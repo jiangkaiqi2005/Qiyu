@@ -55,6 +55,27 @@ body::before {
   padding: 24px 0;
 }
 
+.presence {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(216, 169, 75, 0.4);
+  border-radius: 50%;
+  color: var(--accent);
+  background: rgba(216, 169, 75, 0.08);
+}
+
 .qiyu,
 .user {
   max-width: 82%;
@@ -110,4 +131,29 @@ body::before {
   color: #14110c;
   background: var(--accent);
   border-color: transparent;
+}
+
+.reset {
+  justify-self: center;
+  margin-top: 10px;
+  border: 0;
+  background: transparent;
+  color: #88827a;
+  cursor: pointer;
+  font: inherit;
+}
+
+.reset:hover {
+  color: #c7beb0;
+}
+
+@media (max-width: 520px) {
+  .shell {
+    padding: 18px 12px;
+  }
+
+  .qiyu,
+  .user {
+    max-width: 92%;
+  }
 }
