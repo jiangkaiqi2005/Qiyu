@@ -9,7 +9,7 @@ test('project scaffold exposes app shell and scripts', async () => {
   const html = await readFile(new URL('index.html', root), 'utf8');
 
   assert.equal(pkg.type, 'module');
-  assert.equal(pkg.scripts.test, 'node --test test');
+  assert.equal(pkg.scripts.test, 'node --test "test/**/*.test.js"');
   assert.equal(pkg.scripts.dev, 'node scripts/dev-server.mjs');
   assert.match(html, /<div id="app"><\/div>/);
   assert.match(html, /src="\.\/src\/main\.js"/);
