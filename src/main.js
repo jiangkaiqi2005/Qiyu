@@ -1,6 +1,7 @@
 import { createQiyuReply } from './qiyu/engine.js';
 import {
   createInitialState,
+  startSession,
   loadBrowserState,
   saveBrowserState
 } from './qiyu/state.js';
@@ -8,7 +9,8 @@ import { renderThread } from './ui/render.js';
 
 const app = document.querySelector('#app');
 const storage = window.localStorage;
-let state = loadBrowserState(storage);
+let state = startSession(loadBrowserState(storage));
+saveBrowserState(storage, state);
 let messages = state.turns.length
   ? state.turns.map((turn) => ({ speaker: turn.speaker === 'user' ? 'user' : 'qiyu', text: turn.text }))
   : [{ speaker: 'qiyu', text: '嗨。我是栖语。' }];

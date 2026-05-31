@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createInitialState,
+  startSession,
   rememberUserFact,
   recallRelevantFacts,
+  loadBrowserState,
   recordTurn
 } from '../../src/qiyu/state.js';
 import { inferRelationshipStage } from '../../src/qiyu/relationship.js';
@@ -49,4 +51,28 @@ test('relationship stage grows from interaction depth, not fixed day count alone
   state = recordTurn(state, 'user', '今天跟我妈吵架了');
   state = recordTurn(state, 'qiyu', '又来了');
   assert.equal(inferRelationshipStage(state), '朋友');
+});
+
+test('browser state sanitizes malformed localStorage data', () => {
+  const storage = {
+    getItem() {
+      return JSON.stringify({
+        sessionCount: 'many',
+        lastEmotion: 42,
+        turns: [{ speaker: 'user', text: { html: '<script>' } }],
+        memories: [{ key: null, value: 'bad', source: 'bad' }]
+      });
+    }
+  };
+
+  const state = loadBrowserState(storage);
+  assert.equal(state.sessionCount, 0);
+  assert.equal(state.lastEmotion, 'neutral');
+  assert.deepEqual(state.turns, []);
+  assert.deepEqual(state.memories, []);
+});
+
+test('session count advances explicitly on browser session start', () => {
+  const state = startSession(createInitialState('local-user'));
+  assert.equal(state.sessionCount, 1);
 });

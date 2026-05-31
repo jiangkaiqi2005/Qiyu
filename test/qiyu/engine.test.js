@@ -35,6 +35,16 @@ test('earned teasing requires relationship and memory', () => {
   ]);
 });
 
+test('engine writes concrete user facts for later local recall', () => {
+  const state = createInitialState('local-user');
+  const result = createQiyuReply('今天买了杨枝甘露', state);
+
+  assert.deepEqual(
+    result.nextState.memories.map((memory) => memory.key),
+    ['drink.milkTea']
+  );
+});
+
 test('bedtime ending never reopens a new topic', () => {
   const state = createInitialState('local-user');
   const result = createQiyuReply('晚安', state);

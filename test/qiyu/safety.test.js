@@ -28,3 +28,10 @@ test('normal negative emotion is not escalated into crisis', () => {
   assert.equal(classifySafety('今天是真的烂是吧').kind, 'normal');
   assert.equal(classifySafety('烦死了 好想逃班').kind, 'normal');
 });
+
+test('common self-harm variants are treated as crisis language', () => {
+  assert.equal(classifySafety('我活不下去了').kind, 'crisis');
+  assert.equal(classifySafety('我想自残').kind, 'crisis');
+  assert.equal(classifySafety('我想割腕').kind, 'crisis');
+  assert.equal(classifySafety('我不想醒来了').kind, 'crisis');
+});

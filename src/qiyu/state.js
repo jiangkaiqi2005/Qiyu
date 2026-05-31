@@ -8,6 +8,13 @@ export function createInitialState(userId) {
   };
 }
 
+export function startSession(state) {
+  return {
+    ...state,
+    sessionCount: state.sessionCount + 1
+  };
+}
+
 export function recordTurn(state, speaker, text) {
   return {
     ...state,
@@ -57,6 +64,36 @@ export function recallRelevantFacts(state, text) {
   });
 }
 
+function sanitizeTurn(turn) {
+  if (!turn || (turn.speaker !== 'user' && turn.speaker !== 'qiyu') || typeof turn.text !== 'string') {
+    return null;
+  }
+
+  return {
+    speaker: turn.speaker,
+    text: turn.text,
+    at: typeof turn.at === 'string' ? turn.at : new Date().toISOString()
+  };
+}
+
+function sanitizeMemory(memory) {
+  if (
+    !memory ||
+    typeof memory.key !== 'string' ||
+    typeof memory.value !== 'string' ||
+    typeof memory.source !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    key: memory.key,
+    value: memory.value,
+    source: memory.source,
+    updatedAt: typeof memory.updatedAt === 'string' ? memory.updatedAt : new Date().toISOString()
+  };
+}
+
 export function loadBrowserState(storage, userId = 'local-user') {
   const raw = storage.getItem('qiyu.state');
   if (!raw) {
@@ -65,12 +102,14 @@ export function loadBrowserState(storage, userId = 'local-user') {
 
   try {
     const parsed = JSON.parse(raw);
+    const initial = createInitialState(userId);
     return {
-      ...createInitialState(userId),
-      ...parsed,
+      ...initial,
       userId,
-      turns: Array.isArray(parsed.turns) ? parsed.turns : [],
-      memories: Array.isArray(parsed.memories) ? parsed.memories : []
+      sessionCount: Number.isInteger(parsed.sessionCount) && parsed.sessionCount >= 0 ? parsed.sessionCount : 0,
+      lastEmotion: typeof parsed.lastEmotion === 'string' ? parsed.lastEmotion : initial.lastEmotion,
+      turns: Array.isArray(parsed.turns) ? parsed.turns.map(sanitizeTurn).filter(Boolean) : [],
+      memories: Array.isArray(parsed.memories) ? parsed.memories.map(sanitizeMemory).filter(Boolean) : []
     };
   } catch {
     return createInitialState(userId);
