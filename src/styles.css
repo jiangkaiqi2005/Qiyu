@@ -1,0 +1,113 @@
+:root {
+  color-scheme: dark;
+  --ink: #efece4;
+  --muted: #9f998d;
+  --night: #11100e;
+  --panel: #1b1916;
+  --panel-soft: #232019;
+  --line: #3a3429;
+  --accent: #d8a94b;
+  --user: #2d2921;
+  font-family: "LXGW WenKai", "Microsoft YaHei", "PingFang SC", serif;
+  background: var(--night);
+  color: var(--ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 22% 8%, rgba(216, 169, 75, 0.13), transparent 28rem),
+    linear-gradient(145deg, #0d0d0c 0%, #17140f 52%, #0b0b0a 100%);
+}
+
+body::before {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  opacity: 0.28;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+}
+
+.shell {
+  width: min(760px, 100%);
+  min-height: 100vh;
+  margin: 0 auto;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  padding: 32px 18px 20px;
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 24px 0;
+}
+
+.qiyu,
+.user {
+  max-width: 82%;
+  margin: 0;
+  padding: 10px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  line-height: 1.72;
+  white-space: pre-wrap;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.2);
+}
+
+.qiyu {
+  align-self: flex-start;
+  background: rgba(27, 25, 22, 0.84);
+}
+
+.user {
+  align-self: flex-end;
+  background: rgba(45, 41, 33, 0.92);
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(216, 169, 75, 0.18);
+}
+
+.composer input,
+.composer button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 15, 13, 0.78);
+  color: var(--ink);
+  font: inherit;
+  padding: 11px 13px;
+}
+
+.composer input::placeholder {
+  color: var(--muted);
+}
+
+.composer input:focus,
+.composer button:focus-visible {
+  outline: 2px solid rgba(216, 169, 75, 0.34);
+  outline-offset: 2px;
+}
+
+.composer button {
+  cursor: pointer;
+  color: #14110c;
+  background: var(--accent);
+  border-color: transparent;
+}
