@@ -6,6 +6,7 @@ import {
   saveBrowserState
 } from './qiyu/state.js';
 import { renderBubble } from './ui/render.js';
+import { sendChatMessage } from './ui/chat-api.js';
 
 const app = document.querySelector('#app');
 const storage = window.localStorage;
@@ -114,7 +115,7 @@ async function processReplyQueue(replyMessages) {
   }
 }
 
-form.addEventListener('submit', (event) => {
+form.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (isTyping) return;
 
@@ -124,7 +125,13 @@ form.addEventListener('submit', (event) => {
   input.value = '';
   appendMessage('user', text);
 
-  const result = createQiyuReply(text, state);
+  let result;
+  try {
+    result = await sendChatMessage({ text, state });
+  } catch {
+    result = createQiyuReply(text, state);
+  }
+
   state = result.nextState;
   saveBrowserState(storage, state);
 
