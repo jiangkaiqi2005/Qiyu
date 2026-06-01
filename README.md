@@ -23,4 +23,24 @@ npm run dev
 
 ## 当前边界
 
-这个版本不接外部模型，不做账号系统，不做云端记忆。它的价值是先把「栖语必须像同一个人」这件事写进代码、测试和 eval。
+这个版本已接入外部 LLM API，支持流式风格调取，但同时保留本地规则引擎作为离线降级兜底和安全边界的测试轨道。不做账号系统，不做云端记忆。
+
+## LLM API 配置
+
+浏览器不会读取 API Key。所有 LLM 请求都从本地 Node dev server 的 `/api/chat` 发出。
+
+环境变量方式：
+
+```powershell
+cd E:\Agent\栖语
+$env:LLM_API_URL="https://api.example.com/v1/chat/completions"
+$env:LLM_API_KEY="你的真实 key"
+$env:LLM_MODEL="provider-model-name"
+npm run dev
+```
+
+本地配置文件方式：
+
+复制 `qiyu.config.example.json` 为 `qiyu.config.local.json`，写入真实 `apiUrl`、`apiKey`、`model`。`qiyu.config.local.json` 已加入 `.gitignore`，不要提交。
+
+没有配置 LLM 时，应用自动使用本地规则引擎。
