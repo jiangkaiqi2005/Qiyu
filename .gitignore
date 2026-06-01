@@ -1,0 +1,4 @@
+node_modules/
+.env.local
+qiyu.config.local.json
+*.log
