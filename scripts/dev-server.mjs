@@ -86,6 +86,21 @@ export async function createStaticServer(staticRoot = root) {
       return;
     }
 
+    if (req.url?.startsWith('/api/eval/run')) {
+      try {
+        const { runSuite } = await import('../src/qiyu/eval-runner.js');
+        const { readFile } = await import('node:fs/promises');
+        const cases = JSON.parse(await readFile(join(staticRoot, 'eval/golden-cases.json'), 'utf8'));
+        const report = runSuite(cases);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(report));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
     const resolved = resolveRequestPath(req.url || '/', staticRoot);
     if (resolved.status !== 200) {
       res.writeHead(resolved.status);
