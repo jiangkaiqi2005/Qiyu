@@ -3,6 +3,9 @@ import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { handleChatRequest } from '../src/server/chat-route.js';
+import { loadRuntimeConfig } from '../src/server/config.js';
+import { loadProductSoul } from '../src/server/system-prompt.js';
 
 const root = resolve(process.cwd());
 const port = Number(process.env.PORT || 5173);
@@ -51,8 +54,16 @@ export function resolveRequestPath(urlPath, staticRoot = root) {
   return { status: 200, filePath: candidate };
 }
 
-export function createStaticServer(staticRoot = root) {
+export async function createStaticServer(staticRoot = root) {
+  const runtimeConfig = await loadRuntimeConfig();
+  const productSoul = await loadProductSoul(join(staticRoot, '栖语产品灵魂.md'));
+
   return createServer(async (req, res) => {
+    if (req.url?.startsWith('/api/chat')) {
+      await handleChatRequest(req, res, { runtimeConfig, productSoul });
+      return;
+    }
+
     const resolved = resolveRequestPath(req.url || '/', staticRoot);
     if (resolved.status !== 200) {
       res.writeHead(resolved.status);
@@ -81,7 +92,8 @@ export function createStaticServer(staticRoot = root) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  createStaticServer().listen(port, host, () => {
+  const server = await createStaticServer();
+  server.listen(port, host, () => {
     console.log(`栖语 MVP running at http://${host}:${port}`);
   });
 }
