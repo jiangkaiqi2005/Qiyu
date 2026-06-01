@@ -4,18 +4,20 @@ export function createInitialState(userId) {
     sessionCount: 0,
     turns: [],
     memories: [],
-    lastEmotion: 'neutral'
+    lastEmotion: { kind: 'neutral', intensity: 0 },
+    currentSessionStart: null
   };
 }
 
-export function startSession(state) {
+export function startSession(state, now = new Date()) {
   return {
     ...state,
-    sessionCount: state.sessionCount + 1
+    sessionCount: state.sessionCount + 1,
+    currentSessionStart: now.toISOString()
   };
 }
 
-export function recordTurn(state, speaker, text) {
+export function recordTurn(state, speaker, text, now = new Date()) {
   return {
     ...state,
     turns: [
@@ -23,18 +25,18 @@ export function recordTurn(state, speaker, text) {
       {
         speaker,
         text,
-        at: new Date().toISOString()
+        at: now.toISOString()
       }
     ].slice(-80)
   };
 }
 
-export function rememberUserFact(state, fact) {
+export function rememberUserFact(state, fact, now = new Date()) {
   const nextFact = {
     key: fact.key,
     value: fact.value,
     source: fact.source,
-    updatedAt: new Date().toISOString()
+    updatedAt: now.toISOString()
   };
   const existingIndex = state.memories.findIndex((item) => item.key === fact.key);
 
@@ -107,7 +109,8 @@ export function loadBrowserState(storage, userId = 'local-user') {
       ...initial,
       userId,
       sessionCount: Number.isInteger(parsed.sessionCount) && parsed.sessionCount >= 0 ? parsed.sessionCount : 0,
-      lastEmotion: typeof parsed.lastEmotion === 'string' ? parsed.lastEmotion : initial.lastEmotion,
+      lastEmotion: parsed.lastEmotion && typeof parsed.lastEmotion === 'object' ? parsed.lastEmotion : (typeof parsed.lastEmotion === 'string' ? { kind: parsed.lastEmotion, intensity: 0 } : initial.lastEmotion),
+      currentSessionStart: typeof parsed.currentSessionStart === 'string' ? parsed.currentSessionStart : null,
       turns: Array.isArray(parsed.turns) ? parsed.turns.map(sanitizeTurn).filter(Boolean) : [],
       memories: Array.isArray(parsed.memories) ? parsed.memories.map(sanitizeMemory).filter(Boolean) : []
     };

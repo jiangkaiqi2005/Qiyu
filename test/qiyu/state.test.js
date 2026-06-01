@@ -67,7 +67,7 @@ test('browser state sanitizes malformed localStorage data', () => {
 
   const state = loadBrowserState(storage);
   assert.equal(state.sessionCount, 0);
-  assert.equal(state.lastEmotion, 'neutral');
+  assert.deepEqual(state.lastEmotion, { kind: 'neutral', intensity: 0 });
   assert.deepEqual(state.turns, []);
   assert.deepEqual(state.memories, []);
 });

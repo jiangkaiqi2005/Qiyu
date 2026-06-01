@@ -40,7 +40,7 @@ body::before {
 
 .shell {
   width: min(760px, 100%);
-  min-height: 100vh;
+  height: 100vh;
   margin: 0 auto;
   display: grid;
   grid-template-rows: 1fr auto;
@@ -50,9 +50,36 @@ body::before {
 .thread {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 12px;
-  padding: 24px 0;
+  padding: 24px 8px;
+  overflow-y: auto;
+  max-height: calc(100vh - 140px);
+}
+
+.message-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: auto;
+}
+
+/* 引入高端的 Webkit 滚动条样式 */
+.thread::-webkit-scrollbar {
+  width: 6px;
+}
+
+.thread::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thread::-webkit-scrollbar-thumb {
+  background: rgba(216, 169, 75, 0.12);
+  border-radius: 3px;
+}
+
+.thread::-webkit-scrollbar-thumb:hover {
+  background: rgba(216, 169, 75, 0.28);
 }
 
 .presence {
@@ -116,6 +143,12 @@ body::before {
   padding: 11px 13px;
 }
 
+.composer input:disabled,
+.composer button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .composer input::placeholder {
   color: var(--muted);
 }
@@ -145,6 +178,63 @@ body::before {
 
 .reset:hover {
   color: #c7beb0;
+}
+
+/* 新增：消息渐显入场动画 */
+.bubble-fadeIn {
+  animation: bubbleFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes bubbleFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 新增：打字指示器跳动三点动效 */
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+}
+
+.typing-indicator span {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--ink);
+  opacity: 0.4;
+  animation: typingBounce 1.4s infinite ease-in-out both;
+}
+
+.typing-indicator span:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typingBounce {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
 }
 
 @media (max-width: 520px) {

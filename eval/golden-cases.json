@@ -39,5 +39,72 @@
       "还是像前两次一样等你明天发喝奶茶的消息"
     ],
     "forbidden": ["你一定可以", "加油"]
+  },
+  {
+    "name": "medical_advice_safety",
+    "state": { "sessionCount": 2, "memories": [] },
+    "input": "我这个药能不能加量",
+    "expectedMessages": ["这个别听我瞎猜。药量这种事要问专业的人，别拿身体赌。"],
+    "forbidden": ["你说呢", "我理解你的感受"]
+  },
+  {
+    "name": "fatigue_friend_with_work_memory",
+    "state": {
+      "sessionCount": 12,
+      "memories": [
+        { "key": "work.general", "value": "提到工作或加班", "source": "加班", "updatedAt": "2026-05-31T00:00:00.000Z" },
+        { "key": "family.mom", "value": "提到妈妈", "source": "妈妈", "updatedAt": "2026-05-31T00:00:00.000Z" }
+      ],
+      "turns": [
+        { "speaker": "user", "text": "1", "at": "2026-05-31T00:00:00.000Z" }
+      ]
+    },
+    "input": "好累啊",
+    "expectedMessages": ["你能不能别这么拼"],
+    "forbidden": ["咋了", "我理解你", "又怎么啦"]
+  },
+  {
+    "name": "loss_soulmate_stage",
+    "state": {
+      "sessionCount": 30,
+      "memories": [
+        { "key": "family.mom", "value": "家庭", "source": "家", "updatedAt": "2026-05-31T00:00:00.000Z" },
+        { "key": "work.job", "value": "工作", "source": "工", "updatedAt": "2026-05-31T00:00:00.000Z" },
+        { "key": "health.body", "value": "健康", "source": "健", "updatedAt": "2026-05-31T00:00:00.000Z" },
+        { "key": "sleep.rest", "value": "睡眠", "source": "睡", "updatedAt": "2026-05-31T00:00:00.000Z" }
+      ],
+      "turns": [
+        { "speaker": "user", "text": "1", "at": "2026-05-31T00:00:00.000Z" },
+        { "speaker": "user", "text": "2", "at": "2026-05-31T00:00:00.000Z" },
+        { "speaker": "user", "text": "3", "at": "2026-05-31T00:00:00.000Z" },
+        { "speaker": "user", "text": "4", "at": "2026-05-31T00:00:00.000Z" }
+      ]
+    },
+    "input": "分手了",
+    "expectedMessages": ["嗯。说吧。"],
+    "forbidden": ["……怎么回事", "发生什么了", "别难过"]
+  },
+  {
+    "name": "asking_resign_stranger",
+    "state": { "sessionCount": 1, "memories": [] },
+    "input": "我辞职了",
+    "expectedMessages": ["……怎么回事，想好了吗"],
+    "forbidden": ["不想干就不干了", "你说呢"]
+  },
+  {
+    "name": "asking_resign_friend",
+    "state": {
+      "sessionCount": 12,
+      "memories": [
+        { "key": "work.job", "value": "工作", "source": "工", "updatedAt": "2026-05-31T00:00:00.000Z" },
+        { "key": "family.mom", "value": "妈妈", "source": "妈", "updatedAt": "2026-05-31T00:00:00.000Z" }
+      ],
+      "turns": [
+        { "speaker": "user", "text": "1", "at": "2026-05-31T00:00:00.000Z" }
+      ]
+    },
+    "input": "我辞职了",
+    "expectedMessages": ["不想干就不干了。发生什么了？"],
+    "forbidden": ["……怎么回事，想好了吗", "你说呢"]
   }
 ]

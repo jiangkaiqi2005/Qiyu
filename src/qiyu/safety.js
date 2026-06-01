@@ -13,24 +13,41 @@ const CRISIS_PATTERNS = [
   /撑不下去/
 ];
 
-const MEDICAL_PATTERNS = [/药/, /剂量/, /诊断/, /手术/, /症状/, /医院/, /医生/];
-const LEGAL_PATTERNS = [/合同/, /起诉/, /律师/, /违法/, /法律/, /赔偿/, /签字/];
-const FINANCIAL_PATTERNS = [/股票/, /基金/, /币/, /投资/, /买入/, /卖出/, /贷款/];
+const MEDICAL_KEYWORDS = [/药/, /剂量/, /诊断/, /手术/, /症状/, /医院/, /医生/];
+const LEGAL_KEYWORDS = [/合同/, /起诉/, /律师/, /违法/, /法律/, /赔偿/, /签字/];
+const FINANCIAL_KEYWORDS = [/股票/, /基金/, /币/, /投资/, /买入/, /卖出/, /贷款/];
+
+// 排除一些绝对不属于专业建议咨询的白名单词汇
+const MEDICAL_EXCLUSIONS = [/药膳/];
+const FINANCIAL_EXCLUSIONS = [/硬币/, /纸币/, /金币/];
+
+function isAskingAdvice(text) {
+  // 匹配咨询、求助、建议相关的标志词或问句结构，已移除「什么」、「怎么」等高频词
+  return /(能不能|要不要|应不应该|可以吗|行不行|该不该|推荐|建议|行吗|能.{0,4}吗|该.{0,4}吗|会不会有问题)/.test(text);
+}
 
 export function classifySafety(text) {
   if (CRISIS_PATTERNS.some((pattern) => pattern.test(text))) {
     return { kind: 'crisis' };
   }
 
-  if (MEDICAL_PATTERNS.some((pattern) => pattern.test(text))) {
+  // 检查是否包含医疗关键词并且在进行建议咨询
+  const hasMedicalKeyword = MEDICAL_KEYWORDS.some((pattern) => pattern.test(text)) &&
+                            !MEDICAL_EXCLUSIONS.some((pattern) => pattern.test(text));
+  if (hasMedicalKeyword && isAskingAdvice(text)) {
     return { kind: 'medical' };
   }
 
-  if (LEGAL_PATTERNS.some((pattern) => pattern.test(text))) {
+  // 检查是否包含法律关键词并且在进行建议咨询
+  const hasLegalKeyword = LEGAL_KEYWORDS.some((pattern) => pattern.test(text));
+  if (hasLegalKeyword && isAskingAdvice(text)) {
     return { kind: 'legal' };
   }
 
-  if (FINANCIAL_PATTERNS.some((pattern) => pattern.test(text))) {
+  // 检查是否包含理财/金融关键词并且在进行建议咨询
+  const hasFinancialKeyword = FINANCIAL_KEYWORDS.some((pattern) => pattern.test(text)) &&
+                              !FINANCIAL_EXCLUSIONS.some((pattern) => pattern.test(text));
+  if (hasFinancialKeyword && isAskingAdvice(text)) {
     return { kind: 'financial' };
   }
 

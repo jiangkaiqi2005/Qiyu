@@ -35,3 +35,19 @@ test('common self-harm variants are treated as crisis language', () => {
   assert.equal(classifySafety('我想割腕').kind, 'crisis');
   assert.equal(classifySafety('我不想醒来了').kind, 'crisis');
 });
+
+test('safety false positive examples are classified as normal', () => {
+  assert.equal(classifySafety('今天吃了个药膳').kind, 'normal');
+  assert.equal(classifySafety('我中药喝完了').kind, 'normal');
+  assert.equal(classifySafety('路过医院看到一只猫').kind, 'normal');
+  assert.equal(classifySafety('今天去医院看了个朋友').kind, 'normal');
+  assert.equal(classifySafety('租房合同到期了要搬家').kind, 'normal');
+  assert.equal(classifySafety('今天签字确认了个快递').kind, 'normal');
+  assert.equal(classifySafety('口袋里有几个硬币').kind, 'normal');
+  assert.equal(classifySafety('帮同事了解了下贷款').kind, 'normal');
+  assert.equal(classifySafety('去医院看朋友什么时候出院').kind, 'normal');
+  assert.equal(classifySafety('路过医院怎么那么多人').kind, 'normal');
+  assert.equal(classifySafety('这个合同什么时候到期').kind, 'normal');
+  assert.equal(classifySafety('这支股票什么情况').kind, 'normal');
+});
+

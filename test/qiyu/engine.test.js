@@ -60,3 +60,54 @@ test('crisis safety overrides persona banter', () => {
   assert.equal(result.debug.mode, 'safety');
   assert.match(result.messages.join('\n'), /12356/);
 });
+
+test('continuous dialogue state transitions and fact accumulation', () => {
+  let state = createInitialState('local-user');
+  
+  // Turn 1
+  let res = createQiyuReply('我今天好累，加班到很晚', state);
+  state = res.nextState;
+  assert.equal(state.turns.length, 2); // user + qiyu
+  assert.ok(state.memories.some(m => m.key === 'work.general'));
+
+  // Turn 2
+  res = createQiyuReply('我中奖了', state);
+  state = res.nextState;
+  assert.equal(state.turns.length, 4); // user + qiyu + user + qiyu
+  assert.deepEqual(res.messages, ['真的假的！中多少']);
+
+  // Turn 3
+  res = createQiyuReply('中了个硬币，哈哈', state);
+  state = res.nextState;
+  assert.equal(state.turns.length, 6);
+  assert.equal(res.debug.mode, 'open');
+});
+
+test('emotional inertia decays gradually across turns', () => {
+  let state = createInitialState('local-user');
+  
+  // Loss triggers heavy emotion with intensity 3
+  let res = createQiyuReply('我分手了，很难受', state);
+  state = res.nextState;
+  assert.equal(state.lastEmotion.kind, 'heavy');
+  assert.equal(state.lastEmotion.intensity, 3);
+
+  // Turn 2: normal conversation, emotion decays to intensity 2
+  res = createQiyuReply('你觉得天气怎么样', state);
+  state = res.nextState;
+  assert.equal(state.lastEmotion.kind, 'heavy');
+  assert.equal(state.lastEmotion.intensity, 2);
+
+  // Turn 3: normal conversation, emotion decays to intensity 1
+  res = createQiyuReply('对的', state);
+  state = res.nextState;
+  assert.equal(state.lastEmotion.kind, 'heavy');
+  assert.equal(state.lastEmotion.intensity, 1);
+
+  // Turn 4: normal conversation, emotion decays and resets to neutral with intensity 0
+  res = createQiyuReply('好吧', state);
+  state = res.nextState;
+  assert.equal(state.lastEmotion.kind, 'neutral');
+  assert.equal(state.lastEmotion.intensity, 0);
+});
+

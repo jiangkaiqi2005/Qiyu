@@ -11,7 +11,7 @@ for (const item of cases) {
     ...createInitialState('eval-user'),
     ...item.state,
     turns: item.state.turns || [],
-    lastEmotion: item.state.lastEmotion || 'neutral'
+    lastEmotion: item.state.lastEmotion || { kind: 'neutral', intensity: 0 }
   };
   const result = createQiyuReply(item.input, state);
   const text = result.messages.join('\n');

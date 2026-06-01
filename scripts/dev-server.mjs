@@ -56,7 +56,8 @@ export function createStaticServer(staticRoot = root) {
     const resolved = resolveRequestPath(req.url || '/', staticRoot);
     if (resolved.status !== 200) {
       res.writeHead(resolved.status);
-      res.end(resolved.status === 400 ? 'Bad request' : 'Not found');
+      const messages = { 400: 'Bad request', 403: 'Forbidden', 404: 'Not found' };
+      res.end(messages[resolved.status] || 'Error');
       return;
     }
 
