@@ -1,3 +1,4 @@
+import { renderAppShell, bindNavigation } from '../ui/layout.js';
 import { createQiyuReply } from '../qiyu/engine.js';
 import {
   startSession,
@@ -13,15 +14,8 @@ export function render(container, context) {
   let state = startSession(loadBrowserState(storage));
   saveBrowserState(storage, state);
 
-  container.innerHTML = `
-    <main class="shell">
-      <header class="chat-header">
-        <button data-path="/" class="nav-back-btn">← 返回</button>
-        <div class="presence" aria-hidden="true">
-          <span class="mark">栖</span>
-          <span>深夜在线</span>
-        </div>
-      </header>
+  const innerHtml = `
+    <div class="shell">
       <section class="thread" aria-label="栖语对话" role="log" aria-live="polite">
         <div class="message-container"></div>
       </section>
@@ -30,19 +24,17 @@ export function render(container, context) {
         <button type="submit">发送</button>
       </form>
       <button class="reset" type="button">清空本地对话</button>
-    </main>
+    </div>
   `;
+
+  container.innerHTML = renderAppShell(innerHtml, '/chat');
+  bindNavigation(container, context.router);
 
   const thread = container.querySelector('.thread');
   const msgContainer = container.querySelector('.message-container');
   const form = container.querySelector('.composer');
   const reset = container.querySelector('.reset');
   const input = form.elements.message;
-  const backBtn = container.querySelector('.nav-back-btn');
-
-  backBtn.addEventListener('click', () => {
-    context.router.navigate('/');
-  });
 
   function scrollToBottom() {
     thread.scrollTo({
