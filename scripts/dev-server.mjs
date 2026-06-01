@@ -16,7 +16,9 @@ const contentTypes = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
   ['.css', 'text/css; charset=utf-8'],
-  ['.json', 'application/json; charset=utf-8']
+  ['.json', 'application/json; charset=utf-8'],
+  ['.webmanifest', 'application/manifest+json; charset=utf-8'],
+  ['.png', 'image/png']
 ]);
 
 function isAllowedStaticFile(relativePath) {
@@ -25,7 +27,10 @@ function isAllowedStaticFile(relativePath) {
     return false;
   }
 
-  return relativePath === 'index.html' || parts[0] === 'src';
+  return relativePath === 'index.html' || 
+         relativePath === 'sw.js' || 
+         parts[0] === 'src' || 
+         parts[0] === 'public';
 }
 
 const spaRoutes = new Set([

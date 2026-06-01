@@ -12,6 +12,10 @@ test('dev server only serves app shell and browser assets', () => {
   assert.equal(resolveRequestPath('/package.json', root).status, 404);
   assert.equal(resolveRequestPath('/.git/config', root).status, 404);
   assert.equal(resolveRequestPath('/栖语产品灵魂.md', root).status, 404);
+  
+  assert.equal(resolveRequestPath('/sw.js', root).status, 200);
+  assert.equal(resolveRequestPath('/public/manifest.webmanifest', root).status, 200);
+  assert.equal(resolveRequestPath('/public/offline.html', root).status, 200);
 });
 
 test('dev server rejects malformed and escaping paths', () => {
