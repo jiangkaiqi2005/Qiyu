@@ -60,10 +60,12 @@ function tokensFor(text) {
 
 export function recallRelevantFacts(state, text) {
   const tokens = tokensFor(text).filter((token) => token.length > 1);
-  return state.memories.filter((item) => {
-    const searchable = `${item.key} ${item.value} ${item.source}`.toLowerCase();
-    return tokens.some((token) => searchable.includes(token));
-  });
+  return state.memories
+    .filter((item) => !item.frozen && !item.excludeFromContext)
+    .filter((item) => {
+      const searchable = `${item.key} ${item.value} ${item.source}`.toLowerCase();
+      return tokens.some((token) => searchable.includes(token));
+    });
 }
 
 function sanitizeTurn(turn) {
