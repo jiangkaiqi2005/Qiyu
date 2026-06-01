@@ -35,7 +35,7 @@ test('router matches routes and falls back gracefully', () => {
   const container = {
     innerHTML: '',
     querySelector(selector) {
-      if (selector === '.composer') {
+      if (selector === '.composer' || selector === '.trial-composer') {
         return {
           elements: { message: { focus() {}, value: '' } },
           addEventListener() {},
