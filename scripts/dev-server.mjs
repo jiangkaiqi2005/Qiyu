@@ -27,6 +27,16 @@ function isAllowedStaticFile(relativePath) {
   return relativePath === 'index.html' || parts[0] === 'src';
 }
 
+const spaRoutes = new Set([
+  '/',
+  '/chat',
+  '/onboarding',
+  '/settings',
+  '/memory',
+  '/lab',
+  '/privacy'
+]);
+
 export function resolveRequestPath(urlPath, staticRoot = root) {
   let decoded;
   try {
@@ -39,7 +49,13 @@ export function resolveRequestPath(urlPath, staticRoot = root) {
     return { status: 400 };
   }
 
-  const requestPath = decoded === '/' ? 'index.html' : decoded;
+  let requestPath = decoded;
+  if (spaRoutes.has(decoded)) {
+    requestPath = 'index.html';
+  } else if (decoded === '/') {
+    requestPath = 'index.html';
+  }
+
   const candidate = normalize(join(staticRoot, requestPath));
   const relativePath = relative(staticRoot, candidate);
 
