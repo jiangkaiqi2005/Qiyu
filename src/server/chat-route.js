@@ -6,6 +6,7 @@ import { rememberFactsFromText } from '../qiyu/memory-extraction.js';
 import { recordTurn } from '../qiyu/state.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { callChatCompletions } from './llm-client.js';
+import { inferRelationshipStage } from '../qiyu/relationship.js';
 
 async function readJsonBody(req, limitBytes = 65536) {
   let raw = '';
@@ -51,36 +52,65 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
       return;
     }
 
-    const stateWithMemory = rememberFactsFromText(state, text);
+    // 1. Sandbox User Input to prevent jailbreaking / structural tag injection
+    const sanitizedText = text.replace(/<\/?[a-zA-Z_]+>/g, '');
+
+    // 2. Process user turn and memory first to solve off-by-one update latency
+    const stateWithMemory = rememberFactsFromText(state, sanitizedText);
+    const withUserTurn = recordTurn(stateWithMemory, 'user', sanitizedText);
+
+    // 3. Update relationship stage using sticky, non-downgrading weights
+    const inferredStage = inferRelationshipStage(withUserTurn);
+    const currentStage = state.relationshipStage || '初识';
+    const stageWeights = { '初识': 0, '熟悉': 1, '朋友': 2, '深交': 3 };
+    const nextStage = stageWeights[currentStage] > stageWeights[inferredStage] ? currentStage : inferredStage;
+
+    const activeState = { ...withUserTurn, relationshipStage: nextStage };
+
     const systemPrompt = buildSystemPrompt(productSoul);
-    const context = buildPromptContext({ state: stateWithMemory, userText: text });
+    
+    // 4. includeHistory: false avoids double duplication of history in LLM query
+    const context = buildPromptContext({ state: activeState, userText: sanitizedText, includeHistory: false });
     const recentTurns = (stateWithMemory.turns || []).slice(-8).map((turn) => ({
       role: turn.speaker === 'user' ? 'user' : 'assistant',
       content: turn.text
     }));
 
-    const llmText = await callChatCompletions({
-      config: runtimeConfig.llm,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        context,
-        ...recentTurns,
-        { role: 'user', content: text }
-      ],
-      fetchImpl
-    });
+    let llmText;
+    try {
+      llmText = await callChatCompletions({
+        config: runtimeConfig.llm,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          context,
+          ...recentTurns,
+          { role: 'user', content: sanitizedText }
+        ],
+        fetchImpl
+      });
+      assertNoForbiddenPhrase(llmText);
+    } catch (error) {
+      // 5. Graceful fallback on forbidden phrases or API failures to prevent 500 DoS crashes
+      const result = fallbackReply(sanitizedText, state);
+      sendJson(res, 200, {
+        messages: result.messages,
+        nextState: result.nextState,
+        debug: { ...result.debug, error: error.message },
+        source: 'local'
+      });
+      return;
+    }
 
-    assertNoForbiddenPhrase(llmText);
-    const withUserTurn = recordTurn(stateWithMemory, 'user', text);
-    const nextState = recordTurn(withUserTurn, 'qiyu', llmText);
+    const nextState = recordTurn(activeState, 'qiyu', llmText);
 
     sendJson(res, 200, {
       messages: llmText.split('\n').filter(Boolean),
       nextState,
-      debug: { mode: 'llm' },
+      debug: { mode: 'llm', relationshipStage: nextStage },
       source: 'llm'
     });
   } catch (error) {
-    sendJson(res, 500, { error: error.message });
+    // Sanitize stack traces to avoid absolute server path exposures
+    sendJson(res, 500, { error: 'Internal Server Error' });
   }
 }

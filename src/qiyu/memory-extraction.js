@@ -25,6 +25,16 @@ const FACT_EXTRACTORS = [
     pattern: /失眠|熬夜|睡不着/,
     key: 'sleep.pattern',
     getValue: () => '提到睡眠问题或熬夜'
+  },
+  {
+    pattern: /胃疼|头疼|感冒|发烧|生病|吃药|胃不舒服|身体不舒服|去医院/,
+    key: 'health.status',
+    getValue: () => '提到身体状况或生病'
+  },
+  {
+    pattern: /难过|伤心|情绪低落|崩溃|开心|郁闷|烦躁|抑郁|难受|委屈/,
+    key: 'emotion.status',
+    getValue: () => '提到自身情绪状态'
   }
 ];
 

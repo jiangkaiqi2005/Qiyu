@@ -16,14 +16,14 @@ export function render(container, context) {
 
   const innerHtml = `
     <div class="shell">
-      <section class="thread" aria-label="栖语对话" role="log" aria-live="polite">
+      <section class="thread" aria-label="与 栖语 的深夜夜话" role="log" aria-live="polite">
         <div class="message-container"></div>
       </section>
       <form class="composer" aria-label="发送消息">
-        <input name="message" autocomplete="off" placeholder="今天过得怎么样">
-        <button type="submit">发送</button>
+        <input name="message" autocomplete="off" placeholder="今天过得怎么样" aria-label="写下你的心里话">
+        <button type="submit" class="btn primary">发送</button>
       </form>
-      <button class="reset" type="button">清空本地对话</button>
+      <button class="reset" type="button" aria-label="抹去深夜里的所有相遇痕迹">抹去深夜里的所有相遇痕迹</button>
     </div>
   `;
 
@@ -36,10 +36,14 @@ export function render(container, context) {
   const reset = container.querySelector('.reset');
   const input = form.elements.message;
 
-  function scrollToBottom() {
+  function scrollToBottom(options = {}) {
+    // Accessibility check: Query system preferences for prefers-reduced-motion
+    const isReduced = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
+    const defaultBehavior = isReduced ? 'auto' : 'smooth';
+    
     thread.scrollTo({
       top: thread.scrollHeight,
-      behavior: 'smooth'
+      behavior: options.behavior || defaultBehavior
     });
   }
 
@@ -57,23 +61,32 @@ export function render(container, context) {
     const indicator = document.createElement('p');
     indicator.className = 'qiyu typing-indicator bubble-fadeIn';
     indicator.setAttribute('role', 'status');
-    indicator.setAttribute('aria-label', '栖语正在输入...');
+    indicator.setAttribute('aria-label', '栖语正在想...');
     indicator.innerHTML = '<span>.</span><span>.</span><span>.</span>';
     msgContainer.appendChild(indicator);
     scrollToBottom();
     return indicator;
   }
 
-  // Load history
+  // SOTA High Performance: Document Fragment batch DOM rendering (Reduces reflows from N to 1)
   const historyTurns = state.turns;
   if (historyTurns.length) {
+    const fragment = document.createDocumentFragment();
     historyTurns.forEach(turn => {
-      appendMessage(turn.speaker === 'user' ? 'user' : 'qiyu', turn.text);
+      const html = renderBubble({ speaker: turn.speaker === 'user' ? 'user' : 'qiyu', text: turn.text });
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = html.trim();
+      const bubble = tempDiv.firstChild;
+      bubble.classList.add('bubble-fadeIn');
+      fragment.appendChild(bubble);
     });
+    msgContainer.appendChild(fragment);
+    scrollToBottom({ behavior: 'auto' });
   } else {
-    appendMessage('qiyu', '嗨。我是栖语。');
+    appendMessage('qiyu', '你来了。今晚，外面安静下来了吗？');
   }
-  input.focus();
+
+  // Removed autofocus hijacking input.focus() to satisfy WCAG A11y standards
 
   let isTyping = false;
 
@@ -103,7 +116,6 @@ export function render(container, context) {
       isTyping = false;
       input.disabled = false;
       form.querySelector('button').disabled = false;
-      input.focus();
     }
   }
 
@@ -135,7 +147,6 @@ export function render(container, context) {
     state = createInitialState('local-user');
     saveBrowserState(storage, state);
     msgContainer.innerHTML = '';
-    appendMessage('qiyu', '嗨。我是栖语。');
-    input.focus();
+    appendMessage('qiyu', '你来了。今晚，外面安静下来了吗？');
   });
 }

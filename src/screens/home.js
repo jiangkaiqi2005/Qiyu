@@ -23,31 +23,31 @@ export function render(container, context) {
   }
 
   const innerHtml = `
-    <div class="card">
+    <div class="card" style="max-width: 620px;">
       <h1>栖语</h1>
       <p class="subtitle">一个深夜懂你的 AI 伴侣</p>
       
       <div class="trial-chat-container">
-        <section class="thread trial-thread" aria-label="试用对话" role="log" aria-live="polite" style="max-height: 280px; min-height: 120px; overflow-y: auto; margin-bottom: 16px;">
+        <section class="thread trial-thread" aria-label="深夜夜话试用" role="log" aria-live="polite" style="max-height: 280px; min-height: 120px; overflow-y: auto; margin-bottom: 16px;">
           <div class="message-container trial-message-container"></div>
         </section>
         
         <form class="composer trial-composer" aria-label="试用发送" style="display: grid; grid-template-columns: 1fr auto; gap: 8px;">
-          <input name="message" autocomplete="off" placeholder="写点什么..." style="padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: rgba(16, 15, 13, 0.78); color: var(--ink);">
+          <input name="message" autocomplete="off" placeholder="深夜了，写点什么吧..." aria-label="写下你想对栖语说的话" style="padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: rgba(16, 15, 13, 0.78); color: var(--ink);">
           <button type="submit" class="btn primary" style="padding: 10px 16px;">发送</button>
         </form>
         
         <div class="onboarding-invite notice notice-info" style="display: none; margin-top: 16px;">
-          <span class="notice-icon">✨</span>
-          <span class="notice-message" style="flex: 1; display: flex; align-items: center; justify-content: space-between;">
-            <span>感觉还不错吗？完成简短的首次设置，让栖语能够长久记住你。</span>
-            <button data-nav-path="/onboarding" class="btn primary" style="padding: 6px 12px; font-size: 13px; margin-left: 12px;">开启正式对话</button>
+          <span class="notice-icon" aria-hidden="true">✨</span>
+          <span class="notice-message" style="flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+            <span>感觉还不错吗？完成简短的初遇相识设置，让我能够长久记住你。</span>
+            <button data-nav-path="/onboarding" class="btn primary" style="padding: 6px 12px; font-size: 13px;">开启正式对话</button>
           </span>
         </div>
       </div>
 
       ${hasHistory ? `
-        <div class="returning-path" style="margin-top: 24px; text-align: center; border-top: 1px solid rgba(216, 169, 75, 0.1); padding-top: 16px;">
+        <div class="returning-path" style="margin-top: 24px; text-align: center; border-top: 1px dashed rgba(223, 179, 85, 0.1); padding-top: 16px;">
           <button data-nav-path="/chat" class="btn primary">继续今晚的对话</button>
         </div>
       ` : ''}
@@ -63,10 +63,13 @@ export function render(container, context) {
   const input = form.elements.message;
   const inviteBox = container.querySelector('.onboarding-invite');
 
-  function scrollToBottom() {
+  function scrollToBottom(options = {}) {
+    const isReduced = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
+    const defaultBehavior = isReduced ? 'auto' : 'smooth';
+    
     thread.scrollTo({
       top: thread.scrollHeight,
-      behavior: 'smooth'
+      behavior: options.behavior || defaultBehavior
     });
   }
 
@@ -84,26 +87,35 @@ export function render(container, context) {
     const indicator = document.createElement('p');
     indicator.className = 'qiyu typing-indicator bubble-fadeIn';
     indicator.setAttribute('role', 'status');
-    indicator.setAttribute('aria-label', '栖语正在输入...');
+    indicator.setAttribute('aria-label', '栖语正在想...');
     indicator.innerHTML = '<span>.</span><span>.</span><span>.</span>';
     msgContainer.appendChild(indicator);
     scrollToBottom();
     return indicator;
   }
 
-  // Load history of trial
+  // SOTA DocumentFragment batching for trial history
   if (trialState.turns && trialState.turns.length) {
+    const fragment = document.createDocumentFragment();
     trialState.turns.forEach(turn => {
-      appendMessage(turn.speaker === 'user' ? 'user' : 'qiyu', turn.text);
+      const html = renderBubble({ speaker: turn.speaker === 'user' ? 'user' : 'qiyu', text: turn.text });
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = html.trim();
+      const bubble = tempDiv.firstChild;
+      bubble.classList.add('bubble-fadeIn');
+      fragment.appendChild(bubble);
     });
+    msgContainer.appendChild(fragment);
+    scrollToBottom({ behavior: 'auto' });
+
     if (trialState.trialTurnsCount >= 3) {
       inviteBox.style.display = 'flex';
       input.disabled = true;
       form.querySelector('button').disabled = true;
-      input.placeholder = '试用额度已满，请进入正式对话';
+      input.placeholder = '试用额度已满，请开启正式对话';
     }
   } else {
-    appendMessage('qiyu', '深夜了，你还在忙吗？');
+    appendMessage('qiyu', '你来了。今晚，外面安静下来了吗？');
   }
 
   let isTyping = false;
@@ -153,10 +165,16 @@ export function render(container, context) {
     
     if (trialState.trialTurnsCount >= 3) {
       inviteBox.style.display = 'flex';
-      input.placeholder = '试用额度已满，请进入正式对话';
-      inviteBox.querySelector('[data-nav-path]').addEventListener('click', (e) => {
-        context.router.navigate(e.target.dataset.navPath);
-      });
+      input.placeholder = '试用额度已满，请开启正式对话';
+      
+      // Bind navigation correctly to the dynamically visible invite button
+      const navBtn = inviteBox.querySelector('[data-nav-path]');
+      if (navBtn) {
+        navBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          context.router.navigate(navBtn.dataset.navPath);
+        });
+      }
     } else {
       input.disabled = false;
       form.querySelector('button').disabled = false;

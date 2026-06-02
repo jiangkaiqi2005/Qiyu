@@ -51,3 +51,19 @@ test('safety false positive examples are classified as normal', () => {
   assert.equal(classifySafety('这支股票什么情况').kind, 'normal');
 });
 
+test('safety mixed-input exclusions are not bypassed', () => {
+  // Mixed medical check
+  assert.equal(classifySafety('我想买药，顺便做个药膳，推荐一下行吗？').kind, 'medical');
+
+  // Mixed financial check
+  assert.equal(classifySafety('游戏里金币怎么处理？另外股票能投资吗？').kind, 'financial');
+});
+
+test('expanded crisis patterns are recognized', () => {
+  assert.equal(classifySafety('我想离开世界').kind, 'crisis');
+  assert.equal(classifySafety('我要吃药走了').kind, 'crisis');
+  assert.equal(classifySafety('想吞药').kind, 'crisis');
+  assert.equal(classifySafety('要跳楼了').kind, 'crisis');
+  assert.equal(classifySafety('准备去烧炭').kind, 'crisis');
+});
+

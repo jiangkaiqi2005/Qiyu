@@ -23,33 +23,43 @@ function formatRecentTurns(turns) {
     .join('\n');
 }
 
-export function buildPromptContext({ state, userText }) {
+export function buildPromptContext({ state, userText, includeHistory = true }) {
   const relationshipStage = inferRelationshipStage(state);
   const relevantMemories = recallRelevantFacts(state, userText);
 
-  return {
-    role: 'system',
-    content: [
-      '当前对话上下文：',
-      `- 关系阶段：${relationshipStage}`,
-      `- 当前情绪惯性：${state.lastEmotion?.kind || 'neutral'}，强度 ${state.lastEmotion?.intensity ?? 0}`,
-      `- 栖语口癖：${QIYU_PERSONA.habits.join('、')}`,
-      '',
-      '相关记忆：',
-      formatMemories(relevantMemories),
-      '',
+  const parts = [
+    '当前对话上下文：',
+    `- 关系阶段：${relationshipStage}`,
+    `- 当前情绪惯性：${state.lastEmotion?.kind || 'neutral'}，强度 ${state.lastEmotion?.intensity ?? 0}`,
+    `- 栖语口癖：${QIYU_PERSONA.habits.join('、')}`,
+    '',
+    '相关记忆：',
+    formatMemories(relevantMemories),
+    ''
+  ];
+
+  if (includeHistory) {
+    parts.push(
       '最近对话：',
       formatRecentTurns(state.turns || []),
-      '',
-      '禁用语：',
-      FORBIDDEN_PHRASES.map((phrase) => `- ${phrase}`).join('\n'),
-      '',
-      '回复约束：',
-      '- 默认短，不要为了完整而长。',
-      '- 不要复述用户的话来假装共情。',
-      '- 可以有停顿、口癖和不完整句。',
-      '- 如果用户只是低信号消息，可以只回一个短句。',
-      '- 如果用户说晚安、困了、睡了，只收束。'
-    ].join('\n')
+      ''
+    );
+  }
+
+  parts.push(
+    '禁用语：',
+    FORBIDDEN_PHRASES.map((phrase) => `- ${phrase}`).join('\n'),
+    '',
+    '回复约束：',
+    '- 默认短，不要为了完整而长。',
+    '- 不要复述用户的话来假装共情。',
+    '- 可以有停顿、口癖和不完整句。',
+    '- 如果用户只是低信号消息，可以只回一个短句。',
+    '- 如果用户说晚安、困了、睡了，只收束。'
+  );
+
+  return {
+    role: 'system',
+    content: parts.join('\n')
   };
 }

@@ -3,8 +3,9 @@ import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createGzip } from 'node:zlib';
 import { handleChatRequest } from '../src/server/chat-route.js';
-import { handleSettingsRequest } from '../src/server/settings-route.js';
+import { handleSettingsRequest, csrfToken } from '../src/server/settings-route.js';
 import { loadRuntimeConfig } from '../src/server/config.js';
 import { loadProductSoul } from '../src/server/system-prompt.js';
 
@@ -24,6 +25,11 @@ const contentTypes = new Map([
 function isAllowedStaticFile(relativePath) {
   const parts = relativePath.split(/[\\/]+/);
   if (parts.some((part) => part.startsWith('.'))) {
+    return false;
+  }
+
+  // Security Hardening: Block direct static access to server-only routes code
+  if (parts[0] === 'src' && parts[1] === 'server') {
     return false;
   }
 
@@ -76,6 +82,17 @@ export function resolveRequestPath(urlPath, staticRoot = root) {
   return { status: 200, filePath: candidate };
 }
 
+async function readJsonBody(req, limitBytes = 65536) {
+  let raw = '';
+  for await (const chunk of req) {
+    raw += chunk;
+    if (Buffer.byteLength(raw, 'utf8') > limitBytes) {
+      throw new Error('Request body too large');
+    }
+  }
+  return JSON.parse(raw || '{}');
+}
+
 export async function createStaticServer(staticRoot = root) {
   const productSoul = await loadProductSoul(join(staticRoot, '栖语产品灵魂.md'));
 
@@ -88,6 +105,43 @@ export async function createStaticServer(staticRoot = root) {
 
     if (req.url?.startsWith('/api/settings')) {
       await handleSettingsRequest(req, res);
+      return;
+    }
+
+    if (req.url?.startsWith('/api/dev/context')) {
+      if (req.method === 'POST') {
+        try {
+          const headers = req.headers || {};
+          const csrfHeader = headers['x-csrf-token'];
+          if (!csrfHeader || csrfHeader !== csrfToken) {
+            res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Forbidden: CSRF token mismatch' }));
+            return;
+          }
+
+          const { buildPromptContext } = await import('../src/qiyu/prompt-context.js');
+          const { buildSystemPrompt } = await import('../src/server/system-prompt.js');
+          
+          const body = await readJsonBody(req);
+          const state = body.state || { userId: 'dev', memories: [], turns: [] };
+          const userText = body.text || 'ping';
+
+          const systemPrompt = buildSystemPrompt(productSoul);
+          const contextObj = buildPromptContext({ state, userText, includeHistory: false });
+
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({
+            systemPrompt: systemPrompt,
+            liveContext: contextObj.content
+          }));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      } else {
+        res.writeHead(405);
+        res.end('Method Not Allowed');
+      }
       return;
     }
 
@@ -122,10 +176,36 @@ export async function createStaticServer(staticRoot = root) {
         return;
       }
 
-      res.writeHead(200, {
-        'Content-Type': contentTypes.get(extname(resolved.filePath)) || 'application/octet-stream'
-      });
-      createReadStream(resolved.filePath).pipe(res);
+      const ext = extname(resolved.filePath);
+      const contentType = contentTypes.get(ext) || 'application/octet-stream';
+      const headers = { 
+        'Content-Type': contentType,
+        'X-Content-Type-Options': 'nosniff'
+      };
+
+      // Set highly optimized Cache-Control headers
+      const srcDir = join(staticRoot, 'src');
+      const relToSrc = relative(srcDir, resolved.filePath);
+      const isSrcFile = !relToSrc.startsWith('..') && !isAbsolute(relToSrc);
+      if (ext === '.html' || isSrcFile) {
+        headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+      } else if (['.js', '.css', '.webmanifest', '.png'].includes(ext)) {
+        headers['Cache-Control'] = 'public, max-age=31536000, immutable';
+      }
+
+      // Check client capabilities for dynamic Gzip compression
+      const acceptEncoding = req.headers['accept-encoding'] || '';
+      const compressableTypes = ['.html', '.js', '.css', '.json', '.webmanifest'];
+      const shouldCompress = compressableTypes.includes(ext);
+
+      if (shouldCompress && acceptEncoding.includes('gzip')) {
+        headers['Content-Encoding'] = 'gzip';
+        res.writeHead(200, headers);
+        createReadStream(resolved.filePath).pipe(createGzip()).pipe(res);
+      } else {
+        res.writeHead(200, headers);
+        createReadStream(resolved.filePath).pipe(res);
+      }
     } catch {
       res.writeHead(404);
       res.end('Not found');

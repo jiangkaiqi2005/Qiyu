@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleSettingsRequest } from '../../src/server/settings-route.js';
+import { handleSettingsRequest, csrfToken } from '../../src/server/settings-route.js';
 import { loadRuntimeConfig } from '../../src/server/config.js';
 import { rm } from 'node:fs/promises';
 
@@ -39,6 +39,7 @@ test('settings route GET and POST endpoints', async () => {
   const mockReqPost = {
     url: '/api/settings',
     method: 'POST',
+    headers: { 'x-csrf-token': csrfToken },
     [Symbol.asyncIterator]: async function* () {
       yield JSON.stringify({
         apiUrl: 'https://test.api.com',

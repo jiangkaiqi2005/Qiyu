@@ -72,7 +72,7 @@ test('onboarding screen transitions and state updates', () => {
 
   render(container, { router });
   assert.match(container.innerHTML, /首次相遇设置/);
-  assert.match(container.innerHTML, /第 1 步/);
+  assert.match(container.innerHTML, /深夜里，我该怎么唤你/);
 
   delete globalThis.window;
   delete globalThis.document;

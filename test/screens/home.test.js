@@ -27,6 +27,11 @@ test('homepage trial chat turn limit and returning user path', async () => {
           };
         }
       };
+    },
+    createDocumentFragment() {
+      return {
+        appendChild() {}
+      };
     }
   };
 
@@ -66,7 +71,7 @@ test('homepage trial chat turn limit and returning user path', async () => {
 
   // 1. First render as new user (no regular history)
   render(container, { router });
-  assert.match(container.innerHTML, /试用对话/);
+  assert.match(container.innerHTML, /试用/);
   assert.doesNotMatch(container.innerHTML, /继续今晚的对话/);
 
   // 2. Set regular history in localStorage and re-render

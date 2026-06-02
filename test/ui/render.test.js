@@ -9,10 +9,10 @@ test('escapeHtml protects rendered chat content', () => {
 test('renderBubble marks speaker and preserves line breaks', () => {
   assert.equal(
     renderBubble({ speaker: 'qiyu', text: '……\n怎么回事' }),
-    '<p class="qiyu" role="article" aria-label="栖语说：……\n怎么回事">……<br>怎么回事</p>'
+    '<p class="qiyu" role="article"><span class="sr-only">栖语说：</span>……<br>怎么回事</p>'
   );
   assert.equal(
     renderBubble({ speaker: 'user', text: '今天好累' }),
-    '<p class="user" role="article" aria-label="我说：今天好累">今天好累</p>'
+    '<p class="user" role="article"><span class="sr-only">我说：</span>今天好累</p>'
   );
 });

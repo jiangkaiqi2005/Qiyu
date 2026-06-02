@@ -1,6 +1,9 @@
 import { writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { loadRuntimeConfig } from './config.js';
 import { callChatCompletions } from './llm-client.js';
+
+export const csrfToken = randomBytes(24).toString('hex');
 
 async function readJsonBody(req, limitBytes = 65536) {
   let raw = '';
@@ -23,13 +26,53 @@ export async function handleSettingsRequest(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
 
+    // CSRF and SSRF Origin Verification Protection
+    const headers = req.headers || {};
+    const host = headers.host;
+    const origin = headers.origin;
+    const referer = headers.referer;
+
+    if (origin && host) {
+      try {
+        const originUrl = new URL(origin);
+        if (originUrl.host !== host) {
+          sendJson(res, 403, { error: 'Forbidden cross-origin request' });
+          return;
+        }
+      } catch {
+        sendJson(res, 400, { error: 'Invalid Origin header' });
+        return;
+      }
+    } else if (referer && host) {
+      try {
+        const refererUrl = new URL(referer);
+        if (refererUrl.host !== host) {
+          sendJson(res, 403, { error: 'Forbidden cross-origin request' });
+          return;
+        }
+      } catch {
+        // Skip malformed referers
+      }
+    }
+
+    if (req.method === 'POST') {
+      const csrfHeader = headers['x-csrf-token'];
+      if (!csrfHeader || csrfHeader !== csrfToken) {
+        sendJson(res, 403, { error: 'Forbidden: CSRF token mismatch' });
+        return;
+      }
+    }
+
     if (req.method === 'GET' && path === '/api/settings') {
       const config = await loadRuntimeConfig();
       const masked = {
         ...config.llm,
         apiKey: config.llm.apiKey ? '••••••••' : ''
       };
-      sendJson(res, 200, masked);
+      sendJson(res, 200, {
+        ...masked,
+        csrfToken
+      });
       return;
     }
 
@@ -81,6 +124,7 @@ export async function handleSettingsRequest(req, res) {
 
     sendJson(res, 404, { error: 'Not found' });
   } catch (err) {
-    sendJson(res, 500, { error: err.message });
+    // Sanitize stack traces to prevent absolute server path leaks
+    sendJson(res, 500, { error: 'Internal Server Error' });
   }
 }

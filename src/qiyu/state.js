@@ -5,7 +5,8 @@ export function createInitialState(userId) {
     turns: [],
     memories: [],
     lastEmotion: { kind: 'neutral', intensity: 0 },
-    currentSessionStart: null
+    currentSessionStart: null,
+    relationshipStage: '初识' // Sticky persistent state
   };
 }
 
@@ -94,7 +95,9 @@ function sanitizeMemory(memory) {
     key: memory.key,
     value: memory.value,
     source: memory.source,
-    updatedAt: typeof memory.updatedAt === 'string' ? memory.updatedAt : new Date().toISOString()
+    updatedAt: typeof memory.updatedAt === 'string' ? memory.updatedAt : new Date().toISOString(),
+    frozen: Boolean(memory.frozen),
+    excludeFromContext: Boolean(memory.excludeFromContext)
   };
 }
 
@@ -113,6 +116,7 @@ export function loadBrowserState(storage, userId = 'local-user') {
       sessionCount: Number.isInteger(parsed.sessionCount) && parsed.sessionCount >= 0 ? parsed.sessionCount : 0,
       lastEmotion: parsed.lastEmotion && typeof parsed.lastEmotion === 'object' ? parsed.lastEmotion : (typeof parsed.lastEmotion === 'string' ? { kind: parsed.lastEmotion, intensity: 0 } : initial.lastEmotion),
       currentSessionStart: typeof parsed.currentSessionStart === 'string' ? parsed.currentSessionStart : null,
+      relationshipStage: typeof parsed.relationshipStage === 'string' ? parsed.relationshipStage : initial.relationshipStage,
       turns: Array.isArray(parsed.turns) ? parsed.turns.map(sanitizeTurn).filter(Boolean) : [],
       memories: Array.isArray(parsed.memories) ? parsed.memories.map(sanitizeMemory).filter(Boolean) : []
     };

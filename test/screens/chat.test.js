@@ -27,6 +27,11 @@ test('main chat upgrade bedtime states and resend triggers', () => {
           };
         }
       };
+    },
+    createDocumentFragment() {
+      return {
+        appendChild() {}
+      };
     }
   };
 
@@ -72,7 +77,7 @@ test('main chat upgrade bedtime states and resend triggers', () => {
 
   // 1. Initial chat render
   render(container, { router });
-  assert.match(container.innerHTML, /清空本地对话/);
+  assert.match(container.innerHTML, /抹去/);
 
   // 2. Render with bedtime in state history
   savedItems['qiyu.state'] = JSON.stringify({

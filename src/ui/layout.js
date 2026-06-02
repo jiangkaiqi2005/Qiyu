@@ -1,16 +1,16 @@
 export function renderAppShell(contentHtml, currentPath) {
   const routes = [
-    { path: '/', label: '首页', icon: '🏠' },
-    { path: '/chat', label: '对话', icon: '💬' },
-    { path: '/onboarding', label: '引导', icon: '✨' },
-    { path: '/settings', label: '设置', icon: '⚙️' },
-    { path: '/memory', label: '记忆', icon: '🧠' },
-    { path: '/privacy', label: '隐私', icon: '🛡️' }
+    { path: '/', label: '栖所', icon: '🏠' },
+    { path: '/chat', label: '夜话', icon: '💬' },
+    { path: '/onboarding', label: '初遇', icon: '✨' },
+    { path: '/settings', label: '默契', icon: '⚙️' },
+    { path: '/memory', label: '印记', icon: '🧠' },
+    { path: '/privacy', label: '封存', icon: '🛡️' }
   ];
 
   const devMode = window.localStorage.getItem('qiyu_dev_mode') === 'true';
   if (devMode) {
-    routes.push({ path: '/lab', label: '实验室', icon: '🧪' });
+    routes.push({ path: '/lab', label: '幻镜', icon: '🧪' });
   }
 
   const navItems = routes
@@ -29,17 +29,17 @@ export function renderAppShell(contentHtml, currentPath) {
     <div class="app-shell-container">
       <nav class="app-sidebar" aria-label="主导航">
         <div class="sidebar-brand">
-          <span class="mark">栖</span>
+          <span class="mark" aria-hidden="true">栖</span>
           <span class="brand-name">栖语</span>
         </div>
-        <div class="sidebar-nav">
+        <div class="sidebar-nav" role="tablist">
           ${navItems}
         </div>
       </nav>
       <div class="app-content-wrapper">
         <header class="app-header-bar">
           <div class="header-brand-mobile">
-            <span class="mark">栖</span>
+            <span class="mark" aria-hidden="true">栖</span>
             <span class="brand-name">栖语</span>
           </div>
           <div class="header-status">
@@ -47,7 +47,7 @@ export function renderAppShell(contentHtml, currentPath) {
             <span class="status-text">深夜在线</span>
           </div>
         </header>
-        <main id="main-content" class="app-main-content">
+        <main id="main-content" class="app-main-content" tabindex="-1" style="outline: none;">
           ${contentHtml}
         </main>
       </div>

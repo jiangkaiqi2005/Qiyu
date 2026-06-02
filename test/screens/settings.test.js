@@ -68,7 +68,7 @@ test('settings screen render elements and controls', () => {
   };
 
   render(container, { router });
-  assert.match(container.innerHTML, /设置中心/);
+  assert.match(container.innerHTML, /默契中心/);
 
   delete globalThis.window;
   delete globalThis.document;

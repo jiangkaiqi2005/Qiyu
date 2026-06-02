@@ -22,7 +22,7 @@ test('renderAppShell matches routes and injects developer mode', () => {
   const html = renderAppShell('<div>对话内容</div>', '/chat');
   assert.match(html, /skip-link/);
   assert.match(html, /app-shell-container/);
-  assert.match(html, /实验室/); // Since dev mode is true
+  assert.match(html, /幻镜/); // Since dev mode is true
 
   delete globalThis.window;
 });
@@ -37,6 +37,10 @@ test('renderButton outputs custom label and variant', () => {
 
   const dangerBtn = renderButton({ label: '删除', variant: 'danger' });
   assert.match(dangerBtn, /class="btn danger"/);
+
+  const customBtn = renderButton({ label: '自定义', className: 'custom-class', attrs: 'data-test="123"' });
+  assert.match(customBtn, /class="btn custom-class"/);
+  assert.match(customBtn, /data-test="123"/);
 });
 
 test('renderInput outputs valid attributes', () => {

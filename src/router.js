@@ -1,19 +1,21 @@
-import { render as renderHome } from './screens/home.js';
-import { render as renderChat } from './screens/chat.js';
-import { render as renderOnboarding } from './screens/onboarding.js';
-import { render as renderSettings } from './screens/settings.js';
-import { render as renderMemory } from './screens/memory.js';
-import { render as renderLab } from './screens/lab.js';
-import { render as renderPrivacy } from './screens/privacy.js';
-
 const routes = {
-  '/': renderHome,
-  '/chat': renderChat,
-  '/onboarding': renderOnboarding,
-  '/settings': renderSettings,
-  '/memory': renderMemory,
-  '/lab': renderLab,
-  '/privacy': renderPrivacy
+  '/': () => import('./screens/home.js'),
+  '/chat': () => import('./screens/chat.js'),
+  '/onboarding': () => import('./screens/onboarding.js'),
+  '/settings': () => import('./screens/settings.js'),
+  '/memory': () => import('./screens/memory.js'),
+  '/lab': () => import('./screens/lab.js'),
+  '/privacy': () => import('./screens/privacy.js')
+};
+
+const titles = {
+  '/': '栖所 - 栖语',
+  '/chat': '夜话 - 栖语',
+  '/onboarding': '初遇 - 栖语',
+  '/settings': '默契 - 栖语',
+  '/memory': '印记 - 栖语',
+  '/lab': '幻境 - 栖语',
+  '/privacy': '封存 - 栖语'
 };
 
 export class Router {
@@ -25,21 +27,48 @@ export class Router {
 
   navigate(path) {
     window.history.pushState(null, '', path);
-    this.resolve();
+    return this.resolve();
   }
 
-  resolve() {
+  async resolve() {
     const path = window.location.pathname;
-    const renderFn = routes[path];
+    const loadScreen = routes[path];
 
     this.container.innerHTML = '';
 
-    if (renderFn) {
-      const context = this.getContext ? this.getContext(this) : { router: this };
-      renderFn(this.container, context);
+    if (loadScreen) {
+      try {
+        document.title = titles[path] || '栖语';
+        
+        // Dynamic loading fog placeholder to prevent visual layout shifts (CLS)
+        this.container.innerHTML = `<div class="skeleton-container" style="min-height: 80vh; opacity: 0.2; filter: blur(4px);"></div>`;
+        
+        // Lazy-load the target screen bundle chunk on-demand
+        const module = await loadScreen();
+        
+        this.container.innerHTML = '';
+        const context = this.getContext ? this.getContext(this) : { router: this };
+        module.render(this.container, context);
+      } catch (err) {
+        console.error('Failed to load dynamic screen bundle chunk:', err);
+        this.renderError();
+      }
     } else {
+      document.title = '404 迷路了 - 栖语';
       this.renderNotFound();
     }
+  }
+
+  renderError() {
+    this.container.innerHTML = `
+      <main class="shell error-screen">
+        <div class="card" style="text-align: center;">
+          <h2>栖语：加载出了点小状况</h2>
+          <p>夜色深了，网络好像也有点累了。请检查你的连接并刷新试试。</p>
+          <button onclick="window.location.reload()" class="btn primary">刷新页面</button>
+        </div>
+      </main>
+    `;
   }
 
   renderNotFound() {

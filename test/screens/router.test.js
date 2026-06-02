@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Router } from '../../src/router.js';
 
-test('router matches routes and falls back gracefully', () => {
+test('router matches routes and falls back gracefully', async () => {
   globalThis.window = {
     location: { pathname: '/' },
     history: {
@@ -28,6 +28,11 @@ test('router matches routes and falls back gracefully', () => {
             }
           };
         }
+      };
+    },
+    createDocumentFragment() {
+      return {
+        appendChild() {}
       };
     }
   };
@@ -58,16 +63,16 @@ test('router matches routes and falls back gracefully', () => {
 
   // Test home route
   window.location.pathname = '/';
-  router.resolve();
+  await router.resolve();
   assert.match(container.innerHTML, /栖语/);
 
   // Test navigation
-  router.navigate('/chat');
+  await router.navigate('/chat');
   assert.equal(window.location.pathname, '/chat');
   assert.match(container.innerHTML, /栖语/);
 
   // Test unknown route
-  router.navigate('/some-nonexistent-route');
+  await router.navigate('/some-nonexistent-route');
   assert.equal(window.location.pathname, '/some-nonexistent-route');
   assert.match(container.innerHTML, /404/);
 

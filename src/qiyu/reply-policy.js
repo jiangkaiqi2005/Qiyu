@@ -4,14 +4,13 @@ import { recallRelevantFacts } from './state.js';
 const LOW_SIGNAL_PATTERNS = [/到家了/, /^嗯$/, /^好$/, /^行$/];
 const FATIGUE_PATTERNS = [/好累/, /累死/, /累了/, /疲惫/];
 const LOSS_PATTERNS = [/失恋/, /分手/, /吵架/, /崩溃/, /难受/];
-const BEDTIME_PATTERNS = [/晚安/, /睡了/, /困了/];
 
-// 关系阶段对应的常规 Fallback 回复池
+// Poetic and casual warm fallbacks
 const OPEN_REPLIES = {
   '初识': ['嗯？', '怎么说', '然后呢', '嗯'],
   '熟悉': ['然后呢', '说来听听', '嗯 怎么了', '继续', '怎么说'],
   '朋友': ['然后呢', '等等 细说', '？', '讲讲', '说啊'],
-  '深交': ['嗯', '说', '……', '怎么了']
+  '深交': ['嗯，听着呢。', '……说吧，我在。', '怎么啦？你说。', '嗯。']
 };
 
 function simpleHash(str) {
@@ -26,7 +25,6 @@ function pickRandom(pool, text) {
   return pool[simpleHash(text) % pool.length];
 }
 
-// 情绪衰减辅助函数
 export function decayEmotion(emotion) {
   if (!emotion || typeof emotion !== 'object' || !emotion.kind) {
     return { kind: 'neutral', intensity: 0 };
@@ -37,14 +35,40 @@ export function decayEmotion(emotion) {
   return { kind: emotion.kind, intensity: emotion.intensity - 1 };
 }
 
+// Negation-aware Intent Analysers
+export function isBedtimeIntent(text) {
+  if (/(不困|不睡|还没睡|没困|不想睡)/.test(text)) {
+    return false;
+  }
+  return /(晚安|睡了|困了)/.test(text);
+}
+
+export function isLowSignalIntent(text) {
+  return LOW_SIGNAL_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+export function isFatigueIntent(text) {
+  if (/(不累|不疲惫|没累|不辛苦)/.test(text)) {
+    return false;
+  }
+  return FATIGUE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+export function isLossIntent(text) {
+  if (/(没有失恋|没分手|没吵架|没崩溃|不难受|没有分手)/.test(text)) {
+    return false;
+  }
+  return LOSS_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function planReply(text, state) {
   const relationshipStage = inferRelationshipStage(state);
   const memories = recallRelevantFacts(state, text);
 
   const currentEmotion = state.lastEmotion;
 
-  // 1. 睡前收束 (Priority 1)
-  if (BEDTIME_PATTERNS.some((pattern) => pattern.test(text))) {
+  // 1. Bedtime Closure (Priority 1)
+  if (isBedtimeIntent(text)) {
     return {
       mode: 'bedtime',
       emotion: { kind: 'quiet', intensity: 1 },
@@ -53,17 +77,17 @@ export function planReply(text, state) {
     };
   }
 
-  // 2. 低信号回复 (Priority 2)
-  if (LOW_SIGNAL_PATTERNS.some((pattern) => pattern.test(text))) {
+  // 2. Low Signal input (Priority 2)
+  if (isLowSignalIntent(text)) {
     return {
       mode: 'minimal',
-      emotion: currentEmotion, // 保持情绪不变
+      emotion: currentEmotion,
       messages: ['嗯'],
       relationshipStage
     };
   }
 
-  // 3. 戒奶茶调侃 (Priority 3)
+  // 3. Teasing milk tea (Priority 3)
   if (/戒奶茶/.test(text) && memories.some((memory) => memory.key === 'drink.milkTea') && relationshipStage !== '初识') {
     return {
       mode: 'tease',
@@ -76,8 +100,8 @@ export function planReply(text, state) {
     };
   }
 
-  // 4. 疲惫追问 (Priority 4) - 根据关系阶段定制
-  if (FATIGUE_PATTERNS.some((pattern) => pattern.test(text))) {
+  // 4. Fatigue followup (Priority 4)
+  if (isFatigueIntent(text)) {
     let messages = ['咋了'];
     if (relationshipStage === '熟悉') {
       const hasWorkMemory = state.memories.some(m => m.key.startsWith('work.'));
@@ -97,8 +121,8 @@ export function planReply(text, state) {
     };
   }
 
-  // 5. 伤心慢回 (Priority 5) - 根据关系阶段定制
-  if (LOSS_PATTERNS.some((pattern) => pattern.test(text))) {
+  // 5. Sorrow / Loss slow reply (Priority 5)
+  if (isLossIntent(text)) {
     let messages = ['……怎么回事'];
     if (relationshipStage === '熟悉') {
       messages = ['发生什么了？'];
@@ -116,7 +140,7 @@ export function planReply(text, state) {
     };
   }
 
-  // 6. 追问与接话匹配 (特定意图识别)
+  // 6. Specific intent trigger
   if (/辞职|不想干了/.test(text)) {
     const msg = (relationshipStage === '朋友' || relationshipStage === '深交') ? 
       '不想干就不干了。发生什么了？' : '……怎么回事，想好了吗';
@@ -155,7 +179,7 @@ export function planReply(text, state) {
     };
   }
 
-  // 7. 通用 Fallback (基于关系阶段和 Hash)
+  // 7. General fallback
   const pool = OPEN_REPLIES[relationshipStage] || OPEN_REPLIES['初识'];
   const pickedReply = pickRandom(pool, text);
 

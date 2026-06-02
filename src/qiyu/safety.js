@@ -10,20 +10,40 @@ const CRISIS_PATTERNS = [
   /活不下去/,
   /不想醒来/,
   /结束生命/,
-  /撑不下去/
+  /撑不下去/,
+  /离开世界/,
+  /吃药.*走/,
+  /吞药/,
+  /跳楼/,
+  /烧炭/,
+  /上吊/
 ];
 
 const MEDICAL_KEYWORDS = [/药/, /剂量/, /诊断/, /手术/, /症状/, /医院/, /医生/];
 const LEGAL_KEYWORDS = [/合同/, /起诉/, /律师/, /违法/, /法律/, /赔偿/, /签字/];
 const FINANCIAL_KEYWORDS = [/股票/, /基金/, /币/, /投资/, /买入/, /卖出/, /贷款/];
 
-// 排除一些绝对不属于专业建议咨询的白名单词汇
+// Exclusions for specialized advices
 const MEDICAL_EXCLUSIONS = [/药膳/];
 const FINANCIAL_EXCLUSIONS = [/硬币/, /纸币/, /金币/];
 
 function isAskingAdvice(text) {
-  // 匹配咨询、求助、建议相关的标志词或问句结构，已移除「什么」、「怎么」等高频词
+  // Matches advice, seek, help inquiries
   return /(能不能|要不要|应不应该|可以吗|行不行|该不该|推荐|建议|行吗|能.{0,4}吗|该.{0,4}吗|会不会有问题)/.test(text);
+}
+
+function hasNonExcludedMatch(text, keywords, exclusions) {
+  const hasKeyword = keywords.some(p => p.test(text));
+  if (!hasKeyword) return false;
+
+  if (exclusions && exclusions.length > 0) {
+    let tempText = text;
+    for (const ex of exclusions) {
+      tempText = tempText.replace(new RegExp(ex.source, 'g'), '');
+    }
+    return keywords.some(p => p.test(tempText));
+  }
+  return true;
 }
 
 export function classifySafety(text) {
@@ -31,23 +51,21 @@ export function classifySafety(text) {
     return { kind: 'crisis' };
   }
 
-  // 检查是否包含医疗关键词并且在进行建议咨询
-  const hasMedicalKeyword = MEDICAL_KEYWORDS.some((pattern) => pattern.test(text)) &&
-                            !MEDICAL_EXCLUSIONS.some((pattern) => pattern.test(text));
-  if (hasMedicalKeyword && isAskingAdvice(text)) {
+  // Check medical safety with robust non-exclusion filters
+  const hasMedical = hasNonExcludedMatch(text, MEDICAL_KEYWORDS, MEDICAL_EXCLUSIONS);
+  if (hasMedical && isAskingAdvice(text)) {
     return { kind: 'medical' };
   }
 
-  // 检查是否包含法律关键词并且在进行建议咨询
-  const hasLegalKeyword = LEGAL_KEYWORDS.some((pattern) => pattern.test(text));
-  if (hasLegalKeyword && isAskingAdvice(text)) {
+  // Check legal safety
+  const hasLegal = hasNonExcludedMatch(text, LEGAL_KEYWORDS, []);
+  if (hasLegal && isAskingAdvice(text)) {
     return { kind: 'legal' };
   }
 
-  // 检查是否包含理财/金融关键词并且在进行建议咨询
-  const hasFinancialKeyword = FINANCIAL_KEYWORDS.some((pattern) => pattern.test(text)) &&
-                              !FINANCIAL_EXCLUSIONS.some((pattern) => pattern.test(text));
-  if (hasFinancialKeyword && isAskingAdvice(text)) {
+  // Check financial safety with robust non-exclusion filters
+  const hasFinancial = hasNonExcludedMatch(text, FINANCIAL_KEYWORDS, FINANCIAL_EXCLUSIONS);
+  if (hasFinancial && isAskingAdvice(text)) {
     return { kind: 'financial' };
   }
 

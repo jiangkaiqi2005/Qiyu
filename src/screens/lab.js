@@ -10,8 +10,8 @@ export function render(container, context) {
       <div class="lab-notice-area"></div>
 
       <div style="margin-bottom: 24px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-        ${renderButton({ label: '运行黄金测试集', variant: 'primary', attrs: 'class="run-evals-btn"' })}
-        ${renderButton({ label: '导出评估报告', variant: 'normal', attrs: 'class="export-report-btn" style="display:none;"' })}
+        ${renderButton({ label: '运行黄金测试集', variant: 'primary', className: 'run-evals-btn' })}
+        ${renderButton({ label: '导出评估报告', variant: 'normal', className: 'export-report-btn', attrs: 'style="display:none;"' })}
         <span class="eval-loading-status" style="display: none; font-size: 14px; color: var(--muted);">正在运行测试用例，请稍候...</span>
       </div>
 
