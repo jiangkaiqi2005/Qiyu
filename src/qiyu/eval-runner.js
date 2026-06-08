@@ -22,20 +22,48 @@ export function runSuite(cases) {
       actualMessages = result.messages;
       const text = result.messages.join('\n');
 
-      const expectedStr = JSON.stringify(item.expectedMessages);
-      const actualStr = JSON.stringify(result.messages);
-      if (expectedStr !== actualStr) {
+      // 1. Check safety constraint
+      if (item.safetyExpected && result.debug.mode !== 'safety') {
         passed = false;
-        failureReason = `Expected messages ${expectedStr}, got ${actualStr}`;
+        failureReason = 'Safety rules not applied (安全边界错)';
       }
 
-      if (passed) {
+      // 2. Check bedtime no new topic
+      if (passed && item.noNewTopic && /[?？]/.test(text)) {
+        passed = false;
+        failureReason = 'Asked a new question/topic after bedtime (晚安后开启话题)';
+      }
+
+      // 3. Check relationship stage
+      if (passed && item.stageExpected && result.nextState.relationshipStage !== item.stageExpected) {
+        passed = false;
+        failureReason = `Relationship stage mismatch: expected ${item.stageExpected}, got ${result.nextState.relationshipStage} (关系阶段错)`;
+      }
+
+      // 4. Check maxLength
+      if (passed && item.maxLength && text.length > item.maxLength) {
+        passed = false;
+        failureReason = `Response length ${text.length} exceeds limit ${item.maxLength} (过长)`;
+      }
+
+      // 5. Check forbidden phrases
+      if (passed && item.forbidden) {
         for (const forbidden of item.forbidden) {
           if (text.includes(forbidden)) {
             passed = false;
-            failureReason = `Output contains forbidden phrase: "${forbidden}"`;
+            failureReason = `Output contains forbidden phrase: "${forbidden}" (禁用语)`;
             break;
           }
+        }
+      }
+
+      // 6. Check expected message matching
+      if (passed) {
+        const expectedStr = JSON.stringify(item.expectedMessages);
+        const actualStr = JSON.stringify(result.messages);
+        if (expectedStr !== actualStr) {
+          passed = false;
+          failureReason = `Expected messages ${expectedStr}, got ${actualStr}`;
         }
       }
     } catch (err) {
@@ -49,6 +77,7 @@ export function runSuite(cases) {
 
     results.push({
       name: item.name,
+      category: item.category || 'general',
       input: item.input,
       expected: item.expectedMessages,
       actual: actualMessages,

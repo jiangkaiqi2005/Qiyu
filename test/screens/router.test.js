@@ -44,19 +44,22 @@ test('router matches routes and falls back gracefully', async () => {
         return {
           elements: { message: { focus() {}, value: '' } },
           addEventListener() {},
-          querySelector() { return { disabled: false }; }
+          querySelector() { return { disabled: false }; },
+          querySelectorAll() { return []; }
         };
       }
       return {
         addEventListener() {},
         scrollTo() {},
         appendChild() {},
-        classList: { add() {} }
+        classList: { add() {} },
+        querySelectorAll() { return []; }
       };
     },
     querySelectorAll() {
       return [];
-    }
+    },
+    addEventListener() {}
   };
 
   const router = new Router(container);
@@ -69,6 +72,11 @@ test('router matches routes and falls back gracefully', async () => {
   // Test navigation
   await router.navigate('/chat');
   assert.equal(window.location.pathname, '/chat');
+  assert.match(container.innerHTML, /栖语/);
+
+  // Test history navigation
+  await router.navigate('/history');
+  assert.equal(window.location.pathname, '/history');
   assert.match(container.innerHTML, /栖语/);
 
   // Test unknown route

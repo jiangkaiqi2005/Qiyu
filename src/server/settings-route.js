@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import { loadRuntimeConfig } from './config.js';
+import { loadRuntimeConfig, normalizeChatCompletionsUrl } from './config.js';
 import { callChatCompletions } from './llm-client.js';
 
 export const csrfToken = randomBytes(24).toString('hex');
@@ -21,7 +21,13 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-export async function handleSettingsRequest(req, res) {
+export async function handleSettingsRequest(req, res, {
+  configPath = 'qiyu.config.local.json',
+  loadRuntimeConfigImpl = loadRuntimeConfig,
+  writeFileImpl = writeFile,
+  callChatCompletionsImpl = callChatCompletions,
+  productSoul = ''
+} = {}) {
   try {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
@@ -64,13 +70,15 @@ export async function handleSettingsRequest(req, res) {
     }
 
     if (req.method === 'GET' && path === '/api/settings') {
-      const config = await loadRuntimeConfig();
+      const config = await loadRuntimeConfigImpl({ configPath });
       const masked = {
         ...config.llm,
         apiKey: config.llm.apiKey ? '••••••••' : ''
       };
       sendJson(res, 200, {
         ...masked,
+        hasLlm: config.hasLlm,
+        source: config.source,
         csrfToken
       });
       return;
@@ -78,7 +86,7 @@ export async function handleSettingsRequest(req, res) {
 
     if (req.method === 'POST' && path === '/api/settings') {
       const body = await readJsonBody(req);
-      const current = await loadRuntimeConfig();
+      const current = await loadRuntimeConfigImpl({ configPath });
 
       const apiKey = body.apiKey === '••••••••' ? current.llm.apiKey : body.apiKey;
 
@@ -92,32 +100,121 @@ export async function handleSettingsRequest(req, res) {
         }
       };
 
-      await writeFile('qiyu.config.local.json', JSON.stringify(newConfig, null, 2), 'utf8');
-      sendJson(res, 200, { success: true });
+      await writeFileImpl(configPath, JSON.stringify(newConfig, null, 2), 'utf8');
+      const savedConfig = await loadRuntimeConfigImpl({ configPath });
+      sendJson(res, 200, {
+        success: true,
+        apiUrl: savedConfig.llm.apiUrl,
+        model: savedConfig.llm.model,
+        temperature: savedConfig.llm.temperature,
+        timeoutMs: savedConfig.llm.timeoutMs,
+        hasLlm: savedConfig.hasLlm,
+        source: savedConfig.source
+      });
       return;
     }
 
     if (req.method === 'POST' && path === '/api/settings/test') {
       const body = await readJsonBody(req);
-      const current = await loadRuntimeConfig();
+      const current = await loadRuntimeConfigImpl({ configPath });
       const apiKey = body.apiKey === '••••••••' ? current.llm.apiKey : body.apiKey;
 
+      const normalizedApiUrl = normalizeChatCompletionsUrl(body.apiUrl || '');
       const testLlm = {
-        apiUrl: body.apiUrl || '',
+        apiUrl: normalizedApiUrl,
         apiKey: apiKey || '',
         model: body.model || '',
         temperature: 0.1,
         timeoutMs: 10000
       };
 
+      const start = Date.now();
       try {
-        await callChatCompletions({
+        const sampleText = await callChatCompletionsImpl({
           config: testLlm,
           messages: [{ role: 'user', content: 'ping' }]
         });
-        sendJson(res, 200, { success: true });
+        const latencyMs = Date.now() - start;
+        sendJson(res, 200, {
+          success: true,
+          normalizedApiUrl,
+          model: testLlm.model,
+          latencyMs,
+          sampleText
+        });
       } catch (err) {
-        sendJson(res, 200, { success: false, error: err.message });
+        const latencyMs = Date.now() - start;
+        let errMsg = err.message || String(err);
+        if (apiKey) {
+          errMsg = errMsg.split(apiKey).join('[redacted]');
+        }
+        sendJson(res, 200, {
+          success: false,
+          normalizedApiUrl,
+          model: testLlm.model,
+          latencyMs,
+          error: errMsg
+        });
+      }
+      return;
+    }
+
+    if (req.method === 'POST' && path === '/api/settings/test-chat') {
+      const body = await readJsonBody(req);
+      const current = await loadRuntimeConfigImpl({ configPath });
+      const apiKey = body.apiKey === '••••••••' ? current.llm.apiKey : body.apiKey;
+
+      const normalizedApiUrl = normalizeChatCompletionsUrl(body.apiUrl || '');
+      const testLlm = {
+        apiUrl: normalizedApiUrl,
+        apiKey: apiKey || '',
+        model: body.model || '',
+        temperature: 0.8,
+        timeoutMs: 15000
+      };
+
+      const start = Date.now();
+      try {
+        const { buildPromptContext } = await import('../qiyu/prompt-context.js');
+        const { assertNoForbiddenPhrase } = await import('../qiyu/persona.js');
+        const { buildSystemPrompt } = await import('./system-prompt.js');
+        const { createInitialState } = await import('../qiyu/state.js');
+
+        const state = createInitialState('test-user');
+        state.userName = '小雨';
+        state.companionshipStyle = 'gentle';
+
+        const systemPrompt = buildSystemPrompt(productSoul);
+        const context = buildPromptContext({ state, userText: '今天好累', includeHistory: false });
+
+        const reply = await callChatCompletionsImpl({
+          config: testLlm,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            context,
+            { role: 'user', content: '今天好累' }
+          ]
+        });
+
+        assertNoForbiddenPhrase(reply);
+
+        const latencyMs = Date.now() - start;
+        sendJson(res, 200, {
+          success: true,
+          reply,
+          latencyMs
+        });
+      } catch (err) {
+        const latencyMs = Date.now() - start;
+        let errMsg = err.message || String(err);
+        if (apiKey) {
+          errMsg = errMsg.split(apiKey).join('[redacted]');
+        }
+        sendJson(res, 200, {
+          success: false,
+          error: errMsg,
+          latencyMs
+        });
       }
       return;
     }

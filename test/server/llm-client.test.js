@@ -58,3 +58,88 @@ test('callChatCompletions reports provider errors', async () => {
     /LLM request failed: 401 bad key/
   );
 });
+
+test('callChatCompletions handles content array format and filters text parts', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      return {
+        choices: [
+          {
+            message: {
+              content: [
+                { type: 'text', text: '你好，' },
+                { type: 'text', text: '我是栖语。' }
+              ]
+            }
+          }
+        ]
+      };
+    }
+  });
+
+  const text = await callChatCompletions({
+    config: {
+      apiUrl: 'https://llm.example.test/v1/chat/completions',
+      apiKey: 'test-api-key',
+      model: 'test-model',
+      temperature: 0.8,
+      timeoutMs: 30000
+    },
+    messages: [],
+    fetchImpl
+  });
+
+  assert.equal(text, '你好，我是栖语。');
+});
+
+test('callChatCompletions redacts API Key in error message if key length > 3', async () => {
+  const fetchImpl = async () => ({
+    ok: false,
+    status: 400,
+    async text() {
+      return 'Invalid credential for secret-long-key';
+    }
+  });
+
+  await assert.rejects(
+    () => callChatCompletions({
+      config: {
+        apiUrl: 'https://llm.example.test/v1/chat/completions',
+        apiKey: 'secret-long-key',
+        model: 'test-model',
+        temperature: 0.8,
+        timeoutMs: 30000
+      },
+      messages: [],
+      fetchImpl
+    }),
+    /Invalid credential for \[redacted\]/
+  );
+});
+
+test('callChatCompletions catches Abort timeout and throws structured message', async () => {
+  const fetchImpl = async () => {
+    return new Promise((_, reject) => {
+      const err = new Error('The user aborted a request.');
+      err.name = 'AbortError';
+      reject(err);
+    });
+  };
+
+  await assert.rejects(
+    () => callChatCompletions({
+      config: {
+        apiUrl: 'https://llm.example.test/v1/chat/completions',
+        apiKey: 'test-key',
+        model: 'test-model',
+        temperature: 0.8,
+        timeoutMs: 120
+      },
+      messages: [],
+      fetchImpl
+    }),
+    /LLM request timeout after 120ms/
+  );
+});

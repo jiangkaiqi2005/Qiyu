@@ -1,3 +1,13 @@
+const MAX_HISTORY_DAYS = 180;
+const MAX_SESSION_TURNS = 80;
+
+export function getConversationDate(now = new Date()) {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function createInitialState(userId) {
   return {
     userId,
@@ -6,29 +16,73 @@ export function createInitialState(userId) {
     memories: [],
     lastEmotion: { kind: 'neutral', intensity: 0 },
     currentSessionStart: null,
-    relationshipStage: '初识' // Sticky persistent state
+    relationshipStage: '初识', // Sticky persistent state
+    companionshipStyle: 'gentle', // gentle, playful, quiet
+    sleepTime: '23:00',
+    userName: '你',
+    dailyConversations: [],
+    activeConversationDate: ''
   };
 }
 
 export function startSession(state, now = new Date()) {
+  const dateStr = getConversationDate(now);
+  let dailyConversations = [...(state.dailyConversations || [])];
+  const existingIndex = dailyConversations.findIndex(c => c.date === dateStr);
+  if (existingIndex === -1) {
+    dailyConversations.push({
+      date: dateStr,
+      title: `${now.getMonth() + 1}月${now.getDate()}日 夜话`,
+      startedAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      turns: []
+    });
+  }
   return {
     ...state,
     sessionCount: state.sessionCount + 1,
-    currentSessionStart: now.toISOString()
+    currentSessionStart: now.toISOString(),
+    dailyConversations,
+    activeConversationDate: dateStr
   };
 }
 
 export function recordTurn(state, speaker, text, now = new Date()) {
+  const nextTurn = {
+    speaker,
+    text,
+    at: now.toISOString()
+  };
+
+  const dateStr = state.activeConversationDate || getConversationDate(now);
+  let dailyConversations = [...(state.dailyConversations || [])];
+  let existingIndex = dailyConversations.findIndex(c => c.date === dateStr);
+
+  if (existingIndex === -1) {
+    dailyConversations.push({
+      date: dateStr,
+      title: `${now.getMonth() + 1}月${now.getDate()}日 夜话`,
+      startedAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      turns: [nextTurn]
+    });
+  } else {
+    const currentConv = dailyConversations[existingIndex];
+    dailyConversations[existingIndex] = {
+      ...currentConv,
+      updatedAt: now.toISOString(),
+      turns: [...currentConv.turns, nextTurn]
+    };
+  }
+
+  // Keep maximum 180 days of daily history
+  dailyConversations = dailyConversations.slice(-MAX_HISTORY_DAYS);
+
   return {
     ...state,
-    turns: [
-      ...state.turns,
-      {
-        speaker,
-        text,
-        at: now.toISOString()
-      }
-    ].slice(-80)
+    turns: [...(state.turns || []), nextTurn].slice(-MAX_SESSION_TURNS),
+    dailyConversations,
+    activeConversationDate: dateStr
   };
 }
 
@@ -37,7 +91,14 @@ export function rememberUserFact(state, fact, now = new Date()) {
     key: fact.key,
     value: fact.value,
     source: fact.source,
-    updatedAt: now.toISOString()
+    updatedAt: now.toISOString(),
+    category: fact.category || fact.key.split('.')[0] || 'general',
+    sensitiveLevel: typeof fact.sensitiveLevel === 'number' ? fact.sensitiveLevel : 0,
+    originalText: fact.originalText || fact.source,
+    lastUsedAt: fact.lastUsedAt || null,
+    useCount: typeof fact.useCount === 'number' ? fact.useCount : 0,
+    frozen: typeof fact.frozen === 'boolean' ? fact.frozen : false,
+    excludeFromContext: typeof fact.excludeFromContext === 'boolean' ? fact.excludeFromContext : false
   };
   const existingIndex = state.memories.findIndex((item) => item.key === fact.key);
 
@@ -46,7 +107,10 @@ export function rememberUserFact(state, fact, now = new Date()) {
   }
 
   const memories = state.memories.slice();
-  memories[existingIndex] = nextFact;
+  memories[existingIndex] = {
+    ...memories[existingIndex],
+    ...nextFact
+  };
   return { ...state, memories };
 }
 
@@ -97,7 +161,23 @@ function sanitizeMemory(memory) {
     source: memory.source,
     updatedAt: typeof memory.updatedAt === 'string' ? memory.updatedAt : new Date().toISOString(),
     frozen: Boolean(memory.frozen),
-    excludeFromContext: Boolean(memory.excludeFromContext)
+    excludeFromContext: Boolean(memory.excludeFromContext),
+    category: typeof memory.category === 'string' ? memory.category : (memory.key.split('.')[0] || 'general'),
+    sensitiveLevel: typeof memory.sensitiveLevel === 'number' ? memory.sensitiveLevel : 0,
+    originalText: typeof memory.originalText === 'string' ? memory.originalText : memory.source,
+    lastUsedAt: typeof memory.lastUsedAt === 'string' ? memory.lastUsedAt : null,
+    useCount: typeof memory.useCount === 'number' ? memory.useCount : 0
+  };
+}
+
+function sanitizeDailyConversation(c) {
+  if (!c || typeof c.date !== 'string') return null;
+  return {
+    date: c.date,
+    title: typeof c.title === 'string' ? c.title : `${c.date} 夜话`,
+    startedAt: typeof c.startedAt === 'string' ? c.startedAt : new Date().toISOString(),
+    updatedAt: typeof c.updatedAt === 'string' ? c.updatedAt : new Date().toISOString(),
+    turns: Array.isArray(c.turns) ? c.turns.map(sanitizeTurn).filter(Boolean) : []
   };
 }
 
@@ -110,6 +190,33 @@ export function loadBrowserState(storage, userId = 'local-user') {
   try {
     const parsed = JSON.parse(raw);
     const initial = createInitialState(userId);
+    
+    // Group and migrate old turns if dailyConversations is missing
+    let dailyConversations = [];
+    if (Array.isArray(parsed.dailyConversations)) {
+      dailyConversations = parsed.dailyConversations;
+    } else if (Array.isArray(parsed.turns) && parsed.turns.length > 0) {
+      const groups = {};
+      parsed.turns.forEach(t => {
+        const turn = sanitizeTurn(t);
+        if (!turn) return;
+        const d = new Date(turn.at);
+        const dateStr = getConversationDate(isNaN(d.getTime()) ? new Date() : d);
+        if (!groups[dateStr]) {
+          groups[dateStr] = {
+            date: dateStr,
+            title: `${isNaN(d.getTime()) ? new Date().getMonth() + 1 : d.getMonth() + 1}月${isNaN(d.getTime()) ? new Date().getDate() : d.getDate()}日 夜话`,
+            startedAt: turn.at,
+            updatedAt: turn.at,
+            turns: []
+          };
+        }
+        groups[dateStr].turns.push(turn);
+        groups[dateStr].updatedAt = turn.at;
+      });
+      dailyConversations = Object.values(groups).sort((a, b) => a.date.localeCompare(b.date));
+    }
+
     return {
       ...initial,
       userId,
@@ -118,7 +225,12 @@ export function loadBrowserState(storage, userId = 'local-user') {
       currentSessionStart: typeof parsed.currentSessionStart === 'string' ? parsed.currentSessionStart : null,
       relationshipStage: typeof parsed.relationshipStage === 'string' ? parsed.relationshipStage : initial.relationshipStage,
       turns: Array.isArray(parsed.turns) ? parsed.turns.map(sanitizeTurn).filter(Boolean) : [],
-      memories: Array.isArray(parsed.memories) ? parsed.memories.map(sanitizeMemory).filter(Boolean) : []
+      memories: Array.isArray(parsed.memories) ? parsed.memories.map(sanitizeMemory).filter(Boolean) : [],
+      companionshipStyle: typeof parsed.companionshipStyle === 'string' ? parsed.companionshipStyle : initial.companionshipStyle,
+      sleepTime: typeof parsed.sleepTime === 'string' ? parsed.sleepTime : initial.sleepTime,
+      userName: typeof parsed.userName === 'string' ? parsed.userName : initial.userName,
+      dailyConversations: dailyConversations.map(sanitizeDailyConversation).filter(Boolean),
+      activeConversationDate: typeof parsed.activeConversationDate === 'string' ? parsed.activeConversationDate : ''
     };
   } catch {
     return createInitialState(userId);

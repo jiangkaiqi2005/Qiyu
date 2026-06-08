@@ -1,4 +1,4 @@
-const CACHE_NAME = 'qiyu-app-shell-v3';
+const CACHE_NAME = 'qiyu-app-shell-v4';
 const DYNAMIC_CACHE_NAME = 'qiyu-dynamic-assets-v1';
 const FONT_CACHE_NAME = 'qiyu-fonts-v1';
 
@@ -19,6 +19,7 @@ const ASSETS = [
   '/src/screens/memory.js',
   '/src/screens/lab.js',
   '/src/screens/privacy.js',
+  '/src/screens/history.js',
   '/public/manifest.webmanifest',
   '/public/offline.html'
 ];

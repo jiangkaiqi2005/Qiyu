@@ -6,7 +6,8 @@ import {
   rememberUserFact,
   recallRelevantFacts,
   loadBrowserState,
-  recordTurn
+  recordTurn,
+  getConversationDate
 } from '../../src/qiyu/state.js';
 import { inferRelationshipStage } from '../../src/qiyu/relationship.js';
 
@@ -75,4 +76,46 @@ test('browser state sanitizes malformed localStorage data', () => {
 test('session count advances explicitly on browser session start', () => {
   const state = startSession(createInitialState('local-user'));
   assert.equal(state.sessionCount, 1);
+});
+
+test('state manages daily conversations and migrates old turns data', () => {
+  const dateStr = getConversationDate(new Date());
+
+  // 1. startSession creates current day conversation
+  let state = createInitialState('local-user');
+  state = startSession(state);
+  assert.equal(state.dailyConversations.length, 1);
+  assert.equal(state.dailyConversations[0].date, dateStr);
+  assert.equal(state.activeConversationDate, dateStr);
+
+  // 2. recordTurn writes to both turns and dailyConversations
+  state = recordTurn(state, 'user', '第一条消息');
+  state = recordTurn(state, 'qiyu', '栖语的回复');
+  assert.equal(state.turns.length, 2);
+  assert.equal(state.dailyConversations[0].turns.length, 2);
+  assert.equal(state.dailyConversations[0].turns[0].text, '第一条消息');
+
+  // 3. loadBrowserState migrates old turns data
+  const legacyStorage = {
+    getItem(key) {
+      if (key === 'qiyu.state') {
+        return JSON.stringify({
+          sessionCount: 2,
+          turns: [
+            { speaker: 'user', text: '昨天说了啥', at: '2026-06-02T10:00:00.000Z' },
+            { speaker: 'qiyu', text: '昨天的事', at: '2026-06-02T10:01:00.000Z' },
+            { speaker: 'user', text: '今天也来了', at: new Date().toISOString() }
+          ]
+        });
+      }
+      return null;
+    }
+  };
+
+  const migrated = loadBrowserState(legacyStorage);
+  assert.ok(migrated.dailyConversations.length >= 2);
+  const yesterdays = migrated.dailyConversations.find(c => c.date === '2026-06-02');
+  assert.ok(yesterdays);
+  assert.equal(yesterdays.turns.length, 2);
+  assert.equal(yesterdays.turns[0].text, '昨天说了啥');
 });

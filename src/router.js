@@ -1,6 +1,7 @@
 const routes = {
   '/': () => import('./screens/home.js'),
   '/chat': () => import('./screens/chat.js'),
+  '/history': () => import('./screens/history.js'),
   '/onboarding': () => import('./screens/onboarding.js'),
   '/settings': () => import('./screens/settings.js'),
   '/memory': () => import('./screens/memory.js'),
@@ -9,8 +10,9 @@ const routes = {
 };
 
 const titles = {
-  '/': '栖所 - 栖语',
+  '/': '夜话 - 栖语',
   '/chat': '夜话 - 栖语',
+  '/history': '记录 - 栖语',
   '/onboarding': '初遇 - 栖语',
   '/settings': '默契 - 栖语',
   '/memory': '印记 - 栖语',
@@ -48,7 +50,7 @@ export class Router {
         
         this.container.innerHTML = '';
         const context = this.getContext ? this.getContext(this) : { router: this };
-        module.render(this.container, context);
+        await module.render(this.container, context);
       } catch (err) {
         console.error('Failed to load dynamic screen bundle chunk:', err);
         this.renderError();
@@ -77,7 +79,7 @@ export class Router {
         <div class="card">
           <h1>404 - 迷路了</h1>
           <p>好像走丢了呢。这里没有发现栖语的声音。</p>
-          <button data-path="/" class="btn primary">返回首页</button>
+          <button data-path="/chat" class="btn primary">返回夜话</button>
         </div>
       </main>
     `;

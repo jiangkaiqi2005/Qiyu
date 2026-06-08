@@ -22,6 +22,12 @@ test('renderAppShell matches routes and injects developer mode', () => {
   const html = renderAppShell('<div>对话内容</div>', '/chat');
   assert.match(html, /skip-link/);
   assert.match(html, /app-shell-container/);
+  assert.match(html, /app-canvas/);
+  assert.match(html, /sidebar-orbit/);
+  assert.match(html, /sidebar-context/);
+  assert.match(html, /关系中枢/);
+  assert.doesNotMatch(html, /栖所/);
+  assert.doesNotMatch(html, /初遇/);
   assert.match(html, /幻镜/); // Since dev mode is true
 
   delete globalThis.window;

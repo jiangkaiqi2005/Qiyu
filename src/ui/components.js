@@ -5,15 +5,6 @@ export function renderButton({ label, variant = 'normal', className = '', attrs 
     baseClass += ' ' + className;
   }
 
-  // Backward compatibility: If attrs contains a custom class, extract and merge it to avoid duplicates
-  if (attrs && typeof attrs === 'string') {
-    const classMatch = attrs.match(/class=["']([^"']+)["']/);
-    if (classMatch) {
-      baseClass += ' ' + classMatch[1];
-      attrs = attrs.replace(/class=["']([^"']+)["']/, '');
-    }
-  }
-
   return `<button class="${baseClass}" ${attrs}>${label}</button>`;
 }
 
