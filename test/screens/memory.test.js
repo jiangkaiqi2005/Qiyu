@@ -36,7 +36,14 @@ test('memory screen renders grouped categories and details', () => {
     lastActive: Date.now(),
     memories: [
       { key: 'user.pet', value: '猫咪叫小七', source: 'dialogue', updatedAt: new Date().toISOString() },
-      { key: 'drink.milkTea', value: '喜欢少糖珍奶', source: 'dialogue', updatedAt: new Date().toISOString() }
+      { key: 'drink.milkTea', value: '喜欢少糖珍奶', source: 'dialogue', updatedAt: new Date().toISOString() },
+      {
+        key: 'bad"><script>alert(1)</script>',
+        value: '<img src=x onerror=alert(1)>',
+        source: 'dialogue',
+        originalText: '原文<script>alert(2)</script>',
+        updatedAt: new Date().toISOString()
+      }
     ]
   });
 
@@ -75,6 +82,12 @@ test('memory screen renders grouped categories and details', () => {
   assert.match(container.innerHTML, /记忆中心/);
   assert.match(container.innerHTML, /user\.pet/);
   assert.match(container.innerHTML, /drink\.milkTea/);
+  assert.match(container.innerHTML, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(container.innerHTML, /原文&lt;script&gt;alert\(2\)&lt;\/script&gt;/);
+  assert.doesNotMatch(container.innerHTML, /<img src=x onerror=alert\(1\)>/);
+  assert.doesNotMatch(container.innerHTML, /<script>alert\(2\)<\/script>/);
+  assert.doesNotMatch(container.innerHTML, /手动镌刻印记/);
+  assert.doesNotMatch(container.innerHTML, /手动添加新对话印记事实/);
 
   delete globalThis.window;
   delete globalThis.document;

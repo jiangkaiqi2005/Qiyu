@@ -43,6 +43,7 @@ test('chat route falls back to local engine when LLM is disabled', async () => {
   assert.equal(res.statusCode, 200);
   assert.deepEqual(body.messages, ['咋了']);
   assert.equal(body.source, 'local');
+  assert.equal(body.fallbackReason, 'no_llm_config');
 });
 
 test('chat route uses LLM when configured and injects context', async () => {
@@ -77,7 +78,39 @@ test('chat route uses LLM when configured and injects context', async () => {
   const body = JSON.parse(res.body());
   assert.equal(body.source, 'llm');
   assert.deepEqual(body.messages, ['又加班了？']);
+  assert.equal(body.debug.relationshipStage, '初识');
+  assert.ok(typeof body.latencyMs === 'number');
   assert.match(calls[0].messages[0].content, /产品灵魂原文/);
   assert.match(calls[0].messages[1].content, /关系阶段/);
   assert.match(calls[0].messages[1].content, /禁用语/);
+});
+
+test('chat route exposes error context and latency when API request fails', async () => {
+  const req = reqWithJson({ text: '今天好烦', state: createInitialState('local-user') });
+  const res = captureRes();
+
+  await handleChatRequest(req, res, {
+    runtimeConfig: {
+      hasLlm: true,
+      llm: {
+        apiUrl: 'https://llm.example.test/v1/chat/completions',
+        apiKey: 'key',
+        model: 'qiyu-test-model',
+        temperature: 0.8,
+        timeoutMs: 30000
+      }
+    },
+    productSoul: '# 栖语',
+    fetchImpl: async () => ({
+      ok: false,
+      status: 500,
+      async text() { return 'internal mock crash'; }
+    })
+  });
+
+  const body = JSON.parse(res.body());
+  assert.equal(body.source, 'local');
+  assert.equal(body.fallbackReason, 'llm_error');
+  assert.match(body.providerError, /internal mock crash/);
+  assert.ok(typeof body.latencyMs === 'number');
 });

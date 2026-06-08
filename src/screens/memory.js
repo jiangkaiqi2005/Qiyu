@@ -1,6 +1,7 @@
 import { renderAppShell, bindNavigation } from '../ui/layout.js';
 import { loadBrowserState, saveBrowserState } from '../qiyu/state.js';
-import { renderButton, renderInput, renderNotice } from '../ui/components.js';
+import { renderNotice } from '../ui/components.js';
+import { escapeHtml } from '../ui/render.js';
 
 export function render(container, context) {
   const storage = window.localStorage;
@@ -18,7 +19,8 @@ export function render(container, context) {
     'family': '家人与日常 (Family)',
     'sleep': '起居与睡眠 (Sleep)',
     'health': '身体与状况 (Health)',
-    'emotion': '心境与情绪 (Emotion)'
+    'emotion': '心境与情绪 (Emotion)',
+    'preference': '相处喜好 (Preference)'
   };
 
   const srcNames = {
@@ -41,30 +43,42 @@ export function render(container, context) {
     const groups = {};
     filtered.forEach(m => {
       const parts = m.key.split('.');
-      const cat = parts.length > 1 ? parts[0] : 'general';
+      const cat = m.category || (parts.length > 1 ? parts[0] : 'general');
       if (!groups[cat]) groups[cat] = [];
       groups[cat].push(m);
     });
 
     return Object.keys(groups).map(cat => {
       const memoriesHtml = groups[cat].map((m) => {
-        const isSensitive = m.key.includes('secret') || m.key.includes('pass') || m.isSensitive;
+        const isSensitive = m.sensitiveLevel > 0 || m.key.includes('secret') || m.key.includes('pass');
         const valueDisplay = isSensitive ? '••••••••' : m.value;
         const displaySource = srcNames[m.source] || m.source;
+        const displayOriginalText = m.originalText || m.source;
+        const useCount = m.useCount || 0;
+        const lastUsedStr = m.lastUsedAt ? new Date(m.lastUsedAt).toLocaleString() : '从未使用';
+        const safeKey = escapeHtml(m.key);
+        const safeValue = escapeHtml(valueDisplay);
+        const safeRawValue = escapeHtml(m.value);
+        const safeSource = escapeHtml(displaySource);
+        const safeOriginalText = escapeHtml(displayOriginalText);
+        const safeLastUsedStr = escapeHtml(lastUsedStr);
 
         return `
-          <div class="field-row memory-row" data-key="${m.key}" style="flex-direction: column; align-items: stretch; border: 1px solid var(--line); padding: 16px; border-radius: 8px; margin-bottom: 12px; background: rgba(16,15,13,0.3);">
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(223,179,85,0.08); padding-bottom: 8px; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
-              <span class="memory-key-tag" style="background: rgba(223,179,85,0.12); color: var(--accent); padding: 2px 8px; border-radius: 4px; font-size: 13px; font-weight: bold;">${m.key}</span>
-              <span style="font-size: 11px; color: var(--muted);">镌刻时间：${new Date(m.updatedAt || Date.now()).toLocaleString()}</span>
+          <div class="field-row memory-row" data-key="${safeKey}" style="flex-direction: column; align-items: stretch; border: 1.5px solid rgba(223,179,85,0.15); padding: 20px; border-radius: 14px; margin-bottom: 16px; background: rgba(22, 20, 18, 0.45); box-shadow: 0 4px 12px rgba(0,0,0,0.25); text-align: left;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(223,179,85,0.08); padding-bottom: 10px; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="memory-key-tag" style="background: rgba(223, 179, 85, 0.08); border: 1px solid rgba(223, 179, 85, 0.25); color: var(--accent); padding: 3px 10px; border-radius: 6px; font-size: 12.5px; font-weight: bold; letter-spacing: 0.5px; font-family: monospace;">${safeKey}</span>
+                ${isSensitive ? `<span class="sensitive-badge" style="background: rgba(201, 75, 75, 0.12); border: 1px solid rgba(201, 75, 75, 0.35); color: #ff9999; font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: bold;">[敏感隐私已封存]</span>` : ''}
+              </div>
+              <span style="font-size: 11px; color: var(--muted);">记下时间：${new Date(m.updatedAt || Date.now()).toLocaleString()}</span>
             </div>
 
             <div style="margin: 8px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
-              <div class="memory-value-display" style="flex: 1; font-size: 15px; color: var(--ink);">
-                ${valueDisplay}
+              <div class="memory-value-display" style="flex: 1; font-size: 15.5px; color: var(--ink);">
+                ${safeValue}
               </div>
               <div class="memory-edit-form" style="display: none; flex: 1; gap: 8px; width: 100%;">
-                <input class="form-input edit-value-input" value="${m.value}" aria-label="修改记忆事实内容" style="padding: 6px 10px; font-size: 14px;">
+                <input class="form-input edit-value-input" value="${safeRawValue}" aria-label="修改记忆事实内容" style="padding: 6px 10px; font-size: 14px;">
                 <button class="btn primary save-edit-btn" style="padding: 8px 12px; font-size: 13px; min-height: 36px;">保存</button>
                 <button class="btn cancel-edit-btn" style="padding: 8px 12px; font-size: 13px; min-height: 36px;">取消</button>
               </div>
@@ -77,14 +91,18 @@ export function render(container, context) {
               </div>
             </div>
 
-            <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">事实来源：<code style="background:rgba(0,0,0,0.15); padding:1px 4px; border-radius:3px;">${displaySource}</code></div>
+            <div style="font-size: 12.5px; color: var(--muted); margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; background: rgba(12, 11, 9, 0.35); padding: 12px; border-radius: 8px; border: 1px solid rgba(223, 179, 85, 0.05); text-align: left;">
+              <div><strong>事实来源:</strong> <code style="background:rgba(223, 179, 85, 0.08); color: var(--accent); padding: 2px 6px; border-radius: 4px; font-size: 11.5px; font-family: inherit;">${safeSource}</code></div>
+              <div style="line-height: 1.5;"><strong>来源原文:</strong> <span style="font-style: italic; color: var(--muted);">"${safeOriginalText}"</span></div>
+              <div style="font-size: 11px; border-top: 1px solid rgba(223, 179, 85, 0.04); padding-top: 6px; margin-top: 2px; color: var(--muted);">使用统计：累计调用 <strong>${useCount}</strong> 次 | 最近使用 <strong>${safeLastUsedStr}</strong></div>
+            </div>
 
-            <div style="display: flex; gap: 16px; margin-top: 8px; border-top: 1px solid rgba(223,179,85,0.04); padding-top: 8px; flex-wrap: wrap;">
-              <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+            <div style="display: flex; gap: 16px; margin-top: 8px; border-top: 1px solid rgba(223, 179, 85, 0.04); padding-top: 12px; flex-wrap: wrap;">
+              <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;" title="关闭后此条印记事实将不会被放入深夜聊天的AI上下文">
                 <input type="checkbox" class="exclude-context-chk" style="accent-color:var(--accent);" ${!m.excludeFromContext ? 'checked' : ''}>
-                <span>允许进入夜聊上下文</span>
+                <span>允许进入夜聊上下文 (不要再提)</span>
               </label>
-              <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+              <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;" title="开启冻结后，我会彻底假装忘记，但在印记中心予以保留">
                 <input type="checkbox" class="frozen-chk" style="accent-color:var(--accent);" ${m.frozen ? 'checked' : ''}>
                 <span>藏入箱底 (冻结记忆)</span>
               </label>
@@ -95,8 +113,11 @@ export function render(container, context) {
 
       const displayName = catNames[cat] || `分类：${cat}`;
       return `
-        <div class="memory-group" style="margin-top: 20px;">
-          <h2 style="color: var(--accent); border-left: 3px solid var(--accent); padding-left: 8px; margin-bottom: 12px; font-size: 16px; margin-top:0;">${displayName}</h2>
+        <div class="memory-group" style="margin-top: 32px;">
+          <h2 style="color: var(--accent); border: 0; padding: 0; margin-bottom: 16px; font-size: 16px; margin-top: 0; letter-spacing: 1.5px; display: flex; align-items: center; gap: 8px; font-weight: bold; text-align: left;">
+            <span style="display: inline-block; width: 3px; height: 14px; background: var(--accent); border-radius: 1.5px;"></span>
+            ${displayName}
+          </h2>
           ${memoriesHtml}
         </div>
       `;
@@ -112,19 +133,6 @@ export function render(container, context) {
 
       <div style="display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;">
         <input type="text" class="form-input search-mem-input" placeholder="搜索已记下的碎念..." aria-label="搜索已记下的碎念" style="flex: 1; min-width: 200px;">
-        ${renderButton({ label: '手动镌刻印记', variant: 'primary', className: 'add-memory-btn', attrs: 'style="min-height:44px;"' })}
-      </div>
-
-      <div class="add-memory-box notice notice-info" style="display: none; flex-direction: column; gap: 12px; margin-bottom: 20px; border-color: var(--accent);">
-        <h2 style="margin: 0; color: var(--accent); border: 0; padding: 0; font-size: 16px;">手动添加新对话印记事实</h2>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <input class="form-input add-key-input" placeholder="印记名称 (如 work.project)" aria-label="印记名称" style="flex: 1; min-width: 150px;">
-          <input class="form-input add-val-input" placeholder="碎念事实 (如 最近在忙 deadline)" aria-label="碎念事实" style="flex: 2; min-width: 250px;">
-        </div>
-        <div style="display: flex; gap: 8px; justify-content: flex-end;">
-          <button class="btn confirm-add-btn primary" style="padding: 8px 12px; font-size: 13px; min-height:36px;">确认添加</button>
-          <button class="btn cancel-add-btn" style="padding: 8px 12px; font-size: 13px; min-height:36px;">取消</button>
-        </div>
       </div>
 
       <div class="memory-list-container"></div>
@@ -136,10 +144,6 @@ export function render(container, context) {
 
   const listContainer = container.querySelector('.memory-list-container');
   const searchInput = container.querySelector('.search-mem-input');
-  const addBtn = container.querySelector('.add-memory-btn');
-  const addBox = container.querySelector('.add-memory-box');
-  const confirmAddBtn = container.querySelector('.confirm-add-btn');
-  const cancelAddBtn = container.querySelector('.cancel-add-btn');
   const noticeArea = container.querySelector('.memory-notice-area');
 
   function renderList() {
@@ -232,7 +236,7 @@ export function render(container, context) {
     }
   }
 
-  // SOTA High Performance: 250ms Debounced search updates to completely resolve input typing lags
+  // SOTA High Performance: 250ms Debounced search updates
   function debounce(fn, delay) {
     let timer = null;
     return function (...args) {
@@ -247,59 +251,6 @@ export function render(container, context) {
     searchInput.addEventListener('input', debounce(() => {
       renderList();
     }, 250));
-  }
-
-  if (addBtn) {
-    addBtn.addEventListener('click', () => {
-      addBox.style.display = 'flex';
-    });
-  }
-
-  if (cancelAddBtn) {
-    cancelAddBtn.addEventListener('click', () => {
-      addBox.style.display = 'none';
-      container.querySelector('.add-key-input').value = '';
-      container.querySelector('.add-val-input').value = '';
-    });
-  }
-
-  if (confirmAddBtn) {
-    confirmAddBtn.addEventListener('click', () => {
-      const keyInput = container.querySelector('.add-key-input');
-      const valInput = container.querySelector('.add-val-input');
-      const newKey = keyInput.value.trim().toLowerCase();
-      const newVal = valInput.value.trim();
-
-      if (!newKey || !newVal) {
-        alert('请填入完整的印记名称和内容');
-        return;
-      }
-
-      const nextMemory = {
-        key: newKey,
-        value: newVal,
-        source: 'manual',
-        updatedAt: new Date().toISOString(),
-        excludeFromContext: false,
-        frozen: false
-      };
-
-      const existingIndex = state.memories.findIndex(m => m.key === newKey);
-      if (existingIndex !== -1) {
-        state.memories[existingIndex] = nextMemory;
-      } else {
-        state.memories.push(nextMemory);
-      }
-
-      saveState();
-      
-      keyInput.value = '';
-      valInput.value = '';
-      addBox.style.display = 'none';
-      
-      renderList();
-      showNotification('✓ 自定义相遇印记已保存');
-    });
   }
 
   renderList();
