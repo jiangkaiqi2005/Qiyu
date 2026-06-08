@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderAppShell } from '../../src/ui/layout.js';
+import { renderAppShell, bindNavigation } from '../../src/ui/layout.js';
 import {
   renderButton,
   renderInput,
@@ -81,4 +81,99 @@ test('renderNotice injects type classes and role alert', () => {
   assert.match(infoNotice, /notice notice-info/);
   assert.match(infoNotice, /role="alert"/);
   assert.match(infoNotice, /提示信息/);
+  assert.doesNotMatch(infoNotice, /onclick=/);
+});
+
+test('bindNavigation dismisses notices from the close button', () => {
+  let clickHandler;
+  let prevented = false;
+  let navigated = false;
+  const notice = {
+    removed: false,
+    remove() {
+      this.removed = true;
+    }
+  };
+  const closeBtn = {
+    closest(selector) {
+      return selector === '.notice' ? notice : null;
+    }
+  };
+  const container = {
+    addEventListener(event, fn) {
+      if (event === 'click') {
+        clickHandler = fn;
+      }
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+
+  bindNavigation(container, {
+    navigate() {
+      navigated = true;
+    }
+  });
+
+  clickHandler({
+    preventDefault() {
+      prevented = true;
+    },
+    target: {
+      closest(selector) {
+        return selector === '.btn-close-notice' ? closeBtn : null;
+      }
+    }
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(notice.removed, true);
+  assert.equal(navigated, false);
+});
+
+test('bindNavigation can dismiss a wrapper when the notice asks for wrapper scope', () => {
+  let clickHandler;
+  const wrapper = {
+    dataset: { noticeDismissScope: 'wrapper' },
+    removed: false,
+    remove() {
+      this.removed = true;
+    }
+  };
+  const notice = {
+    parentElement: wrapper,
+    removed: false,
+    remove() {
+      this.removed = true;
+    }
+  };
+  const closeBtn = {
+    closest(selector) {
+      return selector === '.notice' ? notice : null;
+    }
+  };
+  const container = {
+    addEventListener(event, fn) {
+      if (event === 'click') {
+        clickHandler = fn;
+      }
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+
+  bindNavigation(container, { navigate() {} });
+  clickHandler({
+    preventDefault() {},
+    target: {
+      closest(selector) {
+        return selector === '.btn-close-notice' ? closeBtn : null;
+      }
+    }
+  });
+
+  assert.equal(wrapper.removed, true);
+  assert.equal(notice.removed, false);
 });

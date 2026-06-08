@@ -14,6 +14,12 @@ import {
   renderProviderPresetOptions
 } from '../ui/provider-presets.js';
 
+const MASKED_API_KEY = '••••••••';
+
+function isMaskedApiKeyValue(value) {
+  return String(value || '').trim() === MASKED_API_KEY;
+}
+
 export function render(container, context) {
   const storage = window.localStorage;
   let prefs = loadPreferences(storage);
@@ -25,7 +31,7 @@ export function render(container, context) {
       <p class="subtitle">在这里，微调我们的相处温度，或是探索栖语的灵魂深处。</p>
 
       ${prefs.onboardingState !== 'completed' ? `
-        <div class="onboarding-warning-banner" style="margin-bottom: 20px;">
+        <div class="onboarding-warning-banner" data-notice-dismiss-scope="wrapper" style="margin-bottom: 20px;">
           ${renderNotice({
             type: 'warning',
             message: '你尚未完成首次设置。建议先完成初遇引导，开启我们之间的默契。 <button data-nav-path="/onboarding" class="btn primary" style="margin-left: 12px; padding: 4px 12px; font-size: 12px; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;">去完成初遇引导</button>'
@@ -150,9 +156,12 @@ export function render(container, context) {
             label: '访问密钥 (API Key)',
             description: '你的私有 API 访问令牌。绝不上传给任何中心服务器。',
             controlHtml: `
-              <div style="display: flex; gap: 8px; width: 100%;">
-                <input id="input-apiKey" name="apiKey" type="password" class="form-input" style="flex: 1;" placeholder="输入 API Key">
-                <button type="button" class="btn toggle-pw-btn" aria-label="显示 API 密钥" style="padding: 6px 12px; min-width:44px; min-height:44px;">👁️</button>
+              <div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
+                <div style="display: flex; gap: 8px; width: 100%;">
+                  <input id="input-apiKey" name="apiKey" type="password" class="form-input" style="flex: 1;" placeholder="输入 API Key">
+                  <button type="button" class="btn toggle-pw-btn" aria-label="显示 API 密钥" style="padding: 6px 12px; min-width:44px; min-height:44px;">👁️</button>
+                </div>
+                <div class="api-key-inline-notice" style="display:none; font-size:12px; line-height:1.5; color: var(--muted); text-align:left;"></div>
               </div>
             `
           })}
@@ -244,6 +253,7 @@ export function render(container, context) {
   const aiPanel = container.querySelector('.ai-config-panel');
   const togglePwBtn = container.querySelector('.toggle-pw-btn');
   const pwInput = container.querySelector('[name="apiKey"]');
+  const apiKeyInlineNotice = container.querySelector('.api-key-inline-notice');
 
   const saveAiBtn = container.querySelector('.save-ai-btn');
   const testConnectionBtn = container.querySelector('.test-connection-btn');
@@ -264,6 +274,12 @@ export function render(container, context) {
   const diagSource = container.querySelector('.diag-source');
   const diagDetail = container.querySelector('.diag-detail');
   const envNotice = container.querySelector('.env-config-notice');
+
+  function setApiKeyVisibility(type) {
+    pwInput.type = type;
+    togglePwBtn.innerText = type === 'password' ? '👁️' : '🔒';
+    togglePwBtn.setAttribute('aria-label', type === 'password' ? '显示 API 密钥' : '隐藏 API 密钥');
+  }
 
   function showNotification(type, message) {
     if (noticeArea) {
@@ -355,11 +371,31 @@ export function render(container, context) {
   });
 
   // 3. Password Visibility Toggle (WCAG AAA accessible update)
+  pwInput.addEventListener('input', () => {
+    if (pwInput.dataset) {
+      pwInput.dataset.masked = 'false';
+    }
+    if (apiKeyInlineNotice) {
+      apiKeyInlineNotice.style.display = 'none';
+      apiKeyInlineNotice.innerText = '';
+    }
+  });
+
   togglePwBtn.addEventListener('click', () => {
-    const type = pwInput.type === 'password' ? 'text' : 'password';
-    pwInput.type = type;
-    togglePwBtn.innerText = type === 'password' ? '👁️' : '🔒';
-    togglePwBtn.setAttribute('aria-label', type === 'password' ? '显示 API 密钥' : '隐藏 API 密钥');
+    const maskedPlaceholderVisible = pwInput.dataset?.masked === 'true' || isMaskedApiKeyValue(pwInput.value);
+    if (maskedPlaceholderVisible && pwInput.type === 'password') {
+      showNotification('info', '当前显示的是脱敏后的 API Key 占位符，无法直接还原原始密钥。如需查看或修改，请重新输入。');
+      if (apiKeyInlineNotice) {
+        apiKeyInlineNotice.innerText = '当前显示的是脱敏占位符，无法直接还原原始 API Key。需要查看或修改时，请重新输入。';
+        apiKeyInlineNotice.style.display = 'block';
+      }
+      if (typeof pwInput.focus === 'function') {
+        pwInput.focus();
+      }
+      return;
+    }
+
+    setApiKeyVisibility(pwInput.type === 'password' ? 'text' : 'password');
   });
 
   // 4. Load Saved AI Settings from server
@@ -370,6 +406,8 @@ export function render(container, context) {
         const data = await res.json();
         container.querySelector('[name="apiUrl"]').value = data.apiUrl || '';
         container.querySelector('[name="apiKey"]').value = data.apiKey || '';
+        container.querySelector('[name="apiKey"]').dataset.masked = data.apiKey === MASKED_API_KEY ? 'true' : 'false';
+        setApiKeyVisibility('password');
         container.querySelector('[name="model"]').value = data.model || '';
         container.querySelector('[name="temperature"]').value = typeof data.temperature !== 'undefined' ? data.temperature : 0.8;
         container.querySelector('[name="timeoutMs"]').value = data.timeoutMs || 30000;

@@ -47,7 +47,7 @@ export function renderNotice({ type = 'info', message }) {
     <div class="notice notice-${type}" role="alert">
       <span class="notice-icon" aria-hidden="true">${icon}</span>
       <span class="notice-message">${message}</span>
-      <button class="btn-close-notice" type="button" aria-label="关闭通知" onclick="this.parentElement.remove()" style="background:transparent; border:0; color:inherit; cursor:pointer; font-size:16px; margin-left:auto; padding:2px 8px;">×</button>
+      <button class="btn-close-notice" type="button" aria-label="关闭通知" style="background:transparent; border:0; color:inherit; cursor:pointer; font-size:16px; margin-left:auto; padding:2px 8px;">×</button>
     </div>
   `;
 }

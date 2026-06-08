@@ -65,6 +65,27 @@ export function renderAppShell(contentHtml, currentPath) {
 }
 
 export function bindNavigation(container, router) {
+  if (typeof container.addEventListener === 'function' && !container.__qiyuNoticeDismissBound) {
+    container.addEventListener('click', (event) => {
+      const closeBtn = typeof event.target?.closest === 'function'
+        ? event.target.closest('.btn-close-notice')
+        : null;
+      if (!closeBtn) return;
+
+      event.preventDefault();
+      const notice = typeof closeBtn.closest === 'function'
+        ? closeBtn.closest('.notice')
+        : closeBtn.parentElement;
+      const dismissTarget = notice?.parentElement?.dataset?.noticeDismissScope === 'wrapper'
+        ? notice.parentElement
+        : notice;
+      if (typeof dismissTarget?.remove === 'function') {
+        dismissTarget.remove();
+      }
+    });
+    container.__qiyuNoticeDismissBound = true;
+  }
+
   container.querySelectorAll('[data-nav-path]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
