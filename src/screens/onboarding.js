@@ -1,6 +1,7 @@
 import { renderAppShell, bindNavigation } from '../ui/layout.js';
 import { loadPreferences, savePreferences } from '../qiyu/preferences.js';
 import { renderButton, renderInput, renderToggle, renderNotice } from '../ui/components.js';
+import { applyProviderPreset, renderProviderPresetOptions } from '../ui/provider-presets.js';
 
 export function render(container, context) {
   const storage = window.localStorage;
@@ -25,8 +26,11 @@ export function render(container, context) {
     if (currentStep === 1) {
       return `
         <h2 id="step-title-1" style="font-size: 19px; margin-top: 12px; color: var(--ink); border: 0; padding: 0; font-weight: bold; margin-bottom: 8px;">「 先把灵魂引擎接上。」</h2>
-        <p class="subtitle" style="margin-top: 0; margin-bottom: 24px;">栖语可以先用本地规则陪你说话，但如果要真正拥有稳定的人格、记忆和对话质感，建议先配置一个 OpenAI 兼容 API。</p>
+        <p class="subtitle" style="margin-top: 0; margin-bottom: 24px;">栖语可以先用本地规则陪你说话，但如果要真正拥有稳定的人格、记忆和对话质感，建议先配置一个 OpenAI 兼容或 Anthropic 原生 API。</p>
         <div style="display: flex; flex-direction: column; gap: 14px; margin-top: 22px;">
+          <select name="providerPreset" class="form-select" aria-labelledby="step-title-1" style="min-height: 46px;">
+            ${renderProviderPresetOptions()}
+          </select>
           ${renderInput({
             name: 'apiUrl',
             placeholder: 'API 地址，比如：https://api.openai.com/v1',
@@ -155,6 +159,21 @@ export function render(container, context) {
     if (nextBtn) {
       nextBtn.innerText = currentStep === totalSteps ? '完成设置' : '下一步';
     }
+    bindCurrentStepInteractions();
+  }
+
+  function bindCurrentStepInteractions() {
+    if (currentStep !== 1) return;
+
+    const providerPreset = container.querySelector('[name="providerPreset"]');
+    if (!providerPreset) return;
+
+    providerPreset.addEventListener('change', () => {
+      const apiUrlInput = container.querySelector('[name="apiUrl"]');
+      const modelInput = container.querySelector('[name="model"]');
+      const preset = applyProviderPreset(providerPreset.value, { apiUrlInput, modelInput });
+      showNotification('info', preset.notice);
+    });
   }
 
   const innerHtml = `

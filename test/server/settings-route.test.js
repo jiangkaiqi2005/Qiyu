@@ -118,12 +118,19 @@ test('settings route test endpoint returns validation results and handles errors
       yield JSON.stringify({
         apiUrl: 'https://test.api.com/v1',
         apiKey: 'test-key',
-        model: 'test-model'
+        model: 'test-model',
+        timeoutMs: 22000
       });
     }
   };
 
-  const callChatCompletionsImpl = async () => 'pong';
+  let observedConfig = null;
+  let observedMessages = null;
+  const callChatCompletionsImpl = async ({ config, messages }) => {
+    observedConfig = config;
+    observedMessages = messages;
+    return '这是一段不应该回传给前端的长回复';
+  };
 
   await handleSettingsRequest(mockReqTest, mockRes, {
     configPath,
@@ -134,8 +141,13 @@ test('settings route test endpoint returns validation results and handles errors
   const data = JSON.parse(endCalls[0]);
   assert.equal(data.success, true);
   assert.equal(data.normalizedApiUrl, 'https://test.api.com/v1/chat/completions');
-  assert.equal(data.sampleText, 'pong');
+  assert.equal(data.responseReceived, true);
+  assert.equal(data.sampleText, undefined);
   assert.ok(typeof data.latencyMs === 'number');
+  assert.equal(observedConfig.timeoutMs, 22000);
+  assert.equal(observedConfig.maxTokens, 32);
+  assert.equal(observedMessages[0].role, 'system');
+  assert.match(observedMessages[0].content, /只回复 OK/);
 
   await rm(tempDir, { recursive: true, force: true });
 });
@@ -159,12 +171,17 @@ test('settings route test-chat endpoint simulates Qiyu E2E prompt', async () => 
       yield JSON.stringify({
         apiUrl: 'https://test.api.com/v1',
         apiKey: 'test-key',
-        model: 'test-model'
+        model: 'test-model',
+        timeoutMs: 24000
       });
     }
   };
 
-  const callChatCompletionsImpl = async () => '今天辛苦了，早点休息吧';
+  let observedConfig = null;
+  const callChatCompletionsImpl = async ({ config }) => {
+    observedConfig = config;
+    return '今天辛苦了，早点休息吧';
+  };
 
   await handleSettingsRequest(mockReqTestChat, mockRes, {
     configPath,
@@ -177,6 +194,7 @@ test('settings route test-chat endpoint simulates Qiyu E2E prompt', async () => 
   assert.equal(data.success, true);
   assert.equal(data.reply, '今天辛苦了，早点休息吧');
   assert.ok(typeof data.latencyMs === 'number');
+  assert.equal(observedConfig.timeoutMs, 24000);
 
   await rm(tempDir, { recursive: true, force: true });
 });

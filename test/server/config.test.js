@@ -10,6 +10,8 @@ test('normalizeChatCompletionsUrl standardizes input URLs', () => {
   assert.equal(normalizeChatCompletionsUrl('https://api.openai.com/v1/'), 'https://api.openai.com/v1/chat/completions');
   assert.equal(normalizeChatCompletionsUrl('https://api.openai.com/v1/chat/completions'), 'https://api.openai.com/v1/chat/completions');
   assert.equal(normalizeChatCompletionsUrl('http://127.0.0.1:11434/v1'), 'http://127.0.0.1:11434/v1/chat/completions');
+  assert.equal(normalizeChatCompletionsUrl('https://api.anthropic.com/v1'), 'https://api.anthropic.com/v1/messages');
+  assert.equal(normalizeChatCompletionsUrl('https://api.anthropic.com/v1/messages'), 'https://api.anthropic.com/v1/messages');
   
   // Rejects invalid ones
   assert.equal(normalizeChatCompletionsUrl('invalid-url'), '');

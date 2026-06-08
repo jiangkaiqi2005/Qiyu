@@ -21,6 +21,12 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function resolveTestTimeoutMs(body, current, fallback = 30000) {
+  const rawTimeoutMs = typeof body.timeoutMs !== 'undefined' ? body.timeoutMs : current.llm.timeoutMs;
+  const timeoutMs = Number(rawTimeoutMs);
+  return Number.isFinite(timeoutMs) && timeoutMs >= 1000 ? timeoutMs : fallback;
+}
+
 export async function handleSettingsRequest(req, res, {
   configPath = 'qiyu.config.local.json',
   loadRuntimeConfigImpl = loadRuntimeConfig,
@@ -125,14 +131,18 @@ export async function handleSettingsRequest(req, res, {
         apiKey: apiKey || '',
         model: body.model || '',
         temperature: 0.1,
-        timeoutMs: 10000
+        timeoutMs: resolveTestTimeoutMs(body, current),
+        maxTokens: 32
       };
 
       const start = Date.now();
       try {
-        const sampleText = await callChatCompletionsImpl({
+        await callChatCompletionsImpl({
           config: testLlm,
-          messages: [{ role: 'user', content: 'ping' }]
+          messages: [
+            { role: 'system', content: '这是 Provider 连通性测试。只回复 OK。' },
+            { role: 'user', content: 'connection_test' }
+          ]
         });
         const latencyMs = Date.now() - start;
         sendJson(res, 200, {
@@ -140,7 +150,7 @@ export async function handleSettingsRequest(req, res, {
           normalizedApiUrl,
           model: testLlm.model,
           latencyMs,
-          sampleText
+          responseReceived: true
         });
       } catch (err) {
         const latencyMs = Date.now() - start;
@@ -170,7 +180,7 @@ export async function handleSettingsRequest(req, res, {
         apiKey: apiKey || '',
         model: body.model || '',
         temperature: 0.8,
-        timeoutMs: 15000
+        timeoutMs: resolveTestTimeoutMs(body, current)
       };
 
       const start = Date.now();

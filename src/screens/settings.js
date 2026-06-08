@@ -8,6 +8,11 @@ import {
   renderFieldRow,
   renderNotice
 } from '../ui/components.js';
+import {
+  applyProviderPreset,
+  detectProviderPreset,
+  renderProviderPresetOptions
+} from '../ui/provider-presets.js';
 
 export function render(container, context) {
   const storage = window.localStorage;
@@ -119,7 +124,7 @@ export function render(container, context) {
 
           <div class="notice notice-info" style="font-size:13px; line-height:1.6; margin-bottom:16px;">
             <span class="notice-icon" aria-hidden="true">ℹ</span>
-            <span>填写你的 OpenAI 兼容大模型接口。如果未配置或配置出错，栖语将退回本地规则引擎。</span>
+            <span>填写你的 OpenAI 兼容或 Anthropic 原生大模型接口。如果未配置或配置出错，栖语将退回本地规则引擎。</span>
           </div>
 
           ${renderFieldRow({
@@ -128,9 +133,7 @@ export function render(container, context) {
             description: '快速载入常见大模型服务商的接口配置。',
             controlHtml: `
               <select id="input-providerPreset" name="providerPreset" class="form-select" style="min-height: 44px;">
-                <option value="custom">OpenAI-compatible Custom (自定义)</option>
-                <option value="openai">OpenAI (官方)</option>
-                <option value="ollama">Local Ollama (本地 Ollama)</option>
+                ${renderProviderPresetOptions()}
               </select>
             `
           })}
@@ -138,7 +141,7 @@ export function render(container, context) {
           ${renderFieldRow({
             name: 'apiUrl',
             label: '接口地址 (API URL)',
-            description: 'OpenAI 兼容终结点。如：https://api.openai.com/v1/chat/completions',
+            description: 'OpenAI 兼容终结点，或 Anthropic 原生 Messages 终结点。',
             controlHtml: renderInput({ name: 'apiUrl', placeholder: '比如：https://api.example.com/v1/chat/completions' })
           })}
 
@@ -370,6 +373,9 @@ export function render(container, context) {
         container.querySelector('[name="model"]').value = data.model || '';
         container.querySelector('[name="temperature"]').value = typeof data.temperature !== 'undefined' ? data.temperature : 0.8;
         container.querySelector('[name="timeoutMs"]').value = data.timeoutMs || 30000;
+        if (providerPreset) {
+          providerPreset.value = detectProviderPreset({ apiUrl: data.apiUrl, model: data.model });
+        }
         
         if (data.csrfToken) {
           window.qiyuCsrfToken = data.csrfToken;
@@ -388,23 +394,10 @@ export function render(container, context) {
   // 5. Preset Selection
   if (providerPreset) {
     providerPreset.addEventListener('change', () => {
-      const val = providerPreset.value;
       const apiUrlInput = container.querySelector('[name="apiUrl"]');
       const modelInput = container.querySelector('[name="model"]');
-      
-      if (val === 'openai') {
-        apiUrlInput.value = 'https://api.openai.com/v1';
-        modelInput.value = 'gpt-4o';
-        showNotification('info', '已载入 OpenAI 官方预设，请填入您的 API Key 后保存。');
-      } else if (val === 'ollama') {
-        apiUrlInput.value = 'http://127.0.0.1:11434/v1';
-        modelInput.value = 'llama3';
-        showNotification('info', '已载入本地 Ollama 预设，请确保本地 Ollama 服务已启动，随后保存即可。');
-      } else if (val === 'custom') {
-        apiUrlInput.value = '';
-        modelInput.value = '';
-        showNotification('info', '已切换到自定义服务商，请手动填入 API URL 和模型名称。');
-      }
+      const preset = applyProviderPreset(providerPreset.value, { apiUrlInput, modelInput });
+      showNotification('info', preset.notice);
     });
   }
 
@@ -413,6 +406,7 @@ export function render(container, context) {
     const apiUrl = container.querySelector('[name="apiUrl"]').value.trim();
     const apiKey = container.querySelector('[name="apiKey"]').value.trim();
     const model = container.querySelector('[name="model"]').value.trim();
+    const timeoutMs = Number(container.querySelector('[name="timeoutMs"]').value);
 
     if (!apiUrl || !model) {
       showNotification('warning', '请填入完整的接口地址 (API URL) 和模型名称以供测试。');
@@ -431,7 +425,7 @@ export function render(container, context) {
           'Content-Type': 'application/json',
           'X-CSRF-Token': window.qiyuCsrfToken || ''
         },
-        body: JSON.stringify({ apiUrl, apiKey, model })
+        body: JSON.stringify({ apiUrl, apiKey, model, timeoutMs })
       });
 
       if (res.ok) {
@@ -439,7 +433,7 @@ export function render(container, context) {
         if (data.success) {
           storage.setItem('qiyu_api_health_status', 'provider_connected');
           if (diagDetail) {
-            diagDetail.innerText = `[${new Date().toLocaleTimeString()}] Provider 通道测试成功 (延迟 ${data.latencyMs}ms)，接收消息: "${data.sampleText}"`;
+            diagDetail.innerText = `[${new Date().toLocaleTimeString()}] Provider 通道测试成功 (延迟 ${data.latencyMs}ms)，已收到模型响应。`;
           }
           showNotification('success', '✓ 灵魂引擎握手成功！连接一切正常。');
           fetchServerSettings();
@@ -466,6 +460,7 @@ export function render(container, context) {
       const apiUrl = container.querySelector('[name="apiUrl"]').value.trim();
       const apiKey = container.querySelector('[name="apiKey"]').value.trim();
       const model = container.querySelector('[name="model"]').value.trim();
+      const timeoutMs = Number(container.querySelector('[name="timeoutMs"]').value);
 
       if (!apiUrl || !model) {
         showNotification('warning', '请填入完整的接口地址 (API URL) 和模型名称以供测试。');
@@ -484,7 +479,7 @@ export function render(container, context) {
             'Content-Type': 'application/json',
             'X-CSRF-Token': window.qiyuCsrfToken || ''
           },
-          body: JSON.stringify({ apiUrl, apiKey, model })
+          body: JSON.stringify({ apiUrl, apiKey, model, timeoutMs })
         });
 
         if (res.ok) {

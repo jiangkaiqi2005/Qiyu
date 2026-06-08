@@ -16,8 +16,12 @@ export function normalizeChatCompletionsUrl(input) {
     if (pathname.endsWith('/')) {
       pathname = pathname.slice(0, -1);
     }
-    
-    if (!pathname.endsWith('/chat/completions')) {
+
+    if (url.hostname === 'api.anthropic.com') {
+      if (!pathname.endsWith('/messages')) {
+        pathname = pathname + '/messages';
+      }
+    } else if (!pathname.endsWith('/chat/completions')) {
       pathname = pathname + '/chat/completions';
     }
     
