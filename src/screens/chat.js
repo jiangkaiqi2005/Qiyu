@@ -100,21 +100,46 @@ export function render(container, context) {
     devDiagnostics.innerText = '[调试] 开发者模式已激活。发送消息后将在此输出实时 API 连接诊断信息。';
   }
 
+  let pendingScrollFrame = null;
+
   function scrollToBottom(options = {}) {
     const isReduced = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
-    const defaultBehavior = isReduced ? 'auto' : 'smooth';
-    
-    // Stagger layout calculation to next tick to ensure DOM paints first
-    setTimeout(() => {
+    const behavior = options.behavior || (isReduced ? 'auto' : 'auto');
+
+    if (pendingScrollFrame && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(pendingScrollFrame);
+    }
+
+    const applyScroll = () => {
+      pendingScrollFrame = null;
       thread.scrollTo({
         top: thread.scrollHeight,
-        behavior: options.behavior || defaultBehavior
+        behavior
       });
-      // Scroll input field directly into view to solve mobile keyboard layout bugs
-      if (typeof document !== 'undefined' && document.activeElement === input) {
-        input.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    };
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      pendingScrollFrame = window.requestAnimationFrame(applyScroll);
+    } else {
+      applyScroll();
+    }
+  }
+
+  function focusComposerQuietly() {
+    const applyFocus = () => {
+      if (typeof document !== 'undefined' && document.activeElement === input) return;
+      try {
+        input.focus({ preventScroll: true });
+      } catch {
+        input.focus();
       }
-    }, 50);
+    };
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(applyFocus);
+    } else {
+      setTimeout(applyFocus, 0);
+    }
   }
 
   function appendMessage(speaker, text) {
@@ -198,8 +223,7 @@ export function render(container, context) {
       isTyping = false;
       input.disabled = false;
       form.querySelector('button').disabled = false;
-      // Refocus input field after processing replies for seamless typing
-      input.focus();
+      focusComposerQuietly();
     }
   }
 

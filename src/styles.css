@@ -800,6 +800,8 @@ body::before {
 .qiyu-chat-stage {
   position: relative;
   width: min(980px, 100%);
+  height: calc(100vh - 128px);
+  height: calc(100dvh - 128px);
   min-height: calc(100vh - 128px);
   min-height: calc(100dvh - 128px);
   margin: 0 auto;
@@ -884,6 +886,8 @@ body::before {
 
 .shell {
   width: min(880px, 100%);
+  height: calc(100vh - 128px);
+  height: calc(100dvh - 128px);
   min-height: calc(100vh - 128px);
   min-height: calc(100dvh - 128px);
   margin: 0 auto;
@@ -891,6 +895,7 @@ body::before {
   flex-direction: column;
   padding: 14px 18px 24px;
   box-sizing: border-box;
+  overflow: hidden;
   opacity: 1;
   transform: translateY(0);
   transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), max-width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1120,7 +1125,7 @@ body::before {
   padding: 0 26px;
   min-height: 52px;
   font-size: 15px;
-  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background 0.22s ease, box-shadow 0.22s ease, transform 0.22s ease;
   box-shadow: 0 10px 24px rgba(223, 179, 85, 0.18);
 }
 
@@ -1132,7 +1137,7 @@ body::before {
 
 .composer input:disabled,
 .composer button:disabled {
-  opacity: 0.5;
+  opacity: 0.72;
   cursor: not-allowed;
 }
 
@@ -1157,17 +1162,16 @@ body::before {
 
 /* Animations */
 .bubble-fadeIn {
-  animation: bubbleFadeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: bubbleFadeIn 0.22s ease-out forwards;
+  will-change: opacity;
 }
 
 @keyframes bubbleFadeIn {
   from {
     opacity: 0;
-    transform: translateY(12px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
