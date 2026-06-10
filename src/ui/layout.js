@@ -14,8 +14,9 @@ export function renderAppShell(contentHtml, currentPath) {
 
   const navItems = routes
     .map(
-      (r) => `
+      (r, index) => `
     <button data-nav-path="${r.path}" class="nav-item ${currentPath === r.path ? 'active' : ''}" aria-current="${currentPath === r.path ? 'page' : 'false'}">
+      <span class="nav-index" aria-hidden="true">${String(index + 1).padStart(2, '0')}</span>
       <span class="nav-icon" aria-hidden="true">${r.icon}</span>
       <span class="nav-label">${r.label}</span>
     </button>
@@ -27,6 +28,7 @@ export function renderAppShell(contentHtml, currentPath) {
     <a href="#main-content" class="skip-link">跳过导航</a>
     <div class="app-shell-container">
       <nav class="app-sidebar" aria-label="主导航">
+        <span class="sidebar-sheen" aria-hidden="true"></span>
         <span class="sidebar-orbit" aria-hidden="true"></span>
         <div class="sidebar-brand">
           <span class="mark" aria-hidden="true">栖</span>

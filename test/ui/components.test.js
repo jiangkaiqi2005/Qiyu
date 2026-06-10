@@ -23,7 +23,9 @@ test('renderAppShell matches routes and injects developer mode', () => {
   assert.match(html, /skip-link/);
   assert.match(html, /app-shell-container/);
   assert.match(html, /app-canvas/);
+  assert.match(html, /sidebar-sheen/);
   assert.match(html, /sidebar-orbit/);
+  assert.match(html, /nav-index/);
   assert.match(html, /sidebar-context/);
   assert.match(html, /关系中枢/);
   assert.doesNotMatch(html, /栖所/);

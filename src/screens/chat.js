@@ -32,41 +32,29 @@ export function render(container, context) {
   state.userName = prefs.userName || '你';
   saveBrowserState(storage, state);
 
-  const hasHistory = state.turns.length > 0;
-  const initialStageClass = hasHistory ? 'is-conversation-mode' : 'is-room-mode';
-  const arrivalLine = state.userName && state.userName !== '你'
-    ? `你来了，${state.userName}。`
-    : '你来了。';
+  const initialStageClass = 'is-conversation-mode';
 
   const innerHtml = `
     <div class="qiyu-chat-stage ${initialStageClass}">
-      <section class="room-arrival" aria-label="深夜抵达">
-        <div class="room-lamp" aria-hidden="true"></div>
-        <div class="room-arrival-panel">
-          <span class="room-kicker">今晚</span>
-          <h1>栖语</h1>
-          <p>${arrivalLine}</p>
-          <p class="room-arrival-muted">不用整理好再说。先写下一句就行。</p>
-        </div>
-      </section>
-
       <div class="shell">
-        <div class="chat-header">
-          <div class="presence">
-            <span class="mark" aria-hidden="true">栖</span>
-            <div class="presence-copy">
-              <span class="presence-name">栖语</span>
-              <span class="presence-state">深夜里，有我倾听你的声音</span>
+        <div class="conversation-panel">
+          <div class="chat-header">
+            <div class="presence">
+              <span class="mark" aria-hidden="true">栖</span>
+              <div class="presence-copy">
+                <span class="presence-name">栖语</span>
+                <span class="presence-state">深夜里，有我倾听你的声音</span>
+              </div>
             </div>
+            <button class="reset-chat-btn" type="button" aria-label="清空当前上下文">清空当前上下文</button>
           </div>
-          <button class="reset-chat-btn" type="button" aria-label="清空当前上下文">清空当前上下文</button>
+          <div class="chat-dev-diagnostics"></div>
+          <section class="thread" aria-label="与 栖语 的深夜夜话" role="log" aria-live="polite">
+            <div class="message-container"></div>
+          </section>
         </div>
-        <div class="chat-dev-diagnostics"></div>
-        <section class="thread" aria-label="与 栖语 的深夜夜话" role="log" aria-live="polite">
-          <div class="message-container"></div>
-        </section>
         <form class="composer" aria-label="发送消息">
-          <input name="message" autocomplete="off" placeholder="今天过得怎么样" aria-label="写下你的心里话">
+          <textarea class="composer-input" name="message" autocomplete="off" rows="1" placeholder="今天过得怎么样" aria-label="写下你的心里话"></textarea>
           <button type="submit" class="btn primary">发送</button>
         </form>
       </div>
@@ -92,14 +80,39 @@ export function render(container, context) {
 
   function enterConversationMode() {
     if (!chatStage) return;
-    chatStage.classList.remove('is-room-mode');
     chatStage.classList.add('is-conversation-mode');
+  }
+
+  function syncComposerSize() {
+    if (!input?.style) return;
+    input.style.height = 'auto';
+    const nextHeight = Math.min(Math.max(Number(input.scrollHeight) || 44, 44), 132);
+    input.style.height = `${nextHeight}px`;
+  }
+
+  function submitComposerFromKeyboard(event) {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+
+    if (typeof form.requestSubmit === 'function') {
+      form.requestSubmit();
+      return;
+    }
+
+    if (typeof form.dispatchEvent === 'function' && typeof Event === 'function') {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    }
   }
 
   if (typeof input.addEventListener === 'function') {
     input.addEventListener('focus', enterConversationMode);
-    input.addEventListener('input', enterConversationMode);
+    input.addEventListener('input', () => {
+      enterConversationMode();
+      syncComposerSize();
+    });
+    input.addEventListener('keydown', submitComposerFromKeyboard);
   }
+  syncComposerSize();
 
   const isDev = storage.getItem('qiyu_dev_mode') === 'true';
   if (devDiagnostics && isDev) {
@@ -149,6 +162,11 @@ export function render(container, context) {
     }
   }
 
+  function shouldAutofocusComposer() {
+    if (typeof window.matchMedia !== 'function') return true;
+    return window.matchMedia('(pointer: fine)').matches;
+  }
+
   function appendMessage(speaker, text) {
     const html = renderBubble({ speaker, text });
     const tempDiv = document.createElement('div');
@@ -188,6 +206,9 @@ export function render(container, context) {
     // Welcoming first sentence承接 onboarding preferences
     const welcome = getWelcomeMessage(state);
     appendMessage('qiyu', welcome);
+    if (shouldAutofocusComposer()) {
+      focusComposerQuietly();
+    }
   }
 
   let isTyping = false;
@@ -237,6 +258,7 @@ export function render(container, context) {
 
     enterConversationMode();
     input.value = '';
+    syncComposerSize();
     appendMessage('user', text);
 
     let result;

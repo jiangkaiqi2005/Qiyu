@@ -80,6 +80,8 @@ test('main chat upgrade bedtime states and resend triggers', () => {
   // 1. Initial chat render
   render(container, { router });
   assert.match(container.innerHTML, /清空当前上下文/);
+  assert.match(container.innerHTML, /conversation-panel/);
+  assert.match(container.innerHTML, /aria-label="与 栖语 的深夜夜话"/);
 
   // 2. Render with bedtime in state history
   savedItems['qiyu.state'] = JSON.stringify({
@@ -103,9 +105,10 @@ test('main chat upgrade bedtime states and resend triggers', () => {
   delete globalThis.document;
 });
 
-test('chat starts as room mode and enters conversation mode on typing focus', () => {
+test('chat opens directly in conversation mode and focuses composer on desktop', () => {
   let savedItems = {};
   let focusHandler = null;
+  let inputFocusCount = 0;
   const rootClassList = {
     values: new Set(),
     add(value) {
@@ -118,6 +121,103 @@ test('chat starts as room mode and enters conversation mode on typing focus', ()
       return this.values.has(value);
     }
   };
+
+  globalThis.window = {
+    location: { pathname: '/chat' },
+    addEventListener() {},
+    matchMedia() {
+      return { matches: true };
+    },
+    requestAnimationFrame(callback) {
+      callback();
+      return 1;
+    },
+    localStorage: {
+      getItem(key) {
+        return savedItems[key] || null;
+      },
+      setItem(key, val) {
+        savedItems[key] = val;
+      }
+    }
+  };
+
+  globalThis.document = {
+    activeElement: null,
+    createElement() {
+      return {
+        innerHTML: '',
+        get firstChild() {
+          return {
+            classList: { add() {} }
+          };
+        }
+      };
+    },
+    createDocumentFragment() {
+      return {
+        appendChild() {}
+      };
+    }
+  };
+
+  const input = {
+    value: '',
+    disabled: false,
+    focus() {
+      inputFocusCount++;
+    },
+    scrollIntoView() {},
+    addEventListener(type, handler) {
+      if (type === 'focus') focusHandler = handler;
+    }
+  };
+
+  const container = {
+    innerHTML: '',
+    querySelector(selector) {
+      if (selector === '.qiyu-chat-stage') {
+        return { classList: rootClassList };
+      }
+      if (selector === '.composer') {
+        return {
+          elements: { message: input },
+          addEventListener() {},
+          querySelector() { return { disabled: false }; }
+        };
+      }
+      return {
+        addEventListener() {},
+        scrollTo() {},
+        appendChild() {},
+        classList: { add() {}, remove() {} },
+        style: { display: 'none' },
+        innerText: ''
+      };
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+
+  render(container, { router: { navigate() {} } });
+
+  assert.match(container.innerHTML, /qiyu-chat-stage is-conversation-mode/);
+  assert.doesNotMatch(container.innerHTML, /room-arrival/);
+  assert.equal(inputFocusCount, 1);
+
+  assert.equal(typeof focusHandler, 'function');
+  focusHandler();
+  assert.equal(rootClassList.contains('is-conversation-mode'), true);
+
+  delete globalThis.window;
+  delete globalThis.document;
+});
+
+test('chat composer uses multiline dock and enter submits without blocking newline', () => {
+  let savedItems = {};
+  let keydownHandler = null;
+  let requestSubmitCount = 0;
 
   globalThis.window = {
     location: { pathname: '/chat' },
@@ -157,25 +257,28 @@ test('chat starts as room mode and enters conversation mode on typing focus', ()
   const input = {
     value: '',
     disabled: false,
+    style: {},
+    scrollHeight: 42,
     focus() {},
-    scrollIntoView() {},
     addEventListener(type, handler) {
-      if (type === 'focus') focusHandler = handler;
+      if (type === 'keydown') keydownHandler = handler;
+    }
+  };
+
+  const form = {
+    elements: { message: input },
+    addEventListener() {},
+    querySelector() { return { disabled: false }; },
+    requestSubmit() {
+      requestSubmitCount++;
     }
   };
 
   const container = {
     innerHTML: '',
     querySelector(selector) {
-      if (selector === '.qiyu-chat-stage') {
-        return { classList: rootClassList };
-      }
       if (selector === '.composer') {
-        return {
-          elements: { message: input },
-          addEventListener() {},
-          querySelector() { return { disabled: false }; }
-        };
+        return form;
       }
       return {
         addEventListener() {},
@@ -193,12 +296,30 @@ test('chat starts as room mode and enters conversation mode on typing focus', ()
 
   render(container, { router: { navigate() {} } });
 
-  assert.match(container.innerHTML, /qiyu-chat-stage is-room-mode/);
-  assert.match(container.innerHTML, /room-arrival/);
+  assert.match(container.innerHTML, /<textarea[^>]+name="message"/);
+  assert.equal(typeof keydownHandler, 'function');
 
-  assert.equal(typeof focusHandler, 'function');
-  focusHandler();
-  assert.equal(rootClassList.contains('is-conversation-mode'), true);
+  let prevented = false;
+  keydownHandler({
+    key: 'Enter',
+    shiftKey: false,
+    preventDefault() {
+      prevented = true;
+    }
+  });
+  assert.equal(prevented, true);
+  assert.equal(requestSubmitCount, 1);
+
+  prevented = false;
+  keydownHandler({
+    key: 'Enter',
+    shiftKey: true,
+    preventDefault() {
+      prevented = true;
+    }
+  });
+  assert.equal(prevented, false);
+  assert.equal(requestSubmitCount, 1);
 
   delete globalThis.window;
   delete globalThis.document;
@@ -215,8 +336,8 @@ test('chat message flow returns focus to composer without scrolling it into view
   globalThis.window = {
     location: { pathname: '/chat' },
     addEventListener() {},
-    matchMedia() {
-      return { matches: false };
+    matchMedia(query) {
+      return { matches: String(query).includes('pointer: fine') };
     },
     requestAnimationFrame(callback) {
       callback();
@@ -316,11 +437,12 @@ test('chat message flow returns focus to composer without scrolling it into view
 
   render(container, { router: { navigate() {} } });
   assert.equal(typeof submitHandler, 'function');
+  assert.equal(inputFocusCount, 1);
 
   await submitHandler({ preventDefault() {} });
 
   assert.equal(inputScrollIntoViewCount, 0);
-  assert.equal(inputFocusCount, 1);
+  assert.equal(inputFocusCount, 2);
   assert.deepEqual(inputFocusOptions, { preventScroll: true });
   assert.ok(scrollCalls.length >= 1);
   assert.equal(scrollCalls.at(-1).behavior, 'auto');
