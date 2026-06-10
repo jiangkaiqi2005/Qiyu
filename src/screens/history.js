@@ -11,23 +11,25 @@ export function render(container, context) {
   const sortedConversations = [...(state.dailyConversations || [])].sort((a, b) => b.date.localeCompare(a.date));
   let selectedDate = sortedConversations.length > 0 ? sortedConversations[0].date : '';
 
-  const noticeHtml = `<div class="history-notice-area"></div>`;
-
   const innerHtml = `
-    <div class="card" style="max-width: 960px; padding: 24px 32px; width: 100%;">
-      <div style="border-bottom: 1px solid rgba(223, 179, 85, 0.15); padding-bottom: 12px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+    <section class="history-workbench" aria-labelledby="history-title">
+      <div class="archive-hero history-hero">
         <div>
-          <h1 style="border: 0; padding: 0; margin: 0; font-size: 20px; color: var(--accent);">私语归档 (夜话记录)</h1>
-          <p style="font-size: 13px; color: var(--muted); margin: 4px 0 0 0;">重温我们曾在深夜里轻声说过的那些话。</p>
+          <span class="archive-kicker">conversation archive</span>
+          <h1 id="history-title">夜话归档</h1>
+          <p>按日期保留每晚的对话。它是回看，不是打扰；需要时打开，不需要时安静收起。</p>
+        </div>
+        <div class="archive-stamp" aria-hidden="true">
+          <span>${sortedConversations.length}</span>
+          <strong>nights kept</strong>
         </div>
       </div>
 
-      ${noticeHtml}
+      <div class="history-notice-area"></div>
 
       <div class="history-layout-container">
-        <!-- Main Layout rendered dynamically -->
       </div>
-    </div>
+    </section>
   `;
 
   container.innerHTML = renderAppShell(innerHtml, '/history');
@@ -45,10 +47,10 @@ export function render(container, context) {
   function renderMainLayout() {
     if (!state.dailyConversations || state.dailyConversations.length === 0) {
       layoutContainer.innerHTML = `
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px; text-align: center; color: var(--muted);">
-          <span style="font-size: 48px; margin-bottom: 16px;">📁</span>
-          <p style="font-size: 15px; margin: 0 0 12px 0;">这里还没有深夜里的夜话记录呢。</p>
-          <button data-nav-path="/chat" class="btn primary" style="min-height: 40px; font-size: 13px;">开启今晚对话</button>
+        <div class="history-empty-state">
+          <span>empty archive</span>
+          <p>这里还没有深夜里的夜话记录呢。</p>
+          <button data-nav-path="/chat" class="btn primary history-start-btn">开启今晚对话</button>
         </div>
       `;
       bindNavigation(layoutContainer, context.router);
@@ -88,19 +90,19 @@ export function render(container, context) {
       }
 
       return `
-        <div class="history-item-card ${isActive ? 'active' : ''}" data-date="${safeDate}" style="padding: 16px; border-radius: 12px; cursor: pointer; display: flex; flex-direction: column; gap: 8px; position: relative; text-align: left;">
-          <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-            <strong style="color: ${isActive ? 'var(--accent)' : 'var(--ink)'}; font-size: 14.5px; letter-spacing: 0.5px;">${safeTitle}</strong>
-            <button class="delete-day-btn" data-delete-date="${safeDate}" aria-label="删除此日记录" style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 2px 6px; border-radius: 4px; opacity: 0.6; transition: opacity 0.2s;">×</button>
+        <article class="history-item-card ${isActive ? 'active' : ''}" data-date="${safeDate}">
+          <div class="history-item-head">
+            <strong>${safeTitle}</strong>
+            <button class="delete-day-btn" data-delete-date="${safeDate}" aria-label="删除此日记录">删除</button>
           </div>
-          <div style="font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; width: 100%;">
+          <div class="history-item-meta">
             <span>${c.turns.length} 轮对话</span>
             <span>${formattedTime}</span>
           </div>
-          <p style="font-size: 12px; color: var(--muted); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;">
+          <p>
             ${safeLastTurnText}
           </p>
-        </div>
+        </article>
       `;
     }).join('');
   }
@@ -111,8 +113,8 @@ export function render(container, context) {
 
     if (!selectedDate) {
       detailPanel.innerHTML = `
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--muted); min-height: 200px;">
-          <span style="font-size: 24px; margin-bottom: 8px;">📜</span>
+        <div class="history-detail-empty">
+          <span>select a night</span>
           <span>在左侧选择一天，静静重温那一晚的低语。</span>
         </div>
       `;
@@ -131,11 +133,11 @@ export function render(container, context) {
     })).join('');
 
     detailPanel.innerHTML = `
-      <div style="border-bottom: 1px solid rgba(223, 179, 85, 0.1); padding-bottom: 14px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%; text-align: left;">
-        <h2 style="font-size: 17px; color: var(--accent); margin: 0; font-weight: bold; border: 0; padding: 0;">${escapeHtml(c.title)}</h2>
-        <span style="font-size: 12px; color: var(--muted);">共计 ${c.turns.length} 轮对话 | 开启时间：${new Date(c.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      <div class="history-detail-head">
+        <h2>${escapeHtml(c.title)}</h2>
+        <span>共计 ${c.turns.length} 轮对话，开启时间 ${new Date(c.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
       </div>
-      <div class="message-container" style="flex: 1; display: flex; flex-direction: column; gap: 16px; width: 100%;">
+      <div class="message-container history-message-stack">
         ${bubblesHtml}
       </div>
     `;
@@ -174,7 +176,7 @@ export function render(container, context) {
         }
         
         renderMainLayout();
-        showNotification('success', `✓ ${dateToDelete} 的对话记录已被永久遗忘。`);
+        showNotification('success', `${dateToDelete} 的对话记录已删除。`);
       }
     }
   });

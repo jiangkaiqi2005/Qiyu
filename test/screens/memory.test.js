@@ -79,7 +79,7 @@ test('memory screen renders grouped categories and details', () => {
   };
 
   render(container, { router });
-  assert.match(container.innerHTML, /记忆中心/);
+  assert.match(container.innerHTML, /本地印记/);
   assert.match(container.innerHTML, /user\.pet/);
   assert.match(container.innerHTML, /drink\.milkTea/);
   assert.match(container.innerHTML, /&lt;img src=x onerror=alert\(1\)&gt;/);

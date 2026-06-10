@@ -97,7 +97,7 @@ export function render(container, context) {
           ${renderFieldRow({
             name: 'memoryConsent',
             label: '私语记忆功能',
-            description: '允许我在浏览器本地悄悄记下你的喜好与碎念。',
+            description: '允许栖语在浏览器本地保存少量偏好与事实。',
             controlHtml: renderToggle({
               name: 'memoryConsent',
               checked: prefs.memoryConsent

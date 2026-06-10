@@ -11,22 +11,21 @@ export function render(container, context) {
     saveBrowserState(storage, state);
   }
 
-  // Poetic translations for technical categories
   const catNames = {
-    'general': '深夜碎念 (General)',
-    'user': '关于你 (User)',
-    'work': '工作与拼搏 (Work)',
-    'family': '家人与日常 (Family)',
-    'sleep': '起居与睡眠 (Sleep)',
-    'health': '身体与状况 (Health)',
-    'emotion': '心境与情绪 (Emotion)',
-    'preference': '相处喜好 (Preference)'
+    'general': '深夜碎念',
+    'user': '关于你',
+    'work': '工作与拼搏',
+    'family': '家人与日常',
+    'sleep': '起居与睡眠',
+    'health': '身体与状况',
+    'emotion': '心境与情绪',
+    'preference': '相处喜好'
   };
 
   const srcNames = {
-    'manual': '你亲口说的 (Manual)',
-    'extract': '我悄悄记下的 (Extract)',
-    'system': '契约记忆 (System)'
+    'manual': '你主动留下的',
+    'extract': '本地整理出的',
+    'system': '系统规则'
   };
 
   function getMemoryGroupHtml(searchQuery = '') {
@@ -37,7 +36,12 @@ export function render(container, context) {
     });
 
     if (filtered.length === 0) {
-      return `<p style="color: var(--muted); text-align: center; padding: 24px;">暂无符合条件的相遇记忆印记。</p>`;
+      return `
+        <div class="memory-empty-state">
+          <span>empty archive</span>
+          <p>暂无符合条件的本地印记。</p>
+        </div>
+      `;
     }
 
     const groups = {};
@@ -64,79 +68,84 @@ export function render(container, context) {
         const safeLastUsedStr = escapeHtml(lastUsedStr);
 
         return `
-          <div class="field-row memory-row" data-key="${safeKey}" style="flex-direction: column; align-items: stretch; border: 1.5px solid rgba(223,179,85,0.15); padding: 20px; border-radius: 14px; margin-bottom: 16px; background: rgba(22, 20, 18, 0.45); box-shadow: 0 4px 12px rgba(0,0,0,0.25); text-align: left;">
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(223,179,85,0.08); padding-bottom: 10px; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="memory-key-tag" style="background: rgba(223, 179, 85, 0.08); border: 1px solid rgba(223, 179, 85, 0.25); color: var(--accent); padding: 3px 10px; border-radius: 6px; font-size: 12.5px; font-weight: bold; letter-spacing: 0.5px; font-family: monospace;">${safeKey}</span>
-                ${isSensitive ? `<span class="sensitive-badge" style="background: rgba(201, 75, 75, 0.12); border: 1px solid rgba(201, 75, 75, 0.35); color: #ff9999; font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: bold;">[敏感隐私已封存]</span>` : ''}
+          <article class="memory-row" data-key="${safeKey}">
+            <div class="memory-row-head">
+              <div class="memory-row-tags">
+                <span class="memory-key-tag">${safeKey}</span>
+                ${isSensitive ? '<span class="sensitive-badge">敏感内容已隐藏</span>' : ''}
               </div>
-              <span style="font-size: 11px; color: var(--muted);">记下时间：${new Date(m.updatedAt || Date.now()).toLocaleString()}</span>
+              <span class="memory-updated-at">更新时间：${new Date(m.updatedAt || Date.now()).toLocaleString()}</span>
             </div>
 
-            <div style="margin: 8px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
-              <div class="memory-value-display" style="flex: 1; font-size: 15.5px; color: var(--ink);">
+            <div class="memory-row-main">
+              <div class="memory-value-display">
                 ${safeValue}
               </div>
-              <div class="memory-edit-form" style="display: none; flex: 1; gap: 8px; width: 100%;">
-                <input class="form-input edit-value-input" value="${safeRawValue}" aria-label="修改记忆事实内容" style="padding: 6px 10px; font-size: 14px;">
-                <button class="btn primary save-edit-btn" style="padding: 8px 12px; font-size: 13px; min-height: 36px;">保存</button>
-                <button class="btn cancel-edit-btn" style="padding: 8px 12px; font-size: 13px; min-height: 36px;">取消</button>
+              <div class="memory-edit-form">
+                <input class="form-input edit-value-input memory-inline-input" value="${safeRawValue}" aria-label="修改本地印记内容">
+                <button class="btn primary save-edit-btn memory-small-btn">保存</button>
+                <button class="btn cancel-edit-btn memory-small-btn">取消</button>
               </div>
 
-              <!-- Expanded touch target dimensions satisfying WCAG AAA standards -->
-              <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                ${isSensitive ? `<button class="btn toggle-sensitive-btn" style="padding: 8px 12px; font-size: 13px; min-width: 44px; min-height: 36px;">查看</button>` : ''}
-                <button class="btn edit-btn" style="padding: 8px 12px; font-size: 13px; min-width: 44px; min-height: 36px;">修剪</button>
-                <button class="btn danger delete-btn" style="padding: 8px 12px; font-size: 13px; min-width: 44px; min-height: 36px;">遗忘</button>
+              <div class="memory-row-actions">
+                ${isSensitive ? '<button class="btn toggle-sensitive-btn memory-small-btn">查看</button>' : ''}
+                <button class="btn edit-btn memory-small-btn">修剪</button>
+                <button class="btn danger delete-btn memory-small-btn">遗忘</button>
               </div>
             </div>
 
-            <div style="font-size: 12.5px; color: var(--muted); margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; background: rgba(12, 11, 9, 0.35); padding: 12px; border-radius: 8px; border: 1px solid rgba(223, 179, 85, 0.05); text-align: left;">
-              <div><strong>事实来源:</strong> <code style="background:rgba(223, 179, 85, 0.08); color: var(--accent); padding: 2px 6px; border-radius: 4px; font-size: 11.5px; font-family: inherit;">${safeSource}</code></div>
-              <div style="line-height: 1.5;"><strong>来源原文:</strong> <span style="font-style: italic; color: var(--muted);">"${safeOriginalText}"</span></div>
-              <div style="font-size: 11px; border-top: 1px solid rgba(223, 179, 85, 0.04); padding-top: 6px; margin-top: 2px; color: var(--muted);">使用统计：累计调用 <strong>${useCount}</strong> 次 | 最近使用 <strong>${safeLastUsedStr}</strong></div>
+            <div class="memory-meta-panel">
+              <div><strong>来源:</strong> <code>${safeSource}</code></div>
+              <div><strong>原文:</strong> <span>${safeOriginalText}</span></div>
+              <div class="memory-usage-line">累计调用 <strong>${useCount}</strong> 次，最近使用 <strong>${safeLastUsedStr}</strong></div>
             </div>
 
-            <div style="display: flex; gap: 16px; margin-top: 8px; border-top: 1px solid rgba(223, 179, 85, 0.04); padding-top: 12px; flex-wrap: wrap;">
-              <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;" title="关闭后此条印记事实将不会被放入深夜聊天的AI上下文">
-                <input type="checkbox" class="exclude-context-chk" style="accent-color:var(--accent);" ${!m.excludeFromContext ? 'checked' : ''}>
-                <span>允许进入夜聊上下文 (不要再提)</span>
+            <div class="memory-policy-row">
+              <label title="关闭后此条本地印记不会被放入深夜聊天的 AI 上下文">
+                <input type="checkbox" class="exclude-context-chk" ${!m.excludeFromContext ? 'checked' : ''}>
+                <span>允许进入夜聊上下文</span>
               </label>
-              <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;" title="开启冻结后，我会彻底假装忘记，但在印记中心予以保留">
-                <input type="checkbox" class="frozen-chk" style="accent-color:var(--accent);" ${m.frozen ? 'checked' : ''}>
-                <span>藏入箱底 (冻结记忆)</span>
+              <label title="开启后，此条印记会保留但不参与对话上下文">
+                <input type="checkbox" class="frozen-chk" ${m.frozen ? 'checked' : ''}>
+                <span>暂时不参与对话</span>
               </label>
             </div>
-          </div>
+          </article>
         `;
       }).join('');
 
       const displayName = catNames[cat] || `分类：${cat}`;
       return `
-        <div class="memory-group" style="margin-top: 32px;">
-          <h2 style="color: var(--accent); border: 0; padding: 0; margin-bottom: 16px; font-size: 16px; margin-top: 0; letter-spacing: 1.5px; display: flex; align-items: center; gap: 8px; font-weight: bold; text-align: left;">
-            <span style="display: inline-block; width: 3px; height: 14px; background: var(--accent); border-radius: 1.5px;"></span>
-            ${displayName}
-          </h2>
+        <section class="memory-group">
+          <h2>${displayName}</h2>
           ${memoriesHtml}
-        </div>
+        </section>
       `;
     }).join('');
   }
 
   const innerHtml = `
-    <div class="card">
-      <h1>私语印记（记忆中心）</h1>
-      <p class="subtitle">在这里，查看、搜索、修剪或遗忘栖语在深夜里悄悄记下的每一个默契印记。</p>
+    <section class="memory-workbench" aria-labelledby="memory-title">
+      <div class="archive-hero memory-hero">
+        <div>
+          <span class="archive-kicker">local archive</span>
+          <h1 id="memory-title">本地印记</h1>
+          <p>只查看和整理保存在这台设备里的偏好与事实。它们不是任务系统，也不是人格资产，只是为了少让你重复解释。</p>
+        </div>
+        <div class="archive-stamp" aria-hidden="true">
+          <span>${(state.memories || []).length}</span>
+          <strong>stored locally</strong>
+        </div>
+      </div>
 
       <div class="memory-notice-area"></div>
 
-      <div style="display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;">
-        <input type="text" class="form-input search-mem-input" placeholder="搜索已记下的碎念..." aria-label="搜索已记下的碎念" style="flex: 1; min-width: 200px;">
+      <div class="memory-toolbar">
+        <input type="text" class="form-input search-mem-input" placeholder="搜索本地印记" aria-label="搜索本地印记">
       </div>
 
       <div class="memory-list-container"></div>
-    </div>
+    </section>
   `;
 
   container.innerHTML = renderAppShell(innerHtml, '/memory');
@@ -205,7 +214,7 @@ export function render(container, context) {
           state.memories[memIndex].updatedAt = new Date().toISOString();
           saveState();
           renderList();
-          showNotification('✓ 记忆印记修剪成功');
+          showNotification('本地印记已修剪。');
         }
       });
 
@@ -213,19 +222,19 @@ export function render(container, context) {
         state.memories.splice(memIndex, 1);
         saveState();
         renderList();
-        showNotification('✓ 记忆碎念已从脑海遗忘');
+        showNotification('这条本地印记已删除。');
       });
 
       excludeChk.addEventListener('change', (e) => {
         state.memories[memIndex].excludeFromContext = !e.target.checked;
         saveState();
-        showNotification('✓ 对话上下文规则已微调');
+        showNotification('对话上下文范围已更新。');
       });
 
       frozenChk.addEventListener('change', (e) => {
         state.memories[memIndex].frozen = e.target.checked;
         saveState();
-        showNotification('✓ 记忆封箱状态已微调');
+        showNotification('本地印记状态已更新。');
       });
     });
   }
