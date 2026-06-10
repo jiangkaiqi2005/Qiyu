@@ -67,10 +67,16 @@ export class Router {
         <div class="card" style="text-align: center;">
           <h2>栖语：加载出了点小状况</h2>
           <p>夜色深了，网络好像也有点累了。请检查你的连接并刷新试试。</p>
-          <button onclick="window.location.reload()" class="btn primary">刷新页面</button>
+          <button class="btn primary" data-reload>刷新页面</button>
         </div>
       </main>
     `;
+    const btn = this.container.querySelector('[data-reload]');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        window.location.reload();
+      });
+    }
   }
 
   renderNotFound() {

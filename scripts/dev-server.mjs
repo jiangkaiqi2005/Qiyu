@@ -8,6 +8,7 @@ import { handleChatRequest } from '../src/server/chat-route.js';
 import { handleSettingsRequest, csrfToken } from '../src/server/settings-route.js';
 import { loadRuntimeConfig } from '../src/server/config.js';
 import { loadProductSoul } from '../src/server/system-prompt.js';
+import { readJsonBody, validateCsrfAndOrigin } from '../src/server/http-utils.js';
 
 const root = resolve(process.cwd());
 const port = Number(process.env.PORT || 5173);
@@ -82,17 +83,6 @@ export function resolveRequestPath(urlPath, staticRoot = root) {
   return { status: 200, filePath: candidate };
 }
 
-async function readJsonBody(req, limitBytes = 65536) {
-  let raw = '';
-  for await (const chunk of req) {
-    raw += chunk;
-    if (Buffer.byteLength(raw, 'utf8') > limitBytes) {
-      throw new Error('Request body too large');
-    }
-  }
-  return JSON.parse(raw || '{}');
-}
-
 export async function createStaticServer(staticRoot = root) {
   const productSoul = await loadProductSoul(join(staticRoot, '栖语产品灵魂.md'));
 
@@ -111,11 +101,7 @@ export async function createStaticServer(staticRoot = root) {
     if (req.url?.startsWith('/api/dev/context')) {
       if (req.method === 'POST') {
         try {
-          const headers = req.headers || {};
-          const csrfHeader = headers['x-csrf-token'];
-          if (!csrfHeader || csrfHeader !== csrfToken) {
-            res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
-            res.end(JSON.stringify({ error: 'Forbidden: CSRF token mismatch' }));
+          if (!validateCsrfAndOrigin(req, res, csrfToken)) {
             return;
           }
 

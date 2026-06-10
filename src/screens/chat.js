@@ -9,6 +9,7 @@ import {
 import { loadPreferences } from '../qiyu/preferences.js';
 import { renderBubble } from '../ui/render.js';
 import { sendChatMessage } from '../ui/chat-api.js';
+import { calculateTextWaitMs, normalizeReplyMessages } from '../qiyu/reply-delivery.js';
 
 export function render(container, context) {
   const storage = window.localStorage;
@@ -82,6 +83,12 @@ export function render(container, context) {
   const input = form.elements.message;
   const devDiagnostics = container.querySelector('.chat-dev-diagnostics');
   const chatStage = container.querySelector('.qiyu-chat-stage');
+
+  function getWelcomeMessage(st) {
+    return st.userName && st.userName !== '你'
+      ? `你来了，${st.userName}。今晚，外面安静下来了吗？`
+      : '你来了。今晚，外面安静下来了吗？';
+  }
 
   function enterConversationMode() {
     if (!chatStage) return;
@@ -179,43 +186,37 @@ export function render(container, context) {
     scrollToBottom({ behavior: 'auto' });
   } else {
     // Welcoming first sentence承接 onboarding preferences
-    const welcome = state.userName && state.userName !== '你'
-      ? `你来了，${state.userName}。今晚，外面安静下来了吗？`
-      : '你来了。今晚，外面安静下来了吗？';
+    const welcome = getWelcomeMessage(state);
     appendMessage('qiyu', welcome);
   }
 
   let isTyping = false;
 
-  async function processReplyQueue(replyMessages) {
+  async function processReplyQueue(replyMessages, deliveryContext = {}) {
     isTyping = true;
     input.disabled = true;
     form.querySelector('button').disabled = true;
 
     try {
-      for (let i = 0; i < replyMessages.length; i++) {
-        const text = replyMessages[i];
-        const isSilence = text === '……';
-        let indicator;
+      const visibleMessages = normalizeReplyMessages(replyMessages, { fallback: null });
 
-        if (!isSilence) {
-          indicator = appendTypingIndicator();
-          const isHeavy = text.length > 15 || /难受|分手|吵架|累|疲惫/.test(text);
-          const delay = isHeavy 
-            ? Math.min(Math.max(text.length * 60 + 300, 450), 2000)
-            : Math.min(Math.max(text.length * 30 + 150, 200), 1000);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          if (indicator && indicator.parentNode) {
-            indicator.parentNode.removeChild(indicator);
-          }
-        } else {
-          // Silence pause without showing any indicator layout
-          await new Promise(resolve => setTimeout(resolve, 600));
+      for (let i = 0; i < visibleMessages.length; i++) {
+        const text = visibleMessages[i];
+        const indicator = appendTypingIndicator();
+        const delay = calculateTextWaitMs({
+          userText: deliveryContext.userText,
+          replyText: text,
+          mode: deliveryContext.mode
+        });
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+
+        if (indicator && indicator.parentNode) {
+          indicator.parentNode.removeChild(indicator);
         }
-
         appendMessage('qiyu', text);
 
-        if (i < replyMessages.length - 1) {
+        if (i < visibleMessages.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 300));
         }
       }
@@ -270,7 +271,10 @@ export function render(container, context) {
       devDiagnostics.innerText = debugText;
     }
 
-    await processReplyQueue(result.messages);
+    await processReplyQueue(result.messages, {
+      userText: text,
+      mode: result.debug?.mode
+    });
   });
 
   if (resetBtn) {
@@ -280,9 +284,7 @@ export function render(container, context) {
         state.turns = [];
         saveBrowserState(storage, state);
         msgContainer.innerHTML = '';
-        const welcome = state.userName && state.userName !== '你'
-          ? `你来了，${state.userName}。今晚，外面安静下来了吗？`
-          : '你来了。今晚，外面安静下来了吗？';
+        const welcome = getWelcomeMessage(state);
         appendMessage('qiyu', welcome);
       }
     });

@@ -7,22 +7,8 @@ import { recordTurn } from '../qiyu/state.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { callChatCompletions } from './llm-client.js';
 import { inferRelationshipStage } from '../qiyu/relationship.js';
-
-async function readJsonBody(req, limitBytes = 65536) {
-  let raw = '';
-  for await (const chunk of req) {
-    raw += chunk;
-    if (Buffer.byteLength(raw, 'utf8') > limitBytes) {
-      throw new Error('Request body too large');
-    }
-  }
-  return JSON.parse(raw || '{}');
-}
-
-function sendJson(res, status, payload) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(payload));
-}
+import { normalizeReplyMessages } from '../qiyu/reply-delivery.js';
+import { readJsonBody, sendJson } from './http-utils.js';
 
 function fallbackReply(text, state) {
   const result = createQiyuReply(text, state);
@@ -102,13 +88,15 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
         ],
         fetchImpl
       });
-      assertNoForbiddenPhrase(llmText);
       const latencyMs = Date.now() - start;
 
-      const nextState = recordTurn(activeState, 'qiyu', llmText);
+      const messages = normalizeReplyMessages(llmText.split('\n').filter(Boolean), { fallback: '我在。' });
+      const visibleText = messages.join('\n');
+      assertNoForbiddenPhrase(visibleText);
+      const nextState = recordTurn(activeState, 'qiyu', visibleText);
 
       sendJson(res, 200, {
-        messages: llmText.split('\n').filter(Boolean),
+        messages,
         nextState,
         debug: { mode: 'llm', relationshipStage: nextStage },
         source: 'llm',

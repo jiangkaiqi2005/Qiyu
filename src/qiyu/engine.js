@@ -4,6 +4,7 @@ import { classifySafety, safetyReply } from './safety.js';
 import { recordTurn, rememberUserFact } from './state.js';
 import { rememberFactsFromText } from './memory-extraction.js';
 import { inferRelationshipStage } from './relationship.js';
+import { normalizeReplyMessages } from './reply-delivery.js';
 
 export function createQiyuReply(text, state) {
   const trimmed = text.trim();
@@ -12,7 +13,8 @@ export function createQiyuReply(text, state) {
   const currentEmotion = state.lastEmotion;
 
   if (safety.kind !== 'normal') {
-    const reply = safetyReply(safety);
+    const messages = normalizeReplyMessages(safetyReply(safety).split('\n'), { fallback: '我在。' });
+    const reply = messages.join('\n');
     assertNoForbiddenPhrase(reply);
     
     // Process user turn and memory first
@@ -29,7 +31,7 @@ export function createQiyuReply(text, state) {
     const nextState = recordTurn(activeState, 'qiyu', reply);
     
     return {
-      messages: reply.split('\n'),
+      messages,
       nextState: {
         ...nextState,
         lastEmotion: safety.kind === 'crisis' ? { kind: 'heavy', intensity: 3 } : decayEmotion(currentEmotion)
@@ -52,16 +54,17 @@ export function createQiyuReply(text, state) {
 
   // Plan rules-based reply using the updated stage
   const plan = planReply(trimmed, activeState);
-  const replyText = plan.messages.join('\n');
+  const messages = normalizeReplyMessages(plan.messages, { fallback: '嗯。' });
+  const replyText = messages.join('\n');
   assertNoForbiddenPhrase(replyText);
 
-  const withQiyuTurns = plan.messages.reduce(
+  const withQiyuTurns = messages.reduce(
     (nextState, message) => recordTurn(nextState, 'qiyu', message),
     activeState
   );
 
   return {
-    messages: plan.messages,
+    messages,
     nextState: {
       ...withQiyuTurns,
       lastEmotion: plan.emotion

@@ -2,24 +2,9 @@ import { writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { loadRuntimeConfig, normalizeChatCompletionsUrl } from './config.js';
 import { callChatCompletions } from './llm-client.js';
+import { readJsonBody, sendJson, validateCsrfAndOrigin } from './http-utils.js';
 
 export const csrfToken = randomBytes(24).toString('hex');
-
-async function readJsonBody(req, limitBytes = 65536) {
-  let raw = '';
-  for await (const chunk of req) {
-    raw += chunk;
-    if (Buffer.byteLength(raw, 'utf8') > limitBytes) {
-      throw new Error('Request body too large');
-    }
-  }
-  return JSON.parse(raw || '{}');
-}
-
-function sendJson(res, status, payload) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(payload));
-}
 
 function resolveTestTimeoutMs(body, current, fallback = 30000) {
   const rawTimeoutMs = typeof body.timeoutMs !== 'undefined' ? body.timeoutMs : current.llm.timeoutMs;
@@ -39,40 +24,8 @@ export async function handleSettingsRequest(req, res, {
     const path = url.pathname;
 
     // CSRF and SSRF Origin Verification Protection
-    const headers = req.headers || {};
-    const host = headers.host;
-    const origin = headers.origin;
-    const referer = headers.referer;
-
-    if (origin && host) {
-      try {
-        const originUrl = new URL(origin);
-        if (originUrl.host !== host) {
-          sendJson(res, 403, { error: 'Forbidden cross-origin request' });
-          return;
-        }
-      } catch {
-        sendJson(res, 400, { error: 'Invalid Origin header' });
-        return;
-      }
-    } else if (referer && host) {
-      try {
-        const refererUrl = new URL(referer);
-        if (refererUrl.host !== host) {
-          sendJson(res, 403, { error: 'Forbidden cross-origin request' });
-          return;
-        }
-      } catch {
-        // Skip malformed referers
-      }
-    }
-
-    if (req.method === 'POST') {
-      const csrfHeader = headers['x-csrf-token'];
-      if (!csrfHeader || csrfHeader !== csrfToken) {
-        sendJson(res, 403, { error: 'Forbidden: CSRF token mismatch' });
-        return;
-      }
+    if (!validateCsrfAndOrigin(req, res, csrfToken)) {
+      return;
     }
 
     if (req.method === 'GET' && path === '/api/settings') {

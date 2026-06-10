@@ -14,3 +14,11 @@ test('project scaffold exposes app shell and scripts', async () => {
   assert.match(html, /<div id="app"><\/div>/);
   assert.match(html, /src="\.\/src\/main\.js"/);
 });
+
+test('app shell avoids inline script and event handlers under CSP', async () => {
+  const html = await readFile(new URL('index.html', root), 'utf8');
+  const router = await readFile(new URL('src/router.js', root), 'utf8');
+
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/i);
+  assert.doesNotMatch(`${html}\n${router}`, /\son[a-z]+\s*=/i);
+});

@@ -3,34 +3,19 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';">
     <title>栖语</title>
     <link rel="manifest" href="/public/manifest.webmanifest">
     <meta name="theme-color" content="#dfb355">
     
-    <!-- High-Performance Async Non-blocking Font Loading -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=LXGW+WenKai&display=swap" media="print" onload="this.media='all'">
-    <noscript>
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=LXGW+WenKai&display=swap">
-    </noscript>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=LXGW+WenKai&display=swap">
     
     <link rel="stylesheet" href="./src/styles.css?v=20260608-midnight">
   </head>
   <body>
     <div id="app"></div>
     <script type="module" src="./src/main.js"></script>
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').then((reg) => {
-            console.log('Qiyu service worker registered successfully:', reg.scope);
-          }).catch((err) => {
-            console.warn('Qiyu service worker registration failed:', err);
-          });
-        });
-      }
-    </script>
   </body>
 </html>

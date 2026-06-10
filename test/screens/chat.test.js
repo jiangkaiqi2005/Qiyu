@@ -329,3 +329,136 @@ test('chat message flow returns focus to composer without scrolling it into view
   delete globalThis.document;
   delete globalThis.fetch;
 });
+
+test('chat message flow uses input-aware wait before showing returned text', async () => {
+  let savedItems = {};
+  let submitHandler = null;
+  const timeoutCalls = [];
+  const originalSetTimeout = globalThis.setTimeout;
+
+  globalThis.setTimeout = (callback, ms) => {
+    timeoutCalls.push(ms);
+    callback();
+    return 1;
+  };
+
+  globalThis.window = {
+    location: { pathname: '/chat' },
+    addEventListener() {},
+    matchMedia() {
+      return { matches: true };
+    },
+    requestAnimationFrame(callback) {
+      callback();
+      return 1;
+    },
+    cancelAnimationFrame() {},
+    localStorage: {
+      getItem(key) {
+        return savedItems[key] || null;
+      },
+      setItem(key, val) {
+        savedItems[key] = val;
+      }
+    }
+  };
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      messages: ['我在。'],
+      debug: { mode: 'slow' },
+      nextState: JSON.parse(savedItems['qiyu.state'])
+    })
+  });
+
+  const input = {
+    value: '我分手了，今天真的很难受',
+    disabled: false,
+    focus() {},
+    addEventListener() {}
+  };
+
+  globalThis.document = {
+    activeElement: { tagName: 'BODY' },
+    createElement(tagName) {
+      if (tagName === 'p') {
+        return {
+          className: '',
+          innerHTML: '',
+          parentNode: {
+            removeChild() {}
+          },
+          setAttribute() {}
+        };
+      }
+
+      return {
+        innerHTML: '',
+        get firstChild() {
+          return {
+            classList: { add() {} }
+          };
+        }
+      };
+    },
+    createDocumentFragment() {
+      return {
+        appendChild() {}
+      };
+    }
+  };
+
+  const button = { disabled: false };
+  const thread = {
+    scrollHeight: 320,
+    scrollTo() {}
+  };
+
+  const container = {
+    innerHTML: '',
+    querySelector(selector) {
+      if (selector === '.composer') {
+        return {
+          elements: { message: input },
+          addEventListener(type, handler) {
+            if (type === 'submit') submitHandler = handler;
+          },
+          querySelector() {
+            return button;
+          }
+        };
+      }
+      if (selector === '.thread') {
+        return thread;
+      }
+      if (selector === '.qiyu-chat-stage') {
+        return { classList: { add() {}, remove() {} } };
+      }
+      return {
+        addEventListener() {},
+        appendChild() {},
+        classList: { add() {} },
+        style: { display: 'none' },
+        innerText: ''
+      };
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+
+  try {
+    render(container, { router: { navigate() {} } });
+    assert.equal(typeof submitHandler, 'function');
+
+    await submitHandler({ preventDefault() {} });
+
+    assert.ok(timeoutCalls.some((ms) => ms >= 1800 && ms <= 3200));
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    delete globalThis.window;
+    delete globalThis.document;
+    delete globalThis.fetch;
+  }
+});
