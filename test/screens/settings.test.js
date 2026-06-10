@@ -146,7 +146,7 @@ test('settings screen explains that masked api keys cannot be revealed from the 
     }
   };
   const togglePwBtn = {
-    innerText: '👁️',
+    innerText: '查看',
     attrs: {},
     addEventListener(event, fn) {
       listeners['.toggle-pw-btn:' + event] = fn;
@@ -200,7 +200,7 @@ test('settings screen explains that masked api keys cannot be revealed from the 
   assert.match(apiKeyInlineNotice.innerText, /脱敏/);
   assert.equal(apiKeyInlineNotice.style.display, 'block');
   assert.equal(apiKeyInput.type, 'password');
-  assert.equal(togglePwBtn.innerText, '👁️');
+  assert.equal(togglePwBtn.innerText, '查看');
 
   delete globalThis.window;
   delete globalThis.document;
@@ -235,7 +235,7 @@ test('settings screen still warns for masked placeholder values even without mas
     }
   };
   const togglePwBtn = {
-    innerText: '👁️',
+    innerText: '查看',
     attrs: {},
     addEventListener(event, fn) {
       listeners['.toggle-pw-btn:' + event] = fn;
@@ -321,7 +321,7 @@ test('settings screen still toggles visibility after user enters a real api key'
     }
   };
   const togglePwBtn = {
-    innerText: '👁️',
+    innerText: '查看',
     attrs: {},
     addEventListener(event, fn) {
       listeners['.toggle-pw-btn:' + event] = fn;
@@ -371,7 +371,7 @@ test('settings screen still toggles visibility after user enters a real api key'
   assert.equal(apiKeyInlineNotice.innerText, '');
   assert.equal(apiKeyInlineNotice.style.display, 'none');
   assert.equal(apiKeyInput.type, 'text');
-  assert.equal(togglePwBtn.innerText, '🔒');
+  assert.equal(togglePwBtn.innerText, '隐藏');
   assert.equal(togglePwBtn.attrs['aria-label'], '隐藏 API 密钥');
 
   delete globalThis.window;
@@ -403,7 +403,7 @@ test('settings screen resets the eye toggle after masked config reloads from the
     }
   };
   const togglePwBtn = {
-    innerText: '🔒',
+    innerText: '隐藏',
     attrs: { 'aria-label': '隐藏 API 密钥' },
     addEventListener(event, fn) {
       listeners['.toggle-pw-btn:' + event] = fn;
@@ -444,7 +444,7 @@ test('settings screen resets the eye toggle after masked config reloads from the
   await settingsFetch.waitForCall(0);
 
   assert.equal(apiKeyInput.type, 'password');
-  assert.equal(togglePwBtn.innerText, '👁️');
+  assert.equal(togglePwBtn.innerText, '查看');
   assert.equal(togglePwBtn.attrs['aria-label'], '显示 API 密钥');
 
   delete globalThis.window;

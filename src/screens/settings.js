@@ -26,29 +26,39 @@ export function render(container, context) {
   let state = loadBrowserState(storage);
 
   const innerHtml = `
-    <div class="card" style="max-width: 720px;">
-      <h1>默契中心</h1>
-      <p class="subtitle">在这里，微调我们的相处温度，或是探索栖语的灵魂深处。</p>
+    <div class="settings-workbench">
+      <section class="settings-hero" aria-labelledby="settings-title">
+        <div>
+          <span class="settings-kicker">calibration</span>
+          <h1 id="settings-title">默契中心</h1>
+          <p>调好 API、相处温度和本地数据边界。这里像一块仪表板，只在需要时出现。</p>
+        </div>
+        <div class="settings-hero-meter" aria-hidden="true">
+          <span>local</span>
+          <strong>night mode</strong>
+        </div>
+      </section>
 
       ${prefs.onboardingState !== 'completed' ? `
-        <div class="onboarding-warning-banner" data-notice-dismiss-scope="wrapper" style="margin-bottom: 20px;">
+        <div class="onboarding-warning-banner" data-notice-dismiss-scope="wrapper">
           ${renderNotice({
             type: 'warning',
-            message: '你尚未完成首次设置。建议先完成初遇引导，开启我们之间的默契。 <button data-nav-path="/onboarding" class="btn primary" style="margin-left: 12px; padding: 4px 12px; font-size: 12px; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;">去完成初遇引导</button>'
+            message: '你尚未完成首次设置。建议先完成初遇引导，开启我们之间的默契。 <button data-nav-path="/onboarding" class="btn primary notice-inline-action">去完成初遇引导</button>'
           })}
         </div>
       ` : ''}
 
       <div class="settings-notice-area"></div>
+      <div class="settings-panel">
 
       <!-- Part 1: Normal Preferences -->
-      <section class="settings-section" aria-labelledby="sec-normal-title" style="margin-bottom: 36px;">
-        <h2 id="sec-normal-title" style="font-size: 17px; color: var(--accent); margin-bottom: 20px; border: 0; padding: 0; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; font-weight: bold; text-align: left;">
-          <span style="display: inline-block; width: 4px; height: 16px; background: var(--accent); border-radius: 2px;"></span>
-          相处温度（基本设置）
-        </h2>
+      <section class="settings-section" aria-labelledby="sec-normal-title">
+        <div class="settings-section-head">
+          <span>01</span>
+          <h2 id="sec-normal-title">相处温度</h2>
+        </div>
         
-        <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div class="settings-form-stack">
           ${renderFieldRow({
             name: 'userName',
             label: '深夜昵称',
@@ -95,41 +105,41 @@ export function render(container, context) {
           })}
         </div>
 
-        <div style="display: flex; justify-content: flex-end; margin-top: 16px;">
-          ${renderButton({ label: '保存温度配置', variant: 'primary', className: 'save-pref-btn', attrs: 'style="min-height:44px;"' })}
+        <div class="settings-actions">
+          ${renderButton({ label: '保存温度配置', variant: 'primary', className: 'save-pref-btn settings-action-btn' })}
         </div>
       </section>
 
       <!-- Part 2: AI Soul Engine Settings -->
-      <section class="settings-section" aria-labelledby="sec-ai-title" style="margin-bottom: 36px; border-top: 1px solid rgba(223,179,85,0.1); padding-top: 28px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; width: 100%;">
-          <h2 id="sec-ai-title" style="font-size: 17px; color: var(--accent); margin: 0; border: 0; padding: 0; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; font-weight: bold; text-align: left;">
-            <span style="display: inline-block; width: 4px; height: 16px; background: var(--accent); border-radius: 2px;"></span>
-            灵魂引擎 (AI 接入设置)
-          </h2>
-          ${renderButton({ label: '显示/隐藏高级配置', variant: 'normal', className: 'toggle-ai-btn', attrs: 'style="font-size: 13px; padding: 6px 12px;"' })}
+      <section class="settings-section" aria-labelledby="sec-ai-title">
+        <div class="settings-section-head settings-section-head-split">
+          <div>
+            <span>02</span>
+            <h2 id="sec-ai-title">AI 接入设置</h2>
+          </div>
+          ${renderButton({ label: '显示/隐藏高级配置', variant: 'normal', className: 'toggle-ai-btn settings-small-btn' })}
         </div>
 
-        <div class="ai-config-panel" style="display: none; flex-direction: column; gap: 10px;">
-          <div class="ai-status-card" style="padding: 20px; border-radius: 12px; background: rgba(22, 20, 18, 0.45); border: 1px solid rgba(223, 179, 85, 0.15); margin-bottom: 24px; font-size: 13px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.3); text-align: left;">
-            <div style="display: flex; align-items: center; gap: 10px;">
+        <div class="ai-config-panel">
+          <div class="ai-status-card">
+            <div class="status-row">
               <strong>引擎运行状态:</strong>
-              <span class="status-badge" style="padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 12px; letter-spacing: 0.5px;">载入中...</span>
+              <span class="status-badge">载入中...</span>
             </div>
-            <div class="env-config-notice notice notice-warning" style="display: none; font-size: 13px; line-height: 1.6; margin-bottom: 4px; margin-top: 4px; text-align: left;">
-              <span class="notice-icon" aria-hidden="true">⚠️</span>
+            <div class="env-config-notice notice notice-warning">
+              <span class="notice-icon" aria-hidden="true">注意</span>
               <span>当前由环境变量控制，页面保存的修改不会覆盖服务端已生效环境变量值。</span>
             </div>
-            <div class="diagnostic-summary" style="display: none; flex-direction: column; gap: 6px; border-top: 1px dashed rgba(223, 179, 85, 0.1); padding-top: 12px; margin-top: 6px;">
-              <div><strong>实际接口地址:</strong> <span class="diag-url" style="word-break: break-all; font-family: monospace; color: var(--muted); font-size: 12.5px;">-</span></div>
-              <div><strong>最终运行模型:</strong> <span class="diag-model" style="color: var(--muted); font-size: 12.5px;">-</span></div>
-              <div><strong>配置生效来源:</strong> <span class="diag-source" style="color: var(--muted); font-size: 12.5px;">-</span></div>
-              <div><strong>最后诊断详情:</strong> <span class="diag-detail" style="font-family: monospace; display: block; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin-top: 6px; word-break: break-all; white-space: pre-wrap; color: var(--muted); font-size: 12px; line-height: 1.5; border: 1px solid rgba(223,179,85,0.06);">-</span></div>
+            <div class="diagnostic-summary">
+              <div><strong>实际接口地址:</strong> <span class="diag-url">-</span></div>
+              <div><strong>最终运行模型:</strong> <span class="diag-model">-</span></div>
+              <div><strong>配置生效来源:</strong> <span class="diag-source">-</span></div>
+              <div><strong>最后诊断详情:</strong> <span class="diag-detail">-</span></div>
             </div>
           </div>
 
-          <div class="notice notice-info" style="font-size:13px; line-height:1.6; margin-bottom:16px;">
-            <span class="notice-icon" aria-hidden="true">ℹ</span>
+          <div class="notice notice-info">
+            <span class="notice-icon" aria-hidden="true">提示</span>
             <span>填写你的 OpenAI 兼容或 Anthropic 原生大模型接口。如果未配置或配置出错，栖语将退回本地规则引擎。</span>
           </div>
 
@@ -138,7 +148,7 @@ export function render(container, context) {
             label: '服务商预设 (Provider Preset)',
             description: '快速载入常见大模型服务商的接口配置。',
             controlHtml: `
-              <select id="input-providerPreset" name="providerPreset" class="form-select" style="min-height: 44px;">
+              <select id="input-providerPreset" name="providerPreset" class="form-select">
                 ${renderProviderPresetOptions()}
               </select>
             `
@@ -156,12 +166,12 @@ export function render(container, context) {
             label: '访问密钥 (API Key)',
             description: '你的私有 API 访问令牌。绝不上传给任何中心服务器。',
             controlHtml: `
-              <div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
-                <div style="display: flex; gap: 8px; width: 100%;">
-                  <input id="input-apiKey" name="apiKey" type="password" class="form-input" style="flex: 1;" placeholder="输入 API Key">
-                  <button type="button" class="btn toggle-pw-btn" aria-label="显示 API 密钥" style="padding: 6px 12px; min-width:44px; min-height:44px;">👁️</button>
+              <div class="api-key-stack">
+                <div class="api-key-control">
+                  <input id="input-apiKey" name="apiKey" type="password" class="form-input" placeholder="输入 API Key">
+                  <button type="button" class="btn toggle-pw-btn secret-toggle-btn" aria-label="显示 API 密钥">查看</button>
                 </div>
-                <div class="api-key-inline-notice" style="display:none; font-size:12px; line-height:1.5; color: var(--muted); text-align:left;"></div>
+                <div class="api-key-inline-notice"></div>
               </div>
             `
           })}
@@ -187,38 +197,38 @@ export function render(container, context) {
             controlHtml: renderInput({ name: 'timeoutMs', type: 'number', placeholder: '30000', attrs: 'min="1000"' })
           })}
 
-          <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; flex-wrap: wrap;">
-            ${renderButton({ label: '测试 Provider 连接', variant: 'normal', className: 'test-connection-btn', attrs: 'style="min-height:44px;"' })}
-            ${renderButton({ label: '测试栖语回复', variant: 'normal', className: 'test-chat-btn', attrs: 'style="min-height:44px;"' })}
-            ${renderButton({ label: '保存 API 配置', variant: 'primary', className: 'save-ai-btn', attrs: 'style="min-height:44px;"' })}
+          <div class="settings-actions settings-actions-wrap">
+            ${renderButton({ label: '测试 Provider 连接', variant: 'normal', className: 'test-connection-btn settings-action-btn' })}
+            ${renderButton({ label: '测试栖语回复', variant: 'normal', className: 'test-chat-btn settings-action-btn' })}
+            ${renderButton({ label: '保存 API 配置', variant: 'primary', className: 'save-ai-btn settings-action-btn' })}
           </div>
         </div>
       </section>
 
       <!-- Part 3: Data Actions & Privacy -->
-      <section class="settings-section" aria-labelledby="sec-data-title" style="margin-bottom: 36px; border-top: 1px solid rgba(223,179,85,0.1); padding-top: 28px;">
-        <h2 id="sec-data-title" style="font-size: 17px; color: var(--accent); margin-bottom: 16px; border: 0; padding: 0; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; font-weight: bold; text-align: left;">
-          <span style="display: inline-block; width: 4px; height: 16px; background: var(--accent); border-radius: 2px;"></span>
-          记忆封存与遗忘 (数据保护)
-        </h2>
+      <section class="settings-section" aria-labelledby="sec-data-title">
+        <div class="settings-section-head">
+          <span>03</span>
+          <h2 id="sec-data-title">本地数据边界</h2>
+        </div>
         
-        <p style="font-size: 13px; line-height: 1.6; color: var(--muted); margin-bottom: 16px;">
+        <p class="settings-section-copy">
           管理你和栖语的本地私密印记。你可以安全地导出或将其彻底归于虚无。
         </p>
 
-        <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
-          ${renderButton({ label: '导出昨夜私语 (JSON)', variant: 'normal', className: 'export-data-btn', attrs: 'style="min-height:44px;"' })}
-          ${renderButton({ label: '遗忘所有提取的印记', variant: 'danger', className: 'clear-memories-btn', attrs: 'style="min-height:44px;"' })}
-          ${renderButton({ label: '抹去深夜相遇痕迹', variant: 'danger', className: 'clear-history-btn', attrs: 'style="min-height:44px;"' })}
+        <div class="data-action-grid">
+          ${renderButton({ label: '导出昨夜私语 (JSON)', variant: 'normal', className: 'export-data-btn settings-action-btn' })}
+          ${renderButton({ label: '遗忘所有提取的印记', variant: 'danger', className: 'clear-memories-btn settings-action-btn' })}
+          ${renderButton({ label: '抹去深夜相遇痕迹', variant: 'danger', className: 'clear-history-btn settings-action-btn' })}
         </div>
       </section>
 
       <!-- Part 4: Developer & Mirage Mode -->
-      <section class="settings-section" aria-labelledby="sec-dev-title" style="border-top: 1px solid rgba(223,179,85,0.1); padding-top: 28px;">
-        <h2 id="sec-dev-title" style="font-size: 17px; color: var(--accent); margin-bottom: 20px; border: 0; padding: 0; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; font-weight: bold; text-align: left;">
-          <span style="display: inline-block; width: 4px; height: 16px; background: var(--accent); border-radius: 2px;"></span>
-          开发者探幽 (调试选项)
-        </h2>
+      <section class="settings-section" aria-labelledby="sec-dev-title">
+        <div class="settings-section-head">
+          <span>04</span>
+          <h2 id="sec-dev-title">调试选项</h2>
+        </div>
         
         ${renderFieldRow({
           name: 'devMode',
@@ -230,17 +240,18 @@ export function render(container, context) {
           })
         })}
 
-        <div class="dev-preview-panel" style="display: none; flex-direction: column; gap: 16px; margin-top: 16px;">
-          <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div class="dev-preview-panel">
+          <div class="dev-preview-block">
             <label class="field-label">当前 System Prompt 预览</label>
-            <textarea readonly class="form-textarea" style="font-family: monospace; font-size: 12px; background: rgba(0,0,0,0.3); opacity: 0.8; height: 180px;">加载中...</textarea>
+            <textarea readonly class="form-textarea dev-preview-textarea">加载中...</textarea>
           </div>
-          <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div class="dev-preview-block">
             <label class="field-label">最近拼接的 Live Context 预览</label>
-            <textarea readonly class="form-textarea" style="font-family: monospace; font-size: 12px; background: rgba(0,0,0,0.3); opacity: 0.8; height: 180px;">加载中...</textarea>
+            <textarea readonly class="form-textarea dev-preview-textarea">加载中...</textarea>
           </div>
         </div>
       </section>
+      </div>
     </div>
   `;
 
@@ -277,7 +288,7 @@ export function render(container, context) {
 
   function setApiKeyVisibility(type) {
     pwInput.type = type;
-    togglePwBtn.innerText = type === 'password' ? '👁️' : '🔒';
+    togglePwBtn.innerText = type === 'password' ? '查看' : '隐藏';
     togglePwBtn.setAttribute('aria-label', type === 'password' ? '显示 API 密钥' : '隐藏 API 密钥');
   }
 
@@ -361,7 +372,7 @@ export function render(container, context) {
     prefs.memoryConsent = consent;
 
     savePreferences(storage, prefs);
-    showNotification('success', '✓ 深夜相处温度已保存并生效。');
+    showNotification('success', '深夜相处温度已保存并生效。');
   });
 
   // 2. Toggle Advanced AI Settings visibility
@@ -473,19 +484,19 @@ export function render(container, context) {
           if (diagDetail) {
             diagDetail.innerText = `[${new Date().toLocaleTimeString()}] Provider 通道测试成功 (延迟 ${data.latencyMs}ms)，已收到模型响应。`;
           }
-          showNotification('success', '✓ 灵魂引擎握手成功！连接一切正常。');
+          showNotification('success', '灵魂引擎握手成功，连接一切正常。');
           fetchServerSettings();
         } else {
           if (diagDetail) {
             diagDetail.innerText = `[${new Date().toLocaleTimeString()}] Provider 连接失败: ${data.error}`;
           }
-          showNotification('error', `✕ 连接失败：${data.error || '未知模型错误'}`);
+          showNotification('error', `连接失败：${data.error || '未知模型错误'}`);
         }
       } else {
-        showNotification('error', `✕ 请求被拒绝：HTTP ${res.status}`);
+        showNotification('error', `请求被拒绝：HTTP ${res.status}`);
       }
     } catch (err) {
-      showNotification('error', `✕ 网络握手超时：${err.message}`);
+      showNotification('error', `网络握手超时：${err.message}`);
     } finally {
       testConnectionBtn.disabled = false;
       testConnectionBtn.innerHTML = originalText;
@@ -527,19 +538,19 @@ export function render(container, context) {
             if (diagDetail) {
               diagDetail.innerText = `[${new Date().toLocaleTimeString()}] 栖语回复测试成功 (延迟 ${data.latencyMs}ms)，栖语说: "${data.reply}"`;
             }
-            showNotification('success', `✓ 栖语回复测试成功！栖语说：${data.reply}`);
+            showNotification('success', `栖语回复测试成功。栖语说：${data.reply}`);
             fetchServerSettings();
           } else {
             if (diagDetail) {
               diagDetail.innerText = `[${new Date().toLocaleTimeString()}] 栖语回复测试失败: ${data.error}`;
             }
-            showNotification('error', `✕ 栖语回复测试失败：${data.error}`);
+            showNotification('error', `栖语回复测试失败：${data.error}`);
           }
         } else {
-          showNotification('error', `✕ 请求被拒绝：HTTP ${res.status}`);
+          showNotification('error', `请求被拒绝：HTTP ${res.status}`);
         }
       } catch (err) {
-        showNotification('error', `✕ 握手通信故障：${err.message}`);
+        showNotification('error', `握手通信故障：${err.message}`);
       } finally {
         testChatBtn.disabled = false;
         testChatBtn.innerHTML = originalText;
@@ -575,16 +586,16 @@ export function render(container, context) {
           if (healthStatus !== 'chat_connected' && healthStatus !== 'provider_connected') {
             storage.setItem('qiyu_api_health_status', 'configured_untested');
           }
-          showNotification('success', '✓ API 配置保存成功，下一次消息会使用新配置。');
+          showNotification('success', 'API 配置保存成功，下一次消息会使用新配置。');
           updateHealthAndDiagnostics(data);
         } else {
-          showNotification('error', '✕ 保存失败。');
+          showNotification('error', '保存失败。');
         }
       } else {
-        showNotification('error', `✕ 保存失败：HTTP ${res.status}`);
+        showNotification('error', `保存失败：HTTP ${res.status}`);
       }
     } catch (err) {
-      showNotification('error', `✕ 保存网络异常：${err.message}`);
+      showNotification('error', `保存网络异常：${err.message}`);
     } finally {
       saveAiBtn.disabled = false;
       saveAiBtn.innerHTML = originalText;
@@ -605,14 +616,14 @@ export function render(container, context) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    showNotification('success', '✓ 昨夜私语印记数据已成功导出为备份 JSON。');
+    showNotification('success', '昨夜私语印记数据已成功导出为备份 JSON。');
   });
 
   clearMemoriesBtn.addEventListener('click', () => {
     if (confirm('确认遗忘我们所有的默契印记事实吗？这将无法找回。')) {
       state.memories = [];
       saveBrowserState(storage, state);
-      showNotification('success', '✓ 碎念事实已彻底消散。');
+      showNotification('success', '碎念事实已彻底消散。');
     }
   });
 
@@ -621,7 +632,7 @@ export function render(container, context) {
       state = createInitialState(state.userId);
       saveBrowserState(storage, state);
       storage.removeItem('qiyu_trial_state');
-      showNotification('success', '✓ 所有的痕迹均已归于夜空。再见，初见。');
+      showNotification('success', '所有的痕迹均已归于夜空。再见，初见。');
     }
   });
 

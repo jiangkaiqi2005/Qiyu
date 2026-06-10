@@ -25,10 +25,13 @@ export function render(container, context) {
   function getStepHtml() {
     if (currentStep === 1) {
       return `
-        <h2 id="step-title-1" style="font-size: 19px; margin-top: 12px; color: var(--ink); border: 0; padding: 0; font-weight: bold; margin-bottom: 8px;">「 先把灵魂引擎接上。」</h2>
-        <p class="subtitle" style="margin-top: 0; margin-bottom: 24px;">栖语可以先用本地规则陪你说话，但如果要真正拥有稳定的人格、记忆和对话质感，建议先配置一个 OpenAI 兼容或 Anthropic 原生 API。</p>
-        <div style="display: flex; flex-direction: column; gap: 14px; margin-top: 22px;">
-          <select name="providerPreset" class="form-select" aria-labelledby="step-title-1" style="min-height: 46px;">
+        <div class="setup-step">
+          <span class="setup-kicker">API first</span>
+          <h2 id="step-title-1">先把引擎接上</h2>
+          <p class="setup-copy">栖语可以先用本地规则陪你说话。但如果要让对话质感稳定，第一次进入时建议先配置 OpenAI 兼容或 Anthropic 原生 API。</p>
+        </div>
+        <div class="setup-fields">
+          <select name="providerPreset" class="form-select setup-control" aria-labelledby="step-title-1">
             ${renderProviderPresetOptions()}
           </select>
           ${renderInput({
@@ -54,62 +57,68 @@ export function render(container, context) {
             attrs: 'aria-labelledby="step-title-1" min="0" max="2" step="0.1"'
           })}
         </div>
-        <p class="field-desc" style="margin-top: 14px;">暂时不填也可以继续，之后可在“默契中心”补上。</p>
+        <p class="setup-note">暂时不填也可以继续，之后可在“默契中心”补上。</p>
       `;
     }
     if (currentStep === 2) {
       return `
-        <h2 id="step-title-2" style="font-size: 19px; margin-top: 12px; color: var(--ink); border: 0; padding: 0; font-weight: bold; margin-bottom: 8px;">「 深夜里，我该怎么唤你？」</h2>
-        <p class="subtitle" style="margin-top: 0; margin-bottom: 24px;">告诉我一个你最习惯的名字，让我在风吹动树梢的时刻，能轻轻唤你一声。</p>
-        <div style="margin-top: 24px; margin-bottom: 24px;">
+        <div class="setup-step">
+          <span class="setup-kicker">name</span>
+          <h2 id="step-title-2">深夜里，我该怎么唤你</h2>
+          <p class="setup-copy">告诉我一个你习惯的名字。以后开口时，我会少一点生硬。</p>
+        </div>
+        <div class="setup-fields setup-fields-compact">
           ${renderInput({
             name: 'userName',
             placeholder: '比如：林深、小雨...',
             value: prefs.userName || '',
-            attrs: 'aria-labelledby="step-title-2" style="padding: 14px 18px; font-size: 15px;"'
+            attrs: 'aria-labelledby="step-title-2"'
           })}
         </div>
       `;
     }
     if (currentStep === 3) {
       return `
-        <h2 id="step-title-3" style="font-size: 19px; margin-top: 12px; color: var(--ink); border: 0; padding: 0; font-weight: bold; margin-bottom: 8px;">「 你通常，何时坠入梦乡？」</h2>
-        <p class="subtitle" style="margin-top: 0; margin-bottom: 24px;">告诉我你预计入睡的时间，我会在此前静静收拢话头，不再惊扰你的倦意。</p>
-        <div style="margin-top: 24px; margin-bottom: 24px;">
+        <div class="setup-step">
+          <span class="setup-kicker">sleep</span>
+          <h2 id="step-title-3">你通常何时睡下</h2>
+          <p class="setup-copy">告诉我预计入睡的时间。临近这个时刻，我会主动把话题收轻一点。</p>
+        </div>
+        <div class="setup-fields setup-fields-time">
           ${renderInput({
             name: 'sleepTime',
             type: 'time',
             value: prefs.sleepTime || '23:00',
-            attrs: 'aria-labelledby="step-title-3" style="padding: 14px 18px; font-size: 15px; width: 100%; max-width: 180px;"'
+            attrs: 'aria-labelledby="step-title-3"'
           })}
         </div>
       `;
     }
     if (currentStep === 4) {
       return `
-        <fieldset style="border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 14px;">
-          <legend id="step-title-4" style="font-size: 19px; margin-top: 12px; color: var(--ink); font-weight: bold; margin-bottom: 8px; border: 0; padding: 0; display: block;">「 深夜相伴，你希望我是怎样的脾气？」</legend>
-          <p class="subtitle" style="margin-top: 0; margin-bottom: 18px;">选择一种你最感到安心的相处温度。</p>
-          
-          <label style="display: flex; align-items: flex-start; gap: 14px; cursor: pointer; padding: 16px; border: 1.5px solid rgba(223,179,85,0.15); border-radius: 12px; background: rgba(22, 20, 18, 0.4); transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 4px 12px rgba(0,0,0,0.25);">
-            <input type="radio" name="style" value="gentle" ${prefs.companionshipStyle === 'gentle' ? 'checked' : ''} style="accent-color: var(--accent); margin-top: 4px; width: 16px; height: 16px;">
-            <div style="text-align: left;">
-              <strong style="color: var(--ink); font-size: 15px;">温柔倾听</strong>
-              <div style="font-size: 12.5px; color: var(--muted); margin-top: 6px; line-height: 1.5;">细致共情，听你倾诉每一天的疲惫</div>
+        <fieldset class="choice-stack">
+          <legend id="step-title-4">深夜相伴，你希望我是怎样的脾气</legend>
+          <p class="setup-copy">选择一种你更安心的相处温度。</p>
+
+          <label class="choice-card">
+            <input type="radio" name="style" value="gentle" ${prefs.companionshipStyle === 'gentle' ? 'checked' : ''}>
+            <div class="choice-copy">
+              <strong>温柔倾听</strong>
+              <span>细致共情，听你倾诉每一天的疲惫</span>
             </div>
           </label>
-          <label style="display: flex; align-items: flex-start; gap: 14px; cursor: pointer; padding: 16px; border: 1.5px solid rgba(223,179,85,0.15); border-radius: 12px; background: rgba(22, 20, 18, 0.4); transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 4px 12px rgba(0,0,0,0.25);">
-            <input type="radio" name="style" value="playful" ${prefs.companionshipStyle === 'playful' ? 'checked' : ''} style="accent-color: var(--accent); margin-top: 4px; width: 16px; height: 16px;">
-            <div style="text-align: left;">
-              <strong style="color: var(--ink); font-size: 15px;">轻松调侃</strong>
-              <div style="font-size: 12.5px; color: var(--muted); margin-top: 6px; line-height: 1.5;">带着善意的幽默，化解深夜的无聊</div>
+          <label class="choice-card">
+            <input type="radio" name="style" value="playful" ${prefs.companionshipStyle === 'playful' ? 'checked' : ''}>
+            <div class="choice-copy">
+              <strong>轻松调侃</strong>
+              <span>带着善意的幽默，化解深夜的无聊</span>
             </div>
           </label>
-          <label style="display: flex; align-items: flex-start; gap: 14px; cursor: pointer; padding: 16px; border: 1.5px solid rgba(223,179,85,0.15); border-radius: 12px; background: rgba(22, 20, 18, 0.4); transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 4px 12px rgba(0,0,0,0.25);">
-            <input type="radio" name="style" value="quiet" ${prefs.companionshipStyle === 'quiet' ? 'checked' : ''} style="accent-color: var(--accent); margin-top: 4px; width: 16px; height: 16px;">
-            <div style="text-align: left;">
-              <strong style="color: var(--ink); font-size: 15px;">安静聆听</strong>
-              <div style="font-size: 12.5px; color: var(--muted); margin-top: 6px; line-height: 1.5;">少言寡语，只是在旁边默默守候</div>
+          <label class="choice-card">
+            <input type="radio" name="style" value="quiet" ${prefs.companionshipStyle === 'quiet' ? 'checked' : ''}>
+            <div class="choice-copy">
+              <strong>安静聆听</strong>
+              <span>少言寡语，只是在旁边默默守候</span>
             </div>
           </label>
         </fieldset>
@@ -117,17 +126,19 @@ export function render(container, context) {
     }
     if (currentStep === 5) {
       return `
-        <h2 id="step-title-5" style="font-size: 19px; margin-top: 12px; color: var(--ink); border: 0; padding: 0; font-weight: bold; margin-bottom: 8px;">「 昨夜私语，你愿意让我记下吗？」</h2>
-        <p class="subtitle" style="margin-top: 0; margin-bottom: 24px;">为了我们在未来的陪伴里更加默契，我可以用心记住你的一些日常喜好。</p>
-        <p style="font-size: 13px; line-height: 1.6; margin-bottom: 24px; color: var(--muted); text-align: left;">
-          这些悄悄提取的事项（如你爱吃的甜点、繁忙的项目）将<strong>完全只封存在你这台设备的浏览器本地 (localStorage)</strong>。
-          绝不会上传给任何中心化的云端数据库。你可以在“印记中心”里对它们进行修剪、藏入箱底，或者彻底清空。
+        <div class="setup-step">
+          <span class="setup-kicker">local only</span>
+          <h2 id="step-title-5">是否记住少量本地偏好</h2>
+          <p class="setup-copy">如果你愿意，栖语会在本机浏览器里记住一些偏好和事实，让之后的夜话少一点重复确认。</p>
+        </div>
+        <p class="setup-privacy-note">
+          这些内容只保存在这台设备的浏览器本地，不上传到中心化数据库。你可以随时在“印记”里查看、隐藏或清空。
         </p>
-        <div style="margin-bottom: 24px; text-align: left;">
+        <div class="setup-toggle-row">
           ${renderToggle({
             name: 'memoryConsent',
             checked: prefs.memoryConsent,
-            label: '同意启用本地私语记忆功能',
+            label: '允许本地记住少量偏好',
             attrs: 'aria-labelledby="step-title-5"'
           })}
         </div>
@@ -183,7 +194,7 @@ export function render(container, context) {
           <span class="mark" aria-hidden="true">栖</span>
           <div>
             <strong>初遇</strong>
-            <span>在你栖息的时刻，有人跟你说说话。先接上引擎，再建立默契。</span>
+            <span>第一次进入时完成。先接上引擎，再建立默契。</span>
           </div>
         </div>
         <ol>
