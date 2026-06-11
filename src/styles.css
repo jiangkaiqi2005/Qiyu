@@ -3556,6 +3556,57 @@ body::after {
   transform: scaleX(1);
 }
 
+/* Sidebar hover intent */
+.app-sidebar {
+  transition:
+    width 0.62s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.52s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.52s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: 0ms, 0ms, 0ms;
+}
+
+.app-sidebar:hover {
+  transition-delay: 180ms, 180ms, 180ms;
+}
+
+.app-sidebar:focus-within {
+  transition-delay: 0ms, 0ms, 0ms;
+}
+
+.app-sidebar .brand-name,
+.app-sidebar .nav-label,
+.app-sidebar .nav-index,
+.app-sidebar .sidebar-context {
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: 0ms;
+}
+
+.app-sidebar:hover .brand-name,
+.app-sidebar:hover .nav-label,
+.app-sidebar:hover .nav-index,
+.app-sidebar:hover .sidebar-context {
+  transition-delay: 300ms;
+}
+
+.app-sidebar:focus-within .brand-name,
+.app-sidebar:focus-within .nav-label,
+.app-sidebar:focus-within .nav-index,
+.app-sidebar:focus-within .sidebar-context {
+  transition-delay: 80ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar,
+  .app-sidebar:hover,
+  .app-sidebar:focus-within,
+  .app-sidebar .brand-name,
+  .app-sidebar .nav-label,
+  .app-sidebar .nav-index,
+  .app-sidebar .sidebar-context {
+    transition-delay: 0ms;
+  }
+}
+
 @media (max-width: 768px) {
   .sidebar-sheen,
   .nav-index {
