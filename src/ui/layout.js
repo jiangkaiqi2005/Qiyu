@@ -55,7 +55,7 @@ export function renderAppShell(contentHtml, currentPath) {
             <span class="status-text">深夜在线</span>
           </div>
         </header>
-        <main id="main-content" class="app-main-content" tabindex="-1" style="outline: none;">
+        <main id="main-content" class="app-main-content" tabindex="-1">
           ${contentHtml}
         </main>
       </div>
