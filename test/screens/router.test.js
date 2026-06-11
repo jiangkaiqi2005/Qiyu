@@ -18,6 +18,7 @@ test('router matches routes and falls back gracefully', async () => {
   };
 
   globalThis.document = {
+    title: '',
     createElement() {
       return {
         innerHTML: '',
@@ -68,21 +69,26 @@ test('router matches routes and falls back gracefully', async () => {
   window.location.pathname = '/';
   await router.resolve();
   assert.match(container.innerHTML, /栖语/);
+  assert.equal(document.title, '夜话 - 栖语');
+  assert.doesNotMatch(container.innerHTML, /style=/);
 
   // Test navigation
   await router.navigate('/chat');
   assert.equal(window.location.pathname, '/chat');
   assert.match(container.innerHTML, /栖语/);
+  assert.equal(document.title, '夜话 - 栖语');
 
   // Test history navigation
   await router.navigate('/history');
   assert.equal(window.location.pathname, '/history');
   assert.match(container.innerHTML, /栖语/);
+  assert.equal(document.title, '记录 - 栖语');
 
   // Test unknown route
   await router.navigate('/some-nonexistent-route');
   assert.equal(window.location.pathname, '/some-nonexistent-route');
-  assert.match(container.innerHTML, /404/);
+  assert.match(container.innerHTML, /这里暂时没有夜话/);
+  assert.doesNotMatch(container.innerHTML, /style=/);
 
   delete globalThis.window;
   delete globalThis.document;

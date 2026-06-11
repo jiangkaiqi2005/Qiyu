@@ -494,6 +494,121 @@ body::before {
   padding-left: 12px;
 }
 
+.route-loading-shell,
+.route-state {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: clamp(28px, 6vw, 80px);
+  background:
+    radial-gradient(circle at 38% 24%, rgba(215, 173, 91, 0.1), transparent 23rem),
+    radial-gradient(circle at 70% 78%, rgba(95, 76, 44, 0.12), transparent 26rem),
+    var(--bg);
+}
+
+.route-loading-panel,
+.route-state-panel {
+  position: relative;
+  width: min(100%, 620px);
+  border: 1px solid rgba(228, 193, 126, 0.14);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 248, 226, 0.055), rgba(255, 248, 226, 0.012)),
+    rgba(18, 16, 13, 0.74);
+  box-shadow:
+    0 30px 90px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 248, 226, 0.09);
+}
+
+.route-loading-panel {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 18px;
+}
+
+.route-loading-mark {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(228, 193, 126, 0.5);
+  border-radius: 50%;
+  color: var(--accent);
+  font-weight: 700;
+  box-shadow: 0 0 26px rgba(215, 173, 91, 0.12);
+}
+
+.route-loading-line {
+  position: relative;
+  height: 1px;
+  overflow: hidden;
+  background: rgba(228, 193, 126, 0.12);
+}
+
+.route-loading-line::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, rgba(245, 206, 122, 0.82), transparent);
+  animation: routeLoadingDrift 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.route-loading-text,
+.route-state-kicker {
+  color: rgba(228, 193, 126, 0.68);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+}
+
+.route-state-panel {
+  padding: clamp(32px, 5vw, 54px);
+  text-align: left;
+}
+
+.route-state-panel h1 {
+  margin: 12px 0 14px;
+  color: var(--ink);
+  font-size: clamp(28px, 5vw, 48px);
+  line-height: 1.08;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+.route-state-panel p {
+  max-width: 34rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.route-state-action {
+  margin-top: 30px;
+}
+
+@keyframes routeLoadingDrift {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(270%);
+  }
+}
+
+@media (max-width: 640px) {
+  .route-loading-panel {
+    grid-template-columns: auto 1fr;
+  }
+
+  .route-loading-text {
+    grid-column: 1 / -1;
+  }
+}
+
 .subtitle {
   color: var(--muted);
   font-size: 15px;
