@@ -30,3 +30,13 @@ test('core stylesheet uses explicit motion tokens instead of broad transitions',
   assert.match(styles, /--ease-emphasized:/);
   assert.doesNotMatch(styles, /transition:\s*all\b/);
 });
+
+test('sidebar expansion is gated by an explicit interaction state', async () => {
+  const styles = await readFile(new URL('src/styles.css', root), 'utf8');
+  const layout = await readFile(new URL('src/ui/layout.js', root), 'utf8');
+
+  assert.match(styles, /\.app-sidebar\[data-expanded="true"\]/);
+  assert.doesNotMatch(styles, /\.app-sidebar:hover/);
+  assert.match(layout, /bindSidebarHoverIntent/);
+  assert.match(layout, /SIDEBAR_HOVER_INTENT_DELAY_MS = 420/);
+});

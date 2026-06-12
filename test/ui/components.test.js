@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderAppShell, bindNavigation } from '../../src/ui/layout.js';
+import { renderAppShell, bindNavigation, bindSidebarHoverIntent } from '../../src/ui/layout.js';
 import {
   renderButton,
   renderInput,
@@ -178,4 +178,56 @@ test('bindNavigation can dismiss a wrapper when the notice asks for wrapper scop
 
   assert.equal(wrapper.removed, true);
   assert.equal(notice.removed, false);
+});
+
+test('bindSidebarHoverIntent waits before expanding the sidebar', () => {
+  let nextTimerId = 1;
+  const pendingTimers = new Map();
+  const timers = {
+    setTimeout(fn, delay) {
+      const id = nextTimerId;
+      nextTimerId += 1;
+      pendingTimers.set(id, { fn, delay });
+      return id;
+    },
+    clearTimeout(id) {
+      pendingTimers.delete(id);
+    }
+  };
+  const listeners = new Map();
+  const sidebar = {
+    dataset: {},
+    addEventListener(type, fn) {
+      listeners.set(type, fn);
+    },
+    matches() {
+      return false;
+    }
+  };
+  const container = {
+    querySelector(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    }
+  };
+  const runNextTimer = () => {
+    const [[id, timer]] = pendingTimers;
+    pendingTimers.delete(id);
+    timer.fn();
+    return timer.delay;
+  };
+
+  bindSidebarHoverIntent(container, timers);
+  listeners.get('pointerenter')({ pointerType: 'mouse' });
+  listeners.get('pointerleave')({ pointerType: 'mouse' });
+  runNextTimer();
+
+  assert.equal(sidebar.dataset.expanded, undefined);
+
+  listeners.get('pointerenter')({ pointerType: 'mouse' });
+  assert.equal(runNextTimer(), 420);
+  assert.equal(sidebar.dataset.expanded, 'true');
+
+  listeners.get('pointerleave')({ pointerType: 'mouse' });
+  assert.equal(runNextTimer(), 140);
+  assert.equal(sidebar.dataset.expanded, undefined);
 });

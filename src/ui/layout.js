@@ -1,3 +1,6 @@
+const SIDEBAR_HOVER_INTENT_DELAY_MS = 420;
+const SIDEBAR_CLOSE_GRACE_MS = 140;
+
 export function renderAppShell(contentHtml, currentPath) {
   const routes = [
     { path: '/chat', label: '夜话', icon: '话' },
@@ -66,7 +69,76 @@ export function renderAppShell(contentHtml, currentPath) {
   `;
 }
 
+export function bindSidebarHoverIntent(container, timers = globalThis) {
+  const sidebar = typeof container.querySelector === 'function'
+    ? container.querySelector('.app-sidebar')
+    : null;
+  if (!sidebar || sidebar.__qiyuSidebarHoverIntentBound) return;
+
+  let openTimer = null;
+  let closeTimer = null;
+  let pointerInside = false;
+
+  const clearTimer = (timer) => {
+    if (timer !== null && typeof timers.clearTimeout === 'function') {
+      timers.clearTimeout(timer);
+    }
+  };
+
+  const setExpanded = (expanded) => {
+    if (expanded) {
+      sidebar.dataset.expanded = 'true';
+    } else {
+      delete sidebar.dataset.expanded;
+    }
+  };
+
+  const scheduleOpen = (event) => {
+    if (event.pointerType === 'touch') return;
+    pointerInside = true;
+    clearTimer(closeTimer);
+    clearTimer(openTimer);
+    closeTimer = null;
+    openTimer = timers.setTimeout(() => {
+      openTimer = null;
+      if (pointerInside) {
+        setExpanded(true);
+      }
+    }, SIDEBAR_HOVER_INTENT_DELAY_MS);
+  };
+
+  const scheduleClose = () => {
+    pointerInside = false;
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+    openTimer = null;
+    closeTimer = timers.setTimeout(() => {
+      closeTimer = null;
+      const hasFocus = typeof sidebar.matches === 'function'
+        ? sidebar.matches(':focus-within')
+        : false;
+      if (!hasFocus) {
+        setExpanded(false);
+      }
+    }, SIDEBAR_CLOSE_GRACE_MS);
+  };
+
+  sidebar.addEventListener('pointerenter', scheduleOpen);
+  sidebar.addEventListener('pointerleave', scheduleClose);
+  sidebar.addEventListener('focusin', () => {
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+    openTimer = null;
+    closeTimer = null;
+    setExpanded(true);
+  });
+  sidebar.addEventListener('focusout', scheduleClose);
+  sidebar.__qiyuSidebarHoverIntentBound = true;
+}
+
 export function bindNavigation(container, router) {
+  bindSidebarHoverIntent(container);
+
   if (typeof container.addEventListener === 'function' && !container.__qiyuNoticeDismissBound) {
     container.addEventListener('click', (event) => {
       const closeBtn = typeof event.target?.closest === 'function'

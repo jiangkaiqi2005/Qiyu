@@ -167,7 +167,7 @@ body::before {
   overflow: hidden;
 }
 
-.app-sidebar:hover,
+.app-sidebar[data-expanded="true"],
 .app-sidebar:focus-within {
   width: 280px;
   background:
@@ -209,7 +209,7 @@ body::before {
   transition: opacity 0.22s ease 0.08s, transform 0.28s ease 0.08s;
 }
 
-.app-sidebar:hover .brand-name,
+.app-sidebar[data-expanded="true"] .brand-name,
 .app-sidebar:focus-within .brand-name {
   opacity: 1;
   transform: translateX(0);
@@ -292,7 +292,7 @@ body::before {
   white-space: nowrap;
 }
 
-.app-sidebar:hover .nav-label,
+.app-sidebar[data-expanded="true"] .nav-label,
 .app-sidebar:focus-within .nav-label,
 .app-bottom-nav .nav-label {
   opacity: 1;
@@ -313,7 +313,7 @@ body::before {
   transition: opacity 0.24s ease 0.12s, transform 0.28s ease 0.12s;
 }
 
-.app-sidebar:hover .sidebar-context,
+.app-sidebar[data-expanded="true"] .sidebar-context,
 .app-sidebar:focus-within .sidebar-context {
   opacity: 1;
   transform: translateY(0);
@@ -1615,7 +1615,7 @@ body::after {
   box-shadow: 1px 0 0 rgba(255, 255, 255, 0.025) inset;
 }
 
-.app-sidebar:hover,
+.app-sidebar[data-expanded="true"],
 .app-sidebar:focus-within {
   width: 264px;
   background:
@@ -3695,23 +3695,23 @@ body::after {
   grid-column: 3;
 }
 
-.app-sidebar:hover .nav-item,
+.app-sidebar[data-expanded="true"] .nav-item,
 .app-sidebar:focus-within .nav-item {
   grid-template-columns: 28px 34px 1fr;
 }
 
-.app-sidebar:hover .nav-index,
+.app-sidebar[data-expanded="true"] .nav-index,
 .app-sidebar:focus-within .nav-index {
   opacity: 1;
   transform: translateX(0);
 }
 
-.app-sidebar:hover .nav-icon,
+.app-sidebar[data-expanded="true"] .nav-icon,
 .app-sidebar:focus-within .nav-icon {
   grid-column: 2;
 }
 
-.app-sidebar:hover .nav-label,
+.app-sidebar[data-expanded="true"] .nav-label,
 .app-sidebar:focus-within .nav-label {
   grid-column: 3;
 }
@@ -3745,7 +3745,7 @@ body::after {
   transition-delay: 0ms, 0ms, 0ms;
 }
 
-.app-sidebar:hover {
+.app-sidebar[data-expanded="true"] {
   transition-delay: 180ms, 180ms, 180ms;
 }
 
@@ -3761,10 +3761,10 @@ body::after {
   transition-delay: 0ms;
 }
 
-.app-sidebar:hover .brand-name,
-.app-sidebar:hover .nav-label,
-.app-sidebar:hover .nav-index,
-.app-sidebar:hover .sidebar-context {
+.app-sidebar[data-expanded="true"] .brand-name,
+.app-sidebar[data-expanded="true"] .nav-label,
+.app-sidebar[data-expanded="true"] .nav-index,
+.app-sidebar[data-expanded="true"] .sidebar-context {
   transition-delay: 300ms;
 }
 
@@ -3777,7 +3777,7 @@ body::after {
 
 @media (prefers-reduced-motion: reduce) {
   .app-sidebar,
-  .app-sidebar:hover,
+  .app-sidebar[data-expanded="true"],
   .app-sidebar:focus-within,
   .app-sidebar .brand-name,
   .app-sidebar .nav-label,
