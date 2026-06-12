@@ -18,6 +18,12 @@
   --radius-input: 10px;
   --shadow-cozy: 0 8px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-glow: 0 0 24px rgba(223, 179, 85, 0.12);
+  --app-viewport-height: 100dvh;
+  --z-background-glow: 0;
+  --z-texture: 2;
+  --z-sidebar: 10;
+  --z-mobile-nav: 30;
+  --z-skip-link: 40;
   font-family: "LXGW WenKai Screen", "LXGW WenKai", "Noto Serif SC", "Source Han Serif SC", "STSong", "Songti SC", "SimSun", Georgia, serif;
   background: var(--night);
   color: var(--ink);
@@ -29,6 +35,7 @@
 
 body {
   min-height: 100vh;
+  min-height: var(--app-viewport-height);
   margin: 0;
   background:
     radial-gradient(circle at 15% 10%, rgba(223, 179, 85, 0.1), transparent 45rem),
@@ -50,7 +57,7 @@ body::after {
     url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E"),
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Ccircle cx='10' cy='15' r='0.6' fill='%23dfb355' opacity='0.15'/%3E%3Ccircle cx='45' cy='75' r='0.8' fill='%23dfb355' opacity='0.12'/%3E%3Ccircle cx='85' cy='35' r='0.5' fill='%23dfb355' opacity='0.18'/%3E%3Ccircle cx='65' cy='60' r='0.4' fill='%23dfb355' opacity='0.1'/%3E%3C/svg%3E");
   opacity: 0.035;
-  z-index: 100;
+  z-index: var(--z-texture);
 }
 
 /* Sleepy Breathing Glow Background */
@@ -75,7 +82,7 @@ body::before {
   background: radial-gradient(circle at 35% 25%, rgba(223, 179, 85, 0.18), transparent 50rem);
   pointer-events: none;
   animation: nocturnalBreath 20s ease-in-out infinite;
-  z-index: 0;
+  z-index: var(--z-background-glow);
 }
 
 /* Accessibility Skip Link */
@@ -87,7 +94,7 @@ body::before {
   color: #14110c;
   padding: 10px 20px;
   border-radius: 6px;
-  z-index: 9999;
+  z-index: var(--z-skip-link);
   font-weight: bold;
   text-decoration: none;
   transition: top 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -128,6 +135,7 @@ body::before {
   display: grid;
   grid-template-columns: 88px 1fr;
   min-height: 100vh;
+  min-height: var(--app-viewport-height);
 }
 
 .app-sidebar {
@@ -140,7 +148,7 @@ body::before {
   flex-direction: column;
   padding: 30px 14px;
   gap: 34px;
-  z-index: 10;
+  z-index: var(--z-sidebar);
   will-change: width, box-shadow, background;
   transition:
     width 0.42s cubic-bezier(0.16, 1, 0.3, 1),
@@ -322,6 +330,7 @@ body::before {
   display: grid;
   grid-template-rows: auto 1fr;
   height: 100vh;
+  height: var(--app-viewport-height);
   overflow: hidden;
   min-width: 0;
 }
@@ -415,7 +424,7 @@ body::before {
   background: rgba(12, 11, 9, 0.92);
   backdrop-filter: blur(20px) saturate(110%);
   border-top: 1px solid rgba(223, 179, 85, 0.15);
-  z-index: 1000;
+  z-index: var(--z-mobile-nav);
   justify-content: space-around;
   align-items: center;
   padding: 4px 12px;
@@ -1294,6 +1303,7 @@ body::before {
     grid-template-rows: auto 1fr;
     padding-bottom: 72px;
     height: 100vh;
+    height: var(--app-viewport-height);
   }
 
   .app-sidebar {
