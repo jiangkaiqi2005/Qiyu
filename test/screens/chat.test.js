@@ -297,6 +297,8 @@ test('chat composer uses multiline dock and enter submits without blocking newli
   render(container, { router: { navigate() {} } });
 
   assert.match(container.innerHTML, /<textarea[^>]+name="message"/);
+  assert.match(container.innerHTML, /composer-field/);
+  assert.match(container.innerHTML, /send-mark/);
   assert.equal(typeof keydownHandler, 'function');
 
   let prevented = false;

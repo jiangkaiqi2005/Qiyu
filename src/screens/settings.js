@@ -29,13 +29,19 @@ export function render(container, context) {
     <div class="settings-workbench">
       <section class="settings-hero" aria-labelledby="settings-title">
         <div>
-          <span class="settings-kicker">calibration</span>
+          <span class="settings-kicker">只在需要时调整</span>
           <h1 id="settings-title">默契中心</h1>
-          <p>调好 API、相处温度和本地数据边界。这里像一块仪表板，只在需要时出现。</p>
+          <p>把接口、语气和边界调到合适的位置。设置完成后，回到夜话就能直接说。</p>
         </div>
-        <div class="settings-hero-meter" aria-hidden="true">
-          <span>local</span>
-          <strong>night mode</strong>
+        <div class="settings-hero-state" aria-hidden="true">
+          <div>
+            <span>当前路径</span>
+            <strong>API 与偏好</strong>
+          </div>
+          <div>
+            <span>保存位置</span>
+            <strong>本机与服务端</strong>
+          </div>
         </div>
       </section>
 
@@ -54,7 +60,7 @@ export function render(container, context) {
       <!-- Part 1: Normal Preferences -->
       <section class="settings-section" aria-labelledby="sec-normal-title">
         <div class="settings-section-head">
-          <span>01</span>
+          <span class="settings-section-eyebrow">相处方式</span>
           <h2 id="sec-normal-title">相处温度</h2>
         </div>
         
@@ -114,16 +120,16 @@ export function render(container, context) {
       <section class="settings-section" aria-labelledby="sec-ai-title">
         <div class="settings-section-head settings-section-head-split">
           <div>
-            <span>02</span>
-            <h2 id="sec-ai-title">AI 接入设置</h2>
+            <span class="settings-section-eyebrow">模型接入</span>
+            <h2 id="sec-ai-title">API 配置</h2>
           </div>
-          ${renderButton({ label: '显示/隐藏高级配置', variant: 'normal', className: 'toggle-ai-btn settings-small-btn' })}
+          ${renderButton({ label: '展开或收起配置', variant: 'normal', className: 'toggle-ai-btn settings-small-btn' })}
         </div>
 
         <div class="ai-config-panel">
           <div class="ai-status-card">
             <div class="status-row">
-              <strong>引擎运行状态:</strong>
+              <strong>连接状态</strong>
               <span class="status-badge">载入中...</span>
             </div>
             <div class="env-config-notice notice notice-warning">
@@ -208,7 +214,7 @@ export function render(container, context) {
       <!-- Part 3: Data Actions & Privacy -->
       <section class="settings-section" aria-labelledby="sec-data-title">
         <div class="settings-section-head">
-          <span>03</span>
+          <span class="settings-section-eyebrow">本地边界</span>
           <h2 id="sec-data-title">本地数据边界</h2>
         </div>
         
@@ -226,7 +232,7 @@ export function render(container, context) {
       <!-- Part 4: Developer & Mirage Mode -->
       <section class="settings-section" aria-labelledby="sec-dev-title">
         <div class="settings-section-head">
-          <span>04</span>
+          <span class="settings-section-eyebrow">开发调试</span>
           <h2 id="sec-dev-title">调试选项</h2>
         </div>
         

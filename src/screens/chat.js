@@ -54,8 +54,13 @@ export function render(container, context) {
           </section>
         </div>
         <form class="composer" aria-label="发送消息">
-          <textarea class="composer-input" name="message" autocomplete="off" rows="1" placeholder="今天过得怎么样" aria-label="写下你的心里话"></textarea>
-          <button type="submit" class="btn primary">发送</button>
+          <div class="composer-field">
+            <textarea class="composer-input" name="message" autocomplete="off" rows="1" placeholder="今天过得怎么样" aria-label="写下你的心里话"></textarea>
+          </div>
+          <button type="submit" class="btn primary">
+            <span class="send-label">发送</span>
+            <span class="send-mark" aria-hidden="true">↵</span>
+          </button>
         </form>
       </div>
     </div>

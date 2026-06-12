@@ -114,6 +114,54 @@ test('settings screen render elements and controls', () => {
   delete globalThis.fetch;
 });
 
+test('settings screen uses quiet product language instead of dashboard labels', () => {
+  let savedItems = {};
+  installWindow(savedItems);
+  installDocument();
+  globalThis.fetch = async () => {
+    return {
+      ok: true,
+      json: async () => ({
+        apiUrl: '',
+        apiKey: '',
+        model: '',
+        temperature: 0.8,
+        timeoutMs: 30000
+      })
+    };
+  };
+
+  const container = {
+    innerHTML: '',
+    querySelector() {
+      return {
+        addEventListener() {},
+        style: { display: 'none' },
+        elements: {},
+        value: '',
+        innerText: '',
+        appendChild() {},
+        classList: { add() {} }
+      };
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+
+  render(container, { router: { navigate() {} } });
+
+  assert.match(container.innerHTML, /settings-hero-state/);
+  assert.match(container.innerHTML, /settings-section-eyebrow/);
+  assert.match(container.innerHTML, /模型接入/);
+  assert.doesNotMatch(container.innerHTML, /calibration|night mode/);
+  assert.doesNotMatch(container.innerHTML, /settings-section-head[^>]*>\s*<span>0[1-4]<\/span>/);
+
+  delete globalThis.window;
+  delete globalThis.document;
+  delete globalThis.fetch;
+});
+
 test('settings screen explains that masked api keys cannot be revealed from the eye toggle', async () => {
   let savedItems = {};
   let noticeHtml = '';

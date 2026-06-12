@@ -224,7 +224,7 @@ test('bindSidebarHoverIntent waits before expanding the sidebar', () => {
   assert.equal(sidebar.dataset.expanded, undefined);
 
   listeners.get('pointerenter')({ pointerType: 'mouse' });
-  assert.equal(runNextTimer(), 420);
+  assert.equal(runNextTimer(), 760);
   assert.equal(sidebar.dataset.expanded, 'true');
 
   listeners.get('pointerleave')({ pointerType: 'mouse' });

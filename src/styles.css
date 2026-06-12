@@ -2123,24 +2123,27 @@ body::after {
 
 /* Settings workbench */
 .settings-workbench {
-  width: min(1040px, 100%);
+  width: min(1080px, 100%);
   margin: 0 auto;
 }
 
 .settings-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 28px;
-  margin-bottom: 22px;
-  padding: clamp(24px, 4vw, 42px);
-  border: 1px solid rgba(228, 193, 126, 0.085);
+  align-items: center;
+  gap: clamp(22px, 4vw, 46px);
+  margin-bottom: 18px;
+  padding: clamp(26px, 4vw, 48px);
+  border: 1px solid rgba(228, 193, 126, 0.075);
   border-radius: 8px;
   background:
-    radial-gradient(circle at 82% 0%, rgba(215, 173, 91, 0.12), transparent 25rem),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.008)),
-    rgba(10, 8, 6, 0.56);
-  box-shadow: 0 28px 88px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 248, 226, 0.035);
+    radial-gradient(circle at 88% 10%, rgba(215, 173, 91, 0.105), transparent 24rem),
+    radial-gradient(circle at 0% 100%, rgba(255, 244, 218, 0.04), transparent 18rem),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.038), rgba(255, 255, 255, 0.009)),
+    rgba(10, 8, 6, 0.58);
+  box-shadow:
+    0 30px 92px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 248, 226, 0.04);
 }
 
 .settings-hero h1 {
@@ -2152,35 +2155,45 @@ body::after {
 }
 
 .settings-hero p {
-  max-width: 54ch;
-  margin: 18px 0 0;
+  max-width: 49ch;
+  margin: 16px 0 0;
   color: var(--muted);
   font-size: 15px;
   line-height: 1.8;
 }
 
-.settings-hero-meter {
-  min-width: 176px;
-  padding: 18px;
-  border: 1px solid rgba(228, 193, 126, 0.11);
+.settings-hero-state {
+  display: grid;
+  gap: 8px;
+  min-width: 234px;
+  padding: 8px;
+  border: 1px solid rgba(228, 193, 126, 0.095);
   border-radius: 8px;
-  background: rgba(7, 6, 5, 0.42);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.026), rgba(255, 255, 255, 0.006)),
+    rgba(7, 6, 5, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 248, 226, 0.035);
   text-align: left;
 }
 
-.settings-hero-meter span {
-  display: block;
-  color: rgba(215, 173, 91, 0.72);
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+.settings-hero-state div {
+  padding: 13px 14px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.018);
 }
 
-.settings-hero-meter strong {
+.settings-hero-state span {
   display: block;
-  margin-top: 10px;
+  color: rgba(215, 173, 91, 0.72);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.settings-hero-state strong {
+  display: block;
+  margin-top: 8px;
   color: var(--ink);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
 }
 
@@ -2222,10 +2235,11 @@ body::after {
   flex-wrap: wrap;
 }
 
-.settings-section-head span {
+.settings-section-eyebrow {
   color: rgba(215, 173, 91, 0.62);
-  font: 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
 }
 
 .settings-section-head h2 {
@@ -2236,6 +2250,11 @@ body::after {
   font-size: 19px;
   font-weight: 650;
   letter-spacing: 0.04em;
+}
+
+.settings-section-head > .settings-section-eyebrow + h2,
+.settings-section-head > div .settings-section-eyebrow + h2 {
+  margin-left: 2px;
 }
 
 .settings-form-stack {
@@ -3190,7 +3209,7 @@ body::after {
     line-height: 1;
   }
 
-  .settings-hero-meter {
+  .settings-hero-state {
     min-width: 0;
     width: 100%;
   }
@@ -3307,23 +3326,28 @@ body::after {
   font-size: 16px;
   line-height: 1.85;
   border-width: 1px;
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.2);
+  padding: 15px 20px;
+  box-shadow:
+    0 18px 46px rgba(0, 0, 0, 0.18),
+    0 1px 0 rgba(255, 248, 226, 0.03) inset;
 }
 
 .qiyu {
-  border-left-width: 2px;
-  border-radius: 8px 8px 8px 3px;
+  border-left-width: 1px;
+  border-radius: 18px 18px 18px 6px;
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012)),
-    rgba(20, 18, 15, 0.76);
+    radial-gradient(circle at 16% 0%, rgba(255, 246, 216, 0.055), transparent 11rem),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.012)),
+    rgba(18, 16, 13, 0.8);
 }
 
 .user {
-  border-right-width: 2px;
-  border-radius: 8px 8px 3px 8px;
+  border-right-width: 1px;
+  border-radius: 18px 18px 6px 18px;
   background:
-    linear-gradient(145deg, rgba(215, 173, 91, 0.09), rgba(255, 255, 255, 0.012)),
-    rgba(34, 29, 22, 0.78);
+    radial-gradient(circle at 86% 0%, rgba(215, 173, 91, 0.12), transparent 10rem),
+    linear-gradient(145deg, rgba(215, 173, 91, 0.085), rgba(255, 255, 255, 0.014)),
+    rgba(30, 26, 20, 0.84);
 }
 
 .composer {
@@ -3425,17 +3449,18 @@ body::after {
   align-items: end;
   width: min(860px, 100%);
   margin: 20px auto 0;
-  padding: 6px;
-  border-radius: 24px;
-  border-color: rgba(228, 193, 126, 0.095);
+  padding: 5px;
+  border-radius: 28px;
+  border-color: rgba(228, 193, 126, 0.105);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.052), rgba(255, 255, 255, 0.014)),
-    linear-gradient(90deg, rgba(215, 173, 91, 0.055), transparent 28%),
-    rgba(8, 7, 6, 0.82);
+    radial-gradient(circle at 14% 0%, rgba(255, 238, 197, 0.075), transparent 12rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015)),
+    rgba(8, 7, 6, 0.86);
+  backdrop-filter: none;
   box-shadow:
-    0 26px 72px rgba(0, 0, 0, 0.36),
-    0 1px 0 rgba(255, 246, 216, 0.045) inset,
-    0 -1px 0 rgba(0, 0, 0, 0.34) inset;
+    0 30px 82px rgba(0, 0, 0, 0.36),
+    0 1px 0 rgba(255, 246, 216, 0.055) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.42) inset;
   transition:
     border-color 0.36s cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 0.36s cubic-bezier(0.16, 1, 0.3, 1),
@@ -3447,32 +3472,56 @@ body::after {
   position: absolute;
   inset: 1px;
   border-radius: inherit;
-  border: 1px solid rgba(255, 245, 220, 0.035);
+  border: 1px solid rgba(255, 245, 220, 0.04);
   pointer-events: none;
 }
 
 .composer:focus-within {
-  border-color: rgba(215, 173, 91, 0.19);
+  border-color: rgba(215, 173, 91, 0.24);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.062), rgba(255, 255, 255, 0.018)),
-    linear-gradient(90deg, rgba(215, 173, 91, 0.075), transparent 32%),
-    rgba(10, 8, 7, 0.88);
+    radial-gradient(circle at 18% 0%, rgba(255, 232, 177, 0.105), transparent 13rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02)),
+    rgba(10, 8, 7, 0.9);
   box-shadow:
-    0 28px 78px rgba(0, 0, 0, 0.4),
-    0 0 0 3px rgba(215, 173, 91, 0.03),
-    0 1px 0 rgba(255, 246, 216, 0.055) inset,
+    0 32px 88px rgba(0, 0, 0, 0.42),
+    0 0 0 3px rgba(215, 173, 91, 0.035),
+    0 1px 0 rgba(255, 246, 216, 0.065) inset,
     0 -1px 0 rgba(0, 0, 0, 0.34) inset;
+}
+
+.composer-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(2, 2, 1, 0.36), rgba(255, 255, 255, 0.018)),
+    rgba(5, 5, 4, 0.38);
+  box-shadow:
+    0 1px 0 rgba(255, 248, 226, 0.035),
+    inset 0 1px 8px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.composer-field::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 240, 202, 0.11), transparent);
+  pointer-events: none;
 }
 
 .composer-input {
   width: 100%;
   min-height: 44px;
   max-height: 132px;
-  padding: 12px 18px 10px;
+  padding: 13px 18px 11px;
   resize: none;
   overflow-y: auto;
   border: 0;
-  border-radius: 18px;
+  border-radius: 24px;
   background: transparent;
   color: var(--ink);
   box-shadow: none;
@@ -3492,15 +3541,47 @@ body::after {
 }
 
 .composer button {
-  min-height: 44px;
-  min-width: 86px;
-  padding: 0 22px;
-  border-radius: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  min-width: 104px;
+  padding: 0 9px 0 20px;
+  border-radius: 24px;
   align-self: end;
+  letter-spacing: 0.08em;
   transition:
     background 0.24s cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 0.24s cubic-bezier(0.16, 1, 0.3, 1),
     transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.send-label {
+  transform: translateY(1px);
+}
+
+.send-mark {
+  display: grid;
+  width: 31px;
+  height: 31px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(17, 14, 10, 0.16);
+  box-shadow:
+    0 1px 0 rgba(255, 248, 226, 0.14) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.12) inset;
+  font-size: 14px;
+  line-height: 1;
+  transition:
+    transform 0.24s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.composer button:hover:not(:disabled) .send-mark,
+.composer button:focus-visible .send-mark {
+  background: rgba(17, 14, 10, 0.22);
+  transform: translateX(1px) translateY(-1px);
 }
 
 .composer button:active:not(:disabled) {
@@ -3517,7 +3598,12 @@ body::after {
   .composer {
     width: 100%;
     margin-top: 14px;
-    border-radius: 20px;
+    border-radius: 22px;
+  }
+
+  .composer-field {
+    min-height: 42px;
+    border-radius: 18px;
   }
 
   .composer-input {
@@ -3528,9 +3614,16 @@ body::after {
 
   .composer button {
     min-height: 42px;
-    min-width: 72px;
-    padding: 0 16px;
-    border-radius: 16px;
+    min-width: 74px;
+    padding: 0 8px 0 14px;
+    border-radius: 18px;
+    gap: 6px;
+  }
+
+  .send-mark {
+    width: 25px;
+    height: 25px;
+    font-size: 12px;
   }
 }
 
@@ -3739,14 +3832,14 @@ body::after {
 /* Sidebar hover intent */
 .app-sidebar {
   transition:
-    width 0.62s cubic-bezier(0.22, 1, 0.36, 1),
-    background 0.52s cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 0.52s cubic-bezier(0.22, 1, 0.36, 1);
+    width 0.78s cubic-bezier(0.19, 1, 0.22, 1),
+    background 0.68s cubic-bezier(0.19, 1, 0.22, 1),
+    box-shadow 0.68s cubic-bezier(0.19, 1, 0.22, 1);
   transition-delay: 0ms, 0ms, 0ms;
 }
 
 .app-sidebar[data-expanded="true"] {
-  transition-delay: 180ms, 180ms, 180ms;
+  transition-delay: 80ms, 80ms, 80ms;
 }
 
 .app-sidebar:focus-within {
@@ -3765,7 +3858,7 @@ body::after {
 .app-sidebar[data-expanded="true"] .nav-label,
 .app-sidebar[data-expanded="true"] .nav-index,
 .app-sidebar[data-expanded="true"] .sidebar-context {
-  transition-delay: 300ms;
+  transition-delay: 380ms;
 }
 
 .app-sidebar:focus-within .brand-name,

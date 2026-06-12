@@ -38,7 +38,7 @@ test('sidebar expansion is gated by an explicit interaction state', async () => 
   assert.match(styles, /\.app-sidebar\[data-expanded="true"\]/);
   assert.doesNotMatch(styles, /\.app-sidebar:hover/);
   assert.match(layout, /bindSidebarHoverIntent/);
-  assert.match(layout, /SIDEBAR_HOVER_INTENT_DELAY_MS = 420/);
+  assert.match(layout, /SIDEBAR_HOVER_INTENT_DELAY_MS = 760/);
 });
 
 test('app metadata presents Qiyu as a quiet direct-chat app', async () => {
@@ -58,4 +58,15 @@ test('app metadata presents Qiyu as a quiet direct-chat app', async () => {
   assert.equal(manifest.icons.length, 2);
   assert.ok(manifest.shortcuts.some(shortcut => shortcut.url === '/chat'));
   assert.ok(manifest.shortcuts.some(shortcut => shortcut.url === '/settings'));
+});
+
+test('chat composer uses nested material structure instead of a bare input rectangle', async () => {
+  const chat = await readFile(new URL('src/screens/chat.js', root), 'utf8');
+  const styles = await readFile(new URL('src/styles.css', root), 'utf8');
+
+  assert.match(chat, /class="composer-field"/);
+  assert.match(chat, /class="send-mark"/);
+  assert.match(styles, /\.composer-field/);
+  assert.match(styles, /\.send-mark/);
+  assert.doesNotMatch(styles, /\.composer\s+textarea\s*\{[^}]*border:\s*1px/);
 });

@@ -1,4 +1,4 @@
-const SIDEBAR_HOVER_INTENT_DELAY_MS = 420;
+const SIDEBAR_HOVER_INTENT_DELAY_MS = 760;
 const SIDEBAR_CLOSE_GRACE_MS = 140;
 
 export function renderAppShell(contentHtml, currentPath) {
