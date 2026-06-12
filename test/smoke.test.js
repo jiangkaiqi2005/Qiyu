@@ -40,3 +40,22 @@ test('sidebar expansion is gated by an explicit interaction state', async () => 
   assert.match(layout, /bindSidebarHoverIntent/);
   assert.match(layout, /SIDEBAR_HOVER_INTENT_DELAY_MS = 420/);
 });
+
+test('app metadata presents Qiyu as a quiet direct-chat app', async () => {
+  const html = await readFile(new URL('index.html', root), 'utf8');
+  const manifest = JSON.parse(await readFile(new URL('public/manifest.webmanifest', root), 'utf8'));
+
+  assert.match(html, /<meta name="description" content="栖语是一间安静的深夜夜话空间/);
+  assert.match(html, /<meta name="apple-mobile-web-app-capable" content="yes">/);
+  assert.match(html, /<link rel="apple-touch-icon" href="\/public\/icons\/icon-192\.png">/);
+  assert.match(html, /<meta property="og:title" content="栖语">/);
+  assert.doesNotMatch(`${html}\n${manifest.description}`, /AI 伴侣/);
+
+  assert.equal(manifest.id, '/');
+  assert.equal(manifest.scope, '/');
+  assert.equal(manifest.start_url, '/chat');
+  assert.equal(manifest.theme_color, '#0b0a08');
+  assert.equal(manifest.icons.length, 2);
+  assert.ok(manifest.shortcuts.some(shortcut => shortcut.url === '/chat'));
+  assert.ok(manifest.shortcuts.some(shortcut => shortcut.url === '/settings'));
+});
