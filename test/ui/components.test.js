@@ -30,6 +30,9 @@ test('renderAppShell matches routes and injects developer mode', () => {
   assert.match(html, /关系中枢/);
   assert.doesNotMatch(html, /栖所/);
   assert.doesNotMatch(html, /初遇/);
+  assert.doesNotMatch(html, /data-nav-path="\/memory"/);
+  assert.doesNotMatch(html, />印记</);
+  assert.doesNotMatch(html, /印记与默契/);
   assert.match(html, /幻镜/); // Since dev mode is true
 
   delete globalThis.window;

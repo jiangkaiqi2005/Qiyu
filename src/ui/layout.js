@@ -6,7 +6,6 @@ export function renderAppShell(contentHtml, currentPath) {
     { path: '/chat', label: '夜话', icon: '话' },
     { path: '/history', label: '记录', icon: '录' },
     { path: '/settings', label: '默契', icon: '默' },
-    { path: '/memory', label: '印记', icon: '印' },
     { path: '/privacy', label: '封存', icon: '封' }
   ];
 
@@ -43,7 +42,7 @@ export function renderAppShell(contentHtml, currentPath) {
         <div class="sidebar-context" aria-hidden="true">
           <span class="context-kicker">关系中枢</span>
           <strong>今晚低声模式</strong>
-          <p>夜话、记录、印记与默契都在这里。需要时展开，不需要时安静退到边上。</p>
+          <p>夜话、记录、默契与边界都在这里。需要时展开，不需要时安静退到边上。</p>
         </div>
       </nav>
       <div class="app-content-wrapper">

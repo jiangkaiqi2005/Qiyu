@@ -1,4 +1,4 @@
-const CACHE_NAME = 'qiyu-app-shell-v22';
+const CACHE_NAME = 'qiyu-app-shell-v23';
 const DYNAMIC_CACHE_NAME = 'qiyu-dynamic-assets-v1';
 const FONT_CACHE_NAME = 'qiyu-fonts-v1';
 
