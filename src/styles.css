@@ -19,6 +19,12 @@
   --shadow-cozy: 0 8px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-glow: 0 0 24px rgba(223, 179, 85, 0.12);
   --app-viewport-height: 100dvh;
+  --motion-fast: 180ms;
+  --motion-base: 260ms;
+  --motion-slow: 420ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-breathe: cubic-bezier(0.37, 0, 0.63, 1);
   --z-background-glow: 0;
   --z-texture: 2;
   --z-sidebar: 10;
@@ -81,7 +87,7 @@ body::before {
   height: 130%;
   background: radial-gradient(circle at 35% 25%, rgba(223, 179, 85, 0.18), transparent 50rem);
   pointer-events: none;
-  animation: nocturnalBreath 20s ease-in-out infinite;
+  animation: nocturnalBreath 20s var(--ease-breathe) infinite;
   z-index: var(--z-background-glow);
 }
 
@@ -97,12 +103,16 @@ body::before {
   z-index: var(--z-skip-link);
   font-weight: bold;
   text-decoration: none;
-  transition: top 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateY(-140%);
+  transition:
+    transform var(--motion-base) var(--ease-emphasized),
+    box-shadow var(--motion-base) var(--ease-standard);
   box-shadow: 0 4px 12px rgba(223, 179, 85, 0.3);
 }
 
 .skip-link:focus {
   top: 20px;
+  transform: translateY(0);
 }
 
 /* Golden Focus Outline (WCAG AAA) */
@@ -226,7 +236,12 @@ body::before {
   font-family: inherit;
   font-size: 15px;
   text-align: left;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    background var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard),
+    color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-emphasized);
   position: relative;
   overflow: hidden;
 }
@@ -428,7 +443,11 @@ body::before {
   justify-content: space-around;
   align-items: center;
   padding: 4px 12px;
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    opacity var(--motion-slow) var(--ease-standard),
+    transform var(--motion-slow) var(--ease-emphasized),
+    background var(--motion-slow) var(--ease-standard),
+    border-color var(--motion-slow) var(--ease-standard);
   transform: translateY(100%);
   opacity: 0;
   visibility: hidden;
@@ -461,7 +480,9 @@ body::before {
   margin: 24px auto;
   width: 100%;
   animation: cardFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  transition:
+    border-color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard);
 }
 
 .card:hover {
@@ -679,7 +700,11 @@ body::before {
   color: var(--ink);
   font: inherit;
   font-size: 14px;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    background var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard),
+    color var(--motion-base) var(--ease-standard);
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
 }
 
@@ -724,7 +749,12 @@ body::before {
   font-family: inherit;
   font-size: 14px;
   font-weight: 500;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    background var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard),
+    color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-emphasized);
   letter-spacing: 0.5px;
 }
 
@@ -842,7 +872,10 @@ body::before {
   background: rgba(12, 11, 9, 0.8);
   border: 1px solid rgba(223, 179, 85, 0.15);
   position: relative;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    background var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard);
 }
 
 .toggle-track::before {
@@ -854,7 +887,10 @@ body::before {
   background: var(--muted);
   left: 3px;
   top: 3px;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    background var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-emphasized);
 }
 
 .toggle-input:checked + .toggle-track {
@@ -863,7 +899,7 @@ body::before {
 }
 
 .toggle-input:checked + .toggle-track::before {
-  left: 25px;
+  transform: translateX(22px);
   background: #110f0d;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
@@ -966,7 +1002,10 @@ body::before {
   overflow: hidden;
   opacity: 1;
   transform: translateY(0);
-  transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), max-width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    opacity var(--motion-slow) var(--ease-standard),
+    transform var(--motion-slow) var(--ease-emphasized),
+    max-width var(--motion-slow) var(--ease-standard);
   z-index: 2;
 }
 
@@ -990,7 +1029,11 @@ body::before {
   cursor: pointer;
   font-family: inherit;
   font-size: 13px;
-  transition: all 0.25s ease;
+  transition:
+    background var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard),
+    color var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-emphasized);
 }
 
 .nav-back-btn:hover {
@@ -1062,7 +1105,12 @@ body::before {
   color: var(--muted);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.25s;
+  transition:
+    background var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard),
+    color var(--motion-base) var(--ease-standard),
+    opacity var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-emphasized);
   opacity: 0.85;
   padding: 7px 14px;
   border-radius: 9px;
@@ -1209,7 +1257,10 @@ body::before {
   font-size: 13px;
   padding: 6px 16px;
   border-radius: 6px;
-  transition: all 0.25s ease;
+  transition:
+    background var(--motion-base) var(--ease-standard),
+    color var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-emphasized);
 }
 
 .reset:hover {
@@ -1457,7 +1508,11 @@ body::before {
 .history-item-card {
   border: 1px solid rgba(223, 179, 85, 0.1) !important;
   background: rgba(16, 15, 13, 0.3) !important;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  transition:
+    background var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-emphasized) !important;
 }
 
 .history-item-card:hover {

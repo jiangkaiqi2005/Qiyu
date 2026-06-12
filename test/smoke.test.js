@@ -22,3 +22,11 @@ test('app shell avoids inline script and event handlers under CSP', async () => 
   assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/i);
   assert.doesNotMatch(`${html}\n${router}`, /\son[a-z]+\s*=/i);
 });
+
+test('core stylesheet uses explicit motion tokens instead of broad transitions', async () => {
+  const styles = await readFile(new URL('src/styles.css', root), 'utf8');
+
+  assert.match(styles, /--motion-base:/);
+  assert.match(styles, /--ease-emphasized:/);
+  assert.doesNotMatch(styles, /transition:\s*all\b/);
+});
