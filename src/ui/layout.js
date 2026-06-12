@@ -16,9 +16,8 @@ export function renderAppShell(contentHtml, currentPath) {
 
   const navItems = routes
     .map(
-      (r, index) => `
+      (r) => `
     <button data-nav-path="${r.path}" class="nav-item ${currentPath === r.path ? 'active' : ''}" aria-current="${currentPath === r.path ? 'page' : 'false'}">
-      <span class="nav-index" aria-hidden="true">${String(index + 1).padStart(2, '0')}</span>
       <span class="nav-icon" aria-hidden="true">${r.icon}</span>
       <span class="nav-label">${r.label}</span>
     </button>

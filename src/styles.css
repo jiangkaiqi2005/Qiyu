@@ -3760,22 +3760,9 @@ body::after {
 
 .nav-item {
   display: grid;
-  grid-template-columns: 34px 0 1fr;
+  grid-template-columns: 34px 1fr;
   align-items: center;
   column-gap: 12px;
-}
-
-.nav-index {
-  grid-column: 1;
-  justify-self: center;
-  color: rgba(228, 193, 126, 0.42);
-  font: 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
-  letter-spacing: 0.08em;
-  opacity: 0;
-  transform: translateX(-4px);
-  transition:
-    opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1),
-    transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .nav-icon {
@@ -3785,28 +3772,22 @@ body::after {
 }
 
 .nav-label {
-  grid-column: 3;
+  grid-column: 2;
 }
 
 .app-sidebar[data-expanded="true"] .nav-item,
 .app-sidebar:focus-within .nav-item {
-  grid-template-columns: 28px 34px 1fr;
-}
-
-.app-sidebar[data-expanded="true"] .nav-index,
-.app-sidebar:focus-within .nav-index {
-  opacity: 1;
-  transform: translateX(0);
+  grid-template-columns: 34px 1fr;
 }
 
 .app-sidebar[data-expanded="true"] .nav-icon,
 .app-sidebar:focus-within .nav-icon {
-  grid-column: 2;
+  grid-column: 1;
 }
 
 .app-sidebar[data-expanded="true"] .nav-label,
 .app-sidebar:focus-within .nav-label {
-  grid-column: 3;
+  grid-column: 2;
 }
 
 .nav-item::before {
@@ -3848,7 +3829,6 @@ body::after {
 
 .app-sidebar .brand-name,
 .app-sidebar .nav-label,
-.app-sidebar .nav-index,
 .app-sidebar .sidebar-context {
   transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   transition-delay: 0ms;
@@ -3856,14 +3836,12 @@ body::after {
 
 .app-sidebar[data-expanded="true"] .brand-name,
 .app-sidebar[data-expanded="true"] .nav-label,
-.app-sidebar[data-expanded="true"] .nav-index,
 .app-sidebar[data-expanded="true"] .sidebar-context {
   transition-delay: 380ms;
 }
 
 .app-sidebar:focus-within .brand-name,
 .app-sidebar:focus-within .nav-label,
-.app-sidebar:focus-within .nav-index,
 .app-sidebar:focus-within .sidebar-context {
   transition-delay: 80ms;
 }
@@ -3874,15 +3852,13 @@ body::after {
   .app-sidebar:focus-within,
   .app-sidebar .brand-name,
   .app-sidebar .nav-label,
-  .app-sidebar .nav-index,
   .app-sidebar .sidebar-context {
     transition-delay: 0ms;
   }
 }
 
 @media (max-width: 768px) {
-  .sidebar-sheen,
-  .nav-index {
+  .sidebar-sheen {
     display: none;
   }
 
