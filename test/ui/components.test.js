@@ -204,6 +204,9 @@ test('bindSidebarHoverIntent waits before expanding the sidebar', () => {
     addEventListener(type, fn) {
       listeners.set(type, fn);
     },
+    getBoundingClientRect() {
+      return { left: 0 };
+    },
     matches() {
       return false;
     }
@@ -221,17 +224,52 @@ test('bindSidebarHoverIntent waits before expanding the sidebar', () => {
   };
 
   bindSidebarHoverIntent(container, timers);
-  listeners.get('pointerenter')({ pointerType: 'mouse' });
+  listeners.get('pointerenter')({ pointerType: 'mouse', clientX: 42 });
   listeners.get('pointerleave')({ pointerType: 'mouse' });
   runNextTimer();
 
   assert.equal(sidebar.dataset.expanded, undefined);
 
-  listeners.get('pointerenter')({ pointerType: 'mouse' });
-  assert.equal(runNextTimer(), 760);
+  listeners.get('pointerenter')({ pointerType: 'mouse', clientX: 42 });
+  assert.equal(runNextTimer(), 1040);
   assert.equal(sidebar.dataset.expanded, 'true');
 
   listeners.get('pointerleave')({ pointerType: 'mouse' });
-  assert.equal(runNextTimer(), 140);
+  assert.equal(runNextTimer(), 220);
+  assert.equal(sidebar.dataset.expanded, undefined);
+});
+
+test('bindSidebarHoverIntent ignores accidental passes across the sidebar edge', () => {
+  let timerWasScheduled = false;
+  const timers = {
+    setTimeout() {
+      timerWasScheduled = true;
+      return 1;
+    },
+    clearTimeout() {}
+  };
+  const listeners = new Map();
+  const sidebar = {
+    dataset: {},
+    addEventListener(type, fn) {
+      listeners.set(type, fn);
+    },
+    getBoundingClientRect() {
+      return { left: 0 };
+    },
+    matches() {
+      return false;
+    }
+  };
+  const container = {
+    querySelector(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    }
+  };
+
+  bindSidebarHoverIntent(container, timers);
+  listeners.get('pointerenter')({ pointerType: 'mouse', clientX: 86 });
+
+  assert.equal(timerWasScheduled, false);
   assert.equal(sidebar.dataset.expanded, undefined);
 });

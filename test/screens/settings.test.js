@@ -154,8 +154,10 @@ test('settings screen uses quiet product language instead of dashboard labels', 
   assert.match(container.innerHTML, /settings-hero-state/);
   assert.match(container.innerHTML, /settings-section-eyebrow/);
   assert.match(container.innerHTML, /模型接入/);
+  assert.match(container.innerHTML, /本地上下文/);
   assert.doesNotMatch(container.innerHTML, /calibration|night mode/);
   assert.doesNotMatch(container.innerHTML, /settings-section-head[^>]*>\s*<span>0[1-4]<\/span>/);
+  assert.doesNotMatch(container.innerHTML, /记忆功能|印记/);
 
   delete globalThis.window;
   delete globalThis.document;

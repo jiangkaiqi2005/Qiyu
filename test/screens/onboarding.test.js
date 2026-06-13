@@ -85,6 +85,9 @@ test('onboarding screen transitions and state updates', async () => {
   assert.match(container.innerHTML, /step-rail/);
   assert.match(container.innerHTML, /API/);
   assert.match(container.innerHTML, /apiUrl/);
+  assert.doesNotMatch(container.innerHTML, /<span>0[1-9]<\/span>/);
+  assert.doesNotMatch(container.innerHTML, />记忆</);
+  assert.doesNotMatch(container.innerHTML, /印记/);
 
   // Trigger next step transitions
   const nextListener = listeners['.next-btn:click'];
@@ -106,6 +109,94 @@ test('onboarding screen transitions and state updates', async () => {
   const prefs = JSON.parse(savedItems['qiyu_preferences']);
   assert.equal(prefs.onboardingState, 'completed');
   assert.equal(prefs.userName, '林深');
+
+  delete globalThis.window;
+  delete globalThis.document;
+  delete globalThis.fetch;
+});
+
+test('onboarding frames local context as a privacy boundary instead of a memory feature', async () => {
+  let savedItems = {};
+  let contentHtml = '';
+  const listeners = {};
+
+  globalThis.window = {
+    qiyuCsrfToken: 'mock-csrf',
+    location: { pathname: '/onboarding' },
+    addEventListener() {},
+    localStorage: {
+      getItem(key) {
+        return savedItems[key] || null;
+      },
+      setItem(key, val) {
+        savedItems[key] = val;
+      }
+    }
+  };
+
+  globalThis.document = {
+    createElement() {
+      return {
+        innerHTML: '',
+        get firstChild() {
+          return {
+            classList: { add() {} }
+          };
+        }
+      };
+    }
+  };
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ csrfToken: 'mock-csrf', success: true })
+  });
+
+  const container = {
+    innerHTML: '',
+    querySelector(selector) {
+      if (selector === '.onboarding-content') {
+        return {
+          get innerHTML() {
+            return contentHtml;
+          },
+          set innerHTML(val) {
+            contentHtml = val;
+          }
+        };
+      }
+      return {
+        value: '',
+        checked: true,
+        style: { display: 'none', visibility: 'visible' },
+        innerText: '',
+        addEventListener(event, fn) {
+          listeners[selector + ':' + event] = fn;
+        },
+        querySelectorAll() { return []; }
+      };
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+
+  const router = {
+    navigate() {}
+  };
+
+  render(container, { router });
+
+  const nextListener = listeners['.next-btn:click'];
+  await nextListener();
+  await nextListener();
+  await nextListener();
+  await nextListener();
+
+  assert.match(contentHtml, /本地上下文/);
+  assert.match(contentHtml, /边界/);
+  assert.doesNotMatch(contentHtml, /印记/);
+  assert.doesNotMatch(contentHtml, /记忆功能|记住少量本地偏好|本地记住少量偏好/);
 
   delete globalThis.window;
   delete globalThis.document;

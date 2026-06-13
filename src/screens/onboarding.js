@@ -127,18 +127,18 @@ export function render(container, context) {
     if (currentStep === 5) {
       return `
         <div class="setup-step">
-          <span class="setup-kicker">local only</span>
-          <h2 id="step-title-5">是否记住少量本地偏好</h2>
-          <p class="setup-copy">如果你愿意，栖语会在本机浏览器里记住一些偏好和事实，让之后的夜话少一点重复确认。</p>
+          <span class="setup-kicker">local context</span>
+          <h2 id="step-title-5">是否允许本地上下文参与</h2>
+          <p class="setup-copy">如果你愿意，栖语会把少量偏好和事实留在本机浏览器里，让之后的夜话少一点重复确认。</p>
         </div>
         <p class="setup-privacy-note">
-          这些内容只保存在这台设备的浏览器本地，不上传到中心化数据库。你可以随时在“印记”里查看、隐藏或清空。
+          这些内容只保存在这台设备的浏览器本地，不上传到中心化数据库。你可以随时在默契里调整本地上下文边界。
         </p>
         <div class="setup-toggle-row">
           ${renderToggle({
             name: 'memoryConsent',
             checked: prefs.memoryConsent,
-            label: '允许本地记住少量偏好',
+            label: '允许本地上下文参与夜话',
             attrs: 'aria-labelledby="step-title-5"'
           })}
         </div>
@@ -198,11 +198,11 @@ export function render(container, context) {
           </div>
         </div>
         <ol>
-          <li class="step-dot active"><span>01</span><strong>引擎</strong></li>
-          <li class="step-dot"><span>02</span><strong>称呼</strong></li>
-          <li class="step-dot"><span>03</span><strong>作息</strong></li>
-          <li class="step-dot"><span>04</span><strong>脾气</strong></li>
-          <li class="step-dot"><span>05</span><strong>记忆</strong></li>
+          <li class="step-dot active"><span>模型</span><strong>引擎</strong></li>
+          <li class="step-dot"><span>名字</span><strong>称呼</strong></li>
+          <li class="step-dot"><span>时间</span><strong>作息</strong></li>
+          <li class="step-dot"><span>语气</span><strong>脾气</strong></li>
+          <li class="step-dot"><span>边界</span><strong>上下文</strong></li>
         </ol>
       </aside>
 

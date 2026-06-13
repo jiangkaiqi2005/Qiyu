@@ -102,8 +102,8 @@ export function render(container, context) {
 
           ${renderFieldRow({
             name: 'memoryConsent',
-            label: '私语记忆功能',
-            description: '允许栖语在浏览器本地保存少量偏好与事实。',
+            label: '本地上下文边界',
+            description: '允许栖语在浏览器本地保存少量偏好与事实，用于之后的夜话连续性。',
             controlHtml: renderToggle({
               name: 'memoryConsent',
               checked: prefs.memoryConsent
@@ -219,12 +219,12 @@ export function render(container, context) {
         </div>
         
         <p class="settings-section-copy">
-          管理你和栖语的本地私密印记。你可以安全地导出或将其彻底归于虚无。
+          管理你和栖语的本地上下文。你可以安全地导出，或在需要时彻底清空。
         </p>
 
         <div class="data-action-grid">
           ${renderButton({ label: '导出昨夜私语 (JSON)', variant: 'normal', className: 'export-data-btn settings-action-btn' })}
-          ${renderButton({ label: '遗忘所有提取的印记', variant: 'danger', className: 'clear-memories-btn settings-action-btn' })}
+          ${renderButton({ label: '清空本地上下文', variant: 'danger', className: 'clear-memories-btn settings-action-btn' })}
           ${renderButton({ label: '抹去深夜相遇痕迹', variant: 'danger', className: 'clear-history-btn settings-action-btn' })}
         </div>
       </section>
@@ -618,18 +618,18 @@ export function render(container, context) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `qiyu-whispers-imprints-${Date.now()}.json`;
+    a.download = `qiyu-local-context-${Date.now()}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    showNotification('success', '昨夜私语印记数据已成功导出为备份 JSON。');
+    showNotification('success', '本地上下文已成功导出为备份 JSON。');
   });
 
   clearMemoriesBtn.addEventListener('click', () => {
-    if (confirm('确认遗忘我们所有的默契印记事实吗？这将无法找回。')) {
+    if (confirm('确认清空所有本地上下文事实吗？这将无法找回。')) {
       state.memories = [];
       saveBrowserState(storage, state);
-      showNotification('success', '碎念事实已彻底消散。');
+      showNotification('success', '本地上下文已清空。');
     }
   });
 

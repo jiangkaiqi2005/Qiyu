@@ -1,5 +1,6 @@
-const SIDEBAR_HOVER_INTENT_DELAY_MS = 760;
-const SIDEBAR_CLOSE_GRACE_MS = 140;
+const SIDEBAR_HOVER_INTENT_DELAY_MS = 1040;
+const SIDEBAR_CLOSE_GRACE_MS = 220;
+const SIDEBAR_EDGE_INTENT_PX = 72;
 
 export function renderAppShell(contentHtml, currentPath) {
   const routes = [
@@ -93,6 +94,10 @@ export function bindSidebarHoverIntent(container, timers = globalThis) {
 
   const scheduleOpen = (event) => {
     if (event.pointerType === 'touch') return;
+    if (typeof event.clientX === 'number' && typeof sidebar.getBoundingClientRect === 'function') {
+      const rect = sidebar.getBoundingClientRect();
+      if (event.clientX - rect.left > SIDEBAR_EDGE_INTENT_PX) return;
+    }
     pointerInside = true;
     clearTimer(closeTimer);
     clearTimer(openTimer);

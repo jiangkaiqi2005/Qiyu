@@ -38,7 +38,8 @@ test('sidebar expansion is gated by an explicit interaction state', async () => 
   assert.match(styles, /\.app-sidebar\[data-expanded="true"\]/);
   assert.doesNotMatch(styles, /\.app-sidebar:hover/);
   assert.match(layout, /bindSidebarHoverIntent/);
-  assert.match(layout, /SIDEBAR_HOVER_INTENT_DELAY_MS = 760/);
+  assert.match(layout, /SIDEBAR_HOVER_INTENT_DELAY_MS = 1040/);
+  assert.match(layout, /SIDEBAR_EDGE_INTENT_PX = 72/);
 });
 
 test('app metadata presents Qiyu as a quiet direct-chat app', async () => {
