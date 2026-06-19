@@ -51,6 +51,19 @@ test('sidebar expansion is gated by an explicit interaction state', async () => 
   assert.match(layout, /SIDEBAR_HOVER_INTENT_DELAY_MS = 1040/);
 });
 
+test('app shell presents presence as a warm night lamp instead of dashboard online green', async () => {
+  const styles = await readFile(new URL('src/styles.css', root), 'utf8');
+  const layout = await readFile(new URL('src/ui/layout.js', root), 'utf8');
+
+  assert.match(layout, /夜灯已亮/);
+  assert.doesNotMatch(layout, /深夜在线/);
+  assert.match(styles, /--presence-light:/);
+  assert.doesNotMatch(
+    styles,
+    /\.status-indicator\.online\s*\{[^}]*background:\s*var\(--success\)/s
+  );
+});
+
 test('app metadata presents Qiyu as a quiet direct-chat app', async () => {
   const html = await readFile(new URL('index.html', root), 'utf8');
   const manifest = JSON.parse(await readFile(new URL('public/manifest.webmanifest', root), 'utf8'));

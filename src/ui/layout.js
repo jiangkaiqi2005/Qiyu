@@ -84,7 +84,7 @@ export function renderAppShell(contentHtml, currentPath) {
           </div>
           <div class="header-status">
             <span class="status-indicator online"></span>
-            <span class="status-text">深夜在线</span>
+            <span class="status-text">夜灯已亮</span>
           </div>
         </header>
         <main id="main-content" class="app-main-content" tabindex="-1">

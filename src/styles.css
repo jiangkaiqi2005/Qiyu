@@ -9,6 +9,8 @@
   --line: rgba(223, 179, 85, 0.15);
   --accent: #dfb355;
   --accent-glow: rgba(223, 179, 85, 0.35);
+  --presence-light: #e0b75f;
+  --presence-glow: rgba(224, 183, 95, 0.34);
   --user: #312b21;
   --success: #3ab77d;
   --warning: #dca33c;
@@ -402,8 +404,12 @@ body::before {
 }
 
 .status-indicator.online {
-  background: var(--success);
-  box-shadow: 0 0 10px var(--success), 0 0 4px var(--success);
+  background:
+    radial-gradient(circle at 35% 28%, #fff2c7 0 16%, transparent 17%),
+    var(--presence-light);
+  box-shadow:
+    0 0 12px var(--presence-glow),
+    0 0 4px rgba(255, 238, 203, 0.42);
 }
 
 .status-text {
