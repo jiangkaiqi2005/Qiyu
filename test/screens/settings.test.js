@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { render } from '../../src/screens/settings.js';
+
+const root = new URL('../../', import.meta.url);
 
 function installWindow(savedItems = {}) {
   globalThis.window = {
@@ -166,6 +169,22 @@ test('settings screen uses quiet product language instead of dashboard labels', 
   delete globalThis.window;
   delete globalThis.document;
   delete globalThis.fetch;
+});
+
+test('settings api health badge uses css state classes instead of inline dashboard colors', async () => {
+  const settingsSource = await readFile(new URL('src/screens/settings.js', root), 'utf8');
+  const stylesSource = await readFile(new URL('src/styles.css', root), 'utf8');
+
+  assert.doesNotMatch(
+    settingsSource,
+    /#94a3b8|#eab308|#3b82f6|#22c55e|#ef4444|statusBadge\.style\.(color|backgroundColor|border)/
+  );
+  assert.match(settingsSource, /status-badge-connected/);
+  assert.match(settingsSource, /status-badge-ready/);
+  assert.match(settingsSource, /status-badge-fallback/);
+  assert.match(stylesSource, /\.status-badge-connected/);
+  assert.match(stylesSource, /\.status-badge-ready/);
+  assert.match(stylesSource, /\.status-badge-fallback/);
 });
 
 test('settings screen explains that masked api keys cannot be revealed from the eye toggle', async () => {

@@ -16,9 +16,31 @@ import {
 } from '../ui/provider-presets.js';
 
 const MASKED_API_KEY = '••••••••';
+const STATUS_BADGE_CLASSES = [
+  'status-badge-muted',
+  'status-badge-pending',
+  'status-badge-connected',
+  'status-badge-ready',
+  'status-badge-fallback'
+];
 
 function isMaskedApiKeyValue(value) {
   return String(value || '').trim() === MASKED_API_KEY;
+}
+
+function setStatusBadgeTone(element, toneClass) {
+  if (!element) return;
+  if (
+    element.classList &&
+    typeof element.classList.remove === 'function' &&
+    typeof element.classList.add === 'function'
+  ) {
+    element.classList.remove(...STATUS_BADGE_CLASSES);
+    element.classList.add(toneClass);
+    return;
+  }
+
+  element.className = ['status-badge', toneClass].join(' ');
 }
 
 export function render(container, context) {
@@ -131,7 +153,7 @@ export function render(container, context) {
           <div class="ai-status-card">
             <div class="status-row">
               <strong>连接状态</strong>
-              <span class="status-badge">载入中...</span>
+              <span class="status-badge status-badge-muted">载入中...</span>
             </div>
             <div class="env-config-notice notice notice-warning">
               <span class="notice-icon" aria-hidden="true">注意</span>
@@ -319,31 +341,24 @@ export function render(container, context) {
     }
 
     let statusText = '未配置';
-    let badgeColor = '#94a3b8'; // gray
-    let badgeBg = 'rgba(148, 163, 184, 0.1)';
+    let statusTone = 'status-badge-muted';
 
     if (status === 'configured_untested') {
       statusText = '已配置但未测试';
-      badgeColor = '#eab308'; // yellow
-      badgeBg = 'rgba(234, 179, 8, 0.1)';
+      statusTone = 'status-badge-pending';
     } else if (status === 'provider_connected') {
       statusText = '模型已连接';
-      badgeColor = '#3b82f6'; // blue
-      badgeBg = 'rgba(59, 130, 246, 0.1)';
+      statusTone = 'status-badge-connected';
     } else if (status === 'chat_connected') {
       statusText = '栖语回复测试通过';
-      badgeColor = '#22c55e'; // green
-      badgeBg = 'rgba(34, 197, 94, 0.1)';
+      statusTone = 'status-badge-ready';
     } else if (status === 'chat_fallback') {
       statusText = '最近一次聊天回退本地';
-      badgeColor = '#ef4444'; // red
-      badgeBg = 'rgba(239, 68, 68, 0.1)';
+      statusTone = 'status-badge-fallback';
     }
 
     statusBadge.innerText = statusText;
-    statusBadge.style.color = badgeColor;
-    statusBadge.style.backgroundColor = badgeBg;
-    statusBadge.style.border = `1px solid ${badgeColor}33`;
+    setStatusBadgeTone(statusBadge, statusTone);
 
     if (config.hasLlm || config.apiUrl) {
       if (diagSummary) diagSummary.style.display = 'flex';
