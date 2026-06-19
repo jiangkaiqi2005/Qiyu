@@ -1433,12 +1433,44 @@ body::before {
 
 /* Reduced Motion preferences */
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation-delay: 0s !important;
     animation-duration: 0s !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0s !important;
     scroll-behavior: auto !important;
+  }
+
+  body::before,
+  .app-main-content,
+  .card,
+  .route-loading-line::after,
+  .loading-dots::after,
+  .qiyu,
+  .user,
+  .typing-dot {
+    animation: none !important;
+  }
+
+  .app-main-content,
+  .card,
+  .qiyu,
+  .user {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+
+  .route-loading-line::after {
+    width: 100%;
+    background: rgba(228, 193, 126, 0.42);
+    transform: none !important;
+  }
+
+  .loading-dots::after {
+    content: "...";
   }
 }
 

@@ -31,6 +31,16 @@ test('core stylesheet uses explicit motion tokens instead of broad transitions',
   assert.doesNotMatch(styles, /transition:\s*all\b/);
 });
 
+test('core stylesheet quiets decorative motion when reduced motion is requested', async () => {
+  const styles = await readFile(new URL('src/styles.css', root), 'utf8');
+
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*body::before[\s\S]*animation: none/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.app-main-content[\s\S]*animation: none/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.card[\s\S]*animation: none/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.route-loading-line::after[\s\S]*animation: none/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.loading-dots::after[\s\S]*animation: none/);
+});
+
 test('sidebar expansion is gated by an explicit interaction state', async () => {
   const styles = await readFile(new URL('src/styles.css', root), 'utf8');
   const layout = await readFile(new URL('src/ui/layout.js', root), 'utf8');
