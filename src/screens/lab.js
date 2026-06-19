@@ -9,13 +9,13 @@ export function render(container, context) {
     <section class="lab-workbench" aria-labelledby="lab-title">
       <div class="archive-hero lab-hero">
         <div>
-          <span class="archive-kicker">quality lab</span>
+          <span class="archive-kicker">质量观察</span>
           <h1 id="lab-title">质量实验室</h1>
           <p>开发者模式下的回归观察台。用黄金测试集检查栖语是否仍保持克制、边界和夜话质感。</p>
         </div>
         <div class="archive-stamp" aria-hidden="true">
           <span>QA</span>
-          <strong>dev only</strong>
+          <strong>仅开发模式</strong>
         </div>
       </div>
 
@@ -43,7 +43,7 @@ export function render(container, context) {
 
       <div class="eval-results-container">
         <div class="lab-empty-state">
-          <span>ready</span>
+          <span>待运行</span>
           <p>点击上方按钮开始执行系统回归基线测试用例。</p>
         </div>
       </div>

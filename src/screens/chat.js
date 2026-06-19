@@ -9,6 +9,7 @@ import {
 import { loadPreferences } from '../qiyu/preferences.js';
 import { renderBubble } from '../ui/render.js';
 import { sendChatMessage } from '../ui/chat-api.js';
+import { confirmAction } from '../ui/confirm-dialog.js';
 import { calculateTextWaitMs, normalizeReplyMessages } from '../qiyu/reply-delivery.js';
 
 export function render(container, context) {
@@ -305,9 +306,14 @@ export function render(container, context) {
   });
 
   if (resetBtn) {
-    resetBtn.addEventListener('click', () => {
+    resetBtn.addEventListener('click', async () => {
       if (isTyping) return;
-      if (confirm('确认清空当前对话上下文吗？这不会删除您的历史归档记录。')) {
+      const confirmed = await confirmAction({
+        title: '清空当前上下文',
+        message: '这会清空此刻的对话上下文，不会删除历史归档记录。',
+        confirmLabel: '清空'
+      });
+      if (confirmed) {
         state.turns = [];
         saveBrowserState(storage, state);
         msgContainer.innerHTML = '';

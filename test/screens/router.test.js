@@ -73,7 +73,11 @@ test('router matches routes and falls back gracefully', async () => {
   assert.doesNotMatch(container.innerHTML, /style=/);
 
   // Test navigation
-  await router.navigate('/chat');
+  container.innerHTML = '<div class="app-shell-container">旧侧栏仍在</div>';
+  const navigation = router.navigate('/chat');
+  assert.match(container.innerHTML, /旧侧栏仍在/);
+  assert.doesNotMatch(container.innerHTML, /正在把夜色铺开/);
+  await navigation;
   assert.equal(window.location.pathname, '/chat');
   assert.match(container.innerHTML, /栖语/);
   assert.equal(document.title, '夜话 - 栖语');

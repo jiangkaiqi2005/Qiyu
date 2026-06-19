@@ -184,6 +184,61 @@ test('bindNavigation can dismiss a wrapper when the notice asks for wrapper scop
   assert.equal(notice.removed, false);
 });
 
+test('bindNavigation carries a stable expanded sidebar state across sidebar route clicks', () => {
+  globalThis.window = {
+    localStorage: {
+      getItem() {
+        return null;
+      }
+    }
+  };
+
+  let navClickHandler;
+  let navigatedPath = null;
+  const sidebar = {
+    dataset: { expanded: 'true' },
+    addEventListener() {},
+    matches(selector) {
+      return selector === ':hover';
+    }
+  };
+  const navButton = {
+    dataset: { navPath: '/history' },
+    addEventListener(type, handler) {
+      if (type === 'click') {
+        navClickHandler = handler;
+      }
+    },
+    closest(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    }
+  };
+  const container = {
+    addEventListener() {},
+    querySelector(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    },
+    querySelectorAll(selector) {
+      return selector === '[data-nav-path]' ? [navButton] : [];
+    }
+  };
+
+  bindNavigation(container, {
+    navigate(path) {
+      navigatedPath = path;
+    }
+  });
+
+  navClickHandler({ preventDefault() {} });
+  const nextHtml = renderAppShell('<div>记录</div>', '/history');
+
+  assert.equal(navigatedPath, '/history');
+  assert.match(nextHtml, /class="app-sidebar"[^>]*data-expanded="true"/);
+  assert.match(nextHtml, /class="app-sidebar"[^>]*data-restored="true"/);
+
+  delete globalThis.window;
+});
+
 test('bindSidebarHoverIntent waits before expanding the sidebar', () => {
   let nextTimerId = 1;
   const pendingTimers = new Map();
@@ -239,11 +294,11 @@ test('bindSidebarHoverIntent waits before expanding the sidebar', () => {
   assert.equal(sidebar.dataset.expanded, undefined);
 });
 
-test('bindSidebarHoverIntent ignores accidental passes across the sidebar edge', () => {
-  let timerWasScheduled = false;
+test('bindSidebarHoverIntent expands when the pointer rests inside the collapsed sidebar', () => {
+  let scheduledTimer = null;
   const timers = {
-    setTimeout() {
-      timerWasScheduled = true;
+    setTimeout(fn, delay) {
+      scheduledTimer = { fn, delay };
       return 1;
     },
     clearTimeout() {}
@@ -270,6 +325,46 @@ test('bindSidebarHoverIntent ignores accidental passes across the sidebar edge',
   bindSidebarHoverIntent(container, timers);
   listeners.get('pointerenter')({ pointerType: 'mouse', clientX: 86 });
 
-  assert.equal(timerWasScheduled, false);
+  assert.equal(scheduledTimer.delay, 1040);
+  scheduledTimer.fn();
+  assert.equal(sidebar.dataset.expanded, 'true');
+});
+
+test('bindSidebarHoverIntent cancels expansion when the pointer only passes through', () => {
+  let scheduledTimer = null;
+  const timers = {
+    setTimeout(fn, delay) {
+      scheduledTimer = { fn, delay };
+      return 1;
+    },
+    clearTimeout() {
+      scheduledTimer = null;
+    }
+  };
+  const listeners = new Map();
+  const sidebar = {
+    dataset: {},
+    addEventListener(type, fn) {
+      listeners.set(type, fn);
+    },
+    getBoundingClientRect() {
+      return { left: 0 };
+    },
+    matches() {
+      return false;
+    }
+  };
+  const container = {
+    querySelector(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    }
+  };
+
+  bindSidebarHoverIntent(container, timers);
+  listeners.get('pointerenter')({ pointerType: 'mouse', clientX: 86 });
+  listeners.get('pointerleave')({ pointerType: 'mouse' });
+
+  assert.equal(scheduledTimer.delay, 220);
+  scheduledTimer.fn();
   assert.equal(sidebar.dataset.expanded, undefined);
 });

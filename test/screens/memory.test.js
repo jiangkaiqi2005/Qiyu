@@ -79,15 +79,15 @@ test('memory screen renders grouped categories and details', () => {
   };
 
   render(container, { router });
-  assert.match(container.innerHTML, /本地印记/);
+  assert.match(container.innerHTML, /本地上下文/);
   assert.match(container.innerHTML, /user\.pet/);
   assert.match(container.innerHTML, /drink\.milkTea/);
   assert.match(container.innerHTML, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(container.innerHTML, /原文&lt;script&gt;alert\(2\)&lt;\/script&gt;/);
   assert.doesNotMatch(container.innerHTML, /<img src=x onerror=alert\(1\)>/);
   assert.doesNotMatch(container.innerHTML, /<script>alert\(2\)<\/script>/);
-  assert.doesNotMatch(container.innerHTML, /手动镌刻印记/);
-  assert.doesNotMatch(container.innerHTML, /手动添加新对话印记事实/);
+  assert.doesNotMatch(container.innerHTML, /印记|镌刻|记忆功能/);
+  assert.doesNotMatch(container.innerHTML, /local archive|stored locally|empty archive/);
 
   delete globalThis.window;
   delete globalThis.document;

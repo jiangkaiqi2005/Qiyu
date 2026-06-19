@@ -36,10 +36,9 @@ test('sidebar expansion is gated by an explicit interaction state', async () => 
   const layout = await readFile(new URL('src/ui/layout.js', root), 'utf8');
 
   assert.match(styles, /\.app-sidebar\[data-expanded="true"\]/);
-  assert.doesNotMatch(styles, /\.app-sidebar:hover/);
+  assert.match(styles, /\.app-sidebar:hover/);
   assert.match(layout, /bindSidebarHoverIntent/);
   assert.match(layout, /SIDEBAR_HOVER_INTENT_DELAY_MS = 1040/);
-  assert.match(layout, /SIDEBAR_EDGE_INTENT_PX = 72/);
 });
 
 test('app metadata presents Qiyu as a quiet direct-chat app', async () => {
@@ -70,4 +69,15 @@ test('chat composer uses nested material structure instead of a bare input recta
   assert.match(styles, /\.composer-field/);
   assert.match(styles, /\.send-mark/);
   assert.doesNotMatch(styles, /\.composer\s+textarea\s*\{[^}]*border:\s*1px/);
+});
+
+test('destructive frontend actions use the shared confirmation dialog', async () => {
+  const chat = await readFile(new URL('src/screens/chat.js', root), 'utf8');
+  const history = await readFile(new URL('src/screens/history.js', root), 'utf8');
+  const settings = await readFile(new URL('src/screens/settings.js', root), 'utf8');
+  const confirmDialog = await readFile(new URL('src/ui/confirm-dialog.js', root), 'utf8');
+
+  assert.doesNotMatch(`${chat}\n${history}\n${settings}`, /\bconfirm\s*\(/);
+  assert.match(`${chat}\n${history}\n${settings}`, /confirmAction/);
+  assert.match(confirmDialog, /export function confirmAction/);
 });

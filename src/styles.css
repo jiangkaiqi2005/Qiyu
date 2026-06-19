@@ -168,6 +168,7 @@ body::before {
 }
 
 .app-sidebar[data-expanded="true"],
+.app-sidebar:hover,
 .app-sidebar:focus-within {
   width: 280px;
   background:
@@ -210,6 +211,7 @@ body::before {
 }
 
 .app-sidebar[data-expanded="true"] .brand-name,
+.app-sidebar:hover .brand-name,
 .app-sidebar:focus-within .brand-name {
   opacity: 1;
   transform: translateX(0);
@@ -293,6 +295,7 @@ body::before {
 }
 
 .app-sidebar[data-expanded="true"] .nav-label,
+.app-sidebar:hover .nav-label,
 .app-sidebar:focus-within .nav-label,
 .app-bottom-nav .nav-label {
   opacity: 1;
@@ -314,6 +317,7 @@ body::before {
 }
 
 .app-sidebar[data-expanded="true"] .sidebar-context,
+.app-sidebar:hover .sidebar-context,
 .app-sidebar:focus-within .sidebar-context {
   opacity: 1;
   transform: translateY(0);
@@ -795,6 +799,97 @@ body::before {
   border-color: var(--error);
   color: #fff;
   box-shadow: 0 0 16px rgba(201, 75, 75, 0.2);
+}
+
+.confirm-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(215, 173, 91, 0.08), transparent 24rem),
+    rgba(4, 4, 3, 0.66);
+  backdrop-filter: blur(18px) saturate(116%);
+  opacity: 0;
+  transition: opacity 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.confirm-dialog-layer[data-state="open"] {
+  opacity: 1;
+}
+
+.confirm-dialog-layer[data-state="closing"] {
+  opacity: 0;
+}
+
+.confirm-dialog {
+  position: relative;
+  width: min(100%, 420px);
+  padding: 22px;
+  overflow: hidden;
+  border: 1px solid rgba(228, 193, 126, 0.14);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 248, 226, 0.06), rgba(255, 248, 226, 0.014)),
+    rgba(14, 12, 10, 0.92);
+  box-shadow:
+    0 32px 96px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 248, 226, 0.08);
+  transform: translateY(10px) scale(0.985);
+  transition: transform 0.32s cubic-bezier(0.18, 1, 0.21, 1);
+}
+
+.confirm-dialog-layer[data-state="open"] .confirm-dialog {
+  transform: translateY(0) scale(1);
+}
+
+.confirm-dialog-mark {
+  width: 32px;
+  height: 3px;
+  margin-bottom: 18px;
+  border-radius: 999px;
+  background: rgba(215, 173, 91, 0.7);
+  box-shadow: 0 0 20px rgba(215, 173, 91, 0.18);
+}
+
+.confirm-dialog-layer-danger .confirm-dialog-mark {
+  background: rgba(201, 75, 75, 0.82);
+  box-shadow: 0 0 20px rgba(201, 75, 75, 0.2);
+}
+
+.confirm-dialog-copy h2 {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.confirm-dialog-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.confirm-dialog-actions .btn {
+  min-width: 84px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm-dialog-layer,
+  .confirm-dialog {
+    transition: none;
+  }
 }
 
 /* Global Disabled & Loading States */
@@ -1616,6 +1711,7 @@ body::after {
 }
 
 .app-sidebar[data-expanded="true"],
+.app-sidebar:hover,
 .app-sidebar:focus-within {
   width: 264px;
   background:
@@ -3783,16 +3879,19 @@ body::after {
 }
 
 .app-sidebar[data-expanded="true"] .nav-item,
+.app-sidebar:hover .nav-item,
 .app-sidebar:focus-within .nav-item {
   grid-template-columns: 34px 1fr;
 }
 
 .app-sidebar[data-expanded="true"] .nav-icon,
+.app-sidebar:hover .nav-icon,
 .app-sidebar:focus-within .nav-icon {
   grid-column: 1;
 }
 
 .app-sidebar[data-expanded="true"] .nav-label,
+.app-sidebar:hover .nav-label,
 .app-sidebar:focus-within .nav-label {
   grid-column: 2;
 }
@@ -3826,7 +3925,8 @@ body::after {
   transition-delay: 0ms, 0ms, 0ms;
 }
 
-.app-sidebar[data-expanded="true"] {
+.app-sidebar[data-expanded="true"],
+.app-sidebar:hover {
   transition-delay: 120ms, 120ms, 120ms;
 }
 
@@ -3843,7 +3943,10 @@ body::after {
 
 .app-sidebar[data-expanded="true"] .brand-name,
 .app-sidebar[data-expanded="true"] .nav-label,
-.app-sidebar[data-expanded="true"] .sidebar-context {
+.app-sidebar[data-expanded="true"] .sidebar-context,
+.app-sidebar:hover .brand-name,
+.app-sidebar:hover .nav-label,
+.app-sidebar:hover .sidebar-context {
   transition-delay: 480ms;
 }
 
@@ -3853,9 +3956,18 @@ body::after {
   transition-delay: 80ms;
 }
 
+.app-sidebar[data-restored="true"],
+.app-sidebar[data-restored="true"] .brand-name,
+.app-sidebar[data-restored="true"] .nav-label,
+.app-sidebar[data-restored="true"] .sidebar-context {
+  transition-duration: 0ms !important;
+  transition-delay: 0ms !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .app-sidebar,
   .app-sidebar[data-expanded="true"],
+  .app-sidebar:hover,
   .app-sidebar:focus-within,
   .app-sidebar .brand-name,
   .app-sidebar .nav-label,

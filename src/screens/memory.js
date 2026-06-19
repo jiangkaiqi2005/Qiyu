@@ -38,8 +38,8 @@ export function render(container, context) {
     if (filtered.length === 0) {
       return `
         <div class="memory-empty-state">
-          <span>empty archive</span>
-          <p>暂无符合条件的本地印记。</p>
+          <span>暂无上下文</span>
+          <p>暂无符合条件的本地上下文。</p>
         </div>
       `;
     }
@@ -82,15 +82,15 @@ export function render(container, context) {
                 ${safeValue}
               </div>
               <div class="memory-edit-form">
-                <input class="form-input edit-value-input memory-inline-input" value="${safeRawValue}" aria-label="修改本地印记内容">
+                <input class="form-input edit-value-input memory-inline-input" value="${safeRawValue}" aria-label="修改本地上下文内容">
                 <button class="btn primary save-edit-btn memory-small-btn">保存</button>
                 <button class="btn cancel-edit-btn memory-small-btn">取消</button>
               </div>
 
               <div class="memory-row-actions">
                 ${isSensitive ? '<button class="btn toggle-sensitive-btn memory-small-btn">查看</button>' : ''}
-                <button class="btn edit-btn memory-small-btn">修剪</button>
-                <button class="btn danger delete-btn memory-small-btn">遗忘</button>
+                <button class="btn edit-btn memory-small-btn">调整</button>
+                <button class="btn danger delete-btn memory-small-btn">删除</button>
               </div>
             </div>
 
@@ -101,11 +101,11 @@ export function render(container, context) {
             </div>
 
             <div class="memory-policy-row">
-              <label title="关闭后此条本地印记不会被放入深夜聊天的 AI 上下文">
+              <label title="关闭后此条本地上下文不会被放入深夜聊天的 AI 上下文">
                 <input type="checkbox" class="exclude-context-chk" ${!m.excludeFromContext ? 'checked' : ''}>
                 <span>允许进入夜聊上下文</span>
               </label>
-              <label title="开启后，此条印记会保留但不参与对话上下文">
+              <label title="开启后，此条本地上下文会保留但不参与对话上下文">
                 <input type="checkbox" class="frozen-chk" ${m.frozen ? 'checked' : ''}>
                 <span>暂时不参与对话</span>
               </label>
@@ -128,20 +128,20 @@ export function render(container, context) {
     <section class="memory-workbench" aria-labelledby="memory-title">
       <div class="archive-hero memory-hero">
         <div>
-          <span class="archive-kicker">local archive</span>
-          <h1 id="memory-title">本地印记</h1>
+          <span class="archive-kicker">本地上下文</span>
+          <h1 id="memory-title">本地上下文</h1>
           <p>只查看和整理保存在这台设备里的偏好与事实。它们不是任务系统，也不是人格资产，只是为了少让你重复解释。</p>
         </div>
         <div class="archive-stamp" aria-hidden="true">
           <span>${(state.memories || []).length}</span>
-          <strong>stored locally</strong>
+          <strong>仅在本机</strong>
         </div>
       </div>
 
       <div class="memory-notice-area"></div>
 
       <div class="memory-toolbar">
-        <input type="text" class="form-input search-mem-input" placeholder="搜索本地印记" aria-label="搜索本地印记">
+        <input type="text" class="form-input search-mem-input" placeholder="搜索本地上下文" aria-label="搜索本地上下文">
       </div>
 
       <div class="memory-list-container"></div>
@@ -214,7 +214,7 @@ export function render(container, context) {
           state.memories[memIndex].updatedAt = new Date().toISOString();
           saveState();
           renderList();
-          showNotification('本地印记已修剪。');
+          showNotification('本地上下文已更新。');
         }
       });
 
@@ -222,7 +222,7 @@ export function render(container, context) {
         state.memories.splice(memIndex, 1);
         saveState();
         renderList();
-        showNotification('这条本地印记已删除。');
+        showNotification('这条本地上下文已删除。');
       });
 
       excludeChk.addEventListener('change', (e) => {
@@ -234,7 +234,7 @@ export function render(container, context) {
       frozenChk.addEventListener('change', (e) => {
         state.memories[memIndex].frozen = e.target.checked;
         saveState();
-        showNotification('本地印记状态已更新。');
+        showNotification('本地上下文状态已更新。');
       });
     });
   }
@@ -245,7 +245,7 @@ export function render(container, context) {
     }
   }
 
-  // SOTA High Performance: 250ms Debounced search updates
+  // Debounce search updates so filtering does not re-render on every keystroke.
   function debounce(fn, delay) {
     let timer = null;
     return function (...args) {

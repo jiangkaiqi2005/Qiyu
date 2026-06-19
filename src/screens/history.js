@@ -2,6 +2,7 @@ import { renderAppShell, bindNavigation } from '../ui/layout.js';
 import { loadBrowserState, saveBrowserState } from '../qiyu/state.js';
 import { escapeHtml, renderBubble } from '../ui/render.js';
 import { renderNotice } from '../ui/components.js';
+import { confirmAction } from '../ui/confirm-dialog.js';
 
 export function render(container, context) {
   const storage = window.localStorage;
@@ -15,13 +16,13 @@ export function render(container, context) {
     <section class="history-workbench" aria-labelledby="history-title">
       <div class="archive-hero history-hero">
         <div>
-          <span class="archive-kicker">conversation archive</span>
+          <span class="archive-kicker">深夜归档</span>
           <h1 id="history-title">夜话归档</h1>
           <p>按日期保留每晚的对话。它是回看，不是打扰；需要时打开，不需要时安静收起。</p>
         </div>
         <div class="archive-stamp" aria-hidden="true">
           <span>${sortedConversations.length}</span>
-          <strong>nights kept</strong>
+          <strong>晚已留存</strong>
         </div>
       </div>
 
@@ -48,7 +49,7 @@ export function render(container, context) {
     if (!state.dailyConversations || state.dailyConversations.length === 0) {
       layoutContainer.innerHTML = `
         <div class="history-empty-state">
-          <span>empty archive</span>
+          <span>暂无归档</span>
           <p>这里还没有深夜里的夜话记录呢。</p>
           <button data-nav-path="/chat" class="btn primary history-start-btn">开启今晚对话</button>
         </div>
@@ -114,7 +115,7 @@ export function render(container, context) {
     if (!selectedDate) {
       detailPanel.innerHTML = `
         <div class="history-detail-empty">
-          <span>select a night</span>
+          <span>选择一晚</span>
           <span>在左侧选择一天，静静重温那一晚的低语。</span>
         </div>
       `;
@@ -156,12 +157,17 @@ export function render(container, context) {
   });
 
   // Event Delegation for clicking delete button
-  container.addEventListener('click', (e) => {
+  container.addEventListener('click', async (e) => {
     const deleteBtn = e.target.closest('.delete-day-btn');
     if (deleteBtn) {
       e.stopPropagation();
       const dateToDelete = deleteBtn.dataset.deleteDate;
-      if (confirm(`确定要彻底抹去 ${dateToDelete} 这一天的所有对话记忆吗？此操作无法撤销。`)) {
+      const confirmed = await confirmAction({
+        title: '抹去这一天',
+        message: `确定要彻底抹去 ${dateToDelete} 这一天的所有对话记录吗？此操作无法撤销。`,
+        confirmLabel: '抹去'
+      });
+      if (confirmed) {
         state.dailyConversations = state.dailyConversations.filter(c => c.date !== dateToDelete);
         
         if (state.activeConversationDate === dateToDelete) {

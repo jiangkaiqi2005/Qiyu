@@ -1,6 +1,32 @@
 const SIDEBAR_HOVER_INTENT_DELAY_MS = 1040;
 const SIDEBAR_CLOSE_GRACE_MS = 220;
-const SIDEBAR_EDGE_INTENT_PX = 72;
+const SIDEBAR_CARRY_EXPANDED_KEY = '__qiyuCarryExpandedSidebar';
+
+function getRuntimeWindow() {
+  return typeof window === 'object' ? window : null;
+}
+
+function consumeSidebarCarryExpanded() {
+  const runtimeWindow = getRuntimeWindow();
+  if (!runtimeWindow?.[SIDEBAR_CARRY_EXPANDED_KEY]) return false;
+  delete runtimeWindow[SIDEBAR_CARRY_EXPANDED_KEY];
+  return true;
+}
+
+function shouldCarrySidebarExpanded(sidebar) {
+  if (!sidebar) return false;
+  if (sidebar.dataset?.expanded === 'true') return true;
+  if (typeof sidebar.matches !== 'function') return false;
+  return sidebar.matches(':hover') || sidebar.matches(':focus-within');
+}
+
+function carrySidebarExpandedOnce(sidebar) {
+  if (!shouldCarrySidebarExpanded(sidebar)) return;
+  const runtimeWindow = getRuntimeWindow();
+  if (runtimeWindow) {
+    runtimeWindow[SIDEBAR_CARRY_EXPANDED_KEY] = true;
+  }
+}
 
 export function renderAppShell(contentHtml, currentPath) {
   const routes = [
@@ -25,11 +51,15 @@ export function renderAppShell(contentHtml, currentPath) {
   `
     )
     .join('');
+  const shouldRestoreExpandedSidebar = consumeSidebarCarryExpanded();
+  const sidebarExpandedAttr = shouldRestoreExpandedSidebar
+    ? ' data-expanded="true" data-restored="true"'
+    : '';
 
   return `
     <a href="#main-content" class="skip-link">跳过导航</a>
     <div class="app-shell-container">
-      <nav class="app-sidebar" aria-label="主导航">
+      <nav class="app-sidebar"${sidebarExpandedAttr} aria-label="主导航">
         <span class="sidebar-sheen" aria-hidden="true"></span>
         <span class="sidebar-orbit" aria-hidden="true"></span>
         <div class="sidebar-brand">
@@ -78,6 +108,19 @@ export function bindSidebarHoverIntent(container, timers = globalThis) {
   let closeTimer = null;
   let pointerInside = false;
 
+  if (sidebar.dataset?.restored === 'true') {
+    const releaseRestoredState = () => {
+      delete sidebar.dataset.restored;
+    };
+    if (typeof timers.requestAnimationFrame === 'function') {
+      timers.requestAnimationFrame(() => {
+        timers.requestAnimationFrame(releaseRestoredState);
+      });
+    } else if (typeof timers.setTimeout === 'function') {
+      timers.setTimeout(releaseRestoredState, 0);
+    }
+  }
+
   const clearTimer = (timer) => {
     if (timer !== null && typeof timers.clearTimeout === 'function') {
       timers.clearTimeout(timer);
@@ -94,10 +137,6 @@ export function bindSidebarHoverIntent(container, timers = globalThis) {
 
   const scheduleOpen = (event) => {
     if (event.pointerType === 'touch') return;
-    if (typeof event.clientX === 'number' && typeof sidebar.getBoundingClientRect === 'function') {
-      const rect = sidebar.getBoundingClientRect();
-      if (event.clientX - rect.left > SIDEBAR_EDGE_INTENT_PX) return;
-    }
     pointerInside = true;
     clearTimer(closeTimer);
     clearTimer(openTimer);
@@ -166,6 +205,10 @@ export function bindNavigation(container, router) {
   container.querySelectorAll('[data-nav-path]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
+      const sidebar = typeof btn.closest === 'function'
+        ? btn.closest('.app-sidebar')
+        : null;
+      carrySidebarExpandedOnce(sidebar);
       router.navigate(btn.dataset.navPath);
     });
   });

@@ -15,7 +15,7 @@ const titles = {
   '/history': '记录 - 栖语',
   '/onboarding': '初遇 - 栖语',
   '/settings': '默契 - 栖语',
-  '/memory': '印记 - 栖语',
+  '/memory': '本地上下文 - 栖语',
   '/lab': '幻境 - 栖语',
   '/privacy': '封存 - 栖语'
 };
@@ -38,12 +38,13 @@ export class Router {
     const path = window.location.pathname;
     const loadScreen = routes[path];
 
-    this.container.innerHTML = '';
-
     if (loadScreen) {
       try {
         document.title = titles[path] || APP_TITLE;
-        this.renderLoading();
+        const hasCurrentView = this.container.innerHTML.trim().length > 0;
+        if (!hasCurrentView) {
+          this.renderLoading();
+        }
 
         const module = await loadScreen();
 
@@ -55,6 +56,7 @@ export class Router {
         this.renderError();
       }
     } else {
+      this.container.innerHTML = '';
       document.title = '404 迷路了 - 栖语';
       this.renderNotFound();
     }

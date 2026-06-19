@@ -5,13 +5,13 @@ export function render(container, context) {
     <section class="privacy-workbench" aria-labelledby="privacy-title">
       <div class="archive-hero privacy-hero">
         <div>
-          <span class="archive-kicker">privacy boundary</span>
+          <span class="archive-kicker">边界说明</span>
           <h1 id="privacy-title">隐私与安全边界</h1>
           <p>深夜对话必须有边界。这里说明数据在哪里、什么时候会离开本地，以及危机时栖语会怎么处理。</p>
         </div>
         <div class="archive-stamp" aria-hidden="true">
           <span>边界</span>
-          <strong>principles</strong>
+          <strong>四条原则</strong>
         </div>
       </div>
 

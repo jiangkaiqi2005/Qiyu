@@ -65,6 +65,7 @@ test('history screen empty state and detailed logs display', () => {
   // 1. Initial render with no history
   render(container, { router });
   assert.match(container.innerHTML, /这里还没有深夜里的夜话记录呢/);
+  assert.doesNotMatch(container.innerHTML, /conversation archive|nights kept|empty archive|select a night/);
 
   // 2. Render with daily conversations
   savedItems['qiyu.state'] = JSON.stringify({
@@ -99,6 +100,7 @@ test('history screen empty state and detailed logs display', () => {
   assert.match(container.innerHTML, /今天也来了/);
   assert.doesNotMatch(container.innerHTML, /<script>alert\(1\)<\/script>/);
   assert.doesNotMatch(container.innerHTML, /<img src=x onerror=alert\(1\)>/);
+  assert.doesNotMatch(container.innerHTML, /conversation archive|nights kept|empty archive|select a night/);
 
   delete globalThis.window;
   delete globalThis.document;

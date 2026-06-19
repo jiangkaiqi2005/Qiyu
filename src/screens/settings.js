@@ -8,6 +8,7 @@ import {
   renderFieldRow,
   renderNotice
 } from '../ui/components.js';
+import { confirmAction } from '../ui/confirm-dialog.js';
 import {
   applyProviderPreset,
   detectProviderPreset,
@@ -625,16 +626,26 @@ export function render(container, context) {
     showNotification('success', '本地上下文已成功导出为备份 JSON。');
   });
 
-  clearMemoriesBtn.addEventListener('click', () => {
-    if (confirm('确认清空所有本地上下文事实吗？这将无法找回。')) {
+  clearMemoriesBtn.addEventListener('click', async () => {
+    const confirmed = await confirmAction({
+      title: '清空本地上下文',
+      message: '这会清空所有本地上下文事实，操作完成后无法找回。',
+      confirmLabel: '清空'
+    });
+    if (confirmed) {
       state.memories = [];
       saveBrowserState(storage, state);
       showNotification('success', '本地上下文已清空。');
     }
   });
 
-  clearHistoryBtn.addEventListener('click', () => {
-    if (confirm('确定彻底抹去深夜里我们所有的相遇和对话痕迹吗？所有好感度和历史将被彻底重置为零。')) {
+  clearHistoryBtn.addEventListener('click', async () => {
+    const confirmed = await confirmAction({
+      title: '重置全部相遇',
+      message: '这会抹去所有对话痕迹、关系进度和历史归档。所有内容都会归零。',
+      confirmLabel: '重置'
+    });
+    if (confirmed) {
       state = createInitialState(state.userId);
       saveBrowserState(storage, state);
       storage.removeItem('qiyu_trial_state');
