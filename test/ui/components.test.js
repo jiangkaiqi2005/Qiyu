@@ -330,6 +330,56 @@ test('bindSidebarHoverIntent expands when the pointer rests inside the collapsed
   assert.equal(sidebar.dataset.expanded, 'true');
 });
 
+test('bindSidebarHoverIntent keeps a restored sidebar motionless while the pointer remains inside', () => {
+  let scheduledTimer = null;
+  const rafCallbacks = [];
+  const listeners = new Map();
+  let isHovered = true;
+  const timers = {
+    setTimeout(fn, delay) {
+      scheduledTimer = { fn, delay };
+      return 1;
+    },
+    clearTimeout() {
+      scheduledTimer = null;
+    },
+    requestAnimationFrame(fn) {
+      rafCallbacks.push(fn);
+      return rafCallbacks.length;
+    }
+  };
+  const sidebar = {
+    dataset: { expanded: 'true', restored: 'true' },
+    addEventListener(type, fn) {
+      listeners.set(type, fn);
+    },
+    matches(selector) {
+      return selector === ':hover' ? isHovered : false;
+    }
+  };
+  const container = {
+    querySelector(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    }
+  };
+
+  bindSidebarHoverIntent(container, timers);
+  while (rafCallbacks.length) {
+    rafCallbacks.shift()();
+  }
+
+  assert.equal(sidebar.dataset.expanded, 'true');
+  assert.equal(sidebar.dataset.restored, 'true');
+
+  isHovered = false;
+  listeners.get('pointerleave')({ pointerType: 'mouse' });
+
+  assert.equal(sidebar.dataset.restored, undefined);
+  assert.equal(scheduledTimer.delay, 220);
+  scheduledTimer.fn();
+  assert.equal(sidebar.dataset.expanded, undefined);
+});
+
 test('bindSidebarHoverIntent cancels expansion when the pointer only passes through', () => {
   let scheduledTimer = null;
   const timers = {

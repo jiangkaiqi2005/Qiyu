@@ -106,13 +106,18 @@ export function bindSidebarHoverIntent(container, timers = globalThis) {
 
   let openTimer = null;
   let closeTimer = null;
-  let pointerInside = false;
+  const isHovered = () => typeof sidebar.matches === 'function' && sidebar.matches(':hover');
+  const hasFocusWithin = () => typeof sidebar.matches === 'function' && sidebar.matches(':focus-within');
+  let pointerInside = isHovered();
+
+  const releaseRestoredState = () => {
+    delete sidebar.dataset.restored;
+  };
 
   if (sidebar.dataset?.restored === 'true') {
-    const releaseRestoredState = () => {
-      delete sidebar.dataset.restored;
-    };
-    if (typeof timers.requestAnimationFrame === 'function') {
+    if (pointerInside || hasFocusWithin()) {
+      sidebar.dataset.expanded = 'true';
+    } else if (typeof timers.requestAnimationFrame === 'function') {
       timers.requestAnimationFrame(() => {
         timers.requestAnimationFrame(releaseRestoredState);
       });
@@ -154,12 +159,10 @@ export function bindSidebarHoverIntent(container, timers = globalThis) {
     clearTimer(openTimer);
     clearTimer(closeTimer);
     openTimer = null;
+    releaseRestoredState();
     closeTimer = timers.setTimeout(() => {
       closeTimer = null;
-      const hasFocus = typeof sidebar.matches === 'function'
-        ? sidebar.matches(':focus-within')
-        : false;
-      if (!hasFocus) {
+      if (!hasFocusWithin()) {
         setExpanded(false);
       }
     }, SIDEBAR_CLOSE_GRACE_MS);
