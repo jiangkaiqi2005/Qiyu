@@ -158,6 +158,10 @@ test('settings screen uses quiet product language instead of dashboard labels', 
   assert.doesNotMatch(container.innerHTML, /calibration|night mode/);
   assert.doesNotMatch(container.innerHTML, /settings-section-head[^>]*>\s*<span>0[1-4]<\/span>/);
   assert.doesNotMatch(container.innerHTML, /记忆功能|印记/);
+  assert.doesNotMatch(
+    container.innerHTML,
+    /灵魂引擎|Provider Preset|API URL|API Key|模型名称 \(Model\)|随机温度 \(Temperature\)|网络超时 \(Timeout\)|System Prompt|Live Context/
+  );
 
   delete globalThis.window;
   delete globalThis.document;
@@ -422,7 +426,7 @@ test('settings screen still toggles visibility after user enters a real api key'
   assert.equal(apiKeyInlineNotice.style.display, 'none');
   assert.equal(apiKeyInput.type, 'text');
   assert.equal(togglePwBtn.innerText, '隐藏');
-  assert.equal(togglePwBtn.attrs['aria-label'], '隐藏 API 密钥');
+  assert.equal(togglePwBtn.attrs['aria-label'], '隐藏访问密钥');
 
   delete globalThis.window;
   delete globalThis.document;
@@ -454,7 +458,7 @@ test('settings screen resets the eye toggle after masked config reloads from the
   };
   const togglePwBtn = {
     innerText: '隐藏',
-    attrs: { 'aria-label': '隐藏 API 密钥' },
+    attrs: { 'aria-label': '隐藏访问密钥' },
     addEventListener(event, fn) {
       listeners['.toggle-pw-btn:' + event] = fn;
     },
@@ -495,7 +499,7 @@ test('settings screen resets the eye toggle after masked config reloads from the
 
   assert.equal(apiKeyInput.type, 'password');
   assert.equal(togglePwBtn.innerText, '查看');
-  assert.equal(togglePwBtn.attrs['aria-label'], '显示 API 密钥');
+  assert.equal(togglePwBtn.attrs['aria-label'], '显示访问密钥');
 
   delete globalThis.window;
   delete globalThis.document;

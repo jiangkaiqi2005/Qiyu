@@ -117,7 +117,7 @@ export function render(container, context) {
         </div>
       </section>
 
-      <!-- Part 2: AI Soul Engine Settings -->
+      <!-- Part 2: Model connection settings -->
       <section class="settings-section" aria-labelledby="sec-ai-title">
         <div class="settings-section-head settings-section-head-split">
           <div>
@@ -152,7 +152,7 @@ export function render(container, context) {
 
           ${renderFieldRow({
             name: 'providerPreset',
-            label: '服务商预设 (Provider Preset)',
+            label: '服务商预设',
             description: '快速载入常见大模型服务商的接口配置。',
             controlHtml: `
               <select id="input-providerPreset" name="providerPreset" class="form-select">
@@ -163,20 +163,20 @@ export function render(container, context) {
 
           ${renderFieldRow({
             name: 'apiUrl',
-            label: '接口地址 (API URL)',
+            label: '接口地址',
             description: 'OpenAI 兼容终结点，或 Anthropic 原生 Messages 终结点。',
             controlHtml: renderInput({ name: 'apiUrl', placeholder: '比如：https://api.example.com/v1/chat/completions' })
           })}
 
           ${renderFieldRow({
             name: 'apiKey',
-            label: '访问密钥 (API Key)',
+            label: '访问密钥',
             description: '你的私有 API 访问令牌。绝不上传给任何中心服务器。',
             controlHtml: `
               <div class="api-key-stack">
                 <div class="api-key-control">
-                  <input id="input-apiKey" name="apiKey" type="password" class="form-input" placeholder="输入 API Key">
-                  <button type="button" class="btn toggle-pw-btn secret-toggle-btn" aria-label="显示 API 密钥">查看</button>
+                  <input id="input-apiKey" name="apiKey" type="password" class="form-input" placeholder="输入访问密钥">
+                  <button type="button" class="btn toggle-pw-btn secret-toggle-btn" aria-label="显示访问密钥">查看</button>
                 </div>
                 <div class="api-key-inline-notice"></div>
               </div>
@@ -185,27 +185,27 @@ export function render(container, context) {
 
           ${renderFieldRow({
             name: 'model',
-            label: '模型名称 (Model)',
+            label: '模型名称',
             description: '选用的模型名称。如：gpt-4o, claude-3-5-sonnet',
             controlHtml: renderInput({ name: 'model', placeholder: '比如：gpt-4o' })
           })}
 
           ${renderFieldRow({
             name: 'temperature',
-            label: '随机温度 (Temperature)',
+            label: '随机温度',
             description: '数值越高发言越随性，越低发言越严谨克制。推荐 0.8。',
             controlHtml: renderInput({ name: 'temperature', type: 'number', placeholder: '0.8', attrs: 'min="0" max="2" step="0.1"' })
           })}
 
           ${renderFieldRow({
             name: 'timeoutMs',
-            label: '网络超时 (Timeout)',
+            label: '网络超时',
             description: '请求的最大等待时间（毫秒）。默认 30000（30秒）。',
             controlHtml: renderInput({ name: 'timeoutMs', type: 'number', placeholder: '30000', attrs: 'min="1000"' })
           })}
 
           <div class="settings-actions settings-actions-wrap">
-            ${renderButton({ label: '测试 Provider 连接', variant: 'normal', className: 'test-connection-btn settings-action-btn' })}
+            ${renderButton({ label: '测试模型连接', variant: 'normal', className: 'test-connection-btn settings-action-btn' })}
             ${renderButton({ label: '测试栖语回复', variant: 'normal', className: 'test-chat-btn settings-action-btn' })}
             ${renderButton({ label: '保存 API 配置', variant: 'primary', className: 'save-ai-btn settings-action-btn' })}
           </div>
@@ -240,7 +240,7 @@ export function render(container, context) {
         ${renderFieldRow({
           name: 'devMode',
           label: '激活「幻境」实验室',
-          description: '唤醒系统回归质量实验室，展示 System Prompt 预览与 live context 拼接。',
+          description: '唤醒系统回归质量实验室，展示系统提示词预览与上下文拼接。',
           controlHtml: renderToggle({
             name: 'devMode',
             checked: window.localStorage.getItem('qiyu_dev_mode') === 'true'
@@ -249,11 +249,11 @@ export function render(container, context) {
 
         <div class="dev-preview-panel">
           <div class="dev-preview-block">
-            <label class="field-label">当前 System Prompt 预览</label>
+            <label class="field-label">当前系统提示词预览</label>
             <textarea readonly class="form-textarea dev-preview-textarea">加载中...</textarea>
           </div>
           <div class="dev-preview-block">
-            <label class="field-label">最近拼接的 Live Context 预览</label>
+            <label class="field-label">最近拼接的上下文预览</label>
             <textarea readonly class="form-textarea dev-preview-textarea">加载中...</textarea>
           </div>
         </div>
@@ -296,7 +296,7 @@ export function render(container, context) {
   function setApiKeyVisibility(type) {
     pwInput.type = type;
     togglePwBtn.innerText = type === 'password' ? '查看' : '隐藏';
-    togglePwBtn.setAttribute('aria-label', type === 'password' ? '显示 API 密钥' : '隐藏 API 密钥');
+    togglePwBtn.setAttribute('aria-label', type === 'password' ? '显示访问密钥' : '隐藏访问密钥');
   }
 
   function showNotification(type, message) {
@@ -327,7 +327,7 @@ export function render(container, context) {
       badgeColor = '#eab308'; // yellow
       badgeBg = 'rgba(234, 179, 8, 0.1)';
     } else if (status === 'provider_connected') {
-      statusText = 'Provider 已连接';
+      statusText = '模型已连接';
       badgeColor = '#3b82f6'; // blue
       badgeBg = 'rgba(59, 130, 246, 0.1)';
     } else if (status === 'chat_connected') {
@@ -382,7 +382,7 @@ export function render(container, context) {
     showNotification('success', '深夜相处温度已保存并生效。');
   });
 
-  // 2. Toggle Advanced AI Settings visibility
+  // 2. Toggle model settings visibility
   toggleAiBtn.addEventListener('click', () => {
     const isHidden = aiPanel.style.display === 'none';
     aiPanel.style.display = isHidden ? 'flex' : 'none';
@@ -402,9 +402,9 @@ export function render(container, context) {
   togglePwBtn.addEventListener('click', () => {
     const maskedPlaceholderVisible = pwInput.dataset?.masked === 'true' || isMaskedApiKeyValue(pwInput.value);
     if (maskedPlaceholderVisible && pwInput.type === 'password') {
-      showNotification('info', '当前显示的是脱敏后的 API Key 占位符，无法直接还原原始密钥。如需查看或修改，请重新输入。');
+      showNotification('info', '当前显示的是脱敏后的访问密钥占位符，无法直接还原原始密钥。如需查看或修改，请重新输入。');
       if (apiKeyInlineNotice) {
-        apiKeyInlineNotice.innerText = '当前显示的是脱敏占位符，无法直接还原原始 API Key。需要查看或修改时，请重新输入。';
+        apiKeyInlineNotice.innerText = '当前显示的是脱敏占位符，无法直接还原原始访问密钥。需要查看或修改时，请重新输入。';
         apiKeyInlineNotice.style.display = 'block';
       }
       if (typeof pwInput.focus === 'function') {
@@ -441,7 +441,7 @@ export function render(container, context) {
         updateHealthAndDiagnostics(data);
       }
     } catch (err) {
-      showNotification('error', `未能同步云端引擎配置：${err.message}`);
+      showNotification('error', `未能同步模型配置：${err.message}`);
     }
   }
 
@@ -465,14 +465,14 @@ export function render(container, context) {
     const timeoutMs = Number(container.querySelector('[name="timeoutMs"]').value);
 
     if (!apiUrl || !model) {
-      showNotification('warning', '请填入完整的接口地址 (API URL) 和模型名称以供测试。');
+      showNotification('warning', '请填入完整的接口地址和模型名称以供测试。');
       return;
     }
 
     const originalText = testConnectionBtn.innerHTML;
     testConnectionBtn.disabled = true;
     testConnectionBtn.innerHTML = '<span class="loading-dots">连接中</span>';
-    showNotification('warning', '正在尝试建立灵魂引擎握手连接，请稍候...');
+    showNotification('warning', '正在测试模型连接，请稍候...');
 
     try {
       const res = await fetch('/api/settings/test', {
@@ -489,13 +489,13 @@ export function render(container, context) {
         if (data.success) {
           storage.setItem('qiyu_api_health_status', 'provider_connected');
           if (diagDetail) {
-            diagDetail.innerText = `[${new Date().toLocaleTimeString()}] Provider 通道测试成功 (延迟 ${data.latencyMs}ms)，已收到模型响应。`;
+            diagDetail.innerText = `[${new Date().toLocaleTimeString()}] 模型通道测试成功 (延迟 ${data.latencyMs}ms)，已收到模型响应。`;
           }
-          showNotification('success', '灵魂引擎握手成功，连接一切正常。');
+          showNotification('success', '模型连接成功，配置可用。');
           fetchServerSettings();
         } else {
           if (diagDetail) {
-            diagDetail.innerText = `[${new Date().toLocaleTimeString()}] Provider 连接失败: ${data.error}`;
+            diagDetail.innerText = `[${new Date().toLocaleTimeString()}] 模型连接失败: ${data.error}`;
           }
           showNotification('error', `连接失败：${data.error || '未知模型错误'}`);
         }
@@ -519,14 +519,14 @@ export function render(container, context) {
       const timeoutMs = Number(container.querySelector('[name="timeoutMs"]').value);
 
       if (!apiUrl || !model) {
-        showNotification('warning', '请填入完整的接口地址 (API URL) 和模型名称以供测试。');
+        showNotification('warning', '请填入完整的接口地址和模型名称以供测试。');
         return;
       }
 
       const originalText = testChatBtn.innerHTML;
       testChatBtn.disabled = true;
       testChatBtn.innerHTML = '<span class="loading-dots">发送中</span>';
-      showNotification('warning', '正在向灵魂引擎发起测试夜聊会话，请稍候...');
+      showNotification('warning', '正在发送测试消息，请稍候...');
 
       try {
         const res = await fetch('/api/settings/test-chat', {
