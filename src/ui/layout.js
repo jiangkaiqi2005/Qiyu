@@ -6,11 +6,22 @@ function getRuntimeWindow() {
   return typeof window === 'object' ? window : null;
 }
 
+function readPointerPosition(event) {
+  const x = Number(event?.clientX);
+  const y = Number(event?.clientY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
 function consumeSidebarCarryExpanded() {
   const runtimeWindow = getRuntimeWindow();
-  if (!runtimeWindow?.[SIDEBAR_CARRY_EXPANDED_KEY]) return false;
+  const carryState = runtimeWindow?.[SIDEBAR_CARRY_EXPANDED_KEY];
+  if (!carryState) return { shouldRestore: false, pointer: null };
   delete runtimeWindow[SIDEBAR_CARRY_EXPANDED_KEY];
-  return true;
+  return {
+    shouldRestore: true,
+    pointer: carryState.pointer ?? null
+  };
 }
 
 function shouldCarrySidebarExpanded(sidebar) {
@@ -20,12 +31,50 @@ function shouldCarrySidebarExpanded(sidebar) {
   return sidebar.matches(':hover') || sidebar.matches(':focus-within');
 }
 
-function carrySidebarExpandedOnce(sidebar) {
+function carrySidebarExpandedOnce(sidebar, event) {
   if (!shouldCarrySidebarExpanded(sidebar)) return;
   const runtimeWindow = getRuntimeWindow();
   if (runtimeWindow) {
-    runtimeWindow[SIDEBAR_CARRY_EXPANDED_KEY] = true;
+    runtimeWindow[SIDEBAR_CARRY_EXPANDED_KEY] = {
+      pointer: readPointerPosition(event)
+    };
   }
+}
+
+function readRestoredPointer(sidebar) {
+  const x = Number(sidebar.dataset?.restorePointerX);
+  const y = Number(sidebar.dataset?.restorePointerY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+function clearRestoredPointer(sidebar) {
+  if (!sidebar.dataset) return;
+  delete sidebar.dataset.restorePointerX;
+  delete sidebar.dataset.restorePointerY;
+}
+
+function isPointInsideSidebar(sidebar, pointer) {
+  if (!pointer) return false;
+  const ownerDocument = sidebar.ownerDocument ?? getRuntimeWindow()?.document ?? globalThis.document;
+  const pointedElement = typeof ownerDocument?.elementFromPoint === 'function'
+    ? ownerDocument.elementFromPoint(pointer.x, pointer.y)
+    : null;
+
+  if (pointedElement) {
+    if (pointedElement === sidebar) return true;
+    if (typeof pointedElement.closest === 'function') {
+      return pointedElement.closest('.app-sidebar') === sidebar;
+    }
+    return false;
+  }
+
+  if (typeof sidebar.getBoundingClientRect !== 'function') return false;
+  const rect = sidebar.getBoundingClientRect();
+  return pointer.x >= rect.left
+    && pointer.x <= rect.right
+    && pointer.y >= rect.top
+    && pointer.y <= rect.bottom;
 }
 
 export function renderAppShell(contentHtml, currentPath) {
@@ -51,9 +100,12 @@ export function renderAppShell(contentHtml, currentPath) {
   `
     )
     .join('');
-  const shouldRestoreExpandedSidebar = consumeSidebarCarryExpanded();
-  const sidebarExpandedAttr = shouldRestoreExpandedSidebar
-    ? ' data-expanded="true" data-restored="true"'
+  const carriedSidebar = consumeSidebarCarryExpanded();
+  const restorePointerAttr = carriedSidebar.pointer
+    ? ` data-restore-pointer-x="${carriedSidebar.pointer.x}" data-restore-pointer-y="${carriedSidebar.pointer.y}"`
+    : '';
+  const sidebarExpandedAttr = carriedSidebar.shouldRestore
+    ? ` data-expanded="true" data-restored="true"${restorePointerAttr}`
     : '';
 
   return `
@@ -108,7 +160,8 @@ export function bindSidebarHoverIntent(container, timers = globalThis) {
   let closeTimer = null;
   const isHovered = () => typeof sidebar.matches === 'function' && sidebar.matches(':hover');
   const hasFocusWithin = () => typeof sidebar.matches === 'function' && sidebar.matches(':focus-within');
-  let pointerInside = isHovered();
+  let pointerInside = isHovered() || isPointInsideSidebar(sidebar, readRestoredPointer(sidebar));
+  clearRestoredPointer(sidebar);
 
   const releaseRestoredState = () => {
     delete sidebar.dataset.restored;
@@ -211,7 +264,7 @@ export function bindNavigation(container, router) {
       const sidebar = typeof btn.closest === 'function'
         ? btn.closest('.app-sidebar')
         : null;
-      carrySidebarExpandedOnce(sidebar);
+      carrySidebarExpandedOnce(sidebar, e);
       router.navigate(btn.dataset.navPath);
     });
   });

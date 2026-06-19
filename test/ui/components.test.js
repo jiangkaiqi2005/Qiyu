@@ -380,6 +380,108 @@ test('bindSidebarHoverIntent keeps a restored sidebar motionless while the point
   assert.equal(sidebar.dataset.expanded, undefined);
 });
 
+test('bindSidebarHoverIntent keeps a restored sidebar still after a route click when the pointer remains over it', () => {
+  const previousWindow = globalThis.window;
+  globalThis.window = {
+    localStorage: {
+      getItem() {
+        return null;
+      }
+    }
+  };
+
+  try {
+    let navClickHandler;
+    const oldSidebar = {
+      dataset: { expanded: 'true' },
+      addEventListener() {},
+      matches(selector) {
+        return selector === ':hover';
+      }
+    };
+    const navButton = {
+      dataset: { navPath: '/history' },
+      addEventListener(type, handler) {
+        if (type === 'click') {
+          navClickHandler = handler;
+        }
+      },
+      closest(selector) {
+        return selector === '.app-sidebar' ? oldSidebar : null;
+      }
+    };
+    const oldContainer = {
+      addEventListener() {},
+      querySelector(selector) {
+        return selector === '.app-sidebar' ? oldSidebar : null;
+      },
+      querySelectorAll(selector) {
+        return selector === '[data-nav-path]' ? [navButton] : [];
+      }
+    };
+
+    bindNavigation(oldContainer, { navigate() {} });
+    navClickHandler({ preventDefault() {}, clientX: 56, clientY: 220 });
+    const nextHtml = renderAppShell('<div>记录</div>', '/history');
+
+    assert.match(nextHtml, /data-restore-pointer-x="56"/);
+    assert.match(nextHtml, /data-restore-pointer-y="220"/);
+
+    const rafCallbacks = [];
+    const listeners = new Map();
+    const newSidebar = {
+      dataset: {
+        expanded: 'true',
+        restored: 'true',
+        restorePointerX: '56',
+        restorePointerY: '220'
+      },
+      ownerDocument: {
+        elementFromPoint(x, y) {
+          assert.equal(x, 56);
+          assert.equal(y, 220);
+          return {
+            closest(selector) {
+              return selector === '.app-sidebar' ? newSidebar : null;
+            }
+          };
+        }
+      },
+      addEventListener(type, fn) {
+        listeners.set(type, fn);
+      },
+      matches() {
+        return false;
+      }
+    };
+    const newContainer = {
+      querySelector(selector) {
+        return selector === '.app-sidebar' ? newSidebar : null;
+      }
+    };
+    const timers = {
+      setTimeout() {
+        throw new Error('restored sidebar should not schedule a close while the pointer is still over it');
+      },
+      clearTimeout() {},
+      requestAnimationFrame(fn) {
+        rafCallbacks.push(fn);
+        return rafCallbacks.length;
+      }
+    };
+
+    bindSidebarHoverIntent(newContainer, timers);
+    while (rafCallbacks.length) {
+      rafCallbacks.shift()();
+    }
+
+    assert.equal(newSidebar.dataset.expanded, 'true');
+    assert.equal(newSidebar.dataset.restored, 'true');
+  } finally {
+    globalThis.window = previousWindow;
+  }
+});
+
 test('bindSidebarHoverIntent cancels expansion when the pointer only passes through', () => {
   let scheduledTimer = null;
   const timers = {
