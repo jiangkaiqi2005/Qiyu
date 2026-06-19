@@ -3998,6 +3998,36 @@ body::after {
   transform: scaleX(1);
 }
 
+/* Tactile press feedback */
+.btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+}
+
+.btn.primary:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+  box-shadow: 0 10px 22px rgba(215, 173, 91, 0.16);
+}
+
+.nav-item:active {
+  transform: translateX(1px) scale(0.985);
+}
+
+.nav-item:active::before {
+  opacity: 1;
+  transform: scaleX(0.96);
+}
+
+.choice-card:active {
+  transform: translateY(1px) scale(0.992);
+  border-color: rgba(215, 173, 91, 0.2);
+}
+
+.history-item-card:active {
+  transform: translateX(1px) scale(0.992);
+  background: rgba(215, 173, 91, 0.075);
+}
+
 /* Sidebar hover intent */
 .app-sidebar {
   transition:

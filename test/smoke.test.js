@@ -31,6 +31,19 @@ test('core stylesheet uses explicit motion tokens instead of broad transitions',
   assert.doesNotMatch(styles, /transition:\s*all\b/);
 });
 
+test('core controls provide tactile pressed feedback without layout-triggering animation', async () => {
+  const styles = await readFile(new URL('src/styles.css', root), 'utf8');
+
+  assert.match(styles, /\.btn:active:not\(:disabled\)/);
+  assert.match(styles, /\.nav-item:active/);
+  assert.match(styles, /\.choice-card:active/);
+  assert.match(styles, /\.history-item-card:active/);
+  assert.doesNotMatch(
+    styles,
+    /:active[^{]*\{[^}]*(?:top|left|width|height)\s*:/s
+  );
+});
+
 test('core stylesheet quiets decorative motion when reduced motion is requested', async () => {
   const styles = await readFile(new URL('src/styles.css', root), 'utf8');
 
