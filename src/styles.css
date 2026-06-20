@@ -4192,4 +4192,40 @@ body::after {
   .composer {
     margin-top: 10px;
   }
+
+  .onboarding-warning-banner .notice {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 12px;
+    padding: 16px 52px 16px 16px;
+  }
+
+  .onboarding-warning-banner .notice-icon {
+    grid-column: 1;
+    margin-top: 0;
+    font-size: 13px;
+    letter-spacing: 0.18em;
+    white-space: nowrap;
+  }
+
+  .onboarding-warning-banner .notice-message {
+    grid-column: 1 / -1;
+    line-height: 1.75;
+  }
+
+  .onboarding-warning-banner .btn-close-notice {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    margin: 0;
+    padding: 2px;
+    white-space: nowrap;
+  }
+
+  .onboarding-warning-banner .notice-inline-action {
+    display: flex;
+    width: fit-content;
+    margin: 12px 0 0;
+  }
 }

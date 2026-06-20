@@ -130,6 +130,16 @@ test('final mobile shell override removes the desktop sidebar column', async () 
   assert.match(mobileStyles, /\.app-sidebar\s*\{[^}]*display:\s*none;/s);
 });
 
+test('mobile onboarding notice gives copy and action separate rows', async () => {
+  const styles = await readFile(new URL('src/styles.css', root), 'utf8');
+  const finalMobileOverride = styles.lastIndexOf('/* Final mobile shell */');
+  const mobileStyles = styles.slice(finalMobileOverride);
+
+  assert.match(mobileStyles, /\.onboarding-warning-banner \.notice\s*\{[^}]*display:\s*grid;/s);
+  assert.match(mobileStyles, /\.onboarding-warning-banner \.notice-message\s*\{[^}]*grid-column:\s*1 \/ -1;/s);
+  assert.match(mobileStyles, /\.onboarding-warning-banner \.notice-inline-action\s*\{[^}]*display:\s*flex;[^}]*margin:\s*12px 0 0;/s);
+});
+
 test('destructive frontend actions use the shared confirmation dialog', async () => {
   const chat = await readFile(new URL('src/screens/chat.js', root), 'utf8');
   const history = await readFile(new URL('src/screens/history.js', root), 'utf8');

@@ -43,6 +43,7 @@ function isAllowedStaticFile(relativePath) {
 const spaRoutes = new Set([
   '/',
   '/chat',
+  '/history',
   '/onboarding',
   '/settings',
   '/memory',
