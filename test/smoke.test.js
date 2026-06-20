@@ -107,6 +107,29 @@ test('chat composer uses nested material structure instead of a bare input recta
   assert.doesNotMatch(styles, /\.composer\s+textarea\s*\{[^}]*border:\s*1px/);
 });
 
+test('chat uses an open conversation room instead of a framed dashboard card', async () => {
+  const chat = await readFile(new URL('src/screens/chat.js', root), 'utf8');
+  const styles = await readFile(new URL('src/styles.css', root), 'utf8');
+
+  assert.match(chat, /class="conversation-panel conversation-room"/);
+  assert.match(
+    styles,
+    /\.conversation-room\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s
+  );
+  assert.match(styles, /\.conversation-room::before\s*\{[^}]*content:\s*none;/s);
+});
+
+test('final mobile shell override removes the desktop sidebar column', async () => {
+  const styles = await readFile(new URL('src/styles.css', root), 'utf8');
+  const finalMobileOverride = styles.lastIndexOf('/* Final mobile shell */');
+  const lastDesktopShell = styles.lastIndexOf('.app-shell-container {', finalMobileOverride - 1);
+
+  assert.ok(finalMobileOverride > lastDesktopShell);
+  const mobileStyles = styles.slice(finalMobileOverride);
+  assert.match(mobileStyles, /\.app-shell-container\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(mobileStyles, /\.app-sidebar\s*\{[^}]*display:\s*none;/s);
+});
+
 test('destructive frontend actions use the shared confirmation dialog', async () => {
   const chat = await readFile(new URL('src/screens/chat.js', root), 'utf8');
   const history = await readFile(new URL('src/screens/history.js', root), 'utf8');

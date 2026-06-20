@@ -4097,3 +4097,99 @@ body::after {
     display: flex;
   }
 }
+
+/* Open conversation room */
+.qiyu-chat-stage {
+  width: min(1120px, 100%);
+}
+
+.shell {
+  width: min(1000px, 100%);
+}
+
+.conversation-room {
+  padding: 0 clamp(2px, 1.2vw, 14px);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.conversation-room::before {
+  content: none;
+}
+
+.conversation-room::after {
+  inset: auto 0 0;
+  height: 56px;
+  background: linear-gradient(180deg, transparent, rgba(8, 7, 6, 0.8));
+}
+
+.conversation-room .chat-header {
+  padding: 0 8px 14px;
+  border-bottom: 0;
+  box-shadow: inset 0 -1px rgba(228, 193, 126, 0.065);
+}
+
+.conversation-room .thread {
+  padding: clamp(22px, 3vw, 34px) clamp(10px, 1.8vw, 22px) 18px;
+}
+
+.reset-chat-btn {
+  white-space: nowrap;
+}
+
+/* Final mobile shell */
+@media (max-width: 768px) {
+  .app-shell-container {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    padding-bottom: 64px;
+  }
+
+  .app-sidebar {
+    display: none;
+  }
+
+  .app-content-wrapper {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .app-header-bar {
+    padding: 10px 14px;
+  }
+
+  .app-main-content {
+    width: 100%;
+    padding: 8px 12px 12px;
+  }
+
+  .qiyu-chat-stage,
+  .shell {
+    width: 100%;
+    max-width: none;
+    height: calc(var(--app-viewport-height) - 130px);
+    min-height: calc(var(--app-viewport-height) - 130px);
+  }
+
+  .shell {
+    padding: 8px 0 10px;
+  }
+
+  .conversation-room {
+    padding: 0;
+  }
+
+  .conversation-room .chat-header {
+    padding: 0 2px 12px;
+  }
+
+  .conversation-room .thread {
+    padding: 18px 2px 14px;
+  }
+
+  .composer {
+    margin-top: 10px;
+  }
+}

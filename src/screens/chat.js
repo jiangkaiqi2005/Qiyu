@@ -38,7 +38,7 @@ export function render(container, context) {
   const innerHtml = `
     <div class="qiyu-chat-stage ${initialStageClass}">
       <div class="shell">
-        <div class="conversation-panel">
+        <div class="conversation-panel conversation-room">
           <div class="chat-header">
             <div class="presence">
               <span class="mark" aria-hidden="true">栖</span>
@@ -47,7 +47,7 @@ export function render(container, context) {
                 <span class="presence-state">深夜里，有我倾听你的声音</span>
               </div>
             </div>
-            <button class="reset-chat-btn" type="button" aria-label="清空当前上下文">清空当前上下文</button>
+            <button class="reset-chat-btn" type="button" aria-label="清空当前上下文">清空</button>
           </div>
           <div class="chat-dev-diagnostics"></div>
           <section class="thread" aria-label="与 栖语 的深夜夜话" role="log" aria-live="polite">
