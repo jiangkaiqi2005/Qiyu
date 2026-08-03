@@ -1,14 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { handleSettingsRequest, csrfToken } from '../../src/server/settings-route.js';
-import { loadRuntimeConfig } from '../../src/server/config.js';
-import { rm } from 'node:fs/promises';
 
-test('settings route GET and POST endpoints', async () => {
-  // Clean up any existing config file first
-  try {
-    await rm('qiyu.config.local.json');
-  } catch {}
+test('settings route GET and POST endpoints with isolated configPath', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'qiyu-settings-test-'));
+  const configPath = join(dir, 'qiyu.config.local.json');
 
   const writeHeadCalls = [];
   const endCalls = [];
@@ -31,7 +30,7 @@ test('settings route GET and POST endpoints', async () => {
     }
   };
 
-  await handleSettingsRequest(mockReqGet, mockRes);
+  await handleSettingsRequest(mockReqGet, mockRes, { configPath });
   assert.equal(writeHeadCalls[0].status, 200);
   assert.match(endCalls[0], /"apiUrl":""/);
 
@@ -51,17 +50,151 @@ test('settings route GET and POST endpoints', async () => {
     }
   };
 
-  await handleSettingsRequest(mockReqPost, mockRes);
+  await handleSettingsRequest(mockReqPost, mockRes, { configPath });
   assert.equal(writeHeadCalls[1].status, 200);
 
   // 3. GET saved config (masks API Key)
-  await handleSettingsRequest(mockReqGet, mockRes);
+  await handleSettingsRequest(mockReqGet, mockRes, { configPath });
   assert.equal(writeHeadCalls[2].status, 200);
-  assert.match(endCalls[2], /"apiUrl":"https:\/\/test\.api\.com"/);
+  assert.match(endCalls[2], /"apiUrl":"https:\/\/test\.api\.com\/chat\/completions"/);
   assert.match(endCalls[2], /"apiKey":"••••••••"/);
 
-  // Clean up config file
+  // Clean up
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('settings route does not touch root config file when custom configPath is used', async () => {
+  const rootFile = 'qiyu.config.local.json';
+  let originalContent = null;
   try {
-    await rm('qiyu.config.local.json');
+    originalContent = await readFile(rootFile, 'utf8');
   } catch {}
+
+  const tempDir = await mkdtemp(join(tmpdir(), 'qiyu-settings-isolate-'));
+  const configPath = join(tempDir, 'qiyu.config.local.json');
+
+  const mockRes = { writeHead() {}, end() {} };
+  const mockReqPost = {
+    url: '/api/settings',
+    method: 'POST',
+    headers: { 'x-csrf-token': csrfToken },
+    [Symbol.asyncIterator]: async function* () {
+      yield JSON.stringify({ apiUrl: 'https://isolate.test' });
+    }
+  };
+
+  await handleSettingsRequest(mockReqPost, mockRes, { configPath });
+
+  // Assert that root file was not modified/deleted
+  try {
+    const currentContent = await readFile(rootFile, 'utf8');
+    assert.equal(currentContent, originalContent, 'Root config file should not be modified');
+  } catch (err) {
+    if (originalContent !== null) {
+      assert.fail('Root config file should not be deleted');
+    }
+  }
+
+  // Clean up temp dir
+  await rm(tempDir, { recursive: true, force: true });
+});
+
+test('settings route test endpoint returns validation results and handles errors', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'qiyu-settings-test-ep-'));
+  const configPath = join(tempDir, 'qiyu.config.local.json');
+
+  const writeHeadCalls = [];
+  const endCalls = [];
+  const mockRes = {
+    writeHead(status, headers) { writeHeadCalls.push({ status, headers }); },
+    end(payload) { endCalls.push(payload); }
+  };
+
+  const mockReqTest = {
+    url: '/api/settings/test',
+    method: 'POST',
+    headers: { 'x-csrf-token': csrfToken },
+    [Symbol.asyncIterator]: async function* () {
+      yield JSON.stringify({
+        apiUrl: 'https://test.api.com/v1',
+        apiKey: 'test-key',
+        model: 'test-model',
+        timeoutMs: 22000
+      });
+    }
+  };
+
+  let observedConfig = null;
+  let observedMessages = null;
+  const callChatCompletionsImpl = async ({ config, messages }) => {
+    observedConfig = config;
+    observedMessages = messages;
+    return '这是一段不应该回传给前端的长回复';
+  };
+
+  await handleSettingsRequest(mockReqTest, mockRes, {
+    configPath,
+    callChatCompletionsImpl
+  });
+
+  assert.equal(writeHeadCalls[0].status, 200);
+  const data = JSON.parse(endCalls[0]);
+  assert.equal(data.success, true);
+  assert.equal(data.normalizedApiUrl, 'https://test.api.com/v1/chat/completions');
+  assert.equal(data.responseReceived, true);
+  assert.equal(data.sampleText, undefined);
+  assert.ok(typeof data.latencyMs === 'number');
+  assert.equal(observedConfig.timeoutMs, 22000);
+  assert.equal(observedConfig.maxTokens, 32);
+  assert.equal(observedMessages[0].role, 'system');
+  assert.match(observedMessages[0].content, /只回复 OK/);
+
+  await rm(tempDir, { recursive: true, force: true });
+});
+
+test('settings route test-chat endpoint simulates Qiyu E2E prompt', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'qiyu-settings-chat-ep-'));
+  const configPath = join(tempDir, 'qiyu.config.local.json');
+
+  const writeHeadCalls = [];
+  const endCalls = [];
+  const mockRes = {
+    writeHead(status, headers) { writeHeadCalls.push({ status, headers }); },
+    end(payload) { endCalls.push(payload); }
+  };
+
+  const mockReqTestChat = {
+    url: '/api/settings/test-chat',
+    method: 'POST',
+    headers: { 'x-csrf-token': csrfToken },
+    [Symbol.asyncIterator]: async function* () {
+      yield JSON.stringify({
+        apiUrl: 'https://test.api.com/v1',
+        apiKey: 'test-key',
+        model: 'test-model',
+        timeoutMs: 24000
+      });
+    }
+  };
+
+  let observedConfig = null;
+  const callChatCompletionsImpl = async ({ config }) => {
+    observedConfig = config;
+    return '今天辛苦了，早点休息吧';
+  };
+
+  await handleSettingsRequest(mockReqTestChat, mockRes, {
+    configPath,
+    callChatCompletionsImpl,
+    productSoul: '你是睡前伴侣栖语。'
+  });
+
+  assert.equal(writeHeadCalls[0].status, 200);
+  const data = JSON.parse(endCalls[0]);
+  assert.equal(data.success, true);
+  assert.equal(data.reply, '今天辛苦了，早点休息吧');
+  assert.ok(typeof data.latencyMs === 'number');
+  assert.equal(observedConfig.timeoutMs, 24000);
+
+  await rm(tempDir, { recursive: true, force: true });
 });

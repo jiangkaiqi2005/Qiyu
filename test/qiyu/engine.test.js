@@ -111,3 +111,19 @@ test('emotional inertia decays gradually across turns', () => {
   assert.equal(state.lastEmotion.intensity, 0);
 });
 
+test('quiet local replies do not return or persist standalone silence markers', () => {
+  const state = {
+    ...createInitialState('local-user'),
+    companionshipStyle: 'quiet'
+  };
+
+  const result = createQiyuReply('嗯', state);
+
+  assert.deepEqual(result.messages, ['嗯。']);
+  assert.equal(result.nextState.turns.at(-1).speaker, 'qiyu');
+  assert.equal(result.nextState.turns.at(-1).text, '嗯。');
+  assert.doesNotMatch(
+    result.nextState.dailyConversations.at(-1).turns.at(-1).text,
+    /^…+$/
+  );
+});

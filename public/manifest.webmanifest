@@ -1,21 +1,61 @@
 {
   "name": "栖语",
   "short_name": "栖语",
-  "start_url": "/",
+  "id": "/",
+  "start_url": "/chat",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#11100e",
-  "theme_color": "#d8a94b",
-  "description": "一个深夜懂你的 AI 伴侣",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "background_color": "#0b0a08",
+  "theme_color": "#0b0a08",
+  "description": "安静、克制的深夜夜话空间，陪你把想说的话慢慢说完。",
+  "categories": [
+    "lifestyle",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "/public/icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "/public/icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "开始夜话",
+      "short_name": "夜话",
+      "url": "/chat",
+      "icons": [
+        {
+          "src": "/public/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png",
+          "purpose": "any"
+        }
+      ]
+    },
+    {
+      "name": "调整默契",
+      "short_name": "默契",
+      "url": "/settings",
+      "icons": [
+        {
+          "src": "/public/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png",
+          "purpose": "any"
+        }
+      ]
     }
   ]
 }

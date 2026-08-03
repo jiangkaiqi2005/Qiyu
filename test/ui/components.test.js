@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderAppShell } from '../../src/ui/layout.js';
+import { renderAppShell, bindNavigation, bindSidebarHoverIntent } from '../../src/ui/layout.js';
 import {
   renderButton,
   renderInput,
@@ -22,6 +22,18 @@ test('renderAppShell matches routes and injects developer mode', () => {
   const html = renderAppShell('<div>对话内容</div>', '/chat');
   assert.match(html, /skip-link/);
   assert.match(html, /app-shell-container/);
+  assert.match(html, /app-canvas/);
+  assert.match(html, /sidebar-sheen/);
+  assert.match(html, /sidebar-orbit/);
+  assert.doesNotMatch(html, /nav-index/);
+  assert.doesNotMatch(html, />0[1-9]</);
+  assert.match(html, /sidebar-context/);
+  assert.match(html, /关系中枢/);
+  assert.doesNotMatch(html, /栖所/);
+  assert.doesNotMatch(html, /初遇/);
+  assert.doesNotMatch(html, /data-nav-path="\/memory"/);
+  assert.doesNotMatch(html, />印记</);
+  assert.doesNotMatch(html, /印记与默契/);
   assert.match(html, /幻镜/); // Since dev mode is true
 
   delete globalThis.window;
@@ -75,4 +87,436 @@ test('renderNotice injects type classes and role alert', () => {
   assert.match(infoNotice, /notice notice-info/);
   assert.match(infoNotice, /role="alert"/);
   assert.match(infoNotice, /提示信息/);
+  assert.doesNotMatch(infoNotice, /onclick=/);
+});
+
+test('bindNavigation dismisses notices from the close button', () => {
+  let clickHandler;
+  let prevented = false;
+  let navigated = false;
+  const notice = {
+    removed: false,
+    remove() {
+      this.removed = true;
+    }
+  };
+  const closeBtn = {
+    closest(selector) {
+      return selector === '.notice' ? notice : null;
+    }
+  };
+  const container = {
+    addEventListener(event, fn) {
+      if (event === 'click') {
+        clickHandler = fn;
+      }
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+
+  bindNavigation(container, {
+    navigate() {
+      navigated = true;
+    }
+  });
+
+  clickHandler({
+    preventDefault() {
+      prevented = true;
+    },
+    target: {
+      closest(selector) {
+        return selector === '.btn-close-notice' ? closeBtn : null;
+      }
+    }
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(notice.removed, true);
+  assert.equal(navigated, false);
+});
+
+test('bindNavigation can dismiss a wrapper when the notice asks for wrapper scope', () => {
+  let clickHandler;
+  const wrapper = {
+    dataset: { noticeDismissScope: 'wrapper' },
+    removed: false,
+    remove() {
+      this.removed = true;
+    }
+  };
+  const notice = {
+    parentElement: wrapper,
+    removed: false,
+    remove() {
+      this.removed = true;
+    }
+  };
+  const closeBtn = {
+    closest(selector) {
+      return selector === '.notice' ? notice : null;
+    }
+  };
+  const container = {
+    addEventListener(event, fn) {
+      if (event === 'click') {
+        clickHandler = fn;
+      }
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+
+  bindNavigation(container, { navigate() {} });
+  clickHandler({
+    preventDefault() {},
+    target: {
+      closest(selector) {
+        return selector === '.btn-close-notice' ? closeBtn : null;
+      }
+    }
+  });
+
+  assert.equal(wrapper.removed, true);
+  assert.equal(notice.removed, false);
+});
+
+test('bindNavigation carries a stable expanded sidebar state across sidebar route clicks', () => {
+  globalThis.window = {
+    localStorage: {
+      getItem() {
+        return null;
+      }
+    }
+  };
+
+  let navClickHandler;
+  let navigatedPath = null;
+  const sidebar = {
+    dataset: { expanded: 'true' },
+    addEventListener() {},
+    matches(selector) {
+      return selector === ':hover';
+    }
+  };
+  const navButton = {
+    dataset: { navPath: '/history' },
+    addEventListener(type, handler) {
+      if (type === 'click') {
+        navClickHandler = handler;
+      }
+    },
+    closest(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    }
+  };
+  const container = {
+    addEventListener() {},
+    querySelector(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    },
+    querySelectorAll(selector) {
+      return selector === '[data-nav-path]' ? [navButton] : [];
+    }
+  };
+
+  bindNavigation(container, {
+    navigate(path) {
+      navigatedPath = path;
+    }
+  });
+
+  navClickHandler({ preventDefault() {} });
+  const nextHtml = renderAppShell('<div>记录</div>', '/history');
+
+  assert.equal(navigatedPath, '/history');
+  assert.match(nextHtml, /class="app-sidebar"[^>]*data-expanded="true"/);
+  assert.match(nextHtml, /class="app-sidebar"[^>]*data-restored="true"/);
+
+  delete globalThis.window;
+});
+
+test('bindSidebarHoverIntent waits before expanding the sidebar', () => {
+  let nextTimerId = 1;
+  const pendingTimers = new Map();
+  const timers = {
+    setTimeout(fn, delay) {
+      const id = nextTimerId;
+      nextTimerId += 1;
+      pendingTimers.set(id, { fn, delay });
+      return id;
+    },
+    clearTimeout(id) {
+      pendingTimers.delete(id);
+    }
+  };
+  const listeners = new Map();
+  const sidebar = {
+    dataset: {},
+    addEventListener(type, fn) {
+      listeners.set(type, fn);
+    },
+    getBoundingClientRect() {
+      return { left: 0 };
+    },
+    matches() {
+      return false;
+    }
+  };
+  const container = {
+    querySelector(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    }
+  };
+  const runNextTimer = () => {
+    const [[id, timer]] = pendingTimers;
+    pendingTimers.delete(id);
+    timer.fn();
+    return timer.delay;
+  };
+
+  bindSidebarHoverIntent(container, timers);
+  listeners.get('pointerenter')({ pointerType: 'mouse', clientX: 42 });
+  listeners.get('pointerleave')({ pointerType: 'mouse' });
+  runNextTimer();
+
+  assert.equal(sidebar.dataset.expanded, undefined);
+
+  listeners.get('pointerenter')({ pointerType: 'mouse', clientX: 42 });
+  assert.equal(runNextTimer(), 1040);
+  assert.equal(sidebar.dataset.expanded, 'true');
+
+  listeners.get('pointerleave')({ pointerType: 'mouse' });
+  assert.equal(runNextTimer(), 220);
+  assert.equal(sidebar.dataset.expanded, undefined);
+});
+
+test('bindSidebarHoverIntent expands when the pointer rests inside the collapsed sidebar', () => {
+  let scheduledTimer = null;
+  const timers = {
+    setTimeout(fn, delay) {
+      scheduledTimer = { fn, delay };
+      return 1;
+    },
+    clearTimeout() {}
+  };
+  const listeners = new Map();
+  const sidebar = {
+    dataset: {},
+    addEventListener(type, fn) {
+      listeners.set(type, fn);
+    },
+    getBoundingClientRect() {
+      return { left: 0 };
+    },
+    matches() {
+      return false;
+    }
+  };
+  const container = {
+    querySelector(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    }
+  };
+
+  bindSidebarHoverIntent(container, timers);
+  listeners.get('pointerenter')({ pointerType: 'mouse', clientX: 86 });
+
+  assert.equal(scheduledTimer.delay, 1040);
+  scheduledTimer.fn();
+  assert.equal(sidebar.dataset.expanded, 'true');
+});
+
+test('bindSidebarHoverIntent keeps a restored sidebar motionless while the pointer remains inside', () => {
+  let scheduledTimer = null;
+  const rafCallbacks = [];
+  const listeners = new Map();
+  let isHovered = true;
+  const timers = {
+    setTimeout(fn, delay) {
+      scheduledTimer = { fn, delay };
+      return 1;
+    },
+    clearTimeout() {
+      scheduledTimer = null;
+    },
+    requestAnimationFrame(fn) {
+      rafCallbacks.push(fn);
+      return rafCallbacks.length;
+    }
+  };
+  const sidebar = {
+    dataset: { expanded: 'true', restored: 'true' },
+    addEventListener(type, fn) {
+      listeners.set(type, fn);
+    },
+    matches(selector) {
+      return selector === ':hover' ? isHovered : false;
+    }
+  };
+  const container = {
+    querySelector(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    }
+  };
+
+  bindSidebarHoverIntent(container, timers);
+  while (rafCallbacks.length) {
+    rafCallbacks.shift()();
+  }
+
+  assert.equal(sidebar.dataset.expanded, 'true');
+  assert.equal(sidebar.dataset.restored, 'true');
+
+  isHovered = false;
+  listeners.get('pointerleave')({ pointerType: 'mouse' });
+
+  assert.equal(sidebar.dataset.restored, undefined);
+  assert.equal(scheduledTimer.delay, 220);
+  scheduledTimer.fn();
+  assert.equal(sidebar.dataset.expanded, undefined);
+});
+
+test('bindSidebarHoverIntent keeps a restored sidebar still after a route click when the pointer remains over it', () => {
+  const previousWindow = globalThis.window;
+  globalThis.window = {
+    localStorage: {
+      getItem() {
+        return null;
+      }
+    }
+  };
+
+  try {
+    let navClickHandler;
+    const oldSidebar = {
+      dataset: { expanded: 'true' },
+      addEventListener() {},
+      matches(selector) {
+        return selector === ':hover';
+      }
+    };
+    const navButton = {
+      dataset: { navPath: '/history' },
+      addEventListener(type, handler) {
+        if (type === 'click') {
+          navClickHandler = handler;
+        }
+      },
+      closest(selector) {
+        return selector === '.app-sidebar' ? oldSidebar : null;
+      }
+    };
+    const oldContainer = {
+      addEventListener() {},
+      querySelector(selector) {
+        return selector === '.app-sidebar' ? oldSidebar : null;
+      },
+      querySelectorAll(selector) {
+        return selector === '[data-nav-path]' ? [navButton] : [];
+      }
+    };
+
+    bindNavigation(oldContainer, { navigate() {} });
+    navClickHandler({ preventDefault() {}, clientX: 56, clientY: 220 });
+    const nextHtml = renderAppShell('<div>记录</div>', '/history');
+
+    assert.match(nextHtml, /data-restore-pointer-x="56"/);
+    assert.match(nextHtml, /data-restore-pointer-y="220"/);
+
+    const rafCallbacks = [];
+    const listeners = new Map();
+    const newSidebar = {
+      dataset: {
+        expanded: 'true',
+        restored: 'true',
+        restorePointerX: '56',
+        restorePointerY: '220'
+      },
+      ownerDocument: {
+        elementFromPoint(x, y) {
+          assert.equal(x, 56);
+          assert.equal(y, 220);
+          return {
+            closest(selector) {
+              return selector === '.app-sidebar' ? newSidebar : null;
+            }
+          };
+        }
+      },
+      addEventListener(type, fn) {
+        listeners.set(type, fn);
+      },
+      matches() {
+        return false;
+      }
+    };
+    const newContainer = {
+      querySelector(selector) {
+        return selector === '.app-sidebar' ? newSidebar : null;
+      }
+    };
+    const timers = {
+      setTimeout() {
+        throw new Error('restored sidebar should not schedule a close while the pointer is still over it');
+      },
+      clearTimeout() {},
+      requestAnimationFrame(fn) {
+        rafCallbacks.push(fn);
+        return rafCallbacks.length;
+      }
+    };
+
+    bindSidebarHoverIntent(newContainer, timers);
+    while (rafCallbacks.length) {
+      rafCallbacks.shift()();
+    }
+
+    assert.equal(newSidebar.dataset.expanded, 'true');
+    assert.equal(newSidebar.dataset.restored, 'true');
+  } finally {
+    globalThis.window = previousWindow;
+  }
+});
+
+test('bindSidebarHoverIntent cancels expansion when the pointer only passes through', () => {
+  let scheduledTimer = null;
+  const timers = {
+    setTimeout(fn, delay) {
+      scheduledTimer = { fn, delay };
+      return 1;
+    },
+    clearTimeout() {
+      scheduledTimer = null;
+    }
+  };
+  const listeners = new Map();
+  const sidebar = {
+    dataset: {},
+    addEventListener(type, fn) {
+      listeners.set(type, fn);
+    },
+    getBoundingClientRect() {
+      return { left: 0 };
+    },
+    matches() {
+      return false;
+    }
+  };
+  const container = {
+    querySelector(selector) {
+      return selector === '.app-sidebar' ? sidebar : null;
+    }
+  };
+
+  bindSidebarHoverIntent(container, timers);
+  listeners.get('pointerenter')({ pointerType: 'mouse', clientX: 86 });
+  listeners.get('pointerleave')({ pointerType: 'mouse' });
+
+  assert.equal(scheduledTimer.delay, 220);
+  scheduledTimer.fn();
+  assert.equal(sidebar.dataset.expanded, undefined);
 });

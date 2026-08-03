@@ -7,22 +7,8 @@ import { recordTurn } from '../qiyu/state.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { callChatCompletions } from './llm-client.js';
 import { inferRelationshipStage } from '../qiyu/relationship.js';
-
-async function readJsonBody(req, limitBytes = 65536) {
-  let raw = '';
-  for await (const chunk of req) {
-    raw += chunk;
-    if (Buffer.byteLength(raw, 'utf8') > limitBytes) {
-      throw new Error('Request body too large');
-    }
-  }
-  return JSON.parse(raw || '{}');
-}
-
-function sendJson(res, status, payload) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(payload));
-}
+import { normalizeReplyMessages } from '../qiyu/reply-delivery.js';
+import { readJsonBody, sendJson } from './http-utils.js';
 
 function fallbackReply(text, state) {
   const result = createQiyuReply(text, state);
@@ -41,13 +27,26 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
     }
 
     const safety = classifySafety(text);
-    if (safety.kind !== 'normal' || !runtimeConfig.hasLlm) {
+    if (safety.kind !== 'normal') {
       const result = fallbackReply(text, state);
       sendJson(res, 200, {
         messages: result.messages,
         nextState: result.nextState,
         debug: result.debug,
-        source: 'local'
+        source: 'local',
+        fallbackReason: 'safety'
+      });
+      return;
+    }
+
+    if (!runtimeConfig.hasLlm) {
+      const result = fallbackReply(text, state);
+      sendJson(res, 200, {
+        messages: result.messages,
+        nextState: result.nextState,
+        debug: result.debug,
+        source: 'local',
+        fallbackReason: 'no_llm_config'
       });
       return;
     }
@@ -76,6 +75,7 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
       content: turn.text
     }));
 
+    const start = Date.now();
     let llmText;
     try {
       llmText = await callChatCompletions({
@@ -88,27 +88,39 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
         ],
         fetchImpl
       });
-      assertNoForbiddenPhrase(llmText);
+      const latencyMs = Date.now() - start;
+
+      const messages = normalizeReplyMessages(llmText.split('\n').filter(Boolean), { fallback: '我在。' });
+      const visibleText = messages.join('\n');
+      assertNoForbiddenPhrase(visibleText);
+      const nextState = recordTurn(activeState, 'qiyu', visibleText);
+
+      sendJson(res, 200, {
+        messages,
+        nextState,
+        debug: { mode: 'llm', relationshipStage: nextStage },
+        source: 'llm',
+        latencyMs
+      });
     } catch (error) {
+      const latencyMs = Date.now() - start;
+      const fallbackReason = error.message.includes('Forbidden qiyu phrase')
+        ? 'forbidden_phrases'
+        : 'llm_error';
+      const providerError = error.message;
+
       // 5. Graceful fallback on forbidden phrases or API failures to prevent 500 DoS crashes
       const result = fallbackReply(sanitizedText, state);
       sendJson(res, 200, {
         messages: result.messages,
         nextState: result.nextState,
         debug: { ...result.debug, error: error.message },
-        source: 'local'
+        source: 'local',
+        fallbackReason,
+        providerError,
+        latencyMs
       });
-      return;
     }
-
-    const nextState = recordTurn(activeState, 'qiyu', llmText);
-
-    sendJson(res, 200, {
-      messages: llmText.split('\n').filter(Boolean),
-      nextState,
-      debug: { mode: 'llm', relationshipStage: nextStage },
-      source: 'llm'
-    });
   } catch (error) {
     // Sanitize stack traces to avoid absolute server path exposures
     sendJson(res, 500, { error: 'Internal Server Error' });

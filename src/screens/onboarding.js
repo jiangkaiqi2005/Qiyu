@@ -1,38 +1,77 @@
 import { renderAppShell, bindNavigation } from '../ui/layout.js';
 import { loadPreferences, savePreferences } from '../qiyu/preferences.js';
-import { renderButton, renderInput, renderToggle } from '../ui/components.js';
+import { renderButton, renderInput, renderToggle, renderNotice } from '../ui/components.js';
+import { applyProviderPreset, renderProviderPresetOptions } from '../ui/provider-presets.js';
 
 export function render(container, context) {
   const storage = window.localStorage;
   let prefs = loadPreferences(storage);
 
   let currentStep = 1;
-  const totalSteps = 4;
+  const totalSteps = 5;
+  let csrfToken = '';
+
+  const settingsTokenPromise = fetch('/api/settings')
+    .then(res => res.ok ? res.json() : null)
+    .then(data => {
+      if (data && data.csrfToken) {
+        csrfToken = data.csrfToken;
+        window.qiyuCsrfToken = data.csrfToken;
+      }
+      return csrfToken;
+    })
+    .catch(() => '');
 
   function getStepHtml() {
     if (currentStep === 1) {
       return `
-        <h2 id="step-title-1" style="font-size: 18px; margin-top: 12px; color: var(--ink);">「 深夜里，我该怎么唤你？」</h2>
-        <p class="subtitle">告诉我一个你最习惯的名字，让我在风吹动树梢的时刻，能轻轻唤你一声。</p>
-        <div style="margin-top: 24px; margin-bottom: 24px;">
+        <div class="setup-step">
+          <span class="setup-kicker">API first</span>
+          <h2 id="step-title-1">先把引擎接上</h2>
+          <p class="setup-copy">栖语可以先用本地规则陪你说话。但如果要让对话质感稳定，第一次进入时建议先配置 OpenAI 兼容或 Anthropic 原生 API。</p>
+        </div>
+        <div class="setup-fields">
+          <select name="providerPreset" class="form-select setup-control" aria-labelledby="step-title-1">
+            ${renderProviderPresetOptions()}
+          </select>
           ${renderInput({
-            name: 'userName',
-            placeholder: '比如：林深、小雨...',
-            value: prefs.userName || '',
-            attrs: 'aria-labelledby="step-title-1"'
+            name: 'apiUrl',
+            placeholder: 'API 地址，比如：https://api.openai.com/v1',
+            attrs: 'aria-labelledby="step-title-1" autocomplete="off"'
+          })}
+          ${renderInput({
+            name: 'apiKey',
+            type: 'password',
+            placeholder: 'API Key',
+            attrs: 'aria-labelledby="step-title-1" autocomplete="off"'
+          })}
+          ${renderInput({
+            name: 'model',
+            placeholder: '模型名称，比如：gpt-4o',
+            attrs: 'aria-labelledby="step-title-1" autocomplete="off"'
+          })}
+          ${renderInput({
+            name: 'temperature',
+            type: 'number',
+            value: '0.8',
+            attrs: 'aria-labelledby="step-title-1" min="0" max="2" step="0.1"'
           })}
         </div>
+        <p class="setup-note">暂时不填也可以继续，之后可在“默契中心”补上。</p>
       `;
     }
     if (currentStep === 2) {
       return `
-        <h2 id="step-title-2" style="font-size: 18px; margin-top: 12px; color: var(--ink);">「 你通常，何时坠入梦乡？」</h2>
-        <p class="subtitle">告诉我你预计入睡的时间，我会在此前静静收拢话头，不再惊扰你的倦意。</p>
-        <div style="margin-top: 24px; margin-bottom: 24px;">
+        <div class="setup-step">
+          <span class="setup-kicker">name</span>
+          <h2 id="step-title-2">深夜里，我该怎么唤你</h2>
+          <p class="setup-copy">告诉我一个你习惯的名字。以后开口时，我会少一点生硬。</p>
+        </div>
+        <div class="setup-fields setup-fields-compact">
           ${renderInput({
-            name: 'sleepTime',
-            type: 'time',
-            value: prefs.sleepTime || '23:00',
+            name: 'userName',
+            placeholder: '比如：林深、小雨...',
+            value: prefs.userName || '',
             attrs: 'aria-labelledby="step-title-2"'
           })}
         </div>
@@ -40,48 +79,67 @@ export function render(container, context) {
     }
     if (currentStep === 3) {
       return `
-        <fieldset style="border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px;">
-          <legend id="step-title-3" style="font-size: 18px; margin-top: 12px; color: var(--ink); font-weight: bold; margin-bottom: 8px;">「 深夜相伴，你希望我是怎样的脾气？」</legend>
-          <p class="subtitle" style="margin-top: 0; margin-bottom: 16px;">选择一种你最感到安心的相处温度。</p>
-          
-          <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(16,15,13,0.4); transition: border-color 0.2s;">
-            <input type="radio" name="style" value="gentle" ${prefs.companionshipStyle === 'gentle' ? 'checked' : ''} style="accent-color: var(--accent);">
-            <div>
+        <div class="setup-step">
+          <span class="setup-kicker">sleep</span>
+          <h2 id="step-title-3">你通常何时睡下</h2>
+          <p class="setup-copy">告诉我预计入睡的时间。临近这个时刻，我会主动把话题收轻一点。</p>
+        </div>
+        <div class="setup-fields setup-fields-time">
+          ${renderInput({
+            name: 'sleepTime',
+            type: 'time',
+            value: prefs.sleepTime || '23:00',
+            attrs: 'aria-labelledby="step-title-3"'
+          })}
+        </div>
+      `;
+    }
+    if (currentStep === 4) {
+      return `
+        <fieldset class="choice-stack">
+          <legend id="step-title-4">深夜相伴，你希望我是怎样的脾气</legend>
+          <p class="setup-copy">选择一种你更安心的相处温度。</p>
+
+          <label class="choice-card">
+            <input type="radio" name="style" value="gentle" ${prefs.companionshipStyle === 'gentle' ? 'checked' : ''}>
+            <div class="choice-copy">
               <strong>温柔倾听</strong>
-              <div style="font-size: 12px; color: var(--muted); margin-top: 4px;">细致共情，听你倾诉每一天的疲惫</div>
+              <span>细致共情，听你倾诉每一天的疲惫</span>
             </div>
           </label>
-          <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(16,15,13,0.4); transition: border-color 0.2s;">
-            <input type="radio" name="style" value="playful" ${prefs.companionshipStyle === 'playful' ? 'checked' : ''} style="accent-color: var(--accent);">
-            <div>
+          <label class="choice-card">
+            <input type="radio" name="style" value="playful" ${prefs.companionshipStyle === 'playful' ? 'checked' : ''}>
+            <div class="choice-copy">
               <strong>轻松调侃</strong>
-              <div style="font-size: 12px; color: var(--muted); margin-top: 4px;">带着善意的幽默，化解深夜的无聊</div>
+              <span>带着善意的幽默，化解深夜的无聊</span>
             </div>
           </label>
-          <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(16,15,13,0.4); transition: border-color 0.2s;">
-            <input type="radio" name="style" value="quiet" ${prefs.companionshipStyle === 'quiet' ? 'checked' : ''} style="accent-color: var(--accent);">
-            <div>
+          <label class="choice-card">
+            <input type="radio" name="style" value="quiet" ${prefs.companionshipStyle === 'quiet' ? 'checked' : ''}>
+            <div class="choice-copy">
               <strong>安静聆听</strong>
-              <div style="font-size: 12px; color: var(--muted); margin-top: 4px;">少言寡语，只是在旁边默默守候</div>
+              <span>少言寡语，只是在旁边默默守候</span>
             </div>
           </label>
         </fieldset>
       `;
     }
-    if (currentStep === 4) {
+    if (currentStep === 5) {
       return `
-        <h2 id="step-title-4" style="font-size: 18px; margin-top: 12px; color: var(--ink);">「 昨夜私语，你愿意让我记下吗？」</h2>
-        <p class="subtitle">为了我们在未来的陪伴里更加默契，我可以用心记住你的一些日常喜好。</p>
-        <p style="font-size: 13px; line-height: 1.6; margin-bottom: 24px; color: var(--muted);">
-          这些悄悄提取的事实（如你爱吃的甜点、繁忙的项目）将<strong>完全只封存在你这台设备的浏览器本地 (localStorage)</strong>。
-          绝不会上传给任何中心化的云端数据库。你可以在“印记中心”里对它们进行修剪、藏入箱底，或者彻底清空。
+        <div class="setup-step">
+          <span class="setup-kicker">local context</span>
+          <h2 id="step-title-5">是否允许本地上下文参与</h2>
+          <p class="setup-copy">如果你愿意，栖语会把少量偏好和事实留在本机浏览器里，让之后的夜话少一点重复确认。</p>
+        </div>
+        <p class="setup-privacy-note">
+          这些内容只保存在这台设备的浏览器本地，不上传到中心化数据库。你可以随时在默契里调整本地上下文边界。
         </p>
-        <div style="margin-bottom: 24px;">
+        <div class="setup-toggle-row">
           ${renderToggle({
             name: 'memoryConsent',
             checked: prefs.memoryConsent,
-            label: '同意启用本地私语记忆功能',
-            attrs: 'aria-labelledby="step-title-4"'
+            label: '允许本地上下文参与夜话',
+            attrs: 'aria-labelledby="step-title-5"'
           })}
         </div>
       `;
@@ -102,29 +160,71 @@ export function render(container, context) {
     if (stepText) {
       stepText.innerText = stepsProgress;
     }
+    container.querySelectorAll('.step-dot').forEach((dot, index) => {
+      dot.classList.toggle('active', index + 1 === currentStep);
+      dot.classList.toggle('completed', index + 1 < currentStep);
+    });
     if (prevBtn) {
       prevBtn.style.visibility = currentStep === 1 ? 'hidden' : 'visible';
     }
     if (nextBtn) {
       nextBtn.innerText = currentStep === totalSteps ? '完成设置' : '下一步';
     }
+    bindCurrentStepInteractions();
+  }
+
+  function bindCurrentStepInteractions() {
+    if (currentStep !== 1) return;
+
+    const providerPreset = container.querySelector('[name="providerPreset"]');
+    if (!providerPreset) return;
+
+    providerPreset.addEventListener('change', () => {
+      const apiUrlInput = container.querySelector('[name="apiUrl"]');
+      const modelInput = container.querySelector('[name="model"]');
+      const preset = applyProviderPreset(providerPreset.value, { apiUrlInput, modelInput });
+      showNotification('info', preset.notice);
+    });
   }
 
   const innerHtml = `
-    <div class="card onboarding-card" style="max-width: 600px; padding: 36px 32px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(223, 179, 85, 0.15); padding-bottom: 12px; margin-bottom: 20px;">
-        <h1 style="border: 0; padding: 0; margin: 0; font-size: 20px; color: var(--accent);">首次相遇设置</h1>
-        <span class="step-progress-text" style="font-size: 13px; color: var(--muted);"></span>
-      </div>
+    <section class="onboarding-layout">
+      <aside class="step-rail" aria-label="首次设置步骤">
+        <div class="rail-brand">
+          <span class="mark" aria-hidden="true">栖</span>
+          <div>
+            <strong>初遇</strong>
+            <span>第一次进入时完成。先接上引擎，再建立默契。</span>
+          </div>
+        </div>
+        <ol>
+          <li class="step-dot active"><span>模型</span><strong>引擎</strong></li>
+          <li class="step-dot"><span>名字</span><strong>称呼</strong></li>
+          <li class="step-dot"><span>时间</span><strong>作息</strong></li>
+          <li class="step-dot"><span>语气</span><strong>脾气</strong></li>
+          <li class="step-dot"><span>边界</span><strong>上下文</strong></li>
+        </ol>
+      </aside>
 
-      <div class="onboarding-content" style="min-height: 240px;"></div>
+      <div class="card onboarding-card">
+        <div class="onboarding-head">
+          <div>
+            <h1>首次相遇设置</h1>
+            <span>让我们在入夜前建立最初的默契</span>
+          </div>
+          <span class="step-progress-text"></span>
+        </div>
 
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 32px; border-top: 1px solid rgba(223, 179, 85, 0.1); padding-top: 20px;">
-        <button class="btn prev-btn">上一步</button>
-        <button class="btn skip-all-btn" style="border-color: transparent; color: var(--muted);">跳过全部</button>
-        <button class="btn primary next-btn">下一步</button>
+        <div class="onboarding-content">${getStepHtml()}</div>
+        <div class="onboarding-notice-area"></div>
+
+        <div class="onboarding-footer">
+          <button class="btn prev-btn">上一步</button>
+          <button class="btn skip-all-btn">跳过全部</button>
+          <button class="btn primary next-btn">下一步</button>
+        </div>
       </div>
-    </div>
+    </section>
   `;
 
   container.innerHTML = renderAppShell(innerHtml, '/onboarding');
@@ -135,27 +235,93 @@ export function render(container, context) {
   const prevBtn = container.querySelector('.prev-btn');
   const nextBtn = container.querySelector('.next-btn');
   const skipBtn = container.querySelector('.skip-all-btn');
+  const noticeArea = container.querySelector('.onboarding-notice-area');
 
-  function saveCurrentStepData() {
-    if (currentStep === 1) {
-      const nameInput = container.querySelector('[name="userName"]');
-      if (nameInput) prefs.userName = nameInput.value.trim() || '你';
-    } else if (currentStep === 2) {
-      const sleepInput = container.querySelector('[name="sleepTime"]');
-      if (sleepInput) prefs.sleepTime = sleepInput.value || '23:00';
-    } else if (currentStep === 3) {
-      const checkedStyle = container.querySelector('[name="style"]:checked');
-      if (checkedStyle) prefs.companionshipStyle = checkedStyle.value;
-    } else if (currentStep === 4) {
-      const consentInput = container.querySelector('[name="memoryConsent"]');
-      if (consentInput) prefs.memoryConsent = consentInput.checked;
+  function showNotification(type, message) {
+    if (noticeArea) {
+      noticeArea.innerHTML = renderNotice({ type, message });
     }
-    savePreferences(storage, prefs);
+  }
+
+  async function ensureCsrfToken() {
+    if (csrfToken || window.qiyuCsrfToken) {
+      return csrfToken || window.qiyuCsrfToken;
+    }
+    return settingsTokenPromise;
+  }
+
+  async function saveApiSettingsIfProvided() {
+    const apiUrlInput = container.querySelector('[name="apiUrl"]');
+    const apiKeyInput = container.querySelector('[name="apiKey"]');
+    const modelInput = container.querySelector('[name="model"]');
+    const temperatureInput = container.querySelector('[name="temperature"]');
+    const apiUrl = apiUrlInput ? apiUrlInput.value.trim() : '';
+    const apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+    const model = modelInput ? modelInput.value.trim() : '';
+    const temperature = temperatureInput ? Number(temperatureInput.value) : 0.8;
+
+    if (!apiUrl && !apiKey && !model) return;
+
+    const token = await ensureCsrfToken();
+    if (!token) {
+      throw new Error('未能获取安全令牌，请稍后重试');
+    }
+
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': token
+      },
+      body: JSON.stringify({
+        apiUrl,
+        apiKey,
+        model,
+        temperature: Number.isFinite(temperature) ? temperature : 0.8,
+        timeoutMs: 30000
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`API 配置保存失败：HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'API 配置保存失败');
+    }
+  }
+
+  async function saveCurrentStepData() {
+    try {
+      if (currentStep === 1) {
+        await saveApiSettingsIfProvided();
+      } else if (currentStep === 2) {
+        const nameInput = container.querySelector('[name="userName"]');
+        if (nameInput) prefs.userName = nameInput.value.trim() || '你';
+      } else if (currentStep === 3) {
+        const sleepInput = container.querySelector('[name="sleepTime"]');
+        if (sleepInput) prefs.sleepTime = sleepInput.value || '23:00';
+      } else if (currentStep === 4) {
+        const checkedStyle = container.querySelector('[name="style"]:checked');
+        if (checkedStyle) prefs.companionshipStyle = checkedStyle.value;
+      } else if (currentStep === 5) {
+        const consentInput = container.querySelector('[name="memoryConsent"]');
+        if (consentInput) prefs.memoryConsent = consentInput.checked;
+      }
+      savePreferences(storage, prefs);
+      if (noticeArea) noticeArea.innerHTML = '';
+      return true;
+    } catch (error) {
+      showNotification('error', error.message || '保存失败，请稍后重试');
+      return false;
+    }
   }
 
   if (prevBtn) {
-    prevBtn.addEventListener('click', () => {
-      saveCurrentStepData();
+    prevBtn.addEventListener('click', async () => {
+      const saved = await saveCurrentStepData();
+      if (!saved) return;
       if (currentStep > 1) {
         currentStep--;
         updateUI();
@@ -164,8 +330,9 @@ export function render(container, context) {
   }
 
   if (nextBtn) {
-    nextBtn.addEventListener('click', () => {
-      saveCurrentStepData();
+    nextBtn.addEventListener('click', async () => {
+      const saved = await saveCurrentStepData();
+      if (!saved) return;
       if (currentStep < totalSteps) {
         currentStep++;
         updateUI();

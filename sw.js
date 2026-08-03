@@ -1,4 +1,4 @@
-const CACHE_NAME = 'qiyu-app-shell-v3';
+const CACHE_NAME = 'qiyu-app-shell-v43';
 const DYNAMIC_CACHE_NAME = 'qiyu-dynamic-assets-v1';
 const FONT_CACHE_NAME = 'qiyu-fonts-v1';
 
@@ -10,6 +10,7 @@ const ASSETS = [
   '/src/styles.css',
   '/src/ui/layout.js',
   '/src/ui/components.js',
+  '/src/ui/confirm-dialog.js',
   '/src/ui/render.js',
   '/src/ui/chat-api.js',
   '/src/screens/home.js',
@@ -19,6 +20,7 @@ const ASSETS = [
   '/src/screens/memory.js',
   '/src/screens/lab.js',
   '/src/screens/privacy.js',
+  '/src/screens/history.js',
   '/public/manifest.webmanifest',
   '/public/offline.html'
 ];

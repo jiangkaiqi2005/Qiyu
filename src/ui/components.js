@@ -5,15 +5,6 @@ export function renderButton({ label, variant = 'normal', className = '', attrs 
     baseClass += ' ' + className;
   }
 
-  // Backward compatibility: If attrs contains a custom class, extract and merge it to avoid duplicates
-  if (attrs && typeof attrs === 'string') {
-    const classMatch = attrs.match(/class=["']([^"']+)["']/);
-    if (classMatch) {
-      baseClass += ' ' + classMatch[1];
-      attrs = attrs.replace(/class=["']([^"']+)["']/, '');
-    }
-  }
-
   return `<button class="${baseClass}" ${attrs}>${label}</button>`;
 }
 
@@ -51,12 +42,12 @@ export function renderFieldRow({ name, id = `input-${name}`, label, controlHtml,
 }
 
 export function renderNotice({ type = 'info', message }) {
-  const icon = type === 'success' ? '✓' : type === 'warning' ? '⚠' : type === 'error' ? '✕' : 'ℹ';
+  const icon = type === 'success' ? '成功' : type === 'warning' ? '注意' : type === 'error' ? '错误' : '提示';
   return `
     <div class="notice notice-${type}" role="alert">
       <span class="notice-icon" aria-hidden="true">${icon}</span>
       <span class="notice-message">${message}</span>
-      <button class="btn-close-notice" type="button" aria-label="关闭通知" onclick="this.parentElement.remove()" style="background:transparent; border:0; color:inherit; cursor:pointer; font-size:16px; margin-left:auto; padding:2px 8px;">×</button>
+      <button class="btn-close-notice" type="button" aria-label="关闭通知">关闭</button>
     </div>
   `;
 }

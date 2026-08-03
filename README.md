@@ -4,6 +4,8 @@
 
 ## 运行
 
+要求 Node >= 20。项目零运行时依赖、无构建步骤，不需要 `npm install`。
+
 ```powershell
 cd E:\Agent\栖语
 npm test
@@ -11,7 +13,13 @@ npm run eval
 npm run dev
 ```
 
-打开 `http://localhost:5173`。
+打开 `http://localhost:5173`（可用 `PORT` / `HOST` 环境变量修改监听地址）。
+
+跑单个测试文件：
+
+```powershell
+node --test test/qiyu/engine.test.js
+```
 
 ## 核心行为
 
@@ -23,24 +31,62 @@ npm run dev
 
 ## 当前边界
 
-这个版本已接入外部 LLM API，支持流式风格调取，但同时保留本地规则引擎作为离线降级兜底和安全边界的测试轨道。不做账号系统，不做云端记忆。
+这个版本已接入外部 LLM API（一次性非流式调用，回复在前端按节奏逐条呈现），支持 OpenAI 兼容接口与 Anthropic Messages API。LLM 输出命中违禁词或请求失败时，自动降级回本地规则引擎——本地引擎同时是离线兜底和安全边界的测试轨道。不做账号系统，不做云端记忆。
 
 ## LLM API 配置
 
-浏览器不会读取 API Key。所有 LLM 请求都从本地 Node dev server 的 `/api/chat` 发出。
+浏览器不会读取 API Key。所有 LLM 请求都从本地 Node dev server 的 `/api/chat` 发出。且任何请求中出现的 API Key (长度 > 3) 均会在错误或异常输出中被替换为 `[redacted]` 脱敏。
 
-环境变量方式：
+### 1. 自动地址规范化 (URL Auto-normalization)
+
+无论以何种方式配置接口地址，系统会自动完成标准化。例如：
+- `https://api.openai.com/v1` -> `https://api.openai.com/v1/chat/completions`
+- `http://127.0.0.1:11434/v1` -> `http://127.0.0.1:11434/v1/chat/completions`
+- `https://api.anthropic.com/v1` -> `https://api.anthropic.com/v1/messages`（Anthropic Messages API）
+
+### 2. 环境变量方式
 
 ```powershell
 cd E:\Agent\栖语
-$env:LLM_API_URL="https://api.example.com/v1/chat/completions"
+$env:LLM_API_URL="https://api.openai.com/v1"
 $env:LLM_API_KEY="你的真实 key"
-$env:LLM_MODEL="provider-model-name"
+$env:LLM_MODEL="gpt-4o"
 npm run dev
 ```
 
-本地配置文件方式：
+另有可选的 `LLM_TEMPERATURE`（默认 0.8）与 `LLM_TIMEOUT_MS`（默认 30000）。
 
-复制 `qiyu.config.example.json` 为 `qiyu.config.local.json`，写入真实 `apiUrl`、`apiKey`、`model`。`qiyu.config.local.json` 已加入 `.gitignore`，不要提交。
+> [!NOTE]
+> 环境变量的优先级高于本地 JSON 配置文件。如果环境变量已设置，设置中心会提示受其控制，且保存修改将不会覆盖环境变量的生效值。
+
+### 3. 本地配置文件方式
+
+复制 `qiyu.config.example.json` 为 `qiyu.config.local.json`，写入真实 `apiUrl`、`apiKey`、`model`。该本地配置文件已被 `.gitignore` 包含，绝对不会提交至 Git。
+
+### 4. 本地 Ollama 调试指南
+
+1. 本地启动 Ollama 模型（例如 `llama3`）：
+   ```powershell
+   ollama run llama3
+   ```
+2. 打开应用设置中心，在**服务商预设 (Provider Preset)** 下选择 `Local Ollama`；
+3. 输入任意非空的 API Key（例如 `ollama`），随后即可进行连接测试与保存。
+   *（注：虽然 Ollama 不需要 Key，但为通过前端/服务端非空校验，需填入 dummy 值）*
+
+### 5. 调试与诊断
+
+- **双阶段连接测试**: 
+  - **测试 Provider 连接**: 验证基础 API 终结点的 HTTP 请求握手连通性与模型可用性。
+  - **测试栖语回复**: 结合当前栖语的 Prompt 上下文与安全规则，模拟发送一句 `'今天好累'`，并校验模型输出是否合法、是否命中违禁词等。
+- **对话页面实时诊断**:
+  - 在设置中心底部激活 **「幻境」实验室 (开发者模式)**；
+  - 返回对话页面时，顶部会渲染诊断面板。在发送消息后，会实时输出当轮对话的回复来源 (`LLM` 或 `本地兜底`)、通信耗时（延迟）以及具体的降级原因。
 
 没有配置 LLM 时，应用自动使用本地规则引擎。
+
+## 文档
+
+- `AGENTS.md`：面向编码代理的开发指引（命令、架构、回复管线、行为约束、测试约定）；`CLAUDE.md` 是指向它的符号链接。
+- `栖语产品灵魂.md`：人格与风格的最高优先级依据，服务启动时读入并注入 LLM system prompt。
+- `docs/product/behavior-spec.md`：从产品灵魂提炼出的工程行为规范。
+

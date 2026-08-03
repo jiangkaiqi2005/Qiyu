@@ -1,16 +1,93 @@
+const SIDEBAR_HOVER_INTENT_DELAY_MS = 1040;
+const SIDEBAR_CLOSE_GRACE_MS = 220;
+const SIDEBAR_CARRY_EXPANDED_KEY = '__qiyuCarryExpandedSidebar';
+
+function getRuntimeWindow() {
+  return typeof window === 'object' ? window : null;
+}
+
+function readPointerPosition(event) {
+  const x = Number(event?.clientX);
+  const y = Number(event?.clientY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+function consumeSidebarCarryExpanded() {
+  const runtimeWindow = getRuntimeWindow();
+  const carryState = runtimeWindow?.[SIDEBAR_CARRY_EXPANDED_KEY];
+  if (!carryState) return { shouldRestore: false, pointer: null };
+  delete runtimeWindow[SIDEBAR_CARRY_EXPANDED_KEY];
+  return {
+    shouldRestore: true,
+    pointer: carryState.pointer ?? null
+  };
+}
+
+function shouldCarrySidebarExpanded(sidebar) {
+  if (!sidebar) return false;
+  if (sidebar.dataset?.expanded === 'true') return true;
+  if (typeof sidebar.matches !== 'function') return false;
+  return sidebar.matches(':hover') || sidebar.matches(':focus-within');
+}
+
+function carrySidebarExpandedOnce(sidebar, event) {
+  if (!shouldCarrySidebarExpanded(sidebar)) return;
+  const runtimeWindow = getRuntimeWindow();
+  if (runtimeWindow) {
+    runtimeWindow[SIDEBAR_CARRY_EXPANDED_KEY] = {
+      pointer: readPointerPosition(event)
+    };
+  }
+}
+
+function readRestoredPointer(sidebar) {
+  const x = Number(sidebar.dataset?.restorePointerX);
+  const y = Number(sidebar.dataset?.restorePointerY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+function clearRestoredPointer(sidebar) {
+  if (!sidebar.dataset) return;
+  delete sidebar.dataset.restorePointerX;
+  delete sidebar.dataset.restorePointerY;
+}
+
+function isPointInsideSidebar(sidebar, pointer) {
+  if (!pointer) return false;
+  const ownerDocument = sidebar.ownerDocument ?? getRuntimeWindow()?.document ?? globalThis.document;
+  const pointedElement = typeof ownerDocument?.elementFromPoint === 'function'
+    ? ownerDocument.elementFromPoint(pointer.x, pointer.y)
+    : null;
+
+  if (pointedElement) {
+    if (pointedElement === sidebar) return true;
+    if (typeof pointedElement.closest === 'function') {
+      return pointedElement.closest('.app-sidebar') === sidebar;
+    }
+    return false;
+  }
+
+  if (typeof sidebar.getBoundingClientRect !== 'function') return false;
+  const rect = sidebar.getBoundingClientRect();
+  return pointer.x >= rect.left
+    && pointer.x <= rect.right
+    && pointer.y >= rect.top
+    && pointer.y <= rect.bottom;
+}
+
 export function renderAppShell(contentHtml, currentPath) {
   const routes = [
-    { path: '/', label: '栖所', icon: '🏠' },
-    { path: '/chat', label: '夜话', icon: '💬' },
-    { path: '/onboarding', label: '初遇', icon: '✨' },
-    { path: '/settings', label: '默契', icon: '⚙️' },
-    { path: '/memory', label: '印记', icon: '🧠' },
-    { path: '/privacy', label: '封存', icon: '🛡️' }
+    { path: '/chat', label: '夜话', icon: '话' },
+    { path: '/history', label: '记录', icon: '录' },
+    { path: '/settings', label: '默契', icon: '默' },
+    { path: '/privacy', label: '封存', icon: '封' }
   ];
 
   const devMode = window.localStorage.getItem('qiyu_dev_mode') === 'true';
   if (devMode) {
-    routes.push({ path: '/lab', label: '幻镜', icon: '🧪' });
+    routes.push({ path: '/lab', label: '幻镜', icon: '镜' });
   }
 
   const navItems = routes
@@ -23,11 +100,20 @@ export function renderAppShell(contentHtml, currentPath) {
   `
     )
     .join('');
+  const carriedSidebar = consumeSidebarCarryExpanded();
+  const restorePointerAttr = carriedSidebar.pointer
+    ? ` data-restore-pointer-x="${carriedSidebar.pointer.x}" data-restore-pointer-y="${carriedSidebar.pointer.y}"`
+    : '';
+  const sidebarExpandedAttr = carriedSidebar.shouldRestore
+    ? ` data-expanded="true" data-restored="true"${restorePointerAttr}`
+    : '';
 
   return `
     <a href="#main-content" class="skip-link">跳过导航</a>
     <div class="app-shell-container">
-      <nav class="app-sidebar" aria-label="主导航">
+      <nav class="app-sidebar"${sidebarExpandedAttr} aria-label="主导航">
+        <span class="sidebar-sheen" aria-hidden="true"></span>
+        <span class="sidebar-orbit" aria-hidden="true"></span>
         <div class="sidebar-brand">
           <span class="mark" aria-hidden="true">栖</span>
           <span class="brand-name">栖语</span>
@@ -35,8 +121,14 @@ export function renderAppShell(contentHtml, currentPath) {
         <div class="sidebar-nav" role="tablist">
           ${navItems}
         </div>
+        <div class="sidebar-context" aria-hidden="true">
+          <span class="context-kicker">关系中枢</span>
+          <strong>今晚低声模式</strong>
+          <p>夜话、记录、默契与边界都在这里。需要时展开，不需要时安静退到边上。</p>
+        </div>
       </nav>
       <div class="app-content-wrapper">
+        <div class="app-canvas" aria-hidden="true"></div>
         <header class="app-header-bar">
           <div class="header-brand-mobile">
             <span class="mark" aria-hidden="true">栖</span>
@@ -44,10 +136,10 @@ export function renderAppShell(contentHtml, currentPath) {
           </div>
           <div class="header-status">
             <span class="status-indicator online"></span>
-            <span class="status-text">深夜在线</span>
+            <span class="status-text">夜灯已亮</span>
           </div>
         </header>
-        <main id="main-content" class="app-main-content" tabindex="-1" style="outline: none;">
+        <main id="main-content" class="app-main-content" tabindex="-1">
           ${contentHtml}
         </main>
       </div>
@@ -58,10 +150,121 @@ export function renderAppShell(contentHtml, currentPath) {
   `;
 }
 
+export function bindSidebarHoverIntent(container, timers = globalThis) {
+  const sidebar = typeof container.querySelector === 'function'
+    ? container.querySelector('.app-sidebar')
+    : null;
+  if (!sidebar || sidebar.__qiyuSidebarHoverIntentBound) return;
+
+  let openTimer = null;
+  let closeTimer = null;
+  const isHovered = () => typeof sidebar.matches === 'function' && sidebar.matches(':hover');
+  const hasFocusWithin = () => typeof sidebar.matches === 'function' && sidebar.matches(':focus-within');
+  let pointerInside = isHovered() || isPointInsideSidebar(sidebar, readRestoredPointer(sidebar));
+  clearRestoredPointer(sidebar);
+
+  const releaseRestoredState = () => {
+    delete sidebar.dataset.restored;
+  };
+
+  if (sidebar.dataset?.restored === 'true') {
+    if (pointerInside || hasFocusWithin()) {
+      sidebar.dataset.expanded = 'true';
+    } else if (typeof timers.requestAnimationFrame === 'function') {
+      timers.requestAnimationFrame(() => {
+        timers.requestAnimationFrame(releaseRestoredState);
+      });
+    } else if (typeof timers.setTimeout === 'function') {
+      timers.setTimeout(releaseRestoredState, 0);
+    }
+  }
+
+  const clearTimer = (timer) => {
+    if (timer !== null && typeof timers.clearTimeout === 'function') {
+      timers.clearTimeout(timer);
+    }
+  };
+
+  const setExpanded = (expanded) => {
+    if (expanded) {
+      sidebar.dataset.expanded = 'true';
+    } else {
+      delete sidebar.dataset.expanded;
+    }
+  };
+
+  const scheduleOpen = (event) => {
+    if (event.pointerType === 'touch') return;
+    pointerInside = true;
+    clearTimer(closeTimer);
+    clearTimer(openTimer);
+    closeTimer = null;
+    openTimer = timers.setTimeout(() => {
+      openTimer = null;
+      if (pointerInside) {
+        setExpanded(true);
+      }
+    }, SIDEBAR_HOVER_INTENT_DELAY_MS);
+  };
+
+  const scheduleClose = () => {
+    pointerInside = false;
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+    openTimer = null;
+    releaseRestoredState();
+    closeTimer = timers.setTimeout(() => {
+      closeTimer = null;
+      if (!hasFocusWithin()) {
+        setExpanded(false);
+      }
+    }, SIDEBAR_CLOSE_GRACE_MS);
+  };
+
+  sidebar.addEventListener('pointerenter', scheduleOpen);
+  sidebar.addEventListener('pointerleave', scheduleClose);
+  sidebar.addEventListener('focusin', () => {
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+    openTimer = null;
+    closeTimer = null;
+    setExpanded(true);
+  });
+  sidebar.addEventListener('focusout', scheduleClose);
+  sidebar.__qiyuSidebarHoverIntentBound = true;
+}
+
 export function bindNavigation(container, router) {
+  bindSidebarHoverIntent(container);
+
+  if (typeof container.addEventListener === 'function' && !container.__qiyuNoticeDismissBound) {
+    container.addEventListener('click', (event) => {
+      const closeBtn = typeof event.target?.closest === 'function'
+        ? event.target.closest('.btn-close-notice')
+        : null;
+      if (!closeBtn) return;
+
+      event.preventDefault();
+      const notice = typeof closeBtn.closest === 'function'
+        ? closeBtn.closest('.notice')
+        : closeBtn.parentElement;
+      const dismissTarget = notice?.parentElement?.dataset?.noticeDismissScope === 'wrapper'
+        ? notice.parentElement
+        : notice;
+      if (typeof dismissTarget?.remove === 'function') {
+        dismissTarget.remove();
+      }
+    });
+    container.__qiyuNoticeDismissBound = true;
+  }
+
   container.querySelectorAll('[data-nav-path]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
+      const sidebar = typeof btn.closest === 'function'
+        ? btn.closest('.app-sidebar')
+        : null;
+      carrySidebarExpandedOnce(sidebar, e);
       router.navigate(btn.dataset.navPath);
     });
   });

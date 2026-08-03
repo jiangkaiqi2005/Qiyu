@@ -8,6 +8,40 @@ import {
   renderFieldRow,
   renderNotice
 } from '../ui/components.js';
+import { confirmAction } from '../ui/confirm-dialog.js';
+import {
+  applyProviderPreset,
+  detectProviderPreset,
+  renderProviderPresetOptions
+} from '../ui/provider-presets.js';
+
+const MASKED_API_KEY = '••••••••';
+const STATUS_BADGE_CLASSES = [
+  'status-badge-muted',
+  'status-badge-pending',
+  'status-badge-connected',
+  'status-badge-ready',
+  'status-badge-fallback'
+];
+
+function isMaskedApiKeyValue(value) {
+  return String(value || '').trim() === MASKED_API_KEY;
+}
+
+function setStatusBadgeTone(element, toneClass) {
+  if (!element) return;
+  if (
+    element.classList &&
+    typeof element.classList.remove === 'function' &&
+    typeof element.classList.add === 'function'
+  ) {
+    element.classList.remove(...STATUS_BADGE_CLASSES);
+    element.classList.add(toneClass);
+    return;
+  }
+
+  element.className = ['status-badge', toneClass].join(' ');
+}
 
 export function render(container, context) {
   const storage = window.localStorage;
@@ -15,17 +49,45 @@ export function render(container, context) {
   let state = loadBrowserState(storage);
 
   const innerHtml = `
-    <div class="card" style="max-width: 720px;">
-      <h1>默契中心</h1>
-      <p class="subtitle">在这里，微调我们的相处温度，或是探索栖语的灵魂深处。</p>
+    <div class="settings-workbench">
+      <section class="settings-hero" aria-labelledby="settings-title">
+        <div>
+          <span class="settings-kicker">只在需要时调整</span>
+          <h1 id="settings-title">默契中心</h1>
+          <p>把接口、语气和边界调到合适的位置。设置完成后，回到夜话就能直接说。</p>
+        </div>
+        <div class="settings-hero-state" aria-hidden="true">
+          <div>
+            <span>当前路径</span>
+            <strong>API 与偏好</strong>
+          </div>
+          <div>
+            <span>保存位置</span>
+            <strong>本机与服务端</strong>
+          </div>
+        </div>
+      </section>
+
+      ${prefs.onboardingState !== 'completed' ? `
+        <div class="onboarding-warning-banner" data-notice-dismiss-scope="wrapper">
+          ${renderNotice({
+            type: 'warning',
+            message: '你尚未完成首次设置。建议先完成初遇引导，开启我们之间的默契。 <button data-nav-path="/onboarding" class="btn primary notice-inline-action">去完成初遇引导</button>'
+          })}
+        </div>
+      ` : ''}
 
       <div class="settings-notice-area"></div>
+      <div class="settings-panel">
 
       <!-- Part 1: Normal Preferences -->
-      <section class="settings-section" aria-labelledby="sec-normal-title" style="margin-bottom: 32px;">
-        <h2 id="sec-normal-title" style="font-size: 18px; color: var(--accent); margin-bottom: 16px; border-left: 3px solid var(--accent); padding-left: 8px;">相处温度（基本设置）</h2>
+      <section class="settings-section" aria-labelledby="sec-normal-title">
+        <div class="settings-section-head">
+          <span class="settings-section-eyebrow">相处方式</span>
+          <h2 id="sec-normal-title">相处温度</h2>
+        </div>
         
-        <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div class="settings-form-stack">
           ${renderFieldRow({
             name: 'userName',
             label: '深夜昵称',
@@ -63,8 +125,8 @@ export function render(container, context) {
 
           ${renderFieldRow({
             name: 'memoryConsent',
-            label: '私语记忆功能',
-            description: '允许我在浏览器本地悄悄记下你的喜好与碎念。',
+            label: '本地上下文边界',
+            description: '允许栖语在浏览器本地保存少量偏好与事实，用于之后的夜话连续性。',
             controlHtml: renderToggle({
               name: 'memoryConsent',
               checked: prefs.memoryConsent
@@ -72,112 +134,153 @@ export function render(container, context) {
           })}
         </div>
 
-        <div style="display: flex; justify-content: flex-end; margin-top: 16px;">
-          ${renderButton({ label: '保存温度配置', variant: 'primary', className: 'save-pref-btn', attrs: 'style="min-height:44px;"' })}
+        <div class="settings-actions">
+          ${renderButton({ label: '保存温度配置', variant: 'primary', className: 'save-pref-btn settings-action-btn' })}
         </div>
       </section>
 
-      <!-- Part 2: AI Soul Engine Settings -->
-      <section class="settings-section" aria-labelledby="sec-ai-title" style="margin-bottom: 32px; border-top: 1px dashed rgba(223,179,85,0.15); padding-top: 24px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
-          <h2 id="sec-ai-title" style="font-size: 18px; color: var(--accent); margin: 0; border-left: 3px solid var(--accent); padding-left: 8px;">灵魂引擎 (AI 接入设置)</h2>
-          ${renderButton({ label: '显示/隐藏高级配置', variant: 'normal', className: 'toggle-ai-btn', attrs: 'style="font-size: 13px; padding: 6px 12px;"' })}
+      <!-- Part 2: Model connection settings -->
+      <section class="settings-section" aria-labelledby="sec-ai-title">
+        <div class="settings-section-head settings-section-head-split">
+          <div>
+            <span class="settings-section-eyebrow">模型接入</span>
+            <h2 id="sec-ai-title">API 配置</h2>
+          </div>
+          ${renderButton({ label: '展开或收起配置', variant: 'normal', className: 'toggle-ai-btn settings-small-btn' })}
         </div>
 
-        <div class="ai-config-panel" style="display: none; flex-direction: column; gap: 8px;">
-          <div class="notice notice-info" style="font-size:13px; line-height:1.6; margin-bottom:16px;">
-            <span class="notice-icon" aria-hidden="true">ℹ</span>
-            <span>填写你的 OpenAI 兼容大模型接口。如果未配置或配置出错，栖语将退回本地规则引擎。</span>
+        <div class="ai-config-panel">
+          <div class="ai-status-card">
+            <div class="status-row">
+              <strong>连接状态</strong>
+              <span class="status-badge status-badge-muted">载入中...</span>
+            </div>
+            <div class="env-config-notice notice notice-warning">
+              <span class="notice-icon" aria-hidden="true">注意</span>
+              <span>当前由环境变量控制，页面保存的修改不会覆盖服务端已生效环境变量值。</span>
+            </div>
+            <div class="diagnostic-summary">
+              <div><strong>实际接口地址:</strong> <span class="diag-url">-</span></div>
+              <div><strong>最终运行模型:</strong> <span class="diag-model">-</span></div>
+              <div><strong>配置生效来源:</strong> <span class="diag-source">-</span></div>
+              <div><strong>最后诊断详情:</strong> <span class="diag-detail">-</span></div>
+            </div>
+          </div>
+
+          <div class="notice notice-info">
+            <span class="notice-icon" aria-hidden="true">提示</span>
+            <span>填写你的 OpenAI 兼容或 Anthropic 原生大模型接口。如果未配置或配置出错，栖语将退回本地规则引擎。</span>
           </div>
 
           ${renderFieldRow({
+            name: 'providerPreset',
+            label: '服务商预设',
+            description: '快速载入常见大模型服务商的接口配置。',
+            controlHtml: `
+              <select id="input-providerPreset" name="providerPreset" class="form-select">
+                ${renderProviderPresetOptions()}
+              </select>
+            `
+          })}
+
+          ${renderFieldRow({
             name: 'apiUrl',
-            label: '接口地址 (API URL)',
-            description: 'OpenAI 兼容终结点。如：https://api.openai.com/v1/chat/completions',
+            label: '接口地址',
+            description: 'OpenAI 兼容终结点，或 Anthropic 原生 Messages 终结点。',
             controlHtml: renderInput({ name: 'apiUrl', placeholder: '比如：https://api.example.com/v1/chat/completions' })
           })}
 
           ${renderFieldRow({
             name: 'apiKey',
-            label: '访问密钥 (API Key)',
+            label: '访问密钥',
             description: '你的私有 API 访问令牌。绝不上传给任何中心服务器。',
             controlHtml: `
-              <div style="display: flex; gap: 8px; width: 100%;">
-                <input id="input-apiKey" name="apiKey" type="password" class="form-input" style="flex: 1;" placeholder="输入 API Key">
-                <button type="button" class="btn toggle-pw-btn" aria-label="显示 API 密钥" style="padding: 6px 12px; min-width:44px; min-height:44px;">👁️</button>
+              <div class="api-key-stack">
+                <div class="api-key-control">
+                  <input id="input-apiKey" name="apiKey" type="password" class="form-input" placeholder="输入访问密钥">
+                  <button type="button" class="btn toggle-pw-btn secret-toggle-btn" aria-label="显示访问密钥">查看</button>
+                </div>
+                <div class="api-key-inline-notice"></div>
               </div>
             `
           })}
 
           ${renderFieldRow({
             name: 'model',
-            label: '模型名称 (Model)',
+            label: '模型名称',
             description: '选用的模型名称。如：gpt-4o, claude-3-5-sonnet',
             controlHtml: renderInput({ name: 'model', placeholder: '比如：gpt-4o' })
           })}
 
           ${renderFieldRow({
             name: 'temperature',
-            label: '随机温度 (Temperature)',
+            label: '随机温度',
             description: '数值越高发言越随性，越低发言越严谨克制。推荐 0.8。',
             controlHtml: renderInput({ name: 'temperature', type: 'number', placeholder: '0.8', attrs: 'min="0" max="2" step="0.1"' })
           })}
 
           ${renderFieldRow({
             name: 'timeoutMs',
-            label: '网络超时 (Timeout)',
+            label: '网络超时',
             description: '请求的最大等待时间（毫秒）。默认 30000（30秒）。',
             controlHtml: renderInput({ name: 'timeoutMs', type: 'number', placeholder: '30000', attrs: 'min="1000"' })
           })}
 
-          <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; flex-wrap: wrap;">
-            ${renderButton({ label: '推荐默认配置', variant: 'normal', className: 'fill-defaults-btn', attrs: 'style="min-height:44px;"' })}
-            ${renderButton({ label: '灵魂连接测试', variant: 'normal', className: 'test-connection-btn', attrs: 'style="min-height:44px;"' })}
-            ${renderButton({ label: '注入灵魂引擎', variant: 'primary', className: 'save-ai-btn', attrs: 'style="min-height:44px;"' })}
+          <div class="settings-actions settings-actions-wrap">
+            ${renderButton({ label: '测试模型连接', variant: 'normal', className: 'test-connection-btn settings-action-btn' })}
+            ${renderButton({ label: '测试栖语回复', variant: 'normal', className: 'test-chat-btn settings-action-btn' })}
+            ${renderButton({ label: '保存 API 配置', variant: 'primary', className: 'save-ai-btn settings-action-btn' })}
           </div>
         </div>
       </section>
 
       <!-- Part 3: Data Actions & Privacy -->
-      <section class="settings-section" aria-labelledby="sec-data-title" style="margin-bottom: 32px; border-top: 1px dashed rgba(223,179,85,0.15); padding-top: 24px;">
-        <h2 id="sec-data-title" style="font-size: 18px; color: var(--accent); margin-bottom: 16px; border-left: 3px solid var(--accent); padding-left: 8px;">记忆封存与遗忘 (数据保护)</h2>
+      <section class="settings-section" aria-labelledby="sec-data-title">
+        <div class="settings-section-head">
+          <span class="settings-section-eyebrow">本地边界</span>
+          <h2 id="sec-data-title">本地数据边界</h2>
+        </div>
         
-        <p style="font-size: 13px; line-height: 1.6; color: var(--muted); margin-bottom: 16px;">
-          管理你和栖语的本地私密印记。你可以安全地导出或将其彻底归于虚无。
+        <p class="settings-section-copy">
+          管理你和栖语的本地上下文。你可以安全地导出，或在需要时彻底清空。
         </p>
 
-        <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
-          ${renderButton({ label: '导出昨夜私语 (JSON)', variant: 'normal', className: 'export-data-btn', attrs: 'style="min-height:44px;"' })}
-          ${renderButton({ label: '遗忘所有提取的印记', variant: 'danger', className: 'clear-memories-btn', attrs: 'style="min-height:44px;"' })}
-          ${renderButton({ label: '抹去深夜相遇痕迹', variant: 'danger', className: 'clear-history-btn', attrs: 'style="min-height:44px;"' })}
+        <div class="data-action-grid">
+          ${renderButton({ label: '导出昨夜私语 (JSON)', variant: 'normal', className: 'export-data-btn settings-action-btn' })}
+          ${renderButton({ label: '清空本地上下文', variant: 'danger', className: 'clear-memories-btn settings-action-btn' })}
+          ${renderButton({ label: '抹去深夜相遇痕迹', variant: 'danger', className: 'clear-history-btn settings-action-btn' })}
         </div>
       </section>
 
       <!-- Part 4: Developer & Mirage Mode -->
-      <section class="settings-section" aria-labelledby="sec-dev-title" style="border-top: 1px dashed rgba(223,179,85,0.15); padding-top: 24px;">
-        <h2 id="sec-dev-title" style="font-size: 18px; color: var(--accent); margin-bottom: 16px; border-left: 3px solid var(--accent); padding-left: 8px;">开发者探幽 (调试选项)</h2>
+      <section class="settings-section" aria-labelledby="sec-dev-title">
+        <div class="settings-section-head">
+          <span class="settings-section-eyebrow">开发调试</span>
+          <h2 id="sec-dev-title">调试选项</h2>
+        </div>
         
         ${renderFieldRow({
           name: 'devMode',
           label: '激活「幻境」实验室',
-          description: '唤醒系统回归质量实验室，展示 System Prompt 预览与 live context 拼接。',
+          description: '唤醒系统回归质量实验室，展示系统提示词预览与上下文拼接。',
           controlHtml: renderToggle({
             name: 'devMode',
             checked: window.localStorage.getItem('qiyu_dev_mode') === 'true'
           })
         })}
 
-        <div class="dev-preview-panel" style="display: none; flex-direction: column; gap: 16px; margin-top: 16px;">
-          <div style="display: flex; flex-direction: column; gap: 8px;">
-            <label class="field-label">当前 System Prompt 预览</label>
-            <textarea readonly class="form-textarea" style="font-family: monospace; font-size: 12px; background: rgba(0,0,0,0.3); opacity: 0.8; height: 180px;">加载中...</textarea>
+        <div class="dev-preview-panel">
+          <div class="dev-preview-block">
+            <label class="field-label">当前系统提示词预览</label>
+            <textarea readonly class="form-textarea dev-preview-textarea">加载中...</textarea>
           </div>
-          <div style="display: flex; flex-direction: column; gap: 8px;">
-            <label class="field-label">最近拼接的 Live Context 预览</label>
-            <textarea readonly class="form-textarea" style="font-family: monospace; font-size: 12px; background: rgba(0,0,0,0.3); opacity: 0.8; height: 180px;">加载中...</textarea>
+          <div class="dev-preview-block">
+            <label class="field-label">最近拼接的上下文预览</label>
+            <textarea readonly class="form-textarea dev-preview-textarea">加载中...</textarea>
           </div>
         </div>
       </section>
+      </div>
     </div>
   `;
 
@@ -190,10 +293,12 @@ export function render(container, context) {
   const aiPanel = container.querySelector('.ai-config-panel');
   const togglePwBtn = container.querySelector('.toggle-pw-btn');
   const pwInput = container.querySelector('[name="apiKey"]');
+  const apiKeyInlineNotice = container.querySelector('.api-key-inline-notice');
 
   const saveAiBtn = container.querySelector('.save-ai-btn');
-  const fillDefaultsBtn = container.querySelector('.fill-defaults-btn');
   const testConnectionBtn = container.querySelector('.test-connection-btn');
+  const testChatBtn = container.querySelector('.test-chat-btn');
+  const providerPreset = container.querySelector('[name="providerPreset"]');
 
   const exportDataBtn = container.querySelector('.export-data-btn');
   const clearMemoriesBtn = container.querySelector('.clear-memories-btn');
@@ -202,9 +307,77 @@ export function render(container, context) {
   const devToggle = container.querySelector('[name="devMode"]');
   const devPanel = container.querySelector('.dev-preview-panel');
 
+  const statusBadge = container.querySelector('.status-badge');
+  const diagSummary = container.querySelector('.diagnostic-summary');
+  const diagUrl = container.querySelector('.diag-url');
+  const diagModel = container.querySelector('.diag-model');
+  const diagSource = container.querySelector('.diag-source');
+  const diagDetail = container.querySelector('.diag-detail');
+  const envNotice = container.querySelector('.env-config-notice');
+
+  function setApiKeyVisibility(type) {
+    pwInput.type = type;
+    togglePwBtn.innerText = type === 'password' ? '查看' : '隐藏';
+    togglePwBtn.setAttribute('aria-label', type === 'password' ? '显示访问密钥' : '隐藏访问密钥');
+  }
+
   function showNotification(type, message) {
     if (noticeArea) {
       noticeArea.innerHTML = renderNotice({ type, message });
+    }
+  }
+
+  function updateHealthAndDiagnostics(config) {
+    if (!statusBadge) return;
+
+    let status = storage.getItem('qiyu_api_health_status');
+    
+    if (!config.hasLlm) {
+      status = 'not_configured';
+      storage.setItem('qiyu_api_health_status', status);
+    } else if (!status || status === 'not_configured') {
+      status = 'configured_untested';
+      storage.setItem('qiyu_api_health_status', status);
+    }
+
+    let statusText = '未配置';
+    let statusTone = 'status-badge-muted';
+
+    if (status === 'configured_untested') {
+      statusText = '已配置但未测试';
+      statusTone = 'status-badge-pending';
+    } else if (status === 'provider_connected') {
+      statusText = '模型已连接';
+      statusTone = 'status-badge-connected';
+    } else if (status === 'chat_connected') {
+      statusText = '栖语回复测试通过';
+      statusTone = 'status-badge-ready';
+    } else if (status === 'chat_fallback') {
+      statusText = '最近一次聊天回退本地';
+      statusTone = 'status-badge-fallback';
+    }
+
+    statusBadge.innerText = statusText;
+    setStatusBadgeTone(statusBadge, statusTone);
+
+    if (config.hasLlm || config.apiUrl) {
+      if (diagSummary) diagSummary.style.display = 'flex';
+      
+      const displayUrl = config.apiUrl || '未配置';
+      if (diagUrl) diagUrl.innerText = displayUrl;
+      if (diagModel) diagModel.innerText = config.model || '未配置';
+      
+      let sourceText = '本地配置文件';
+      if (config.source === 'env') {
+        sourceText = '系统环境变量 (优先)';
+      } else if (config.source === 'empty') {
+        sourceText = '未检测到配置';
+      }
+      if (diagSource) diagSource.innerText = sourceText;
+      if (envNotice) envNotice.style.display = config.source === 'env' ? 'block' : 'none';
+    } else {
+      if (diagSummary) diagSummary.style.display = 'none';
+      if (envNotice) envNotice.style.display = 'none';
     }
   }
 
@@ -221,21 +394,41 @@ export function render(container, context) {
     prefs.memoryConsent = consent;
 
     savePreferences(storage, prefs);
-    showNotification('success', '✓ 深夜相处温度已保存并生效。');
+    showNotification('success', '深夜相处温度已保存并生效。');
   });
 
-  // 2. Toggle Advanced AI Settings visibility
+  // 2. Toggle model settings visibility
   toggleAiBtn.addEventListener('click', () => {
     const isHidden = aiPanel.style.display === 'none';
     aiPanel.style.display = isHidden ? 'flex' : 'none';
   });
 
   // 3. Password Visibility Toggle (WCAG AAA accessible update)
+  pwInput.addEventListener('input', () => {
+    if (pwInput.dataset) {
+      pwInput.dataset.masked = 'false';
+    }
+    if (apiKeyInlineNotice) {
+      apiKeyInlineNotice.style.display = 'none';
+      apiKeyInlineNotice.innerText = '';
+    }
+  });
+
   togglePwBtn.addEventListener('click', () => {
-    const type = pwInput.type === 'password' ? 'text' : 'password';
-    pwInput.type = type;
-    togglePwBtn.innerText = type === 'password' ? '👁️' : '🔒';
-    togglePwBtn.setAttribute('aria-label', type === 'password' ? '显示 API 密钥' : '隐藏 API 密钥');
+    const maskedPlaceholderVisible = pwInput.dataset?.masked === 'true' || isMaskedApiKeyValue(pwInput.value);
+    if (maskedPlaceholderVisible && pwInput.type === 'password') {
+      showNotification('info', '当前显示的是脱敏后的访问密钥占位符，无法直接还原原始密钥。如需查看或修改，请重新输入。');
+      if (apiKeyInlineNotice) {
+        apiKeyInlineNotice.innerText = '当前显示的是脱敏占位符，无法直接还原原始访问密钥。需要查看或修改时，请重新输入。';
+        apiKeyInlineNotice.style.display = 'block';
+      }
+      if (typeof pwInput.focus === 'function') {
+        pwInput.focus();
+      }
+      return;
+    }
+
+    setApiKeyVisibility(pwInput.type === 'password' ? 'text' : 'password');
   });
 
   // 4. Load Saved AI Settings from server
@@ -246,47 +439,55 @@ export function render(container, context) {
         const data = await res.json();
         container.querySelector('[name="apiUrl"]').value = data.apiUrl || '';
         container.querySelector('[name="apiKey"]').value = data.apiKey || '';
+        container.querySelector('[name="apiKey"]').dataset.masked = data.apiKey === MASKED_API_KEY ? 'true' : 'false';
+        setApiKeyVisibility('password');
         container.querySelector('[name="model"]').value = data.model || '';
         container.querySelector('[name="temperature"]').value = typeof data.temperature !== 'undefined' ? data.temperature : 0.8;
         container.querySelector('[name="timeoutMs"]').value = data.timeoutMs || 30000;
+        if (providerPreset) {
+          providerPreset.value = detectProviderPreset({ apiUrl: data.apiUrl, model: data.model });
+        }
         
         if (data.csrfToken) {
           window.qiyuCsrfToken = data.csrfToken;
           updateDevUI();
         }
+
+        updateHealthAndDiagnostics(data);
       }
     } catch (err) {
-      showNotification('error', `未能同步云端引擎配置：${err.message}`);
+      showNotification('error', `未能同步模型配置：${err.message}`);
     }
   }
 
   fetchServerSettings();
 
-  // 5. Fill Recommended Defaults SOTA values
-  fillDefaultsBtn.addEventListener('click', () => {
-    container.querySelector('[name="apiUrl"]').value = 'https://api.openai.com/v1/chat/completions';
-    container.querySelector('[name="apiKey"]').value = '';
-    container.querySelector('[name="model"]').value = 'gpt-4o';
-    container.querySelector('[name="temperature"]').value = 0.8;
-    container.querySelector('[name="timeoutMs"]').value = 30000;
-    showNotification('success', '已载入推荐 SOTA AI 引擎模板。请填入你的 API Key 后连接。');
-  });
+  // 5. Preset Selection
+  if (providerPreset) {
+    providerPreset.addEventListener('change', () => {
+      const apiUrlInput = container.querySelector('[name="apiUrl"]');
+      const modelInput = container.querySelector('[name="model"]');
+      const preset = applyProviderPreset(providerPreset.value, { apiUrlInput, modelInput });
+      showNotification('info', preset.notice);
+    });
+  }
 
   // 6. Test AI Connection
   testConnectionBtn.addEventListener('click', async () => {
     const apiUrl = container.querySelector('[name="apiUrl"]').value.trim();
     const apiKey = container.querySelector('[name="apiKey"]').value.trim();
     const model = container.querySelector('[name="model"]').value.trim();
+    const timeoutMs = Number(container.querySelector('[name="timeoutMs"]').value);
 
     if (!apiUrl || !model) {
-      showNotification('warning', '请填入完整的接口地址 (API URL) 和模型名称以供测试。');
+      showNotification('warning', '请填入完整的接口地址和模型名称以供测试。');
       return;
     }
 
     const originalText = testConnectionBtn.innerHTML;
     testConnectionBtn.disabled = true;
     testConnectionBtn.innerHTML = '<span class="loading-dots">连接中</span>';
-    showNotification('warning', '正在尝试建立灵魂引擎握手连接，请稍候...');
+    showNotification('warning', '正在测试模型连接，请稍候...');
 
     try {
       const res = await fetch('/api/settings/test', {
@@ -295,26 +496,89 @@ export function render(container, context) {
           'Content-Type': 'application/json',
           'X-CSRF-Token': window.qiyuCsrfToken || ''
         },
-        body: JSON.stringify({ apiUrl, apiKey, model })
+        body: JSON.stringify({ apiUrl, apiKey, model, timeoutMs })
       });
 
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          showNotification('success', '✓ 灵魂引擎握手成功！连接一切正常。');
+          storage.setItem('qiyu_api_health_status', 'provider_connected');
+          if (diagDetail) {
+            diagDetail.innerText = `[${new Date().toLocaleTimeString()}] 模型通道测试成功 (延迟 ${data.latencyMs}ms)，已收到模型响应。`;
+          }
+          showNotification('success', '模型连接成功，配置可用。');
+          fetchServerSettings();
         } else {
-          showNotification('error', `✕ 连接失败：${data.error || '未知模型错误'}`);
+          if (diagDetail) {
+            diagDetail.innerText = `[${new Date().toLocaleTimeString()}] 模型连接失败: ${data.error}`;
+          }
+          showNotification('error', `连接失败：${data.error || '未知模型错误'}`);
         }
       } else {
-        showNotification('error', `✕ 请求被拒绝：HTTP ${res.status}`);
+        showNotification('error', `请求被拒绝：HTTP ${res.status}`);
       }
     } catch (err) {
-      showNotification('error', `✕ 网络握手超时：${err.message}`);
+      showNotification('error', `网络握手超时：${err.message}`);
     } finally {
       testConnectionBtn.disabled = false;
       testConnectionBtn.innerHTML = originalText;
     }
   });
+
+  // 6.2 Test Qiyu Reply Connection
+  if (testChatBtn) {
+    testChatBtn.addEventListener('click', async () => {
+      const apiUrl = container.querySelector('[name="apiUrl"]').value.trim();
+      const apiKey = container.querySelector('[name="apiKey"]').value.trim();
+      const model = container.querySelector('[name="model"]').value.trim();
+      const timeoutMs = Number(container.querySelector('[name="timeoutMs"]').value);
+
+      if (!apiUrl || !model) {
+        showNotification('warning', '请填入完整的接口地址和模型名称以供测试。');
+        return;
+      }
+
+      const originalText = testChatBtn.innerHTML;
+      testChatBtn.disabled = true;
+      testChatBtn.innerHTML = '<span class="loading-dots">发送中</span>';
+      showNotification('warning', '正在发送测试消息，请稍候...');
+
+      try {
+        const res = await fetch('/api/settings/test-chat', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': window.qiyuCsrfToken || ''
+          },
+          body: JSON.stringify({ apiUrl, apiKey, model, timeoutMs })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            storage.setItem('qiyu_api_health_status', 'chat_connected');
+            if (diagDetail) {
+              diagDetail.innerText = `[${new Date().toLocaleTimeString()}] 栖语回复测试成功 (延迟 ${data.latencyMs}ms)，栖语说: "${data.reply}"`;
+            }
+            showNotification('success', `栖语回复测试成功。栖语说：${data.reply}`);
+            fetchServerSettings();
+          } else {
+            if (diagDetail) {
+              diagDetail.innerText = `[${new Date().toLocaleTimeString()}] 栖语回复测试失败: ${data.error}`;
+            }
+            showNotification('error', `栖语回复测试失败：${data.error}`);
+          }
+        } else {
+          showNotification('error', `请求被拒绝：HTTP ${res.status}`);
+        }
+      } catch (err) {
+        showNotification('error', `握手通信故障：${err.message}`);
+      } finally {
+        testChatBtn.disabled = false;
+        testChatBtn.innerHTML = originalText;
+      }
+    });
+  }
 
   // 7. Save AI Settings to server
   saveAiBtn.addEventListener('click', async () => {
@@ -326,7 +590,7 @@ export function render(container, context) {
 
     const originalText = saveAiBtn.innerHTML;
     saveAiBtn.disabled = true;
-    saveAiBtn.innerHTML = '<span class="loading-dots">注入中</span>';
+    saveAiBtn.innerHTML = '<span class="loading-dots">保存中</span>';
     try {
       const res = await fetch('/api/settings', {
         method: 'POST',
@@ -338,12 +602,22 @@ export function render(container, context) {
       });
 
       if (res.ok) {
-        showNotification('success', '✓ 灵魂引擎配置成功注入服务端配置，重启生效。');
+        const data = await res.json();
+        if (data.success) {
+          const healthStatus = storage.getItem('qiyu_api_health_status');
+          if (healthStatus !== 'chat_connected' && healthStatus !== 'provider_connected') {
+            storage.setItem('qiyu_api_health_status', 'configured_untested');
+          }
+          showNotification('success', 'API 配置保存成功，下一次消息会使用新配置。');
+          updateHealthAndDiagnostics(data);
+        } else {
+          showNotification('error', '保存失败。');
+        }
       } else {
-        showNotification('error', `✕ 注入失败：HTTP ${res.status}`);
+        showNotification('error', `保存失败：HTTP ${res.status}`);
       }
     } catch (err) {
-      showNotification('error', `✕ 注入网络异常：${err.message}`);
+      showNotification('error', `保存网络异常：${err.message}`);
     } finally {
       saveAiBtn.disabled = false;
       saveAiBtn.innerHTML = originalText;
@@ -360,32 +634,46 @@ export function render(container, context) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `qiyu-whispers-imprints-${Date.now()}.json`;
+    a.download = `qiyu-local-context-${Date.now()}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    showNotification('success', '✓ 昨夜私语印记数据已成功导出为备份 JSON。');
+    showNotification('success', '本地上下文已成功导出为备份 JSON。');
   });
 
-  clearMemoriesBtn.addEventListener('click', () => {
-    if (confirm('确认遗忘我们所有的默契印记事实吗？这将无法找回。')) {
+  clearMemoriesBtn.addEventListener('click', async () => {
+    const confirmed = await confirmAction({
+      title: '清空本地上下文',
+      message: '这会清空所有本地上下文事实，操作完成后无法找回。',
+      confirmLabel: '清空'
+    });
+    if (confirmed) {
       state.memories = [];
-      saveState();
-      showNotification('success', '✓ 碎念事实已彻底消散。');
+      saveBrowserState(storage, state);
+      showNotification('success', '本地上下文已清空。');
     }
   });
 
-  clearHistoryBtn.addEventListener('click', () => {
-    if (confirm('确定彻底抹去深夜里我们所有的相遇和对话痕迹吗？所有好感度和历史将被彻底重置为零。')) {
+  clearHistoryBtn.addEventListener('click', async () => {
+    const confirmed = await confirmAction({
+      title: '重置全部相遇',
+      message: '这会抹去所有对话痕迹、关系进度和历史归档。所有内容都会归零。',
+      confirmLabel: '重置'
+    });
+    if (confirmed) {
       state = createInitialState(state.userId);
-      saveState();
+      saveBrowserState(storage, state);
       storage.removeItem('qiyu_trial_state');
-      showNotification('success', '✓ 所有的痕迹均已归于夜空。再见，初见。');
+      showNotification('success', '所有的痕迹均已归于夜空。再见，初见。');
     }
   });
 
   // 9. Developer & Mirage Mode Toggle
   function updateDevUI() {
+    const devToggle = container.querySelector('[name="devMode"]');
+    const devPanel = container.querySelector('.dev-preview-panel');
+    if (!devToggle || !devPanel) return;
+
     const isDev = devToggle.checked;
     window.localStorage.setItem('qiyu_dev_mode', isDev ? 'true' : 'false');
     devPanel.style.display = isDev ? 'flex' : 'none';
@@ -393,33 +681,36 @@ export function render(container, context) {
     if (isDev) {
       const sysBox = devPanel.querySelectorAll('textarea')[0];
       const liveBox = devPanel.querySelectorAll('textarea')[1];
-      sysBox.value = '加载中...\n';
-      liveBox.value = '加载中...\n';
+      if (sysBox && liveBox) {
+        sysBox.value = '加载中...\n';
+        liveBox.value = '加载中...\n';
 
-      // Load System Prompt and live context from single source of truth
-      fetch('/api/dev/context', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': window.qiyuCsrfToken || ''
-        },
-        body: JSON.stringify({ text: 'ping', state: state })
-      }).then(async (res) => {
-        if (res.ok) {
-          const data = await res.json();
-          sysBox.value = data.systemPrompt || '加载失败';
-          liveBox.value = data.liveContext || '加载失败';
-        } else {
+        fetch('/api/dev/context', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': window.qiyuCsrfToken || ''
+          },
+          body: JSON.stringify({ text: 'ping', state: state })
+        }).then(async (res) => {
+          if (res.ok) {
+            const data = await res.json();
+            sysBox.value = data.systemPrompt || '加载失败';
+            liveBox.value = data.liveContext || '加载失败';
+          } else {
+            sysBox.value = '加载出了点小状况。';
+            liveBox.value = '加载出了点小状况。';
+          }
+        }).catch(() => {
           sysBox.value = '加载出了点小状况。';
           liveBox.value = '加载出了点小状况。';
-        }
-      }).catch(() => {
-        sysBox.value = '加载出了点小状况。';
-        liveBox.value = '加载出了点小状况。';
-      });
+        });
+      }
     }
   }
 
-  devToggle.addEventListener('change', updateDevUI);
+  if (devToggle) {
+    devToggle.addEventListener('change', updateDevUI);
+  }
   updateDevUI();
 }

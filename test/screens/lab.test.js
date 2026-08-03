@@ -52,6 +52,7 @@ test('lab screen renders titles and action buttons', () => {
   render(container, { router });
   assert.match(container.innerHTML, /质量实验室/);
   assert.match(container.innerHTML, /运行黄金测试集/);
+  assert.doesNotMatch(container.innerHTML, /quality lab|dev only|ready/);
 
   delete globalThis.window;
   delete globalThis.document;

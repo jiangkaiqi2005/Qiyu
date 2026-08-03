@@ -7,6 +7,7 @@ const root = resolve(process.cwd());
 
 test('dev server only serves app shell and browser assets', () => {
   assert.equal(resolveRequestPath('/', root).status, 200);
+  assert.match(resolveRequestPath('/history', root).filePath, /index\.html$/);
   assert.match(resolveRequestPath('/src/main.js', root).filePath, /src[\\/]main\.js$/);
 
   assert.equal(resolveRequestPath('/package.json', root).status, 404);

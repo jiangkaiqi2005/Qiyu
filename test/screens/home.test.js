@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { render } from '../../src/screens/home.js';
 
-test('homepage trial chat turn limit and returning user path', async () => {
+test('homepage onboarding state分流 test', async () => {
   let savedItems = {};
+  let routeNavigated = '';
   globalThis.window = {
     location: { pathname: '/' },
     addEventListener() {},
@@ -17,45 +18,17 @@ test('homepage trial chat turn limit and returning user path', async () => {
     }
   };
 
-  globalThis.document = {
-    createElement() {
-      return {
-        innerHTML: '',
-        get firstChild() {
-          return {
-            classList: { add() {} }
-          };
-        }
-      };
-    },
-    createDocumentFragment() {
-      return {
-        appendChild() {}
-      };
-    }
-  };
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ hasLlm: false })
+  });
 
   const container = {
     innerHTML: '',
     querySelector(selector) {
-      if (selector === '.trial-composer') {
-        return {
-          elements: { message: { focus() {}, value: '', disabled: false } },
-          addEventListener() {},
-          querySelector() { return { disabled: false }; }
-        };
-      }
-      if (selector === '.onboarding-invite') {
-        return {
-          style: { display: 'none' },
-          querySelector() { return { addEventListener() {} }; }
-        };
-      }
       return {
         addEventListener() {},
-        scrollTo() {},
-        appendChild() {},
-        classList: { add() {} }
+        style: { display: 'none' }
       };
     },
     querySelectorAll() {
@@ -66,40 +39,70 @@ test('homepage trial chat turn limit and returning user path', async () => {
   const router = {
     navigate(path) {
       window.location.pathname = path;
+      routeNavigated = path;
     }
   };
 
-  // 1. First render as new user (no regular history)
+  // 1. Render as a brand-new user with no API config
   render(container, { router });
-  assert.match(container.innerHTML, /试用/);
-  assert.doesNotMatch(container.innerHTML, /继续今晚的对话/);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(routeNavigated, '/onboarding');
 
-  // 2. Set regular history in localStorage and re-render
-  savedItems['qiyu.state'] = JSON.stringify({
-    turns: [{ speaker: 'user', text: '你好' }],
-    sessionCount: 1,
-    lastActive: Date.now()
+  // 2. Render as a completed onboarding user直接进入夜话
+  routeNavigated = '';
+  savedItems['qiyu_preferences'] = JSON.stringify({
+    onboardingState: 'completed'
   });
-
   render(container, { router });
-  assert.match(container.innerHTML, /继续今晚的对话/);
-
-  // 3. Set trial count >= 3 in trial state
-  savedItems['qiyu_trial_state'] = JSON.stringify({
-    turns: [
-      { speaker: 'user', text: '1' },
-      { speaker: 'qiyu', text: '1' },
-      { speaker: 'user', text: '2' },
-      { speaker: 'qiyu', text: '2' },
-      { speaker: 'user', text: '3' },
-      { speaker: 'qiyu', text: '3' }
-    ],
-    trialTurnsCount: 3
-  });
-
-  render(container, { router });
-  // The trial flow limits turn inputs when threshold is hit
+  assert.equal(routeNavigated, '/chat');
+  assert.doesNotMatch(container.innerHTML, /qiyu-home/);
 
   delete globalThis.window;
-  delete globalThis.document;
+  delete globalThis.fetch;
+});
+
+test('homepage does not force onboarding when API is already configured', async () => {
+  let routeNavigated = '';
+  globalThis.window = {
+    location: { pathname: '/' },
+    addEventListener() {},
+    localStorage: {
+      getItem() { return null; },
+      setItem() {}
+    }
+  };
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ hasLlm: true })
+  });
+
+  const container = {
+    innerHTML: '',
+    querySelector() {
+      return {
+        addEventListener() {},
+        style: { display: 'none' }
+      };
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+
+  render(container, {
+    router: {
+      navigate(path) {
+        routeNavigated = path;
+      }
+    }
+  });
+
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(routeNavigated, '/chat');
+  assert.doesNotMatch(container.innerHTML, /开始相识设置/);
+  assert.doesNotMatch(container.innerHTML, /qiyu-home/);
+
+  delete globalThis.window;
+  delete globalThis.fetch;
 });

@@ -48,6 +48,10 @@ test('privacy and safety screen renders key sections', () => {
   assert.match(container.innerHTML, /危机安全与紧急干预行为/);
   assert.match(container.innerHTML, /大语言模型/);
   assert.match(container.innerHTML, /有所为与有所不为/);
+  assert.match(container.innerHTML, /本地上下文/);
+  assert.doesNotMatch(container.innerHTML, /<span>0[1-9]<\/span>/);
+  assert.doesNotMatch(container.innerHTML, /本地印记|事实记忆/);
+  assert.doesNotMatch(container.innerHTML, /privacy boundary|>principles</);
 
   delete globalThis.window;
   delete globalThis.document;
