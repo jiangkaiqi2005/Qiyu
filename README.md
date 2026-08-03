@@ -4,6 +4,8 @@
 
 ## 运行
 
+要求 Node >= 20。项目零运行时依赖、无构建步骤，不需要 `npm install`。
+
 ```powershell
 cd E:\Agent\栖语
 npm test
@@ -11,7 +13,13 @@ npm run eval
 npm run dev
 ```
 
-打开 `http://localhost:5173`。
+打开 `http://localhost:5173`（可用 `PORT` / `HOST` 环境变量修改监听地址）。
+
+跑单个测试文件：
+
+```powershell
+node --test test/qiyu/engine.test.js
+```
 
 ## 核心行为
 
@@ -23,7 +31,7 @@ npm run dev
 
 ## 当前边界
 
-这个版本已接入外部 LLM API，支持流式风格调取，但同时保留本地规则引擎作为离线降级兜底和安全边界的测试轨道。不做账号系统，不做云端记忆。
+这个版本已接入外部 LLM API（一次性非流式调用，回复在前端按节奏逐条呈现），支持 OpenAI 兼容接口与 Anthropic Messages API。LLM 输出命中违禁词或请求失败时，自动降级回本地规则引擎——本地引擎同时是离线兜底和安全边界的测试轨道。不做账号系统，不做云端记忆。
 
 ## LLM API 配置
 
@@ -34,6 +42,7 @@ npm run dev
 无论以何种方式配置接口地址，系统会自动完成标准化。例如：
 - `https://api.openai.com/v1` -> `https://api.openai.com/v1/chat/completions`
 - `http://127.0.0.1:11434/v1` -> `http://127.0.0.1:11434/v1/chat/completions`
+- `https://api.anthropic.com/v1` -> `https://api.anthropic.com/v1/messages`（Anthropic Messages API）
 
 ### 2. 环境变量方式
 
@@ -44,6 +53,8 @@ $env:LLM_API_KEY="你的真实 key"
 $env:LLM_MODEL="gpt-4o"
 npm run dev
 ```
+
+另有可选的 `LLM_TEMPERATURE`（默认 0.8）与 `LLM_TIMEOUT_MS`（默认 30000）。
 
 > [!NOTE]
 > 环境变量的优先级高于本地 JSON 配置文件。如果环境变量已设置，设置中心会提示受其控制，且保存修改将不会覆盖环境变量的生效值。
@@ -72,4 +83,10 @@ npm run dev
   - 返回对话页面时，顶部会渲染诊断面板。在发送消息后，会实时输出当轮对话的回复来源 (`LLM` 或 `本地兜底`)、通信耗时（延迟）以及具体的降级原因。
 
 没有配置 LLM 时，应用自动使用本地规则引擎。
+
+## 文档
+
+- `AGENTS.md`：面向编码代理的开发指引（命令、架构、回复管线、行为约束、测试约定）；`CLAUDE.md` 是指向它的符号链接。
+- `栖语产品灵魂.md`：人格与风格的最高优先级依据，服务启动时读入并注入 LLM system prompt。
+- `docs/product/behavior-spec.md`：从产品灵魂提炼出的工程行为规范。
 
