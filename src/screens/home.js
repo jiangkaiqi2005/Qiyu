@@ -1,13 +1,15 @@
+import { hasStoredPreferences } from '../qiyu/preferences.js';
+
 export function render(container, context) {
   const storage = window.localStorage;
-  const hasStoredPreferences = Boolean(storage.getItem('qiyu_preferences'));
+  const storedPrefs = hasStoredPreferences(storage);
 
   function navigateTo(path) {
     container.innerHTML = '';
     return context.router.navigate(path);
   }
 
-  if (hasStoredPreferences) {
+  if (storedPrefs) {
     return navigateTo('/chat');
   }
 

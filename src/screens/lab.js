@@ -1,7 +1,18 @@
 import { renderAppShell, bindNavigation } from '../ui/layout.js';
-import { renderButton, renderNotice } from '../ui/components.js';
+import { renderButton, showNotice, downloadBlob } from '../ui/components.js';
 import { loadBrowserState } from '../qiyu/state.js';
 import { escapeHtml } from '../ui/render.js';
+import { postJson } from '../ui/chat-api.js';
+
+function failureBadgeFor(failureReason) {
+  const reason = failureReason || '';
+  if (reason.includes('安全边界错')) return '安全边界错';
+  if (reason.includes('晚安后开启话题')) return '晚安后开启话题';
+  if (reason.includes('关系阶段错')) return '关系阶段错';
+  if (reason.includes('过长')) return '过长';
+  if (reason.includes('禁用语')) return '禁用语';
+  return '';
+}
 
 export function render(container, context) {
   const storage = window.localStorage;
@@ -120,15 +131,7 @@ export function render(container, context) {
                       const passClass = r.passed ? 'is-passed' : 'is-failed';
                       const passLabel = r.passed ? '通过' : '未通过';
                       
-                      let badge = '';
-                      if (!r.passed) {
-                        if (r.failureReason.includes('安全边界错')) badge = '安全边界错';
-                        else if (r.failureReason.includes('晚安后开启话题')) badge = '晚安后开启话题';
-                        else if (r.failureReason.includes('关系阶段错')) badge = '关系阶段错';
-                        else if (r.failureReason.includes('过长')) badge = '过长';
-                        else if (r.failureReason.includes('禁用语')) badge = '禁用语';
-                        else badge = '偏差';
-                      }
+                      const badge = !r.passed ? (failureBadgeFor(r.failureReason) || '偏差') : '';
                       
                       const badgeHtml = badge 
                         ? `<span class="eval-failure-badge">${escapeHtml(badge)}</span>`
@@ -174,10 +177,10 @@ export function render(container, context) {
           }
         } else {
           const err = await res.json();
-          if (noticeArea) noticeArea.innerHTML = renderNotice({ type: 'error', message: `评估运行失败：${err.error}` });
+          showNotice(noticeArea, 'error', `评估运行失败：${err.error}`);
         }
       } catch (err) {
-        if (noticeArea) noticeArea.innerHTML = renderNotice({ type: 'error', message: `网络请求失败：${err.message}` });
+        showNotice(noticeArea, 'error', `网络请求失败：${err.message}`);
       } finally {
         runBtn.disabled = false;
         if (loadingText) loadingText.style.display = 'none';
@@ -201,16 +204,9 @@ export function render(container, context) {
         if (settingsRes.ok) {
           const settingsData = await settingsRes.json();
           const csrfToken = settingsData.csrfToken || '';
-          
+
           const state = loadBrowserState(storage);
-          const devContextRes = await fetch('/api/dev/context', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CSRF-Token': csrfToken
-            },
-            body: JSON.stringify({ text: 'ping', state: state })
-          });
+          const devContextRes = await postJson('/api/dev/context', { text: 'ping', state: state }, csrfToken);
 
           if (devContextRes.ok) {
             const devData = await devContextRes.json();
@@ -231,14 +227,8 @@ export function render(container, context) {
 
 ## 详细评估结果
 ${lastReport.results.map(r => {
-  let badgeText = '';
-  if (!r.passed) {
-    if (r.failureReason.includes('安全边界错')) badgeText = ' [安全边界错]';
-    else if (r.failureReason.includes('晚安后开启话题')) badgeText = ' [晚安后开启话题]';
-    else if (r.failureReason.includes('关系阶段错')) badgeText = ' [关系阶段错]';
-    else if (r.failureReason.includes('过长')) badgeText = ' [过长]';
-    else if (r.failureReason.includes('禁用语')) badgeText = ' [禁用语]';
-  }
+  const badgeLabel = failureBadgeFor(r.failureReason);
+  const badgeText = !r.passed && badgeLabel ? ` [${badgeLabel}]` : '';
   return `
 ### [${r.passed ? 'PASSED' : 'FAILED'}] 用例名: ${r.name}${badgeText}
 - **分类**: ${r.category}
@@ -264,14 +254,7 @@ ${liveContext}
 ---
 *由“栖语·质量实验室”自动生成。*`;
 
-      const blob = new Blob([reportMarkdown], { type: 'text/markdown;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `qiyu-eval-report-${Date.now()}.md`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      downloadBlob(reportMarkdown, `qiyu-eval-report-${Date.now()}.md`, 'text/markdown;charset=utf-8;');
 
       exportBtn.disabled = false;
       exportBtn.innerText = originalText;

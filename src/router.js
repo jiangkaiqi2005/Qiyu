@@ -22,10 +22,12 @@ const titles = {
 
 const APP_TITLE = '栖语';
 
+// Screen paths shared with the dev server's SPA fallback (scripts/dev-server.mjs)
+export const SPA_ROUTES = Object.keys(routes);
+
 export class Router {
-  constructor(container, getContext) {
+  constructor(container) {
     this.container = container;
-    this.getContext = getContext;
     window.addEventListener('popstate', () => this.resolve());
   }
 
@@ -41,7 +43,7 @@ export class Router {
     if (loadScreen) {
       try {
         document.title = titles[path] || APP_TITLE;
-        const hasCurrentView = this.container.innerHTML.trim().length > 0;
+        const hasCurrentView = this.container.firstChild !== null;
         if (!hasCurrentView) {
           this.renderLoading();
         }
@@ -49,7 +51,7 @@ export class Router {
         const module = await loadScreen();
 
         this.container.innerHTML = '';
-        const context = this.getContext ? this.getContext(this) : { router: this };
+        const context = { router: this };
         await module.render(this.container, context);
       } catch (err) {
         console.error('Failed to load dynamic screen bundle chunk:', err);

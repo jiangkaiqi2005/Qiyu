@@ -1,7 +1,7 @@
 import { renderAppShell, bindNavigation } from '../ui/layout.js';
 import { loadBrowserState, saveBrowserState } from '../qiyu/state.js';
 import { escapeHtml, renderBubble } from '../ui/render.js';
-import { renderNotice } from '../ui/components.js';
+import { showNotice } from '../ui/components.js';
 import { confirmAction } from '../ui/confirm-dialog.js';
 
 export function render(container, context) {
@@ -40,9 +40,7 @@ export function render(container, context) {
   const layoutContainer = container.querySelector('.history-layout-container');
 
   function showNotification(type, message) {
-    if (noticeArea) {
-      noticeArea.innerHTML = renderNotice({ type, message });
-    }
+    showNotice(noticeArea, type, message);
   }
 
   function renderMainLayout() {
@@ -146,18 +144,21 @@ export function render(container, context) {
 
   renderMainLayout();
 
-  // Event Delegation for clicking sidebar item cards
-  container.addEventListener('click', (e) => {
+  // Event Delegation for clicking sidebar item cards.
+  // Bound to layoutContainer (recreated per navigation) so stale handlers do
+  // not accumulate on the persistent #app container.
+  layoutContainer.addEventListener('click', (e) => {
     const itemCard = e.target.closest('.history-item-card');
     if (itemCard && !e.target.closest('.delete-day-btn')) {
       selectedDate = itemCard.dataset.date;
-      renderSidebar();
+      container.querySelector('.history-item-card.active')?.classList.remove('active');
+      itemCard.classList.add('active');
       renderDetailPanel();
     }
   });
 
   // Event Delegation for clicking delete button
-  container.addEventListener('click', async (e) => {
+  layoutContainer.addEventListener('click', async (e) => {
     const deleteBtn = e.target.closest('.delete-day-btn');
     if (deleteBtn) {
       e.stopPropagation();

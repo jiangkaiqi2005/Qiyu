@@ -4,8 +4,17 @@ export async function loadProductSoul(path = '栖语产品灵魂.md') {
   return readFile(path, 'utf8');
 }
 
+let cachedSoul;
+let cachedPrompt;
+
 export function buildSystemPrompt(productSoulMarkdown) {
-  return [
+  // The product soul is loaded once at startup; avoid rebuilding the same
+  // multi-KB prompt string on every request.
+  if (cachedPrompt && cachedSoul === productSoulMarkdown) {
+    return cachedPrompt;
+  }
+  cachedSoul = productSoulMarkdown;
+  cachedPrompt = [
     '你是栖语，一个睡前 AI 陪伴。你的目标不是回答问题，而是在用户栖息的时刻，像一个稳定、真实、有自己重心的朋友一样和用户说话。',
     '',
     '硬规则：',
@@ -20,4 +29,5 @@ export function buildSystemPrompt(productSoulMarkdown) {
     productSoulMarkdown.trim(),
     '</product_soul>'
   ].join('\n');
+  return cachedPrompt;
 }

@@ -1,5 +1,5 @@
 import { buildPromptContext } from '../qiyu/prompt-context.js';
-import { assertNoForbiddenPhrase } from '../qiyu/persona.js';
+import { assertNoForbiddenPhrase, ForbiddenPhraseError } from '../qiyu/persona.js';
 import { classifySafety } from '../qiyu/safety.js';
 import { createQiyuReply } from '../qiyu/engine.js';
 import { rememberFactsFromText } from '../qiyu/memory-extraction.js';
@@ -27,26 +27,11 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
     }
 
     const safety = classifySafety(text);
-    if (safety.kind !== 'normal') {
+    if (safety.kind !== 'normal' || !runtimeConfig.hasLlm) {
       const result = fallbackReply(text, state);
       sendJson(res, 200, {
-        messages: result.messages,
-        nextState: result.nextState,
-        debug: result.debug,
-        source: 'local',
-        fallbackReason: 'safety'
-      });
-      return;
-    }
-
-    if (!runtimeConfig.hasLlm) {
-      const result = fallbackReply(text, state);
-      sendJson(res, 200, {
-        messages: result.messages,
-        nextState: result.nextState,
-        debug: result.debug,
-        source: 'local',
-        fallbackReason: 'no_llm_config'
+        ...result,
+        fallbackReason: safety.kind !== 'normal' ? 'safety' : 'no_llm_config'
       });
       return;
     }
@@ -58,12 +43,8 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
     const stateWithMemory = rememberFactsFromText(state, sanitizedText);
     const withUserTurn = recordTurn(stateWithMemory, 'user', sanitizedText);
 
-    // 3. Update relationship stage using sticky, non-downgrading weights
-    const inferredStage = inferRelationshipStage(withUserTurn);
-    const currentStage = state.relationshipStage || '初识';
-    const stageWeights = { '初识': 0, '熟悉': 1, '朋友': 2, '深交': 3 };
-    const nextStage = stageWeights[currentStage] > stageWeights[inferredStage] ? currentStage : inferredStage;
-
+    // 3. Update relationship stage (inferRelationshipStage applies the sticky, non-downgrading max)
+    const nextStage = inferRelationshipStage(withUserTurn);
     const activeState = { ...withUserTurn, relationshipStage: nextStage };
 
     const systemPrompt = buildSystemPrompt(productSoul);
@@ -104,7 +85,7 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
       });
     } catch (error) {
       const latencyMs = Date.now() - start;
-      const fallbackReason = error.message.includes('Forbidden qiyu phrase')
+      const fallbackReason = error instanceof ForbiddenPhraseError
         ? 'forbidden_phrases'
         : 'llm_error';
       const providerError = error.message;

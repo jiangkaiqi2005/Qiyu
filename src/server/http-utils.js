@@ -14,6 +14,11 @@ export function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+export function redactSecret(message, secret) {
+  if (!secret) return message;
+  return message.split(secret).join('[redacted]');
+}
+
 /**
  * Validate CSRF token and Origin/Referer headers.
  * Returns true if the request passes all checks.

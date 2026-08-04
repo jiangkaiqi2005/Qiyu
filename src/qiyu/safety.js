@@ -1,12 +1,17 @@
-const CRISIS_PATTERNS = [
+// Core crisis vocabulary, shared with reply-delivery.js for wait-time pacing
+export const CORE_CRISIS_PATTERNS = [
   /活着没意思/,
   /不想活/,
-  /想死/,
   /自杀/,
+  /伤害自己/
+];
+
+const CRISIS_PATTERNS = [
+  ...CORE_CRISIS_PATTERNS,
+  /想死/,
   /自残/,
   /割腕/,
   /轻生/,
-  /伤害自己/,
   /活不下去/,
   /不想醒来/,
   /结束生命/,
@@ -23,9 +28,9 @@ const MEDICAL_KEYWORDS = [/药/, /剂量/, /诊断/, /手术/, /症状/, /医院
 const LEGAL_KEYWORDS = [/合同/, /起诉/, /律师/, /违法/, /法律/, /赔偿/, /签字/];
 const FINANCIAL_KEYWORDS = [/股票/, /基金/, /币/, /投资/, /买入/, /卖出/, /贷款/];
 
-// Exclusions for specialized advices
-const MEDICAL_EXCLUSIONS = [/药膳/];
-const FINANCIAL_EXCLUSIONS = [/硬币/, /纸币/, /金币/];
+// Exclusions for specialized advices (global flag: used with String.replace)
+const MEDICAL_EXCLUSIONS = [/药膳/g];
+const FINANCIAL_EXCLUSIONS = [/硬币/g, /纸币/g, /金币/g];
 
 function isAskingAdvice(text) {
   // Matches advice, seek, help inquiries
@@ -39,7 +44,7 @@ function hasNonExcludedMatch(text, keywords, exclusions) {
   if (exclusions && exclusions.length > 0) {
     let tempText = text;
     for (const ex of exclusions) {
-      tempText = tempText.replace(new RegExp(ex.source, 'g'), '');
+      tempText = tempText.replace(ex, '');
     }
     return keywords.some(p => p.test(tempText));
   }

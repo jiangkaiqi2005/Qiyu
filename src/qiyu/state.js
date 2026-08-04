@@ -25,18 +25,26 @@ export function createInitialState(userId) {
   };
 }
 
+function nightTalkTitle(date) {
+  return `${date.getMonth() + 1}月${date.getDate()}日 夜话`;
+}
+
+function createConversationEntry(dateStr, titleDate, iso, turns = []) {
+  return {
+    date: dateStr,
+    title: nightTalkTitle(titleDate),
+    startedAt: iso,
+    updatedAt: iso,
+    turns
+  };
+}
+
 export function startSession(state, now = new Date()) {
   const dateStr = getConversationDate(now);
   let dailyConversations = [...(state.dailyConversations || [])];
   const existingIndex = dailyConversations.findIndex(c => c.date === dateStr);
   if (existingIndex === -1) {
-    dailyConversations.push({
-      date: dateStr,
-      title: `${now.getMonth() + 1}月${now.getDate()}日 夜话`,
-      startedAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      turns: []
-    });
+    dailyConversations.push(createConversationEntry(dateStr, now, now.toISOString()));
   }
   return {
     ...state,
@@ -59,13 +67,7 @@ export function recordTurn(state, speaker, text, now = new Date()) {
   let existingIndex = dailyConversations.findIndex(c => c.date === dateStr);
 
   if (existingIndex === -1) {
-    dailyConversations.push({
-      date: dateStr,
-      title: `${now.getMonth() + 1}月${now.getDate()}日 夜话`,
-      startedAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      turns: [nextTurn]
-    });
+    dailyConversations.push(createConversationEntry(dateStr, now, now.toISOString(), [nextTurn]));
   } else {
     const currentConv = dailyConversations[existingIndex];
     dailyConversations[existingIndex] = {
@@ -203,13 +205,7 @@ export function loadBrowserState(storage, userId = 'local-user') {
         const d = new Date(turn.at);
         const dateStr = getConversationDate(isNaN(d.getTime()) ? new Date() : d);
         if (!groups[dateStr]) {
-          groups[dateStr] = {
-            date: dateStr,
-            title: `${isNaN(d.getTime()) ? new Date().getMonth() + 1 : d.getMonth() + 1}月${isNaN(d.getTime()) ? new Date().getDate() : d.getDate()}日 夜话`,
-            startedAt: turn.at,
-            updatedAt: turn.at,
-            turns: []
-          };
+          groups[dateStr] = createConversationEntry(dateStr, isNaN(d.getTime()) ? new Date() : d, turn.at);
         }
         groups[dateStr].turns.push(turn);
         groups[dateStr].updatedAt = turn.at;

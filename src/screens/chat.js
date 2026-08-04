@@ -1,4 +1,4 @@
-import { renderAppShell, bindNavigation } from '../ui/layout.js';
+import { renderAppShell, bindNavigation, isDevMode } from '../ui/layout.js';
 import { createQiyuReply } from '../qiyu/engine.js';
 import {
   startSession,
@@ -10,7 +10,7 @@ import { loadPreferences } from '../qiyu/preferences.js';
 import { renderBubble } from '../ui/render.js';
 import { sendChatMessage } from '../ui/chat-api.js';
 import { confirmAction } from '../ui/confirm-dialog.js';
-import { calculateTextWaitMs, normalizeReplyMessages } from '../qiyu/reply-delivery.js';
+import { calculateTextWaitMs } from '../qiyu/reply-delivery.js';
 
 export function render(container, context) {
   const storage = window.localStorage;
@@ -120,7 +120,7 @@ export function render(container, context) {
   }
   syncComposerSize();
 
-  const isDev = storage.getItem('qiyu_dev_mode') === 'true';
+  const isDev = isDevMode(storage);
   if (devDiagnostics && isDev) {
     devDiagnostics.style.display = 'block';
     devDiagnostics.innerText = '[调试] 开发者模式已激活。发送消息后将在此输出实时 API 连接诊断信息。';
@@ -129,8 +129,7 @@ export function render(container, context) {
   let pendingScrollFrame = null;
 
   function scrollToBottom(options = {}) {
-    const isReduced = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
-    const behavior = options.behavior || (isReduced ? 'auto' : 'auto');
+    const behavior = options.behavior || 'auto';
 
     if (pendingScrollFrame && typeof window.cancelAnimationFrame === 'function') {
       window.cancelAnimationFrame(pendingScrollFrame);
@@ -173,13 +172,16 @@ export function render(container, context) {
     return window.matchMedia('(pointer: fine)').matches;
   }
 
-  function appendMessage(speaker, text) {
-    const html = renderBubble({ speaker, text });
+  function createBubbleNode(speaker, text) {
     const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = html.trim();
+    tempDiv.innerHTML = renderBubble({ speaker, text }).trim();
     const bubble = tempDiv.firstChild;
     bubble.classList.add('bubble-fadeIn');
-    msgContainer.appendChild(bubble);
+    return bubble;
+  }
+
+  function appendMessage(speaker, text) {
+    msgContainer.appendChild(createBubbleNode(speaker, text));
     scrollToBottom();
   }
 
@@ -199,12 +201,7 @@ export function render(container, context) {
   if (historyTurns.length) {
     const fragment = document.createDocumentFragment();
     historyTurns.forEach(turn => {
-      const html = renderBubble({ speaker: turn.speaker === 'user' ? 'user' : 'qiyu', text: turn.text });
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = html.trim();
-      const bubble = tempDiv.firstChild;
-      bubble.classList.add('bubble-fadeIn');
-      fragment.appendChild(bubble);
+      fragment.appendChild(createBubbleNode(turn.speaker, turn.text));
     });
     msgContainer.appendChild(fragment);
     scrollToBottom({ behavior: 'auto' });
@@ -225,7 +222,8 @@ export function render(container, context) {
     form.querySelector('button').disabled = true;
 
     try {
-      const visibleMessages = normalizeReplyMessages(replyMessages, { fallback: null });
+      // Server and local engine both normalize replies before returning them
+      const visibleMessages = replyMessages;
 
       for (let i = 0; i < visibleMessages.length; i++) {
         const text = visibleMessages[i];
@@ -277,7 +275,7 @@ export function render(container, context) {
     state = result.nextState;
     saveBrowserState(storage, state);
 
-    if (devDiagnostics && storage.getItem('qiyu_dev_mode') === 'true') {
+    if (devDiagnostics && isDevMode(storage)) {
       const source = result.source || 'local';
       const latency = result.latencyMs ? `${result.latencyMs}ms` : 'N/A';
       let debugText = `[调试] 回复来源: ${source === 'llm' ? 'LLM' : '本地兜底'} | 延迟: ${latency}`;

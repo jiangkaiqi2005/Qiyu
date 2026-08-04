@@ -17,7 +17,7 @@ const OPEN_REPLIES = {
     quiet: ['嗯', '……', '怎么说']
   },
   '熟悉': {
-    gentle: ['离开了吗', '说来听听', '嗯 怎么了', '继续', '怎么说'],
+    gentle: ['然后呢', '说来听听', '嗯 怎么了', '继续', '怎么说'],
     playful: ['讲讲呗', '然后呢，离谱不', '行叭，接着说'],
     quiet: ['嗯', '继续', '……']
   },
@@ -33,8 +33,18 @@ const OPEN_REPLIES = {
   }
 };
 
-// Explicit fallback mapping for exact unit test matches
-OPEN_REPLIES['熟悉'].gentle = ['然后呢', '说来听听', '嗯 怎么了', '继续', '怎么说'];
+// Single-line replies keyed by companionship style, per intent
+const BEDTIME_REPLIES = { gentle: '晚安', quiet: '晚安。', playful: '好啦，晚安。明天还要喝奶茶呢。' };
+const BEDTIME_LOCKOUT_REPLIES = { gentle: '好啦，该睡了，别想了。', quiet: '……', playful: '都这会儿了还聊，快闭眼。' };
+const LOW_SIGNAL_REPLIES = { gentle: '嗯', quiet: '……', playful: '行叭' };
+const SABOTAGE_REPLIES = { gentle: '怎么又这样，明天该难受了。', quiet: '……又来。', playful: '嘴上说着不要，身体倒是很诚实。' };
+const GOOD_NEWS_REPLIES = { gentle: '真的吗！太好啦', quiet: '挺好。', playful: '离谱，这必须请客！' };
+const ABSURD_REPLIES = { gentle: '这确实让人无语。', quiet: '离谱。', playful: '确实大病，这操作有点秀。' };
+const OBSESSIVE_REPLIES = { gentle: '别想太多了，早点休息吧。', quiet: '别想了。', playful: '想不通就睡觉，脑子打结了。' };
+
+function styledReply(replies, style) {
+  return replies[style] || replies.gentle;
+}
 
 function simpleHash(str) {
   let hash = 0;
@@ -110,16 +120,10 @@ export function planReply(text, state) {
 
   // 1. Bedtime Closure (Priority 1)
   if (isBedtimeIntent(text)) {
-    let messages = ['晚安'];
-    if (companionshipStyle === 'quiet') {
-      messages = ['晚安。'];
-    } else if (companionshipStyle === 'playful') {
-      messages = ['好啦，晚安。明天还要喝奶茶呢。'];
-    }
     return {
       mode: 'bedtime',
       emotion: { kind: 'quiet', intensity: 1 },
-      messages,
+      messages: [styledReply(BEDTIME_REPLIES, companionshipStyle)],
       relationshipStage
     };
   }
@@ -128,32 +132,20 @@ export function planReply(text, state) {
   const turns = state.turns || [];
   const hasSaidBedtime = turns.some(t => t.speaker === 'user' && isBedtimeIntent(t.text));
   if (hasSaidBedtime) {
-    let messages = ['好啦，该睡了，别想了。'];
-    if (companionshipStyle === 'quiet') {
-      messages = ['……'];
-    } else if (companionshipStyle === 'playful') {
-      messages = ['都这会儿了还聊，快闭眼。'];
-    }
     return {
       mode: 'bedtime',
       emotion: { kind: 'quiet', intensity: 1 },
-      messages,
+      messages: [styledReply(BEDTIME_LOCKOUT_REPLIES, companionshipStyle)],
       relationshipStage
     };
   }
 
   // 2. Low Signal input (Priority 2)
   if (isLowSignalIntent(text)) {
-    let reply = '嗯';
-    if (companionshipStyle === 'quiet') {
-      reply = '……';
-    } else if (companionshipStyle === 'playful') {
-      reply = '行叭';
-    }
     return {
       mode: 'minimal',
       emotion: currentEmotion,
-      messages: [reply],
+      messages: [styledReply(LOW_SIGNAL_REPLIES, companionshipStyle)],
       relationshipStage
     };
   }
@@ -183,16 +175,10 @@ export function planReply(text, state) {
 
   // 5. Repeated Self-sabotage (Priority 5)
   if (isSabotageIntent(text)) {
-    let messages = ['怎么又这样，明天该难受了。'];
-    if (companionshipStyle === 'quiet') {
-      messages = ['……又来。'];
-    } else if (companionshipStyle === 'playful') {
-      messages = ['嘴上说着不要，身体倒是很诚实。'];
-    }
     return {
       mode: 'tease',
       emotion: { kind: 'light', intensity: 2 },
-      messages,
+      messages: [styledReply(SABOTAGE_REPLIES, companionshipStyle)],
       relationshipStage
     };
   }
@@ -263,46 +249,28 @@ export function planReply(text, state) {
   }
 
   if (isGoodNewsIntent(text)) {
-    let msg = '真的吗！太好啦';
-    if (companionshipStyle === 'quiet') {
-      msg = '挺好。';
-    } else if (companionshipStyle === 'playful') {
-      msg = '离谱，这必须请客！';
-    }
     return {
       mode: 'open',
       emotion: { kind: 'light', intensity: 2 },
-      messages: [msg],
+      messages: [styledReply(GOOD_NEWS_REPLIES, companionshipStyle)],
       relationshipStage
     };
   }
 
   if (isAbsurdIntent(text)) {
-    let msg = '这确实让人无语。';
-    if (companionshipStyle === 'quiet') {
-      msg = '离谱。';
-    } else if (companionshipStyle === 'playful') {
-      msg = '确实大病，这操作有点秀。';
-    }
     return {
       mode: 'open',
       emotion: decayEmotion(currentEmotion),
-      messages: [msg],
+      messages: [styledReply(ABSURD_REPLIES, companionshipStyle)],
       relationshipStage
     };
   }
 
   if (isObsessiveIntent(text)) {
-    let msg = '别想太多了，早点休息吧。';
-    if (companionshipStyle === 'quiet') {
-      msg = '别想了。';
-    } else if (companionshipStyle === 'playful') {
-      msg = '想不通就睡觉，脑子打结了。';
-    }
     return {
       mode: 'open',
       emotion: decayEmotion(currentEmotion),
-      messages: [msg],
+      messages: [styledReply(OBSESSIVE_REPLIES, companionshipStyle)],
       relationshipStage
     };
   }

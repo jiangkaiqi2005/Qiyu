@@ -1,3 +1,5 @@
+import { redactSecret } from './http-utils.js';
+
 function stripReasoningTags(text) {
   return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 }
@@ -141,9 +143,7 @@ export async function callChatCompletions({ config, messages, fetchImpl = fetch 
     if (err.name === 'AbortError' || msg.includes('aborted')) {
       msg = `LLM request timeout after ${config.timeoutMs}ms`;
     }
-    if (config.apiKey && config.apiKey.length > 3) {
-      msg = msg.split(config.apiKey).join('[redacted]');
-    }
+    msg = redactSecret(msg, config.apiKey && config.apiKey.length > 3 ? config.apiKey : '');
     throw new Error(msg);
   } finally {
     clearTimeout(timeout);

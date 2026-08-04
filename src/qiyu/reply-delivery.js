@@ -1,3 +1,5 @@
+import { CORE_CRISIS_PATTERNS } from './safety.js';
+
 const STAGE_DIRECTION_PATTERNS = [
   /^栖语?(等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下)[。.!！?？,，\s]*$/,
   /^(等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下)[。.!！?？,，\s]*$/,
@@ -26,13 +28,6 @@ const HEAVY_PATTERNS = [
   /好累/,
   /疲惫/,
   /撑不住/
-];
-
-const SAFETY_PATTERNS = [
-  /自杀/,
-  /不想活/,
-  /活着没意思/,
-  /伤害自己/
 ];
 
 const SPEAKER_PREFIX_PATTERN = /^(栖语|她|他)\s*[：:]\s*/;
@@ -79,17 +74,20 @@ function stripNonVisibleStageText(value) {
   return text;
 }
 
-export function isNonVisibleReplyLine(value) {
-  const text = stripNonVisibleStageText(value);
+function isStrippedNonVisible(text) {
   if (!text) return true;
   if (/^…+$/.test(text)) return true;
   return STAGE_DIRECTION_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+export function isNonVisibleReplyLine(value) {
+  return isStrippedNonVisible(stripNonVisibleStageText(value));
+}
+
 export function normalizeReplyMessages(messages, { fallback = '我在。' } = {}) {
   const visible = (Array.isArray(messages) ? messages : [])
     .map((message) => stripNonVisibleStageText(message))
-    .filter((message) => !isNonVisibleReplyLine(message));
+    .filter((message) => !isStrippedNonVisible(message));
 
   if (visible.length) return visible;
   return fallback === null ? [] : [fallback];
@@ -98,7 +96,7 @@ export function normalizeReplyMessages(messages, { fallback = '我在。' } = {}
 export function calculateTextWaitMs({ userText = '', replyText = '', mode = '', random = Math.random } = {}) {
   const source = `${userText}\n${replyText}`;
 
-  if (mode === 'safety' || matchesAny(SAFETY_PATTERNS, source)) {
+  if (mode === 'safety' || matchesAny(CORE_CRISIS_PATTERNS, source)) {
     return Math.round(200 + clamp(random(), 0, 1) * 300);
   }
 

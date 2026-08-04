@@ -8,7 +8,8 @@ import { handleChatRequest } from '../src/server/chat-route.js';
 import { handleSettingsRequest, csrfToken } from '../src/server/settings-route.js';
 import { loadRuntimeConfig } from '../src/server/config.js';
 import { loadProductSoul } from '../src/server/system-prompt.js';
-import { readJsonBody, validateCsrfAndOrigin } from '../src/server/http-utils.js';
+import { readJsonBody, sendJson, validateCsrfAndOrigin } from '../src/server/http-utils.js';
+import { SPA_ROUTES } from '../src/router.js';
 
 const root = resolve(process.cwd());
 const port = Number(process.env.PORT || 5173);
@@ -40,16 +41,9 @@ function isAllowedStaticFile(relativePath) {
          parts[0] === 'public';
 }
 
-const spaRoutes = new Set([
-  '/',
-  '/chat',
-  '/history',
-  '/onboarding',
-  '/settings',
-  '/memory',
-  '/lab',
-  '/privacy'
-]);
+// Shared with the client router; sw.js precache is intentionally manual
+// (a classic service worker cannot import ESM).
+const spaRoutes = new Set(SPA_ROUTES);
 
 export function resolveRequestPath(urlPath, staticRoot = root) {
   let decoded;
@@ -65,8 +59,6 @@ export function resolveRequestPath(urlPath, staticRoot = root) {
 
   let requestPath = decoded;
   if (spaRoutes.has(decoded)) {
-    requestPath = 'index.html';
-  } else if (decoded === '/') {
     requestPath = 'index.html';
   }
 
@@ -116,14 +108,12 @@ export async function createStaticServer(staticRoot = root) {
           const systemPrompt = buildSystemPrompt(productSoul);
           const contextObj = buildPromptContext({ state, userText, includeHistory: false });
 
-          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({
+          sendJson(res, 200, {
             systemPrompt: systemPrompt,
             liveContext: contextObj.content
-          }));
+          });
         } catch (err) {
-          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({ error: err.message }));
+          sendJson(res, 500, { error: err.message });
         }
       } else {
         res.writeHead(405);
@@ -138,11 +128,9 @@ export async function createStaticServer(staticRoot = root) {
         const { readFile } = await import('node:fs/promises');
         const cases = JSON.parse(await readFile(join(staticRoot, 'eval/golden-cases.json'), 'utf8'));
         const report = runSuite(cases);
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify(report));
+        sendJson(res, 200, report);
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ error: err.message }));
+        sendJson(res, 500, { error: err.message });
       }
       return;
     }

@@ -1,3 +1,5 @@
+const PREFERENCES_KEY = 'qiyu_preferences';
+
 export function createDefaultPreferences() {
   return {
     userName: '你',
@@ -9,7 +11,7 @@ export function createDefaultPreferences() {
 }
 
 export function loadPreferences(storage) {
-  const raw = storage.getItem('qiyu_preferences');
+  const raw = storage.getItem(PREFERENCES_KEY);
   if (!raw) return createDefaultPreferences();
   try {
     return { ...createDefaultPreferences(), ...JSON.parse(raw) };
@@ -19,5 +21,9 @@ export function loadPreferences(storage) {
 }
 
 export function savePreferences(storage, prefs) {
-  storage.setItem('qiyu_preferences', JSON.stringify(prefs));
+  storage.setItem(PREFERENCES_KEY, JSON.stringify(prefs));
+}
+
+export function hasStoredPreferences(storage) {
+  return Boolean(storage.getItem(PREFERENCES_KEY));
 }

@@ -31,9 +31,17 @@ export const RESPONSE_SPECTRUM = Object.freeze([
   '长段回应'
 ]);
 
+export class ForbiddenPhraseError extends Error {
+  constructor(phrase) {
+    super(`Forbidden qiyu phrase: ${phrase}`);
+    this.name = 'ForbiddenPhraseError';
+    this.phrase = phrase;
+  }
+}
+
 export function assertNoForbiddenPhrase(text) {
   const hit = FORBIDDEN_PHRASES.find((phrase) => text.includes(phrase));
   if (hit) {
-    throw new Error(`Forbidden qiyu phrase: ${hit}`);
+    throw new ForbiddenPhraseError(hit);
   }
 }

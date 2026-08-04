@@ -22,11 +22,8 @@ export function createQiyuReply(text, state) {
     const withUserTurn = recordTurn(stateWithMemory, 'user', trimmed);
     
     // Evaluate relationship stage on the updated state
-    const relationshipStage = inferRelationshipStage(withUserTurn);
-    const currentStage = state.relationshipStage || '初识';
-    const stageWeights = { '初识': 0, '熟悉': 1, '朋友': 2, '深交': 3 };
-    const nextStage = stageWeights[currentStage] > stageWeights[relationshipStage] ? currentStage : relationshipStage;
-    
+    // (inferRelationshipStage already applies the sticky, non-downgrading max)
+    const nextStage = inferRelationshipStage(withUserTurn);
     const activeState = { ...withUserTurn, relationshipStage: nextStage };
     const nextState = recordTurn(activeState, 'qiyu', reply);
     
@@ -45,11 +42,8 @@ export function createQiyuReply(text, state) {
   const withUserTurn = recordTurn(stateWithMemory, 'user', trimmed);
   
   // Calculate relationship stage based on the updated state
-  const relationshipStage = inferRelationshipStage(withUserTurn);
-  const currentStage = state.relationshipStage || '初识';
-  const stageWeights = { '初识': 0, '熟悉': 1, '朋友': 2, '深交': 3 };
-  const nextStage = stageWeights[currentStage] > stageWeights[relationshipStage] ? currentStage : relationshipStage;
-  
+  // (inferRelationshipStage already applies the sticky, non-downgrading max)
+  const nextStage = inferRelationshipStage(withUserTurn);
   const activeState = { ...withUserTurn, relationshipStage: nextStage };
 
   // Plan rules-based reply using the updated stage

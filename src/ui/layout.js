@@ -1,6 +1,15 @@
 const SIDEBAR_HOVER_INTENT_DELAY_MS = 1040;
 const SIDEBAR_CLOSE_GRACE_MS = 220;
 const SIDEBAR_CARRY_EXPANDED_KEY = '__qiyuCarryExpandedSidebar';
+const DEV_MODE_KEY = 'qiyu_dev_mode';
+
+export function isDevMode(storage) {
+  return storage.getItem(DEV_MODE_KEY) === 'true';
+}
+
+export function setDevMode(storage, enabled) {
+  storage.setItem(DEV_MODE_KEY, enabled ? 'true' : 'false');
+}
 
 function getRuntimeWindow() {
   return typeof window === 'object' ? window : null;
@@ -85,7 +94,7 @@ export function renderAppShell(contentHtml, currentPath) {
     { path: '/privacy', label: '封存', icon: '封' }
   ];
 
-  const devMode = window.localStorage.getItem('qiyu_dev_mode') === 'true';
+  const devMode = isDevMode(window.localStorage);
   if (devMode) {
     routes.push({ path: '/lab', label: '幻镜', icon: '镜' });
   }

@@ -2,9 +2,16 @@ import { writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { loadRuntimeConfig, normalizeChatCompletionsUrl } from './config.js';
 import { callChatCompletions } from './llm-client.js';
-import { readJsonBody, sendJson, validateCsrfAndOrigin } from './http-utils.js';
+import { readJsonBody, sendJson, validateCsrfAndOrigin, redactSecret } from './http-utils.js';
 
 export const csrfToken = randomBytes(24).toString('hex');
+
+// Sentinel shown to clients instead of the real key; echoed back unchanged on save
+export const MASKED_API_KEY = '••••••••';
+
+function resolveApiKey(bodyApiKey, currentApiKey) {
+  return bodyApiKey === MASKED_API_KEY ? currentApiKey : bodyApiKey;
+}
 
 function resolveTestTimeoutMs(body, current, fallback = 30000) {
   const rawTimeoutMs = typeof body.timeoutMs !== 'undefined' ? body.timeoutMs : current.llm.timeoutMs;
@@ -32,7 +39,7 @@ export async function handleSettingsRequest(req, res, {
       const config = await loadRuntimeConfigImpl({ configPath });
       const masked = {
         ...config.llm,
-        apiKey: config.llm.apiKey ? '••••••••' : ''
+        apiKey: config.llm.apiKey ? MASKED_API_KEY : ''
       };
       sendJson(res, 200, {
         ...masked,
@@ -47,7 +54,7 @@ export async function handleSettingsRequest(req, res, {
       const body = await readJsonBody(req);
       const current = await loadRuntimeConfigImpl({ configPath });
 
-      const apiKey = body.apiKey === '••••••••' ? current.llm.apiKey : body.apiKey;
+      const apiKey = resolveApiKey(body.apiKey, current.llm.apiKey);
 
       const newConfig = {
         llm: {
@@ -76,7 +83,7 @@ export async function handleSettingsRequest(req, res, {
     if (req.method === 'POST' && path === '/api/settings/test') {
       const body = await readJsonBody(req);
       const current = await loadRuntimeConfigImpl({ configPath });
-      const apiKey = body.apiKey === '••••••••' ? current.llm.apiKey : body.apiKey;
+      const apiKey = resolveApiKey(body.apiKey, current.llm.apiKey);
 
       const normalizedApiUrl = normalizeChatCompletionsUrl(body.apiUrl || '');
       const testLlm = {
@@ -107,10 +114,7 @@ export async function handleSettingsRequest(req, res, {
         });
       } catch (err) {
         const latencyMs = Date.now() - start;
-        let errMsg = err.message || String(err);
-        if (apiKey) {
-          errMsg = errMsg.split(apiKey).join('[redacted]');
-        }
+        const errMsg = redactSecret(err.message || String(err), apiKey);
         sendJson(res, 200, {
           success: false,
           normalizedApiUrl,
@@ -125,7 +129,7 @@ export async function handleSettingsRequest(req, res, {
     if (req.method === 'POST' && path === '/api/settings/test-chat') {
       const body = await readJsonBody(req);
       const current = await loadRuntimeConfigImpl({ configPath });
-      const apiKey = body.apiKey === '••••••••' ? current.llm.apiKey : body.apiKey;
+      const apiKey = resolveApiKey(body.apiKey, current.llm.apiKey);
 
       const normalizedApiUrl = normalizeChatCompletionsUrl(body.apiUrl || '');
       const testLlm = {
@@ -169,10 +173,7 @@ export async function handleSettingsRequest(req, res, {
         });
       } catch (err) {
         const latencyMs = Date.now() - start;
-        let errMsg = err.message || String(err);
-        if (apiKey) {
-          errMsg = errMsg.split(apiKey).join('[redacted]');
-        }
+        const errMsg = redactSecret(err.message || String(err), apiKey);
         sendJson(res, 200, {
           success: false,
           error: errMsg,

@@ -12,3 +12,15 @@ export async function sendChatMessage({ text, state, fetchImpl = fetch }) {
 
   return response.json();
 }
+
+// CSRF-protected JSON POST shared by the settings-family routes
+export function postJson(url, body, csrfToken, fetchImpl = fetch) {
+  return fetchImpl(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': csrfToken || ''
+    },
+    body: JSON.stringify(body)
+  });
+}

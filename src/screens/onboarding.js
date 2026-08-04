@@ -1,7 +1,8 @@
 import { renderAppShell, bindNavigation } from '../ui/layout.js';
 import { loadPreferences, savePreferences } from '../qiyu/preferences.js';
-import { renderButton, renderInput, renderToggle, renderNotice } from '../ui/components.js';
+import { renderButton, renderInput, renderToggle, showNotice } from '../ui/components.js';
 import { applyProviderPreset, renderProviderPresetOptions } from '../ui/provider-presets.js';
+import { postJson } from '../ui/chat-api.js';
 
 export function render(container, context) {
   const storage = window.localStorage;
@@ -238,9 +239,7 @@ export function render(container, context) {
   const noticeArea = container.querySelector('.onboarding-notice-area');
 
   function showNotification(type, message) {
-    if (noticeArea) {
-      noticeArea.innerHTML = renderNotice({ type, message });
-    }
+    showNotice(noticeArea, type, message);
   }
 
   async function ensureCsrfToken() {
@@ -267,20 +266,13 @@ export function render(container, context) {
       throw new Error('未能获取安全令牌，请稍后重试');
     }
 
-    const response = await fetch('/api/settings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-Token': token
-      },
-      body: JSON.stringify({
-        apiUrl,
-        apiKey,
-        model,
-        temperature: Number.isFinite(temperature) ? temperature : 0.8,
-        timeoutMs: 30000
-      })
-    });
+    const response = await postJson('/api/settings', {
+      apiUrl,
+      apiKey,
+      model,
+      temperature: Number.isFinite(temperature) ? temperature : 0.8,
+      timeoutMs: 30000
+    }, token);
 
     if (!response.ok) {
       throw new Error(`API 配置保存失败：HTTP ${response.status}`);

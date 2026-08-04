@@ -1,6 +1,6 @@
 import { renderAppShell, bindNavigation } from '../ui/layout.js';
 import { loadBrowserState, saveBrowserState } from '../qiyu/state.js';
-import { renderNotice } from '../ui/components.js';
+import { showNotice } from '../ui/components.js';
 import { escapeHtml } from '../ui/render.js';
 
 export function render(container, context) {
@@ -240,9 +240,7 @@ export function render(container, context) {
   }
 
   function showNotification(message) {
-    if (noticeArea) {
-      noticeArea.innerHTML = renderNotice({ type: 'success', message });
-    }
+    showNotice(noticeArea, 'success', message);
   }
 
   // Debounce search updates so filtering does not re-render on every keystroke.

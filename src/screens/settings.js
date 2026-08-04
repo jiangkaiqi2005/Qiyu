@@ -1,4 +1,4 @@
-import { renderAppShell, bindNavigation } from '../ui/layout.js';
+import { renderAppShell, bindNavigation, isDevMode, setDevMode } from '../ui/layout.js';
 import { loadPreferences, savePreferences } from '../qiyu/preferences.js';
 import { loadBrowserState, saveBrowserState, createInitialState } from '../qiyu/state.js';
 import {
@@ -6,8 +6,11 @@ import {
   renderInput,
   renderToggle,
   renderFieldRow,
-  renderNotice
+  renderNotice,
+  showNotice,
+  downloadBlob
 } from '../ui/components.js';
+import { postJson } from '../ui/chat-api.js';
 import { confirmAction } from '../ui/confirm-dialog.js';
 import {
   applyProviderPreset,
@@ -265,7 +268,7 @@ export function render(container, context) {
           description: '唤醒系统回归质量实验室，展示系统提示词预览与上下文拼接。',
           controlHtml: renderToggle({
             name: 'devMode',
-            checked: window.localStorage.getItem('qiyu_dev_mode') === 'true'
+            checked: isDevMode(window.localStorage)
           })
         })}
 
@@ -322,9 +325,48 @@ export function render(container, context) {
   }
 
   function showNotification(type, message) {
-    if (noticeArea) {
-      noticeArea.innerHTML = renderNotice({ type, message });
+    showNotice(noticeArea, type, message);
+  }
+
+  function withBusyButton(btn, loadingLabel, action) {
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="loading-dots">${loadingLabel}</span>`;
+    return action().finally(() => {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+    });
+  }
+
+  function readApiFormValues() {
+    return {
+      apiUrl: container.querySelector('[name="apiUrl"]').value.trim(),
+      apiKey: container.querySelector('[name="apiKey"]').value.trim(),
+      model: container.querySelector('[name="model"]').value.trim(),
+      timeoutMs: Number(container.querySelector('[name="timeoutMs"]').value)
+    };
+  }
+
+  async function runProbe({ endpoint, button, busyLabel, startNotice, networkErrorPrefix, onResult }) {
+    const { apiUrl, apiKey, model, timeoutMs } = readApiFormValues();
+    if (!apiUrl || !model) {
+      showNotification('warning', '请填入完整的接口地址和模型名称以供测试。');
+      return;
     }
+    await withBusyButton(button, busyLabel, async () => {
+      showNotification('warning', startNotice);
+      try {
+        const res = await postJson(endpoint, { apiUrl, apiKey, model, timeoutMs }, window.qiyuCsrfToken);
+        if (res.ok) {
+          const data = await res.json();
+          onResult(data);
+        } else {
+          showNotification('error', `请求被拒绝：HTTP ${res.status}`);
+        }
+      } catch (err) {
+        showNotification('error', `${networkErrorPrefix}${err.message}`);
+      }
+    });
   }
 
   function updateHealthAndDiagnostics(config) {
@@ -473,34 +515,14 @@ export function render(container, context) {
   }
 
   // 6. Test AI Connection
-  testConnectionBtn.addEventListener('click', async () => {
-    const apiUrl = container.querySelector('[name="apiUrl"]').value.trim();
-    const apiKey = container.querySelector('[name="apiKey"]').value.trim();
-    const model = container.querySelector('[name="model"]').value.trim();
-    const timeoutMs = Number(container.querySelector('[name="timeoutMs"]').value);
-
-    if (!apiUrl || !model) {
-      showNotification('warning', '请填入完整的接口地址和模型名称以供测试。');
-      return;
-    }
-
-    const originalText = testConnectionBtn.innerHTML;
-    testConnectionBtn.disabled = true;
-    testConnectionBtn.innerHTML = '<span class="loading-dots">连接中</span>';
-    showNotification('warning', '正在测试模型连接，请稍候...');
-
-    try {
-      const res = await fetch('/api/settings/test', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': window.qiyuCsrfToken || ''
-        },
-        body: JSON.stringify({ apiUrl, apiKey, model, timeoutMs })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
+  testConnectionBtn.addEventListener('click', () => {
+    runProbe({
+      endpoint: '/api/settings/test',
+      button: testConnectionBtn,
+      busyLabel: '连接中',
+      startNotice: '正在测试模型连接，请稍候...',
+      networkErrorPrefix: '网络握手超时：',
+      onResult(data) {
         if (data.success) {
           storage.setItem('qiyu_api_health_status', 'provider_connected');
           if (diagDetail) {
@@ -514,47 +536,20 @@ export function render(container, context) {
           }
           showNotification('error', `连接失败：${data.error || '未知模型错误'}`);
         }
-      } else {
-        showNotification('error', `请求被拒绝：HTTP ${res.status}`);
       }
-    } catch (err) {
-      showNotification('error', `网络握手超时：${err.message}`);
-    } finally {
-      testConnectionBtn.disabled = false;
-      testConnectionBtn.innerHTML = originalText;
-    }
+    });
   });
 
   // 6.2 Test Qiyu Reply Connection
   if (testChatBtn) {
-    testChatBtn.addEventListener('click', async () => {
-      const apiUrl = container.querySelector('[name="apiUrl"]').value.trim();
-      const apiKey = container.querySelector('[name="apiKey"]').value.trim();
-      const model = container.querySelector('[name="model"]').value.trim();
-      const timeoutMs = Number(container.querySelector('[name="timeoutMs"]').value);
-
-      if (!apiUrl || !model) {
-        showNotification('warning', '请填入完整的接口地址和模型名称以供测试。');
-        return;
-      }
-
-      const originalText = testChatBtn.innerHTML;
-      testChatBtn.disabled = true;
-      testChatBtn.innerHTML = '<span class="loading-dots">发送中</span>';
-      showNotification('warning', '正在发送测试消息，请稍候...');
-
-      try {
-        const res = await fetch('/api/settings/test-chat', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': window.qiyuCsrfToken || ''
-          },
-          body: JSON.stringify({ apiUrl, apiKey, model, timeoutMs })
-        });
-
-        if (res.ok) {
-          const data = await res.json();
+    testChatBtn.addEventListener('click', () => {
+      runProbe({
+        endpoint: '/api/settings/test-chat',
+        button: testChatBtn,
+        busyLabel: '发送中',
+        startNotice: '正在发送测试消息，请稍候...',
+        networkErrorPrefix: '握手通信故障：',
+        onResult(data) {
           if (data.success) {
             storage.setItem('qiyu_api_health_status', 'chat_connected');
             if (diagDetail) {
@@ -568,40 +563,24 @@ export function render(container, context) {
             }
             showNotification('error', `栖语回复测试失败：${data.error}`);
           }
-        } else {
-          showNotification('error', `请求被拒绝：HTTP ${res.status}`);
         }
-      } catch (err) {
-        showNotification('error', `握手通信故障：${err.message}`);
-      } finally {
-        testChatBtn.disabled = false;
-        testChatBtn.innerHTML = originalText;
-      }
+      });
     });
   }
 
   // 7. Save AI Settings to server
-  saveAiBtn.addEventListener('click', async () => {
-    const apiUrl = container.querySelector('[name="apiUrl"]').value.trim();
-    const apiKey = container.querySelector('[name="apiKey"]').value.trim();
-    const model = container.querySelector('[name="model"]').value.trim();
-    const temperature = Number(container.querySelector('[name="temperature"]').value);
-    const timeoutMs = Number(container.querySelector('[name="timeoutMs"]').value);
+  saveAiBtn.addEventListener('click', () => {
+    withBusyButton(saveAiBtn, '保存中', async () => {
+      const apiUrl = container.querySelector('[name="apiUrl"]').value.trim();
+      const apiKey = container.querySelector('[name="apiKey"]').value.trim();
+      const model = container.querySelector('[name="model"]').value.trim();
+      const temperature = Number(container.querySelector('[name="temperature"]').value);
+      const timeoutMs = Number(container.querySelector('[name="timeoutMs"]').value);
 
-    const originalText = saveAiBtn.innerHTML;
-    saveAiBtn.disabled = true;
-    saveAiBtn.innerHTML = '<span class="loading-dots">保存中</span>';
-    try {
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': window.qiyuCsrfToken || ''
-        },
-        body: JSON.stringify({ apiUrl, apiKey, model, temperature, timeoutMs })
-      });
+      try {
+        const res = await postJson('/api/settings', { apiUrl, apiKey, model, temperature, timeoutMs }, window.qiyuCsrfToken);
 
-      if (res.ok) {
+        if (res.ok) {
         const data = await res.json();
         if (data.success) {
           const healthStatus = storage.getItem('qiyu_api_health_status');
@@ -618,10 +597,8 @@ export function render(container, context) {
       }
     } catch (err) {
       showNotification('error', `保存网络异常：${err.message}`);
-    } finally {
-      saveAiBtn.disabled = false;
-      saveAiBtn.innerHTML = originalText;
     }
+    });
   });
 
   // 8. Data Export and Cleanup Actions
@@ -630,14 +607,7 @@ export function render(container, context) {
       preferences: prefs,
       state: state
     };
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `qiyu-local-context-${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    downloadBlob(JSON.stringify(backup, null, 2), `qiyu-local-context-${Date.now()}.json`, 'application/json');
     showNotification('success', '本地上下文已成功导出为备份 JSON。');
   });
 
@@ -675,7 +645,7 @@ export function render(container, context) {
     if (!devToggle || !devPanel) return;
 
     const isDev = devToggle.checked;
-    window.localStorage.setItem('qiyu_dev_mode', isDev ? 'true' : 'false');
+    setDevMode(window.localStorage, isDev);
     devPanel.style.display = isDev ? 'flex' : 'none';
 
     if (isDev) {
@@ -685,14 +655,7 @@ export function render(container, context) {
         sysBox.value = '加载中...\n';
         liveBox.value = '加载中...\n';
 
-        fetch('/api/dev/context', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': window.qiyuCsrfToken || ''
-          },
-          body: JSON.stringify({ text: 'ping', state: state })
-        }).then(async (res) => {
+        postJson('/api/dev/context', { text: 'ping', state: state }, window.qiyuCsrfToken).then(async (res) => {
           if (res.ok) {
             const data = await res.json();
             sysBox.value = data.systemPrompt || '加载失败';
