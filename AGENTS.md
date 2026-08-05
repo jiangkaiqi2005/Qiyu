@@ -63,3 +63,4 @@ npm run eval    # 黄金行为用例套件（eval/golden-cases.json），任何�
 ## Notes
 
 - 本仓库已建立 codebase-memory 知识图谱索引（项目名 `qiyu`），可用 `search_graph` / `trace_path` / `get_architecture` 等 MCP 工具做代码探索；结构性大改后可重新 `index_repository`。
+- `.codebase-memory/` 下的产物（`graph.db.zst`、`artifact.json` 等）由索引进程自动更新，属于预期变更：**每次发现改动必须随当次提交一起 commit 并推送，严禁还原（`git restore` / `git checkout --`）**。
