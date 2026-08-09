@@ -81,7 +81,11 @@ for (const fixture of fixtures.cases) {
 
     assert.deepEqual(body.messages, fixture.expected.messages);
     assert.equal(body.source, fixture.expected.source);
-    assert.equal(body.fallbackReason, fixture.expected.fallbackReason);
+    if (Object.hasOwn(fixture.expected, 'fallbackReason')) {
+      assert.equal(body.fallbackReason, fixture.expected.fallbackReason);
+    } else {
+      assert.equal(body.fallbackReason, undefined);
+    }
     assert.equal(body.debug.mode, fixture.expected.mode);
     assert.equal(body.debug.safety, fixture.expected.safety);
     assert.equal(body.nextState.relationshipStage, fixture.expected.relationshipStage);

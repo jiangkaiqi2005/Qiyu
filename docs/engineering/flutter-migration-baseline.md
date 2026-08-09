@@ -16,7 +16,7 @@
 契约当前为 `schemaVersion: 1`：
 
 - `ChatRequest`：请求版本、`requestId` 和用户文本。
-- `StateSnapshot`：用户标识、关系阶段、可观察对话轮次和情绪快照。
+- `StateSnapshot`：用户标识、强类型关系阶段、可观察对话轮次和强类型情绪快照；未知 wire 值会被拒绝。
 - `ChatResult`：可见消息、下一状态、回复来源、降级原因、安全分类和行为模式。
 - `ErrorResult`：稳定错误码、可展示消息和是否可重试。
 
@@ -36,7 +36,7 @@
 | `lints` | `^6.0.0` | Dart 团队维护，BSD-3-Clause | 统一静态检查，生产产物不包含。 |
 | `flutter_test` / `flutter_lints` | Flutter SDK / `^6.0.0` | Flutter 团队维护，BSD-3-Clause | Widget 测试与 Flutter 官方 lint，生产产物不包含。 |
 
-`qiyu_behavior_core` 是仓库内 path dependency，不是第三方包。其生产依赖为空。
+`qiyu_behavior_core` 是仓库内 path dependency，不是第三方包。其生产依赖为空。三个工程都提交 `pubspec.lock`，干净环境不会重新选择另一组依赖版本。
 
 ## 验证
 

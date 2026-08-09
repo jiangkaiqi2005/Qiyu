@@ -36,7 +36,10 @@ void main() {
       expect(result.fallbackReason?.wireName, expected['fallbackReason']);
       expect(result.mode, expected['mode']);
       expect(result.safety?.name, expected['safety']);
-      expect(result.nextState.relationshipStage, expected['relationshipStage']);
+      expect(
+        result.nextState.relationshipStage.wireName,
+        expected['relationshipStage'],
+      );
       expect(
         result.nextState.turns.map((turn) => turn.toJson()).toList(),
         expected['turns'],
@@ -53,9 +56,28 @@ void main() {
       message: '消息不能为空',
       retryable: false,
     );
+    final result = QiyuBehaviorCore().reply(request, state) as ChatResult;
 
     expect(ChatRequest.fromJson(request.toJson()), request);
     expect(StateSnapshot.fromJson(state.toJson()), state);
+    expect(ChatResult.fromJson(result.toJson()), result);
+    expect(result.toJson(), containsPair('debug', isA<Map<String, Object?>>()));
+    expect(result.toJson(), isNot(contains('mode')));
+    expect(result.toJson(), isNot(contains('safety')));
     expect(ErrorResult.fromJson(error.toJson()), error);
+  });
+
+  test('state contracts reject unknown relationship and emotion values', () {
+    expect(
+      () => StateSnapshot.fromJson({
+        ...StateSnapshot.initial('fixture-user').toJson(),
+        'relationshipStage': '陌生值',
+      }),
+      throwsFormatException,
+    );
+    expect(
+      () => EmotionSnapshot.fromJson({'kind': 'unknown', 'intensity': 0}),
+      throwsA(isA<ArgumentError>()),
+    );
   });
 }

@@ -13,7 +13,7 @@ enum ChatErrorCode {
   );
 }
 
-enum ReplySource { local, model }
+enum ReplySource { local, llm }
 
 enum FallbackReason {
   safety('safety'),
@@ -24,11 +24,34 @@ enum FallbackReason {
   const FallbackReason(this.wireName);
 
   final String wireName;
+
+  static FallbackReason fromWireName(String value) => values.firstWhere(
+    (candidate) => candidate.wireName == value,
+    orElse: () => throw FormatException('Unknown fallback reason: $value'),
+  );
 }
 
 enum SafetyKind { normal, crisis, medical, legal, financial }
 
 enum Speaker { user, qiyu }
+
+enum RelationshipStage {
+  stranger('初识'),
+  familiar('熟悉'),
+  friend('朋友'),
+  deep('深交');
+
+  const RelationshipStage(this.wireName);
+
+  final String wireName;
+
+  static RelationshipStage fromWireName(String value) => values.firstWhere(
+    (candidate) => candidate.wireName == value,
+    orElse: () => throw FormatException('Unknown relationship stage: $value'),
+  );
+}
+
+enum EmotionKind { neutral, quiet, light, soft, heavy }
 
 sealed class ChatOutcome {
   const ChatOutcome();
@@ -100,15 +123,15 @@ final class EmotionSnapshot {
 
   factory EmotionSnapshot.fromJson(Map<String, Object?> json) {
     return EmotionSnapshot(
-      kind: json['kind']! as String,
+      kind: EmotionKind.values.byName(json['kind']! as String),
       intensity: json['intensity']! as int,
     );
   }
 
-  final String kind;
+  final EmotionKind kind;
   final int intensity;
 
-  Map<String, Object?> toJson() => {'kind': kind, 'intensity': intensity};
+  Map<String, Object?> toJson() => {'kind': kind.name, 'intensity': intensity};
 
   @override
   bool operator ==(Object other) =>
@@ -131,9 +154,9 @@ final class StateSnapshot {
 
   factory StateSnapshot.initial(String userId) => StateSnapshot(
     userId: userId,
-    relationshipStage: '初识',
+    relationshipStage: RelationshipStage.stranger,
     turns: const [],
-    lastEmotion: const EmotionSnapshot(kind: 'neutral', intensity: 0),
+    lastEmotion: const EmotionSnapshot(kind: EmotionKind.neutral, intensity: 0),
   );
 
   factory StateSnapshot.fromJson(Map<String, Object?> json) {
@@ -141,7 +164,9 @@ final class StateSnapshot {
     return StateSnapshot(
       schemaVersion: json['schemaVersion'] as int? ?? contractSchemaVersion,
       userId: json['userId']! as String,
-      relationshipStage: json['relationshipStage']! as String,
+      relationshipStage: RelationshipStage.fromWireName(
+        json['relationshipStage']! as String,
+      ),
       turns: rawTurns
           .map((value) => ChatTurn.fromJson(value! as Map<String, Object?>))
           .toList(),
@@ -153,7 +178,7 @@ final class StateSnapshot {
 
   final int schemaVersion;
   final String userId;
-  final String relationshipStage;
+  final RelationshipStage relationshipStage;
   final List<ChatTurn> turns;
   final EmotionSnapshot lastEmotion;
 
@@ -174,7 +199,7 @@ final class StateSnapshot {
   Map<String, Object?> toJson() => {
     'schemaVersion': schemaVersion,
     'userId': userId,
-    'relationshipStage': relationshipStage,
+    'relationshipStage': relationshipStage.wireName,
     'turns': turns.map((turn) => turn.toJson()).toList(),
     'lastEmotion': lastEmotion.toJson(),
   };
@@ -210,6 +235,27 @@ final class ChatResult extends ChatOutcome {
     this.schemaVersion = contractSchemaVersion,
   }) : messages = List.unmodifiable(messages);
 
+  factory ChatResult.fromJson(Map<String, Object?> json) {
+    final rawMessages = json['messages']! as List<Object?>;
+    final debug = json['debug']! as Map<String, Object?>;
+    final rawFallbackReason = json['fallbackReason'] as String?;
+    final rawSafety = debug['safety'] as String?;
+    return ChatResult(
+      schemaVersion: json['schemaVersion'] as int? ?? contractSchemaVersion,
+      requestId: json['requestId']! as String,
+      messages: rawMessages.cast<String>(),
+      nextState: StateSnapshot.fromJson(
+        json['nextState']! as Map<String, Object?>,
+      ),
+      source: ReplySource.values.byName(json['source']! as String),
+      fallbackReason: rawFallbackReason == null
+          ? null
+          : FallbackReason.fromWireName(rawFallbackReason),
+      mode: debug['mode']! as String,
+      safety: rawSafety == null ? null : SafetyKind.values.byName(rawSafety),
+    );
+  }
+
   final int schemaVersion;
   final String requestId;
   final List<String> messages;
@@ -226,10 +272,38 @@ final class ChatResult extends ChatOutcome {
     'messages': messages,
     'nextState': nextState.toJson(),
     'source': source.name,
-    'fallbackReason': fallbackReason?.wireName,
-    'mode': mode,
-    'safety': safety?.name,
+    if (fallbackReason != null) 'fallbackReason': fallbackReason!.wireName,
+    'debug': {
+      'mode': mode,
+      if (safety != null) 'safety': safety!.name,
+      if (safety == null)
+        'relationshipStage': nextState.relationshipStage.wireName,
+    },
   };
+
+  @override
+  bool operator ==(Object other) =>
+      other is ChatResult &&
+      other.schemaVersion == schemaVersion &&
+      other.requestId == requestId &&
+      _listsEqual(other.messages, messages) &&
+      other.nextState == nextState &&
+      other.source == source &&
+      other.fallbackReason == fallbackReason &&
+      other.mode == mode &&
+      other.safety == safety;
+
+  @override
+  int get hashCode => Object.hash(
+    schemaVersion,
+    requestId,
+    Object.hashAll(messages),
+    nextState,
+    source,
+    fallbackReason,
+    mode,
+    safety,
+  );
 }
 
 final class ErrorResult extends ChatOutcome {

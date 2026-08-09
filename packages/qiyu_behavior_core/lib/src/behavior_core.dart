@@ -57,7 +57,7 @@ final class QiyuBehaviorCore {
           state: state,
           text: text,
           messages: candidateMessages,
-          source: ReplySource.model,
+          source: ReplySource.llm,
           mode: 'llm',
           replyAsSingleTurn: true,
         );
@@ -112,7 +112,7 @@ final class QiyuBehaviorCore {
   }) {
     final replyText = replyAsSingleTurn ? messages.join('\n') : messages.single;
     final emotion = safety == SafetyKind.crisis
-        ? const EmotionSnapshot(kind: 'heavy', intensity: 3)
+        ? const EmotionSnapshot(kind: EmotionKind.heavy, intensity: 3)
         : state.lastEmotion;
     final nextState = state.append(
       userTurn: ChatTurn(speaker: Speaker.user, text: text),

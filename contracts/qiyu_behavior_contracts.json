@@ -94,6 +94,27 @@
           { "speaker": "qiyu", "text": "嗯？" }
         ]
       }
+    },
+    {
+      "id": "accepted-model-reply-keeps-llm-source",
+      "request": {
+        "requestId": "fixture-llm-success",
+        "text": "今天还行"
+      },
+      "provider": {
+        "configured": true,
+        "candidateReply": "那就好。"
+      },
+      "expected": {
+        "messages": ["那就好。"],
+        "source": "llm",
+        "mode": "llm",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "今天还行" },
+          { "speaker": "qiyu", "text": "那就好。" }
+        ]
+      }
     }
   ]
 }
