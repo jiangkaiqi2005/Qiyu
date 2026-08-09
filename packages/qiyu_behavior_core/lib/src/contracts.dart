@@ -242,7 +242,7 @@ final class ChatResult extends ChatOutcome {
     final rawSafety = debug['safety'] as String?;
     return ChatResult(
       schemaVersion: json['schemaVersion'] as int? ?? contractSchemaVersion,
-      requestId: json['requestId']! as String,
+      requestId: json['requestId'] as String?,
       messages: rawMessages.cast<String>(),
       nextState: StateSnapshot.fromJson(
         json['nextState']! as Map<String, Object?>,
@@ -257,7 +257,7 @@ final class ChatResult extends ChatOutcome {
   }
 
   final int schemaVersion;
-  final String requestId;
+  final String? requestId;
   final List<String> messages;
   final StateSnapshot nextState;
   final ReplySource source;
@@ -268,7 +268,7 @@ final class ChatResult extends ChatOutcome {
   @override
   Map<String, Object?> toJson() => {
     'schemaVersion': schemaVersion,
-    'requestId': requestId,
+    if (requestId != null) 'requestId': requestId,
     'messages': messages,
     'nextState': nextState.toJson(),
     'source': source.name,

@@ -17,12 +17,12 @@
 
 - `ChatRequest`：请求版本、`requestId` 和用户文本。
 - `StateSnapshot`：用户标识、强类型关系阶段、可观察对话轮次和强类型情绪快照；未知 wire 值会被拒绝。
-- `ChatResult`：可见消息、下一状态、回复来源、降级原因、安全分类和行为模式。
+- `ChatResult`：可见消息、下一状态、回复来源、降级原因、安全分类和行为模式；结果侧 `requestId` 在迁移期可选，以兼容尚未回传该字段的旧 JS wire。
 - `ErrorResult`：稳定错误码、可展示消息和是否可重试。
 
 最高测试接缝是 `QiyuBehaviorCore.reply(request, state, candidateReply: ...)`。`candidateReply` 是 runtime 已取得的候选模型文本，不属于浏览器请求；行为核心只负责安全前置、候选输出检查和确定性结果。后续切片必须通过这些契约扩展，不直接把 Flutter 或宿主接到内部函数。
 
-共享 fixtures 固定四个迁移起点：普通本地回复、晚安收束、危机输入绕过 Provider、模型命中违禁话术后本地降级。JS 测试使用现有 `/api/chat` 管线作为 oracle，Dart 测试读取同一文件。
+共享 fixtures 固定五个迁移起点：普通本地回复、晚安收束、危机输入绕过 Provider、模型命中违禁话术后本地降级，以及成功模型回复的 `source: llm`。JS 测试使用现有 `/api/chat` 管线作为 oracle，Dart 测试读取同一文件。
 
 ## 直接依赖选择
 

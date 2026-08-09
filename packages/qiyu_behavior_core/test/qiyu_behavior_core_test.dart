@@ -67,6 +67,26 @@ void main() {
     expect(ErrorResult.fromJson(error.toJson()), error);
   });
 
+  test('ChatResult accepts the migration-period JavaScript wire shape', () {
+    final result =
+        QiyuBehaviorCore().reply(
+              const ChatRequest(requestId: 'legacy-js', text: '我到家了'),
+              StateSnapshot.initial('fixture-user'),
+            )
+            as ChatResult;
+    final legacyWire = Map<String, Object?>.from(result.toJson())
+      ..remove('schemaVersion')
+      ..remove('requestId');
+
+    final decoded = ChatResult.fromJson(legacyWire);
+
+    expect(decoded.requestId, isNull);
+    expect(decoded.messages, result.messages);
+    expect(decoded.nextState, result.nextState);
+    expect(decoded.source, ReplySource.local);
+    expect(decoded.mode, 'minimal');
+  });
+
   test('state contracts reject unknown relationship and emotion values', () {
     expect(
       () => StateSnapshot.fromJson({
