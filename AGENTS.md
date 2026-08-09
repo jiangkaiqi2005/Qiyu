@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) and other coding agents when working with code in this repository. `CLAUDE.md` is a symlink to this file — edit this file, never the link.
 
+## 交互语言（最高优先）
+
+**面向用户的所有输出一律用中文**：对话、提问、选项、报告、解释、ticket 与地图文字。代码、文件路径、字段名、命令等技术标识保留原文，但解释性文字必须中文。
+
 ## What this repository is
 
 栖语 (qiyu) MVP：一个睡前 AI 陪伴原型，重点在行为层——人格一致性、本地记忆、关系阶段、微摩擦、少回应、睡前收束、安全边界。
