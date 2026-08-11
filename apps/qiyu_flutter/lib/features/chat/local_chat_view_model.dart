@@ -68,6 +68,14 @@ final class LocalChatViewModel extends ChangeNotifier {
       _messages
         ..clear()
         ..addAll(snapshot.messages);
+      final lastMessage = _messages.isEmpty ? null : _messages.last;
+      if (lastMessage?.speaker == LocalChatSpeaker.user) {
+        _pendingRequestId = lastMessage!.requestId;
+        _pendingText = lastMessage.text;
+      } else {
+        _pendingRequestId = null;
+        _pendingText = null;
+      }
       _errorMessage = null;
       _initialized = true;
     } on Object catch (error) {
@@ -114,7 +122,11 @@ final class LocalChatViewModel extends ChangeNotifier {
         sessionId: _sessionId,
       );
       _sessionId = exchange.sessionId;
-      if (!_messages.any((message) => message.requestId == requestId)) {
+      if (!_messages.any(
+        (message) =>
+            message.requestId == requestId &&
+            message.speaker == LocalChatSpeaker.user,
+      )) {
         _messages.add(
           LocalChatMessage(
             requestId: requestId,
@@ -122,6 +134,12 @@ final class LocalChatViewModel extends ChangeNotifier {
             text: trimmed,
           ),
         );
+      }
+      if (!_messages.any(
+        (message) =>
+            message.requestId == requestId &&
+            message.speaker == LocalChatSpeaker.qiyu,
+      )) {
         _messages.addAll(
           exchange.messages.map(
             (message) => LocalChatMessage(

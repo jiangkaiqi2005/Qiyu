@@ -150,6 +150,40 @@ void main() {
     expect(find.text('别重复这句'), findsOneWidget);
     expect(find.text('咋了'), findsOneWidget);
   });
+
+  testWidgets('resumes a persisted user-only turn after a reload', (
+    tester,
+  ) async {
+    final gateway = _FakeLocalChatGateway(
+      restored: const LocalChatSnapshot(
+        sessionId: 'session-1',
+        messages: [
+          LocalChatMessage(
+            requestId: 'interrupted-request',
+            speaker: LocalChatSpeaker.user,
+            text: '别重复这句',
+          ),
+        ],
+      ),
+    );
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      autoStart: false,
+      requestIdFactory: () => 'new-request',
+    );
+    await viewModel.initialize();
+    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('chat-input')), '别重复这句');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.sentRequestIds, ['interrupted-request']);
+    expect(find.text('别重复这句'), findsOneWidget);
+    expect(find.text('咋了'), findsOneWidget);
+  });
 }
 
 final class _FakeLocalChatGateway implements LocalChatGateway {
