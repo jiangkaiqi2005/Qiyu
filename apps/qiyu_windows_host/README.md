@@ -14,8 +14,12 @@ dart run
 # 只检查平台、行为核心和 Web 资源
 dart run -- --check
 
-# 构建 Windows 可执行程序
-dart compile exe bin/qiyu_windows_host.dart -o .dart_tool\qiyu_windows_host.exe
+# 从仓库根目录生成可搬移的 Windows 分发目录
+Push-Location ..\..
+npm run build:windows-bundle
+Pop-Location
 ```
+
+完整产物位于 `apps\qiyu_windows_host\build\windows-bundle\`，其中 `qiyu_windows_host.exe` 和 `web\` 必须一起移动或打包。exe 优先读取自身旁边的 `web\index.html`，因此从仓库外工作目录启动也不依赖开发树。
 
 开发和验证时可用 `--no-browser` 禁止自动打开浏览器，用 `--web-root <path>` 指定 Web 资源目录，用 `--runtime-dir <path>` 隔离单实例状态。正常运行会始终打印可复制的本机地址；若浏览器启动失败，也可手动打开该地址。

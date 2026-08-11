@@ -4,7 +4,7 @@
 
 ## 启动与退出
 
-宿主通过 `shelf` 绑定 `127.0.0.1:0`，由操作系统选择可用端口，并通过 `shelf_static` 提供 `apps/qiyu_flutter/build/web/`。启动成功后调用 Windows 默认浏览器；无论浏览器调用是否成功，控制台都会输出可复制的本机地址。主实例接收 `Ctrl+C` 后关闭 HTTP 服务并释放端口。
+宿主通过 `shelf` 绑定 `127.0.0.1:0`，由操作系统选择可用端口，并通过 `shelf_static` 提供随分发包放在 exe 旁边的 `web/`。启动成功后调用 Windows 默认浏览器；无论浏览器调用是否成功，控制台都会输出可复制的本机地址。主实例接收 `Ctrl+C` 后关闭 HTTP 服务并释放端口。
 
 单实例状态位于 `%LOCALAPPDATA%\Qiyu\runtime`。主实例持有 `instance.lock` 的独占文件锁并发布地址和内部激活凭据；第二次启动拿不到锁时只请求主实例重新打开当前页面，不再监听第二个端口。锁和描述文件都随主实例退出释放。
 
@@ -19,6 +19,14 @@ Push-Location apps\qiyu_windows_host
 dart run
 Pop-Location
 ```
+
+生成可搬移的 Windows 分发包：
+
+```powershell
+npm run build:windows-bundle
+```
+
+输出为 `apps/qiyu_windows_host/build/windows-bundle/`。`qiyu_windows_host.exe` 与 `web/` 共同构成应用包，必须一起移动或压缩；启动时优先读取 exe 旁的 `web/index.html`，不依赖仓库目录或当前工作目录。
 
 ## 页面会话与本机 API
 
@@ -47,4 +55,4 @@ Flutter 页面每两秒探测一次健康接口。宿主停止或当前会话失
 npm run verify:migration-baseline
 ```
 
-宿主测试覆盖随机回环端口、端口释放、静态资源、单实例激活、浏览器失败回退、启动凭据重启失效，以及 Host、Origin、会话和 CSRF 校验。Flutter 测试覆盖健康检查成功/失败和主机停止提示。验证脚本还会构建 Flutter Web、编译 Windows exe、执行 `--check`，并回归 Dart 契约、JavaScript 测试和黄金行为评测。
+宿主测试覆盖随机回环端口、端口释放、静态资源、单实例激活、浏览器失败回退、启动凭据重启失效，以及 Host、Origin、会话和 CSRF 校验。Flutter 测试覆盖健康检查成功/失败和主机停止提示。验证脚本还会构建 Flutter Web 和完整 Windows bundle，从仓库外工作目录执行 bundle 的 `--check`，正常启动 exe 并通过带 Cookie 的页面跳转确认它提供 Flutter 页面，最后回归 Dart 契约、JavaScript 测试和黄金行为评测。

@@ -7,6 +7,7 @@
     "dev": "node scripts/dev-server.mjs",
     "test": "node --test \"test/**/*.test.js\"",
     "eval": "node scripts/run-evals.mjs",
+    "build:windows-bundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-bundle.ps1",
     "verify:migration-baseline": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-migration-baseline.ps1"
   },
   "engines": {

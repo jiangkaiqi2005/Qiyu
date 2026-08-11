@@ -49,4 +49,4 @@
 npm run verify:migration-baseline
 ```
 
-脚本依次执行 Dart core analyze/test、Flutter analyze/test/Web build、Windows host analyze/test/exe build/启动前检查，以及现有 `npm test` 和 `npm run eval`。生成物只进入各工程已忽略的 `.dart_tool/` 与 `build/`。
+脚本依次执行 Dart core analyze/test、Flutter analyze/test/Web build、Windows host analyze/test、完整 bundle 构建/仓库外启动检查/页面冒烟，以及现有 `npm test` 和 `npm run eval`。生成物只进入各工程已忽略的 `.dart_tool/` 与 `build/`。

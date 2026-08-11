@@ -50,6 +50,28 @@ void main() {
     expect(path.equals(resolved, webDirectory.path), isTrue);
   });
 
+  test('resolves bundled Web assets beside a movable executable', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-bundle-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final bundleDirectory = Directory(
+      path.join(temporaryDirectory.path, 'windows-bundle'),
+    )..createSync();
+    final webDirectory = Directory(path.join(bundleDirectory.path, 'web'))
+      ..createSync();
+    File(
+      path.join(webDirectory.path, 'index.html'),
+    ).writeAsStringSync('<!doctype html>');
+
+    final resolved = resolveHostWebRoot(
+      currentDirectory: temporaryDirectory.path,
+      executablePath: path.join(bundleDirectory.path, 'qiyu_windows_host.exe'),
+    );
+
+    expect(path.equals(resolved, webDirectory.path), isTrue);
+  });
+
   test('preflight includes bundled Web assets when a root is supplied', () {
     final webRoot = Directory.systemTemp.createTempSync('qiyu-preflight-test-');
     addTearDown(() => webRoot.deleteSync(recursive: true));
