@@ -35,10 +35,17 @@ Future<void> main(List<String> arguments) async {
       environment: Platform.environment,
       overridePath: options.memoryDirectory,
     );
+    final productSoul = await File(
+      resolveProductSoulPath(
+        currentDirectory: Directory.current.path,
+        executablePath: Platform.resolvedExecutable,
+      ),
+    ).readAsString();
     launch = await QiyuHostRunner(
       webRoot: webRoot,
       runtimeDirectory: runtimeDirectory,
       memoryDirectory: memoryDirectory,
+      productSoul: productSoul,
       browserLauncher: const WindowsDefaultBrowserLauncher(),
     ).launch(openBrowser: options.openBrowser);
 

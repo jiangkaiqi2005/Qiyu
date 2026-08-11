@@ -11,6 +11,7 @@ import 'browser_launcher.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
+import 'model_prompt_builder.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
 import 'secure_token.dart';
@@ -39,6 +40,7 @@ final class LocalAppHost {
   static Future<LocalAppHost> start({
     required String webRoot,
     required String memoryDirectory,
+    required String productSoul,
     String? activationToken,
     Future<BrowserLaunchResult> Function()? onActivate,
     ProviderSettingsService? providerSettingsService,
@@ -53,6 +55,7 @@ final class LocalAppHost {
         'activationToken and onActivate must either both be set or both be null',
       );
     }
+    final modelPromptBuilder = ModelPromptBuilder(productSoul);
     final effectiveProviderSettings =
         providerSettingsService ??
         ProviderSettingsService(
@@ -64,10 +67,12 @@ final class LocalAppHost {
           ),
           const WindowsCredentialSecretStore(),
           const ProviderModelGateway(DartIoProviderHttpClient()),
+          modelPromptBuilder,
         );
     final chatService = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
       providerChatClient: effectiveProviderSettings,
+      modelPromptBuilder: modelPromptBuilder,
     );
     await chatService.initialize();
     final requestHandler = _LocalAppRequestHandler(
@@ -248,7 +253,28 @@ final class _LocalAppRequestHandler {
         );
       }
       if (request.method == 'POST' && request.url.path == 'api/provider/test') {
-        final result = await providerSettingsService.testCurrent();
+        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
+        final apiKey = payload['apiKey'];
+        if (apiKey != null && apiKey is! String) {
+          throw const ProviderConfigException('API Key 格式不正确。');
+        }
+        final config = payload.isEmpty
+            ? (await providerSettingsService.read()).config
+            : _providerConfigFromPayload(payload);
+        if (config == null) {
+          const result = ProviderTestResult(
+            status: ProviderTestStatus.notConfigured,
+            message: '还没有保存模型配置。',
+          );
+          return Response.ok(
+            jsonEncode(result.toJson()),
+            headers: _jsonHeaders,
+          );
+        }
+        final result = await providerSettingsService.test(
+          config: config,
+          apiKey: apiKey as String?,
+        );
         return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
       }
       if (request.method == 'DELETE' &&

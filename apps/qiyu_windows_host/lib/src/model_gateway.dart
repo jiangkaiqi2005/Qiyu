@@ -14,10 +14,15 @@ final class ModelMessage {
 }
 
 enum ModelFailureKind {
+  dns,
+  tls,
+  timeout,
   authentication,
   network,
   modelNotFound,
-  invalidResponse,
+  rateLimited,
+  incompatibleResponse,
+  contentParsing,
   provider,
 }
 
@@ -97,15 +102,15 @@ final class ProviderModelGateway implements ModelGateway {
     required List<ModelMessage> messages,
   }) async {
     config.validate();
-    if (config.kind != ProviderKind.ollama &&
-        (apiKey == null || apiKey.trim().isEmpty)) {
+    final protocol = _providerProtocol(config.kind);
+    if (protocol.requiresApiKey && (apiKey == null || apiKey.trim().isEmpty)) {
       throw const ModelGatewayException(
         kind: ModelFailureKind.authentication,
         message: '还没有保存 API Key。',
       );
     }
 
-    final request = _buildRequest(config, apiKey, messages);
+    final request = protocol.buildRequest(config, apiKey, messages);
     ProviderHttpResponse response;
     try {
       response = await httpClient.post(
@@ -116,14 +121,16 @@ final class ProviderModelGateway implements ModelGateway {
       );
     } on TimeoutException {
       throw const ModelGatewayException(
-        kind: ModelFailureKind.network,
+        kind: ModelFailureKind.timeout,
         message: '连接模型服务超时。',
       );
-    } on SocketException {
+    } on HandshakeException {
       throw const ModelGatewayException(
-        kind: ModelFailureKind.network,
-        message: '无法连接模型服务。',
+        kind: ModelFailureKind.tls,
+        message: '模型服务的 TLS 安全连接失败。',
       );
+    } on SocketException catch (error) {
+      throw _socketFailure(error);
     } on HttpException {
       throw const ModelGatewayException(
         kind: ModelFailureKind.network,
@@ -141,9 +148,21 @@ final class ProviderModelGateway implements ModelGateway {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw _statusFailure(response);
     }
+    late Map<String, Object?> payload;
     try {
-      final payload = jsonDecode(response.body) as Map<String, Object?>;
-      final content = _readContent(config.kind, payload).trim();
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, Object?>) {
+        throw const FormatException('response is not an object');
+      }
+      payload = decoded;
+    } on Object {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.incompatibleResponse,
+        message: '模型服务返回了不兼容的响应格式。',
+      );
+    }
+    try {
+      final content = protocol.readContent(payload).trim();
       if (content.isEmpty) {
         throw const FormatException('empty content');
       }
@@ -152,53 +171,152 @@ final class ProviderModelGateway implements ModelGateway {
       rethrow;
     } on Object {
       throw const ModelGatewayException(
-        kind: ModelFailureKind.invalidResponse,
-        message: '模型服务返回了无法读取的内容。',
+        kind: ModelFailureKind.contentParsing,
+        message: '模型服务返回的内容无法解析。',
       );
     }
   }
 }
 
-({Uri uri, Map<String, String> headers, Map<String, Object?> body})
-_buildRequest(
-  ProviderConfig config,
-  String? apiKey,
-  List<ModelMessage> messages,
-) {
-  final headers = <String, String>{'content-type': 'application/json'};
-  final body = <String, Object?>{
-    'model': config.model.trim(),
-    'temperature': config.temperature,
-    'stream': false,
-  };
-  switch (config.kind) {
-    case ProviderKind.openAiCompatible:
-      headers['authorization'] = 'Bearer ${apiKey!.trim()}';
-      body['messages'] = messages.map(_messageJson).toList();
-    case ProviderKind.anthropic:
-      headers
-        ..['x-api-key'] = apiKey!.trim()
-        ..['anthropic-version'] = '2023-06-01';
-      body
-        ..['system'] = messages
-            .where((message) => message.role == ModelMessageRole.system)
-            .map((message) => message.content)
-            .join('\n')
-        ..['messages'] = messages
-            .where((message) => message.role != ModelMessageRole.system)
-            .map(_messageJson)
-            .toList()
-        ..['max_tokens'] = 512;
-    case ProviderKind.ollama:
-      body
-        ..remove('temperature')
-        ..['messages'] = messages.map(_messageJson).toList()
-        ..['options'] = {'temperature': config.temperature};
-      if (apiKey != null && apiKey.trim().isNotEmpty) {
-        headers['authorization'] = 'Bearer ${apiKey.trim()}';
-      }
+typedef _ProviderRequest = ({
+  Uri uri,
+  Map<String, String> headers,
+  Map<String, Object?> body,
+});
+
+abstract interface class _ProviderProtocol {
+  bool get requiresApiKey;
+
+  _ProviderRequest buildRequest(
+    ProviderConfig config,
+    String? apiKey,
+    List<ModelMessage> messages,
+  );
+
+  String readContent(Map<String, Object?> payload);
+}
+
+_ProviderProtocol _providerProtocol(ProviderKind kind) => switch (kind) {
+  ProviderKind.openAiCompatible => const _OpenAiCompatibleProtocol(),
+  ProviderKind.anthropic => const _AnthropicProtocol(),
+  ProviderKind.ollama => const _OllamaProtocol(),
+};
+
+final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
+  const _OpenAiCompatibleProtocol();
+
+  @override
+  bool get requiresApiKey => true;
+
+  @override
+  _ProviderRequest buildRequest(
+    ProviderConfig config,
+    String? apiKey,
+    List<ModelMessage> messages,
+  ) => (
+    uri: _appendEndpoint(config.baseUrl, 'chat/completions'),
+    headers: {
+      'content-type': 'application/json',
+      'authorization': 'Bearer ${apiKey!.trim()}',
+    },
+    body: {
+      'model': config.model.trim(),
+      'messages': messages.map(_messageJson).toList(),
+      'temperature': config.temperature,
+      'stream': false,
+    },
+  );
+
+  @override
+  String readContent(Map<String, Object?> payload) {
+    final choices = payload['choices']! as List<Object?>;
+    final message =
+        (choices.first! as Map<String, Object?>)['message']!
+            as Map<String, Object?>;
+    final content = message['content'];
+    if (content is String) {
+      return content;
+    }
+    return (content! as List<Object?>)
+        .map((part) => (part! as Map<String, Object?>)['text'] as String? ?? '')
+        .join();
   }
-  return (uri: _providerEndpoint(config), headers: headers, body: body);
+}
+
+final class _AnthropicProtocol implements _ProviderProtocol {
+  const _AnthropicProtocol();
+
+  @override
+  bool get requiresApiKey => true;
+
+  @override
+  _ProviderRequest buildRequest(
+    ProviderConfig config,
+    String? apiKey,
+    List<ModelMessage> messages,
+  ) => (
+    uri: _appendEndpoint(config.baseUrl, 'messages'),
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey!.trim(),
+      'anthropic-version': '2023-06-01',
+    },
+    body: {
+      'model': config.model.trim(),
+      'system': messages
+          .where((message) => message.role == ModelMessageRole.system)
+          .map((message) => message.content)
+          .join('\n'),
+      'messages': messages
+          .where((message) => message.role != ModelMessageRole.system)
+          .map(_messageJson)
+          .toList(),
+      'temperature': config.temperature,
+      'max_tokens': 512,
+      'stream': false,
+    },
+  );
+
+  @override
+  String readContent(Map<String, Object?> payload) =>
+      (payload['content']! as List<Object?>)
+          .map((part) => part! as Map<String, Object?>)
+          .where((part) => part['type'] == 'text')
+          .map((part) => part['text'] as String? ?? '')
+          .join();
+}
+
+final class _OllamaProtocol implements _ProviderProtocol {
+  const _OllamaProtocol();
+
+  @override
+  bool get requiresApiKey => false;
+
+  @override
+  _ProviderRequest buildRequest(
+    ProviderConfig config,
+    String? apiKey,
+    List<ModelMessage> messages,
+  ) {
+    final headers = <String, String>{'content-type': 'application/json'};
+    if (apiKey != null && apiKey.trim().isNotEmpty) {
+      headers['authorization'] = 'Bearer ${apiKey.trim()}';
+    }
+    return (
+      uri: _appendEndpoint(config.baseUrl, 'api/chat', ollama: true),
+      headers: headers,
+      body: {
+        'model': config.model.trim(),
+        'messages': messages.map(_messageJson).toList(),
+        'options': {'temperature': config.temperature},
+        'stream': false,
+      },
+    );
+  }
+
+  @override
+  String readContent(Map<String, Object?> payload) =>
+      (payload['message']! as Map<String, Object?>)['content']! as String;
 }
 
 Map<String, String> _messageJson(ModelMessage message) => {
@@ -206,18 +324,13 @@ Map<String, String> _messageJson(ModelMessage message) => {
   'content': message.content,
 };
 
-Uri _providerEndpoint(ProviderConfig config) {
-  final base = Uri.parse(config.baseUrl.trim());
-  final suffix = switch (config.kind) {
-    ProviderKind.openAiCompatible => 'chat/completions',
-    ProviderKind.anthropic => 'messages',
-    ProviderKind.ollama => 'api/chat',
-  };
+Uri _appendEndpoint(String baseUrl, String suffix, {bool ollama = false}) {
+  final base = Uri.parse(baseUrl.trim());
   final normalizedPath = base.path.replaceFirst(RegExp(r'/+$'), '');
   if (normalizedPath.endsWith('/$suffix')) {
     return base.replace(path: normalizedPath);
   }
-  if (config.kind == ProviderKind.ollama && normalizedPath.endsWith('/api')) {
+  if (ollama && normalizedPath.endsWith('/api')) {
     return base.replace(path: '$normalizedPath/chat');
   }
   final path = normalizedPath.isEmpty ? '/$suffix' : '$normalizedPath/$suffix';
@@ -232,13 +345,18 @@ ModelGatewayException _statusFailure(ProviderHttpResponse response) {
       message: 'API Key 未通过模型服务验证。',
     );
   }
+  if (response.statusCode == HttpStatus.tooManyRequests) {
+    return const ModelGatewayException(
+      kind: ModelFailureKind.rateLimited,
+      message: '模型服务请求过于频繁。',
+    );
+  }
   final lowerBody = response.body.toLowerCase();
-  if (response.statusCode == HttpStatus.notFound ||
-      (lowerBody.contains('model') &&
-          (lowerBody.contains('not found') ||
-              lowerBody.contains('does not exist') ||
-              lowerBody.contains('unknown model') ||
-              lowerBody.contains('no such model')))) {
+  if (lowerBody.contains('model') &&
+      (lowerBody.contains('not found') ||
+          lowerBody.contains('does not exist') ||
+          lowerBody.contains('unknown model') ||
+          lowerBody.contains('no such model'))) {
     return const ModelGatewayException(
       kind: ModelFailureKind.modelNotFound,
       message: '模型名称不存在或当前账号不可用。',
@@ -250,32 +368,17 @@ ModelGatewayException _statusFailure(ProviderHttpResponse response) {
   );
 }
 
-String _readContent(ProviderKind kind, Map<String, Object?> payload) {
-  return switch (kind) {
-    ProviderKind.openAiCompatible => _openAiContent(payload),
-    ProviderKind.anthropic => _anthropicContent(payload),
-    ProviderKind.ollama =>
-      (payload['message']! as Map<String, Object?>)['content']! as String,
-  };
-}
-
-String _openAiContent(Map<String, Object?> payload) {
-  final choices = payload['choices']! as List<Object?>;
-  final message =
-      (choices.first! as Map<String, Object?>)['message']!
-          as Map<String, Object?>;
-  final content = message['content'];
-  if (content is String) {
-    return content;
+ModelGatewayException _socketFailure(SocketException error) {
+  final message = error.message.toLowerCase();
+  final code = error.osError?.errorCode;
+  if (message.contains('failed host lookup') || code == 11001) {
+    return const ModelGatewayException(
+      kind: ModelFailureKind.dns,
+      message: '找不到模型服务域名。',
+    );
   }
-  return (content! as List<Object?>)
-      .map((part) => (part! as Map<String, Object?>)['text'] as String? ?? '')
-      .join();
+  return const ModelGatewayException(
+    kind: ModelFailureKind.network,
+    message: '无法连接模型服务。',
+  );
 }
-
-String _anthropicContent(Map<String, Object?> payload) =>
-    (payload['content']! as List<Object?>)
-        .map((part) => part! as Map<String, Object?>)
-        .where((part) => part['type'] == 'text')
-        .map((part) => part['text'] as String? ?? '')
-        .join();

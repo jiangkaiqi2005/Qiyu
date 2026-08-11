@@ -127,11 +127,13 @@ void main() {
       memoryDirectory: temporaryDirectory.path,
       clock: () => DateTime(2026, 8, 12, 22, 30),
     );
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('还没睡？'),
+    );
     final service = LocalChatService(
       repository,
-      providerChatClient: _FakeProviderChatClient(
-        const ModelCompletion.reply('还没睡？'),
-      ),
+      providerChatClient: provider,
+      modelPromptBuilder: const ModelPromptBuilder('完整测试产品灵魂'),
       clock: () => DateTime(2026, 8, 12, 22, 30),
     );
 
@@ -144,6 +146,8 @@ void main() {
     expect(exchange.result.source, ReplySource.llm);
     expect(restored.turns.last.source, ReplySource.llm);
     expect(restored.turns.last.text, '还没睡？');
+    expect(provider.messages!.first.content, contains('完整测试产品灵魂'));
+    expect(provider.messages!.first.content, contains('<product_soul>'));
   });
 
   test(
@@ -199,11 +203,14 @@ final class _FailOnceAtomicWriter implements AtomicTextWriter {
 }
 
 final class _FakeProviderChatClient implements ProviderChatClient {
-  const _FakeProviderChatClient(this.completion);
+  _FakeProviderChatClient(this.completion);
 
   final ModelCompletion? completion;
+  List<ModelMessage>? messages;
 
   @override
-  Future<ModelCompletion?> complete(List<ModelMessage> messages) async =>
-      completion;
+  Future<ModelCompletion?> complete(List<ModelMessage> messages) async {
+    this.messages = messages;
+    return completion;
+  }
 }

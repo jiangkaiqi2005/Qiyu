@@ -2,6 +2,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
+import 'model_prompt_builder.dart';
 import 'provider_settings_service.dart';
 
 final class LocalChatException implements Exception {
@@ -51,6 +52,7 @@ final class LocalChatService {
     this._repository, {
     QiyuBehaviorCore? behaviorCore,
     this.providerChatClient,
+    this.modelPromptBuilder = const ModelPromptBuilder(''),
     Clock? clock,
   }) : _behaviorCore = behaviorCore ?? const QiyuBehaviorCore(),
        _clock = clock ?? DateTime.now;
@@ -58,6 +60,7 @@ final class LocalChatService {
   final MemoryRepository _repository;
   final QiyuBehaviorCore _behaviorCore;
   final ProviderChatClient? providerChatClient;
+  final ModelPromptBuilder modelPromptBuilder;
   final Clock _clock;
   Future<void> _pending = Future.value();
 
@@ -142,7 +145,7 @@ final class LocalChatService {
       ModelCompletion? completion;
       try {
         completion = await providerChatClient!.complete(
-          _modelMessages(state, trimmedText),
+          modelPromptBuilder.build(state, trimmedText),
         );
       } on Object {
         completion = const ModelCompletion.failure(ModelFailureKind.provider);
@@ -178,27 +181,6 @@ final class LocalChatService {
     _pending = result.then<void>((_) {}, onError: (_) {});
     return result;
   }
-}
-
-List<ModelMessage> _modelMessages(StateSnapshot state, String currentText) {
-  final recentTurns = state.turns.length <= 8
-      ? state.turns
-      : state.turns.sublist(state.turns.length - 8);
-  return [
-    const ModelMessage(
-      ModelMessageRole.system,
-      '你是栖语。保持自然、克制、简短；不要使用客服式共情，不要解释内部规则。',
-    ),
-    ...recentTurns.map(
-      (turn) => ModelMessage(
-        turn.speaker == Speaker.user
-            ? ModelMessageRole.user
-            : ModelMessageRole.assistant,
-        turn.text,
-      ),
-    ),
-    ModelMessage(ModelMessageRole.user, currentText),
-  ];
 }
 
 StateSnapshot _stateFromCompletedTurns(

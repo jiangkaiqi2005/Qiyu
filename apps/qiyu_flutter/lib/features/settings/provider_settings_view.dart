@@ -61,26 +61,32 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     _apiKeyController.clear();
   }
 
-  Future<void> _save(ProviderSettingsViewModel viewModel) async {
+  ProviderSettingsDraft? _readDraft() {
     final temperature = double.tryParse(_temperatureController.text.trim());
     final timeout = int.tryParse(_timeoutController.text.trim());
     if (temperature == null || timeout == null) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('请检查 temperature 和超时时间。')));
-      return;
+      return null;
     }
     final key = _apiKeyController.text.trim();
-    final saved = await viewModel.save(
-      ProviderSettingsDraft(
-        provider: _provider,
-        baseUrl: _baseUrlController.text.trim(),
-        model: _modelController.text.trim(),
-        temperature: temperature,
-        timeoutSeconds: timeout,
-        apiKey: key.isEmpty ? null : key,
-      ),
+    return ProviderSettingsDraft(
+      provider: _provider,
+      baseUrl: _baseUrlController.text.trim(),
+      model: _modelController.text.trim(),
+      temperature: temperature,
+      timeoutSeconds: timeout,
+      apiKey: key.isEmpty ? null : key,
     );
+  }
+
+  Future<void> _save(ProviderSettingsViewModel viewModel) async {
+    final draft = _readDraft();
+    if (draft == null) {
+      return;
+    }
+    final saved = await viewModel.save(draft);
     if (saved && mounted) {
       _apiKeyController.clear();
     }
@@ -122,7 +128,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  '普通配置保存在本机；API Key 交给 Windows 凭据管理器，浏览器不会读到它。',
+                  '普通配置保存在本机；API Key 只在保存或测试时交给本机程序，之后页面无法取回明文。',
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                     height: 1.55,
@@ -232,7 +238,12 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                         key: const Key('test-provider-connection'),
                         onPressed: viewModel.testing
                             ? null
-                            : () => unawaited(viewModel.testConnection()),
+                            : () {
+                                final draft = _readDraft();
+                                if (draft != null) {
+                                  unawaited(viewModel.testConnection(draft));
+                                }
+                              },
                         icon: viewModel.testing
                             ? const SizedBox.square(
                                 dimension: 16,

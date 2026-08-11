@@ -56,7 +56,9 @@ void main() {
   });
 
   test('distinguishes an authentication test result', () async {
+    final requests = <http.Request>[];
     final client = MockClient((request) async {
+      requests.add(request);
       return switch (request.url.path) {
         '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
         '/api/provider/test' => _jsonResponse({
@@ -72,10 +74,19 @@ void main() {
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
     );
 
-    final result = await gateway.testConnection();
+    const draft = ProviderSettingsDraft(
+      provider: ProviderKind.openAiCompatible,
+      baseUrl: 'https://new.example/v1',
+      model: 'new-model',
+      temperature: 0.4,
+      timeoutSeconds: 20,
+      apiKey: 'new-test-value',
+    );
+    final result = await gateway.testConnection(draft);
 
     expect(result.status, ProviderTestStatus.authentication);
     expect(result.succeeded, isFalse);
+    expect(jsonDecode(requests.last.body), draft.toJson());
   });
 }
 

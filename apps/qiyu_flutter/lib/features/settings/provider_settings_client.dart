@@ -83,10 +83,15 @@ final class ProviderSettingsDraft {
 enum ProviderTestStatus {
   success,
   notConfigured,
+  dns,
+  tls,
+  timeout,
   authentication,
   network,
   modelNotFound,
-  invalidResponse,
+  rateLimited,
+  incompatibleResponse,
+  contentParsing,
   provider,
 }
 
@@ -125,7 +130,7 @@ abstract interface class ProviderSettingsGateway {
 
   Future<ProviderSettings> forgetApiKey();
 
-  Future<ProviderTestResult> testConnection();
+  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft);
 }
 
 final class HttpProviderSettingsGateway implements ProviderSettingsGateway {
@@ -166,11 +171,12 @@ final class HttpProviderSettingsGateway implements ProviderSettingsGateway {
   }
 
   @override
-  Future<ProviderTestResult> testConnection() async {
+  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) async {
     await _ensureBootstrap();
     final response = await _client.post(
       _baseUri.resolve('/api/provider/test'),
       headers: _modifyingHeaders,
+      body: jsonEncode(draft.toJson()),
     );
     return ProviderTestResult.fromJson(_decodeSuccess(response));
   }

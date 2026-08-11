@@ -20,7 +20,7 @@ npm run build:windows-bundle
 Pop-Location
 ```
 
-完整产物位于 `apps\qiyu_windows_host\build\windows-bundle\`，其中 `qiyu_windows_host.exe` 和 `web\` 必须一起移动或打包。exe 优先读取自身旁边的 `web\index.html`，因此从仓库外工作目录启动也不依赖开发树。
+完整产物位于 `apps\qiyu_windows_host\build\windows-bundle\`，其中 `qiyu_windows_host.exe`、`web\` 和 `product-soul.md` 必须一起移动或打包。exe 优先读取自身旁边的 Web 资源与产品灵魂，因此从仓库外工作目录启动也不依赖开发树。
 
 记忆目录优先使用 `--memory-dir <path>`，其次读取 `QIYU_MEMORY_DIR`，默认写入 `%USERPROFILE%\.qiyu\memories`。原始会话按天保存到 `sessions\年\月\`：每段最多 80 条消息，满额开启新段；最近会话恢复窗口为 180 天，旧 Markdown 不自动删除。
 

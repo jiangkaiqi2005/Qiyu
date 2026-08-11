@@ -72,7 +72,6 @@ void main() {
     File(
       path.join(webDirectory.path, 'index.html'),
     ).writeAsStringSync('<!doctype html>');
-
     final resolved = resolveHostWebRoot(
       currentDirectory: hostDirectory.path,
       executablePath: path.join(hostDirectory.path, 'host.exe'),
@@ -94,6 +93,8 @@ void main() {
     File(
       path.join(webDirectory.path, 'index.html'),
     ).writeAsStringSync('<!doctype html>');
+    final productSoul = File(path.join(bundleDirectory.path, 'product-soul.md'))
+      ..writeAsStringSync('测试产品灵魂');
 
     final resolved = resolveHostWebRoot(
       currentDirectory: temporaryDirectory.path,
@@ -101,6 +102,19 @@ void main() {
     );
 
     expect(path.equals(resolved, webDirectory.path), isTrue);
+    expect(
+      path.equals(
+        resolveProductSoulPath(
+          currentDirectory: temporaryDirectory.path,
+          executablePath: path.join(
+            bundleDirectory.path,
+            'qiyu_windows_host.exe',
+          ),
+        ),
+        productSoul.path,
+      ),
+      isTrue,
+    );
   });
 
   test('preflight includes bundled Web assets when a root is supplied', () {

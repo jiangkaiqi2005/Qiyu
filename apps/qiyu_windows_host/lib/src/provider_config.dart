@@ -41,6 +41,12 @@ final class ProviderConfig {
   final double temperature;
   final int timeoutSeconds;
 
+  String get credentialScope {
+    final uri = Uri.parse(baseUrl.trim());
+    final normalizedPath = uri.path.replaceFirst(RegExp(r'/+$'), '');
+    return '${kind.wireName}|${uri.replace(path: normalizedPath, query: '', fragment: '')}';
+  }
+
   Map<String, Object?> toJson() => {
     'schemaVersion': 1,
     'provider': kind.wireName,

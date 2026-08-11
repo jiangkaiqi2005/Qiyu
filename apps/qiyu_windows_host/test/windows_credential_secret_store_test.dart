@@ -8,13 +8,15 @@ void main() {
   test('API Key 通过 Windows Credential Manager 持久保存和删除', () async {
     final target =
         'Qiyu.Test.Provider.${DateTime.now().microsecondsSinceEpoch}';
-    final store = WindowsCredentialSecretStore(targetName: target);
-    addTearDown(store.deleteApiKey);
+    final store = WindowsCredentialSecretStore(targetNamePrefix: target);
+    const scope = 'openai_compatible|https://example.com/v1';
+    addTearDown(() => store.deleteApiKey(scope));
 
-    expect(await store.readApiKey(), isNull);
-    await store.writeApiKey('test-only-secret-value');
-    expect(await store.readApiKey(), 'test-only-secret-value');
-    await store.deleteApiKey();
-    expect(await store.readApiKey(), isNull);
+    expect(await store.readApiKey(scope), isNull);
+    await store.writeApiKey(scope, 'test-only-secret-value');
+    expect(await store.readApiKey(scope), 'test-only-secret-value');
+    expect(await store.readApiKey('anthropic|https://example.com/v1'), isNull);
+    await store.deleteApiKey(scope);
+    expect(await store.readApiKey(scope), isNull);
   });
 }

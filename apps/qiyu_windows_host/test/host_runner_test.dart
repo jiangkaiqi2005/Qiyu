@@ -41,6 +41,7 @@ void main() {
         webRoot: webRoot.path,
         runtimeDirectory: runtimeDirectory.path,
         memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
         browserLauncher: primaryBrowser,
       ).launch();
 
@@ -53,6 +54,7 @@ void main() {
         webRoot: webRoot.path,
         runtimeDirectory: runtimeDirectory.path,
         memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
         browserLauncher: secondaryBrowser,
       ).launch();
 
@@ -76,6 +78,7 @@ void main() {
       webRoot: webRoot.path,
       runtimeDirectory: runtimeDirectory.path,
       memoryDirectory: memoryDirectory.path,
+      productSoul: '测试产品灵魂',
       browserLauncher: browser,
     ).launch();
 

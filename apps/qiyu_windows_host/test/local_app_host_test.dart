@@ -41,6 +41,7 @@ void main() {
       final host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
       );
 
       expect(host.address.address, InternetAddress.loopbackIPv4.address);
@@ -75,6 +76,7 @@ void main() {
       final host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
       );
 
       final sessionStart = await _send(host.launchUri);
@@ -152,6 +154,7 @@ void main() {
       final restartedHost = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
       );
       final oldSession = await _send(
         restartedHost.origin.resolve('/api/bootstrap'),
@@ -178,6 +181,7 @@ void main() {
       final host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
       );
       final firstSession = await _openBrowserSession(host);
       final firstChat = await _send(
@@ -207,6 +211,7 @@ void main() {
       final restarted = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
       );
       final restartedSession = await _openBrowserSession(restarted);
       final restored = await _send(
@@ -254,10 +259,12 @@ void main() {
         JsonProviderConfigRepository(filePath: configPath),
         secrets,
         gateway,
+        const ModelPromptBuilder('测试产品灵魂'),
       );
       var host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
         providerSettingsService: settingsService(),
       );
       var browser = await _openBrowserSession(host);
@@ -292,6 +299,7 @@ void main() {
       host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
         providerSettingsService: settingsService(),
       );
       browser = await _openBrowserSession(host);
@@ -392,16 +400,18 @@ final class _HttpResponse {
 }
 
 final class _MemorySecretStore implements SecretStore {
-  String? value;
+  final Map<String, String> values = {};
 
   @override
-  Future<void> deleteApiKey() async => value = null;
+  Future<void> deleteApiKey(String scope) async => values.remove(scope);
 
   @override
-  Future<String?> readApiKey() async => value;
+  Future<String?> readApiKey(String scope) async => values[scope];
 
   @override
-  Future<void> writeApiKey(String value) async => this.value = value;
+  Future<void> writeApiKey(String scope, String value) async {
+    values[scope] = value;
+  }
 }
 
 final class _StaticModelGateway implements ModelGateway {

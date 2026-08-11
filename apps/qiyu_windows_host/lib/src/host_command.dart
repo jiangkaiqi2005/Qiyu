@@ -108,3 +108,21 @@ String resolveHostRuntimeDirectory({
   }
   return path.join(Directory.systemTemp.path, 'Qiyu', 'runtime');
 }
+
+String resolveProductSoulPath({
+  required String currentDirectory,
+  required String executablePath,
+}) {
+  final candidates = [
+    path.join(path.dirname(executablePath), 'product-soul.md'),
+    path.join(currentDirectory, '栖语产品灵魂.md'),
+    path.join(currentDirectory, '..', '..', '栖语产品灵魂.md'),
+  ];
+  for (final candidate in candidates) {
+    final absoluteCandidate = path.normalize(path.absolute(candidate));
+    if (File(absoluteCandidate).existsSync()) {
+      return absoluteCandidate;
+    }
+  }
+  throw FileSystemException('找不到栖语产品灵魂.md，无法启动模型聊天');
+}

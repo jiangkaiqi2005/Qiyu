@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -102,8 +103,25 @@ void main() {
     });
   });
 
-  test('鉴权、模型、网络和响应格式错误可区分且不泄露 Key', () async {
+  test('所有连接测试错误可区分且不泄露 Key', () async {
     for (final scenario in [
+      (
+        client: _RecordingHttpClient(
+          error: const SocketException(
+            'Failed host lookup',
+            osError: OSError('host not found', 11001),
+          ),
+        ),
+        kind: ModelFailureKind.dns,
+      ),
+      (
+        client: _RecordingHttpClient(error: HandshakeException('bad tls')),
+        kind: ModelFailureKind.tls,
+      ),
+      (
+        client: _RecordingHttpClient(error: TimeoutException('slow')),
+        kind: ModelFailureKind.timeout,
+      ),
       (
         client: _RecordingHttpClient(
           response: const ProviderHttpResponse(
@@ -128,9 +146,30 @@ void main() {
       ),
       (
         client: _RecordingHttpClient(
+          response: const ProviderHttpResponse(statusCode: 429, body: '{}'),
+        ),
+        kind: ModelFailureKind.rateLimited,
+      ),
+      (
+        client: _RecordingHttpClient(
+          response: const ProviderHttpResponse(statusCode: 200, body: 'oops'),
+        ),
+        kind: ModelFailureKind.incompatibleResponse,
+      ),
+      (
+        client: _RecordingHttpClient(
           response: const ProviderHttpResponse(statusCode: 200, body: '{}'),
         ),
-        kind: ModelFailureKind.invalidResponse,
+        kind: ModelFailureKind.contentParsing,
+      ),
+      (
+        client: _RecordingHttpClient(
+          response: const ProviderHttpResponse(
+            statusCode: 404,
+            body: '{"error":"route not found"}',
+          ),
+        ),
+        kind: ModelFailureKind.provider,
       ),
     ]) {
       await expectLater(

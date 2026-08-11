@@ -243,9 +243,14 @@ void main() {
     );
     expect(keyField.controller!.text, isEmpty);
 
+    await tester.enterText(
+      find.byKey(const Key('provider-model')),
+      'unsaved-test-model',
+    );
     await tester.tap(find.byKey(const Key('test-provider-connection')));
     await tester.pumpAndSettle();
     expect(find.text('连接成功，栖语可以使用这个模型。'), findsOneWidget);
+    expect(settingsGateway.tested.single.model, 'unsaved-test-model');
   });
 }
 
@@ -312,6 +317,7 @@ final class _FakeProviderSettingsGateway implements ProviderSettingsGateway {
     keySet: false,
   );
   final List<ProviderSettingsDraft> saved = [];
+  final List<ProviderSettingsDraft> tested = [];
 
   @override
   Future<ProviderSettings> read() async => current;
@@ -346,9 +352,12 @@ final class _FakeProviderSettingsGateway implements ProviderSettingsGateway {
   }
 
   @override
-  Future<ProviderTestResult> testConnection() async => const ProviderTestResult(
-    succeeded: true,
-    status: ProviderTestStatus.success,
-    message: '连接成功，栖语可以使用这个模型。',
-  );
+  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) async {
+    tested.add(draft);
+    return const ProviderTestResult(
+      succeeded: true,
+      status: ProviderTestStatus.success,
+      message: '连接成功，栖语可以使用这个模型。',
+    );
+  }
 }

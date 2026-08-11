@@ -65,7 +65,7 @@ final class ProviderSettingsViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> testConnection() async {
+  Future<void> testConnection(ProviderSettingsDraft draft) async {
     if (_testing) {
       return;
     }
@@ -74,7 +74,7 @@ final class ProviderSettingsViewModel extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
     try {
-      _testResult = await _gateway.testConnection();
+      _testResult = await _gateway.testConnection(draft);
     } on Object catch (error) {
       _errorMessage = _readableError(error);
     } finally {
