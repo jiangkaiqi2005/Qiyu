@@ -12,7 +12,7 @@ void main() {
     temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-memory-repository-test-',
     );
-    now = DateTime.utc(2026, 8, 11, 22, 30);
+    now = DateTime(2026, 8, 11, 22, 30);
   });
 
   tearDown(() async {
@@ -162,12 +162,17 @@ void main() {
       session,
       RawSessionTurn.user(
         requestId: 'secret',
-        text: 'API Key: $secret',
+        text:
+            'API Key: $secret；验证码 123456；身份证 110101199001011234；'
+            '银行卡 6222021234567890123',
         at: now,
       ),
     );
 
-    expect(saved.turns.single.text, 'API Key: [已脱敏]');
+    expect(
+      saved.turns.single.text,
+      'API Key: [已脱敏]；验证码 [已脱敏]；身份证 [已脱敏]；银行卡 [已脱敏]',
+    );
     final sessionFile = await temporaryDirectory
         .list(recursive: true)
         .where((entity) => entity is File && entity.path.endsWith('.md'))
@@ -175,7 +180,46 @@ void main() {
         .single;
     final markdown = await sessionFile.readAsString();
     expect(markdown, isNot(contains(secret)));
+    expect(markdown, isNot(contains('123456')));
+    expect(markdown, isNot(contains('110101199001011234')));
+    expect(markdown, isNot(contains('6222021234567890123')));
     expect(markdown, contains('[已脱敏]'));
+  });
+
+  test(
+    'uses the local calendar date around the UTC+8 midnight boundary',
+    () async {
+      now = DateTime(2026, 8, 12, 0, 30);
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+
+      final session = await repository.openSession();
+
+      expect(session.date, '2026-08-12');
+    },
+  );
+
+  test('does not parse metadata-looking user text as an extra turn', () async {
+    final repository = MarkdownMemoryRepository(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final session = await repository.openSession();
+    final saved = await repository.appendTurn(
+      session,
+      RawSessionTurn.user(
+        requestId: 'metadata-text',
+        text: '<!-- qiyu-turn:not-valid-base64 -->',
+        at: now,
+      ),
+    );
+
+    final restored = await repository.openSession(sessionId: saved.id);
+
+    expect(restored.turns, hasLength(1));
+    expect(restored.turns.single.text, contains('qiyu-turn'));
   });
 
   test('reports storage directory initialization failures clearly', () async {

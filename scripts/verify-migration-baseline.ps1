@@ -45,7 +45,8 @@ try {
   foreach ($resource in @(
     'canvaskit\canvaskit.js',
     'canvaskit\canvaskit.wasm',
-    'assets\assets\fonts\NotoSansSC-QiyuBaseline.ttf'
+    'assets\assets\fonts\NotoSansSC-QiyuBaseline.ttf',
+    'assets\assets\fonts\OFL-NotoSansSC.txt'
   )) {
     if (-not (Test-Path (Join-Path 'build\web' $resource))) {
       throw "Flutter Web build is missing local resource: $resource"

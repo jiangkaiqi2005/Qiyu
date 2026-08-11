@@ -70,7 +70,7 @@ final class LocalChatService {
     String? sessionId,
   }) => _serialized(() async {
     final trimmedRequestId = requestId.trim();
-    final trimmedText = text.trim();
+    final trimmedText = _stripStructureTags(text).trim();
     if (trimmedRequestId.isEmpty || trimmedText.isEmpty) {
       throw const LocalChatException(
         code: 'invalid_request',
@@ -80,20 +80,16 @@ final class LocalChatService {
     }
 
     var session = await _repository.openSession(sessionId: sessionId);
-    final existingUser = session.turns
-        .where(
-          (turn) =>
-              turn.requestId == trimmedRequestId &&
-              turn.speaker == Speaker.user,
-        )
-        .firstOrNull;
-    final existingReply = session.turns
-        .where(
-          (turn) =>
-              turn.requestId == trimmedRequestId &&
-              turn.speaker == Speaker.qiyu,
-        )
-        .firstOrNull;
+    final existingUser = _findTurn(
+      session.turns,
+      requestId: trimmedRequestId,
+      speaker: Speaker.user,
+    );
+    final existingReply = _findTurn(
+      session.turns,
+      requestId: trimmedRequestId,
+      speaker: Speaker.qiyu,
+    );
     if (existingUser != null &&
         existingUser.text != redactSessionText(trimmedText)) {
       throw const LocalChatException(
@@ -110,8 +106,8 @@ final class LocalChatService {
     }
 
     if (existingUser == null) {
-      if (session.turns.length >= maxRawSessionTurns ||
-          session.date != _datePart(_clock().toUtc())) {
+      if (session.turns.length > maxRawSessionTurns - 2 ||
+          session.date != localSessionDate(_clock())) {
         session = await _repository.createSession();
       }
       session = await _repository.appendTurn(
@@ -214,14 +210,18 @@ Map<String, Object?> _turnToPublicJson(RawSessionTurn turn) => {
     'fallbackReason': turn.fallbackReason!.wireName,
 };
 
-String _datePart(DateTime value) =>
-    '${value.year.toString().padLeft(4, '0')}-'
-    '${value.month.toString().padLeft(2, '0')}-'
-    '${value.day.toString().padLeft(2, '0')}';
-
-extension<T> on Iterable<T> {
-  T? get firstOrNull {
-    final iterator = this.iterator;
-    return iterator.moveNext() ? iterator.current : null;
+RawSessionTurn? _findTurn(
+  List<RawSessionTurn> turns, {
+  required String requestId,
+  required Speaker speaker,
+}) {
+  for (final turn in turns) {
+    if (turn.requestId == requestId && turn.speaker == speaker) {
+      return turn;
+    }
   }
+  return null;
 }
+
+String _stripStructureTags(String text) =>
+    text.replaceAll(RegExp(r'<[^>\r\n]{1,200}>'), ' ');

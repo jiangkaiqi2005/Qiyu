@@ -22,13 +22,15 @@ class _LocalChatViewState extends State<LocalChatView> {
     super.dispose();
   }
 
-  void _send(LocalChatViewModel viewModel) {
+  Future<void> _send(LocalChatViewModel viewModel) async {
     final text = _controller.text;
     if (text.trim().isEmpty) {
       return;
     }
-    _controller.clear();
-    unawaited(viewModel.send(text));
+    final sent = await viewModel.send(text);
+    if (sent && mounted && _controller.text == text) {
+      _controller.clear();
+    }
   }
 
   @override
@@ -91,7 +93,7 @@ class _LocalChatViewState extends State<LocalChatView> {
                             key: const Key('chat-send'),
                             onPressed: viewModel.sending
                                 ? null
-                                : () => _send(viewModel),
+                                : () => unawaited(_send(viewModel)),
                             tooltip: '发送',
                             icon: viewModel.sending
                                 ? const SizedBox.square(

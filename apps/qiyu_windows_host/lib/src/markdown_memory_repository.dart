@@ -253,8 +253,9 @@ final class MarkdownMemoryRepository implements MemoryRepository {
   Future<RawSession> openSession({String? sessionId}) async {
     await initialize();
     final sessions = await _readSessions();
-    final now = _clock().toUtc();
-    final today = _datePart(now);
+    final currentTime = _clock();
+    final now = currentTime.toUtc();
+    final today = localSessionDate(currentTime);
     RawSession? requested;
     if (sessionId != null) {
       requested = sessions
@@ -284,8 +285,9 @@ final class MarkdownMemoryRepository implements MemoryRepository {
   Future<RawSession> createSession() async {
     await initialize();
     final sessions = await _readSessions();
-    final now = _clock().toUtc();
-    return _createSession(sessions, now, _datePart(now));
+    final currentTime = _clock();
+    final now = currentTime.toUtc();
+    return _createSession(sessions, now, localSessionDate(currentTime));
   }
 
   Future<RawSession> _createSession(
@@ -403,14 +405,16 @@ String _toMarkdown(RawSession session) {
 
 RawSession _parseMarkdown(String markdown) {
   final metadataMatch = RegExp(
-    r'<!-- qiyu-session:([A-Za-z0-9_-]+) -->',
+    r'^<!-- qiyu-session:([A-Za-z0-9_-]+) -->\r?$',
+    multiLine: true,
   ).firstMatch(markdown);
   if (metadataMatch == null) {
     throw const FormatException('Missing qiyu session metadata');
   }
   final metadata = _decodeJson(metadataMatch.group(1)!);
   final turnMatches = RegExp(
-    r'<!-- qiyu-turn:([A-Za-z0-9_-]+) -->',
+    r'^<!-- qiyu-turn:([A-Za-z0-9_-]+) -->\r?$',
+    multiLine: true,
   ).allMatches(markdown);
   final turns = turnMatches
       .map((match) => RawSessionTurn.fromJson(_decodeJson(match.group(1)!)))
@@ -427,10 +431,12 @@ Map<String, Object?> _decodeJson(String value) {
       as Map<String, Object?>;
 }
 
-String _datePart(DateTime value) =>
-    '${value.year.toString().padLeft(4, '0')}-'
-    '${value.month.toString().padLeft(2, '0')}-'
-    '${value.day.toString().padLeft(2, '0')}';
+String localSessionDate(DateTime value) {
+  final local = value.toLocal();
+  return '${local.year.toString().padLeft(4, '0')}-'
+      '${local.month.toString().padLeft(2, '0')}-'
+      '${local.day.toString().padLeft(2, '0')}';
+}
 
 String _newOpaqueId() {
   final random = Random.secure();
@@ -444,9 +450,17 @@ String redactSessionText(String text) {
     RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
     RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
     RegExp(
-      r'((?:api[_ -]?key|token|cookie|password|密码|口令)\s*[:=：]\s*)\S+',
+      r'((?:api[_ -]?key|token|cookie|password|密码|口令)\s*[:=：]\s*)[^\s；;，,]+',
       caseSensitive: false,
     ),
+    RegExp(
+      r'((?:验证码|otp|verification code)\s*[:=：]?\s*)\d{4,8}',
+      caseSensitive: false,
+    ),
+    RegExp(r'((?:身份证(?:号)?|证件号)\s*[:=：]?\s*)\d{17}[\dXx]'),
+    RegExp(r'((?:银行卡(?:号)?|卡号)\s*[:=：]?\s*)(?:\d[ -]?){15,18}\d'),
+    RegExp(r'(?<!\d)\d{17}[\dXx](?!\d)'),
+    RegExp(r'(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)'),
     RegExp(
       r'-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----',
       caseSensitive: false,

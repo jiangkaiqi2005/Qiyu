@@ -4,6 +4,7 @@ import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 void main() {
   testWidgets('restores the latest local session without duplicate messages', (
@@ -22,8 +23,8 @@ void main() {
             requestId: 'old-1',
             speaker: LocalChatSpeaker.qiyu,
             text: '嗯',
-            source: 'local',
-            fallbackReason: 'no_llm_config',
+            source: ReplySource.local,
+            fallbackReason: FallbackReason.noLlmConfig,
           ),
         ],
       ),
@@ -97,6 +98,7 @@ void main() {
   ) async {
     final gateway = _FakeLocalChatGateway(
       sendError: const LocalChatGatewayException('无法保存本地聊天记录。'),
+      failuresRemaining: 1,
     );
     final viewModel = LocalChatViewModel(
       gateway,
@@ -111,7 +113,42 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('无法保存本地聊天记录。'), findsOneWidget);
-    expect(find.text('别丢掉这句'), findsNothing);
+    expect(viewModel.messages, isEmpty);
+    final inputAfterFailure = tester.widget<TextField>(
+      find.byKey(const Key('chat-input')),
+    );
+    expect(inputAfterFailure.controller!.text, '别丢掉这句');
+  });
+
+  testWidgets('retries a failed send with the same request id', (tester) async {
+    var nextId = 0;
+    final gateway = _FakeLocalChatGateway(
+      sendError: const LocalChatGatewayException('第一次写入失败。'),
+      failuresRemaining: 1,
+    );
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      autoStart: false,
+      requestIdFactory: () => 'retry-${nextId++}',
+    );
+    await viewModel.initialize();
+    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
+
+    await tester.enterText(find.byKey(const Key('chat-input')), '别重复这句');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    final inputAfterFailure = tester.widget<TextField>(
+      find.byKey(const Key('chat-input')),
+    );
+    expect(inputAfterFailure.controller!.text, '别重复这句');
+
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.sentRequestIds, ['retry-0', 'retry-0']);
+    expect(find.text('别重复这句'), findsOneWidget);
+    expect(find.text('咋了'), findsOneWidget);
   });
 }
 
@@ -122,11 +159,14 @@ final class _FakeLocalChatGateway implements LocalChatGateway {
       messages: [],
     ),
     this.sendError,
+    this.failuresRemaining = 0,
   });
 
   final LocalChatSnapshot restored;
   final List<String> sentTexts = [];
+  final List<String> sentRequestIds = [];
   final Object? sendError;
+  int failuresRemaining;
 
   @override
   Future<LocalChatSnapshot> restore({String? sessionId}) async => restored;
@@ -138,15 +178,17 @@ final class _FakeLocalChatGateway implements LocalChatGateway {
     String? sessionId,
   }) async {
     sentTexts.add(text);
-    if (sendError case final error?) {
+    sentRequestIds.add(requestId);
+    if (sendError case final error? when failuresRemaining > 0) {
+      failuresRemaining -= 1;
       throw error;
     }
     return LocalChatExchange(
       sessionId: restored.sessionId,
       requestId: requestId,
       messages: const ['咋了'],
-      source: 'local',
-      fallbackReason: 'no_llm_config',
+      source: ReplySource.local,
+      fallbackReason: FallbackReason.noLlmConfig,
     );
   }
 }

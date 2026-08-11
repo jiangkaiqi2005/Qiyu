@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 void main() {
   test(
@@ -48,7 +49,7 @@ void main() {
       );
 
       expect(restored.messages.single.text, '旧消息');
-      expect(exchange.source, 'local');
+      expect(exchange.source, ReplySource.local);
       expect(
         requests.where((request) => request.url.path == '/api/bootstrap'),
         hasLength(1),

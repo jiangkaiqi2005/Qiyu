@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 enum LocalChatSpeaker { user, qiyu }
 
@@ -16,17 +17,22 @@ final class LocalChatMessage {
   final String requestId;
   final LocalChatSpeaker speaker;
   final String text;
-  final String? source;
-  final String? fallbackReason;
+  final ReplySource? source;
+  final FallbackReason? fallbackReason;
 
-  factory LocalChatMessage.fromJson(Map<String, Object?> json) =>
-      LocalChatMessage(
-        requestId: json['requestId']! as String,
-        speaker: LocalChatSpeaker.values.byName(json['speaker']! as String),
-        text: json['text']! as String,
-        source: json['source'] as String?,
-        fallbackReason: json['fallbackReason'] as String?,
-      );
+  factory LocalChatMessage.fromJson(Map<String, Object?> json) {
+    final source = json['source'] as String?;
+    final fallbackReason = json['fallbackReason'] as String?;
+    return LocalChatMessage(
+      requestId: json['requestId']! as String,
+      speaker: LocalChatSpeaker.values.byName(json['speaker']! as String),
+      text: json['text']! as String,
+      source: source == null ? null : ReplySource.values.byName(source),
+      fallbackReason: fallbackReason == null
+          ? null
+          : FallbackReason.fromWireName(fallbackReason),
+    );
+  }
 }
 
 final class LocalChatSnapshot {
@@ -62,15 +68,17 @@ final class LocalChatExchange {
         sessionId: json['sessionId']! as String,
         requestId: json['requestId']! as String,
         messages: (json['messages']! as List<Object?>).cast<String>(),
-        source: json['source']! as String,
-        fallbackReason: json['fallbackReason'] as String?,
+        source: ReplySource.values.byName(json['source']! as String),
+        fallbackReason: json['fallbackReason'] == null
+            ? null
+            : FallbackReason.fromWireName(json['fallbackReason']! as String),
       );
 
   final String sessionId;
   final String requestId;
   final List<String> messages;
-  final String source;
-  final String? fallbackReason;
+  final ReplySource source;
+  final FallbackReason? fallbackReason;
 }
 
 final class LocalChatGatewayException implements Exception {

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import '../baseline/host_connection_probe.dart';
 import 'local_chat_client.dart';
@@ -37,6 +38,8 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool _initializing = false;
   bool _initialized = false;
   bool _sending = false;
+  String? _pendingRequestId;
+  String? _pendingText;
 
   List<LocalChatMessage> get messages => List.unmodifiable(_messages);
   String? get errorMessage => _errorMessage;
@@ -45,7 +48,8 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool get hostStopped => _hostAvailable == false;
   bool get hasLocalFallback => _messages.any(
     (message) =>
-        message.speaker == LocalChatSpeaker.qiyu && message.source == 'local',
+        message.speaker == LocalChatSpeaker.qiyu &&
+        message.source == ReplySource.local,
   );
 
   Future<void> initialize() async {
@@ -90,15 +94,19 @@ final class LocalChatViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> send(String text) async {
+  Future<bool> send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || _sending || hostStopped) {
-      return;
+      return false;
     }
     _sending = true;
     _errorMessage = null;
     notifyListeners();
-    final requestId = _requestIdFactory();
+    final requestId = _pendingText == trimmed && _pendingRequestId != null
+        ? _pendingRequestId!
+        : _requestIdFactory();
+    _pendingRequestId = requestId;
+    _pendingText = trimmed;
     try {
       final exchange = await _gateway.send(
         requestId: requestId,
@@ -126,8 +134,12 @@ final class LocalChatViewModel extends ChangeNotifier {
           ),
         );
       }
+      _pendingRequestId = null;
+      _pendingText = null;
+      return true;
     } on Object catch (error) {
       _errorMessage = _readableError(error);
+      return false;
     } finally {
       _sending = false;
       notifyListeners();
