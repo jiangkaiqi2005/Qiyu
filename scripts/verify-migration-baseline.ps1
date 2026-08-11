@@ -87,12 +87,17 @@ try {
   $smokeOutput = Join-Path $hostPath '.dart_tool\bundle-smoke.stdout.txt'
   $smokeError = Join-Path $hostPath '.dart_tool\bundle-smoke.stderr.txt'
   $smokeRuntime = Join-Path $hostPath '.dart_tool\bundle-smoke-runtime'
+  $smokeMemory = Join-Path $hostPath '.dart_tool\bundle-smoke-memory'
   Remove-Item -LiteralPath $smokeOutput, $smokeError -Force `
     -ErrorAction SilentlyContinue
   $smokeProcess = $null
   try {
     $smokeProcess = Start-Process -FilePath $hostExecutable `
-      -ArgumentList @('--no-browser', '--runtime-dir', $smokeRuntime) `
+      -ArgumentList @(
+        '--no-browser',
+        '--runtime-dir', $smokeRuntime,
+        '--memory-dir', $smokeMemory
+      ) `
       -WorkingDirectory ([IO.Path]::GetTempPath()) -WindowStyle Hidden `
       -RedirectStandardOutput $smokeOutput `
       -RedirectStandardError $smokeError -PassThru

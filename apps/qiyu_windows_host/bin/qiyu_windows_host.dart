@@ -31,9 +31,14 @@ Future<void> main(List<String> arguments) async {
       environment: Platform.environment,
       overridePath: options.runtimeDirectory,
     );
+    final memoryDirectory = resolveHostMemoryDirectory(
+      environment: Platform.environment,
+      overridePath: options.memoryDirectory,
+    );
     launch = await QiyuHostRunner(
       webRoot: webRoot,
       runtimeDirectory: runtimeDirectory,
+      memoryDirectory: memoryDirectory,
       browserLauncher: const WindowsDefaultBrowserLauncher(),
     ).launch(openBrowser: options.openBrowser);
 

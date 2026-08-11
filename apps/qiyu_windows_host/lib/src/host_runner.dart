@@ -10,11 +10,13 @@ final class QiyuHostRunner {
   const QiyuHostRunner({
     required this.webRoot,
     required this.runtimeDirectory,
+    required this.memoryDirectory,
     required this.browserLauncher,
   });
 
   final String webRoot;
   final String runtimeDirectory;
+  final String memoryDirectory;
   final BrowserLauncher browserLauncher;
 
   Future<HostLaunchResult> launch({bool openBrowser = true}) async {
@@ -37,6 +39,7 @@ final class QiyuHostRunner {
     try {
       host = await LocalAppHost.start(
         webRoot: webRoot,
+        memoryDirectory: memoryDirectory,
         activationToken: activationToken,
         onActivate: () => browserLauncher.open(host.launchUri),
       );

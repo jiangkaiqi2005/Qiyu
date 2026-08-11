@@ -7,6 +7,7 @@ import 'package:test/test.dart';
 void main() {
   late Directory temporaryDirectory;
   late Directory webRoot;
+  late Directory memoryDirectory;
 
   setUp(() async {
     temporaryDirectory = await Directory.systemTemp.createTemp(
@@ -15,6 +16,9 @@ void main() {
     webRoot = Directory(
       '${temporaryDirectory.path}${Platform.pathSeparator}web',
     )..createSync();
+    memoryDirectory = Directory(
+      '${temporaryDirectory.path}${Platform.pathSeparator}memories',
+    );
     File(
       '${webRoot.path}${Platform.pathSeparator}index.html',
     ).writeAsStringSync(
@@ -34,7 +38,10 @@ void main() {
   test(
     'serves bundled Web assets on a random loopback port and releases it',
     () async {
-      final host = await LocalAppHost.start(webRoot: webRoot.path);
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+      );
 
       expect(host.address.address, InternetAddress.loopbackIPv4.address);
       expect(host.port, greaterThan(0));
@@ -65,7 +72,10 @@ void main() {
   test(
     'issues a host-lifetime browser session and rejects invalid API sources',
     () async {
-      final host = await LocalAppHost.start(webRoot: webRoot.path);
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+      );
 
       final sessionStart = await _send(host.launchUri);
       expect(sessionStart.statusCode, HttpStatus.seeOther);
@@ -139,7 +149,10 @@ void main() {
 
       final oldLaunchUri = host.launchUri;
       await host.close();
-      final restartedHost = await LocalAppHost.start(webRoot: webRoot.path);
+      final restartedHost = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+      );
       final oldSession = await _send(
         restartedHost.origin.resolve('/api/bootstrap'),
         headers: {
@@ -158,6 +171,77 @@ void main() {
       await restartedHost.close();
     },
   );
+
+  test(
+    'sends, persists, restarts, and restores one local chat exactly once',
+    () async {
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+      );
+      final firstSession = await _openBrowserSession(host);
+      final firstChat = await _send(
+        host.origin.resolve('/api/chat'),
+        method: 'POST',
+        headers: firstSession.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'requestId': 'restart-1', 'text': '今天有点累'}),
+      );
+
+      expect(firstChat.statusCode, HttpStatus.ok);
+      final firstJson = jsonDecode(firstChat.body) as Map<String, Object?>;
+      expect(firstJson['source'], 'local');
+      expect(firstJson['fallbackReason'], 'no_llm_config');
+      expect(firstJson['messages'], ['咋了']);
+      final sessionId = firstJson['sessionId']! as String;
+      await host.close();
+
+      final markdownFiles = memoryDirectory
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.md'))
+          .toList();
+      expect(markdownFiles, hasLength(1));
+      final markdown = await markdownFiles.single.readAsString();
+      expect(markdown.indexOf('今天有点累'), lessThan(markdown.indexOf('咋了')));
+
+      final restarted = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+      );
+      final restartedSession = await _openBrowserSession(restarted);
+      final restored = await _send(
+        restarted.origin.resolve('/api/chat/session?sessionId=$sessionId'),
+        headers: restartedSession.readHeaders(restarted.origin),
+      );
+      expect(restored.statusCode, HttpStatus.ok);
+      final restoredJson = jsonDecode(restored.body) as Map<String, Object?>;
+      expect(restoredJson['sessionId'], sessionId);
+      expect(restoredJson['turns'], hasLength(2));
+
+      final replay = await _send(
+        restarted.origin.resolve('/api/chat'),
+        method: 'POST',
+        headers: restartedSession.mutationHeaders(restarted.origin),
+        requestBody: jsonEncode({
+          'requestId': 'restart-1',
+          'sessionId': sessionId,
+          'text': '今天有点累',
+        }),
+      );
+      expect(replay.statusCode, HttpStatus.ok);
+      final replayJson = jsonDecode(replay.body) as Map<String, Object?>;
+      expect(replayJson['messages'], ['咋了']);
+
+      final restoredAgain = await _send(
+        restarted.origin.resolve('/api/chat/session?sessionId=$sessionId'),
+        headers: restartedSession.readHeaders(restarted.origin),
+      );
+      final restoredAgainJson =
+          jsonDecode(restoredAgain.body) as Map<String, Object?>;
+      expect(restoredAgainJson['turns'], hasLength(2));
+      await restarted.close();
+    },
+  );
 }
 
 Future<_HttpResponse> _send(
@@ -165,6 +249,7 @@ Future<_HttpResponse> _send(
   String method = 'GET',
   Map<String, String> headers = const {},
   String? hostOverride,
+  String? requestBody,
 }) async {
   final client = HttpClient();
   final request = await client.openUrl(method, uri);
@@ -173,11 +258,49 @@ Future<_HttpResponse> _send(
     request.headers.host = hostOverride;
   }
   headers.forEach(request.headers.set);
+  if (requestBody != null) {
+    request.add(utf8.encode(requestBody));
+  }
   final response = await request.close();
   final body = await response.transform(utf8.decoder).join();
   final result = _HttpResponse(response.statusCode, response.headers, body);
   client.close(force: true);
   return result;
+}
+
+Future<_BrowserSession> _openBrowserSession(LocalAppHost host) async {
+  final sessionStart = await _send(host.launchUri);
+  final cookie = sessionStart.headers[HttpHeaders.setCookieHeader]!.single
+      .split(';')
+      .first;
+  final bootstrap = await _send(
+    host.origin.resolve('/api/bootstrap'),
+    headers: {
+      HttpHeaders.cookieHeader: cookie,
+      HttpHeaders.refererHeader: host.origin.toString(),
+    },
+  );
+  final bootstrapJson = jsonDecode(bootstrap.body) as Map<String, Object?>;
+  return _BrowserSession(cookie, bootstrapJson['csrfToken']! as String);
+}
+
+final class _BrowserSession {
+  const _BrowserSession(this.cookie, this.csrfToken);
+
+  final String cookie;
+  final String csrfToken;
+
+  Map<String, String> readHeaders(Uri origin) => {
+    HttpHeaders.cookieHeader: cookie,
+    HttpHeaders.refererHeader: origin.toString(),
+  };
+
+  Map<String, String> mutationHeaders(Uri origin) => {
+    ...readHeaders(origin),
+    'origin': origin.toString().replaceFirst(RegExp(r'/$'), ''),
+    'x-qiyu-csrf': csrfToken,
+    HttpHeaders.contentTypeHeader: 'application/json',
+  };
 }
 
 final class _HttpResponse {

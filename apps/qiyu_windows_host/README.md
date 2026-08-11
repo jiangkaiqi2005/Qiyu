@@ -1,6 +1,6 @@
 # qiyu_windows_host
 
-栖语的 Windows 本机 Dart 宿主。它只绑定 `127.0.0.1` 的随机端口，提供已经构建好的 Flutter Web 资源，并为本机 API 建立一次性启动会话。
+栖语的 Windows 本机 Dart 宿主。它只绑定 `127.0.0.1` 的随机端口，提供已经构建好的 Flutter Web 资源、本地规则聊天 API 和 Markdown 原始会话持久化，并为本机 API 建立一次性启动会话。
 
 ```powershell
 # 先构建相邻的 Flutter Web 工程
@@ -21,5 +21,7 @@ Pop-Location
 ```
 
 完整产物位于 `apps\qiyu_windows_host\build\windows-bundle\`，其中 `qiyu_windows_host.exe` 和 `web\` 必须一起移动或打包。exe 优先读取自身旁边的 `web\index.html`，因此从仓库外工作目录启动也不依赖开发树。
+
+记忆目录优先使用 `--memory-dir <path>`，其次读取 `QIYU_MEMORY_DIR`，默认写入 `%USERPROFILE%\.qiyu\memories`。原始会话按天保存到 `sessions\年\月\`：每段最多 80 条消息，满额开启新段；最近会话恢复窗口为 180 天，旧 Markdown 不自动删除。
 
 开发和验证时可用 `--no-browser` 禁止自动打开浏览器，用 `--web-root <path>` 指定 Web 资源目录，用 `--runtime-dir <path>` 隔离单实例状态。正常运行会始终打印可复制的本机地址；若浏览器启动失败，也可手动打开该地址。

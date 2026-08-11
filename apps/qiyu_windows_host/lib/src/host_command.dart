@@ -8,18 +8,21 @@ final class HostCommandOptions {
     required this.openBrowser,
     required this.webRoot,
     required this.runtimeDirectory,
+    required this.memoryDirectory,
   });
 
   final bool checkOnly;
   final bool openBrowser;
   final String? webRoot;
   final String? runtimeDirectory;
+  final String? memoryDirectory;
 
   static HostCommandOptions parse(List<String> arguments) {
     var checkOnly = false;
     var openBrowser = true;
     String? webRoot;
     String? runtimeDirectory;
+    String? memoryDirectory;
 
     for (var index = 0; index < arguments.length; index += 1) {
       switch (arguments[index]) {
@@ -31,6 +34,8 @@ final class HostCommandOptions {
           webRoot = _readValue(arguments, ++index, '--web-root');
         case '--runtime-dir':
           runtimeDirectory = _readValue(arguments, ++index, '--runtime-dir');
+        case '--memory-dir':
+          memoryDirectory = _readValue(arguments, ++index, '--memory-dir');
         default:
           throw FormatException('未知参数：${arguments[index]}');
       }
@@ -41,6 +46,7 @@ final class HostCommandOptions {
       openBrowser: openBrowser,
       webRoot: webRoot,
       runtimeDirectory: runtimeDirectory,
+      memoryDirectory: memoryDirectory,
     );
   }
 
@@ -50,6 +56,21 @@ final class HostCommandOptions {
     }
     return arguments[index];
   }
+}
+
+String resolveHostMemoryDirectory({
+  required Map<String, String> environment,
+  String? overridePath,
+}) {
+  final configured = overridePath ?? environment['QIYU_MEMORY_DIR'];
+  if (configured != null && configured.isNotEmpty) {
+    return path.normalize(path.absolute(configured));
+  }
+  final userProfile = environment['USERPROFILE'];
+  if (userProfile == null || userProfile.isEmpty) {
+    throw StateError('找不到用户目录，请设置 QIYU_MEMORY_DIR。');
+  }
+  return path.join(userProfile, '.qiyu', 'memories');
 }
 
 String resolveHostWebRoot({

@@ -1,4 +1,5 @@
 const contractSchemaVersion = 1;
+const maxStateTurns = 80;
 
 enum ChatErrorCode {
   invalidRequest('invalid_request');
@@ -187,11 +188,14 @@ final class StateSnapshot {
     required ChatTurn qiyuTurn,
     EmotionSnapshot? emotion,
   }) {
+    final nextTurns = [...turns, userTurn, qiyuTurn];
     return StateSnapshot(
       schemaVersion: schemaVersion,
       userId: userId,
       relationshipStage: relationshipStage,
-      turns: [...turns, userTurn, qiyuTurn],
+      turns: nextTurns.length <= maxStateTurns
+          ? nextTurns
+          : nextTurns.sublist(nextTurns.length - maxStateTurns),
       lastEmotion: emotion ?? lastEmotion,
     );
   }

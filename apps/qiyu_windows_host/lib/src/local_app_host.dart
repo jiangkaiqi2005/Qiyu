@@ -7,6 +7,8 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_static/shelf_static.dart';
 
 import 'browser_launcher.dart';
+import 'local_chat_service.dart';
+import 'markdown_memory_repository.dart';
 import 'secure_token.dart';
 
 const _sessionCookieName = 'qiyu_session';
@@ -31,6 +33,7 @@ final class LocalAppHost {
 
   static Future<LocalAppHost> start({
     required String webRoot,
+    required String memoryDirectory,
     String? activationToken,
     Future<BrowserLaunchResult> Function()? onActivate,
   }) async {
@@ -44,8 +47,13 @@ final class LocalAppHost {
         'activationToken and onActivate must either both be set or both be null',
       );
     }
+    final chatService = LocalChatService(
+      MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
+    );
+    await chatService.initialize();
     final requestHandler = _LocalAppRequestHandler(
       webRoot,
+      chatService: chatService,
       activationToken: activationToken,
       onActivate: onActivate,
     );
@@ -70,6 +78,7 @@ final class LocalAppHost {
 final class _LocalAppRequestHandler {
   _LocalAppRequestHandler(
     String webRoot, {
+    required this.chatService,
     required this.activationToken,
     required this.onActivate,
   }) : startupToken = generateSecureToken(),
@@ -82,6 +91,7 @@ final class _LocalAppRequestHandler {
        );
 
   final String startupToken;
+  final LocalChatService chatService;
   final String? activationToken;
   final Future<BrowserLaunchResult> Function()? onActivate;
   final String _sessionToken;
@@ -162,7 +172,7 @@ final class _LocalAppRequestHandler {
     );
   }
 
-  Response _handleApi(Request request, Uri origin) {
+  Future<Response> _handleApi(Request request, Uri origin) async {
     final modifying = request.method != 'GET' && request.method != 'HEAD';
     if (!_hasExpectedSource(request, origin, requireOrigin: modifying)) {
       return _plainError(HttpStatus.forbidden, 'Unexpected request source');
@@ -190,6 +200,80 @@ final class _LocalAppRequestHandler {
     }
     if (request.method == 'POST' && request.url.path == 'api/session/verify') {
       return Response(HttpStatus.noContent, headers: _noStoreHeaders);
+    }
+    try {
+      if (request.method == 'GET' && request.url.path == 'api/chat/session') {
+        final snapshot = await chatService.restore(
+          sessionId: request.url.queryParameters['sessionId'],
+        );
+        return Response.ok(
+          jsonEncode(snapshot.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'POST' && request.url.path == 'api/chat') {
+        final contentLength = request.contentLength;
+        if (contentLength != null && contentLength > 64 * 1024) {
+          return _jsonError(
+            HttpStatus.requestEntityTooLarge,
+            code: 'invalid_request',
+            message: '消息内容过长。',
+            retryable: false,
+          );
+        }
+        final body = await request.readAsString();
+        final payload = jsonDecode(body) as Map<String, Object?>;
+        final requestId = payload['requestId'];
+        final text = payload['text'];
+        final sessionId = payload['sessionId'];
+        if (requestId is! String ||
+            text is! String ||
+            (sessionId != null && sessionId is! String)) {
+          throw const LocalChatException(
+            code: 'invalid_request',
+            message: '聊天请求格式不正确。',
+            retryable: false,
+          );
+        }
+        final exchange = await chatService.send(
+          requestId: requestId,
+          text: text,
+          sessionId: sessionId as String?,
+        );
+        return Response.ok(
+          jsonEncode(exchange.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+    } on FormatException {
+      return _jsonError(
+        HttpStatus.badRequest,
+        code: 'invalid_request',
+        message: '聊天请求格式不正确。',
+        retryable: false,
+      );
+    } on LocalChatException catch (error) {
+      final status = switch (error.code) {
+        'invalid_request' => HttpStatus.badRequest,
+        'request_id_conflict' => HttpStatus.conflict,
+        _ => HttpStatus.internalServerError,
+      };
+      return _jsonError(
+        status,
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
+      );
+    } on MemoryRepositoryException catch (error) {
+      final status = error.code == 'session_not_found'
+          ? HttpStatus.notFound
+          : HttpStatus.internalServerError;
+      return _jsonError(
+        status,
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
+      );
     }
     return _plainError(HttpStatus.notFound, 'Not found');
   }
@@ -250,6 +334,23 @@ Response _plainError(int statusCode, String message) {
       HttpHeaders.contentTypeHeader: 'text/plain; charset=utf-8',
       HttpHeaders.cacheControlHeader: 'no-store',
     },
+  );
+}
+
+Response _jsonError(
+  int statusCode, {
+  required String code,
+  required String message,
+  required bool retryable,
+}) {
+  return Response(
+    statusCode,
+    body: jsonEncode({
+      'code': code,
+      'message': message,
+      'retryable': retryable,
+    }),
+    headers: _jsonHeaders,
   );
 }
 

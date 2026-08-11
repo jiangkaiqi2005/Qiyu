@@ -1,6 +1,6 @@
 # qiyu_flutter
 
-栖语的 Flutter Web 迁移外壳。当前只验证路由、View/ViewModel 单向依赖和纯 Dart 行为核心接线；聊天页面在后续 ticket 中实现。
+栖语的 Flutter Web 聊天界面。页面通过 Windows 本机 API 恢复最近会话、发送消息，并明确展示本地规则降级来源；用户记忆不保存在浏览器中。
 
 ```powershell
 flutter test

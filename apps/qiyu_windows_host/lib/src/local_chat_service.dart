@@ -1,0 +1,227 @@
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
+import 'markdown_memory_repository.dart';
+
+final class LocalChatException implements Exception {
+  const LocalChatException({
+    required this.code,
+    required this.message,
+    required this.retryable,
+  });
+
+  final String code;
+  final String message;
+  final bool retryable;
+
+  @override
+  String toString() => message;
+}
+
+final class LocalChatSnapshot {
+  const LocalChatSnapshot(this.session);
+
+  final RawSession session;
+
+  Map<String, Object?> toJson() => {
+    'sessionId': session.id,
+    'turns': session.turns.map(_turnToPublicJson).toList(),
+    'limits': {
+      'maxTurnsPerSegment': maxRawSessionTurns,
+      'activeHistoryDays': activeSessionHistoryWindow.inDays,
+    },
+  };
+}
+
+final class LocalChatExchange {
+  const LocalChatExchange({required this.session, required this.result});
+
+  final RawSession session;
+  final ChatResult result;
+
+  Map<String, Object?> toJson() => {
+    ...result.toJson(),
+    'sessionId': session.id,
+  };
+}
+
+final class LocalChatService {
+  LocalChatService(
+    this._repository, {
+    QiyuBehaviorCore? behaviorCore,
+    Clock? clock,
+  }) : _behaviorCore = behaviorCore ?? const QiyuBehaviorCore(),
+       _clock = clock ?? DateTime.now;
+
+  final MemoryRepository _repository;
+  final QiyuBehaviorCore _behaviorCore;
+  final Clock _clock;
+  Future<void> _pending = Future.value();
+
+  Future<void> initialize() => _repository.initialize();
+
+  Future<LocalChatSnapshot> restore({String? sessionId}) => _serialized(
+    () async =>
+        LocalChatSnapshot(await _repository.openSession(sessionId: sessionId)),
+  );
+
+  Future<LocalChatExchange> send({
+    required String requestId,
+    required String text,
+    String? sessionId,
+  }) => _serialized(() async {
+    final trimmedRequestId = requestId.trim();
+    final trimmedText = text.trim();
+    if (trimmedRequestId.isEmpty || trimmedText.isEmpty) {
+      throw const LocalChatException(
+        code: 'invalid_request',
+        message: '消息不能为空。',
+        retryable: false,
+      );
+    }
+
+    var session = await _repository.openSession(sessionId: sessionId);
+    final existingUser = session.turns
+        .where(
+          (turn) =>
+              turn.requestId == trimmedRequestId &&
+              turn.speaker == Speaker.user,
+        )
+        .firstOrNull;
+    final existingReply = session.turns
+        .where(
+          (turn) =>
+              turn.requestId == trimmedRequestId &&
+              turn.speaker == Speaker.qiyu,
+        )
+        .firstOrNull;
+    if (existingUser != null &&
+        existingUser.text != redactSessionText(trimmedText)) {
+      throw const LocalChatException(
+        code: 'request_id_conflict',
+        message: '这条消息标识已被另一条内容使用，请重新发送。',
+        retryable: false,
+      );
+    }
+    if (existingReply != null) {
+      return LocalChatExchange(
+        session: session,
+        result: _storedResult(session, existingReply),
+      );
+    }
+
+    if (existingUser == null) {
+      if (session.turns.length >= maxRawSessionTurns ||
+          session.date != _datePart(_clock().toUtc())) {
+        session = await _repository.createSession();
+      }
+      session = await _repository.appendTurn(
+        session,
+        RawSessionTurn.user(
+          requestId: trimmedRequestId,
+          text: trimmedText,
+          at: _clock(),
+        ),
+      );
+    }
+
+    final state = _stateFromCompletedTurns(session.turns, trimmedRequestId);
+    final outcome = _behaviorCore.reply(
+      ChatRequest(requestId: trimmedRequestId, text: trimmedText),
+      state,
+    );
+    if (outcome is! ChatResult) {
+      final error = outcome as ErrorResult;
+      throw LocalChatException(
+        code: error.code.wireName,
+        message: error.message,
+        retryable: error.retryable,
+      );
+    }
+
+    final completed = await _repository.appendTurn(
+      session,
+      RawSessionTurn.qiyu(
+        requestId: trimmedRequestId,
+        messages: outcome.messages,
+        at: _clock(),
+        source: outcome.source,
+        fallbackReason: outcome.fallbackReason,
+        mode: outcome.mode,
+        safety: outcome.safety,
+      ),
+    );
+    return LocalChatExchange(session: completed, result: outcome);
+  });
+
+  Future<T> _serialized<T>(Future<T> Function() operation) {
+    final result = _pending.then((_) => operation());
+    _pending = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+}
+
+StateSnapshot _stateFromCompletedTurns(
+  List<RawSessionTurn> turns,
+  String pendingRequestId,
+) {
+  final completed = <ChatTurn>[];
+  RawSessionTurn? pendingUser;
+  for (final turn in turns) {
+    if (turn.requestId == pendingRequestId && turn.speaker == Speaker.user) {
+      continue;
+    }
+    if (turn.speaker == Speaker.user) {
+      pendingUser = turn;
+      continue;
+    }
+    if (pendingUser != null && pendingUser.requestId == turn.requestId) {
+      completed
+        ..add(ChatTurn(speaker: Speaker.user, text: pendingUser.text))
+        ..add(ChatTurn(speaker: Speaker.qiyu, text: turn.text));
+      pendingUser = null;
+    }
+  }
+  final recent = completed.length <= maxStateTurns
+      ? completed
+      : completed.sublist(completed.length - maxStateTurns);
+  return StateSnapshot(
+    userId: 'local-user',
+    relationshipStage: RelationshipStage.stranger,
+    turns: recent,
+    lastEmotion: const EmotionSnapshot(kind: EmotionKind.neutral, intensity: 0),
+  );
+}
+
+ChatResult _storedResult(RawSession session, RawSessionTurn reply) {
+  return ChatResult(
+    requestId: reply.requestId,
+    messages: reply.messages.isEmpty ? [reply.text] : reply.messages,
+    nextState: _stateFromCompletedTurns(session.turns, ''),
+    source: reply.source ?? ReplySource.local,
+    fallbackReason: reply.fallbackReason,
+    mode: reply.mode ?? 'local',
+    safety: reply.safety,
+  );
+}
+
+Map<String, Object?> _turnToPublicJson(RawSessionTurn turn) => {
+  'requestId': turn.requestId,
+  'speaker': turn.speaker.name,
+  'text': turn.text,
+  'at': turn.at.toUtc().toIso8601String(),
+  if (turn.source != null) 'source': turn.source!.name,
+  if (turn.fallbackReason != null)
+    'fallbackReason': turn.fallbackReason!.wireName,
+};
+
+String _datePart(DateTime value) =>
+    '${value.year.toString().padLeft(4, '0')}-'
+    '${value.month.toString().padLeft(2, '0')}-'
+    '${value.day.toString().padLeft(2, '0')}';
+
+extension<T> on Iterable<T> {
+  T? get firstOrNull {
+    final iterator = this.iterator;
+    return iterator.moveNext() ? iterator.current : null;
+  }
+}

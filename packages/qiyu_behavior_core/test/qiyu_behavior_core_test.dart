@@ -100,4 +100,21 @@ void main() {
       throwsA(isA<ArgumentError>()),
     );
   });
+
+  test('behavior state keeps only the latest 80 turns', () {
+    var state = StateSnapshot.initial('fixture-user');
+    const core = QiyuBehaviorCore();
+
+    for (var index = 0; index < 41; index += 1) {
+      final result = core.reply(
+        ChatRequest(requestId: 'limit-$index', text: '第 $index 轮'),
+        state,
+      );
+      state = (result as ChatResult).nextState;
+    }
+
+    expect(state.turns, hasLength(80));
+    expect(state.turns.first.text, '第 1 轮');
+    expect(state.turns.last.text, '嗯？');
+  });
 }

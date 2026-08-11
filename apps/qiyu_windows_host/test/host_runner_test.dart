@@ -7,6 +7,7 @@ void main() {
   late Directory temporaryDirectory;
   late Directory webRoot;
   late Directory runtimeDirectory;
+  late Directory memoryDirectory;
 
   setUp(() async {
     temporaryDirectory = await Directory.systemTemp.createTemp(
@@ -17,6 +18,9 @@ void main() {
     )..createSync();
     runtimeDirectory = Directory(
       '${temporaryDirectory.path}${Platform.pathSeparator}runtime',
+    );
+    memoryDirectory = Directory(
+      '${temporaryDirectory.path}${Platform.pathSeparator}memories',
     );
     File(
       '${webRoot.path}${Platform.pathSeparator}index.html',
@@ -36,6 +40,7 @@ void main() {
       final primary = await QiyuHostRunner(
         webRoot: webRoot.path,
         runtimeDirectory: runtimeDirectory.path,
+        memoryDirectory: memoryDirectory.path,
         browserLauncher: primaryBrowser,
       ).launch();
 
@@ -47,6 +52,7 @@ void main() {
       final secondary = await QiyuHostRunner(
         webRoot: webRoot.path,
         runtimeDirectory: runtimeDirectory.path,
+        memoryDirectory: memoryDirectory.path,
         browserLauncher: secondaryBrowser,
       ).launch();
 
@@ -69,6 +75,7 @@ void main() {
     final launch = await QiyuHostRunner(
       webRoot: webRoot.path,
       runtimeDirectory: runtimeDirectory.path,
+      memoryDirectory: memoryDirectory.path,
       browserLauncher: browser,
     ).launch();
 

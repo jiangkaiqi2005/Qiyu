@@ -2,22 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import 'features/baseline/migration_baseline_view.dart';
-import 'features/baseline/migration_baseline_view_model.dart';
+import 'features/chat/local_chat_client.dart';
+import 'features/chat/local_chat_view.dart';
+import 'features/chat/local_chat_view_model.dart';
 
 final _router = GoRouter(
   routes: [
-    GoRoute(
-      path: '/',
-      builder: (context, state) => const MigrationBaselineView(),
-    ),
+    GoRoute(path: '/', builder: (context, state) => const LocalChatView()),
   ],
 );
 
 class QiyuApp extends StatelessWidget {
   const QiyuApp({super.key, this.viewModel});
 
-  final MigrationBaselineViewModel? viewModel;
+  final LocalChatViewModel? viewModel;
 
   @override
   Widget build(BuildContext context) {
@@ -29,7 +27,7 @@ class QiyuApp extends StatelessWidget {
       );
     }
     return ChangeNotifierProvider(
-      create: (_) => MigrationBaselineViewModel(),
+      create: (_) => LocalChatViewModel(HttpLocalChatGateway()),
       child: _buildMaterialApp(),
     );
   }

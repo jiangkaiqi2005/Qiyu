@@ -7,6 +7,8 @@ export 'src/browser_launcher.dart';
 export 'src/host_command.dart';
 export 'src/host_runner.dart';
 export 'src/local_app_host.dart';
+export 'src/local_chat_service.dart';
+export 'src/markdown_memory_repository.dart';
 
 final class HostPreflightReport {
   HostPreflightReport({
