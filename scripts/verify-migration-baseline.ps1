@@ -35,7 +35,21 @@ try {
   Invoke-Step 'Flutter dependencies' { flutter pub get }
   Invoke-Step 'Flutter analysis' { flutter analyze }
   Invoke-Step 'Flutter widget tests' { flutter test }
-  Invoke-Step 'Flutter Web build' { flutter build web }
+  Invoke-Step 'Flutter Web build' { flutter build web --no-web-resources-cdn }
+  $flutterBootstrap = Get-Content -Raw -Encoding UTF8 'build\web\flutter_bootstrap.js'
+  if ($flutterBootstrap -notmatch '"useLocalCanvasKit":true') {
+    throw 'Flutter Web build is not configured to use its bundled CanvasKit'
+  }
+  foreach ($resource in @(
+    'canvaskit\canvaskit.js',
+    'canvaskit\canvaskit.wasm',
+    'assets\assets\fonts\NotoSansSC-QiyuBaseline.ttf'
+  )) {
+    if (-not (Test-Path (Join-Path 'build\web' $resource))) {
+      throw "Flutter Web build is missing local resource: $resource"
+    }
+  }
+  Write-Host '==> Flutter Web bundled resource check passed'
 } finally {
   Pop-Location
 }

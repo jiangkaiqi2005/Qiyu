@@ -1,4 +1,12 @@
+import 'dart:io';
+
+import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
+export 'src/browser_launcher.dart';
+export 'src/host_command.dart';
+export 'src/host_runner.dart';
+export 'src/local_app_host.dart';
 
 final class HostPreflightReport {
   HostPreflightReport({
@@ -18,7 +26,10 @@ final class HostPreflightReport {
   };
 }
 
-HostPreflightReport runHostPreflight({required String operatingSystem}) {
+HostPreflightReport runHostPreflight({
+  required String operatingSystem,
+  String? webRoot,
+}) {
   const core = QiyuBehaviorCore();
   final coreOutcome = core.reply(
     const ChatRequest(requestId: 'host-preflight', text: '晚安'),
@@ -29,11 +40,13 @@ HostPreflightReport runHostPreflight({required String operatingSystem}) {
       coreOutcome.messages.length == 1 &&
       coreOutcome.messages.single == '晚安';
 
-  return HostPreflightReport(
-    operatingSystem: operatingSystem,
-    checks: {
-      'supportedPlatform': operatingSystem == 'windows',
-      'behaviorCore': coreReady,
-    },
-  );
+  final checks = <String, bool>{
+    'supportedPlatform': operatingSystem == 'windows',
+    'behaviorCore': coreReady,
+  };
+  if (webRoot != null) {
+    checks['webAssets'] = File(path.join(webRoot, 'index.html')).existsSync();
+  }
+
+  return HostPreflightReport(operatingSystem: operatingSystem, checks: checks);
 }

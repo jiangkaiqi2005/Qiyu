@@ -1,8 +1,21 @@
 # qiyu_windows_host
 
-栖语的 Windows 本机 Dart 宿主骨架。当前只提供平台与行为核心启动前检查；回环 HTTP 服务属于 ticket 2。
+栖语的 Windows 本机 Dart 宿主。它只绑定 `127.0.0.1` 的随机端口，提供已经构建好的 Flutter Web 资源，并为本机 API 建立一次性启动会话。
 
 ```powershell
+# 先构建相邻的 Flutter Web 工程
+Push-Location ..\qiyu_flutter
+flutter build web --no-web-resources-cdn
+Pop-Location
+
+# 启动并打开默认浏览器；Ctrl+C 停止宿主
+dart run
+
+# 只检查平台、行为核心和 Web 资源
 dart run -- --check
-dart compile exe bin/qiyu_windows_host.dart
+
+# 构建 Windows 可执行程序
+dart compile exe bin/qiyu_windows_host.dart -o .dart_tool\qiyu_windows_host.exe
 ```
+
+开发和验证时可用 `--no-browser` 禁止自动打开浏览器，用 `--web-root <path>` 指定 Web 资源目录，用 `--runtime-dir <path>` 隔离单实例状态。正常运行会始终打印可复制的本机地址；若浏览器启动失败，也可手动打开该地址。

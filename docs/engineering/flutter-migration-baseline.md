@@ -5,11 +5,11 @@
 ## 工程边界
 
 - `packages/qiyu_behavior_core/`：纯 Dart 行为核心。不得导入 Flutter、浏览器 API、Node、Windows API 或具体存储实现。
-- `apps/qiyu_flutter/`：Flutter Web 外壳，采用 View、ViewModel、`provider` 和 `go_router`；当前只验证行为核心接线。
-- `apps/qiyu_windows_host/`：可编译为 Windows exe 的 Dart 宿主骨架；当前只执行平台与行为核心启动前检查，不监听端口。
+- `apps/qiyu_flutter/`：Flutter Web 外壳，采用 View、ViewModel、`provider` 和 `go_router`；除行为核心接线外，已接入本机宿主健康检查。
+- `apps/qiyu_windows_host/`：可编译为 Windows exe 的 Dart 宿主；只在随机回环端口提供 Flutter Web 资源和受会话保护的本机 API。
 - `contracts/qiyu_behavior_contracts.json`：JS 与 Dart 共用的语言无关 fixtures。
 
-本票没有加入数据库、云服务、账号系统、远程静态托管、移动端工程、Provider 网络访问或本机 HTTP 服务。
+迁移基线本身没有加入数据库、云服务、账号系统、远程静态托管、移动端工程或 Provider 网络访问。后续 Ticket 2 已在该边界上增加 Windows 本机 HTTP 外壳，详见 `docs/engineering/windows-local-web-shell.md`。
 
 ## 稳定契约
 
@@ -32,6 +32,9 @@
 | --- | --- | --- | --- |
 | `go_router` | `^17.4.0` | Flutter 团队维护，BSD-3-Clause，支持 Flutter Web/Windows | Spec 已选定的统一 URL 路由；不自研浏览器路由同步。 |
 | `provider` | `^6.1.5+1` | 长期活跃，MIT，支持 Flutter Web/Windows | Spec 已选定的轻量依赖注入与 `ChangeNotifier` 接线；不同时引入 Riverpod。 |
+| `http` | `^1.6.0` | Dart 团队维护，BSD-3-Clause，支持 Flutter Web | 探测本机宿主健康状态，并保留可注入测试接缝。 |
+| `shelf` / `shelf_static` | `^1.4.2` / `^1.1.3` | Dart 团队维护，BSD-3-Clause | 在随机回环端口提供本机 API 和 Flutter Web 构建产物。 |
+| `path` | `^1.9.1` | Dart 团队维护，BSD-3-Clause | 解析 Web 构建产物和本机运行目录。 |
 | `test` | `^1.25.6`（核心）、`^1.31.2`（宿主） | Dart 团队维护，BSD-3-Clause | 公开契约与宿主检查的标准测试工具，生产产物不包含。 |
 | `lints` | `^6.0.0` | Dart 团队维护，BSD-3-Clause | 统一静态检查，生产产物不包含。 |
 | `flutter_test` / `flutter_lints` | Flutter SDK / `^6.0.0` | Flutter 团队维护，BSD-3-Clause | Widget 测试与 Flutter 官方 lint，生产产物不包含。 |
