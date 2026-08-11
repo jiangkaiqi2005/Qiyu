@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'local_chat_client.dart';
@@ -55,6 +56,13 @@ class _LocalChatViewState extends State<LocalChatView> {
                           ),
                           const Spacer(),
                           if (viewModel.hasLocalFallback) const Text('本地规则回复'),
+                          const SizedBox(width: 12),
+                          IconButton(
+                            key: const Key('open-provider-settings'),
+                            onPressed: () => context.push('/settings'),
+                            tooltip: '模型连接',
+                            icon: const Icon(Icons.tune),
+                          ),
                         ],
                       ),
                     ),

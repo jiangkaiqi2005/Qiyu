@@ -5,11 +5,16 @@ import 'dart:io';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_static/shelf_static.dart';
+import 'package:path/path.dart' as path;
 
 import 'browser_launcher.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
+import 'model_gateway.dart';
+import 'provider_config.dart';
+import 'provider_settings_service.dart';
 import 'secure_token.dart';
+import 'secret_store.dart';
 
 const _sessionCookieName = 'qiyu_session';
 const _csrfHeaderName = 'x-qiyu-csrf';
@@ -36,6 +41,7 @@ final class LocalAppHost {
     required String memoryDirectory,
     String? activationToken,
     Future<BrowserLaunchResult> Function()? onActivate,
+    ProviderSettingsService? providerSettingsService,
   }) async {
     final indexFile = File('$webRoot${Platform.pathSeparator}index.html');
     if (!indexFile.existsSync()) {
@@ -47,13 +53,27 @@ final class LocalAppHost {
         'activationToken and onActivate must either both be set or both be null',
       );
     }
+    final effectiveProviderSettings =
+        providerSettingsService ??
+        ProviderSettingsService(
+          JsonProviderConfigRepository(
+            filePath: path.join(
+              Directory(memoryDirectory).parent.path,
+              'provider.json',
+            ),
+          ),
+          const WindowsCredentialSecretStore(),
+          const ProviderModelGateway(DartIoProviderHttpClient()),
+        );
     final chatService = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
+      providerChatClient: effectiveProviderSettings,
     );
     await chatService.initialize();
     final requestHandler = _LocalAppRequestHandler(
       webRoot,
       chatService: chatService,
+      providerSettingsService: effectiveProviderSettings,
       activationToken: activationToken,
       onActivate: onActivate,
     );
@@ -79,6 +99,7 @@ final class _LocalAppRequestHandler {
   _LocalAppRequestHandler(
     String webRoot, {
     required this.chatService,
+    required this.providerSettingsService,
     required this.activationToken,
     required this.onActivate,
   }) : startupToken = generateSecureToken(),
@@ -92,6 +113,7 @@ final class _LocalAppRequestHandler {
 
   final String startupToken;
   final LocalChatService chatService;
+  final ProviderSettingsService providerSettingsService;
   final String? activationToken;
   final Future<BrowserLaunchResult> Function()? onActivate;
   final String _sessionToken;
@@ -202,6 +224,41 @@ final class _LocalAppRequestHandler {
       return Response(HttpStatus.noContent, headers: _noStoreHeaders);
     }
     try {
+      if (request.method == 'GET' && request.url.path == 'api/provider') {
+        final settings = await providerSettingsService.read();
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'PUT' && request.url.path == 'api/provider') {
+        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
+        final config = _providerConfigFromPayload(payload);
+        final apiKey = payload['apiKey'];
+        if (apiKey != null && apiKey is! String) {
+          throw const ProviderConfigException('API Key 格式不正确。');
+        }
+        final settings = await providerSettingsService.save(
+          config: config,
+          apiKey: apiKey as String?,
+        );
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'POST' && request.url.path == 'api/provider/test') {
+        final result = await providerSettingsService.testCurrent();
+        return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
+      }
+      if (request.method == 'DELETE' &&
+          request.url.path == 'api/provider/key') {
+        final settings = await providerSettingsService.forgetApiKey();
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
       if (request.method == 'GET' && request.url.path == 'api/chat/session') {
         final snapshot = await chatService.restore(
           sessionId: request.url.queryParameters['sessionId'],
@@ -264,6 +321,20 @@ final class _LocalAppRequestHandler {
         message: error.message,
         retryable: error.retryable,
       );
+    } on ProviderConfigException catch (error) {
+      return _jsonError(
+        HttpStatus.badRequest,
+        code: 'invalid_provider_config',
+        message: error.message,
+        retryable: false,
+      );
+    } on SecretStoreException catch (error) {
+      return _jsonError(
+        HttpStatus.internalServerError,
+        code: 'credential_store_error',
+        message: error.message,
+        retryable: true,
+      );
     } on MemoryRepositoryException catch (error) {
       final status = error.code == 'session_not_found'
           ? HttpStatus.notFound
@@ -317,6 +388,43 @@ final class _LocalAppRequestHandler {
     }
     return false;
   }
+}
+
+Future<Map<String, Object?>> _readJsonObject(
+  Request request, {
+  required int maxBytes,
+}) async {
+  final contentLength = request.contentLength;
+  if (contentLength != null && contentLength > maxBytes) {
+    throw const FormatException('request body is too large');
+  }
+  final decoded = jsonDecode(await request.readAsString());
+  if (decoded is! Map<String, Object?>) {
+    throw const FormatException('request body must be an object');
+  }
+  return decoded;
+}
+
+ProviderConfig _providerConfigFromPayload(Map<String, Object?> payload) {
+  final provider = payload['provider'];
+  final baseUrl = payload['baseUrl'];
+  final model = payload['model'];
+  final temperature = payload['temperature'];
+  final timeoutSeconds = payload['timeoutSeconds'];
+  if (provider is! String ||
+      baseUrl is! String ||
+      model is! String ||
+      temperature is! num ||
+      timeoutSeconds is! int) {
+    throw const ProviderConfigException('模型配置格式不正确。');
+  }
+  return ProviderConfig(
+    kind: ProviderKind.fromWireName(provider),
+    baseUrl: baseUrl,
+    model: model,
+    temperature: temperature.toDouble(),
+    timeoutSeconds: timeoutSeconds,
+  );
 }
 
 const _jsonHeaders = {

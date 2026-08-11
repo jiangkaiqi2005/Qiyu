@@ -242,6 +242,86 @@ void main() {
       await restarted.close();
     },
   );
+
+  test(
+    'persists Provider settings, masks Key, tests it, and uses model chat',
+    () async {
+      final configPath =
+          '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+      final secrets = _MemorySecretStore();
+      final gateway = _StaticModelGateway('还没睡？');
+      ProviderSettingsService settingsService() => ProviderSettingsService(
+        JsonProviderConfigRepository(filePath: configPath),
+        secrets,
+        gateway,
+      );
+      var host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        providerSettingsService: settingsService(),
+      );
+      var browser = await _openBrowserSession(host);
+
+      final saved = await _send(
+        host.origin.resolve('/api/provider'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'provider': 'openai_compatible',
+          'baseUrl': 'https://example.com/v1',
+          'model': 'chat-model',
+          'temperature': 0.6,
+          'timeoutSeconds': 25,
+          'apiKey': 'private-test-value',
+        }),
+      );
+      expect(saved.statusCode, HttpStatus.ok);
+      expect(saved.body, isNot(contains('private-test-value')));
+      expect(jsonDecode(saved.body), containsPair('keySet', true));
+
+      final tested = await _send(
+        host.origin.resolve('/api/provider/test'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      expect(tested.statusCode, HttpStatus.ok);
+      expect(jsonDecode(tested.body), containsPair('status', 'success'));
+      await host.close();
+
+      host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        providerSettingsService: settingsService(),
+      );
+      browser = await _openBrowserSession(host);
+      final restored = await _send(
+        host.origin.resolve('/api/provider'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(restored.body, isNot(contains('private-test-value')));
+      expect(
+        jsonDecode(restored.body),
+        allOf(
+          containsPair('configured', true),
+          containsPair('keySet', true),
+          containsPair('model', 'chat-model'),
+        ),
+      );
+
+      final chat = await _send(
+        host.origin.resolve('/api/chat'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'requestId': 'provider-chat', 'text': '在吗'}),
+      );
+      final chatJson = jsonDecode(chat.body) as Map<String, Object?>;
+      expect(chatJson['messages'], ['还没睡？']);
+      expect(chatJson['source'], 'llm');
+      expect(gateway.apiKey, 'private-test-value');
+      await host.close();
+    },
+  );
 }
 
 Future<_HttpResponse> _send(
@@ -309,4 +389,34 @@ final class _HttpResponse {
   final int statusCode;
   final HttpHeaders headers;
   final String body;
+}
+
+final class _MemorySecretStore implements SecretStore {
+  String? value;
+
+  @override
+  Future<void> deleteApiKey() async => value = null;
+
+  @override
+  Future<String?> readApiKey() async => value;
+
+  @override
+  Future<void> writeApiKey(String value) async => this.value = value;
+}
+
+final class _StaticModelGateway implements ModelGateway {
+  _StaticModelGateway(this.reply);
+
+  final String reply;
+  String? apiKey;
+
+  @override
+  Future<String> complete({
+    required ProviderConfig config,
+    required String? apiKey,
+    required List<ModelMessage> messages,
+  }) async {
+    this.apiKey = apiKey;
+    return reply;
+  }
 }

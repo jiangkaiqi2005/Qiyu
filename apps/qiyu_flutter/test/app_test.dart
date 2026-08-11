@@ -4,6 +4,8 @@ import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 void main() {
@@ -184,6 +186,67 @@ void main() {
     expect(find.text('别重复这句'), findsOneWidget);
     expect(find.text('咋了'), findsOneWidget);
   });
+
+  testWidgets('configures and tests all supported model providers', (
+    tester,
+  ) async {
+    final chatViewModel = LocalChatViewModel(
+      _FakeLocalChatGateway(),
+      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      autoStart: false,
+    );
+    await chatViewModel.initialize();
+    final settingsGateway = _FakeProviderSettingsGateway();
+    final settingsViewModel = ProviderSettingsViewModel(
+      settingsGateway,
+      autoStart: false,
+    );
+    await settingsViewModel.initialize();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: chatViewModel,
+        providerSettingsViewModel: settingsViewModel,
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('open-provider-settings')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('模型连接'), findsOneWidget);
+    expect(find.text('OpenAI 兼容'), findsOneWidget);
+    expect(find.text('Anthropic'), findsOneWidget);
+    expect(find.text('Ollama'), findsOneWidget);
+    expect(find.text('尚未保存 API Key'), findsOneWidget);
+    expect(find.byKey(const Key('provider-api-key')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('provider-base-url')),
+      'https://api.openai.com/v1',
+    );
+    await tester.enterText(
+      find.byKey(const Key('provider-model')),
+      'gpt-4.1-mini',
+    );
+    await tester.enterText(
+      find.byKey(const Key('provider-api-key')),
+      'ui-only-test-value',
+    );
+    await tester.drag(find.byType(ListView), const Offset(0, -420));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-provider-settings')));
+    await tester.pumpAndSettle();
+
+    expect(settingsGateway.saved.single.apiKey, 'ui-only-test-value');
+    expect(find.text('API Key 已安全保存在 Windows 凭据管理器'), findsOneWidget);
+    final keyField = tester.widget<TextField>(
+      find.byKey(const Key('provider-api-key')),
+    );
+    expect(keyField.controller!.text, isEmpty);
+
+    await tester.tap(find.byKey(const Key('test-provider-connection')));
+    await tester.pumpAndSettle();
+    expect(find.text('连接成功，栖语可以使用这个模型。'), findsOneWidget);
+  });
 }
 
 final class _FakeLocalChatGateway implements LocalChatGateway {
@@ -241,4 +304,51 @@ final class _FakeHostConnectionProbe implements HostConnectionProbe {
     }
     return result;
   }
+}
+
+final class _FakeProviderSettingsGateway implements ProviderSettingsGateway {
+  ProviderSettings current = const ProviderSettings(
+    configured: false,
+    keySet: false,
+  );
+  final List<ProviderSettingsDraft> saved = [];
+
+  @override
+  Future<ProviderSettings> read() async => current;
+
+  @override
+  Future<ProviderSettings> save(ProviderSettingsDraft draft) async {
+    saved.add(draft);
+    current = ProviderSettings(
+      configured: true,
+      keySet: draft.apiKey != null,
+      provider: draft.provider,
+      baseUrl: draft.baseUrl,
+      model: draft.model,
+      temperature: draft.temperature,
+      timeoutSeconds: draft.timeoutSeconds,
+    );
+    return current;
+  }
+
+  @override
+  Future<ProviderSettings> forgetApiKey() async {
+    current = ProviderSettings(
+      configured: current.configured,
+      keySet: false,
+      provider: current.provider,
+      baseUrl: current.baseUrl,
+      model: current.model,
+      temperature: current.temperature,
+      timeoutSeconds: current.timeoutSeconds,
+    );
+    return current;
+  }
+
+  @override
+  Future<ProviderTestResult> testConnection() async => const ProviderTestResult(
+    succeeded: true,
+    status: ProviderTestStatus.success,
+    message: '连接成功，栖语可以使用这个模型。',
+  );
 }

@@ -9,6 +9,10 @@ export 'src/host_runner.dart';
 export 'src/local_app_host.dart';
 export 'src/local_chat_service.dart';
 export 'src/markdown_memory_repository.dart';
+export 'src/model_gateway.dart';
+export 'src/provider_config.dart';
+export 'src/provider_settings_service.dart';
+export 'src/secret_store.dart';
 
 final class HostPreflightReport {
   HostPreflightReport({

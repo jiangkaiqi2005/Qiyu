@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -116,6 +117,68 @@ void main() {
     expect(exchange.session.turns.first.text, contains('在吗'));
     expect(exchange.session.turns.first.text, isNot(contains('<system>')));
   });
+
+  test('configured Provider reply is persisted with llm source', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-provider-chat-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final repository = MarkdownMemoryRepository(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 12, 22, 30),
+    );
+    final service = LocalChatService(
+      repository,
+      providerChatClient: _FakeProviderChatClient(
+        const ModelCompletion.reply('还没睡？'),
+      ),
+      clock: () => DateTime(2026, 8, 12, 22, 30),
+    );
+
+    final exchange = await service.send(requestId: 'llm-1', text: '在吗');
+    final restored = await repository.openSession(
+      sessionId: exchange.session.id,
+    );
+
+    expect(exchange.result.messages, ['还没睡？']);
+    expect(exchange.result.source, ReplySource.llm);
+    expect(restored.turns.last.source, ReplySource.llm);
+    expect(restored.turns.last.text, '还没睡？');
+  });
+
+  test(
+    'Provider failure falls back locally without losing the user turn',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-provider-fallback-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      );
+      final service = LocalChatService(
+        repository,
+        providerChatClient: _FakeProviderChatClient(
+          const ModelCompletion.failure(ModelFailureKind.network),
+        ),
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      );
+
+      final exchange = await service.send(
+        requestId: 'fallback-1',
+        text: '今天有点累',
+      );
+
+      expect(exchange.result.messages, ['咋了']);
+      expect(exchange.result.source, ReplySource.local);
+      expect(exchange.result.fallbackReason, FallbackReason.llmError);
+      expect(exchange.session.turns.map((turn) => turn.speaker), [
+        Speaker.user,
+        Speaker.qiyu,
+      ]);
+    },
+  );
 }
 
 final class _FailOnceAtomicWriter implements AtomicTextWriter {
@@ -133,4 +196,14 @@ final class _FailOnceAtomicWriter implements AtomicTextWriter {
     }
     return _delegate.replace(path, contents);
   }
+}
+
+final class _FakeProviderChatClient implements ProviderChatClient {
+  const _FakeProviderChatClient(this.completion);
+
+  final ModelCompletion? completion;
+
+  @override
+  Future<ModelCompletion?> complete(List<ModelMessage> messages) async =>
+      completion;
 }
