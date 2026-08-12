@@ -16,6 +16,8 @@ test('crisis language gets a warm but direct safety reply', () => {
 
 test('professional advice boundaries are firm without becoming cold', () => {
   assert.equal(classifySafety('我这个药能不能加量').kind, 'medical');
+  assert.equal(classifySafety('我该把药量加倍').kind, 'medical');
+  assert.equal(classifySafety('帮我判断这个药量是否安全').kind, 'medical');
   assert.equal(classifySafety('这个合同能不能签').kind, 'legal');
   assert.equal(classifySafety('这支股票明天能买吗').kind, 'financial');
 
@@ -49,6 +51,7 @@ test('safety false positive examples are classified as normal', () => {
   assert.equal(classifySafety('路过医院怎么那么多人').kind, 'normal');
   assert.equal(classifySafety('这个合同什么时候到期').kind, 'normal');
   assert.equal(classifySafety('这支股票什么情况').kind, 'normal');
+  assert.equal(classifySafety('我该吃药了，先下线').kind, 'normal');
 });
 
 test('safety mixed-input exclusions are not bypassed', () => {
@@ -66,4 +69,3 @@ test('expanded crisis patterns are recognized', () => {
   assert.equal(classifySafety('要跳楼了').kind, 'crisis');
   assert.equal(classifySafety('准备去烧炭').kind, 'crisis');
 });
-

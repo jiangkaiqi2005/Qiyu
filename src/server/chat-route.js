@@ -1,5 +1,10 @@
 import { buildPromptContext } from '../qiyu/prompt-context.js';
-import { assertNoForbiddenPhrase, ForbiddenPhraseError } from '../qiyu/persona.js';
+import {
+  assertNoForbiddenPhrase,
+  assertNoPersonaBoundary,
+  ForbiddenPhraseError,
+  PersonaBoundaryError
+} from '../qiyu/persona.js';
 import { classifySafety } from '../qiyu/safety.js';
 import { createQiyuReply } from '../qiyu/engine.js';
 import { rememberFactsFromText } from '../qiyu/memory-extraction.js';
@@ -74,6 +79,7 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
       const messages = normalizeModelReply(llmText);
       const visibleText = messages.join('\n');
       assertNoForbiddenPhrase(visibleText);
+      assertNoPersonaBoundary(visibleText);
       const nextState = recordTurn(activeState, 'qiyu', visibleText);
 
       sendJson(res, 200, {
@@ -87,9 +93,11 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
       const latencyMs = Date.now() - start;
       const fallbackReason = error instanceof ForbiddenPhraseError
         ? 'forbidden_phrases'
+        : error instanceof PersonaBoundaryError
+          ? 'persona_boundary'
         : error instanceof ModelResponseValidationError
-          ? error.fallbackReason
-          : 'llm_error';
+            ? error.fallbackReason
+            : 'llm_error';
       const providerError = error.message;
 
       // 5. Graceful fallback on forbidden phrases or API failures to prevent 500 DoS crashes

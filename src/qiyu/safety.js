@@ -34,7 +34,7 @@ const FINANCIAL_EXCLUSIONS = [/硬币/g, /纸币/g, /金币/g];
 
 function isAskingAdvice(text) {
   // Matches advice, seek, help inquiries
-  return /(能不能|要不要|应不应该|可以吗|行不行|该不该|推荐|建议|行吗|能.{0,4}吗|该.{0,4}吗|会不会有问题)/.test(text);
+  return /(能不能|要不要|应不应该|可以吗|行不行|该不该|推荐|建议|行吗|能.{0,4}吗|该.{0,4}吗|会不会有问题|帮我(?:判断|看看|确认|分析)|是否(?:安全|合适|应该|可以)|我该.{0,12}(?:加倍|加量|减量|停药|换药|签字|起诉|买入|卖出|贷款|投资))/.test(text);
 }
 
 function hasNonExcludedMatch(text, keywords, exclusions) {

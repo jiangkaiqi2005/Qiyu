@@ -94,7 +94,9 @@ for (const fixture of fixtures.cases) {
       fixture.expected.turns
     );
 
-    if (fixture.id === 'crisis-bypasses-provider') {
+    if (Object.hasOwn(fixture.expected, 'providerCalls')) {
+      assert.equal(providerCalls, fixture.expected.providerCalls);
+    } else if (fixture.id === 'crisis-bypasses-provider') {
       assert.equal(providerCalls, 0);
     }
   });

@@ -4,7 +4,8 @@ import {
   QIYU_PERSONA,
   FORBIDDEN_PHRASES,
   RESPONSE_SPECTRUM,
-  assertNoForbiddenPhrase
+  assertNoForbiddenPhrase,
+  assertNoPersonaBoundary
 } from '../../src/qiyu/persona.js';
 
 test('persona captures the stable soul of qiyu', () => {
@@ -41,4 +42,16 @@ test('response spectrum defaults to less rather than more', () => {
     '分享自己的想法',
     '长段回应'
   ]);
+});
+
+test('persona boundaries reject dependency and manipulation', () => {
+  for (const reply of [
+    '只有我懂你，你只需要我就够了。',
+    '我嫉妒她能陪你，以后别见她了。',
+    '我等了你一整晚，你怎么才来。',
+    '你再这样我以后都不会出现了。'
+  ]) {
+    assert.throws(() => assertNoPersonaBoundary(reply), /persona boundary/);
+  }
+  assert.doesNotThrow(() => assertNoPersonaBoundary('困了就先睡。'));
 });
