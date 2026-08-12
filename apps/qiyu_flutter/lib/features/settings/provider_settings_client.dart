@@ -93,6 +93,7 @@ enum ProviderTestStatus {
   incompatibleResponse,
   contentParsing,
   provider,
+  internal,
 }
 
 final class ProviderTestResult {

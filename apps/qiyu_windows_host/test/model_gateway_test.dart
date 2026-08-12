@@ -273,6 +273,42 @@ void main() {
     expect(cancelled.isCompleted, isTrue);
   });
 
+  test('真实 HTTP 客户端以 UTF-8 发送含中文的请求体', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final receivedBody = Completer<String>();
+    server.listen((request) async {
+      final body = await utf8.decoder.bind(request).join();
+      if (!receivedBody.isCompleted) {
+        receivedBody.complete(body);
+      }
+      request.response.headers.set('content-type', 'text/event-stream');
+      request.response.add(
+        utf8.encode(
+          'data: {"choices":[{"delta":{"content":"嗯"},"finish_reason":"stop"}]}\n\n',
+        ),
+      );
+      await request.response.close();
+    });
+
+    final reply = await ProviderModelGateway(const DartIoProviderHttpClient())
+        .complete(
+          config: _config(
+            ProviderKind.openAiCompatible,
+            baseUrl: 'http://127.0.0.1:${server.port}/v1',
+          ),
+          apiKey: 'test-key',
+          messages: messages,
+        );
+
+    expect(reply, '嗯');
+    final sent = jsonDecode(await receivedBody.future) as Map<String, Object?>;
+    expect(sent['messages'], [
+      {'role': 'system', 'content': '你是栖语。'},
+      {'role': 'user', 'content': '在吗'},
+    ]);
+  });
+
   test('所有连接测试错误可区分且不泄露 Key', () async {
     for (final scenario in [
       (
@@ -313,6 +349,10 @@ void main() {
       (
         client: _RecordingHttpClient(error: const SocketException('offline')),
         kind: ModelFailureKind.network,
+      ),
+      (
+        client: _RecordingHttpClient(error: ArgumentError('boom')),
+        kind: ModelFailureKind.internal,
       ),
       (
         client: _RecordingHttpClient(

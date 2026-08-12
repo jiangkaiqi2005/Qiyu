@@ -33,6 +33,7 @@ enum ProviderTestStatus {
   incompatibleResponse,
   contentParsing,
   provider,
+  internal,
 }
 
 final class ProviderTestResult {
@@ -160,6 +161,7 @@ final class ProviderSettingsService
           ProviderTestStatus.incompatibleResponse,
         ModelFailureKind.contentParsing => ProviderTestStatus.contentParsing,
         ModelFailureKind.provider => ProviderTestStatus.provider,
+        ModelFailureKind.internal => ProviderTestStatus.internal,
       };
       return ProviderTestResult(status: status, message: _testMessage(status));
     } on Object {
@@ -186,7 +188,7 @@ final class ProviderSettingsService
     } on ModelGatewayException catch (error) {
       return ModelCompletion.failure(error.kind);
     } on Object {
-      return const ModelCompletion.failure(ModelFailureKind.provider);
+      return const ModelCompletion.failure(ModelFailureKind.internal);
     }
   }
 
@@ -226,8 +228,8 @@ final class ProviderSettingsService
       yield ModelStreamEvent.failure(error.kind, error.message);
     } on Object {
       yield const ModelStreamEvent.failure(
-        ModelFailureKind.provider,
-        '模型服务暂时不可用。',
+        ModelFailureKind.internal,
+        '本机程序内部出错。',
       );
     }
   }
@@ -246,4 +248,5 @@ String _testMessage(ProviderTestStatus status) => switch (status) {
   ProviderTestStatus.incompatibleResponse => '模型服务返回了不兼容的响应格式。',
   ProviderTestStatus.contentParsing => '模型服务返回的内容无法解析。',
   ProviderTestStatus.provider => '模型服务拒绝了测试请求。',
+  ProviderTestStatus.internal => '本机程序内部出错，请重试或重启栖语。',
 };

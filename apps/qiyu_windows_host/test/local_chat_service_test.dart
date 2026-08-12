@@ -341,6 +341,7 @@ void main() {
           FallbackReason.incompatibleModelResponse,
       ModelFailureKind.contentParsing: FallbackReason.modelContentParsing,
       ModelFailureKind.provider: FallbackReason.modelProvider,
+      ModelFailureKind.internal: FallbackReason.modelInternal,
     };
 
     for (final entry in expectedReasons.entries) {

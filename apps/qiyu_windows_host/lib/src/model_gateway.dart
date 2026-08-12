@@ -24,6 +24,7 @@ enum ModelFailureKind {
   incompatibleResponse,
   contentParsing,
   provider,
+  internal,
 }
 
 final class ModelGatewayException implements Exception {
@@ -82,7 +83,7 @@ final class DartIoProviderHttpClient implements ProviderHttpClient {
     try {
       final request = await client.postUrl(uri).timeout(timeout);
       headers.forEach(request.headers.set);
-      request.write(body);
+      request.add(utf8.encode(body));
       final response = await request.close().timeout(timeout);
       return ProviderHttpResponse(
         statusCode: response.statusCode,
@@ -221,8 +222,8 @@ final class ProviderModelGateway implements StreamingModelGateway {
       return;
     } on Object {
       yield const ModelStreamEvent.failure(
-        ModelFailureKind.network,
-        '模型服务暂时不可用。',
+        ModelFailureKind.internal,
+        '本机程序内部出错。',
       );
       return;
     }

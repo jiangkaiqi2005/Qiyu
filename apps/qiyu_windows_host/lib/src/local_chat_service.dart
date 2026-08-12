@@ -595,4 +595,5 @@ FallbackReason _fallbackReasonFor(ModelFailureKind failure) =>
         FallbackReason.incompatibleModelResponse,
       ModelFailureKind.contentParsing => FallbackReason.modelContentParsing,
       ModelFailureKind.provider => FallbackReason.modelProvider,
+      ModelFailureKind.internal => FallbackReason.modelInternal,
     };

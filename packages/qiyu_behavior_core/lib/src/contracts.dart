@@ -33,6 +33,7 @@ enum FallbackReason {
   incompatibleModelResponse('incompatible_model_response'),
   modelContentParsing('model_content_parsing'),
   modelProvider('model_provider'),
+  modelInternal('model_internal'),
   llmError('llm_error');
 
   const FallbackReason(this.wireName);

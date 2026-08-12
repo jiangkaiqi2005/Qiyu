@@ -99,6 +99,7 @@ void main() {
       ModelFailureKind.rateLimited,
       ModelFailureKind.incompatibleResponse,
       ModelFailureKind.contentParsing,
+      ModelFailureKind.internal,
     ]) {
       final service = ProviderSettingsService(
         _MemoryProviderConfigRepository()..config = config,

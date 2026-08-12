@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) and other coding age
 
 栖语 (qiyu) MVP：一个睡前 AI 陪伴原型，重点在行为层——人格一致性、本地记忆、关系阶段、微摩擦、少回应、睡前收束、安全边界。
 
-技术形态：vanilla JavaScript + ESM，**零运行时依赖、无构建步骤**（Node >= 20）。没有 bundler、没有框架、不需要 `npm install`。前端是一个由自研 Node dev server 直出静态文件的 SPA；所有 LLM 调用都走本地服务端代理，API Key 永远不进浏览器。
+当前主交付形态是 **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心**。Windows Host 只监听 `127.0.0.1`，负责静态资源、Provider 调用、凭据与 Markdown 会话持久化；浏览器只负责 UI，API Key 永远不进入浏览器。仓库根目录的 vanilla JavaScript + ESM 应用仍作为迁移期行为基准、回归轨道与实验界面保留（Node >= 20，零运行时依赖）。
 
 ## Commands
 
@@ -18,9 +18,14 @@ This file provides guidance to Claude Code (claude.ai/code) and other coding age
 npm run dev     # 静态 + API dev server → http://127.0.0.1:5173（可用 PORT / HOST 环境变量改）
 npm test        # node --test "test/**/*.test.js"
 npm run eval    # 黄金行为用例套件（eval/golden-cases.json），任何一条失败即 exit 1
+npm run verify:migration-baseline # Dart/Flutter/Windows Host/JS/eval/构建与冒烟全量验证
+npm run build:windows-bundle      # 构建可移动的 Windows Host + Flutter Web 资源包
 ```
 
 - 跑单个测试文件：`node --test test/qiyu/engine.test.js`
+- Dart Core：在 `packages/qiyu_behavior_core` 下运行 `dart analyze && dart test`。
+- Flutter：在 `apps/qiyu_flutter` 下运行 `flutter analyze && flutter test`。
+- Windows Host：在 `apps/qiyu_windows_host` 下运行 `dart analyze && dart test`。
 - eval 套件在 dev server 运行时也可通过 `POST /api/eval/run` 在线跑（`/lab` 页面用的就是它）。
 - 未配置 LLM 时应用自动降级为本地规则引擎，功能完整可测。
 
@@ -28,41 +33,48 @@ npm run eval    # 黄金行为用例套件（eval/golden-cases.json），任何�
 
 ### 分层
 
-- `src/qiyu/` — **纯行为核心**，不依赖 DOM/Node，被浏览器、Node 测试、eval、服务端四方共用。人格与违禁词（`persona.js`）、安全分类（`safety.js`）、意图匹配与回复策略（`reply-policy.js`）、关系阶段（`relationship.js`）、记忆抽取（`memory-extraction.js`）、状态迁移（`state.js`）、prompt 上下文拼装（`prompt-context.js`）、回复清洗（`reply-delivery.js`）、eval 执行器（`eval-runner.js`）。
-- `src/server/` — 仅 Node 侧的服务路由：`chat-route.js`、`settings-route.js`、`llm-client.js`、`config.js`、`system-prompt.js`。静态文件服务**禁止**直接访问该目录（见 `dev-server.mjs` 的 `isAllowedStaticFile`）。
-- `src/screens/` — 每个 SPA 路由一个 `render(container, context)` 模块，由 `src/router.js` 动态 import 懒加载。
-- `src/ui/` — 共享 DOM 工具（app shell、组件、escape/render、`chat-api.js` fetch 封装）。
-- `scripts/dev-server.mjs` 是唯一的服务器入口；`scripts/run-evals.mjs` 是 eval 的 CLI 包装。
+- `packages/qiyu_behavior_core/` — **纯 Dart 行为与协议核心**，不依赖 Flutter、DOM、Node、Windows API 或具体存储。`QiyuBehaviorCore.reply` 负责安全分类、本地回复、候选模型输出清洗/人格边界校验与降级；稳定 DTO、`ChatDeliveryEvent` 流式事件协议也在这里。
+- `apps/qiyu_flutter/` — Flutter Web UI。`features/chat/` 负责本机会话恢复、NDJSON 事件消费、等待/渐进文本/停止生成界面；`features/settings/` 负责 Provider 设置与连接测试。浏览器不持久化 Provider Key。
+- `apps/qiyu_windows_host/` — Dart Windows 本机 Host。`LocalAppHost` 提供 loopback 静态站点和受会话、Origin、CSRF 保护的 API；`LocalChatService` 编排安全回复、流式交付与会话持久化；`ProviderModelGateway` 适配 OpenAI-compatible、Anthropic、Ollama；`MarkdownMemoryRepository` 管理本地 Markdown 会话。
+- `contracts/` — JS/Dart 共用的行为契约 fixture；行为变更必须保证两端一致。
+- `src/`、`test/`、`eval/` — 迁移前的 vanilla JS 行为核心、Node 服务与回归基准。它们仍参与完整验证，不能因 Dart 主链路可用而跳过。
+- `scripts/verify-migration-baseline.ps1` 串联所有分析、测试、Flutter Web 构建、Windows bundle/preflight/launch smoke、JS 测试和黄金 eval。
 
 ### 回复管线（核心数据流）
 
-`/chat` 页面 → `sendChatMessage`（`src/ui/chat-api.js`）→ `POST /api/chat`（body 为 `{ text, state }`）→ `handleChatRequest`：
+Flutter `/chat` → `HttpLocalChatGateway` → `POST /api/chat` → `LocalChatService.deliver`：
 
-1. `classifySafety(text)` 非 normal（危机/医疗等）→ **一律本地引擎应答，绝不发给 LLM**；危机话术包含 `12356`。
-2. 未配置 LLM → 本地引擎（`createQiyuReply`）。
-3. 否则：先剥离输入中的类 XML 标签（防注入），**先**做 `rememberFactsFromText` + `recordTurn(user)` 再生成回复（刻意为之，消除状态更新延迟一拍的问题）；关系阶段按 `初识→熟悉→朋友→深交` 权重取 max，**只升不降（sticky）**——这段逻辑在 `chat-route.js` 和 `engine.js` 里各有一份，改动时两处都要同步。
-4. system prompt = 硬规则 + `栖语产品灵魂.md` 全文（包在 `<product_soul>` 里，服务启动时读入）；`buildPromptContext`（`includeHistory: false`，避免历史重复）+ 最近 8 轮 turns 一起发给 `callChatCompletions`。
-5. LLM 输出经 `normalizeReplyMessages` 清洗后过 `assertNoForbiddenPhrase`——命中违禁词或 API 出错都**优雅降级回本地引擎**，返回体带 `source: 'llm' | 'local'` 和 `fallbackReason: 'safety' | 'no_llm_config' | 'forbidden_phrases' | 'llm_error'`（`/lab` 诊断面板靠这些字段渲染）。
+1. Host 先校验 `requestId`/文本，按 `requestId` 幂等写入用户原始消息；写入 sessions 的文本只做 secrets 脱敏，发送给安全分类与模型的文本另行清洗类 XML、ChatML 与角色控制结构。
+2. `QiyuBehaviorCore.reply` 先在本地分类危机、医疗、法律、金融等 non-normal 输入；这类输入**绝不调用 Provider**。未配置 Provider、Provider 失败或模型输出不合格时统一走本地规则回复。
+3. 普通输入通过 `ModelPromptBuilder` 注入硬规则、`栖语产品灵魂.md` 全文与最近已完成会话，再交给 `StreamingProviderChatClient`。
+4. `ProviderModelGateway` 将 OpenAI SSE、Anthropic SSE、Ollama NDJSON 统一为 `delta / done / failure`。只有收到协议原生终止标记（OpenAI `finish_reason`/`[DONE]`、Anthropic `message_stop`、Ollama `done:true`）才算完成；提前 EOF、超时或原生 error 必须失败并降级，不能把半句当完整回复。
+5. Provider 的原始增量先在 Host 内完整缓存；候选回复通过结构清洗、违禁词与人格边界校验后，才以共享 `ChatDeliveryEvent` 协议发送 `accepted → waiting → [fallback] → delta* → message → state → done`。页面绝不能看到未经完整安全校验的原始 token。
+6. 用户可通过 `/api/chat/cancel` 按 `requestId` 停止生成；取消会向下取消 Provider/HTTP 流，只保留可重试的用户 turn，不把已展示半句或未完成候选记录为完整栖语回复。
+7. 只有安全可见文本交付完成后才追加栖语 turn。刷新、Host 重启或同一 `requestId` 重试必须复用已有用户 turn/已完成回复，不能重复展示或落盘。晚安类输入在本地直接收束，不调用 Provider、不开新话题。
 
 **本地规则引擎不是占位 stub，而是行为基准（ground truth）**：黄金 eval 锁定的就是它的输出。
 
 ### 状态与配置
 
-- 全部会话状态在浏览器 localStorage（`createInitialState` 定义形状；单会话上限 80 轮、历史保留 180 天）。无账号、无云端记忆。
-- 配置优先级：环境变量 `LLM_API_URL` / `LLM_API_KEY` / `LLM_MODEL` **高于** `qiyu.config.local.json`（已 gitignore）。URL 会被 `normalizeChatCompletionsUrl` 自动规范化（OpenAI 系补 `/chat/completions`，`api.anthropic.com` 补 `/messages`）。
-- 安全不变量：settings/dev 路由有 CSRF token + Origin 校验；GET `/api/settings` 返回的 key 一律打码；错误输出中的 key 会被 redact。
-- PWA：`main.js` 注册 `sw.js`，离线回退 `public/offline.html`。
+- 主链路会话由 Windows Host 写入本机 Markdown sessions；单段最多 80 turns，活动历史窗口 180 天。浏览器刷新后从 Host 恢复，不以 localStorage 作为主持久化层。无账号、无云端记忆。
+- Provider 非敏感配置写在本机 runtime 目录；API Key 由 Windows Credential Manager 保存。切换 Provider/URL 时不得沿用另一 credential scope 的旧 Key。
+- 支持 OpenAI-compatible、Anthropic、Ollama。地址规范化、鉴权头、请求体、流式解析和错误分类集中在 Provider 层；不要在 UI 或 Chat Service 重复 Provider 分支。
+- 安全不变量：Host 仅监听 loopback；API 需要 Host 会话，修改请求还需同源 Origin + CSRF；读取设置永不返回明文 Key；对外错误只返回允许列表诊断，禁止透出授权头、Cookie、完整敏感输入、第三方错误原文或本机路径。
+- 根目录旧 Node 应用仍使用环境变量/`qiyu.config.local.json`，但这是迁移回归轨道，不代表 Flutter/Windows 主链路把 Key 放进浏览器。
 
 ## Behavior constraints（改动回复行为前必读）
 
 - `栖语产品灵魂.md` 是人格/风格的最高优先级依据（直接注入 system prompt）；`docs/product/behavior-spec.md` 是从它提炼的工程行为规范。
 - 关键约束：默认少说（回复频谱取最少一侧）；禁止客服式话术（`FORBIDDEN_PHRASES`，如「我理解你的感受」「谢谢你愿意和我分享」）；用户说「晚安」只收束、不开新话题；调侃/翻旧账只在关系变深后出现；一致性高于聪明。
 - 改回复逻辑时，同步更新 `eval/golden-cases.json`，并保持 `npm test` 与 `npm run eval` 全绿。
+- 跨 JS/Dart 的行为或协议改动还要同步 `contracts/qiyu_behavior_contracts.json` 和两端消费测试；不得用一端自测掩盖 wire 分叉。
 
 ## Testing conventions
 
-- `test/` 目录镜像 `src/` 结构（`test/qiyu`、`test/screens`、`test/server`、`test/ui`）。
-- 零依赖约束的代价：screen 测试手写 `globalThis.window` / `globalThis.document` 桩对象；server 测试通过**参数注入**替换 `fetchImpl` / `writeFileImpl` / `loadRuntimeConfigImpl` 等。写新测试请沿用这两种手法，不要引入任何测试框架或 DOM 库。
+- 根 `test/` 目录镜像旧 JS `src/` 结构；screen 测试使用手写 DOM 桩，server 测试使用参数注入，不要为旧轨道引入测试框架或 DOM 库。
+- Dart Core、Flutter、Windows Host 各自在包内维护测试。Host 通过抽象接口注入 Provider、HTTP、凭据、时钟和原子写入；Flutter widget 测试注入流式 gateway 与 Host probe。
+- 流式改动至少覆盖：三种 Provider 正常终止、提前 EOF、超时/原生错误、底层订阅取消；Host 正常/取消/半途失败/本地回退/晚安/刷新重启幂等；Flutter 等待态、安全增量可见节奏、停止按钮与最终只提交一次。
+- 交付前运行 `npm run verify:migration-baseline`，不能只跑本次改动的专项测试。该命令必须保持 Dart analyze/test、Flutter analyze/test/Web build、Windows Host analyze/test/bundle/preflight/launch smoke、JS test、golden eval 全绿。
 
 ## Notes
 
