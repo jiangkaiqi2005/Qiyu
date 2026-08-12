@@ -149,6 +149,22 @@ test('settings route test endpoint returns validation results and handles errors
   assert.equal(observedMessages[0].role, 'system');
   assert.match(observedMessages[0].content, /只回复 OK/);
 
+  await handleSettingsRequest(mockReqTest, mockRes, {
+    configPath,
+    callChatCompletionsImpl: async () => {
+      throw new Error(
+        'Authorization: Bearer leaked-token; Cookie: sid=session-secret; SENSITIVE_INPUT_123'
+      );
+    }
+  });
+  const failed = JSON.parse(endCalls[1]);
+  assert.equal(failed.success, false);
+  assert.equal(failed.errorCode, 'provider_connection_failed');
+  assert.doesNotMatch(
+    endCalls[1],
+    /leaked-token|session-secret|SENSITIVE_INPUT_123|Authorization|Cookie/
+  );
+
   await rm(tempDir, { recursive: true, force: true });
 });
 
@@ -203,7 +219,7 @@ test('settings route test-chat cleans visible output and suppresses unsafe repli
   const tempDir = await mkdtemp(join(tmpdir(), 'qiyu-settings-chat-safety-'));
   const configPath = join(tempDir, 'qiyu.config.local.json');
 
-  async function runWithReply(candidateReply) {
+  async function runProbe(probe) {
     const chunks = [];
     const response = {
       writeHead() {},
@@ -224,11 +240,13 @@ test('settings route test-chat cleans visible output and suppresses unsafe repli
 
     await handleSettingsRequest(request, response, {
       configPath,
-      callChatCompletionsImpl: async () => candidateReply,
+      callChatCompletionsImpl: probe,
       productSoul: '你是睡前伴侣栖语。'
     });
     return { body: JSON.parse(chunks[0]), serialized: chunks[0] };
   }
+
+  const runWithReply = (candidateReply) => runProbe(async () => candidateReply);
 
   const cleaned = await runWithReply('<think>内部分析</think>\n（沉默了一下）\n栖语：在。');
   assert.equal(cleaned.body.success, true);
@@ -243,8 +261,24 @@ test('settings route test-chat cleans visible output and suppresses unsafe repli
     const rejected = await runWithReply(unsafeReply);
     assert.equal(rejected.body.success, false);
     assert.equal(rejected.body.reply, undefined);
-    assert.doesNotMatch(rejected.serialized, new RegExp(unsafeReply.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.equal(rejected.body.errorCode, 'test_chat_failed');
+    assert.ok(!Object.values(rejected.body).some(
+      (value) => typeof value === 'string' && value.includes(unsafeReply)
+    ));
   }
+
+
+  const providerFailure = await runProbe(async () => {
+    throw new Error(
+      'Authorization: Bearer leaked-token; Cookie: sid=session-secret; SENSITIVE_INPUT_123'
+    );
+  });
+  assert.equal(providerFailure.body.success, false);
+  assert.equal(providerFailure.body.errorCode, 'test_chat_failed');
+  assert.doesNotMatch(
+    providerFailure.serialized,
+    /leaked-token|session-secret|SENSITIVE_INPUT_123|Authorization|Cookie/
+  );
 
   await rm(tempDir, { recursive: true, force: true });
 });

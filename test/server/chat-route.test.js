@@ -148,8 +148,9 @@ test('chat route falls back local when LLM returns forbidden phrase', async () =
   assert.ok(typeof body.latencyMs === 'number');
 });
 
-test('chat route exposes error context and latency when API request fails', async () => {
-  const req = reqWithJson({ text: '今天好烦', state: createInitialState('local-user') });
+test('chat route exposes only allowlisted diagnostics when API request fails', async () => {
+  const sensitiveInput = 'SENSITIVE_INPUT_123';
+  const req = reqWithJson({ text: sensitiveInput, state: createInitialState('local-user') });
   const res = captureRes();
 
   await handleChatRequest(req, res, {
@@ -167,13 +168,21 @@ test('chat route exposes error context and latency when API request fails', asyn
     fetchImpl: async () => ({
       ok: false,
       status: 500,
-      async text() { return 'internal mock crash'; }
+      async text() {
+        return 'Authorization: Bearer leaked-token; Cookie: sid=session-secret; SENSITIVE_INPUT_123';
+      }
     })
   });
 
   const body = JSON.parse(res.body());
   assert.equal(body.source, 'local');
   assert.equal(body.fallbackReason, 'llm_error');
-  assert.match(body.providerError, /internal mock crash/);
+  assert.equal(body.providerError, '模型服务暂时不可用');
+  assert.equal(body.debug.error, 'provider_request_failed');
+  assert.doesNotMatch(res.body(), /leaked-token|session-secret|Authorization|Cookie/);
+  assert.doesNotMatch(
+    JSON.stringify({ providerError: body.providerError, debug: body.debug }),
+    /SENSITIVE_INPUT_123/
+  );
   assert.ok(typeof body.latencyMs === 'number');
 });

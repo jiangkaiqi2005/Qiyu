@@ -98,17 +98,19 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
         : error instanceof ModelResponseValidationError
             ? error.fallbackReason
             : 'llm_error';
-      const providerError = error.message;
+      const diagnosticCode = fallbackReason === 'llm_error'
+        ? 'provider_request_failed'
+        : fallbackReason;
 
       // 5. Graceful fallback on forbidden phrases or API failures to prevent 500 DoS crashes
       const result = fallbackReply(sanitizedText, state);
       sendJson(res, 200, {
         messages: result.messages,
         nextState: result.nextState,
-        debug: { ...result.debug, error: error.message },
+        debug: { ...result.debug, error: diagnosticCode },
         source: 'local',
         fallbackReason,
-        providerError,
+        providerError: '模型服务暂时不可用',
         latencyMs
       });
     }

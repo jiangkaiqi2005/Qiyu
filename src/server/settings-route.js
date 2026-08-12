@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { loadRuntimeConfig, normalizeChatCompletionsUrl } from './config.js';
 import { callChatCompletions } from './llm-client.js';
-import { readJsonBody, sendJson, validateCsrfAndOrigin, redactSecret } from './http-utils.js';
+import { readJsonBody, sendJson, validateCsrfAndOrigin } from './http-utils.js';
 
 export const csrfToken = randomBytes(24).toString('hex');
 
@@ -114,13 +114,11 @@ export async function handleSettingsRequest(req, res, {
         });
       } catch (err) {
         const latencyMs = Date.now() - start;
-        const errMsg = redactSecret(err.message || String(err), apiKey);
         sendJson(res, 200, {
           success: false,
-          normalizedApiUrl,
-          model: testLlm.model,
           latencyMs,
-          error: errMsg
+          error: '模型连接失败，请检查地址、模型和凭据后重试。',
+          errorCode: 'provider_connection_failed'
         });
       }
       return;
@@ -176,10 +174,10 @@ export async function handleSettingsRequest(req, res, {
         });
       } catch (err) {
         const latencyMs = Date.now() - start;
-        const errMsg = redactSecret(err.message || String(err), apiKey);
         sendJson(res, 200, {
           success: false,
-          error: errMsg,
+          error: '栖语回复测试未通过，请检查模型配置后重试。',
+          errorCode: 'test_chat_failed',
           latencyMs
         });
       }
