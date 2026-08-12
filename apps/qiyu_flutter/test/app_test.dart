@@ -48,6 +48,42 @@ void main() {
     expect(find.text('本地规则回复'), findsOneWidget);
   });
 
+  testWidgets('renders Qiyu replies as markdown but keeps user input plain', (
+    tester,
+  ) async {
+    final gateway = _FakeLocalChatGateway(
+      restored: const LocalChatSnapshot(
+        sessionId: 'session-1',
+        messages: [
+          LocalChatMessage(
+            requestId: 'old-1',
+            speaker: LocalChatSpeaker.user,
+            text: '**用户输入不当 Markdown 解析**',
+          ),
+          LocalChatMessage(
+            requestId: 'old-1',
+            speaker: LocalChatSpeaker.qiyu,
+            text: '先**躺好**，慢慢说',
+            source: ReplySource.llm,
+          ),
+        ],
+      ),
+    );
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      autoStart: false,
+    );
+    await viewModel.initialize();
+
+    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
+    await tester.pumpAndSettle();
+
+    expect(find.text('**用户输入不当 Markdown 解析**'), findsOneWidget);
+    expect(find.text('先**躺好**，慢慢说'), findsNothing);
+    expect(find.text('先躺好，慢慢说'), findsOneWidget);
+  });
+
   testWidgets('sends non-empty text and renders user and local Qiyu replies', (
     tester,
   ) async {

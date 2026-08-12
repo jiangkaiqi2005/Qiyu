@@ -7,7 +7,9 @@ environment:
   sdk: ^3.12.2
 
 dependencies:
+  crypto: ^3.0.7
   ffi: 2.1.4
+  meta: ^1.19.0
   path: ^1.9.1
   qiyu_behavior_core:
     path: ../../packages/qiyu_behavior_core

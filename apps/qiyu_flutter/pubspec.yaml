@@ -10,10 +10,12 @@ dependencies:
   flutter:
     sdk: flutter
   go_router: ^17.4.0
+  gpt_markdown: ^1.1.8
   http: ^1.6.0
   provider: ^6.1.5+1
   qiyu_behavior_core:
     path: ../../packages/qiyu_behavior_core
+  uuid: ^4.6.0
 
 dev_dependencies:
   flutter_test:
