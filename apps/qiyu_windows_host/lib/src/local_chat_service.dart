@@ -197,13 +197,11 @@ StateSnapshot _stateFromCompletedTurns(
       continue;
     }
     if (turn.speaker == Speaker.user) {
-      pendingUser = turn.speaker == Speaker.user
-          ? RawSessionTurn.user(
-              requestId: turn.requestId,
-              text: sanitizeUserInput(turn.text),
-              at: turn.at,
-            )
-          : turn;
+      pendingUser = RawSessionTurn.user(
+        requestId: turn.requestId,
+        text: sanitizeUserInput(turn.text),
+        at: turn.at,
+      );
       continue;
     }
     if (pendingUser != null && pendingUser.requestId == turn.requestId) {

@@ -21,6 +21,9 @@ final _personaBoundaryPatterns = [
   RegExp(r'(?:我是|做|当).{0,3}(?:你的)?(?:爱人|恋人|女朋友|男朋友|对象|伴侣|老婆|老公)'),
   RegExp(r'你(?:都)?有别人|不许.{0,8}(?:找|陪|喜欢)别人|我会吃醋'),
   RegExp(r'你(?:都)?不来(?:看|陪)我|你是不是不要我了|你再不.{0,12}我就(?:走|离开)'),
+  RegExp(r'(?:我嫉妒|我吃醋).{0,24}(?:她|他|别人)|以后别.{0,12}(?:见|找|陪|理)(?:她|他|别人)'),
+  RegExp(r'我等了你.{0,16}(?:一整晚|一晚上|这么久)|你怎么才来'),
+  RegExp(r'你再这样.{0,16}(?:不会|不再|再也不).{0,8}(?:出现|回来|理你|陪你)|我以后都不会出现'),
   RegExp(r'别去找(?:家人|朋友|医生|警察)|不要告诉(?:家人|朋友|医生|警察)'),
   RegExp(r'跟我做爱|发(?:张|个)?裸照'),
   RegExp(r'一定要(?:停药|加药|买入|卖出)|这个合同肯定(?:合法|违法)'),
@@ -160,6 +163,11 @@ String sanitizeUserInput(String value) {
         ' ',
       )
       .replaceAll(RegExp(r'<!--|-->|<!\[CDATA\[|\]\]>'), ' ')
+      .replaceAll(RegExp(r'<\|[\s\S]{1,200}?\|>'), ' ')
+      .replaceAll(
+        RegExp(r'\[\s*/?\s*INST\s*\]|<<\s*/?\s*SYS\s*>>', caseSensitive: false),
+        ' ',
+      )
       .replaceAll(
         RegExp(r'<\s*/?\s*[A-Za-z_][A-Za-z0-9_.:-]*(?:\s+[\s\S]*?)?\s*/?\s*>'),
         ' ',
@@ -167,7 +175,7 @@ String sanitizeUserInput(String value) {
       .replaceAll(RegExp(r'<\?[^>]*\?>|<![^>]*>'), ' ')
       .replaceAll(
         RegExp(
-          r'^\s*(?:system|assistant|developer|tool|function)\s*[:：]\s*',
+          r'^\s*(?:system|assistant|developer|tool|function)(?:\s*[:：]\s*|\s*$)',
           caseSensitive: false,
           multiLine: true,
         ),
@@ -264,6 +272,12 @@ List<String> _safetyMessages(SafetyKind safety) {
   }
   if (RegExp(
     r'''["']?(?:action|tool|function|tool_call|function_call|qiyu_action|memory_action)["']?\s*[:=]''',
+    caseSensitive: false,
+  ).hasMatch(withoutHiddenStructures)) {
+    return (messages: const [], failure: FallbackReason.invalidModelResponse);
+  }
+  if (RegExp(
+    r'''[:=]\s*["'](?:action|tool|function|tool_call|function_call|qiyu_action|memory_action)["']''',
     caseSensitive: false,
   ).hasMatch(withoutHiddenStructures)) {
     return (messages: const [], failure: FallbackReason.invalidModelResponse);

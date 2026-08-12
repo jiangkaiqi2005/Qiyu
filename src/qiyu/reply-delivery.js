@@ -34,6 +34,18 @@ const SPEAKER_PREFIX_PATTERN = /^(栖语|她|他)\s*[：:]\s*/;
 const STAGE_PHRASE = '(?:等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下)';
 const WRAPPED_LEADING_STAGE_PATTERN = new RegExp(`^[（(【\\[]\\s*${STAGE_PHRASE}[。.!！?？,，、\\s]*[）)】\\]]\\s*`);
 const LEADING_STAGE_PATTERN = new RegExp(`^${STAGE_PHRASE}[。.!！?？,，、\\s]+`);
+const HIDDEN_STRUCTURE_PATTERN = /<\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu_action|actions?|memory_action)\b[^>]*>[\s\S]*?<\s*\/\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu_action|actions?|memory_action)\s*>/gi;
+const LEFTOVER_STRUCTURE_PATTERN = /<\s*\/?\s*[A-Za-z_][^>\r\n]*>/;
+const CONTROL_KEY_PATTERN = /["']?(?:action|tool|function|tool_call|function_call|qiyu_action|memory_action)["']?\s*[:=]/i;
+const CONTROL_VALUE_PATTERN = /[:=]\s*["'](?:action|tool|function|tool_call|function_call|qiyu_action|memory_action)["']/i;
+
+export class ModelResponseValidationError extends Error {
+  constructor(fallbackReason) {
+    super(fallbackReason);
+    this.name = 'ModelResponseValidationError';
+    this.fallbackReason = fallbackReason;
+  }
+}
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -91,6 +103,23 @@ export function normalizeReplyMessages(messages, { fallback = '我在。' } = {}
 
   if (visible.length) return visible;
   return fallback === null ? [] : [fallback];
+}
+
+export function normalizeModelReply(value) {
+  const visibleText = String(value || '').replace(HIDDEN_STRUCTURE_PATTERN, '');
+  if (
+    LEFTOVER_STRUCTURE_PATTERN.test(visibleText)
+    || CONTROL_KEY_PATTERN.test(visibleText)
+    || CONTROL_VALUE_PATTERN.test(visibleText)
+  ) {
+    throw new ModelResponseValidationError('invalid_model_response');
+  }
+
+  const messages = normalizeReplyMessages(visibleText.split('\n'), { fallback: null });
+  if (!messages.length) {
+    throw new ModelResponseValidationError('empty_model_reply');
+  }
+  return messages;
 }
 
 export function calculateTextWaitMs({ userText = '', replyText = '', mode = '', random = Math.random } = {}) {

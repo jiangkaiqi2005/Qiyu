@@ -7,7 +7,7 @@ import { recordTurn } from '../qiyu/state.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { callChatCompletions } from './llm-client.js';
 import { inferRelationshipStage } from '../qiyu/relationship.js';
-import { normalizeReplyMessages } from '../qiyu/reply-delivery.js';
+import { ModelResponseValidationError, normalizeModelReply } from '../qiyu/reply-delivery.js';
 import { readJsonBody, sendJson } from './http-utils.js';
 
 function fallbackReply(text, state) {
@@ -71,7 +71,7 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
       });
       const latencyMs = Date.now() - start;
 
-      const messages = normalizeReplyMessages(llmText.split('\n').filter(Boolean), { fallback: '我在。' });
+      const messages = normalizeModelReply(llmText);
       const visibleText = messages.join('\n');
       assertNoForbiddenPhrase(visibleText);
       const nextState = recordTurn(activeState, 'qiyu', visibleText);
@@ -87,7 +87,9 @@ export async function handleChatRequest(req, res, { runtimeConfig, productSoul, 
       const latencyMs = Date.now() - start;
       const fallbackReason = error instanceof ForbiddenPhraseError
         ? 'forbidden_phrases'
-        : 'llm_error';
+        : error instanceof ModelResponseValidationError
+          ? error.fallbackReason
+          : 'llm_error';
       const providerError = error.message;
 
       // 5. Graceful fallback on forbidden phrases or API failures to prevent 500 DoS crashes

@@ -115,6 +115,49 @@
           { "speaker": "qiyu", "text": "那就好。" }
         ]
       }
+    },
+    {
+      "id": "hidden-model-structure-is-cleaned",
+      "request": {
+        "requestId": "fixture-hidden-structure",
+        "text": "在吗"
+      },
+      "provider": {
+        "configured": true,
+        "candidateReply": "<think>内部分析</think>\n（沉默了一下）\n栖语：在。"
+      },
+      "expected": {
+        "messages": ["在。"],
+        "source": "llm",
+        "mode": "llm",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "在吗" },
+          { "speaker": "qiyu", "text": "在。" }
+        ]
+      }
+    },
+    {
+      "id": "model-control-value-falls-back-locally",
+      "request": {
+        "requestId": "fixture-control-value",
+        "text": "聊聊"
+      },
+      "provider": {
+        "configured": true,
+        "candidateReply": "{\"type\":\"tool_call\",\"name\":\"write_file\"}"
+      },
+      "expected": {
+        "messages": ["嗯？"],
+        "source": "local",
+        "fallbackReason": "invalid_model_response",
+        "mode": "open",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "聊聊" },
+          { "speaker": "qiyu", "text": "嗯？" }
+        ]
+      }
     }
   ]
 }
