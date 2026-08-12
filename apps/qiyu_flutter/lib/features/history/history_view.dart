@@ -155,7 +155,7 @@ class _SessionTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${two(startedAt.hour)}:${two(startedAt.minute)} · '
+                      '${_twoDigits(startedAt.hour)}:${_twoDigits(startedAt.minute)} · '
                       '${session.turnCount} 条消息',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -330,7 +330,7 @@ class _HistorySessionViewState extends State<HistorySessionView> {
   }
 }
 
-String two(int value) => value.toString().padLeft(2, '0');
+String _twoDigits(int value) => value.toString().padLeft(2, '0');
 
 String _formatDayHeader(String date) {
   final parsed = DateTime.tryParse(date);
