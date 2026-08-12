@@ -77,7 +77,7 @@ final class LocalChatService {
     String? sessionId,
   }) => _serialized(() async {
     final trimmedRequestId = requestId.trim();
-    final trimmedText = _stripStructureTags(text).trim();
+    final trimmedText = sanitizeUserInput(text);
     if (trimmedRequestId.isEmpty || trimmedText.isEmpty) {
       throw const LocalChatException(
         code: 'invalid_request',
@@ -155,7 +155,10 @@ final class LocalChatService {
             _behaviorCore.reply(
                   ChatRequest(requestId: trimmedRequestId, text: trimmedText),
                   state,
-                  candidateReply: completion.succeeded ? completion.text! : '',
+                  candidateReply: completion.text,
+                  modelFailure: completion.failure == null
+                      ? null
+                      : _fallbackReasonFor(completion.failure!),
                 )
                 as ChatResult;
       }
@@ -250,5 +253,17 @@ RawSessionTurn? _findTurn(
   return null;
 }
 
-String _stripStructureTags(String text) =>
-    text.replaceAll(RegExp(r'<[^>\r\n]{1,200}>'), ' ');
+FallbackReason _fallbackReasonFor(ModelFailureKind failure) =>
+    switch (failure) {
+      ModelFailureKind.dns => FallbackReason.modelDns,
+      ModelFailureKind.tls => FallbackReason.modelTls,
+      ModelFailureKind.timeout => FallbackReason.modelTimeout,
+      ModelFailureKind.authentication => FallbackReason.modelAuthentication,
+      ModelFailureKind.network => FallbackReason.modelNetwork,
+      ModelFailureKind.modelNotFound => FallbackReason.modelNotFound,
+      ModelFailureKind.rateLimited => FallbackReason.modelRateLimited,
+      ModelFailureKind.incompatibleResponse =>
+        FallbackReason.incompatibleModelResponse,
+      ModelFailureKind.contentParsing => FallbackReason.modelContentParsing,
+      ModelFailureKind.provider => FallbackReason.modelProvider,
+    };

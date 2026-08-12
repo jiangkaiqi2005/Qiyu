@@ -475,6 +475,30 @@ String redactSessionText(String text) {
   return result;
 }
 
+String redactDiagnosticText(String text) {
+  var result = redactSessionText(text);
+  final patterns = <RegExp>[
+    RegExp(
+      r'((?:authorization|proxy-authorization)\s*[:=]\s*)[^\r\n,;]+',
+      caseSensitive: false,
+    ),
+    RegExp(r'(cookie\s*[:=]\s*)[^\r\n]+', caseSensitive: false),
+    RegExp(
+      r'((?:用户输入|完整输入|user input|prompt)\s*[:=：]\s*)[^\r\n]+',
+      caseSensitive: false,
+    ),
+    RegExp(r'[A-Za-z]:\\(?:[^\\\r\n\s]+\\)*[^\\\r\n\s]+'),
+    RegExp(r'/(?:Users|home)/[^\r\n\s]+', caseSensitive: false),
+  ];
+  for (final pattern in patterns) {
+    result = result.replaceAllMapped(pattern, (match) {
+      final prefix = match.groupCount > 0 ? match.group(1) : null;
+      return '${prefix ?? ''}[已脱敏]';
+    });
+  }
+  return result;
+}
+
 extension<T> on Iterable<T> {
   T? get firstOrNull {
     final iterator = this.iterator;

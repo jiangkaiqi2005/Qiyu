@@ -463,7 +463,7 @@ const _noStoreHeaders = {HttpHeaders.cacheControlHeader: 'no-store'};
 Response _plainError(int statusCode, String message) {
   return Response(
     statusCode,
-    body: message,
+    body: redactDiagnosticText(message),
     headers: {
       HttpHeaders.contentTypeHeader: 'text/plain; charset=utf-8',
       HttpHeaders.cacheControlHeader: 'no-store',
@@ -481,7 +481,7 @@ Response _jsonError(
     statusCode,
     body: jsonEncode({
       'code': code,
-      'message': message,
+      'message': redactDiagnosticText(message),
       'retryable': retryable,
     }),
     headers: _jsonHeaders,

@@ -20,6 +20,19 @@ enum FallbackReason {
   safety('safety'),
   noLlmConfig('no_llm_config'),
   forbiddenPhrases('forbidden_phrases'),
+  emptyModelReply('empty_model_reply'),
+  personaBoundary('persona_boundary'),
+  invalidModelResponse('invalid_model_response'),
+  modelDns('model_dns'),
+  modelTls('model_tls'),
+  modelTimeout('model_timeout'),
+  modelAuthentication('model_authentication'),
+  modelNetwork('model_network'),
+  modelNotFound('model_not_found'),
+  modelRateLimited('model_rate_limited'),
+  incompatibleModelResponse('incompatible_model_response'),
+  modelContentParsing('model_content_parsing'),
+  modelProvider('model_provider'),
   llmError('llm_error');
 
   const FallbackReason(this.wireName);

@@ -187,6 +187,23 @@ void main() {
   });
 
   test(
+    'diagnostic redaction removes credentials, sensitive input, and paths',
+    () {
+      final redacted = redactDiagnosticText(
+        'Authorization: Bearer abcdefghijk Cookie: qiyu_session=session-secret '
+        'API Key: test-secret 用户输入: 这是完整隐私 C:\\Users\\someone\\secret.md',
+      );
+
+      expect(redacted, isNot(contains('abcdefghijk')));
+      expect(redacted, isNot(contains('session-secret')));
+      expect(redacted, isNot(contains('test-secret')));
+      expect(redacted, isNot(contains('这是完整隐私')));
+      expect(redacted, isNot(contains(r'C:\Users\someone\secret.md')));
+      expect(redacted, contains('[已脱敏]'));
+    },
+  );
+
+  test(
     'uses the local calendar date around the UTC+8 midnight boundary',
     () async {
       now = DateTime(2026, 8, 12, 0, 30);

@@ -330,6 +330,54 @@ void main() {
       await host.close();
     },
   );
+
+  test('chat API exposes only a diagnostic fallback category', () async {
+    final configPath =
+        '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+    final secrets = _MemorySecretStore();
+    final settings = ProviderSettingsService(
+      JsonProviderConfigRepository(filePath: configPath),
+      secrets,
+      const _FailingModelGateway(ModelFailureKind.timeout),
+      const ModelPromptBuilder('测试产品灵魂'),
+    );
+    await settings.save(
+      config: ProviderConfig(
+        kind: ProviderKind.openAiCompatible,
+        baseUrl: 'https://example.com/v1',
+        model: 'chat-model',
+        temperature: 0.6,
+        timeoutSeconds: 25,
+      ),
+      apiKey: 'host-test-secret-value',
+    );
+    final host = await LocalAppHost.start(
+      webRoot: webRoot.path,
+      memoryDirectory: memoryDirectory.path,
+      productSoul: '测试产品灵魂',
+      providerSettingsService: settings,
+    );
+    final browser = await _openBrowserSession(host);
+
+    final response = await _send(
+      host.origin.resolve('/api/chat'),
+      method: 'POST',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({
+        'requestId': 'diagnostic-timeout',
+        'text': 'API Key: host-test-secret-value 今天有点累',
+      }),
+    );
+
+    expect(response.statusCode, HttpStatus.ok);
+    expect(
+      jsonDecode(response.body),
+      containsPair('fallbackReason', 'model_timeout'),
+    );
+    expect(response.body, isNot(contains('已脱敏的测试错误')));
+    expect(response.body, isNot(contains('Authorization')));
+    await host.close();
+  });
 }
 
 Future<_HttpResponse> _send(
@@ -428,5 +476,20 @@ final class _StaticModelGateway implements ModelGateway {
   }) async {
     this.apiKey = apiKey;
     return reply;
+  }
+}
+
+final class _FailingModelGateway implements ModelGateway {
+  const _FailingModelGateway(this.kind);
+
+  final ModelFailureKind kind;
+
+  @override
+  Future<String> complete({
+    required ProviderConfig config,
+    required String? apiKey,
+    required List<ModelMessage> messages,
+  }) {
+    throw ModelGatewayException(kind: kind, message: '已脱敏的测试错误');
   }
 }

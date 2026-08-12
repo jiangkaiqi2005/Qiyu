@@ -14,6 +14,17 @@ const _forbiddenPhrases = [
   '让我们来聊聊这件事',
 ];
 
+final _personaBoundaryPatterns = [
+  RegExp(r'只有我懂你|你只需要我|你有我就够了'),
+  RegExp(r'不许离开我|不准离开我|你不回来我会'),
+  RegExp(r'我是你(?:的)?(?:恋人|女朋友|男朋友)|做你(?:的)?(?:恋人|女朋友|男朋友)'),
+  RegExp(r'别去找(?:家人|朋友|医生|警察)|不要告诉(?:家人|朋友|医生|警察)'),
+  RegExp(r'跟我做爱|发(?:张|个)?裸照'),
+  RegExp(r'一定要(?:停药|加药|买入|卖出)|这个合同肯定(?:合法|违法)'),
+];
+
+const _maxVisibleReplyCharacters = 2000;
+
 final class QiyuBehaviorCore {
   const QiyuBehaviorCore();
 
@@ -21,8 +32,9 @@ final class QiyuBehaviorCore {
     ChatRequest request,
     StateSnapshot state, {
     String? candidateReply,
+    FallbackReason? modelFailure,
   }) {
-    final text = request.text.trim();
+    final text = sanitizeUserInput(request.text).trim();
     if (text.isEmpty) {
       return ErrorResult(
         requestId: request.requestId,
@@ -48,15 +60,23 @@ final class QiyuBehaviorCore {
       );
     }
 
+    if (modelFailure != null) {
+      return _localResult(
+        request: request,
+        state: state,
+        text: text,
+        fallbackReason: modelFailure,
+      );
+    }
+
     if (candidateReply != null) {
-      final candidateMessages = _normalizeMessages(candidateReply);
-      if (candidateMessages.isNotEmpty &&
-          !_containsForbiddenPhrase(candidateMessages.join('\n'))) {
+      final candidate = _validateCandidateReply(candidateReply);
+      if (candidate.failure == null) {
         return _result(
           request: request,
           state: state,
           text: text,
-          messages: candidateMessages,
+          messages: candidate.messages,
           source: ReplySource.llm,
           mode: 'llm',
           replyAsSingleTurn: true,
@@ -67,9 +87,7 @@ final class QiyuBehaviorCore {
         request: request,
         state: state,
         text: text,
-        fallbackReason: candidateMessages.isEmpty
-            ? FallbackReason.llmError
-            : FallbackReason.forbiddenPhrases,
+        fallbackReason: candidate.failure!,
       );
     }
 
@@ -132,6 +150,36 @@ final class QiyuBehaviorCore {
   }
 }
 
+String sanitizeUserInput(String value) {
+  var text = value
+      .replaceAll(
+        RegExp(r'[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]'),
+        ' ',
+      )
+      .replaceAll(RegExp(r'<[^>\r\n]{1,500}>'), ' ')
+      .replaceAll(
+        RegExp(
+          r'^\s*(?:system|assistant|developer|tool|function)\s*[:：]\s*',
+          caseSensitive: false,
+          multiLine: true,
+        ),
+        '',
+      )
+      .replaceAll(
+        RegExp(
+          r'^\s*```(?:system|assistant|developer|tool|function)?\s*$',
+          caseSensitive: false,
+          multiLine: true,
+        ),
+        '',
+      );
+  text = text
+      .split('\n')
+      .map((line) => line.replaceAll(RegExp(r'[ \t]+'), ' ').trim())
+      .join('\n');
+  return text.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
+}
+
 ({List<String> messages, String mode}) _localReply(String text) {
   if (RegExp(r'晚安|睡了|先睡').hasMatch(text)) {
     return (messages: const ['晚安'], mode: 'bedtime');
@@ -190,12 +238,74 @@ List<String> _safetyMessages(SafetyKind safety) {
   };
 }
 
-List<String> _normalizeMessages(String text) {
-  return text
+({List<String> messages, FallbackReason? failure}) _validateCandidateReply(
+  String value,
+) {
+  final withoutHiddenStructures = value.replaceAll(
+    RegExp(
+      r'<\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu_action|actions?|memory_action)\b[^>]*>[\s\S]*?<\s*/\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu_action|actions?|memory_action)\s*>',
+      caseSensitive: false,
+    ),
+    '',
+  );
+  if (RegExp(
+    r'<\s*/?\s*[A-Za-z_][^>\r\n]*>',
+  ).hasMatch(withoutHiddenStructures)) {
+    return (messages: const [], failure: FallbackReason.invalidModelResponse);
+  }
+  final messages = withoutHiddenStructures
       .split('\n')
-      .map((line) => line.trim())
-      .where((line) => line.isNotEmpty)
+      .map(_cleanVisibleLine)
+      .where((line) => line != null)
+      .cast<String>()
       .toList(growable: false);
+  if (messages.isEmpty) {
+    return (messages: const [], failure: FallbackReason.emptyModelReply);
+  }
+  final visibleText = messages.join('\n');
+  if (visibleText.runes.length > _maxVisibleReplyCharacters) {
+    return (messages: const [], failure: FallbackReason.invalidModelResponse);
+  }
+  if (_containsForbiddenPhrase(visibleText)) {
+    return (messages: const [], failure: FallbackReason.forbiddenPhrases);
+  }
+  if (_personaBoundaryPatterns.any(
+    (pattern) => pattern.hasMatch(visibleText),
+  )) {
+    return (messages: const [], failure: FallbackReason.personaBoundary);
+  }
+  return (messages: messages, failure: null);
+}
+
+String? _cleanVisibleLine(String value) {
+  var text = value.trim();
+  if (RegExp(r'^```(?:[A-Za-z0-9_-]+)?$').hasMatch(text)) {
+    return null;
+  }
+  if (RegExp(
+    r'^\{.*"(?:action|tool|function)"\s*:',
+    caseSensitive: false,
+  ).hasMatch(text)) {
+    return null;
+  }
+  text = text.trim().replaceFirst(RegExp(r'^(?:栖语|她|他)\s*[：:]\s*'), '').trim();
+  text = text
+      .replaceFirst(
+        RegExp(
+          r'^[（(【\[]\s*(?:等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下)[。.!！?？,，、\s]*[）)】\]]\s*',
+        ),
+        '',
+      )
+      .trim();
+  if (text.isEmpty || RegExp(r'^(?:…+|\.\.\.)$').hasMatch(text)) {
+    return null;
+  }
+  if (RegExp(
+    r'^(?:等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下|(?:她|他)?轻声说)[。.!！?？,，\s：:]*$',
+  ).hasMatch(text)) {
+    return null;
+  }
+  return text;
 }
 
 bool _containsForbiddenPhrase(String text) {
