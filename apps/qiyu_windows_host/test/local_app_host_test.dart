@@ -192,11 +192,15 @@ void main() {
       );
 
       expect(firstChat.statusCode, HttpStatus.ok);
-      final firstJson = jsonDecode(firstChat.body) as Map<String, Object?>;
-      expect(firstJson['source'], 'local');
-      expect(firstJson['fallbackReason'], 'no_llm_config');
-      expect(firstJson['messages'], ['咋了']);
-      final sessionId = firstJson['sessionId']! as String;
+      final firstEvents = _chatEvents(firstChat.body);
+      expect(_chatEvent(firstEvents, 'state')['source'], 'local');
+      expect(
+        _chatEvent(firstEvents, 'state')['fallbackReason'],
+        'no_llm_config',
+      );
+      expect(_chatEvent(firstEvents, 'message')['messages'], ['咋了']);
+      final sessionId =
+          _chatEvent(firstEvents, 'accepted')['sessionId']! as String;
       await host.close();
 
       final markdownFiles = memoryDirectory
@@ -234,8 +238,9 @@ void main() {
         }),
       );
       expect(replay.statusCode, HttpStatus.ok);
-      final replayJson = jsonDecode(replay.body) as Map<String, Object?>;
-      expect(replayJson['messages'], ['咋了']);
+      expect(_chatEvent(_chatEvents(replay.body), 'message')['messages'], [
+        '咋了',
+      ]);
 
       final restoredAgain = await _send(
         restarted.origin.resolve('/api/chat/session?sessionId=$sessionId'),
@@ -323,9 +328,9 @@ void main() {
         headers: browser.mutationHeaders(host.origin),
         requestBody: jsonEncode({'requestId': 'provider-chat', 'text': '在吗'}),
       );
-      final chatJson = jsonDecode(chat.body) as Map<String, Object?>;
-      expect(chatJson['messages'], ['还没睡？']);
-      expect(chatJson['source'], 'llm');
+      final chatEvents = _chatEvents(chat.body);
+      expect(_chatEvent(chatEvents, 'message')['messages'], ['还没睡？']);
+      expect(_chatEvent(chatEvents, 'state')['source'], 'llm');
       expect(gateway.apiKey, 'private-test-value');
       await host.close();
     },
@@ -371,7 +376,7 @@ void main() {
 
     expect(response.statusCode, HttpStatus.ok);
     expect(
-      jsonDecode(response.body),
+      _chatEvent(_chatEvents(response.body), 'fallback'),
       containsPair('fallbackReason', 'model_timeout'),
     );
     expect(response.body, isNot(contains('已脱敏的测试错误')));
@@ -379,6 +384,17 @@ void main() {
     await host.close();
   });
 }
+
+List<Map<String, Object?>> _chatEvents(String body) => body
+    .split('\n')
+    .where((line) => line.trim().isNotEmpty)
+    .map((line) => jsonDecode(line) as Map<String, Object?>)
+    .toList(growable: false);
+
+Map<String, Object?> _chatEvent(
+  List<Map<String, Object?>> events,
+  String kind,
+) => events.singleWhere((event) => event['event'] == kind);
 
 Future<_HttpResponse> _send(
   Uri uri, {

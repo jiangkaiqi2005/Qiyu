@@ -98,18 +98,15 @@ class _LocalChatViewState extends State<LocalChatView> {
                           ),
                           const SizedBox(width: 12),
                           IconButton.filled(
-                            key: const Key('chat-send'),
+                            key: Key(
+                              viewModel.sending ? 'chat-stop' : 'chat-send',
+                            ),
                             onPressed: viewModel.sending
-                                ? null
+                                ? () => unawaited(viewModel.stop())
                                 : () => unawaited(_send(viewModel)),
-                            tooltip: '发送',
+                            tooltip: viewModel.sending ? '停止回复' : '发送',
                             icon: viewModel.sending
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
+                                ? const Icon(Icons.stop_rounded)
                                 : const Icon(Icons.arrow_upward),
                           ),
                         ],
@@ -145,13 +142,37 @@ class _LocalChatViewState extends State<LocalChatView> {
     if (viewModel.loading) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (viewModel.messages.isEmpty) {
+    if (viewModel.messages.isEmpty &&
+        !viewModel.waiting &&
+        viewModel.streamingText.isEmpty) {
       return const Center(child: Text('今晚想说点什么？'));
     }
+    final transientCount =
+        viewModel.waiting || viewModel.streamingText.isNotEmpty ? 1 : 0;
     return ListView.builder(
       padding: const EdgeInsets.all(24),
-      itemCount: viewModel.messages.length,
+      itemCount: viewModel.messages.length + transientCount,
       itemBuilder: (context, index) {
+        if (index == viewModel.messages.length) {
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              key: const Key('chat-streaming-reply'),
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              constraints: const BoxConstraints(maxWidth: 520),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Text(
+                viewModel.streamingText.isEmpty
+                    ? '栖语在想…'
+                    : viewModel.streamingText,
+              ),
+            ),
+          );
+        }
         final message = viewModel.messages[index];
         final fromUser = message.speaker == LocalChatSpeaker.user;
         return Align(

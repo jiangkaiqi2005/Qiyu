@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/app.dart';
@@ -73,6 +75,139 @@ void main() {
     await tester.tap(find.byKey(const Key('chat-send')));
     await tester.pump();
     expect(gateway.sentTexts, hasLength(1));
+  });
+
+  testWidgets(
+    'shows waiting before validated streaming text and then commits once',
+    (tester) async {
+      final gateway = _StreamingFakeLocalChatGateway();
+      final viewModel = LocalChatViewModel(
+        gateway,
+        hostConnectionProbe: _FakeHostConnectionProbe([true]),
+        autoStart: false,
+        requestIdFactory: () => 'stream-request',
+      );
+      await viewModel.initialize();
+      await tester.pumpWidget(QiyuApp(viewModel: viewModel));
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '还醒着');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pump();
+      gateway.add(
+        const LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.accepted,
+          requestId: 'stream-request',
+          sessionId: 'session-1',
+        ),
+      );
+      gateway.add(
+        const LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.waiting,
+          requestId: 'stream-request',
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('栖语在想…'), findsOneWidget);
+      expect(find.byKey(const Key('chat-stop')), findsOneWidget);
+      gateway.add(
+        const LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.delta,
+          requestId: 'stream-request',
+          text: '还没',
+        ),
+      );
+      await tester.pump();
+      expect(find.text('还没'), findsOneWidget);
+
+      gateway.add(
+        const LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.delta,
+          requestId: 'stream-request',
+          text: '睡？',
+        ),
+      );
+      gateway.add(
+        const LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.message,
+          requestId: 'stream-request',
+          messages: ['还没睡？'],
+        ),
+      );
+      gateway.add(
+        const LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.state,
+          requestId: 'stream-request',
+          source: ReplySource.llm,
+        ),
+      );
+      gateway.add(
+        const LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.done,
+          requestId: 'stream-request',
+        ),
+      );
+      await gateway.close();
+      await tester.pumpAndSettle();
+
+      expect(find.text('还没睡？'), findsOneWidget);
+      expect(
+        viewModel.messages.where(
+          (message) => message.speaker == LocalChatSpeaker.qiyu,
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  testWidgets('stops an active streamed reply without committing it', (
+    tester,
+  ) async {
+    final gateway = _StreamingFakeLocalChatGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      autoStart: false,
+      requestIdFactory: () => 'cancel-request',
+    );
+    await viewModel.initialize();
+    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
+    await tester.enterText(find.byKey(const Key('chat-input')), '先别说');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pump();
+    gateway.add(
+      const LocalChatDeliveryEvent(
+        kind: LocalChatEventKind.accepted,
+        requestId: 'cancel-request',
+        sessionId: 'session-1',
+      ),
+    );
+    gateway.add(
+      const LocalChatDeliveryEvent(
+        kind: LocalChatEventKind.waiting,
+        requestId: 'cancel-request',
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('chat-stop')));
+    await tester.pump();
+    expect(gateway.cancelledRequestIds, ['cancel-request']);
+    gateway.add(
+      const LocalChatDeliveryEvent(
+        kind: LocalChatEventKind.cancelled,
+        requestId: 'cancel-request',
+      ),
+    );
+    await gateway.close();
+    await tester.pumpAndSettle();
+
+    expect(
+      viewModel.messages.where(
+        (message) => message.speaker == LocalChatSpeaker.qiyu,
+      ),
+      isEmpty,
+    );
   });
 
   testWidgets('shows a clear stopped state when the local host disappears', (
@@ -254,7 +389,7 @@ void main() {
   });
 }
 
-final class _FakeLocalChatGateway implements LocalChatGateway {
+final class _FakeLocalChatGateway implements StreamingLocalChatGateway {
   _FakeLocalChatGateway({
     this.restored = const LocalChatSnapshot(
       sessionId: 'session-1',
@@ -274,25 +409,76 @@ final class _FakeLocalChatGateway implements LocalChatGateway {
   Future<LocalChatSnapshot> restore({String? sessionId}) async => restored;
 
   @override
-  Future<LocalChatExchange> send({
+  Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Stream<LocalChatDeliveryEvent> deliver({
     required String requestId,
     required String text,
     String? sessionId,
-  }) async {
+  }) async* {
     sentTexts.add(text);
     sentRequestIds.add(requestId);
     if (sendError case final error? when failuresRemaining > 0) {
       failuresRemaining -= 1;
       throw error;
     }
-    return LocalChatExchange(
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.accepted,
+      requestId: requestId,
       sessionId: restored.sessionId,
+    );
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.waiting,
+      requestId: requestId,
+    );
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.delta,
+      requestId: requestId,
+      text: '咋了',
+    );
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.message,
       requestId: requestId,
       messages: const ['咋了'],
+    );
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.state,
+      requestId: requestId,
       source: ReplySource.local,
       fallbackReason: FallbackReason.noLlmConfig,
     );
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.done,
+      requestId: requestId,
+    );
   }
+}
+
+final class _StreamingFakeLocalChatGateway
+    implements StreamingLocalChatGateway {
+  final _controller = StreamController<LocalChatDeliveryEvent>();
+  final List<String> cancelledRequestIds = [];
+
+  void add(LocalChatDeliveryEvent event) => _controller.add(event);
+  Future<void> close() => _controller.close();
+
+  @override
+  Future<bool> cancel(String requestId) async {
+    cancelledRequestIds.add(requestId);
+    return true;
+  }
+
+  @override
+  Stream<LocalChatDeliveryEvent> deliver({
+    required String requestId,
+    required String text,
+    String? sessionId,
+  }) => _controller.stream;
+
+  @override
+  Future<LocalChatSnapshot> restore({String? sessionId}) async =>
+      const LocalChatSnapshot(sessionId: 'session-1', messages: []);
 }
 
 final class _FakeHostConnectionProbe implements HostConnectionProbe {

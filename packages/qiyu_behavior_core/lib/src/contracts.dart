@@ -371,6 +371,81 @@ final class ErrorResult extends ChatOutcome {
       Object.hash(schemaVersion, requestId, code, message, retryable);
 }
 
+enum ChatDeliveryEventKind {
+  accepted,
+  waiting,
+  delta,
+  message,
+  state,
+  fallback,
+  cancelled,
+  error,
+  done,
+}
+
+class ChatDeliveryEvent {
+  const ChatDeliveryEvent({
+    required this.kind,
+    required this.requestId,
+    this.sessionId,
+    this.text,
+    this.messages,
+    this.source,
+    this.fallbackReason,
+    this.mode,
+    this.safety,
+    this.code,
+    this.retryable,
+  });
+
+  factory ChatDeliveryEvent.fromJson(Map<String, Object?> json) {
+    final source = json['source'] as String?;
+    final fallbackReason = json['fallbackReason'] as String?;
+    final safety = json['safety'] as String?;
+    return ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.values.byName(json['event']! as String),
+      requestId: json['requestId']! as String,
+      sessionId: json['sessionId'] as String?,
+      text: json['text'] as String?,
+      messages: (json['messages'] as List<Object?>?)?.cast<String>(),
+      source: source == null ? null : ReplySource.values.byName(source),
+      fallbackReason: fallbackReason == null
+          ? null
+          : FallbackReason.fromWireName(fallbackReason),
+      mode: json['mode'] as String?,
+      safety: safety == null ? null : SafetyKind.values.byName(safety),
+      code: json['code'] as String?,
+      retryable: json['retryable'] as bool?,
+    );
+  }
+
+  final ChatDeliveryEventKind kind;
+  final String requestId;
+  final String? sessionId;
+  final String? text;
+  final List<String>? messages;
+  final ReplySource? source;
+  final FallbackReason? fallbackReason;
+  final String? mode;
+  final SafetyKind? safety;
+  final String? code;
+  final bool? retryable;
+
+  Map<String, Object?> toJson() => {
+    'event': kind.name,
+    'requestId': requestId,
+    if (sessionId != null) 'sessionId': sessionId,
+    if (text != null) 'text': text,
+    if (messages != null) 'messages': messages,
+    if (source != null) 'source': source!.name,
+    if (fallbackReason != null) 'fallbackReason': fallbackReason!.wireName,
+    if (mode != null) 'mode': mode,
+    if (safety != null) 'safety': safety!.name,
+    if (code != null) 'code': code,
+    if (retryable != null) 'retryable': retryable,
+  };
+}
+
 bool _listsEqual<T>(List<T> left, List<T> right) {
   if (left.length != right.length) {
     return false;

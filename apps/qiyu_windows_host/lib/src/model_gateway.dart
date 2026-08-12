@@ -44,15 +44,23 @@ abstract interface class ModelGateway {
   });
 }
 
+abstract interface class StreamingModelGateway implements ModelGateway {
+  Stream<ModelStreamEvent> stream({
+    required ProviderConfig config,
+    required String? apiKey,
+    required List<ModelMessage> messages,
+  });
+}
+
 final class ProviderHttpResponse {
   const ProviderHttpResponse({required this.statusCode, required this.body});
 
   final int statusCode;
-  final String body;
+  final Stream<String> body;
 }
 
 abstract interface class ProviderHttpClient {
-  Future<ProviderHttpResponse> post({
+  Future<ProviderHttpResponse> postStream({
     required Uri uri,
     required Map<String, String> headers,
     required String body,
@@ -64,7 +72,7 @@ final class DartIoProviderHttpClient implements ProviderHttpClient {
   const DartIoProviderHttpClient();
 
   @override
-  Future<ProviderHttpResponse> post({
+  Future<ProviderHttpResponse> postStream({
     required Uri uri,
     required Map<String, String> headers,
     required String body,
@@ -76,21 +84,56 @@ final class DartIoProviderHttpClient implements ProviderHttpClient {
       headers.forEach(request.headers.set);
       request.write(body);
       final response = await request.close().timeout(timeout);
-      final responseBody = await response
-          .transform(utf8.decoder)
-          .join()
-          .timeout(timeout);
       return ProviderHttpResponse(
         statusCode: response.statusCode,
-        body: responseBody,
+        body: _readResponse(response, client, timeout),
       );
-    } finally {
+    } catch (_) {
       client.close(force: true);
+      rethrow;
     }
   }
 }
 
-final class ProviderModelGateway implements ModelGateway {
+Stream<String> _readResponse(
+  HttpClientResponse response,
+  HttpClient client,
+  Duration timeout,
+) async* {
+  try {
+    yield* response.transform(utf8.decoder).timeout(timeout);
+  } finally {
+    client.close(force: true);
+  }
+}
+
+enum ModelStreamEventKind { delta, done, failure }
+
+final class ModelStreamEvent {
+  const ModelStreamEvent.delta(String this.text)
+    : kind = ModelStreamEventKind.delta,
+      failure = null,
+      message = null;
+
+  const ModelStreamEvent.done()
+    : kind = ModelStreamEventKind.done,
+      text = null,
+      failure = null,
+      message = null;
+
+  const ModelStreamEvent.failure(
+    ModelFailureKind this.failure,
+    String this.message,
+  ) : kind = ModelStreamEventKind.failure,
+      text = null;
+
+  final ModelStreamEventKind kind;
+  final String? text;
+  final ModelFailureKind? failure;
+  final String? message;
+}
+
+final class ProviderModelGateway implements StreamingModelGateway {
   const ProviderModelGateway(this.httpClient);
 
   final ProviderHttpClient httpClient;
@@ -101,80 +144,160 @@ final class ProviderModelGateway implements ModelGateway {
     required String? apiKey,
     required List<ModelMessage> messages,
   }) async {
+    final buffer = StringBuffer();
+    await for (final event in stream(
+      config: config,
+      apiKey: apiKey,
+      messages: messages,
+    )) {
+      if (event.kind == ModelStreamEventKind.delta) {
+        buffer.write(event.text);
+      } else if (event.kind == ModelStreamEventKind.failure) {
+        throw ModelGatewayException(
+          kind: event.failure!,
+          message: event.message!,
+        );
+      }
+    }
+    final text = buffer.toString().trim();
+    if (text.isEmpty) {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.contentParsing,
+        message: '模型服务返回的内容无法解析。',
+      );
+    }
+    return text;
+  }
+
+  @override
+  Stream<ModelStreamEvent> stream({
+    required ProviderConfig config,
+    required String? apiKey,
+    required List<ModelMessage> messages,
+  }) async* {
     config.validate();
     final protocol = _providerProtocol(config.kind);
     if (protocol.requiresApiKey && (apiKey == null || apiKey.trim().isEmpty)) {
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.authentication,
-        message: '还没有保存 API Key。',
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.authentication,
+        '还没有保存 API Key。',
       );
+      return;
     }
 
     final request = protocol.buildRequest(config, apiKey, messages);
     ProviderHttpResponse response;
     try {
-      response = await httpClient.post(
+      response = await httpClient.postStream(
         uri: request.uri,
         headers: request.headers,
         body: jsonEncode(request.body),
         timeout: Duration(seconds: config.timeoutSeconds),
       );
     } on TimeoutException {
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.timeout,
-        message: '连接模型服务超时。',
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.timeout,
+        '连接模型服务超时。',
       );
+      return;
     } on HandshakeException {
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.tls,
-        message: '模型服务的 TLS 安全连接失败。',
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.tls,
+        '模型服务的 TLS 安全连接失败。',
       );
+      return;
     } on SocketException catch (error) {
-      throw _socketFailure(error);
+      final failure = _socketFailure(error);
+      yield ModelStreamEvent.failure(failure.kind, failure.message);
+      return;
     } on HttpException {
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.network,
-        message: '模型服务连接中断。',
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.network,
+        '模型服务连接中断。',
       );
-    } on ModelGatewayException {
-      rethrow;
+      return;
+    } on ModelGatewayException catch (error) {
+      yield ModelStreamEvent.failure(error.kind, error.message);
+      return;
     } on Object {
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.network,
-        message: '模型服务暂时不可用。',
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.network,
+        '模型服务暂时不可用。',
       );
+      return;
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _statusFailure(response);
-    }
-    late Map<String, Object?> payload;
-    try {
-      final decoded = jsonDecode(response.body);
-      if (decoded is! Map<String, Object?>) {
-        throw const FormatException('response is not an object');
+      String body;
+      try {
+        body = await response.body.join();
+      } on TimeoutException {
+        yield const ModelStreamEvent.failure(
+          ModelFailureKind.timeout,
+          '模型服务响应超时。',
+        );
+        return;
+      } on Object {
+        yield const ModelStreamEvent.failure(
+          ModelFailureKind.network,
+          '模型服务连接中断。',
+        );
+        return;
       }
-      payload = decoded;
-    } on Object {
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.incompatibleResponse,
-        message: '模型服务返回了不兼容的响应格式。',
-      );
+      final failure = _statusFailure(response.statusCode, body);
+      yield ModelStreamEvent.failure(failure.kind, failure.message);
+      return;
     }
+    var emittedText = false;
     try {
-      final content = protocol.readContent(payload).trim();
-      if (content.isEmpty) {
-        throw const FormatException('empty content');
+      await for (final line in response.body.transform(const LineSplitter())) {
+        final event = protocol.readEvent(line);
+        if (event == null) {
+          continue;
+        }
+        if (event.delta.isNotEmpty) {
+          emittedText = true;
+          yield ModelStreamEvent.delta(event.delta);
+        }
+        if (event.done) {
+          if (!emittedText) {
+            yield const ModelStreamEvent.failure(
+              ModelFailureKind.contentParsing,
+              '模型服务返回的内容无法解析。',
+            );
+          } else {
+            yield const ModelStreamEvent.done();
+          }
+          return;
+        }
       }
-      return content;
-    } on ModelGatewayException {
-      rethrow;
-    } on Object {
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.contentParsing,
-        message: '模型服务返回的内容无法解析。',
+    } on TimeoutException {
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.timeout,
+        '模型服务响应超时。',
       );
+      return;
+    } on ModelGatewayException catch (error) {
+      yield ModelStreamEvent.failure(error.kind, error.message);
+      return;
+    } on Object {
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.incompatibleResponse,
+        '模型服务返回了不兼容的响应格式。',
+      );
+      return;
     }
+    if (!emittedText) {
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.contentParsing,
+        '模型服务返回的内容无法解析。',
+      );
+      return;
+    }
+    yield const ModelStreamEvent.failure(
+      ModelFailureKind.network,
+      '模型服务连接在回复完成前中断。',
+    );
   }
 }
 
@@ -193,8 +316,10 @@ abstract interface class _ProviderProtocol {
     List<ModelMessage> messages,
   );
 
-  String readContent(Map<String, Object?> payload);
+  _ProviderStreamPart? readEvent(String line);
 }
+
+typedef _ProviderStreamPart = ({String delta, bool done});
 
 _ProviderProtocol _providerProtocol(ProviderKind kind) => switch (kind) {
   ProviderKind.openAiCompatible => const _OpenAiCompatibleProtocol(),
@@ -223,23 +348,45 @@ final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
       'model': config.model.trim(),
       'messages': messages.map(_messageJson).toList(),
       'temperature': config.temperature,
-      'stream': false,
+      'stream': true,
     },
   );
 
   @override
-  String readContent(Map<String, Object?> payload) {
-    final choices = payload['choices']! as List<Object?>;
-    final message =
-        (choices.first! as Map<String, Object?>)['message']!
-            as Map<String, Object?>;
-    final content = message['content'];
-    if (content is String) {
-      return content;
+  _ProviderStreamPart? readEvent(String line) {
+    final data = _sseData(line);
+    if (data == null) {
+      if (line.trim().isNotEmpty && !line.trim().startsWith(':')) {
+        throw const FormatException('invalid SSE line');
+      }
+      return null;
     }
-    return (content! as List<Object?>)
-        .map((part) => (part! as Map<String, Object?>)['text'] as String? ?? '')
-        .join();
+    if (data == '[DONE]') {
+      return (delta: '', done: true);
+    }
+    final payload = jsonDecode(data) as Map<String, Object?>;
+    try {
+      final choices = payload['choices']! as List<Object?>;
+      final choice = choices.first! as Map<String, Object?>;
+      final delta = choice['delta'] as Map<String, Object?>?;
+      final content = delta?['content'];
+      final text = content is String
+          ? content
+          : content is List<Object?>
+          ? content
+                .map(
+                  (part) =>
+                      (part! as Map<String, Object?>)['text'] as String? ?? '',
+                )
+                .join()
+          : '';
+      return (delta: text, done: choice['finish_reason'] != null);
+    } on Object {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.contentParsing,
+        message: '模型服务返回的内容无法解析。',
+      );
+    }
   }
 }
 
@@ -273,17 +420,39 @@ final class _AnthropicProtocol implements _ProviderProtocol {
           .toList(),
       'temperature': config.temperature,
       'max_tokens': 512,
-      'stream': false,
+      'stream': true,
     },
   );
 
   @override
-  String readContent(Map<String, Object?> payload) =>
-      (payload['content']! as List<Object?>)
-          .map((part) => part! as Map<String, Object?>)
-          .where((part) => part['type'] == 'text')
-          .map((part) => part['text'] as String? ?? '')
-          .join();
+  _ProviderStreamPart? readEvent(String line) {
+    final data = _sseData(line);
+    if (data == null) {
+      final trimmed = line.trim();
+      if (trimmed.isNotEmpty &&
+          !trimmed.startsWith('event:') &&
+          !trimmed.startsWith(':')) {
+        throw const FormatException('invalid SSE line');
+      }
+      return null;
+    }
+    final payload = jsonDecode(data) as Map<String, Object?>;
+    final type = payload['type'];
+    if (type == 'error') {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.provider,
+        message: '模型服务返回了错误。',
+      );
+    }
+    if (type == 'message_stop') {
+      return (delta: '', done: true);
+    }
+    if (type == 'content_block_delta') {
+      final delta = payload['delta']! as Map<String, Object?>;
+      return (delta: delta['text'] as String? ?? '', done: false);
+    }
+    return null;
+  }
 }
 
 final class _OllamaProtocol implements _ProviderProtocol {
@@ -309,14 +478,31 @@ final class _OllamaProtocol implements _ProviderProtocol {
         'model': config.model.trim(),
         'messages': messages.map(_messageJson).toList(),
         'options': {'temperature': config.temperature},
-        'stream': false,
+        'stream': true,
       },
     );
   }
 
   @override
-  String readContent(Map<String, Object?> payload) =>
-      (payload['message']! as Map<String, Object?>)['content']! as String;
+  _ProviderStreamPart? readEvent(String line) {
+    if (line.trim().isEmpty) {
+      return null;
+    }
+    final payload = jsonDecode(line) as Map<String, Object?>;
+    final message = payload['message'] as Map<String, Object?>?;
+    return (
+      delta: message?['content'] as String? ?? '',
+      done: payload['done'] == true,
+    );
+  }
+}
+
+String? _sseData(String line) {
+  final trimmed = line.trim();
+  if (!trimmed.startsWith('data:')) {
+    return null;
+  }
+  return trimmed.substring(5).trim();
 }
 
 Map<String, String> _messageJson(ModelMessage message) => {
@@ -337,21 +523,21 @@ Uri _appendEndpoint(String baseUrl, String suffix, {bool ollama = false}) {
   return base.replace(path: path);
 }
 
-ModelGatewayException _statusFailure(ProviderHttpResponse response) {
-  if (response.statusCode == HttpStatus.unauthorized ||
-      response.statusCode == HttpStatus.forbidden) {
+ModelGatewayException _statusFailure(int statusCode, String body) {
+  if (statusCode == HttpStatus.unauthorized ||
+      statusCode == HttpStatus.forbidden) {
     return const ModelGatewayException(
       kind: ModelFailureKind.authentication,
       message: 'API Key 未通过模型服务验证。',
     );
   }
-  if (response.statusCode == HttpStatus.tooManyRequests) {
+  if (statusCode == HttpStatus.tooManyRequests) {
     return const ModelGatewayException(
       kind: ModelFailureKind.rateLimited,
       message: '模型服务请求过于频繁。',
     );
   }
-  final lowerBody = response.body.toLowerCase();
+  final lowerBody = body.toLowerCase();
   if (lowerBody.contains('model') &&
       (lowerBody.contains('not found') ||
           lowerBody.contains('does not exist') ||

@@ -26,7 +26,7 @@ final class LocalChatViewModel extends ChangeNotifier {
     }
   }
 
-  final LocalChatGateway _gateway;
+  final StreamingLocalChatGateway _gateway;
   final HostConnectionProbe _hostConnectionProbe;
   final RequestIdFactory _requestIdFactory;
   final List<LocalChatMessage> _messages = [];
@@ -38,6 +38,8 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool _initializing = false;
   bool _initialized = false;
   bool _sending = false;
+  bool _waiting = false;
+  String _streamingText = '';
   String? _pendingRequestId;
   String? _pendingText;
 
@@ -45,6 +47,8 @@ final class LocalChatViewModel extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get loading => _initializing && !_initialized;
   bool get sending => _sending;
+  bool get waiting => _waiting;
+  String get streamingText => _streamingText;
   bool get hostStopped => _hostAvailable == false;
   bool get hasLocalFallback => _messages.any(
     (message) =>
@@ -116,52 +120,97 @@ final class LocalChatViewModel extends ChangeNotifier {
     _pendingRequestId = requestId;
     _pendingText = trimmed;
     try {
-      final exchange = await _gateway.send(
-        requestId: requestId,
-        text: trimmed,
-        sessionId: _sessionId,
-      );
-      _sessionId = exchange.sessionId;
-      if (!_messages.any(
-        (message) =>
-            message.requestId == requestId &&
-            message.speaker == LocalChatSpeaker.user,
-      )) {
-        _messages.add(
-          LocalChatMessage(
-            requestId: requestId,
-            speaker: LocalChatSpeaker.user,
-            text: trimmed,
-          ),
-        );
-      }
-      if (!_messages.any(
-        (message) =>
-            message.requestId == requestId &&
-            message.speaker == LocalChatSpeaker.qiyu,
-      )) {
-        _messages.addAll(
-          exchange.messages.map(
-            (message) => LocalChatMessage(
-              requestId: requestId,
-              speaker: LocalChatSpeaker.qiyu,
-              text: message,
-              source: exchange.source,
-              fallbackReason: exchange.fallbackReason,
-            ),
-          ),
-        );
-      }
-      _pendingRequestId = null;
-      _pendingText = null;
-      return true;
+      return await _sendStreaming(requestId: requestId, text: trimmed);
     } on Object catch (error) {
+      _streamingText = '';
+      _waiting = false;
       _errorMessage = _readableError(error);
       return false;
     } finally {
       _sending = false;
+      _waiting = false;
       notifyListeners();
     }
+  }
+
+  Future<bool> _sendStreaming({
+    required String requestId,
+    required String text,
+  }) async {
+    List<String>? finalMessages;
+    ReplySource? source;
+    FallbackReason? fallbackReason;
+    var completed = false;
+    await for (final event in _gateway.deliver(
+      requestId: requestId,
+      text: text,
+      sessionId: _sessionId,
+    )) {
+      _sessionId = event.sessionId ?? _sessionId;
+      switch (event.kind) {
+        case LocalChatEventKind.accepted:
+          if (!_messages.any(
+            (message) =>
+                message.requestId == requestId &&
+                message.speaker == LocalChatSpeaker.user,
+          )) {
+            _messages.add(
+              LocalChatMessage(
+                requestId: requestId,
+                speaker: LocalChatSpeaker.user,
+                text: text,
+              ),
+            );
+          }
+        case LocalChatEventKind.waiting:
+          _waiting = true;
+        case LocalChatEventKind.delta:
+          _waiting = false;
+          _streamingText += event.text ?? '';
+        case LocalChatEventKind.message:
+          finalMessages = event.messages;
+        case LocalChatEventKind.state:
+          source = event.source;
+          fallbackReason = event.fallbackReason;
+        case LocalChatEventKind.fallback:
+          fallbackReason = event.fallbackReason;
+        case LocalChatEventKind.done:
+          completed = true;
+        case LocalChatEventKind.cancelled:
+          _streamingText = '';
+          _waiting = false;
+        case LocalChatEventKind.error:
+          throw LocalChatGatewayException(event.text ?? '本地聊天暂时不可用，请稍后重试。');
+      }
+      notifyListeners();
+    }
+    if (!completed || finalMessages == null || source == null) {
+      _streamingText = '';
+      return false;
+    }
+    _messages.addAll(
+      finalMessages.map(
+        (message) => LocalChatMessage(
+          requestId: requestId,
+          speaker: LocalChatSpeaker.qiyu,
+          text: message,
+          source: source,
+          fallbackReason: fallbackReason,
+        ),
+      ),
+    );
+    _streamingText = '';
+    _pendingRequestId = null;
+    _pendingText = null;
+    return true;
+  }
+
+  Future<void> stop() async {
+    final requestId = _pendingRequestId;
+    if (!_sending || requestId == null) {
+      return;
+    }
+    await _gateway.cancel(requestId);
   }
 
   @override

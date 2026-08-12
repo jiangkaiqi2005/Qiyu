@@ -294,6 +294,21 @@ final class _LocalAppRequestHandler {
           headers: _jsonHeaders,
         );
       }
+      if (request.method == 'POST' && request.url.path == 'api/chat/cancel') {
+        final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
+        final requestId = payload['requestId'];
+        if (requestId is! String || requestId.trim().isEmpty) {
+          throw const LocalChatException(
+            code: 'invalid_request',
+            message: '聊天请求格式不正确。',
+            retryable: false,
+          );
+        }
+        return Response.ok(
+          jsonEncode({'cancelled': chatService.cancel(requestId)}),
+          headers: _jsonHeaders,
+        );
+      }
       if (request.method == 'POST' && request.url.path == 'api/chat') {
         final contentLength = request.contentLength;
         if (contentLength != null && contentLength > 64 * 1024) {
@@ -311,21 +326,24 @@ final class _LocalAppRequestHandler {
         final sessionId = payload['sessionId'];
         if (requestId is! String ||
             text is! String ||
-            (sessionId != null && sessionId is! String)) {
+            (sessionId != null && sessionId is! String) ||
+            requestId.trim().isEmpty ||
+            text.trim().isEmpty) {
           throw const LocalChatException(
             code: 'invalid_request',
             message: '聊天请求格式不正确。',
             retryable: false,
           );
         }
-        final exchange = await chatService.send(
-          requestId: requestId,
-          text: text,
-          sessionId: sessionId as String?,
-        );
         return Response.ok(
-          jsonEncode(exchange.toJson()),
-          headers: _jsonHeaders,
+          chatService
+              .deliver(
+                requestId: requestId,
+                text: text,
+                sessionId: sessionId as String?,
+              )
+              .map((event) => utf8.encode('${jsonEncode(event.toJson())}\n')),
+          headers: _streamHeaders,
         );
       }
     } on FormatException {
@@ -456,6 +474,12 @@ ProviderConfig _providerConfigFromPayload(Map<String, Object?> payload) {
 const _jsonHeaders = {
   HttpHeaders.contentTypeHeader: 'application/json; charset=utf-8',
   HttpHeaders.cacheControlHeader: 'no-store',
+};
+
+const _streamHeaders = {
+  HttpHeaders.contentTypeHeader: 'application/x-ndjson; charset=utf-8',
+  HttpHeaders.cacheControlHeader: 'no-store',
+  'x-accel-buffering': 'no',
 };
 
 const _noStoreHeaders = {HttpHeaders.cacheControlHeader: 'no-store'};

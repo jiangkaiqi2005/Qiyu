@@ -65,7 +65,12 @@ abstract interface class ProviderChatClient {
   Future<ModelCompletion?> complete(List<ModelMessage> messages);
 }
 
-final class ProviderSettingsService implements ProviderChatClient {
+abstract interface class StreamingProviderChatClient {
+  Future<Stream<ModelStreamEvent>?> openStream(List<ModelMessage> messages);
+}
+
+final class ProviderSettingsService
+    implements ProviderChatClient, StreamingProviderChatClient {
   const ProviderSettingsService(
     this.configRepository,
     this.secretStore,
@@ -182,6 +187,48 @@ final class ProviderSettingsService implements ProviderChatClient {
       return ModelCompletion.failure(error.kind);
     } on Object {
       return const ModelCompletion.failure(ModelFailureKind.provider);
+    }
+  }
+
+  @override
+  Future<Stream<ModelStreamEvent>?> openStream(
+    List<ModelMessage> messages,
+  ) async {
+    final config = await configRepository.load();
+    if (config == null) {
+      return null;
+    }
+    final apiKey = await secretStore.readApiKey(config.credentialScope);
+    if (modelGateway case final StreamingModelGateway streamingGateway) {
+      return streamingGateway.stream(
+        config: config,
+        apiKey: apiKey,
+        messages: messages,
+      );
+    }
+    return _singleCompletionStream(config, apiKey, messages);
+  }
+
+  Stream<ModelStreamEvent> _singleCompletionStream(
+    ProviderConfig config,
+    String? apiKey,
+    List<ModelMessage> messages,
+  ) async* {
+    try {
+      final text = await modelGateway.complete(
+        config: config,
+        apiKey: apiKey,
+        messages: messages,
+      );
+      yield ModelStreamEvent.delta(text);
+      yield const ModelStreamEvent.done();
+    } on ModelGatewayException catch (error) {
+      yield ModelStreamEvent.failure(error.kind, error.message);
+    } on Object {
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.provider,
+        '模型服务暂时不可用。',
+      );
     }
   }
 }

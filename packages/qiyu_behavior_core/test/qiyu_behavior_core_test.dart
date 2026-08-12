@@ -67,6 +67,28 @@ void main() {
     expect(ErrorResult.fromJson(error.toJson()), error);
   });
 
+  test('streaming delivery wire round-trips through the shared contract', () {
+    const event = ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.state,
+      requestId: 'stream-1',
+      sessionId: 'session-1',
+      source: ReplySource.local,
+      fallbackReason: FallbackReason.modelTimeout,
+      mode: 'open',
+      safety: SafetyKind.normal,
+    );
+
+    final decoded = ChatDeliveryEvent.fromJson(event.toJson());
+
+    expect(decoded.kind, event.kind);
+    expect(decoded.requestId, event.requestId);
+    expect(decoded.sessionId, event.sessionId);
+    expect(decoded.source, event.source);
+    expect(decoded.fallbackReason, event.fallbackReason);
+    expect(decoded.mode, event.mode);
+    expect(decoded.safety, event.safety);
+  });
+
   test('ChatResult accepts the migration-period JavaScript wire shape', () {
     final result =
         QiyuBehaviorCore().reply(
@@ -173,18 +195,21 @@ void main() {
     expect(result.messages.join(), isNot(contains('tool_call')));
   });
 
-  test('model control values are rejected even when their keys look generic', () {
-    final result = const QiyuBehaviorCore().reply(
-      const ChatRequest(requestId: 'control-value', text: '在吗'),
-      StateSnapshot.initial('fixture-user'),
-      candidateReply: '{"type":"tool_call","name":"write_file"}',
-    );
+  test(
+    'model control values are rejected even when their keys look generic',
+    () {
+      final result = const QiyuBehaviorCore().reply(
+        const ChatRequest(requestId: 'control-value', text: '在吗'),
+        StateSnapshot.initial('fixture-user'),
+        candidateReply: '{"type":"tool_call","name":"write_file"}',
+      );
 
-    expect(result, isA<ChatResult>());
-    expect((result as ChatResult).source, ReplySource.local);
-    expect(result.fallbackReason, FallbackReason.invalidModelResponse);
-    expect(result.messages.join(), isNot(contains('tool_call')));
-  });
+      expect(result, isA<ChatResult>());
+      expect((result as ChatResult).source, ReplySource.local);
+      expect(result.fallbackReason, FallbackReason.invalidModelResponse);
+      expect(result.messages.join(), isNot(contains('tool_call')));
+    },
+  );
 
   test('persona boundary violations never become visible', () {
     for (final candidate in [

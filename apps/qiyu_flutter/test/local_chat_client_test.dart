@@ -26,13 +26,31 @@ void main() {
               },
             ],
           }, 200),
-          '/api/chat' => _jsonResponse({
-            'requestId': 'new-1',
-            'sessionId': 'session-1',
-            'messages': ['嗯？'],
-            'source': 'local',
-            'fallbackReason': 'no_llm_config',
-          }, 200),
+          '/api/chat' => _streamResponse([
+            {
+              'event': 'accepted',
+              'requestId': 'new-1',
+              'sessionId': 'session-1',
+            },
+            {
+              'event': 'waiting',
+              'requestId': 'new-1',
+              'sessionId': 'session-1',
+            },
+            {'event': 'delta', 'requestId': 'new-1', 'text': '嗯？'},
+            {
+              'event': 'message',
+              'requestId': 'new-1',
+              'messages': ['嗯？'],
+            },
+            {
+              'event': 'state',
+              'requestId': 'new-1',
+              'source': 'local',
+              'fallbackReason': 'no_llm_config',
+            },
+            {'event': 'done', 'requestId': 'new-1'},
+          ]),
           _ => http.Response('not found', 404),
         };
       });
@@ -87,6 +105,15 @@ void main() {
       ),
     );
   });
+}
+
+http.Response _streamResponse(List<Map<String, Object?>> events) {
+  final body = '${events.map(jsonEncode).join('\n')}\n';
+  return http.Response.bytes(
+    utf8.encode(body),
+    200,
+    headers: const {'content-type': 'application/x-ndjson; charset=utf-8'},
+  );
 }
 
 http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {
