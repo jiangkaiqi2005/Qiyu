@@ -78,6 +78,7 @@ final class LocalChatService {
   }) => _serialized(() async {
     final trimmedRequestId = requestId.trim();
     final trimmedText = sanitizeUserInput(text);
+    final archivedText = redactSessionText(text);
     if (trimmedRequestId.isEmpty || trimmedText.isEmpty) {
       throw const LocalChatException(
         code: 'invalid_request',
@@ -97,8 +98,7 @@ final class LocalChatService {
       requestId: trimmedRequestId,
       speaker: Speaker.qiyu,
     );
-    if (existingUser != null &&
-        existingUser.text != redactSessionText(trimmedText)) {
+    if (existingUser != null && existingUser.text != archivedText) {
       throw const LocalChatException(
         code: 'request_id_conflict',
         message: '这条消息标识已被另一条内容使用，请重新发送。',
@@ -121,7 +121,7 @@ final class LocalChatService {
         session,
         RawSessionTurn.user(
           requestId: trimmedRequestId,
-          text: trimmedText,
+          text: text,
           at: _clock(),
         ),
       );
@@ -197,7 +197,13 @@ StateSnapshot _stateFromCompletedTurns(
       continue;
     }
     if (turn.speaker == Speaker.user) {
-      pendingUser = turn;
+      pendingUser = turn.speaker == Speaker.user
+          ? RawSessionTurn.user(
+              requestId: turn.requestId,
+              text: sanitizeUserInput(turn.text),
+              at: turn.at,
+            )
+          : turn;
       continue;
     }
     if (pendingUser != null && pendingUser.requestId == turn.requestId) {

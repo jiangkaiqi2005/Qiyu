@@ -155,17 +155,43 @@ void main() {
     expect(result.messages.join(), isNot(contains('tool_call')));
   });
 
-  test('persona boundary violations never become visible', () {
+  test('multiline model action payloads are rejected', () {
     final result = const QiyuBehaviorCore().reply(
-      const ChatRequest(requestId: 'boundary-output', text: '你会一直在吗'),
+      const ChatRequest(requestId: 'multiline-action', text: '在吗'),
       StateSnapshot.initial('fixture-user'),
-      candidateReply: '只有我懂你，你只需要我就够了。',
+      candidateReply: '''在。
+{
+  "tool_call": {
+    "name": "write_file"
+  }
+}''',
     );
 
     expect(result, isA<ChatResult>());
     expect((result as ChatResult).source, ReplySource.local);
-    expect(result.fallbackReason, FallbackReason.personaBoundary);
-    expect(result.messages.join(), isNot(contains('只有我懂你')));
+    expect(result.fallbackReason, FallbackReason.invalidModelResponse);
+    expect(result.messages.join(), isNot(contains('tool_call')));
+  });
+
+  test('persona boundary violations never become visible', () {
+    for (final candidate in [
+      '只有我懂你，你只需要我就够了。',
+      '我想你了，别走。',
+      '我是你的爱人。',
+      '你都有别人陪了，还回来干什么。',
+      '你再不回来我就离开。',
+    ]) {
+      final result = const QiyuBehaviorCore().reply(
+        const ChatRequest(requestId: 'boundary-output', text: '你会一直在吗'),
+        StateSnapshot.initial('fixture-user'),
+        candidateReply: candidate,
+      );
+
+      expect(result, isA<ChatResult>());
+      expect((result as ChatResult).source, ReplySource.local);
+      expect(result.fallbackReason, FallbackReason.personaBoundary);
+      expect(result.messages.join(), isNot(contains(candidate)));
+    }
   });
 
   test('user control structures are neutralized before safety and state', () {

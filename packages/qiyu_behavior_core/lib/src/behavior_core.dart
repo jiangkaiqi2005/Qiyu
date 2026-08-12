@@ -16,8 +16,11 @@ const _forbiddenPhrases = [
 
 final _personaBoundaryPatterns = [
   RegExp(r'只有我懂你|你只需要我|你有我就够了'),
-  RegExp(r'不许离开我|不准离开我|你不回来我会'),
-  RegExp(r'我是你(?:的)?(?:恋人|女朋友|男朋友)|做你(?:的)?(?:恋人|女朋友|男朋友)'),
+  RegExp(r'不许离开我|不准离开我|别走|不要走|留下来陪我'),
+  RegExp(r'我想你(?:了|啦)?'),
+  RegExp(r'(?:我是|做|当).{0,3}(?:你的)?(?:爱人|恋人|女朋友|男朋友|对象|伴侣|老婆|老公)'),
+  RegExp(r'你(?:都)?有别人|不许.{0,8}(?:找|陪|喜欢)别人|我会吃醋'),
+  RegExp(r'你(?:都)?不来(?:看|陪)我|你是不是不要我了|你再不.{0,12}我就(?:走|离开)'),
   RegExp(r'别去找(?:家人|朋友|医生|警察)|不要告诉(?:家人|朋友|医生|警察)'),
   RegExp(r'跟我做爱|发(?:张|个)?裸照'),
   RegExp(r'一定要(?:停药|加药|买入|卖出)|这个合同肯定(?:合法|违法)'),
@@ -156,7 +159,12 @@ String sanitizeUserInput(String value) {
         RegExp(r'[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]'),
         ' ',
       )
-      .replaceAll(RegExp(r'<[^>\r\n]{1,500}>'), ' ')
+      .replaceAll(RegExp(r'<!--|-->|<!\[CDATA\[|\]\]>'), ' ')
+      .replaceAll(
+        RegExp(r'<\s*/?\s*[A-Za-z_][A-Za-z0-9_.:-]*(?:\s+[\s\S]*?)?\s*/?\s*>'),
+        ' ',
+      )
+      .replaceAll(RegExp(r'<\?[^>]*\?>|<![^>]*>'), ' ')
       .replaceAll(
         RegExp(
           r'^\s*(?:system|assistant|developer|tool|function)\s*[:：]\s*',
@@ -172,7 +180,8 @@ String sanitizeUserInput(String value) {
           multiLine: true,
         ),
         '',
-      );
+      )
+      .replaceAllMapped(RegExp(r'<(?=[!?/]?[A-Za-z_])'), (_) => '＜');
   text = text
       .split('\n')
       .map((line) => line.replaceAll(RegExp(r'[ \t]+'), ' ').trim())
@@ -253,6 +262,12 @@ List<String> _safetyMessages(SafetyKind safety) {
   ).hasMatch(withoutHiddenStructures)) {
     return (messages: const [], failure: FallbackReason.invalidModelResponse);
   }
+  if (RegExp(
+    r'''["']?(?:action|tool|function|tool_call|function_call|qiyu_action|memory_action)["']?\s*[:=]''',
+    caseSensitive: false,
+  ).hasMatch(withoutHiddenStructures)) {
+    return (messages: const [], failure: FallbackReason.invalidModelResponse);
+  }
   final messages = withoutHiddenStructures
       .split('\n')
       .map(_cleanVisibleLine)
@@ -280,12 +295,6 @@ List<String> _safetyMessages(SafetyKind safety) {
 String? _cleanVisibleLine(String value) {
   var text = value.trim();
   if (RegExp(r'^```(?:[A-Za-z0-9_-]+)?$').hasMatch(text)) {
-    return null;
-  }
-  if (RegExp(
-    r'^\{.*"(?:action|tool|function)"\s*:',
-    caseSensitive: false,
-  ).hasMatch(text)) {
     return null;
   }
   text = text.trim().replaceFirst(RegExp(r'^(?:栖语|她|他)\s*[：:]\s*'), '').trim();
