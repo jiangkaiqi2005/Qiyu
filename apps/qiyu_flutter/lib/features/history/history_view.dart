@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../chat/local_chat_client.dart';
 import '../chat/local_chat_view_model.dart';
+import '../chat/qiyu_markdown.dart';
 import 'history_client.dart';
 import 'history_view_model.dart';
 
@@ -322,7 +323,10 @@ class _HistorySessionViewState extends State<HistorySessionView> {
                   : Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(18),
             ),
-            child: Text(message.text),
+            // 用户输入按纯文本展示；栖语回复来自模型，按 Markdown 渲染。
+            child: fromUser
+                ? Text(message.text)
+                : QiyuMarkdown(text: message.text),
           ),
         );
       },

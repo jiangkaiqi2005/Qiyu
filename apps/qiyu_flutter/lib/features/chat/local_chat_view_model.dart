@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+import 'package:uuid/uuid.dart';
 
 import '../baseline/host_connection_probe.dart';
 import 'local_chat_client.dart';
@@ -270,8 +271,9 @@ final class LocalChatViewModel extends ChangeNotifier {
   }
 }
 
-String _defaultRequestId() =>
-    'chat-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
+final Uuid _requestIdUuid = Uuid();
+
+String _defaultRequestId() => 'chat-${_requestIdUuid.v4()}';
 
 String _readableError(Object error) => switch (error) {
   LocalChatGatewayException() => error.message,

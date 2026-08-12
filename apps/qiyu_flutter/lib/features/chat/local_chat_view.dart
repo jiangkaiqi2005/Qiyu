@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
+import 'qiyu_markdown.dart';
 
 class LocalChatView extends StatefulWidget {
   const LocalChatView({super.key});
@@ -171,11 +172,9 @@ class _LocalChatViewState extends State<LocalChatView> {
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(18),
               ),
-              child: Text(
-                viewModel.streamingText.isEmpty
-                    ? '栖语在想…'
-                    : viewModel.streamingText,
-              ),
+              child: viewModel.streamingText.isEmpty
+                  ? const Text('栖语在想…')
+                  : QiyuMarkdown(text: viewModel.streamingText),
             ),
           );
         }
@@ -193,7 +192,10 @@ class _LocalChatViewState extends State<LocalChatView> {
                   : Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(18),
             ),
-            child: Text(message.text),
+            // 用户输入按纯文本展示；栖语回复来自模型，按 Markdown 渲染。
+            child: fromUser
+                ? Text(message.text)
+                : QiyuMarkdown(text: message.text),
           ),
         );
       },

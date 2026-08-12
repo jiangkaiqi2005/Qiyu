@@ -213,7 +213,10 @@ void main() {
         const ModelCompletion.reply('不应调用'),
       );
       final service = LocalChatService(
-        MarkdownMemoryRepository(memoryDirectory: temporaryDirectory.path),
+        MarkdownMemoryRepository(
+          memoryDirectory: temporaryDirectory.path,
+          clock: () => DateTime(2026, 8, 12, 22, 30),
+        ),
         providerChatClient: provider,
         clock: () => DateTime(2026, 8, 12, 22, 30),
       );
@@ -250,7 +253,10 @@ void main() {
     addTearDown(() => temporaryDirectory.delete(recursive: true));
     final provider = _FakeProviderChatClient(const ModelCompletion.reply('在。'));
     final service = LocalChatService(
-      MarkdownMemoryRepository(memoryDirectory: temporaryDirectory.path),
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      ),
       providerChatClient: provider,
       modelPromptBuilder: const ModelPromptBuilder('测试产品灵魂'),
       clock: () => DateTime(2026, 8, 12, 22, 30),
@@ -273,7 +279,10 @@ void main() {
     addTearDown(() => temporaryDirectory.delete(recursive: true));
     final provider = _FakeProviderChatClient(const ModelCompletion.reply('在。'));
     final service = LocalChatService(
-      MarkdownMemoryRepository(memoryDirectory: temporaryDirectory.path),
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      ),
       providerChatClient: provider,
       modelPromptBuilder: const ModelPromptBuilder('测试产品灵魂'),
       clock: () => DateTime(2026, 8, 12, 22, 30),
@@ -301,7 +310,10 @@ void main() {
         const ModelCompletion.reply('在。'),
       );
       final service = LocalChatService(
-        MarkdownMemoryRepository(memoryDirectory: temporaryDirectory.path),
+        MarkdownMemoryRepository(
+          memoryDirectory: temporaryDirectory.path,
+          clock: () => DateTime(2026, 8, 12, 22, 30),
+        ),
         providerChatClient: provider,
         modelPromptBuilder: const ModelPromptBuilder('测试产品灵魂'),
         clock: () => DateTime(2026, 8, 12, 22, 30),
@@ -350,7 +362,10 @@ void main() {
       );
       addTearDown(() => temporaryDirectory.delete(recursive: true));
       final service = LocalChatService(
-        MarkdownMemoryRepository(memoryDirectory: temporaryDirectory.path),
+        MarkdownMemoryRepository(
+          memoryDirectory: temporaryDirectory.path,
+          clock: () => DateTime(2026, 8, 12, 22, 30),
+        ),
         providerChatClient: _FakeProviderChatClient(
           ModelCompletion.failure(entry.key),
         ),
