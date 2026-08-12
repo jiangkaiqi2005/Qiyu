@@ -144,6 +144,7 @@ export async function handleSettingsRequest(req, res, {
       try {
         const { buildPromptContext } = await import('../qiyu/prompt-context.js');
         const { assertNoForbiddenPhrase, assertNoPersonaBoundary } = await import('../qiyu/persona.js');
+        const { normalizeModelReply } = await import('../qiyu/reply-delivery.js');
         const { buildSystemPrompt } = await import('./system-prompt.js');
         const { createInitialState } = await import('../qiyu/state.js');
 
@@ -163,13 +164,14 @@ export async function handleSettingsRequest(req, res, {
           ]
         });
 
-        assertNoForbiddenPhrase(reply);
-        assertNoPersonaBoundary(reply);
+        const visibleReply = normalizeModelReply(reply).join('\n');
+        assertNoForbiddenPhrase(visibleReply);
+        assertNoPersonaBoundary(visibleReply);
 
         const latencyMs = Date.now() - start;
         sendJson(res, 200, {
           success: true,
-          reply,
+          reply: visibleReply,
           latencyMs
         });
       } catch (err) {

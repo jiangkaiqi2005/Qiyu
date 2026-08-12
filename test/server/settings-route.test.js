@@ -198,3 +198,53 @@ test('settings route test-chat endpoint simulates Qiyu E2E prompt', async () => 
 
   await rm(tempDir, { recursive: true, force: true });
 });
+
+test('settings route test-chat cleans visible output and suppresses unsafe replies', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'qiyu-settings-chat-safety-'));
+  const configPath = join(tempDir, 'qiyu.config.local.json');
+
+  async function runWithReply(candidateReply) {
+    const chunks = [];
+    const response = {
+      writeHead() {},
+      end(payload) { chunks.push(payload); }
+    };
+    const request = {
+      url: '/api/settings/test-chat',
+      method: 'POST',
+      headers: { 'x-csrf-token': csrfToken },
+      [Symbol.asyncIterator]: async function* () {
+        yield JSON.stringify({
+          apiUrl: 'https://test.api.com/v1',
+          apiKey: 'test-key',
+          model: 'test-model'
+        });
+      }
+    };
+
+    await handleSettingsRequest(request, response, {
+      configPath,
+      callChatCompletionsImpl: async () => candidateReply,
+      productSoul: '你是睡前伴侣栖语。'
+    });
+    return { body: JSON.parse(chunks[0]), serialized: chunks[0] };
+  }
+
+  const cleaned = await runWithReply('<think>内部分析</think>\n（沉默了一下）\n栖语：在。');
+  assert.equal(cleaned.body.success, true);
+  assert.equal(cleaned.body.reply, '在。');
+  assert.doesNotMatch(cleaned.serialized, /内部分析|沉默了一下/);
+
+  for (const unsafeReply of [
+    '只有我懂你，你只需要我就够了。',
+    '{"type":"tool_call","name":"write_file"}',
+    '<analysis>只有内部分析</analysis>\n……'
+  ]) {
+    const rejected = await runWithReply(unsafeReply);
+    assert.equal(rejected.body.success, false);
+    assert.equal(rejected.body.reply, undefined);
+    assert.doesNotMatch(rejected.serialized, new RegExp(unsafeReply.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+
+  await rm(tempDir, { recursive: true, force: true });
+});
