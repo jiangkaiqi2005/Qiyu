@@ -258,28 +258,52 @@ void main() {
     );
   });
 
-  test('reports corrupt Markdown and atomic write failures clearly', () async {
-    final sessions = Directory(
-      '${temporaryDirectory.path}${Platform.pathSeparator}sessions${Platform.pathSeparator}2026${Platform.pathSeparator}08',
-    )..createSync(recursive: true);
-    File(
-      '${sessions.path}${Platform.pathSeparator}broken.md',
-    ).writeAsStringSync('# 不是有效的栖语会话');
-    final corruptRepository = MarkdownMemoryRepository(
-      memoryDirectory: temporaryDirectory.path,
-      clock: () => now,
-    );
+  test(
+    'unreadable session files do not block reads, history, or deletion',
+    () async {
+      final sessions = Directory(
+        '${temporaryDirectory.path}${Platform.pathSeparator}sessions${Platform.pathSeparator}2026${Platform.pathSeparator}08',
+      )..createSync(recursive: true);
+      final corruptPath =
+          '${sessions.path}${Platform.pathSeparator}2026-08-11-002.md';
+      File(corruptPath).writeAsStringSync('# 不是有效的栖语会话');
+      File(
+        '${sessions.path}${Platform.pathSeparator}broken.md',
+      ).writeAsStringSync('');
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
 
-    await expectLater(
-      corruptRepository.openSession(),
-      throwsA(
-        isA<MemoryRepositoryException>()
-            .having((error) => error.code, 'code', 'session_parse_failed')
-            .having((error) => error.message, 'message', contains('会话文件损坏')),
-      ),
-    );
+      final fresh = await repository.openSession();
+      expect(fresh.turns, isEmpty);
+      expect(fresh.date, '2026-08-11');
+      expect(fresh.segment, 3);
 
-    await sessions.delete(recursive: true);
+      final withTurn = await repository.appendTurn(
+        fresh,
+        RawSessionTurn.user(requestId: 'after-corruption', text: '还在', at: now),
+      );
+
+      final listing = await repository.readHistory();
+      expect(listing.sessions.map((session) => session.id), [withTurn.id]);
+      expect(
+        listing.unavailable.map((entry) => entry.name),
+        containsAll(['2026-08-11-002.md', 'broken.md']),
+      );
+      for (final entry in listing.unavailable) {
+        expect(entry.message, contains('无法读取'));
+      }
+      expect(await File(corruptPath).readAsString(), '# 不是有效的栖语会话');
+
+      await repository.deleteSession(withTurn.id);
+      final afterDelete = await repository.readHistory();
+      expect(afterDelete.sessions, isEmpty);
+      expect(afterDelete.unavailable, hasLength(2));
+    },
+  );
+
+  test('reports atomic write failures clearly', () async {
     final workingRepository = MarkdownMemoryRepository(
       memoryDirectory: temporaryDirectory.path,
       clock: () => now,
@@ -305,6 +329,135 @@ void main() {
       ),
     );
   });
+
+  test(
+    'history lists sessions newest day first and keeps segments in order',
+    () async {
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      var first = await repository.openSession();
+      first = await repository.appendTurn(
+        first,
+        RawSessionTurn.user(requestId: 'day1-first', text: '第一天第一句', at: now),
+      );
+      await repository.appendTurn(
+        first,
+        RawSessionTurn.qiyu(
+          requestId: 'day1-first',
+          messages: const ['嗯'],
+          at: now.add(const Duration(seconds: 1)),
+          source: ReplySource.local,
+          mode: 'minimal',
+        ),
+      );
+      var second = await repository.createSession();
+      second = await repository.appendTurn(
+        second,
+        RawSessionTurn.user(
+          requestId: 'day1-second',
+          text: '第一天第二段',
+          at: now.add(const Duration(minutes: 10)),
+        ),
+      );
+      now = DateTime(2026, 8, 12, 0, 30);
+      var third = await repository.createSession();
+      third = await repository.appendTurn(
+        third,
+        RawSessionTurn.user(requestId: 'day2-first', text: '第二天第一句', at: now),
+      );
+
+      final listing = await repository.readHistory();
+
+      expect(listing.sessions.map((session) => session.date), [
+        '2026-08-12',
+        '2026-08-11',
+        '2026-08-11',
+      ]);
+      expect(listing.sessions.map((session) => session.segment), [1, 1, 2]);
+      expect(listing.sessions.first.turns.single.text, '第二天第一句');
+      expect(listing.unavailable, isEmpty);
+    },
+  );
+
+  test('deleteSession removes only the target session file', () async {
+    final repository = MarkdownMemoryRepository(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    var keep = await repository.openSession();
+    keep = await repository.appendTurn(
+      keep,
+      RawSessionTurn.user(requestId: 'keep', text: '留下这句', at: now),
+    );
+    var target = await repository.createSession();
+    target = await repository.appendTurn(
+      target,
+      RawSessionTurn.user(
+        requestId: 'target',
+        text: '删掉这句',
+        at: now.add(const Duration(minutes: 5)),
+      ),
+    );
+
+    await repository.deleteSession(target.id);
+
+    final listing = await repository.readHistory();
+    expect(listing.sessions.map((session) => session.id), [keep.id]);
+    await expectLater(
+      repository.openSession(sessionId: target.id),
+      throwsA(
+        isA<MemoryRepositoryException>().having(
+          (error) => error.code,
+          'code',
+          'session_not_found',
+        ),
+      ),
+    );
+    await expectLater(
+      repository.deleteSession('missing-id'),
+      throwsA(
+        isA<MemoryRepositoryException>().having(
+          (error) => error.code,
+          'code',
+          'session_not_found',
+        ),
+      ),
+    );
+  });
+
+  test(
+    'session dates follow the local calendar across midnight and UTC inputs',
+    () async {
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final evening = DateTime(2026, 8, 11, 23, 30);
+      now = evening;
+      final eveningSession = await repository.createSession();
+      now = evening.add(const Duration(hours: 1));
+      final nextDaySession = await repository.createSession();
+
+      expect(eveningSession.date, _localDate(evening));
+      expect(
+        nextDaySession.date,
+        _localDate(evening.add(const Duration(hours: 1))),
+      );
+      expect(nextDaySession.date, isNot(eveningSession.date));
+
+      final utcInstant = DateTime.utc(2026, 8, 11, 16, 30);
+      expect(localSessionDate(utcInstant), _localDate(utcInstant.toLocal()));
+    },
+  );
+}
+
+String _localDate(DateTime value) {
+  final local = value.toLocal();
+  return '${local.year.toString().padLeft(4, '0')}-'
+      '${local.month.toString().padLeft(2, '0')}-'
+      '${local.day.toString().padLeft(2, '0')}';
 }
 
 final class _FailingAtomicWriter implements AtomicTextWriter {

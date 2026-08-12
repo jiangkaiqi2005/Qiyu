@@ -58,6 +58,12 @@ class _LocalChatViewState extends State<LocalChatView> {
                           if (viewModel.hasLocalFallback) const Text('本地规则回复'),
                           const SizedBox(width: 12),
                           IconButton(
+                            key: const Key('open-history'),
+                            onPressed: () => context.push('/history'),
+                            tooltip: '历史',
+                            icon: const Icon(Icons.history),
+                          ),
+                          IconButton(
                             key: const Key('open-provider-settings'),
                             onPressed: () => context.push('/settings'),
                             tooltip: '模型连接',

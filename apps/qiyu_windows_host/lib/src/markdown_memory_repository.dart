@@ -210,6 +210,27 @@ final class RawSession {
   };
 }
 
+final class UnavailableSessionFile {
+  const UnavailableSessionFile({
+    required this.name,
+    required this.message,
+    this.date,
+    this.segment,
+  });
+
+  final String name;
+  final String message;
+  final String? date;
+  final int? segment;
+}
+
+final class HistoryListing {
+  const HistoryListing({required this.sessions, required this.unavailable});
+
+  final List<RawSession> sessions;
+  final List<UnavailableSessionFile> unavailable;
+}
+
 abstract interface class MemoryRepository {
   Future<void> initialize();
 
@@ -218,6 +239,10 @@ abstract interface class MemoryRepository {
   Future<RawSession> createSession();
 
   Future<RawSession> appendTurn(RawSession session, RawSessionTurn turn);
+
+  Future<HistoryListing> readHistory();
+
+  Future<void> deleteSession(String sessionId);
 }
 
 final class MarkdownMemoryRepository implements MemoryRepository {
@@ -252,7 +277,8 @@ final class MarkdownMemoryRepository implements MemoryRepository {
   @override
   Future<RawSession> openSession({String? sessionId}) async {
     await initialize();
-    final sessions = await _readSessions();
+    final records = await _readSessionRecords();
+    final sessions = _validSessions(records);
     final currentTime = _clock();
     final now = currentTime.toUtc();
     final today = localSessionDate(currentTime);
@@ -278,33 +304,93 @@ final class MarkdownMemoryRepository implements MemoryRepository {
       return latest;
     }
 
-    return _createSession(sessions, now, today);
+    return _createSession(records, now, today);
   }
 
   @override
   Future<RawSession> createSession() async {
     await initialize();
-    final sessions = await _readSessions();
+    final records = await _readSessionRecords();
     final currentTime = _clock();
     final now = currentTime.toUtc();
-    return _createSession(sessions, now, localSessionDate(currentTime));
+    return _createSession(records, now, localSessionDate(currentTime));
+  }
+
+  @override
+  Future<HistoryListing> readHistory() async {
+    await initialize();
+    final records = await _readSessionRecords();
+    final sessions = _validSessions(records)
+      ..sort((left, right) {
+        final byDate = right.date.compareTo(left.date);
+        if (byDate != 0) {
+          return byDate;
+        }
+        return left.segment.compareTo(right.segment);
+      });
+    final unavailable = records
+        .map((record) => record.unavailable)
+        .whereType<UnavailableSessionFile>()
+        .toList()
+      ..sort((left, right) => left.name.compareTo(right.name));
+    return HistoryListing(sessions: sessions, unavailable: unavailable);
+  }
+
+  @override
+  Future<void> deleteSession(String sessionId) async {
+    await initialize();
+    final records = await _readSessionRecords();
+    for (final record in records) {
+      final session = record.session;
+      if (session == null || session.id != sessionId) {
+        continue;
+      }
+      try {
+        await record.file.delete();
+      } on FileSystemException catch (error) {
+        throw MemoryRepositoryException(
+          code: 'session_delete_failed',
+          message: '无法删除这段本地会话，请检查目录权限后重试。',
+          retryable: true,
+          cause: error,
+        );
+      }
+      return;
+    }
+    throw const MemoryRepositoryException(
+      code: 'session_not_found',
+      message: '没有找到这段本地会话，可能已经被删除。',
+      retryable: false,
+    );
   }
 
   Future<RawSession> _createSession(
-    List<RawSession> sessions,
+    List<_SessionRecord> records,
     DateTime now,
     String today,
   ) async {
-    final nextSegment =
-        sessions
-            .where((session) => session.date == today)
-            .map((session) => session.segment)
-            .fold(0, max) +
-        1;
+    var maxSegment = 0;
+    for (final record in records) {
+      final session = record.session;
+      if (session != null) {
+        if (session.date == today && session.segment > maxSegment) {
+          maxSegment = session.segment;
+        }
+        continue;
+      }
+      final unavailable = record.unavailable;
+      final segment = unavailable?.segment;
+      if (unavailable != null &&
+          unavailable.date == today &&
+          segment != null &&
+          segment > maxSegment) {
+        maxSegment = segment;
+      }
+    }
     final created = RawSession(
       id: _newOpaqueId(),
       date: today,
-      segment: nextSegment,
+      segment: maxSegment + 1,
       createdAt: now,
       updatedAt: now,
       turns: const [],
@@ -343,26 +429,35 @@ final class MarkdownMemoryRepository implements MemoryRepository {
     }
   }
 
-  Future<List<RawSession>> _readSessions() async {
+  Future<List<_SessionRecord>> _readSessionRecords() async {
     final files = await _sessionsDirectory
         .list(recursive: true, followLinks: false)
         .where((entity) => entity is File && entity.path.endsWith('.md'))
         .cast<File>()
         .toList();
-    final sessions = <RawSession>[];
+    final records = <_SessionRecord>[];
     for (final file in files) {
       try {
-        sessions.add(_parseMarkdown(await file.readAsString(encoding: utf8)));
-      } on Object catch (error) {
-        throw MemoryRepositoryException(
-          code: 'session_parse_failed',
-          message: '本地会话文件损坏，暂时无法恢复最近聊天。',
-          retryable: false,
-          cause: error,
-        );
+        final session = _parseMarkdown(await file.readAsString(encoding: utf8));
+        records.add(_SessionRecord(file: file, session: session));
+      } on Object {
+        records.add(_SessionRecord(file: file, unavailable: _unavailableFor(file)));
       }
     }
-    return sessions;
+    return records;
+  }
+
+  UnavailableSessionFile _unavailableFor(File file) {
+    final name = path.basename(file.path);
+    final match = RegExp(
+      r'^(\d{4}-\d{2}-\d{2})-(\d{3})\.md$',
+    ).firstMatch(name);
+    return UnavailableSessionFile(
+      name: name,
+      message: '这个会话文件暂时无法读取，不影响其他历史记录。',
+      date: match?.group(1),
+      segment: match == null ? null : int.parse(match.group(2)!),
+    );
   }
 
   String _sessionPath(RawSession session) => path.join(
@@ -373,6 +468,19 @@ final class MarkdownMemoryRepository implements MemoryRepository {
     '${session.date}-${session.segment.toString().padLeft(3, '0')}.md',
   );
 }
+
+final class _SessionRecord {
+  const _SessionRecord({required this.file, this.session, this.unavailable});
+
+  final File file;
+  final RawSession? session;
+  final UnavailableSessionFile? unavailable;
+}
+
+List<RawSession> _validSessions(List<_SessionRecord> records) => records
+    .map((record) => record.session)
+    .whereType<RawSession>()
+    .toList();
 
 RawSession? _latestSession(List<RawSession> sessions) {
   if (sessions.isEmpty) {

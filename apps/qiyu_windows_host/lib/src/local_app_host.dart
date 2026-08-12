@@ -294,6 +294,31 @@ final class _LocalAppRequestHandler {
           headers: _jsonHeaders,
         );
       }
+      if (request.method == 'GET' && request.url.path == 'api/history') {
+        final listing = await chatService.history();
+        return Response.ok(
+          jsonEncode(_historyJson(listing)),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'DELETE' &&
+          request.url.path.startsWith('api/history/sessions/')) {
+        final sessionId = request.url.path.substring(
+          'api/history/sessions/'.length,
+        );
+        if (!RegExp(r'^[A-Za-z0-9_-]{1,64}$').hasMatch(sessionId)) {
+          throw const LocalChatException(
+            code: 'invalid_request',
+            message: '会话标识格式不正确。',
+            retryable: false,
+          );
+        }
+        await chatService.deleteSession(sessionId);
+        return Response.ok(
+          jsonEncode({'deleted': true}),
+          headers: _jsonHeaders,
+        );
+      }
       if (request.method == 'POST' && request.url.path == 'api/chat/cancel') {
         final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
         final requestId = payload['requestId'];
@@ -447,6 +472,61 @@ Future<Map<String, Object?>> _readJsonObject(
     throw const FormatException('request body must be an object');
   }
   return decoded;
+}
+
+Map<String, Object?> _historyJson(HistoryListing listing) {
+  RawSession? latest;
+  for (final session in listing.sessions) {
+    if (latest == null || session.updatedAt.isAfter(latest.updatedAt)) {
+      latest = session;
+    }
+  }
+  final days = <Map<String, Object?>>[];
+  for (final session in listing.sessions) {
+    if (days.isEmpty || days.last['date'] != session.date) {
+      days.add({'date': session.date, 'sessions': <Map<String, Object?>>[]});
+    }
+    final daySessions = days.last['sessions']! as List<Map<String, Object?>>;
+    daySessions.add(_sessionSummaryJson(session));
+  }
+  return {
+    'latestSessionId': ?latest?.id,
+    'days': days,
+    'unavailable': [
+      for (final entry in listing.unavailable)
+        {'name': entry.name, 'message': entry.message},
+    ],
+  };
+}
+
+Map<String, Object?> _sessionSummaryJson(RawSession session) {
+  final startedAt = session.turns.isEmpty
+      ? session.createdAt
+      : session.turns.first.at;
+  return {
+    'sessionId': session.id,
+    'segment': session.segment,
+    'startedAt': startedAt.toUtc().toIso8601String(),
+    'updatedAt': session.updatedAt.toUtc().toIso8601String(),
+    'turnCount': session.turns.length,
+    'preview': _historyPreview(session),
+  };
+}
+
+String _historyPreview(RawSession session) {
+  if (session.turns.isEmpty) {
+    return '';
+  }
+  final lines = session.turns.first.text.replaceAll('\r\n', '\n').split('\n');
+  final firstLine = lines
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .firstOrNull;
+  final runes = (firstLine ?? '').runes.toList(growable: false);
+  if (runes.length <= 60) {
+    return String.fromCharCodes(runes);
+  }
+  return '${String.fromCharCodes(runes.sublist(0, 60))}…';
 }
 
 ProviderConfig _providerConfigFromPayload(Map<String, Object?> payload) {

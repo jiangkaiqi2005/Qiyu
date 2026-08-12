@@ -99,6 +99,12 @@ final class LocalChatService {
         LocalChatSnapshot(await _repository.openSession(sessionId: sessionId)),
   );
 
+  Future<HistoryListing> history() =>
+      _serialized(() => _repository.readHistory());
+
+  Future<void> deleteSession(String sessionId) =>
+      _serialized(() => _repository.deleteSession(sessionId));
+
   Future<LocalChatExchange> send({
     required String requestId,
     required String text,

@@ -383,6 +383,220 @@ void main() {
     expect(response.body, isNot(contains('Authorization')));
     await host.close();
   });
+
+  test(
+    'history API lists by local day, survives restart, and deletes with CSRF',
+    () async {
+      var host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+      );
+      var browser = await _openBrowserSession(host);
+      final chat = await _send(
+        host.origin.resolve('/api/chat'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'requestId': 'history-1',
+          'text': '今天有点累',
+        }),
+      );
+      final sessionId =
+          _chatEvent(_chatEvents(chat.body), 'accepted')['sessionId']!
+              as String;
+
+      final history = await _send(
+        host.origin.resolve('/api/history'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(history.statusCode, HttpStatus.ok);
+      final historyJson = jsonDecode(history.body) as Map<String, Object?>;
+      expect(historyJson['latestSessionId'], sessionId);
+      final days = historyJson['days']! as List<Object?>;
+      expect(days, hasLength(1));
+      final day = days.single! as Map<String, Object?>;
+      expect(day['date'], localSessionDate(DateTime.now()));
+      final sessions = day['sessions']! as List<Object?>;
+      final summary = sessions.single! as Map<String, Object?>;
+      expect(summary['sessionId'], sessionId);
+      expect(summary['turnCount'], 2);
+      expect(summary['preview'], '今天有点累');
+      expect(historyJson['unavailable'], isEmpty);
+
+      final markdownFile = memoryDirectory
+          .listSync(recursive: true)
+          .whereType<File>()
+          .singleWhere((file) => file.path.endsWith('.md'));
+      final markdownBefore = await markdownFile.readAsString();
+      final browsed = await _send(
+        host.origin.resolve('/api/chat/session?sessionId=$sessionId'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(browsed.statusCode, HttpStatus.ok);
+      expect(
+        (jsonDecode(browsed.body) as Map<String, Object?>)['turns'],
+        hasLength(2),
+      );
+      expect(await markdownFile.readAsString(), markdownBefore);
+      await host.close();
+
+      host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+      );
+      browser = await _openBrowserSession(host);
+      final afterRestart = await _send(
+        host.origin.resolve('/api/history'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(afterRestart.statusCode, HttpStatus.ok);
+      final afterRestartJson =
+          jsonDecode(afterRestart.body) as Map<String, Object?>;
+      expect(afterRestartJson['latestSessionId'], sessionId);
+
+      final missingCsrf = await _send(
+        host.origin.resolve('/api/history/sessions/$sessionId'),
+        method: 'DELETE',
+        headers: {
+          ...browser.readHeaders(host.origin),
+          'origin': host.origin.toString().replaceFirst(RegExp(r'/$'), ''),
+        },
+      );
+      expect(missingCsrf.statusCode, HttpStatus.forbidden);
+
+      final invalidId = await _send(
+        host.origin.resolve('/api/history/sessions/not:valid'),
+        method: 'DELETE',
+        headers: browser.mutationHeaders(host.origin),
+      );
+      expect(invalidId.statusCode, HttpStatus.badRequest);
+
+      final deleted = await _send(
+        host.origin.resolve('/api/history/sessions/$sessionId'),
+        method: 'DELETE',
+        headers: browser.mutationHeaders(host.origin),
+      );
+      expect(deleted.statusCode, HttpStatus.ok);
+      expect(jsonDecode(deleted.body), {'deleted': true});
+      expect(
+        memoryDirectory
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((file) => file.path.endsWith('.md')),
+        isEmpty,
+      );
+
+      final emptyHistory = await _send(
+        host.origin.resolve('/api/history'),
+        headers: browser.readHeaders(host.origin),
+      );
+      final emptyHistoryJson =
+          jsonDecode(emptyHistory.body) as Map<String, Object?>;
+      expect(emptyHistoryJson['days'], isEmpty);
+      expect(emptyHistoryJson.containsKey('latestSessionId'), isFalse);
+
+      final freshRestore = await _send(
+        host.origin.resolve('/api/chat/session'),
+        headers: browser.readHeaders(host.origin),
+      );
+      final freshSessionId =
+          (jsonDecode(freshRestore.body) as Map<String, Object?>)['sessionId']
+              as String;
+      expect(freshSessionId, isNot(sessionId));
+
+      final deletedAgain = await _send(
+        host.origin.resolve('/api/history/sessions/$sessionId'),
+        method: 'DELETE',
+        headers: browser.mutationHeaders(host.origin),
+      );
+      expect(deletedAgain.statusCode, HttpStatus.notFound);
+      await host.close();
+    },
+  );
+
+  test(
+    'an unreadable session file is reported without blocking browsing, chat, or deletion',
+    () async {
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+      );
+      final browser = await _openBrowserSession(host);
+      final chat = await _send(
+        host.origin.resolve('/api/chat'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'requestId': 'corrupt-1', 'text': '在吗'}),
+      );
+      final sessionId =
+          _chatEvent(_chatEvents(chat.body), 'accepted')['sessionId']!
+              as String;
+      final today = localSessionDate(DateTime.now());
+      final corruptFile = File(
+        '${memoryDirectory.path}${Platform.pathSeparator}sessions'
+        '${Platform.pathSeparator}${today.substring(0, 4)}'
+        '${Platform.pathSeparator}${today.substring(5, 7)}'
+        '${Platform.pathSeparator}$today-002.md',
+      );
+      await corruptFile.writeAsString('# 不是有效的栖语会话');
+
+      final history = await _send(
+        host.origin.resolve('/api/history'),
+        headers: browser.readHeaders(host.origin),
+      );
+      final historyJson = jsonDecode(history.body) as Map<String, Object?>;
+      expect(historyJson['latestSessionId'], sessionId);
+      final days = historyJson['days']! as List<Object?>;
+      final daySessions =
+          (days.single! as Map<String, Object?>)['sessions']! as List<Object?>;
+      expect(
+        daySessions.map(
+          (session) =>
+              (session! as Map<String, Object?>)['sessionId'] as String,
+        ),
+        [sessionId],
+      );
+      final unavailable = historyJson['unavailable']! as List<Object?>;
+      final entry = unavailable.single! as Map<String, Object?>;
+      expect(entry['name'], '$today-002.md');
+      expect(entry['message']! as String, contains('无法读取'));
+
+      final fullText = await _send(
+        host.origin.resolve('/api/chat/session?sessionId=$sessionId'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(fullText.statusCode, HttpStatus.ok);
+
+      final continued = await _send(
+        host.origin.resolve('/api/chat'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'requestId': 'corrupt-2',
+          'sessionId': sessionId,
+          'text': '还想再说一句',
+        }),
+      );
+      expect(continued.statusCode, HttpStatus.ok);
+      expect(
+        _chatEvent(_chatEvents(continued.body), 'accepted')['sessionId'],
+        sessionId,
+      );
+
+      final deleted = await _send(
+        host.origin.resolve('/api/history/sessions/$sessionId'),
+        method: 'DELETE',
+        headers: browser.mutationHeaders(host.origin),
+      );
+      expect(deleted.statusCode, HttpStatus.ok);
+      expect(await corruptFile.exists(), isTrue);
+      expect(await corruptFile.readAsString(), '# 不是有效的栖语会话');
+      await host.close();
+    },
+  );
 }
 
 List<Map<String, Object?>> _chatEvents(String body) => body

@@ -1,0 +1,351 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
+
+import '../chat/local_chat_client.dart';
+import '../chat/local_chat_view_model.dart';
+import 'history_client.dart';
+import 'history_view_model.dart';
+
+class HistoryView extends StatelessWidget {
+  const HistoryView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final viewModel = context.watch<HistoryViewModel>();
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        key: const Key('history-back'),
+                        onPressed: () => context.go('/'),
+                        tooltip: '返回聊天',
+                        icon: const Icon(Icons.arrow_back),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '历史',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        key: const Key('refresh-history'),
+                        onPressed: viewModel.loading
+                            ? null
+                            : () => unawaited(viewModel.refresh()),
+                        tooltip: '刷新历史',
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(child: _body(context, viewModel)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _body(BuildContext context, HistoryViewModel viewModel) {
+    if (viewModel.loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (viewModel.errorMessage case final message?) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              message,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+            const SizedBox(height: 12),
+            TextButton(
+              key: const Key('retry-history'),
+              onPressed: () => unawaited(viewModel.refresh()),
+              child: const Text('重试'),
+            ),
+          ],
+        ),
+      );
+    }
+    final listing = viewModel.listing;
+    if (listing == null ||
+        (listing.days.isEmpty && listing.unavailable.isEmpty)) {
+      return const Center(child: Text('还没有历史记录'));
+    }
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        for (final day in listing.days) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 8),
+            child: Text(
+              _formatDayHeader(day.date),
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+          ),
+          for (final session in day.sessions)
+            _SessionTile(
+              key: Key('history-session-tile-${session.sessionId}'),
+              session: session,
+              isLatest: session.sessionId == listing.latestSessionId,
+              viewModel: viewModel,
+            ),
+        ],
+        if (listing.unavailable.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.only(top: 24, bottom: 8),
+            child: Text('以下会话文件暂时无法读取'),
+          ),
+          for (final entry in listing.unavailable)
+            Padding(
+              key: Key('history-unavailable-${entry.name}'),
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                '${entry.name}：${entry.message}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+class _SessionTile extends StatelessWidget {
+  const _SessionTile({
+    super.key,
+    required this.session,
+    required this.isLatest,
+    required this.viewModel,
+  });
+
+  final HistorySessionSummary session;
+  final bool isLatest;
+  final HistoryViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) {
+    final startedAt = session.startedAt.toLocal();
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => unawaited(context.push('/history/${session.sessionId}')),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${two(startedAt.hour)}:${two(startedAt.minute)} · '
+                      '${session.turnCount} 条消息',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      session.preview.isEmpty ? '（空会话）' : session.preview,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              if (isLatest)
+                TextButton(
+                  key: const Key('resume-latest-session'),
+                  onPressed: () => context.go('/'),
+                  child: const Text('继续这段对话'),
+                ),
+              IconButton(
+                key: Key('delete-session-${session.sessionId}'),
+                onPressed: viewModel.deleting
+                    ? null
+                    : () => unawaited(_confirmDelete(context)),
+                tooltip: '删除这段会话',
+                icon: const Icon(Icons.delete_outline),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除这段会话？'),
+        content: Text('删除后，这段会话的 ${session.turnCount} 条消息无法恢复。'),
+        actions: [
+          TextButton(
+            key: const Key('cancel-delete'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            key: const Key('confirm-delete'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await viewModel.deleteSession(session.sessionId);
+    }
+  }
+}
+
+class HistorySessionView extends StatefulWidget {
+  const HistorySessionView({super.key, required this.sessionId});
+
+  final String sessionId;
+
+  @override
+  State<HistorySessionView> createState() => _HistorySessionViewState();
+}
+
+class _HistorySessionViewState extends State<HistorySessionView> {
+  LocalChatSnapshot? _snapshot;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    final viewModel = context.read<LocalChatViewModel>();
+    unawaited(_load(viewModel));
+  }
+
+  Future<void> _load(LocalChatViewModel viewModel) async {
+    try {
+      final snapshot = await viewModel.readSession(widget.sessionId);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _snapshot = snapshot);
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = switch (error) {
+          LocalChatGatewayException() => error.message,
+          _ => '无法打开这段会话，请返回后重试。',
+        };
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        key: const Key('history-session-back'),
+                        onPressed: () => context.pop(),
+                        tooltip: '返回历史',
+                        icon: const Icon(Icons.arrow_back),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '会话详情',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(child: _body()),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _body() {
+    if (_errorMessage case final message?) {
+      return Center(child: Text(message));
+    }
+    final snapshot = _snapshot;
+    if (snapshot == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (snapshot.messages.isEmpty) {
+      return const Center(child: Text('这段会话还没有消息'));
+    }
+    return ListView.builder(
+      key: const Key('history-session-messages'),
+      padding: const EdgeInsets.all(24),
+      itemCount: snapshot.messages.length,
+      itemBuilder: (context, index) {
+        final message = snapshot.messages[index];
+        final fromUser = message.speaker == LocalChatSpeaker.user;
+        return Align(
+          alignment: fromUser ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            constraints: const BoxConstraints(maxWidth: 520),
+            decoration: BoxDecoration(
+              color: fromUser
+                  ? Theme.of(context).colorScheme.primaryContainer
+                  : Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Text(message.text),
+          ),
+        );
+      },
+    );
+  }
+}
+
+String two(int value) => value.toString().padLeft(2, '0');
+
+String _formatDayHeader(String date) {
+  final parsed = DateTime.tryParse(date);
+  if (parsed == null) {
+    return date;
+  }
+  final day = DateTime(parsed.year, parsed.month, parsed.day);
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final difference = today.difference(day).inDays;
+  if (difference == 0) {
+    return '今天';
+  }
+  if (difference == 1) {
+    return '昨天';
+  }
+  return '${parsed.year}年${parsed.month}月${parsed.day}日';
+}

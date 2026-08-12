@@ -42,6 +42,7 @@ final class LocalChatViewModel extends ChangeNotifier {
   String _streamingText = '';
   String? _pendingRequestId;
   String? _pendingText;
+  int _restoreGeneration = 0;
 
   List<LocalChatMessage> get messages => List.unmodifiable(_messages);
   String? get errorMessage => _errorMessage;
@@ -61,13 +62,29 @@ final class LocalChatViewModel extends ChangeNotifier {
       return;
     }
     _initializing = true;
+    _restoreGeneration += 1;
+    final generation = _restoreGeneration;
     notifyListeners();
     try {
       await checkHostNow();
       if (hostStopped) {
         return;
       }
-      final snapshot = await _gateway.restore(sessionId: _sessionId);
+      await _applyRestore(generation, sessionId: _sessionId);
+    } finally {
+      if (generation == _restoreGeneration) {
+        _initializing = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _applyRestore(int generation, {String? sessionId}) async {
+    try {
+      final snapshot = await _gateway.restore(sessionId: sessionId);
+      if (generation != _restoreGeneration) {
+        return;
+      }
       _sessionId = snapshot.sessionId;
       _messages
         ..clear()
@@ -82,12 +99,34 @@ final class LocalChatViewModel extends ChangeNotifier {
       }
       _errorMessage = null;
       _initialized = true;
+      notifyListeners();
     } on Object catch (error) {
+      if (generation != _restoreGeneration) {
+        return;
+      }
       _errorMessage = _readableError(error);
-    } finally {
-      _initializing = false;
       notifyListeners();
     }
+  }
+
+  Future<LocalChatSnapshot> readSession(String sessionId) =>
+      _gateway.restore(sessionId: sessionId);
+
+  Future<void> discardSession(String sessionId) async {
+    if (_sessionId != sessionId) {
+      return;
+    }
+    _restoreGeneration += 1;
+    final generation = _restoreGeneration;
+    _sessionId = null;
+    _messages.clear();
+    _pendingRequestId = null;
+    _pendingText = null;
+    _streamingText = '';
+    _waiting = false;
+    _errorMessage = null;
+    notifyListeners();
+    await _applyRestore(generation);
   }
 
   Future<void> checkHostNow() async {
@@ -137,6 +176,7 @@ final class LocalChatViewModel extends ChangeNotifier {
     required String requestId,
     required String text,
   }) async {
+    final generation = _restoreGeneration;
     List<String>? finalMessages;
     ReplySource? source;
     FallbackReason? fallbackReason;
@@ -146,14 +186,17 @@ final class LocalChatViewModel extends ChangeNotifier {
       text: text,
       sessionId: _sessionId,
     )) {
-      _sessionId = event.sessionId ?? _sessionId;
+      if (generation == _restoreGeneration) {
+        _sessionId = event.sessionId ?? _sessionId;
+      }
       switch (event.kind) {
         case LocalChatEventKind.accepted:
-          if (!_messages.any(
-            (message) =>
-                message.requestId == requestId &&
-                message.speaker == LocalChatSpeaker.user,
-          )) {
+          if (generation == _restoreGeneration &&
+              !_messages.any(
+                (message) =>
+                    message.requestId == requestId &&
+                    message.speaker == LocalChatSpeaker.user,
+              )) {
             _messages.add(
               LocalChatMessage(
                 requestId: requestId,
@@ -166,7 +209,9 @@ final class LocalChatViewModel extends ChangeNotifier {
           _waiting = true;
         case LocalChatEventKind.delta:
           _waiting = false;
-          _streamingText += event.text ?? '';
+          if (generation == _restoreGeneration) {
+            _streamingText += event.text ?? '';
+          }
         case LocalChatEventKind.message:
           finalMessages = event.messages;
         case LocalChatEventKind.state:
@@ -185,7 +230,12 @@ final class LocalChatViewModel extends ChangeNotifier {
       notifyListeners();
     }
     if (!completed || finalMessages == null || source == null) {
-      _streamingText = '';
+      if (generation == _restoreGeneration) {
+        _streamingText = '';
+      }
+      return false;
+    }
+    if (generation != _restoreGeneration) {
       return false;
     }
     _messages.addAll(

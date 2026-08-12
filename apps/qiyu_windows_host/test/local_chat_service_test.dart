@@ -543,6 +543,86 @@ void main() {
       '晚安',
     );
   });
+
+  test(
+    'a message after local midnight starts a new day and keeps the old session intact',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-day-change-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      var now = DateTime(2026, 8, 11, 23, 50);
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final service = LocalChatService(repository, clock: () => now);
+
+      final first = await service.send(
+        requestId: 'before-midnight',
+        text: '今天有点累',
+      );
+      expect(first.session.date, '2026-08-11');
+
+      now = DateTime(2026, 8, 12, 0, 10);
+      final next = await service.send(
+        requestId: 'after-midnight',
+        text: '睡不着',
+        sessionId: first.session.id,
+      );
+
+      expect(next.session.id, isNot(first.session.id));
+      expect(next.session.date, '2026-08-12');
+      expect(next.session.turns, hasLength(2));
+
+      final restoredOld = await repository.openSession(
+        sessionId: first.session.id,
+      );
+      expect(restoredOld.date, '2026-08-11');
+      expect(restoredOld.turns.map((turn) => turn.text), ['今天有点累', '咋了']);
+
+      final listing = await repository.readHistory();
+      expect(listing.sessions.map((session) => session.date), [
+        '2026-08-12',
+        '2026-08-11',
+      ]);
+    },
+  );
+
+  test('deleting the current session lets restore start a fresh one', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-delete-session-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final repository = MarkdownMemoryRepository(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+    final service = LocalChatService(
+      repository,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+    final exchange = await service.send(
+      requestId: 'delete-me',
+      text: '今天有点累',
+    );
+
+    await service.deleteSession(exchange.session.id);
+
+    await expectLater(
+      service.restore(sessionId: exchange.session.id),
+      throwsA(
+        isA<MemoryRepositoryException>().having(
+          (error) => error.code,
+          'code',
+          'session_not_found',
+        ),
+      ),
+    );
+    final fresh = await service.restore();
+    expect(fresh.session.id, isNot(exchange.session.id));
+    expect(fresh.session.turns, isEmpty);
+  });
 }
 
 final class _FailOnceAtomicWriter implements AtomicTextWriter {
