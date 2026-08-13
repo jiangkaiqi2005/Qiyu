@@ -597,6 +597,90 @@ void main() {
       await host.close();
     },
   );
+
+  test(
+    'onboarding starts open, persists completion across restarts, and reopens after clearing local data',
+    () async {
+      var host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+      );
+      var browser = await _openBrowserSession(host);
+
+      final fresh = await _send(
+        host.origin.resolve('/api/onboarding'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(fresh.statusCode, HttpStatus.ok);
+      expect(jsonDecode(fresh.body), {'completed': false});
+
+      final missingCsrf = await _send(
+        host.origin.resolve('/api/onboarding/complete'),
+        method: 'POST',
+        headers: {
+          ...browser.readHeaders(host.origin),
+          'origin': host.origin.toString().replaceFirst(RegExp(r'/$'), ''),
+        },
+      );
+      expect(missingCsrf.statusCode, HttpStatus.forbidden);
+
+      final completed = await _send(
+        host.origin.resolve('/api/onboarding/complete'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      expect(completed.statusCode, HttpStatus.ok);
+      expect(jsonDecode(completed.body), {'completed': true});
+      final onboardingFile = File(
+        '${temporaryDirectory.path}${Platform.pathSeparator}onboarding.json',
+      );
+      expect(await onboardingFile.exists(), isTrue);
+      await host.close();
+
+      host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+      );
+      browser = await _openBrowserSession(host);
+      final afterRestart = await _send(
+        host.origin.resolve('/api/onboarding'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(jsonDecode(afterRestart.body), {'completed': true});
+      await host.close();
+
+      await onboardingFile.writeAsString('不是有效的 JSON');
+      host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+      );
+      browser = await _openBrowserSession(host);
+      final afterCorruption = await _send(
+        host.origin.resolve('/api/onboarding'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(jsonDecode(afterCorruption.body), {'completed': false});
+      await host.close();
+
+      await onboardingFile.delete();
+      host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+      );
+      browser = await _openBrowserSession(host);
+      final afterClear = await _send(
+        host.origin.resolve('/api/onboarding'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(jsonDecode(afterClear.body), {'completed': false});
+      await host.close();
+    },
+  );
 }
 
 List<Map<String, Object?>> _chatEvents(String body) => body

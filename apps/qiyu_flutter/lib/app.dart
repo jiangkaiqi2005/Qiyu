@@ -10,13 +10,17 @@ import 'features/chat/local_chat_view_model.dart';
 import 'features/history/history_client.dart';
 import 'features/history/history_view.dart';
 import 'features/history/history_view_model.dart';
+import 'features/onboarding/onboarding_client.dart';
+import 'features/onboarding/onboarding_view_model.dart';
+import 'features/onboarding/root_view.dart';
 import 'features/settings/provider_settings_client.dart';
 import 'features/settings/provider_settings_view.dart';
 import 'features/settings/provider_settings_view_model.dart';
 
 final _router = GoRouter(
   routes: [
-    GoRoute(path: '/', builder: (context, state) => const LocalChatView()),
+    GoRoute(path: '/', builder: (context, state) => const RootView()),
+    GoRoute(path: '/chat', builder: (context, state) => const LocalChatView()),
     GoRoute(
       path: '/history',
       builder: (context, state) => const HistoryView(),
@@ -39,17 +43,20 @@ class QiyuApp extends StatelessWidget {
     this.viewModel,
     this.providerSettingsViewModel,
     this.historyViewModel,
+    this.onboardingViewModel,
   });
 
   final LocalChatViewModel? viewModel;
   final ProviderSettingsViewModel? providerSettingsViewModel;
   final HistoryViewModel? historyViewModel;
+  final OnboardingViewModel? onboardingViewModel;
 
   @override
   Widget build(BuildContext context) {
     final injectedChatViewModel = viewModel;
     final injectedSettingsViewModel = providerSettingsViewModel;
     final injectedHistoryViewModel = historyViewModel;
+    final injectedOnboardingViewModel = onboardingViewModel;
     return MultiProvider(
       providers: [
         if (injectedChatViewModel != null)
@@ -76,6 +83,15 @@ class QiyuApp extends StatelessWidget {
               onSessionDeleted: (sessionId) => unawaited(
                 context.read<LocalChatViewModel>().discardSession(sessionId),
               ),
+            ),
+          ),
+        if (injectedOnboardingViewModel != null)
+          ChangeNotifierProvider.value(value: injectedOnboardingViewModel)
+        else
+          ChangeNotifierProvider(
+            create: (_) => OnboardingViewModel(
+              HttpOnboardingGateway(),
+              HttpProviderSettingsGateway(),
             ),
           ),
       ],

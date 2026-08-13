@@ -51,6 +51,13 @@ class _LocalChatViewState extends State<LocalChatView> {
                       padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
                       child: Row(
                         children: [
+                          IconButton(
+                            key: const Key('go-home'),
+                            onPressed: () => context.go('/'),
+                            tooltip: '首页',
+                            icon: const Icon(Icons.arrow_back),
+                          ),
+                          const SizedBox(width: 8),
                           Text(
                             '栖语',
                             style: Theme.of(context).textTheme.headlineSmall,

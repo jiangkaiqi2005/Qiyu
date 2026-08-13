@@ -172,7 +172,7 @@ class _SessionTile extends StatelessWidget {
               if (isLatest)
                 TextButton(
                   key: const Key('resume-latest-session'),
-                  onPressed: () => context.go('/'),
+                  onPressed: () => context.go('/chat'),
                   child: const Text('继续这段对话'),
                 ),
               IconButton(

@@ -12,6 +12,7 @@ import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
+import 'onboarding_state.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
 import 'secure_token.dart';
@@ -75,10 +76,17 @@ final class LocalAppHost {
       modelPromptBuilder: modelPromptBuilder,
     );
     await chatService.initialize();
+    final onboardingRepository = JsonOnboardingRepository(
+      filePath: path.join(
+        Directory(memoryDirectory).parent.path,
+        'onboarding.json',
+      ),
+    );
     final requestHandler = _LocalAppRequestHandler(
       webRoot,
       chatService: chatService,
       providerSettingsService: effectiveProviderSettings,
+      onboardingRepository: onboardingRepository,
       activationToken: activationToken,
       onActivate: onActivate,
     );
@@ -105,6 +113,7 @@ final class _LocalAppRequestHandler {
     String webRoot, {
     required this.chatService,
     required this.providerSettingsService,
+    required this.onboardingRepository,
     required this.activationToken,
     required this.onActivate,
   }) : startupToken = generateSecureToken(),
@@ -119,6 +128,7 @@ final class _LocalAppRequestHandler {
   final String startupToken;
   final LocalChatService chatService;
   final ProviderSettingsService providerSettingsService;
+  final OnboardingRepository onboardingRepository;
   final String? activationToken;
   final Future<BrowserLaunchResult> Function()? onActivate;
   final String _sessionToken;
@@ -229,6 +239,21 @@ final class _LocalAppRequestHandler {
       return Response(HttpStatus.noContent, headers: _noStoreHeaders);
     }
     try {
+      if (request.method == 'GET' && request.url.path == 'api/onboarding') {
+        final state = await onboardingRepository.load();
+        return Response.ok(
+          jsonEncode({'completed': state.completed}),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'POST' &&
+          request.url.path == 'api/onboarding/complete') {
+        final state = await onboardingRepository.markCompleted(DateTime.now());
+        return Response.ok(
+          jsonEncode({'completed': state.completed}),
+          headers: _jsonHeaders,
+        );
+      }
       if (request.method == 'GET' && request.url.path == 'api/provider') {
         final settings = await providerSettingsService.read();
         return Response.ok(
@@ -401,6 +426,13 @@ final class _LocalAppRequestHandler {
       return _jsonError(
         HttpStatus.internalServerError,
         code: 'credential_store_error',
+        message: error.message,
+        retryable: true,
+      );
+    } on OnboardingStateException catch (error) {
+      return _jsonError(
+        HttpStatus.internalServerError,
+        code: 'onboarding_unavailable',
         message: error.message,
         retryable: true,
       );

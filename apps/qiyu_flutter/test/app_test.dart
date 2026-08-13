@@ -6,6 +6,8 @@ import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
+import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
@@ -40,12 +42,19 @@ void main() {
     );
     await viewModel.initialize();
 
-    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: viewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
 
     expect(find.text('我回来了'), findsOneWidget);
     expect(find.text('嗯'), findsOneWidget);
     expect(find.text('本地规则回复'), findsOneWidget);
+
+    await _returnToHome(tester);
   });
 
   testWidgets('renders Qiyu replies as markdown but keeps user input plain', (
@@ -76,12 +85,19 @@ void main() {
     );
     await viewModel.initialize();
 
-    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: viewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
 
     expect(find.text('**用户输入不当 Markdown 解析**'), findsOneWidget);
     expect(find.text('先**躺好**，慢慢说'), findsNothing);
     expect(find.text('先躺好，慢慢说'), findsOneWidget);
+
+    await _returnToHome(tester);
   });
 
   testWidgets('sends non-empty text and renders user and local Qiyu replies', (
@@ -95,8 +111,13 @@ void main() {
       requestIdFactory: () => 'new-request',
     );
     await viewModel.initialize();
-    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: viewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '今天有点累');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -111,6 +132,9 @@ void main() {
     await tester.tap(find.byKey(const Key('chat-send')));
     await tester.pump();
     expect(gateway.sentTexts, hasLength(1));
+
+    await tester.pumpAndSettle();
+    await _returnToHome(tester);
   });
 
   testWidgets(
@@ -124,7 +148,13 @@ void main() {
         requestIdFactory: () => 'stream-request',
       );
       await viewModel.initialize();
-      await tester.pumpWidget(QiyuApp(viewModel: viewModel));
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: viewModel,
+          onboardingViewModel: await _completedOnboardingViewModel(),
+        ),
+      );
+      await _enterChatFromHome(tester);
 
       await tester.enterText(find.byKey(const Key('chat-input')), '还醒着');
       await tester.tap(find.byKey(const Key('chat-send')));
@@ -193,6 +223,8 @@ void main() {
         ),
         hasLength(1),
       );
+
+      await _returnToHome(tester);
     },
   );
 
@@ -207,7 +239,13 @@ void main() {
       requestIdFactory: () => 'cancel-request',
     );
     await viewModel.initialize();
-    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: viewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
     await tester.enterText(find.byKey(const Key('chat-input')), '先别说');
     await tester.tap(find.byKey(const Key('chat-send')));
     await tester.pump();
@@ -244,6 +282,8 @@ void main() {
       ),
       isEmpty,
     );
+
+    await _returnToHome(tester);
   });
 
   testWidgets('shows a clear stopped state when the local host disappears', (
@@ -251,11 +291,17 @@ void main() {
   ) async {
     final viewModel = LocalChatViewModel(
       _FakeLocalChatGateway(),
-      hostConnectionProbe: _FakeHostConnectionProbe([true, false]),
+      hostConnectionProbe: _FakeHostConnectionProbe([true, false, true]),
       autoStart: false,
     );
     await viewModel.initialize();
-    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: viewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
 
     expect(find.text('本机程序已停止'), findsNothing);
 
@@ -264,6 +310,10 @@ void main() {
 
     expect(find.text('本机程序已停止'), findsOneWidget);
     expect(find.text('请重新启动栖语本机程序。'), findsOneWidget);
+
+    await viewModel.checkHostNow();
+    await tester.pumpAndSettle();
+    await _returnToHome(tester);
   });
 
   testWidgets('shows storage errors without presenting an unsaved exchange', (
@@ -279,7 +329,13 @@ void main() {
       autoStart: false,
     );
     await viewModel.initialize();
-    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: viewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '别丢掉这句');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -291,6 +347,8 @@ void main() {
       find.byKey(const Key('chat-input')),
     );
     expect(inputAfterFailure.controller!.text, '别丢掉这句');
+
+    await _returnToHome(tester);
   });
 
   testWidgets('retries a failed send with the same request id', (tester) async {
@@ -306,7 +364,13 @@ void main() {
       requestIdFactory: () => 'retry-${nextId++}',
     );
     await viewModel.initialize();
-    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: viewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '别重复这句');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -322,6 +386,8 @@ void main() {
     expect(gateway.sentRequestIds, ['retry-0', 'retry-0']);
     expect(find.text('别重复这句'), findsOneWidget);
     expect(find.text('咋了'), findsOneWidget);
+
+    await _returnToHome(tester);
   });
 
   testWidgets('resumes a persisted user-only turn after a reload', (
@@ -346,8 +412,13 @@ void main() {
       requestIdFactory: () => 'new-request',
     );
     await viewModel.initialize();
-    await tester.pumpWidget(QiyuApp(viewModel: viewModel));
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: viewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '别重复这句');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -356,6 +427,8 @@ void main() {
     expect(gateway.sentRequestIds, ['interrupted-request']);
     expect(find.text('别重复这句'), findsOneWidget);
     expect(find.text('咋了'), findsOneWidget);
+
+    await _returnToHome(tester);
   });
 
   testWidgets('configures and tests all supported model providers', (
@@ -377,8 +450,10 @@ void main() {
       QiyuApp(
         viewModel: chatViewModel,
         providerSettingsViewModel: settingsViewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
+    await _enterChatFromHome(tester);
 
     await tester.tap(find.byKey(const Key('open-provider-settings')));
     await tester.pumpAndSettle();
@@ -422,6 +497,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('连接成功，栖语可以使用这个模型。'), findsOneWidget);
     expect(settingsGateway.tested.single.model, 'unsaved-test-model');
+
+    await tester.drag(find.byType(ListView), const Offset(0, 420));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('返回聊天'));
+    await tester.pumpAndSettle();
+    await _returnToHome(tester);
   });
 }
 
@@ -531,6 +612,59 @@ final class _FakeHostConnectionProbe implements HostConnectionProbe {
     }
     return result;
   }
+}
+
+Future<OnboardingViewModel> _completedOnboardingViewModel() async {
+  final viewModel = OnboardingViewModel(
+    _FakeOnboardingGateway(completed: true),
+    _FixedProviderSettingsGateway(),
+    autoStart: false,
+  );
+  await viewModel.initialize();
+  return viewModel;
+}
+
+Future<void> _enterChatFromHome(WidgetTester tester) async {
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('home-go-chat')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _returnToHome(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('go-home')));
+  await tester.pumpAndSettle();
+}
+
+final class _FakeOnboardingGateway implements OnboardingGateway {
+  _FakeOnboardingGateway({required this.completed});
+
+  bool completed;
+
+  @override
+  Future<OnboardingState> read() async =>
+      OnboardingState(completed: completed);
+
+  @override
+  Future<void> complete() async {
+    completed = true;
+  }
+}
+
+final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {
+  @override
+  Future<ProviderSettings> read() async =>
+      const ProviderSettings(configured: false, keySet: false);
+
+  @override
+  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
+
+  @override
+  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
+      throw UnimplementedError();
 }
 
 final class _FakeProviderSettingsGateway implements ProviderSettingsGateway {

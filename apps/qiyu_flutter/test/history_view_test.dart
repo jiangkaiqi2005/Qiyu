@@ -6,6 +6,9 @@ import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/history/history_client.dart';
 import 'package:qiyu_flutter/features/history/history_view_model.dart';
+import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
+import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
+import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 void main() {
@@ -23,9 +26,10 @@ void main() {
         QiyuApp(
           viewModel: _chatViewModel(),
           historyViewModel: historyViewModel,
+          onboardingViewModel: await _onboardingViewModel(),
         ),
       );
-      await tester.pumpAndSettle();
+      await _enterChatFromHome(tester);
 
       await tester.tap(find.byKey(const Key('open-history')));
       await tester.pumpAndSettle();
@@ -43,7 +47,7 @@ void main() {
 
       await tester.tap(find.byKey(const Key('history-back')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('chat-input')), findsOneWidget);
+      expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
     },
   );
 
@@ -60,9 +64,10 @@ void main() {
       QiyuApp(
         viewModel: _chatViewModel(),
         historyViewModel: historyViewModel,
+        onboardingViewModel: await _onboardingViewModel(),
       ),
     );
-    await tester.pumpAndSettle();
+    await _enterChatFromHome(tester);
     await tester.tap(find.byKey(const Key('open-history')));
     await tester.pumpAndSettle();
 
@@ -83,7 +88,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('history-back')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('chat-input')), findsOneWidget);
+    expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
   });
 
   testWidgets(
@@ -103,9 +108,10 @@ void main() {
         QiyuApp(
           viewModel: chatViewModel,
           historyViewModel: historyViewModel,
+          onboardingViewModel: await _onboardingViewModel(),
         ),
       );
-      await tester.pumpAndSettle();
+      await _enterChatFromHome(tester);
       await tester.tap(find.byKey(const Key('open-history')));
       await tester.pumpAndSettle();
 
@@ -139,7 +145,7 @@ void main() {
 
       await tester.tap(find.byKey(const Key('history-back')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('chat-input')), findsOneWidget);
+      expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
     },
   );
 
@@ -156,9 +162,10 @@ void main() {
       QiyuApp(
         viewModel: _chatViewModel(),
         historyViewModel: historyViewModel,
+        onboardingViewModel: await _onboardingViewModel(),
       ),
     );
-    await tester.pumpAndSettle();
+    await _enterChatFromHome(tester);
     await tester.tap(find.byKey(const Key('open-history')));
     await tester.pumpAndSettle();
 
@@ -167,6 +174,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('chat-input')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('go-home')));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('history errors offer a retry without losing the page', (
@@ -186,9 +196,10 @@ void main() {
       QiyuApp(
         viewModel: _chatViewModel(),
         historyViewModel: historyViewModel,
+        onboardingViewModel: await _onboardingViewModel(),
       ),
     );
-    await tester.pumpAndSettle();
+    await _enterChatFromHome(tester);
     await tester.tap(find.byKey(const Key('open-history')));
     await tester.pumpAndSettle();
 
@@ -201,7 +212,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('history-back')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('chat-input')), findsOneWidget);
+    expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
   });
 }
 
@@ -211,6 +222,48 @@ LocalChatViewModel _chatViewModel([_FakeChatGateway? gateway]) =>
       hostConnectionProbe: _FakeHostConnectionProbe([true]),
       autoStart: false,
     );
+
+Future<OnboardingViewModel> _onboardingViewModel() async {
+  final viewModel = OnboardingViewModel(
+    _FakeOnboardingGateway(),
+    _FixedProviderSettingsGateway(),
+    autoStart: false,
+  );
+  await viewModel.initialize();
+  return viewModel;
+}
+
+Future<void> _enterChatFromHome(WidgetTester tester) async {
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('home-go-chat')));
+  await tester.pumpAndSettle();
+}
+
+final class _FakeOnboardingGateway implements OnboardingGateway {
+  @override
+  Future<OnboardingState> read() async =>
+      const OnboardingState(completed: true);
+
+  @override
+  Future<void> complete() async {}
+}
+
+final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {
+  @override
+  Future<ProviderSettings> read() async =>
+      const ProviderSettings(configured: false, keySet: false);
+
+  @override
+  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
+
+  @override
+  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
+      throw UnimplementedError();
+}
 
 String _localDate(DateTime value) =>
     '${value.year}-'
