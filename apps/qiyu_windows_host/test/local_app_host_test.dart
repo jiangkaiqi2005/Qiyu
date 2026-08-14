@@ -176,6 +176,91 @@ void main() {
   );
 
   test(
+    'startup URL 只能兑换一次会话，兑换后旧凭据失效',
+    () async {
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+      );
+
+      final originalUri = host.launchUri;
+      final firstStart = await _send(originalUri);
+      expect(firstStart.statusCode, HttpStatus.seeOther);
+
+      final replay = await _send(originalUri);
+      expect(replay.statusCode, HttpStatus.unauthorized);
+
+      await host.close();
+    },
+  );
+
+  test(
+    '拒绝超过 64KB 的 chunked 聊天请求体与非对象 JSON',
+    () async {
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+      );
+      final session = await _openBrowserSession(host);
+
+      final client = HttpClient();
+      final oversizeRequest = await client.openUrl(
+        'POST',
+        host.origin.resolve('/api/chat'),
+      );
+      session
+          .mutationHeaders(host.origin)
+          .forEach(oversizeRequest.headers.set);
+      // 不设置 contentLength，让客户端走 chunked 传输编码。
+      oversizeRequest.add(
+        utf8.encode(
+          jsonEncode({
+            'requestId': 'oversize-test',
+            'text': '长' * (70 * 1024),
+          }),
+        ),
+      );
+      try {
+        final oversizeResponse = await oversizeRequest.close();
+        final oversizeBody = await oversizeResponse
+            .transform(utf8.decoder)
+            .join();
+        expect(oversizeResponse.statusCode, HttpStatus.badRequest);
+        expect(oversizeBody, contains('invalid_request'));
+      } on SocketException {
+        // 服务器在超限时提前中止连接，客户端收到连接重置同样是拒绝。
+      }
+
+      // 被拒后服务依然健康：正常大小的请求照常处理。
+      final healthyRequest = await client.openUrl(
+        'POST',
+        host.origin.resolve('/api/session/verify'),
+      );
+      session.mutationHeaders(host.origin).forEach(healthyRequest.headers.set);
+      final healthyResponse = await healthyRequest.close();
+      expect(healthyResponse.statusCode, HttpStatus.noContent);
+
+      final nonObjectRequest = await client.openUrl(
+        'POST',
+        host.origin.resolve('/api/chat'),
+      );
+      session.mutationHeaders(host.origin).forEach(nonObjectRequest.headers.set);
+      nonObjectRequest.add(utf8.encode('[1,2,3]'));
+      final nonObjectResponse = await nonObjectRequest.close();
+      final nonObjectBody = await nonObjectResponse
+          .transform(utf8.decoder)
+          .join();
+      expect(nonObjectResponse.statusCode, HttpStatus.badRequest);
+      expect(nonObjectBody, contains('invalid_request'));
+
+      client.close(force: true);
+      await host.close();
+    },
+  );
+
+  test(
     'sends, persists, restarts, and restores one local chat exactly once',
     () async {
       final host = await LocalAppHost.start(

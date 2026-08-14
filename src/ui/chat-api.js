@@ -1,7 +1,27 @@
+// Fetch and cache the CSRF token required by POST API routes.
+// Uses globalThis so it interoperates with window.qiyuCsrfToken set by other screens.
+export async function ensureCsrfToken(fetchImpl = fetch) {
+  if (globalThis.qiyuCsrfToken) {
+    return globalThis.qiyuCsrfToken;
+  }
+  try {
+    const response = await fetchImpl('/api/settings');
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.csrfToken) {
+        globalThis.qiyuCsrfToken = data.csrfToken;
+        return data.csrfToken;
+      }
+    }
+  } catch {}
+  return '';
+}
+
 export async function sendChatMessage({ text, state, fetchImpl = fetch }) {
+  const csrfToken = await ensureCsrfToken(fetchImpl);
   const response = await fetchImpl('/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
     body: JSON.stringify({ text, state })
   });
 

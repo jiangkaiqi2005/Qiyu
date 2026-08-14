@@ -525,6 +525,46 @@ void main() {
     },
   );
 
+  test(
+    'oversized provider stream falls back locally before buffer exhaustion',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-oversized-stream-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      final service = LocalChatService(
+        MarkdownMemoryRepository(memoryDirectory: temporaryDirectory.path),
+        providerChatClient: _StreamingProviderChatClient(
+          Stream.fromIterable([
+            ModelStreamEvent.delta('水' * 9000),
+            const ModelStreamEvent.done(),
+          ]),
+        ),
+        deliveryPause: (_) async {},
+      );
+
+      final events = await service
+          .deliver(requestId: 'oversized-stream', text: '今天有点累')
+          .toList();
+
+      expect(
+        events
+            .singleWhere(
+              (event) => event.kind == LocalChatEventKind.fallback,
+            )
+            .fallbackReason,
+        FallbackReason.incompatibleModelResponse,
+      );
+      expect(
+        events
+            .singleWhere((event) => event.kind == LocalChatEventKind.message)
+            .messages,
+        ['咋了'],
+      );
+      expect(events.last.exchange!.result.source, ReplySource.local);
+    },
+  );
+
   test('bedtime closes locally without opening a Provider stream', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-bedtime-delivery-test-',

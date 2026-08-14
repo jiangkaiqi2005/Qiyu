@@ -2,7 +2,7 @@ import { renderAppShell, bindNavigation } from '../ui/layout.js';
 import { renderButton, showNotice, downloadBlob } from '../ui/components.js';
 import { loadBrowserState } from '../qiyu/state.js';
 import { escapeHtml } from '../ui/render.js';
-import { postJson } from '../ui/chat-api.js';
+import { postJson, ensureCsrfToken } from '../ui/chat-api.js';
 
 function failureBadgeFor(failureReason) {
   const reason = failureReason || '';
@@ -84,7 +84,8 @@ export function render(container, context) {
       if (resultsContainer) resultsContainer.innerHTML = '';
 
       try {
-        const res = await fetch('/api/eval/run');
+        const csrfToken = await ensureCsrfToken();
+        const res = await postJson('/api/eval/run', {}, csrfToken);
         if (res.ok) {
           const data = await res.json();
           lastReport = data;

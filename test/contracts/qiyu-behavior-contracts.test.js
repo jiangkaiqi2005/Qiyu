@@ -7,10 +7,13 @@ import { createInitialState } from '../../src/qiyu/state.js';
 
 const fixtureUrl = new URL('../../contracts/qiyu_behavior_contracts.json', import.meta.url);
 
+const CSRF_TOKEN = 'contracts-test-csrf-token';
+
 function requestWithJson(body) {
   const request = Readable.from([JSON.stringify(body)]);
   request.method = 'POST';
   request.url = '/api/chat';
+  request.headers = { 'x-csrf-token': CSRF_TOKEN };
   return request;
 }
 
@@ -54,6 +57,7 @@ async function runFixture(fixture) {
   const response = captureResponse();
 
   await handleChatRequest(request, response, {
+    csrfToken: CSRF_TOKEN,
     runtimeConfig: runtimeConfig(fixture.provider),
     productSoul: '# 栖语',
     fetchImpl: async () => {

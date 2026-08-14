@@ -71,6 +71,10 @@ final class LocalChatDeliveryEvent extends ChatDeliveryEvent {
 
 typedef DeliveryPause = Future<void> Function(Duration duration);
 
+/// 候选回复缓冲上限（runes）。可见回复在行为核心侧另有 2000 runes 限制，
+/// 这里只为防止失控的 Provider 流在超时前耗尽内存。
+const _maxModelReplyRunes = 8192;
+
 final class LocalChatService {
   LocalChatService(
     this._repository, {
@@ -349,6 +353,7 @@ final class LocalChatService {
       }
       final iterator = StreamIterator<ModelStreamEvent>(stream);
       final buffer = StringBuffer();
+      var bufferedRunes = 0;
       try {
         while (true) {
           final moveNext = iterator.moveNext();
@@ -366,6 +371,13 @@ final class LocalChatService {
           final event = iterator.current;
           switch (event.kind) {
             case ModelStreamEventKind.delta:
+              bufferedRunes += event.text!.runes.length;
+              if (bufferedRunes > _maxModelReplyRunes) {
+                await iterator.cancel();
+                return const ModelCompletion.failure(
+                  ModelFailureKind.incompatibleResponse,
+                );
+              }
               buffer.write(event.text);
             case ModelStreamEventKind.done:
               return ModelCompletion.reply(buffer.toString());

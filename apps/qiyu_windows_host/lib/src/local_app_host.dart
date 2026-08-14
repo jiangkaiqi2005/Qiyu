@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
@@ -116,7 +117,7 @@ final class _LocalAppRequestHandler {
     required this.onboardingRepository,
     required this.activationToken,
     required this.onActivate,
-  }) : startupToken = generateSecureToken(),
+  }) : _startupToken = generateSecureToken(),
        _sessionToken = generateSecureToken(),
        _csrfToken = generateSecureToken(),
        _staticHandler = createStaticHandler(
@@ -125,7 +126,8 @@ final class _LocalAppRequestHandler {
          listDirectories: false,
        );
 
-  final String startupToken;
+  String _startupToken;
+  String get startupToken => _startupToken;
   final LocalChatService chatService;
   final ProviderSettingsService providerSettingsService;
   final OnboardingRepository onboardingRepository;
@@ -170,9 +172,12 @@ final class _LocalAppRequestHandler {
 
   Response _startSession(Request request) {
     if (request.method != 'GET' ||
-        request.url.queryParameters['token'] != startupToken) {
+        request.url.queryParameters['token'] != _startupToken) {
       return _plainError(HttpStatus.unauthorized, 'Invalid startup credential');
     }
+
+    // 兑换成功后立即轮换，登录 URL 只能使用一次。
+    _startupToken = generateSecureToken();
 
     return Response(
       HttpStatus.seeOther,
@@ -200,7 +205,7 @@ final class _LocalAppRequestHandler {
     }
     final displayUrl = origin.replace(
       path: '/_session/start',
-      queryParameters: {'token': startupToken},
+      queryParameters: {'token': _startupToken},
     );
     return Response(
       HttpStatus.serviceUnavailable,
@@ -360,17 +365,7 @@ final class _LocalAppRequestHandler {
         );
       }
       if (request.method == 'POST' && request.url.path == 'api/chat') {
-        final contentLength = request.contentLength;
-        if (contentLength != null && contentLength > 64 * 1024) {
-          return _jsonError(
-            HttpStatus.requestEntityTooLarge,
-            code: 'invalid_request',
-            message: '消息内容过长。',
-            retryable: false,
-          );
-        }
-        final body = await request.readAsString();
-        final payload = jsonDecode(body) as Map<String, Object?>;
+        final payload = await _readJsonObject(request, maxBytes: 64 * 1024);
         final requestId = payload['requestId'];
         final text = payload['text'];
         final sessionId = payload['sessionId'];
@@ -499,7 +494,17 @@ Future<Map<String, Object?>> _readJsonObject(
   if (contentLength != null && contentLength > maxBytes) {
     throw const FormatException('request body is too large');
   }
-  final decoded = jsonDecode(await request.readAsString());
+  // 累计计数以覆盖无 Content-Length 的 chunked 请求体。
+  final buffer = BytesBuilder(copy: false);
+  var totalBytes = 0;
+  await for (final chunk in request.read()) {
+    totalBytes += chunk.length;
+    if (totalBytes > maxBytes) {
+      throw const FormatException('request body is too large');
+    }
+    buffer.add(chunk);
+  }
+  final decoded = jsonDecode(utf8.decode(buffer.takeBytes()));
   if (decoded is! Map<String, Object?>) {
     throw const FormatException('request body must be an object');
   }

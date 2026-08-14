@@ -13,15 +13,20 @@ import { buildSystemPrompt } from './system-prompt.js';
 import { callChatCompletions } from './llm-client.js';
 import { inferRelationshipStage } from '../qiyu/relationship.js';
 import { ModelResponseValidationError, normalizeModelReply } from '../qiyu/reply-delivery.js';
-import { readJsonBody, sendJson } from './http-utils.js';
+import { readJsonBody, sendJson, validateCsrfAndOrigin } from './http-utils.js';
 
 function fallbackReply(text, state) {
   const result = createQiyuReply(text, state);
   return { ...result, source: 'local' };
 }
 
-export async function handleChatRequest(req, res, { runtimeConfig, productSoul, fetchImpl = fetch }) {
+export async function handleChatRequest(req, res, { runtimeConfig, productSoul, csrfToken, fetchImpl = fetch }) {
   try {
+    // Cross-site pages must not be able to spend the locally configured LLM quota
+    if (!validateCsrfAndOrigin(req, res, csrfToken)) {
+      return;
+    }
+
     const body = await readJsonBody(req);
     const text = typeof body.text === 'string' ? body.text.trim() : '';
     const state = body.state && typeof body.state === 'object' ? body.state : null;

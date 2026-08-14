@@ -82,7 +82,7 @@ export async function createStaticServer(staticRoot = root) {
   return createServer(async (req, res) => {
     if (req.url?.startsWith('/api/chat')) {
       const runtimeConfig = await loadRuntimeConfig();
-      await handleChatRequest(req, res, { runtimeConfig, productSoul });
+      await handleChatRequest(req, res, { runtimeConfig, productSoul, csrfToken });
       return;
     }
 
@@ -112,8 +112,8 @@ export async function createStaticServer(staticRoot = root) {
             systemPrompt: systemPrompt,
             liveContext: contextObj.content
           });
-        } catch (err) {
-          sendJson(res, 500, { error: err.message });
+        } catch {
+          sendJson(res, 500, { error: '服务器内部错误' });
         }
       } else {
         res.writeHead(405);
@@ -123,14 +123,22 @@ export async function createStaticServer(staticRoot = root) {
     }
 
     if (req.url?.startsWith('/api/eval/run')) {
+      if (req.method !== 'POST') {
+        res.writeHead(405);
+        res.end('Method Not Allowed');
+        return;
+      }
+      if (!validateCsrfAndOrigin(req, res, csrfToken)) {
+        return;
+      }
       try {
         const { runSuite } = await import('../src/qiyu/eval-runner.js');
         const { readFile } = await import('node:fs/promises');
         const cases = JSON.parse(await readFile(join(staticRoot, 'eval/golden-cases.json'), 'utf8'));
         const report = runSuite(cases);
         sendJson(res, 200, report);
-      } catch (err) {
-        sendJson(res, 500, { error: err.message });
+      } catch {
+        sendJson(res, 500, { error: '服务器内部错误' });
       }
       return;
     }

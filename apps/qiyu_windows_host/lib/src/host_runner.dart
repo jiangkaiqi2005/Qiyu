@@ -70,6 +70,10 @@ final class QiyuHostRunner {
   Future<_ActivationResult> _activateExisting(
     InstanceDescriptor descriptor,
   ) async {
+    // descriptor 可被本机同用户进程篡改，激活请求绝不发往 loopback 之外。
+    if (!_isLoopbackOrigin(descriptor.origin)) {
+      throw StateError('Existing Qiyu instance descriptor points outside loopback');
+    }
     final client = HttpClient();
     try {
       final request = await client.postUrl(
@@ -136,4 +140,12 @@ final class _ActivationResult {
 
   final BrowserLaunchResult browserLaunch;
   final Uri? displayUri;
+}
+
+bool _isLoopbackOrigin(Uri origin) {
+  if (origin.host == 'localhost') {
+    return true;
+  }
+  final address = InternetAddress.tryParse(origin.host);
+  return address != null && address.isLoopback;
 }

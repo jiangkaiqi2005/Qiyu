@@ -4,10 +4,13 @@ import { Readable, Writable } from 'node:stream';
 import { handleChatRequest } from '../../src/server/chat-route.js';
 import { createInitialState } from '../../src/qiyu/state.js';
 
+const CSRF_TOKEN = 'test-csrf-token';
+
 function reqWithJson(body) {
   const req = Readable.from([JSON.stringify(body)]);
   req.method = 'POST';
   req.url = '/api/chat';
+  req.headers = { 'x-csrf-token': CSRF_TOKEN };
   return req;
 }
 
@@ -35,6 +38,7 @@ test('chat route falls back to local engine when LLM is disabled', async () => {
 
   await handleChatRequest(req, res, {
     runtimeConfig: { hasLlm: false, llm: {} },
+    csrfToken: CSRF_TOKEN,
     productSoul: '# 栖语',
     fetchImpl: async () => { throw new Error('fetch should not be called'); }
   });
@@ -62,6 +66,7 @@ test('chat route uses LLM when configured and injects context', async () => {
         timeoutMs: 30000
       }
     },
+    csrfToken: CSRF_TOKEN,
     productSoul: '# 栖语\n\n一致性。',
     fetchImpl: async (url, options) => {
       calls.push(JSON.parse(options.body));
@@ -100,6 +105,7 @@ test('chat route removes LLM stage directions before returning and recording rep
         timeoutMs: 30000
       }
     },
+    csrfToken: CSRF_TOKEN,
     productSoul: '# 栖语',
     fetchImpl: async () => ({
       ok: true,
@@ -134,6 +140,7 @@ test('chat route falls back local when LLM returns forbidden phrase', async () =
         timeoutMs: 30000
       }
     },
+    csrfToken: CSRF_TOKEN,
     productSoul: '# 栖语',
     fetchImpl: async () => ({
       ok: true,
@@ -146,6 +153,31 @@ test('chat route falls back local when LLM returns forbidden phrase', async () =
   assert.equal(body.source, 'local');
   assert.equal(body.fallbackReason, 'forbidden_phrases');
   assert.ok(typeof body.latencyMs === 'number');
+});
+
+test('chat route rejects requests without a matching CSRF token', async () => {
+  const req = reqWithJson({ text: '你好', state: createInitialState('local-user') });
+  req.headers = {};
+  const res = captureRes();
+
+  await handleChatRequest(req, res, {
+    csrfToken: CSRF_TOKEN,
+    runtimeConfig: {
+      hasLlm: true,
+      llm: {
+        apiUrl: 'https://llm.example.test/v1/chat/completions',
+        apiKey: 'key',
+        model: 'qiyu-test-model',
+        temperature: 0.8,
+        timeoutMs: 30000
+      }
+    },
+    productSoul: '# 栖语',
+    fetchImpl: async () => { throw new Error('fetch should not be called'); }
+  });
+
+  assert.equal(res.statusCode, 403);
+  assert.match(res.body(), /CSRF token mismatch/);
 });
 
 test('chat route exposes only allowlisted diagnostics when API request fails', async () => {
@@ -164,6 +196,7 @@ test('chat route exposes only allowlisted diagnostics when API request fails', a
         timeoutMs: 30000
       }
     },
+    csrfToken: CSRF_TOKEN,
     productSoul: '# 栖语',
     fetchImpl: async () => ({
       ok: false,

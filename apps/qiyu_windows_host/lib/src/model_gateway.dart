@@ -82,6 +82,7 @@ final class DartIoProviderHttpClient implements ProviderHttpClient {
     final client = HttpClient()..connectionTimeout = timeout;
     try {
       final request = await client.postUrl(uri).timeout(timeout);
+      request.followRedirects = false;
       headers.forEach(request.headers.set);
       request.add(utf8.encode(body));
       final response = await request.close().timeout(timeout);
@@ -322,6 +323,9 @@ abstract interface class _ProviderProtocol {
 
 typedef _ProviderStreamPart = ({String delta, bool done});
 
+/// 发给 Provider 的输出上限，各协议保持一致，防止失控的账单与超长候选。
+const _maxModelReplyTokens = 512;
+
 _ProviderProtocol _providerProtocol(ProviderKind kind) => switch (kind) {
   ProviderKind.openAiCompatible => const _OpenAiCompatibleProtocol(),
   ProviderKind.anthropic => const _AnthropicProtocol(),
@@ -349,6 +353,7 @@ final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
       'model': config.model.trim(),
       'messages': messages.map(_messageJson).toList(),
       'temperature': config.temperature,
+      'max_tokens': _maxModelReplyTokens,
       'stream': true,
     },
   );
@@ -420,7 +425,7 @@ final class _AnthropicProtocol implements _ProviderProtocol {
           .map(_messageJson)
           .toList(),
       'temperature': config.temperature,
-      'max_tokens': 512,
+      'max_tokens': _maxModelReplyTokens,
       'stream': true,
     },
   );

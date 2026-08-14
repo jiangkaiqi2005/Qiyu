@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
@@ -89,6 +90,49 @@ void main() {
 
     await launch.close();
   });
+
+  test(
+    'refuses to activate an instance whose descriptor points outside loopback',
+    () async {
+      final primary = await QiyuHostRunner(
+        webRoot: webRoot.path,
+        runtimeDirectory: runtimeDirectory.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+        browserLauncher: _RecordingBrowserLauncher(),
+      ).launch();
+      expect(primary.isPrimary, isTrue);
+
+      final descriptorFile = File(
+        '${runtimeDirectory.path}${Platform.pathSeparator}instance.json',
+      );
+      final json =
+          jsonDecode(descriptorFile.readAsStringSync())
+              as Map<String, Object?>;
+      json['origin'] = 'http://evil.example:8080';
+      descriptorFile.writeAsStringSync(jsonEncode(json));
+
+      final secondary = QiyuHostRunner(
+        webRoot: webRoot.path,
+        runtimeDirectory: runtimeDirectory.path,
+        memoryDirectory: memoryDirectory.path,
+        productSoul: '测试产品灵魂',
+        browserLauncher: _RecordingBrowserLauncher(),
+      );
+      await expectLater(
+        secondary.launch(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('loopback'),
+          ),
+        ),
+      );
+
+      await primary.close();
+    },
+  );
 }
 
 final class _RecordingBrowserLauncher implements BrowserLauncher {
