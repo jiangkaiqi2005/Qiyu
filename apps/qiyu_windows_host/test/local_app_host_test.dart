@@ -231,6 +231,8 @@ void main() {
         expect(oversizeBody, contains('invalid_request'));
       } on SocketException {
         // 服务器在超限时提前中止连接，客户端收到连接重置同样是拒绝。
+      } on HttpException {
+        // 中止时机不同时客户端也可能报 header 未收全，同样属于拒绝。
       }
 
       // 被拒后服务依然健康：正常大小的请求照常处理。

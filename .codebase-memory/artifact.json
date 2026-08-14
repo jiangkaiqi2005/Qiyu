@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "4135cb66443516ec59b5c09b568b9286a8446f70",
-    "indexed_at": "2026-08-14T15:16:19Z",
+    "commit": "1f3441edeef52e30f6c87312bf330f7b1834be5d",
+    "indexed_at": "2026-08-14T16:56:42Z",
     "project": "E-Agent-Qiyu",
-    "nodes": 3738,
-    "edges": 8236,
-    "original_size": 9437184,
-    "compressed_size": 1736433,
+    "nodes": 3857,
+    "edges": 8718,
+    "original_size": 9633792,
+    "compressed_size": 1786213,
     "compression_level": 3
 }

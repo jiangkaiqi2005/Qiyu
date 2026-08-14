@@ -9,6 +9,7 @@ import 'package:shelf_static/shelf_static.dart';
 import 'package:path/path.dart' as path;
 
 import 'browser_launcher.dart';
+import 'episode_memory.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
@@ -75,6 +76,7 @@ final class LocalAppHost {
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
       providerChatClient: effectiveProviderSettings,
       modelPromptBuilder: modelPromptBuilder,
+      episodePipeline: EpisodeMemoryPipeline(memoryDirectory: memoryDirectory),
     );
     await chatService.initialize();
     final onboardingRepository = JsonOnboardingRepository(

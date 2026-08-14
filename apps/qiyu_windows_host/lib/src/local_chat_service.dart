@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
@@ -81,18 +83,23 @@ final class LocalChatService {
     QiyuBehaviorCore? behaviorCore,
     this.providerChatClient,
     this.modelPromptBuilder = const ModelPromptBuilder(''),
+    this.episodePipeline,
     DeliveryPause? deliveryPause,
     Clock? clock,
+    void Function(String message)? diagnosticsSink,
   }) : _behaviorCore = behaviorCore ?? const QiyuBehaviorCore(),
        _deliveryPause = deliveryPause ?? Future<void>.delayed,
-       _clock = clock ?? DateTime.now;
+       _clock = clock ?? DateTime.now,
+       _diagnosticsSink = diagnosticsSink ?? _stderrDiagnostics;
 
   final MemoryRepository _repository;
   final QiyuBehaviorCore _behaviorCore;
   final StreamingProviderChatClient? providerChatClient;
   final ModelPromptBuilder modelPromptBuilder;
+  final EpisodeMemoryPipeline? episodePipeline;
   final DeliveryPause _deliveryPause;
   final Clock _clock;
+  final void Function(String message) _diagnosticsSink;
   final Map<String, _DeliveryCancellation> _activeDeliveries = {};
   Future<void> _pending = Future.value();
 
@@ -285,6 +292,7 @@ final class LocalChatService {
     }
 
     final state = _stateFromCompletedTurns(session.turns, trimmedRequestId);
+    List<HiddenAction> hiddenActions = const [];
     final localOutcome = _behaviorCore.reply(
       ChatRequest(requestId: trimmedRequestId, text: trimmedText),
       state,
@@ -324,11 +332,23 @@ final class LocalChatService {
         return;
       }
       if (completion != null) {
+        final rawText = completion.failure == null ? completion.text : null;
+        // 隐藏动作协议与可见文本在进入行为核心前就严格分离；
+        // 动作只在 runtime 内部流转，绝不进入交付事件。
+        final parsed = rawText == null ? null : parseHiddenActions(rawText);
+        if (parsed != null) {
+          hiddenActions = parsed.actions;
+          for (final diagnostic in parsed.diagnostics) {
+            _diagnosticsSink(
+              'hidden-action dropped [$diagnostic] request=$trimmedRequestId',
+            );
+          }
+        }
         outcome =
             _behaviorCore.reply(
                   ChatRequest(requestId: trimmedRequestId, text: trimmedText),
                   state,
-                  candidateReply: completion.text,
+                  candidateReply: parsed?.visibleText ?? completion.text,
                   modelFailure: completion.failure == null
                       ? null
                       : _fallbackReasonFor(completion.failure!),
@@ -338,7 +358,54 @@ final class LocalChatService {
     }
 
     final exchange = LocalChatExchange(session: session, result: outcome);
-    yield* _deliverOutcome(exchange, cancellation, persist: true);
+    LocalChatDeliveryEvent? lastEvent;
+    await for (
+      final event
+      in _deliverOutcome(exchange, cancellation, persist: true)
+    ) {
+      lastEvent = event;
+      yield event;
+    }
+    if (lastEvent != null && lastEvent.kind == LocalChatEventKind.done) {
+      await _applyHiddenActions(
+        lastEvent.exchange!.session,
+        trimmedRequestId,
+        hiddenActions,
+        // 只有模型真正参与的本轮才消费整理窗口；本地降级/晚安收束
+        // 保持 pending，等 Provider 恢复后补跑。
+        consumeWindow: outcome.source == ReplySource.llm,
+      );
+    }
+  }
+
+  /// 可见回复落盘之后的增量记忆整理：写失败只记诊断，不影响本轮回复。
+  Future<void> _applyHiddenActions(
+    RawSession completedSession,
+    String requestId,
+    List<HiddenAction> hiddenActions, {
+    required bool consumeWindow,
+  }) async {
+    final pipeline = episodePipeline;
+    if (pipeline == null) {
+      return;
+    }
+    try {
+      final result = await pipeline.processReply(
+        session: completedSession,
+        requestId: requestId,
+        hiddenActions: hiddenActions,
+        consumeWindow: consumeWindow,
+      );
+      if (result.skippedCorruptDay) {
+        _diagnosticsSink(
+          'episode day unreadable, waiting for recovery request=$requestId',
+        );
+      }
+    } on Object catch (error) {
+      _diagnosticsSink(
+        'episode update deferred [$error] request=$requestId',
+      );
+    }
   }
 
   Future<ModelCompletion?> _collectModelCompletion(
@@ -615,3 +682,8 @@ FallbackReason _fallbackReasonFor(ModelFailureKind failure) =>
       ModelFailureKind.provider => FallbackReason.modelProvider,
       ModelFailureKind.internal => FallbackReason.modelInternal,
     };
+
+/// 隐藏动作与记忆整理诊断只写本机 stderr，内容先过允许列表脱敏。
+void _stderrDiagnostics(String message) {
+  stderr.writeln('[qiyu] ${redactDiagnosticText(message)}');
+}

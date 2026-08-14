@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
@@ -678,6 +679,168 @@ void main() {
     expect(fresh.session.id, isNot(exchange.session.id));
     expect(fresh.session.turns, isEmpty);
   });
+
+  test('hidden actions update today episode without leaking into the reply', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-hidden-action-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('''面试前紧张很正常。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户明天有面试","evidence":"明天要面试，有点紧张"}]
+</qiyu-actions>'''),
+    );
+    final diagnostics = <String>[];
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      ),
+      providerChatClient: provider,
+      episodePipeline: EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      ),
+      diagnosticsSink: diagnostics.add,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+
+    final events = await service
+        .deliver(requestId: 'action-1', text: '明天要面试，有点紧张')
+        .toList();
+
+    final exchange = events.last.exchange!;
+    expect(exchange.result.source, ReplySource.llm);
+    expect(exchange.result.messages, ['面试前紧张很正常。']);
+    final everyVisibleText = events
+        .where((event) => event.text != null)
+        .map((event) => event.text)
+        .join();
+    expect(everyVisibleText, isNot(contains('qiyu-actions')));
+    expect(everyVisibleText, isNot(contains('memory_signal')));
+
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 11, 22, 31),
+    );
+    final day = await pipeline.readToday();
+    expect(day.entries, hasLength(1));
+    expect(day.entries.single.summary, '用户明天有面试');
+    expect((await pipeline.readCheckpoint())!.lastRequestId, 'action-1');
+    expect(diagnostics, isEmpty);
+
+    final sessionFile = File(
+      '${temporaryDirectory.path}/sessions/2026/08/2026-08-11-001.md',
+    );
+    expect(
+      await sessionFile.readAsString(encoding: utf8),
+      isNot(contains('qiyu-actions')),
+    );
+  });
+
+  test('unknown hidden actions are dropped into diagnostics only', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-unknown-action-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply(r'''在。
+<qiyu-actions>[{"action":"format_disk","target":"C:\\"}]</qiyu-actions>'''),
+    );
+    final diagnostics = <String>[];
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      ),
+      providerChatClient: provider,
+      episodePipeline: EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      ),
+      diagnosticsSink: diagnostics.add,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+
+    final exchange = await service.send(requestId: 'bad-action', text: '在吗');
+
+    expect(exchange.result.messages, ['在。']);
+    expect(diagnostics, hasLength(1));
+    expect(diagnostics.single, contains('hidden_action_unknown'));
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 11, 22, 31),
+    );
+    expect((await pipeline.readToday()).entries, isEmpty);
+  });
+
+  test('episode write failures never break the delivered reply', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-episode-failure-reply-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('''在。
+<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢热牛奶"}]</qiyu-actions>'''),
+    );
+    final diagnostics = <String>[];
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      ),
+      providerChatClient: provider,
+      episodePipeline: EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+        atomicWriter: const _EpisodesFailingWriter(),
+      ),
+      diagnosticsSink: diagnostics.add,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+
+    final exchange = await service.send(requestId: 'broken-memory', text: '在吗');
+
+    expect(exchange.result.messages, ['在。']);
+    expect(exchange.result.source, ReplySource.llm);
+    expect(exchange.session.turns, hasLength(2));
+    expect(diagnostics, hasLength(1));
+    expect(diagnostics.single, contains('episode update deferred'));
+  });
+
+  test('retrying a stored reply never duplicates the episode entry', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-action-retry-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('''在。
+<qiyu-actions>[{"action":"memory_signal","summary":"用户下周搬家"}]</qiyu-actions>'''),
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      ),
+      providerChatClient: provider,
+      episodePipeline: EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      ),
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+
+    await service.send(requestId: 'retry-action', text: '在吗');
+    await service.send(requestId: 'retry-action', text: '在吗');
+
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 11, 22, 31),
+    );
+    expect((await pipeline.readToday()).entries, hasLength(1));
+    expect(provider.calls, 1);
+  });
 }
 
 final class _FailOnceAtomicWriter implements AtomicTextWriter {
@@ -692,6 +855,20 @@ final class _FailOnceAtomicWriter implements AtomicTextWriter {
     _calls += 1;
     if (_calls == failOnCall) {
       throw const FileSystemException('mock interrupted write');
+    }
+    return _delegate.replace(path, contents);
+  }
+}
+
+final class _EpisodesFailingWriter implements AtomicTextWriter {
+  const _EpisodesFailingWriter();
+
+  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
+
+  @override
+  Future<void> replace(String path, String contents) {
+    if (path.contains('episodes')) {
+      throw const FileSystemException('mock interrupted episode write');
     }
     return _delegate.replace(path, contents);
   }
