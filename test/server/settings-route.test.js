@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleSettingsRequest, csrfToken } from '../../src/server/settings-route.js';
 
+// 测试占位符：这些不是真实凭据，仅用于验证路由行为。
+const TEST_KEY = '_TEST_KEY_';
+
 test('settings route GET and POST endpoints with isolated configPath', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'qiyu-settings-test-'));
   const configPath = join(dir, 'qiyu.config.local.json');
@@ -42,7 +45,7 @@ test('settings route GET and POST endpoints with isolated configPath', async () 
     [Symbol.asyncIterator]: async function* () {
       yield JSON.stringify({
         apiUrl: 'https://test.api.com',
-        apiKey: 'secret_key',
+        apiKey: TEST_KEY,
         model: 'test-model',
         temperature: 0.7,
         timeoutMs: 15000
@@ -117,7 +120,7 @@ test('settings route test endpoint returns validation results and handles errors
     [Symbol.asyncIterator]: async function* () {
       yield JSON.stringify({
         apiUrl: 'https://test.api.com/v1',
-        apiKey: 'test-key',
+        apiKey: TEST_KEY,
         model: 'test-model',
         timeoutMs: 22000
       });
@@ -153,7 +156,7 @@ test('settings route test endpoint returns validation results and handles errors
     configPath,
     callChatCompletionsImpl: async () => {
       throw new Error(
-        'Authorization: Bearer leaked-token; Cookie: sid=session-secret; SENSITIVE_INPUT_123'
+        'Authorization: Bearer _TEST_BEARER_; Cookie: sid=_TEST_SID_; SENSITIVE_INPUT_123'
       );
     }
   });
@@ -162,7 +165,7 @@ test('settings route test endpoint returns validation results and handles errors
   assert.equal(failed.errorCode, 'provider_connection_failed');
   assert.doesNotMatch(
     endCalls[1],
-    /leaked-token|session-secret|SENSITIVE_INPUT_123|Authorization|Cookie/
+    /_TEST_BEARER_|_TEST_SID_|SENSITIVE_INPUT_123|Authorization|Cookie/
   );
 
   await rm(tempDir, { recursive: true, force: true });
@@ -186,7 +189,7 @@ test('settings route test-chat endpoint simulates Qiyu E2E prompt', async () => 
     [Symbol.asyncIterator]: async function* () {
       yield JSON.stringify({
         apiUrl: 'https://test.api.com/v1',
-        apiKey: 'test-key',
+        apiKey: TEST_KEY,
         model: 'test-model',
         timeoutMs: 24000
       });
@@ -232,7 +235,7 @@ test('settings route test-chat cleans visible output and suppresses unsafe repli
       [Symbol.asyncIterator]: async function* () {
         yield JSON.stringify({
           apiUrl: 'https://test.api.com/v1',
-          apiKey: 'test-key',
+          apiKey: TEST_KEY,
           model: 'test-model'
         });
       }
@@ -270,14 +273,14 @@ test('settings route test-chat cleans visible output and suppresses unsafe repli
 
   const providerFailure = await runProbe(async () => {
     throw new Error(
-      'Authorization: Bearer leaked-token; Cookie: sid=session-secret; SENSITIVE_INPUT_123'
+      'Authorization: Bearer _TEST_BEARER_; Cookie: sid=_TEST_SID_; SENSITIVE_INPUT_123'
     );
   });
   assert.equal(providerFailure.body.success, false);
   assert.equal(providerFailure.body.errorCode, 'test_chat_failed');
   assert.doesNotMatch(
     providerFailure.serialized,
-    /leaked-token|session-secret|SENSITIVE_INPUT_123|Authorization|Cookie/
+    /_TEST_BEARER_|_TEST_SID_|SENSITIVE_INPUT_123|Authorization|Cookie/
   );
 
   await rm(tempDir, { recursive: true, force: true });

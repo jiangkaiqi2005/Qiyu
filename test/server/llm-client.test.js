@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { callChatCompletions } from '../../src/server/llm-client.js';
 
+// 测试占位符：这些不是真实凭据，仅用于验证请求构造。
+const TEST_KEY = '_TEST_KEY_';
+
 test('callChatCompletions posts OpenAI-compatible request', async () => {
   const calls = [];
   const fetchImpl = async (url, options) => {
@@ -18,7 +21,7 @@ test('callChatCompletions posts OpenAI-compatible request', async () => {
   const text = await callChatCompletions({
     config: {
       apiUrl: 'https://llm.example.test/v1/chat/completions',
-      apiKey: 'key',
+      apiKey: TEST_KEY,
       model: 'qiyu-test-model',
       temperature: 0.8,
       timeoutMs: 30000,
@@ -31,7 +34,7 @@ test('callChatCompletions posts OpenAI-compatible request', async () => {
   assert.equal(text, '……怎么回事');
   assert.equal(calls[0].url, 'https://llm.example.test/v1/chat/completions');
   assert.equal(calls[0].options.method, 'POST');
-  assert.equal(calls[0].options.headers.Authorization, 'Bearer key');
+  assert.equal(calls[0].options.headers.Authorization, `Bearer ${TEST_KEY}`);
   const requestBody = JSON.parse(calls[0].options.body);
   assert.equal(requestBody.model, 'qiyu-test-model');
   assert.equal(requestBody.max_tokens, 16);
@@ -50,7 +53,7 @@ test('callChatCompletions reports provider errors', async () => {
     () => callChatCompletions({
       config: {
         apiUrl: 'https://llm.example.test/v1/chat/completions',
-        apiKey: 'key',
+        apiKey: TEST_KEY,
         model: 'qiyu-test-model',
         temperature: 0.8,
         timeoutMs: 30000
@@ -85,7 +88,7 @@ test('callChatCompletions handles content array format and filters text parts', 
   const text = await callChatCompletions({
     config: {
       apiUrl: 'https://llm.example.test/v1/chat/completions',
-      apiKey: 'test-api-key',
+      apiKey: TEST_KEY,
       model: 'test-model',
       temperature: 0.8,
       timeoutMs: 30000
@@ -117,7 +120,7 @@ test('callChatCompletions strips provider reasoning tags from content', async ()
   const text = await callChatCompletions({
     config: {
       apiUrl: 'https://llm.example.test/v1/chat/completions',
-      apiKey: 'test-api-key',
+      apiKey: TEST_KEY,
       model: 'test-model',
       temperature: 0.8,
       timeoutMs: 30000
@@ -134,7 +137,7 @@ test('callChatCompletions supports Anthropic messages API', async () => {
   const text = await callChatCompletions({
     config: {
       apiUrl: 'https://api.anthropic.com/v1/messages',
-      apiKey: 'anthropic-key',
+      apiKey: TEST_KEY,
       model: 'claude-sonnet-4-20250514',
       temperature: 0.6,
       timeoutMs: 30000
@@ -160,7 +163,7 @@ test('callChatCompletions supports Anthropic messages API', async () => {
   });
 
   assert.equal(calls[0].url, 'https://api.anthropic.com/v1/messages');
-  assert.equal(calls[0].options.headers['x-api-key'], 'anthropic-key');
+  assert.equal(calls[0].options.headers['x-api-key'], TEST_KEY);
   assert.equal(calls[0].options.headers['anthropic-version'], '2023-06-01');
   assert.equal(calls[0].options.headers.Authorization, undefined);
 
@@ -174,11 +177,12 @@ test('callChatCompletions supports Anthropic messages API', async () => {
 });
 
 test('callChatCompletions redacts API Key in error message if key length > 3', async () => {
+  const longKey = `${TEST_KEY}-longer-than-three`;
   const fetchImpl = async () => ({
     ok: false,
     status: 400,
     async text() {
-      return 'Invalid credential for secret-long-key';
+      return `Invalid credential for ${longKey}`;
     }
   });
 
@@ -186,7 +190,7 @@ test('callChatCompletions redacts API Key in error message if key length > 3', a
     () => callChatCompletions({
       config: {
         apiUrl: 'https://llm.example.test/v1/chat/completions',
-        apiKey: 'secret-long-key',
+        apiKey: longKey,
         model: 'test-model',
         temperature: 0.8,
         timeoutMs: 30000
@@ -211,7 +215,7 @@ test('callChatCompletions catches Abort timeout and throws structured message', 
     () => callChatCompletions({
       config: {
         apiUrl: 'https://llm.example.test/v1/chat/completions',
-        apiKey: 'test-key',
+        apiKey: TEST_KEY,
         model: 'test-model',
         temperature: 0.8,
         timeoutMs: 120

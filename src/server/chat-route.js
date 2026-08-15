@@ -22,6 +22,12 @@ function fallbackReply(text, state) {
 
 export async function handleChatRequest(req, res, { runtimeConfig, productSoul, csrfToken, fetchImpl = fetch }) {
   try {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { Allow: 'POST' });
+      res.end('Method Not Allowed');
+      return;
+    }
+
     // Cross-site pages must not be able to spend the locally configured LLM quota
     if (!validateCsrfAndOrigin(req, res, csrfToken)) {
       return;

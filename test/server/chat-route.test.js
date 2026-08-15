@@ -6,6 +6,9 @@ import { createInitialState } from '../../src/qiyu/state.js';
 
 const CSRF_TOKEN = 'test-csrf-token';
 
+// 测试占位符：这不是真实凭据，仅用于验证路由行为。
+const TEST_KEY = '_TEST_KEY_';
+
 function reqWithJson(body) {
   const req = Readable.from([JSON.stringify(body)]);
   req.method = 'POST';
@@ -60,7 +63,7 @@ test('chat route uses LLM when configured and injects context', async () => {
       hasLlm: true,
       llm: {
         apiUrl: 'https://llm.example.test/v1/chat/completions',
-        apiKey: 'key',
+        apiKey: TEST_KEY,
         model: 'qiyu-test-model',
         temperature: 0.8,
         timeoutMs: 30000
@@ -99,7 +102,7 @@ test('chat route removes LLM stage directions before returning and recording rep
       hasLlm: true,
       llm: {
         apiUrl: 'https://llm.example.test/v1/chat/completions',
-        apiKey: 'key',
+        apiKey: TEST_KEY,
         model: 'qiyu-test-model',
         temperature: 0.8,
         timeoutMs: 30000
@@ -134,7 +137,7 @@ test('chat route falls back local when LLM returns forbidden phrase', async () =
       hasLlm: true,
       llm: {
         apiUrl: 'https://llm.example.test/v1/chat/completions',
-        apiKey: 'key',
+        apiKey: TEST_KEY,
         model: 'qiyu-test-model',
         temperature: 0.8,
         timeoutMs: 30000
@@ -155,6 +158,21 @@ test('chat route falls back local when LLM returns forbidden phrase', async () =
   assert.ok(typeof body.latencyMs === 'number');
 });
 
+test('chat route rejects non-POST methods before touching the body', async () => {
+  const req = reqWithJson({ text: '你好', state: createInitialState('local-user') });
+  req.method = 'GET';
+  const res = captureRes();
+
+  await handleChatRequest(req, res, {
+    csrfToken: CSRF_TOKEN,
+    runtimeConfig: { hasLlm: false, llm: {} },
+    productSoul: '# 栖语',
+    fetchImpl: async () => { throw new Error('fetch should not be called'); }
+  });
+
+  assert.equal(res.statusCode, 405);
+});
+
 test('chat route rejects requests without a matching CSRF token', async () => {
   const req = reqWithJson({ text: '你好', state: createInitialState('local-user') });
   req.headers = {};
@@ -166,7 +184,7 @@ test('chat route rejects requests without a matching CSRF token', async () => {
       hasLlm: true,
       llm: {
         apiUrl: 'https://llm.example.test/v1/chat/completions',
-        apiKey: 'key',
+        apiKey: TEST_KEY,
         model: 'qiyu-test-model',
         temperature: 0.8,
         timeoutMs: 30000
@@ -190,7 +208,7 @@ test('chat route exposes only allowlisted diagnostics when API request fails', a
       hasLlm: true,
       llm: {
         apiUrl: 'https://llm.example.test/v1/chat/completions',
-        apiKey: 'key',
+        apiKey: TEST_KEY,
         model: 'qiyu-test-model',
         temperature: 0.8,
         timeoutMs: 30000
@@ -202,7 +220,7 @@ test('chat route exposes only allowlisted diagnostics when API request fails', a
       ok: false,
       status: 500,
       async text() {
-        return 'Authorization: Bearer leaked-token; Cookie: sid=session-secret; SENSITIVE_INPUT_123';
+        return 'Authorization: Bearer _TEST_BEARER_; Cookie: sid=_TEST_SID_; SENSITIVE_INPUT_123';
       }
     })
   });
@@ -212,7 +230,7 @@ test('chat route exposes only allowlisted diagnostics when API request fails', a
   assert.equal(body.fallbackReason, 'llm_error');
   assert.equal(body.providerError, '模型服务暂时不可用');
   assert.equal(body.debug.error, 'provider_request_failed');
-  assert.doesNotMatch(res.body(), /leaked-token|session-secret|Authorization|Cookie/);
+  assert.doesNotMatch(res.body(), /_TEST_BEARER_|_TEST_SID_|Authorization|Cookie/);
   assert.doesNotMatch(
     JSON.stringify({ providerError: body.providerError, debug: body.debug }),
     /SENSITIVE_INPUT_123/

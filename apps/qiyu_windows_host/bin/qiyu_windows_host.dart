@@ -50,9 +50,15 @@ Future<void> main(List<String> arguments) async {
     ).launch(openBrowser: options.openBrowser);
 
     final state = launch.isPrimary ? '栖语已启动' : '栖语已在运行';
-    stdout.writeln('$state：${launch.displayUri}');
-    if (launch.browserLaunch.attempted && !launch.browserLaunch.succeeded) {
-      stdout.writeln('无法自动打开浏览器，请复制上面的本机地址。');
+    // 登录 URL 里的 startup token 是会话凭据，仅在浏览器没能自动打开、
+    // 或显式 --no-browser 需要手动访问时才输出，避免落入终端缓冲与日志。
+    if (launch.browserLaunch.succeeded) {
+      stdout.writeln(state);
+    } else if (launch.browserLaunch.attempted) {
+      stdout.writeln(state);
+      stdout.writeln('无法自动打开浏览器，请手动访问：${launch.displayUri}');
+    } else {
+      stdout.writeln('$state：${launch.displayUri}');
     }
     if (!launch.isPrimary) {
       return;

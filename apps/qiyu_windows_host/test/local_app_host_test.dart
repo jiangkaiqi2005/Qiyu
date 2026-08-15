@@ -59,6 +59,8 @@ void main() {
       );
       expect(contentSecurityPolicy, contains("'wasm-unsafe-eval'"));
       expect(contentSecurityPolicy, isNot(contains(" 'unsafe-eval'")));
+      expect(contentSecurityPolicy, contains("frame-ancestors 'none'"));
+      expect(response.headers.value('x-frame-options'), 'DENY');
 
       final releasedPort = host.port;
       await host.close();

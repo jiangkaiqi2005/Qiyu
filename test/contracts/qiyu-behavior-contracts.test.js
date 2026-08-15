@@ -35,12 +35,15 @@ function captureResponse() {
   return response;
 }
 
+// 测试占位符：这不是真实凭据，仅用于契约夹具。
+const TEST_KEY = '_TEST_KEY_';
+
 function runtimeConfig(provider) {
   return {
     hasLlm: provider.configured,
     llm: {
       apiUrl: 'https://llm.example.test/v1/chat/completions',
-      apiKey: 'fixture-key',
+      apiKey: TEST_KEY,
       model: 'fixture-model',
       temperature: 0.8,
       timeoutMs: 30_000

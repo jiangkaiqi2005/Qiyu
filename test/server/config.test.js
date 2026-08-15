@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadRuntimeConfig, normalizeChatCompletionsUrl } from '../../src/server/config.js';
 
+// 测试占位符：这不是真实凭据，仅用于验证配置读取。
+const TEST_KEY = '_TEST_KEY_';
+
 test('normalizeChatCompletionsUrl standardizes input URLs', () => {
   assert.equal(normalizeChatCompletionsUrl('https://api.openai.com/v1'), 'https://api.openai.com/v1/chat/completions');
   assert.equal(normalizeChatCompletionsUrl('https://api.openai.com/v1/'), 'https://api.openai.com/v1/chat/completions');
@@ -23,7 +26,7 @@ test('runtime config reads complete LLM settings from environment', async () => 
   const config = await loadRuntimeConfig({
     env: {
       LLM_API_URL: 'https://llm.example.test/v1',
-      LLM_API_KEY: 'test-key',
+      LLM_API_KEY: TEST_KEY,
       LLM_MODEL: 'qiyu-test-model',
       LLM_TEMPERATURE: '0.7',
       LLM_TIMEOUT_MS: '12000'
@@ -34,7 +37,7 @@ test('runtime config reads complete LLM settings from environment', async () => 
   assert.equal(config.hasLlm, true);
   assert.equal(config.source, 'env');
   assert.equal(config.llm.apiUrl, 'https://llm.example.test/v1/chat/completions');
-  assert.equal(config.llm.apiKey, 'test-key');
+  assert.equal(config.llm.apiKey, TEST_KEY);
   assert.equal(config.llm.model, 'qiyu-test-model');
   assert.equal(config.llm.temperature, 0.7);
   assert.equal(config.llm.timeoutMs, 12000);
@@ -46,7 +49,7 @@ test('runtime config can read optional local JSON config', async () => {
   await writeFile(configPath, JSON.stringify({
     llm: {
       apiUrl: 'https://file.example.test/v1/',
-      apiKey: 'file-key',
+      apiKey: TEST_KEY,
       model: 'file-model',
       temperature: 0.8,
       timeoutMs: 9000
@@ -57,7 +60,7 @@ test('runtime config can read optional local JSON config', async () => {
   assert.equal(config.hasLlm, true);
   assert.equal(config.source, 'local-file');
   assert.equal(config.llm.apiUrl, 'https://file.example.test/v1/chat/completions');
-  assert.equal(config.llm.apiKey, 'file-key');
+  assert.equal(config.llm.apiKey, TEST_KEY);
   assert.equal(config.llm.model, 'file-model');
 
   await rm(dir, { recursive: true, force: true });
