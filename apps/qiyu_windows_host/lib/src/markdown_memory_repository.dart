@@ -35,6 +35,12 @@ final class IoAtomicTextWriter implements AtomicTextWriter {
   }
 }
 
+/// Host 内部诊断默认出口：只写本机 stderr，内容先过允许列表脱敏。
+/// 诊断绝不展示给用户，也不透出正文、密钥或本机路径。
+void stderrDiagnostics(String message) {
+  stderr.writeln('[qiyu] ${redactDiagnosticText(message)}');
+}
+
 final class MemoryRepositoryException implements Exception {
   const MemoryRepositoryException({
     required this.code,

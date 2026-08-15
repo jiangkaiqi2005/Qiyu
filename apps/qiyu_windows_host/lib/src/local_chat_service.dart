@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'daily_finalization.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_recall.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'open_loop_store.dart';
@@ -90,13 +90,14 @@ final class LocalChatService {
     this.dailyFinalization,
     this.openLoopStore,
     this.statePackReader,
+    this.memoryRecall,
     DeliveryPause? deliveryPause,
     Clock? clock,
     void Function(String message)? diagnosticsSink,
   }) : _behaviorCore = behaviorCore ?? const QiyuBehaviorCore(),
        _deliveryPause = deliveryPause ?? Future<void>.delayed,
        _clock = clock ?? DateTime.now,
-       _diagnosticsSink = diagnosticsSink ?? _stderrDiagnostics;
+       _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
   final MemoryRepository _repository;
   final QiyuBehaviorCore _behaviorCore;
@@ -106,12 +107,17 @@ final class LocalChatService {
   final DailyFinalizationService? dailyFinalization;
   final OpenLoopStore? openLoopStore;
   final StatePackReader? statePackReader;
+
+  /// 「晚一拍想起」后台召回（ticket 13）。只在配置了 Provider 时
+  /// 有意义：检索结果要注入下一轮模型上下文。
+  final MemoryRecallService? memoryRecall;
   final DeliveryPause _deliveryPause;
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
   final Map<String, _DeliveryCancellation> _activeDeliveries = {};
   Future<void> _pending = Future.value();
   Future<void> _finalizationTask = Future.value();
+  Future<void> _recallTask = Future.value();
   String? _lastDeliveryDate;
 
   Future<void> initialize() async {
@@ -129,6 +135,9 @@ final class LocalChatService {
   /// 等待已调度的后台日终归档完成。日终归档幂等且每一步原子写入，
   /// 供测试断言与 Host 优雅收尾使用。
   Future<void> finalizePending() => _finalizationTask;
+
+  /// 等待已调度的后台召回检索完成。检索失败只记诊断，供测试断言使用。
+  Future<void> settlePendingRecalls() => _recallTask;
 
   /// 把一次后台归档挂到串行任务链上：归档之间不并发，失败只记诊断。
   void _runFinalization(
@@ -368,14 +377,23 @@ final class LocalChatService {
         localOutcome.mode != 'bedtime' &&
         providerChatClient != null) {
       ModelCompletion? completion;
+      ModelPromptBuilder? requestBuilder;
       try {
-        final builder = await _promptBuilderForRequest();
+        requestBuilder = await _promptBuilderForRequest(session.id);
         completion = await _collectModelCompletion(
-          builder.build(state, trimmedText),
+          requestBuilder.build(state, trimmedText),
           cancellation,
         );
       } on Object {
         completion = const ModelCompletion.failure(ModelFailureKind.provider);
+      }
+      // 模型没有真正收到本轮（失败/无流/取消）时，把已取用的短期
+      // memory context 放回，留给下一轮注入；「晚一拍」允许再晚一拍。
+      final consumedContext = requestBuilder?.memoryContext ?? '';
+      final modelSucceeded = completion != null && completion.failure == null;
+      if (consumedContext.isNotEmpty &&
+          (!modelSucceeded || cancellation.isCancelled)) {
+        memoryRecall?.restorePendingContext(session.id, consumedContext);
       }
       if (cancellation.isCancelled) {
         yield LocalChatDeliveryEvent(
@@ -429,7 +447,52 @@ final class LocalChatService {
         // 保持 pending，等 Provider 恢复后补跑。
         consumeWindow: outcome.source == ReplySource.llm,
       );
+      _scheduleRecall(
+        sessionId: lastEvent.exchange!.session.id,
+        userText: trimmedText,
+        hiddenActions: hiddenActions,
+        outcome: outcome,
+      );
       _scheduleEndOfDayTriggers(outcome);
+    }
+  }
+
+  /// 「晚一拍想起」触发（首响运行层定稿的双保险），全部在可见回复
+  /// 交付之后后台执行，绝不阻塞首响：
+  /// 1. 模型隐藏块里的 memory_recall 检索请求为主；
+  /// 2. 服务端规则兜底：召回式输入（「你还记得」「我之前说的」）
+  ///    在模型没有给出检索请求时自动触发。
+  /// 晚安收束与安全回复不检索；未配置 Provider 时检索结果没有消费者，
+  /// 也不触发。检索失败不纠缠：不重试、不编造，话题再来再查。
+  void _scheduleRecall({
+    required String sessionId,
+    required String userText,
+    required List<HiddenAction> hiddenActions,
+    required ChatResult outcome,
+  }) {
+    final recall = memoryRecall;
+    if (recall == null ||
+        providerChatClient == null ||
+        outcome.safety != null ||
+        outcome.mode == 'bedtime') {
+      return;
+    }
+    final recallQueries = hiddenActions
+        .where((action) => action.kind == HiddenActionKind.memoryRecall)
+        .map((action) => action.query ?? '')
+        .where((query) => query.trim().isNotEmpty)
+        .toList();
+    if (recallQueries.isEmpty && looksLikeRecallInput(userText)) {
+      recallQueries.add(userText);
+    }
+    for (final query in recallQueries) {
+      _recallTask = _recallTask.then((_) async {
+        try {
+          await recall.search(sessionId: sessionId, query: query);
+        } on Object catch (error) {
+          _diagnosticsSink('recall deferred [$error]');
+        }
+      });
     }
   }
 
@@ -521,19 +584,24 @@ final class LocalChatService {
   }
 
   /// 每轮实测状态包，组装本轮【近况】块；读取失败降级为空块
-  /// （空块不输出），绝不阻塞回复。
-  Future<ModelPromptBuilder> _promptBuilderForRequest() async {
+  /// （空块不输出），绝不阻塞回复。同时消费该会话上一轮后台召回
+  /// 命中的短期 memory context（临时透镜，只注入一次）。
+  Future<ModelPromptBuilder> _promptBuilderForRequest(String sessionId) async {
+    var builder = modelPromptBuilder;
     final reader = statePackReader;
-    if (reader == null) {
-      return modelPromptBuilder;
+    if (reader != null) {
+      try {
+        final block = await reader.readDailyStateBlock();
+        builder = builder.copyWithDailyState(block);
+      } on Object catch (error) {
+        _diagnosticsSink('state pack unavailable [$error]');
+      }
     }
-    try {
-      final block = await reader.readDailyStateBlock();
-      return modelPromptBuilder.copyWithDailyState(block);
-    } on Object catch (error) {
-      _diagnosticsSink('state pack unavailable [$error]');
-      return modelPromptBuilder;
+    final pendingContext = memoryRecall?.consumePendingContext(sessionId);
+    if (pendingContext != null) {
+      builder = builder.copyWithMemoryContext(pendingContext);
     }
+    return builder;
   }
 
   Future<ModelCompletion?> _collectModelCompletion(
@@ -810,8 +878,3 @@ FallbackReason _fallbackReasonFor(ModelFailureKind failure) =>
       ModelFailureKind.provider => FallbackReason.modelProvider,
       ModelFailureKind.internal => FallbackReason.modelInternal,
     };
-
-/// 隐藏动作与记忆整理诊断只写本机 stderr，内容先过允许列表脱敏。
-void _stderrDiagnostics(String message) {
-  stderr.writeln('[qiyu] ${redactDiagnosticText(message)}');
-}

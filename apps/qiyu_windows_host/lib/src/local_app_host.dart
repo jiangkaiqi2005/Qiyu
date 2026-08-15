@@ -13,6 +13,7 @@ import 'daily_finalization.dart';
 import 'episode_memory.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_recall.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'onboarding_state.dart';
@@ -95,6 +96,11 @@ final class LocalAppHost {
         memoryDirectory: memoryDirectory,
         openLoopStore: openLoopStore,
       ),
+      memoryRecall: MemoryRecallService(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: episodePipeline,
+        openLoopStore: openLoopStore,
+      ),
     );
     await chatService.initialize();
     final onboardingRepository = JsonOnboardingRepository(
@@ -126,13 +132,16 @@ final class LocalAppHost {
     return LocalAppHost._(server, requestHandler);
   }
 
-  /// 关闭前先等待后台日终归档收尾；归档幂等且每步原子写入，超时或
-  /// 失败不阻塞关闭，未完成的归档由下次启动补扫继续。
+  /// 关闭前先等待后台日终归档与召回检索收尾；归档幂等且每步原子
+  /// 写入，超时或失败不阻塞关闭，未完成的归档由下次启动补扫继续，
+  /// 未完成的召回只是失去一次「晚一拍想起」，不丢记忆。
   Future<void> close() async {
     try {
-      await _requestHandler.chatService
-          .finalizePending()
-          .timeout(const Duration(seconds: 3));
+      final service = _requestHandler.chatService;
+      await Future.wait<void>([
+        service.finalizePending(),
+        service.settlePendingRecalls(),
+      ]).timeout(const Duration(seconds: 3));
     } on Object {
       // 归档中断安全：finalized 保持 false，启动补扫会重做。
     }

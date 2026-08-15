@@ -104,6 +104,19 @@ void main() {
     expect(system, contains('普通闲聊'));
   });
 
+  test('the protocol offers memory_recall and honest not-yet-recalled wording', () {
+    final system = builder
+        .build(StateSnapshot.initial('local-user'), '在吗')
+        .first
+        .content;
+
+    expect(system, contains('memory_recall'));
+    // 硬规则定稿：热层未命中时如实说一时没想起，不编造。
+    expect(system, contains('一时没想起'));
+    expect(system, contains('不编造相似经历'));
+    expect(system, contains('没查到记录不代表没发生'));
+  });
+
   test('copyWithDailyState replaces only the recent-state block', () {
     const full = ModelPromptBuilder(
       '测试人格宪法',
@@ -121,5 +134,23 @@ void main() {
     expect(system, isNot(contains('旧状态')));
     expect(system, contains('- 用户喜欢热牛奶'));
     expect(system, contains('熬夜型'));
+  });
+
+  test('copyWithMemoryContext replaces only the one-shot recall lens', () {
+    const full = ModelPromptBuilder(
+      '测试人格宪法',
+      dailyState: '旧状态',
+      memoryContext: '旧检索结果',
+    );
+
+    final copied = full.copyWithMemoryContext('新检索结果');
+    final userMessage = copied
+        .build(StateSnapshot.initial('local-user'), '在吗')
+        .last
+        .content;
+
+    expect(userMessage, contains('新检索结果'));
+    expect(userMessage, isNot(contains('旧检索结果')));
+    expect(userMessage, contains('<memory_context>'));
   });
 }

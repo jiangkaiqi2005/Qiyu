@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
+import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'open_loop_store.dart';
@@ -22,9 +23,6 @@ const _dailySummaryMaxEntries = 5;
 const _dailyStateMaxActiveItems = 6;
 const _dailyStateMaxRecentItems = 4;
 const _dailyStateMaxItemRunes = 28;
-const _indexMaxDayKeywords = 4;
-const _indexMaxMonthKeywords = 6;
-const _indexKeywordMaxRunes = 12;
 
 /// 单日归档结果。
 enum FinalizationStatus {
@@ -87,6 +85,7 @@ final class DailyFinalizationService {
     required this.episodePipeline,
     OpenLoopStore? openLoopStore,
     RelationshipLifecycle? relationshipLifecycle,
+    EpisodeIndexStore? indexStore,
     Clock? clock,
     AtomicTextWriter? atomicWriter,
   }) : _clock = clock ?? DateTime.now,
@@ -101,18 +100,23 @@ final class DailyFinalizationService {
              memoryDirectory: memoryDirectory,
              atomicWriter: atomicWriter ?? const IoAtomicTextWriter(),
              clock: clock ?? DateTime.now,
+           ),
+       _indexStore = indexStore ??
+           EpisodeIndexStore(
+             memoryDirectory: memoryDirectory,
+             episodePipeline: episodePipeline,
+             atomicWriter: atomicWriter ?? const IoAtomicTextWriter(),
            );
 
   final String memoryDirectory;
   final EpisodeMemoryPipeline episodePipeline;
   final OpenLoopStore _openLoopStore;
   final RelationshipLifecycle _relationshipLifecycle;
+  final EpisodeIndexStore _indexStore;
   final Clock _clock;
   final AtomicTextWriter _atomicWriter;
 
   File get _dailyStateFile => File(path.join(memoryDirectory, 'daily-state.md'));
-  File get _topIndexFile =>
-      File(path.join(memoryDirectory, 'episodes', 'index.md'));
 
   /// 晚安归档：先补做所有更早的未完成日期，最后归档用户说晚安的当天。
   /// 当天放在最后，保证近日状态包以最新一天为窗口终点重建。
@@ -190,7 +194,7 @@ final class DailyFinalizationService {
         status: FinalizationStatus.alreadyFinalized,
       );
     }
-    final entries = _validEntries(day.entries);
+    final entries = validEpisodeEntries(day.entries);
     if (entries.isEmpty) {
       // 只有系统错误、敏感信息或纯簿记条目的一天没有可投影内容：
       // 不写 daily-state。但热层的闭环归档与过期清理是 store 级动作，
@@ -234,7 +238,7 @@ final class DailyFinalizationService {
       () => _relationshipLifecycle.updateAtEndOfDay(date, episodePipeline, dates),
     );
     await _writeStep(date, () => _rebuildDailyState(date, dates));
-    await _writeStep(date, () => _rebuildIndexes(dates, includingDay: date));
+    await _writeStep(date, () => _rebuildIndexes(includingDay: date));
     await episodePipeline.writeFinalization(
       date,
       entries: day.entries,
@@ -267,7 +271,7 @@ final class DailyFinalizationService {
     final seen = <String>{};
     for (final entry in entries) {
       final text = entry.summary.trim();
-      final key = _normalize(text);
+      final key = normalizeMemoryText(text);
       if (key.isEmpty || !seen.add(key)) {
         continue;
       }
@@ -276,7 +280,7 @@ final class DailyFinalizationService {
         break;
       }
     }
-    return _clip(parts.join('；'), dailySummaryMaxRunes);
+    return clipRunes(parts.join('；'), dailySummaryMaxRunes);
   }
 
   /// 待跟进候选（固定顺序第 2 步，ticket 11）：
@@ -318,7 +322,7 @@ final class DailyFinalizationService {
         continue;
       }
       readableDays += 1;
-      final valid = _validEntries(day.entries);
+      final valid = validEpisodeEntries(day.entries);
       if (valid.isNotEmpty) {
         perDay[candidate] = valid;
       }
@@ -337,7 +341,7 @@ final class DailyFinalizationService {
     );
     // 「一事只进其一」：已进 open-loop 的条目不重复进 daily-state。
     bool excluded(EpisodeEntry entry) =>
-        openLoopTitles.contains(_normalize(entry.summary));
+        openLoopTitles.contains(normalizeMemoryText(entry.summary));
 
     final active = <String>[];
     for (final dayDate in perDay.keys.toList()..sort()) {
@@ -350,7 +354,7 @@ final class DailyFinalizationService {
         }
         active.add(
           '- (${dayDate.substring(5)}) '
-          '${_clip(entry.summary.trim(), _dailyStateMaxItemRunes)}',
+          '${clipRunes(entry.summary.trim(), _dailyStateMaxItemRunes)}',
         );
         if (active.length >= _dailyStateMaxActiveItems) {
           break;
@@ -363,7 +367,7 @@ final class DailyFinalizationService {
     final recent = perDay[latestDate]!
         .where((entry) => !excluded(entry))
         .take(_dailyStateMaxRecentItems)
-        .map((entry) => '- ${_clip(entry.summary.trim(), _dailyStateMaxItemRunes)}')
+        .map((entry) => '- ${clipRunes(entry.summary.trim(), _dailyStateMaxItemRunes)}')
         .toList();
 
     final sections = StringBuffer()
@@ -415,89 +419,14 @@ final class DailyFinalizationService {
         .toSet();
   }
 
-  /// 两级索引（月份索引 + 每日索引）只在日终更新，且只收录已归档、
-  /// 有有效条目的日期。整体重建保证补跑幂等、失败不残留半份索引。
+  /// 日终归档内的索引步骤：从原始 episode 整体重建两级索引，日终路径
+  /// 只收录已归档、有有效条目的日期。整体重建保证补跑幂等、失败不
+  /// 残留半份索引。（召回修复是另一条重建路径：索引缺失或损坏时
+  /// 收录全部可读日期，见 MemoryRecallService。）
   /// [includingDay] 是本次正在归档的日期：索引步骤先于 finalized 标记，
   /// 构建时把它视作已归档，避免当天永远缺席索引。
-  Future<void> _rebuildIndexes(
-    List<String> dates, {
-    String? includingDay,
-  }) async {
-    final monthDayLines = <String, List<String>>{};
-    final monthKeywords = <String, List<String>>{};
-    for (final date in dates) {
-      final day = await episodePipeline.readDay(date);
-      if (!day.readable) {
-        continue;
-      }
-      if (!day.finalized && date != includingDay) {
-        continue;
-      }
-      final valid = _validEntries(day.entries);
-      if (valid.isEmpty) {
-        continue;
-      }
-      final keywords = <String>[];
-      final seen = <String>{};
-      for (final entry in valid) {
-        final keyword = _clip(entry.summary.trim(), _indexKeywordMaxRunes);
-        final key = _normalize(keyword);
-        if (key.isEmpty || !seen.add(key)) {
-          continue;
-        }
-        keywords.add(keyword);
-        if (keywords.length >= _indexMaxDayKeywords) {
-          break;
-        }
-      }
-      final month = date.substring(0, 7);
-      (monthDayLines[month] ??= []).add(
-        '- $date | ${keywords.join(', ')} | $date.md',
-      );
-      final monthList = monthKeywords[month] ??= [];
-      for (final keyword in keywords) {
-        final key = _normalize(keyword);
-        final exists = monthList.any(
-          (existing) => _normalize(existing) == key,
-        );
-        if (!exists) {
-          monthList.add(keyword);
-        }
-      }
-    }
-
-    if (monthDayLines.isEmpty) {
-      if (await _topIndexFile.exists()) {
-        await _topIndexFile.delete();
-      }
-      return;
-    }
-    final topLines = <String>[];
-    for (final month in monthDayLines.keys.toList()..sort()) {
-      final monthPath = path.join(
-        memoryDirectory,
-        'episodes',
-        month.substring(0, 4),
-        month.substring(5, 7),
-        'index.md',
-      );
-      await _atomicWriter.replace(
-        monthPath,
-        '# $month index\n\n${monthDayLines[month]!.join('\n')}\n',
-      );
-      final keywords = (monthKeywords[month] ?? [])
-          .take(_indexMaxMonthKeywords)
-          .join(', ');
-      topLines.add(
-        '- $month | $keywords | episodes/${month.substring(0, 4)}/'
-        '${month.substring(5, 7)}/index.md',
-      );
-    }
-    await _atomicWriter.replace(
-      _topIndexFile.path,
-      '# episodes index\n\n${topLines.join('\n')}\n',
-    );
-  }
+  Future<void> _rebuildIndexes({String? includingDay}) =>
+      _indexStore.rebuild(includingDay: includingDay);
 
   String _timeSense(DateTime now) {
     const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -519,36 +448,9 @@ final class DailyFinalizationService {
   }
 }
 
-/// 只保留可参与投影的条目：摘要非空，且不是系统簿记条目。
-/// open_loop_event（状态变化/禁提）与 relationship_signal（关系证据）
-/// 只留在 episode 里做追溯：前者不得进摘要、状态包或索引（簿记文字
-/// 含禁提标题，进状态包就会随注入绕回）；后者按定稿只投影到
-/// relationship.md 的近期变化，不走通用投影。
-List<EpisodeEntry> _validEntries(List<EpisodeEntry> entries) => entries
-    .where(
-      (entry) =>
-          entry.summary.trim().isNotEmpty &&
-          entry.kind != episodeKindOpenLoopEvent &&
-          entry.kind != episodeKindRelationshipSignal,
-    )
-    .toList();
-
 DateTime _parseDate(String date) => DateTime(
   int.parse(date.substring(0, 4)),
   int.parse(date.substring(5, 7)),
   int.parse(date.substring(8, 10)),
 );
 
-/// 规范化用于语义去重比较：折叠空白并统一大小写；不改变落盘原文。
-String _normalize(String value) => value
-    .replaceAll(RegExp(r'\s+'), ' ')
-    .toLowerCase()
-    .trim();
-
-String _clip(String value, int maxRunes) {
-  final runes = value.runes;
-  if (runes.length <= maxRunes) {
-    return value;
-  }
-  return String.fromCharCodes(runes.take(maxRunes));
-}

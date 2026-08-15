@@ -285,9 +285,9 @@ final class EpisodeMemoryPipeline {
 
     var written = 0;
     var skipped = 0;
-    // TODO(ticket 13): memory_recall 动作在两级索引落地后接入后台检索；
-    // 在那之前只消费记忆与 Open-loop 生活动作，recall 经白名单校验后
-    // 静默忽略。
+    // memory_recall 不产生 episode 条目：它由 LocalChatService 转交
+    // MemoryRecallService 在后台检索（ticket 13），这里只消费记忆与
+    // Open-loop 生活动作。
     final consumable = hiddenActions
         .where(
           (action) =>

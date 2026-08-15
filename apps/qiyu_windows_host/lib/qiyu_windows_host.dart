@@ -5,12 +5,14 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 export 'src/browser_launcher.dart';
 export 'src/daily_finalization.dart';
+export 'src/episode_index.dart';
 export 'src/episode_memory.dart';
 export 'src/host_command.dart';
 export 'src/host_runner.dart';
 export 'src/local_app_host.dart';
 export 'src/local_chat_service.dart';
 export 'src/markdown_memory_repository.dart';
+export 'src/memory_recall.dart';
 export 'src/model_gateway.dart';
 export 'src/model_prompt_builder.dart';
 export 'src/onboarding_state.dart';
