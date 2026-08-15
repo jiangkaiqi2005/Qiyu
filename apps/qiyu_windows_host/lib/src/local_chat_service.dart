@@ -8,7 +8,9 @@ import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
+import 'open_loop_store.dart';
 import 'provider_settings_service.dart';
+import 'state_pack_reader.dart';
 
 final class LocalChatException implements Exception {
   const LocalChatException({
@@ -86,6 +88,8 @@ final class LocalChatService {
     this.modelPromptBuilder = const ModelPromptBuilder(''),
     this.episodePipeline,
     this.dailyFinalization,
+    this.openLoopStore,
+    this.statePackReader,
     DeliveryPause? deliveryPause,
     Clock? clock,
     void Function(String message)? diagnosticsSink,
@@ -100,6 +104,8 @@ final class LocalChatService {
   final ModelPromptBuilder modelPromptBuilder;
   final EpisodeMemoryPipeline? episodePipeline;
   final DailyFinalizationService? dailyFinalization;
+  final OpenLoopStore? openLoopStore;
+  final StatePackReader? statePackReader;
   final DeliveryPause _deliveryPause;
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
@@ -363,8 +369,9 @@ final class LocalChatService {
         providerChatClient != null) {
       ModelCompletion? completion;
       try {
+        final builder = await _promptBuilderForRequest();
         completion = await _collectModelCompletion(
-          modelPromptBuilder.build(state, trimmedText),
+          builder.build(state, trimmedText),
           cancellation,
         );
       } on Object {
@@ -459,25 +466,73 @@ final class LocalChatService {
     required bool consumeWindow,
   }) async {
     final pipeline = episodePipeline;
-    if (pipeline == null) {
-      return;
-    }
-    try {
-      final result = await pipeline.processReply(
-        session: completedSession,
-        requestId: requestId,
-        hiddenActions: hiddenActions,
-        consumeWindow: consumeWindow,
-      );
-      if (result.skippedCorruptDay) {
+    if (pipeline != null) {
+      try {
+        final result = await pipeline.processReply(
+          session: completedSession,
+          requestId: requestId,
+          hiddenActions: hiddenActions,
+          consumeWindow: consumeWindow,
+        );
+        if (result.skippedCorruptDay) {
+          _diagnosticsSink(
+            'episode day unreadable, waiting for recovery request=$requestId',
+          );
+        }
+      } on Object catch (error) {
         _diagnosticsSink(
-          'episode day unreadable, waiting for recovery request=$requestId',
+          'episode update deferred [$error] request=$requestId',
         );
       }
+    }
+    // Open-loop 状态变化与禁提属于用户记忆控制：回复后异步立即生效，
+    // 不等日终（对齐记忆控制定稿）；禁提同时移出热层并写 controls。
+    final store = openLoopStore;
+    if (store != null) {
+      for (final action in hiddenActions) {
+        try {
+          if (action.kind == HiddenActionKind.openLoopStatus &&
+              action.summary != null &&
+              action.status != null) {
+            await store.applyStatusChange(
+              title: action.summary!,
+              status: action.status!,
+              result: action.result,
+            );
+          } else if (action.kind == HiddenActionKind.memoryBan &&
+              action.summary != null) {
+            final banned = await store.banTitle(action.summary!);
+            if (!banned) {
+              // controls 不可写：禁提没有落盘，热层也保持不动，
+              // 等待下次触发重试，绝不留下半生效状态。
+              _diagnosticsSink(
+                'memory ban deferred [controls not writable] '
+                'request=$requestId',
+              );
+            }
+          }
+        } on Object catch (error) {
+          _diagnosticsSink(
+            'open-loop update deferred [$error] request=$requestId',
+          );
+        }
+      }
+    }
+  }
+
+  /// 每轮实测状态包，组装本轮【近况】块；读取失败降级为空块
+  /// （空块不输出），绝不阻塞回复。
+  Future<ModelPromptBuilder> _promptBuilderForRequest() async {
+    final reader = statePackReader;
+    if (reader == null) {
+      return modelPromptBuilder;
+    }
+    try {
+      final block = await reader.readDailyStateBlock();
+      return modelPromptBuilder.copyWithDailyState(block);
     } on Object catch (error) {
-      _diagnosticsSink(
-        'episode update deferred [$error] request=$requestId',
-      );
+      _diagnosticsSink('state pack unavailable [$error]');
+      return modelPromptBuilder;
     }
   }
 

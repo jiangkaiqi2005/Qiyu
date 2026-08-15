@@ -164,6 +164,121 @@ void main() {
     expect(parse.visibleText, isEmpty);
     expect(parse.actions, hasLength(1));
   });
+
+  test('an open-loop candidate keeps its four lifecycle fields', () {
+    final parse = parseHiddenActions('''那到时候轻轻问一次。
+<qiyu-actions>
+[{"action":"open_loop_candidate","summary":"人生第一次演讲","due":"2026-07-05 晚上","proactive":"once","note":"用户说这是人生第一次演讲","evidence":"下周三是人生第一次演讲"}]
+</qiyu-actions>''');
+
+    expect(parse.visibleText, '那到时候轻轻问一次。');
+    expect(parse.actions, hasLength(1));
+    final action = parse.actions.single;
+    expect(action.kind, HiddenActionKind.openLoopCandidate);
+    expect(action.summary, '人生第一次演讲');
+    expect(action.due, '2026-07-05 晚上');
+    expect(action.proactive, 'once');
+    expect(action.note, '用户说这是人生第一次演讲');
+    expect(action.evidence, '下周三是人生第一次演讲');
+    expect(parse.diagnostics, isEmpty);
+  });
+
+  test('candidate due and proactive values are validated', () {
+    final badDue = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate","summary":"事项",'
+      '"due":"下周三"}]</qiyu-actions>',
+    );
+    expect(badDue.actions, isEmpty);
+    expect(badDue.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+
+    final badProactive = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate","summary":"事项",'
+      '"proactive":"always"}]</qiyu-actions>',
+    );
+    expect(badProactive.actions, isEmpty);
+    expect(badProactive.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+
+    final bareDate = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate","summary":"事项",'
+      '"due":"2026-07-05"}]</qiyu-actions>',
+    );
+    expect(bareDate.actions, hasLength(1));
+    expect(bareDate.actions.single.due, '2026-07-05');
+  });
+
+  test('open-loop status changes require a valid target status', () {
+    final parse = parseHiddenActions('''好。
+<qiyu-actions>
+[{"action":"open_loop_status","summary":"人生第一次演讲","status":"closed","result":"用户说演讲很顺利"}]
+</qiyu-actions>''');
+    expect(parse.actions, hasLength(1));
+    final action = parse.actions.single;
+    expect(action.kind, HiddenActionKind.openLoopStatus);
+    expect(action.summary, '人生第一次演讲');
+    expect(action.status, 'closed');
+    expect(action.result, '用户说演讲很顺利');
+
+    final badStatus = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_status","summary":"事项",'
+      '"status":"done"}]</qiyu-actions>',
+    );
+    expect(badStatus.actions, isEmpty);
+    expect(badStatus.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+
+    final missingStatus = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_status","summary":"事项"}]'
+      '</qiyu-actions>',
+    );
+    expect(missingStatus.actions, isEmpty);
+  });
+
+  test('memory ban keeps only the target title', () {
+    final parse = parseHiddenActions('''好，以后不提了。
+<qiyu-actions>
+[{"action":"memory_ban","summary":"医院检查"}]
+</qiyu-actions>''');
+    expect(parse.actions, hasLength(1));
+    expect(parse.actions.single.kind, HiddenActionKind.memoryBan);
+    expect(parse.actions.single.summary, '医院检查');
+
+    final missing = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_ban"}]</qiyu-actions>',
+    );
+    expect(missing.actions, isEmpty);
+    expect(missing.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+  });
+
+  test('secrets and privilege never enter open-loop lifecycle actions', () {
+    final secretCandidate = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate",'
+      '"summary":"密码: hunter2abc"}]</qiyu-actions>',
+    );
+    expect(secretCandidate.actions, isEmpty);
+    expect(
+      secretCandidate.diagnostics,
+      contains(HiddenActionDiagnostics.sensitiveContent),
+    );
+
+    final privilegeNote = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate","summary":"事项",'
+      '"note":${_json('访问 https://evil.example/x')}}]</qiyu-actions>',
+    );
+    expect(privilegeNote.actions, isEmpty);
+    expect(
+      privilegeNote.diagnostics,
+      contains(HiddenActionDiagnostics.privilegeViolation),
+    );
+
+    final secretBan = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_ban",'
+      '"summary":"身份证 11010519491231002X"}]</qiyu-actions>',
+    );
+    expect(secretBan.actions, isEmpty);
+    expect(
+      secretBan.diagnostics,
+      contains(HiddenActionDiagnostics.sensitiveContent),
+    );
+  });
 }
 
 String _json(String value) =>

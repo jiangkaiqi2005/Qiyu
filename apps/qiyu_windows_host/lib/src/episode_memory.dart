@@ -10,6 +10,11 @@ import 'markdown_memory_repository.dart';
 /// checkpoint 照常前进，保证对话不会被重复整理。
 const episodeWindowTurns = 4;
 
+/// episode 条目的来源类型。旧文件没有该字段，按 [episodeKindMemory] 解析。
+const episodeKindMemory = 'memory';
+const episodeKindOpenLoopCandidate = 'open_loop_candidate';
+const episodeKindOpenLoopEvent = 'open_loop_event';
+
 final class EpisodeEntry {
   const EpisodeEntry({
     required this.id,
@@ -18,6 +23,10 @@ final class EpisodeEntry {
     required this.summary,
     this.evidence,
     required this.at,
+    this.kind = episodeKindMemory,
+    this.due,
+    this.proactive,
+    this.note,
   });
 
   factory EpisodeEntry.fromJson(Map<String, Object?> json) => EpisodeEntry(
@@ -27,6 +36,10 @@ final class EpisodeEntry {
     summary: json['summary']! as String,
     evidence: json['evidence'] as String?,
     at: DateTime.parse(json['at']! as String).toUtc(),
+    kind: json['kind'] as String? ?? episodeKindMemory,
+    due: json['due'] as String?,
+    proactive: json['proactive'] as String?,
+    note: json['note'] as String?,
   );
 
   final String id;
@@ -36,6 +49,14 @@ final class EpisodeEntry {
   final String? evidence;
   final DateTime at;
 
+  /// 条目来源：普通记忆信号、Open-loop 日终候选或 Open-loop 状态事件。
+  final String kind;
+
+  /// Open-loop 候选的四字段载荷，日终提升时原样带入 open-loops.md。
+  final String? due;
+  final String? proactive;
+  final String? note;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'sessionId': sessionId,
@@ -43,6 +64,10 @@ final class EpisodeEntry {
     'summary': summary,
     if (evidence != null) 'evidence': evidence,
     'at': at.toUtc().toIso8601String(),
+    if (kind != episodeKindMemory) 'kind': kind,
+    if (due != null) 'due': due,
+    if (proactive != null) 'proactive': proactive,
+    if (note != null) 'note': note,
   };
 }
 
@@ -252,25 +277,27 @@ final class EpisodeMemoryPipeline {
     var written = 0;
     var skipped = 0;
     // TODO(ticket 13): memory_recall 动作在两级索引落地后接入后台检索；
-    // 在那之前只消费 memory_signal，recall 经白名单校验后静默忽略。
-    final signals = hiddenActions
-        .where((action) => action.kind == HiddenActionKind.memorySignal)
+    // 在那之前只消费记忆与 Open-loop 生活动作，recall 经白名单校验后
+    // 静默忽略。
+    final consumable = hiddenActions
+        .where(
+          (action) =>
+              action.kind == HiddenActionKind.memorySignal ||
+              action.kind == HiddenActionKind.openLoopCandidate ||
+              action.kind == HiddenActionKind.openLoopStatus ||
+              action.kind == HiddenActionKind.memoryBan,
+        )
         .toList();
-    if (signals.isNotEmpty) {
+    if (consumable.isNotEmpty) {
       final additions = <EpisodeEntry>[];
-      for (var index = 0; index < signals.length; index += 1) {
-        final signal = signals[index];
-        final entry = EpisodeEntry(
-          id: '${session.id}:$requestId:$index',
-          sessionId: session.id,
+      for (var index = 0; index < consumable.length; index += 1) {
+        final entry = _entryForAction(
+          consumable[index],
+          session: session,
           requestId: requestId,
-          summary: redactSessionText(signal.summary ?? '').trim(),
-          evidence: signal.evidence == null
-              ? null
-              : redactSessionText(signal.evidence!).trim(),
-          at: _clock().toUtc(),
+          index: index,
         );
-        if (entry.summary.isEmpty || day.hasEntryId(entry.id)) {
+        if (entry == null || entry.summary.isEmpty || day.hasEntryId(entry.id)) {
           skipped += 1;
           continue;
         }
@@ -309,6 +336,67 @@ final class EpisodeMemoryPipeline {
       checkpointAdvanced: true,
       pendingTurns: remainingTurns < 0 ? 0 : remainingTurns,
     );
+  }
+
+  /// 把已通过白名单校验的隐藏动作落成当天 episode 条目。
+  /// 候选保留四字段载荷供日终提升；状态变化与禁提作为事件条目留痕。
+  EpisodeEntry? _entryForAction(
+    HiddenAction action, {
+    required RawSession session,
+    required String requestId,
+    required int index,
+  }) {
+    String? redacted(String? value) =>
+        value == null ? null : redactSessionText(value).trim();
+    final id = '${session.id}:$requestId:$index';
+    switch (action.kind) {
+      case HiddenActionKind.memorySignal:
+        return EpisodeEntry(
+          id: id,
+          sessionId: session.id,
+          requestId: requestId,
+          summary: redactSessionText(action.summary ?? '').trim(),
+          evidence: redacted(action.evidence),
+          at: _clock().toUtc(),
+        );
+      case HiddenActionKind.openLoopCandidate:
+        return EpisodeEntry(
+          id: id,
+          sessionId: session.id,
+          requestId: requestId,
+          summary: redactSessionText(action.summary ?? '').trim(),
+          evidence: redacted(action.evidence),
+          at: _clock().toUtc(),
+          kind: episodeKindOpenLoopCandidate,
+          due: action.due,
+          proactive: action.proactive,
+          note: redacted(action.note),
+        );
+      case HiddenActionKind.openLoopStatus:
+        return EpisodeEntry(
+          id: id,
+          sessionId: session.id,
+          requestId: requestId,
+          summary: 'Open-loop 状态: '
+              '${redactSessionText(action.summary ?? '').trim()} → '
+              '${action.status}',
+          evidence: redacted(action.result),
+          at: _clock().toUtc(),
+          kind: episodeKindOpenLoopEvent,
+        );
+      case HiddenActionKind.memoryBan:
+        return EpisodeEntry(
+          id: id,
+          sessionId: session.id,
+          requestId: requestId,
+          summary: '禁提: ${redactSessionText(action.summary ?? '').trim()}',
+          at: _clock().toUtc(),
+          kind: episodeKindOpenLoopEvent,
+        );
+      case HiddenActionKind.memoryRecall:
+      case HiddenActionKind.noAction:
+        return null;
+    }
   }
 
   int _pendingUserTurns(EpisodeCheckpoint? checkpoint, RawSession session) {

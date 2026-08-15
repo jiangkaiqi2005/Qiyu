@@ -16,10 +16,12 @@ import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'onboarding_state.dart';
+import 'open_loop_store.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
 import 'secure_token.dart';
 import 'secret_store.dart';
+import 'state_pack_reader.dart';
 
 const _sessionCookieName = 'qiyu_session';
 const _csrfHeaderName = 'x-qiyu-csrf';
@@ -76,6 +78,8 @@ final class LocalAppHost {
     final episodePipeline = EpisodeMemoryPipeline(
       memoryDirectory: memoryDirectory,
     );
+    // Open-loop 生命周期由日终归档与对话即时生效两条路径共享同一存储。
+    final openLoopStore = OpenLoopStore(memoryDirectory: memoryDirectory);
     final chatService = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
       providerChatClient: effectiveProviderSettings,
@@ -84,6 +88,12 @@ final class LocalAppHost {
       dailyFinalization: DailyFinalizationService(
         memoryDirectory: memoryDirectory,
         episodePipeline: episodePipeline,
+        openLoopStore: openLoopStore,
+      ),
+      openLoopStore: openLoopStore,
+      statePackReader: StatePackReader(
+        memoryDirectory: memoryDirectory,
+        openLoopStore: openLoopStore,
       ),
     );
     await chatService.initialize();

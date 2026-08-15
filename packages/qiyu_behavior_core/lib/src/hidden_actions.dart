@@ -1,11 +1,21 @@
 import 'dart:convert';
 
-/// 伪 Agent 隐藏动作白名单。模型只能在回复之外提出这三类动作，
+/// 伪 Agent 隐藏动作白名单。模型只能在回复之外提出这些动作，
 /// 任何其它动作名一律丢弃并记入诊断。
 enum HiddenActionKind {
   memorySignal('memory_signal'),
   memoryRecall('memory_recall'),
-  noAction('no_action');
+  noAction('no_action'),
+
+  /// 日终候选：模型认为本轮出现了真正未完、值得以后跟进的事项。
+  /// 是否提升为正式 Open-loop 由 Host 在日终归档时校验决定。
+  openLoopCandidate('open_loop_candidate'),
+
+  /// Open-loop 状态变化：用户回复让某事项闭环、暂缓或重新活跃。
+  openLoopStatus('open_loop_status'),
+
+  /// 用户要求不再提及某事项：立即禁提，属于用户记忆控制。
+  memoryBan('memory_ban');
 
   const HiddenActionKind(this.wireName);
 
@@ -31,6 +41,24 @@ const maxHiddenEvidenceRunes = 200;
 /// memory_recall 的检索意图长度上限（runes）。
 const maxHiddenQueryRunes = 100;
 
+/// Open-loop 动作的字段长度上限（runes）。标题走 summary 字段，
+/// 比 memory_signal 的摘要更短——事项名应当简短。
+const maxLoopTitleRunes = 60;
+const maxLoopNoteRunes = 120;
+const maxLoopResultRunes = 120;
+
+/// due 的合法形态：日期 + 可选时段（中英文皆可，与日终解析一致）。
+final loopDuePattern = RegExp(
+  r'^\d{4}-\d{2}-\d{2}'
+  r'(?: (?:早晨|上午|中午|下午|晚上|深夜|morning|afternoon|evening|night))?$',
+);
+
+/// open_loop_status 的目标状态白名单。
+const loopStatusValues = {'active', 'paused', 'closed'};
+
+/// open_loop_candidate 的 proactive 白名单；缺省由 Host 按 once 处理。
+const loopProactiveValues = {'no', 'once', 'yes'};
+
 /// 动作诊断码：只进入本机诊断，绝不展示给用户。
 class HiddenActionDiagnostics {
   static const invalidFormat = 'hidden_action_invalid_format';
@@ -48,6 +76,11 @@ final class HiddenAction {
     this.summary,
     this.evidence,
     this.query,
+    this.due,
+    this.proactive,
+    this.note,
+    this.result,
+    this.status,
   });
 
   final HiddenActionKind kind;
@@ -55,11 +88,31 @@ final class HiddenAction {
   final String? evidence;
   final String? query;
 
+  /// open_loop_candidate：最早可跟进时间（`YYYY-MM-DD[ 时段]`）。
+  final String? due;
+
+  /// open_loop_candidate：no / once / yes。
+  final String? proactive;
+
+  /// open_loop_candidate：跟进时需要知道的背景。
+  final String? note;
+
+  /// open_loop_status：闭环结果的追溯说明。
+  final String? result;
+
+  /// open_loop_status：目标状态（active / paused / closed）。
+  final String? status;
+
   Map<String, Object?> toJson() => {
     'action': kind.wireName,
     if (summary != null) 'summary': summary,
     if (evidence != null) 'evidence': evidence,
     if (query != null) 'query': query,
+    if (due != null) 'due': due,
+    if (proactive != null) 'proactive': proactive,
+    if (note != null) 'note': note,
+    if (result != null) 'result': result,
+    if (status != null) 'status': status,
   };
 
   @override
@@ -68,10 +121,25 @@ final class HiddenAction {
       other.kind == kind &&
       other.summary == summary &&
       other.evidence == evidence &&
-      other.query == query;
+      other.query == query &&
+      other.due == due &&
+      other.proactive == proactive &&
+      other.note == note &&
+      other.result == result &&
+      other.status == status;
 
   @override
-  int get hashCode => Object.hash(kind, summary, evidence, query);
+  int get hashCode => Object.hash(
+    kind,
+    summary,
+    evidence,
+    query,
+    due,
+    proactive,
+    note,
+    result,
+    status,
+  );
 }
 
 final class HiddenActionParse {
@@ -240,6 +308,104 @@ HiddenAction? _validateAction(
       return HiddenAction(kind: kind, query: query);
     case HiddenActionKind.noAction:
       return HiddenAction(kind: kind);
+    case HiddenActionKind.openLoopCandidate:
+      final title = _cleanFieldValue(item['summary']);
+      if (title == null || title.runes.length > maxLoopTitleRunes) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      final evidence = _cleanFieldValue(item['evidence']);
+      if (evidence != null && evidence.runes.length > maxHiddenEvidenceRunes) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      final due = _cleanFieldValue(item['due']);
+      if (due != null && !loopDuePattern.hasMatch(due)) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      final proactive = _cleanFieldValue(item['proactive']);
+      if (proactive != null && !loopProactiveValues.contains(proactive)) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      final note = _cleanFieldValue(item['note']);
+      if (note != null && note.runes.length > maxLoopNoteRunes) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      if (_violatesPrivilege(title) ||
+          (evidence != null && _violatesPrivilege(evidence)) ||
+          (note != null && _violatesPrivilege(note)) ||
+          _containsSecret(title) ||
+          (evidence != null && _containsSecret(evidence)) ||
+          (note != null && _containsSecret(note))) {
+        diagnostics.add(
+          _violatesPrivilege(title) ||
+                  (evidence != null && _violatesPrivilege(evidence)) ||
+                  (note != null && _violatesPrivilege(note))
+              ? HiddenActionDiagnostics.privilegeViolation
+              : HiddenActionDiagnostics.sensitiveContent,
+        );
+        return null;
+      }
+      return HiddenAction(
+        kind: kind,
+        summary: title,
+        evidence: evidence,
+        due: due,
+        proactive: proactive,
+        note: note,
+      );
+    case HiddenActionKind.openLoopStatus:
+      final title = _cleanFieldValue(item['summary']);
+      if (title == null || title.runes.length > maxLoopTitleRunes) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      final status = _cleanFieldValue(item['status']);
+      if (status == null || !loopStatusValues.contains(status)) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      final result = _cleanFieldValue(item['result']);
+      if (result != null && result.runes.length > maxLoopResultRunes) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      if (_violatesPrivilege(title) ||
+          (result != null && _violatesPrivilege(result)) ||
+          _containsSecret(title) ||
+          (result != null && _containsSecret(result))) {
+        diagnostics.add(
+          _violatesPrivilege(title) ||
+                  (result != null && _violatesPrivilege(result))
+              ? HiddenActionDiagnostics.privilegeViolation
+              : HiddenActionDiagnostics.sensitiveContent,
+        );
+        return null;
+      }
+      return HiddenAction(
+        kind: kind,
+        summary: title,
+        status: status,
+        result: result,
+      );
+    case HiddenActionKind.memoryBan:
+      final title = _cleanFieldValue(item['summary']);
+      if (title == null || title.runes.length > maxLoopTitleRunes) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      if (_violatesPrivilege(title) || _containsSecret(title)) {
+        diagnostics.add(
+          _violatesPrivilege(title)
+              ? HiddenActionDiagnostics.privilegeViolation
+              : HiddenActionDiagnostics.sensitiveContent,
+        );
+        return null;
+      }
+      return HiddenAction(kind: kind, summary: title);
   }
 }
 

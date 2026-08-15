@@ -1,10 +1,10 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'open_loop_store.dart';
 
 /// 每日状态包分块预算来自设计笔记定稿：daily-state 100-300 tokens、
 /// open-loops 100-250 tokens、relationship 150-300 tokens。
@@ -83,19 +83,23 @@ final class DailyFinalizationService {
   DailyFinalizationService({
     required this.memoryDirectory,
     required this.episodePipeline,
+    OpenLoopStore? openLoopStore,
     Clock? clock,
     AtomicTextWriter? atomicWriter,
   }) : _clock = clock ?? DateTime.now,
-       _atomicWriter = atomicWriter ?? const IoAtomicTextWriter();
+       _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
+       _openLoopStore = openLoopStore ??
+           OpenLoopStore(
+             memoryDirectory: memoryDirectory,
+             atomicWriter: atomicWriter ?? const IoAtomicTextWriter(),
+           );
 
   final String memoryDirectory;
   final EpisodeMemoryPipeline episodePipeline;
+  final OpenLoopStore _openLoopStore;
   final Clock _clock;
   final AtomicTextWriter _atomicWriter;
 
-  File get _openLoopsFile => File(path.join(memoryDirectory, 'open-loops.md'));
-  File get _openLoopsArchiveFile =>
-      File(path.join(memoryDirectory, 'open-loops.archive.md'));
   File get _relationshipFile =>
       File(path.join(memoryDirectory, 'relationship.md'));
   File get _dailyStateFile => File(path.join(memoryDirectory, 'daily-state.md'));
@@ -180,8 +184,13 @@ final class DailyFinalizationService {
     }
     final entries = _validEntries(day.entries);
     if (entries.isEmpty) {
-      // 只有系统错误或敏感信息的一天不会留下条目：只置 organized 标记
-      // 防止反复重扫，绝不写任何状态包内容。
+      // 只有系统错误、敏感信息或纯簿记条目的一天没有可投影内容：
+      // 不写任何状态包。但热层的闭环归档与过期清理是 store 级动作，
+      // 与当天条目无关，仍要执行，否则 closed 条目永远进不了归档。
+      await _writeStep(date, () async {
+        await _openLoopStore.archiveClosed(date);
+        await _openLoopStore.expireStale(_clock());
+      });
       await episodePipeline.writeFinalization(
         date,
         entries: day.entries,
@@ -204,7 +213,7 @@ final class DailyFinalizationService {
       summary: summary,
       finalized: false,
     ));
-    await _writeStep(date, () => _archiveClosedOpenLoops(date));
+    await _writeStep(date, () => _processFollowUpCandidates(date, day.entries));
     await _writeStep(date, () => _ensureRelationshipFile(dates));
     await _writeStep(date, () => _rebuildDailyState(date, dates));
     await _writeStep(date, () => _rebuildIndexes(dates, includingDay: date));
@@ -252,106 +261,24 @@ final class DailyFinalizationService {
     return _clip(parts.join('；'), dailySummaryMaxRunes);
   }
 
-  /// 待跟进候选：把 status: closed 的 open-loop 挪入归档文件。
-  /// 热层只留 active/paused；归档文件不注入、不占热层预算。
-  /// 结构无法识别时（例如用户手写内容）原样保留，绝不覆盖。
-  Future<void> _archiveClosedOpenLoops(String date) async {
-    final file = _openLoopsFile;
-    if (!await file.exists()) {
-      return;
+  /// 待跟进候选（固定顺序第 2 步，ticket 11）：
+  /// 1. 提升当天 episode 中的 open-loop 候选——只有字段合法、未被禁提、
+  ///    不与既有事项重复且热层预算允许时才成为正式 Open-loop；
+  /// 2. 已闭环条目挪入归档（热层只留 active/paused）；
+  /// 3. 过期清理：due 过期仍无下文的事项按「过期」归档。
+  /// 三个动作都幂等；open-loops.md 结构无法识别时整体保留不动。
+  Future<void> _processFollowUpCandidates(
+    String date,
+    List<EpisodeEntry> entries,
+  ) async {
+    final candidates = entries
+        .where((entry) => entry.kind == episodeKindOpenLoopCandidate)
+        .toList();
+    if (candidates.isNotEmpty) {
+      await _openLoopStore.promoteCandidates(candidates);
     }
-    final contents = await file.readAsString(encoding: utf8);
-    final items = _splitOpenLoopItems(contents);
-    if (items == null) {
-      return;
-    }
-    final kept = <String>[];
-    final archivedLines = <String>[];
-    for (final item in items) {
-      if (_isOpenLoopClosed(item)) {
-        archivedLines.add(_archiveLineFor(item, date));
-      } else {
-        kept.add(item);
-      }
-    }
-    if (archivedLines.isEmpty) {
-      return;
-    }
-    // 整体重写归档文件（读-合并-去重-写），补跑不会重复追加。
-    final existingLines = await _openLoopsArchiveFile.exists()
-        ? (await _openLoopsArchiveFile.readAsString(encoding: utf8))
-              .replaceAll('\r\n', '\n')
-              .split('\n')
-              .where((line) => line.trim().isNotEmpty)
-              .toList()
-        : <String>['# open-loops archive'];
-    final seenLines = existingLines.toSet();
-    for (final line in archivedLines) {
-      if (seenLines.add(line)) {
-        existingLines.add(line);
-      }
-    }
-    await _atomicWriter.replace(
-      _openLoopsArchiveFile.path,
-      '${existingLines.join('\n')}\n',
-    );
-    final keptBody = kept.isEmpty ? '' : '\n${kept.join('\n')}\n';
-    await _atomicWriter.replace(file.path, '# open-loops\n$keptBody');
-  }
-
-  /// 把 open-loops.md 拆成条目块；无法识别结构时返回 null（不得改动）。
-  List<String>? _splitOpenLoopItems(String contents) {
-    final lines = contents.replaceAll('\r\n', '\n').split('\n');
-    final items = <String>[];
-    final current = <String>[];
-    var sawItem = false;
-    for (final line in lines) {
-      if (RegExp(r'^- \[').hasMatch(line)) {
-        if (current.isNotEmpty) {
-          items.add(_joinItem(current));
-        }
-        current
-          ..clear()
-          ..add(line);
-        sawItem = true;
-      } else if (sawItem) {
-        current.add(line);
-      } else if (line.trim().isNotEmpty && !line.startsWith('#')) {
-        // 条目之外存在无法识别的正文：视为用户内容，整体不动。
-        return null;
-      }
-    }
-    if (current.isNotEmpty) {
-      items.add(_joinItem(current));
-    }
-    return items;
-  }
-
-  String _joinItem(List<String> lines) {
-    while (lines.isNotEmpty && lines.last.trim().isEmpty) {
-      lines.removeLast();
-    }
-    return lines.join('\n');
-  }
-
-  bool _isOpenLoopClosed(String item) => RegExp(
-    r'^\s*status\s*[:：]\s*closed\s*$',
-    multiLine: true,
-  ).hasMatch(item);
-
-  String _archiveLineFor(String item, String date) {
-    final titleMatch = RegExp(
-      r'^- \[[^\]]+\]\s*(.*)$',
-      multiLine: true,
-    ).firstMatch(item);
-    final title = (titleMatch?.group(1) ?? '').trim();
-    final noteMatch = RegExp(
-      r'^\s*note\s*[:：]\s*(.*)$',
-      multiLine: true,
-    ).firstMatch(item);
-    final result = (noteMatch?.group(1) ?? '').trim();
-    return '- ${title.isEmpty ? '未命名事项' : title} | 闭环: $date | '
-        '${result.isEmpty ? '已闭环' : result}';
+    await _openLoopStore.archiveClosed(date);
+    await _openLoopStore.expireStale(_clock());
   }
 
   /// 关系证据：只负责确保 relationship.md 以初识起步存在；既有文件
@@ -477,22 +404,14 @@ final class DailyFinalizationService {
   }
 
   Future<Set<String>> _openLoopTitles() async {
-    final file = _openLoopsFile;
-    if (!await file.exists()) {
+    final items = await _openLoopStore.readItems();
+    if (items == null) {
       return const {};
     }
-    final contents = await file.readAsString(encoding: utf8);
-    final titles = <String>{};
-    for (final match in RegExp(
-      r'^- \[[^\]]+\]\s*(.*)$',
-      multiLine: true,
-    ).allMatches(contents)) {
-      final title = _normalize(match.group(1) ?? '');
-      if (title.isNotEmpty) {
-        titles.add(title);
-      }
-    }
-    return titles;
+    return items
+        .map((item) => normalizeLoopTitle(item.title))
+        .where((title) => title.isNotEmpty)
+        .toSet();
   }
 
   /// 两级索引（月份索引 + 每日索引）只在日终更新，且只收录已归档、
@@ -599,9 +518,16 @@ final class DailyFinalizationService {
   }
 }
 
-/// 只保留摘要非空的条目；摘要是日终全部投影的唯一内容来源。
+/// 只保留可参与投影的条目：摘要非空，且不是系统簿记条目。
+/// 状态变化/禁提产生的 open_loop_event 条目只留在 episode 里做追溯，
+/// 不进摘要、近日状态包或索引——簿记文字（含禁提标题）一旦进入
+/// 状态包就会随注入绕回，与禁提纪律直接冲突。
 List<EpisodeEntry> _validEntries(List<EpisodeEntry> entries) => entries
-    .where((entry) => entry.summary.trim().isNotEmpty)
+    .where(
+      (entry) =>
+          entry.summary.trim().isNotEmpty &&
+          entry.kind != episodeKindOpenLoopEvent,
+    )
     .toList();
 
 DateTime _parseDate(String date) => DateTime(

@@ -1,0 +1,125 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:path/path.dart' as path;
+
+import 'markdown_memory_repository.dart';
+import 'open_loop_store.dart';
+
+/// 热层注入硬上限（设计定稿）：总量超 3000 tokens 先砍再注入。
+/// 砍序：先压 long-memory（尚未落地）→ 再压 daily-state 的气氛描述；
+/// 永不砍 relationship 与 open-loops。
+const hotLayerMaxRunes = 3000;
+
+/// 每日状态包装配（装配图定稿）：服务端每轮读状态包三个文件
+/// （open-loops / relationship / daily-state），各带小标题拼成
+/// `<daily_state>`【近况】块；空块不输出。
+///
+/// 跟进门控的确定性部分在 Host 计算（状态/权限/到期/阶段/禁提），
+/// 以「主动跟进候选」批注呈现；语境是否自然、是否开口由模型判断。
+final class StatePackReader {
+  StatePackReader({
+    required this.memoryDirectory,
+    OpenLoopStore? openLoopStore,
+    Clock? clock,
+  }) : _clock = clock ?? DateTime.now,
+       _openLoopStore = openLoopStore ??
+           OpenLoopStore(memoryDirectory: memoryDirectory);
+
+  final String memoryDirectory;
+  final Clock _clock;
+  final OpenLoopStore _openLoopStore;
+
+  File get _relationshipFile =>
+      File(path.join(memoryDirectory, 'relationship.md'));
+  File get _dailyStateFile => File(path.join(memoryDirectory, 'daily-state.md'));
+
+  /// 返回可直接注入的【近况】内容；无任何可用内容时返回空串。
+  /// 禁提事项不出现在注入内容中（过滤 open-loop 投影；relationship 与
+  /// daily-state 的语义级控制过滤归 ticket 18）。
+  Future<String> readDailyStateBlock() async {
+    final now = _clock();
+    final sections = <String>[];
+
+    final loopsText = await _renderLoops();
+    if (loopsText != null) {
+      sections.add('【未闭环事项】\n$loopsText');
+    }
+
+    final relationship = await _readIfExists(_relationshipFile);
+    final stage = parseRelationshipStage(relationship);
+    if (relationship != null && relationship.trim().isNotEmpty) {
+      sections.add('【关系温度】\n${relationship.trim()}');
+    }
+
+    final dailyState = await _readIfExists(_dailyStateFile);
+    final dailySection = dailyState == null || dailyState.trim().isEmpty
+        ? null
+        : '【近日状态】\n${dailyState.trim()}';
+    if (dailySection != null) {
+      sections.add(dailySection);
+    }
+
+    if (sections.isEmpty) {
+      return '';
+    }
+
+    if (loopsText != null) {
+      final candidates = await _openLoopStore.proactiveCandidates(now, stage);
+      sections.add(_followUpDiscipline(candidates));
+    }
+
+    var block = sections.join('\n\n');
+    // 注入关：超预算先砍近日状态（关系与未闭环事项永不砍）。
+    if (block.runes.length > hotLayerMaxRunes && dailySection != null) {
+      sections.remove(dailySection);
+      block = sections.join('\n\n');
+    }
+    return block;
+  }
+
+  /// open-loop 投影：过滤禁提事项后按原样注入 active/paused 条目。
+  Future<String?> _renderLoops() async {
+    final items = await _openLoopStore.readItems();
+    if (items == null || items.isEmpty) {
+      return null;
+    }
+    final banned = await _openLoopStore.bannedTitles();
+    final visible = items
+        .where((item) => !banned.contains(normalizeLoopTitle(item.title)))
+        .toList();
+    if (visible.isEmpty) {
+      return null;
+    }
+    return visible.map((item) => item.raw).join('\n');
+  }
+
+  /// 跟进纪律 + 确定性门控通过的候选池（状态 active、允许主动、
+  /// due 已到、关系阶段允许且未被禁提）。候选只表示「可以进入候选池」，
+  /// 是否开口、怎么开口仍由模型结合当前语境选择。
+  String _followUpDiscipline(List<OpenLoopItem> candidates) {
+    const discipline =
+        '主动跟进纪律：每轮最多主动跟进一件事；只有用户当前没有明确任务、'
+        '语境自然且不打断当前话题时才轻轻问起；初识阶段不主动翻旧事；'
+        '晚安收束时不发起跟进；用户要求不再提的事项绝不触碰。';
+    if (candidates.isEmpty) {
+      return discipline;
+    }
+    final list = candidates
+        .map((item) => '[${item.id}] ${item.title}')
+        .join('；');
+    return '$discipline\n主动跟进候选（条件已满足，最多选一个，'
+        '语境不合适就不问）：$list';
+  }
+
+  Future<String?> _readIfExists(File file) async {
+    if (!await file.exists()) {
+      return null;
+    }
+    try {
+      return await file.readAsString(encoding: utf8);
+    } on Object {
+      return null;
+    }
+  }
+}

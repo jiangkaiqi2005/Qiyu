@@ -23,23 +23,32 @@ const hardRulesBlock = '''
 /// 本块是它唯一授权的例外，必须相邻可见；同时静态前缀在聊天轮与
 /// 日终总结请求间逐字复用，方便前缀缓存与两类请求共享同一协议。
 const hiddenActionsProtocolBlock = '''
-每次回复后，先判断本轮是否出现值得长期记住的内容：稳定偏好、过敏与忌口、重要事件、待跟进事项、明确纠正。若有，在回复最后另起一行追加隐藏块，格式固定为：
-<qiyu-actions>
-[{"action":"memory_signal","summary":"不超过60字的事实概括","evidence":"用户原话摘录，不超过80字"}]
-</qiyu-actions>
+每次回复后判断本轮是否出现以下内容；若有，在回复最后另起一行追加隐藏块，格式固定为 <qiyu-actions>[...]</qiyu-actions>，数组最多两个对象：
+1. memory_signal：值得长期记住的稳定偏好、过敏与忌口、重要事件、明确纠正。
+{"action":"memory_signal","summary":"不超过60字的事实概括","evidence":"用户原话摘录，不超过80字"}
+2. open_loop_candidate：用户明确提到、真正未完且以后值得跟进的事（将要发生的事件、约好的安排、等待结果的事项）。普通闲聊、一次性任务细节不要变成任务。
+{"action":"open_loop_candidate","summary":"事项简称","due":"YYYY-MM-DD 时段","proactive":"once","note":"跟进时需要知道的背景","evidence":"用户原话摘录"}
+proactive 只用 no（用户自己提到才接）/ once（到点最多轻轻问一次）/ yes（用户明确要求持续跟进）；不知道时间就省略 due。
+3. open_loop_status：用户回复让某件记录过的事有了结果。
+{"action":"open_loop_status","summary":"事项简称","status":"closed","result":"闭环原因，可省略"}
+用户回答解决了 → closed；没接或转移话题 → paused；用户重新提起暂停的事项 → active。
+4. memory_ban：用户明确要求某件事以后不要再提、不要再记住。
+{"action":"memory_ban","summary":"事项简称"}
 示例：用户说「我对芒果过敏」时，回复后追加
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户对芒果过敏","evidence":"我对芒果过敏"}]
 </qiyu-actions>
-规则：数组最多两个对象；本阶段 action 只允许 memory_signal，没有值得记住的内容时不加隐藏块；summary 与 evidence 绝不包含密码、API Key、令牌、验证码、私钥、证件号或银行卡号；隐藏块不属于可见回复，用户永远看不到，但必须原样输出完整标签。
+规则：没有值得记录的内容时不加隐藏块；所有字段绝不包含密码、API Key、令牌、验证码、私钥、证件号或银行卡号；隐藏块不属于可见回复，用户永远看不到，但必须原样输出完整标签。
 ''';
 
 /// 靠近生成位置的一句话格式提醒，提升隐藏块协议遵从率。
 const hiddenActionsReminder =
     '回复格式提醒：输出可见回复后，若本轮出现值得长期记住的内容'
-    '（偏好、过敏忌口、重要事件、待跟进、纠正），必须在最后另起一行'
-    '追加 <qiyu-actions>[{"action":"memory_signal","summary":"…",'
-    '"evidence":"…"}]</qiyu-actions>；普通闲聊不追加。';
+    '（偏好、过敏忌口、重要事件、纠正），在最后另起一行追加 '
+    '<qiyu-actions>[{"action":"memory_signal","summary":"…","evidence":"…"}]'
+    '</qiyu-actions>；出现真正未完的事用 open_loop_candidate；用户回复'
+    '让某事闭环或暂缓用 open_loop_status；用户要求不再提某事用 '
+    'memory_ban；普通闲聊不追加。';
 
 /// 按设计定稿的装配图组装模型上下文：
 /// 人格宪法 → 硬规则与优先级 → 隐藏块协议 →
@@ -69,6 +78,16 @@ final class ModelPromptBuilder {
 
   /// 【检索结果】：临时透镜，只附在本轮上下文，不进系统提示词。
   final String memoryContext;
+
+  /// 返回只替换【近况】块的新 builder；状态包文件每轮实测，其余字段不变。
+  ModelPromptBuilder copyWithDailyState(String nextDailyState) =>
+      ModelPromptBuilder(
+        personaConstitution,
+        dailyState: nextDailyState,
+        longMemory: longMemory,
+        persona: persona,
+        memoryContext: memoryContext,
+      );
 
   List<ModelMessage> build(StateSnapshot state, String currentText) {
     final systemSections = StringBuffer();

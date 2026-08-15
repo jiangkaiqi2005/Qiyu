@@ -89,4 +89,37 @@ void main() {
     expect(messages[1].content, '你好');
     expect(messages[2].role, ModelMessageRole.assistant);
   });
+
+  test('the action protocol covers the whole open-loop lifecycle', () {
+    final system = builder
+        .build(StateSnapshot.initial('local-user'), '在吗')
+        .first
+        .content;
+
+    expect(system, contains('memory_signal'));
+    expect(system, contains('open_loop_candidate'));
+    expect(system, contains('open_loop_status'));
+    expect(system, contains('memory_ban'));
+    // 候选门槛写进协议：普通闲聊不得变成任务。
+    expect(system, contains('普通闲聊'));
+  });
+
+  test('copyWithDailyState replaces only the recent-state block', () {
+    const full = ModelPromptBuilder(
+      '测试人格宪法',
+      dailyState: '旧状态',
+      longMemory: '- 用户喜欢热牛奶',
+      persona: '### 偏好\n熬夜型',
+    );
+
+    final copied = full.copyWithDailyState('新状态');
+    final system = copied.build(StateSnapshot.initial('local-user'), '在吗')
+        .first
+        .content;
+
+    expect(system, contains('新状态'));
+    expect(system, isNot(contains('旧状态')));
+    expect(system, contains('- 用户喜欢热牛奶'));
+    expect(system, contains('熬夜型'));
+  });
 }

@@ -601,6 +601,228 @@ void main() {
     expect(day.summary, contains('说了晚安'));
     expect(day.summary, contains('又睡不着了'));
   });
+
+  test('end-of-day promotes candidates and repeated runs never duplicate', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-promote-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(
+          kind: HiddenActionKind.openLoopCandidate,
+          summary: '人生第一次演讲',
+          due: '2026-08-20 晚上',
+          evidence: '下周三是人生第一次演讲',
+        ),
+      ],
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: clock,
+    );
+
+    final outcome = await service.finalizeDay('2026-08-14');
+
+    expect(outcome.status, FinalizationStatus.finalized);
+    final loopsFile = File('${temporaryDirectory.path}/open-loops.md');
+    var contents = await loopsFile.readAsString(encoding: utf8);
+    expect(contents, contains('- [o1] 人生第一次演讲'));
+    expect(contents, contains('due: 2026-08-20 晚上'));
+    expect(contents, contains('proactive: once'));
+    expect(contents, contains('status: active'));
+    // 证据本体留在 episode：候选条目带类型与载荷。
+    final day = await pipeline.readDay('2026-08-14');
+    expect(day.entries.single.kind, episodeKindOpenLoopCandidate);
+    expect(day.entries.single.evidence, '下周三是人生第一次演讲');
+
+    // 晚安后用户又回来：同一候选重复日终不得重复提升。
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1', 'req-2']),
+      requestId: 'req-2',
+      hiddenActions: const [
+        HiddenAction(
+          kind: HiddenActionKind.openLoopCandidate,
+          summary: '人生第一次演讲',
+        ),
+      ],
+    );
+    await service.finalizeDay('2026-08-14');
+    contents = await loopsFile.readAsString(encoding: utf8);
+    expect('人生第一次演讲'.allMatches(contents).length, 1);
+  });
+
+  test('banned matters are never re-promoted by later end-of-day runs', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-ban-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final store = OpenLoopStore(memoryDirectory: temporaryDirectory.path);
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      openLoopStore: store,
+      clock: () => now,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(
+          kind: HiddenActionKind.openLoopCandidate,
+          summary: '医院检查',
+          proactive: 'no',
+        ),
+      ],
+    );
+    await service.finalizeDay('2026-08-14');
+    expect(await store.readItems(), hasLength(1));
+
+    // 用户要求不再提：立即禁提并移出手层。
+    await store.banTitle('医院检查');
+    expect(await store.readItems(), isEmpty);
+
+    // 次日模型再次提出同一事项：日终不得重新激活。
+    now = DateTime(2026, 8, 15, 22);
+    await pipeline.processReply(
+      session: _session('session-2', ['req-2']),
+      requestId: 'req-2',
+      hiddenActions: const [
+        HiddenAction(
+          kind: HiddenActionKind.openLoopCandidate,
+          summary: '医院检查',
+        ),
+      ],
+    );
+    await service.finalizeDay('2026-08-15');
+    expect(await store.readItems(), isEmpty);
+    final controls = await File(
+      '${temporaryDirectory.path}/memory-controls.md',
+    ).readAsString(encoding: utf8);
+    expect(controls, contains('医院检查'));
+  });
+
+  test('end-of-day archives loops that expired without any follow-up', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-expiry-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final now = DateTime(2026, 8, 16, 22);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final store = OpenLoopStore(memoryDirectory: temporaryDirectory.path);
+    await store.promoteCandidates([
+      EpisodeEntry(
+        id: 'seed:1:0',
+        sessionId: 'seed',
+        requestId: 'seed',
+        summary: '早已过期的大事',
+        at: DateTime(2026, 7, 1).toUtc(),
+        kind: episodeKindOpenLoopCandidate,
+        due: '2026-07-01',
+      ),
+    ]);
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '普通的一天'),
+      ],
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      openLoopStore: store,
+      clock: () => now,
+    );
+
+    await service.finalizeDay('2026-08-16');
+
+    expect(await store.readItems(), isEmpty);
+    final archive = await File(
+      '${temporaryDirectory.path}/open-loops.archive.md',
+    ).readAsString(encoding: utf8);
+    expect(archive, contains('- 早已过期的大事 | 闭环: 2026-08-16 | 过期'));
+  });
+
+  test('system bookkeeping entries stay out of summaries, state pack and indexes', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-bookkeeping-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1', 'req-2']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '聊了周末的安排'),
+        HiddenAction(
+          kind: HiddenActionKind.openLoopStatus,
+          summary: '人生第一次演讲',
+          status: 'closed',
+          result: '用户说演讲很顺利',
+        ),
+      ],
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1', 'req-2']),
+      requestId: 'req-2',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memoryBan, summary: '医院检查'),
+      ],
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: clock,
+    );
+
+    final outcome = await service.finalizeDay('2026-08-14');
+
+    expect(outcome.status, FinalizationStatus.finalized);
+    final day = await pipeline.readDay('2026-08-14');
+    // 簿记条目仍留在 episode 里供追溯。
+    expect(
+      day.entries.where((entry) => entry.kind == episodeKindOpenLoopEvent),
+      hasLength(2),
+    );
+    // 但摘要只复述真实记忆条目。
+    expect(day.summary, contains('聊了周末的安排'));
+    expect(day.summary, isNot(contains('Open-loop 状态')));
+    expect(day.summary, isNot(contains('禁提')));
+    // 近日状态包与索引同样不得带回簿记文字（含禁提标题）。
+    final dailyState = await File(
+      '${temporaryDirectory.path}/daily-state.md',
+    ).readAsString(encoding: utf8);
+    expect(dailyState, contains('聊了周末的安排'));
+    expect(dailyState, isNot(contains('Open-loop 状态')));
+    expect(dailyState, isNot(contains('禁提')));
+    final monthIndex = await File(
+      '${temporaryDirectory.path}/episodes/2026/08/index.md',
+    ).readAsString(encoding: utf8);
+    expect(monthIndex, contains('聊了周末的安排'));
+    expect(monthIndex, isNot(contains('Open-loop 状态')));
+    expect(monthIndex, isNot(contains('禁提')));
+  });
 }
 
 Map<String, String> _snapshotStateFiles(String root) {

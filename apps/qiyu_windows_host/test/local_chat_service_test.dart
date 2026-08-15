@@ -452,9 +452,15 @@ void main() {
     final repository = MarkdownMemoryRepository(
       memoryDirectory: temporaryDirectory.path,
     );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+    );
+    final store = OpenLoopStore(memoryDirectory: temporaryDirectory.path);
     final service = LocalChatService(
       repository,
       providerChatClient: provider,
+      episodePipeline: pipeline,
+      openLoopStore: store,
       deliveryPause: (_) async {},
     );
     final events = <LocalChatDeliveryEvent>[];
@@ -471,6 +477,11 @@ void main() {
         .asFuture<void>();
 
     await waiting.future;
+    // 半途增量里带着隐藏动作：取消后它们不得被消费。
+    provider.pushDelta('到时候轻轻问一次。\n<qiyu-actions>\n'
+        '[{"action":"open_loop_candidate","summary":"人生第一次演讲"}]\n'
+        '</qiyu-actions>');
+    await Future<void>.delayed(Duration.zero);
     expect(service.cancel('cancel-1'), isTrue);
     await completed;
 
@@ -488,6 +499,11 @@ void main() {
     final sessionId = events.first.sessionId!;
     final restored = await repository.openSession(sessionId: sessionId);
     expect(restored.turns.map((turn) => turn.speaker), [Speaker.user]);
+    expect(await pipeline.listEpisodeDates(), isEmpty);
+    expect(
+      File('${temporaryDirectory.path}/open-loops.md').existsSync(),
+      isFalse,
+    );
     await provider.close();
   });
 
@@ -1100,6 +1116,288 @@ void main() {
       isFalse,
     );
   });
+
+  test('model-proposed candidates become open-loops at bedtime finalization', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-loop-create-e2e-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 11, 22, 30);
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('''到时候轻轻问一次。
+<qiyu-actions>
+[{"action":"open_loop_candidate","summary":"人生第一次演讲","due":"2026-08-12 晚上","evidence":"明天是我人生第一次演讲"}]
+</qiyu-actions>'''),
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    final store = OpenLoopStore(memoryDirectory: temporaryDirectory.path);
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        openLoopStore: store,
+        clock: clock,
+      ),
+      openLoopStore: store,
+      clock: clock,
+    );
+
+    final first = await service.send(
+      requestId: 'cand-1',
+      text: '明天是我人生第一次演讲',
+    );
+    expect(first.result.source, ReplySource.llm);
+    // 对话中只产生候选：open-loops.md 要等日终才出现。
+    expect(
+      File('${temporaryDirectory.path}/open-loops.md').existsSync(),
+      isFalse,
+    );
+
+    final bedtime = await service.send(
+      requestId: 'night-1',
+      text: '晚安',
+      sessionId: first.session.id,
+    );
+    expect(bedtime.result.mode, 'bedtime');
+    await service.finalizePending();
+
+    final loops = await File(
+      '${temporaryDirectory.path}/open-loops.md',
+    ).readAsString(encoding: utf8);
+    expect(loops, contains('- [o1] 人生第一次演讲'));
+    expect(loops, contains('due: 2026-08-12 晚上'));
+    expect(loops, contains('status: active'));
+  });
+
+  test('a user reply closes the loop now and archives it at next bedtime', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-loop-close-e2e-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 11, 22, 30);
+    final provider = _SequencedProviderChatClient([
+      const ModelCompletion.reply('''到时候轻轻问一次。
+<qiyu-actions>
+[{"action":"open_loop_candidate","summary":"人生第一次演讲","due":"2026-08-12 晚上"}]
+</qiyu-actions>'''),
+      const ModelCompletion.reply('''那就好。
+<qiyu-actions>
+[{"action":"open_loop_status","summary":"人生第一次演讲","status":"closed","result":"用户说演讲很顺利"}]
+</qiyu-actions>'''),
+    ]);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final store = OpenLoopStore(memoryDirectory: temporaryDirectory.path);
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        openLoopStore: store,
+        clock: () => now,
+      ),
+      openLoopStore: store,
+      clock: () => now,
+    );
+
+    final first = await service.send(
+      requestId: 'day-1',
+      text: '明天是我人生第一次演讲',
+    );
+    await service.send(
+      requestId: 'night-1',
+      text: '晚安',
+      sessionId: first.session.id,
+    );
+    await service.finalizePending();
+    expect(await store.readItems(), hasLength(1));
+
+    // 次日用户告知结果：状态变化在回复落盘后立即生效，不等日终。
+    now = DateTime(2026, 8, 12, 22, 30);
+    await service.send(
+      requestId: 'day-2',
+      text: '演讲很顺利',
+      sessionId: first.session.id,
+    );
+    expect(
+      (await store.readItems())!.single.status,
+      OpenLoopStatus.closed,
+      reason: '闭环必须在当轮回复后立即生效',
+    );
+
+    // 晚安日终把 closed 条目挪入归档，热层不再出现。
+    await service.send(requestId: 'night-2', text: '晚安');
+    await service.finalizePending();
+    expect(await store.readItems(), isEmpty);
+    final archive = await File(
+      '${temporaryDirectory.path}/open-loops.archive.md',
+    ).readAsString(encoding: utf8);
+    expect(archive, contains('- 人生第一次演讲 | 闭环: 2026-08-12 | 用户说演讲很顺利'));
+  });
+
+  test('memory ban applies immediately and survives later end-of-day runs', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-loop-ban-e2e-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 11, 22, 30);
+    final provider = _SequencedProviderChatClient([
+      const ModelCompletion.reply('''好，到时候提醒你。
+<qiyu-actions>
+[{"action":"open_loop_candidate","summary":"医院检查","proactive":"no"}]
+</qiyu-actions>'''),
+      const ModelCompletion.reply('''好，以后不提了。
+<qiyu-actions>
+[{"action":"memory_ban","summary":"医院检查"}]
+</qiyu-actions>'''),
+      const ModelCompletion.reply('''嗯。
+<qiyu-actions>
+[{"action":"open_loop_candidate","summary":"医院检查","proactive":"no"}]
+</qiyu-actions>'''),
+    ]);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final store = OpenLoopStore(memoryDirectory: temporaryDirectory.path);
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        openLoopStore: store,
+        clock: () => now,
+      ),
+      openLoopStore: store,
+      clock: () => now,
+    );
+
+    final first = await service.send(requestId: 'day-1', text: '下周去医院检查');
+    await service.send(
+      requestId: 'night-1',
+      text: '晚安',
+      sessionId: first.session.id,
+    );
+    await service.finalizePending();
+    expect(await store.readItems(), hasLength(1));
+
+    // 用户要求不再提：回复落盘后立即生效，不等日终。
+    await service.send(
+      requestId: 'day-2',
+      text: '检查的事以后别跟我提了',
+      sessionId: first.session.id,
+    );
+    expect(await store.readItems(), isEmpty);
+    final controls = await File(
+      '${temporaryDirectory.path}/memory-controls.md',
+    ).readAsString(encoding: utf8);
+    expect(controls, contains('## banned'));
+    expect(controls, contains('医院检查'));
+
+    // 模型之后再提同一事项：日终归档不得重新激活。
+    now = DateTime(2026, 8, 12, 22, 30);
+    await service.send(requestId: 'day-3', text: '随便聊聊');
+    await service.send(requestId: 'night-2', text: '晚安');
+    await service.finalizePending();
+    expect(await store.readItems(), isEmpty);
+  });
+
+  test('the state pack injection carries gated follow-up candidates', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-loop-injection-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 11, 22, 30);
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('在。'),
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    final store = OpenLoopStore(memoryDirectory: temporaryDirectory.path);
+    await store.promoteCandidates([
+      EpisodeEntry(
+        id: 'seed:1:0',
+        sessionId: 'seed',
+        requestId: 'seed',
+        summary: '面试结果',
+        at: DateTime(2026, 8, 10).toUtc(),
+        kind: episodeKindOpenLoopCandidate,
+        due: '2026-08-10',
+        proactive: 'once',
+        note: '用户说这周出面试结果',
+      ),
+    ]);
+    File('${temporaryDirectory.path}/relationship.md').writeAsStringSync(
+      '# relationship\n\nstage: 熟悉\nsince: 2026-08-01\n',
+      encoding: utf8,
+    );
+    File('${temporaryDirectory.path}/daily-state.md').writeAsStringSync(
+      '# daily-state\n\ndate: 2026-08-11\n\n## 时间感\n周一晚上\n',
+      encoding: utf8,
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      providerChatClient: provider,
+      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
+      episodePipeline: pipeline,
+      openLoopStore: store,
+      statePackReader: StatePackReader(
+        memoryDirectory: temporaryDirectory.path,
+        openLoopStore: store,
+        clock: clock,
+      ),
+      clock: clock,
+    );
+
+    await service.send(requestId: 'inject-1', text: '在吗');
+
+    final system = provider.messages!.first.content;
+    expect(system, contains('<daily_state>'));
+    expect(system, contains('【未闭环事项】'));
+    expect(system, contains('面试结果'));
+    expect(system, contains('【关系温度】'));
+    expect(system, contains('【近日状态】'));
+    expect(system, contains('主动跟进纪律'));
+    // 熟悉阶段 + due 已到 + active：进入候选池批注。
+    expect(system, contains('主动跟进候选'));
+    expect(system, contains('[o1] 面试结果'));
+
+    // 关系退回初识（阶段门禁）：候选池批注消失。
+    File('${temporaryDirectory.path}/relationship.md').writeAsStringSync(
+      '# relationship\n\nstage: 初识\nsince: 2026-08-01\n',
+      encoding: utf8,
+    );
+    await service.send(requestId: 'inject-2', text: '在吗');
+    final gated = provider.messages!.first.content;
+    expect(gated, contains('【未闭环事项】'));
+    expect(gated, isNot(contains('主动跟进候选')));
+  });
 }
 
 final class _FailOnceAtomicWriter implements AtomicTextWriter {
@@ -1160,6 +1458,36 @@ final class _FakeProviderChatClient implements StreamingProviderChatClient {
   }
 }
 
+final class _SequencedProviderChatClient
+    implements StreamingProviderChatClient {
+  _SequencedProviderChatClient(this.completions);
+
+  final List<ModelCompletion> completions;
+  List<ModelMessage>? messages;
+  var calls = 0;
+
+  @override
+  Future<Stream<ModelStreamEvent>?> openStream(
+    List<ModelMessage> messages,
+  ) async {
+    this.messages = messages;
+    final completion = completions[
+      calls < completions.length ? calls : completions.length - 1
+    ];
+    calls += 1;
+    return switch (completion) {
+      ModelCompletion(:final text?) => Stream.fromIterable([
+        ModelStreamEvent.delta(text),
+        const ModelStreamEvent.done(),
+      ]),
+      ModelCompletion(:final failure?) => Stream.value(
+        ModelStreamEvent.failure(failure, '测试故障'),
+      ),
+      _ => null,
+    };
+  }
+}
+
 final class _StreamingProviderChatClient
     implements StreamingProviderChatClient {
   _StreamingProviderChatClient(this.events);
@@ -1184,6 +1512,8 @@ final class _ControlledStreamingProviderChatClient
   Future<Stream<ModelStreamEvent>?> openStream(
     List<ModelMessage> messages,
   ) async => _controller.stream;
+
+  void pushDelta(String text) => _controller.add(ModelStreamEvent.delta(text));
 
   Future<void> close() => _controller.close();
 }
