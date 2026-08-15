@@ -67,6 +67,20 @@ const loopProactiveValues = {'no', 'once', 'yes'};
 /// 状态描述，不复制原话。
 const maxRelationshipSummaryRunes = 60;
 
+/// memory_signal 可携带的画像分支白名单（PersonaTree 真树机制定稿的
+/// 五个主分支）。画像提示只影响叶指针归类，缺失时记忆照常写入。
+const personaBranchValues = {
+  'identity',
+  'expression',
+  'values',
+  'preferences',
+  'boundaries',
+};
+
+/// memory_signal 画像信号的来源性质白名单：用户明确自述 / 栖语行为观察。
+/// 来源性质是叶节点唯一的置信维度（定稿不引入数值 confidence）。
+const personaNatureValues = {'self_report', 'behavior'};
+
 /// relationship_signal 的信号类型白名单：
 /// deep_talk 深谈信号；temperature 冷暖变化；
 /// boundary_open 用户接受某相处方式；boundary_close 用户回避或拒绝。
@@ -88,6 +102,9 @@ class HiddenActionDiagnostics {
   static const multipleBlocks = 'hidden_action_multiple_blocks';
   static const duplicateRelationshipSignal =
       'hidden_action_duplicate_relationship_signal';
+
+  /// 画像提示（branch/nature）不合法被丢弃；记忆信号本身保留。
+  static const personaHintDropped = 'hidden_action_persona_hint_dropped';
 }
 
 final class HiddenAction {
@@ -96,6 +113,8 @@ final class HiddenAction {
     this.summary,
     this.evidence,
     this.query,
+    this.branch,
+    this.nature,
     this.due,
     this.proactive,
     this.note,
@@ -108,6 +127,13 @@ final class HiddenAction {
   final String? summary;
   final String? evidence;
   final String? query;
+
+  /// memory_signal 画像提示：所属 PersonaTree 分支
+  /// （identity/expression/values/preferences/boundaries）。
+  final String? branch;
+
+  /// memory_signal 画像提示：来源性质（self_report / behavior）。
+  final String? nature;
 
   /// open_loop_candidate：最早可跟进时间（`YYYY-MM-DD[ 时段]`）。
   final String? due;
@@ -133,6 +159,8 @@ final class HiddenAction {
     if (summary != null) 'summary': summary,
     if (evidence != null) 'evidence': evidence,
     if (query != null) 'query': query,
+    if (branch != null) 'branch': branch,
+    if (nature != null) 'nature': nature,
     if (due != null) 'due': due,
     if (proactive != null) 'proactive': proactive,
     if (note != null) 'note': note,
@@ -148,6 +176,8 @@ final class HiddenAction {
       other.summary == summary &&
       other.evidence == evidence &&
       other.query == query &&
+      other.branch == branch &&
+      other.nature == nature &&
       other.due == due &&
       other.proactive == proactive &&
       other.note == note &&
@@ -161,6 +191,8 @@ final class HiddenAction {
     summary,
     evidence,
     query,
+    branch,
+    nature,
     due,
     proactive,
     note,
@@ -329,7 +361,31 @@ HiddenAction? _validateAction(
         diagnostics.add(HiddenActionDiagnostics.sensitiveContent);
         return null;
       }
-      return HiddenAction(kind: kind, summary: summary, evidence: evidence);
+      // 画像提示是归类的附加线索：不合法时只丢提示、不丢记忆信号。
+      // 身份事实禁止行为推断（PersonaTree 定稿），违规组合同样丢提示。
+      final branch = _cleanFieldValue(item['branch']);
+      final nature = _cleanFieldValue(item['nature']);
+      String? personaBranch;
+      String? personaNature;
+      if (branch != null || nature != null) {
+        if (branch != null &&
+            nature != null &&
+            personaBranchValues.contains(branch) &&
+            personaNatureValues.contains(nature) &&
+            !(branch == 'identity' && nature != 'self_report')) {
+          personaBranch = branch;
+          personaNature = nature;
+        } else {
+          diagnostics.add(HiddenActionDiagnostics.personaHintDropped);
+        }
+      }
+      return HiddenAction(
+        kind: kind,
+        summary: summary,
+        evidence: evidence,
+        branch: personaBranch,
+        nature: personaNature,
+      );
     case HiddenActionKind.memoryRecall:
       final query = _cleanFieldValue(item['query']);
       if (query == null || query.runes.length > maxHiddenQueryRunes) {

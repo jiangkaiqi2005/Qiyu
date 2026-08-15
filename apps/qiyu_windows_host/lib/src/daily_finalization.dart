@@ -6,6 +6,7 @@ import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'open_loop_store.dart';
+import 'persona_tree.dart';
 import 'relationship_lifecycle.dart';
 
 /// 每日状态包分块预算来自设计笔记定稿：daily-state 100-300 tokens、
@@ -77,42 +78,75 @@ final class FinalizationReport {
 ///
 /// 本阶段归档全部为确定性投影（episodes → 摘要/状态包/索引），
 /// 不依赖 Provider；未配置模型时也完整可用。语义判定类步骤
-/// （open-loop 提升、关系阶段升降、PersonaTree 中间理解）分别归
-/// ticket 11/12/14，此处只维护它们的落盘机制。
+/// （open-loop 提升、关系阶段升降）分别归 ticket 11/12；PersonaTree
+/// 中间理解（ticket 14）也由本服务在日终调用 [PersonaTreeStore]
+/// 执行（固定顺序第 6 步）。
 final class DailyFinalizationService {
-  DailyFinalizationService({
-    required this.memoryDirectory,
-    required this.episodePipeline,
+  /// 工厂构造统一兜底默认组件：缺省 PersonaTree 必须与日终自己的
+  /// Open-loop 存储共享同一实例，否则日终禁提清扫会因拿不到禁提
+  /// 列表而静默失效。
+  factory DailyFinalizationService({
+    required String memoryDirectory,
+    required EpisodeMemoryPipeline episodePipeline,
     OpenLoopStore? openLoopStore,
     RelationshipLifecycle? relationshipLifecycle,
     EpisodeIndexStore? indexStore,
+    PersonaTreeStore? personaTree,
     Clock? clock,
     AtomicTextWriter? atomicWriter,
-  }) : _clock = clock ?? DateTime.now,
-       _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
-       _openLoopStore = openLoopStore ??
-           OpenLoopStore(
-             memoryDirectory: memoryDirectory,
-             atomicWriter: atomicWriter ?? const IoAtomicTextWriter(),
-           ),
-       _relationshipLifecycle = relationshipLifecycle ??
-           RelationshipLifecycle(
-             memoryDirectory: memoryDirectory,
-             atomicWriter: atomicWriter ?? const IoAtomicTextWriter(),
-             clock: clock ?? DateTime.now,
-           ),
-       _indexStore = indexStore ??
-           EpisodeIndexStore(
-             memoryDirectory: memoryDirectory,
-             episodePipeline: episodePipeline,
-             atomicWriter: atomicWriter ?? const IoAtomicTextWriter(),
-           );
+  }) {
+    final effectiveClock = clock ?? DateTime.now;
+    final effectiveAtomicWriter = atomicWriter ?? const IoAtomicTextWriter();
+    final effectiveOpenLoopStore = openLoopStore ??
+        OpenLoopStore(
+          memoryDirectory: memoryDirectory,
+          atomicWriter: effectiveAtomicWriter,
+        );
+    return DailyFinalizationService._(
+      memoryDirectory: memoryDirectory,
+      episodePipeline: episodePipeline,
+      openLoopStore: effectiveOpenLoopStore,
+      relationshipLifecycle: relationshipLifecycle ??
+          RelationshipLifecycle(
+            memoryDirectory: memoryDirectory,
+            atomicWriter: effectiveAtomicWriter,
+            clock: effectiveClock,
+          ),
+      indexStore: indexStore ??
+          EpisodeIndexStore(
+            memoryDirectory: memoryDirectory,
+            episodePipeline: episodePipeline,
+            atomicWriter: effectiveAtomicWriter,
+          ),
+      personaTree: personaTree ??
+          PersonaTreeStore(
+            memoryDirectory: memoryDirectory,
+            episodePipeline: episodePipeline,
+            openLoopStore: effectiveOpenLoopStore,
+            atomicWriter: effectiveAtomicWriter,
+          ),
+      clock: effectiveClock,
+      atomicWriter: effectiveAtomicWriter,
+    );
+  }
+
+  DailyFinalizationService._({
+    required this.memoryDirectory,
+    required this.episodePipeline,
+    required this._openLoopStore,
+    required this._relationshipLifecycle,
+    required this._indexStore,
+    required this._personaTree,
+    required this._clock,
+    required this._atomicWriter,
+  });
 
   final String memoryDirectory;
   final EpisodeMemoryPipeline episodePipeline;
   final OpenLoopStore _openLoopStore;
   final RelationshipLifecycle _relationshipLifecycle;
   final EpisodeIndexStore _indexStore;
+  final PersonaTreeStore _personaTree;
   final Clock _clock;
   final AtomicTextWriter _atomicWriter;
 
@@ -223,8 +257,8 @@ final class DailyFinalizationService {
     }
 
     // 固定顺序，任一步失败则 finalized 保持 false，下次整体重跑：
-    // 1. 当天摘要；2. 待跟进候选；3. 关系证据；4. 近日状态包；5. 索引。
-    // TODO(ticket 14): PersonaTree 中间理解的建立、挂载与整理也归日终。
+    // 1. 当天摘要；2. 待跟进候选；3. 关系证据；4. 近日状态包；5. 索引；
+    // 6. PersonaTree 中间理解（先补齐当天叶，再建立/挂载/整理）。
     final summary = _buildSummary(entries);
     await _writeStep(date, () => episodePipeline.writeFinalization(
       date,
@@ -239,6 +273,7 @@ final class DailyFinalizationService {
     );
     await _writeStep(date, () => _rebuildDailyState(date, dates));
     await _writeStep(date, () => _rebuildIndexes(includingDay: date));
+    await _writeStep(date, () => _personaTree.processDay(date));
     await episodePipeline.writeFinalization(
       date,
       entries: day.entries,

@@ -18,6 +18,7 @@ import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'onboarding_state.dart';
 import 'open_loop_store.dart';
+import 'persona_tree.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
 import 'secure_token.dart';
@@ -81,6 +82,13 @@ final class LocalAppHost {
     );
     // Open-loop 生命周期由日终归档与对话即时生效两条路径共享同一存储。
     final openLoopStore = OpenLoopStore(memoryDirectory: memoryDirectory);
+    // PersonaTree 同样由随手记建叶与日终整理两条路径共享同一实例：
+    // 树文件串行锁在实例内部，必须唯一。
+    final personaTree = PersonaTreeStore(
+      memoryDirectory: memoryDirectory,
+      episodePipeline: episodePipeline,
+      openLoopStore: openLoopStore,
+    );
     final chatService = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
       providerChatClient: effectiveProviderSettings,
@@ -90,6 +98,7 @@ final class LocalAppHost {
         memoryDirectory: memoryDirectory,
         episodePipeline: episodePipeline,
         openLoopStore: openLoopStore,
+        personaTree: personaTree,
       ),
       openLoopStore: openLoopStore,
       statePackReader: StatePackReader(
@@ -101,6 +110,7 @@ final class LocalAppHost {
         episodePipeline: episodePipeline,
         openLoopStore: openLoopStore,
       ),
+      personaTree: personaTree,
     );
     await chatService.initialize();
     final onboardingRepository = JsonOnboardingRepository(

@@ -259,6 +259,44 @@ final class EpisodeIndexStore {
 String normalizeMemoryText(String value) =>
     value.replaceAll(RegExp(r'\s+'), ' ').toLowerCase().trim();
 
+/// 两段文本共享的前缀 rune 数（话题相近判断用）。
+int sharedPrefixRunes(String left, String right) {
+  final leftRunes = left.runes.toList();
+  final rightRunes = right.runes.toList();
+  var count = 0;
+  while (count < leftRunes.length &&
+      count < rightRunes.length &&
+      leftRunes[count] == rightRunes[count]) {
+    count += 1;
+  }
+  return count;
+}
+
+/// 话题同一性判断：规范化后相等或互为包含，视作同一主张
+/// （合并计数、挂入现有理解都用它）。
+bool sameClaim(String left, String right) {
+  final a = normalizeMemoryText(left);
+  final b = normalizeMemoryText(right);
+  if (a.isEmpty || b.isEmpty) {
+    return false;
+  }
+  return a == b || a.contains(b) || b.contains(a);
+}
+
+/// 话题冲突判断：同一话题骨架（共享不少于 5 rune 的前缀或后缀）
+/// 但主张不同。阈值 5 越过「用户的」「用户提到」这类公共开头。
+bool conflictTopic(String left, String right) {
+  final a = normalizeMemoryText(left);
+  final b = normalizeMemoryText(right);
+  if (a.isEmpty || b.isEmpty || sameClaim(a, b)) {
+    return false;
+  }
+  final reversedA = String.fromCharCodes(a.runes.toList().reversed);
+  final reversedB = String.fromCharCodes(b.runes.toList().reversed);
+  return sharedPrefixRunes(a, b) >= 5 ||
+      sharedPrefixRunes(reversedA, reversedB) >= 5;
+}
+
 /// 按 rune 截断文本，避免截断多字节字符。
 String clipRunes(String value, int maxRunes) {
   final runes = value.runes;

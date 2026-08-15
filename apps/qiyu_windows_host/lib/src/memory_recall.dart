@@ -223,7 +223,7 @@ final class MemoryRecallService {
           if (score < 1) {
             continue;
           }
-          if (_matchesBanned(entry.summary, banned)) {
+          if (bannedTitleMatches(normalizeMemoryText(entry.summary), banned)) {
             diagnostics.add(
               'recall entry skipped reason=banned date=${line.date}',
             );
@@ -267,7 +267,9 @@ final class MemoryRecallService {
       // 多个相似候选或证据冲突：不强行认定，诊断说明未采用原因。
       final dates = top.map((candidate) => candidate.date).join(',');
       final sameTopic = top.every(
-        (candidate) => _sameTopic(top.first.entry.summary, candidate.entry.summary),
+        (candidate) =>
+            sameClaim(top.first.entry.summary, candidate.entry.summary) ||
+            conflictTopic(top.first.entry.summary, candidate.entry.summary),
       );
       final reason = sameTopic ? 'conflict' : 'ambiguous';
       diagnostics.add(
@@ -394,28 +396,6 @@ final class MemoryRecallService {
     return store.bannedTitles();
   }
 
-  /// 禁提范围按包含关系匹配：禁提记录存的是事项简称，episode 摘要
-  /// 往往是更长的完整句，精确相等会漏。宁可多屏蔽，不可让禁提内容
-  /// 绕进注入上下文；冻结/删除的全链路语义匹配归 ticket 18。
-  bool _matchesBanned(String summary, Set<String> banned) {
-    if (banned.isEmpty) {
-      return false;
-    }
-    final normalized = normalizeMemoryText(summary);
-    if (normalized.isEmpty) {
-      return false;
-    }
-    for (final title in banned) {
-      if (title.isEmpty) {
-        continue;
-      }
-      if (normalized.contains(title) || title.contains(normalized)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   /// 短期 memory context 内容：压缩后的证据 + 使用纪律。
   /// 只带回与问题相关的压缩结果，不搬运选中文件全文。
   String _buildContext(_RecallCandidate winner) {
@@ -472,36 +452,6 @@ final class MemoryRecallService {
     return tokens;
   }
 
-  /// 话题相近判断：规范化后一条包含另一条，或共享不少于 5 rune
-  /// 的前缀/后缀，视作同一话题（用于区分证据冲突与多候选歧义）。
-  /// 阈值取 5 是为了越过「用户提到」「用户聊到」这类公共开头。
-  bool _sameTopic(String left, String right) {
-    final a = normalizeMemoryText(left);
-    final b = normalizeMemoryText(right);
-    if (a.isEmpty || b.isEmpty || a == b) {
-      return a == b;
-    }
-    if (a.contains(b) || b.contains(a)) {
-      return true;
-    }
-    return _sharedRunes(a, b) >= 5 ||
-        _sharedRunes(
-          String.fromCharCodes(a.runes.toList().reversed),
-          String.fromCharCodes(b.runes.toList().reversed),
-        ) >= 5;
-  }
-
-  int _sharedRunes(String left, String right) {
-    final leftRunes = left.runes.toList();
-    final rightRunes = right.runes.toList();
-    var count = 0;
-    while (count < leftRunes.length &&
-        count < rightRunes.length &&
-        leftRunes[count] == rightRunes[count]) {
-      count += 1;
-    }
-    return count;
-  }
 }
 
 final class _RecallCandidate {

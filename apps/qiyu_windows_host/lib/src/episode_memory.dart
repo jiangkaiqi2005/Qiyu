@@ -25,6 +25,8 @@ final class EpisodeEntry {
     this.evidence,
     required this.at,
     this.kind = episodeKindMemory,
+    this.personaBranch,
+    this.personaNature,
     this.due,
     this.proactive,
     this.note,
@@ -39,6 +41,8 @@ final class EpisodeEntry {
     evidence: json['evidence'] as String?,
     at: DateTime.parse(json['at']! as String).toUtc(),
     kind: json['kind'] as String? ?? episodeKindMemory,
+    personaBranch: json['personaBranch'] as String?,
+    personaNature: json['personaNature'] as String?,
     due: json['due'] as String?,
     proactive: json['proactive'] as String?,
     note: json['note'] as String?,
@@ -55,6 +59,13 @@ final class EpisodeEntry {
   /// 条目来源：普通记忆信号、Open-loop 日终候选、Open-loop 状态事件
   /// 或关系证据信号。
   final String kind;
+
+  /// 画像提示（ticket 14）：本条信号所属的 PersonaTree 分支线名
+  /// （identity/expression/values/preferences/boundaries）与来源性质
+  /// （self_report/behavior）。白名单校验在隐藏动作层完成；两者同时
+  /// 存在才建叶指针，缺任一个都只当普通记忆条目。
+  final String? personaBranch;
+  final String? personaNature;
 
   /// Open-loop 候选的四字段载荷，日终提升时原样带入 open-loops.md。
   final String? due;
@@ -73,6 +84,8 @@ final class EpisodeEntry {
     if (evidence != null) 'evidence': evidence,
     'at': at.toUtc().toIso8601String(),
     if (kind != episodeKindMemory) 'kind': kind,
+    if (personaBranch != null) 'personaBranch': personaBranch,
+    if (personaNature != null) 'personaNature': personaNature,
     if (due != null) 'due': due,
     if (proactive != null) 'proactive': proactive,
     if (note != null) 'note': note,
@@ -145,6 +158,7 @@ final class EpisodeUpdateResult {
     required this.checkpointAdvanced,
     required this.pendingTurns,
     this.skippedCorruptDay = false,
+    this.addedEntries = const [],
   });
 
   final int writtenEntries;
@@ -156,6 +170,10 @@ final class EpisodeUpdateResult {
 
   /// 前进后仍留在窗口内、等待下一次整理判断的用户轮数。
   final int pendingTurns;
+
+  /// 本轮实际写入的条目，供后续整理（如 PersonaTree 建叶）复用，
+  /// 避免重复推导。
+  final List<EpisodeEntry> addedEntries;
 }
 
 /// 伪 Agent 隐藏动作的记忆写入端。只接受白名单校验后的
@@ -285,6 +303,7 @@ final class EpisodeMemoryPipeline {
 
     var written = 0;
     var skipped = 0;
+    final additions = <EpisodeEntry>[];
     // memory_recall 不产生 episode 条目：它由 LocalChatService 转交
     // MemoryRecallService 在后台检索（ticket 13），这里只消费记忆与
     // Open-loop 生活动作。
@@ -299,7 +318,6 @@ final class EpisodeMemoryPipeline {
         )
         .toList();
     if (consumable.isNotEmpty) {
-      final additions = <EpisodeEntry>[];
       for (var index = 0; index < consumable.length; index += 1) {
         final entry = _entryForAction(
           consumable[index],
@@ -345,6 +363,7 @@ final class EpisodeMemoryPipeline {
       skippedDuplicates: skipped,
       checkpointAdvanced: true,
       pendingTurns: remainingTurns < 0 ? 0 : remainingTurns,
+      addedEntries: additions,
     );
   }
 
@@ -368,6 +387,8 @@ final class EpisodeMemoryPipeline {
           summary: redactSessionText(action.summary ?? '').trim(),
           evidence: redacted(action.evidence),
           at: _clock().toUtc(),
+          personaBranch: action.branch,
+          personaNature: action.nature,
         );
       case HiddenActionKind.openLoopCandidate:
         return EpisodeEntry(

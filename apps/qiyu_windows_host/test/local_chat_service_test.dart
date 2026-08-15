@@ -1773,6 +1773,136 @@ void main() {
     expect(exchange.result.messages, ['在。']);
     expect(provider.messages!.last.content, isNot(contains('<memory_context>')));
   });
+
+  test('persona hints become leaves at once and middle understanding at day-end', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-persona-chat-wiring-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+    final provider = _SequencedProviderChatClient([
+      const ModelCompletion.reply('''记下了。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户是中学老师","branch":"identity","nature":"self_report"}]
+</qiyu-actions>'''),
+    ]);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    final openLoopStore = OpenLoopStore(
+      memoryDirectory: temporaryDirectory.path,
+    );
+    final personaTree = PersonaTreeStore(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      openLoopStore: openLoopStore,
+      diagnosticsSink: (_) {},
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        openLoopStore: openLoopStore,
+        personaTree: personaTree,
+        clock: clock,
+      ),
+      openLoopStore: openLoopStore,
+      personaTree: personaTree,
+      clock: clock,
+    );
+
+    final exchange = await service.send(requestId: 'p-1', text: '我是中学老师');
+    expect(exchange.result.source, ReplySource.llm);
+
+    // 随手记立刻建叶；中间理解要等日终。
+    final leaves = File(
+      '${temporaryDirectory.path}/persona-tree/identity.md',
+    ).readAsStringSync();
+    expect(leaves, contains('[ID-L001]'));
+    expect(leaves, isNot(contains('待稳定事实')));
+
+    await service.send(
+      requestId: 'p-2',
+      text: '晚安',
+      sessionId: exchange.session.id,
+    );
+    await service.finalizePending();
+
+    // 日终第 6 步：单条明确自述形成待稳定事实。
+    final tree = File(
+      '${temporaryDirectory.path}/persona-tree/identity.md',
+    ).readAsStringSync();
+    expect(tree, contains('### [ID-M001] 待稳定事实｜用户是中学老师'));
+  });
+
+  test('a user ban clears persona tree content immediately', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-persona-ban-wiring-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+    final provider = _SequencedProviderChatClient([
+      const ModelCompletion.reply('''记下了。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户是中学老师","branch":"identity","nature":"self_report"}]
+</qiyu-actions>'''),
+      const ModelCompletion.reply('''好，以后不提了。
+<qiyu-actions>
+[{"action":"memory_ban","summary":"用户是中学老师"}]
+</qiyu-actions>'''),
+    ]);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    final openLoopStore = OpenLoopStore(
+      memoryDirectory: temporaryDirectory.path,
+    );
+    final personaTree = PersonaTreeStore(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      openLoopStore: openLoopStore,
+      diagnosticsSink: (_) {},
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      openLoopStore: openLoopStore,
+      personaTree: personaTree,
+      clock: clock,
+    );
+
+    final exchange = await service.send(requestId: 'b-1', text: '我是中学老师');
+    final branchFile = File(
+      '${temporaryDirectory.path}/persona-tree/identity.md',
+    );
+    expect(branchFile.existsSync(), isTrue);
+
+    await service.send(
+      requestId: 'b-2',
+      text: '以后别聊这个了',
+      sessionId: exchange.session.id,
+    );
+
+    // 禁提即时生效：树内容删除不留档，episode 留痕照常。
+    expect(branchFile.existsSync(), isFalse);
+    final day = await pipeline.readDay('2026-08-16');
+    expect(
+      day.entries.map((entry) => entry.summary),
+      contains('禁提: 用户是中学老师'),
+    );
+  });
 }
 
 final class _FailOnceAtomicWriter implements AtomicTextWriter {

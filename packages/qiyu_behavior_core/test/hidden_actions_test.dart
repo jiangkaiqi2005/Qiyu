@@ -353,6 +353,68 @@ void main() {
     );
   });
 
+  test('a memory signal may carry a valid persona hint', () {
+    final parse = parseHiddenActions('''嗯，记下了。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户养了一只叫米子的猫","branch":"identity","nature":"self_report"}]
+</qiyu-actions>''');
+
+    expect(parse.actions, hasLength(1));
+    final action = parse.actions.single;
+    expect(action.kind, HiddenActionKind.memorySignal);
+    expect(action.branch, 'identity');
+    expect(action.nature, 'self_report');
+    expect(parse.diagnostics, isEmpty);
+  });
+
+  test('invalid persona hints are dropped but the memory signal survives', () {
+    // 未知分支：丢提示、留记忆。
+    final unknownBranch = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢爬山",'
+      '"branch":"hobby","nature":"behavior"}]</qiyu-actions>',
+    );
+    expect(unknownBranch.actions, hasLength(1));
+    expect(unknownBranch.actions.single.summary, '用户喜欢爬山');
+    expect(unknownBranch.actions.single.branch, isNull);
+    expect(unknownBranch.actions.single.nature, isNull);
+    expect(
+      unknownBranch.diagnostics,
+      [HiddenActionDiagnostics.personaHintDropped],
+    );
+
+    // 只有 branch 没有 nature：同样丢提示。
+    final missingNature = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢爬山",'
+      '"branch":"preferences"}]</qiyu-actions>',
+    );
+    expect(missingNature.actions, hasLength(1));
+    expect(missingNature.actions.single.branch, isNull);
+    expect(
+      missingNature.diagnostics,
+      [HiddenActionDiagnostics.personaHintDropped],
+    );
+
+    // 身份事实禁止行为推断：丢提示。
+    final identityBehavior = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal","summary":"用户像是老师",'
+      '"branch":"identity","nature":"behavior"}]</qiyu-actions>',
+    );
+    expect(identityBehavior.actions, hasLength(1));
+    expect(identityBehavior.actions.single.branch, isNull);
+    expect(
+      identityBehavior.diagnostics,
+      [HiddenActionDiagnostics.personaHintDropped],
+    );
+
+    // 没有画像提示时不产生诊断。
+    final noHint = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢爬山"}]'
+      '</qiyu-actions>',
+    );
+    expect(noHint.actions.single.branch, isNull);
+    expect(noHint.diagnostics, isEmpty);
+  });
+
   test('secrets and privilege never enter relationship signals', () {
     final secret = parseHiddenActions(
       '<qiyu-actions>[{"action":"relationship_signal",'

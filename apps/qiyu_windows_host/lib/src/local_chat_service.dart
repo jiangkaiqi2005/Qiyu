@@ -9,6 +9,7 @@ import 'memory_recall.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'open_loop_store.dart';
+import 'persona_tree.dart';
 import 'provider_settings_service.dart';
 import 'state_pack_reader.dart';
 
@@ -91,6 +92,7 @@ final class LocalChatService {
     this.openLoopStore,
     this.statePackReader,
     this.memoryRecall,
+    this.personaTree,
     DeliveryPause? deliveryPause,
     Clock? clock,
     void Function(String message)? diagnosticsSink,
@@ -111,6 +113,10 @@ final class LocalChatService {
   /// 「晚一拍想起」后台召回（ticket 13）。只在配置了 Provider 时
   /// 有意义：检索结果要注入下一轮模型上下文。
   final MemoryRecallService? memoryRecall;
+
+  /// PersonaTree 叶与中间理解（ticket 14）。必须与日终归档使用
+  /// 同一实例：树文件的串行锁在实例内部，两个实例会互相覆盖。
+  final PersonaTreeStore? personaTree;
   final DeliveryPause _deliveryPause;
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
@@ -542,6 +548,12 @@ final class LocalChatService {
             'episode day unreadable, waiting for recovery request=$requestId',
           );
         }
+        // 随手记只建叶指针（ticket 14）：中间理解归日终。建叶失败
+        // 只记诊断，日终还会按当天 episode 补齐。
+        final tree = personaTree;
+        if (tree != null && result.addedEntries.isNotEmpty) {
+          await tree.createLeaves(result.addedEntries);
+        }
       } on Object catch (error) {
         _diagnosticsSink(
           'episode update deferred [$error] request=$requestId',
@@ -572,6 +584,12 @@ final class LocalChatService {
                 'memory ban deferred [controls not writable] '
                 'request=$requestId',
               );
+            } else {
+              // 用户禁提高于 PersonaTree 提炼：立即清出树（ticket 14）。
+              final tree = personaTree;
+              if (tree != null) {
+                await tree.applyBan(action.summary!);
+              }
             }
           }
         } on Object catch (error) {

@@ -17,6 +17,7 @@ export 'src/model_gateway.dart';
 export 'src/model_prompt_builder.dart';
 export 'src/onboarding_state.dart';
 export 'src/open_loop_store.dart';
+export 'src/persona_tree.dart';
 export 'src/provider_config.dart';
 export 'src/provider_settings_service.dart';
 export 'src/relationship_lifecycle.dart';

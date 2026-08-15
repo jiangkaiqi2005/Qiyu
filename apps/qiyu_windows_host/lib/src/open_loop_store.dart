@@ -580,6 +580,24 @@ String normalizeLoopTitle(String value) => value
     .toLowerCase()
     .trim();
 
+/// 禁提范围按包含关系匹配：禁提记录存的是事项简称，派生内容（episode
+/// 摘要、画像理解等）往往是更长的完整句，精确相等会漏。宁可多屏蔽，
+/// 不可让禁提内容绕过控制重新进入注入或提炼。
+bool bannedTitleMatches(String normalizedText, Set<String> bannedTitles) {
+  if (bannedTitles.isEmpty || normalizedText.isEmpty) {
+    return false;
+  }
+  for (final title in bannedTitles) {
+    if (title.isEmpty) {
+      continue;
+    }
+    if (normalizedText.contains(title) || title.contains(normalizedText)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /// 把 open-loops.md 拆成条目块并解析四字段；无法识别的结构返回 null。
 List<OpenLoopItem>? parseOpenLoopItems(String contents) {
   final lines = contents.replaceAll('\r\n', '\n').split('\n');
