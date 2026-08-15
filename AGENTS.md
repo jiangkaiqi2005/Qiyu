@@ -102,4 +102,4 @@ Flutter `/chat` → `HttpLocalChatGateway` → `POST /api/chat` → `LocalChatSe
 ## Notes
 
 - 本仓库已建立 codebase-memory 知识图谱索引（项目名 `qiyu`），可用 `search_graph` / `trace_path` / `get_architecture` 等 MCP 工具做代码探索；结构性大改后可重新 `index_repository`。
-- `.codebase-memory/` 下的产物（`graph.db.zst`、`artifact.json` 等）由索引进程自动更新，属于预期变更：**每次发现改动必须随当次提交一起 commit 并推送，严禁还原（`git restore` / `git checkout --`）**。
+- `.codebase-memory/` 下的产物（`graph.db.zst`、`artifact.json` 等）由索引进程自动更新，属于预期变更：**必须随引起变化的功能提交一起 commit 并推送，严禁为索引产物单独提交（不要再出现「刷新知识图谱索引产物」这类独立提交），严禁还原（`git restore` / `git checkout --`）**。
