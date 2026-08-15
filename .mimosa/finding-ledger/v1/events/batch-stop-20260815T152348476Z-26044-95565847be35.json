@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20260815T152348476Z-26044-95565847be35",
+  "runId": "20260815T152348476Z-26044-95565847be35",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "c6c4c37256204f04e17c5bff58945823db3a350c",
+  "diffHash": "6c38c41b4d941910746067e55348a5e1f812a04c21d696949f6a22b5c1f6d849",
+  "rulesVersion": "unavailable",
+  "sessionHash": "8807d9fc187e15d439a08396e8530c80b7263c9806b70358c188eb376e76bda4",
+  "reportRef": ".mimosa/reports/task-review-sess_31d077e5-555a-4758-bea6-fb1c274341c4-20260815T152348476Z-26044-95565847be35.json",
+  "events": [],
+  "observedFindingIds": [],
+  "verifiedFiles": [
+    {
+      "file": "test/server/llm-client.test.js",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/server/config.test.js",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/server/settings-route.test.js",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/contracts/qiyu-behavior-contracts.test.js",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/server/chat-route.test.js",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-08-15T15:23:48.778Z"
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Qwen3.5 Flash 识图"
+  short_description: "用 Qwen3.5-Flash 快速理解图片、界面和图表"
+  default_prompt: "Use $analyze-images-with-qwen-flash to inspect the provided image and answer my question."

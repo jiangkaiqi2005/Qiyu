@@ -1,0 +1,35 @@
+实现伪 Agent 白名单动作与增量 Episode（Ticket 9）
+
+让模型可以在回复之外提出受控的隐藏记忆动作，由本地运行时校验后
+增量更新当天 Episode 与 checkpoint，使栖语表现出连续性但不成为通用
+Agent。
+
+主要改动：
+
+- 行为核心新增 hidden_actions 模块：隐藏动作白名单（memory_signal /
+  memory_recall / no_action）的解析与校验，动作协议与可见文本在进入
+  行为核心前严格分离；未知动作、畸形 JSON、超长字段、越权特征（路径 /
+  URL / 命令）与秘密内容（密码、Key、令牌、验证码、私钥、证件号、银行
+  卡号）一律丢弃并只记本机诊断，每轮最多两条动作。
+- Windows Host 新增 EpisodeMemoryPipeline：memory_signal 动作增量写入
+  当天 episodes/YYYY/MM/日期.md（原子替换），checkpoint 只在 Episode
+  写入成功后前进；条目按 sessionId:requestId 幂等去重，重启后可续跑；
+  无模型的本地降级轮不消费整理窗口，保持 pending 待 Provider 恢复补跑；
+  当日文件存在但无法解析或缺少栖语元数据时绝不覆盖，等待恢复流程。
+- LocalChatService 接入管线：模型原始输出先分离隐藏动作再送行为核心
+  校验，可见回复落盘之后才执行记忆整理；写失败仅记脱敏诊断（stderr），
+  绝不影响当前回复交付与落盘；交付事件与 sessions 文件不携带任何动作
+  协议内容。
+- system prompt 增加隐藏动作协议说明、敏感信息禁令与靠近生成位置的格
+  式提醒（OpenAI-compatible / Anthropic / Ollama 三家网关均兼容）。
+- 测试覆盖 ticket 全部验收项：合法动作、未知动作、越权动作、敏感信息、
+  重复动作幂等、写入失败、隐藏内容不泄漏、四轮换窗、跨会话重启续跑、
+  损坏日文件保护与降级轮 pending。
+- 顺带修复既有偶发测试：请求体超限中止连接时客户端可能抛
+  HttpException，补充容忍以匹配测试本意。
+
+验证：dart analyze/test 三包全绿；npm run verify:migration-baseline
+全绿（含 Flutter Web 构建、Windows bundle、preflight、启动冒烟、JS
+测试与黄金 eval）；打包 exe + 真实浏览器端到端回归通过；真实 DeepSeek
+调用确认 checkpoint 落盘与回复链路正常。独立代码审查无严重问题，两条
+建议（损坏日文件覆盖、降级轮消费窗口）均已修复并补充回归测试。
