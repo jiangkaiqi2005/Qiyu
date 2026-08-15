@@ -52,6 +52,9 @@ final class EpisodeDay {
     required this.entries,
     this.exists = false,
     this.readable = true,
+    this.summary,
+    this.finalized = false,
+    this.finalizedAt,
   });
 
   final String date;
@@ -60,6 +63,14 @@ final class EpisodeDay {
   /// 当日文件是否已存在；存在但不可解析时绝不能被新内容覆盖。
   final bool exists;
   final bool readable;
+
+  /// 日终归档写入的当天摘要；未归档时为空。
+  final String? summary;
+
+  /// 日终归档是否已完成。只在当天全部必要写入成功后才为 true；
+  /// 归档后若当天再次产生新条目，写入会把该标记重置为 false 等待补归档。
+  final bool finalized;
+  final DateTime? finalizedAt;
 
   bool hasEntryId(String id) => entries.any((entry) => entry.id == id);
 }
@@ -117,6 +128,10 @@ final class EpisodeUpdateResult {
 /// [HiddenAction]，把 memory_signal 增量写入当天 episode，并维护
 /// 可续跑的 checkpoint。模型从不直接写文件；这里的每一次写入都是
 /// 原子替换，且 checkpoint 只在 episode 写入成功后才前进。
+///
+/// 日终归档（ticket 10）与对话中的增量整理共用同一批 episode 文件；
+/// [synchronizedOnDayFiles] 是两者之间的唯一写锁，保证晚安归档与
+/// 紧随其后的新对话不会互相覆盖。
 final class EpisodeMemoryPipeline {
   EpisodeMemoryPipeline({
     required this.memoryDirectory,
@@ -128,11 +143,63 @@ final class EpisodeMemoryPipeline {
   final String memoryDirectory;
   final Clock _clock;
   final AtomicTextWriter _atomicWriter;
+  Future<void> _dayFileTail = Future.value();
 
   Directory get _episodesDirectory =>
       Directory(path.join(memoryDirectory, 'episodes'));
 
   Future<EpisodeDay> readToday() => _readDay(localSessionDate(_clock()));
+
+  /// 读取指定日期的 episode 日文件；文件不存在时返回空 [EpisodeDay]。
+  Future<EpisodeDay> readDay(String date) => _readDay(date);
+
+  /// 串行化所有 episode 日文件与 checkpoint 的写操作。日终归档流程
+  /// 整体在此锁内执行；对话增量整理（[processReply]）同样在锁内。
+  /// 锁内都是本机小文件原子写：单日归档毫秒级；启动补扫按日逐个
+  /// 串行执行并复用日期列表，长积压分摊到多次归档，绝不阻塞首个
+  /// 可见回应（所有归档触发都在回复交付之后或后台任务链上）。
+  Future<T> synchronizedOnDayFiles<T>(Future<T> Function() body) {
+    final result = _dayFileTail.then((_) => body());
+    _dayFileTail = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+
+  /// 扫描 episodes 目录，返回全部日文件日期（升序）。
+  /// 只认文件名形如 `YYYY-MM-DD.md` 的日文件；内容是否有效由读取方判断。
+  Future<List<String>> listEpisodeDates() async {
+    final root = _episodesDirectory;
+    if (!await root.exists()) {
+      return const [];
+    }
+    final dates = <String>{};
+    final dayFileName = RegExp(r'^\d{4}-\d{2}-\d{2}\.md$');
+    await for (final entity in root.list(recursive: true, followLinks: false)) {
+      if (entity is! File) {
+        continue;
+      }
+      final name = path.basename(entity.path);
+      if (dayFileName.hasMatch(name)) {
+        dates.add(name.substring(0, 10));
+      }
+    }
+    return dates.toList()..sort();
+  }
+
+  /// 日终归档写入：带摘要与 finalized 标记重写当日文件。
+  /// 调用方必须已持有 [synchronizedOnDayFiles] 锁（日终流程整体持锁）。
+  Future<void> writeFinalization(
+    String date, {
+    required List<EpisodeEntry> entries,
+    String? summary,
+    required bool finalized,
+    DateTime? finalizedAt,
+  }) => _writeDayFile(
+    date,
+    entries,
+    summary: summary,
+    finalized: finalized,
+    finalizedAt: finalizedAt,
+  );
 
   Future<EpisodeCheckpoint?> readCheckpoint() async {
     final file = _checkpointFile();
@@ -152,6 +219,20 @@ final class EpisodeMemoryPipeline {
     required String requestId,
     required List<HiddenAction> hiddenActions,
     bool consumeWindow = true,
+  }) => synchronizedOnDayFiles(
+    () => _processReplyLocked(
+      session: session,
+      requestId: requestId,
+      hiddenActions: hiddenActions,
+      consumeWindow: consumeWindow,
+    ),
+  );
+
+  Future<EpisodeUpdateResult> _processReplyLocked({
+    required RawSession session,
+    required String requestId,
+    required List<HiddenAction> hiddenActions,
+    required bool consumeWindow,
   }) async {
     final checkpoint = await readCheckpoint();
     final pendingTurns = _pendingUserTurns(checkpoint, session);
@@ -196,7 +277,9 @@ final class EpisodeMemoryPipeline {
         additions.add(entry);
       }
       if (additions.isNotEmpty) {
-        await _writeDay(date, [...day.entries, ...additions]);
+        // 新条目使当天重新处于未归档状态：摘要与 finalized 标记失效，
+        // 等待下一次晚安/跨日/启动补扫重新日终归档。
+        await _writeDayFile(date, [...day.entries, ...additions]);
         written = additions.length;
       }
     }
@@ -266,7 +349,18 @@ final class EpisodeMemoryPipeline {
       ).allMatches(contents).map((match) {
         return EpisodeEntry.fromJson(_decodeJson(match.group(1)!));
       }).toList();
-      return EpisodeDay(date: date, entries: entries, exists: true);
+      final metadata = _decodeDayMetadata(contents);
+      final finalizedAt = metadata['finalizedAt'] as String?;
+      return EpisodeDay(
+        date: date,
+        entries: entries,
+        exists: true,
+        summary: metadata['summary'] as String?,
+        finalized: metadata['finalized'] as bool? ?? false,
+        finalizedAt: finalizedAt == null
+            ? null
+            : DateTime.parse(finalizedAt).toUtc(),
+      );
     } on Object {
       // 文件存在但无法解析：返回损坏标记，调用方绝不覆盖它。
       return EpisodeDay(
@@ -278,7 +372,14 @@ final class EpisodeMemoryPipeline {
     }
   }
 
-  Future<void> _writeDay(String date, List<EpisodeEntry> entries) async {
+  Future<void> _writeDayFile(
+    String date,
+    List<EpisodeEntry> entries, {
+    String? summary,
+    bool finalized = false,
+    DateTime? finalizedAt,
+  }) async {
+    final trimmedSummary = summary?.trim();
     final buffer = StringBuffer()
       ..writeln('# 栖语每日记录')
       ..writeln()
@@ -286,8 +387,19 @@ final class EpisodeMemoryPipeline {
         'schemaVersion': 1,
         'date': date,
         'updatedAt': _clock().toUtc().toIso8601String(),
+        if (trimmedSummary != null && trimmedSummary.isNotEmpty)
+          'summary': trimmedSummary,
+        'finalized': finalized,
+        if (finalizedAt != null)
+          'finalizedAt': finalizedAt.toUtc().toIso8601String(),
       })} -->')
       ..writeln();
+    if (trimmedSummary != null && trimmedSummary.isNotEmpty) {
+      buffer
+        ..writeln('## summary')
+        ..writeln(trimmedSummary)
+        ..writeln();
+    }
     for (final entry in entries) {
       buffer
         ..writeln('<!-- qiyu-episode-entry:${_encodeJson(entry.toJson())} -->')
@@ -350,6 +462,17 @@ final class EpisodeMemoryPipeline {
     ).firstMatch(contents);
     if (match == null) {
       throw const FormatException('Missing qiyu checkpoint metadata');
+    }
+    return _decodeJson(match.group(1)!);
+  }
+
+  Map<String, Object?> _decodeDayMetadata(String contents) {
+    final match = RegExp(
+      r'^<!-- qiyu-episode:([A-Za-z0-9_-]+) -->\r?$',
+      multiLine: true,
+    ).firstMatch(contents);
+    if (match == null) {
+      throw const FormatException('Missing qiyu episode metadata');
     }
     return _decodeJson(match.group(1)!);
   }

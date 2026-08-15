@@ -4,6 +4,7 @@ import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 export 'src/browser_launcher.dart';
+export 'src/daily_finalization.dart';
 export 'src/episode_memory.dart';
 export 'src/host_command.dart';
 export 'src/host_runner.dart';

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'daily_finalization.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
@@ -84,6 +85,7 @@ final class LocalChatService {
     this.providerChatClient,
     this.modelPromptBuilder = const ModelPromptBuilder(''),
     this.episodePipeline,
+    this.dailyFinalization,
     DeliveryPause? deliveryPause,
     Clock? clock,
     void Function(String message)? diagnosticsSink,
@@ -97,13 +99,58 @@ final class LocalChatService {
   final StreamingProviderChatClient? providerChatClient;
   final ModelPromptBuilder modelPromptBuilder;
   final EpisodeMemoryPipeline? episodePipeline;
+  final DailyFinalizationService? dailyFinalization;
   final DeliveryPause _deliveryPause;
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
   final Map<String, _DeliveryCancellation> _activeDeliveries = {};
   Future<void> _pending = Future.value();
+  Future<void> _finalizationTask = Future.value();
+  String? _lastDeliveryDate;
 
-  Future<void> initialize() => _repository.initialize();
+  Future<void> initialize() async {
+    await _repository.initialize();
+    // 启动补扫：发现 finalized 仍为 false 的历史日期并安全补做日终归档。
+    // 后台执行，绝不阻塞首个可见回应。
+    _runFinalization(
+      'startup',
+      (service) => service.catchUpUnfinalized(
+        before: localSessionDate(_clock()),
+      ),
+    );
+  }
+
+  /// 等待已调度的后台日终归档完成。日终归档幂等且每一步原子写入，
+  /// 供测试断言与 Host 优雅收尾使用。
+  Future<void> finalizePending() => _finalizationTask;
+
+  /// 把一次后台归档挂到串行任务链上：归档之间不并发，失败只记诊断。
+  void _runFinalization(
+    String reason,
+    Future<FinalizationReport> Function(DailyFinalizationService service) work,
+  ) {
+    final service = dailyFinalization;
+    if (service == null) {
+      return;
+    }
+    _finalizationTask = _finalizationTask.then((_) async {
+      try {
+        final report = await work(service);
+        for (final outcome in report.outcomes) {
+          if (outcome.status == FinalizationStatus.failed ||
+              outcome.status == FinalizationStatus.skippedUnreadable) {
+            final detail = outcome.detail == null ? '' : ' [${outcome.detail}]';
+            _diagnosticsSink(
+              'finalization ${outcome.status.name} date=${outcome.date}'
+              '$detail reason=$reason',
+            );
+          }
+        }
+      } on Object catch (error) {
+        _diagnosticsSink('finalization deferred [$error] reason=$reason');
+      }
+    });
+  }
 
   Future<LocalChatSnapshot> restore({String? sessionId}) => _serialized(
     () async =>
@@ -374,6 +421,32 @@ final class LocalChatService {
         // 只有模型真正参与的本轮才消费整理窗口；本地降级/晚安收束
         // 保持 pending，等 Provider 恢复后补跑。
         consumeWindow: outcome.source == ReplySource.llm,
+      );
+      _scheduleEndOfDayTriggers(outcome);
+    }
+  }
+
+  /// 日终归档触发点（五段节奏第三动作），全部在可见回复交付之后后台执行：
+  /// - 晚安：睡前收束完成后归档当天，并补做更早的未完成日期；
+  ///   晚安只触发日终归档，Dream 是独立的第五动作（ticket 16），绝不在此触发。
+  /// - 日期变化（含进程跨午夜后的第一条消息）：补做昨天及更早的未完成日期；
+  ///   当天仍在进行中，不归档。
+  void _scheduleEndOfDayTriggers(ChatResult outcome) {
+    if (dailyFinalization == null) {
+      return;
+    }
+    final today = localSessionDate(_clock());
+    final dateChanged = _lastDeliveryDate != today;
+    _lastDeliveryDate = today;
+    if (outcome.mode == 'bedtime') {
+      _runFinalization(
+        'bedtime',
+        (service) => service.finalizeForBedtime(date: today),
+      );
+    } else if (dateChanged) {
+      _runFinalization(
+        'date-change',
+        (service) => service.catchUpUnfinalized(before: today),
       );
     }
   }

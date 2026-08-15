@@ -1,0 +1,660 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+import 'package:qiyu_windows_host/qiyu_windows_host.dart';
+import 'package:test/test.dart';
+
+void main() {
+  test('finalizes a day in fixed order: summary, state pack, indexes, flag', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(
+          kind: HiddenActionKind.memorySignal,
+          summary: '用户明天有面试',
+          evidence: '明天要面试，有点紧张',
+        ),
+      ],
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: clock,
+    );
+
+    final outcome = await service.finalizeDay('2026-08-14');
+
+    expect(outcome.status, FinalizationStatus.finalized);
+    final day = await pipeline.readDay('2026-08-14');
+    expect(day.finalized, isTrue);
+    expect(day.finalizedAt, isNotNull);
+    expect(day.summary, '用户明天有面试');
+    expect(day.entries, hasLength(1));
+
+    final dailyState = await File(
+      '${temporaryDirectory.path}/daily-state.md',
+    ).readAsString(encoding: utf8);
+    expect(dailyState, contains('date: 2026-08-14'));
+    expect(dailyState, contains('## 时间感'));
+    expect(dailyState, contains('用户明天有面试'));
+
+    final relationship = await File(
+      '${temporaryDirectory.path}/relationship.md',
+    ).readAsString(encoding: utf8);
+    expect(relationship, contains('stage: 初识'));
+    expect(relationship, contains('since: 2026-08-14'));
+
+    final monthIndex = await File(
+      '${temporaryDirectory.path}/episodes/2026/08/index.md',
+    ).readAsString(encoding: utf8);
+    expect(monthIndex, contains('- 2026-08-14 |'));
+    expect(monthIndex, contains('2026-08-14.md'));
+    final topIndex = await File(
+      '${temporaryDirectory.path}/episodes/index.md',
+    ).readAsString(encoding: utf8);
+    expect(topIndex, contains('- 2026-08 |'));
+    expect(topIndex, contains('episodes/2026/08/index.md'));
+  });
+
+  test('repeated finalization is an idempotent no-op', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-repeat-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '用户下周搬家'),
+      ],
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: clock,
+    );
+    await service.finalizeDay('2026-08-14');
+    final before = _snapshotStateFiles(temporaryDirectory.path);
+
+    final replay = await service.finalizeDay('2026-08-14');
+
+    expect(replay.status, FinalizationStatus.alreadyFinalized);
+    expect(_snapshotStateFiles(temporaryDirectory.path), before);
+    expect((await pipeline.readDay('2026-08-14')).entries, hasLength(1));
+  });
+
+  test('bedtime finalizes today and catches up earlier unfinalized days', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-bedtime-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 13, 22);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '前天聊了旅行计划'),
+      ],
+    );
+    now = DateTime(2026, 8, 14, 23, 30);
+    await pipeline.processReply(
+      session: _session('session-2', ['req-2']),
+      requestId: 'req-2',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '今天讨论了面试'),
+      ],
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: () => now,
+    );
+
+    final report = await service.finalizeForBedtime(date: '2026-08-14');
+
+    expect(
+      report.outcomes.map((outcome) => outcome.status),
+      containsAll([
+        FinalizationStatus.finalized,
+        FinalizationStatus.finalized,
+      ]),
+    );
+    expect((await pipeline.readDay('2026-08-14')).finalized, isTrue);
+    expect((await pipeline.readDay('2026-08-13')).finalized, isTrue);
+    // 近日状态包含两天证据，且当天条目落在「用户当前近况」。
+    final dailyState = await File(
+      '${temporaryDirectory.path}/daily-state.md',
+    ).readAsString(encoding: utf8);
+    expect(dailyState, contains('今天讨论了面试'));
+    expect(dailyState, contains('前天聊了旅行计划'));
+  });
+
+  test('catch-up never finalizes the still-active current day', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-catchup-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 13, 22);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '昨天的事'),
+      ],
+    );
+    now = DateTime(2026, 8, 14, 9);
+    await pipeline.processReply(
+      session: _session('session-2', ['req-2']),
+      requestId: 'req-2',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '今天的事'),
+      ],
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: () => now,
+    );
+
+    await service.catchUpUnfinalized(before: '2026-08-14');
+
+    expect((await pipeline.readDay('2026-08-13')).finalized, isTrue);
+    expect((await pipeline.readDay('2026-08-14')).finalized, isFalse);
+  });
+
+  test('a failed step keeps finalized false; retry completes without duplicates', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-failure-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '用户在健身'),
+      ],
+    );
+    final failingService = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: clock,
+      atomicWriter: const _FailOnPath('daily-state'),
+    );
+
+    await expectLater(
+      failingService.finalizeDay('2026-08-14'),
+      throwsA(
+        isA<MemoryRepositoryException>().having(
+          (error) => error.code,
+          'code',
+          'finalization_write_failed',
+        ),
+      ),
+    );
+    expect((await pipeline.readDay('2026-08-14')).finalized, isFalse);
+    expect(
+      File('${temporaryDirectory.path}/episodes/index.md').existsSync(),
+      isFalse,
+      reason: '索引是最后一步，失败前不得落盘',
+    );
+
+    final retryService = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: clock,
+    );
+    final retry = await retryService.finalizeDay('2026-08-14');
+
+    expect(retry.status, FinalizationStatus.finalized);
+    final day = await pipeline.readDay('2026-08-14');
+    expect(day.finalized, isTrue);
+    expect(day.entries, hasLength(1), reason: '补跑不得重复写入条目');
+    expect(
+      File('${temporaryDirectory.path}/episodes/index.md').existsSync(),
+      isTrue,
+    );
+  });
+
+  test('a day without valid content never fabricates state pack files', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-empty-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: clock,
+    );
+
+    // 没有 episode 文件的日期：归档直接跳过，不落任何文件。
+    final missing = await service.finalizeDay('2026-08-14');
+    expect(missing.status, FinalizationStatus.skippedMissing);
+    expect(
+      File('${temporaryDirectory.path}/daily-state.md').existsSync(),
+      isFalse,
+    );
+    expect(
+      File('${temporaryDirectory.path}/relationship.md').existsSync(),
+      isFalse,
+    );
+
+    // 有日文件但没有效条目（例如全部动作都被敏感过滤）：只置标记，
+    // 不写任何状态包，也不进索引。
+    final dayPath =
+        '${temporaryDirectory.path}/episodes/2026/08/2026-08-14.md';
+    await File(dayPath).create(recursive: true);
+    await File(dayPath).writeAsString(
+      '# 栖语每日记录\n\n'
+      '<!-- qiyu-episode:${base64Url.encode(utf8.encode(jsonEncode({
+        'schemaVersion': 1,
+        'date': '2026-08-14',
+        'updatedAt': clock().toUtc().toIso8601String(),
+        'finalized': false,
+      }))).replaceAll('=', '')} -->\n',
+      encoding: utf8,
+    );
+
+    final empty = await service.finalizeDay('2026-08-14');
+
+    expect(empty.status, FinalizationStatus.finalizedEmpty);
+    expect((await pipeline.readDay('2026-08-14')).finalized, isTrue);
+    expect(
+      File('${temporaryDirectory.path}/daily-state.md').existsSync(),
+      isFalse,
+    );
+    expect(
+      File('${temporaryDirectory.path}/episodes/index.md').existsSync(),
+      isFalse,
+    );
+  });
+
+  test('closed open-loops are archived; active entries stay idempotently', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-openloops-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '今天随便聊聊'),
+      ],
+    );
+    File('${temporaryDirectory.path}/open-loops.md').writeAsStringSync(
+      '# open-loops\n\n'
+      '- [o1] 人生第一次演讲\n'
+      '  due: 2026-08-13 evening\n'
+      '  proactive: once\n'
+      '  status: closed\n'
+      '  note: 用户说演讲顺利结束\n'
+      '- [o2] 医院检查\n'
+      '  due: 2026-08-20\n'
+      '  proactive: no\n'
+      '  status: active\n'
+      '  note: 用户主动提到时再接\n',
+      encoding: utf8,
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: clock,
+    );
+
+    await service.finalizeDay('2026-08-14');
+
+    final hotLayer = await File(
+      '${temporaryDirectory.path}/open-loops.md',
+    ).readAsString(encoding: utf8);
+    expect(hotLayer, isNot(contains('人生第一次演讲')));
+    expect(hotLayer, contains('- [o2] 医院检查'));
+    final archive = await File(
+      '${temporaryDirectory.path}/open-loops.archive.md',
+    ).readAsString(encoding: utf8);
+    expect(archive, contains('人生第一次演讲'));
+    expect(archive, contains('闭环: 2026-08-14'));
+    expect(archive, contains('用户说演讲顺利结束'));
+
+    // 重复归档不得追加重复行。
+    File('${temporaryDirectory.path}/episodes/2026/08/2026-08-14.md')
+        .deleteSync();
+    await pipeline.processReply(
+      session: _session('session-1', ['req-2']),
+      requestId: 'req-2',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '又过了一天'),
+      ],
+    );
+    await service.finalizeDay('2026-08-14');
+    final archiveAgain = await File(
+      '${temporaryDirectory.path}/open-loops.archive.md',
+    ).readAsString(encoding: utf8);
+    expect(
+      '人生第一次演讲'.allMatches(archiveAgain).length,
+      1,
+    );
+  });
+
+  test('an existing relationship file is never overwritten', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-relationship-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '聊了咖啡'),
+      ],
+    );
+    const custom = '# relationship\n\nstage: 朋友\nsince: 2026-01-01\n';
+    File('${temporaryDirectory.path}/relationship.md').writeAsStringSync(
+      custom,
+      encoding: utf8,
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: clock,
+    );
+
+    await service.finalizeDay('2026-08-14');
+
+    expect(
+      File('${temporaryDirectory.path}/relationship.md')
+          .readAsStringSync(encoding: utf8),
+      custom,
+    );
+  });
+
+  test('daily-state respects the budget and the seven-day window', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-budget-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 7, 22);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    // 窗口外的一天（8 天前）+ 窗口内 7 天，每天多条长摘要。
+    await pipeline.processReply(
+      session: _session('session-old', ['req-old']),
+      requestId: 'req-old',
+      hiddenActions: const [
+        HiddenAction(
+          kind: HiddenActionKind.memorySignal,
+          summary: '窗口外不应出现的很旧很旧的事情',
+        ),
+      ],
+    );
+    for (var dayOffset = 0; dayOffset < 7; dayOffset += 1) {
+      now = DateTime(2026, 8, 8 + dayOffset, 22);
+      await pipeline.processReply(
+        session: _session('session-$dayOffset', ['req-$dayOffset']),
+        requestId: 'req-$dayOffset',
+        hiddenActions: [
+          HiddenAction(
+            kind: HiddenActionKind.memorySignal,
+            summary: '第$dayOffset天发生的一件需要很长描述才能说清楚的事情，'
+                '这里继续补充更多细节以撑大体积',
+          ),
+        ],
+      );
+    }
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: () => now,
+    );
+
+    await service.finalizeDay('2026-08-14');
+
+    final dailyState = await File(
+      '${temporaryDirectory.path}/daily-state.md',
+    ).readAsString(encoding: utf8);
+    expect(dailyState.runes.length, lessThanOrEqualTo(dailyStateMaxRunes));
+    expect(dailyState, isNot(contains('窗口外不应出现')));
+    expect(dailyState, contains('date: 2026-08-14'));
+  });
+
+  test('a foreign day file is skipped untouched and does not block other days', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-foreign-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    const foreign = '# 用户手写的日记\n\n今天天气很好。\n';
+    final foreignFile = File(
+      '${temporaryDirectory.path}/episodes/2026/08/2026-08-13.md',
+    );
+    await foreignFile.create(recursive: true);
+    await foreignFile.writeAsString(foreign, encoding: utf8);
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '正常的一天'),
+      ],
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: () => DateTime(2026, 8, 15, 8),
+    );
+
+    final report = await service.catchUpUnfinalized(before: '2026-08-15');
+
+    expect(
+      report.outcomes.firstWhere(
+        (outcome) => outcome.date == '2026-08-13',
+      ).status,
+      FinalizationStatus.skippedUnreadable,
+    );
+    expect(
+      await foreignFile.readAsString(encoding: utf8),
+      foreign,
+      reason: '无法识别的日文件绝不覆盖',
+    );
+    expect((await pipeline.readDay('2026-08-14')).finalized, isTrue);
+  });
+
+  test('indexes only list finalized days and survive re-finalization', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-index-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 7, 31, 22);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    await pipeline.processReply(
+      session: _session('session-july', ['req-july']),
+      requestId: 'req-july',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '七月最后一天'),
+      ],
+    );
+    now = DateTime(2026, 8, 1, 22);
+    await pipeline.processReply(
+      session: _session('session-aug', ['req-aug']),
+      requestId: 'req-aug',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '八月第一天'),
+      ],
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: () => DateTime(2026, 8, 2, 8),
+    );
+
+    // 只归档七月的天；八月的天保持未归档，不得进入索引。
+    await service.finalizeDay('2026-07-31');
+
+    final topIndex = await File(
+      '${temporaryDirectory.path}/episodes/index.md',
+    ).readAsString(encoding: utf8);
+    expect(topIndex, contains('- 2026-07 |'));
+    expect(topIndex, isNot(contains('2026-08')));
+    final julyIndex = await File(
+      '${temporaryDirectory.path}/episodes/2026/07/index.md',
+    ).readAsString(encoding: utf8);
+    expect(julyIndex, contains('七月最后一天'));
+
+    await service.finalizeDay('2026-08-01');
+    final rebuiltTop = await File(
+      '${temporaryDirectory.path}/episodes/index.md',
+    ).readAsString(encoding: utf8);
+    expect(rebuiltTop, contains('- 2026-07 |'));
+    expect(rebuiltTop, contains('- 2026-08 |'));
+  });
+
+  test('a new entry after bedtime reopens the day for re-finalization', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-reopen-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: clock,
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '说了晚安'),
+      ],
+    );
+    await service.finalizeDay('2026-08-14');
+    expect((await pipeline.readDay('2026-08-14')).finalized, isTrue);
+
+    // 用户说完晚安又回来补了一句：新条目使当天重新开放。
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1', 'req-2']),
+      requestId: 'req-2',
+      hiddenActions: const [
+        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '又睡不着了'),
+      ],
+    );
+    final reopened = await pipeline.readDay('2026-08-14');
+    expect(reopened.finalized, isFalse);
+    expect(reopened.entries, hasLength(2));
+
+    final again = await service.finalizeDay('2026-08-14');
+    expect(again.status, FinalizationStatus.finalized);
+    final day = await pipeline.readDay('2026-08-14');
+    expect(day.summary, contains('说了晚安'));
+    expect(day.summary, contains('又睡不着了'));
+  });
+}
+
+Map<String, String> _snapshotStateFiles(String root) {
+  final snapshot = <String, String>{};
+  for (final relative in [
+    'daily-state.md',
+    'relationship.md',
+    'open-loops.md',
+    'open-loops.archive.md',
+    'episodes/index.md',
+    'episodes/2026/08/index.md',
+    'episodes/2026/08/2026-08-14.md',
+  ]) {
+    final file = File('$root/$relative');
+    if (file.existsSync()) {
+      snapshot[relative] = file.readAsStringSync(encoding: utf8);
+    }
+  }
+  return snapshot;
+}
+
+RawSession _session(String id, List<String> requestIds) {
+  final base = DateTime(2026, 8, 14, 22);
+  final turns = <RawSessionTurn>[];
+  for (var index = 0; index < requestIds.length; index += 1) {
+    turns.add(
+      RawSessionTurn.user(
+        requestId: requestIds[index],
+        text: '第 ${index + 1} 轮',
+        at: base.add(Duration(minutes: index)),
+      ),
+    );
+  }
+  return RawSession(
+    id: id,
+    date: '2026-08-14',
+    segment: 1,
+    createdAt: base.toUtc(),
+    updatedAt: base.toUtc(),
+    turns: turns,
+  );
+}
+
+final class _FailOnPath implements AtomicTextWriter {
+  const _FailOnPath(this.fragment);
+
+  final String fragment;
+  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
+
+  @override
+  Future<void> replace(String path, String contents) {
+    if (path.contains(fragment)) {
+      throw const FileSystemException('mock interrupted write');
+    }
+    return _delegate.replace(path, contents);
+  }
+}

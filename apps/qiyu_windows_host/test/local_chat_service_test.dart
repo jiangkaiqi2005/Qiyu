@@ -848,6 +848,258 @@ void main() {
     expect((await pipeline.readToday()).entries, hasLength(1));
     expect(provider.calls, 1);
   });
+
+  test('bedtime triggers end-of-day finalization after the reply is delivered', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-bedtime-finalization-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('''早点休息。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户今天完成了演讲"}]
+</qiyu-actions>'''),
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => DateTime(2026, 8, 11, 22, 35),
+      ),
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+
+    final exchange = await service.send(requestId: 'day-1', text: '演讲结束了');
+    expect(exchange.result.source, ReplySource.llm);
+    final bedtime = await service.send(
+      requestId: 'night-1',
+      text: '晚安',
+      sessionId: exchange.session.id,
+    );
+    expect(bedtime.result.mode, 'bedtime');
+    await service.finalizePending();
+
+    final day = await pipeline.readDay('2026-08-11');
+    expect(day.finalized, isTrue);
+    expect(day.summary, contains('用户今天完成了演讲'));
+    expect(
+      File('${temporaryDirectory.path}/daily-state.md').existsSync(),
+      isTrue,
+    );
+    expect(
+      File('${temporaryDirectory.path}/episodes/index.md').existsSync(),
+      isTrue,
+    );
+  });
+
+  test('a normal chat never finalizes the still-active current day', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-daytime-finalization-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('''在的。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户白天来找栖语"}]
+</qiyu-actions>'''),
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 11, 15),
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 15),
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => DateTime(2026, 8, 11, 15),
+      ),
+      clock: () => DateTime(2026, 8, 11, 15),
+    );
+
+    await service.send(requestId: 'day-chat', text: '在吗');
+    await service.finalizePending();
+
+    expect((await pipeline.readDay('2026-08-11')).finalized, isFalse);
+    expect(
+      File('${temporaryDirectory.path}/daily-state.md').existsSync(),
+      isFalse,
+    );
+  });
+
+  test('the first chat after midnight catches up the unfinalized previous day', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-midnight-finalization-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 11, 23, 50);
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('''嗯，我在。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户昨晚睡得晚"}]
+</qiyu-actions>'''),
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => now,
+      ),
+      clock: () => now,
+    );
+    final first = await service.send(requestId: 'before', text: '睡不着');
+
+    now = DateTime(2026, 8, 12, 0, 20);
+    await service.send(
+      requestId: 'after',
+      text: '早',
+      sessionId: first.session.id,
+    );
+    await service.finalizePending();
+
+    expect((await pipeline.readDay('2026-08-11')).finalized, isTrue);
+    expect((await pipeline.readDay('2026-08-12')).finalized, isFalse);
+  });
+
+  test('initialize catches up unfinalized days discovered at startup', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-startup-finalization-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final seedPipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 10, 22),
+    );
+    await seedPipeline.processReply(
+      session: RawSession(
+        id: 'old-session',
+        date: '2026-08-10',
+        segment: 1,
+        createdAt: DateTime(2026, 8, 10, 22).toUtc(),
+        updatedAt: DateTime(2026, 8, 10, 22).toUtc(),
+        turns: [
+          RawSessionTurn.user(
+            requestId: 'old-req',
+            text: '第 1 轮',
+            at: DateTime(2026, 8, 10, 22),
+          ),
+        ],
+      ),
+      requestId: 'old-req',
+      hiddenActions: const [
+        HiddenAction(
+          kind: HiddenActionKind.memorySignal,
+          summary: '前天留下的未归档记忆',
+        ),
+      ],
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 12, 9),
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 12, 9),
+      ),
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => DateTime(2026, 8, 12, 9),
+      ),
+      clock: () => DateTime(2026, 8, 12, 9),
+    );
+
+    await service.initialize();
+    await service.finalizePending();
+
+    final day = await pipeline.readDay('2026-08-10');
+    expect(day.finalized, isTrue);
+    expect(day.summary, contains('前天留下的未归档记忆'));
+  });
+
+  test('a day with only secret-laden signals finalizes without any memory', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-sensitive-finalization-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('''好。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"密码: hunter2abc","evidence":"密码: hunter2abc"}]
+</qiyu-actions>'''),
+    );
+    final diagnostics = <String>[];
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => DateTime(2026, 8, 11, 22, 35),
+      ),
+      diagnosticsSink: diagnostics.add,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+
+    await service.send(requestId: 'secret-1', text: '帮我记个东西');
+    await service.send(requestId: 'night-secret', text: '晚安');
+    await service.finalizePending();
+
+    expect(diagnostics.any((line) => line.contains('hidden_action_sensitive')), isTrue);
+    expect(
+      File('${temporaryDirectory.path}/episodes/2026/08/2026-08-11.md')
+          .existsSync(),
+      isFalse,
+      reason: '敏感动作被丢弃后当天没有条目，不得产生记忆文件',
+    );
+    expect(
+      File('${temporaryDirectory.path}/daily-state.md').existsSync(),
+      isFalse,
+    );
+    expect(
+      File('${temporaryDirectory.path}/relationship.md').existsSync(),
+      isFalse,
+    );
+    expect(
+      File('${temporaryDirectory.path}/episodes/index.md').existsSync(),
+      isFalse,
+    );
+  });
 }
 
 final class _FailOnceAtomicWriter implements AtomicTextWriter {

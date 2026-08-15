@@ -9,6 +9,7 @@ import 'package:shelf_static/shelf_static.dart';
 import 'package:path/path.dart' as path;
 
 import 'browser_launcher.dart';
+import 'daily_finalization.dart';
 import 'episode_memory.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
@@ -72,11 +73,18 @@ final class LocalAppHost {
           const ProviderModelGateway(DartIoProviderHttpClient()),
           modelPromptBuilder,
         );
+    final episodePipeline = EpisodeMemoryPipeline(
+      memoryDirectory: memoryDirectory,
+    );
     final chatService = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
       providerChatClient: effectiveProviderSettings,
       modelPromptBuilder: modelPromptBuilder,
-      episodePipeline: EpisodeMemoryPipeline(memoryDirectory: memoryDirectory),
+      episodePipeline: episodePipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: episodePipeline,
+      ),
     );
     await chatService.initialize();
     final onboardingRepository = JsonOnboardingRepository(
@@ -108,7 +116,18 @@ final class LocalAppHost {
     return LocalAppHost._(server, requestHandler);
   }
 
-  Future<void> close() => _server.close(force: true);
+  /// 关闭前先等待后台日终归档收尾；归档幂等且每步原子写入，超时或
+  /// 失败不阻塞关闭，未完成的归档由下次启动补扫继续。
+  Future<void> close() async {
+    try {
+      await _requestHandler.chatService
+          .finalizePending()
+          .timeout(const Duration(seconds: 3));
+    } on Object {
+      // 归档中断安全：finalized 保持 false，启动补扫会重做。
+    }
+    await _server.close(force: true);
+  }
 }
 
 final class _LocalAppRequestHandler {
