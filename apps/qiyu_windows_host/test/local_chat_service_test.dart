@@ -1387,16 +1387,96 @@ void main() {
     // 熟悉阶段 + due 已到 + active：进入候选池批注。
     expect(system, contains('主动跟进候选'));
     expect(system, contains('[o1] 面试结果'));
+    // 阶段边界纪律：熟悉的权限开放自然提起，但调侃与翻旧账仍锁着。
+    expect(system, contains('阶段边界'));
+    expect(system, contains('当前熟悉'));
+    expect(system, contains('仍不调侃、不翻旧账'));
+    expect(system, contains('用户边界、安全规则与禁提事项始终高于关系亲密度'));
 
-    // 关系退回初识（阶段门禁）：候选池批注消失。
+    // 关系升到朋友：权限差异可见——调侃与翻旧账解锁。
+    File('${temporaryDirectory.path}/relationship.md').writeAsStringSync(
+      '# relationship\n\nstage: 朋友\nsince: 2026-08-01\n'
+      '阶段描述: 朋友阶段：可以轻调侃、翻旧账、直说。\n',
+      encoding: utf8,
+    );
+    await service.send(requestId: 'inject-2', text: '在吗');
+    final friend = provider.messages!.first.content;
+    expect(friend, contains('当前朋友'));
+    expect(friend, contains('可以轻调侃、翻旧账'));
+    expect(friend, isNot(contains('当前熟悉')));
+
+    // 关系退回初识（阶段门禁）：候选池批注消失，权限全面收紧。
     File('${temporaryDirectory.path}/relationship.md').writeAsStringSync(
       '# relationship\n\nstage: 初识\nsince: 2026-08-01\n',
       encoding: utf8,
     );
-    await service.send(requestId: 'inject-2', text: '在吗');
+    await service.send(requestId: 'inject-3', text: '在吗');
     final gated = provider.messages!.first.content;
     expect(gated, contains('【未闭环事项】'));
     expect(gated, isNot(contains('主动跟进候选')));
+    expect(gated, contains('当前初识'));
+    expect(gated, contains('不调侃、不翻旧账'));
+  });
+
+  test('a deep-talk signal lands in episodes and the next end-of-day relationship', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-relationship-e2e-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 11, 22, 30);
+    final provider = _SequencedProviderChatClient([
+      const ModelCompletion.reply('''嗯，我在。
+<qiyu-actions>
+[{"action":"relationship_signal","signal":"deep_talk","summary":"用户愿意聊到更深的家庭关系"}]
+</qiyu-actions>'''),
+    ]);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => now,
+      ),
+      clock: () => now,
+    );
+
+    final first = await service.send(
+      requestId: 'deep-1',
+      text: '其实最近和我妈的关系让我很累',
+    );
+    // 深谈信号当轮只落 episode：relationship 要等日终，不即时改写。
+    expect(
+      File('${temporaryDirectory.path}/relationship.md').existsSync(),
+      isFalse,
+    );
+
+    await service.send(
+      requestId: 'night-1',
+      text: '晚安',
+      sessionId: first.session.id,
+    );
+    await service.finalizePending();
+
+    final relationship = await File(
+      '${temporaryDirectory.path}/relationship.md',
+    ).readAsString(encoding: utf8);
+    expect(relationship, contains('stage: 初识'));
+    expect(relationship, contains('用户愿意聊到更深的家庭关系'));
+    final day = await pipeline.readDay('2026-08-11');
+    final signal = day.entries.singleWhere(
+      (entry) => entry.kind == episodeKindRelationshipSignal,
+    );
+    expect(signal.signal, 'deep_talk');
+    expect(signal.summary, '用户愿意聊到更深的家庭关系');
   });
 }
 

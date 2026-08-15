@@ -504,6 +504,128 @@ void main() {
     await tester.pumpAndSettle();
     await _returnToHome(tester);
   });
+
+  testWidgets(
+    'chat list restores at the bottom and streaming never yanks a reading user',
+    (tester) async {
+      final messages = <LocalChatMessage>[
+        for (var index = 0; index < 24; index += 1) ...[
+          LocalChatMessage(
+            requestId: 'old-$index',
+            speaker: LocalChatSpeaker.user,
+            text: '用户消息第 $index 条，写得长一点以便产生足够的滚动高度',
+          ),
+          LocalChatMessage(
+            requestId: 'old-$index',
+            speaker: LocalChatSpeaker.qiyu,
+            text: '栖语回复第 $index 条，同样写得长一点以便产生滚动高度',
+            source: ReplySource.llm,
+          ),
+        ],
+      ];
+      final gateway = _RestoredStreamingGateway(
+        restored: LocalChatSnapshot(sessionId: 'session-1', messages: messages),
+      );
+      final viewModel = LocalChatViewModel(
+        gateway,
+        hostConnectionProbe: _FakeHostConnectionProbe([true]),
+        autoStart: false,
+        requestIdFactory: () => 'scroll-request',
+      );
+      await viewModel.initialize();
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: viewModel,
+          onboardingViewModel: await _completedOnboardingViewModel(),
+        ),
+      );
+      await _enterChatFromHome(tester);
+
+      // 恢复后粘在会话尾部：最新一轮可见，最早一轮在视口外。
+      expect(find.textContaining('回复第 23 条'), findsOneWidget);
+      expect(find.textContaining('用户消息第 0 条'), findsNothing);
+
+      // 发送并进入等待态后，用户上滑回读历史。
+      await tester.enterText(find.byKey(const Key('chat-input')), '再说一句');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pump();
+      gateway.add(
+        LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.accepted,
+          requestId: 'scroll-request',
+          sessionId: 'session-1',
+        ),
+      );
+      gateway.add(
+        LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.waiting,
+          requestId: 'scroll-request',
+        ),
+      );
+      await tester.pump();
+      await tester.drag(find.byType(ListView), const Offset(0, 6000));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('用户消息第 0 条'), findsOneWidget);
+
+      // 流式增量到达时不打断回读：仍停留在顶部。
+      gateway.add(
+        LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.delta,
+          requestId: 'scroll-request',
+          text: '慢慢说，',
+        ),
+      );
+      await tester.pump();
+      gateway.add(
+        LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.delta,
+          requestId: 'scroll-request',
+          text: '我在听。',
+        ),
+      );
+      await tester.pump();
+      expect(find.textContaining('用户消息第 0 条'), findsOneWidget);
+
+      // 手动滑回底部后重新粘滞，跟随后续增量。
+      await tester.drag(find.byType(ListView), const Offset(0, -8000));
+      await tester.pump();
+      await tester.pump();
+      gateway.add(
+        LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.delta,
+          requestId: 'scroll-request',
+          text: '你继续。',
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(const Key('chat-streaming-reply')), findsOneWidget);
+      expect(find.textContaining('慢慢说，我在听。你继续。'), findsOneWidget);
+
+      gateway.add(
+        LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.message,
+          requestId: 'scroll-request',
+          messages: const ['慢慢说，我在听。你继续。'],
+        ),
+      );
+      gateway.add(
+        LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.state,
+          requestId: 'scroll-request',
+          source: ReplySource.llm,
+        ),
+      );
+      gateway.add(
+        LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.done,
+          requestId: 'scroll-request',
+        ),
+      );
+      await gateway.close();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('慢慢说，我在听。你继续。'), findsOneWidget);
+    },
+  );
 }
 
 final class _FakeLocalChatGateway implements StreamingLocalChatGateway {
@@ -596,6 +718,29 @@ final class _StreamingFakeLocalChatGateway
   @override
   Future<LocalChatSnapshot> restore({String? sessionId}) async =>
       const LocalChatSnapshot(sessionId: 'session-1', messages: []);
+}
+
+final class _RestoredStreamingGateway implements StreamingLocalChatGateway {
+  _RestoredStreamingGateway({required this.restored});
+
+  final LocalChatSnapshot restored;
+  final _controller = StreamController<LocalChatDeliveryEvent>();
+
+  void add(LocalChatDeliveryEvent event) => _controller.add(event);
+  Future<void> close() => _controller.close();
+
+  @override
+  Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Stream<LocalChatDeliveryEvent> deliver({
+    required String requestId,
+    required String text,
+    String? sessionId,
+  }) => _controller.stream;
+
+  @override
+  Future<LocalChatSnapshot> restore({String? sessionId}) async => restored;
 }
 
 final class _FakeHostConnectionProbe implements HostConnectionProbe {

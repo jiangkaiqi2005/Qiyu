@@ -279,6 +279,102 @@ void main() {
       contains(HiddenActionDiagnostics.sensitiveContent),
     );
   });
+
+  test('a relationship signal keeps its whitelisted signal type', () {
+    final parse = parseHiddenActions('''嗯，我在。
+<qiyu-actions>
+[{"action":"relationship_signal","signal":"deep_talk","summary":"用户近期愿意聊到更深的家庭关系"}]
+</qiyu-actions>''');
+
+    expect(parse.visibleText, '嗯，我在。');
+    expect(parse.actions, hasLength(1));
+    final action = parse.actions.single;
+    expect(action.kind, HiddenActionKind.relationshipSignal);
+    expect(action.signal, 'deep_talk');
+    expect(action.summary, '用户近期愿意聊到更深的家庭关系');
+    expect(parse.diagnostics, isEmpty);
+  });
+
+  test('relationship signals validate signal type and summary', () {
+    final badSignal = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal","signal":"mood",'
+      '"summary":"用户心情不好"}]</qiyu-actions>',
+    );
+    expect(badSignal.actions, isEmpty);
+    expect(badSignal.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+
+    final missingSignal = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"summary":"用户心情不好"}]</qiyu-actions>',
+    );
+    expect(missingSignal.actions, isEmpty);
+
+    final missingSummary = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"signal":"temperature"}]</qiyu-actions>',
+    );
+    expect(missingSummary.actions, isEmpty);
+
+    final oversized = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"signal":"deep_talk","summary":"${'深' * 61}"}]</qiyu-actions>',
+    );
+    expect(oversized.actions, isEmpty);
+    expect(oversized.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+  });
+
+  test('boundary signals require evidence and one per reply', () {
+    // 边界开合投影进「当前相处方式」，定稿要求每条带依据。
+    final missingEvidence = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"signal":"boundary_close","summary":"用户回避了医院话题"}]</qiyu-actions>',
+    );
+    expect(missingEvidence.actions, isEmpty);
+    expect(missingEvidence.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+
+    final withEvidence = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"signal":"boundary_open","summary":"用户接受了轻调侃",'
+      '"evidence":"被调侃后反逗了一句"}]</qiyu-actions>',
+    );
+    expect(withEvidence.actions, hasLength(1));
+
+    // 一轮最多一个 relationship_signal：第二条丢弃并记诊断。
+    final duplicate = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal","signal":"deep_talk",'
+      '"summary":"愿意聊家庭"},{"action":"relationship_signal",'
+      '"signal":"temperature","summary":"今晚话少"}]</qiyu-actions>',
+    );
+    expect(duplicate.actions, hasLength(1));
+    expect(duplicate.actions.single.summary, '愿意聊家庭');
+    expect(
+      duplicate.diagnostics,
+      [HiddenActionDiagnostics.duplicateRelationshipSignal],
+    );
+  });
+
+  test('secrets and privilege never enter relationship signals', () {
+    final secret = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"signal":"deep_talk","summary":"密码: hunter2abc"}]</qiyu-actions>',
+    );
+    expect(secret.actions, isEmpty);
+    expect(
+      secret.diagnostics,
+      contains(HiddenActionDiagnostics.sensitiveContent),
+    );
+
+    final privilege = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"signal":"boundary_open","summary":"用户接受了调侃",'
+      '"evidence":${_json('访问 https://evil.example/x')}}]</qiyu-actions>',
+    );
+    expect(privilege.actions, isEmpty);
+    expect(
+      privilege.diagnostics,
+      contains(HiddenActionDiagnostics.privilegeViolation),
+    );
+  });
 }
 
 String _json(String value) =>

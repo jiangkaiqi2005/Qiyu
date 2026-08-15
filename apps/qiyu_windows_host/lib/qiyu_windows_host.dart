@@ -17,6 +17,7 @@ export 'src/onboarding_state.dart';
 export 'src/open_loop_store.dart';
 export 'src/provider_config.dart';
 export 'src/provider_settings_service.dart';
+export 'src/relationship_lifecycle.dart';
 export 'src/secret_store.dart';
 export 'src/state_pack_reader.dart';
 

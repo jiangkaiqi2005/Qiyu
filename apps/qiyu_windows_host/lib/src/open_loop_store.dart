@@ -655,23 +655,3 @@ OpenLoopItem? _parseItemBlock(List<String> blockLines) {
   );
 }
 
-/// 从 relationship.md 解析关系阶段；缺失或不可识别按初识处理。
-RelationshipStage parseRelationshipStage(String? contents) {
-  if (contents == null) {
-    return RelationshipStage.stranger;
-  }
-  final match = RegExp(
-    r'^\s*stage\s*[:：]\s*(.+)$',
-    multiLine: true,
-  ).firstMatch(contents);
-  if (match == null) {
-    return RelationshipStage.stranger;
-  }
-  final value = match.group(1)!.trim();
-  for (final stage in RelationshipStage.values) {
-    if (stage.wireName == value) {
-      return stage;
-    }
-  }
-  return RelationshipStage.stranger;
-}

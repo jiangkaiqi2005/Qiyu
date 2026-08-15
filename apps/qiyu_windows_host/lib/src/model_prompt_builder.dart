@@ -34,6 +34,9 @@ proactive 只用 no（用户自己提到才接）/ once（到点最多轻轻问�
 用户回答解决了 → closed；没接或转移话题 → paused；用户重新提起暂停的事项 → active。
 4. memory_ban：用户明确要求某件事以后不要再提、不要再记住。
 {"action":"memory_ban","summary":"事项简称"}
+5. relationship_signal：本轮出现关系证据时才用，一轮最多一个。
+{"action":"relationship_signal","signal":"deep_talk","summary":"自然抽象的状态描述，不超过60字","evidence":"依据，deep_talk/temperature 可省略"}
+signal 四种：deep_talk（用户主动谈到通常不轻易谈的个人深层话题）；temperature（用户近期冷暖明显变化，如情绪基调、回应热度）；boundary_open（用户接受或欢迎了某种相处方式，如被调侃后反逗）；boundary_close（用户回避、拒绝或冷处理了某个话题或方式）。boundary_open/boundary_close 的 evidence 必填（用户接受或回避的依据），缺了整条作废。summary 只写自然抽象的状态，不复制原话，不写秘密细节。
 示例：用户说「我对芒果过敏」时，回复后追加
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户对芒果过敏","evidence":"我对芒果过敏"}]
@@ -48,7 +51,8 @@ const hiddenActionsReminder =
     '<qiyu-actions>[{"action":"memory_signal","summary":"…","evidence":"…"}]'
     '</qiyu-actions>；出现真正未完的事用 open_loop_candidate；用户回复'
     '让某事闭环或暂缓用 open_loop_status；用户要求不再提某事用 '
-    'memory_ban；普通闲聊不追加。';
+    'memory_ban；出现深谈、冷暖变化或边界开合等关系证据用 '
+    'relationship_signal；普通闲聊不追加。';
 
 /// 按设计定稿的装配图组装模型上下文：
 /// 人格宪法 → 硬规则与优先级 → 隐藏块协议 →

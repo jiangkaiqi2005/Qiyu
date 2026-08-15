@@ -5,6 +5,7 @@ import 'package:path/path.dart' as path;
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'open_loop_store.dart';
+import 'relationship_lifecycle.dart';
 
 /// 每日状态包分块预算来自设计笔记定稿：daily-state 100-300 tokens、
 /// open-loops 100-250 tokens、relationship 150-300 tokens。
@@ -39,7 +40,8 @@ enum FinalizationStatus {
   /// 当天文件存在但无法解析（损坏或用户手写）：绝不覆盖，等待恢复流程。
   skippedUnreadable,
 
-  /// 当天文件存在但没有有效条目：只置 finalized，不写任何状态包。
+  /// 当天文件存在但没有可投影条目：置 finalized，不写 daily-state，
+  /// 但 store 级清理（闭环归档/过期/关系证据）照常执行。
   finalizedEmpty,
 
   /// 归档中途写入失败：finalized 保持 false，下次触发时幂等重试。
@@ -84,6 +86,7 @@ final class DailyFinalizationService {
     required this.memoryDirectory,
     required this.episodePipeline,
     OpenLoopStore? openLoopStore,
+    RelationshipLifecycle? relationshipLifecycle,
     Clock? clock,
     AtomicTextWriter? atomicWriter,
   }) : _clock = clock ?? DateTime.now,
@@ -92,16 +95,21 @@ final class DailyFinalizationService {
            OpenLoopStore(
              memoryDirectory: memoryDirectory,
              atomicWriter: atomicWriter ?? const IoAtomicTextWriter(),
+           ),
+       _relationshipLifecycle = relationshipLifecycle ??
+           RelationshipLifecycle(
+             memoryDirectory: memoryDirectory,
+             atomicWriter: atomicWriter ?? const IoAtomicTextWriter(),
+             clock: clock ?? DateTime.now,
            );
 
   final String memoryDirectory;
   final EpisodeMemoryPipeline episodePipeline;
   final OpenLoopStore _openLoopStore;
+  final RelationshipLifecycle _relationshipLifecycle;
   final Clock _clock;
   final AtomicTextWriter _atomicWriter;
 
-  File get _relationshipFile =>
-      File(path.join(memoryDirectory, 'relationship.md'));
   File get _dailyStateFile => File(path.join(memoryDirectory, 'daily-state.md'));
   File get _topIndexFile =>
       File(path.join(memoryDirectory, 'episodes', 'index.md'));
@@ -185,11 +193,18 @@ final class DailyFinalizationService {
     final entries = _validEntries(day.entries);
     if (entries.isEmpty) {
       // 只有系统错误、敏感信息或纯簿记条目的一天没有可投影内容：
-      // 不写任何状态包。但热层的闭环归档与过期清理是 store 级动作，
-      // 与当天条目无关，仍要执行，否则 closed 条目永远进不了归档。
+      // 不写 daily-state。但热层的闭环归档与过期清理是 store 级动作，
+      // 与当天条目无关，仍要执行，否则 closed 条目永远进不了归档；
+      // 关系证据同理——只有深谈信号的一天也是真实互动，relationship
+      // 更新必须照跑。
       await _writeStep(date, () async {
         await _openLoopStore.archiveClosed(date);
         await _openLoopStore.expireStale(_clock());
+        await _relationshipLifecycle.updateAtEndOfDay(
+          date,
+          episodePipeline,
+          dates,
+        );
       });
       await episodePipeline.writeFinalization(
         date,
@@ -214,7 +229,10 @@ final class DailyFinalizationService {
       finalized: false,
     ));
     await _writeStep(date, () => _processFollowUpCandidates(date, day.entries));
-    await _writeStep(date, () => _ensureRelationshipFile(dates));
+    await _writeStep(
+      date,
+      () => _relationshipLifecycle.updateAtEndOfDay(date, episodePipeline, dates),
+    );
     await _writeStep(date, () => _rebuildDailyState(date, dates));
     await _writeStep(date, () => _rebuildIndexes(dates, includingDay: date));
     await episodePipeline.writeFinalization(
@@ -279,23 +297,6 @@ final class DailyFinalizationService {
     }
     await _openLoopStore.archiveClosed(date);
     await _openLoopStore.expireStale(_clock());
-  }
-
-  /// 关系证据：只负责确保 relationship.md 以初识起步存在；既有文件
-  /// 一律不覆盖——阶段升降与温度变化归 ticket 12，记忆控制归 ticket 18。
-  Future<void> _ensureRelationshipFile(List<String> dates) async {
-    final file = _relationshipFile;
-    if (await file.exists()) {
-      return;
-    }
-    final since = dates.isEmpty ? localSessionDate(_clock()) : dates.first;
-    final contents = '# relationship\n'
-        '\n'
-        'stage: 初识\n'
-        'since: $since\n'
-        '阶段描述: 初识阶段：以回应当前话题为主；不调侃、不翻旧账、'
-        '不主动追问私事。\n';
-    await _atomicWriter.replace(file.path, contents);
   }
 
   /// 近日状态包：每天从近 7 天 episodes 从头重写，不接龙旧状态包。
@@ -519,14 +520,16 @@ final class DailyFinalizationService {
 }
 
 /// 只保留可参与投影的条目：摘要非空，且不是系统簿记条目。
-/// 状态变化/禁提产生的 open_loop_event 条目只留在 episode 里做追溯，
-/// 不进摘要、近日状态包或索引——簿记文字（含禁提标题）一旦进入
-/// 状态包就会随注入绕回，与禁提纪律直接冲突。
+/// open_loop_event（状态变化/禁提）与 relationship_signal（关系证据）
+/// 只留在 episode 里做追溯：前者不得进摘要、状态包或索引（簿记文字
+/// 含禁提标题，进状态包就会随注入绕回）；后者按定稿只投影到
+/// relationship.md 的近期变化，不走通用投影。
 List<EpisodeEntry> _validEntries(List<EpisodeEntry> entries) => entries
     .where(
       (entry) =>
           entry.summary.trim().isNotEmpty &&
-          entry.kind != episodeKindOpenLoopEvent,
+          entry.kind != episodeKindOpenLoopEvent &&
+          entry.kind != episodeKindRelationshipSignal,
     )
     .toList();
 

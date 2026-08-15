@@ -15,7 +15,11 @@ enum HiddenActionKind {
   openLoopStatus('open_loop_status'),
 
   /// 用户要求不再提及某事项：立即禁提，属于用户记忆控制。
-  memoryBan('memory_ban');
+  memoryBan('memory_ban'),
+
+  /// 关系证据：深谈信号、温度变化、边界开合。对话中只落 episode，
+  /// 日终归档才据此更新 relationship.md（阶段与温度）。
+  relationshipSignal('relationship_signal');
 
   const HiddenActionKind(this.wireName);
 
@@ -59,6 +63,20 @@ const loopStatusValues = {'active', 'paused', 'closed'};
 /// open_loop_candidate 的 proactive 白名单；缺省由 Host 按 once 处理。
 const loopProactiveValues = {'no', 'once', 'yes'};
 
+/// relationship_signal 的摘要长度上限（runes）。摘要必须是自然、抽象的
+/// 状态描述，不复制原话。
+const maxRelationshipSummaryRunes = 60;
+
+/// relationship_signal 的信号类型白名单：
+/// deep_talk 深谈信号；temperature 冷暖变化；
+/// boundary_open 用户接受某相处方式；boundary_close 用户回避或拒绝。
+const relationshipSignalValues = {
+  'deep_talk',
+  'temperature',
+  'boundary_open',
+  'boundary_close',
+};
+
 /// 动作诊断码：只进入本机诊断，绝不展示给用户。
 class HiddenActionDiagnostics {
   static const invalidFormat = 'hidden_action_invalid_format';
@@ -68,6 +86,8 @@ class HiddenActionDiagnostics {
   static const privilegeViolation = 'hidden_action_privilege';
   static const overLimit = 'hidden_action_over_limit';
   static const multipleBlocks = 'hidden_action_multiple_blocks';
+  static const duplicateRelationshipSignal =
+      'hidden_action_duplicate_relationship_signal';
 }
 
 final class HiddenAction {
@@ -81,6 +101,7 @@ final class HiddenAction {
     this.note,
     this.result,
     this.status,
+    this.signal,
   });
 
   final HiddenActionKind kind;
@@ -103,6 +124,10 @@ final class HiddenAction {
   /// open_loop_status：目标状态（active / paused / closed）。
   final String? status;
 
+  /// relationship_signal：信号类型
+  /// （deep_talk / temperature / boundary_open / boundary_close）。
+  final String? signal;
+
   Map<String, Object?> toJson() => {
     'action': kind.wireName,
     if (summary != null) 'summary': summary,
@@ -113,6 +138,7 @@ final class HiddenAction {
     if (note != null) 'note': note,
     if (result != null) 'result': result,
     if (status != null) 'status': status,
+    if (signal != null) 'signal': signal,
   };
 
   @override
@@ -126,7 +152,8 @@ final class HiddenAction {
       other.proactive == proactive &&
       other.note == note &&
       other.result == result &&
-      other.status == status;
+      other.status == status &&
+      other.signal == signal;
 
   @override
   int get hashCode => Object.hash(
@@ -139,6 +166,7 @@ final class HiddenAction {
     note,
     result,
     status,
+    signal,
   );
 }
 
@@ -245,9 +273,16 @@ HiddenActionParse parseHiddenActions(String rawText) {
       continue;
     }
     final action = _validateAction(item, diagnostics);
-    if (action != null) {
-      actions.add(action);
+    if (action == null) {
+      continue;
     }
+    // 协议约定一轮最多一个 relationship_signal：多余的丢弃并记诊断。
+    if (action.kind == HiddenActionKind.relationshipSignal &&
+        actions.any((kept) => kept.kind == HiddenActionKind.relationshipSignal)) {
+      diagnostics.add(HiddenActionDiagnostics.duplicateRelationshipSignal);
+      continue;
+    }
+    actions.add(action);
   }
 
   return HiddenActionParse(
@@ -406,6 +441,45 @@ HiddenAction? _validateAction(
         return null;
       }
       return HiddenAction(kind: kind, summary: title);
+    case HiddenActionKind.relationshipSignal:
+      final summary = _cleanFieldValue(item['summary']);
+      if (summary == null ||
+          summary.runes.length > maxRelationshipSummaryRunes) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      final signal = _cleanFieldValue(item['signal']);
+      if (signal == null || !relationshipSignalValues.contains(signal)) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      final evidence = _cleanFieldValue(item['evidence']);
+      if (evidence != null && evidence.runes.length > maxHiddenEvidenceRunes) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      // 边界开合会投影进「当前相处方式」，定稿要求每条带依据，evidence 必备。
+      if ((signal == 'boundary_open' || signal == 'boundary_close') &&
+          evidence == null) {
+        diagnostics.add(HiddenActionDiagnostics.invalidFields);
+        return null;
+      }
+      if (_violatesPrivilege(summary) ||
+          (evidence != null && _violatesPrivilege(evidence))) {
+        diagnostics.add(HiddenActionDiagnostics.privilegeViolation);
+        return null;
+      }
+      if (_containsSecret(summary) ||
+          (evidence != null && _containsSecret(evidence))) {
+        diagnostics.add(HiddenActionDiagnostics.sensitiveContent);
+        return null;
+      }
+      return HiddenAction(
+        kind: kind,
+        summary: summary,
+        signal: signal,
+        evidence: evidence,
+      );
   }
 }
 

@@ -17,11 +17,37 @@ class LocalChatView extends StatefulWidget {
 
 class _LocalChatViewState extends State<LocalChatView> {
   final _controller = TextEditingController();
+  final _scrollController = ScrollController();
+  String _lastListSignature = '';
+
+  // 会话恢复与发送后默认跟到底部；只有用户主动上滑才离开，
+  // 避免流式增量把正在回读历史的用户拉回底部。
+  bool _stickToBottom = true;
+  double _lastPixels = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_trackStickToBottom);
+  }
 
   @override
   void dispose() {
     _controller.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  // pixels 减少只可能来自用户上滑（程序跳转与内容增长不会减少），
+  // 以此判定离开底部；滑回底部附近则重新粘滞。
+  void _trackStickToBottom() {
+    final position = _scrollController.position;
+    if (position.pixels < _lastPixels) {
+      _stickToBottom = position.pixels >= position.maxScrollExtent - 120;
+    } else if (position.pixels >= position.maxScrollExtent - 120) {
+      _stickToBottom = true;
+    }
+    _lastPixels = position.pixels;
   }
 
   Future<void> _send(LocalChatViewModel viewModel) async {
@@ -29,6 +55,7 @@ class _LocalChatViewState extends State<LocalChatView> {
     if (text.trim().isEmpty) {
       return;
     }
+    _stickToBottom = true;
     final sent = await viewModel.send(text);
     if (sent && mounted && _controller.text == text) {
       _controller.clear();
@@ -38,6 +65,24 @@ class _LocalChatViewState extends State<LocalChatView> {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<LocalChatViewModel>();
+    // 会话恢复、新消息与流式增量都跟在列表尾部：签名变化时下一帧滚到底。
+    final transient =
+        viewModel.waiting || viewModel.streamingText.isNotEmpty ? 1 : 0;
+    final signature =
+        '${viewModel.messages.length}|$transient|${viewModel.streamingText.length}';
+    if (signature != _lastListSignature) {
+      _lastListSignature = signature;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_stickToBottom) {
+          return;
+        }
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(
+            _scrollController.position.maxScrollExtent,
+          );
+        }
+      });
+    }
     return Scaffold(
       body: Stack(
         children: [
@@ -164,6 +209,7 @@ class _LocalChatViewState extends State<LocalChatView> {
     final transientCount =
         viewModel.waiting || viewModel.streamingText.isNotEmpty ? 1 : 0;
     return ListView.builder(
+      controller: _scrollController,
       padding: const EdgeInsets.all(24),
       itemCount: viewModel.messages.length + transientCount,
       itemBuilder: (context, index) {

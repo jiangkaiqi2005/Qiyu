@@ -2,9 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'markdown_memory_repository.dart';
 import 'open_loop_store.dart';
+import 'relationship_lifecycle.dart';
 
 /// 热层注入硬上限（设计定稿）：总量超 3000 tokens 先砍再注入。
 /// 砍序：先压 long-memory（尚未落地）→ 再压 daily-state 的气氛描述；
@@ -50,6 +52,7 @@ final class StatePackReader {
     final stage = parseRelationshipStage(relationship);
     if (relationship != null && relationship.trim().isNotEmpty) {
       sections.add('【关系温度】\n${relationship.trim()}');
+      sections.add(_stageBoundaryDiscipline(stage));
     }
 
     final dailyState = await _readIfExists(_dailyStateFile);
@@ -92,6 +95,18 @@ final class StatePackReader {
       return null;
     }
     return visible.map((item) => item.raw).join('\n');
+  }
+
+  /// 阶段边界纪律：权限由阶段决定，温度（近期变化）只能影响语气冷暖，
+  /// 不能绕过阶段限制的调侃、主动性与旧事引用；用户边界、安全规则与
+  /// 禁提永远压在关系亲密度之上。
+  String _stageBoundaryDiscipline(RelationshipStage stage) {
+    const prefix =
+        '阶段边界（权限由关系阶段决定，关系温度不能绕过；'
+        '用户边界、安全规则与禁提事项始终高于关系亲密度）：';
+    final permissions =
+        '当前${stage.wireName}：${relationshipStageBehaviorLine(stage)}';
+    return '$prefix\n$permissions';
   }
 
   /// 跟进纪律 + 确定性门控通过的候选池（状态 active、允许主动、

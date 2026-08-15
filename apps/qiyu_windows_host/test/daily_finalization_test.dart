@@ -660,6 +660,60 @@ void main() {
     expect('人生第一次演讲'.allMatches(contents).length, 1);
   });
 
+  test('end-of-day relationship step promotes once and replays stay stable', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-relationship-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 1, 22);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    // 三个活跃日 + 一次深谈：证据够到熟悉。
+    for (var day = 1; day <= 3; day += 1) {
+      now = DateTime(2026, 8, day, 22);
+      await pipeline.processReply(
+        session: _session('session-$day', ['req-$day']),
+        requestId: 'req-$day',
+        hiddenActions: [
+          const HiddenAction(
+            kind: HiddenActionKind.memorySignal,
+            summary: '聊了日常',
+          ),
+          if (day == 2)
+            const HiddenAction(
+              kind: HiddenActionKind.relationshipSignal,
+              signal: 'deep_talk',
+              summary: '用户愿意聊到更深的工作困扰',
+            ),
+        ],
+      );
+    }
+    now = DateTime(2026, 8, 3, 22);
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      clock: () => now,
+    );
+    final relationshipFile = File(
+      '${temporaryDirectory.path}/relationship.md',
+    );
+
+    // 补扫三个旧日都在同一自然日执行：只允许升级一次。
+    await service.finalizeDay('2026-08-01');
+    await service.finalizeDay('2026-08-02');
+    await service.finalizeDay('2026-08-03');
+    var contents = await relationshipFile.readAsString(encoding: utf8);
+    expect(contents, contains('stage: 熟悉'));
+    expect(contents, contains('用户愿意聊到更深的工作困扰'));
+
+    // 重复日终：阶段不回退也不重复升级。
+    await service.finalizeDay('2026-08-03');
+    contents = await relationshipFile.readAsString(encoding: utf8);
+    expect(contents, contains('stage: 熟悉'));
+  });
+
   test('banned matters are never re-promoted by later end-of-day runs', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-finalization-ban-test-',
@@ -788,6 +842,11 @@ void main() {
       requestId: 'req-2',
       hiddenActions: const [
         HiddenAction(kind: HiddenActionKind.memoryBan, summary: '医院检查'),
+        HiddenAction(
+          kind: HiddenActionKind.relationshipSignal,
+          signal: 'deep_talk',
+          summary: '用户愿意聊到更深的家庭关系',
+        ),
       ],
     );
     final service = DailyFinalizationService(
@@ -804,6 +863,12 @@ void main() {
     expect(
       day.entries.where((entry) => entry.kind == episodeKindOpenLoopEvent),
       hasLength(2),
+    );
+    expect(
+      day.entries.where(
+        (entry) => entry.kind == episodeKindRelationshipSignal,
+      ),
+      hasLength(1),
     );
     // 但摘要只复述真实记忆条目。
     expect(day.summary, contains('聊了周末的安排'));
@@ -822,6 +887,15 @@ void main() {
     expect(monthIndex, contains('聊了周末的安排'));
     expect(monthIndex, isNot(contains('Open-loop 状态')));
     expect(monthIndex, isNot(contains('禁提')));
+    // 关系证据也不走通用投影。
+    expect(day.summary, isNot(contains('家庭关系')));
+    expect(dailyState, isNot(contains('家庭关系')));
+    expect(monthIndex, isNot(contains('家庭关系')));
+    // 它唯一的去处是 relationship.md 的近期变化。
+    final relationship = await File(
+      '${temporaryDirectory.path}/relationship.md',
+    ).readAsString(encoding: utf8);
+    expect(relationship, contains('用户愿意聊到更深的家庭关系'));
   });
 }
 

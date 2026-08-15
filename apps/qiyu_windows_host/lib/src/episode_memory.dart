@@ -14,6 +14,7 @@ const episodeWindowTurns = 4;
 const episodeKindMemory = 'memory';
 const episodeKindOpenLoopCandidate = 'open_loop_candidate';
 const episodeKindOpenLoopEvent = 'open_loop_event';
+const episodeKindRelationshipSignal = 'relationship_signal';
 
 final class EpisodeEntry {
   const EpisodeEntry({
@@ -27,6 +28,7 @@ final class EpisodeEntry {
     this.due,
     this.proactive,
     this.note,
+    this.signal,
   });
 
   factory EpisodeEntry.fromJson(Map<String, Object?> json) => EpisodeEntry(
@@ -40,6 +42,7 @@ final class EpisodeEntry {
     due: json['due'] as String?,
     proactive: json['proactive'] as String?,
     note: json['note'] as String?,
+    signal: json['signal'] as String?,
   );
 
   final String id;
@@ -49,13 +52,18 @@ final class EpisodeEntry {
   final String? evidence;
   final DateTime at;
 
-  /// 条目来源：普通记忆信号、Open-loop 日终候选或 Open-loop 状态事件。
+  /// 条目来源：普通记忆信号、Open-loop 日终候选、Open-loop 状态事件
+  /// 或关系证据信号。
   final String kind;
 
   /// Open-loop 候选的四字段载荷，日终提升时原样带入 open-loops.md。
   final String? due;
   final String? proactive;
   final String? note;
+
+  /// 关系证据的信号类型（deep_talk / temperature / boundary_open /
+  /// boundary_close），日终据此更新 relationship.md 的阶段与温度。
+  final String? signal;
 
   Map<String, Object?> toJson() => {
     'id': id,
@@ -68,6 +76,7 @@ final class EpisodeEntry {
     if (due != null) 'due': due,
     if (proactive != null) 'proactive': proactive,
     if (note != null) 'note': note,
+    if (signal != null) 'signal': signal,
   };
 }
 
@@ -285,7 +294,8 @@ final class EpisodeMemoryPipeline {
               action.kind == HiddenActionKind.memorySignal ||
               action.kind == HiddenActionKind.openLoopCandidate ||
               action.kind == HiddenActionKind.openLoopStatus ||
-              action.kind == HiddenActionKind.memoryBan,
+              action.kind == HiddenActionKind.memoryBan ||
+              action.kind == HiddenActionKind.relationshipSignal,
         )
         .toList();
     if (consumable.isNotEmpty) {
@@ -392,6 +402,19 @@ final class EpisodeMemoryPipeline {
           summary: '禁提: ${redactSessionText(action.summary ?? '').trim()}',
           at: _clock().toUtc(),
           kind: episodeKindOpenLoopEvent,
+        );
+      case HiddenActionKind.relationshipSignal:
+        // 摘要本身就是自然、抽象的状态描述（白名单已校验），
+        // 原话细节只留在 evidence 供追溯，不进任何注入投影。
+        return EpisodeEntry(
+          id: id,
+          sessionId: session.id,
+          requestId: requestId,
+          summary: redactSessionText(action.summary ?? '').trim(),
+          evidence: redacted(action.evidence),
+          at: _clock().toUtc(),
+          kind: episodeKindRelationshipSignal,
+          signal: action.signal,
         );
       case HiddenActionKind.memoryRecall:
       case HiddenActionKind.noAction:
