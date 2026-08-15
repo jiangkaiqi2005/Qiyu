@@ -11,14 +11,14 @@ final class QiyuHostRunner {
     required this.webRoot,
     required this.runtimeDirectory,
     required this.memoryDirectory,
-    required this.productSoul,
+    required this.personaConstitution,
     required this.browserLauncher,
   });
 
   final String webRoot;
   final String runtimeDirectory;
   final String memoryDirectory;
-  final String productSoul;
+  final String personaConstitution;
   final BrowserLauncher browserLauncher;
 
   Future<HostLaunchResult> launch({bool openBrowser = true}) async {
@@ -42,7 +42,7 @@ final class QiyuHostRunner {
       host = await LocalAppHost.start(
         webRoot: webRoot,
         memoryDirectory: memoryDirectory,
-        productSoul: productSoul,
+        personaConstitution: personaConstitution,
         activationToken: activationToken,
         onActivate: () => browserLauncher.open(host.launchUri),
       );

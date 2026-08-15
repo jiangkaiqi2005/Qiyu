@@ -109,14 +109,14 @@ String resolveHostRuntimeDirectory({
   return path.join(Directory.systemTemp.path, 'Qiyu', 'runtime');
 }
 
-String resolveProductSoulPath({
+String resolvePersonaConstitutionPath({
   required String currentDirectory,
   required String executablePath,
 }) {
   final candidates = [
-    path.join(path.dirname(executablePath), 'product-soul.md'),
-    path.join(currentDirectory, '栖语产品灵魂.md'),
-    path.join(currentDirectory, '..', '..', '栖语产品灵魂.md'),
+    path.join(path.dirname(executablePath), 'persona-constitution.md'),
+    path.join(currentDirectory, '栖语人格宪法.md'),
+    path.join(currentDirectory, '..', '..', '栖语人格宪法.md'),
   ];
   for (final candidate in candidates) {
     final absoluteCandidate = path.normalize(path.absolute(candidate));
@@ -124,5 +124,5 @@ String resolveProductSoulPath({
       return absoluteCandidate;
     }
   }
-  throw FileSystemException('找不到栖语产品灵魂.md，无法启动模型聊天');
+  throw FileSystemException('找不到栖语人格宪法.md，无法启动模型聊天');
 }

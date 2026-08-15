@@ -35,8 +35,8 @@ Future<void> main(List<String> arguments) async {
       environment: Platform.environment,
       overridePath: options.memoryDirectory,
     );
-    final productSoul = await File(
-      resolveProductSoulPath(
+    final personaConstitution = await File(
+      resolvePersonaConstitutionPath(
         currentDirectory: Directory.current.path,
         executablePath: Platform.resolvedExecutable,
       ),
@@ -45,7 +45,7 @@ Future<void> main(List<String> arguments) async {
       webRoot: webRoot,
       runtimeDirectory: runtimeDirectory,
       memoryDirectory: memoryDirectory,
-      productSoul: productSoul,
+      personaConstitution: personaConstitution,
       browserLauncher: const WindowsDefaultBrowserLauncher(),
     ).launch(openBrowser: options.openBrowser);
 

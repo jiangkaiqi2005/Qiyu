@@ -93,8 +93,9 @@ void main() {
     File(
       path.join(webDirectory.path, 'index.html'),
     ).writeAsStringSync('<!doctype html>');
-    final productSoul = File(path.join(bundleDirectory.path, 'product-soul.md'))
-      ..writeAsStringSync('测试产品灵魂');
+    final personaConstitution = File(
+      path.join(bundleDirectory.path, 'persona-constitution.md'),
+    )..writeAsStringSync('测试人格宪法');
 
     final resolved = resolveHostWebRoot(
       currentDirectory: temporaryDirectory.path,
@@ -104,14 +105,14 @@ void main() {
     expect(path.equals(resolved, webDirectory.path), isTrue);
     expect(
       path.equals(
-        resolveProductSoulPath(
+        resolvePersonaConstitutionPath(
           currentDirectory: temporaryDirectory.path,
           executablePath: path.join(
             bundleDirectory.path,
             'qiyu_windows_host.exe',
           ),
         ),
-        productSoul.path,
+        personaConstitution.path,
       ),
       isTrue,
     );

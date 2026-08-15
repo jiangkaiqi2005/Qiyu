@@ -42,7 +42,7 @@ void main() {
         webRoot: webRoot.path,
         runtimeDirectory: runtimeDirectory.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
         browserLauncher: primaryBrowser,
       ).launch();
 
@@ -55,7 +55,7 @@ void main() {
         webRoot: webRoot.path,
         runtimeDirectory: runtimeDirectory.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
         browserLauncher: secondaryBrowser,
       ).launch();
 
@@ -79,7 +79,7 @@ void main() {
       webRoot: webRoot.path,
       runtimeDirectory: runtimeDirectory.path,
       memoryDirectory: memoryDirectory.path,
-      productSoul: '测试产品灵魂',
+      personaConstitution: '测试人格宪法',
       browserLauncher: browser,
     ).launch();
 
@@ -98,7 +98,7 @@ void main() {
         webRoot: webRoot.path,
         runtimeDirectory: runtimeDirectory.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
         browserLauncher: _RecordingBrowserLauncher(),
       ).launch();
       expect(primary.isPrimary, isTrue);
@@ -116,7 +116,7 @@ void main() {
         webRoot: webRoot.path,
         runtimeDirectory: runtimeDirectory.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
         browserLauncher: _RecordingBrowserLauncher(),
       );
       await expectLater(

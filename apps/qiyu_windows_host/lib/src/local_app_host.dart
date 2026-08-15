@@ -43,7 +43,7 @@ final class LocalAppHost {
   static Future<LocalAppHost> start({
     required String webRoot,
     required String memoryDirectory,
-    required String productSoul,
+    required String personaConstitution,
     String? activationToken,
     Future<BrowserLaunchResult> Function()? onActivate,
     ProviderSettingsService? providerSettingsService,
@@ -58,7 +58,7 @@ final class LocalAppHost {
         'activationToken and onActivate must either both be set or both be null',
       );
     }
-    final modelPromptBuilder = ModelPromptBuilder(productSoul);
+    final modelPromptBuilder = ModelPromptBuilder(personaConstitution);
     final effectiveProviderSettings =
         providerSettingsService ??
         ProviderSettingsService(

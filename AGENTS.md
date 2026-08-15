@@ -46,7 +46,7 @@ Flutter `/chat` → `HttpLocalChatGateway` → `POST /api/chat` → `LocalChatSe
 
 1. Host 先校验 `requestId`/文本，按 `requestId` 幂等写入用户原始消息；写入 sessions 的文本只做 secrets 脱敏，发送给安全分类与模型的文本另行清洗类 XML、ChatML 与角色控制结构。
 2. `QiyuBehaviorCore.reply` 先在本地分类危机、医疗、法律、金融等 non-normal 输入；这类输入**绝不调用 Provider**。未配置 Provider、Provider 失败或模型输出不合格时统一走本地规则回复。
-3. 普通输入通过 `ModelPromptBuilder` 注入硬规则、`栖语产品灵魂.md` 全文与最近已完成会话，再交给 `StreamingProviderChatClient`。
+3. 普通输入通过 `ModelPromptBuilder` 按定稿装配图组装上下文：人格宪法（`栖语人格宪法.md`）→ 硬规则与优先级 → 隐藏块协议 → `<daily_state>`/`<long_memory>`/`<persona>`（空块不输出）→ 最近已完成会话 → 格式提醒 → 当前消息，再交给 `StreamingProviderChatClient`。
 4. `ProviderModelGateway` 将 OpenAI SSE、Anthropic SSE、Ollama NDJSON 统一为 `delta / done / failure`。只有收到协议原生终止标记（OpenAI `finish_reason`/`[DONE]`、Anthropic `message_stop`、Ollama `done:true`）才算完成；提前 EOF、超时或原生 error 必须失败并降级，不能把半句当完整回复。
 5. Provider 的原始增量先在 Host 内完整缓存；候选回复通过结构清洗、违禁词与人格边界校验后，才以共享 `ChatDeliveryEvent` 协议发送 `accepted → waiting → [fallback] → delta* → message → state → done`。页面绝不能看到未经完整安全校验的原始 token。
 6. 用户可通过 `/api/chat/cancel` 按 `requestId` 停止生成；取消会向下取消 Provider/HTTP 流，只保留可重试的用户 turn，不把已展示半句或未完成候选记录为完整栖语回复。
@@ -64,7 +64,7 @@ Flutter `/chat` → `HttpLocalChatGateway` → `POST /api/chat` → `LocalChatSe
 
 ## Behavior constraints（改动回复行为前必读）
 
-- `栖语产品灵魂.md` 是人格/风格的最高优先级依据（直接注入 system prompt）；`docs/product/behavior-spec.md` 是从它提炼的工程行为规范。
+- `栖语产品灵魂.md` 是人格/风格的最高优先级设计依据（只作设计文档，不再注入 prompt）；注入 system prompt 的是从它定稿的 `栖语人格宪法.md`；`docs/product/behavior-spec.md` 是从它提炼的工程行为规范。
 - 关键约束：默认少说（回复频谱取最少一侧）；禁止客服式话术（`FORBIDDEN_PHRASES`，如「我理解你的感受」「谢谢你愿意和我分享」）；用户说「晚安」只收束、不开新话题；调侃/翻旧账只在关系变深后出现；一致性高于聪明。
 - 改回复逻辑时，同步更新 `eval/golden-cases.json`，并保持 `npm test` 与 `npm run eval` 全绿。
 - 跨 JS/Dart 的行为或协议改动还要同步 `contracts/qiyu_behavior_contracts.json` 和两端消费测试；不得用一端自测掩盖 wire 分叉。

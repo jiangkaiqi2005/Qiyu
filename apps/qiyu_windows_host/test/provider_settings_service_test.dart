@@ -9,7 +9,7 @@ void main() {
     temperature: 0.7,
     timeoutSeconds: 30,
   );
-  const promptBuilder = ModelPromptBuilder('测试产品灵魂');
+  const promptBuilder = ModelPromptBuilder('测试人格宪法');
 
   test('设置快照只返回 Key 是否存在且重启后配置仍可用', () async {
     final repository = _MemoryProviderConfigRepository();
@@ -55,7 +55,7 @@ void main() {
     expect(result.status, ProviderTestStatus.success);
     expect(result.toJson().toString(), isNot(contains('private-value')));
     expect(gateway.apiKey, 'private-value');
-    expect(gateway.messages!.first.content, contains('测试产品灵魂'));
+    expect(gateway.messages!.first.content, contains('测试人格宪法'));
   });
 
   test('切换 Provider 或 URL 时不会把旧配置的 Key 发给新目标', () async {

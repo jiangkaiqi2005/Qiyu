@@ -41,7 +41,7 @@ void main() {
       final host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
 
       expect(host.address.address, InternetAddress.loopbackIPv4.address);
@@ -78,7 +78,7 @@ void main() {
       final host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
 
       final sessionStart = await _send(host.launchUri);
@@ -156,7 +156,7 @@ void main() {
       final restartedHost = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       final oldSession = await _send(
         restartedHost.origin.resolve('/api/bootstrap'),
@@ -183,7 +183,7 @@ void main() {
       final host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
 
       final originalUri = host.launchUri;
@@ -203,7 +203,7 @@ void main() {
       final host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       final session = await _openBrowserSession(host);
 
@@ -270,7 +270,7 @@ void main() {
       final host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       final firstSession = await _openBrowserSession(host);
       final firstChat = await _send(
@@ -304,7 +304,7 @@ void main() {
       final restarted = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       final restartedSession = await _openBrowserSession(restarted);
       final restored = await _send(
@@ -353,12 +353,12 @@ void main() {
         JsonProviderConfigRepository(filePath: configPath),
         secrets,
         gateway,
-        const ModelPromptBuilder('测试产品灵魂'),
+        const ModelPromptBuilder('测试人格宪法'),
       );
       var host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
         providerSettingsService: settingsService(),
       );
       var browser = await _openBrowserSession(host);
@@ -393,7 +393,7 @@ void main() {
       host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
         providerSettingsService: settingsService(),
       );
       browser = await _openBrowserSession(host);
@@ -433,7 +433,7 @@ void main() {
       JsonProviderConfigRepository(filePath: configPath),
       secrets,
       const _FailingModelGateway(ModelFailureKind.timeout),
-      const ModelPromptBuilder('测试产品灵魂'),
+      const ModelPromptBuilder('测试人格宪法'),
     );
     await settings.save(
       config: ProviderConfig(
@@ -448,7 +448,7 @@ void main() {
     final host = await LocalAppHost.start(
       webRoot: webRoot.path,
       memoryDirectory: memoryDirectory.path,
-      productSoul: '测试产品灵魂',
+      personaConstitution: '测试人格宪法',
       providerSettingsService: settings,
     );
     final browser = await _openBrowserSession(host);
@@ -479,7 +479,7 @@ void main() {
       var host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       var browser = await _openBrowserSession(host);
       final chat = await _send(
@@ -533,7 +533,7 @@ void main() {
       host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       browser = await _openBrowserSession(host);
       final afterRestart = await _send(
@@ -611,7 +611,7 @@ void main() {
       final host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       final browser = await _openBrowserSession(host);
       final chat = await _send(
@@ -693,7 +693,7 @@ void main() {
       var host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       var browser = await _openBrowserSession(host);
 
@@ -731,7 +731,7 @@ void main() {
       host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       browser = await _openBrowserSession(host);
       final afterRestart = await _send(
@@ -745,7 +745,7 @@ void main() {
       host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       browser = await _openBrowserSession(host);
       final afterCorruption = await _send(
@@ -759,7 +759,7 @@ void main() {
       host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
-        productSoul: '测试产品灵魂',
+        personaConstitution: '测试人格宪法',
       );
       browser = await _openBrowserSession(host);
       final afterClear = await _send(

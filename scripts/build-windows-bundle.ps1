@@ -80,10 +80,10 @@ try {
 
 Copy-Item -LiteralPath $flutterWebPath `
   -Destination (Join-Path $stagingPath 'web') -Recurse
-$productSoulFileName = ([char]0x6816) + ([char]0x8BED) + ([char]0x4EA7) + `
-  ([char]0x54C1) + ([char]0x7075) + ([char]0x9B42) + '.md'
-Copy-Item -LiteralPath (Join-Path $repositoryRoot $productSoulFileName) `
-  -Destination (Join-Path $stagingPath 'product-soul.md')
+$personaConstitutionFileName = ([char]0x6816) + ([char]0x8BED) + `
+  ([char]0x4EBA) + ([char]0x683C) + ([char]0x5BAA) + ([char]0x6CD5) + '.md'
+Copy-Item -LiteralPath (Join-Path $repositoryRoot $personaConstitutionFileName) `
+  -Destination (Join-Path $stagingPath 'persona-constitution.md')
 Remove-GeneratedDirectory -Path $bundlePath -ExpectedParent $hostBuildPath
 Move-Item -LiteralPath $stagingPath -Destination $bundlePath
 

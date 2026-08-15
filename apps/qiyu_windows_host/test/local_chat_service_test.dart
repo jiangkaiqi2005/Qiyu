@@ -109,7 +109,7 @@ void main() {
     final service = LocalChatService(
       repository,
       providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('测试产品灵魂'),
+      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
       clock: () => DateTime(2026, 8, 11, 22, 30),
     );
 
@@ -152,7 +152,7 @@ void main() {
     final service = LocalChatService(
       repository,
       providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('完整测试产品灵魂'),
+      modelPromptBuilder: const ModelPromptBuilder('完整测试人格宪法'),
       clock: () => DateTime(2026, 8, 12, 22, 30),
     );
 
@@ -165,8 +165,15 @@ void main() {
     expect(exchange.result.source, ReplySource.llm);
     expect(restored.turns.last.source, ReplySource.llm);
     expect(restored.turns.last.text, '还没睡？');
-    expect(provider.messages!.first.content, contains('完整测试产品灵魂'));
-    expect(provider.messages!.first.content, contains('<product_soul>'));
+    expect(provider.messages!.first.content, contains('完整测试人格宪法'));
+    expect(provider.messages!.first.content, contains('<persona_constitution>'));
+    expect(provider.messages!.first.content, contains('<hard_rules>'));
+    expect(provider.messages!.first.content, contains('<memory_actions>'));
+    // 空块不输出：状态包/长期印象/画像文件未落地前不出现。
+    expect(provider.messages!.first.content, isNot(contains('<daily_state>')));
+    expect(provider.messages!.first.content, isNot(contains('<long_memory>')));
+    expect(provider.messages!.first.content, isNot(contains('<persona>')));
+    expect(provider.messages!.first.content, isNot(contains('<recent_state>')));
   });
 
   test(
@@ -259,7 +266,7 @@ void main() {
         clock: () => DateTime(2026, 8, 12, 22, 30),
       ),
       providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('测试产品灵魂'),
+      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
       clock: () => DateTime(2026, 8, 12, 22, 30),
     );
 
@@ -285,7 +292,7 @@ void main() {
         clock: () => DateTime(2026, 8, 12, 22, 30),
       ),
       providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('测试产品灵魂'),
+      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
       clock: () => DateTime(2026, 8, 12, 22, 30),
     );
     final longAttribute = 'x' * 700;
@@ -316,7 +323,7 @@ void main() {
           clock: () => DateTime(2026, 8, 12, 22, 30),
         ),
         providerChatClient: provider,
-        modelPromptBuilder: const ModelPromptBuilder('测试产品灵魂'),
+        modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
         clock: () => DateTime(2026, 8, 12, 22, 30),
       );
 
@@ -402,7 +409,7 @@ void main() {
             ModelStreamEvent.done(),
           ]),
         ),
-        modelPromptBuilder: const ModelPromptBuilder('测试产品灵魂'),
+        modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
         deliveryPause: (_) async {},
       );
 
