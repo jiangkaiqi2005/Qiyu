@@ -99,6 +99,17 @@ final class ModelPromptBuilder {
         memoryContext: memoryContext,
       );
 
+  /// 返回只替换【长期印象】块的新 builder；long-memory 每轮实测，
+  /// 其余字段不变。
+  ModelPromptBuilder copyWithLongMemory(String nextLongMemory) =>
+      ModelPromptBuilder(
+        personaConstitution,
+        dailyState: dailyState,
+        longMemory: nextLongMemory,
+        persona: persona,
+        memoryContext: memoryContext,
+      );
+
   /// 返回只替换【检索结果】块的新 builder。检索结果是临时透镜：
   /// 只在命中后的下一轮注入一次，不进系统提示词。
   ModelPromptBuilder copyWithMemoryContext(String nextMemoryContext) =>

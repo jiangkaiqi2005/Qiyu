@@ -2285,6 +2285,256 @@ void main() {
     await service.finalizePending();
     expect(summaryFile.readAsStringSync(), before);
   });
+
+  test('a bedtime dream accepted impressions into the next chat hot layer', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-wiring-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 11, 22, 30);
+    final provider = _RecallScriptedProviderClient(
+      streamReplies: [
+        ModelCompletion.reply('''记下了。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户最近有面试安排","evidence":"下周有面试"}]
+</qiyu-actions>'''),
+        ModelCompletion.reply('在。'),
+      ],
+      completions: [
+        ModelCompletion.reply(jsonEncode({
+          'items': [
+            {
+              'section': '重要事件',
+              'text': '用户最近有面试安排',
+              'evidence': ['2026-08-11'],
+            },
+          ],
+        })),
+      ],
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      ),
+      providerChatClient: provider,
+      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => now,
+      ),
+      statePackReader: StatePackReader(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      ),
+      dreamService: DreamService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        modelClient: provider,
+        clock: () => now,
+      ),
+      clock: () => now,
+    );
+
+    final first = await service.send(
+      requestId: 'dream-day',
+      text: '下周有面试',
+    );
+    expect(first.result.source, ReplySource.llm);
+    await service.send(
+      requestId: 'dream-night',
+      text: '晚安',
+      sessionId: first.session.id,
+    );
+    await service.finalizePending();
+
+    // 晚安归档之后 Dream 接纳：长期印象落盘。
+    final longMemory = File(
+      '${temporaryDirectory.path}/long-memory.md',
+    ).readAsStringSync();
+    expect(longMemory, contains('- 用户最近有面试安排'));
+    expect(provider.completeCalls, hasLength(1));
+
+    // 次日聊天：长期印象进入热层注入。
+    now = DateTime(2026, 8, 12, 21);
+    await service.send(requestId: 'dream-next', text: '在吗');
+    final system = provider.messages!.first.content;
+    expect(system, contains('<long_memory>'));
+    expect(system, contains('【长期印象】'));
+    expect(system, contains('用户最近有面试安排'));
+
+    // 七天内的下一次晚安不会重跑 Dream。
+    await service.send(requestId: 'dream-night-2', text: '晚安');
+    await service.finalizePending();
+    expect(provider.completeCalls, hasLength(1));
+    expect(
+      File('${temporaryDirectory.path}/long-memory.md').readAsStringSync(),
+      longMemory,
+    );
+  });
+
+  test('startup catches up a bedtime dream that failed overnight', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-catchup-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 11, 22, 30);
+    final failingProvider = _RecallScriptedProviderClient(
+      streamReplies: [
+        ModelCompletion.reply('''记下了。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户下周搬家","evidence":"下周搬家"}]
+</qiyu-actions>'''),
+      ],
+      completions: const [
+        ModelCompletion.failure(ModelFailureKind.network),
+      ],
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      ),
+      providerChatClient: failingProvider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => now,
+      ),
+      dreamService: DreamService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        modelClient: failingProvider,
+        clock: () => now,
+      ),
+      clock: () => now,
+    );
+    final first = await service.send(
+      requestId: 'night-fail',
+      text: '下周搬家',
+    );
+    await service.send(
+      requestId: 'night-fail-bed',
+      text: '晚安',
+      sessionId: first.session.id,
+    );
+    await service.finalizePending();
+    // 夜里模型失败：长期印象不落盘。
+    expect(
+      File('${temporaryDirectory.path}/long-memory.md').existsSync(),
+      isFalse,
+    );
+
+    // 次日重启：启动补跑兑现晚安留下的请求。
+    now = DateTime(2026, 8, 12, 9);
+    final recoveredProvider = _RecallScriptedProviderClient(
+      streamReplies: const [],
+      completions: [
+        ModelCompletion.reply(jsonEncode({
+          'items': [
+            {
+              'section': '重要事件',
+              'text': '用户搬了一次家',
+              'evidence': ['2026-08-11'],
+            },
+          ],
+        })),
+      ],
+    );
+    final restarted = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      ),
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => now,
+      ),
+      dreamService: DreamService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        modelClient: recoveredProvider,
+        clock: () => now,
+      ),
+      clock: () => now,
+    );
+    await restarted.initialize();
+    await restarted.finalizePending();
+
+    final longMemory = File(
+      '${temporaryDirectory.path}/long-memory.md',
+    ).readAsStringSync();
+    expect(longMemory, contains('- 用户搬了一次家'));
+  });
+
+  test('long-memory injection is clipped to the hot-layer budget', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-injection-budget-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 12, 21);
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('在。'),
+    );
+    // 手写一份超预算的合法长期印象（记忆中心允许用户编辑）。
+    final oversized = renderLongMemory({
+      for (final section in longMemorySections)
+        section: [
+          for (var index = 0; index < 35; index += 1)
+            '$section的长期印象条目内容测试文本$index',
+        ],
+    });
+    expect(oversized.runes.length, greaterThan(hotLayerMaxRunes));
+    File('${temporaryDirectory.path}/long-memory.md').writeAsStringSync(
+      oversized,
+      encoding: utf8,
+    );
+    File('${temporaryDirectory.path}/relationship.md').writeAsStringSync(
+      '# relationship\n\nstage: 初识\nsince: 2026-08-01\n',
+      encoding: utf8,
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      providerChatClient: provider,
+      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
+      statePackReader: StatePackReader(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      clock: clock,
+    );
+
+    await service.send(requestId: 'budget-1', text: '在吗');
+
+    final system = provider.messages!.first.content;
+    expect(system, contains('<daily_state>'));
+    expect(system, contains('<long_memory>'));
+    final match = RegExp(
+      r'<long_memory>\n【长期印象】\n([\s\S]*?)\n</long_memory>',
+    ).firstMatch(system);
+    expect(match, isNotNull);
+    final injected = match!.group(1)!;
+    // 注入的长期印象被裁进剩余热层预算，且逆序从尾部条目开始裁。
+    expect(injected.runes.length, lessThanOrEqualTo(hotLayerMaxRunes));
+    expect(injected, contains('## 人与关系'));
+    expect(injected, isNot(contains('共同过往的长期印象条目内容测试文本34')));
+  });
 }
 
 final class _FailOnceAtomicWriter implements AtomicTextWriter {

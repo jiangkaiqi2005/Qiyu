@@ -9,8 +9,9 @@ import 'open_loop_store.dart';
 import 'relationship_lifecycle.dart';
 
 /// 热层注入硬上限（设计定稿）：总量超 3000 tokens 先砍再注入。
-/// 砍序：先压 long-memory（尚未落地）→ 再压 daily-state 的气氛描述；
-/// 永不砍 relationship 与 open-loops。
+/// 砍序：先压 long-memory（注入关在聊天服务侧按剩余预算裁剪，见
+/// clipLongMemoryBlock）→ 再压 daily-state 的近日状态节；永不砍
+/// relationship 与 open-loops。
 const hotLayerMaxRunes = 3000;
 
 /// 每日状态包装配（装配图定稿）：服务端每轮读状态包三个文件
@@ -35,6 +36,16 @@ final class StatePackReader {
   File get _relationshipFile =>
       File(path.join(memoryDirectory, 'relationship.md'));
   File get _dailyStateFile => File(path.join(memoryDirectory, 'daily-state.md'));
+  File get _longMemoryFile =>
+      File(path.join(memoryDirectory, 'long-memory.md'));
+
+  /// 返回可直接注入的【长期印象】内容；文件不存在、为空或读取失败
+  /// （损坏等待恢复流程）时返回空串，空块不输出。预算裁剪由注入关
+  /// 按剩余热层预算执行，不在这里。
+  Future<String> readLongMemoryBlock() async {
+    final contents = await _readIfExists(_longMemoryFile);
+    return contents?.trim() ?? '';
+  }
 
   /// 返回可直接注入的【近况】内容；无任何可用内容时返回空串。
   /// 禁提事项不出现在注入内容中（过滤 open-loop 投影；relationship 与

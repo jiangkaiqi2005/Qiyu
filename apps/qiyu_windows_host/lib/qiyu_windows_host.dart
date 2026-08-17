@@ -6,6 +6,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 export 'src/browser_launcher.dart';
 export 'src/daily_finalization.dart';
 export 'src/daily_understanding.dart';
+export 'src/dream.dart';
 export 'src/episode_index.dart';
 export 'src/episode_memory.dart';
 export 'src/host_command.dart';

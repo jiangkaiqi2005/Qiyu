@@ -10,6 +10,7 @@ import 'package:path/path.dart' as path;
 
 import 'browser_launcher.dart';
 import 'daily_finalization.dart';
+import 'dream.dart';
 import 'episode_memory.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
@@ -96,6 +97,16 @@ final class LocalAppHost {
       episodePipeline: episodePipeline,
       openLoopStore: openLoopStore,
     );
+    // Dream（五段节奏第五动作）：晚安后与启动补跑时深度重组产出
+    // 长期印象；与聊天共用同一 Provider 配置与凭据，未配置时不运行，
+    // 绝不用规则补写长期内容。
+    final dreamService = DreamService(
+      memoryDirectory: memoryDirectory,
+      episodePipeline: episodePipeline,
+      openLoopStore: openLoopStore,
+      monthlySummary: monthlySummary,
+      modelClient: effectiveProviderSettings,
+    );
     final chatService = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
       providerChatClient: effectiveProviderSettings,
@@ -125,6 +136,7 @@ final class LocalAppHost {
       ),
       personaTree: personaTree,
       monthlySummary: monthlySummary,
+      dreamService: dreamService,
     );
     await chatService.initialize();
     final onboardingRepository = JsonOnboardingRepository(

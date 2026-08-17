@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'daily_finalization.dart';
+import 'dream.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_recall.dart';
@@ -99,6 +100,7 @@ final class LocalChatService {
     this.memoryRecall,
     this.personaTree,
     this.monthlySummary,
+    this.dreamService,
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
     Clock? clock,
@@ -130,6 +132,11 @@ final class LocalChatService {
   /// 月压缩（ticket 15，五段节奏第四动作）：进入新月、跨年或启动
   /// 补做时压缩当前月之前的月份。
   final MonthlySummaryStore? monthlySummary;
+
+  /// Dream（ticket 16，五段节奏第五动作）：晚安后且距上次成功至少
+  /// 七天时深度重组产出长期印象；启动时补跑上次晚安未成功的请求。
+  /// 与日终归档、月压缩挂同一条后台任务链，保证只看到 finalized 材料。
+  final DreamService? dreamService;
   final DeliveryPause _deliveryPause;
   final RecallWindowWait _recallWindowWait;
   final Clock _clock;
@@ -152,6 +159,9 @@ final class LocalChatService {
     );
     // 启动也补做月压缩：跨月停机后重新打开时，上月摘要在这里补齐。
     _scheduleMonthlyCompression();
+    // 启动补跑 Dream：只兑现上次晚安留下且仍满足七天间隔的请求，
+    // 没有晚安请求时绝不自行运行。
+    _scheduleDream(bedtime: false);
   }
 
   /// 等待已调度的后台日终归档完成。日终归档幂等且每一步原子写入，
@@ -613,9 +623,10 @@ final class LocalChatService {
     );
   }
 
-  /// 日终归档触发点（五段节奏第三动作），全部在可见回复交付之后后台执行：
-  /// - 晚安：睡前收束完成后归档当天，并补做更早的未完成日期；
-  ///   晚安只触发日终归档，Dream 是独立的第五动作（ticket 16），绝不在此触发。
+  /// 可见回复交付之后的后台记忆触发点，全部不阻塞首响：
+  /// - 晚安：睡前收束完成后归档当天并补做更早的未完成日期（第三动作），
+  ///   随后依次补月压缩（第四动作）与 Dream（第五动作，ticket 16）。
+  ///   Dream 是独立动作：归档服务绝不调用它，资格在 DreamService 内复查。
   /// - 日期变化（含进程跨午夜后的第一条消息）：补做昨天及更早的未完成日期；
   ///   当天仍在进行中，不归档。
   void _scheduleEndOfDayTriggers(ChatResult outcome) {
@@ -626,11 +637,17 @@ final class LocalChatService {
     final dateChanged = _lastDeliveryDate != today;
     _lastDeliveryDate = today;
     if (outcome.mode == 'bedtime') {
+      // 晚安请求先登记：即使进程在随后的归档完成前退出，启动补跑
+      // 也能兑现这次 Dream（笔记定稿：当晚没跑成，下次启动补）。
+      _markDreamBedtime();
       _runFinalization(
         'bedtime',
         (service) => service.finalizeForBedtime(date: today),
       );
       _scheduleMonthlyCompression();
+      // Dream 排在补归档与月压缩之后：只读 finalized 材料与最新月摘要。
+      // 资格（晚安 + 距上次成功 ≥7 天）在 DreamService 内复查。
+      _scheduleDream(bedtime: true);
     } else if (dateChanged) {
       _runFinalization(
         'date-change',
@@ -656,6 +673,47 @@ final class LocalChatService {
         await compressor.compressBefore(month);
       } on Object catch (error) {
         _diagnosticsSink('monthly compression deferred [$error]');
+      }
+    });
+  }
+
+  /// 晚安触发预登记：排在晚安任务链最前面，把七天间隔已到的请求先
+  /// 落成 pending；失败只记诊断。
+  void _markDreamBedtime() {
+    final dream = dreamService;
+    if (dream == null) {
+      return;
+    }
+    _finalizationTask = _finalizationTask.then((_) async {
+      try {
+        await dream.markBedtime();
+      } on Object catch (error) {
+        _diagnosticsSink('dream bedtime mark deferred [$error]');
+      }
+    });
+  }
+
+  /// Dream 挂到日终归档同一条后台任务链上：补归档与月压缩先完成，
+  /// Dream 只看到 finalized 材料；失败只记诊断，绝不阻塞聊天，
+  /// 未成功的请求由下次晚安或启动补跑继续。
+  void _scheduleDream({required bool bedtime}) {
+    final dream = dreamService;
+    if (dream == null) {
+      return;
+    }
+    _finalizationTask = _finalizationTask.then((_) async {
+      try {
+        final outcome = await dream.run(bedtime: bedtime);
+        final status = outcome.status;
+        if (status == DreamStatus.modelFailed ||
+            status == DreamStatus.validationFailed ||
+            status == DreamStatus.writeFailed ||
+            status == DreamStatus.skippedUnreadable) {
+          final detail = outcome.detail == null ? '' : ' [${outcome.detail}]';
+          _diagnosticsSink('dream deferred status=${status.name}$detail');
+        }
+      } on Object catch (error) {
+        _diagnosticsSink('dream deferred [$error]');
       }
     });
   }
@@ -734,9 +792,12 @@ final class LocalChatService {
     }
   }
 
-  /// 每轮实测状态包，组装本轮【近况】块；读取失败降级为空块
-  /// （空块不输出），绝不阻塞回复。同时消费该会话上一轮后台召回
-  /// 命中的短期 memory context（临时透镜，只注入一次）。
+  /// 每轮实测状态包，组装本轮【近况】块与【长期印象】块；读取失败
+  /// 降级为空块（空块不输出），绝不阻塞回复。注入关：近况与长期印象
+  /// 总量超热层硬上限时按砍序先压长期印象（clipLongMemoryBlock），
+  /// 近况块内部再压近日状态；relationship 与 open-loops 永不砍。
+  /// 同时消费该会话上一轮后台召回命中的短期 memory context（临时透镜，
+  /// 只注入一次）。
   Future<ModelPromptBuilder> _promptBuilderForRequest(String sessionId) async {
     var builder = modelPromptBuilder;
     final reader = statePackReader;
@@ -744,6 +805,13 @@ final class LocalChatService {
       try {
         final block = await reader.readDailyStateBlock();
         builder = builder.copyWithDailyState(block);
+        final longMemory = await reader.readLongMemoryBlock();
+        if (longMemory.isNotEmpty) {
+          final available = hotLayerMaxRunes - block.runes.length;
+          builder = builder.copyWithLongMemory(
+            clipLongMemoryBlock(longMemory, available),
+          );
+        }
       } on Object catch (error) {
         _diagnosticsSink('state pack unavailable [$error]');
       }
