@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as path;
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
@@ -977,6 +978,620 @@ void main() {
     expect(clipLongMemoryBlock('随手写的', 100), '随手写的');
     expect(clipLongMemoryBlock('坏' * 200, 100), '');
   });
+
+  group('dream root proposals (ticket 17)', () {
+    test('parseDreamRootProposals whitelists ops, branches and id shapes', () {
+      final raw = jsonEncode({
+        'items': <Object?>[],
+        'rootProposals': [
+          {
+            'op': 'promote',
+            'branch': 'expression',
+            'claim': '用户尴尬时倾向自嘲',
+            'middles': ['EX-M001', 'bogus', 'EX-M002'],
+          },
+          {
+            'op': 'absorb',
+            'branch': 'values',
+            'root': 'VA-R001',
+            'middles': ['VA-M002'],
+          },
+          {
+            'op': 'demote',
+            'branch': 'preferences',
+            'root': 'PR-R001',
+            'counter': 'PR-M003',
+          },
+          {
+            'op': 'merge',
+            'branch': 'preferences',
+            'claim': '合并主张',
+            'roots': ['PR-R001', 'PR-R002'],
+          },
+          {'op': 'explode', 'branch': 'identity'},
+          {
+            'op': 'promote',
+            'branch': 'not-a-branch',
+            'claim': 'x',
+            'middles': ['XX-M001'],
+          },
+          // demote 缺 counter：整条丢弃。
+          {'op': 'demote', 'branch': 'identity', 'root': 'ID-R001'},
+        ],
+      });
+
+      final ops = parseDreamRootProposals(raw);
+
+      expect(ops, hasLength(4));
+      final promote = ops[0] as PersonaPromoteOp;
+      expect(promote.branchWire, 'expression');
+      // 形态不合法的 ID 被逐条过滤。
+      expect(promote.middleIds, ['EX-M001', 'EX-M002']);
+      expect(ops[1], isA<PersonaAbsorbOp>());
+      expect(ops[2], isA<PersonaDemoteOp>());
+      expect((ops[2] as PersonaDemoteOp).counterId, 'PR-M003');
+      expect(ops[3], isA<PersonaMergeOp>());
+      // 无结构或无提案字段：空列表。
+      expect(parseDreamRootProposals('不是 JSON'), isEmpty);
+      expect(parseDreamRootProposals(jsonEncode({'items': []})), isEmpty);
+    });
+
+    test('an accepted dream applies validated root proposals and projects persona.md', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-dream-roots-accept-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊到一次尴尬经历');
+      _seedPersonaBranch(directory.path, 'expression.md', '''# 性格表达
+
+## 未归根中间节点
+
+### [EX-M001] 重复模式｜用户尴尬时倾向自嘲
+- 形成: 2026-07-20 · 复核: 2026-08-02
+- [EX-L001] 2026-07-20 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/07/2026-07-20.md [m1]
+- [EX-L002] 2026-08-02 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/08/2026-08-02.md [m2]
+''');
+      final client = _ScriptedDreamClient([
+        ModelCompletion.reply(_candidateWithRoots([
+          _item('模式与轨迹', '2026年夏天起用户更愿意谈起尴尬经历', ['2026-08-14']),
+        ], [
+          {
+            'op': 'promote',
+            'branch': 'expression',
+            'claim': '用户尴尬时倾向自嘲',
+            'middles': ['EX-M001'],
+          },
+        ])),
+      ]);
+      final personaTree = PersonaTreeStore(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+      );
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      expect(outcome.status, DreamStatus.accepted);
+      expect(outcome.rootOpsApplied, 1);
+      expect(outcome.rootOpsRejected, 0);
+      final active = File(
+        '${directory.path}/persona-tree/expression.md',
+      ).readAsStringSync();
+      expect(active, contains('## [EX-R001] 用户尴尬时倾向自嘲'));
+      expect(active, isNot(contains('## 未归根中间节点')));
+      final persona = File('${directory.path}/persona.md').readAsStringSync();
+      expect(persona, contains('## 性格与表达'));
+      expect(persona, contains('- 用户尴尬时倾向自嘲'));
+      // 递给模型的结构里包含未归根理解；清单记录提案裁决（只含 ID）。
+      expect(
+        client.calls.single.last.content,
+        contains('未归根 [EX-M001] 重复模式｜用户尴尬时倾向自嘲'),
+      );
+      // 成长线与共同过往的写作要求进入系统提示词。
+      expect(
+        client.calls.single.first.content,
+        contains('模式与轨迹按成长线写'),
+      );
+      expect(
+        client.calls.single.first.content,
+        contains('共同过往只收双方真实互动'),
+      );
+      final history = Directory('${directory.path}/dream/history').listSync();
+      final archived = File(history.single.path).readAsStringSync();
+      expect(archived, contains('根节点提案数: 1'));
+      expect(archived, contains('- promote expression(EX-M001): accepted'));
+    });
+
+    test('proposals without enough evidence are rejected and leave the tree untouched', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-dream-roots-insufficient-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊到跑步');
+      // EX-M001 单日期行为证据：不够任何一条升根门槛。
+      // EX-M002 证据跨度足够，但挂着未解决的 conflict 叶：同样不得升根。
+      _seedPersonaBranch(directory.path, 'expression.md', '''# 性格表达
+
+## 未归根中间节点
+
+### [EX-M001] 重复模式｜用户靠跑步解压
+- 形成: 2026-08-10 · 复核: 2026-08-10
+- [EX-L001] 2026-08-10 | 行为观察 | support | 用户靠跑步解压 | episodes/2026/08/2026-08-10.md [m1]
+
+### [EX-M002] 重复模式｜用户尴尬时倾向自嘲
+- 形成: 2026-07-20 · 复核: 2026-08-09
+- [EX-L002] 2026-07-20 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/07/2026-07-20.md [m2]
+- [EX-L003] 2026-08-02 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/08/2026-08-02.md [m3]
+- [EX-L004] 2026-08-09 | 行为观察 | conflict | 用户被夸时一本正经道谢 | episodes/2026/08/2026-08-09.md [m4]
+''');
+      final client = _ScriptedDreamClient([
+        ModelCompletion.reply(_candidateWithRoots([
+          _item('模式与轨迹', '用户近期常聊跑步', ['2026-08-14']),
+        ], [
+          {
+            'op': 'promote',
+            'branch': 'expression',
+            'claim': '用户靠跑步解压',
+            'middles': ['EX-M001'],
+          },
+          {
+            'op': 'promote',
+            'branch': 'expression',
+            'claim': '用户尴尬时倾向自嘲',
+            'middles': ['EX-M002'],
+          },
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        personaTree: PersonaTreeStore(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+        ),
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      expect(outcome.status, DreamStatus.accepted);
+      expect(outcome.rootOpsApplied, 0);
+      expect(outcome.rootOpsRejected, 2);
+      final active = File(
+        '${directory.path}/persona-tree/expression.md',
+      ).readAsStringSync();
+      expect(active, contains('## 未归根中间节点'));
+      expect(active, isNot(contains('[EX-R')));
+      expect(File('${directory.path}/persona.md').existsSync(), isFalse);
+      final history = Directory('${directory.path}/dream/history').listSync();
+      final archived = File(history.single.path).readAsStringSync();
+      expect(
+        archived,
+        contains('- promote expression(EX-M001): rejected(insufficient-evidence)'),
+      );
+      // 未解决冲突（挂着 conflict 叶）的理解不得升根。
+      expect(
+        archived,
+        contains('- promote expression(EX-M002): rejected(unresolved-conflict)'),
+      );
+    });
+
+    test('time-bound, sensitive and banned root claims are rejected one by one', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-dream-roots-claims-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了近况');
+      // 三个不同分支各挂一条够门槛的自述中间理解。
+      _seedPersonaBranch(directory.path, 'expression.md', '''# 性格表达
+
+## 未归根中间节点
+
+### [EX-M001] 重复模式｜用户尴尬时倾向自嘲
+- 形成: 2026-07-20 · 复核: 2026-08-02
+- [EX-L001] 2026-07-20 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/07/2026-07-20.md [m1]
+- [EX-L002] 2026-08-02 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/08/2026-08-02.md [m2]
+''');
+      _seedPersonaBranch(directory.path, 'values.md', '''# 价值原则
+
+## 未归根中间节点
+
+### [VA-M001] 重复模式｜用户看重说到做到
+- 形成: 2026-07-20 · 复核: 2026-08-02
+- [VA-L001] 2026-07-20 | 明确自述 | support | 用户看重说到做到 | episodes/2026/07/2026-07-20.md [m1]
+- [VA-L002] 2026-08-02 | 明确自述 | support | 用户看重说到做到 | episodes/2026/08/2026-08-02.md [m2]
+''');
+      final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
+      expect(await openLoopStore.banTitle('跑步解压'), isTrue);
+      _seedPersonaBranch(directory.path, 'preferences.md', '''# 偏好习惯
+
+## 未归根中间节点
+
+### [PR-M001] 重复模式｜用户靠跑步解压
+- 形成: 2026-07-20 · 复核: 2026-08-02
+- [PR-L001] 2026-07-20 | 明确自述 | support | 用户靠跑步解压 | episodes/2026/07/2026-07-20.md [m1]
+- [PR-L002] 2026-08-02 | 明确自述 | support | 用户靠跑步解压 | episodes/2026/08/2026-08-02.md [m2]
+''');
+      final client = _ScriptedDreamClient([
+        ModelCompletion.reply(_candidateWithRoots([
+          _item('模式与轨迹', '用户状态平稳', ['2026-08-14']),
+        ], [
+          {
+            'op': 'promote',
+            'branch': 'expression',
+            'claim': '用户最近常自嘲',
+            'middles': ['EX-M001'],
+          },
+          {
+            'op': 'promote',
+            'branch': 'values',
+            'claim': 'api_key: abcdef123456',
+            'middles': ['VA-M001'],
+          },
+          {
+            'op': 'promote',
+            'branch': 'preferences',
+            'claim': '用户靠跑步解压',
+            'middles': ['PR-M001'],
+          },
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        personaTree: PersonaTreeStore(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+          openLoopStore: openLoopStore,
+        ),
+        openLoopStore: openLoopStore,
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      expect(outcome.status, DreamStatus.accepted);
+      expect(outcome.rootOpsApplied, 0);
+      expect(outcome.rootOpsRejected, 3);
+      final history = Directory('${directory.path}/dream/history').listSync();
+      final archived = File(history.single.path).readAsStringSync();
+      expect(archived, contains('rejected(time-word-claim)'));
+      expect(archived, contains('rejected(sensitive-claim)'));
+      expect(archived, contains('rejected(banned-claim)'));
+      // 被拒提案的主张原文绝不落盘：敏感内容不进记忆目录任何文件。
+      expect(archived, isNot(contains('abcdef123456')));
+      expect(File('${directory.path}/persona.md').existsSync(), isFalse);
+      for (final branch in ['expression', 'values', 'preferences']) {
+        expect(
+          File('${directory.path}/persona-tree/$branch.md').readAsStringSync(),
+          isNot(contains('-R')),
+        );
+      }
+    });
+
+    test('duplicate and archived claims never become roots again', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-dream-roots-dup-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了习惯');
+      // 已有根：同主张再提案升根属于重复。
+      _seedPersonaBranch(directory.path, 'expression.md', '''# 性格表达
+
+## 未归根中间节点
+
+### [EX-M002] 重复模式｜用户尴尬时倾向自嘲
+- 形成: 2026-08-05 · 复核: 2026-08-12
+- [EX-L003] 2026-08-05 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/08/2026-08-05.md [m3]
+- [EX-L004] 2026-08-12 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/08/2026-08-12.md [m4]
+
+## [EX-R001] 用户尴尬时倾向自嘲
+
+### [EX-M001] 重复模式｜用户尴尬时倾向自嘲
+- 形成: 2026-07-20 · 复核: 2026-08-02
+- [EX-L001] 2026-07-20 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/07/2026-07-20.md [m1]
+''');
+      // 归档主张：已被纠正的理解不得用旧证据复活。
+      _seedPersonaBranch(directory.path, path.join('archive', 'values.md'), '''# 价值原则（归档）
+
+### [VA-M001] 重复模式｜用户看重说到做到
+- 失效: 2026-08-01 · 原因: 明确纠正 · 关联: VA-L001
+- 形成: 2026-07-20 · 复核: 2026-07-25
+- [VA-L001] 2026-07-20 | 明确自述 | support | 用户看重说到做到 | episodes/2026/07/2026-07-20.md [m1]
+''');
+      _seedPersonaBranch(directory.path, 'values.md', '''# 价值原则
+
+## 未归根中间节点
+
+### [VA-M002] 重复模式｜用户看重说到做到
+- 形成: 2026-08-05 · 复核: 2026-08-12
+- [VA-L002] 2026-08-05 | 明确自述 | support | 用户看重说到做到 | episodes/2026/08/2026-08-05.md [m2]
+- [VA-L003] 2026-08-12 | 明确自述 | support | 用户看重说到做到 | episodes/2026/08/2026-08-12.md [m3]
+''');
+      final client = _ScriptedDreamClient([
+        ModelCompletion.reply(_candidateWithRoots([
+          _item('模式与轨迹', '用户状态平稳', ['2026-08-14']),
+        ], [
+          {
+            'op': 'promote',
+            'branch': 'expression',
+            'claim': '用户尴尬时倾向自嘲',
+            'middles': ['EX-M002'],
+          },
+          {
+            'op': 'promote',
+            'branch': 'values',
+            'claim': '用户看重说到做到',
+            'middles': ['VA-M002'],
+          },
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        personaTree: PersonaTreeStore(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+        ),
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      expect(outcome.status, DreamStatus.accepted);
+      expect(outcome.rootOpsApplied, 0);
+      expect(outcome.rootOpsRejected, 2);
+      final history = Directory('${directory.path}/dream/history').listSync();
+      final archived = File(history.single.path).readAsStringSync();
+      expect(archived, contains('rejected(duplicate-root)'));
+      expect(archived, contains('rejected(archived-claim)'));
+      // 活跃区维持原状：已有根不动，未归根理解保持未归根。
+      final active = File(
+        '${directory.path}/persona-tree/expression.md',
+      ).readAsStringSync();
+      expect('[EX-R'.allMatches(active).length, 1);
+      expect(active, contains('### [EX-M002]'));
+    });
+
+    test('demote needs a real counter understanding; with one it archives the root', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-dream-roots-demote-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了解压方式');
+      final branchSeed = '''# 性格表达
+
+## 未归根中间节点
+
+### [EX-M002] 重复模式｜用户不再靠跑步解压
+- 形成: 2026-08-10 · 复核: 2026-08-15
+- [EX-L003] 2026-08-10 | 行为观察 | support | 用户不再靠跑步解压 | episodes/2026/08/2026-08-10.md [m3]
+- [EX-L004] 2026-08-15 | 行为观察 | support | 用户不再靠跑步解压 | episodes/2026/08/2026-08-15.md [m4]
+
+### [EX-M003] 重复模式｜用户偶尔游泳放松
+- 形成: 2026-08-12 · 复核: 2026-08-12
+- [EX-L005] 2026-08-12 | 行为观察 | support | 用户偶尔游泳放松 | episodes/2026/08/2026-08-12.md [m5]
+
+## [EX-R001] 用户靠跑步解压
+
+### [EX-M001] 重复模式｜用户靠跑步解压
+- 形成: 2026-07-20 · 复核: 2026-08-01
+- [EX-L001] 2026-07-20 | 行为观察 | support | 用户靠跑步解压 | episodes/2026/07/2026-07-20.md [m1]
+''';
+      _seedPersonaBranch(directory.path, 'expression.md', branchSeed);
+      final client = _ScriptedDreamClient([
+        // 第一次：引用不存在的反向理解、以及单日期证据的无关理解
+        // → 两条都拒绝，树不动。
+        ModelCompletion.reply(_candidateWithRoots([
+          _item('模式与轨迹', '用户的解压方式在变化', ['2026-08-14']),
+        ], [
+          {
+            'op': 'demote',
+            'branch': 'expression',
+            'root': 'EX-R001',
+            'counter': 'EX-M999',
+          },
+          {
+            'op': 'demote',
+            'branch': 'expression',
+            'root': 'EX-R001',
+            'counter': 'EX-M003',
+          },
+        ])),
+        // 第二次：真实反向理解 → 降根成立。证据只能引用第二轮递过去
+        // 的整理日期（上次成功之后）。
+        ModelCompletion.reply(_candidateWithRoots([
+          _item('模式与轨迹', '用户不再靠跑步解压', ['2026-08-21']),
+        ], [
+          {
+            'op': 'demote',
+            'branch': 'expression',
+            'root': 'EX-R001',
+            'counter': 'EX-M002',
+          },
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        personaTree: PersonaTreeStore(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+        ),
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final first = await dream.run(bedtime: true);
+      expect(first.status, DreamStatus.accepted);
+      expect(first.rootOpsRejected, 2);
+      expect(
+        File('${directory.path}/persona-tree/expression.md').readAsStringSync(),
+        contains('## [EX-R001]'),
+      );
+      final history = Directory('${directory.path}/dream/history').listSync();
+      final firstChanges = File(history.last.path).readAsStringSync();
+      expect(firstChanges, contains('rejected(unknown-counter)'));
+      // 单日期证据的引用不构成反向理解，同样拒绝。
+      expect(firstChanges, contains('rejected(counter-insufficient)'));
+
+      // 七天后再跑：降根成立，旧根入归档，子树退回未归根区。
+      final later = DateTime(2026, 8, 22, 23, 10);
+      await _seedFinalizedDay(
+        EpisodeMemoryPipeline(memoryDirectory: directory.path, clock: () => later),
+        '2026-08-21',
+        '用户又聊了解压方式',
+      );
+      final second = await DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: EpisodeMemoryPipeline(
+          memoryDirectory: directory.path,
+          clock: () => later,
+        ),
+        personaTree: PersonaTreeStore(
+          memoryDirectory: directory.path,
+          episodePipeline: EpisodeMemoryPipeline(
+            memoryDirectory: directory.path,
+            clock: () => later,
+          ),
+        ),
+        modelClient: client,
+        clock: () => later,
+      ).run(bedtime: true);
+
+      expect(second.status, DreamStatus.accepted);
+      expect(second.rootOpsApplied, 1);
+      final active = File(
+        '${directory.path}/persona-tree/expression.md',
+      ).readAsStringSync();
+      expect(active, isNot(contains('[EX-R001]')));
+      expect(active, contains('### [EX-M001]'));
+      final archivedTree = File(
+        '${directory.path}/persona-tree/archive/expression.md',
+      ).readAsStringSync();
+      expect(archivedTree, contains('## [EX-R001] 用户靠跑步解压'));
+      expect(archivedTree, contains('原因: 行为冲突'));
+    });
+
+    test('a tree write failure never rolls back the accepted long-memory', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-dream-roots-writefail-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了习惯');
+      _seedPersonaBranch(directory.path, 'expression.md', '''# 性格表达
+
+## 未归根中间节点
+
+### [EX-M001] 重复模式｜用户尴尬时倾向自嘲
+- 形成: 2026-07-20 · 复核: 2026-08-02
+- [EX-L001] 2026-07-20 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/07/2026-07-20.md [m1]
+- [EX-L002] 2026-08-02 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/08/2026-08-02.md [m2]
+''');
+      final before = File(
+        '${directory.path}/persona-tree/expression.md',
+      ).readAsStringSync();
+      final client = _ScriptedDreamClient([
+        ModelCompletion.reply(_candidateWithRoots([
+          _item('模式与轨迹', '用户状态平稳', ['2026-08-14']),
+        ], [
+          {
+            'op': 'promote',
+            'branch': 'expression',
+            'claim': '用户尴尬时倾向自嘲',
+            'middles': ['EX-M001'],
+          },
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        personaTree: PersonaTreeStore(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+          atomicWriter: _TargetedFailingWriter(
+            (target) => target.contains('persona-tree'),
+          ),
+        ),
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      // 长期印象照常接纳；树提案记为未落盘，树文件原样。
+      expect(outcome.status, DreamStatus.accepted);
+      expect(outcome.rootOpsApplied, 0);
+      expect(outcome.rootOpsRejected, 1);
+      expect(
+        File('${directory.path}/long-memory.md').readAsStringSync(),
+        contains('- 用户状态平稳'),
+      );
+      expect(
+        File('${directory.path}/persona-tree/expression.md').readAsStringSync(),
+        before,
+      );
+      final history = Directory('${directory.path}/dream/history').listSync();
+      expect(
+        File(history.single.path).readAsStringSync(),
+        contains('rejected(apply-deferred)'),
+      );
+    });
+  });
+}
+
+String _candidateWithRoots(
+  List<Map<String, Object?>> items,
+  List<Map<String, Object?>> rootProposals,
+) => jsonEncode({'items': items, 'rootProposals': rootProposals});
+
+void _seedPersonaBranch(
+  String memoryDirectory,
+  String relative,
+  String contents,
+) {
+  final file = File(path.join(memoryDirectory, 'persona-tree', relative));
+  file.createSync(recursive: true);
+  file.writeAsStringSync(contents);
 }
 
 /// 播种已归档（finalized）的 episode 日文件。

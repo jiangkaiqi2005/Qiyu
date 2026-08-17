@@ -110,6 +110,16 @@ final class ModelPromptBuilder {
         memoryContext: memoryContext,
       );
 
+  /// 返回只替换【用户画像】块的新 builder；persona.md 投影每轮实测，
+  /// 其余字段不变。
+  ModelPromptBuilder copyWithPersona(String nextPersona) => ModelPromptBuilder(
+    personaConstitution,
+    dailyState: dailyState,
+    longMemory: longMemory,
+    persona: nextPersona,
+    memoryContext: memoryContext,
+  );
+
   /// 返回只替换【检索结果】块的新 builder。检索结果是临时透镜：
   /// 只在命中后的下一轮注入一次，不进系统提示词。
   ModelPromptBuilder copyWithMemoryContext(String nextMemoryContext) =>

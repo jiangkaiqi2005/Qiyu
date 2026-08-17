@@ -2161,6 +2161,75 @@ void main() {
     expect(tree, contains('### [ID-M001] 待稳定事实｜用户是中学老师'));
   });
 
+  test('an identity correction revokes the rooted claim within the same turn', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-persona-online-correction-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+    final provider = _SequencedProviderChatClient([
+      const ModelCompletion.reply('''记下了。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户不是中学老师","branch":"identity","nature":"self_report"}]
+</qiyu-actions>'''),
+    ]);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    final personaTree = PersonaTreeStore(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      diagnosticsSink: (_) {},
+    );
+    // 已生根的旧印象与它的投影。
+    File('${temporaryDirectory.path}/persona-tree/identity.md')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('''# 身份事实
+
+## [ID-R001] 用户是中学老师
+
+### [ID-M001] 待稳定事实｜用户是中学老师
+- 形成: 2026-07-01 · 复核: 2026-07-01
+- [ID-L001] 2026-07-01 | 明确自述 | support | 用户是中学老师 | episodes/2026/07/2026-07-01.md [m1]
+''');
+    File('${temporaryDirectory.path}/persona.md').writeAsStringSync(
+      '# persona\n\n## 身份与客观事实\n- 用户是中学老师\n',
+      encoding: utf8,
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      openLoopStore: OpenLoopStore(memoryDirectory: temporaryDirectory.path),
+      personaTree: personaTree,
+      clock: clock,
+    );
+
+    await service.send(requestId: 'correct-1', text: '我不是中学老师');
+
+    // 不等日终：当轮自述立即撤根（唯一在线撤根例外）并归档旧路径。
+    final active = File(
+      '${temporaryDirectory.path}/persona-tree/identity.md',
+    ).readAsStringSync();
+    expect(active, isNot(contains('[ID-R001]')));
+    final archive = File(
+      '${temporaryDirectory.path}/persona-tree/archive/identity.md',
+    ).readAsStringSync();
+    expect(archive, contains('## [ID-R001] 用户是中学老师'));
+    expect(archive, contains('原因: 明确纠正'));
+    expect(archive, contains('关联: ID-M001'));
+    // persona.md 当场重投影：旧主张当轮停止生效。
+    final persona = File('${temporaryDirectory.path}/persona.md');
+    expect(
+      persona.existsSync() ? persona.readAsStringSync() : '',
+      isNot(contains('用户是中学老师')),
+    );
+  });
+
   test('a user ban clears persona tree content immediately', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-persona-ban-wiring-test-',
@@ -2534,6 +2603,167 @@ void main() {
     expect(injected.runes.length, lessThanOrEqualTo(hotLayerMaxRunes));
     expect(injected, contains('## 人与关系'));
     expect(injected, isNot(contains('共同过往的长期印象条目内容测试文本34')));
+  });
+
+  test('persona projection enters the hot layer without long-memory pressure', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-persona-injection-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 12, 21);
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('在。'),
+    );
+    File('${temporaryDirectory.path}/persona.md').writeAsStringSync(
+      '# persona\n\n## 身份与客观事实\n- 用户在互联网行业工作\n\n'
+      '## 边界与禁区\n- 家庭话题只接不探\n',
+      encoding: utf8,
+    );
+    File('${temporaryDirectory.path}/relationship.md').writeAsStringSync(
+      '# relationship\n\nstage: 初识\nsince: 2026-08-01\n',
+      encoding: utf8,
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      providerChatClient: provider,
+      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
+      statePackReader: StatePackReader(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      clock: clock,
+    );
+
+    await service.send(requestId: 'persona-1', text: '在吗');
+
+    final system = provider.messages!.first.content;
+    final match = RegExp(
+      r'<persona>\n【用户画像】\n([\s\S]*?)\n</persona>',
+    ).firstMatch(system);
+    expect(match, isNotNull);
+    final injected = match!.group(1)!;
+    expect(injected, contains('## 身份与客观事实'));
+    expect(injected, contains('- 用户在互联网行业工作'));
+    expect(injected, contains('- 家庭话题只接不探'));
+    // 文件首行的 `# persona` 属于文件格式，不进注入内容。
+    expect(injected, isNot(contains('# persona')));
+    // 无长期印象文件时长期印象块不输出。
+    expect(system, isNot(contains('<long_memory>')));
+  });
+
+  test('under hot-layer pressure long-memory is clipped before persona, and persona boundaries never are', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-persona-budget-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 12, 21);
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('在。'),
+    );
+    // 大体量关系文件把热层预算挤紧：先裁长期印象，再裁画像可裁节。
+    File('${temporaryDirectory.path}/relationship.md').writeAsStringSync(
+      '# relationship\n\nstage: 初识\nsince: 2026-08-01\n'
+      '${'关' * 2800}\n',
+      encoding: utf8,
+    );
+    File('${temporaryDirectory.path}/long-memory.md').writeAsStringSync(
+      renderLongMemory({
+        '重要事件': ['用户完成过一次公开演讲'],
+      }),
+      encoding: utf8,
+    );
+    final preferences = [
+      for (var i = 1; i <= 12; i += 1) '- 用户偏好第$i项${'长' * 53}',
+    ].join('\n');
+    File('${temporaryDirectory.path}/persona.md').writeAsStringSync(
+      '# persona\n\n## 偏好与习惯\n$preferences\n\n'
+      '## 边界与禁区\n- 家庭话题只接不探\n',
+      encoding: utf8,
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      providerChatClient: provider,
+      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
+      statePackReader: StatePackReader(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      clock: clock,
+    );
+
+    await service.send(requestId: 'persona-budget-1', text: '在吗');
+
+    final system = provider.messages!.first.content;
+    expect(system, contains('<daily_state>'));
+    final personaMatch = RegExp(
+      r'<persona>\n【用户画像】\n([\s\S]*?)\n</persona>',
+    ).firstMatch(system);
+    expect(personaMatch, isNotNull);
+    final personaInjected = personaMatch!.group(1)!;
+    // 边界禁区永不裁；偏好习惯是可裁节，超预算时先被压缩。
+    expect(personaInjected, contains('- 家庭话题只接不探'));
+    expect('- 用户偏好第'.allMatches(personaInjected).length, lessThan(12));
+    // 长期印象先被压缩：整份热层不超硬上限。
+    final dailyMatch = RegExp(
+      r'<daily_state>\n【近况】\n([\s\S]*?)\n</daily_state>',
+    ).firstMatch(system);
+    final longMatch = RegExp(
+      r'<long_memory>\n【长期印象】\n([\s\S]*?)\n</long_memory>',
+    ).firstMatch(system);
+    final total =
+        (dailyMatch?.group(1) ?? '').runes.length +
+        (longMatch?.group(1) ?? '').runes.length +
+        personaInjected.runes.length;
+    expect(total, lessThanOrEqualTo(hotLayerMaxRunes));
+  });
+
+  test('shared-past memories inject, but stranger-stage discipline locks them', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-shared-past-gating-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 12, 21);
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('在。'),
+    );
+    // 共同过往来自双方真实互动（Dream 证据关已保证有整理日期依据），
+    // 允许进入热层；能否在回复里引用由关系阶段纪律门控。
+    File('${temporaryDirectory.path}/long-memory.md').writeAsStringSync(
+      '# long-memory\n\n## 共同过往\n- 深夜聊天的梗\n',
+      encoding: utf8,
+    );
+    File('${temporaryDirectory.path}/relationship.md').writeAsStringSync(
+      '# relationship\n\nstage: 初识\nsince: 2026-08-01\n',
+      encoding: utf8,
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      providerChatClient: provider,
+      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
+      statePackReader: StatePackReader(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      ),
+      clock: clock,
+    );
+
+    await service.send(requestId: 'shared-past-1', text: '在吗');
+
+    final system = provider.messages!.first.content;
+    // 共同过往进入热层。
+    expect(system, contains('<long_memory>'));
+    expect(system, contains('- 深夜聊天的梗'));
+    // 初识阶段纪律同时注入：不引用共同过往。是否开口由模型按纪律判断。
+    expect(system, contains('不引用共同过往'));
   });
 }
 

@@ -10,6 +10,7 @@ import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'monthly_summary.dart';
 import 'open_loop_store.dart';
+import 'persona_tree.dart';
 import 'provider_settings_service.dart';
 
 /// Dream 最小间隔（天）：距上次成功 Dream 的日历日差至少达到该值才
@@ -39,6 +40,12 @@ const dreamInputMaxRunes = 9000;
 
 /// dream/history/ 保留的变更清单份数。
 const dreamHistoryKeep = 4;
+
+/// 单次 Dream 接受的根节点提案上限：防止模型一次性大改树结构。
+const dreamMaxRootProposals = 8;
+
+final _rootIdPattern = RegExp(r'^[A-Z]{2}-R\d+$');
+final _middleIdPattern = RegExp(r'^[A-Z]{2}-M\d+$');
 
 /// long-memory 四分区（T03 定稿，顺序固定）。
 const longMemorySections = ['人与关系', '重要事件', '模式与轨迹', '共同过往'];
@@ -88,12 +95,23 @@ enum DreamStatus {
 }
 
 final class DreamOutcome {
-  const DreamOutcome({required this.status, this.detail});
+  const DreamOutcome({
+    required this.status,
+    this.detail,
+    this.rootOpsApplied = 0,
+    this.rootOpsRejected = 0,
+  });
 
   final DreamStatus status;
 
   /// 诊断细节（错误码级别），只进本机诊断，不含用户内容。
   final String? detail;
+
+  /// 本轮落盘的根节点提案数量（仅接纳成功的 Dream 计数）。
+  final int rootOpsApplied;
+
+  /// 本轮被拒绝的根节点提案数量（无证据、过度推断、敏感、禁提等）。
+  final int rootOpsRejected;
 }
 
 /// Dream 持久化状态：上次成功时间与是否有待补跑的晚安请求。
@@ -276,6 +294,130 @@ List<DreamItem>? parseDreamCandidate(
   return items;
 }
 
+/// 解析 Dream 模型输出中的根节点提案：只认 rootProposals 数组，逐条
+/// 白名单校验（op 白名单、branch 白名单、ID 形态、数量上限），无效
+/// 提案单条丢弃。提案校验（证据门槛、敏感、禁提、防复活）在
+/// DreamService 内逐条进行；结构解析失败一律返回空列表，绝不影响
+/// items 的接纳路径。
+List<PersonaDreamOp> parseDreamRootProposals(
+  String raw, {
+  void Function(String message)? diagnosticsSink,
+}) {
+  final sink = diagnosticsSink ?? stderrDiagnostics;
+  final json = _extractJsonObject(raw);
+  if (json == null) {
+    return const [];
+  }
+  final value = json['rootProposals'];
+  if (value is! List<Object?>) {
+    return const [];
+  }
+  final ops = <PersonaDreamOp>[];
+  for (final entry in value) {
+    if (ops.length >= dreamMaxRootProposals) {
+      sink('dream root proposal dropped [too many proposals]');
+      break;
+    }
+    if (entry is! Map<String, Object?>) {
+      sink('dream root proposal dropped [not an object]');
+      continue;
+    }
+    final op = entry['op'];
+    final branchWire = entry['branch'];
+    if (op is! String ||
+        branchWire is! String ||
+        personaBranchForWire(branchWire) == null) {
+      sink('dream root proposal dropped [op/branch not in whitelist]');
+      continue;
+    }
+    switch (op) {
+      case 'promote':
+        final claim = entry['claim'];
+        final middleIds = _idList(entry['middles'], _middleIdPattern);
+        if (claim is! String || middleIds == null) {
+          sink('dream root proposal dropped [promote fields invalid]');
+          continue;
+        }
+        ops.add(
+          PersonaPromoteOp(
+            branchWire,
+            claim: claim.trim(),
+            middleIds: middleIds,
+          ),
+        );
+      case 'absorb':
+        final rootId = entry['root'];
+        final middleIds = _idList(entry['middles'], _middleIdPattern);
+        if (rootId is! String ||
+            !_rootIdPattern.hasMatch(rootId.trim()) ||
+            middleIds == null) {
+          sink('dream root proposal dropped [absorb fields invalid]');
+          continue;
+        }
+        ops.add(
+          PersonaAbsorbOp(
+            branchWire,
+            rootId: rootId.trim(),
+            middleIds: middleIds,
+          ),
+        );
+      case 'demote':
+        final rootId = entry['root'];
+        final counterId = entry['counter'];
+        if (rootId is! String ||
+            !_rootIdPattern.hasMatch(rootId.trim()) ||
+            counterId is! String ||
+            !_middleIdPattern.hasMatch(counterId.trim())) {
+          sink('dream root proposal dropped [demote fields invalid]');
+          continue;
+        }
+        ops.add(
+          PersonaDemoteOp(
+            branchWire,
+            rootId: rootId.trim(),
+            counterId: counterId.trim(),
+          ),
+        );
+      case 'merge':
+        final claim = entry['claim'];
+        final rootIds = _idList(entry['roots'], _rootIdPattern);
+        if (claim is! String || rootIds == null) {
+          sink('dream root proposal dropped [merge fields invalid]');
+          continue;
+        }
+        ops.add(
+          PersonaMergeOp(
+            branchWire,
+            claim: claim.trim(),
+            rootIds: rootIds,
+          ),
+        );
+      default:
+        sink('dream root proposal dropped [unknown op]');
+    }
+  }
+  return ops;
+}
+
+/// ID 列表白名单：只保留形态合法的 ID；空列表返回 null（提案缺证据
+/// 对象，整条丢弃）。
+List<String>? _idList(Object? value, RegExp pattern) {
+  if (value is! List<Object?>) {
+    return null;
+  }
+  final ids = <String>[];
+  for (final id in value.whereType<String>()) {
+    if (ids.length >= 8) {
+      break;
+    }
+    final trimmed = id.trim();
+    if (pattern.hasMatch(trimmed)) {
+      ids.add(trimmed);
+    }
+  }
+  return ids.isEmpty ? null : ids;
+}
+
 /// Dream（五段节奏第五动作，ticket 16 / T04 / T08 / T13 定稿）。
 ///
 /// 资格：触发必须来自晚安（[run] 的 bedtime 路径），或来自上次晚安
@@ -302,6 +444,7 @@ final class DreamService {
     required this.episodePipeline,
     this.openLoopStore,
     this.monthlySummary,
+    this.personaTree,
     this.modelClient,
     Clock? clock,
     AtomicTextWriter? atomicWriter,
@@ -314,6 +457,10 @@ final class DreamService {
   final EpisodeMemoryPipeline episodePipeline;
   final OpenLoopStore? openLoopStore;
   final MonthlySummaryStore? monthlySummary;
+
+  /// PersonaTree 真树（ticket 17）：Dream 读快照组模型输入，接纳后
+  /// 把通过校验的根节点提案落盘；null 时只重组长期印象不动树。
+  final PersonaTreeStore? personaTree;
 
   /// 深度重组调用的 Provider 客户端；null 时 Dream 整体跳过。
   final ProviderChatClient? modelClient;
@@ -461,6 +608,12 @@ final class DreamService {
       }
     }
 
+    // 根节点提案：未接 PersonaTree 时不解析。提案与 items 同出一份
+    // 模型输出，但逐条独立校验；结构解析失败只丢提案，不影响 items。
+    final proposals = personaTree == null
+        ? const <PersonaDreamOp>[]
+        : parseDreamRootProposals(raw, diagnosticsSink: _diagnosticsSink);
+
     // 独立草稿：先写候选版与变更清单，再跑五关。
     final draftSections = <String, List<String>>{
       for (final section in longMemorySections) section: <String>[],
@@ -505,10 +658,38 @@ final class DreamService {
           existing,
           'rejected ($gateFailure)',
           includeDetails: false,
+          rootOps: [
+            for (final op in proposals) _RootOpRecord(op, 'draft-rejected'),
+          ],
         ),
       );
       await _deleteIfExists(_draftFile);
       return DreamOutcome(status: DreamStatus.validationFailed, detail: gateFailure);
+    }
+
+    // 根节点提案逐条校验：无证据、过度推断、敏感、禁提或复活的提案
+    // 单独拒绝，其余提案与 items 接纳互不影响。被拒提案不持久化主张
+    // 原文，只落原因码（草稿可能携带敏感内容，与五关前的清单同律）。
+    final opRecords = <_RootOpRecord>[];
+    final acceptedOps = <PersonaDreamOp>[];
+    if (proposals.isNotEmpty) {
+      final snapshot = input.personaSnapshot;
+      final createdClaims = <String>[];
+      for (final op in proposals) {
+        final reason = snapshot == null
+            ? 'persona-unavailable'
+            : _validateProposal(op, snapshot, input.banned, createdClaims);
+        final record = _RootOpRecord(op, reason);
+        opRecords.add(record);
+        if (reason == null) {
+          acceptedOps.add(op);
+        } else {
+          _diagnosticsSink(
+            'dream root proposal rejected reason=$reason '
+            'branch=${op.branchWire}',
+          );
+        }
+      }
     }
 
     // 原子接纳（T10：先备份旧文件再替换；每一步都是 temp+rename）。
@@ -521,6 +702,32 @@ final class DreamService {
         _stateFile.path,
         _encodeState(DreamState(lastSuccess: now, pending: false)),
       );
+      // 长期印象替换成功后才动树：树变更失败不回滚长期印象（不同文件，
+      // 下次 Dream 可再评估），只把对应提案记为未落盘。
+      if (acceptedOps.isNotEmpty) {
+        try {
+          final result = await personaTree!.applyDreamChanges(
+            date: today,
+            ops: acceptedOps,
+          );
+          var cursor = 0;
+          for (final record in opRecords) {
+            if (record.reason != null) {
+              continue;
+            }
+            final outcome = result.outcomes[cursor];
+            cursor += 1;
+            if (outcome != null) {
+              record.reason = 'skipped-in-apply($outcome)';
+            }
+          }
+        } on Object catch (error) {
+          _diagnosticsSink('dream persona apply deferred [$error]');
+          for (final record in opRecords) {
+            record.reason ??= 'apply-deferred';
+          }
+        }
+      }
       await _writeChanges(
         _buildChanges(
           today,
@@ -530,6 +737,7 @@ final class DreamService {
           existing,
           'accepted',
           includeDetails: true,
+          rootOps: opRecords,
         ),
       );
       await _archiveChanges(today);
@@ -537,7 +745,15 @@ final class DreamService {
     } on Object catch (error) {
       return DreamOutcome(status: DreamStatus.writeFailed, detail: '$error');
     }
-    return const DreamOutcome(status: DreamStatus.accepted);
+    final appliedCount = opRecords.fold<int>(
+      0,
+      (count, record) => record.reason == null ? count + 1 : count,
+    );
+    return DreamOutcome(
+      status: DreamStatus.accepted,
+      rootOpsApplied: appliedCount,
+      rootOpsRejected: opRecords.length - appliedCount,
+    );
   }
 
   /// 读取 Dream 状态；文件不存在返回空状态，存在但不可读时
@@ -618,9 +834,27 @@ final class DreamService {
         ? const <String>{}
         : await openLoopStore!.bannedTitles();
 
-    // 预算裁剪：关系与未闭环线索体量已有分块预算，先裁最旧月摘要，
-    // 再裁最旧日摘要。
-    var total = _inputRunes(windowed, monthSummaries, relationship, openLoops, longMemory);
+    // PersonaTree 快照：模型输入只给活跃根与未归根理解（含叶证据的
+    // 日期/来源/关系）；归档只作代码校验的负面依据，不递给模型。
+    PersonaTreeSnapshot? personaSnapshot;
+    String? personaSection;
+    final tree = personaTree;
+    if (tree != null) {
+      personaSnapshot = await tree.readSnapshot();
+      final rendered = _renderTreeForModel(personaSnapshot);
+      personaSection = rendered.isEmpty ? null : rendered;
+    }
+
+    // 预算裁剪：关系与未闭环线索体量已有分块预算，PersonaTree 结构
+    // 是提案依据不裁；先裁最旧月摘要，再裁最旧日摘要。
+    var total = _inputRunes(
+      windowed,
+      monthSummaries,
+      relationship,
+      openLoops,
+      longMemory,
+      personaSection,
+    );
     while (total > dreamInputMaxRunes && monthSummaries.isNotEmpty) {
       total -= monthSummaries.removeAt(0).contents.runes.length;
     }
@@ -635,6 +869,8 @@ final class DreamService {
       relationship: relationship,
       openLoops: openLoops,
       longMemory: longMemory,
+      personaSnapshot: personaSnapshot,
+      personaSection: personaSection,
       banned: banned,
       validDates: {for (final entry in windowed) entry.date},
       validMonths: {for (final entry in monthSummaries) entry.month},
@@ -647,6 +883,7 @@ final class DreamService {
     String? relationship,
     String? openLoops,
     String? longMemory,
+    String? personaSection,
   ) {
     var total = 0;
     for (final entry in summaries) {
@@ -658,6 +895,7 @@ final class DreamService {
     total += (relationship ?? '').runes.length;
     total += (openLoops ?? '').runes.length;
     total += (longMemory ?? '').runes.length;
+    total += (personaSection ?? '').runes.length;
     return total;
   }
 
@@ -670,6 +908,215 @@ final class DreamService {
       buffer.writeln('- [${item.section}] ${item.date} ${item.text}');
     }
     return buffer.toString().trim();
+  }
+
+  /// PersonaTree 结构的模型输入：活跃根与未归根中间理解，附叶证据
+  /// 的日期、来源性质与 support/conflict 关系。归档是代码校验的负面
+  /// 依据，不递给模型（避免已纠正内容重新进入生成）。
+  String _renderTreeForModel(PersonaTreeSnapshot snapshot) {
+    final buffer = StringBuffer();
+    for (final branch in personaBranches) {
+      final view = snapshot.branches[branch.wireName];
+      if (view == null || !view.readable) {
+        continue;
+      }
+      if (view.roots.isEmpty && view.unrooted.isEmpty) {
+        continue;
+      }
+      buffer.writeln('### ${branch.title}（${branch.wireName}）');
+      for (final root in view.roots) {
+        buffer.writeln('- 根 [${root.id}] ${root.claim}');
+        for (final middle in root.middles) {
+          buffer.writeln(
+            '  - [${middle.id}] ${middle.type}｜${middle.claim}'
+            '（${_describeLeaves(middle.leaves)}）',
+          );
+        }
+      }
+      for (final middle in view.unrooted) {
+        buffer.writeln(
+          '- 未归根 [${middle.id}] ${middle.type}｜${middle.claim}'
+          '（${_describeLeaves(middle.leaves)}）',
+        );
+      }
+    }
+    return buffer.toString().trim();
+  }
+
+  String _describeLeaves(List<PersonaLeaf> leaves) {
+    if (leaves.isEmpty) {
+      return '无叶证据';
+    }
+    return [
+      for (final leaf in leaves) '${leaf.date} ${leaf.nature} ${leaf.relation}',
+    ].join('；');
+  }
+
+  /// 根节点提案逐条校验：返回拒绝原因码，null 为通过。所有门槛都
+  /// 来自 PersonaTree.md 定稿——证据不足、过度推断、敏感、禁提、
+  /// 复活已归档主张、带时间限定的近况，一律拒绝该提案。
+  String? _validateProposal(
+    PersonaDreamOp op,
+    PersonaTreeSnapshot snapshot,
+    Set<String> banned,
+    List<String> claimsCreatedThisRound,
+  ) {
+    final view = snapshot.branches[op.branchWire];
+    if (view == null || !view.readable) {
+      return 'branch-unreadable';
+    }
+    switch (op) {
+      case PersonaPromoteOp(:final claim, :final middleIds):
+        final claimFailure = rootClaimGateFailure(claim, banned: banned);
+        if (claimFailure != null) {
+          return claimFailure;
+        }
+        final ids = middleIds.toSet();
+        final middles = <PersonaMiddle>[];
+        for (final id in ids) {
+          final middle = view.unrooted
+              .where((candidate) => candidate.id == id)
+              .firstOrNull;
+          if (middle == null) {
+            return 'unknown-middle';
+          }
+          middles.add(middle);
+        }
+        final leaves = [for (final middle in middles) ...middle.leaves];
+        if (leaves.any((leaf) => leaf.relation == 'conflict')) {
+          return 'unresolved-conflict';
+        }
+        final branch = personaBranchForWire(op.branchWire)!;
+        final gateFailure = promotionGateFailure(branch, leaves);
+        if (gateFailure != null) {
+          return gateFailure;
+        }
+        final collision = _claimCollision(claim, view, claimsCreatedThisRound);
+        if (collision != null) {
+          return collision;
+        }
+        claimsCreatedThisRound.add(normalizeMemoryText(claim));
+        return null;
+      case PersonaAbsorbOp(:final rootId, :final middleIds):
+        final root = view.roots
+            .where((candidate) => candidate.id == rootId)
+            .firstOrNull;
+        if (root == null) {
+          return 'unknown-root';
+        }
+        final ids = middleIds.toSet();
+        for (final id in ids) {
+          final middle = view.unrooted
+              .where((candidate) => candidate.id == id)
+              .firstOrNull;
+          if (middle == null) {
+            return 'unknown-middle';
+          }
+          if (middle.leaves.any((leaf) => leaf.relation == 'conflict')) {
+            return 'unresolved-conflict';
+          }
+          if (!sameClaim(middle.claim, root.claim)) {
+            return 'claim-mismatch';
+          }
+        }
+        return null;
+      case PersonaDemoteOp(:final rootId, :final counterId):
+        final root = view.roots
+            .where((candidate) => candidate.id == rootId)
+            .firstOrNull;
+        if (root == null) {
+          return 'unknown-root';
+        }
+        final counter = view.unrooted
+            .where((candidate) => candidate.id == counterId)
+            .firstOrNull;
+        if (counter == null) {
+          return 'unknown-counter';
+        }
+        // 降根只认「两个不同日期的反向行为已形成反向中间理解」的
+        // 证据形态（日终冲突升级的产物）；单日期或无叶的引用不成立。
+        final counterDates = counter.leaves
+            .map((leaf) => leaf.date)
+            .toSet()
+            .length;
+        if (counter.leaves.length < 2 || counterDates < 2) {
+          return 'counter-insufficient';
+        }
+        if (sameClaim(counter.claim, root.claim)) {
+          return 'counter-same-claim';
+        }
+        return null;
+      case PersonaMergeOp(:final claim, :final rootIds):
+        final claimFailure = rootClaimGateFailure(claim, banned: banned);
+        if (claimFailure != null) {
+          return claimFailure;
+        }
+        final ids = rootIds.toSet();
+        if (ids.length < 2) {
+          return 'needs-two-roots';
+        }
+        final roots = <PersonaRoot>[];
+        for (final id in ids) {
+          final root = view.roots
+              .where((candidate) => candidate.id == id)
+              .firstOrNull;
+          if (root == null) {
+            return 'unknown-root';
+          }
+          roots.add(root);
+        }
+        for (final root in roots) {
+          if (root.allLeaves.any((leaf) => leaf.relation == 'conflict')) {
+            return 'unresolved-conflict';
+          }
+          if (conflictTopic(claim, root.claim)) {
+            return 'claim-conflict';
+          }
+        }
+        if (!roots.any((root) => sameClaim(claim, root.claim))) {
+          return 'claim-drift';
+        }
+        final collision = _claimCollision(
+          claim,
+          view,
+          claimsCreatedThisRound,
+          excludeRootIds: ids,
+        );
+        if (collision != null) {
+          return collision;
+        }
+        claimsCreatedThisRound.add(normalizeMemoryText(claim));
+        return null;
+    }
+  }
+
+  /// 新根主张的重复/复活检查：与现有根、归档主张或本轮已接纳主张
+  /// 同义即拒绝。[excludeRootIds] 供合并操作排除参与合并的根。
+  String? _claimCollision(
+    String claim,
+    PersonaBranchSnapshot view,
+    List<String> claimsCreatedThisRound, {
+    Set<String> excludeRootIds = const {},
+  }) {
+    for (final root in view.roots) {
+      if (excludeRootIds.contains(root.id)) {
+        continue;
+      }
+      if (sameClaim(claim, root.claim)) {
+        return 'duplicate-root';
+      }
+    }
+    for (final archived in view.archivedClaims) {
+      if (sameClaim(claim, archived)) {
+        return 'archived-claim';
+      }
+    }
+    for (final created in claimsCreatedThisRound) {
+      if (sameClaim(claim, created)) {
+        return 'duplicate-root';
+      }
+    }
+    return null;
   }
 
   /// 自检五关：任一不过返回失败原因码，整份草稿作废。
@@ -773,6 +1220,7 @@ final class DreamService {
     LongMemoryFile? existing,
     String result, {
     required bool includeDetails,
+    List<_RootOpRecord> rootOps = const [],
   }) {
     final rangeStart = previousState.lastSuccess == null
         ? '最初'
@@ -787,8 +1235,22 @@ final class DreamService {
       )
       ..writeln('result: $result')
       ..writeln('候选条目数: ${items.length}');
+    if (rootOps.isNotEmpty) {
+      buffer.writeln('根节点提案数: ${rootOps.length}');
+    }
     if (!includeDetails) {
       return buffer.toString();
+    }
+    if (rootOps.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('## 根节点提案');
+      for (final record in rootOps) {
+        final verdict = record.reason == null
+            ? 'accepted'
+            : 'rejected(${record.reason})';
+        buffer.writeln('- ${_describeOp(record.op)}: $verdict');
+      }
     }
     final oldItems = existing?.allItems ?? const <String>[];
     final newNormalized = {
@@ -902,12 +1364,20 @@ final class DreamService {
 你是栖语离线记忆的深度重组模块（Dream）。给你用户已整理的记忆与当前长期印象，请产出新长期印象的候选版。要求：
 1. 只输出一个 JSON 对象，不要输出任何其它文字、解释或代码块标记。
 2. 每条印象必须有给定材料中的依据，不得编造、不得引入材料外的事实。
-3. 只保留高压缩的生活倾向、持续关注和关系变化：用户现实里的重要的人、值得长期记住的人生事件、经历过的变化与反复出现的主题、双方共同形成的经历；不写产品机制、逐日流水账、一次性任务细节、原话细节或证据链。
+3. 只保留高压缩的生活倾向、持续关注和关系变化：用户现实里的重要的人、值得长期记住的人生事件、经历过的变化与反复出现的主题、双方共同形成的经历；不写产品机制、逐日流水账、一次性任务细节、原话细节或证据链。模式与轨迹按成长线写：一行「时间段＋前后变化」，保持中性；共同过往只收双方真实互动、有整理日期依据的内容，不写单方面印象。
 4. 每条是一行压缩印象，不超过60字，可以带时间词。
 5. 以当前长期印象为基础保守重组：同义的合并，仍有依据的保留，被更新证据推翻的改写；拿不准就不写。
 6. 绝不出现密码、密钥、证件号、银行卡号等敏感内容；绝不触碰禁提清单中的话题。
+7. rootProposals：可选数组，最多8条；递来 PersonaTree 结构时才可提保守的根节点调整，没有把握就不提，节点 ID 必须取自递来的结构，绝不编造：
+   - {"op":"promote","branch":"identity|expression|values|preferences|boundaries","claim":"一句不带时间词的稳定主张，不超过60字","middles":["XX-Mnnn"]}：把证据充分的未归根中间理解升为新根；identity 分支只接受明确自述；证据不足的中间理解保持未归根，不强行升根。
+   - {"op":"absorb","branch":"…","root":"XX-Rnnn","middles":["XX-Mnnn"]}：把与已有根同主张的未归根中间理解归入该根。
+   - {"op":"demote","branch":"…","root":"XX-Rnnn","counter":"XX-Mnnn"}：只有反向中间理解真实存在时才降根，counter 必填且取自未归根中间理解。
+   - {"op":"merge","branch":"…","roots":["XX-Rnnn","XX-Rnnn"],"claim":"合并后的稳定主张"}：只合并同义或过度细分的根。
+   boundaries 分支的行为推断只能写成「少探问」「谨慎接近」这类软边界，不得伪装成用户明确禁止。
+   提案的 claim 同样不得带「最近/这周/这几天」等时间限定，不得出现敏感或禁提内容。
 字段白名单：
-- items: 数组，最多24项，每项 {"section": 人与关系、重要事件、模式与轨迹、共同过往 之一, "text": 一行压缩印象，不超过60字, "evidence": 日期数组，每项形如 YYYY-MM-DD，必须取自递来的已整理记录日期，绝不编造}。''';
+- items: 数组，最多24项，每项 {"section": 人与关系、重要事件、模式与轨迹、共同过往 之一, "text": 一行压缩印象，不超过60字, "evidence": 日期数组，每项形如 YYYY-MM-DD，必须取自递来的已整理记录日期，绝不编造}。
+- rootProposals: 可选数组，格式见第7条；不调整树时省略该字段。''';
 
     final user = StringBuffer()
       ..writeln('## 当前长期印象')
@@ -935,6 +1405,9 @@ final class DreamService {
     }
     user
       ..writeln()
+      ..writeln('## PersonaTree 当前结构')
+      ..writeln(_sectionOrEmpty(input.personaSection))
+      ..writeln()
       ..writeln('## 关系状态')
       ..writeln(_sectionOrEmpty(input.relationship))
       ..writeln()
@@ -956,6 +1429,29 @@ final class DreamService {
   }
 }
 
+/// 一条根节点提案的校验/落盘记录。[reason] 为 null 表示通过校验并
+/// 落盘；否则是拒绝原因码。只存原因码与操作对象（含节点 ID），绝不
+/// 存主张原文——被拒提案可能携带敏感内容。[reason] 可变：校验通过后
+/// 仍可能在落盘阶段被 store 的存在性防御跳过。
+final class _RootOpRecord {
+  _RootOpRecord(this.op, this.reason);
+
+  final PersonaDreamOp op;
+  String? reason;
+}
+
+/// 提案的诊断描述：只含操作类型、分支与节点 ID，绝不含主张原文。
+String _describeOp(PersonaDreamOp op) => switch (op) {
+  PersonaPromoteOp(:final middleIds) =>
+    'promote ${op.branchWire}(${middleIds.join(',')})',
+  PersonaAbsorbOp(:final rootId, :final middleIds) =>
+    'absorb ${op.branchWire}($rootId←${middleIds.join(',')})',
+  PersonaDemoteOp(:final rootId, :final counterId) =>
+    'demote ${op.branchWire}($rootId,counter=$counterId)',
+  PersonaMergeOp(:final rootIds) =>
+    'merge ${op.branchWire}(${rootIds.join(',')})',
+};
+
 /// Dream 一次运行的输入快照。
 final class _DreamInput {
   const _DreamInput({
@@ -964,6 +1460,8 @@ final class _DreamInput {
     required this.relationship,
     required this.openLoops,
     required this.longMemory,
+    required this.personaSnapshot,
+    required this.personaSection,
     required this.banned,
     required this.validDates,
     required this.validMonths,
@@ -974,6 +1472,12 @@ final class _DreamInput {
   final String? relationship;
   final String? openLoops;
   final String? longMemory;
+
+  /// PersonaTree 只读快照：根节点提案校验的事实来源；未接树时为 null。
+  final PersonaTreeSnapshot? personaSnapshot;
+
+  /// 递给模型的树结构渲染；无树或树为空时为 null。
+  final String? personaSection;
   final Set<String> banned;
 
   /// 本轮实际递给模型的整理日期与月份：证据关的白名单。

@@ -744,6 +744,9 @@ final class LocalChatService {
         final tree = personaTree;
         if (tree != null && result.addedEntries.isNotEmpty) {
           await tree.createLeaves(result.addedEntries);
+          // 用户明确纠正是唯一在线撤根例外（ticket 17）：当轮身份自述
+          // 与根下理解冲突时立即撤根并重投影 persona.md，不等日终。
+          await tree.revokeCorrectedIdentityRoots(result.addedEntries);
         }
       } on Object catch (error) {
         _diagnosticsSink(
@@ -792,10 +795,12 @@ final class LocalChatService {
     }
   }
 
-  /// 每轮实测状态包，组装本轮【近况】块与【长期印象】块；读取失败
-  /// 降级为空块（空块不输出），绝不阻塞回复。注入关：近况与长期印象
-  /// 总量超热层硬上限时按砍序先压长期印象（clipLongMemoryBlock），
-  /// 近况块内部再压近日状态；relationship 与 open-loops 永不砍。
+  /// 每轮实测状态包，组装本轮【近况】、【长期印象】与【用户画像】块；
+  /// 读取失败降级为空块（空块不输出），绝不阻塞回复。注入关统一预算：
+  /// 近况 + 长期印象 + 用户画像总量超热层硬上限时按砍序先压长期印象
+  /// （clipLongMemoryBlock），再压用户画像可裁节（clipPersonaBlock，
+  /// 边界禁区永不裁）；近况块内部再压近日状态；relationship 与
+  /// open-loops 永不砍，当前安全信息与近况优先保住。
   /// 同时消费该会话上一轮后台召回命中的短期 memory context（临时透镜，
   /// 只注入一次）。
   Future<ModelPromptBuilder> _promptBuilderForRequest(String sessionId) async {
@@ -806,12 +811,33 @@ final class LocalChatService {
         final block = await reader.readDailyStateBlock();
         builder = builder.copyWithDailyState(block);
         final longMemory = await reader.readLongMemoryBlock();
-        if (longMemory.isNotEmpty) {
-          final available = hotLayerMaxRunes - block.runes.length;
-          builder = builder.copyWithLongMemory(
-            clipLongMemoryBlock(longMemory, available),
+        final persona = await reader.readPersonaBlock();
+        final overflow =
+            block.runes.length +
+            longMemory.runes.length +
+            persona.runes.length -
+            hotLayerMaxRunes;
+        var clippedLongMemory = longMemory;
+        var clippedPersona = persona;
+        if (overflow > 0) {
+          clippedLongMemory = clipLongMemoryBlock(
+            longMemory,
+            longMemory.runes.length - overflow,
           );
+          final remainingOverflow =
+              block.runes.length +
+              clippedLongMemory.runes.length +
+              persona.runes.length -
+              hotLayerMaxRunes;
+          if (remainingOverflow > 0) {
+            clippedPersona = clipPersonaBlock(
+              persona,
+              persona.runes.length - remainingOverflow,
+            );
+          }
         }
+        builder = builder.copyWithLongMemory(clippedLongMemory);
+        builder = builder.copyWithPersona(clippedPersona);
       } on Object catch (error) {
         _diagnosticsSink('state pack unavailable [$error]');
       }

@@ -9,9 +9,10 @@ import 'open_loop_store.dart';
 import 'relationship_lifecycle.dart';
 
 /// 热层注入硬上限（设计定稿）：总量超 3000 tokens 先砍再注入。
-/// 砍序：先压 long-memory（注入关在聊天服务侧按剩余预算裁剪，见
-/// clipLongMemoryBlock）→ 再压 daily-state 的近日状态节；永不砍
-/// relationship 与 open-loops。
+/// 砍序：先压 long-memory → 再压 persona 投影的可裁节（边界禁区永不
+/// 裁）→ 再压 daily-state 的近日状态节；永不砍 relationship 与
+/// open-loops。注入关在聊天服务侧按剩余预算裁剪（clipLongMemoryBlock
+/// / clipPersonaBlock）。
 const hotLayerMaxRunes = 3000;
 
 /// 每日状态包装配（装配图定稿）：服务端每轮读状态包三个文件
@@ -38,6 +39,7 @@ final class StatePackReader {
   File get _dailyStateFile => File(path.join(memoryDirectory, 'daily-state.md'));
   File get _longMemoryFile =>
       File(path.join(memoryDirectory, 'long-memory.md'));
+  File get _personaFile => File(path.join(memoryDirectory, 'persona.md'));
 
   /// 返回可直接注入的【长期印象】内容；文件不存在、为空或读取失败
   /// （损坏等待恢复流程）时返回空串，空块不输出。预算裁剪由注入关
@@ -45,6 +47,22 @@ final class StatePackReader {
   Future<String> readLongMemoryBlock() async {
     final contents = await _readIfExists(_longMemoryFile);
     return contents?.trim() ?? '';
+  }
+
+  /// 返回可直接注入的【用户画像】内容（persona.md 稳定根投影）；文件
+  /// 不存在、为空或读取失败时返回空串，空块不输出。文件首行的
+  /// `# persona` 标题属于文件格式，不进注入内容；预算裁剪归注入关。
+  Future<String> readPersonaBlock() async {
+    final contents = await _readIfExists(_personaFile);
+    final trimmed = contents?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    final lines = trimmed.split('\n');
+    if (lines.first.trim() == '# persona') {
+      return lines.skip(1).join('\n').trim();
+    }
+    return trimmed;
   }
 
   /// 返回可直接注入的【近况】内容；无任何可用内容时返回空串。

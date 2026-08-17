@@ -98,13 +98,15 @@ final class LocalAppHost {
       openLoopStore: openLoopStore,
     );
     // Dream（五段节奏第五动作）：晚安后与启动补跑时深度重组产出
-    // 长期印象；与聊天共用同一 Provider 配置与凭据，未配置时不运行，
-    // 绝不用规则补写长期内容。
+    // 长期印象，并保守维护 PersonaTree 根节点与 persona.md 投影；
+    // 与聊天共用同一 Provider 配置与凭据，未配置时不运行，绝不用规则
+    // 补写长期内容。共享同一 PersonaTreeStore 实例（树文件串行锁唯一）。
     final dreamService = DreamService(
       memoryDirectory: memoryDirectory,
       episodePipeline: episodePipeline,
       openLoopStore: openLoopStore,
       monthlySummary: monthlySummary,
+      personaTree: personaTree,
       modelClient: effectiveProviderSettings,
     );
     final chatService = LocalChatService(
