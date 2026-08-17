@@ -218,6 +218,11 @@ final class RelationshipLifecycle {
 
   /// 日终更新：文件缺失则按初识播种；受管结构则按证据整体重建；
   /// 手写不可识别文件绝不改写。播种当晚同样投影当天已有的关系证据。
+  ///
+  /// 日终模型理解调用产出的关系信号持久化在各日文件元数据里，
+  /// [_collectSignals] 与 episode 证据一并读取投影；它们绝不进入
+  /// [_collectEvidence] 的阶段计数——棘轮只认 episodes 里可追溯的
+  /// 互动证据，模型主观判断不能越级。
   Future<void> updateAtEndOfDay(
     String date,
     EpisodeMemoryPipeline pipeline,
@@ -339,6 +344,40 @@ final class RelationshipLifecycle {
           (entry) => entry.kind == episodeKindRelationshipSignal,
         ),
       );
+      // 日终模型理解的关系信号随日文件元数据持久化，之后每次日终
+      // 重建都与 episode 证据一起投影，不会在次日消失；它不参与
+      // _collectEvidence 的阶段计数，棘轮证据保持纯 episode 来源。
+      final signals = day.understanding?['relationshipSignals'];
+      if (signals is List<Object?>) {
+        for (final (index, item) in signals
+            .whereType<Map<String, Object?>>()
+            .indexed) {
+          final signal = item['signal'];
+          final summary = item['summary'];
+          if (signal is! String ||
+              summary is! String ||
+              summary.trim().isEmpty) {
+            continue;
+          }
+          final parsedDate = _parseDate(date);
+          entries.add(
+            EpisodeEntry(
+              id: 'finalize:$date:signal:$index',
+              sessionId: 'finalization',
+              requestId: 'finalization',
+              summary: summary,
+              at: DateTime(
+                parsedDate.year,
+                parsedDate.month,
+                parsedDate.day,
+                23,
+              ).toUtc(),
+              kind: episodeKindRelationshipSignal,
+              signal: signal,
+            ),
+          );
+        }
+      }
     }
     entries.sort((left, right) => left.at.compareTo(right.at));
     return _RelationshipSignals(

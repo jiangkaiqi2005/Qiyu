@@ -280,15 +280,23 @@ final class PersonaTreeStore {
 
   /// 日终：先补齐当天可能遗漏的叶（跨重启重建也走这里），再对每个
   /// 分支做中间理解的建立、挂载与整理。幂等。
-  Future<void> processDay(String date) => _locked(() async {
+  ///
+  /// [extraEntries] 承载日终模型理解调用产出的画像候选提示（白名单
+  /// 校验后）：与当天 episode 条目走同一套建叶闸门（禁提、身份只认
+  /// 自述、去重合并），指针落在日文件上。
+  Future<void> processDay(
+    String date, {
+    List<EpisodeEntry> extraEntries = const [],
+  }) => _locked(() async {
     final day = await episodePipeline.readDay(date);
     if (!day.readable) {
       _diagnosticsSink('persona day skipped reason=$date-unreadable');
       return;
     }
-    final personaEntries = day.entries
-        .where((entry) => entry.summary.trim().isNotEmpty)
-        .toList();
+    final personaEntries = [
+      ...day.entries.where((entry) => entry.summary.trim().isNotEmpty),
+      ...extraEntries,
+    ];
     await _createLeavesLocked(personaEntries);
     final banned = await _bannedTitles();
     for (final branch in personaBranches) {

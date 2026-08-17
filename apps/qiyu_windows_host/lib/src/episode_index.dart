@@ -157,7 +157,7 @@ final class EpisodeIndexStore {
       if (valid.isEmpty) {
         continue;
       }
-      final keywords = _keywordsFor(valid);
+      final keywords = _keywordsForDay(day, valid);
       final month = date.substring(0, 7);
       (monthDayLines[month] ??= []).add(
         '- $date | ${keywords.join(', ')} | $date.md',
@@ -198,6 +198,19 @@ final class EpisodeIndexStore {
       topIndexFile.path,
       '# episodes index\n\n${topLines.join('\n')}\n',
     );
+  }
+
+  /// 当天索引关键词：优先取日终模型理解写下的主题词（日终归档定稿
+  /// 2026-08-16：不机械截断），缺失或全被丢弃时回退确定性截断。
+  List<String> _keywordsForDay(EpisodeDay day, List<EpisodeEntry> valid) {
+    final modelKeywords = day.understanding?['indexKeywords'];
+    if (modelKeywords is List<Object?>) {
+      final keywords = sanitizeIndexKeywords(modelKeywords.whereType<String>());
+      if (keywords.isNotEmpty) {
+        return keywords;
+      }
+    }
+    return _keywordsFor(valid);
   }
 
   /// 从当天有效条目提取索引关键词：摘要截断后去重，最多四条。
@@ -258,6 +271,25 @@ final class EpisodeIndexStore {
 /// 规范化用于语义去重比较：折叠空白并统一大小写；不改变落盘原文。
 String normalizeMemoryText(String value) =>
     value.replaceAll(RegExp(r'\s+'), ' ').toLowerCase().trim();
+
+/// 清洗模型理解产出的索引关键词：脱敏、修剪、去重、限长限量；没有
+/// 可用结果时返回空列表。日终解析闸门与索引重建共用同一份清洗规则。
+List<String> sanitizeIndexKeywords(Iterable<String> raw) {
+  final keywords = <String>[];
+  final seen = <String>{};
+  for (final keyword in raw) {
+    final cleaned = redactSessionText(keyword).trim();
+    final key = normalizeMemoryText(cleaned);
+    if (cleaned.isEmpty || key.isEmpty || !seen.add(key)) {
+      continue;
+    }
+    keywords.add(clipRunes(cleaned, indexKeywordMaxRunes));
+    if (keywords.length >= indexMaxDayKeywords) {
+      break;
+    }
+  }
+  return keywords;
+}
 
 /// 两段文本共享的前缀 rune 数（话题相近判断用）。
 int sharedPrefixRunes(String left, String right) {

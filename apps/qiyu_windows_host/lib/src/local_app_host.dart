@@ -106,6 +106,9 @@ final class LocalAppHost {
         episodePipeline: episodePipeline,
         openLoopStore: openLoopStore,
         personaTree: personaTree,
+        // 日终一次模型理解调用与聊天共用同一 Provider 配置与凭据；
+        // 未配置时日终自动走全确定性路径。
+        modelClient: effectiveProviderSettings,
       ),
       openLoopStore: openLoopStore,
       statePackReader: StatePackReader(

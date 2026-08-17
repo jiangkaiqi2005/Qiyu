@@ -102,6 +102,7 @@ final class EpisodeDay {
     this.summary,
     this.finalized = false,
     this.finalizedAt,
+    this.understanding,
   });
 
   final String date;
@@ -118,6 +119,11 @@ final class EpisodeDay {
   /// 归档后若当天再次产生新条目，写入会把该标记重置为 false 等待补归档。
   final bool finalized;
   final DateTime? finalizedAt;
+
+  /// 日终一次模型理解调用的白名单校验结果（Memory.md 日终归档定稿
+  /// 2026-08-16）。持久化在日文件元数据里供重跑复用与索引取词；
+  /// 未经过模型理解的日期为 null。
+  final Map<String, Object?>? understanding;
 
   bool hasEntryId(String id) => entries.any((entry) => entry.id == id);
 }
@@ -207,9 +213,11 @@ final class EpisodeMemoryPipeline {
 
   /// 串行化所有 episode 日文件与 checkpoint 的写操作。日终归档流程
   /// 整体在此锁内执行；对话增量整理（[processReply]）同样在锁内。
-  /// 锁内都是本机小文件原子写：单日归档毫秒级；启动补扫按日逐个
-  /// 串行执行并复用日期列表，长积压分摊到多次归档，绝不阻塞首个
-  /// 可见回应（所有归档触发都在回复交付之后或后台任务链上）。
+  /// 锁内是本机小文件原子写：单日归档毫秒级；启用日终模型理解调用
+  /// 时该调用也在锁内（归档日文件读写之间），耗时计入后台任务链，
+  /// 绝不阻塞可见回应（所有归档触发都在回复交付之后或后台任务链上，
+  /// 对话增量整理只排在后台等待）。启动补扫按日逐个串行执行并复用
+  /// 日期列表，长积压分摊到多次归档。
   Future<T> synchronizedOnDayFiles<T>(Future<T> Function() body) {
     final result = _dayFileTail.then((_) => body());
     _dayFileTail = result.then<void>((_) {}, onError: (_) {});
@@ -238,6 +246,8 @@ final class EpisodeMemoryPipeline {
   }
 
   /// 日终归档写入：带摘要与 finalized 标记重写当日文件。
+  /// [understanding] 是日终模型理解调用的白名单校验结果，随元数据
+  /// 持久化供重跑复用与索引取词；null 表示当天没有模型理解。
   /// 调用方必须已持有 [synchronizedOnDayFiles] 锁（日终流程整体持锁）。
   Future<void> writeFinalization(
     String date, {
@@ -245,12 +255,14 @@ final class EpisodeMemoryPipeline {
     String? summary,
     required bool finalized,
     DateTime? finalizedAt,
+    Map<String, Object?>? understanding,
   }) => _writeDayFile(
     date,
     entries,
     summary: summary,
     finalized: finalized,
     finalizedAt: finalizedAt,
+    understanding: understanding,
   );
 
   Future<EpisodeCheckpoint?> readCheckpoint() async {
@@ -483,6 +495,7 @@ final class EpisodeMemoryPipeline {
       }).toList();
       final metadata = _decodeDayMetadata(contents);
       final finalizedAt = metadata['finalizedAt'] as String?;
+      final understanding = metadata['understanding'];
       return EpisodeDay(
         date: date,
         entries: entries,
@@ -492,6 +505,9 @@ final class EpisodeMemoryPipeline {
         finalizedAt: finalizedAt == null
             ? null
             : DateTime.parse(finalizedAt).toUtc(),
+        understanding: understanding is Map<String, Object?>
+            ? understanding
+            : null,
       );
     } on Object {
       // 文件存在但无法解析：返回损坏标记，调用方绝不覆盖它。
@@ -510,6 +526,7 @@ final class EpisodeMemoryPipeline {
     String? summary,
     bool finalized = false,
     DateTime? finalizedAt,
+    Map<String, Object?>? understanding,
   }) async {
     final trimmedSummary = summary?.trim();
     final buffer = StringBuffer()
@@ -524,6 +541,7 @@ final class EpisodeMemoryPipeline {
         'finalized': finalized,
         if (finalizedAt != null)
           'finalizedAt': finalizedAt.toUtc().toIso8601String(),
+        'understanding': ?understanding,
       })} -->')
       ..writeln();
     if (trimmedSummary != null && trimmedSummary.isNotEmpty) {
