@@ -36,6 +36,53 @@ void main() {
       HiddenActionKind.noAction,
     ]);
     expect(parse.actions.first.query, '上次说的那本书');
+    // 聊天轮的检索请求不带选择字段。
+    expect(parse.actions.first.months, isNull);
+    expect(parse.actions.first.dates, isNull);
+  });
+
+  test('recall selections are format-checked and deduplicated', () {
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"火锅店",'
+      '"months":["2026-07","2026-07"],"dates":["2026-07-14","2026-7-14",'
+      '"2026-07-14"]}]</qiyu-actions>',
+    );
+
+    expect(parse.actions, hasLength(1));
+    final action = parse.actions.single;
+    expect(action.query, '火锅店');
+    expect(action.months, ['2026-07']);
+    expect(action.dates, ['2026-07-14']);
+    // 非法格式的项被丢弃并记诊断，合法项保留。
+    expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+  });
+
+  test('recall selections are uncapped across months and dates', () {
+    // 跨月跨年检索不设月份或日期数量上限（定稿）：全部合法选择保留。
+    final dates = List.generate(40, (index) {
+      final month = '${(index % 12) + 1}'.padLeft(2, '0');
+      final day = '${(index % 28) + 1}'.padLeft(2, '0');
+      return '"2026-$month-$day"';
+    }).join(',');
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"跨月查找",'
+      '"dates":[$dates]}]</qiyu-actions>',
+    );
+
+    expect(parse.actions, hasLength(1));
+    expect(parse.actions.single.dates, hasLength(40));
+    expect(parse.diagnostics, isEmpty);
+  });
+
+  test('recall selection fields must be arrays', () {
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"火锅店",'
+      '"months":"2026-07"}]</qiyu-actions>',
+    );
+
+    expect(parse.actions, hasLength(1));
+    expect(parse.actions.single.months, isNull);
+    expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
   });
 
   test('unknown actions are dropped with diagnostics, valid ones kept', () {

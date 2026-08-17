@@ -138,6 +138,27 @@
       }
     },
     {
+      "id": "recall-selection-block-stays-hidden",
+      "request": {
+        "requestId": "fixture-recall-selections",
+        "text": "上次那家火锅店叫什么来着"
+      },
+      "provider": {
+        "configured": true,
+        "candidateReply": "一时没想起名字。\n<qiyu-actions>[{\"action\":\"memory_recall\",\"query\":\"火锅店\",\"months\":[\"2026-07\"],\"dates\":[\"2026-07-14\"]}]</qiyu-actions>"
+      },
+      "expected": {
+        "messages": ["一时没想起名字。"],
+        "source": "llm",
+        "mode": "llm",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "上次那家火锅店叫什么来着" },
+          { "speaker": "qiyu", "text": "一时没想起名字。" }
+        ]
+      }
+    },
+    {
       "id": "model-control-value-falls-back-locally",
       "request": {
         "requestId": "fixture-control-value",

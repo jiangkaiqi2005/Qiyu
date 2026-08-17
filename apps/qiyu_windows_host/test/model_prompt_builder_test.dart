@@ -117,6 +117,28 @@ void main() {
     expect(system, contains('没查到记录不代表没发生'));
   });
 
+  test('the recall discipline states index paths and selection rules', () {
+    final system = builder
+        .build(StateSnapshot.initial('local-user'), '在吗')
+        .first
+        .content;
+
+    // 触发纪律：常驻字段没命中且用户问旧事才发。
+    expect(system, contains('常驻字段'));
+    // 两级索引路径与格式静态写明，不常驻挂载索引内容本身。
+    expect(system, contains('episodes/index.md'));
+    expect(system, contains('episodes/YYYY/MM/index.md'));
+    expect(system, contains('- YYYY-MM | 关键词'));
+    expect(system, contains('- YYYY-MM-DD | 关键词'));
+    expect(system, isNot(contains('# episodes index')));
+    // 选择纪律：只取递来的目录、可空、禁编造日期。
+    expect(system, contains('选择只能取自递来的目录'));
+    expect(system, contains('绝不编造日期'));
+    // 节奏：命中快本轮补，绝不等查找。
+    expect(system, contains('绝不等查找结果'));
+    expect(system, contains('第二条消息'));
+  });
+
   test('copyWithDailyState replaces only the recent-state block', () {
     const full = ModelPromptBuilder(
       '测试人格宪法',

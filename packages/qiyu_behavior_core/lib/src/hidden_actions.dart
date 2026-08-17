@@ -45,6 +45,12 @@ const maxHiddenEvidenceRunes = 200;
 /// memory_recall 的检索意图长度上限（runes）。
 const maxHiddenQueryRunes = 100;
 
+/// memory_recall 选择字段的合法形态。选择数量不设上限（跨月跨年
+/// 检索定稿）：Provider 输出预算天然约束块大小，Host 成员校验才是
+/// 真正的闸门。
+final _recallMonthPattern = RegExp(r'^\d{4}-\d{2}$');
+final _recallDatePattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+
 /// Open-loop 动作的字段长度上限（runes）。标题走 summary 字段，
 /// 比 memory_signal 的摘要更短——事项名应当简短。
 const maxLoopTitleRunes = 60;
@@ -113,6 +119,8 @@ final class HiddenAction {
     this.summary,
     this.evidence,
     this.query,
+    this.months,
+    this.dates,
     this.branch,
     this.nature,
     this.due,
@@ -127,6 +135,13 @@ final class HiddenAction {
   final String? summary;
   final String? evidence;
   final String? query;
+
+  /// memory_recall 轮内查找的月份选择（`YYYY-MM`），只出现在选择调用
+  /// 的回应里；聊天轮的检索请求只有 query。
+  final List<String>? months;
+
+  /// memory_recall 轮内查找的日期选择（`YYYY-MM-DD`）。
+  final List<String>? dates;
 
   /// memory_signal 画像提示：所属 PersonaTree 分支
   /// （identity/expression/values/preferences/boundaries）。
@@ -159,6 +174,8 @@ final class HiddenAction {
     if (summary != null) 'summary': summary,
     if (evidence != null) 'evidence': evidence,
     if (query != null) 'query': query,
+    if (months != null) 'months': months,
+    if (dates != null) 'dates': dates,
     if (branch != null) 'branch': branch,
     if (nature != null) 'nature': nature,
     if (due != null) 'due': due,
@@ -176,6 +193,8 @@ final class HiddenAction {
       other.summary == summary &&
       other.evidence == evidence &&
       other.query == query &&
+      _sameSelections(other.months, months) &&
+      _sameSelections(other.dates, dates) &&
       other.branch == branch &&
       other.nature == nature &&
       other.due == due &&
@@ -191,6 +210,8 @@ final class HiddenAction {
     summary,
     evidence,
     query,
+    Object.hashAll(months ?? const []),
+    Object.hashAll(dates ?? const []),
     branch,
     nature,
     due,
@@ -200,6 +221,21 @@ final class HiddenAction {
     status,
     signal,
   );
+}
+
+bool _sameSelections(List<String>? left, List<String>? right) {
+  if (identical(left, right)) {
+    return true;
+  }
+  if (left == null || right == null || left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index += 1) {
+    if (left[index] != right[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 final class HiddenActionParse {
@@ -396,7 +432,25 @@ HiddenAction? _validateAction(
         diagnostics.add(HiddenActionDiagnostics.privilegeViolation);
         return null;
       }
-      return HiddenAction(kind: kind, query: query);
+      // 轮内查找的选择字段（只出现在选择调用回应里）：逐项做格式校验，
+      // 不合规的项丢弃并记诊断。成员校验（选择必须来自 Host 递过的
+      // 目录）在 Host 编排层执行。
+      final months = _parseSelections(
+        item['months'],
+        _recallMonthPattern,
+        diagnostics,
+      );
+      final dates = _parseSelections(
+        item['dates'],
+        _recallDatePattern,
+        diagnostics,
+      );
+      return HiddenAction(
+        kind: kind,
+        query: query,
+        months: months,
+        dates: dates,
+      );
     case HiddenActionKind.noAction:
       return HiddenAction(kind: kind);
     case HiddenActionKind.openLoopCandidate:
@@ -550,6 +604,35 @@ String? _cleanFieldValue(Object? value) {
       .replaceAll(RegExp(r'\s{2,}'), ' ')
       .trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+/// 解析 memory_recall 的选择数组：字段缺失返回 null（未选择）；
+/// 存在但非数组、或数组里没有合法项时同样返回 null，违规项记诊断。
+/// 数量不设上限（跨月跨年检索定稿），重复项折叠。
+List<String>? _parseSelections(
+  Object? value,
+  RegExp pattern,
+  List<String> diagnostics,
+) {
+  if (value == null) {
+    return null;
+  }
+  if (value is! List<Object?>) {
+    diagnostics.add(HiddenActionDiagnostics.invalidFields);
+    return null;
+  }
+  final selections = <String>[];
+  for (final item in value) {
+    if (item is! String || !pattern.hasMatch(item.trim())) {
+      diagnostics.add(HiddenActionDiagnostics.invalidFields);
+      continue;
+    }
+    final selection = item.trim();
+    if (!selections.contains(selection)) {
+      selections.add(selection);
+    }
+  }
+  return selections.isEmpty ? null : selections;
 }
 
 bool _violatesPrivilege(String value) =>

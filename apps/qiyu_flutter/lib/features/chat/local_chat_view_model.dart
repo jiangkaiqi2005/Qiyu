@@ -182,6 +182,7 @@ final class LocalChatViewModel extends ChangeNotifier {
     ReplySource? source;
     FallbackReason? fallbackReason;
     var completed = false;
+    var committed = false;
     await for (final event in _gateway.deliver(
       requestId: requestId,
       text: text,
@@ -222,6 +223,32 @@ final class LocalChatViewModel extends ChangeNotifier {
           fallbackReason = event.fallbackReason;
         case LocalChatEventKind.done:
           completed = true;
+          // 轮内召回的 bubble 2 会在同一条事件流里带来第二段
+          // message/state/done：每个 done 提交已收齐的一段，
+          // 而不是等流结束只保留最后一段。
+          final messages = finalMessages;
+          final replySource = source;
+          if (messages != null && replySource != null) {
+            committed = true;
+            if (generation == _restoreGeneration) {
+              _messages.addAll(
+                messages.map(
+                  (message) => LocalChatMessage(
+                    requestId: requestId,
+                    speaker: LocalChatSpeaker.qiyu,
+                    text: message,
+                    source: replySource,
+                    fallbackReason: fallbackReason,
+                  ),
+                ),
+              );
+              _streamingText = '';
+              _waiting = false;
+            }
+            finalMessages = null;
+            source = null;
+            fallbackReason = null;
+          }
         case LocalChatEventKind.cancelled:
           _streamingText = '';
           _waiting = false;
@@ -230,7 +257,7 @@ final class LocalChatViewModel extends ChangeNotifier {
       }
       notifyListeners();
     }
-    if (!completed || finalMessages == null || source == null) {
+    if (!completed || !committed) {
       if (generation == _restoreGeneration) {
         _streamingText = '';
       }
@@ -239,17 +266,6 @@ final class LocalChatViewModel extends ChangeNotifier {
     if (generation != _restoreGeneration) {
       return false;
     }
-    _messages.addAll(
-      finalMessages.map(
-        (message) => LocalChatMessage(
-          requestId: requestId,
-          speaker: LocalChatSpeaker.qiyu,
-          text: message,
-          source: source,
-          fallbackReason: fallbackReason,
-        ),
-      ),
-    );
     _streamingText = '';
     _pendingRequestId = null;
     _pendingText = null;

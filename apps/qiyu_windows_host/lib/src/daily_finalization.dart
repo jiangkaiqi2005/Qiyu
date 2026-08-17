@@ -691,7 +691,7 @@ final class DailyFinalizationService {
   /// 日终归档内的索引步骤：从原始 episode 整体重建两级索引，日终路径
   /// 只收录已归档、有有效条目的日期。整体重建保证补跑幂等、失败不
   /// 残留半份索引。（召回修复是另一条重建路径：索引缺失或损坏时
-  /// 收录全部可读日期，见 MemoryRecallService。）
+  /// 收录全部可读日期，见 RecallOrchestrator。）
   /// [includingDay] 是本次正在归档的日期：索引步骤先于 finalized 标记，
   /// 构建时把它视作已归档，避免当天永远缺席索引。
   Future<void> _rebuildIndexes({String? includingDay}) =>

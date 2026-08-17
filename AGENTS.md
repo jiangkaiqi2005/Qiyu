@@ -68,6 +68,7 @@ Flutter `/chat` → `HttpLocalChatGateway` → `POST /api/chat` → `LocalChatSe
 5. Provider 的原始增量先在 Host 内完整缓存；候选回复通过结构清洗、违禁词与人格边界校验后，才以共享 `ChatDeliveryEvent` 协议发送 `accepted → waiting → [fallback] → delta* → message → state → done`。页面绝不能看到未经完整安全校验的原始 token。
 6. 用户可通过 `/api/chat/cancel` 按 `requestId` 停止生成；取消会向下取消 Provider/HTTP 流，只保留可重试的用户 turn，不把已展示半句或未完成候选记录为完整栖语回复。
 7. 只有安全可见文本交付完成后才追加栖语 turn。刷新、Host 重启或同一 `requestId` 重试必须复用已有用户 turn/已完成回复，不能重复展示或落盘。晚安类输入在本地直接收束，不调用 Provider、不开新话题。
+8. 召回模型查找轮内循环：本轮模型在隐藏块发出 `memory_recall` 时，bubble 1 交付后 Host 读取两级索引（`episodes/index.md` → `episodes/YYYY/MM/index.md`）连同查找意图递回，模型选月份/日期，代码做成员校验（选取必须出自递过的目录，编造的丢弃记诊断），再回读选中日原文递回，模型组织 bubble 2。命中快（秒级窗口预算）且用户未停止时用同一套 `ChatDeliveryEvent` 交付与安全校验补上，落为同一 `requestId` 的栖语 turn；没赶上则压缩结果并入下一用户轮 `<memory_context>`。查找只由模型隐藏动作触发，无规则兜底、不打分；晚安/安全回复/未配置 Provider 不查找。
 
 **本地规则引擎不是占位 stub，而是行为基准（ground truth）**：黄金 eval 锁定的就是它的输出。
 

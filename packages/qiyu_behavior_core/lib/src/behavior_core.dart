@@ -260,7 +260,7 @@ List<String> _safetyMessages(SafetyKind safety) {
 ) {
   final withoutHiddenStructures = value.replaceAll(
     RegExp(
-      r'<\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu_action|actions?|memory_action)\b[^>]*>[\s\S]*?<\s*/\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu_action|actions?|memory_action)\s*>',
+      r'<\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu[-_]actions?|actions?|memory_action)\b[^>]*>[\s\S]*?<\s*/\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu[-_]actions?|actions?|memory_action)\s*>',
       caseSensitive: false,
     ),
     '',

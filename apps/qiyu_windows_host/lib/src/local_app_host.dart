@@ -90,7 +90,7 @@ final class LocalAppHost {
       episodePipeline: episodePipeline,
       openLoopStore: openLoopStore,
     );
-    // 月压缩由后台任务链触发、召回兜底读取，共享同一实例。
+    // 月压缩由后台任务链触发（五段节奏第四动作），共享同一实例。
     final monthlySummary = MonthlySummaryStore(
       memoryDirectory: memoryDirectory,
       episodePipeline: episodePipeline,
@@ -115,11 +115,13 @@ final class LocalAppHost {
         memoryDirectory: memoryDirectory,
         openLoopStore: openLoopStore,
       ),
-      memoryRecall: MemoryRecallService(
+      memoryRecall: RecallOrchestrator(
         memoryDirectory: memoryDirectory,
         episodePipeline: episodePipeline,
+        // 轮内查找的选择/组织小调用与聊天共用同一 Provider 配置与
+        // 凭据；未配置时轮内循环静默跳过（不召回保持现状）。
+        modelClient: effectiveProviderSettings,
         openLoopStore: openLoopStore,
-        monthlySummary: monthlySummary,
       ),
       personaTree: personaTree,
       monthlySummary: monthlySummary,

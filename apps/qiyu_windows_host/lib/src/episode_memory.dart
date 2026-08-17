@@ -317,7 +317,7 @@ final class EpisodeMemoryPipeline {
     var skipped = 0;
     final additions = <EpisodeEntry>[];
     // memory_recall 不产生 episode 条目：它由 LocalChatService 转交
-    // MemoryRecallService 在后台检索（ticket 13），这里只消费记忆与
+    // RecallOrchestrator 走轮内查找循环，这里只消费记忆与
     // Open-loop 生活动作。
     final consumable = hiddenActions
         .where(

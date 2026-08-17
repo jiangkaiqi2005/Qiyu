@@ -78,6 +78,10 @@ final class LocalChatDeliveryEvent extends ChatDeliveryEvent {
 
 typedef DeliveryPause = Future<void> Function(Duration duration);
 
+/// 召回窗口预算的等待注入点：与流式分段停顿（[DeliveryPause]）语义
+/// 不同，单独注入，测试可分别控制。
+typedef RecallWindowWait = Future<void> Function(Duration window);
+
 /// 候选回复缓冲上限（runes）。可见回复在行为核心侧另有 2000 runes 限制，
 /// 这里只为防止失控的 Provider 流在超时前耗尽内存。
 const _maxModelReplyRunes = 8192;
@@ -96,10 +100,12 @@ final class LocalChatService {
     this.personaTree,
     this.monthlySummary,
     DeliveryPause? deliveryPause,
+    RecallWindowWait? recallWindowWait,
     Clock? clock,
     void Function(String message)? diagnosticsSink,
   }) : _behaviorCore = behaviorCore ?? const QiyuBehaviorCore(),
        _deliveryPause = deliveryPause ?? Future<void>.delayed,
+       _recallWindowWait = recallWindowWait ?? Future<void>.delayed,
        _clock = clock ?? DateTime.now,
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
@@ -112,18 +118,20 @@ final class LocalChatService {
   final OpenLoopStore? openLoopStore;
   final StatePackReader? statePackReader;
 
-  /// 「晚一拍想起」后台召回（ticket 13）。只在配置了 Provider 时
-  /// 有意义：检索结果要注入下一轮模型上下文。
-  final MemoryRecallService? memoryRecall;
+  /// 召回模型查找轮内循环。只在配置了 Provider 时有意义：查找由
+  /// 模型隐藏动作触发，命中快时当轮补 bubble 2，没赶上时压缩结果
+  /// 注入下一轮模型上下文。
+  final RecallOrchestrator? memoryRecall;
 
   /// PersonaTree 叶与中间理解（ticket 14）。必须与日终归档使用
   /// 同一实例：树文件的串行锁在实例内部，两个实例会互相覆盖。
   final PersonaTreeStore? personaTree;
 
   /// 月压缩（ticket 15，五段节奏第四动作）：进入新月、跨年或启动
-  /// 补做时压缩当前月之前的月份。必须与召回检索使用同一实例。
+  /// 补做时压缩当前月之前的月份。
   final MonthlySummaryStore? monthlySummary;
   final DeliveryPause _deliveryPause;
+  final RecallWindowWait _recallWindowWait;
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
   final Map<String, _DeliveryCancellation> _activeDeliveries = {};
@@ -453,37 +461,50 @@ final class LocalChatService {
       yield event;
     }
     if (lastEvent != null && lastEvent.kind == LocalChatEventKind.done) {
+      final completedSession = lastEvent.exchange!.session;
       await _applyHiddenActions(
-        lastEvent.exchange!.session,
+        completedSession,
         trimmedRequestId,
         hiddenActions,
         // 只有模型真正参与的本轮才消费整理窗口；本地降级/晚安收束
         // 保持 pending，等 Provider 恢复后补跑。
         consumeWindow: outcome.source == ReplySource.llm,
       );
-      _scheduleRecall(
-        sessionId: lastEvent.exchange!.session.id,
+      // 轮内召回循环：bubble 1 交付后才开始，绝不阻塞首响。
+      yield* _recallBubble(
+        session: completedSession,
+        state: state,
         userText: trimmedText,
         hiddenActions: hiddenActions,
         outcome: outcome,
+        cancellation: cancellation,
       );
       _scheduleEndOfDayTriggers(outcome);
     }
   }
 
-  /// 「晚一拍想起」触发（首响运行层定稿的双保险），全部在可见回复
-  /// 交付之后后台执行，绝不阻塞首响：
-  /// 1. 模型隐藏块里的 memory_recall 检索请求为主；
-  /// 2. 服务端规则兜底：召回式输入（「你还记得」「我之前说的」）
-  ///    在模型没有给出检索请求时自动触发。
-  /// 晚安收束与安全回复不检索；未配置 Provider 时检索结果没有消费者，
-  /// 也不触发。检索失败不纠缠：不重试、不编造，话题再来再查。
-  void _scheduleRecall({
-    required String sessionId,
+  /// 召回模型查找轮内循环（查找流程定稿 2026-08-16）：bubble 1 交付
+  /// 之后，模型隐藏块里有 memory_recall 请求时，Host 读取两级索引请
+  /// 模型定位，在窗口预算内命中就把 bubble 2 用同一套交付事件补上
+  /// （同套安全校验，落为同一 requestId 的栖语 turn）；没赶上、被
+  /// 停止或未命中时，压缩结果并入下一用户轮注入（现状路径）。
+  ///
+  /// 定稿的放弃条件「用户已发新消息」由交付串行化天然保证：同一
+  /// LocalChatService 的所有 deliver 经 [_serialized] 排队，窗口未结束
+  /// 前下一轮无法开始，因此 bubble 2 永远不会交付到用户已经开启的
+  /// 新一轮之后；UI 侧在窗口内把发送键换成停止键，「停止」则走
+  /// [cancellation] 分支。
+  ///
+  /// 只有模型隐藏动作能触发查找（规则兜底已退役）；晚安收束与安全
+  /// 回复不查找；未配置 Provider 不查找（保持现状）。
+  Stream<LocalChatDeliveryEvent> _recallBubble({
+    required RawSession session,
+    required StateSnapshot state,
     required String userText,
     required List<HiddenAction> hiddenActions,
     required ChatResult outcome,
-  }) {
+    required _DeliveryCancellation cancellation,
+  }) async* {
     final recall = memoryRecall;
     if (recall == null ||
         providerChatClient == null ||
@@ -491,23 +512,105 @@ final class LocalChatService {
         outcome.mode == 'bedtime') {
       return;
     }
-    final recallQueries = hiddenActions
-        .where((action) => action.kind == HiddenActionKind.memoryRecall)
-        .map((action) => action.query ?? '')
-        .where((query) => query.trim().isNotEmpty)
-        .toList();
-    if (recallQueries.isEmpty && looksLikeRecallInput(userText)) {
-      recallQueries.add(userText);
+    final requestId = outcome.requestId;
+    if (requestId == null) {
+      return;
     }
-    for (final query in recallQueries) {
-      _recallTask = _recallTask.then((_) async {
-        try {
-          await recall.search(sessionId: sessionId, query: query);
-        } on Object catch (error) {
-          _diagnosticsSink('recall deferred [$error]');
-        }
-      });
+    final hasRecallRequest = hiddenActions.any(
+      (action) =>
+          action.kind == HiddenActionKind.memoryRecall &&
+          (action.query ?? '').trim().isNotEmpty,
+    );
+    if (!hasRecallRequest) {
+      return;
     }
+
+    final task = recall.runTurnRecall(
+      userText: userText,
+      recallActions: hiddenActions,
+    );
+    // 保存延续与窗口竞态共享同一个任务：结果被窗口内inline处理时置位
+    // [inlineHandled]，保存只在窗口超时/被停止时执行（压缩结果并入
+    // 下一用户轮注入）；整条延续挂到召回任务链上，settlePendingRecalls
+    // 与 Host 收尾连保存动作本身也等待，避免「刚落盘就被读取」的竞态。
+    final inlineHandled = Completer<bool>();
+    final lateSave = task.then((late) async {
+      if (await inlineHandled.future) {
+        return;
+      }
+      for (final diagnostic in late.diagnostics) {
+        _diagnosticsSink(diagnostic);
+      }
+      if (late.pendingContext != null) {
+        recall.storePendingContext(session.id, late.pendingContext!);
+      }
+    });
+    _recallTask = _recallTask
+        .then((_) => lateSave)
+        .then((_) {}, onError: (_) {});
+
+    RecallTurnResult? result;
+    try {
+      result = await Future.any<RecallTurnResult?>([
+        task,
+        _recallWindowWait(recallBubbleWindow).then((_) => null),
+        cancellation.whenCancelled.then((_) => null),
+      ]);
+    } on Object catch (error) {
+      inlineHandled.complete(true);
+      _diagnosticsSink('recall deferred [$error] request=$requestId');
+      return;
+    }
+
+    if (result == null) {
+      // 窗口超时或用户已停止：查找在后台继续，命中后的压缩结果由
+      // lateSave 并入下一用户轮注入。
+      inlineHandled.complete(false);
+      return;
+    }
+    inlineHandled.complete(true);
+
+    for (final diagnostic in result.diagnostics) {
+      _diagnosticsSink(diagnostic);
+    }
+    final bubbleText = result.bubbleText;
+    if (bubbleText == null || cancellation.isCancelled) {
+      if (result.pendingContext != null) {
+        recall.storePendingContext(session.id, result.pendingContext!);
+      }
+      return;
+    }
+
+    // bubble 2 走与 bubble 1 同一套安全校验：行为核心拒绝候选时
+    // 什么都不交付；压缩结果仍可留给下一轮。
+    final validated = _behaviorCore.reply(
+      ChatRequest(requestId: requestId, text: userText),
+      state,
+      candidateReply: bubbleText,
+    );
+    if (validated is! ChatResult || validated.source != ReplySource.llm) {
+      _diagnosticsSink(
+        'recall bubble dropped reason=validation request=$requestId',
+      );
+      if (result.pendingContext != null) {
+        recall.storePendingContext(session.id, result.pendingContext!);
+      }
+      return;
+    }
+    yield* _deliverOutcome(
+      LocalChatExchange(
+        session: session,
+        result: ChatResult(
+          requestId: requestId,
+          messages: validated.messages,
+          nextState: validated.nextState,
+          source: ReplySource.llm,
+          mode: validated.mode,
+        ),
+      ),
+      cancellation,
+      persist: true,
+    );
   }
 
   /// 日终归档触发点（五段节奏第三动作），全部在可见回复交付之后后台执行：
@@ -846,6 +949,9 @@ StateSnapshot _stateFromCompletedTurns(
 ) {
   final completed = <ChatTurn>[];
   RawSessionTurn? pendingUser;
+  // 轮内召回的 bubble 2 与 bubble 1 共用 requestId：紧跟在已配对
+  // 回复之后、同一 requestId 的栖语 turn 属于同一轮，一并带入历史。
+  String? lastPairedRequestId;
   for (final turn in turns) {
     if (turn.requestId == pendingRequestId && turn.speaker == Speaker.user) {
       continue;
@@ -862,7 +968,12 @@ StateSnapshot _stateFromCompletedTurns(
       completed
         ..add(ChatTurn(speaker: Speaker.user, text: pendingUser.text))
         ..add(ChatTurn(speaker: Speaker.qiyu, text: turn.text));
+      lastPairedRequestId = turn.requestId;
       pendingUser = null;
+      continue;
+    }
+    if (pendingUser == null && turn.requestId == lastPairedRequestId) {
+      completed.add(ChatTurn(speaker: Speaker.qiyu, text: turn.text));
     }
   }
   final recent = completed.length <= maxStateTurns

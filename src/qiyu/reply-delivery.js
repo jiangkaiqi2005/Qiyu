@@ -34,7 +34,7 @@ const SPEAKER_PREFIX_PATTERN = /^(栖语|她|他)\s*[：:]\s*/;
 const STAGE_PHRASE = '(?:等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下)';
 const WRAPPED_LEADING_STAGE_PATTERN = new RegExp(`^[（(【\\[]\\s*${STAGE_PHRASE}[。.!！?？,，、\\s]*[）)】\\]]\\s*`);
 const LEADING_STAGE_PATTERN = new RegExp(`^${STAGE_PHRASE}[。.!！?？,，、\\s]+`);
-const HIDDEN_STRUCTURE_PATTERN = /<\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu_action|actions?|memory_action)\b[^>]*>[\s\S]*?<\s*\/\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu_action|actions?|memory_action)\s*>/gi;
+const HIDDEN_STRUCTURE_PATTERN = /<\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu[-_]actions?|actions?|memory_action)\b[^>]*>[\s\S]*?<\s*\/\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu[-_]actions?|actions?|memory_action)\s*>/gi;
 const LEFTOVER_STRUCTURE_PATTERN = /<\s*\/?\s*[A-Za-z_][^>\r\n]*>/;
 const CONTROL_KEY_PATTERN = /["']?(?:action|tool|function|tool_call|function_call|qiyu_action|memory_action)["']?\s*[:=]/i;
 const CONTROL_VALUE_PATTERN = /[:=]\s*["'](?:action|tool|function|tool_call|function_call|qiyu_action|memory_action)["']/i;

@@ -1,154 +1,97 @@
+import 'dart:async';
+
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'episode_index.dart';
 import 'episode_memory.dart';
-import 'markdown_memory_repository.dart';
-import 'monthly_summary.dart';
+import 'model_gateway.dart';
 import 'open_loop_store.dart';
+import 'provider_settings_service.dart';
 
-/// 召回结果状态。
-enum RecallStatus {
-  /// 找到唯一可信证据，已写入短期 memory context，下一轮注入。
-  hit,
+/// bubble 2 轮内窗口预算（节奏定稿：秒级常量）。窗口内命中且用户
+/// 没有停止/新消息时主动补第二条气泡；没赶上就把压缩结果并入下一
+/// 用户轮注入，绝不阻塞首响。
+const recallBubbleWindow = Duration(seconds: 8);
 
-  /// 索引与原始证据中都没有找到相关记录。没找到不代表没发生，
-  /// 不注入、不编造，话题再来再查。
-  miss,
+/// 选择调用随顶层索引一并递回的近期每日索引月数。
+const recallRecentMonthCount = 3;
 
-  /// 多个相似候选平分最高分，无法确定用户指的是哪一件：
-  /// 不强行认定，诊断说明未采用原因。
-  ambiguous,
+/// 递回日原文里单条摘要/原话摘录的裁剪预算（runes）：回读的是原始
+/// 证据，但仍按压缩预算递送，不搬运整段长文。
+const recallRawSummaryMaxRunes = 120;
+const recallRawEvidenceMaxRunes = 160;
 
-  /// 同一话题的多条证据内容不一致：不强行认定，诊断说明。
-  conflict,
-}
+/// 并入下一用户轮的压缩整理记录用更紧的摘录预算（临时透镜只留线索）。
+const recallPendingEvidenceMaxRunes = 100;
 
-/// 一次后台召回检索的结果。诊断只进本机 stderr，绝不展示给用户。
-final class RecallSearch {
-  const RecallSearch({
-    required this.status,
-    required this.query,
-    this.matchedDate,
-    this.memoryContext,
+/// 轮内查找选择调用里「没有相关记录」的哨兵输出：模型宁可说没有，
+/// 也不得牵强组织 bubble 2。
+const _recallNoBubbleSentinel = '没有了';
+
+/// 一次轮内召回查找的结果。诊断只进本机 stderr，绝不展示给用户。
+final class RecallTurnResult {
+  const RecallTurnResult({
+    this.bubbleText,
+    this.pendingContext,
     this.diagnostics = const [],
   });
 
-  final RecallStatus status;
-  final String query;
+  /// 模型组织好的 bubble 2 候选文本（尚未经行为核心安全校验）；
+  /// 未命中或组织失败为 null。
+  final String? bubbleText;
 
-  /// 命中证据所在的 episode 日期（仅 hit）。
-  final String? matchedDate;
+  /// 命中证据的压缩整理记录：bubble 2 没赶上交付时并入下一用户轮
+  /// 注入（现状路径）；未命中为 null。
+  final String? pendingContext;
 
-  /// 命中时写入的短期 memory context 内容（仅 hit）。
-  final String? memoryContext;
-
-  /// 诊断码与原因（不含正文），说明未采用或降级的原因。
   final List<String> diagnostics;
 }
 
-/// 召回式输入的服务端规则兜底（首响运行层定稿的「双保险」之二）：
-/// 模型隐藏检索请求缺失时，这类输入自动触发后台检索。
-final recallIntentPattern = RegExp(
-  r'还记得|记得吗|不记得|还记得吗|还记得不|还记得么|'
-  r'我之前说|之前说过|以前说过|上次说|上回说|说过.{0,10}吗|'
-  r'提过|聊过|有没有说|忘没忘|忘了吗',
-);
-
-/// 判断用户输入是否是召回式提问（服务端规则兜底触发检索）。
-bool looksLikeRecallInput(String text) => recallIntentPattern.hasMatch(text);
-
-/// 召回检索意图中的功能性措辞：匹配前先剥掉，留下真正的话题词。
-/// 只剥召回话术与最常见虚词，绝不剥可能承载话题的字。
-final _recallStopPhrases = RegExp(
-  r'还记得吗|还记得不|还记得么|还记得|记得吗|不记得|'
-  r'我之前说过|我之前说|之前说过|以前说过|上次说的|上次说|上回说的|上回说|'
-  r'说过|提过|聊过|有没有|忘没忘|忘了吗|吗|呢|么|'
-  r'我|你|他|她|它|的|了|吧|啊|是|在|有|和|就|都|也|很|这|那|哪',
-);
-
-/// 月份线索：显式年月（2026年7月 / 2026-07）、只有月份（7月）
-/// 与相对时间（去年这时候 / 上个月），由 [MemoryRecallService] 解析。
-final _explicitYearMonth = RegExp(r'(\d{4})\s*年\s*(\d{1,2})\s*月');
-final _explicitMonth = RegExp(r'(?<!\d)(\d{1,2})\s*月');
-final _monthHyphen = RegExp(r'(\d{4})-(\d{2})');
-
-/// 「晚一拍想起」的后台召回服务（ticket 13）。
+/// 召回模型查找轮内循环（Memory.md 查找流程定稿 2026-08-16）。
 ///
-/// 两级索引只负责定位：月份索引选月份，每日索引选日期，命中后
-/// 必须打开索引指向的 daily episode 原始证据，索引摘要本身永远
-/// 不作为最终事实来源（硬规则定稿）。
+/// 查找者是模型，不打分、无规则兜底、不常驻挂载索引：
+/// 1. 聊天轮模型在隐藏块里发出 memory_recall{query}（常驻字段没命中
+///    且用户问旧事才发）；
+/// 2. Host 读取顶层索引 + 近期每月每日索引递回（罕见路径：模型先指到
+///    老月时，Host 补读该月每日索引再递一次）；
+/// 3. 模型选月份/日期，代码做成员校验——选取必须出自递过的目录，
+///    编造的丢弃并记诊断；
+/// 4. Host 回读选中日文件的原始证据递回，模型组织 bubble 2。
 ///
-/// 检索在可见回复交付之后后台执行，绝不阻塞首响；找到唯一可信
-/// 证据时写入按会话保存的短期 memory context，下一轮装配时取用
-/// 一次后即失效（临时透镜，不落盘、不进状态包）。索引缺失或
-/// 损坏时先从原始 episode 重建再继续，普通聊天不读索引、不受影响。
+/// 两级索引只负责定位：索引关键词永远不是事实来源，命中必须回到
+/// 索引指向的 daily episode 原始证据（硬规则定稿）。索引缺失或损坏
+/// 时先从原始 episode 重建再继续。找到而 bubble 2 没赶上交付时，压缩
+/// 结果存入按会话保存的短期 memory context，下一轮装配取用一次后
+/// 即失效（临时透镜，不落盘、不进状态包）。
 ///
-/// 冻结/禁提/删除的全链路过滤归 ticket 18；当前只有禁提可写入
-/// memory-controls.md，因此这里先过滤禁提范围。
-final class MemoryRecallService {
-  MemoryRecallService({
+/// 未配置 Provider 不召回（保持现状）；任何失败都降级为无结果，
+/// 检索失败不纠缠，话题再来再查。
+final class RecallOrchestrator {
+  RecallOrchestrator({
     required this.memoryDirectory,
     required EpisodeMemoryPipeline episodePipeline,
+    this.modelClient,
     EpisodeIndexStore? indexStore,
     this.openLoopStore,
-    this.monthlySummary,
-    Clock? clock,
-    void Function(String message)? diagnosticsSink,
   }) : _episodePipeline = episodePipeline,
        _indexStore = indexStore ??
            EpisodeIndexStore(
              memoryDirectory: memoryDirectory,
              episodePipeline: episodePipeline,
-           ),
-       _clock = clock ?? DateTime.now,
-       _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
+           );
 
   final String memoryDirectory;
   final EpisodeMemoryPipeline _episodePipeline;
+
+  /// 选择/组织两次小调用使用的模型客户端；未配置（null）时整个
+  /// 轮内循环静默跳过。
+  final ProviderChatClient? modelClient;
   final EpisodeIndexStore _indexStore;
   final OpenLoopStore? openLoopStore;
-
-  /// 月压缩摘要读取（ticket 15）：日证据缺失时的次级证据来源，
-  /// 事实优先级 daily > 月 summary 在此遵守。
-  final MonthlySummaryStore? monthlySummary;
-  final Clock _clock;
-  final void Function(String message) _diagnosticsSink;
 
   final Map<String, String> _pendingContexts = {};
 
   EpisodeIndexStore get indexStore => _indexStore;
-
-  /// 执行一次后台召回检索。命中时把短期 memory context 存到
-  /// [sessionId] 名下，供下一轮装配取用；其余状态只记诊断。
-  /// 任何异常都降级为 miss：检索失败不纠缠，话题再来再查。
-  Future<RecallSearch> search({
-    required String sessionId,
-    required String query,
-  }) async {
-    final cleanQuery = sanitizeUserInput(query).trim();
-    if (cleanQuery.isEmpty) {
-      return RecallSearch(
-        status: RecallStatus.miss,
-        query: query,
-        diagnostics: const ['recall skipped reason=empty-query'],
-      );
-    }
-    try {
-      final result = await _searchClean(sessionId, cleanQuery);
-      for (final diagnostic in result.diagnostics) {
-        _diagnosticsSink(diagnostic);
-      }
-      return result;
-    } on Object catch (error) {
-      final diagnostic = 'recall deferred [$error]';
-      _diagnosticsSink(diagnostic);
-      return RecallSearch(
-        status: RecallStatus.miss,
-        query: query,
-        diagnostics: [diagnostic],
-      );
-    }
-  }
 
   /// 取用并清空该会话的短期 memory context（一次性临时透镜）。
   /// 没有待注入内容时返回 null。
@@ -164,16 +107,58 @@ final class MemoryRecallService {
     _pendingContexts.putIfAbsent(sessionId, () => context);
   }
 
-  Future<RecallSearch> _searchClean(
-    String sessionId,
-    String cleanQuery,
-  ) async {
+  /// 存入一次命中的压缩结果（新结果覆盖旧结果：旧的还没被注入说明
+  /// 话题已经过去，最新的才值得下一轮带出）。
+  void storePendingContext(String sessionId, String context) {
+    if (context.trim().isEmpty) {
+      return;
+    }
+    _pendingContexts[sessionId] = context;
+  }
+
+  /// 执行一次轮内查找。绝不抛出：任何异常都降级为无结果并记诊断。
+  Future<RecallTurnResult> runTurnRecall({
+    required String userText,
+    required List<HiddenAction> recallActions,
+  }) async {
     final diagnostics = <String>[];
+    try {
+      return await _runClean(userText, recallActions, diagnostics);
+    } on Object catch (error) {
+      // 诊断只收进结果，由调用方统一落 sink，避免同一错误重复打印。
+      diagnostics.add('recall deferred [$error]');
+      return RecallTurnResult(diagnostics: diagnostics);
+    }
+  }
+
+  Future<RecallTurnResult> _runClean(
+    String userText,
+    List<HiddenAction> recallActions,
+    List<String> diagnostics,
+  ) async {
+    final client = modelClient;
+    if (client == null) {
+      diagnostics.add('recall skipped reason=no-provider');
+      return RecallTurnResult(diagnostics: diagnostics);
+    }
+    final query = sanitizeUserInput(
+      recallActions
+          .where((action) => action.kind == HiddenActionKind.memoryRecall)
+          .map((action) => action.query ?? '')
+          .where((value) => value.trim().isNotEmpty)
+          .firstOrNull ??
+          '',
+    ).trim();
+    if (query.isEmpty) {
+      diagnostics.add('recall skipped reason=empty-query');
+      return RecallTurnResult(diagnostics: diagnostics);
+    }
+    // 禁提过滤贯穿全部递给模型的材料：索引关键词、回读证据与压缩注入。
     final banned = await _bannedTitles();
 
     var topIndex = await _indexStore.readTopIndex();
     if (topIndex == null) {
-      // 索引缺失或损坏：先从原始 episode 重建，再继续检索。
+      // 索引缺失或损坏：先从原始 episode 重建，再继续查找。
       // 重建写索引文件，必须在 episode 日文件写锁内执行。
       await _episodePipeline.synchronizedOnDayFiles(
         () => _indexStore.rebuild(includeUnfinalized: true),
@@ -182,229 +167,272 @@ final class MemoryRecallService {
       topIndex = await _indexStore.readTopIndex();
       if (topIndex == null) {
         diagnostics.add('recall miss reason=no-episodes');
-        return RecallSearch(
-          status: RecallStatus.miss,
-          query: cleanQuery,
-          diagnostics: diagnostics,
-        );
+        return RecallTurnResult(diagnostics: diagnostics);
       }
     }
+    topIndex = _filterBannedMonthLines(topIndex, banned, diagnostics);
+    if (topIndex.isEmpty) {
+      diagnostics.add('recall miss reason=no-visible-months');
+      return RecallTurnResult(diagnostics: diagnostics);
+    }
 
-    final months = _selectMonths(cleanQuery, topIndex, diagnostics);
-    if (months.isEmpty) {
-      return RecallSearch(
-        status: RecallStatus.miss,
-        query: cleanQuery,
-        diagnostics: diagnostics,
+    // 递回目录：顶层索引全部月份 + 近期月份的每日索引。
+    final topMonths = topIndex.map((line) => line.month).toSet();
+    final dayIndexByMonth = <String, List<DayIndexLine>>{};
+    final recentMonths = (topIndex.map((line) => line.month).toList()
+          ..sort())
+        .reversed
+        .take(recallRecentMonthCount)
+        .toList()
+        .reversed;
+    for (final month in recentMonths) {
+      final dayLines = await _readMonthIndexWithRepair(
+        month,
+        banned,
+        diagnostics,
       );
-    }
-
-    final candidates = <_RecallCandidate>[];
-    for (final month in months) {
-      var dayLines = await _indexStore.readMonthIndex(month);
-      if (dayLines == null) {
-        // 月索引缺失或损坏：整体重建一次（幂等），再读。
-        await _episodePipeline.synchronizedOnDayFiles(
-          () => _indexStore.rebuild(includeUnfinalized: true),
-        );
-        diagnostics.add('recall index rebuilt reason=month-index-unreadable');
-        dayLines = await _indexStore.readMonthIndex(month);
-        if (dayLines == null) {
-          diagnostics.add('recall month skipped reason=$month-unreadable');
-          continue;
-        }
+      if (dayLines != null) {
+        dayIndexByMonth[month] = dayLines;
       }
-      for (final line in dayLines) {
-        if (_score(cleanQuery, line.keywords.join(' ')) < 1) {
-          continue;
-        }
-        // 索引只负责定位：必须打开原始日文件读取证据条目。
-        final day = await _episodePipeline.readDay(line.date);
-        if (!day.readable) {
-          diagnostics.add('recall day skipped reason=${line.date}-unreadable');
-          continue;
-        }
-        for (final entry in validEpisodeEntries(day.entries)) {
-          final score = _score(cleanQuery, entry.summary);
-          if (score < 1) {
+    }
+    final passedDates = _datesOf(dayIndexByMonth);
+
+    // 调用2：模型在递过的目录里选择月份/日期。
+    var selection = await _select(
+      client,
+      query: query,
+      userText: userText,
+      topIndex: topIndex,
+      dayIndexByMonth: dayIndexByMonth,
+      diagnostics: diagnostics,
+    );
+    var dates = _memberDates(selection.dates, passedDates, diagnostics);
+    if (dates.isEmpty) {
+      final months = _memberMonths(selection.months, topMonths, diagnostics);
+      if (months.isNotEmpty) {
+        // 罕见路径：模型先指到月份（通常是没有递过每日索引的老月）。
+        // Host 补读这些月的每日索引再递一次，重新选择；没有补到
+        // 任何新目录时不再重复同样的选择调用。
+        var supplemented = false;
+        for (final month in months) {
+          if (dayIndexByMonth.containsKey(month)) {
             continue;
           }
-          if (bannedTitleMatches(normalizeMemoryText(entry.summary), banned)) {
-            diagnostics.add(
-              'recall entry skipped reason=banned date=${line.date}',
-            );
-            continue;
+          final dayLines = await _readMonthIndexWithRepair(
+            month,
+            banned,
+            diagnostics,
+          );
+          if (dayLines != null) {
+            dayIndexByMonth[month] = dayLines;
+            supplemented = true;
+            diagnostics.add('recall month index supplemented month=$month');
           }
-          candidates.add(
-            _RecallCandidate(date: line.date, entry: entry, score: score),
+        }
+        if (supplemented) {
+          selection = await _select(
+            client,
+            query: query,
+            userText: userText,
+            topIndex: topIndex,
+            dayIndexByMonth: dayIndexByMonth,
+            diagnostics: diagnostics,
+          );
+          dates = _memberDates(
+            selection.dates,
+            _datesOf(dayIndexByMonth),
+            diagnostics,
           );
         }
       }
     }
+    if (dates.isEmpty) {
+      diagnostics.add('recall miss reason=no-date-selection');
+      return RecallTurnResult(diagnostics: diagnostics);
+    }
 
-    if (candidates.isEmpty) {
-      // 日证据全部缺失或不可读时退回月摘要（事实优先级
-      // daily > 月 summary，ticket 15）；月摘要也是索引定位后的
-      // 证据，不是索引本身。
-      final summaryResult = await _searchMonthSummaries(
-        sessionId,
-        cleanQuery,
-        months,
-        banned,
-        diagnostics,
-      );
-      if (summaryResult != null) {
-        return summaryResult;
+    // 索引只负责定位：回读选中日文件的原始证据。跨月跨年检索不设
+    // 日期数量上限（定稿）；只按压缩预算裁剪单条内容，不搬运全文。
+    final rawDays = <(String, List<EpisodeEntry>)>[];
+    for (final date in dates) {
+      final day = await _episodePipeline.readDay(date);
+      if (!day.readable) {
+        diagnostics.add('recall day skipped reason=$date-unreadable');
+        continue;
       }
+      final entries = <EpisodeEntry>[];
+      for (final entry in validEpisodeEntries(day.entries)) {
+        if (bannedTitleMatches(normalizeMemoryText(entry.summary), banned)) {
+          diagnostics.add('recall entry skipped reason=banned date=$date');
+          continue;
+        }
+        final evidence = entry.evidence;
+        if (evidence != null &&
+            bannedTitleMatches(normalizeMemoryText(evidence), banned)) {
+          // 摘要未命中但原话摘录命中禁提：丢掉摘录，保留摘要。
+          diagnostics.add('recall evidence dropped reason=banned date=$date');
+          entries.add(
+            EpisodeEntry(
+              id: entry.id,
+              sessionId: entry.sessionId,
+              requestId: entry.requestId,
+              summary: entry.summary,
+              at: entry.at,
+              kind: entry.kind,
+              signal: entry.signal,
+            ),
+          );
+          continue;
+        }
+        entries.add(entry);
+      }
+      if (entries.isEmpty) {
+        diagnostics.add('recall day skipped reason=$date-no-evidence');
+        continue;
+      }
+      rawDays.add((date, entries));
+    }
+    if (rawDays.isEmpty) {
       diagnostics.add('recall miss reason=no-evidence');
-      return RecallSearch(
-        status: RecallStatus.miss,
-        query: cleanQuery,
-        diagnostics: diagnostics,
-      );
+      return RecallTurnResult(diagnostics: diagnostics);
     }
 
-    // 同一件事在多日重复记录时按规范化摘要折叠，保留最早证据。
-    final deduped = <String, _RecallCandidate>{};
-    for (final candidate in candidates) {
-      final key = normalizeMemoryText(candidate.entry.summary);
-      final existing = deduped[key];
-      if (existing == null || candidate.date.compareTo(existing.date) < 0) {
-        deduped[key] = candidate;
-      }
-    }
-    final distinct = deduped.values.toList()
-      ..sort((left, right) => left.date.compareTo(right.date));
+    final pendingContext = _buildPendingContext(rawDays);
 
-    final bestScore = distinct
-        .map((candidate) => candidate.score)
-        .reduce((left, right) => left > right ? left : right);
-    final top = distinct
-        .where((candidate) => candidate.score == bestScore)
-        .toList();
-    if (top.length >= 2) {
-      // 多个相似候选或证据冲突：不强行认定，诊断说明未采用原因。
-      final dates = top.map((candidate) => candidate.date).join(',');
-      final sameTopic = top.every(
-        (candidate) =>
-            sameClaim(top.first.entry.summary, candidate.entry.summary) ||
-            conflictTopic(top.first.entry.summary, candidate.entry.summary),
-      );
-      final reason = sameTopic ? 'conflict' : 'ambiguous';
-      diagnostics.add(
-        'recall deferred reason=$reason candidates=${top.length} dates=$dates',
-      );
-      return RecallSearch(
-        status: sameTopic ? RecallStatus.conflict : RecallStatus.ambiguous,
-        query: cleanQuery,
-        diagnostics: diagnostics,
-      );
-    }
-
-    final winner = top.single;
-    final context = _buildContext(winner);
-    _pendingContexts[sessionId] = context;
-    return RecallSearch(
-      status: RecallStatus.hit,
-      query: cleanQuery,
-      matchedDate: winner.date,
-      memoryContext: context,
+    // 调用3：模型基于原始证据组织 bubble 2。
+    final bubbleText = await _composeBubble(
+      client,
+      query: query,
+      userText: userText,
+      rawDays: rawDays,
+      diagnostics: diagnostics,
+    );
+    return RecallTurnResult(
+      bubbleText: bubbleText,
+      pendingContext: pendingContext,
       diagnostics: diagnostics,
     );
   }
 
-  /// 月份选择：查询里有明确月份线索时只查线索月份（线索月份不在
-  /// 索引中说明没有那段时间的记录，直接 miss，不拿别的月份顶替）；
-  /// 没有线索时按关键词命中选择，跨月跨年不设数量上限。
-  /// 线索可以是精确月份，也可以带年份或月份的通配（如「7月」匹配
-  /// 索引中全部年份的 7 月，「去年」匹配索引中去年全部月份）。
-  List<String> _selectMonths(
-    String cleanQuery,
-    List<MonthIndexLine> topIndex,
+  /// 读取某月每日索引；缺失或损坏时整体重建（幂等）再读，仍不可读
+  /// 返回 null 并记诊断。读出后按禁提过滤关键词（见
+  /// [_filterBannedDayLines]）。
+  Future<List<DayIndexLine>?> _readMonthIndexWithRepair(
+    String month,
+    Set<String> banned,
     List<String> diagnostics,
-  ) {
-    final available = topIndex.map((line) => line.month).toSet();
-    final hinted = _monthHints(cleanQuery);
-    if (hinted.isNotEmpty) {
-      final months = <String>{};
-      for (final hint in hinted) {
-        if (hint.contains('??')) {
-          // 通配线索形如 '??-07'（年份未知）或 '2025-??'（月份未知）。
-          final parts = hint.split('-');
-          final year = parts[0];
-          final month = parts[1];
-          for (final candidate in available) {
-            final yearMatches = year == '??' || candidate.startsWith(year);
-            final monthMatches =
-                month == '??' || candidate.substring(5) == month;
-            if (yearMatches && monthMatches) {
-              months.add(candidate);
-            }
-          }
-        } else if (available.contains(hint)) {
-          months.add(hint);
-        }
-      }
-      final result = months.toList()..sort();
-      if (result.isEmpty) {
-        diagnostics.add('recall miss reason=month-hint-not-indexed');
-      }
-      return result;
+  ) async {
+    var dayLines = await _indexStore.readMonthIndex(month);
+    if (dayLines == null) {
+      await _episodePipeline.synchronizedOnDayFiles(
+        () => _indexStore.rebuild(includeUnfinalized: true),
+      );
+      diagnostics.add('recall index rebuilt reason=month-index-unreadable');
+      dayLines = await _indexStore.readMonthIndex(month);
     }
-    final months = topIndex
-        .where((line) => _score(cleanQuery, line.keywords.join(' ')) >= 1)
-        .map((line) => line.month)
-        .toList()
-      ..sort();
-    if (months.isEmpty) {
-      diagnostics.add('recall miss reason=no-month-match');
+    if (dayLines == null) {
+      diagnostics.add('recall month skipped reason=$month-unreadable');
+      return null;
     }
-    return months;
+    return _filterBannedDayLines(dayLines, banned, diagnostics);
   }
 
-  /// 从查询中提取月份线索（`YYYY-MM`），相对时间按本机时钟解析。
-  List<String> _monthHints(String query) {
-    final hints = <String>[];
-    final now = _clock();
-    for (final match in _explicitYearMonth.allMatches(query)) {
-      final month = int.tryParse(match.group(2)!);
-      if (month == null || month < 1 || month > 12) {
+  /// 顶层索引行禁提过滤：逐行剥掉命中禁提的关键词；剥空后整行隐藏，
+  /// 不让模型看到该月份的存在。索引只负责定位，禁提内容绝不递出。
+  List<MonthIndexLine> _filterBannedMonthLines(
+    List<MonthIndexLine> lines,
+    Set<String> banned,
+    List<String> diagnostics,
+  ) {
+    if (banned.isEmpty) {
+      return lines;
+    }
+    final kept = <MonthIndexLine>[];
+    for (final line in lines) {
+      final keywords = _filterBannedKeywords(line.keywords, banned);
+      if (keywords.isEmpty) {
+        diagnostics.add('recall index line hidden reason=banned');
         continue;
       }
-      hints.add('${match.group(1)}-${'$month'.padLeft(2, '0')}');
+      kept.add(MonthIndexLine(month: line.month, keywords: keywords));
     }
-    for (final match in _monthHyphen.allMatches(query)) {
-      hints.add('${match.group(1)}-${match.group(2)}');
+    return kept;
+  }
+
+  /// 每日索引行禁提过滤：同 [_filterBannedMonthLines]。
+  List<DayIndexLine> _filterBannedDayLines(
+    List<DayIndexLine> lines,
+    Set<String> banned,
+    List<String> diagnostics,
+  ) {
+    if (banned.isEmpty) {
+      return lines;
     }
-    if (hints.isEmpty) {
-      for (final match in _explicitMonth.allMatches(query)) {
-        final month = int.tryParse(match.group(1)!);
-        if (month == null || month < 1 || month > 12) {
-          continue;
-        }
-        final padded = '$month'.padLeft(2, '0');
-        // 只有月份没有年份：检索索引中全部年份的同名月份。
-        hints.add('??-$padded');
+    final kept = <DayIndexLine>[];
+    for (final line in lines) {
+      final keywords = _filterBannedKeywords(line.keywords, banned);
+      if (keywords.isEmpty) {
+        diagnostics.add('recall index line hidden reason=banned');
+        continue;
+      }
+      kept.add(DayIndexLine(date: line.date, keywords: keywords));
+    }
+    return kept;
+  }
+
+  List<String> _filterBannedKeywords(List<String> keywords, Set<String> banned) =>
+      keywords
+          .where(
+            (keyword) => !bannedTitleMatches(normalizeMemoryText(keyword), banned),
+          )
+          .toList();
+
+  Set<String> _datesOf(Map<String, List<DayIndexLine>> dayIndexByMonth) {
+    final dates = <String>{};
+    for (final lines in dayIndexByMonth.values) {
+      for (final line in lines) {
+        dates.add(line.date);
       }
     }
-    final monthNow = '${now.year}-${'${now.month}'.padLeft(2, '0')}';
-    if (query.contains('去年这时候') ||
-        query.contains('去年的现在') ||
-        query.contains('这个时候去年')) {
-      hints.add('${now.year - 1}-${monthNow.substring(5)}');
-    } else if (query.contains('去年')) {
-      hints.add('${now.year - 1}-??');
+    return dates;
+  }
+
+  /// 成员校验：月份选取必须出自递过的顶层索引，编造的丢弃并记诊断。
+  List<String> _memberMonths(
+    List<String>? selections,
+    Set<String> passed,
+    List<String> diagnostics,
+  ) {
+    final kept = <String>[];
+    for (final month in selections ?? const <String>[]) {
+      if (passed.contains(month)) {
+        kept.add(month);
+      } else {
+        diagnostics.add(
+          'recall selection dropped month=$month reason=not-in-passed-index',
+        );
+      }
     }
-    if (query.contains('前年')) {
-      hints.add('${now.year - 2}-??');
+    return kept;
+  }
+
+  /// 成员校验：日期选取必须出自递过的每日索引，编造的丢弃并记诊断。
+  List<String> _memberDates(
+    List<String>? selections,
+    Set<String> passed,
+    List<String> diagnostics,
+  ) {
+    final kept = <String>[];
+    for (final date in selections ?? const <String>[]) {
+      if (passed.contains(date)) {
+        kept.add(date);
+      } else {
+        diagnostics.add(
+          'recall selection dropped date=$date reason=not-in-passed-index',
+        );
+      }
     }
-    if (query.contains('上个月') || query.contains('上月')) {
-      final previous = DateTime(now.year, now.month - 1, 1);
-      hints.add(
-        '${previous.year}-${'${previous.month}'.padLeft(2, '0')}',
-      );
-    }
-    return hints;
+    return kept;
   }
 
   Future<Set<String>> _bannedTitles() async {
@@ -415,121 +443,109 @@ final class MemoryRecallService {
     return store.bannedTitles();
   }
 
-  /// 月摘要兜底检索：只在选中月份没有任何可读日证据时启用。
-  /// 命中唯一证据行时写入短期 memory context；多候选平分或内容
-  /// 冲突时与日证据同样的「不强行认定」纪律处理。找不到返回 null，
-  /// 由调用方继续走 miss。
-  Future<RecallSearch?> _searchMonthSummaries(
-    String sessionId,
-    String cleanQuery,
-    List<String> months,
-    Set<String> banned,
-    List<String> diagnostics,
-  ) async {
-    final summaryStore = monthlySummary;
-    if (summaryStore == null) {
-      return null;
-    }
-    final hits = <_SummaryCandidate>[];
-    final seen = <String>{};
-    for (final month in months) {
-      MonthSummary? summary;
-      try {
-        summary = await summaryStore.readMonthSummary(month);
-      } on Object {
-        continue;
-      }
-      final current = summary;
-      if (current == null || !current.readable) {
-        continue;
-      }
-      // 四个分区（含「关系变化」）都可作为兜底证据：日证据路径排除
-      // relationship_signal 是状态包投影纪律，召回兜底面向的是「旧月份
-      // 仍能被准确召回」，两者不冲突。
-      for (final item in current.items) {
-        final score = _score(cleanQuery, item.text);
-        if (score < 1) {
-          continue;
-        }
-        final normalized = normalizeMemoryText(item.text);
-        if (bannedTitleMatches(normalized, banned)) {
-          diagnostics.add(
-            'recall summary entry skipped reason=banned month=$month',
-          );
-          continue;
-        }
-        if (!seen.add(normalized)) {
-          continue;
-        }
-        hits.add(_SummaryCandidate(item: item, score: score));
-      }
-    }
-    if (hits.isEmpty) {
-      return null;
-    }
-    hits.sort((left, right) => left.item.date.compareTo(right.item.date));
-    final bestScore = hits
-        .map((candidate) => candidate.score)
-        .reduce((left, right) => left > right ? left : right);
-    final top = hits
-        .where((candidate) => candidate.score == bestScore)
-        .toList();
-    if (top.length >= 2) {
-      final sameTopic = top.every(
-        (candidate) =>
-            sameClaim(top.first.item.text, candidate.item.text) ||
-            conflictTopic(top.first.item.text, candidate.item.text),
+  /// 选择调用：把查找意图与递回的目录交给模型，收回 memory_recall
+  /// 选择。模型输出无法解析或没有给出动作时视作「没有头绪」。
+  Future<HiddenAction> _select(
+    ProviderChatClient client, {
+    required String query,
+    required String userText,
+    required List<MonthIndexLine> topIndex,
+    required Map<String, List<DayIndexLine>> dayIndexByMonth,
+    required List<String> diagnostics,
+  }) async {
+    final empty = const HiddenAction(kind: HiddenActionKind.memoryRecall);
+    ModelCompletion? completion;
+    try {
+      completion = await client.complete(
+        _selectionMessages(
+          query: query,
+          userText: userText,
+          topIndex: topIndex,
+          dayIndexByMonth: dayIndexByMonth,
+        ),
       );
-      final reason = sameTopic ? 'conflict' : 'ambiguous';
+    } on Object catch (error) {
+      diagnostics.add('recall selection deferred [$error]');
+      return empty;
+    }
+    final text = completion?.text;
+    if (text == null) {
       diagnostics.add(
-        'recall deferred reason=month-summary-$reason '
-        'candidates=${top.length}',
+        'recall selection deferred '
+        '[${completion?.failure?.name ?? 'no-provider'}]',
       );
-      return RecallSearch(
-        status: sameTopic ? RecallStatus.conflict : RecallStatus.ambiguous,
-        query: cleanQuery,
-        diagnostics: diagnostics,
-      );
+      return empty;
     }
-    final winner = top.single;
-    final context = _buildSummaryContext(winner.item);
-    _pendingContexts[sessionId] = context;
-    diagnostics.add(
-      'recall month-summary fallback month=${winner.item.date.substring(0, 7)}',
-    );
-    return RecallSearch(
-      status: RecallStatus.hit,
-      query: cleanQuery,
-      matchedDate: winner.item.date,
-      memoryContext: context,
-      diagnostics: diagnostics,
-    );
+    final parsed = parseHiddenActions(text);
+    final action = parsed.actions
+        .where((candidate) => candidate.kind == HiddenActionKind.memoryRecall)
+        .firstOrNull;
+    for (final diagnostic in parsed.diagnostics) {
+      diagnostics.add('recall selection dropped [$diagnostic]');
+    }
+    if (action == null) {
+      diagnostics.add('recall selection empty reason=no-action');
+      return empty;
+    }
+    return action;
   }
 
-  /// 月摘要命中的短期 memory context：明确标注这是压缩摘要，
-  /// 细节以原始记录为准，不冒充当日证据。
-  String _buildSummaryContext(MonthSummaryItem item) {
-    final buffer = StringBuffer()
-      ..writeln('此前对话的月度整理记录（压缩摘要，临时参考，不是新发生的事）：')
-      ..writeln('- ${item.date}：${clipRunes(item.text, 120)}');
-    buffer.write(
-      '语境合适时自然补上；与当前话题无关就不提；拿不准时保持不确定，不声称一直记得。',
-    );
-    return buffer.toString();
+  /// 组织调用：把选中日的原始证据交给模型，请它自然地补一句。
+  /// 失败、哨兵或空输出都返回 null（压缩结果仍可留给下一轮）。
+  Future<String?> _composeBubble(
+    ProviderChatClient client, {
+    required String query,
+    required String userText,
+    required List<(String, List<EpisodeEntry>)> rawDays,
+    required List<String> diagnostics,
+  }) async {
+    ModelCompletion? completion;
+    try {
+      completion = await client.complete(
+        _composeMessages(query: query, userText: userText, rawDays: rawDays),
+      );
+    } on Object catch (error) {
+      diagnostics.add('recall compose deferred [$error]');
+      return null;
+    }
+    final text = completion?.text;
+    if (text == null) {
+      diagnostics.add(
+        'recall compose deferred [${completion?.failure?.name ?? 'no-provider'}]',
+      );
+      return null;
+    }
+    final visibleText = parseHiddenActions(text).visibleText;
+    // 哨兵容忍尾部标点/空白（模型可能输出「没有了。」），避免把
+    // 「没有」的表态当成 bubble 2 内容交付。
+    final sentinelNormalized = visibleText
+        .replaceAll(RegExp(r'[。．.…!！?？,，、\s]+$'), '')
+        .trim();
+    if (sentinelNormalized.isEmpty ||
+        sentinelNormalized == _recallNoBubbleSentinel) {
+      diagnostics.add('recall compose empty reason=model-passed');
+      return null;
+    }
+    return visibleText;
   }
 
   /// 短期 memory context 内容：压缩后的证据 + 使用纪律。
   /// 只带回与问题相关的压缩结果，不搬运选中文件全文。
-  String _buildContext(_RecallCandidate winner) {
-    final entry = winner.entry;
+  String _buildPendingContext(List<(String, List<EpisodeEntry>)> rawDays) {
     final buffer = StringBuffer()
-      ..writeln('此前对话的后台整理记录（临时参考，不是新发生的事）：')
-      ..writeln(
-        '- ${winner.date}：${clipRunes(entry.summary.trim(), 120)}',
-      );
-    final evidence = entry.evidence?.trim();
-    if (evidence != null && evidence.isNotEmpty) {
-      buffer.writeln('  原话摘录：${clipRunes(evidence, 100)}');
+      ..writeln('此前对话的后台整理记录（临时参考，不是新发生的事）：');
+    for (final (date, entries) in rawDays) {
+      for (final entry in entries) {
+        buffer.writeln(
+          '- $date：${clipRunes(entry.summary.trim(), recallRawSummaryMaxRunes)}',
+        );
+        final evidence = entry.evidence?.trim();
+        if (evidence != null && evidence.isNotEmpty) {
+          buffer.writeln(
+            '  原话摘录：${clipRunes(evidence, recallPendingEvidenceMaxRunes)}',
+          );
+        }
+      }
     }
     buffer.write(
       '语境合适时自然补上；与当前话题无关就不提；拿不准时保持不确定，不声称一直记得。',
@@ -537,61 +553,87 @@ final class MemoryRecallService {
     return buffer.toString();
   }
 
-  /// 查询与文本的相关度：共有词元数量。词元 = 中文二元组 +
-  /// 拉丁词（长度≥2，小写）。功能性措辞先剥掉再切词。
-  int _score(String query, String text) {
-    final queryTokens = _queryTokens(query);
-    if (queryTokens.isEmpty) {
-      return 0;
+  List<ModelMessage> _selectionMessages({
+    required String query,
+    required String userText,
+    required List<MonthIndexLine> topIndex,
+    required Map<String, List<DayIndexLine>> dayIndexByMonth,
+  }) {
+    const system = '''
+你是栖语的本机记忆检索模块。用户在对话里提起一件旧事，聊天模型已经请求后台查找。给你两层索引目录，请选出最可能相关的月份和日期。
+两层索引的路径与格式：
+- 月份索引 episodes/index.md：每行 `- YYYY-MM | 关键词 | episodes/YYYY/MM/index.md`
+- 每日索引 episodes/YYYY/MM/index.md：每行 `- YYYY-MM-DD | 关键词 | YYYY-MM-DD.md`
+要求：
+1. 只输出一个隐藏块 <qiyu-actions>[{"action":"memory_recall","query":"查找意图原样带回","months":["YYYY-MM",…],"dates":["YYYY-MM-DD",…]}]</qiyu-actions>，除此之外不输出任何文字。
+2. months 只能取自下面月份索引中出现过的月份；dates 只能取自下面每日索引中出现过的日期。可以少选；没有头绪时两个数组都留空。
+3. 严禁编造目录里没有的月份或日期。
+4. 目录里没有足够线索定位具体日期时，只选 months，不要猜 dates。
+5. 不输出密码、密钥、证件号等敏感内容。''';
+
+    final user = StringBuffer()
+      ..writeln('查找意图：$query')
+      ..writeln('用户当时的原话：$userText')
+      ..writeln()
+      ..writeln('## 月份索引（episodes/index.md）');
+    for (final line in topIndex) {
+      user.writeln(
+        '- ${line.month} | ${line.keywords.join(', ')} | '
+        'episodes/${line.month.substring(0, 4)}/${line.month.substring(5, 7)}/index.md',
+      );
     }
-    final textTokens = _textTokens(text);
-    var score = 0;
-    for (final token in queryTokens) {
-      if (textTokens.contains(token)) {
-        score += 1;
+    for (final MapEntry(:key, :value) in dayIndexByMonth.entries) {
+      user
+        ..writeln()
+        ..writeln('## 每日索引（$key）');
+      for (final line in value) {
+        user.writeln(
+          '- ${line.date} | ${line.keywords.join(', ')} | ${line.date}.md',
+        );
       }
     }
-    return score;
+    return [
+      const ModelMessage(ModelMessageRole.system, system),
+      ModelMessage(ModelMessageRole.user, user.toString()),
+    ];
   }
 
-  Set<String> _queryTokens(String query) =>
-      _textTokens(query.replaceAll(_recallStopPhrases, ' '));
+  List<ModelMessage> _composeMessages({
+    required String query,
+    required String userText,
+    required List<(String, List<EpisodeEntry>)> rawDays,
+  }) {
+    const system = '''
+你是栖语。刚才用户提起一件旧事，你先按一时没想起回应了；现在后台查找有了结果，你要自然地补一句。
+要求：
+1. 只输出要补给用户的一到两句话本身；不输出标签、解释、前缀或隐藏块。
+2. 只能使用下面查到的记录里真实存在的内容；记录里没有的细节不提，不编造。
+3. 像刚想起来那样轻轻补上；不复述用户的话，不开新话题，不追问。
+4. 查到的记录与用户问的不是一回事时，只输出「$_recallNoBubbleSentinel」三个字。
+5. 禁止客服式话术；少说，安静，温暖。''';
 
-  Set<String> _textTokens(String text) {
-    final tokens = <String>{};
-    for (final match in RegExp(r'[A-Za-z0-9]{2,}').allMatches(text)) {
-      tokens.add(match.group(0)!.toLowerCase());
-    }
-    for (final match in RegExp(r'[一-鿿]+').allMatches(text)) {
-      final run = match.group(0)!;
-      if (run.length == 1) {
-        tokens.add(run);
+    final user = StringBuffer()
+      ..writeln('用户刚才说：$userText')
+      ..writeln('查找意图：$query')
+      ..writeln()
+      ..writeln('## 查到的记录');
+    for (final (date, entries) in rawDays) {
+      user.writeln('### $date');
+      for (final entry in entries) {
+        user.writeln(
+          '- ${clipRunes(entry.summary.trim(), recallRawSummaryMaxRunes)}',
+        );
+        final evidence = entry.evidence?.trim();
+        if (evidence != null && evidence.isNotEmpty) {
+          user.writeln(
+            '  原话摘录：${clipRunes(evidence, recallRawEvidenceMaxRunes)}',
+          );
+        }
       }
-      for (var index = 0; index + 2 <= run.length; index += 1) {
-        tokens.add(run.substring(index, index + 2));
-      }
     }
-    return tokens;
+    return [
+      const ModelMessage(ModelMessageRole.system, system),
+      ModelMessage(ModelMessageRole.user, user.toString()),
+    ];
   }
-
 }
-
-final class _RecallCandidate {
-  const _RecallCandidate({
-    required this.date,
-    required this.entry,
-    required this.score,
-  });
-
-  final String date;
-  final EpisodeEntry entry;
-  final int score;
-}
-
-final class _SummaryCandidate {
-  const _SummaryCandidate({required this.item, required this.score});
-
-  final MonthSummaryItem item;
-  final int score;
-}
-
