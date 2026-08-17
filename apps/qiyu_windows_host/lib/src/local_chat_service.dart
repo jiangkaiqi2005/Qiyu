@@ -8,6 +8,7 @@ import 'markdown_memory_repository.dart';
 import 'memory_recall.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
+import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
 import 'provider_settings_service.dart';
@@ -93,6 +94,7 @@ final class LocalChatService {
     this.statePackReader,
     this.memoryRecall,
     this.personaTree,
+    this.monthlySummary,
     DeliveryPause? deliveryPause,
     Clock? clock,
     void Function(String message)? diagnosticsSink,
@@ -117,6 +119,10 @@ final class LocalChatService {
   /// PersonaTree 叶与中间理解（ticket 14）。必须与日终归档使用
   /// 同一实例：树文件的串行锁在实例内部，两个实例会互相覆盖。
   final PersonaTreeStore? personaTree;
+
+  /// 月压缩（ticket 15，五段节奏第四动作）：进入新月、跨年或启动
+  /// 补做时压缩当前月之前的月份。必须与召回检索使用同一实例。
+  final MonthlySummaryStore? monthlySummary;
   final DeliveryPause _deliveryPause;
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
@@ -136,6 +142,8 @@ final class LocalChatService {
         before: localSessionDate(_clock()),
       ),
     );
+    // 启动也补做月压缩：跨月停机后重新打开时，上月摘要在这里补齐。
+    _scheduleMonthlyCompression();
   }
 
   /// 等待已调度的后台日终归档完成。日终归档幂等且每一步原子写入，
@@ -519,12 +527,34 @@ final class LocalChatService {
         'bedtime',
         (service) => service.finalizeForBedtime(date: today),
       );
+      _scheduleMonthlyCompression();
     } else if (dateChanged) {
       _runFinalization(
         'date-change',
         (service) => service.catchUpUnfinalized(before: today),
       );
+      // 新月（含跨年）的第一次对话在这里触发上月压缩（五段节奏
+      // 第四动作）。压缩排在补归档之后：只收 finalized 日期。
+      _scheduleMonthlyCompression();
     }
+  }
+
+  /// 月压缩挂到日终归档同一条后台任务链上：保证补归档先完成、
+  /// 压缩只看到 finalized 日期；失败只记诊断，绝不阻塞聊天。
+  void _scheduleMonthlyCompression() {
+    final compressor = monthlySummary;
+    if (compressor == null) {
+      return;
+    }
+    final now = _clock();
+    final month = '${now.year}-${'${now.month}'.padLeft(2, '0')}';
+    _finalizationTask = _finalizationTask.then((_) async {
+      try {
+        await compressor.compressBefore(month);
+      } on Object catch (error) {
+        _diagnosticsSink('monthly compression deferred [$error]');
+      }
+    });
   }
 
   /// 可见回复落盘之后的增量记忆整理：写失败只记诊断，不影响本轮回复。

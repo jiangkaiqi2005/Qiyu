@@ -16,6 +16,7 @@ import 'markdown_memory_repository.dart';
 import 'memory_recall.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
+import 'monthly_summary.dart';
 import 'onboarding_state.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
@@ -89,6 +90,12 @@ final class LocalAppHost {
       episodePipeline: episodePipeline,
       openLoopStore: openLoopStore,
     );
+    // 月压缩由后台任务链触发、召回兜底读取，共享同一实例。
+    final monthlySummary = MonthlySummaryStore(
+      memoryDirectory: memoryDirectory,
+      episodePipeline: episodePipeline,
+      openLoopStore: openLoopStore,
+    );
     final chatService = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
       providerChatClient: effectiveProviderSettings,
@@ -109,8 +116,10 @@ final class LocalAppHost {
         memoryDirectory: memoryDirectory,
         episodePipeline: episodePipeline,
         openLoopStore: openLoopStore,
+        monthlySummary: monthlySummary,
       ),
       personaTree: personaTree,
+      monthlySummary: monthlySummary,
     );
     await chatService.initialize();
     final onboardingRepository = JsonOnboardingRepository(

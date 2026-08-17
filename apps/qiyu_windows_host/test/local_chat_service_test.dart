@@ -1903,6 +1903,69 @@ void main() {
       contains('禁提: 用户是中学老师'),
     );
   });
+
+  test('the first chat of a new month compresses the previous month idempotently', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-month-compression-wiring-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 7, 2, 22);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    await pipeline.synchronizedOnDayFiles(
+      () => pipeline.writeFinalization(
+        '2026-07-02',
+        entries: [
+          EpisodeEntry(
+            id: 's1:r1:0',
+            sessionId: 's1',
+            requestId: 'r1',
+            summary: '用户完成了演讲',
+            at: DateTime(2026, 7, 2, 21).toUtc(),
+          ),
+        ],
+        summary: '用户完成了演讲',
+        finalized: true,
+        finalizedAt: DateTime(2026, 7, 2, 23).toUtc(),
+      ),
+    );
+    now = DateTime(2026, 8, 1, 9);
+    final monthlySummary = MonthlySummaryStore(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      diagnosticsSink: (_) {},
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      ),
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => now,
+      ),
+      monthlySummary: monthlySummary,
+      clock: () => now,
+    );
+
+    // 启动补扫即补上上月压缩；新月第一条消息走日期变化路径再次触发也幂等。
+    await service.initialize();
+    await service.finalizePending();
+    final summaryFile = File(
+      '${temporaryDirectory.path}/episodes/2026/07/summary.md',
+    );
+    expect(summaryFile.existsSync(), isTrue);
+    expect(summaryFile.readAsStringSync(), contains('用户完成了演讲'));
+    final before = summaryFile.readAsStringSync();
+
+    await service.send(requestId: 'm-1', text: '你好');
+    await service.finalizePending();
+    expect(summaryFile.readAsStringSync(), before);
+  });
 }
 
 final class _FailOnceAtomicWriter implements AtomicTextWriter {

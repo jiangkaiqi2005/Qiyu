@@ -3,6 +3,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 
 /// 召回结果状态。
@@ -90,6 +91,7 @@ final class MemoryRecallService {
     required EpisodeMemoryPipeline episodePipeline,
     EpisodeIndexStore? indexStore,
     this.openLoopStore,
+    this.monthlySummary,
     Clock? clock,
     void Function(String message)? diagnosticsSink,
   }) : _episodePipeline = episodePipeline,
@@ -105,6 +107,10 @@ final class MemoryRecallService {
   final EpisodeMemoryPipeline _episodePipeline;
   final EpisodeIndexStore _indexStore;
   final OpenLoopStore? openLoopStore;
+
+  /// 月压缩摘要读取（ticket 15）：日证据缺失时的次级证据来源，
+  /// 事实优先级 daily > 月 summary 在此遵守。
+  final MonthlySummaryStore? monthlySummary;
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
 
@@ -237,6 +243,19 @@ final class MemoryRecallService {
     }
 
     if (candidates.isEmpty) {
+      // 日证据全部缺失或不可读时退回月摘要（事实优先级
+      // daily > 月 summary，ticket 15）；月摘要也是索引定位后的
+      // 证据，不是索引本身。
+      final summaryResult = await _searchMonthSummaries(
+        sessionId,
+        cleanQuery,
+        months,
+        banned,
+        diagnostics,
+      );
+      if (summaryResult != null) {
+        return summaryResult;
+      }
       diagnostics.add('recall miss reason=no-evidence');
       return RecallSearch(
         status: RecallStatus.miss,
@@ -396,6 +415,109 @@ final class MemoryRecallService {
     return store.bannedTitles();
   }
 
+  /// 月摘要兜底检索：只在选中月份没有任何可读日证据时启用。
+  /// 命中唯一证据行时写入短期 memory context；多候选平分或内容
+  /// 冲突时与日证据同样的「不强行认定」纪律处理。找不到返回 null，
+  /// 由调用方继续走 miss。
+  Future<RecallSearch?> _searchMonthSummaries(
+    String sessionId,
+    String cleanQuery,
+    List<String> months,
+    Set<String> banned,
+    List<String> diagnostics,
+  ) async {
+    final summaryStore = monthlySummary;
+    if (summaryStore == null) {
+      return null;
+    }
+    final hits = <_SummaryCandidate>[];
+    final seen = <String>{};
+    for (final month in months) {
+      MonthSummary? summary;
+      try {
+        summary = await summaryStore.readMonthSummary(month);
+      } on Object {
+        continue;
+      }
+      final current = summary;
+      if (current == null || !current.readable) {
+        continue;
+      }
+      // 四个分区（含「关系变化」）都可作为兜底证据：日证据路径排除
+      // relationship_signal 是状态包投影纪律，召回兜底面向的是「旧月份
+      // 仍能被准确召回」，两者不冲突。
+      for (final item in current.items) {
+        final score = _score(cleanQuery, item.text);
+        if (score < 1) {
+          continue;
+        }
+        final normalized = normalizeMemoryText(item.text);
+        if (bannedTitleMatches(normalized, banned)) {
+          diagnostics.add(
+            'recall summary entry skipped reason=banned month=$month',
+          );
+          continue;
+        }
+        if (!seen.add(normalized)) {
+          continue;
+        }
+        hits.add(_SummaryCandidate(item: item, score: score));
+      }
+    }
+    if (hits.isEmpty) {
+      return null;
+    }
+    hits.sort((left, right) => left.item.date.compareTo(right.item.date));
+    final bestScore = hits
+        .map((candidate) => candidate.score)
+        .reduce((left, right) => left > right ? left : right);
+    final top = hits
+        .where((candidate) => candidate.score == bestScore)
+        .toList();
+    if (top.length >= 2) {
+      final sameTopic = top.every(
+        (candidate) =>
+            sameClaim(top.first.item.text, candidate.item.text) ||
+            conflictTopic(top.first.item.text, candidate.item.text),
+      );
+      final reason = sameTopic ? 'conflict' : 'ambiguous';
+      diagnostics.add(
+        'recall deferred reason=month-summary-$reason '
+        'candidates=${top.length}',
+      );
+      return RecallSearch(
+        status: sameTopic ? RecallStatus.conflict : RecallStatus.ambiguous,
+        query: cleanQuery,
+        diagnostics: diagnostics,
+      );
+    }
+    final winner = top.single;
+    final context = _buildSummaryContext(winner.item);
+    _pendingContexts[sessionId] = context;
+    diagnostics.add(
+      'recall month-summary fallback month=${winner.item.date.substring(0, 7)}',
+    );
+    return RecallSearch(
+      status: RecallStatus.hit,
+      query: cleanQuery,
+      matchedDate: winner.item.date,
+      memoryContext: context,
+      diagnostics: diagnostics,
+    );
+  }
+
+  /// 月摘要命中的短期 memory context：明确标注这是压缩摘要，
+  /// 细节以原始记录为准，不冒充当日证据。
+  String _buildSummaryContext(MonthSummaryItem item) {
+    final buffer = StringBuffer()
+      ..writeln('此前对话的月度整理记录（压缩摘要，临时参考，不是新发生的事）：')
+      ..writeln('- ${item.date}：${clipRunes(item.text, 120)}');
+    buffer.write(
+      '语境合适时自然补上；与当前话题无关就不提；拿不准时保持不确定，不声称一直记得。',
+    );
+    return buffer.toString();
+  }
+
   /// 短期 memory context 内容：压缩后的证据 + 使用纪律。
   /// 只带回与问题相关的压缩结果，不搬运选中文件全文。
   String _buildContext(_RecallCandidate winner) {
@@ -463,6 +585,13 @@ final class _RecallCandidate {
 
   final String date;
   final EpisodeEntry entry;
+  final int score;
+}
+
+final class _SummaryCandidate {
+  const _SummaryCandidate({required this.item, required this.score});
+
+  final MonthSummaryItem item;
   final int score;
 }
 
