@@ -34,10 +34,10 @@ final class DayIndexLine {
 }
 
 /// 只保留可参与投影的条目：摘要非空，且不是系统簿记条目。
-/// open_loop_event（状态变化/禁提）与 relationship_signal（关系证据）
-/// 只留在 episode 里做追溯：前者不得进摘要、状态包或索引（簿记文字
-/// 含禁提标题，进状态包就会随注入绕回）；后者按定稿只投影到
-/// relationship.md 的近期变化，不走通用投影。
+/// open_loop_event（状态变化/记忆控制事件）与 relationship_signal
+/// （关系证据）只留在 episode 里做追溯：前者不得进摘要、状态包或
+/// 索引（簿记文字含受控标题，进状态包就会随注入绕回）；后者按定稿
+/// 只投影到 relationship.md 的近期变化，不走通用投影。
 List<EpisodeEntry> validEpisodeEntries(List<EpisodeEntry> entries) => entries
     .where(
       (entry) =>

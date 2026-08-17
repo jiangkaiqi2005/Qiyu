@@ -17,6 +17,19 @@ enum HiddenActionKind {
   /// 用户要求不再提及某事项：立即禁提，属于用户记忆控制。
   memoryBan('memory_ban'),
 
+  /// 用户要求本轮内容不要进入记忆：当轮生效，不产生持久控制记录。
+  memoryForget('memory_forget'),
+
+  /// 用户要求冻结某内容：停止注入、检索与自动整理，保留可见原文，
+  /// 只有用户明确解除才恢复。
+  memoryFreeze('memory_freeze'),
+
+  /// 用户明确解除冻结；解除后内容恢复正常参与注入与整理。
+  memoryUnfreeze('memory_unfreeze'),
+
+  /// 用户要求删除某记忆：先记录抽象防复活范围，再清除全部派生内容。
+  memoryDelete('memory_delete'),
+
   /// 关系证据：深谈信号、温度变化、边界开合。对话中只落 episode，
   /// 日终归档才据此更新 relationship.md（阶段与温度）。
   relationshipSignal('relationship_signal');
@@ -537,6 +550,12 @@ HiddenAction? _validateAction(
         result: result,
       );
     case HiddenActionKind.memoryBan:
+    case HiddenActionKind.memoryForget:
+    case HiddenActionKind.memoryFreeze:
+    case HiddenActionKind.memoryUnfreeze:
+    case HiddenActionKind.memoryDelete:
+      // 用户记忆控制动作共用同一校验：summary 是控制对象的话题简称，
+      // 必填、限长、不越权、不含秘密。
       final title = _cleanFieldValue(item['summary']);
       if (title == null || title.runes.length > maxLoopTitleRunes) {
         diagnostics.add(HiddenActionDiagnostics.invalidFields);

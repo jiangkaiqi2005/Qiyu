@@ -153,8 +153,9 @@ final class RecallOrchestrator {
       diagnostics.add('recall skipped reason=empty-query');
       return RecallTurnResult(diagnostics: diagnostics);
     }
-    // 禁提过滤贯穿全部递给模型的材料：索引关键词、回读证据与压缩注入。
-    final banned = await _bannedTitles();
+    // 记忆控制过滤贯穿全部递给模型的材料：索引关键词、回读证据与
+    // 压缩注入。封禁（禁提 ∪ 删除）与冻结都不得被检索。
+    final banned = await _blockedTitles();
 
     var topIndex = await _indexStore.readTopIndex();
     if (topIndex == null) {
@@ -263,14 +264,14 @@ final class RecallOrchestrator {
       final entries = <EpisodeEntry>[];
       for (final entry in validEpisodeEntries(day.entries)) {
         if (bannedTitleMatches(normalizeMemoryText(entry.summary), banned)) {
-          diagnostics.add('recall entry skipped reason=banned date=$date');
+          diagnostics.add('recall entry skipped reason=blocked date=$date');
           continue;
         }
         final evidence = entry.evidence;
         if (evidence != null &&
             bannedTitleMatches(normalizeMemoryText(evidence), banned)) {
-          // 摘要未命中但原话摘录命中禁提：丢掉摘录，保留摘要。
-          diagnostics.add('recall evidence dropped reason=banned date=$date');
+          // 摘要未命中但原话摘录命中受控范围：丢掉摘录，保留摘要。
+          diagnostics.add('recall evidence dropped reason=blocked date=$date');
           entries.add(
             EpisodeEntry(
               id: entry.id,
@@ -315,7 +316,7 @@ final class RecallOrchestrator {
   }
 
   /// 读取某月每日索引；缺失或损坏时整体重建（幂等）再读，仍不可读
-  /// 返回 null 并记诊断。读出后按禁提过滤关键词（见
+  /// 返回 null 并记诊断。读出后按受控范围过滤关键词（见
   /// [_filterBannedDayLines]）。
   Future<List<DayIndexLine>?> _readMonthIndexWithRepair(
     String month,
@@ -351,7 +352,7 @@ final class RecallOrchestrator {
     for (final line in lines) {
       final keywords = _filterBannedKeywords(line.keywords, banned);
       if (keywords.isEmpty) {
-        diagnostics.add('recall index line hidden reason=banned');
+        diagnostics.add('recall index line hidden reason=blocked');
         continue;
       }
       kept.add(MonthIndexLine(month: line.month, keywords: keywords));
@@ -372,7 +373,7 @@ final class RecallOrchestrator {
     for (final line in lines) {
       final keywords = _filterBannedKeywords(line.keywords, banned);
       if (keywords.isEmpty) {
-        diagnostics.add('recall index line hidden reason=banned');
+        diagnostics.add('recall index line hidden reason=blocked');
         continue;
       }
       kept.add(DayIndexLine(date: line.date, keywords: keywords));
@@ -435,12 +436,14 @@ final class RecallOrchestrator {
     return kept;
   }
 
-  Future<Set<String>> _bannedTitles() async {
+  /// 检索封禁集合 = 封禁（禁提 ∪ 删除）∪ 冻结：冻结同样停止检索。
+  Future<Set<String>> _blockedTitles() async {
     final store = openLoopStore;
     if (store == null) {
       return const {};
     }
-    return store.bannedTitles();
+    final controls = await store.memoryControls.load();
+    return {...controls.blockedSummaries, ...controls.frozenSummaries};
   }
 
   /// 选择调用：把查找意图与递回的目录交给模型，收回 memory_recall

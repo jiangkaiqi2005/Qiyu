@@ -656,11 +656,12 @@ final class PersonaTreeStore {
       ...extraEntries,
     ];
     await _createLeavesLocked(personaEntries);
-    final banned = await _bannedTitles();
+    final blocked = await _blockedTitles();
+    final frozen = await _frozenTitles();
     var rootsChanged = false;
     for (final branch in personaBranches) {
       try {
-        if (await _organizeBranch(branch, date, banned)) {
+        if (await _organizeBranch(branch, date, blocked, frozen)) {
           rootsChanged = true;
         }
       } on Object catch (error) {
@@ -675,16 +676,17 @@ final class PersonaTreeStore {
     }
   });
 
-  /// 禁提即时生效（用户记忆控制高于 PersonaTree 提炼）：命中禁提的
-  /// 中间理解连同其叶直接删除，未归类叶同样删除；命中禁提的根连同
-  /// 整条子树直接删除，根下中间理解命中时删除该理解——不进归档，
-  /// 彻底遗忘。根被删除后立即重投影 persona.md。返回是否实际清理了内容。
+  /// 禁提/删除即时生效（用户记忆控制高于 PersonaTree 提炼）：命中
+  /// 封禁集合（禁提 ∪ 删除）的中间理解连同其叶直接删除，未归类叶
+  /// 同样删除；命中的根连同整条子树直接删除，根下中间理解命中时
+  /// 删除该理解——不进归档，彻底遗忘。根被删除后立即重投影
+  /// persona.md。返回是否实际清理了内容。
   Future<bool> applyBan(String title) => _locked(() async {
     final normalized = normalizeMemoryText(title);
     if (normalized.isEmpty) {
       return false;
     }
-    final banned = await _bannedTitles();
+    final banned = await _blockedTitles();
     var applied = false;
     var rootsChanged = false;
     for (final branch in personaBranches) {
@@ -1003,12 +1005,23 @@ final class PersonaTreeStore {
     return null;
   }
 
-  Future<Set<String>> _bannedTitles() async {
+  /// 封禁集合（禁提 ∪ 删除）：命中即清除或拒绝建叶，绝不复活。
+  Future<Set<String>> _blockedTitles() async {
     final store = openLoopStore;
     if (store == null) {
       return const {};
     }
-    return store.bannedTitles();
+    return store.blockedTitles();
+  }
+
+  /// 冻结集合：冻结停止自动整理，命中的叶与中间理解保持原样，
+  /// 不参与挂载、冲突升级或新建理解，直到用户解除。
+  Future<Set<String>> _frozenTitles() async {
+    final store = openLoopStore;
+    if (store == null) {
+      return const {};
+    }
+    return store.frozenTitles();
   }
 
   /// 建叶（锁内）：只处理同时带 branch 与 nature 的记忆条目。
@@ -1033,7 +1046,7 @@ final class PersonaTreeStore {
     if (tagged.isEmpty) {
       return;
     }
-    final banned = await _bannedTitles();
+    final banned = await _blockedTitles();
     for (final MapEntry(key: branch, value: branchEntries) in tagged.entries) {
       final state = await _readBranch(branch);
       if (!state.readable) {
@@ -1065,7 +1078,7 @@ final class PersonaTreeStore {
         }
         if (bannedTitleMatches(normalizeMemoryText(summary), banned)) {
           _diagnosticsSink(
-            'persona leaf skipped reason=banned branch=${branch.wireName}',
+            'persona leaf skipped reason=blocked branch=${branch.wireName}',
           );
           continue;
         }
@@ -1103,13 +1116,16 @@ final class PersonaTreeStore {
     }
   }
 
-  /// 日终单分支整理（锁内）：禁提清扫 → 身份最新陈述胜出 → 挂载 →
-  /// 冲突升级 → 从未归类叶建立中间理解。返回本轮是否撤销过根
-  /// （身份纠正），供调用方决定是否重投影 persona.md。
+  /// 日终单分支整理（锁内）：封禁清扫 → 身份最新陈述胜出 → 挂载 →
+  /// 冲突升级 → 从未归类叶建立中间理解。冻结内容停止自动整理：
+  /// 命中冻结的叶与中间理解原地保留，不参与挂载、冲突升级或新建
+  /// 理解（用户当前纠正仍高于冻结，身份纠正不受冻结限制）。
+  /// 返回本轮是否撤销过根（身份纠正），供调用方决定是否重投影 persona.md。
   Future<bool> _organizeBranch(
     PersonaBranch branch,
     String date,
     Set<String> banned,
+    Set<String> frozen,
   ) async {
     final state = await _readBranch(branch);
     if (!state.readable) {
@@ -1149,6 +1165,10 @@ final class PersonaTreeStore {
       state.unclassified.removeWhere(bannedLeaves.contains);
       changed = true;
     }
+
+    bool frozenHit(String text) =>
+        frozen.isNotEmpty &&
+        bannedTitleMatches(normalizeMemoryText(text), frozen);
 
     // 2. 身份事实的最新明确陈述胜出：新的自述与旧「待稳定事实」
     //    冲突时归档旧理解，新说法走全新 ID，不拿旧证据背书。
@@ -1201,7 +1221,14 @@ final class PersonaTreeStore {
       if (branch.wireName == 'identity' && leaf.nature != natureSelfReport) {
         continue;
       }
+      // 冻结停止自动整理：冻结的叶与中间理解原地保留，不挂载。
+      if (frozenHit(leaf.summary)) {
+        continue;
+      }
       for (final middle in state.allMiddles) {
+        if (frozenHit(middle.claim)) {
+          continue;
+        }
         if (sameClaim(leaf.summary, middle.claim)) {
           state.unclassified.remove(leaf);
           middle.leaves.add(leaf);
@@ -1236,6 +1263,9 @@ final class PersonaTreeStore {
     //    （比较旧根与反向理解后降根与否）归下一次 Dream。
     if (branch.wireName != 'identity') {
       for (final middle in [...state.allMiddles]) {
+        if (frozenHit(middle.claim)) {
+          continue;
+        }
         final conflicts = middle.leaves
             .where((leaf) => leaf.relation == 'conflict')
             .toList();
@@ -1293,8 +1323,12 @@ final class PersonaTreeStore {
     }
 
     // 5. 建立：剩余未归类叶按同一主张分组，跨时间证据足够才成理解。
+    //    冻结的叶不参与新建理解，留在未归类区等待解除。
     final groups = <List<PersonaLeaf>>[];
     for (final leaf in [...state.unclassified]) {
+      if (frozenHit(leaf.summary)) {
+        continue;
+      }
       List<PersonaLeaf>? target;
       for (final group in groups) {
         if (group.any((member) => sameClaim(member.summary, leaf.summary))) {

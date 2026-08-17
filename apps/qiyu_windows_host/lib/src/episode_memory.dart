@@ -317,8 +317,8 @@ final class EpisodeMemoryPipeline {
     var skipped = 0;
     final additions = <EpisodeEntry>[];
     // memory_recall 不产生 episode 条目：它由 LocalChatService 转交
-    // RecallOrchestrator 走轮内查找循环，这里只消费记忆与
-    // Open-loop 生活动作。
+    // RecallOrchestrator 走轮内查找循环，这里只消费记忆、Open-loop
+    // 生活与记忆控制动作。
     final consumable = hiddenActions
         .where(
           (action) =>
@@ -326,6 +326,10 @@ final class EpisodeMemoryPipeline {
               action.kind == HiddenActionKind.openLoopCandidate ||
               action.kind == HiddenActionKind.openLoopStatus ||
               action.kind == HiddenActionKind.memoryBan ||
+              action.kind == HiddenActionKind.memoryForget ||
+              action.kind == HiddenActionKind.memoryFreeze ||
+              action.kind == HiddenActionKind.memoryUnfreeze ||
+              action.kind == HiddenActionKind.memoryDelete ||
               action.kind == HiddenActionKind.relationshipSignal,
         )
         .toList();
@@ -378,6 +382,49 @@ final class EpisodeMemoryPipeline {
       addedEntries: additions,
     );
   }
+
+  /// 删除清除（定稿：删除才清除 episodes 派生内容，sessions 保留）：
+  /// 移除全部命中 [test] 的条目并原子重写受影响日期，命中 [test] 的
+  /// 当日摘要一并移除（摘要是派生内容）。finalized 标记原样保留；
+  /// 理解元数据由调用方随受控范围一并过滤后写回（索引关键词等派生
+  /// 字段不得残留被删内容）。调用方必须已持有
+  /// [synchronizedOnDayFiles] 锁。返回清除的条目数。
+  Future<int> purgeEntriesMatching(bool Function(EpisodeEntry entry) test) async {
+    var purged = 0;
+    for (final date in await listEpisodeDates()) {
+      final day = await _readDay(date);
+      if (!day.readable) {
+        continue;
+      }
+      final kept = day.entries.where((entry) => !test(entry)).toList();
+      final summary = day.summary;
+      final summaryHit =
+          summary != null && test(_summaryProbeEntry(date, summary));
+      if (kept.length == day.entries.length && !summaryHit) {
+        continue;
+      }
+      purged += day.entries.length - kept.length;
+      await _writeDayFile(
+        date,
+        kept,
+        summary: summaryHit ? null : summary,
+        finalized: day.finalized,
+        finalizedAt: day.finalizedAt,
+        understanding: day.understanding,
+      );
+    }
+    return purged;
+  }
+
+  /// 把当日摘要包成只有 summary 的探针条目，复用条目谓词判断摘要
+  /// 是否命中控制范围；其余字段不参与判断。
+  EpisodeEntry _summaryProbeEntry(String date, String summary) => EpisodeEntry(
+    id: 'summary:$date',
+    sessionId: 'summary',
+    requestId: 'summary',
+    summary: summary,
+    at: _clock().toUtc(),
+  );
 
   /// 把已通过白名单校验的隐藏动作落成当天 episode 条目。
   /// 候选保留四字段载荷供日终提升；状态变化与禁提作为事件条目留痕。
@@ -433,6 +480,26 @@ final class EpisodeMemoryPipeline {
           sessionId: session.id,
           requestId: requestId,
           summary: '禁提: ${redactSessionText(action.summary ?? '').trim()}',
+          at: _clock().toUtc(),
+          kind: episodeKindOpenLoopEvent,
+        );
+      case HiddenActionKind.memoryForget:
+      case HiddenActionKind.memoryFreeze:
+      case HiddenActionKind.memoryUnfreeze:
+      case HiddenActionKind.memoryDelete:
+        // 记忆控制事件留痕（审计）：簿记条目不进摘要、状态包、索引
+        // 或 PersonaTree，只留在 episode 里做追溯。
+        final label = switch (action.kind) {
+          HiddenActionKind.memoryForget => '不记录',
+          HiddenActionKind.memoryFreeze => '冻结',
+          HiddenActionKind.memoryUnfreeze => '解除冻结',
+          _ => '删除',
+        };
+        return EpisodeEntry(
+          id: id,
+          sessionId: session.id,
+          requestId: requestId,
+          summary: '$label: ${redactSessionText(action.summary ?? '').trim()}',
           at: _clock().toUtc(),
           kind: episodeKindOpenLoopEvent,
         );

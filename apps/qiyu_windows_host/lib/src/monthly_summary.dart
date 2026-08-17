@@ -244,7 +244,7 @@ final class MonthlySummaryStore {
     Map<String, String> skipped,
     Map<String, EpisodeDay> days,
   ) async {
-    final banned = await _bannedTitles();
+    final banned = await _controlledTitles();
     final loopTitles = await _activeLoopTitles();
 
     final happened = <MonthSummaryItem>[];
@@ -265,7 +265,7 @@ final class MonthlySummaryStore {
         }
         if (bannedTitleMatches(key, banned)) {
           _diagnosticsSink(
-            'monthly compression entry skipped reason=banned date=$date',
+            'monthly compression entry skipped reason=blocked date=$date',
           );
           continue;
         }
@@ -297,8 +297,8 @@ final class MonthlySummaryStore {
       }
     }
 
-    // 主题关键词来自索引（索引本身不过滤禁提），落盘前同样过滤，
-    // 与条目侧的禁提纪律保持一致。
+    // 主题关键词来自索引（索引本身不过滤受控内容），落盘前同样过滤，
+    // 与条目侧的控制纪律保持一致。
     final theme = (await _monthTheme(month))
         .where(
           (keyword) => !bannedTitleMatches(normalizeMemoryText(keyword), banned),
@@ -312,6 +312,93 @@ final class MonthlySummaryStore {
     };
     _fitBudget(sections, theme);
 
+    return _renderSummary(
+      month: month,
+      theme: theme,
+      sections: sections,
+      compressedDates: compressedDates,
+      skipped: skipped,
+    );
+  }
+
+  /// 删除清除（定稿：月摘要是派生内容，删除必须清掉引用）：扫描已有
+  /// 月摘要，移除命中封禁集合的条目与主题关键词，原子重写有变化的
+  /// 月份。已完整覆盖的月份平时绝不重新生成，所以删除必须在这里
+  /// 显式清理。返回移除的条目与关键词总数。
+  Future<int> purgeBlocked(Set<String> blocked) async {
+    if (blocked.isEmpty) {
+      return 0;
+    }
+    var removed = 0;
+    // 按文件系统扫描已有摘要：即使某月的 episodes 已被删空，
+    // 残留的摘要文件也必须清理。
+    final months = <String>{};
+    final episodesRoot = Directory(path.join(memoryDirectory, 'episodes'));
+    if (await episodesRoot.exists()) {
+      await for (final entity in episodesRoot.list(
+        recursive: true,
+        followLinks: false,
+      )) {
+        if (entity is File && path.basename(entity.path) == 'summary.md') {
+          final relative = path.relative(entity.path, from: episodesRoot.path);
+          final parts = path.split(relative);
+          if (parts.length == 3 &&
+              RegExp(r'^\d{4}$').hasMatch(parts[0]) &&
+              RegExp(r'^\d{2}$').hasMatch(parts[1])) {
+            months.add('${parts[0]}-${parts[1]}');
+          }
+        }
+      }
+    }
+    for (final month in months.toList()..sort()) {
+      final summary = await readMonthSummary(month);
+      if (summary == null || !summary.readable) {
+        continue;
+      }
+      bool hit(String text) =>
+          bannedTitleMatches(normalizeMemoryText(text), blocked);
+      final keptItems = summary.items.where((item) => !hit(item.text)).toList();
+      final keptTheme = summary.theme.where((keyword) => !hit(keyword)).toList();
+      final removedHere =
+          (summary.items.length - keptItems.length) +
+          (summary.theme.length - keptTheme.length);
+      if (removedHere == 0) {
+        continue;
+      }
+      removed += removedHere;
+      final sections = <String, List<MonthSummaryItem>>{
+        for (final name in const [
+          sectionHappened,
+          sectionOpenLoops,
+          sectionRelationship,
+          sectionUncertain,
+        ])
+          name: keptItems.where((item) => item.section == name).toList(),
+      };
+      final contents = _renderSummary(
+        month: month,
+        theme: keptTheme,
+        sections: sections,
+        compressedDates: summary.compressedDates,
+        skipped: summary.skipped,
+      );
+      await _atomicWriter.replace(summaryFile(month).path, contents);
+      _diagnosticsSink(
+        'monthly summary purged month=$month removed=$removedHere',
+      );
+    }
+    return removed;
+  }
+
+  /// 月摘要渲染（压缩生成与删除清除共用）：元数据 + 当月主题 +
+  /// 四分区条目。
+  String _renderSummary({
+    required String month,
+    required List<String> theme,
+    required Map<String, List<MonthSummaryItem>> sections,
+    required List<String> compressedDates,
+    required Map<String, String> skipped,
+  }) {
     final metadata = _encodeJson({
       'schemaVersion': 1,
       'month': month,
@@ -394,12 +481,15 @@ final class MonthlySummaryStore {
     return const [];
   }
 
-  Future<Set<String>> _bannedTitles() async {
+  /// 月压缩的受控集合 = 封禁（禁提 ∪ 删除）∪ 冻结：冻结停止整理，
+  /// 封禁内容不得进摘要。
+  Future<Set<String>> _controlledTitles() async {
     final store = openLoopStore;
     if (store == null) {
       return const {};
     }
-    return store.bannedTitles();
+    final controls = await store.memoryControls.load();
+    return {...controls.blockedSummaries, ...controls.frozenSummaries};
   }
 
   /// 当前仍未闭环（active/paused）的 open-loop 标题集合。

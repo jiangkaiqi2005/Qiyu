@@ -42,6 +42,16 @@ signal 四种：deep_talk（用户主动谈到通常不轻易谈的个人深层�
 query 只写话题关键词，不带疑问词；本轮先按一时没想起自然回应，绝不等查找结果。
 记忆按两级索引存放：episodes/index.md 列出月份，每行 `- YYYY-MM | 关键词 | episodes/YYYY/MM/index.md`；episodes/YYYY/MM/index.md 列出该月日期，每行 `- YYYY-MM-DD | 关键词 | 日文件`；日文件才是原始记录。后台查找沿这两级索引定位到日文件再回读原文，命中快时本轮就会自然补上第二条消息，没赶上时话题再来自然补上。
 查找过程中若被要求选择月份/日期：选择只能取自递来的目录，可以空着，绝不编造日期。
+7. memory_forget：用户明确要求本轮的某些内容不要记住、不要留下记录。
+{"action":"memory_forget","summary":"不记录的内容简称"}
+只对本轮内容生效；与同轮的 memory_signal 冲突时以 memory_forget 为准。
+8. memory_freeze：用户明确要求冻结某段记忆（暂停使用、先不要动它），内容保留但停止使用，直到用户明确解除。
+{"action":"memory_freeze","summary":"冻结的内容简称"}
+9. memory_unfreeze：用户明确解除之前冻结的某段记忆。
+{"action":"memory_unfreeze","summary":"解除冻结的内容简称"}
+10. memory_delete：用户明确要求删除某段记忆。
+{"action":"memory_delete","summary":"删除的内容简称"}
+记忆控制纪律：只在用户明确表达时才发控制动作（7-10），猜测与暗示都不发；冻结或禁提对象说不清时覆盖当前话题；删除对象说不清时只指向最近一条，完全没有可定位的对象时先开口确认，不发任何控制动作。用户重提已被禁提的话题只回应当下，绝不自动解除禁提。
 示例：用户说「我对芒果过敏」时，回复后追加
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户对芒果过敏","evidence":"我对芒果过敏"}]
@@ -56,8 +66,10 @@ const hiddenActionsReminder =
     '<qiyu-actions>[{"action":"memory_signal","summary":"…","evidence":"…"}]'
     '</qiyu-actions>；出现真正未完的事用 open_loop_candidate；用户回复'
     '让某事闭环或暂缓用 open_loop_status；用户要求不再提某事用 '
-    'memory_ban；出现深谈、冷暖变化或边界开合等关系证据用 '
-    'relationship_signal；常驻字段没命中且用户问旧事用 '
+    'memory_ban；用户要求本轮内容不要记住用 memory_forget；要求冻结'
+    '某段记忆用 memory_freeze，明确解除冻结用 memory_unfreeze；'
+    '要求删除某段记忆用 memory_delete；出现深谈、冷暖变化或边界开合'
+    '等关系证据用 relationship_signal；常驻字段没命中且用户问旧事用 '
     'memory_recall；普通闲聊不追加。';
 
 /// 按设计定稿的装配图组装模型上下文：

@@ -6,6 +6,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'open_loop_store.dart';
 
 /// relationship.md 写入关预算（设计定稿：150-300 tokens，按 rune 上限保守计）。
 const relationshipMaxRunes = 300;
@@ -463,6 +464,58 @@ final class RelationshipLifecycle {
       return base;
     }
     return '$base 已认识 $days 天。';
+  }
+
+  /// 删除清除：relationship.md 里命中封禁范围的投影行（当前相处方式
+  /// 与近期变化）立即移除；stage/since/阶段描述是结构性字段不受影响。
+  /// 手写不可识别文件绝不改写。返回移除行数。
+  Future<int> purgeBlockedTitles(Set<String> blocked) async {
+    if (blocked.isEmpty) {
+      return 0;
+    }
+    final file = _file;
+    if (!await file.exists()) {
+      return 0;
+    }
+    String contents;
+    try {
+      contents = await file.readAsString(encoding: utf8);
+    } on Object {
+      return 0;
+    }
+    final parsed = parseRelationshipFile(contents);
+    if (parsed == null) {
+      return 0;
+    }
+    bool hit(String line) =>
+        bannedTitleMatches(normalizeRelationshipLine(line), blocked);
+    final confirmed = parsed.confirmed.where((line) => !hit(line)).toList();
+    final probes = parsed.probes.where((line) => !hit(line)).toList();
+    final recent = parsed.recentChanges.where((line) => !hit(line)).toList();
+    final removed =
+        (parsed.confirmed.length - confirmed.length) +
+        (parsed.probes.length - probes.length) +
+        (parsed.recentChanges.length - recent.length);
+    if (removed == 0) {
+      return 0;
+    }
+    // 原阶段描述逐字保留（结构性描述，不含被删用户内容）。
+    final descriptionMatch = RegExp(
+      r'^阶段描述\s*[:：]\s*(.+)$',
+      multiLine: true,
+    ).firstMatch(contents.replaceAll('\r\n', '\n'));
+    await _atomicWriter.replace(
+      file.path,
+      _compose(
+        stage: parsed.stage,
+        since: parsed.since,
+        description: descriptionMatch?.group(1)?.trim() ?? '',
+        confirmed: confirmed,
+        probes: probes,
+        recentChanges: recent,
+      ),
+    );
+    return removed;
   }
 
   String _compose({

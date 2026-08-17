@@ -6,6 +6,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_controls.dart';
 
 /// 设计定稿分块预算：open-loops.md 100-250 tokens。
 /// 保守按 1 rune ≈ 1 token 估算，rune 上限即 token 上限。
@@ -132,30 +133,37 @@ bool loopDueArrived(String? due, DateTime now) {
 bool stageAllowsProactive(RelationshipStage stage) =>
     stage != RelationshipStage.stranger;
 
-/// Open-loop 生命周期存储：热层 `open-loops.md`、归档
-/// `open-loops.archive.md` 与用户记忆控制 `memory-controls.md` 的读写。
+/// Open-loop 生命周期存储：热层 `open-loops.md` 与归档
+/// `open-loops.archive.md` 的读写。用户记忆控制记录统一由
+/// [MemoryControlsStore] 管理（ticket 18），本类只做读取代理与
+/// 禁提/删除时的热层移出。
 ///
 /// 职责边界（ticket 11）：
-/// - 日终：候选提升（校验未完性/禁提/去重/预算）、closed 归档、过期清理；
+/// - 日终：候选提升（校验未完性/控制/去重/预算）、closed 归档、过期清理；
 /// - 即时：状态变化与禁提在回复落盘后立刻生效，不等日终；
 /// - 禁提写入 memory-controls.md 并移出手层，后续整理不得重新激活。
 final class OpenLoopStore {
   OpenLoopStore({
     required this.memoryDirectory,
     AtomicTextWriter? atomicWriter,
-  }) : _atomicWriter = atomicWriter ?? const IoAtomicTextWriter();
+    MemoryControlsStore? memoryControls,
+  }) : _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
+       memoryControls = memoryControls ??
+           MemoryControlsStore(memoryDirectory: memoryDirectory);
 
   final String memoryDirectory;
   final AtomicTextWriter _atomicWriter;
+
+  /// 记忆控制记录的唯一读写者；禁提/冻结/删除的过滤集合都从这里取。
+  final MemoryControlsStore memoryControls;
   Future<void> _lockTail = Future.value();
 
   File get _loopsFile => File(path.join(memoryDirectory, 'open-loops.md'));
   File get _archiveFile =>
       File(path.join(memoryDirectory, 'open-loops.archive.md'));
-  File get _controlsFile => File(path.join(memoryDirectory, 'memory-controls.md'));
 
-  /// 串行化全部 loop/controls 文件写操作：日终归档与对话中的即时
-  /// 生效分属不同任务链，必须在此汇合。
+  /// 串行化全部 loop 文件写操作：日终归档与对话中的即时生效分属
+  /// 不同任务链，必须在此汇合。controls 文件有独立的串行锁。
   Future<T> _withLock<T>(Future<T> Function() body) {
     final result = _lockTail.then((_) => body());
     _lockTail = result.then<void>((_) {}, onError: (_) {});
@@ -176,37 +184,23 @@ final class OpenLoopStore {
 
   /// memory-controls.md 的 banned 摘要集合（规范化后），用于阻止
   /// 禁提事项被重新提升或注入。
-  Future<Set<String>> bannedTitles() async {
-    final file = _controlsFile;
-    if (!await file.exists()) {
-      return const {};
-    }
-    final titles = <String>{};
-    var inBanned = false;
-    for (final line in (await file.readAsString(encoding: utf8))
-        .replaceAll('\r\n', '\n')
-        .split('\n')) {
-      final header = line.trim();
-      if (header.startsWith('## ')) {
-        inBanned = header == '## banned';
-        continue;
-      }
-      if (!inBanned) {
-        continue;
-      }
-      final match = RegExp(r'^- \[[^\]]+\]\s*[^|]*\|\s*(.+)$').firstMatch(line);
-      if (match != null) {
-        final normalized = normalizeLoopTitle(match.group(1)!);
-        if (normalized.isNotEmpty) {
-          titles.add(normalized);
-        }
-      }
-    }
-    return titles;
-  }
+  Future<Set<String>> bannedTitles() async =>
+      (await memoryControls.load()).bannedSummaries;
+
+  /// 封禁集合 = 禁提 ∪ 删除（规范化后）：两类内容都不得再被提升、
+  /// 注入、检索或整理。
+  Future<Set<String>> blockedTitles() async =>
+      (await memoryControls.load()).blockedSummaries;
+
+  /// 冻结摘要集合（规范化后）：冻结停止注入、检索与自动整理，
+  /// 与封禁同样参与各管线过滤。
+  Future<Set<String>> frozenTitles() async =>
+      (await memoryControls.load()).frozenSummaries;
 
   /// 主动跟进候选池：状态 active、允许主动、due 已到、关系阶段允许
-  /// 且未被禁提的条目。只进入候选池，是否开口由模型按语境选择。
+  /// 且未被封禁（禁提/删除）或冻结的条目。只进入候选池，是否开口
+  /// 由模型按语境选择。控制匹配按包含关系（与其余管线同律），
+  /// 绝不让受控事项经主动跟进绕回。
   Future<List<OpenLoopItem>> proactiveCandidates(
     DateTime now,
     RelationshipStage stage,
@@ -215,7 +209,11 @@ final class OpenLoopStore {
     if (items == null) {
       return const [];
     }
-    final banned = await bannedTitles();
+    final controls = await memoryControls.load();
+    final controlled = {
+      ...controls.blockedSummaries,
+      ...controls.frozenSummaries,
+    };
     return items
         .where(
           (item) =>
@@ -223,22 +221,27 @@ final class OpenLoopStore {
               item.proactive != OpenLoopProactive.no &&
               loopDueArrived(item.due, now) &&
               stageAllowsProactive(stage) &&
-              !banned.contains(normalizeLoopTitle(item.title)),
+              !bannedTitleMatches(normalizeLoopTitle(item.title), controlled),
         )
         .toList();
   }
 
   // ---------- 日终 ----------
 
-  /// 候选提升：只有字段合法、未被禁提、不与既有事项重复且预算允许时
-  /// 才成为正式 Open-loop。返回提升数量；结构不可识别时整体跳过。
+  /// 候选提升：只有字段合法、未被封禁（禁提/删除）或冻结、不与既有
+  /// 事项重复且预算允许时才成为正式 Open-loop。控制匹配按包含关系
+  /// （与其余管线同律）。返回提升数量；结构不可识别时整体跳过。
   Future<int> promoteCandidates(List<EpisodeEntry> candidates) =>
       _withLock(() async {
         final parsed = await _parseLoopsFile();
         if (parsed == null) {
           return 0;
         }
-        final banned = await bannedTitles();
+        final controls = await memoryControls.load();
+        final controlled = {
+          ...controls.blockedSummaries,
+          ...controls.frozenSummaries,
+        };
         var nextId = _nextLoopNumber(parsed);
         final contents = parsed.contents;
         var promoted = 0;
@@ -250,7 +253,8 @@ final class OpenLoopStore {
           }
           final title = candidate.summary.trim();
           final normalized = normalizeLoopTitle(title);
-          if (normalized.isEmpty || banned.contains(normalized)) {
+          if (normalized.isEmpty ||
+              bannedTitleMatches(normalized, controlled)) {
             continue;
           }
           final exists = parsed.items.any(
@@ -318,18 +322,21 @@ final class OpenLoopStore {
   });
 
   /// 过期清理：due 已过超过 [openLoopExpiryDays] 天仍未闭环的条目
-  /// 按「过期」归档。无 due 的条目不自动过期。
+  /// 按「过期」归档。无 due 的条目不自动过期。冻结条目停止自动修改：
+  /// 过期整理跳过它们，原地保留到用户解除。
   Future<int> expireStale(DateTime now) => _withLock(() async {
     final parsed = await _parseLoopsFile();
     if (parsed == null) {
       return 0;
     }
+    final frozen = await frozenTitles();
     final local = now.toLocal();
     final today = DateTime(local.year, local.month, local.day);
     final stale = parsed.items
         .where((item) => item.status != OpenLoopStatus.closed &&
             item.due != null &&
-            _dueExpired(item.due!, today))
+            _dueExpired(item.due!, today) &&
+            !bannedTitleMatches(normalizeLoopTitle(item.title), frozen))
         .toList();
     if (stale.isEmpty) {
       return 0;
@@ -406,39 +413,60 @@ final class OpenLoopStore {
     return changed;
   });
 
-  /// 禁提：写入 memory-controls.md 的 banned 区，并立即把事项移出手层。
-  /// 幂等——同一事项重复禁提不产生重复控制记录。返回禁提是否已生效；
-  /// controls 文件不可识别、禁提记录无法落盘时返回 false 且**不动热层**——
-  /// 否则事项离了热层又没有控制记录，次日日终会被重新提升，留下可复活空洞。
-  Future<bool> banTitle(String title) => _withLock(() async {
-    final normalized = normalizeLoopTitle(title);
-    if (normalized.isEmpty) {
-      return false;
-    }
-    if (!(await bannedTitles()).contains(normalized)) {
-      final controls = await _appendBannedControl(title);
-      if (controls == null) {
-        return false;
-      }
-      await _atomicWriter.replace(_controlsFile.path, controls);
-    }
-    final parsed = await _parseLoopsFile();
-    if (parsed != null) {
-      final kept = <String>[];
-      var removed = false;
-      for (final item in parsed.items) {
-        if (normalizeLoopTitle(item.title) == normalized) {
-          removed = true;
-        } else {
-          kept.add(item.raw);
+  /// 禁提：先写 memory-controls.md 的 banned 区，再把事项移出手层
+  /// （定稿写入顺序：先控制记录后清派生）。幂等——同一事项重复禁提
+  /// 不产生重复控制记录。返回禁提是否已生效；controls 文件不可识别、
+  /// 禁提记录无法落盘时返回 false 且**不动热层**——否则事项离了热层
+  /// 又没有控制记录，次日日终会被重新提升，留下可复活空洞。
+  Future<bool> banTitle(String title, {String origin = 'open-loop'}) =>
+      _withLock(() async {
+        final normalized = normalizeLoopTitle(title);
+        if (normalized.isEmpty) {
+          return false;
         }
-      }
-      if (removed) {
-        await _replaceLoops(_composeLoopsFile(kept));
+        if (!await memoryControls.ban(title, origin: origin)) {
+          return false;
+        }
+        await _removeLoopsWhere(
+          (item) => bannedTitleMatches(
+            normalizeLoopTitle(item.title),
+            {normalized},
+          ),
+        );
+        return true;
+      });
+
+  /// 删除即时生效的一部分：把命中控制范围的条目永久移出手层
+  /// （删除清除派生内容，与禁提的移出同一条路径）。返回移出条数。
+  Future<int> removeLoopsMatching(Set<String> titles) => _withLock(() async {
+    if (titles.isEmpty) {
+      return 0;
+    }
+    return _removeLoopsWhere(
+      (item) =>
+          bannedTitleMatches(normalizeLoopTitle(item.title), titles),
+    );
+  });
+
+  Future<int> _removeLoopsWhere(bool Function(OpenLoopItem item) test) async {
+    final parsed = await _parseLoopsFile();
+    if (parsed == null) {
+      return 0;
+    }
+    final kept = <String>[];
+    var removed = 0;
+    for (final item in parsed.items) {
+      if (test(item)) {
+        removed += 1;
+      } else {
+        kept.add(item.raw);
       }
     }
-    return true;
-  });
+    if (removed > 0) {
+      await _replaceLoops(_composeLoopsFile(kept));
+    }
+    return removed;
+  }
 
   // ---------- 内部 ----------
 
@@ -485,38 +513,6 @@ final class OpenLoopStore {
 
   String _archiveLine(String title, String date, String result) =>
       '- $title | 闭环: $date | $result';
-
-  /// 追加 banned 控制记录；controls 文件结构不可识别时返回 null（不动）。
-  Future<String?> _appendBannedControl(String title) async {
-    final file = _controlsFile;
-    String contents;
-    if (await file.exists()) {
-      contents = await file.readAsString(encoding: utf8);
-      if (!contents.contains('# memory-controls')) {
-        return null;
-      }
-    } else {
-      contents = '# memory-controls\n'
-          '## frozen\n'
-          '## banned\n'
-          '## deleted\n';
-    }
-    final maxId = RegExp(r'- \[MC(\d+)\]')
-        .allMatches(contents)
-        .map((match) => int.tryParse(match.group(1)!) ?? 0)
-        .fold<int>(0, (max, value) => value > max ? value : max);
-    final line =
-        '- [MC${(maxId + 1).toString().padLeft(3, '0')}] open-loop | $title';
-    final normalizedLines = contents.replaceAll('\r\n', '\n');
-    final bannedHeader = RegExp(r'^## banned\s*$', multiLine: true);
-    if (bannedHeader.hasMatch(normalizedLines)) {
-      return normalizedLines.replaceFirstMapped(
-        bannedHeader,
-        (_) => '## banned\n$line',
-      );
-    }
-    return '$normalizedLines\n## banned\n$line\n';
-  }
 
   int _nextLoopNumber(_ParsedLoops parsed) {
     var max = 0;

@@ -278,7 +278,7 @@ void main() {
     expect(result.pendingContext, isNull);
     // 唯一月份的索引行关键词全部被禁：顶层目录直接为空，任何模型
     // 调用都不发生，被禁内容绝不递给模型。
-    expect(result.diagnostics.join('\n'), contains('reason=banned'));
+    expect(result.diagnostics.join('\n'), contains('reason=blocked'));
     expect(result.diagnostics.join('\n'), contains('no-visible-months'));
     expect((recall.modelClient! as _ScriptedModelClient).calls, isEmpty);
   });
@@ -358,7 +358,7 @@ void main() {
     expect(result.bubbleText, isNull);
     expect(result.pendingContext, isNull);
     final diagnostics = result.diagnostics.join('\n');
-    expect(diagnostics, contains('index line hidden reason=banned'));
+    expect(diagnostics, contains('index line hidden reason=blocked'));
     expect(diagnostics, contains('not-in-passed-index'));
   });
 

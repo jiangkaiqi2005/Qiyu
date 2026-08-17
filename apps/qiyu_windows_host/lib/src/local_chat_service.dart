@@ -1,11 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'daily_finalization.dart';
+import 'daily_understanding.dart';
 import 'dream.dart';
+import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_controls.dart';
 import 'memory_recall.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
@@ -13,6 +19,7 @@ import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
 import 'provider_settings_service.dart';
+import 'relationship_lifecycle.dart';
 import 'state_pack_reader.dart';
 
 final class LocalChatException implements Exception {
@@ -101,6 +108,8 @@ final class LocalChatService {
     this.personaTree,
     this.monthlySummary,
     this.dreamService,
+    this.memoryControls,
+    this.relationshipLifecycle,
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
     Clock? clock,
@@ -119,6 +128,14 @@ final class LocalChatService {
   final DailyFinalizationService? dailyFinalization;
   final OpenLoopStore? openLoopStore;
   final StatePackReader? statePackReader;
+
+  /// 用户记忆控制记录（ticket 18）：冻结/禁提/删除的落盘与读取。
+  /// 必须与 OpenLoopStore 使用同一实例，避免两条写入链互相覆盖。
+  final MemoryControlsStore? memoryControls;
+
+  /// relationship.md 生命周期：删除时需要立即清掉命中的关系证据行。
+  /// 与日终归档共享同一实例。
+  final RelationshipLifecycle? relationshipLifecycle;
 
   /// 召回模型查找轮内循环。只在配置了 Provider 时有意义：查找由
   /// 模型隐藏动作触发，命中快时当轮补 bubble 2，没赶上时压缩结果
@@ -719,19 +736,49 @@ final class LocalChatService {
   }
 
   /// 可见回复落盘之后的增量记忆整理：写失败只记诊断，不影响本轮回复。
+  /// 用户记忆控制（不记录/禁提/冻结/解除/删除）在回复后异步立即生效，
+  /// 不等日终（记忆控制定稿）。
   Future<void> _applyHiddenActions(
     RawSession completedSession,
     String requestId,
     List<HiddenAction> hiddenActions, {
     required bool consumeWindow,
   }) async {
+    // 不要记（当轮控制，不产生持久记录）：命中目标的记忆信号、
+    // 未完事项候选与关系证据一律不落 episode——内容不进提升、索引
+    // 或 PersonaTree；控制动作自身保留为审计条目。
+    final forgetTargets = hiddenActions
+        .where((action) => action.kind == HiddenActionKind.memoryForget)
+        .map((action) => normalizeMemoryText(action.summary ?? ''))
+        .where((summary) => summary.isNotEmpty)
+        .toSet();
+    var effectiveActions = hiddenActions;
+    if (forgetTargets.isNotEmpty) {
+      effectiveActions = hiddenActions
+          .where((action) {
+            final isContentAction =
+                action.kind == HiddenActionKind.memorySignal ||
+                action.kind == HiddenActionKind.openLoopCandidate ||
+                action.kind == HiddenActionKind.relationshipSignal;
+            final summary = action.summary;
+            if (!isContentAction || summary == null) {
+              return true;
+            }
+            return !bannedTitleMatches(
+              normalizeMemoryText(summary),
+              forgetTargets,
+            );
+          })
+          .toList();
+    }
+
     final pipeline = episodePipeline;
     if (pipeline != null) {
       try {
         final result = await pipeline.processReply(
           session: completedSession,
           requestId: requestId,
-          hiddenActions: hiddenActions,
+          hiddenActions: effectiveActions,
           consumeWindow: consumeWindow,
         );
         if (result.skippedCorruptDay) {
@@ -754,44 +801,345 @@ final class LocalChatService {
         );
       }
     }
-    // Open-loop 状态变化与禁提属于用户记忆控制：回复后异步立即生效，
-    // 不等日终（对齐记忆控制定稿）；禁提同时移出热层并写 controls。
+    // 记忆控制与 Open-loop 状态变化：回复后异步立即生效，不等日终。
     final store = openLoopStore;
-    if (store != null) {
-      for (final action in hiddenActions) {
-        try {
-          if (action.kind == HiddenActionKind.openLoopStatus &&
-              action.summary != null &&
-              action.status != null) {
-            await store.applyStatusChange(
-              title: action.summary!,
-              status: action.status!,
-              result: action.result,
+    for (final action in hiddenActions) {
+      try {
+        if (action.kind == HiddenActionKind.openLoopStatus &&
+            action.summary != null &&
+            action.status != null) {
+          await store?.applyStatusChange(
+            title: action.summary!,
+            status: action.status!,
+            result: action.result,
+          );
+        } else if (action.kind == HiddenActionKind.memoryBan &&
+            action.summary != null) {
+          final banned =
+              await store?.banTitle(action.summary!, origin: 'chat') ?? false;
+          if (!banned) {
+            // controls 不可写：禁提没有落盘，热层也保持不动，
+            // 等待下次触发重试，绝不留下半生效状态。
+            _diagnosticsSink(
+              'memory ban deferred [controls not writable] '
+              'request=$requestId',
             );
-          } else if (action.kind == HiddenActionKind.memoryBan &&
-              action.summary != null) {
-            final banned = await store.banTitle(action.summary!);
-            if (!banned) {
-              // controls 不可写：禁提没有落盘，热层也保持不动，
-              // 等待下次触发重试，绝不留下半生效状态。
-              _diagnosticsSink(
-                'memory ban deferred [controls not writable] '
-                'request=$requestId',
-              );
-            } else {
-              // 用户禁提高于 PersonaTree 提炼：立即清出树（ticket 14）。
-              final tree = personaTree;
-              if (tree != null) {
-                await tree.applyBan(action.summary!);
-              }
+          } else {
+            // 用户禁提高于 PersonaTree 提炼：立即清出树（ticket 14）。
+            final tree = personaTree;
+            if (tree != null) {
+              await tree.applyBan(action.summary!);
             }
           }
-        } on Object catch (error) {
-          _diagnosticsSink(
-            'open-loop update deferred [$error] request=$requestId',
-          );
+        } else if (action.kind == HiddenActionKind.memoryFreeze &&
+            action.summary != null) {
+          final controls = memoryControls;
+          final frozen = await controls?.freeze(action.summary!) ?? false;
+          if (!frozen) {
+            _diagnosticsSink(
+              'memory freeze deferred [controls not writable] '
+              'request=$requestId',
+            );
+          }
+        } else if (action.kind == HiddenActionKind.memoryUnfreeze &&
+            action.summary != null) {
+          final controls = memoryControls;
+          final removed = await controls?.unfreeze(action.summary!);
+          if (removed == null) {
+            _diagnosticsSink(
+              'memory unfreeze deferred [controls not writable] '
+              'request=$requestId',
+            );
+          }
+        } else if (action.kind == HiddenActionKind.memoryDelete &&
+            action.summary != null) {
+          await _applyDelete(action.summary!, requestId);
+        }
+        // memory_forget 是当轮控制：内容过滤已在上面执行，
+        // 审计条目随 episode 落盘，没有额外的持久动作。
+      } on Object catch (error) {
+        _diagnosticsSink(
+          'memory control deferred [$error] request=$requestId',
+        );
+      }
+    }
+  }
+
+  /// 删除即时生效（ticket 18 / T24 定稿）：先定位目标，无任何可定位
+  /// 目标时不写控制记录也不清除——绝不把宽泛范围变成永久封禁；
+  /// 定位到目标后先写 deleted 抽象防复活范围，再清除全部派生内容
+  /// （PersonaTree、episodes 与索引、长期印象、月摘要、关系证据、
+  /// 近日状态、未闭环事项）。sessions 保留；重复执行安全。
+  Future<void> _applyDelete(String summary, String requestId) async {
+    final controls = memoryControls;
+    final pipeline = episodePipeline;
+    final normalized = normalizeMemoryText(summary);
+    if (controls == null || pipeline == null || normalized.isEmpty) {
+      return;
+    }
+    final scope = {normalized};
+    // 清除侧沿用禁提的双向包含匹配（宁可多屏蔽）：删除没有解除路径，
+    // 过度清除是保守方向；防复活范围以 controls 记录的抽象摘要为准。
+    bool hitText(String text) =>
+        bannedTitleMatches(normalizeMemoryText(text), scope);
+    // 簿记条目（控制事件留痕）不是被删事实的派生内容：与禁提同律，
+    // 留在 episode 里做审计追溯，不参与清除。
+    bool hitEntry(EpisodeEntry entry) =>
+        entry.kind != episodeKindOpenLoopEvent &&
+        (hitText(entry.summary) ||
+            (entry.evidence != null && hitText(entry.evidence!)));
+
+    // 定位扫描（只读）：任一记忆层命中即可执行。
+    var located = false;
+    for (final date in await pipeline.listEpisodeDates()) {
+      final day = await pipeline.readDay(date);
+      if (!day.readable) {
+        continue;
+      }
+      if (day.entries.any(hitEntry) ||
+          (day.summary != null && hitText(day.summary!))) {
+        located = true;
+        break;
+      }
+    }
+    if (!located) {
+      final longMemory = await _readMemoryFile('long-memory.md');
+      if (longMemory != null) {
+        final parsed = parseLongMemory(longMemory);
+        located = parsed.readable && parsed.allItems.any(hitText);
+      }
+    }
+    final tree = personaTree;
+    if (!located && tree != null) {
+      final snapshot = await tree.readSnapshot();
+      for (final view in snapshot.branches.values) {
+        if (!view.readable) {
+          continue;
+        }
+        final claims = [
+          for (final root in view.roots) root.claim,
+          for (final middle in view.unrooted) middle.claim,
+        ];
+        if (claims.any(hitText)) {
+          located = true;
+          break;
         }
       }
+    }
+    final store = openLoopStore;
+    if (!located && store != null) {
+      final items = await store.readItems();
+      located = items != null && items.any((item) => hitText(item.title));
+    }
+    if (!located) {
+      final relationship = await _readMemoryFile('relationship.md');
+      located = relationship != null &&
+          relationship
+              .split('\n')
+              .any((line) => line.trim().startsWith('- ') && hitText(line));
+    }
+    if (!located) {
+      final dailyState = await _readMemoryFile('daily-state.md');
+      located = dailyState != null &&
+          dailyState
+              .split('\n')
+              .any((line) => line.trim().startsWith('- ') && hitText(line));
+    }
+    if (!located) {
+      final compressor = monthlySummary;
+      if (compressor != null) {
+        final months = <String>{
+          for (final date in await pipeline.listEpisodeDates())
+            date.substring(0, 7),
+        };
+        for (final month in months) {
+          final summaryFile = await compressor.readMonthSummary(month);
+          if (summaryFile == null || !summaryFile.readable) {
+            continue;
+          }
+          if (summaryFile.items.any((item) => hitText(item.text))) {
+            located = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!located) {
+      _diagnosticsSink(
+        'memory delete skipped [no target] request=$requestId',
+      );
+      return;
+    }
+
+    // 先写控制记录；写不进就中止清除，绝不留下可复活空洞。
+    if (!await controls.recordDelete(summary, origin: 'chat')) {
+      _diagnosticsSink(
+        'memory delete deferred [controls not writable] request=$requestId',
+      );
+      return;
+    }
+
+    // 清除派生内容：每步独立幂等，单步失败只记诊断，控制记录已挡住
+    // 注入与检索，剩余派生内容等待下次触发或日终补齐。
+    if (tree != null) {
+      try {
+        await tree.applyBan(summary);
+      } on Object catch (error) {
+        _diagnosticsSink('delete persona purge deferred [$error]');
+      }
+    }
+    try {
+      await pipeline.synchronizedOnDayFiles(() async {
+        await pipeline.purgeEntriesMatching(hitEntry);
+        // 日终理解元数据同样是派生内容（索引关键词、摘要、气氛等）：
+        // 必须按同一范围过滤，否则索引重建会从 understanding 把被删
+        // 关键词重新写回，永久残留。
+        for (final date in await pipeline.listEpisodeDates()) {
+          final day = await pipeline.readDay(date);
+          if (!day.readable || day.understanding == null) {
+            continue;
+          }
+          final filteredJson = DayUnderstanding.fromJson(
+            day.understanding!,
+          ).filterBanned(scope).toJson();
+          if (jsonEncode(filteredJson) == jsonEncode(day.understanding)) {
+            continue;
+          }
+          await pipeline.writeFinalization(
+            date,
+            entries: day.entries,
+            summary: day.summary,
+            finalized: day.finalized,
+            finalizedAt: day.finalizedAt,
+            understanding: filteredJson,
+          );
+        }
+        // 索引派生自 episodes 与理解元数据：清除后整体重建，受控
+        // 关键词随之消失。
+        final indexStore = EpisodeIndexStore(
+          memoryDirectory: pipeline.memoryDirectory,
+          episodePipeline: pipeline,
+        );
+        await indexStore.rebuild(includeUnfinalized: true);
+      });
+    } on Object catch (error) {
+      _diagnosticsSink('delete episode purge deferred [$error]');
+    }
+    try {
+      await _purgeLongMemory(scope);
+    } on Object catch (error) {
+      _diagnosticsSink('delete long-memory purge deferred [$error]');
+    }
+    final compressor = monthlySummary;
+    if (compressor != null) {
+      try {
+        await compressor.purgeBlocked(scope);
+      } on Object catch (error) {
+        _diagnosticsSink('delete month summary purge deferred [$error]');
+      }
+    }
+    final lifecycle = relationshipLifecycle;
+    if (lifecycle != null) {
+      try {
+        await lifecycle.purgeBlockedTitles(scope);
+      } on Object catch (error) {
+        _diagnosticsSink('delete relationship purge deferred [$error]');
+      }
+    }
+    try {
+      await _purgeDailyStateLines(scope);
+    } on Object catch (error) {
+      _diagnosticsSink('delete daily-state purge deferred [$error]');
+    }
+    if (store != null) {
+      try {
+        await store.removeLoopsMatching(scope);
+      } on Object catch (error) {
+        _diagnosticsSink('delete loop purge deferred [$error]');
+      }
+    }
+  }
+
+  /// 删除清除长期印象里的命中条目：解析 → 过滤 → 原子重写。
+  /// 结构不可识别时不动（等待恢复流程）。
+  Future<void> _purgeLongMemory(Set<String> scope) async {
+    final pipeline = episodePipeline;
+    if (pipeline == null) {
+      return;
+    }
+    final file = File(
+      path.join(pipeline.memoryDirectory, 'long-memory.md'),
+    );
+    if (!await file.exists()) {
+      return;
+    }
+    final parsed = parseLongMemory(await file.readAsString(encoding: utf8));
+    if (!parsed.readable) {
+      return;
+    }
+    var changed = false;
+    final sections = <String, List<String>>{};
+    for (final section in longMemorySections) {
+      final items = parsed.sections[section] ?? const <String>[];
+      final kept = items.where((item) => !bannedTitleMatches(
+        normalizeMemoryText(item),
+        scope,
+      )).toList();
+      if (kept.length != items.length) {
+        changed = true;
+      }
+      sections[section] = kept;
+    }
+    if (changed) {
+      await const IoAtomicTextWriter().replace(
+        file.path,
+        renderLongMemory(sections),
+      );
+    }
+  }
+
+  /// 删除清除 daily-state.md 里命中的列表行；其余结构原样保留。
+  Future<void> _purgeDailyStateLines(Set<String> scope) async {
+    final pipeline = episodePipeline;
+    if (pipeline == null) {
+      return;
+    }
+    final file = File(
+      path.join(pipeline.memoryDirectory, 'daily-state.md'),
+    );
+    if (!await file.exists()) {
+      return;
+    }
+    final contents = await file.readAsString(encoding: utf8);
+    final kept = <String>[];
+    var changed = false;
+    for (final line in contents.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.startsWith('- ') &&
+          bannedTitleMatches(normalizeMemoryText(trimmed), scope)) {
+        changed = true;
+        continue;
+      }
+      kept.add(line);
+    }
+    if (changed) {
+      await const IoAtomicTextWriter().replace(file.path, kept.join('\n'));
+    }
+  }
+
+  Future<String?> _readMemoryFile(String fileName) async {
+    final pipeline = episodePipeline;
+    if (pipeline == null) {
+      return null;
+    }
+    final file = File(path.join(pipeline.memoryDirectory, fileName));
+    if (!await file.exists()) {
+      return null;
+    }
+    try {
+      return await file.readAsString(encoding: utf8);
+    } on Object {
+      return null;
     }
   }
 

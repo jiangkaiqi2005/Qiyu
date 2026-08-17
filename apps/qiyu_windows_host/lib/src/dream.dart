@@ -86,8 +86,8 @@ enum DreamStatus {
   /// 模型调用失败或输出无法解析：旧记忆原样保留，等待下次重试。
   modelFailed,
 
-  /// 草稿未通过结构/证据/敏感/用户控制/相互矛盾五关之一：整份作废，
-  /// 失败原因记入变更清单。
+  /// 草稿未通过结构/证据/敏感/用户控制/冻结保留/冻结禁增/相互矛盾
+  /// 各自检关之一：整份作废，失败原因记入变更清单。
   validationFailed,
 
   /// 接纳过程写入失败：旧 long-memory 与上次成功时间保持原样。
@@ -241,7 +241,7 @@ typedef DreamItem = ({String section, String text, List<String> evidence});
 /// 解析 Dream 模型输出：只认带 items 数组的 JSON 对象；条目字段逐条
 /// 白名单校验（分区白名单、条目限长、证据只认日期/月份形态），无效
 /// 条目整条丢弃；整体无法解析返回 null。敏感与禁提不在此处静默清洗，
-/// 留给自检五关整份裁决。
+/// 留给自检各关整份裁决。
 List<DreamItem>? parseDreamCandidate(
   String raw, {
   void Function(String message)? diagnosticsSink,
@@ -427,14 +427,15 @@ List<String>? _idList(Object? value, RegExp pattern) {
 ///
 /// 输入（全部只读，遵守 [dreamInputMaxRunes] 预算）：上次成功之后的
 /// finalized 日摘要（窗口 [dreamSummaryWindowDays] 天）、月摘要（至多
-/// [dreamMaxMonthSummaries] 月）、关系状态、未闭环线索、现有长期印象
-/// 与禁提清单。不读 sessions 原文，不写 episodes。
+/// [dreamMaxMonthSummaries] 月）、关系状态、未闭环线索、现有长期印象、
+/// 封禁（禁提 ∪ 删除）清单与冻结清单。受控内容在递给模型前按层过滤，
+/// 冻结的既有条目由模型原样带回。不读 sessions 原文，不写 episodes。
 ///
-/// 流程：一次模型调用产出全量候选 → 写独立草稿与变更清单 → 自检五关
-/// （结构、证据、敏感信息、用户控制、相互矛盾）→ 全部通过后原子接纳：
-/// 备份旧文件 → 替换 long-memory.md → 记录成功时间 → 清单归档 history →
-/// 清空 draft。任一关不过整份作废；中断、模型失败、验证失败或写入
-/// 失败都不更新上次成功时间，也不破坏旧长期记忆。
+/// 流程：一次模型调用产出全量候选 → 写独立草稿与变更清单 → 自检各关
+/// （结构、证据、敏感信息、用户控制、冻结保留、冻结禁增、相互矛盾）
+/// → 全部通过后原子接纳：备份旧文件 → 替换 long-memory.md → 记录成功
+/// 时间 → 清单归档 history → 清空 draft。任一关不过整份作废；中断、
+/// 模型失败、验证失败或写入失败都不更新上次成功时间，也不破坏旧长期记忆。
 ///
 /// 未配置 Provider 时不运行：语义重组只能调用用户配置的 LLM，绝不
 /// 用规则或推断补写长期内容（对齐 T26 语义重建原则）。
@@ -614,7 +615,7 @@ final class DreamService {
         ? const <PersonaDreamOp>[]
         : parseDreamRootProposals(raw, diagnosticsSink: _diagnosticsSink);
 
-    // 独立草稿：先写候选版与变更清单，再跑五关。
+    // 独立草稿：先写候选版与变更清单，再跑自检各关。
     final draftSections = <String, List<String>>{
       for (final section in longMemorySections) section: <String>[],
     };
@@ -624,7 +625,7 @@ final class DreamService {
     final draftContent = renderLongMemory(draftSections);
     try {
       await _atomicWriter.replace(_draftFile.path, draftContent);
-      // 五关之前的清单不含候选原文：草稿可能携带敏感或被禁内容，
+      // 过关前的清单不含候选原文：草稿可能携带敏感或被禁内容，
       // 只有通过全部自检的条目才允许持久化正文。
       await _writeChanges(
         _buildChanges(
@@ -641,12 +642,30 @@ final class DreamService {
       return DreamOutcome(status: DreamStatus.writeFailed, detail: '$error');
     }
 
+    // 冻结保留清单：现有长期印象里命中冻结的条目必须在候选版中
+    // 原样保留（冻结停止自动修改）。模型删掉或改写任何一条都整份
+    // 拒绝——旧文件保持原样，冻结内容绝不丢失。同时命中封禁的条目
+    // 不保留：封禁严格强于冻结，冲突取最保守裁决（该内容离开长期
+    // 印象，Dream 对其余内容照常），绝不陷入「 banned 关要它消失、
+    // 冻结关要它留下」的死锁。
+    final frozenRequired = <String>[];
+    if (input.frozen.isNotEmpty && existing != null) {
+      for (final item in existing.allItems) {
+        if (bannedTitleMatches(normalizeMemoryText(item), input.frozen) &&
+            !bannedTitleMatches(normalizeMemoryText(item), input.banned)) {
+          frozenRequired.add(item);
+        }
+      }
+    }
+
     final gateFailure = _validateDraft(
       items: items,
       draftContent: draftContent,
       validDates: input.validDates,
       validMonths: input.validMonths,
       banned: input.banned,
+      frozen: input.frozen,
+      frozenRequired: frozenRequired,
     );
     if (gateFailure != null) {
       await _writeChanges(
@@ -669,7 +688,7 @@ final class DreamService {
 
     // 根节点提案逐条校验：无证据、过度推断、敏感、禁提或复活的提案
     // 单独拒绝，其余提案与 items 接纳互不影响。被拒提案不持久化主张
-    // 原文，只落原因码（草稿可能携带敏感内容，与五关前的清单同律）。
+    // 原文，只落原因码（草稿可能携带敏感内容，与过关前的清单同律）。
     final opRecords = <_RootOpRecord>[];
     final acceptedOps = <PersonaDreamOp>[];
     if (proposals.isNotEmpty) {
@@ -678,7 +697,13 @@ final class DreamService {
       for (final op in proposals) {
         final reason = snapshot == null
             ? 'persona-unavailable'
-            : _validateProposal(op, snapshot, input.banned, createdClaims);
+            : _validateProposal(
+                op,
+                snapshot,
+                input.banned,
+                createdClaims,
+                frozen: input.frozen,
+              );
         final record = _RootOpRecord(op, reason);
         opRecords.add(record);
         if (reason == null) {
@@ -783,8 +808,23 @@ final class DreamService {
     }
   }
 
-  /// 组装 Dream 输入（全部只读）并执行上下文预算裁剪。
+  /// 组装 Dream 输入（全部只读）并执行上下文预算裁剪。受控内容
+  /// （封禁 ∪ 冻结）不参与整理：日摘要、月摘要条目、关系投影、
+  /// 未闭环线索与长期印象里的封禁条目都在递给模型前过滤；冻结的
+  /// 长期印象条目保留给模型，由冻结保留关强制原样带回。
   Future<_DreamInput> _collectInput({required String? after}) async {
+    // Dream 只读最小控制信息（定稿）：封禁集合（禁提 ∪ 删除）进自检
+    // 闸门与模型清单；冻结集合用于保持被冻结条目原样、拒绝触碰
+    // 冻结节点的根提案。
+    final controls = openLoopStore == null
+        ? null
+        : await openLoopStore!.memoryControls.load();
+    final banned = controls?.blockedSummaries ?? const <String>{};
+    final frozen = controls?.frozenSummaries ?? const <String>{};
+    bool controlled(String text) =>
+        bannedTitleMatches(normalizeMemoryText(text), banned) ||
+        bannedTitleMatches(normalizeMemoryText(text), frozen);
+
     final dates = await episodePipeline.listEpisodeDates();
     final summaries = <({String date, String summary})>[];
     for (final date in dates) {
@@ -796,7 +836,7 @@ final class DreamService {
         continue;
       }
       final summary = day.summary?.trim() ?? '';
-      if (summary.isEmpty) {
+      if (summary.isEmpty || controlled(summary)) {
         continue;
       }
       summaries.add(
@@ -819,29 +859,34 @@ final class DreamService {
         if (summary == null || !summary.readable) {
           continue;
         }
-        monthSummaries.insert(0, (month: month, contents: _renderMonthForModel(summary)));
+        final contents = _renderMonthForModel(summary, controlled: controlled);
+        if (contents.isEmpty) {
+          continue;
+        }
+        monthSummaries.insert(0, (month: month, contents: contents));
       }
     }
 
-    final relationship = await _readIfExists(
-      File(path.join(memoryDirectory, 'relationship.md')),
+    final relationship = _filterControlledLines(
+      await _readIfExists(File(path.join(memoryDirectory, 'relationship.md'))),
+      controlled,
     );
-    final openLoops = await _readIfExists(
-      File(path.join(memoryDirectory, 'open-loops.md')),
+    final openLoops = await _filteredOpenLoops(controlled);
+    final longMemory = _filterLongMemoryInput(
+      await _readIfExists(_longMemoryFile),
+      banned,
     );
-    final longMemory = await _readIfExists(_longMemoryFile);
-    final banned = openLoopStore == null
-        ? const <String>{}
-        : await openLoopStore!.bannedTitles();
 
     // PersonaTree 快照：模型输入只给活跃根与未归根理解（含叶证据的
     // 日期/来源/关系）；归档只作代码校验的负面依据，不递给模型。
+    // 命中冻结的主张按原样留在树里但不递给模型——冻结内容绝不参与
+    // 自动整理（否则模型可能据冻结主张写出新的长期印象条目）。
     PersonaTreeSnapshot? personaSnapshot;
     String? personaSection;
     final tree = personaTree;
     if (tree != null) {
       personaSnapshot = await tree.readSnapshot();
-      final rendered = _renderTreeForModel(personaSnapshot);
+      final rendered = _renderTreeForModel(personaSnapshot, frozen);
       personaSection = rendered.isEmpty ? null : rendered;
     }
 
@@ -872,6 +917,7 @@ final class DreamService {
       personaSnapshot: personaSnapshot,
       personaSection: personaSection,
       banned: banned,
+      frozen: frozen,
       validDates: {for (final entry in windowed) entry.date},
       validMonths: {for (final entry in monthSummaries) entry.month},
     );
@@ -899,21 +945,107 @@ final class DreamService {
     return total;
   }
 
-  String _renderMonthForModel(MonthSummary summary) {
+  String _renderMonthForModel(
+    MonthSummary summary, {
+    bool Function(String text)? controlled,
+  }) {
+    bool hit(String text) => controlled != null && controlled(text);
     final buffer = StringBuffer();
-    if (summary.theme.isNotEmpty) {
-      buffer.writeln('主题: ${summary.theme.join('、')}');
+    final theme = summary.theme.where((keyword) => !hit(keyword)).toList();
+    if (theme.isNotEmpty) {
+      buffer.writeln('主题: ${theme.join('、')}');
     }
     for (final item in summary.items) {
+      if (hit(item.text)) {
+        continue;
+      }
       buffer.writeln('- [${item.section}] ${item.date} ${item.text}');
     }
     return buffer.toString().trim();
   }
 
+  /// 行级受控过滤：列表行（`- ` 开头）命中即丢弃，其余结构原样保留。
+  /// 用于 relationship.md 这类按行投影的文件。
+  String? _filterControlledLines(
+    String? contents,
+    bool Function(String text) controlled,
+  ) {
+    if (contents == null) {
+      return null;
+    }
+    final kept = <String>[];
+    for (final line in contents.split('\n')) {
+      if (line.trim().startsWith('- ') && controlled(line.trim())) {
+        continue;
+      }
+      kept.add(line);
+    }
+    return kept.join('\n');
+  }
+
+  /// 未闭环线索的受控过滤：封禁/冻结标题的条目不递给 Dream。
+  /// 结构不可识别时原样递交（写侧另有控制闸门兜底）。
+  Future<String?> _filteredOpenLoops(bool Function(String text) controlled) async {
+    final contents = await _readIfExists(
+      File(path.join(memoryDirectory, 'open-loops.md')),
+    );
+    if (contents == null) {
+      return null;
+    }
+    final items = parseOpenLoopItems(contents);
+    if (items == null) {
+      return contents;
+    }
+    final kept = items
+        .where((item) => !controlled(item.title))
+        .map((item) => item.raw)
+        .toList();
+    if (kept.length == items.length) {
+      return contents;
+    }
+    if (kept.isEmpty) {
+      return '# open-loops\n';
+    }
+    return '# open-loops\n\n${kept.join('\n')}\n';
+  }
+
+  /// 长期印象输入过滤：封禁条目不递给模型（递给模型只会让草稿被
+  /// 用户控制关整份拒绝）；冻结条目保留，冻结保留关要求其原样带回。
+  /// 结构不可识别时原样递交。
+  String? _filterLongMemoryInput(String? contents, Set<String> banned) {
+    if (contents == null || banned.isEmpty) {
+      return contents;
+    }
+    final parsed = parseLongMemory(contents);
+    if (!parsed.readable) {
+      return contents;
+    }
+    var changed = false;
+    final sections = <String, List<String>>{};
+    for (final section in longMemorySections) {
+      final items = parsed.sections[section] ?? const <String>[];
+      final kept = items
+          .where(
+            (item) => !bannedTitleMatches(normalizeMemoryText(item), banned),
+          )
+          .toList();
+      if (kept.length != items.length) {
+        changed = true;
+      }
+      sections[section] = kept;
+    }
+    return changed ? renderLongMemory(sections) : contents;
+  }
+
   /// PersonaTree 结构的模型输入：活跃根与未归根中间理解，附叶证据
   /// 的日期、来源性质与 support/conflict 关系。归档是代码校验的负面
-  /// 依据，不递给模型（避免已纠正内容重新进入生成）。
-  String _renderTreeForModel(PersonaTreeSnapshot snapshot) {
+  /// 依据，不递给模型（避免已纠正内容重新进入生成）。命中冻结集合的
+  /// 根/中间理解/叶同样不递给模型：冻结按设计留在树里，但绝不参与
+  /// 自动整理。
+  String _renderTreeForModel(PersonaTreeSnapshot snapshot, Set<String> frozen) {
+    bool frozenHit(String text) =>
+        frozen.isNotEmpty &&
+        bannedTitleMatches(normalizeMemoryText(text), frozen);
     final buffer = StringBuffer();
     for (final branch in personaBranches) {
       final view = snapshot.branches[branch.wireName];
@@ -925,8 +1057,14 @@ final class DreamService {
       }
       buffer.writeln('### ${branch.title}（${branch.wireName}）');
       for (final root in view.roots) {
+        if (frozenHit(root.claim)) {
+          continue;
+        }
         buffer.writeln('- 根 [${root.id}] ${root.claim}');
         for (final middle in root.middles) {
+          if (frozenHit(middle.claim)) {
+            continue;
+          }
           buffer.writeln(
             '  - [${middle.id}] ${middle.type}｜${middle.claim}'
             '（${_describeLeaves(middle.leaves)}）',
@@ -934,6 +1072,9 @@ final class DreamService {
         }
       }
       for (final middle in view.unrooted) {
+        if (frozenHit(middle.claim)) {
+          continue;
+        }
         buffer.writeln(
           '- 未归根 [${middle.id}] ${middle.type}｜${middle.claim}'
           '（${_describeLeaves(middle.leaves)}）',
@@ -953,23 +1094,31 @@ final class DreamService {
   }
 
   /// 根节点提案逐条校验：返回拒绝原因码，null 为通过。所有门槛都
-  /// 来自 PersonaTree.md 定稿——证据不足、过度推断、敏感、禁提、
-  /// 复活已归档主张、带时间限定的近况，一律拒绝该提案。
+  /// 来自 PersonaTree.md 定稿——证据不足、过度推断、敏感、封禁、
+  /// 复活已归档主张、带时间限定的近况，一律拒绝该提案。冻结停止
+  /// 自动整理：触碰冻结节点（根或中间理解）的提案同样拒绝。
   String? _validateProposal(
     PersonaDreamOp op,
     PersonaTreeSnapshot snapshot,
     Set<String> banned,
-    List<String> claimsCreatedThisRound,
-  ) {
+    List<String> claimsCreatedThisRound, {
+    Set<String> frozen = const {},
+  }) {
     final view = snapshot.branches[op.branchWire];
     if (view == null || !view.readable) {
       return 'branch-unreadable';
     }
+    bool frozenHit(String text) =>
+        frozen.isNotEmpty &&
+        bannedTitleMatches(normalizeMemoryText(text), frozen);
     switch (op) {
       case PersonaPromoteOp(:final claim, :final middleIds):
         final claimFailure = rootClaimGateFailure(claim, banned: banned);
         if (claimFailure != null) {
           return claimFailure;
+        }
+        if (frozenHit(claim)) {
+          return 'frozen';
         }
         final ids = middleIds.toSet();
         final middles = <PersonaMiddle>[];
@@ -979,6 +1128,9 @@ final class DreamService {
               .firstOrNull;
           if (middle == null) {
             return 'unknown-middle';
+          }
+          if (frozenHit(middle.claim)) {
+            return 'frozen';
           }
           middles.add(middle);
         }
@@ -1004,6 +1156,9 @@ final class DreamService {
         if (root == null) {
           return 'unknown-root';
         }
+        if (frozenHit(root.claim)) {
+          return 'frozen';
+        }
         final ids = middleIds.toSet();
         for (final id in ids) {
           final middle = view.unrooted
@@ -1011,6 +1166,9 @@ final class DreamService {
               .firstOrNull;
           if (middle == null) {
             return 'unknown-middle';
+          }
+          if (frozenHit(middle.claim)) {
+            return 'frozen';
           }
           if (middle.leaves.any((leaf) => leaf.relation == 'conflict')) {
             return 'unresolved-conflict';
@@ -1027,11 +1185,17 @@ final class DreamService {
         if (root == null) {
           return 'unknown-root';
         }
+        if (frozenHit(root.claim)) {
+          return 'frozen';
+        }
         final counter = view.unrooted
             .where((candidate) => candidate.id == counterId)
             .firstOrNull;
         if (counter == null) {
           return 'unknown-counter';
+        }
+        if (frozenHit(counter.claim)) {
+          return 'frozen';
         }
         // 降根只认「两个不同日期的反向行为已形成反向中间理解」的
         // 证据形态（日终冲突升级的产物）；单日期或无叶的引用不成立。
@@ -1051,6 +1215,9 @@ final class DreamService {
         if (claimFailure != null) {
           return claimFailure;
         }
+        if (frozenHit(claim)) {
+          return 'frozen';
+        }
         final ids = rootIds.toSet();
         if (ids.length < 2) {
           return 'needs-two-roots';
@@ -1062,6 +1229,9 @@ final class DreamService {
               .firstOrNull;
           if (root == null) {
             return 'unknown-root';
+          }
+          if (frozenHit(root.claim)) {
+            return 'frozen';
           }
           roots.add(root);
         }
@@ -1119,13 +1289,15 @@ final class DreamService {
     return null;
   }
 
-  /// 自检五关：任一不过返回失败原因码，整份草稿作废。
+  /// 自检七关：任一不过返回失败原因码，整份草稿作废。
   String? _validateDraft({
     required List<DreamItem> items,
     required String draftContent,
     required Set<String> validDates,
     required Set<String> validMonths,
     required Set<String> banned,
+    required Set<String> frozen,
+    required List<String> frozenRequired,
   }) {
     // 结构关：条目数与总量都在预算内；空候选一律拒绝——没有产出就
     // 不接纳，绝不允许一次清空已有的全部长期印象。
@@ -1159,10 +1331,32 @@ final class DreamService {
         return 'sensitive';
       }
     }
-    // 用户控制关：不得改写或复活禁提内容。
+    // 用户控制关：不得改写或复活封禁（禁提 ∪ 删除）内容。
     for (final item in items) {
       if (bannedTitleMatches(normalizeMemoryText(item.text), banned)) {
         return 'banned';
+      }
+    }
+    // 冻结保留关：被冻结的既有条目必须在候选版中原样出现；缺少任何
+    // 一条都整份作废（旧长期印象不动，冻结绝不因 Dream 失效）。
+    final draftNormalized = {
+      for (final item in items) normalizeMemoryText(item.text),
+    };
+    for (final required in frozenRequired) {
+      if (!draftNormalized.contains(normalizeMemoryText(required))) {
+        return 'frozen';
+      }
+    }
+    // 冻结禁止新增关：冻结停止自动整理——候选版除了原样保留的既有
+    // 冻结条目，绝不允许出现命中冻结范围的新内容。
+    final requiredNormalized = {
+      for (final item in frozenRequired) normalizeMemoryText(item),
+    };
+    for (final item in items) {
+      final normalized = normalizeMemoryText(item.text);
+      if (bannedTitleMatches(normalized, frozen) &&
+          !requiredNormalized.contains(normalized)) {
+        return 'frozen';
       }
     }
     // 相互矛盾关：候选版内部同一核心断言一正一反并存。
@@ -1209,7 +1403,7 @@ final class DreamService {
   /// 变更清单（诊断档案，不是审批单）：接纳后逐条写改了什么、证据在
   /// 哪，以及与上一版的增删保留。栖语聊天时永远不提。
   ///
-  /// [includeDetails] 只在接纳成功（全部五关通过）时为 true。被拒或
+  /// [includeDetails] 只在接纳成功（自检各关全部通过）时为 true。被拒或
   /// 待定的草稿可能携带敏感、禁提内容，清单绝不能落盘其原文，只记
   /// 结果码与数量——否则等于把模型吐出的密钥写进记忆目录。
   String _buildChanges(
@@ -1367,7 +1561,7 @@ final class DreamService {
 3. 只保留高压缩的生活倾向、持续关注和关系变化：用户现实里的重要的人、值得长期记住的人生事件、经历过的变化与反复出现的主题、双方共同形成的经历；不写产品机制、逐日流水账、一次性任务细节、原话细节或证据链。模式与轨迹按成长线写：一行「时间段＋前后变化」，保持中性；共同过往只收双方真实互动、有整理日期依据的内容，不写单方面印象。
 4. 每条是一行压缩印象，不超过60字，可以带时间词。
 5. 以当前长期印象为基础保守重组：同义的合并，仍有依据的保留，被更新证据推翻的改写；拿不准就不写。
-6. 绝不出现密码、密钥、证件号、银行卡号等敏感内容；绝不触碰禁提清单中的话题。
+6. 绝不出现密码、密钥、证件号、银行卡号等敏感内容；绝不触碰禁提清单中的话题；冻结清单命中的现有长期印象必须逐字原样保留。
 7. rootProposals：可选数组，最多8条；递来 PersonaTree 结构时才可提保守的根节点调整，没有把握就不提，节点 ID 必须取自递来的结构，绝不编造：
    - {"op":"promote","branch":"identity|expression|values|preferences|boundaries","claim":"一句不带时间词的稳定主张，不超过60字","middles":["XX-Mnnn"]}：把证据充分的未归根中间理解升为新根；identity 分支只接受明确自述；证据不足的中间理解保持未归根，不强行升根。
    - {"op":"absorb","branch":"…","root":"XX-Rnnn","middles":["XX-Mnnn"]}：把与已有根同主张的未归根中间理解归入该根。
@@ -1422,6 +1616,16 @@ final class DreamService {
         user.writeln('- $title');
       }
     }
+    user
+      ..writeln()
+      ..writeln('## 冻结清单（命中的现有长期印象必须原样保留，不得改写、合并或删除）');
+    if (input.frozen.isEmpty) {
+      user.writeln('（无）');
+    } else {
+      for (final title in input.frozen) {
+        user.writeln('- $title');
+      }
+    }
     return [
       const ModelMessage(ModelMessageRole.system, system),
       ModelMessage(ModelMessageRole.user, redactSessionText(user.toString())),
@@ -1463,6 +1667,7 @@ final class _DreamInput {
     required this.personaSnapshot,
     required this.personaSection,
     required this.banned,
+    required this.frozen,
     required this.validDates,
     required this.validMonths,
   });
@@ -1478,7 +1683,13 @@ final class _DreamInput {
 
   /// 递给模型的树结构渲染；无树或树为空时为 null。
   final String? personaSection;
+
+  /// 封禁集合（禁提 ∪ 删除，规范化后）：草稿与根提案都不得触碰。
   final Set<String> banned;
+
+  /// 冻结集合（规范化后）：现有长期印象里命中的条目必须原样保留，
+  /// 命中冻结节点的根提案一律拒绝。
+  final Set<String> frozen;
 
   /// 本轮实际递给模型的整理日期与月份：证据关的白名单。
   final Set<String> validDates;

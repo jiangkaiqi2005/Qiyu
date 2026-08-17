@@ -14,6 +14,7 @@ import 'dream.dart';
 import 'episode_memory.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_controls.dart';
 import 'memory_recall.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
@@ -23,6 +24,7 @@ import 'open_loop_store.dart';
 import 'persona_tree.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
+import 'relationship_lifecycle.dart';
 import 'secure_token.dart';
 import 'secret_store.dart';
 import 'state_pack_reader.dart';
@@ -82,8 +84,20 @@ final class LocalAppHost {
     final episodePipeline = EpisodeMemoryPipeline(
       memoryDirectory: memoryDirectory,
     );
+    // 用户记忆控制记录的唯一读写者（ticket 18）：Open-loop 热层与
+    // 聊天即时生效两条路径共享同一实例，避免双写覆盖。
+    final memoryControls = MemoryControlsStore(
+      memoryDirectory: memoryDirectory,
+    );
     // Open-loop 生命周期由日终归档与对话即时生效两条路径共享同一存储。
-    final openLoopStore = OpenLoopStore(memoryDirectory: memoryDirectory);
+    final openLoopStore = OpenLoopStore(
+      memoryDirectory: memoryDirectory,
+      memoryControls: memoryControls,
+    );
+    // 关系生命周期由日终归档与删除即时清除共享同一实例。
+    final relationshipLifecycle = RelationshipLifecycle(
+      memoryDirectory: memoryDirectory,
+    );
     // PersonaTree 同样由随手记建叶与日终整理两条路径共享同一实例：
     // 树文件串行锁在实例内部，必须唯一。
     final personaTree = PersonaTreeStore(
@@ -119,6 +133,7 @@ final class LocalAppHost {
         episodePipeline: episodePipeline,
         openLoopStore: openLoopStore,
         personaTree: personaTree,
+        relationshipLifecycle: relationshipLifecycle,
         // 日终一次模型理解调用与聊天共用同一 Provider 配置与凭据；
         // 未配置时日终自动走全确定性路径。
         modelClient: effectiveProviderSettings,
@@ -139,6 +154,8 @@ final class LocalAppHost {
       personaTree: personaTree,
       monthlySummary: monthlySummary,
       dreamService: dreamService,
+      memoryControls: memoryControls,
+      relationshipLifecycle: relationshipLifecycle,
     );
     await chatService.initialize();
     final onboardingRepository = JsonOnboardingRepository(

@@ -385,7 +385,12 @@ final class DailyFinalizationService {
     List<EpisodeEntry> entries,
     bool allowModel,
   ) async {
-    final banned = await _openLoopStore.bannedTitles();
+    // 受控集合 = 封禁（禁提 ∪ 删除）∪ 冻结：冻结同样停止整理。
+    final controls = await _openLoopStore.memoryControls.load();
+    final banned = {
+      ...controls.blockedSummaries,
+      ...controls.frozenSummaries,
+    };
     final persisted = day.understanding;
     if (persisted != null) {
       final restored = DayUnderstanding.fromJson(persisted).filterBanned(banned);
@@ -406,13 +411,65 @@ final class DailyFinalizationService {
       entries: day.entries
           .where((entry) => entry.kind != episodeKindOpenLoopEvent)
           .toList(),
-      openLoops: await _readMemoryFile('open-loops.md'),
-      relationship: await _readMemoryFile('relationship.md'),
-      dailyState: await _readMemoryFile('daily-state.md'),
+      // 受控内容绝不随理解调用离开本机：冻结按定稿保留文件原文，
+      // 冻结/封禁事项必须在递给模型前过滤（输出侧逐字段过滤只是兜底）。
+      openLoops: await _filteredLoopsFile(banned),
+      relationship: _filterControlledLines(
+        await _readMemoryFile('relationship.md'),
+        banned,
+      ),
+      dailyState: _filterControlledLines(
+        await _readMemoryFile('daily-state.md'),
+        banned,
+      ),
       bannedTitles: banned,
       diagnosticsSink: _diagnosticsSink,
     );
     return (understanding: understanding, usedModel: true);
+  }
+
+  /// open-loops.md 的受控过滤（条目级）：结构不可识别时原样保留。
+  Future<String?> _filteredLoopsFile(Set<String> controlled) async {
+    final contents = await _readMemoryFile('open-loops.md');
+    if (contents == null || controlled.isEmpty) {
+      return contents;
+    }
+    final items = parseOpenLoopItems(contents);
+    if (items == null) {
+      return contents;
+    }
+    final kept = items
+        .where(
+          (item) =>
+              !bannedTitleMatches(normalizeLoopTitle(item.title), controlled),
+        )
+        .map((item) => item.raw)
+        .toList();
+    if (kept.length == items.length) {
+      return contents;
+    }
+    if (kept.isEmpty) {
+      return '# open-loops\n';
+    }
+    return '# open-loops\n\n${kept.join('\n')}\n';
+  }
+
+  /// 行级受控过滤：列表行（`- ` 开头）命中即丢弃，其余原样保留。
+  /// 供 relationship.md / daily-state.md 这类按行投影的文件使用。
+  String? _filterControlledLines(String? contents, Set<String> controlled) {
+    if (contents == null || controlled.isEmpty) {
+      return contents;
+    }
+    final kept = <String>[];
+    for (final line in contents.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.startsWith('- ') &&
+          bannedTitleMatches(normalizeMemoryText(trimmed), controlled)) {
+        continue;
+      }
+      kept.add(line);
+    }
+    return kept.join('\n');
   }
 
   Future<String?> _readMemoryFile(String fileName) async {
