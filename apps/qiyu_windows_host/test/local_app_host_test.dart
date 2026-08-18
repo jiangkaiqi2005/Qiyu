@@ -177,92 +177,81 @@ void main() {
     },
   );
 
-  test(
-    'startup URL 只能兑换一次会话，兑换后旧凭据失效',
-    () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-      );
+  test('startup URL 只能兑换一次会话，兑换后旧凭据失效', () async {
+    final host = await LocalAppHost.start(
+      webRoot: webRoot.path,
+      memoryDirectory: memoryDirectory.path,
+      personaConstitution: '测试人格宪法',
+    );
 
-      final originalUri = host.launchUri;
-      final firstStart = await _send(originalUri);
-      expect(firstStart.statusCode, HttpStatus.seeOther);
+    final originalUri = host.launchUri;
+    final firstStart = await _send(originalUri);
+    expect(firstStart.statusCode, HttpStatus.seeOther);
 
-      final replay = await _send(originalUri);
-      expect(replay.statusCode, HttpStatus.unauthorized);
+    final replay = await _send(originalUri);
+    expect(replay.statusCode, HttpStatus.unauthorized);
 
-      await host.close();
-    },
-  );
+    await host.close();
+  });
 
-  test(
-    '拒绝超过 64KB 的 chunked 聊天请求体与非对象 JSON',
-    () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-      );
-      final session = await _openBrowserSession(host);
+  test('拒绝超过 64KB 的 chunked 聊天请求体与非对象 JSON', () async {
+    final host = await LocalAppHost.start(
+      webRoot: webRoot.path,
+      memoryDirectory: memoryDirectory.path,
+      personaConstitution: '测试人格宪法',
+    );
+    final session = await _openBrowserSession(host);
 
-      final client = HttpClient();
-      final oversizeRequest = await client.openUrl(
-        'POST',
-        host.origin.resolve('/api/chat'),
-      );
-      session
-          .mutationHeaders(host.origin)
-          .forEach(oversizeRequest.headers.set);
-      // 不设置 contentLength，让客户端走 chunked 传输编码。
-      oversizeRequest.add(
-        utf8.encode(
-          jsonEncode({
-            'requestId': 'oversize-test',
-            'text': '长' * (70 * 1024),
-          }),
-        ),
-      );
-      try {
-        final oversizeResponse = await oversizeRequest.close();
-        final oversizeBody = await oversizeResponse
-            .transform(utf8.decoder)
-            .join();
-        expect(oversizeResponse.statusCode, HttpStatus.badRequest);
-        expect(oversizeBody, contains('invalid_request'));
-      } on SocketException {
-        // 服务器在超限时提前中止连接，客户端收到连接重置同样是拒绝。
-      } on HttpException {
-        // 中止时机不同时客户端也可能报 header 未收全，同样属于拒绝。
-      }
-
-      // 被拒后服务依然健康：正常大小的请求照常处理。
-      final healthyRequest = await client.openUrl(
-        'POST',
-        host.origin.resolve('/api/session/verify'),
-      );
-      session.mutationHeaders(host.origin).forEach(healthyRequest.headers.set);
-      final healthyResponse = await healthyRequest.close();
-      expect(healthyResponse.statusCode, HttpStatus.noContent);
-
-      final nonObjectRequest = await client.openUrl(
-        'POST',
-        host.origin.resolve('/api/chat'),
-      );
-      session.mutationHeaders(host.origin).forEach(nonObjectRequest.headers.set);
-      nonObjectRequest.add(utf8.encode('[1,2,3]'));
-      final nonObjectResponse = await nonObjectRequest.close();
-      final nonObjectBody = await nonObjectResponse
+    final client = HttpClient();
+    final oversizeRequest = await client.openUrl(
+      'POST',
+      host.origin.resolve('/api/chat'),
+    );
+    session.mutationHeaders(host.origin).forEach(oversizeRequest.headers.set);
+    // 不设置 contentLength，让客户端走 chunked 传输编码。
+    oversizeRequest.add(
+      utf8.encode(
+        jsonEncode({'requestId': 'oversize-test', 'text': '长' * (70 * 1024)}),
+      ),
+    );
+    try {
+      final oversizeResponse = await oversizeRequest.close();
+      final oversizeBody = await oversizeResponse
           .transform(utf8.decoder)
           .join();
-      expect(nonObjectResponse.statusCode, HttpStatus.badRequest);
-      expect(nonObjectBody, contains('invalid_request'));
+      expect(oversizeResponse.statusCode, HttpStatus.badRequest);
+      expect(oversizeBody, contains('invalid_request'));
+    } on SocketException {
+      // 服务器在超限时提前中止连接，客户端收到连接重置同样是拒绝。
+    } on HttpException {
+      // 中止时机不同时客户端也可能报 header 未收全，同样属于拒绝。
+    }
 
-      client.close(force: true);
-      await host.close();
-    },
-  );
+    // 被拒后服务依然健康：正常大小的请求照常处理。
+    final healthyRequest = await client.openUrl(
+      'POST',
+      host.origin.resolve('/api/session/verify'),
+    );
+    session.mutationHeaders(host.origin).forEach(healthyRequest.headers.set);
+    final healthyResponse = await healthyRequest.close();
+    expect(healthyResponse.statusCode, HttpStatus.noContent);
+
+    final nonObjectRequest = await client.openUrl(
+      'POST',
+      host.origin.resolve('/api/chat'),
+    );
+    session.mutationHeaders(host.origin).forEach(nonObjectRequest.headers.set);
+    nonObjectRequest.add(utf8.encode('[1,2,3]'));
+    final nonObjectResponse = await nonObjectRequest.close();
+    final nonObjectBody = await nonObjectResponse
+        .transform(utf8.decoder)
+        .join();
+    expect(nonObjectResponse.statusCode, HttpStatus.badRequest);
+    expect(nonObjectBody, contains('invalid_request'));
+
+    client.close(force: true);
+    await host.close();
+  });
 
   test(
     'sends, persists, restarts, and restores one local chat exactly once',
@@ -486,10 +475,7 @@ void main() {
         host.origin.resolve('/api/chat'),
         method: 'POST',
         headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({
-          'requestId': 'history-1',
-          'text': '今天有点累',
-        }),
+        requestBody: jsonEncode({'requestId': 'history-1', 'text': '今天有点累'}),
       );
       final sessionId =
           _chatEvent(_chatEvents(chat.body), 'accepted')['sessionId']!
@@ -845,8 +831,7 @@ void main() {
         headers: browser.readHeaders(host.origin),
       );
       expect(dayResponse.statusCode, HttpStatus.ok);
-      final dayDetail =
-          jsonDecode(dayResponse.body) as Map<String, Object?>;
+      final dayDetail = jsonDecode(dayResponse.body) as Map<String, Object?>;
       expect(dayDetail['kind'], 'day');
       expect(dayDetail['date'], today);
       final entries = dayDetail['entries']! as List<Object?>;
@@ -866,9 +851,8 @@ void main() {
 
       // 只读红线：整轮浏览不改动记忆目录里的任何文件。
       final filesBefore = {
-        for (final file in memoryDirectory
-            .listSync(recursive: true)
-            .whereType<File>())
+        for (final file
+            in memoryDirectory.listSync(recursive: true).whereType<File>())
           file.path: file.readAsStringSync(),
       };
       await _send(
@@ -880,12 +864,226 @@ void main() {
         headers: browser.readHeaders(host.origin),
       );
       final filesAfter = {
-        for (final file in memoryDirectory
-            .listSync(recursive: true)
-            .whereType<File>())
+        for (final file
+            in memoryDirectory.listSync(recursive: true).whereType<File>())
           file.path: file.readAsStringSync(),
       };
       expect(filesAfter, filesBefore);
+      await host.close();
+    },
+  );
+
+  test(
+    'memory action endpoint edits, controls, deletes and reveals over HTTP',
+    () async {
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+      );
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: memoryDirectory.path,
+      );
+      final today = localSessionDate(DateTime.now());
+      final date = DateTime.parse(today);
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          today,
+          entries: [
+            EpisodeEntry(
+              id: 's1:r1:0',
+              sessionId: 'seed-session',
+              requestId: 'seed',
+              summary: '用户的手机号是13812345678',
+              at: date.add(const Duration(hours: 20)).toUtc(),
+            ),
+            EpisodeEntry(
+              id: 's1:r1:1',
+              sessionId: 'seed-session',
+              requestId: 'seed',
+              summary: '用户在准备演讲',
+              evidence: '周四有个演讲',
+              at: date.add(const Duration(hours: 21)).toUtc(),
+            ),
+          ],
+          summary: '聊了近况',
+          finalized: true,
+          finalizedAt: date.add(const Duration(hours: 23)).toUtc(),
+        ),
+      );
+      File(
+        '${memoryDirectory.path}${Platform.pathSeparator}long-memory.md',
+      ).writeAsStringSync('# long-memory\n\n## 人与关系\n- 用户养了一只猫\n');
+      final browser = await _openBrowserSession(host);
+      final actionUri = host.origin.resolve('/api/memory/action');
+
+      // 变更请求缺 CSRF 一律拒绝。
+      final noCsrf = await _send(
+        actionUri,
+        method: 'POST',
+        headers: browser.readHeaders(host.origin),
+        requestBody: jsonEncode({'action': 'freeze', 'id': 'whatever'}),
+      );
+      expect(noCsrf.statusCode, HttpStatus.forbidden);
+
+      // 未知 opaque ID → 404。
+      final unknown = await _send(
+        actionUri,
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'action': 'freeze', 'id': 'no-such-id'}),
+      );
+      expect(unknown.statusCode, HttpStatus.notFound);
+
+      Future<Map<String, Object?>> overviewJson() async {
+        final response = await _send(
+          host.origin.resolve('/api/memory'),
+          headers: browser.readHeaders(host.origin),
+        );
+        return jsonDecode(response.body) as Map<String, Object?>;
+      }
+
+      Map<String, Object?> entryById(
+        Map<String, Object?> overview,
+        String content,
+      ) {
+        final days =
+            (overview['recent']! as Map<String, Object?>)['days']!
+                as List<Object?>;
+        for (final day in days) {
+          for (final entry
+              in (day! as Map<String, Object?>)['entries']! as List<Object?>) {
+            final map = entry! as Map<String, Object?>;
+            if (map['content'] == content) {
+              return map;
+            }
+          }
+        }
+        fail('entry not found in overview: $content');
+      }
+
+      // 编辑 episode：修正按用户声明保存，摘录移除。
+      final beforeEdit = await overviewJson();
+      final editTarget = entryById(beforeEdit, '用户在准备演讲');
+      final editResponse = await _send(
+        actionUri,
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'action': 'edit',
+          'id': editTarget['id'],
+          'text': '用户在准备一场辩论赛',
+        }),
+      );
+      expect(editResponse.statusCode, HttpStatus.ok);
+      final edited = await overviewJson();
+      final editedEntry = entryById(edited, '用户在准备一场辩论赛');
+      expect(editedEntry['userEdited'], isTrue);
+      expect(editedEntry['hasEvidence'], isFalse);
+
+      // 冻结与解除：控制状态立即反映到总览。
+      final freezeResponse = await _send(
+        actionUri,
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'action': 'freeze', 'id': editedEntry['id']}),
+      );
+      expect(freezeResponse.statusCode, HttpStatus.ok);
+      final frozen = await overviewJson();
+      expect(entryById(frozen, '用户在准备一场辩论赛')['control'], 'frozen');
+      final unfreezeResponse = await _send(
+        actionUri,
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'action': 'unfreeze',
+          'id': editedEntry['id'],
+        }),
+      );
+      expect(unfreezeResponse.statusCode, HttpStatus.ok);
+      final unfrozen = await overviewJson();
+      expect(entryById(unfrozen, '用户在准备一场辩论赛')['control'], isNull);
+
+      // 敏感条目：列表遮罩，揭示只返回一次原文。
+      Map<String, Object?> masked() {
+        final days =
+            (unfrozen['recent']! as Map<String, Object?>)['days']!
+                as List<Object?>;
+        for (final day in days) {
+          for (final entry
+              in (day! as Map<String, Object?>)['entries']! as List<Object?>) {
+            final map = entry! as Map<String, Object?>;
+            if (map['masked'] == true) {
+              return map;
+            }
+          }
+        }
+        fail('no masked entry in overview');
+      }
+
+      final maskedEntryReal = masked();
+      expect(maskedEntryReal['content'], isNull);
+      final revealResponse = await _send(
+        actionUri,
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'action': 'reveal',
+          'id': maskedEntryReal['id'],
+        }),
+      );
+      expect(revealResponse.statusCode, HttpStatus.ok);
+      final revealJson =
+          jsonDecode(revealResponse.body) as Map<String, Object?>;
+      expect(revealJson['text'], '用户的手机号是13812345678');
+      // 非敏感条目没有可揭示内容。
+      final plainReveal = await _send(
+        actionUri,
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'action': 'reveal', 'id': editedEntry['id']}),
+      );
+      expect(plainReveal.statusCode, HttpStatus.badRequest);
+      expect(
+        (jsonDecode(plainReveal.body) as Map<String, Object?>)['code'],
+        'memory_item_not_masked',
+      );
+
+      // 长期印象条目：预览删除影响 → 确认删除。
+      final longTerm = (unfrozen['longTerm']! as Map<String, Object?>);
+      final group =
+          (longTerm['groups']! as List<Object?>).single!
+              as Map<String, Object?>;
+      final item =
+          (group['items']! as List<Object?>).single! as Map<String, Object?>;
+      expect(item['content'], '用户养了一只猫');
+      final preview = await _send(
+        actionUri,
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'action': 'delete-preview', 'id': item['id']}),
+      );
+      expect(preview.statusCode, HttpStatus.ok);
+      final impact = jsonDecode(preview.body) as Map<String, Object?>;
+      expect(impact['longTermItems'], 1);
+      expect(impact['lines'], isA<List<Object?>>());
+
+      final deleteResponse = await _send(
+        actionUri,
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'action': 'delete', 'id': item['id']}),
+      );
+      expect(deleteResponse.statusCode, HttpStatus.ok);
+      final afterDelete = await overviewJson();
+      final groupsAfter =
+          (afterDelete['longTerm']! as Map<String, Object?>)['groups']!
+              as List<Object?>;
+      expect(groupsAfter, isEmpty);
+      final controlsContents = File(
+        '${memoryDirectory.path}${Platform.pathSeparator}memory-controls.md',
+      ).readAsStringSync();
+      expect(controlsContents, contains('## deleted'));
       await host.close();
     },
   );

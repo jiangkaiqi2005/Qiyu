@@ -1,4 +1,4 @@
-﻿import 'dart:collection';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -30,7 +30,8 @@ final _emailPattern = RegExp(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}');
 
 /// 敏感判定由本机服务读取时生成，绝不写回 md（T25 定稿）：密钥类
 /// 脱敏规则命中后仍有残留，或含手机号、邮箱等私密标识，即视为敏感。
-bool _isSensitiveMemoryText(String text) {
+/// 记忆动作（ticket 20）的揭示判定共用同一标准。
+bool isSensitiveMemoryText(String text) {
   final trimmed = text.trim();
   if (trimmed.isEmpty) {
     return false;
@@ -67,6 +68,7 @@ final class MemoryEntryCard {
     required this.control,
     required this.at,
     required this.hasEvidence,
+    required this.userEdited,
   });
 
   final String id;
@@ -79,6 +81,10 @@ final class MemoryEntryCard {
   final DateTime at;
   final bool hasEvidence;
 
+  /// 用户修正过的条目（ticket 20）：摘要按用户声明呈现，UI 标注
+  /// 「由你修正」，绝不与自动整理的证据混同。
+  final bool userEdited;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'kind': kind,
@@ -87,6 +93,7 @@ final class MemoryEntryCard {
     if (control != null) 'control': control!.wireName,
     'at': at.toUtc().toIso8601String(),
     'hasEvidence': hasEvidence,
+    'userEdited': userEdited,
   };
 }
 
@@ -117,7 +124,8 @@ final class MemoryDayCard {
     if (summary != null) 'summary': summary,
     'summaryMasked': summaryMasked,
     'finalized': finalized,
-    if (finalizedAt != null) 'finalizedAt': finalizedAt!.toUtc().toIso8601String(),
+    if (finalizedAt != null)
+      'finalizedAt': finalizedAt!.toUtc().toIso8601String(),
     'entries': entries.map((entry) => entry.toJson()).toList(),
   };
 }
@@ -134,16 +142,20 @@ final class MemoryRecentSection {
 
 final class MemoryLongTermItem {
   const MemoryLongTermItem({
+    required this.id,
     required this.content,
     required this.masked,
     required this.control,
   });
 
+  /// 不透明引用（ticket 20）：编辑、控制与删除动作的目标。
+  final String id;
   final String? content;
   final bool masked;
   final MemoryControlStatus? control;
 
   Map<String, Object?> toJson() => {
+    'id': id,
     if (content != null) 'content': content,
     'masked': masked,
     if (control != null) 'control': control!.wireName,
@@ -183,7 +195,8 @@ final class MemoryLongTermSection {
   Map<String, Object?> toJson() => {
     'present': present,
     'readable': readable,
-    if (organizedAt != null) 'organizedAt': organizedAt!.toUtc().toIso8601String(),
+    if (organizedAt != null)
+      'organizedAt': organizedAt!.toUtc().toIso8601String(),
     'groups': groups.map((group) => group.toJson()).toList(),
   };
 }
@@ -381,6 +394,7 @@ final class EpisodeEntryDetail extends MemoryItemDetail {
     required this.sessionId,
     required this.daySummary,
     required this.finalized,
+    required this.userEdited,
   });
 
   final String date;
@@ -391,7 +405,8 @@ final class EpisodeEntryDetail extends MemoryItemDetail {
   final MemoryControlStatus? control;
   final DateTime at;
 
-  /// 证据原话摘录；敏感时整体遮罩。
+  /// 证据原话摘录；敏感时整体遮罩。用户修正过的条目没有摘录
+  /// （修正不伪装原始会话证据）。
   final String? evidence;
   final bool evidenceMasked;
 
@@ -399,6 +414,9 @@ final class EpisodeEntryDetail extends MemoryItemDetail {
   final String? sessionId;
   final String? daySummary;
   final bool finalized;
+
+  /// 是否由用户修正过（ticket 20）。
+  final bool userEdited;
 
   @override
   Map<String, Object?> toJson() => {
@@ -415,6 +433,7 @@ final class EpisodeEntryDetail extends MemoryItemDetail {
     if (sessionId != null) 'sessionId': sessionId,
     if (daySummary != null) 'daySummary': daySummary,
     'finalized': finalized,
+    'userEdited': userEdited,
   };
 }
 
@@ -551,54 +570,78 @@ final class MemoryDayDetail extends MemoryItemDetail {
     if (summary != null) 'summary': summary,
     'summaryMasked': summaryMasked,
     'finalized': finalized,
-    if (finalizedAt != null) 'finalizedAt': finalizedAt!.toUtc().toIso8601String(),
+    if (finalizedAt != null)
+      'finalizedAt': finalizedAt!.toUtc().toIso8601String(),
     'entries': entries.map((entry) => entry.toJson()).toList(),
   };
 }
 
 /// 不透明 ID 背后的引用类型；只在本进程内有效，绝不落盘、绝不含
-/// 文件路径。
-sealed class _MemoryRef {
-  const _MemoryRef();
+/// 文件路径。记忆中心的读取与动作（ticket 20）共用同一套解析。
+sealed class MemoryItemRef {
+  const MemoryItemRef();
 }
 
-final class _EntryRef extends _MemoryRef {
-  const _EntryRef(this.date, this.entryId);
+final class MemoryEntryRef extends MemoryItemRef {
+  const MemoryEntryRef(this.date, this.entryId);
 
   final String date;
   final String entryId;
 }
 
-final class _RootRef extends _MemoryRef {
-  const _RootRef(this.branchWire, this.rootId);
+final class MemoryRootRef extends MemoryItemRef {
+  const MemoryRootRef(this.branchWire, this.rootId);
 
   final String branchWire;
   final String rootId;
 }
 
-final class _MiddleRef extends _MemoryRef {
-  const _MiddleRef(this.branchWire, this.middleId);
+final class MemoryMiddleRef extends MemoryItemRef {
+  const MemoryMiddleRef(this.branchWire, this.middleId);
 
   final String branchWire;
   final String middleId;
 }
 
-final class _DayRef extends _MemoryRef {
-  const _DayRef(this.date);
+final class MemoryDayRef extends MemoryItemRef {
+  const MemoryDayRef(this.date);
 
   final String date;
 }
 
-/// 四区只读记忆中心（ticket 19）：把本机 md 记忆聚合为用户可理解的
+/// long-memory 条目引用：四分区之一 + 注册时的条目原文。动作执行时
+/// 以原文在分区内定位（条目顺序可能被后台整理改写，原文校验失败即
+/// 视为「不存在或已变化」）。
+final class MemoryLongTermRef extends MemoryItemRef {
+  const MemoryLongTermRef(this.section, this.text);
+
+  final String section;
+  final String text;
+}
+
+/// relationship.md 各行引用（相处方式/试探/近期变化）或 long-memory
+/// 「共同过往」条目。状态包各行不是控制对象（T24 定稿），只允许
+/// 揭示查看；[list] 为 `sharedPast` 时指向 long-memory 文件，允许
+/// 全部条目动作。
+final class MemoryRelationshipRef extends MemoryItemRef {
+  const MemoryRelationshipRef(this.list, this.text);
+
+  final String list;
+  final String text;
+}
+
+/// 四区记忆中心（ticket 19）：把本机 md 记忆聚合为用户可理解的
 /// 四个区域——最近发生、长期印象、关于你、我们的关系。
 ///
-/// 只读纪律（验收红线）：
+/// 读取纪律（验收红线）：
 /// - 本服务不持有模型客户端、不持有任何写入器，构造上杜绝模型调用
-///   与隐式写入；全部数据来自各存储的只读接口与文件读取。
-/// - 条目使用进程内随机 opaque ID，详情按注册表解析；ID 不含路径，
-///   解析失败返回 null，调用方以「不存在或已变化」呈现。
+///   与隐式写入；全部数据来自各存储的只读接口与文件读取。编辑、
+///   控制与删除动作归 [MemoryActionService]（ticket 20），只共用
+///   opaque ID 注册表。
+/// - 条目使用进程内随机 opaque ID，详情与动作按注册表解析；ID 不含
+///   路径，解析失败返回 null，调用方以「不存在或已变化」呈现。
 /// - 敏感内容读取时判定并遮罩，绝不写回 md；冻结/禁提状态只展示
-///   标识，不执行控制动作（控制操作归 ticket 20）。
+///   标识，本服务不执行控制动作。
 /// - 局部损坏（某日文件、某画像分支、long-memory 或 relationship
 ///   不可读）只影响对应条块，其余区域照常返回。
 final class MemoryCenterService {
@@ -621,7 +664,7 @@ final class MemoryCenterService {
   final Clock _clock;
   final void Function(String) _diagnosticsSink;
 
-  final LinkedHashMap<String, _MemoryRef> _registry = LinkedHashMap();
+  final LinkedHashMap<String, MemoryItemRef> _registry = LinkedHashMap();
 
   File get _longMemoryFile =>
       File(path.join(memoryDirectory, 'long-memory.md'));
@@ -653,16 +696,24 @@ final class MemoryCenterService {
     final frozen = controls.frozenSummaries;
     final blocked = controls.blockedSummaries;
     switch (ref) {
-      case _EntryRef():
+      case MemoryEntryRef():
         return _entryDetail(ref, frozen, blocked);
-      case _RootRef():
+      case MemoryRootRef():
         return _rootDetail(ref, frozen, blocked);
-      case _MiddleRef():
+      case MemoryMiddleRef():
         return _middleDetail(ref, frozen, blocked);
-      case _DayRef():
+      case MemoryDayRef():
         return _dayDetail(ref.date, frozen, blocked);
+      case MemoryLongTermRef():
+      case MemoryRelationshipRef():
+        // 长期印象与关系条目没有独立详情页，动作直接作用于总览卡片。
+        return null;
     }
   }
+
+  /// 按 opaque ID 解析条目引用，供记忆动作（ticket 20）定位目标；
+  /// ID 未知或已淘汰时返回 null。
+  MemoryItemRef? resolveRef(String id) => _registry[id];
 
   // ---------- 总览分区 ----------
 
@@ -685,12 +736,13 @@ final class MemoryCenterService {
         continue;
       }
       final cards = _entryCards(date, day.entries, frozen, blocked);
-      if (cards.isEmpty && (day.summary == null || day.summary!.trim().isEmpty)) {
+      if (cards.isEmpty &&
+          (day.summary == null || day.summary!.trim().isEmpty)) {
         continue;
       }
       days.add(
         MemoryDayCard(
-          id: _register(_DayRef(date)),
+          id: _register(MemoryDayRef(date)),
           date: date,
           summary: _visible(day.summary),
           summaryMasked: _isMasked(day.summary),
@@ -736,7 +788,14 @@ final class MemoryCenterService {
           MemoryLongTermGroup(
             section: section,
             items: (parsed.sections[section] ?? const <String>[])
-                .map((item) => _longTermItem(item, frozen, blocked))
+                .map(
+                  (item) => _longTermItem(
+                    MemoryLongTermRef(section, item),
+                    item,
+                    frozen,
+                    blocked,
+                  ),
+                )
                 .toList(),
           ),
     ];
@@ -776,7 +835,7 @@ final class MemoryCenterService {
           roots: [
             for (final root in view.roots)
               MemoryPersonaRootCard(
-                id: _register(_RootRef(branch.wireName, root.id)),
+                id: _register(MemoryRootRef(branch.wireName, root.id)),
                 claim: _visible(root.claim),
                 masked: _isMasked(root.claim),
                 control: _controlFor(root.claim, frozen, blocked),
@@ -802,9 +861,7 @@ final class MemoryCenterService {
   ) async {
     final sharedPast = await _sharedPastItems(frozen, blocked);
     final contents = await _readIfExists(_relationshipFile);
-    final parsed = contents == null
-        ? null
-        : parseRelationshipFile(contents);
+    final parsed = contents == null ? null : parseRelationshipFile(contents);
     if (parsed == null) {
       return MemoryRelationshipSection(
         present: false,
@@ -820,9 +877,19 @@ final class MemoryCenterService {
       present: true,
       stage: parsed.stage.wireName,
       since: parsed.since,
-      confirmed: _relationshipItems(parsed.confirmed, frozen, blocked),
-      probes: _relationshipItems(parsed.probes, frozen, blocked),
-      recentChanges: _relationshipItems(parsed.recentChanges, frozen, blocked),
+      confirmed: _relationshipItems(
+        'confirmed',
+        parsed.confirmed,
+        frozen,
+        blocked,
+      ),
+      probes: _relationshipItems('probes', parsed.probes, frozen, blocked),
+      recentChanges: _relationshipItems(
+        'recentChanges',
+        parsed.recentChanges,
+        frozen,
+        blocked,
+      ),
       sharedPast: sharedPast,
     );
   }
@@ -841,14 +908,21 @@ final class MemoryCenterService {
       return const [];
     }
     return (parsed.sections['共同过往'] ?? const <String>[])
-        .map((item) => _longTermItem(item, frozen, blocked))
+        .map(
+          (item) => _longTermItem(
+            MemoryLongTermRef('共同过往', item),
+            item,
+            frozen,
+            blocked,
+          ),
+        )
         .toList();
   }
 
   // ---------- 详情 ----------
 
   Future<EpisodeEntryDetail?> _entryDetail(
-    _EntryRef ref,
+    MemoryEntryRef ref,
     Set<String> frozen,
     Set<String> blocked,
   ) async {
@@ -864,7 +938,7 @@ final class MemoryCenterService {
     }
     return EpisodeEntryDetail(
       date: ref.date,
-      dayId: _register(_DayRef(ref.date)),
+      dayId: _register(MemoryDayRef(ref.date)),
       kind: _kindLabelFor(entry.kind),
       content: _visible(entry.summary),
       masked: _isMasked(entry.summary),
@@ -875,11 +949,12 @@ final class MemoryCenterService {
       sessionId: entry.sessionId,
       daySummary: _visible(day.summary),
       finalized: day.finalized,
+      userEdited: entry.userEdited,
     );
   }
 
   Future<PersonaRootDetail?> _rootDetail(
-    _RootRef ref,
+    MemoryRootRef ref,
     Set<String> frozen,
     Set<String> blocked,
   ) async {
@@ -912,7 +987,7 @@ final class MemoryCenterService {
   }
 
   Future<PersonaMiddleDetail?> _middleDetail(
-    _MiddleRef ref,
+    MemoryMiddleRef ref,
     Set<String> frozen,
     Set<String> blocked,
   ) async {
@@ -956,7 +1031,7 @@ final class MemoryCenterService {
       leaves: [
         for (final leaf in middle.leaves)
           MemoryPersonaLeafCard(
-            dayId: _register(_DayRef(leaf.date)),
+            dayId: _register(MemoryDayRef(leaf.date)),
             date: leaf.date,
             nature: leaf.nature,
             relation: leaf.relation,
@@ -1002,13 +1077,14 @@ final class MemoryCenterService {
       }
       cards.add(
         MemoryEntryCard(
-          id: _register(_EntryRef(date, entry.id)),
+          id: _register(MemoryEntryRef(date, entry.id)),
           kind: _kindLabelFor(entry.kind),
           content: _visible(entry.summary),
           masked: _isMasked(entry.summary),
           control: _controlFor(entry.summary, frozen, blocked),
           at: entry.at,
           hasEvidence: (entry.evidence ?? '').trim().isNotEmpty,
+          userEdited: entry.userEdited,
         ),
       );
     }
@@ -1022,7 +1098,7 @@ final class MemoryCenterService {
     Set<String> frozen,
     Set<String> blocked,
   ) => MemoryPersonaMiddleCard(
-    id: _register(_MiddleRef(branchWire, middle.id)),
+    id: _register(MemoryMiddleRef(branchWire, middle.id)),
     type: middle.type,
     claim: _visible(middle.claim),
     masked: _isMasked(middle.claim),
@@ -1034,18 +1110,22 @@ final class MemoryCenterService {
   );
 
   MemoryLongTermItem _longTermItem(
+    MemoryItemRef ref,
     String item,
     Set<String> frozen,
     Set<String> blocked,
   ) => MemoryLongTermItem(
+    id: _register(ref),
     content: _visible(item),
     masked: _isMasked(item),
     control: _controlFor(item, frozen, blocked),
   );
 
   /// relationship 各行（解析器保证 `- ` 前缀）走读取时纪律后成为
-  /// 条目：敏感遮罩、控制标识，空行丢弃。
+  /// 条目：敏感遮罩、控制标识，空行丢弃。条目引用供揭示查看
+  /// （ticket 20）；状态包各行不是控制对象（T24 定稿）。
   List<MemoryLongTermItem> _relationshipItems(
+    String list,
     List<String> lines,
     Set<String> frozen,
     Set<String> blocked,
@@ -1060,7 +1140,9 @@ final class MemoryCenterService {
       if (text.isEmpty) {
         continue;
       }
-      items.add(_longTermItem(text, frozen, blocked));
+      items.add(
+        _longTermItem(MemoryRelationshipRef(list, text), text, frozen, blocked),
+      );
     }
     return items;
   }
@@ -1075,7 +1157,7 @@ final class MemoryCenterService {
 
   String? _visible(String? text) {
     final trimmed = text?.trim() ?? '';
-    if (trimmed.isEmpty || _isSensitiveMemoryText(trimmed)) {
+    if (trimmed.isEmpty || isSensitiveMemoryText(trimmed)) {
       return null;
     }
     return trimmed;
@@ -1083,7 +1165,7 @@ final class MemoryCenterService {
 
   bool _isMasked(String? text) {
     final trimmed = text?.trim() ?? '';
-    return trimmed.isNotEmpty && _isSensitiveMemoryText(trimmed);
+    return trimmed.isNotEmpty && isSensitiveMemoryText(trimmed);
   }
 
   MemoryControlStatus? _controlFor(
@@ -1135,7 +1217,7 @@ final class MemoryCenterService {
     }
   }
 
-  String _register(_MemoryRef ref) {
+  String _register(MemoryItemRef ref) {
     final id = _newOpaqueId();
     _registry[id] = ref;
     while (_registry.length > _memoryCenterRegistryCapacity) {

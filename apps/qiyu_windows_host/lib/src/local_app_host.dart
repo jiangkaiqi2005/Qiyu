@@ -14,6 +14,7 @@ import 'dream.dart';
 import 'episode_memory.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_actions.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
 import 'memory_recall.dart';
@@ -124,6 +125,17 @@ final class LocalAppHost {
       personaTree: personaTree,
       modelClient: effectiveProviderSettings,
     );
+    // 记忆动作执行端（ticket 20）：记忆中心 UI 的编辑、控制、删除
+    // 与敏感揭示；聊天隐藏动作的删除管线共用同一实现。
+    final memoryActions = MemoryActionService(
+      memoryDirectory: memoryDirectory,
+      episodePipeline: episodePipeline,
+      personaTree: personaTree,
+      memoryControls: memoryControls,
+      openLoopStore: openLoopStore,
+      monthlySummary: monthlySummary,
+      relationshipLifecycle: relationshipLifecycle,
+    );
     final chatService = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
       providerChatClient: effectiveProviderSettings,
@@ -157,11 +169,12 @@ final class LocalAppHost {
       dreamService: dreamService,
       memoryControls: memoryControls,
       relationshipLifecycle: relationshipLifecycle,
+      memoryActions: memoryActions,
     );
     await chatService.initialize();
-    // 四区只读记忆中心（ticket 19）：只依赖各存储的只读接口，不持有
+    // 四区记忆中心（ticket 19）：只依赖各存储的只读接口，不持有
     // 模型客户端与任何写入器；浏览与证据展开不触发模型调用、重新
-    // 整理或隐式写入。
+    // 整理或隐式写入。写入动作归 memoryActions（ticket 20）。
     final memoryCenter = MemoryCenterService(
       memoryDirectory: memoryDirectory,
       episodePipeline: episodePipeline,
@@ -181,6 +194,7 @@ final class LocalAppHost {
       providerSettingsService: effectiveProviderSettings,
       onboardingRepository: onboardingRepository,
       memoryCenter: memoryCenter,
+      memoryActions: memoryActions,
       activationToken: activationToken,
       onActivate: onActivate,
     );
@@ -223,6 +237,7 @@ final class _LocalAppRequestHandler {
     required this.providerSettingsService,
     required this.onboardingRepository,
     required this.memoryCenter,
+    required this.memoryActions,
     required this.activationToken,
     required this.onActivate,
   }) : _startupToken = generateSecureToken(),
@@ -240,6 +255,7 @@ final class _LocalAppRequestHandler {
   final ProviderSettingsService providerSettingsService;
   final OnboardingRepository onboardingRepository;
   final MemoryCenterService memoryCenter;
+  final MemoryActionService memoryActions;
   final String? activationToken;
   final Future<BrowserLaunchResult> Function()? onActivate;
   final String _sessionToken;
@@ -485,6 +501,100 @@ final class _LocalAppRequestHandler {
           );
         }
         return Response.ok(jsonEncode(detail.toJson()), headers: _jsonHeaders);
+      }
+      if (request.method == 'POST' && request.url.path == 'api/memory/action') {
+        final Map<String, Object?> payload;
+        try {
+          payload = await _readJsonObject(request, maxBytes: 16 * 1024);
+        } on FormatException {
+          throw const LocalChatException(
+            code: 'invalid_request',
+            message: '记忆操作请求格式不正确。',
+            retryable: false,
+          );
+        }
+        final action = payload['action'];
+        final id = payload['id'];
+        if (action is! String ||
+            action.isEmpty ||
+            id is! String ||
+            id.isEmpty) {
+          throw const LocalChatException(
+            code: 'invalid_request',
+            message: '记忆操作请求格式不正确。',
+            retryable: false,
+          );
+        }
+        final ref = memoryCenter.resolveRef(id);
+        if (ref == null) {
+          return _jsonError(
+            HttpStatus.notFound,
+            code: 'memory_item_not_found',
+            message: '这条记忆不存在或已经变化，请返回后刷新。',
+            retryable: false,
+          );
+        }
+        final MemoryActionResult result;
+        switch (action) {
+          case 'edit':
+            final text = payload['text'];
+            if (text is! String) {
+              throw const LocalChatException(
+                code: 'invalid_request',
+                message: '记忆操作请求格式不正确。',
+                retryable: false,
+              );
+            }
+            result = await memoryActions.edit(ref, text);
+          case 'freeze':
+            result = await memoryActions.freeze(ref);
+          case 'unfreeze':
+            result = await memoryActions.unfreeze(ref);
+          case 'ban':
+            result = await memoryActions.ban(ref);
+          case 'unban':
+            result = await memoryActions.unban(ref);
+          case 'delete-preview':
+            final impact = await memoryActions.deletePreview(ref);
+            if (impact == null) {
+              return _jsonError(
+                HttpStatus.notFound,
+                code: 'memory_item_not_found',
+                message: '这条记忆不存在或已经变化，请返回后刷新。',
+                retryable: false,
+              );
+            }
+            return Response.ok(
+              jsonEncode(impact.toJson()),
+              headers: _jsonHeaders,
+            );
+          case 'delete':
+            result = await memoryActions.delete(ref);
+          case 'reveal':
+            final field = payload['field'];
+            result = await memoryActions.reveal(
+              ref,
+              field is String && field.isNotEmpty ? field : 'content',
+            );
+          default:
+            throw const LocalChatException(
+              code: 'invalid_request',
+              message: '不支持的记忆操作。',
+              retryable: false,
+            );
+        }
+        final statusCode = switch (result.code) {
+          'memory_item_not_found' => HttpStatus.notFound,
+          'memory_action_not_allowed' ||
+          'memory_item_not_masked' ||
+          'memory_delete_no_target' => HttpStatus.badRequest,
+          _ => HttpStatus.ok,
+        };
+        return Response(
+          statusCode,
+          body: jsonEncode(result.toJson()),
+          headers: _jsonHeaders,
+        );
       }
       if (request.method == 'POST' && request.url.path == 'api/chat/cancel') {
         final payload = await _readJsonObject(request, maxBytes: 4 * 1024);

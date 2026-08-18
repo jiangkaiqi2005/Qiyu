@@ -75,10 +75,7 @@ void main() {
 
       // 只读红线：整轮浏览只触发读取调用。
       expect(memoryGateway.calls, isNotEmpty);
-      expect(
-        memoryGateway.calls,
-        everyElement(startsWith('fetch')),
-      );
+      expect(memoryGateway.calls, everyElement(startsWith('fetch')));
 
       await tester.tap(find.byKey(const Key('memory-back')));
       await tester.pumpAndSettle();
@@ -117,9 +114,7 @@ void main() {
       expect(find.text('被关注时常用玩笑降低郑重感'), findsOneWidget);
 
       // 理解 → 逐条证据（含冲突标识）。
-      await tester.tap(
-        find.byKey(const Key('memory-root-middle-middle-1')),
-      );
+      await tester.tap(find.byKey(const Key('memory-root-middle-middle-1')));
       await tester.pumpAndSettle();
       expect(memoryGateway.detailCalls, contains('middle-1'));
       expect(find.text('证据'), findsOneWidget);
@@ -133,9 +128,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(memoryGateway.detailCalls, contains('day-leaf-1'));
       expect(find.text('2026年7月10日'), findsOneWidget);
-      await tester.tap(
-        find.byKey(const Key('memory-day-entry-entry-9')),
-      );
+      await tester.tap(find.byKey(const Key('memory-day-entry-entry-9')));
       await tester.pumpAndSettle();
       expect(find.text('当时的摘录'), findsOneWidget);
       expect(find.text('周四有个演讲'), findsOneWidget);
@@ -157,9 +150,7 @@ void main() {
     },
   );
 
-  testWidgets('stale item ids resolve to an honest gone state', (
-    tester,
-  ) async {
+  testWidgets('stale item ids resolve to an honest gone state', (tester) async {
     final memoryGateway = _FakeMemoryGateway(_fullOverview());
     final memoryViewModel = MemoryCenterViewModel(
       memoryGateway,
@@ -180,9 +171,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('memory-root-root-1')));
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const Key('memory-root-middle-middle-1')),
-    );
+    await tester.tap(find.byKey(const Key('memory-root-middle-middle-1')));
     await tester.pumpAndSettle();
 
     // 指向已不存在日期的叶：诚实说明，不编造内容。
@@ -262,14 +251,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // 敏感条目默认遮罩：原文不出现在界面任何地方。
-    expect(
-      find.textContaining('13812345678'),
-      findsNothing,
-    );
-    expect(
-      find.textContaining('这条内容涉及私密信息，暂不直接展示。'),
-      findsWidgets,
-    );
+    expect(find.textContaining('13812345678'), findsNothing);
+    expect(find.textContaining('这条内容涉及私密信息，暂不直接展示。'), findsWidgets);
 
     // 冻结与禁提标识安静地挂在条目上。
     await tester.tap(find.byKey(const Key('memory-tab-longterm')));
@@ -357,7 +340,444 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
   });
+
+  testWidgets('editing an entry saves the correction as a user statement', (
+    tester,
+  ) async {
+    final gateway = _FakeMemoryGateway(_fullOverview());
+    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('修正'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('memory-edit-field')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('memory-edit-field')),
+      '这周在准备一场辩论赛',
+    );
+    await tester.tap(find.byKey(const Key('memory-edit-save')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.actionCalls, contains('edit:entry-1:这周在准备一场辩论赛'));
+    // 成功后总览刷新，界面立即反映修正。
+    expect(
+      gateway.calls.where((call) => call == 'fetchOverview').length,
+      greaterThanOrEqualTo(2),
+    );
+    expect(find.byKey(const Key('memory-action-result')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('freeze applies immediately, ban needs confirmation', (
+    tester,
+  ) async {
+    final gateway = _FakeMemoryGateway(_fullOverview());
+    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+
+    // 冻结直接生效，不需要确认。
+    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('暂停使用'));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('freeze:entry-1'));
+
+    // 禁提必须确认；取消不产生动作。
+    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('不再提起'));
+    await tester.pumpAndSettle();
+    expect(find.text('不再提起这条记忆？'), findsOneWidget);
+    await tester.tap(find.text('先不用'));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, isNot(contains('ban:entry-1')));
+
+    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('不再提起'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-ban-confirm')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('ban:entry-1'));
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('delete previews the exact impact before executing', (
+    tester,
+  ) async {
+    final gateway = _FakeMemoryGateway(_fullOverview());
+    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+
+    // 影响范围先于删除呈现，表述准确不含糊。
+    expect(gateway.actionCalls, contains('preview:entry-1'));
+    expect(find.text('将删除这条记忆：测试内容'), findsOneWidget);
+    expect(find.text('原始对话记录保留。'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('memory-delete-confirm')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('delete:entry-1'));
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('persona items can be controlled but never edited', (
+    tester,
+  ) async {
+    final gateway = _FakeMemoryGateway(_fullOverview());
+    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-tab-persona')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('memory-actions-root-1')));
+    await tester.pumpAndSettle();
+    // 画像只能通过对话纠正：菜单里没有修正入口。
+    expect(find.text('修正'), findsNothing);
+    await tester.tap(find.text('暂停使用'));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('freeze:root-1'));
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('state pack rows stay read-only', (tester) async {
+    final gateway = _FakeMemoryGateway(_fullOverview());
+    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-tab-relationship')));
+    await tester.pumpAndSettle();
+
+    // 相处方式/近期变化是状态包投影：不是控制对象，没有操作入口。
+    expect(find.byKey(const Key('memory-actions-rel-1')), findsNothing);
+    expect(find.byKey(const Key('memory-actions-rel-2')), findsNothing);
+    // 共同过往属于长期印象，仍可操作。
+    expect(find.byKey(const Key('memory-actions-lt-2')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('masked detail content reveals once and re-masks on timeout', (
+    tester,
+  ) async {
+    final gateway = _FakeMemoryGateway(_maskedEntryOverview());
+    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-entry-entry-masked')));
+    await tester.pumpAndSettle();
+
+    // 默认遮罩：原文不出现。
+    expect(find.text('揭示出的原文'), findsNothing);
+    expect(find.byKey(const Key('memory-reveal-content')), findsOneWidget);
+
+    // 明确揭示后才展示原文。
+    await tester.tap(find.byKey(const Key('memory-reveal-content')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('reveal:entry-masked:content'));
+    expect(find.text('揭示出的原文'), findsOneWidget);
+
+    // 超时自动重新遮罩。
+    await tester.pump(const Duration(seconds: 21));
+    await tester.pumpAndSettle();
+    expect(find.text('揭示出的原文'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('memory-item-back')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('masked persona root and day summary offer a reveal entry', (
+    tester,
+  ) async {
+    final gateway = _FakeMemoryGateway(_maskedPersonaOverview());
+    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+
+    // 画像根详情：遮罩主张有临时查看入口，揭示后展示原文。
+    await tester.tap(find.byKey(const Key('memory-tab-persona')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-root-root-masked')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-reveal-claim')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('memory-reveal-claim')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('reveal:root-masked:claim'));
+    expect(find.text('揭示出的原文'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('memory-item-back')));
+    await tester.pumpAndSettle();
+
+    // 某一天的详情：遮罩小结同样有临时查看入口，请求 summary 字段。
+    await tester.tap(find.byKey(const Key('memory-tab-recent')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-entry-entry-m2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-item-day')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-reveal-summary')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('memory-reveal-summary')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('reveal:day-masked:summary'));
+    expect(find.text('揭示出的原文'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('memory-item-back')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-item-back')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('action entries stay disabled while an action is in flight', (
+    tester,
+  ) async {
+    final gateway = _FakeMemoryGateway(_fullOverview());
+    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+
+    // 冻结动作挂起期间：菜单禁用，避免重复触发。
+    gateway.holdFreeze = Completer<MemoryActionResult>();
+    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('暂停使用'));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('freeze:entry-1'));
+
+    PopupMenuButton<Object?> actionMenu() =>
+        tester.widget<PopupMenuButton<Object?>>(
+          find.byWidgetPredicate(
+            (widget) => widget is PopupMenuButton<Object?>,
+          ),
+        );
+    expect(actionMenu().enabled, isFalse);
+
+    // 完成后：结果三态呈现，入口恢复可用。
+    gateway.holdFreeze!.complete(
+      const MemoryActionResult(
+        status: MemoryActionStatus.success,
+        message: '已暂停使用这条记忆。',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-action-result')), findsOneWidget);
+    expect(actionMenu().enabled, isTrue);
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
 }
+
+MemoryOverview _maskedEntryOverview() => MemoryOverview(
+  generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
+  recent: MemoryRecentSection(
+    days: [
+      MemoryDayCard(
+        id: 'day-1',
+        date: _localDate(DateTime.now()),
+        summary: null,
+        summaryMasked: false,
+        finalized: true,
+        finalizedAt: null,
+        entries: [
+          MemoryEntryCard(
+            id: 'entry-masked',
+            kind: 'memory',
+            content: null,
+            masked: true,
+            control: null,
+            at: DateTime.now().subtract(const Duration(hours: 1)),
+            hasEvidence: false,
+          ),
+        ],
+      ),
+    ],
+  ),
+  longTerm: MemoryLongTermSection(
+    present: false,
+    readable: true,
+    organizedAt: null,
+    groups: [],
+  ),
+  persona: MemoryPersonaSection(branches: []),
+  relationship: MemoryRelationshipSection(
+    present: false,
+    stage: null,
+    since: null,
+    confirmed: [],
+    probes: [],
+    recentChanges: [],
+    sharedPast: [],
+  ),
+);
+
+/// 画像根与当日小结被遮罩的总览：原文字段为 null，揭示入口仍要
+/// 在详情页可达。
+MemoryOverview _maskedPersonaOverview() => MemoryOverview(
+  generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
+  recent: MemoryRecentSection(
+    days: [
+      MemoryDayCard(
+        id: 'day-masked',
+        date: _localDate(DateTime.now()),
+        summary: null,
+        summaryMasked: true,
+        finalized: true,
+        finalizedAt: null,
+        entries: [
+          MemoryEntryCard(
+            id: 'entry-m2',
+            kind: 'memory',
+            content: '一条普通记录',
+            masked: false,
+            control: null,
+            at: DateTime.now().subtract(const Duration(hours: 1)),
+            hasEvidence: false,
+          ),
+        ],
+      ),
+    ],
+  ),
+  longTerm: MemoryLongTermSection(
+    present: false,
+    readable: true,
+    organizedAt: null,
+    groups: [],
+  ),
+  persona: MemoryPersonaSection(
+    branches: [
+      MemoryPersonaBranchCard(
+        wire: 'identity',
+        title: '身份事实',
+        readable: true,
+        roots: const [
+          MemoryPersonaRootCard(
+            id: 'root-masked',
+            claim: null,
+            masked: true,
+            control: null,
+            middleCount: 0,
+            leafCount: 0,
+            earliestEvidence: null,
+            latestEvidence: null,
+          ),
+        ],
+        unrooted: const [],
+      ),
+    ],
+  ),
+  relationship: MemoryRelationshipSection(
+    present: false,
+    stage: null,
+    since: null,
+    confirmed: [],
+    probes: [],
+    recentChanges: [],
+    sharedPast: [],
+  ),
+);
 
 LocalChatViewModel _chatViewModel([_FakeChatGateway? gateway]) =>
     LocalChatViewModel(
@@ -410,6 +830,7 @@ MemoryOverview _fullOverview() => MemoryOverview(
         section: '人与关系',
         items: const [
           MemoryLongTermItem(
+            id: 'lt-1',
             content: '用户和家人关系亲近',
             masked: false,
             control: null,
@@ -446,6 +867,7 @@ MemoryOverview _fullOverview() => MemoryOverview(
     since: '2026-08-01',
     confirmed: [
       MemoryLongTermItem(
+        id: 'rel-1',
         content: '可以自然提起说过的事',
         masked: false,
         control: null,
@@ -454,6 +876,7 @@ MemoryOverview _fullOverview() => MemoryOverview(
     probes: [],
     recentChanges: [
       MemoryLongTermItem(
+        id: 'rel-2',
         content: '聊得比平时深一些',
         masked: false,
         control: null,
@@ -461,6 +884,7 @@ MemoryOverview _fullOverview() => MemoryOverview(
     ],
     sharedPast: [
       MemoryLongTermItem(
+        id: 'lt-2',
         content: '一起聊到过深夜',
         masked: false,
         control: null,
@@ -526,11 +950,13 @@ MemoryOverview _markedOverview() => MemoryOverview(
         section: '人与关系',
         items: [
           MemoryLongTermItem(
+            id: 'lt-frozen',
             content: '冻结的印象',
             masked: false,
             control: MemoryControlStatus.frozen,
           ),
           MemoryLongTermItem(
+            id: 'lt-banned',
             content: '禁提的印象',
             masked: false,
             control: MemoryControlStatus.banned,
@@ -588,6 +1014,20 @@ final class _FakeMemoryGateway implements MemoryGateway {
   Object? detailError;
   final calls = <String>[];
   final detailCalls = <String>[];
+  final actionCalls = <String>[];
+
+  /// 动作结果注入：缺省一律成功。
+  MemoryActionResult actionResult = const MemoryActionResult(
+    status: MemoryActionStatus.success,
+    message: '好了。',
+  );
+  MemoryDeleteImpact? previewImpact = const MemoryDeleteImpact(
+    lines: ['将删除这条记忆：测试内容', '原始对话记录保留。'],
+    sessionsKept: true,
+  );
+
+  /// 非 null 时冻结动作挂起在它上面，用于观察执行中的忙碌态。
+  Completer<MemoryActionResult>? holdFreeze;
 
   @override
   Future<MemoryOverview> fetchOverview() async {
@@ -597,6 +1037,65 @@ final class _FakeMemoryGateway implements MemoryGateway {
       throw error;
     }
     return _overview;
+  }
+
+  @override
+  Future<MemoryActionResult> editItem(String id, String text) async {
+    actionCalls.add('edit:$id:$text');
+    return actionResult;
+  }
+
+  @override
+  Future<MemoryActionResult> freezeItem(String id) async {
+    actionCalls.add('freeze:$id');
+    final hold = holdFreeze;
+    if (hold != null) {
+      return hold.future;
+    }
+    return actionResult;
+  }
+
+  @override
+  Future<MemoryActionResult> unfreezeItem(String id) async {
+    actionCalls.add('unfreeze:$id');
+    return actionResult;
+  }
+
+  @override
+  Future<MemoryActionResult> banItem(String id) async {
+    actionCalls.add('ban:$id');
+    return actionResult;
+  }
+
+  @override
+  Future<MemoryActionResult> unbanItem(String id) async {
+    actionCalls.add('unban:$id');
+    return actionResult;
+  }
+
+  @override
+  Future<MemoryDeleteImpact?> previewDelete(String id) async {
+    actionCalls.add('preview:$id');
+    return previewImpact;
+  }
+
+  @override
+  Future<MemoryActionResult> deleteItem(String id) async {
+    actionCalls.add('delete:$id');
+    return actionResult;
+  }
+
+  @override
+  Future<MemoryActionResult> revealItem(
+    String id, {
+    String field = 'content',
+  }) async {
+    actionCalls.add('reveal:$id:$field');
+    return const MemoryActionResult(
+      status: MemoryActionStatus.success,
+      message: '仅本次展示。',
+      text: '揭示出的原文',
+    );
   }
 
   @override
@@ -690,6 +1189,51 @@ final class _FakeMemoryGateway implements MemoryGateway {
         sessionId: 'session-9',
         daySummary: '聊了被夸奖的反应',
         finalized: true,
+      ),
+      'entry-masked' => EpisodeEntryDetail(
+        date: '2026-08-17',
+        dayId: 'day-1',
+        entryKind: 'memory',
+        content: null,
+        masked: true,
+        control: null,
+        at: DateTime.parse('2026-08-17T12:00:00.000Z'),
+        evidence: null,
+        evidenceMasked: false,
+        sessionId: null,
+        daySummary: null,
+        finalized: true,
+      ),
+      'entry-m2' => EpisodeEntryDetail(
+        date: _localDate(DateTime.now()),
+        dayId: 'day-masked',
+        entryKind: 'memory',
+        content: '一条普通记录',
+        masked: false,
+        control: null,
+        at: DateTime.now().subtract(const Duration(hours: 1)),
+        evidence: null,
+        evidenceMasked: false,
+        sessionId: null,
+        daySummary: null,
+        finalized: true,
+      ),
+      // 遮罩时原文字段为 null，只有遮罩标记：揭示入口必须仍在。
+      'day-masked' => MemoryDayDetail(
+        date: _localDate(DateTime.now()),
+        summary: null,
+        summaryMasked: true,
+        finalized: true,
+        finalizedAt: null,
+        entries: const [],
+      ),
+      'root-masked' => const PersonaRootDetail(
+        branch: 'identity',
+        branchTitle: '身份事实',
+        claim: null,
+        masked: true,
+        control: null,
+        middles: [],
       ),
       _ => null,
     };

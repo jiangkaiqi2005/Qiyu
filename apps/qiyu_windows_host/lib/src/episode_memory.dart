@@ -31,6 +31,7 @@ final class EpisodeEntry {
     this.proactive,
     this.note,
     this.signal,
+    this.userEdited = false,
   });
 
   factory EpisodeEntry.fromJson(Map<String, Object?> json) => EpisodeEntry(
@@ -47,6 +48,7 @@ final class EpisodeEntry {
     proactive: json['proactive'] as String?,
     note: json['note'] as String?,
     signal: json['signal'] as String?,
+    userEdited: json['userEdited'] as bool? ?? false,
   );
 
   final String id;
@@ -76,6 +78,11 @@ final class EpisodeEntry {
   /// boundary_close），日终据此更新 relationship.md 的阶段与温度。
   final String? signal;
 
+  /// 用户在记忆中心修正过（ticket 20）：摘要按用户声明保存，原始
+  /// 摘录随即移除——修正文本绝不伪装成原始会话证据；sessions 原文
+  /// 不受影响。
+  final bool userEdited;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'sessionId': sessionId,
@@ -90,6 +97,7 @@ final class EpisodeEntry {
     if (proactive != null) 'proactive': proactive,
     if (note != null) 'note': note,
     if (signal != null) 'signal': signal,
+    if (userEdited) 'userEdited': true,
   };
 }
 
@@ -341,7 +349,9 @@ final class EpisodeMemoryPipeline {
           requestId: requestId,
           index: index,
         );
-        if (entry == null || entry.summary.isEmpty || day.hasEntryId(entry.id)) {
+        if (entry == null ||
+            entry.summary.isEmpty ||
+            day.hasEntryId(entry.id)) {
           skipped += 1;
           continue;
         }
@@ -356,8 +366,7 @@ final class EpisodeMemoryPipeline {
     }
 
     final shouldAdvance =
-        written > 0 ||
-        (consumeWindow && pendingTurns >= episodeWindowTurns);
+        written > 0 || (consumeWindow && pendingTurns >= episodeWindowTurns);
     if (!shouldAdvance) {
       return EpisodeUpdateResult(
         writtenEntries: written,
@@ -389,7 +398,9 @@ final class EpisodeMemoryPipeline {
   /// 理解元数据由调用方随受控范围一并过滤后写回（索引关键词等派生
   /// 字段不得残留被删内容）。调用方必须已持有
   /// [synchronizedOnDayFiles] 锁。返回清除的条目数。
-  Future<int> purgeEntriesMatching(bool Function(EpisodeEntry entry) test) async {
+  Future<int> purgeEntriesMatching(
+    bool Function(EpisodeEntry entry) test,
+  ) async {
     var purged = 0;
     for (final date in await listEpisodeDates()) {
       final day = await _readDay(date);
@@ -467,7 +478,8 @@ final class EpisodeMemoryPipeline {
           id: id,
           sessionId: session.id,
           requestId: requestId,
-          summary: 'Open-loop 状态: '
+          summary:
+              'Open-loop 状态: '
               '${redactSessionText(action.summary ?? '').trim()} → '
               '${action.status}',
           evidence: redacted(action.result),
@@ -554,12 +566,13 @@ final class EpisodeMemoryPipeline {
           readable: false,
         );
       }
-      final entries = RegExp(
-        r'^<!-- qiyu-episode-entry:([A-Za-z0-9_-]+) -->\r?$',
-        multiLine: true,
-      ).allMatches(contents).map((match) {
-        return EpisodeEntry.fromJson(_decodeJson(match.group(1)!));
-      }).toList();
+      final entries =
+          RegExp(
+            r'^<!-- qiyu-episode-entry:([A-Za-z0-9_-]+) -->\r?$',
+            multiLine: true,
+          ).allMatches(contents).map((match) {
+            return EpisodeEntry.fromJson(_decodeJson(match.group(1)!));
+          }).toList();
       final metadata = _decodeDayMetadata(contents);
       final finalizedAt = metadata['finalizedAt'] as String?;
       final understanding = metadata['understanding'];
@@ -599,17 +612,9 @@ final class EpisodeMemoryPipeline {
     final buffer = StringBuffer()
       ..writeln('# 栖语每日记录')
       ..writeln()
-      ..writeln('<!-- qiyu-episode:${_encodeJson({
-        'schemaVersion': 1,
-        'date': date,
-        'updatedAt': _clock().toUtc().toIso8601String(),
-        if (trimmedSummary != null && trimmedSummary.isNotEmpty)
-          'summary': trimmedSummary,
-        'finalized': finalized,
-        if (finalizedAt != null)
-          'finalizedAt': finalizedAt.toUtc().toIso8601String(),
-        'understanding': ?understanding,
-      })} -->')
+      ..writeln(
+        '<!-- qiyu-episode:${_encodeJson({'schemaVersion': 1, 'date': date, 'updatedAt': _clock().toUtc().toIso8601String(), if (trimmedSummary != null && trimmedSummary.isNotEmpty) 'summary': trimmedSummary, 'finalized': finalized, if (finalizedAt != null) 'finalizedAt': finalizedAt.toUtc().toIso8601String(), 'understanding': ?understanding})} -->',
+      )
       ..writeln();
     if (trimmedSummary != null && trimmedSummary.isNotEmpty) {
       buffer
@@ -620,7 +625,9 @@ final class EpisodeMemoryPipeline {
     for (final entry in entries) {
       buffer
         ..writeln('<!-- qiyu-episode-entry:${_encodeJson(entry.toJson())} -->')
-        ..writeln('## ${entry.at.toLocal().toIso8601String()} · ${entry.summary}')
+        ..writeln(
+          '## ${entry.at.toLocal().toIso8601String()} · ${entry.summary}',
+        )
         ..writeln();
       final evidence = entry.evidence;
       if (evidence != null && evidence.isNotEmpty) {

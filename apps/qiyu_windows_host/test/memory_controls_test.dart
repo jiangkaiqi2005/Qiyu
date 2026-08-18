@@ -7,45 +7,47 @@ import 'package:test/test.dart';
 
 void main() {
   group('memory-controls store', () {
-    test('writes frozen/banned/deleted sections with stable ids, idempotently',
-        () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-memory-controls-store-test-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
-      final store = MemoryControlsStore(memoryDirectory: directory.path);
+    test(
+      'writes frozen/banned/deleted sections with stable ids, idempotently',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'qiyu-memory-controls-store-test-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final store = MemoryControlsStore(memoryDirectory: directory.path);
 
-      expect(await store.ban('前任'), isTrue);
-      expect(await store.freeze('加班'), isTrue);
-      expect(await store.recordDelete('搬家'), isTrue);
-      // 幂等：重复控制不产生重复记录。
-      expect(await store.ban('前任'), isTrue);
+        expect(await store.ban('前任'), isTrue);
+        expect(await store.freeze('加班'), isTrue);
+        expect(await store.recordDelete('搬家'), isTrue);
+        // 幂等：重复控制不产生重复记录。
+        expect(await store.ban('前任'), isTrue);
 
-      final controls = await store.load();
-      expect(controls.readable, isTrue);
-      expect(controls.bannedSummaries, {'前任'});
-      expect(controls.frozenSummaries, {'加班'});
-      expect(controls.deletedSummaries, {'搬家'});
-      expect(controls.blockedSummaries, {'前任', '搬家'});
+        final controls = await store.load();
+        expect(controls.readable, isTrue);
+        expect(controls.bannedSummaries, {'前任'});
+        expect(controls.frozenSummaries, {'加班'});
+        expect(controls.deletedSummaries, {'搬家'});
+        expect(controls.blockedSummaries, {'前任', '搬家'});
 
-      final contents = File(
-        '${directory.path}/memory-controls.md',
-      ).readAsStringSync();
-      expect(contents, contains('# memory-controls'));
-      expect(contents, contains('## frozen'));
-      expect(contents, contains('## banned'));
-      expect(contents, contains('## deleted'));
-      expect(contents, contains('- [MC001] chat | 前任'));
-      expect(contents, contains('- [MC002] chat | 加班'));
-      expect(contents, contains('- [MC003] chat | 搬家'));
+        final contents = File(
+          '${directory.path}/memory-controls.md',
+        ).readAsStringSync();
+        expect(contents, contains('# memory-controls'));
+        expect(contents, contains('## frozen'));
+        expect(contents, contains('## banned'));
+        expect(contents, contains('## deleted'));
+        expect(contents, contains('- [MC001] chat | 前任'));
+        expect(contents, contains('- [MC002] chat | 加班'));
+        expect(contents, contains('- [MC003] chat | 搬家'));
 
-      // 跨重启保持：新实例从文件读回同样的控制。
-      final reopened = MemoryControlsStore(memoryDirectory: directory.path);
-      final reopenedControls = await reopened.load();
-      expect(reopenedControls.bannedSummaries, {'前任'});
-      expect(reopenedControls.frozenSummaries, {'加班'});
-      expect(reopenedControls.deletedSummaries, {'搬家'});
-    });
+        // 跨重启保持：新实例从文件读回同样的控制。
+        final reopened = MemoryControlsStore(memoryDirectory: directory.path);
+        final reopenedControls = await reopened.load();
+        expect(reopenedControls.bannedSummaries, {'前任'});
+        expect(reopenedControls.frozenSummaries, {'加班'});
+        expect(reopenedControls.deletedSummaries, {'搬家'});
+      },
+    );
 
     test('unfreeze and unban remove records; deleted records stay', () async {
       final directory = await Directory.systemTemp.createTemp(
@@ -81,29 +83,31 @@ void main() {
       );
     });
 
-    test('unreadable controls refuse mutations but reads degrade gracefully',
-        () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-memory-controls-unreadable-test-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
-      File('${directory.path}/memory-controls.md').writeAsStringSync(
-        '这是手写内容，不是受管结构。\n',
-      );
-      final store = MemoryControlsStore(memoryDirectory: directory.path);
+    test(
+      'unreadable controls refuse mutations but reads degrade gracefully',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'qiyu-memory-controls-unreadable-test-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        File(
+          '${directory.path}/memory-controls.md',
+        ).writeAsStringSync('这是手写内容，不是受管结构。\n');
+        final store = MemoryControlsStore(memoryDirectory: directory.path);
 
-      final controls = await store.load();
-      expect(controls.readable, isFalse);
-      expect(await store.ban('新禁提'), isFalse);
-      expect(await store.freeze('新冻结'), isFalse);
-      expect(await store.recordDelete('新删除'), isFalse);
-      expect(await store.unfreeze(' anything'), isNull);
-      // 拒绝写入时文件原样保留。
-      expect(
-        File('${directory.path}/memory-controls.md').readAsStringSync(),
-        contains('这是手写内容'),
-      );
-    });
+        final controls = await store.load();
+        expect(controls.readable, isFalse);
+        expect(await store.ban('新禁提'), isFalse);
+        expect(await store.freeze('新冻结'), isFalse);
+        expect(await store.recordDelete('新删除'), isFalse);
+        expect(await store.unfreeze(' anything'), isNull);
+        // 拒绝写入时文件原样保留。
+        expect(
+          File('${directory.path}/memory-controls.md').readAsStringSync(),
+          contains('这是手写内容'),
+        );
+      },
+    );
 
     test('release only removes exact-match records (S3)', () async {
       final directory = await Directory.systemTemp.createTemp(
@@ -131,23 +135,25 @@ void main() {
   });
 
   group('ban persistence', () {
-    test('open-loop ban survives restart and stays in the blocked set',
-        () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-ban-persistence-test-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
-      final store = OpenLoopStore(memoryDirectory: directory.path);
-      expect(await store.banTitle('加班'), isTrue);
+    test(
+      'open-loop ban survives restart and stays in the blocked set',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'qiyu-ban-persistence-test-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final store = OpenLoopStore(memoryDirectory: directory.path);
+        expect(await store.banTitle('加班'), isTrue);
 
-      final reopened = OpenLoopStore(memoryDirectory: directory.path);
-      expect(await reopened.bannedTitles(), {'加班'});
-      expect(await reopened.blockedTitles(), {'加班'});
-      final contents = File(
-        '${directory.path}/memory-controls.md',
-      ).readAsStringSync();
-      expect(contents, contains('- [MC001] open-loop | 加班'));
-    });
+        final reopened = OpenLoopStore(memoryDirectory: directory.path);
+        expect(await reopened.bannedTitles(), {'加班'});
+        expect(await reopened.blockedTitles(), {'加班'});
+        final contents = File(
+          '${directory.path}/memory-controls.md',
+        ).readAsStringSync();
+        expect(contents, contains('- [MC001] open-loop | 加班'));
+      },
+    );
   });
 
   group('forget', () {
@@ -176,10 +182,7 @@ void main() {
         diagnosticsSink: (_) {},
       );
       final service = LocalChatService(
-        MarkdownMemoryRepository(
-          memoryDirectory: directory.path,
-          clock: clock,
-        ),
+        MarkdownMemoryRepository(memoryDirectory: directory.path, clock: clock),
         providerChatClient: provider,
         episodePipeline: pipeline,
         openLoopStore: openLoopStore,
@@ -187,17 +190,11 @@ void main() {
         clock: clock,
       );
 
-      final exchange = await service.send(
-        requestId: 'f-1',
-        text: '我在找工作，别记下来',
-      );
+      final exchange = await service.send(requestId: 'f-1', text: '我在找工作，别记下来');
 
       // 内容条目不落盘，只留审计簿记；没有条目能进提升、索引或画像。
       final day = await pipeline.readDay('2026-08-16');
-      expect(
-        day.entries.map((entry) => entry.summary),
-        ['不记录: 用户正在找新工作'],
-      );
+      expect(day.entries.map((entry) => entry.summary), ['不记录: 用户正在找新工作']);
       expect(day.entries.single.kind, episodeKindOpenLoopEvent);
       expect(
         File('${directory.path}/persona-tree/preferences.md').existsSync(),
@@ -217,10 +214,7 @@ void main() {
 </qiyu-actions>'''),
       ]);
       final service2 = LocalChatService(
-        MarkdownMemoryRepository(
-          memoryDirectory: directory.path,
-          clock: clock,
-        ),
+        MarkdownMemoryRepository(memoryDirectory: directory.path, clock: clock),
         providerChatClient: provider2,
         episodePipeline: pipeline,
         openLoopStore: openLoopStore,
@@ -246,14 +240,16 @@ void main() {
         'qiyu-freeze-injection-test-',
       );
       addTearDown(() => directory.delete(recursive: true));
-      File('${directory.path}/long-memory.md').writeAsStringSync('''# long-memory
+      File('${directory.path}/long-memory.md').writeAsStringSync(
+        '''# long-memory
 
 ## 重要事件
 - 用户去年完成了第一个马拉松
 
 ## 人与关系
 - 用户和朋友每周末爬山
-''');
+''',
+      );
       File('${directory.path}/persona.md').writeAsStringSync('''# persona
 
 ## 偏好与习惯
@@ -310,21 +306,23 @@ void main() {
       expect(await reader.readDailyStateBlock(), contains('爬山'));
     });
 
-    test('an unparseable long-memory is injected verbatim (D3 baseline)',
-        () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-long-memory-baseline-test-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
-      const handwritten = '这是用户手写的一段话，没有受管结构。';
-      File('${directory.path}/long-memory.md').writeAsStringSync(
-        '$handwritten\n',
-      );
-      final reader = StatePackReader(memoryDirectory: directory.path);
+    test(
+      'an unparseable long-memory is injected verbatim (D3 baseline)',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'qiyu-long-memory-baseline-test-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        const handwritten = '这是用户手写的一段话，没有受管结构。';
+        File(
+          '${directory.path}/long-memory.md',
+        ).writeAsStringSync('$handwritten\n');
+        final reader = StatePackReader(memoryDirectory: directory.path);
 
-      // 基线行为（用户裁定 2026-08-18，D3 按基线）：解析失败原样注入。
-      expect(await reader.readLongMemoryBlock(), handwritten);
-    });
+        // 基线行为（用户裁定 2026-08-18，D3 按基线）：解析失败原样注入。
+        expect(await reader.readLongMemoryBlock(), handwritten);
+      },
+    );
 
     test('frozen content is hidden from recall', () async {
       final root = await Directory.systemTemp.createTemp(
@@ -356,9 +354,7 @@ void main() {
         modelClient: _ScriptedModelClient(const []),
         openLoopStore: openLoopStore,
       );
-      await pipeline.synchronizedOnDayFiles(
-        () => recall.indexStore.rebuild(),
-      );
+      await pipeline.synchronizedOnDayFiles(() => recall.indexStore.rebuild());
 
       expect(await openLoopStore.memoryControls.freeze('爬山'), isTrue);
 
@@ -441,26 +437,32 @@ void main() {
         clock: () => now,
       );
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
-      File('${directory.path}/long-memory.md').writeAsStringSync('''# long-memory
+      File('${directory.path}/long-memory.md').writeAsStringSync(
+        '''# long-memory
 
 ## 重要事件
 - 用户去年完成了第一个马拉松
 
 ## 人与关系
 - 用户和朋友每周末爬山
-''');
+''',
+      );
       final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
       expect(await openLoopStore.memoryControls.freeze('爬山'), isTrue);
       final client = _ScriptedDreamClient([
         // 第一稿丢掉冻结条目。
-        ModelCompletion.reply(_candidate([
-          _item('重要事件', '用户去年完成了第一个马拉松', ['2026-08-14']),
-        ])),
+        ModelCompletion.reply(
+          _candidate([
+            _item('重要事件', '用户去年完成了第一个马拉松', ['2026-08-14']),
+          ]),
+        ),
         // 第二稿原样带回冻结条目。
-        ModelCompletion.reply(_candidate([
-          _item('重要事件', '用户去年完成了第一个马拉松', ['2026-08-14']),
-          _item('人与关系', '用户和朋友每周末爬山', ['2026-08-14']),
-        ])),
+        ModelCompletion.reply(
+          _candidate([
+            _item('重要事件', '用户去年完成了第一个马拉松', ['2026-08-14']),
+            _item('人与关系', '用户和朋友每周末爬山', ['2026-08-14']),
+          ]),
+        ),
       ]);
       final dream = DreamService(
         memoryDirectory: directory.path,
@@ -500,9 +502,7 @@ void main() {
         clock: () => now,
       );
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
-      final branchFile = File(
-        '${directory.path}/persona-tree/preferences.md',
-      );
+      final branchFile = File('${directory.path}/persona-tree/preferences.md');
       branchFile.createSync(recursive: true);
       branchFile.writeAsStringSync('''# 偏好习惯
 
@@ -516,16 +516,21 @@ void main() {
       final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
       expect(await openLoopStore.memoryControls.freeze('跑步'), isTrue);
       final client = _ScriptedDreamClient([
-        ModelCompletion.reply(_candidateWithRoots([
-          _item('模式与轨迹', '用户状态平稳', ['2026-08-14']),
-        ], [
-          {
-            'op': 'promote',
-            'branch': 'preferences',
-            'claim': '用户靠跑步解压',
-            'middles': ['PR-M001'],
-          },
-        ])),
+        ModelCompletion.reply(
+          _candidateWithRoots(
+            [
+              _item('模式与轨迹', '用户状态平稳', ['2026-08-14']),
+            ],
+            [
+              {
+                'op': 'promote',
+                'branch': 'preferences',
+                'claim': '用户靠跑步解压',
+                'middles': ['PR-M001'],
+              },
+            ],
+          ),
+        ),
       ]);
       final tree = PersonaTreeStore(
         memoryDirectory: directory.path,
@@ -591,7 +596,8 @@ void main() {
   proactive: yes
   status: active
 ''');
-      File('${directory.path}/relationship.md').writeAsStringSync('''# relationship
+      File('${directory.path}/relationship.md').writeAsStringSync(
+        '''# relationship
 
 stage: 熟悉
 since: 2026-08-01
@@ -599,12 +605,15 @@ since: 2026-08-01
 ## 近期变化
 - 2026-08-10 用户提到前任
 - 2026-08-12 用户聊了工作
-''');
-      File('${directory.path}/daily-state.md').writeAsStringSync('''# daily-state
+''',
+      );
+      File('${directory.path}/daily-state.md').writeAsStringSync(
+        '''# daily-state
 
 - 用户最近常提到前任
 - 用户睡眠平稳
-''');
+''',
+      );
       final client = _ScriptedModelClient([
         ModelCompletion.reply('{"summary":"用户聊了工作"}'),
       ]);
@@ -643,9 +652,7 @@ since: 2026-08-01
         clock: () => now,
       );
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
-      final branchFile = File(
-        '${directory.path}/persona-tree/preferences.md',
-      );
+      final branchFile = File('${directory.path}/persona-tree/preferences.md');
       branchFile.createSync(recursive: true);
       branchFile.writeAsStringSync('''# 偏好习惯
 
@@ -658,9 +665,11 @@ since: 2026-08-01
       final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
       expect(await openLoopStore.memoryControls.freeze('跑步'), isTrue);
       final client = _ScriptedDreamClient([
-        ModelCompletion.reply(_candidate([
-          _item('模式与轨迹', '用户靠跑步解压', ['2026-08-14']),
-        ])),
+        ModelCompletion.reply(
+          _candidate([
+            _item('模式与轨迹', '用户靠跑步解压', ['2026-08-14']),
+          ]),
+        ),
       ]);
       final dream = DreamService(
         memoryDirectory: directory.path,
@@ -689,110 +698,119 @@ since: 2026-08-01
       expect(promptText, contains('跑步'));
     });
 
-    test('freezing and banning the same target does not deadlock dream (M2)',
-        () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-freeze-ban-overlap-dream-test-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
-      var now = DateTime(2026, 8, 15, 23, 10);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
-        clock: () => now,
-      );
-      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
-      File('${directory.path}/long-memory.md').writeAsStringSync('''# long-memory
+    test(
+      'freezing and banning the same target does not deadlock dream (M2)',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'qiyu-freeze-ban-overlap-dream-test-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        var now = DateTime(2026, 8, 15, 23, 10);
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: directory.path,
+          clock: () => now,
+        );
+        await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
+        File('${directory.path}/long-memory.md').writeAsStringSync(
+          '''# long-memory
 
 ## 重要事件
 - 用户去年完成了第一个马拉松
 
 ## 人与关系
 - 用户和朋友每周末爬山
-''');
-      final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
-      // 同一事项先冻结后禁提：禁提胜出（最保守），冻结保留关不得再
-      // 强制带回该条目，否则每一稿都被拒，Dream 永久卡死。
-      expect(await openLoopStore.memoryControls.freeze('爬山'), isTrue);
-      expect(await openLoopStore.memoryControls.ban('爬山'), isTrue);
-      final client = _ScriptedDreamClient([
-        ModelCompletion.reply(_candidate([
-          _item('重要事件', '用户去年完成了第一个马拉松', ['2026-08-14']),
-        ])),
-      ]);
-      final dream = DreamService(
-        memoryDirectory: directory.path,
-        episodePipeline: pipeline,
-        openLoopStore: openLoopStore,
-        modelClient: client,
-        clock: () => now,
-        diagnosticsSink: (_) {},
-      );
+''',
+        );
+        final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
+        // 同一事项先冻结后禁提：禁提胜出（最保守），冻结保留关不得再
+        // 强制带回该条目，否则每一稿都被拒，Dream 永久卡死。
+        expect(await openLoopStore.memoryControls.freeze('爬山'), isTrue);
+        expect(await openLoopStore.memoryControls.ban('爬山'), isTrue);
+        final client = _ScriptedDreamClient([
+          ModelCompletion.reply(
+            _candidate([
+              _item('重要事件', '用户去年完成了第一个马拉松', ['2026-08-14']),
+            ]),
+          ),
+        ]);
+        final dream = DreamService(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+          openLoopStore: openLoopStore,
+          modelClient: client,
+          clock: () => now,
+          diagnosticsSink: (_) {},
+        );
 
-      final outcome = await dream.run(bedtime: true);
-      expect(outcome.status, DreamStatus.accepted);
-      final longMemory = File(
-        '${directory.path}/long-memory.md',
-      ).readAsStringSync();
-      expect(longMemory, contains('- 用户去年完成了第一个马拉松'));
-      expect(longMemory, isNot(contains('爬山')));
-      // 两条控制记录都在：禁提与冻结各自独立可查。
-      final controls = await openLoopStore.memoryControls.load();
-      expect(controls.bannedSummaries, contains('爬山'));
-      expect(controls.frozenSummaries, contains('爬山'));
-    });
+        final outcome = await dream.run(bedtime: true);
+        expect(outcome.status, DreamStatus.accepted);
+        final longMemory = File(
+          '${directory.path}/long-memory.md',
+        ).readAsStringSync();
+        expect(longMemory, contains('- 用户去年完成了第一个马拉松'));
+        expect(longMemory, isNot(contains('爬山')));
+        // 两条控制记录都在：禁提与冻结各自独立可查。
+        final controls = await openLoopStore.memoryControls.load();
+        expect(controls.bannedSummaries, contains('爬山'));
+        expect(controls.frozenSummaries, contains('爬山'));
+      },
+    );
   });
 
   group('delete', () {
-    test('writes the control record first, then purges every derived layer',
-        () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-delete-purge-test-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
-      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
-        clock: clock,
-      );
-      // 七月的一天：稍后进入月摘要。
-      await pipeline.synchronizedOnDayFiles(
-        () => pipeline.writeFinalization(
-          '2026-07-05',
-          entries: [
-            EpisodeEntry(
-              id: 'seed:july:0',
-              sessionId: 'seed',
-              requestId: 'seed',
-              summary: '用户在青岛工作',
-              at: DateTime(2026, 7, 5, 21).toUtc(),
-            ),
-          ],
-          summary: '用户在青岛工作',
-          finalized: true,
-          finalizedAt: DateTime(2026, 7, 5, 23).toUtc(),
-        ),
-      );
-      final monthlySummary = MonthlySummaryStore(
-        memoryDirectory: directory.path,
-        episodePipeline: pipeline,
-        diagnosticsSink: (_) {},
-      );
-      await monthlySummary.compressMonth('2026-07');
-      expect(
-        File('${directory.path}/episodes/2026/07/summary.md')
-            .readAsStringSync(),
-        contains('用户在青岛工作'),
-      );
+    test(
+      'writes the control record first, then purges every derived layer',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'qiyu-delete-purge-test-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: directory.path,
+          clock: clock,
+        );
+        // 七月的一天：稍后进入月摘要。
+        await pipeline.synchronizedOnDayFiles(
+          () => pipeline.writeFinalization(
+            '2026-07-05',
+            entries: [
+              EpisodeEntry(
+                id: 'seed:july:0',
+                sessionId: 'seed',
+                requestId: 'seed',
+                summary: '用户在青岛工作',
+                at: DateTime(2026, 7, 5, 21).toUtc(),
+              ),
+            ],
+            summary: '用户在青岛工作',
+            finalized: true,
+            finalizedAt: DateTime(2026, 7, 5, 23).toUtc(),
+          ),
+        );
+        final monthlySummary = MonthlySummaryStore(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+          diagnosticsSink: (_) {},
+        );
+        await monthlySummary.compressMonth('2026-07');
+        expect(
+          File(
+            '${directory.path}/episodes/2026/07/summary.md',
+          ).readAsStringSync(),
+          contains('用户在青岛工作'),
+        );
 
-      final memoryControls = MemoryControlsStore(
-        memoryDirectory: directory.path,
-      );
-      final store = OpenLoopStore(
-        memoryDirectory: directory.path,
-        memoryControls: memoryControls,
-      );
-      // 关系证据：受管结构里带一条命中目标的近期变化。
-      File('${directory.path}/relationship.md').writeAsStringSync('''# relationship
+        final memoryControls = MemoryControlsStore(
+          memoryDirectory: directory.path,
+        );
+        final store = OpenLoopStore(
+          memoryDirectory: directory.path,
+          memoryControls: memoryControls,
+        );
+        // 关系证据：受管结构里带一条命中目标的近期变化。
+        File('${directory.path}/relationship.md').writeAsStringSync(
+          '''# relationship
 
 stage: 熟悉
 since: 2026-08-01
@@ -800,9 +818,11 @@ since: 2026-08-01
 
 ## 近期变化
 - 2026-08-10 用户提到在青岛工作
-''');
-      // 未闭环事项与长期印象各放一条命中内容。
-      File('${directory.path}/open-loops.md').writeAsStringSync('''# open-loops
+''',
+        );
+        // 未闭环事项与长期印象各放一条命中内容。
+        File('${directory.path}/open-loops.md').writeAsStringSync(
+          '''# open-loops
 
 - [o1] 青岛旅行计划
   proactive: yes
@@ -810,163 +830,170 @@ since: 2026-08-01
 - [o2] 买牛奶
   proactive: yes
   status: active
-''');
-      File('${directory.path}/long-memory.md').writeAsStringSync('''# long-memory
+''',
+        );
+        File('${directory.path}/long-memory.md').writeAsStringSync(
+          '''# long-memory
 
 ## 人与关系
 - 用户在青岛工作
 - 用户喜欢喝热牛奶
-''');
-      final personaTree = PersonaTreeStore(
-        memoryDirectory: directory.path,
-        episodePipeline: pipeline,
-        openLoopStore: store,
-        diagnosticsSink: (_) {},
-      );
-      await personaTree.createLeaves([
-        EpisodeEntry(
-          id: 'seed:persona:0',
-          sessionId: 'seed',
-          requestId: 'seed',
-          summary: '用户在青岛工作',
-          at: DateTime(2026, 8, 12, 21).toUtc(),
-          personaBranch: 'identity',
-          personaNature: 'self_report',
-        ),
-      ]);
+''',
+        );
+        final personaTree = PersonaTreeStore(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+          openLoopStore: store,
+          diagnosticsSink: (_) {},
+        );
+        await personaTree.createLeaves([
+          EpisodeEntry(
+            id: 'seed:persona:0',
+            sessionId: 'seed',
+            requestId: 'seed',
+            summary: '用户在青岛工作',
+            at: DateTime(2026, 8, 12, 21).toUtc(),
+            personaBranch: 'identity',
+            personaNature: 'self_report',
+          ),
+        ]);
+        final relationshipLifecycle = RelationshipLifecycle(
+          memoryDirectory: directory.path,
+        );
+        final memoryActions = MemoryActionService(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+          personaTree: personaTree,
+          memoryControls: memoryControls,
+          openLoopStore: store,
+          monthlySummary: monthlySummary,
+          relationshipLifecycle: relationshipLifecycle,
+          diagnosticsSink: (_) {},
+        );
 
-      final provider = _SequencedProviderChatClient([
-        const ModelCompletion.reply('''好，都清掉。
+        final provider = _SequencedProviderChatClient([
+          const ModelCompletion.reply('''好，都清掉。
 <qiyu-actions>
 [{"action":"memory_delete","summary":"青岛"}]
 </qiyu-actions>'''),
-      ]);
-      final service = LocalChatService(
-        MarkdownMemoryRepository(
+        ]);
+        final service = LocalChatService(
+          MarkdownMemoryRepository(
+            memoryDirectory: directory.path,
+            clock: clock,
+          ),
+          providerChatClient: provider,
+          episodePipeline: pipeline,
+          openLoopStore: store,
+          personaTree: personaTree,
+          monthlySummary: monthlySummary,
+          memoryControls: memoryControls,
+          relationshipLifecycle: relationshipLifecycle,
+          memoryActions: memoryActions,
+          clock: clock,
+        );
+
+        final exchange = await service.send(requestId: 'd-1', text: '把青岛的事都删了');
+        await service.finalizePending();
+
+        // 1. 控制记录先落盘：deleted 区留下抽象防复活范围。
+        final controlsContents = File(
+          '${directory.path}/memory-controls.md',
+        ).readAsStringSync();
+        expect(controlsContents, contains('## deleted'));
+        expect(controlsContents, contains('- [MC001] chat | 青岛'));
+
+        // 2. episodes 清除目标条目，其他条目与簿记留痕保留。
+        final july = await pipeline.readDay('2026-07-05');
+        expect(july.entries, isEmpty);
+        expect(july.summary, isNull);
+
+        // 3. 索引重建后不再含受控关键词。
+        final topIndex = await EpisodeIndexStore(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+        ).readTopIndex();
+        expect(
+          topIndex == null ||
+              topIndex.every((line) => !line.keywords.join().contains('青岛')),
+          isTrue,
+        );
+
+        // 4. 长期印象只删命中条目。
+        final longMemory = File(
+          '${directory.path}/long-memory.md',
+        ).readAsStringSync();
+        expect(longMemory, isNot(contains('青岛')));
+        expect(longMemory, contains('用户喜欢喝热牛奶'));
+
+        // 5. PersonaTree 节点清除。
+        final snapshot = await personaTree.readSnapshot();
+        final identity = snapshot.branches['identity']!;
+        expect(identity.roots, isEmpty);
+        expect(identity.unrooted, isEmpty);
+
+        // 6. 月摘要条目清除。
+        final monthSummary = File(
+          '${directory.path}/episodes/2026/07/summary.md',
+        ).readAsStringSync();
+        expect(monthSummary, isNot(contains('青岛')));
+
+        // 7. 关系证据行清除，结构保留。
+        final relationship = File(
+          '${directory.path}/relationship.md',
+        ).readAsStringSync();
+        expect(relationship, isNot(contains('青岛')));
+        expect(relationship, contains('stage: 熟悉'));
+
+        // 8. 未闭环事项清除命中条目。
+        final loops = File(
+          '${directory.path}/open-loops.md',
+        ).readAsStringSync();
+        expect(loops, isNot(contains('青岛旅行计划')));
+        expect(loops, contains('买牛奶'));
+
+        // 9. sessions 保留：用户轮次仍在。
+        final session = await MarkdownMemoryRepository(
           memoryDirectory: directory.path,
           clock: clock,
-        ),
-        providerChatClient: provider,
-        episodePipeline: pipeline,
-        openLoopStore: store,
-        personaTree: personaTree,
-        monthlySummary: monthlySummary,
-        memoryControls: memoryControls,
-        relationshipLifecycle: RelationshipLifecycle(
-          memoryDirectory: directory.path,
-        ),
-        clock: clock,
-      );
+        ).openSession(sessionId: exchange.session.id);
+        expect(session.turns, isNotEmpty);
+        expect(session.turns.map((turn) => turn.text), contains('把青岛的事都删了'));
 
-      final exchange = await service.send(
-        requestId: 'd-1',
-        text: '把青岛的事都删了',
-      );
-      await service.finalizePending();
-
-      // 1. 控制记录先落盘：deleted 区留下抽象防复活范围。
-      final controlsContents = File(
-        '${directory.path}/memory-controls.md',
-      ).readAsStringSync();
-      expect(controlsContents, contains('## deleted'));
-      expect(controlsContents, contains('- [MC001] chat | 青岛'));
-
-      // 2. episodes 清除目标条目，其他条目与簿记留痕保留。
-      final july = await pipeline.readDay('2026-07-05');
-      expect(july.entries, isEmpty);
-      expect(july.summary, isNull);
-
-      // 3. 索引重建后不再含受控关键词。
-      final topIndex = await EpisodeIndexStore(
-        memoryDirectory: directory.path,
-        episodePipeline: pipeline,
-      ).readTopIndex();
-      expect(
-        topIndex == null ||
-            topIndex.every(
-              (line) => !line.keywords.join().contains('青岛'),
-            ),
-        isTrue,
-      );
-
-      // 4. 长期印象只删命中条目。
-      final longMemory = File(
-        '${directory.path}/long-memory.md',
-      ).readAsStringSync();
-      expect(longMemory, isNot(contains('青岛')));
-      expect(longMemory, contains('用户喜欢喝热牛奶'));
-
-      // 5. PersonaTree 节点清除。
-      final snapshot = await personaTree.readSnapshot();
-      final identity = snapshot.branches['identity']!;
-      expect(identity.roots, isEmpty);
-      expect(identity.unrooted, isEmpty);
-
-      // 6. 月摘要条目清除。
-      final monthSummary = File(
-        '${directory.path}/episodes/2026/07/summary.md',
-      ).readAsStringSync();
-      expect(monthSummary, isNot(contains('青岛')));
-
-      // 7. 关系证据行清除，结构保留。
-      final relationship = File(
-        '${directory.path}/relationship.md',
-      ).readAsStringSync();
-      expect(relationship, isNot(contains('青岛')));
-      expect(relationship, contains('stage: 熟悉'));
-
-      // 8. 未闭环事项清除命中条目。
-      final loops = File(
-        '${directory.path}/open-loops.md',
-      ).readAsStringSync();
-      expect(loops, isNot(contains('青岛旅行计划')));
-      expect(loops, contains('买牛奶'));
-
-      // 9. sessions 保留：用户轮次仍在。
-      final session = await MarkdownMemoryRepository(
-        memoryDirectory: directory.path,
-        clock: clock,
-      ).openSession(sessionId: exchange.session.id);
-      expect(session.turns, isNotEmpty);
-      expect(
-        session.turns.map((turn) => turn.text),
-        contains('把青岛的事都删了'),
-      );
-
-      // 重复执行安全：再次删除没有新控制记录、不再扩大范围。
-      final again = _SequencedProviderChatClient([
-        const ModelCompletion.reply('''已经删过了。
+        // 重复执行安全：再次删除没有新控制记录、不再扩大范围。
+        final again = _SequencedProviderChatClient([
+          const ModelCompletion.reply('''已经删过了。
 <qiyu-actions>
 [{"action":"memory_delete","summary":"青岛"}]
 </qiyu-actions>'''),
-      ]);
-      final serviceAgain = LocalChatService(
-        MarkdownMemoryRepository(
-          memoryDirectory: directory.path,
+        ]);
+        final serviceAgain = LocalChatService(
+          MarkdownMemoryRepository(
+            memoryDirectory: directory.path,
+            clock: clock,
+          ),
+          providerChatClient: again,
+          episodePipeline: pipeline,
+          openLoopStore: store,
+          personaTree: personaTree,
+          monthlySummary: monthlySummary,
+          memoryControls: memoryControls,
+          relationshipLifecycle: relationshipLifecycle,
+          memoryActions: memoryActions,
           clock: clock,
-        ),
-        providerChatClient: again,
-        episodePipeline: pipeline,
-        openLoopStore: store,
-        personaTree: personaTree,
-        monthlySummary: monthlySummary,
-        memoryControls: memoryControls,
-        relationshipLifecycle: RelationshipLifecycle(
-          memoryDirectory: directory.path,
-        ),
-        clock: clock,
-      );
-      await serviceAgain.send(
-        requestId: 'd-2',
-        text: '再删一次青岛',
-        sessionId: exchange.session.id,
-      );
-      await serviceAgain.finalizePending();
-      final controlsAfter = File(
-        '${directory.path}/memory-controls.md',
-      ).readAsStringSync();
-      expect('- [MC'.allMatches(controlsAfter).length, 1);
-    });
+        );
+        await serviceAgain.send(
+          requestId: 'd-2',
+          text: '再删一次青岛',
+          sessionId: exchange.session.id,
+        );
+        await serviceAgain.finalizePending();
+        final controlsAfter = File(
+          '${directory.path}/memory-controls.md',
+        ).readAsStringSync();
+        expect('- [MC'.allMatches(controlsAfter).length, 1);
+      },
+    );
 
     test('delete filters day understanding metadata before index rebuild '
         '(M1)', () async {
@@ -1025,14 +1052,17 @@ since: 2026-08-01
 </qiyu-actions>'''),
       ]);
       final service = LocalChatService(
-        MarkdownMemoryRepository(
-          memoryDirectory: directory.path,
-          clock: clock,
-        ),
+        MarkdownMemoryRepository(memoryDirectory: directory.path, clock: clock),
         providerChatClient: provider,
         episodePipeline: pipeline,
         openLoopStore: store,
         memoryControls: memoryControls,
+        memoryActions: _chatMemoryActions(
+          memoryDirectory: directory.path,
+          pipeline: pipeline,
+          memoryControls: memoryControls,
+          openLoopStore: store,
+        ),
         clock: clock,
       );
 
@@ -1041,10 +1071,7 @@ since: 2026-08-01
 
       // 条目层：命中条目清除，其余保留。
       final day = await pipeline.readDay('2026-08-05');
-      expect(
-        day.entries.map((entry) => entry.summary),
-        ['用户喜欢喝热牛奶'],
-      );
+      expect(day.entries.map((entry) => entry.summary), ['用户喜欢喝热牛奶']);
       // 理解元数据同范围过滤：受控摘要置空、受控关键词移除。
       final understanding = day.understanding!;
       expect(understanding['summary'], isNull);
@@ -1056,55 +1083,64 @@ since: 2026-08-01
       ).readTopIndex();
       expect(topIndex, isNotNull);
       expect(
-        topIndex!.every(
-          (line) => !line.keywords.join().contains('青岛'),
-        ),
+        topIndex!.every((line) => !line.keywords.join().contains('青岛')),
         isTrue,
       );
     });
 
-    test('delete without any locatable target writes no control record',
-        () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-delete-no-target-test-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
-      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
-        clock: clock,
-      );
-      final provider = _SequencedProviderChatClient([
-        const ModelCompletion.reply('''我一时找不到这个内容，你说的是哪件事？
+    test(
+      'delete without any locatable target writes no control record',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'qiyu-delete-no-target-test-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: directory.path,
+          clock: clock,
+        );
+        final provider = _SequencedProviderChatClient([
+          const ModelCompletion.reply('''我一时找不到这个内容，你说的是哪件事？
 <qiyu-actions>
 [{"action":"memory_delete","summary":"从未提过的事"}]
 </qiyu-actions>'''),
-      ]);
-      final memoryControls = MemoryControlsStore(memoryDirectory: directory.path);
-      final service = LocalChatService(
-        MarkdownMemoryRepository(
+        ]);
+        final memoryControls = MemoryControlsStore(
           memoryDirectory: directory.path,
-          clock: clock,
-        ),
-        providerChatClient: provider,
-        episodePipeline: pipeline,
-        openLoopStore: OpenLoopStore(
+        );
+        final store = OpenLoopStore(
           memoryDirectory: directory.path,
           memoryControls: memoryControls,
-        ),
-        memoryControls: memoryControls,
-        clock: clock,
-      );
+        );
+        final service = LocalChatService(
+          MarkdownMemoryRepository(
+            memoryDirectory: directory.path,
+            clock: clock,
+          ),
+          providerChatClient: provider,
+          episodePipeline: pipeline,
+          openLoopStore: store,
+          memoryControls: memoryControls,
+          memoryActions: _chatMemoryActions(
+            memoryDirectory: directory.path,
+            pipeline: pipeline,
+            memoryControls: memoryControls,
+            openLoopStore: store,
+          ),
+          clock: clock,
+        );
 
-      await service.send(requestId: 'd-0', text: '删掉那个');
-      await service.finalizePending();
+        await service.send(requestId: 'd-0', text: '删掉那个');
+        await service.finalizePending();
 
-      // 没有可定位对象：不落控制记录，不产生宽泛封禁。
-      final file = File('${directory.path}/memory-controls.md');
-      if (file.existsSync()) {
-        expect(file.readAsStringSync(), isNot(contains('从未提过的事')));
-      }
-    });
+        // 没有可定位对象：不落控制记录，不产生宽泛封禁。
+        final file = File('${directory.path}/memory-controls.md');
+        if (file.existsSync()) {
+          expect(file.readAsStringSync(), isNot(contains('从未提过的事')));
+        }
+      },
+    );
 
     test('a deleted scope blocks dream drafts like a ban', () async {
       final directory = await Directory.systemTemp.createTemp(
@@ -1118,14 +1154,13 @@ since: 2026-08-01
       );
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
       final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
-      expect(
-        await openLoopStore.memoryControls.recordDelete('搬家'),
-        isTrue,
-      );
+      expect(await openLoopStore.memoryControls.recordDelete('搬家'), isTrue);
       final client = _ScriptedDreamClient([
-        ModelCompletion.reply(_candidate([
-          _item('重要事件', '用户搬家了', ['2026-08-14']),
-        ])),
+        ModelCompletion.reply(
+          _candidate([
+            _item('重要事件', '用户搬家了', ['2026-08-14']),
+          ]),
+        ),
       ]);
       final dream = DreamService(
         memoryDirectory: directory.path,
@@ -1139,10 +1174,7 @@ since: 2026-08-01
       final outcome = await dream.run(bedtime: true);
       expect(outcome.status, DreamStatus.validationFailed);
       expect(outcome.detail, 'banned');
-      expect(
-        File('${directory.path}/long-memory.md').existsSync(),
-        isFalse,
-      );
+      expect(File('${directory.path}/long-memory.md').existsSync(), isFalse);
     });
   });
 
@@ -1236,6 +1268,36 @@ Map<String, Object?> _item(
   List<String> evidence,
 ) => {'section': section, 'text': text, 'evidence': evidence};
 
+/// 聊天删除路径用的 MemoryActionService 测试构造：多个用例共用同一
+/// 组装，避免漂移。PersonaTreeStore 必须注入 openLoopStore（applyBan
+/// 经它读取控制集合）。
+MemoryActionService _chatMemoryActions({
+  required String memoryDirectory,
+  required EpisodeMemoryPipeline pipeline,
+  required MemoryControlsStore memoryControls,
+  required OpenLoopStore openLoopStore,
+}) => MemoryActionService(
+  memoryDirectory: memoryDirectory,
+  episodePipeline: pipeline,
+  personaTree: PersonaTreeStore(
+    memoryDirectory: memoryDirectory,
+    episodePipeline: pipeline,
+    openLoopStore: openLoopStore,
+    diagnosticsSink: (_) {},
+  ),
+  memoryControls: memoryControls,
+  openLoopStore: openLoopStore,
+  monthlySummary: MonthlySummaryStore(
+    memoryDirectory: memoryDirectory,
+    episodePipeline: pipeline,
+    diagnosticsSink: (_) {},
+  ),
+  relationshipLifecycle: RelationshipLifecycle(
+    memoryDirectory: memoryDirectory,
+  ),
+  diagnosticsSink: (_) {},
+);
+
 final class _SequencedProviderChatClient
     implements StreamingProviderChatClient {
   _SequencedProviderChatClient(this.completions);
@@ -1249,9 +1311,10 @@ final class _SequencedProviderChatClient
     List<ModelMessage> messages,
   ) async {
     this.messages = messages;
-    final completion = completions[
-      calls < completions.length ? calls : completions.length - 1
-    ];
+    final completion =
+        completions[calls < completions.length
+            ? calls
+            : completions.length - 1];
     calls += 1;
     return switch (completion) {
       ModelCompletion(:final text?) => Stream.fromIterable([
@@ -1295,9 +1358,10 @@ final class _ScriptedDreamClient implements ProviderChatClient {
     if (completions.isEmpty) {
       return null;
     }
-    final completion = completions[
-      _index < completions.length ? _index : completions.length - 1
-    ];
+    final completion =
+        completions[_index < completions.length
+            ? _index
+            : completions.length - 1];
     _index += 1;
     return completion;
   }

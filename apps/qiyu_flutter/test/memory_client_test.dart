@@ -121,6 +121,115 @@ void main() {
       ),
     );
   });
+
+  test(
+    'actions post to the unified endpoint with CSRF and tri-state results',
+    () async {
+      final requests = <http.Request>[];
+      final client = MockClient((request) async {
+        requests.add(request);
+        if (request.url.path == '/api/bootstrap') {
+          return _jsonResponse({
+            'csrfToken': 'csrf-1',
+            'session': 'active',
+          }, 200);
+        }
+        if (request.url.path == '/api/memory/action') {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          return switch (body['action']) {
+            'freeze' => _jsonResponse({
+              'status': 'success',
+              'message': '已暂停使用这条记忆。',
+            }, 200),
+            'delete-preview' =>
+              body['id'] == 'gone'
+                  ? _jsonResponse({
+                      'code': 'memory_item_not_found',
+                      'message': '这条记忆不存在或已经变化，请返回后刷新。',
+                    }, 404)
+                  : _jsonResponse({
+                      'lines': ['将删除这条记忆：用户在青岛工作', '原始对话记录保留。'],
+                      'sessionsKept': true,
+                    }, 200),
+            'delete' => _jsonResponse({
+              'status': 'partial',
+              'message': '删除已生效。',
+              'deferred': ['画像的清理'],
+            }, 200),
+            'reveal' => _jsonResponse({
+              'status': 'success',
+              'message': '仅本次展示。',
+              'text': '用户的手机号是13812345678',
+            }, 200),
+            _ => http.Response('not found', 404),
+          };
+        }
+        return http.Response('not found', 404);
+      });
+      final gateway = HttpMemoryGateway(
+        client: client,
+        baseUri: Uri.parse('http://127.0.0.1:5173/'),
+      );
+
+      final frozen = await gateway.freezeItem('item-1');
+      expect(frozen.status, MemoryActionStatus.success);
+
+      final preview = await gateway.previewDelete('item-1');
+      expect(preview, isNotNull);
+      expect(preview!.lines, hasLength(2));
+      expect(preview.sessionsKept, isTrue);
+      expect(await gateway.previewDelete('gone'), isNull);
+
+      final deleted = await gateway.deleteItem('item-1');
+      expect(deleted.status, MemoryActionStatus.partial);
+      expect(deleted.deferred, ['画像的清理']);
+
+      final revealed = await gateway.revealItem('item-1');
+      expect(revealed.text, '用户的手机号是13812345678');
+
+      // 全部写动作走统一动作端点并携带 CSRF。
+      for (final request in requests.where((r) => r.method == 'POST')) {
+        expect(request.url.path, '/api/memory/action');
+        expect(request.headers['x-qiyu-csrf'], 'csrf-1');
+      }
+      // 读取仍然是 GET。
+      expect(
+        requests
+            .where((r) => r.method == 'GET')
+            .every((r) => r.url.path != '/api/memory/action'),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'error responses without a status field are never read as success',
+    () async {
+      final client = MockClient((request) async {
+        if (request.url.path == '/api/bootstrap') {
+          return _jsonResponse({
+            'csrfToken': 'csrf-1',
+            'session': 'active',
+          }, 200);
+        }
+        // Host 的 4xx 错误体只有 code/message，没有 status 字段。
+        return _jsonResponse({
+          'code': 'memory_action_not_allowed',
+          'message': '关系状态记录不支持这项操作。',
+          'retryable': false,
+        }, 400);
+      });
+      final gateway = HttpMemoryGateway(
+        client: client,
+        baseUri: Uri.parse('http://127.0.0.1:5173/'),
+      );
+
+      final result = await gateway.freezeItem('rel-1');
+      expect(result.status, MemoryActionStatus.failed);
+      expect(result.message, '关系状态记录不支持这项操作。');
+      expect(result.retryable, isFalse);
+    },
+  );
 }
 
 http.Response _jsonResponse(Object body, int statusCode) => http.Response(
@@ -160,7 +269,7 @@ Map<String, Object?> _overviewJson() => {
       {
         'section': '人与关系',
         'items': [
-          {'content': '用户和家人关系亲近', 'masked': false},
+          {'id': 'lt-1', 'content': '用户和家人关系亲近', 'masked': false},
         ],
       },
     ],
@@ -200,14 +309,14 @@ Map<String, Object?> _overviewJson() => {
     'stage': '熟悉',
     'since': '2026-08-01',
     'confirmed': [
-      {'content': '可以自然提起说过的事', 'masked': false},
+      {'id': 'rel-1', 'content': '可以自然提起说过的事', 'masked': false},
     ],
     'probes': <Object?>[],
     'recentChanges': [
-      {'content': '聊得比平时深一些', 'masked': false},
+      {'id': 'rel-2', 'content': '聊得比平时深一些', 'masked': false},
     ],
     'sharedPast': [
-      {'content': '一起聊到过深夜', 'masked': false},
+      {'id': 'lt-2', 'content': '一起聊到过深夜', 'masked': false},
     ],
   },
 };
@@ -240,8 +349,18 @@ Map<String, Object?> _markedOverviewJson() => {
       {
         'section': '人与关系',
         'items': [
-          {'content': '冻结的印象', 'masked': false, 'control': 'frozen'},
-          {'content': '禁提的印象', 'masked': false, 'control': 'banned'},
+          {
+            'id': 'lt-frozen',
+            'content': '冻结的印象',
+            'masked': false,
+            'control': 'frozen',
+          },
+          {
+            'id': 'lt-banned',
+            'content': '禁提的印象',
+            'masked': false,
+            'control': 'banned',
+          },
         ],
       },
     ],

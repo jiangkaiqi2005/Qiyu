@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
@@ -74,15 +74,9 @@ void main() {
     final today = overview.recent.days.first;
     expect(today.date, '2026-08-17');
     expect(today.finalized, isFalse);
-    expect(
-      today.entries.map((entry) => entry.content),
-      contains('用户说这周在准备演讲'),
-    );
+    expect(today.entries.map((entry) => entry.content), contains('用户说这周在准备演讲'));
     // 关系证据条目以用户语言呈现。
-    expect(
-      today.entries.map((entry) => entry.kind),
-      contains('relationship'),
-    );
+    expect(today.entries.map((entry) => entry.kind), contains('relationship'));
     final yesterday = overview.recent.days.last;
     expect(yesterday.date, '2026-08-16');
     expect(yesterday.finalized, isTrue);
@@ -98,18 +92,17 @@ void main() {
     expect(overview.longTerm.present, isTrue);
     expect(overview.longTerm.readable, isTrue);
     expect(overview.longTerm.organizedAt, isNotNull);
-    expect(
-      overview.longTerm.groups.map((group) => group.section),
-      ['人与关系', '重要事件', '模式与轨迹'],
-    );
-    expect(
-      overview.longTerm.groups.first.items.single.content,
-      '用户和家人关系亲近',
-    );
+    expect(overview.longTerm.groups.map((group) => group.section), [
+      '人与关系',
+      '重要事件',
+      '模式与轨迹',
+    ]);
+    expect(overview.longTerm.groups.first.items.single.content, '用户和家人关系亲近');
 
     // 关于你：根主张与未归根中间理解，不暴露内部术语作为导航。
-    final expression = overview.persona.branches
-        .singleWhere((branch) => branch.wire == 'expression');
+    final expression = overview.persona.branches.singleWhere(
+      (branch) => branch.wire == 'expression',
+    );
     expect(expression.roots, hasLength(1));
     final root = expression.roots.single;
     expect(root.claim, '用户尴尬时倾向自嘲');
@@ -117,8 +110,9 @@ void main() {
     expect(root.leafCount, 2);
     expect(root.earliestEvidence, '2026-07-10');
     expect(root.latestEvidence, '2026-07-16');
-    final identity = overview.persona.branches
-        .singleWhere((branch) => branch.wire == 'identity');
+    final identity = overview.persona.branches.singleWhere(
+      (branch) => branch.wire == 'identity',
+    );
     expect(identity.unrooted, hasLength(1));
     expect(identity.unrooted.single.type, '待稳定事实');
     expect(identity.unrooted.single.claim, '用户是中学老师');
@@ -127,18 +121,9 @@ void main() {
     expect(overview.relationship.present, isTrue);
     expect(overview.relationship.stage, '熟悉');
     expect(overview.relationship.since, '2026-08-01');
-    expect(
-      overview.relationship.confirmed.single.content,
-      '可以自然提起说过的事',
-    );
-    expect(
-      overview.relationship.recentChanges.single.content,
-      '聊得比平时深一些',
-    );
-    expect(
-      overview.relationship.sharedPast.single.content,
-      '一起聊到过深夜',
-    );
+    expect(overview.relationship.confirmed.single.content, '可以自然提起说过的事');
+    expect(overview.relationship.recentChanges.single.content, '聊得比平时深一些');
+    expect(overview.relationship.sharedPast.single.content, '一起聊到过深夜');
   });
 
   test('evidence drills layer by layer down to the episode entry', () async {
@@ -165,10 +150,7 @@ void main() {
     expect(middle.reviewedOn, isNotEmpty);
     expect(middle.leaves, hasLength(2));
     // 置信维度：来源性质逐叶可见。
-    expect(
-      middle.leaves.map((leaf) => leaf.nature),
-      everyElement('行为观察'),
-    );
+    expect(middle.leaves.map((leaf) => leaf.nature), everyElement('行为观察'));
 
     // 叶 → 当日记录 → 条目详情（含原话摘录与会话入口）。
     final dayDetail = await service.itemDetail(middle.leaves.first.dayId);
@@ -199,9 +181,9 @@ void main() {
         ),
       ],
     });
-    File(path.join(memoryDirectory, 'long-memory.md')).writeAsStringSync(
-      '# long-memory\n\n## 人与关系\n- 用户的邮箱是user@example.com\n',
-    );
+    File(
+      path.join(memoryDirectory, 'long-memory.md'),
+    ).writeAsStringSync('# long-memory\n\n## 人与关系\n- 用户的邮箱是user@example.com\n');
     // 关系区各行同样走读取时敏感纪律。
     File(path.join(memoryDirectory, 'relationship.md')).writeAsStringSync(
       '# relationship\n\n'
@@ -287,9 +269,7 @@ void main() {
     });
     final personaTree = PersonaTreeStore(
       memoryDirectory: memoryDirectory,
-      episodePipeline: EpisodeMemoryPipeline(
-        memoryDirectory: memoryDirectory,
-      ),
+      episodePipeline: EpisodeMemoryPipeline(memoryDirectory: memoryDirectory),
     );
     await personaTree.processDay('2026-08-02');
     await personaTree.processDay('2026-08-09');
@@ -322,13 +302,7 @@ void main() {
     await _seedFullMemory(now);
     // 损坏一个 episode 日文件与一个画像分支文件。
     File(
-      path.join(
-        memoryDirectory,
-        'episodes',
-        '2026',
-        '08',
-        '2026-08-16.md',
-      ),
+      path.join(memoryDirectory, 'episodes', '2026', '08', '2026-08-16.md'),
     ).writeAsStringSync('这不是栖语的记忆文件');
     File(
       path.join(memoryDirectory, 'persona-tree', 'values.md'),
@@ -339,11 +313,13 @@ void main() {
     // 损坏日整体跳过，其余日期照常展示。
     expect(overview.recent.days.map((day) => day.date), ['2026-08-17']);
     // 损坏分支标记不可读，其余分支不受影响。
-    final values = overview.persona.branches
-        .singleWhere((branch) => branch.wire == 'values');
+    final values = overview.persona.branches.singleWhere(
+      (branch) => branch.wire == 'values',
+    );
     expect(values.readable, isFalse);
-    final expression = overview.persona.branches
-        .singleWhere((branch) => branch.wire == 'expression');
+    final expression = overview.persona.branches.singleWhere(
+      (branch) => branch.wire == 'expression',
+    );
     expect(expression.readable, isTrue);
     expect(expression.roots, hasLength(1));
 
@@ -366,29 +342,32 @@ void main() {
     expect(overview.recent.days.single.finalized, isFalse);
   });
 
-  test('browsing overview and details never writes to the memory directory', () async {
-    final now = DateTime(2026, 8, 17, 21);
-    await _seedFullMemory(now);
-    final service = serviceFor(now: now);
-    final before = _directorySnapshot(memoryDirectory);
+  test(
+    'browsing overview and details never writes to the memory directory',
+    () async {
+      final now = DateTime(2026, 8, 17, 21);
+      await _seedFullMemory(now);
+      final service = serviceFor(now: now);
+      final before = _directorySnapshot(memoryDirectory);
 
-    final overview = await service.overview();
-    final ids = <String>[
-      for (final day in overview.recent.days) ...[
-        day.id,
-        for (final entry in day.entries) entry.id,
-      ],
-      for (final branch in overview.persona.branches) ...[
-        for (final root in branch.roots) root.id,
-        for (final middle in branch.unrooted) middle.id,
-      ],
-    ];
-    for (final id in ids) {
-      await service.itemDetail(id);
-    }
+      final overview = await service.overview();
+      final ids = <String>[
+        for (final day in overview.recent.days) ...[
+          day.id,
+          for (final entry in day.entries) entry.id,
+        ],
+        for (final branch in overview.persona.branches) ...[
+          for (final root in branch.roots) root.id,
+          for (final middle in branch.unrooted) middle.id,
+        ],
+      ];
+      for (final id in ids) {
+        await service.itemDetail(id);
+      }
 
-    expect(_directorySnapshot(memoryDirectory), before);
-  });
+      expect(_directorySnapshot(memoryDirectory), before);
+    },
+  );
 
   test('unknown or stale item ids resolve to nothing', () async {
     final service = serviceFor();
@@ -399,12 +378,74 @@ void main() {
   test('days outside the recent window are not listed', () async {
     final now = DateTime(2026, 8, 17, 21);
     await _seedEpisodes({
-      '2026-07-01': [
-        _entry('s1:r1:0', '很早以前的事', at: DateTime(2026, 7, 1, 20)),
-      ],
+      '2026-07-01': [_entry('s1:r1:0', '很早以前的事', at: DateTime(2026, 7, 1, 20))],
     });
     final overview = await serviceFor(now: now).overview();
     expect(overview.recent.days, isEmpty);
+  });
+
+  test('actionable items carry opaque ids resolvable to refs', () async {
+    final now = DateTime(2026, 8, 17, 21);
+    await _seedFullMemory(now);
+    final service = serviceFor(now: now);
+    final overview = await service.overview();
+
+    final longTermItem = overview.longTerm.groups.first.items.single;
+    expect(longTermItem.id, isNotEmpty);
+    expect(
+      service.resolveRef(longTermItem.id),
+      isA<MemoryLongTermRef>().having((ref) => ref.section, 'section', '人与关系'),
+    );
+
+    final sharedPast = overview.relationship.sharedPast.single;
+    expect(sharedPast.id, isNotEmpty);
+    expect(
+      service.resolveRef(sharedPast.id),
+      isA<MemoryLongTermRef>().having((ref) => ref.section, 'section', '共同过往'),
+    );
+
+    final confirmed = overview.relationship.confirmed.single;
+    expect(confirmed.id, isNotEmpty);
+    expect(
+      service.resolveRef(confirmed.id),
+      isA<MemoryRelationshipRef>().having(
+        (ref) => ref.list,
+        'list',
+        'confirmed',
+      ),
+    );
+
+    final entry = overview.recent.days.first.entries.first;
+    expect(service.resolveRef(entry.id), isA<MemoryEntryRef>());
+    final root = overview.persona.branches
+        .singleWhere((branch) => branch.wire == 'expression')
+        .roots
+        .single;
+    expect(service.resolveRef(root.id), isA<MemoryRootRef>());
+    expect(service.resolveRef('stale-id'), isNull);
+  });
+
+  test('user-edited entries surface the correction marker', () async {
+    final now = DateTime(2026, 8, 17, 21);
+    await _seedEpisodes({
+      '2026-08-17': [
+        EpisodeEntry(
+          id: 's1:r1:0',
+          sessionId: 'seed-session',
+          requestId: 'seed',
+          summary: '用户修正后的说法',
+          at: DateTime(2026, 8, 17, 20).toUtc(),
+          userEdited: true,
+        ),
+      ],
+    });
+    final service = serviceFor(now: now);
+    final overview = await service.overview();
+    final entry = overview.recent.days.single.entries.single;
+    expect(entry.userEdited, isTrue);
+
+    final detail = await service.itemDetail(entry.id);
+    expect((detail! as EpisodeEntryDetail).userEdited, isTrue);
   });
 }
 
@@ -413,45 +454,48 @@ void main() {
 /// 四分区、Dream 状态与受管 relationship。
 Future<void> _seedFullMemory(DateTime now) async {
   final memoryDirectory = _currentTestDirectory;
-  await _seedEpisodes({
-    '2026-08-16': [
-      _entry(
-        's1:r1:0',
-        '用户睡前习惯听白噪音',
-        evidence: '不听点声音睡不着',
-        branch: 'preferences',
-        nature: 'behavior',
-        at: DateTime(2026, 8, 16, 22),
-      ),
-    ],
-    '2026-08-17': [
-      _entry(
-        's2:r2:0',
-        '用户说这周在准备演讲',
-        evidence: '周四有个演讲，有点紧张',
-        at: DateTime(2026, 8, 17, 20),
-      ),
-      _entry(
-        's2:r2:1',
-        '聊得比平时深一些',
-        kind: episodeKindRelationshipSignal,
-        signal: 'deep_talk',
-        at: DateTime(2026, 8, 17, 20, 30),
-      ),
-      _entry(
-        's2:r2:2',
-        '继续跟进演讲准备的进展',
-        kind: episodeKindOpenLoopCandidate,
-        at: DateTime(2026, 8, 17, 20, 40),
-      ),
-      _entry(
-        's2:r2:3',
-        '冻结: 用户在准备演讲',
-        kind: episodeKindOpenLoopEvent,
-        at: DateTime(2026, 8, 17, 20, 50),
-      ),
-    ],
-  }, finalizedDates: {'2026-08-16': '聊了睡前习惯'});
+  await _seedEpisodes(
+    {
+      '2026-08-16': [
+        _entry(
+          's1:r1:0',
+          '用户睡前习惯听白噪音',
+          evidence: '不听点声音睡不着',
+          branch: 'preferences',
+          nature: 'behavior',
+          at: DateTime(2026, 8, 16, 22),
+        ),
+      ],
+      '2026-08-17': [
+        _entry(
+          's2:r2:0',
+          '用户说这周在准备演讲',
+          evidence: '周四有个演讲，有点紧张',
+          at: DateTime(2026, 8, 17, 20),
+        ),
+        _entry(
+          's2:r2:1',
+          '聊得比平时深一些',
+          kind: episodeKindRelationshipSignal,
+          signal: 'deep_talk',
+          at: DateTime(2026, 8, 17, 20, 30),
+        ),
+        _entry(
+          's2:r2:2',
+          '继续跟进演讲准备的进展',
+          kind: episodeKindOpenLoopCandidate,
+          at: DateTime(2026, 8, 17, 20, 40),
+        ),
+        _entry(
+          's2:r2:3',
+          '冻结: 用户在准备演讲',
+          kind: episodeKindOpenLoopEvent,
+          at: DateTime(2026, 8, 17, 20, 50),
+        ),
+      ],
+    },
+    finalizedDates: {'2026-08-16': '聊了睡前习惯'},
+  );
 
   // 画像：跨日两条一致证据形成中间理解；身份分支留一个待稳定事实；
   // 再用 Dream 提案把表达分支的理解升根。证据日期放在最近窗口之外，
@@ -592,10 +636,13 @@ Map<String, List<int>> _directorySnapshot(String root) {
   if (!directory.existsSync()) {
     return snapshot;
   }
-  for (final entity in directory.listSync(recursive: true, followLinks: false)) {
+  for (final entity in directory.listSync(
+    recursive: true,
+    followLinks: false,
+  )) {
     if (entity is File) {
-      snapshot[path.relative(entity.path, from: root)] =
-          entity.readAsBytesSync();
+      snapshot[path.relative(entity.path, from: root)] = entity
+          .readAsBytesSync();
     }
   }
   return snapshot;

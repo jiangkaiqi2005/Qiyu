@@ -34,6 +34,7 @@ final class MemoryEntryCard {
     required this.control,
     required this.at,
     required this.hasEvidence,
+    this.userEdited = false,
   });
 
   factory MemoryEntryCard.fromJson(Map<String, Object?> json) =>
@@ -45,6 +46,7 @@ final class MemoryEntryCard {
         control: MemoryControlStatus.fromWire(json['control']),
         at: DateTime.parse(json['at']! as String),
         hasEvidence: json['hasEvidence']! as bool,
+        userEdited: json['userEdited'] as bool? ?? false,
       );
 
   final String id;
@@ -54,6 +56,10 @@ final class MemoryEntryCard {
   final MemoryControlStatus? control;
   final DateTime at;
   final bool hasEvidence;
+
+  /// 用户修正过的条目（ticket 20）：按用户声明呈现，不与自动整理
+  /// 的证据混同。
+  final bool userEdited;
 
   String get kindLabel => memoryKindLabel(kind);
 }
@@ -79,7 +85,9 @@ final class MemoryDayCard {
         ? null
         : DateTime.parse(json['finalizedAt']! as String),
     entries: (json['entries']! as List<Object?>)
-        .map((entry) => MemoryEntryCard.fromJson(entry! as Map<String, Object?>))
+        .map(
+          (entry) => MemoryEntryCard.fromJson(entry! as Map<String, Object?>),
+        )
         .toList(),
   );
 
@@ -107,6 +115,7 @@ final class MemoryRecentSection {
 
 final class MemoryLongTermItem {
   const MemoryLongTermItem({
+    required this.id,
     required this.content,
     required this.masked,
     required this.control,
@@ -114,11 +123,14 @@ final class MemoryLongTermItem {
 
   factory MemoryLongTermItem.fromJson(Map<String, Object?> json) =>
       MemoryLongTermItem(
+        id: json['id']! as String,
         content: json['content'] as String?,
         masked: json['masked']! as bool,
         control: MemoryControlStatus.fromWire(json['control']),
       );
 
+  /// 不透明引用（ticket 20）：编辑、控制与删除动作的目标。
+  final String id;
   final String? content;
   final bool masked;
   final MemoryControlStatus? control;
@@ -251,25 +263,25 @@ final class MemoryPersonaBranchCard {
     required this.unrooted,
   });
 
-  factory MemoryPersonaBranchCard.fromJson(Map<String, Object?> json) =>
-      MemoryPersonaBranchCard(
-        wire: json['wire']! as String,
-        title: json['title']! as String,
-        readable: json['readable']! as bool,
-        roots: (json['roots']! as List<Object?>)
-            .map(
-              (root) =>
-                  MemoryPersonaRootCard.fromJson(root! as Map<String, Object?>),
-            )
-            .toList(),
-        unrooted: (json['unrooted']! as List<Object?>)
-            .map(
-              (middle) => MemoryPersonaMiddleCard.fromJson(
-                middle! as Map<String, Object?>,
-              ),
-            )
-            .toList(),
-      );
+  factory MemoryPersonaBranchCard.fromJson(
+    Map<String, Object?> json,
+  ) => MemoryPersonaBranchCard(
+    wire: json['wire']! as String,
+    title: json['title']! as String,
+    readable: json['readable']! as bool,
+    roots: (json['roots']! as List<Object?>)
+        .map(
+          (root) =>
+              MemoryPersonaRootCard.fromJson(root! as Map<String, Object?>),
+        )
+        .toList(),
+    unrooted: (json['unrooted']! as List<Object?>)
+        .map(
+          (middle) =>
+              MemoryPersonaMiddleCard.fromJson(middle! as Map<String, Object?>),
+        )
+        .toList(),
+  );
 
   final String wire;
   final String title;
@@ -283,16 +295,16 @@ final class MemoryPersonaBranchCard {
 final class MemoryPersonaSection {
   const MemoryPersonaSection({required this.branches});
 
-  factory MemoryPersonaSection.fromJson(Map<String, Object?> json) =>
-      MemoryPersonaSection(
-        branches: (json['branches']! as List<Object?>)
-            .map(
-              (branch) => MemoryPersonaBranchCard.fromJson(
-                branch! as Map<String, Object?>,
-              ),
-            )
-            .toList(),
-      );
+  factory MemoryPersonaSection.fromJson(
+    Map<String, Object?> json,
+  ) => MemoryPersonaSection(
+    branches: (json['branches']! as List<Object?>)
+        .map(
+          (branch) =>
+              MemoryPersonaBranchCard.fromJson(branch! as Map<String, Object?>),
+        )
+        .toList(),
+  );
 
   final List<MemoryPersonaBranchCard> branches;
 
@@ -412,6 +424,7 @@ final class EpisodeEntryDetail extends MemoryItemDetail {
     required this.sessionId,
     required this.daySummary,
     required this.finalized,
+    this.userEdited = false,
   });
 
   factory EpisodeEntryDetail.fromJson(Map<String, Object?> json) =>
@@ -428,6 +441,7 @@ final class EpisodeEntryDetail extends MemoryItemDetail {
         sessionId: json['sessionId'] as String?,
         daySummary: json['daySummary'] as String?,
         finalized: json['finalized']! as bool,
+        userEdited: json['userEdited'] as bool? ?? false,
       );
 
   final String date;
@@ -443,6 +457,9 @@ final class EpisodeEntryDetail extends MemoryItemDetail {
   final String? daySummary;
   final bool finalized;
 
+  /// 是否由用户修正过（ticket 20）。
+  final bool userEdited;
+
   String get kindLabel => memoryKindLabel(entryKind);
 }
 
@@ -456,21 +473,21 @@ final class PersonaRootDetail extends MemoryItemDetail {
     required this.middles,
   });
 
-  factory PersonaRootDetail.fromJson(Map<String, Object?> json) =>
-      PersonaRootDetail(
-        branch: json['branch']! as String,
-        branchTitle: json['branchTitle']! as String,
-        claim: json['claim'] as String?,
-        masked: json['masked']! as bool,
-        control: MemoryControlStatus.fromWire(json['control']),
-        middles: (json['middles']! as List<Object?>)
-            .map(
-              (middle) => MemoryPersonaMiddleCard.fromJson(
-                middle! as Map<String, Object?>,
-              ),
-            )
-            .toList(),
-      );
+  factory PersonaRootDetail.fromJson(
+    Map<String, Object?> json,
+  ) => PersonaRootDetail(
+    branch: json['branch']! as String,
+    branchTitle: json['branchTitle']! as String,
+    claim: json['claim'] as String?,
+    masked: json['masked']! as bool,
+    control: MemoryControlStatus.fromWire(json['control']),
+    middles: (json['middles']! as List<Object?>)
+        .map(
+          (middle) =>
+              MemoryPersonaMiddleCard.fromJson(middle! as Map<String, Object?>),
+        )
+        .toList(),
+  );
 
   final String branch;
   final String branchTitle;
@@ -577,7 +594,8 @@ final class MemoryDayDetail extends MemoryItemDetail {
             : DateTime.parse(json['finalizedAt']! as String),
         entries: (json['entries']! as List<Object?>)
             .map(
-              (entry) => MemoryEntryCard.fromJson(entry! as Map<String, Object?>),
+              (entry) =>
+                  MemoryEntryCard.fromJson(entry! as Map<String, Object?>),
             )
             .toList(),
       );
@@ -590,6 +608,65 @@ final class MemoryDayDetail extends MemoryItemDetail {
   final List<MemoryEntryCard> entries;
 }
 
+/// 记忆动作结果三态（ticket 20）：成功、部分失败（控制已生效，
+/// 个别派生清理推迟）与可恢复失败（什么都没改变，可重试）。
+enum MemoryActionStatus {
+  success,
+  partial,
+  failed;
+
+  /// 只认显式的三态字段：缺失或未知值一律按失败处理，绝不把
+  /// 错误响应误读为成功。
+  static MemoryActionStatus fromWire(Object? value) => switch (value) {
+    'success' => MemoryActionStatus.success,
+    'partial' => MemoryActionStatus.partial,
+    _ => MemoryActionStatus.failed,
+  };
+}
+
+final class MemoryActionResult {
+  const MemoryActionResult({
+    required this.status,
+    required this.message,
+    this.retryable = false,
+    this.deferred = const [],
+    this.text,
+  });
+
+  factory MemoryActionResult.fromJson(Map<String, Object?> json) =>
+      MemoryActionResult(
+        status: MemoryActionStatus.fromWire(json['status']),
+        message: json['message']! as String,
+        retryable: json['retryable'] as bool? ?? false,
+        deferred: (json['deferred'] as List<Object?>? ?? const [])
+            .whereType<String>()
+            .toList(),
+        text: json['text'] as String?,
+      );
+
+  final MemoryActionStatus status;
+  final String message;
+  final bool retryable;
+  final List<String> deferred;
+
+  /// 揭示动作返回的原文；只在揭示成功时出现。
+  final String? text;
+}
+
+/// 删除影响范围（删除前展示）：每一项都是准确计数与用户语言说明。
+final class MemoryDeleteImpact {
+  const MemoryDeleteImpact({required this.lines, required this.sessionsKept});
+
+  factory MemoryDeleteImpact.fromJson(Map<String, Object?> json) =>
+      MemoryDeleteImpact(
+        lines: (json['lines']! as List<Object?>).whereType<String>().toList(),
+        sessionsKept: json['sessionsKept']! as bool,
+      );
+
+  final List<String> lines;
+  final bool sessionsKept;
+}
+
 final class MemoryGatewayException implements Exception {
   const MemoryGatewayException(this.message);
 
@@ -599,13 +676,32 @@ final class MemoryGatewayException implements Exception {
   String toString() => message;
 }
 
-/// 只读网关：接口面只有读取，任何编辑、控制或揭示动作都不在本票
-/// 范围（归 ticket 20）。
+/// 记忆中心网关：读取 + 经过确认的写入动作（ticket 20）。所有写入
+/// 都走统一动作端点，携带会话 Cookie 与 CSRF；揭示结果只取一次，
+/// 不做任何本地持久化。
 abstract interface class MemoryGateway {
   Future<MemoryOverview> fetchOverview();
 
   /// ID 对应条目已不存在或已变化时返回 null。
   Future<MemoryItemDetail?> fetchItemDetail(String id);
+
+  Future<MemoryActionResult> editItem(String id, String text);
+
+  Future<MemoryActionResult> freezeItem(String id);
+
+  Future<MemoryActionResult> unfreezeItem(String id);
+
+  Future<MemoryActionResult> banItem(String id);
+
+  Future<MemoryActionResult> unbanItem(String id);
+
+  /// 删除影响范围预览；条目已不存在或已变化时返回 null。
+  Future<MemoryDeleteImpact?> previewDelete(String id);
+
+  Future<MemoryActionResult> deleteItem(String id);
+
+  /// 敏感内容的临时揭示；不需要揭示时返回 failed 结果。
+  Future<MemoryActionResult> revealItem(String id, {String field = 'content'});
 }
 
 final class HttpMemoryGateway implements MemoryGateway {
@@ -615,6 +711,7 @@ final class HttpMemoryGateway implements MemoryGateway {
 
   final http.Client _client;
   final Uri _baseUri;
+  String? _csrfToken;
 
   @override
   Future<MemoryOverview> fetchOverview() async {
@@ -633,20 +730,96 @@ final class HttpMemoryGateway implements MemoryGateway {
     return MemoryItemDetail.fromJson(_decodeSuccess(response));
   }
 
-  Map<String, Object?> _decodeSuccess(http.Response response) {
-    Map<String, Object?>? json;
-    try {
-      json = jsonDecode(response.body) as Map<String, Object?>;
-    } on Object {
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        throw const MemoryGatewayException('本机程序返回了无法读取的内容。');
-      }
+  @override
+  Future<MemoryActionResult> editItem(String id, String text) =>
+      _action({'action': 'edit', 'id': id, 'text': text});
+
+  @override
+  Future<MemoryActionResult> freezeItem(String id) =>
+      _action({'action': 'freeze', 'id': id});
+
+  @override
+  Future<MemoryActionResult> unfreezeItem(String id) =>
+      _action({'action': 'unfreeze', 'id': id});
+
+  @override
+  Future<MemoryActionResult> banItem(String id) =>
+      _action({'action': 'ban', 'id': id});
+
+  @override
+  Future<MemoryActionResult> unbanItem(String id) =>
+      _action({'action': 'unban', 'id': id});
+
+  @override
+  Future<MemoryDeleteImpact?> previewDelete(String id) async {
+    await _ensureBootstrap();
+    final response = await _client.post(
+      _baseUri.resolve('/api/memory/action'),
+      headers: {'content-type': 'application/json', 'x-qiyu-csrf': _csrfToken!},
+      body: jsonEncode({'action': 'delete-preview', 'id': id}),
+    );
+    if (response.statusCode == 404) {
+      return null;
     }
+    return MemoryDeleteImpact.fromJson(_decodeSuccess(response));
+  }
+
+  @override
+  Future<MemoryActionResult> deleteItem(String id) =>
+      _action({'action': 'delete', 'id': id});
+
+  @override
+  Future<MemoryActionResult> revealItem(
+    String id, {
+    String field = 'content',
+  }) => _action({'action': 'reveal', 'id': id, 'field': field});
+
+  Future<MemoryActionResult> _action(Map<String, Object?> payload) async {
+    await _ensureBootstrap();
+    final response = await _client.post(
+      _baseUri.resolve('/api/memory/action'),
+      headers: {'content-type': 'application/json', 'x-qiyu-csrf': _csrfToken!},
+      body: jsonEncode(payload),
+    );
+    final json = _decodePayload(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw MemoryGatewayException(
-        json?['message'] as String? ?? '记忆中心暂时不可用，请稍后重试。',
+      // 错误响应体可能没有 status 字段：不信任解析结果，一律按
+      // 可重试失败呈现，旧有效数据保持可用。
+      return MemoryActionResult(
+        status: MemoryActionStatus.failed,
+        message: json['message'] as String? ?? '记忆操作没有生效，可稍后重试。',
+        retryable: json['retryable'] as bool? ?? true,
       );
     }
-    return json!;
+    return MemoryActionResult.fromJson(json);
+  }
+
+  Future<void> _ensureBootstrap() async {
+    if (_csrfToken != null) {
+      return;
+    }
+    final response = await _client.get(_baseUri.resolve('/api/bootstrap'));
+    final json = jsonDecode(response.body) as Map<String, Object?>;
+    _csrfToken = json['csrfToken']! as String;
+  }
+
+  Map<String, Object?> _decodeSuccess(http.Response response) {
+    final json = _decodePayload(response);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw MemoryGatewayException(
+        json['message'] as String? ?? '记忆中心暂时不可用，请稍后重试。',
+      );
+    }
+    return json;
+  }
+
+  /// 动作端点在 4xx 上也返回结构化结果（三态与错误码），解析
+  /// 失败才抛异常。
+  Map<String, Object?> _decodePayload(http.Response response) {
+    try {
+      return jsonDecode(response.body) as Map<String, Object?>;
+    } on Object {
+      throw const MemoryGatewayException('本机程序返回了无法读取的内容。');
+    }
   }
 }

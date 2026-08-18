@@ -9,9 +9,13 @@ import 'memory_view_model.dart';
 
 const _maskedPlaceholder = '这条内容涉及私密信息，暂不直接展示。';
 
-/// 四区只读记忆中心（ticket 19）：最近发生、长期印象、关于你、
-/// 我们的关系。导航只用用户语言；页面只读取，不提供任何编辑、
-/// 控制或揭示入口。
+/// 临时揭示的自动重新遮罩时间：只作本次展示，离开页面立即失效。
+const _revealTimeout = Duration(seconds: 20);
+
+/// 四区记忆中心（ticket 19 读取 / ticket 20 控制）：最近发生、长期
+/// 印象、关于你、我们的关系。导航只用用户语言；编辑、冻结/解除、
+/// 禁提/解除、删除与敏感揭示都经过明确确认，结果以成功、部分失败、
+/// 可恢复失败三态呈现。
 class MemoryView extends StatelessWidget {
   const MemoryView({super.key});
 
@@ -57,19 +61,10 @@ class MemoryView extends StatelessWidget {
                   const TabBar(
                     isScrollable: true,
                     tabs: [
-                      Tab(
-                        key: Key('memory-tab-recent'),
-                        text: '最近发生',
-                      ),
-                      Tab(
-                        key: Key('memory-tab-longterm'),
-                        text: '长期印象',
-                      ),
+                      Tab(key: Key('memory-tab-recent'), text: '最近发生'),
+                      Tab(key: Key('memory-tab-longterm'), text: '长期印象'),
                       Tab(key: Key('memory-tab-persona'), text: '关于你'),
-                      Tab(
-                        key: Key('memory-tab-relationship'),
-                        text: '我们的关系',
-                      ),
+                      Tab(key: Key('memory-tab-relationship'), text: '我们的关系'),
                     ],
                   ),
                   const Divider(height: 1),
@@ -146,7 +141,10 @@ class _RecentTab extends StatelessWidget {
               ),
               if (!day.finalized) ...[
                 const SizedBox(width: 8),
-                const _StatusChip(key: Key('memory-day-organizing'), label: '整理中'),
+                const _StatusChip(
+                  key: Key('memory-day-organizing'),
+                  label: '整理中',
+                ),
               ] else if (day.finalizedAt case final organizedAt?) ...[
                 const SizedBox(width: 8),
                 Text(
@@ -206,7 +204,7 @@ class _LongTermTab extends StatelessWidget {
             ),
           ),
           for (final item in group.items)
-            _LongTermTile(key: UniqueKey(), item: item),
+            _LongTermTile(key: Key('memory-longterm-${item.id}'), item: item),
         ],
         if (section.organizedAt case final organizedAt?)
           Padding(
@@ -297,23 +295,35 @@ class _RelationshipTab extends StatelessWidget {
           if (section.confirmed.isNotEmpty) ...[
             _sectionTitle(context, '当前相处方式'),
             for (final item in section.confirmed)
-              _LongTermTile(key: UniqueKey(), item: item),
+              _LongTermTile(
+                key: Key('memory-relationship-${item.id}'),
+                item: item,
+                statePack: true,
+              ),
           ],
           if (section.probes.isNotEmpty) ...[
             _sectionTitle(context, '试探中'),
             for (final item in section.probes)
-              _LongTermTile(key: UniqueKey(), item: item),
+              _LongTermTile(
+                key: Key('memory-relationship-${item.id}'),
+                item: item,
+                statePack: true,
+              ),
           ],
           if (section.recentChanges.isNotEmpty) ...[
             _sectionTitle(context, '近期变化'),
             for (final item in section.recentChanges)
-              _LongTermTile(key: UniqueKey(), item: item),
+              _LongTermTile(
+                key: Key('memory-relationship-${item.id}'),
+                item: item,
+                statePack: true,
+              ),
           ],
         ],
         if (section.sharedPast.isNotEmpty) ...[
           _sectionTitle(context, '共同过往'),
           for (final item in section.sharedPast)
-            _LongTermTile(key: UniqueKey(), item: item),
+            _LongTermTile(key: Key('memory-longterm-${item.id}'), item: item),
         ],
       ],
     );
@@ -326,7 +336,8 @@ class _RelationshipTab extends StatelessWidget {
 }
 
 /// 条目详情/证据追溯页：episode 条目、画像根路径、画像中间理解与
-/// 某一天的记录都在这里展开；打开即只读，不提供任何写入入口。
+/// 某一天的记录都在这里展开。episode 条目支持修正、控制、删除与
+/// 敏感内容的临时揭示（ticket 20）。
 class MemoryItemView extends StatefulWidget {
   const MemoryItemView({super.key, required this.itemId});
 
@@ -336,16 +347,36 @@ class MemoryItemView extends StatefulWidget {
   State<MemoryItemView> createState() => _MemoryItemViewState();
 }
 
+class _RevealState {
+  _RevealState(this.text, this.timer);
+
+  final String text;
+  final Timer timer;
+}
+
 class _MemoryItemViewState extends State<MemoryItemView> {
   MemoryItemDetail? _detail;
   bool _loading = true;
   bool _gone = false;
   bool _failed = false;
 
+  /// 临时揭示状态：字段 → 原文与自动重新遮罩计时器。离开页面即
+  /// 全部作废，绝不持久化。
+  final Map<String, _RevealState> _reveals = {};
+
   @override
   void initState() {
     super.initState();
     unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    for (final reveal in _reveals.values) {
+      reveal.timer.cancel();
+    }
+    _reveals.clear();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -375,8 +406,36 @@ class _MemoryItemViewState extends State<MemoryItemView> {
     }
   }
 
+  /// 明确的临时揭示动作：只取一次原文，超时自动重新遮罩；原文
+  /// 只存在于本页面的临时状态里。
+  Future<void> _reveal(String field) async {
+    final viewModel = context.read<MemoryCenterViewModel>();
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await viewModel.reveal(widget.itemId, field: field);
+    if (!mounted) {
+      return;
+    }
+    if (result.status != MemoryActionStatus.success || result.text == null) {
+      messenger.showSnackBar(SnackBar(content: Text(result.message)));
+      return;
+    }
+    setState(() {
+      _reveals.remove(field)?.timer.cancel();
+      _reveals[field] = _RevealState(
+        result.text!,
+        Timer(_revealTimeout, () {
+          if (!mounted) {
+            return;
+          }
+          setState(() => _reveals.remove(field));
+        }),
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final acting = context.watch<MemoryCenterViewModel>().acting;
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -399,11 +458,24 @@ class _MemoryItemViewState extends State<MemoryItemView> {
                         '记忆详情',
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
+                      if (acting) ...[
+                        const Spacer(),
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            key: Key('memory-item-acting'),
+                            strokeWidth: 2,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text('整理中'),
+                      ],
                     ],
                   ),
                 ),
                 const Divider(height: 1),
-                Expanded(child: _body()),
+                Expanded(child: _body(acting: acting)),
               ],
             ),
           ),
@@ -412,7 +484,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
     );
   }
 
-  Widget _body() {
+  Widget _body({required bool acting}) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -421,10 +493,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              '记忆中心暂时不可用，请稍后重试。',
-              key: Key('memory-item-error'),
-            ),
+            const Text('记忆中心暂时不可用，请稍后重试。', key: Key('memory-item-error')),
             const SizedBox(height: 12),
             TextButton(
               key: const Key('memory-item-retry'),
@@ -437,17 +506,14 @@ class _MemoryItemViewState extends State<MemoryItemView> {
     }
     if (_gone) {
       return const Center(
-        child: Text(
-          '这条记忆不存在或已经变化，请返回后刷新。',
-          key: Key('memory-item-gone'),
-        ),
+        child: Text('这条记忆不存在或已经变化，请返回后刷新。', key: Key('memory-item-gone')),
       );
     }
     final detail = _detail!;
     return ListView(
       padding: const EdgeInsets.all(24),
       children: switch (detail) {
-        EpisodeEntryDetail() => _episodeEntryBody(detail),
+        EpisodeEntryDetail() => _episodeEntryBody(detail, acting: acting),
         PersonaRootDetail() => _personaRootBody(detail),
         PersonaMiddleDetail() => _personaMiddleBody(detail),
         MemoryDayDetail() => _dayBody(detail),
@@ -455,21 +521,69 @@ class _MemoryItemViewState extends State<MemoryItemView> {
     );
   }
 
-  List<Widget> _episodeEntryBody(EpisodeEntryDetail detail) {
+  /// 遮罩内容的揭示展示：已揭示时显示原文与倒计时提示，未揭示时
+  /// 显示占位与「临时查看」入口。
+  Widget _maskedOrRevealed(String field, {Key? textKey}) {
+    final reveal = _reveals[field];
+    if (reveal != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            reveal.text,
+            key: textKey ?? Key('memory-revealed-$field'),
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 4),
+          const _StatusChip(
+            key: Key('memory-reveal-countdown'),
+            label: '仅本次展示，稍后自动重新遮罩',
+          ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(_maskedPlaceholder, style: Theme.of(context).textTheme.bodyMedium),
+        TextButton(
+          key: Key('memory-reveal-$field'),
+          onPressed: () => unawaited(_reveal(field)),
+          child: const Text('临时查看'),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _episodeEntryBody(
+    EpisodeEntryDetail detail, {
+    required bool acting,
+  }) {
     final time = detail.at.toLocal();
     return [
       Row(
         children: [
           _StatusChip(label: detail.kindLabel),
           const SizedBox(width: 8),
-          if (detail.control case final control?) _StatusChip(label: control.label),
+          if (detail.userEdited) ...[
+            const _StatusChip(
+              key: Key('memory-entry-user-edited'),
+              label: '由你修正',
+            ),
+            const SizedBox(width: 8),
+          ],
+          if (detail.control case final control?)
+            _StatusChip(label: control.label),
         ],
       ),
       const SizedBox(height: 12),
-      Text(
-        _visibleOr(detail.masked, detail.content),
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
+      if (detail.masked)
+        _maskedOrRevealed('content')
+      else
+        Text(
+          detail.content ?? '',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
       const SizedBox(height: 8),
       Text(
         '${_formatDayHeader(detail.date)} · ${_twoDigits(time.hour)}:'
@@ -480,10 +594,13 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         const SizedBox(height: 16),
         Text('当时的摘录', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 4),
-        Text(
-          _visibleOr(detail.evidenceMasked, detail.evidence),
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
+        if (detail.evidenceMasked)
+          _maskedOrRevealed('evidence')
+        else
+          Text(
+            detail.evidence ?? '',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
       ],
       if (detail.daySummary case final summary?) ...[
         const SizedBox(height: 16),
@@ -507,32 +624,104 @@ class _MemoryItemViewState extends State<MemoryItemView> {
           onPressed: () => context.push('/history/$sessionId'),
           child: const Text('查看当时的对话'),
         ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        children: [
+          TextButton(
+            key: const Key('memory-item-edit'),
+            onPressed: detail.masked || acting
+                ? null
+                : () => unawaited(
+                    _editFlow(
+                      context,
+                      id: widget.itemId,
+                      current: detail.content ?? '',
+                    ),
+                  ),
+            child: const Text('修正'),
+          ),
+          TextButton(
+            key: const Key('memory-item-freeze'),
+            onPressed: acting
+                ? null
+                : () => unawaited(
+                    detail.control == MemoryControlStatus.frozen
+                        ? _runControl(
+                            (viewModel) => viewModel.unfreeze(widget.itemId),
+                          )
+                        : _runControl(
+                            (viewModel) => viewModel.freeze(widget.itemId),
+                          ),
+                  ),
+            child: Text(
+              detail.control == MemoryControlStatus.frozen ? '恢复使用' : '暂停使用',
+            ),
+          ),
+          TextButton(
+            key: const Key('memory-item-ban'),
+            onPressed: acting
+                ? null
+                : () => unawaited(
+                    detail.control == MemoryControlStatus.banned
+                        ? _runControl(
+                            (viewModel) => viewModel.unban(widget.itemId),
+                          )
+                        : _banFlow(context, widget.itemId),
+                  ),
+            child: Text(
+              detail.control == MemoryControlStatus.banned ? '解除禁提' : '不再提起',
+            ),
+          ),
+          TextButton(
+            key: const Key('memory-item-delete'),
+            onPressed: acting
+                ? null
+                : () => unawaited(_deleteFlow(context, widget.itemId)),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
     ];
+  }
+
+  /// 详情页控制动作的统一出口（冻结/解除/禁提解除）：调用方显式
+  /// 指定要执行的动作；禁提确认与删除走各自的确认流程。
+  Future<void> _runControl(
+    Future<MemoryActionResult> Function(MemoryCenterViewModel) action,
+  ) async {
+    final viewModel = context.read<MemoryCenterViewModel>();
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await action(viewModel);
+    messenger.showSnackBar(_resultSnackBar(result));
   }
 
   List<Widget> _personaRootBody(PersonaRootDetail detail) {
     return [
       _StatusChip(label: detail.branchTitle),
       const SizedBox(height: 12),
-      Text(
-        _visibleOr(detail.masked, detail.claim),
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
+      if (detail.masked)
+        _maskedOrRevealed('claim')
+      else
+        Text(
+          detail.claim ?? '',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
       if (detail.control case final control?) ...[
         const SizedBox(height: 8),
         _StatusChip(label: control.label),
       ],
       const SizedBox(height: 16),
-      Text(
-        '支持它的理解',
-        style: Theme.of(context).textTheme.titleSmall,
-      ),
+      Text('支持它的理解', style: Theme.of(context).textTheme.titleSmall),
       const SizedBox(height: 4),
       if (detail.middles.isEmpty)
         const Text('暂时没有记录支持它的依据。')
       else
         for (final middle in detail.middles)
-          _MiddleTile(key: Key('memory-root-middle-${middle.id}'), middle: middle),
+          _MiddleTile(
+            key: Key('memory-root-middle-${middle.id}'),
+            middle: middle,
+          ),
     ];
   }
 
@@ -550,10 +739,13 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         ],
       ),
       const SizedBox(height: 12),
-      Text(
-        _visibleOr(detail.masked, detail.claim),
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
+      if (detail.masked)
+        _maskedOrRevealed('claim')
+      else
+        Text(
+          detail.claim ?? '',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
       const SizedBox(height: 8),
       Text(
         '形成于 ${detail.formedOn} · 最近复核 ${detail.reviewedOn}',
@@ -561,10 +753,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
       ),
       if (detail.rootClaim case final rootClaim?) ...[
         const SizedBox(height: 8),
-        Text(
-          '所属结论：$rootClaim',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+        Text('所属结论：$rootClaim', style: Theme.of(context).textTheme.bodySmall),
       ],
       const SizedBox(height: 16),
       Text('证据', style: Theme.of(context).textTheme.titleSmall),
@@ -594,13 +783,16 @@ class _MemoryItemViewState extends State<MemoryItemView> {
           ],
         ],
       ),
-      if (detail.summary case final summary?)
+      // 遮罩时 summary 为 null：仍要给出临时查看入口。
+      if (detail.summary != null || detail.summaryMasked)
         Padding(
           padding: const EdgeInsets.only(top: 8),
-          child: Text(
-            _visibleOr(detail.summaryMasked, summary),
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
+          child: detail.summaryMasked
+              ? _maskedOrRevealed('summary')
+              : Text(
+                  detail.summary ?? '',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
         ),
       const SizedBox(height: 12),
       if (detail.entries.isEmpty)
@@ -634,6 +826,10 @@ class _EntryTile extends StatelessWidget {
                 children: [
                   _StatusChip(label: entry.kindLabel),
                   const SizedBox(width: 8),
+                  if (entry.userEdited) ...[
+                    const _StatusChip(label: '由你修正'),
+                    const SizedBox(width: 8),
+                  ],
                   if (entry.control case final control?) ...[
                     _StatusChip(
                       key: Key('memory-entry-control-${entry.id}'),
@@ -650,6 +846,14 @@ class _EntryTile extends StatelessWidget {
                     '${_twoDigits(time.hour)}:${_twoDigits(time.minute)}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
+                  _MemoryActionMenu(
+                    key: Key('memory-actions-${entry.id}'),
+                    itemId: entry.id,
+                    control: entry.control,
+                    masked: entry.masked,
+                    editable: true,
+                    currentText: entry.content,
+                  ),
                 ],
               ),
               const SizedBox(height: 6),
@@ -663,23 +867,41 @@ class _EntryTile extends StatelessWidget {
 }
 
 class _LongTermTile extends StatelessWidget {
-  const _LongTermTile({super.key, required this.item});
+  const _LongTermTile({super.key, required this.item, this.statePack = false});
 
   final MemoryLongTermItem item;
+
+  /// 状态包各行（相处方式/试探/近期变化）不是控制对象（T24 定稿）：
+  /// 只读展示，不提供编辑、控制或删除入口。
+  final bool statePack;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         child: Row(
           children: [
-            Expanded(child: Text(_visibleOr(item.masked, item.content))),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(_visibleOr(item.masked, item.content)),
+              ),
+            ),
             if (item.control case final control?) ...[
               const SizedBox(width: 8),
               _StatusChip(label: control.label),
             ],
+            if (!statePack)
+              _MemoryActionMenu(
+                key: Key('memory-actions-${item.id}'),
+                itemId: item.id,
+                control: item.control,
+                masked: item.masked,
+                editable: true,
+                currentText: item.content,
+              ),
           ],
         ),
       ),
@@ -712,9 +934,17 @@ class _RootTile extends StatelessWidget {
                     _StatusChip(label: control.label),
                     const SizedBox(width: 8),
                   ],
-                  Text(
-                    _evidenceSpanText(root),
-                    style: Theme.of(context).textTheme.bodySmall,
+                  Expanded(
+                    child: Text(
+                      _evidenceSpanText(root),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  _MemoryActionMenu(
+                    key: Key('memory-actions-${root.id}'),
+                    itemId: root.id,
+                    control: root.control,
+                    masked: root.masked,
                   ),
                 ],
               ),
@@ -774,6 +1004,12 @@ class _MiddleTile extends StatelessWidget {
                       textAlign: TextAlign.end,
                     ),
                   ),
+                  _MemoryActionMenu(
+                    key: Key('memory-actions-${middle.id}'),
+                    itemId: middle.id,
+                    control: middle.control,
+                    masked: middle.masked,
+                  ),
                 ],
               ),
             ],
@@ -823,6 +1059,394 @@ class _LeafTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 条目操作菜单（ticket 20）：修正、暂停/恢复使用、不再提起/解除、
+/// 删除。冻结直接生效；禁提与删除需要确认；画像不提供编辑。
+enum _MemoryActionChoice {
+  edit('修正'),
+  reveal('临时查看'),
+  freeze('暂停使用'),
+  unfreeze('恢复使用'),
+  ban('不再提起'),
+  unban('解除禁提'),
+  delete('删除');
+
+  const _MemoryActionChoice(this.label);
+
+  final String label;
+}
+
+class _MemoryActionMenu extends StatelessWidget {
+  const _MemoryActionMenu({
+    super.key,
+    required this.itemId,
+    required this.control,
+    required this.masked,
+    this.editable = false,
+    this.currentText,
+  });
+
+  final String itemId;
+  final MemoryControlStatus? control;
+  final bool masked;
+  final bool editable;
+  final String? currentText;
+
+  List<PopupMenuEntry<_MemoryActionChoice>> _items() {
+    final items = <PopupMenuEntry<_MemoryActionChoice>>[];
+    if (editable && !masked) {
+      items.add(
+        const PopupMenuItem(value: _MemoryActionChoice.edit, child: Text('修正')),
+      );
+    }
+    if (masked) {
+      items.add(
+        const PopupMenuItem(
+          value: _MemoryActionChoice.reveal,
+          child: Text('临时查看'),
+        ),
+      );
+    }
+    switch (control) {
+      case MemoryControlStatus.frozen:
+        items.add(
+          const PopupMenuItem(
+            value: _MemoryActionChoice.unfreeze,
+            child: Text('恢复使用'),
+          ),
+        );
+      case MemoryControlStatus.banned:
+        items.add(
+          const PopupMenuItem(
+            value: _MemoryActionChoice.unban,
+            child: Text('解除禁提'),
+          ),
+        );
+      case null:
+        items.addAll([
+          const PopupMenuItem(
+            value: _MemoryActionChoice.freeze,
+            child: Text('暂停使用'),
+          ),
+          const PopupMenuItem(
+            value: _MemoryActionChoice.ban,
+            child: Text('不再提起'),
+          ),
+        ]);
+    }
+    items.add(
+      const PopupMenuItem(value: _MemoryActionChoice.delete, child: Text('删除')),
+    );
+    return items;
+  }
+
+  Future<void> _selected(
+    BuildContext context,
+    _MemoryActionChoice choice,
+  ) async {
+    final viewModel = context.read<MemoryCenterViewModel>();
+    final messenger = ScaffoldMessenger.of(context);
+    switch (choice) {
+      case _MemoryActionChoice.edit:
+        await _editFlow(context, id: itemId, current: currentText ?? '');
+      case _MemoryActionChoice.reveal:
+        await _revealTileFlow(context, itemId);
+      case _MemoryActionChoice.freeze:
+        messenger.showSnackBar(_resultSnackBar(await viewModel.freeze(itemId)));
+      case _MemoryActionChoice.unfreeze:
+        messenger.showSnackBar(
+          _resultSnackBar(await viewModel.unfreeze(itemId)),
+        );
+      case _MemoryActionChoice.ban:
+        await _banFlow(context, itemId);
+      case _MemoryActionChoice.unban:
+        messenger.showSnackBar(_resultSnackBar(await viewModel.unban(itemId)));
+      case _MemoryActionChoice.delete:
+        await _deleteFlow(context, itemId);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final acting = context.watch<MemoryCenterViewModel>().acting;
+    return PopupMenuButton<_MemoryActionChoice>(
+      tooltip: acting ? '正在整理…' : '记忆操作',
+      enabled: !acting,
+      itemBuilder: (context) => _items(),
+      onSelected: (choice) => unawaited(_selected(context, choice)),
+    );
+  }
+}
+
+// ---------- 记忆动作流程（ticket 20） ----------
+
+/// 修正流程：对话框预填现有文本，保存按用户声明落盘。遮罩条目
+/// 不提供修正入口（不揭示原文就不能改）。
+Future<void> _editFlow(
+  BuildContext context, {
+  required String id,
+  required String current,
+}) async {
+  final viewModel = context.read<MemoryCenterViewModel>();
+  final messenger = ScaffoldMessenger.of(context);
+  final updated = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) => _EditDialog(initial: current),
+  );
+  if (updated == null || updated.trim().isEmpty) {
+    return;
+  }
+  final result = await viewModel.edit(id, updated.trim());
+  messenger.showSnackBar(_resultSnackBar(result));
+}
+
+/// 列表遮罩条目的临时揭示：原文只出现在一次性对话框里，关闭即
+/// 重新遮罩，超时自动关闭；不落任何状态。
+Future<void> _revealTileFlow(BuildContext context, String id) async {
+  final viewModel = context.read<MemoryCenterViewModel>();
+  final messenger = ScaffoldMessenger.of(context);
+  final result = await viewModel.reveal(id);
+  if (!context.mounted) {
+    return;
+  }
+  if (result.status != MemoryActionStatus.success || result.text == null) {
+    messenger.showSnackBar(_resultSnackBar(result));
+    return;
+  }
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => _RevealDialog(text: result.text!),
+  );
+}
+
+/// 禁提确认流程（T25 定稿：禁提需要确认，冻结直接生效）。
+Future<void> _banFlow(BuildContext context, String id) async {
+  final viewModel = context.read<MemoryCenterViewModel>();
+  final messenger = ScaffoldMessenger.of(context);
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('不再提起这条记忆？'),
+      content: const Text('确认后，栖语不会再主动提起它，聊天和整理都会避开这条内容。以后可以随时解除。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('先不用'),
+        ),
+        TextButton(
+          key: const Key('memory-ban-confirm'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('不再提起'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) {
+    return;
+  }
+  final result = await viewModel.ban(id);
+  messenger.showSnackBar(_resultSnackBar(result));
+}
+
+/// 删除流程：先取准确影响范围，展示后确认执行；影响范围取不到
+/// （条目已变化）时如实告知，不执行删除。
+Future<void> _deleteFlow(BuildContext context, String id) async {
+  final viewModel = context.read<MemoryCenterViewModel>();
+  final messenger = ScaffoldMessenger.of(context);
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) =>
+        _DeletePreviewDialog(impact: viewModel.deletePreview(id)),
+  );
+  if (confirmed != true) {
+    return;
+  }
+  final result = await viewModel.delete(id);
+  messenger.showSnackBar(_resultSnackBar(result));
+}
+
+SnackBar _resultSnackBar(MemoryActionResult result) {
+  final color = switch (result.status) {
+    MemoryActionStatus.success => null,
+    MemoryActionStatus.partial => const Color(0xFFB26B1B),
+    MemoryActionStatus.failed => const Color(0xFFB3261E),
+  };
+  return SnackBar(
+    key: const Key('memory-action-result'),
+    content: Text(result.message),
+    backgroundColor: color,
+  );
+}
+
+class _EditDialog extends StatefulWidget {
+  const _EditDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_EditDialog> createState() => _EditDialogState();
+}
+
+class _EditDialogState extends State<_EditDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('修正这条记忆'),
+      content: TextField(
+        key: const Key('memory-edit-field'),
+        controller: _controller,
+        autofocus: true,
+        maxLines: 3,
+        maxLength: 120,
+        decoration: const InputDecoration(hintText: '按你的说法写'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          key: const Key('memory-edit-save'),
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 临时揭示对话框：原文只作本次展示，超时自动关闭；关闭即重新
+/// 遮罩。
+class _RevealDialog extends StatefulWidget {
+  const _RevealDialog({required this.text});
+
+  final String text;
+
+  @override
+  State<_RevealDialog> createState() => _RevealDialogState();
+}
+
+class _RevealDialogState extends State<_RevealDialog> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(_revealTimeout, () {
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      key: const Key('memory-reveal-dialog'),
+      title: const Text('仅本次展示'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 不提供选择复制：敏感原文只作本次呈现，不进剪贴板。
+          Text(widget.text),
+          const SizedBox(height: 8),
+          Text('关闭或稍后会自动重新遮罩。', style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 删除确认对话框：先呈现只读的影响范围预览，确认后返回 true。
+class _DeletePreviewDialog extends StatelessWidget {
+  const _DeletePreviewDialog({required this.impact});
+
+  final Future<MemoryDeleteImpact?> impact;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('删除这条记忆？'),
+      content: FutureBuilder<MemoryDeleteImpact?>(
+        future: impact,
+        builder: (context, snapshot) {
+          if (!snapshot.hasData && !snapshot.hasError) {
+            return const SizedBox(
+              height: 80,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 8),
+                    Text('正在核对影响范围…'),
+                  ],
+                ),
+              ),
+            );
+          }
+          final preview = snapshot.data;
+          if (preview == null) {
+            return const Text('这条记忆不存在或已经变化，请返回后刷新。');
+          }
+          return SizedBox(
+            width: 420,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final line in preview.lines)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(line),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('先不用'),
+        ),
+        FutureBuilder<MemoryDeleteImpact?>(
+          future: impact,
+          builder: (context, snapshot) {
+            final ready = snapshot.hasData && snapshot.data != null;
+            return TextButton(
+              key: const Key('memory-delete-confirm'),
+              onPressed: ready ? () => Navigator.of(context).pop(true) : null,
+              child: const Text('确认删除'),
+            );
+          },
+        ),
+      ],
     );
   }
 }

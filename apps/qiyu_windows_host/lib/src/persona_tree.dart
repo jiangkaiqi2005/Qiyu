@@ -358,6 +358,7 @@ final class PersonaBranchSnapshot {
     this.roots = const [],
     this.unrooted = const [],
     this.archivedClaims = const [],
+    this.unclassified = const [],
   });
 
   final bool readable;
@@ -366,6 +367,10 @@ final class PersonaBranchSnapshot {
 
   /// 归档主张（根与中间理解）：只作「不得用旧证据复活」的负面依据。
   final List<String> archivedClaims;
+
+  /// 未归类叶（等待日终整理的证据指针）：Dream 不消费，供记忆中心
+  /// 删除预览与 applyBan 的实际清除范围对齐。
+  final List<PersonaLeaf> unclassified;
 }
 
 /// 全树只读快照。
@@ -563,9 +568,8 @@ final class PersonaTreeStore {
   /// 随手记：为带画像提示的 episode 条目建立叶指针。幂等——同一条目
   /// 或同日同摘要的信号不重复建叶（相同信号合并计数）。隐私与禁提
   /// 先于叶写入；失败只记诊断，不影响对话与 episode。
-  Future<void> createLeaves(List<EpisodeEntry> entries) => _locked(
-    () => _createLeavesLocked(entries),
-  );
+  Future<void> createLeaves(List<EpisodeEntry> entries) =>
+      _locked(() => _createLeavesLocked(entries));
 
   /// 用户明确纠正是唯一在线撤根例外（定稿）：当轮身份自述与根下
   /// 身份理解冲突时，立即把旧根从 persona.md 撤下并停止生效——旧根
@@ -610,13 +614,15 @@ final class PersonaTreeStore {
             continue;
           }
           final date = localSessionDate(entry.at.toLocal());
-          final outdated = state.roots.where(
-            (root) => root.middles.any(
-              (middle) =>
-                  middle.type == middleTypePendingFact &&
-                  conflictTopic(summary, middle.claim),
-            ),
-          ).toList();
+          final outdated = state.roots
+              .where(
+                (root) => root.middles.any(
+                  (middle) =>
+                      middle.type == middleTypePendingFact &&
+                      conflictTopic(summary, middle.claim),
+                ),
+              )
+              .toList();
           for (final root in outdated) {
             state.roots.remove(root);
             _archiveRoot(
@@ -755,6 +761,68 @@ final class PersonaTreeStore {
     return applied;
   });
 
+  /// 用户修正 episode 条目后同步叶的摘要副本（ticket 20）：指向该
+  /// 条目（entryRef 相同）的叶改用修正文本，关系（support/conflict）
+  /// 维持原值等待下一次日终复核重判；叶只是证据指针，不影响
+  /// persona.md 投影。分支文件不可读时跳过该分支。返回更新叶数。
+  Future<int> resyncLeafSummaries(
+    String entryRef,
+    String newSummary,
+  ) => _locked(() async {
+    final summary = redactSessionText(newSummary).trim();
+    if (entryRef.isEmpty || summary.isEmpty) {
+      return 0;
+    }
+    var updated = 0;
+    for (final branch in personaBranches) {
+      final state = await _readBranch(branch);
+      if (!state.readable) {
+        _diagnosticsSink(
+          'persona leaf resync skipped reason=${branch.wireName}-unreadable',
+        );
+        continue;
+      }
+      PersonaLeaf? resync(PersonaLeaf leaf) {
+        if (leaf.entryRef != entryRef || leaf.summary == summary) {
+          return null;
+        }
+        return PersonaLeaf(
+          id: leaf.id,
+          date: leaf.date,
+          nature: leaf.nature,
+          relation: leaf.relation,
+          summary: summary,
+          episodePath: leaf.episodePath,
+          entryRef: leaf.entryRef,
+        );
+      }
+
+      var changed = false;
+      for (var i = 0; i < state.unclassified.length; i += 1) {
+        final next = resync(state.unclassified[i]);
+        if (next != null) {
+          state.unclassified[i] = next;
+          changed = true;
+          updated += 1;
+        }
+      }
+      for (final middle in state.allMiddles) {
+        for (var i = 0; i < middle.leaves.length; i += 1) {
+          final next = resync(middle.leaves[i]);
+          if (next != null) {
+            middle.leaves[i] = next;
+            changed = true;
+            updated += 1;
+          }
+        }
+      }
+      if (changed) {
+        await _writeBranch(branch, state);
+      }
+    }
+    return updated;
+  });
+
   /// Dream 只读快照：活跃根、未归根中间理解与归档主张（负面依据）。
   /// 读失败不回 null，用 readable=false 表达，Dream 对该分支不提案。
   Future<PersonaTreeSnapshot> readSnapshot() => _locked(() async {
@@ -783,6 +851,7 @@ final class PersonaTreeStore {
         archivedClaims: archive.readable
             ? archive.archivedClaims()
             : const <String>[],
+        unclassified: state.unclassified,
       );
     }
     return PersonaTreeSnapshot(branches: branches);
@@ -1179,23 +1248,27 @@ final class PersonaTreeStore {
         if (leaf.nature != natureSelfReport) {
           continue;
         }
-        final outdated = state.unrooted.where(
-          (middle) =>
-              middle.type == middleTypePendingFact &&
-              conflictTopic(leaf.summary, middle.claim),
-        ).toList();
+        final outdated = state.unrooted
+            .where(
+              (middle) =>
+                  middle.type == middleTypePendingFact &&
+                  conflictTopic(leaf.summary, middle.claim),
+            )
+            .toList();
         for (final middle in outdated) {
           state.unrooted.remove(middle);
           _archiveMiddle(archive, middle, archiveReasonCorrection, date);
           changed = true;
         }
-        final outdatedRoots = state.roots.where(
-          (root) => root.middles.any(
-            (middle) =>
-                middle.type == middleTypePendingFact &&
-                conflictTopic(leaf.summary, middle.claim),
-          ),
-        ).toList();
+        final outdatedRoots = state.roots
+            .where(
+              (root) => root.middles.any(
+                (middle) =>
+                    middle.type == middleTypePendingFact &&
+                    conflictTopic(leaf.summary, middle.claim),
+              ),
+            )
+            .toList();
         for (final root in outdatedRoots) {
           state.roots.remove(root);
           _archiveRoot(
@@ -1215,8 +1288,9 @@ final class PersonaTreeStore {
     //    同话题不同主张挂 conflict（并存不覆盖）。身份分支只认自述，
     //    行为叶不得挂载或反驳身份事实。根下中间理解同样参与挂载：
     //    新证据必须够得到高层理解，反向证据才能浮出并支撑降根裁决。
-    for (final leaf in state.unclassified.toList()
-      ..sort((left, right) => left.date.compareTo(right.date))) {
+    for (final leaf
+        in state.unclassified.toList()
+          ..sort((left, right) => left.date.compareTo(right.date))) {
       // 身份事实只认自述：行为叶不得挂载或反驳身份理解。
       if (branch.wireName == 'identity' && leaf.nature != natureSelfReport) {
         continue;
@@ -1269,10 +1343,7 @@ final class PersonaTreeStore {
         final conflicts = middle.leaves
             .where((leaf) => leaf.relation == 'conflict')
             .toList();
-        final distinctDates = conflicts
-            .map((leaf) => leaf.date)
-            .toSet()
-            .length;
+        final distinctDates = conflicts.map((leaf) => leaf.date).toSet().length;
         if (conflicts.length < 2 || distinctDates < 2) {
           continue;
         }
@@ -1281,9 +1352,8 @@ final class PersonaTreeStore {
         final counterClaim = conflicts
             .map((leaf) => leaf.summary)
             .reduce(
-              (left, right) => left.runes.length >= right.runes.length
-                  ? left
-                  : right,
+              (left, right) =>
+                  left.runes.length >= right.runes.length ? left : right,
             );
         final counter = PersonaMiddle(
           id: _nextId(branch, 'M', state, archive),
@@ -1382,9 +1452,8 @@ final class PersonaTreeStore {
       final claim = attach
           .map((leaf) => leaf.summary)
           .reduce(
-            (left, right) => left.runes.length >= right.runes.length
-                ? left
-                : right,
+            (left, right) =>
+                left.runes.length >= right.runes.length ? left : right,
           );
       final middle = PersonaMiddle(
         id: _nextId(branch, 'M', state, archive),
@@ -2073,9 +2142,7 @@ String clipPersonaBlock(String contents, int maxRunes) {
   while (render().runes.length > maxRunes) {
     var dropped = false;
     for (final title in personaTrimOrder) {
-      final section = sections
-          .where((entry) => entry.$1 == title)
-          .firstOrNull;
+      final section = sections.where((entry) => entry.$1 == title).firstOrNull;
       if (section == null || section.$2.isEmpty) {
         continue;
       }
