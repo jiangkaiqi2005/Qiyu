@@ -507,6 +507,41 @@ void main() {
     await provider.close();
   });
 
+  test('runExclusively waits for the in-flight delivery to finish', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-exclusive-slot-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final provider = _ControlledStreamingProviderChatClient();
+    final repository = MarkdownMemoryRepository(
+      memoryDirectory: temporaryDirectory.path,
+    );
+    final service = LocalChatService(
+      repository,
+      providerChatClient: provider,
+      deliveryPause: (_) async {},
+    );
+
+    final streamEnded = service
+        .deliver(requestId: 'exclusive-1', text: '聊到一半')
+        .listen((_) {})
+        .asFuture<void>();
+    // 交付已占用串行槽、模型流未终止：危险操作只能排在后面。
+    var ranExclusively = false;
+    final exclusive = service.runExclusively(() async {
+      ranExclusively = true;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(ranExclusively, isFalse);
+
+    provider.pushDelta('嗯，');
+    provider.pushDelta('我在听。');
+    await provider.close();
+    await streamEnded;
+    await exclusive;
+    expect(ranExclusively, isTrue);
+  });
+
   test(
     'half-stream failure hides partial text and delivers local fallback',
     () async {

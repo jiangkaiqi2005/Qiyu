@@ -10,9 +10,11 @@ import 'package:path/path.dart' as path;
 
 import 'browser_launcher.dart';
 import 'daily_finalization.dart';
+import 'developer_diagnostics.dart';
 import 'dream.dart';
 import 'episode_memory.dart';
 import 'local_chat_service.dart';
+import 'local_data_service.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
 import 'memory_backup.dart';
@@ -72,19 +74,26 @@ final class LocalAppHost {
       );
     }
     final modelPromptBuilder = ModelPromptBuilder(personaConstitution);
+    final runtimeDirectory = Directory(memoryDirectory).parent.path;
     final effectiveProviderSettings =
         providerSettingsService ??
         ProviderSettingsService(
           JsonProviderConfigRepository(
-            filePath: path.join(
-              Directory(memoryDirectory).parent.path,
-              'provider.json',
-            ),
+            filePath: path.join(runtimeDirectory, 'provider.json'),
           ),
           const WindowsCredentialSecretStore(),
           const ProviderModelGateway(DartIoProviderHttpClient()),
           modelPromptBuilder,
         );
+    // 开发者诊断（ticket 23）：最近请求环形缓冲 + 体验选项持久化。
+    // 记录器结构上不收用户文本，诊断端点只读、默认不启用。
+    final requestDiagnostics = RequestDiagnosticsRecorder();
+    final experienceRepository = JsonExperienceSettingsRepository(
+      filePath: path.join(runtimeDirectory, 'experience.json'),
+    );
+    final memoryRepository = MarkdownMemoryRepository(
+      memoryDirectory: memoryDirectory,
+    );
     final episodePipeline = EpisodeMemoryPipeline(
       memoryDirectory: memoryDirectory,
     );
@@ -161,8 +170,9 @@ final class LocalAppHost {
       memoryActions: memoryActions,
     );
     final chatService = LocalChatService(
-      MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
+      memoryRepository,
       providerChatClient: effectiveProviderSettings,
+      requestDiagnostics: requestDiagnostics,
       modelPromptBuilder: modelPromptBuilder,
       episodePipeline: episodePipeline,
       dailyFinalization: DailyFinalizationService(
@@ -209,10 +219,31 @@ final class LocalAppHost {
       memoryRecovery: memoryRecovery,
     );
     final onboardingRepository = JsonOnboardingRepository(
-      filePath: path.join(
-        Directory(memoryDirectory).parent.path,
-        'onboarding.json',
-      ),
+      filePath: path.join(runtimeDirectory, 'onboarding.json'),
+    );
+    // 开发者诊断快照服务：只读汇总最近请求、后台整理、Dream 资格与
+    // 文件健康度；仅在体验选项开启开发者模式时经 /api/dev/diagnostics 暴露。
+    final developerDiagnostics = DeveloperDiagnosticsService(
+      memoryDirectory: memoryDirectory,
+      recorder: requestDiagnostics,
+      repository: memoryRepository,
+      episodePipeline: episodePipeline,
+      dreamService: dreamService,
+      memoryControls: memoryControls,
+      personaTree: personaTree,
+      memoryRecovery: memoryRecovery,
+      providerConfiguredReader: () async =>
+          (await effectiveProviderSettings.read()).configured,
+    );
+    // 本机数据管理：数据位置概览与「清除产品数据」（清除前先落快照）。
+    final localDataService = LocalDataService(
+      memoryDirectory: memoryDirectory,
+      repository: memoryRepository,
+      backupService: memoryBackup,
+      providerSettingsService: effectiveProviderSettings,
+      onboardingFilePath: path.join(runtimeDirectory, 'onboarding.json'),
+      episodePipeline: episodePipeline,
+      memoryControls: memoryControls,
     );
     final requestHandler = _LocalAppRequestHandler(
       webRoot,
@@ -222,6 +253,11 @@ final class LocalAppHost {
       memoryCenter: memoryCenter,
       memoryActions: memoryActions,
       memoryBackup: memoryBackup,
+      memoryControls: memoryControls,
+      experienceRepository: experienceRepository,
+      developerDiagnostics: developerDiagnostics,
+      localDataService: localDataService,
+      requestDiagnostics: requestDiagnostics,
       activationToken: activationToken,
       onActivate: onActivate,
     );
@@ -266,6 +302,11 @@ final class _LocalAppRequestHandler {
     required this.memoryCenter,
     required this.memoryActions,
     required this.memoryBackup,
+    required this.memoryControls,
+    required this.experienceRepository,
+    required this.developerDiagnostics,
+    required this.localDataService,
+    required this.requestDiagnostics,
     required this.activationToken,
     required this.onActivate,
   }) : _startupToken = generateSecureToken(),
@@ -285,6 +326,11 @@ final class _LocalAppRequestHandler {
   final MemoryCenterService memoryCenter;
   final MemoryActionService memoryActions;
   final MemoryBackupService memoryBackup;
+  final MemoryControlsStore memoryControls;
+  final ExperienceSettingsRepository experienceRepository;
+  final DeveloperDiagnosticsService developerDiagnostics;
+  final LocalDataService localDataService;
+  final RequestDiagnosticsRecorder? requestDiagnostics;
   final String? activationToken;
   final Future<BrowserLaunchResult> Function()? onActivate;
   final String _sessionToken;
@@ -459,6 +505,13 @@ final class _LocalAppRequestHandler {
           config: config,
           apiKey: apiKey as String?,
         );
+        requestDiagnostics?.record(
+          source: RecentRequestSources.providerTest,
+          result: result.succeeded
+              ? RecentRequestResults.ok
+              : RecentRequestResults.failed,
+          detail: 'status=${result.status.name}',
+        );
         return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
       }
       if (request.method == 'DELETE' &&
@@ -468,6 +521,87 @@ final class _LocalAppRequestHandler {
           jsonEncode(settings.toJson()),
           headers: _jsonHeaders,
         );
+      }
+      if (request.method == 'GET' && request.url.path == 'api/preferences') {
+        final settings = await experienceRepository.load();
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'PUT' && request.url.path == 'api/preferences') {
+        final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
+        final developerMode = payload['developerMode'];
+        if (developerMode is! bool) {
+          throw const LocalChatException(
+            code: 'invalid_request',
+            message: '体验选项请求格式不正确。',
+            retryable: false,
+          );
+        }
+        final ExperienceSettings settings;
+        try {
+          settings = await experienceRepository.save(
+            ExperienceSettings(developerMode: developerMode),
+          );
+        } on Object catch (error) {
+          throw LocalDataException('体验选项保存失败，请稍后重试。', error);
+        }
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'GET' &&
+          request.url.path == 'api/memory/controls') {
+        final controls = await memoryControls.load();
+        Map<String, Object?> entryJson(MemoryControlEntry entry) => {
+          'id': entry.id,
+          'origin': entry.origin,
+          'summary': entry.summary,
+        };
+        return Response.ok(
+          jsonEncode({
+            'readable': controls.readable,
+            'frozen': [for (final entry in controls.frozen) entryJson(entry)],
+            'banned': [for (final entry in controls.banned) entryJson(entry)],
+            // 删除记录只存抽象防复活范围，只给数量不给内容。
+            'deletedCount': controls.deleted.length,
+          }),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'GET' &&
+          request.url.path == 'api/data/clear-preview') {
+        final preview = await localDataService.clearPreview();
+        return Response.ok(jsonEncode(preview), headers: _jsonHeaders);
+      }
+      if (request.method == 'POST' && request.url.path == 'api/data/clear') {
+        final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
+        if (payload['confirm'] != true) {
+          throw const LocalChatException(
+            code: 'invalid_request',
+            message: '清除本机数据需要明确确认。',
+            retryable: false,
+          );
+        }
+        // 经聊天服务的独占槽执行：等全部在途交付与后台任务完成，
+        // 期间没有新交付并发，清除才不会丢写入或复活已清除的数据。
+        final result = await chatService.runExclusively(
+          () => localDataService.clear(),
+        );
+        return Response.ok(jsonEncode(result), headers: _jsonHeaders);
+      }
+      if (request.method == 'GET' &&
+          request.url.path == 'api/dev/diagnostics') {
+        // 实验室/开发者能力默认不打扰普通用户：未开启开发者模式时
+        // 端点直接按不存在处理；诊断只读，绝不修改生产数据。
+        final settings = await experienceRepository.load();
+        if (!settings.developerMode) {
+          return _plainError(HttpStatus.notFound, 'Not found');
+        }
+        final snapshot = await developerDiagnostics.snapshot();
+        return Response.ok(jsonEncode(snapshot), headers: _jsonHeaders);
       }
       if (request.method == 'GET' && request.url.path == 'api/chat/session') {
         final snapshot = await chatService.restore(
@@ -763,6 +897,13 @@ final class _LocalAppRequestHandler {
       return _jsonError(
         HttpStatus.internalServerError,
         code: 'credential_store_error',
+        message: error.message,
+        retryable: true,
+      );
+    } on LocalDataException catch (error) {
+      return _jsonError(
+        HttpStatus.internalServerError,
+        code: 'local_data_error',
         message: error.message,
         retryable: true,
       );

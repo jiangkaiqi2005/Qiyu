@@ -10,6 +10,8 @@ import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/settings_client.dart';
+import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 void main() {
@@ -451,6 +453,7 @@ void main() {
         viewModel: chatViewModel,
         providerSettingsViewModel: settingsViewModel,
         onboardingViewModel: await _completedOnboardingViewModel(),
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
       ),
     );
     await _enterChatFromHome(tester);
@@ -477,7 +480,20 @@ void main() {
       find.byKey(const Key('provider-api-key')),
       'ui-only-test-value',
     );
-    await tester.drag(find.byType(ListView), const Offset(0, -420));
+    // 设置页变长了（ticket 23 新增本地数据/隐私/开发者区块）：
+    // 用滚动到可见代替固定位移，避免依赖具体页面高度。
+    // 设置页唯一的纵向滚动区（TextField 内部的横向滚动条不算）。
+    final settingsScrollable = find.byWidgetPredicate(
+      (widget) =>
+          widget is Scrollable && widget.axisDirection == AxisDirection.down,
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('save-provider-settings')),
+      160,
+      scrollable: settingsScrollable,
+      maxScrolls: 20,
+    );
+    await tester.ensureVisible(find.byKey(const Key('save-provider-settings')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('save-provider-settings')));
     await tester.pumpAndSettle();
@@ -489,16 +505,38 @@ void main() {
     );
     expect(keyField.controller!.text, isEmpty);
 
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('provider-model')),
+      -160,
+      scrollable: settingsScrollable,
+      maxScrolls: 20,
+    );
     await tester.enterText(
       find.byKey(const Key('provider-model')),
       'unsaved-test-model',
     );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('test-provider-connection')),
+      160,
+      scrollable: settingsScrollable,
+      maxScrolls: 20,
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('test-provider-connection')),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('test-provider-connection')));
     await tester.pumpAndSettle();
     expect(find.text('连接成功，栖语可以使用这个模型。'), findsOneWidget);
     expect(settingsGateway.tested.single.model, 'unsaved-test-model');
 
-    await tester.drag(find.byType(ListView), const Offset(0, 420));
+    await tester.scrollUntilVisible(
+      find.byTooltip('返回聊天'),
+      -160,
+      scrollable: settingsScrollable,
+      maxScrolls: 20,
+    );
+    await tester.ensureVisible(find.byTooltip('返回聊天'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('返回聊天'));
     await tester.pumpAndSettle();
@@ -861,4 +899,63 @@ final class _FakeProviderSettingsGateway implements ProviderSettingsGateway {
       message: '连接成功，栖语可以使用这个模型。',
     );
   }
+}
+
+final class _FakeSettingsGateway implements SettingsGateway {
+  bool developerMode = false;
+  int clearCalls = 0;
+
+  @override
+  Future<ExperiencePreferences> readPreferences() async =>
+      ExperiencePreferences(developerMode: developerMode);
+
+  @override
+  Future<ExperiencePreferences> savePreferences({
+    required bool developerMode,
+  }) async {
+    this.developerMode = developerMode;
+    return ExperiencePreferences(developerMode: developerMode);
+  }
+
+  @override
+  Future<MemoryControlsOverview> readMemoryControls() async =>
+      const MemoryControlsOverview(
+        readable: true,
+        frozen: [],
+        banned: [],
+        deletedCount: 0,
+      );
+
+  @override
+  Future<ClearPreview> readClearPreview() async => const ClearPreview(
+    memoryDirectory: 'C:/qiyu-test/memories',
+    sessionCount: 0,
+    episodeDayCount: 0,
+    frozenCount: 0,
+    bannedCount: 0,
+    deletedCount: 0,
+    snapshotCount: 0,
+    providerConfigured: false,
+    keySet: false,
+  );
+
+  @override
+  Future<void> clearData() async {
+    clearCalls += 1;
+  }
+
+  @override
+  Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
+    generatedAt: DateTime(2026, 8, 19),
+    memoryDirectory: 'C:/qiyu-test/memories',
+    recentRequests: const [],
+    finalization: const FinalizationHealth(
+      today: '2026-08-19',
+      todayFinalized: false,
+      pendingDays: 0,
+      unreadableDays: 0,
+    ),
+    dream: const DreamHealth(),
+    fileHealth: const {},
+  );
 }

@@ -1216,6 +1216,239 @@ void main() {
       await host.close();
     },
   );
+
+  test(
+    'developer diagnostics stay closed until developer mode is turned on',
+    () async {
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+      );
+      final browser = await _openBrowserSession(host);
+
+      // 体验选项默认关闭开发者模式。
+      final preferences = await _send(
+        host.origin.resolve('/api/preferences'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(preferences.statusCode, HttpStatus.ok);
+      expect(jsonDecode(preferences.body), containsPair('developerMode', false));
+
+      // 未开启时诊断按不存在处理；变更请求更不被接受（只读能力）。
+      final closed = await _send(
+        host.origin.resolve('/api/dev/diagnostics'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(closed.statusCode, HttpStatus.notFound);
+      final posted = await _send(
+        host.origin.resolve('/api/dev/diagnostics'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      expect(posted.statusCode, HttpStatus.notFound);
+
+      // 非法体验选项负载被拒绝。
+      final invalid = await _send(
+        host.origin.resolve('/api/preferences'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'developerMode': 'yes'}),
+      );
+      expect(invalid.statusCode, HttpStatus.badRequest);
+
+      // 开启后可读，且负载缺 CSRF 一律拒绝。
+      final turnedOn = await _send(
+        host.origin.resolve('/api/preferences'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'developerMode': true}),
+      );
+      expect(turnedOn.statusCode, HttpStatus.ok);
+      expect(jsonDecode(turnedOn.body), containsPair('developerMode', true));
+      final missingCsrf = await _send(
+        host.origin.resolve('/api/preferences'),
+        method: 'PUT',
+        headers: browser.readHeaders(host.origin),
+        requestBody: jsonEncode({'developerMode': false}),
+      );
+      expect(missingCsrf.statusCode, HttpStatus.forbidden);
+
+      final diagnostics = await _send(
+        host.origin.resolve('/api/dev/diagnostics'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(diagnostics.statusCode, HttpStatus.ok);
+      final snapshot = jsonDecode(diagnostics.body) as Map<String, Object?>;
+      expect(snapshot['recentRequests'], isA<List<Object?>>());
+      expect(snapshot['finalization'], isA<Map<String, Object?>>());
+      expect(snapshot['dream'], isA<Map<String, Object?>>());
+      expect(snapshot['fileHealth'], isA<Map<String, Object?>>());
+      expect(snapshot['memoryDirectory'], memoryDirectory.path);
+      await host.close();
+    },
+  );
+
+  test(
+    'diagnostics show recent chat source and fallback reason without secrets',
+    () async {
+      final configPath =
+          '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+      final settings = ProviderSettingsService(
+        JsonProviderConfigRepository(filePath: configPath),
+        _MemorySecretStore(),
+        const _FailingModelGateway(ModelFailureKind.timeout),
+        const ModelPromptBuilder('测试人格宪法'),
+      );
+      await settings.save(
+        config: ProviderConfig(
+          kind: ProviderKind.openAiCompatible,
+          baseUrl: 'https://example.com/v1',
+          model: 'chat-model',
+          temperature: 0.6,
+          timeoutSeconds: 25,
+        ),
+        apiKey: 'diagnostics-secret-key-value',
+      );
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+        providerSettingsService: settings,
+      );
+      final browser = await _openBrowserSession(host);
+
+      await _send(
+        host.origin.resolve('/api/preferences'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'developerMode': true}),
+      );
+      final chat = await _send(
+        host.origin.resolve('/api/chat'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'requestId': 'diagnostics-chat',
+          'text': '今天有点累',
+        }),
+      );
+      expect(chat.statusCode, HttpStatus.ok);
+      expect(
+        _chatEvent(_chatEvents(chat.body), 'fallback'),
+        containsPair('fallbackReason', 'model_timeout'),
+      );
+
+      final diagnostics = await _send(
+        host.origin.resolve('/api/dev/diagnostics'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(diagnostics.statusCode, HttpStatus.ok);
+      final snapshot = jsonDecode(diagnostics.body) as Map<String, Object?>;
+      final requests = (snapshot['recentRequests']! as List<Object?>)
+          .cast<Map<String, Object?>>();
+      final chatEntry = requests.firstWhere(
+        (entry) => entry['source'] == 'chat',
+      );
+      expect(chatEntry['result'], 'fallback');
+      expect(chatEntry['fallbackReason'], 'model_timeout');
+      expect(chatEntry['replySource'], 'local');
+      // 诊断导出统一脱敏：API Key 原文绝不出现。
+      expect(diagnostics.body, isNot(contains('diagnostics-secret-key-value')));
+      await host.close();
+    },
+  );
+
+  test('memory controls overview and clear-product-data flow', () async {
+    final host = await LocalAppHost.start(
+      webRoot: webRoot.path,
+      memoryDirectory: memoryDirectory.path,
+      personaConstitution: '测试人格宪法',
+    );
+    final browser = await _openBrowserSession(host);
+
+    // 先产生一条真实会话，并放一份控制记录夹具。
+    final chat = await _send(
+      host.origin.resolve('/api/chat'),
+      method: 'POST',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({'requestId': 'clear-flow', 'text': '在吗'}),
+    );
+    expect(chat.statusCode, HttpStatus.ok);
+    File(
+      '${memoryDirectory.path}${Platform.pathSeparator}memory-controls.md',
+    ).writeAsStringSync(
+      '# memory-controls\n'
+      '## frozen\n'
+      '- [MC001] chat | 一段冻结的记忆\n'
+      '## banned\n'
+      '- [MC002] chat | 一段禁提的往事\n'
+      '## deleted\n',
+    );
+
+    // 记忆控制总览：冻结与禁提逐条可见，删除只给数量。
+    final controls = await _send(
+      host.origin.resolve('/api/memory/controls'),
+      headers: browser.readHeaders(host.origin),
+    );
+    expect(controls.statusCode, HttpStatus.ok);
+    final controlsJson = jsonDecode(controls.body) as Map<String, Object?>;
+    expect(controlsJson['readable'], isTrue);
+    expect(controlsJson['frozen'], hasLength(1));
+    expect(controlsJson['banned'], hasLength(1));
+    expect(controlsJson['deletedCount'], 0);
+
+    // 清除前影响概览：位置与数量准确。
+    final preview = await _send(
+      host.origin.resolve('/api/data/clear-preview'),
+      headers: browser.readHeaders(host.origin),
+    );
+    expect(preview.statusCode, HttpStatus.ok);
+    final previewJson = jsonDecode(preview.body) as Map<String, Object?>;
+    expect(previewJson['memoryDirectory'], memoryDirectory.path);
+    expect(previewJson['sessionCount'], 1);
+    expect(previewJson['frozenCount'], 1);
+    expect(previewJson['bannedCount'], 1);
+
+    // 未明确确认一律拒绝。
+    final unconfirmed = await _send(
+      host.origin.resolve('/api/data/clear'),
+      method: 'POST',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({'confirm': false}),
+    );
+    expect(unconfirmed.statusCode, HttpStatus.badRequest);
+
+    // 确认后清除：产品数据消失，清除前快照保留。
+    final cleared = await _send(
+      host.origin.resolve('/api/data/clear'),
+      method: 'POST',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({'confirm': true}),
+    );
+    expect(cleared.statusCode, HttpStatus.ok);
+    expect(jsonDecode(cleared.body), containsPair('cleared', true));
+    expect(
+      Directory(
+        '${memoryDirectory.path}${Platform.pathSeparator}sessions',
+      ).existsSync(),
+      isFalse,
+    );
+    expect(
+      File(
+        '${memoryDirectory.path}${Platform.pathSeparator}memory-controls.md',
+      ).existsSync(),
+      isFalse,
+    );
+    final snapshots = await _send(
+      host.origin.resolve('/api/backup/snapshots'),
+      headers: browser.readHeaders(host.origin),
+    );
+    final snapshotsJson = jsonDecode(snapshots.body) as Map<String, Object?>;
+    expect(snapshotsJson['snapshots']! as List<Object?>, hasLength(1));
+    await host.close();
+  });
 }
 
 List<Map<String, Object?>> _chatEvents(String body) => body

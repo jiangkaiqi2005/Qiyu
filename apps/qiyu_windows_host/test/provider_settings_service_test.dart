@@ -82,10 +82,8 @@ void main() {
 
     expect(result.status, ProviderTestStatus.success);
     expect(gateway.apiKey, isNull);
-    expect(
-      await secrets.readApiKey(config.credentialScope),
-      'old-private-value',
-    );
+    // 换作用域保存后旧 Key 已被清理，更不会发给新目标。
+    expect(await secrets.readApiKey(config.credentialScope), isNull);
   });
 
   test('测试当前表单保留所有连接错误类别', () async {
@@ -127,6 +125,62 @@ void main() {
 
     expect(result.status, ProviderTestStatus.contentParsing);
     expect(result.succeeded, isFalse);
+  });
+
+  test('Key 替换覆盖旧值、移除后配置仍在但 Key 清空', () async {
+    final repository = _MemoryProviderConfigRepository();
+    final secrets = _MemorySecretStore();
+    final gateway = _FakeModelGateway(reply: '在。');
+    final service = ProviderSettingsService(
+      repository,
+      secrets,
+      gateway,
+      promptBuilder,
+    );
+
+    await service.save(config: config, apiKey: 'first-private-value');
+    expect(
+      await secrets.readApiKey(config.credentialScope),
+      'first-private-value',
+    );
+
+    // 替换：同一作用域写入新 Key，旧值被覆盖。
+    final replaced = await service.save(
+      config: config,
+      apiKey: 'second-private-value',
+    );
+    expect(replaced.keySet, isTrue);
+    expect(
+      await secrets.readApiKey(config.credentialScope),
+      'second-private-value',
+    );
+
+    // 换地址即换凭据作用域：新 Key 落位后，旧作用域的 Key 被清走，
+    // 本机凭据库不留无人读取的废弃 Key。
+    const switched = ProviderConfig(
+      kind: ProviderKind.anthropic,
+      baseUrl: 'https://other.anthropic.example/v1',
+      model: 'claude-test',
+      temperature: 0.7,
+      timeoutSeconds: 30,
+    );
+    final afterSwitch = await service.save(
+      config: switched,
+      apiKey: 'third-private-value',
+    );
+    expect(afterSwitch.keySet, isTrue);
+    expect(
+      await secrets.readApiKey(switched.credentialScope),
+      'third-private-value',
+    );
+    expect(await secrets.readApiKey(config.credentialScope), isNull);
+
+    // 移除：Key 清空，配置本身保留。
+    final forgotten = await service.forgetApiKey();
+    expect(forgotten.keySet, isFalse);
+    expect(forgotten.configured, isTrue);
+    expect(await secrets.readApiKey(switched.credentialScope), isNull);
+    expect(repository.config, switched);
   });
 }
 

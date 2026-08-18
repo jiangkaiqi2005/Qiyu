@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'daily_finalization.dart';
+import 'developer_diagnostics.dart';
 import 'dream.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
@@ -110,6 +111,7 @@ final class LocalChatService {
     this.relationshipLifecycle,
     this.memoryActions,
     this.memoryRecovery,
+    this.requestDiagnostics,
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
     Clock? clock,
@@ -163,6 +165,10 @@ final class LocalChatService {
   /// 七天时深度重组产出长期印象；启动时补跑上次晚安未成功的请求。
   /// 与日终归档、月压缩挂同一条后台任务链，保证只看到 finalized 材料。
   final DreamService? dreamService;
+
+  /// 开发者诊断最近请求记录器（ticket 23）：只记来源、结果与脱敏
+  /// 细节，绝不记用户文本；null 时不记录。
+  final RequestDiagnosticsRecorder? requestDiagnostics;
   final DeliveryPause _deliveryPause;
   final RecallWindowWait _recallWindowWait;
   final Clock _clock;
@@ -209,6 +215,19 @@ final class LocalChatService {
   /// 等待已调度的后台召回检索完成。检索失败只记诊断，供测试断言使用。
   Future<void> settlePendingRecalls() => _recallTask;
 
+  /// 先等全部在途交付与后台任务（补归档、月压缩、Dream、召回保存）
+  /// 完成，再独占交付串行槽运行 [operation]：期间新交付一律排在
+  /// operation 之后，不会与之并发。「清除产品数据」这类整机危险操作
+  /// （ticket 23）必须经此执行——操作前落盘的写入都能被其快照覆盖，
+  /// 操作后也不会被在途写入把已清除的数据复活。
+  Future<T> runExclusively<T>(Future<T> Function() operation) => _serialized(
+    () async {
+      await _finalizationTask;
+      await _recallTask;
+      return operation();
+    },
+  );
+
   /// 把一次后台归档挂到串行任务链上：归档之间不并发，失败只记诊断。
   void _runFinalization(
     String reason,
@@ -221,9 +240,11 @@ final class LocalChatService {
     _finalizationTask = _finalizationTask.then((_) async {
       try {
         final report = await work(service);
+        var troubled = 0;
         for (final outcome in report.outcomes) {
           if (outcome.status == FinalizationStatus.failed ||
               outcome.status == FinalizationStatus.skippedUnreadable) {
+            troubled += 1;
             final detail = outcome.detail == null ? '' : ' [${outcome.detail}]';
             _diagnosticsSink(
               'finalization ${outcome.status.name} date=${outcome.date}'
@@ -231,7 +252,21 @@ final class LocalChatService {
             );
           }
         }
+        requestDiagnostics?.record(
+          source: RecentRequestSources.finalization,
+          result: troubled == 0
+              ? RecentRequestResults.ok
+              : RecentRequestResults.failed,
+          detail: 'dates=${report.outcomes.length} troubled=$troubled '
+              'reason=$reason',
+        );
       } on Object catch (error) {
+        requestDiagnostics?.record(
+          source: RecentRequestSources.finalization,
+          result: RecentRequestResults.failed,
+          // 细节只记错误类别，不记第三方错误原文。
+          detail: '${error.runtimeType} reason=$reason',
+        );
         _diagnosticsSink('finalization deferred [$error] reason=$reason');
       }
     });
@@ -297,6 +332,10 @@ final class LocalChatService {
       if (trimmedRequestId.isNotEmpty) {
         _activeDeliveries[trimmedRequestId] = cancellation;
       }
+      // 诊断记录（ticket 23）：只取交付事件的来源与回退元数据。
+      LocalChatDeliveryEvent? stateEvent;
+      var cancelled = false;
+      String? failureDetail;
       try {
         await controller.addStream(
           _deliver(
@@ -304,9 +343,17 @@ final class LocalChatService {
             text: text,
             sessionId: sessionId,
             cancellation: cancellation,
-          ),
+          ).map((event) {
+            if (event.kind == LocalChatEventKind.state) {
+              stateEvent ??= event;
+            } else if (event.kind == LocalChatEventKind.cancelled) {
+              cancelled = true;
+            }
+            return event;
+          }),
         );
       } on LocalChatException catch (error) {
+        failureDetail = error.code;
         controller.add(
           LocalChatDeliveryEvent(
             kind: LocalChatEventKind.error,
@@ -317,6 +364,7 @@ final class LocalChatService {
           ),
         );
       } on Object {
+        failureDetail = 'internal_error';
         controller.add(
           LocalChatDeliveryEvent(
             kind: LocalChatEventKind.error,
@@ -327,6 +375,7 @@ final class LocalChatService {
           ),
         );
       } finally {
+        _recordChatRequest(stateEvent, cancelled, failureDetail);
         if (identical(_activeDeliveries[trimmedRequestId], cancellation)) {
           _activeDeliveries.remove(trimmedRequestId);
         }
@@ -334,6 +383,40 @@ final class LocalChatService {
       }
     });
     return controller.stream;
+  }
+
+  /// 一次聊天请求交付结束后记一条诊断：有可见结果按结果记，其次
+  /// 取消，最后失败；细节只保留错误码级。
+  void _recordChatRequest(
+    LocalChatDeliveryEvent? stateEvent,
+    bool cancelled,
+    String? failureDetail,
+  ) {
+    final recorder = requestDiagnostics;
+    if (recorder == null) {
+      return;
+    }
+    if (stateEvent case final state?) {
+      recorder.record(
+        source: RecentRequestSources.chat,
+        result: state.fallbackReason == null
+            ? RecentRequestResults.ok
+            : RecentRequestResults.fallback,
+        replySource: state.source?.name,
+        fallbackReason: state.fallbackReason?.wireName,
+      );
+    } else if (cancelled) {
+      recorder.record(
+        source: RecentRequestSources.chat,
+        result: RecentRequestResults.cancelled,
+      );
+    } else {
+      recorder.record(
+        source: RecentRequestSources.chat,
+        result: RecentRequestResults.failed,
+        detail: failureDetail ?? 'no_outcome',
+      );
+    }
   }
 
   bool cancel(String requestId) {
@@ -751,7 +834,25 @@ final class LocalChatService {
           final detail = outcome.detail == null ? '' : ' [${outcome.detail}]';
           _diagnosticsSink('dream deferred status=${status.name}$detail');
         }
+        requestDiagnostics?.record(
+          source: RecentRequestSources.dream,
+          result: switch (status) {
+            DreamStatus.accepted => RecentRequestResults.ok,
+            DreamStatus.notEligible ||
+            DreamStatus.notDue ||
+            DreamStatus.skippedNoMaterial ||
+            DreamStatus.skippedNoProvider => RecentRequestResults.skipped,
+            _ => RecentRequestResults.failed,
+          },
+          detail: 'status=${status.name}',
+        );
       } on Object catch (error) {
+        requestDiagnostics?.record(
+          source: RecentRequestSources.dream,
+          result: RecentRequestResults.failed,
+          // 细节只记错误类别，不记第三方错误原文。
+          detail: '${error.runtimeType}',
+        );
         _diagnosticsSink('dream deferred [$error]');
       }
     });

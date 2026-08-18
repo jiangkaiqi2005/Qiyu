@@ -102,10 +102,16 @@ final class ProviderSettingsService
     String? apiKey,
   }) async {
     config.validate();
+    final previous = await configRepository.load();
     if (apiKey != null) {
       await secretStore.writeApiKey(config.credentialScope, apiKey);
     }
     await configRepository.save(config);
+    // 切换 Provider 或地址会更换凭据作用域：旧作用域的 Key 从此无人
+    // 读取，保存成功后立即清掉，不在本机凭据库留废弃 Key。
+    if (previous != null && previous.credentialScope != config.credentialScope) {
+      await secretStore.deleteApiKey(previous.credentialScope);
+    }
     return read();
   }
 

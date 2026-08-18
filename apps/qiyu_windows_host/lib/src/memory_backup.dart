@@ -920,6 +920,10 @@ final class MemoryBackupService {
 
   var _snapshotSequence = 0;
 
+  /// 高风险写入前的保护快照（导入与「清除产品数据」共用，ticket 22/23）：
+  /// 全部文件落盘后才写完成标记，没有完成标记的快照不参与回滚。
+  Future<String> createSnapshot() => _createSnapshot();
+
   /// 给当前记忆目录整体拍快照（快照目录自身除外）。全部文件落盘后
   /// 才写完成标记；没有完成标记的快照不参与回滚。快照是运行时产物，
   /// ID 与时间用真实时钟并附加实例内序号，固定时钟环境下也不冲突。

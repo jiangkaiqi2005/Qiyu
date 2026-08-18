@@ -12,6 +12,8 @@ import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/settings_client.dart';
+import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 
 void main() {
   test('bootstraps CSRF, reads onboarding state, and completes with headers', () async {
@@ -196,6 +198,7 @@ void main() {
         viewModel: _chatViewModel(),
         providerSettingsViewModel: settingsViewModel,
         onboardingViewModel: onboardingViewModel,
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
       ),
     );
     await tester.pumpAndSettle();
@@ -366,4 +369,50 @@ final class _FakeHostConnectionProbe implements HostConnectionProbe {
     }
     return result;
   }
+}
+
+final class _FakeSettingsGateway implements SettingsGateway {
+  @override
+  Future<ExperiencePreferences> readPreferences() async =>
+      const ExperiencePreferences(developerMode: false);
+
+  @override
+  Future<ExperiencePreferences> savePreferences({
+    required bool developerMode,
+  }) async => ExperiencePreferences(developerMode: developerMode);
+
+  @override
+  Future<MemoryControlsOverview> readMemoryControls() async =>
+      const MemoryControlsOverview(
+        readable: true,
+        frozen: [],
+        banned: [],
+        deletedCount: 0,
+      );
+
+  @override
+  Future<ClearPreview> readClearPreview() async => const ClearPreview(
+    memoryDirectory: 'C:/qiyu-test/memories',
+    sessionCount: 0,
+    episodeDayCount: 0,
+    frozenCount: 0,
+    bannedCount: 0,
+    deletedCount: 0,
+    snapshotCount: 0,
+    providerConfigured: false,
+    keySet: false,
+  );
+
+  @override
+  Future<void> clearData() async {}
+
+  @override
+  Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
+    generatedAt: DateTime(2026, 8, 19),
+    memoryDirectory: 'C:/qiyu-test/memories',
+    recentRequests: const [],
+    finalization: null,
+    dream: null,
+    fileHealth: const {},
+  );
 }

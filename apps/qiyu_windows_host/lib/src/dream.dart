@@ -125,6 +125,26 @@ final class DreamState {
   final bool pending;
 }
 
+/// Dream 诊断事实（ticket 23）：供开发者诊断页只读展示。日差与
+/// 七天间隔判定与 [DreamService.run] 内部资格复查同一口径。
+final class DreamHealthFacts {
+  const DreamHealthFacts({
+    required this.lastSuccess,
+    required this.pending,
+    required this.daysSinceLastSuccess,
+    required this.intervalSatisfied,
+  });
+
+  final DateTime? lastSuccess;
+  final bool pending;
+
+  /// 距上次成功的本地日历日差；从未成功时为 null。
+  final int? daysSinceLastSuccess;
+
+  /// 七天最小间隔是否已满足（从未成功视为满足）。
+  final bool intervalSatisfied;
+}
+
 /// long-memory.md 解析结果。[readable] 为 false 表示结构无法识别
 /// （损坏或手写越界）：Dream 绝不覆盖，等待恢复流程（ticket 21）。
 final class LongMemoryFile {
@@ -788,6 +808,33 @@ final class DreamService {
   /// 只读暴露最近一次成功 Dream 的状态（ticket 19 记忆中心展示
   /// 「最近整理时间」用）；文件缺失或不可读时返回空状态。
   Future<DreamState> readState() async => (await _readState()).state;
+
+  /// Dream 状态文件结构可读性（ticket 23 开发者诊断用）：文件缺失
+  /// 视为可读（从未运行），结构无法识别为不可读，等待恢复流程。
+  Future<bool> stateReadable() async => !(await _readState()).corrupted;
+
+  /// 开发者诊断事实（ticket 23）：上次成功时间、日历日差、待补跑与
+  /// 七天间隔是否满足。只读，不写状态；[today] 供测试注入当前日期。
+  Future<DreamHealthFacts> healthFacts({String? today}) async {
+    final state = await readState();
+    final currentDate = today ?? localSessionDate(_clock());
+    int? daysSinceLastSuccess;
+    if (state.lastSuccess != null) {
+      daysSinceLastSuccess = _daysBetween(
+        localSessionDate(state.lastSuccess!),
+        currentDate,
+      );
+    }
+    final intervalSatisfied =
+        state.lastSuccess == null ||
+        daysSinceLastSuccess! >= dreamMinIntervalDays;
+    return DreamHealthFacts(
+      lastSuccess: state.lastSuccess,
+      pending: state.pending,
+      daysSinceLastSuccess: daysSinceLastSuccess,
+      intervalSatisfied: intervalSatisfied,
+    );
+  }
 
   Directory get _personaBackupDirectory =>
       Directory(path.join(memoryDirectory, 'dream', 'backup', 'persona-tree'));

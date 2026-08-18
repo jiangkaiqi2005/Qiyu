@@ -57,6 +57,13 @@ final class OnboardingViewModel extends ChangeNotifier {
     }
   }
 
+  /// 重读初见状态（ticket 23）：清除产品数据会删掉本机初见记录，
+  /// 清除成功后调用本方法回到「未完成」，根路由随即重走初见引导。
+  Future<void> reload() async {
+    _initialized = false;
+    await initialize();
+  }
+
   Future<bool> complete() async {
     if (_completing) {
       return false;

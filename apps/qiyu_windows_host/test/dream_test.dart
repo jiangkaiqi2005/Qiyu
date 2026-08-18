@@ -688,6 +688,49 @@ void main() {
     expect(File('${directory.path}/long-memory.md').existsSync(), isFalse);
   });
 
+  test('healthFacts shares the eligibility interval semantics', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-health-facts-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final dream = DreamService(
+      memoryDirectory: directory.path,
+      episodePipeline: EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => DateTime(2026, 8, 14, 22),
+      ),
+      clock: () => DateTime(2026, 8, 14, 22),
+    );
+
+    // 从未运行：无日差，间隔天然满足。
+    var facts = await dream.healthFacts();
+    expect(facts.lastSuccess, isNull);
+    expect(facts.daysSinceLastSuccess, isNull);
+    expect(facts.pending, isFalse);
+    expect(facts.intervalSatisfied, isTrue);
+
+    // 三天前成功且有待补跑：间隔未满，pending 原样透传。
+    File('${directory.path}/dream/state.md')
+      ..createSync(recursive: true)
+      ..writeAsStringSync(
+        _encodedState(lastSuccess: DateTime(2026, 8, 11), pending: true),
+        encoding: utf8,
+      );
+    facts = await dream.healthFacts();
+    expect(facts.daysSinceLastSuccess, 3);
+    expect(facts.intervalSatisfied, isFalse);
+    expect(facts.pending, isTrue);
+
+    // 八天前成功：间隔已满。
+    File('${directory.path}/dream/state.md').writeAsStringSync(
+      _encodedState(lastSuccess: DateTime(2026, 8, 6)),
+      encoding: utf8,
+    );
+    facts = await dream.healthFacts();
+    expect(facts.daysSinceLastSuccess, 8);
+    expect(facts.intervalSatisfied, isTrue);
+  });
+
   test('input respects the summary window and the month cap', () async {
     final directory = await Directory.systemTemp.createTemp(
       'qiyu-dream-budget-test-',
@@ -1700,4 +1743,18 @@ final class _TargetedFailingWriter implements AtomicTextWriter {
     }
     return _delegate.replace(path, contents);
   }
+}
+
+/// 与 DreamService 内部编码同构的测试夹具：直接落一份 state.md。
+String _encodedState({DateTime? lastSuccess, bool pending = false}) {
+  final json = <String, Object?>{
+    'schemaVersion': 1,
+    if (lastSuccess != null)
+      'lastSuccess': lastSuccess.toUtc().toIso8601String(),
+    'pending': pending,
+  };
+  final encoded = base64Url
+      .encode(utf8.encode(jsonEncode(json)))
+      .replaceAll('=', '');
+  return '# dream-state\n\n<!-- qiyu-dream-state:$encoded -->\n';
 }

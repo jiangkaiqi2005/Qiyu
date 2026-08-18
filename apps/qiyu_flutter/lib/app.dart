@@ -16,9 +16,13 @@ import 'features/memory/memory_view_model.dart';
 import 'features/onboarding/onboarding_client.dart';
 import 'features/onboarding/onboarding_view_model.dart';
 import 'features/onboarding/root_view.dart';
+import 'features/settings/diagnostics_view.dart';
+import 'features/settings/privacy_view.dart';
 import 'features/settings/provider_settings_client.dart';
 import 'features/settings/provider_settings_view.dart';
 import 'features/settings/provider_settings_view_model.dart';
+import 'features/settings/settings_client.dart';
+import 'features/settings/settings_view_model.dart';
 
 final _router = GoRouter(
   routes: [
@@ -43,6 +47,14 @@ final _router = GoRouter(
       path: '/settings',
       builder: (context, state) => const ProviderSettingsView(),
     ),
+    GoRoute(
+      path: '/settings/diagnostics',
+      builder: (context, state) => const DiagnosticsView(),
+    ),
+    GoRoute(
+      path: '/privacy',
+      builder: (context, state) => const PrivacyView(),
+    ),
   ],
 );
 
@@ -54,6 +66,7 @@ class QiyuApp extends StatelessWidget {
     this.historyViewModel,
     this.onboardingViewModel,
     this.memoryViewModel,
+    this.settingsViewModel,
   });
 
   final LocalChatViewModel? viewModel;
@@ -61,6 +74,7 @@ class QiyuApp extends StatelessWidget {
   final HistoryViewModel? historyViewModel;
   final OnboardingViewModel? onboardingViewModel;
   final MemoryCenterViewModel? memoryViewModel;
+  final SettingsViewModel? settingsViewModel;
 
   @override
   Widget build(BuildContext context) {
@@ -69,6 +83,7 @@ class QiyuApp extends StatelessWidget {
     final injectedHistoryViewModel = historyViewModel;
     final injectedOnboardingViewModel = onboardingViewModel;
     final injectedMemoryViewModel = memoryViewModel;
+    final injectedAppSettingsViewModel = settingsViewModel;
     return MultiProvider(
       providers: [
         if (injectedChatViewModel != null)
@@ -111,6 +126,12 @@ class QiyuApp extends StatelessWidget {
         else
           ChangeNotifierProvider(
             create: (_) => MemoryCenterViewModel(HttpMemoryGateway()),
+          ),
+        if (injectedAppSettingsViewModel != null)
+          ChangeNotifierProvider.value(value: injectedAppSettingsViewModel)
+        else
+          ChangeNotifierProvider(
+            create: (_) => SettingsViewModel(HttpSettingsGateway()),
           ),
       ],
       child: _buildMaterialApp(),
