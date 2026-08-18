@@ -45,9 +45,9 @@ final class StatePackReader {
 
   /// 返回可直接注入的【长期印象】内容；文件不存在、为空或读取失败
   /// 时返回空串，空块不输出。受控过滤（ticket 18）：封禁（禁提 ∪
-  /// 删除）与冻结条目不进注入；无法解析的文件无法证明过滤完整，
-  /// 同样不注入，等待恢复流程。预算裁剪由注入关按剩余热层预算
-  /// 执行，不在这里。
+  /// 删除）与冻结条目不进注入；无法解析的文件按基线原样注入
+  /// （用户裁定 2026-08-18，D3 按基线）。预算裁剪由注入关按剩余
+  /// 热层预算执行，不在这里。
   Future<String> readLongMemoryBlock() async {
     final contents = await _readIfExists(_longMemoryFile);
     final trimmed = contents?.trim() ?? '';
@@ -56,7 +56,7 @@ final class StatePackReader {
     }
     final parsed = parseLongMemory(trimmed);
     if (!parsed.readable) {
-      return '';
+      return trimmed;
     }
     final controlled = await _controlledTitles();
     if (controlled.isEmpty) {

@@ -310,6 +310,22 @@ void main() {
       expect(await reader.readDailyStateBlock(), contains('爬山'));
     });
 
+    test('an unparseable long-memory is injected verbatim (D3 baseline)',
+        () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-long-memory-baseline-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      const handwritten = '这是用户手写的一段话，没有受管结构。';
+      File('${directory.path}/long-memory.md').writeAsStringSync(
+        '$handwritten\n',
+      );
+      final reader = StatePackReader(memoryDirectory: directory.path);
+
+      // 基线行为（用户裁定 2026-08-18，D3 按基线）：解析失败原样注入。
+      expect(await reader.readLongMemoryBlock(), handwritten);
+    });
+
     test('frozen content is hidden from recall', () async {
       final root = await Directory.systemTemp.createTemp(
         'qiyu-freeze-recall-test-',

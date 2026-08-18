@@ -16,6 +16,9 @@ final class MemoryControlEntry {
   });
 
   final int id;
+
+  /// 控制触发渠道（chat / open-loop）。渠道语义即「原归属」本意
+  /// （用户裁定 2026-08-18）：记录里不另写内容原归属层。
   final String origin;
   final String summary;
 }
