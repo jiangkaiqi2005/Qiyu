@@ -38,6 +38,13 @@ class HomeView extends StatelessWidget {
                     onTap: () => context.go('/history'),
                   ),
                   _HomeEntry(
+                    key: const Key('home-go-memory'),
+                    icon: Icons.auto_stories_outlined,
+                    title: '记忆',
+                    subtitle: '看看我记得的',
+                    onTap: () => context.go('/memory'),
+                  ),
+                  _HomeEntry(
                     key: const Key('home-go-settings'),
                     icon: Icons.tune,
                     title: '设置',

@@ -14,6 +14,7 @@ import 'dream.dart';
 import 'episode_memory.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_center.dart';
 import 'memory_controls.dart';
 import 'memory_recall.dart';
 import 'model_gateway.dart';
@@ -158,6 +159,16 @@ final class LocalAppHost {
       relationshipLifecycle: relationshipLifecycle,
     );
     await chatService.initialize();
+    // 四区只读记忆中心（ticket 19）：只依赖各存储的只读接口，不持有
+    // 模型客户端与任何写入器；浏览与证据展开不触发模型调用、重新
+    // 整理或隐式写入。
+    final memoryCenter = MemoryCenterService(
+      memoryDirectory: memoryDirectory,
+      episodePipeline: episodePipeline,
+      personaTree: personaTree,
+      memoryControls: memoryControls,
+      dreamService: dreamService,
+    );
     final onboardingRepository = JsonOnboardingRepository(
       filePath: path.join(
         Directory(memoryDirectory).parent.path,
@@ -169,6 +180,7 @@ final class LocalAppHost {
       chatService: chatService,
       providerSettingsService: effectiveProviderSettings,
       onboardingRepository: onboardingRepository,
+      memoryCenter: memoryCenter,
       activationToken: activationToken,
       onActivate: onActivate,
     );
@@ -210,6 +222,7 @@ final class _LocalAppRequestHandler {
     required this.chatService,
     required this.providerSettingsService,
     required this.onboardingRepository,
+    required this.memoryCenter,
     required this.activationToken,
     required this.onActivate,
   }) : _startupToken = generateSecureToken(),
@@ -226,6 +239,7 @@ final class _LocalAppRequestHandler {
   final LocalChatService chatService;
   final ProviderSettingsService providerSettingsService;
   final OnboardingRepository onboardingRepository;
+  final MemoryCenterService memoryCenter;
   final String? activationToken;
   final Future<BrowserLaunchResult> Function()? onActivate;
   final String _sessionToken;
@@ -443,6 +457,34 @@ final class _LocalAppRequestHandler {
           jsonEncode({'deleted': true}),
           headers: _jsonHeaders,
         );
+      }
+      if (request.method == 'GET' && request.url.path == 'api/memory') {
+        final overview = await memoryCenter.overview();
+        return Response.ok(
+          jsonEncode(overview.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'GET' &&
+          request.url.path.startsWith('api/memory/items/')) {
+        final itemId = request.url.path.substring('api/memory/items/'.length);
+        if (itemId.isEmpty || itemId.contains('/')) {
+          throw const LocalChatException(
+            code: 'invalid_request',
+            message: '记忆条目标识格式不正确。',
+            retryable: false,
+          );
+        }
+        final detail = await memoryCenter.itemDetail(itemId);
+        if (detail == null) {
+          return _jsonError(
+            HttpStatus.notFound,
+            code: 'memory_item_not_found',
+            message: '这条记忆不存在或已经变化，请返回后刷新。',
+            retryable: false,
+          );
+        }
+        return Response.ok(jsonEncode(detail.toJson()), headers: _jsonHeaders);
       }
       if (request.method == 'POST' && request.url.path == 'api/chat/cancel') {
         final payload = await _readJsonObject(request, maxBytes: 4 * 1024);

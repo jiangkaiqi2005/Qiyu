@@ -781,6 +781,10 @@ final class DreamService {
     );
   }
 
+  /// 只读暴露最近一次成功 Dream 的状态（ticket 19 记忆中心展示
+  /// 「最近整理时间」用）；文件缺失或不可读时返回空状态。
+  Future<DreamState> readState() async => (await _readState()).state;
+
   /// 读取 Dream 状态；文件不存在返回空状态，存在但不可读时
   /// [corrupted] 为 true。
   Future<({DreamState state, bool corrupted})> _readState() async {

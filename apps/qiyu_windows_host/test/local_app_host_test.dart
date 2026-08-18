@@ -770,6 +770,125 @@ void main() {
       await host.close();
     },
   );
+
+  test(
+    'memory center endpoints serve the four read-only sections over HTTP',
+    () async {
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+      );
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: memoryDirectory.path,
+      );
+      final today = localSessionDate(DateTime.now());
+      final date = DateTime.parse(today);
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          today,
+          entries: [
+            EpisodeEntry(
+              id: 's1:r1:0',
+              sessionId: 'seed-session',
+              requestId: 'seed',
+              summary: '用户说这周在准备演讲',
+              evidence: '周四有个演讲',
+              at: date.add(const Duration(hours: 20)).toUtc(),
+            ),
+          ],
+          summary: '聊了演讲准备',
+          finalized: true,
+          finalizedAt: date.add(const Duration(hours: 23)).toUtc(),
+        ),
+      );
+      File(
+        '${memoryDirectory.path}${Platform.pathSeparator}long-memory.md',
+      ).writeAsStringSync('# long-memory\n\n## 人与关系\n- 用户和家人关系亲近\n');
+      final browser = await _openBrowserSession(host);
+
+      final missingSession = await _send(host.origin.resolve('/api/memory'));
+      expect(missingSession.statusCode, HttpStatus.unauthorized);
+
+      final overviewResponse = await _send(
+        host.origin.resolve('/api/memory'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(overviewResponse.statusCode, HttpStatus.ok);
+      final overview =
+          jsonDecode(overviewResponse.body) as Map<String, Object?>;
+      for (final section in ['recent', 'longTerm', 'persona', 'relationship']) {
+        expect(overview[section], isA<Map<String, Object?>>(), reason: section);
+      }
+      final days =
+          (overview['recent']! as Map<String, Object?>)['days']!
+              as List<Object?>;
+      final day = days.single! as Map<String, Object?>;
+      expect(day['date'], today);
+      final dayId = day['id']! as String;
+      // opaque ID 不暴露文件路径。
+      expect(dayId, isNot(contains('/')));
+      expect(dayId, isNot(contains('episodes')));
+
+      final unknownItem = await _send(
+        host.origin.resolve('/api/memory/items/no-such-id'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(unknownItem.statusCode, HttpStatus.notFound);
+      expect(
+        (jsonDecode(unknownItem.body) as Map<String, Object?>)['code'],
+        'memory_item_not_found',
+      );
+
+      final dayResponse = await _send(
+        host.origin.resolve('/api/memory/items/$dayId'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(dayResponse.statusCode, HttpStatus.ok);
+      final dayDetail =
+          jsonDecode(dayResponse.body) as Map<String, Object?>;
+      expect(dayDetail['kind'], 'day');
+      expect(dayDetail['date'], today);
+      final entries = dayDetail['entries']! as List<Object?>;
+      final entry = entries.single! as Map<String, Object?>;
+      expect(entry['content'], '用户说这周在准备演讲');
+
+      final entryResponse = await _send(
+        host.origin.resolve('/api/memory/items/${entry['id']}'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(entryResponse.statusCode, HttpStatus.ok);
+      final entryDetail =
+          jsonDecode(entryResponse.body) as Map<String, Object?>;
+      expect(entryDetail['kind'], 'episode-entry');
+      expect(entryDetail['evidence'], '周四有个演讲');
+      expect(entryDetail['sessionId'], 'seed-session');
+
+      // 只读红线：整轮浏览不改动记忆目录里的任何文件。
+      final filesBefore = {
+        for (final file in memoryDirectory
+            .listSync(recursive: true)
+            .whereType<File>())
+          file.path: file.readAsStringSync(),
+      };
+      await _send(
+        host.origin.resolve('/api/memory'),
+        headers: browser.readHeaders(host.origin),
+      );
+      await _send(
+        host.origin.resolve('/api/memory/items/$dayId'),
+        headers: browser.readHeaders(host.origin),
+      );
+      final filesAfter = {
+        for (final file in memoryDirectory
+            .listSync(recursive: true)
+            .whereType<File>())
+          file.path: file.readAsStringSync(),
+      };
+      expect(filesAfter, filesBefore);
+      await host.close();
+    },
+  );
 }
 
 List<Map<String, Object?>> _chatEvents(String body) => body

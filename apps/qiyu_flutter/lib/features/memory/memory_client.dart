@@ -1,0 +1,652 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+
+/// 条目来源的用户语言标签（与 Host 侧 wire 取值一一对应）。
+String memoryKindLabel(String kind) => switch (kind) {
+  'concern' => '关注的事',
+  'relationship' => '关系变化',
+  _ => '记忆',
+};
+
+/// 记忆控制状态的用户语言：冻结 = 暂停使用，禁提 = 不再提起。
+enum MemoryControlStatus {
+  frozen('已冻结'),
+  banned('已禁提');
+
+  const MemoryControlStatus(this.label);
+
+  final String label;
+
+  static MemoryControlStatus? fromWire(Object? value) => switch (value) {
+    'frozen' => MemoryControlStatus.frozen,
+    'banned' => MemoryControlStatus.banned,
+    _ => null,
+  };
+}
+
+final class MemoryEntryCard {
+  const MemoryEntryCard({
+    required this.id,
+    required this.kind,
+    required this.content,
+    required this.masked,
+    required this.control,
+    required this.at,
+    required this.hasEvidence,
+  });
+
+  factory MemoryEntryCard.fromJson(Map<String, Object?> json) =>
+      MemoryEntryCard(
+        id: json['id']! as String,
+        kind: json['kind']! as String,
+        content: json['content'] as String?,
+        masked: json['masked']! as bool,
+        control: MemoryControlStatus.fromWire(json['control']),
+        at: DateTime.parse(json['at']! as String),
+        hasEvidence: json['hasEvidence']! as bool,
+      );
+
+  final String id;
+  final String kind;
+  final String? content;
+  final bool masked;
+  final MemoryControlStatus? control;
+  final DateTime at;
+  final bool hasEvidence;
+
+  String get kindLabel => memoryKindLabel(kind);
+}
+
+final class MemoryDayCard {
+  const MemoryDayCard({
+    required this.id,
+    required this.date,
+    required this.summary,
+    required this.summaryMasked,
+    required this.finalized,
+    required this.finalizedAt,
+    required this.entries,
+  });
+
+  factory MemoryDayCard.fromJson(Map<String, Object?> json) => MemoryDayCard(
+    id: json['id']! as String,
+    date: json['date']! as String,
+    summary: json['summary'] as String?,
+    summaryMasked: json['summaryMasked']! as bool,
+    finalized: json['finalized']! as bool,
+    finalizedAt: json['finalizedAt'] == null
+        ? null
+        : DateTime.parse(json['finalizedAt']! as String),
+    entries: (json['entries']! as List<Object?>)
+        .map((entry) => MemoryEntryCard.fromJson(entry! as Map<String, Object?>))
+        .toList(),
+  );
+
+  final String id;
+  final String date;
+  final String? summary;
+  final bool summaryMasked;
+  final bool finalized;
+  final DateTime? finalizedAt;
+  final List<MemoryEntryCard> entries;
+}
+
+final class MemoryRecentSection {
+  const MemoryRecentSection({required this.days});
+
+  factory MemoryRecentSection.fromJson(Map<String, Object?> json) =>
+      MemoryRecentSection(
+        days: (json['days']! as List<Object?>)
+            .map((day) => MemoryDayCard.fromJson(day! as Map<String, Object?>))
+            .toList(),
+      );
+
+  final List<MemoryDayCard> days;
+}
+
+final class MemoryLongTermItem {
+  const MemoryLongTermItem({
+    required this.content,
+    required this.masked,
+    required this.control,
+  });
+
+  factory MemoryLongTermItem.fromJson(Map<String, Object?> json) =>
+      MemoryLongTermItem(
+        content: json['content'] as String?,
+        masked: json['masked']! as bool,
+        control: MemoryControlStatus.fromWire(json['control']),
+      );
+
+  final String? content;
+  final bool masked;
+  final MemoryControlStatus? control;
+}
+
+final class MemoryLongTermGroup {
+  const MemoryLongTermGroup({required this.section, required this.items});
+
+  factory MemoryLongTermGroup.fromJson(Map<String, Object?> json) =>
+      MemoryLongTermGroup(
+        section: json['section']! as String,
+        items: (json['items']! as List<Object?>)
+            .map(
+              (item) =>
+                  MemoryLongTermItem.fromJson(item! as Map<String, Object?>),
+            )
+            .toList(),
+      );
+
+  final String section;
+  final List<MemoryLongTermItem> items;
+}
+
+final class MemoryLongTermSection {
+  const MemoryLongTermSection({
+    required this.present,
+    required this.readable,
+    required this.organizedAt,
+    required this.groups,
+  });
+
+  factory MemoryLongTermSection.fromJson(Map<String, Object?> json) =>
+      MemoryLongTermSection(
+        present: json['present']! as bool,
+        readable: json['readable']! as bool,
+        organizedAt: json['organizedAt'] == null
+            ? null
+            : DateTime.parse(json['organizedAt']! as String),
+        groups: (json['groups']! as List<Object?>)
+            .map(
+              (group) =>
+                  MemoryLongTermGroup.fromJson(group! as Map<String, Object?>),
+            )
+            .toList(),
+      );
+
+  final bool present;
+  final bool readable;
+  final DateTime? organizedAt;
+  final List<MemoryLongTermGroup> groups;
+}
+
+final class MemoryPersonaRootCard {
+  const MemoryPersonaRootCard({
+    required this.id,
+    required this.claim,
+    required this.masked,
+    required this.control,
+    required this.middleCount,
+    required this.leafCount,
+    required this.earliestEvidence,
+    required this.latestEvidence,
+  });
+
+  factory MemoryPersonaRootCard.fromJson(Map<String, Object?> json) =>
+      MemoryPersonaRootCard(
+        id: json['id']! as String,
+        claim: json['claim'] as String?,
+        masked: json['masked']! as bool,
+        control: MemoryControlStatus.fromWire(json['control']),
+        middleCount: json['middleCount']! as int,
+        leafCount: json['leafCount']! as int,
+        earliestEvidence: json['earliestEvidence'] as String?,
+        latestEvidence: json['latestEvidence'] as String?,
+      );
+
+  final String id;
+  final String? claim;
+  final bool masked;
+  final MemoryControlStatus? control;
+  final int middleCount;
+  final int leafCount;
+  final String? earliestEvidence;
+  final String? latestEvidence;
+}
+
+final class MemoryPersonaMiddleCard {
+  const MemoryPersonaMiddleCard({
+    required this.id,
+    required this.type,
+    required this.claim,
+    required this.masked,
+    required this.control,
+    required this.formedOn,
+    required this.reviewedOn,
+    required this.leafCount,
+    required this.hasConflict,
+  });
+
+  factory MemoryPersonaMiddleCard.fromJson(Map<String, Object?> json) =>
+      MemoryPersonaMiddleCard(
+        id: json['id']! as String,
+        type: json['type']! as String,
+        claim: json['claim'] as String?,
+        masked: json['masked']! as bool,
+        control: MemoryControlStatus.fromWire(json['control']),
+        formedOn: json['formedOn']! as String,
+        reviewedOn: json['reviewedOn']! as String,
+        leafCount: json['leafCount']! as int,
+        hasConflict: json['hasConflict']! as bool,
+      );
+
+  final String id;
+  final String type;
+  final String? claim;
+  final bool masked;
+  final MemoryControlStatus? control;
+  final String formedOn;
+  final String reviewedOn;
+  final int leafCount;
+  final bool hasConflict;
+}
+
+final class MemoryPersonaBranchCard {
+  const MemoryPersonaBranchCard({
+    required this.wire,
+    required this.title,
+    required this.readable,
+    required this.roots,
+    required this.unrooted,
+  });
+
+  factory MemoryPersonaBranchCard.fromJson(Map<String, Object?> json) =>
+      MemoryPersonaBranchCard(
+        wire: json['wire']! as String,
+        title: json['title']! as String,
+        readable: json['readable']! as bool,
+        roots: (json['roots']! as List<Object?>)
+            .map(
+              (root) =>
+                  MemoryPersonaRootCard.fromJson(root! as Map<String, Object?>),
+            )
+            .toList(),
+        unrooted: (json['unrooted']! as List<Object?>)
+            .map(
+              (middle) => MemoryPersonaMiddleCard.fromJson(
+                middle! as Map<String, Object?>,
+              ),
+            )
+            .toList(),
+      );
+
+  final String wire;
+  final String title;
+  final bool readable;
+  final List<MemoryPersonaRootCard> roots;
+  final List<MemoryPersonaMiddleCard> unrooted;
+
+  bool get isEmpty => roots.isEmpty && unrooted.isEmpty;
+}
+
+final class MemoryPersonaSection {
+  const MemoryPersonaSection({required this.branches});
+
+  factory MemoryPersonaSection.fromJson(Map<String, Object?> json) =>
+      MemoryPersonaSection(
+        branches: (json['branches']! as List<Object?>)
+            .map(
+              (branch) => MemoryPersonaBranchCard.fromJson(
+                branch! as Map<String, Object?>,
+              ),
+            )
+            .toList(),
+      );
+
+  final List<MemoryPersonaBranchCard> branches;
+
+  bool get isEmpty => branches.every((branch) => branch.isEmpty);
+}
+
+final class MemoryRelationshipSection {
+  const MemoryRelationshipSection({
+    required this.present,
+    required this.stage,
+    required this.since,
+    required this.confirmed,
+    required this.probes,
+    required this.recentChanges,
+    required this.sharedPast,
+  });
+
+  factory MemoryRelationshipSection.fromJson(Map<String, Object?> json) =>
+      MemoryRelationshipSection(
+        present: json['present']! as bool,
+        stage: json['stage'] as String?,
+        since: json['since'] as String?,
+        confirmed: (json['confirmed']! as List<Object?>)
+            .map(
+              (item) =>
+                  MemoryLongTermItem.fromJson(item! as Map<String, Object?>),
+            )
+            .toList(),
+        probes: (json['probes']! as List<Object?>)
+            .map(
+              (item) =>
+                  MemoryLongTermItem.fromJson(item! as Map<String, Object?>),
+            )
+            .toList(),
+        recentChanges: (json['recentChanges']! as List<Object?>)
+            .map(
+              (item) =>
+                  MemoryLongTermItem.fromJson(item! as Map<String, Object?>),
+            )
+            .toList(),
+        sharedPast: (json['sharedPast']! as List<Object?>)
+            .map(
+              (item) =>
+                  MemoryLongTermItem.fromJson(item! as Map<String, Object?>),
+            )
+            .toList(),
+      );
+
+  final bool present;
+  final String? stage;
+  final String? since;
+  final List<MemoryLongTermItem> confirmed;
+  final List<MemoryLongTermItem> probes;
+  final List<MemoryLongTermItem> recentChanges;
+  final List<MemoryLongTermItem> sharedPast;
+
+  bool get isEmpty => !present && sharedPast.isEmpty;
+}
+
+final class MemoryOverview {
+  const MemoryOverview({
+    required this.generatedAt,
+    required this.recent,
+    required this.longTerm,
+    required this.persona,
+    required this.relationship,
+  });
+
+  factory MemoryOverview.fromJson(Map<String, Object?> json) => MemoryOverview(
+    generatedAt: DateTime.parse(json['generatedAt']! as String),
+    recent: MemoryRecentSection.fromJson(
+      json['recent']! as Map<String, Object?>,
+    ),
+    longTerm: MemoryLongTermSection.fromJson(
+      json['longTerm']! as Map<String, Object?>,
+    ),
+    persona: MemoryPersonaSection.fromJson(
+      json['persona']! as Map<String, Object?>,
+    ),
+    relationship: MemoryRelationshipSection.fromJson(
+      json['relationship']! as Map<String, Object?>,
+    ),
+  );
+
+  final DateTime generatedAt;
+  final MemoryRecentSection recent;
+  final MemoryLongTermSection longTerm;
+  final MemoryPersonaSection persona;
+  final MemoryRelationshipSection relationship;
+}
+
+/// 条目详情：按 kind 分派为 episode 条目、画像根路径、画像中间理解
+/// （含叶证据）或某一天的完整记录。
+sealed class MemoryItemDetail {
+  const MemoryItemDetail();
+
+  static MemoryItemDetail fromJson(Map<String, Object?> json) =>
+      switch (json['kind']) {
+        'episode-entry' => EpisodeEntryDetail.fromJson(json),
+        'persona-root' => PersonaRootDetail.fromJson(json),
+        'persona-middle' => PersonaMiddleDetail.fromJson(json),
+        _ => MemoryDayDetail.fromJson(json),
+      };
+}
+
+final class EpisodeEntryDetail extends MemoryItemDetail {
+  const EpisodeEntryDetail({
+    required this.date,
+    required this.dayId,
+    required this.entryKind,
+    required this.content,
+    required this.masked,
+    required this.control,
+    required this.at,
+    required this.evidence,
+    required this.evidenceMasked,
+    required this.sessionId,
+    required this.daySummary,
+    required this.finalized,
+  });
+
+  factory EpisodeEntryDetail.fromJson(Map<String, Object?> json) =>
+      EpisodeEntryDetail(
+        date: json['date']! as String,
+        dayId: json['dayId']! as String,
+        entryKind: json['entryKind']! as String,
+        content: json['content'] as String?,
+        masked: json['masked']! as bool,
+        control: MemoryControlStatus.fromWire(json['control']),
+        at: DateTime.parse(json['at']! as String),
+        evidence: json['evidence'] as String?,
+        evidenceMasked: json['evidenceMasked']! as bool,
+        sessionId: json['sessionId'] as String?,
+        daySummary: json['daySummary'] as String?,
+        finalized: json['finalized']! as bool,
+      );
+
+  final String date;
+  final String dayId;
+  final String entryKind;
+  final String? content;
+  final bool masked;
+  final MemoryControlStatus? control;
+  final DateTime at;
+  final String? evidence;
+  final bool evidenceMasked;
+  final String? sessionId;
+  final String? daySummary;
+  final bool finalized;
+
+  String get kindLabel => memoryKindLabel(entryKind);
+}
+
+final class PersonaRootDetail extends MemoryItemDetail {
+  const PersonaRootDetail({
+    required this.branch,
+    required this.branchTitle,
+    required this.claim,
+    required this.masked,
+    required this.control,
+    required this.middles,
+  });
+
+  factory PersonaRootDetail.fromJson(Map<String, Object?> json) =>
+      PersonaRootDetail(
+        branch: json['branch']! as String,
+        branchTitle: json['branchTitle']! as String,
+        claim: json['claim'] as String?,
+        masked: json['masked']! as bool,
+        control: MemoryControlStatus.fromWire(json['control']),
+        middles: (json['middles']! as List<Object?>)
+            .map(
+              (middle) => MemoryPersonaMiddleCard.fromJson(
+                middle! as Map<String, Object?>,
+              ),
+            )
+            .toList(),
+      );
+
+  final String branch;
+  final String branchTitle;
+  final String? claim;
+  final bool masked;
+  final MemoryControlStatus? control;
+  final List<MemoryPersonaMiddleCard> middles;
+}
+
+final class MemoryPersonaLeafCard {
+  const MemoryPersonaLeafCard({
+    required this.dayId,
+    required this.date,
+    required this.nature,
+    required this.relation,
+    required this.summary,
+    required this.masked,
+    required this.control,
+  });
+
+  factory MemoryPersonaLeafCard.fromJson(Map<String, Object?> json) =>
+      MemoryPersonaLeafCard(
+        dayId: json['dayId']! as String,
+        date: json['date']! as String,
+        nature: json['nature']! as String,
+        relation: json['relation']! as String,
+        summary: json['summary'] as String?,
+        masked: json['masked']! as bool,
+        control: MemoryControlStatus.fromWire(json['control']),
+      );
+
+  final String dayId;
+  final String date;
+  final String nature;
+  final String relation;
+  final String? summary;
+  final bool masked;
+  final MemoryControlStatus? control;
+}
+
+final class PersonaMiddleDetail extends MemoryItemDetail {
+  const PersonaMiddleDetail({
+    required this.branch,
+    required this.branchTitle,
+    required this.type,
+    required this.claim,
+    required this.masked,
+    required this.control,
+    required this.formedOn,
+    required this.reviewedOn,
+    required this.rootClaim,
+    required this.leaves,
+  });
+
+  factory PersonaMiddleDetail.fromJson(Map<String, Object?> json) =>
+      PersonaMiddleDetail(
+        branch: json['branch']! as String,
+        branchTitle: json['branchTitle']! as String,
+        type: json['type']! as String,
+        claim: json['claim'] as String?,
+        masked: json['masked']! as bool,
+        control: MemoryControlStatus.fromWire(json['control']),
+        formedOn: json['formedOn']! as String,
+        reviewedOn: json['reviewedOn']! as String,
+        rootClaim: json['rootClaim'] as String?,
+        leaves: (json['leaves']! as List<Object?>)
+            .map(
+              (leaf) =>
+                  MemoryPersonaLeafCard.fromJson(leaf! as Map<String, Object?>),
+            )
+            .toList(),
+      );
+
+  final String branch;
+  final String branchTitle;
+  final String type;
+  final String? claim;
+  final bool masked;
+  final MemoryControlStatus? control;
+  final String formedOn;
+  final String reviewedOn;
+  final String? rootClaim;
+  final List<MemoryPersonaLeafCard> leaves;
+}
+
+final class MemoryDayDetail extends MemoryItemDetail {
+  const MemoryDayDetail({
+    required this.date,
+    required this.summary,
+    required this.summaryMasked,
+    required this.finalized,
+    required this.finalizedAt,
+    required this.entries,
+  });
+
+  factory MemoryDayDetail.fromJson(Map<String, Object?> json) =>
+      MemoryDayDetail(
+        date: json['date']! as String,
+        summary: json['summary'] as String?,
+        summaryMasked: json['summaryMasked']! as bool,
+        finalized: json['finalized']! as bool,
+        finalizedAt: json['finalizedAt'] == null
+            ? null
+            : DateTime.parse(json['finalizedAt']! as String),
+        entries: (json['entries']! as List<Object?>)
+            .map(
+              (entry) => MemoryEntryCard.fromJson(entry! as Map<String, Object?>),
+            )
+            .toList(),
+      );
+
+  final String date;
+  final String? summary;
+  final bool summaryMasked;
+  final bool finalized;
+  final DateTime? finalizedAt;
+  final List<MemoryEntryCard> entries;
+}
+
+final class MemoryGatewayException implements Exception {
+  const MemoryGatewayException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// 只读网关：接口面只有读取，任何编辑、控制或揭示动作都不在本票
+/// 范围（归 ticket 20）。
+abstract interface class MemoryGateway {
+  Future<MemoryOverview> fetchOverview();
+
+  /// ID 对应条目已不存在或已变化时返回 null。
+  Future<MemoryItemDetail?> fetchItemDetail(String id);
+}
+
+final class HttpMemoryGateway implements MemoryGateway {
+  HttpMemoryGateway({http.Client? client, Uri? baseUri})
+    : _client = client ?? http.Client(),
+      _baseUri = baseUri ?? Uri.base;
+
+  final http.Client _client;
+  final Uri _baseUri;
+
+  @override
+  Future<MemoryOverview> fetchOverview() async {
+    final response = await _client.get(_baseUri.resolve('/api/memory'));
+    return MemoryOverview.fromJson(_decodeSuccess(response));
+  }
+
+  @override
+  Future<MemoryItemDetail?> fetchItemDetail(String id) async {
+    final response = await _client.get(
+      _baseUri.resolve('/api/memory/items/$id'),
+    );
+    if (response.statusCode == 404) {
+      return null;
+    }
+    return MemoryItemDetail.fromJson(_decodeSuccess(response));
+  }
+
+  Map<String, Object?> _decodeSuccess(http.Response response) {
+    Map<String, Object?>? json;
+    try {
+      json = jsonDecode(response.body) as Map<String, Object?>;
+    } on Object {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        throw const MemoryGatewayException('本机程序返回了无法读取的内容。');
+      }
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw MemoryGatewayException(
+        json?['message'] as String? ?? '记忆中心暂时不可用，请稍后重试。',
+      );
+    }
+    return json!;
+  }
+}

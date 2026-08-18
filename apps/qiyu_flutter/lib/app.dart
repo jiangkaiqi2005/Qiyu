@@ -10,6 +10,9 @@ import 'features/chat/local_chat_view_model.dart';
 import 'features/history/history_client.dart';
 import 'features/history/history_view.dart';
 import 'features/history/history_view_model.dart';
+import 'features/memory/memory_client.dart';
+import 'features/memory/memory_view.dart';
+import 'features/memory/memory_view_model.dart';
 import 'features/onboarding/onboarding_client.dart';
 import 'features/onboarding/onboarding_view_model.dart';
 import 'features/onboarding/root_view.dart';
@@ -30,6 +33,12 @@ final _router = GoRouter(
       builder: (context, state) =>
           HistorySessionView(sessionId: state.pathParameters['sessionId']!),
     ),
+    GoRoute(path: '/memory', builder: (context, state) => const MemoryView()),
+    GoRoute(
+      path: '/memory/item/:itemId',
+      builder: (context, state) =>
+          MemoryItemView(itemId: state.pathParameters['itemId']!),
+    ),
     GoRoute(
       path: '/settings',
       builder: (context, state) => const ProviderSettingsView(),
@@ -44,12 +53,14 @@ class QiyuApp extends StatelessWidget {
     this.providerSettingsViewModel,
     this.historyViewModel,
     this.onboardingViewModel,
+    this.memoryViewModel,
   });
 
   final LocalChatViewModel? viewModel;
   final ProviderSettingsViewModel? providerSettingsViewModel;
   final HistoryViewModel? historyViewModel;
   final OnboardingViewModel? onboardingViewModel;
+  final MemoryCenterViewModel? memoryViewModel;
 
   @override
   Widget build(BuildContext context) {
@@ -57,6 +68,7 @@ class QiyuApp extends StatelessWidget {
     final injectedSettingsViewModel = providerSettingsViewModel;
     final injectedHistoryViewModel = historyViewModel;
     final injectedOnboardingViewModel = onboardingViewModel;
+    final injectedMemoryViewModel = memoryViewModel;
     return MultiProvider(
       providers: [
         if (injectedChatViewModel != null)
@@ -93,6 +105,12 @@ class QiyuApp extends StatelessWidget {
               HttpOnboardingGateway(),
               HttpProviderSettingsGateway(),
             ),
+          ),
+        if (injectedMemoryViewModel != null)
+          ChangeNotifierProvider.value(value: injectedMemoryViewModel)
+        else
+          ChangeNotifierProvider(
+            create: (_) => MemoryCenterViewModel(HttpMemoryGateway()),
           ),
       ],
       child: _buildMaterialApp(),
