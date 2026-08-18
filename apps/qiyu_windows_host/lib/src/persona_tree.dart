@@ -359,6 +359,7 @@ final class PersonaBranchSnapshot {
     this.unrooted = const [],
     this.archivedClaims = const [],
     this.unclassified = const [],
+    this.archiveReadable = true,
   });
 
   final bool readable;
@@ -367,6 +368,10 @@ final class PersonaBranchSnapshot {
 
   /// 归档主张（根与中间理解）：只作「不得用旧证据复活」的负面依据。
   final List<String> archivedClaims;
+
+  /// 归档文件是否可读（ticket 21）：归档无法恢复时，受影响分支必须
+  /// 暂停根节点升降——没有负面依据的升根可能复活已被纠正的旧画像。
+  final bool archiveReadable;
 
   /// 未归类叶（等待日终整理的证据指针）：Dream 不消费，供记忆中心
   /// 删除预览与 applyBan 的实际清除范围对齐。
@@ -852,10 +857,79 @@ final class PersonaTreeStore {
             ? archive.archivedClaims()
             : const <String>[],
         unclassified: state.unclassified,
+        archiveReadable: archive.readable,
       );
     }
     return PersonaTreeSnapshot(branches: branches);
   });
+
+  /// 备份全部可读的分支与归档文件（ticket 21 / T26：PersonaTree 的
+  /// Dream 备份与恢复）。键为相对布局（`identity.md`、
+  /// `archive/identity.md`），值为原文；不可读的文件不入备份。
+  Future<Map<String, String>> backupFiles() => _locked(() async {
+    final files = <String, String>{};
+    for (final branch in personaBranches) {
+      final active = _branchFile(branch);
+      if (await active.exists()) {
+        final state = await _readBranch(branch);
+        if (state.readable) {
+          files[branch.fileName] = await active.readAsString(encoding: utf8);
+        }
+      }
+      final archive = _archiveFile(branch);
+      if (await archive.exists()) {
+        final state = await _readArchive(branch);
+        if (state.readable) {
+          files['archive/${branch.fileName}'] =
+              await archive.readAsString(encoding: utf8);
+        }
+      }
+    }
+    return files;
+  });
+
+  /// 用 Dream 备份恢复分支与归档文件（ticket 21）：只接受布局白名单
+  /// 内的键，逐文件校验可解析后才原子写入，解析不回来的备份内容一律
+  /// 丢弃（绝不把坏备份写成现状）。恢复结束后从活跃根重投影
+  /// persona.md；仍有分支不可读时保留旧投影。返回实际落盘的键集合，
+  /// 供恢复流程判断哪些原件可以安全清理。
+  Future<Set<String>> restoreBackupFiles(Map<String, String> files) =>
+      _locked(() async {
+        final validNames = {
+          for (final branch in personaBranches) branch.fileName,
+        };
+        final applied = <String>{};
+        for (final MapEntry(:key, :value) in files.entries) {
+          final archived = key.startsWith('archive/');
+          final name = archived ? key.substring('archive/'.length) : key;
+          if (!validNames.contains(name) || value.trim().isEmpty) {
+            continue;
+          }
+          final branch = personaBranches.firstWhere(
+            (candidate) => candidate.fileName == name,
+          );
+          if (archived) {
+            if (!_parseArchive(value).readable) {
+              _diagnosticsSink(
+                'persona restore skipped reason=${branch.wireName}-archive-backup-unreadable',
+              );
+              continue;
+            }
+            await _atomicWriter.replace(_archiveFile(branch).path, value);
+          } else {
+            if (!_parseActive(value).readable) {
+              _diagnosticsSink(
+                'persona restore skipped reason=${branch.wireName}-backup-unreadable',
+              );
+              continue;
+            }
+            await _atomicWriter.replace(_branchFile(branch).path, value);
+          }
+          applied.add(key);
+        }
+        await _regeneratePersona();
+        return applied;
+      });
 
   /// 应用 Dream 已通过校验的根节点提案，并顺带执行 Dream 的维护
   /// 职责（孤儿叶清理、冗余叶裁剪、零中间理解根归档），最后从活跃
@@ -2019,6 +2093,11 @@ final class PersonaTreeStore {
     kept.sort((left, right) => left.date.compareTo(right.date));
     return kept;
   }
+
+  /// 恢复流程的投影重建入口（ticket 21）：分支修复后从活跃根重投影
+  /// persona.md；仍有分支不可读时保留旧投影。
+  Future<void> regeneratePersonaProjection() =>
+      _locked(() => _regeneratePersona());
 
   /// 从活跃根重投影 persona.md：重新读取全部分支，任一分支不可读时
   /// 保留旧投影等待恢复流程，绝不写出残缺画像。

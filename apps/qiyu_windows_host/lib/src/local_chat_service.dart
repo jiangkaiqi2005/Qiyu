@@ -10,6 +10,7 @@ import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
 import 'memory_controls.dart';
 import 'memory_recall.dart';
+import 'memory_recovery.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'monthly_summary.dart';
@@ -108,6 +109,7 @@ final class LocalChatService {
     this.memoryControls,
     this.relationshipLifecycle,
     this.memoryActions,
+    this.memoryRecovery,
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
     Clock? clock,
@@ -139,6 +141,11 @@ final class LocalChatService {
   /// 实现，保证聊天删除与界面删除的清理范围完全一致。
   final MemoryActionService? memoryActions;
 
+  /// 损坏隔离与证据驱动恢复（ticket 21）：启动后台任务链上排在补
+  /// 归档、月压缩与 Dream 之前执行——恢复修好的材料才能被后续整理
+  /// 安全引用；受损层跳过，绝不阻塞首个可见回应。
+  final MemoryRecoveryService? memoryRecovery;
+
   /// 召回模型查找轮内循环。只在配置了 Provider 时有意义：查找由
   /// 模型隐藏动作触发，命中快时当轮补 bubble 2，没赶上时压缩结果
   /// 注入下一轮模型上下文。
@@ -168,6 +175,19 @@ final class LocalChatService {
 
   Future<void> initialize() async {
     await _repository.initialize();
+    // 启动恢复扫描（ticket 21）：排在一切补归档之前——先隔离损坏原件、
+    // 自底向上重建，补归档与月压缩才看得到修复后的材料。后台执行，
+    // 受损层跳过，绝不阻塞首个可见回应。
+    final recovery = memoryRecovery;
+    if (recovery != null) {
+      _finalizationTask = _finalizationTask.then((_) async {
+        try {
+          await recovery.sweepAndRecover();
+        } on Object catch (error) {
+          _diagnosticsSink('memory recovery deferred [$error]');
+        }
+      });
+    }
     // 启动补扫：发现 finalized 仍为 false 的历史日期并安全补做日终归档。
     // 后台执行，绝不阻塞首个可见回应。
     _runFinalization(

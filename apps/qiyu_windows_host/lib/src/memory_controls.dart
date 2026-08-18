@@ -123,6 +123,38 @@ final class MemoryControlsStore {
   Future<bool> recordDelete(String summary, {String origin = 'chat'}) =>
       _addRecord('## deleted', summary, origin);
 
+  /// 恢复流程整体重建控制文件（ticket 21）：文件损坏时由恢复服务从
+  /// episode 控制事件审计重建快照，再经这里原子落盘。正常管线绝不
+  /// 调用本方法。重建后 ID 重新连续编号（旧 ID 随损坏原件隔离，
+  /// 「删除后不复用」约束的是活文件内部）。
+  Future<bool> replaceForRecovery(MemoryControls controls) =>
+      _withLock(() async {
+        String line(MemoryControlEntry entry) =>
+            '- [MC${entry.id.toString().padLeft(3, '0')}] '
+            '${entry.origin} | ${entry.summary}';
+        final buffer = StringBuffer()
+          ..writeln('# memory-controls')
+          ..writeln('## frozen');
+        for (final entry in controls.frozen) {
+          buffer.writeln(line(entry));
+        }
+        buffer.writeln('## banned');
+        for (final entry in controls.banned) {
+          buffer.writeln(line(entry));
+        }
+        buffer.writeln('## deleted');
+        for (final entry in controls.deleted) {
+          buffer.writeln(line(entry));
+        }
+        try {
+          await _atomicWriter.replace(controlsFile.path, buffer.toString());
+          return true;
+        } on Object catch (error) {
+          _diagnosticsSink('memory controls recovery deferred [$error]');
+          return false;
+        }
+      });
+
   /// 解除冻结：移除匹配的控制记录（内容从未被清除，无需恢复）。
   /// 返回移除条数；文件不可识别返回 null。
   Future<int?> unfreeze(String summary) => _removeRecords('## frozen', summary);

@@ -281,10 +281,17 @@ void main() {
           _chatEvent(firstEvents, 'accepted')['sessionId']! as String;
       await host.close();
 
+      // recovery/ 是启动恢复扫描的诊断区（ticket 21），不属于会话持久化。
       final markdownFiles = memoryDirectory
           .listSync(recursive: true)
           .whereType<File>()
-          .where((file) => file.path.endsWith('.md'))
+          .where(
+            (file) =>
+                file.path.endsWith('.md') &&
+                !file.path.contains(
+                  '${Platform.pathSeparator}recovery${Platform.pathSeparator}',
+                ),
+          )
           .toList();
       expect(markdownFiles, hasLength(1));
       final markdown = await markdownFiles.single.readAsString();
@@ -499,10 +506,17 @@ void main() {
       expect(summary['preview'], '今天有点累');
       expect(historyJson['unavailable'], isEmpty);
 
+      // recovery/ 是启动恢复扫描的诊断区（ticket 21），不属于会话持久化。
       final markdownFile = memoryDirectory
           .listSync(recursive: true)
           .whereType<File>()
-          .singleWhere((file) => file.path.endsWith('.md'));
+          .singleWhere(
+            (file) =>
+                file.path.endsWith('.md') &&
+                !file.path.contains(
+                  '${Platform.pathSeparator}recovery${Platform.pathSeparator}',
+                ),
+          );
       final markdownBefore = await markdownFile.readAsString();
       final browsed = await _send(
         host.origin.resolve('/api/chat/session?sessionId=$sessionId'),
@@ -559,7 +573,13 @@ void main() {
         memoryDirectory
             .listSync(recursive: true)
             .whereType<File>()
-            .where((file) => file.path.endsWith('.md')),
+            .where(
+              (file) =>
+                  file.path.endsWith('.md') &&
+                  !file.path.contains(
+                    '${Platform.pathSeparator}recovery${Platform.pathSeparator}',
+                  ),
+            ),
         isEmpty,
       );
 

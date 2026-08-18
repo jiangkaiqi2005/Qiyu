@@ -18,6 +18,7 @@ import 'memory_actions.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
 import 'memory_recall.dart';
+import 'memory_recovery.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'monthly_summary.dart';
@@ -136,6 +137,18 @@ final class LocalAppHost {
       monthlySummary: monthlySummary,
       relationshipLifecycle: relationshipLifecycle,
     );
+    // 损坏隔离与证据驱动恢复（ticket 21）：启动后台任务链上先于补
+    // 归档执行；共享全部既有存储实例，写锁与各管线同律。
+    final memoryRecovery = MemoryRecoveryService(
+      memoryDirectory: memoryDirectory,
+      episodePipeline: episodePipeline,
+      memoryControls: memoryControls,
+      personaTree: personaTree,
+      dreamService: dreamService,
+      monthlySummary: monthlySummary,
+      relationshipLifecycle: relationshipLifecycle,
+      memoryActions: memoryActions,
+    );
     final chatService = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
       providerChatClient: effectiveProviderSettings,
@@ -170,6 +183,7 @@ final class LocalAppHost {
       memoryControls: memoryControls,
       relationshipLifecycle: relationshipLifecycle,
       memoryActions: memoryActions,
+      memoryRecovery: memoryRecovery,
     );
     await chatService.initialize();
     // 四区记忆中心（ticket 19）：只依赖各存储的只读接口，不持有
@@ -181,6 +195,7 @@ final class LocalAppHost {
       personaTree: personaTree,
       memoryControls: memoryControls,
       dreamService: dreamService,
+      memoryRecovery: memoryRecovery,
     );
     final onboardingRepository = JsonOnboardingRepository(
       filePath: path.join(

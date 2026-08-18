@@ -727,6 +727,10 @@ final class DreamService {
         _stateFile.path,
         _encodeState(DreamState(lastSuccess: now, pending: false)),
       );
+      // 树变更落盘前先备份全部可读分支与归档（T26：PersonaTree 的
+      // 最近有效 Dream 备份是它的恢复来源）。备份失败只记诊断，
+      // 不阻断树变更（与既有「树失败不回滚长期印象」同律）。
+      await _backupPersonaTree();
       // 长期印象替换成功后才动树：树变更失败不回滚长期印象（不同文件，
       // 下次 Dream 可再评估），只把对应提案记为未落盘。
       if (acceptedOps.isNotEmpty) {
@@ -784,6 +788,70 @@ final class DreamService {
   /// 只读暴露最近一次成功 Dream 的状态（ticket 19 记忆中心展示
   /// 「最近整理时间」用）；文件缺失或不可读时返回空状态。
   Future<DreamState> readState() async => (await _readState()).state;
+
+  Directory get _personaBackupDirectory =>
+      Directory(path.join(memoryDirectory, 'dream', 'backup', 'persona-tree'));
+
+  /// 树变更前的整树备份：全部可读分支与归档文件逐文件原子写入
+  /// `dream/backup/persona-tree/`。单文件失败只记诊断，其余照写。
+  Future<void> _backupPersonaTree() async {
+    final tree = personaTree;
+    if (tree == null) {
+      return;
+    }
+    try {
+      final files = await tree.backupFiles();
+      for (final MapEntry(:key, :value) in files.entries) {
+        await _atomicWriter.replace(
+          path.join(_personaBackupDirectory.path, key),
+          value,
+        );
+      }
+    } on Object catch (error) {
+      _diagnosticsSink('dream persona backup deferred [$error]');
+    }
+  }
+
+  /// 最近有效的 long-memory Dream 备份（ticket 21 恢复来源）；
+  /// 不存在或结构不可读时返回 null。
+  Future<String?> readLongMemoryBackup() async {
+    final contents = await _readIfExists(_backupFile);
+    if (contents == null) {
+      return null;
+    }
+    return parseLongMemory(contents).readable ? contents : null;
+  }
+
+  /// 最近有效的 PersonaTree Dream 备份（ticket 21 恢复来源）：键为
+  /// 相对布局（`identity.md`、`archive/identity.md`）；目录不存在时
+  /// 返回空映射。逐文件的可解析校验在恢复写入侧执行。
+  Future<Map<String, String>> readPersonaTreeBackup() async {
+    final directory = _personaBackupDirectory;
+    if (!await directory.exists()) {
+      return const {};
+    }
+    final files = <String, String>{};
+    await for (final entity in directory.list(
+      recursive: true,
+      followLinks: false,
+    )) {
+      if (entity is! File || !entity.path.endsWith('.md')) {
+        continue;
+      }
+      final relative = path
+          .relative(entity.path, from: directory.path)
+          .replaceAll(Platform.pathSeparator, '/');
+      try {
+        final contents = await entity.readAsString(encoding: utf8);
+        if (contents.trim().isNotEmpty) {
+          files[relative] = contents;
+        }
+      } on Object {
+        // 读不到的备份文件不入备份集。
+      }
+    }
+    return files;
+  }
 
   /// 读取 Dream 状态；文件不存在返回空状态，存在但不可读时
   /// [corrupted] 为 true。
@@ -1111,6 +1179,11 @@ final class DreamService {
     final view = snapshot.branches[op.branchWire];
     if (view == null || !view.readable) {
       return 'branch-unreadable';
+    }
+    // 归档无法恢复时暂停受影响分支的全部根节点操作（T26 定稿）：没有
+    // 「已纠正主张」的负面依据，升根与合并都可能复活旧画像。
+    if (!view.archiveReadable) {
+      return 'archive-unavailable';
     }
     bool frozenHit(String text) =>
         frozen.isNotEmpty &&

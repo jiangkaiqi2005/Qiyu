@@ -527,6 +527,57 @@ void main() {
     expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
   });
 
+  testWidgets('recovery findings show an honest banner with details', (
+    tester,
+  ) async {
+    final gateway = _FakeMemoryGateway(_recoveryOverview());
+    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+
+    // 受影响范围、恢复结果与仍无法恢复的内容都诚实呈现。
+    expect(find.byKey(const Key('memory-recovery-banner')), findsOneWidget);
+    expect(find.text('部分记忆文件出现过损坏'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('memory-recovery-banner')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('长期印象内容'), findsOneWidget);
+    expect(find.textContaining('从文件内完整对话块 2 段抢救'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('healthy recovery section stays invisible', (tester) async {
+    final gateway = _FakeMemoryGateway(_fullOverview());
+    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('memory-recovery-banner')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('masked detail content reveals once and re-masks on timeout', (
     tester,
   ) async {
@@ -795,6 +846,51 @@ Future<OnboardingViewModel> _onboardingViewModel() async {
   await viewModel.initialize();
   return viewModel;
 }
+
+/// 恢复状态呈现用总览（ticket 21）：受影响范围、采用证据与恢复结果
+/// 诚实可见，绝不显示虚假成功。
+MemoryOverview _recoveryOverview() => MemoryOverview(
+  generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
+  recent: MemoryRecentSection(days: []),
+  longTerm: MemoryLongTermSection(
+    present: false,
+    readable: true,
+    organizedAt: null,
+    groups: [],
+  ),
+  persona: MemoryPersonaSection(branches: []),
+  relationship: MemoryRelationshipSection(
+    present: false,
+    stage: null,
+    since: null,
+    confirmed: [],
+    probes: [],
+    recentChanges: [],
+    sharedPast: [],
+  ),
+  recovery: MemoryRecoverySection(
+    healthy: false,
+    quarantinedFiles: 2,
+    findings: [
+      MemoryRecoveryFindingCard(
+        layer: '长期印象',
+        kind: 'corrupt',
+        outcome: 'pending',
+        evidence: '无有效 Dream 备份',
+        loss: '长期印象内容',
+        quarantined: true,
+      ),
+      MemoryRecoveryFindingCard(
+        layer: '原始会话（2026-08-05 第 1 段）',
+        kind: 'incomplete',
+        outcome: 'partial',
+        evidence: '从文件内完整对话块 2 段抢救',
+        loss: '未完整解析的对话块',
+        quarantined: true,
+      ),
+    ],
+  ),
+);
 
 MemoryOverview _fullOverview() => MemoryOverview(
   generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),

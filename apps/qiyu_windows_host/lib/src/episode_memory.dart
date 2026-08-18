@@ -16,6 +16,15 @@ const episodeKindOpenLoopCandidate = 'open_loop_candidate';
 const episodeKindOpenLoopEvent = 'open_loop_event';
 const episodeKindRelationshipSignal = 'relationship_signal';
 
+/// 记忆控制事件的审计前缀（写入端）；解析端在 memory_recovery 的
+/// `_controlEvent` 引用同一组常量，两侧必须始终一致。「不记录」不是
+/// 控制事件（当时就没有写入任何内容），恢复时不参与重建。
+const controlAuditPrefixBan = '禁提: ';
+const controlAuditPrefixFreeze = '冻结: ';
+const controlAuditPrefixUnfreeze = '解除冻结: ';
+const controlAuditPrefixDelete = '删除: ';
+const controlAuditPrefixForget = '不记录: ';
+
 final class EpisodeEntry {
   const EpisodeEntry({
     required this.id,
@@ -491,7 +500,9 @@ final class EpisodeMemoryPipeline {
           id: id,
           sessionId: session.id,
           requestId: requestId,
-          summary: '禁提: ${redactSessionText(action.summary ?? '').trim()}',
+          summary:
+              '$controlAuditPrefixBan'
+              '${redactSessionText(action.summary ?? '').trim()}',
           at: _clock().toUtc(),
           kind: episodeKindOpenLoopEvent,
         );
@@ -502,16 +513,16 @@ final class EpisodeMemoryPipeline {
         // 记忆控制事件留痕（审计）：簿记条目不进摘要、状态包、索引
         // 或 PersonaTree，只留在 episode 里做追溯。
         final label = switch (action.kind) {
-          HiddenActionKind.memoryForget => '不记录',
-          HiddenActionKind.memoryFreeze => '冻结',
-          HiddenActionKind.memoryUnfreeze => '解除冻结',
-          _ => '删除',
+          HiddenActionKind.memoryForget => controlAuditPrefixForget,
+          HiddenActionKind.memoryFreeze => controlAuditPrefixFreeze,
+          HiddenActionKind.memoryUnfreeze => controlAuditPrefixUnfreeze,
+          _ => controlAuditPrefixDelete,
         };
         return EpisodeEntry(
           id: id,
           sessionId: session.id,
           requestId: requestId,
-          summary: '$label: ${redactSessionText(action.summary ?? '').trim()}',
+          summary: '$label${redactSessionText(action.summary ?? '').trim()}',
           at: _clock().toUtc(),
           kind: episodeKindOpenLoopEvent,
         );

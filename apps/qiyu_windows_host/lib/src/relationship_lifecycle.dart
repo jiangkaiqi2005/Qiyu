@@ -275,6 +275,36 @@ final class RelationshipLifecycle {
     await _atomicWriter.replace(file.path, contents);
   }
 
+  /// 恢复重建（ticket 21 / T26）：原文件已被恢复流程隔离后，从全部
+  /// 有效 episodes 一次性写入整体关系判断。与日终不同：不受「每次最多
+  /// 一级」限制——阶段直接取证据配得上的级别；当前轮不变、下轮生效
+  /// 由文件写入时机自然保证。文件仍存在（无论可读与否）时绝不动它。
+  Future<bool> rebuildForRecovery(
+    EpisodeMemoryPipeline pipeline,
+    List<String> episodeDates,
+    String today,
+  ) async {
+    final file = _file;
+    if (await file.exists()) {
+      return false;
+    }
+    final evidence = await _collectEvidence(pipeline, episodeDates, today);
+    final stage = evaluateTargetStage(evidence);
+    final earliest = await _earliestEpisodeDate(pipeline, episodeDates);
+    final since = earliest ?? today;
+    final signals = await _collectSignals(pipeline, episodeDates);
+    final contents = _compose(
+      stage: stage,
+      since: since,
+      description: _stageDescription(stage, since, today),
+      confirmed: _projectBoundaries(signals.opens, relationshipConfirmedMax),
+      probes: _projectBoundaries(signals.closes, relationshipProbeMax),
+      recentChanges: _projectRecentChanges(signals.changes),
+    );
+    await _atomicWriter.replace(file.path, contents);
+    return true;
+  }
+
   Future<RelationshipEvidence> _collectEvidence(
     EpisodeMemoryPipeline pipeline,
     List<String> episodeDates,

@@ -10,6 +10,7 @@ import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
+import 'memory_recovery.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
 import 'relationship_lifecycle.dart';
@@ -347,6 +348,33 @@ final class MemoryRelationshipSection {
   };
 }
 
+/// 恢复状态区（ticket 21）：受影响范围、采用的证据、恢复结果与仍
+/// 无法恢复的内容。只读呈现最近一次启动恢复扫描的持久化报告，
+/// 绝不缓存正文，也不触发新的恢复写入。
+final class MemoryRecoverySection {
+  const MemoryRecoverySection({
+    required this.healthy,
+    required this.findings,
+    required this.quarantinedFiles,
+  });
+
+  /// 没有任何损坏发现（也没有保留的隔离原件）。
+  final bool healthy;
+
+  /// 每项含层标签、损坏类型（missing/stale/corrupt/incomplete/
+  /// orphaned）、结果（full/partial/pending）、证据与损失描述。
+  final List<MemoryRecoveryFinding> findings;
+
+  /// 隔离区保留的原件份数；部分恢复的证据在用户明确处理前一直保留。
+  final int quarantinedFiles;
+
+  Map<String, Object?> toJson() => {
+    'healthy': healthy,
+    'quarantinedFiles': quarantinedFiles,
+    'findings': findings.map((finding) => finding.toJson()).toList(),
+  };
+}
+
 final class MemoryCenterOverview {
   const MemoryCenterOverview({
     required this.generatedAt,
@@ -354,6 +382,7 @@ final class MemoryCenterOverview {
     required this.longTerm,
     required this.persona,
     required this.relationship,
+    required this.recovery,
   });
 
   final DateTime generatedAt;
@@ -362,12 +391,16 @@ final class MemoryCenterOverview {
   final MemoryPersonaSection persona;
   final MemoryRelationshipSection relationship;
 
+  /// 恢复状态；未接恢复服务时恒为健康空区。
+  final MemoryRecoverySection recovery;
+
   Map<String, Object?> toJson() => {
     'generatedAt': generatedAt.toUtc().toIso8601String(),
     'recent': recent.toJson(),
     'longTerm': longTerm.toJson(),
     'persona': persona.toJson(),
     'relationship': relationship.toJson(),
+    'recovery': recovery.toJson(),
   };
 }
 
@@ -651,6 +684,7 @@ final class MemoryCenterService {
     required this.personaTree,
     required this.memoryControls,
     required this.dreamService,
+    this.memoryRecovery,
     Clock? clock,
     void Function(String message)? diagnosticsSink,
   }) : _clock = clock ?? DateTime.now,
@@ -661,6 +695,10 @@ final class MemoryCenterService {
   final PersonaTreeStore personaTree;
   final MemoryControlsStore memoryControls;
   final DreamService dreamService;
+
+  /// 恢复服务（ticket 21）：本服务只读其最近一次持久化报告，绝不
+  /// 触发恢复写入；null 时恢复区呈现健康空状态。
+  final MemoryRecoveryService? memoryRecovery;
   final Clock _clock;
   final void Function(String) _diagnosticsSink;
 
@@ -682,6 +720,33 @@ final class MemoryCenterService {
       longTerm: await _longTermSection(frozen, blocked),
       persona: await _personaSection(frozen, blocked),
       relationship: await _relationshipSection(frozen, blocked),
+      recovery: await _recoverySection(),
+    );
+  }
+
+  /// 恢复区只读最近一次持久化报告；报告缺失（从未触发或不可读）
+  /// 时呈现健康空状态，绝不显示虚假成功，也不在读取路径触发恢复。
+  Future<MemoryRecoverySection> _recoverySection() async {
+    final service = memoryRecovery;
+    if (service == null) {
+      return const MemoryRecoverySection(
+        healthy: true,
+        findings: [],
+        quarantinedFiles: 0,
+      );
+    }
+    final report = await service.readReport();
+    if (report == null) {
+      return const MemoryRecoverySection(
+        healthy: true,
+        findings: [],
+        quarantinedFiles: 0,
+      );
+    }
+    return MemoryRecoverySection(
+      healthy: report.healthy && report.quarantinedFiles == 0,
+      findings: report.findings,
+      quarantinedFiles: report.quarantinedFiles,
     );
   }
 

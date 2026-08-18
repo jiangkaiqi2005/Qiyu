@@ -422,7 +422,7 @@ final class MarkdownMemoryRepository implements MemoryRepository {
   Future<void> _writeSession(RawSession session) async {
     final targetPath = _sessionPath(session);
     try {
-      await _atomicWriter.replace(targetPath, _toMarkdown(session));
+      await _atomicWriter.replace(targetPath, renderSessionMarkdown(session));
     } on MemoryRepositoryException {
       rethrow;
     } on Object catch (error) {
@@ -497,7 +497,8 @@ RawSession? _latestSession(List<RawSession> sessions) {
   );
 }
 
-String _toMarkdown(RawSession session) {
+/// 会话文件的规范 Markdown 渲染（写入与 ticket 21 抢救重写共用）。
+String renderSessionMarkdown(RawSession session) {
   final buffer = StringBuffer()
     ..writeln('# 栖语原始会话')
     ..writeln()

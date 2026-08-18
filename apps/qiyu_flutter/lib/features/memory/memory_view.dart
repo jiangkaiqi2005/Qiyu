@@ -68,6 +68,7 @@ class MemoryView extends StatelessWidget {
                     ],
                   ),
                   const Divider(height: 1),
+                  ?_recoveryBanner(viewModel.overview),
                   Expanded(child: _body(context, viewModel)),
                 ],
               ),
@@ -113,6 +114,79 @@ class MemoryView extends StatelessWidget {
         _RelationshipTab(section: overview.relationship),
       ],
     );
+  }
+
+  /// 恢复状态横幅（ticket 21）：有损坏发现或保留的隔离原件时才呈现；
+  /// 展开可见受影响范围、采用的证据、恢复结果与仍无法恢复的内容。
+  Widget? _recoveryBanner(MemoryOverview? overview) {
+    final recovery = overview?.recovery;
+    if (recovery == null || recovery.healthy || recovery.findings.isEmpty) {
+      return null;
+    }
+    return _RecoveryBanner(section: recovery);
+  }
+}
+
+class _RecoveryBanner extends StatelessWidget {
+  const _RecoveryBanner({required this.section});
+
+  final MemoryRecoverySection section;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final pending = section.findings
+        .where((finding) => finding.outcome == 'pending')
+        .length;
+    final partial = section.findings
+        .where((finding) => finding.outcome == 'partial')
+        .length;
+    final subtitle = [
+      if (pending > 0) '$pending 项待恢复',
+      if (partial > 0) '$partial 项部分恢复',
+      if (section.quarantinedFiles > 0)
+        '${section.quarantinedFiles} 份原件保留在隔离区',
+    ].join('，');
+    return Card(
+      key: const Key('memory-recovery-banner'),
+      margin: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: Icon(
+          Icons.health_and_safety_outlined,
+          color: theme.colorScheme.error,
+        ),
+        title: const Text('部分记忆文件出现过损坏'),
+        subtitle: subtitle.isEmpty ? null : Text(subtitle),
+        children: [
+          for (final finding in section.findings)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(_findingText(finding)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _findingText(MemoryRecoveryFindingCard finding) {
+    final buffer = StringBuffer(
+      '${finding.layer}：${finding.kindLabel}，${finding.outcomeLabel}',
+    );
+    final evidence = finding.evidence;
+    if (evidence != null && evidence.isNotEmpty) {
+      buffer.write('\n采用证据：$evidence');
+    }
+    final loss = finding.loss;
+    if (loss != null && loss.isNotEmpty) {
+      buffer.write('\n仍无法恢复：$loss');
+    }
+    return buffer.toString();
   }
 }
 

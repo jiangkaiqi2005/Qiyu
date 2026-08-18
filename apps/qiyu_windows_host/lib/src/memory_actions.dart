@@ -788,12 +788,6 @@ final class MemoryActionService {
     required String origin,
   }) async {
     final scope = {normalizeMemoryText(text)};
-    bool hitText(String candidate) =>
-        bannedTitleMatches(normalizeMemoryText(candidate), scope);
-    bool hitEntry(EpisodeEntry entry) =>
-        entry.kind != episodeKindOpenLoopEvent &&
-        (hitText(entry.summary) ||
-            (entry.evidence != null && hitText(entry.evidence!)));
 
     if (!await memoryControls.recordDelete(text, origin: origin)) {
       return const MemoryActionResult(
@@ -806,6 +800,38 @@ final class MemoryActionService {
 
     // 每步独立幂等，单步失败只记诊断并进入部分失败清单；控制记录
     // 已挡住注入与检索，剩余派生内容等待下次触发或日终补齐。
+    final deferred = await purgeDerivedScopes(scope, text: text);
+
+    if (deferred.isNotEmpty) {
+      return MemoryActionResult(
+        status: MemoryActionStatus.partial,
+        message:
+            '删除已生效，这条内容不会再出现；'
+            '${deferred.join('、')}没有一次完成，稍后会自动补上。',
+        deferred: deferred,
+      );
+    }
+    return const MemoryActionResult(
+      status: MemoryActionStatus.success,
+      message: '已删除。原始对话记录还在，但不会再从那里整理出这条内容。',
+    );
+  }
+
+  /// 清除命中封禁范围的全部派生内容与索引（删除管线与 ticket 21
+  /// 恢复共用）：每步独立幂等，单步失败只记诊断并进入返回的部分
+  /// 失败清单。本方法绝不写控制记录——控制记录归调用方（删除先写
+  /// deleted 记录；恢复先重建控制文件），避免复活或重复 tombstone。
+  Future<List<String>> purgeDerivedScopes(
+    Set<String> scope, {
+    required String text,
+  }) async {
+    bool hitText(String candidate) =>
+        bannedTitleMatches(normalizeMemoryText(candidate), scope);
+    bool hitEntry(EpisodeEntry entry) =>
+        entry.kind != episodeKindOpenLoopEvent &&
+        (hitText(entry.summary) ||
+            (entry.evidence != null && hitText(entry.evidence!)));
+
     final deferred = <String>[];
     try {
       await personaTree.applyBan(text);
@@ -876,20 +902,7 @@ final class MemoryActionService {
       deferred.add('未闭环事项的清理');
       _diagnosticsSink('delete loop purge deferred [$error]');
     }
-
-    if (deferred.isNotEmpty) {
-      return MemoryActionResult(
-        status: MemoryActionStatus.partial,
-        message:
-            '删除已生效，这条内容不会再出现；'
-            '${deferred.join('、')}没有一次完成，稍后会自动补上。',
-        deferred: deferred,
-      );
-    }
-    return const MemoryActionResult(
-      status: MemoryActionStatus.success,
-      message: '已删除。原始对话记录还在，但不会再从那里整理出这条内容。',
-    );
+    return deferred;
   }
 
   /// 删除清除长期印象里的命中条目：解析 → 过滤 → 原子重写。

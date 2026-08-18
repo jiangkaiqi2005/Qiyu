@@ -18,6 +18,7 @@ export 'src/memory_actions.dart';
 export 'src/memory_center.dart';
 export 'src/memory_controls.dart';
 export 'src/memory_recall.dart';
+export 'src/memory_recovery.dart';
 export 'src/model_gateway.dart';
 export 'src/model_prompt_builder.dart';
 export 'src/monthly_summary.dart';

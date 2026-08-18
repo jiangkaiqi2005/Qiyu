@@ -364,6 +364,76 @@ final class MemoryRelationshipSection {
   bool get isEmpty => !present && sharedPast.isEmpty;
 }
 
+/// 恢复状态区的一条发现（ticket 21）：受影响层、损坏类型、恢复结果、
+/// 采用的证据与仍无法恢复的内容，全部是用户语言的抽象描述。
+final class MemoryRecoveryFindingCard {
+  const MemoryRecoveryFindingCard({
+    required this.layer,
+    required this.kind,
+    required this.outcome,
+    required this.evidence,
+    required this.loss,
+    required this.quarantined,
+  });
+
+  factory MemoryRecoveryFindingCard.fromJson(Map<String, Object?> json) =>
+      MemoryRecoveryFindingCard(
+        layer: json['layer']! as String,
+        kind: json['kind']! as String,
+        outcome: json['outcome']! as String,
+        evidence: json['evidence'] as String?,
+        loss: json['loss'] as String?,
+        quarantined: json['quarantined'] == true,
+      );
+
+  final String layer;
+  final String kind;
+  final String outcome;
+  final String? evidence;
+  final String? loss;
+  final bool quarantined;
+
+  String get kindLabel => switch (kind) {
+    'missing' => '缺失',
+    'stale' => '旧版本',
+    'corrupt' => '语法损坏',
+    'incomplete' => '内容不完整',
+    'orphaned' => '引用失效',
+    _ => '异常',
+  };
+
+  String get outcomeLabel => switch (outcome) {
+    'full' => '已完整恢复',
+    'partial' => '部分恢复',
+    'pending' => '待恢复',
+    _ => '未知',
+  };
+}
+
+/// 恢复状态区：健康时 [healthy] 为 true 且不展示；有发现时逐条呈现
+/// 受影响范围、采用证据、恢复结果与仍无法恢复的内容，绝不显示虚假成功。
+final class MemoryRecoverySection {
+  const MemoryRecoverySection({
+    required this.healthy,
+    required this.quarantinedFiles,
+    required this.findings,
+  });
+
+  factory MemoryRecoverySection.fromJson(Map<String, Object?> json) =>
+      MemoryRecoverySection(
+        healthy: json['healthy'] == true,
+        quarantinedFiles: json['quarantinedFiles'] as int? ?? 0,
+        findings: (json['findings'] as List<Object?>? ?? const [])
+            .whereType<Map<String, Object?>>()
+            .map(MemoryRecoveryFindingCard.fromJson)
+            .toList(),
+      );
+
+  final bool healthy;
+  final int quarantinedFiles;
+  final List<MemoryRecoveryFindingCard> findings;
+}
+
 final class MemoryOverview {
   const MemoryOverview({
     required this.generatedAt,
@@ -371,6 +441,7 @@ final class MemoryOverview {
     required this.longTerm,
     required this.persona,
     required this.relationship,
+    this.recovery,
   });
 
   factory MemoryOverview.fromJson(Map<String, Object?> json) => MemoryOverview(
@@ -387,6 +458,11 @@ final class MemoryOverview {
     relationship: MemoryRelationshipSection.fromJson(
       json['relationship']! as Map<String, Object?>,
     ),
+    recovery: json['recovery'] is Map<String, Object?>
+        ? MemoryRecoverySection.fromJson(
+            json['recovery']! as Map<String, Object?>,
+          )
+        : null,
   );
 
   final DateTime generatedAt;
@@ -394,6 +470,9 @@ final class MemoryOverview {
   final MemoryLongTermSection longTerm;
   final MemoryPersonaSection persona;
   final MemoryRelationshipSection relationship;
+
+  /// 恢复状态；旧 Host 未提供时为 null，按健康呈现。
+  final MemoryRecoverySection? recovery;
 }
 
 /// 条目详情：按 kind 分派为 episode 条目、画像根路径、画像中间理解
