@@ -15,6 +15,7 @@ import 'episode_memory.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
+import 'memory_backup.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
 import 'memory_recall.dart';
@@ -149,6 +150,16 @@ final class LocalAppHost {
       relationshipLifecycle: relationshipLifecycle,
       memoryActions: memoryActions,
     );
+    // Markdown 备份导出与导入（ticket 22）：只依赖记忆目录与各存储
+    // 实例，验证、差异、快照、回滚全部在写入前完成；共享控制与动作
+    // 实例，导入后按现行控制再清除派生内容。
+    final memoryBackup = MemoryBackupService(
+      memoryDirectory: memoryDirectory,
+      memoryControls: memoryControls,
+      episodePipeline: episodePipeline,
+      personaTree: personaTree,
+      memoryActions: memoryActions,
+    );
     final chatService = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
       providerChatClient: effectiveProviderSettings,
@@ -210,6 +221,7 @@ final class LocalAppHost {
       onboardingRepository: onboardingRepository,
       memoryCenter: memoryCenter,
       memoryActions: memoryActions,
+      memoryBackup: memoryBackup,
       activationToken: activationToken,
       onActivate: onActivate,
     );
@@ -253,6 +265,7 @@ final class _LocalAppRequestHandler {
     required this.onboardingRepository,
     required this.memoryCenter,
     required this.memoryActions,
+    required this.memoryBackup,
     required this.activationToken,
     required this.onActivate,
   }) : _startupToken = generateSecureToken(),
@@ -271,6 +284,7 @@ final class _LocalAppRequestHandler {
   final OnboardingRepository onboardingRepository;
   final MemoryCenterService memoryCenter;
   final MemoryActionService memoryActions;
+  final MemoryBackupService memoryBackup;
   final String? activationToken;
   final Future<BrowserLaunchResult> Function()? onActivate;
   final String _sessionToken;
@@ -611,6 +625,65 @@ final class _LocalAppRequestHandler {
           headers: _jsonHeaders,
         );
       }
+      if (request.method == 'GET' && request.url.path == 'api/backup/export') {
+        final export = await memoryBackup.exportBundle();
+        return Response.ok(
+          export.bytes,
+          headers: {
+            HttpHeaders.contentTypeHeader: 'application/zip',
+            'content-disposition':
+                'attachment; filename="${export.fileName}"',
+            HttpHeaders.cacheControlHeader: 'no-store',
+          },
+        );
+      }
+      if (request.method == 'POST' &&
+          request.url.path == 'api/backup/preview') {
+        final bundle = await _readBackupBundle(request);
+        final preview = await memoryBackup.previewImport(bundle);
+        return Response.ok(
+          jsonEncode(preview.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'POST' &&
+          request.url.path == 'api/backup/import') {
+        final bundle = await _readBackupBundle(request);
+        final result = await memoryBackup.importBundle(bundle);
+        return Response.ok(
+          jsonEncode(result.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'GET' &&
+          request.url.path == 'api/backup/snapshots') {
+        final snapshots = await memoryBackup.listSnapshots();
+        return Response.ok(
+          jsonEncode({
+            'snapshots': [
+              for (final snapshot in snapshots) snapshot.toJson(),
+            ],
+          }),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'POST' &&
+          request.url.path == 'api/backup/rollback') {
+        final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
+        final snapshotId = payload['snapshotId'];
+        if (snapshotId != null && snapshotId is! String) {
+          throw const LocalChatException(
+            code: 'invalid_request',
+            message: '回滚请求格式不正确。',
+            retryable: false,
+          );
+        }
+        final result = await memoryBackup.rollbackTo(snapshotId as String?);
+        return Response.ok(
+          jsonEncode(result.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
       if (request.method == 'POST' && request.url.path == 'api/chat/cancel') {
         final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
         final requestId = payload['requestId'];
@@ -658,6 +731,13 @@ final class _LocalAppRequestHandler {
         HttpStatus.badRequest,
         code: 'invalid_request',
         message: '聊天请求格式不正确。',
+        retryable: false,
+      );
+    } on BackupValidationException catch (error) {
+      return _jsonError(
+        HttpStatus.badRequest,
+        code: error.code,
+        message: error.message,
         retryable: false,
       );
     } on LocalChatException catch (error) {
@@ -745,6 +825,34 @@ final class _LocalAppRequestHandler {
       }
     }
     return false;
+  }
+}
+
+/// 备份请求体上限：base64 编码后的 zip。本机记忆是纯文本，正常备份
+/// 远小于该值；超限直接拒绝，不进入验证与写入。
+const _backupBundleMaxBytes = 96 * 1024 * 1024;
+
+Future<Uint8List> _readBackupBundle(Request request) async {
+  final payload = await _readJsonObject(
+    request,
+    maxBytes: _backupBundleMaxBytes,
+  );
+  final data = payload['dataBase64'];
+  if (data is! String || data.isEmpty) {
+    throw const LocalChatException(
+      code: 'invalid_request',
+      message: '备份请求格式不正确。',
+      retryable: false,
+    );
+  }
+  try {
+    return base64.decode(data);
+  } on Object {
+    throw const LocalChatException(
+      code: 'invalid_request',
+      message: '备份文件读不出来，请重新选择。',
+      retryable: false,
+    );
   }
 }
 

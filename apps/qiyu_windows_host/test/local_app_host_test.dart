@@ -1107,6 +1107,115 @@ void main() {
       await host.close();
     },
   );
+
+  test(
+    'backup export, preview, import and rollback stay honest end to end',
+    () async {
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+      );
+      final browser = await _openBrowserSession(host);
+
+      // 先产生一份真实会话作为备份内容。
+      final chat = await _send(
+        host.origin.resolve('/api/chat'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'requestId': 'backup-1', 'text': '今天有点累'}),
+      );
+      expect(chat.statusCode, HttpStatus.ok);
+
+      // 导出：zip 字节流 + 附件下载头。
+      final client = HttpClient();
+      final exportRequest = await client.openUrl(
+        'GET',
+        host.origin.resolve('/api/backup/export'),
+      );
+      browser.readHeaders(host.origin).forEach(exportRequest.headers.set);
+      final exportResponse = await exportRequest.close();
+      expect(exportResponse.statusCode, HttpStatus.ok);
+      expect(exportResponse.headers.contentType?.mimeType, 'application/zip');
+      expect(
+        exportResponse.headers.value('content-disposition'),
+        contains('attachment'),
+      );
+      final exportBytes = <int>[];
+      await for (final chunk in exportResponse) {
+        exportBytes.addAll(chunk);
+      }
+      // zip 本地文件头原样保存文件名：清单必须存在。
+      expect(latin1.decode(exportBytes), contains('manifest.md'));
+      client.close(force: true);
+
+      // 无效备份被拒绝：结构校验在写入之前完成。
+      final rejected = await _send(
+        host.origin.resolve('/api/backup/preview'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'dataBase64': base64.encode([1, 2, 3])}),
+      );
+      expect(rejected.statusCode, HttpStatus.badRequest);
+      expect(rejected.body, contains('not-a-backup'));
+
+      // 预览：本机数据完整时全部跳过。
+      final preview = await _send(
+        host.origin.resolve('/api/backup/preview'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'dataBase64': base64.encode(exportBytes)}),
+      );
+      expect(preview.statusCode, HttpStatus.ok);
+      final previewJson = jsonDecode(preview.body) as Map<String, Object?>;
+      final counts = previewJson['counts']! as Map<String, Object?>;
+      expect(counts['added'], 0);
+      expect(counts['replaced'], 0);
+
+      // 确认导入：生成快照，重复数据全部跳过。
+      final imported = await _send(
+        host.origin.resolve('/api/backup/import'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'dataBase64': base64.encode(exportBytes)}),
+      );
+      expect(imported.statusCode, HttpStatus.ok);
+      final importJson = jsonDecode(imported.body) as Map<String, Object?>;
+      expect(importJson['added'], 0);
+      expect(importJson['snapshotId'], isNotEmpty);
+
+      // 快照列表包含导入前快照。
+      final snapshots = await _send(
+        host.origin.resolve('/api/backup/snapshots'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(snapshots.statusCode, HttpStatus.ok);
+      final snapshotsJson = jsonDecode(snapshots.body) as Map<String, Object?>;
+      expect(snapshotsJson['snapshots']! as List<Object?>, isNotEmpty);
+
+      // 回滚：恢复快照并留下保底快照。
+      final rollback = await _send(
+        host.origin.resolve('/api/backup/rollback'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({}),
+      );
+      expect(rollback.statusCode, HttpStatus.ok);
+      final rollbackJson = jsonDecode(rollback.body) as Map<String, Object?>;
+      expect(rollbackJson['restoredFiles'], greaterThan(0));
+      expect(rollbackJson['safetySnapshotId'], isNotEmpty);
+
+      // 变更请求缺少 CSRF 一律拒绝。
+      final missingCsrf = await _send(
+        host.origin.resolve('/api/backup/import'),
+        method: 'POST',
+        headers: browser.readHeaders(host.origin),
+        requestBody: jsonEncode({'dataBase64': base64.encode(exportBytes)}),
+      );
+      expect(missingCsrf.statusCode, HttpStatus.forbidden);
+      await host.close();
+    },
+  );
 }
 
 List<Map<String, Object?>> _chatEvents(String body) => body

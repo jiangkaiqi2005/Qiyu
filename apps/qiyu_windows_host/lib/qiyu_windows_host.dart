@@ -15,6 +15,7 @@ export 'src/local_app_host.dart';
 export 'src/local_chat_service.dart';
 export 'src/markdown_memory_repository.dart';
 export 'src/memory_actions.dart';
+export 'src/memory_backup.dart';
 export 'src/memory_center.dart';
 export 'src/memory_controls.dart';
 export 'src/memory_recall.dart';

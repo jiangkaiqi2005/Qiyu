@@ -1,11 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/memory/backup_client.dart';
+import 'package:qiyu_flutter/features/memory/backup_platform.dart';
+import 'package:qiyu_flutter/features/memory/backup_view.dart';
 import 'package:qiyu_flutter/features/memory/memory_client.dart';
 import 'package:qiyu_flutter/features/memory/memory_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
@@ -719,6 +725,205 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
   });
+
+  testWidgets('memory page opens the backup dialog with honest platform state', (
+    tester,
+  ) async {
+    final memoryViewModel = MemoryCenterViewModel(
+      _FakeMemoryGateway(_fullOverview()),
+      autoStart: false,
+    );
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('memory-backup')));
+    await tester.pumpAndSettle();
+    expect(find.text('备份与恢复'), findsOneWidget);
+    expect(find.byKey(const Key('backup-export')), findsOneWidget);
+    // 测试环境没有浏览器文件能力：如实说明，不假装可用。
+    expect(find.textContaining('当前环境不支持选择文件'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('backup-close')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('backup import previews differences and only writes after confirm', (
+    tester,
+  ) async {
+    final backupGateway = _FakeBackupGateway();
+    final memoryViewModel = MemoryCenterViewModel(
+      _FakeMemoryGateway(_fullOverview()),
+      autoStart: false,
+    );
+    await memoryViewModel.refresh();
+    await _pumpBackupDialog(
+      tester,
+      memoryViewModel: memoryViewModel,
+      gateway: backupGateway,
+      platform: _FakeBackupPlatform(
+        picked: Uint8List.fromList(utf8.encode('备份字节')),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('backup-import-pick')));
+    await tester.pumpAndSettle();
+
+    // 预览：差异计数、控制合并说明与逐条归类。
+    expect(find.byKey(const Key('backup-preview')), findsOneWidget);
+    expect(find.textContaining('新增 1'), findsOneWidget);
+    expect(find.textContaining('替换 1'), findsOneWidget);
+    expect(find.textContaining('冲突 1'), findsOneWidget);
+    expect(find.textContaining('不可恢复 1'), findsOneWidget);
+    expect(find.textContaining('并集'), findsOneWidget);
+    expect(
+      find.textContaining('冲突：sessions/2026/08/2026-08-05-001.md'),
+      findsOneWidget,
+    );
+    // 跳过项同样逐条可见，不是只有一个计数。
+    expect(find.textContaining('跳过：open-loops.md'), findsOneWidget);
+    expect(backupGateway.importCalls, 0);
+
+    await tester.ensureVisible(find.byKey(const Key('backup-import-confirm')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('backup-import-confirm')));
+    await tester.pumpAndSettle();
+    expect(backupGateway.importCalls, 1);
+    expect(find.textContaining('导入完成'), findsOneWidget);
+    expect(find.textContaining('记忆控制已按并集合并'), findsOneWidget);
+  });
+
+  testWidgets('cancelling an import preview writes nothing', (tester) async {
+    final backupGateway = _FakeBackupGateway();
+    final memoryViewModel = MemoryCenterViewModel(
+      _FakeMemoryGateway(_fullOverview()),
+      autoStart: false,
+    );
+    await memoryViewModel.refresh();
+    await _pumpBackupDialog(
+      tester,
+      memoryViewModel: memoryViewModel,
+      gateway: backupGateway,
+      platform: _FakeBackupPlatform(
+        picked: Uint8List.fromList(utf8.encode('备份字节')),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('backup-import-pick')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('backup-preview')), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const Key('backup-import-cancel')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('backup-import-cancel')));
+    await tester.pumpAndSettle();
+    expect(backupGateway.importCalls, 0);
+    expect(backupGateway.previewCalls, 1);
+    expect(find.byKey(const Key('backup-import-pick')), findsOneWidget);
+  });
+
+  testWidgets('an invalid backup is rejected with the honest reason', (
+    tester,
+  ) async {
+    final backupGateway = _FakeBackupGateway()
+      ..previewError = const BackupGatewayException(
+        '备份版本与当前栖语不兼容，已拒绝。',
+      );
+    final memoryViewModel = MemoryCenterViewModel(
+      _FakeMemoryGateway(_fullOverview()),
+      autoStart: false,
+    );
+    await memoryViewModel.refresh();
+    await _pumpBackupDialog(
+      tester,
+      memoryViewModel: memoryViewModel,
+      gateway: backupGateway,
+      platform: _FakeBackupPlatform(
+        picked: Uint8List.fromList(utf8.encode('坏备份')),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('backup-import-pick')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('不兼容'), findsOneWidget);
+    expect(find.byKey(const Key('backup-preview')), findsNothing);
+    expect(backupGateway.importCalls, 0);
+  });
+
+  testWidgets('rollback restores the pre-import snapshot after confirmation', (
+    tester,
+  ) async {
+    final backupGateway = _FakeBackupGateway();
+    final memoryViewModel = MemoryCenterViewModel(
+      _FakeMemoryGateway(_fullOverview()),
+      autoStart: false,
+    );
+    await memoryViewModel.refresh();
+    await _pumpBackupDialog(
+      tester,
+      memoryViewModel: memoryViewModel,
+      gateway: backupGateway,
+      platform: _FakeBackupPlatform(),
+    );
+
+    expect(find.textContaining('最近快照'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('backup-rollback')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('backup-rollback')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('backup-rollback-confirm')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('backup-rollback-go')));
+    await tester.pumpAndSettle();
+    expect(backupGateway.rollbackCalls, 1);
+    expect(find.textContaining('已恢复到导入之前'), findsOneWidget);
+  });
+}
+
+Future<void> _pumpBackupDialog(
+  WidgetTester tester, {
+  required MemoryCenterViewModel memoryViewModel,
+  required BackupGateway gateway,
+  required BackupPlatform platform,
+}) async {
+  await tester.pumpWidget(
+    ChangeNotifierProvider<MemoryCenterViewModel>.value(
+      value: memoryViewModel,
+      child: MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: Builder(
+              builder: (context) => ElevatedButton(
+                key: const Key('open-backup'),
+                onPressed: () => unawaited(
+                  showBackupDialog(
+                    context,
+                    gateway: gateway,
+                    platform: platform,
+                  ),
+                ),
+                child: const Text('打开备份'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('open-backup')));
+  await tester.pumpAndSettle();
 }
 
 MemoryOverview _maskedEntryOverview() => MemoryOverview(
@@ -1408,4 +1613,117 @@ final class _FakeHostConnectionProbe implements HostConnectionProbe {
     }
     return result;
   }
+}
+
+final class _FakeBackupGateway implements BackupGateway {
+  BackupGatewayException? previewError;
+  int previewCalls = 0;
+  int importCalls = 0;
+  int rollbackCalls = 0;
+
+  @override
+  Future<({Uint8List bytes, String fileName})> exportBundle() async => (
+    bytes: Uint8List.fromList(utf8.encode('zip')),
+    fileName: 'qiyu-backup-test.zip',
+  );
+
+  @override
+  Future<BackupPreview> previewBundle(Uint8List bundle) async {
+    previewCalls += 1;
+    final error = previewError;
+    if (error != null) {
+      throw error;
+    }
+    return BackupPreview(
+      generatedAt: DateTime.parse('2026-08-19T12:00:00Z'),
+      controlsMerge: 'union',
+      counts: const {
+        'added': 1,
+        'replaced': 1,
+        'conflict': 1,
+        'skipped': 2,
+        'unrecoverable': 1,
+      },
+      items: const [
+        BackupPreviewItem(
+          path: 'long-memory.md',
+          category: BackupItemCategory.added,
+        ),
+        BackupPreviewItem(
+          path: 'daily-state.md',
+          category: BackupItemCategory.replaced,
+        ),
+        BackupPreviewItem(
+          path: 'sessions/2026/08/2026-08-05-001.md',
+          category: BackupItemCategory.conflict,
+          note: '本机已有同名原始会话，保留本机版本',
+        ),
+        BackupPreviewItem(
+          path: 'sessions/2026/08/2026-08-06-001.md',
+          category: BackupItemCategory.unrecoverable,
+          note: '备份中的会话结构无法识别，未导入',
+        ),
+        BackupPreviewItem(
+          path: 'open-loops.md',
+          category: BackupItemCategory.skipped,
+        ),
+        BackupPreviewItem(
+          path: 'episodes/index.md',
+          category: BackupItemCategory.skipped,
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<BackupImportResult> importBundle(Uint8List bundle) async {
+    importCalls += 1;
+    return const BackupImportResult(
+      added: 1,
+      replaced: 1,
+      skipped: 2,
+      conflicts: 1,
+      unrecoverable: 1,
+      controlsMerged: true,
+      snapshotId: 'snapshot-1',
+    );
+  }
+
+  @override
+  Future<List<BackupSnapshotInfo>> snapshots() async => [
+    BackupSnapshotInfo(
+      id: 'snapshot-1',
+      createdAt: DateTime.parse('2026-08-19T12:00:00Z'),
+      fileCount: 3,
+    ),
+  ];
+
+  @override
+  Future<BackupRollbackResult> rollback({String? snapshotId}) async {
+    rollbackCalls += 1;
+    return const BackupRollbackResult(
+      snapshotId: 'snapshot-1',
+      restoredFiles: 3,
+      safetySnapshotId: 'snapshot-2',
+    );
+  }
+}
+
+final class _FakeBackupPlatform implements BackupPlatform {
+  _FakeBackupPlatform({this.picked});
+
+  final Uint8List? picked;
+  int downloads = 0;
+
+  @override
+  bool get supported => true;
+
+  @override
+  Future<bool> downloadBackup(String fileName, Uint8List bytes) async {
+    downloads += 1;
+    return true;
+  }
+
+  @override
+  Future<Uint8List?> pickBackupFile() async => picked;
 }

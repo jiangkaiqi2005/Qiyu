@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'backup_client.dart';
+import 'backup_platform.dart';
+import 'backup_view.dart';
 import 'memory_client.dart';
 import 'memory_view_model.dart';
 
@@ -17,7 +20,12 @@ const _revealTimeout = Duration(seconds: 20);
 /// 禁提/解除、删除与敏感揭示都经过明确确认，结果以成功、部分失败、
 /// 可恢复失败三态呈现。
 class MemoryView extends StatelessWidget {
-  const MemoryView({super.key});
+  const MemoryView({super.key, this.backupGateway, this.backupPlatform});
+
+  /// 备份网关与浏览器能力接缝：缺省走真实 HTTP 与 Web 实现；
+  /// widget 测试注入桩。
+  final BackupGateway? backupGateway;
+  final BackupPlatform? backupPlatform;
 
   @override
   Widget build(BuildContext context) {
@@ -47,6 +55,18 @@ class MemoryView extends StatelessWidget {
                           style: Theme.of(context).textTheme.headlineSmall,
                         ),
                         const Spacer(),
+                        IconButton(
+                          key: const Key('memory-backup'),
+                          onPressed: () => unawaited(
+                            showBackupDialog(
+                              context,
+                              gateway: backupGateway,
+                              platform: backupPlatform,
+                            ),
+                          ),
+                          tooltip: '备份与恢复',
+                          icon: const Icon(Icons.archive_outlined),
+                        ),
                         IconButton(
                           key: const Key('refresh-memory'),
                           onPressed: viewModel.loading
