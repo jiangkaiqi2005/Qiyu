@@ -25,7 +25,10 @@ final class QiyuHostRunner {
     final lease = SingleInstanceLease.tryAcquire(runtimeDirectory);
     if (!lease.isPrimary) {
       final descriptor = await lease.readDescriptor();
-      final activation = await _activateExisting(descriptor);
+      final activation = await _activateExisting(
+        descriptor,
+        activateBrowser: openBrowser,
+      );
       return HostLaunchResult._(
         isPrimary: false,
         origin: descriptor.origin,
@@ -68,11 +71,17 @@ final class QiyuHostRunner {
   }
 
   Future<_ActivationResult> _activateExisting(
-    InstanceDescriptor descriptor,
-  ) async {
+    InstanceDescriptor descriptor, {
+    required bool activateBrowser,
+  }) async {
     // descriptor 可被本机同用户进程篡改，激活请求绝不发往 loopback 之外。
     if (!_isLoopbackOrigin(descriptor.origin)) {
       throw StateError('Existing Qiyu instance descriptor points outside loopback');
+    }
+    if (!activateBrowser) {
+      return const _ActivationResult(
+        browserLaunch: BrowserLaunchResult.skipped(),
+      );
     }
     final client = HttpClient();
     try {

@@ -20,13 +20,27 @@ dart run
 Pop-Location
 ```
 
-生成可搬移的 Windows 分发包：
+生成可安装的 Windows 候选包：
 
 ```powershell
 npm run build:windows-bundle
 ```
 
-输出为 `apps/qiyu_windows_host/build/windows-bundle/`。`qiyu_windows_host.exe` 与 `web/` 共同构成应用包，必须一起移动或压缩；启动时优先读取 exe 旁的 `web/index.html`，不依赖仓库目录或当前工作目录。
+输出目录为 `apps/qiyu_windows_host/build/windows-bundle/`，同时生成
+`apps/qiyu_windows_host/build/qiyu-windows-x64-<version>.zip`。解压后运行
+`install.cmd`，按当前 Windows 用户安装到 `%LOCALAPPDATA%\Programs\Qiyu`，并创建
+开始菜单与桌面快捷方式；重复安装执行原位升级。安装与升级只替换程序文件，不触碰
+`%USERPROFILE%\.qiyu` 下的 Markdown、Provider 设置或 Windows Credential Manager
+中的 Key。
+
+卸载从安装目录运行 `uninstall.cmd`。脚本必须让用户明确选择保留或永久删除聊天、
+Markdown 记忆、Provider 设置和 API Key；未作选择就取消。候选包仍可直接搬移使用：
+`qiyu_windows_host.exe`、`web/`、`persona-constitution.md` 与 `licenses/` 必须保持在
+同一目录结构，启动不依赖仓库或当前工作目录。
+
+候选包附 `release.json` SHA-256 清单，以及 Dart SDK、Flutter SDK、Host Dart 包、
+Flutter Web 与字体许可证。发布审计会解包 zip 复核清单、x64 PE、包内 CanvasKit、
+远程静态引用、测试密钥、Node 运行依赖、调试文件和非 Windows 平台目录。
 
 ## 页面会话与本机 API
 
@@ -55,4 +69,4 @@ Flutter 页面每两秒探测一次健康接口。宿主停止或当前会话失
 npm run verify:migration-baseline
 ```
 
-宿主测试覆盖随机回环端口、端口释放、静态资源、单实例激活、浏览器失败回退、启动凭据重启失效，以及 Host、Origin、会话和 CSRF 校验。Flutter 测试覆盖健康检查成功/失败和主机停止提示。验证脚本还会构建 Flutter Web 和完整 Windows bundle，从仓库外工作目录执行 bundle 的 `--check`，正常启动 exe 并通过带 Cookie 的页面跳转确认它提供 Flutter 页面，最后回归 Dart 契约、JavaScript 测试和黄金行为评测。
+宿主测试覆盖随机回环端口、端口释放、静态资源、单实例激活、无浏览器模式、浏览器失败回退、启动凭据重启失效，以及 Host、Origin、会话和 CSRF 校验。Flutter 测试覆盖健康检查成功/失败和主机停止提示。验证脚本还会测试安装→升级→两种卸载策略，构建并解包复核完整 Windows 候选 zip，从仓库外工作目录执行 bundle 的 `--check`，正常启动 exe 并通过带 Cookie 的页面跳转确认它提供 Flutter 页面，最后回归 Dart 契约、JavaScript 测试和黄金行为评测。

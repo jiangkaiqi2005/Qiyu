@@ -1,0 +1,9 @@
+栖语 0.1.0-test.1 已安装到：C:\Users\25330\AppData\Local\Temp\qiyu-ticket25-package-test-73968\installed\Qiyu
+聊天、记忆和 Provider 凭据保存在安装目录之外，升级不会覆盖。
+栖语 0.1.0-test.2 已安装到：C:\Users\25330\AppData\Local\Temp\qiyu-ticket25-package-test-73968\installed\Qiyu
+聊天、记忆和 Provider 凭据保存在安装目录之外，升级不会覆盖。
+栖语已卸载；聊天、Markdown 记忆、Provider 设置和 API Key 已保留。
+栖语 0.1.0-test.2 已安装到：C:\Users\25330\AppData\Local\Temp\qiyu-ticket25-package-test-73968\installed\Qiyu
+聊天、记忆和 Provider 凭据保存在安装目录之外，升级不会覆盖。
+栖语及本机用户数据已卸载。
+Windows package lifecycle tests passed

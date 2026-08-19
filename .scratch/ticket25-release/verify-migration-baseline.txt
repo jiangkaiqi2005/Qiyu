@@ -1,0 +1,833 @@
+
+> qiyu-mvp@0.1.0 verify:migration-baseline
+> powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-migration-baseline.ps1
+
+==> Dart core dependencies
+Resolving dependencies...
+Downloading packages...
+  vm_service 15.2.0 (15.3.0 available)
+Got dependencies!
+1 package has newer versions incompatible with dependency constraints.
+Try `dart pub outdated` for more information.
+==> Dart core analysis
+Analyzing qiyu_behavior_core...
+No issues found!
+==> Dart core contract tests
+00:00 +0: loading test\hidden_actions_test.dart
+00:00 +0: test\hidden_actions_test.dart: text without an action block passes through unchanged
+00:00 +1: test\hidden_actions_test.dart: a whitelisted memory signal is parsed and hidden from visible text
+00:00 +2: test\hidden_actions_test.dart: recall and no-action complete the whitelist
+00:00 +3: test\hidden_actions_test.dart: recall selections are format-checked and deduplicated
+00:00 +4: test\hidden_actions_test.dart: recall selections are uncapped across months and dates
+00:00 +5: test\hidden_actions_test.dart: recall selection fields must be arrays
+00:00 +6: test\hidden_actions_test.dart: unknown actions are dropped with diagnostics, valid ones kept
+00:00 +7: test\hidden_actions_test.dart: malformed JSON is ignored entirely without touching visible text
+00:00 +8: test\hidden_actions_test.dart: non-array payloads are rejected as invalid format
+00:00 +9: test\hidden_actions_test.dart: missing or oversized summaries fail field validation
+00:00 +10: test\hidden_actions_test.dart: secrets never become memory signals
+00:00 +11: test\hidden_actions_test.dart: privilege-shaped fields are rejected
+00:00 +12: test\hidden_actions_test.dart: more than two actions hit the per-reply cap
+00:00 +13: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +14: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +15: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +16: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +17: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +18: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +19: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +20: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +21: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +22: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +23: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +24: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +25: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: normal-local-reply
+00:00 +26: test\hidden_actions_test.dart: invalid persona hints are dropped but the memory signal survives
+00:00 +27: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: bedtime-closes-without-new-topic
+00:00 +28: test\hidden_actions_test.dart: secrets and privilege never enter relationship signals
+00:00 +29: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: crisis-bypasses-provider
+00:00 +30: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: forbidden-model-reply-falls-back-locally
+00:00 +31: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: accepted-model-reply-keeps-llm-source
+00:00 +32: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: hidden-model-structure-is-cleaned
+00:00 +33: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: recall-selection-block-stays-hidden
+00:00 +34: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: model-control-value-falls-back-locally
+00:00 +35: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: persona-boundary-model-reply-falls-back-locally
+00:00 +36: test\qiyu_behavior_core_test.dart: Dart behavior matches shared fixture: direct-medical-advice-bypasses-provider
+00:00 +37: test\qiyu_behavior_core_test.dart: stable contracts round-trip through JSON
+00:00 +38: test\qiyu_behavior_core_test.dart: streaming delivery wire round-trips through the shared contract
+00:00 +39: test\qiyu_behavior_core_test.dart: ChatResult accepts the migration-period JavaScript wire shape
+00:00 +40: test\qiyu_behavior_core_test.dart: state contracts reject unknown relationship and emotion values
+00:00 +41: test\qiyu_behavior_core_test.dart: behavior state keeps only the latest 80 turns
+00:00 +42: test\qiyu_behavior_core_test.dart: model output removes hidden structures before it becomes visible
+00:00 +43: test\qiyu_behavior_core_test.dart: empty model output falls back with an explicit reason
+00:00 +44: test\qiyu_behavior_core_test.dart: malformed model control structures are rejected
+00:00 +45: test\qiyu_behavior_core_test.dart: multiline model action payloads are rejected
+00:00 +46: test\qiyu_behavior_core_test.dart: model control values are rejected even when their keys look generic
+00:00 +47: test\qiyu_behavior_core_test.dart: persona boundary violations never become visible
+00:00 +48: test\qiyu_behavior_core_test.dart: user control structures are neutralized before safety and state
+00:00 +49: test\qiyu_behavior_core_test.dart: ChatML control tokens and bare role lines are neutralized
+00:00 +50: All tests passed!
+==> Flutter dependencies
+Resolving dependencies...
+Downloading packages...
+  go_router 17.4.0 (17.5.0 available)
+  matcher 0.12.19 (0.12.20 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.0 (1.19.0 available)
+  test_api 0.7.11 (0.7.13 available)
+  vector_math 2.2.0 (2.4.2 available)
+  vm_service 15.2.0 (15.3.0 available)
+Got dependencies!
+7 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+==> Flutter analysis
+Resolving dependencies...
+Downloading packages...
+  go_router 17.4.0 (17.5.0 available)
+  matcher 0.12.19 (0.12.20 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.0 (1.19.0 available)
+  test_api 0.7.11 (0.7.13 available)
+  vector_math 2.2.0 (2.4.2 available)
+  vm_service 15.2.0 (15.3.0 available)
+Got dependencies!
+7 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Analyzing qiyu_flutter...
+No issues found! (ran in 1.1s)
+==> Flutter widget tests
+Resolving dependencies...
+Downloading packages...
+  go_router 17.4.0 (17.5.0 available)
+  matcher 0.12.19 (0.12.20 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.0 (1.19.0 available)
+  test_api 0.7.11 (0.7.13 available)
+  vector_math 2.2.0 (2.4.2 available)
+  vm_service 15.2.0 (15.3.0 available)
+Got dependencies!
+7 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+00:00 +0: loading E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart
+00:00 +0: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: keyboard alone navigates from home into the chat
+00:00 +1: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: keyboard alone navigates from home into the chat
+00:00 +2: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: keyboard alone navigates from home into the chat
+00:00 +3: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: keyboard alone navigates from home into the chat
+00:00 +4: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: keyboard alone navigates from home into the chat
+00:00 +5: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: keyboard alone navigates from home into the chat
+00:00 +6: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: keyboard alone navigates from home into the chat
+00:00 +7: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: keyboard alone navigates from home into the chat
+00:00 +8: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: keyboard alone navigates from home into the chat
+00:00 +9: E:/Agent/Qiyu/apps/qiyu_flutter/test/app_test.dart: restores the latest local session without duplicate messages
+00:00 +10: E:/Agent/Qiyu/apps/qiyu_flutter/test/app_test.dart: restores the latest local session without duplicate messages
+00:00 +11: E:/Agent/Qiyu/apps/qiyu_flutter/test/app_test.dart: restores the latest local session without duplicate messages
+00:00 +12: E:/Agent/Qiyu/apps/qiyu_flutter/test/app_test.dart: restores the latest local session without duplicate messages
+00:00 +13: E:/Agent/Qiyu/apps/qiyu_flutter/test/app_test.dart: restores the latest local session without duplicate messages
+00:00 +14: E:/Agent/Qiyu/apps/qiyu_flutter/test/app_test.dart: restores the latest local session without duplicate messages
+00:01 +15: E:/Agent/Qiyu/apps/qiyu_flutter/test/history_view_test.dart: history lists sessions by day with previews, counts, and unavailable hints
+00:01 +16: E:/Agent/Qiyu/apps/qiyu_flutter/test/history_view_test.dart: history lists sessions by day with previews, counts, and unavailable hints
+00:01 +17: E:/Agent/Qiyu/apps/qiyu_flutter/test/history_view_test.dart: history lists sessions by day with previews, counts, and unavailable hints
+00:01 +18: E:/Agent/Qiyu/apps/qiyu_flutter/test/history_view_test.dart: history lists sessions by day with previews, counts, and unavailable hints
+00:01 +19: E:/Agent/Qiyu/apps/qiyu_flutter/test/history_view_test.dart: history lists sessions by day with previews, counts, and unavailable hints
+00:01 +20: E:/Agent/Qiyu/apps/qiyu_flutter/test/history_view_test.dart: history lists sessions by day with previews, counts, and unavailable hints
+00:01 +21: E:/Agent/Qiyu/apps/qiyu_flutter/test/history_view_test.dart: history lists sessions by day with previews, counts, and unavailable hints
+00:01 +22: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +23: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +24: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +25: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +26: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +27: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +28: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +29: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +30: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +31: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +32: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:01 +33: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:02 +34: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:02 +35: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: home offers a memory entry and the center loads all four sections
+00:02 +36: E:/Agent/Qiyu/apps/qiyu_flutter/test/onboarding_test.dart: a fresh user without a Provider chooses local chat first
+00:02 +37: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: first-run pages stay usable at 960x600
+00:02 +38: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: developer diagnostics entry only appears after developer mode is on
+00:02 +39: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: developer diagnostics entry only appears after developer mode is on
+00:02 +40: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: developer diagnostics entry only appears after developer mode is on
+00:02 +41: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: developer diagnostics entry only appears after developer mode is on
+00:02 +42: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: developer diagnostics entry only appears after developer mode is on
+00:02 +43: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: developer diagnostics entry only appears after developer mode is on
+00:02 +44: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: developer diagnostics entry only appears after developer mode is on
+00:02 +45: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: developer diagnostics entry only appears after developer mode is on
+00:02 +46: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: developer diagnostics entry only appears after developer mode is on
+00:02 +47: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: evidence drills from a conclusion to summaries, days and the session
+00:02 +48: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: evidence drills from a conclusion to summaries, days and the session
+00:02 +49: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: evidence drills from a conclusion to summaries, days and the session
+00:02 +50: E:/Agent/Qiyu/apps/qiyu_flutter/test/app_test.dart: configures and tests all supported model providers
+00:02 +51: E:/Agent/Qiyu/apps/qiyu_flutter/test/app_test.dart: configures and tests all supported model providers
+00:03 +52: E:/Agent/Qiyu/apps/qiyu_flutter/test/app_test.dart: configures and tests all supported model providers
+00:03 +53: E:/Agent/Qiyu/apps/qiyu_flutter/test/app_test.dart: configures and tests all supported model providers
+00:03 +54: E:/Agent/Qiyu/apps/qiyu_flutter/test/accessibility_test.dart: first-run pages stay usable at 1920x1080
+00:03 +55: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: clearing product data previews impact and needs confirmation
+00:03 +56: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: clearing product data previews impact and needs confirmation
+00:03 +57: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: clearing product data previews impact and needs confirmation
+00:03 +58: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: clearing product data previews impact and needs confirmation
+00:03 +59: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: clearing product data previews impact and needs confirmation
+00:03 +60: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: clearing product data previews impact and needs confirmation
+00:03 +61: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: item load failures stay distinct from stale ids
+00:03 +62: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: item load failures stay distinct from stale ids
+00:03 +63: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: forgetting the saved API key needs confirmation
+00:03 +64: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: forgetting the saved API key needs confirmation
+00:03 +65: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: memory errors offer a retry without losing the page
+00:03 +66: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: memory errors offer a retry without losing the page
+00:03 +67: E:/Agent/Qiyu/apps/qiyu_flutter/test/settings_view_test.dart: privacy page states the local-only boundaries
+00:03 +68: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: editing an entry saves the correction as a user statement
+00:04 +69: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: freeze applies immediately, ban needs confirmation
+00:04 +70: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: delete previews the exact impact before executing
+00:04 +71: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: persona items can be controlled but never edited
+00:04 +72: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: state pack rows stay read-only
+00:04 +73: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: recovery findings show an honest banner with details
+00:04 +74: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: healthy recovery section stays invisible
+00:04 +75: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: masked detail content reveals once and re-masks on timeout
+00:04 +76: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: masked persona root and day summary offer a reveal entry
+00:05 +77: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: action entries stay disabled while an action is in flight
+00:05 +78: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: memory page opens the backup dialog with honest platform state
+00:05 +79: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: backup import previews differences and only writes after confirm
+00:05 +80: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: cancelling an import preview writes nothing
+00:05 +81: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: an invalid backup is rejected with the honest reason
+00:05 +82: E:/Agent/Qiyu/apps/qiyu_flutter/test/memory_view_test.dart: rollback restores the pre-import snapshot after confirmation
+00:05 +83: All tests passed!
+==> Flutter Web build
+Resolving dependencies...
+Downloading packages...
+  go_router 17.4.0 (17.5.0 available)
+  matcher 0.12.19 (0.12.20 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.0 (1.19.0 available)
+  test_api 0.7.11 (0.7.13 available)
+  vector_math 2.2.0 (2.4.2 available)
+  vm_service 15.2.0 (15.3.0 available)
+Got dependencies!
+7 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Compiling lib\main.dart for the Web...
+Wasm dry run succeeded. Consider building and testing your application with the `--wasm` flag. See docs for more info: https://docs.flutter.dev/platform-integration/web/wasm
+Use --no-wasm-dry-run to disable these warnings.
+Compiling lib\main.dart for the Web...                             20.4s
+√ Built build\web
+==> Flutter Web bundled resource check passed
+==> Windows host dependencies
+Resolving dependencies...
+Downloading packages...
+  archive 4.0.9 (4.1.0 available)
+  ffi 2.1.4 (2.2.0 available)
+  vm_service 15.2.0 (15.3.0 available)
+Got dependencies!
+3 packages have newer versions incompatible with dependency constraints.
+Try `dart pub outdated` for more information.
+==> Windows host analysis
+Analyzing qiyu_windows_host...
+No issues found!
+==> Windows host tests
+00:00 +0: loading test\daily_finalization_test.dart
+00:00 +0: test\daily_finalization_test.dart: finalizes a day in fixed order: summary, state pack, indexes, flag
+00:00 +1: test\daily_finalization_test.dart: finalizes a day in fixed order: summary, state pack, indexes, flag
+00:00 +2: test\daily_finalization_test.dart: finalizes a day in fixed order: summary, state pack, indexes, flag
+00:00 +3: test\daily_finalization_test.dart: finalizes a day in fixed order: summary, state pack, indexes, flag
+00:00 +4: test\daily_finalization_test.dart: finalizes a day in fixed order: summary, state pack, indexes, flag
+00:00 +5: test\daily_finalization_test.dart: finalizes a day in fixed order: summary, state pack, indexes, flag
+00:00 +6: test\daily_finalization_test.dart: finalizes a day in fixed order: summary, state pack, indexes, flag
+00:00 +7: test\daily_finalization_test.dart: finalizes a day in fixed order: summary, state pack, indexes, flag
+00:00 +8: test\daily_finalization_test.dart: finalizes a day in fixed order: summary, state pack, indexes, flag
+00:00 +9: test\daily_finalization_test.dart: finalizes a day in fixed order: summary, state pack, indexes, flag
+00:00 +10: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call model materials flow through every existing gate
+00:00 +11: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call model materials flow through every existing gate
+00:00 +12: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call model materials flow through every existing gate
+00:00 +13: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call model materials flow through every existing gate
+00:00 +14: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call model materials flow through every existing gate
+00:00 +15: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call model materials flow through every existing gate
+00:00 +16: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call model materials flow through every existing gate
+00:00 +17: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call model materials flow through every existing gate
+00:00 +18: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call model materials flow through every existing gate
+00:00 +19: test\dream_test.dart: the first bedtime dream accepts a validated draft
+00:00 +20: test\dream_test.dart: the first bedtime dream accepts a validated draft
+00:00 +21: test\dream_test.dart: the first bedtime dream accepts a validated draft
+00:00 +22: test\dream_test.dart: the first bedtime dream accepts a validated draft
+00:00 +23: test\developer_diagnostics_test.dart: DeveloperDiagnosticsService finalization health counts unfinalized days before today
+00:00 +24: test\developer_diagnostics_test.dart: DeveloperDiagnosticsService finalization health counts unfinalized days before today
+00:00 +25: test\developer_diagnostics_test.dart: DeveloperDiagnosticsService finalization health counts unfinalized days before today
+00:00 +26: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +27: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +28: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +29: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +30: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +31: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +32: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +33: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +34: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +35: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +36: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +37: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +38: test\daily_finalization_test.dart: bedtime finalizes today and catches up earlier unfinalized days
+00:00 +39: test\dream_test.dart: less than seven days later the bedtime dream stays ineligible
+00:00 +40: test\dream_test.dart: less than seven days later the bedtime dream stays ineligible
+00:00 +41: test\dream_test.dart: less than seven days later the bedtime dream stays ineligible
+00:00 +42: test\dream_test.dart: less than seven days later the bedtime dream stays ineligible
+00:00 +43: test\dream_test.dart: less than seven days later the bedtime dream stays ineligible
+00:00 +44: test\local_app_host_test.dart: serves bundled Web assets on a random loopback port and releases it
+00:00 +45: test\local_app_host_test.dart: serves bundled Web assets on a random loopback port and releases it
+00:00 +46: test\local_app_host_test.dart: serves bundled Web assets on a random loopback port and releases it
+00:00 +47: test\daily_finalization_test.dart: catch-up never finalizes the still-active current day
+00:00 +48: test\daily_finalization_test.dart: catch-up never finalizes the still-active current day
+00:00 +49: test\daily_finalization_test.dart: catch-up never finalizes the still-active current day
+00:00 +50: test\local_data_service_test.dart: clear preview reports accurate impact and data location
+00:00 +51: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call an unconfigured Provider or unusable output stays deterministic
+00:00 +52: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call an unconfigured Provider or unusable output stays deterministic
+00:00 +53: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call an unconfigured Provider or unusable output stays deterministic
+00:00 +54: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call an unconfigured Provider or unusable output stays deterministic
+00:00 +55: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call an unconfigured Provider or unusable output stays deterministic
+00:00 +56: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call an unconfigured Provider or unusable output stays deterministic
+00:00 +57: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call an unconfigured Provider or unusable output stays deterministic
+00:00 +58: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call an unconfigured Provider or unusable output stays deterministic
+00:00 +59: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call an unconfigured Provider or unusable output stays deterministic
+00:00 +60: test\daily_understanding_test.dart: end-of-day finalization with a model understanding call an unconfigured Provider or unusable output stays deterministic
+00:00 +61: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:00 +62: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:00 +63: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:00 +64: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +65: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +66: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +67: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +68: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +69: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +70: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +71: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +72: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +73: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +74: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +75: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +76: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +77: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +78: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +79: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +80: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +81: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +82: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +83: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +84: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +85: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +86: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +87: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +88: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +89: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +90: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +91: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +92: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +93: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +94: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +95: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +96: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +97: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +98: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +99: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +100: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +101: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +102: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +103: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +104: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +105: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +106: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +107: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +108: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +109: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +110: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +111: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +112: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +113: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +114: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +115: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +116: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +117: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +118: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +119: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +120: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +121: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +122: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +123: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +124: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +125: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +126: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +127: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +128: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +129: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +130: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +131: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +132: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +133: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +134: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +135: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +136: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +137: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +138: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +139: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +140: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +141: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +142: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +143: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +144: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +145: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +146: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:01 +147: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +148: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +149: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +150: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +151: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +152: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +153: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +154: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +155: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +156: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +157: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +158: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +159: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +160: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +161: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +162: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +163: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +164: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +165: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +166: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +167: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +168: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +169: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +170: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +171: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +172: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +173: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +174: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +175: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +176: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +177: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +178: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +179: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +180: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +181: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +182: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +183: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +184: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+[qiyu] persona snapshot partial reason=values-unreadable
+[qiyu] persona snapshot partial reason=values-unreadable
+00:02 +185: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +186: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +187: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +188: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +189: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +190: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +191: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +192: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +193: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +194: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +195: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +196: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +197: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +198: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +199: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +200: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:02 +201: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +202: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +203: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +204: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +205: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +206: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +207: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +208: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +209: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +210: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +211: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +212: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +213: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +214: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +215: test\local_chat_service_test.dart: starts a new segment when only one slot remains
+00:03 +216: test\markdown_memory_repository_test.dart: starts a new segment at 80 turns without deleting the full segment
+00:03 +217: test\markdown_memory_repository_test.dart: starts a new segment at 80 turns without deleting the full segment
+00:03 +218: test\markdown_memory_repository_test.dart: starts a new segment at 80 turns without deleting the full segment
+00:03 +219: test\markdown_memory_repository_test.dart: starts a new segment at 80 turns without deleting the full segment
+00:03 +220: test\markdown_memory_repository_test.dart: starts a new segment at 80 turns without deleting the full segment
+00:03 +221: test\markdown_memory_repository_test.dart: starts a new segment at 80 turns without deleting the full segment
+00:03 +222: test\markdown_memory_repository_test.dart: starts a new segment at 80 turns without deleting the full segment
+00:03 +223: test\markdown_memory_repository_test.dart: starts a new segment at 80 turns without deleting the full segment
+00:03 +224: test\markdown_memory_repository_test.dart: starts a new segment at 80 turns without deleting the full segment
+00:03 +225: test\markdown_memory_repository_test.dart: starts a new segment at 80 turns without deleting the full segment
+00:03 +226: test\memory_backup_test.dart: 取消、中断与回滚 导入中途失败时恢复到导入前状态
+00:03 +227: test\memory_backup_test.dart: 取消、中断与回滚 导入中途失败时恢复到导入前状态
+00:03 +228: test\daily_finalization_test.dart: indexes only list finalized days and survive re-finalization
+00:03 +229: test\daily_finalization_test.dart: indexes only list finalized days and survive re-finalization
+00:03 +230: test\daily_finalization_test.dart: indexes only list finalized days and survive re-finalization
+00:03 +231: test\daily_finalization_test.dart: indexes only list finalized days and survive re-finalization
+00:03 +232: test\daily_finalization_test.dart: indexes only list finalized days and survive re-finalization
+00:03 +233: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +234: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +235: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +236: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +237: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +238: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +239: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +240: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +241: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +242: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +243: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +244: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +245: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +246: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +247: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +248: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +249: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +250: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +251: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +252: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +253: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +254: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +255: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +256: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +257: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +258: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:03 +259: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:04 +260: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:04 +261: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+[qiyu] persona leaf skipped reason=blocked branch=expression
+00:04 +262: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:04 +263: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:04 +264: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:04 +265: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:04 +266: test\relationship_lifecycle_test.dart: catch-up backfill across old days promotes at most once per calendar day
+00:04 +267: test\dream_test.dart: daily finalization never resets or bypasses the dream interval
+00:04 +268: test\dream_test.dart: daily finalization never resets or bypasses the dream interval
+[qiyu] persona leaf skipped reason=blocked branch=expression
+00:04 +269: test\persona_tree_test.dart: default-wired finalization still honors bans in the persona sweep
+00:04 +270: test\persona_tree_test.dart: default-wired finalization still honors bans in the persona sweep
+00:04 +271: test\daily_finalization_test.dart: end-of-day promotes candidates and repeated runs never duplicate
+00:04 +272: test\daily_finalization_test.dart: end-of-day promotes candidates and repeated runs never duplicate
+00:04 +273: test\daily_finalization_test.dart: end-of-day promotes candidates and repeated runs never duplicate
+00:04 +274: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+00:04 +275: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+00:04 +276: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+00:04 +277: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+00:04 +278: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+00:04 +279: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+00:04 +280: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+00:04 +281: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+00:04 +282: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+[qiyu] memory delete deferred [failed] request=d-2
+00:04 +283: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+00:04 +284: test\memory_controls_test.dart: delete writes the control record first, then purges every derived layer
+00:04 +285: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +286: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +287: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +288: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +289: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +290: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +291: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +292: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +293: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +294: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +295: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +296: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +297: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +298: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +299: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +300: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +301: test\local_chat_service_test.dart: model failure kinds remain diagnostic after local fallback
+00:04 +302: test\dream_test.dart: input respects the summary window and the month cap
+[qiyu] memory delete deferred [failed] request=d-0
+00:04 +303: test\dream_test.dart: input respects the summary window and the month cap
+00:04 +304: test\dream_test.dart: input respects the summary window and the month cap
+00:04 +305: test\dream_test.dart: input respects the summary window and the month cap
+00:04 +306: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +307: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +308: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +309: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +310: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +311: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +312: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +313: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +314: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +315: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +316: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +317: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +318: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +319: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +320: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +321: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +322: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +323: test\dream_test.dart: input respects the summary window and the month cap
+00:05 +324: test\relationship_lifecycle_test.dart: the write gate keeps relationship.md within the token budget
+00:05 +325: test\relationship_lifecycle_test.dart: the write gate keeps relationship.md within the token budget
+00:05 +326: test\relationship_lifecycle_test.dart: the write gate keeps relationship.md within the token budget
+00:05 +327: test\relationship_lifecycle_test.dart: the write gate keeps relationship.md within the token budget
+00:05 +328: test\dream_test.dart: a stale draft from an interrupted run is discarded
+00:05 +329: test\dream_test.dart: a stale draft from an interrupted run is discarded
+00:05 +330: test\memory_recovery_test.dart: 热层 关系记录从剧集证据整体重建，完整恢复不留隔离副本
+00:05 +331: test\local_chat_service_test.dart: hidden actions update today episode without leaking into the reply
+00:05 +332: test\dream_test.dart: markBedtime registers the request before the dream chain runs
+00:05 +333: test\dream_test.dart: markBedtime registers the request before the dream chain runs
+00:05 +334: test\memory_recovery_test.dart: 整体 多层同时损坏不阻塞健康日期浏览与恢复呈现
+00:05 +335: test\memory_recovery_test.dart: 整体 多层同时损坏不阻塞健康日期浏览与恢复呈现
+00:05 +336: test\dream_test.dart: an oversized side input is trimmed months first, then days
+00:05 +337: test\dream_test.dart: an oversized side input is trimmed months first, then days
+00:05 +338: test\dream_test.dart: an oversized side input is trimmed months first, then days
+00:05 +339: test\local_chat_service_test.dart: bedtime triggers end-of-day finalization after the reply is delivered
+00:05 +340: test\local_chat_service_test.dart: bedtime triggers end-of-day finalization after the reply is delivered
+00:05 +341: test\local_chat_service_test.dart: bedtime triggers end-of-day finalization after the reply is delivered
+00:05 +342: test\local_chat_service_test.dart: bedtime triggers end-of-day finalization after the reply is delivered
+00:05 +343: test\local_chat_service_test.dart: bedtime triggers end-of-day finalization after the reply is delivered
+[qiyu] dream root proposal dropped [unknown op]
+[qiyu] dream root proposal dropped [op/branch not in whitelist]
+[qiyu] dream root proposal dropped [demote fields invalid]
+00:05 +344: test\local_chat_service_test.dart: bedtime triggers end-of-day finalization after the reply is delivered
+00:05 +345: test\dream_test.dart: dream root proposals (ticket 17) an accepted dream applies validated root proposals and projects persona.md
+00:05 +346: test\local_chat_service_test.dart: a normal chat never finalizes the still-active current day
+00:05 +347: test\dream_test.dart: dream root proposals (ticket 17) proposals without enough evidence are rejected and leave the tree untouched
+[qiyu] dream root proposal rejected reason=insufficient-evidence branch=expression
+[qiyu] dream root proposal rejected reason=unresolved-conflict branch=expression
+00:05 +348: test\local_chat_service_test.dart: the first chat after midnight catches up the unfinalized previous day
+[qiyu] dream root proposal rejected reason=time-word-claim branch=expression
+[qiyu] dream root proposal rejected reason=sensitive-claim branch=values
+[qiyu] dream root proposal rejected reason=banned-claim branch=preferences
+00:05 +349: test\dream_test.dart: dream root proposals (ticket 17) time-bound, sensitive and banned root claims are rejected one by one
+00:05 +350: test\local_chat_service_test.dart: initialize catches up unfinalized days discovered at startup
+[qiyu] dream root proposal rejected reason=duplicate-root branch=expression
+[qiyu] dream root proposal rejected reason=archived-claim branch=values
+00:05 +351: test\dream_test.dart: dream root proposals (ticket 17) duplicate and archived claims never become roots again
+00:06 +352: test\local_chat_service_test.dart: a day with only secret-laden signals finalizes without any memory
+00:06 +353: test\dream_test.dart: dream root proposals (ticket 17) demote needs a real counter understanding; with one it archives the root
+[qiyu] dream root proposal rejected reason=unknown-counter branch=expression
+[qiyu] dream root proposal rejected reason=counter-insufficient branch=expression
+00:06 +354: test\dream_test.dart: dream root proposals (ticket 17) demote needs a real counter understanding; with one it archives the root
+00:06 +355: test\local_chat_service_test.dart: a user reply closes the loop now and archives it at next bedtime
+[qiyu] dream persona apply deferred [FileSystemException: mock interrupted write, path = '']
+00:06 +356: test\local_chat_service_test.dart: a user reply closes the loop now and archives it at next bedtime
+00:06 +357: test\local_chat_service_test.dart: memory ban applies immediately and survives later end-of-day runs
+00:06 +358: test\local_chat_service_test.dart: the state pack injection carries gated follow-up candidates
+00:06 +359: test\local_chat_service_test.dart: a deep-talk signal lands in episodes and the next end-of-day relationship
+00:06 +360: test\local_chat_service_test.dart: a fast in-turn recall delivers bubble 2 on the same request
+00:06 +361: test\local_chat_service_test.dart: a user stop inside the recall window suppresses bubble 2
+[qiyu] recall selection empty reason=no-action
+[qiyu] recall miss reason=no-date-selection
+00:06 +362: test\local_chat_service_test.dart: a slow recall misses the window and merges into the next turn
+00:06 +363: test\local_chat_service_test.dart: recall only starts from a model request, not from input phrasing
+00:06 +364: test\local_chat_service_test.dart: bubble 2 rejoins the model history on the following turn
+00:06 +365: test\local_chat_service_test.dart: bedtime turns never trigger recall searches
+00:06 +366: test\local_chat_service_test.dart: an unconsumed recall context survives a failed model turn
+00:07 +367: test\local_chat_service_test.dart: a broken index does not disturb ordinary chat
+00:07 +368: test\local_chat_service_test.dart: persona hints become leaves at once and middle understanding at day-end
+00:07 +369: test\local_chat_service_test.dart: an identity correction revokes the rooted claim within the same turn
+00:07 +370: test\local_chat_service_test.dart: a user ban clears persona tree content immediately
+00:07 +371: test\local_chat_service_test.dart: the first chat of a new month compresses the previous month idempotently
+00:07 +372: test\local_chat_service_test.dart: a bedtime dream accepted impressions into the next chat hot layer
+00:07 +373: test\local_chat_service_test.dart: startup catches up a bedtime dream that failed overnight
+[qiyu] dream deferred status=modelFailed [network]
+00:07 +374: test\local_chat_service_test.dart: long-memory injection is clipped to the hot-layer budget
+00:07 +375: test\local_chat_service_test.dart: persona projection enters the hot layer without long-memory pressure
+00:07 +376: test\local_chat_service_test.dart: under hot-layer pressure long-memory is clipped before persona, and persona boundaries never are
+00:07 +377: test\local_chat_service_test.dart: shared-past memories inject, but stranger-stage discipline locks them
+00:07 +378: All tests passed!
+==> Windows package lifecycle tests
+栖语 0.1.0-test.1 已安装到：C:\Users\25330\AppData\Local\Temp\qiyu-ticket25-package-test-48848\installed\Qiyu
+聊天、记忆和 Provider 凭据保存在安装目录之外，升级不会覆盖。
+栖语 0.1.0-test.2 已安装到：C:\Users\25330\AppData\Local\Temp\qiyu-ticket25-package-test-48848\installed\Qiyu
+聊天、记忆和 Provider 凭据保存在安装目录之外，升级不会覆盖。
+栖语已卸载；聊天、Markdown 记忆、Provider 设置和 API Key 已保留。
+栖语 0.1.0-test.2 已安装到：C:\Users\25330\AppData\Local\Temp\qiyu-ticket25-package-test-48848\installed\Qiyu
+聊天、记忆和 Provider 凭据保存在安装目录之外，升级不会覆盖。
+栖语及本机用户数据已卸载。
+Windows package lifecycle tests passed
+==> Windows bundle build
+==> Windows host dependencies
+Resolving dependencies...
+Downloading packages...
+  archive 4.0.9 (4.1.0 available)
+  ffi 2.1.4 (2.2.0 available)
+  vm_service 15.2.0 (15.3.0 available)
+Got dependencies!
+3 packages have newer versions incompatible with dependency constraints.
+Try `dart pub outdated` for more information.
+==> Windows host executable
+Generated: e:\agent\qiyu\apps\qiyu_windows_host\.dart_tool\windows-bundle-staging\qiyu_windows_host.exe
+==> Windows bundle ready: E:\Agent\Qiyu\apps\qiyu_windows_host\build\windows-bundle
+==> Windows release archive ready: E:\Agent\Qiyu\apps\qiyu_windows_host\build\qiyu-windows-x64-0.1.0.zip
+==> Windows package verification
+Windows package verification passed: version=0.1.0, files=70, architecture=x64
+Windows package verification passed: version=0.1.0, files=70, architecture=x64
+==> Windows host preflight passed
+==> Windows bundle launch smoke test passed
+==> JavaScript tests
+
+> qiyu-mvp@0.1.0 test
+> node --test "test/**/*.test.js"
+
+✔ JavaScript behavior matches shared fixture: normal-local-reply (5.5543ms)
+✔ JavaScript behavior matches shared fixture: bedtime-closes-without-new-topic (0.8357ms)
+✔ JavaScript behavior matches shared fixture: crisis-bypasses-provider (0.5375ms)
+✔ JavaScript behavior matches shared fixture: forbidden-model-reply-falls-back-locally (1.8418ms)
+✔ JavaScript behavior matches shared fixture: accepted-model-reply-keeps-llm-source (1.1765ms)
+✔ JavaScript behavior matches shared fixture: hidden-model-structure-is-cleaned (0.7907ms)
+✔ JavaScript behavior matches shared fixture: recall-selection-block-stays-hidden (0.9608ms)
+✔ JavaScript behavior matches shared fixture: model-control-value-falls-back-locally (1.0223ms)
+✔ JavaScript behavior matches shared fixture: persona-boundary-model-reply-falls-back-locally (0.5773ms)
+✔ JavaScript behavior matches shared fixture: direct-medical-advice-bypasses-provider (1.1518ms)
+✔ low-signal arrival gets a minimal reply (3.0576ms)
+✔ fatigue asks one small question rather than generic empathy (0.4994ms)
+✔ earned teasing requires relationship and memory (0.3379ms)
+✔ engine writes concrete user facts for later local recall (0.4276ms)
+✔ bedtime ending never reopens a new topic (0.221ms)
+✔ crisis safety overrides persona banter (0.1866ms)
+✔ continuous dialogue state transitions and fact accumulation (0.7272ms)
+✔ emotional inertia decays gradually across turns (1.1434ms)
+✔ quiet local replies do not return or persist standalone silence markers (0.2101ms)
+✔ runSuite correctly evaluates mock cases (3.9048ms)
+✔ rememberFactsFromText extracts reusable prompt memories (2.5507ms)
+✔ recallRelevantFacts filters out frozen and excluded memories (0.67ms)
+✔ persona captures the stable soul of qiyu (0.8405ms)
+✔ forbidden phrases reject generic AI empathy (0.3716ms)
+✔ response spectrum defaults to less rather than more (0.0779ms)
+✔ persona boundaries reject dependency and manipulation (0.6846ms)
+✔ preferences utility default values and save/load (0.6344ms)
+✔ prompt context injects relationship stage, memories, and forbidden phrases (1.5117ms)
+✔ initial relationship stage is stranger (0.5373ms)
+✔ familiar requires sessionCount >= 3 and memories >= 1 (0.1297ms)
+✔ friend stage requires sessionCount >= 12, deep memories >= 2, and user turns >= 1 (0.1076ms)
+✔ soulmate stage requires sessionCount >= 30, deep memories >= 4, and user turns >= 4 (0.0859ms)
+✔ detects standalone silence and stage directions as non-visible reply lines (1.0636ms)
+✔ normalizes reply messages without leaving the user with no final text (1.1916ms)
+✔ normalizes wrapped and prefixed stage directions while preserving visible text (0.3449ms)
+✔ does not strip legitimate visible text that starts with similar words (0.1737ms)
+✔ calculates faster waits for functional text (0.3755ms)
+✔ calculates slower waits for emotionally heavy text (0.194ms)
+✔ does not delay crisis or safety language for dramatic effect (0.1786ms)
+✔ low signal input maps to minimal mode (2.0112ms)
+✔ fatigue input maps to ask mode (0.3582ms)
+✔ loss input maps to slow mode (0.2157ms)
+✔ bedtime input maps to bedtime mode (0.0931ms)
+✔ tease mode requires memory and non-stranger relationship stage (0.3966ms)
+✔ boundary input of睡了 maps bedtime prioritizing over low_signal (0.105ms)
+✔ crisis language gets a warm but direct safety reply (0.786ms)
+✔ professional advice boundaries are firm without becoming cold (0.3475ms)
+✔ normal negative emotion is not escalated into crisis (0.8515ms)
+✔ common self-harm variants are treated as crisis language (0.0943ms)
+✔ safety false positive examples are classified as normal (0.162ms)
+✔ safety mixed-input exclusions are not bypassed (0.073ms)
+✔ expanded crisis patterns are recognized (0.0828ms)
+✔ memory stores concrete user facts without contradiction (1.8911ms)
+✔ relationship stage grows from interaction depth, not fixed day count alone (0.3166ms)
+✔ browser state sanitizes malformed localStorage data (0.3969ms)
+✔ session count advances explicitly on browser session start (0.1302ms)
+✔ state manages daily conversations and migrates old turns data (7.0802ms)
+✔ main chat upgrade bedtime states and resend triggers (2.6592ms)
+✔ chat opens directly in conversation mode and focuses composer on desktop (0.9531ms)
+✔ chat composer uses multiline dock and enter submits without blocking newline (0.3948ms)
+✔ chat message flow returns focus to composer without scrolling it into view (1.4859ms)
+✔ chat message flow uses input-aware wait before showing returned text (0.6107ms)
+✔ history screen empty state and detailed logs display (15.3144ms)
+✔ homepage onboarding state分流 test (1.8305ms)
+✔ homepage does not force onboarding when API is already configured (1.3462ms)
+✔ lab screen renders titles and action buttons (1.115ms)
+✔ memory screen renders grouped categories and details (14.2974ms)
+✔ onboarding screen transitions and state updates (1.5823ms)
+✔ onboarding frames local context as a privacy boundary instead of a memory feature (0.4069ms)
+✔ onboarding blocks progression when API settings save fails (0.44ms)
+✔ privacy and safety screen renders key sections (0.9795ms)
+✔ router matches routes and falls back gracefully (25.3821ms)
+✔ settings screen render elements and controls (1.6261ms)
+✔ settings screen uses quiet product language instead of dashboard labels (0.4453ms)
+✔ settings api health badge uses css state classes instead of inline dashboard colors (5.3403ms)
+✔ settings screen explains that masked api keys cannot be revealed from the eye toggle (1.2476ms)
+✔ settings screen still warns for masked placeholder values even without masked dataset state (0.4866ms)
+✔ settings screen still toggles visibility after user enters a real api key (0.4261ms)
+✔ settings screen resets the eye toggle after masked config reloads from the server (0.2552ms)
+✔ chat route falls back to local engine when LLM is disabled (11.1558ms)
+✔ chat route uses LLM when configured and injects context (2.5385ms)
+✔ chat route removes LLM stage directions before returning and recording reply text (1.9104ms)
+✔ chat route falls back local when LLM returns forbidden phrase (1.2274ms)
+✔ chat route rejects non-POST methods before touching the body (0.2117ms)
+✔ chat route rejects requests without a matching CSRF token (0.2119ms)
+✔ chat route exposes only allowlisted diagnostics when API request fails (1.6058ms)
+✔ normalizeChatCompletionsUrl standardizes input URLs (0.7577ms)
+✔ runtime config reads complete LLM settings from environment (3.6059ms)
+✔ runtime config can read optional local JSON config (5.0771ms)
+✔ runtime config marks LLM disabled when key details are missing (0.9931ms)
+✔ dev server only serves app shell and browser assets (1.1847ms)
+✔ dev server rejects malformed and escaping paths (1.0438ms)
+✔ readJsonBody parses a valid JSON body (3.404ms)
+✔ readJsonBody throws on oversized body (0.7443ms)
+✔ readJsonBody returns {} for empty body (0.619ms)
+✔ readJsonBody throws on malformed JSON (0.4285ms)
+✔ readJsonBody respects custom limitBytes (0.5101ms)
+✔ sendJson sets Content-Type header and writes JSON body (0.4148ms)
+✔ validateCsrfAndOrigin returns true for matching origin and POST with valid CSRF (0.1517ms)
+✔ validateCsrfAndOrigin returns false + 403 for cross-origin Origin (0.2571ms)
+✔ validateCsrfAndOrigin returns false + 400 for invalid Origin URL (0.7057ms)
+✔ validateCsrfAndOrigin returns false + 403 for missing CSRF on POST (0.2315ms)
+✔ validateCsrfAndOrigin returns false + 403 for incorrect CSRF on POST (0.1238ms)
+✔ validateCsrfAndOrigin skips CSRF check for GET requests (0.0795ms)
+✔ validateCsrfAndOrigin validates Referer when Origin is absent (0.0642ms)
+✔ validateCsrfAndOrigin returns false + 403 for cross-origin Referer (0.0916ms)
+✔ validateCsrfAndOrigin silently skips malformed Referer (0.0719ms)
+✔ validateCsrfAndOrigin returns true when neither Origin nor Referer present (0.0504ms)
+✔ callChatCompletions posts OpenAI-compatible request (1.0746ms)
+✔ callChatCompletions reports provider errors (1.2301ms)
+✔ callChatCompletions handles content array format and filters text parts (0.2037ms)
+✔ callChatCompletions strips provider reasoning tags from content (0.15ms)
+✔ callChatCompletions supports Anthropic messages API (0.8419ms)
+✔ callChatCompletions redacts API Key in error message if key length > 3 (0.2426ms)
+✔ callChatCompletions catches Abort timeout and throws structured message (0.2324ms)
+✔ settings route GET and POST endpoints with isolated configPath (25.8818ms)
+✔ settings route does not touch root config file when custom configPath is used (16.5204ms)
+✔ settings route test endpoint returns validation results and handles errors (1.6692ms)
+✔ settings route test-chat endpoint simulates Qiyu E2E prompt (5.4976ms)
+✔ settings route test-chat cleans visible output and suppresses unsafe replies (3.376ms)
+✔ loadProductSoul reads utf8 product soul markdown (5.7353ms)
+✔ system prompt contains product soul and hard output rules (0.2206ms)
+✔ project scaffold exposes app shell and scripts (5.7821ms)
+✔ app shell avoids inline script and event handlers under CSP (1.9067ms)
+✔ core stylesheet uses explicit motion tokens instead of broad transitions (0.6661ms)
+✔ core controls provide tactile pressed feedback without layout-triggering animation (1.6422ms)
+✔ core stylesheet quiets decorative motion when reduced motion is requested (2.1447ms)
+✔ sidebar expansion is gated by an explicit interaction state (1.1723ms)
+✔ app shell presents presence as a warm night lamp instead of dashboard online green (0.9512ms)
+✔ app metadata presents Qiyu as a quiet direct-chat app (0.9406ms)
+✔ chat composer uses nested material structure instead of a bare input rectangle (1.0494ms)
+✔ chat uses an open conversation room instead of a framed dashboard card (1.3467ms)
+✔ final mobile shell override removes the desktop sidebar column (0.9954ms)
+✔ mobile onboarding notice gives copy and action separate rows (0.5986ms)
+✔ destructive frontend actions use the shared confirmation dialog (1.2433ms)
+✔ sendChatMessage posts text and state to api route with CSRF header (1.6555ms)
+✔ sendChatMessage posts with empty CSRF header when token cannot be fetched (0.2171ms)
+✔ sendChatMessage reports bad api responses (1.3649ms)
+✔ renderAppShell matches routes and injects developer mode (0.8226ms)
+✔ renderButton outputs custom label and variant (0.1542ms)
+✔ renderInput outputs valid attributes (0.0837ms)
+✔ renderToggle respects checked state (0.0909ms)
+✔ renderFieldRow layout elements match hierarchy (0.0943ms)
+✔ renderNotice injects type classes and role alert (0.0877ms)
+✔ bindNavigation dismisses notices from the close button (0.2763ms)
+✔ bindNavigation can dismiss a wrapper when the notice asks for wrapper scope (0.1663ms)
+✔ bindNavigation carries a stable expanded sidebar state across sidebar route clicks (0.3613ms)
+✔ bindSidebarHoverIntent waits before expanding the sidebar (0.4008ms)
+✔ bindSidebarHoverIntent expands when the pointer rests inside the collapsed sidebar (0.138ms)
+✔ bindSidebarHoverIntent keeps a restored sidebar motionless while the pointer remains inside (0.119ms)
+✔ bindSidebarHoverIntent keeps a restored sidebar still after a route click when the pointer remains over it (0.2445ms)
+✔ bindSidebarHoverIntent cancels expansion when the pointer only passes through (0.1152ms)
+✔ renderProviderPresetOptions includes the expanded popular providers (0.6351ms)
+✔ applyProviderPreset fills api url and model for known provider (0.1628ms)
+✔ applyProviderPreset uses the current MiniMax compatible endpoint (0.0809ms)
+✔ detectProviderPreset matches normalized saved config urls (0.2286ms)
+✔ escapeHtml protects rendered chat content (0.4872ms)
+✔ renderBubble marks speaker and preserves line breaks (0.1197ms)
+ℹ tests 158
+ℹ suites 0
+ℹ pass 158
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 346.7326
+==> Golden behavior evaluation
+
+> qiyu-mvp@0.1.0 eval
+> node scripts/run-evals.mjs
+
+Qiyu evals passed: 10/10

@@ -22,6 +22,12 @@ $hostPath = Join-Path $repositoryRoot 'apps\qiyu_windows_host'
 $bundlePath = Join-Path $hostPath 'build\windows-bundle'
 $hostExecutable = Join-Path $bundlePath 'qiyu_windows_host.exe'
 $bundleWebPath = Join-Path $bundlePath 'web'
+$packageVersion = (
+  Get-Content -Raw -Encoding UTF8 (Join-Path $repositoryRoot 'package.json') |
+    ConvertFrom-Json
+).version
+$packageArchive = Join-Path $hostPath `
+  "build\qiyu-windows-x64-$packageVersion.zip"
 
 Push-Location $corePath
 try {
@@ -62,9 +68,16 @@ try {
   Invoke-Step 'Windows host dependencies' { dart pub get }
   Invoke-Step 'Windows host analysis' { dart analyze }
   Invoke-Step 'Windows host tests' { dart test }
+  Invoke-Step 'Windows package lifecycle tests' {
+    & (Join-Path $repositoryRoot 'scripts\test-windows-package.ps1')
+  }
   Invoke-Step 'Windows bundle build' {
     & (Join-Path $repositoryRoot 'scripts\build-windows-bundle.ps1') `
       -SkipFlutterBuild
+  }
+  Invoke-Step 'Windows package verification' {
+    & (Join-Path $repositoryRoot 'scripts\verify-windows-package.ps1') `
+      -BundlePath $bundlePath -ArchivePath $packageArchive
   }
   if (-not (Test-Path -LiteralPath (Join-Path $bundleWebPath 'index.html'))) {
     throw 'Windows bundle does not contain Flutter Web assets'

@@ -14,13 +14,20 @@ dart run
 # 只检查平台、行为核心和 Web 资源
 dart run -- --check
 
-# 从仓库根目录生成可搬移的 Windows 分发目录
+# 从仓库根目录生成 Windows 安装候选包
 Push-Location ..\..
 npm run build:windows-bundle
 Pop-Location
 ```
 
-完整产物位于 `apps\qiyu_windows_host\build\windows-bundle\`，其中 `qiyu_windows_host.exe`、`web\` 和 `persona-constitution.md` 必须一起移动或打包。exe 优先读取自身旁边的 Web 资源与人格宪法，因此从仓库外工作目录启动也不依赖开发树。
+完整目录位于 `apps\qiyu_windows_host\build\windows-bundle\`，可分发 zip 为
+`apps\qiyu_windows_host\build\qiyu-windows-x64-<version>.zip`。普通用户解压后运行
+`install.cmd`；重复运行即升级。卸载时运行安装目录中的 `uninstall.cmd`，并明确选择
+保留或删除本机数据。包内同时提供第三方许可证与 `release.json` SHA-256 清单。
+
+便携运行时，`qiyu_windows_host.exe`、`web\`、`persona-constitution.md` 与
+`licenses\` 必须一起移动。exe 优先读取自身旁边的 Web 资源与人格宪法，因此从仓库外
+工作目录启动也不依赖开发树。
 
 记忆目录优先使用 `--memory-dir <path>`，其次读取 `QIYU_MEMORY_DIR`，默认写入 `%USERPROFILE%\.qiyu\memories`。原始会话按天保存到 `sessions\年\月\`：每段最多 80 条消息，满额开启新段；最近会话恢复窗口为 180 天，旧 Markdown 不自动删除。
 

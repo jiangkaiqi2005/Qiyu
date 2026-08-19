@@ -91,6 +91,45 @@ void main() {
     await launch.close();
   });
 
+  test('no-browser launch keeps single-instance activation headless', () async {
+    final primaryBrowser = _RecordingBrowserLauncher();
+    final primary = await QiyuHostRunner(
+      webRoot: webRoot.path,
+      runtimeDirectory: runtimeDirectory.path,
+      memoryDirectory: memoryDirectory.path,
+      personaConstitution: '测试人格宪法',
+      browserLauncher: primaryBrowser,
+    ).launch(openBrowser: false);
+    HostLaunchResult? secondary;
+    HostLaunchResult? interactive;
+    try {
+      secondary = await QiyuHostRunner(
+        webRoot: webRoot.path,
+        runtimeDirectory: runtimeDirectory.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+        browserLauncher: _RecordingBrowserLauncher(),
+      ).launch(openBrowser: false);
+
+      expect(secondary.isPrimary, isFalse);
+      expect(primaryBrowser.openedUris, isEmpty);
+
+      interactive = await QiyuHostRunner(
+        webRoot: webRoot.path,
+        runtimeDirectory: runtimeDirectory.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+        browserLauncher: _RecordingBrowserLauncher(),
+      ).launch();
+      expect(interactive.isPrimary, isFalse);
+      expect(primaryBrowser.openedUris, [primary.displayUri]);
+    } finally {
+      await interactive?.close();
+      await secondary?.close();
+      await primary.close();
+    }
+  });
+
   test(
     'refuses to activate an instance whose descriptor points outside loopback',
     () async {

@@ -1,0 +1,4 @@
+work/
+*.zip
+*.stdout.txt
+*.stderr.txt

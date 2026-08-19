@@ -1,0 +1,2 @@
+Windows package verification passed: version=0.1.0, files=70, architecture=x64
+Windows package verification passed: version=0.1.0, files=70, architecture=x64

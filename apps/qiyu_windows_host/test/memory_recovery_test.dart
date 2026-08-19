@@ -26,7 +26,10 @@ void main() {
       'qiyu-recovery-test-',
     );
     memoryDirectory = temporaryDirectory.path;
-    pipeline = EpisodeMemoryPipeline(memoryDirectory: memoryDirectory);
+    pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: memoryDirectory,
+      clock: () => clock,
+    );
     memoryControls = MemoryControlsStore(
       memoryDirectory: memoryDirectory,
       diagnosticsSink: (_) {},
