@@ -151,6 +151,8 @@ class QiyuApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: const Color(0xFF15131A),
         useMaterial3: true,
+        // 键盘焦点高亮在深色底上必须清晰可见，对比度留足余量（ticket 24）。
+        focusColor: const Color(0x80CFC8F5),
       ),
     );
   }

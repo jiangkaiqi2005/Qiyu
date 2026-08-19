@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../accessibility.dart';
+
 class HomeView extends StatelessWidget {
   const HomeView({super.key});
 
@@ -8,52 +10,48 @@ class HomeView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    '回来了。',
-                    key: const Key('home-greeting'),
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 32),
-                  _HomeEntry(
-                    key: const Key('home-go-chat'),
-                    icon: Icons.chat_bubble_outline,
-                    title: '聊天',
-                    subtitle: '接着上次说',
-                    onTap: () => context.go('/chat'),
-                  ),
-                  _HomeEntry(
-                    key: const Key('home-go-history'),
-                    icon: Icons.history,
-                    title: '历史',
-                    subtitle: '看看之前说过的',
-                    onTap: () => context.go('/history'),
-                  ),
-                  _HomeEntry(
-                    key: const Key('home-go-memory'),
-                    icon: Icons.auto_stories_outlined,
-                    title: '记忆',
-                    subtitle: '看看我记得的',
-                    onTap: () => context.go('/memory'),
-                  ),
-                  _HomeEntry(
-                    key: const Key('home-go-settings'),
-                    icon: Icons.tune,
-                    title: '设置',
-                    subtitle: '模型连接',
-                    onTap: () => context.go('/settings'),
-                  ),
-                ],
+        // 小窗与字号放大时整体可滚动（ticket 24），绝不溢出。
+        child: QiyuCenteredScrollable(
+          maxWidth: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '回来了。',
+                key: const Key('home-greeting'),
+                style: Theme.of(context).textTheme.headlineSmall,
               ),
-            ),
+              const SizedBox(height: 32),
+              _HomeEntry(
+                key: const Key('home-go-chat'),
+                icon: Icons.chat_bubble_outline,
+                title: '聊天',
+                subtitle: '接着上次说',
+                onTap: () => context.go('/chat'),
+              ),
+              _HomeEntry(
+                key: const Key('home-go-history'),
+                icon: Icons.history,
+                title: '历史',
+                subtitle: '看看之前说过的',
+                onTap: () => context.go('/history'),
+              ),
+              _HomeEntry(
+                key: const Key('home-go-memory'),
+                icon: Icons.auto_stories_outlined,
+                title: '记忆',
+                subtitle: '看看我记得的',
+                onTap: () => context.go('/memory'),
+              ),
+              _HomeEntry(
+                key: const Key('home-go-settings'),
+                icon: Icons.tune,
+                title: '设置',
+                subtitle: '模型连接',
+                onTap: () => context.go('/settings'),
+              ),
+            ],
           ),
         ),
       ),
@@ -79,6 +77,10 @@ class _HomeEntry extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: highContrastSide(context),
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,

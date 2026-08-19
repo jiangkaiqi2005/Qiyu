@@ -1,12 +1,20 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../accessibility.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_markdown.dart';
+
+/// 输入框里按 Ctrl+Enter 发送（ticket 24 键盘流程）：主流程不必
+/// 离开键盘。Enter 本身仍用于换行。
+final class _SendChatIntent extends Intent {
+  const _SendChatIntent();
+}
 
 class LocalChatView extends StatefulWidget {
   const LocalChatView({super.key});
@@ -108,7 +116,13 @@ class _LocalChatViewState extends State<LocalChatView> {
                             style: Theme.of(context).textTheme.headlineSmall,
                           ),
                           const Spacer(),
-                          if (viewModel.hasLocalFallback) const Text('本地规则回复'),
+                          if (viewModel.hasLocalFallback)
+                            const Flexible(
+                              child: Text(
+                                '本地规则回复',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                           const SizedBox(width: 12),
                           IconButton(
                             key: const Key('open-history'),
@@ -128,47 +142,75 @@ class _LocalChatViewState extends State<LocalChatView> {
                     const Divider(height: 1),
                     Expanded(child: _messageList(viewModel)),
                     if (viewModel.errorMessage case final message?)
+                      // 错误就近出现在输入区上方，并作为 live region
+                      // 播报给屏幕阅读器（ticket 24 错误关联）。
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Text(
-                          message,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
+                        child: Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            message,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
                           ),
                         ),
                       ),
-                    Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              key: const Key('chat-input'),
-                              controller: _controller,
-                              minLines: 1,
-                              maxLines: 5,
-                              textInputAction: TextInputAction.newline,
-                              decoration: const InputDecoration(
-                                hintText: '想说点什么…',
-                                border: OutlineInputBorder(),
+                    Shortcuts(
+                      shortcuts: const {
+                        SingleActivator(
+                          LogicalKeyboardKey.enter,
+                          control: true,
+                        ): _SendChatIntent(),
+                      },
+                      child: Actions(
+                        actions: {
+                          _SendChatIntent: CallbackAction<_SendChatIntent>(
+                            onInvoke: (intent) {
+                              if (!viewModel.sending) {
+                                unawaited(_send(viewModel));
+                              }
+                              return null;
+                            },
+                          ),
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  key: const Key('chat-input'),
+                                  controller: _controller,
+                                  autofocus: true,
+                                  minLines: 1,
+                                  maxLines: 5,
+                                  textInputAction: TextInputAction.newline,
+                                  decoration: const InputDecoration(
+                                    hintText: '想说点什么…',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                ),
                               ),
-                            ),
+                              const SizedBox(width: 12),
+                              IconButton.filled(
+                                key: Key(
+                                  viewModel.sending
+                                      ? 'chat-stop'
+                                      : 'chat-send',
+                                ),
+                                onPressed: viewModel.sending
+                                    ? () => unawaited(viewModel.stop())
+                                    : () => unawaited(_send(viewModel)),
+                                tooltip: viewModel.sending ? '停止回复' : '发送',
+                                icon: viewModel.sending
+                                    ? const Icon(Icons.stop_rounded)
+                                    : const Icon(Icons.arrow_upward),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          IconButton.filled(
-                            key: Key(
-                              viewModel.sending ? 'chat-stop' : 'chat-send',
-                            ),
-                            onPressed: viewModel.sending
-                                ? () => unawaited(viewModel.stop())
-                                : () => unawaited(_send(viewModel)),
-                            tooltip: viewModel.sending ? '停止回复' : '发送',
-                            icon: viewModel.sending
-                                ? const Icon(Icons.stop_rounded)
-                                : const Icon(Icons.arrow_upward),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ],
@@ -217,17 +259,32 @@ class _LocalChatViewState extends State<LocalChatView> {
           return Align(
             alignment: Alignment.centerLeft,
             child: Container(
-              key: const Key('chat-streaming-reply'),
               margin: const EdgeInsets.only(bottom: 12),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               constraints: const BoxConstraints(maxWidth: 520),
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(18),
+                border: Border.fromBorderSide(highContrastSide(context)),
               ),
-              child: viewModel.streamingText.isEmpty
-                  ? const Text('栖语在想…')
-                  : QiyuMarkdown(text: viewModel.streamingText),
+              // live region 只承载状态标签：流式期间正文不进语义树，
+              // 避免每个 delta 都重读全文；交付完成后正文以历史消息
+              // 的说话人语义呈现（ticket 24）。
+              child: Semantics(
+                key: const Key('chat-streaming-reply'),
+                container: true,
+                child: Semantics(
+                  liveRegion: true,
+                  label: viewModel.streamingText.isEmpty
+                      ? '栖语在想'
+                      : '栖语正在回复',
+                  child: ExcludeSemantics(
+                    child: viewModel.streamingText.isEmpty
+                        ? const Text('栖语在想…')
+                        : QiyuMarkdown(text: viewModel.streamingText),
+                  ),
+                ),
+              ),
             ),
           );
         }
@@ -244,11 +301,18 @@ class _LocalChatViewState extends State<LocalChatView> {
                   ? Theme.of(context).colorScheme.primaryContainer
                   : Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(18),
+              border: Border.fromBorderSide(highContrastSide(context)),
             ),
             // 用户输入按纯文本展示；栖语回复来自模型，按 Markdown 渲染。
-            child: fromUser
-                ? Text(message.text)
-                : QiyuMarkdown(text: message.text),
+            // 语义标签带上说话人，屏幕阅读器能分清谁在说（ticket 24）。
+            child: MergeSemantics(
+              child: Semantics(
+                label: fromUser ? '你说' : '栖语说',
+                child: fromUser
+                    ? Text(message.text)
+                    : QiyuMarkdown(text: message.text),
+              ),
+            ),
           ),
         );
       },

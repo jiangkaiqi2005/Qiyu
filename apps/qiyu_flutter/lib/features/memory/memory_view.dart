@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../accessibility.dart';
 import 'backup_client.dart';
 import 'backup_platform.dart';
 import 'backup_view.dart';
@@ -908,6 +909,10 @@ class _EntryTile extends StatelessWidget {
     final time = entry.at.toLocal();
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: highContrastSide(context),
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => unawaited(context.push('/memory/item/${entry.id}')),
@@ -918,24 +923,27 @@ class _EntryTile extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  _StatusChip(label: entry.kindLabel),
-                  const SizedBox(width: 8),
-                  if (entry.userEdited) ...[
-                    const _StatusChip(label: '由你修正'),
-                    const SizedBox(width: 8),
-                  ],
-                  if (entry.control case final control?) ...[
-                    _StatusChip(
-                      key: Key('memory-entry-control-${entry.id}'),
-                      label: control.label,
+                  // 状态芯片可换行：窄窗口下不撑破布局（ticket 24）。
+                  Expanded(
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        _StatusChip(label: entry.kindLabel),
+                        if (entry.userEdited)
+                          const _StatusChip(label: '由你修正'),
+                        if (entry.control case final control?)
+                          _StatusChip(
+                            key: Key('memory-entry-control-${entry.id}'),
+                            label: control.label,
+                          ),
+                        if (entry.hasEvidence)
+                          const _StatusChip(label: '有摘录'),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                  ],
-                  if (entry.hasEvidence) ...[
-                    const _StatusChip(label: '有摘录'),
-                    const SizedBox(width: 8),
-                  ],
-                  const Spacer(),
+                  ),
+                  const SizedBox(width: 8),
                   Text(
                     '${_twoDigits(time.hour)}:${_twoDigits(time.minute)}',
                     style: Theme.of(context).textTheme.bodySmall,
@@ -973,6 +981,10 @@ class _LongTermTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: highContrastSide(context),
+      ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         child: Row(
@@ -1012,6 +1024,10 @@ class _RootTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: highContrastSide(context),
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => unawaited(context.push('/memory/item/${root.id}')),
@@ -1069,6 +1085,10 @@ class _MiddleTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: highContrastSide(context),
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => unawaited(context.push('/memory/item/${middle.id}')),
@@ -1081,16 +1101,21 @@ class _MiddleTile extends StatelessWidget {
               const SizedBox(height: 6),
               Row(
                 children: [
-                  _StatusChip(label: middle.type),
+                  Flexible(
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        _StatusChip(label: middle.type),
+                        if (middle.control case final control?)
+                          _StatusChip(label: control.label),
+                        if (middle.hasConflict)
+                          const _StatusChip(label: '有冲突证据'),
+                      ],
+                    ),
+                  ),
                   const SizedBox(width: 8),
-                  if (middle.control case final control?) ...[
-                    _StatusChip(label: control.label),
-                    const SizedBox(width: 8),
-                  ],
-                  if (middle.hasConflict) ...[
-                    const _StatusChip(label: '有冲突证据'),
-                    const SizedBox(width: 8),
-                  ],
                   Expanded(
                     child: Text(
                       '形成 ${middle.formedOn} · 复核 ${middle.reviewedOn}',
@@ -1123,6 +1148,10 @@ class _LeafTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: highContrastSide(context),
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => unawaited(context.push('/memory/item/${leaf.dayId}')),
@@ -1133,17 +1162,21 @@ class _LeafTile extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  _StatusChip(label: leaf.nature),
+                  Expanded(
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        _StatusChip(label: leaf.nature),
+                        if (leaf.relation == 'conflict')
+                          const _StatusChip(label: '冲突'),
+                        if (leaf.control case final control?)
+                          _StatusChip(label: control.label),
+                      ],
+                    ),
+                  ),
                   const SizedBox(width: 8),
-                  if (leaf.relation == 'conflict') ...[
-                    const _StatusChip(label: '冲突'),
-                    const SizedBox(width: 8),
-                  ],
-                  if (leaf.control case final control?) ...[
-                    _StatusChip(label: control.label),
-                    const SizedBox(width: 8),
-                  ],
-                  const Spacer(),
                   Text(leaf.date, style: Theme.of(context).textTheme.bodySmall),
                 ],
               ),
@@ -1363,14 +1396,19 @@ Future<void> _deleteFlow(BuildContext context, String id) async {
 }
 
 SnackBar _resultSnackBar(MemoryActionResult result) {
+  // partial 底色加深到与白字对比 ≥4.5:1（AA），failed 维持原色（ticket 24）。
   final color = switch (result.status) {
     MemoryActionStatus.success => null,
-    MemoryActionStatus.partial => const Color(0xFFB26B1B),
+    MemoryActionStatus.partial => const Color(0xFF9C5C13),
     MemoryActionStatus.failed => const Color(0xFFB3261E),
   };
   return SnackBar(
     key: const Key('memory-action-result'),
-    content: Text(result.message),
+    // 自定义深色底必须显式配白字，保住对比度（ticket 24）。
+    content: Text(
+      result.message,
+      style: color == null ? null : const TextStyle(color: Color(0xFFFFFFFF)),
+    ),
     backgroundColor: color,
   );
 }
@@ -1509,17 +1547,24 @@ class _DeletePreviewDialog extends StatelessWidget {
           if (preview == null) {
             return const Text('这条记忆不存在或已经变化，请返回后刷新。');
           }
-          return SizedBox(
-            width: 420,
-            child: ListView(
-              shrinkWrap: true,
-              children: [
-                for (final line in preview.lines)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text(line),
-                  ),
-              ],
+          return ConstrainedBox(
+            // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
+            // 内层用 Column 而非视口类列表（对话框要测量内容固有尺寸，
+            // ListView 无法参与），外裹 SingleChildScrollView 兜住
+            // 字号放大或小窗下的超高内容，与记忆控制总览对话框同模式。
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final line in preview.lines)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(line),
+                    ),
+                ],
+              ),
             ),
           );
         },
@@ -1558,6 +1603,7 @@ class _StatusChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(8),
+        border: Border.fromBorderSide(highContrastSide(context)),
       ),
       child: Text(label, style: Theme.of(context).textTheme.labelSmall),
     );

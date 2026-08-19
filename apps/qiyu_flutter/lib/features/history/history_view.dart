@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../accessibility.dart';
 import '../chat/local_chat_client.dart';
 import '../chat/local_chat_view_model.dart';
 import '../chat/qiyu_markdown.dart';
@@ -144,6 +145,10 @@ class _SessionTile extends StatelessWidget {
     final startedAt = session.startedAt.toLocal();
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: highContrastSide(context),
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => unawaited(context.push('/history/${session.sessionId}')),
@@ -322,11 +327,18 @@ class _HistorySessionViewState extends State<HistorySessionView> {
                   ? Theme.of(context).colorScheme.primaryContainer
                   : Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(18),
+              border: Border.fromBorderSide(highContrastSide(context)),
             ),
             // 用户输入按纯文本展示；栖语回复来自模型，按 Markdown 渲染。
-            child: fromUser
-                ? Text(message.text)
-                : QiyuMarkdown(text: message.text),
+            // 与聊天页同口径：语义标签带说话人（ticket 24）。
+            child: MergeSemantics(
+              child: Semantics(
+                label: fromUser ? '你说' : '栖语说',
+                child: fromUser
+                    ? Text(message.text)
+                    : QiyuMarkdown(text: message.text),
+              ),
+            ),
           ),
         );
       },

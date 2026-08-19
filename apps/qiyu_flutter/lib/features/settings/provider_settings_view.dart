@@ -539,30 +539,35 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
           children: [
             Text('体验与开发者选项', style: theme.textTheme.titleMedium),
             const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('开发者模式', style: theme.textTheme.titleSmall),
-                      Text(
-                        '开启后出现开发者诊断入口。诊断只读，不修改任何数据。',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
+            // 说明文字与开关合并为一个语义节点：屏幕阅读器一次读全
+            // 「开发者模式」的含义与开关状态（ticket 24）。
+            MergeSemantics(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('开发者模式', style: theme.textTheme.titleSmall),
+                        Text(
+                          '开启后出现开发者诊断入口。诊断只读，不修改任何数据。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                Switch(
-                  key: const Key('developer-mode-switch'),
-                  value: viewModel.developerMode,
-                  onChanged: viewModel.busy
-                      ? null
-                      : (value) => unawaited(viewModel.setDeveloperMode(value)),
-                ),
-              ],
+                  Switch(
+                    key: const Key('developer-mode-switch'),
+                    value: viewModel.developerMode,
+                    onChanged: viewModel.busy
+                        ? null
+                        : (value) =>
+                            unawaited(viewModel.setDeveloperMode(value)),
+                  ),
+                ],
+              ),
             ),
             if (viewModel.developerMode)
               OutlinedButton.icon(
@@ -596,8 +601,9 @@ class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
     return AlertDialog(
       key: const Key('memory-controls-dialog'),
       title: const Text('记忆控制总览'),
-      content: SizedBox(
-        width: 460,
+      content: ConstrainedBox(
+        // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
+        constraints: const BoxConstraints(maxWidth: 460),
         child: controls == null
             ? const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
@@ -683,15 +689,17 @@ class _ClearDataDialog extends StatelessWidget {
       key: const Key('clear-data-dialog'),
       title: const Text('清除产品数据？'),
       content: preview == null
-          ? const SizedBox(
-              width: 460,
-              child: Padding(
+          ? ConstrainedBox(
+              // 与内容分支同口径：上限而非定宽，窄窗口不溢出（ticket 24）。
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
                 child: Center(child: CircularProgressIndicator()),
               ),
             )
-          : SizedBox(
-              width: 460,
+          : ConstrainedBox(
+              // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
+              constraints: const BoxConstraints(maxWidth: 460),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -753,18 +761,23 @@ class _StatusMessage extends StatelessWidget {
     final color = succeeded
         ? const Color(0xFF91C7A7)
         : Theme.of(context).colorScheme.error;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(
-          succeeded ? Icons.check_circle_outline : Icons.info_outline,
-          color: color,
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(message, style: TextStyle(color: color)),
-        ),
-      ],
+    // 校验与连通测试的结果作为 live region 播报：屏幕阅读器不在输入
+    // 框上也能听到成败（ticket 24 错误关联）。
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            succeeded ? Icons.check_circle_outline : Icons.info_outline,
+            color: color,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(message, style: TextStyle(color: color)),
+          ),
+        ],
+      ),
     );
   }
 }
