@@ -48,6 +48,26 @@ function Assert-HostNotRunning {
   }
 }
 
+function Test-QiyuInstallation {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  $executable = Join-Path $Path 'qiyu_windows_host.exe'
+  $releasePath = Join-Path $Path 'release.json'
+  if (
+    -not (Test-Path -LiteralPath $executable -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $releasePath -PathType Leaf)
+  ) {
+    return $false
+  }
+  try {
+    $release = Get-Content -Raw -Encoding UTF8 $releasePath |
+      ConvertFrom-Json
+    return $release.product -eq 'Qiyu'
+  } catch {
+    return $false
+  }
+}
+
 function New-QiyuShortcut {
   param(
     [Parameter(Mandatory = $true)][string]$ShortcutPath,
@@ -71,8 +91,23 @@ if (-not [Environment]::Is64BitOperatingSystem) {
 $sourceRoot = Resolve-SafeApplicationPath -Path $PSScriptRoot -Purpose '安装包目录'
 $resolvedInstallRoot = Resolve-SafeApplicationPath `
   -Path $InstallRoot -Purpose '安装目录'
+if ([IO.Path]::GetFileName($resolvedInstallRoot) -ine 'Qiyu') {
+  throw '安装目录必须是名称为 Qiyu 的专用 Qiyu 目录。'
+}
 if ($resolvedInstallRoot -eq $sourceRoot) {
   throw '安装目录不能与安装包目录相同。'
+}
+if (Test-Path -LiteralPath $resolvedInstallRoot) {
+  if (-not (Test-Path -LiteralPath $resolvedInstallRoot -PathType Container)) {
+    throw '现有安装路径不是目录，拒绝覆盖。'
+  }
+  $existingItems = @(Get-ChildItem -LiteralPath $resolvedInstallRoot -Force)
+  if (
+    $existingItems.Count -gt 0 -and
+    -not (Test-QiyuInstallation -Path $resolvedInstallRoot)
+  ) {
+    throw '现有目录不是栖语安装，拒绝覆盖或升级。'
+  }
 }
 
 $requiredItems = @(

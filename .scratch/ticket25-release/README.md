@@ -47,12 +47,18 @@
 ```powershell
 npm run build:windows-bundle
 powershell -NoProfile -ExecutionPolicy Bypass -File `
+  .scratch\ticket25-release\capture-verify-migration-baseline.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File `
   .scratch\ticket25-release\run-release-acceptance.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File `
   scripts\verify-windows-package.ps1 `
   -BundlePath apps\qiyu_windows_host\build\windows-bundle `
   -ArchivePath apps\qiyu_windows_host\build\qiyu-windows-x64-0.1.0.zip
 ```
+
+`capture-verify-migration-baseline.ps1` 在执行同一条迁移总门禁的同时，把留档中的当前
+工作区、临时目录和用户目录稳定替换为 `<WORKSPACE>`、`<TEMP>`、`<USERPROFILE>`；
+不会改变终端命令的真实工作目录或测试行为。
 
 运行期 `work/`、Host stdout/stderr 与备份 zip 被本目录 `.gitignore` 排除；提交中只保留
 无凭据的脚本、结论和结构化结果。

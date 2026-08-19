@@ -67,6 +67,54 @@ function Assert-HostNotRunning {
   }
 }
 
+function Assert-QiyuInstallation {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  if ([IO.Path]::GetFileName($Path) -ine 'Qiyu') {
+    throw '程序目录必须是名称为 Qiyu 的专用 Qiyu 目录。'
+  }
+  $executable = Join-Path $Path 'qiyu_windows_host.exe'
+  $releasePath = Join-Path $Path 'release.json'
+  if (
+    -not (Test-Path -LiteralPath $executable -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $releasePath -PathType Leaf)
+  ) {
+    throw '程序目录不是可验证的栖语安装，拒绝卸载。'
+  }
+  try {
+    $release = Get-Content -Raw -Encoding UTF8 $releasePath |
+      ConvertFrom-Json
+  } catch {
+    throw '程序目录的 release.json 无法读取，拒绝卸载。'
+  }
+  if ($release.product -ne 'Qiyu') {
+    throw '程序目录的产品标识不是 Qiyu，拒绝卸载。'
+  }
+}
+
+function Assert-DedicatedQiyuDirectory {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$ExpectedName,
+    [Parameter(Mandatory = $true)][string]$Purpose
+  )
+
+  if ([IO.Path]::GetFileName($Path) -ine $ExpectedName) {
+    throw "$Purpose 必须是名称为 $ExpectedName 的栖语专用目录。"
+  }
+}
+
+function Assert-QiyuCredentialTargetPrefix {
+  param([Parameter(Mandatory = $true)][string]$TargetPrefix)
+
+  if (
+    $TargetPrefix -ine 'Qiyu.Provider.ApiKey' -and
+    $TargetPrefix -notmatch '^Qiyu\.Provider\.ApiKey\.[A-Fa-f0-9]{64}$'
+  ) {
+    throw '凭据删除范围必须位于 Qiyu.Provider.ApiKey 命名空间。'
+  }
+}
+
 function Remove-QiyuShortcut {
   param(
     [Parameter(Mandatory = $true)][string]$ShortcutPath,
@@ -93,9 +141,15 @@ function Remove-QiyuCredentials {
   if ($LASTEXITCODE -ne 0) {
     throw '无法读取 Windows 凭据列表，未继续删除用户数据。'
   }
-  $pattern = [regex]::Escape($TargetPrefix) + '[A-Za-z0-9._-]*'
-  $targets = [regex]::Matches($credentialList, $pattern) |
+  $targets = [regex]::Matches(
+    $credentialList,
+    'Qiyu\.Provider\.ApiKey\.[A-Fa-f0-9]{64}'
+  ) |
     ForEach-Object { $_.Value } |
+    Where-Object {
+      $TargetPrefix -ieq 'Qiyu.Provider.ApiKey' -or
+      $_ -ieq $TargetPrefix
+    } |
     Sort-Object -Unique
   foreach ($target in $targets) {
     & cmdkey.exe "/delete:$target" | Out-Null
@@ -122,8 +176,17 @@ if (-not $KeepData -and -not $RemoveData) {
 
 $resolvedInstallRoot = Resolve-SafeRemovalPath `
   -Path $InstallRoot -Purpose '程序目录'
+Assert-QiyuInstallation -Path $resolvedInstallRoot
 $installedExecutable = Join-Path $resolvedInstallRoot 'qiyu_windows_host.exe'
 Assert-HostNotRunning -ExecutablePath $installedExecutable
+$resolvedDataRoot = Resolve-SafeRemovalPath -Path $DataRoot -Purpose '数据目录'
+Assert-DedicatedQiyuDirectory -Path $resolvedDataRoot `
+  -ExpectedName '.qiyu' -Purpose '数据目录'
+$resolvedRuntimeRoot = Resolve-SafeRemovalPath `
+  -Path $RuntimeRoot -Purpose '运行目录'
+Assert-DedicatedQiyuDirectory -Path $resolvedRuntimeRoot `
+  -ExpectedName 'Qiyu' -Purpose '运行目录'
+Assert-QiyuCredentialTargetPrefix -TargetPrefix $CredentialTargetPrefix
 
 Remove-QiyuShortcut -ShortcutPath (Join-Path $StartMenuRoot '栖语.lnk') `
   -ExecutablePath $installedExecutable
@@ -131,9 +194,6 @@ Remove-QiyuShortcut -ShortcutPath (Join-Path $DesktopRoot '栖语.lnk') `
   -ExecutablePath $installedExecutable
 
 if ($RemoveData) {
-  $resolvedDataRoot = Resolve-SafeRemovalPath -Path $DataRoot -Purpose '数据目录'
-  $resolvedRuntimeRoot = Resolve-SafeRemovalPath `
-    -Path $RuntimeRoot -Purpose '运行目录'
   Remove-QiyuCredentials -TargetPrefix $CredentialTargetPrefix
   foreach ($path in @($resolvedDataRoot, $resolvedRuntimeRoot)) {
     if (Test-Path -LiteralPath $path) {
