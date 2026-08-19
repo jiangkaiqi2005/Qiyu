@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) and other coding age
 
 栖语 (qiyu) MVP：一个睡前 AI 陪伴原型，重点在行为层——人格一致性、本地记忆、关系阶段、微摩擦、少回应、睡前收束、安全边界。
 
-当前 Release 1 交付形态是 **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心**。Windows Host 只监听 `127.0.0.1`，负责静态资源、Provider 调用、凭据与 Markdown 持久化；浏览器只负责 UI，API Key 永远不进入浏览器。旧 Node/JavaScript 产品轨道已在 Ticket 26 退役；`contracts/` 中的语言无关行为 fixture 继续作为稳定契约。
+当前 Release 1 交付形态是 **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心**。Windows Host 只监听 `127.0.0.1`，负责静态资源、Provider 调用、凭据与 Markdown 持久化；浏览器只负责 UI，API Key 永远不进入浏览器。旧 Node/JavaScript 产品轨道已在 Ticket 26 退役；`contracts/qiyu_behavior_contracts.json` 是当前可执行 Release 契约，`contracts/legacy-migration-golden-cases.json` 只冻结保留旧迁移 golden，不接入当前状态模型。
 
 ## 设计笔记权威（最高设计优先级）
 
@@ -49,7 +49,7 @@ This file provides guidance to Claude Code (claude.ai/code) and other coding age
 - `packages/qiyu_behavior_core/` — **纯 Dart 行为与协议核心**，不依赖 Flutter、DOM、Node、Windows API 或具体存储。`QiyuBehaviorCore.reply` 负责安全分类、本地回复、候选模型输出清洗/人格边界校验与降级；稳定 DTO、`ChatDeliveryEvent` 流式事件协议也在这里。
 - `apps/qiyu_flutter/` — Flutter Web UI。`features/chat/` 负责本机会话恢复、NDJSON 事件消费、等待/渐进文本/停止生成界面；`features/settings/` 负责 Provider 设置与连接测试。浏览器不持久化 Provider Key。
 - `apps/qiyu_windows_host/` — Dart Windows 本机 Host。`LocalAppHost` 提供 loopback 静态站点和受会话、Origin、CSRF 保护的 API；`LocalChatService` 编排安全回复、流式交付与会话持久化；`ProviderModelGateway` 适配 OpenAI-compatible、Anthropic、Ollama；`MarkdownMemoryRepository` 管理本地 Markdown 会话。
-- `contracts/` — 语言无关的行为契约 fixture；纯 Dart Core 必须直接消费，不能改成测试内复制的期望值。
+- `contracts/` — `qiyu_behavior_contracts.json` 是纯 Dart Core 直接消费的当前行为契约；`legacy-migration-golden-cases.json` 是 4a5d24f 旧 golden 的冻结历史快照，只供迁移审计与完整性门禁，不由当前运行时消费。
 - `scripts/verify-release-baseline.ps1` 串联所有分析、测试、Flutter Web 构建、Windows bundle/preflight/launch smoke 与发布策略检查。
 
 ### 回复管线（核心数据流）

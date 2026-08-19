@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "a72d54d8ddeacc5d73976aec671e3f4edae01f27",
-    "indexed_at": "2026-08-19T17:10:41Z",
+    "commit": "e02f4a80d34921496cd6801059dd694d6f61b178",
+    "indexed_at": "2026-08-19T17:19:27Z",
     "project": "qiyu",
-    "nodes": 5255,
-    "edges": 17495,
-    "original_size": 9109504,
-    "compressed_size": 1556940,
+    "nodes": 5277,
+    "edges": 17651,
+    "original_size": 9175040,
+    "compressed_size": 1558674,
     "compression_level": 9
 }

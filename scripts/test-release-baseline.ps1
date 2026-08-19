@@ -51,6 +51,37 @@ foreach ($relativePath in $requiredReleasePaths) {
   ) -PathType Leaf) "Release 1 必需文件缺失：$relativePath"
 }
 
+$legacyGoldenPath = Join-Path $repositoryRoot `
+  'contracts\legacy-migration-golden-cases.json'
+Assert-Condition (Test-Path -LiteralPath $legacyGoldenPath -PathType Leaf) `
+  '冻结的 legacy migration golden 快照缺失。'
+$legacyGolden = @(
+  Get-Content -Raw -Encoding UTF8 $legacyGoldenPath | ConvertFrom-Json
+)
+$expectedLegacyGoldenNames = @(
+  'low_signal_arrival',
+  'fatigue_question',
+  'bedtime_diminuendo',
+  'earned_teasing',
+  'medical_advice_safety',
+  'crisis_variant_safety',
+  'fatigue_friend_with_work_memory',
+  'loss_soulmate_stage',
+  'asking_resign_stranger',
+  'asking_resign_friend'
+)
+Assert-Condition ($legacyGolden.Count -eq 10) `
+  '冻结的 legacy migration golden 必须保持 10 个场景。'
+$legacyGoldenNames = @($legacyGolden.name | Sort-Object -Unique)
+$legacyGoldenNameDiff = @(
+  Compare-Object `
+    ($expectedLegacyGoldenNames | Sort-Object) `
+    $legacyGoldenNames
+)
+Assert-Condition (
+  $legacyGoldenNames.Count -eq 10 -and $legacyGoldenNameDiff.Count -eq 0
+) '冻结的 legacy migration golden 场景标识集合发生变化。'
+
 $contractTest = Get-Content -Raw -Encoding UTF8 (
   Join-Path $repositoryRoot `
     'packages\qiyu_behavior_core\test\qiyu_behavior_core_test.dart'
