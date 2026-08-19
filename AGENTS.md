@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) and other coding age
 
 栖语 (qiyu) MVP：一个睡前 AI 陪伴原型，重点在行为层——人格一致性、本地记忆、关系阶段、微摩擦、少回应、睡前收束、安全边界。
 
-当前主交付形态是 **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心**。Windows Host 只监听 `127.0.0.1`，负责静态资源、Provider 调用、凭据与 Markdown 会话持久化；浏览器只负责 UI，API Key 永远不进入浏览器。仓库根目录的 vanilla JavaScript + ESM 应用仍作为迁移期行为基准、回归轨道与实验界面保留（Node >= 20，零运行时依赖）。
+当前 Release 1 交付形态是 **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心**。Windows Host 只监听 `127.0.0.1`，负责静态资源、Provider 调用、凭据与 Markdown 持久化；浏览器只负责 UI，API Key 永远不进入浏览器。旧 Node/JavaScript 产品轨道已在 Ticket 26 退役；`contracts/` 中的语言无关行为 fixture 继续作为稳定契约。
 
 ## 设计笔记权威（最高设计优先级）
 
@@ -31,19 +31,15 @@ This file provides guidance to Claude Code (claude.ai/code) and other coding age
 
 ## Commands
 
-```sh
-npm run dev     # 静态 + API dev server → http://127.0.0.1:5173（可用 PORT / HOST 环境变量改）
-npm test        # node --test "test/**/*.test.js"
-npm run eval    # 黄金行为用例套件（eval/golden-cases.json），任何一条失败即 exit 1
-npm run verify:migration-baseline # Dart/Flutter/Windows Host/JS/eval/构建与冒烟全量验证
-npm run build:windows-bundle      # 构建可移动的 Windows Host + Flutter Web 资源包
+```powershell
+& .\scripts\verify-release-baseline.ps1 # Dart/Flutter/Windows Host/构包与冒烟全量验证
+& .\scripts\build-windows-bundle.ps1    # 构建可安装的 Windows Host + Flutter Web 资源包
 ```
 
-- 跑单个测试文件：`node --test test/qiyu/engine.test.js`
+- 跑单个 Host 测试文件：在 `apps/qiyu_windows_host` 下运行 `dart test test/local_chat_service_test.dart`。
 - Dart Core：在 `packages/qiyu_behavior_core` 下运行 `dart analyze && dart test`。
 - Flutter：在 `apps/qiyu_flutter` 下运行 `flutter analyze && flutter test`。
 - Windows Host：在 `apps/qiyu_windows_host` 下运行 `dart analyze && dart test`。
-- eval 套件在 dev server 运行时也可通过 `POST /api/eval/run` 在线跑（`/lab` 页面用的就是它）。
 - 未配置 LLM 时应用自动降级为本地规则引擎，功能完整可测。
 
 ## Architecture
@@ -53,9 +49,8 @@ npm run build:windows-bundle      # 构建可移动的 Windows Host + Flutter We
 - `packages/qiyu_behavior_core/` — **纯 Dart 行为与协议核心**，不依赖 Flutter、DOM、Node、Windows API 或具体存储。`QiyuBehaviorCore.reply` 负责安全分类、本地回复、候选模型输出清洗/人格边界校验与降级；稳定 DTO、`ChatDeliveryEvent` 流式事件协议也在这里。
 - `apps/qiyu_flutter/` — Flutter Web UI。`features/chat/` 负责本机会话恢复、NDJSON 事件消费、等待/渐进文本/停止生成界面；`features/settings/` 负责 Provider 设置与连接测试。浏览器不持久化 Provider Key。
 - `apps/qiyu_windows_host/` — Dart Windows 本机 Host。`LocalAppHost` 提供 loopback 静态站点和受会话、Origin、CSRF 保护的 API；`LocalChatService` 编排安全回复、流式交付与会话持久化；`ProviderModelGateway` 适配 OpenAI-compatible、Anthropic、Ollama；`MarkdownMemoryRepository` 管理本地 Markdown 会话。
-- `contracts/` — JS/Dart 共用的行为契约 fixture；行为变更必须保证两端一致。
-- `src/`、`test/`、`eval/` — 迁移前的 vanilla JS 行为核心、Node 服务与回归基准。它们仍参与完整验证，不能因 Dart 主链路可用而跳过。
-- `scripts/verify-migration-baseline.ps1` 串联所有分析、测试、Flutter Web 构建、Windows bundle/preflight/launch smoke、JS 测试和黄金 eval。
+- `contracts/` — 语言无关的行为契约 fixture；纯 Dart Core 必须直接消费，不能改成测试内复制的期望值。
+- `scripts/verify-release-baseline.ps1` 串联所有分析、测试、Flutter Web 构建、Windows bundle/preflight/launch smoke 与发布策略检查。
 
 ### 回复管线（核心数据流）
 
@@ -78,22 +73,21 @@ Flutter `/chat` → `HttpLocalChatGateway` → `POST /api/chat` → `LocalChatSe
 - Provider 非敏感配置写在本机 runtime 目录；API Key 由 Windows Credential Manager 保存。切换 Provider/URL 时不得沿用另一 credential scope 的旧 Key。
 - 支持 OpenAI-compatible、Anthropic、Ollama。地址规范化、鉴权头、请求体、流式解析和错误分类集中在 Provider 层；不要在 UI 或 Chat Service 重复 Provider 分支。
 - 安全不变量：Host 仅监听 loopback；API 需要 Host 会话，修改请求还需同源 Origin + CSRF；读取设置永不返回明文 Key；对外错误只返回允许列表诊断，禁止透出授权头、Cookie、完整敏感输入、第三方错误原文或本机路径。
-- 根目录旧 Node 应用仍使用环境变量/`qiyu.config.local.json`，但这是迁移回归轨道，不代表 Flutter/Windows 主链路把 Key 放进浏览器。
+- Release 1 不迁移旧 localStorage 或旧 `qiyu.config.local.json`。不要重新引入旧 Web 产品入口或浏览器持久化主链路。
 
 ## Behavior constraints（改动回复行为前必读）
 
 - `栖语产品灵魂.md` 是人格/风格的最高优先级设计依据（只作设计文档，不再注入 prompt）；注入 system prompt 的是从它定稿的 `栖语人格宪法.md`（与笔记 `栖语system prompt/人格宪法.md` 保持同步，仓库版去除 Obsidian 链接）；`docs/product/behavior-spec.md` 是从它提炼的工程行为规范。
 - 人格基调固定为「温暖但不讨好，聪明但不炫耀，安静但不冷淡」；不要把示例话术扩展成机械模板。
 - 关键约束：默认少说（回复频谱取最少一侧）；禁止客服式话术（`FORBIDDEN_PHRASES`，如「我理解你的感受」「谢谢你愿意和我分享」）；用户说「晚安」只收束、不开新话题；调侃/翻旧账只在关系变深后出现；一致性高于聪明（宁可笨，不可不一致）。
-- 改回复逻辑时，同步更新 `eval/golden-cases.json`，并保持 `npm test` 与 `npm run eval` 全绿。
-- 跨 JS/Dart 的行为或协议改动还要同步 `contracts/qiyu_behavior_contracts.json` 和两端消费测试；不得用一端自测掩盖 wire 分叉。
+- 改回复逻辑时同步更新 `contracts/qiyu_behavior_contracts.json` 和 Dart Core 消费测试，并运行完整 Release 1 门禁。
+- `contracts/qiyu_behavior_contracts.json` 是退役后仍保留的规范 fixture；不得以实现内常量或单端自测替代它。
 
 ## Testing conventions
 
-- 根 `test/` 目录镜像旧 JS `src/` 结构；screen 测试使用手写 DOM 桩，server 测试使用参数注入，不要为旧轨道引入测试框架或 DOM 库。
 - Dart Core、Flutter、Windows Host 各自在包内维护测试。Host 通过抽象接口注入 Provider、HTTP、凭据、时钟和原子写入；Flutter widget 测试注入流式 gateway 与 Host probe。
 - 流式改动至少覆盖：三种 Provider 正常终止、提前 EOF、超时/原生错误、底层订阅取消；Host 正常/取消/半途失败/本地回退/晚安/刷新重启幂等；Flutter 等待态、安全增量可见节奏、停止按钮与最终只提交一次。
-- 交付前运行 `npm run verify:migration-baseline`，不能只跑本次改动的专项测试。该命令必须保持 Dart analyze/test、Flutter analyze/test/Web build、Windows Host analyze/test/bundle/preflight/launch smoke、JS test、golden eval 全绿。
+- 交付前运行 `& .\scripts\verify-release-baseline.ps1`，不能只跑本次改动的专项测试。门禁必须保持 Dart analyze/test、Flutter analyze/test/Web build、Windows Host analyze/test、安装生命周期、bundle 校验、preflight 与 launch smoke 全绿，且不得依赖 Node/npm。
 
 ## 提交规范（与设计笔记对齐）
 

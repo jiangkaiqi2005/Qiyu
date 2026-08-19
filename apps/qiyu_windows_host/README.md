@@ -1,34 +1,25 @@
 # qiyu_windows_host
 
-栖语的 Windows 本机 Dart 宿主。它只绑定 `127.0.0.1` 的随机端口，提供已经构建好的 Flutter Web 资源、本地规则聊天 API 和 Markdown 原始会话持久化，并为本机 API 建立一次性启动会话。
+栖语 Windows 本机 Dart Host：只绑定 `127.0.0.1`，提供 Flutter Web、受保护的本机 API、Provider、Windows 凭据、Markdown 记忆、Dream、备份与恢复。
 
 ```powershell
-# 先构建相邻的 Flutter Web 工程
+# 开发运行
 Push-Location ..\qiyu_flutter
 flutter build web --no-web-resources-cdn
 Pop-Location
-
-# 启动并打开默认浏览器；Ctrl+C 停止宿主
 dart run
 
-# 只检查平台、行为核心和 Web 资源
+# 平台与随包资源预检
 dart run -- --check
 
-# 从仓库根目录生成 Windows 安装候选包
+# 在仓库根目录构建候选包
 Push-Location ..\..
-npm run build:windows-bundle
+& .\scripts\build-windows-bundle.ps1
 Pop-Location
 ```
 
-完整目录位于 `apps\qiyu_windows_host\build\windows-bundle\`，可分发 zip 为
-`apps\qiyu_windows_host\build\qiyu-windows-x64-<version>.zip`。普通用户解压后运行
-`install.cmd`；重复运行即升级。卸载时运行安装目录中的 `uninstall.cmd`，并明确选择
-保留或删除本机数据。包内同时提供第三方许可证与 `release.json` SHA-256 清单。
+输出目录为 `build\windows-bundle\`，zip 为 `build\qiyu-windows-x64-<version>.zip`。用户运行 `install.cmd` 安装或升级，运行安装目录中的 `uninstall.cmd` 并明确选择是否保留数据。
 
-便携运行时，`qiyu_windows_host.exe`、`web\`、`persona-constitution.md` 与
-`licenses\` 必须一起移动。exe 优先读取自身旁边的 Web 资源与人格宪法，因此从仓库外
-工作目录启动也不依赖开发树。
+便携运行时必须一起移动 `qiyu_windows_host.exe`、`web\`、`persona-constitution.md`、安装卸载脚本与 `licenses\`。exe 优先读取自身旁边的资源，因此不依赖仓库和当前工作目录。
 
-记忆目录优先使用 `--memory-dir <path>`，其次读取 `QIYU_MEMORY_DIR`，默认写入 `%USERPROFILE%\.qiyu\memories`。原始会话按天保存到 `sessions\年\月\`：每段最多 80 条消息，满额开启新段；最近会话恢复窗口为 180 天，旧 Markdown 不自动删除。
-
-开发和验证时可用 `--no-browser` 禁止自动打开浏览器，用 `--web-root <path>` 指定 Web 资源目录，用 `--runtime-dir <path>` 隔离单实例状态。正常运行会始终打印可复制的本机地址；若浏览器启动失败，也可手动打开该地址。
+记忆目录优先级为 `--memory-dir <path>`、`QIYU_MEMORY_DIR`、`%USERPROFILE%\.qiyu\memories`。开发和验收还可用 `--no-browser`、`--web-root` 与 `--runtime-dir`；正常启动始终打印可复制的本机地址。

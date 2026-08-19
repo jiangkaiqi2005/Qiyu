@@ -79,7 +79,7 @@ _Avoid_: 把叶写入或中间理解日常维护收归 Dream；让栖语向用�
 _Avoid_: 把 sessions 当作「记忆」（记忆只指整理后的内容）
 
 **记忆目录**:
-存放全部记忆文件的根目录。位置优先级：环境变量 QIYU_MEMORY_DIR > qiyu.config.local.json > 默认 ~/.qiyu/memories。本地优先，跨平台同构（PC 用户可见文件夹，移动端 App 沙盒同构目录）。
+存放全部记忆文件的根目录。Windows Release 1 位置优先级：启动参数 `--memory-dir` > 环境变量 `QIYU_MEMORY_DIR` > 默认 `%USERPROFILE%/.qiyu/memories`。本地优先，跨平台同构（PC 用户可见文件夹，移动端 App 沙盒同构目录）。
 
 **检索层**:
 按需查找 Memory 的机制，覆盖完整 PersonaTree、episodes、月压缩和 index；热层不走检索，PersonaTree 归档不得进入普通检索。

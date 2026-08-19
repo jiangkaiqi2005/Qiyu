@@ -2,13 +2,12 @@ $ErrorActionPreference = 'Stop'
 
 function Invoke-Step {
   param(
-    [Parameter(Mandatory = $true)]
-    [string]$Name,
-    [Parameter(Mandatory = $true)]
-    [scriptblock]$Command
+    [Parameter(Mandatory = $true)][string]$Name,
+    [Parameter(Mandatory = $true)][scriptblock]$Command
   )
 
   Write-Host "==> $Name"
+  $global:LASTEXITCODE = 0
   & $Command
   if ($LASTEXITCODE -ne 0) {
     throw "$Name failed with exit code $LASTEXITCODE"
@@ -22,12 +21,18 @@ $hostPath = Join-Path $repositoryRoot 'apps\qiyu_windows_host'
 $bundlePath = Join-Path $hostPath 'build\windows-bundle'
 $hostExecutable = Join-Path $bundlePath 'qiyu_windows_host.exe'
 $bundleWebPath = Join-Path $bundlePath 'web'
-$packageVersion = (
-  Get-Content -Raw -Encoding UTF8 (Join-Path $repositoryRoot 'package.json') |
-    ConvertFrom-Json
-).version
+$hostPubspec = Get-Content -Raw -Encoding UTF8 `
+  (Join-Path $hostPath 'pubspec.yaml')
+if ($hostPubspec -notmatch '(?m)^version:\s*([0-9A-Za-z.+-]+)\s*$') {
+  throw 'Windows host pubspec.yaml is missing a valid version.'
+}
+$packageVersion = $Matches[1]
 $packageArchive = Join-Path $hostPath `
   "build\qiyu-windows-x64-$packageVersion.zip"
+
+Invoke-Step 'Release baseline policy tests' {
+  & (Join-Path $repositoryRoot 'scripts\test-release-baseline.ps1')
+}
 
 Push-Location $corePath
 try {
@@ -43,8 +48,11 @@ try {
   Invoke-Step 'Flutter dependencies' { flutter pub get }
   Invoke-Step 'Flutter analysis' { flutter analyze }
   Invoke-Step 'Flutter widget tests' { flutter test }
-  Invoke-Step 'Flutter Web build' { flutter build web --no-web-resources-cdn }
-  $flutterBootstrap = Get-Content -Raw -Encoding UTF8 'build\web\flutter_bootstrap.js'
+  Invoke-Step 'Flutter Web build' {
+    flutter build web --no-web-resources-cdn
+  }
+  $flutterBootstrap = Get-Content -Raw -Encoding UTF8 `
+    'build\web\flutter_bootstrap.js'
   if ($flutterBootstrap -notmatch '"useLocalCanvasKit":true') {
     throw 'Flutter Web build is not configured to use its bundled CanvasKit'
   }
@@ -54,7 +62,7 @@ try {
     'assets\assets\fonts\NotoSansSC-QiyuBaseline.ttf',
     'assets\assets\fonts\OFL-NotoSansSC.txt'
   )) {
-    if (-not (Test-Path (Join-Path 'build\web' $resource))) {
+    if (-not (Test-Path -LiteralPath (Join-Path 'build\web' $resource))) {
       throw "Flutter Web build is missing local resource: $resource"
     }
   }
@@ -98,10 +106,14 @@ try {
   }
   Write-Host '==> Windows host preflight passed'
 
-  $smokeOutput = Join-Path $hostPath '.dart_tool\bundle-smoke.stdout.txt'
-  $smokeError = Join-Path $hostPath '.dart_tool\bundle-smoke.stderr.txt'
-  $smokeRuntime = Join-Path $hostPath '.dart_tool\bundle-smoke-runtime'
-  $smokeMemory = Join-Path $hostPath '.dart_tool\bundle-smoke-memory'
+  $smokeOutput = Join-Path $hostPath `
+    '.dart_tool\release-bundle-smoke.stdout.txt'
+  $smokeError = Join-Path $hostPath `
+    '.dart_tool\release-bundle-smoke.stderr.txt'
+  $smokeRuntime = Join-Path $hostPath `
+    '.dart_tool\release-bundle-smoke-runtime'
+  $smokeMemory = Join-Path $hostPath `
+    '.dart_tool\release-bundle-smoke-memory'
   Remove-Item -LiteralPath $smokeOutput, $smokeError -Force `
     -ErrorAction SilentlyContinue
   $smokeProcess = $null
@@ -163,10 +175,4 @@ try {
   Pop-Location
 }
 
-Push-Location $repositoryRoot
-try {
-  Invoke-Step 'JavaScript tests' { npm test }
-  Invoke-Step 'Golden behavior evaluation' { npm run eval }
-} finally {
-  Pop-Location
-}
+Write-Host '==> Release baseline verification passed without Node/npm'

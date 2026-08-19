@@ -1,8 +1,0 @@
-{
-  "llm": {
-    "apiUrl": "https://api.example.com/v1/chat/completions",
-    "model": "provider-model-name",
-    "temperature": 0.8,
-    "timeoutMs": 30000
-  }
-}

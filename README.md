@@ -1,92 +1,73 @@
-# 栖语 MVP
+# 栖语
 
-栖语是一个睡前 AI 陪伴原型。这个 MVP 先实现可测试的行为层：人格一致性、记忆、关系阶段、微摩擦、少回应、睡前收束和安全边界。
+栖语是一个完全在本机运行的睡前 AI 陪伴产品：打开后直接聊天，关闭标签页或重启宿主后，聊天、关系和 Markdown 记忆仍会延续。未配置模型时也能使用本地规则回复；配置自己的 Provider 后，由 Windows 本机 Host 代发请求，API Key 不进入浏览器。
 
-## 运行
+## Windows 使用
 
-要求 Node >= 20。项目零运行时依赖、无构建步骤，不需要 `npm install`。
+普通用户不需要安装 Node、Dart 或 Flutter。
 
-```powershell
-cd E:\Agent\栖语
-npm test
-npm run eval
-npm run dev
-```
+1. 解压 `qiyu-windows-x64-<version>.zip`。
+2. 运行 `install.cmd`，完成当前用户安装。
+3. 从桌面或开始菜单打开“栖语”；本机程序会在 `127.0.0.1` 启动并打开默认浏览器。
+4. 在设置中选择 OpenAI-compatible、Anthropic 或 Ollama，填写自己的 Provider 信息；也可以跳过并直接离线聊天。
 
-打开 `http://localhost:5173`（可用 `PORT` / `HOST` 环境变量修改监听地址）。
+卸载时运行安装目录中的 `uninstall.cmd`。脚本会明确询问保留还是永久删除聊天、Markdown 记忆、Provider 设置和 API Key。
 
-跑单个测试文件：
+## 数据与安全边界
 
-```powershell
-node --test test/qiyu/engine.test.js
-```
+- 记忆默认位于 `%USERPROFILE%\.qiyu\memories`，可用 `QIYU_MEMORY_DIR` 覆盖；开发调试还可传 `--memory-dir`。
+- Provider 非秘密设置位于 `%LOCALAPPDATA%\Qiyu`，API Key 保存在 Windows Credential Manager。
+- Host 只监听回环地址，并校验本机会话、Host、Origin 与 CSRF；浏览器拿不到 Key 明文和真实记忆路径。
+- 除用户主动配置的模型 Provider 外，产品不访问栖语远端服务，不提供账号、云同步或远程托管页面。
+- iOS 与 Android 是后续适配范围；Release 1 不实现移动端、云同步或旧 localStorage 迁移。
 
-## 核心行为
+## 开发与发布
 
-- 默认少说，不把每句话都处理成客服式共情。
-- 禁止「我理解你的感受」「谢谢你愿意和我分享」这类 AI 话术。
-- 关系变深后才调侃、翻旧账、制造轻微摩擦。
-- 用户说「晚安」时只收束，不重新打开新话题。
-- 危机表达优先进入安全回应，并提供 `12356`。
-
-## 当前边界
-
-这个版本已接入外部 LLM API（一次性非流式调用，回复在前端按节奏逐条呈现），支持 OpenAI 兼容接口与 Anthropic Messages API。LLM 输出命中违禁词或请求失败时，自动降级回本地规则引擎——本地引擎同时是离线兜底和安全边界的测试轨道。不做账号系统，不做云端记忆。
-
-## LLM API 配置
-
-浏览器不会读取 API Key。所有 LLM 请求都从本地 Node dev server 的 `/api/chat` 发出。且任何请求中出现的 API Key (长度 > 3) 均会在错误或异常输出中被替换为 `[redacted]` 脱敏。
-
-### 1. 自动地址规范化 (URL Auto-normalization)
-
-无论以何种方式配置接口地址，系统会自动完成标准化。例如：
-- `https://api.openai.com/v1` -> `https://api.openai.com/v1/chat/completions`
-- `http://127.0.0.1:11434/v1` -> `http://127.0.0.1:11434/v1/chat/completions`
-- `https://api.anthropic.com/v1` -> `https://api.anthropic.com/v1/messages`（Anthropic Messages API）
-
-### 2. 环境变量方式
+开发机需要当前锁定版本所兼容的 Dart 与 Flutter SDK。以下命令均从仓库根目录运行：
 
 ```powershell
-cd E:\Agent\栖语
-$env:LLM_API_URL="https://api.openai.com/v1"
-$env:LLM_API_KEY="你的真实 key"
-$env:LLM_MODEL="gpt-4o"
-npm run dev
+& .\scripts\verify-release-baseline.ps1
+& .\scripts\build-windows-bundle.ps1
 ```
 
-另有可选的 `LLM_TEMPERATURE`（默认 0.8）与 `LLM_TIMEOUT_MS`（默认 30000）。
+全量门禁依次运行 Dart Core 分析与契约测试、Flutter 分析/Widget 测试/Web 构建、Windows Host 分析与测试、安装生命周期测试、候选包清单/敏感信息检查、仓库外预检和启动冒烟。它不执行 Node/npm。
 
-> [!NOTE]
-> 环境变量的优先级高于本地 JSON 配置文件。如果环境变量已设置，设置中心会提示受其控制，且保存修改将不会覆盖环境变量的生效值。
+输出位于：
 
-### 3. 本地配置文件方式
+- 可移动目录：`apps\qiyu_windows_host\build\windows-bundle\`
+- 发布压缩包：`apps\qiyu_windows_host\build\qiyu-windows-x64-<version>.zip`
 
-复制 `qiyu.config.example.json` 为 `qiyu.config.local.json`，写入真实 `apiUrl`、`apiKey`、`model`。该本地配置文件已被 `.gitignore` 包含，绝对不会提交至 Git。
+单独验证各层：
 
-### 4. 本地 Ollama 调试指南
+```powershell
+Push-Location packages\qiyu_behavior_core
+dart analyze
+dart test
+Pop-Location
 
-1. 本地启动 Ollama 模型（例如 `llama3`）：
-   ```powershell
-   ollama run llama3
-   ```
-2. 打开应用设置中心，在**服务商预设 (Provider Preset)** 下选择 `Local Ollama`；
-3. 输入任意非空的 API Key（例如 `ollama`），随后即可进行连接测试与保存。
-   *（注：虽然 Ollama 不需要 Key，但为通过前端/服务端非空校验，需填入 dummy 值）*
+Push-Location apps\qiyu_flutter
+flutter analyze
+flutter test
+Pop-Location
 
-### 5. 调试与诊断
+Push-Location apps\qiyu_windows_host
+dart analyze
+dart test
+Pop-Location
+```
 
-- **双阶段连接测试**: 
-  - **测试 Provider 连接**: 验证基础 API 终结点的 HTTP 请求握手连通性与模型可用性。
-  - **测试栖语回复**: 结合当前栖语的 Prompt 上下文与安全规则，模拟发送一句 `'今天好累'`，并校验模型输出是否合法、是否命中违禁词等。
-- **对话页面实时诊断**:
-  - 在设置中心底部激活 **「幻境」实验室 (开发者模式)**；
-  - 返回对话页面时，顶部会渲染诊断面板。在发送消息后，会实时输出当轮对话的回复来源 (`LLM` 或 `本地兜底`)、通信耗时（延迟）以及具体的降级原因。
+## 故障排查
 
-没有配置 LLM 时，应用自动使用本地规则引擎。
+- 启动前检查候选包：运行 `qiyu_windows_host.exe --check`。
+- 浏览器未自动打开：复制 Host 控制台输出的 `http://127.0.0.1:<port>/...` 地址。
+- 页面提示本机程序停止：关闭旧标签页，从快捷方式重新启动栖语。
+- Provider 失败：在设置页分别运行“测试连接”和“测试栖语回复”；诊断只显示脱敏后的错误类别。
+- 数据异常：先导出完整 Markdown 备份，再从记忆中心查看恢复结果；不要直接覆盖运行中的记忆目录。
 
-## 文档
+## 文档入口
 
-- `AGENTS.md`：面向编码代理的开发指引（命令、架构、回复管线、行为约束、测试约定）；`CLAUDE.md` 是指向它的符号链接。
-- `栖语产品灵魂.md`：人格与风格的最高优先级依据，服务启动时读入并注入 LLM system prompt。
-- `docs/product/behavior-spec.md`：从产品灵魂提炼出的工程行为规范。
-
+- `AGENTS.md`：当前架构、行为约束和验证命令。
+- `docs/engineering/windows-release-baseline.md`：Release 1 能力证据与行为对拍。
+- `docs/engineering/windows-local-web-shell.md`：Windows Host、安装和安全边界。
+- `docs/product/behavior-spec.md`：工程行为规范。
+- `栖语产品灵魂.md`：人格与可见行为的最高设计依据。

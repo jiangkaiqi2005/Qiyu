@@ -66,10 +66,12 @@ $bundlePath = Join-Path $hostBuildPath 'windows-bundle'
 $stagingParent = Join-Path $hostPath '.dart_tool'
 $stagingPath = Join-Path $stagingParent 'windows-bundle-staging'
 $flutterWebPath = Join-Path $flutterPath 'build\web'
-$packageVersion = (
-  Get-Content -Raw -Encoding UTF8 (Join-Path $repositoryRoot 'package.json') |
-    ConvertFrom-Json
-).version
+$hostPubspec = Get-Content -Raw -Encoding UTF8 `
+  (Join-Path $hostPath 'pubspec.yaml')
+if ($hostPubspec -notmatch '(?m)^version:\s*([0-9A-Za-z.+-]+)\s*$') {
+  throw 'Windows host pubspec.yaml is missing a valid version.'
+}
+$packageVersion = $Matches[1]
 $archivePath = Join-Path $hostBuildPath "qiyu-windows-x64-$packageVersion.zip"
 
 if (-not $SkipFlutterBuild) {
