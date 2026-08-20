@@ -161,6 +161,14 @@ void main() {
       await tester.enterText(find.byKey(const Key('chat-input')), '还醒着');
       await tester.tap(find.byKey(const Key('chat-send')));
       await tester.pump();
+      expect(find.text('还醒着'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('chat-input')))
+            .controller!
+            .text,
+        isEmpty,
+      );
       gateway.add(
         const LocalChatDeliveryEvent(
           kind: LocalChatEventKind.accepted,
@@ -185,7 +193,7 @@ void main() {
           text: '还没',
         ),
       );
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1));
       expect(find.text('还没'), findsOneWidget);
 
       gateway.add(

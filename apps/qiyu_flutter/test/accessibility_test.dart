@@ -42,7 +42,7 @@ void main() {
     expect(find.byKey(const Key('chat-input')), findsOneWidget);
   });
 
-  testWidgets('control+enter sends the message without leaving the keyboard', (
+  testWidgets('enter sends while shift+enter and control+enter insert newlines', (
     tester,
   ) async {
     final chatGateway = _FakeChatGateway();
@@ -52,10 +52,26 @@ void main() {
     await tester.tap(find.byKey(const Key('home-go-chat')));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byKey(const Key('chat-input')), '今晚睡不着');
+    final input = find.byKey(const Key('chat-input'));
+
+    await tester.enterText(input, '第一行');
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    expect(chatGateway.sentTexts, isEmpty);
+    expect(tester.widget<TextField>(input).controller!.text, contains('\n'));
+
+    await tester.enterText(input, '第二行');
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    expect(chatGateway.sentTexts, isEmpty);
+    expect(tester.widget<TextField>(input).controller!.text, contains('\n'));
+
+    await tester.enterText(input, '今晚睡不着');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
 
     expect(chatGateway.sentTexts, ['今晚睡不着']);
@@ -399,9 +415,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const Key('chat-input')), '睡了吗');
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pumpAndSettle();
 
     // 完成反馈与正文在关闭动画时照常出现。

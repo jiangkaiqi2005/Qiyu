@@ -10,10 +10,13 @@ import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_markdown.dart';
 
-/// 输入框里按 Ctrl+Enter 发送（ticket 24 键盘流程）：主流程不必
-/// 离开键盘。Enter 本身仍用于换行。
+/// 输入框里按 Enter 发送；Shift+Enter / Ctrl+Enter 插入软换行。
 final class _SendChatIntent extends Intent {
   const _SendChatIntent();
+}
+
+final class _InsertLineBreakIntent extends Intent {
+  const _InsertLineBreakIntent();
 }
 
 class LocalChatView extends StatefulWidget {
@@ -64,18 +67,43 @@ class _LocalChatViewState extends State<LocalChatView> {
       return;
     }
     _stickToBottom = true;
-    final sent = await viewModel.send(text);
-    if (sent && mounted && _controller.text == text) {
+    final sending = viewModel.send(text);
+    if (mounted && _controller.text == text) {
       _controller.clear();
     }
+    final sent = await sending;
+    if (!sent &&
+        mounted &&
+        _controller.text.isEmpty &&
+        !viewModel.messages.any(
+          (message) =>
+              message.speaker == LocalChatSpeaker.user &&
+              message.text == text.trim(),
+        )) {
+      _controller.text = text;
+      _controller.selection = TextSelection.collapsed(offset: text.length);
+    }
+  }
+
+  void _insertLineBreak() {
+    final value = _controller.value;
+    final selection = value.selection;
+    final start = selection.isValid ? selection.start : value.text.length;
+    final end = selection.isValid ? selection.end : value.text.length;
+    final nextText = value.text.replaceRange(start, end, '\n');
+    _controller.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: start + 1),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<LocalChatViewModel>();
     // 会话恢复、新消息与流式增量都跟在列表尾部：签名变化时下一帧滚到底。
-    final transient =
-        viewModel.waiting || viewModel.streamingText.isNotEmpty ? 1 : 0;
+    final transient = viewModel.waiting || viewModel.streamingText.isNotEmpty
+        ? 1
+        : 0;
     final signature =
         '${viewModel.messages.length}|$transient|${viewModel.streamingText.length}';
     if (signature != _lastListSignature) {
@@ -85,9 +113,7 @@ class _LocalChatViewState extends State<LocalChatView> {
           return;
         }
         if (_scrollController.hasClients) {
-          _scrollController.jumpTo(
-            _scrollController.position.maxScrollExtent,
-          );
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         }
       });
     }
@@ -158,10 +184,14 @@ class _LocalChatViewState extends State<LocalChatView> {
                       ),
                     Shortcuts(
                       shortcuts: const {
+                        SingleActivator(LogicalKeyboardKey.enter):
+                            _SendChatIntent(),
+                        SingleActivator(LogicalKeyboardKey.enter, shift: true):
+                            _InsertLineBreakIntent(),
                         SingleActivator(
                           LogicalKeyboardKey.enter,
                           control: true,
-                        ): _SendChatIntent(),
+                        ): _InsertLineBreakIntent(),
                       },
                       child: Actions(
                         actions: {
@@ -173,6 +203,13 @@ class _LocalChatViewState extends State<LocalChatView> {
                               return null;
                             },
                           ),
+                          _InsertLineBreakIntent:
+                              CallbackAction<_InsertLineBreakIntent>(
+                                onInvoke: (intent) {
+                                  _insertLineBreak();
+                                  return null;
+                                },
+                              ),
                         },
                         child: Padding(
                           padding: const EdgeInsets.all(24),
@@ -196,9 +233,7 @@ class _LocalChatViewState extends State<LocalChatView> {
                               const SizedBox(width: 12),
                               IconButton.filled(
                                 key: Key(
-                                  viewModel.sending
-                                      ? 'chat-stop'
-                                      : 'chat-send',
+                                  viewModel.sending ? 'chat-stop' : 'chat-send',
                                 ),
                                 onPressed: viewModel.sending
                                     ? () => unawaited(viewModel.stop())
@@ -275,9 +310,7 @@ class _LocalChatViewState extends State<LocalChatView> {
                 container: true,
                 child: Semantics(
                   liveRegion: true,
-                  label: viewModel.streamingText.isEmpty
-                      ? '栖语在想'
-                      : '栖语正在回复',
+                  label: viewModel.streamingText.isEmpty ? '栖语在想' : '栖语正在回复',
                   child: ExcludeSemantics(
                     child: viewModel.streamingText.isEmpty
                         ? const Text('栖语在想…')

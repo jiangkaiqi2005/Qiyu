@@ -153,14 +153,32 @@ final class LocalChatViewModel extends ChangeNotifier {
     }
     _sending = true;
     _errorMessage = null;
-    notifyListeners();
     final requestId = _pendingText == trimmed && _pendingRequestId != null
         ? _pendingRequestId!
         : _requestIdFactory();
     _pendingRequestId = requestId;
     _pendingText = trimmed;
+    final optimisticallyAdded = !_messages.any(
+      (message) =>
+          message.requestId == requestId &&
+          message.speaker == LocalChatSpeaker.user,
+    );
+    if (optimisticallyAdded) {
+      _messages.add(
+        LocalChatMessage(
+          requestId: requestId,
+          speaker: LocalChatSpeaker.user,
+          text: trimmed,
+        ),
+      );
+    }
+    notifyListeners();
     try {
-      return await _sendStreaming(requestId: requestId, text: trimmed);
+      return await _sendStreaming(
+        requestId: requestId,
+        text: trimmed,
+        optimisticallyAdded: optimisticallyAdded,
+      );
     } on Object catch (error) {
       _streamingText = '';
       _waiting = false;
@@ -176,6 +194,7 @@ final class LocalChatViewModel extends ChangeNotifier {
   Future<bool> _sendStreaming({
     required String requestId,
     required String text,
+    required bool optimisticallyAdded,
   }) async {
     final generation = _restoreGeneration;
     List<String>? finalMessages;
@@ -183,83 +202,106 @@ final class LocalChatViewModel extends ChangeNotifier {
     FallbackReason? fallbackReason;
     var completed = false;
     var committed = false;
-    await for (final event in _gateway.deliver(
-      requestId: requestId,
-      text: text,
-      sessionId: _sessionId,
-    )) {
-      if (generation == _restoreGeneration) {
-        _sessionId = event.sessionId ?? _sessionId;
-      }
-      switch (event.kind) {
-        case LocalChatEventKind.accepted:
-          if (generation == _restoreGeneration &&
-              !_messages.any(
-                (message) =>
-                    message.requestId == requestId &&
-                    message.speaker == LocalChatSpeaker.user,
-              )) {
-            _messages.add(
-              LocalChatMessage(
-                requestId: requestId,
-                speaker: LocalChatSpeaker.user,
-                text: text,
-              ),
-            );
-          }
-        case LocalChatEventKind.waiting:
-          _waiting = true;
-        case LocalChatEventKind.delta:
-          _waiting = false;
-          if (generation == _restoreGeneration) {
-            _streamingText += event.text ?? '';
-          }
-        case LocalChatEventKind.message:
-          finalMessages = event.messages;
-        case LocalChatEventKind.state:
-          source = event.source;
-          fallbackReason = event.fallbackReason;
-        case LocalChatEventKind.fallback:
-          fallbackReason = event.fallbackReason;
-        case LocalChatEventKind.done:
-          completed = true;
-          // 轮内召回的 bubble 2 会在同一条事件流里带来第二段
-          // message/state/done：每个 done 提交已收齐的一段，
-          // 而不是等流结束只保留最后一段。
-          final messages = finalMessages;
-          final replySource = source;
-          if (messages != null && replySource != null) {
-            committed = true;
-            if (generation == _restoreGeneration) {
-              _messages.addAll(
-                messages.map(
-                  (message) => LocalChatMessage(
-                    requestId: requestId,
-                    speaker: LocalChatSpeaker.qiyu,
-                    text: message,
-                    source: replySource,
-                    fallbackReason: fallbackReason,
-                  ),
+    var accepted = false;
+    try {
+      await for (final event in _gateway.deliver(
+        requestId: requestId,
+        text: text,
+        sessionId: _sessionId,
+      )) {
+        if (generation == _restoreGeneration) {
+          _sessionId = event.sessionId ?? _sessionId;
+        }
+        switch (event.kind) {
+          case LocalChatEventKind.accepted:
+            accepted = true;
+            if (generation == _restoreGeneration &&
+                !_messages.any(
+                  (message) =>
+                      message.requestId == requestId &&
+                      message.speaker == LocalChatSpeaker.user,
+                )) {
+              _messages.add(
+                LocalChatMessage(
+                  requestId: requestId,
+                  speaker: LocalChatSpeaker.user,
+                  text: text,
                 ),
               );
-              _streamingText = '';
-              _waiting = false;
             }
-            finalMessages = null;
-            source = null;
-            fallbackReason = null;
-          }
-        case LocalChatEventKind.cancelled:
-          _streamingText = '';
-          _waiting = false;
-        case LocalChatEventKind.error:
-          throw LocalChatGatewayException(event.text ?? '本地聊天暂时不可用，请稍后重试。');
+          case LocalChatEventKind.waiting:
+            _waiting = true;
+          case LocalChatEventKind.delta:
+            _waiting = false;
+            if (generation == _restoreGeneration) {
+              _streamingText += event.text ?? '';
+            }
+          case LocalChatEventKind.message:
+            finalMessages = event.messages;
+          case LocalChatEventKind.state:
+            source = event.source;
+            fallbackReason = event.fallbackReason;
+          case LocalChatEventKind.fallback:
+            fallbackReason = event.fallbackReason;
+          case LocalChatEventKind.done:
+            completed = true;
+            // 轮内召回的 bubble 2 会在同一条事件流里带来第二段
+            // message/state/done：每个 done 提交已收齐的一段，
+            // 而不是等流结束只保留最后一段。
+            final messages = finalMessages;
+            final replySource = source;
+            if (messages != null && replySource != null) {
+              committed = true;
+              if (generation == _restoreGeneration) {
+                _messages.addAll(
+                  messages.map(
+                    (message) => LocalChatMessage(
+                      requestId: requestId,
+                      speaker: LocalChatSpeaker.qiyu,
+                      text: message,
+                      source: replySource,
+                      fallbackReason: fallbackReason,
+                    ),
+                  ),
+                );
+                _streamingText = '';
+                _waiting = false;
+              }
+              finalMessages = null;
+              source = null;
+              fallbackReason = null;
+            }
+          case LocalChatEventKind.cancelled:
+            _streamingText = '';
+            _waiting = false;
+          case LocalChatEventKind.error:
+            throw LocalChatGatewayException(event.text ?? '本地聊天暂时不可用，请稍后重试。');
+        }
+        notifyListeners();
       }
-      notifyListeners();
+    } on Object {
+      if (!accepted &&
+          optimisticallyAdded &&
+          generation == _restoreGeneration) {
+        _messages.removeWhere(
+          (message) =>
+              message.requestId == requestId &&
+              message.speaker == LocalChatSpeaker.user,
+        );
+        notifyListeners();
+      }
+      rethrow;
     }
     if (!completed || !committed) {
       if (generation == _restoreGeneration) {
         _streamingText = '';
+        if (!accepted && optimisticallyAdded) {
+          _messages.removeWhere(
+            (message) =>
+                message.requestId == requestId &&
+                message.speaker == LocalChatSpeaker.user,
+          );
+        }
       }
       return false;
     }
