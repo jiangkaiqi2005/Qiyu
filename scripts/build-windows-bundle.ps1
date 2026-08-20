@@ -4,6 +4,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot 'windows-bundle-publish.ps1')
+
 function Get-Sha256Hex {
   param(
     [Parameter(Mandatory = $true)]
@@ -195,8 +197,10 @@ $release = @{
   [Text.UTF8Encoding]::new($false)
 )
 
-Remove-GeneratedDirectory -Path $bundlePath -ExpectedParent $hostBuildPath
-Move-Item -LiteralPath $stagingPath -Destination $bundlePath
+Publish-WindowsBundle `
+  -StagingPath $stagingPath `
+  -BundlePath $bundlePath `
+  -ExpectedParent $hostBuildPath
 
 if (Test-Path -LiteralPath $archivePath) {
   if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($archivePath)) -ne `

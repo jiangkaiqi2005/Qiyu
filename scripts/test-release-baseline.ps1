@@ -41,6 +41,8 @@ $requiredReleasePaths = @(
   'contracts\qiyu_behavior_contracts.json',
   'packages\qiyu_behavior_core\test\qiyu_behavior_core_test.dart',
   'scripts\build-windows-bundle.ps1',
+  'scripts\windows-bundle-publish.ps1',
+  'scripts\test-windows-bundle-publish.ps1',
   'scripts\verify-release-baseline.ps1',
   'scripts\verify-windows-package.ps1',
   'scripts\test-windows-package.ps1'
@@ -97,6 +99,8 @@ Assert-Condition ($buildScript -notmatch 'package\.json|\bnpm\b|\bnode\b') `
   'Windows 构包脚本仍依赖 Node 产品元数据或命令。'
 Assert-Condition ($buildScript -match "'pubspec\.yaml'") `
   'Windows 构包脚本没有从 Dart Host 元数据读取版本。'
+
+& (Join-Path $repositoryRoot 'scripts\test-windows-bundle-publish.ps1')
 
 $verificationScript = Get-Content -Raw -Encoding UTF8 (
   Join-Path $repositoryRoot 'scripts\verify-release-baseline.ps1'
