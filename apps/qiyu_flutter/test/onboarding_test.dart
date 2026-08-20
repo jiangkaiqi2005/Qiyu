@@ -208,7 +208,8 @@ void main() {
 
     expect(onboardingGateway.completeCalls, 1);
     expect(find.text('模型连接'), findsOneWidget);
-    expect(find.byKey(const Key('provider-base-url')), findsOneWidget);
+    expect(find.byKey(const Key('provider-preset')), findsOneWidget);
+    expect(find.text('官方 API · OpenAI 兼容'), findsOneWidget);
 
     await tester.tap(find.byTooltip('返回聊天'));
     await tester.pumpAndSettle();

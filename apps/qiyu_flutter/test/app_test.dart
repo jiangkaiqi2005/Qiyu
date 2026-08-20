@@ -433,7 +433,7 @@ void main() {
     await _returnToHome(tester);
   });
 
-  testWidgets('configures and tests all supported model providers', (
+  testWidgets('selects a provider preset and its Anthropic-compatible route', (
     tester,
   ) async {
     final chatViewModel = LocalChatViewModel(
@@ -462,23 +462,31 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('模型连接'), findsOneWidget);
-    expect(find.text('OpenAI 兼容'), findsOneWidget);
-    expect(find.text('Anthropic'), findsOneWidget);
-    expect(find.text('Ollama'), findsOneWidget);
-    expect(find.text('尚未保存 API Key'), findsOneWidget);
-    expect(find.byKey(const Key('provider-api-key')), findsOneWidget);
+    expect(find.text('OpenAI'), findsOneWidget);
+    expect(find.text('官方 API · OpenAI 兼容'), findsOneWidget);
+    expect(find.text('gpt-4.1-mini'), findsOneWidget);
+    expect(find.textContaining('协议与服务地址已自动配置'), findsOneWidget);
 
-    await tester.enterText(
-      find.byKey(const Key('provider-base-url')),
-      'https://api.openai.com/v1',
-    );
+    await tester.tap(find.byKey(const Key('provider-preset')));
+    await tester.pumpAndSettle();
+    expect(find.text('DeepSeek'), findsOneWidget);
+    expect(find.text('阿里云百炼'), findsOneWidget);
+    expect(find.text('火山方舟'), findsOneWidget);
+    await tester.tap(find.text('DeepSeek').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('provider-connection')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('按量付费 · Anthropic 兼容').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('provider-model-preset')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('输入其他模型名称').last);
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('provider-model')),
-      'gpt-4.1-mini',
-    );
-    await tester.enterText(
-      find.byKey(const Key('provider-api-key')),
-      'ui-only-test-value',
+      'claude-compatible-model',
     );
     // 设置页变长了（ticket 23 新增本地数据/隐私/开发者区块）：
     // 用滚动到可见代替固定位移，避免依赖具体页面高度。
@@ -486,6 +494,17 @@ void main() {
     final settingsScrollable = find.byWidgetPredicate(
       (widget) =>
           widget is Scrollable && widget.axisDirection == AxisDirection.down,
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('provider-api-key')),
+      160,
+      scrollable: settingsScrollable,
+      maxScrolls: 20,
+    );
+    expect(find.text('尚未保存 API Key'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('provider-api-key')),
+      'ui-only-test-value',
     );
     await tester.scrollUntilVisible(
       find.byKey(const Key('save-provider-settings')),
@@ -499,6 +518,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(settingsGateway.saved.single.apiKey, 'ui-only-test-value');
+    expect(settingsGateway.saved.single.provider, ProviderKind.anthropic);
+    expect(
+      settingsGateway.saved.single.baseUrl,
+      'https://api.deepseek.com/anthropic',
+    );
+    expect(settingsGateway.saved.single.model, 'claude-compatible-model');
     expect(find.text('API Key 已安全保存在 Windows 凭据管理器'), findsOneWidget);
     final keyField = tester.widget<TextField>(
       find.byKey(const Key('provider-api-key')),
@@ -542,6 +567,45 @@ void main() {
     await tester.pumpAndSettle();
     await _returnToHome(tester);
   });
+
+  testWidgets(
+    'settings back works after selecting only a provider from home',
+    (tester) async {
+      final chatViewModel = LocalChatViewModel(
+        _FakeLocalChatGateway(),
+        hostConnectionProbe: _FakeHostConnectionProbe([true]),
+        autoStart: false,
+      );
+      await chatViewModel.initialize();
+      final settingsViewModel = ProviderSettingsViewModel(
+        _FakeProviderSettingsGateway(),
+        autoStart: false,
+      );
+      await settingsViewModel.initialize();
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: chatViewModel,
+          providerSettingsViewModel: settingsViewModel,
+          onboardingViewModel: await _completedOnboardingViewModel(),
+          settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('home-go-settings')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('provider-preset')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('DeepSeek').last);
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(700, 120));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('返回聊天'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'chat list restores at the bottom and streaming never yanks a reading user',

@@ -8,6 +8,7 @@ import '../memory/backup_client.dart';
 import '../memory/backup_platform.dart';
 import '../memory/backup_view.dart';
 import '../onboarding/onboarding_view_model.dart';
+import 'provider_catalog.dart';
 import 'provider_settings_client.dart';
 import 'provider_settings_view_model.dart';
 import 'settings_view_model.dart';
@@ -16,7 +17,11 @@ import 'settings_view_model.dart';
 /// 总览 / 清除产品数据）、隐私说明与开发者选项。危险操作（忘记
 /// Key、清除产品数据）都有明确影响说明与确认。
 class ProviderSettingsView extends StatefulWidget {
-  const ProviderSettingsView({super.key, this.backupGateway, this.backupPlatform});
+  const ProviderSettingsView({
+    super.key,
+    this.backupGateway,
+    this.backupPlatform,
+  });
 
   /// 备份网关与浏览器能力接缝：缺省走真实 HTTP 与 Web 实现；
   /// widget 测试注入桩。
@@ -33,9 +38,18 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   final _temperatureController = TextEditingController(text: '0.7');
   final _timeoutController = TextEditingController(text: '60');
   final _apiKeyController = TextEditingController();
-  ProviderKind _provider = ProviderKind.openAiCompatible;
+  String _selectedProviderId = 'openai';
+  String _selectedConnectionId = 'official';
+  bool _customModel = false;
   ProviderSettings? _syncedSettings;
   bool _requestedInitialization = false;
+
+  ProviderPreset get _selectedProvider =>
+      providerPresetById(_selectedProviderId);
+
+  ProviderConnectionPreset get _selectedConnection => _selectedProvider
+      .connections
+      .firstWhere((connection) => connection.id == _selectedConnectionId);
 
   @override
   void didChangeDependencies() {
@@ -44,10 +58,15 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       return;
     }
     _requestedInitialization = true;
-    final settingsViewModel = context.read<SettingsViewModel>();
-    unawaited(context.read<ProviderSettingsViewModel>().initialize());
-    unawaited(settingsViewModel.loadPreferences());
-    unawaited(settingsViewModel.loadClearPreview());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final settingsViewModel = context.read<SettingsViewModel>();
+      unawaited(context.read<ProviderSettingsViewModel>().initialize());
+      unawaited(settingsViewModel.loadPreferences());
+      unawaited(settingsViewModel.loadClearPreview());
+    });
   }
 
   @override
@@ -65,16 +84,54 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       return;
     }
     _syncedSettings = settings;
+    final selection = matchProviderSettings(settings);
+    _selectedProviderId = selection.providerId;
+    _selectedConnectionId = selection.connectionId;
+    _customModel = selection.customModel;
     if (settings.configured) {
-      _provider = settings.provider!;
       _baseUrlController.text = settings.baseUrl!;
       _modelController.text = settings.model!;
       _temperatureController.text = '${settings.temperature!}';
       _timeoutController.text = '${settings.timeoutSeconds!}';
-    } else if (_baseUrlController.text.isEmpty) {
-      _baseUrlController.text = 'https://api.openai.com/v1';
+    } else {
+      _baseUrlController.text = _selectedConnection.baseUrl;
+      _modelController.text = _selectedConnection.models.first;
     }
     _apiKeyController.clear();
+  }
+
+  void _selectProvider(String providerId) {
+    final provider = providerPresetById(providerId);
+    setState(() {
+      _selectedProviderId = provider.id;
+      _selectedConnectionId = provider.connections.first.id;
+      _applyConnection(provider.connections.first);
+    });
+  }
+
+  void _selectConnection(String connectionId) {
+    final connection = _selectedProvider.connections.firstWhere(
+      (candidate) => candidate.id == connectionId,
+    );
+    setState(() {
+      _selectedConnectionId = connection.id;
+      _applyConnection(connection);
+    });
+  }
+
+  void _applyConnection(ProviderConnectionPreset connection) {
+    _baseUrlController.text = connection.baseUrl;
+    _customModel = connection.models.isEmpty;
+    _modelController.text = connection.models.isEmpty
+        ? ''
+        : connection.models.first;
+  }
+
+  void _selectModel(String model) {
+    setState(() {
+      _customModel = model == customModelValue;
+      _modelController.text = _customModel ? '' : model;
+    });
   }
 
   ProviderSettingsDraft? _readDraft() {
@@ -86,9 +143,16 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       ).showSnackBar(const SnackBar(content: Text('请检查 temperature 和超时时间。')));
       return null;
     }
+    if (_baseUrlController.text.trim().isEmpty ||
+        _modelController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请填写服务地址和模型名称。')));
+      return null;
+    }
     final key = _apiKeyController.text.trim();
     return ProviderSettingsDraft(
-      provider: _provider,
+      provider: _selectedConnection.provider,
       baseUrl: _baseUrlController.text.trim(),
       model: _modelController.text.trim(),
       temperature: temperature,
@@ -184,7 +248,13 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                 Row(
                   children: [
                     IconButton(
-                      onPressed: () => context.pop(),
+                      onPressed: () {
+                        if (context.canPop()) {
+                          context.pop();
+                        } else {
+                          context.go('/');
+                        }
+                      },
                       tooltip: '返回聊天',
                       icon: const Icon(Icons.arrow_back),
                     ),
@@ -213,71 +283,125 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                 if (viewModel.loading)
                   const Center(child: CircularProgressIndicator())
                 else ...[
-                  SegmentedButton<ProviderKind>(
-                    segments: ProviderKind.values
-                        .map(
-                          (provider) => ButtonSegment(
-                            value: provider,
-                            label: Text(provider.label),
-                          ),
-                        )
-                        .toList(),
-                    selected: {_provider},
-                    onSelectionChanged: (selection) {
-                      setState(() => _provider = selection.single);
-                    },
-                  ),
-                  const SizedBox(height: 24),
-                  TextField(
-                    key: const Key('provider-base-url'),
-                    controller: _baseUrlController,
-                    decoration: const InputDecoration(
-                      labelText: '服务地址',
-                      hintText: 'https://api.openai.com/v1',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    key: const Key('provider-model'),
-                    controller: _modelController,
-                    decoration: const InputDecoration(
-                      labelText: '模型名称',
-                      hintText: 'gpt-4.1-mini',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          key: const Key('provider-temperature'),
-                          controller: _temperatureController,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'temperature',
-                            border: OutlineInputBorder(),
-                          ),
+                  _ControlledDropdown(
+                    dropdownKey: const Key('provider-preset'),
+                    label: '提供商',
+                    value: _selectedProviderId,
+                    items: [
+                      for (final provider in providerCatalog)
+                        DropdownMenuItem(
+                          value: provider.id,
+                          child: Text(provider.label),
                         ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: TextField(
-                          key: const Key('provider-timeout'),
-                          controller: _timeoutController,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: '超时（秒）',
-                            border: OutlineInputBorder(),
-                          ),
+                    ],
+                    onChanged: _selectProvider,
+                  ),
+                  const SizedBox(height: 16),
+                  _ControlledDropdown(
+                    dropdownKey: const Key('provider-connection'),
+                    label: '套餐 / 接口类型',
+                    value: _selectedConnectionId,
+                    items: [
+                      for (final connection in _selectedProvider.connections)
+                        DropdownMenuItem(
+                          value: connection.id,
+                          child: Text(connection.label),
+                        ),
+                    ],
+                    onChanged: _selectConnection,
+                  ),
+                  const SizedBox(height: 16),
+                  _ControlledDropdown(
+                    dropdownKey: const Key('provider-model-preset'),
+                    label: '模型',
+                    value: _customModel
+                        ? customModelValue
+                        : _modelController.text,
+                    items: [
+                      for (final model in _selectedConnection.models)
+                        DropdownMenuItem(value: model, child: Text(model)),
+                      const DropdownMenuItem(
+                        value: customModelValue,
+                        child: Row(
+                          children: [
+                            Icon(Icons.edit_outlined, size: 18),
+                            SizedBox(width: 8),
+                            Text('输入其他模型名称'),
+                          ],
                         ),
                       ),
                     ],
+                    onChanged: _selectModel,
                   ),
-                  const SizedBox(height: 28),
+                  if (_customModel) ...[
+                    const SizedBox(height: 16),
+                    TextField(
+                      key: const Key('provider-model'),
+                      controller: _modelController,
+                      decoration: const InputDecoration(
+                        labelText: '模型名称',
+                        hintText: '输入服务商提供的 Model ID',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  if (_selectedConnection.editableBaseUrl)
+                    TextField(
+                      key: const Key('provider-base-url'),
+                      controller: _baseUrlController,
+                      decoration: const InputDecoration(
+                        labelText: '服务地址',
+                        hintText: 'https://example.com/v1',
+                        border: OutlineInputBorder(),
+                      ),
+                    )
+                  else
+                    _ResolvedConnection(
+                      provider: _selectedConnection.provider,
+                      baseUrl: _selectedConnection.baseUrl,
+                    ),
+                  const SizedBox(height: 8),
+                  ExpansionTile(
+                    key: const Key('provider-advanced-settings'),
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: const EdgeInsets.only(bottom: 8),
+                    title: const Text('高级参数'),
+                    subtitle: const Text('temperature 与请求超时'),
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              key: const Key('provider-temperature'),
+                              controller: _temperatureController,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              decoration: const InputDecoration(
+                                labelText: 'temperature',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextField(
+                              key: const Key('provider-timeout'),
+                              controller: _timeoutController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: '超时（秒）',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
                   _credentialSection(context, viewModel),
                   const SizedBox(height: 24),
                   if (viewModel.errorMessage case final message?)
@@ -521,10 +645,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     );
   }
 
-  Widget _developerSection(
-    BuildContext context,
-    SettingsViewModel viewModel,
-  ) {
+  Widget _developerSection(BuildContext context, SettingsViewModel viewModel) {
     final theme = Theme.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -564,7 +685,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                     onChanged: viewModel.busy
                         ? null
                         : (value) =>
-                            unawaited(viewModel.setDeveloperMode(value)),
+                              unawaited(viewModel.setDeveloperMode(value)),
                   ),
                 ],
               ),
@@ -622,29 +743,41 @@ class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Text('已冻结（${controls.frozen.length}）',
-                        style: theme.textTheme.titleSmall),
+                    Text(
+                      '已冻结（${controls.frozen.length}）',
+                      style: theme.textTheme.titleSmall,
+                    ),
                     if (controls.frozen.isEmpty)
-                      Text('没有冻结的记忆。',
-                          style: TextStyle(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ))
+                      Text(
+                        '没有冻结的记忆。',
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      )
                     else
                       for (final entry in controls.frozen)
-                        Text('· ${entry.summary}',
-                            style: theme.textTheme.bodyMedium),
+                        Text(
+                          '· ${entry.summary}',
+                          style: theme.textTheme.bodyMedium,
+                        ),
                     const SizedBox(height: 12),
-                    Text('已禁提（${controls.banned.length}）',
-                        style: theme.textTheme.titleSmall),
+                    Text(
+                      '已禁提（${controls.banned.length}）',
+                      style: theme.textTheme.titleSmall,
+                    ),
                     if (controls.banned.isEmpty)
-                      Text('没有禁提的内容。',
-                          style: TextStyle(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ))
+                      Text(
+                        '没有禁提的内容。',
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      )
                     else
                       for (final entry in controls.banned)
-                        Text('· ${entry.summary}',
-                            style: theme.textTheme.bodyMedium),
+                        Text(
+                          '· ${entry.summary}',
+                          style: theme.textTheme.bodyMedium,
+                        ),
                     const SizedBox(height: 12),
                     Text(
                       '已删除范围：${controls.deletedCount} 条（只保留抽象范围，防止复活）',
@@ -716,9 +849,7 @@ class _ClearDataDialog extends StatelessWidget {
                   Text(
                     '清除前会先创建一份备份快照，之后随时可以在「备份与恢复」里找回；'
                     '模型连接设置与 API Key 不受影响。清除后栖语会像第一次见面一样重新开始。',
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
+                    style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
                   ),
                 ],
               ),
@@ -746,6 +877,99 @@ class _ClearDataDialog extends StatelessWidget {
               : const Text('确认清除'),
         ),
       ],
+    );
+  }
+}
+
+class _ControlledDropdown extends StatelessWidget {
+  const _ControlledDropdown({
+    required this.dropdownKey,
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+  });
+
+  final Key dropdownKey;
+  final String label;
+  final String value;
+  final List<DropdownMenuItem<String>> items;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) => InputDecorator(
+    decoration: InputDecoration(
+      labelText: label,
+      border: const OutlineInputBorder(),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    ),
+    child: DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        key: dropdownKey,
+        value: value,
+        isExpanded: true,
+        items: items,
+        onChanged: (next) {
+          if (next != null) {
+            onChanged(next);
+          }
+        },
+      ),
+    ),
+  );
+}
+
+class _ResolvedConnection extends StatelessWidget {
+  const _ResolvedConnection({required this.provider, required this.baseUrl});
+
+  final ProviderKind provider;
+  final String baseUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.check_circle_outline,
+              size: 20,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${provider.label}协议与服务地址已自动配置',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SelectionArea(
+                    child: Text(
+                      baseUrl,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

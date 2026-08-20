@@ -81,6 +81,59 @@ void main() {
     });
   });
 
+  test('火山方舟 Agent Plan 使用 Bearer 鉴权', () async {
+    final client = _RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.fromIterable([
+          'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"在。"}}\n\n',
+          'data: {"type":"message_stop"}\n\n',
+        ]),
+      ),
+    );
+    final gateway = ProviderModelGateway(client);
+
+    final reply = await gateway.complete(
+      config: _config(
+        ProviderKind.anthropic,
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/plan',
+      ),
+      apiKey: 'agent-plan-test-key',
+      messages: messages,
+    );
+
+    expect(reply, '在。');
+    expect(client.uri.path, '/api/plan/v1/messages');
+    expect(client.headers['authorization'], 'Bearer agent-plan-test-key');
+    expect(client.headers, isNot(contains('x-api-key')));
+    expect(client.headers['anthropic-version'], '2023-06-01');
+  });
+
+  test('Anthropic 兼容地址会补全 v1/messages', () async {
+    final client = _RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.fromIterable([
+          'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"在。"}}\n\n',
+          'data: {"type":"message_stop"}\n\n',
+        ]),
+      ),
+    );
+    final gateway = ProviderModelGateway(client);
+
+    await gateway.complete(
+      config: _config(
+        ProviderKind.anthropic,
+        baseUrl: 'https://api.deepseek.com/anthropic',
+      ),
+      apiKey: 'compatible-test-key',
+      messages: messages,
+    );
+
+    expect(client.uri.path, '/anthropic/v1/messages');
+    expect(client.headers['x-api-key'], 'compatible-test-key');
+  });
+
   test('Ollama 使用本机 Chat API 且 temperature 放在 options', () async {
     final client = _RecordingHttpClient(
       response: ProviderHttpResponse(

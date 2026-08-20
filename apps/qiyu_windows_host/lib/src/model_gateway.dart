@@ -408,10 +408,13 @@ final class _AnthropicProtocol implements _ProviderProtocol {
     String? apiKey,
     List<ModelMessage> messages,
   ) => (
-    uri: _appendEndpoint(config.baseUrl, 'messages'),
+    uri: _anthropicMessagesEndpoint(config.baseUrl),
     headers: {
       'content-type': 'application/json',
-      'x-api-key': apiKey!.trim(),
+      if (_usesArkAgentPlan(config.baseUrl))
+        'authorization': 'Bearer ${apiKey!.trim()}'
+      else
+        'x-api-key': apiKey!.trim(),
       'anthropic-version': '2023-06-01',
     },
     body: {
@@ -459,6 +462,13 @@ final class _AnthropicProtocol implements _ProviderProtocol {
     }
     return null;
   }
+}
+
+bool _usesArkAgentPlan(String baseUrl) {
+  final uri = Uri.parse(baseUrl.trim());
+  final path = uri.path.replaceFirst(RegExp(r'/+$'), '');
+  return uri.host.toLowerCase() == 'ark.cn-beijing.volces.com' &&
+      (path == '/api/plan' || path.startsWith('/api/plan/'));
 }
 
 final class _OllamaProtocol implements _ProviderProtocol {
@@ -526,6 +536,21 @@ Uri _appendEndpoint(String baseUrl, String suffix, {bool ollama = false}) {
     return base.replace(path: '$normalizedPath/chat');
   }
   final path = normalizedPath.isEmpty ? '/$suffix' : '$normalizedPath/$suffix';
+  return base.replace(path: path);
+}
+
+Uri _anthropicMessagesEndpoint(String baseUrl) {
+  final base = Uri.parse(baseUrl.trim());
+  final normalizedPath = base.path.replaceFirst(RegExp(r'/+$'), '');
+  if (normalizedPath.endsWith('/messages')) {
+    return base.replace(path: normalizedPath);
+  }
+  if (normalizedPath.endsWith('/v1')) {
+    return base.replace(path: '$normalizedPath/messages');
+  }
+  final path = normalizedPath.isEmpty
+      ? '/v1/messages'
+      : '$normalizedPath/v1/messages';
   return base.replace(path: path);
 }
 
