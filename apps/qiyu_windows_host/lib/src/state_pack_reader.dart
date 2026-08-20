@@ -29,8 +29,8 @@ final class StatePackReader {
     OpenLoopStore? openLoopStore,
     Clock? clock,
   }) : _clock = clock ?? DateTime.now,
-       _openLoopStore = openLoopStore ??
-           OpenLoopStore(memoryDirectory: memoryDirectory);
+       _openLoopStore =
+           openLoopStore ?? OpenLoopStore(memoryDirectory: memoryDirectory);
 
   final String memoryDirectory;
   final Clock _clock;
@@ -38,7 +38,8 @@ final class StatePackReader {
 
   File get _relationshipFile =>
       File(path.join(memoryDirectory, 'relationship.md'));
-  File get _dailyStateFile => File(path.join(memoryDirectory, 'daily-state.md'));
+  File get _dailyStateFile =>
+      File(path.join(memoryDirectory, 'daily-state.md'));
   File get _longMemoryFile =>
       File(path.join(memoryDirectory, 'long-memory.md'));
   File get _personaFile => File(path.join(memoryDirectory, 'persona.md'));
@@ -220,7 +221,7 @@ final class StatePackReader {
     const discipline =
         '主动跟进纪律：每轮最多主动跟进一件事；只有用户当前没有明确任务、'
         '语境自然且不打断当前话题时才轻轻问起；初识阶段不主动翻旧事；'
-        '晚安收束时不发起跟进；用户要求不再提的事项绝不触碰。';
+        '用户要求不再提的事项绝不触碰。';
     if (candidates.isEmpty) {
       return discipline;
     }

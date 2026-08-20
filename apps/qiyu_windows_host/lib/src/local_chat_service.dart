@@ -220,13 +220,12 @@ final class LocalChatService {
   /// operation 之后，不会与之并发。「清除产品数据」这类整机危险操作
   /// （ticket 23）必须经此执行——操作前落盘的写入都能被其快照覆盖，
   /// 操作后也不会被在途写入把已清除的数据复活。
-  Future<T> runExclusively<T>(Future<T> Function() operation) => _serialized(
-    () async {
-      await _finalizationTask;
-      await _recallTask;
-      return operation();
-    },
-  );
+  Future<T> runExclusively<T>(Future<T> Function() operation) =>
+      _serialized(() async {
+        await _finalizationTask;
+        await _recallTask;
+        return operation();
+      });
 
   /// 把一次后台归档挂到串行任务链上：归档之间不并发，失败只记诊断。
   void _runFinalization(
@@ -257,7 +256,8 @@ final class LocalChatService {
           result: troubled == 0
               ? RecentRequestResults.ok
               : RecentRequestResults.failed,
-          detail: 'dates=${report.outcomes.length} troubled=$troubled '
+          detail:
+              'dates=${report.outcomes.length} troubled=$troubled '
               'reason=$reason',
         );
       } on Object catch (error) {
@@ -436,6 +436,7 @@ final class LocalChatService {
   }) async* {
     final trimmedRequestId = requestId.trim();
     final trimmedText = sanitizeUserInput(text);
+    final bedtime = RegExp(r'晚安|睡了|先睡').hasMatch(trimmedText);
     final archivedText = redactSessionText(text);
     if (trimmedRequestId.isEmpty || trimmedText.isEmpty) {
       throw const LocalChatException(
@@ -526,9 +527,7 @@ final class LocalChatService {
       requestId: trimmedRequestId,
       sessionId: session.id,
     );
-    if (localOutcome.safety == null &&
-        localOutcome.mode != 'bedtime' &&
-        providerChatClient != null) {
+    if (localOutcome.safety == null && providerChatClient != null) {
       ModelCompletion? completion;
       ModelPromptBuilder? requestBuilder;
       try {
@@ -598,8 +597,8 @@ final class LocalChatService {
         completedSession,
         trimmedRequestId,
         hiddenActions,
-        // 只有模型真正参与的本轮才消费整理窗口；本地降级/晚安收束
-        // 保持 pending，等 Provider 恢复后补跑。
+        // 只有模型真正参与的本轮才消费整理窗口；本地降级保持
+        // pending，等 Provider 恢复后补跑。
         consumeWindow: outcome.source == ReplySource.llm,
       );
       // 轮内召回循环：bubble 1 交付后才开始，绝不阻塞首响。
@@ -609,9 +608,10 @@ final class LocalChatService {
         userText: trimmedText,
         hiddenActions: hiddenActions,
         outcome: outcome,
+        bedtime: bedtime,
         cancellation: cancellation,
       );
-      _scheduleEndOfDayTriggers(outcome);
+      _scheduleEndOfDayTriggers(bedtime: bedtime);
     }
   }
 
@@ -627,7 +627,7 @@ final class LocalChatService {
   /// 新一轮之后；UI 侧在窗口内把发送键换成停止键，「停止」则走
   /// [cancellation] 分支。
   ///
-  /// 只有模型隐藏动作能触发查找（规则兜底已退役）；晚安收束与安全
+  /// 只有模型隐藏动作能触发查找（规则兜底已退役）；晚安信号与安全
   /// 回复不查找；未配置 Provider 不查找（保持现状）。
   Stream<LocalChatDeliveryEvent> _recallBubble({
     required RawSession session,
@@ -635,13 +635,14 @@ final class LocalChatService {
     required String userText,
     required List<HiddenAction> hiddenActions,
     required ChatResult outcome,
+    required bool bedtime,
     required _DeliveryCancellation cancellation,
   }) async* {
     final recall = memoryRecall;
     if (recall == null ||
         providerChatClient == null ||
         outcome.safety != null ||
-        outcome.mode == 'bedtime') {
+        bedtime) {
       return;
     }
     final requestId = outcome.requestId;
@@ -746,19 +747,19 @@ final class LocalChatService {
   }
 
   /// 可见回复交付之后的后台记忆触发点，全部不阻塞首响：
-  /// - 晚安：睡前收束完成后归档当天并补做更早的未完成日期（第三动作），
+  /// - 晚安：可见回复完成后归档当天并补做更早的未完成日期（第三动作），
   ///   随后依次补月压缩（第四动作）与 Dream（第五动作，ticket 16）。
   ///   Dream 是独立动作：归档服务绝不调用它，资格在 DreamService 内复查。
   /// - 日期变化（含进程跨午夜后的第一条消息）：补做昨天及更早的未完成日期；
   ///   当天仍在进行中，不归档。
-  void _scheduleEndOfDayTriggers(ChatResult outcome) {
+  void _scheduleEndOfDayTriggers({required bool bedtime}) {
     if (dailyFinalization == null) {
       return;
     }
     final today = localSessionDate(_clock());
     final dateChanged = _lastDeliveryDate != today;
     _lastDeliveryDate = today;
-    if (outcome.mode == 'bedtime') {
+    if (bedtime) {
       // 晚安请求先登记：即使进程在随后的归档完成前退出，启动补跑
       // 也能兑现这次 Dream（笔记定稿：当晚没跑成，下次启动补）。
       _markDreamBedtime();

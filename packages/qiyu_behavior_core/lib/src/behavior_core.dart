@@ -198,9 +198,6 @@ String sanitizeUserInput(String value) {
 }
 
 ({List<String> messages, String mode}) _localReply(String text) {
-  if (RegExp(r'晚安|睡了|先睡').hasMatch(text)) {
-    return (messages: const ['晚安'], mode: 'bedtime');
-  }
   if (text == '我到家了') {
     return (messages: const ['嗯'], mode: 'minimal');
   }

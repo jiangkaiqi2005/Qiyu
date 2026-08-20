@@ -624,13 +624,16 @@ void main() {
     },
   );
 
-  test('bedtime closes locally without opening a Provider stream', () async {
+  test('bedtime uses the Provider instead of forcing a local close', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-bedtime-delivery-test-',
     );
     addTearDown(() => temporaryDirectory.delete(recursive: true));
     final provider = _StreamingProviderChatClient(
-      Stream.value(const ModelStreamEvent.delta('对了，明天有什么计划吗？')),
+      Stream.fromIterable(const [
+        ModelStreamEvent.delta('晚点再睡也行，想说什么？'),
+        ModelStreamEvent.done(),
+      ]),
     );
     final service = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: temporaryDirectory.path),
@@ -642,19 +645,19 @@ void main() {
         .deliver(requestId: 'bedtime-1', text: '晚安')
         .toList();
 
-    expect(provider.calls, 0);
+    expect(provider.calls, 1);
     expect(
       events
           .singleWhere((event) => event.kind == LocalChatEventKind.message)
           .messages,
-      ['晚安'],
+      ['晚点再睡也行，想说什么？'],
     );
     expect(
       events
           .where((event) => event.kind == LocalChatEventKind.delta)
           .map((event) => event.text)
           .join(),
-      '晚安',
+      '晚点再睡也行，想说什么？',
     );
   });
 
@@ -937,7 +940,7 @@ void main() {
       text: '晚安',
       sessionId: exchange.session.id,
     );
-    expect(bedtime.result.mode, 'bedtime');
+    expect(bedtime.result.mode, 'llm');
     await service.finalizePending();
 
     final day = await pipeline.readDay('2026-08-11');
@@ -1202,7 +1205,7 @@ void main() {
       text: '晚安',
       sessionId: first.session.id,
     );
-    expect(bedtime.result.mode, 'bedtime');
+    expect(bedtime.result.mode, 'llm');
     await service.finalizePending();
 
     final loops = await File(
@@ -1297,6 +1300,7 @@ void main() {
 <qiyu-actions>
 [{"action":"open_loop_candidate","summary":"医院检查","proactive":"no"}]
 </qiyu-actions>'''),
+      const ModelCompletion.reply('晚点再睡也行。'),
       const ModelCompletion.reply('''好，以后不提了。
 <qiyu-actions>
 [{"action":"memory_ban","summary":"医院检查"}]
@@ -1305,6 +1309,7 @@ void main() {
 <qiyu-actions>
 [{"action":"open_loop_candidate","summary":"医院检查","proactive":"no"}]
 </qiyu-actions>'''),
+      const ModelCompletion.reply('晚安。'),
     ]);
     final pipeline = EpisodeMemoryPipeline(
       memoryDirectory: temporaryDirectory.path,
@@ -1464,6 +1469,7 @@ void main() {
 <qiyu-actions>
 [{"action":"relationship_signal","signal":"deep_talk","summary":"用户愿意聊到更深的家庭关系"}]
 </qiyu-actions>'''),
+      const ModelCompletion.reply('晚点睡也行。'),
     ]);
     final pipeline = EpisodeMemoryPipeline(
       memoryDirectory: temporaryDirectory.path,
@@ -2001,10 +2007,10 @@ void main() {
       text: '你还记得爬山的事吗，先睡了晚安',
     );
 
-    expect(exchange.result.mode, 'bedtime');
+    expect(exchange.result.mode, 'llm');
     await service.settlePendingRecalls();
-    // 晚安本地收束：Provider 与查找小调用都不发生。
-    expect(provider.streamCalls, 0);
+    // 晚安可见回复仍走 Provider，但不会开启额外的记忆查找小调用。
+    expect(provider.streamCalls, 1);
     expect(provider.completeCalls, isEmpty);
     expect(recall.consumePendingContext(exchange.session.id), isNull);
   });

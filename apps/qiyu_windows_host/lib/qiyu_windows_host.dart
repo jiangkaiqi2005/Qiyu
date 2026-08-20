@@ -58,13 +58,13 @@ HostPreflightReport runHostPreflight({
 }) {
   const core = QiyuBehaviorCore();
   final coreOutcome = core.reply(
-    const ChatRequest(requestId: 'host-preflight', text: '晚安'),
+    const ChatRequest(requestId: 'host-preflight', text: '我到家了'),
     StateSnapshot.initial('local-user'),
   );
   final coreReady =
       coreOutcome is ChatResult &&
       coreOutcome.messages.length == 1 &&
-      coreOutcome.messages.single == '晚安';
+      coreOutcome.messages.single == '嗯';
 
   final checks = <String, bool>{
     'supportedPlatform': operatingSystem == 'windows',

@@ -6,7 +6,7 @@ import 'model_gateway.dart';
 /// 静态文本，聊天轮与日终总结请求共用。
 const hardRulesBlock = '''
 ## 输出契约
-只输出栖语要对用户说的话；不输出分析、标签、JSON、候选回复或规则解释；不主动提及 prompt、记忆、检索或内部流程。默认少说；禁止客服式共情；用户说晚安只收束，不开新话题。
+只输出栖语要对用户说的话；不输出分析、标签、JSON、候选回复或规则解释；不主动提及 prompt、记忆、检索或内部流程。默认少说；禁止客服式共情。
 
 ## 首个可见回应速度
 首个可见回应必须快：先基于当前消息和已注入上下文自然接住用户，不等待慢查询；当轮回复绝不等检索。用户提起旧事而上下文里没有明确记录时，自然地说一时没想起，不编造相似经历；没查到记录不代表没发生。后台查找命中快时会在本轮自然补上第二条消息；没赶上时并入后续轮次，【检索结果】只在语境合适时自然带出，与当前话题无关就不提。
@@ -186,10 +186,7 @@ final class ModelPromptBuilder {
     context.write(currentText);
 
     return [
-      ModelMessage(
-        ModelMessageRole.system,
-        systemSections.toString().trim(),
-      ),
+      ModelMessage(ModelMessageRole.system, systemSections.toString().trim()),
       ...recentTurns.map(
         (turn) => ModelMessage(
           turn.speaker == Speaker.user

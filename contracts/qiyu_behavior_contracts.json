@@ -23,23 +23,23 @@
       }
     },
     {
-      "id": "bedtime-closes-without-new-topic",
+      "id": "bedtime-has-no-forced-local-close",
       "request": {
         "requestId": "fixture-bedtime",
         "text": "晚安"
       },
       "provider": {
-        "configured": false
+        "configured": true,
+        "candidateReply": "晚点再睡也行，想说什么？"
       },
       "expected": {
-        "messages": ["晚安"],
-        "source": "local",
-        "fallbackReason": "no_llm_config",
-        "mode": "bedtime",
+        "messages": ["晚点再睡也行，想说什么？"],
+        "source": "llm",
+        "mode": "llm",
         "relationshipStage": "初识",
         "turns": [
           { "speaker": "user", "text": "晚安" },
-          { "speaker": "qiyu", "text": "晚安" }
+          { "speaker": "qiyu", "text": "晚点再睡也行，想说什么？" }
         ]
       }
     },

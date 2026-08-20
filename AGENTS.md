@@ -62,7 +62,7 @@ Flutter `/chat` → `HttpLocalChatGateway` → `POST /api/chat` → `LocalChatSe
 4. `ProviderModelGateway` 将 OpenAI SSE、Anthropic SSE、Ollama NDJSON 统一为 `delta / done / failure`。只有收到协议原生终止标记（OpenAI `finish_reason`/`[DONE]`、Anthropic `message_stop`、Ollama `done:true`）才算完成；提前 EOF、超时或原生 error 必须失败并降级，不能把半句当完整回复。
 5. Provider 的原始增量先在 Host 内完整缓存；候选回复通过结构清洗、违禁词与人格边界校验后，才以共享 `ChatDeliveryEvent` 协议发送 `accepted → waiting → [fallback] → delta* → message → state → done`。页面绝不能看到未经完整安全校验的原始 token。
 6. 用户可通过 `/api/chat/cancel` 按 `requestId` 停止生成；取消会向下取消 Provider/HTTP 流，只保留可重试的用户 turn，不把已展示半句或未完成候选记录为完整栖语回复。
-7. 只有安全可见文本交付完成后才追加栖语 turn。刷新、Host 重启或同一 `requestId` 重试必须复用已有用户 turn/已完成回复，不能重复展示或落盘。晚安类输入在本地直接收束，不调用 Provider、不开新话题。
+7. 只有安全可见文本交付完成后才追加栖语 turn。刷新、Host 重启或同一 `requestId` 重试必须复用已有用户 turn/已完成回复，不能重复展示或落盘。晚安类输入不走本地固定收束，正常交给 Provider 结合语境回应；晚安信号仍在可见回复后触发日终归档与符合间隔的 Dream。
 8. 召回模型查找轮内循环：本轮模型在隐藏块发出 `memory_recall` 时，bubble 1 交付后 Host 读取两级索引（`episodes/index.md` → `episodes/YYYY/MM/index.md`）连同查找意图递回，模型选月份/日期，代码做成员校验（选取必须出自递过的目录，编造的丢弃记诊断），再回读选中日原文递回，模型组织 bubble 2。命中快（秒级窗口预算）且用户未停止时用同一套 `ChatDeliveryEvent` 交付与安全校验补上，落为同一 `requestId` 的栖语 turn；没赶上则压缩结果并入下一用户轮 `<memory_context>`。查找只由模型隐藏动作触发，无规则兜底、不打分；晚安/安全回复/未配置 Provider 不查找。
 
 **本地规则引擎不是占位 stub，而是行为基准（ground truth）**：黄金 eval 锁定的就是它的输出。
@@ -79,7 +79,7 @@ Flutter `/chat` → `HttpLocalChatGateway` → `POST /api/chat` → `LocalChatSe
 
 - `栖语产品灵魂.md` 是人格/风格的最高优先级设计依据（只作设计文档，不再注入 prompt）；注入 system prompt 的是从它定稿的 `栖语人格宪法.md`（与笔记 `栖语system prompt/人格宪法.md` 保持同步，仓库版去除 Obsidian 链接）；`docs/product/behavior-spec.md` 是从它提炼的工程行为规范。
 - 人格基调固定为「温暖但不讨好，聪明但不炫耀，安静但不冷淡」；不要把示例话术扩展成机械模板。
-- 关键约束：默认少说（回复频谱取最少一侧）；禁止客服式话术（`FORBIDDEN_PHRASES`，如「我理解你的感受」「谢谢你愿意和我分享」）；用户说「晚安」只收束、不开新话题；调侃/翻旧账只在关系变深后出现；一致性高于聪明（宁可笨，不可不一致）。
+- 关键约束：默认少说（回复频谱取最少一侧）；禁止客服式话术（`FORBIDDEN_PHRASES`，如「我理解你的感受」「谢谢你愿意和我分享」）；晚安不使用固定话术或本地规则强制结束对话；调侃/翻旧账只在关系变深后出现；一致性高于聪明（宁可笨，不可不一致）。
 - 改回复逻辑时同步更新 `contracts/qiyu_behavior_contracts.json` 和 Dart Core 消费测试，并运行完整 Release 1 门禁。
 - `contracts/qiyu_behavior_contracts.json` 是退役后仍保留的规范 fixture；不得以实现内常量或单端自测替代它。
 

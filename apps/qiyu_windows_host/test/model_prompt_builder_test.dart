@@ -21,6 +21,7 @@ void main() {
     expect(system, contains('## 首个可见回应速度'));
     expect(system, contains('## 事实来源优先级'));
     expect(system, contains('## 安全与专业边界'));
+    expect(system, isNot(contains('用户说晚安只收束')));
 
     expect(messages.last.role, ModelMessageRole.user);
     expect(messages.last.content, '在吗');
