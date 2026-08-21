@@ -6,8 +6,9 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'markdown_memory_repository.dart';
 
-/// 增量整理窗口：每四到六轮取最保守的一侧。窗口内没有显著信号时，
-/// checkpoint 照常前进，保证对话不会被重复整理。
+/// 增量整理窗口：每四到六轮取最保守的一侧。写入记忆会覆盖当前窗口；
+/// no_action 只覆盖当前一轮，不能越过此前缺少判断的轮次。缺口留给
+/// 晚安/启动补扫。
 const episodeWindowTurns = 4;
 
 /// episode 条目的来源类型。旧文件没有该字段，按 [episodeKindMemory] 解析。
@@ -295,6 +296,35 @@ final class EpisodeMemoryPipeline {
     }
   }
 
+  /// 日终从 sessions 完整补建后推进检查点。只接受已完成日终覆盖的会话，
+  /// 并按最后用户轮时间防止历史补扫覆盖更新的检查点。
+  Future<void> advanceCheckpointAfterBackfill(List<RawSession> sessions) async {
+    ({RawSession session, RawSessionTurn turn})? latest;
+    for (final session in sessions) {
+      for (final turn in session.turns) {
+        if (turn.speaker != Speaker.user ||
+            (latest != null && !turn.at.isAfter(latest.turn.at))) {
+          continue;
+        }
+        latest = (session: session, turn: turn);
+      }
+    }
+    if (latest == null) {
+      return;
+    }
+    final current = await readCheckpoint();
+    if (current != null && current.updatedAt.isAfter(latest.turn.at)) {
+      return;
+    }
+    await _writeCheckpoint(
+      EpisodeCheckpoint(
+        sessionId: latest.session.id,
+        lastRequestId: latest.turn.requestId,
+        updatedAt: _clock().toUtc(),
+      ),
+    );
+  }
+
   Future<EpisodeUpdateResult> processReply({
     required RawSession session,
     required String requestId,
@@ -374,8 +404,13 @@ final class EpisodeMemoryPipeline {
       }
     }
 
+    final hasExplicitNoAction = hiddenActions.any(
+      (action) => action.kind == HiddenActionKind.noAction,
+    );
     final shouldAdvance =
-        written > 0 || (consumeWindow && pendingTurns >= episodeWindowTurns);
+        consumeWindow &&
+        pendingTurns == 1 &&
+        (written > 0 || hasExplicitNoAction);
     if (!shouldAdvance) {
       return EpisodeUpdateResult(
         writtenEntries: written,

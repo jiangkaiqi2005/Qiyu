@@ -24,7 +24,7 @@ const hardRulesBlock = '''
 /// 日终总结请求间逐字复用，方便前缀缓存与两类请求共享同一协议。
 const hiddenActionsProtocolBlock = '''
 每次回复后判断本轮是否出现以下内容；若有，在回复最后另起一行追加隐藏块，格式固定为 <qiyu-actions>[...]</qiyu-actions>，数组最多两个对象：
-1. memory_signal：值得长期记住的稳定偏好、过敏与忌口、重要事件、明确纠正。
+1. memory_signal：本轮出现的具体用户信息。除稳定偏好、过敏与忌口、重要事件、明确纠正外，日常琐事、临时状态、生活细节和项目进展也要记录，不要只挑长期稳定或重大事项。
 {"action":"memory_signal","summary":"不超过60字的事实概括","evidence":"用户原话摘录，不超过80字"}
 2. open_loop_candidate：用户明确提到、真正未完且以后值得跟进的事（将要发生的事件、约好的安排、等待结果的事项）。普通闲聊、一次性任务细节不要变成任务。
 {"action":"open_loop_candidate","summary":"事项简称","due":"YYYY-MM-DD 时段","proactive":"once","note":"跟进时需要知道的背景","evidence":"用户原话摘录"}
@@ -52,17 +52,20 @@ query 只写话题关键词，不带疑问词；本轮先按一时没想起自�
 10. memory_delete：用户明确要求删除某段记忆。
 {"action":"memory_delete","summary":"删除的内容简称"}
 记忆控制纪律：只在用户明确表达时才发控制动作（7-10），猜测与暗示都不发；冻结或禁提对象说不清时覆盖当前话题；删除对象说不清时只指向最近一条，完全没有可定位的对象时先开口确认，不发任何控制动作。用户重提已被禁提的话题只回应当下，绝不自动解除禁提。
+11. no_action：本轮没有可记录的具体用户信息，也没有其他动作时使用，明确表示本轮已经判断过。
+{"action":"no_action"}
 示例：用户说「我对芒果过敏」时，回复后追加
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户对芒果过敏","evidence":"我对芒果过敏"}]
 </qiyu-actions>
-规则：没有值得记录的内容时不加隐藏块；所有字段绝不包含密码、API Key、令牌、验证码、私钥、证件号或银行卡号；隐藏块不属于可见回复，用户永远看不到，但必须原样输出完整标签。
+规则：没有可记录内容时也要用 no_action，不能省略隐藏块；所有字段绝不包含密码、API Key、令牌、验证码、私钥、证件号或银行卡号；隐藏块不属于可见回复，用户永远看不到，但必须原样输出完整标签。
 ''';
 
 /// 靠近生成位置的一句话格式提醒，提升隐藏块协议遵从率。
 const hiddenActionsReminder =
-    '回复格式提醒：输出可见回复后，若本轮出现值得长期记住的内容'
-    '（偏好、过敏忌口、重要事件、纠正），在最后另起一行追加 '
+    '回复格式提醒：输出可见回复后，若本轮出现可记录的具体用户信息'
+    '（包括日常琐事、临时状态、生活细节、项目进展、偏好、过敏忌口、'
+    '重要事件或纠正），在最后另起一行追加 '
     '<qiyu-actions>[{"action":"memory_signal","summary":"…","evidence":"…"}]'
     '</qiyu-actions>；出现真正未完的事用 open_loop_candidate；用户回复'
     '让某事闭环或暂缓用 open_loop_status；用户要求不再提某事用 '
@@ -70,7 +73,7 @@ const hiddenActionsReminder =
     '某段记忆用 memory_freeze，明确解除冻结用 memory_unfreeze；'
     '要求删除某段记忆用 memory_delete；出现深谈、冷暖变化或边界开合'
     '等关系证据用 relationship_signal；常驻字段没命中且用户问旧事用 '
-    'memory_recall；普通闲聊不追加。';
+    'memory_recall；没有可记录内容且没有其他动作时用 no_action，不能省略隐藏块。';
 
 /// 按设计定稿的装配图组装模型上下文：
 /// 人格宪法 → 硬规则与优先级 → 隐藏块协议 →

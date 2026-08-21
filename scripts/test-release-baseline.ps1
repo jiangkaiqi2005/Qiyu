@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 function Assert-Condition {
   param(
@@ -60,6 +60,12 @@ Assert-Condition (Test-Path -LiteralPath $legacyGoldenPath -PathType Leaf) `
 $legacyGolden = @(
   Get-Content -Raw -Encoding UTF8 $legacyGoldenPath | ConvertFrom-Json
 )
+# ConvertFrom-Json 对顶层数组的包装在 Windows PowerShell 5.1 与
+# PowerShell 7 之间存在差异（可能得到嵌套一层的数组）；统一展平，
+# 保证下方按 case 计数与比名的断言语义稳定。
+if ($legacyGolden.Count -eq 1 -and $legacyGolden[0] -is [System.Array]) {
+  $legacyGolden = @($legacyGolden[0])
+}
 $expectedLegacyGoldenNames = @(
   'low_signal_arrival',
   'fatigue_question',

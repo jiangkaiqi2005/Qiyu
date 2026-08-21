@@ -38,10 +38,7 @@ void main() {
     }
     // 检索结果只附在本轮上下文，未命中时不出现。
     expect(
-      builder
-          .build(StateSnapshot.initial('local-user'), '在吗')
-          .last
-          .content,
+      builder.build(StateSnapshot.initial('local-user'), '在吗').last.content,
       isNot(contains('<memory_context>')),
     );
   });
@@ -74,10 +71,12 @@ void main() {
 
   test('format reminder sits right before the current user message', () {
     var state = StateSnapshot.initial('local-user');
-    final first = const QiyuBehaviorCore().reply(
-      const ChatRequest(requestId: 'turn-1', text: '你好'),
-      state,
-    ) as ChatResult;
+    final first =
+        const QiyuBehaviorCore().reply(
+              const ChatRequest(requestId: 'turn-1', text: '你好'),
+              state,
+            )
+            as ChatResult;
     state = first.nextState;
 
     final messages = builder.build(state, '再说一句');
@@ -105,18 +104,37 @@ void main() {
     expect(system, contains('普通闲聊'));
   });
 
-  test('the protocol offers memory_recall and honest not-yet-recalled wording', () {
-    final system = builder
-        .build(StateSnapshot.initial('local-user'), '在吗')
-        .first
-        .content;
+  test(
+    'the action protocol records everyday details and requires a decision',
+    () {
+      final system = builder
+          .build(StateSnapshot.initial('local-user'), '晚饭吃了小馄饨')
+          .first
+          .content;
 
-    expect(system, contains('memory_recall'));
-    // 硬规则定稿：热层未命中时如实说一时没想起，不编造。
-    expect(system, contains('一时没想起'));
-    expect(system, contains('不编造相似经历'));
-    expect(system, contains('没查到记录不代表没发生'));
-  });
+      expect(system, contains('日常琐事'));
+      expect(system, contains('临时状态'));
+      expect(system, contains('项目进展'));
+      expect(system, contains('no_action'));
+      expect(system, isNot(contains('普通闲聊不追加')));
+    },
+  );
+
+  test(
+    'the protocol offers memory_recall and honest not-yet-recalled wording',
+    () {
+      final system = builder
+          .build(StateSnapshot.initial('local-user'), '在吗')
+          .first
+          .content;
+
+      expect(system, contains('memory_recall'));
+      // 硬规则定稿：热层未命中时如实说一时没想起，不编造。
+      expect(system, contains('一时没想起'));
+      expect(system, contains('不编造相似经历'));
+      expect(system, contains('没查到记录不代表没发生'));
+    },
+  );
 
   test('the recall discipline states index paths and selection rules', () {
     final system = builder
@@ -149,7 +167,8 @@ void main() {
     );
 
     final copied = full.copyWithDailyState('新状态');
-    final system = copied.build(StateSnapshot.initial('local-user'), '在吗')
+    final system = copied
+        .build(StateSnapshot.initial('local-user'), '在吗')
         .first
         .content;
 

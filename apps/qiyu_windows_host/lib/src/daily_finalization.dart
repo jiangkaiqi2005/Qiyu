@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'daily_understanding.dart';
 import 'episode_index.dart';
@@ -117,13 +118,15 @@ final class DailyFinalizationService {
     EpisodeIndexStore? indexStore,
     PersonaTreeStore? personaTree,
     ProviderChatClient? modelClient,
+    MemoryRepository? sessionRepository,
     Clock? clock,
     AtomicTextWriter? atomicWriter,
     void Function(String message)? diagnosticsSink,
   }) {
     final effectiveClock = clock ?? DateTime.now;
     final effectiveAtomicWriter = atomicWriter ?? const IoAtomicTextWriter();
-    final effectiveOpenLoopStore = openLoopStore ??
+    final effectiveOpenLoopStore =
+        openLoopStore ??
         OpenLoopStore(
           memoryDirectory: memoryDirectory,
           atomicWriter: effectiveAtomicWriter,
@@ -132,19 +135,22 @@ final class DailyFinalizationService {
       memoryDirectory: memoryDirectory,
       episodePipeline: episodePipeline,
       openLoopStore: effectiveOpenLoopStore,
-      relationshipLifecycle: relationshipLifecycle ??
+      relationshipLifecycle:
+          relationshipLifecycle ??
           RelationshipLifecycle(
             memoryDirectory: memoryDirectory,
             atomicWriter: effectiveAtomicWriter,
             clock: effectiveClock,
           ),
-      indexStore: indexStore ??
+      indexStore:
+          indexStore ??
           EpisodeIndexStore(
             memoryDirectory: memoryDirectory,
             episodePipeline: episodePipeline,
             atomicWriter: effectiveAtomicWriter,
           ),
-      personaTree: personaTree ??
+      personaTree:
+          personaTree ??
           PersonaTreeStore(
             memoryDirectory: memoryDirectory,
             episodePipeline: episodePipeline,
@@ -152,6 +158,13 @@ final class DailyFinalizationService {
             atomicWriter: effectiveAtomicWriter,
           ),
       modelClient: modelClient,
+      sessionRepository:
+          sessionRepository ??
+          MarkdownMemoryRepository(
+            memoryDirectory: memoryDirectory,
+            clock: effectiveClock,
+            atomicWriter: effectiveAtomicWriter,
+          ),
       clock: effectiveClock,
       atomicWriter: effectiveAtomicWriter,
       diagnosticsSink: diagnosticsSink,
@@ -166,6 +179,7 @@ final class DailyFinalizationService {
     required this._indexStore,
     required this._personaTree,
     required this._modelClient,
+    required this._sessionRepository,
     required this._clock,
     required this._atomicWriter,
     required void Function(String message)? diagnosticsSink,
@@ -180,11 +194,13 @@ final class DailyFinalizationService {
 
   /// 日终模型理解调用的 Provider 客户端；null 时全确定性路径。
   final ProviderChatClient? _modelClient;
+  final MemoryRepository _sessionRepository;
   final Clock _clock;
   final AtomicTextWriter _atomicWriter;
   final void Function(String) _diagnosticsSink;
 
-  File get _dailyStateFile => File(path.join(memoryDirectory, 'daily-state.md'));
+  File get _dailyStateFile =>
+      File(path.join(memoryDirectory, 'daily-state.md'));
 
   /// 晚安归档：先补做所有更早的未完成日期，最后归档用户说晚安的当天。
   /// 当天放在最后，保证近日状态包以最新一天为窗口终点重建。
@@ -214,21 +230,28 @@ final class DailyFinalizationService {
   /// 授予模型理解调用，其余日期确定性归档；已持久化理解的复用不占
   /// 预算。写入仍按日期**升序**执行：近日状态包每日整文件重建，
   /// 最新日最后归档，最终投影才以最新日为窗口终点。
-  Future<FinalizationReport> catchUpUnfinalized({required String before}) async {
-    final dates = await episodePipeline.listEpisodeDates();
-    final past = dates
-        .where((date) => date.compareTo(before) < 0)
-        .toList();
+  Future<FinalizationReport> catchUpUnfinalized({
+    required String before,
+  }) async {
+    final history = await _sessionRepository.readHistory();
+    final dates = {
+      ...await episodePipeline.listEpisodeDates(),
+      ...history.sessions.map((session) => session.date),
+    }.toList()..sort();
+    final past = dates.where((date) => date.compareTo(before) < 0).toList();
     final pending = <String>[];
     for (final date in past) {
       final day = await episodePipeline.readDay(date);
-      if (day.exists && day.readable && !day.finalized) {
+      final sessions = history.sessions
+          .where((session) => session.date == date)
+          .toList();
+      if (day.readable &&
+          ((!day.finalized && day.exists) ||
+              _pendingSessionRequestIds(day, sessions).isNotEmpty)) {
         pending.add(date);
       }
     }
-    final modelDates = pending.reversed
-        .take(catchUpModelDayBudget)
-        .toSet();
+    final modelDates = pending.reversed.take(catchUpModelDayBudget).toSet();
     final outcomes = <FinalizationOutcome>[];
     for (final date in past) {
       try {
@@ -237,6 +260,11 @@ final class DailyFinalizationService {
             date,
             episodeDates: dates,
             allowModel: modelDates.contains(date),
+            // 补扫复用循环前已读的会话记录，避免逐日重复全量读盘。
+            sessions: history.sessions
+                .where((session) => session.date == date)
+                .toList()
+                ..sort((left, right) => left.segment.compareTo(right.segment)),
           ),
         );
       } on Object catch (error) {
@@ -256,24 +284,31 @@ final class DailyFinalizationService {
   /// false；重复调用幂等（已归档日期直接跳过）。[episodeDates] 供补扫
   /// 复用已扫描的日期列表；缺省时自行扫描。[allowModel] 为 false 时
   /// 不发起新的模型理解调用（已持久化理解仍复用），补扫预算外的
-  /// 日期走该路径。
+  /// 日期走该路径。[sessions] 供补扫复用循环前已读的会话记录；缺省
+  /// 时自行读取一次。
+  ///
+  /// 分两阶段执行，episode 日文件锁只覆盖提交阶段的写入：
+  /// 准备阶段（不持锁）读取快照、计算待补范围并发起可能长达数十秒的
+  /// 模型理解调用；提交阶段（持锁）基于快照做全部判断与写入。模型
+  /// 调用绝不占锁，否则对话增量整理会排队等锁并堵住交付串行槽，
+  /// 用户下一条消息完全无法开始。快照之后并发写入的新条目在提交时
+  /// 按 id 合并，绝不覆盖丢失。
   Future<FinalizationOutcome> finalizeDay(
     String date, {
     List<String>? episodeDates,
     bool allowModel = true,
-  }) => episodePipeline.synchronizedOnDayFiles(
-    () => _finalizeDayLocked(date, episodeDates, allowModel),
-  );
-
-  Future<FinalizationOutcome> _finalizeDayLocked(
-    String date,
-    List<String>? episodeDates,
-    bool allowModel,
-  ) async {
+    List<RawSession>? sessions,
+  }) async {
     final dates = episodeDates ?? await episodePipeline.listEpisodeDates();
+
+    // —— 准备阶段（不持锁）：读快照与材料，模型理解调用在此。——
     final day = await episodePipeline.readDay(date);
-    if (!day.exists) {
-      return FinalizationOutcome(date: date, status: FinalizationStatus.skippedMissing);
+    final daySessions = sessions ?? await _sessionsForDate(date);
+    if (!day.exists && daySessions.isEmpty) {
+      return FinalizationOutcome(
+        date: date,
+        status: FinalizationStatus.skippedMissing,
+      );
     }
     if (!day.readable) {
       return FinalizationOutcome(
@@ -281,13 +316,113 @@ final class DailyFinalizationService {
         status: FinalizationStatus.skippedUnreadable,
       );
     }
-    if (day.finalized) {
+    final pendingRequestIds = _pendingSessionRequestIds(day, daySessions);
+    if (day.finalized && pendingRequestIds.isEmpty) {
       return FinalizationOutcome(
         date: date,
         status: FinalizationStatus.alreadyFinalized,
       );
     }
-    final entries = validEpisodeEntries(day.entries);
+    var entries = validEpisodeEntries(day.entries);
+
+    final ({DayUnderstanding? understanding, bool usedModel})
+    understandingResult;
+    if (entries.isEmpty && pendingRequestIds.isEmpty) {
+      understandingResult = (understanding: null, usedModel: false);
+    } else {
+      understandingResult = await _understandingFor(
+        date,
+        day,
+        entries,
+        allowModel,
+        sessions: daySessions,
+        pendingRequestIds: pendingRequestIds,
+      );
+    }
+    final preparedUnderstanding = understandingResult.understanding;
+
+    // 补建闸门（锁外判断）：只要求覆盖全部待补轮次即可提交；多报的
+    // requestId 由 _backfilledEntries 的成员校验丢弃并记诊断，不再因
+    // 一字之差整体作废重试。未发起模型尝试或未覆盖时按定稿留给下次
+    // 晚安/启动补扫。
+    var backfillAdditions = const <EpisodeEntry>[];
+    if (pendingRequestIds.isNotEmpty) {
+      final covered =
+          preparedUnderstanding?.coveredRequestIds.toSet() ??
+          const <String>{};
+      if (!understandingResult.usedModel ||
+          preparedUnderstanding == null ||
+          !covered.containsAll(pendingRequestIds)) {
+        throw MemoryRepositoryException(
+          code: 'session_backfill_deferred',
+          message: '日终尚未完整整理 sessions，将在下次晚安或启动时重试。',
+          retryable: true,
+        );
+      }
+      backfillAdditions = _backfilledEntries(
+        date,
+        preparedUnderstanding,
+        daySessions,
+        pendingRequestIds,
+        existingEntries: day.entries,
+      );
+    }
+
+    // —— 提交阶段（持锁）：全部写入。——
+    return episodePipeline.synchronizedOnDayFiles(
+      () => _commitDayWrites(
+        date,
+        dates,
+        daySessions,
+        pendingRequestIds,
+        snapshotEntries: day.entries,
+        backfillAdditions: backfillAdditions,
+        understanding: preparedUnderstanding,
+        usedModel: understandingResult.usedModel,
+      ),
+    );
+  }
+
+  /// 提交阶段：必须在 [EpisodeMemoryPipeline.synchronizedOnDayFiles]
+  /// 锁内调用。以准备阶段快照为基础写入；快照之后并发写入的新条目
+  /// （如当天聊天的隐藏动作落盘）按 id 合并进来，理解材料仍基于快照，
+  /// 新条目的整理由既有 finalized=false 语义留给下一轮归档。
+  Future<FinalizationOutcome> _commitDayWrites(
+    String date,
+    List<String> dates,
+    List<RawSession> daySessions,
+    Set<String> pendingRequestIds, {
+    required List<EpisodeEntry> snapshotEntries,
+    required List<EpisodeEntry> backfillAdditions,
+    required DayUnderstanding? understanding,
+    required bool usedModel,
+  }) async {
+    final latest = await episodePipeline.readDay(date);
+    final knownIds = {
+      ...snapshotEntries.map((entry) => entry.id),
+      ...backfillAdditions.map((entry) => entry.id),
+    };
+    final allEntries = [
+      ...snapshotEntries,
+      ...backfillAdditions,
+      ...latest.entries.where((entry) => !knownIds.contains(entry.id)),
+    ];
+    final entries = validEpisodeEntries(allEntries);
+
+    final persistedUnderstanding = understanding
+        ?.withCoverage(entries)
+        .toJson();
+    final effectiveDates = ({...dates, date}.toList()..sort());
+    if (pendingRequestIds.isNotEmpty) {
+      await episodePipeline.writeFinalization(
+        date,
+        entries: allEntries,
+        finalized: false,
+        understanding: persistedUnderstanding,
+      );
+      await episodePipeline.advanceCheckpointAfterBackfill(daySessions);
+    }
+
     if (entries.isEmpty) {
       // 只有系统错误、敏感信息或纯簿记条目的一天没有可投影内容：
       // 不调模型、不写 daily-state。但热层的闭环归档与过期清理是
@@ -300,12 +435,12 @@ final class DailyFinalizationService {
         await _relationshipLifecycle.updateAtEndOfDay(
           date,
           episodePipeline,
-          dates,
+          effectiveDates,
         );
       });
       await episodePipeline.writeFinalization(
         date,
-        entries: day.entries,
+        entries: allEntries,
         finalized: true,
         finalizedAt: _clock().toUtc(),
       );
@@ -315,41 +450,35 @@ final class DailyFinalizationService {
       );
     }
 
-    // 模型理解调用（可选第 0 步）：未配置/失败/全废时为 null，
-    // 以下各步全部退回确定性材料，finalized 语义不受影响。
-    final understandingResult = await _understandingFor(
-      date,
-      day,
-      entries,
-      allowModel,
-    );
-    final understanding = understandingResult.understanding;
-    final persistedUnderstanding = understanding
-        ?.withCoverage(entries)
-        .toJson();
-
     // 固定顺序，任一步失败则 finalized 保持 false，下次整体重跑：
     // 1. 当天摘要；2. 待跟进候选；3. 关系证据；4. 近日状态包；5. 索引；
     // 6. PersonaTree 中间理解（先补齐当天叶，再建立/挂载/整理）。
     final summary = understanding?.summary ?? _buildSummary(entries);
-    await _writeStep(date, () => episodePipeline.writeFinalization(
-      date,
-      entries: day.entries,
-      summary: summary,
-      finalized: false,
-      understanding: persistedUnderstanding,
-    ));
     await _writeStep(
       date,
-      () => _processFollowUpCandidates(date, day.entries, understanding),
+      () => episodePipeline.writeFinalization(
+        date,
+        entries: allEntries,
+        summary: summary,
+        finalized: false,
+        understanding: persistedUnderstanding,
+      ),
     );
     await _writeStep(
       date,
-      () => _relationshipLifecycle.updateAtEndOfDay(date, episodePipeline, dates),
+      () => _processFollowUpCandidates(date, allEntries, understanding),
     );
     await _writeStep(
       date,
-      () => _rebuildDailyState(date, dates, mood: understanding?.mood),
+      () => _relationshipLifecycle.updateAtEndOfDay(
+        date,
+        episodePipeline,
+        effectiveDates,
+      ),
+    );
+    await _writeStep(
+      date,
+      () => _rebuildDailyState(date, effectiveDates, mood: understanding?.mood),
     );
     await _writeStep(date, () => _rebuildIndexes(includingDay: date));
     await _writeStep(
@@ -361,7 +490,7 @@ final class DailyFinalizationService {
     );
     await episodePipeline.writeFinalization(
       date,
-      entries: day.entries,
+      entries: allEntries,
       summary: summary,
       finalized: true,
       finalizedAt: _clock().toUtc(),
@@ -370,31 +499,35 @@ final class DailyFinalizationService {
     return FinalizationOutcome(
       date: date,
       status: FinalizationStatus.finalized,
-      usedModel: understandingResult.usedModel,
+      usedModel: usedModel,
     );
   }
 
-  /// 取得当天模型理解：已持久化且仍覆盖当前条目的理解按当前禁提
-  /// 复查后直接复用（不重复调用）；否则在预算与配置允许时发起一次
-  /// 调用。返回值里 [usedModel] 表示本次是否发起了新的理解尝试，
-  /// 供补扫预算记账。
-  Future<({DayUnderstanding? understanding, bool usedModel})>
-  _understandingFor(
+  /// 取得当天模型理解。已持久化且仍覆盖当前条目的理解按当前禁提
+  /// 复查后直接复用（不重复调用）；已持久化但仍有待补轮次时发起
+  /// **增量**调用——模型只看待补轮次（fetch 层已按 pending 过滤），
+  /// 返回后仅合并 episode_entries 与 covered_request_ids，其余字段
+  /// 保留旧理解结论，绝不让补建推翻已归档的整体理解；否则在预算与
+  /// 配置允许时发起一次全新调用。返回值里 [usedModel] 表示本次是否
+  /// 发起了新的理解尝试，供补扫预算记账。
+  Future<({DayUnderstanding? understanding, bool usedModel})> _understandingFor(
     String date,
     EpisodeDay day,
     List<EpisodeEntry> entries,
-    bool allowModel,
-  ) async {
+    bool allowModel, {
+    required List<RawSession> sessions,
+    required Set<String> pendingRequestIds,
+  }) async {
     // 受控集合 = 封禁（禁提 ∪ 删除）∪ 冻结：冻结同样停止整理。
     final controls = await _openLoopStore.memoryControls.load();
-    final banned = {
-      ...controls.blockedSummaries,
-      ...controls.frozenSummaries,
-    };
+    final banned = {...controls.blockedSummaries, ...controls.frozenSummaries};
+    DayUnderstanding? restored;
     final persisted = day.understanding;
     if (persisted != null) {
-      final restored = DayUnderstanding.fromJson(persisted).filterBanned(banned);
-      if (!restored.isEmpty && restored.covers(entries)) {
+      restored = DayUnderstanding.fromJson(persisted).filterBanned(banned);
+      if (!restored.isEmpty &&
+          pendingRequestIds.isEmpty &&
+          restored.covers(entries)) {
         return (understanding: restored, usedModel: false);
       }
     }
@@ -423,9 +556,123 @@ final class DailyFinalizationService {
         banned,
       ),
       bannedTitles: banned,
+      sessions: sessions,
+      pendingRequestIds: pendingRequestIds,
       diagnosticsSink: _diagnosticsSink,
     );
-    return (understanding: understanding, usedModel: true);
+    if (understanding == null || restored == null || restored.isEmpty) {
+      return (understanding: understanding, usedModel: true);
+    }
+    if (pendingRequestIds.isEmpty) {
+      // 无待补轮次的全新重理解（旧理解不覆盖当前条目）：整体替换。
+      return (understanding: understanding, usedModel: true);
+    }
+    // 已归档日期的增量补建：episode 与覆盖清单取本次结果，其余字段
+    // 沿用已归档结论。
+    final mergedCovered = [...restored.coveredRequestIds];
+    for (final requestId in understanding.coveredRequestIds) {
+      if (!mergedCovered.contains(requestId)) {
+        mergedCovered.add(requestId);
+      }
+    }
+    return (
+      understanding: DayUnderstanding(
+        summary: restored.summary,
+        mood: restored.mood,
+        loopCandidates: restored.loopCandidates,
+        loopClosures: restored.loopClosures,
+        relationshipSignals: restored.relationshipSignals,
+        indexKeywords: restored.indexKeywords,
+        personaHints: restored.personaHints,
+        episodeEntries: understanding.episodeEntries,
+        coveredRequestIds: mergedCovered,
+      ),
+      usedModel: true,
+    );
+  }
+
+  Future<List<RawSession>> _sessionsForDate(String date) async {
+    final history = await _sessionRepository.readHistory();
+    return history.sessions.where((session) => session.date == date).toList()
+      ..sort((left, right) => left.segment.compareTo(right.segment));
+  }
+
+  Set<String> _pendingSessionRequestIds(
+    EpisodeDay day,
+    List<RawSession> sessions,
+  ) {
+    final covered = <String>{for (final entry in day.entries) entry.requestId};
+    final persisted = day.understanding;
+    if (persisted != null) {
+      covered.addAll(DayUnderstanding.fromJson(persisted).coveredRequestIds);
+    }
+    return {
+      for (final session in sessions)
+        for (final turn in session.turns)
+          if (turn.speaker == Speaker.user &&
+              !_isPureBedtimeTrigger(turn.text) &&
+              !covered.contains(turn.requestId))
+            turn.requestId,
+    };
+  }
+
+  List<EpisodeEntry> _backfilledEntries(
+    String date,
+    DayUnderstanding understanding,
+    List<RawSession> sessions,
+    Set<String> pendingRequestIds, {
+    required List<EpisodeEntry> existingEntries,
+  }) {
+    final sources = <String, ({RawSession session, RawSessionTurn turn})>{};
+    final ambiguous = <String>{};
+    for (final session in sessions) {
+      for (final turn in session.turns) {
+        if (turn.speaker != Speaker.user ||
+            !pendingRequestIds.contains(turn.requestId)) {
+          continue;
+        }
+        if (sources.containsKey(turn.requestId)) {
+          ambiguous.add(turn.requestId);
+          continue;
+        }
+        sources[turn.requestId] = (session: session, turn: turn);
+      }
+    }
+    for (final requestId in ambiguous) {
+      sources.remove(requestId);
+      _diagnosticsSink(
+        'session backfill entry dropped reason=ambiguous request=$requestId '
+        'date=$date',
+      );
+    }
+
+    final existingIds = existingEntries.map((entry) => entry.id).toSet();
+    final additions = <EpisodeEntry>[];
+    for (final (index, candidate) in understanding.episodeEntries.indexed) {
+      final source = sources[candidate.requestId];
+      if (source == null) {
+        _diagnosticsSink(
+          'session backfill entry dropped reason=unknown request='
+          '${candidate.requestId} date=$date',
+        );
+        continue;
+      }
+      final id = 'backfill:${source.session.id}:${candidate.requestId}:$index';
+      if (!existingIds.add(id)) {
+        continue;
+      }
+      additions.add(
+        EpisodeEntry(
+          id: id,
+          sessionId: source.session.id,
+          requestId: candidate.requestId,
+          summary: candidate.summary,
+          evidence: candidate.evidence,
+          at: source.turn.at,
+        ),
+      );
+    }
+    return additions;
   }
 
   /// open-loops.md 的受控过滤（条目级）：结构不可识别时原样保留。
@@ -587,9 +834,7 @@ final class DailyFinalizationService {
     DayUnderstanding? understanding,
   ) async {
     final candidates = [
-      ...entries.where(
-        (entry) => entry.kind == episodeKindOpenLoopCandidate,
-      ),
+      ...entries.where((entry) => entry.kind == episodeKindOpenLoopCandidate),
       ..._modelLoopCandidates(date, understanding),
     ];
     if (candidates.isNotEmpty) {
@@ -680,7 +925,10 @@ final class DailyFinalizationService {
     final recent = perDay[latestDate]!
         .where((entry) => !excluded(entry))
         .take(_dailyStateMaxRecentItems)
-        .map((entry) => '- ${clipRunes(entry.summary.trim(), _dailyStateMaxItemRunes)}')
+        .map(
+          (entry) =>
+              '- ${clipRunes(entry.summary.trim(), _dailyStateMaxItemRunes)}',
+        )
         .toList();
 
     final sections = StringBuffer()
@@ -703,16 +951,11 @@ final class DailyFinalizationService {
     final trimmedMood = mood?.trim() ?? '';
     var moodSection = trimmedMood.isEmpty
         ? ''
-        : renderSection(
-            '近日气氛',
-            [clipRunes(trimmedMood, understandingMoodMaxRunes)],
-          );
-    final recentSection = recent.isEmpty
-        ? ''
-        : renderSection('用户当前近况', recent);
-    var activeSection = active.isEmpty
-        ? ''
-        : renderSection('近日活跃', active);
+        : renderSection('近日气氛', [
+            clipRunes(trimmedMood, understandingMoodMaxRunes),
+          ]);
+    final recentSection = recent.isEmpty ? '' : renderSection('用户当前近况', recent);
+    var activeSection = active.isEmpty ? '' : renderSection('近日活跃', active);
     var usedRunes = sections.toString().runes.length + moodSection.runes.length;
     // 预算关（T09 砍序：气氛描述是 daily-state 内的可牺牲项）：超限
     // 先整体砍掉近日气氛，再砍近日活跃（最旧优先）；当前近况是最新
@@ -726,9 +969,7 @@ final class DailyFinalizationService {
             dailyStateMaxRunes &&
         active.isNotEmpty) {
       active.removeAt(0);
-      activeSection = active.isEmpty
-          ? ''
-          : renderSection('近日活跃', active);
+      activeSection = active.isEmpty ? '' : renderSection('近日活跃', active);
     }
     final contents = '$sections$moodSection$activeSection$recentSection';
     await _atomicWriter.replace(file.path, contents);
@@ -780,3 +1021,7 @@ DateTime _parseDate(String date) => DateTime(
   int.parse(date.substring(8, 10)),
 );
 
+bool _isPureBedtimeTrigger(String text) {
+  final normalized = text.trim().replaceAll(RegExp(r'[。！!~～…]+$'), '').trim();
+  return RegExp(r'^(晚安|睡了|先睡|先睡了|我先睡|我先睡了|去睡了|睡觉|睡觉了)$').hasMatch(normalized);
+}

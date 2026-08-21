@@ -1,4 +1,4 @@
-function Publish-WindowsBundle {
+﻿function Publish-WindowsBundle {
   param(
     [Parameter(Mandatory = $true)]
     [string]$StagingPath,

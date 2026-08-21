@@ -6,38 +6,41 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('a validated memory signal writes today episode and advances checkpoint', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-episode-signal-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: () => DateTime(2026, 8, 14, 22, 30),
-    );
+  test(
+    'a validated memory signal writes today episode and advances checkpoint',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-episode-signal-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 14, 22, 30),
+      );
 
-    final result = await pipeline.processReply(
-      session: _session('session-1', ['req-1']),
-      requestId: 'req-1',
-      hiddenActions: const [
-        HiddenAction(
-          kind: HiddenActionKind.memorySignal,
-          summary: '用户明天有面试',
-          evidence: '明天要面试，有点紧张',
-        ),
-      ],
-    );
+      final result = await pipeline.processReply(
+        session: _session('session-1', ['req-1']),
+        requestId: 'req-1',
+        hiddenActions: const [
+          HiddenAction(
+            kind: HiddenActionKind.memorySignal,
+            summary: '用户明天有面试',
+            evidence: '明天要面试，有点紧张',
+          ),
+        ],
+      );
 
-    expect(result.writtenEntries, 1);
-    expect(result.checkpointAdvanced, isTrue);
-    final day = await pipeline.readToday();
-    expect(day.entries, hasLength(1));
-    expect(day.entries.single.summary, '用户明天有面试');
-    expect(day.entries.single.evidence, '明天要面试，有点紧张');
-    final checkpoint = await pipeline.readCheckpoint();
-    expect(checkpoint!.sessionId, 'session-1');
-    expect(checkpoint.lastRequestId, 'req-1');
-  });
+      expect(result.writtenEntries, 1);
+      expect(result.checkpointAdvanced, isTrue);
+      final day = await pipeline.readToday();
+      expect(day.entries, hasLength(1));
+      expect(day.entries.single.summary, '用户明天有面试');
+      expect(day.entries.single.evidence, '明天要面试，有点紧张');
+      final checkpoint = await pipeline.readCheckpoint();
+      expect(checkpoint!.sessionId, 'session-1');
+      expect(checkpoint.lastRequestId, 'req-1');
+    },
+  );
 
   test('duplicate signals for the same turn are idempotent', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
@@ -50,10 +53,7 @@ void main() {
     );
     final session = _session('session-1', ['req-1']);
     const signal = [
-      HiddenAction(
-        kind: HiddenActionKind.memorySignal,
-        summary: '用户下周搬家',
-      ),
+      HiddenAction(kind: HiddenActionKind.memorySignal, summary: '用户下周搬家'),
     ];
 
     await pipeline.processReply(
@@ -88,10 +88,7 @@ void main() {
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
         hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.memorySignal,
-            summary: '写不进去的记忆',
-          ),
+          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '写不进去的记忆'),
         ],
       ),
       throwsA(
@@ -105,9 +102,48 @@ void main() {
     expect(await pipeline.readCheckpoint(), isNull);
   });
 
-  test('the four-turn window advances the checkpoint without a signal', () async {
+  test(
+    'the four-turn window stays pending without a memory decision',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-episode-window-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 14, 22, 30),
+      );
+
+      for (final requestId in ['req-1', 'req-2', 'req-3']) {
+        final result = await pipeline.processReply(
+          session: _session('session-1', [
+            ...[
+              'req-1',
+              'req-2',
+              'req-3',
+            ].sublist(0, ['req-1', 'req-2', 'req-3'].indexOf(requestId) + 1),
+          ]),
+          requestId: requestId,
+          hiddenActions: const [],
+        );
+        expect(result.checkpointAdvanced, isFalse, reason: requestId);
+      }
+      final fourth = await pipeline.processReply(
+        session: _session('session-1', ['req-1', 'req-2', 'req-3', 'req-4']),
+        requestId: 'req-4',
+        hiddenActions: const [],
+      );
+
+      expect(fourth.checkpointAdvanced, isFalse);
+      expect(fourth.pendingTurns, 4);
+      expect(await pipeline.readCheckpoint(), isNull);
+      expect((await pipeline.readToday()).entries, isEmpty);
+    },
+  );
+
+  test('an explicit no-action advances only a clean current turn', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-episode-window-test-',
+      'qiyu-episode-no-action-test-',
     );
     addTearDown(() => temporaryDirectory.delete(recursive: true));
     final pipeline = EpisodeMemoryPipeline(
@@ -115,29 +151,15 @@ void main() {
       clock: () => DateTime(2026, 8, 14, 22, 30),
     );
 
-    for (final requestId in ['req-1', 'req-2', 'req-3']) {
-      final result = await pipeline.processReply(
-        session: _session('session-1', [
-          ...['req-1', 'req-2', 'req-3'].sublist(
-            0,
-            ['req-1', 'req-2', 'req-3'].indexOf(requestId) + 1,
-          ),
-        ]),
-        requestId: requestId,
-        hiddenActions: const [],
-      );
-      expect(result.checkpointAdvanced, isFalse, reason: requestId);
-    }
-    final fourth = await pipeline.processReply(
-      session: _session('session-1', ['req-1', 'req-2', 'req-3', 'req-4']),
-      requestId: 'req-4',
-      hiddenActions: const [],
+    final result = await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [HiddenAction(kind: HiddenActionKind.noAction)],
     );
 
-    expect(fourth.checkpointAdvanced, isTrue);
-    expect(fourth.pendingTurns, 0);
-    expect((await pipeline.readCheckpoint())!.lastRequestId, 'req-4');
-    expect((await pipeline.readToday()).entries, isEmpty);
+    expect(result.checkpointAdvanced, isTrue);
+    expect(result.pendingTurns, 0);
+    expect((await pipeline.readCheckpoint())!.lastRequestId, 'req-1');
   });
 
   test('a new session restarts the window from scratch', () async {
@@ -165,36 +187,39 @@ void main() {
     expect(switched.pendingTurns, 1);
   });
 
-  test('secrets never reach the episode file even if validation is bypassed', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-episode-secrets-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: () => DateTime(2026, 8, 14, 22, 30),
-    );
+  test(
+    'secrets never reach the episode file even if validation is bypassed',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-episode-secrets-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 14, 22, 30),
+      );
 
-    await pipeline.processReply(
-      session: _session('session-1', ['req-1']),
-      requestId: 'req-1',
-      hiddenActions: const [
-        HiddenAction(
-          kind: HiddenActionKind.memorySignal,
-          summary: '密码: hunter2abc',
-          evidence: '身份证 11010519491231002X',
-        ),
-      ],
-    );
+      await pipeline.processReply(
+        session: _session('session-1', ['req-1']),
+        requestId: 'req-1',
+        hiddenActions: const [
+          HiddenAction(
+            kind: HiddenActionKind.memorySignal,
+            summary: '密码: hunter2abc',
+            evidence: '身份证 11010519491231002X',
+          ),
+        ],
+      );
 
-    final episodeFile = File(
-      '${temporaryDirectory.path}/episodes/2026/08/2026-08-14.md',
-    );
-    final contents = await episodeFile.readAsString(encoding: utf8);
-    expect(contents, isNot(contains('hunter2abc')));
-    expect(contents, isNot(contains('11010519491231002X')));
-    expect(contents, contains('[已脱敏]'));
-  });
+      final episodeFile = File(
+        '${temporaryDirectory.path}/episodes/2026/08/2026-08-14.md',
+      );
+      final contents = await episodeFile.readAsString(encoding: utf8);
+      expect(contents, isNot(contains('hunter2abc')));
+      expect(contents, isNot(contains('11010519491231002X')));
+      expect(contents, contains('[已脱敏]'));
+    },
+  );
 
   test('a corrupted or foreign day file is never overwritten', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
@@ -205,13 +230,9 @@ void main() {
       memoryDirectory: temporaryDirectory.path,
       clock: () => DateTime(2026, 8, 14, 22, 30),
     );
-    final dayPath =
-        '${temporaryDirectory.path}/episodes/2026/08/2026-08-14.md';
+    final dayPath = '${temporaryDirectory.path}/episodes/2026/08/2026-08-14.md';
     File(dayPath).createSync(recursive: true);
-    File(dayPath).writeAsStringSync(
-      '# 用户手写的日记\n\n今天天气很好。\n',
-      encoding: utf8,
-    );
+    File(dayPath).writeAsStringSync('# 用户手写的日记\n\n今天天气很好。\n', encoding: utf8);
 
     final result = await pipeline.processReply(
       session: _session('session-1', ['req-1', 'req-2', 'req-3', 'req-4']),
@@ -252,7 +273,7 @@ void main() {
     expect(result.pendingTurns, 4);
     expect(await pipeline.readCheckpoint(), isNull);
 
-    // Provider 恢复后的 LLM 轮一次性补跑窗口。
+    // Provider 恢复后只判断了当前轮，不能顺带越过前四轮。
     final recovered = await pipeline.processReply(
       session: _session('session-1', [
         'req-1',
@@ -262,10 +283,11 @@ void main() {
         'req-5',
       ]),
       requestId: 'req-5',
-      hiddenActions: const [],
+      hiddenActions: const [HiddenAction(kind: HiddenActionKind.noAction)],
       consumeWindow: true,
     );
-    expect(recovered.checkpointAdvanced, isTrue);
+    expect(recovered.checkpointAdvanced, isFalse);
+    expect(recovered.pendingTurns, 5);
   });
 
   test('a fresh pipeline resumes from the persisted checkpoint', () async {

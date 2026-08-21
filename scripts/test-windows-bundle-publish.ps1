@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'windows-bundle-publish.ps1')
 

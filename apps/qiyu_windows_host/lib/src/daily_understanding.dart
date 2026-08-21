@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
 import 'daily_finalization.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
@@ -24,6 +26,8 @@ const understandingMaxLoopCandidates = 2;
 const understandingMaxLoopClosures = 1;
 const understandingMaxRelationshipSignals = 1;
 const understandingMaxPersonaHints = 1;
+const understandingMaxEpisodeEntries = 40;
+const understandingEvidenceMaxRunes = 80;
 
 /// open-loop proactive 字段白名单。
 const _understandingProactiveWhitelist = {'no', 'once', 'yes'};
@@ -60,6 +64,14 @@ typedef UnderstandingPersonaHint = ({
   String summary,
 });
 
+/// 日终从 sessions 补建的 episode 候选。requestId 只能引用本次递给
+/// 模型的待补用户轮，代码侧还会做成员校验。
+typedef UnderstandingEpisodeEntry = ({
+  String requestId,
+  String summary,
+  String? evidence,
+});
+
 /// 日终一次模型理解调用的产出（Memory.md 日终归档定稿 2026-08-16）。
 ///
 /// 所有字段都经过白名单校验、脱敏与禁提过滤；不合规字段在解析时
@@ -75,6 +87,8 @@ final class DayUnderstanding {
     this.relationshipSignals = const [],
     this.indexKeywords = const [],
     this.personaHints = const [],
+    this.episodeEntries = const [],
+    this.coveredRequestIds = const [],
     this.entryCount,
     this.lastEntryId,
   });
@@ -86,6 +100,8 @@ final class DayUnderstanding {
   final List<UnderstandingSignal> relationshipSignals;
   final List<String> indexKeywords;
   final List<UnderstandingPersonaHint> personaHints;
+  final List<UnderstandingEpisodeEntry> episodeEntries;
+  final List<String> coveredRequestIds;
   final int? entryCount;
   final String? lastEntryId;
 
@@ -96,7 +112,9 @@ final class DayUnderstanding {
       loopClosures.isEmpty &&
       relationshipSignals.isEmpty &&
       indexKeywords.isEmpty &&
-      personaHints.isEmpty;
+      personaHints.isEmpty &&
+      episodeEntries.isEmpty &&
+      coveredRequestIds.isEmpty;
 
   /// 本理解是否仍覆盖当前条目集合（条目只追加不删除，比较数量与
   /// 末条 ID 即可）。
@@ -112,6 +130,7 @@ final class DayUnderstanding {
     relationshipSignals: relationshipSignals,
     indexKeywords: indexKeywords,
     personaHints: personaHints,
+    coveredRequestIds: coveredRequestIds,
     entryCount: entries.length,
     lastEntryId: entries.isEmpty ? null : entries.last.id,
   );
@@ -157,9 +176,20 @@ final class DayUnderstanding {
           .where((signal) => !hit(signal.summary))
           .toList(),
       indexKeywords: indexKeywords.where((keyword) => !hit(keyword)).toList(),
-      personaHints: personaHints
-          .where((hint) => !hit(hint.summary))
+      personaHints: personaHints.where((hint) => !hit(hint.summary)).toList(),
+      episodeEntries: episodeEntries
+          .where((entry) => !hit(entry.summary))
+          .map(
+            (entry) => (
+              requestId: entry.requestId,
+              summary: entry.summary,
+              evidence: entry.evidence != null && hit(entry.evidence!)
+                  ? null
+                  : entry.evidence,
+            ),
+          )
           .toList(),
+      coveredRequestIds: coveredRequestIds,
       entryCount: entryCount,
       lastEntryId: lastEntryId,
     );
@@ -195,8 +225,13 @@ final class DayUnderstanding {
     if (personaHints.isNotEmpty)
       'personaHints': [
         for (final hint in personaHints)
-          {'branch': hint.branch, 'nature': hint.nature, 'summary': hint.summary},
+          {
+            'branch': hint.branch,
+            'nature': hint.nature,
+            'summary': hint.summary,
+          },
       ],
+    if (coveredRequestIds.isNotEmpty) 'coveredRequestIds': coveredRequestIds,
     if (entryCount != null) 'entryCount': entryCount,
     if (lastEntryId != null) 'lastEntryId': lastEntryId,
   };
@@ -230,7 +265,8 @@ final class DayUnderstanding {
       candidates.add((
         title: title,
         due: _clipText(item['due'], understandingDueMaxRunes),
-        proactive: proactive is String &&
+        proactive:
+            proactive is String &&
                 _understandingProactiveWhitelist.contains(proactive)
             ? proactive
             : null,
@@ -251,10 +287,7 @@ final class DayUnderstanding {
     final signals = <UnderstandingSignal>[];
     for (final item in objects('relationshipSignals')) {
       final signal = item['signal'];
-      final summary = _clipText(
-        item['summary'],
-        understandingTitleMaxRunes,
-      );
+      final summary = _clipText(item['summary'], understandingTitleMaxRunes);
       if (signal is! String ||
           !_understandingSignalWhitelist.contains(signal) ||
           summary == null) {
@@ -289,6 +322,16 @@ final class DayUnderstanding {
       }
       hints.add((branch: branch, nature: nature, summary: summary));
     }
+    final coveredRequestIds = <String>[];
+    final rawCovered = json['coveredRequestIds'];
+    if (rawCovered is List<Object?>) {
+      for (final requestId in rawCovered.whereType<String>()) {
+        final trimmed = requestId.trim();
+        if (trimmed.isNotEmpty && !coveredRequestIds.contains(trimmed)) {
+          coveredRequestIds.add(trimmed);
+        }
+      }
+    }
     final entryCount = json['entryCount'];
     final lastEntryId = json['lastEntryId'];
     return DayUnderstanding(
@@ -299,6 +342,7 @@ final class DayUnderstanding {
       relationshipSignals: signals,
       indexKeywords: keywords,
       personaHints: hints,
+      coveredRequestIds: coveredRequestIds,
       entryCount: entryCount is int ? entryCount : null,
       lastEntryId: lastEntryId is String ? lastEntryId : null,
     );
@@ -326,6 +370,8 @@ Future<DayUnderstanding?> fetchDayUnderstanding({
   required String? relationship,
   required String? dailyState,
   required Set<String> bannedTitles,
+  List<RawSession> sessions = const [],
+  Set<String> pendingRequestIds = const <String>{},
   void Function(String message)? diagnosticsSink,
 }) async {
   final sink = diagnosticsSink ?? stderrDiagnostics;
@@ -338,6 +384,9 @@ Future<DayUnderstanding?> fetchDayUnderstanding({
         openLoops: openLoops,
         relationship: relationship,
         dailyState: dailyState,
+        sessions: sessions,
+        pendingRequestIds: pendingRequestIds,
+        bannedTitles: bannedTitles,
       ),
     );
   } on Object catch (error) {
@@ -382,7 +431,9 @@ DayUnderstanding? parseDayUnderstanding(
   String? dateForDiagnostics,
 }) {
   final sink = diagnosticsSink ?? stderrDiagnostics;
-  final dateLabel = dateForDiagnostics == null ? '' : ' date=$dateForDiagnostics';
+  final dateLabel = dateForDiagnostics == null
+      ? ''
+      : ' date=$dateForDiagnostics';
   void dropped(String reason) =>
       sink('day understanding field dropped [$reason]$dateLabel');
 
@@ -400,6 +451,38 @@ DayUnderstanding? parseDayUnderstanding(
   final mood = _clipText(json['mood'], understandingMoodMaxRunes);
   if (mood != null && banned(mood)) {
     dropped('mood banned');
+  }
+
+  final episodeEntries = <UnderstandingEpisodeEntry>[];
+  for (final item in _objects(json['episode_entries'])) {
+    if (episodeEntries.length >= understandingMaxEpisodeEntries) {
+      break;
+    }
+    final requestId = item['request_id'];
+    final summaryText = _clipText(item['summary'], dailySummaryMaxRunes);
+    if (requestId is! String ||
+        requestId.trim().isEmpty ||
+        summaryText == null ||
+        banned(summaryText)) {
+      dropped('episode entry invalid or banned');
+      continue;
+    }
+    final evidence = _clipText(item['evidence'], understandingEvidenceMaxRunes);
+    episodeEntries.add((
+      requestId: requestId.trim(),
+      summary: summaryText,
+      evidence: evidence != null && banned(evidence) ? null : evidence,
+    ));
+  }
+  final coveredRequestIds = <String>[];
+  final rawCoveredRequestIds = json['covered_request_ids'];
+  if (rawCoveredRequestIds is List<Object?>) {
+    for (final requestId in rawCoveredRequestIds.whereType<String>()) {
+      final trimmed = requestId.trim();
+      if (trimmed.isNotEmpty && !coveredRequestIds.contains(trimmed)) {
+        coveredRequestIds.add(trimmed);
+      }
+    }
   }
 
   // 数量上限按「收纳条目」计：先校验后计数，无效项不占名额。
@@ -424,7 +507,8 @@ DayUnderstanding? parseDayUnderstanding(
     candidates.add((
       title: title,
       due: due != null && banned(due) ? null : due,
-      proactive: proactive is String &&
+      proactive:
+          proactive is String &&
               _understandingProactiveWhitelist.contains(proactive)
           ? proactive
           : null,
@@ -455,10 +539,7 @@ DayUnderstanding? parseDayUnderstanding(
       break;
     }
     final signal = item['signal'];
-    final summaryText = _clipText(
-      item['summary'],
-      understandingTitleMaxRunes,
-    );
+    final summaryText = _clipText(item['summary'], understandingTitleMaxRunes);
     if (signal is! String || !_understandingSignalWhitelist.contains(signal)) {
       dropped('relationship signal not in whitelist');
       continue;
@@ -490,10 +571,7 @@ DayUnderstanding? parseDayUnderstanding(
     }
     final branch = item['branch'];
     final nature = item['nature'];
-    final summaryText = _clipText(
-      item['summary'],
-      understandingTitleMaxRunes,
-    );
+    final summaryText = _clipText(item['summary'], understandingTitleMaxRunes);
     if (branch is! String || personaBranchForWire(branch) == null) {
       dropped('persona hint branch not in whitelist');
       continue;
@@ -521,6 +599,8 @@ DayUnderstanding? parseDayUnderstanding(
     relationshipSignals: signals,
     indexKeywords: keywords,
     personaHints: hints,
+    episodeEntries: episodeEntries,
+    coveredRequestIds: coveredRequestIds,
   );
 }
 
@@ -557,14 +637,20 @@ List<ModelMessage> _understandingMessages({
   required String? openLoops,
   required String? relationship,
   required String? dailyState,
+  required List<RawSession> sessions,
+  required Set<String> pendingRequestIds,
+  required Set<String> bannedTitles,
 }) {
   const system = '''
-你是栖语日终归档的本机记忆整理模块。给你某一天的对话整理记录与当前记忆状态，请产出当天的理解材料。要求：
+你是栖语日终归档的本机记忆整理模块。给你某一天的原始会话、已有对话整理记录与当前记忆状态，请产出当天的理解材料。要求：
 1. 只输出一个 JSON 对象，不要输出任何其它文字、解释或代码块标记。
 2. 所有内容必须来自给定材料，不得编造、不得引入材料外的事实；只做当天理解，不做跨天深度重组。
 3. 没有把握或材料中没有依据的字段直接省略。
 4. 密码、密钥、证件号、银行卡号等敏感内容一律不得出现。
+5. 从已有 sessions 补建缺失的 episode，而不是只处理已经存在的 episode。只补“待补 requestId”标出的用户轮；日常琐事、临时状态、随口提到的生活细节和项目进展也要记录，不要只挑长期稳定或重大事项。寒暄、重复内容和纯测试话语可以不生成 episode，但仍要在完整处理后写入 covered_request_ids。
 字段白名单：
+- episode_entries: 数组，从待补用户轮整理出的 episode；每项 {"request_id": 必须取自待补 requestId, "summary": 不超过60字的事实概括, "evidence": 可选的用户原话摘录，不超过80字}。同一轮有多件小事可以分成多项。
+- covered_request_ids: 数组。只有完整检查过全部待补用户轮时才输出，并逐项原样列出所有待补 requestId；不得遗漏或编造。
 - summary: 字符串，当天发生了什么的一句话概括，不超过60字，只复述记录中真实出现的事。
 - mood: 字符串，用户当天留下的情绪气氛余波，不超过20字；材料中没有情绪线索就省略。
 - loop_candidates: 数组，最多2项，用户提到且之后可能需要跟进的事；每项 {"title": 不超过24字的简称, "due": 可选的跟进时间, "note": 可选说明不超过30字}；材料中已有跟进安排或已闭环的事项不要重复。
@@ -575,6 +661,9 @@ List<ModelMessage> _understandingMessages({
 
   final entryLines = StringBuffer();
   for (final entry in entries) {
+    if (bannedTitleMatches(normalizeMemoryText(entry.summary), bannedTitles)) {
+      continue;
+    }
     final label = entry.kind == episodeKindMemory
         ? '记忆'
         : entry.kind == episodeKindOpenLoopCandidate
@@ -584,13 +673,33 @@ List<ModelMessage> _understandingMessages({
         : '关系信号${entry.signal == null ? '' : ':${entry.signal}'}';
     entryLines.writeln('- [$label] ${redactSessionText(entry.summary).trim()}');
   }
+  final sessionLines = StringBuffer();
+  for (final session in sessions) {
+    for (final turn in session.turns) {
+      if (!pendingRequestIds.contains(turn.requestId)) {
+        continue;
+      }
+      final speaker = turn.speaker == Speaker.user ? '用户' : '栖语';
+      var safeText = sanitizeUserInput(redactSessionText(turn.text)).trim();
+      if (safeText.isEmpty) {
+        continue;
+      }
+      if (bannedTitleMatches(normalizeMemoryText(safeText), bannedTitles)) {
+        safeText = '[受记忆控制内容已隐藏]';
+      }
+      sessionLines.writeln(
+        '- [${session.id}][${turn.requestId}][$speaker] $safeText',
+      );
+    }
+  }
   final user = StringBuffer()
     ..writeln('日期：$date')
     ..writeln()
     ..writeln('## 当天对话整理记录')
-    ..write(
-      entryLines.isEmpty ? '（无）\n' : entryLines.toString(),
-    )
+    ..write(entryLines.isEmpty ? '（无）\n' : entryLines.toString())
+    ..writeln()
+    ..writeln('## sessions 待补范围')
+    ..write(sessionLines.isEmpty ? '（无）\n' : sessionLines.toString())
     ..writeln()
     ..writeln('## 未闭环事项')
     ..writeln(_sectionOrEmpty(openLoops))

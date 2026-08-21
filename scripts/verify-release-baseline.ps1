@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 function Invoke-Step {
   param(
@@ -8,7 +8,17 @@ function Invoke-Step {
 
   Write-Host "==> $Name"
   $global:LASTEXITCODE = 0
-  & $Command
+  # Windows PowerShell 5.1 在 EAP=Stop 下会把原生命令写到 stderr 的
+  # 进度与诊断输出（flutter/dart 提示、测试诊断行）误判为致命错误。
+  # 步骤内临时降级为 Continue；真实失败仍由下方 LASTEXITCODE 兜底，
+  # scriptblock 内显式 throw 的异常照常传播。
+  $previousPreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $Command
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
   if ($LASTEXITCODE -ne 0) {
     throw "$Name failed with exit code $LASTEXITCODE"
   }

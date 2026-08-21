@@ -26,12 +26,32 @@ final class IoAtomicTextWriter implements AtomicTextWriter {
     );
     try {
       await temporary.writeAsString(contents, encoding: utf8, flush: true);
-      await temporary.rename(targetPath);
+      // Windows 上目标文件仍被并发读取句柄占用时 rename 抛共享冲突；
+      // 异步读取完成即关闭句柄，冲突是瞬态的，短重试越过即可，
+      // 不必为此把所有读取改成阻塞式同步 IO。
+      for (var attempt = 0; ; attempt += 1) {
+        try {
+          await temporary.rename(targetPath);
+          break;
+        } on FileSystemException catch (error) {
+          if (attempt >= 4 || !_isTransientWindowsConflict(error)) {
+            rethrow;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 15));
+        }
+      }
     } finally {
       if (await temporary.exists()) {
         await temporary.delete();
       }
     }
+  }
+
+  /// ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33)：
+  /// 目标暂被其他句柄占用，稍后重试有意义；其余错误立即抛出。
+  bool _isTransientWindowsConflict(FileSystemException error) {
+    final code = error.osError?.errorCode;
+    return code == 32 || code == 33;
   }
 }
 
@@ -334,11 +354,12 @@ final class MarkdownMemoryRepository implements MemoryRepository {
         }
         return left.segment.compareTo(right.segment);
       });
-    final unavailable = records
-        .map((record) => record.unavailable)
-        .whereType<UnavailableSessionFile>()
-        .toList()
-      ..sort((left, right) => left.name.compareTo(right.name));
+    final unavailable =
+        records
+            .map((record) => record.unavailable)
+            .whereType<UnavailableSessionFile>()
+            .toList()
+          ..sort((left, right) => left.name.compareTo(right.name));
     return HistoryListing(sessions: sessions, unavailable: unavailable);
   }
 
@@ -444,10 +465,17 @@ final class MarkdownMemoryRepository implements MemoryRepository {
     final records = <_SessionRecord>[];
     for (final file in files) {
       try {
-        final session = _parseMarkdown(await file.readAsString(encoding: utf8));
+        // 保持异步读取：同步读会在日终补扫循环里反复阻塞事件循环，
+        // 卡住正在流式交付的聊天。与原子替换的瞬时句柄冲突由
+        // IoAtomicTextWriter 的短重试处理。
+        final session = _parseMarkdown(
+          await file.readAsString(encoding: utf8),
+        );
         records.add(_SessionRecord(file: file, session: session));
       } on Object {
-        records.add(_SessionRecord(file: file, unavailable: _unavailableFor(file)));
+        records.add(
+          _SessionRecord(file: file, unavailable: _unavailableFor(file)),
+        );
       }
     }
     return records;
@@ -455,9 +483,7 @@ final class MarkdownMemoryRepository implements MemoryRepository {
 
   UnavailableSessionFile _unavailableFor(File file) {
     final name = path.basename(file.path);
-    final match = RegExp(
-      r'^(\d{4}-\d{2}-\d{2})-(\d{3})\.md$',
-    ).firstMatch(name);
+    final match = RegExp(r'^(\d{4}-\d{2}-\d{2})-(\d{3})\.md$').firstMatch(name);
     return UnavailableSessionFile(
       name: name,
       message: '这个会话文件暂时无法读取，不影响其他历史记录。',
@@ -483,10 +509,8 @@ final class _SessionRecord {
   final UnavailableSessionFile? unavailable;
 }
 
-List<RawSession> _validSessions(List<_SessionRecord> records) => records
-    .map((record) => record.session)
-    .whereType<RawSession>()
-    .toList();
+List<RawSession> _validSessions(List<_SessionRecord> records) =>
+    records.map((record) => record.session).whereType<RawSession>().toList();
 
 RawSession? _latestSession(List<RawSession> sessions) {
   if (sessions.isEmpty) {
