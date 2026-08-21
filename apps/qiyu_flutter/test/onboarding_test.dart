@@ -211,7 +211,7 @@ void main() {
     expect(find.byKey(const Key('provider-preset')), findsOneWidget);
     expect(find.text('官方 API · OpenAI 兼容'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('返回聊天'));
+    await tester.tap(find.byTooltip('返回上一页'));
     await tester.pumpAndSettle();
     expect(find.text('回来了。'), findsOneWidget);
   });

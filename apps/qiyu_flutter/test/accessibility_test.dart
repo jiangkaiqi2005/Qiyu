@@ -151,6 +151,10 @@ void main() {
 
         await tester.tap(find.byKey(const Key('history-back')));
         await tester.pumpAndSettle();
+        // 历史是从聊天页 push 进来的：返回键回到聊天页而不是首页。
+        expect(find.byKey(const Key('open-history')), findsOneWidget);
+        await tester.tap(find.byKey(const Key('go-home')));
+        await tester.pumpAndSettle();
         await tester.tap(find.byKey(const Key('home-go-memory')));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);

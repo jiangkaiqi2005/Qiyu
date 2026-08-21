@@ -47,7 +47,8 @@ void main() {
 
       await tester.tap(find.byKey(const Key('history-back')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
+      // 历史从聊天页 push 进入：返回键回到聊天页而不是首页。
+      expect(find.byKey(const Key('open-history')), findsOneWidget);
     },
   );
 
@@ -79,6 +80,8 @@ void main() {
     expect(find.text('会话详情'), findsOneWidget);
     expect(find.text('昨天的第一句'), findsOneWidget);
     expect(find.text('嗯'), findsOneWidget);
+    // 只读回看页整页可选择：拖动即可选中复制。
+    expect(find.byType(SelectionArea), findsOneWidget);
     expect(find.byKey(const Key('chat-input')), findsNothing);
     expect(find.byKey(const Key('chat-send')), findsNothing);
 
@@ -88,7 +91,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('history-back')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
+    // 历史从聊天页 push 进入：返回键回到聊天页而不是首页。
+    expect(find.byKey(const Key('open-history')), findsOneWidget);
   });
 
   testWidgets(
@@ -145,7 +149,8 @@ void main() {
 
       await tester.tap(find.byKey(const Key('history-back')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
+      // 历史从聊天页 push 进入：返回键回到聊天页而不是首页。
+      expect(find.byKey(const Key('open-history')), findsOneWidget);
     },
   );
 
@@ -212,7 +217,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('history-back')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
+    // 历史从聊天页 push 进入：返回键回到聊天页而不是首页。
+    expect(find.byKey(const Key('open-history')), findsOneWidget);
   });
 }
 

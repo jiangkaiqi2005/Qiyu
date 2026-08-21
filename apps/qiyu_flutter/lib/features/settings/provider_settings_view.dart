@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../memory/backup_client.dart';
 import '../memory/backup_platform.dart';
 import '../memory/backup_view.dart';
+import '../navigation.dart';
 import '../onboarding/onboarding_view_model.dart';
 import 'provider_catalog.dart';
 import 'provider_settings_client.dart';
@@ -248,14 +249,8 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                 Row(
                   children: [
                     IconButton(
-                      onPressed: () {
-                        if (context.canPop()) {
-                          context.pop();
-                        } else {
-                          context.go('/');
-                        }
-                      },
-                      tooltip: '返回聊天',
+                      onPressed: () => backToPrevious(context),
+                      tooltip: '返回上一页',
                       icon: const Icon(Icons.arrow_back),
                     ),
                     const SizedBox(width: 8),

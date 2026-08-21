@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../accessibility.dart';
+import '../navigation.dart';
 import 'backup_client.dart';
 import 'backup_platform.dart';
 import 'backup_view.dart';
@@ -46,8 +46,8 @@ class MemoryView extends StatelessWidget {
                       children: [
                         IconButton(
                           key: const Key('memory-back'),
-                          onPressed: () => context.go('/'),
-                          tooltip: '返回首页',
+                          onPressed: () => backToPrevious(context),
+                          tooltip: '返回上一页',
                           icon: const Icon(Icons.arrow_back),
                         ),
                         const SizedBox(width: 8),
@@ -544,7 +544,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
                     children: [
                       IconButton(
                         key: const Key('memory-item-back'),
-                        onPressed: () => context.pop(),
+                        onPressed: () => backToPrevious(context),
                         tooltip: '返回记忆',
                         icon: const Icon(Icons.arrow_back),
                       ),
@@ -710,13 +710,13 @@ class _MemoryItemViewState extends State<MemoryItemView> {
       const SizedBox(height: 16),
       TextButton(
         key: const Key('memory-item-day'),
-        onPressed: () => context.push('/memory/item/${detail.dayId}'),
+        onPressed: () => openInFront(context, '/memory/item/${detail.dayId}'),
         child: const Text('查看这一天的记录'),
       ),
       if (detail.sessionId case final sessionId?)
         TextButton(
           key: const Key('memory-item-session'),
-          onPressed: () => context.push('/history/$sessionId'),
+          onPressed: () => openInFront(context, '/history/$sessionId'),
           child: const Text('查看当时的对话'),
         ),
       const SizedBox(height: 8),
@@ -915,7 +915,7 @@ class _EntryTile extends StatelessWidget {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => unawaited(context.push('/memory/item/${entry.id}')),
+        onTap: () => openInFront(context, '/memory/item/${entry.id}'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Column(
@@ -1030,7 +1030,7 @@ class _RootTile extends StatelessWidget {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => unawaited(context.push('/memory/item/${root.id}')),
+        onTap: () => openInFront(context, '/memory/item/${root.id}'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Column(
@@ -1091,7 +1091,7 @@ class _MiddleTile extends StatelessWidget {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => unawaited(context.push('/memory/item/${middle.id}')),
+        onTap: () => openInFront(context, '/memory/item/${middle.id}'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Column(
@@ -1154,7 +1154,7 @@ class _LeafTile extends StatelessWidget {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => unawaited(context.push('/memory/item/${leaf.dayId}')),
+        onTap: () => openInFront(context, '/memory/item/${leaf.dayId}'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Column(

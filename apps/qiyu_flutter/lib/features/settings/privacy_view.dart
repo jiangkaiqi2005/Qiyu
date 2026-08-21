@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+
+import '../navigation.dart';
 
 /// 隐私说明页（ticket 23）：数据只在本机、何时调用用户选择的模型
 /// 服务、哪些敏感信息永不提升为记忆、日志与诊断统一脱敏。文案与
@@ -22,7 +23,7 @@ class PrivacyView extends StatelessWidget {
                   children: [
                     IconButton(
                       key: const Key('privacy-back'),
-                      onPressed: () => context.pop(),
+                      onPressed: () => backToPrevious(context),
                       tooltip: '返回设置',
                       icon: const Icon(Icons.arrow_back),
                     ),
@@ -93,7 +94,7 @@ class PrivacyView extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   child: OutlinedButton(
                     key: const Key('privacy-back-to-settings'),
-                    onPressed: () => context.pop(),
+                    onPressed: () => backToPrevious(context),
                     child: const Text('返回设置'),
                   ),
                 ),

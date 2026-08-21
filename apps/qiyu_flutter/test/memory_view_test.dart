@@ -17,6 +17,9 @@ import 'package:qiyu_flutter/features/memory/memory_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/settings_client.dart';
+import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 
 void main() {
   testWidgets(
@@ -153,6 +156,109 @@ void main() {
       await tester.tap(find.byKey(const Key('memory-back')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'revisiting a day already on the stack falls back instead of nesting deeper',
+    (tester) async {
+      final memoryGateway = _FakeMemoryGateway(_fullOverview());
+      final memoryViewModel = MemoryCenterViewModel(
+        memoryGateway,
+        autoStart: false,
+      );
+      await memoryViewModel.refresh();
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: _chatViewModel(),
+          onboardingViewModel: await _onboardingViewModel(),
+          memoryViewModel: memoryViewModel,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-go-memory')));
+      await tester.pumpAndSettle();
+
+      // 走到 条目 → 这一天 → 条目 的环：从条目详情再点「查看这一天的记录」。
+      await tester.tap(find.byKey(const Key('memory-tab-persona')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('memory-root-root-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('memory-root-middle-middle-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('memory-leaf-expression-2026-07-10-day-leaf-1')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('memory-day-entry-entry-9')));
+      await tester.pumpAndSettle();
+      expect(find.text('当时的摘录'), findsOneWidget);
+
+      // 目标日期已在返回栈里：回退到那一层，而不是再叠一层新页面。
+      await tester.tap(find.byKey(const Key('memory-item-day')));
+      await tester.pumpAndSettle();
+      expect(find.text('2026年7月10日'), findsOneWidget);
+
+      // 回退次数与栈深一致（根 → 理解 → 这一天），不再无限嵌套。
+      var backs = 0;
+      while (backs < 6 &&
+          find.byKey(const Key('memory-back')).evaluate().isEmpty) {
+        await tester.tap(find.byKey(const Key('memory-item-back')));
+        await tester.pumpAndSettle();
+        backs += 1;
+      }
+      expect(backs, 3);
+      await tester.tap(find.byKey(const Key('memory-back')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'memory center back returns to the page it was opened from',
+    (tester) async {
+      final memoryGateway = _FakeMemoryGateway(_fullOverview());
+      final memoryViewModel = MemoryCenterViewModel(
+        memoryGateway,
+        autoStart: false,
+      );
+      await memoryViewModel.refresh();
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: _chatViewModel(),
+          onboardingViewModel: await _onboardingViewModel(),
+          memoryViewModel: memoryViewModel,
+          providerSettingsViewModel: await _providerSettingsViewModel(),
+          settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 设置 → 本地数据 → 记忆中心：返回键回到设置页而不是首页。
+      await tester.tap(find.byKey(const Key('home-go-settings')));
+      await tester.pumpAndSettle();
+      final settingsScrollable = find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('settings-memory-center')),
+        200,
+        scrollable: settingsScrollable,
+        maxScrolls: 20,
+      );
+      await tester.ensureVisible(find.byKey(const Key('settings-memory-center')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-memory-center')));
+      await tester.pumpAndSettle();
+      expect(find.text('最近发生'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('memory-back')));
+      await tester.pumpAndSettle();
+      // 回到设置页（保持离开时的滚动位置），而不是首页。
+      expect(find.text('本地数据'), findsOneWidget);
     },
   );
 
@@ -1050,6 +1156,66 @@ Future<OnboardingViewModel> _onboardingViewModel() async {
   );
   await viewModel.initialize();
   return viewModel;
+}
+
+Future<ProviderSettingsViewModel> _providerSettingsViewModel() async {
+  final viewModel = ProviderSettingsViewModel(
+    _FixedProviderSettingsGateway(),
+    autoStart: false,
+  );
+  await viewModel.initialize();
+  return viewModel;
+}
+
+final class _FakeSettingsGateway implements SettingsGateway {
+  @override
+  Future<ExperiencePreferences> readPreferences() async =>
+      ExperiencePreferences(developerMode: false);
+
+  @override
+  Future<ExperiencePreferences> savePreferences({
+    required bool developerMode,
+  }) async => ExperiencePreferences(developerMode: developerMode);
+
+  @override
+  Future<MemoryControlsOverview> readMemoryControls() async =>
+      const MemoryControlsOverview(
+        readable: true,
+        frozen: [],
+        banned: [],
+        deletedCount: 0,
+      );
+
+  @override
+  Future<ClearPreview> readClearPreview() async => const ClearPreview(
+    memoryDirectory: 'C:/qiyu-test/memories',
+    sessionCount: 0,
+    episodeDayCount: 0,
+    frozenCount: 0,
+    bannedCount: 0,
+    deletedCount: 0,
+    snapshotCount: 0,
+    providerConfigured: false,
+    keySet: false,
+  );
+
+  @override
+  Future<void> clearData() async {}
+
+  @override
+  Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
+    generatedAt: DateTime(2026, 8, 19),
+    memoryDirectory: 'C:/qiyu-test/memories',
+    recentRequests: const [],
+    finalization: const FinalizationHealth(
+      today: '2026-08-19',
+      todayFinalized: false,
+      pendingDays: 0,
+      unreadableDays: 0,
+    ),
+    dream: const DreamHealth(),
+    fileHealth: const {},
+  );
 }
 
 /// 恢复状态呈现用总览（ticket 21）：受影响范围、采用证据与恢复结果

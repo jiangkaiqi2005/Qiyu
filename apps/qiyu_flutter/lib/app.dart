@@ -24,7 +24,7 @@ import 'features/settings/provider_settings_view_model.dart';
 import 'features/settings/settings_client.dart';
 import 'features/settings/settings_view_model.dart';
 
-final _router = GoRouter(
+GoRouter _createRouter() => GoRouter(
   routes: [
     GoRoute(path: '/', builder: (context, state) => const RootView()),
     GoRoute(path: '/chat', builder: (context, state) => const LocalChatView()),
@@ -58,7 +58,7 @@ final _router = GoRouter(
   ],
 );
 
-class QiyuApp extends StatelessWidget {
+class QiyuApp extends StatefulWidget {
   const QiyuApp({
     super.key,
     this.viewModel,
@@ -77,13 +77,22 @@ class QiyuApp extends StatelessWidget {
   final SettingsViewModel? settingsViewModel;
 
   @override
+  State<QiyuApp> createState() => _QiyuAppState();
+}
+
+class _QiyuAppState extends State<QiyuApp> {
+  /// 每个应用实例持有独立路由：返回键依赖真实导航栈，测试之间不得
+  /// 共享栈状态。
+  late final GoRouter _router = _createRouter();
+
+  @override
   Widget build(BuildContext context) {
-    final injectedChatViewModel = viewModel;
-    final injectedSettingsViewModel = providerSettingsViewModel;
-    final injectedHistoryViewModel = historyViewModel;
-    final injectedOnboardingViewModel = onboardingViewModel;
-    final injectedMemoryViewModel = memoryViewModel;
-    final injectedAppSettingsViewModel = settingsViewModel;
+    final injectedChatViewModel = widget.viewModel;
+    final injectedSettingsViewModel = widget.providerSettingsViewModel;
+    final injectedHistoryViewModel = widget.historyViewModel;
+    final injectedOnboardingViewModel = widget.onboardingViewModel;
+    final injectedMemoryViewModel = widget.memoryViewModel;
+    final injectedAppSettingsViewModel = widget.settingsViewModel;
     return MultiProvider(
       providers: [
         if (injectedChatViewModel != null)

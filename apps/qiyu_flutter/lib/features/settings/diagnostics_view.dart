@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../navigation.dart';
 import 'settings_client.dart';
 import 'settings_view_model.dart';
 
@@ -47,7 +47,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
                   children: [
                     IconButton(
                       key: const Key('diagnostics-back'),
-                      onPressed: () => context.pop(),
+                      onPressed: () => backToPrevious(context),
                       tooltip: '返回设置',
                       icon: const Icon(Icons.arrow_back),
                     ),

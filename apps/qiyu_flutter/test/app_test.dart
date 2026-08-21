@@ -564,14 +564,14 @@ void main() {
     expect(settingsGateway.tested.single.model, 'unsaved-test-model');
 
     await tester.scrollUntilVisible(
-      find.byTooltip('返回聊天'),
+      find.byTooltip('返回上一页'),
       -160,
       scrollable: settingsScrollable,
       maxScrolls: 20,
     );
-    await tester.ensureVisible(find.byTooltip('返回聊天'));
+    await tester.ensureVisible(find.byTooltip('返回上一页'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('返回聊天'));
+    await tester.tap(find.byTooltip('返回上一页'));
     await tester.pumpAndSettle();
     await _returnToHome(tester);
   });
@@ -608,7 +608,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tapAt(const Offset(700, 120));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('返回聊天'));
+      await tester.tap(find.byTooltip('返回上一页'));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('home-go-chat')), findsOneWidget);

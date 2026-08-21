@@ -8,6 +8,7 @@ import '../accessibility.dart';
 import '../chat/local_chat_client.dart';
 import '../chat/local_chat_view_model.dart';
 import '../chat/qiyu_markdown.dart';
+import '../navigation.dart';
 import 'history_client.dart';
 import 'history_view_model.dart';
 
@@ -30,8 +31,8 @@ class HistoryView extends StatelessWidget {
                     children: [
                       IconButton(
                         key: const Key('history-back'),
-                        onPressed: () => context.go('/'),
-                        tooltip: '返回聊天',
+                        onPressed: () => backToPrevious(context),
+                        tooltip: '返回上一页',
                         icon: const Icon(Icons.arrow_back),
                       ),
                       const SizedBox(width: 8),
@@ -151,7 +152,8 @@ class _SessionTile extends StatelessWidget {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => unawaited(context.push('/history/${session.sessionId}')),
+        onTap: () =>
+            openInFront(context, '/history/${session.sessionId}'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -276,7 +278,7 @@ class _HistorySessionViewState extends State<HistorySessionView> {
                     children: [
                       IconButton(
                         key: const Key('history-session-back'),
-                        onPressed: () => context.pop(),
+                        onPressed: () => backToPrevious(context),
                         tooltip: '返回历史',
                         icon: const Icon(Icons.arrow_back),
                       ),
@@ -309,39 +311,43 @@ class _HistorySessionViewState extends State<HistorySessionView> {
     if (snapshot.messages.isEmpty) {
       return const Center(child: Text('这段会话还没有消息'));
     }
-    return ListView.builder(
-      key: const Key('history-session-messages'),
-      padding: const EdgeInsets.all(24),
-      itemCount: snapshot.messages.length,
-      itemBuilder: (context, index) {
-        final message = snapshot.messages[index];
-        final fromUser = message.speaker == LocalChatSpeaker.user;
-        return Align(
-          alignment: fromUser ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            constraints: const BoxConstraints(maxWidth: 520),
-            decoration: BoxDecoration(
-              color: fromUser
-                  ? Theme.of(context).colorScheme.primaryContainer
-                  : Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.fromBorderSide(highContrastSide(context)),
-            ),
-            // 用户输入按纯文本展示；栖语回复来自模型，按 Markdown 渲染。
-            // 与聊天页同口径：语义标签带说话人（ticket 24）。
-            child: MergeSemantics(
-              child: Semantics(
-                label: fromUser ? '你说' : '栖语说',
-                child: fromUser
-                    ? Text(message.text)
-                    : QiyuMarkdown(text: message.text),
+    // 只读回看页整页可选择：拖动即可跨气泡选中并复制文字；栖语回复
+    // 的 Markdown 经 gpt_markdown 的 SelectableAdapter 参与同一选区。
+    return SelectionArea(
+      child: ListView.builder(
+        key: const Key('history-session-messages'),
+        padding: const EdgeInsets.all(24),
+        itemCount: snapshot.messages.length,
+        itemBuilder: (context, index) {
+          final message = snapshot.messages[index];
+          final fromUser = message.speaker == LocalChatSpeaker.user;
+          return Align(
+            alignment: fromUser ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              constraints: const BoxConstraints(maxWidth: 520),
+              decoration: BoxDecoration(
+                color: fromUser
+                    ? Theme.of(context).colorScheme.primaryContainer
+                    : Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.fromBorderSide(highContrastSide(context)),
+              ),
+              // 用户输入按纯文本展示；栖语回复来自模型，按 Markdown 渲染。
+              // 与聊天页同口径：语义标签带说话人（ticket 24）。
+              child: MergeSemantics(
+                child: Semantics(
+                  label: fromUser ? '你说' : '栖语说',
+                  child: fromUser
+                      ? Text(message.text)
+                      : QiyuMarkdown(text: message.text),
+                ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
