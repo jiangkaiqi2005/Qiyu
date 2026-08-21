@@ -85,6 +85,17 @@ void main() {
     expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
   });
 
+  test('secrets in recall queries stay on the privilege diagnostic', () {
+    // 锁定行为：检索词命中秘密也记 privilegeViolation，而非 sensitiveContent。
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall",'
+      '"query":${_json('密码: hunter2abc')}}]</qiyu-actions>',
+    );
+
+    expect(parse.actions, isEmpty);
+    expect(parse.diagnostics, [HiddenActionDiagnostics.privilegeViolation]);
+  });
+
   test('unknown actions are dropped with diagnostics, valid ones kept', () {
     final parse = parseHiddenActions('''在。
 <qiyu-actions>[

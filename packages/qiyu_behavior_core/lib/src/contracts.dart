@@ -294,6 +294,7 @@ final class ChatResult extends ChatOutcome {
     'debug': {
       'mode': mode,
       if (safety != null) 'safety': safety!.name,
+      // 迁移兼容的线格式：仅当无安全分类时才携带 relationshipStage，勿改。
       if (safety == null)
         'relationshipStage': nextState.relationshipStage.wireName,
     },

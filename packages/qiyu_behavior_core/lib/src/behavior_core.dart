@@ -31,6 +31,82 @@ final _personaBoundaryPatterns = [
 
 const _maxVisibleReplyCharacters = 2000;
 
+// —— 用户输入净化（sanitizeUserInput）。各遍替换顺序即语义，勿合并勿换序。——
+final _controlCharacterPattern = RegExp(
+  r'[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]',
+);
+final _commentDelimiterPattern = RegExp(r'<!--|-->|<!\[CDATA\[|\]\]>');
+final _specialTokenPattern = RegExp(r'<\|[\s\S]{1,200}?\|>');
+final _chatTemplateMarkerPattern = RegExp(
+  r'\[\s*/?\s*INST\s*\]|<<\s*/?\s*SYS\s*>>',
+  caseSensitive: false,
+);
+final _tagPattern = RegExp(
+  r'<\s*/?\s*[A-Za-z_][A-Za-z0-9_.:-]*(?:\s+[\s\S]*?)?\s*/?\s*>',
+);
+final _directivePattern = RegExp(r'<\?[^>]*\?>|<![^>]*>');
+final _roleLinePattern = RegExp(
+  r'^\s*(?:system|assistant|developer|tool|function)(?:\s*[:：]\s*|\s*$)',
+  caseSensitive: false,
+  multiLine: true,
+);
+final _roleFenceLinePattern = RegExp(
+  r'^\s*```(?:system|assistant|developer|tool|function)?\s*$',
+  caseSensitive: false,
+  multiLine: true,
+);
+final _leftAngleBracketPattern = RegExp(r'<(?=[!?/]?[A-Za-z_])');
+final _inlineSpacePattern = RegExp(r'[ \t]+');
+final _blankLinesPattern = RegExp(r'\n{3,}');
+
+// —— 安全分类（_classifySafety）。——
+final _crisisPattern = RegExp(
+  r'活着没意思|不想活|自杀|伤害自己|想死|自残|割腕|轻生|活不下去|不想醒来|结束生命|撑不下去|离开世界|吃药.*走|吞药|跳楼|烧炭|上吊',
+);
+final _adviceSeekingPattern = RegExp(
+  r'能不能|要不要|应不应该|可以吗|行不行|该不该|推荐|建议|行吗|能.{0,4}吗|该.{0,4}吗|会不会有问题|帮我(?:判断|看看|确认|分析)|是否(?:安全|合适|应该|可以)|我该.{0,12}(?:加倍|加量|减量|停药|换药|签字|起诉|买入|卖出|贷款|投资)',
+);
+final _medicalKeywordPattern = RegExp(r'药|剂量|诊断|手术|症状|医院|医生');
+final _legalKeywordPattern = RegExp(r'合同|起诉|律师|违法|法律|赔偿|签字');
+final _financialKeywordPattern = RegExp(r'股票|基金|币|投资|买入|卖出|贷款');
+
+// —— 本地规则回复（_localReply）。——
+final _fatiguePattern = RegExp(r'累|疲惫|困');
+
+// —— 模型候选回复校验（_validateCandidateReply / _cleanVisibleLine）。——
+final _hiddenModelStructurePattern = RegExp(
+  r'<\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu[-_]actions?|actions?|memory_action)\b[^>]*>[\s\S]*?<\s*/\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu[-_]actions?|actions?|memory_action)\s*>',
+  caseSensitive: false,
+);
+
+/// 隐藏块剥除后仍不允许出现的动作控制词表；键形态与值形态两个模式共用。
+const _modelControlWords =
+    'action|tool|function|tool_call|function_call|qiyu_action|memory_action';
+
+/// 隐藏块剥除后残留的模型控制结构：XML 标签、动作键形态与动作值形态。
+/// 三者同判 invalid_model_response，故可合并为单一列表匹配。
+final _modelControlPatterns = [
+  RegExp(r'<\s*/?\s*[A-Za-z_][^>\r\n]*>'),
+  RegExp(
+    r'''["']?(?:''' + _modelControlWords + r''')["']?\s*[:=]''',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'''[:=]\s*["'](?:''' + _modelControlWords + r''')["']''',
+    caseSensitive: false,
+  ),
+];
+
+final _codeFenceLinePattern = RegExp(r'^```(?:[A-Za-z0-9_-]+)?$');
+final _speakerPrefixPattern = RegExp(r'^(?:栖语|她|他)\s*[：:]\s*');
+final _bracketedPausePrefixPattern = RegExp(
+  r'^[（(【\[]\s*(?:等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下)[。.!！?？,，、\s]*[）)】\]]\s*',
+);
+final _ellipsisOnlyPattern = RegExp(r'^(?:…+|\.\.\.)$');
+final _barePauseLinePattern = RegExp(
+  r'^(?:等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下|(?:她|他)?轻声说)[。.!！?？,，\s：:]*$',
+);
+
 final class QiyuBehaviorCore {
   const QiyuBehaviorCore();
 
@@ -62,7 +138,6 @@ final class QiyuBehaviorCore {
         fallbackReason: FallbackReason.safety,
         mode: 'safety',
         safety: safety,
-        replyAsSingleTurn: true,
       );
     }
 
@@ -85,7 +160,6 @@ final class QiyuBehaviorCore {
           messages: candidate.messages,
           source: ReplySource.llm,
           mode: 'llm',
-          replyAsSingleTurn: true,
         );
       }
 
@@ -132,9 +206,8 @@ final class QiyuBehaviorCore {
     required String mode,
     FallbackReason? fallbackReason,
     SafetyKind? safety,
-    bool replyAsSingleTurn = false,
   }) {
-    final replyText = replyAsSingleTurn ? messages.join('\n') : messages.single;
+    final replyText = messages.join('\n');
     final emotion = safety == SafetyKind.crisis
         ? const EmotionSnapshot(kind: EmotionKind.heavy, intensity: 3)
         : state.lastEmotion;
@@ -158,81 +231,53 @@ final class QiyuBehaviorCore {
 
 String sanitizeUserInput(String value) {
   var text = value
-      .replaceAll(
-        RegExp(r'[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]'),
-        ' ',
-      )
-      .replaceAll(RegExp(r'<!--|-->|<!\[CDATA\[|\]\]>'), ' ')
-      .replaceAll(RegExp(r'<\|[\s\S]{1,200}?\|>'), ' ')
-      .replaceAll(
-        RegExp(r'\[\s*/?\s*INST\s*\]|<<\s*/?\s*SYS\s*>>', caseSensitive: false),
-        ' ',
-      )
-      .replaceAll(
-        RegExp(r'<\s*/?\s*[A-Za-z_][A-Za-z0-9_.:-]*(?:\s+[\s\S]*?)?\s*/?\s*>'),
-        ' ',
-      )
-      .replaceAll(RegExp(r'<\?[^>]*\?>|<![^>]*>'), ' ')
-      .replaceAll(
-        RegExp(
-          r'^\s*(?:system|assistant|developer|tool|function)(?:\s*[:：]\s*|\s*$)',
-          caseSensitive: false,
-          multiLine: true,
-        ),
-        '',
-      )
-      .replaceAll(
-        RegExp(
-          r'^\s*```(?:system|assistant|developer|tool|function)?\s*$',
-          caseSensitive: false,
-          multiLine: true,
-        ),
-        '',
-      )
-      .replaceAllMapped(RegExp(r'<(?=[!?/]?[A-Za-z_])'), (_) => '＜');
+      .replaceAll(_controlCharacterPattern, ' ')
+      .replaceAll(_commentDelimiterPattern, ' ')
+      .replaceAll(_specialTokenPattern, ' ')
+      .replaceAll(_chatTemplateMarkerPattern, ' ')
+      .replaceAll(_tagPattern, ' ')
+      .replaceAll(_directivePattern, ' ')
+      .replaceAll(_roleLinePattern, '')
+      .replaceAll(_roleFenceLinePattern, '')
+      .replaceAllMapped(_leftAngleBracketPattern, (_) => '＜');
   text = text
       .split('\n')
-      .map((line) => line.replaceAll(RegExp(r'[ \t]+'), ' ').trim())
+      .map((line) => line.replaceAll(_inlineSpacePattern, ' ').trim())
       .join('\n');
-  return text.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
+  return text.replaceAll(_blankLinesPattern, '\n\n').trim();
 }
 
 ({List<String> messages, String mode}) _localReply(String text) {
   if (text == '我到家了') {
     return (messages: const ['嗯'], mode: 'minimal');
   }
-  if (RegExp(r'累|疲惫|困').hasMatch(text)) {
+  if (_fatiguePattern.hasMatch(text)) {
     return (messages: const ['咋了'], mode: 'fatigue');
   }
   return (messages: const ['嗯？'], mode: 'open');
 }
 
 SafetyKind _classifySafety(String text) {
-  if (RegExp(
-    r'活着没意思|不想活|自杀|伤害自己|想死|自残|割腕|轻生|活不下去|不想醒来|结束生命|撑不下去|离开世界|吃药.*走|吞药|跳楼|烧炭|上吊',
-  ).hasMatch(text)) {
+  if (_crisisPattern.hasMatch(text)) {
     return SafetyKind.crisis;
   }
 
-  final asksAdvice = RegExp(
-    r'能不能|要不要|应不应该|可以吗|行不行|该不该|推荐|建议|行吗|能.{0,4}吗|该.{0,4}吗|会不会有问题|帮我(?:判断|看看|确认|分析)|是否(?:安全|合适|应该|可以)|我该.{0,12}(?:加倍|加量|减量|停药|换药|签字|起诉|买入|卖出|贷款|投资)',
-  ).hasMatch(text);
-  if (!asksAdvice) {
+  if (!_adviceSeekingPattern.hasMatch(text)) {
     return SafetyKind.normal;
   }
 
   final withoutMedicalExclusions = text.replaceAll('药膳', '');
-  if (RegExp(r'药|剂量|诊断|手术|症状|医院|医生').hasMatch(withoutMedicalExclusions)) {
+  if (_medicalKeywordPattern.hasMatch(withoutMedicalExclusions)) {
     return SafetyKind.medical;
   }
-  if (RegExp(r'合同|起诉|律师|违法|法律|赔偿|签字').hasMatch(text)) {
+  if (_legalKeywordPattern.hasMatch(text)) {
     return SafetyKind.legal;
   }
   final withoutFinancialExclusions = text
       .replaceAll('硬币', '')
       .replaceAll('纸币', '')
       .replaceAll('金币', '');
-  if (RegExp(r'股票|基金|币|投资|买入|卖出|贷款').hasMatch(withoutFinancialExclusions)) {
+  if (_financialKeywordPattern.hasMatch(withoutFinancialExclusions)) {
     return SafetyKind.financial;
   }
   return SafetyKind.normal;
@@ -256,34 +301,18 @@ List<String> _safetyMessages(SafetyKind safety) {
   String value,
 ) {
   final withoutHiddenStructures = value.replaceAll(
-    RegExp(
-      r'<\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu[-_]actions?|actions?|memory_action)\b[^>]*>[\s\S]*?<\s*/\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu[-_]actions?|actions?|memory_action)\s*>',
-      caseSensitive: false,
-    ),
+    _hiddenModelStructurePattern,
     '',
   );
-  if (RegExp(
-    r'<\s*/?\s*[A-Za-z_][^>\r\n]*>',
-  ).hasMatch(withoutHiddenStructures)) {
-    return (messages: const [], failure: FallbackReason.invalidModelResponse);
-  }
-  if (RegExp(
-    r'''["']?(?:action|tool|function|tool_call|function_call|qiyu_action|memory_action)["']?\s*[:=]''',
-    caseSensitive: false,
-  ).hasMatch(withoutHiddenStructures)) {
-    return (messages: const [], failure: FallbackReason.invalidModelResponse);
-  }
-  if (RegExp(
-    r'''[:=]\s*["'](?:action|tool|function|tool_call|function_call|qiyu_action|memory_action)["']''',
-    caseSensitive: false,
-  ).hasMatch(withoutHiddenStructures)) {
+  if (_modelControlPatterns.any(
+    (pattern) => pattern.hasMatch(withoutHiddenStructures),
+  )) {
     return (messages: const [], failure: FallbackReason.invalidModelResponse);
   }
   final messages = withoutHiddenStructures
       .split('\n')
       .map(_cleanVisibleLine)
-      .where((line) => line != null)
-      .cast<String>()
+      .whereType<String>()
       .toList(growable: false);
   if (messages.isEmpty) {
     return (messages: const [], failure: FallbackReason.emptyModelReply);
@@ -305,24 +334,15 @@ List<String> _safetyMessages(SafetyKind safety) {
 
 String? _cleanVisibleLine(String value) {
   var text = value.trim();
-  if (RegExp(r'^```(?:[A-Za-z0-9_-]+)?$').hasMatch(text)) {
+  if (_codeFenceLinePattern.hasMatch(text)) {
     return null;
   }
-  text = text.trim().replaceFirst(RegExp(r'^(?:栖语|她|他)\s*[：:]\s*'), '').trim();
-  text = text
-      .replaceFirst(
-        RegExp(
-          r'^[（(【\[]\s*(?:等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下)[。.!！?？,，、\s]*[）)】\]]\s*',
-        ),
-        '',
-      )
-      .trim();
-  if (text.isEmpty || RegExp(r'^(?:…+|\.\.\.)$').hasMatch(text)) {
+  text = text.replaceFirst(_speakerPrefixPattern, '').trim();
+  text = text.replaceFirst(_bracketedPausePrefixPattern, '').trim();
+  if (text.isEmpty || _ellipsisOnlyPattern.hasMatch(text)) {
     return null;
   }
-  if (RegExp(
-    r'^(?:等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下|(?:她|他)?轻声说)[。.!！?？,，\s：:]*$',
-  ).hasMatch(text)) {
+  if (_barePauseLinePattern.hasMatch(text)) {
     return null;
   }
   return text;

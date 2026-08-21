@@ -64,14 +64,20 @@ const maxHiddenQueryRunes = 100;
 final _recallMonthPattern = RegExp(r'^\d{4}-\d{2}$');
 final _recallDatePattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
 
+/// 动作块剥除后的空行折叠与字段内空白折叠。
+final _blankLinesPattern = RegExp(r'\n{3,}');
+final _fieldWhitespaceRunsPattern = RegExp(r'\s{2,}');
+
 /// Open-loop 动作的字段长度上限（runes）。标题走 summary 字段，
 /// 比 memory_signal 的摘要更短——事项名应当简短。
+/// memory_ban/forget/freeze/unfreeze/delete 五个用户记忆控制动作的
+/// summary 也按此限长。
 const maxLoopTitleRunes = 60;
 const maxLoopNoteRunes = 120;
 const maxLoopResultRunes = 120;
 
 /// due 的合法形态：日期 + 可选时段（中英文皆可，与日终解析一致）。
-final loopDuePattern = RegExp(
+final _loopDuePattern = RegExp(
   r'^\d{4}-\d{2}-\d{2}'
   r'(?: (?:早晨|上午|中午|下午|晚上|深夜|morning|afternoon|evening|night))?$',
 );
@@ -303,7 +309,7 @@ HiddenActionParse parseHiddenActions(String rawText) {
   final blocks = _hiddenActionBlock.allMatches(rawText).toList();
   final visibleText = rawText
       .replaceAll(_hiddenActionBlock, '')
-      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+      .replaceAll(_blankLinesPattern, '\n\n')
       .trim();
   if (blocks.isEmpty) {
     return HiddenActionParse(
@@ -319,16 +325,12 @@ HiddenActionParse parseHiddenActions(String rawText) {
   }
 
   final actions = <HiddenAction>[];
+  // JSON 解析失败与非数组、标量载荷同属 invalid_format：丢弃动作块并记诊断。
   Object? decoded;
   try {
     decoded = jsonDecode(blocks.first.group(1)!.trim());
   } on Object {
-    diagnostics.add(HiddenActionDiagnostics.invalidFormat);
-    return HiddenActionParse(
-      visibleText: visibleText,
-      actions: const [],
-      diagnostics: diagnostics,
-    );
+    decoded = null;
   }
   final items = switch (decoded) {
     final List<Object?> list => list,
@@ -400,14 +402,9 @@ HiddenAction? _validateAction(
         diagnostics.add(HiddenActionDiagnostics.invalidFields);
         return null;
       }
-      if (_violatesPrivilege(summary) ||
-          (evidence != null && _violatesPrivilege(evidence))) {
-        diagnostics.add(HiddenActionDiagnostics.privilegeViolation);
-        return null;
-      }
-      if (_containsSecret(summary) ||
-          (evidence != null && _containsSecret(evidence))) {
-        diagnostics.add(HiddenActionDiagnostics.sensitiveContent);
+      final security = _fieldSecurityDiagnostic([summary, evidence]);
+      if (security != null) {
+        diagnostics.add(security);
         return null;
       }
       // 画像提示是归类的附加线索：不合法时只丢提示、不丢记忆信号。
@@ -441,6 +438,8 @@ HiddenAction? _validateAction(
         diagnostics.add(HiddenActionDiagnostics.invalidFields);
         return null;
       }
+      // 锁定行为：检索词命中越权或秘密一律记 privilegeViolation，
+      // 不走其它动作的 privilege/secret 分流（有测试钉住，勿"统一"）。
       if (_violatesPrivilege(query) || _containsSecret(query)) {
         diagnostics.add(HiddenActionDiagnostics.privilegeViolation);
         return null;
@@ -478,7 +477,7 @@ HiddenAction? _validateAction(
         return null;
       }
       final due = _cleanFieldValue(item['due']);
-      if (due != null && !loopDuePattern.hasMatch(due)) {
+      if (due != null && !_loopDuePattern.hasMatch(due)) {
         diagnostics.add(HiddenActionDiagnostics.invalidFields);
         return null;
       }
@@ -492,19 +491,9 @@ HiddenAction? _validateAction(
         diagnostics.add(HiddenActionDiagnostics.invalidFields);
         return null;
       }
-      if (_violatesPrivilege(title) ||
-          (evidence != null && _violatesPrivilege(evidence)) ||
-          (note != null && _violatesPrivilege(note)) ||
-          _containsSecret(title) ||
-          (evidence != null && _containsSecret(evidence)) ||
-          (note != null && _containsSecret(note))) {
-        diagnostics.add(
-          _violatesPrivilege(title) ||
-                  (evidence != null && _violatesPrivilege(evidence)) ||
-                  (note != null && _violatesPrivilege(note))
-              ? HiddenActionDiagnostics.privilegeViolation
-              : HiddenActionDiagnostics.sensitiveContent,
-        );
+      final security = _fieldSecurityDiagnostic([title, evidence, note]);
+      if (security != null) {
+        diagnostics.add(security);
         return null;
       }
       return HiddenAction(
@@ -531,16 +520,9 @@ HiddenAction? _validateAction(
         diagnostics.add(HiddenActionDiagnostics.invalidFields);
         return null;
       }
-      if (_violatesPrivilege(title) ||
-          (result != null && _violatesPrivilege(result)) ||
-          _containsSecret(title) ||
-          (result != null && _containsSecret(result))) {
-        diagnostics.add(
-          _violatesPrivilege(title) ||
-                  (result != null && _violatesPrivilege(result))
-              ? HiddenActionDiagnostics.privilegeViolation
-              : HiddenActionDiagnostics.sensitiveContent,
-        );
+      final security = _fieldSecurityDiagnostic([title, result]);
+      if (security != null) {
+        diagnostics.add(security);
         return null;
       }
       return HiddenAction(
@@ -561,12 +543,9 @@ HiddenAction? _validateAction(
         diagnostics.add(HiddenActionDiagnostics.invalidFields);
         return null;
       }
-      if (_violatesPrivilege(title) || _containsSecret(title)) {
-        diagnostics.add(
-          _violatesPrivilege(title)
-              ? HiddenActionDiagnostics.privilegeViolation
-              : HiddenActionDiagnostics.sensitiveContent,
-        );
+      final security = _fieldSecurityDiagnostic([title]);
+      if (security != null) {
+        diagnostics.add(security);
         return null;
       }
       return HiddenAction(kind: kind, summary: title);
@@ -593,14 +572,9 @@ HiddenAction? _validateAction(
         diagnostics.add(HiddenActionDiagnostics.invalidFields);
         return null;
       }
-      if (_violatesPrivilege(summary) ||
-          (evidence != null && _violatesPrivilege(evidence))) {
-        diagnostics.add(HiddenActionDiagnostics.privilegeViolation);
-        return null;
-      }
-      if (_containsSecret(summary) ||
-          (evidence != null && _containsSecret(evidence))) {
-        diagnostics.add(HiddenActionDiagnostics.sensitiveContent);
+      final security = _fieldSecurityDiagnostic([summary, evidence]);
+      if (security != null) {
+        diagnostics.add(security);
         return null;
       }
       return HiddenAction(
@@ -620,7 +594,7 @@ String? _cleanFieldValue(Object? value) {
       .split('\n')
       .map((line) => line.trim())
       .join(' ')
-      .replaceAll(RegExp(r'\s{2,}'), ' ')
+      .replaceAll(_fieldWhitespaceRunsPattern, ' ')
       .trim();
   return trimmed.isEmpty ? null : trimmed;
 }
@@ -642,11 +616,11 @@ List<String>? _parseSelections(
   }
   final selections = <String>[];
   for (final item in value) {
-    if (item is! String || !pattern.hasMatch(item.trim())) {
+    final selection = item is String ? item.trim() : null;
+    if (selection == null || !pattern.hasMatch(selection)) {
       diagnostics.add(HiddenActionDiagnostics.invalidFields);
       continue;
     }
-    final selection = item.trim();
     if (!selections.contains(selection)) {
       selections.add(selection);
     }
@@ -659,3 +633,20 @@ bool _violatesPrivilege(String value) =>
 
 bool _containsSecret(String value) =>
     _secretPatterns.any((pattern) => pattern.hasMatch(value));
+
+/// 对动作字段做内容安全筛查：任一字段命中越权特征返回 privilegeViolation，
+/// 否则任一字段命中秘密特征返回 sensitiveContent，全部干净返回 null。
+/// 越权优先于秘密判定；null 字段跳过（可空字段不参与筛查）。
+String? _fieldSecurityDiagnostic(List<String?> fields) {
+  for (final field in fields) {
+    if (field != null && _violatesPrivilege(field)) {
+      return HiddenActionDiagnostics.privilegeViolation;
+    }
+  }
+  for (final field in fields) {
+    if (field != null && _containsSecret(field)) {
+      return HiddenActionDiagnostics.sensitiveContent;
+    }
+  }
+  return null;
+}
