@@ -158,7 +158,7 @@ void main() {
     // 模型连接设置与 Key 不属于产品数据：原样保留。
     expect((await providerSettings.read()).configured, isTrue);
     expect((await providerSettings.read()).keySet, isTrue);
-    expect(secretStore.values, isNotEmpty);
+    expect(configRepository.stored!.apiKey, 'sk-testkey1234567890ab');
   });
 
   test('clear still succeeds when nothing was ever written', () async {
@@ -189,11 +189,6 @@ final class _MemorySecretStore implements SecretStore {
 
   @override
   Future<String?> readApiKey(String scope) async => values[scope];
-
-  @override
-  Future<void> writeApiKey(String scope, String value) async {
-    values[scope] = value;
-  }
 }
 
 final class _UnusedModelGateway implements ModelGateway {

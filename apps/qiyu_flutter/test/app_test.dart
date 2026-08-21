@@ -532,7 +532,7 @@ void main() {
       'https://api.deepseek.com/anthropic',
     );
     expect(settingsGateway.saved.single.model, 'claude-compatible-model');
-    expect(find.text('API Key 已安全保存在 Windows 凭据管理器'), findsOneWidget);
+    expect(find.text('API Key 已保存在本机 provider.json'), findsOneWidget);
     final keyField = tester.widget<TextField>(
       find.byKey(const Key('provider-api-key')),
     );

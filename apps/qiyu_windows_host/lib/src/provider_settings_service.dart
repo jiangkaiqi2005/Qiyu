@@ -88,13 +88,26 @@ final class ProviderSettingsService
 
   Future<ProviderSettingsSnapshot> read() async {
     final config = await configRepository.load();
-    final key = config == null
-        ? null
-        : await secretStore.readApiKey(config.credentialScope);
+    final key = config == null ? null : await _resolveApiKey(config);
     return ProviderSettingsSnapshot(
       config: config,
       keySet: key != null && key.isNotEmpty,
     );
+  }
+
+  /// Key 的解析顺序：provider.json 里用户直接保存/编辑的值优先，
+  /// 文件没有时回退读 Windows 凭据管理器（升级前旧数据的迁移兼容）。
+  /// [storedConfig] 缺省即 [config]；连接测试传入的是表单配置、从不
+  /// 携带 Key，需另传落盘配置，文件 Key 只在作用域一致时采信。
+  Future<String?> _resolveApiKey(
+    ProviderConfig config, [
+    ProviderConfig? storedConfig,
+  ]) async {
+    final stored = storedConfig ?? config;
+    final fileKey = stored.credentialScope == config.credentialScope
+        ? ProviderConfig.normalizeKey(stored.apiKey)
+        : null;
+    return fileKey ?? secretStore.readApiKey(config.credentialScope);
   }
 
   Future<ProviderSettingsSnapshot> save({
@@ -103,14 +116,28 @@ final class ProviderSettingsService
   }) async {
     config.validate();
     final previous = await configRepository.load();
-    if (apiKey != null) {
-      await secretStore.writeApiKey(config.credentialScope, apiKey);
+    final trimmed = apiKey?.trim();
+    // 传入新 Key 就写入文件；没传时同作用域保留已存 Key，换作用域
+    // 则清空——旧目标的 Key 绝不沿用给新目标。
+    String? persistedKey;
+    if (trimmed != null && trimmed.isNotEmpty) {
+      persistedKey = trimmed;
+    } else if (previous != null &&
+        previous.credentialScope == config.credentialScope) {
+      persistedKey = previous.apiKey;
     }
-    await configRepository.save(config);
-    // 切换 Provider 或地址会更换凭据作用域：旧作用域的 Key 从此无人
-    // 读取，保存成功后立即清掉，不在本机凭据库留废弃 Key。
-    if (previous != null && previous.credentialScope != config.credentialScope) {
+    await configRepository.save(config.withApiKey(persistedKey));
+    // 切换 Provider 或地址会更换凭据作用域：旧作用域在凭据管理器里
+    // 的遗留 Key 从此无人读取，保存成功后立即清掉。
+    if (previous != null &&
+        previous.credentialScope != config.credentialScope) {
       await secretStore.deleteApiKey(previous.credentialScope);
+    }
+    // 文件一旦接管当前作用域的 Key，凭据管理器里的同作用域旧值即被
+    // 取代：立即清掉，避免用户日后手改文件清空 Key 时回退复活陈旧
+    // 凭据。纯旧安装（Key 只在凭据库、文件从未存过）不受影响。
+    if (persistedKey != null) {
+      await secretStore.deleteApiKey(config.credentialScope);
     }
     return read();
   }
@@ -118,6 +145,8 @@ final class ProviderSettingsService
   Future<ProviderSettingsSnapshot> forgetApiKey() async {
     final config = await configRepository.load();
     if (config != null) {
+      await configRepository.save(config.withApiKey(null));
+      // 一并清掉凭据管理器里的旧数据（升级前保存的 Key）。
       await secretStore.deleteApiKey(config.credentialScope);
     }
     return read();
@@ -136,7 +165,9 @@ final class ProviderSettingsService
     try {
       final candidate = await modelGateway.complete(
         config: config,
-        apiKey: apiKey ?? await secretStore.readApiKey(config.credentialScope),
+        apiKey:
+            apiKey ??
+            await _resolveApiKey(config, await configRepository.load()),
         messages: modelPromptBuilder.build(state, request.text),
       );
       final outcome = _behaviorCore.reply(
@@ -187,7 +218,7 @@ final class ProviderSettingsService
     try {
       final text = await modelGateway.complete(
         config: config,
-        apiKey: await secretStore.readApiKey(config.credentialScope),
+        apiKey: await _resolveApiKey(config),
         messages: messages,
       );
       return ModelCompletion.reply(text);
@@ -206,7 +237,7 @@ final class ProviderSettingsService
     if (config == null) {
       return null;
     }
-    final apiKey = await secretStore.readApiKey(config.credentialScope);
+    final apiKey = await _resolveApiKey(config);
     if (modelGateway case final StreamingModelGateway streamingGateway) {
       return streamingGateway.stream(
         config: config,

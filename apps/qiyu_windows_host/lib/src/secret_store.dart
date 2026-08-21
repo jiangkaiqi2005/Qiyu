@@ -10,8 +10,6 @@ import 'package:win32/win32.dart';
 abstract interface class SecretStore {
   Future<String?> readApiKey(String scope);
 
-  Future<void> writeApiKey(String scope, String value);
-
   Future<void> deleteApiKey(String scope);
 }
 
@@ -51,16 +49,6 @@ final class WindowsCredentialSecretStore implements SecretStore {
       // 忽略迁移失败。
     }
     return legacyValue;
-  }
-
-  @override
-  Future<void> writeApiKey(String scope, String value) async {
-    _requireWindows();
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) {
-      throw const SecretStoreException('API Key 不能为空。');
-    }
-    _writeTarget(_targetName(scope), trimmed);
   }
 
   @override

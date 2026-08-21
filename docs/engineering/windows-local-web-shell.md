@@ -4,7 +4,7 @@ Windows Release 1 由编译后的 Dart Host 在 `127.0.0.1:0` 提供随包 Flutt
 
 ## 用户启动与退出
 
-候选 zip 解压后运行 `install.cmd`。安装到当前用户目录并创建桌面、开始菜单快捷方式；重复运行执行原位升级，且不触碰 `%USERPROFILE%\.qiyu`、Provider 设置或 Windows Credential Manager 中的 Key。
+候选 zip 解压后运行 `install.cmd`。安装到当前用户目录并创建桌面、开始菜单快捷方式；重复运行执行原位升级，且不触碰 `%USERPROFILE%\.qiyu`、provider.json（含 API Key）或 Windows Credential Manager 中的旧 Key。
 
 从快捷方式启动后，主实例持有 `%LOCALAPPDATA%\Qiyu\runtime` 下的独占锁。再次启动只激活已有实例，不建立第二个记忆写入者。显式关闭 Host 才停止本机 runtime；关闭浏览器标签页不会删除或停止数据。
 
@@ -32,7 +32,7 @@ Pop-Location
 
 所有请求必须使用当前回环端口的精确 Host。API 需要当前会话；修改请求还需同源 Origin 与 `x-qiyu-csrf`。静态资源策略只允许本地脚本、字体、图片和连接；构建使用 `--no-web-resources-cdn` 并随包携带 CanvasKit 与字体。
 
-Provider 请求由 Host 发起。非敏感设置写入本机 runtime；API Key 写入 Windows Credential Manager。API、日志、备份和 Markdown 不返回或保存明文 Key、Cookie、CSRF、第三方错误正文及真实用户路径。
+Provider 请求由 Host 发起。Provider 配置（含 API Key）写入本机 runtime 的 `provider.json`，可直接编辑该文件更换 Key；Windows Credential Manager 只作升级前旧 Key 的只读回退。API 响应、日志、备份和 Markdown 不返回或保存明文 Key、Cookie、CSRF、第三方错误正文及真实用户路径。
 
 ## 数据目录
 

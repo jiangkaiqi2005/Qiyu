@@ -376,6 +376,12 @@ void main() {
       expect(saved.body, isNot(contains('private-test-value')));
       expect(jsonDecode(saved.body), containsPair('keySet', true));
 
+      // Key 随配置落盘 provider.json：用户可直接编辑该文件更换 Key。
+      final storedConfig =
+          jsonDecode(await File(configPath).readAsString())
+              as Map<String, Object?>;
+      expect(storedConfig['apiKey'], 'private-test-value');
+
       final tested = await _send(
         host.origin.resolve('/api/provider/test'),
         method: 'POST',
@@ -1537,11 +1543,6 @@ final class _MemorySecretStore implements SecretStore {
 
   @override
   Future<String?> readApiKey(String scope) async => values[scope];
-
-  @override
-  Future<void> writeApiKey(String scope, String value) async {
-    values[scope] = value;
-  }
 }
 
 final class _StaticModelGateway implements ModelGateway {

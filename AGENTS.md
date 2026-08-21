@@ -70,7 +70,7 @@ Flutter `/chat` → `HttpLocalChatGateway` → `POST /api/chat` → `LocalChatSe
 ### 状态与配置
 
 - 主链路会话由 Windows Host 写入本机 Markdown sessions；单段最多 80 turns，活动历史窗口 180 天。浏览器刷新后从 Host 恢复，不以 localStorage 作为主持久化层。无账号、无云端记忆。
-- Provider 非敏感配置写在本机 runtime 目录；API Key 由 Windows Credential Manager 保存。切换 Provider/URL 时不得沿用另一 credential scope 的旧 Key。
+- Provider 配置（含 API Key）写在本机 runtime 目录的 `provider.json`，用户可直接编辑该文件更换 Key；Windows Credential Manager 只作升级前旧 Key 的只读回退，不再写入。切换 Provider/URL 时不得沿用另一 credential scope 的旧 Key。
 - 支持 OpenAI-compatible、Anthropic、Ollama。地址规范化、鉴权头、请求体、流式解析和错误分类集中在 Provider 层；不要在 UI 或 Chat Service 重复 Provider 分支。
 - 安全不变量：Host 仅监听 loopback；API 需要 Host 会话，修改请求还需同源 Origin + CSRF；读取设置永不返回明文 Key；对外错误只返回允许列表诊断，禁止透出授权头、Cookie、完整敏感输入、第三方错误原文或本机路径。
 - Release 1 不迁移旧 localStorage 或旧 `qiyu.config.local.json`。不要重新引入旧 Web 产品入口或浏览器持久化主链路。

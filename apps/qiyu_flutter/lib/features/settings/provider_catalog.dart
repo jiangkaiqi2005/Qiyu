@@ -44,8 +44,8 @@ final class ProviderCatalogSelection {
   final bool customModel;
 }
 
-/// 常用服务商目录。只保存公开、稳定的连接元数据；API Key 仍由 Host
-/// 写入 Windows 凭据管理器，目录本身不会联网，也不持有任何凭据。
+/// 常用服务商目录。只保存公开、稳定的连接元数据；API Key 由 Host
+/// 写入本机 provider.json，目录本身不会联网，也不持有任何凭据。
 const providerCatalog = <ProviderPreset>[
   ProviderPreset(
     id: 'openai',

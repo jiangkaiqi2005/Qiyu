@@ -267,8 +267,9 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  '把模型留在本机这端。普通配置保存在本机；API Key 只在保存或测试时'
-                  '交给本机程序，之后页面无法取回明文。',
+                  '把模型留在本机这端。普通配置和 API Key 都保存在本机 '
+                  'provider.json 文件里，可以直接编辑该文件更换 Key；'
+                  '页面只显示是否已保存，无法取回明文。',
                   style: theme.textTheme.bodyLarge?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                     height: 1.55,
@@ -486,12 +487,14 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              keySet ? 'API Key 已安全保存在 Windows 凭据管理器' : '尚未保存 API Key',
+              keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存 API Key',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
             Text(
-              keySet ? '留空即可继续使用；输入新值会覆盖旧值。' : 'Ollama 本地服务通常可以留空。',
+              keySet
+                  ? '留空即可继续使用；输入新值会覆盖旧值，也可以直接编辑 provider.json 更换。'
+                  : 'Ollama 本地服务通常可以留空。',
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -505,7 +508,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
               autocorrect: false,
               decoration: const InputDecoration(
                 labelText: 'API Key',
-                hintText: '只在本次保存时使用',
+                hintText: '保存后写入本机 provider.json',
                 border: OutlineInputBorder(),
               ),
             ),
