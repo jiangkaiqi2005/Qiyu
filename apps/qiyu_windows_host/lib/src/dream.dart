@@ -512,9 +512,8 @@ final class DreamService {
       return;
     }
     final today = localSessionDate(_clock());
-    if (state.lastSuccess != null &&
-        _daysBetween(localSessionDate(state.lastSuccess!), today) <
-            dreamMinIntervalDays) {
+    final gap = _daysSinceLastSuccess(state, today);
+    if (gap != null && gap < dreamMinIntervalDays) {
       return;
     }
     if (!await _writeState(
@@ -541,11 +540,9 @@ final class DreamService {
       return const DreamOutcome(status: DreamStatus.notEligible);
     }
     final today = localSessionDate(now);
-    if (state.lastSuccess != null) {
-      final lastDate = localSessionDate(state.lastSuccess!);
-      if (_daysBetween(lastDate, today) < dreamMinIntervalDays) {
-        return const DreamOutcome(status: DreamStatus.notDue);
-      }
+    final gap = _daysSinceLastSuccess(state, today);
+    if (gap != null && gap < dreamMinIntervalDays) {
+      return const DreamOutcome(status: DreamStatus.notDue);
     }
 
     // 中断补扫：上一轮被打断留下的草稿一律作废，同一时间只有一份
@@ -794,10 +791,9 @@ final class DreamService {
     } on Object catch (error) {
       return DreamOutcome(status: DreamStatus.writeFailed, detail: '$error');
     }
-    final appliedCount = opRecords.fold<int>(
-      0,
-      (count, record) => record.reason == null ? count + 1 : count,
-    );
+    final appliedCount = opRecords
+        .where((record) => record.reason == null)
+        .length;
     return DreamOutcome(
       status: DreamStatus.accepted,
       rootOpsApplied: appliedCount,
@@ -818,16 +814,10 @@ final class DreamService {
   Future<DreamHealthFacts> healthFacts({String? today}) async {
     final state = await readState();
     final currentDate = today ?? localSessionDate(_clock());
-    int? daysSinceLastSuccess;
-    if (state.lastSuccess != null) {
-      daysSinceLastSuccess = _daysBetween(
-        localSessionDate(state.lastSuccess!),
-        currentDate,
-      );
-    }
+    final daysSinceLastSuccess = _daysSinceLastSuccess(state, currentDate);
     final intervalSatisfied =
-        state.lastSuccess == null ||
-        daysSinceLastSuccess! >= dreamMinIntervalDays;
+        daysSinceLastSuccess == null ||
+        daysSinceLastSuccess >= dreamMinIntervalDays;
     return DreamHealthFacts(
       lastSuccess: state.lastSuccess,
       pending: state.pending,
@@ -1162,9 +1152,6 @@ final class DreamService {
   /// 根/中间理解/叶同样不递给模型：冻结按设计留在树里，但绝不参与
   /// 自动整理。
   String _renderTreeForModel(PersonaTreeSnapshot snapshot, Set<String> frozen) {
-    bool frozenHit(String text) =>
-        frozen.isNotEmpty &&
-        bannedTitleMatches(normalizeMemoryText(text), frozen);
     final buffer = StringBuffer();
     for (final branch in personaBranches) {
       final view = snapshot.branches[branch.wireName];
@@ -1176,12 +1163,12 @@ final class DreamService {
       }
       buffer.writeln('### ${branch.title}（${branch.wireName}）');
       for (final root in view.roots) {
-        if (frozenHit(root.claim)) {
+        if (frozenTitleHit(root.claim, frozen)) {
           continue;
         }
         buffer.writeln('- 根 [${root.id}] ${root.claim}');
         for (final middle in root.middles) {
-          if (frozenHit(middle.claim)) {
+          if (frozenTitleHit(middle.claim, frozen)) {
             continue;
           }
           buffer.writeln(
@@ -1191,7 +1178,7 @@ final class DreamService {
         }
       }
       for (final middle in view.unrooted) {
-        if (frozenHit(middle.claim)) {
+        if (frozenTitleHit(middle.claim, frozen)) {
           continue;
         }
         buffer.writeln(
@@ -1232,16 +1219,13 @@ final class DreamService {
     if (!view.archiveReadable) {
       return 'archive-unavailable';
     }
-    bool frozenHit(String text) =>
-        frozen.isNotEmpty &&
-        bannedTitleMatches(normalizeMemoryText(text), frozen);
     switch (op) {
       case PersonaPromoteOp(:final claim, :final middleIds):
         final claimFailure = rootClaimGateFailure(claim, banned: banned);
         if (claimFailure != null) {
           return claimFailure;
         }
-        if (frozenHit(claim)) {
+        if (frozenTitleHit(claim, frozen)) {
           return 'frozen';
         }
         final ids = middleIds.toSet();
@@ -1253,7 +1237,7 @@ final class DreamService {
           if (middle == null) {
             return 'unknown-middle';
           }
-          if (frozenHit(middle.claim)) {
+          if (frozenTitleHit(middle.claim, frozen)) {
             return 'frozen';
           }
           middles.add(middle);
@@ -1280,7 +1264,7 @@ final class DreamService {
         if (root == null) {
           return 'unknown-root';
         }
-        if (frozenHit(root.claim)) {
+        if (frozenTitleHit(root.claim, frozen)) {
           return 'frozen';
         }
         final ids = middleIds.toSet();
@@ -1291,7 +1275,7 @@ final class DreamService {
           if (middle == null) {
             return 'unknown-middle';
           }
-          if (frozenHit(middle.claim)) {
+          if (frozenTitleHit(middle.claim, frozen)) {
             return 'frozen';
           }
           if (middle.leaves.any((leaf) => leaf.relation == 'conflict')) {
@@ -1309,7 +1293,7 @@ final class DreamService {
         if (root == null) {
           return 'unknown-root';
         }
-        if (frozenHit(root.claim)) {
+        if (frozenTitleHit(root.claim, frozen)) {
           return 'frozen';
         }
         final counter = view.unrooted
@@ -1318,7 +1302,7 @@ final class DreamService {
         if (counter == null) {
           return 'unknown-counter';
         }
-        if (frozenHit(counter.claim)) {
+        if (frozenTitleHit(counter.claim, frozen)) {
           return 'frozen';
         }
         // 降根只认「两个不同日期的反向行为已形成反向中间理解」的
@@ -1339,7 +1323,7 @@ final class DreamService {
         if (claimFailure != null) {
           return claimFailure;
         }
-        if (frozenHit(claim)) {
+        if (frozenTitleHit(claim, frozen)) {
           return 'frozen';
         }
         final ids = rootIds.toSet();
@@ -1354,7 +1338,7 @@ final class DreamService {
           if (root == null) {
             return 'unknown-root';
           }
-          if (frozenHit(root.claim)) {
+          if (frozenTitleHit(root.claim, frozen)) {
             return 'frozen';
           }
           roots.add(root);
@@ -1870,20 +1854,12 @@ Map<String, Object?> _decodeJson(String value) {
       as Map<String, Object?>;
 }
 
-/// 两个 YYYY-MM-DD 日期之间的日历日差（later - earlier）。
-int _daysBetween(String earlier, String later) {
-  final from = DateTime(
-    int.parse(earlier.substring(0, 4)),
-    int.parse(earlier.substring(5, 7)),
-    int.parse(earlier.substring(8, 10)),
-  );
-  final to = DateTime(
-    int.parse(later.substring(0, 4)),
-    int.parse(later.substring(5, 7)),
-    int.parse(later.substring(8, 10)),
-  );
-  return to.difference(from).inDays;
-}
+/// 距上次成功 Dream 的本地日历日差（[today] 为 YYYY-MM-DD）；从未
+/// 成功时为 null。晚安预登记、执行资格复查与诊断事实共用同一口径。
+int? _daysSinceLastSuccess(DreamState state, String today) =>
+    state.lastSuccess == null
+    ? null
+    : dateSpanDays(localSessionDate(state.lastSuccess!), today);
 
 /// 从模型输出中提取 JSON 对象：容忍代码块围栏与前后多余文字，只取
 /// 第一个 `{` 到最后一个 `}` 之间的内容。

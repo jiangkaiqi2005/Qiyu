@@ -88,6 +88,11 @@ const natureBehavior = '行为观察';
 String natureLabelForWire(String wire) =>
     wire == 'self_report' ? natureSelfReport : natureBehavior;
 
+/// 组内最长的摘要作为主张原文；同长取先出现者。
+String _longestSummary(Iterable<PersonaLeaf> leaves) => leaves
+    .map((leaf) => leaf.summary)
+    .reduce((left, right) => left.runes.length >= right.runes.length ? left : right);
+
 /// 归档原因（定稿三种）。用户禁提不归档而是直接删除：归档仍可能被
 /// Dream 作为负面依据读到，禁提内容必须彻底遗忘。
 const archiveReasonCorrection = '明确纠正';
@@ -112,6 +117,21 @@ const personaMaxRunes = 600;
 /// 热层预算超限时的投影裁剪顺序（定稿）：偏好习惯、性格表达先省略，
 /// 身份事实最后省略；边界禁区不在裁剪顺序里，永不裁掉。
 const personaTrimOrder = ['偏好与习惯', '性格与表达', '价值观与原则', '身份与客观事实'];
+
+/// 超预算时按 [personaTrimOrder] 从第一个可裁小节尾部丢弃一条；
+/// 只剩边界禁区等不可裁内容时返回 false。persona.md 写盘与注入关
+/// [clipPersonaBlock] 共用同一砍序。
+bool _dropOneByTrimOrder(List<(String, List<String>)> sections) {
+  for (final title in personaTrimOrder) {
+    final section = sections.where((entry) => entry.$1 == title).firstOrNull;
+    if (section == null || section.$2.isEmpty) {
+      continue;
+    }
+    section.$2.removeLast();
+    return true;
+  }
+  return false;
+}
 
 /// 根主张禁止携带的时间限定词（定稿）：带时间限定的近况不得升根。
 final rootTimeWordPattern = RegExp(
@@ -146,6 +166,18 @@ final class PersonaLeaf {
   final String entryRef;
 
   String get pointer => '$episodePath [$entryRef]';
+
+  /// 复制叶并按需改写 relation（挂载为 conflict、升级回 support）或
+  /// summary（条目修正同步）；其余证据指针字段原样保留。
+  PersonaLeaf copyWith({String? relation, String? summary}) => PersonaLeaf(
+    id: id,
+    date: date,
+    nature: nature,
+    relation: relation ?? this.relation,
+    summary: summary ?? this.summary,
+    episodePath: episodePath,
+    entryRef: entryRef,
+  );
 }
 
 /// 中间理解（第二层）：只存稳定 ID、类型、候选理解；形成与最近
@@ -393,8 +425,7 @@ final class PersonaDreamApplyResult {
 
   final List<String?> outcomes;
 
-  int get appliedCount =>
-      outcomes.fold(0, (count, outcome) => outcome == null ? count + 1 : count);
+  int get appliedCount => outcomes.where((outcome) => outcome == null).length;
 
   int get skippedCount => outcomes.length - appliedCount;
 }
@@ -435,7 +466,7 @@ String? promotionGateFailure(
       return 0;
     }
     final sorted = [...dates]..sort();
-    return _dateSpanDays(sorted.first, sorted.last);
+    return dateSpanDays(sorted.first, sorted.last);
   }
 
   final selfDates = supportLeaves
@@ -473,8 +504,9 @@ String? promotionGateFailure(
   }
 }
 
-/// 两个 YYYY-MM-DD 日期之间的日历日差（later - earlier）。
-int _dateSpanDays(String earlier, String later) {
+/// 两个 YYYY-MM-DD 日期之间的日历日差（later - earlier）。dream.dart
+/// 的间隔判定与孤儿叶过期判定共用同一实现。
+int dateSpanDays(String earlier, String later) {
   final from = DateTime(
     int.parse(earlier.substring(0, 4)),
     int.parse(earlier.substring(5, 7)),
@@ -487,6 +519,11 @@ int _dateSpanDays(String earlier, String later) {
   );
   return to.difference(from).inDays;
 }
+
+/// 定稿冻结标题命中判定，Persona 注入关与 Dream 校验共用。
+bool frozenTitleHit(String text, Set<String> frozen) =>
+    frozen.isNotEmpty &&
+    bannedTitleMatches(normalizeMemoryText(text), frozen);
 
 final _leafLinePattern = RegExp(
   r'^- \[([A-Z]{2}-L\d+)\] (\d{4}-\d{2}-\d{2}) \| '
@@ -687,6 +724,34 @@ final class PersonaTreeStore {
     }
   });
 
+  /// 封禁清扫：命中封禁集合（禁提 ∪ 删除）的未归根中间理解与未归类
+  /// 叶直接删除，不进归档。返回是否删除过内容。[applyBan] 与日终
+  /// 整理共用同一清扫口径。
+  bool _sweepBanned(_BranchState state, Set<String> banned) {
+    var changed = false;
+    final bannedMiddles = state.unrooted
+        .where(
+          (middle) =>
+              bannedTitleMatches(normalizeMemoryText(middle.claim), banned),
+        )
+        .toList();
+    if (bannedMiddles.isNotEmpty) {
+      state.unrooted.removeWhere(bannedMiddles.contains);
+      changed = true;
+    }
+    final bannedLeaves = state.unclassified
+        .where(
+          (leaf) =>
+              bannedTitleMatches(normalizeMemoryText(leaf.summary), banned),
+        )
+        .toList();
+    if (bannedLeaves.isNotEmpty) {
+      state.unclassified.removeWhere(bannedLeaves.contains);
+      changed = true;
+    }
+    return changed;
+  }
+
   /// 禁提/删除即时生效（用户记忆控制高于 PersonaTree 提炼）：命中
   /// 封禁集合（禁提 ∪ 删除）的中间理解连同其叶直接删除，未归类叶
   /// 同样删除；命中的根连同整条子树直接删除，根下中间理解命中时
@@ -708,27 +773,8 @@ final class PersonaTreeStore {
         );
         continue;
       }
-      var changed = false;
-      final bannedMiddles = state.unrooted
-          .where(
-            (middle) =>
-                bannedTitleMatches(normalizeMemoryText(middle.claim), banned),
-          )
-          .toList();
-      if (bannedMiddles.isNotEmpty) {
-        state.unrooted.removeWhere(bannedMiddles.contains);
-        changed = true;
-        applied = true;
-      }
-      final bannedLeaves = state.unclassified
-          .where(
-            (leaf) =>
-                bannedTitleMatches(normalizeMemoryText(leaf.summary), banned),
-          )
-          .toList();
-      if (bannedLeaves.isNotEmpty) {
-        state.unclassified.removeWhere(bannedLeaves.contains);
-        changed = true;
+      var changed = _sweepBanned(state, banned);
+      if (changed) {
         applied = true;
       }
       final bannedRoots = state.roots
@@ -791,15 +837,7 @@ final class PersonaTreeStore {
         if (leaf.entryRef != entryRef || leaf.summary == summary) {
           return null;
         }
-        return PersonaLeaf(
-          id: leaf.id,
-          date: leaf.date,
-          nature: leaf.nature,
-          relation: leaf.relation,
-          summary: summary,
-          episodePath: leaf.episodePath,
-          entryRef: leaf.entryRef,
-        );
+        return leaf.copyWith(summary: summary);
       }
 
       var changed = false;
@@ -1063,7 +1101,7 @@ final class PersonaTreeStore {
       var changed = false;
       final orphans = state.unclassified.where((leaf) {
         try {
-          return _dateSpanDays(leaf.date, date) > personaOrphanLeafKeepDays;
+          return dateSpanDays(leaf.date, date) > personaOrphanLeafKeepDays;
         } on Object {
           return false;
         }
@@ -1149,23 +1187,13 @@ final class PersonaTreeStore {
   }
 
   /// 封禁集合（禁提 ∪ 删除）：命中即清除或拒绝建叶，绝不复活。
-  Future<Set<String>> _blockedTitles() async {
-    final store = openLoopStore;
-    if (store == null) {
-      return const {};
-    }
-    return store.blockedTitles();
-  }
+  Future<Set<String>> _blockedTitles() async =>
+      await openLoopStore?.blockedTitles() ?? const <String>{};
 
   /// 冻结集合：冻结停止自动整理，命中的叶与中间理解保持原样，
   /// 不参与挂载、冲突升级或新建理解，直到用户解除。
-  Future<Set<String>> _frozenTitles() async {
-    final store = openLoopStore;
-    if (store == null) {
-      return const {};
-    }
-    return store.frozenTitles();
-  }
+  Future<Set<String>> _frozenTitles() async =>
+      await openLoopStore?.frozenTitles() ?? const <String>{};
 
   /// 建叶（锁内）：只处理同时带 branch 与 nature 的记忆条目。
   Future<void> _createLeavesLocked(List<EpisodeEntry> entries) async {
@@ -1288,30 +1316,9 @@ final class PersonaTreeStore {
     var rootsChanged = false;
 
     // 1. 禁提清扫：用户禁止提及高于提炼，命中即删除、不进归档。
-    final bannedMiddles = state.unrooted
-        .where(
-          (middle) =>
-              bannedTitleMatches(normalizeMemoryText(middle.claim), banned),
-        )
-        .toList();
-    if (bannedMiddles.isNotEmpty) {
-      state.unrooted.removeWhere(bannedMiddles.contains);
+    if (_sweepBanned(state, banned)) {
       changed = true;
     }
-    final bannedLeaves = state.unclassified
-        .where(
-          (leaf) =>
-              bannedTitleMatches(normalizeMemoryText(leaf.summary), banned),
-        )
-        .toList();
-    if (bannedLeaves.isNotEmpty) {
-      state.unclassified.removeWhere(bannedLeaves.contains);
-      changed = true;
-    }
-
-    bool frozenHit(String text) =>
-        frozen.isNotEmpty &&
-        bannedTitleMatches(normalizeMemoryText(text), frozen);
 
     // 2. 身份事实的最新明确陈述胜出：新的自述与旧「待稳定事实」
     //    冲突时归档旧理解，新说法走全新 ID，不拿旧证据背书。
@@ -1370,11 +1377,11 @@ final class PersonaTreeStore {
         continue;
       }
       // 冻结停止自动整理：冻结的叶与中间理解原地保留，不挂载。
-      if (frozenHit(leaf.summary)) {
+      if (frozenTitleHit(leaf.summary, frozen)) {
         continue;
       }
       for (final middle in state.allMiddles) {
-        if (frozenHit(middle.claim)) {
+        if (frozenTitleHit(middle.claim, frozen)) {
           continue;
         }
         if (sameClaim(leaf.summary, middle.claim)) {
@@ -1387,17 +1394,7 @@ final class PersonaTreeStore {
         if (branch.wireName != 'identity' &&
             conflictTopic(leaf.summary, middle.claim)) {
           state.unclassified.remove(leaf);
-          middle.leaves.add(
-            PersonaLeaf(
-              id: leaf.id,
-              date: leaf.date,
-              nature: leaf.nature,
-              relation: 'conflict',
-              summary: leaf.summary,
-              episodePath: leaf.episodePath,
-              entryRef: leaf.entryRef,
-            ),
-          );
+          middle.leaves.add(leaf.copyWith(relation: 'conflict'));
           middle.reviewedOn = date;
           changed = true;
           break;
@@ -1411,7 +1408,7 @@ final class PersonaTreeStore {
     //    （比较旧根与反向理解后降根与否）归下一次 Dream。
     if (branch.wireName != 'identity') {
       for (final middle in [...state.allMiddles]) {
-        if (frozenHit(middle.claim)) {
+        if (frozenTitleHit(middle.claim, frozen)) {
           continue;
         }
         final conflicts = middle.leaves
@@ -1423,12 +1420,7 @@ final class PersonaTreeStore {
         }
         middle.leaves.removeWhere(conflicts.contains);
         middle.reviewedOn = date;
-        final counterClaim = conflicts
-            .map((leaf) => leaf.summary)
-            .reduce(
-              (left, right) =>
-                  left.runes.length >= right.runes.length ? left : right,
-            );
+        final counterClaim = _longestSummary(conflicts);
         final counter = PersonaMiddle(
           id: _nextId(branch, 'M', state, archive),
           type: branch.wireName == 'boundaries'
@@ -1437,18 +1429,7 @@ final class PersonaTreeStore {
           claim: counterClaim,
           formedOn: date,
           reviewedOn: date,
-          leaves: [
-            for (final leaf in conflicts)
-              PersonaLeaf(
-                id: leaf.id,
-                date: leaf.date,
-                nature: leaf.nature,
-                relation: 'support',
-                summary: leaf.summary,
-                episodePath: leaf.episodePath,
-                entryRef: leaf.entryRef,
-              ),
-          ],
+          leaves: [for (final leaf in conflicts) leaf.copyWith(relation: 'support')],
         );
         state.unrooted.add(counter);
         if (middle.leaves.isEmpty) {
@@ -1470,7 +1451,7 @@ final class PersonaTreeStore {
     //    冻结的叶不参与新建理解，留在未归类区等待解除。
     final groups = <List<PersonaLeaf>>[];
     for (final leaf in [...state.unclassified]) {
-      if (frozenHit(leaf.summary)) {
+      if (frozenTitleHit(leaf.summary, frozen)) {
         continue;
       }
       List<PersonaLeaf>? target;
@@ -1523,12 +1504,7 @@ final class PersonaTreeStore {
         // 证据不足：单轮行为信号不形成理解，叶留在未归类区。
         continue;
       }
-      final claim = attach
-          .map((leaf) => leaf.summary)
-          .reduce(
-            (left, right) =>
-                left.runes.length >= right.runes.length ? left : right,
-          );
+      final claim = _longestSummary(attach);
       final middle = PersonaMiddle(
         id: _nextId(branch, 'M', state, archive),
         type: type,
@@ -1692,6 +1668,12 @@ final class PersonaTreeStore {
             return _BranchState(readable: false);
           }
         case 'unrooted':
+        case 'root':
+          // 两个区都只认中间理解头、元数据行与叶行；其余视为损坏。
+          // 差别只在头的去向：未归根区平铺，根区挂到当前根下。
+          if (section == 'root' && currentRoot == null) {
+            return _BranchState(readable: false);
+          }
           final middleMatch = _middleHeaderPattern.firstMatch(trimmed);
           if (middleMatch != null) {
             currentMiddle = PersonaMiddle(
@@ -1702,7 +1684,11 @@ final class PersonaTreeStore {
               reviewedOn: '',
               leaves: [],
             );
-            state.unrooted.add(currentMiddle);
+            if (section == 'unrooted') {
+              state.unrooted.add(currentMiddle);
+            } else {
+              currentRoot?.middles.add(currentMiddle);
+            }
             continue;
           }
           final middle = currentMiddle;
@@ -1711,7 +1697,8 @@ final class PersonaTreeStore {
           }
           final metaMatch = _middleMetaPattern.firstMatch(trimmed);
           if (metaMatch != null) {
-            _setMiddleMeta(middle, metaMatch.group(1)!, metaMatch.group(2)!);
+            middle.formedOn = metaMatch.group(1)!;
+            middle.reviewedOn = metaMatch.group(2)!;
             continue;
           }
           final leaf = _parseLeafLine(trimmed);
@@ -1725,51 +1712,11 @@ final class PersonaTreeStore {
             return _BranchState(readable: false);
           }
           state.unclassified.add(leaf);
-        case 'root':
-          // 根区只认嵌套中间理解头、元数据行与叶行；其余视为损坏。
-          final root = currentRoot;
-          if (root == null) {
-            return _BranchState(readable: false);
-          }
-          final middleMatch = _middleHeaderPattern.firstMatch(trimmed);
-          if (middleMatch != null) {
-            currentMiddle = PersonaMiddle(
-              id: middleMatch.group(1)!,
-              type: middleMatch.group(2)!,
-              claim: middleMatch.group(3)!,
-              formedOn: '',
-              reviewedOn: '',
-              leaves: [],
-            );
-            root.middles.add(currentMiddle);
-            continue;
-          }
-          final middle = currentMiddle;
-          if (middle == null) {
-            return _BranchState(readable: false);
-          }
-          final metaMatch = _middleMetaPattern.firstMatch(trimmed);
-          if (metaMatch != null) {
-            _setMiddleMeta(middle, metaMatch.group(1)!, metaMatch.group(2)!);
-            continue;
-          }
-          final leaf = _parseLeafLine(trimmed);
-          if (leaf == null) {
-            return _BranchState(readable: false);
-          }
-          middle.leaves.add(leaf);
         default:
           return _BranchState(readable: false);
       }
     }
     return state;
-  }
-
-  /// PersonaMiddle 的 formedOn/reviewedOn 声明为 final 之外的普通字段：
-  /// 解析期先落空串，读到元数据行再回填。
-  void _setMiddleMeta(PersonaMiddle middle, String formed, String reviewed) {
-    middle.formedOn = formed;
-    middle.reviewedOn = reviewed;
   }
 
   PersonaLeaf? _parseLeafLine(String line) {
@@ -1936,7 +1883,8 @@ final class PersonaTreeStore {
       }
       final metaMatch = _middleMetaPattern.firstMatch(trimmed);
       if (metaMatch != null) {
-        _setMiddleMeta(middle, metaMatch.group(1)!, metaMatch.group(2)!);
+        middle.formedOn = metaMatch.group(1)!;
+        middle.reviewedOn = metaMatch.group(2)!;
         continue;
       }
       final leaf = _parseLeafLine(trimmed);
@@ -1993,10 +1941,19 @@ final class PersonaTreeStore {
     await _atomicWriter.replace(file.path, buffer.toString());
   }
 
-  void _writeMiddleBlock(StringBuffer buffer, PersonaMiddle middle) {
+  /// 中间理解块：活跃区与归档区共用同一渲染，归档条目经 [archivedMeta]
+  /// 在头行后插入「失效」元数据行，两侧序列化格式永不漂移。
+  void _writeMiddleBlock(
+    StringBuffer buffer,
+    PersonaMiddle middle, {
+    String? archivedMeta,
+  }) {
     buffer
       ..writeln()
       ..writeln('### [${middle.id}] ${middle.type}｜${middle.claim}');
+    if (archivedMeta != null) {
+      buffer.writeln(archivedMeta);
+    }
     // 元数据缺失（手改文件）时省略该行而不是写空日期：
     // 空日期行解析不回来，会把可恢复文件变成永久不可读。
     if (middle.formedOn.isNotEmpty && middle.reviewedOn.isNotEmpty) {
@@ -2022,20 +1979,13 @@ final class PersonaTreeStore {
     }
     final buffer = StringBuffer()..writeln('# ${branch.title}（归档）');
     for (final entry in archive.entries) {
-      final middle = entry.middle;
-      buffer
-        ..writeln()
-        ..writeln('### [${middle.id}] ${middle.type}｜${middle.claim}')
-        ..writeln(
-          '- 失效: ${entry.archivedOn} · 原因: ${entry.reason} · '
-          '关联: ${entry.relatedIds.join(', ')}',
-        );
-      if (middle.formedOn.isNotEmpty && middle.reviewedOn.isNotEmpty) {
-        buffer.writeln('- 形成: ${middle.formedOn} · 复核: ${middle.reviewedOn}');
-      }
-      for (final leaf in middle.leaves) {
-        buffer.writeln(_leafLine(leaf));
-      }
+      _writeMiddleBlock(
+        buffer,
+        entry.middle,
+        archivedMeta:
+            '- 失效: ${entry.archivedOn} · 原因: ${entry.reason} · '
+            '关联: ${entry.relatedIds.join(', ')}',
+      );
     }
     for (final entry in archive.rootEntries) {
       final root = entry.root;
@@ -2120,14 +2070,14 @@ final class PersonaTreeStore {
   /// 日期或二次概括；超预算按 [personaTrimOrder] 裁剪，边界禁区永不裁。
   Future<void> _writePersona(Map<String, _BranchState> states) async {
     final file = File(path.join(memoryDirectory, 'persona.md'));
-    final sections = <(PersonaBranch, List<String>)>[];
+    final sections = <(String, List<String>)>[];
     for (final branch in personaBranches) {
       final claims = states[branch.wireName]!.roots
           .map((root) => root.claim.trim())
           .where((claim) => claim.isNotEmpty)
           .toList();
       if (claims.isNotEmpty) {
-        sections.add((branch, claims));
+        sections.add((branch.personaTitle, claims));
       }
     }
     if (sections.isEmpty) {
@@ -2137,19 +2087,7 @@ final class PersonaTreeStore {
       return;
     }
     while (_renderPersona(sections).runes.length > personaMaxRunes) {
-      var dropped = false;
-      for (final title in personaTrimOrder) {
-        final section = sections
-            .where((entry) => entry.$1.personaTitle == title)
-            .firstOrNull;
-        if (section == null || section.$2.isEmpty) {
-          continue;
-        }
-        section.$2.removeLast();
-        dropped = true;
-        break;
-      }
-      if (!dropped) {
+      if (!_dropOneByTrimOrder(sections)) {
         // 只剩边界禁区也超预算：边界不得裁掉，原样落盘。
         break;
       }
@@ -2158,12 +2096,12 @@ final class PersonaTreeStore {
     await _atomicWriter.replace(file.path, _renderPersona(sections));
   }
 
-  String _renderPersona(List<(PersonaBranch, List<String>)> sections) {
+  String _renderPersona(List<(String, List<String>)> sections) {
     final buffer = StringBuffer()..writeln('# persona');
-    for (final (branch, claims) in sections) {
+    for (final (title, claims) in sections) {
       buffer
         ..writeln()
-        ..writeln('## ${branch.personaTitle}');
+        ..writeln('## $title');
       for (final claim in claims) {
         buffer.writeln('- $claim');
       }
@@ -2219,17 +2157,7 @@ String clipPersonaBlock(String contents, int maxRunes) {
   }
 
   while (render().runes.length > maxRunes) {
-    var dropped = false;
-    for (final title in personaTrimOrder) {
-      final section = sections.where((entry) => entry.$1 == title).firstOrNull;
-      if (section == null || section.$2.isEmpty) {
-        continue;
-      }
-      section.$2.removeLast();
-      dropped = true;
-      break;
-    }
-    if (!dropped) {
+    if (!_dropOneByTrimOrder(sections)) {
       // 只剩边界禁区：边界不得裁掉，剩余内容原样返回。
       break;
     }
