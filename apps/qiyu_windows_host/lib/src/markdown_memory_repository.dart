@@ -10,6 +10,11 @@ import 'memory_marker_codec.dart';
 const maxRawSessionTurns = 80;
 const activeSessionHistoryWindow = Duration(days: 180);
 
+/// 跨 0 点回放窗口：睡前对话跨过午夜后短时间内（继续聊或刷新）仍
+/// 回放昨晚的段，窗口外按新的一天开新段。只影响回放，不影响写入分段
+/// 与按自然日的日终归档。
+const activeSessionResumeWindow = Duration(hours: 6);
+
 typedef Clock = DateTime Function();
 
 abstract interface class AtomicTextWriter {
@@ -340,10 +345,16 @@ final class MarkdownMemoryRepository implements MemoryRepository {
     if (requested != null) {
       return requested;
     }
-    // 当前会话按天分界：昨天的段不再作为当前会话回放，第二天打开即开新段。
+    // 当前会话按天分界：同一天的段直接接着用；跨 0 点后在回放窗口内
+    // （睡前继续聊或刷新）仍回放昨晚的段，窗口外开新段。文件时间超前
+    // 于当前时钟（时钟回拨）不算窗口内，保守开新段。
     final latest = _latestSession(sessions);
-    if (latest != null && latest.date == today) {
-      return latest;
+    if (latest != null) {
+      final age = now.difference(latest.updatedAt);
+      if (latest.date == today ||
+          (age >= Duration.zero && age <= activeSessionResumeWindow)) {
+        return latest;
+      }
     }
 
     return _createSession(records, now, today);

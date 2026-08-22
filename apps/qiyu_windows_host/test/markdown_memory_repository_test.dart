@@ -152,6 +152,78 @@ void main() {
     },
   );
 
+  test(
+    'openSession resumes an evening segment after midnight and within the same day',
+    () async {
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      now = DateTime(2026, 8, 11, 23, 50);
+      final evening = await repository.createSession();
+      final saved = await repository.appendTurn(
+        evening,
+        RawSessionTurn.user(requestId: 'midnight', text: '还没睡', at: now),
+      );
+
+      // 跨 0 点后短时间内刷新：仍回放昨晚这段，不开新段。
+      now = DateTime(2026, 8, 12, 0, 30);
+      final afterMidnight = await repository.openSession();
+      expect(afterMidnight.id, saved.id);
+
+      // 次日窗口外打开：开今天的新段。
+      now = DateTime(2026, 8, 12, 15, 0);
+      final nextDay = await repository.openSession();
+      expect(nextDay.id, isNot(saved.id));
+      expect(nextDay.date, '2026-08-12');
+      final today = await repository.appendTurn(
+        nextDay,
+        RawSessionTurn.user(requestId: 'afternoon', text: '下午接着说', at: now),
+      );
+
+      // 同一天的段即使超过回放窗口，也直接接着用。
+      now = DateTime(2026, 8, 12, 22, 0);
+      final sameDay = await repository.openSession();
+      expect(sameDay.id, today.id);
+    },
+  );
+
+  test(
+    'the resume window honors its edge and ignores future session timestamps',
+    () async {
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      now = DateTime(2026, 8, 11, 23, 50);
+      final evening = await repository.createSession();
+      final saved = await repository.appendTurn(
+        evening,
+        RawSessionTurn.user(requestId: 'edge', text: '还没睡', at: now),
+      );
+
+      // 窗口内（5 小时 50 分）：仍回放昨晚的段。
+      now = DateTime(2026, 8, 12, 5, 40);
+      expect((await repository.openSession()).id, saved.id);
+
+      // 窗口外（6 小时 20 分）：开今天的新段。
+      now = DateTime(2026, 8, 12, 6, 10);
+      final fresh = await repository.openSession();
+      expect(fresh.id, isNot(saved.id));
+      expect(fresh.date, '2026-08-12');
+      await repository.appendTurn(
+        fresh,
+        RawSessionTurn.user(requestId: 'future', text: '回拨前', at: now),
+      );
+
+      // 时钟回拨到前一天：文件时间超前不算窗口内，保守开当时的新段。
+      now = DateTime(2026, 8, 11, 23, 0);
+      final rolledBack = await repository.openSession();
+      expect(rolledBack.id, isNot(fresh.id));
+      expect(rolledBack.date, '2026-08-11');
+    },
+  );
+
   test('redacts secrets before raw session persistence', () async {
     final secret = 'sk-${List.filled(24, 'x').join()}';
     final repository = MarkdownMemoryRepository(

@@ -737,6 +737,35 @@ void main() {
     },
   );
 
+  test(
+    'restore after midnight still resumes the evening session within the resume window',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-resume-window-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      var now = DateTime(2026, 8, 11, 23, 50);
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final service = LocalChatService(repository, clock: () => now);
+
+      final evening = await service.send(
+        requestId: 'evening-1',
+        text: '今天有点累',
+      );
+      expect(evening.session.date, '2026-08-11');
+
+      now = DateTime(2026, 8, 12, 0, 30);
+      final snapshot = await service.restore();
+
+      expect(snapshot.session.id, evening.session.id);
+      expect(snapshot.session.date, '2026-08-11');
+      expect(snapshot.session.turns.map((turn) => turn.text), ['今天有点累', '咋了']);
+    },
+  );
+
   test('deleting the current session lets restore start a fresh one', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-delete-session-test-',
