@@ -1116,9 +1116,9 @@ _sttProtocolDefaults(SttServiceKind kind) => switch (kind) {
     modelHint: 'whisper-1',
   ),
   SttServiceKind.volcSeedAsr => (
-    url: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_async',
+    url: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
     model: 'volc.seedasr.sauc.duration',
-    urlHint: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_async',
+    urlHint: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
     modelHint: 'volc.seedasr.sauc.duration',
   ),
 };

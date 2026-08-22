@@ -286,7 +286,7 @@ void main() {
     expect(
       tester.widget<TextField>(find.byKey(const Key('stt-base-url'))).controller!
           .text,
-      'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_async',
+      'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
     );
     expect(
       tester.widget<TextField>(find.byKey(const Key('stt-model'))).controller!
@@ -299,7 +299,7 @@ void main() {
     expect(sttGateway.savedDrafts.last.provider, SttServiceKind.volcSeedAsr);
     expect(
       sttGateway.savedDrafts.last.baseUrl,
-      'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_async',
+      'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
     );
 
     // 忘记 Key：需要确认，确认后 keySet 归零。

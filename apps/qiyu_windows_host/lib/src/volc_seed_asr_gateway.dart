@@ -9,10 +9,11 @@ import 'provider_config.dart';
 import 'provider_web_socket.dart';
 import 'stt_gateway.dart';
 
-/// 豆包流式语音识别（volc_seed_asr）网关：火山引擎 sauc 大模型 WebSocket
-/// 二进制协议（docs.volcengine.com/docs/6561/1354869，帧错即断连，字节
-/// 严格照协议）。音频按约 6400 字节 gzip 分块连发，收到最终包（flags
-/// 0011）后拼接全部识别文本返回。
+/// 豆包流式语音识别（volc_seed_asr）网关：火山方舟 Agent Plan 的 sauc
+/// 大模型 WebSocket 二进制协议（官方「接入语音模型」文档与示例代码，
+/// docs.volcengine.com/docs/82379/2516286）。请求帧全部带 4 字节大端
+/// 序列号（full request 从 1 起，音频分片递增，末分片取负值）；响应帧
+/// 按 header_size 与 flags 动态偏移解析；错误只映射允许列表文案。
 final class VolcSeedAsrGateway {
   VolcSeedAsrGateway(this.connector, {this.timeout = sttRequestTimeout});
 
@@ -76,130 +77,210 @@ final class VolcSeedAsrGateway {
     final uri = Uri.parse(config.baseUrl.trim());
     // STT 是新增出网路径：出网前统一过 SSRF 校验（聊天 Provider 不走）。
     ensureSttOutboundAllowed(uri);
+    final requestId = _newRequestId();
     final connection = await connector.connect(
       uri: uri,
       headers: {
         'X-Api-Key': key,
         // 模型名称字段填 Resource-Id（如 volc.seedasr.sauc.duration）。
         'X-Api-Resource-Id': config.model.trim(),
-        'X-Api-Request-Id': _newRequestId(),
-        // 官方鉴权规范要求的固定值：整段音频一次性上送（非实时流），序号恒为 -1。
+        'X-Api-Request-Id': requestId,
+        // 官方示例要求：连接与请求各自唯一 UUID，这里同值即可。
+        'X-Api-Connect-Id': requestId,
+        // 官方鉴权规范的固定值：整段音频一次性上送（非实时流），序号恒为 -1。
         'X-Api-Sequence': '-1',
       },
     );
-    // 先订阅再发送：响应帧绝不因发送时序丢失。
-    final result = _awaitFinalResponse(connection);
     try {
-      connection.send(_fullClientRequestFrame());
-      for (final chunk in _audioChunks(audio)) {
-        connection.send(_audioOnlyFrame(chunk, last: false));
-      }
-      // 末包标记必须发送：payload 是 gzip 后的空音频块。
-      connection.send(_audioOnlyFrame(const [], last: true));
-      return await result;
+      return await _runSession(connection, audio);
     } finally {
       await connection.close();
     }
   }
 
-  /// 逐帧消费服务端响应，最终包（或空音频 error 码）时返回拼接文本；
-  /// 连接在最终包前结束按网络中断处理。
-  Future<String> _awaitFinalResponse(ProviderWebSocketConnection connection) {
-    final text = StringBuffer();
-    return () async {
-      await for (final frame in connection.messages) {
-        if (_applyServerFrame(frame, text) != _VolcFrameOutcome.more) {
-          return text.toString();
-        }
+  /// 一次完整会话：发 full request 并等服务端确认，随后连发音频分片
+  /// （最后一片就是负序号末包），持续消费服务端响应直到最终包。
+  Future<String> _runSession(
+    ProviderWebSocketConnection connection,
+    List<int> audio,
+  ) async {
+    final responses = StreamIterator<List<int>>(connection.messages);
+    try {
+      final text = StringBuffer();
+
+      connection.send(_fullClientRequestFrame(sequence: 1));
+      var sequence = 2;
+      // 官方示例在发送音频前等待 full request 的服务端确认帧。
+      if (!await _advance(responses, text)) {
+        return text.toString();
       }
+
+      final chunks = _audioChunks(audio);
+      for (var index = 0; index < chunks.length; index += 1) {
+        final isLast = index == chunks.length - 1;
+        // 末分片取负序号；官方示例没有空补包，只有空音频才单发末包。
+        connection.send(
+          _audioOnlyFrame(
+            chunks[index],
+            sequence: isLast ? -sequence : sequence,
+            last: isLast,
+          ),
+        );
+        sequence += 1;
+      }
+      if (chunks.isEmpty) {
+        connection.send(
+          _audioOnlyFrame(const [], sequence: -sequence, last: true),
+        );
+      }
+
+      while (await _advance(responses, text)) {}
+      return text.toString();
+    } finally {
+      // 必须显式取消订阅：非广播流的 close() 会一直等一个未取消的
+      // listener，不取消的话上层 await close() 永远挂起。
+      await responses.cancel();
+    }
+  }
+
+  /// 消费一条服务端消息。返回是否应继续等待（最终包、错误与连接结束
+  /// 都返回 false，错误已在内部抛出）。
+  Future<bool> _advance(
+    StreamIterator<List<int>> responses,
+    StringBuffer text,
+  ) async {
+    if (!await responses.moveNext()) {
       throw const SttGatewayException(
         kind: ModelFailureKind.network,
         message: '语音服务连接中断。',
       );
-    }();
+    }
+    return _applyServerFrame(responses.current, text);
   }
 }
 
-/// 服务端单帧的处理结果。
-enum _VolcFrameOutcome { more, finalPacket, emptyAudio }
-
-/// 协议常量：通用帧头 byte0（version 1 + header size 4）与各消息类型。
+/// 协议常量：通用帧头 byte0（version 1 + header size 1）与各消息类型。
+/// 请求帧全部带正/负序列号（flags 位 0），与官方 Python 示例一致。
 const _volcProtocolVersionHeader = 0x11;
-const _volcFullRequestFlags = 0x10; // type 0001 flags 0000（无 sequence）
+const _volcFullRequestFlags = 0x11; // type 0001 + POS_SEQUENCE 0001
 const _volcJsonGzipBytes = 0x11; // serialization JSON(0001) + compression gzip(0001)
 const _volcAudioGzipBytes = 0x01; // serialization none(0000) + compression gzip(0001)
-const _volcAudioFlags = 0x20; // type 0010 flags 0000
-const _volcAudioLastFlags = 0x22; // type 0010 flags 0010（末包）
+const _volcAudioFlags = 0x21; // type 0010 + POS_SEQUENCE 0001
+const _volcAudioLastFlags = 0x23; // type 0010 + NEG_WITH_SEQUENCE 0011
 const _volcChunkSize = 6400;
 
-/// 官方建议的音频分块大小（字节）。
-Uint8List _fullClientRequestFrame() {
+/// full client request 的配置 payload：字段集与官方示例完全一致
+/// （codec raw、enable_itn/ddc/utterances/nonstream）。
+Uint8List _fullClientRequestFrame({required int sequence}) {
   final payload = utf8.encode(
     jsonEncode({
       'user': {'uid': 'qiyu'},
       'audio': {
         'format': 'wav',
+        'codec': 'raw',
         'rate': 16000,
         'bits': 16,
         'channel': 1,
-        // 流式输入模式（bigmodel_nostream）支持且建议固定中文。
-        'language': 'zh-CN',
       },
       'request': {
         'model_name': 'bigmodel',
+        'enable_itn': true,
         'enable_punc': true,
-        'result_type': 'full',
+        'enable_ddc': true,
+        'show_utterances': true,
+        'enable_nonstream': false,
       },
     }),
   );
-  return _frame(_volcFullRequestFlags, _volcJsonGzipBytes, gzip.encode(payload));
+  return _sequencedFrame(
+    _volcFullRequestFlags,
+    _volcJsonGzipBytes,
+    sequence,
+    gzip.encode(payload),
+  );
 }
 
-Uint8List _audioOnlyFrame(List<int> chunk, {required bool last}) =>
-    _frame(
-      last ? _volcAudioLastFlags : _volcAudioFlags,
-      _volcAudioGzipBytes,
-      gzip.encode(chunk),
-    );
+Uint8List _audioOnlyFrame(
+  List<int> chunk, {
+  required int sequence,
+  required bool last,
+}) => _sequencedFrame(
+  last ? _volcAudioLastFlags : _volcAudioFlags,
+  _volcAudioGzipBytes,
+  sequence,
+  gzip.encode(chunk),
+);
 
-/// 通用帧：4 字节头 + 大端 u32 payload 长度 + payload。
-Uint8List _frame(int typeFlags, int serializationCompression, List<int> payload) {
+/// 带序列号的通用帧：4 字节头 + 大端 i32 序列号 + 大端 u32 payload
+/// 长度 + payload。
+Uint8List _sequencedFrame(
+  int typeFlags,
+  int serializationCompression,
+  int sequence,
+  List<int> payload,
+) {
   return (BytesBuilder(copy: false)
-        ..add([_volcProtocolVersionHeader, typeFlags, serializationCompression, 0x00])
+        ..add([
+          _volcProtocolVersionHeader,
+          typeFlags,
+          serializationCompression,
+          0x00,
+        ])
+        ..add(_int32Bytes(sequence))
         ..add(_uint32Bytes(payload.length))
         ..add(payload))
       .takeBytes();
 }
 
-/// 整段音频（含 WAV 文件头）按协议块大小切分；空音频返回空列表，
-/// 由调用方至少补发末包标记。
+/// 整段音频（含 WAV 文件头）按约 200ms（6400 字节）切片；空音频返回
+/// 空列表，由调用方单发一个负序号末包。
 List<List<int>> _audioChunks(List<int> audio) => [
   for (var start = 0; start < audio.length; start += _volcChunkSize)
     audio.sublist(start, min(start + _volcChunkSize, audio.length)),
 ];
 
-/// 解析一帧服务端消息：server response（type 1001）追加识别文本并区分
-/// 是否最终包；error 帧（type 1111）按错误码映射。不符合帧形状、解压
-/// 或 JSON 失败一律按解析失败处理。
-_VolcFrameOutcome _applyServerFrame(List<int> frame, StringBuffer text) {
+/// 解析一帧服务端消息，按官方 ResponseParser 的动态偏移规则：
+/// header_size = byte0 低 4 位 × 4 字节；flags 位 0 跳 4 字节序列号，
+/// 位 2 跳 4 字节 event；server response 再读 u32 长度，error 读
+/// i32 错误码 + u32 消息长度。解析失败一律按解析失败处理，不透出
+/// 原始字节。
+bool _applyServerFrame(List<int> frame, StringBuffer text) {
   SttGatewayException parsingFailure() => const SttGatewayException(
     kind: ModelFailureKind.contentParsing,
     message: '语音服务返回的内容无法解析。',
   );
-  if (frame.length < 8) {
+  if (frame.length < 4) {
     throw parsingFailure();
   }
+  final headerSize = (frame[0] & 0x0F) * 4;
+  if (frame.length < headerSize + 4) {
+    throw parsingFailure();
+  }
+  final flags = frame[1] & 0x0F;
+  var offset = headerSize;
+  void skip(int count) {
+    if (offset + count > frame.length) {
+      throw parsingFailure();
+    }
+    offset += count;
+  }
+
+  if (flags & 0x01 != 0) {
+    skip(4); // 正/负序列号
+  }
+  if (flags & 0x04 != 0) {
+    skip(4); // event 字段（TTS 协议族事件，出现时跳过即可）
+  }
+  final isLast = flags & 0x02 != 0;
+
   switch (frame[1] >> 4) {
-    case 0x9: // server response：头 + u32 sequence + u32 长度 + gzip(JSON)。
-      if (frame.length < 12) {
+    case 0x9: // server response：u32 payload 长度 + gzip(JSON)。
+      skip(4);
+      final payloadSize = _readUint32(frame, offset - 4);
+      if (offset + payloadSize > frame.length) {
         throw parsingFailure();
       }
-      final payloadSize = _readUint32(frame, 8);
-      const payloadStart = 12;
-      if (payloadStart + payloadSize > frame.length) {
-        throw parsingFailure();
-      }
-      final payload = frame.sublist(payloadStart, payloadStart + payloadSize);
+      final payload = frame.sublist(offset, offset + payloadSize);
       Object decoded;
       try {
         decoded = jsonDecode(utf8.decode(gzip.decode(payload)));
@@ -209,7 +290,8 @@ _VolcFrameOutcome _applyServerFrame(List<int> frame, StringBuffer text) {
       if (decoded is! Map<String, Object?>) {
         throw parsingFailure();
       }
-      // 官方示例里 result 是对象（text 字段）；字段表标注 list，两种都兼容。
+      // 官方字段表是 list、示例是对象，两种形态都兼容；增量包与最终
+      // 包的 text 全量拼接。
       final result = decoded['result'];
       if (result is Map<String, Object?>) {
         final chunk = result['text'];
@@ -226,16 +308,14 @@ _VolcFrameOutcome _applyServerFrame(List<int> frame, StringBuffer text) {
           }
         }
       }
-      // flags 位 1（0x02）标记最终包。
-      return (frame[1] & 0x02) != 0
-          ? _VolcFrameOutcome.finalPacket
-          : _VolcFrameOutcome.more;
-    case 0xF: // error：头 + u32 code + u32 消息长度 + UTF-8 消息。
-      if (frame.length < 12) {
+      return !isLast;
+    case 0xF: // error：i32 错误码 + u32 消息长度 + UTF-8 消息。
+      if (offset + 8 > frame.length) {
         throw parsingFailure();
       }
-      final code = _readUint32(frame, 4);
-      return _volcErrorOutcome(code);
+      final code = _readInt32(frame, offset);
+      _volcErrorOutcome(code);
+      return false;
     default:
       throw parsingFailure();
   }
@@ -243,12 +323,12 @@ _VolcFrameOutcome _applyServerFrame(List<int> frame, StringBuffer text) {
 
 /// error 帧错误码到允许列表文案的映射：对外只出中文人话，服务端原始
 /// 消息（可能含敏感内容）绝不透出。
-_VolcFrameOutcome _volcErrorOutcome(int code) {
+void _volcErrorOutcome(int code) {
   switch (code) {
-    // 空音频：与 OpenAI 空文本同一分支（返回已拼接的空文本，正式转写
-    // 由服务层报「没有识别到语音」，连接测试算成功）。
+    // 空音频：与 OpenAI 空文本同一分支（调用方收到空串，正式转写报
+    // 「没有识别到语音」，连接测试算成功）。
     case 45000002:
-      return _VolcFrameOutcome.emptyAudio;
+      return;
     // 请求参数无效 / 音频格式不正确：豆包读不了这段音频。
     case 45000001:
     case 45000151:
@@ -276,11 +356,18 @@ Uint8List _uint32Bytes(int value) => Uint8List.fromList([
   value & 0xFF,
 ]);
 
+Uint8List _int32Bytes(int value) => _uint32Bytes(value & 0xFFFFFFFF);
+
 int _readUint32(List<int> bytes, int offset) =>
     (bytes[offset] << 24) |
     (bytes[offset + 1] << 16) |
     (bytes[offset + 2] << 8) |
     bytes[offset + 3];
+
+int _readInt32(List<int> bytes, int offset) {
+  final raw = _readUint32(bytes, offset);
+  return raw >= 0x80000000 ? raw - 0x100000000 : raw;
+}
 
 final _requestIdRandom = Random.secure();
 

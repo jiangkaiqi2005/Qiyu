@@ -305,21 +305,24 @@ void main() {
 SttModelGateway _sttGateway(String text) =>
     SttModelGateway(_StaticSttHttpClient(jsonEncode({'text': text})));
 
-/// 把豆包 audio only 正包（非末包）解压拼接：验证整段音频原样上送。
+/// 把豆包 audio 帧（正包与末片）解压拼接：验证整段音频原样上送。
+/// 带序列号的帧结构：头 4 + i32 序号 + u32 长度 + payload。
 List<int> _rejoinAudioFrames(List<List<int>> frames) {
   final rejoined = <int>[];
   for (final frame in frames) {
-    if (frame[1] != 0x20) {
-      continue; // 只看正包（0x20），跳过 full request 与末包。
+    final typeFlags = frame[1];
+    if (typeFlags != 0x21 && typeFlags != 0x23) {
+      continue; // 只看音频帧（0x21 正包 / 0x23 末片），跳过 full request。
     }
     final length =
-        (frame[4] << 24) | (frame[5] << 16) | (frame[6] << 8) | frame[7];
-    rejoined.addAll(gzip.decode(frame.sublist(8, 8 + length)));
+        (frame[8] << 24) | (frame[9] << 16) | (frame[10] << 8) | frame[11];
+    rejoined.addAll(gzip.decode(frame.sublist(12, 12 + length)));
   }
   return rejoined;
 }
 
-/// 脚本化豆包 WS 连接器：记录全部上行帧，按脚本回一个最终包或 error 帧。
+/// 脚本化豆包 WS 连接器：记录全部上行帧；收到 full request 回确认帧，
+/// 收到负序号末片回最终包或 error 帧（与官方示例时序一致）。
 final class _ScriptedVolcConnector implements ProviderWebSocketConnector {
   _ScriptedVolcConnector({this.responsePayload, this.errorCode});
 
@@ -342,37 +345,55 @@ final class _ScriptedVolcConnection implements ProviderWebSocketConnection {
   _ScriptedVolcConnection(this._connector);
 
   final _ScriptedVolcConnector _connector;
+  final _incoming = StreamController<List<int>>();
 
-  @override
-  Stream<List<int>> get messages async* {
-    // 让网关先完成上行发送，再回服务端结果（贴近真实往返）。
-    await Future<void>.delayed(Duration.zero);
-    await Future<void>.delayed(Duration.zero);
-    if (_connector.errorCode case final code?) {
-      final message = utf8.encode('upstream secret detail');
-      yield Uint8List.fromList([
-        0x11, 0xF0, 0x11, 0x00,
-        (code >> 24) & 0xFF, (code >> 16) & 0xFF, (code >> 8) & 0xFF, code & 0xFF,
-        0, 0, 0, message.length,
-        ...message,
-      ]);
-      return;
-    }
-    final payload = gzip.encode(
-      utf8.encode(jsonEncode(_connector.responsePayload)),
-    );
-    yield Uint8List.fromList([
-      0x11, 0x93, 0x11, 0x00,
+  static Uint8List _responseFrame(
+    int flags,
+    Map<String, Object?> payload,
+  ) {
+    final compressed = gzip.encode(utf8.encode(jsonEncode(payload)));
+    return Uint8List.fromList([
+      0x11, 0x90 | flags, 0x11, 0x00,
       0, 0, 0, 1, // sequence
-      (payload.length >> 24) & 0xFF, (payload.length >> 16) & 0xFF,
-      (payload.length >> 8) & 0xFF, payload.length & 0xFF,
-      ...payload,
+      (compressed.length >> 24) & 0xFF, (compressed.length >> 16) & 0xFF,
+      (compressed.length >> 8) & 0xFF, compressed.length & 0xFF,
+      ...compressed,
     ]);
   }
+
+  void _serverSends(Uint8List frame) {
+    scheduleMicrotask(() => _incoming.add(frame));
+  }
+
+  @override
+  Stream<List<int>> get messages => _incoming.stream;
 
   @override
   void send(List<int> bytes) {
     _connector.sentFrames.add(bytes);
+    if (bytes.length < 2) {
+      return;
+    }
+    if (bytes[1] == 0x11) {
+      // full client request（type 0001 + POS_SEQUENCE）→ 回确认帧。
+      _serverSends(_responseFrame(0x91, {}));
+    } else if (bytes[1] == 0x23) {
+      // 负序号末片 → 回最终包或 error 帧。
+      if (_connector.errorCode case final code?) {
+        final message = utf8.encode('upstream secret detail');
+        _serverSends(Uint8List.fromList([
+          0x11, 0xF0, 0x11, 0x00,
+          (code >> 24) & 0xFF, (code >> 16) & 0xFF,
+          (code >> 8) & 0xFF, code & 0xFF,
+          0, 0, 0, message.length,
+          ...message,
+        ]));
+      } else {
+        _serverSends(
+          _responseFrame(0x93, _connector.responsePayload ?? const {}),
+        );
+      }
+    }
   }
 
   @override

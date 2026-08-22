@@ -9,7 +9,7 @@ import 'package:test/test.dart';
 void main() {
   const config = SttConfig(
     provider: SttProviderKind.volcSeedAsr,
-    baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+    baseUrl: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
     model: 'volc.seedasr.sauc.duration',
   );
 
@@ -17,28 +17,37 @@ void main() {
     List<int>.generate(length, (index) => index % 251),
   );
 
-  test('建连头与帧序列：full request JSON 字段、约 6400 分块与末包标记', () async {
+  test('建连头与帧序列：full request 带序号、音频分片递增、末片取负', () async {
     final connector = _FakeWebSocketConnector();
     final connection = connector.connection!;
     final gateway = VolcSeedAsrGateway(connector);
 
-    final audio = wav(20000);
+    final audio = wav(20000); // 4 片：6400×3 + 800，末片即末包。
     final future = gateway.transcribe(
       config: config,
       apiKey: ' ark-test-key ',
       audio: audio,
       mimeType: 'audio/wav',
     );
-    await _pumpUntil(connection, (_) => connection.sentFrames.length == 6);
-    connection.serverSends(_responseFrame(flags: 0x93, payload: {'result': {'text': '今天有点累'}}));
+    // full request 发出后网关等服务端确认，先回 ack 再继续。
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 5);
+    connection.serverSends(
+      _responseFrame(flags: 0x93, payload: {'result': {'text': '今天有点累'}}),
+    );
     expect(await future, '今天有点累');
 
-    // 建连头：Key 去空格、Resource-Id 用模型名、Request-Id 是 UUID 形态。
+    // 建连头：Key 去空格、Resource-Id 用模型名、Request-Id/Connect-Id 是
+    // 同值 UUID，官方鉴权规范的固定序号头也在。
     expect(connector.lastUri.toString(), config.baseUrl);
     expect(connector.lastHeaders!['X-Api-Key'], 'ark-test-key');
     expect(connector.lastHeaders!['X-Api-Resource-Id'], 'volc.seedasr.sauc.duration');
-    // 官方鉴权规范的固定序号头：整段音频一次性上送，序号恒为 -1。
     expect(connector.lastHeaders!['X-Api-Sequence'], '-1');
+    expect(
+      connector.lastHeaders!['X-Api-Connect-Id'],
+      connector.lastHeaders!['X-Api-Request-Id'],
+    );
     expect(
       RegExp(
         r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
@@ -46,49 +55,55 @@ void main() {
       isTrue,
     );
 
-    // ① full client request：头字节 11 10 11 00，payload 是 gzip(JSON)。
+    // ① full client request：头字节 11 11 11 00 + 大端 i32 序号 1。
     final frames = connection.sentFrames;
-    expect(frames, hasLength(6));
+    expect(frames, hasLength(5));
     final fullRequest = frames[0];
-    expect(fullRequest.sublist(0, 4), [0x11, 0x10, 0x11, 0x00]);
-    final fullPayload = _payloadOf(fullRequest);
+    expect(fullRequest.sublist(0, 4), [0x11, 0x11, 0x11, 0x00]);
+    expect(_readInt32(fullRequest, 4), 1);
     final requestJson =
-        jsonDecode(utf8.decode(gzip.decode(fullPayload))) as Map<String, Object?>;
+        jsonDecode(utf8.decode(_payloadAt(fullRequest, 8)))
+            as Map<String, Object?>;
     expect(requestJson, {
       'user': {'uid': 'qiyu'},
       'audio': {
         'format': 'wav',
+        'codec': 'raw',
         'rate': 16000,
         'bits': 16,
         'channel': 1,
-        'language': 'zh-CN',
       },
       'request': {
         'model_name': 'bigmodel',
+        'enable_itn': true,
         'enable_punc': true,
-        'result_type': 'full',
+        'enable_ddc': true,
+        'show_utterances': true,
+        'enable_nonstream': false,
       },
     });
 
-    // ② audio only：正包头 11 20 01 00，末包头 11 22 01 00。
-    for (final frame in frames.sublist(1, 5)) {
-      expect(frame.sublist(0, 4), [0x11, 0x20, 0x01, 0x00]);
+    // ② audio only：正包头 11 21 01 00 + 递增正序号；末片 11 23 01 00 取负。
+    final sequences = <int>[];
+    for (final frame in frames.sublist(1)) {
+      sequences.add(_readInt32(frame, 4));
     }
-    final lastFrame = frames[5];
-    expect(lastFrame.sublist(0, 4), [0x11, 0x22, 0x01, 0x00]);
-    // 末包是 gzip 后的空音频块（可解压且内容为空）。
-    expect(gzip.decode(_payloadOf(lastFrame)), isEmpty);
+    expect(sequences, [2, 3, 4, -5]);
+    for (final frame in frames.sublist(1, 4)) {
+      expect(frame.sublist(0, 4), [0x11, 0x21, 0x01, 0x00]);
+    }
+    expect(frames[4].sublist(0, 4), [0x11, 0x23, 0x01, 0x00]);
 
-    // 分块还原：全部正包解压拼接等于整段原始音频（含 WAV 头在内原样）。
+    // 分片还原：全部音频帧（含末片）解压拼接等于整段原始字节。
     final rejoined = BytesBuilder(copy: false);
-    for (final frame in frames.sublist(1, 5)) {
-      final chunk = gzip.decode(_payloadOf(frame));
-      expect(chunk.length, lessThanOrEqualTo(6400));
-      rejoined.add(chunk);
+    for (final frame in frames.sublist(1)) {
+      rejoined.add(_payloadAt(frame, 8));
     }
     expect(rejoined.takeBytes(), audio);
     expect(connection.closed, isTrue);
-  });  test('空音频也至少发送一个末包标记', () async {
+  });
+
+  test('空音频只发一个负序号空末包', () async {
     final connector = _FakeWebSocketConnector();
     final connection = connector.connection!;
     final gateway = VolcSeedAsrGateway(connector);
@@ -99,15 +114,19 @@ void main() {
       audio: const [],
       mimeType: 'audio/wav',
     );
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
     await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
     connection.serverSends(_responseFrame(flags: 0x93, payload: {'result': {'text': ''}}));
     expect(await future, '');
 
     expect(connection.sentFrames, hasLength(2));
-    expect(connection.sentFrames[1].sublist(0, 4), [0x11, 0x22, 0x01, 0x00]);
+    expect(connection.sentFrames[1].sublist(0, 4), [0x11, 0x23, 0x01, 0x00]);
+    expect(_readInt32(connection.sentFrames[1], 4), -2);
+    expect(_payloadAt(connection.sentFrames[1], 8), isEmpty);
   });
 
-  test('多响应全量拼接：普通包续收、最终包结束', () async {
+  test('多响应全量拼接：确认帧续收、普通包续收、最终包结束', () async {
     final connector = _FakeWebSocketConnector();
     final connection = connector.connection!;
     final gateway = VolcSeedAsrGateway(connector);
@@ -118,7 +137,9 @@ void main() {
       audio: wav(100),
       mimeType: 'audio/wav',
     );
-    await _pumpUntil(connection, (_) => connection.sentFrames.length == 3);
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
     connection.serverSends(
       _responseFrame(flags: 0x91, sequence: 1, payload: {
         'result': {'text': '今晚'},
@@ -148,7 +169,9 @@ void main() {
       audio: wav(100),
       mimeType: 'audio/wav',
     );
-    await _pumpUntil(connection, (_) => connection.sentFrames.length == 3);
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
     connection.serverSends(_responseFrame(flags: 0x93, payload: {
       'result': [
         {'text': '睡吧'},
@@ -156,6 +179,25 @@ void main() {
       ],
     }));
     expect(await future, '睡吧，明天再聊。');
+  });
+
+  test('响应帧带 event 字段（flags 0x04）时按动态偏移跳过', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final gateway = VolcSeedAsrGateway(connector);
+
+    final future = gateway.transcribe(
+      config: config,
+      apiKey: 'ark-test-key',
+      audio: wav(100),
+      mimeType: 'audio/wav',
+    );
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    // flags = seq(0x01) | event(0x04) | last(0x02) = 0x07。
+    connection.serverSends(_responseFrame(flags: 0x07, payload: {
+      'result': {'text': '带事件的最终包'},
+    }));
+    expect(await future, '带事件的最终包');
   });
 
   test('error 帧按允许列表映射：空音频语义、音频不可读、限流与其余拒绝', () async {
@@ -179,6 +221,28 @@ void main() {
     }
   });
 
+  test('full request 的确认帧是 error 时直接按错误映射终止', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final gateway = VolcSeedAsrGateway(connector);
+
+    final future = gateway.transcribe(
+      config: config,
+      apiKey: 'ark-test-key',
+      audio: wav(100),
+      mimeType: 'audio/wav',
+    );
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    connection.serverSends(_errorFrame(45000151, 'format secret detail'));
+    await expectLater(
+      future,
+      throwsA(
+        isA<SttGatewayException>()
+            .having((error) => error.kind, 'kind', ModelFailureKind.contentParsing),
+      ),
+    );
+  });
+
   test('响应帧解不开按解析失败处理，不透出原始字节', () async {
     final connector = _FakeWebSocketConnector();
     final connection = connector.connection!;
@@ -190,7 +254,7 @@ void main() {
       audio: wav(100),
       mimeType: 'audio/wav',
     );
-    await _pumpUntil(connection, (_) => connection.sentFrames.length == 3);
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
     connection.serverSends([0x11, 0x93, 0x11, 0x00, 0x00]);
     await expectLater(
       future,
@@ -241,7 +305,7 @@ void main() {
     }
   });
 
-  test('总超时（含建连）沿用 sttRequestTimeout 语义并归为 timeout', () async {
+  test('总超时（含建连与确认等待）沿用 sttRequestTimeout 语义并归为 timeout', () async {
     final connector = _HangingWebSocketConnector();
     final gateway = VolcSeedAsrGateway(
       connector,
@@ -263,7 +327,7 @@ void main() {
     );
   });
 
-  test('响应前连接断开归为网络中断', () async {
+  test('服务端不发确认帧直接断开按网络中断处理', () async {
     final connector = _FakeWebSocketConnector();
     final connection = connector.connection!;
     final gateway = VolcSeedAsrGateway(connector);
@@ -274,7 +338,7 @@ void main() {
       audio: wav(100),
       mimeType: 'audio/wav',
     );
-    await _pumpUntil(connection, (_) => connection.sentFrames.length == 3);
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
     await connection.drop();
     await expectLater(
       future,
@@ -375,7 +439,7 @@ Future<String?> _transcribeWithServerError(int code, String message) {
   final future = gateway.transcribe(
     config: const SttConfig(
       provider: SttProviderKind.volcSeedAsr,
-      baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+      baseUrl: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
       model: 'volc.seedasr.sauc.duration',
     ),
     apiKey: 'ark-test-key',
@@ -383,25 +447,32 @@ Future<String?> _transcribeWithServerError(int code, String message) {
     mimeType: 'audio/wav',
   );
   return (() async {
-    await _pumpUntil(connection, (_) => connection.sentFrames.length == 3);
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
     connection.serverSends(_errorFrame(code, message));
     return future;
   })();
 }
 
-/// 服务端响应帧：头 + 大端 u32 sequence + 大端 u32 payload 长度 + gzip(JSON)。
+/// 服务端响应帧：头 + 大端 u32 sequence +（flags 声明 event 时）大端
+/// u32 event + 大端 u32 payload 长度 + gzip(JSON)，与网关动态偏移对齐。
 Uint8List _responseFrame({
-  int flags = 0x01,
+  required int flags,
   int sequence = 0,
   required Map<String, Object?> payload,
 }) {
   final compressed = gzip.encode(utf8.encode(jsonEncode(payload)));
-  return (BytesBuilder(copy: false)
-        ..add([0x11, 0x90 | flags, 0x11, 0x00])
-        ..add(_u32(sequence))
-        ..add(_u32(compressed.length))
-        ..add(compressed))
-      .takeBytes();
+  final builder = BytesBuilder(copy: false)
+    ..add([0x11, 0x90 | flags, 0x11, 0x00])
+    ..add(_u32(sequence));
+  if (flags & 0x04 != 0) {
+    builder.add(_u32(1));
+  }
+  builder
+    ..add(_u32(compressed.length))
+    ..add(compressed);
+  return builder.takeBytes();
 }
 
 /// 服务端 error 帧：头 + 大端 u32 code + 大端 u32 消息长度 + UTF-8 消息。
@@ -422,11 +493,25 @@ Uint8List _u32(int value) => Uint8List.fromList([
   value & 0xFF,
 ]);
 
-/// 取通用帧头之后的 payload（自动按头部 u32 长度校验）。
-List<int> _payloadOf(List<int> frame) {
-  final length = (frame[4] << 24) | (frame[5] << 16) | (frame[6] << 8) | frame[7];
-  expect(frame.length, 8 + length);
-  return frame.sublist(8);
+int _readInt32(List<int> bytes, int offset) {
+  final raw =
+      (bytes[offset] << 24) |
+      (bytes[offset + 1] << 16) |
+      (bytes[offset + 2] << 8) |
+      bytes[offset + 3];
+  return raw >= 0x80000000 ? raw - 0x100000000 : raw;
+}
+
+/// 解压带序列号帧（头 + i32 seq + u32 长度 + payload）在 [offset] 处的
+/// gzip payload。
+List<int> _payloadAt(List<int> frame, int offset) {
+  final length =
+      (frame[offset] << 24) |
+      (frame[offset + 1] << 16) |
+      (frame[offset + 2] << 8) |
+      frame[offset + 3];
+  expect(frame.length, offset + 4 + length);
+  return gzip.decode(frame.sublist(offset + 4));
 }
 
 final class _FakeWebSocketConnector implements ProviderWebSocketConnector {
