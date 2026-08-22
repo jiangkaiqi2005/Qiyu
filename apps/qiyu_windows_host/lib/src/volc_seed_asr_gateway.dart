@@ -83,6 +83,8 @@ final class VolcSeedAsrGateway {
         // 模型名称字段填 Resource-Id（如 volc.seedasr.sauc.duration）。
         'X-Api-Resource-Id': config.model.trim(),
         'X-Api-Request-Id': _newRequestId(),
+        // 官方鉴权规范要求的固定值：整段音频一次性上送（非实时流），序号恒为 -1。
+        'X-Api-Sequence': '-1',
       },
     );
     // 先订阅再发送：响应帧绝不因发送时序丢失。

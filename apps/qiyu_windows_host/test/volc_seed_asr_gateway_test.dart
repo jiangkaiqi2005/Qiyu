@@ -37,6 +37,8 @@ void main() {
     expect(connector.lastUri.toString(), config.baseUrl);
     expect(connector.lastHeaders!['X-Api-Key'], 'ark-test-key');
     expect(connector.lastHeaders!['X-Api-Resource-Id'], 'volc.seedasr.sauc.duration');
+    // 官方鉴权规范的固定序号头：整段音频一次性上送，序号恒为 -1。
+    expect(connector.lastHeaders!['X-Api-Sequence'], '-1');
     expect(
       RegExp(
         r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
