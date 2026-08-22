@@ -265,6 +265,31 @@ void main() {
     );
   });
 
+  test('无压缩响应帧（真机确认帧实测形态：compression=0 明文 JSON）', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final gateway = VolcSeedAsrGateway(connector);
+
+    final future = gateway.transcribe(
+      config: config,
+      apiKey: 'ark-test-key',
+      audio: wav(100),
+      mimeType: 'audio/wav',
+    );
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    // 真机抓包形态：byte2=0x10（JSON + 无压缩），payload 是明文 JSON。
+    connection.serverSends(_plainResponseFrame(0x91, {
+      'audio_info': {'duration': 0.0},
+      'result': {'text': ''},
+    }));
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
+    connection.serverSends(_plainResponseFrame(0x93, {
+      'audio_info': {'duration': 0.06},
+      'result': {'text': '静音也要能读出来'},
+    }));
+    expect(await future, '静音也要能读出来');
+  });
+
   test('连接失败按 SocketException 消息分 dns/network，TLS 单独分类', () async {
     final scenarios = [
       (
@@ -461,17 +486,37 @@ Uint8List _responseFrame({
   required int flags,
   int sequence = 0,
   required Map<String, Object?> payload,
-}) {
-  final compressed = gzip.encode(utf8.encode(jsonEncode(payload)));
+}) => _buildResponseFrame(
+      flags,
+      sequence,
+      0x11, // serialization JSON + compression gzip
+      gzip.encode(utf8.encode(jsonEncode(payload))),
+    );
+
+/// 无压缩响应帧（真机确认帧实测形态）：payload 是明文 JSON。
+Uint8List _plainResponseFrame(int flags, Map<String, Object?> payload) =>
+    _buildResponseFrame(
+      flags,
+      1,
+      0x10, // serialization JSON + 无压缩
+      utf8.encode(jsonEncode(payload)),
+    );
+
+Uint8List _buildResponseFrame(
+  int flags,
+  int sequence,
+  int serializationCompression,
+  List<int> encoded,
+) {
   final builder = BytesBuilder(copy: false)
-    ..add([0x11, 0x90 | flags, 0x11, 0x00])
+    ..add([0x11, 0x90 | flags, serializationCompression, 0x00])
     ..add(_u32(sequence));
   if (flags & 0x04 != 0) {
     builder.add(_u32(1));
   }
   builder
-    ..add(_u32(compressed.length))
-    ..add(compressed);
+    ..add(_u32(encoded.length))
+    ..add(encoded);
   return builder.takeBytes();
 }
 

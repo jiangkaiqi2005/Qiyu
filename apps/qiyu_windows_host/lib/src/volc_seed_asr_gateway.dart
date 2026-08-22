@@ -274,16 +274,20 @@ bool _applyServerFrame(List<int> frame, StringBuffer text) {
   final isLast = flags & 0x02 != 0;
 
   switch (frame[1] >> 4) {
-    case 0x9: // server response：u32 payload 长度 + gzip(JSON)。
+    case 0x9: // server response：u32 payload 长度 + JSON（是否 gzip 由
+      // compression 位决定——真机确认帧实测为无压缩明文 JSON）。
       skip(4);
       final payloadSize = _readUint32(frame, offset - 4);
       if (offset + payloadSize > frame.length) {
         throw parsingFailure();
       }
-      final payload = frame.sublist(offset, offset + payloadSize);
+      final payload = _decompress(
+        frame.sublist(offset, offset + payloadSize),
+        frame[2] & 0x0F,
+      );
       Object decoded;
       try {
-        decoded = jsonDecode(utf8.decode(gzip.decode(payload)));
+        decoded = jsonDecode(utf8.decode(payload));
       } on Object {
         throw parsingFailure();
       }
@@ -347,6 +351,14 @@ void _volcErrorOutcome(int code) {
         message: '语音服务拒绝了这次请求。',
       );
   }
+}
+
+/// 按 compression 位解出 payload：0x01 gzip 解压，0x00 原样返回。
+List<int> _decompress(List<int> payload, int compression) {
+  if (compression == 0x01) {
+    return gzip.decode(payload);
+  }
+  return payload;
 }
 
 Uint8List _uint32Bytes(int value) => Uint8List.fromList([
