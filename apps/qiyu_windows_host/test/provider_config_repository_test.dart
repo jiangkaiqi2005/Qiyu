@@ -119,6 +119,89 @@ void main() {
     );
   });
 
+  test('stt 段 provider 解析：缺省 openai_compatible、豆包往返、非法值中文报错', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-stt-provider-');
+    addTearDown(() => temp.delete(recursive: true));
+    final path = '${temp.path}${Platform.pathSeparator}provider.json';
+    JsonProviderConfigRepository repository() =>
+        JsonProviderConfigRepository(filePath: path);
+
+    // 不带 provider 字段的存量配置照常读为 openai_compatible。
+    await File(path).writeAsString(
+      jsonEncode({
+        'stt': {'baseUrl': 'https://stt.example.com/v1', 'model': 'whisper-test'},
+      }),
+    );
+    expect((await repository().loadStt())!.provider, SttProviderKind.openAiCompatible);
+
+    // 豆包协议往返：wss 地址通过校验并原样落盘。
+    await repository().saveStt(
+      const SttConfig(
+        provider: SttProviderKind.volcSeedAsr,
+        baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+        model: 'volc.seedasr.sauc.duration',
+      ),
+    );
+    final restored = await repository().loadStt();
+    expect(restored!.provider, SttProviderKind.volcSeedAsr);
+    expect(restored.baseUrl, 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream');
+    final json =
+        jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
+    expect((json['stt']! as Map<String, Object?>)['provider'], 'volc_seed_asr');
+
+    // 非法协议名按中文配置错误拒绝。
+    await File(path).writeAsString(
+      jsonEncode({
+        'stt': {
+          'provider': 'azure_speech',
+          'baseUrl': 'https://stt.example.com/v1',
+          'model': 'whisper-test',
+        },
+      }),
+    );
+    await expectLater(
+      repository().loadStt(),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          '不支持这个语音服务协议。',
+        ),
+      ),
+    );
+  });
+
+  test('stt 段按协议校验地址 scheme 与 Key 沿用作用域', () async {
+    // 豆包协议只接受 ws/wss 地址。
+    expect(
+      () => const SttConfig(
+        provider: SttProviderKind.volcSeedAsr,
+        baseUrl: 'https://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+        model: 'volc.seedasr.sauc.duration',
+      ).validate(),
+      throwsA(isA<ProviderConfigException>()),
+    );
+    // OpenAI 兼容协议沿用 http/https 约束。
+    expect(
+      () => const SttConfig(
+        baseUrl: 'ws://stt.example.com/v1',
+        model: 'whisper-test',
+      ).validate(),
+      throwsA(isA<ProviderConfigException>()),
+    );
+    // 协议不同则 Key 作用域不同：换协议不沿用旧 Key。
+    const openAi = SttConfig(
+      baseUrl: 'https://openspeech.bytedance.com/v1',
+      model: 'whisper-test',
+    );
+    const volc = SttConfig(
+      provider: SttProviderKind.volcSeedAsr,
+      baseUrl: 'https://openspeech.bytedance.com/v1',
+      model: 'volc.seedasr.sauc.duration',
+    );
+    expect(openAi.credentialScope, isNot(volc.credentialScope));
+  });
+
   test('stt 段读写往返且 Key 只落在文件里', () async {
     final temp = await Directory.systemTemp.createTemp('qiyu-stt-section-');
     addTearDown(() => temp.delete(recursive: true));

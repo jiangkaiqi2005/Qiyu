@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
@@ -182,6 +184,99 @@ void main() {
     );
   });
 
+  test('豆包类型转写走 WS 网关：HTTP transcriptions 不再被调用', () async {
+    final connector = _ScriptedVolcConnector(
+      responsePayload: {'result': {'text': '今天有点累'}},
+    );
+    final http = _StaticSttHttpClient('{"text":"不应出现"}');
+    final service = SttSettingsService(
+      repository(),
+      SttModelGateway(http, webSocketConnector: connector),
+    );
+    await service.save(
+      provider: SttProviderKind.volcSeedAsr,
+      baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+      model: 'volc.seedasr.sauc.duration',
+      apiKey: 'ark-secret-value',
+    );
+
+    final audio = [9, 8, 7, 6];
+    expect(await service.transcribe(audio: audio, mimeType: 'audio/wav'), '今天有点累');
+    expect(http.lastBody, isNull); // HTTP 出网路径绝未触发。
+    // 上送音频原样分块：全部 audio 帧解压拼接等于原始字节。
+    expect(_rejoinAudioFrames(connector.sentFrames), audio);
+    expect(
+      connector.lastHeaders?['X-Api-Resource-Id'],
+      'volc.seedasr.sauc.duration',
+    );
+  });
+
+  test('豆包连接测试：内置静音 WAV 经 WS 代发，45000002/空文本都算成功', () async {
+    // 静音 WAV 得到空文本（正常最终包）。
+    final emptyText = SttSettingsService(
+      repository(),
+      SttModelGateway(
+        _StaticSttHttpClient('{}'),
+        webSocketConnector: _ScriptedVolcConnector(
+          responsePayload: {'result': {'text': ''}},
+        ),
+      ),
+    );
+    final ok = await emptyText.test(
+      provider: SttProviderKind.volcSeedAsr,
+      baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+      model: 'volc.seedasr.sauc.duration',
+      apiKey: 'ark-test-key',
+    );
+    expect(ok.succeeded, isTrue);
+    expect(ok.message, '连接成功，语音输入可以使用。');
+
+    // 静音 WAV 得到 45000002（空音频）error 码：同样算成功。
+    final connector = _ScriptedVolcConnector(errorCode: 45000002);
+    final errorOk = SttSettingsService(
+      repository(),
+      SttModelGateway(
+        _StaticSttHttpClient('{}'),
+        webSocketConnector: connector,
+      ),
+    );
+    final result = await errorOk.test(
+      provider: SttProviderKind.volcSeedAsr,
+      baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+      model: 'volc.seedasr.sauc.duration',
+      apiKey: 'ark-test-key',
+    );
+    expect(result.succeeded, isTrue);
+    // 代发的就是内置静音 WAV（16kHz、单声道、含 RIFF 头）。
+    expect(_rejoinAudioFrames(connector.sentFrames), sttConnectionTestAudio);
+    expect(latin1.decode(sttConnectionTestAudio).startsWith('RIFF'), isTrue);
+  });
+
+  test('豆包正式转写遇 45000002 报「没有识别到语音」且可重试', () async {
+    final service = SttSettingsService(
+      repository(),
+      SttModelGateway(
+        _StaticSttHttpClient('{}'),
+        webSocketConnector: _ScriptedVolcConnector(errorCode: 45000002),
+      ),
+    );
+    await service.save(
+      provider: SttProviderKind.volcSeedAsr,
+      baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+      model: 'volc.seedasr.sauc.duration',
+      apiKey: 'ark-secret-value',
+    );
+
+    await expectLater(
+      service.transcribe(audio: [1], mimeType: 'audio/wav'),
+      throwsA(
+        isA<SttServiceException>()
+            .having((error) => error.code, 'code', 'stt_no_speech')
+            .having((error) => error.retryable, 'retryable', isTrue),
+      ),
+    );
+  });
+
   test('损坏的 stt 段只影响 STT，不拖垮聊天配置读取', () async {
     await repository().save(
       const ProviderConfig(
@@ -209,6 +304,80 @@ void main() {
 
 SttModelGateway _sttGateway(String text) =>
     SttModelGateway(_StaticSttHttpClient(jsonEncode({'text': text})));
+
+/// 把豆包 audio only 正包（非末包）解压拼接：验证整段音频原样上送。
+List<int> _rejoinAudioFrames(List<List<int>> frames) {
+  final rejoined = <int>[];
+  for (final frame in frames) {
+    if (frame[1] != 0x20) {
+      continue; // 只看正包（0x20），跳过 full request 与末包。
+    }
+    final length =
+        (frame[4] << 24) | (frame[5] << 16) | (frame[6] << 8) | frame[7];
+    rejoined.addAll(gzip.decode(frame.sublist(8, 8 + length)));
+  }
+  return rejoined;
+}
+
+/// 脚本化豆包 WS 连接器：记录全部上行帧，按脚本回一个最终包或 error 帧。
+final class _ScriptedVolcConnector implements ProviderWebSocketConnector {
+  _ScriptedVolcConnector({this.responsePayload, this.errorCode});
+
+  final Map<String, Object?>? responsePayload;
+  final int? errorCode;
+  final sentFrames = <List<int>>[];
+  Map<String, String>? lastHeaders;
+
+  @override
+  Future<ProviderWebSocketConnection> connect({
+    required Uri uri,
+    required Map<String, String> headers,
+  }) async {
+    lastHeaders = headers;
+    return _ScriptedVolcConnection(this);
+  }
+}
+
+final class _ScriptedVolcConnection implements ProviderWebSocketConnection {
+  _ScriptedVolcConnection(this._connector);
+
+  final _ScriptedVolcConnector _connector;
+
+  @override
+  Stream<List<int>> get messages async* {
+    // 让网关先完成上行发送，再回服务端结果（贴近真实往返）。
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    if (_connector.errorCode case final code?) {
+      final message = utf8.encode('upstream secret detail');
+      yield Uint8List.fromList([
+        0x11, 0xF0, 0x11, 0x00,
+        (code >> 24) & 0xFF, (code >> 16) & 0xFF, (code >> 8) & 0xFF, code & 0xFF,
+        0, 0, 0, message.length,
+        ...message,
+      ]);
+      return;
+    }
+    final payload = gzip.encode(
+      utf8.encode(jsonEncode(_connector.responsePayload)),
+    );
+    yield Uint8List.fromList([
+      0x11, 0x93, 0x11, 0x00,
+      0, 0, 0, 1, // sequence
+      (payload.length >> 24) & 0xFF, (payload.length >> 16) & 0xFF,
+      (payload.length >> 8) & 0xFF, payload.length & 0xFF,
+      ...payload,
+    ]);
+  }
+
+  @override
+  void send(List<int> bytes) {
+    _connector.sentFrames.add(bytes);
+  }
+
+  @override
+  Future<void> close() async {}
+}
 
 final class _StaticSttHttpClient implements ProviderHttpClient {
   _StaticSttHttpClient(this.responseBody, {this.statusCode = 200});

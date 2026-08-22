@@ -23,7 +23,6 @@ void main() {
 
   test('未配置语音服务时停在 notConfigured，引导去设置页', () async {
     final controller = _pumpController(configured: false);
-
     await controller.initialize();
 
     expect(controller.status, VoiceInputStatus.notConfigured);
@@ -37,7 +36,7 @@ void main() {
     var configured = false;
     final controller = VoiceInputController(
       _FakeRecorderPlatform(),
-      () async => configured,
+      () async => (configured: configured, wantsWavAudio: false),
       (audio, mimeType) async => '配置完成后的第一句',
       onTranscribed: (_) {},
     );
@@ -98,7 +97,7 @@ void main() {
     final sent = <String>[];
     final controller = VoiceInputController(
       platform,
-      () async => true,
+      () async => (configured: true, wantsWavAudio: false),
       (_, _) async => '自动收尾的内容',
       onTranscribed: sent.add,
       autoStopAfter: const Duration(milliseconds: 20),
@@ -150,6 +149,132 @@ void main() {
     // 重传的是同一段音频字节。
     expect(attempts[0], attempts[1]);
     expect(controller.hasRetainedAudio, isFalse);
+    controller.dispose();
+  });
+
+  test('豆包类型只在转写前调用一次 WAV 转换，转换后的字节与 mime 上送', () async {
+    final platform = _FakeRecorderPlatform()
+      ..wavBytes = Uint8List.fromList([9, 9, 9, 9, 9, 9]);
+    final uploads = <(Uint8List, String)>[];
+    final controller = VoiceInputController(
+      platform,
+      () async => (configured: true, wantsWavAudio: true),
+      (audio, mimeType) async {
+        uploads.add((audio, mimeType));
+        return '今天有点累';
+      },
+      onTranscribed: (_) {},
+    );
+    await controller.initialize();
+
+    controller.handleMicTap();
+    await Future<void>.delayed(Duration.zero);
+    controller.handleMicTap();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.status, VoiceInputStatus.idle);
+    // 转换被调用且只调用一次：上送的是 fake 预置的 WAV 字节与 audio/wav。
+    expect(platform.toWavCalls, 1);
+    expect(uploads.single.$1, platform.wavBytes);
+    expect(uploads.single.$2, 'audio/wav');
+    controller.dispose();
+  });
+
+  test('OpenAI 类型不调用 WAV 转换：webm 原样上送', () async {
+    final platform = _FakeRecorderPlatform();
+    final uploads = <(Uint8List, String)>[];
+    final controller = VoiceInputController(
+      platform,
+      () async => (configured: true, wantsWavAudio: false),
+      (audio, mimeType) async {
+        uploads.add((audio, mimeType));
+        return '今天有点累';
+      },
+      onTranscribed: (_) {},
+    );
+    await controller.initialize();
+
+    controller.handleMicTap();
+    await Future<void>.delayed(Duration.zero);
+    controller.handleMicTap();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.status, VoiceInputStatus.idle);
+    expect(platform.toWavCalls, 0);
+    // 原样字节与录音容器类型。
+    expect(uploads.single.$1, platform.session!.bytes);
+    expect(uploads.single.$2, 'audio/webm');
+    controller.dispose();
+  });
+
+  test('豆包类型重试不重新转换，仍上送同一段 WAV 字节', () async {
+    final platform = _FakeRecorderPlatform()
+      ..wavBytes = Uint8List.fromList([7, 7, 7]);
+    final attempts = <List<int>>[];
+    var failures = 1;
+    final controller = VoiceInputController(
+      platform,
+      () async => (configured: true, wantsWavAudio: true),
+      (audio, mimeType) async {
+        attempts.add(audio);
+        if (failures > 0) {
+          failures -= 1;
+          throw const LocalChatGatewayException('连接语音服务超时。');
+        }
+        return '重试的话';
+      },
+      onTranscribed: (_) {},
+    );
+    await controller.initialize();
+
+    controller.handleMicTap();
+    await Future<void>.delayed(Duration.zero);
+    controller.handleMicTap();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.status, VoiceInputStatus.retryable);
+
+    controller.handleMicTap(); // 重试
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.status, VoiceInputStatus.idle);
+    expect(platform.toWavCalls, 1); // 重试不重新转换。
+    expect(attempts, hasLength(2));
+    expect(attempts[0], attempts[1]);
+    expect(attempts[0], platform.wavBytes);
+    controller.dispose();
+  });
+
+  test('WAV 转换失败进可重试态并给人话提示，重试可恢复', () async {
+    final platform = _FakeRecorderPlatform()..wavError = true;
+    var transcribed = 0;
+    final controller = VoiceInputController(
+      platform,
+      () async => (configured: true, wantsWavAudio: true),
+      (audio, mimeType) async {
+        transcribed += 1;
+        return '不应出现';
+      },
+      onTranscribed: (_) {},
+    );
+    await controller.initialize();
+
+    controller.handleMicTap();
+    await Future<void>.delayed(Duration.zero);
+    controller.handleMicTap();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.status, VoiceInputStatus.retryable);
+    expect(controller.errorMessage, contains('无法转换'));
+    expect(transcribed, 0); // 转换失败绝不发起转写。
+
+    // 重试：转换恢复后照常完成。
+    platform.wavError = false;
+    controller.handleMicTap();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.status, VoiceInputStatus.idle);
+    expect(transcribed, 1);
     controller.dispose();
   });
 
@@ -355,7 +480,7 @@ VoiceInputController _pumpController({
 }) {
   return VoiceInputController(
     platform ?? _FakeRecorderPlatform(),
-    () async => configured,
+    () async => (configured: configured, wantsWavAudio: false),
     transcribe ?? ((audio, mimeType) async => '今天有点累'),
     onTranscribed: onTranscribed ?? (_) {},
   );
@@ -367,6 +492,11 @@ final class _FakeRecorderPlatform implements VoiceRecorderPlatform {
   @override
   final bool supported;
   final bool sessionEnabled;
+
+  /// WAV 转换的可控预置结果：测试注入确定字节。
+  Uint8List wavBytes = Uint8List.fromList([1, 1]);
+  bool wavError = false;
+  int toWavCalls = 0;
   _FakeRecordingSession? session;
 
   @override
@@ -375,6 +505,15 @@ final class _FakeRecorderPlatform implements VoiceRecorderPlatform {
       return null;
     }
     return session = _FakeRecordingSession();
+  }
+
+  @override
+  Future<RecordedAudio> toWav16kMono(RecordedAudio audio) async {
+    toWavCalls += 1;
+    if (wavError) {
+      throw StateError('decode failed');
+    }
+    return RecordedAudio(bytes: wavBytes, mimeType: 'audio/wav');
   }
 }
 

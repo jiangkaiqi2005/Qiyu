@@ -349,6 +349,10 @@ final class _FakeRecorderPlatform implements VoiceRecorderPlatform {
   @override
   Future<VoiceRecordingSession?> start() async =>
       supported ? (session = _FakeRecordingSession()) : null;
+
+  @override
+  Future<RecordedAudio> toWav16kMono(RecordedAudio audio) async =>
+      RecordedAudio(bytes: audio.bytes, mimeType: 'audio/wav');
 }
 
 final class _FakeRecordingSession implements VoiceRecordingSession {

@@ -1,0 +1,495 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:qiyu_windows_host/qiyu_windows_host.dart';
+import 'package:test/test.dart';
+
+void main() {
+  const config = SttConfig(
+    provider: SttProviderKind.volcSeedAsr,
+    baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+    model: 'volc.seedasr.sauc.duration',
+  );
+
+  Uint8List wav(int length) => Uint8List.fromList(
+    List<int>.generate(length, (index) => index % 251),
+  );
+
+  test('建连头与帧序列：full request JSON 字段、约 6400 分块与末包标记', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final gateway = VolcSeedAsrGateway(connector);
+
+    final audio = wav(20000);
+    final future = gateway.transcribe(
+      config: config,
+      apiKey: ' ark-test-key ',
+      audio: audio,
+      mimeType: 'audio/wav',
+    );
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 6);
+    connection.serverSends(_responseFrame(flags: 0x93, payload: {'result': {'text': '今天有点累'}}));
+    expect(await future, '今天有点累');
+
+    // 建连头：Key 去空格、Resource-Id 用模型名、Request-Id 是 UUID 形态。
+    expect(connector.lastUri.toString(), config.baseUrl);
+    expect(connector.lastHeaders!['X-Api-Key'], 'ark-test-key');
+    expect(connector.lastHeaders!['X-Api-Resource-Id'], 'volc.seedasr.sauc.duration');
+    expect(
+      RegExp(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+      ).hasMatch(connector.lastHeaders!['X-Api-Request-Id']!),
+      isTrue,
+    );
+
+    // ① full client request：头字节 11 10 11 00，payload 是 gzip(JSON)。
+    final frames = connection.sentFrames;
+    expect(frames, hasLength(6));
+    final fullRequest = frames[0];
+    expect(fullRequest.sublist(0, 4), [0x11, 0x10, 0x11, 0x00]);
+    final fullPayload = _payloadOf(fullRequest);
+    final requestJson =
+        jsonDecode(utf8.decode(gzip.decode(fullPayload))) as Map<String, Object?>;
+    expect(requestJson, {
+      'user': {'uid': 'qiyu'},
+      'audio': {
+        'format': 'wav',
+        'rate': 16000,
+        'bits': 16,
+        'channel': 1,
+        'language': 'zh-CN',
+      },
+      'request': {
+        'model_name': 'bigmodel',
+        'enable_punc': true,
+        'result_type': 'full',
+      },
+    });
+
+    // ② audio only：正包头 11 20 01 00，末包头 11 22 01 00。
+    for (final frame in frames.sublist(1, 5)) {
+      expect(frame.sublist(0, 4), [0x11, 0x20, 0x01, 0x00]);
+    }
+    final lastFrame = frames[5];
+    expect(lastFrame.sublist(0, 4), [0x11, 0x22, 0x01, 0x00]);
+    // 末包是 gzip 后的空音频块（可解压且内容为空）。
+    expect(gzip.decode(_payloadOf(lastFrame)), isEmpty);
+
+    // 分块还原：全部正包解压拼接等于整段原始音频（含 WAV 头在内原样）。
+    final rejoined = BytesBuilder(copy: false);
+    for (final frame in frames.sublist(1, 5)) {
+      final chunk = gzip.decode(_payloadOf(frame));
+      expect(chunk.length, lessThanOrEqualTo(6400));
+      rejoined.add(chunk);
+    }
+    expect(rejoined.takeBytes(), audio);
+    expect(connection.closed, isTrue);
+  });  test('空音频也至少发送一个末包标记', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final gateway = VolcSeedAsrGateway(connector);
+
+    final future = gateway.transcribe(
+      config: config,
+      apiKey: 'ark-test-key',
+      audio: const [],
+      mimeType: 'audio/wav',
+    );
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
+    connection.serverSends(_responseFrame(flags: 0x93, payload: {'result': {'text': ''}}));
+    expect(await future, '');
+
+    expect(connection.sentFrames, hasLength(2));
+    expect(connection.sentFrames[1].sublist(0, 4), [0x11, 0x22, 0x01, 0x00]);
+  });
+
+  test('多响应全量拼接：普通包续收、最终包结束', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final gateway = VolcSeedAsrGateway(connector);
+
+    final future = gateway.transcribe(
+      config: config,
+      apiKey: 'ark-test-key',
+      audio: wav(100),
+      mimeType: 'audio/wav',
+    );
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 3);
+    connection.serverSends(
+      _responseFrame(flags: 0x91, sequence: 1, payload: {
+        'result': {'text': '今晚'},
+      }),
+    );
+    connection.serverSends(
+      _responseFrame(flags: 0x91, sequence: 2, payload: {
+        'result': {'text': '有点'},
+      }),
+    );
+    connection.serverSends(
+      _responseFrame(flags: 0x93, sequence: 3, payload: {
+        'result': {'text': '累。'},
+      }),
+    );
+    expect(await future, '今晚有点累。');
+  });
+
+  test('result 为列表形态时逐项拼接（官方字段表与示例两种形态都兼容）', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final gateway = VolcSeedAsrGateway(connector);
+
+    final future = gateway.transcribe(
+      config: config,
+      apiKey: 'ark-test-key',
+      audio: wav(100),
+      mimeType: 'audio/wav',
+    );
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 3);
+    connection.serverSends(_responseFrame(flags: 0x93, payload: {
+      'result': [
+        {'text': '睡吧'},
+        {'text': '，明天再聊。'},
+      ],
+    }));
+    expect(await future, '睡吧，明天再聊。');
+  });
+
+  test('error 帧按允许列表映射：空音频语义、音频不可读、限流与其余拒绝', () async {
+    // 45000002：空音频，与 OpenAI 空文本同一分支，返回空串不抛。
+    expect(await _transcribeWithServerError(45000002, 'raw secret detail'), isEmpty);
+    final scenarios = [
+      (code: 45000001, kind: ModelFailureKind.contentParsing, message: '语音服务无法读取这段音频。'),
+      (code: 45000151, kind: ModelFailureKind.contentParsing, message: '语音服务无法读取这段音频。'),
+      (code: 55000031, kind: ModelFailureKind.rateLimited, message: '语音服务繁忙，请稍后再试。'),
+      (code: 45000003, kind: ModelFailureKind.provider, message: '语音服务拒绝了这次请求。'),
+    ];
+    for (final scenario in scenarios) {
+      final outcome = await _captureOutcome(
+        _transcribeWithServerError(scenario.code, 'quota secret detail'),
+      );
+      expect(outcome, isA<SttGatewayException>(), reason: scenario.code.toString());
+      final sttError = outcome as SttGatewayException;
+      expect(sttError.kind, scenario.kind, reason: scenario.code.toString());
+      expect(sttError.message, scenario.message, reason: scenario.code.toString());
+      expect(sttError.toString(), isNot(contains('secret')));
+    }
+  });
+
+  test('响应帧解不开按解析失败处理，不透出原始字节', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final gateway = VolcSeedAsrGateway(connector);
+
+    final future = gateway.transcribe(
+      config: config,
+      apiKey: 'ark-test-key',
+      audio: wav(100),
+      mimeType: 'audio/wav',
+    );
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 3);
+    connection.serverSends([0x11, 0x93, 0x11, 0x00, 0x00]);
+    await expectLater(
+      future,
+      throwsA(
+        isA<SttGatewayException>()
+            .having((error) => error.kind, 'kind', ModelFailureKind.contentParsing),
+      ),
+    );
+  });
+
+  test('连接失败按 SocketException 消息分 dns/network，TLS 单独分类', () async {
+    final scenarios = [
+      (
+        error: const SocketException(
+          'Failed host lookup',
+          osError: OSError('host not found', 11001),
+        ),
+        kind: ModelFailureKind.dns,
+        message: '找不到语音服务域名。',
+      ),
+      (
+        error: const SocketException('offline'),
+        kind: ModelFailureKind.network,
+        message: '无法连接语音服务。',
+      ),
+      (
+        error: HandshakeException('bad tls'),
+        kind: ModelFailureKind.tls,
+        message: '语音服务的 TLS 安全连接失败。',
+      ),
+    ];
+    for (final scenario in scenarios) {
+      final connector = _FakeWebSocketConnector(connectError: scenario.error);
+      await expectLater(
+        VolcSeedAsrGateway(connector).transcribe(
+          config: config,
+          apiKey: 'ark-test-key',
+          audio: wav(10),
+          mimeType: 'audio/wav',
+        ),
+        throwsA(
+          isA<SttGatewayException>()
+              .having((error) => error.kind, 'kind', scenario.kind)
+              .having((error) => error.message, 'message', scenario.message),
+        ),
+        reason: scenario.kind.name,
+      );
+    }
+  });
+
+  test('总超时（含建连）沿用 sttRequestTimeout 语义并归为 timeout', () async {
+    final connector = _HangingWebSocketConnector();
+    final gateway = VolcSeedAsrGateway(
+      connector,
+      timeout: const Duration(milliseconds: 30),
+    );
+
+    await expectLater(
+      gateway.transcribe(
+        config: config,
+        apiKey: 'ark-test-key',
+        audio: wav(10),
+        mimeType: 'audio/wav',
+      ),
+      throwsA(
+        isA<SttGatewayException>()
+            .having((error) => error.kind, 'kind', ModelFailureKind.timeout)
+            .having((error) => error.message, 'message', '连接语音服务超时。'),
+      ),
+    );
+  });
+
+  test('响应前连接断开归为网络中断', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final gateway = VolcSeedAsrGateway(connector);
+
+    final future = gateway.transcribe(
+      config: config,
+      apiKey: 'ark-test-key',
+      audio: wav(100),
+      mimeType: 'audio/wav',
+    );
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 3);
+    await connection.drop();
+    await expectLater(
+      future,
+      throwsA(
+        isA<SttGatewayException>()
+            .having((error) => error.kind, 'kind', ModelFailureKind.network)
+            .having((error) => error.message, 'message', '语音服务连接中断。'),
+      ),
+    );
+  });
+
+  test('SSRF 拒绝：内网与保留地址在出网前抛错，连接器未被调用', () async {
+    final targets = [
+      'ws://localhost:9000/api',
+      'wss://127.0.0.1/api',
+      'wss://127.0.0.10/api',
+      'wss://10.0.0.1/api',
+      'wss://172.16.0.1/api',
+      'wss://172.31.255.255/api',
+      'wss://192.168.1.5/api',
+      'wss://169.254.169.254/api',
+      'wss://0.0.0.0/api',
+      'wss://100.64.0.1/api',
+      'wss://[::1]/api',
+      'wss://[fe80::1]/api',
+      'wss://[fc00::1]/api',
+      'wss://[::ffff:127.0.0.1]/api',
+    ];
+    for (final baseUrl in targets) {
+      final connector = _FakeWebSocketConnector();
+      await expectLater(
+        VolcSeedAsrGateway(connector).transcribe(
+          config: SttConfig(
+            provider: SttProviderKind.volcSeedAsr,
+            baseUrl: baseUrl,
+            model: 'volc.seedasr.sauc.duration',
+          ),
+          apiKey: 'ark-test-key',
+          audio: wav(10),
+          mimeType: 'audio/wav',
+        ),
+        throwsA(
+          isA<SttGatewayException>()
+              .having((error) => error.kind, 'kind', ModelFailureKind.provider)
+              .having(
+                (error) => error.message,
+                'message',
+                '语音服务地址不允许指向本机或内网。',
+              ),
+        ),
+        reason: baseUrl,
+      );
+      expect(connector.connectCalls, 0, reason: baseUrl);
+    }
+  });
+
+  test('缺 Key 按鉴权失败拒绝，不出网', () async {
+    final connector = _FakeWebSocketConnector();
+    await expectLater(
+      VolcSeedAsrGateway(connector).transcribe(
+        config: config,
+        apiKey: '  ',
+        audio: wav(10),
+        mimeType: 'audio/wav',
+      ),
+      throwsA(
+        isA<SttGatewayException>()
+            .having((error) => error.kind, 'kind', ModelFailureKind.authentication),
+      ),
+    );
+    expect(connector.connectCalls, 0);
+  });
+}
+
+/// 等待 [connection] 的发送侧出现满足条件的帧（fake 侧同步分发）。
+Future<void> _pumpUntil(
+  _FakeWebSocketConnection connection,
+  bool Function(_FakeWebSocketConnection) condition,
+) async {
+  while (!condition(connection)) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
+
+/// 把转写结果或异常都收成值，便于逐场景断言映射。
+Future<Object?> _captureOutcome(Future<String?> future) async {
+  try {
+    return await future;
+  } on Object catch (error) {
+    return error;
+  }
+}
+
+Future<String?> _transcribeWithServerError(int code, String message) {
+  final connector = _FakeWebSocketConnector();
+  final connection = connector.connection!;
+  final gateway = VolcSeedAsrGateway(connector);
+  final future = gateway.transcribe(
+    config: const SttConfig(
+      provider: SttProviderKind.volcSeedAsr,
+      baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+      model: 'volc.seedasr.sauc.duration',
+    ),
+    apiKey: 'ark-test-key',
+    audio: Uint8List.fromList(List<int>.generate(100, (index) => index)),
+    mimeType: 'audio/wav',
+  );
+  return (() async {
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 3);
+    connection.serverSends(_errorFrame(code, message));
+    return future;
+  })();
+}
+
+/// 服务端响应帧：头 + 大端 u32 sequence + 大端 u32 payload 长度 + gzip(JSON)。
+Uint8List _responseFrame({
+  int flags = 0x01,
+  int sequence = 0,
+  required Map<String, Object?> payload,
+}) {
+  final compressed = gzip.encode(utf8.encode(jsonEncode(payload)));
+  return (BytesBuilder(copy: false)
+        ..add([0x11, 0x90 | flags, 0x11, 0x00])
+        ..add(_u32(sequence))
+        ..add(_u32(compressed.length))
+        ..add(compressed))
+      .takeBytes();
+}
+
+/// 服务端 error 帧：头 + 大端 u32 code + 大端 u32 消息长度 + UTF-8 消息。
+Uint8List _errorFrame(int code, String message) {
+  final bytes = utf8.encode(message);
+  return (BytesBuilder(copy: false)
+        ..add([0x11, 0xF0, 0x11, 0x00])
+        ..add(_u32(code))
+        ..add(_u32(bytes.length))
+        ..add(bytes))
+      .takeBytes();
+}
+
+Uint8List _u32(int value) => Uint8List.fromList([
+  (value >> 24) & 0xFF,
+  (value >> 16) & 0xFF,
+  (value >> 8) & 0xFF,
+  value & 0xFF,
+]);
+
+/// 取通用帧头之后的 payload（自动按头部 u32 长度校验）。
+List<int> _payloadOf(List<int> frame) {
+  final length = (frame[4] << 24) | (frame[5] << 16) | (frame[6] << 8) | frame[7];
+  expect(frame.length, 8 + length);
+  return frame.sublist(8);
+}
+
+final class _FakeWebSocketConnector implements ProviderWebSocketConnector {
+  _FakeWebSocketConnector({this.connectError});
+
+  final Object? connectError;
+  int connectCalls = 0;
+  Uri? lastUri;
+  Map<String, String>? lastHeaders;
+  _FakeWebSocketConnection? _connection;
+
+  _FakeWebSocketConnection? get connection {
+    _connection ??= _FakeWebSocketConnection();
+    return _connection;
+  }
+
+  @override
+  Future<ProviderWebSocketConnection> connect({
+    required Uri uri,
+    required Map<String, String> headers,
+  }) async {
+    connectCalls += 1;
+    if (connectError case final error?) {
+      throw error;
+    }
+    lastUri = uri;
+    lastHeaders = headers;
+    return connection!;
+  }
+}
+
+final class _FakeWebSocketConnection implements ProviderWebSocketConnection {
+  final _incoming = StreamController<List<int>>();
+  final sentFrames = <List<int>>[];
+  bool closed = false;
+
+  @override
+  Stream<List<int>> get messages => _incoming.stream;
+
+  @override
+  void send(List<int> bytes) {
+    sentFrames.add(bytes);
+  }
+
+  @override
+  Future<void> close() async {
+    closed = true;
+    await _incoming.close();
+  }
+
+  /// 服务端主动断开（不经过 close 的正常关闭路径）。
+  Future<void> drop() async {
+    await _incoming.close();
+  }
+
+  void serverSends(List<int> frame) {
+    _incoming.add(frame);
+  }
+}
+
+final class _HangingWebSocketConnector implements ProviderWebSocketConnector {
+  @override
+  Future<ProviderWebSocketConnection> connect({
+    required Uri uri,
+    required Map<String, String> headers,
+  }) =>
+      Completer<ProviderWebSocketConnection>().future;
+}

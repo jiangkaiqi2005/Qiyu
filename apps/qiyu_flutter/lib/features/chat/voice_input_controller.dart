@@ -10,12 +10,17 @@ import 'voice_recorder_platform.dart';
 /// 进入 idle 前的门槛状态：按钮置灰并引导，不参与转移。
 enum VoiceInputStatus { unsupported, notConfigured, idle, recording, transcribing, retryable }
 
+/// 语音服务状态探针的结果：是否已配置，以及是否需要浏览器端把录音
+/// 转换成 WAV（豆包协议只吃 16kHz/16-bit 单声道 WAV；OpenAI 兼容协议
+/// 原样上送 webm）。
+typedef VoiceServiceStatus = ({bool configured, bool wantsWavAudio});
+
 /// 聊天页语音输入控制器：录音只在内存里，成功、丢弃、页面离开即清空；
 /// 失败进可重试态，点麦克风重传同一段音频，Esc 丢弃。
 final class VoiceInputController extends ChangeNotifier {
   VoiceInputController(
     this._platform,
-    this._isConfigured,
+    this._serviceStatus,
     this._transcribe, {
     required this.onTranscribed,
     this.autoStopAfter = const Duration(seconds: 60),
@@ -24,7 +29,7 @@ final class VoiceInputController extends ChangeNotifier {
   static const _tickInterval = Duration(seconds: 1);
 
   final VoiceRecorderPlatform _platform;
-  final Future<bool> Function() _isConfigured;
+  final Future<VoiceServiceStatus> Function() _serviceStatus;
   final Future<String> Function(Uint8List audio, String mimeType) _transcribe;
 
   /// 转写成功：文本交回聊天页走既有发送链路（与手打完全一致）。
@@ -38,6 +43,8 @@ final class VoiceInputController extends ChangeNotifier {
   VoiceRecordingSession? _session;
   Uint8List? _pendingAudio;
   String _pendingMimeType = '';
+  bool _pendingAudioIsWav = false;
+  bool _wantsWavAudio = false;
   Timer? _autoStopTimer;
   Timer? _elapsedTimer;
   int _elapsedSeconds = 0;
@@ -61,17 +68,17 @@ final class VoiceInputController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    var configured = false;
+    var status = (configured: false, wantsWavAudio: false);
     try {
-      configured = await _isConfigured();
+      status = await _serviceStatus();
     } on Object {
       // 拉不到配置按未配置呈现：按钮置灰引导去设置页，不出错弹层。
-      configured = false;
     }
     if (_disposed) {
       return;
     }
-    _status = configured ? VoiceInputStatus.idle : VoiceInputStatus.notConfigured;
+    _wantsWavAudio = status.wantsWavAudio;
+    _status = status.configured ? VoiceInputStatus.idle : VoiceInputStatus.notConfigured;
     notifyListeners();
   }
 
@@ -83,15 +90,18 @@ final class VoiceInputController extends ChangeNotifier {
         _status != VoiceInputStatus.notConfigured) {
       return;
     }
-    var configured = false;
+    VoiceServiceStatus status;
     try {
-      configured = await _isConfigured();
+      status = await _serviceStatus();
     } on Object {
       return;
     }
-    if (_disposed || !configured || _status != VoiceInputStatus.notConfigured) {
+    if (_disposed ||
+        !status.configured ||
+        _status != VoiceInputStatus.notConfigured) {
       return;
     }
+    _wantsWavAudio = status.wantsWavAudio;
     _status = VoiceInputStatus.idle;
     _errorMessage = null;
     notifyListeners();
@@ -187,11 +197,13 @@ final class VoiceInputController extends ChangeNotifier {
       if (_status == VoiceInputStatus.retryable) {
         _pendingAudio = audio;
         _pendingMimeType = session.mimeType;
+        _pendingAudioIsWav = false;
       }
       return;
     }
     _pendingAudio = audio;
     _pendingMimeType = session.mimeType;
+    _pendingAudioIsWav = false;
     await _runTranscribe(attempt);
   }
 
@@ -236,6 +248,7 @@ final class VoiceInputController extends ChangeNotifier {
     _attempt += 1;
     _pendingAudio = null;
     _pendingMimeType = '';
+    _pendingAudioIsWav = false;
     _status = VoiceInputStatus.idle;
     _errorMessage = null;
     notifyListeners();
@@ -246,14 +259,35 @@ final class VoiceInputController extends ChangeNotifier {
   int _registerAttempt() => _attempt += 1;
 
   Future<void> _runTranscribe(int attempt) async {
-    final audio = _pendingAudio;
-    final mimeType = _pendingMimeType;
-    if (audio == null) {
+    if (_pendingAudio == null) {
       _status = VoiceInputStatus.retryable;
       _errorMessage = '录音已不可用，请重新说一次。';
       notifyListeners();
       return;
     }
+    // 豆包协议只吃 16kHz/16-bit 单声道 WAV：转写前在浏览器转换一次，
+    // 转换结果缓存为待重传形态（重试不再重复转换）。
+    if (_wantsWavAudio && !_pendingAudioIsWav) {
+      try {
+        final converted = await _platform.toWav16kMono(
+          RecordedAudio(bytes: _pendingAudio!, mimeType: _pendingMimeType),
+        );
+        if (_disposed || attempt != _attempt) {
+          return;
+        }
+        _pendingAudio = converted.bytes;
+        _pendingMimeType = converted.mimeType;
+        _pendingAudioIsWav = true;
+      } on Object {
+        if (_disposed || attempt != _attempt) {
+          return;
+        }
+        _enterRetryable('这段录音无法转换成语音服务需要的格式，请重试或重新说一次。');
+        return;
+      }
+    }
+    final audio = _pendingAudio!;
+    final mimeType = _pendingMimeType;
     try {
       final text = (await _transcribe(audio, mimeType)).trim();
       if (_disposed || attempt != _attempt) {
@@ -266,6 +300,7 @@ final class VoiceInputController extends ChangeNotifier {
       }
       _pendingAudio = null;
       _pendingMimeType = '';
+      _pendingAudioIsWav = false;
       _status = VoiceInputStatus.idle;
       _errorMessage = null;
       notifyListeners();
@@ -299,6 +334,7 @@ final class VoiceInputController extends ChangeNotifier {
     _session = null;
     _pendingAudio = null;
     _pendingMimeType = '';
+    _pendingAudioIsWav = false;
     super.dispose();
   }
 }

@@ -543,6 +543,7 @@ final class _LocalAppRequestHandler {
       if (request.method == 'PUT' && request.url.path == 'api/provider/stt') {
         final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
         final settings = await sttSettingsService.save(
+          provider: _sttProviderFromPayload(payload),
           baseUrl: _sttTextField(payload, 'baseUrl'),
           model: _sttTextField(payload, 'model'),
           apiKey: _apiKeyFromPayload(payload),
@@ -556,6 +557,7 @@ final class _LocalAppRequestHandler {
           request.url.path == 'api/provider/stt/test') {
         final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
         final result = await sttSettingsService.test(
+          provider: _sttProviderFromPayload(payload),
           baseUrl: _optionalSttTextField(payload, 'baseUrl'),
           model: _optionalSttTextField(payload, 'model'),
           apiKey: _apiKeyFromPayload(payload),
@@ -1034,6 +1036,19 @@ String? _optionalSttTextField(Map<String, Object?> payload, String key) {
     throw const ProviderConfigException('语音服务配置格式不正确。');
   }
   return value;
+}
+
+/// STT 设置的服务类型（provider）：可选字段，缺省 openai_compatible；
+/// 非法协议名按配置格式错误拒绝，不落盘。
+SttProviderKind _sttProviderFromPayload(Map<String, Object?> payload) {
+  final value = payload['provider'];
+  if (value == null) {
+    return SttProviderKind.openAiCompatible;
+  }
+  if (value is! String) {
+    throw const ProviderConfigException('语音服务配置格式不正确。');
+  }
+  return SttProviderKind.fromWireName(value);
 }
 
 /// 读取二进制请求体（语音转写）：与 JSON 读取同一套限长策略，Content-

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
@@ -208,41 +209,63 @@ void main() {
     }
   });
 
-  test('真实 HTTP 客户端发送 multipart 并解析 JSON 响应', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    final received = Completer<List<int>>();
-    server.listen((request) async {
-      final body = <int>[];
-      await for (final chunk in request) {
-        body.addAll(chunk);
-      }
-      if (!received.isCompleted) {
-        received.complete(body);
-      }
-      request.response.headers.contentType = ContentType.json;
-      request.response.add(utf8.encode('{"text":"还醒着"}'));
-      await request.response.close();
-    });
+  test('SSRF 拒绝：STT HTTP 出网指向环回/内网/保留地址时在出网前抛错', () async {
+    const targets = [
+      'https://localhost/v1',
+      'https://127.0.0.1/v1',
+      'https://10.1.2.3/v1',
+      'https://172.20.0.1/v1',
+      'https://192.168.0.2/v1',
+      'https://169.254.1.1/v1',
+      'https://0.0.0.0/v1',
+      'https://100.64.0.1/v1',
+      'https://[::1]/v1',
+      'https://[fe80::1]/v1',
+      'https://[fc00::1]/v1',
+    ];
+    for (final baseUrl in targets) {
+      final client = _RecordingHttpClient();
+      await expectLater(
+        SttModelGateway(client).transcribe(
+          config: SttConfig(baseUrl: baseUrl, model: 'whisper-test'),
+          apiKey: 'stt-test-key',
+          audio: [0],
+          mimeType: 'audio/webm',
+        ),
+        throwsA(
+          isA<SttGatewayException>()
+              .having((error) => error.kind, 'kind', ModelFailureKind.provider)
+              .having(
+                (error) => error.message,
+                'message',
+                '语音服务地址不允许指向本机或内网。',
+              ),
+        ),
+        reason: baseUrl,
+      );
+      expect(client.called, isFalse, reason: baseUrl);
+    }
+  });
 
-    final text = await SttModelGateway(const DartIoProviderHttpClient()).transcribe(
-      config: SttConfig(
-        baseUrl: 'http://127.0.0.1:${server.port}/v1',
-        model: 'whisper-test',
+  test('OpenAI 协议按 config.provider 分派：豆包配置不再打 HTTP transcriptions', () async {
+    // 分派行为在 SttModelGateway 层验证：豆包配置即使配了 HTTP 客户端也
+    // 绝不发起 HTTP 调用（HTTP 客户端被调用即失败）。
+    final client = _RecordingHttpClient();
+    final connector = _StaticWebSocketConnector();
+    await expectLater(
+      SttModelGateway(client, webSocketConnector: connector).transcribe(
+        config: const SttConfig(
+          provider: SttProviderKind.volcSeedAsr,
+          baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+          model: 'volc.seedasr.sauc.duration',
+        ),
+        apiKey: 'ark-test-key',
+        audio: [1, 2, 3],
+        mimeType: 'audio/wav',
       ),
-      apiKey: 'stt-test-key',
-      audio: utf8.encode('fake-opus-bytes'),
-      mimeType: 'audio/webm',
+      completion('ws-ok'),
     );
-
-    expect(text, '还醒着');
-    final sent = latin1.decode(await received.future);
-    expect(sent, contains('name="model"'));
-    expect(sent, contains('whisper-test'));
-    expect(sent, contains('name="language"'));
-    expect(sent, contains('zh'));
-    expect(sent, contains('filename="recording.webm"'));
-    expect(sent, contains('fake-opus-bytes'));
+    expect(client.called, isFalse);
   });
 }
 
@@ -282,4 +305,41 @@ final class _RecordingHttpClient implements ProviderHttpClient {
   }) {
     throw UnsupportedError('STT 网关只使用非流式 POST');
   }
+}
+
+/// 固定回一段豆包最终包响应的假 WS 连接（分派行为验证用）。
+final class _StaticWebSocketConnector implements ProviderWebSocketConnector {
+  @override
+  Future<ProviderWebSocketConnection> connect({
+    required Uri uri,
+    required Map<String, String> headers,
+  }) async => _StaticWebSocketConnection();
+}
+
+final class _StaticWebSocketConnection implements ProviderWebSocketConnection {
+  @override
+  Stream<List<int>> get messages async* {
+    final payload = gzip.encode(
+      utf8.encode(jsonEncode({'result': {'text': 'ws-ok'}})),
+    );
+    yield Uint8List.fromList([
+      0x11, 0x93, 0x11, 0x00, // server response 最终包（flags 0011）
+      0x00, 0x00, 0x00, 0x01, // sequence
+      ..._u32(payload.length),
+      ...payload,
+    ]);
+  }
+
+  static List<int> _u32(int value) => [
+    (value >> 24) & 0xFF,
+    (value >> 16) & 0xFF,
+    (value >> 8) & 0xFF,
+    value & 0xFF,
+  ];
+
+  @override
+  void send(List<int> bytes) {}
+
+  @override
+  Future<void> close() async {}
 }

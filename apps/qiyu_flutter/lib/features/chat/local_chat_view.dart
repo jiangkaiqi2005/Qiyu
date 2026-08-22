@@ -63,7 +63,14 @@ class _LocalChatViewState extends State<LocalChatView> {
     final sttSettingsGateway = _resolveSttSettingsGateway();
     _voiceInput = VoiceInputController(
       widget.voiceRecorderPlatform ?? createVoiceRecorderPlatform(),
-      () async => (await sttSettingsGateway.read()).configured,
+      // 服务类型决定是否要浏览器端 WAV 转换（豆包要 16kHz 单声道 WAV）。
+      () async {
+        final settings = await sttSettingsGateway.read();
+        return (
+          configured: settings.configured,
+          wantsWavAudio: settings.wantsWavAudio,
+        );
+      },
       chatViewModel.transcribeVoice,
       onTranscribed: (text) =>
           unawaited(_sendTranscribed(chatViewModel, text)),

@@ -250,6 +250,10 @@ void main() {
     await tester.tap(find.byKey(const Key('save-stt-settings')));
     await tester.pumpAndSettle();
     expect(sttGateway.savedDrafts, hasLength(1));
+    expect(
+      sttGateway.savedDrafts.single.provider,
+      SttServiceKind.openaiCompatible,
+    );
     expect(sttGateway.savedDrafts.single.apiKey, 'stt-new-secret-value');
     expect(
       tester
@@ -265,6 +269,38 @@ void main() {
     await tester.pumpAndSettle();
     expect(sttGateway.testCalls, 1);
     expect(find.textContaining('连接成功，语音输入可以使用'), findsOneWidget);
+
+    // 切到豆包：下拉在区块顶部，测试按钮之后可能已经滚下去，向上找回。
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('stt-provider')),
+      -300,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 20,
+    );
+    await tester.ensureVisible(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('豆包流式语音识别').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('stt-base-url'))).controller!
+          .text,
+      'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+    );
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('stt-model'))).controller!
+          .text,
+      'volc.seedasr.sauc.duration',
+    );
+    await tester.ensureVisible(find.byKey(const Key('save-stt-settings')));
+    await tester.tap(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+    expect(sttGateway.savedDrafts.last.provider, SttServiceKind.volcSeedAsr);
+    expect(
+      sttGateway.savedDrafts.last.baseUrl,
+      'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+    );
 
     // 忘记 Key：需要确认，确认后 keySet 归零。
     await tester.scrollUntilVisible(
@@ -620,6 +656,7 @@ final class _MutableSttSettingsGateway implements SttSettingsGateway {
     return _settings = SttSettings(
       configured: true,
       keySet: draft.apiKey != null || _settings.keySet,
+      provider: draft.provider,
       baseUrl: draft.baseUrl,
       model: draft.model,
     );

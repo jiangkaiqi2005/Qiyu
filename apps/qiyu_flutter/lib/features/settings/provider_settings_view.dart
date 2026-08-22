@@ -47,6 +47,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   final _sttBaseUrlController = TextEditingController();
   final _sttModelController = TextEditingController();
   final _sttApiKeyController = TextEditingController();
+  SttServiceKind _sttProvider = SttServiceKind.openaiCompatible;
   String _selectedProviderId = 'openai';
   String _selectedConnectionId = 'official';
   bool _customModel = false;
@@ -119,11 +120,53 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       return;
     }
     _syncedSttSettings = settings;
+    _sttProvider = settings.provider;
     if (settings.configured) {
       _sttBaseUrlController.text = settings.baseUrl ?? '';
       _sttModelController.text = settings.model ?? '';
     }
     _sttApiKeyController.clear();
+  }
+
+  void _selectSttProvider(String wireName) {
+    final next = wireName == 'volc_seed_asr'
+        ? SttServiceKind.volcSeedAsr
+        : SttServiceKind.openaiCompatible;
+    if (next == _sttProvider) {
+      return;
+    }
+    setState(() {
+      final previous = _sttProvider;
+      _sttProvider = next;
+      _applySttProtocolDefaults(from: previous, to: next);
+    });
+  }
+
+  /// 切换协议时，若地址空白或 scheme 与新协议不兼容（https 不能给豆包，
+  /// wss 不能给 OpenAI 兼容），换成新协议的缺省地址和模型。
+  void _applySttProtocolDefaults({
+    required SttServiceKind from,
+    required SttServiceKind to,
+  }) {
+    final url = _sttBaseUrlController.text.trim();
+    final model = _sttModelController.text.trim();
+    final fromDefaults = _sttProtocolDefaults(from);
+    final toDefaults = _sttProtocolDefaults(to);
+    final uri = Uri.tryParse(url);
+    final schemeCompatible = switch (to) {
+      SttServiceKind.openaiCompatible =>
+        uri != null && (uri.scheme == 'http' || uri.scheme == 'https'),
+      SttServiceKind.volcSeedAsr =>
+        uri != null && (uri.scheme == 'ws' || uri.scheme == 'wss'),
+    };
+    if (url.isEmpty || !schemeCompatible) {
+      _sttBaseUrlController.text = toDefaults.url;
+      if (model.isEmpty || model == fromDefaults.model || !schemeCompatible) {
+        _sttModelController.text = toDefaults.model;
+      }
+    } else if (model.isEmpty || model == fromDefaults.model) {
+      _sttModelController.text = toDefaults.model;
+    }
   }
 
   SttSettingsDraft? _readSttDraft() {
@@ -136,6 +179,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     }
     final key = _sttApiKeyController.text.trim();
     return SttSettingsDraft(
+      provider: _sttProvider,
       baseUrl: _sttBaseUrlController.text.trim(),
       model: _sttModelController.text.trim(),
       apiKey: key.isEmpty ? null : key,
@@ -600,32 +644,57 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
         )),
         const SizedBox(height: 10),
         Text(
-          '把说的话转成文字的服务（OpenAI 兼容转写，如 whisper 系列）。'
-          'Key 只保存在本机 provider.json；录音只存在内存里，'
-          '转写完成即丢弃，不会进入会话与记忆。',
+          _sttProvider == SttServiceKind.volcSeedAsr
+              ? '把说的话转成文字。豆包走官方语音识别协议；'
+                    'Key 只保存在本机 provider.json；录音只存在内存里，'
+                    '转写完成即丢弃，不会进入会话与记忆。'
+              : '把说的话转成文字的服务（OpenAI 兼容转写，如 whisper 系列）。'
+                    'Key 只保存在本机 provider.json；录音只存在内存里，'
+                    '转写完成即丢弃，不会进入会话与记忆。',
           style: theme.textTheme.bodyLarge?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
             height: 1.55,
           ),
         ),
         const SizedBox(height: 16),
+        _ControlledDropdown(
+          dropdownKey: const Key('stt-provider'),
+          label: '服务类型',
+          value: _sttProvider == SttServiceKind.volcSeedAsr
+              ? 'volc_seed_asr'
+              : 'openai_compatible',
+          items: const [
+            DropdownMenuItem(
+              value: 'openai_compatible',
+              child: Text('OpenAI 兼容转写'),
+            ),
+            DropdownMenuItem(
+              value: 'volc_seed_asr',
+              child: Text('豆包流式语音识别'),
+            ),
+          ],
+          onChanged: _selectSttProvider,
+        ),
+        const SizedBox(height: 16),
         TextField(
           key: const Key('stt-base-url'),
           controller: _sttBaseUrlController,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: '服务地址',
-            hintText: 'https://api.example.com/v1',
-            border: OutlineInputBorder(),
+            hintText: _sttProtocolDefaults(_sttProvider).urlHint,
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
         TextField(
           key: const Key('stt-model'),
           controller: _sttModelController,
-          decoration: const InputDecoration(
-            labelText: '模型名称',
-            hintText: 'whisper-1',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: _sttProvider == SttServiceKind.volcSeedAsr
+                ? 'Resource-Id'
+                : '模型名称',
+            hintText: _sttProtocolDefaults(_sttProvider).modelHint,
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 8),
@@ -1037,6 +1106,22 @@ class _ClearDataDialog extends StatelessWidget {
     );
   }
 }
+
+({String url, String model, String urlHint, String modelHint})
+_sttProtocolDefaults(SttServiceKind kind) => switch (kind) {
+  SttServiceKind.openaiCompatible => (
+    url: '',
+    model: '',
+    urlHint: 'https://api.example.com/v1',
+    modelHint: 'whisper-1',
+  ),
+  SttServiceKind.volcSeedAsr => (
+    url: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+    model: 'volc.seedasr.sauc.duration',
+    urlHint: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+    modelHint: 'volc.seedasr.sauc.duration',
+  ),
+};
 
 class _ControlledDropdown extends StatelessWidget {
   const _ControlledDropdown({

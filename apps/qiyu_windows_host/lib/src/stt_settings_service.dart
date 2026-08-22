@@ -59,9 +59,14 @@ final class SttSettingsService {
   Future<SttSettingsSnapshot> save({
     required String baseUrl,
     required String model,
+    SttProviderKind provider = SttProviderKind.openAiCompatible,
     String? apiKey,
   }) async {
-    final config = SttConfig(baseUrl: baseUrl, model: model);
+    final config = SttConfig(
+      provider: provider,
+      baseUrl: baseUrl,
+      model: model,
+    );
     config.validate();
     final previous = await configRepository.loadStt();
     final trimmed = apiKey?.trim();
@@ -91,6 +96,7 @@ final class SttSettingsService {
   Future<ProviderTestResult> test({
     String? baseUrl,
     String? model,
+    SttProviderKind? provider,
     String? apiKey,
   }) async {
     final stored = await configRepository.loadStt();
@@ -106,7 +112,13 @@ final class SttSettingsService {
         message: '还没有保存语音服务配置。',
       );
     }
-    final config = SttConfig(baseUrl: effectiveBaseUrl, model: effectiveModel);
+    final effectiveProvider =
+        provider ?? stored?.provider ?? SttProviderKind.openAiCompatible;
+    final config = SttConfig(
+      provider: effectiveProvider,
+      baseUrl: effectiveBaseUrl,
+      model: effectiveModel,
+    );
     try {
       config.validate();
     } on ProviderConfigException catch (error) {

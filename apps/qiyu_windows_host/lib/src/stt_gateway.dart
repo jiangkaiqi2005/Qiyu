@@ -6,6 +6,8 @@ import 'dart:typed_data';
 
 import 'model_gateway.dart';
 import 'provider_config.dart';
+import 'provider_web_socket.dart';
+import 'volc_seed_asr_gateway.dart';
 
 /// STT 出网异常：kind 与聊天 Provider 出网错误共用同一套分类
 /// （域名解析/TLS/超时/鉴权/网络/模型不存在/限流/响应不兼容/解析
@@ -20,15 +22,27 @@ final class SttGatewayException implements Exception {
   String toString() => message;
 }
 
+/// STT 协议网关的公共调用面：服务层（设置、转写、连接测试）只认这个
+/// 形状，协议分支不出 Provider 层。
+abstract interface class SttTranscriptionGateway {
+  /// 转写一段完整录音。返回识别文本，可能为空（空与失败的语义区分
+  /// 由调用方决定：连接测试视为成功，正式转写视为失败）。
+  Future<String> transcribe({
+    required SttConfig config,
+    required String? apiKey,
+    required List<int> audio,
+    required String mimeType,
+  });
+}
+
 /// OpenAI-compatible `/audio/transcriptions` 的 Host 中介客户端。
 /// 浏览器录音字节原样上送（云端负责解码），不做重采样或规范化。
-final class SttModelGateway {
-  const SttModelGateway(this.httpClient);
+final class OpenAiTranscriptionGateway implements SttTranscriptionGateway {
+  const OpenAiTranscriptionGateway(this.httpClient);
 
   final ProviderHttpClient httpClient;
 
-  /// 转写一段完整录音。返回识别文本，可能为空（空与失败的语义区分
-  /// 由调用方决定：连接测试视为成功，正式转写视为失败）。
+  @override
   Future<String> transcribe({
     required SttConfig config,
     required String? apiKey,
@@ -45,6 +59,8 @@ final class SttModelGateway {
     }
     final boundary = _newBoundary();
     final uri = appendProviderEndpoint(config.baseUrl, 'audio/transcriptions');
+    // STT 是新增出网路径：出网前统一过 SSRF 校验（聊天 Provider 不走）。
+    ensureSttOutboundAllowed(uri);
     final ProviderHttpResponse response;
     try {
       response = await httpClient.post(
@@ -110,9 +126,114 @@ final class SttModelGateway {
   }
 }
 
+/// 语音转写的出网入口：按 stt 配置的协议分派到具体网关。
+/// [httpClient] 供 OpenAI 兼容协议使用，[webSocketConnector] 供豆包
+/// 流式协议使用；调用面（transcribe 形状）与 v1 保持一致。
+final class SttModelGateway implements SttTranscriptionGateway {
+  SttModelGateway(this.httpClient, {ProviderWebSocketConnector? webSocketConnector})
+    : _volcSeedAsr = VolcSeedAsrGateway(
+        webSocketConnector ?? const DartIoProviderWebSocketConnector(),
+      );
+
+  final ProviderHttpClient httpClient;
+  final VolcSeedAsrGateway _volcSeedAsr;
+
+  @override
+  Future<String> transcribe({
+    required SttConfig config,
+    required String? apiKey,
+    required List<int> audio,
+    required String mimeType,
+  }) => switch (config.provider) {
+    SttProviderKind.openAiCompatible => OpenAiTranscriptionGateway(
+      httpClient,
+    ).transcribe(config: config, apiKey: apiKey, audio: audio, mimeType: mimeType),
+    SttProviderKind.volcSeedAsr => _volcSeedAsr.transcribe(
+      config: config,
+      apiKey: apiKey,
+      audio: audio,
+      mimeType: mimeType,
+    ),
+  };
+}
+
 /// 语音转写的出网预算：一次性完整上传 + 等待整段文本，显著长于聊天
 /// 首响预算，但仍要有界。
 const sttRequestTimeout = Duration(seconds: 60);
+
+/// STT 出网前的统一 SSRF 校验（OpenAI HTTP 与豆包 WS 共用）：scheme 限
+/// ws/wss/http/https；host 拒绝环回、私有、保留、组播与链路本地地址。
+/// 边界：聊天 Provider（模型对话）出网不走这条校验——Ollama 本机部署
+/// （如 localhost:11434）是 AGENTS 明确支持的产品功能，而 STT 服务始终
+/// 是云端第三方，不允许被指向内网。
+void ensureSttOutboundAllowed(Uri uri) {
+  final scheme = uri.scheme.toLowerCase();
+  if (scheme != 'http' &&
+      scheme != 'https' &&
+      scheme != 'ws' &&
+      scheme != 'wss') {
+    throw const SttGatewayException(
+      kind: ModelFailureKind.provider,
+      message: '语音服务地址必须是有效的 HTTP 或 WebSocket 地址。',
+    );
+  }
+  final host = uri.host.toLowerCase();
+  const refused = SttGatewayException(
+    kind: ModelFailureKind.provider,
+    message: '语音服务地址不允许指向本机或内网。',
+  );
+  if (host.isEmpty || host == 'localhost' || host.endsWith('.localhost')) {
+    throw refused;
+  }
+  final address = InternetAddress.tryParse(host);
+  // 域名字面量无法静态判定（DNS 解析后的内网 IP 由系统网络层路由），
+  // 这里只拦字面量形态的内网地址。
+  if (address != null && !_isPublicInternetAddress(address.rawAddress)) {
+    throw refused;
+  }
+}
+
+/// 字面量 IP 是否为公网单播地址（按原始网络字节序判断）。
+bool _isPublicInternetAddress(Uint8List raw) {
+  if (raw.length == 4) {
+    return _isPublicIpv4(raw);
+  }
+  if (raw.length == 16) {
+    return _isPublicIpv6(raw);
+  }
+  return false;
+}
+
+bool _isPublicIpv4(Uint8List b) {
+  final a0 = b[0];
+  final a1 = b[1];
+  if (a0 == 0) return false; // 0.0.0.0/8 保留
+  if (a0 == 10) return false; // 10/8 私有
+  if (a0 == 100 && a1 >= 64 && a1 <= 127) return false; // 100.64/10 CGNAT
+  if (a0 == 127) return false; // 环回
+  if (a0 == 169 && a1 == 254) return false; // 169.254/16 链路本地
+  if (a0 == 172 && a1 >= 16 && a1 <= 31) return false; // 172.16/12 私有
+  if (a0 == 192 && a1 == 168) return false; // 192.168/16 私有
+  if (a0 >= 224) return false; // 224/4 组播 + 240/4 保留（含广播）
+  return true;
+}
+
+bool _isPublicIpv6(Uint8List b) {
+  var zeroPrefix = 0;
+  while (zeroPrefix < 16 && b[zeroPrefix] == 0) {
+    zeroPrefix += 1;
+  }
+  if (zeroPrefix == 16) return false; // :: 未指定
+  if (zeroPrefix == 15 && b[15] == 1) return false; // ::1 环回
+  // IPv4 映射地址 ::ffff:a.b.c.d：按内嵌 IPv4 再判。
+  if (zeroPrefix == 10 && b[10] == 0xFF && b[11] == 0xFF) {
+    return _isPublicIpv4(Uint8List.sublistView(b, 12, 16));
+  }
+  if ((b[0] & 0xFE) == 0xFC) return false; // fc00::/7 唯一本地
+  if (b[0] == 0xFE && (b[1] & 0xC0) == 0x80) return false; // fe80::/10 链路本地
+  if (b[0] == 0xFF) return false; // ff00::/8 组播
+  return true;
+}
 
 String _parseTranscriptionText(String body) {
   try {

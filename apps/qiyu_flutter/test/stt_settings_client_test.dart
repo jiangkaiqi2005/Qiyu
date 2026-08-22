@@ -32,6 +32,33 @@ void main() {
     expect(settings.keySet, isTrue);
     expect(settings.baseUrl, 'https://stt.example.com/v1');
     expect(settings.model, 'whisper-test');
+    expect(settings.provider, SttServiceKind.openaiCompatible);
+    expect(settings.wantsWavAudio, isFalse);
+  });
+
+  test('读取设置：豆包协议回填 provider 并标记需要 WAV 转换', () async {
+    final client = MockClient(
+      (request) async => switch (request.url.path) {
+        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+        '/api/provider/stt' => _jsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'volc_seed_asr',
+          'baseUrl':
+              'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+          'model': 'volc.seedasr.sauc.duration',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+    );
+
+    final settings = await HttpSttSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    ).read();
+
+    expect(settings.provider, SttServiceKind.volcSeedAsr);
+    expect(settings.wantsWavAudio, isTrue);
   });
 
   test('保存与忘记 Key 都带 CSRF 头且请求体形状正确', () async {
@@ -72,6 +99,7 @@ void main() {
     expect(saveRequest.method, 'PUT');
     expect(saveRequest.headers['x-qiyu-csrf'], 'csrf-1');
     expect(jsonDecode(saveRequest.body), {
+      'provider': 'openai_compatible',
       'baseUrl': 'https://stt.example.com/v1',
       'model': 'whisper-test',
       'apiKey': 'stt-temporary-value',

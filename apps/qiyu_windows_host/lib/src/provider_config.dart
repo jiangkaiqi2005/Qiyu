@@ -146,19 +146,46 @@ Uri normalizeProviderBaseUri(String baseUrl) {
   );
 }
 
-/// 语音转写（STT）服务配置：provider.json 顶层的可选 `stt` 段。
-/// provider 字段为将来协议扩展预留，v1 只接受 openai_compatible。
-final class SttConfig {
-  const SttConfig({required this.baseUrl, required this.model, this.apiKey});
+/// 语音转写（STT）的协议类型：配置里的 wire 名与网关分派共用。
+/// 缺省 openai_compatible：不带 provider 字段的存量配置照常工作。
+enum SttProviderKind {
+  openAiCompatible('openai_compatible'),
+  volcSeedAsr('volc_seed_asr');
 
-  static const providerWireName = 'openai_compatible';
+  const SttProviderKind(this.wireName);
+
+  final String wireName;
+
+  static SttProviderKind fromWireName(String value) => values.firstWhere(
+    (kind) => kind.wireName == value,
+    orElse: () => throw const ProviderConfigException('不支持这个语音服务协议。'),
+  );
+
+  /// 该协议允许的服务地址 scheme（配置校验与出网前 SSRF 校验共用）。
+  bool allows(String scheme) => switch (this) {
+    SttProviderKind.openAiCompatible => scheme == 'http' || scheme == 'https',
+    SttProviderKind.volcSeedAsr => scheme == 'ws' || scheme == 'wss',
+  };
+}
+
+/// 语音转写（STT）服务配置：provider.json 顶层的可选 `stt` 段。
+final class SttConfig {
+  const SttConfig({
+    required this.baseUrl,
+    required this.model,
+    this.provider = SttProviderKind.openAiCompatible,
+    this.apiKey,
+  });
 
   factory SttConfig.fromJson(Map<String, Object?> json) {
-    final provider = json['provider'];
-    if (provider != null && provider != providerWireName) {
-      throw const ProviderConfigException('语音服务暂只支持 OpenAI 兼容协议。');
-    }
+    // provider 字段缺失按缺省协议：不带它的存量配置照常工作。
+    final provider = switch (json['provider']) {
+      null => SttProviderKind.openAiCompatible,
+      final String value => SttProviderKind.fromWireName(value),
+      _ => throw const ProviderConfigException('语音服务配置无法读取。'),
+    };
     return SttConfig(
+      provider: provider,
       baseUrl: json['baseUrl']! as String,
       model: json['model']! as String,
       // 与聊天段同律：兼容 apiKey 与 API_KEY 两种手写法，空白视为未设置。
@@ -166,6 +193,7 @@ final class SttConfig {
     );
   }
 
+  final SttProviderKind provider;
   final String baseUrl;
   final String model;
 
@@ -173,25 +201,32 @@ final class SttConfig {
   /// 同律：不进 toJson()，HTTP 快照绝不携带明文。
   final String? apiKey;
 
-  SttConfig withApiKey(String? apiKey) =>
-      SttConfig(baseUrl: baseUrl, model: model, apiKey: apiKey);
+  SttConfig withApiKey(String? apiKey) => SttConfig(
+    provider: provider,
+    baseUrl: baseUrl,
+    model: model,
+    apiKey: apiKey,
+  );
 
-  /// Key 的沿用作用域只看规范化后的服务地址（v1 只有 openai_compatible
-  /// 一种协议，无需再叠加协议维度）。
-  String get credentialScope => normalizeProviderBaseUri(baseUrl).toString();
+  /// Key 的沿用作用域看协议与规范化后的服务地址：换协议（如 OpenAI
+  /// 兼容换豆包）与换地址一样，都不沿用旧服务商的 Key。
+  String get credentialScope =>
+      '${provider.wireName}|${normalizeProviderBaseUri(baseUrl)}';
 
   Map<String, Object?> toJson() => {
-    'provider': providerWireName,
+    'provider': provider.wireName,
     'baseUrl': baseUrl,
     'model': model,
   };
 
   void validate() {
     final uri = Uri.tryParse(baseUrl.trim());
-    if (uri == null ||
-        !uri.hasAuthority ||
-        (uri.scheme != 'http' && uri.scheme != 'https')) {
-      throw const ProviderConfigException('语音服务地址必须是有效的 HTTP 地址。');
+    final label = switch (provider) {
+      SttProviderKind.openAiCompatible => '语音服务地址必须是有效的 HTTP 地址。',
+      SttProviderKind.volcSeedAsr => '语音服务地址必须是有效的 WebSocket 地址。',
+    };
+    if (uri == null || !uri.hasAuthority || !provider.allows(uri.scheme)) {
+      throw ProviderConfigException(label);
     }
     if (model.trim().isEmpty) {
       throw const ProviderConfigException('请填写语音服务的模型名称。');

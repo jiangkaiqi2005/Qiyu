@@ -1435,6 +1435,7 @@ void main() {
         allOf(
           containsPair('configured', true),
           containsPair('keySet', true),
+          containsPair('provider', 'openai_compatible'),
           containsPair('baseUrl', 'https://stt.example.com/v1'),
           containsPair('model', 'whisper-test'),
         ),
@@ -1561,6 +1562,69 @@ void main() {
       await host.close();
     },
   );
+
+  test('STT provider 字段：豆包配置往返，非法协议名按中文报错拒绝', () async {
+    final configPath =
+        '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+    final sttHttp = _RecordingSttHttpClient('{"text":"今天有点累"}');
+    final host = await LocalAppHost.start(
+      webRoot: webRoot.path,
+      memoryDirectory: memoryDirectory.path,
+      personaConstitution: '测试人格宪法',
+      sttSettingsService: SttSettingsService(
+        JsonProviderConfigRepository(filePath: configPath),
+        SttModelGateway(sttHttp),
+      ),
+    );
+    final browser = await _openBrowserSession(host);
+
+    // 豆包配置保存与读回：provider 字段往返一致。
+    final saved = await _send(
+      host.origin.resolve('/api/provider/stt'),
+      method: 'PUT',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({
+        'provider': 'volc_seed_asr',
+        'baseUrl': 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+        'model': 'volc.seedasr.sauc.duration',
+        'apiKey': 'ark-secret-value',
+      }),
+    );
+    expect(saved.statusCode, HttpStatus.ok);
+    expect(
+      jsonDecode(saved.body),
+      containsPair('provider', 'volc_seed_asr'),
+    );
+    expect(saved.body, isNot(contains('ark-secret-value')));
+    final read = await _send(
+      host.origin.resolve('/api/provider/stt'),
+      headers: browser.readHeaders(host.origin),
+    );
+    expect(
+      jsonDecode(read.body),
+      containsPair('provider', 'volc_seed_asr'),
+    );
+
+    // 非法协议名：拒绝且给出中文提示，不落盘。
+    final invalid = await _send(
+      host.origin.resolve('/api/provider/stt'),
+      method: 'PUT',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({
+        'provider': 'azure_speech',
+        'baseUrl': 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+        'model': 'volc.seedasr.sauc.duration',
+      }),
+    );
+    expect(invalid.statusCode, HttpStatus.badRequest);
+    expect(invalid.body, contains('不支持这个语音服务协议'));
+    final afterInvalid = await _send(
+      host.origin.resolve('/api/provider/stt'),
+      headers: browser.readHeaders(host.origin),
+    );
+    expect(jsonDecode(afterInvalid.body), containsPair('provider', 'volc_seed_asr'));
+    await host.close();
+  });
 
   test('transcribe rejects unconfigured and oversize audio bodies', () async {
     final configPath =

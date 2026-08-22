@@ -8,7 +8,10 @@ import 'voice_recorder_platform.dart';
 
 /// Flutter Web 构建的真实浏览器实现（ADR 0001）：getUserMedia 取麦克
 /// 风，MediaRecorder 容器优先 audio/webm，Safari 回退 audio/mp4；字节
-/// 只在内存 Blob 里累积，stop/discard 后连同媒体轨道一并释放。
+/// 只在内存 Blob 里累积，stop/discard 后连同媒体轨道一并释放。豆包
+/// 协议需要 16kHz/16-bit 单声道 WAV，转换（decodeAudioData 解码 +
+/// OfflineAudioContext 重采样 + Int16 量化 + RIFF 头）全部在浏览器内
+/// 完成，本机 Host 不做音频解码。
 final class WebVoiceRecorderPlatform implements VoiceRecorderPlatform {
   const WebVoiceRecorderPlatform();
 
@@ -49,6 +52,91 @@ final class WebVoiceRecorderPlatform implements VoiceRecorderPlatform {
       return null;
     }
   }
+
+  @override
+  Future<RecordedAudio> toWav16kMono(RecordedAudio audio) async {
+    // 解码或重采样失败（损坏字节、不支持的编码等）交给调用方按
+    // 「录音无法转换」的可重试失败呈现。
+    final wav = await _decodeResampleAndPack(audio.bytes);
+    return RecordedAudio(bytes: wav, mimeType: 'audio/wav');
+  }
+}
+
+const _wavTargetSampleRate = 16000;
+
+/// webm/mp4 → AudioBuffer → 16kHz 单声道 → Int16 LE + 44 字节 RIFF 头。
+/// interop 调用全部经 lambda 显式调用（dart2js 禁止 tear-off）。
+Future<Uint8List> _decodeResampleAndPack(Uint8List bytes) async {
+  // 用一次性 OfflineAudioContext 只做解码，避免动到真实音频设备。
+  final decodeContext = web.OfflineAudioContext(
+    1.toJS,
+    1,
+    48000,
+  );
+  // Uint8List 可能是某个更大 buffer 的视图：拷到独立拷贝再交出 JSArrayBuffer，
+  // 避免 offset 不为 0 时 decodeAudioData 读到错字节。dart2js 上 JSUint8Array
+  // 没有 .buffer 成员，必须走 ByteBuffer.toJS。
+  final copy = bytes.offsetInBytes == 0 &&
+          bytes.lengthInBytes == bytes.buffer.lengthInBytes
+      ? bytes
+      : Uint8List.fromList(bytes);
+  final decoded = await decodeContext.decodeAudioData(copy.buffer.toJS).toDart;
+  final frameCount =
+      (decoded.length * _wavTargetSampleRate / decoded.sampleRate).ceil();
+  final renderContext = web.OfflineAudioContext(
+    1.toJS,
+    frameCount,
+    _wavTargetSampleRate,
+  );
+  final source = renderContext.createBufferSource();
+  source.buffer = decoded;
+  source.connect(renderContext.destination);
+  source.start();
+  final rendered = await renderContext.startRendering().toDart;
+  return _packWav(rendered.getChannelData(0).toDart);
+}
+
+Uint8List _packWav(Float32List samples) {
+  final dataBytes = samples.length * 2;
+  final wav = Uint8List(44 + dataBytes);
+  final view = ByteData.view(wav.buffer);
+  var offset = 0;
+  void ascii(String text) {
+    for (final code in text.codeUnits) {
+      view.setUint8(offset, code);
+      offset += 1;
+    }
+  }
+
+  void u32(int value) {
+    view.setUint32(offset, value, Endian.little);
+    offset += 4;
+  }
+
+  void u16(int value) {
+    view.setUint16(offset, value, Endian.little);
+    offset += 2;
+  }
+
+  ascii('RIFF');
+  u32(36 + dataBytes);
+  ascii('WAVE');
+  ascii('fmt ');
+  u32(16); // fmt 块长度
+  u16(1); // PCM
+  u16(1); // 单声道
+  u32(_wavTargetSampleRate);
+  u32(_wavTargetSampleRate * 2); // 字节率 = 采样率 × 块对齐
+  u16(2); // 块对齐 = 2 字节
+  u16(16); // 位深
+  ascii('data');
+  u32(dataBytes);
+  for (final sample in samples) {
+    // 浮点采样可能略越界：clamp 到 [-1, 1] 再放大成 Int16。
+    view.setInt16(offset, (sample.clamp(-1.0, 1.0) * 32767).round(), Endian.little);
+    offset += 2;
+  }
+  return wav;
 }
 
 final class _WebVoiceRecordingSession implements VoiceRecordingSession {
