@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../accessibility.dart';
 import '../navigation.dart';
+import '../time_format.dart';
 import 'backup_client.dart';
 import 'backup_platform.dart';
 import 'backup_view.dart';
@@ -165,8 +166,7 @@ class _RecoveryBanner extends StatelessWidget {
     final subtitle = [
       if (pending > 0) '$pending 项待恢复',
       if (partial > 0) '$partial 项部分恢复',
-      if (section.quarantinedFiles > 0)
-        '${section.quarantinedFiles} 份原件保留在隔离区',
+      if (section.quarantinedFiles > 0) '${section.quarantinedFiles} 份原件保留在隔离区',
     ].join('，');
     return Card(
       key: const Key('memory-recovery-banner'),
@@ -231,7 +231,7 @@ class _RecentTab extends StatelessWidget {
           Row(
             children: [
               Text(
-                _formatDayHeader(day.date),
+                formatDayHeader(day.date),
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               if (!day.finalized) ...[
@@ -243,8 +243,8 @@ class _RecentTab extends StatelessWidget {
               ] else if (day.finalizedAt case final organizedAt?) ...[
                 const SizedBox(width: 8),
                 Text(
-                  '整理于 ${_twoDigits(organizedAt.toLocal().hour)}:'
-                  '${_twoDigits(organizedAt.toLocal().minute)}',
+                  '整理于 ${twoDigits(organizedAt.toLocal().hour)}:'
+                  '${twoDigits(organizedAt.toLocal().minute)}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -305,7 +305,7 @@ class _LongTermTab extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 16),
             child: Text(
-              '最近一次深度整理：${_formatTime(organizedAt)}',
+              '最近一次深度整理：${formatTime(organizedAt)}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
@@ -387,32 +387,21 @@ class _RelationshipTab extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 12),
-          if (section.confirmed.isNotEmpty) ...[
-            _sectionTitle(context, '当前相处方式'),
-            for (final item in section.confirmed)
-              _LongTermTile(
-                key: Key('memory-relationship-${item.id}'),
-                item: item,
-                statePack: true,
-              ),
-          ],
-          if (section.probes.isNotEmpty) ...[
-            _sectionTitle(context, '试探中'),
-            for (final item in section.probes)
-              _LongTermTile(
-                key: Key('memory-relationship-${item.id}'),
-                item: item,
-                statePack: true,
-              ),
-          ],
-          if (section.recentChanges.isNotEmpty) ...[
-            _sectionTitle(context, '近期变化'),
-            for (final item in section.recentChanges)
-              _LongTermTile(
-                key: Key('memory-relationship-${item.id}'),
-                item: item,
-                statePack: true,
-              ),
+          // 相处方式/试探/近期变化三组同为状态包投影，展示口径一致。
+          for (final (title, items) in [
+            ('当前相处方式', section.confirmed),
+            ('试探中', section.probes),
+            ('近期变化', section.recentChanges),
+          ]) ...[
+            if (items.isNotEmpty) ...[
+              _sectionTitle(context, title),
+              for (final item in items)
+                _LongTermTile(
+                  key: Key('memory-relationship-${item.id}'),
+                  item: item,
+                  statePack: true,
+                ),
+            ],
           ],
         ],
         if (section.sharedPast.isNotEmpty) ...[
@@ -681,8 +670,8 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         ),
       const SizedBox(height: 8),
       Text(
-        '${_formatDayHeader(detail.date)} · ${_twoDigits(time.hour)}:'
-        '${_twoDigits(time.minute)}',
+        '${formatDayHeader(detail.date)} · ${twoDigits(time.hour)}:'
+        '${twoDigits(time.minute)}',
         style: Theme.of(context).textTheme.bodySmall,
       ),
       if (detail.evidenceMasked || detail.evidence != null) ...[
@@ -869,7 +858,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
       Row(
         children: [
           Text(
-            _formatDayHeader(detail.date),
+            formatDayHeader(detail.date),
             style: Theme.of(context).textTheme.titleMedium,
           ),
           if (!detail.finalized) ...[
@@ -899,6 +888,25 @@ class _MemoryItemViewState extends State<MemoryItemView> {
   }
 }
 
+/// 记忆卡片的统一外观：底部留白、12px 圆角与高对比模式下的可见描边。
+class _MemoryCard extends StatelessWidget {
+  const _MemoryCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: highContrastSide(context),
+      ),
+      child: child,
+    );
+  }
+}
+
 class _EntryTile extends StatelessWidget {
   const _EntryTile({super.key, required this.entry});
 
@@ -907,12 +915,7 @@ class _EntryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final time = entry.at.toLocal();
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: highContrastSide(context),
-      ),
+    return _MemoryCard(
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => openInFront(context, '/memory/item/${entry.id}'),
@@ -931,21 +934,19 @@ class _EntryTile extends StatelessWidget {
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         _StatusChip(label: entry.kindLabel),
-                        if (entry.userEdited)
-                          const _StatusChip(label: '由你修正'),
+                        if (entry.userEdited) const _StatusChip(label: '由你修正'),
                         if (entry.control case final control?)
                           _StatusChip(
                             key: Key('memory-entry-control-${entry.id}'),
                             label: control.label,
                           ),
-                        if (entry.hasEvidence)
-                          const _StatusChip(label: '有摘录'),
+                        if (entry.hasEvidence) const _StatusChip(label: '有摘录'),
                       ],
                     ),
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    '${_twoDigits(time.hour)}:${_twoDigits(time.minute)}',
+                    '${twoDigits(time.hour)}:${twoDigits(time.minute)}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   _MemoryActionMenu(
@@ -979,12 +980,7 @@ class _LongTermTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: highContrastSide(context),
-      ),
+    return _MemoryCard(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         child: Row(
@@ -1022,12 +1018,7 @@ class _RootTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: highContrastSide(context),
-      ),
+    return _MemoryCard(
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => openInFront(context, '/memory/item/${root.id}'),
@@ -1083,12 +1074,7 @@ class _MiddleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: highContrastSide(context),
-      ),
+    return _MemoryCard(
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => openInFront(context, '/memory/item/${middle.id}'),
@@ -1146,12 +1132,7 @@ class _LeafTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: highContrastSide(context),
-      ),
+    return _MemoryCard(
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => openInFront(context, '/memory/item/${leaf.dayId}'),
@@ -1633,29 +1614,3 @@ class _EmptyState extends StatelessWidget {
 /// 遮罩展示的统一出口：敏感内容只呈现占位说明，原文不出现在界面上。
 String _visibleOr(bool masked, String? content) =>
     masked ? _maskedPlaceholder : (content ?? '');
-
-String _twoDigits(int value) => value.toString().padLeft(2, '0');
-
-String _formatTime(DateTime value) {
-  final local = value.toLocal();
-  return '${local.year}-${_twoDigits(local.month)}-${_twoDigits(local.day)} '
-      '${_twoDigits(local.hour)}:${_twoDigits(local.minute)}';
-}
-
-String _formatDayHeader(String date) {
-  final parsed = DateTime.tryParse(date);
-  if (parsed == null) {
-    return date;
-  }
-  final day = DateTime(parsed.year, parsed.month, parsed.day);
-  final now = DateTime.now();
-  final today = DateTime(now.year, now.month, now.day);
-  final difference = today.difference(day).inDays;
-  if (difference == 0) {
-    return '今天';
-  }
-  if (difference == 1) {
-    return '昨天';
-  }
-  return '${parsed.year}年${parsed.month}月${parsed.day}日';
-}

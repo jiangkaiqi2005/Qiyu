@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'backup_client.dart';
 import 'backup_platform.dart';
 import 'memory_view_model.dart';
+import '../time_format.dart';
 
 /// 备份与恢复对话框（ticket 22）：导出下载、导入前差异预览与确认后
 /// 写入、快照回滚。默认不静默覆盖：导入必须先经用户确认，确认后
@@ -263,10 +264,7 @@ class _BackupDialogState extends State<_BackupDialog> {
             children: [
               Row(
                 children: [
-                  Text(
-                    '备份与恢复',
-                    style: theme.textTheme.titleLarge,
-                  ),
+                  Text('备份与恢复', style: theme.textTheme.titleLarge),
                   const Spacer(),
                   IconButton(
                     key: const Key('backup-close'),
@@ -313,17 +311,9 @@ class _BackupDialogState extends State<_BackupDialog> {
                 ),
               ),
               const SizedBox(height: 12),
-              _sectionCard(
-                theme,
-                title: '导入备份',
-                body: _importBody(theme),
-              ),
+              _sectionCard(theme, title: '导入备份', body: _importBody(theme)),
               const SizedBox(height: 12),
-              _sectionCard(
-                theme,
-                title: '回滚',
-                body: _rollbackBody(theme),
-              ),
+              _sectionCard(theme, title: '回滚', body: _rollbackBody(theme)),
             ],
           ),
         ),
@@ -331,7 +321,8 @@ class _BackupDialogState extends State<_BackupDialog> {
     );
   }
 
-  Widget _sectionCard(ThemeData theme, {
+  Widget _sectionCard(
+    ThemeData theme, {
     required String title,
     required Widget body,
   }) {
@@ -387,32 +378,12 @@ class _BackupDialogState extends State<_BackupDialog> {
       case _ImportPhase.reading:
         return const Text('正在读取备份文件…');
       case _ImportPhase.previewing:
-        return const Row(
-          children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            SizedBox(width: 8),
-            Text('正在验证备份并比对差异…'),
-          ],
-        );
+        return _busyRow('正在验证备份并比对差异…');
       case _ImportPhase.previewed:
         final preview = _preview!;
         return _previewBody(theme, preview);
       case _ImportPhase.importing:
-        return const Row(
-          children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            SizedBox(width: 8),
-            Text('正在创建快照并写入，请不要关闭栖语…'),
-          ],
-        );
+        return _busyRow('正在创建快照并写入，请不要关闭栖语…');
       case _ImportPhase.done:
         final result = _importResult!;
         return Column(
@@ -426,9 +397,7 @@ class _BackupDialogState extends State<_BackupDialog> {
             ),
             const SizedBox(height: 4),
             Text(
-              result.controlsMerged
-                  ? '记忆控制已按并集合并，更保守的隐私结果保留。'
-                  : '记忆控制保持不变。',
+              result.controlsMerged ? '记忆控制已按并集合并，更保守的隐私结果保留。' : '记忆控制保持不变。',
             ),
             const SizedBox(height: 4),
             const Text('如果结果不对，可以在下方「回滚」恢复原样。'),
@@ -467,7 +436,7 @@ class _BackupDialogState extends State<_BackupDialog> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '备份生成于 ${_formatTime(preview.generatedAt)}，'
+          '备份生成于 ${formatTime(preview.generatedAt)}，'
           '验证通过。与本机数据对比：$summary。',
         ),
         const SizedBox(height: 4),
@@ -511,9 +480,7 @@ class _BackupDialogState extends State<_BackupDialog> {
           ),
         ],
         const SizedBox(height: 12),
-        const Text(
-          '确认后栖语会先创建一份可回滚的快照，再写入备份内容。',
-        ),
+        const Text('确认后栖语会先创建一份可回滚的快照，再写入备份内容。'),
         const SizedBox(height: 12),
         Row(
           children: [
@@ -538,6 +505,21 @@ class _BackupDialogState extends State<_BackupDialog> {
     );
   }
 
+  /// 导入进行中的提示行：小号进度指示加一句说明。
+  Widget _busyRow(String text) {
+    return Row(
+      children: [
+        const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        const SizedBox(width: 8),
+        Text(text),
+      ],
+    );
+  }
+
   Widget _rollbackBody(ThemeData theme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -548,7 +530,7 @@ class _BackupDialogState extends State<_BackupDialog> {
           const Text('还没有快照。导入备份时会自动创建。')
         else ...[
           Text(
-            '最近快照：${_formatTime(_snapshots.first.createdAt)}'
+            '最近快照：${formatTime(_snapshots.first.createdAt)}'
             '（${_snapshots.first.fileCount} 份文件），共 '
             '${_snapshots.length} 份。',
           ),
@@ -568,12 +550,5 @@ class _BackupDialogState extends State<_BackupDialog> {
         ],
       ],
     );
-  }
-
-  String _formatTime(DateTime time) {
-    final local = time.toLocal();
-    String two(int value) => value.toString().padLeft(2, '0');
-    return '${local.year}-${two(local.month)}-${two(local.day)} '
-        '${two(local.hour)}:${two(local.minute)}';
   }
 }

@@ -9,6 +9,15 @@ String memoryKindLabel(String kind) => switch (kind) {
   _ => '记忆',
 };
 
+/// wire 数组统一解码为 DTO 列表：数组缺失即抛错，条目必须是对象，
+/// 与各处手写的 `as` 链同语义。
+List<T> _listFromJson<T>(
+  Object? value,
+  T Function(Map<String, Object?> json) fromJson,
+) => (value! as List<Object?>)
+    .map((entry) => fromJson(entry! as Map<String, Object?>))
+    .toList();
+
 /// 记忆控制状态的用户语言：冻结 = 暂停使用，禁提 = 不再提起。
 enum MemoryControlStatus {
   frozen('已冻结'),
@@ -84,11 +93,7 @@ final class MemoryDayCard {
     finalizedAt: json['finalizedAt'] == null
         ? null
         : DateTime.parse(json['finalizedAt']! as String),
-    entries: (json['entries']! as List<Object?>)
-        .map(
-          (entry) => MemoryEntryCard.fromJson(entry! as Map<String, Object?>),
-        )
-        .toList(),
+    entries: _listFromJson(json['entries'], MemoryEntryCard.fromJson),
   );
 
   final String id;
@@ -105,9 +110,7 @@ final class MemoryRecentSection {
 
   factory MemoryRecentSection.fromJson(Map<String, Object?> json) =>
       MemoryRecentSection(
-        days: (json['days']! as List<Object?>)
-            .map((day) => MemoryDayCard.fromJson(day! as Map<String, Object?>))
-            .toList(),
+        days: _listFromJson(json['days'], MemoryDayCard.fromJson),
       );
 
   final List<MemoryDayCard> days;
@@ -142,12 +145,7 @@ final class MemoryLongTermGroup {
   factory MemoryLongTermGroup.fromJson(Map<String, Object?> json) =>
       MemoryLongTermGroup(
         section: json['section']! as String,
-        items: (json['items']! as List<Object?>)
-            .map(
-              (item) =>
-                  MemoryLongTermItem.fromJson(item! as Map<String, Object?>),
-            )
-            .toList(),
+        items: _listFromJson(json['items'], MemoryLongTermItem.fromJson),
       );
 
   final String section;
@@ -169,12 +167,7 @@ final class MemoryLongTermSection {
         organizedAt: json['organizedAt'] == null
             ? null
             : DateTime.parse(json['organizedAt']! as String),
-        groups: (json['groups']! as List<Object?>)
-            .map(
-              (group) =>
-                  MemoryLongTermGroup.fromJson(group! as Map<String, Object?>),
-            )
-            .toList(),
+        groups: _listFromJson(json['groups'], MemoryLongTermGroup.fromJson),
       );
 
   final bool present;
@@ -263,25 +256,17 @@ final class MemoryPersonaBranchCard {
     required this.unrooted,
   });
 
-  factory MemoryPersonaBranchCard.fromJson(
-    Map<String, Object?> json,
-  ) => MemoryPersonaBranchCard(
-    wire: json['wire']! as String,
-    title: json['title']! as String,
-    readable: json['readable']! as bool,
-    roots: (json['roots']! as List<Object?>)
-        .map(
-          (root) =>
-              MemoryPersonaRootCard.fromJson(root! as Map<String, Object?>),
-        )
-        .toList(),
-    unrooted: (json['unrooted']! as List<Object?>)
-        .map(
-          (middle) =>
-              MemoryPersonaMiddleCard.fromJson(middle! as Map<String, Object?>),
-        )
-        .toList(),
-  );
+  factory MemoryPersonaBranchCard.fromJson(Map<String, Object?> json) =>
+      MemoryPersonaBranchCard(
+        wire: json['wire']! as String,
+        title: json['title']! as String,
+        readable: json['readable']! as bool,
+        roots: _listFromJson(json['roots'], MemoryPersonaRootCard.fromJson),
+        unrooted: _listFromJson(
+          json['unrooted'],
+          MemoryPersonaMiddleCard.fromJson,
+        ),
+      );
 
   final String wire;
   final String title;
@@ -295,16 +280,13 @@ final class MemoryPersonaBranchCard {
 final class MemoryPersonaSection {
   const MemoryPersonaSection({required this.branches});
 
-  factory MemoryPersonaSection.fromJson(
-    Map<String, Object?> json,
-  ) => MemoryPersonaSection(
-    branches: (json['branches']! as List<Object?>)
-        .map(
-          (branch) =>
-              MemoryPersonaBranchCard.fromJson(branch! as Map<String, Object?>),
-        )
-        .toList(),
-  );
+  factory MemoryPersonaSection.fromJson(Map<String, Object?> json) =>
+      MemoryPersonaSection(
+        branches: _listFromJson(
+          json['branches'],
+          MemoryPersonaBranchCard.fromJson,
+        ),
+      );
 
   final List<MemoryPersonaBranchCard> branches;
 
@@ -322,36 +304,20 @@ final class MemoryRelationshipSection {
     required this.sharedPast,
   });
 
-  factory MemoryRelationshipSection.fromJson(Map<String, Object?> json) =>
-      MemoryRelationshipSection(
-        present: json['present']! as bool,
-        stage: json['stage'] as String?,
-        since: json['since'] as String?,
-        confirmed: (json['confirmed']! as List<Object?>)
-            .map(
-              (item) =>
-                  MemoryLongTermItem.fromJson(item! as Map<String, Object?>),
-            )
-            .toList(),
-        probes: (json['probes']! as List<Object?>)
-            .map(
-              (item) =>
-                  MemoryLongTermItem.fromJson(item! as Map<String, Object?>),
-            )
-            .toList(),
-        recentChanges: (json['recentChanges']! as List<Object?>)
-            .map(
-              (item) =>
-                  MemoryLongTermItem.fromJson(item! as Map<String, Object?>),
-            )
-            .toList(),
-        sharedPast: (json['sharedPast']! as List<Object?>)
-            .map(
-              (item) =>
-                  MemoryLongTermItem.fromJson(item! as Map<String, Object?>),
-            )
-            .toList(),
-      );
+  factory MemoryRelationshipSection.fromJson(
+    Map<String, Object?> json,
+  ) => MemoryRelationshipSection(
+    present: json['present']! as bool,
+    stage: json['stage'] as String?,
+    since: json['since'] as String?,
+    confirmed: _listFromJson(json['confirmed'], MemoryLongTermItem.fromJson),
+    probes: _listFromJson(json['probes'], MemoryLongTermItem.fromJson),
+    recentChanges: _listFromJson(
+      json['recentChanges'],
+      MemoryLongTermItem.fromJson,
+    ),
+    sharedPast: _listFromJson(json['sharedPast'], MemoryLongTermItem.fromJson),
+  );
 
   final bool present;
   final String? stage;
@@ -552,21 +518,18 @@ final class PersonaRootDetail extends MemoryItemDetail {
     required this.middles,
   });
 
-  factory PersonaRootDetail.fromJson(
-    Map<String, Object?> json,
-  ) => PersonaRootDetail(
-    branch: json['branch']! as String,
-    branchTitle: json['branchTitle']! as String,
-    claim: json['claim'] as String?,
-    masked: json['masked']! as bool,
-    control: MemoryControlStatus.fromWire(json['control']),
-    middles: (json['middles']! as List<Object?>)
-        .map(
-          (middle) =>
-              MemoryPersonaMiddleCard.fromJson(middle! as Map<String, Object?>),
-        )
-        .toList(),
-  );
+  factory PersonaRootDetail.fromJson(Map<String, Object?> json) =>
+      PersonaRootDetail(
+        branch: json['branch']! as String,
+        branchTitle: json['branchTitle']! as String,
+        claim: json['claim'] as String?,
+        masked: json['masked']! as bool,
+        control: MemoryControlStatus.fromWire(json['control']),
+        middles: _listFromJson(
+          json['middles'],
+          MemoryPersonaMiddleCard.fromJson,
+        ),
+      );
 
   final String branch;
   final String branchTitle;
@@ -632,12 +595,7 @@ final class PersonaMiddleDetail extends MemoryItemDetail {
         formedOn: json['formedOn']! as String,
         reviewedOn: json['reviewedOn']! as String,
         rootClaim: json['rootClaim'] as String?,
-        leaves: (json['leaves']! as List<Object?>)
-            .map(
-              (leaf) =>
-                  MemoryPersonaLeafCard.fromJson(leaf! as Map<String, Object?>),
-            )
-            .toList(),
+        leaves: _listFromJson(json['leaves'], MemoryPersonaLeafCard.fromJson),
       );
 
   final String branch;
@@ -671,12 +629,7 @@ final class MemoryDayDetail extends MemoryItemDetail {
         finalizedAt: json['finalizedAt'] == null
             ? null
             : DateTime.parse(json['finalizedAt']! as String),
-        entries: (json['entries']! as List<Object?>)
-            .map(
-              (entry) =>
-                  MemoryEntryCard.fromJson(entry! as Map<String, Object?>),
-            )
-            .toList(),
+        entries: _listFromJson(json['entries'], MemoryEntryCard.fromJson),
       );
 
   final String date;

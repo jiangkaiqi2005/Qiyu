@@ -12,6 +12,7 @@ import '../onboarding/onboarding_view_model.dart';
 import 'provider_catalog.dart';
 import 'provider_settings_client.dart';
 import 'provider_settings_view_model.dart';
+import 'settings_client.dart';
 import 'settings_view_model.dart';
 
 /// 设置中心（ticket 23）：模型连接、本地数据管理（备份 / 记忆控制
@@ -419,14 +420,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                         onPressed: viewModel.saving
                             ? null
                             : () => unawaited(_save(viewModel)),
-                        icon: viewModel.saving
-                            ? const SizedBox.square(
-                                dimension: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.lock_outline),
+                        icon: _busyOr(viewModel.saving, Icons.lock_outline),
                         label: const Text('保存到本机'),
                       ),
                       OutlinedButton.icon(
@@ -439,14 +433,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                                   unawaited(viewModel.testConnection(draft));
                                 }
                               },
-                        icon: viewModel.testing
-                            ? const SizedBox.square(
-                                dimension: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.bolt_outlined),
+                        icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
                         label: const Text('测试连接'),
                       ),
                     ],
@@ -475,6 +462,191 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     ProviderSettingsViewModel viewModel,
   ) {
     final keySet = viewModel.settings?.keySet ?? false;
+    return _SettingsPanel(
+      children: [
+        Text(
+          keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存 API Key',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          keySet
+              ? '留空即可继续使用；输入新值会覆盖旧值，也可以直接编辑 provider.json 更换。'
+              : 'Ollama 本地服务通常可以留空。',
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('provider-api-key'),
+          controller: _apiKeyController,
+          obscureText: true,
+          enableSuggestions: false,
+          autocorrect: false,
+          decoration: const InputDecoration(
+            labelText: 'API Key',
+            hintText: '保存后写入本机 provider.json',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        if (keySet) ...[
+          const SizedBox(height: 8),
+          TextButton(
+            key: const Key('forget-api-key'),
+            onPressed: viewModel.saving
+                ? null
+                : () => unawaited(_confirmForgetKey(viewModel)),
+            child: const Text('忘记已保存的 Key'),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _localDataSection(BuildContext context, SettingsViewModel viewModel) {
+    final theme = Theme.of(context);
+    final preview = viewModel.clearPreview;
+    return _SettingsPanel(
+      children: [
+        Text('本地数据', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 6),
+        Text(
+          '全部会话与记忆都是这台电脑上的 Markdown 文件，不会上传到任何服务器。',
+          style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        if (preview != null) ...[
+          const SizedBox(height: 10),
+          Text(
+            '数据位置：${preview.memoryDirectory}',
+            key: const Key('local-data-location'),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 12,
+          runSpacing: 10,
+          children: [
+            OutlinedButton.icon(
+              key: const Key('settings-backup'),
+              onPressed: () => unawaited(
+                showBackupDialog(
+                  context,
+                  gateway: widget.backupGateway,
+                  platform: widget.backupPlatform,
+                ),
+              ),
+              icon: const Icon(Icons.archive_outlined),
+              label: const Text('备份与恢复'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('settings-memory-center'),
+              onPressed: () => context.push('/memory'),
+              icon: const Icon(Icons.menu_book_outlined),
+              label: const Text('记忆中心'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('settings-memory-controls'),
+              onPressed: () => unawaited(_showMemoryControls(viewModel)),
+              icon: const Icon(Icons.shield_outlined),
+              label: const Text('记忆控制总览'),
+            ),
+            TextButton.icon(
+              key: const Key('settings-clear-data'),
+              style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.error,
+              ),
+              onPressed: viewModel.clearing
+                  ? null
+                  : () => unawaited(_confirmClearData(viewModel)),
+              icon: _busyOr(viewModel.clearing, Icons.delete_outline),
+              label: const Text('清除产品数据'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _privacySection(BuildContext context) {
+    final theme = Theme.of(context);
+    return _SettingsPanel(
+      children: [
+        Text('隐私与边界', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 6),
+        Text(
+          '数据只在本机；只有你配置了模型服务才会联网；敏感信息永不被记住。',
+          style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 14),
+        OutlinedButton.icon(
+          key: const Key('settings-privacy'),
+          onPressed: () => context.push('/privacy'),
+          icon: const Icon(Icons.privacy_tip_outlined),
+          label: const Text('查看隐私说明'),
+        ),
+      ],
+    );
+  }
+
+  Widget _developerSection(BuildContext context, SettingsViewModel viewModel) {
+    final theme = Theme.of(context);
+    return _SettingsPanel(
+      children: [
+        Text('体验与开发者选项', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 10),
+        // 说明文字与开关合并为一个语义节点：屏幕阅读器一次读全
+        // 「开发者模式」的含义与开关状态（ticket 24）。
+        MergeSemantics(
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('开发者模式', style: theme.textTheme.titleSmall),
+                    Text(
+                      '开启后出现开发者诊断入口。诊断只读，不修改任何数据。',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                key: const Key('developer-mode-switch'),
+                value: viewModel.developerMode,
+                onChanged: viewModel.busy
+                    ? null
+                    : (value) => unawaited(viewModel.setDeveloperMode(value)),
+              ),
+            ],
+          ),
+        ),
+        if (viewModel.developerMode)
+          OutlinedButton.icon(
+            key: const Key('settings-diagnostics'),
+            onPressed: () => context.push('/settings/diagnostics'),
+            icon: const Icon(Icons.monitor_heart_outlined),
+            label: const Text('开发者诊断'),
+          ),
+      ],
+    );
+  }
+}
+
+/// 设置分区面板的统一外观：surfaceContainer 底、18px 圆角与细描边。
+class _SettingsPanel extends StatelessWidget {
+  const _SettingsPanel({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainer,
@@ -485,222 +657,20 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存 API Key',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              keySet
-                  ? '留空即可继续使用；输入新值会覆盖旧值，也可以直接编辑 provider.json 更换。'
-                  : 'Ollama 本地服务通常可以留空。',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              key: const Key('provider-api-key'),
-              controller: _apiKeyController,
-              obscureText: true,
-              enableSuggestions: false,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'API Key',
-                hintText: '保存后写入本机 provider.json',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            if (keySet) ...[
-              const SizedBox(height: 8),
-              TextButton(
-                key: const Key('forget-api-key'),
-                onPressed: viewModel.saving
-                    ? null
-                    : () => unawaited(_confirmForgetKey(viewModel)),
-                child: const Text('忘记已保存的 Key'),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _localDataSection(BuildContext context, SettingsViewModel viewModel) {
-    final theme = Theme.of(context);
-    final preview = viewModel.clearPreview;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('本地数据', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 6),
-            Text(
-              '全部会话与记忆都是这台电脑上的 Markdown 文件，不会上传到任何服务器。',
-              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            if (preview != null) ...[
-              const SizedBox(height: 10),
-              Text(
-                '数据位置：${preview.memoryDirectory}',
-                key: const Key('local-data-location'),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 12,
-              runSpacing: 10,
-              children: [
-                OutlinedButton.icon(
-                  key: const Key('settings-backup'),
-                  onPressed: () => unawaited(
-                    showBackupDialog(
-                      context,
-                      gateway: widget.backupGateway,
-                      platform: widget.backupPlatform,
-                    ),
-                  ),
-                  icon: const Icon(Icons.archive_outlined),
-                  label: const Text('备份与恢复'),
-                ),
-                OutlinedButton.icon(
-                  key: const Key('settings-memory-center'),
-                  onPressed: () => context.push('/memory'),
-                  icon: const Icon(Icons.menu_book_outlined),
-                  label: const Text('记忆中心'),
-                ),
-                OutlinedButton.icon(
-                  key: const Key('settings-memory-controls'),
-                  onPressed: () => unawaited(_showMemoryControls(viewModel)),
-                  icon: const Icon(Icons.shield_outlined),
-                  label: const Text('记忆控制总览'),
-                ),
-                TextButton.icon(
-                  key: const Key('settings-clear-data'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: theme.colorScheme.error,
-                  ),
-                  onPressed: viewModel.clearing
-                      ? null
-                      : () => unawaited(_confirmClearData(viewModel)),
-                  icon: viewModel.clearing
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.delete_outline),
-                  label: const Text('清除产品数据'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _privacySection(BuildContext context) {
-    final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('隐私与边界', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 6),
-            Text(
-              '数据只在本机；只有你配置了模型服务才会联网；敏感信息永不被记住。',
-              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 14),
-            OutlinedButton.icon(
-              key: const Key('settings-privacy'),
-              onPressed: () => context.push('/privacy'),
-              icon: const Icon(Icons.privacy_tip_outlined),
-              label: const Text('查看隐私说明'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _developerSection(BuildContext context, SettingsViewModel viewModel) {
-    final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('体验与开发者选项', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 10),
-            // 说明文字与开关合并为一个语义节点：屏幕阅读器一次读全
-            // 「开发者模式」的含义与开关状态（ticket 24）。
-            MergeSemantics(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('开发者模式', style: theme.textTheme.titleSmall),
-                        Text(
-                          '开启后出现开发者诊断入口。诊断只读，不修改任何数据。',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Switch(
-                    key: const Key('developer-mode-switch'),
-                    value: viewModel.developerMode,
-                    onChanged: viewModel.busy
-                        ? null
-                        : (value) =>
-                              unawaited(viewModel.setDeveloperMode(value)),
-                  ),
-                ],
-              ),
-            ),
-            if (viewModel.developerMode)
-              OutlinedButton.icon(
-                key: const Key('settings-diagnostics'),
-                onPressed: () => context.push('/settings/diagnostics'),
-                icon: const Icon(Icons.monitor_heart_outlined),
-                label: const Text('开发者诊断'),
-              ),
-          ],
+          children: children,
         ),
       ),
     );
   }
 }
+
+/// 按钮图标在忙碌时换成小号进度指示，三个动作按钮共用同一形态。
+Widget _busyOr(bool busy, IconData icon) => busy
+    ? const SizedBox.square(
+        dimension: 16,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      )
+    : Icon(icon);
 
 /// 记忆控制总览对话框：冻结与禁提逐条列出，删除只给数量；具体
 /// 管理去记忆中心。
@@ -712,6 +682,24 @@ class _MemoryControlsDialog extends StatefulWidget {
 }
 
 class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
+  /// 冻结/禁提两组共用同一呈现：计数标题、空态说明与逐条安全摘要。
+  List<Widget> _controlGroup(
+    ThemeData theme, {
+    required String title,
+    required String emptyText,
+    required List<MemoryControlRecord> entries,
+  }) => [
+    Text(title, style: theme.textTheme.titleSmall),
+    if (entries.isEmpty)
+      Text(
+        emptyText,
+        style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+      )
+    else
+      for (final entry in entries)
+        Text('· ${entry.summary}', style: theme.textTheme.bodyMedium),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<SettingsViewModel>();
@@ -741,41 +729,19 @@ class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      '已冻结（${controls.frozen.length}）',
-                      style: theme.textTheme.titleSmall,
+                    ..._controlGroup(
+                      theme,
+                      title: '已冻结（${controls.frozen.length}）',
+                      emptyText: '没有冻结的记忆。',
+                      entries: controls.frozen,
                     ),
-                    if (controls.frozen.isEmpty)
-                      Text(
-                        '没有冻结的记忆。',
-                        style: TextStyle(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      )
-                    else
-                      for (final entry in controls.frozen)
-                        Text(
-                          '· ${entry.summary}',
-                          style: theme.textTheme.bodyMedium,
-                        ),
                     const SizedBox(height: 12),
-                    Text(
-                      '已禁提（${controls.banned.length}）',
-                      style: theme.textTheme.titleSmall,
+                    ..._controlGroup(
+                      theme,
+                      title: '已禁提（${controls.banned.length}）',
+                      emptyText: '没有禁提的内容。',
+                      entries: controls.banned,
                     ),
-                    if (controls.banned.isEmpty)
-                      Text(
-                        '没有禁提的内容。',
-                        style: TextStyle(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      )
-                    else
-                      for (final entry in controls.banned)
-                        Text(
-                          '· ${entry.summary}',
-                          style: theme.textTheme.bodyMedium,
-                        ),
                     const SizedBox(height: 12),
                     Text(
                       '已删除范围：${controls.deletedCount} 条（只保留抽象范围，防止复活）',

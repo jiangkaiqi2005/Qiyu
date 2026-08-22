@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../accessibility.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
+import 'qiyu_chat_bubble.dart';
 import 'qiyu_markdown.dart';
 
 /// 输入框里按 Enter 发送；Shift+Enter / Ctrl+Enter 插入软换行。
@@ -322,31 +323,9 @@ class _LocalChatViewState extends State<LocalChatView> {
           );
         }
         final message = viewModel.messages[index];
-        final fromUser = message.speaker == LocalChatSpeaker.user;
-        return Align(
-          alignment: fromUser ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            constraints: const BoxConstraints(maxWidth: 520),
-            decoration: BoxDecoration(
-              color: fromUser
-                  ? Theme.of(context).colorScheme.primaryContainer
-                  : Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.fromBorderSide(highContrastSide(context)),
-            ),
-            // 用户输入按纯文本展示；栖语回复来自模型，按 Markdown 渲染。
-            // 语义标签带上说话人，屏幕阅读器能分清谁在说（ticket 24）。
-            child: MergeSemantics(
-              child: Semantics(
-                label: fromUser ? '你说' : '栖语说',
-                child: fromUser
-                    ? Text(message.text)
-                    : QiyuMarkdown(text: message.text),
-              ),
-            ),
-          ),
+        return QiyuChatBubble(
+          text: message.text,
+          fromUser: message.speaker == LocalChatSpeaker.user,
         );
       },
     );

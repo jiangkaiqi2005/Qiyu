@@ -7,8 +7,9 @@ import 'package:provider/provider.dart';
 import '../accessibility.dart';
 import '../chat/local_chat_client.dart';
 import '../chat/local_chat_view_model.dart';
-import '../chat/qiyu_markdown.dart';
+import '../chat/qiyu_chat_bubble.dart';
 import '../navigation.dart';
+import '../time_format.dart';
 import 'history_client.dart';
 import 'history_view_model.dart';
 
@@ -97,7 +98,7 @@ class HistoryView extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 8),
             child: Text(
-              _formatDayHeader(day.date),
+              formatDayHeader(day.date),
               style: Theme.of(context).textTheme.titleSmall,
             ),
           ),
@@ -152,8 +153,7 @@ class _SessionTile extends StatelessWidget {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () =>
-            openInFront(context, '/history/${session.sessionId}'),
+        onTap: () => openInFront(context, '/history/${session.sessionId}'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -163,7 +163,7 @@ class _SessionTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${_twoDigits(startedAt.hour)}:${_twoDigits(startedAt.minute)} · '
+                      '${twoDigits(startedAt.hour)}:${twoDigits(startedAt.minute)} · '
                       '${session.turnCount} 条消息',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -321,53 +321,11 @@ class _HistorySessionViewState extends State<HistorySessionView> {
         itemBuilder: (context, index) {
           final message = snapshot.messages[index];
           final fromUser = message.speaker == LocalChatSpeaker.user;
-          return Align(
-            alignment: fromUser ? Alignment.centerRight : Alignment.centerLeft,
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              constraints: const BoxConstraints(maxWidth: 520),
-              decoration: BoxDecoration(
-                color: fromUser
-                    ? Theme.of(context).colorScheme.primaryContainer
-                    : Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.fromBorderSide(highContrastSide(context)),
-              ),
-              // 用户输入按纯文本展示；栖语回复来自模型，按 Markdown 渲染。
-              // 与聊天页同口径：语义标签带说话人（ticket 24）。
-              child: MergeSemantics(
-                child: Semantics(
-                  label: fromUser ? '你说' : '栖语说',
-                  child: fromUser
-                      ? Text(message.text)
-                      : QiyuMarkdown(text: message.text),
-                ),
-              ),
-            ),
-          );
+          // 与聊天页同口径：用户输入纯文本、栖语回复 Markdown，
+          // 语义标签带说话人（ticket 24）。
+          return QiyuChatBubble(text: message.text, fromUser: fromUser);
         },
       ),
     );
   }
-}
-
-String _twoDigits(int value) => value.toString().padLeft(2, '0');
-
-String _formatDayHeader(String date) {
-  final parsed = DateTime.tryParse(date);
-  if (parsed == null) {
-    return date;
-  }
-  final day = DateTime(parsed.year, parsed.month, parsed.day);
-  final now = DateTime.now();
-  final today = DateTime(now.year, now.month, now.day);
-  final difference = today.difference(day).inDays;
-  if (difference == 0) {
-    return '今天';
-  }
-  if (difference == 1) {
-    return '昨天';
-  }
-  return '${parsed.year}年${parsed.month}月${parsed.day}日';
 }

@@ -58,6 +58,20 @@ final class LocalChatViewModel extends ChangeNotifier {
         message.source == ReplySource.local,
   );
 
+  /// 本轮用户 turn 的判定与失败回退：乐观插入去重、accepted 去重与
+  /// 异常清理共用同一口径。
+  bool _hasUserTurn(String requestId) => _messages.any(
+    (message) =>
+        message.requestId == requestId &&
+        message.speaker == LocalChatSpeaker.user,
+  );
+
+  void _removeUserTurn(String requestId) => _messages.removeWhere(
+    (message) =>
+        message.requestId == requestId &&
+        message.speaker == LocalChatSpeaker.user,
+  );
+
   Future<void> initialize() async {
     if (_initializing || _initialized) {
       return;
@@ -158,11 +172,7 @@ final class LocalChatViewModel extends ChangeNotifier {
         : _requestIdFactory();
     _pendingRequestId = requestId;
     _pendingText = trimmed;
-    final optimisticallyAdded = !_messages.any(
-      (message) =>
-          message.requestId == requestId &&
-          message.speaker == LocalChatSpeaker.user,
-    );
+    final optimisticallyAdded = !_hasUserTurn(requestId);
     if (optimisticallyAdded) {
       _messages.add(
         LocalChatMessage(
@@ -215,12 +225,7 @@ final class LocalChatViewModel extends ChangeNotifier {
         switch (event.kind) {
           case LocalChatEventKind.accepted:
             accepted = true;
-            if (generation == _restoreGeneration &&
-                !_messages.any(
-                  (message) =>
-                      message.requestId == requestId &&
-                      message.speaker == LocalChatSpeaker.user,
-                )) {
+            if (generation == _restoreGeneration && !_hasUserTurn(requestId)) {
               _messages.add(
                 LocalChatMessage(
                   requestId: requestId,
@@ -283,11 +288,7 @@ final class LocalChatViewModel extends ChangeNotifier {
       if (!accepted &&
           optimisticallyAdded &&
           generation == _restoreGeneration) {
-        _messages.removeWhere(
-          (message) =>
-              message.requestId == requestId &&
-              message.speaker == LocalChatSpeaker.user,
-        );
+        _removeUserTurn(requestId);
         notifyListeners();
       }
       rethrow;
@@ -296,11 +297,7 @@ final class LocalChatViewModel extends ChangeNotifier {
       if (generation == _restoreGeneration) {
         _streamingText = '';
         if (!accepted && optimisticallyAdded) {
-          _messages.removeWhere(
-            (message) =>
-                message.requestId == requestId &&
-                message.speaker == LocalChatSpeaker.user,
-          );
+          _removeUserTurn(requestId);
         }
       }
       return false;
