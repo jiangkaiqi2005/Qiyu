@@ -907,8 +907,9 @@ final class _LocalAppRequestHandler {
       );
     } on SttServiceException catch (error) {
       final status = switch (error.code) {
-        // 未配置与请求本身的问题按客户端错误；上游失败按网关错误。
-        'stt_not_configured' || 'stt_no_speech' => HttpStatus.badRequest,
+        // 未配置、请求本身与本地配置无效按客户端错误；上游失败按网关错误。
+        'stt_not_configured' || 'stt_no_speech' || 'stt_config_invalid' =>
+          HttpStatus.badRequest,
         _ => HttpStatus.badGateway,
       };
       return _jsonError(

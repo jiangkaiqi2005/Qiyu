@@ -135,6 +135,14 @@ final class SttSettingsService {
               stored.credentialScope == config.credentialScope
           ? stored.apiKey
           : null);
+    // 网关异常只按 kind 映射固定文案（message 被丢弃），Key 脏字符必须
+    // 在这里提前拦截，人话文案才能到达用户。
+    if (effectiveKey != null && sttContainsNonVisibleAscii(effectiveKey)) {
+      return const ProviderTestResult(
+        status: ProviderTestStatus.contentParsing,
+        message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+      );
+    }
     try {
       await sttGateway.transcribe(
         config: config,
@@ -171,6 +179,15 @@ final class SttSettingsService {
         retryable: false,
       );
     }
+    // 与连接测试同口径：脏 Key 按本地配置错误给可定位文案，出网前先拦
+    // （网关层的同名检查保留作防御）。
+    if (config.apiKey case final key? when sttContainsNonVisibleAscii(key)) {
+      throw const SttServiceException(
+        code: 'stt_config_invalid',
+        message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+        retryable: false,
+      );
+    }
     try {
       final text = (await sttGateway.transcribe(
         config: config,
@@ -186,6 +203,15 @@ final class SttSettingsService {
         );
       }
       return text;
+    } on ProviderConfigException catch (error) {
+      // 防御性映射：网关出网前会再校验配置，防的是不做校验的仓库实现
+      // （生产链路手改 provider.json 的脏配置在 loadStt() 就被拦，由路由
+      // 以 invalid_provider_config 回 400，正常到不了这里）。
+      throw SttServiceException(
+        code: 'stt_config_invalid',
+        message: error.message,
+        retryable: false,
+      );
     } on SttGatewayException catch (error) {
       throw SttServiceException(
         code: 'stt_service_error',

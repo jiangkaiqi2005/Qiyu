@@ -202,6 +202,58 @@ void main() {
     expect(openAi.credentialScope, isNot(volc.credentialScope));
   });
 
+  test('stt 地址与模型名混入非可见 ASCII 按粘贴事故拒绝', () {
+    // baseUrl 里的零宽空格（U+200B）：从控制台/文档复制时常见，会让
+    // dart:io 写 HTTP 头时抛未分类异常。
+    expect(
+      () => const SttConfig(
+        provider: SttProviderKind.volcSeedAsr,
+        baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel\u200B',
+        model: 'volc.seedasr.sauc.duration',
+      ).validate(),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          '语音服务地址里混入了中文或看不见的字符，请重新复制粘贴。',
+        ),
+      ),
+    );
+    // 模型名里的中文。
+    expect(
+      () => const SttConfig(
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper测试',
+      ).validate(),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          '语音服务的模型名称里混入了中文或看不见的字符，请重新填写。',
+        ),
+      ),
+    );
+    // 干净值不受影响。
+    expect(
+      () => const SttConfig(
+        provider: SttProviderKind.volcSeedAsr,
+        baseUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+        model: 'volc.seedasr.sauc.duration',
+      ).validate(),
+      returnsNormally,
+    );
+  });
+
+  test('sttContainsNonVisibleAscii 边界值：0x21–0x7E 通过，0x20/0x7F 拒绝', () {
+    // 可见 ASCII 两端恰好通过。
+    expect(sttContainsNonVisibleAscii(String.fromCharCode(0x21)), isFalse); // !
+    expect(sttContainsNonVisibleAscii(String.fromCharCode(0x7E)), isFalse); // ~
+    expect(sttContainsNonVisibleAscii('Az09-._~'), isFalse);
+    // 空格与 DEL 恰好拒绝。
+    expect(sttContainsNonVisibleAscii(String.fromCharCode(0x20)), isTrue);
+    expect(sttContainsNonVisibleAscii(String.fromCharCode(0x7F)), isTrue);
+  });
+
   test('stt 段读写往返且 Key 只落在文件里', () async {
     final temp = await Directory.systemTemp.createTemp('qiyu-stt-section-');
     addTearDown(() => temp.delete(recursive: true));

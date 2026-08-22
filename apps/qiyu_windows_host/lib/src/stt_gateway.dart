@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
 import 'provider_web_socket.dart';
@@ -57,6 +58,14 @@ final class OpenAiTranscriptionGateway implements SttTranscriptionGateway {
         message: '还没有保存语音服务的 API Key。',
       );
     }
+    // 粘贴进表单的 Key 常带零宽空格/中文：脏字节会让 dart:io 在写头时
+    // 抛未分类异常，必须在出网前拦成人话。
+    if (sttContainsNonVisibleAscii(key)) {
+      throw const SttGatewayException(
+        kind: ModelFailureKind.provider,
+        message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+      );
+    }
     final boundary = _newBoundary();
     final uri = appendProviderEndpoint(config.baseUrl, 'audio/transcriptions');
     // STT 是新增出网路径：出网前统一过 SSRF 校验（聊天 Provider 不走）。
@@ -96,7 +105,9 @@ final class OpenAiTranscriptionGateway implements SttTranscriptionGateway {
         kind: ModelFailureKind.network,
         message: '语音服务连接中断。',
       );
-    } on Object {
+    } on Object catch (error) {
+      // 只打异常类型不打消息：消息可能嵌着用户输入（Key/地址/模型名）。
+      stderrDiagnostics('stt unclassified exception: ${error.runtimeType}');
       throw const SttGatewayException(
         kind: ModelFailureKind.internal,
         message: '本机程序内部出错。',

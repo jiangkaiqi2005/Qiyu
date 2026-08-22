@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
 import 'provider_web_socket.dart';
@@ -36,6 +37,14 @@ final class VolcSeedAsrGateway {
         message: '还没有保存语音服务的 API Key。',
       );
     }
+    // 粘贴进表单的 Key 常带零宽空格/中文：脏字节会让 dart:io 在写
+    // WebSocket 头时抛未分类异常，必须在建连前拦成人话。
+    if (sttContainsNonVisibleAscii(key)) {
+      throw const SttGatewayException(
+        kind: ModelFailureKind.provider,
+        message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+      );
+    }
     try {
       return await _exchange(config: config, key: key, audio: audio).timeout(
         timeout,
@@ -61,7 +70,9 @@ final class VolcSeedAsrGateway {
         kind: ModelFailureKind.network,
         message: '无法连接语音服务。',
       );
-    } on Object {
+    } on Object catch (error) {
+      // 只打异常类型不打消息：消息可能嵌着用户输入（Key/地址/模型名）。
+      stderrDiagnostics('stt unclassified exception: ${error.runtimeType}');
       throw const SttGatewayException(
         kind: ModelFailureKind.internal,
         message: '本机程序内部出错。',

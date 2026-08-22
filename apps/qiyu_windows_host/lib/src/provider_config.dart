@@ -168,6 +168,14 @@ enum SttProviderKind {
   };
 }
 
+/// 是否混入可见 ASCII（0x21–0x7E）之外的字符：空格、控制符、DEL、中文、
+/// 零宽字符等粘贴事故。语音转写的地址、模型名与 API Key 只应是可见
+/// ASCII（trim 只去首尾，中间的脏字符一律是粘贴事故），否则 dart:io
+/// 写 HTTP/WebSocket 头时会抛未分类异常。放在这里而不是 stt_gateway：
+/// 网关与服务层都依赖本文件，反向依赖会形成循环 import。
+bool sttContainsNonVisibleAscii(String value) =>
+    value.runes.any((r) => r < 0x21 || r > 0x7E);
+
 /// 语音转写（STT）服务配置：provider.json 顶层的可选 `stt` 段。
 final class SttConfig {
   const SttConfig({
@@ -220,6 +228,13 @@ final class SttConfig {
   };
 
   void validate() {
+    // 粘贴事故优先拦截：地址里的脏字符会让 dart:io 写头时抛未分类异常，
+    // 用户只能看到黑盒 internal 错误，这里换成可定位的人话文案。与 URI
+    // 解析同口径用 trim 后的值：首尾空格按既有 trim 规则放过，只拦
+    // trim 去不掉的中间脏字符。
+    if (sttContainsNonVisibleAscii(baseUrl.trim())) {
+      throw const ProviderConfigException('语音服务地址里混入了中文或看不见的字符，请重新复制粘贴。');
+    }
     final uri = Uri.tryParse(baseUrl.trim());
     final label = switch (provider) {
       SttProviderKind.openAiCompatible => '语音服务地址必须是有效的 HTTP 地址。',
@@ -230,6 +245,9 @@ final class SttConfig {
     }
     if (model.trim().isEmpty) {
       throw const ProviderConfigException('请填写语音服务的模型名称。');
+    }
+    if (sttContainsNonVisibleAscii(model.trim())) {
+      throw const ProviderConfigException('语音服务的模型名称里混入了中文或看不见的字符，请重新填写。');
     }
   }
 }

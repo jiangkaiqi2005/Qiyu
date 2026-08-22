@@ -436,6 +436,28 @@ void main() {
     );
     expect(connector.connectCalls, 0);
   });
+
+  test('Key 带零宽空格按粘贴事故拒绝，不出网', () async {
+    final connector = _FakeWebSocketConnector();
+    await expectLater(
+      VolcSeedAsrGateway(connector).transcribe(
+        config: config,
+        apiKey: 'ark-test-key\u200B',
+        audio: wav(10),
+        mimeType: 'audio/wav',
+      ),
+      throwsA(
+        isA<SttGatewayException>()
+            .having((error) => error.kind, 'kind', ModelFailureKind.provider)
+            .having(
+              (error) => error.message,
+              'message',
+              'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+            ),
+      ),
+    );
+    expect(connector.connectCalls, 0);
+  });
 }
 
 /// 等待 [connection] 的发送侧出现满足条件的帧（fake 侧同步分发）。

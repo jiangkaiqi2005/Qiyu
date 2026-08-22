@@ -131,6 +131,83 @@ void main() {
     );
   });
 
+  test('连接测试：Key 混入零宽空格提前拦为人话文案，不出网', () async {
+    final http = _StaticSttHttpClient('{"text":""}');
+    final service = SttSettingsService(repository(), SttModelGateway(http));
+
+    final result = await service.test(
+      baseUrl: 'https://stt.example.com/v1',
+      model: 'whisper-test',
+      apiKey: 'stt-test-key\u200B',
+    );
+
+    expect(result.status, ProviderTestStatus.contentParsing);
+    expect(result.message, 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。');
+    expect(http.lastBody, isNull);
+  });
+
+  test('保存的配置模型带脏字符：正式转写报 stt_config_invalid 人话', () async {
+    // save() 会拦住脏值，只有手改 provider.json 才会出现这种形态：用内存
+    // 仓库直接注入脏配置，验证网关的配置校验被映射成可定位的诊断码。
+    final http = _StaticSttHttpClient('{"text":"不应到达"}');
+    final service = SttSettingsService(
+      _StaticSttConfigRepository(
+        const SttConfig(
+          baseUrl: 'https://stt.example.com/v1',
+          model: 'whisper-test\u200B',
+          apiKey: 'stt-secret-value',
+        ),
+      ),
+      SttModelGateway(http),
+    );
+
+    await expectLater(
+      service.transcribe(audio: [1, 2], mimeType: 'audio/webm'),
+      throwsA(
+        isA<SttServiceException>()
+            .having((error) => error.code, 'code', 'stt_config_invalid')
+            .having(
+              (error) => error.message,
+              'message',
+              '语音服务的模型名称里混入了中文或看不见的字符，请重新填写。',
+            )
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
+    );
+    expect(http.lastBody, isNull);
+  });
+
+  test('保存的配置 Key 带脏字符：正式转写报 stt_config_invalid 且不出网', () async {
+    // Key 不进 validate()，save() 存得进脏 Key：正式转写在出网前按本地
+    // 配置错误拦截，给出可定位文案。
+    final http = _StaticSttHttpClient('{"text":"不应到达"}');
+    final service = SttSettingsService(
+      _StaticSttConfigRepository(
+        const SttConfig(
+          baseUrl: 'https://stt.example.com/v1',
+          model: 'whisper-test',
+          apiKey: 'stt-secret-value\u200B',
+        ),
+      ),
+      SttModelGateway(http),
+    );
+
+    await expectLater(
+      service.transcribe(audio: [1, 2], mimeType: 'audio/webm'),
+      throwsA(
+        isA<SttServiceException>()
+            .having((error) => error.code, 'code', 'stt_config_invalid')
+            .having(
+              (error) => error.message,
+              'message',
+              'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+            )
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
+    );
+    expect(http.lastBody, isNull);
+  });
+
   test('正式转写空文本视为失败，正常文本照常返回', () async {
     final service = SttSettingsService(repository(), _sttGateway(''));
     await service.save(
@@ -304,6 +381,20 @@ void main() {
 
 SttModelGateway _sttGateway(String text) =>
     SttModelGateway(_StaticSttHttpClient(jsonEncode({'text': text})));
+
+/// 内存版 STT 配置仓库：绕过文件仓库自带的校验，模拟只有手改
+/// provider.json 才会出现的脏配置形态。
+final class _StaticSttConfigRepository implements SttConfigRepository {
+  _StaticSttConfigRepository(this.config);
+
+  SttConfig? config;
+
+  @override
+  Future<SttConfig?> loadStt() async => config;
+
+  @override
+  Future<void> saveStt(SttConfig config) async => this.config = config;
+}
 
 /// 把豆包 audio 帧（正包与末片）解压拼接：验证整段音频原样上送。
 /// 带序列号的帧结构：头 4 + i32 序号 + u32 长度 + payload。

@@ -1548,6 +1548,32 @@ void main() {
       expect(noSpeechJson['message'], contains('没有识别到语音'));
       expect(noSpeechJson['retryable'], isTrue);
 
+      // 保存的 Key 带零宽空格：本地配置无效按 400 拒（不是上游 502）。
+      await _send(
+        host.origin.resolve('/api/provider/stt'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://stt.example.com/v1',
+          'model': 'whisper-test',
+          'apiKey': 'stt-secret-value\u200B',
+        }),
+      );
+      final dirtyKey = await _sendBytes(
+        host.origin.resolve('/api/chat/transcribe'),
+        headers: {
+          ...browser.mutationHeaders(host.origin)
+            ..remove(HttpHeaders.contentTypeHeader),
+          HttpHeaders.contentTypeHeader: 'audio/webm',
+        },
+        body: [1, 2, 3],
+      );
+      expect(dirtyKey.statusCode, HttpStatus.badRequest);
+      final dirtyKeyJson = jsonDecode(dirtyKey.body) as Map<String, Object?>;
+      expect(dirtyKeyJson['code'], 'stt_config_invalid');
+      expect(dirtyKeyJson['retryable'], isFalse);
+      expect(dirtyKey.body, isNot(contains('stt-secret-value')));
+
       // 忘记 Key：配置保留、keySet 归零。
       final forgotten = await _send(
         host.origin.resolve('/api/provider/stt/key'),

@@ -111,6 +111,29 @@ void main() {
     expect(client.called, isFalse);
   });
 
+  test('Key 带零宽空格按粘贴事故拒绝，不出网', () async {
+    final client = _RecordingHttpClient();
+
+    await expectLater(
+      SttModelGateway(client).transcribe(
+        config: config,
+        apiKey: 'stt-test-key\u200B',
+        audio: [0],
+        mimeType: 'audio/webm',
+      ),
+      throwsA(
+        isA<SttGatewayException>()
+            .having((error) => error.kind, 'kind', ModelFailureKind.provider)
+            .having(
+              (error) => error.message,
+              'message',
+              'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+            ),
+      ),
+    );
+    expect(client.called, isFalse);
+  });
+
   test('非 2xx 与出网异常按语音服务文案分类且不回传服务商原文', () async {
     final scenarios = [
       (
