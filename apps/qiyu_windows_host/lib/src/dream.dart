@@ -7,6 +7,7 @@ import 'daily_finalization.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_controls.dart';
 import 'memory_marker_codec.dart';
 import 'model_gateway.dart';
 import 'model_text_protocol.dart';

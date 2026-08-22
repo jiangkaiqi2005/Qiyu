@@ -7,6 +7,7 @@ import 'daily_understanding.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_controls.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
 import 'provider_settings_service.dart';

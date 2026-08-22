@@ -7,7 +7,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
-import 'open_loop_store.dart';
+import 'memory_controls.dart';
 
 /// relationship.md 写入关预算（设计定稿：150-300 tokens，按 rune 上限保守计）。
 const relationshipMaxRunes = 300;

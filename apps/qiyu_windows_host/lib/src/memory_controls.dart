@@ -350,3 +350,48 @@ MemoryControls parseMemoryControls(String contents) {
     deleted: deleted,
   );
 }
+
+/// 禁提范围按包含关系匹配：禁提记录存的是事项简称，派生内容（episode
+/// 摘要、画像理解等）往往是更长的完整句，精确相等会漏。宁可多屏蔽，
+/// 不可让禁提内容绕过控制重新进入注入或提炼。
+bool bannedTitleMatches(String normalizedText, Set<String> bannedTitles) {
+  if (bannedTitles.isEmpty || normalizedText.isEmpty) {
+    return false;
+  }
+  for (final title in bannedTitles) {
+    if (title.isEmpty) {
+      continue;
+    }
+    if (normalizedText.contains(title) || title.contains(normalizedText)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// 记忆原文级的受控筛查谓词：先经 [normalizeMemoryText] 归一化，再按
+/// [bannedTitleMatches] 的包含规则匹配。注入过滤、提炼闸门与删除清除
+/// 的「原文 + 受控集合」判断统一走这里，不再各自拼组合。
+bool bannedMemoryText(String text, Set<String> bannedTitles) =>
+    bannedTitleMatches(normalizeMemoryText(text), bannedTitles);
+
+/// 行级受控过滤：列表行（`- ` 开头）命中 [controlled] 即丢弃，其余
+/// 原样保留；null 原样返回。relationship.md / daily-state.md 这类
+/// 按行投影文件的注入与整理共用同一份实现。
+String? filterControlledLines(
+  String? contents,
+  bool Function(String text) controlled,
+) {
+  if (contents == null) {
+    return null;
+  }
+  final kept = <String>[];
+  for (final line in contents.split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.startsWith('- ') && controlled(trimmed)) {
+      continue;
+    }
+    kept.add(line);
+  }
+  return kept.join('\n');
+}
