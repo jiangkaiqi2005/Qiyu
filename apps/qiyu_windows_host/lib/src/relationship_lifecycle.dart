@@ -448,13 +448,14 @@ final class RelationshipLifecycle {
   }
 
   String _boundaryLine(EpisodeEntry entry) {
-    final summary = _clip(entry.summary.trim(), relationshipLineMaxRunes);
+    final summary = clipRunes(entry.summary.trim(), relationshipLineMaxRunes);
     final evidence = entry.evidence?.trim() ?? '';
     if (evidence.isEmpty) {
       return '- $summary';
     }
-    final line = '- $summary（${_clip(evidence, relationshipLineMaxRunes)}）';
-    return _clip(line, relationshipLineMaxRunes * 2 + 4);
+    final line =
+        '- $summary（${clipRunes(evidence, relationshipLineMaxRunes)}）';
+    return clipRunes(line, relationshipLineMaxRunes * 2 + 4);
   }
 
   /// 近期变化：深谈与冷暖信号投影为带日期的自然抽象状态，新换旧。
@@ -474,7 +475,7 @@ final class RelationshipLifecycle {
         .map((entry) {
           final date = localSessionDate(entry.at.toLocal());
           return '- $date '
-              '${_clip(entry.summary.trim(), relationshipLineMaxRunes)}';
+              '${clipRunes(entry.summary.trim(), relationshipLineMaxRunes)}';
         })
         .toList();
   }
@@ -623,14 +624,6 @@ final class _RelationshipSignals {
 /// 规范化用于去重比较：与 [normalizeMemoryText] 同一规则（折叠空白
 /// 并统一大小写）；不改变落盘原文。
 String normalizeRelationshipLine(String value) => normalizeMemoryText(value);
-
-String _clip(String value, int maxRunes) {
-  final runes = value.runes;
-  if (runes.length <= maxRunes) {
-    return value;
-  }
-  return String.fromCharCodes(runes.take(maxRunes));
-}
 
 DateTime _parseDate(String date) => DateTime(
   int.parse(date.substring(0, 4)),
