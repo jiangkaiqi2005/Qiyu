@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/app.dart';
@@ -421,6 +423,13 @@ final class _FakeChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async => '语音测试转写';
 }
 
 final class _FakeHostConnectionProbe implements HostConnectionProbe {

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
+
+import '../baseline/host_api_gateway.dart';
 
 enum ProviderKind {
   openAiCompatible('openai_compatible', 'OpenAI 兼容'),
@@ -115,9 +116,11 @@ final class ProviderTestResult {
   final String message;
 }
 
-final class ProviderSettingsException implements Exception {
+final class ProviderSettingsException
+    implements Exception, UserFacingException {
   const ProviderSettingsException(this.message);
 
+  @override
   final String message;
 
   @override
@@ -134,82 +137,49 @@ abstract interface class ProviderSettingsGateway {
   Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft);
 }
 
-final class HttpProviderSettingsGateway implements ProviderSettingsGateway {
-  HttpProviderSettingsGateway({http.Client? client, Uri? baseUri})
-    : _client = client ?? http.Client(),
-      _baseUri = baseUri ?? Uri.base;
+final class HttpProviderSettingsGateway extends HostApiGateway
+    implements ProviderSettingsGateway {
+  HttpProviderSettingsGateway({super.client, super.baseUri});
 
-  final http.Client _client;
-  final Uri _baseUri;
-  String? _csrfToken;
+  @override
+  Object errorFor(String message) => ProviderSettingsException(message);
+
+  @override
+  String get unavailableMessage => '模型设置暂时不可用，请稍后重试。';
 
   @override
   Future<ProviderSettings> read() async {
-    await _ensureBootstrap();
-    final response = await _client.get(_baseUri.resolve('/api/provider'));
-    return ProviderSettings.fromJson(_decodeSuccess(response));
+    await ensureBootstrap();
+    final response = await httpClient.get(resolve('/api/provider'));
+    return ProviderSettings.fromJson(decodeSuccess(response));
   }
 
   @override
   Future<ProviderSettings> save(ProviderSettingsDraft draft) async {
-    await _ensureBootstrap();
-    final response = await _client.put(
-      _baseUri.resolve('/api/provider'),
-      headers: _modifyingHeaders,
+    final response = await httpClient.put(
+      resolve('/api/provider'),
+      headers: await modifyingHeaders(),
       body: jsonEncode(draft.toJson()),
     );
-    return ProviderSettings.fromJson(_decodeSuccess(response));
+    return ProviderSettings.fromJson(decodeSuccess(response));
   }
 
   @override
   Future<ProviderSettings> forgetApiKey() async {
-    await _ensureBootstrap();
-    final response = await _client.delete(
-      _baseUri.resolve('/api/provider/key'),
-      headers: _modifyingHeaders,
+    final response = await httpClient.delete(
+      resolve('/api/provider/key'),
+      headers: await modifyingHeaders(),
     );
-    return ProviderSettings.fromJson(_decodeSuccess(response));
+    return ProviderSettings.fromJson(decodeSuccess(response));
   }
 
   @override
   Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) async {
-    await _ensureBootstrap();
-    final response = await _client.post(
-      _baseUri.resolve('/api/provider/test'),
-      headers: _modifyingHeaders,
+    final response = await httpClient.post(
+      resolve('/api/provider/test'),
+      headers: await modifyingHeaders(),
       body: jsonEncode(draft.toJson()),
     );
-    return ProviderTestResult.fromJson(_decodeSuccess(response));
+    return ProviderTestResult.fromJson(decodeSuccess(response));
   }
-
-  Map<String, String> get _modifyingHeaders => {
-    'content-type': 'application/json',
-    'x-qiyu-csrf': _csrfToken!,
-  };
-
-  Future<void> _ensureBootstrap() async {
-    if (_csrfToken != null) {
-      return;
-    }
-    final response = await _client.get(_baseUri.resolve('/api/bootstrap'));
-    final json = _decodeSuccess(response);
-    _csrfToken = json['csrfToken']! as String;
-  }
-}
-
-Map<String, Object?> _decodeSuccess(http.Response response) {
-  Map<String, Object?>? json;
-  try {
-    json = jsonDecode(response.body) as Map<String, Object?>;
-  } on Object {
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      throw const ProviderSettingsException('本机程序返回了无法读取的内容。');
-    }
-  }
-  if (response.statusCode < 200 || response.statusCode >= 300) {
-    throw ProviderSettingsException(
-      json?['message'] as String? ?? '模型设置暂时不可用，请稍后重试。',
-    );
-  }
-  return json!;
 }

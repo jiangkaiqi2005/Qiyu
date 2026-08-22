@@ -23,6 +23,8 @@ import 'features/settings/provider_settings_view.dart';
 import 'features/settings/provider_settings_view_model.dart';
 import 'features/settings/settings_client.dart';
 import 'features/settings/settings_view_model.dart';
+import 'features/settings/stt_settings_client.dart';
+import 'features/settings/stt_settings_view_model.dart';
 
 GoRouter _createRouter() => GoRouter(
   routes: [
@@ -63,6 +65,8 @@ class QiyuApp extends StatefulWidget {
     super.key,
     this.viewModel,
     this.providerSettingsViewModel,
+    this.sttSettingsViewModel,
+    this.sttSettingsGateway,
     this.historyViewModel,
     this.onboardingViewModel,
     this.memoryViewModel,
@@ -71,6 +75,11 @@ class QiyuApp extends StatefulWidget {
 
   final LocalChatViewModel? viewModel;
   final ProviderSettingsViewModel? providerSettingsViewModel;
+  final SttSettingsViewModel? sttSettingsViewModel;
+
+  /// 语音服务设置网关：缺省由 [_QiyuAppState] 持有单例，聊天页与设置
+  /// 页共享同一实例（bootstrap 的 CSRF 只换一次）；测试注入桩。
+  final SttSettingsGateway? sttSettingsGateway;
   final HistoryViewModel? historyViewModel;
   final OnboardingViewModel? onboardingViewModel;
   final MemoryCenterViewModel? memoryViewModel;
@@ -85,16 +94,25 @@ class _QiyuAppState extends State<QiyuApp> {
   /// 共享栈状态。
   late final GoRouter _router = _createRouter();
 
+  /// 未注入时的共享 STT 设置网关：聊天页的 configured 探测与设置页的
+  /// 读写共用同一实例，CSRF 不重复换取。
+  late final SttSettingsGateway _defaultSttGateway = HttpSttSettingsGateway();
+
+  SttSettingsGateway get _effectiveSttGateway =>
+      widget.sttSettingsGateway ?? _defaultSttGateway;
+
   @override
   Widget build(BuildContext context) {
     final injectedChatViewModel = widget.viewModel;
     final injectedSettingsViewModel = widget.providerSettingsViewModel;
+    final injectedSttSettingsViewModel = widget.sttSettingsViewModel;
     final injectedHistoryViewModel = widget.historyViewModel;
     final injectedOnboardingViewModel = widget.onboardingViewModel;
     final injectedMemoryViewModel = widget.memoryViewModel;
     final injectedAppSettingsViewModel = widget.settingsViewModel;
     return MultiProvider(
       providers: [
+        Provider<SttSettingsGateway>.value(value: _effectiveSttGateway),
         if (injectedChatViewModel != null)
           ChangeNotifierProvider.value(value: injectedChatViewModel)
         else
@@ -107,6 +125,15 @@ class _QiyuAppState extends State<QiyuApp> {
           ChangeNotifierProvider(
             create: (_) => ProviderSettingsViewModel(
               HttpProviderSettingsGateway(),
+              autoStart: false,
+            ),
+          ),
+        if (injectedSttSettingsViewModel != null)
+          ChangeNotifierProvider.value(value: injectedSttSettingsViewModel)
+        else
+          ChangeNotifierProvider(
+            create: (context) => SttSettingsViewModel(
+              context.read<SttSettingsGateway>(),
               autoStart: false,
             ),
           ),

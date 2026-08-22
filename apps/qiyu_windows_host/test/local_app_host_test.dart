@@ -1366,6 +1366,254 @@ void main() {
     },
   );
 
+  test(
+    'STT routes persist per-section, mask keys, test, and transcribe safely',
+    () async {
+      final configPath =
+          '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+      JsonProviderConfigRepository repository() => JsonProviderConfigRepository(
+        filePath: configPath,
+      );
+      // 记录型出网客户端：转写返回固定文本，供路由全链路验证。
+      final sttHttp = _RecordingSttHttpClient('{"text":"今天有点累"}');
+      SttSettingsService sttService() => SttSettingsService(
+        repository(),
+        SttModelGateway(sttHttp),
+      );
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+        sttSettingsService: sttService(),
+      );
+      final browser = await _openBrowserSession(host);
+
+      // 变更请求缺 CSRF / 缺 Origin / 缺会话一律拒绝。
+      final noCsrf = await _send(
+        host.origin.resolve('/api/provider/stt'),
+        method: 'PUT',
+        headers: {
+          ...browser.readHeaders(host.origin),
+          'origin': host.origin.toString().replaceFirst(RegExp(r'/$'), ''),
+        },
+        requestBody: jsonEncode({'baseUrl': 'https://stt.example.com/v1', 'model': 'w'}),
+      );
+      expect(noCsrf.statusCode, HttpStatus.forbidden);
+      final noOrigin = await _send(
+        host.origin.resolve('/api/provider/stt'),
+        method: 'PUT',
+        headers: {
+          // 有会话、有 referer、有 CSRF，唯独缺 Origin 头：
+          // 变更请求仍必须拒绝。
+          ...browser.readHeaders(host.origin),
+          'x-qiyu-csrf': browser.csrfToken,
+        },
+        requestBody: jsonEncode({'baseUrl': 'https://stt.example.com/v1', 'model': 'w'}),
+      );
+      expect(noOrigin.statusCode, HttpStatus.forbidden);
+      final noSession = await _send(
+        host.origin.resolve('/api/provider/stt'),
+        headers: {HttpHeaders.refererHeader: host.origin.toString()},
+      );
+      expect(noSession.statusCode, HttpStatus.unauthorized);
+
+      // 保存：Key 只落文件，响应永不回明文。
+      final saved = await _send(
+        host.origin.resolve('/api/provider/stt'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://stt.example.com/v1',
+          'model': 'whisper-test',
+          'apiKey': 'stt-secret-value',
+        }),
+      );
+      expect(saved.statusCode, HttpStatus.ok);
+      expect(saved.body, isNot(contains('stt-secret-value')));
+      expect(
+        jsonDecode(saved.body),
+        allOf(
+          containsPair('configured', true),
+          containsPair('keySet', true),
+          containsPair('baseUrl', 'https://stt.example.com/v1'),
+          containsPair('model', 'whisper-test'),
+        ),
+      );
+
+      // 保存聊天 Provider 不得抹掉 stt 段。
+      final chatSaved = await _send(
+        host.origin.resolve('/api/provider'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'provider': 'openai_compatible',
+          'baseUrl': 'https://chat.example.com/v1',
+          'model': 'chat-model',
+          'temperature': 0.6,
+          'timeoutSeconds': 25,
+        }),
+      );
+      expect(chatSaved.statusCode, HttpStatus.ok);
+      final sttStillThere = await _send(
+        host.origin.resolve('/api/provider/stt'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(
+        jsonDecode(sttStillThere.body),
+        containsPair('configured', true),
+      );
+      // 读回的设置 JSON 不携带 apiKey 字段，更不含明文 Key。
+      expect(sttStillThere.body, isNot(contains('apiKey')));
+      expect(sttStillThere.body, isNot(contains('stt-secret-value')));
+      final providerStillThere = await _send(
+        host.origin.resolve('/api/provider'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(
+        jsonDecode(providerStillThere.body),
+        containsPair('configured', true),
+      );
+
+      // 连接测试：空负载按已保存配置测试，静音音频也算成功。
+      final tested = await _send(
+        host.origin.resolve('/api/provider/stt/test'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      expect(tested.statusCode, HttpStatus.ok);
+      expect(jsonDecode(tested.body), containsPair('ok', true));
+
+      // 正式转写：二进制 body 成功返回文本；鉴权头不回显。
+      final transcribed = await _sendBytes(
+        host.origin.resolve('/api/chat/transcribe'),
+        headers: {
+          ...browser.mutationHeaders(host.origin)
+            ..remove(HttpHeaders.contentTypeHeader),
+          HttpHeaders.contentTypeHeader: 'audio/webm',
+        },
+        body: [1, 2, 3],
+      );
+      expect(transcribed.statusCode, HttpStatus.ok);
+      expect(jsonDecode(transcribed.body), {'text': '今天有点累'});
+      expect(transcribed.body, isNot(contains('Bearer')));
+
+      // 非 audio/* 内容类型拒绝。
+      final wrongType = await _sendBytes(
+        host.origin.resolve('/api/chat/transcribe'),
+        headers: {
+          ...browser.mutationHeaders(host.origin)
+            ..remove(HttpHeaders.contentTypeHeader),
+          HttpHeaders.contentTypeHeader: 'text/plain',
+        },
+        body: [1, 2, 3],
+      );
+      expect(wrongType.statusCode, HttpStatus.badRequest);
+
+      // 上游失败映射为允许列表诊断码，不透出服务商原文。
+      sttHttp.statusCode = 429;
+      sttHttp.responseBody = '{"error":"429 quota secret detail"}';
+      final upstreamFailure = await _sendBytes(
+        host.origin.resolve('/api/chat/transcribe'),
+        headers: {
+          ...browser.mutationHeaders(host.origin)
+            ..remove(HttpHeaders.contentTypeHeader),
+          HttpHeaders.contentTypeHeader: 'audio/webm',
+        },
+        body: [1, 2, 3],
+      );
+      expect(upstreamFailure.statusCode, HttpStatus.badGateway);
+      final failureJson =
+          jsonDecode(upstreamFailure.body) as Map<String, Object?>;
+      expect(failureJson['code'], 'stt_service_error');
+      expect(failureJson['message'], '语音服务请求过于频繁。');
+      expect(upstreamFailure.body, isNot(contains('secret')));
+
+      // 空文本视为「没有识别到语音」的可重试失败。
+      sttHttp.statusCode = 200;
+      sttHttp.responseBody = '{"text":""}';
+      final noSpeech = await _sendBytes(
+        host.origin.resolve('/api/chat/transcribe'),
+        headers: {
+          ...browser.mutationHeaders(host.origin)
+            ..remove(HttpHeaders.contentTypeHeader),
+          HttpHeaders.contentTypeHeader: 'audio/webm',
+        },
+        body: [1, 2, 3],
+      );
+      expect(noSpeech.statusCode, HttpStatus.badRequest);
+      final noSpeechJson = jsonDecode(noSpeech.body) as Map<String, Object?>;
+      expect(noSpeechJson['code'], 'stt_no_speech');
+      expect(noSpeechJson['message'], contains('没有识别到语音'));
+      expect(noSpeechJson['retryable'], isTrue);
+
+      // 忘记 Key：配置保留、keySet 归零。
+      final forgotten = await _send(
+        host.origin.resolve('/api/provider/stt/key'),
+        method: 'DELETE',
+        headers: browser.mutationHeaders(host.origin),
+      );
+      expect(forgotten.statusCode, HttpStatus.ok);
+      expect(
+        jsonDecode(forgotten.body),
+        allOf(containsPair('configured', true), containsPair('keySet', false)),
+      );
+      await host.close();
+    },
+  );
+
+  test('transcribe rejects unconfigured and oversize audio bodies', () async {
+    final configPath =
+        '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+    final host = await LocalAppHost.start(
+      webRoot: webRoot.path,
+      memoryDirectory: memoryDirectory.path,
+      personaConstitution: '测试人格宪法',
+      sttSettingsService: SttSettingsService(
+        JsonProviderConfigRepository(filePath: configPath),
+        SttModelGateway(_RecordingSttHttpClient('{"text":"x"}')),
+      ),
+    );
+    final browser = await _openBrowserSession(host);
+
+    // 未配置 STT：可读诊断码，不出网。
+    final unconfigured = await _sendBytes(
+      host.origin.resolve('/api/chat/transcribe'),
+      headers: {
+        ...browser.mutationHeaders(host.origin)
+          ..remove(HttpHeaders.contentTypeHeader),
+        HttpHeaders.contentTypeHeader: 'audio/webm',
+      },
+      body: [1, 2, 3],
+    );
+    expect(unconfigured.statusCode, HttpStatus.badRequest);
+    expect(
+      (jsonDecode(unconfigured.body) as Map<String, Object?>)['code'],
+      'stt_not_configured',
+    );
+
+    // 超过 10MB 上限：拒绝且不进入转写。
+    final oversize = await _sendBytes(
+      host.origin.resolve('/api/chat/transcribe'),
+      headers: {
+        ...browser.mutationHeaders(host.origin)
+          ..remove(HttpHeaders.contentTypeHeader),
+        HttpHeaders.contentTypeHeader: 'audio/webm',
+      },
+      body: List<int>.filled(10 * 1024 * 1024 + 1, 0),
+    );
+    expect(oversize.statusCode, HttpStatus.badRequest);
+    expect(oversize.body, contains('录音文件太大'));
+
+    // 被拒后服务依然健康。
+    final health = await _send(
+      host.origin.resolve('/api/health'),
+      headers: browser.readHeaders(host.origin),
+    );
+    expect(health.statusCode, HttpStatus.ok);
+    await host.close();
+  });
+
   test('memory controls overview and clear-product-data flow', () async {
     final host = await LocalAppHost.start(
       webRoot: webRoot.path,
@@ -1492,6 +1740,31 @@ Future<_HttpResponse> _send(
   return result;
 }
 
+/// 与 [_send] 同构，但携带二进制请求体（语音转写路由）。
+Future<_HttpResponse> _sendBytes(
+  Uri uri, {
+  String method = 'POST',
+  Map<String, String> headers = const {},
+  required List<int> body,
+}) async {
+  final client = HttpClient();
+  final request = await client.openUrl(method, uri);
+  request.followRedirects = false;
+  headers.forEach(request.headers.set);
+  // 明确 Content-Length：超限请求可被服务器在读体前直接拒绝。
+  request.contentLength = body.length;
+  request.add(body);
+  final response = await request.close();
+  final responseBody = await response.transform(utf8.decoder).join();
+  final result = _HttpResponse(
+    response.statusCode,
+    response.headers,
+    responseBody,
+  );
+  client.close(force: true);
+  return result;
+}
+
 Future<_BrowserSession> _openBrowserSession(LocalAppHost host) async {
   final sessionStart = await _send(host.launchUri);
   final cookie = sessionStart.headers[HttpHeaders.setCookieHeader]!.single
@@ -1574,5 +1847,35 @@ final class _FailingModelGateway implements ModelGateway {
     required List<ModelMessage> messages,
   }) {
     throw ModelGatewayException(kind: kind, message: '已脱敏的测试错误');
+  }
+}
+
+/// STT 出网测试客户端：响应内容与状态可按用例改写。
+final class _RecordingSttHttpClient implements ProviderHttpClient {
+  _RecordingSttHttpClient(this.responseBody);
+
+  int statusCode = 200;
+  String responseBody;
+
+  @override
+  Future<ProviderHttpResponse> post({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) async =>
+      ProviderHttpResponse(
+        statusCode: statusCode,
+        body: Stream.value(responseBody),
+      );
+
+  @override
+  Future<ProviderHttpResponse> postStream({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+  }) {
+    throw UnsupportedError('STT 测试客户端只使用非流式 POST');
   }
 }

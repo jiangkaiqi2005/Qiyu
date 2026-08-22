@@ -3,17 +3,20 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../baseline/host_api_gateway.dart';
-import 'provider_settings_client.dart';
+import 'provider_settings_client.dart' show ProviderTestResult;
+import 'stt_settings_client.dart';
 
-final class ProviderSettingsViewModel extends ChangeNotifier {
-  ProviderSettingsViewModel(this._gateway, {bool autoStart = true}) {
+/// 语音服务设置的视图模型：与聊天 ProviderSettingsViewModel 同构，
+/// 错误与测试结果都以人话呈现。
+final class SttSettingsViewModel extends ChangeNotifier {
+  SttSettingsViewModel(this._gateway, {bool autoStart = true}) {
     if (autoStart) {
       unawaited(initialize());
     }
   }
 
-  final ProviderSettingsGateway _gateway;
-  ProviderSettings? _settings;
+  final SttSettingsGateway _gateway;
+  SttSettings? _settings;
   ProviderTestResult? _testResult;
   String? _errorMessage;
   bool _loading = false;
@@ -21,7 +24,7 @@ final class ProviderSettingsViewModel extends ChangeNotifier {
   bool _testing = false;
   bool _initialized = false;
 
-  ProviderSettings? get settings => _settings;
+  SttSettings? get settings => _settings;
   ProviderTestResult? get testResult => _testResult;
   String? get errorMessage => _errorMessage;
   bool get loading => _loading && !_initialized;
@@ -46,7 +49,7 @@ final class ProviderSettingsViewModel extends ChangeNotifier {
     }
   }
 
-  Future<bool> save(ProviderSettingsDraft draft) async {
+  Future<bool> save(SttSettingsDraft draft) async {
     if (_saving) {
       return false;
     }
@@ -66,7 +69,7 @@ final class ProviderSettingsViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> testConnection(ProviderSettingsDraft draft) async {
+  Future<void> testConnection(SttSettingsDraft draft) async {
     if (_testing) {
       return;
     }
@@ -104,4 +107,4 @@ final class ProviderSettingsViewModel extends ChangeNotifier {
 }
 
 String _readableError(Object error) =>
-    readableError(error, fallback: '模型设置暂时不可用，请稍后重试。');
+    readableError(error, fallback: '语音设置暂时不可用，请稍后重试。');

@@ -320,6 +320,32 @@ final class LocalChatViewModel extends ChangeNotifier {
     await _gateway.cancel(requestId);
   }
 
+  /// 等正在流式回复的一轮结束后再发送：语音转写完成时栖语可能仍在
+  /// 回复，说完的话照常排队发出，不丢也不并发。
+  Future<bool> sendWhenIdle(String text) async {
+    if (_sending) {
+      final idle = Completer<void>();
+      void listener() {
+        if (!_sending && !idle.isCompleted) {
+          idle.complete();
+        }
+      }
+
+      addListener(listener);
+      try {
+        await idle.future;
+      } finally {
+        removeListener(listener);
+      }
+    }
+    return send(text);
+  }
+
+  /// 语音转写通道：录音字节经本机程序转成文字，语义与手打输入完全
+  /// 一致，成功后由调用方走 [send]/[sendWhenIdle] 现有链路。
+  Future<String> transcribeVoice(Uint8List audio, String mimeType) =>
+      _gateway.transcribe(audio: audio, mimeType: mimeType);
+
   @override
   void dispose() {
     _monitorTimer?.cancel();

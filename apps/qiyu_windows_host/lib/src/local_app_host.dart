@@ -34,6 +34,8 @@ import 'relationship_lifecycle.dart';
 import 'secure_token.dart';
 import 'secret_store.dart';
 import 'state_pack_reader.dart';
+import 'stt_gateway.dart';
+import 'stt_settings_service.dart';
 
 const _sessionCookieName = 'qiyu_session';
 const _csrfHeaderName = 'x-qiyu-csrf';
@@ -65,6 +67,7 @@ final class LocalAppHost {
     String? activationToken,
     Future<BrowserLaunchResult> Function()? onActivate,
     ProviderSettingsService? providerSettingsService,
+    SttSettingsService? sttSettingsService,
   }) async {
     final indexFile = File('$webRoot${Platform.pathSeparator}index.html');
     if (!indexFile.existsSync()) {
@@ -78,15 +81,24 @@ final class LocalAppHost {
     }
     final modelPromptBuilder = ModelPromptBuilder(personaConstitution);
     final runtimeDirectory = Directory(memoryDirectory).parent.path;
+    final providerConfigRepository = JsonProviderConfigRepository(
+      filePath: path.join(runtimeDirectory, 'provider.json'),
+    );
     final effectiveProviderSettings =
         providerSettingsService ??
         ProviderSettingsService(
-          JsonProviderConfigRepository(
-            filePath: path.join(runtimeDirectory, 'provider.json'),
-          ),
+          providerConfigRepository,
           const WindowsCredentialSecretStore(),
           const ProviderModelGateway(DartIoProviderHttpClient()),
           modelPromptBuilder,
+        );
+    // 语音转写（STT）：与聊天 Provider 共用 provider.json（stt 段）与
+    // 出网 HTTP 抽象，但配置与 Key 作用域独立（ADR 0001）。
+    final effectiveSttSettings =
+        sttSettingsService ??
+        SttSettingsService(
+          providerConfigRepository,
+          SttModelGateway(DartIoProviderHttpClient()),
         );
     // 开发者诊断（ticket 23）：最近请求环形缓冲 + 体验选项持久化。
     // 记录器结构上不收用户文本，诊断端点只读、默认不启用。
@@ -252,6 +264,7 @@ final class LocalAppHost {
       webRoot,
       chatService: chatService,
       providerSettingsService: effectiveProviderSettings,
+      sttSettingsService: effectiveSttSettings,
       onboardingRepository: onboardingRepository,
       memoryCenter: memoryCenter,
       memoryActions: memoryActions,
@@ -301,6 +314,7 @@ final class _LocalAppRequestHandler {
     String webRoot, {
     required this.chatService,
     required this.providerSettingsService,
+    required this.sttSettingsService,
     required this.onboardingRepository,
     required this.memoryCenter,
     required this.memoryActions,
@@ -325,6 +339,7 @@ final class _LocalAppRequestHandler {
   String get startupToken => _startupToken;
   final LocalChatService chatService;
   final ProviderSettingsService providerSettingsService;
+  final SttSettingsService sttSettingsService;
   final OnboardingRepository onboardingRepository;
   final MemoryCenterService memoryCenter;
   final MemoryActionService memoryActions;
@@ -513,6 +528,50 @@ final class _LocalAppRequestHandler {
       if (request.method == 'DELETE' &&
           request.url.path == 'api/provider/key') {
         final settings = await providerSettingsService.forgetApiKey();
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'GET' && request.url.path == 'api/provider/stt') {
+        final settings = await sttSettingsService.read();
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'PUT' && request.url.path == 'api/provider/stt') {
+        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
+        final settings = await sttSettingsService.save(
+          baseUrl: _sttTextField(payload, 'baseUrl'),
+          model: _sttTextField(payload, 'model'),
+          apiKey: _apiKeyFromPayload(payload),
+        );
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'POST' &&
+          request.url.path == 'api/provider/stt/test') {
+        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
+        final result = await sttSettingsService.test(
+          baseUrl: _optionalSttTextField(payload, 'baseUrl'),
+          model: _optionalSttTextField(payload, 'model'),
+          apiKey: _apiKeyFromPayload(payload),
+        );
+        requestDiagnostics?.record(
+          source: RecentRequestSources.providerTest,
+          result: result.succeeded
+              ? RecentRequestResults.ok
+              : RecentRequestResults.failed,
+          detail: 'stt status=${result.status.name}',
+        );
+        return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
+      }
+      if (request.method == 'DELETE' &&
+          request.url.path == 'api/provider/stt/key') {
+        final settings = await sttSettingsService.forgetApiKey();
         return Response.ok(
           jsonEncode(settings.toJson()),
           headers: _jsonHeaders,
@@ -774,6 +833,20 @@ final class _LocalAppRequestHandler {
           headers: _jsonHeaders,
         );
       }
+      if (request.method == 'POST' &&
+          request.url.path == 'api/chat/transcribe') {
+        final audio = await _readBytes(request, maxBytes: _transcribeMaxBytes);
+        final contentType = request.headers[HttpHeaders.contentTypeHeader];
+        final mimeType = contentType?.split(';').first.trim().toLowerCase();
+        if (mimeType == null || !mimeType.startsWith('audio/')) {
+          throw _invalidRequest('音频请求格式不正确。');
+        }
+        final text = await sttSettingsService.transcribe(
+          audio: audio,
+          mimeType: mimeType,
+        );
+        return Response.ok(jsonEncode({'text': text}), headers: _jsonHeaders);
+      }
       if (request.method == 'POST' && request.url.path == 'api/chat') {
         final payload = await _readJsonObject(request, maxBytes: 64 * 1024);
         final requestId = payload['requestId'];
@@ -829,6 +902,18 @@ final class _LocalAppRequestHandler {
         code: 'invalid_provider_config',
         message: error.message,
         retryable: false,
+      );
+    } on SttServiceException catch (error) {
+      final status = switch (error.code) {
+        // 未配置与请求本身的问题按客户端错误；上游失败按网关错误。
+        'stt_not_configured' || 'stt_no_speech' => HttpStatus.badRequest,
+        _ => HttpStatus.badGateway,
+      };
+      return _jsonError(
+        status,
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
       );
     } on SecretStoreException catch (error) {
       return _jsonError(
@@ -910,6 +995,10 @@ final class _LocalAppRequestHandler {
 /// 远小于该值；超限直接拒绝，不进入验证与写入。
 const _backupBundleMaxBytes = 96 * 1024 * 1024;
 
+/// 语音转写请求体上限：一次 60 秒以内的浏览器录音（opus/webm 远低于
+/// 该值）；超限直接拒绝，不进入转写。
+const _transcribeMaxBytes = 10 * 1024 * 1024;
+
 /// API 请求参数或请求体不合法的统一异常（HTTP 400 + invalid_request）。
 LocalChatException _invalidRequest(String message) => LocalChatException(
   code: 'invalid_request',
@@ -924,6 +1013,54 @@ String? _apiKeyFromPayload(Map<String, Object?> payload) {
     throw const ProviderConfigException('API Key 格式不正确。');
   }
   return apiKey as String?;
+}
+
+/// STT 设置必填文本字段：缺失或类型不对按配置格式错误拒绝。
+String _sttTextField(Map<String, Object?> payload, String key) {
+  final value = payload[key];
+  if (value is! String) {
+    throw const ProviderConfigException('语音服务配置格式不正确。');
+  }
+  return value;
+}
+
+/// STT 连接测试的可选文本字段：空负载（测试已保存配置）允许缺失。
+String? _optionalSttTextField(Map<String, Object?> payload, String key) {
+  final value = payload[key];
+  if (value == null) {
+    return null;
+  }
+  if (value is! String) {
+    throw const ProviderConfigException('语音服务配置格式不正确。');
+  }
+  return value;
+}
+
+/// 读取二进制请求体（语音转写）：与 JSON 读取同一套限长策略，Content-
+/// Length 与累计字节数双重校验覆盖 chunked 请求。
+Future<Uint8List> _readBytes(Request request, {required int maxBytes}) async {
+  final contentLength = request.contentLength;
+  if (contentLength != null && contentLength > maxBytes) {
+    throw LocalChatException(
+      code: 'invalid_request',
+      message: '录音文件太大，请录短一些再试。',
+      retryable: false,
+    );
+  }
+  final buffer = BytesBuilder(copy: false);
+  var totalBytes = 0;
+  await for (final chunk in request.read()) {
+    totalBytes += chunk.length;
+    if (totalBytes > maxBytes) {
+      throw LocalChatException(
+        code: 'invalid_request',
+        message: '录音文件太大，请录短一些再试。',
+        retryable: false,
+      );
+    }
+    buffer.add(chunk);
+  }
+  return buffer.takeBytes();
 }
 
 Future<Uint8List> _readBackupBundle(Request request) async {

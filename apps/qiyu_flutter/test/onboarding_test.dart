@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -418,6 +419,13 @@ final class _UnusedChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async => '语音测试转写';
 }
 
 final class _RestoringChatGateway implements StreamingLocalChatGateway {
@@ -437,6 +445,13 @@ final class _RestoringChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async => '语音测试转写';
 }
 
 final class _FakeHostConnectionProbe implements HostConnectionProbe {

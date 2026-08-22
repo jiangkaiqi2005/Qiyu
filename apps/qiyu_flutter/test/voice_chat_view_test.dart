@@ -1,0 +1,367 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
+import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
+import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
+import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
+import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
+
+void main() {
+  testWidgets('未配置语音服务：置灰点按引导去设置页', (tester) async {
+    await tester.pumpWidget(
+      _harness(
+        viewModel: _chatViewModel(),
+        platform: _FakeRecorderPlatform(),
+        sttConfigured: false,
+      ),
+    );
+    await tester.pump();
+
+    final mic = find.byKey(const Key('voice-mic'));
+    expect(mic, findsOneWidget);
+    await tester.tap(mic);
+    await tester.pump();
+
+    expect(find.textContaining('还没有配置语音服务'), findsOneWidget);
+    expect(find.text('去设置'), findsOneWidget);
+    // SnackBar 到期退出，避免挂起计时器。
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('浏览器不支持录音：明确提示而不是无声失败', (tester) async {
+    await tester.pumpWidget(
+      _harness(
+        viewModel: _chatViewModel(),
+        platform: _FakeRecorderPlatform(supported: false),
+        sttConfigured: false,
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pump();
+
+    expect(find.textContaining('不支持语音输入'), findsOneWidget);
+    expect(find.text('去设置'), findsNothing);
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('配置完成后置灰麦克风直接开始录音（无需刷新页面）', (tester) async {
+    final sttGateway = _MutableSttGateway()..configured = false;
+    await tester.pumpWidget(
+      _harness(
+        viewModel: _chatViewModel(),
+        platform: _FakeRecorderPlatform(),
+        sttGateway: sttGateway,
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(const Key('voice-mic')), findsOneWidget);
+
+    // 用户在设置页配好语音服务后回到聊天页再点麦克风。
+    sttGateway.configured = true;
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pump();
+
+    // 重查成功：不弹引导，直接进入录音。
+    expect(find.textContaining('还没有配置语音服务'), findsNothing);
+    expect(find.byKey(const Key('voice-mic-stop')), findsOneWidget);
+  });
+
+  testWidgets('录音 → 转写 → 成功只发一条用户消息', (tester) async {
+    // 先挂起转写以观察「正在转文字」中间态，再放行到成功。
+    final gateway = _VoiceChatGateway()..hangTranscribe = true;
+    await tester.pumpWidget(
+      _harness(viewModel: _chatViewModel(gateway), platform: _FakeRecorderPlatform()),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pump();
+    expect(find.byKey(const Key('voice-mic-stop')), findsOneWidget);
+    expect(find.textContaining('正在录音'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('voice-mic-stop')));
+    await tester.pump();
+    expect(find.byKey(const Key('voice-mic-busy')), findsOneWidget);
+    expect(find.textContaining('正在转文字'), findsOneWidget);
+    expect(gateway.sentTexts, isEmpty);
+
+    gateway.completeHungTranscribe('今天有点累');
+    await tester.pumpAndSettle();
+
+    // 转写文本经既有发送链路变成唯一一条用户消息与栖语回复。
+    expect(gateway.sentTexts, ['今天有点累']);
+    expect(find.text('今天有点累'), findsOneWidget);
+    expect(find.text('咋了'), findsOneWidget);
+    expect(find.byKey(const Key('voice-mic')), findsOneWidget);
+  });
+
+  testWidgets('转写失败进重试态，点麦克风重传后照常发送', (tester) async {
+    final gateway = _VoiceChatGateway()
+      ..transcribeFailuresRemaining = 1
+      ..transcribeError = const LocalChatGatewayException('没有识别到语音，可以再说一次。');
+    await tester.pumpWidget(
+      _harness(viewModel: _chatViewModel(gateway), platform: _FakeRecorderPlatform()),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('voice-mic-stop')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('voice-mic-retry')), findsOneWidget);
+    expect(find.textContaining('没有识别到语音'), findsOneWidget);
+    expect(gateway.sentTexts, isEmpty);
+    expect(gateway.transcribeCalls, 1);
+
+    // 重试：不重录、同一段音频再传一次。
+    await tester.tap(find.byKey(const Key('voice-mic-retry')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.transcribeCalls, 2);
+    expect(gateway.transcribeAudioCalls.first, gateway.transcribeAudioCalls.last);
+    expect(gateway.sentTexts, ['今天有点累']);
+    expect(find.text('今天有点累'), findsOneWidget);
+  });
+
+  testWidgets('录音中按 Esc 丢弃：不转写也不发送', (tester) async {
+    final platform = _FakeRecorderPlatform();
+    final gateway = _VoiceChatGateway();
+    await tester.pumpWidget(
+      _harness(viewModel: _chatViewModel(gateway), platform: platform),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('chat-input')));
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pump();
+    expect(find.byKey(const Key('voice-mic-stop')), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+
+    expect(find.byKey(const Key('voice-mic')), findsOneWidget);
+    expect(find.textContaining('正在录音'), findsNothing);
+    expect(gateway.transcribeCalls, 0);
+    expect(platform.session!.discardCalls, 1);
+    expect(gateway.sentTexts, isEmpty);
+  });
+
+  testWidgets('转写中按 Esc 中止：回重试态且迟到结果不发送', (tester) async {
+    final gateway = _VoiceChatGateway()..hangTranscribe = true;
+    await tester.pumpWidget(
+      _harness(viewModel: _chatViewModel(gateway), platform: _FakeRecorderPlatform()),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('chat-input')));
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('voice-mic-stop')));
+    await tester.pump();
+    expect(find.byKey(const Key('voice-mic-busy')), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(find.byKey(const Key('voice-mic-retry')), findsOneWidget);
+
+    // 迟到的转写结果到达：不触发发送，重试态保持。
+    gateway.completeHungTranscribe('迟到的话');
+    await tester.pumpAndSettle();
+    expect(gateway.sentTexts, isEmpty);
+    expect(find.byKey(const Key('voice-mic-retry')), findsOneWidget);
+  });
+}
+
+Widget _harness({
+  required LocalChatViewModel viewModel,
+  required VoiceRecorderPlatform platform,
+  bool sttConfigured = true,
+  SttSettingsGateway? sttGateway,
+}) {
+  return MultiProvider(
+    providers: [ChangeNotifierProvider.value(value: viewModel)],
+    child: MaterialApp(
+      home: LocalChatView(
+        voiceRecorderPlatform: platform,
+        sttSettingsGateway:
+            sttGateway ?? _FixedSttGateway(configured: sttConfigured),
+      ),
+    ),
+  );
+}
+
+LocalChatViewModel _chatViewModel([StreamingLocalChatGateway? gateway]) =>
+    LocalChatViewModel(
+      gateway ?? _VoiceChatGateway(),
+      hostConnectionProbe: _FixedHostConnectionProbe(),
+      autoStart: false,
+    );
+
+final class _FixedHostConnectionProbe implements HostConnectionProbe {
+  @override
+  Future<bool> isHostAvailable() async => true;
+}
+
+/// configured 可翻转的 STT 设置网关：模拟设置页保存前后的状态。
+final class _MutableSttGateway implements SttSettingsGateway {
+  var configured = false;
+
+  @override
+  Future<SttSettings> read() async =>
+      SttSettings(configured: configured, keySet: configured);
+
+  @override
+  Future<SttSettings> save(SttSettingsDraft draft) async =>
+      const SttSettings(configured: true, keySet: true);
+
+  @override
+  Future<SttSettings> forgetApiKey() async =>
+      const SttSettings(configured: false, keySet: false);
+
+  @override
+  Future<ProviderTestResult> testConnection(SttSettingsDraft draft) async =>
+      const ProviderTestResult(
+        succeeded: true,
+        status: ProviderTestStatus.success,
+        message: '连接成功，语音输入可以使用。',
+      );
+}
+
+final class _FixedSttGateway implements SttSettingsGateway {
+  const _FixedSttGateway({required this.configured});
+
+  final bool configured;
+
+  @override
+  Future<SttSettings> read() async =>
+      SttSettings(configured: configured, keySet: configured);
+
+  @override
+  Future<SttSettings> save(SttSettingsDraft draft) async =>
+      const SttSettings(configured: true, keySet: true);
+
+  @override
+  Future<SttSettings> forgetApiKey() async =>
+      const SttSettings(configured: false, keySet: false);
+
+  @override
+  Future<ProviderTestResult> testConnection(SttSettingsDraft draft) async =>
+      const ProviderTestResult(
+        succeeded: true,
+        status: ProviderTestStatus.success,
+        message: '连接成功，语音输入可以使用。',
+      );
+}
+
+/// 聊天 + 转写双通道 fake：转写行为可编程（失败次数、挂起等待）。
+final class _VoiceChatGateway implements StreamingLocalChatGateway {
+  final sentTexts = <String>[];
+  final transcribeAudioCalls = <List<int>>[];
+  int transcribeCalls = 0;
+  int transcribeFailuresRemaining = 0;
+  LocalChatGatewayException? transcribeError;
+  bool hangTranscribe = false;
+  final _hungCompleters = <Completer<String>>[];
+
+  void completeHungTranscribe(String text) {
+    for (final completer in _hungCompleters) {
+      if (!completer.isCompleted) {
+        completer.complete(text);
+      }
+    }
+  }
+
+  @override
+  Future<LocalChatSnapshot> restore({String? sessionId}) async =>
+      const LocalChatSnapshot(sessionId: 'session-voice', messages: []);
+
+  @override
+  Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async {
+    transcribeCalls += 1;
+    transcribeAudioCalls.add(audio.toList());
+    if (hangTranscribe) {
+      final completer = Completer<String>();
+      _hungCompleters.add(completer);
+      return completer.future;
+    }
+    if (transcribeFailuresRemaining > 0) {
+      transcribeFailuresRemaining -= 1;
+      throw transcribeError ?? const LocalChatGatewayException('转写失败。');
+    }
+    return '今天有点累';
+  }
+
+  @override
+  Stream<LocalChatDeliveryEvent> deliver({
+    required String requestId,
+    required String text,
+    String? sessionId,
+  }) async* {
+    sentTexts.add(text);
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.accepted,
+      requestId: requestId,
+      sessionId: 'session-voice',
+    );
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.message,
+      requestId: requestId,
+      messages: ['咋了'],
+    );
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.state,
+      requestId: requestId,
+      source: ReplySource.local,
+      fallbackReason: FallbackReason.noLlmConfig,
+    );
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.done,
+      requestId: requestId,
+    );
+  }
+}
+
+final class _FakeRecorderPlatform implements VoiceRecorderPlatform {
+  _FakeRecorderPlatform({this.supported = true});
+
+  @override
+  final bool supported;
+  _FakeRecordingSession? session;
+
+  @override
+  Future<VoiceRecordingSession?> start() async =>
+      supported ? (session = _FakeRecordingSession()) : null;
+}
+
+final class _FakeRecordingSession implements VoiceRecordingSession {
+  int discardCalls = 0;
+
+  @override
+  String get mimeType => 'audio/webm';
+
+  @override
+  Future<Uint8List> stop() async => Uint8List.fromList([1, 2, 3]);
+
+  @override
+  void discard() {
+    discardCalls += 1;
+  }
+}

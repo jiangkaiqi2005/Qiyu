@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -11,6 +13,8 @@ import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
 
 void main() {
   testWidgets(
@@ -190,6 +194,96 @@ void main() {
     expect(providerGateway.forgetCalls, 1);
   });
 
+  testWidgets('STT 设置区块：读写、Key 不回显、测试与忘记 Key', (tester) async {
+    final sttGateway = _MutableSttSettingsGateway(
+      const SttSettings(
+        configured: true,
+        keySet: true,
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-test',
+      ),
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        sttGateway: sttGateway,
+      ),
+    );
+    await _openSettings(tester);
+
+    // 已保存配置回填，Key 只显示已保存状态、绝不回显明文。
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('stt-base-url')),
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 30,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('stt-base-url'))).controller!
+          .text,
+      'https://stt.example.com/v1',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-api-key')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+    expect(find.textContaining('API Key 已保存在本机'), findsOneWidget);
+
+    // 保存：新 Key 随表单提交，保存后输入框清空。
+    await tester.enterText(
+      find.byKey(const Key('stt-api-key')),
+      'stt-new-secret-value',
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('save-stt-settings')),
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 10,
+    );
+    await tester.ensureVisible(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+    expect(sttGateway.savedDrafts, hasLength(1));
+    expect(sttGateway.savedDrafts.single.apiKey, 'stt-new-secret-value');
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-api-key')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+
+    // 连接测试：结果以人话呈现。
+    await tester.ensureVisible(find.byKey(const Key('test-stt-connection')));
+    await tester.tap(find.byKey(const Key('test-stt-connection')));
+    await tester.pumpAndSettle();
+    expect(sttGateway.testCalls, 1);
+    expect(find.textContaining('连接成功，语音输入可以使用'), findsOneWidget);
+
+    // 忘记 Key：需要确认，确认后 keySet 归零。
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('forget-stt-key')),
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 10,
+    );
+    await tester.ensureVisible(find.byKey(const Key('forget-stt-key')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('forget-stt-key')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stt-forget-key-dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('stt-forget-key-confirm')));
+    await tester.pumpAndSettle();
+    expect(sttGateway.forgetCalls, 1);
+    expect(find.textContaining('尚未保存语音服务的 API Key'), findsOneWidget);
+  });
+
   testWidgets('privacy page states the local-only boundaries', (
     tester,
   ) async {
@@ -247,6 +341,7 @@ Future<Widget> _app({
   required SettingsViewModel settingsViewModel,
   required ProviderSettingsGateway providerGateway,
   OnboardingGateway? onboardingGateway,
+  SttSettingsGateway? sttGateway,
 }) async {
   final providerViewModel = ProviderSettingsViewModel(
     providerGateway,
@@ -266,6 +361,10 @@ Future<Widget> _app({
       autoStart: false,
     ),
     providerSettingsViewModel: providerViewModel,
+    sttSettingsViewModel: SttSettingsViewModel(
+      sttGateway ?? const _FixedSttSettingsGateway(),
+      autoStart: false,
+    ),
     onboardingViewModel: onboardingViewModel,
     settingsViewModel: settingsViewModel,
   );
@@ -466,4 +565,84 @@ final class _UnusedChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async => '语音测试转写';
+}
+
+final class _FixedSttSettingsGateway implements SttSettingsGateway {
+  const _FixedSttSettingsGateway();
+
+  @override
+  Future<SttSettings> read() async =>
+      const SttSettings(configured: false, keySet: false);
+
+  @override
+  Future<SttSettings> save(SttSettingsDraft draft) async => SttSettings(
+    configured: true,
+    keySet: draft.apiKey != null,
+    baseUrl: draft.baseUrl,
+    model: draft.model,
+  );
+
+  @override
+  Future<SttSettings> forgetApiKey() async =>
+      const SttSettings(configured: false, keySet: false);
+
+  @override
+  Future<ProviderTestResult> testConnection(SttSettingsDraft draft) async =>
+      const ProviderTestResult(
+        succeeded: true,
+        status: ProviderTestStatus.success,
+        message: '连接成功，语音输入可以使用。',
+      );
+}
+
+/// 可变 STT 设置网关：记录保存草稿、测试与忘记 Key 的调用。
+final class _MutableSttSettingsGateway implements SttSettingsGateway {
+  _MutableSttSettingsGateway(this._settings);
+
+  SttSettings _settings;
+  final savedDrafts = <SttSettingsDraft>[];
+  int testCalls = 0;
+  int forgetCalls = 0;
+
+  @override
+  Future<SttSettings> read() async => _settings;
+
+  @override
+  Future<SttSettings> save(SttSettingsDraft draft) async {
+    savedDrafts.add(draft);
+    return _settings = SttSettings(
+      configured: true,
+      keySet: draft.apiKey != null || _settings.keySet,
+      baseUrl: draft.baseUrl,
+      model: draft.model,
+    );
+  }
+
+  @override
+  Future<SttSettings> forgetApiKey() async {
+    forgetCalls += 1;
+    return _settings = SttSettings(
+      configured: true,
+      keySet: false,
+      baseUrl: _settings.baseUrl,
+      model: _settings.model,
+    );
+  }
+
+  @override
+  Future<ProviderTestResult> testConnection(SttSettingsDraft draft) async {
+    testCalls += 1;
+    return const ProviderTestResult(
+      succeeded: true,
+      status: ProviderTestStatus.success,
+      message: '连接成功，语音输入可以使用。',
+    );
+  }
 }

@@ -67,6 +67,15 @@ abstract interface class ProviderHttpClient {
     required String body,
     required Duration timeout,
   });
+
+  /// 非流式 POST（二进制请求体、整段文本响应）：语音转写等一次性
+  /// 出网调用使用；与 postStream 同一套超时语义。
+  Future<ProviderHttpResponse> post({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  });
 }
 
 final class DartIoProviderHttpClient implements ProviderHttpClient {
@@ -78,13 +87,37 @@ final class DartIoProviderHttpClient implements ProviderHttpClient {
     required Map<String, String> headers,
     required String body,
     required Duration timeout,
+  }) {
+    return _postBytes(
+      uri: uri,
+      headers: headers,
+      body: utf8.encode(body),
+      timeout: timeout,
+    );
+  }
+
+  @override
+  Future<ProviderHttpResponse> post({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) {
+    return _postBytes(uri: uri, headers: headers, body: body, timeout: timeout);
+  }
+
+  Future<ProviderHttpResponse> _postBytes({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
   }) async {
     final client = HttpClient()..connectionTimeout = timeout;
     try {
       final request = await client.postUrl(uri).timeout(timeout);
       request.followRedirects = false;
       headers.forEach(request.headers.set);
-      request.add(utf8.encode(body));
+      request.add(body);
       final response = await request.close().timeout(timeout);
       return ProviderHttpResponse(
         statusCode: response.statusCode,
@@ -526,11 +559,16 @@ Map<String, String> _messageJson(ModelMessage message) => {
   'content': message.content,
 };
 
-Uri _appendEndpoint(String baseUrl, String suffix, {bool ollama = false}) {
-  final base = Uri.parse(baseUrl.trim());
-  final normalizedPath = base.path.replaceFirst(RegExp(r'/+$'), '');
+Uri _appendEndpoint(String baseUrl, String suffix, {bool ollama = false}) =>
+    appendProviderEndpoint(baseUrl, suffix, ollama: ollama);
+
+/// 把服务地址与端点后缀拼接成完整请求地址：已以该端点结尾的地址原样
+/// 使用（用户可能直接填了完整端点）。聊天与语音转写共用。
+Uri appendProviderEndpoint(String baseUrl, String suffix, {bool ollama = false}) {
+  final base = normalizeProviderBaseUri(baseUrl);
+  final normalizedPath = base.path;
   if (normalizedPath.endsWith('/$suffix')) {
-    return base.replace(path: normalizedPath);
+    return base;
   }
   if (ollama && normalizedPath.endsWith('/api')) {
     return base.replace(path: '$normalizedPath/chat');
@@ -540,10 +578,10 @@ Uri _appendEndpoint(String baseUrl, String suffix, {bool ollama = false}) {
 }
 
 Uri _anthropicMessagesEndpoint(String baseUrl) {
-  final base = Uri.parse(baseUrl.trim());
-  final normalizedPath = base.path.replaceFirst(RegExp(r'/+$'), '');
+  final base = normalizeProviderBaseUri(baseUrl);
+  final normalizedPath = base.path;
   if (normalizedPath.endsWith('/messages')) {
-    return base.replace(path: normalizedPath);
+    return base;
   }
   if (normalizedPath.endsWith('/v1')) {
     return base.replace(path: '$normalizedPath/messages');
@@ -554,18 +592,27 @@ Uri _anthropicMessagesEndpoint(String baseUrl) {
   return base.replace(path: path);
 }
 
-ModelGatewayException _statusFailure(int statusCode, String body) {
+ModelGatewayException _statusFailure(int statusCode, String body) =>
+    providerStatusFailure(statusCode, body, serviceLabel: '模型服务');
+
+/// 出网 HTTP 非 2xx 的统一分类（带服务名文案）。聊天模型与语音转写
+/// 共用同一套错误分类，供连接测试与失败提示使用。
+ModelGatewayException providerStatusFailure(
+  int statusCode,
+  String body, {
+  required String serviceLabel,
+}) {
   if (statusCode == HttpStatus.unauthorized ||
       statusCode == HttpStatus.forbidden) {
-    return const ModelGatewayException(
+    return ModelGatewayException(
       kind: ModelFailureKind.authentication,
-      message: 'API Key 未通过模型服务验证。',
+      message: 'API Key 未通过$serviceLabel验证。',
     );
   }
   if (statusCode == HttpStatus.tooManyRequests) {
-    return const ModelGatewayException(
+    return ModelGatewayException(
       kind: ModelFailureKind.rateLimited,
-      message: '模型服务请求过于频繁。',
+      message: '$serviceLabel请求过于频繁。',
     );
   }
   final lowerBody = body.toLowerCase();
@@ -579,23 +626,31 @@ ModelGatewayException _statusFailure(int statusCode, String body) {
       message: '模型名称不存在或当前账号不可用。',
     );
   }
-  return const ModelGatewayException(
+  return ModelGatewayException(
     kind: ModelFailureKind.provider,
-    message: '模型服务拒绝了这次请求。',
+    message: '$serviceLabel拒绝了这次请求。',
   );
 }
 
-ModelGatewayException _socketFailure(SocketException error) {
+ModelGatewayException _socketFailure(SocketException error) =>
+    providerSocketFailure(error, serviceLabel: '模型服务');
+
+/// Socket 异常的统一分类（带服务名文案）：域名解析失败与一般网络故障
+/// 分开报告。聊天模型与语音转写共用。
+ModelGatewayException providerSocketFailure(
+  SocketException error, {
+  required String serviceLabel,
+}) {
   final message = error.message.toLowerCase();
   final code = error.osError?.errorCode;
   if (message.contains('failed host lookup') || code == 11001) {
-    return const ModelGatewayException(
+    return ModelGatewayException(
       kind: ModelFailureKind.dns,
-      message: '找不到模型服务域名。',
+      message: '找不到$serviceLabel域名。',
     );
   }
-  return const ModelGatewayException(
+  return ModelGatewayException(
     kind: ModelFailureKind.network,
-    message: '无法连接模型服务。',
+    message: '无法连接$serviceLabel。',
   );
 }

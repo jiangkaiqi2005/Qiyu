@@ -14,6 +14,8 @@ import 'provider_settings_client.dart';
 import 'provider_settings_view_model.dart';
 import 'settings_client.dart';
 import 'settings_view_model.dart';
+import 'stt_settings_client.dart';
+import 'stt_settings_view_model.dart';
 
 /// 设置中心（ticket 23）：模型连接、本地数据管理（备份 / 记忆控制
 /// 总览 / 清除产品数据）、隐私说明与开发者选项。危险操作（忘记
@@ -40,10 +42,16 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   final _temperatureController = TextEditingController(text: '0.7');
   final _timeoutController = TextEditingController(text: '60');
   final _apiKeyController = TextEditingController();
+  // 语音转写（STT）服务：与聊天 Provider 同一套表单形态，独立的
+  // 配置段与 Key。
+  final _sttBaseUrlController = TextEditingController();
+  final _sttModelController = TextEditingController();
+  final _sttApiKeyController = TextEditingController();
   String _selectedProviderId = 'openai';
   String _selectedConnectionId = 'official';
   bool _customModel = false;
   ProviderSettings? _syncedSettings;
+  SttSettings? _syncedSttSettings;
   bool _requestedInitialization = false;
 
   ProviderPreset get _selectedProvider =>
@@ -66,6 +74,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       }
       final settingsViewModel = context.read<SettingsViewModel>();
       unawaited(context.read<ProviderSettingsViewModel>().initialize());
+      unawaited(context.read<SttSettingsViewModel>().initialize());
       unawaited(settingsViewModel.loadPreferences());
       unawaited(settingsViewModel.loadClearPreview());
     });
@@ -78,6 +87,9 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     _temperatureController.dispose();
     _timeoutController.dispose();
     _apiKeyController.dispose();
+    _sttBaseUrlController.dispose();
+    _sttModelController.dispose();
+    _sttApiKeyController.dispose();
     super.dispose();
   }
 
@@ -100,6 +112,74 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       _modelController.text = _selectedConnection.models.first;
     }
     _apiKeyController.clear();
+  }
+
+  void _syncStt(SttSettings? settings) {
+    if (settings == null || identical(settings, _syncedSttSettings)) {
+      return;
+    }
+    _syncedSttSettings = settings;
+    if (settings.configured) {
+      _sttBaseUrlController.text = settings.baseUrl ?? '';
+      _sttModelController.text = settings.model ?? '';
+    }
+    _sttApiKeyController.clear();
+  }
+
+  SttSettingsDraft? _readSttDraft() {
+    if (_sttBaseUrlController.text.trim().isEmpty ||
+        _sttModelController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请填写语音服务地址和模型名称。')),
+      );
+      return null;
+    }
+    final key = _sttApiKeyController.text.trim();
+    return SttSettingsDraft(
+      baseUrl: _sttBaseUrlController.text.trim(),
+      model: _sttModelController.text.trim(),
+      apiKey: key.isEmpty ? null : key,
+    );
+  }
+
+  Future<void> _saveStt(SttSettingsViewModel viewModel) async {
+    final draft = _readSttDraft();
+    if (draft == null) {
+      return;
+    }
+    final saved = await viewModel.save(draft);
+    if (saved && mounted) {
+      _sttApiKeyController.clear();
+    }
+  }
+
+  Future<void> _confirmForgetSttKey(SttSettingsViewModel viewModel) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const Key('stt-forget-key-dialog'),
+        title: const Text('忘记语音服务的 API Key？'),
+        content: const Text(
+          '忘记后本机不再保存这个 Key，语音输入暂时不可用，直到你重新输入。'
+          '语音服务的地址和模型不受影响。',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('stt-forget-key-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('再想想'),
+          ),
+          FilledButton(
+            key: const Key('stt-forget-key-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('忘记 Key'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await viewModel.forgetApiKey();
+    }
   }
 
   void _selectProvider(String providerId) {
@@ -235,8 +315,10 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<ProviderSettingsViewModel>();
+    final sttViewModel = context.watch<SttSettingsViewModel>();
     final settingsViewModel = context.watch<SettingsViewModel>();
     _sync(viewModel.settings);
+    _syncStt(sttViewModel.settings);
     final theme = Theme.of(context);
     return Scaffold(
       body: SafeArea(
@@ -440,6 +522,8 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                   ),
                 ],
                 const SizedBox(height: 40),
+                _sttSection(context, sttViewModel),
+                const SizedBox(height: 24),
                 _localDataSection(context, settingsViewModel),
                 const SizedBox(height: 24),
                 _privacySection(context),
@@ -500,6 +584,115 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
             child: const Text('忘记已保存的 Key'),
           ),
         ],
+      ],
+    );
+  }
+
+  /// 语音输入（STT）服务配置：与聊天 Provider 同构的表单与 Key 规则。
+  Widget _sttSection(BuildContext context, SttSettingsViewModel viewModel) {
+    final theme = Theme.of(context);
+    final keySet = viewModel.settings?.keySet ?? false;
+    return _SettingsPanel(
+      children: [
+        Text('语音输入', style: theme.textTheme.headlineMedium?.copyWith(
+          fontWeight: FontWeight.w500,
+          letterSpacing: -0.8,
+        )),
+        const SizedBox(height: 10),
+        Text(
+          '把说的话转成文字的服务（OpenAI 兼容转写，如 whisper 系列）。'
+          'Key 只保存在本机 provider.json；录音只存在内存里，'
+          '转写完成即丢弃，不会进入会话与记忆。',
+          style: theme.textTheme.bodyLarge?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            height: 1.55,
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('stt-base-url'),
+          controller: _sttBaseUrlController,
+          decoration: const InputDecoration(
+            labelText: '服务地址',
+            hintText: 'https://api.example.com/v1',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('stt-model'),
+          controller: _sttModelController,
+          decoration: const InputDecoration(
+            labelText: '模型名称',
+            hintText: 'whisper-1',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存语音服务的 API Key',
+          style: theme.textTheme.titleSmall,
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          key: const Key('stt-api-key'),
+          controller: _sttApiKeyController,
+          obscureText: true,
+          enableSuggestions: false,
+          autocorrect: false,
+          decoration: InputDecoration(
+            labelText: 'API Key',
+            hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        if (keySet) ...[
+          const SizedBox(height: 8),
+          TextButton(
+            key: const Key('forget-stt-key'),
+            onPressed: viewModel.saving
+                ? null
+                : () => unawaited(_confirmForgetSttKey(viewModel)),
+            child: const Text('忘记语音服务的 Key'),
+          ),
+        ],
+        const SizedBox(height: 20),
+        if (viewModel.errorMessage case final message?)
+          _StatusMessage(message: message, succeeded: false),
+        if (viewModel.testResult case final result?)
+          _StatusMessage(
+            message: result.message,
+            succeeded: result.succeeded,
+          ),
+        if (viewModel.errorMessage != null || viewModel.testResult != null)
+          const SizedBox(height: 14),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            FilledButton.icon(
+              key: const Key('save-stt-settings'),
+              onPressed: viewModel.saving
+                  ? null
+                  : () => unawaited(_saveStt(viewModel)),
+              icon: _busyOr(viewModel.saving, Icons.lock_outline),
+              label: const Text('保存到本机'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('test-stt-connection'),
+              onPressed: viewModel.testing
+                  ? null
+                  : () {
+                      final draft = _readSttDraft();
+                      if (draft != null) {
+                        unawaited(viewModel.testConnection(draft));
+                      }
+                    },
+              icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
+              label: const Text('测试连接'),
+            ),
+          ],
+        ),
       ],
     );
   }

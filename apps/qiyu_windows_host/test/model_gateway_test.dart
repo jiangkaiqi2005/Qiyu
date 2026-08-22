@@ -497,4 +497,19 @@ final class _RecordingHttpClient implements ProviderHttpClient {
     }
     return response!;
   }
+
+  @override
+  Future<ProviderHttpResponse> post({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) async {
+    this.uri = uri;
+    this.headers = headers;
+    if (error case final failure?) {
+      throw failure;
+    }
+    return response!;
+  }
 }

@@ -6,10 +6,13 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../accessibility.dart';
+import '../settings/stt_settings_client.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_chat_bubble.dart';
 import 'qiyu_markdown.dart';
+import 'voice_input_controller.dart';
+import 'voice_recorder_platform.dart';
 
 /// 输入框里按 Enter 发送；Shift+Enter / Ctrl+Enter 插入软换行。
 final class _SendChatIntent extends Intent {
@@ -20,8 +23,21 @@ final class _InsertLineBreakIntent extends Intent {
   const _InsertLineBreakIntent();
 }
 
+/// Esc 在语音输入各状态下的语义：录音中丢弃、转写中中止、可重试丢弃。
+final class _VoiceEscapeIntent extends Intent {
+  const _VoiceEscapeIntent();
+}
+
 class LocalChatView extends StatefulWidget {
-  const LocalChatView({super.key});
+  const LocalChatView({super.key, this.voiceRecorderPlatform, this.sttSettingsGateway});
+
+  /// 语音输入接缝：缺省走条件导出的平台实现（Web 真录音、测试 stub）；
+  /// widget 测试注入 fake。
+  final VoiceRecorderPlatform? voiceRecorderPlatform;
+
+  /// 语音服务配置读取：缺省复用 app Provider 树里的共享网关实例
+  /// （与设置页同一实例，CSRF 不重复换）；widget 测试注入 fake。
+  final SttSettingsGateway? sttSettingsGateway;
 
   @override
   State<LocalChatView> createState() => _LocalChatViewState();
@@ -37,14 +53,42 @@ class _LocalChatViewState extends State<LocalChatView> {
   bool _stickToBottom = true;
   double _lastPixels = 0;
 
+  late final VoiceInputController _voiceInput;
+
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_trackStickToBottom);
+    final chatViewModel = context.read<LocalChatViewModel>();
+    final sttSettingsGateway = _resolveSttSettingsGateway();
+    _voiceInput = VoiceInputController(
+      widget.voiceRecorderPlatform ?? createVoiceRecorderPlatform(),
+      () async => (await sttSettingsGateway.read()).configured,
+      chatViewModel.transcribeVoice,
+      onTranscribed: (text) =>
+          unawaited(_sendTranscribed(chatViewModel, text)),
+    );
+    unawaited(_voiceInput.initialize());
+  }
+
+  /// 语音设置网关解析：注入优先；其次复用 app Provider 树的共享实例
+  /// （与设置页同一实例，CSRF 不重复换取）；只有脱离 app 树单独 pump
+  /// 本页的测试才回退自建——widget 测试里平台是 stub，不会真正发请求。
+  SttSettingsGateway _resolveSttSettingsGateway() {
+    final injected = widget.sttSettingsGateway;
+    if (injected != null) {
+      return injected;
+    }
+    try {
+      return context.read<SttSettingsGateway>();
+    } on ProviderNotFoundException {
+      return HttpSttSettingsGateway();
+    }
   }
 
   @override
   void dispose() {
+    _voiceInput.dispose();
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -95,6 +139,48 @@ class _LocalChatViewState extends State<LocalChatView> {
     _controller.value = TextEditingValue(
       text: nextText,
       selection: TextSelection.collapsed(offset: start + 1),
+    );
+  }
+
+  /// 语音转写出的文字直接发送：与手打共用同一条链路（requestId 幂等、
+  /// 乐观插入、失败回填输入框）。栖语正在回复时排队，回复结束即发。
+  Future<void> _sendTranscribed(LocalChatViewModel viewModel, String text) async {
+    _stickToBottom = true;
+    final sent = await viewModel.sendWhenIdle(text);
+    if (!sent &&
+        mounted &&
+        _controller.text.isEmpty &&
+        text.trim().isNotEmpty) {
+      _controller.text = text;
+      _controller.selection = TextSelection.collapsed(offset: text.length);
+    }
+  }
+
+  Future<void> _showVoiceGuide() async {
+    final voice = _voiceInput;
+    // 置灰态先惰性重查一次：从设置页配好回来点麦克风直接开始说话。
+    await voice.refreshConfigured();
+    if (!mounted) {
+      return;
+    }
+    if (voice.status == VoiceInputStatus.idle) {
+      voice.handleMicTap();
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          voice.status == VoiceInputStatus.unsupported
+              ? '当前浏览器不支持语音输入，请换 Chrome 或 Edge。'
+              : '还没有配置语音服务，先去设置页填写地址、模型和 Key。',
+        ),
+        action: voice.status == VoiceInputStatus.unsupported
+            ? null
+            : SnackBarAction(
+                label: '去设置',
+                onPressed: () => context.push('/settings'),
+              ),
+      ),
     );
   }
 
@@ -183,6 +269,10 @@ class _LocalChatViewState extends State<LocalChatView> {
                           ),
                         ),
                       ),
+                    AnimatedBuilder(
+                      animation: _voiceInput,
+                      builder: (context, _) => _voiceStatusBar(context),
+                    ),
                     Shortcuts(
                       shortcuts: const {
                         SingleActivator(LogicalKeyboardKey.enter):
@@ -193,6 +283,8 @@ class _LocalChatViewState extends State<LocalChatView> {
                           LogicalKeyboardKey.enter,
                           control: true,
                         ): _InsertLineBreakIntent(),
+                        SingleActivator(LogicalKeyboardKey.escape):
+                            _VoiceEscapeIntent(),
                       },
                       child: Actions(
                         actions: {
@@ -208,6 +300,13 @@ class _LocalChatViewState extends State<LocalChatView> {
                               CallbackAction<_InsertLineBreakIntent>(
                                 onInvoke: (intent) {
                                   _insertLineBreak();
+                                  return null;
+                                },
+                              ),
+                          _VoiceEscapeIntent:
+                              CallbackAction<_VoiceEscapeIntent>(
+                                onInvoke: (intent) {
+                                  _voiceInput.handleEscape();
                                   return null;
                                 },
                               ),
@@ -230,6 +329,11 @@ class _LocalChatViewState extends State<LocalChatView> {
                                     border: OutlineInputBorder(),
                                   ),
                                 ),
+                              ),
+                              const SizedBox(width: 12),
+                              AnimatedBuilder(
+                                animation: _voiceInput,
+                                builder: (context, _) => _voiceMicButton(),
                               ),
                               const SizedBox(width: 12),
                               IconButton.filled(
@@ -273,6 +377,119 @@ class _LocalChatViewState extends State<LocalChatView> {
         ],
       ),
     );
+  }
+
+  /// 语音输入状态行：录音计时 / 转写等待 / 可重试提示。作为 live region
+  /// 播报给屏幕阅读器；idle 无事可报时不占位。
+  Widget _voiceStatusBar(BuildContext context) {
+    final voice = _voiceInput;
+    final String? message;
+    switch (voice.status) {
+      case VoiceInputStatus.recording:
+        final minutes = (voice.elapsedSeconds ~/ 60).toString().padLeft(2, '0');
+        final seconds = (voice.elapsedSeconds % 60).toString().padLeft(2, '0');
+        message = '正在录音 $minutes:$seconds，再点一次说完，按 Esc 取消';
+      case VoiceInputStatus.transcribing:
+        message = '正在转文字…（Esc 中止）';
+      case VoiceInputStatus.retryable:
+        message = voice.errorMessage ?? '转写没有成功，点麦克风重试，Esc 丢弃。';
+      case VoiceInputStatus.idle:
+        message = voice.errorMessage; // 麦克风授权失败等就近平铺。
+      case VoiceInputStatus.unsupported:
+      case VoiceInputStatus.notConfigured:
+        message = null;
+    }
+    if (message == null) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+      child: Semantics(
+        liveRegion: true,
+        child: Row(
+          children: [
+            if (voice.status == VoiceInputStatus.transcribing)
+              const SizedBox.square(
+                key: Key('voice-transcribing-spinner'),
+                dimension: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Icon(
+                voice.status == VoiceInputStatus.retryable
+                    ? Icons.error_outline
+                    : Icons.graphic_eq,
+                size: 16,
+                color: voice.status == VoiceInputStatus.retryable
+                    ? Theme.of(context).colorScheme.error
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                key: const Key('voice-status'),
+                style: TextStyle(
+                  color: voice.status == VoiceInputStatus.retryable
+                      ? Theme.of(context).colorScheme.error
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 麦克风按钮：置灰态（不支持/未配置）点击只做引导，其余状态按
+  /// 控制器状态机分派；转写中禁点（Esc 才是中止入口）。
+  Widget _voiceMicButton() {
+    final voice = _voiceInput;
+    switch (voice.status) {
+      case VoiceInputStatus.unsupported:
+      case VoiceInputStatus.notConfigured:
+        return IconButton(
+          key: const Key('voice-mic'),
+          tooltip: '语音输入（当前不可用）',
+          color: Theme.of(context).disabledColor,
+          onPressed: _showVoiceGuide,
+          icon: const Icon(Icons.mic_off_outlined),
+        );
+      case VoiceInputStatus.idle:
+        return IconButton(
+          key: const Key('voice-mic'),
+          tooltip: '语音输入',
+          onPressed: () => voice.handleMicTap(),
+          icon: const Icon(Icons.mic_none),
+        );
+      case VoiceInputStatus.recording:
+        return IconButton(
+          key: const Key('voice-mic-stop'),
+          tooltip: '说完，转成文字',
+          color: Theme.of(context).colorScheme.error,
+          onPressed: () => voice.handleMicTap(),
+          icon: const Icon(Icons.stop_circle_rounded),
+        );
+      case VoiceInputStatus.transcribing:
+        return IconButton(
+          key: const Key('voice-mic-busy'),
+          tooltip: '正在转文字',
+          onPressed: null,
+          icon: const SizedBox.square(
+            dimension: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        );
+      case VoiceInputStatus.retryable:
+        return IconButton(
+          key: const Key('voice-mic-retry'),
+          tooltip: '重试转写',
+          color: Theme.of(context).colorScheme.error,
+          onPressed: () => voice.handleMicTap(),
+          icon: const Icon(Icons.mic_rounded),
+        );
+    }
   }
 
   Widget _messageList(LocalChatViewModel viewModel) {

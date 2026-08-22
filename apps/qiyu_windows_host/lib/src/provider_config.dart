@@ -44,9 +44,6 @@ final class ProviderConfig {
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
 
-  static String? _optionalKey(Object? value) =>
-      value is String ? normalizeKey(value) : null;
-
   final ProviderKind kind;
   final String baseUrl;
   final String model;
@@ -67,7 +64,14 @@ final class ProviderConfig {
     apiKey: apiKey,
   );
 
-  String get credentialScope {
+  String get credentialScope =>
+      '${kind.wireName}|${normalizeProviderBaseUri(baseUrl)}';
+
+  /// 旧版作用域字符串：历史上 Uri.replace(query: '', fragment: '') 的
+  /// 序列化会在地址尾部残留「?#」尾巴。凭据管理器按 scope 精确匹配，
+  /// 纯旧安装（Key 只存过凭据管理器）的条目挂在这套旧 scope 下；
+  /// 凭据回退读取与孤儿清理都要兼容它。
+  String get legacyCredentialScope {
     final uri = Uri.parse(baseUrl.trim());
     final normalizedPath = uri.path.replaceFirst(RegExp(r'/+$'), '');
     return '${kind.wireName}|${uri.replace(path: normalizedPath, query: '', fragment: '')}';
@@ -124,13 +128,91 @@ final class ProviderConfigException implements Exception {
   String toString() => message;
 }
 
+/// 可选 Key 字段的解析：非字符串忽略、空白归一为 null。
+String? _optionalKey(Object? value) =>
+    value is String ? ProviderConfig.normalizeKey(value) : null;
+
+/// 服务地址的规范化：去掉路径末尾斜杠、丢弃 query 与 fragment。
+/// Key 作用域比较与端点拼接共用同一口径。（用构造重建而非
+/// replace(query: '')：后者会在地址上残留「?#」尾巴。）
+Uri normalizeProviderBaseUri(String baseUrl) {
+  final uri = Uri.parse(baseUrl.trim());
+  return Uri(
+    scheme: uri.scheme,
+    userInfo: uri.userInfo,
+    host: uri.host,
+    port: uri.hasPort ? uri.port : null,
+    path: uri.path.replaceFirst(RegExp(r'/+$'), ''),
+  );
+}
+
+/// 语音转写（STT）服务配置：provider.json 顶层的可选 `stt` 段。
+/// provider 字段为将来协议扩展预留，v1 只接受 openai_compatible。
+final class SttConfig {
+  const SttConfig({required this.baseUrl, required this.model, this.apiKey});
+
+  static const providerWireName = 'openai_compatible';
+
+  factory SttConfig.fromJson(Map<String, Object?> json) {
+    final provider = json['provider'];
+    if (provider != null && provider != providerWireName) {
+      throw const ProviderConfigException('语音服务暂只支持 OpenAI 兼容协议。');
+    }
+    return SttConfig(
+      baseUrl: json['baseUrl']! as String,
+      model: json['model']! as String,
+      // 与聊天段同律：兼容 apiKey 与 API_KEY 两种手写法，空白视为未设置。
+      apiKey: _optionalKey(json['apiKey'] ?? json['API_KEY']),
+    );
+  }
+
+  final String baseUrl;
+  final String model;
+
+  /// 本机 provider.json 的 stt 段里保存的 API Key（明文）。与聊天 Key
+  /// 同律：不进 toJson()，HTTP 快照绝不携带明文。
+  final String? apiKey;
+
+  SttConfig withApiKey(String? apiKey) =>
+      SttConfig(baseUrl: baseUrl, model: model, apiKey: apiKey);
+
+  /// Key 的沿用作用域只看规范化后的服务地址（v1 只有 openai_compatible
+  /// 一种协议，无需再叠加协议维度）。
+  String get credentialScope => normalizeProviderBaseUri(baseUrl).toString();
+
+  Map<String, Object?> toJson() => {
+    'provider': providerWireName,
+    'baseUrl': baseUrl,
+    'model': model,
+  };
+
+  void validate() {
+    final uri = Uri.tryParse(baseUrl.trim());
+    if (uri == null ||
+        !uri.hasAuthority ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      throw const ProviderConfigException('语音服务地址必须是有效的 HTTP 地址。');
+    }
+    if (model.trim().isEmpty) {
+      throw const ProviderConfigException('请填写语音服务的模型名称。');
+    }
+  }
+}
+
 abstract interface class ProviderConfigRepository {
   Future<ProviderConfig?> load();
 
   Future<void> save(ProviderConfig config);
 }
 
-final class JsonProviderConfigRepository implements ProviderConfigRepository {
+abstract interface class SttConfigRepository {
+  Future<SttConfig?> loadStt();
+
+  Future<void> saveStt(SttConfig config);
+}
+
+final class JsonProviderConfigRepository
+    implements ProviderConfigRepository, SttConfigRepository {
   const JsonProviderConfigRepository({
     required this.filePath,
     this.writer = const IoAtomicTextWriter(),
@@ -141,13 +223,23 @@ final class JsonProviderConfigRepository implements ProviderConfigRepository {
 
   @override
   Future<ProviderConfig?> load() async {
-    final file = File(filePath);
-    if (!await file.exists()) {
+    final json = await _readRawMap(orThrow: true);
+    if (json == null) {
+      return null;
+    }
+    // 聊天字段一个都没有（例如只配了 stt 段）视为未配置而不是文件损坏；
+    // 残缺一半则继续解析，让具体缺口以「无法读取」暴露。
+    const chatKeys = [
+      'provider',
+      'baseUrl',
+      'model',
+      'temperature',
+      'timeoutSeconds',
+    ];
+    if (!chatKeys.any(json.containsKey)) {
       return null;
     }
     try {
-      final json =
-          jsonDecode(await file.readAsString()) as Map<String, Object?>;
       final config = ProviderConfig.fromJson(json);
       config.validate();
       return config;
@@ -161,9 +253,76 @@ final class JsonProviderConfigRepository implements ProviderConfigRepository {
   @override
   Future<void> save(ProviderConfig config) async {
     config.validate();
-    // Key 只在这里并入落盘 JSON：toJson() 供设置快照复用，必须保持
-    // 不含明文 Key。
-    final json = {...config.toJson(), 'apiKey': ?config.apiKey};
+    // 段级保存：只替换聊天 Provider 字段，保留 stt 段与其他未知键；
+    // 损坏到读不出 JSON 的文件本就无从保留，按整体覆盖处理。
+    final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
+    json
+      ..remove('API_KEY')
+      ..addAll(config.toJson());
+    if (config.apiKey case final key?) {
+      json['apiKey'] = key;
+    } else {
+      json.remove('apiKey');
+    }
+    await _writeFile(json);
+  }
+
+  @override
+  Future<SttConfig?> loadStt() async {
+    final json = await _readRawMap(orThrow: true);
+    if (json == null) {
+      return null;
+    }
+    final section = json['stt'];
+    if (section == null) {
+      return null;
+    }
+    // 损坏的 stt 段只影响语音输入，不影响聊天配置。
+    if (section is! Map<String, Object?>) {
+      throw const ProviderConfigException('语音服务配置无法读取。');
+    }
+    try {
+      final config = SttConfig.fromJson(section);
+      config.validate();
+      return config;
+    } on ProviderConfigException {
+      rethrow;
+    } on Object catch (error) {
+      throw ProviderConfigException('语音服务配置无法读取。', error);
+    }
+  }
+
+  @override
+  Future<void> saveStt(SttConfig config) async {
+    config.validate();
+    final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
+    json['stt'] = {...config.toJson(), 'apiKey': ?config.apiKey};
+    await _writeFile(json);
+  }
+
+  /// 读取整份 provider.json；文件不存在返回 null。`orThrow` 为 true 时
+  /// JSON 损坏抛「无法读取」（读路径要如实暴露损坏），为 false 时返回
+  /// null（写路径无从保留损坏内容，交由调用方整体重建）。
+  Future<Map<String, Object?>?> _readRawMap({required bool orThrow}) async {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! Map<String, Object?>) {
+        throw const FormatException('provider config must be an object');
+      }
+      return decoded;
+    } on Object catch (error) {
+      if (orThrow) {
+        throw ProviderConfigException('本地模型配置无法读取。', error);
+      }
+      return null;
+    }
+  }
+
+  Future<void> _writeFile(Map<String, Object?> json) async {
     try {
       await writer.replace(
         filePath,

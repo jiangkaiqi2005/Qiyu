@@ -107,7 +107,17 @@ final class ProviderSettingsService
     final fileKey = stored.credentialScope == config.credentialScope
         ? ProviderConfig.normalizeKey(stored.apiKey)
         : null;
-    return fileKey ?? secretStore.readApiKey(config.credentialScope);
+    if (fileKey != null) {
+      return fileKey;
+    }
+    final current = await secretStore.readApiKey(config.credentialScope);
+    if (current != null && current.isNotEmpty) {
+      return current;
+    }
+    // 现行 scope 未命中再按旧版 scope 字符串补读一次：旧安装的 Key
+    // 存的是带「?#」尾巴的旧格式，命中即视为当前作用域的 Key。
+    final legacy = await secretStore.readApiKey(config.legacyCredentialScope);
+    return legacy != null && legacy.isNotEmpty ? legacy : null;
   }
 
   Future<ProviderSettingsSnapshot> save({
@@ -128,16 +138,17 @@ final class ProviderSettingsService
     }
     await configRepository.save(config.withApiKey(persistedKey));
     // 切换 Provider 或地址会更换凭据作用域：旧作用域在凭据管理器里
-    // 的遗留 Key 从此无人读取，保存成功后立即清掉。
+    // 的遗留 Key 从此无人读取，保存成功后立即清掉（新旧两种 scope
+    // 字符串一并清，见 [_deleteStoredApiKeys]）。
     if (previous != null &&
         previous.credentialScope != config.credentialScope) {
-      await secretStore.deleteApiKey(previous.credentialScope);
+      await _deleteStoredApiKeys(previous);
     }
     // 文件一旦接管当前作用域的 Key，凭据管理器里的同作用域旧值即被
     // 取代：立即清掉，避免用户日后手改文件清空 Key 时回退复活陈旧
     // 凭据。纯旧安装（Key 只在凭据库、文件从未存过）不受影响。
     if (persistedKey != null) {
-      await secretStore.deleteApiKey(config.credentialScope);
+      await _deleteStoredApiKeys(config);
     }
     return read();
   }
@@ -147,9 +158,17 @@ final class ProviderSettingsService
     if (config != null) {
       await configRepository.save(config.withApiKey(null));
       // 一并清掉凭据管理器里的旧数据（升级前保存的 Key）。
-      await secretStore.deleteApiKey(config.credentialScope);
+      await _deleteStoredApiKeys(config);
     }
     return read();
+  }
+
+  /// 凭据管理器按 scope 精确匹配：同一配置在旧版本下可能以旧格式
+  /// scope（带「?#」尾巴）存过 Key，清理时新旧两个 scope 一并删除，
+  /// 与既有「文件接管/换作用域即清理」语义对称。
+  Future<void> _deleteStoredApiKeys(ProviderConfig config) async {
+    await secretStore.deleteApiKey(config.credentialScope);
+    await secretStore.deleteApiKey(config.legacyCredentialScope);
   }
 
   Future<ProviderTestResult> test({

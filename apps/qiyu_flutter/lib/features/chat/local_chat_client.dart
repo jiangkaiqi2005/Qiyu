@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
+import '../baseline/host_api_gateway.dart';
 
 enum LocalChatSpeaker { user, qiyu }
 
@@ -85,9 +88,10 @@ final class LocalChatExchange {
   final FallbackReason? fallbackReason;
 }
 
-final class LocalChatGatewayException implements Exception {
+final class LocalChatGatewayException implements Exception, UserFacingException {
   const LocalChatGatewayException(this.message);
 
+  @override
   final String message;
 
   @override
@@ -114,28 +118,35 @@ abstract interface class StreamingLocalChatGateway {
   });
 
   Future<bool> cancel(String requestId);
+
+  /// 语音转写：把浏览器录音字节交给本机程序云端转写，返回识别文本。
+  /// 失败（含「没有识别到语音」）抛 [LocalChatGatewayException]，
+  /// message 已是面向用户的人话。
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  });
 }
 
 final class HttpLocalChatGateway
+    extends HostApiGateway
     implements LocalChatGateway, StreamingLocalChatGateway {
-  HttpLocalChatGateway({http.Client? client, Uri? baseUri})
-    : _client = client ?? http.Client(),
-      _baseUri = baseUri ?? Uri.base;
+  HttpLocalChatGateway({super.client, super.baseUri});
 
-  final http.Client _client;
-  final Uri _baseUri;
-  String? _csrfToken;
+  @override
+  Object errorFor(String message) => LocalChatGatewayException(message);
+
+  @override
+  String get unavailableMessage => '本机聊天暂时不可用，请稍后重试。';
 
   @override
   Future<LocalChatSnapshot> restore({String? sessionId}) async {
-    await _ensureBootstrap();
-    final uri = _baseUri
-        .resolve('/api/chat/session')
-        .replace(
-          queryParameters: sessionId == null ? null : {'sessionId': sessionId},
-        );
-    final response = await _client.get(uri);
-    return LocalChatSnapshot.fromJson(_decodeSuccess(response));
+    await ensureBootstrap();
+    final uri = resolve('/api/chat/session').replace(
+      queryParameters: sessionId == null ? null : {'sessionId': sessionId},
+    );
+    final response = await httpClient.get(uri);
+    return LocalChatSnapshot.fromJson(decodeSuccess(response));
   }
 
   @override
@@ -176,19 +187,18 @@ final class HttpLocalChatGateway
     required String text,
     String? sessionId,
   }) async* {
-    await _ensureBootstrap();
-    final request = http.Request('POST', _baseUri.resolve('/api/chat'))
-      ..headers.addAll({
-        'content-type': 'application/json',
-        'accept': 'application/x-ndjson',
-        'x-qiyu-csrf': _csrfToken!,
-      })
-      ..body = jsonEncode({
-        'requestId': requestId,
-        'text': text,
-        'sessionId': ?sessionId,
-      });
-    final response = await _client.send(request);
+    final request = http.Request('POST', resolve('/api/chat'));
+    request.headers.addAll({
+      ...await csrfHeaders(),
+      'content-type': 'application/json',
+      'accept': 'application/x-ndjson',
+    });
+    request.body = jsonEncode({
+      'requestId': requestId,
+      'text': text,
+      'sessionId': ?sessionId,
+    });
+    final response = await httpClient.send(request);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final body = await response.stream.bytesToString();
       throw LocalChatGatewayException(_decodeErrorMessage(body));
@@ -214,23 +224,30 @@ final class HttpLocalChatGateway
 
   @override
   Future<bool> cancel(String requestId) async {
-    await _ensureBootstrap();
-    final response = await _client.post(
-      _baseUri.resolve('/api/chat/cancel'),
-      headers: {'content-type': 'application/json', 'x-qiyu-csrf': _csrfToken!},
+    final response = await httpClient.post(
+      resolve('/api/chat/cancel'),
+      headers: {
+        ...await csrfHeaders(),
+        'content-type': 'application/json',
+      },
       body: jsonEncode({'requestId': requestId}),
     );
-    final json = _decodeSuccess(response);
+    final json = decodeSuccess(response);
     return json['cancelled'] == true;
   }
 
-  Future<void> _ensureBootstrap() async {
-    if (_csrfToken != null) {
-      return;
-    }
-    final response = await _client.get(_baseUri.resolve('/api/bootstrap'));
-    final json = _decodeSuccess(response);
-    _csrfToken = json['csrfToken']! as String;
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async {
+    final response = await httpClient.post(
+      resolve('/api/chat/transcribe'),
+      headers: {...await csrfHeaders(), 'content-type': mimeType},
+      body: audio,
+    );
+    final json = decodeSuccess(response);
+    return json['text'] as String? ?? '';
   }
 }
 
@@ -241,21 +258,4 @@ String _decodeErrorMessage(String body) {
   } on Object {
     return '本机聊天暂时不可用，请稍后重试。';
   }
-}
-
-Map<String, Object?> _decodeSuccess(http.Response response) {
-  Map<String, Object?>? json;
-  try {
-    json = jsonDecode(response.body) as Map<String, Object?>;
-  } on Object {
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      throw const LocalChatGatewayException('本机程序返回了无法读取的内容。');
-    }
-  }
-  if (response.statusCode < 200 || response.statusCode >= 300) {
-    throw LocalChatGatewayException(
-      json?['message'] as String? ?? '本机聊天暂时不可用，请稍后重试。',
-    );
-  }
-  return json!;
 }

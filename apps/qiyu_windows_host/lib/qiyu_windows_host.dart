@@ -35,6 +35,8 @@ export 'src/provider_settings_service.dart';
 export 'src/relationship_lifecycle.dart';
 export 'src/secret_store.dart';
 export 'src/state_pack_reader.dart';
+export 'src/stt_gateway.dart';
+export 'src/stt_settings_service.dart';
 
 final class HostPreflightReport {
   HostPreflightReport({

@@ -118,4 +118,115 @@ void main() {
       throwsA(isA<ProviderConfigException>()),
     );
   });
+
+  test('stt 段读写往返且 Key 只落在文件里', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-stt-section-');
+    addTearDown(() => temp.delete(recursive: true));
+    final repository = JsonProviderConfigRepository(
+      filePath: '${temp.path}${Platform.pathSeparator}provider.json',
+    );
+
+    expect(await repository.loadStt(), isNull);
+    await repository.saveStt(
+      const SttConfig(
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-test',
+        apiKey: 'stt-secret-value',
+      ),
+    );
+
+    final restored = await JsonProviderConfigRepository(
+      filePath: '${temp.path}${Platform.pathSeparator}provider.json',
+    ).loadStt();
+    expect(restored!.baseUrl, 'https://stt.example.com/v1');
+    expect(restored.model, 'whisper-test');
+    expect(restored.apiKey, 'stt-secret-value');
+    final json =
+        jsonDecode(
+          await File(
+            '${temp.path}${Platform.pathSeparator}provider.json',
+          ).readAsString(),
+        ) as Map<String, Object?>;
+    expect((json['stt']! as Map<String, Object?>)['provider'],
+        'openai_compatible');
+  });
+
+  test('保存聊天段与 stt 段互不覆盖', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-stt-sections-');
+    addTearDown(() => temp.delete(recursive: true));
+    final repository = JsonProviderConfigRepository(
+      filePath: '${temp.path}${Platform.pathSeparator}provider.json',
+    );
+
+    await repository.save(
+      const ProviderConfig(
+        kind: ProviderKind.openAiCompatible,
+        baseUrl: 'https://chat.example.com/v1',
+        model: 'chat-model',
+        temperature: 0.6,
+        timeoutSeconds: 25,
+      ).withApiKey('chat-secret-value'),
+    );
+    await repository.saveStt(
+      const SttConfig(
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-test',
+        apiKey: 'stt-secret-value',
+      ),
+    );
+    // 再保存一次聊天段（repository 层不解释 Key 沿用，按传入值写入）：
+    // stt 段必须原样保留。
+    await repository.save(
+      const ProviderConfig(
+        kind: ProviderKind.openAiCompatible,
+        baseUrl: 'https://chat.example.com/v1',
+        model: 'chat-model-2',
+        temperature: 0.7,
+        timeoutSeconds: 30,
+      ).withApiKey('chat-secret-value'),
+    );
+
+    final json =
+        jsonDecode(
+          await File(
+            '${temp.path}${Platform.pathSeparator}provider.json',
+          ).readAsString(),
+        ) as Map<String, Object?>;
+    expect(json['model'], 'chat-model-2');
+    final stt = json['stt']! as Map<String, Object?>;
+    expect(stt['baseUrl'], 'https://stt.example.com/v1');
+    expect(stt['apiKey'], 'stt-secret-value');
+
+    // 保存 stt 段也不抹掉聊天 Key。
+    await repository.saveStt(
+      const SttConfig(baseUrl: 'https://stt.example.com/v1', model: 'whisper-2'),
+    );
+    final reloaded =
+        jsonDecode(
+          await File(
+            '${temp.path}${Platform.pathSeparator}provider.json',
+          ).readAsString(),
+        ) as Map<String, Object?>;
+    expect(reloaded['apiKey'], 'chat-secret-value');
+    expect((reloaded['stt']! as Map<String, Object?>)['model'], 'whisper-2');
+  });
+
+  test('只有 stt 段时聊天读取视为未配置而不是损坏', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-stt-only-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    await File(filePath).writeAsString('''
+{
+  "stt": {
+    "provider": "openai_compatible",
+    "baseUrl": "https://stt.example.com/v1",
+    "model": "whisper-test"
+  }
+}
+''');
+
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+    expect(await repository.load(), isNull);
+    expect((await repository.loadStt())!.model, 'whisper-test');
+  });
 }

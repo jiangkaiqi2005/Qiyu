@@ -20,6 +20,8 @@ import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
 
 void main() {
   testWidgets(
@@ -229,6 +231,10 @@ void main() {
           onboardingViewModel: await _onboardingViewModel(),
           memoryViewModel: memoryViewModel,
           providerSettingsViewModel: await _providerSettingsViewModel(),
+          sttSettingsViewModel: SttSettingsViewModel(
+            const _FixedSttSettingsGateway(),
+            autoStart: false,
+          ),
           settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
         ),
       );
@@ -1763,6 +1769,12 @@ final class _FakeChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async => '语音测试转写';
 }
 
 final class _FakeHostConnectionProbe implements HostConnectionProbe {
@@ -1892,4 +1904,32 @@ final class _FakeBackupPlatform implements BackupPlatform {
 
   @override
   Future<Uint8List?> pickBackupFile() async => picked;
+}
+
+final class _FixedSttSettingsGateway implements SttSettingsGateway {
+  const _FixedSttSettingsGateway();
+
+  @override
+  Future<SttSettings> read() async =>
+      const SttSettings(configured: false, keySet: false);
+
+  @override
+  Future<SttSettings> save(SttSettingsDraft draft) async => SttSettings(
+    configured: true,
+    keySet: draft.apiKey != null,
+    baseUrl: draft.baseUrl,
+    model: draft.model,
+  );
+
+  @override
+  Future<SttSettings> forgetApiKey() async =>
+      const SttSettings(configured: false, keySet: false);
+
+  @override
+  Future<ProviderTestResult> testConnection(SttSettingsDraft draft) async =>
+      const ProviderTestResult(
+        succeeded: true,
+        status: ProviderTestStatus.success,
+        message: '连接成功，语音输入可以使用。',
+      );
 }

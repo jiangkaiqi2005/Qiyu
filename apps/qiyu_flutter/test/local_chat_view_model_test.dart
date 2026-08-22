@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
@@ -83,6 +84,49 @@ void main() {
     expect(qiyuMessages.single.text, '在。');
     viewModel.dispose();
   });
+
+  test('sendWhenIdle 等正在回复的一轮结束后再发出语音转写内容', () async {
+    final gateway = _GatedGateway();
+    var counter = 0;
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: _AvailableProbe(),
+      requestIdFactory: () => 'voice-${counter += 1}',
+      autoStart: false,
+    );
+    addTearDown(() {
+      gateway.release();
+      viewModel.dispose();
+    });
+
+    final first = viewModel.send('第一条');
+    await Future<void>.delayed(Duration.zero);
+    expect(viewModel.sending, isTrue);
+
+    var secondSettled = false;
+    final second = viewModel
+        .sendWhenIdle('语音转写的内容')
+        .whenComplete(() => secondSettled = true);
+    await Future<void>.delayed(Duration.zero);
+    // 第一轮还在流式回复：排队中的语音消息不并发发出。
+    expect(secondSettled, isFalse);
+    expect(
+      viewModel.messages
+          .where((message) => message.speaker == LocalChatSpeaker.user)
+          .map((message) => message.text),
+      ['第一条'],
+    );
+
+    gateway.release();
+    expect(await first, isTrue);
+    expect(await second, isTrue);
+    expect(
+      viewModel.messages
+          .where((message) => message.speaker == LocalChatSpeaker.user)
+          .map((message) => message.text),
+      ['第一条', '语音转写的内容'],
+    );
+  });
 }
 
 final class _TwoBubbleGateway implements StreamingLocalChatGateway {
@@ -92,6 +136,13 @@ final class _TwoBubbleGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async => '语音测试转写';
 
   @override
   Stream<LocalChatDeliveryEvent> deliver({
@@ -177,6 +228,13 @@ final class _GatedGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async => '语音测试转写';
 
   @override
   Stream<LocalChatDeliveryEvent> deliver({

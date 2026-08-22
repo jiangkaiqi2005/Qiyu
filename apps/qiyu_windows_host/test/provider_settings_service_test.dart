@@ -253,6 +253,76 @@ void main() {
     expect(gateway.apiKey, 'legacy-only-value');
   });
 
+  test('旧版 scope 字符串（带「?#」尾巴）下的凭据回退仍可读取使用', () async {
+    final repository = _MemoryProviderConfigRepository()..config = config;
+    // 只在旧格式 scope 下有 Key：模拟升级前的纯旧安装。
+    final secrets = _MemorySecretStore()
+      ..values[config.legacyCredentialScope] = 'legacy-scope-value';
+    final gateway = _FakeModelGateway(reply: '在。');
+    final service = ProviderSettingsService(
+      repository,
+      secrets,
+      gateway,
+      promptBuilder,
+    );
+
+    final snapshot = await service.read();
+    expect(snapshot.keySet, isTrue);
+
+    final result = await service.test(config: config);
+    expect(result.status, ProviderTestStatus.success);
+    expect(gateway.apiKey, 'legacy-scope-value');
+  });
+
+  test('文件接管 Key 后旧格式 scope 的凭据条目一并被清理', () async {
+    final repository = _MemoryProviderConfigRepository()..config = config;
+    final secrets = _MemorySecretStore()
+      ..values[config.legacyCredentialScope] = 'legacy-scope-value';
+    final service = ProviderSettingsService(
+      repository,
+      secrets,
+      _FakeModelGateway(reply: '在。'),
+      promptBuilder,
+    );
+
+    await service.save(config: config, apiKey: 'fresh-private-value');
+
+    expect(await secrets.readApiKey(config.legacyCredentialScope), isNull);
+    expect(await secrets.readApiKey(config.credentialScope), isNull);
+
+    // 换作用域保存也把旧格式的旧作用域条目清走。
+    final secrets2 = _MemorySecretStore()
+      ..values[config.legacyCredentialScope] = 'legacy-scope-value';
+    final service2 = ProviderSettingsService(
+      _MemoryProviderConfigRepository()..config = config,
+      secrets2,
+      _FakeModelGateway(reply: '在。'),
+      promptBuilder,
+    );
+    const switched = ProviderConfig(
+      kind: ProviderKind.openAiCompatible,
+      baseUrl: 'https://different.example/v1',
+      model: 'new-model',
+      temperature: 0.5,
+      timeoutSeconds: 20,
+    );
+    await service2.save(config: switched, apiKey: 'new-private-value');
+    expect(await secrets2.readApiKey(config.legacyCredentialScope), isNull);
+
+    // 忘记 Key 同样覆盖旧格式条目。
+    final secrets3 = _MemorySecretStore()
+      ..values[switched.legacyCredentialScope] = 'legacy-scope-value';
+    final service3 = ProviderSettingsService(
+      _MemoryProviderConfigRepository()..config = switched,
+      secrets3,
+      _FakeModelGateway(reply: '在。'),
+      promptBuilder,
+    );
+    final forgotten = await service3.forgetApiKey();
+    expect(forgotten.keySet, isFalse);
+    expect(await secrets3.readApiKey(switched.legacyCredentialScope), isNull);
+  });
+
   test('同作用域保存其他字段保留已存 Key，换作用域不带新 Key 则清空', () async {
     final repository = _MemoryProviderConfigRepository();
     final secrets = _MemorySecretStore();
