@@ -824,7 +824,7 @@ final class MemoryCenterService {
     Set<String> blocked,
   ) async {
     final state = await dreamService.readState();
-    final contents = await _readIfExists(_longMemoryFile);
+    final contents = await readFileIfExists(_longMemoryFile);
     final trimmed = contents?.trim() ?? '';
     if (trimmed.isEmpty) {
       return MemoryLongTermSection(
@@ -924,7 +924,7 @@ final class MemoryCenterService {
     Set<String> blocked,
   ) async {
     final sharedPast = await _sharedPastItems(frozen, blocked);
-    final contents = await _readIfExists(_relationshipFile);
+    final contents = await readFileIfExists(_relationshipFile);
     final parsed = contents == null ? null : parseRelationshipFile(contents);
     if (parsed == null) {
       return MemoryRelationshipSection(
@@ -962,7 +962,7 @@ final class MemoryCenterService {
     Set<String> frozen,
     Set<String> blocked,
   ) async {
-    final contents = await _readIfExists(_longMemoryFile);
+    final contents = await readFileIfExists(_longMemoryFile);
     final trimmed = contents?.trim() ?? '';
     if (trimmed.isEmpty) {
       return const [];
@@ -1268,17 +1268,6 @@ final class MemoryCenterService {
       }
     }
     return latest;
-  }
-
-  Future<String?> _readIfExists(File file) async {
-    if (!await file.exists()) {
-      return null;
-    }
-    try {
-      return await file.readAsString(encoding: utf8);
-    } on Object {
-      return null;
-    }
   }
 
   String _register(MemoryItemRef ref) {

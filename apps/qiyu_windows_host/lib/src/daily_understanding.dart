@@ -141,8 +141,7 @@ final class DayUnderstanding {
     if (bannedTitles.isEmpty) {
       return this;
     }
-    bool hit(String text) =>
-        bannedTitleMatches(normalizeMemoryText(text), bannedTitles);
+    bool hit(String text) => bannedMemoryText(text, bannedTitles);
     return DayUnderstanding(
       summary: _dropBanned(summary, bannedTitles),
       mood: _dropBanned(mood, bannedTitles),
@@ -344,10 +343,7 @@ String? _clipText(Object? value, int maxRunes) {
 
 /// 禁提子字段过滤的统一形态：命中禁提置 null，其余原样返回。
 String? _dropBanned(String? value, Set<String> bannedTitles) =>
-    value != null &&
-        bannedTitleMatches(normalizeMemoryText(value), bannedTitles)
-    ? null
-    : value;
+    value != null && bannedMemoryText(value, bannedTitles) ? null : value;
 
 /// covered_request_ids 的统一解析（持久化键与模型输出键共用）：只收
 /// 非空且未重复的 requestId，保持原序。
@@ -446,8 +442,7 @@ DayUnderstanding? parseDayUnderstanding(
   if (json == null) {
     return null;
   }
-  bool banned(String text) =>
-      bannedTitleMatches(normalizeMemoryText(text), bannedTitles);
+  bool banned(String text) => bannedMemoryText(text, bannedTitles);
 
   final summary = _clipText(json['summary'], dailySummaryMaxRunes);
   if (summary != null && banned(summary)) {
@@ -638,7 +633,7 @@ List<ModelMessage> _understandingMessages({
 
   final entryLines = StringBuffer();
   for (final entry in entries) {
-    if (bannedTitleMatches(normalizeMemoryText(entry.summary), bannedTitles)) {
+    if (bannedMemoryText(entry.summary, bannedTitles)) {
       continue;
     }
     final label = entry.kind == episodeKindMemory
@@ -661,7 +656,7 @@ List<ModelMessage> _understandingMessages({
       if (safeText.isEmpty) {
         continue;
       }
-      if (bannedTitleMatches(normalizeMemoryText(safeText), bannedTitles)) {
+      if (bannedMemoryText(safeText, bannedTitles)) {
         safeText = '[受记忆控制内容已隐藏]';
       }
       sessionLines.writeln(

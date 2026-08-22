@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
@@ -210,10 +211,7 @@ final class OpenLoopStore {
       return const [];
     }
     final controls = await memoryControls.load();
-    final controlled = {
-      ...controls.blockedSummaries,
-      ...controls.frozenSummaries,
-    };
+    final controlled = controls.controlledSummaries;
     return items
         .where(
           (item) =>
@@ -238,10 +236,7 @@ final class OpenLoopStore {
           return 0;
         }
         final controls = await memoryControls.load();
-        final controlled = {
-          ...controls.blockedSummaries,
-          ...controls.frozenSummaries,
-        };
+        final controlled = controls.controlledSummaries;
         var nextId = _nextLoopNumber(parsed);
         final contents = parsed.contents;
         var promoted = 0;
@@ -570,11 +565,9 @@ final class _ParsedLoops {
   final List<OpenLoopItem> items;
 }
 
-/// 标题规范化：折叠空白并统一大小写，用于去重、禁提与状态定位。
-String normalizeLoopTitle(String value) => value
-    .replaceAll(RegExp(r'\s+'), ' ')
-    .toLowerCase()
-    .trim();
+/// 标题规范化：与 [normalizeMemoryText] 同一规则（折叠空白并统一
+/// 大小写），用于去重、禁提与状态定位。
+String normalizeLoopTitle(String value) => normalizeMemoryText(value);
 
 /// 禁提范围按包含关系匹配：禁提记录存的是事项简称，派生内容（episode
 /// 摘要、画像理解等）往往是更长的完整句，精确相等会漏。宁可多屏蔽，
@@ -592,6 +585,60 @@ bool bannedTitleMatches(String normalizedText, Set<String> bannedTitles) {
     }
   }
   return false;
+}
+
+/// 记忆原文级的受控筛查谓词：先经 [normalizeMemoryText] 归一化，再按
+/// [bannedTitleMatches] 的包含规则匹配。注入过滤、提炼闸门与删除清除
+/// 的「原文 + 受控集合」判断统一走这里，不再各自拼组合。
+bool bannedMemoryText(String text, Set<String> bannedTitles) =>
+    bannedTitleMatches(normalizeMemoryText(text), bannedTitles);
+
+/// 行级受控过滤：列表行（`- ` 开头）命中 [controlled] 即丢弃，其余
+/// 原样保留；null 原样返回。relationship.md / daily-state.md 这类
+/// 按行投影文件的注入与整理共用同一份实现。
+String? filterControlledLines(
+  String? contents,
+  bool Function(String text) controlled,
+) {
+  if (contents == null) {
+    return null;
+  }
+  final kept = <String>[];
+  for (final line in contents.split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.startsWith('- ') && controlled(trimmed)) {
+      continue;
+    }
+    kept.add(line);
+  }
+  return kept.join('\n');
+}
+
+/// open-loops.md 的条目级受控过滤：文件缺失返回 null；结构不可识别
+/// 原样返回；有条目标题命中 [controlled] 时重渲染为只含未命中条目的
+/// 完整文件文本。日终整理与 Dream 输入共用同一份重渲染格式。
+String? filterOpenLoopContents(
+  String? contents,
+  bool Function(String title) controlled,
+) {
+  if (contents == null) {
+    return null;
+  }
+  final items = parseOpenLoopItems(contents);
+  if (items == null) {
+    return contents;
+  }
+  final kept = items
+      .where((item) => !controlled(item.title))
+      .map((item) => item.raw)
+      .toList();
+  if (kept.length == items.length) {
+    return contents;
+  }
+  if (kept.isEmpty) {
+    return '# open-loops\n';
+  }
+  return '# open-loops\n\n${kept.join('\n')}\n';
 }
 
 /// 把 open-loops.md 拆成条目块并解析四字段；无法识别的结构返回 null。
@@ -668,4 +715,3 @@ OpenLoopItem? _parseItemBlock(List<String> blockLines) {
     note: field('note'),
   );
 }
-

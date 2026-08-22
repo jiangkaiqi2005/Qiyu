@@ -305,9 +305,7 @@ final class MonthlySummaryStore {
     // 主题关键词来自索引（索引本身不过滤受控内容），落盘前同样过滤，
     // 与条目侧的控制纪律保持一致。
     final theme = (await _monthTheme(month))
-        .where(
-          (keyword) => !bannedTitleMatches(normalizeMemoryText(keyword), banned),
-        )
+        .where((keyword) => !bannedMemoryText(keyword, banned))
         .toList();
     final sections = <String, List<MonthSummaryItem>>{
       sectionHappened: happened.take(_maxHappenedItems).toList(),
@@ -360,8 +358,7 @@ final class MonthlySummaryStore {
       if (summary == null || !summary.readable) {
         continue;
       }
-      bool hit(String text) =>
-          bannedTitleMatches(normalizeMemoryText(text), blocked);
+      bool hit(String text) => bannedMemoryText(text, blocked);
       final keptItems = summary.items.where((item) => !hit(item.text)).toList();
       final keptTheme = summary.theme.where((keyword) => !hit(keyword)).toList();
       final removedHere =
@@ -491,7 +488,7 @@ final class MonthlySummaryStore {
       return const {};
     }
     final controls = await store.memoryControls.load();
-    return {...controls.blockedSummaries, ...controls.frozenSummaries};
+    return controls.controlledSummaries;
   }
 
   /// 当前仍未闭环（active/paused）的 open-loop 标题集合。
@@ -533,8 +530,8 @@ final class MonthlySummaryStore {
       return MonthSummary(month: month, readable: false);
     }
     final compressedDates = (metadata['compressedDates'] as List<Object?>?)
-            ?.whereType<String>()
-            .toList() ??
+        ?.whereType<String>()
+        .toList() ??
         const [];
     final skippedRaw = metadata['skipped'];
     final skipped = <String, String>{};

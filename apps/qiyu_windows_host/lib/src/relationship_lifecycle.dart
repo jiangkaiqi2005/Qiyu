@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'open_loop_store.dart';
@@ -619,11 +620,9 @@ final class _RelationshipSignals {
   final List<EpisodeEntry> changes;
 }
 
-/// 规范化用于去重比较：折叠空白并统一小写；不改变落盘原文。
-String normalizeRelationshipLine(String value) => value
-    .replaceAll(RegExp(r'\s+'), ' ')
-    .toLowerCase()
-    .trim();
+/// 规范化用于去重比较：与 [normalizeMemoryText] 同一规则（折叠空白
+/// 并统一大小写）；不改变落盘原文。
+String normalizeRelationshipLine(String value) => normalizeMemoryText(value);
 
 String _clip(String value, int maxRunes) {
   final runes = value.runes;

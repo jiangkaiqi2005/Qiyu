@@ -147,7 +147,7 @@ final class RecallOrchestrator {
           .map((action) => action.query ?? '')
           .where((value) => value.trim().isNotEmpty)
           .firstOrNull ??
-          '',
+      '',
     ).trim();
     if (query.isEmpty) {
       diagnostics.add('recall skipped reason=empty-query');
@@ -263,13 +263,12 @@ final class RecallOrchestrator {
       }
       final entries = <EpisodeEntry>[];
       for (final entry in validEpisodeEntries(day.entries)) {
-        if (bannedTitleMatches(normalizeMemoryText(entry.summary), banned)) {
+        if (bannedMemoryText(entry.summary, banned)) {
           diagnostics.add('recall entry skipped reason=blocked date=$date');
           continue;
         }
         final evidence = entry.evidence;
-        if (evidence != null &&
-            bannedTitleMatches(normalizeMemoryText(evidence), banned)) {
+        if (evidence != null && bannedMemoryText(evidence, banned)) {
           // 摘要未命中但原话摘录命中受控范围：丢掉摘录，保留摘要。
           diagnostics.add('recall evidence dropped reason=blocked date=$date');
           entries.add(
@@ -381,12 +380,10 @@ final class RecallOrchestrator {
     return kept;
   }
 
-  List<String> _filterBannedKeywords(List<String> keywords, Set<String> banned) =>
-      keywords
-          .where(
-            (keyword) => !bannedTitleMatches(normalizeMemoryText(keyword), banned),
-          )
-          .toList();
+  List<String> _filterBannedKeywords(
+    List<String> keywords,
+    Set<String> banned,
+  ) => keywords.where((keyword) => !bannedMemoryText(keyword, banned)).toList();
 
   Set<String> _datesOf(Map<String, List<DayIndexLine>> dayIndexByMonth) {
     final dates = <String>{};
@@ -443,7 +440,7 @@ final class RecallOrchestrator {
       return const {};
     }
     final controls = await store.memoryControls.load();
-    return {...controls.blockedSummaries, ...controls.frozenSummaries};
+    return controls.controlledSummaries;
   }
 
   /// 选择调用：把查找意图与递回的目录交给模型，收回 memory_recall

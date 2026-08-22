@@ -890,7 +890,7 @@ final class LocalChatService {
         if (!isContentAction || summary == null) {
           return true;
         }
-        return !bannedTitleMatches(normalizeMemoryText(summary), forgetTargets);
+        return !bannedMemoryText(summary, forgetTargets);
       }).toList();
     }
 

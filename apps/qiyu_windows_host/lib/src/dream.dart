@@ -551,7 +551,7 @@ final class DreamService {
     // 进行中的草稿。
     await _deleteIfExists(_draftFile);
 
-    final existingContent = await _readIfExists(_longMemoryFile);
+    final existingContent = await readFileIfExists(_longMemoryFile);
     LongMemoryFile? existing;
     if (existingContent != null) {
       existing = parseLongMemory(existingContent);
@@ -670,8 +670,8 @@ final class DreamService {
     final frozenRequired = <String>[];
     if (input.frozen.isNotEmpty && existing != null) {
       for (final item in existing.allItems) {
-        if (bannedTitleMatches(normalizeMemoryText(item), input.frozen) &&
-            !bannedTitleMatches(normalizeMemoryText(item), input.banned)) {
+        if (bannedMemoryText(item, input.frozen) &&
+            !bannedMemoryText(item, input.banned)) {
           frozenRequired.add(item);
         }
       }
@@ -854,7 +854,7 @@ final class DreamService {
   /// 最近有效的 long-memory Dream 备份（ticket 21 恢复来源）；
   /// 不存在或结构不可读时返回 null。
   Future<String?> readLongMemoryBackup() async {
-    final contents = await _readIfExists(_backupFile);
+    final contents = await readFileIfExists(_backupFile);
     if (contents == null) {
       return null;
     }
@@ -933,8 +933,7 @@ final class DreamService {
     final banned = controls?.blockedSummaries ?? const <String>{};
     final frozen = controls?.frozenSummaries ?? const <String>{};
     bool controlled(String text) =>
-        bannedTitleMatches(normalizeMemoryText(text), banned) ||
-        bannedTitleMatches(normalizeMemoryText(text), frozen);
+        bannedMemoryText(text, banned) || bannedMemoryText(text, frozen);
 
     final dates = await episodePipeline.listEpisodeDates();
     final summaries = <({String date, String summary})>[];
@@ -978,13 +977,15 @@ final class DreamService {
       }
     }
 
-    final relationship = _filterControlledLines(
-      await _readIfExists(File(path.join(memoryDirectory, 'relationship.md'))),
+    final relationship = filterControlledLines(
+      await readFileIfExists(
+        File(path.join(memoryDirectory, 'relationship.md')),
+      ),
       controlled,
     );
     final openLoops = await _filteredOpenLoops(controlled);
     final longMemory = _filterLongMemoryInput(
-      await _readIfExists(_longMemoryFile),
+      await readFileIfExists(_longMemoryFile),
       banned,
     );
 
@@ -1075,50 +1076,14 @@ final class DreamService {
     return buffer.toString().trim();
   }
 
-  /// 行级受控过滤：列表行（`- ` 开头）命中即丢弃，其余结构原样保留。
-  /// 用于 relationship.md 这类按行投影的文件。
-  String? _filterControlledLines(
-    String? contents,
-    bool Function(String text) controlled,
-  ) {
-    if (contents == null) {
-      return null;
-    }
-    final kept = <String>[];
-    for (final line in contents.split('\n')) {
-      if (line.trim().startsWith('- ') && controlled(line.trim())) {
-        continue;
-      }
-      kept.add(line);
-    }
-    return kept.join('\n');
-  }
-
   /// 未闭环线索的受控过滤：封禁/冻结标题的条目不递给 Dream。
   /// 结构不可识别时原样递交（写侧另有控制闸门兜底）。
-  Future<String?> _filteredOpenLoops(bool Function(String text) controlled) async {
-    final contents = await _readIfExists(
-      File(path.join(memoryDirectory, 'open-loops.md')),
-    );
-    if (contents == null) {
-      return null;
-    }
-    final items = parseOpenLoopItems(contents);
-    if (items == null) {
-      return contents;
-    }
-    final kept = items
-        .where((item) => !controlled(item.title))
-        .map((item) => item.raw)
-        .toList();
-    if (kept.length == items.length) {
-      return contents;
-    }
-    if (kept.isEmpty) {
-      return '# open-loops\n';
-    }
-    return '# open-loops\n\n${kept.join('\n')}\n';
-  }
+  Future<String?> _filteredOpenLoops(
+    bool Function(String text) controlled,
+  ) async => filterOpenLoopContents(
+    await readFileIfExists(File(path.join(memoryDirectory, 'open-loops.md'))),
+    controlled,
+  );
 
   /// 长期印象输入过滤：封禁条目不递给模型（递给模型只会让草稿被
   /// 用户控制关整份拒绝）；冻结条目保留，冻结保留关要求其原样带回。
@@ -1136,9 +1101,7 @@ final class DreamService {
     for (final section in longMemorySections) {
       final items = parsed.sections[section] ?? const <String>[];
       final kept = items
-          .where(
-            (item) => !bannedTitleMatches(normalizeMemoryText(item), banned),
-          )
+          .where((item) => !bannedMemoryText(item, banned))
           .toList();
       if (kept.length != items.length) {
         changed = true;
@@ -1443,7 +1406,7 @@ final class DreamService {
     }
     // 用户控制关：不得改写或复活封禁（禁提 ∪ 删除）内容。
     for (final item in items) {
-      if (bannedTitleMatches(normalizeMemoryText(item.text), banned)) {
+      if (bannedMemoryText(item.text, banned)) {
         return 'banned';
       }
     }
@@ -1639,17 +1602,6 @@ final class DreamService {
       }
     } on Object catch (error) {
       _diagnosticsSink('dream archive deferred [$error]');
-    }
-  }
-
-  Future<String?> _readIfExists(File file) async {
-    if (!await file.exists()) {
-      return null;
-    }
-    try {
-      return await file.readAsString(encoding: utf8);
-    } on Object {
-      return null;
     }
   }
 

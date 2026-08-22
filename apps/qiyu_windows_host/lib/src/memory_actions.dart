@@ -464,7 +464,7 @@ final class MemoryActionService {
     if (!longMemorySections.contains(ref.section)) {
       return _notFound;
     }
-    final contents = await _readIfExists(_longMemoryFile);
+    final contents = await readFileIfExists(_longMemoryFile);
     final trimmed = contents?.trim() ?? '';
     if (trimmed.isEmpty) {
       return _notFound;
@@ -585,7 +585,7 @@ final class MemoryActionService {
     }
 
     var longTermItems = 0;
-    final longMemory = await _readIfExists(_longMemoryFile);
+    final longMemory = await readFileIfExists(_longMemoryFile);
     if (longMemory != null && longMemory.trim().isNotEmpty) {
       final parsed = parseLongMemory(longMemory);
       if (parsed.readable) {
@@ -606,7 +606,7 @@ final class MemoryActionService {
     }
 
     var relationshipLines = 0;
-    final relationship = await _readIfExists(_relationshipFile);
+    final relationship = await readFileIfExists(_relationshipFile);
     if (relationship != null) {
       final parsed = parseRelationshipFile(relationship);
       if (parsed != null) {
@@ -626,7 +626,7 @@ final class MemoryActionService {
     }
 
     var dailyStateLines = 0;
-    final dailyState = await _readIfExists(_dailyStateFile);
+    final dailyState = await readFileIfExists(_dailyStateFile);
     if (dailyState != null) {
       dailyStateLines = dailyState
           .split('\n')
@@ -714,7 +714,7 @@ final class MemoryActionService {
         return true;
       }
     }
-    final longMemory = await _readIfExists(_longMemoryFile);
+    final longMemory = await readFileIfExists(_longMemoryFile);
     if (longMemory != null && longMemory.trim().isNotEmpty) {
       final parsed = parseLongMemory(longMemory);
       if (parsed.readable && parsed.allItems.any(hitText)) {
@@ -739,14 +739,14 @@ final class MemoryActionService {
     if (items != null && items.any((item) => hitText(item.title))) {
       return true;
     }
-    final relationship = await _readIfExists(_relationshipFile);
+    final relationship = await readFileIfExists(_relationshipFile);
     if (relationship != null &&
         relationship
             .split('\n')
             .any((line) => line.trim().startsWith('- ') && hitText(line))) {
       return true;
     }
-    final dailyState = await _readIfExists(_dailyStateFile);
+    final dailyState = await readFileIfExists(_dailyStateFile);
     if (dailyState != null &&
         dailyState
             .split('\n')
@@ -901,9 +901,7 @@ final class MemoryActionService {
     for (final section in longMemorySections) {
       final items = parsed.sections[section] ?? const <String>[];
       final kept = items
-          .where(
-            (item) => !bannedTitleMatches(normalizeMemoryText(item), scope),
-          )
+          .where((item) => !bannedMemoryText(item, scope))
           .toList();
       if (kept.length != items.length) {
         changed = true;
@@ -928,8 +926,7 @@ final class MemoryActionService {
     var changed = false;
     for (final line in contents.split('\n')) {
       final trimmed = line.trim();
-      if (trimmed.startsWith('- ') &&
-          bannedTitleMatches(normalizeMemoryText(trimmed), scope)) {
+      if (trimmed.startsWith('- ') && bannedMemoryText(trimmed, scope)) {
         changed = true;
         continue;
       }
@@ -1035,7 +1032,7 @@ final class MemoryActionService {
     if (!longMemorySections.contains(section)) {
       return null;
     }
-    final contents = await _readIfExists(_longMemoryFile);
+    final contents = await readFileIfExists(_longMemoryFile);
     final trimmed = contents?.trim() ?? '';
     if (trimmed.isEmpty) {
       return null;
@@ -1054,7 +1051,7 @@ final class MemoryActionService {
   }
 
   Future<String?> _relationshipLineText(String list, String text) async {
-    final contents = await _readIfExists(_relationshipFile);
+    final contents = await readFileIfExists(_relationshipFile);
     if (contents == null) {
       return null;
     }
@@ -1086,24 +1083,13 @@ final class MemoryActionService {
     final trimmed = value?.trim() ?? '';
     return trimmed.isEmpty ? null : trimmed;
   }
-
-  Future<String?> _readIfExists(File file) async {
-    if (!await file.exists()) {
-      return null;
-    }
-    try {
-      return await file.readAsString(encoding: utf8);
-    } on Object {
-      return null;
-    }
-  }
 }
 
 /// 控制范围（禁提 ∪ 删除）的统一文本匹配谓词：与注入侧同一套
-/// 包含规则（bannedTitleMatches + normalizeMemoryText），删除预览、
-/// 定位扫描与派生清除共用，绝不各写一套。
+/// 包含规则（bannedMemoryText），删除预览、定位扫描与派生清除共用，
+/// 绝不各写一套。
 bool Function(String) _scopeHitText(Set<String> scope) =>
-    (candidate) => bannedTitleMatches(normalizeMemoryText(candidate), scope);
+    (candidate) => bannedMemoryText(candidate, scope);
 
 /// episode 条目是否命中控制范围：簿记条目（open_loop_event，含受控
 /// 标题文字）不参与匹配；摘要与原始摘录任一命中即算。

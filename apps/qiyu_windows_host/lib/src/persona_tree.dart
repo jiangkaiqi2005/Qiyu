@@ -443,7 +443,7 @@ String? rootClaimGateFailure(String claim, {required Set<String> banned}) {
   if (redactSessionText(trimmed) != trimmed) {
     return 'sensitive-claim';
   }
-  if (bannedTitleMatches(normalizeMemoryText(trimmed), banned)) {
+  if (bannedMemoryText(trimmed, banned)) {
     return 'banned-claim';
   }
   if (rootTimeWordPattern.hasMatch(trimmed)) {
@@ -522,8 +522,7 @@ int dateSpanDays(String earlier, String later) {
 
 /// 定稿冻结标题命中判定，Persona 注入关与 Dream 校验共用。
 bool frozenTitleHit(String text, Set<String> frozen) =>
-    frozen.isNotEmpty &&
-    bannedTitleMatches(normalizeMemoryText(text), frozen);
+    frozen.isNotEmpty && bannedMemoryText(text, frozen);
 
 final _leafLinePattern = RegExp(
   r'^- \[([A-Z]{2}-L\d+)\] (\d{4}-\d{2}-\d{2}) \| '
@@ -730,20 +729,14 @@ final class PersonaTreeStore {
   bool _sweepBanned(_BranchState state, Set<String> banned) {
     var changed = false;
     final bannedMiddles = state.unrooted
-        .where(
-          (middle) =>
-              bannedTitleMatches(normalizeMemoryText(middle.claim), banned),
-        )
+        .where((middle) => bannedMemoryText(middle.claim, banned))
         .toList();
     if (bannedMiddles.isNotEmpty) {
       state.unrooted.removeWhere(bannedMiddles.contains);
       changed = true;
     }
     final bannedLeaves = state.unclassified
-        .where(
-          (leaf) =>
-              bannedTitleMatches(normalizeMemoryText(leaf.summary), banned),
-        )
+        .where((leaf) => bannedMemoryText(leaf.summary, banned))
         .toList();
     if (bannedLeaves.isNotEmpty) {
       state.unclassified.removeWhere(bannedLeaves.contains);
@@ -778,10 +771,7 @@ final class PersonaTreeStore {
         applied = true;
       }
       final bannedRoots = state.roots
-          .where(
-            (root) =>
-                bannedTitleMatches(normalizeMemoryText(root.claim), banned),
-          )
+          .where((root) => bannedMemoryText(root.claim, banned))
           .toList();
       if (bannedRoots.isNotEmpty) {
         state.roots.removeWhere(bannedRoots.contains);
@@ -791,10 +781,7 @@ final class PersonaTreeStore {
       }
       for (final root in state.roots) {
         final hitMiddles = root.middles
-            .where(
-              (middle) =>
-                  bannedTitleMatches(normalizeMemoryText(middle.claim), banned),
-            )
+            .where((middle) => bannedMemoryText(middle.claim, banned))
             .toList();
         if (hitMiddles.isNotEmpty) {
           root.middles.removeWhere(hitMiddles.contains);
@@ -1247,7 +1234,7 @@ final class PersonaTreeStore {
           );
           continue;
         }
-        if (bannedTitleMatches(normalizeMemoryText(summary), banned)) {
+        if (bannedMemoryText(summary, banned)) {
           _diagnosticsSink(
             'persona leaf skipped reason=blocked branch=${branch.wireName}',
           );

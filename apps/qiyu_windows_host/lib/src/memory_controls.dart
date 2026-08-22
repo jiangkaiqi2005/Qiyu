@@ -60,6 +60,13 @@ final class MemoryControls {
     ...bannedSummaries,
     ...deletedSummaries,
   };
+
+  /// 受控集合 = 封禁 ∪ 冻结：注入、检索与整理的统一过滤范围，
+  /// 冻结同样停止自动整理与注入。
+  Set<String> get controlledSummaries => {
+    ...blockedSummaries,
+    ...frozenSummaries,
+  };
 }
 
 final _controlEntryPattern = RegExp(r'^- \[MC(\d+)\]\s*([^|]*?)\s*\|\s*(.+)$');
@@ -285,17 +292,7 @@ final class MemoryControlsStore {
     return '${_normalizeTrailing(base)}$section\n$line\n';
   }
 
-  Future<String?> _readRawContents() async {
-    final file = controlsFile;
-    if (!await file.exists()) {
-      return null;
-    }
-    try {
-      return await file.readAsString(encoding: utf8);
-    } on Object {
-      return null;
-    }
-  }
+  Future<String?> _readRawContents() => readFileIfExists(controlsFile);
 
   String _normalizeTrailing(String contents) {
     final trimmed = contents.replaceAll(RegExp(r'\n{3,}$'), '\n\n');

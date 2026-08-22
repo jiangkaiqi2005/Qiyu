@@ -63,6 +63,20 @@ void stderrDiagnostics(String message) {
   stderr.writeln('[qiyu] ${redactDiagnosticText(message)}');
 }
 
+/// 安全读取文本文件：不存在或读取失败（权限、占用、损坏等）一律
+/// 返回 null，由调用方按「缺失与不可读同义」处理。记忆域各存储类
+/// 共用同一份容错口径，不再各写一套。
+Future<String?> readFileIfExists(File file) async {
+  if (!await file.exists()) {
+    return null;
+  }
+  try {
+    return await file.readAsString(encoding: utf8);
+  } on Object {
+    return null;
+  }
+}
+
 final class MemoryRepositoryException implements Exception {
   const MemoryRepositoryException({
     required this.code,
