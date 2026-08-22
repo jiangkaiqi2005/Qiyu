@@ -128,7 +128,7 @@ void main() {
   );
 
   test(
-    'restores a recent prior-day session but starts today explicitly',
+    'openSession rolls to a fresh today segment on a new day but keeps explicit replay',
     () async {
       final repository = MarkdownMemoryRepository(
         memoryDirectory: temporaryDirectory.path,
@@ -142,12 +142,13 @@ void main() {
       now = now.add(const Duration(days: 1));
 
       final restored = await repository.openSession();
-      final today = await repository.createSession();
+      final replayed = await repository.openSession(sessionId: saved.id);
 
-      expect(restored.id, saved.id);
-      expect(restored.turns.single.text, '昨晚的话');
-      expect(today.id, isNot(saved.id));
-      expect(today.date, '2026-08-12');
+      expect(restored.id, isNot(saved.id));
+      expect(restored.date, '2026-08-12');
+      expect(restored.turns, isEmpty);
+      expect(replayed.id, saved.id);
+      expect(replayed.turns.single.text, '昨晚的话');
     },
   );
 

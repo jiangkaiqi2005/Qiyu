@@ -212,7 +212,7 @@ void main() {
     // 首页与初见页是仅有的非列表整页：字号放大后必须可滚动不溢出。
     await _pumpScaled(
       tester,
-      const HomeView(),
+      _homeWithChatViewModel(),
       scale: 1.5,
     );
     expect(tester.takeException(), isNull);
@@ -370,7 +370,7 @@ void main() {
   ) async {
     // 负例：普通模式不加多余边框；正例：高对比模式（如 Windows 强制
     // 颜色）下依赖底色区分的卡片要有可见边框（ticket 24 验收 4）。
-    await _pumpScaled(tester, const HomeView(), scale: 1.0);
+    await _pumpScaled(tester, _homeWithChatViewModel(), scale: 1.0);
     await tester.pumpAndSettle();
     final normalCard = tester.widget<Card>(find.byType(Card).first);
     expect(
@@ -378,7 +378,7 @@ void main() {
       BorderSide.none,
     );
 
-    await _pumpHighContrast(tester, const HomeView());
+    await _pumpHighContrast(tester, _homeWithChatViewModel());
     await tester.pumpAndSettle();
     final contrastCard = tester.widget<Card>(find.byType(Card).first);
     expect(
@@ -475,6 +475,16 @@ Future<void> _goHome(WidgetTester tester) async {
 Finder _verticalScrollable() => find.byWidgetPredicate(
   (widget) =>
       widget is Scrollable && widget.axisDirection == AxisDirection.down,
+);
+
+/// 首页依赖应用级的聊天 view model（副标题按当前会话状态切换）。
+Widget _homeWithChatViewModel() => ChangeNotifierProvider.value(
+  value: LocalChatViewModel(
+    _FakeChatGateway(),
+    hostConnectionProbe: _FixedProbe(),
+    autoStart: false,
+  ),
+  child: const HomeView(),
 );
 
 /// 按高对比模式泵入单页（验证强制颜色等场景下的边框兜底）。

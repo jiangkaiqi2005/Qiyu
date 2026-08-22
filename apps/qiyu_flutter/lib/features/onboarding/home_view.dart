@@ -1,13 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 
 import '../accessibility.dart';
+import '../chat/local_chat_view_model.dart';
 
 class HomeView extends StatelessWidget {
   const HomeView({super.key});
 
   @override
   Widget build(BuildContext context) {
+    // 当前会话按天分界：今天还没聊过（恢复出的会话为空）时，入口
+    // 引导开新对话，而不是「接着上次说」。
+    final chatViewModel = context.watch<LocalChatViewModel>();
+    final chatSubtitle =
+        chatViewModel.initialized && chatViewModel.messages.isEmpty
+        ? '今天想聊点什么'
+        : '接着上次说';
     return Scaffold(
       body: SafeArea(
         // 小窗与字号放大时整体可滚动（ticket 24），绝不溢出。
@@ -27,7 +36,7 @@ class HomeView extends StatelessWidget {
                 key: const Key('home-go-chat'),
                 icon: Icons.chat_bubble_outline,
                 title: '聊天',
-                subtitle: '接着上次说',
+                subtitle: chatSubtitle,
                 onTap: () => context.go('/chat'),
               ),
               _HomeEntry(

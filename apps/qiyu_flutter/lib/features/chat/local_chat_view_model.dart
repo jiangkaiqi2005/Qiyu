@@ -48,6 +48,7 @@ final class LocalChatViewModel extends ChangeNotifier {
   List<LocalChatMessage> get messages => List.unmodifiable(_messages);
   String? get errorMessage => _errorMessage;
   bool get loading => _initializing && !_initialized;
+  bool get initialized => _initialized;
   bool get sending => _sending;
   bool get waiting => _waiting;
   String get streamingText => _streamingText;

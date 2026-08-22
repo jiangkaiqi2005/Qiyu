@@ -340,9 +340,9 @@ final class MarkdownMemoryRepository implements MemoryRepository {
     if (requested != null) {
       return requested;
     }
+    // 当前会话按天分界：昨天的段不再作为当前会话回放，第二天打开即开新段。
     final latest = _latestSession(sessions);
-    if (latest != null &&
-        now.difference(latest.updatedAt) <= activeSessionHistoryWindow) {
+    if (latest != null && latest.date == today) {
       return latest;
     }
 

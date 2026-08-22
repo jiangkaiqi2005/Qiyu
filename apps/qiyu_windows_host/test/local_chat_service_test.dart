@@ -706,6 +706,37 @@ void main() {
     },
   );
 
+  test(
+    'restore on a later day starts a fresh session instead of replaying the old one',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-restore-day-change-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      var now = DateTime(2026, 8, 11, 23, 50);
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final service = LocalChatService(repository, clock: () => now);
+
+      final day1 = await service.send(requestId: 'day-1', text: '今天有点累');
+      expect(day1.session.date, '2026-08-11');
+
+      now = DateTime(2026, 8, 12, 20, 5);
+      final snapshot = await service.restore();
+
+      expect(snapshot.session.date, '2026-08-12');
+      expect(snapshot.session.id, isNot(day1.session.id));
+      expect(snapshot.session.turns, isEmpty);
+
+      // 指定旧段 id 的回放（历史查看路径）不受跨天分界影响。
+      final replayed = await service.restore(sessionId: day1.session.id);
+      expect(replayed.session.id, day1.session.id);
+      expect(replayed.session.turns, isNotEmpty);
+    },
+  );
+
   test('deleting the current session lets restore start a fresh one', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-delete-session-test-',

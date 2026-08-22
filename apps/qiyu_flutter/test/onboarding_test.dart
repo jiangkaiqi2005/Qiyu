@@ -153,6 +153,70 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('home chat entry invites a new talk before today first chat', (
+    tester,
+  ) async {
+    final onboardingGateway = _FakeOnboardingGateway(completed: true);
+    final onboardingViewModel = await _onboardingViewModel(
+      onboardingGateway,
+      configured: false,
+    );
+    final chatViewModel = LocalChatViewModel(
+      _RestoringChatGateway(
+        const LocalChatSnapshot(sessionId: 'session-today', messages: []),
+      ),
+      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      autoStart: false,
+    );
+    await chatViewModel.initialize();
+
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: chatViewModel,
+        onboardingViewModel: onboardingViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('今天想聊点什么'), findsOneWidget);
+    expect(find.text('接着上次说'), findsNothing);
+  });
+
+  testWidgets('home chat entry keeps resuming once today has messages', (
+    tester,
+  ) async {
+    final onboardingGateway = _FakeOnboardingGateway(completed: true);
+    final onboardingViewModel = await _onboardingViewModel(
+      onboardingGateway,
+      configured: false,
+    );
+    final chatViewModel = LocalChatViewModel(
+      _RestoringChatGateway(
+        const LocalChatSnapshot(sessionId: 'session-today', messages: [
+          LocalChatMessage(
+            requestId: 'today-1',
+            speaker: LocalChatSpeaker.user,
+            text: '今天有点累',
+          ),
+        ]),
+      ),
+      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      autoStart: false,
+    );
+    await chatViewModel.initialize();
+
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: chatViewModel,
+        onboardingViewModel: onboardingViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('接着上次说'), findsOneWidget);
+    expect(find.text('今天想聊点什么'), findsNothing);
+  });
+
   testWidgets('clearing local product data reopens the first meeting', (
     tester,
   ) async {
@@ -344,6 +408,25 @@ final class _UnusedChatGateway implements StreamingLocalChatGateway {
   @override
   Future<LocalChatSnapshot> restore({String? sessionId}) async =>
       const LocalChatSnapshot(sessionId: 'session-1', messages: []);
+
+  @override
+  Stream<LocalChatDeliveryEvent> deliver({
+    required String requestId,
+    required String text,
+    String? sessionId,
+  }) async* {}
+
+  @override
+  Future<bool> cancel(String requestId) async => true;
+}
+
+final class _RestoringChatGateway implements StreamingLocalChatGateway {
+  _RestoringChatGateway(this.snapshot);
+
+  final LocalChatSnapshot snapshot;
+
+  @override
+  Future<LocalChatSnapshot> restore({String? sessionId}) async => snapshot;
 
   @override
   Stream<LocalChatDeliveryEvent> deliver({
