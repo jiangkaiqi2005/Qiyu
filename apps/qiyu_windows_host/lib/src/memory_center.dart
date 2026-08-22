@@ -704,6 +704,13 @@ final class MemoryCenterService {
 
   final LinkedHashMap<String, MemoryItemRef> _registry = LinkedHashMap();
 
+  /// 无恢复服务或无持久化报告时的健康空状态。
+  static const _healthyRecoverySection = MemoryRecoverySection(
+    healthy: true,
+    findings: [],
+    quarantinedFiles: 0,
+  );
+
   File get _longMemoryFile =>
       File(path.join(memoryDirectory, 'long-memory.md'));
   File get _relationshipFile =>
@@ -729,19 +736,11 @@ final class MemoryCenterService {
   Future<MemoryRecoverySection> _recoverySection() async {
     final service = memoryRecovery;
     if (service == null) {
-      return const MemoryRecoverySection(
-        healthy: true,
-        findings: [],
-        quarantinedFiles: 0,
-      );
+      return _healthyRecoverySection;
     }
     final report = await service.readReport();
     if (report == null) {
-      return const MemoryRecoverySection(
-        healthy: true,
-        findings: [],
-        quarantinedFiles: 0,
-      );
+      return _healthyRecoverySection;
     }
     return MemoryRecoverySection(
       healthy: report.healthy && report.quarantinedFiles == 0,
@@ -1296,11 +1295,4 @@ String _newOpaqueId() {
   final random = Random.secure();
   final bytes = List<int>.generate(18, (_) => random.nextInt(256));
   return base64Url.encode(bytes).replaceAll('=', '');
-}
-
-extension<T> on Iterable<T> {
-  T? get firstOrNull {
-    final iterator = this.iterator;
-    return iterator.moveNext() ? iterator.current : null;
-  }
 }

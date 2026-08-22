@@ -544,25 +544,18 @@ final class MemoryActionService {
     if (ref is MemoryRelationshipRef && ref.list != 'sharedPast') {
       return null;
     }
-    final scope = {normalizeMemoryText(text)};
-    bool hitText(String candidate) =>
-        bannedTitleMatches(normalizeMemoryText(candidate), scope);
+    final hitText = _scopeHitText({normalizeMemoryText(text)});
+    final hitEntry = _scopeHitEntry(hitText);
 
+    final dates = await episodePipeline.listEpisodeDates();
     var entries = 0;
     var daySummaries = 0;
-    for (final date in await episodePipeline.listEpisodeDates()) {
+    for (final date in dates) {
       final day = await episodePipeline.readDay(date);
       if (!day.readable) {
         continue;
       }
-      entries += day.entries
-          .where(
-            (entry) =>
-                entry.kind != episodeKindOpenLoopEvent &&
-                (hitText(entry.summary) ||
-                    (entry.evidence != null && hitText(entry.evidence!))),
-          )
-          .length;
+      entries += day.entries.where(hitEntry).length;
       final summary = day.summary;
       if (summary != null && hitText(summary)) {
         daySummaries += 1;
@@ -601,10 +594,7 @@ final class MemoryActionService {
     }
 
     var monthSummaryItems = 0;
-    final months = <String>{
-      for (final date in await episodePipeline.listEpisodeDates())
-        date.substring(0, 7),
-    };
+    final months = <String>{for (final date in dates) date.substring(0, 7)};
     for (final month in months) {
       final summaryFile = await monthlySummary.readMonthSummary(month);
       if (summaryFile == null || !summaryFile.readable) {
@@ -710,15 +700,11 @@ final class MemoryActionService {
   /// 定位扫描（只读）：episodes、长期印象、画像、未闭环事项、关系
   /// 记录、近日状态、月摘要任一层命中即返回 true。
   Future<bool> _locate(String normalized) async {
-    final scope = {normalized};
-    bool hitText(String candidate) =>
-        bannedTitleMatches(normalizeMemoryText(candidate), scope);
-    bool hitEntry(EpisodeEntry entry) =>
-        entry.kind != episodeKindOpenLoopEvent &&
-        (hitText(entry.summary) ||
-            (entry.evidence != null && hitText(entry.evidence!)));
+    final hitText = _scopeHitText({normalized});
+    final hitEntry = _scopeHitEntry(hitText);
 
-    for (final date in await episodePipeline.listEpisodeDates()) {
+    final dates = await episodePipeline.listEpisodeDates();
+    for (final date in dates) {
       final day = await episodePipeline.readDay(date);
       if (!day.readable) {
         continue;
@@ -767,10 +753,7 @@ final class MemoryActionService {
             .any((line) => line.trim().startsWith('- ') && hitText(line))) {
       return true;
     }
-    final months = <String>{
-      for (final date in await episodePipeline.listEpisodeDates())
-        date.substring(0, 7),
-    };
+    final months = <String>{for (final date in dates) date.substring(0, 7)};
     for (final month in months) {
       final summaryFile = await monthlySummary.readMonthSummary(month);
       if (summaryFile == null || !summaryFile.readable) {
@@ -825,12 +808,8 @@ final class MemoryActionService {
     Set<String> scope, {
     required String text,
   }) async {
-    bool hitText(String candidate) =>
-        bannedTitleMatches(normalizeMemoryText(candidate), scope);
-    bool hitEntry(EpisodeEntry entry) =>
-        entry.kind != episodeKindOpenLoopEvent &&
-        (hitText(entry.summary) ||
-            (entry.evidence != null && hitText(entry.evidence!)));
+    final hitText = _scopeHitText(scope);
+    final hitEntry = _scopeHitEntry(hitText);
 
     final deferred = <String>[];
     try {
@@ -1120,9 +1099,16 @@ final class MemoryActionService {
   }
 }
 
-extension<T> on Iterable<T> {
-  T? get firstOrNull {
-    final iterator = this.iterator;
-    return iterator.moveNext() ? iterator.current : null;
-  }
-}
+/// 控制范围（禁提 ∪ 删除）的统一文本匹配谓词：与注入侧同一套
+/// 包含规则（bannedTitleMatches + normalizeMemoryText），删除预览、
+/// 定位扫描与派生清除共用，绝不各写一套。
+bool Function(String) _scopeHitText(Set<String> scope) =>
+    (candidate) => bannedTitleMatches(normalizeMemoryText(candidate), scope);
+
+/// episode 条目是否命中控制范围：簿记条目（open_loop_event，含受控
+/// 标题文字）不参与匹配；摘要与原始摘录任一命中即算。
+bool Function(EpisodeEntry) _scopeHitEntry(bool Function(String) hitText) =>
+    (entry) =>
+        entry.kind != episodeKindOpenLoopEvent &&
+        (hitText(entry.summary) ||
+            (entry.evidence != null && hitText(entry.evidence!)));

@@ -28,6 +28,19 @@ const _maxBackupTotalBytes = 1 << 30;
 /// 快照保留份数：导入与回滚都会新增快照，只保留最近几份。
 const _snapshotKeepCount = 5;
 
+/// 备份结构无效（不是 zip 或空包）的统一拒绝码与文案。
+BackupValidationException _notABackup() => const BackupValidationException(
+  'not-a-backup',
+  '这不是有效的栖语备份文件。',
+);
+
+/// 备份清单缺失或条目不完整的统一拒绝码与文案。
+BackupValidationException _manifestIncomplete() =>
+    const BackupValidationException(
+      'missing-manifest',
+      '备份清单不完整，无法验证。',
+    );
+
 /// 导入预览中每个文件的归类（ticket 22）：新增、替换、冲突、跳过、
 /// 不可恢复。冲突与不可恢复的项目一律不写入本机。
 enum BackupItemCategory {
@@ -306,23 +319,14 @@ final class MemoryBackupService {
   /// 导出范围：记忆目录内白名单路径的全部文件。恢复隔离区、快照、
   /// Dream 草稿与诊断档案、临时文件一律不导出。
   Future<Map<String, Uint8List>> _collectExportFiles() async {
-    final root = Directory(memoryDirectory);
+    final diskFiles = await _listRelativeFiles(Directory(memoryDirectory));
     final files = <String, Uint8List>{};
-    if (!await root.exists()) {
-      return files;
-    }
-    await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is! File) {
-        continue;
-      }
-      final relative = path
-          .relative(entity.path, from: memoryDirectory)
-          .replaceAll(r'\', '/');
-      if (!_allowedMemoryPath(relative)) {
+    for (final MapEntry(:key, :value) in diskFiles.entries) {
+      if (!_allowedMemoryPath(key)) {
         continue;
       }
       try {
-        files[relative] = await entity.readAsBytes();
+        files[key] = await value.readAsBytes();
       } on Object catch (error) {
         _diagnosticsSink('backup export skipped unreadable file [$error]');
       }
@@ -337,7 +341,7 @@ final class MemoryBackupService {
     final buffer = StringBuffer()
       ..writeln('# 栖语记忆备份')
       ..writeln()
-      ..writeln('$_manifestMarker${_encodeJson(manifestJson)} -->')
+      ..writeln('$_manifestMarker${encodeMarkerPayload(manifestJson)} -->')
       ..writeln()
       ..writeln('## 这份备份是什么')
       ..writeln()
@@ -383,16 +387,10 @@ final class MemoryBackupService {
     try {
       archive = ZipDecoder().decodeBytes(bundle);
     } on Object {
-      throw const BackupValidationException(
-        'not-a-backup',
-        '这不是有效的栖语备份文件。',
-      );
+      throw _notABackup();
     }
     if (archive.files.isEmpty) {
-      throw const BackupValidationException(
-        'not-a-backup',
-        '这不是有效的栖语备份文件。',
-      );
+      throw _notABackup();
     }
     if (archive.files.length > _maxBackupEntries) {
       throw const BackupValidationException(
@@ -445,27 +443,18 @@ final class MemoryBackupService {
 
     final declaredRaw = manifest['files'];
     if (declaredRaw is! List<Object?>) {
-      throw const BackupValidationException(
-        'missing-manifest',
-        '备份清单不完整，无法验证。',
-      );
+      throw _manifestIncomplete();
     }
     final declared = <String, ({int bytes, String sha256})>{};
     for (final item in declaredRaw) {
       if (item is! Map<String, Object?>) {
-        throw const BackupValidationException(
-          'missing-manifest',
-          '备份清单不完整，无法验证。',
-        );
+        throw _manifestIncomplete();
       }
       final entryPath = item['path'];
       final entryBytes = item['bytes'];
       final entrySha = item['sha256'];
       if (entryPath is! String || entryBytes is! int || entrySha is! String) {
-        throw const BackupValidationException(
-          'missing-manifest',
-          '备份清单不完整，无法验证。',
-        );
+        throw _manifestIncomplete();
       }
       declared['memory/$entryPath'.replaceFirst(RegExp('^memory/'), '')] =
           (bytes: entryBytes, sha256: entrySha);
@@ -536,7 +525,7 @@ final class MemoryBackupService {
       if (payloadEnd < 0) {
         throw const FormatException('manifest marker unterminated');
       }
-      final json = _decodeJson(
+      final json = decodeMarkerPayload(
         contents.substring(payloadStart, payloadEnd).trim(),
       );
       if (json['kind'] != 'qiyu-memory-backup') {
@@ -759,18 +748,17 @@ final class MemoryBackupService {
           continue;
         }
         switch (item.category) {
-          case BackupItemCategory.added:
+          case BackupItemCategory.added ||
+              BackupItemCategory.replaced:
             await _byteWriter.write(
               path.join(memoryDirectory, item.path),
               files[item.path]!,
             );
-            added += 1;
-          case BackupItemCategory.replaced:
-            await _byteWriter.write(
-              path.join(memoryDirectory, item.path),
-              files[item.path]!,
-            );
-            replaced += 1;
+            if (item.category == BackupItemCategory.added) {
+              added += 1;
+            } else {
+              replaced += 1;
+            }
           case BackupItemCategory.skipped:
             skipped += 1;
           case BackupItemCategory.conflict:
@@ -909,7 +897,7 @@ final class MemoryBackupService {
       return false;
     }
     try {
-      _decodeJson(match.group(1)!);
+      decodeMarkerPayload(match.group(1)!);
       return true;
     } on Object {
       return false;
@@ -934,26 +922,15 @@ final class MemoryBackupService {
     final directory = Directory(path.join(_backupsDirectory.path, id));
     await directory.create(recursive: true);
     var fileCount = 0;
-    final root = Directory(memoryDirectory);
-    if (await root.exists()) {
-      await for (final entity in root.list(
-        recursive: true,
-        followLinks: false,
-      )) {
-        if (entity is! File) {
-          continue;
-        }
-        final relative = path
-            .relative(entity.path, from: memoryDirectory)
-            .replaceAll(r'\', '/');
-        if (relative.startsWith('backups/') || relative.endsWith('.tmp')) {
-          continue;
-        }
-        final target = path.join(directory.path, relative);
-        await File(target).parent.create(recursive: true);
-        await entity.copy(target);
-        fileCount += 1;
+    final memoryFiles = await _listRelativeFiles(Directory(memoryDirectory));
+    for (final MapEntry(:key, :value) in memoryFiles.entries) {
+      if (key.startsWith('backups/') || key.endsWith('.tmp')) {
+        continue;
       }
+      final target = path.join(directory.path, key);
+      await File(target).parent.create(recursive: true);
+      await value.copy(target);
+      fileCount += 1;
     }
     final marker = {
       'kind': 'qiyu-memory-snapshot',
@@ -962,7 +939,7 @@ final class MemoryBackupService {
       'fileCount': fileCount,
     };
     await File(path.join(directory.path, 'snapshot.md')).writeAsString(
-      '# 栖语导入前快照\n\n$_snapshotMarker${_encodeJson(marker)} -->\n',
+      '# 栖语导入前快照\n\n$_snapshotMarker${encodeMarkerPayload(marker)} -->\n',
       encoding: utf8,
       flush: true,
     );
@@ -1006,7 +983,7 @@ final class MemoryBackupService {
       if (payloadEnd < 0) {
         return null;
       }
-      final json = _decodeJson(
+      final json = decodeMarkerPayload(
         contents.substring(payloadStart, payloadEnd).trim(),
       );
       final id = json['id'];
@@ -1066,47 +1043,26 @@ final class MemoryBackupService {
         '指定的快照不完整，无法恢复。',
       );
     }
+    final snapshotEntries = await _listRelativeFiles(directory);
+    snapshotEntries.remove('snapshot.md');
     final snapshotFiles = <String, Uint8List>{};
-    await for (final entity in directory.list(
-      recursive: true,
-      followLinks: false,
-    )) {
-      if (entity is! File) {
-        continue;
-      }
-      final relative = path
-          .relative(entity.path, from: directory.path)
-          .replaceAll(r'\', '/');
-      if (relative == 'snapshot.md') {
-        continue;
-      }
-      snapshotFiles[relative] = await entity.readAsBytes();
+    for (final MapEntry(:key, :value) in snapshotEntries.entries) {
+      snapshotFiles[key] = await value.readAsBytes();
     }
     for (final MapEntry(:key, :value) in snapshotFiles.entries) {
       await _byteWriter.write(path.join(memoryDirectory, key), value);
     }
     // 清理快照中不存在的文件（导入后新增的），快照本身不动。
-    final root = Directory(memoryDirectory);
-    if (await root.exists()) {
-      await for (final entity in root.list(
-        recursive: true,
-        followLinks: false,
-      )) {
-        if (entity is! File) {
-          continue;
-        }
-        final relative = path
-            .relative(entity.path, from: memoryDirectory)
-            .replaceAll(r'\', '/');
-        if (relative.startsWith('backups/') || relative.endsWith('.tmp')) {
-          continue;
-        }
-        if (!snapshotFiles.containsKey(relative)) {
-          try {
-            await entity.delete();
-          } on Object catch (error) {
-            _diagnosticsSink('snapshot restore cleanup deferred [$error]');
-          }
+    final memoryFiles = await _listRelativeFiles(Directory(memoryDirectory));
+    for (final MapEntry(:key, :value) in memoryFiles.entries) {
+      if (key.startsWith('backups/') || key.endsWith('.tmp')) {
+        continue;
+      }
+      if (!snapshotFiles.containsKey(key)) {
+        try {
+          await value.delete();
+        } on Object catch (error) {
+          _diagnosticsSink('snapshot restore cleanup deferred [$error]');
         }
       }
     }
@@ -1165,11 +1121,21 @@ final class MemoryBackupService {
   }
 }
 
-String _encodeJson(Map<String, Object?> value) =>
-    base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
-
-Map<String, Object?> _decodeJson(String value) {
-  final padded = value.padRight(value.length + (4 - value.length % 4) % 4, '=');
-  return jsonDecode(utf8.decode(base64Url.decode(padded)))
-      as Map<String, Object?>;
+/// 递归收集 [root] 下全部文件，键为正斜杠相对路径（导出、快照与
+/// 回滚清理共用同一种目录遍历）；目录不存在时返回空映射。两趟语义：
+/// 先整表列出目录，再由调用方逐个读文件，两趟之间文件系统发生的
+/// 变化不在备份与回滚的原子性保证内。
+Future<Map<String, File>> _listRelativeFiles(Directory root) async {
+  final files = <String, File>{};
+  if (!await root.exists()) {
+    return files;
+  }
+  await for (final entity in root.list(recursive: true, followLinks: false)) {
+    if (entity is! File) {
+      continue;
+    }
+    files[path.relative(entity.path, from: root.path).replaceAll(r'\', '/')] =
+        entity;
+  }
+  return files;
 }

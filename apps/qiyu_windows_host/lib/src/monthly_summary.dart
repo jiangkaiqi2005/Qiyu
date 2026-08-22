@@ -39,6 +39,10 @@ final _uncertaintyPattern = RegExp(
 
 final _summaryItemPattern = RegExp(r'^- (\d{4}-\d{2}-\d{2}) · (.+)$');
 
+/// purgeBlocked 扫描 episodes 目录时的年/月目录段校验。
+final _yearSegmentPattern = RegExp(r'^\d{4}$');
+final _monthSegmentPattern = RegExp(r'^\d{2}$');
+
 /// 月摘要中的一条证据条目：摘要文本 + 可回溯的证据引用
 /// （日期、episode 路径与条目号）。
 final class MonthSummaryItem {
@@ -273,7 +277,7 @@ final class MonthlySummaryStore {
           section: section,
           date: date,
           text: clipRunes(text, monthSummaryItemMaxRunes),
-          episodePath: _episodePathFor(date),
+          episodePath: episodeDayRelativePath(date),
           entryRef: entry.id,
         );
         switch (entry.kind) {
@@ -343,8 +347,8 @@ final class MonthlySummaryStore {
           final relative = path.relative(entity.path, from: episodesRoot.path);
           final parts = path.split(relative);
           if (parts.length == 3 &&
-              RegExp(r'^\d{4}$').hasMatch(parts[0]) &&
-              RegExp(r'^\d{2}$').hasMatch(parts[1])) {
+              _yearSegmentPattern.hasMatch(parts[0]) &&
+              _monthSegmentPattern.hasMatch(parts[1])) {
             months.add('${parts[0]}-${parts[1]}');
           }
         }
@@ -399,7 +403,7 @@ final class MonthlySummaryStore {
     required List<String> compressedDates,
     required Map<String, String> skipped,
   }) {
-    final metadata = _encodeJson({
+    final metadata = encodeMarkerPayload({
       'schemaVersion': 1,
       'month': month,
       'compressedDates': compressedDates,
@@ -428,9 +432,6 @@ final class MonthlySummaryStore {
     }
     return buffer.toString();
   }
-
-  String _episodePathFor(String date) =>
-      'episodes/${date.substring(0, 4)}/${date.substring(5, 7)}/$date.md';
 
   /// 超预算时按「先裁发生过的事情，再裁不确定内容、关系变化」的
   /// 顺序从尾部丢弃：线索分区最小也最常被跨月提起，留到最后。
@@ -523,7 +524,7 @@ final class MonthlySummaryStore {
     }
     Map<String, Object?> metadata;
     try {
-      metadata = _decodeJson(metadataMatch.group(1)!);
+      metadata = decodeMarkerPayload(metadataMatch.group(1)!);
     } on Object {
       return MonthSummary(month: month, readable: false);
     }
@@ -612,13 +613,4 @@ final class MonthlySummaryStore {
 
 extension on MonthSummaryItem {
   int get lineRunes => '\n- $date · $text | $pointer'.runes.length;
-}
-
-String _encodeJson(Map<String, Object?> value) =>
-    base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
-
-Map<String, Object?> _decodeJson(String value) {
-  final padded = value.padRight(value.length + (4 - value.length % 4) % 4, '=');
-  return jsonDecode(utf8.decode(base64Url.decode(padded)))
-      as Map<String, Object?>;
 }

@@ -26,6 +26,17 @@ const controlAuditPrefixUnfreeze = '解除冻结: ';
 const controlAuditPrefixDelete = '删除: ';
 const controlAuditPrefixForget = '不记录: ';
 
+/// 日文件与检查点的元数据标记（读取端；写入端见 [_writeDayFile] 与
+/// [_writeCheckpoint]）。
+final _episodeMetaPattern = RegExp(
+  r'^<!-- qiyu-episode:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
+final _checkpointMetaPattern = RegExp(
+  r'^<!-- qiyu-checkpoint:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
+
 final class EpisodeEntry {
   const EpisodeEntry({
     required this.id,
@@ -289,7 +300,11 @@ final class EpisodeMemoryPipeline {
       return null;
     }
     try {
-      final metadata = _decodeMetadata(await file.readAsString(encoding: utf8));
+      final metadata = _decodeMarkerMetadata(
+        await file.readAsString(encoding: utf8),
+        _checkpointMetaPattern,
+        'Missing qiyu checkpoint metadata',
+      );
       return EpisodeCheckpoint.fromJson(metadata);
     } on Object {
       return null;
@@ -617,9 +632,13 @@ final class EpisodeMemoryPipeline {
             r'^<!-- qiyu-episode-entry:([A-Za-z0-9_-]+) -->\r?$',
             multiLine: true,
           ).allMatches(contents).map((match) {
-            return EpisodeEntry.fromJson(_decodeJson(match.group(1)!));
+            return EpisodeEntry.fromJson(decodeMarkerPayload(match.group(1)!));
           }).toList();
-      final metadata = _decodeDayMetadata(contents);
+      final metadata = _decodeMarkerMetadata(
+        contents,
+        _episodeMetaPattern,
+        'Missing qiyu episode metadata',
+      );
       final finalizedAt = metadata['finalizedAt'] as String?;
       final understanding = metadata['understanding'];
       return EpisodeDay(
@@ -659,7 +678,7 @@ final class EpisodeMemoryPipeline {
       ..writeln('# 栖语每日记录')
       ..writeln()
       ..writeln(
-        '<!-- qiyu-episode:${_encodeJson({'schemaVersion': 1, 'date': date, 'updatedAt': _clock().toUtc().toIso8601String(), if (trimmedSummary != null && trimmedSummary.isNotEmpty) 'summary': trimmedSummary, 'finalized': finalized, if (finalizedAt != null) 'finalizedAt': finalizedAt.toUtc().toIso8601String(), 'understanding': ?understanding})} -->',
+        '<!-- qiyu-episode:${encodeMarkerPayload({'schemaVersion': 1, 'date': date, 'updatedAt': _clock().toUtc().toIso8601String(), if (trimmedSummary != null && trimmedSummary.isNotEmpty) 'summary': trimmedSummary, 'finalized': finalized, if (finalizedAt != null) 'finalizedAt': finalizedAt.toUtc().toIso8601String(), 'understanding': ?understanding})} -->',
       )
       ..writeln();
     if (trimmedSummary != null && trimmedSummary.isNotEmpty) {
@@ -670,7 +689,9 @@ final class EpisodeMemoryPipeline {
     }
     for (final entry in entries) {
       buffer
-        ..writeln('<!-- qiyu-episode-entry:${_encodeJson(entry.toJson())} -->')
+        ..writeln(
+          '<!-- qiyu-episode-entry:${encodeMarkerPayload(entry.toJson())} -->',
+        )
         ..writeln(
           '## ${entry.at.toLocal().toIso8601String()} · ${entry.summary}',
         )
@@ -695,14 +716,8 @@ final class EpisodeMemoryPipeline {
     }
   }
 
-  File _dayFile(String date) => File(
-    path.join(
-      _episodesDirectory.path,
-      date.substring(0, 4),
-      date.substring(5, 7),
-      '$date.md',
-    ),
-  );
+  File _dayFile(String date) =>
+      File(path.join(memoryDirectory, episodeDayRelativePath(date)));
 
   File _checkpointFile() =>
       File(path.join(_episodesDirectory.path, 'checkpoint.md'));
@@ -710,7 +725,7 @@ final class EpisodeMemoryPipeline {
   Future<void> _writeCheckpoint(EpisodeCheckpoint checkpoint) async {
     final contents =
         '# 栖语整理检查点\n\n'
-        '<!-- qiyu-checkpoint:${_encodeJson(checkpoint.toJson())} -->\n';
+        '<!-- qiyu-checkpoint:${encodeMarkerPayload(checkpoint.toJson())} -->\n';
     try {
       await _atomicWriter.replace(_checkpointFile().path, contents);
     } on MemoryRepositoryException {
@@ -725,34 +740,35 @@ final class EpisodeMemoryPipeline {
     }
   }
 
-  Map<String, Object?> _decodeMetadata(String contents) {
-    final match = RegExp(
-      r'^<!-- qiyu-checkpoint:([A-Za-z0-9_-]+) -->\r?$',
-      multiLine: true,
-    ).firstMatch(contents);
+  /// 从 Markdown 里定位元数据标记并解码载荷；标记缺失时按 [missing]
+  /// 抛出 [FormatException]。
+  Map<String, Object?> _decodeMarkerMetadata(
+    String contents,
+    RegExp marker,
+    String missing,
+  ) {
+    final match = marker.firstMatch(contents);
     if (match == null) {
-      throw const FormatException('Missing qiyu checkpoint metadata');
+      throw FormatException(missing);
     }
-    return _decodeJson(match.group(1)!);
-  }
-
-  Map<String, Object?> _decodeDayMetadata(String contents) {
-    final match = RegExp(
-      r'^<!-- qiyu-episode:([A-Za-z0-9_-]+) -->\r?$',
-      multiLine: true,
-    ).firstMatch(contents);
-    if (match == null) {
-      throw const FormatException('Missing qiyu episode metadata');
-    }
-    return _decodeJson(match.group(1)!);
+    return decodeMarkerPayload(match.group(1)!);
   }
 }
 
-String _encodeJson(Map<String, Object?> value) =>
+/// qiyu 记忆 Markdown 元数据标记载荷的统一编码（base64url 去填充）。
+/// 全部记忆文件的写入端与解析端必须共用这一对实现，任何一侧都不
+/// 允许另写变体；编码丢弃 `=`，解码时按 4 字节对齐补回。
+String encodeMarkerPayload(Map<String, Object?> value) =>
     base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
 
-Map<String, Object?> _decodeJson(String value) {
+/// [encodeMarkerPayload] 的逆变换；载荷非法时抛出解析异常。
+Map<String, Object?> decodeMarkerPayload(String value) {
   final padded = value.padRight(value.length + (4 - value.length % 4) % 4, '=');
   return jsonDecode(utf8.decode(base64Url.decode(padded)))
       as Map<String, Object?>;
 }
+
+/// episode 日文件在记忆目录内的相对路径（正斜杠）。两级索引与月
+/// 摘要里指向日文件的持久化指针共用同一拼装，解析端依赖该格式。
+String episodeDayRelativePath(String date) =>
+    'episodes/${date.substring(0, 4)}/${date.substring(5, 7)}/$date.md';

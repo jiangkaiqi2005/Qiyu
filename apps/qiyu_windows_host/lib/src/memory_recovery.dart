@@ -245,6 +245,14 @@ final _dreamStateMarkerPattern = RegExp(
   r'^<!-- qiyu-dream-state:([A-Za-z0-9_-]+) -->\r?$',
   multiLine: true,
 );
+final _checkpointMetaPattern = RegExp(
+  r'^<!-- qiyu-checkpoint:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
+final _recoveryReportMarkerPattern = RegExp(
+  r'^<!-- qiyu-recovery-report:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
 
 /// 归档墓碑标记（ticket 21）：归档损坏且无备份可恢复时，原位留下
 /// 该标记保持「归档不可读」语义——受影响分支的根节点升降因此持续
@@ -356,19 +364,18 @@ final class MemoryRecoveryService {
 
   /// 最近一次持久化的恢复报告；不存在或不可读返回 null。
   Future<MemoryRecoveryReport?> readReport() async {
-    final file = _reportFile;
-    if (!await file.exists()) {
+    final contents = await _readOrNull(_reportFile);
+    if (contents == null) {
       return null;
     }
     try {
-      final match = RegExp(
-        r'^<!-- qiyu-recovery-report:([A-Za-z0-9_-]+) -->\r?$',
-        multiLine: true,
-      ).firstMatch(await file.readAsString(encoding: utf8));
+      final match = _recoveryReportMarkerPattern.firstMatch(contents);
       if (match == null) {
         return null;
       }
-      return MemoryRecoveryReport.fromJson(_decodeJson(match.group(1)!));
+      return MemoryRecoveryReport.fromJson(
+        decodeMarkerPayload(match.group(1)!),
+      );
     } on Object {
       return null;
     }
@@ -446,16 +453,14 @@ final class MemoryRecoveryService {
         contents = await file.readAsString(encoding: utf8);
       } on Object {
         encodingCorrupt = true;
-        contents = await file.readAsString(
-          encoding: const Utf8Codec(allowMalformed: true),
-        );
+        contents = await _readLenient(file);
       }
 
       final metadataMatch = _sessionMetaPattern.firstMatch(contents);
       Map<String, Object?>? metadata;
       if (metadataMatch != null) {
         try {
-          metadata = _decodeJson(metadataMatch.group(1)!);
+          metadata = decodeMarkerPayload(metadataMatch.group(1)!);
         } on Object {
           metadata = null;
         }
@@ -465,7 +470,7 @@ final class MemoryRecoveryService {
       var failedMarkers = 0;
       for (final marker in markers) {
         try {
-          turns.add(RawSessionTurn.fromJson(_decodeJson(marker.group(1)!)));
+          turns.add(RawSessionTurn.fromJson(decodeMarkerPayload(marker.group(1)!)));
         } on Object {
           failedMarkers += 1;
         }
@@ -573,9 +578,7 @@ final class MemoryRecoveryService {
       try {
         contents = await file.readAsString(encoding: utf8);
       } on Object {
-        contents = await file.readAsString(
-          encoding: const Utf8Codec(allowMalformed: true),
-        );
+        contents = await _readLenient(file);
       }
       final label = '每日记录（$date）';
       if (!_episodeMetaPattern.hasMatch(contents) &&
@@ -597,7 +600,7 @@ final class MemoryRecoveryService {
       final metadataMatch = _episodeMetaPattern.firstMatch(contents);
       if (metadataMatch != null) {
         try {
-          metadata = _decodeJson(metadataMatch.group(1)!);
+          metadata = decodeMarkerPayload(metadataMatch.group(1)!);
         } on Object {
           metadata = null;
         }
@@ -607,7 +610,7 @@ final class MemoryRecoveryService {
       var failedMarkers = 0;
       for (final marker in markers) {
         try {
-          entries.add(EpisodeEntry.fromJson(_decodeJson(marker.group(1)!)));
+          entries.add(EpisodeEntry.fromJson(decodeMarkerPayload(marker.group(1)!)));
         } on Object {
           failedMarkers += 1;
         }
@@ -648,12 +651,7 @@ final class MemoryRecoveryService {
               : null,
         );
         // 元数据与全部条目完整（仅编码等外围损坏）：重写后内容无损。
-        // 截断在标记中间的残行匹配不了完整正则，按前缀计数兜底。
-        final truncatedMarkers =
-            _countOccurrences(contents, '<!-- qiyu-episode-entry:') >
-                markers.length;
-        final full =
-            metadata != null && failedMarkers == 0 && !truncatedMarkers;
+        final full = metadata != null && failedMarkers == 0 && !truncated;
         if (full) {
           await _deleteIfExists(File(quarantinePath));
         }
@@ -692,23 +690,13 @@ final class MemoryRecoveryService {
     if (!await file.exists()) {
       return;
     }
-    String contents;
-    var unreadable = false;
-    try {
-      contents = await file.readAsString(encoding: utf8);
-    } on Object {
-      unreadable = true;
-      contents = '';
-    }
+    final contents = await _readOrNull(file);
     Map<String, Object?>? metadata;
-    if (!unreadable) {
-      final match = RegExp(
-        r'^<!-- qiyu-checkpoint:([A-Za-z0-9_-]+) -->\r?$',
-        multiLine: true,
-      ).firstMatch(contents);
+    if (contents != null) {
+      final match = _checkpointMetaPattern.firstMatch(contents);
       if (match != null) {
         try {
-          metadata = _decodeJson(match.group(1)!);
+          metadata = decodeMarkerPayload(match.group(1)!);
         } on Object {
           metadata = null;
         }
@@ -903,13 +891,14 @@ final class MemoryRecoveryService {
   }
 
   /// 冻结集合恢复原文：审计重放后仍在冻结中的规范化摘要，找回其
-  /// 最近一次冻结事件的原文（落盘格式需要可读摘要）。
+  /// 最近一次冻结事件的原文（落盘格式需要可读摘要）。倒序扫描去重
+  /// 后再整体反转，保持事件时间顺序。
   List<String> _originalTexts(
     List<({DateTime at, String action, String text})> events,
     String action,
     Set<String> keptNormalized,
   ) {
-    final result = <String>[];
+    final latestFirst = <String>[];
     final seen = <String>{};
     for (final event in events.reversed) {
       if (event.action != action) {
@@ -917,10 +906,10 @@ final class MemoryRecoveryService {
       }
       final normalized = normalizeMemoryText(event.text);
       if (keptNormalized.contains(normalized) && seen.add(normalized)) {
-        result.insert(0, event.text);
+        latestFirst.add(event.text);
       }
     }
-    return result;
+    return latestFirst.reversed.toList();
   }
 
   // ---------- 索引与月摘要 ----------
@@ -1156,43 +1145,34 @@ final class MemoryRecoveryService {
 
     // daily-state.md：编码失败才算损坏；重建归下一次日终归档。
     final dailyState = File(path.join(memoryDirectory, 'daily-state.md'));
-    if (await dailyState.exists()) {
+    if (await dailyState.exists() && await _readOrNull(dailyState) == null) {
       try {
-        await dailyState.readAsString(encoding: utf8);
-      } on Object {
-        try {
-          await _quarantineMove(dailyState, 'daily-state');
-          findings.add(
-            const MemoryRecoveryFinding(
-              layerKey: 'daily-state',
-              layer: '近日状态',
-              kind: MemoryDamageKind.corrupt,
-              outcome: MemoryRecoveryOutcome.pending,
-              evidence: '下次日终归档按近 7 天有效记录重建',
-              loss: '近日状态内容',
-              quarantined: true,
-            ),
-          );
-        } on Object catch (error) {
-          _diagnosticsSink('daily-state quarantine deferred [$error]');
-        }
+        await _quarantineMove(dailyState, 'daily-state');
+        findings.add(
+          const MemoryRecoveryFinding(
+            layerKey: 'daily-state',
+            layer: '近日状态',
+            kind: MemoryDamageKind.corrupt,
+            outcome: MemoryRecoveryOutcome.pending,
+            evidence: '下次日终归档按近 7 天有效记录重建',
+            loss: '近日状态内容',
+            quarantined: true,
+          ),
+        );
+      } on Object catch (error) {
+        _diagnosticsSink('daily-state quarantine deferred [$error]');
       }
     }
 
     // relationship.md：受管结构损坏时从全部有效剧集证据整体重建。
     final relationship = File(path.join(memoryDirectory, 'relationship.md'));
     if (await relationship.exists()) {
-      String? contents;
-      try {
-        contents = await relationship.readAsString(encoding: utf8);
-      } on Object {
-        contents = null;
-      }
-      final managed = contents != null &&
-          contents.trimLeft().startsWith('# relationship');
+      final contents = await _readOrNull(relationship);
+      final managed =
+          contents != null && contents.trimLeft().startsWith('# relationship');
       final broken = contents == null ||
           (managed && parseRelationshipFile(contents) == null);
-      if (broken && (contents == null || managed)) {
+      if (broken) {
         try {
           final quarantinePath = await _quarantineMove(relationship, 'relationship');
           final dates = await episodePipeline.listEpisodeDates();
@@ -1287,17 +1267,12 @@ final class MemoryRecoveryService {
     // 并等待语义恢复，绝不补写无法证明的长期内容。
     final longMemory = File(path.join(memoryDirectory, 'long-memory.md'));
     if (await longMemory.exists()) {
-      String? contents;
-      try {
-        contents = await longMemory.readAsString(encoding: utf8);
-      } on Object {
-        contents = null;
-      }
-      final managed = contents != null &&
-          contents.trimLeft().startsWith('# long-memory');
+      final contents = await _readOrNull(longMemory);
+      final managed =
+          contents != null && contents.trimLeft().startsWith('# long-memory');
       final broken = contents == null ||
           (managed && !parseLongMemory(contents).readable);
-      if (broken && (contents == null || managed)) {
+      if (broken) {
         final backup = await dreamService.readLongMemoryBackup();
         if (backup != null) {
           try {
@@ -1494,12 +1469,7 @@ final class MemoryRecoveryService {
     // 等待，绝不写出残缺画像。
     final persona = File(path.join(memoryDirectory, 'persona.md'));
     if (await persona.exists()) {
-      String? contents;
-      try {
-        contents = await persona.readAsString(encoding: utf8);
-      } on Object {
-        contents = null;
-      }
+      final contents = await _readOrNull(persona);
       if (!_personaProjectionValid(contents)) {
         final freshSnapshot = await personaTree.readSnapshot();
         final allReadable = freshSnapshot.branches.values.every(
@@ -1551,15 +1521,17 @@ final class MemoryRecoveryService {
     final state = File(path.join(memoryDirectory, 'dream', 'state.md'));
     if (await state.exists()) {
       var valid = false;
-      try {
-        final contents = await state.readAsString(encoding: utf8);
+      final contents = await _readOrNull(state);
+      if (contents != null) {
         final match = _dreamStateMarkerPattern.firstMatch(contents);
         if (match != null) {
-          final json = _decodeJson(match.group(1)!);
-          valid = json['schemaVersion'] == 1;
+          try {
+            final json = decodeMarkerPayload(match.group(1)!);
+            valid = json['schemaVersion'] == 1;
+          } on Object {
+            valid = false;
+          }
         }
-      } on Object {
-        valid = false;
       }
       if (!valid) {
         try {
@@ -1751,36 +1723,41 @@ final class MemoryRecoveryService {
         }
         // 日志同样走 temp+rename 原子替换（读旧内容拼接后整体写回），
         // 中断不会留下写了一半的追加行。
-        var existing = '';
-        if (await _logFile.exists()) {
-          try {
-            existing = await _logFile.readAsString(encoding: utf8);
-          } on Object {
-            existing = '';
-          }
-        }
+        final existing = await _readOrNull(_logFile) ?? '';
         await _atomicWriter.replace(_logFile.path, existing + buffer.toString());
       }
       await _atomicWriter.replace(
         _reportFile.path,
         '# recovery-report\n\n'
             '<!-- qiyu-recovery-report:'
-            '${_encodeJson(report.toJson())} -->\n',
+            '${encodeMarkerPayload(report.toJson())} -->\n',
       );
     } on Object catch (error) {
       _diagnosticsSink('recovery persist deferred [$error]');
     }
   }
 
-  File _episodeDayFile(String date) => File(
-    path.join(
-      memoryDirectory,
-      'episodes',
-      date.substring(0, 4),
-      date.substring(5, 7),
-      '$date.md',
-    ),
-  );
+  /// 委托产出的路径为正斜杠拼装：仅供 File I/O 与 basename 使用，
+  /// 禁止对它做字符串等值比较。
+  File _episodeDayFile(String date) =>
+      File(path.join(memoryDirectory, episodeDayRelativePath(date)));
+
+  /// UTF-8 文本读取；文件不存在或读取失败返回 null。
+  Future<String?> _readOrNull(File file) async {
+    try {
+      if (!await file.exists()) {
+        return null;
+      }
+      return await file.readAsString(encoding: utf8);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// 编码损坏时的宽松解码兜底：宁可带着替换字符抢救正文结构，也
+  /// 不因外围编码失败丢弃原始证据。
+  Future<String> _readLenient(File file) =>
+      file.readAsString(encoding: const Utf8Codec(allowMalformed: true));
 
   Future<void> _deleteIfExists(File file) async {
     try {
@@ -1815,13 +1792,4 @@ final class MemoryRecoveryService {
       return null;
     }
   }
-}
-
-String _encodeJson(Map<String, Object?> value) =>
-    base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
-
-Map<String, Object?> _decodeJson(String value) {
-  final padded = value.padRight(value.length + (4 - value.length % 4) % 4, '=');
-  return jsonDecode(utf8.decode(base64Url.decode(padded)))
-      as Map<String, Object?>;
 }
