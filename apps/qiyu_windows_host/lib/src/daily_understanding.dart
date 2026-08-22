@@ -145,21 +145,17 @@ final class DayUnderstanding {
     bool hit(String text) =>
         bannedTitleMatches(normalizeMemoryText(text), bannedTitles);
     return DayUnderstanding(
-      summary: summary != null && hit(summary!) ? null : summary,
-      mood: mood != null && hit(mood!) ? null : mood,
+      summary: _dropBanned(summary, bannedTitles),
+      mood: _dropBanned(mood, bannedTitles),
       // 与解析侧策略一致：标题命中禁提整条丢弃；子字段命中只置空。
       loopCandidates: [
         for (final candidate in loopCandidates)
           if (!hit(candidate.title))
             (
               title: candidate.title,
-              due: candidate.due != null && hit(candidate.due!)
-                  ? null
-                  : candidate.due,
+              due: _dropBanned(candidate.due, bannedTitles),
               proactive: candidate.proactive,
-              note: candidate.note != null && hit(candidate.note!)
-                  ? null
-                  : candidate.note,
+              note: _dropBanned(candidate.note, bannedTitles),
             ),
       ],
       loopClosures: [
@@ -167,9 +163,7 @@ final class DayUnderstanding {
           if (!hit(closure.title))
             (
               title: closure.title,
-              result: closure.result != null && hit(closure.result!)
-                  ? null
-                  : closure.result,
+              result: _dropBanned(closure.result, bannedTitles),
             ),
       ],
       relationshipSignals: relationshipSignals
@@ -183,9 +177,7 @@ final class DayUnderstanding {
             (entry) => (
               requestId: entry.requestId,
               summary: entry.summary,
-              evidence: entry.evidence != null && hit(entry.evidence!)
-                  ? null
-                  : entry.evidence,
+              evidence: _dropBanned(entry.evidence, bannedTitles),
             ),
           )
           .toList(),
@@ -322,16 +314,7 @@ final class DayUnderstanding {
       }
       hints.add((branch: branch, nature: nature, summary: summary));
     }
-    final coveredRequestIds = <String>[];
-    final rawCovered = json['coveredRequestIds'];
-    if (rawCovered is List<Object?>) {
-      for (final requestId in rawCovered.whereType<String>()) {
-        final trimmed = requestId.trim();
-        if (trimmed.isNotEmpty && !coveredRequestIds.contains(trimmed)) {
-          coveredRequestIds.add(trimmed);
-        }
-      }
-    }
+    final coveredRequestIds = _coveredRequestIds(json['coveredRequestIds']);
     final entryCount = json['entryCount'];
     final lastEntryId = json['lastEntryId'];
     return DayUnderstanding(
@@ -358,6 +341,29 @@ String? _clipText(Object? value, int maxRunes) {
     return null;
   }
   return clipRunes(cleaned, maxRunes);
+}
+
+/// 禁提子字段过滤的统一形态：命中禁提置 null，其余原样返回。
+String? _dropBanned(String? value, Set<String> bannedTitles) =>
+    value != null &&
+        bannedTitleMatches(normalizeMemoryText(value), bannedTitles)
+    ? null
+    : value;
+
+/// covered_request_ids 的统一解析（持久化键与模型输出键共用）：只收
+/// 非空且未重复的 requestId，保持原序。
+List<String> _coveredRequestIds(Object? value) {
+  if (value is! List<Object?>) {
+    return const [];
+  }
+  final ids = <String>[];
+  for (final requestId in value.whereType<String>()) {
+    final trimmed = requestId.trim();
+    if (trimmed.isNotEmpty && !ids.contains(trimmed)) {
+      ids.add(trimmed);
+    }
+  }
+  return ids;
 }
 
 /// 执行日终一次模型理解调用。未配置 Provider（返回 null）、调用失败
@@ -471,19 +477,10 @@ DayUnderstanding? parseDayUnderstanding(
     episodeEntries.add((
       requestId: requestId.trim(),
       summary: summaryText,
-      evidence: evidence != null && banned(evidence) ? null : evidence,
+      evidence: _dropBanned(evidence, bannedTitles),
     ));
   }
-  final coveredRequestIds = <String>[];
-  final rawCoveredRequestIds = json['covered_request_ids'];
-  if (rawCoveredRequestIds is List<Object?>) {
-    for (final requestId in rawCoveredRequestIds.whereType<String>()) {
-      final trimmed = requestId.trim();
-      if (trimmed.isNotEmpty && !coveredRequestIds.contains(trimmed)) {
-        coveredRequestIds.add(trimmed);
-      }
-    }
-  }
+  final coveredRequestIds = _coveredRequestIds(json['covered_request_ids']);
 
   // 数量上限按「收纳条目」计：先校验后计数，无效项不占名额。
   final candidates = <UnderstandingLoopCandidate>[];
@@ -506,13 +503,13 @@ DayUnderstanding? parseDayUnderstanding(
     final due = _clipText(item['due'], understandingDueMaxRunes);
     candidates.add((
       title: title,
-      due: due != null && banned(due) ? null : due,
+      due: _dropBanned(due, bannedTitles),
       proactive:
           proactive is String &&
               _understandingProactiveWhitelist.contains(proactive)
           ? proactive
           : null,
-      note: note != null && banned(note) ? null : note,
+      note: _dropBanned(note, bannedTitles),
     ));
   }
 
@@ -527,10 +524,7 @@ DayUnderstanding? parseDayUnderstanding(
       continue;
     }
     final result = _clipText(item['result'], understandingResultMaxRunes);
-    closures.add((
-      title: title,
-      result: result != null && banned(result) ? null : result,
-    ));
+    closures.add((title: title, result: _dropBanned(result, bannedTitles)));
   }
 
   final signals = <UnderstandingSignal>[];

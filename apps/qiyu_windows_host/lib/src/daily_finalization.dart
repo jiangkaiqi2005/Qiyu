@@ -210,13 +210,7 @@ final class DailyFinalizationService {
     try {
       outcomes.add(await finalizeDay(date));
     } on Object catch (error) {
-      outcomes.add(
-        FinalizationOutcome(
-          date: date,
-          status: FinalizationStatus.failed,
-          detail: '$error',
-        ),
-      );
+      outcomes.add(_failedOutcome(date, error));
     }
     return FinalizationReport(outcomes: outcomes);
   }
@@ -242,12 +236,12 @@ final class DailyFinalizationService {
     final pending = <String>[];
     for (final date in past) {
       final day = await episodePipeline.readDay(date);
-      final sessions = history.sessions
-          .where((session) => session.date == date)
-          .toList();
       if (day.readable &&
           ((!day.finalized && day.exists) ||
-              _pendingSessionRequestIds(day, sessions).isNotEmpty)) {
+              _pendingSessionRequestIds(
+                day,
+                _sessionsOnDate(history.sessions, date),
+              ).isNotEmpty)) {
         pending.add(date);
       }
     }
@@ -261,20 +255,11 @@ final class DailyFinalizationService {
             episodeDates: dates,
             allowModel: modelDates.contains(date),
             // 补扫复用循环前已读的会话记录，避免逐日重复全量读盘。
-            sessions: history.sessions
-                .where((session) => session.date == date)
-                .toList()
-                ..sort((left, right) => left.segment.compareTo(right.segment)),
+            sessions: _sessionsOnDate(history.sessions, date),
           ),
         );
       } on Object catch (error) {
-        outcomes.add(
-          FinalizationOutcome(
-            date: date,
-            status: FinalizationStatus.failed,
-            detail: '$error',
-          ),
-        );
+        outcomes.add(_failedOutcome(date, error));
       }
     }
     return FinalizationReport(outcomes: outcomes);
@@ -593,8 +578,7 @@ final class DailyFinalizationService {
 
   Future<List<RawSession>> _sessionsForDate(String date) async {
     final history = await _sessionRepository.readHistory();
-    return history.sessions.where((session) => session.date == date).toList()
-      ..sort((left, right) => left.segment.compareTo(right.segment));
+    return _sessionsOnDate(history.sessions, date);
   }
 
   Set<String> _pendingSessionRequestIds(
@@ -957,13 +941,14 @@ final class DailyFinalizationService {
     final recentSection = recent.isEmpty ? '' : renderSection('用户当前近况', recent);
     var activeSection = active.isEmpty ? '' : renderSection('近日活跃', active);
     var usedRunes = sections.toString().runes.length + moodSection.runes.length;
+    final headerRunes = usedRunes - moodSection.runes.length;
     // 预算关（T09 砍序：气氛描述是 daily-state 内的可牺牲项）：超限
     // 先整体砍掉近日气氛，再砍近日活跃（最旧优先）；当前近况是最新
     // 一天的事实，预算上永远放得下，不参与裁剪。
     if (usedRunes + activeSection.runes.length + recentSection.runes.length >
         dailyStateMaxRunes) {
       moodSection = '';
-      usedRunes = sections.toString().runes.length;
+      usedRunes = headerRunes;
     }
     while (usedRunes + activeSection.runes.length + recentSection.runes.length >
             dailyStateMaxRunes &&
@@ -1021,7 +1006,28 @@ DateTime _parseDate(String date) => DateTime(
   int.parse(date.substring(8, 10)),
 );
 
+final _bedtimeTriggerTailPattern = RegExp(r'[。！!~～…]+$');
+final _bedtimeTriggerPattern = RegExp(
+  r'^(晚安|睡了|先睡|先睡了|我先睡|我先睡了|去睡了|睡觉|睡觉了)$',
+);
+
 bool _isPureBedtimeTrigger(String text) {
-  final normalized = text.trim().replaceAll(RegExp(r'[。！!~～…]+$'), '').trim();
-  return RegExp(r'^(晚安|睡了|先睡|先睡了|我先睡|我先睡了|去睡了|睡觉|睡觉了)$').hasMatch(normalized);
+  final normalized = text
+      .trim()
+      .replaceAll(_bedtimeTriggerTailPattern, '')
+      .trim();
+  return _bedtimeTriggerPattern.hasMatch(normalized);
 }
+
+/// 按日期过滤会话并按段号稳定排序：日终读取与补扫共用同一顺序。
+List<RawSession> _sessionsOnDate(List<RawSession> sessions, String date) =>
+    sessions.where((session) => session.date == date).toList()
+      ..sort((left, right) => left.segment.compareTo(right.segment));
+
+/// 单日归档失败的统一结果：细节只留异常摘要，供诊断与报告。
+FinalizationOutcome _failedOutcome(String date, Object error) =>
+    FinalizationOutcome(
+      date: date,
+      status: FinalizationStatus.failed,
+      detail: '$error',
+    );

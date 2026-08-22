@@ -1819,7 +1819,7 @@ String _encodeState(DreamState state) {
       'lastSuccess': state.lastSuccess!.toUtc().toIso8601String(),
     'pending': state.pending,
   };
-  return '# dream-state\n\n<!-- qiyu-dream-state:${_encodeJson(json)} -->\n';
+  return '# dream-state\n\n<!-- qiyu-dream-state:${encodeMarkerPayload(json)} -->\n';
 }
 
 DreamState? _decodeState(String contents) {
@@ -1831,7 +1831,7 @@ DreamState? _decodeState(String contents) {
     return null;
   }
   try {
-    final json = _decodeJson(match.group(1)!);
+    final json = decodeMarkerPayload(match.group(1)!);
     if (json['schemaVersion'] != 1) {
       return null;
     }
@@ -1843,15 +1843,6 @@ DreamState? _decodeState(String contents) {
   } on Object {
     return null;
   }
-}
-
-String _encodeJson(Map<String, Object?> value) =>
-    base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
-
-Map<String, Object?> _decodeJson(String value) {
-  final padded = value.padRight(value.length + (4 - value.length % 4) % 4, '=');
-  return jsonDecode(utf8.decode(base64Url.decode(padded)))
-      as Map<String, Object?>;
 }
 
 /// 距上次成功 Dream 的本地日历日差（[today] 为 YYYY-MM-DD）；从未

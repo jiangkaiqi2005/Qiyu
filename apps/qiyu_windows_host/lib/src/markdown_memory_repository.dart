@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'episode_memory.dart';
+
 const maxRawSessionTurns = 80;
 const activeSessionHistoryWindow = Duration(days: 180);
 
@@ -483,7 +485,7 @@ final class MarkdownMemoryRepository implements MemoryRepository {
 
   UnavailableSessionFile _unavailableFor(File file) {
     final name = path.basename(file.path);
-    final match = RegExp(r'^(\d{4}-\d{2}-\d{2})-(\d{3})\.md$').firstMatch(name);
+    final match = _sessionFileNamePattern.firstMatch(name);
     return UnavailableSessionFile(
       name: name,
       message: '这个会话文件暂时无法读取，不影响其他历史记录。',
@@ -500,6 +502,9 @@ final class MarkdownMemoryRepository implements MemoryRepository {
     '${session.date}-${session.segment.toString().padLeft(3, '0')}.md',
   );
 }
+
+/// 会话文件名形态（日期-段号.md）：不可读文件据此提取日期与段号。
+final _sessionFileNamePattern = RegExp(r'^(\d{4}-\d{2}-\d{2})-(\d{3})\.md$');
 
 final class _SessionRecord {
   const _SessionRecord({required this.file, this.session, this.unavailable});
@@ -526,12 +531,12 @@ String renderSessionMarkdown(RawSession session) {
   final buffer = StringBuffer()
     ..writeln('# 栖语原始会话')
     ..writeln()
-    ..writeln('<!-- qiyu-session:${_encodeJson(session.toJson())} -->')
+    ..writeln('<!-- qiyu-session:${encodeMarkerPayload(session.toJson())} -->')
     ..writeln();
   for (final turn in session.turns) {
     final speaker = turn.speaker == Speaker.user ? '用户' : '栖语';
     buffer
-      ..writeln('<!-- qiyu-turn:${_encodeJson(turn.toJson())} -->')
+      ..writeln('<!-- qiyu-turn:${encodeMarkerPayload(turn.toJson())} -->')
       ..writeln('## $speaker · ${turn.at.toLocal().toIso8601String()}')
       ..writeln();
     for (final line in turn.text.replaceAll('\r\n', '\n').split('\n')) {
@@ -550,24 +555,15 @@ RawSession _parseMarkdown(String markdown) {
   if (metadataMatch == null) {
     throw const FormatException('Missing qiyu session metadata');
   }
-  final metadata = _decodeJson(metadataMatch.group(1)!);
+  final metadata = decodeMarkerPayload(metadataMatch.group(1)!);
   final turnMatches = RegExp(
     r'^<!-- qiyu-turn:([A-Za-z0-9_-]+) -->\r?$',
     multiLine: true,
   ).allMatches(markdown);
   final turns = turnMatches
-      .map((match) => RawSessionTurn.fromJson(_decodeJson(match.group(1)!)))
+      .map((match) => RawSessionTurn.fromJson(decodeMarkerPayload(match.group(1)!)))
       .toList();
   return RawSession.fromJson(metadata, turns);
-}
-
-String _encodeJson(Map<String, Object?> value) =>
-    base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
-
-Map<String, Object?> _decodeJson(String value) {
-  final padded = value.padRight(value.length + (4 - value.length % 4) % 4, '=');
-  return jsonDecode(utf8.decode(base64Url.decode(padded)))
-      as Map<String, Object?>;
 }
 
 String localSessionDate(DateTime value) {
@@ -583,29 +579,46 @@ String _newOpaqueId() {
   return base64Url.encode(bytes).replaceAll('=', '');
 }
 
+/// 会话文本脱敏规则（每条消息、每段诊断都会过一遍，正则只编译一次）。
+final _sessionRedactPatterns = <RegExp>[
+  RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
+  RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
+  RegExp(
+    r'((?:api[_ -]?key|token|cookie|password|密码|口令)\s*[:=：]\s*)[^\s；;，,]+',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'((?:验证码|otp|verification code)\s*[:=：]?\s*)\d{4,8}',
+    caseSensitive: false,
+  ),
+  RegExp(r'((?:身份证(?:号)?|证件号)\s*[:=：]?\s*)\d{17}[\dXx]'),
+  RegExp(r'((?:银行卡(?:号)?|卡号)\s*[:=：]?\s*)(?:\d[ -]?){15,18}\d'),
+  RegExp(r'(?<!\d)\d{17}[\dXx](?!\d)'),
+  RegExp(r'(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)'),
+  RegExp(
+    r'-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----',
+    caseSensitive: false,
+  ),
+];
+
+/// 诊断文本在会话脱敏之外的追加规则：授权头、Cookie、完整输入与本机路径。
+final _diagnosticRedactPatterns = <RegExp>[
+  RegExp(
+    r'((?:authorization|proxy-authorization)\s*[:=]\s*)[^\r\n,;]+',
+    caseSensitive: false,
+  ),
+  RegExp(r'(cookie\s*[:=]\s*)[^\r\n]+', caseSensitive: false),
+  RegExp(
+    r'((?:用户输入|完整输入|user input|prompt)\s*[:=：]\s*)[^\r\n]+',
+    caseSensitive: false,
+  ),
+  RegExp(r'[A-Za-z]:\\(?:[^\\\r\n\s]+\\)*[^\\\r\n\s]+'),
+  RegExp(r'/(?:Users|home)/[^\r\n\s]+', caseSensitive: false),
+];
+
 String redactSessionText(String text) {
   var result = text;
-  final patterns = <RegExp>[
-    RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
-    RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
-    RegExp(
-      r'((?:api[_ -]?key|token|cookie|password|密码|口令)\s*[:=：]\s*)[^\s；;，,]+',
-      caseSensitive: false,
-    ),
-    RegExp(
-      r'((?:验证码|otp|verification code)\s*[:=：]?\s*)\d{4,8}',
-      caseSensitive: false,
-    ),
-    RegExp(r'((?:身份证(?:号)?|证件号)\s*[:=：]?\s*)\d{17}[\dXx]'),
-    RegExp(r'((?:银行卡(?:号)?|卡号)\s*[:=：]?\s*)(?:\d[ -]?){15,18}\d'),
-    RegExp(r'(?<!\d)\d{17}[\dXx](?!\d)'),
-    RegExp(r'(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)'),
-    RegExp(
-      r'-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----',
-      caseSensitive: false,
-    ),
-  ];
-  for (final pattern in patterns) {
+  for (final pattern in _sessionRedactPatterns) {
     result = result.replaceAllMapped(pattern, (match) {
       final prefix = match.groupCount > 0 ? match.group(1) : null;
       return '${prefix ?? ''}[已脱敏]';
@@ -616,31 +629,11 @@ String redactSessionText(String text) {
 
 String redactDiagnosticText(String text) {
   var result = redactSessionText(text);
-  final patterns = <RegExp>[
-    RegExp(
-      r'((?:authorization|proxy-authorization)\s*[:=]\s*)[^\r\n,;]+',
-      caseSensitive: false,
-    ),
-    RegExp(r'(cookie\s*[:=]\s*)[^\r\n]+', caseSensitive: false),
-    RegExp(
-      r'((?:用户输入|完整输入|user input|prompt)\s*[:=：]\s*)[^\r\n]+',
-      caseSensitive: false,
-    ),
-    RegExp(r'[A-Za-z]:\\(?:[^\\\r\n\s]+\\)*[^\\\r\n\s]+'),
-    RegExp(r'/(?:Users|home)/[^\r\n\s]+', caseSensitive: false),
-  ];
-  for (final pattern in patterns) {
+  for (final pattern in _diagnosticRedactPatterns) {
     result = result.replaceAllMapped(pattern, (match) {
       final prefix = match.groupCount > 0 ? match.group(1) : null;
       return '${prefix ?? ''}[已脱敏]';
     });
   }
   return result;
-}
-
-extension<T> on Iterable<T> {
-  T? get firstOrNull {
-    final iterator = this.iterator;
-    return iterator.moveNext() ? iterator.current : null;
-  }
 }

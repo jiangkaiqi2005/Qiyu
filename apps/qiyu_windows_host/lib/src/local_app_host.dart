@@ -38,6 +38,9 @@ import 'state_pack_reader.dart';
 const _sessionCookieName = 'qiyu_session';
 const _csrfHeaderName = 'x-qiyu-csrf';
 
+/// URL 路径里会话标识的形态上限：不透明 ID 只认这套字符与长度。
+final _sessionIdPattern = RegExp(r'^[A-Za-z0-9_-]{1,64}$');
+
 final class LocalAppHost {
   LocalAppHost._(this._server, this._requestHandler);
 
@@ -469,13 +472,9 @@ final class _LocalAppRequestHandler {
       if (request.method == 'PUT' && request.url.path == 'api/provider') {
         final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
         final config = _providerConfigFromPayload(payload);
-        final apiKey = payload['apiKey'];
-        if (apiKey != null && apiKey is! String) {
-          throw const ProviderConfigException('API Key 格式不正确。');
-        }
         final settings = await providerSettingsService.save(
           config: config,
-          apiKey: apiKey as String?,
+          apiKey: _apiKeyFromPayload(payload),
         );
         return Response.ok(
           jsonEncode(settings.toJson()),
@@ -484,10 +483,7 @@ final class _LocalAppRequestHandler {
       }
       if (request.method == 'POST' && request.url.path == 'api/provider/test') {
         final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
-        final apiKey = payload['apiKey'];
-        if (apiKey != null && apiKey is! String) {
-          throw const ProviderConfigException('API Key 格式不正确。');
-        }
+        final apiKey = _apiKeyFromPayload(payload);
         final config = payload.isEmpty
             ? (await providerSettingsService.read()).config
             : _providerConfigFromPayload(payload);
@@ -503,7 +499,7 @@ final class _LocalAppRequestHandler {
         }
         final result = await providerSettingsService.test(
           config: config,
-          apiKey: apiKey as String?,
+          apiKey: apiKey,
         );
         requestDiagnostics?.record(
           source: RecentRequestSources.providerTest,
@@ -533,11 +529,7 @@ final class _LocalAppRequestHandler {
         final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
         final developerMode = payload['developerMode'];
         if (developerMode is! bool) {
-          throw const LocalChatException(
-            code: 'invalid_request',
-            message: '体验选项请求格式不正确。',
-            retryable: false,
-          );
+          throw _invalidRequest('体验选项请求格式不正确。');
         }
         final ExperienceSettings settings;
         try {
@@ -579,11 +571,7 @@ final class _LocalAppRequestHandler {
       if (request.method == 'POST' && request.url.path == 'api/data/clear') {
         final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
         if (payload['confirm'] != true) {
-          throw const LocalChatException(
-            code: 'invalid_request',
-            message: '清除本机数据需要明确确认。',
-            retryable: false,
-          );
+          throw _invalidRequest('清除本机数据需要明确确认。');
         }
         // 经聊天服务的独占槽执行：等全部在途交付与后台任务完成，
         // 期间没有新交付并发，清除才不会丢写入或复活已清除的数据。
@@ -624,12 +612,8 @@ final class _LocalAppRequestHandler {
         final sessionId = request.url.path.substring(
           'api/history/sessions/'.length,
         );
-        if (!RegExp(r'^[A-Za-z0-9_-]{1,64}$').hasMatch(sessionId)) {
-          throw const LocalChatException(
-            code: 'invalid_request',
-            message: '会话标识格式不正确。',
-            retryable: false,
-          );
+        if (!_sessionIdPattern.hasMatch(sessionId)) {
+          throw _invalidRequest('会话标识格式不正确。');
         }
         await chatService.deleteSession(sessionId);
         return Response.ok(
@@ -648,20 +632,11 @@ final class _LocalAppRequestHandler {
           request.url.path.startsWith('api/memory/items/')) {
         final itemId = request.url.path.substring('api/memory/items/'.length);
         if (itemId.isEmpty || itemId.contains('/')) {
-          throw const LocalChatException(
-            code: 'invalid_request',
-            message: '记忆条目标识格式不正确。',
-            retryable: false,
-          );
+          throw _invalidRequest('记忆条目标识格式不正确。');
         }
         final detail = await memoryCenter.itemDetail(itemId);
         if (detail == null) {
-          return _jsonError(
-            HttpStatus.notFound,
-            code: 'memory_item_not_found',
-            message: '这条记忆不存在或已经变化，请返回后刷新。',
-            retryable: false,
-          );
+          return _memoryItemNotFound();
         }
         return Response.ok(jsonEncode(detail.toJson()), headers: _jsonHeaders);
       }
@@ -670,11 +645,7 @@ final class _LocalAppRequestHandler {
         try {
           payload = await _readJsonObject(request, maxBytes: 16 * 1024);
         } on FormatException {
-          throw const LocalChatException(
-            code: 'invalid_request',
-            message: '记忆操作请求格式不正确。',
-            retryable: false,
-          );
+          throw _invalidRequest('记忆操作请求格式不正确。');
         }
         final action = payload['action'];
         final id = payload['id'];
@@ -682,31 +653,18 @@ final class _LocalAppRequestHandler {
             action.isEmpty ||
             id is! String ||
             id.isEmpty) {
-          throw const LocalChatException(
-            code: 'invalid_request',
-            message: '记忆操作请求格式不正确。',
-            retryable: false,
-          );
+          throw _invalidRequest('记忆操作请求格式不正确。');
         }
         final ref = memoryCenter.resolveRef(id);
         if (ref == null) {
-          return _jsonError(
-            HttpStatus.notFound,
-            code: 'memory_item_not_found',
-            message: '这条记忆不存在或已经变化，请返回后刷新。',
-            retryable: false,
-          );
+          return _memoryItemNotFound();
         }
         final MemoryActionResult result;
         switch (action) {
           case 'edit':
             final text = payload['text'];
             if (text is! String) {
-              throw const LocalChatException(
-                code: 'invalid_request',
-                message: '记忆操作请求格式不正确。',
-                retryable: false,
-              );
+              throw _invalidRequest('记忆操作请求格式不正确。');
             }
             result = await memoryActions.edit(ref, text);
           case 'freeze':
@@ -720,12 +678,7 @@ final class _LocalAppRequestHandler {
           case 'delete-preview':
             final impact = await memoryActions.deletePreview(ref);
             if (impact == null) {
-              return _jsonError(
-                HttpStatus.notFound,
-                code: 'memory_item_not_found',
-                message: '这条记忆不存在或已经变化，请返回后刷新。',
-                retryable: false,
-              );
+              return _memoryItemNotFound();
             }
             return Response.ok(
               jsonEncode(impact.toJson()),
@@ -740,11 +693,7 @@ final class _LocalAppRequestHandler {
               field is String && field.isNotEmpty ? field : 'content',
             );
           default:
-            throw const LocalChatException(
-              code: 'invalid_request',
-              message: '不支持的记忆操作。',
-              retryable: false,
-            );
+            throw _invalidRequest('不支持的记忆操作。');
         }
         final statusCode = switch (result.code) {
           'memory_item_not_found' => HttpStatus.notFound,
@@ -806,11 +755,7 @@ final class _LocalAppRequestHandler {
         final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
         final snapshotId = payload['snapshotId'];
         if (snapshotId != null && snapshotId is! String) {
-          throw const LocalChatException(
-            code: 'invalid_request',
-            message: '回滚请求格式不正确。',
-            retryable: false,
-          );
+          throw _invalidRequest('回滚请求格式不正确。');
         }
         final result = await memoryBackup.rollbackTo(snapshotId as String?);
         return Response.ok(
@@ -822,11 +767,7 @@ final class _LocalAppRequestHandler {
         final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
         final requestId = payload['requestId'];
         if (requestId is! String || requestId.trim().isEmpty) {
-          throw const LocalChatException(
-            code: 'invalid_request',
-            message: '聊天请求格式不正确。',
-            retryable: false,
-          );
+          throw _invalidRequest('聊天请求格式不正确。');
         }
         return Response.ok(
           jsonEncode({'cancelled': chatService.cancel(requestId)}),
@@ -843,11 +784,7 @@ final class _LocalAppRequestHandler {
             (sessionId != null && sessionId is! String) ||
             requestId.trim().isEmpty ||
             text.trim().isEmpty) {
-          throw const LocalChatException(
-            code: 'invalid_request',
-            message: '聊天请求格式不正确。',
-            retryable: false,
-          );
+          throw _invalidRequest('聊天请求格式不正确。');
         }
         return Response.ok(
           chatService
@@ -973,6 +910,22 @@ final class _LocalAppRequestHandler {
 /// 远小于该值；超限直接拒绝，不进入验证与写入。
 const _backupBundleMaxBytes = 96 * 1024 * 1024;
 
+/// API 请求参数或请求体不合法的统一异常（HTTP 400 + invalid_request）。
+LocalChatException _invalidRequest(String message) => LocalChatException(
+  code: 'invalid_request',
+  message: message,
+  retryable: false,
+);
+
+/// 从 Provider 相关请求体取可选 API Key；类型不对时按配置格式错误拒绝。
+String? _apiKeyFromPayload(Map<String, Object?> payload) {
+  final apiKey = payload['apiKey'];
+  if (apiKey != null && apiKey is! String) {
+    throw const ProviderConfigException('API Key 格式不正确。');
+  }
+  return apiKey as String?;
+}
+
 Future<Uint8List> _readBackupBundle(Request request) async {
   final payload = await _readJsonObject(
     request,
@@ -980,20 +933,12 @@ Future<Uint8List> _readBackupBundle(Request request) async {
   );
   final data = payload['dataBase64'];
   if (data is! String || data.isEmpty) {
-    throw const LocalChatException(
-      code: 'invalid_request',
-      message: '备份请求格式不正确。',
-      retryable: false,
-    );
+    throw _invalidRequest('备份请求格式不正确。');
   }
   try {
     return base64.decode(data);
   } on Object {
-    throw const LocalChatException(
-      code: 'invalid_request',
-      message: '备份文件读不出来，请重新选择。',
-      retryable: false,
-    );
+    throw _invalidRequest('备份文件读不出来，请重新选择。');
   }
 }
 
@@ -1139,6 +1084,14 @@ Response _jsonError(
     headers: _jsonHeaders,
   );
 }
+
+/// 记忆条目定位失败的统一响应：ID 可能来自过期页面，提示返回刷新。
+Response _memoryItemNotFound() => _jsonError(
+  HttpStatus.notFound,
+  code: 'memory_item_not_found',
+  message: '这条记忆不存在或已经变化，请返回后刷新。',
+  retryable: false,
+);
 
 bool _sameOrigin(String value, Uri expected) {
   final candidate = Uri.tryParse(value);

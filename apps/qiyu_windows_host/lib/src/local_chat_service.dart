@@ -93,6 +93,9 @@ typedef RecallWindowWait = Future<void> Function(Duration window);
 /// 这里只为防止失控的 Provider 流在超时前耗尽内存。
 const _maxModelReplyRunes = 8192;
 
+/// 晚安信号词：可见回复交付后据此触发日终归档与 Dream 资格预登记。
+final _bedtimeSignalPattern = RegExp(r'晚安|睡了|先睡');
+
 final class LocalChatService {
   LocalChatService(
     this._repository, {
@@ -436,7 +439,7 @@ final class LocalChatService {
   }) async* {
     final trimmedRequestId = requestId.trim();
     final trimmedText = sanitizeUserInput(text);
-    final bedtime = RegExp(r'晚安|睡了|先睡').hasMatch(trimmedText);
+    final bedtime = _bedtimeSignalPattern.hasMatch(trimmedText);
     final archivedText = redactSessionText(text);
     if (trimmedRequestId.isEmpty || trimmedText.isEmpty) {
       throw const LocalChatException(
@@ -1316,14 +1319,9 @@ RawSessionTurn? _findTurn(
   List<RawSessionTurn> turns, {
   required String requestId,
   required Speaker speaker,
-}) {
-  for (final turn in turns) {
-    if (turn.requestId == requestId && turn.speaker == speaker) {
-      return turn;
-    }
-  }
-  return null;
-}
+}) => turns
+    .where((turn) => turn.requestId == requestId && turn.speaker == speaker)
+    .firstOrNull;
 
 FallbackReason _fallbackReasonFor(ModelFailureKind failure) =>
     switch (failure) {
