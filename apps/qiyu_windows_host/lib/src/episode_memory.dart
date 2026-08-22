@@ -5,6 +5,7 @@ import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'markdown_memory_repository.dart';
+import 'memory_marker_codec.dart';
 
 /// 增量整理窗口：每四到六轮取最保守的一侧。写入记忆会覆盖当前窗口；
 /// no_action 只覆盖当前一轮，不能越过此前缺少判断的轮次。缺口留给
@@ -753,19 +754,6 @@ final class EpisodeMemoryPipeline {
     }
     return decodeMarkerPayload(match.group(1)!);
   }
-}
-
-/// qiyu 记忆 Markdown 元数据标记载荷的统一编码（base64url 去填充）。
-/// 全部记忆文件的写入端与解析端必须共用这一对实现，任何一侧都不
-/// 允许另写变体；编码丢弃 `=`，解码时按 4 字节对齐补回。
-String encodeMarkerPayload(Map<String, Object?> value) =>
-    base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
-
-/// [encodeMarkerPayload] 的逆变换；载荷非法时抛出解析异常。
-Map<String, Object?> decodeMarkerPayload(String value) {
-  final padded = value.padRight(value.length + (4 - value.length % 4) % 4, '=');
-  return jsonDecode(utf8.decode(base64Url.decode(padded)))
-      as Map<String, Object?>;
 }
 
 /// episode 日文件在记忆目录内的相对路径（正斜杠）。两级索引与月

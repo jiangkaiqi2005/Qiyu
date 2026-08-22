@@ -5,7 +5,7 @@ import 'dart:math';
 import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
-import 'episode_memory.dart';
+import 'memory_marker_codec.dart';
 
 const maxRawSessionTurns = 80;
 const activeSessionHistoryWindow = Duration(days: 180);

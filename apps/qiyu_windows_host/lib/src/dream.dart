@@ -7,7 +7,9 @@ import 'daily_finalization.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_marker_codec.dart';
 import 'model_gateway.dart';
+import 'model_text_protocol.dart';
 import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
@@ -267,7 +269,7 @@ List<DreamItem>? parseDreamCandidate(
   void Function(String message)? diagnosticsSink,
 }) {
   final sink = diagnosticsSink ?? stderrDiagnostics;
-  final json = _extractJsonObject(raw);
+  final json = extractJsonObject(raw);
   if (json == null) {
     return null;
   }
@@ -324,7 +326,7 @@ List<PersonaDreamOp> parseDreamRootProposals(
   void Function(String message)? diagnosticsSink,
 }) {
   final sink = diagnosticsSink ?? stderrDiagnostics;
-  final json = _extractJsonObject(raw);
+  final json = extractJsonObject(raw);
   if (json == null) {
     return const [];
   }
@@ -1683,7 +1685,7 @@ final class DreamService {
 
     final user = StringBuffer()
       ..writeln('## 当前长期印象')
-      ..writeln(_sectionOrEmpty(input.longMemory))
+      ..writeln(sectionOrEmpty(input.longMemory))
       ..writeln()
       ..writeln('## 已整理记录（finalized 摘要）');
     if (input.summaries.isEmpty) {
@@ -1708,13 +1710,13 @@ final class DreamService {
     user
       ..writeln()
       ..writeln('## PersonaTree 当前结构')
-      ..writeln(_sectionOrEmpty(input.personaSection))
+      ..writeln(sectionOrEmpty(input.personaSection))
       ..writeln()
       ..writeln('## 关系状态')
-      ..writeln(_sectionOrEmpty(input.relationship))
+      ..writeln(sectionOrEmpty(input.relationship))
       ..writeln()
       ..writeln('## 未闭环线索')
-      ..writeln(_sectionOrEmpty(input.openLoops))
+      ..writeln(sectionOrEmpty(input.openLoops))
       ..writeln()
       ..writeln('## 禁提清单（以下话题绝不出现）');
     if (input.banned.isEmpty) {
@@ -1804,14 +1806,6 @@ final class _DreamInput {
   final Set<String> validMonths;
 }
 
-String _sectionOrEmpty(String? contents) {
-  final trimmed = contents?.trim();
-  if (trimmed == null || trimmed.isEmpty) {
-    return '（无）';
-  }
-  return trimmed;
-}
-
 String _encodeState(DreamState state) {
   final json = <String, Object?>{
     'schemaVersion': 1,
@@ -1851,19 +1845,3 @@ int? _daysSinceLastSuccess(DreamState state, String today) =>
     state.lastSuccess == null
     ? null
     : dateSpanDays(localSessionDate(state.lastSuccess!), today);
-
-/// 从模型输出中提取 JSON 对象：容忍代码块围栏与前后多余文字，只取
-/// 第一个 `{` 到最后一个 `}` 之间的内容。
-Map<String, Object?>? _extractJsonObject(String raw) {
-  final start = raw.indexOf('{');
-  final end = raw.lastIndexOf('}');
-  if (start < 0 || end <= start) {
-    return null;
-  }
-  try {
-    final decoded = jsonDecode(raw.substring(start, end + 1));
-    return decoded is Map<String, Object?> ? decoded : null;
-  } on Object {
-    return null;
-  }
-}

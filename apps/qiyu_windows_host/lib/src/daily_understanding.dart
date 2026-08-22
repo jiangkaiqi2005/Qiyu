@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'daily_finalization.dart';
@@ -7,6 +5,7 @@ import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
+import 'model_text_protocol.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
 import 'provider_settings_service.dart';
@@ -443,7 +442,7 @@ DayUnderstanding? parseDayUnderstanding(
   void dropped(String reason) =>
       sink('day understanding field dropped [$reason]$dateLabel');
 
-  final json = _extractJsonObject(raw);
+  final json = extractJsonObject(raw);
   if (json == null) {
     return null;
   }
@@ -586,8 +585,8 @@ DayUnderstanding? parseDayUnderstanding(
   }
 
   return DayUnderstanding(
-    summary: summary != null && !banned(summary) ? summary : null,
-    mood: mood != null && !banned(mood) ? mood : null,
+    summary: _dropBanned(summary, bannedTitles),
+    mood: _dropBanned(mood, bannedTitles),
     loopCandidates: candidates,
     loopClosures: closures,
     relationshipSignals: signals,
@@ -606,22 +605,6 @@ Iterable<Map<String, Object?>> _objects(Object? value) sync* {
     if (item is Map<String, Object?>) {
       yield item;
     }
-  }
-}
-
-/// 从模型输出中提取 JSON 对象：容忍代码块围栏与前后多余文字，
-/// 只取第一个 `{` 到最后一个 `}` 之间的内容。
-Map<String, Object?>? _extractJsonObject(String raw) {
-  final start = raw.indexOf('{');
-  final end = raw.lastIndexOf('}');
-  if (start < 0 || end <= start) {
-    return null;
-  }
-  try {
-    final decoded = jsonDecode(raw.substring(start, end + 1));
-    return decoded is Map<String, Object?> ? decoded : null;
-  } on Object {
-    return null;
   }
 }
 
@@ -696,23 +679,15 @@ List<ModelMessage> _understandingMessages({
     ..write(sessionLines.isEmpty ? '（无）\n' : sessionLines.toString())
     ..writeln()
     ..writeln('## 未闭环事项')
-    ..writeln(_sectionOrEmpty(openLoops))
+    ..writeln(sectionOrEmpty(openLoops))
     ..writeln()
     ..writeln('## 关系状态')
-    ..writeln(_sectionOrEmpty(relationship))
+    ..writeln(sectionOrEmpty(relationship))
     ..writeln()
     ..writeln('## 现状态包')
-    ..write(_sectionOrEmpty(dailyState));
+    ..write(sectionOrEmpty(dailyState));
   return [
     const ModelMessage(ModelMessageRole.system, system),
     ModelMessage(ModelMessageRole.user, redactSessionText(user.toString())),
   ];
-}
-
-String _sectionOrEmpty(String? contents) {
-  final trimmed = contents?.trim();
-  if (trimmed == null || trimmed.isEmpty) {
-    return '（无）';
-  }
-  return trimmed;
 }
