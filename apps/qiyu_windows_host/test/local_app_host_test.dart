@@ -1828,6 +1828,149 @@ void main() {
     },
   );
 
+  test(
+    'speak reads the persisted qiyu turn and returns synthesized audio',
+    () async {
+      final configPath =
+          '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+      final ttsGateway = _RecordingTtsGateway(audio: [1, 2, 3]);
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+        providerSettingsService: ProviderSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          _MemorySecretStore(),
+          _StaticModelGateway('还没睡？'),
+          const ModelPromptBuilder('测试人格宪法'),
+        ),
+        ttsSettingsService: TtsSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          ttsGateway,
+        ),
+      );
+      final browser = await _openBrowserSession(host);
+
+      // 配置聊天与 TTS（否则回复不落模型 turn、朗读没 Key）。
+      await _send(
+        host.origin.resolve('/api/provider'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'provider': 'openai_compatible',
+          'baseUrl': 'https://example.com/v1',
+          'model': 'chat-model',
+          'temperature': 0.6,
+          'timeoutSeconds': 25,
+          'apiKey': 'private-test-value',
+        }),
+      );
+      await _send(
+        host.origin.resolve('/api/provider/tts'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://tts.example.com/v1',
+          'model': 'tts-test',
+          'apiKey': 'tts-secret-value',
+        }),
+      );
+
+      // 变更请求缺 CSRF 拒绝。
+      final noCsrf = await _send(
+        host.origin.resolve('/api/chat/speak'),
+        method: 'POST',
+        headers: {
+          ...browser.readHeaders(host.origin),
+          'origin': host.origin.toString().replaceFirst(RegExp(r'/$'), ''),
+        },
+        requestBody: jsonEncode({'requestId': 'speak-1', 'deliveryIndex': 0}),
+      );
+      expect(noCsrf.statusCode, HttpStatus.forbidden);
+
+      // 聊天交付一轮：栖语 turn 完整落盘。
+      final chat = await _send(
+        host.origin.resolve('/api/chat'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'requestId': 'speak-1', 'text': '在吗'}),
+      );
+      expect(chat.statusCode, HttpStatus.ok);
+
+      // 朗读：Host 从落盘 turn 取该 bubble 的文字去合成。
+      final spoken = await _send(
+        host.origin.resolve('/api/chat/speak'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'requestId': 'speak-1', 'deliveryIndex': 0}),
+      );
+      expect(spoken.statusCode, HttpStatus.ok);
+      expect(spoken.headers.value(HttpHeaders.contentTypeHeader), 'audio/mpeg');
+      expect(spoken.bodyBytes, [1, 2, 3]);
+      expect(ttsGateway.lastText, '还没睡？');
+
+      // deliveryIndex 越界与未知 requestId：允许列表诊断码。
+      final overflow = await _send(
+        host.origin.resolve('/api/chat/speak'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'requestId': 'speak-1', 'deliveryIndex': 9}),
+      );
+      expect(overflow.statusCode, HttpStatus.badRequest);
+      expect(
+        jsonDecode(overflow.body),
+        containsPair('code', 'tts_turn_not_found'),
+      );
+
+      final unknown = await _send(
+        host.origin.resolve('/api/chat/speak'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'requestId': 'nope', 'deliveryIndex': 0}),
+      );
+      expect(unknown.statusCode, HttpStatus.badRequest);
+      expect(
+        jsonDecode(unknown.body),
+        containsPair('code', 'tts_turn_not_found'),
+      );
+
+      // 请求格式不对（缺 requestId / deliveryIndex 非整数）。
+      final malformed = await _send(
+        host.origin.resolve('/api/chat/speak'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'requestId': 'speak-1',
+          'deliveryIndex': 'zero',
+        }),
+      );
+      expect(malformed.statusCode, HttpStatus.badRequest);
+
+      // 上游合成失败映射为允许列表诊断码与人话文案（网关异常 message
+      // 是白名单文案，服务商原文不出网关层）。
+      ttsGateway.error = const TtsGatewayException(
+        kind: ModelFailureKind.rateLimited,
+        message: '语音合成服务请求过于频繁。',
+      );
+      final upstreamFailure = await _send(
+        host.origin.resolve('/api/chat/speak'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'requestId': 'speak-1', 'deliveryIndex': 0}),
+      );
+      expect(upstreamFailure.statusCode, HttpStatus.badGateway);
+      expect(
+        jsonDecode(upstreamFailure.body),
+        containsPair('code', 'tts_service_error'),
+      );
+      expect(
+        jsonDecode(upstreamFailure.body),
+        containsPair('message', '语音合成服务请求过于频繁。'),
+      );
+      await host.close();
+    },
+  );
+
   test('transcribe rejects unconfigured and oversize audio bodies', () async {
     final configPath =
         '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
@@ -2000,7 +2143,10 @@ Future<_HttpResponse> _send(
     request.add(utf8.encode(requestBody));
   }
   final response = await request.close();
-  final body = await response.transform(utf8.decoder).join();
+  final body = await response.fold<List<int>>(
+    <int>[],
+    (buffer, chunk) => buffer..addAll(chunk),
+  );
   final result = _HttpResponse(response.statusCode, response.headers, body);
   client.close(force: true);
   return result;
@@ -2021,7 +2167,10 @@ Future<_HttpResponse> _sendBytes(
   request.contentLength = body.length;
   request.add(body);
   final response = await request.close();
-  final responseBody = await response.transform(utf8.decoder).join();
+  final responseBody = await response.fold<List<int>>(
+    <int>[],
+    (buffer, chunk) => buffer..addAll(chunk),
+  );
   final result = _HttpResponse(
     response.statusCode,
     response.headers,
@@ -2067,11 +2216,15 @@ final class _BrowserSession {
 }
 
 final class _HttpResponse {
-  const _HttpResponse(this.statusCode, this.headers, this.body);
+  const _HttpResponse(this.statusCode, this.headers, this.bodyBytes);
 
   final int statusCode;
   final HttpHeaders headers;
-  final String body;
+  final List<int> bodyBytes;
+
+  /// 文本视图：既有断言用 String 匹配。二进制响应（朗读音频）请用
+  /// [bodyBytes]。
+  String get body => utf8.decode(bodyBytes, allowMalformed: true);
 }
 
 final class _MemorySecretStore implements SecretStore {

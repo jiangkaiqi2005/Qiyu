@@ -19,6 +19,7 @@ final class LocalChatMessage {
     required this.text,
     this.source,
     this.fallbackReason,
+    this.deliveryIndex,
   });
 
   final String requestId;
@@ -26,6 +27,11 @@ final class LocalChatMessage {
   final String text;
   final ReplySource? source;
   final FallbackReason? fallbackReason;
+
+  /// 该栖语交付段在 requestId 内的序号（轮内召回的 bubble 2 是第二段）。
+  /// 纯运行时标注：不序列化，历史恢复的消息没有它（朗读只对新交付
+  /// 的回复触发，与气泡的「正在朗读」指示共用。
+  final int? deliveryIndex;
 
   factory LocalChatMessage.fromJson(Map<String, Object?> json) {
     final source = json['source'] as String?;
@@ -88,7 +94,8 @@ final class LocalChatExchange {
   final FallbackReason? fallbackReason;
 }
 
-final class LocalChatGatewayException implements Exception, UserFacingException {
+final class LocalChatGatewayException
+    implements Exception, UserFacingException {
   const LocalChatGatewayException(this.message);
 
   @override
@@ -128,9 +135,20 @@ abstract interface class StreamingLocalChatGateway {
   });
 }
 
-final class HttpLocalChatGateway
-    extends HostApiGateway
-    implements LocalChatGateway, StreamingLocalChatGateway {
+/// 语音朗读的独立小接口（不往 StreamingLocalChatGateway 塞方法）：
+/// 朗读可单独注入与测试，聊天 fake 不被迫实现。
+abstract interface class ChatSpeechGateway {
+  /// 朗读一条已完整交付并落盘的栖语交付段：Host 按 (requestId,
+  /// deliveryIndex) 从 session 取文字合成，返回 mp3 字节（只在内存）。
+  Future<Uint8List> speak({
+    required String requestId,
+    required int deliveryIndex,
+    String? sessionId,
+  });
+}
+
+final class HttpLocalChatGateway extends HostApiGateway
+    implements LocalChatGateway, StreamingLocalChatGateway, ChatSpeechGateway {
   HttpLocalChatGateway({super.client, super.baseUri});
 
   @override
@@ -226,10 +244,7 @@ final class HttpLocalChatGateway
   Future<bool> cancel(String requestId) async {
     final response = await httpClient.post(
       resolve('/api/chat/cancel'),
-      headers: {
-        ...await csrfHeaders(),
-        'content-type': 'application/json',
-      },
+      headers: {...await csrfHeaders(), 'content-type': 'application/json'},
       body: jsonEncode({'requestId': requestId}),
     );
     final json = decodeSuccess(response);
@@ -248,6 +263,27 @@ final class HttpLocalChatGateway
     );
     final json = decodeSuccess(response);
     return json['text'] as String? ?? '';
+  }
+
+  @override
+  Future<Uint8List> speak({
+    required String requestId,
+    required int deliveryIndex,
+    String? sessionId,
+  }) async {
+    final response = await httpClient.post(
+      resolve('/api/chat/speak'),
+      headers: await csrfHeaders(),
+      body: jsonEncode({
+        'requestId': requestId,
+        'deliveryIndex': deliveryIndex,
+        'sessionId': ?sessionId,
+      }),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw LocalChatGatewayException(_decodeErrorMessage(response.body));
+    }
+    return response.bodyBytes;
   }
 }
 

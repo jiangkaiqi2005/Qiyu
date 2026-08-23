@@ -105,6 +105,71 @@ void main() {
       ),
     );
   });
+
+  test('speak：带 CSRF 的朗读请求与二进制音频响应', () async {
+    final requests = <http.Request>[];
+    final client = MockClient((request) async {
+      requests.add(request);
+      return switch (request.url.path) {
+        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+        '/api/chat/speak' => http.Response.bytes(
+          [1, 2, 3],
+          200,
+          headers: const {'content-type': 'audio/mpeg'},
+        ),
+        _ => _jsonResponse({'message': 'not found'}, 404),
+      };
+    });
+    final gateway = HttpLocalChatGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    final audio = await gateway.speak(
+      requestId: 'r1',
+      deliveryIndex: 1,
+      sessionId: 's1',
+    );
+    expect(audio, [1, 2, 3]);
+    final sent = requests.last;
+    expect(sent.method, 'POST');
+    expect(sent.url.path, '/api/chat/speak');
+    expect(sent.headers['x-qiyu-csrf'], 'csrf-1');
+    expect(jsonDecode(sent.body), {
+      'requestId': 'r1',
+      'deliveryIndex': 1,
+      'sessionId': 's1',
+    });
+  });
+
+  test('speak：服务端错误回人话异常', () async {
+    final client = MockClient((request) async {
+      return switch (request.url.path) {
+        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+        '/api/chat/speak' => _jsonResponse({
+          'code': 'tts_turn_not_found',
+          'message': '找不到这句话，请刷新后重试。',
+          'retryable': false,
+        }, 400),
+        _ => _jsonResponse({'message': 'not found'}, 404),
+      };
+    });
+    final gateway = HttpLocalChatGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    await expectLater(
+      gateway.speak(requestId: 'r1', deliveryIndex: 0),
+      throwsA(
+        isA<LocalChatGatewayException>().having(
+          (error) => error.message,
+          'message',
+          '找不到这句话，请刷新后重试。',
+        ),
+      ),
+    );
+  });
 }
 
 http.Response _streamResponse(List<Map<String, Object?>> events) {

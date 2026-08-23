@@ -12,6 +12,7 @@ import 'local_chat_view_model.dart';
 import 'qiyu_chat_bubble.dart';
 import 'qiyu_markdown.dart';
 import 'voice_input_controller.dart';
+import 'voice_output_controller.dart';
 import 'voice_recorder_platform.dart';
 
 /// 输入框里按 Enter 发送；Shift+Enter / Ctrl+Enter 插入软换行。
@@ -29,7 +30,11 @@ final class _VoiceEscapeIntent extends Intent {
 }
 
 class LocalChatView extends StatefulWidget {
-  const LocalChatView({super.key, this.voiceRecorderPlatform, this.sttSettingsGateway});
+  const LocalChatView({
+    super.key,
+    this.voiceRecorderPlatform,
+    this.sttSettingsGateway,
+  });
 
   /// 语音输入接缝：缺省走条件导出的平台实现（Web 真录音、测试 stub）；
   /// widget 测试注入 fake。
@@ -72,8 +77,7 @@ class _LocalChatViewState extends State<LocalChatView> {
         );
       },
       chatViewModel.transcribeVoice,
-      onTranscribed: (text) =>
-          unawaited(_sendTranscribed(chatViewModel, text)),
+      onTranscribed: (text) => unawaited(_sendTranscribed(chatViewModel, text)),
     );
     unawaited(_voiceInput.initialize());
   }
@@ -151,7 +155,10 @@ class _LocalChatViewState extends State<LocalChatView> {
 
   /// 语音转写出的文字直接发送：与手打共用同一条链路（requestId 幂等、
   /// 乐观插入、失败回填输入框）。栖语正在回复时排队，回复结束即发。
-  Future<void> _sendTranscribed(LocalChatViewModel viewModel, String text) async {
+  Future<void> _sendTranscribed(
+    LocalChatViewModel viewModel,
+    String text,
+  ) async {
     _stickToBottom = true;
     final sent = await viewModel.sendWhenIdle(text);
     if (!sent &&
@@ -260,7 +267,12 @@ class _LocalChatViewState extends State<LocalChatView> {
                       ),
                     ),
                     const Divider(height: 1),
-                    Expanded(child: _messageList(viewModel)),
+                    Expanded(
+                      child: AnimatedBuilder(
+                        animation: viewModel.voiceOutput,
+                        builder: (context, _) => _messageList(viewModel),
+                      ),
+                    ),
                     if (viewModel.errorMessage case final message?)
                       // 错误就近出现在输入区上方，并作为 live region
                       // 播报给屏幕阅读器（ticket 24 错误关联）。
@@ -279,6 +291,14 @@ class _LocalChatViewState extends State<LocalChatView> {
                     AnimatedBuilder(
                       animation: _voiceInput,
                       builder: (context, _) => _voiceStatusBar(context),
+                    ),
+                    AnimatedBuilder(
+                      animation: Listenable.merge([
+                        viewModel,
+                        viewModel.voiceOutput,
+                      ]),
+                      builder: (context, _) =>
+                          _voiceOutputBar(context, viewModel),
                     ),
                     Shortcuts(
                       shortcuts: const {
@@ -499,6 +519,60 @@ class _LocalChatViewState extends State<LocalChatView> {
     }
   }
 
+  /// 语音朗读状态行：正在朗读时提示并给出停止按钮；读不出来时同一
+  /// 会话只提示一次（ADR 0002 的首提示后续静默）。作为 live region
+  /// 播报给屏幕阅读器；空闲时收起。
+  Widget _voiceOutputBar(BuildContext context, LocalChatViewModel viewModel) {
+    final voiceOutput = viewModel.voiceOutput;
+    final failure = voiceOutput.failureNotice;
+    if (!voiceOutput.isReading && failure == null) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+      child: Semantics(
+        liveRegion: true,
+        child: Row(
+          children: [
+            if (voiceOutput.isReading) ...[
+              const Icon(Icons.volume_up_outlined, size: 18),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  voiceOutput.phase == VoiceOutputPhase.synthesizing
+                      ? '栖语准备读…'
+                      : '栖语正在读',
+                  key: const Key('voice-output-status'),
+                ),
+              ),
+              IconButton(
+                key: const Key('voice-output-stop'),
+                tooltip: '停止朗读',
+                onPressed: () => voiceOutput.stopAll(),
+                icon: const Icon(Icons.stop_rounded),
+              ),
+            ] else if (failure != null) ...[
+              Expanded(
+                child: Text(
+                  failure,
+                  key: const Key('voice-output-failure'),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: '知道了',
+                onPressed: () => voiceOutput.consumeFailureNotice(),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _messageList(LocalChatViewModel viewModel) {
     if (viewModel.loading) {
       return const Center(child: CircularProgressIndicator());
@@ -547,9 +621,14 @@ class _LocalChatViewState extends State<LocalChatView> {
           );
         }
         final message = viewModel.messages[index];
+        final nowReading = viewModel.voiceOutput.nowReading;
         return QiyuChatBubble(
           text: message.text,
           fromUser: message.speaker == LocalChatSpeaker.user,
+          isSpeaking:
+              nowReading != null &&
+              message.requestId == nowReading.requestId &&
+              message.deliveryIndex == nowReading.deliveryIndex,
         );
       },
     );

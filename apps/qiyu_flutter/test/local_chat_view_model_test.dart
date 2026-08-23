@@ -5,6 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/chat/voice_output_controller.dart';
+import 'package:qiyu_flutter/features/chat/voice_player_platform.dart';
+import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 void main() {
@@ -127,6 +130,59 @@ void main() {
       ['第一条', '语音转写的内容'],
     );
   });
+
+  test('双 bubble 交付段按序进入朗读队列；开关关着不触发', () async {
+    final speakGateway = _RecordingSpeakGateway();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: _SequentialPlayerPlatform(),
+    );
+    final viewModel = LocalChatViewModel(
+      _TwoBubbleGateway(),
+      hostConnectionProbe: _AvailableProbe(),
+      requestIdFactory: () => 'request-voice',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+    expect(await viewModel.send('我上次说爬山的事'), isTrue);
+    // 等朗读队列消化完两段。
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(speakGateway.calls, [
+      (requestId: 'request-voice', deliveryIndex: 0),
+      (requestId: 'request-voice', deliveryIndex: 1),
+    ]);
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  test('autoSpeak 关或未配置时交付不朗读', () async {
+    for (final ttsGateway in [
+      _FixedTtsSettingsGateway(configured: true, autoSpeak: false),
+      _FixedTtsSettingsGateway(configured: false),
+    ]) {
+      final speakGateway = _RecordingSpeakGateway();
+      final controller = VoiceOutputController(
+        speakGateway,
+        playerPlatform: _SequentialPlayerPlatform(),
+      );
+      final viewModel = LocalChatViewModel(
+        _TwoBubbleGateway(withBubble2: false),
+        hostConnectionProbe: _AvailableProbe(),
+        requestIdFactory: () => 'request-quiet',
+        ttsSettingsGateway: ttsGateway,
+        voiceOutput: controller,
+        autoStart: false,
+      );
+      await viewModel.refreshVoiceOutputStatus();
+      expect(await viewModel.send('在吗'), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(speakGateway.calls, isEmpty);
+      viewModel.dispose();
+      controller.dispose();
+    }
+  });
 }
 
 final class _TwoBubbleGateway implements StreamingLocalChatGateway {
@@ -136,7 +192,6 @@ final class _TwoBubbleGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
-
 
   @override
   Future<String> transcribe({
@@ -229,7 +284,6 @@ final class _GatedGateway implements StreamingLocalChatGateway {
   @override
   Future<bool> cancel(String requestId) async => true;
 
-
   @override
   Future<String> transcribe({
     required Uint8List audio,
@@ -275,4 +329,64 @@ final class _GatedGateway implements StreamingLocalChatGateway {
 final class _AvailableProbe implements HostConnectionProbe {
   @override
   Future<bool> isHostAvailable() async => true;
+}
+
+final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
+  _FixedTtsSettingsGateway({required this.configured, this.autoSpeak = true});
+
+  final bool configured;
+  final bool autoSpeak;
+
+  @override
+  Future<TtsSettings> read() async => TtsSettings(
+    configured: configured,
+    keySet: configured,
+    autoSpeak: autoSpeak,
+  );
+
+  @override
+  Future<TtsSettings> save(TtsSettingsDraft draft) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<TtsSettings> forgetApiKey() async => throw UnimplementedError();
+
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
+      throw UnimplementedError();
+}
+
+final class _RecordingSpeakGateway implements ChatSpeechGateway {
+  final List<({String requestId, int deliveryIndex})> calls = [];
+
+  @override
+  Future<Uint8List> speak({
+    required String requestId,
+    required int deliveryIndex,
+    String? sessionId,
+  }) async {
+    calls.add((requestId: requestId, deliveryIndex: deliveryIndex));
+    return Uint8List.fromList([1]);
+  }
+}
+
+final class _SequentialPlayerPlatform implements VoicePlayerPlatform {
+  @override
+  bool get supported => true;
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+  }) async => _InstantPlayback();
+}
+
+final class _InstantPlayback implements VoicePlayback {
+  final Completer<void> _done = (Completer<void>()..complete());
+
+  @override
+  Future<void> get done => _done.future;
+
+  @override
+  void stop() {}
 }

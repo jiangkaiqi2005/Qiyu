@@ -9,11 +9,52 @@ import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/chat/voice_output_controller.dart';
+import 'package:qiyu_flutter/features/chat/voice_player_platform.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 
 void main() {
+  testWidgets('模型回复完整交付后自动朗读：指示与停止按钮', (tester) async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _HoldingPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final viewModel = LocalChatViewModel(
+      _VoiceChatGateway(),
+      hostConnectionProbe: _FixedHostConnectionProbe(),
+      ttsSettingsGateway: _FixedTtsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+    await tester.pumpWidget(
+      _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
+    );
+
+    await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+
+    // 完整交付后自动朗读一次（且仅一次）：状态行、气泡指示、停止按钮。
+    expect(speakGateway.calls, hasLength(1));
+    expect(find.byKey(const Key('voice-output-status')), findsOneWidget);
+    expect(find.byKey(const Key('voice-output-stop')), findsOneWidget);
+    expect(find.text('正在读'), findsOneWidget);
+
+    // 停止按钮：立即停播收起状态。
+    await tester.tap(find.byKey(const Key('voice-output-stop')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('voice-output-status')), findsNothing);
+    expect(find.text('正在读'), findsNothing);
+    viewModel.dispose();
+    controller.dispose();
+  });
+
   testWidgets('未配置语音服务：置灰点按引导去设置页', (tester) async {
     await tester.pumpWidget(
       _harness(
@@ -81,7 +122,10 @@ void main() {
     // 先挂起转写以观察「正在转文字」中间态，再放行到成功。
     final gateway = _VoiceChatGateway()..hangTranscribe = true;
     await tester.pumpWidget(
-      _harness(viewModel: _chatViewModel(gateway), platform: _FakeRecorderPlatform()),
+      _harness(
+        viewModel: _chatViewModel(gateway),
+        platform: _FakeRecorderPlatform(),
+      ),
     );
     await tester.pump();
 
@@ -111,7 +155,10 @@ void main() {
       ..transcribeFailuresRemaining = 1
       ..transcribeError = const LocalChatGatewayException('没有识别到语音，可以再说一次。');
     await tester.pumpWidget(
-      _harness(viewModel: _chatViewModel(gateway), platform: _FakeRecorderPlatform()),
+      _harness(
+        viewModel: _chatViewModel(gateway),
+        platform: _FakeRecorderPlatform(),
+      ),
     );
     await tester.pump();
 
@@ -130,7 +177,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.transcribeCalls, 2);
-    expect(gateway.transcribeAudioCalls.first, gateway.transcribeAudioCalls.last);
+    expect(
+      gateway.transcribeAudioCalls.first,
+      gateway.transcribeAudioCalls.last,
+    );
     expect(gateway.sentTexts, ['今天有点累']);
     expect(find.text('今天有点累'), findsOneWidget);
   });
@@ -161,7 +211,10 @@ void main() {
   testWidgets('转写中按 Esc 中止：回重试态且迟到结果不发送', (tester) async {
     final gateway = _VoiceChatGateway()..hangTranscribe = true;
     await tester.pumpWidget(
-      _harness(viewModel: _chatViewModel(gateway), platform: _FakeRecorderPlatform()),
+      _harness(
+        viewModel: _chatViewModel(gateway),
+        platform: _FakeRecorderPlatform(),
+      ),
     );
     await tester.pump();
 
@@ -367,5 +420,87 @@ final class _FakeRecordingSession implements VoiceRecordingSession {
   @override
   void discard() {
     discardCalls += 1;
+  }
+}
+
+/// TTS 设置 fake：朗读可用性可编程。
+final class _FixedTtsGateway implements TtsSettingsGateway {
+  _FixedTtsGateway({required this.configured});
+
+  final bool configured;
+
+  @override
+  Future<TtsSettings> read() async =>
+      TtsSettings(configured: configured, keySet: configured);
+
+  @override
+  Future<TtsSettings> save(TtsSettingsDraft draft) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<TtsSettings> forgetApiKey() async => throw UnimplementedError();
+
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
+      throw UnimplementedError();
+}
+
+/// 朗读 fake：记录调用，播放挂起直到测试放行。
+final class _RecordingSpeakGateway implements ChatSpeechGateway {
+  final List<({String requestId, int deliveryIndex})> calls = [];
+
+  @override
+  Future<Uint8List> speak({
+    required String requestId,
+    required int deliveryIndex,
+    String? sessionId,
+  }) async {
+    calls.add((requestId: requestId, deliveryIndex: deliveryIndex));
+    return Uint8List.fromList([1]);
+  }
+}
+
+/// 播放挂起型 fake：正在读的状态保持到 finish 被调用。
+final class _HoldingPlayerPlatform implements VoicePlayerPlatform {
+  final _playbacks = <Completer<void>>[];
+
+  @override
+  bool get supported => true;
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+  }) async {
+    final playback = _HoldingPlayback(this);
+    _playbacks.add(playback._done);
+    return playback;
+  }
+
+  void finishAll() {
+    for (final done in _playbacks) {
+      if (!done.isCompleted) {
+        done.complete();
+      }
+    }
+    _playbacks.clear();
+  }
+}
+
+final class _HoldingPlayback implements VoicePlayback {
+  _HoldingPlayback(this._platform);
+
+  final _HoldingPlayerPlatform _platform;
+  final Completer<void> _done = Completer<void>();
+
+  @override
+  Future<void> get done => _done.future;
+
+  @override
+  void stop() {
+    _platform._playbacks.remove(_done);
+    if (!_done.isCompleted) {
+      _done.complete();
+    }
   }
 }

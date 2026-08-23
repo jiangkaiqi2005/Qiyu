@@ -5,7 +5,9 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:uuid/uuid.dart';
 
 import '../baseline/host_connection_probe.dart';
+import '../settings/tts_settings_client.dart';
 import 'local_chat_client.dart';
+import 'voice_output_controller.dart';
 
 typedef RequestIdFactory = String Function();
 
@@ -14,10 +16,16 @@ final class LocalChatViewModel extends ChangeNotifier {
     this._gateway, {
     HostConnectionProbe? hostConnectionProbe,
     RequestIdFactory? requestIdFactory,
+    TtsSettingsGateway? ttsSettingsGateway,
+    VoiceOutputController? voiceOutput,
     bool autoStart = true,
     Duration monitorInterval = const Duration(seconds: 2),
   }) : _hostConnectionProbe = hostConnectionProbe ?? HttpHostConnectionProbe(),
-       _requestIdFactory = requestIdFactory ?? _defaultRequestId {
+       _requestIdFactory = requestIdFactory ?? _defaultRequestId,
+       // 缺省独立创建朗读网关（与聊天网关同构；widget 测试注入桩）。
+       voiceOutput =
+           voiceOutput ?? VoiceOutputController(HttpLocalChatGateway()) {
+    _ttsSettingsGateway = ttsSettingsGateway;
     if (autoStart) {
       unawaited(initialize());
       _monitorTimer = Timer.periodic(
@@ -30,6 +38,13 @@ final class LocalChatViewModel extends ChangeNotifier {
   final StreamingLocalChatGateway _gateway;
   final HostConnectionProbe _hostConnectionProbe;
   final RequestIdFactory _requestIdFactory;
+  late final TtsSettingsGateway? _ttsSettingsGateway;
+
+  /// 语音朗读播放队列（ADR 0002）：view 观察它渲染「正在朗读」指示与
+  /// 停止按钮。
+  final VoiceOutputController voiceOutput;
+  bool _voiceOutputEnabled = false;
+  final Map<String, int> _announcedDeliveries = {};
   final List<LocalChatMessage> _messages = [];
   Timer? _monitorTimer;
   String? _sessionId;
@@ -82,6 +97,7 @@ final class LocalChatViewModel extends ChangeNotifier {
     final generation = _restoreGeneration;
     notifyListeners();
     try {
+      unawaited(refreshVoiceOutputStatus());
       await checkHostNow();
       if (hostStopped) {
         return;
@@ -92,6 +108,22 @@ final class LocalChatViewModel extends ChangeNotifier {
         _initializing = false;
         notifyListeners();
       }
+    }
+  }
+
+  /// 朗读可用性：配了语音合成且自动朗读开着才触发（ADR 0002：配置了
+  /// 就自动读，聊天页开关写 Host 的 autoSpeak 位）。Host 不可达或未
+  /// 配置时按关闭处理——读不出来不影响文字主链路。
+  Future<void> refreshVoiceOutputStatus() async {
+    final gateway = _ttsSettingsGateway;
+    if (gateway == null) {
+      return;
+    }
+    try {
+      final settings = await gateway.read();
+      _voiceOutputEnabled = settings.configured && settings.autoSpeak;
+    } on Object {
+      _voiceOutputEnabled = false;
     }
   }
 
@@ -258,6 +290,10 @@ final class LocalChatViewModel extends ChangeNotifier {
             final replySource = source;
             if (messages != null && replySource != null) {
               committed = true;
+              // 该 requestId 的第 N 次交付段（轮内召回的 bubble 2 是
+              // 第二段）：朗读定位与气泡的「正在朗读」指示共用。
+              final delivery = _announcedDeliveries[requestId] ?? 0;
+              _announcedDeliveries[requestId] = delivery + 1;
               if (generation == _restoreGeneration) {
                 _messages.addAll(
                   messages.map(
@@ -267,11 +303,22 @@ final class LocalChatViewModel extends ChangeNotifier {
                       text: message,
                       source: replySource,
                       fallbackReason: fallbackReason,
+                      deliveryIndex: delivery,
                     ),
                   ),
                 );
                 _streamingText = '';
                 _waiting = false;
+                // ADR 0002：只有完整交付并落盘的栖语 turn 才朗读——
+                // done 交付即 Host 落盘完成，此时入队按序读。
+                voiceOutput.offer(
+                  VoiceOutputRequest(
+                    requestId: requestId,
+                    deliveryIndex: delivery,
+                    sessionId: _sessionId,
+                  ),
+                  enabled: _voiceOutputEnabled,
+                );
               }
               finalMessages = null;
               source = null;

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:shelf_static/shelf_static.dart';
 import 'package:path/path.dart' as path;
 
@@ -276,6 +277,7 @@ final class LocalAppHost {
       providerSettingsService: effectiveProviderSettings,
       sttSettingsService: effectiveSttSettings,
       ttsSettingsService: effectiveTtsSettings,
+      memoryRepository: memoryRepository,
       onboardingRepository: onboardingRepository,
       memoryCenter: memoryCenter,
       memoryActions: memoryActions,
@@ -327,6 +329,7 @@ final class _LocalAppRequestHandler {
     required this.providerSettingsService,
     required this.sttSettingsService,
     required this.ttsSettingsService,
+    required this.memoryRepository,
     required this.onboardingRepository,
     required this.memoryCenter,
     required this.memoryActions,
@@ -353,6 +356,9 @@ final class _LocalAppRequestHandler {
   final ProviderSettingsService providerSettingsService;
   final SttSettingsService sttSettingsService;
   final TtsSettingsService ttsSettingsService;
+
+  /// 朗读端点从这里取已落盘的栖语 turn 文字（Host 是文字真相源）。
+  final MemoryRepository memoryRepository;
   final OnboardingRepository onboardingRepository;
   final MemoryCenterService memoryCenter;
   final MemoryActionService memoryActions;
@@ -900,6 +906,48 @@ final class _LocalAppRequestHandler {
         );
         return Response.ok(jsonEncode({'text': text}), headers: _jsonHeaders);
       }
+      if (request.method == 'POST' && request.url.path == 'api/chat/speak') {
+        final payload = await _readJsonObject(request, maxBytes: 8 * 1024);
+        final requestId = payload['requestId'];
+        final deliveryIndex = payload['deliveryIndex'];
+        final sessionId = payload['sessionId'];
+        if (requestId is! String ||
+            requestId.trim().isEmpty ||
+            deliveryIndex is! int ||
+            deliveryIndex < 0 ||
+            (sessionId != null && sessionId is! String)) {
+          throw _invalidRequest('朗读请求格式不正确。');
+        }
+        // Host 是文字真相源：浏览器只传定位符，朗读文字从已落盘的
+        // 栖语 turn 取（ADR 0002：只有完整交付并落盘的话才读）。
+        // deliveryIndex 是该 requestId 的第 N 次交付段：轮内召回的
+        // bubble 2 落为同一 requestId 的第二个栖语 turn，一次交付 =
+        // 一段朗读。
+        final session = await memoryRepository.openSession(
+          sessionId: sessionId as String?,
+        );
+        var matched = 0;
+        RawSessionTurn? turn;
+        for (final candidate in session.turns) {
+          if (candidate.requestId == requestId &&
+              candidate.speaker == Speaker.qiyu) {
+            if (matched == deliveryIndex) {
+              turn = candidate;
+              break;
+            }
+            matched += 1;
+          }
+        }
+        if (turn == null) {
+          throw const TtsServiceException(
+            code: 'tts_turn_not_found',
+            message: '找不到这句话，请刷新后重试。',
+            retryable: false,
+          );
+        }
+        final audio = await ttsSettingsService.synthesize(turn.text);
+        return Response.ok(audio, headers: _audioHeaders);
+      }
       if (request.method == 'POST' && request.url.path == 'api/chat') {
         final payload = await _readJsonObject(request, maxBytes: 64 * 1024);
         final requestId = payload['requestId'];
@@ -976,7 +1024,8 @@ final class _LocalAppRequestHandler {
         'tts_not_configured' ||
         'tts_config_invalid' ||
         'tts_empty_text' ||
-        'tts_text_too_long' => HttpStatus.badRequest,
+        'tts_text_too_long' ||
+        'tts_turn_not_found' => HttpStatus.badRequest,
         _ => HttpStatus.badGateway,
       };
       return _jsonError(
@@ -1310,6 +1359,12 @@ const _streamHeaders = {
   HttpHeaders.contentTypeHeader: 'application/x-ndjson; charset=utf-8',
   HttpHeaders.cacheControlHeader: 'no-store',
   'x-accel-buffering': 'no',
+};
+
+/// 朗读音频响应头：mp3 字节直出，浏览器 blob 播放，不落盘不缓存。
+const _audioHeaders = {
+  HttpHeaders.contentTypeHeader: 'audio/mpeg',
+  HttpHeaders.cacheControlHeader: 'no-store',
 };
 
 const _noStoreHeaders = {HttpHeaders.cacheControlHeader: 'no-store'};
