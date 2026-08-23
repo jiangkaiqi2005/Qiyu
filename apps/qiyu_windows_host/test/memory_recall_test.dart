@@ -540,7 +540,10 @@ final class _ScriptedModelClient implements ProviderChatClient {
   final List<List<ModelMessage>> calls = [];
 
   @override
-  Future<ModelCompletion?> complete(List<ModelMessage> messages) async {
+  Future<ModelCompletion?> complete(
+    List<ModelMessage> messages, {
+    int? maxTokens,
+  }) async {
     calls.add(messages);
     final index = calls.length - 1 < completions.length
         ? calls.length - 1

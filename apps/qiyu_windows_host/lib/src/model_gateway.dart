@@ -38,10 +38,13 @@ final class ModelGatewayException implements Exception {
 }
 
 abstract interface class ModelGateway {
+  /// [maxTokens] 缺省用全局回复上限（聊天护栏）；理解类调用输出的是
+  /// 长结构 JSON，必须按调用显式给足预算，否则截断后解析必失败。
   Future<String> complete({
     required ProviderConfig config,
     required String? apiKey,
     required List<ModelMessage> messages,
+    int? maxTokens,
   });
 }
 
@@ -50,6 +53,7 @@ abstract interface class StreamingModelGateway implements ModelGateway {
     required ProviderConfig config,
     required String? apiKey,
     required List<ModelMessage> messages,
+    int? maxTokens,
   });
 }
 
@@ -244,12 +248,14 @@ final class ProviderModelGateway implements StreamingModelGateway {
     required ProviderConfig config,
     required String? apiKey,
     required List<ModelMessage> messages,
+    int? maxTokens,
   }) async {
     final buffer = StringBuffer();
     await for (final event in stream(
       config: config,
       apiKey: apiKey,
       messages: messages,
+      maxTokens: maxTokens,
     )) {
       if (event.kind == ModelStreamEventKind.delta) {
         buffer.write(event.text);
@@ -275,6 +281,7 @@ final class ProviderModelGateway implements StreamingModelGateway {
     required ProviderConfig config,
     required String? apiKey,
     required List<ModelMessage> messages,
+    int? maxTokens,
   }) async* {
     config.validate();
     final protocol = _providerProtocol(config.kind);
@@ -286,7 +293,12 @@ final class ProviderModelGateway implements StreamingModelGateway {
       return;
     }
 
-    final request = protocol.buildRequest(config, apiKey, messages);
+    final request = protocol.buildRequest(
+      config,
+      apiKey,
+      messages,
+      maxTokens ?? _maxModelReplyTokens,
+    );
     ProviderHttpResponse response;
     try {
       response = await httpClient.postStream(
@@ -411,10 +423,13 @@ typedef _ProviderRequest = ({
 abstract interface class _ProviderProtocol {
   bool get requiresApiKey;
 
+  /// [maxTokens] 已在 gateway 层解析过默认值；是否写入请求体由各
+  /// 协议自定（Ollama 历来不设输出上限，见其实现）。
   _ProviderRequest buildRequest(
     ProviderConfig config,
     String? apiKey,
     List<ModelMessage> messages,
+    int maxTokens,
   );
 
   _ProviderStreamPart? readEvent(String line);
@@ -442,6 +457,7 @@ final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
     ProviderConfig config,
     String? apiKey,
     List<ModelMessage> messages,
+    int maxTokens,
   ) => (
     uri: _appendEndpoint(config.baseUrl, 'chat/completions'),
     headers: {
@@ -452,7 +468,7 @@ final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
       'model': config.model.trim(),
       'messages': messages.map(_messageJson).toList(),
       'temperature': config.temperature,
-      'max_tokens': _maxModelReplyTokens,
+      'max_tokens': maxTokens,
       'stream': true,
     },
   );
@@ -506,6 +522,7 @@ final class _AnthropicProtocol implements _ProviderProtocol {
     ProviderConfig config,
     String? apiKey,
     List<ModelMessage> messages,
+    int maxTokens,
   ) => (
     uri: _anthropicMessagesEndpoint(config.baseUrl),
     headers: {
@@ -527,7 +544,7 @@ final class _AnthropicProtocol implements _ProviderProtocol {
           .map(_messageJson)
           .toList(),
       'temperature': config.temperature,
-      'max_tokens': _maxModelReplyTokens,
+      'max_tokens': maxTokens,
       'stream': true,
     },
   );
@@ -581,7 +598,9 @@ final class _OllamaProtocol implements _ProviderProtocol {
     ProviderConfig config,
     String? apiKey,
     List<ModelMessage> messages,
+    int maxTokens,
   ) {
+    // Ollama 历来不设输出上限，这里同样不设（num_predict），保持原状。
     final headers = <String, String>{'content-type': 'application/json'};
     if (apiKey != null && apiKey.trim().isNotEmpty) {
       headers['authorization'] = 'Bearer ${apiKey.trim()}';

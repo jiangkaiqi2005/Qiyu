@@ -199,6 +199,7 @@ final class _UnusedModelGateway implements ModelGateway {
     required ProviderConfig config,
     required String? apiKey,
     required List<ModelMessage> messages,
+    int? maxTokens,
   }) {
     throw UnsupportedError('local data tests never call the model');
   }

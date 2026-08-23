@@ -1717,7 +1717,10 @@ final class _ScriptedDreamClient implements ProviderChatClient {
   var _index = 0;
 
   @override
-  Future<ModelCompletion?> complete(List<ModelMessage> messages) async {
+  Future<ModelCompletion?> complete(
+    List<ModelMessage> messages, {
+    int? maxTokens,
+  }) async {
     calls.add(messages);
     if (completions.isEmpty) {
       return null;

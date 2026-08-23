@@ -63,7 +63,12 @@ final class ModelCompletion {
 }
 
 abstract interface class ProviderChatClient {
-  Future<ModelCompletion?> complete(List<ModelMessage> messages);
+  /// [maxTokens] 缺省沿用聊天回复护栏；理解类调用要输出长结构 JSON，
+  /// 必须显式给足预算，否则输出截断后无法解析。
+  Future<ModelCompletion?> complete(
+    List<ModelMessage> messages, {
+    int? maxTokens,
+  });
 }
 
 abstract interface class StreamingProviderChatClient {
@@ -229,7 +234,10 @@ final class ProviderSettingsService
   }
 
   @override
-  Future<ModelCompletion?> complete(List<ModelMessage> messages) async {
+  Future<ModelCompletion?> complete(
+    List<ModelMessage> messages, {
+    int? maxTokens,
+  }) async {
     final config = await configRepository.load();
     if (config == null) {
       return null;
@@ -239,6 +247,7 @@ final class ProviderSettingsService
         config: config,
         apiKey: await _resolveApiKey(config),
         messages: messages,
+        maxTokens: maxTokens,
       );
       return ModelCompletion.reply(text);
     } on ModelGatewayException catch (error) {

@@ -2280,6 +2280,7 @@ final class _StaticModelGateway implements ModelGateway {
     required ProviderConfig config,
     required String? apiKey,
     required List<ModelMessage> messages,
+    int? maxTokens,
   }) async {
     this.apiKey = apiKey;
     return reply;
@@ -2296,6 +2297,7 @@ final class _FailingModelGateway implements ModelGateway {
     required ProviderConfig config,
     required String? apiKey,
     required List<ModelMessage> messages,
+    int? maxTokens,
   }) {
     throw ModelGatewayException(kind: kind, message: '已脱敏的测试错误');
   }

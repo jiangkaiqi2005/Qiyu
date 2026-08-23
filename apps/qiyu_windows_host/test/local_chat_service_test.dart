@@ -3108,7 +3108,10 @@ final class _RecallScriptedProviderClient
   }
 
   @override
-  Future<ModelCompletion?> complete(List<ModelMessage> messages) async {
+  Future<ModelCompletion?> complete(
+    List<ModelMessage> messages, {
+    int? maxTokens,
+  }) async {
     completeCalls.add(messages);
     if (completions.isEmpty) {
       return null;
@@ -3158,7 +3161,10 @@ final class _GatedRecallProviderClient
   }
 
   @override
-  Future<ModelCompletion?> complete(List<ModelMessage> messages) async {
+  Future<ModelCompletion?> complete(
+    List<ModelMessage> messages, {
+    int? maxTokens,
+  }) async {
     completeCalls.add(messages);
     if (completeCalls.length == 1) {
       return ModelCompletion.reply(selectionReply);

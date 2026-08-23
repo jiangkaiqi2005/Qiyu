@@ -44,6 +44,70 @@ void main() {
     });
   });
 
+  test('per-call maxTokens 覆盖默认输出预算', () async {
+    final client = _RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.fromIterable([
+          'data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n\n',
+        ]),
+      ),
+    );
+    final gateway = ProviderModelGateway(client);
+
+    await gateway.complete(
+      config: _config(ProviderKind.openAiCompatible),
+      apiKey: 'test-key',
+      messages: messages,
+      maxTokens: 8192,
+    );
+
+    expect(client.jsonBody['max_tokens'], 8192);
+  });
+
+  test('Anthropic 同样吃 per-call 输出预算，Ollama 保持不设上限', () async {
+    final anthropicClient = _RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.fromIterable([
+          'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"{}"}}\n\n',
+          'data: {"type":"message_stop"}\n\n',
+        ]),
+      ),
+    );
+    await ProviderModelGateway(anthropicClient).complete(
+      config: _config(
+        ProviderKind.anthropic,
+        baseUrl: 'https://api.anthropic.com/v1',
+      ),
+      apiKey: 'anthropic-test-key',
+      messages: messages,
+      maxTokens: 8192,
+    );
+    expect(anthropicClient.jsonBody['max_tokens'], 8192);
+
+    final ollamaClient = _RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.fromIterable([
+          '{"message":{"role":"assistant","content":"{}"},"done":true}\n',
+        ]),
+      ),
+    );
+    await ProviderModelGateway(ollamaClient).complete(
+      config: _config(ProviderKind.ollama, baseUrl: 'http://127.0.0.1:11434'),
+      apiKey: null,
+      messages: messages,
+      maxTokens: 8192,
+    );
+    expect(ollamaClient.jsonBody.containsKey('max_tokens'), isFalse);
+    expect(
+      (ollamaClient.jsonBody['options'] as Map<String, Object?>)
+          .containsKey('num_predict'),
+      isFalse,
+    );
+  });
+
   test('Anthropic 使用 Messages API 的顶层 system 与鉴权头', () async {
     final client = _RecordingHttpClient(
       response: ProviderHttpResponse(

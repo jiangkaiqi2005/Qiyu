@@ -28,6 +28,13 @@ const understandingMaxPersonaHints = 1;
 const understandingMaxEpisodeEntries = 40;
 const understandingEvidenceMaxRunes = 80;
 
+/// 日终理解调用的输出预算：一次要返回当天全部 episode 条目（上限
+/// 40 条 × 摘要 60 字 + 摘录 80 字）加整份 covered_request_ids 清单
+/// 的单个 JSON 对象，远超聊天的少说护栏。按旧 tokenizer 汉字可到
+/// 2 token/字估算最坏输出可超 1 万 token，预算不足时输出被截断，
+/// JSON 解析必失败，归档会整体推迟（8-20 起三天的真实事故）。
+const understandingMaxOutputTokens = 16384;
+
 /// open-loop proactive 字段白名单。
 const _understandingProactiveWhitelist = {'no', 'once', 'yes'};
 
@@ -389,6 +396,7 @@ Future<DayUnderstanding?> fetchDayUnderstanding({
         pendingRequestIds: pendingRequestIds,
         bannedTitles: bannedTitles,
       ),
+      maxTokens: understandingMaxOutputTokens,
     );
   } on Object catch (error) {
     sink('day understanding deferred [$error] date=$date');

@@ -38,6 +38,26 @@ void main() {
     expect(saved.toJson().toString(), isNot(contains('private-value')));
   });
 
+  test('complete 透传 per-call 输出预算，缺省回落聊天护栏', () async {
+    final repository = _MemoryProviderConfigRepository()..config = config;
+    final secrets = _MemorySecretStore();
+    final gateway = _FakeModelGateway(reply: '{}');
+    final service = ProviderSettingsService(
+      repository,
+      secrets,
+      gateway,
+      promptBuilder,
+    );
+
+    await service.complete([
+      const ModelMessage(ModelMessageRole.user, '理解'),
+    ], maxTokens: 8192);
+    expect(gateway.maxTokens, 8192);
+
+    await service.complete([const ModelMessage(ModelMessageRole.user, '在吗')]);
+    expect(gateway.maxTokens, isNull);
+  });
+
   test('测试当前配置返回成功结果且不会回传 Key', () async {
     final repository = _MemoryProviderConfigRepository()..config = config;
     final secrets = _MemorySecretStore()
@@ -393,15 +413,18 @@ final class _FakeModelGateway implements ModelGateway {
   final ModelFailureKind? failure;
   String? apiKey;
   List<ModelMessage>? messages;
+  int? maxTokens;
 
   @override
   Future<String> complete({
     required ProviderConfig config,
     required String? apiKey,
     required List<ModelMessage> messages,
+    int? maxTokens,
   }) async {
     this.apiKey = apiKey;
     this.messages = messages;
+    this.maxTokens = maxTokens;
     if (failure case final kind?) {
       throw ModelGatewayException(kind: kind, message: '测试失败');
     }

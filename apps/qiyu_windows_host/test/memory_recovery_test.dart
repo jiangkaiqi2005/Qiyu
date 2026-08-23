@@ -1038,7 +1038,10 @@ final class _ScriptedClient implements ProviderChatClient {
   var _index = 0;
 
   @override
-  Future<ModelCompletion?> complete(List<ModelMessage> messages) async {
+  Future<ModelCompletion?> complete(
+    List<ModelMessage> messages, {
+    int? maxTokens,
+  }) async {
     if (_index >= completions.length) {
       return null;
     }

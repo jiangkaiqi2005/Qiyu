@@ -755,7 +755,10 @@ final class _FakeUnderstandingClient implements ProviderChatClient {
   List<ModelMessage>? lastMessages;
 
   @override
-  Future<ModelCompletion?> complete(List<ModelMessage> messages) async {
+  Future<ModelCompletion?> complete(
+    List<ModelMessage> messages, {
+    int? maxTokens,
+  }) async {
     calls += 1;
     lastMessages = messages;
     if (!configured) {
