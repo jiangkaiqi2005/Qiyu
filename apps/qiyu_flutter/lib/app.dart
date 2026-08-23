@@ -127,7 +127,10 @@ class _QiyuAppState extends State<QiyuApp> {
           ChangeNotifierProvider.value(value: injectedChatViewModel)
         else
           ChangeNotifierProvider(
-            create: (_) => LocalChatViewModel(HttpLocalChatGateway()),
+            create: (context) => LocalChatViewModel(
+              HttpLocalChatGateway(),
+              ttsSettingsGateway: context.read<TtsSettingsGateway>(),
+            ),
           ),
         if (injectedSettingsViewModel != null)
           ChangeNotifierProvider.value(value: injectedSettingsViewModel)

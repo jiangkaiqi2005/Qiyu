@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
@@ -51,6 +52,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('voice-output-status')), findsNothing);
     expect(find.text('正在读'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
     viewModel.dispose();
     controller.dispose();
   });
@@ -94,6 +96,62 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('voice-output-status')), findsNothing);
 
+    await tester.pumpWidget(const SizedBox.shrink());
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  testWidgets('离开聊天页立即停止朗读并清空队列', (tester) async {
+    final player = _HoldingPlayerPlatform();
+    final controller = VoiceOutputController(
+      _RecordingSpeakGateway(),
+      playerPlatform: player,
+    );
+    final viewModel = LocalChatViewModel(
+      _VoiceChatGateway(),
+      hostConnectionProbe: _FixedHostConnectionProbe(),
+      ttsSettingsGateway: _FixedTtsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+    final router = GoRouter(
+      initialLocation: '/chat',
+      routes: [
+        GoRoute(
+          path: '/chat',
+          builder: (context, state) => LocalChatView(
+            voiceRecorderPlatform: _FakeRecorderPlatform(),
+            sttSettingsGateway: _FixedSttGateway(configured: true),
+          ),
+        ),
+        GoRoute(
+          path: '/settings',
+          builder: (context, state) => const Scaffold(body: Text('设置页')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: viewModel,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+
+    await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    expect(controller.phase, VoiceOutputPhase.playing);
+    expect(player.activeCount, 1);
+
+    await tester.tap(find.byKey(const Key('open-provider-settings')));
+    await tester.pumpAndSettle();
+    expect(find.text('设置页'), findsOneWidget);
+    expect(controller.phase, VoiceOutputPhase.idle);
+    expect(player.activeCount, 0);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    router.dispose();
     viewModel.dispose();
     controller.dispose();
   });
@@ -131,7 +189,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(speakGateway.calls, hasLength(2));
     expect(speakGateway.calls.last.deliveryIndex, 0);
+    expect(speakGateway.calls.map((call) => call.sessionId), [
+      'session-voice',
+      'session-voice',
+    ]);
 
+    await tester.pumpWidget(const SizedBox.shrink());
     viewModel.dispose();
     controller.dispose();
   });
@@ -178,6 +241,7 @@ void main() {
     expect(mutableTts.autoSpeakWrites, [false, true]);
     expect(find.byKey(const Key('voice-output-toggle-on')), findsOneWidget);
 
+    await tester.pumpWidget(const SizedBox.shrink());
     viewModel.dispose();
     controller.dispose();
   });
@@ -599,7 +663,8 @@ final class _FixedTtsGateway implements TtsSettingsGateway {
 
 /// 朗读 fake：记录调用，播放挂起直到测试放行。
 final class _RecordingSpeakGateway implements ChatSpeechGateway {
-  final List<({String requestId, int deliveryIndex})> calls = [];
+  final List<({String requestId, int deliveryIndex, String? sessionId})> calls =
+      [];
 
   @override
   Future<Uint8List> speak({
@@ -607,7 +672,11 @@ final class _RecordingSpeakGateway implements ChatSpeechGateway {
     required int deliveryIndex,
     String? sessionId,
   }) async {
-    calls.add((requestId: requestId, deliveryIndex: deliveryIndex));
+    calls.add((
+      requestId: requestId,
+      deliveryIndex: deliveryIndex,
+      sessionId: sessionId,
+    ));
     return Uint8List.fromList([1]);
   }
 }
@@ -615,6 +684,8 @@ final class _RecordingSpeakGateway implements ChatSpeechGateway {
 /// 播放挂起型 fake：正在读的状态保持到 finish 被调用。
 final class _HoldingPlayerPlatform implements VoicePlayerPlatform {
   final _playbacks = <Completer<void>>[];
+
+  int get activeCount => _playbacks.length;
 
   @override
   bool get supported => true;

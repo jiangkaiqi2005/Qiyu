@@ -60,6 +60,48 @@ void main() {
     expect(moved.keySet, isFalse);
   });
 
+  test('保存设置保留既有朗读开关，脏 Key 不落盘', () async {
+    final service = TtsSettingsService(repository, _FakeTtsGateway());
+    await service.save(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'tts-test',
+      apiKey: 'secret-tts-key',
+      autoSpeak: false,
+    );
+
+    final updated = await service.save(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'tts-next',
+    );
+    expect(updated.config?.autoSpeak, isFalse);
+
+    await expectLater(
+      service.save(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-next',
+        apiKey: 'key\u200B',
+      ),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+        ),
+      ),
+    );
+    expect((await repository.loadTts())?.apiKey, 'secret-tts-key');
+
+    await expectLater(
+      service.save(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-next',
+        apiKey: ' secret-tts-key',
+      ),
+      throwsA(isA<ProviderConfigException>()),
+    );
+    expect((await repository.loadTts())?.apiKey, 'secret-tts-key');
+  });
+
   test('忘记 Key 只清 Key，音色语速开关与地址模型保留', () async {
     final service = TtsSettingsService(repository, _FakeTtsGateway());
     await service.save(
@@ -120,6 +162,29 @@ void main() {
     expect(gateway.lastConfig?.voice, 'nova');
   });
 
+  test('连接测试：当前表单缺省音色语速用服务默认，空负载才沿用已存值', () async {
+    final gateway = _FakeTtsGateway(audio: [7, 8, 9]);
+    final service = TtsSettingsService(repository, gateway);
+    await service.save(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'tts-test',
+      apiKey: 'secret-tts-key',
+      voice: 'nova',
+      speed: 1.25,
+    );
+
+    await service.test(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'tts-test',
+    );
+    expect(gateway.lastConfig?.voice, isNull);
+    expect(gateway.lastConfig?.speed, isNull);
+
+    await service.test();
+    expect(gateway.lastConfig?.voice, 'nova');
+    expect(gateway.lastConfig?.speed, 1.25);
+  });
+
   test('连接测试失败：按分类给人话，不带音频', () async {
     final service = TtsSettingsService(
       repository,
@@ -150,6 +215,15 @@ void main() {
     );
     expect(result.succeeded, isFalse);
     expect(result.message, 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。');
+    expect(gateway.called, isFalse);
+
+    final spaced = await service.test(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'tts-test',
+      apiKey: ' secret-tts-key',
+    );
+    expect(spaced.succeeded, isFalse);
+    expect(spaced.message, 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。');
     expect(gateway.called, isFalse);
   });
 
@@ -204,6 +278,32 @@ void main() {
     );
     expect(await service.synthesize('晚安。'), [4, 5]);
     expect(gateway.lastText, '晚安。');
+  });
+
+  test('正式合成：上游错误保留既有分类诊断码', () async {
+    final service = TtsSettingsService(
+      repository,
+      _FakeTtsGateway(
+        error: const TtsGatewayException(
+          kind: ModelFailureKind.rateLimited,
+          message: '上游额度详情 secret-provider-body',
+        ),
+      ),
+    );
+    await service.save(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'tts-test',
+      apiKey: 'secret-tts-key',
+    );
+
+    await expectLater(
+      service.synthesize('晚安。'),
+      throwsA(
+        isA<TtsServiceException>()
+            .having((error) => error.code, 'code', 'tts_rate_limited')
+            .having((error) => error.message, 'message', '语音合成服务请求过于频繁，请稍后再试。'),
+      ),
+    );
   });
 }
 

@@ -21,13 +21,15 @@ final class WebVoicePlayerPlatform implements VoicePlayerPlatform {
     Uint8List bytes, {
     required String mimeType,
   }) async {
+    String? url;
+    web.HTMLAudioElement? audio;
     try {
       final blob = web.Blob(
         <web.BlobPart>[bytes.toJS].toJS,
         web.BlobPropertyBag(type: mimeType),
       );
-      final url = web.URL.createObjectURL(blob);
-      final audio = web.HTMLAudioElement()..src = url;
+      url = web.URL.createObjectURL(blob);
+      audio = web.HTMLAudioElement()..src = url;
       final stopped = Completer<void>();
       audio.onended = ((web.Event _) {
         if (!stopped.isCompleted) {
@@ -43,6 +45,11 @@ final class WebVoicePlayerPlatform implements VoicePlayerPlatform {
       await audio.play().toDart;
       return _WebVoicePlayback(audio, url, stopped);
     } on Object {
+      audio?.pause();
+      audio?.removeAttribute('src');
+      if (url != null) {
+        web.URL.revokeObjectURL(url);
+      }
       return null;
     }
   }
@@ -54,6 +61,7 @@ final class _WebVoicePlayback implements VoicePlayback {
   final web.HTMLAudioElement _audio;
   final String _url;
   final Completer<void> _stopped;
+  bool _released = false;
 
   @override
   Future<void> get done async {
@@ -71,6 +79,10 @@ final class _WebVoicePlayback implements VoicePlayback {
   }
 
   void _release() {
+    if (_released) {
+      return;
+    }
+    _released = true;
     _audio.removeAttribute('src');
     web.URL.revokeObjectURL(_url);
   }

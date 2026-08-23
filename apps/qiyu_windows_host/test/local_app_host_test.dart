@@ -1918,7 +1918,7 @@ void main() {
           ...browser.readHeaders(host.origin),
           'origin': host.origin.toString().replaceFirst(RegExp(r'/$'), ''),
         },
-        requestBody: jsonEncode({'requestId': 'speak-1', 'deliveryIndex': 0}),
+        requestBody: jsonEncode({'requestId': 'speak-1', 'turnIndex': 0}),
       );
       expect(noCsrf.statusCode, HttpStatus.forbidden);
 
@@ -1936,19 +1936,19 @@ void main() {
         host.origin.resolve('/api/chat/speak'),
         method: 'POST',
         headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'speak-1', 'deliveryIndex': 0}),
+        requestBody: jsonEncode({'requestId': 'speak-1', 'turnIndex': 0}),
       );
       expect(spoken.statusCode, HttpStatus.ok);
       expect(spoken.headers.value(HttpHeaders.contentTypeHeader), 'audio/mpeg');
       expect(spoken.bodyBytes, [1, 2, 3]);
       expect(ttsGateway.lastText, '还没睡？');
 
-      // deliveryIndex 越界与未知 requestId：允许列表诊断码。
+      // turnIndex 越界与未知 requestId：允许列表诊断码。
       final overflow = await _send(
         host.origin.resolve('/api/chat/speak'),
         method: 'POST',
         headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'speak-1', 'deliveryIndex': 9}),
+        requestBody: jsonEncode({'requestId': 'speak-1', 'turnIndex': 9}),
       );
       expect(overflow.statusCode, HttpStatus.badRequest);
       expect(
@@ -1960,7 +1960,7 @@ void main() {
         host.origin.resolve('/api/chat/speak'),
         method: 'POST',
         headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'nope', 'deliveryIndex': 0}),
+        requestBody: jsonEncode({'requestId': 'nope', 'turnIndex': 0}),
       );
       expect(unknown.statusCode, HttpStatus.badRequest);
       expect(
@@ -1968,39 +1968,37 @@ void main() {
         containsPair('code', 'tts_turn_not_found'),
       );
 
-      // 请求格式不对（缺 requestId / deliveryIndex 非整数）。
+      // 请求格式不对（缺 requestId / turnIndex 非整数）。
       final malformed = await _send(
         host.origin.resolve('/api/chat/speak'),
         method: 'POST',
         headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({
-          'requestId': 'speak-1',
-          'deliveryIndex': 'zero',
-        }),
+        requestBody: jsonEncode({'requestId': 'speak-1', 'turnIndex': 'zero'}),
       );
       expect(malformed.statusCode, HttpStatus.badRequest);
 
-      // 上游合成失败映射为允许列表诊断码与人话文案（网关异常 message
-      // 是白名单文案，服务商原文不出网关层）。
+      // 上游合成失败映射为允许列表诊断码与人话文案，网关异常里的
+      // 服务商原文不得进入 HTTP 响应。
       ttsGateway.error = const TtsGatewayException(
         kind: ModelFailureKind.rateLimited,
-        message: '语音合成服务请求过于频繁。',
+        message: '上游额度详情 secret-provider-body',
       );
       final upstreamFailure = await _send(
         host.origin.resolve('/api/chat/speak'),
         method: 'POST',
         headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'speak-1', 'deliveryIndex': 0}),
+        requestBody: jsonEncode({'requestId': 'speak-1', 'turnIndex': 0}),
       );
       expect(upstreamFailure.statusCode, HttpStatus.badGateway);
       expect(
         jsonDecode(upstreamFailure.body),
-        containsPair('code', 'tts_service_error'),
+        containsPair('code', 'tts_rate_limited'),
       );
       expect(
         jsonDecode(upstreamFailure.body),
-        containsPair('message', '语音合成服务请求过于频繁。'),
+        containsPair('message', '语音合成服务请求过于频繁，请稍后再试。'),
       );
+      expect(upstreamFailure.body, isNot(contains('secret-provider-body')));
       await host.close();
     },
   );

@@ -135,11 +135,6 @@ void main() {
     expect(sent.method, 'POST');
     expect(sent.url.path, '/api/chat/speak');
     expect(sent.headers['x-qiyu-csrf'], 'csrf-1');
-    expect(jsonDecode(sent.body), {
-      'requestId': 'r1',
-      'deliveryIndex': 1,
-      'sessionId': 's1',
-    });
   });
 
   test('speak：服务端错误回人话异常', () async {
@@ -169,6 +164,27 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('speak：按 spec 发送 requestId 与 turnIndex 定位符', () async {
+    late Map<String, Object?> payload;
+    final client = MockClient((request) async {
+      return switch (request.url.path) {
+        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+        '/api/chat/speak' => () {
+          payload = (jsonDecode(request.body) as Map).cast<String, Object?>();
+          return http.Response.bytes([1, 2, 3], 200);
+        }(),
+        _ => _jsonResponse({'message': 'not found'}, 404),
+      };
+    });
+    final gateway = HttpLocalChatGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    expect(await gateway.speak(requestId: 'r1', deliveryIndex: 2), [1, 2, 3]);
+    expect(payload, {'requestId': 'r1', 'turnIndex': 2});
   });
 }
 

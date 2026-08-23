@@ -276,7 +276,7 @@ final class HttpLocalChatGateway extends HostApiGateway
       headers: await csrfHeaders(),
       body: jsonEncode({
         'requestId': requestId,
-        'deliveryIndex': deliveryIndex,
+        'turnIndex': deliveryIndex,
         'sessionId': ?sessionId,
       }),
     );

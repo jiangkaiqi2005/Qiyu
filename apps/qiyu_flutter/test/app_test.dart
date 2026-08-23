@@ -15,9 +15,23 @@ import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 void main() {
+  testWidgets('默认聊天 ViewModel 复用应用级 TTS 设置网关', (tester) async {
+    final ttsGateway = _RecordingTtsSettingsGateway();
+    await tester.pumpWidget(
+      QiyuApp(
+        ttsSettingsGateway: ttsGateway,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await tester.pump();
+
+    expect(ttsGateway.readCalls, 1);
+  });
+
   testWidgets('restores the latest local session without duplicate messages', (
     tester,
   ) async {
@@ -754,6 +768,29 @@ void main() {
       expect(find.textContaining('慢慢说，我在听。你继续。'), findsOneWidget);
     },
   );
+}
+
+final class _RecordingTtsSettingsGateway implements TtsSettingsGateway {
+  int readCalls = 0;
+
+  @override
+  Future<TtsSettings> read() async {
+    readCalls += 1;
+    return const TtsSettings(configured: true, keySet: true, autoSpeak: true);
+  }
+
+  @override
+  Future<TtsSettings> save(TtsSettingsDraft draft) => read();
+
+  @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) => read();
+
+  @override
+  Future<TtsSettings> forgetApiKey() => read();
+
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
+      const TtsConnectionTest(succeeded: true, message: '连接成功。');
 }
 
 final class _FakeLocalChatGateway implements StreamingLocalChatGateway {

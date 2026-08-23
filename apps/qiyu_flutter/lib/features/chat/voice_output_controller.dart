@@ -37,6 +37,8 @@ final class VoiceOutputController extends ChangeNotifier {
   final Queue<VoiceOutputRequest> _queue = Queue();
   var _generation = 0;
   bool _failureNotified = false;
+  bool _sessionInitialized = false;
+  String? _sessionId;
   VoicePlayback? _activePlayback;
 
   VoiceOutputPhase _phase = VoiceOutputPhase.idle;
@@ -58,6 +60,7 @@ final class VoiceOutputController extends ChangeNotifier {
     if (!enabled) {
       return;
     }
+    _enterSession(request.sessionId);
     _queue.addLast(request);
     _drain();
   }
@@ -65,6 +68,7 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 手动重听（气泡小喇叭）：用户主动点播优先于自动队列——立即播这
   /// 条，正在播的直接顶掉，清空自动排队（用户要听的是这一句）。
   void playNow(VoiceOutputRequest request) {
+    _enterSession(request.sessionId);
     _abandonActive(incrementGeneration: true);
     _phase = VoiceOutputPhase.idle;
     _nowReading = null;
@@ -162,5 +166,15 @@ final class VoiceOutputController extends ChangeNotifier {
       _failureNotice = '语音服务连不上，这条读不出来。';
       notifyListeners();
     }
+  }
+
+  void _enterSession(String? sessionId) {
+    if (_sessionInitialized && _sessionId == sessionId) {
+      return;
+    }
+    _sessionInitialized = true;
+    _sessionId = sessionId;
+    _failureNotified = false;
+    _failureNotice = null;
   }
 }

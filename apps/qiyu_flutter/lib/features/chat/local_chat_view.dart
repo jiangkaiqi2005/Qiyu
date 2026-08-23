@@ -58,13 +58,14 @@ class _LocalChatViewState extends State<LocalChatView> {
   bool _stickToBottom = true;
   double _lastPixels = 0;
 
+  late final LocalChatViewModel _chatViewModel;
   late final VoiceInputController _voiceInput;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_trackStickToBottom);
-    final chatViewModel = context.read<LocalChatViewModel>();
+    final chatViewModel = _chatViewModel = context.read<LocalChatViewModel>();
     final sttSettingsGateway = _resolveSttSettingsGateway();
     _voiceInput = VoiceInputController(
       widget.voiceRecorderPlatform ?? createVoiceRecorderPlatform(),
@@ -99,10 +100,21 @@ class _LocalChatViewState extends State<LocalChatView> {
 
   @override
   void dispose() {
+    _chatViewModel.voiceOutput.stopAll();
     _voiceInput.dispose();
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _pushAwayFromChat(String location) {
+    _chatViewModel.voiceOutput.stopAll();
+    context.push(location);
+  }
+
+  void _goHome() {
+    _chatViewModel.voiceOutput.stopAll();
+    context.go('/');
   }
 
   // pixels 减少只可能来自用户上滑（程序跳转与内容增长不会减少），
@@ -192,7 +204,7 @@ class _LocalChatViewState extends State<LocalChatView> {
             ? null
             : SnackBarAction(
                 label: '去设置',
-                onPressed: () => context.push('/settings'),
+                onPressed: () => _pushAwayFromChat('/settings'),
               ),
       ),
     );
@@ -233,7 +245,7 @@ class _LocalChatViewState extends State<LocalChatView> {
                         children: [
                           IconButton(
                             key: const Key('go-home'),
-                            onPressed: () => context.go('/'),
+                            onPressed: _goHome,
                             tooltip: '首页',
                             icon: const Icon(Icons.arrow_back),
                           ),
@@ -274,13 +286,13 @@ class _LocalChatViewState extends State<LocalChatView> {
                             ),
                           IconButton(
                             key: const Key('open-history'),
-                            onPressed: () => context.push('/history'),
+                            onPressed: () => _pushAwayFromChat('/history'),
                             tooltip: '历史',
                             icon: const Icon(Icons.history),
                           ),
                           IconButton(
                             key: const Key('open-provider-settings'),
-                            onPressed: () => context.push('/settings'),
+                            onPressed: () => _pushAwayFromChat('/settings'),
                             tooltip: '模型连接',
                             icon: const Icon(Icons.tune),
                           ),
@@ -667,13 +679,7 @@ class _LocalChatViewState extends State<LocalChatView> {
               deliveryIndex == nowReading.deliveryIndex,
           // 栖语气泡的重听小喇叭：点一下立即重读这句（重听=重新合成）。
           onReplay: isQiyu && deliveryIndex != null
-              ? () => viewModel.voiceOutput.playNow(
-                  VoiceOutputRequest(
-                    requestId: message.requestId,
-                    deliveryIndex: deliveryIndex,
-                    sessionId: null,
-                  ),
-                )
+              ? () => viewModel.replayVoiceOutput(message)
               : null,
         );
       },

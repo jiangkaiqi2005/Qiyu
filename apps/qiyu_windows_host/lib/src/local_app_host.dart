@@ -922,18 +922,18 @@ final class _LocalAppRequestHandler {
       if (request.method == 'POST' && request.url.path == 'api/chat/speak') {
         final payload = await _readJsonObject(request, maxBytes: 8 * 1024);
         final requestId = payload['requestId'];
-        final deliveryIndex = payload['deliveryIndex'];
+        final turnIndex = payload['turnIndex'];
         final sessionId = payload['sessionId'];
         if (requestId is! String ||
             requestId.trim().isEmpty ||
-            deliveryIndex is! int ||
-            deliveryIndex < 0 ||
+            turnIndex is! int ||
+            turnIndex < 0 ||
             (sessionId != null && sessionId is! String)) {
           throw _invalidRequest('朗读请求格式不正确。');
         }
         // Host 是文字真相源：浏览器只传定位符，朗读文字从已落盘的
         // 栖语 turn 取（ADR 0002：只有完整交付并落盘的话才读）。
-        // deliveryIndex 是该 requestId 的第 N 次交付段：轮内召回的
+        // turnIndex 是该 requestId 的第 N 个栖语 turn：轮内召回的
         // bubble 2 落为同一 requestId 的第二个栖语 turn，一次交付 =
         // 一段朗读。
         final session = await memoryRepository.openSession(
@@ -944,7 +944,7 @@ final class _LocalAppRequestHandler {
         for (final candidate in session.turns) {
           if (candidate.requestId == requestId &&
               candidate.speaker == Speaker.qiyu) {
-            if (matched == deliveryIndex) {
+            if (matched == turnIndex) {
               turn = candidate;
               break;
             }

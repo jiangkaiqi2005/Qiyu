@@ -123,7 +123,12 @@ final class TtsSettingsViewModel extends ChangeNotifier {
     if (audio == null || !result!.succeeded) {
       return;
     }
-    await _playerPlatform.play(audio, mimeType: 'audio/mpeg');
+    final playback = await _playerPlatform.play(audio, mimeType: 'audio/mpeg');
+    if (playback != null) {
+      // 读取 done 才会在播放结束后释放浏览器 blob URL；试听本身不阻塞
+      // 设置页交互。
+      unawaited(playback.done);
+    }
   }
 }
 

@@ -94,6 +94,48 @@ void main() {
     expect(controller.phase, VoiceOutputPhase.idle);
   });
 
+  test('合成失败提示按会话重置：同会话只提示一次，新会话可再次提示', () async {
+    final gateway = _RecordingSpeakGateway(failing: true);
+    final controller = VoiceOutputController(
+      gateway,
+      playerPlatform: _FakeVoicePlayerPlatform(),
+    );
+
+    controller.offer(
+      const VoiceOutputRequest(
+        requestId: 'r1',
+        deliveryIndex: 0,
+        sessionId: 'session-1',
+      ),
+      enabled: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.failureNotice, isNotNull);
+
+    controller.consumeFailureNotice();
+    controller.offer(
+      const VoiceOutputRequest(
+        requestId: 'r2',
+        deliveryIndex: 0,
+        sessionId: 'session-1',
+      ),
+      enabled: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.failureNotice, isNull);
+
+    controller.offer(
+      const VoiceOutputRequest(
+        requestId: 'r3',
+        deliveryIndex: 0,
+        sessionId: 'session-2',
+      ),
+      enabled: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.failureNotice, isNotNull);
+  });
+
   test('自动播放被拒（play 返回 null）与合成失败同款降级', () async {
     final gateway = _RecordingSpeakGateway();
     final controller = VoiceOutputController(

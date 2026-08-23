@@ -150,6 +150,22 @@ final class LocalChatViewModel extends ChangeNotifier {
     }
   }
 
+  /// 气泡重听：与自动朗读复用当前会话定位，避免同一会话因 null
+  /// sessionId 被误判成新会话并重置首次失败提示。
+  void replayVoiceOutput(LocalChatMessage message) {
+    final deliveryIndex = message.deliveryIndex;
+    if (message.speaker != LocalChatSpeaker.qiyu || deliveryIndex == null) {
+      return;
+    }
+    voiceOutput.playNow(
+      VoiceOutputRequest(
+        requestId: message.requestId,
+        deliveryIndex: deliveryIndex,
+        sessionId: _sessionId,
+      ),
+    );
+  }
+
   Future<void> _applyRestore(int generation, {String? sessionId}) async {
     try {
       final snapshot = await _gateway.restore(sessionId: sessionId);

@@ -94,23 +94,23 @@ final class TtsSettingsService {
     double? speed,
     bool? autoSpeak,
   }) async {
+    final previous = await configRepository.loadTts();
     final config = TtsConfig(
       provider: provider,
       baseUrl: baseUrl,
       model: model,
       voice: _normalizeOptional(voice),
       speed: speed,
-      autoSpeak: autoSpeak ?? true,
+      autoSpeak: autoSpeak ?? previous?.autoSpeak ?? true,
     );
     config.validate();
-    final previous = await configRepository.loadTts();
-    final trimmed = apiKey?.trim();
+    final normalizedKey = _normalizeApiKey(apiKey);
     String? persistedKey;
-    if (trimmed != null && trimmed.isNotEmpty) {
-      persistedKey = trimmed;
+    if (normalizedKey != null) {
+      persistedKey = normalizedKey;
     } else if (previous != null &&
         previous.credentialScope == config.credentialScope) {
-      persistedKey = previous.apiKey;
+      persistedKey = _normalizeApiKey(previous.apiKey);
     }
     // Key 作用域没变时，音色/语速/开关沿用已存值之外的字段更新。
     await configRepository.saveTts(config.withApiKey(persistedKey));
@@ -161,6 +161,7 @@ final class TtsSettingsService {
     double? speed,
   }) async {
     final stored = await configRepository.loadTts();
+    final useStoredOptionalSettings = baseUrl == null && model == null;
     final effectiveBaseUrl = baseUrl == null || baseUrl.trim().isEmpty
         ? stored?.baseUrl
         : baseUrl.trim();
@@ -179,8 +180,10 @@ final class TtsSettingsService {
       provider: effectiveProvider,
       baseUrl: effectiveBaseUrl,
       model: effectiveModel,
-      voice: _normalizeOptional(voice) ?? stored?.voice,
-      speed: speed ?? stored?.speed,
+      voice: useStoredOptionalSettings
+          ? _normalizeOptional(voice) ?? stored?.voice
+          : _normalizeOptional(voice),
+      speed: useStoredOptionalSettings ? speed ?? stored?.speed : speed,
     );
     try {
       config.validate();
@@ -190,20 +193,22 @@ final class TtsSettingsService {
         message: error.message,
       );
     }
-    final trimmedKey = apiKey?.trim();
-    final effectiveKey = trimmedKey != null && trimmedKey.isNotEmpty
-        ? trimmedKey
-        : (stored != null && stored.credentialScope == config.credentialScope
-              ? stored.apiKey
+    final String? effectiveKey;
+    try {
+      final normalizedKey = _normalizeApiKey(apiKey);
+      effectiveKey =
+          normalizedKey ??
+          (stored != null && stored.credentialScope == config.credentialScope
+              ? _normalizeApiKey(stored.apiKey)
               : null);
-    // 网关异常只按 kind 映射固定文案（message 被丢弃），Key 脏字符必须
-    // 在这里提前拦截，人话文案才能到达用户。
-    if (effectiveKey != null && containsNonVisibleAscii(effectiveKey)) {
+    } on ProviderConfigException {
       return const TtsTestResult(
         status: ProviderTestStatus.contentParsing,
-        message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+        message: _dirtyApiKeyMessage,
       );
     }
+    // 网关异常只按 kind 映射固定文案（message 被丢弃）；Key 脏字符已
+    // 由 _normalizeApiKey 在出网前统一拦截。
     try {
       final audio = await ttsGateway.synthesize(
         config: config,
@@ -216,7 +221,7 @@ final class TtsSettingsService {
         audioBase64: base64Encode(audio),
       );
     } on TtsGatewayException catch (error) {
-      final status = _ttsTestStatus(error.kind);
+      final status = _ttsFailureDetails(error.kind).status;
       return TtsTestResult(status: status, message: _ttsTestMessage(status));
     } on Object {
       return const TtsTestResult(
@@ -237,10 +242,13 @@ final class TtsSettingsService {
         retryable: false,
       );
     }
-    if (config.apiKey case final key? when containsNonVisibleAscii(key)) {
+    final String? apiKey;
+    try {
+      apiKey = _normalizeApiKey(config.apiKey);
+    } on ProviderConfigException {
       throw const TtsServiceException(
         code: 'tts_config_invalid',
-        message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+        message: _dirtyApiKeyMessage,
         retryable: false,
       );
     }
@@ -261,7 +269,7 @@ final class TtsSettingsService {
     try {
       return await ttsGateway.synthesize(
         config: config,
-        apiKey: config.apiKey,
+        apiKey: apiKey,
         text: text,
       );
     } on ProviderConfigException catch (error) {
@@ -273,9 +281,10 @@ final class TtsSettingsService {
         retryable: false,
       );
     } on TtsGatewayException catch (error) {
+      final failure = _ttsFailureDetails(error.kind);
       throw TtsServiceException(
-        code: 'tts_service_error',
-        message: error.message,
+        code: failure.code,
+        message: _ttsTestMessage(failure.status),
         retryable: true,
       );
     }
@@ -294,19 +303,60 @@ String? _normalizeOptional(String? value) {
   return trimmed == null || trimmed.isEmpty ? null : trimmed;
 }
 
-ProviderTestStatus _ttsTestStatus(ModelFailureKind kind) => switch (kind) {
-  ModelFailureKind.dns => ProviderTestStatus.dns,
-  ModelFailureKind.tls => ProviderTestStatus.tls,
-  ModelFailureKind.timeout => ProviderTestStatus.timeout,
-  ModelFailureKind.authentication => ProviderTestStatus.authentication,
-  ModelFailureKind.network => ProviderTestStatus.network,
-  ModelFailureKind.modelNotFound => ProviderTestStatus.modelNotFound,
-  ModelFailureKind.rateLimited => ProviderTestStatus.rateLimited,
-  ModelFailureKind.incompatibleResponse =>
-    ProviderTestStatus.incompatibleResponse,
-  ModelFailureKind.contentParsing => ProviderTestStatus.contentParsing,
-  ModelFailureKind.provider => ProviderTestStatus.provider,
-  ModelFailureKind.internal => ProviderTestStatus.internal,
+const _dirtyApiKeyMessage = 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。';
+
+String? _normalizeApiKey(String? value) {
+  if (value == null) {
+    return null;
+  }
+  if (value.isNotEmpty && containsNonVisibleAscii(value)) {
+    throw const ProviderConfigException(_dirtyApiKeyMessage);
+  }
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
+({String code, ProviderTestStatus status}) _ttsFailureDetails(
+  ModelFailureKind kind,
+) => switch (kind) {
+  ModelFailureKind.dns => (code: 'tts_dns', status: ProviderTestStatus.dns),
+  ModelFailureKind.tls => (code: 'tts_tls', status: ProviderTestStatus.tls),
+  ModelFailureKind.timeout => (
+    code: 'tts_timeout',
+    status: ProviderTestStatus.timeout,
+  ),
+  ModelFailureKind.authentication => (
+    code: 'tts_authentication',
+    status: ProviderTestStatus.authentication,
+  ),
+  ModelFailureKind.network => (
+    code: 'tts_network',
+    status: ProviderTestStatus.network,
+  ),
+  ModelFailureKind.modelNotFound => (
+    code: 'tts_model_not_found',
+    status: ProviderTestStatus.modelNotFound,
+  ),
+  ModelFailureKind.rateLimited => (
+    code: 'tts_rate_limited',
+    status: ProviderTestStatus.rateLimited,
+  ),
+  ModelFailureKind.incompatibleResponse => (
+    code: 'tts_incompatible_response',
+    status: ProviderTestStatus.incompatibleResponse,
+  ),
+  ModelFailureKind.contentParsing => (
+    code: 'tts_content_parsing',
+    status: ProviderTestStatus.contentParsing,
+  ),
+  ModelFailureKind.provider => (
+    code: 'tts_provider',
+    status: ProviderTestStatus.provider,
+  ),
+  ModelFailureKind.internal => (
+    code: 'tts_internal',
+    status: ProviderTestStatus.internal,
+  ),
 };
 
 String _ttsTestMessage(ProviderTestStatus status) => switch (status) {
