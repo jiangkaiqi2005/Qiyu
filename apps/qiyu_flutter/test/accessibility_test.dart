@@ -22,6 +22,8 @@ import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
@@ -44,41 +46,42 @@ void main() {
     expect(find.byKey(const Key('chat-input')), findsOneWidget);
   });
 
-  testWidgets('enter sends while shift+enter and control+enter insert newlines', (
-    tester,
-  ) async {
-    final chatGateway = _FakeChatGateway();
-    await tester.pumpWidget(await _app(chatGateway: chatGateway));
-    await tester.pumpAndSettle();
-    await _goHome(tester);
-    await tester.tap(find.byKey(const Key('home-go-chat')));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'enter sends while shift+enter and control+enter insert newlines',
+    (tester) async {
+      final chatGateway = _FakeChatGateway();
+      await tester.pumpWidget(await _app(chatGateway: chatGateway));
+      await tester.pumpAndSettle();
+      await _goHome(tester);
+      await tester.tap(find.byKey(const Key('home-go-chat')));
+      await tester.pumpAndSettle();
 
-    final input = find.byKey(const Key('chat-input'));
+      final input = find.byKey(const Key('chat-input'));
 
-    await tester.enterText(input, '第一行');
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-    await tester.pump();
-    expect(chatGateway.sentTexts, isEmpty);
-    expect(tester.widget<TextField>(input).controller!.text, contains('\n'));
+      await tester.enterText(input, '第一行');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(chatGateway.sentTexts, isEmpty);
+      expect(tester.widget<TextField>(input).controller!.text, contains('\n'));
 
-    await tester.enterText(input, '第二行');
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.pump();
-    expect(chatGateway.sentTexts, isEmpty);
-    expect(tester.widget<TextField>(input).controller!.text, contains('\n'));
+      await tester.enterText(input, '第二行');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+      expect(chatGateway.sentTexts, isEmpty);
+      expect(tester.widget<TextField>(input).controller!.text, contains('\n'));
 
-    await tester.enterText(input, '今晚睡不着');
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pumpAndSettle();
+      await tester.enterText(input, '今晚睡不着');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
 
-    expect(chatGateway.sentTexts, ['今晚睡不着']);
-    expect(find.text('今晚睡不着'), findsOneWidget);
-  });
+      expect(chatGateway.sentTexts, ['今晚睡不着']);
+      expect(find.text('今晚睡不着'), findsOneWidget);
+    },
+  );
 
   testWidgets('escape closes the delete dialog without deleting', (
     tester,
@@ -107,116 +110,110 @@ void main() {
     Size(1366, 768),
     Size(1920, 1080),
   ]) {
-    testWidgets(
-      'first-run pages stay usable at ${size.width.toInt()}x'
-      '${size.height.toInt()}',
-      (tester) async {
-        tester.view.physicalSize = size;
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-        await tester.pumpWidget(
-          await _app(
-            chatGateway: _FakeChatGateway(
-              restored: const LocalChatSnapshot(
-                sessionId: 'session-1',
-                messages: [
-                  LocalChatMessage(
-                    requestId: 'r-1',
-                    speaker: LocalChatSpeaker.user,
-                    text: '我回来了',
-                  ),
-                  LocalChatMessage(
-                    requestId: 'r-1',
-                    speaker: LocalChatSpeaker.qiyu,
-                    text: '嗯，坐吧。',
-                    source: ReplySource.local,
-                  ),
-                ],
-              ),
+    testWidgets('first-run pages stay usable at ${size.width.toInt()}x'
+        '${size.height.toInt()}', (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        await _app(
+          chatGateway: _FakeChatGateway(
+            restored: const LocalChatSnapshot(
+              sessionId: 'session-1',
+              messages: [
+                LocalChatMessage(
+                  requestId: 'r-1',
+                  speaker: LocalChatSpeaker.user,
+                  text: '我回来了',
+                ),
+                LocalChatMessage(
+                  requestId: 'r-1',
+                  speaker: LocalChatSpeaker.qiyu,
+                  text: '嗯，坐吧。',
+                  source: ReplySource.local,
+                ),
+              ],
             ),
           ),
-        );
-        await tester.pumpAndSettle();
-        await _goHome(tester);
-        expect(tester.takeException(), isNull);
-        expect(find.byKey(const Key('home-greeting')), findsOneWidget);
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _goHome(tester);
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('home-greeting')), findsOneWidget);
 
-        await tester.tap(find.byKey(const Key('home-go-chat')));
-        await tester.pumpAndSettle();
-        expect(tester.takeException(), isNull);
-        expect(find.text('我回来了'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('home-go-chat')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('我回来了'), findsOneWidget);
 
-        await tester.tap(find.byKey(const Key('open-history')));
-        await tester.pumpAndSettle();
-        expect(tester.takeException(), isNull);
-        expect(find.byKey(const Key('history-session-tile-session-9')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('open-history')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(
+        find.byKey(const Key('history-session-tile-session-9')),
+        findsOneWidget,
+      );
 
-        await tester.tap(find.byKey(const Key('history-back')));
-        await tester.pumpAndSettle();
-        // 历史是从聊天页 push 进来的：返回键回到聊天页而不是首页。
-        expect(find.byKey(const Key('open-history')), findsOneWidget);
-        await tester.tap(find.byKey(const Key('go-home')));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('home-go-memory')));
-        await tester.pumpAndSettle();
-        expect(tester.takeException(), isNull);
-        expect(find.byKey(const Key('memory-tab-recent')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('history-back')));
+      await tester.pumpAndSettle();
+      // 历史是从聊天页 push 进来的：返回键回到聊天页而不是首页。
+      expect(find.byKey(const Key('open-history')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('go-home')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-go-memory')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('memory-tab-recent')), findsOneWidget);
 
-        await tester.tap(find.byKey(const Key('memory-back')));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('home-go-settings')));
-        await tester.pumpAndSettle();
-        expect(tester.takeException(), isNull);
-        expect(find.text('模型连接'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('memory-back')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-go-settings')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('模型连接'), findsOneWidget);
 
-        await tester.scrollUntilVisible(
-          find.byKey(const Key('settings-privacy')),
-          200,
-          scrollable: _verticalScrollable(),
-          maxScrolls: 20,
-        );
-        await tester.ensureVisible(find.byKey(const Key('settings-privacy')));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('settings-privacy')));
-        await tester.pumpAndSettle();
-        expect(tester.takeException(), isNull);
-        expect(find.text('隐私与边界'), findsWidgets);
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('settings-privacy')),
+        200,
+        scrollable: _verticalScrollable(),
+        maxScrolls: 20,
+      );
+      await tester.ensureVisible(find.byKey(const Key('settings-privacy')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-privacy')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('隐私与边界'), findsWidgets);
 
-        await tester.tap(find.byKey(const Key('privacy-back')));
-        await tester.pumpAndSettle();
-        await tester.scrollUntilVisible(
-          find.byKey(const Key('developer-mode-switch')),
-          200,
-          scrollable: _verticalScrollable(),
-          maxScrolls: 20,
-        );
-        await tester.ensureVisible(
-          find.byKey(const Key('developer-mode-switch')),
-        );
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('developer-mode-switch')));
-        await tester.pumpAndSettle();
-        await tester.ensureVisible(
-          find.byKey(const Key('settings-diagnostics')),
-        );
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('settings-diagnostics')));
-        await tester.pumpAndSettle();
-        expect(tester.takeException(), isNull);
-        expect(find.text('开发者诊断'), findsOneWidget);
-      },
-    );
+      await tester.tap(find.byKey(const Key('privacy-back')));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('developer-mode-switch')),
+        200,
+        scrollable: _verticalScrollable(),
+        maxScrolls: 20,
+      );
+      await tester.ensureVisible(
+        find.byKey(const Key('developer-mode-switch')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('developer-mode-switch')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('settings-diagnostics')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-diagnostics')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('开发者诊断'), findsOneWidget);
+    });
   }
 
   testWidgets('150% text scaling keeps home and first meeting scrollable', (
     tester,
   ) async {
     // 首页与初见页是仅有的非列表整页：字号放大后必须可滚动不溢出。
-    await _pumpScaled(
-      tester,
-      _homeWithChatViewModel(),
-      scale: 1.5,
-    );
+    await _pumpScaled(tester, _homeWithChatViewModel(), scale: 1.5);
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('home-go-settings')), findsOneWidget);
     await tester.drag(
@@ -299,6 +296,12 @@ void main() {
               autoStart: false,
             ),
           ),
+          ChangeNotifierProvider.value(
+            value: TtsSettingsViewModel(
+              const _FixedTtsSettingsGateway(),
+              autoStart: false,
+            ),
+          ),
           ChangeNotifierProvider.value(value: settingsViewModel),
         ],
         child: const ProviderSettingsView(),
@@ -310,68 +313,67 @@ void main() {
     expect(find.text('设置'), findsOneWidget);
   });
 
-  testWidgets('messages carry speaker semantics and streaming is a live region', (
-    tester,
-  ) async {
-    final handle = tester.ensureSemantics();
-    try {
-      final chatGateway = _StreamingChatGateway();
-      await tester.pumpWidget(await _app(chatGateway: chatGateway));
-      await tester.pumpAndSettle();
-      await _goHome(tester);
-      await tester.tap(find.byKey(const Key('home-go-chat')));
-      await tester.pumpAndSettle();
+  testWidgets(
+    'messages carry speaker semantics and streaming is a live region',
+    (tester) async {
+      final handle = tester.ensureSemantics();
+      try {
+        final chatGateway = _StreamingChatGateway();
+        await tester.pumpWidget(await _app(chatGateway: chatGateway));
+        await tester.pumpAndSettle();
+        await _goHome(tester);
+        await tester.tap(find.byKey(const Key('home-go-chat')));
+        await tester.pumpAndSettle();
 
-      // 历史消息带说话人标签：屏幕阅读器分得清谁在说（ticket 24）。
-      expect(find.bySemanticsLabel(RegExp('你说')), findsWidgets);
-      expect(find.bySemanticsLabel(RegExp('栖语说')), findsWidgets);
+        // 历史消息带说话人标签：屏幕阅读器分得清谁在说（ticket 24）。
+        expect(find.bySemanticsLabel(RegExp('你说')), findsWidgets);
+        expect(find.bySemanticsLabel(RegExp('栖语说')), findsWidgets);
 
-      // 发起一次回复：状态标签节点是 live region，状态变化可被播报；
-      // live region 不含逐 delta 增长的正文，避免每个增量重读全文。
-      await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
-      await tester.tap(find.byKey(const Key('chat-send')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      final statusNode = tester.getSemantics(
-        find.bySemanticsLabel('栖语在想'),
-      );
-      expect(statusNode.flagsCollection.isLiveRegion, isTrue);
+        // 发起一次回复：状态标签节点是 live region，状态变化可被播报；
+        // live region 不含逐 delta 增长的正文，避免每个增量重读全文。
+        await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+        await tester.tap(find.byKey(const Key('chat-send')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        final statusNode = tester.getSemantics(find.bySemanticsLabel('栖语在想'));
+        expect(statusNode.flagsCollection.isLiveRegion, isTrue);
 
-      chatGateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.delta,
-          requestId: 'stream-1',
-          text: '在的。',
-        ),
-      );
-      chatGateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.message,
-          requestId: 'stream-1',
-          messages: ['在的。'],
-        ),
-      );
-      chatGateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.state,
-          requestId: 'stream-1',
-          source: ReplySource.local,
-        ),
-      );
-      chatGateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.done,
-          requestId: 'stream-1',
-        ),
-      );
-      await chatGateway.close();
-      await tester.pumpAndSettle();
-      expect(find.text('在的。'), findsOneWidget);
-    } finally {
-      // 断言失败也要释放，避免句柄泄漏连带影响下一个用例。
-      handle.dispose();
-    }
-  });
+        chatGateway.add(
+          const LocalChatDeliveryEvent(
+            kind: LocalChatEventKind.delta,
+            requestId: 'stream-1',
+            text: '在的。',
+          ),
+        );
+        chatGateway.add(
+          const LocalChatDeliveryEvent(
+            kind: LocalChatEventKind.message,
+            requestId: 'stream-1',
+            messages: ['在的。'],
+          ),
+        );
+        chatGateway.add(
+          const LocalChatDeliveryEvent(
+            kind: LocalChatEventKind.state,
+            requestId: 'stream-1',
+            source: ReplySource.local,
+          ),
+        );
+        chatGateway.add(
+          const LocalChatDeliveryEvent(
+            kind: LocalChatEventKind.done,
+            requestId: 'stream-1',
+          ),
+        );
+        await chatGateway.close();
+        await tester.pumpAndSettle();
+        expect(find.text('在的。'), findsOneWidget);
+      } finally {
+        // 断言失败也要释放，避免句柄泄漏连带影响下一个用例。
+        handle.dispose();
+      }
+    },
+  );
 
   testWidgets('high contrast mode outlines cards that rely on fill color', (
     tester,
@@ -381,10 +383,7 @@ void main() {
     await _pumpScaled(tester, _homeWithChatViewModel(), scale: 1.0);
     await tester.pumpAndSettle();
     final normalCard = tester.widget<Card>(find.byType(Card).first);
-    expect(
-      (normalCard.shape as RoundedRectangleBorder).side,
-      BorderSide.none,
-    );
+    expect((normalCard.shape as RoundedRectangleBorder).side, BorderSide.none);
 
     await _pumpHighContrast(tester, _homeWithChatViewModel());
     await tester.pumpAndSettle();
@@ -467,6 +466,10 @@ Future<Widget> _app({
       const _FixedSttSettingsGateway(),
       autoStart: false,
     ),
+    ttsSettingsViewModel: TtsSettingsViewModel(
+      const _FixedTtsSettingsGateway(),
+      autoStart: false,
+    ),
     onboardingViewModel: onboarding,
     historyViewModel: HistoryViewModel(
       historyGateway ?? _FakeHistoryGateway(),
@@ -528,10 +531,7 @@ Future<void> _pumpScaled(
   await tester.pumpWidget(
     MaterialApp(
       home: MediaQuery(
-        data: MediaQueryData(
-          size: size,
-          textScaler: TextScaler.linear(scale),
-        ),
+        data: MediaQueryData(size: size, textScaler: TextScaler.linear(scale)),
         child: SafeArea(child: child),
       ),
     ),
@@ -556,7 +556,6 @@ final class _FakeChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
-
 
   @override
   Future<String> transcribe({
@@ -629,7 +628,6 @@ final class _StreamingChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
-
 
   @override
   Future<String> transcribe({
@@ -861,12 +859,13 @@ final class _FixedProviderGateway implements ProviderSettingsGateway {
   Future<ProviderSettings> forgetApiKey() async => read();
 
   @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) async =>
-      const ProviderTestResult(
-        succeeded: true,
-        status: ProviderTestStatus.success,
-        message: '连接成功。',
-      );
+  Future<ProviderTestResult> testConnection(
+    ProviderSettingsDraft draft,
+  ) async => const ProviderTestResult(
+    succeeded: true,
+    status: ProviderTestStatus.success,
+    message: '连接成功。',
+  );
 }
 
 final class _FixedProbe implements HostConnectionProbe {
@@ -900,4 +899,28 @@ final class _FixedSttSettingsGateway implements SttSettingsGateway {
         status: ProviderTestStatus.success,
         message: '连接成功，语音输入可以使用。',
       );
+}
+
+final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
+  const _FixedTtsSettingsGateway();
+
+  @override
+  Future<TtsSettings> read() async =>
+      const TtsSettings(configured: false, keySet: false);
+
+  @override
+  Future<TtsSettings> save(TtsSettingsDraft draft) async => TtsSettings(
+    configured: true,
+    keySet: draft.apiKey != null,
+    baseUrl: draft.baseUrl,
+    model: draft.model,
+  );
+
+  @override
+  Future<TtsSettings> forgetApiKey() async =>
+      const TtsSettings(configured: false, keySet: false);
+
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
+      const TtsConnectionTest(succeeded: false, message: '还没有保存语音合成服务配置。');
 }

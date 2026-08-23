@@ -36,6 +36,8 @@ import 'secret_store.dart';
 import 'state_pack_reader.dart';
 import 'stt_gateway.dart';
 import 'stt_settings_service.dart';
+import 'tts_gateway.dart';
+import 'tts_settings_service.dart';
 
 const _sessionCookieName = 'qiyu_session';
 const _csrfHeaderName = 'x-qiyu-csrf';
@@ -68,6 +70,7 @@ final class LocalAppHost {
     Future<BrowserLaunchResult> Function()? onActivate,
     ProviderSettingsService? providerSettingsService,
     SttSettingsService? sttSettingsService,
+    TtsSettingsService? ttsSettingsService,
   }) async {
     final indexFile = File('$webRoot${Platform.pathSeparator}index.html');
     if (!indexFile.existsSync()) {
@@ -99,6 +102,13 @@ final class LocalAppHost {
         SttSettingsService(
           providerConfigRepository,
           SttModelGateway(DartIoProviderHttpClient()),
+        );
+    // 语音朗读（TTS）：同一套律（ADR 0002：整段合成、tts 段独立）。
+    final effectiveTtsSettings =
+        ttsSettingsService ??
+        TtsSettingsService(
+          providerConfigRepository,
+          TtsModelGateway(DartIoProviderHttpClient()),
         );
     // 开发者诊断（ticket 23）：最近请求环形缓冲 + 体验选项持久化。
     // 记录器结构上不收用户文本，诊断端点只读、默认不启用。
@@ -265,6 +275,7 @@ final class LocalAppHost {
       chatService: chatService,
       providerSettingsService: effectiveProviderSettings,
       sttSettingsService: effectiveSttSettings,
+      ttsSettingsService: effectiveTtsSettings,
       onboardingRepository: onboardingRepository,
       memoryCenter: memoryCenter,
       memoryActions: memoryActions,
@@ -315,6 +326,7 @@ final class _LocalAppRequestHandler {
     required this.chatService,
     required this.providerSettingsService,
     required this.sttSettingsService,
+    required this.ttsSettingsService,
     required this.onboardingRepository,
     required this.memoryCenter,
     required this.memoryActions,
@@ -340,6 +352,7 @@ final class _LocalAppRequestHandler {
   final LocalChatService chatService;
   final ProviderSettingsService providerSettingsService;
   final SttSettingsService sttSettingsService;
+  final TtsSettingsService ttsSettingsService;
   final OnboardingRepository onboardingRepository;
   final MemoryCenterService memoryCenter;
   final MemoryActionService memoryActions;
@@ -579,6 +592,57 @@ final class _LocalAppRequestHandler {
           headers: _jsonHeaders,
         );
       }
+      if (request.method == 'GET' && request.url.path == 'api/provider/tts') {
+        final settings = await ttsSettingsService.read();
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'PUT' && request.url.path == 'api/provider/tts') {
+        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
+        final settings = await ttsSettingsService.save(
+          provider: _ttsProviderFromPayload(payload),
+          baseUrl: _sttTextField(payload, 'baseUrl'),
+          model: _sttTextField(payload, 'model'),
+          apiKey: _apiKeyFromPayload(payload),
+          voice: _optionalSttTextField(payload, 'voice'),
+          speed: _ttsSpeedFromPayload(payload),
+          autoSpeak: _ttsAutoSpeakFromPayload(payload),
+        );
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'POST' &&
+          request.url.path == 'api/provider/tts/test') {
+        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
+        final result = await ttsSettingsService.test(
+          provider: _ttsProviderFromPayload(payload),
+          baseUrl: _optionalSttTextField(payload, 'baseUrl'),
+          model: _optionalSttTextField(payload, 'model'),
+          apiKey: _apiKeyFromPayload(payload),
+          voice: _optionalSttTextField(payload, 'voice'),
+          speed: _ttsSpeedFromPayload(payload),
+        );
+        requestDiagnostics?.record(
+          source: RecentRequestSources.providerTest,
+          result: result.succeeded
+              ? RecentRequestResults.ok
+              : RecentRequestResults.failed,
+          detail: 'tts status=${result.status.name}',
+        );
+        return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
+      }
+      if (request.method == 'DELETE' &&
+          request.url.path == 'api/provider/tts/key') {
+        final settings = await ttsSettingsService.forgetApiKey();
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
       if (request.method == 'GET' && request.url.path == 'api/preferences') {
         final settings = await experienceRepository.load();
         return Response.ok(
@@ -775,8 +839,7 @@ final class _LocalAppRequestHandler {
           export.bytes,
           headers: {
             HttpHeaders.contentTypeHeader: 'application/zip',
-            'content-disposition':
-                'attachment; filename="${export.fileName}"',
+            'content-disposition': 'attachment; filename="${export.fileName}"',
             HttpHeaders.cacheControlHeader: 'no-store',
           },
         );
@@ -785,28 +848,19 @@ final class _LocalAppRequestHandler {
           request.url.path == 'api/backup/preview') {
         final bundle = await _readBackupBundle(request);
         final preview = await memoryBackup.previewImport(bundle);
-        return Response.ok(
-          jsonEncode(preview.toJson()),
-          headers: _jsonHeaders,
-        );
+        return Response.ok(jsonEncode(preview.toJson()), headers: _jsonHeaders);
       }
-      if (request.method == 'POST' &&
-          request.url.path == 'api/backup/import') {
+      if (request.method == 'POST' && request.url.path == 'api/backup/import') {
         final bundle = await _readBackupBundle(request);
         final result = await memoryBackup.importBundle(bundle);
-        return Response.ok(
-          jsonEncode(result.toJson()),
-          headers: _jsonHeaders,
-        );
+        return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
       }
       if (request.method == 'GET' &&
           request.url.path == 'api/backup/snapshots') {
         final snapshots = await memoryBackup.listSnapshots();
         return Response.ok(
           jsonEncode({
-            'snapshots': [
-              for (final snapshot in snapshots) snapshot.toJson(),
-            ],
+            'snapshots': [for (final snapshot in snapshots) snapshot.toJson()],
           }),
           headers: _jsonHeaders,
         );
@@ -819,10 +873,7 @@ final class _LocalAppRequestHandler {
           throw _invalidRequest('回滚请求格式不正确。');
         }
         final result = await memoryBackup.rollbackTo(snapshotId as String?);
-        return Response.ok(
-          jsonEncode(result.toJson()),
-          headers: _jsonHeaders,
-        );
+        return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
       }
       if (request.method == 'POST' && request.url.path == 'api/chat/cancel') {
         final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
@@ -908,8 +959,24 @@ final class _LocalAppRequestHandler {
     } on SttServiceException catch (error) {
       final status = switch (error.code) {
         // 未配置、请求本身与本地配置无效按客户端错误；上游失败按网关错误。
-        'stt_not_configured' || 'stt_no_speech' || 'stt_config_invalid' =>
-          HttpStatus.badRequest,
+        'stt_not_configured' ||
+        'stt_no_speech' ||
+        'stt_config_invalid' => HttpStatus.badRequest,
+        _ => HttpStatus.badGateway,
+      };
+      return _jsonError(
+        status,
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
+      );
+    } on TtsServiceException catch (error) {
+      final status = switch (error.code) {
+        // 与 STT 同口径：本地配置问题按客户端错误，上游失败按网关错误。
+        'tts_not_configured' ||
+        'tts_config_invalid' ||
+        'tts_empty_text' ||
+        'tts_text_too_long' => HttpStatus.badRequest,
         _ => HttpStatus.badGateway,
       };
       return _jsonError(
@@ -1050,6 +1117,43 @@ SttProviderKind _sttProviderFromPayload(Map<String, Object?> payload) {
     throw const ProviderConfigException('语音服务配置格式不正确。');
   }
   return SttProviderKind.fromWireName(value);
+}
+
+/// TTS 设置的服务类型（provider）：缺省与校验规则同 STT。
+TtsProviderKind _ttsProviderFromPayload(Map<String, Object?> payload) {
+  final value = payload['provider'];
+  if (value == null) {
+    return TtsProviderKind.openAiCompatible;
+  }
+  if (value is! String) {
+    throw const ProviderConfigException('语音服务配置格式不正确。');
+  }
+  return TtsProviderKind.fromWireName(value);
+}
+
+/// TTS 语速（speed）：可选数值字段；null/缺省不设置（沿用服务缺省），
+/// 类型不对按配置格式错误拒绝。
+double? _ttsSpeedFromPayload(Map<String, Object?> payload) {
+  final value = payload['speed'];
+  if (value == null) {
+    return null;
+  }
+  if (value is! num) {
+    throw const ProviderConfigException('语音服务配置格式不正确。');
+  }
+  return value.toDouble();
+}
+
+/// TTS 自动朗读开关（autoSpeak）：可选布尔字段，缺省 true。
+bool? _ttsAutoSpeakFromPayload(Map<String, Object?> payload) {
+  final value = payload['autoSpeak'];
+  if (value == null) {
+    return null;
+  }
+  if (value is! bool) {
+    throw const ProviderConfigException('语音服务配置格式不正确。');
+  }
+  return value;
 }
 
 /// 读取二进制请求体（语音转写）：与 JSON 读取同一套限长策略，Content-

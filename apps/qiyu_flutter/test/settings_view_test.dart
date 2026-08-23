@@ -15,6 +15,8 @@ import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
 
 void main() {
   testWidgets(
@@ -40,7 +42,9 @@ void main() {
         scrollable: _verticalScrollable(),
         maxScrolls: 20,
       );
-      await tester.ensureVisible(find.byKey(const Key('developer-mode-switch')));
+      await tester.ensureVisible(
+        find.byKey(const Key('developer-mode-switch')),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('developer-mode-switch')));
       await tester.pumpAndSettle();
@@ -66,10 +70,7 @@ void main() {
         scrollable: _verticalScrollable(),
         maxScrolls: 20,
       );
-      expect(
-        find.textContaining('C:/qiyu/memories'),
-        findsAtLeastNWidgets(1),
-      );
+      expect(find.textContaining('C:/qiyu/memories'), findsAtLeastNWidgets(1));
     },
   );
 
@@ -91,7 +92,9 @@ void main() {
       scrollable: _verticalScrollable(),
       maxScrolls: 20,
     );
-    await tester.ensureVisible(find.byKey(const Key('settings-memory-controls')));
+    await tester.ensureVisible(
+      find.byKey(const Key('settings-memory-controls')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('settings-memory-controls')));
     await tester.pumpAndSettle();
@@ -155,6 +158,111 @@ void main() {
     await tester.pumpAndSettle();
     expect(settingsGateway.clearCalls, 1);
     expect(find.byKey(const Key('first-meeting-greeting')), findsOneWidget);
+  });
+
+  testWidgets('TTS 设置区块：读写、音色语速、测试试听与忘记 Key', (tester) async {
+    final ttsGateway = _MutableTtsSettingsGateway(
+      const TtsSettings(
+        configured: true,
+        keySet: true,
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+        voice: 'nova',
+        speed: 1.25,
+      ),
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        ttsGateway: ttsGateway,
+      ),
+    );
+    await _openSettings(tester);
+
+    // 已保存配置回填（含音色），Key 只显示已保存状态、绝不回显明文。
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('tts-base-url')),
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 30,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-base-url')))
+          .controller!
+          .text,
+      'https://tts.example.com/v1',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-voice')))
+          .controller!
+          .text,
+      'nova',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-api-key')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+    expect(find.textContaining('语速：1.25'), findsOneWidget);
+
+    // 保存：Key、音色、语速随表单提交，保存后 Key 输入框清空。
+    await tester.enterText(
+      find.byKey(const Key('tts-api-key')),
+      'tts-new-secret-value',
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('save-tts-settings')),
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 10,
+    );
+    await tester.ensureVisible(find.byKey(const Key('save-tts-settings')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-tts-settings')));
+    await tester.pumpAndSettle();
+    expect(ttsGateway.savedDrafts, hasLength(1));
+    expect(ttsGateway.savedDrafts.single.apiKey, 'tts-new-secret-value');
+    expect(ttsGateway.savedDrafts.single.voice, 'nova');
+    expect(ttsGateway.savedDrafts.single.speed, 1.25);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-api-key')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+
+    // 连接测试：结果以人话呈现，成功后出现「再听一次试听」入口
+    // （widget 测试环境播放平台不可用，静默降级不报错）。
+    await tester.ensureVisible(find.byKey(const Key('test-tts-connection')));
+    await tester.tap(find.byKey(const Key('test-tts-connection')));
+    await tester.pumpAndSettle();
+    expect(ttsGateway.testCalls, 1);
+    expect(find.textContaining('连接成功'), findsOneWidget);
+    expect(find.byKey(const Key('tts-replay-preview')), findsOneWidget);
+
+    // 忘记 Key 需要确认；确认后 keySet 归零。
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('forget-tts-key')),
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 10,
+    );
+    await tester.ensureVisible(find.byKey(const Key('forget-tts-key')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('forget-tts-key')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('tts-forget-key-dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('tts-forget-key-confirm')));
+    await tester.pumpAndSettle();
+    expect(ttsGateway.forgetCalls, 1);
+    expect(find.textContaining('尚未保存语音合成的 API Key'), findsOneWidget);
   });
 
   testWidgets('forgetting the saved API key needs confirmation', (
@@ -221,7 +329,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(
-      tester.widget<TextField>(find.byKey(const Key('stt-base-url'))).controller!
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-base-url')))
+          .controller!
           .text,
       'https://stt.example.com/v1',
     );
@@ -284,12 +394,16 @@ void main() {
     await tester.tap(find.text('豆包流式语音识别').last);
     await tester.pumpAndSettle();
     expect(
-      tester.widget<TextField>(find.byKey(const Key('stt-base-url'))).controller!
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-base-url')))
+          .controller!
           .text,
       'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
     );
     expect(
-      tester.widget<TextField>(find.byKey(const Key('stt-model'))).controller!
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-model')))
+          .controller!
           .text,
       'volc.seedasr.sauc.duration',
     );
@@ -320,9 +434,7 @@ void main() {
     expect(find.textContaining('尚未保存语音服务的 API Key'), findsOneWidget);
   });
 
-  testWidgets('privacy page states the local-only boundaries', (
-    tester,
-  ) async {
+  testWidgets('privacy page states the local-only boundaries', (tester) async {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
@@ -378,6 +490,7 @@ Future<Widget> _app({
   required ProviderSettingsGateway providerGateway,
   OnboardingGateway? onboardingGateway,
   SttSettingsGateway? sttGateway,
+  TtsSettingsGateway? ttsGateway,
 }) async {
   final providerViewModel = ProviderSettingsViewModel(
     providerGateway,
@@ -399,6 +512,10 @@ Future<Widget> _app({
     providerSettingsViewModel: providerViewModel,
     sttSettingsViewModel: SttSettingsViewModel(
       sttGateway ?? const _FixedSttSettingsGateway(),
+      autoStart: false,
+    ),
+    ttsSettingsViewModel: TtsSettingsViewModel(
+      ttsGateway ?? const _FixedTtsSettingsGateway(),
       autoStart: false,
     ),
     onboardingViewModel: onboardingViewModel,
@@ -559,12 +676,13 @@ final class _MutableProviderSettingsGateway implements ProviderSettingsGateway {
   }
 
   @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) async =>
-      const ProviderTestResult(
-        succeeded: true,
-        status: ProviderTestStatus.success,
-        message: '连接成功，栖语可以使用这个模型。',
-      );
+  Future<ProviderTestResult> testConnection(
+    ProviderSettingsDraft draft,
+  ) async => const ProviderTestResult(
+    succeeded: true,
+    status: ProviderTestStatus.success,
+    message: '连接成功，栖语可以使用这个模型。',
+  );
 }
 
 final class _CompletedOnboardingGateway extends _ClearableOnboardingGateway {}
@@ -601,7 +719,6 @@ final class _UnusedChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
-
 
   @override
   Future<String> transcribe({
@@ -680,6 +797,80 @@ final class _MutableSttSettingsGateway implements SttSettingsGateway {
       succeeded: true,
       status: ProviderTestStatus.success,
       message: '连接成功，语音输入可以使用。',
+    );
+  }
+}
+
+final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
+  const _FixedTtsSettingsGateway();
+
+  @override
+  Future<TtsSettings> read() async =>
+      const TtsSettings(configured: false, keySet: false);
+
+  @override
+  Future<TtsSettings> save(TtsSettingsDraft draft) async => TtsSettings(
+    configured: true,
+    keySet: draft.apiKey != null,
+    baseUrl: draft.baseUrl,
+    model: draft.model,
+    voice: draft.voice,
+    speed: draft.speed,
+  );
+
+  @override
+  Future<TtsSettings> forgetApiKey() async =>
+      const TtsSettings(configured: false, keySet: false);
+
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
+      const TtsConnectionTest(succeeded: false, message: '还没有保存语音合成服务配置。');
+}
+
+final class _MutableTtsSettingsGateway implements TtsSettingsGateway {
+  _MutableTtsSettingsGateway(this._settings);
+
+  TtsSettings _settings;
+  final savedDrafts = <TtsSettingsDraft>[];
+  int testCalls = 0;
+  int forgetCalls = 0;
+
+  @override
+  Future<TtsSettings> read() async => _settings;
+
+  @override
+  Future<TtsSettings> save(TtsSettingsDraft draft) async {
+    savedDrafts.add(draft);
+    return _settings = TtsSettings(
+      configured: true,
+      keySet: draft.apiKey != null || _settings.keySet,
+      baseUrl: draft.baseUrl,
+      model: draft.model,
+      voice: draft.voice,
+      speed: draft.speed,
+    );
+  }
+
+  @override
+  Future<TtsSettings> forgetApiKey() async {
+    forgetCalls += 1;
+    return _settings = TtsSettings(
+      configured: true,
+      keySet: false,
+      baseUrl: _settings.baseUrl,
+      model: _settings.model,
+      voice: _settings.voice,
+      speed: _settings.speed,
+    );
+  }
+
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async {
+    testCalls += 1;
+    return TtsConnectionTest(
+      succeeded: true,
+      message: '连接成功，点「听试听」可以听听栖语的声音。',
+      audio: Uint8List.fromList([1, 2, 3]),
     );
   }
 }

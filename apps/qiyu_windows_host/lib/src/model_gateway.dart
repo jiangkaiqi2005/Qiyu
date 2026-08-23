@@ -60,6 +60,29 @@ final class ProviderHttpResponse {
   final Stream<String> body;
 }
 
+/// 二进制响应形态：响应体不经 utf8 解码（语音合成返回音频字节，
+/// 文本解码会破坏二进制数据）。
+final class ProviderBytesHttpResponse {
+  const ProviderBytesHttpResponse({
+    required this.statusCode,
+    required this.body,
+  });
+
+  final int statusCode;
+  final Stream<List<int>> body;
+}
+
+/// 二进制响应出网调用（语音合成等）：与 [ProviderHttpClient.post] 同
+/// 一套超时与连接语义，独立成接口避免逼所有既有实现与 fake 改动。
+abstract interface class ProviderBytesHttpClient {
+  Future<ProviderBytesHttpResponse> postBytes({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  });
+}
+
 abstract interface class ProviderHttpClient {
   Future<ProviderHttpResponse> postStream({
     required Uri uri,
@@ -78,7 +101,8 @@ abstract interface class ProviderHttpClient {
   });
 }
 
-final class DartIoProviderHttpClient implements ProviderHttpClient {
+final class DartIoProviderHttpClient
+    implements ProviderHttpClient, ProviderBytesHttpClient {
   const DartIoProviderHttpClient();
 
   @override
@@ -104,6 +128,30 @@ final class DartIoProviderHttpClient implements ProviderHttpClient {
     required Duration timeout,
   }) {
     return _postBytes(uri: uri, headers: headers, body: body, timeout: timeout);
+  }
+
+  @override
+  Future<ProviderBytesHttpResponse> postBytes({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) async {
+    final client = HttpClient()..connectionTimeout = timeout;
+    try {
+      final request = await client.postUrl(uri).timeout(timeout);
+      request.followRedirects = false;
+      headers.forEach(request.headers.set);
+      request.add(body);
+      final response = await request.close().timeout(timeout);
+      return ProviderBytesHttpResponse(
+        statusCode: response.statusCode,
+        body: _readBytesResponse(response, client, timeout),
+      );
+    } catch (_) {
+      client.close(force: true);
+      rethrow;
+    }
   }
 
   Future<ProviderHttpResponse> _postBytes({
@@ -137,6 +185,18 @@ Stream<String> _readResponse(
 ) async* {
   try {
     yield* response.transform(utf8.decoder).timeout(timeout);
+  } finally {
+    client.close(force: true);
+  }
+}
+
+Stream<List<int>> _readBytesResponse(
+  HttpClientResponse response,
+  HttpClient client,
+  Duration timeout,
+) async* {
+  try {
+    yield* response.timeout(timeout);
   } finally {
     client.close(force: true);
   }
@@ -564,7 +624,11 @@ Uri _appendEndpoint(String baseUrl, String suffix, {bool ollama = false}) =>
 
 /// 把服务地址与端点后缀拼接成完整请求地址：已以该端点结尾的地址原样
 /// 使用（用户可能直接填了完整端点）。聊天与语音转写共用。
-Uri appendProviderEndpoint(String baseUrl, String suffix, {bool ollama = false}) {
+Uri appendProviderEndpoint(
+  String baseUrl,
+  String suffix, {
+  bool ollama = false,
+}) {
   final base = normalizeProviderBaseUri(baseUrl);
   final normalizedPath = base.path;
   if (normalizedPath.endsWith('/$suffix')) {

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'markdown_memory_repository.dart';
 
@@ -169,12 +170,81 @@ enum SttProviderKind {
 }
 
 /// 是否混入可见 ASCII（0x21–0x7E）之外的字符：空格、控制符、DEL、中文、
-/// 零宽字符等粘贴事故。语音转写的地址、模型名与 API Key 只应是可见
-/// ASCII（trim 只去首尾，中间的脏字符一律是粘贴事故），否则 dart:io
-/// 写 HTTP/WebSocket 头时会抛未分类异常。放在这里而不是 stt_gateway：
+/// 零宽字符等粘贴事故。语音转写与语音合成的地址、模型名、音色与 API
+/// Key 都只应是可见 ASCII（trim 只去首尾，中间的脏字符一律是粘贴事故），
+/// 否则 dart:io 写 HTTP 头时会抛未分类异常。放在这里而不是各网关：
 /// 网关与服务层都依赖本文件，反向依赖会形成循环 import。
-bool sttContainsNonVisibleAscii(String value) =>
+bool containsNonVisibleAscii(String value) =>
     value.runes.any((r) => r < 0x21 || r > 0x7E);
+
+/// 语音服务出网前的统一 SSRF 校验（转写与合成共用）：scheme 限
+/// ws/wss/http/https；host 拒绝环回、私有、保留、组播与链路本地地址。
+/// 返回拒绝原因（人话文案），允许出网返回 null；各自网关负责包装成
+/// 本通道的异常类型。边界：聊天 Provider（模型对话）出网不走这条
+/// 校验——Ollama 本机部署（如 localhost:11434）是 AGENTS 明确支持的
+/// 产品功能，而语音服务始终是云端第三方，不允许被指向内网。
+String? speechOutboundRefusalReason(Uri uri) {
+  final scheme = uri.scheme.toLowerCase();
+  if (scheme != 'http' &&
+      scheme != 'https' &&
+      scheme != 'ws' &&
+      scheme != 'wss') {
+    return '语音服务地址必须是有效的 HTTP 或 WebSocket 地址。';
+  }
+  final host = uri.host.toLowerCase();
+  if (host.isEmpty || host == 'localhost' || host.endsWith('.localhost')) {
+    return '语音服务地址不允许指向本机或内网。';
+  }
+  final address = InternetAddress.tryParse(host);
+  // 域名字面量无法静态判定（DNS 解析后的内网 IP 由系统网络层路由），
+  // 这里只拦字面量形态的内网地址。
+  if (address != null && !_isPublicInternetAddress(address.rawAddress)) {
+    return '语音服务地址不允许指向本机或内网。';
+  }
+  return null;
+}
+
+/// 字面量 IP 是否为公网单播地址（按原始网络字节序判断）。
+bool _isPublicInternetAddress(Uint8List raw) {
+  if (raw.length == 4) {
+    return _isPublicIpv4(raw);
+  }
+  if (raw.length == 16) {
+    return _isPublicIpv6(raw);
+  }
+  return false;
+}
+
+bool _isPublicIpv4(Uint8List b) {
+  final a0 = b[0];
+  final a1 = b[1];
+  if (a0 == 0) return false; // 0.0.0.0/8 保留
+  if (a0 == 10) return false; // 10/8 私有
+  if (a0 == 100 && a1 >= 64 && a1 <= 127) return false; // 100.64/10 CGNAT
+  if (a0 == 127) return false; // 环回
+  if (a0 == 169 && a1 == 254) return false; // 169.254/16 链路本地
+  if (a0 == 172 && a1 >= 16 && a1 <= 31) return false; // 172.16/12 私有
+  if (a0 == 192 && a1 == 168) return false; // 192.168/16 私有
+  if (a0 >= 224) return false; // 224/4 组播 + 240/4 保留（含广播）
+  return true;
+}
+
+bool _isPublicIpv6(Uint8List b) {
+  var zeroPrefix = 0;
+  while (zeroPrefix < 16 && b[zeroPrefix] == 0) {
+    zeroPrefix += 1;
+  }
+  if (zeroPrefix == 16) return false; // :: 未指定
+  if (zeroPrefix == 15 && b[15] == 1) return false; // ::1 环回
+  // IPv4 映射地址 ::ffff:a.b.c.d：按内嵌 IPv4 再判。
+  if (zeroPrefix == 10 && b[10] == 0xFF && b[11] == 0xFF) {
+    return _isPublicIpv4(Uint8List.sublistView(b, 12, 16));
+  }
+  if ((b[0] & 0xFE) == 0xFC) return false; // fc00::/7 唯一本地
+  if (b[0] == 0xFE && (b[1] & 0xC0) == 0x80) return false; // fe80::/10 链路本地
+  if (b[0] == 0xFF) return false; // ff00::/8 组播
+  return true;
+}
 
 /// 语音转写（STT）服务配置：provider.json 顶层的可选 `stt` 段。
 final class SttConfig {
@@ -232,7 +302,7 @@ final class SttConfig {
     // 用户只能看到黑盒 internal 错误，这里换成可定位的人话文案。与 URI
     // 解析同口径用 trim 后的值：首尾空格按既有 trim 规则放过，只拦
     // trim 去不掉的中间脏字符。
-    if (sttContainsNonVisibleAscii(baseUrl.trim())) {
+    if (containsNonVisibleAscii(baseUrl.trim())) {
       throw const ProviderConfigException('语音服务地址里混入了中文或看不见的字符，请重新复制粘贴。');
     }
     final uri = Uri.tryParse(baseUrl.trim());
@@ -246,8 +316,139 @@ final class SttConfig {
     if (model.trim().isEmpty) {
       throw const ProviderConfigException('请填写语音服务的模型名称。');
     }
-    if (sttContainsNonVisibleAscii(model.trim())) {
+    if (containsNonVisibleAscii(model.trim())) {
       throw const ProviderConfigException('语音服务的模型名称里混入了中文或看不见的字符，请重新填写。');
+    }
+  }
+}
+
+/// 语音合成的协议类型：配置里的 wire 名与网关分派共用。缺省
+/// openai_compatible：不带 provider 字段的存量配置照常工作。
+/// 豆包协议（volc_tts）走订阅专属 HTTP 端点，同为 HTTP(S)。
+enum TtsProviderKind {
+  openAiCompatible('openai_compatible');
+
+  const TtsProviderKind(this.wireName);
+
+  final String wireName;
+
+  static TtsProviderKind fromWireName(String value) => values.firstWhere(
+    (kind) => kind.wireName == value,
+    orElse: () => throw const ProviderConfigException('不支持这个语音合成服务协议。'),
+  );
+
+  /// 该协议允许的服务地址 scheme（配置校验与出网前 SSRF 校验共用）。
+  bool allows(String scheme) => scheme == 'http' || scheme == 'https';
+}
+
+/// 语音合成（TTS）服务配置：provider.json 顶层的可选 `tts` 段。
+/// [speed] 为空表示用服务缺省语速；[autoSpeak] 是聊天页朗读开关的
+/// 持久化位（缺省开：配了就自动读）。
+final class TtsConfig {
+  const TtsConfig({
+    required this.baseUrl,
+    required this.model,
+    this.provider = TtsProviderKind.openAiCompatible,
+    this.apiKey,
+    this.voice,
+    this.speed,
+    this.autoSpeak = true,
+  });
+
+  factory TtsConfig.fromJson(Map<String, Object?> json) {
+    // provider 字段缺失按缺省协议：不带它的存量配置照常工作。
+    final provider = switch (json['provider']) {
+      null => TtsProviderKind.openAiCompatible,
+      final String value => TtsProviderKind.fromWireName(value),
+      _ => throw const ProviderConfigException('语音合成服务配置无法读取。'),
+    };
+    final voice = json['voice'];
+    if (voice != null && voice is! String) {
+      throw const ProviderConfigException('语音合成服务配置无法读取。');
+    }
+    final rawSpeed = json['speed'];
+    if (rawSpeed != null && rawSpeed is! num) {
+      throw const ProviderConfigException('语音合成服务配置无法读取。');
+    }
+    final rawAutoSpeak = json['autoSpeak'];
+    if (rawAutoSpeak != null && rawAutoSpeak is! bool) {
+      throw const ProviderConfigException('语音合成服务配置无法读取。');
+    }
+    return TtsConfig(
+      provider: provider,
+      baseUrl: json['baseUrl']! as String,
+      model: json['model']! as String,
+      // 与聊天段同律：兼容 apiKey 与 API_KEY 两种手写法，空白视为未设置。
+      apiKey: _optionalKey(json['apiKey'] ?? json['API_KEY']),
+      voice: voice as String?,
+      speed: rawSpeed is num ? rawSpeed.toDouble() : null,
+      autoSpeak: rawAutoSpeak is bool ? rawAutoSpeak : true,
+    );
+  }
+
+  final TtsProviderKind provider;
+  final String baseUrl;
+  final String model;
+
+  /// 音色 ID（如 alloy、zh_female_…_bigtts）：空表示用协议缺省音色。
+  final String? voice;
+
+  /// 语速倍率：空表示用服务缺省；合法区间覆盖各家协议（网关层再夹
+  /// 到本协议允许的窄区间）。
+  final double? speed;
+
+  /// 聊天页「自动朗读」开关：随配置存本机（刷新、重启都记住）。
+  final bool autoSpeak;
+
+  /// 本机 provider.json 的 tts 段里保存的 API Key（明文）。与聊天 Key
+  /// 同律：不进 toJson()，HTTP 快照绝不携带明文。
+  final String? apiKey;
+
+  TtsConfig withApiKey(String? apiKey) => TtsConfig(
+    provider: provider,
+    baseUrl: baseUrl,
+    model: model,
+    apiKey: apiKey,
+    voice: voice,
+    speed: speed,
+    autoSpeak: autoSpeak,
+  );
+
+  /// Key 的沿用作用域看协议与规范化后的服务地址：换协议与换地址
+  /// 一样，都不沿用旧服务商的 Key。
+  String get credentialScope =>
+      '${provider.wireName}|${normalizeProviderBaseUri(baseUrl)}';
+
+  Map<String, Object?> toJson() => {
+    'provider': provider.wireName,
+    'baseUrl': baseUrl,
+    'model': model,
+    if (voice != null && voice!.trim().isNotEmpty) 'voice': voice,
+    if (speed != null) 'speed': speed,
+    'autoSpeak': autoSpeak,
+  };
+
+  void validate() {
+    // 粘贴事故优先拦截：脏字符会让 dart:io 写头时抛未分类异常（STT
+    // 联调踩过的黑盒「内部出错」），这里换成可定位的人话文案。
+    if (containsNonVisibleAscii(baseUrl.trim())) {
+      throw const ProviderConfigException('语音合成服务地址里混入了中文或看不见的字符，请重新复制粘贴。');
+    }
+    final uri = Uri.tryParse(baseUrl.trim());
+    if (uri == null || !uri.hasAuthority || !provider.allows(uri.scheme)) {
+      throw const ProviderConfigException('语音合成服务地址必须是有效的 HTTP 地址。');
+    }
+    if (model.trim().isEmpty) {
+      throw const ProviderConfigException('请填写语音合成服务的模型名称。');
+    }
+    if (containsNonVisibleAscii(model.trim())) {
+      throw const ProviderConfigException('语音合成服务的模型名称里混入了中文或看不见的字符，请重新填写。');
+    }
+    if (voice != null && containsNonVisibleAscii(voice!.trim())) {
+      throw const ProviderConfigException('音色里混入了中文或看不见的字符，请重新填写。');
+    }
+    if (speed != null && (!speed!.isFinite || speed! < 0.25 || speed! > 4)) {
+      throw const ProviderConfigException('语速必须在 0.25 到 4 之间。');
     }
   }
 }
@@ -264,8 +465,17 @@ abstract interface class SttConfigRepository {
   Future<void> saveStt(SttConfig config);
 }
 
+abstract interface class TtsConfigRepository {
+  Future<TtsConfig?> loadTts();
+
+  Future<void> saveTts(TtsConfig config);
+}
+
 final class JsonProviderConfigRepository
-    implements ProviderConfigRepository, SttConfigRepository {
+    implements
+        ProviderConfigRepository,
+        SttConfigRepository,
+        TtsConfigRepository {
   const JsonProviderConfigRepository({
     required this.filePath,
     this.writer = const IoAtomicTextWriter(),
@@ -350,6 +560,39 @@ final class JsonProviderConfigRepository
     config.validate();
     final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
     json['stt'] = {...config.toJson(), 'apiKey': ?config.apiKey};
+    await _writeFile(json);
+  }
+
+  @override
+  Future<TtsConfig?> loadTts() async {
+    final json = await _readRawMap(orThrow: true);
+    if (json == null) {
+      return null;
+    }
+    final section = json['tts'];
+    if (section == null) {
+      return null;
+    }
+    // 损坏的 tts 段只影响语音朗读，不影响聊天与语音输入配置。
+    if (section is! Map<String, Object?>) {
+      throw const ProviderConfigException('语音合成服务配置无法读取。');
+    }
+    try {
+      final config = TtsConfig.fromJson(section);
+      config.validate();
+      return config;
+    } on ProviderConfigException {
+      rethrow;
+    } on Object catch (error) {
+      throw ProviderConfigException('语音合成服务配置无法读取。', error);
+    }
+  }
+
+  @override
+  Future<void> saveTts(TtsConfig config) async {
+    config.validate();
+    final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
+    json['tts'] = {...config.toJson(), 'apiKey': ?config.apiKey};
     await _writeFile(json);
   }
 

@@ -137,7 +137,7 @@ final class SttSettingsService {
           : null);
     // 网关异常只按 kind 映射固定文案（message 被丢弃），Key 脏字符必须
     // 在这里提前拦截，人话文案才能到达用户。
-    if (effectiveKey != null && sttContainsNonVisibleAscii(effectiveKey)) {
+    if (effectiveKey != null && containsNonVisibleAscii(effectiveKey)) {
       return const ProviderTestResult(
         status: ProviderTestStatus.contentParsing,
         message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
@@ -181,7 +181,7 @@ final class SttSettingsService {
     }
     // 与连接测试同口径：脏 Key 按本地配置错误给可定位文案，出网前先拦
     // （网关层的同名检查保留作防御）。
-    if (config.apiKey case final key? when sttContainsNonVisibleAscii(key)) {
+    if (config.apiKey case final key? when containsNonVisibleAscii(key)) {
       throw const SttServiceException(
         code: 'stt_config_invalid',
         message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',

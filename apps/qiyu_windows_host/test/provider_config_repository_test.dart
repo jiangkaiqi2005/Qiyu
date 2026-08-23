@@ -60,9 +60,7 @@ void main() {
     final temp = await Directory.systemTemp.createTemp('qiyu-provider-alias-');
     addTearDown(() => temp.delete(recursive: true));
     final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
-    await File(
-      filePath,
-    ).writeAsString('''
+    await File(filePath).writeAsString('''
 {
   "schemaVersion": 1,
   "provider": "anthropic",
@@ -90,9 +88,7 @@ void main() {
   "apiKey": "   "
 }
 ''');
-    final blank = await JsonProviderConfigRepository(
-      filePath: filePath,
-    ).load();
+    final blank = await JsonProviderConfigRepository(filePath: filePath).load();
     expect(blank!.apiKey, isNull);
   });
 
@@ -129,10 +125,16 @@ void main() {
     // 不带 provider 字段的存量配置照常读为 openai_compatible。
     await File(path).writeAsString(
       jsonEncode({
-        'stt': {'baseUrl': 'https://stt.example.com/v1', 'model': 'whisper-test'},
+        'stt': {
+          'baseUrl': 'https://stt.example.com/v1',
+          'model': 'whisper-test',
+        },
       }),
     );
-    expect((await repository().loadStt())!.provider, SttProviderKind.openAiCompatible);
+    expect(
+      (await repository().loadStt())!.provider,
+      SttProviderKind.openAiCompatible,
+    );
 
     // 豆包协议往返：wss 地址通过校验并原样落盘。
     await repository().saveStt(
@@ -144,7 +146,10 @@ void main() {
     );
     final restored = await repository().loadStt();
     expect(restored!.provider, SttProviderKind.volcSeedAsr);
-    expect(restored.baseUrl, 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream');
+    expect(
+      restored.baseUrl,
+      'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+    );
     final json =
         jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
     expect((json['stt']! as Map<String, Object?>)['provider'], 'volc_seed_asr');
@@ -176,7 +181,8 @@ void main() {
     expect(
       () => const SttConfig(
         provider: SttProviderKind.volcSeedAsr,
-        baseUrl: 'https://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
         model: 'volc.seedasr.sauc.duration',
       ).validate(),
       throwsA(isA<ProviderConfigException>()),
@@ -244,14 +250,14 @@ void main() {
     );
   });
 
-  test('sttContainsNonVisibleAscii 边界值：0x21–0x7E 通过，0x20/0x7F 拒绝', () {
+  test('containsNonVisibleAscii 边界值：0x21–0x7E 通过，0x20/0x7F 拒绝', () {
     // 可见 ASCII 两端恰好通过。
-    expect(sttContainsNonVisibleAscii(String.fromCharCode(0x21)), isFalse); // !
-    expect(sttContainsNonVisibleAscii(String.fromCharCode(0x7E)), isFalse); // ~
-    expect(sttContainsNonVisibleAscii('Az09-._~'), isFalse);
+    expect(containsNonVisibleAscii(String.fromCharCode(0x21)), isFalse); // !
+    expect(containsNonVisibleAscii(String.fromCharCode(0x7E)), isFalse); // ~
+    expect(containsNonVisibleAscii('Az09-._~'), isFalse);
     // 空格与 DEL 恰好拒绝。
-    expect(sttContainsNonVisibleAscii(String.fromCharCode(0x20)), isTrue);
-    expect(sttContainsNonVisibleAscii(String.fromCharCode(0x7F)), isTrue);
+    expect(containsNonVisibleAscii(String.fromCharCode(0x20)), isTrue);
+    expect(containsNonVisibleAscii(String.fromCharCode(0x7F)), isTrue);
   });
 
   test('stt 段读写往返且 Key 只落在文件里', () async {
@@ -278,12 +284,15 @@ void main() {
     expect(restored.apiKey, 'stt-secret-value');
     final json =
         jsonDecode(
-          await File(
-            '${temp.path}${Platform.pathSeparator}provider.json',
-          ).readAsString(),
-        ) as Map<String, Object?>;
-    expect((json['stt']! as Map<String, Object?>)['provider'],
-        'openai_compatible');
+              await File(
+                '${temp.path}${Platform.pathSeparator}provider.json',
+              ).readAsString(),
+            )
+            as Map<String, Object?>;
+    expect(
+      (json['stt']! as Map<String, Object?>)['provider'],
+      'openai_compatible',
+    );
   });
 
   test('保存聊天段与 stt 段互不覆盖', () async {
@@ -323,10 +332,11 @@ void main() {
 
     final json =
         jsonDecode(
-          await File(
-            '${temp.path}${Platform.pathSeparator}provider.json',
-          ).readAsString(),
-        ) as Map<String, Object?>;
+              await File(
+                '${temp.path}${Platform.pathSeparator}provider.json',
+              ).readAsString(),
+            )
+            as Map<String, Object?>;
     expect(json['model'], 'chat-model-2');
     final stt = json['stt']! as Map<String, Object?>;
     expect(stt['baseUrl'], 'https://stt.example.com/v1');
@@ -334,14 +344,18 @@ void main() {
 
     // 保存 stt 段也不抹掉聊天 Key。
     await repository.saveStt(
-      const SttConfig(baseUrl: 'https://stt.example.com/v1', model: 'whisper-2'),
+      const SttConfig(
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-2',
+      ),
     );
     final reloaded =
         jsonDecode(
-          await File(
-            '${temp.path}${Platform.pathSeparator}provider.json',
-          ).readAsString(),
-        ) as Map<String, Object?>;
+              await File(
+                '${temp.path}${Platform.pathSeparator}provider.json',
+              ).readAsString(),
+            )
+            as Map<String, Object?>;
     expect(reloaded['apiKey'], 'chat-secret-value');
     expect((reloaded['stt']! as Map<String, Object?>)['model'], 'whisper-2');
   });
@@ -363,5 +377,192 @@ void main() {
     final repository = JsonProviderConfigRepository(filePath: filePath);
     expect(await repository.load(), isNull);
     expect((await repository.loadStt())!.model, 'whisper-test');
+  });
+
+  test('tts 段读写往返：音色语速开关与缺省值，Key 只落文件', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-tts-roundtrip-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+
+    await repository.saveTts(
+      const TtsConfig(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+        apiKey: 'tts-secret-value',
+        voice: 'nova',
+        speed: 1.25,
+        autoSpeak: false,
+      ),
+    );
+    final loaded = (await repository.loadTts())!;
+    expect(loaded.provider, TtsProviderKind.openAiCompatible);
+    expect(loaded.voice, 'nova');
+    expect(loaded.speed, 1.25);
+    expect(loaded.autoSpeak, isFalse);
+    expect(loaded.apiKey, 'tts-secret-value');
+    // 明文 Key 不进 toJson（HTTP 快照路径），但落在本机文件里。
+    expect(loaded.toJson().containsKey('apiKey'), isFalse);
+    expect(
+      jsonDecode(await File(filePath).readAsString())['tts'],
+      containsPair('apiKey', 'tts-secret-value'),
+    );
+
+    // 缺省字段：不带 provider/voice/speed/autoSpeak 的手写 tts 段。
+    await File(filePath).writeAsString('''
+{
+  "tts": {
+    "baseUrl": "https://tts.example.com/v1",
+    "model": "tts-test"
+  }
+}
+''');
+    final handwritten = (await repository.loadTts())!;
+    expect(handwritten.provider, TtsProviderKind.openAiCompatible);
+    expect(handwritten.voice, isNull);
+    expect(handwritten.speed, isNull);
+    expect(handwritten.autoSpeak, isTrue);
+  });
+
+  test('聊天、stt、tts 三段保存互不覆盖', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-tts-sections-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+
+    await repository.save(
+      const ProviderConfig(
+        kind: ProviderKind.openAiCompatible,
+        baseUrl: 'https://chat.example.com/v1',
+        model: 'chat-model',
+        temperature: 0.6,
+        timeoutSeconds: 25,
+      ).withApiKey('chat-secret-value'),
+    );
+    await repository.saveStt(
+      const SttConfig(
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-test',
+        apiKey: 'stt-secret-value',
+      ),
+    );
+    await repository.saveTts(
+      const TtsConfig(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+        apiKey: 'tts-secret-value',
+      ),
+    );
+    // 各段再各保存一次，其余两段必须原样保留。
+    await repository.save(
+      const ProviderConfig(
+        kind: ProviderKind.openAiCompatible,
+        baseUrl: 'https://chat.example.com/v1',
+        model: 'chat-model-2',
+        temperature: 0.6,
+        timeoutSeconds: 25,
+      ).withApiKey('chat-secret-value'),
+    );
+    await repository.saveStt(
+      const SttConfig(
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-2',
+      ),
+    );
+    await repository.saveTts(
+      const TtsConfig(baseUrl: 'https://tts.example.com/v1', model: 'tts-2'),
+    );
+
+    expect((await repository.load())!.model, 'chat-model-2');
+    expect((await repository.loadStt())!.model, 'whisper-2');
+    final tts = (await repository.loadTts())!;
+    expect(tts.model, 'tts-2');
+    // stt/tts 各自的 Key 保存语义独立：stt 保存过 Key，tts 换模型未传
+    // Key 时按 repository 层语义（传入什么写什么）为空。
+    expect(tts.apiKey, isNull);
+    expect((await repository.loadStt())!.apiKey, isNull);
+  });
+
+  test('只有 tts 段时聊天与 stt 各自独立判断，不视为损坏', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-tts-only-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    await File(filePath).writeAsString('''
+{
+  "tts": {
+    "baseUrl": "https://tts.example.com/v1",
+    "model": "tts-test"
+  }
+}
+''');
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+    expect(await repository.load(), isNull);
+    expect(await repository.loadStt(), isNull);
+    expect((await repository.loadTts())!.model, 'tts-test');
+  });
+
+  test('损坏的 tts 段只影响语音朗读，不影响聊天与 stt', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-tts-broken-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    await File(filePath).writeAsString('''
+{
+  "provider": "openai_compatible",
+  "baseUrl": "https://chat.example.com/v1",
+  "model": "chat-model",
+  "temperature": 0.6,
+  "timeoutSeconds": 25,
+  "stt": {
+    "baseUrl": "https://stt.example.com/v1",
+    "model": "whisper-test"
+  },
+  "tts": "not-an-object"
+}
+''');
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+    expect((await repository.load())!.model, 'chat-model');
+    expect((await repository.loadStt())!.model, 'whisper-test');
+    await expectLater(
+      repository.loadTts(),
+      throwsA(isA<ProviderConfigException>()),
+    );
+  });
+
+  test('tts 段校验：空地址、脏地址、非法语速、脏音色拒绝保存', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-tts-validate-');
+    addTearDown(() => temp.delete(recursive: true));
+    final repository = JsonProviderConfigRepository(
+      filePath: '${temp.path}${Platform.pathSeparator}provider.json',
+    );
+
+    await expectLater(
+      () => repository.saveTts(const TtsConfig(baseUrl: '', model: 'm')),
+      throwsA(isA<ProviderConfigException>()),
+    );
+    await expectLater(
+      () =>
+          repository.saveTts(const TtsConfig(baseUrl: 'ht!tp://x', model: 'm')),
+      throwsA(isA<ProviderConfigException>()),
+    );
+    await expectLater(
+      () => repository.saveTts(
+        const TtsConfig(
+          baseUrl: 'https://tts.example.com/v1',
+          model: 'm',
+          speed: 9,
+        ),
+      ),
+      throwsA(isA<ProviderConfigException>()),
+    );
+    await expectLater(
+      () => repository.saveTts(
+        TtsConfig(
+          baseUrl: 'https://tts.example.com/v1',
+          model: 'm',
+          voice: '暖女声',
+        ),
+      ),
+      throwsA(isA<ProviderConfigException>()),
+    );
   });
 }

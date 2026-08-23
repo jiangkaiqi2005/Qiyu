@@ -1160,7 +1160,9 @@ void main() {
         host.origin.resolve('/api/backup/preview'),
         method: 'POST',
         headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'dataBase64': base64.encode([1, 2, 3])}),
+        requestBody: jsonEncode({
+          'dataBase64': base64.encode([1, 2, 3]),
+        }),
       );
       expect(rejected.statusCode, HttpStatus.badRequest);
       expect(rejected.body, contains('not-a-backup'));
@@ -1239,7 +1241,10 @@ void main() {
         headers: browser.readHeaders(host.origin),
       );
       expect(preferences.statusCode, HttpStatus.ok);
-      expect(jsonDecode(preferences.body), containsPair('developerMode', false));
+      expect(
+        jsonDecode(preferences.body),
+        containsPair('developerMode', false),
+      );
 
       // 未开启时诊断按不存在处理；变更请求更不被接受（只读能力）。
       final closed = await _send(
@@ -1371,15 +1376,12 @@ void main() {
     () async {
       final configPath =
           '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
-      JsonProviderConfigRepository repository() => JsonProviderConfigRepository(
-        filePath: configPath,
-      );
+      JsonProviderConfigRepository repository() =>
+          JsonProviderConfigRepository(filePath: configPath);
       // 记录型出网客户端：转写返回固定文本，供路由全链路验证。
       final sttHttp = _RecordingSttHttpClient('{"text":"今天有点累"}');
-      SttSettingsService sttService() => SttSettingsService(
-        repository(),
-        SttModelGateway(sttHttp),
-      );
+      SttSettingsService sttService() =>
+          SttSettingsService(repository(), SttModelGateway(sttHttp));
       final host = await LocalAppHost.start(
         webRoot: webRoot.path,
         memoryDirectory: memoryDirectory.path,
@@ -1396,7 +1398,10 @@ void main() {
           ...browser.readHeaders(host.origin),
           'origin': host.origin.toString().replaceFirst(RegExp(r'/$'), ''),
         },
-        requestBody: jsonEncode({'baseUrl': 'https://stt.example.com/v1', 'model': 'w'}),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://stt.example.com/v1',
+          'model': 'w',
+        }),
       );
       expect(noCsrf.statusCode, HttpStatus.forbidden);
       final noOrigin = await _send(
@@ -1408,7 +1413,10 @@ void main() {
           ...browser.readHeaders(host.origin),
           'x-qiyu-csrf': browser.csrfToken,
         },
-        requestBody: jsonEncode({'baseUrl': 'https://stt.example.com/v1', 'model': 'w'}),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://stt.example.com/v1',
+          'model': 'w',
+        }),
       );
       expect(noOrigin.statusCode, HttpStatus.forbidden);
       final noSession = await _send(
@@ -1459,10 +1467,7 @@ void main() {
         host.origin.resolve('/api/provider/stt'),
         headers: browser.readHeaders(host.origin),
       );
-      expect(
-        jsonDecode(sttStillThere.body),
-        containsPair('configured', true),
-      );
+      expect(jsonDecode(sttStillThere.body), containsPair('configured', true));
       // 读回的设置 JSON 不携带 apiKey 字段，更不含明文 Key。
       expect(sttStillThere.body, isNot(contains('apiKey')));
       expect(sttStillThere.body, isNot(contains('stt-secret-value')));
@@ -1611,25 +1616,20 @@ void main() {
       headers: browser.mutationHeaders(host.origin),
       requestBody: jsonEncode({
         'provider': 'volc_seed_asr',
-        'baseUrl': 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+        'baseUrl':
+            'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
         'model': 'volc.seedasr.sauc.duration',
         'apiKey': 'ark-secret-value',
       }),
     );
     expect(saved.statusCode, HttpStatus.ok);
-    expect(
-      jsonDecode(saved.body),
-      containsPair('provider', 'volc_seed_asr'),
-    );
+    expect(jsonDecode(saved.body), containsPair('provider', 'volc_seed_asr'));
     expect(saved.body, isNot(contains('ark-secret-value')));
     final read = await _send(
       host.origin.resolve('/api/provider/stt'),
       headers: browser.readHeaders(host.origin),
     );
-    expect(
-      jsonDecode(read.body),
-      containsPair('provider', 'volc_seed_asr'),
-    );
+    expect(jsonDecode(read.body), containsPair('provider', 'volc_seed_asr'));
 
     // 非法协议名：拒绝且给出中文提示，不落盘。
     final invalid = await _send(
@@ -1638,7 +1638,8 @@ void main() {
       headers: browser.mutationHeaders(host.origin),
       requestBody: jsonEncode({
         'provider': 'azure_speech',
-        'baseUrl': 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
+        'baseUrl':
+            'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
         'model': 'volc.seedasr.sauc.duration',
       }),
     );
@@ -1648,9 +1649,184 @@ void main() {
       host.origin.resolve('/api/provider/stt'),
       headers: browser.readHeaders(host.origin),
     );
-    expect(jsonDecode(afterInvalid.body), containsPair('provider', 'volc_seed_asr'));
+    expect(
+      jsonDecode(afterInvalid.body),
+      containsPair('provider', 'volc_seed_asr'),
+    );
     await host.close();
   });
+
+  test(
+    'TTS routes persist per-section, mask keys, and return preview audio',
+    () async {
+      final configPath =
+          '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+      final ttsGateway = _RecordingTtsGateway(audio: [1, 2, 3]);
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+        ttsSettingsService: TtsSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          ttsGateway,
+        ),
+      );
+      final browser = await _openBrowserSession(host);
+
+      // 变更请求缺 CSRF / 缺 Origin / 缺会话一律拒绝。
+      final noCsrf = await _send(
+        host.origin.resolve('/api/provider/tts'),
+        method: 'PUT',
+        headers: {
+          ...browser.readHeaders(host.origin),
+          'origin': host.origin.toString().replaceFirst(RegExp(r'/$'), ''),
+        },
+        requestBody: jsonEncode({
+          'baseUrl': 'https://tts.example.com/v1',
+          'model': 't',
+        }),
+      );
+      expect(noCsrf.statusCode, HttpStatus.forbidden);
+      final noOrigin = await _send(
+        host.origin.resolve('/api/provider/tts'),
+        method: 'PUT',
+        headers: {
+          ...browser.readHeaders(host.origin),
+          'x-qiyu-csrf': browser.csrfToken,
+        },
+        requestBody: jsonEncode({
+          'baseUrl': 'https://tts.example.com/v1',
+          'model': 't',
+        }),
+      );
+      expect(noOrigin.statusCode, HttpStatus.forbidden);
+      final noSession = await _send(
+        host.origin.resolve('/api/provider/tts'),
+        headers: {HttpHeaders.refererHeader: host.origin.toString()},
+      );
+      expect(noSession.statusCode, HttpStatus.unauthorized);
+
+      // 保存：Key 只落文件，响应永不回明文；音色/语速/开关往返。
+      final saved = await _send(
+        host.origin.resolve('/api/provider/tts'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://tts.example.com/v1',
+          'model': 'tts-test',
+          'apiKey': 'tts-secret-value',
+          'voice': 'nova',
+          'speed': 1.2,
+          'autoSpeak': false,
+        }),
+      );
+      expect(saved.statusCode, HttpStatus.ok);
+      expect(saved.body, isNot(contains('tts-secret-value')));
+      expect(
+        jsonDecode(saved.body),
+        allOf(
+          containsPair('configured', true),
+          containsPair('keySet', true),
+          containsPair('provider', 'openai_compatible'),
+          containsPair('voice', 'nova'),
+          containsPair('speed', 1.2),
+          containsPair('autoSpeak', false),
+        ),
+      );
+
+      // 保存聊天 Provider 与 STT 不得抹掉 tts 段。
+      await _send(
+        host.origin.resolve('/api/provider'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'provider': 'openai_compatible',
+          'baseUrl': 'https://chat.example.com/v1',
+          'model': 'chat-model',
+          'temperature': 0.6,
+          'timeoutSeconds': 25,
+        }),
+      );
+      await _send(
+        host.origin.resolve('/api/provider/stt'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://stt.example.com/v1',
+          'model': 'whisper-test',
+        }),
+      );
+      final read = await _send(
+        host.origin.resolve('/api/provider/tts'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(jsonDecode(read.body), containsPair('configured', true));
+      expect(read.body, isNot(contains('apiKey')));
+      expect(read.body, isNot(contains('tts-secret-value')));
+
+      // 连接测试：空负载按已保存配置测试，成功并带回试听音频
+      // （fake 网关返回 [1,2,3] → base64 "AQID"）。
+      final tested = await _send(
+        host.origin.resolve('/api/provider/tts/test'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      expect(tested.statusCode, HttpStatus.ok);
+      expect(jsonDecode(tested.body), containsPair('ok', true));
+      expect(jsonDecode(tested.body), containsPair('audioBase64', 'AQID'));
+      expect(ttsGateway.lastText, ttsConnectionTestSentence);
+
+      // 上游失败：分类文案，不带音频，不透出服务商原文。
+      ttsGateway.error = const TtsGatewayException(
+        kind: ModelFailureKind.authentication,
+        message: 'x',
+      );
+      final failed = await _send(
+        host.origin.resolve('/api/provider/tts/test'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      expect(failed.statusCode, HttpStatus.ok);
+      final failedJson = jsonDecode(failed.body) as Map<String, Object?>;
+      expect(failedJson['ok'], false);
+      expect(failedJson.containsKey('audioBase64'), isFalse);
+      expect(failedJson['message'], 'API Key 没有通过验证。');
+      ttsGateway.error = null;
+
+      // 非法协议名：中文报错拒绝，不落盘。
+      final invalid = await _send(
+        host.origin.resolve('/api/provider/tts'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'provider': 'azure_speech',
+          'baseUrl': 'https://tts.example.com/v1',
+          'model': 'tts-test',
+        }),
+      );
+      expect(invalid.statusCode, HttpStatus.badRequest);
+      expect(invalid.body, contains('不支持这个语音合成服务协议'));
+
+      // 忘记 Key：配置保留、keySet 归零。
+      final forgotten = await _send(
+        host.origin.resolve('/api/provider/tts/key'),
+        method: 'DELETE',
+        headers: browser.mutationHeaders(host.origin),
+      );
+      expect(forgotten.statusCode, HttpStatus.ok);
+      expect(
+        jsonDecode(forgotten.body),
+        allOf(
+          containsPair('configured', true),
+          containsPair('keySet', false),
+          containsPair('voice', 'nova'),
+        ),
+      );
+      await host.close();
+    },
+  );
 
   test('transcribe rejects unconfigured and oversize audio bodies', () async {
     final configPath =
@@ -1953,11 +2129,10 @@ final class _RecordingSttHttpClient implements ProviderHttpClient {
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
-  }) async =>
-      ProviderHttpResponse(
-        statusCode: statusCode,
-        body: Stream.value(responseBody),
-      );
+  }) async => ProviderHttpResponse(
+    statusCode: statusCode,
+    body: Stream.value(responseBody),
+  );
 
   @override
   Future<ProviderHttpResponse> postStream({
@@ -1967,5 +2142,27 @@ final class _RecordingSttHttpClient implements ProviderHttpClient {
     required Duration timeout,
   }) {
     throw UnsupportedError('STT 测试客户端只使用非流式 POST');
+  }
+}
+
+/// TTS 网关测试替身：合成结果与异常可按用例改写，记录最近一次文本。
+final class _RecordingTtsGateway implements TtsSynthesisGateway {
+  _RecordingTtsGateway({this.audio = const []});
+
+  List<int> audio;
+  TtsGatewayException? error;
+  String? lastText;
+
+  @override
+  Future<List<int>> synthesize({
+    required TtsConfig config,
+    required String? apiKey,
+    required String text,
+  }) async {
+    lastText = text;
+    if (error case final failure?) {
+      throw failure;
+    }
+    return audio;
   }
 }

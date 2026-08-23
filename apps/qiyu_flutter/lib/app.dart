@@ -24,16 +24,15 @@ import 'features/settings/provider_settings_view_model.dart';
 import 'features/settings/settings_client.dart';
 import 'features/settings/settings_view_model.dart';
 import 'features/settings/stt_settings_client.dart';
+import 'features/settings/tts_settings_client.dart';
 import 'features/settings/stt_settings_view_model.dart';
+import 'features/settings/tts_settings_view_model.dart';
 
 GoRouter _createRouter() => GoRouter(
   routes: [
     GoRoute(path: '/', builder: (context, state) => const RootView()),
     GoRoute(path: '/chat', builder: (context, state) => const LocalChatView()),
-    GoRoute(
-      path: '/history',
-      builder: (context, state) => const HistoryView(),
-    ),
+    GoRoute(path: '/history', builder: (context, state) => const HistoryView()),
     GoRoute(
       path: '/history/:sessionId',
       builder: (context, state) =>
@@ -53,10 +52,7 @@ GoRouter _createRouter() => GoRouter(
       path: '/settings/diagnostics',
       builder: (context, state) => const DiagnosticsView(),
     ),
-    GoRoute(
-      path: '/privacy',
-      builder: (context, state) => const PrivacyView(),
-    ),
+    GoRoute(path: '/privacy', builder: (context, state) => const PrivacyView()),
   ],
 );
 
@@ -67,6 +63,8 @@ class QiyuApp extends StatefulWidget {
     this.providerSettingsViewModel,
     this.sttSettingsViewModel,
     this.sttSettingsGateway,
+    this.ttsSettingsViewModel,
+    this.ttsSettingsGateway,
     this.historyViewModel,
     this.onboardingViewModel,
     this.memoryViewModel,
@@ -80,6 +78,10 @@ class QiyuApp extends StatefulWidget {
   /// 语音服务设置网关：缺省由 [_QiyuAppState] 持有单例，聊天页与设置
   /// 页共享同一实例（bootstrap 的 CSRF 只换一次）；测试注入桩。
   final SttSettingsGateway? sttSettingsGateway;
+  final TtsSettingsViewModel? ttsSettingsViewModel;
+
+  /// 语音朗读设置网关：同上，缺省共享单例；测试注入桩。
+  final TtsSettingsGateway? ttsSettingsGateway;
   final HistoryViewModel? historyViewModel;
   final OnboardingViewModel? onboardingViewModel;
   final MemoryCenterViewModel? memoryViewModel;
@@ -101,11 +103,18 @@ class _QiyuAppState extends State<QiyuApp> {
   SttSettingsGateway get _effectiveSttGateway =>
       widget.sttSettingsGateway ?? _defaultSttGateway;
 
+  /// 未注入时的共享 TTS 设置网关：同 STT。
+  late final TtsSettingsGateway _defaultTtsGateway = HttpTtsSettingsGateway();
+
+  TtsSettingsGateway get _effectiveTtsGateway =>
+      widget.ttsSettingsGateway ?? _defaultTtsGateway;
+
   @override
   Widget build(BuildContext context) {
     final injectedChatViewModel = widget.viewModel;
     final injectedSettingsViewModel = widget.providerSettingsViewModel;
     final injectedSttSettingsViewModel = widget.sttSettingsViewModel;
+    final injectedTtsSettingsViewModel = widget.ttsSettingsViewModel;
     final injectedHistoryViewModel = widget.historyViewModel;
     final injectedOnboardingViewModel = widget.onboardingViewModel;
     final injectedMemoryViewModel = widget.memoryViewModel;
@@ -113,6 +122,7 @@ class _QiyuAppState extends State<QiyuApp> {
     return MultiProvider(
       providers: [
         Provider<SttSettingsGateway>.value(value: _effectiveSttGateway),
+        Provider<TtsSettingsGateway>.value(value: _effectiveTtsGateway),
         if (injectedChatViewModel != null)
           ChangeNotifierProvider.value(value: injectedChatViewModel)
         else
@@ -134,6 +144,15 @@ class _QiyuAppState extends State<QiyuApp> {
           ChangeNotifierProvider(
             create: (context) => SttSettingsViewModel(
               context.read<SttSettingsGateway>(),
+              autoStart: false,
+            ),
+          ),
+        if (injectedTtsSettingsViewModel != null)
+          ChangeNotifierProvider.value(value: injectedTtsSettingsViewModel)
+        else
+          ChangeNotifierProvider(
+            create: (context) => TtsSettingsViewModel(
+              context.read<TtsSettingsGateway>(),
               autoStart: false,
             ),
           ),

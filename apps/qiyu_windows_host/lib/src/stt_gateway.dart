@@ -60,7 +60,7 @@ final class OpenAiTranscriptionGateway implements SttTranscriptionGateway {
     }
     // 粘贴进表单的 Key 常带零宽空格/中文：脏字节会让 dart:io 在写头时
     // 抛未分类异常，必须在出网前拦成人话。
-    if (sttContainsNonVisibleAscii(key)) {
+    if (containsNonVisibleAscii(key)) {
       throw const SttGatewayException(
         kind: ModelFailureKind.provider,
         message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
@@ -141,10 +141,12 @@ final class OpenAiTranscriptionGateway implements SttTranscriptionGateway {
 /// [httpClient] 供 OpenAI 兼容协议使用，[webSocketConnector] 供豆包
 /// 流式协议使用；调用面（transcribe 形状）与 v1 保持一致。
 final class SttModelGateway implements SttTranscriptionGateway {
-  SttModelGateway(this.httpClient, {ProviderWebSocketConnector? webSocketConnector})
-    : _volcSeedAsr = VolcSeedAsrGateway(
-        webSocketConnector ?? const DartIoProviderWebSocketConnector(),
-      );
+  SttModelGateway(
+    this.httpClient, {
+    ProviderWebSocketConnector? webSocketConnector,
+  }) : _volcSeedAsr = VolcSeedAsrGateway(
+         webSocketConnector ?? const DartIoProviderWebSocketConnector(),
+       );
 
   final ProviderHttpClient httpClient;
   final VolcSeedAsrGateway _volcSeedAsr;
@@ -156,9 +158,13 @@ final class SttModelGateway implements SttTranscriptionGateway {
     required List<int> audio,
     required String mimeType,
   }) => switch (config.provider) {
-    SttProviderKind.openAiCompatible => OpenAiTranscriptionGateway(
-      httpClient,
-    ).transcribe(config: config, apiKey: apiKey, audio: audio, mimeType: mimeType),
+    SttProviderKind.openAiCompatible =>
+      OpenAiTranscriptionGateway(httpClient).transcribe(
+        config: config,
+        apiKey: apiKey,
+        audio: audio,
+        mimeType: mimeType,
+      ),
     SttProviderKind.volcSeedAsr => _volcSeedAsr.transcribe(
       config: config,
       apiKey: apiKey,
@@ -172,78 +178,13 @@ final class SttModelGateway implements SttTranscriptionGateway {
 /// 首响预算，但仍要有界。
 const sttRequestTimeout = Duration(seconds: 60);
 
-/// STT 出网前的统一 SSRF 校验（OpenAI HTTP 与豆包 WS 共用）：scheme 限
-/// ws/wss/http/https；host 拒绝环回、私有、保留、组播与链路本地地址。
-/// 边界：聊天 Provider（模型对话）出网不走这条校验——Ollama 本机部署
-/// （如 localhost:11434）是 AGENTS 明确支持的产品功能，而 STT 服务始终
-/// 是云端第三方，不允许被指向内网。
+/// STT 出网前的统一 SSRF 校验：scheme 与 host 字面量的公共判定在
+/// provider_config 的 speechOutboundRefusalReason（与语音合成共用），
+/// 这里只负责包装成本通道的异常类型。
 void ensureSttOutboundAllowed(Uri uri) {
-  final scheme = uri.scheme.toLowerCase();
-  if (scheme != 'http' &&
-      scheme != 'https' &&
-      scheme != 'ws' &&
-      scheme != 'wss') {
-    throw const SttGatewayException(
-      kind: ModelFailureKind.provider,
-      message: '语音服务地址必须是有效的 HTTP 或 WebSocket 地址。',
-    );
+  if (speechOutboundRefusalReason(uri) case final reason?) {
+    throw SttGatewayException(kind: ModelFailureKind.provider, message: reason);
   }
-  final host = uri.host.toLowerCase();
-  const refused = SttGatewayException(
-    kind: ModelFailureKind.provider,
-    message: '语音服务地址不允许指向本机或内网。',
-  );
-  if (host.isEmpty || host == 'localhost' || host.endsWith('.localhost')) {
-    throw refused;
-  }
-  final address = InternetAddress.tryParse(host);
-  // 域名字面量无法静态判定（DNS 解析后的内网 IP 由系统网络层路由），
-  // 这里只拦字面量形态的内网地址。
-  if (address != null && !_isPublicInternetAddress(address.rawAddress)) {
-    throw refused;
-  }
-}
-
-/// 字面量 IP 是否为公网单播地址（按原始网络字节序判断）。
-bool _isPublicInternetAddress(Uint8List raw) {
-  if (raw.length == 4) {
-    return _isPublicIpv4(raw);
-  }
-  if (raw.length == 16) {
-    return _isPublicIpv6(raw);
-  }
-  return false;
-}
-
-bool _isPublicIpv4(Uint8List b) {
-  final a0 = b[0];
-  final a1 = b[1];
-  if (a0 == 0) return false; // 0.0.0.0/8 保留
-  if (a0 == 10) return false; // 10/8 私有
-  if (a0 == 100 && a1 >= 64 && a1 <= 127) return false; // 100.64/10 CGNAT
-  if (a0 == 127) return false; // 环回
-  if (a0 == 169 && a1 == 254) return false; // 169.254/16 链路本地
-  if (a0 == 172 && a1 >= 16 && a1 <= 31) return false; // 172.16/12 私有
-  if (a0 == 192 && a1 == 168) return false; // 192.168/16 私有
-  if (a0 >= 224) return false; // 224/4 组播 + 240/4 保留（含广播）
-  return true;
-}
-
-bool _isPublicIpv6(Uint8List b) {
-  var zeroPrefix = 0;
-  while (zeroPrefix < 16 && b[zeroPrefix] == 0) {
-    zeroPrefix += 1;
-  }
-  if (zeroPrefix == 16) return false; // :: 未指定
-  if (zeroPrefix == 15 && b[15] == 1) return false; // ::1 环回
-  // IPv4 映射地址 ::ffff:a.b.c.d：按内嵌 IPv4 再判。
-  if (zeroPrefix == 10 && b[10] == 0xFF && b[11] == 0xFF) {
-    return _isPublicIpv4(Uint8List.sublistView(b, 12, 16));
-  }
-  if ((b[0] & 0xFE) == 0xFC) return false; // fc00::/7 唯一本地
-  if (b[0] == 0xFE && (b[1] & 0xC0) == 0x80) return false; // fe80::/10 链路本地
-  if (b[0] == 0xFF) return false; // ff00::/8 组播
-  return true;
 }
 
 String _parseTranscriptionText(String body) {
@@ -290,9 +231,7 @@ Uint8List _multipartBody({
   void addField(String name, String value) {
     builder
       ..add(utf8.encode('--$boundary\r\n'))
-      ..add(
-        utf8.encode('content-disposition: form-data; name="$name"\r\n\r\n'),
-      )
+      ..add(utf8.encode('content-disposition: form-data; name="$name"\r\n\r\n'))
       ..add(utf8.encode(value))
       ..add(utf8.encode('\r\n'));
   }

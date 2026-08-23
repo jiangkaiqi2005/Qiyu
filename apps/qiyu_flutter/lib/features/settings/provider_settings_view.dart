@@ -16,6 +16,8 @@ import 'settings_client.dart';
 import 'settings_view_model.dart';
 import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
+import 'tts_settings_client.dart';
+import 'tts_settings_view_model.dart';
 
 /// 设置中心（ticket 23）：模型连接、本地数据管理（备份 / 记忆控制
 /// 总览 / 清除产品数据）、隐私说明与开发者选项。危险操作（忘记
@@ -48,11 +50,20 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   final _sttModelController = TextEditingController();
   final _sttApiKeyController = TextEditingController();
   SttServiceKind _sttProvider = SttServiceKind.openaiCompatible;
+  // 语音朗读（TTS）服务：同一套表单形态再加音色与语速。
+  final _ttsBaseUrlController = TextEditingController();
+  final _ttsModelController = TextEditingController();
+  final _ttsApiKeyController = TextEditingController();
+  final _ttsVoiceController = TextEditingController();
+
+  /// null 表示用服务缺省语速（不传 speed 字段）。
+  double? _ttsSpeed;
   String _selectedProviderId = 'openai';
   String _selectedConnectionId = 'official';
   bool _customModel = false;
   ProviderSettings? _syncedSettings;
   SttSettings? _syncedSttSettings;
+  TtsSettings? _syncedTtsSettings;
   bool _requestedInitialization = false;
 
   ProviderPreset get _selectedProvider =>
@@ -76,6 +87,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       final settingsViewModel = context.read<SettingsViewModel>();
       unawaited(context.read<ProviderSettingsViewModel>().initialize());
       unawaited(context.read<SttSettingsViewModel>().initialize());
+      unawaited(context.read<TtsSettingsViewModel>().initialize());
       unawaited(settingsViewModel.loadPreferences());
       unawaited(settingsViewModel.loadClearPreview());
     });
@@ -91,6 +103,10 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     _sttBaseUrlController.dispose();
     _sttModelController.dispose();
     _sttApiKeyController.dispose();
+    _ttsBaseUrlController.dispose();
+    _ttsModelController.dispose();
+    _ttsApiKeyController.dispose();
+    _ttsVoiceController.dispose();
     super.dispose();
   }
 
@@ -172,9 +188,9 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   SttSettingsDraft? _readSttDraft() {
     if (_sttBaseUrlController.text.trim().isEmpty ||
         _sttModelController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请填写语音服务地址和模型名称。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请填写语音服务地址和模型名称。')));
       return null;
     }
     final key = _sttApiKeyController.text.trim();
@@ -215,6 +231,79 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
           ),
           FilledButton(
             key: const Key('stt-forget-key-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('忘记 Key'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await viewModel.forgetApiKey();
+    }
+  }
+
+  void _syncTts(TtsSettings? settings) {
+    if (settings == null || identical(settings, _syncedTtsSettings)) {
+      return;
+    }
+    _syncedTtsSettings = settings;
+    if (settings.configured) {
+      _ttsBaseUrlController.text = settings.baseUrl ?? '';
+      _ttsModelController.text = settings.model ?? '';
+      _ttsVoiceController.text = settings.voice ?? '';
+      _ttsSpeed = settings.speed;
+    }
+    _ttsApiKeyController.clear();
+  }
+
+  TtsSettingsDraft? _readTtsDraft() {
+    if (_ttsBaseUrlController.text.trim().isEmpty ||
+        _ttsModelController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请填写语音合成服务地址和模型名称。')));
+      return null;
+    }
+    final key = _ttsApiKeyController.text.trim();
+    final voice = _ttsVoiceController.text.trim();
+    return TtsSettingsDraft(
+      baseUrl: _ttsBaseUrlController.text.trim(),
+      model: _ttsModelController.text.trim(),
+      apiKey: key.isEmpty ? null : key,
+      voice: voice.isEmpty ? null : voice,
+      speed: _ttsSpeed,
+    );
+  }
+
+  Future<void> _saveTts(TtsSettingsViewModel viewModel) async {
+    final draft = _readTtsDraft();
+    if (draft == null) {
+      return;
+    }
+    final saved = await viewModel.save(draft);
+    if (saved && mounted) {
+      _ttsApiKeyController.clear();
+    }
+  }
+
+  Future<void> _confirmForgetTtsKey(TtsSettingsViewModel viewModel) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const Key('tts-forget-key-dialog'),
+        title: const Text('忘记语音合成的 API Key？'),
+        content: const Text(
+          '忘记后本机不再保存这个 Key，栖语暂时读不出声，直到你重新输入。'
+          '语音合成服务的地址、模型、音色和语速不受影响。',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('tts-forget-key-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('再想想'),
+          ),
+          FilledButton(
+            key: const Key('tts-forget-key-confirm'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: const Text('忘记 Key'),
           ),
@@ -360,9 +449,11 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   Widget build(BuildContext context) {
     final viewModel = context.watch<ProviderSettingsViewModel>();
     final sttViewModel = context.watch<SttSettingsViewModel>();
+    final ttsViewModel = context.watch<TtsSettingsViewModel>();
     final settingsViewModel = context.watch<SettingsViewModel>();
     _sync(viewModel.settings);
     _syncStt(sttViewModel.settings);
+    _syncTts(ttsViewModel.settings);
     final theme = Theme.of(context);
     return Scaffold(
       body: SafeArea(
@@ -568,6 +659,8 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                 const SizedBox(height: 40),
                 _sttSection(context, sttViewModel),
                 const SizedBox(height: 24),
+                _ttsSection(context, ttsViewModel),
+                const SizedBox(height: 24),
                 _localDataSection(context, settingsViewModel),
                 const SizedBox(height: 24),
                 _privacySection(context),
@@ -638,10 +731,13 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     final keySet = viewModel.settings?.keySet ?? false;
     return _SettingsPanel(
       children: [
-        Text('语音输入', style: theme.textTheme.headlineMedium?.copyWith(
-          fontWeight: FontWeight.w500,
-          letterSpacing: -0.8,
-        )),
+        Text(
+          '语音输入',
+          style: theme.textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.w500,
+            letterSpacing: -0.8,
+          ),
+        ),
         const SizedBox(height: 10),
         Text(
           _sttProvider == SttServiceKind.volcSeedAsr
@@ -668,10 +764,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
               value: 'openai_compatible',
               child: Text('OpenAI 兼容转写'),
             ),
-            DropdownMenuItem(
-              value: 'volc_seed_asr',
-              child: Text('豆包流式语音识别'),
-            ),
+            DropdownMenuItem(value: 'volc_seed_asr', child: Text('豆包流式语音识别')),
           ],
           onChanged: _selectSttProvider,
         ),
@@ -729,10 +822,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
         if (viewModel.errorMessage case final message?)
           _StatusMessage(message: message, succeeded: false),
         if (viewModel.testResult case final result?)
-          _StatusMessage(
-            message: result.message,
-            succeeded: result.succeeded,
-          ),
+          _StatusMessage(message: result.message, succeeded: result.succeeded),
         if (viewModel.errorMessage != null || viewModel.testResult != null)
           const SizedBox(height: 14),
         Wrap(
@@ -759,6 +849,183 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                     },
               icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
               label: const Text('测试连接'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 语音朗读（TTS）服务配置：与语音输入同构的表单，外加音色与语速；
+  /// 测试连接成功即用所选音色语速试听一句话。
+  Widget _ttsSection(BuildContext context, TtsSettingsViewModel viewModel) {
+    final theme = Theme.of(context);
+    final keySet = viewModel.settings?.keySet ?? false;
+    final testResult = viewModel.testResult;
+    return _SettingsPanel(
+      children: [
+        Text(
+          '语音朗读',
+          style: theme.textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.w500,
+            letterSpacing: -0.8,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '把栖语写完的话读出来的服务（OpenAI 兼容语音合成，如 tts-1）。'
+          '她先把每句完整写好、过了安全检查才开口读；音频只存在内存，'
+          '播完即丢，本机不留声音文件。',
+          style: theme.textTheme.bodyLarge?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            height: 1.55,
+          ),
+        ),
+        const SizedBox(height: 16),
+        // 只有一种协议时不开下拉（假选择不如不给）；接入第二种协议时
+        // 再换成与语音输入同款的下拉。
+        InputDecorator(
+          decoration: const InputDecoration(
+            labelText: '服务类型',
+            border: OutlineInputBorder(),
+          ),
+          child: const Text('OpenAI 兼容语音合成'),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('tts-base-url'),
+          controller: _ttsBaseUrlController,
+          decoration: const InputDecoration(
+            labelText: '服务地址',
+            hintText: 'https://api.example.com/v1',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('tts-model'),
+          controller: _ttsModelController,
+          decoration: const InputDecoration(
+            labelText: '模型名称',
+            hintText: 'tts-1',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('tts-voice'),
+          controller: _ttsVoiceController,
+          decoration: const InputDecoration(
+            labelText: '音色（可选）',
+            hintText: 'alloy',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        MergeSemantics(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _ttsSpeed == null
+                          ? '语速：默认'
+                          : '语速：${_ttsSpeed!.toStringAsFixed(2)} 倍',
+                      style: theme.textTheme.titleSmall,
+                    ),
+                  ),
+                  if (_ttsSpeed != null)
+                    TextButton(
+                      key: const Key('tts-speed-reset'),
+                      onPressed: () => setState(() => _ttsSpeed = null),
+                      child: const Text('默认'),
+                    ),
+                ],
+              ),
+              Slider(
+                key: const Key('tts-speed-slider'),
+                value: _ttsSpeed ?? 1.0,
+                min: 0.5,
+                max: 2.0,
+                divisions: 6,
+                label: (_ttsSpeed ?? 1.0).toStringAsFixed(2),
+                // 滑过即存显式值（1.0 也算「用户选的」）；「默认」语义由
+                // 重置按钮回到 null（不传 speed 字段）。
+                onChanged: (value) => setState(() => _ttsSpeed = value),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存语音合成的 API Key',
+          style: theme.textTheme.titleSmall,
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          key: const Key('tts-api-key'),
+          controller: _ttsApiKeyController,
+          obscureText: true,
+          enableSuggestions: false,
+          autocorrect: false,
+          decoration: InputDecoration(
+            labelText: 'API Key',
+            hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        if (keySet) ...[
+          const SizedBox(height: 8),
+          TextButton(
+            key: const Key('forget-tts-key'),
+            onPressed: viewModel.saving
+                ? null
+                : () => unawaited(_confirmForgetTtsKey(viewModel)),
+            child: const Text('忘记语音合成的 Key'),
+          ),
+        ],
+        const SizedBox(height: 20),
+        if (viewModel.errorMessage case final message?)
+          _StatusMessage(message: message, succeeded: false),
+        if (testResult case final result?)
+          _StatusMessage(message: result.message, succeeded: result.succeeded),
+        if (testResult != null && testResult.succeeded) ...[
+          const SizedBox(height: 8),
+          TextButton.icon(
+            key: const Key('tts-replay-preview'),
+            onPressed: () => unawaited(viewModel.replayPreview()),
+            icon: const Icon(Icons.volume_up_outlined),
+            label: const Text('再听一次试听'),
+          ),
+        ],
+        if (viewModel.errorMessage != null || testResult != null)
+          const SizedBox(height: 14),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            FilledButton.icon(
+              key: const Key('save-tts-settings'),
+              onPressed: viewModel.saving
+                  ? null
+                  : () => unawaited(_saveTts(viewModel)),
+              icon: _busyOr(viewModel.saving, Icons.lock_outline),
+              label: const Text('保存到本机'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('test-tts-connection'),
+              onPressed: viewModel.testing
+                  ? null
+                  : () {
+                      final draft = _readTtsDraft();
+                      if (draft != null) {
+                        unawaited(viewModel.testConnection(draft));
+                      }
+                    },
+              icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
+              label: const Text('测试连接并试听'),
             ),
           ],
         ),
@@ -1118,7 +1385,8 @@ _sttProtocolDefaults(SttServiceKind kind) => switch (kind) {
   SttServiceKind.volcSeedAsr => (
     url: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
     model: 'volc.seedasr.sauc.duration',
-    urlHint: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
+    urlHint:
+        'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
     modelHint: 'volc.seedasr.sauc.duration',
   ),
 };
