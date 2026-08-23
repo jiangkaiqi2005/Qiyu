@@ -6,7 +6,7 @@ import 'provider_settings_client.dart' show ProviderSettingsException;
 
 /// 语音合成（TTS）的服务类型：与 Host 的 tts 段 provider 字段对应，
 /// 缺省 openai_compatible（存量配置不带该字段）。
-enum TtsServiceKind { openAiCompatible }
+enum TtsServiceKind { openAiCompatible, volcTts }
 
 /// 语音合成（TTS）服务设置：与聊天 Provider、语音转写设置同一套读回
 /// 口径——永不回明文 Key，只回 keySet 布尔。
@@ -27,7 +27,9 @@ final class TtsSettings {
     keySet: json['keySet']! as bool,
     // 快照 provider 字段缺失或未知值一律按缺省协议呈现（Host 只会回
     // 已支持的值，防御旧版 Host 的响应）。
-    provider: TtsServiceKind.openAiCompatible,
+    provider: json['provider'] == 'volc_tts'
+        ? TtsServiceKind.volcTts
+        : TtsServiceKind.openAiCompatible,
     baseUrl: json['baseUrl'] as String?,
     model: json['model'] as String?,
     voice: json['voice'] as String?,
@@ -67,6 +69,7 @@ final class TtsSettingsDraft {
   Map<String, Object?> toJson() => {
     'provider': switch (provider) {
       TtsServiceKind.openAiCompatible => 'openai_compatible',
+      TtsServiceKind.volcTts => 'volc_tts',
     },
     'baseUrl': baseUrl,
     'model': model,

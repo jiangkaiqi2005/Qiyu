@@ -326,7 +326,8 @@ final class SttConfig {
 /// openai_compatible：不带 provider 字段的存量配置照常工作。
 /// 豆包协议（volc_tts）走订阅专属 HTTP 端点，同为 HTTP(S)。
 enum TtsProviderKind {
-  openAiCompatible('openai_compatible');
+  openAiCompatible('openai_compatible'),
+  volcTts('volc_tts');
 
   const TtsProviderKind(this.wireName);
 
@@ -340,6 +341,14 @@ enum TtsProviderKind {
   /// 该协议允许的服务地址 scheme（配置校验与出网前 SSRF 校验共用）。
   bool allows(String scheme) => scheme == 'http' || scheme == 'https';
 }
+
+/// 豆包语音合成的订阅专属 HTTP 端点（设置页缺省值）：一次性发送文本、
+/// 返回 chunked 逐行 JSON 音频。地址本身就是完整端点，不做后缀拼接。
+const volcTtsDefaultEndpoint =
+    'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional';
+
+/// 豆包语音合成 2.0 的 Resource-Id（模型名称字段缺省值）。
+const volcTtsDefaultResourceId = 'seed-tts-2.0';
 
 /// 语音合成（TTS）服务配置：provider.json 顶层的可选 `tts` 段。
 /// [speed] 为空表示用服务缺省语速；[autoSpeak] 是聊天页朗读开关的

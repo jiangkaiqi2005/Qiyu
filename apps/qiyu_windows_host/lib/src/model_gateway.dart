@@ -66,10 +66,15 @@ final class ProviderBytesHttpResponse {
   const ProviderBytesHttpResponse({
     required this.statusCode,
     required this.body,
+    this.headers = const {},
   });
 
   final int statusCode;
   final Stream<List<int>> body;
+
+  /// 响应头（小写键，仅透出诊断需要的键）：语音合成网关用它记录
+  /// 官方建议的 X-Tt-Logid（只进本机 stderr，不透出浏览器）。
+  final Map<String, String> headers;
 }
 
 /// 二进制响应出网调用（语音合成等）：与 [ProviderHttpClient.post] 同
@@ -147,6 +152,7 @@ final class DartIoProviderHttpClient
       return ProviderBytesHttpResponse(
         statusCode: response.statusCode,
         body: _readBytesResponse(response, client, timeout),
+        headers: {'x-tt-logid': ?response.headers.value('x-tt-logid')},
       );
     } catch (_) {
       client.close(force: true);

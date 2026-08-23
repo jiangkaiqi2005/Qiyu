@@ -55,6 +55,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   final _ttsModelController = TextEditingController();
   final _ttsApiKeyController = TextEditingController();
   final _ttsVoiceController = TextEditingController();
+  TtsServiceKind _ttsProvider = TtsServiceKind.openAiCompatible;
 
   /// null 表示用服务缺省语速（不传 speed 字段）。
   double? _ttsSpeed;
@@ -247,6 +248,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       return;
     }
     _syncedTtsSettings = settings;
+    _ttsProvider = settings.provider;
     if (settings.configured) {
       _ttsBaseUrlController.text = settings.baseUrl ?? '';
       _ttsModelController.text = settings.model ?? '';
@@ -254,6 +256,24 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       _ttsSpeed = settings.speed;
     }
     _ttsApiKeyController.clear();
+  }
+
+  void _selectTtsProvider(String wireName) {
+    final next = wireName == 'volc_tts'
+        ? TtsServiceKind.volcTts
+        : TtsServiceKind.openAiCompatible;
+    if (next == _ttsProvider) {
+      return;
+    }
+    setState(() {
+      _ttsProvider = next;
+      // 换协议等于换服务商：地址与模型换成新协议缺省（豆包的端点是
+      // 订阅专属完整地址，不能沿用别家的 base URL）；音色文本保留，
+      // 由用户自己决定是否换。
+      final defaults = _ttsProtocolDefaults(next);
+      _ttsBaseUrlController.text = defaults.url;
+      _ttsModelController.text = defaults.model;
+    });
   }
 
   TtsSettingsDraft? _readTtsDraft() {
@@ -267,6 +287,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     final key = _ttsApiKeyController.text.trim();
     final voice = _ttsVoiceController.text.trim();
     return TtsSettingsDraft(
+      provider: _ttsProvider,
       baseUrl: _ttsBaseUrlController.text.trim(),
       model: _ttsModelController.text.trim(),
       apiKey: key.isEmpty ? null : key,
@@ -873,52 +894,66 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
         ),
         const SizedBox(height: 10),
         Text(
-          '把栖语写完的话读出来的服务（OpenAI 兼容语音合成，如 tts-1）。'
-          '她先把每句完整写好、过了安全检查才开口读；音频只存在内存，'
-          '播完即丢，本机不留声音文件。',
+          _ttsProvider == TtsServiceKind.volcTts
+              ? '把栖语写完的话读出来。豆包语音合成走火山方舟的 HTTP 接口，'
+                    '模型名称填 Resource-Id；Key 只存本机 provider.json；'
+                    '音频只存在内存，播完即丢。'
+              : '把栖语写完的话读出来的服务（OpenAI 兼容语音合成，如 tts-1）。'
+                    '她先把每句完整写好、过了安全检查才开口读；音频只存在内存，'
+                    '播完即丢，本机不留声音文件。',
           style: theme.textTheme.bodyLarge?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
             height: 1.55,
           ),
         ),
         const SizedBox(height: 16),
-        // 只有一种协议时不开下拉（假选择不如不给）；接入第二种协议时
-        // 再换成与语音输入同款的下拉。
-        InputDecorator(
-          decoration: const InputDecoration(
-            labelText: '服务类型',
-            border: OutlineInputBorder(),
-          ),
-          child: const Text('OpenAI 兼容语音合成'),
+        _ControlledDropdown(
+          dropdownKey: const Key('tts-provider'),
+          label: '服务类型',
+          value: _ttsProvider == TtsServiceKind.volcTts
+              ? 'volc_tts'
+              : 'openai_compatible',
+          items: const [
+            DropdownMenuItem(
+              value: 'openai_compatible',
+              child: Text('OpenAI 兼容语音合成'),
+            ),
+            DropdownMenuItem(value: 'volc_tts', child: Text('豆包语音合成')),
+          ],
+          onChanged: _selectTtsProvider,
         ),
         const SizedBox(height: 16),
         TextField(
           key: const Key('tts-base-url'),
           controller: _ttsBaseUrlController,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: '服务地址',
-            hintText: 'https://api.example.com/v1',
-            border: OutlineInputBorder(),
+            hintText: _ttsProtocolDefaults(_ttsProvider).urlHint,
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
         TextField(
           key: const Key('tts-model'),
           controller: _ttsModelController,
-          decoration: const InputDecoration(
-            labelText: '模型名称',
-            hintText: 'tts-1',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: _ttsProvider == TtsServiceKind.volcTts
+                ? 'Resource-Id'
+                : '模型名称',
+            hintText: _ttsProtocolDefaults(_ttsProvider).modelHint,
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
         TextField(
           key: const Key('tts-voice'),
           controller: _ttsVoiceController,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: '音色（可选）',
-            hintText: 'alloy',
-            border: OutlineInputBorder(),
+            hintText: _ttsProvider == TtsServiceKind.volcTts
+                ? 'zh_female_vv_uranus_bigtts'
+                : 'alloy',
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 8),
@@ -1388,6 +1423,24 @@ _sttProtocolDefaults(SttServiceKind kind) => switch (kind) {
     urlHint:
         'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
     modelHint: 'volc.seedasr.sauc.duration',
+  ),
+};
+
+({String url, String model, String urlHint, String modelHint})
+_ttsProtocolDefaults(TtsServiceKind kind) => switch (kind) {
+  TtsServiceKind.openAiCompatible => (
+    url: '',
+    model: '',
+    urlHint: 'https://api.example.com/v1',
+    modelHint: 'tts-1',
+  ),
+  // 豆包走火山方舟订阅专属 HTTP 端点（官方文档 2026-08-23 核实）：
+  // 地址是完整端点、模型名称字段填 Resource-Id（不带 volc. 前缀）。
+  TtsServiceKind.volcTts => (
+    url: 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+    model: 'seed-tts-2.0',
+    urlHint: 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+    modelHint: 'seed-tts-2.0',
   ),
 };
 

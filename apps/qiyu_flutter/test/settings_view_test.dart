@@ -247,6 +247,39 @@ void main() {
     expect(find.textContaining('连接成功'), findsOneWidget);
     expect(find.byKey(const Key('tts-replay-preview')), findsOneWidget);
 
+    // 切到豆包：地址与模型换成订阅专属缺省（完整端点 + Resource-Id）。
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('tts-provider')),
+      -300,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 20,
+    );
+    await tester.ensureVisible(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('豆包语音合成').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-base-url')))
+          .controller!
+          .text,
+      'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-model')))
+          .controller!
+          .text,
+      'seed-tts-2.0',
+    );
+    await tester.ensureVisible(find.byKey(const Key('save-tts-settings')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-tts-settings')));
+    await tester.pumpAndSettle();
+    expect(ttsGateway.savedDrafts.last.provider, TtsServiceKind.volcTts);
+
     // 忘记 Key 需要确认；确认后 keySet 归零。
     await tester.scrollUntilVisible(
       find.byKey(const Key('forget-tts-key')),

@@ -63,6 +63,44 @@ void main() {
     expect(settings.autoSpeak, isTrue);
   });
 
+  test('豆包协议：provider 往返一致，保存请求带 volc_tts', () async {
+    final requests = <http.Request>[];
+    final client = MockClient((request) async {
+      requests.add(request);
+      return switch (request.url.path) {
+        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+        '/api/provider/tts' => _jsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'volc_tts',
+          'baseUrl':
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          'model': 'seed-tts-2.0',
+        }, 200),
+        _ => http.Response('not found', 404),
+      };
+    });
+    final gateway = HttpTtsSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    final settings = await gateway.read();
+    expect(settings.provider, TtsServiceKind.volcTts);
+
+    final saved = await gateway.save(
+      const TtsSettingsDraft(
+        provider: TtsServiceKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        apiKey: 'ark-test-value',
+      ),
+    );
+    expect(saved.provider, TtsServiceKind.volcTts);
+    expect(jsonDecode(requests.last.body)['provider'], 'volc_tts');
+  });
+
   test('保存与忘记 Key 都带 CSRF 头且请求体形状正确', () async {
     final requests = <http.Request>[];
     final client = MockClient((request) async {

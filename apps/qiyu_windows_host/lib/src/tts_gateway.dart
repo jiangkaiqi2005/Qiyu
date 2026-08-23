@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
+import 'volc_tts_gateway.dart';
 
 /// TTS 出网异常：kind 与聊天 Provider、STT 出网错误共用同一套分类
 /// （域名解析/TLS/超时/鉴权/网络/模型不存在/限流/响应不兼容/解析
@@ -165,6 +166,9 @@ final class TtsModelGateway implements TtsSynthesisGateway {
     required String text,
   }) => switch (config.provider) {
     TtsProviderKind.openAiCompatible => OpenAiSpeechGateway(
+      httpClient,
+    ).synthesize(config: config, apiKey: apiKey, text: text),
+    TtsProviderKind.volcTts => VolcTtsGateway(
       httpClient,
     ).synthesize(config: config, apiKey: apiKey, text: text),
   };

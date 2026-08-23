@@ -39,6 +39,7 @@ export 'src/state_pack_reader.dart';
 export 'src/stt_gateway.dart';
 export 'src/stt_settings_service.dart';
 export 'src/tts_gateway.dart';
+export 'src/volc_tts_gateway.dart';
 export 'src/tts_settings_service.dart';
 export 'src/volc_seed_asr_gateway.dart';
 
