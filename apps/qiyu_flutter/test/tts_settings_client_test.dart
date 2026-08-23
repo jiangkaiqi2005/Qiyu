@@ -207,6 +207,36 @@ void main() {
     expect(failed.audio, isNull);
     expect(failed.message, 'API Key 没有通过验证。');
   });
+
+  test('setAutoSpeak：独立端点、带 CSRF、只传 enabled', () async {
+    final requests = <http.Request>[];
+    final client = MockClient((request) async {
+      requests.add(request);
+      return switch (request.url.path) {
+        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+        '/api/provider/tts/auto-speak' => _jsonResponse({
+          'configured': true,
+          'keySet': true,
+          'baseUrl': 'https://tts.example.com/v1',
+          'model': 'tts-test',
+          'autoSpeak': false,
+        }, 200),
+        _ => http.Response('not found', 404),
+      };
+    });
+    final gateway = HttpTtsSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    final settings = await gateway.setAutoSpeak(false);
+    expect(settings.autoSpeak, isFalse);
+    final sent = requests.last;
+    expect(sent.method, 'PUT');
+    expect(sent.url.path, '/api/provider/tts/auto-speak');
+    expect(sent.headers['x-qiyu-csrf'], 'csrf-1');
+    expect(jsonDecode(sent.body), {'enabled': false});
+  });
 }
 
 http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {

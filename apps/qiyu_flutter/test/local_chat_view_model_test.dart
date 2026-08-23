@@ -183,6 +183,33 @@ void main() {
       controller.dispose();
     }
   });
+
+  test('toggleVoiceOutput：写 Host autoSpeak 并刷新可用状态', () async {
+    final gateway = _MutableTtsSettingsGateway(autoSpeak: true);
+    final viewModel = LocalChatViewModel(
+      _TwoBubbleGateway(withBubble2: false),
+      hostConnectionProbe: _AvailableProbe(),
+      requestIdFactory: () => 'request-toggle',
+      ttsSettingsGateway: gateway,
+      voiceOutput: VoiceOutputController(
+        _RecordingSpeakGateway(),
+        playerPlatform: _SequentialPlayerPlatform(),
+      ),
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+    expect(viewModel.voiceOutputConfigured, isTrue);
+    expect(viewModel.voiceOutputEnabled, isTrue);
+
+    await viewModel.toggleVoiceOutput();
+    expect(gateway.autoSpeakWrites, [false]);
+    expect(viewModel.voiceOutputEnabled, isFalse);
+
+    await viewModel.toggleVoiceOutput();
+    expect(gateway.autoSpeakWrites, [false, true]);
+    expect(viewModel.voiceOutputEnabled, isTrue);
+    viewModel.dispose();
+  });
 }
 
 final class _TwoBubbleGateway implements StreamingLocalChatGateway {
@@ -349,6 +376,10 @@ final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
       throw UnimplementedError();
 
   @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) async =>
+      throw UnimplementedError();
+
+  @override
   Future<TtsSettings> forgetApiKey() async => throw UnimplementedError();
 
   @override
@@ -389,4 +420,34 @@ final class _InstantPlayback implements VoicePlayback {
 
   @override
   void stop() {}
+}
+
+/// 可翻转的 TTS 设置 fake：记录 autoSpeak 写入，供 toggle 测试。
+final class _MutableTtsSettingsGateway implements TtsSettingsGateway {
+  _MutableTtsSettingsGateway({this.autoSpeak = true});
+
+  bool autoSpeak;
+  final autoSpeakWrites = <bool>[];
+
+  @override
+  Future<TtsSettings> read() async =>
+      TtsSettings(configured: true, keySet: true, autoSpeak: autoSpeak);
+
+  @override
+  Future<TtsSettings> save(TtsSettingsDraft draft) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) async {
+    autoSpeakWrites.add(enabled);
+    autoSpeak = enabled;
+    return TtsSettings(configured: true, keySet: true, autoSpeak: autoSpeak);
+  }
+
+  @override
+  Future<TtsSettings> forgetApiKey() async => throw UnimplementedError();
+
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
+      throw UnimplementedError();
 }

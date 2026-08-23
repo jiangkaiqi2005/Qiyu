@@ -1824,6 +1824,40 @@ void main() {
           containsPair('voice', 'nova'),
         ),
       );
+
+      // 朗读开关：只写 autoSpeak 位，协议/地址/音色/Key 不动；缺 CSRF
+      // 拒绝；enabled 非布尔按格式错误拒绝。
+      final toggled = await _send(
+        host.origin.resolve('/api/provider/tts/auto-speak'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'enabled': false}),
+      );
+      expect(toggled.statusCode, HttpStatus.ok);
+      expect(
+        jsonDecode(toggled.body),
+        allOf(
+          containsPair('configured', true),
+          containsPair('autoSpeak', false),
+        ),
+      );
+      final noCsrfToggle = await _send(
+        host.origin.resolve('/api/provider/tts/auto-speak'),
+        method: 'PUT',
+        headers: {
+          ...browser.readHeaders(host.origin),
+          'origin': host.origin.toString().replaceFirst(RegExp(r'/$'), ''),
+        },
+        requestBody: jsonEncode({'enabled': true}),
+      );
+      expect(noCsrfToggle.statusCode, HttpStatus.forbidden);
+      final malformedToggle = await _send(
+        host.origin.resolve('/api/provider/tts/auto-speak'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'enabled': 'yes'}),
+      );
+      expect(malformedToggle.statusCode, HttpStatus.badRequest);
       await host.close();
     },
   );

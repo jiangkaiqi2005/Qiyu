@@ -55,6 +55,154 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('点麦克风与 Esc 都让栖语立即闭嘴（防自我循环）', (tester) async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _HoldingPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final viewModel = LocalChatViewModel(
+      _VoiceChatGateway(),
+      hostConnectionProbe: _FixedHostConnectionProbe(),
+      ttsSettingsGateway: _FixedTtsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+    await tester.pumpWidget(
+      _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
+    );
+
+    // 一轮回复后自动朗读中。
+    await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('voice-output-status')), findsOneWidget);
+
+    // 点麦克风：立即停播清队列（否则她的声音会被录进转写自我循环）。
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('voice-output-status')), findsNothing);
+
+    // 再触发一轮朗读，Esc 同样停播。
+    await tester.enterText(find.byKey(const Key('chat-input')), '还在吗');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('voice-output-status')), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('voice-output-status')), findsNothing);
+
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  testWidgets('气泡小喇叭重听：播完后点喇叭立即再读一次', (tester) async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _HoldingPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final viewModel = LocalChatViewModel(
+      _VoiceChatGateway(),
+      hostConnectionProbe: _FixedHostConnectionProbe(),
+      ttsSettingsGateway: _FixedTtsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+    await tester.pumpWidget(
+      _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
+    );
+
+    await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    // 自动朗读一次；播完后气泡出现重听小喇叭。
+    expect(speakGateway.calls, hasLength(1));
+    player.finishAll();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('chat-replay-0')), findsOneWidget);
+
+    // 点小喇叭：重听 = 重新合成再播一次。
+    await tester.tap(find.byKey(const Key('chat-replay-0')));
+    await tester.pumpAndSettle();
+    expect(speakGateway.calls, hasLength(2));
+    expect(speakGateway.calls.last.deliveryIndex, 0);
+
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  testWidgets('朗读开关：配了才显示，点按切 autoSpeak 并停播', (tester) async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _HoldingPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final mutableTts = _MutableTtsGateway(configured: true, autoSpeak: true);
+    final viewModel = LocalChatViewModel(
+      _VoiceChatGateway(),
+      hostConnectionProbe: _FixedHostConnectionProbe(),
+      ttsSettingsGateway: mutableTts,
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+    await tester.pumpWidget(
+      _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
+    );
+
+    // 配了 TTS：顶部出现朗读开关（开着）。
+    expect(find.byKey(const Key('voice-output-toggle-on')), findsOneWidget);
+
+    // 点开关关掉朗读：写 Host autoSpeak=false，图标切换。
+    await tester.tap(find.byKey(const Key('voice-output-toggle-on')));
+    await tester.pumpAndSettle();
+    expect(mutableTts.autoSpeakWrites, [false]);
+    expect(find.byKey(const Key('voice-output-toggle-off')), findsOneWidget);
+
+    // 关了之后自动朗读不触发（纯文字）。
+    await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    expect(speakGateway.calls, isEmpty);
+    expect(find.byKey(const Key('voice-output-status')), findsNothing);
+
+    // 再点开：恢复自动朗读。
+    await tester.tap(find.byKey(const Key('voice-output-toggle-off')));
+    await tester.pumpAndSettle();
+    expect(mutableTts.autoSpeakWrites, [false, true]);
+    expect(find.byKey(const Key('voice-output-toggle-on')), findsOneWidget);
+
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  testWidgets('未配语音合成：不显示朗读开关', (tester) async {
+    final viewModel = LocalChatViewModel(
+      _VoiceChatGateway(),
+      hostConnectionProbe: _FixedHostConnectionProbe(),
+      ttsSettingsGateway: _FixedTtsGateway(configured: false),
+      voiceOutput: VoiceOutputController(
+        _RecordingSpeakGateway(),
+        playerPlatform: _HoldingPlayerPlatform(),
+      ),
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+    await tester.pumpWidget(
+      _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('voice-output-toggle-on')), findsNothing);
+    expect(find.byKey(const Key('voice-output-toggle-off')), findsNothing);
+    viewModel.dispose();
+  });
+
   testWidgets('未配置语音服务：置灰点按引导去设置页', (tester) async {
     await tester.pumpWidget(
       _harness(
@@ -438,6 +586,10 @@ final class _FixedTtsGateway implements TtsSettingsGateway {
       throw UnimplementedError();
 
   @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) async =>
+      throw UnimplementedError();
+
+  @override
   Future<TtsSettings> forgetApiKey() async => throw UnimplementedError();
 
   @override
@@ -503,4 +655,42 @@ final class _HoldingPlayback implements VoicePlayback {
       _done.complete();
     }
   }
+}
+
+/// 可翻转的 TTS 设置 fake：记录 autoSpeak 写入。
+final class _MutableTtsGateway implements TtsSettingsGateway {
+  _MutableTtsGateway({required this.configured, this.autoSpeak = true});
+
+  bool configured;
+  bool autoSpeak;
+  final autoSpeakWrites = <bool>[];
+
+  @override
+  Future<TtsSettings> read() async => TtsSettings(
+    configured: configured,
+    keySet: configured,
+    autoSpeak: autoSpeak,
+  );
+
+  @override
+  Future<TtsSettings> save(TtsSettingsDraft draft) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) async {
+    autoSpeakWrites.add(enabled);
+    autoSpeak = enabled;
+    return TtsSettings(
+      configured: configured,
+      keySet: configured,
+      autoSpeak: autoSpeak,
+    );
+  }
+
+  @override
+  Future<TtsSettings> forgetApiKey() async => throw UnimplementedError();
+
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
+      throw UnimplementedError();
 }

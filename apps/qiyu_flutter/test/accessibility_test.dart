@@ -917,6 +917,10 @@ final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
   );
 
   @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) async =>
+      throw UnimplementedError();
+
+  @override
   Future<TtsSettings> forgetApiKey() async =>
       const TtsSettings(configured: false, keySet: false);
 

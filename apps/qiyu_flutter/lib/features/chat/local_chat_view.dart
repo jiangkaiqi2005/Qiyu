@@ -251,6 +251,27 @@ class _LocalChatViewState extends State<LocalChatView> {
                               ),
                             ),
                           const SizedBox(width: 12),
+                          if (viewModel.voiceOutputConfigured)
+                            // 朗读一键开关：写 Host 的 tts.autoSpeak，刷新、
+                            // 重启都记住；关掉后纯文字（状态变化经
+                            // viewModel 通知重建）。
+                            IconButton(
+                              key: Key(
+                                viewModel.voiceOutputEnabled
+                                    ? 'voice-output-toggle-on'
+                                    : 'voice-output-toggle-off',
+                              ),
+                              onPressed: () =>
+                                  unawaited(viewModel.toggleVoiceOutput()),
+                              tooltip: viewModel.voiceOutputEnabled
+                                  ? '语音朗读开着，点击安静'
+                                  : '语音朗读关着，点击开启',
+                              icon: Icon(
+                                viewModel.voiceOutputEnabled
+                                    ? Icons.volume_up_rounded
+                                    : Icons.volume_off_rounded,
+                              ),
+                            ),
                           IconButton(
                             key: const Key('open-history'),
                             onPressed: () => context.push('/history'),
@@ -333,6 +354,9 @@ class _LocalChatViewState extends State<LocalChatView> {
                           _VoiceEscapeIntent:
                               CallbackAction<_VoiceEscapeIntent>(
                                 onInvoke: (intent) {
+                                  // 播放态下 Esc 等同停止按钮（ADR 0002
+                                  // 的打断规则）；录音/转写语义不变。
+                                  viewModel.voiceOutput.stopAll();
                                   _voiceInput.handleEscape();
                                   return null;
                                 },
@@ -487,7 +511,12 @@ class _LocalChatViewState extends State<LocalChatView> {
         return IconButton(
           key: const Key('voice-mic'),
           tooltip: '语音输入',
-          onPressed: () => voice.handleMicTap(),
+          // 点麦克风她立刻闭嘴（ADR 0002 硬规则）：她的声音不能被录进
+          // 转写变成用户在自言自语。
+          onPressed: () {
+            context.read<LocalChatViewModel>().voiceOutput.stopAll();
+            voice.handleMicTap();
+          },
           icon: const Icon(Icons.mic_none),
         );
       case VoiceInputStatus.recording:
@@ -513,7 +542,11 @@ class _LocalChatViewState extends State<LocalChatView> {
           key: const Key('voice-mic-retry'),
           tooltip: '重试转写',
           color: Theme.of(context).colorScheme.error,
-          onPressed: () => voice.handleMicTap(),
+          // 与开始录音同规则：点麦克风即停播清队列。
+          onPressed: () {
+            context.read<LocalChatViewModel>().voiceOutput.stopAll();
+            voice.handleMicTap();
+          },
           icon: const Icon(Icons.mic_rounded),
         );
     }
@@ -622,13 +655,26 @@ class _LocalChatViewState extends State<LocalChatView> {
         }
         final message = viewModel.messages[index];
         final nowReading = viewModel.voiceOutput.nowReading;
+        final isQiyu = message.speaker == LocalChatSpeaker.qiyu;
+        final deliveryIndex = message.deliveryIndex;
         return QiyuChatBubble(
           text: message.text,
-          fromUser: message.speaker == LocalChatSpeaker.user,
+          fromUser: !isQiyu,
+          deliveryIndex: deliveryIndex,
           isSpeaking:
               nowReading != null &&
               message.requestId == nowReading.requestId &&
-              message.deliveryIndex == nowReading.deliveryIndex,
+              deliveryIndex == nowReading.deliveryIndex,
+          // 栖语气泡的重听小喇叭：点一下立即重读这句（重听=重新合成）。
+          onReplay: isQiyu && deliveryIndex != null
+              ? () => viewModel.voiceOutput.playNow(
+                  VoiceOutputRequest(
+                    requestId: message.requestId,
+                    deliveryIndex: deliveryIndex,
+                    sessionId: null,
+                  ),
+                )
+              : null,
         );
       },
     );

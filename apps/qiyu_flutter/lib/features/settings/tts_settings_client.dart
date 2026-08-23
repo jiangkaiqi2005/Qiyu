@@ -109,6 +109,10 @@ abstract interface class TtsSettingsGateway {
 
   Future<TtsSettings> save(TtsSettingsDraft draft);
 
+  /// 聊天页朗读开关：只写 autoSpeak 位（Host 独立路由，不动协议、
+  /// 地址、音色与 Key）。
+  Future<TtsSettings> setAutoSpeak(bool enabled);
+
   Future<TtsSettings> forgetApiKey();
 
   Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft);
@@ -137,6 +141,16 @@ final class HttpTtsSettingsGateway extends HostApiGateway
       resolve('/api/provider/tts'),
       headers: await modifyingHeaders(),
       body: jsonEncode(draft.toJson()),
+    );
+    return TtsSettings.fromJson(decodeSuccess(response));
+  }
+
+  @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) async {
+    final response = await httpClient.put(
+      resolve('/api/provider/tts/auto-speak'),
+      headers: await modifyingHeaders(),
+      body: jsonEncode({'enabled': enabled}),
     );
     return TtsSettings.fromJson(decodeSuccess(response));
   }

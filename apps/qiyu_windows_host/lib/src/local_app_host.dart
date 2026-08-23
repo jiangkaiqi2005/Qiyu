@@ -641,6 +641,19 @@ final class _LocalAppRequestHandler {
         );
         return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
       }
+      if (request.method == 'PUT' &&
+          request.url.path == 'api/provider/tts/auto-speak') {
+        final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
+        final enabled = payload['enabled'];
+        if (enabled is! bool) {
+          throw _invalidRequest('朗读开关请求格式不正确。');
+        }
+        final settings = await ttsSettingsService.setAutoSpeak(enabled);
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
       if (request.method == 'DELETE' &&
           request.url.path == 'api/provider/tts/key') {
         final settings = await ttsSettingsService.forgetApiKey();

@@ -852,6 +852,10 @@ final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
   );
 
   @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) async =>
+      throw UnimplementedError();
+
+  @override
   Future<TtsSettings> forgetApiKey() async =>
       const TtsSettings(configured: false, keySet: false);
 
@@ -867,9 +871,16 @@ final class _MutableTtsSettingsGateway implements TtsSettingsGateway {
   final savedDrafts = <TtsSettingsDraft>[];
   int testCalls = 0;
   int forgetCalls = 0;
+  final autoSpeakWrites = <bool>[];
 
   @override
   Future<TtsSettings> read() async => _settings;
+
+  @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) async {
+    autoSpeakWrites.add(enabled);
+    return _settings;
+  }
 
   @override
   Future<TtsSettings> save(TtsSettingsDraft draft) async {

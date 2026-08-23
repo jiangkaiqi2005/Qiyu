@@ -583,48 +583,47 @@ void main() {
     await _returnToHome(tester);
   });
 
-  testWidgets(
-    'settings back works after selecting only a provider from home',
-    (tester) async {
-      final chatViewModel = LocalChatViewModel(
-        _FakeLocalChatGateway(),
-        hostConnectionProbe: _FakeHostConnectionProbe([true]),
-        autoStart: false,
-      );
-      await chatViewModel.initialize();
-      final settingsViewModel = ProviderSettingsViewModel(
-        _FakeProviderSettingsGateway(),
-        autoStart: false,
-      );
-      await settingsViewModel.initialize();
-      await tester.pumpWidget(
-        QiyuApp(
-          viewModel: chatViewModel,
-          providerSettingsViewModel: settingsViewModel,
-          sttSettingsViewModel: SttSettingsViewModel(
-            const _FixedSttSettingsGateway(),
-            autoStart: false,
-          ),
-          onboardingViewModel: await _completedOnboardingViewModel(),
-          settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+  testWidgets('settings back works after selecting only a provider from home', (
+    tester,
+  ) async {
+    final chatViewModel = LocalChatViewModel(
+      _FakeLocalChatGateway(),
+      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      autoStart: false,
+    );
+    await chatViewModel.initialize();
+    final settingsViewModel = ProviderSettingsViewModel(
+      _FakeProviderSettingsGateway(),
+      autoStart: false,
+    );
+    await settingsViewModel.initialize();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: chatViewModel,
+        providerSettingsViewModel: settingsViewModel,
+        sttSettingsViewModel: SttSettingsViewModel(
+          const _FixedSttSettingsGateway(),
+          autoStart: false,
         ),
-      );
-      await tester.pumpAndSettle();
+        onboardingViewModel: await _completedOnboardingViewModel(),
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('home-go-settings')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('provider-preset')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('DeepSeek').last);
-      await tester.pumpAndSettle();
-      await tester.tapAt(const Offset(700, 120));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('返回上一页'));
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-settings')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('provider-preset')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('DeepSeek').last);
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(700, 120));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('返回上一页'));
+    await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
-    },
-  );
+    expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
+  });
 
   testWidgets(
     'chat list restores at the bottom and streaming never yanks a reading user',
@@ -708,14 +707,22 @@ void main() {
       expect(find.textContaining('用户消息第 0 条'), findsOneWidget);
 
       // 手动滑回底部后重新粘滞，跟随后续增量。
-      await tester.drag(find.byType(ListView), const Offset(0, -8000));
-      await tester.pump();
-      await tester.pump();
+      // 恢复的历史栖语气泡带重听小喇叭（+28px/条），列表比以往更高：
+      // 明确滚到最新流式内容（回读后回到最新可见的语义不变）。
       gateway.add(
         LocalChatDeliveryEvent(
           kind: LocalChatEventKind.delta,
           requestId: 'scroll-request',
           text: '你继续。',
+        ),
+      );
+      await tester.pump();
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('chat-streaming-reply')),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
         ),
       );
       await tester.pump();
@@ -770,7 +777,6 @@ final class _FakeLocalChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
-
 
   @override
   Future<String> transcribe({
@@ -866,7 +872,6 @@ final class _RestoredStreamingGateway implements StreamingLocalChatGateway {
   @override
   Future<bool> cancel(String requestId) async => true;
 
-
   @override
   Future<String> transcribe({
     required Uint8List audio,
@@ -927,8 +932,7 @@ final class _FakeOnboardingGateway implements OnboardingGateway {
   bool completed;
 
   @override
-  Future<OnboardingState> read() async =>
-      OnboardingState(completed: completed);
+  Future<OnboardingState> read() async => OnboardingState(completed: completed);
 
   @override
   Future<void> complete() async {

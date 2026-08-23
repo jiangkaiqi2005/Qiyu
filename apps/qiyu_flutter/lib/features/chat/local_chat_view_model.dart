@@ -44,6 +44,7 @@ final class LocalChatViewModel extends ChangeNotifier {
   /// 停止按钮。
   final VoiceOutputController voiceOutput;
   bool _voiceOutputEnabled = false;
+  bool _voiceOutputConfigured = false;
   final Map<String, int> _announcedDeliveries = {};
   final List<LocalChatMessage> _messages = [];
   Timer? _monitorTimer;
@@ -121,9 +122,31 @@ final class LocalChatViewModel extends ChangeNotifier {
     }
     try {
       final settings = await gateway.read();
+      _voiceOutputConfigured = settings.configured;
       _voiceOutputEnabled = settings.configured && settings.autoSpeak;
     } on Object {
+      _voiceOutputConfigured = false;
       _voiceOutputEnabled = false;
+    }
+    notifyListeners();
+  }
+
+  /// 是否配了语音合成（聊天页据此显示/隐藏朗读开关）。
+  bool get voiceOutputConfigured => _voiceOutputConfigured;
+
+  /// 自动朗读开关状态（写 Host 的 tts.autoSpeak，刷新重启都记住）。
+  bool get voiceOutputEnabled => _voiceOutputEnabled;
+
+  Future<void> toggleVoiceOutput() async {
+    final gateway = _ttsSettingsGateway;
+    if (gateway == null || !_voiceOutputConfigured) {
+      return;
+    }
+    try {
+      await gateway.setAutoSpeak(!_voiceOutputEnabled);
+      await refreshVoiceOutputStatus();
+    } on Object {
+      // 开关写失败：保持原状态，不打扰聊天主链路。
     }
   }
 
@@ -134,9 +157,37 @@ final class LocalChatViewModel extends ChangeNotifier {
         return;
       }
       _sessionId = snapshot.sessionId;
+      // 历史栖语消息也标注 deliveryIndex（同 requestId 内第 N 个栖语
+      // turn，与 Host 朗读定位同口径、从 0 起）：恢复的气泡同样能点
+      // 小喇叭重听（重听=重新合成，文字都在）。
+      final deliveryCounts = <String, int>{};
+      final restored = <LocalChatMessage>[];
+      for (final message in snapshot.messages) {
+        if (message.speaker != LocalChatSpeaker.qiyu) {
+          restored.add(message);
+          continue;
+        }
+        final delivery = deliveryCounts[message.requestId] ?? 0;
+        deliveryCounts[message.requestId] = delivery + 1;
+        restored.add(
+          LocalChatMessage(
+            requestId: message.requestId,
+            speaker: message.speaker,
+            text: message.text,
+            source: message.source,
+            fallbackReason: message.fallbackReason,
+            deliveryIndex: delivery,
+          ),
+        );
+      }
       _messages
         ..clear()
-        ..addAll(snapshot.messages);
+        ..addAll(restored);
+      // 交付计数与已展示消息对齐：恢复后同一 requestId 的新交付段接着
+      // 计数，朗读定位不撞号。
+      _announcedDeliveries
+        ..clear()
+        ..addAll(deliveryCounts);
       final lastMessage = _messages.isEmpty ? null : _messages.last;
       if (lastMessage?.speaker == LocalChatSpeaker.user) {
         _pendingRequestId = lastMessage!.requestId;
