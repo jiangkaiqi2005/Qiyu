@@ -34,17 +34,18 @@ final class IoAtomicTextWriter implements AtomicTextWriter {
     try {
       await temporary.writeAsString(contents, encoding: utf8, flush: true);
       // Windows 上目标文件仍被并发读取句柄占用时 rename 抛共享冲突；
-      // 异步读取完成即关闭句柄，冲突是瞬态的，短重试越过即可，
-      // 不必为此把所有读取改成阻塞式同步 IO。
+      // 冲突是瞬态的，短重试越过即可，不必为此把所有读取改成阻塞式
+      // 同步 IO。重试窗口要盖过杀毒/索引服务对文件的实时扫描（实测
+      // 外部进程可持锁数百毫秒），1 秒级窗口换保存的稳定。
       for (var attempt = 0; ; attempt += 1) {
         try {
           await temporary.rename(targetPath);
           break;
         } on FileSystemException catch (error) {
-          if (attempt >= 4 || !_isTransientWindowsConflict(error)) {
+          if (attempt >= 20 || !_isTransientWindowsConflict(error)) {
             rethrow;
           }
-          await Future<void>.delayed(const Duration(milliseconds: 15));
+          await Future<void>.delayed(const Duration(milliseconds: 50));
         }
       }
     } finally {
@@ -58,7 +59,11 @@ final class IoAtomicTextWriter implements AtomicTextWriter {
   /// 目标暂被其他句柄占用，稍后重试有意义；其余错误立即抛出。
   bool _isTransientWindowsConflict(FileSystemException error) {
     final code = error.osError?.errorCode;
-    return code == 32 || code == 33;
+    // 32/33（共享/锁冲突）：目标被并发句柄占用。5（拒绝访问）：rename
+    // 要求目标的 DELETE 访问权，与其他进程已打开的读句柄（杀毒/索引
+    // 实时扫描）冲突时 Windows 同样报 5——两者都是瞬态，重试有意义；
+    // 权限真正缺失时重试 20 次后仍会如实失败。
+    return code == 32 || code == 33 || code == 5;
   }
 }
 
