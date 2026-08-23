@@ -238,13 +238,14 @@ void main() {
       isEmpty,
     );
 
-    // 连接测试：结果以人话呈现，成功后出现「再听一次试听」入口
-    // （widget 测试环境播放平台不可用，静默降级不报错）。
+    // 连接测试：widget 环境不能播放时明确区分「连接已通、试听失败」，
+    // 不能同时留下绿色成功状态；仍保留「再听一次试听」恢复入口。
     await tester.ensureVisible(find.byKey(const Key('test-tts-connection')));
     await tester.tap(find.byKey(const Key('test-tts-connection')));
     await tester.pumpAndSettle();
     expect(ttsGateway.testCalls, 1);
-    expect(find.textContaining('连接成功'), findsOneWidget);
+    expect(find.textContaining('没能播放试听'), findsOneWidget);
+    expect(find.textContaining('连接成功'), findsNothing);
     expect(find.byKey(const Key('tts-replay-preview')), findsOneWidget);
 
     // 切到豆包：地址与模型换成订阅专属缺省（完整端点 + Resource-Id）。

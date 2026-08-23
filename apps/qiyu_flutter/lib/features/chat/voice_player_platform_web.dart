@@ -6,87 +6,111 @@ import 'package:web/web.dart' as web;
 
 import 'voice_player_platform.dart';
 
-/// Flutter Web 构建的真实浏览器实现：音频字节经内存 blob URL 交给
-/// HTMLAudioElement 播放，播完/停止立即 revoke URL——磁盘上永远不出现
-/// 声音文件（ADR 0002）。自动播放被浏览器策略拒绝时返回 null，调用方
-/// 按「读不出来」降级。
-final class WebVoicePlayerPlatform implements VoicePlayerPlatform {
-  const WebVoicePlayerPlatform();
+/// Flutter Web 的内存音频播放器。
+///
+/// 用户点击试听或重听时先同步恢复一个 [web.AudioContext]，这样云端合成
+/// 跨过异步边界后仍可在同一上下文解码、播放。音频字节和解码缓冲都只在
+/// 内存中，播放结束或停止后由浏览器回收，不创建文件或持久化缓存。
+final class WebVoicePlayerPlatform
+    implements VoicePlayerPlatform, UserGestureVoicePlayerPlatform {
+  web.AudioContext? _context;
+  Future<bool>? _resumeAttempt;
 
   @override
   bool get supported => true;
+
+  @override
+  void prepareForPlayback() {
+    final context = _ensureContext();
+    // resume() 必须在用户点击回调的同步调用栈里发起；异步结果由 play 等待。
+    _resumeAttempt = _resume(context);
+  }
 
   @override
   Future<VoicePlayback?> play(
     Uint8List bytes, {
     required String mimeType,
   }) async {
-    String? url;
-    web.HTMLAudioElement? audio;
+    final context = _ensureContext();
     try {
-      final blob = web.Blob(
-        <web.BlobPart>[bytes.toJS].toJS,
-        web.BlobPropertyBag(type: mimeType),
-      );
-      url = web.URL.createObjectURL(blob);
-      audio = web.HTMLAudioElement()..src = url;
-      final stopped = Completer<void>();
-      audio.onended = ((web.Event _) {
-        if (!stopped.isCompleted) {
-          stopped.complete();
-        }
-      }).toJS;
-      audio.onerror = ((web.Event _) {
-        if (!stopped.isCompleted) {
-          stopped.complete();
-        }
-      }).toJS;
-      // 自动播放策略拒绝（NotAllowedError）或解码失败都在这里变 null。
-      await audio.play().toDart;
-      return _WebVoicePlayback(audio, url, stopped);
-    } on Object {
-      audio?.pause();
-      audio?.removeAttribute('src');
-      if (url != null) {
-        web.URL.revokeObjectURL(url);
+      if (!await _waitUntilRunning(context)) {
+        return null;
       }
+      // Uint8List 可能只是更大 buffer 的视图；只把本次音频的确切字节交给
+      // decodeAudioData，避免 offset/尾部字节污染解码。
+      final copy =
+          bytes.offsetInBytes == 0 &&
+              bytes.lengthInBytes == bytes.buffer.lengthInBytes
+          ? bytes
+          : Uint8List.fromList(bytes);
+      final decoded = await context
+          .decodeAudioData(copy.buffer.toJS)
+          .toDart
+          .timeout(const Duration(seconds: 5));
+      final source = context.createBufferSource()..buffer = decoded;
+      source.connect(context.destination);
+      final stopped = Completer<void>();
+      source.onended = ((web.Event _) {
+        if (!stopped.isCompleted) {
+          stopped.complete();
+        }
+      }).toJS;
+      source.start();
+      return _WebVoicePlayback(source, stopped);
+    } on Object {
       return null;
+    }
+  }
+
+  web.AudioContext _ensureContext() => _context ??= web.AudioContext();
+
+  Future<bool> _waitUntilRunning(web.AudioContext context) async {
+    if (context.state == 'running') {
+      return true;
+    }
+    final attempt = _resumeAttempt ??= _resume(context);
+    final resumed = await attempt.timeout(
+      const Duration(seconds: 1),
+      onTimeout: () => false,
+    );
+    return resumed && context.state == 'running';
+  }
+
+  Future<bool> _resume(web.AudioContext context) async {
+    try {
+      await context.resume().toDart;
+      return context.state == 'running';
+    } on Object {
+      return false;
     }
   }
 }
 
 final class _WebVoicePlayback implements VoicePlayback {
-  _WebVoicePlayback(this._audio, this._url, this._stopped);
+  _WebVoicePlayback(this._source, this._stopped);
 
-  final web.HTMLAudioElement _audio;
-  final String _url;
+  final web.AudioBufferSourceNode _source;
   final Completer<void> _stopped;
   bool _released = false;
 
   @override
-  Future<void> get done async {
-    await _stopped.future;
-    _release();
-  }
+  Future<void> get done => _stopped.future;
 
   @override
   void stop() {
-    _audio.pause();
-    if (!_stopped.isCompleted) {
-      _stopped.complete();
-    }
-    _release();
-  }
-
-  void _release() {
     if (_released) {
       return;
     }
     _released = true;
-    _audio.removeAttribute('src');
-    web.URL.revokeObjectURL(_url);
+    try {
+      _source.stop();
+    } on Object {
+      // 已自然结束的 source 再 stop 会因浏览器实现不同而可能抛错；幂等吞掉。
+    }
+    if (!_stopped.isCompleted) {
+      _stopped.complete();
+    }
   }
 }
 
-VoicePlayerPlatform createVoicePlayerPlatform() =>
-    const WebVoicePlayerPlatform();
+VoicePlayerPlatform createVoicePlayerPlatform() => WebVoicePlayerPlatform();

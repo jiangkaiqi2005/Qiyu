@@ -1024,8 +1024,12 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
         const SizedBox(height: 20),
         if (viewModel.errorMessage case final message?)
           _StatusMessage(message: message, succeeded: false),
-        if (testResult case final result?)
-          _StatusMessage(message: result.message, succeeded: result.succeeded),
+        if (viewModel.errorMessage == null)
+          if (testResult case final result?)
+            _StatusMessage(
+              message: result.message,
+              succeeded: result.succeeded,
+            ),
         if (testResult != null && testResult.succeeded) ...[
           const SizedBox(height: 8),
           TextButton.icon(

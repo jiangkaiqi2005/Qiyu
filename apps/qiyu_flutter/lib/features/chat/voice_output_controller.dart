@@ -68,6 +68,7 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 手动重听（气泡小喇叭）：用户主动点播优先于自动队列——立即播这
   /// 条，正在播的直接顶掉，清空自动排队（用户要听的是这一句）。
   void playNow(VoiceOutputRequest request) {
+    prepareForUserInitiatedPlayback();
     _enterSession(request.sessionId);
     _abandonActive(incrementGeneration: true);
     _phase = VoiceOutputPhase.idle;
@@ -76,6 +77,11 @@ final class VoiceOutputController extends ChangeNotifier {
       ..clear()
       ..addLast(request);
     _drain();
+  }
+
+  /// 用户发送消息或主动点播时调用；必须发生在第一个 await 前。
+  void prepareForUserInitiatedPlayback() {
+    _playerPlatform.prepareForUserGesturePlayback();
   }
 
   /// 停止播放并清空队列（停止按钮 / Esc / 点麦克风立即停播）。
@@ -127,7 +133,7 @@ final class VoiceOutputController extends ChangeNotifier {
         if (generation != _generation) {
           return;
         }
-        _notifyFailureOnce();
+        _notifyFailureOnce('语音服务连不上，这条读不出来。');
         continue;
       }
       if (generation != _generation) {
@@ -142,8 +148,8 @@ final class VoiceOutputController extends ChangeNotifier {
         return;
       }
       if (playback == null) {
-        // 浏览器自动播放被拒或解码失败：与合成失败同款降级。
-        _notifyFailureOnce();
+        // 合成已成功；浏览器策略、解码或音频设备失败不能冒充服务断线。
+        _notifyFailureOnce('浏览器没能播放，点小喇叭再听一次。');
         continue;
       }
       _activePlayback = playback;
@@ -160,10 +166,10 @@ final class VoiceOutputController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _notifyFailureOnce() {
+  void _notifyFailureOnce(String message) {
     if (!_failureNotified) {
       _failureNotified = true;
-      _failureNotice = '语音服务连不上，这条读不出来。';
+      _failureNotice = message;
       notifyListeners();
     }
   }

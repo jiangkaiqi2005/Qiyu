@@ -27,6 +27,82 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     viewModel.dispose();
   });
+
+  test('连接成功但浏览器播放失败时明确提示，不能假装试听成功', () async {
+    final viewModel = TtsSettingsViewModel(
+      const _PreviewGateway(),
+      playerPlatform: const _RefusingPreviewPlayer(),
+      autoStart: false,
+    );
+
+    await viewModel.testConnection(
+      const TtsSettingsDraft(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+      ),
+    );
+
+    expect(viewModel.testResult?.succeeded, isTrue);
+    expect(viewModel.errorMessage, '语音服务已连接，但浏览器没能播放试听。点「再听一次试听」重试。');
+    viewModel.dispose();
+  });
+
+  test('测试按钮先取得浏览器播放许可，异步连接后仍能播放试听', () async {
+    final gateway = _PendingPreviewGateway();
+    final player = _GestureLockedPreviewPlayer();
+    final viewModel = TtsSettingsViewModel(
+      gateway,
+      playerPlatform: player,
+      autoStart: false,
+    );
+
+    player.gestureActive = true;
+    final testing = viewModel.testConnection(
+      const TtsSettingsDraft(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+      ),
+    );
+    player.gestureActive = false;
+    gateway.complete();
+    await testing;
+
+    expect(viewModel.errorMessage, isNull);
+    expect(player.started, isTrue);
+    player.finish();
+    viewModel.dispose();
+  });
+}
+
+final class _PendingPreviewGateway implements TtsSettingsGateway {
+  final Completer<TtsConnectionTest> _result = Completer<TtsConnectionTest>();
+
+  void complete() {
+    _result.complete(
+      TtsConnectionTest(
+        succeeded: true,
+        message: '连接成功。',
+        audio: Uint8List.fromList([1, 2, 3]),
+      ),
+    );
+  }
+
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) =>
+      _result.future;
+
+  @override
+  Future<TtsSettings> read() => throw UnimplementedError();
+
+  @override
+  Future<TtsSettings> save(TtsSettingsDraft draft) =>
+      throw UnimplementedError();
+
+  @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) => throw UnimplementedError();
+
+  @override
+  Future<TtsSettings> forgetApiKey() => throw UnimplementedError();
 }
 
 final class _PreviewGateway implements TtsSettingsGateway {
@@ -87,4 +163,49 @@ final class _RecordingPlayback implements VoicePlayback {
       _done.complete();
     }
   }
+}
+
+final class _RefusingPreviewPlayer implements VoicePlayerPlatform {
+  const _RefusingPreviewPlayer();
+
+  @override
+  bool get supported => true;
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+  }) async => null;
+}
+
+final class _GestureLockedPreviewPlayer
+    implements VoicePlayerPlatform, UserGestureVoicePlayerPlatform {
+  bool gestureActive = false;
+  bool _prepared = false;
+  bool started = false;
+  _RecordingPlayback? _playback;
+
+  @override
+  bool get supported => true;
+
+  @override
+  void prepareForPlayback() {
+    if (gestureActive) {
+      _prepared = true;
+    }
+  }
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+  }) async {
+    if (!_prepared) {
+      return null;
+    }
+    started = true;
+    return _playback = _RecordingPlayback();
+  }
+
+  void finish() => _playback?.finish();
 }

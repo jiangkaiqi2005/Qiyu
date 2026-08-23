@@ -136,7 +136,7 @@ void main() {
     expect(controller.failureNotice, isNotNull);
   });
 
-  test('自动播放被拒（play 返回 null）与合成失败同款降级', () async {
+  test('自动播放被拒时提示点气泡重听，不误报成语音服务断线', () async {
     final gateway = _RecordingSpeakGateway();
     final controller = VoiceOutputController(
       gateway,
@@ -148,7 +148,7 @@ void main() {
       enabled: true,
     );
     await Future<void>.delayed(Duration.zero);
-    expect(controller.failureNotice, isNotNull);
+    expect(controller.failureNotice, '浏览器没能播放，点小喇叭再听一次。');
     expect(controller.phase, VoiceOutputPhase.idle);
   });
 
@@ -200,6 +200,38 @@ void main() {
     expect(controller.phase, VoiceOutputPhase.idle);
     expect(gateway.calls.map((call) => call.requestId), ['r1', 'r3']);
   });
+
+  test('气泡重听先取得浏览器播放许可，异步合成后仍能开始播放', () async {
+    final gateway = _PendingSpeakGateway();
+    final player = _GestureLockedPlayerPlatform();
+    final controller = VoiceOutputController(gateway, playerPlatform: player);
+
+    player.gestureActive = true;
+    controller.playNow(
+      const VoiceOutputRequest(requestId: 'manual', deliveryIndex: 0),
+    );
+    player.gestureActive = false;
+    gateway.complete();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.phase, VoiceOutputPhase.playing);
+    expect(controller.failureNotice, isNull);
+    player.finish();
+  });
+}
+
+final class _PendingSpeakGateway implements ChatSpeechGateway {
+  final Completer<Uint8List> _audio = Completer<Uint8List>();
+
+  void complete() => _audio.complete(Uint8List.fromList([1, 2, 3]));
+
+  @override
+  Future<Uint8List> speak({
+    required String requestId,
+    required int deliveryIndex,
+    String? sessionId,
+  }) => _audio.future;
 }
 
 final class _RecordingSpeakGateway implements ChatSpeechGateway {
@@ -288,4 +320,34 @@ final class _RefusingVoicePlayerPlatform implements VoicePlayerPlatform {
     Uint8List bytes, {
     required String mimeType,
   }) async => null;
+}
+
+final class _GestureLockedPlayerPlatform
+    implements VoicePlayerPlatform, UserGestureVoicePlayerPlatform {
+  bool gestureActive = false;
+  bool _prepared = false;
+  _FakeVoicePlayback? _playback;
+
+  @override
+  bool get supported => true;
+
+  @override
+  void prepareForPlayback() {
+    if (gestureActive) {
+      _prepared = true;
+    }
+  }
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+  }) async {
+    if (!_prepared) {
+      return null;
+    }
+    return _playback = _FakeVoicePlayback(_FakeVoicePlayerPlatform());
+  }
+
+  void finish() => _playback?.finish();
 }

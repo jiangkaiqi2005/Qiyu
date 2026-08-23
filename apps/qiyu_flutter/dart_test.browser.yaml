@@ -1,0 +1,20 @@
+define_platforms:
+  qiyu_chrome:
+    name: Qiyu Chrome
+    extends: chrome
+    settings:
+      # Headless runner 没有 trusted UI 事件：这里冒烟验证真实 Web Audio
+      # 解码/播放，用户手势的同步预备由失败锁接缝测试覆盖。
+      arguments: --autoplay-policy=no-user-gesture-required
+  qiyu_chromium:
+    name: Qiyu Chromium
+    extends: chrome
+    settings:
+      executable:
+        windows: Chromium\Application\chrome.exe
+      arguments: --autoplay-policy=no-user-gesture-required
+  qiyu_edge:
+    name: Qiyu Edge
+    extends: edge
+    settings:
+      arguments: --autoplay-policy=no-user-gesture-required

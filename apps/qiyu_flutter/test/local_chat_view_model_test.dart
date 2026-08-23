@@ -157,6 +157,35 @@ void main() {
     controller.dispose();
   });
 
+  test('发送消息先取得浏览器播放许可，异步回复可直接自动朗读', () async {
+    final player = _GestureLockedSequentialPlayer();
+    final speakGateway = _RecordingSpeakGateway();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final viewModel = LocalChatViewModel(
+      _TwoBubbleGateway(withBubble2: false),
+      hostConnectionProbe: _AvailableProbe(),
+      requestIdFactory: () => 'request-auto-unlock',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+
+    player.gestureActive = true;
+    final sending = viewModel.send('在吗');
+    player.gestureActive = false;
+    expect(await sending, isTrue);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.started, isTrue);
+    expect(controller.failureNotice, isNull);
+    viewModel.dispose();
+    controller.dispose();
+  });
+
   test('autoSpeak 关或未配置时交付不朗读', () async {
     for (final ttsGateway in [
       _FixedTtsSettingsGateway(configured: true, autoSpeak: false),
@@ -410,6 +439,35 @@ final class _SequentialPlayerPlatform implements VoicePlayerPlatform {
     Uint8List bytes, {
     required String mimeType,
   }) async => _InstantPlayback();
+}
+
+final class _GestureLockedSequentialPlayer
+    implements VoicePlayerPlatform, UserGestureVoicePlayerPlatform {
+  bool gestureActive = false;
+  bool _prepared = false;
+  bool started = false;
+
+  @override
+  bool get supported => true;
+
+  @override
+  void prepareForPlayback() {
+    if (gestureActive) {
+      _prepared = true;
+    }
+  }
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+  }) async {
+    if (!_prepared) {
+      return null;
+    }
+    started = true;
+    return _InstantPlayback();
+  }
 }
 
 final class _InstantPlayback implements VoicePlayback {

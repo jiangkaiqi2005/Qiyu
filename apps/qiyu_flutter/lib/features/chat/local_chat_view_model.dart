@@ -265,6 +265,10 @@ final class LocalChatViewModel extends ChangeNotifier {
     if (trimmed.isEmpty || _sending || hostStopped) {
       return false;
     }
+    if (_voiceOutputEnabled) {
+      // send 由按钮/Enter 同步触发：先保住许可，再跨入聊天事件流。
+      voiceOutput.prepareForUserInitiatedPlayback();
+    }
     _sending = true;
     _errorMessage = null;
     final requestId = _pendingText == trimmed && _pendingRequestId != null

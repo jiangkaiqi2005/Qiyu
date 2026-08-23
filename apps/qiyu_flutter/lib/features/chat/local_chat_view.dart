@@ -526,7 +526,13 @@ class _LocalChatViewState extends State<LocalChatView> {
           // 点麦克风她立刻闭嘴（ADR 0002 硬规则）：她的声音不能被录进
           // 转写变成用户在自言自语。
           onPressed: () {
-            context.read<LocalChatViewModel>().voiceOutput.stopAll();
+            final viewModel = context.read<LocalChatViewModel>();
+            viewModel.voiceOutput.stopAll();
+            // 60 秒自动收尾没有第二次点击，必须在开始录音
+            // 的用户手势中先为稍后的回复朗读保留许可。
+            if (viewModel.voiceOutputEnabled) {
+              viewModel.voiceOutput.prepareForUserInitiatedPlayback();
+            }
             voice.handleMicTap();
           },
           icon: const Icon(Icons.mic_none),
@@ -536,7 +542,15 @@ class _LocalChatViewState extends State<LocalChatView> {
           key: const Key('voice-mic-stop'),
           tooltip: '说完，转成文字',
           color: Theme.of(context).colorScheme.error,
-          onPressed: () => voice.handleMicTap(),
+          onPressed: () {
+            // 转写和聊天都会跨越异步边界；说完的这次点击
+            // 是语音闭环最后一个可用的浏览器用户手势。
+            context
+                .read<LocalChatViewModel>()
+                .voiceOutput
+                .prepareForUserInitiatedPlayback();
+            voice.handleMicTap();
+          },
           icon: const Icon(Icons.stop_circle_rounded),
         );
       case VoiceInputStatus.transcribing:
@@ -556,7 +570,11 @@ class _LocalChatViewState extends State<LocalChatView> {
           color: Theme.of(context).colorScheme.error,
           // 与开始录音同规则：点麦克风即停播清队列。
           onPressed: () {
-            context.read<LocalChatViewModel>().voiceOutput.stopAll();
+            final voiceOutput = context
+                .read<LocalChatViewModel>()
+                .voiceOutput;
+            voiceOutput.stopAll();
+            voiceOutput.prepareForUserInitiatedPlayback();
             voice.handleMicTap();
           },
           icon: const Icon(Icons.mic_rounded),

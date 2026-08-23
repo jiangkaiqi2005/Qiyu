@@ -58,6 +58,41 @@ try {
   Invoke-Step 'Flutter dependencies' { flutter pub get }
   Invoke-Step 'Flutter analysis' { flutter analyze }
   Invoke-Step 'Flutter widget tests' { flutter test }
+  $chromeExecutable = @(
+      $env:CHROME_EXECUTABLE,
+      'C:\Program Files\Google\Chrome\Application\chrome.exe',
+      'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+      (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+      Select-Object -First 1
+  $chromiumExecutable = @(
+      'C:\Program Files\Chromium\Application\chrome.exe',
+      'C:\Program Files (x86)\Chromium\Application\chrome.exe',
+      (Join-Path $env:LOCALAPPDATA 'Chromium\Application\chrome.exe')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+      Select-Object -First 1
+  $edgeExecutable = @(
+      $env:MS_EDGE_EXECUTABLE,
+      'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+      'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+      (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\Application\msedge.exe')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+      Select-Object -First 1
+  $browserPlatform = if ($chromeExecutable) {
+    'qiyu_chrome'
+  } elseif ($chromiumExecutable) {
+    'qiyu_chromium'
+  } elseif ($edgeExecutable) {
+    'qiyu_edge'
+  }
+  if (-not $browserPlatform) {
+    throw 'Release 门禁需要 Chrome、Chromium 或 Edge 执行真实浏览器语音播放测试。'
+  }
+  Invoke-Step 'Browser voice playback test' {
+    dart test --configuration dart_test.browser.yaml `
+      --platform $browserPlatform `
+      test/voice_player_platform_web_test.dart
+  }
   Invoke-Step 'Flutter Web build' {
     flutter build web --no-web-resources-cdn
   }

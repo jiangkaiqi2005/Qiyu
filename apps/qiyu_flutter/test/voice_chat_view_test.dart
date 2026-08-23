@@ -362,6 +362,79 @@ void main() {
     expect(find.byKey(const Key('voice-mic')), findsOneWidget);
   });
 
+  testWidgets('说完按停止先取得播放许可，异步转写和回复后仍自动朗读', (tester) async {
+    final gateway = _VoiceChatGateway()..hangTranscribe = true;
+    final player = _GestureLockedPlayerPlatform();
+    final controller = VoiceOutputController(
+      _RecordingSpeakGateway(),
+      playerPlatform: player,
+    );
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: _FixedHostConnectionProbe(),
+      ttsSettingsGateway: _FixedTtsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+    await tester.pumpWidget(
+      _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pump();
+    player.gestureActive = true;
+    await tester.tap(find.byKey(const Key('voice-mic-stop')));
+    player.gestureActive = false;
+    await tester.pump();
+
+    gateway.completeHungTranscribe('今天有点累');
+    await tester.pumpAndSettle();
+
+    expect(player.started, isTrue);
+    expect(controller.failureNotice, isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  testWidgets('60 秒自动收尾仍沿用开始录音的许可自动朗读', (tester) async {
+    final gateway = _VoiceChatGateway()..hangTranscribe = true;
+    final player = _GestureLockedPlayerPlatform();
+    final controller = VoiceOutputController(
+      _RecordingSpeakGateway(),
+      playerPlatform: player,
+    );
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: _FixedHostConnectionProbe(),
+      ttsSettingsGateway: _FixedTtsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+    await tester.pumpWidget(
+      _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
+    );
+    await tester.pump();
+
+    player.gestureActive = true;
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    player.gestureActive = false;
+    await tester.pump(const Duration(seconds: 60));
+    expect(find.byKey(const Key('voice-mic-busy')), findsOneWidget);
+
+    gateway.completeHungTranscribe('今天有点累');
+    await tester.pumpAndSettle();
+
+    expect(player.started, isTrue);
+    expect(controller.failureNotice, isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    viewModel.dispose();
+    controller.dispose();
+  });
+
   testWidgets('转写失败进重试态，点麦克风重传后照常发送', (tester) async {
     final gateway = _VoiceChatGateway()
       ..transcribeFailuresRemaining = 1
@@ -726,6 +799,45 @@ final class _HoldingPlayback implements VoicePlayback {
       _done.complete();
     }
   }
+}
+
+final class _GestureLockedPlayerPlatform
+    implements VoicePlayerPlatform, UserGestureVoicePlayerPlatform {
+  bool gestureActive = false;
+  bool _prepared = false;
+  bool started = false;
+
+  @override
+  bool get supported => true;
+
+  @override
+  void prepareForPlayback() {
+    if (gestureActive) {
+      _prepared = true;
+    }
+  }
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+  }) async {
+    if (!_prepared) {
+      return null;
+    }
+    started = true;
+    return const _CompletedPlayback();
+  }
+}
+
+final class _CompletedPlayback implements VoicePlayback {
+  const _CompletedPlayback();
+
+  @override
+  Future<void> get done => Future<void>.value();
+
+  @override
+  void stop() {}
 }
 
 /// 可翻转的 TTS 设置 fake：记录 autoSpeak 写入。

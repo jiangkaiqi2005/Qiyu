@@ -79,6 +79,7 @@ final class TtsSettingsViewModel extends ChangeNotifier {
     if (_testing) {
       return;
     }
+    _prepareForUserInitiatedPlayback();
     _testing = true;
     _testResult = null;
     _errorMessage = null;
@@ -96,8 +97,14 @@ final class TtsSettingsViewModel extends ChangeNotifier {
 
   /// 再听一次最近一次成功的试听（音频只存在内存，页面离开即丢）。
   Future<void> replayPreview() async {
+    _prepareForUserInitiatedPlayback();
     await _playPreview(_testResult);
     notifyListeners();
+  }
+
+  void _prepareForUserInitiatedPlayback() {
+    // 必须在按钮点击后的第一个 await 前同步发生。
+    _playerPlatform.prepareForUserGesturePlayback();
   }
 
   Future<void> forgetApiKey() async {
@@ -124,11 +131,13 @@ final class TtsSettingsViewModel extends ChangeNotifier {
       return;
     }
     final playback = await _playerPlatform.play(audio, mimeType: 'audio/mpeg');
-    if (playback != null) {
-      // 读取 done 才会在播放结束后释放浏览器 blob URL；试听本身不阻塞
-      // 设置页交互。
-      unawaited(playback.done);
+    if (playback == null) {
+      _errorMessage = '语音服务已连接，但浏览器没能播放试听。点「再听一次试听」重试。';
+      return;
     }
+    _errorMessage = null;
+    // 读取 done 让平台在播放结束后释放内存音频；试听本身不阻塞设置页交互。
+    unawaited(playback.done);
   }
 }
 

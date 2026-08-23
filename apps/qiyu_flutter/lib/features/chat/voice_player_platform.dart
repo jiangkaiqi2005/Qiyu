@@ -22,3 +22,20 @@ abstract interface class VoicePlayerPlatform {
   /// 不可用时返回 null，由调用方决定降级（试听提示、朗读静默跳过）。
   Future<VoicePlayback?> play(Uint8List bytes, {required String mimeType});
 }
+
+/// 需要浏览器用户手势才能启用有声播放的平台能力。
+///
+/// 调用方必须在点击回调的同步阶段调用 [prepareForPlayback]，不能先等待
+/// 合成或其他异步工作；不需要这项能力的平台只实现 [VoicePlayerPlatform]。
+abstract interface class UserGestureVoicePlayerPlatform {
+  void prepareForPlayback();
+}
+
+extension VoicePlayerUserGesture on VoicePlayerPlatform {
+  /// 在当前用户点击/按键的同步调用栈中预备后续异步音频播放。
+  void prepareForUserGesturePlayback() {
+    if (this case final UserGestureVoicePlayerPlatform player) {
+      player.prepareForPlayback();
+    }
+  }
+}

@@ -123,6 +123,17 @@ foreach ($requiredCommand in @(
   Assert-Condition ($verificationScript -match [regex]::Escape($requiredCommand)) `
     "Release 1 全量门禁缺少：$requiredCommand"
 }
+Assert-Condition (
+  $verificationScript -match 'voice_player_platform_web_test\.dart'
+) 'Release 1 全量门禁没有接入浏览器语音播放测试。'
+Assert-Condition (
+  $verificationScript -match 'qiyu_edge' -and
+  $verificationScript -match 'qiyu_chrome' -and
+  $verificationScript -match 'qiyu_chromium'
+) 'Release 1 浏览器语音播放门禁没有同时支持 Chrome/Chromium 与 Edge。'
+Assert-Condition (
+  $verificationScript -notmatch 'browser voice playback test skipped'
+) 'Release 1 不得在没有可用浏览器时跳过语音播放测试并继续成功。'
 
 foreach ($relativePath in @(
   'README.md',
