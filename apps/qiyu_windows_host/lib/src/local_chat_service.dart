@@ -94,7 +94,12 @@ typedef RecallWindowWait = Future<void> Function(Duration window);
 const _maxModelReplyRunes = 8192;
 
 /// 晚安信号词：可见回复交付后据此触发日终归档与 Dream 资格预登记。
-final _bedtimeSignalPattern = RegExp(r'晚安|睡了|先睡');
+/// 词根定稿见笔记《栖语记忆/Memory.md》「晚安怎么认」：宁可认宽
+/// （提前归档可由增量整理补回），不可认漏（一晚对话整理丢失）。
+/// 光秃秃的「睡觉」不认——「没睡觉」「不想睡觉」是抱怨，不是道别；
+/// 但带趋向的说法（「睡觉了」「想睡」「去睡」）即便带着否定也会认，
+/// 认宽的代价只是提前归档一次。
+final _bedtimeSignalPattern = RegExp(r'晚安|睡了|先睡|睡觉了|想睡|去睡|困了|该睡了');
 
 final class LocalChatService {
   LocalChatService(

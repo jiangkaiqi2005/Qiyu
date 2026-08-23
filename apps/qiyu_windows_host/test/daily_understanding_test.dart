@@ -159,6 +159,53 @@ void main() {
       expect(restored.covers(entries), isTrue);
       expect(restored.covers(const []), isFalse);
     });
+
+    test('pending request ids survive redaction and get a plain copy list', () async {
+      final client = _FakeUnderstandingClient(reply: '{}');
+      // requestId 中段恰为「15-19 位数字夹分隔符」的银行卡形状，
+      // 整包脱敏会把它改成 [已脱敏]，模型便永远无法复述完整 id。
+      const unluckyId = 'chat-c5844040-4144-4382-8d54-5c0f9449b8db';
+      await fetchDayUnderstanding(
+        client: client,
+        date: '2026-08-20',
+        entries: const [],
+        openLoops: '# open-loops\n\n- [o1] 搬家打包\n',
+        relationship: '# relationship\n\nstage: 初识\n',
+        dailyState: '# daily-state\n\ndate: 2026-08-20\n'
+            'token: sk-abcdefghijklmnop1234\n',
+        bannedTitles: const {},
+        sessions: [
+          RawSession(
+            id: 'MrD41LDCG6g7vZUxxxjl1J8i',
+            date: '2026-08-20',
+            segment: 1,
+            createdAt: DateTime.utc(2026, 8, 20, 9),
+            updatedAt: DateTime.utc(2026, 8, 20, 16),
+            turns: [
+              RawSessionTurn.user(
+                requestId: unluckyId,
+                text: '还可以吧，只是暑假过太久了，明天要早起',
+                at: DateTime.utc(2026, 8, 20, 15, 28),
+              ),
+            ],
+          ),
+        ],
+        pendingRequestIds: const {unluckyId},
+        diagnosticsSink: (_) {},
+      );
+      final user = client.lastMessages!.last.content;
+      // requestId 与 session id 必须原样出现，模型才有机会覆盖它。
+      expect(user, contains(unluckyId));
+      expect(user, contains('MrD41LDCG6g7vZUxxxjl1J8i'));
+      // 记忆文件段（状态包等）仍要脱敏。
+      expect(user, isNot(contains('sk-abcdefghijklmnop1234')));
+      // 待补 id 另附纯清单，供模型原样复制，降低复述遗漏。
+      expect(user, contains('## 待补 requestId 清单'));
+      expect(
+        RegExp('^- $unluckyId\$', multiLine: true).hasMatch(user),
+        isTrue,
+      );
+    });
   });
 
   group('end-of-day finalization with a model understanding call', () {

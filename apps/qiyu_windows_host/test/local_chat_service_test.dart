@@ -1016,6 +1016,56 @@ void main() {
     );
   });
 
+  test('common bedtime phrases trigger finalization while complaints do not', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-bedtime-phrase-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final provider = _FakeProviderChatClient(
+      const ModelCompletion.reply('''在的。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户睡前发消息"}]
+</qiyu-actions>'''),
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 22, 23, 50),
+    );
+    final service = LocalChatService(
+      MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 22, 23, 50),
+      ),
+      providerChatClient: provider,
+      episodePipeline: pipeline,
+      dailyFinalization: DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        clock: () => DateTime(2026, 8, 22, 23, 55),
+      ),
+      clock: () => DateTime(2026, 8, 22, 23, 50),
+    );
+
+    // 光秃秃的「睡觉」带着否定，是抱怨不是道别：不该归档。
+    final complaint = await service.send(
+      requestId: 'night-a',
+      text: '失眠了，根本没睡觉，烦死',
+    );
+    expect(complaint.result.mode, 'llm');
+    await service.finalizePending();
+    expect((await pipeline.readDay('2026-08-22')).finalized, isFalse);
+
+    // 8-22 的真实句式：嘴上道了别，词根也必须认出来。
+    final bedtime = await service.send(
+      requestId: 'night-b',
+      text: '哎呀，算了，我要睡觉了，今天好累呀',
+      sessionId: complaint.session.id,
+    );
+    expect(bedtime.result.mode, 'llm');
+    await service.finalizePending();
+    expect((await pipeline.readDay('2026-08-22')).finalized, isTrue);
+  });
+
   test('a normal chat never finalizes the still-active current day', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-daytime-finalization-test-',

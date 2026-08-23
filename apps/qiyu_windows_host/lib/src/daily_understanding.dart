@@ -603,6 +603,15 @@ Iterable<Map<String, Object?>> _objects(Object? value) sync* {
   }
 }
 
+/// 轮次文本经消息侧清洗管道（脱敏 + 结构清洗）后是否还有可送模型的
+/// 内容；无可送内容返回 null。pending 判定与消息渲染必须共用这一份
+/// 实现：两边口径分叉会造出「pending 里有、消息里没有」的死锁轮次，
+/// 模型永远无法覆盖它。
+String? backfillableTurnText(String text) {
+  final safeText = sanitizeUserInput(redactSessionText(text)).trim();
+  return safeText.isEmpty ? null : safeText;
+}
+
 List<ModelMessage> _understandingMessages({
   required String date,
   required List<EpisodeEntry> entries,
@@ -622,7 +631,7 @@ List<ModelMessage> _understandingMessages({
 5. 从已有 sessions 补建缺失的 episode，而不是只处理已经存在的 episode。只补“待补 requestId”标出的用户轮；日常琐事、临时状态、随口提到的生活细节和项目进展也要记录，不要只挑长期稳定或重大事项。寒暄、重复内容和纯测试话语可以不生成 episode，但仍要在完整处理后写入 covered_request_ids。
 字段白名单：
 - episode_entries: 数组，从待补用户轮整理出的 episode；每项 {"request_id": 必须取自待补 requestId, "summary": 不超过60字的事实概括, "evidence": 可选的用户原话摘录，不超过80字}。同一轮有多件小事可以分成多项。
-- covered_request_ids: 数组。只有完整检查过全部待补用户轮时才输出，并逐项原样列出所有待补 requestId；不得遗漏或编造。
+- covered_request_ids: 数组。只有完整检查过全部待补用户轮时才输出；直接从「## 待补 requestId 清单」原样复制全部条目，不得遗漏、改写或编造。
 - summary: 字符串，当天发生了什么的一句话概括，不超过60字，只复述记录中真实出现的事。
 - mood: 字符串，用户当天留下的情绪气氛余波，不超过20字；材料中没有情绪线索就省略。
 - loop_candidates: 数组，最多2项，用户提到且之后可能需要跟进的事；每项 {"title": 不超过24字的简称, "due": 可选的跟进时间, "note": 可选说明不超过30字}；材料中已有跟进安排或已闭环的事项不要重复。
@@ -652,10 +661,11 @@ List<ModelMessage> _understandingMessages({
         continue;
       }
       final speaker = turn.speaker == Speaker.user ? '用户' : '栖语';
-      var safeText = sanitizeUserInput(redactSessionText(turn.text)).trim();
-      if (safeText.isEmpty) {
+      final backfillable = backfillableTurnText(turn.text);
+      if (backfillable == null) {
         continue;
       }
+      var safeText = backfillable;
       if (bannedMemoryText(safeText, bannedTitles)) {
         safeText = '[受记忆控制内容已隐藏]';
       }
@@ -663,6 +673,18 @@ List<ModelMessage> _understandingMessages({
         '- [${session.id}][${turn.requestId}][$speaker] $safeText',
       );
     }
+  }
+  // 记忆文件段（open-loops / relationship / daily-state）逐段脱敏。
+  // 绝不能对整包 user 消息再做一次脱敏：requestId 与 session id 是
+  // 协议标识，其中的长数字段会被卡号样式规则误伤成 [已脱敏]，
+  // 模型从此无法复述完整 id，补建覆盖校验会无限推迟（8-20 死锁）。
+  String guardedSection(String? section) =>
+      section == null ? '' : redactSessionText(section);
+  // 待补 id 以纯清单单独给出：模型从长对话行里逐字抠 id 极易遗漏，
+  // 清单化后 covered_request_ids 只是原样复制。
+  final idList = StringBuffer();
+  for (final requestId in pendingRequestIds) {
+    idList.writeln('- $requestId');
   }
   final user = StringBuffer()
     ..writeln('日期：$date')
@@ -674,15 +696,19 @@ List<ModelMessage> _understandingMessages({
     ..write(sessionLines.isEmpty ? '（无）\n' : sessionLines.toString())
     ..writeln()
     ..writeln('## 未闭环事项')
-    ..writeln(sectionOrEmpty(openLoops))
+    ..writeln(sectionOrEmpty(guardedSection(openLoops)))
     ..writeln()
     ..writeln('## 关系状态')
-    ..writeln(sectionOrEmpty(relationship))
+    ..writeln(sectionOrEmpty(guardedSection(relationship)))
     ..writeln()
     ..writeln('## 现状态包')
-    ..write(sectionOrEmpty(dailyState));
+    ..write(sectionOrEmpty(guardedSection(dailyState)))
+    ..writeln()
+    ..writeln()
+    ..writeln('## 待补 requestId 清单')
+    ..write(idList.isEmpty ? '（无）\n' : idList.toString());
   return [
     const ModelMessage(ModelMessageRole.system, system),
-    ModelMessage(ModelMessageRole.user, redactSessionText(user.toString())),
+    ModelMessage(ModelMessageRole.user, user.toString()),
   ];
 }

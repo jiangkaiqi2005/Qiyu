@@ -229,6 +229,143 @@ void main() {
   );
 
   test(
+    'pure bedtime farewells stay out of the backfill scope',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-finalization-pure-bedtime-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      DateTime clock() => DateTime(2026, 8, 22, 23, 50);
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      );
+      var session = await repository.createSession();
+      session = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(
+          requestId: 'tired-1',
+          text: '今天实训第一天，累瘫了',
+          at: clock(),
+        ),
+      );
+      // 整轮只是道别：不产生记忆条目，也不进待补范围。
+      session = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(
+          requestId: 'tired-2',
+          text: '该睡了',
+          at: clock(),
+        ),
+      );
+      final client = _RecordingUnderstandingClient(
+        jsonEncode({
+          'episode_entries': [
+            {
+              'request_id': 'tired-1',
+              'summary': '用户实训第一天很累',
+              'evidence': '今天实训第一天，累瘫了',
+            },
+          ],
+          'covered_request_ids': ['tired-1'],
+          'summary': '用户实训第一天很累，早早道了晚安',
+          'index_keywords': ['实训', '晚安'],
+        }),
+      );
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      );
+      final service = DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        modelClient: client,
+        clock: clock,
+      );
+
+      final report = await service.finalizeForBedtime(date: '2026-08-22');
+
+      final userMessage = client
+          .lastMessages!
+          .singleWhere((message) => message.role == ModelMessageRole.user)
+          .content;
+      expect(userMessage, contains('今天实训第一天，累瘫了'));
+      expect(userMessage, isNot(contains('该睡了')));
+      // 待补清单只含实质轮次，纯道别轮不要求模型覆盖。
+      expect(userMessage, isNot(contains('- tired-2')));
+      expect(report.outcomes.single.status, FinalizationStatus.finalized);
+      final day = await pipeline.readDay('2026-08-22');
+      expect(day.entries, hasLength(1));
+      expect(day.entries.single.requestId, 'tired-1');
+    },
+  );
+
+  test(
+    'a turn that sanitizes to nothing never blocks the backfill gate',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-finalization-empty-sanitize-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      DateTime clock() => DateTime(2026, 8, 22, 23, 50);
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      );
+      var session = await repository.createSession();
+      session = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(
+          requestId: 'real-1',
+          text: '项目原型今天跑通了',
+          at: clock(),
+        ),
+      );
+      // 纯控制字符的消息清洗后为空：消息侧不会发给模型，
+      // pending 侧也绝不能把它算作待补，否则覆盖校验永久通不过。
+      session = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(
+          requestId: 'junk-1',
+          text: '\u0000',
+          at: clock(),
+        ),
+      );
+      final client = _RecordingUnderstandingClient(
+        jsonEncode({
+          'episode_entries': [
+            {
+              'request_id': 'real-1',
+              'summary': '用户项目原型跑通',
+              'evidence': '项目原型今天跑通了',
+            },
+          ],
+          'covered_request_ids': ['real-1'],
+          'summary': '用户项目原型跑通',
+          'index_keywords': ['项目原型'],
+        }),
+      );
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: clock,
+      );
+      final service = DailyFinalizationService(
+        memoryDirectory: temporaryDirectory.path,
+        episodePipeline: pipeline,
+        modelClient: client,
+        clock: clock,
+      );
+
+      final report = await service.finalizeForBedtime(date: '2026-08-22');
+
+      expect(report.outcomes.single.status, FinalizationStatus.finalized);
+      final day = await pipeline.readDay('2026-08-22');
+      expect(day.entries, hasLength(1));
+      expect(day.entries.single.requestId, 'real-1');
+    },
+  );
+
+  test(
     'session backfill never sends controlled memory text to the model',
     () async {
       final temporaryDirectory = await Directory.systemTemp.createTemp(

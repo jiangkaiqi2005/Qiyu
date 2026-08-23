@@ -593,8 +593,12 @@ final class DailyFinalizationService {
     return {
       for (final session in sessions)
         for (final turn in session.turns)
+          // 与 _understandingMessages 的消息侧共用 backfillableTurnText：
+          // 清洗后为空的轮次不会发给模型，这里也绝不能算作待补，否则
+          // 该轮的 requestId 永远无法被覆盖，归档会无限推迟。
           if (turn.speaker == Speaker.user &&
               !_isPureBedtimeTrigger(turn.text) &&
+              backfillableTurnText(turn.text) != null &&
               !covered.contains(turn.requestId))
             turn.requestId,
     };
@@ -961,8 +965,13 @@ DateTime _parseDate(String date) => DateTime(
 );
 
 final _bedtimeTriggerTailPattern = RegExp(r'[。！!~～…]+$');
+/// 整轮只是道别的白名单：这类轮次不产生记忆条目，也不进待补范围。
+/// 与触发词根（local_chat_service 的 _bedtimeSignalPattern）同源于
+/// 笔记《栖语记忆/Memory.md》「晚安怎么认」，但语义不同：那边认
+/// 词根（句子里出现就算），这边要求去掉尾标点后整轮完全匹配。
 final _bedtimeTriggerPattern = RegExp(
-  r'^(晚安|睡了|先睡|先睡了|我先睡|我先睡了|去睡了|睡觉|睡觉了)$',
+  r'^(晚安|晚安啦|晚安咯|晚安安|睡了|先睡|先睡了|我先睡|我先睡了|去睡了|去睡|'
+  r'去睡觉|去睡觉了|睡觉|睡觉了|睡觉去了|我想睡了|想睡了|困了|我困了|该睡了)$',
 );
 
 bool _isPureBedtimeTrigger(String text) {
