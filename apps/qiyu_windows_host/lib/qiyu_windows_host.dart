@@ -4,6 +4,7 @@ import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 export 'src/browser_launcher.dart';
+export 'src/anysearch_client.dart';
 export 'src/daily_finalization.dart';
 export 'src/daily_understanding.dart';
 export 'src/developer_diagnostics.dart';
@@ -42,6 +43,8 @@ export 'src/tts_gateway.dart';
 export 'src/volc_tts_gateway.dart';
 export 'src/tts_settings_service.dart';
 export 'src/volc_seed_asr_gateway.dart';
+export 'src/web_search_settings_service.dart';
+export 'src/web_search.dart';
 
 final class HostPreflightReport {
   HostPreflightReport({

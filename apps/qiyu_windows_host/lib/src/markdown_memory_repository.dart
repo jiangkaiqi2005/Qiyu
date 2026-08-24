@@ -350,14 +350,16 @@ final class MarkdownMemoryRepository implements MemoryRepository {
     if (requested != null) {
       return requested;
     }
-    // 当前会话按天分界：同一天的段直接接着用；跨 0 点后在回放窗口内
-    // （睡前继续聊或刷新）仍回放昨晚的段，窗口外开新段。文件时间超前
-    // 于当前时钟（时钟回拨）不算窗口内，保守开新段。
+    // 自动恢复按凌晨 4 点逻辑日分界；只有跨逻辑日时才检查六小时窗口。
+    // 会话自身日期仍按自然日保存。文件时间超前于当前时钟（时钟回拨）
+    // 不算窗口内，保守开新段。
     final latest = _latestSession(sessions);
     if (latest != null) {
       final age = now.difference(latest.updatedAt);
-      if (latest.date == today ||
-          (age >= Duration.zero && age <= activeSessionResumeWindow)) {
+      if (age >= Duration.zero &&
+          (_logicalSessionDate(latest.updatedAt) ==
+                  _logicalSessionDate(currentTime) ||
+              age <= activeSessionResumeWindow)) {
         return latest;
       }
     }
@@ -603,6 +605,9 @@ String localSessionDate(DateTime value) {
       '${local.day.toString().padLeft(2, '0')}';
 }
 
+String _logicalSessionDate(DateTime value) =>
+    localSessionDate(value.subtract(const Duration(hours: 4)));
+
 String _newOpaqueId() {
   final random = Random.secure();
   final bytes = List<int>.generate(18, (_) => random.nextInt(256));
@@ -611,6 +616,29 @@ String _newOpaqueId() {
 
 /// 会话文本脱敏规则（每条消息、每段诊断都会过一遍，正则只编译一次）。
 final _sessionRedactPatterns = <RegExp>[
+  RegExp(r'as_sk_[A-Za-z0-9_-]{8,}', caseSensitive: false),
+  RegExp(
+    r'(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9_])',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'(?<![A-Za-z0-9_])ghp_[A-Za-z0-9]{20,}(?![A-Za-z0-9_])',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'(?<![A-Za-z0-9_-])glpat-[A-Za-z0-9_-]{10,}(?![A-Za-z0-9_-])',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'(?<![A-Za-z0-9-])xox[a-z]-[A-Za-z0-9-]{10,}(?![A-Za-z0-9-])',
+    caseSensitive: false,
+  ),
+  RegExp(r'(?<![A-Z0-9])AKIA[A-Z0-9]{16}(?![A-Z0-9])'),
+  RegExp(r'(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])'),
+  RegExp(
+    r'(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\.'
+    r'[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-])',
+  ),
   RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(

@@ -27,6 +27,8 @@ import 'features/settings/stt_settings_client.dart';
 import 'features/settings/tts_settings_client.dart';
 import 'features/settings/stt_settings_view_model.dart';
 import 'features/settings/tts_settings_view_model.dart';
+import 'features/settings/web_search_settings_client.dart';
+import 'features/settings/web_search_settings_view_model.dart';
 
 GoRouter _createRouter() => GoRouter(
   routes: [
@@ -65,6 +67,7 @@ class QiyuApp extends StatefulWidget {
     this.sttSettingsGateway,
     this.ttsSettingsViewModel,
     this.ttsSettingsGateway,
+    this.webSearchSettingsViewModel,
     this.historyViewModel,
     this.onboardingViewModel,
     this.memoryViewModel,
@@ -82,6 +85,7 @@ class QiyuApp extends StatefulWidget {
 
   /// 语音朗读设置网关：同上，缺省共享单例；测试注入桩。
   final TtsSettingsGateway? ttsSettingsGateway;
+  final WebSearchSettingsViewModel? webSearchSettingsViewModel;
   final HistoryViewModel? historyViewModel;
   final OnboardingViewModel? onboardingViewModel;
   final MemoryCenterViewModel? memoryViewModel;
@@ -115,6 +119,8 @@ class _QiyuAppState extends State<QiyuApp> {
     final injectedSettingsViewModel = widget.providerSettingsViewModel;
     final injectedSttSettingsViewModel = widget.sttSettingsViewModel;
     final injectedTtsSettingsViewModel = widget.ttsSettingsViewModel;
+    final injectedWebSearchSettingsViewModel =
+        widget.webSearchSettingsViewModel;
     final injectedHistoryViewModel = widget.historyViewModel;
     final injectedOnboardingViewModel = widget.onboardingViewModel;
     final injectedMemoryViewModel = widget.memoryViewModel;
@@ -156,6 +162,17 @@ class _QiyuAppState extends State<QiyuApp> {
           ChangeNotifierProvider(
             create: (context) => TtsSettingsViewModel(
               context.read<TtsSettingsGateway>(),
+              autoStart: false,
+            ),
+          ),
+        if (injectedWebSearchSettingsViewModel != null)
+          ChangeNotifierProvider.value(
+            value: injectedWebSearchSettingsViewModel,
+          )
+        else
+          ChangeNotifierProvider(
+            create: (_) => WebSearchSettingsViewModel(
+              HttpWebSearchSettingsGateway(),
               autoStart: false,
             ),
           ),

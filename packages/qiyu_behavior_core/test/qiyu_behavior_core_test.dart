@@ -14,6 +14,18 @@ void main() {
           as Map<String, Object?>;
   final fixtures = fixtureDocument['cases']! as List<Object?>;
 
+  test('shared contract locks the minimal web search instruction', () {
+    final promptModules =
+        fixtureDocument['promptModules']! as Map<String, Object?>;
+    final webSearch = promptModules['webSearch']! as Map<String, Object?>;
+    expect(
+      webSearchSystemInstruction,
+      '涉及当前时间、天气、新闻或可能变化的事实时，按需调用 `web_search`。'
+      '不得将用户的私密对话、密钥或身份信息写入搜索词。',
+    );
+    expect(webSearch['instruction'], webSearchSystemInstruction);
+  });
+
   for (final value in fixtures) {
     final fixture = value! as Map<String, Object?>;
     test('Dart behavior matches shared fixture: ${fixture['id']}', () {

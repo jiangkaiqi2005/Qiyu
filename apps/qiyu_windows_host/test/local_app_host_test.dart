@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
@@ -426,6 +427,164 @@ void main() {
       await host.close();
     },
   );
+
+  test('主聊天完成 web_search 两轮闭环且工具中间态不出现在流与落盘', () async {
+    final configPath =
+        '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+    final repository = JsonProviderConfigRepository(filePath: configPath);
+    final http = _WebSearchRoundTripHttpClient();
+    final settings = ProviderSettingsService(
+      repository,
+      _MemorySecretStore(),
+      ProviderModelGateway(http),
+      const ModelPromptBuilder('测试人格宪法'),
+      webSearchConfigRepository: repository,
+      webSearchClient: AnySearchClient(http),
+    );
+    final host = await LocalAppHost.start(
+      webRoot: webRoot.path,
+      memoryDirectory: memoryDirectory.path,
+      personaConstitution: '测试人格宪法',
+      providerSettingsService: settings,
+      webSearchSettingsService: WebSearchSettingsService(repository),
+    );
+    final browser = await _openBrowserSession(host);
+    await _send(
+      host.origin.resolve('/api/provider'),
+      method: 'PUT',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({
+        'provider': 'anthropic',
+        'baseUrl': 'https://api.example.com/v1',
+        'model': 'deepseek-v4-flash',
+        'temperature': 0.6,
+        'timeoutSeconds': 25,
+        'apiKey': 'provider-secret',
+      }),
+    );
+    await _send(
+      host.origin.resolve('/api/provider/web-search'),
+      method: 'PUT',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({'apiKey': 'any-secret'}),
+    );
+    await _send(
+      host.origin.resolve('/api/preferences'),
+      method: 'PUT',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({'developerMode': true}),
+    );
+
+    final chat = await _send(
+      host.origin.resolve('/api/chat'),
+      method: 'POST',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({
+        'requestId': 'web-search-round-trip',
+        'text': '今天天气怎么样',
+      }),
+    );
+    final events = _chatEvents(chat.body);
+    expect(_chatEvent(events, 'message')['messages'], ['查到了，今天会下雨。']);
+    expect(chat.body, isNot(contains('web_search')));
+    expect(chat.body, isNot(contains('今天天气')));
+    expect(chat.body, isNot(contains('天气来源')));
+    expect(
+      chat.body,
+      isNot(contains(_WebSearchRoundTripHttpClient.queryMarker)),
+    );
+    expect(
+      chat.body,
+      isNot(contains(_WebSearchRoundTripHttpClient.resultMarker)),
+    );
+    expect(http.providerBodies, hasLength(2));
+    final systemPrompt = http.providerBodies.first['system'] as String;
+    expect(
+      RegExp(
+        RegExp.escape(webSearchSystemInstruction),
+      ).allMatches(systemPrompt),
+      hasLength(1),
+    );
+    expect(http.searchBodies, hasLength(1));
+    final searchArguments =
+        ((http.searchBodies.single['params']!
+                as Map<String, Object?>)['arguments']!
+            as Map<String, Object?>);
+    expect(searchArguments['query'], contains('[已脱敏]'));
+    expect(
+      searchArguments['query'],
+      contains(_WebSearchRoundTripHttpClient.queryMarker),
+    );
+    for (final secret in _WebSearchRoundTripHttpClient.leakedSecrets) {
+      expect(searchArguments['query'], isNot(contains(secret)), reason: secret);
+    }
+
+    final replay = await _send(
+      host.origin.resolve('/api/chat'),
+      method: 'POST',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({
+        'requestId': 'web-search-round-trip',
+        'text': '今天天气怎么样',
+      }),
+    );
+    expect(_chatEvent(_chatEvents(replay.body), 'message')['messages'], [
+      '查到了，今天会下雨。',
+    ]);
+    expect(http.searchBodies, hasLength(1));
+    final sessionFile = Directory(
+      '${memoryDirectory.path}${Platform.pathSeparator}sessions',
+    ).listSync(recursive: true).whereType<File>().single;
+    final sessionText = await sessionFile.readAsString();
+    expect(sessionText, isNot(contains('web_search')));
+    expect(sessionText, isNot(contains('北京今天气温')));
+    expect(sessionText, isNot(contains('天气来源')));
+    expect(sessionText, isNot(contains('any-secret')));
+    for (final secret in _WebSearchRoundTripHttpClient.leakedSecrets) {
+      expect(sessionText, isNot(contains(secret)), reason: secret);
+    }
+    expect(
+      sessionText,
+      isNot(contains(_WebSearchRoundTripHttpClient.queryMarker)),
+    );
+    expect(
+      sessionText,
+      isNot(contains(_WebSearchRoundTripHttpClient.resultMarker)),
+    );
+    final episodesDirectory = Directory(
+      '${memoryDirectory.path}${Platform.pathSeparator}episodes',
+    );
+    final episodeText = StringBuffer();
+    if (await episodesDirectory.exists()) {
+      await for (final entity in episodesDirectory.list(recursive: true)) {
+        if (entity is File) {
+          episodeText.write(await entity.readAsString());
+        }
+      }
+    }
+    expect(
+      episodeText.toString(),
+      isNot(contains(_WebSearchRoundTripHttpClient.queryMarker)),
+    );
+    expect(
+      episodeText.toString(),
+      isNot(contains(_WebSearchRoundTripHttpClient.resultMarker)),
+    );
+    final diagnostics = await _send(
+      host.origin.resolve('/api/dev/diagnostics'),
+      headers: browser.readHeaders(host.origin),
+    );
+    expect(diagnostics.statusCode, HttpStatus.ok);
+    expect(
+      diagnostics.body,
+      isNot(contains(_WebSearchRoundTripHttpClient.queryMarker)),
+    );
+    expect(
+      diagnostics.body,
+      isNot(contains(_WebSearchRoundTripHttpClient.resultMarker)),
+    );
+    await host.close();
+  });
 
   test('chat API exposes only a diagnostic fallback category', () async {
     final configPath =
@@ -2063,6 +2222,18 @@ void main() {
     );
     final browser = await _openBrowserSession(host);
 
+    final webSearchEndpoint = host.origin.resolve('/api/provider/web-search');
+    final webSearchSaved = await _send(
+      webSearchEndpoint,
+      method: 'PUT',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({'apiKey': 'clear-me-anysearch-key'}),
+    );
+    expect(jsonDecode(webSearchSaved.body), {
+      'configured': true,
+      'keySet': true,
+    });
+
     // 先产生一条真实会话，并放一份控制记录夹具。
     final chat = await _send(
       host.origin.resolve('/api/chat'),
@@ -2136,12 +2307,139 @@ void main() {
       ).existsSync(),
       isFalse,
     );
+    final webSearchAfterClear = await _send(
+      webSearchEndpoint,
+      headers: browser.readHeaders(host.origin),
+    );
+    expect(jsonDecode(webSearchAfterClear.body), {
+      'configured': false,
+      'keySet': false,
+    });
+    expect(
+      File(
+        '${temporaryDirectory.path}${Platform.pathSeparator}provider.json',
+      ).readAsStringSync(),
+      isNot(contains('clear-me-anysearch-key')),
+    );
     final snapshots = await _send(
       host.origin.resolve('/api/backup/snapshots'),
       headers: browser.readHeaders(host.origin),
     );
     final snapshotsJson = jsonDecode(snapshots.body) as Map<String, Object?>;
     expect(snapshotsJson['snapshots']! as List<Object?>, hasLength(1));
+    await host.close();
+  });
+
+  test('Web Search 设置端点只返回状态并与其他配置段互不覆盖', () async {
+    var host = await LocalAppHost.start(
+      webRoot: webRoot.path,
+      memoryDirectory: memoryDirectory.path,
+      personaConstitution: '测试人格宪法',
+    );
+    var endpoint = host.origin.resolve('/api/provider/web-search');
+    final missingSession = await _send(endpoint);
+    expect(missingSession.statusCode, HttpStatus.unauthorized);
+
+    var browser = await _openBrowserSession(host);
+
+    final initial = await _send(
+      endpoint,
+      headers: browser.readHeaders(host.origin),
+    );
+    expect(jsonDecode(initial.body), {'configured': false, 'keySet': false});
+
+    final badOriginHeaders = browser.mutationHeaders(host.origin)
+      ..['origin'] = 'https://evil.example';
+    final badOrigin = await _send(
+      endpoint,
+      method: 'PUT',
+      headers: badOriginHeaders,
+      requestBody: jsonEncode({'apiKey': 'must-not-save'}),
+    );
+    expect(badOrigin.statusCode, HttpStatus.forbidden);
+
+    final rejected = await _send(
+      endpoint,
+      method: 'PUT',
+      headers: browser.readHeaders(host.origin),
+      requestBody: jsonEncode({'apiKey': 'must-not-save'}),
+    );
+    expect(rejected.statusCode, HttpStatus.forbidden);
+
+    try {
+      final oversize = await _send(
+        endpoint,
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'apiKey': 'x' * (9 * 1024)}),
+      );
+      expect(oversize.statusCode, HttpStatus.badRequest);
+    } on SocketException {
+      // Host 在读满前中止超限连接同样是拒绝。
+    } on HttpException {
+      // 中止时机不同时可能收不全响应头，不影响拒绝语义。
+    }
+
+    final saved = await _send(
+      endpoint,
+      method: 'PUT',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({'apiKey': 'any-secret-value'}),
+    );
+    expect(jsonDecode(saved.body), {'configured': true, 'keySet': true});
+    expect(saved.body, isNot(contains('any-secret-value')));
+
+    final replaced = await _send(
+      endpoint,
+      method: 'PUT',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({'apiKey': 'replacement-secret-value'}),
+    );
+    expect(jsonDecode(replaced.body), {'configured': true, 'keySet': true});
+    expect(replaced.body, isNot(contains('replacement-secret-value')));
+
+    final retained = await _send(
+      endpoint,
+      method: 'PUT',
+      headers: browser.mutationHeaders(host.origin),
+      requestBody: jsonEncode({'apiKey': '   '}),
+    );
+    expect(jsonDecode(retained.body), {'configured': true, 'keySet': true});
+
+    final providerFile = File(
+      '${temporaryDirectory.path}${Platform.pathSeparator}provider.json',
+    );
+    expect(
+      await providerFile.readAsString(),
+      contains('replacement-secret-value'),
+    );
+    expect(await providerFile.readAsString(), isNot(contains('any-secret-value')));
+    await host.close();
+
+    host = await LocalAppHost.start(
+      webRoot: webRoot.path,
+      memoryDirectory: memoryDirectory.path,
+      personaConstitution: '测试人格宪法',
+    );
+    browser = await _openBrowserSession(host);
+    endpoint = host.origin.resolve('/api/provider/web-search');
+    final restored = await _send(
+      endpoint,
+      headers: browser.readHeaders(host.origin),
+    );
+    expect(jsonDecode(restored.body), {'configured': true, 'keySet': true});
+    expect(restored.body, isNot(contains('replacement-secret-value')));
+
+    final forgotten = await _send(
+      host.origin.resolve('/api/provider/web-search/key'),
+      method: 'DELETE',
+      headers: browser.mutationHeaders(host.origin),
+    );
+    expect(jsonDecode(forgotten.body), {'configured': false, 'keySet': false});
+    expect(
+      await providerFile.readAsString(),
+      isNot(contains('replacement-secret-value')),
+    );
     await host.close();
   });
 }
@@ -2304,6 +2602,93 @@ final class _FailingModelGateway implements ModelGateway {
 }
 
 /// STT 出网测试客户端：响应内容与状态可按用例改写。
+final class _WebSearchRoundTripHttpClient implements ProviderHttpClient {
+  static const queryMarker = 'internal-query-marker-9274';
+  static const resultMarker = 'internal-result-marker-6841';
+  static const leakedSecrets = [
+    'as_sk_abcdefghijklmnopqrstuvwxyz123456',
+    'ghp_abcdefghijklmnopqrstuvwxyz1234567890',
+    'github_pat_abcdefghijklmnopqrstuvwxyz_1234567890',
+    'glpat-abcdefghijklmnopqrst',
+    'xoxb-123456789012-abcdefghijklmnopqrstuvwx',
+    'AKIAIOSFODNN7EXAMPLE',
+    'AIzaSyA1234567890abcdefghijklmnopqrstuvwxyz',
+    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop',
+  ];
+
+  final providerBodies = <Map<String, Object?>>[];
+  final searchBodies = <Map<String, Object?>>[];
+
+  @override
+  Future<ProviderHttpResponse> postStream({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+  }) async {
+    providerBodies.add(jsonDecode(body) as Map<String, Object?>);
+    if (providerBodies.length == 1) {
+      return ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.fromIterable([
+          'data: ${jsonEncode({
+            'type': 'content_block_start',
+            'content_block': {'type': 'tool_use', 'id': 'tool-1', 'name': 'web_search', 'input': <String, Object?>{}},
+          })}\n\n',
+          'data: ${jsonEncode({
+            'type': 'content_block_delta',
+            'delta': {
+              'type': 'input_json_delta',
+              'partial_json': jsonEncode({
+                'query': '$queryMarker ${leakedSecrets.join(' ')} 今天气温',
+              }),
+            },
+          })}\n\n',
+          'data: {"type":"message_stop"}\n\n',
+        ]),
+      );
+    }
+    return ProviderHttpResponse(
+      statusCode: 200,
+      body: Stream.fromIterable([
+        'data: ${jsonEncode({
+          'type': 'content_block_delta',
+          'delta': {'type': 'text_delta', 'text': '查到了，今天会下雨。'},
+        })}\n\n',
+        'data: {"type":"message_stop"}\n\n',
+      ]),
+    );
+  }
+
+  @override
+  Future<ProviderHttpResponse> post({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) async {
+    searchBodies.add(jsonDecode(utf8.decode(body)) as Map<String, Object?>);
+    return ProviderHttpResponse(
+      statusCode: 200,
+      body: Stream.value(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': 'qiyu-web-search',
+          'result': {
+            'results': [
+              {
+                'title': '天气来源',
+                'url': 'https://example.com/weather',
+                'snippet': resultMarker,
+              },
+            ],
+          },
+        }),
+      ),
+    );
+  }
+}
+
 final class _RecordingSttHttpClient implements ProviderHttpClient {
   _RecordingSttHttpClient(this.responseBody);
 

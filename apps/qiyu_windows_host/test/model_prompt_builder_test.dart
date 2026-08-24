@@ -27,6 +27,36 @@ void main() {
     expect(messages.last.content, '在吗');
   });
 
+  test('web search instruction is injected exactly once only when enabled', () {
+    final disabled = builder
+        .build(StateSnapshot.initial('local-user'), '现在几点')
+        .first
+        .content;
+    final enabled = builder
+        .build(
+          StateSnapshot.initial('local-user'),
+          '现在几点',
+          webSearchEnabled: true,
+        )
+        .first
+        .content;
+    final hardRulesStart = enabled.indexOf('<hard_rules>');
+    final instructionIndex = enabled.indexOf(webSearchSystemInstruction);
+    final hardRulesEnd = enabled.indexOf('</hard_rules>');
+    final memoryActionsStart = enabled.indexOf('<memory_actions>');
+
+    expect(disabled, isNot(contains('web_search')));
+    expect(
+      RegExp(RegExp.escape(webSearchSystemInstruction)).allMatches(enabled),
+      hasLength(1),
+    );
+    expect(instructionIndex, greaterThan(hardRulesStart));
+    expect(instructionIndex, lessThan(hardRulesEnd));
+    expect(memoryActionsStart, greaterThan(hardRulesEnd));
+    expect(enabled, isNot(contains('get_local_time')));
+    expect(enabled, isNot(contains('searched_at')));
+  });
+
   test('empty dynamic blocks are omitted entirely', () {
     final system = builder
         .build(StateSnapshot.initial('local-user'), '在吗')

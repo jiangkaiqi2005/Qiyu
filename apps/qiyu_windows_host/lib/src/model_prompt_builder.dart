@@ -146,7 +146,11 @@ final class ModelPromptBuilder {
         memoryContext: nextMemoryContext,
       );
 
-  List<ModelMessage> build(StateSnapshot state, String currentText) {
+  List<ModelMessage> build(
+    StateSnapshot state,
+    String currentText, {
+    bool webSearchEnabled = false,
+  }) {
     final systemSections = StringBuffer();
     void appendBlock(String tag, String label, String content) {
       final trimmed = content.trim();
@@ -165,7 +169,11 @@ final class ModelPromptBuilder {
       ..writeln(personaConstitution.trim())
       ..writeln('</persona_constitution>')
       ..writeln('<hard_rules>')
-      ..writeln(hardRulesBlock.trim())
+      ..writeln(hardRulesBlock.trim());
+    if (webSearchEnabled) {
+      systemSections.writeln(webSearchSystemInstruction);
+    }
+    systemSections
       ..writeln('</hard_rules>')
       ..writeln('<memory_actions>')
       ..writeln(hiddenActionsProtocolBlock.trim())

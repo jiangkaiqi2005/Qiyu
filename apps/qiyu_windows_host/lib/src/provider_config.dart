@@ -468,6 +468,24 @@ abstract interface class ProviderConfigRepository {
   Future<void> save(ProviderConfig config);
 }
 
+final class WebSearchConfig {
+  const WebSearchConfig({required this.apiKey});
+
+  final String apiKey;
+
+  void validate() {
+    if (apiKey.trim().isEmpty) {
+      throw const ProviderConfigException('请填写 ANYSEARCH_API_KEY。');
+    }
+  }
+}
+
+abstract interface class WebSearchConfigRepository {
+  Future<WebSearchConfig?> loadWebSearch();
+
+  Future<void> saveWebSearch(WebSearchConfig? config);
+}
+
 abstract interface class SttConfigRepository {
   Future<SttConfig?> loadStt();
 
@@ -484,7 +502,8 @@ final class JsonProviderConfigRepository
     implements
         ProviderConfigRepository,
         SttConfigRepository,
-        TtsConfigRepository {
+        TtsConfigRepository,
+        WebSearchConfigRepository {
   const JsonProviderConfigRepository({
     required this.filePath,
     this.writer = const IoAtomicTextWriter(),
@@ -602,6 +621,39 @@ final class JsonProviderConfigRepository
     config.validate();
     final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
     json['tts'] = {...config.toJson(), 'apiKey': ?config.apiKey};
+    await _writeFile(json);
+  }
+
+  @override
+  Future<WebSearchConfig?> loadWebSearch() async {
+    final json = await _readRawMap(orThrow: true);
+    if (json == null || json['webSearch'] == null) {
+      return null;
+    }
+    final section = json['webSearch'];
+    if (section is! Map<String, Object?>) {
+      return null;
+    }
+    final rawApiKey = section['apiKey'];
+    if (rawApiKey is! String) {
+      return null;
+    }
+    final apiKey = ProviderConfig.normalizeKey(rawApiKey);
+    if (apiKey == null) {
+      return null;
+    }
+    return WebSearchConfig(apiKey: apiKey);
+  }
+
+  @override
+  Future<void> saveWebSearch(WebSearchConfig? config) async {
+    config?.validate();
+    final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
+    if (config == null) {
+      json.remove('webSearch');
+    } else {
+      json['webSearch'] = {'apiKey': config.apiKey.trim()};
+    }
     await _writeFile(json);
   }
 

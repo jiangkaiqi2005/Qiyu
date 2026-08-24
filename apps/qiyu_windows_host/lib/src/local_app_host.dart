@@ -9,6 +9,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:shelf_static/shelf_static.dart';
 import 'package:path/path.dart' as path;
 
+import 'anysearch_client.dart';
 import 'browser_launcher.dart';
 import 'daily_finalization.dart';
 import 'developer_diagnostics.dart';
@@ -39,6 +40,7 @@ import 'stt_gateway.dart';
 import 'stt_settings_service.dart';
 import 'tts_gateway.dart';
 import 'tts_settings_service.dart';
+import 'web_search_settings_service.dart';
 
 const _sessionCookieName = 'qiyu_session';
 const _csrfHeaderName = 'x-qiyu-csrf';
@@ -70,6 +72,7 @@ final class LocalAppHost {
     String? activationToken,
     Future<BrowserLaunchResult> Function()? onActivate,
     ProviderSettingsService? providerSettingsService,
+    WebSearchSettingsService? webSearchSettingsService,
     SttSettingsService? sttSettingsService,
     TtsSettingsService? ttsSettingsService,
   }) async {
@@ -88,14 +91,20 @@ final class LocalAppHost {
     final providerConfigRepository = JsonProviderConfigRepository(
       filePath: path.join(runtimeDirectory, 'provider.json'),
     );
+    const providerHttpClient = DartIoProviderHttpClient();
     final effectiveProviderSettings =
         providerSettingsService ??
         ProviderSettingsService(
           providerConfigRepository,
           const WindowsCredentialSecretStore(),
-          const ProviderModelGateway(DartIoProviderHttpClient()),
+          const ProviderModelGateway(providerHttpClient),
           modelPromptBuilder,
+          webSearchConfigRepository: providerConfigRepository,
+          webSearchClient: const AnySearchClient(providerHttpClient),
         );
+    final effectiveWebSearchSettings =
+        webSearchSettingsService ??
+        WebSearchSettingsService(providerConfigRepository);
     // 语音转写（STT）：与聊天 Provider 共用 provider.json（stt 段）与
     // 出网 HTTP 抽象，但配置与 Key 作用域独立（ADR 0001）。
     final effectiveSttSettings =
@@ -267,6 +276,7 @@ final class LocalAppHost {
       repository: memoryRepository,
       backupService: memoryBackup,
       providerSettingsService: effectiveProviderSettings,
+      webSearchSettingsService: effectiveWebSearchSettings,
       onboardingFilePath: path.join(runtimeDirectory, 'onboarding.json'),
       episodePipeline: episodePipeline,
       memoryControls: memoryControls,
@@ -275,6 +285,7 @@ final class LocalAppHost {
       webRoot,
       chatService: chatService,
       providerSettingsService: effectiveProviderSettings,
+      webSearchSettingsService: effectiveWebSearchSettings,
       sttSettingsService: effectiveSttSettings,
       ttsSettingsService: effectiveTtsSettings,
       memoryRepository: memoryRepository,
@@ -327,6 +338,7 @@ final class _LocalAppRequestHandler {
     String webRoot, {
     required this.chatService,
     required this.providerSettingsService,
+    required this.webSearchSettingsService,
     required this.sttSettingsService,
     required this.ttsSettingsService,
     required this.memoryRepository,
@@ -354,6 +366,7 @@ final class _LocalAppRequestHandler {
   String get startupToken => _startupToken;
   final LocalChatService chatService;
   final ProviderSettingsService providerSettingsService;
+  final WebSearchSettingsService webSearchSettingsService;
   final SttSettingsService sttSettingsService;
   final TtsSettingsService ttsSettingsService;
 
@@ -547,6 +560,37 @@ final class _LocalAppRequestHandler {
       if (request.method == 'DELETE' &&
           request.url.path == 'api/provider/key') {
         final settings = await providerSettingsService.forgetApiKey();
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'GET' &&
+          request.url.path == 'api/provider/web-search') {
+        final settings = await webSearchSettingsService.read();
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'PUT' &&
+          request.url.path == 'api/provider/web-search') {
+        final payload = await _readJsonObject(request, maxBytes: 8 * 1024);
+        final unexpected = payload.keys.where((key) => key != 'apiKey');
+        if (unexpected.isNotEmpty) {
+          throw const ProviderConfigException('联网搜索配置格式不正确。');
+        }
+        final settings = await webSearchSettingsService.save(
+          apiKey: _apiKeyFromPayload(payload),
+        );
+        return Response.ok(
+          jsonEncode(settings.toJson()),
+          headers: _jsonHeaders,
+        );
+      }
+      if (request.method == 'DELETE' &&
+          request.url.path == 'api/provider/web-search/key') {
+        final settings = await webSearchSettingsService.forgetApiKey();
         return Response.ok(
           jsonEncode(settings.toJson()),
           headers: _jsonHeaders,

@@ -17,6 +17,8 @@ import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
 
 void main() {
   testWidgets(
@@ -141,6 +143,7 @@ void main() {
 
     // 影响逐条列清。
     expect(find.byKey(const Key('clear-data-dialog')), findsOneWidget);
+    expect(find.textContaining('AnySearch API Key 会一并删除'), findsOneWidget);
     expect(find.textContaining('4 段会话'), findsOneWidget);
     expect(find.textContaining('9 天的整理记录'), findsOneWidget);
     expect(find.textContaining('冻结 1、禁提 2'), findsOneWidget);
@@ -517,6 +520,107 @@ void main() {
     );
     expect(find.textContaining('日志与诊断统一脱敏'), findsOneWidget);
   });
+
+  testWidgets('联网搜索 Key 可保存、空白保留，重新进入不回显', (tester) async {
+    final webSearchGateway = _MutableWebSearchSettingsGateway();
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        webSearchGateway: webSearchGateway,
+      ),
+    );
+    await _openSettings(tester);
+
+    final field = find.byKey(const Key('web-search-api-key'));
+    await tester.scrollUntilVisible(
+      field,
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 20,
+    );
+    expect(find.text('联网搜索'), findsOneWidget);
+    expect(find.text('ANYSEARCH_API_KEY'), findsOneWidget);
+
+    await tester.enterText(field, 'temporary-anysearch-key');
+    await tester.ensureVisible(
+      find.byKey(const Key('save-web-search-settings')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-web-search-settings')));
+    await tester.pumpAndSettle();
+    expect(webSearchGateway.savedApiKeys, ['temporary-anysearch-key']);
+    expect(tester.widget<TextField>(field).controller?.text, isEmpty);
+    expect(find.textContaining('已保存在本机'), findsWidgets);
+
+    await tester.enterText(field, '   ');
+    await tester.ensureVisible(
+      find.byKey(const Key('save-web-search-settings')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-web-search-settings')));
+    await tester.pumpAndSettle();
+    expect(webSearchGateway.savedApiKeys, ['temporary-anysearch-key', null]);
+
+    final context = tester.element(find.byType(Scaffold).first);
+    GoRouter.of(context).go('/');
+    await tester.pumpAndSettle();
+    await _openSettings(tester);
+    await tester.scrollUntilVisible(
+      field,
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 20,
+    );
+    expect(tester.widget<TextField>(field).controller?.text, isEmpty);
+  });
+
+  testWidgets('联网搜索 Key 可忘记，保存失败只显示人话错误', (tester) async {
+    final webSearchGateway = _MutableWebSearchSettingsGateway(
+      keySet: true,
+      failSave: true,
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        webSearchGateway: webSearchGateway,
+      ),
+    );
+    await _openSettings(tester);
+
+    final field = find.byKey(const Key('web-search-api-key'));
+    await tester.scrollUntilVisible(
+      field,
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 20,
+    );
+    await tester.enterText(field, 'temporary-anysearch-key');
+    await tester.ensureVisible(
+      find.byKey(const Key('save-web-search-settings')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-web-search-settings')));
+    await tester.pumpAndSettle();
+    expect(find.text('联网搜索设置暂时不可用，请稍后重试。'), findsOneWidget);
+    expect(tester.widget<TextField>(field).controller?.text, isEmpty);
+    expect(webSearchGateway.keySet, isTrue);
+    expect(find.byKey(const Key('forget-web-search-key')), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const Key('forget-web-search-key')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('forget-web-search-key')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('web-search-forget-key-dialog')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('web-search-forget-key-confirm')));
+    await tester.pumpAndSettle();
+    expect(webSearchGateway.forgetCalls, 1);
+    expect(find.byKey(const Key('forget-web-search-key')), findsNothing);
+  });
 }
 
 Future<Widget> _app({
@@ -525,6 +629,7 @@ Future<Widget> _app({
   OnboardingGateway? onboardingGateway,
   SttSettingsGateway? sttGateway,
   TtsSettingsGateway? ttsGateway,
+  WebSearchSettingsGateway? webSearchGateway,
 }) async {
   final providerViewModel = ProviderSettingsViewModel(
     providerGateway,
@@ -550,6 +655,10 @@ Future<Widget> _app({
     ),
     ttsSettingsViewModel: TtsSettingsViewModel(
       ttsGateway ?? const _FixedTtsSettingsGateway(),
+      autoStart: false,
+    ),
+    webSearchSettingsViewModel: WebSearchSettingsViewModel(
+      webSearchGateway ?? const _FixedWebSearchSettingsGateway(),
       autoStart: false,
     ),
     onboardingViewModel: onboardingViewModel,
@@ -717,6 +826,57 @@ final class _MutableProviderSettingsGateway implements ProviderSettingsGateway {
     status: ProviderTestStatus.success,
     message: '连接成功，栖语可以使用这个模型。',
   );
+}
+
+final class _FixedWebSearchSettingsGateway implements WebSearchSettingsGateway {
+  const _FixedWebSearchSettingsGateway();
+
+  @override
+  Future<WebSearchSettings> read() async =>
+      const WebSearchSettings(configured: false, keySet: false);
+
+  @override
+  Future<WebSearchSettings> save(WebSearchSettingsDraft draft) =>
+      throw UnimplementedError();
+
+  @override
+  Future<WebSearchSettings> forgetApiKey() => throw UnimplementedError();
+}
+
+final class _MutableWebSearchSettingsGateway
+    implements WebSearchSettingsGateway {
+  _MutableWebSearchSettingsGateway({
+    this.keySet = false,
+    this.failSave = false,
+  });
+
+  bool keySet;
+  final bool failSave;
+  final List<String?> savedApiKeys = [];
+  int forgetCalls = 0;
+
+  @override
+  Future<WebSearchSettings> read() async =>
+      WebSearchSettings(configured: keySet, keySet: keySet);
+
+  @override
+  Future<WebSearchSettings> save(WebSearchSettingsDraft draft) async {
+    savedApiKeys.add(draft.apiKey);
+    if (failSave) {
+      throw StateError('raw backend details');
+    }
+    if (draft.apiKey != null) {
+      keySet = true;
+    }
+    return read();
+  }
+
+  @override
+  Future<WebSearchSettings> forgetApiKey() async {
+    forgetCalls += 1;
+    keySet = false;
+    return read();
+  }
 }
 
 final class _CompletedOnboardingGateway extends _ClearableOnboardingGateway {}

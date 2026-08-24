@@ -5,6 +5,35 @@ import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('webSearch 段独立往返且损坏只使搜索不可用', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'qiyu-web-search-config-',
+    );
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+    await repository.save(
+      const ProviderConfig(
+        kind: ProviderKind.anthropic,
+        baseUrl: 'https://api.example.com/v1',
+        model: 'deepseek-v4-flash',
+        temperature: 0.6,
+        timeoutSeconds: 25,
+      ).withApiKey('chat-secret'),
+    );
+    await repository.saveWebSearch(const WebSearchConfig(apiKey: 'any-secret'));
+
+    expect((await repository.loadWebSearch())!.apiKey, 'any-secret');
+    expect((await repository.load())!.apiKey, 'chat-secret');
+    final json =
+        jsonDecode(await File(filePath).readAsString()) as Map<String, Object?>;
+    json['webSearch'] = 'broken';
+    await File(filePath).writeAsString(jsonEncode(json));
+
+    expect(await repository.loadWebSearch(), isNull);
+    expect((await repository.load())!.apiKey, 'chat-secret');
+  });
+
   test('普通 Provider 配置重启后仍可读取且文件不包含 Key', () async {
     final temp = await Directory.systemTemp.createTemp('qiyu-provider-config-');
     addTearDown(() => temp.delete(recursive: true));
@@ -424,7 +453,7 @@ void main() {
     expect(handwritten.autoSpeak, isTrue);
   });
 
-  test('聊天、stt、tts 三段保存互不覆盖', () async {
+  test('聊天、stt、tts、webSearch 四段保存互不覆盖', () async {
     final temp = await Directory.systemTemp.createTemp('qiyu-tts-sections-');
     addTearDown(() => temp.delete(recursive: true));
     final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
@@ -452,6 +481,9 @@ void main() {
         model: 'tts-test',
         apiKey: 'tts-secret-value',
       ),
+    );
+    await repository.saveWebSearch(
+      const WebSearchConfig(apiKey: 'any-secret-value'),
     );
     // 各段再各保存一次，其余两段必须原样保留。
     await repository.save(
@@ -481,6 +513,7 @@ void main() {
     // Key 时按 repository 层语义（传入什么写什么）为空。
     expect(tts.apiKey, isNull);
     expect((await repository.loadStt())!.apiKey, isNull);
+    expect((await repository.loadWebSearch())!.apiKey, 'any-secret-value');
   });
 
   test('只有 tts 段时聊天与 stt 各自独立判断，不视为损坏', () async {

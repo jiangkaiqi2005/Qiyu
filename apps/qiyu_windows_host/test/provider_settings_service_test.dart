@@ -1,4 +1,5 @@
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -10,6 +11,143 @@ void main() {
     timeoutSeconds: 30,
   );
   const promptBuilder = ModelPromptBuilder('测试人格宪法');
+
+  test('只有 Anthropic 与 AnySearch 工具都就绪时报告联网能力', () async {
+    final repository = _MemoryProviderConfigRepository()
+      ..config = config.withApiKey('provider-key');
+    final webSearch = _MemoryWebSearchRepository()
+      ..config = const WebSearchConfig(apiKey: 'any-key');
+    final gateway = _RecordingWebSearchGateway();
+    final service = ProviderSettingsService(
+      repository,
+      _MemorySecretStore(),
+      gateway,
+      promptBuilder,
+      webSearchConfigRepository: webSearch,
+      webSearchClient: _NoopWebSearchClient(),
+    );
+
+    final messages = promptBuilder.build(
+      StateSnapshot.initial('local-user'),
+      '现在几点',
+      webSearchEnabled: true,
+    );
+    final request = await service.prepareChatRequest();
+    expect(request!.webSearchEnabled, isTrue);
+    await (await request.openStream(messages))!.drain<void>();
+
+    final prompt = gateway.messages!.first.content;
+    expect(
+      RegExp(RegExp.escape(webSearchSystemInstruction)).allMatches(prompt),
+      hasLength(1),
+    );
+    expect(prompt, isNot(contains('get_local_time')));
+    expect(prompt, isNot(contains('searched_at')));
+    expect(gateway.webSearchApiKey, 'any-key');
+  });
+
+  test('同一聊天请求的提示与工具始终使用同一配置快照', () async {
+    final repository = _MemoryProviderConfigRepository()
+      ..config = config.withApiKey('provider-key');
+    final webSearch = _MemoryWebSearchRepository()
+      ..config = const WebSearchConfig(apiKey: 'any-key');
+    final gateway = _RecordingWebSearchGateway();
+    final service = ProviderSettingsService(
+      repository,
+      _MemorySecretStore(),
+      gateway,
+      promptBuilder,
+      webSearchConfigRepository: webSearch,
+      webSearchClient: _NoopWebSearchClient(),
+    );
+
+    final request = await service.prepareChatRequest();
+    repository.config = const ProviderConfig(
+      kind: ProviderKind.openAiCompatible,
+      baseUrl: 'https://api.example.com/v1',
+      model: 'changed-between-reads',
+      temperature: 0.7,
+      timeoutSeconds: 30,
+      apiKey: 'changed-key',
+    );
+    webSearch.config = null;
+    final messages = promptBuilder.build(
+      StateSnapshot.initial('local-user'),
+      '今天新闻',
+      webSearchEnabled: request!.webSearchEnabled,
+    );
+    await (await request.openStream(messages))!.drain<void>();
+
+    expect(gateway.config, config.withApiKey('provider-key'));
+    expect(gateway.webSearchApiKey, 'any-key');
+    expect(
+      gateway.messages!.first.content,
+      contains(webSearchSystemInstruction),
+    );
+  });
+
+  test('后台 complete 调用不注入联网提示也不声明搜索工具', () async {
+    final repository = _MemoryProviderConfigRepository()
+      ..config = config.withApiKey('provider-key');
+    final webSearch = _MemoryWebSearchRepository()
+      ..config = const WebSearchConfig(apiKey: 'any-key');
+    final gateway = _RecordingWebSearchGateway();
+    final service = ProviderSettingsService(
+      repository,
+      _MemorySecretStore(),
+      gateway,
+      promptBuilder,
+      webSearchConfigRepository: webSearch,
+      webSearchClient: _NoopWebSearchClient(),
+    );
+    final messages = promptBuilder.build(
+      StateSnapshot.initial('background'),
+      '整理每日状态',
+    );
+
+    await service.complete(messages, maxTokens: 8192);
+
+    expect(gateway.messages!.first.content, isNot(contains('web_search')));
+    expect(gateway.webSearchApiKey, isNull);
+  });
+
+  test('AnySearch Key 缺失或 Provider 非 Anthropic 时不报告联网能力', () async {
+    final repository = _MemoryProviderConfigRepository()
+      ..config = config.withApiKey('provider-key');
+    final webSearch = _MemoryWebSearchRepository();
+    final gateway = _RecordingWebSearchGateway();
+    final service = ProviderSettingsService(
+      repository,
+      _MemorySecretStore(),
+      gateway,
+      promptBuilder,
+      webSearchConfigRepository: webSearch,
+      webSearchClient: _NoopWebSearchClient(),
+    );
+    const messages = [
+      ModelMessage(ModelMessageRole.system, 'system'),
+      ModelMessage(ModelMessageRole.user, '普通聊天'),
+    ];
+
+    var request = await service.prepareChatRequest();
+    expect(request!.webSearchEnabled, isFalse);
+    await (await request.openStream(messages))!.drain<void>();
+    expect(gateway.messages!.first.content, isNot(contains('web_search')));
+
+    webSearch.config = const WebSearchConfig(apiKey: 'any-key');
+    repository.config = const ProviderConfig(
+      kind: ProviderKind.openAiCompatible,
+      baseUrl: 'https://api.example.com/v1',
+      model: 'chat-model',
+      temperature: 0.7,
+      timeoutSeconds: 30,
+      apiKey: 'provider-key',
+    );
+    request = await service.prepareChatRequest();
+    expect(request!.webSearchEnabled, isFalse);
+    await (await request.openStream(messages))!.drain<void>();
+    expect(gateway.messages!.first.content, isNot(contains('web_search')));
+  });
 
   test('设置快照只返回 Key 是否存在且重启后配置仍可用', () async {
     final repository = _MemoryProviderConfigRepository();
@@ -429,5 +567,62 @@ final class _FakeModelGateway implements ModelGateway {
       throw ModelGatewayException(kind: kind, message: '测试失败');
     }
     return reply!;
+  }
+}
+
+final class _MemoryWebSearchRepository implements WebSearchConfigRepository {
+  WebSearchConfig? config;
+
+  @override
+  Future<WebSearchConfig?> loadWebSearch() async => config;
+
+  @override
+  Future<void> saveWebSearch(WebSearchConfig? config) async {
+    this.config = config;
+  }
+}
+
+final class _NoopWebSearchClient implements WebSearchClient {
+  @override
+  Future<List<WebSearchResult>> search({
+    required String apiKey,
+    required String query,
+    Future<void>? whenCancelled,
+  }) async => const [];
+}
+
+final class _RecordingWebSearchGateway
+    implements ModelGateway, WebSearchStreamingModelGateway {
+  ProviderConfig? config;
+  List<ModelMessage>? messages;
+  String? webSearchApiKey;
+
+  @override
+  Future<String> complete({
+    required ProviderConfig config,
+    required String? apiKey,
+    required List<ModelMessage> messages,
+    int? maxTokens,
+  }) async {
+    this.config = config;
+    this.messages = messages;
+    return '普通回复';
+  }
+
+  @override
+  Stream<ModelStreamEvent> streamWithWebSearch({
+    required ProviderConfig config,
+    required String? apiKey,
+    required List<ModelMessage> messages,
+    required String webSearchApiKey,
+    required WebSearchClient webSearchClient,
+    Future<void>? whenCancelled,
+    int? maxTokens,
+  }) async* {
+    this.config = config;
+    this.messages = messages;
+    this.webSearchApiKey = webSearchApiKey;
+    yield const ModelStreamEvent.delta('在。');
+    yield const ModelStreamEvent.done();
   }
 }

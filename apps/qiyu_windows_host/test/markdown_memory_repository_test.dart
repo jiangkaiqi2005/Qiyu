@@ -189,6 +189,125 @@ void main() {
   );
 
   test(
+    'openSession starts a new segment after crossing 04:00 by more than six hours',
+    () async {
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      now = DateTime(2026, 8, 12);
+      final midnight = await repository.createSession();
+      final saved = await repository.appendTurn(
+        midnight,
+        RawSessionTurn.user(requestId: 'midnight', text: '凌晨的话', at: now),
+      );
+
+      now = DateTime(2026, 8, 12, 9, 9);
+      final morning = await repository.openSession();
+
+      expect(morning.id, isNot(saved.id));
+      expect(morning.date, '2026-08-12');
+      expect(morning.segment, 2);
+
+      final history = await repository.readHistory();
+      expect(history.sessions.map((session) => session.date), [
+        '2026-08-12',
+        '2026-08-12',
+      ]);
+    },
+  );
+
+  final logicalDayResumeCases =
+      <
+        ({String name, DateTime lastUpdatedAt, DateTime openedAt, bool resumes})
+      >[
+        (
+          name: '00:00 to 05:50 crosses the boundary within six hours',
+          lastUpdatedAt: DateTime(2026, 8, 12),
+          openedAt: DateTime(2026, 8, 12, 5, 50),
+          resumes: true,
+        ),
+        (
+          name: '21:00 to 03:30 stays in one logical day',
+          lastUpdatedAt: DateTime(2026, 8, 11, 21),
+          openedAt: DateTime(2026, 8, 12, 3, 30),
+          resumes: true,
+        ),
+        (
+          name:
+              '05:00 to 23:30 stays in one logical day despite a long silence',
+          lastUpdatedAt: DateTime(2026, 8, 12, 5),
+          openedAt: DateTime(2026, 8, 12, 23, 30),
+          resumes: true,
+        ),
+        (
+          name: '03:59 to 04:00 crosses the boundary within the window',
+          lastUpdatedAt: DateTime(2026, 8, 12, 3, 59),
+          openedAt: DateTime(2026, 8, 12, 4),
+          resumes: true,
+        ),
+        (
+          name: 'a cross-boundary silence of exactly six hours resumes',
+          lastUpdatedAt: DateTime(2026, 8, 11, 22),
+          openedAt: DateTime(2026, 8, 12, 4),
+          resumes: true,
+        ),
+        (
+          name:
+              'a cross-boundary silence of six hours and one second starts fresh',
+          lastUpdatedAt: DateTime(2026, 8, 11, 21, 59, 59),
+          openedAt: DateTime(2026, 8, 12, 4),
+          resumes: false,
+        ),
+      ];
+  for (final testCase in logicalDayResumeCases) {
+    test('openSession ${testCase.name}', () async {
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      now = testCase.lastUpdatedAt;
+      final original = await repository.createSession();
+      final saved = await repository.appendTurn(
+        original,
+        RawSessionTurn.user(requestId: 'original', text: '上一句', at: now),
+      );
+
+      now = testCase.openedAt;
+      final opened = await repository.openSession();
+
+      if (testCase.resumes) {
+        expect(opened.id, saved.id);
+      } else {
+        expect(opened.id, isNot(saved.id));
+      }
+    });
+  }
+
+  test(
+    'openSession does not resume a future session in the same logical day',
+    () async {
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      now = DateTime(2026, 8, 12, 23);
+      final future = await repository.createSession();
+      final saved = await repository.appendTurn(
+        future,
+        RawSessionTurn.user(requestId: 'future', text: '回拨前', at: now),
+      );
+
+      now = DateTime(2026, 8, 12, 22);
+      final rolledBack = await repository.openSession();
+
+      expect(rolledBack.id, isNot(saved.id));
+      expect(rolledBack.date, '2026-08-12');
+      expect(rolledBack.segment, 2);
+    },
+  );
+
+  test(
     'the resume window honors its edge and ignores future session timestamps',
     () async {
       final repository = MarkdownMemoryRepository(
@@ -226,6 +345,7 @@ void main() {
 
   test('redacts secrets before raw session persistence', () async {
     final secret = 'sk-${List.filled(24, 'x').join()}';
+    const anySearchSecret = 'as_sk_abcdefghijklmnopqrstuvwxyz123456';
     final repository = MarkdownMemoryRepository(
       memoryDirectory: temporaryDirectory.path,
       clock: () => now,
@@ -237,14 +357,15 @@ void main() {
         requestId: 'secret',
         text:
             'API Key: $secret；验证码 123456；身份证 110101199001011234；'
-            '银行卡 6222021234567890123',
+            '银行卡 6222021234567890123；AnySearch $anySearchSecret',
         at: now,
       ),
     );
 
     expect(
       saved.turns.single.text,
-      'API Key: [已脱敏]；验证码 [已脱敏]；身份证 [已脱敏]；银行卡 [已脱敏]',
+      'API Key: [已脱敏]；验证码 [已脱敏]；身份证 [已脱敏]；银行卡 [已脱敏]；'
+      'AnySearch [已脱敏]',
     );
     final sessionFile = await temporaryDirectory
         .list(recursive: true)
@@ -256,8 +377,51 @@ void main() {
     expect(markdown, isNot(contains('123456')));
     expect(markdown, isNot(contains('110101199001011234')));
     expect(markdown, isNot(contains('6222021234567890123')));
+    expect(markdown, isNot(contains(anySearchSecret)));
     expect(markdown, contains('[已脱敏]'));
   });
+
+  test(
+    'redacts common bare provider tokens before session persistence',
+    () async {
+      const secrets = [
+        'as_sk_abcdefghijklmnopqrstuvwxyz123456',
+        'ghp_abcdefghijklmnopqrstuvwxyz1234567890',
+        'github_pat_abcdefghijklmnopqrstuvwxyz_1234567890',
+        'glpat-abcdefghijklmnopqrst',
+        'xoxb-123456789012-abcdefghijklmnopqrstuvwx',
+        'AKIAIOSFODNN7EXAMPLE',
+        'AIzaSyA1234567890abcdefghijklmnopqrstuvwxyz',
+        'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop',
+      ];
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final session = await repository.openSession();
+
+      final saved = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(
+          requestId: 'bare-tokens',
+          text: secrets.join(' '),
+          at: now,
+        ),
+      );
+
+      for (final secret in secrets) {
+        expect(
+          saved.turns.single.text,
+          isNot(contains(secret)),
+          reason: secret,
+        );
+      }
+      expect(
+        RegExp(RegExp.escape('[已脱敏]')).allMatches(saved.turns.single.text),
+        hasLength(secrets.length),
+      );
+    },
+  );
 
   test(
     'diagnostic redaction removes credentials, sensitive input, and paths',

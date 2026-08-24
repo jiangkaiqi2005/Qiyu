@@ -4,6 +4,7 @@ import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'provider_config.dart';
 import 'secret_store.dart';
+import 'web_search.dart';
 
 final class ProviderSettingsSnapshot {
   const ProviderSettingsSnapshot({required this.config, required this.keySet});
@@ -75,13 +76,51 @@ abstract interface class StreamingProviderChatClient {
   Future<Stream<ModelStreamEvent>?> openStream(List<ModelMessage> messages);
 }
 
+abstract interface class CancellableStreamingProviderChatClient
+    implements StreamingProviderChatClient {
+  Future<Stream<ModelStreamEvent>?> openCancellableStream(
+    List<ModelMessage> messages,
+    Future<void> whenCancelled,
+  );
+}
+
+abstract interface class WebSearchCapableProviderChatClient {
+  Future<PreparedProviderChatRequest?> prepareChatRequest();
+}
+
+/// 单次主聊天的 Provider 快照：提示词能力与打开流共用
+/// 同一份 Provider/AnySearch 配置，不会在两步之间重读配置。
+final class PreparedProviderChatRequest {
+  const PreparedProviderChatRequest({
+    required this.webSearchEnabled,
+    required this._openStream,
+  });
+
+  final bool webSearchEnabled;
+  final Future<Stream<ModelStreamEvent>?> Function(
+    List<ModelMessage> messages,
+    Future<void>? whenCancelled,
+  )
+  _openStream;
+
+  Future<Stream<ModelStreamEvent>?> openStream(
+    List<ModelMessage> messages, {
+    Future<void>? whenCancelled,
+  }) => _openStream(messages, whenCancelled);
+}
+
 final class ProviderSettingsService
-    implements ProviderChatClient, StreamingProviderChatClient {
+    implements
+        ProviderChatClient,
+        CancellableStreamingProviderChatClient,
+        WebSearchCapableProviderChatClient {
   const ProviderSettingsService(
     this.configRepository,
     this.secretStore,
     this.modelGateway,
     this.modelPromptBuilder, {
+    this.webSearchConfigRepository,
+    this.webSearchClient,
     this._behaviorCore = const QiyuBehaviorCore(),
   });
 
@@ -89,6 +128,8 @@ final class ProviderSettingsService
   final SecretStore secretStore;
   final ModelGateway modelGateway;
   final ModelPromptBuilder modelPromptBuilder;
+  final WebSearchConfigRepository? webSearchConfigRepository;
+  final WebSearchClient? webSearchClient;
   final QiyuBehaviorCore _behaviorCore;
 
   Future<ProviderSettingsSnapshot> read() async {
@@ -258,14 +299,71 @@ final class ProviderSettingsService
   }
 
   @override
-  Future<Stream<ModelStreamEvent>?> openStream(
-    List<ModelMessage> messages,
-  ) async {
+  Future<Stream<ModelStreamEvent>?> openStream(List<ModelMessage> messages) =>
+      _openStream(messages);
+
+  @override
+  Future<PreparedProviderChatRequest?> prepareChatRequest() async {
     final config = await configRepository.load();
     if (config == null) {
       return null;
     }
     final apiKey = await _resolveApiKey(config);
+    final webSearchConfig =
+        config.kind == ProviderKind.anthropic &&
+            webSearchClient != null &&
+            modelGateway is WebSearchStreamingModelGateway
+        ? await webSearchConfigRepository?.loadWebSearch()
+        : null;
+    return PreparedProviderChatRequest(
+      webSearchEnabled: webSearchConfig != null,
+      openStream: (messages, whenCancelled) => _openStreamWithSnapshot(
+        config,
+        apiKey,
+        webSearchConfig,
+        messages,
+        whenCancelled: whenCancelled,
+      ),
+    );
+  }
+
+  @override
+  Future<Stream<ModelStreamEvent>?> openCancellableStream(
+    List<ModelMessage> messages,
+    Future<void> whenCancelled,
+  ) => _openStream(messages, whenCancelled: whenCancelled);
+
+  Future<Stream<ModelStreamEvent>?> _openStream(
+    List<ModelMessage> messages, {
+    Future<void>? whenCancelled,
+  }) async {
+    final request = await prepareChatRequest();
+    if (request == null) {
+      return null;
+    }
+    return request.openStream(messages, whenCancelled: whenCancelled);
+  }
+
+  Future<Stream<ModelStreamEvent>?> _openStreamWithSnapshot(
+    ProviderConfig config,
+    String? apiKey,
+    WebSearchConfig? webSearchConfig,
+    List<ModelMessage> messages, {
+    Future<void>? whenCancelled,
+  }) async {
+    if (webSearchConfig != null &&
+        webSearchClient != null &&
+        modelGateway is WebSearchStreamingModelGateway) {
+      final gateway = modelGateway as WebSearchStreamingModelGateway;
+      return gateway.streamWithWebSearch(
+        config: config,
+        apiKey: apiKey,
+        messages: messages,
+        webSearchApiKey: webSearchConfig.apiKey,
+        webSearchClient: webSearchClient!,
+        whenCancelled: whenCancelled,
+      );
+    }
     if (modelGateway case final StreamingModelGateway streamingGateway) {
       return streamingGateway.stream(
         config: config,

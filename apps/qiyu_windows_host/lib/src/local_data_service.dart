@@ -7,6 +7,7 @@ import 'markdown_memory_repository.dart';
 import 'memory_backup.dart';
 import 'memory_controls.dart';
 import 'provider_settings_service.dart';
+import 'web_search_settings_service.dart';
 
 final class LocalDataException implements Exception {
   const LocalDataException(this.message, [this.cause]);
@@ -27,14 +28,15 @@ final class LocalDataException implements Exception {
 ///   每日记录与索引、长期印象、画像树、关系与近日状态、记忆控制、
 ///   Dream 状态与损坏隔离区；
 /// - 删除首次见面状态，清除后重新进入初见引导；
-/// - 模型连接设置与 API Key 不属于产品数据，清除不动它们；体验
-///   选项（开发者模式）同样保留。
+/// - 聊天模型与语音设置及其 API Key 保留；AnySearch API Key 随
+///   产品数据一并删除；体验选项（开发者模式）同样保留。
 final class LocalDataService {
   LocalDataService({
     required this.memoryDirectory,
     required this.repository,
     required this.backupService,
     required this.providerSettingsService,
+    required this.webSearchSettingsService,
     required this.onboardingFilePath,
     this.episodePipeline,
     this.memoryControls,
@@ -44,6 +46,7 @@ final class LocalDataService {
   final MemoryRepository repository;
   final MemoryBackupService backupService;
   final ProviderSettingsService providerSettingsService;
+  final WebSearchSettingsService webSearchSettingsService;
   final String onboardingFilePath;
   final EpisodeMemoryPipeline? episodePipeline;
   final MemoryControlsStore? memoryControls;
@@ -124,6 +127,11 @@ final class LocalDataService {
       } on Object catch (error) {
         throw LocalDataException('本机数据清除未完成，请稍后重试。', error);
       }
+    }
+    try {
+      await webSearchSettingsService.forgetApiKey();
+    } on Object catch (error) {
+      throw LocalDataException('本机数据清除未完成，请稍后重试。', error);
     }
     return {'cleared': true, 'snapshotId': snapshotId};
   }

@@ -24,15 +24,30 @@ void main() {
     });
 
     test('redacts secrets out of detail before buffering', () {
+      const bareSecrets = [
+        'as_sk_abcdefghijklmnopqrstuvwxyz123456',
+        'ghp_abcdefghijklmnopqrstuvwxyz1234567890',
+        'github_pat_abcdefghijklmnopqrstuvwxyz_1234567890',
+        'glpat-abcdefghijklmnopqrst',
+        'xoxp-123456789012-abcdefghijklmnopqrstuvwx',
+        'AKIAIOSFODNN7EXAMPLE',
+        'AIzaSyA1234567890abcdefghijklmnopqrstuvwxyz',
+        'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop',
+      ];
       final recorder = RequestDiagnosticsRecorder();
       recorder.record(
         source: RecentRequestSources.chat,
         result: RecentRequestResults.failed,
-        detail: 'provider rejected sk-abcdefABCDEF1234567890 and continued',
+        detail:
+            'provider rejected sk-abcdefABCDEF1234567890 and '
+            '${bareSecrets.join(' ')} then continued',
       );
       final entry = recorder.recent().single;
       expect(entry.detail, contains('[已脱敏]'));
       expect(entry.detail, isNot(contains('sk-abcdefABCDEF1234567890')));
+      for (final secret in bareSecrets) {
+        expect(entry.detail, isNot(contains(secret)), reason: secret);
+      }
     });
 
     test('entry json never carries user text fields', () {

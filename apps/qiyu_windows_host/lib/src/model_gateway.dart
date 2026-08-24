@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'provider_config.dart';
+import 'web_search.dart';
 
 enum ModelMessageRole { system, user, assistant }
 
@@ -53,6 +54,18 @@ abstract interface class StreamingModelGateway implements ModelGateway {
     required ProviderConfig config,
     required String? apiKey,
     required List<ModelMessage> messages,
+    int? maxTokens,
+  });
+}
+
+abstract interface class WebSearchStreamingModelGateway {
+  Stream<ModelStreamEvent> streamWithWebSearch({
+    required ProviderConfig config,
+    required String? apiKey,
+    required List<ModelMessage> messages,
+    required String webSearchApiKey,
+    required WebSearchClient webSearchClient,
+    Future<void>? whenCancelled,
     int? maxTokens,
   });
 }
@@ -110,8 +123,34 @@ abstract interface class ProviderHttpClient {
   });
 }
 
+abstract interface class CancellableProviderHttpClient
+    implements ProviderHttpClient {
+  Future<ProviderHttpResponse> postStreamCancellable({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+    required Future<void> whenCancelled,
+  });
+
+  Future<ProviderHttpResponse> postCancellable({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+    required Future<void> whenCancelled,
+  });
+}
+
+final class ProviderRequestCancelled implements Exception {
+  const ProviderRequestCancelled();
+}
+
 final class DartIoProviderHttpClient
-    implements ProviderHttpClient, ProviderBytesHttpClient {
+    implements
+        ProviderHttpClient,
+        CancellableProviderHttpClient,
+        ProviderBytesHttpClient {
   const DartIoProviderHttpClient();
 
   @override
@@ -130,6 +169,21 @@ final class DartIoProviderHttpClient
   }
 
   @override
+  Future<ProviderHttpResponse> postStreamCancellable({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+    required Future<void> whenCancelled,
+  }) => _postBytes(
+    uri: uri,
+    headers: headers,
+    body: utf8.encode(body),
+    timeout: timeout,
+    whenCancelled: whenCancelled,
+  );
+
+  @override
   Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,
@@ -138,6 +192,21 @@ final class DartIoProviderHttpClient
   }) {
     return _postBytes(uri: uri, headers: headers, body: body, timeout: timeout);
   }
+
+  @override
+  Future<ProviderHttpResponse> postCancellable({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+    required Future<void> whenCancelled,
+  }) => _postBytes(
+    uri: uri,
+    headers: headers,
+    body: body,
+    timeout: timeout,
+    whenCancelled: whenCancelled,
+  );
 
   @override
   Future<ProviderBytesHttpResponse> postBytes({
@@ -169,8 +238,14 @@ final class DartIoProviderHttpClient
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
   }) async {
     final client = HttpClient()..connectionTimeout = timeout;
+    var cancelled = false;
+    whenCancelled?.then((_) {
+      cancelled = true;
+      client.close(force: true);
+    });
     try {
       final request = await client.postUrl(uri).timeout(timeout);
       request.followRedirects = false;
@@ -183,6 +258,9 @@ final class DartIoProviderHttpClient
       );
     } catch (_) {
       client.close(force: true);
+      if (cancelled) {
+        throw const ProviderRequestCancelled();
+      }
       rethrow;
     }
   }
@@ -238,7 +316,8 @@ final class ModelStreamEvent {
   final String? message;
 }
 
-final class ProviderModelGateway implements StreamingModelGateway {
+final class ProviderModelGateway
+    implements StreamingModelGateway, WebSearchStreamingModelGateway {
   const ProviderModelGateway(this.httpClient);
 
   final ProviderHttpClient httpClient;
@@ -412,6 +491,292 @@ final class ProviderModelGateway implements StreamingModelGateway {
       '模型服务连接在回复完成前中断。',
     );
   }
+
+  @override
+  Stream<ModelStreamEvent> streamWithWebSearch({
+    required ProviderConfig config,
+    required String? apiKey,
+    required List<ModelMessage> messages,
+    required String webSearchApiKey,
+    required WebSearchClient webSearchClient,
+    Future<void>? whenCancelled,
+    int? maxTokens,
+  }) async* {
+    if (config.kind != ProviderKind.anthropic) {
+      yield* stream(
+        config: config,
+        apiKey: apiKey,
+        messages: messages,
+        maxTokens: maxTokens,
+      );
+      return;
+    }
+    config.validate();
+    if (apiKey == null || apiKey.trim().isEmpty) {
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.authentication,
+        '还没有保存 API Key。',
+      );
+      return;
+    }
+    final protocol = const _AnthropicProtocol();
+    final request = protocol.buildRequest(
+      config,
+      apiKey,
+      messages,
+      maxTokens ?? _maxModelReplyTokens,
+    );
+    final firstBody = <String, Object?>{
+      ...request.body,
+      'tools': const [
+        {
+          'name': 'web_search',
+          'description': '搜索当前互联网信息。',
+          'input_schema': {
+            'type': 'object',
+            'properties': {
+              'query': {'type': 'string'},
+            },
+            'required': ['query'],
+            'additionalProperties': false,
+          },
+        },
+      ],
+      'tool_choice': const {'type': 'auto'},
+    };
+    try {
+      final first = await _readAnthropicTurn(
+        request: request,
+        body: firstBody,
+        timeout: Duration(seconds: config.timeoutSeconds),
+        whenCancelled: whenCancelled,
+      );
+      if (first.toolUse == null) {
+        if (first.text.trim().isEmpty) {
+          throw const ModelGatewayException(
+            kind: ModelFailureKind.contentParsing,
+            message: '模型服务返回的内容无法解析。',
+          );
+        }
+        yield ModelStreamEvent.delta(first.text);
+        yield const ModelStreamEvent.done();
+        return;
+      }
+      final toolUse = first.toolUse!;
+      if (toolUse.name != 'web_search') {
+        throw const ModelGatewayException(
+          kind: ModelFailureKind.incompatibleResponse,
+          message: '模型服务请求了不支持的工具。',
+        );
+      }
+      final decodedInput = jsonDecode(toolUse.inputJson);
+      if (decodedInput is! Map<String, Object?> ||
+          decodedInput.length != 1 ||
+          decodedInput['query'] is! String) {
+        throw const ModelGatewayException(
+          kind: ModelFailureKind.contentParsing,
+          message: '模型服务返回的搜索参数无法解析。',
+        );
+      }
+      final query = decodedInput['query']! as String;
+      final safeQuery = sanitizeWebSearchQuery(query);
+      if (safeQuery.isEmpty) {
+        throw const ModelGatewayException(
+          kind: ModelFailureKind.contentParsing,
+          message: '模型服务返回的搜索参数无法解析。',
+        );
+      }
+      String toolContent;
+      var isError = false;
+      try {
+        final results = await webSearchClient.search(
+          apiKey: webSearchApiKey,
+          query: safeQuery,
+          whenCancelled: whenCancelled,
+        );
+        toolContent = jsonEncode([
+          for (final result in results) result.toJson(),
+        ]);
+      } on ProviderRequestCancelled {
+        rethrow;
+      } on Object {
+        isError = true;
+        toolContent = '这次联网搜索失败，无法取得可靠结果。';
+      }
+      final secondMessages = <Object?>[
+        ...request.body['messages']! as List<Object?>,
+        {
+          'role': 'assistant',
+          'content': [
+            {
+              'type': 'tool_use',
+              'id': toolUse.id,
+              'name': toolUse.name,
+              'input': {'query': safeQuery},
+            },
+          ],
+        },
+        {
+          'role': 'user',
+          'content': [
+            {
+              'type': 'tool_result',
+              'tool_use_id': toolUse.id,
+              'content': toolContent,
+              if (isError) 'is_error': true,
+            },
+          ],
+        },
+      ];
+      final second = await _readAnthropicTurn(
+        request: request,
+        body: {...request.body, 'messages': secondMessages},
+        timeout: Duration(seconds: config.timeoutSeconds),
+        whenCancelled: whenCancelled,
+      );
+      if (second.toolUse != null || second.text.trim().isEmpty) {
+        throw const ModelGatewayException(
+          kind: ModelFailureKind.incompatibleResponse,
+          message: '模型服务返回了不兼容的响应格式。',
+        );
+      }
+      yield ModelStreamEvent.delta(second.text);
+      yield const ModelStreamEvent.done();
+    } on ProviderRequestCancelled {
+      return;
+    } on TimeoutException {
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.timeout,
+        '模型服务响应超时。',
+      );
+    } on HandshakeException {
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.tls,
+        '模型服务的 TLS 安全连接失败。',
+      );
+    } on SocketException catch (error) {
+      final failure = _socketFailure(error);
+      yield ModelStreamEvent.failure(failure.kind, failure.message);
+    } on HttpException {
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.network,
+        '模型服务连接中断。',
+      );
+    } on ModelGatewayException catch (error) {
+      yield ModelStreamEvent.failure(error.kind, error.message);
+    } on Object {
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.incompatibleResponse,
+        '模型服务返回了不兼容的响应格式。',
+      );
+    }
+  }
+
+  Future<_AnthropicTurn> _readAnthropicTurn({
+    required _ProviderRequest request,
+    required Map<String, Object?> body,
+    required Duration timeout,
+    Future<void>? whenCancelled,
+  }) async {
+    var cancelled = false;
+    whenCancelled?.then((_) => cancelled = true);
+    final encodedBody = jsonEncode(body);
+    final response =
+        whenCancelled != null && httpClient is CancellableProviderHttpClient
+        ? await (httpClient as CancellableProviderHttpClient)
+              .postStreamCancellable(
+                uri: request.uri,
+                headers: request.headers,
+                body: encodedBody,
+                timeout: timeout,
+                whenCancelled: whenCancelled,
+              )
+        : await httpClient.postStream(
+            uri: request.uri,
+            headers: request.headers,
+            body: encodedBody,
+            timeout: timeout,
+          );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final String responseBody;
+      try {
+        responseBody = await response.body.join();
+      } on Object {
+        if (cancelled) {
+          throw const ProviderRequestCancelled();
+        }
+        rethrow;
+      }
+      if (cancelled) {
+        throw const ProviderRequestCancelled();
+      }
+      throw _statusFailure(response.statusCode, responseBody);
+    }
+    final text = StringBuffer();
+    String? toolId;
+    String? toolName;
+    final toolInput = StringBuffer();
+    var stopped = false;
+    try {
+      await for (final line in response.body.transform(const LineSplitter())) {
+        if (cancelled) {
+          throw const ProviderRequestCancelled();
+        }
+        final event = _readAnthropicEvent(line);
+        if (event == null) {
+          continue;
+        }
+        text.write(event.delta);
+        if (event.toolId != null) {
+          toolId = event.toolId;
+          toolName = event.toolName;
+        }
+        toolInput.write(event.toolInputDelta);
+        stopped = event.done || stopped;
+      }
+    } on Object {
+      if (cancelled) {
+        throw const ProviderRequestCancelled();
+      }
+      rethrow;
+    }
+    if (cancelled) {
+      throw const ProviderRequestCancelled();
+    }
+    if (!stopped) {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.network,
+        message: '模型服务连接在回复完成前中断。',
+      );
+    }
+    final toolUse = toolId == null || toolName == null
+        ? null
+        : _AnthropicToolUse(
+            id: toolId,
+            name: toolName,
+            inputJson: toolInput.toString(),
+          );
+    return _AnthropicTurn(text: text.toString(), toolUse: toolUse);
+  }
+}
+
+final class _AnthropicToolUse {
+  const _AnthropicToolUse({
+    required this.id,
+    required this.name,
+    required this.inputJson,
+  });
+
+  final String id;
+  final String name;
+  final String inputJson;
+}
+
+final class _AnthropicTurn {
+  const _AnthropicTurn({required this.text, required this.toolUse});
+
+  final String text;
+  final _AnthropicToolUse? toolUse;
 }
 
 typedef _ProviderRequest = ({
@@ -436,6 +801,14 @@ abstract interface class _ProviderProtocol {
 }
 
 typedef _ProviderStreamPart = ({String delta, bool done});
+
+typedef _AnthropicStreamPart = ({
+  String delta,
+  bool done,
+  String? toolId,
+  String? toolName,
+  String toolInputDelta,
+});
 
 /// 发给 Provider 的输出上限，各协议保持一致，防止失控的账单与超长候选。
 const _maxModelReplyTokens = 512;
@@ -551,32 +924,73 @@ final class _AnthropicProtocol implements _ProviderProtocol {
 
   @override
   _ProviderStreamPart? readEvent(String line) {
-    final data = _sseData(line);
-    if (data == null) {
-      final trimmed = line.trim();
-      if (trimmed.isNotEmpty &&
-          !trimmed.startsWith('event:') &&
-          !trimmed.startsWith(':')) {
-        throw const FormatException('invalid SSE line');
-      }
-      return null;
+    final event = _readAnthropicEvent(line);
+    return event == null ? null : (delta: event.delta, done: event.done);
+  }
+}
+
+_AnthropicStreamPart? _readAnthropicEvent(String line) {
+  final data = _sseData(line);
+  if (data == null) {
+    final trimmed = line.trim();
+    if (trimmed.isNotEmpty &&
+        !trimmed.startsWith('event:') &&
+        !trimmed.startsWith(':')) {
+      throw const FormatException('invalid SSE line');
     }
-    final payload = jsonDecode(data) as Map<String, Object?>;
-    final type = payload['type'];
-    if (type == 'error') {
+    return null;
+  }
+  final payload = jsonDecode(data) as Map<String, Object?>;
+  switch (payload['type']) {
+    case 'error':
       throw const ModelGatewayException(
         kind: ModelFailureKind.provider,
         message: '模型服务返回了错误。',
       );
-    }
-    if (type == 'message_stop') {
-      return (delta: '', done: true);
-    }
-    if (type == 'content_block_delta') {
-      final delta = payload['delta']! as Map<String, Object?>;
-      return (delta: delta['text'] as String? ?? '', done: false);
-    }
-    return null;
+    case 'message_stop':
+      return (
+        delta: '',
+        done: true,
+        toolId: null,
+        toolName: null,
+        toolInputDelta: '',
+      );
+    case 'content_block_start':
+      final block = payload['content_block'];
+      if (block is Map<String, Object?> && block['type'] == 'tool_use') {
+        final input = block['input'];
+        return (
+          delta: '',
+          done: false,
+          toolId: block['id'] as String?,
+          toolName: block['name'] as String?,
+          toolInputDelta: input is Map && input.isNotEmpty
+              ? jsonEncode(input)
+              : '',
+        );
+      }
+      return null;
+    case 'content_block_delta':
+      final delta = payload['delta'];
+      if (delta is! Map<String, Object?>) {
+        throw const ModelGatewayException(
+          kind: ModelFailureKind.contentParsing,
+          message: '模型服务返回的内容无法解析。',
+        );
+      }
+      return (
+        delta: delta['type'] == 'input_json_delta'
+            ? ''
+            : delta['text'] as String? ?? '',
+        done: false,
+        toolId: null,
+        toolName: null,
+        toolInputDelta: delta['type'] == 'input_json_delta'
+            ? delta['partial_json'] as String? ?? ''
+            : '',
+      );
+    default:
+      return null;
   }
 }
 

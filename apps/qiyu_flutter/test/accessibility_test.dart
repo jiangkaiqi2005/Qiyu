@@ -28,6 +28,8 @@ import 'package:qiyu_flutter/features/settings/provider_settings_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
 
 void main() {
   testWidgets('keyboard alone navigates from home into the chat', (
@@ -299,6 +301,12 @@ void main() {
           ChangeNotifierProvider.value(
             value: TtsSettingsViewModel(
               const _FixedTtsSettingsGateway(),
+              autoStart: false,
+            ),
+          ),
+          ChangeNotifierProvider.value(
+            value: WebSearchSettingsViewModel(
+              const _FixedWebSearchSettingsGateway(),
               autoStart: false,
             ),
           ),
@@ -871,6 +879,21 @@ final class _FixedProviderGateway implements ProviderSettingsGateway {
 final class _FixedProbe implements HostConnectionProbe {
   @override
   Future<bool> isHostAvailable() async => true;
+}
+
+final class _FixedWebSearchSettingsGateway implements WebSearchSettingsGateway {
+  const _FixedWebSearchSettingsGateway();
+
+  @override
+  Future<WebSearchSettings> read() async =>
+      const WebSearchSettings(configured: false, keySet: false);
+
+  @override
+  Future<WebSearchSettings> save(WebSearchSettingsDraft draft) =>
+      throw UnimplementedError();
+
+  @override
+  Future<WebSearchSettings> forgetApiKey() => throw UnimplementedError();
 }
 
 final class _FixedSttSettingsGateway implements SttSettingsGateway {

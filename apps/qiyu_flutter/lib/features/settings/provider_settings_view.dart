@@ -18,6 +18,8 @@ import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
 import 'tts_settings_client.dart';
 import 'tts_settings_view_model.dart';
+import 'web_search_settings_client.dart';
+import 'web_search_settings_view_model.dart';
 
 /// 设置中心（ticket 23）：模型连接、本地数据管理（备份 / 记忆控制
 /// 总览 / 清除产品数据）、隐私说明与开发者选项。危险操作（忘记
@@ -44,6 +46,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   final _temperatureController = TextEditingController(text: '0.7');
   final _timeoutController = TextEditingController(text: '60');
   final _apiKeyController = TextEditingController();
+  final _webSearchApiKeyController = TextEditingController();
   // 语音转写（STT）服务：与聊天 Provider 同一套表单形态，独立的
   // 配置段与 Key。
   final _sttBaseUrlController = TextEditingController();
@@ -65,6 +68,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   ProviderSettings? _syncedSettings;
   SttSettings? _syncedSttSettings;
   TtsSettings? _syncedTtsSettings;
+  WebSearchSettings? _syncedWebSearchSettings;
   bool _requestedInitialization = false;
 
   ProviderPreset get _selectedProvider =>
@@ -89,6 +93,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       unawaited(context.read<ProviderSettingsViewModel>().initialize());
       unawaited(context.read<SttSettingsViewModel>().initialize());
       unawaited(context.read<TtsSettingsViewModel>().initialize());
+      unawaited(context.read<WebSearchSettingsViewModel>().initialize());
       unawaited(settingsViewModel.loadPreferences());
       unawaited(settingsViewModel.loadClearPreview());
     });
@@ -101,6 +106,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     _temperatureController.dispose();
     _timeoutController.dispose();
     _apiKeyController.dispose();
+    _webSearchApiKeyController.dispose();
     _sttBaseUrlController.dispose();
     _sttModelController.dispose();
     _sttApiKeyController.dispose();
@@ -143,6 +149,58 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       _sttModelController.text = settings.model ?? '';
     }
     _sttApiKeyController.clear();
+  }
+
+  void _syncWebSearch(WebSearchSettings? settings) {
+    if (settings == null || identical(settings, _syncedWebSearchSettings)) {
+      return;
+    }
+    _syncedWebSearchSettings = settings;
+    _webSearchApiKeyController.clear();
+  }
+
+  Future<void> _saveWebSearch(WebSearchSettingsViewModel viewModel) async {
+    final key = _webSearchApiKeyController.text.trim();
+    try {
+      await viewModel.save(
+        WebSearchSettingsDraft(apiKey: key.isEmpty ? null : key),
+      );
+    } finally {
+      if (mounted) {
+        _webSearchApiKeyController.clear();
+      }
+    }
+  }
+
+  Future<void> _confirmForgetWebSearchKey(
+    WebSearchSettingsViewModel viewModel,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const Key('web-search-forget-key-dialog'),
+        title: const Text('忘记 AnySearch API Key？'),
+        content: const Text(
+          '忘记后本机不再保存这个 Key，联网搜索会立即停用，'
+          '普通聊天仍可照常使用。',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('web-search-forget-key-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('再想想'),
+          ),
+          FilledButton(
+            key: const Key('web-search-forget-key-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('忘记 Key'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await viewModel.forgetApiKey();
+    }
   }
 
   void _selectSttProvider(String wireName) {
@@ -471,10 +529,12 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     final viewModel = context.watch<ProviderSettingsViewModel>();
     final sttViewModel = context.watch<SttSettingsViewModel>();
     final ttsViewModel = context.watch<TtsSettingsViewModel>();
+    final webSearchViewModel = context.watch<WebSearchSettingsViewModel>();
     final settingsViewModel = context.watch<SettingsViewModel>();
     _sync(viewModel.settings);
     _syncStt(sttViewModel.settings);
     _syncTts(ttsViewModel.settings);
+    _syncWebSearch(webSearchViewModel.settings);
     final theme = Theme.of(context);
     return Scaffold(
       body: SafeArea(
@@ -678,6 +738,8 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                   ),
                 ],
                 const SizedBox(height: 40),
+                _webSearchSection(context, webSearchViewModel),
+                const SizedBox(height: 24),
                 _sttSection(context, sttViewModel),
                 const SizedBox(height: 24),
                 _ttsSection(context, ttsViewModel),
@@ -740,6 +802,79 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                 ? null
                 : () => unawaited(_confirmForgetKey(viewModel)),
             child: const Text('忘记已保存的 Key'),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _webSearchSection(
+    BuildContext context,
+    WebSearchSettingsViewModel viewModel,
+  ) {
+    final theme = Theme.of(context);
+    final keySet = viewModel.settings?.keySet ?? false;
+    return _SettingsPanel(
+      children: [
+        Text(
+          '联网搜索',
+          style: theme.textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.w500,
+            letterSpacing: -0.8,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '需要当前时间、天气、新闻等变化中的事实时，栖语可以按需搜索。'
+          'Key 只保存在本机 provider.json，页面不会取回明文。',
+          style: theme.textTheme.bodyLarge?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            height: 1.55,
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (viewModel.loading)
+          const Center(child: CircularProgressIndicator())
+        else ...[
+          Text(
+            keySet ? 'AnySearch Key 已保存在本机' : '尚未保存 AnySearch Key',
+            style: theme.textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const Key('web-search-api-key'),
+            controller: _webSearchApiKeyController,
+            obscureText: true,
+            enableSuggestions: false,
+            autocorrect: false,
+            decoration: InputDecoration(
+              labelText: 'ANYSEARCH_API_KEY',
+              hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          if (keySet) ...[
+            const SizedBox(height: 8),
+            TextButton(
+              key: const Key('forget-web-search-key'),
+              onPressed: viewModel.saving
+                  ? null
+                  : () => unawaited(_confirmForgetWebSearchKey(viewModel)),
+              child: const Text('忘记 AnySearch Key'),
+            ),
+          ],
+          const SizedBox(height: 20),
+          if (viewModel.errorMessage case final message?) ...[
+            _StatusMessage(message: message, succeeded: false),
+            const SizedBox(height: 14),
+          ],
+          FilledButton.icon(
+            key: const Key('save-web-search-settings'),
+            onPressed: viewModel.saving
+                ? null
+                : () => unawaited(_saveWebSearch(viewModel)),
+            icon: _busyOr(viewModel.saving, Icons.lock_outline),
+            label: const Text('保存到本机'),
           ),
         ],
       ],
@@ -1380,7 +1515,8 @@ class _ClearDataDialog extends StatelessWidget {
                   const SizedBox(height: 10),
                   Text(
                     '清除前会先创建一份备份快照，之后随时可以在「备份与恢复」里找回；'
-                    '模型连接设置与 API Key 不受影响。清除后栖语会像第一次见面一样重新开始。',
+                    '聊天模型与语音设置及其 API Key 不受影响；AnySearch API Key 会一并删除。'
+                    '清除后栖语会像第一次见面一样重新开始。',
                     style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
                   ),
                 ],

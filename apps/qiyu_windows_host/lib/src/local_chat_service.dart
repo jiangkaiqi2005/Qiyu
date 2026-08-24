@@ -540,10 +540,26 @@ final class LocalChatService {
       ModelPromptBuilder? requestBuilder;
       try {
         requestBuilder = await _promptBuilderForRequest(session.id);
-        completion = await _collectModelCompletion(
-          requestBuilder.build(state, trimmedText),
-          cancellation,
-        );
+        if (providerChatClient
+            case final WebSearchCapableProviderChatClient webSearchProvider) {
+          final prepared = await webSearchProvider.prepareChatRequest();
+          if (prepared != null) {
+            completion = await _collectModelCompletion(
+              requestBuilder.build(
+                state,
+                trimmedText,
+                webSearchEnabled: prepared.webSearchEnabled,
+              ),
+              cancellation,
+              preparedRequest: prepared,
+            );
+          }
+        } else {
+          completion = await _collectModelCompletion(
+            requestBuilder.build(state, trimmedText),
+            cancellation,
+          );
+        }
       } on Object {
         completion = const ModelCompletion.failure(ModelFailureKind.provider);
       }
@@ -1068,11 +1084,22 @@ final class LocalChatService {
 
   Future<ModelCompletion?> _collectModelCompletion(
     List<ModelMessage> messages,
-    _DeliveryCancellation cancellation,
-  ) async {
+    _DeliveryCancellation cancellation, {
+    PreparedProviderChatRequest? preparedRequest,
+  }) async {
     final streaming = providerChatClient;
     if (streaming != null) {
-      final stream = await streaming.openStream(messages);
+      final stream = preparedRequest != null
+          ? await preparedRequest.openStream(
+              messages,
+              whenCancelled: cancellation.whenCancelled,
+            )
+          : streaming is CancellableStreamingProviderChatClient
+          ? await streaming.openCancellableStream(
+              messages,
+              cancellation.whenCancelled,
+            )
+          : await streaming.openStream(messages);
       if (stream == null) {
         return null;
       }

@@ -217,8 +217,31 @@ void main() {
         'qiyu-safety-gate-test-',
       );
       addTearDown(() => temporaryDirectory.delete(recursive: true));
-      final provider = _FakeProviderChatClient(
-        const ModelCompletion.reply('不应调用'),
+      final providerRepository = JsonProviderConfigRepository(
+        filePath:
+            '${temporaryDirectory.path}${Platform.pathSeparator}provider.json',
+      );
+      await providerRepository.save(
+        const ProviderConfig(
+          kind: ProviderKind.anthropic,
+          baseUrl: 'https://api.example.com/v1',
+          model: 'deepseek-v4-flash',
+          temperature: 0.6,
+          timeoutSeconds: 25,
+          apiKey: 'provider-secret',
+        ),
+      );
+      await providerRepository.saveWebSearch(
+        const WebSearchConfig(apiKey: 'any-secret'),
+      );
+      final http = _CountingProviderHttpClient();
+      final provider = ProviderSettingsService(
+        providerRepository,
+        _EmptySecretStore(),
+        ProviderModelGateway(http),
+        const ModelPromptBuilder('测试人格宪法'),
+        webSearchConfigRepository: providerRepository,
+        webSearchClient: AnySearchClient(http),
       );
       final service = LocalChatService(
         MarkdownMemoryRepository(
@@ -250,7 +273,8 @@ void main() {
           expect(exchange.result.messages.join('\n'), contains('12356'));
         }
       }
-      expect(provider.calls, 0);
+      expect(http.providerCalls, 0);
+      expect(http.searchCalls, 0);
     },
   );
 
@@ -505,6 +529,24 @@ void main() {
       isFalse,
     );
     await provider.close();
+
+    final retry = LocalChatService(
+      repository,
+      providerChatClient: _FakeProviderChatClient(
+        const ModelCompletion.reply('这次说完。'),
+      ),
+      deliveryPause: (_) async {},
+    );
+    final retried = await retry.send(
+      requestId: 'cancel-1',
+      text: '先别说',
+      sessionId: sessionId,
+    );
+    expect(retried.result.messages, ['这次说完。']);
+    expect(retried.session.turns.map((turn) => turn.speaker), [
+      Speaker.user,
+      Speaker.qiyu,
+    ]);
   });
 
   test('runExclusively waits for the in-flight delivery to finish', () async {
@@ -3034,6 +3076,41 @@ final class _ControlledStreamingProviderChatClient
   void pushDelta(String text) => _controller.add(ModelStreamEvent.delta(text));
 
   Future<void> close() => _controller.close();
+}
+
+final class _EmptySecretStore implements SecretStore {
+  @override
+  Future<void> deleteApiKey(String scope) async {}
+
+  @override
+  Future<String?> readApiKey(String scope) async => null;
+}
+
+final class _CountingProviderHttpClient implements ProviderHttpClient {
+  var providerCalls = 0;
+  var searchCalls = 0;
+
+  @override
+  Future<ProviderHttpResponse> postStream({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+  }) async {
+    providerCalls += 1;
+    throw StateError('safety input must not call Provider');
+  }
+
+  @override
+  Future<ProviderHttpResponse> post({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) async {
+    searchCalls += 1;
+    throw StateError('safety input must not call AnySearch');
+  }
 }
 
 /// 播种已归档的 episode 日文件。writeFinalization 契约要求调用方

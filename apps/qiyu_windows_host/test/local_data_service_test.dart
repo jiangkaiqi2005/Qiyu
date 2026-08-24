@@ -17,6 +17,7 @@ void main() {
   late _MemoryProviderConfigRepository configRepository;
   late _MemorySecretStore secretStore;
   late ProviderSettingsService providerSettings;
+  late WebSearchSettingsService webSearchSettings;
   late LocalDataService service;
   late String onboardingFilePath;
 
@@ -76,12 +77,14 @@ void main() {
       const _UnusedModelGateway(),
       const ModelPromptBuilder(''),
     );
+    webSearchSettings = WebSearchSettingsService(configRepository);
     onboardingFilePath = path.join(runtimeDirectory, 'onboarding.json');
     service = LocalDataService(
       memoryDirectory: memoryDirectory,
       repository: repository,
       backupService: backup,
       providerSettingsService: providerSettings,
+      webSearchSettingsService: webSearchSettings,
       onboardingFilePath: onboardingFilePath,
       episodePipeline: pipeline,
       memoryControls: memoryControls,
@@ -124,7 +127,7 @@ void main() {
     expect(preview['keySet'], isFalse);
   });
 
-  test('clear snapshots first, wipes product data, keeps backups and keys', () async {
+  test('clear snapshots first, wipes product data and web search key', () async {
     await seedProductData();
     final config = ProviderConfig(
       kind: ProviderKind.openAiCompatible,
@@ -134,6 +137,7 @@ void main() {
       timeoutSeconds: 60,
     );
     await providerSettings.save(config: config, apiKey: 'sk-testkey1234567890ab');
+    await webSearchSettings.save(apiKey: 'any-secret-value');
 
     final result = await service.clear();
 
@@ -155,10 +159,12 @@ void main() {
     expect(history.sessions, isEmpty);
     // 首次见面状态一并清除。
     expect(File(onboardingFilePath).existsSync(), isFalse);
-    // 模型连接设置与 Key 不属于产品数据：原样保留。
+    // 聊天模型连接设置与 Key 原样保留；AnySearch Key 一并删除。
     expect((await providerSettings.read()).configured, isTrue);
     expect((await providerSettings.read()).keySet, isTrue);
     expect(configRepository.stored!.apiKey, 'sk-testkey1234567890ab');
+    expect((await webSearchSettings.read()).keySet, isFalse);
+    expect(configRepository.webSearch, isNull);
   });
 
   test('clear still succeeds when nothing was ever written', () async {
@@ -169,8 +175,9 @@ void main() {
 }
 
 final class _MemoryProviderConfigRepository
-    implements ProviderConfigRepository {
+    implements ProviderConfigRepository, WebSearchConfigRepository {
   ProviderConfig? stored;
+  WebSearchConfig? webSearch;
 
   @override
   Future<ProviderConfig?> load() async => stored;
@@ -178,6 +185,14 @@ final class _MemoryProviderConfigRepository
   @override
   Future<void> save(ProviderConfig config) async {
     stored = config;
+  }
+
+  @override
+  Future<WebSearchConfig?> loadWebSearch() async => webSearch;
+
+  @override
+  Future<void> saveWebSearch(WebSearchConfig? config) async {
+    webSearch = config;
   }
 }
 
