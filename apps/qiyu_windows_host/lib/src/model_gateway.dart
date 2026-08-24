@@ -551,7 +551,7 @@ final class ProviderModelGateway
         timeout: Duration(seconds: config.timeoutSeconds),
         whenCancelled: whenCancelled,
       );
-      if (first.toolUse == null) {
+      if (first.toolUses.isEmpty) {
         if (first.text.trim().isEmpty) {
           throw const ModelGatewayException(
             kind: ModelFailureKind.contentParsing,
@@ -562,69 +562,65 @@ final class ProviderModelGateway
         yield const ModelStreamEvent.done();
         return;
       }
-      final toolUse = first.toolUse!;
-      if (toolUse.name != 'web_search') {
-        throw const ModelGatewayException(
-          kind: ModelFailureKind.incompatibleResponse,
-          message: '模型服务请求了不支持的工具。',
-        );
-      }
-      final decodedInput = jsonDecode(toolUse.inputJson);
-      if (decodedInput is! Map<String, Object?> ||
-          decodedInput.length != 1 ||
-          decodedInput['query'] is! String) {
-        throw const ModelGatewayException(
-          kind: ModelFailureKind.contentParsing,
-          message: '模型服务返回的搜索参数无法解析。',
-        );
-      }
-      final query = decodedInput['query']! as String;
-      final safeQuery = sanitizeWebSearchQuery(query);
-      if (safeQuery.isEmpty) {
-        throw const ModelGatewayException(
-          kind: ModelFailureKind.contentParsing,
-          message: '模型服务返回的搜索参数无法解析。',
-        );
-      }
-      String toolContent;
-      var isError = false;
-      try {
-        final results = await webSearchClient.search(
-          apiKey: webSearchApiKey,
-          query: safeQuery,
-          whenCancelled: whenCancelled,
-        );
-        toolContent = jsonEncode([
-          for (final result in results) result.toJson(),
-        ]);
-      } on ProviderRequestCancelled {
-        rethrow;
-      } on Object {
-        isError = true;
-        toolContent = '这次联网搜索失败，无法取得可靠结果。';
+      // 同一响应可能携带多个并行工具调用：先整体校验全部调用（名称与
+      // 输入 schema），任何一个不合法都失败关闭，不执行任何搜索。
+      final validated = [
+        for (final toolUse in first.toolUses) _validatedWebSearchCall(toolUse),
+      ];
+      // 串行执行各次搜索，复用现有超时与取消信号；单个搜索失败只生成
+      // 对应 id 的 is_error 结果，不中断其余调用。id、query、结果内容与
+      // 错误标记合并在同一条记录里，后续不再按下标平行配对。
+      final calls =
+          <({String id, String query, String content, bool isError})>[];
+      for (final call in validated) {
+        String content;
+        var isError = false;
+        try {
+          final results = await webSearchClient.search(
+            apiKey: webSearchApiKey,
+            query: call.query,
+            whenCancelled: whenCancelled,
+          );
+          content = jsonEncode([
+            for (final result in results) result.toJson(),
+          ]);
+        } on ProviderRequestCancelled {
+          rethrow;
+        } on Object {
+          isError = true;
+          content = '这次联网搜索失败，无法取得可靠结果。';
+        }
+        calls.add((
+          id: call.id,
+          query: call.query,
+          content: content,
+          isError: isError,
+        ));
       }
       final secondMessages = <Object?>[
         ...request.body['messages']! as List<Object?>,
         {
           'role': 'assistant',
           'content': [
-            {
-              'type': 'tool_use',
-              'id': toolUse.id,
-              'name': toolUse.name,
-              'input': {'query': safeQuery},
-            },
+            for (final call in calls)
+              {
+                'type': 'tool_use',
+                'id': call.id,
+                'name': 'web_search',
+                'input': {'query': call.query},
+              },
           ],
         },
         {
           'role': 'user',
           'content': [
-            {
-              'type': 'tool_result',
-              'tool_use_id': toolUse.id,
-              'content': toolContent,
-              if (isError) 'is_error': true,
-            },
+            for (final call in calls)
+              {
+                'type': 'tool_result',
+                'tool_use_id': call.id,
+                'content': call.content,
+                if (call.isError) 'is_error': true,
+              },
           ],
         },
       ];
@@ -634,7 +630,7 @@ final class ProviderModelGateway
         timeout: Duration(seconds: config.timeoutSeconds),
         whenCancelled: whenCancelled,
       );
-      if (second.toolUse != null || second.text.trim().isEmpty) {
+      if (second.toolUses.isNotEmpty || second.text.trim().isEmpty) {
         throw const ModelGatewayException(
           kind: ModelFailureKind.incompatibleResponse,
           message: '模型服务返回了不兼容的响应格式。',
@@ -670,6 +666,38 @@ final class ProviderModelGateway
         '模型服务返回了不兼容的响应格式。',
       );
     }
+  }
+
+  /// 校验单个工具调用的名称与输入 schema（`{query: string}` 单键），
+  /// 返回脱敏后的搜索词；未知工具报 incompatibleResponse 失败关闭；
+  /// 参数 JSON 无法解码时由外层兜底为 incompatibleResponse，可解码
+  /// 但结构不符或脱敏后为空的输入才报 contentParsing。
+  ({String id, String query}) _validatedWebSearchCall(
+    _AnthropicToolUse toolUse,
+  ) {
+    if (toolUse.name != 'web_search') {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.incompatibleResponse,
+        message: '模型服务请求了不支持的工具。',
+      );
+    }
+    final decodedInput = jsonDecode(toolUse.inputJson);
+    if (decodedInput is! Map<String, Object?> ||
+        decodedInput.length != 1 ||
+        decodedInput['query'] is! String) {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.contentParsing,
+        message: '模型服务返回的搜索参数无法解析。',
+      );
+    }
+    final safeQuery = sanitizeWebSearchQuery(decodedInput['query']! as String);
+    if (safeQuery.isEmpty) {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.contentParsing,
+        message: '模型服务返回的搜索参数无法解析。',
+      );
+    }
+    return (id: toolUse.id, query: safeQuery);
   }
 
   Future<_AnthropicTurn> _readAnthropicTurn({
@@ -713,9 +741,13 @@ final class ProviderModelGateway
       throw _statusFailure(response.statusCode, responseBody);
     }
     final text = StringBuffer();
-    String? toolId;
-    String? toolName;
-    final toolInput = StringBuffer();
+    // 同一 turn 可包含多个工具块：每个 content_block 一组独立缓冲，参数
+    // 增量按 index 归位；个别兼容服务省略 index 时退化为追加到最近开始
+    // 的工具块，绝不跨块拼接不同工具的增量，thinking 与可见文本不进任何
+    // 工具缓冲。
+    final toolBuffers = <_AnthropicToolBuffer>[];
+    final toolBuffersByIndex = <int, _AnthropicToolBuffer>{};
+    _AnthropicToolBuffer? latestToolBuffer;
     var stopped = false;
     try {
       await for (final line in response.body.transform(const LineSplitter())) {
@@ -727,11 +759,24 @@ final class ProviderModelGateway
           continue;
         }
         text.write(event.delta);
-        if (event.toolId != null) {
-          toolId = event.toolId;
-          toolName = event.toolName;
+        if (event.toolName != null) {
+          final buffer = _AnthropicToolBuffer(
+            id: event.toolId,
+            name: event.toolName!,
+          );
+          toolBuffers.add(buffer);
+          final blockIndex = event.blockIndex;
+          if (blockIndex != null) {
+            toolBuffersByIndex[blockIndex] = buffer;
+          }
+          latestToolBuffer = buffer;
+          buffer.input.write(event.toolInputDelta);
+        } else if (event.toolInputDelta.isNotEmpty) {
+          final buffer = event.blockIndex == null
+              ? latestToolBuffer
+              : toolBuffersByIndex[event.blockIndex];
+          buffer?.input.write(event.toolInputDelta);
         }
-        toolInput.write(event.toolInputDelta);
         stopped = event.done || stopped;
       }
     } on Object {
@@ -749,14 +794,16 @@ final class ProviderModelGateway
         message: '模型服务连接在回复完成前中断。',
       );
     }
-    final toolUse = toolId == null || toolName == null
-        ? null
-        : _AnthropicToolUse(
-            id: toolId,
-            name: toolName,
-            inputJson: toolInput.toString(),
-          );
-    return _AnthropicTurn(text: text.toString(), toolUse: toolUse);
+    final toolUses = <_AnthropicToolUse>[
+      for (final buffer in toolBuffers)
+        if (buffer.id != null)
+          _AnthropicToolUse(
+            id: buffer.id!,
+            name: buffer.name,
+            inputJson: buffer.input.toString(),
+          ),
+    ];
+    return _AnthropicTurn(text: text.toString(), toolUses: toolUses);
   }
 }
 
@@ -772,11 +819,22 @@ final class _AnthropicToolUse {
   final String inputJson;
 }
 
+/// 单个工具内容块的流式参数缓冲：id/name 来自 content_block_start，
+/// input 累加属于同一块的 input_json_delta。
+final class _AnthropicToolBuffer {
+  _AnthropicToolBuffer({required this.id, required this.name});
+
+  final String? id;
+  final String name;
+
+  final input = StringBuffer();
+}
+
 final class _AnthropicTurn {
-  const _AnthropicTurn({required this.text, required this.toolUse});
+  const _AnthropicTurn({required this.text, required this.toolUses});
 
   final String text;
-  final _AnthropicToolUse? toolUse;
+  final List<_AnthropicToolUse> toolUses;
 }
 
 typedef _ProviderRequest = ({
@@ -805,6 +863,7 @@ typedef _ProviderStreamPart = ({String delta, bool done});
 typedef _AnthropicStreamPart = ({
   String delta,
   bool done,
+  int? blockIndex,
   String? toolId,
   String? toolName,
   String toolInputDelta,
@@ -951,6 +1010,7 @@ _AnthropicStreamPart? _readAnthropicEvent(String line) {
       return (
         delta: '',
         done: true,
+        blockIndex: null,
         toolId: null,
         toolName: null,
         toolInputDelta: '',
@@ -962,6 +1022,7 @@ _AnthropicStreamPart? _readAnthropicEvent(String line) {
         return (
           delta: '',
           done: false,
+          blockIndex: _contentBlockIndex(payload),
           toolId: block['id'] as String?,
           toolName: block['name'] as String?,
           toolInputDelta: input is Map && input.isNotEmpty
@@ -983,6 +1044,7 @@ _AnthropicStreamPart? _readAnthropicEvent(String line) {
             ? ''
             : delta['text'] as String? ?? '',
         done: false,
+        blockIndex: _contentBlockIndex(payload),
         toolId: null,
         toolName: null,
         toolInputDelta: delta['type'] == 'input_json_delta'
@@ -992,6 +1054,13 @@ _AnthropicStreamPart? _readAnthropicEvent(String line) {
     default:
       return null;
   }
+}
+
+/// Anthropic SSE 的内容块序号：个别兼容服务可能省略 index，此时返回
+/// null，由累计方退化为「追加到最近开始的工具块」。
+int? _contentBlockIndex(Map<String, Object?> payload) {
+  final index = payload['index'];
+  return index is int ? index : null;
 }
 
 bool _usesArkAgentPlan(String baseUrl) {

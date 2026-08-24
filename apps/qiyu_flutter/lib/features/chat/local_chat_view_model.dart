@@ -69,11 +69,18 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool get waiting => _waiting;
   String get streamingText => _streamingText;
   bool get hostStopped => _hostAvailable == false;
-  bool get hasLocalFallback => _messages.any(
-    (message) =>
-        message.speaker == LocalChatSpeaker.qiyu &&
-        message.source == ReplySource.local,
-  );
+
+  /// 「本地规则回复」标识只描述最近一次已完成的栖语回复：最后一条
+  /// 栖语消息来自本地规则才显示；之后模型恢复正常即消失。流式等待
+  /// 与半句候选不进 [_messages]，天然保持上一次的状态。
+  bool get hasLocalFallback {
+    for (final message in _messages.reversed) {
+      if (message.speaker == LocalChatSpeaker.qiyu) {
+        return message.source == ReplySource.local;
+      }
+    }
+    return false;
+  }
 
   /// 本轮用户 turn 的判定与失败回退：乐观插入去重、accepted 去重与
   /// 异常清理共用同一口径。

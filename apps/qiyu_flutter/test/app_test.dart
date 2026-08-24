@@ -76,6 +76,99 @@ void main() {
     await _returnToHome(tester);
   });
 
+  testWidgets('历史含本地回复但最后一条是模型回复时不显示本地规则标识', (
+    tester,
+  ) async {
+    final gateway = _FakeLocalChatGateway(
+      restored: const LocalChatSnapshot(
+        sessionId: 'session-1',
+        messages: [
+          LocalChatMessage(
+            requestId: 'old-1',
+            speaker: LocalChatSpeaker.user,
+            text: '我回来了',
+          ),
+          LocalChatMessage(
+            requestId: 'old-1',
+            speaker: LocalChatSpeaker.qiyu,
+            text: '嗯',
+            source: ReplySource.local,
+            fallbackReason: FallbackReason.noLlmConfig,
+          ),
+          LocalChatMessage(
+            requestId: 'old-2',
+            speaker: LocalChatSpeaker.user,
+            text: '后来呢',
+          ),
+          LocalChatMessage(
+            requestId: 'old-2',
+            speaker: LocalChatSpeaker.qiyu,
+            text: '后来好多了',
+            source: ReplySource.llm,
+          ),
+        ],
+      ),
+    );
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      autoStart: false,
+    );
+    await viewModel.initialize();
+
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: viewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
+
+    expect(find.text('我回来了'), findsOneWidget);
+    expect(find.text('后来好多了'), findsOneWidget);
+    expect(find.text('本地规则回复'), findsNothing);
+
+    await _returnToHome(tester);
+  });
+
+  testWidgets('同一会话内先本地降级后模型恢复正常则隐藏标识', (tester) async {
+    final gateway = _FakeLocalChatGateway(
+      replySources: const [ReplySource.local, ReplySource.llm],
+    );
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      autoStart: false,
+      requestIdFactory: () => 'fallback-request',
+    );
+    await viewModel.initialize();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: viewModel,
+        onboardingViewModel: await _completedOnboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
+
+    // 第一轮走本地规则降级：标识出现。
+    await tester.enterText(find.byKey(const Key('chat-input')), '有点累');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    expect(gateway.sentTexts, ['有点累']);
+    expect(find.text('咋了'), findsOneWidget);
+    expect(find.text('本地规则回复'), findsOneWidget);
+
+    // 第二轮模型恢复正常：最近一次已完成回复来自模型，标识消失。
+    await tester.enterText(find.byKey(const Key('chat-input')), '那继续说说');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    expect(gateway.sentTexts, ['有点累', '那继续说说']);
+    expect(find.text('咋了'), findsNWidgets(2));
+    expect(find.text('本地规则回复'), findsNothing);
+
+    await _returnToHome(tester);
+  });
+
   testWidgets('renders Qiyu replies as markdown but keeps user input plain', (
     tester,
   ) async {
@@ -801,6 +894,7 @@ final class _FakeLocalChatGateway implements StreamingLocalChatGateway {
     ),
     this.sendError,
     this.failuresRemaining = 0,
+    this.replySources = const [ReplySource.local],
   });
 
   final LocalChatSnapshot restored;
@@ -808,6 +902,10 @@ final class _FakeLocalChatGateway implements StreamingLocalChatGateway {
   final List<String> sentRequestIds = [];
   final Object? sendError;
   int failuresRemaining;
+
+  /// 每次发送对应的完成来源（超出后沿用最后一个），供降级→恢复的
+  /// 连续轮次测试。
+  final List<ReplySource> replySources;
 
   @override
   Future<LocalChatSnapshot> restore({String? sessionId}) async => restored;
@@ -833,6 +931,10 @@ final class _FakeLocalChatGateway implements StreamingLocalChatGateway {
       failuresRemaining -= 1;
       throw error;
     }
+    final source = switch (sentTexts.length - 1) {
+      final index when index < replySources.length => replySources[index],
+      _ => replySources.last,
+    };
     yield LocalChatDeliveryEvent(
       kind: LocalChatEventKind.accepted,
       requestId: requestId,
@@ -855,8 +957,10 @@ final class _FakeLocalChatGateway implements StreamingLocalChatGateway {
     yield LocalChatDeliveryEvent(
       kind: LocalChatEventKind.state,
       requestId: requestId,
-      source: ReplySource.local,
-      fallbackReason: FallbackReason.noLlmConfig,
+      source: source,
+      fallbackReason: source == ReplySource.local
+          ? FallbackReason.noLlmConfig
+          : null,
     );
     yield LocalChatDeliveryEvent(
       kind: LocalChatEventKind.done,
