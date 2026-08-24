@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) and other coding age
 
 - 根目录：`栖语产品灵魂.md`（产品目标与人格基调）、`栖语目标达成效果.md`（体验验收判准）、`栖语机制想法.md`、`栖语还存在的问题.md`、`栖语启动.md`（运行说明）。
 - `栖语system prompt/`：可注入提示词模块——人格宪法、硬规则与优先级（输出契约/首响速度/事实来源优先级/安全与专业边界）、Memory注入、每日状态包、自我世界、总览、具体实现（装配图，ticket T11 定稿）。
-- `栖语记忆/`：记忆方案定稿——Memory（五层）、long-memory、open-loop、Dream（每周一次、晚安后、距上次 ≥7 天）、checkpoint、PersonaTree（五分支真树）。
+- `栖语记忆/`：记忆方案定稿——Memory（五层）、long-memory、open-loop、Dream（晚安后、距上次 ≥3 天）、checkpoint、PersonaTree（五分支真树）。
 - `设计闭环/`：设计地图与 tickets T01–T27，每张 ticket 的 Resolution 即定稿答案。
 
 对齐规则：

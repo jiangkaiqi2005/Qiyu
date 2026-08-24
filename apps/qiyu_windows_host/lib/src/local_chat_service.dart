@@ -793,7 +793,7 @@ final class LocalChatService {
       );
       _scheduleMonthlyCompression();
       // Dream 排在补归档与月压缩之后：只读 finalized 材料与最新月摘要。
-      // 资格（晚安 + 距上次成功 ≥7 天）在 DreamService 内复查。
+      // 资格（晚安 + 距上次成功 ≥3 天）在 DreamService 内复查。
       _scheduleDream(bedtime: true);
     } else if (dateChanged) {
       _runFinalization(

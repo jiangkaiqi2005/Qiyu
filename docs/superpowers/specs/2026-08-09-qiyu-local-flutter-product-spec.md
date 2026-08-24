@@ -30,7 +30,7 @@ iOS 与 Android 后续使用同一 Flutter 界面、纯 Dart 行为核心、记�
 
 栖语运行时采用受限伪 Agent 模型：大模型可以随回复提出少量白名单内部动作，例如请求记忆检索或标记本轮存在记忆信号；本地运行时负责校验、执行、持久化和失败恢复。模型不得构造任意文件路径、执行系统命令、调用未注册工具或形成无人监督的循环。用户始终只看到栖语的自然回复。
 
-记忆以纯 Markdown 文件作为事实与投影载体，不引入关系数据库、向量数据库、RAG 或 embedding。每轮原始对话先脱敏写入 sessions；对话中增量形成 episodes 和 checkpoint；日终归档重建近日状态并维护 open-loop、relationship、索引和 PersonaTree 中间理解；新月首次对话生成月摘要；Dream 只在晚安后且距上次至少 7 天时执行深度重组。任何慢整理都不得阻塞首个可见回应。
+记忆以纯 Markdown 文件作为事实与投影载体，不引入关系数据库、向量数据库、RAG 或 embedding。每轮原始对话先脱敏写入 sessions；对话中增量形成 episodes 和 checkpoint；日终归档重建近日状态并维护 open-loop、relationship、索引和 PersonaTree 中间理解；新月首次对话生成月摘要；Dream 只在晚安后且距上次至少 3 天时执行深度重组。任何慢整理都不得阻塞首个可见回应。
 
 产品保持栖语的最高行为原则：一致性高于聪明；默认少说；不使用客服式共情；关系变深后才调侃、翻旧账和制造微摩擦；安全边界优先；记忆的价值体现在自然使用，而不是展示记忆能力。晚安类输入正常交给模型结合语境回应，不用固定话术强制结束对话。
 
@@ -270,7 +270,7 @@ iOS 与 Android 后续使用同一 Flutter 界面、纯 Dart 行为核心、记�
 - 随手记：回复后每四至六轮或出现明显记忆信号时，更新当天 episode、checkpoint 和画像相关叶指针。
 - 日终归档：晚安、检测到日期切换或启动发现 finalized:false 时，重建 daily-state，更新 open-loop、relationship、索引和 PersonaTree 中间理解，最后置 finalized:true。
 - 月压缩：进入新月份的第一次对话时，压缩上月标记为 keep:month 的 episode 条目并生成不超过 800 字的月摘要；每日文件永久保留。
-- Dream：只在晚安后检查；仅当距上次成功 Dream 至少 7 天时运行。漏跑时可在下次启动或空闲补跑，但不得绕过 7 天最小间隔。
+- Dream：只在晚安后检查；仅当距上次成功 Dream 至少 3 天时运行。漏跑时可在下次启动或空闲补跑，但不得绕过 3 天最小间隔。
 - 动作二至五都不得阻塞首个可见回应。
 - 未配置模型、无网络或 Provider 失败时，语义整理任务保持 pending；不能用未经证明的本地猜测生成长期记忆。
 
@@ -348,7 +348,7 @@ iOS 与 Android 后续使用同一 Flutter 界面、纯 Dart 行为核心、记�
 - 保留现有 golden cases 作为迁移基准，但不新增 T27 专项记忆行为设计套件。产品实现中出现的真实缺陷仍应增加最小回归测试。
 - MemoryRepository 使用一套合约测试验证目录初始化、sessions 追加、episode 更新、checkpoint、索引、原子替换、Dream 草稿、controls、损坏隔离、恢复和备份导入导出。
 - MemoryRepository 合约测试使用临时目录，不读写用户真实 `.qiyu` 目录。
-- QiyuRuntime 测试使用 fake ModelGateway 和 fake clock，验证五段节奏的触发边界，尤其区分每日归档与最小 7 天 Dream。
+- QiyuRuntime 测试使用 fake ModelGateway 和 fake clock，验证五段节奏的触发边界，尤其区分每日归档与最小 3 天 Dream。
 - ModelGateway 使用注入的 HTTP client 验证 OpenAI-compatible、Anthropic 与 Ollama 请求、流式解析、错误分类、超时、取消和敏感信息脱敏。
 - 伪 Agent 动作协议测试只验证白名单动作能执行、未知动作被拒绝、受控记忆被过滤和可见回复不泄露内部指令。
 - 本机宿主进行黑盒接口测试：只能绑定回环地址、拒绝错误 Host/Origin/CSRF、掩码 Key、限制请求体、禁止目录穿越、不返回真实文件路径。

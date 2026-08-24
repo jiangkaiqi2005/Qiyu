@@ -232,9 +232,22 @@ void main() {
       expect(dreamJson['pending'], isFalse);
       expect(dreamJson['eligible'], isFalse);
 
-      // 三天前刚成功：间隔未满，即使配置了 Provider 也不合格。
+      // 两天前刚成功：间隔未满（2 < 3），即使配置了 Provider 也不合格。
       await File(path.join(memoryDirectory, 'dream', 'state.md'))
           .create(recursive: true);
+      await File(path.join(memoryDirectory, 'dream', 'state.md'))
+          .writeAsString(_encodedDreamState(lastSuccess: DateTime(2026, 8, 12)));
+      snapshot = await service(
+        dreamService: dream,
+        providerConfiguredReader: () async => true,
+      ).snapshot();
+      dreamJson = snapshot['dream']! as Map<String, Object?>;
+      expect(dreamJson['daysSinceLastSuccess'], 2);
+      expect(dreamJson['intervalSatisfied'], isFalse);
+      expect(dreamJson['providerConfigured'], isTrue);
+      expect(dreamJson['eligible'], isFalse);
+
+      // 三天前成功：间隔已满（3 >= 3）且配置齐全 → 合格。
       await File(path.join(memoryDirectory, 'dream', 'state.md'))
           .writeAsString(_encodedDreamState(lastSuccess: DateTime(2026, 8, 11)));
       snapshot = await service(
@@ -243,19 +256,7 @@ void main() {
       ).snapshot();
       dreamJson = snapshot['dream']! as Map<String, Object?>;
       expect(dreamJson['daysSinceLastSuccess'], 3);
-      expect(dreamJson['intervalSatisfied'], isFalse);
-      expect(dreamJson['providerConfigured'], isTrue);
-      expect(dreamJson['eligible'], isFalse);
-
-      // 八天前成功：间隔已满且配置齐全 → 合格。
-      await File(path.join(memoryDirectory, 'dream', 'state.md'))
-          .writeAsString(_encodedDreamState(lastSuccess: DateTime(2026, 8, 6)));
-      snapshot = await service(
-        dreamService: dream,
-        providerConfiguredReader: () async => true,
-      ).snapshot();
-      dreamJson = snapshot['dream']! as Map<String, Object?>;
-      expect(dreamJson['daysSinceLastSuccess'], 8);
+      expect(dreamJson['intervalSatisfied'], isTrue);
       expect(dreamJson['eligible'], isTrue);
     });
 

@@ -11,7 +11,7 @@ Ticket 26 结束迁移期。当前产品入口只有 Flutter Web UI、Dart Windo
 | 聊天与安全 | `QiyuBehaviorCore.reply`、`LocalChatService.deliver`、`POST /api/chat` | 离线回复可用；危机/医疗/法律/金融在 Provider 前本地分流；非法候选降级 | `qiyu_behavior_core_test.dart`、`local_chat_service_test.dart` |
 | Provider | `ProviderModelGateway`、`ProviderSettingsService` | OpenAI-compatible、Anthropic、Ollama 的设置、连接测试、流式终止、超时、取消与脱敏错误 | `model_gateway_test.dart`、`provider_settings_service_test.dart` |
 | Markdown 记忆 | `MarkdownMemoryRepository`、episode/open-loop/relationship/PersonaTree 服务 | sessions 脱敏追加，episode、热层、controls 与索引落盘并跨重启恢复 | 对应 repository、episode、controls、relationship、persona 合约测试 |
-| Dream | `DreamService` 与聊天后的后台任务链 | 只有晚安且距上次成功至少 7 天才重组；草稿通过四关后原子采用，失败保持 pending | `dream_test.dart`、`local_chat_service_test.dart` 的 Dream 接线用例 |
+| Dream | `DreamService` 与聊天后的后台任务链 | 只有晚安且距上次成功至少 3 天才重组；草稿通过四关后原子采用，失败保持 pending | `dream_test.dart`、`local_chat_service_test.dart` 的 Dream 接线用例 |
 | 历史 | Host history API、Flutter History client/view | 按日查看本机 sessions，刷新和宿主重启后仍能恢复 | `local_data_service_test.dart`、Flutter history tests |
 | 设置与凭据 | Provider config repository（provider.json 含 Key）、Windows Credential Manager 只读回退、Flutter Settings | 页面只见掩码；替换/忘记 Key；切换 scope 不复用旧 Key | provider config/settings/credential tests 与候选包重启验收 |
 | 备份与恢复 | `MemoryBackupService`、backup API、Flutter backup client | 导出 Markdown 快照；导入先预览与校验；可回滚；损坏先隔离再恢复 | `memory_backup_test.dart`、`memory_recovery_test.dart`、候选包备份恢复验收 |

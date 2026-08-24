@@ -159,7 +159,7 @@ void main() {
             'lastSuccessAt': '2026-08-11T16:00:00.000Z',
             'daysSinceLastSuccess': 8,
             'pending': false,
-            'minIntervalDays': 7,
+            'minIntervalDays': 3,
             'intervalSatisfied': true,
             'providerConfigured': true,
             'eligible': true,

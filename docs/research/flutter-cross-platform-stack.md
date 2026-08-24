@@ -15,7 +15,7 @@
 2. Android/iOS 在 App 沙盒中维护真实 `.md` 目录；电脑端由本机 Dart 程序维护用户可备份的真实 `.md` 目录。浏览器只负责呈现，不持有记忆事实源。
 3. Provider 与用户自己的 API Key 持续保存在本机：移动端进 Keychain/Keystore；电脑端由本机程序使用操作系统安全存储或受限本地配置持有，浏览器页面不直接接触明文 Key。
 4. 模型请求由移动 App 或电脑本机 Dart 程序直连 OpenAI-compatible、Anthropic 或 Ollama；电脑 Web 页面只调用 `127.0.0.1`，因此不受模型端点浏览器 CORS 限制。
-5. 日终归档与 Dream 是两个不同周期：日终归档按跨日/晚安/启动补扫执行；Dream 只在晚安后检查且距上次至少 7 天时运行，漏跑才在下次启动或空闲补跑。
+5. 日终归档与 Dream 是两个不同周期：日终归档按跨日/晚安/启动补扫执行；Dream 只在晚安后检查且距上次至少 3 天时运行，漏跑才在下次启动或空闲补跑。
 
 Flutter 官方将 PWA、SPA 和移动应用的浏览器交付列为 Flutter Web 的合适场景，栖语属于应用型 SPA。[Flutter Web 支持](https://docs.flutter.dev/platform-integration/web)
 
@@ -113,7 +113,7 @@ CORS 是浏览器实施的限制；本架构由移动 App 或电脑本机 Dart �
 任何平台都不能把“用户退出应用”当可靠事件：移动系统可直接杀进程，本机进程也可能异常结束。因此：
 
 - 每轮立即落盘原始证据与 `pending-dream.json`/Markdown frontmatter checkpoint。
-- 日终归档用“跨日、晚安、启动补扫”触发；Dream 只在晚安后且距上次 Dream 至少 7 天时触发。
+- 日终归档用“跨日、晚安、启动补扫”触发；Dream 只在晚安后且距上次 Dream 至少 3 天时触发。
 - App 启动/恢复时先扫描 pending task，满足条件就补跑；写 `memory.draft.md`，校验成功后原子替换。
 - Dream 调模型时允许取消和续跑；没有网络、Key 或 Ollama 不可达就保持 pending，不破坏当前记忆。
 
@@ -123,7 +123,7 @@ CORS 是浏览器实施的限制；本架构由移动 App 或电脑本机 Dart �
 - Android WorkManager 是官方推荐的持久后台工作 API，但执行时间由系统和约束决定，并有运行时间上限；可用成熟的 Flutter Community [`workmanager`](https://pub.dev/packages/workmanager) 作为机会性加速。[Android WorkManager](https://developer.android.com/reference/androidx/work/WorkManager.html)
 - iOS 的 `BGProcessingTask`/`BGAppRefreshTask` 由系统决定何时启动；短 refresh 只有有限运行时间，不能承诺固定午夜执行。[Apple Background Tasks](https://developer.apple.com/documentation/BackgroundTasks/choosing-background-strategies-for-your-app)
 
-首版推荐**不引入 `workmanager`**：先把前台补跑、checkpoint、幂等和性能做好。日终归档可以补跑；Dream 的最小间隔始终是 7 天，补跑不得把它变成每日任务。
+首版推荐**不引入 `workmanager`**：先把前台补跑、checkpoint、幂等和性能做好。日终归档可以补跑；Dream 的最小间隔始终是 3 天，补跑不得把它变成每日任务。
 
 ## 7. 推荐实施顺序
 

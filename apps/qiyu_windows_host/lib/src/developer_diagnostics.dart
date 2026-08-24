@@ -305,7 +305,7 @@ final class DeveloperDiagnosticsService {
     'unreadableDays': episodes.unreadableBeforeToday,
   };
 
-  /// Dream 资格事实：日差与七天间隔由 DreamService 按资格复查同
+  /// Dream 资格事实：日差与 3 天间隔由 DreamService 按资格复查同
   /// 口径给出；Provider 配置是诊断侧补充的事实。
   Future<Map<String, Object?>> _dreamHealth(bool providerConfigured) async {
     final dream = dreamService;

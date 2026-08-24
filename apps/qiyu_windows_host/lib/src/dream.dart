@@ -17,8 +17,8 @@ import 'persona_tree.dart';
 import 'provider_settings_service.dart';
 
 /// Dream 最小间隔（天）：距上次成功 Dream 的日历日差至少达到该值才
-/// 具备执行资格（T04/T13 定稿取保守值 7 天；频率越高漂移风险越大）。
-const dreamMinIntervalDays = 7;
+/// 具备执行资格（T04/T13 定稿后于 2026-08-24 调整为 3 天，兼顾敏锐度与防漂移）。
+const dreamMinIntervalDays = 3;
 
 /// long-memory 预算上限（runes）。热层分块预算 800-1500 tokens
 /// （T03 定稿），保守按 1 rune ≈ 1 token，写入关取上限 1500。

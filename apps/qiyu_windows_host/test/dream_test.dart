@@ -65,7 +65,7 @@ void main() {
     expect(await pipeline.listEpisodeDates(), ['2026-08-14', '2026-08-15']);
   });
 
-  test('less than seven days later the bedtime dream stays ineligible', () async {
+  test('less than three days later the bedtime dream stays ineligible', () async {
     final directory = await Directory.systemTemp.createTemp(
       'qiyu-dream-interval-test-',
     );
@@ -92,9 +92,9 @@ void main() {
       '${directory.path}/long-memory.md',
     ).readAsStringSync();
 
-    // 三天后（少于七天）：不具备资格，模型绝不被调用。
-    now = DateTime(2026, 8, 18, 23, 10);
-    await _seedFinalizedDay(pipeline, '2026-08-18', '用户聊了新同事');
+    // 两天后（少于三天）：不具备资格，模型绝不被调用。
+    now = DateTime(2026, 8, 17, 23, 10);
+    await _seedFinalizedDay(pipeline, '2026-08-17', '用户聊了新同事');
     final tooSoon = await dream.run(bedtime: true);
     expect(tooSoon.status, DreamStatus.notDue);
     expect(client.calls, hasLength(1));
@@ -106,12 +106,12 @@ void main() {
       acceptedLongMemory,
     );
 
-    // 正好第七天：具备资格并接纳。证据白名单从上次成功之后算起，
+    // 正好第三天：具备资格并接纳。证据白名单从上次成功之后算起，
     // 只能引用新递过去的整理日期。
-    now = DateTime(2026, 8, 22, 23, 5);
+    now = DateTime(2026, 8, 18, 23, 5);
     client.completions.add(
       ModelCompletion.reply(_candidate([
-        _item('人与关系', '用户和新同事相处得来', ['2026-08-18']),
+        _item('人与关系', '用户和新同事相处得来', ['2026-08-17']),
       ])),
     );
     final due = await dream.run(bedtime: true);
@@ -531,8 +531,8 @@ void main() {
       '${directory.path}/dream/state.md',
     ).readAsStringSync();
 
-    // 之后三天日终归档照常执行。
-    for (final day in ['2026-08-16', '2026-08-17', '2026-08-18']) {
+    // 之后两天日终归档照常执行。
+    for (final day in ['2026-08-16', '2026-08-17']) {
       await _seedUnfinalizedDay(pipeline, day, '当天聊了别的事');
     }
     final finalization = DailyFinalizationService(
@@ -540,13 +540,13 @@ void main() {
       episodePipeline: pipeline,
       clock: () => now,
     );
-    for (final day in ['2026-08-16', '2026-08-17', '2026-08-18']) {
+    for (final day in ['2026-08-16', '2026-08-17']) {
       now = DateTime(2026, 8, int.parse(day.substring(8)), 23, 20);
       final outcome = await finalization.finalizeDay(day);
       expect(outcome.status, FinalizationStatus.finalized);
     }
 
-    // Dream 状态一字未变，晚安触发仍被七天间隔挡住。
+    // Dream 状态一字未变，晚安触发仍被三天间隔挡住（两天后仍未满三天）。
     expect(
       File('${directory.path}/dream/state.md').readAsStringSync(),
       stateAfterSuccess,
@@ -709,25 +709,25 @@ void main() {
     expect(facts.pending, isFalse);
     expect(facts.intervalSatisfied, isTrue);
 
-    // 三天前成功且有待补跑：间隔未满，pending 原样透传。
+    // 两天前成功且有待补跑：间隔未满（2 < 3），pending 原样透传。
     File('${directory.path}/dream/state.md')
       ..createSync(recursive: true)
       ..writeAsStringSync(
-        _encodedState(lastSuccess: DateTime(2026, 8, 11), pending: true),
+        _encodedState(lastSuccess: DateTime(2026, 8, 12), pending: true),
         encoding: utf8,
       );
     facts = await dream.healthFacts();
-    expect(facts.daysSinceLastSuccess, 3);
+    expect(facts.daysSinceLastSuccess, 2);
     expect(facts.intervalSatisfied, isFalse);
     expect(facts.pending, isTrue);
 
-    // 八天前成功：间隔已满。
+    // 三天前成功：间隔已满（3 >= 3）。
     File('${directory.path}/dream/state.md').writeAsStringSync(
-      _encodedState(lastSuccess: DateTime(2026, 8, 6)),
+      _encodedState(lastSuccess: DateTime(2026, 8, 11)),
       encoding: utf8,
     );
     facts = await dream.healthFacts();
-    expect(facts.daysSinceLastSuccess, 8);
+    expect(facts.daysSinceLastSuccess, 3);
     expect(facts.intervalSatisfied, isTrue);
   });
 
@@ -876,7 +876,7 @@ void main() {
     );
     expect(state['pending'], isTrue);
 
-    // 成功之后七天内的晚安不再登记：间隔未到。
+    // 成功之后三天内的晚安不再登记：间隔未到。
     final accepted = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
@@ -888,7 +888,7 @@ void main() {
       clock: () => now,
     );
     expect((await accepted.run(bedtime: true)).status, DreamStatus.accepted);
-    now = DateTime(2026, 8, 18, 23, 10);
+    now = DateTime(2026, 8, 17, 23, 10);
     await dream.markBedtime();
     state = _decodeStateFile(
       File('${directory.path}/dream/state.md').readAsStringSync(),
