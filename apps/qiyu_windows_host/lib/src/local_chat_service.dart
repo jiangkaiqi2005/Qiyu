@@ -332,8 +332,7 @@ final class LocalChatService {
   }) {
     final trimmedRequestId = requestId.trim();
     final cancellation = _DeliveryCancellation();
-    late final StreamController<LocalChatDeliveryEvent> controller;
-    controller = StreamController<LocalChatDeliveryEvent>(
+    final controller = StreamController<LocalChatDeliveryEvent>(
       onCancel: cancellation.cancel,
     );
     _serialized(() async {

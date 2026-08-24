@@ -22,10 +22,11 @@ final class LocalChatViewModel extends ChangeNotifier {
     Duration monitorInterval = const Duration(seconds: 2),
   }) : _hostConnectionProbe = hostConnectionProbe ?? HttpHostConnectionProbe(),
        _requestIdFactory = requestIdFactory ?? _defaultRequestId,
+       // ignore: prefer_initializing_formals
+       _ttsSettingsGateway = ttsSettingsGateway,
        // 缺省独立创建朗读网关（与聊天网关同构；widget 测试注入桩）。
        voiceOutput =
            voiceOutput ?? VoiceOutputController(HttpLocalChatGateway()) {
-    _ttsSettingsGateway = ttsSettingsGateway;
     if (autoStart) {
       unawaited(initialize());
       _monitorTimer = Timer.periodic(
@@ -38,7 +39,7 @@ final class LocalChatViewModel extends ChangeNotifier {
   final StreamingLocalChatGateway _gateway;
   final HostConnectionProbe _hostConnectionProbe;
   final RequestIdFactory _requestIdFactory;
-  late final TtsSettingsGateway? _ttsSettingsGateway;
+  final TtsSettingsGateway? _ttsSettingsGateway;
 
   /// 语音朗读播放队列（ADR 0002）：view 观察它渲染「正在朗读」指示与
   /// 停止按钮。
