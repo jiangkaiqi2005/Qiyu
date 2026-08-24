@@ -5,3 +5,9 @@ qiyu.config.local.json
 
 # Local ticket acceptance workspaces. Already tracked evidence stays versioned.
 .scratch/ticket*/
+
+# Mimosa security-scan runtime artifacts (hooks, ledgers, reports) at any depth.
+.mimosa/
+
+# Codebase-memory knowledge graph artifacts, refreshed by the local indexer.
+.codebase-memory/
