@@ -71,11 +71,12 @@ final class OpenAiSpeechGateway implements TtsSynthesisGateway {
     ensureTtsOutboundAllowed(uri);
     final voice = config.voice?.trim();
     final body = jsonEncode({
+      if (config.extraParams != null) ...config.extraParams!,
       'model': config.model.trim(),
       'input': text,
       'voice': voice == null || voice.isEmpty ? defaultVoice : voice,
       'response_format': 'mp3',
-      'speed': ?config.speed,
+      if (config.speed != null) 'speed': config.speed,
     });
     final ProviderBytesHttpResponse response;
     try {

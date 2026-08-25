@@ -1,6 +1,20 @@
 import 'provider_settings_client.dart';
+import 'tts_settings_client.dart' show TtsServiceKind;
 
 const customModelValue = '__custom_model__';
+const customVoiceValue = '__custom_voice__';
+
+final class TtsVoicePreset {
+  const TtsVoicePreset({
+    required this.id,
+    required this.label,
+    this.category,
+  });
+
+  final String id;
+  final String label;
+  final String? category;
+}
 
 final class ProviderPreset {
   const ProviderPreset({
@@ -331,3 +345,91 @@ ProviderCatalogSelection matchProviderSettings(ProviderSettings settings) {
 bool _sameBaseUrl(String left, String right) =>
     left.trim().replaceFirst(RegExp(r'/+$'), '') ==
     right.trim().replaceFirst(RegExp(r'/+$'), '');
+
+/// 豆包语音合成预设音色库（含标准音色与常用方言）。
+const doubaoTtsVoicePresets = <TtsVoicePreset>[
+  // 标准音色
+  TtsVoicePreset(
+    id: 'zh_female_vv_uranus_bigtts',
+    label: '标准女声（灿灿）',
+    category: '通用',
+  ),
+  TtsVoicePreset(
+    id: 'zh_female_gaolengyujie_uranus_bigtts',
+    label: '高冷御姐',
+    category: '通用',
+  ),
+  TtsVoicePreset(
+    id: 'zh_male_chunhou_uranus_bigtts',
+    label: '醇厚男声',
+    category: '通用',
+  ),
+  TtsVoicePreset(
+    id: 'zh_female_shuangkuainvhai_uranus_bigtts',
+    label: '爽快女声',
+    category: '通用',
+  ),
+  // 地方方言
+  TtsVoicePreset(
+    id: 'zh_female_sichuan_uranus_bigtts',
+    label: '四川话',
+    category: '方言',
+  ),
+  TtsVoicePreset(
+    id: 'zh_female_cantonese_uranus_bigtts',
+    label: '粤语',
+    category: '方言',
+  ),
+  TtsVoicePreset(
+    id: 'zh_female_dongbei_uranus_bigtts',
+    label: '东北话',
+    category: '方言',
+  ),
+  TtsVoicePreset(
+    id: 'zh_female_henan_uranus_bigtts',
+    label: '河南话',
+    category: '方言',
+  ),
+  TtsVoicePreset(
+    id: 'zh_female_shanxi_uranus_bigtts',
+    label: '陕西话',
+    category: '方言',
+  ),
+  TtsVoicePreset(
+    id: 'zh_female_tianjin_uranus_bigtts',
+    label: '天津话',
+    category: '方言',
+  ),
+  TtsVoicePreset(
+    id: 'zh_female_shandong_uranus_bigtts',
+    label: '山东话',
+    category: '方言',
+  ),
+  TtsVoicePreset(
+    id: 'zh_female_minnan_uranus_bigtts',
+    label: '闽南话',
+    category: '方言',
+  ),
+  TtsVoicePreset(
+    id: 'zh_female_wanwanxiaohe_moon_bigtts',
+    label: '台湾普通话',
+    category: '方言',
+  ),
+];
+
+/// OpenAI 兼容语音合成预设音色库。
+const openAiTtsVoicePresets = <TtsVoicePreset>[
+  TtsVoicePreset(id: 'alloy', label: 'Alloy（中性平衡）'),
+  TtsVoicePreset(id: 'echo', label: 'Echo（温和男声）'),
+  TtsVoicePreset(id: 'fable', label: 'Fable（英音男声）'),
+  TtsVoicePreset(id: 'onyx', label: 'Onyx（深沉男声）'),
+  TtsVoicePreset(id: 'nova', label: 'Nova（亲切女声）'),
+  TtsVoicePreset(id: 'shimmer', label: 'Shimmer（清亮女声）'),
+];
+
+/// 获取对应服务协议的预设音色列表。
+List<TtsVoicePreset> ttsVoicePresetsFor(TtsServiceKind provider) =>
+    switch (provider) {
+      TtsServiceKind.volcTts => doubaoTtsVoicePresets,
+      TtsServiceKind.openAiCompatible => openAiTtsVoicePresets,
+    };

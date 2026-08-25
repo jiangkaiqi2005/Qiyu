@@ -237,6 +237,56 @@ void main() {
     expect(sent.headers['x-qiyu-csrf'], 'csrf-1');
     expect(jsonDecode(sent.body), {'enabled': false});
   });
+
+  test('extraParams：读取与保存往返正确，请求携带 JSON 对象', () async {
+    final requests = <http.Request>[];
+    final client = MockClient((request) async {
+      requests.add(request);
+      return switch (request.url.path) {
+        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+        '/api/provider/tts' => _jsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'volc_tts',
+          'baseUrl':
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          'model': 'seed-tts-2.0',
+          'extraParams': {
+            'audio_params': {'sample_rate': 16000},
+            'additions': {'explicit_dialect': 'sichuan'},
+          },
+        }, 200),
+        _ => http.Response('not found', 404),
+      };
+    });
+    final gateway = HttpTtsSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    final read = await gateway.read();
+    expect(read.extraParams, {
+      'audio_params': {'sample_rate': 16000},
+      'additions': {'explicit_dialect': 'sichuan'},
+    });
+
+    final saved = await gateway.save(
+      const TtsSettingsDraft(
+        provider: TtsServiceKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        extraParams: {
+          'audio_params': {'sample_rate': 16000},
+        },
+      ),
+    );
+    expect(saved.extraParams, isNotNull);
+    final saveBody = jsonDecode(requests.last.body) as Map<String, Object?>;
+    expect(saveBody['extraParams'], {
+      'audio_params': {'sample_rate': 16000},
+    });
+  });
 }
 
 http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {

@@ -598,4 +598,58 @@ void main() {
       throwsA(isA<ProviderConfigException>()),
     );
   });
+
+  test('tts 段 extraParams 支持读取、保存与别名兼容', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-tts-extra-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+
+    await repository.saveTts(
+      const TtsConfig(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+        extraParams: {
+          'audio_params': {'sample_rate': 16000},
+          'additions': {'explicit_dialect': 'sichuan'},
+        },
+      ),
+    );
+
+    final loaded = (await repository.loadTts())!;
+    expect(loaded.extraParams, {
+      'audio_params': {'sample_rate': 16000},
+      'additions': {'explicit_dialect': 'sichuan'},
+    });
+
+    // 兼容 extra_params 下划线手写
+    await File(filePath).writeAsString('''
+{
+  "tts": {
+    "baseUrl": "https://tts.example.com/v1",
+    "model": "tts-test",
+    "extra_params": {
+      "response_format": "wav"
+    }
+  }
+}
+''');
+    final loadedAlias = (await repository.loadTts())!;
+    expect(loadedAlias.extraParams, {'response_format': 'wav'});
+
+    // 非法 extraParams 格式拒绝
+    await File(filePath).writeAsString('''
+{
+  "tts": {
+    "baseUrl": "https://tts.example.com/v1",
+    "model": "tts-test",
+    "extraParams": "not-a-map"
+  }
+}
+''');
+    await expectLater(
+      repository.loadTts(),
+      throwsA(isA<ProviderConfigException>()),
+    );
+  });
 }

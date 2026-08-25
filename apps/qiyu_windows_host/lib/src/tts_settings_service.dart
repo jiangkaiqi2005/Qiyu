@@ -93,6 +93,7 @@ final class TtsSettingsService {
     String? voice,
     double? speed,
     bool? autoSpeak,
+    Map<String, Object?>? extraParams,
   }) async {
     final previous = await configRepository.loadTts();
     final config = TtsConfig(
@@ -102,6 +103,7 @@ final class TtsSettingsService {
       voice: _normalizeOptional(voice),
       speed: speed,
       autoSpeak: autoSpeak ?? previous?.autoSpeak ?? true,
+      extraParams: extraParams,
     );
     config.validate();
     final normalizedKey = _normalizeApiKey(apiKey);
@@ -136,6 +138,7 @@ final class TtsSettingsService {
         voice: config.voice,
         speed: config.speed,
         autoSpeak: enabled,
+        extraParams: config.extraParams,
       ),
     );
     return read();
@@ -159,6 +162,7 @@ final class TtsSettingsService {
     String? apiKey,
     String? voice,
     double? speed,
+    Map<String, Object?>? extraParams,
   }) async {
     final stored = await configRepository.loadTts();
     final useStoredOptionalSettings = baseUrl == null && model == null;
@@ -184,6 +188,9 @@ final class TtsSettingsService {
           ? _normalizeOptional(voice) ?? stored?.voice
           : _normalizeOptional(voice),
       speed: useStoredOptionalSettings ? speed ?? stored?.speed : speed,
+      extraParams: useStoredOptionalSettings
+          ? extraParams ?? stored?.extraParams
+          : extraParams,
     );
     try {
       config.validate();

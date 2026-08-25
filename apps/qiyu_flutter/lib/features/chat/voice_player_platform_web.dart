@@ -36,9 +36,38 @@ final class WebVoicePlayerPlatform
   }
 
   @override
+  double getInitialVolume() {
+    try {
+      final saved = web.window.localStorage.getItem('qiyu_voice_output_volume');
+      if (saved != null) {
+        final val = double.tryParse(saved);
+        if (val != null && val.isFinite && val >= 0.0 && val <= 1.0) {
+          return val;
+        }
+      }
+    } on Object {
+      // 忽略 localStorage 读取异常
+    }
+    return 1.0;
+  }
+
+  @override
+  void saveVolume(double volume) {
+    try {
+      web.window.localStorage.setItem(
+        'qiyu_voice_output_volume',
+        volume.clamp(0.0, 1.0).toStringAsFixed(2),
+      );
+    } on Object {
+      // 忽略 localStorage 写入异常
+    }
+  }
+
+  @override
   Future<VoicePlayback?> play(
     Uint8List bytes, {
     required String mimeType,
+    double volume = 1.0,
   }) async {
     try {
       final context = _ensureContext();
@@ -58,7 +87,10 @@ final class WebVoicePlayerPlatform
           .toDart
           .timeout(const Duration(seconds: 5));
       final source = activeContext.createBufferSource()..buffer = decoded;
-      source.connect(activeContext.destination);
+      final gainNode = activeContext.createGain();
+      gainNode.gain.value = volume.clamp(0.0, 1.0);
+      source.connect(gainNode);
+      gainNode.connect(activeContext.destination);
 
       final stopped = Completer<void>();
       final durationSeconds = decoded.duration;
@@ -82,7 +114,7 @@ final class WebVoicePlayerPlatform
       }).toJS;
 
       source.start();
-      return _WebVoicePlayback(source, stopped, fallbackTimer);
+      return _WebVoicePlayback(source, gainNode, stopped, fallbackTimer);
     } on Object {
       return null;
     }
@@ -180,15 +212,33 @@ final class WebVoicePlayerPlatform
 }
 
 final class _WebVoicePlayback implements VoicePlayback {
-  _WebVoicePlayback(this._source, this._stopped, this._fallbackTimer);
+  _WebVoicePlayback(
+    this._source,
+    this._gainNode,
+    this._stopped,
+    this._fallbackTimer,
+  );
 
   final web.AudioBufferSourceNode _source;
+  final web.GainNode _gainNode;
   final Completer<void> _stopped;
   final Timer _fallbackTimer;
   bool _released = false;
 
   @override
   Future<void> get done => _stopped.future;
+
+  @override
+  void setVolume(double volume) {
+    if (_released) {
+      return;
+    }
+    try {
+      _gainNode.gain.value = volume.clamp(0.0, 1.0);
+    } on Object {
+      // 忽略音量调节异常
+    }
+  }
 
   @override
   void stop() {

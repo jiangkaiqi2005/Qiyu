@@ -9,10 +9,13 @@ abstract interface class VoicePlayback {
 
   /// 立即停止播放（幂等，停完 done 也会完成）。
   void stop();
+
+  /// 实时调节当前正在播放的音量（0.0 ~ 1.0）。
+  void setVolume(double volume);
 }
 
 /// 语音输出的浏览器能力接缝（与录音平台接缝同构）：Web 构建走真实
-/// HTMLAudioElement + blob URL（播完即 revoke，字节只存在于内存）；
+/// Web Audio API GainNode（播完即释放，字节只存在于内存）；
 /// 其余平台（含 widget 测试环境）按「不支持」如实呈现，调用方按
 /// 「读不出来」降级，不抛异常。
 abstract interface class VoicePlayerPlatform {
@@ -20,7 +23,17 @@ abstract interface class VoicePlayerPlatform {
 
   /// 播放一段完整音频字节。浏览器不支持解码、自动播放被拒或设备
   /// 不可用时返回 null，由调用方决定降级（试听提示、朗读静默跳过）。
-  Future<VoicePlayback?> play(Uint8List bytes, {required String mimeType});
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+    double volume = 1.0,
+  });
+
+  /// 读取持久化的播放音量偏好（0.0 ~ 1.0），缺省 1.0。
+  double getInitialVolume() => 1.0;
+
+  /// 持久化保存播放音量偏好。
+  void saveVolume(double volume) {}
 }
 
 /// 需要浏览器用户手势才能启用有声播放的平台能力。

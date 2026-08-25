@@ -20,22 +20,32 @@ final class TtsSettings {
     this.voice,
     this.speed,
     this.autoSpeak = true,
+    this.extraParams,
   });
 
-  factory TtsSettings.fromJson(Map<String, Object?> json) => TtsSettings(
-    configured: json['configured']! as bool,
-    keySet: json['keySet']! as bool,
-    // 快照 provider 字段缺失或未知值一律按缺省协议呈现（Host 只会回
-    // 已支持的值，防御旧版 Host 的响应）。
-    provider: json['provider'] == 'volc_tts'
-        ? TtsServiceKind.volcTts
-        : TtsServiceKind.openAiCompatible,
-    baseUrl: json['baseUrl'] as String?,
-    model: json['model'] as String?,
-    voice: json['voice'] as String?,
-    speed: (json['speed'] as num?)?.toDouble(),
-    autoSpeak: json['autoSpeak'] == false ? false : true,
-  );
+  factory TtsSettings.fromJson(Map<String, Object?> json) {
+    final rawExtra = json['extraParams'] ?? json['extra_params'];
+    final extraParams = rawExtra is Map
+        ? Map<String, Object?>.from(
+            rawExtra.map((k, v) => MapEntry(k.toString(), v)),
+          )
+        : null;
+    return TtsSettings(
+      configured: json['configured']! as bool,
+      keySet: json['keySet']! as bool,
+      // 快照 provider 字段缺失或未知值一律按缺省协议呈现（Host 只会回
+      // 已支持的值，防御旧版 Host 的响应）。
+      provider: json['provider'] == 'volc_tts'
+          ? TtsServiceKind.volcTts
+          : TtsServiceKind.openAiCompatible,
+      baseUrl: json['baseUrl'] as String?,
+      model: json['model'] as String?,
+      voice: json['voice'] as String?,
+      speed: (json['speed'] as num?)?.toDouble(),
+      autoSpeak: json['autoSpeak'] == false ? false : true,
+      extraParams: extraParams,
+    );
+  }
 
   final bool configured;
   final bool keySet;
@@ -45,6 +55,7 @@ final class TtsSettings {
   final String? voice;
   final double? speed;
   final bool autoSpeak;
+  final Map<String, Object?>? extraParams;
 }
 
 final class TtsSettingsDraft {
@@ -56,6 +67,7 @@ final class TtsSettingsDraft {
     this.voice,
     this.speed,
     this.autoSpeak,
+    this.extraParams,
   });
 
   final TtsServiceKind provider;
@@ -65,6 +77,7 @@ final class TtsSettingsDraft {
   final String? voice;
   final double? speed;
   final bool? autoSpeak;
+  final Map<String, Object?>? extraParams;
 
   Map<String, Object?> toJson() => {
     'provider': switch (provider) {
@@ -77,6 +90,8 @@ final class TtsSettingsDraft {
     if (voice != null && voice!.trim().isNotEmpty) 'voice': voice,
     'speed': ?speed,
     'autoSpeak': ?autoSpeak,
+    if (extraParams != null && extraParams!.isNotEmpty)
+      'extraParams': extraParams,
   };
 }
 

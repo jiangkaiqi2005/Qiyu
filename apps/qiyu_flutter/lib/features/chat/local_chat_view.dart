@@ -264,26 +264,7 @@ class _LocalChatViewState extends State<LocalChatView> {
                             ),
                           const SizedBox(width: 12),
                           if (viewModel.voiceOutputConfigured)
-                            // 朗读一键开关：写 Host 的 tts.autoSpeak，刷新、
-                            // 重启都记住；关掉后纯文字（状态变化经
-                            // viewModel 通知重建）。
-                            IconButton(
-                              key: Key(
-                                viewModel.voiceOutputEnabled
-                                    ? 'voice-output-toggle-on'
-                                    : 'voice-output-toggle-off',
-                              ),
-                              onPressed: () =>
-                                  unawaited(viewModel.toggleVoiceOutput()),
-                              tooltip: viewModel.voiceOutputEnabled
-                                  ? '语音朗读开着，点击安静'
-                                  : '语音朗读关着，点击开启',
-                              icon: Icon(
-                                viewModel.voiceOutputEnabled
-                                    ? Icons.volume_up_rounded
-                                    : Icons.volume_off_rounded,
-                              ),
-                            ),
+                            _VoiceOutputHeaderControl(viewModel: viewModel),
                           IconButton(
                             key: const Key('open-history'),
                             onPressed: () => _pushAwayFromChat('/history'),
@@ -701,6 +682,184 @@ class _LocalChatViewState extends State<LocalChatView> {
               : null,
         );
       },
+    );
+  }
+}
+
+class _VoiceOutputHeaderControl extends StatefulWidget {
+  const _VoiceOutputHeaderControl({required this.viewModel});
+
+  final LocalChatViewModel viewModel;
+
+  @override
+  State<_VoiceOutputHeaderControl> createState() =>
+      _VoiceOutputHeaderControlState();
+}
+
+class _VoiceOutputHeaderControlState extends State<_VoiceOutputHeaderControl> {
+  final _overlayController = OverlayPortalController();
+  final _link = LayerLink();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final viewModel = widget.viewModel;
+    final voiceOutput = viewModel.voiceOutput;
+    return CompositedTransformTarget(
+      link: _link,
+      child: ListenableBuilder(
+        listenable: voiceOutput,
+        builder: (context, _) {
+          final isMuted =
+              !viewModel.voiceOutputEnabled || voiceOutput.volume == 0;
+          final icon = isMuted
+              ? Icons.volume_off_rounded
+              : (voiceOutput.volume < 0.5
+                  ? Icons.volume_down_rounded
+                  : Icons.volume_up_rounded);
+          return OverlayPortal(
+            controller: _overlayController,
+            overlayChildBuilder: (context) {
+              return Stack(
+                children: [
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _overlayController.hide(),
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                  CompositedTransformFollower(
+                    link: _link,
+                    targetAnchor: Alignment.bottomCenter,
+                    followerAnchor: Alignment.topCenter,
+                    offset: const Offset(0, 6),
+                    child: _VolumePopupCard(
+                      viewModel: viewModel,
+                      voiceOutput: voiceOutput,
+                    ),
+                  ),
+                ],
+              );
+            },
+            child: IconButton(
+              key: Key(
+                viewModel.voiceOutputEnabled
+                    ? 'voice-output-toggle-on'
+                    : 'voice-output-toggle-off',
+              ),
+              color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
+              tooltip: viewModel.voiceOutputEnabled
+                  ? '朗读音量与静音调节'
+                  : '语音朗读已关闭，点击开启与调节',
+              icon: Icon(icon),
+              onPressed: () {
+                _overlayController.toggle();
+              },
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _VolumePopupCard extends StatelessWidget {
+  const _VolumePopupCard({
+    required this.viewModel,
+    required this.voiceOutput,
+  });
+
+  final LocalChatViewModel viewModel;
+  final VoiceOutputController voiceOutput;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isMuted = !viewModel.voiceOutputEnabled || voiceOutput.volume == 0;
+    final percent = isMuted ? 0 : (voiceOutput.volume * 100).round();
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: 72,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          boxShadow: [
+            BoxShadow(
+              color: theme.shadowColor.withValues(alpha: 0.25),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              height: 120,
+              width: 32,
+              child: RotatedBox(
+                quarterTurns: 3,
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 6,
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 8,
+                    ),
+                    overlayShape: const RoundSliderOverlayShape(
+                      overlayRadius: 14,
+                    ),
+                    activeTrackColor: theme.colorScheme.primary,
+                    thumbColor: theme.colorScheme.primary,
+                    inactiveTrackColor: theme.colorScheme.surfaceContainer,
+                  ),
+                  child: Slider(
+                    key: const Key('voice-output-volume-slider'),
+                    value: isMuted ? 0.0 : voiceOutput.volume,
+                    min: 0.0,
+                    max: 1.0,
+                    onChanged: (val) {
+                      voiceOutput.setVolume(val);
+                      if (!viewModel.voiceOutputEnabled && val > 0) {
+                        unawaited(viewModel.toggleVoiceOutput());
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '$percent%',
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+                letterSpacing: -0.5,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Divider(height: 1),
+            const SizedBox(height: 2),
+            IconButton(
+              key: const Key('voice-output-popover-mute-button'),
+              iconSize: 22,
+              visualDensity: VisualDensity.compact,
+              tooltip: isMuted ? '解除静音' : '静音',
+              color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
+              icon: Icon(
+                isMuted
+                    ? Icons.volume_off_rounded
+                    : Icons.volume_up_rounded,
+              ),
+              onPressed: () => unawaited(viewModel.toggleVoiceOutput()),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -305,6 +305,32 @@ void main() {
       ),
     );
   });
+
+  test('extraParams 透传保存、快照返回与连接测试透传', () async {
+    final fakeGateway = _FakeTtsGateway(audio: [1, 2, 3]);
+    final service = TtsSettingsService(repository, fakeGateway);
+
+    final snapshot = await service.save(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'tts-test',
+      apiKey: 'secret-tts-key',
+      extraParams: {'response_format': 'wav'},
+    );
+
+    expect(snapshot.config?.extraParams, {'response_format': 'wav'});
+    expect(snapshot.toJson()['extraParams'], {'response_format': 'wav'});
+
+    final testResult = await service.test(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'tts-test',
+      apiKey: 'secret-tts-key',
+      extraParams: {'response_format': 'opus'},
+    );
+
+    expect(testResult.succeeded, isTrue);
+    expect(fakeGateway.called, isTrue);
+    expect(fakeGateway.lastConfig?.extraParams, {'response_format': 'opus'});
+  });
 }
 
 final class _FakeTtsGateway implements TtsSynthesisGateway {

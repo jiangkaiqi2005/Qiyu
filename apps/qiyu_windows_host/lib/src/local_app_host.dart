@@ -659,6 +659,7 @@ final class _LocalAppRequestHandler {
           voice: _optionalSttTextField(payload, 'voice'),
           speed: _ttsSpeedFromPayload(payload),
           autoSpeak: _ttsAutoSpeakFromPayload(payload),
+          extraParams: _ttsExtraParamsFromPayload(payload),
         );
         return Response.ok(
           jsonEncode(settings.toJson()),
@@ -675,6 +676,7 @@ final class _LocalAppRequestHandler {
           apiKey: _apiKeyFromPayload(payload),
           voice: _optionalSttTextField(payload, 'voice'),
           speed: _ttsSpeedFromPayload(payload),
+          extraParams: _ttsExtraParamsFromPayload(payload),
         );
         requestDiagnostics?.record(
           source: RecentRequestSources.providerTest,
@@ -1260,6 +1262,20 @@ bool? _ttsAutoSpeakFromPayload(Map<String, Object?> payload) {
     throw const ProviderConfigException('语音服务配置格式不正确。');
   }
   return value;
+}
+
+/// TTS 自定义高级参数（extraParams）：可选 Map 对象。
+Map<String, Object?>? _ttsExtraParamsFromPayload(
+  Map<String, Object?> payload,
+) {
+  final value = payload['extraParams'] ?? payload['extra_params'];
+  if (value == null) {
+    return null;
+  }
+  if (value is! Map) {
+    throw const ProviderConfigException('语音服务配置格式不正确。');
+  }
+  return value.cast<String, Object?>();
 }
 
 /// 读取二进制请求体（语音转写）：与 JSON 读取同一套限长策略，Content-

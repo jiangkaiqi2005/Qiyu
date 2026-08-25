@@ -200,9 +200,10 @@ void main() {
     );
     expect(
       tester
-          .widget<TextField>(find.byKey(const Key('tts-voice')))
-          .controller!
-          .text,
+          .widget<DropdownButton<String>>(
+            find.byKey(const Key('tts-voice-preset')),
+          )
+          .value,
       'nova',
     );
     expect(
@@ -300,6 +301,94 @@ void main() {
     await tester.pumpAndSettle();
     expect(ttsGateway.forgetCalls, 1);
     expect(find.textContaining('尚未保存语音合成的 API Key'), findsOneWidget);
+  });
+
+  testWidgets('TTS 设置：支持选择方言音色、自定义音色与高级参数 extraParams', (tester) async {
+    final ttsGateway = _MutableTtsSettingsGateway(
+      const TtsSettings(
+        configured: true,
+        keySet: true,
+        provider: TtsServiceKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        voice: 'zh_female_sichuan_uranus_bigtts',
+        extraParams: {
+          'additions': {'explicit_dialect': 'sichuan'},
+        },
+      ),
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        ttsGateway: ttsGateway,
+      ),
+    );
+    await _openSettings(tester);
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('tts-voice-preset')),
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 30,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<DropdownButton<String>>(
+            find.byKey(const Key('tts-voice-preset')),
+          )
+          .value,
+      'zh_female_sichuan_uranus_bigtts',
+    );
+
+    // 展开高级参数面板，校验已回填 extraParams JSON
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('tts-advanced-params-tile')),
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 10,
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('tts-advanced-params-tile')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
+    await tester.pumpAndSettle();
+
+    final helpTextFinder = find.textContaining('配置豆包语音合成的深合并参数');
+    expect(helpTextFinder, findsOneWidget);
+    final helpTextWidget = tester.widget<Text>(helpTextFinder);
+    expect(helpTextWidget.style?.fontFamily, 'Noto Sans SC');
+
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-extra-params')))
+          .controller!
+          .text,
+      contains('"explicit_dialect": "sichuan"'),
+    );
+
+    // 修改 extraParams 并保存
+    await tester.enterText(
+      find.byKey(const Key('tts-extra-params')),
+      '{"audio_params": {"sample_rate": 16000}}',
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('save-tts-settings')),
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 10,
+    );
+    await tester.ensureVisible(find.byKey(const Key('save-tts-settings')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-tts-settings')));
+    await tester.pumpAndSettle();
+
+    expect(ttsGateway.savedDrafts.last.extraParams, {
+      'audio_params': {'sample_rate': 16000},
+    });
   });
 
   testWidgets('forgetting the saved API key needs confirmation', (
@@ -621,6 +710,67 @@ void main() {
     expect(webSearchGateway.forgetCalls, 1);
     expect(find.byKey(const Key('forget-web-search-key')), findsNothing);
   });
+
+  testWidgets(
+    'FocusNode 保护与编辑态草稿：获焦编辑中绝不被覆盖，且 tts-extra-params 为 multiline',
+    (tester) async {
+      final ttsGateway = _MutableTtsSettingsGateway(
+        const TtsSettings(
+          configured: true,
+          keySet: true,
+          provider: TtsServiceKind.volcTts,
+          baseUrl:
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          model: 'seed-tts-2.0',
+          voice: 'zh_female_vv_uranus_bigtts',
+          extraParams: {'old': 'val'},
+        ),
+      );
+
+      await tester.pumpWidget(
+        await _app(
+          settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+          providerGateway: _FixedProviderSettingsGateway(configured: false),
+          ttsGateway: ttsGateway,
+        ),
+      );
+      await _openSettings(tester);
+
+      // 展开高级参数
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('tts-advanced-params-tile')),
+        200,
+        scrollable: _verticalScrollable(),
+        maxScrolls: 30,
+      );
+      await tester.ensureVisible(
+        find.byKey(const Key('tts-advanced-params-tile')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
+      await tester.pumpAndSettle();
+
+      final extraField = find.byKey(const Key('tts-extra-params'));
+      final textFieldWidget = tester.widget<TextField>(extraField);
+      expect(textFieldWidget.keyboardType, TextInputType.multiline);
+      expect(textFieldWidget.focusNode, isNotNull);
+
+      // 用户正在获焦输入未保存的草稿
+      await tester.enterText(extraField, '{"user_draft": 123}');
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(extraField).focusNode?.hasFocus,
+        isTrue,
+      );
+
+      // 重新触发组件树更新/重绘，草稿绝不被冲掉
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(extraField).controller!.text,
+        '{"user_draft": 123}',
+      );
+    },
+  );
 }
 
 Future<Widget> _app({
@@ -676,10 +826,12 @@ Future<void> _openSettings(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-Finder _verticalScrollable() => find.byWidgetPredicate(
-  (widget) =>
-      widget is Scrollable && widget.axisDirection == AxisDirection.down,
-);
+Finder _verticalScrollable() => find
+    .byWidgetPredicate(
+      (widget) =>
+          widget is Scrollable && widget.axisDirection == AxisDirection.down,
+    )
+    .first;
 
 final class _FakeSettingsGateway implements SettingsGateway {
   _FakeSettingsGateway({this.onCleared});
@@ -1049,10 +1201,12 @@ final class _MutableTtsSettingsGateway implements TtsSettingsGateway {
     return _settings = TtsSettings(
       configured: true,
       keySet: draft.apiKey != null || _settings.keySet,
+      provider: draft.provider,
       baseUrl: draft.baseUrl,
       model: draft.model,
       voice: draft.voice,
       speed: draft.speed,
+      extraParams: draft.extraParams,
     );
   }
 

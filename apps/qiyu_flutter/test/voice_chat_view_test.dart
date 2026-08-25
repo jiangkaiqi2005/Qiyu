@@ -219,11 +219,21 @@ void main() {
       _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
     );
 
-    // 配了 TTS：顶部出现朗读开关（开着）。
+    // 配了 TTS：顶部出现朗读小喇叭（开着）。
     expect(find.byKey(const Key('voice-output-toggle-on')), findsOneWidget);
 
-    // 点开关关掉朗读：写 Host autoSpeak=false，图标切换。
+    // 点小喇叭弹出音量与静音卡片。
     await tester.tap(find.byKey(const Key('voice-output-toggle-on')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('voice-output-volume-slider')), findsOneWidget);
+    expect(
+      find.byKey(const Key('voice-output-popover-mute-button')),
+      findsOneWidget,
+    );
+
+    // 点弹窗里的静音按钮关掉朗读：写 Host autoSpeak=false，图标切换。
+    await tester.tap(find.byKey(const Key('voice-output-popover-mute-button')));
     await tester.pumpAndSettle();
     expect(mutableTts.autoSpeakWrites, [false]);
     expect(find.byKey(const Key('voice-output-toggle-off')), findsOneWidget);
@@ -235,11 +245,20 @@ void main() {
     expect(speakGateway.calls, isEmpty);
     expect(find.byKey(const Key('voice-output-status')), findsNothing);
 
-    // 再点开：恢复自动朗读。
+    // 再点开小喇叭弹窗，点静音按钮解除静音：恢复自动朗读。
     await tester.tap(find.byKey(const Key('voice-output-toggle-off')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('voice-output-popover-mute-button')));
     await tester.pumpAndSettle();
     expect(mutableTts.autoSpeakWrites, [false, true]);
     expect(find.byKey(const Key('voice-output-toggle-on')), findsOneWidget);
+
+    // 调节滑块
+    await tester.drag(
+      find.byKey(const Key('voice-output-volume-slider')),
+      const Offset(0, -30),
+    );
+    await tester.pumpAndSettle();
 
     await tester.pumpWidget(const SizedBox.shrink());
     viewModel.dispose();
@@ -764,9 +783,16 @@ final class _HoldingPlayerPlatform implements VoicePlayerPlatform {
   bool get supported => true;
 
   @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
   Future<VoicePlayback?> play(
     Uint8List bytes, {
     required String mimeType,
+    double volume = 1.0,
   }) async {
     final playback = _HoldingPlayback(this);
     _playbacks.add(playback._done);
@@ -793,6 +819,9 @@ final class _HoldingPlayback implements VoicePlayback {
   Future<void> get done => _done.future;
 
   @override
+  void setVolume(double volume) {}
+
+  @override
   void stop() {
     _platform._playbacks.remove(_done);
     if (!_done.isCompleted) {
@@ -811,6 +840,12 @@ final class _GestureLockedPlayerPlatform
   bool get supported => true;
 
   @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
   void prepareForPlayback() {
     if (gestureActive) {
       _prepared = true;
@@ -821,6 +856,7 @@ final class _GestureLockedPlayerPlatform
   Future<VoicePlayback?> play(
     Uint8List bytes, {
     required String mimeType,
+    double volume = 1.0,
   }) async {
     if (!_prepared) {
       return null;
@@ -835,6 +871,9 @@ final class _CompletedPlayback implements VoicePlayback {
 
   @override
   Future<void> get done => Future<void>.value();
+
+  @override
+  void setVolume(double volume) {}
 
   @override
   void stop() {}

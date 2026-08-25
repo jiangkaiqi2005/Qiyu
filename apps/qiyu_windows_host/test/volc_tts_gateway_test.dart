@@ -217,6 +217,48 @@ void main() {
     );
     expect(client.called, isFalse);
   });
+
+  test('extraParams 智能深合并：audio_params 深度合并与顶层字段扩展', () async {
+    final client = _RecordingBytesHttpClient(
+      response: lines([
+        {
+          'code': 0,
+          'data': base64Encode([1, 2, 3]),
+        },
+        {'code': 20000000},
+      ]),
+    );
+
+    final audio = await TtsModelGateway(client).synthesize(
+      config: const TtsConfig(
+        provider: TtsProviderKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        voice: 'zh_female_sichuan_uranus_bigtts',
+        extraParams: {
+          'audio_params': {'sample_rate': 16000, 'channel': 1},
+          'additions': {'explicit_dialect': 'sichuan'},
+        },
+      ),
+      apiKey: 'ark-test-key',
+      text: '你好呀。',
+    );
+
+    expect(audio, [1, 2, 3]);
+    final body =
+        jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+    final reqParams = body['req_params']! as Map<String, Object?>;
+    expect(reqParams['text'], '你好呀。');
+    expect(reqParams['speaker'], 'zh_female_sichuan_uranus_bigtts');
+    // audio_params 保留 format: mp3 并合并 sample_rate 与 channel
+    expect(reqParams['audio_params'], {
+      'format': 'mp3',
+      'sample_rate': 16000,
+      'channel': 1,
+    });
+    expect(reqParams['additions'], {'explicit_dialect': 'sichuan'});
+  });
 }
 
 final class _RecordingBytesHttpClient implements ProviderBytesHttpClient {

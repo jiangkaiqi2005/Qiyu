@@ -201,6 +201,38 @@ void main() {
       ),
     );
   });
+
+  test('OpenAI 协议 extraParams 展平合并入顶层请求体', () async {
+    final client = _RecordingBytesHttpClient(
+      response: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value([1, 2]),
+      ),
+    );
+
+    final audio = await TtsModelGateway(client).synthesize(
+      config: const TtsConfig(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-1',
+        voice: 'alloy',
+        extraParams: {
+          'user': 'test-user',
+          'custom_field': 123,
+        },
+      ),
+      apiKey: 'tts-test-key',
+      text: '你好。',
+    );
+
+    expect(audio, [1, 2]);
+    final body =
+        jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+    expect(body['model'], 'tts-1');
+    expect(body['input'], '你好。');
+    expect(body['voice'], 'alloy');
+    expect(body['user'], 'test-user');
+    expect(body['custom_field'], 123);
+  });
 }
 
 final class _RecordingBytesHttpClient implements ProviderBytesHttpClient {

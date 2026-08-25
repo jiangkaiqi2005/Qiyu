@@ -435,9 +435,16 @@ final class _SequentialPlayerPlatform implements VoicePlayerPlatform {
   bool get supported => true;
 
   @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
   Future<VoicePlayback?> play(
     Uint8List bytes, {
     required String mimeType,
+    double volume = 1.0,
   }) async => _InstantPlayback();
 }
 
@@ -451,6 +458,12 @@ final class _GestureLockedSequentialPlayer
   bool get supported => true;
 
   @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
   void prepareForPlayback() {
     if (gestureActive) {
       _prepared = true;
@@ -461,6 +474,7 @@ final class _GestureLockedSequentialPlayer
   Future<VoicePlayback?> play(
     Uint8List bytes, {
     required String mimeType,
+    double volume = 1.0,
   }) async {
     if (!_prepared) {
       return null;
@@ -475,6 +489,9 @@ final class _InstantPlayback implements VoicePlayback {
 
   @override
   Future<void> get done => _done.future;
+
+  @override
+  void setVolume(double volume) {}
 
   @override
   void stop() {}

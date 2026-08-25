@@ -148,4 +148,13 @@ foreach ($relativePath in @(
     "当前运行文档仍给出 Node/npm 命令：$relativePath"
 }
 
+$flutterLibPath = Join-Path $repositoryRoot 'apps\qiyu_flutter\lib'
+$dartFiles = Get-ChildItem -LiteralPath $flutterLibPath -Recurse -Filter '*.dart'
+foreach ($file in $dartFiles) {
+  $fileContent = Get-Content -Raw -Encoding UTF8 $file.FullName
+  Assert-Condition ($fileContent -notmatch "fontFamily:\s*['""]monospace['""]") `
+    "Flutter 代码仍指定未打包等宽字体导致 Web 远程字体回退：$($file.FullName)"
+}
+
 Write-Host 'Release baseline policy tests passed'
+

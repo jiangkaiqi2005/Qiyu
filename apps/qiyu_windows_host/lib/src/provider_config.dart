@@ -362,6 +362,7 @@ final class TtsConfig {
     this.voice,
     this.speed,
     this.autoSpeak = true,
+    this.extraParams,
   });
 
   factory TtsConfig.fromJson(Map<String, Object?> json) {
@@ -383,6 +384,15 @@ final class TtsConfig {
     if (rawAutoSpeak != null && rawAutoSpeak is! bool) {
       throw const ProviderConfigException('语音合成服务配置无法读取。');
     }
+    final rawExtra = json['extraParams'] ?? json['extra_params'];
+    if (rawExtra != null && rawExtra is! Map) {
+      throw const ProviderConfigException('语音合成服务配置无法读取。');
+    }
+    final extraParams = rawExtra is Map
+        ? Map<String, Object?>.from(
+            rawExtra.map((k, v) => MapEntry(k.toString(), v)),
+          )
+        : null;
     return TtsConfig(
       provider: provider,
       baseUrl: json['baseUrl']! as String,
@@ -392,6 +402,7 @@ final class TtsConfig {
       voice: voice as String?,
       speed: rawSpeed is num ? rawSpeed.toDouble() : null,
       autoSpeak: rawAutoSpeak is bool ? rawAutoSpeak : true,
+      extraParams: extraParams,
     );
   }
 
@@ -409,6 +420,9 @@ final class TtsConfig {
   /// 聊天页「自动朗读」开关：随配置存本机（刷新、重启都记住）。
   final bool autoSpeak;
 
+  /// 自定义高级参数（深合并入请求体）。
+  final Map<String, Object?>? extraParams;
+
   /// 本机 provider.json 的 tts 段里保存的 API Key（明文）。与聊天 Key
   /// 同律：不进 toJson()，HTTP 快照绝不携带明文。
   final String? apiKey;
@@ -421,6 +435,7 @@ final class TtsConfig {
     voice: voice,
     speed: speed,
     autoSpeak: autoSpeak,
+    extraParams: extraParams,
   );
 
   /// Key 的沿用作用域看协议与规范化后的服务地址：换协议与换地址
@@ -435,6 +450,8 @@ final class TtsConfig {
     if (voice != null && voice!.trim().isNotEmpty) 'voice': voice,
     if (speed != null) 'speed': speed,
     'autoSpeak': autoSpeak,
+    if (extraParams != null && extraParams!.isNotEmpty)
+      'extraParams': extraParams,
   };
 
   void validate() {
@@ -458,6 +475,13 @@ final class TtsConfig {
     }
     if (speed != null && (!speed!.isFinite || speed! < 0.25 || speed! > 4)) {
       throw const ProviderConfigException('语速必须在 0.25 到 4 之间。');
+    }
+    if (extraParams != null) {
+      for (final key in extraParams!.keys) {
+        if (key.trim().isEmpty) {
+          throw const ProviderConfigException('自定义高级参数格式不正确。');
+        }
+      }
     }
   }
 }

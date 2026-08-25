@@ -219,6 +219,38 @@ void main() {
     expect(controller.failureNotice, isNull);
     player.finish();
   });
+
+  test('音量调节：初始读取、调节并通知监听者、持久化保存与实时生效', () async {
+    final player = _FakeVoicePlayerPlatform(savedVolume: 0.8);
+    final gateway = _RecordingSpeakGateway();
+    final controller = VoiceOutputController(gateway, playerPlatform: player);
+
+    expect(controller.volume, 0.8);
+
+    var notifyCount = 0;
+    controller.addListener(() => notifyCount += 1);
+
+    controller.setVolume(0.5);
+    expect(controller.volume, 0.5);
+    expect(player.persistedVolume, 0.5);
+    expect(notifyCount, 1);
+
+    // 播放时传入当前音量
+    controller.offer(
+      const VoiceOutputRequest(requestId: 'req-1', deliveryIndex: 0),
+      enabled: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(player.lastPlayedVolume, 0.5);
+
+    // 播放中调节音量，实时同步给活动 playback
+    controller.setVolume(0.3);
+    expect(player._active.single.currentVolume, 0.3);
+
+    player.finishCurrent();
+    await Future<void>.delayed(Duration.zero);
+    controller.dispose();
+  });
 }
 
 final class _PendingSpeakGateway implements ChatSpeechGateway {
@@ -260,20 +292,33 @@ final class _RecordingSpeakGateway implements ChatSpeechGateway {
 }
 
 final class _FakeVoicePlayerPlatform implements VoicePlayerPlatform {
-  _FakeVoicePlayerPlatform();
+  _FakeVoicePlayerPlatform({double? savedVolume})
+    : persistedVolume = savedVolume ?? 1.0;
 
   final List<_FakeVoicePlayback> _active = [];
   int stoppedCount = 0;
+  double persistedVolume;
+  double? lastPlayedVolume;
 
   @override
   bool get supported => true;
 
   @override
+  double getInitialVolume() => persistedVolume;
+
+  @override
+  void saveVolume(double volume) {
+    persistedVolume = volume;
+  }
+
+  @override
   Future<VoicePlayback?> play(
     Uint8List bytes, {
     required String mimeType,
+    double volume = 1.0,
   }) async {
-    final playback = _FakeVoicePlayback(this);
+    lastPlayedVolume = volume;
+    final playback = _FakeVoicePlayback(this, initialVolume: volume);
     _active.add(playback);
     return playback;
   }
@@ -287,10 +332,12 @@ final class _FakeVoicePlayerPlatform implements VoicePlayerPlatform {
 }
 
 final class _FakeVoicePlayback implements VoicePlayback {
-  _FakeVoicePlayback(this._platform);
+  _FakeVoicePlayback(this._platform, {double initialVolume = 1.0})
+    : currentVolume = initialVolume;
 
   final _FakeVoicePlayerPlatform _platform;
   final Completer<void> _done = Completer<void>();
+  double currentVolume;
 
   void finish() {
     if (!_done.isCompleted) {
@@ -300,6 +347,11 @@ final class _FakeVoicePlayback implements VoicePlayback {
 
   @override
   Future<void> get done => _done.future;
+
+  @override
+  void setVolume(double volume) {
+    currentVolume = volume;
+  }
 
   @override
   void stop() {
@@ -316,9 +368,16 @@ final class _RefusingVoicePlayerPlatform implements VoicePlayerPlatform {
   bool get supported => true;
 
   @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
   Future<VoicePlayback?> play(
     Uint8List bytes, {
     required String mimeType,
+    double volume = 1.0,
   }) async => null;
 }
 
@@ -332,6 +391,12 @@ final class _GestureLockedPlayerPlatform
   bool get supported => true;
 
   @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
   void prepareForPlayback() {
     if (gestureActive) {
       _prepared = true;
@@ -342,6 +407,7 @@ final class _GestureLockedPlayerPlatform
   Future<VoicePlayback?> play(
     Uint8List bytes, {
     required String mimeType,
+    double volume = 1.0,
   }) async {
     if (!_prepared) {
       return null;

@@ -45,18 +45,30 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
     final uri = Uri.parse(config.baseUrl.trim());
     ensureTtsOutboundAllowed(uri);
     final speaker = config.voice?.trim();
-    final body = jsonEncode({
-      'req_params': {
-        'text': text,
-        'speaker': speaker == null || speaker.isEmpty
-            ? defaultSpeaker
-            : speaker,
-        'audio_params': {'format': 'mp3', 'sample_rate': 24000},
-        // 官方说明的示例未出现语速字段：按传统豆包 TTS 参数名 speed_ratio
-        // 传入（spec 定稿）；实测拒收则设置页禁用该协议下的语速，不假调节。
-        'speed_ratio': ?config.speed,
-      },
-    });
+    final audioParams = <String, Object?>{
+      'format': 'mp3',
+      'sample_rate': 24000,
+    };
+    final extra = config.extraParams;
+    if (extra != null && extra['audio_params'] is Map) {
+      audioParams.addAll(
+        (extra['audio_params'] as Map).cast<String, Object?>(),
+      );
+    }
+    final reqParams = <String, Object?>{
+      if (extra != null)
+        for (final entry in extra.entries)
+          if (entry.key != 'audio_params') entry.key: entry.value,
+      'text': text,
+      'speaker': speaker == null || speaker.isEmpty
+          ? defaultSpeaker
+          : speaker,
+      'audio_params': audioParams,
+      // 官方说明的示例未出现语速字段：按传统豆包 TTS 参数名 speed_ratio
+      // 传入（spec 定稿）；实测拒收则设置页禁用该协议下的语速，不假调节。
+      if (config.speed != null) 'speed_ratio': config.speed,
+    };
+    final body = jsonEncode({'req_params': reqParams});
     final ProviderBytesHttpResponse response;
     try {
       response = await httpClient.postBytes(

@@ -29,11 +29,14 @@ enum VoiceOutputPhase { idle, synthesizing, playing }
 final class VoiceOutputController extends ChangeNotifier {
   VoiceOutputController(this._gateway, {VoicePlayerPlatform? playerPlatform})
     : // 缺省走平台接缝：web 真播放，其余环境如实「不支持」降级。
-      _playerPlatform = playerPlatform ?? createVoicePlayerPlatform();
+      _playerPlatform = playerPlatform ?? createVoicePlayerPlatform() {
+    _volume = _playerPlatform.getInitialVolume();
+  }
 
   final ChatSpeechGateway _gateway;
   final VoicePlayerPlatform _playerPlatform;
 
+  late double _volume;
   final Queue<VoiceOutputRequest> _queue = Queue();
   var _generation = 0;
   bool _failureNotified = false;
@@ -47,6 +50,18 @@ final class VoiceOutputController extends ChangeNotifier {
 
   VoiceOutputPhase get phase => _phase;
   VoiceOutputRequest? get nowReading => _nowReading;
+  double get volume => _volume;
+
+  void setVolume(double value) {
+    final clamped = value.clamp(0.0, 1.0);
+    if ((_volume - clamped).abs() < 0.001) {
+      return;
+    }
+    _volume = clamped;
+    _playerPlatform.saveVolume(_volume);
+    _activePlayback?.setVolume(_volume);
+    notifyListeners();
+  }
 
   /// 最近一次失败的人话提示：同一生命周期最多置一次（首次提示后续
   /// 静默），UI 展示后调用 [consumeFailureNotice] 清除。
@@ -142,6 +157,7 @@ final class VoiceOutputController extends ChangeNotifier {
       final playback = await _playerPlatform.play(
         audio,
         mimeType: 'audio/mpeg',
+        volume: _volume,
       );
       if (generation != _generation) {
         playback?.stop();

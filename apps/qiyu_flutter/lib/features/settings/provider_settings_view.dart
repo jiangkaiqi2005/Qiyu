@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -41,42 +42,7 @@ class ProviderSettingsView extends StatefulWidget {
 }
 
 class _ProviderSettingsViewState extends State<ProviderSettingsView> {
-  final _baseUrlController = TextEditingController();
-  final _modelController = TextEditingController();
-  final _temperatureController = TextEditingController(text: '0.7');
-  final _timeoutController = TextEditingController(text: '60');
-  final _apiKeyController = TextEditingController();
-  final _webSearchApiKeyController = TextEditingController();
-  // 语音转写（STT）服务：与聊天 Provider 同一套表单形态，独立的
-  // 配置段与 Key。
-  final _sttBaseUrlController = TextEditingController();
-  final _sttModelController = TextEditingController();
-  final _sttApiKeyController = TextEditingController();
-  SttServiceKind _sttProvider = SttServiceKind.openaiCompatible;
-  // 语音朗读（TTS）服务：同一套表单形态再加音色与语速。
-  final _ttsBaseUrlController = TextEditingController();
-  final _ttsModelController = TextEditingController();
-  final _ttsApiKeyController = TextEditingController();
-  final _ttsVoiceController = TextEditingController();
-  TtsServiceKind _ttsProvider = TtsServiceKind.openAiCompatible;
-
-  /// null 表示用服务缺省语速（不传 speed 字段）。
-  double? _ttsSpeed;
-  String _selectedProviderId = 'openai';
-  String _selectedConnectionId = 'official';
-  bool _customModel = false;
-  ProviderSettings? _syncedSettings;
-  SttSettings? _syncedSttSettings;
-  TtsSettings? _syncedTtsSettings;
-  WebSearchSettings? _syncedWebSearchSettings;
   bool _requestedInitialization = false;
-
-  ProviderPreset get _selectedProvider =>
-      providerPresetById(_selectedProviderId);
-
-  ProviderConnectionPreset get _selectedConnection => _selectedProvider
-      .connections
-      .firstWhere((connection) => connection.id == _selectedConnectionId);
 
   @override
   void didChangeDependencies() {
@@ -100,20 +66,110 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   }
 
   @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: ListView(
+              key: const Key('settings-scroll'),
+              padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => backToPrevious(context),
+                      tooltip: '返回上一页',
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                    const SizedBox(width: 8),
+                    Text('设置', style: theme.textTheme.headlineSmall),
+                  ],
+                ),
+                const SizedBox(height: 30),
+                const _ProviderSection(),
+                const SizedBox(height: 40),
+                const _WebSearchSection(),
+                const SizedBox(height: 24),
+                const _SttSection(),
+                const SizedBox(height: 24),
+                const _TtsSection(),
+                const SizedBox(height: 24),
+                _LocalDataSection(
+                  backupGateway: widget.backupGateway,
+                  backupPlatform: widget.backupPlatform,
+                ),
+                const SizedBox(height: 24),
+                const _PrivacySection(),
+                const SizedBox(height: 24),
+                const _DeveloperSection(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 获焦安全保护字段同步：在输入框获焦时不覆盖用户正在输入的草稿。
+void _syncField(
+  TextEditingController controller,
+  FocusNode focusNode,
+  String newValue,
+) {
+  if (!focusNode.hasFocus && controller.text != newValue) {
+    controller.text = newValue;
+  }
+}
+
+/// 模型连接（Provider）配置区块：模型连接、参数设置与 API Key 凭据管理。
+class _ProviderSection extends StatefulWidget {
+  const _ProviderSection();
+
+  @override
+  State<_ProviderSection> createState() => _ProviderSectionState();
+}
+
+class _ProviderSectionState extends State<_ProviderSection> {
+  final _baseUrlController = TextEditingController();
+  final _modelController = TextEditingController();
+  final _temperatureController = TextEditingController(text: '0.7');
+  final _timeoutController = TextEditingController(text: '60');
+  final _apiKeyController = TextEditingController();
+
+  final _baseUrlFocusNode = FocusNode();
+  final _modelFocusNode = FocusNode();
+  final _temperatureFocusNode = FocusNode();
+  final _timeoutFocusNode = FocusNode();
+  final _apiKeyFocusNode = FocusNode();
+
+  String _selectedProviderId = 'openai';
+  String _selectedConnectionId = 'official';
+  bool _customModel = false;
+  ProviderSettings? _syncedSettings;
+
+  ProviderPreset get _selectedProvider =>
+      providerPresetById(_selectedProviderId);
+
+  ProviderConnectionPreset get _selectedConnection => _selectedProvider
+      .connections
+      .firstWhere((connection) => connection.id == _selectedConnectionId);
+
+  @override
   void dispose() {
     _baseUrlController.dispose();
     _modelController.dispose();
     _temperatureController.dispose();
     _timeoutController.dispose();
     _apiKeyController.dispose();
-    _webSearchApiKeyController.dispose();
-    _sttBaseUrlController.dispose();
-    _sttModelController.dispose();
-    _sttApiKeyController.dispose();
-    _ttsBaseUrlController.dispose();
-    _ttsModelController.dispose();
-    _ttsApiKeyController.dispose();
-    _ttsVoiceController.dispose();
+    _baseUrlFocusNode.dispose();
+    _modelFocusNode.dispose();
+    _temperatureFocusNode.dispose();
+    _timeoutFocusNode.dispose();
+    _apiKeyFocusNode.dispose();
     super.dispose();
   }
 
@@ -127,270 +183,34 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     _selectedConnectionId = selection.connectionId;
     _customModel = selection.customModel;
     if (settings.configured) {
-      _baseUrlController.text = settings.baseUrl!;
-      _modelController.text = settings.model!;
-      _temperatureController.text = '${settings.temperature!}';
-      _timeoutController.text = '${settings.timeoutSeconds!}';
-    } else {
-      _baseUrlController.text = _selectedConnection.baseUrl;
-      _modelController.text = _selectedConnection.models.first;
-    }
-    _apiKeyController.clear();
-  }
-
-  void _syncStt(SttSettings? settings) {
-    if (settings == null || identical(settings, _syncedSttSettings)) {
-      return;
-    }
-    _syncedSttSettings = settings;
-    _sttProvider = settings.provider;
-    if (settings.configured) {
-      _sttBaseUrlController.text = settings.baseUrl ?? '';
-      _sttModelController.text = settings.model ?? '';
-    }
-    _sttApiKeyController.clear();
-  }
-
-  void _syncWebSearch(WebSearchSettings? settings) {
-    if (settings == null || identical(settings, _syncedWebSearchSettings)) {
-      return;
-    }
-    _syncedWebSearchSettings = settings;
-    _webSearchApiKeyController.clear();
-  }
-
-  Future<void> _saveWebSearch(WebSearchSettingsViewModel viewModel) async {
-    final key = _webSearchApiKeyController.text.trim();
-    try {
-      await viewModel.save(
-        WebSearchSettingsDraft(apiKey: key.isEmpty ? null : key),
+      _syncField(_baseUrlController, _baseUrlFocusNode, settings.baseUrl ?? '');
+      _syncField(_modelController, _modelFocusNode, settings.model ?? '');
+      _syncField(
+        _temperatureController,
+        _temperatureFocusNode,
+        settings.temperature != null ? '${settings.temperature}' : '',
       );
-    } finally {
-      if (mounted) {
-        _webSearchApiKeyController.clear();
-      }
+      _syncField(
+        _timeoutController,
+        _timeoutFocusNode,
+        settings.timeoutSeconds != null ? '${settings.timeoutSeconds}' : '',
+      );
+    } else {
+      _syncField(
+        _baseUrlController,
+        _baseUrlFocusNode,
+        _selectedConnection.baseUrl,
+      );
+      _syncField(
+        _modelController,
+        _modelFocusNode,
+        _selectedConnection.models.isNotEmpty
+            ? _selectedConnection.models.first
+            : '',
+      );
     }
-  }
-
-  Future<void> _confirmForgetWebSearchKey(
-    WebSearchSettingsViewModel viewModel,
-  ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('web-search-forget-key-dialog'),
-        title: const Text('忘记 AnySearch API Key？'),
-        content: const Text(
-          '忘记后本机不再保存这个 Key，联网搜索会立即停用，'
-          '普通聊天仍可照常使用。',
-        ),
-        actions: [
-          TextButton(
-            key: const Key('web-search-forget-key-cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('再想想'),
-          ),
-          FilledButton(
-            key: const Key('web-search-forget-key-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('忘记 Key'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await viewModel.forgetApiKey();
-    }
-  }
-
-  void _selectSttProvider(String wireName) {
-    final next = wireName == 'volc_seed_asr'
-        ? SttServiceKind.volcSeedAsr
-        : SttServiceKind.openaiCompatible;
-    if (next == _sttProvider) {
-      return;
-    }
-    setState(() {
-      final previous = _sttProvider;
-      _sttProvider = next;
-      _applySttProtocolDefaults(from: previous, to: next);
-    });
-  }
-
-  /// 切换协议时，若地址空白或 scheme 与新协议不兼容（https 不能给豆包，
-  /// wss 不能给 OpenAI 兼容），换成新协议的缺省地址和模型。
-  void _applySttProtocolDefaults({
-    required SttServiceKind from,
-    required SttServiceKind to,
-  }) {
-    final url = _sttBaseUrlController.text.trim();
-    final model = _sttModelController.text.trim();
-    final fromDefaults = _sttProtocolDefaults(from);
-    final toDefaults = _sttProtocolDefaults(to);
-    final uri = Uri.tryParse(url);
-    final schemeCompatible = switch (to) {
-      SttServiceKind.openaiCompatible =>
-        uri != null && (uri.scheme == 'http' || uri.scheme == 'https'),
-      SttServiceKind.volcSeedAsr =>
-        uri != null && (uri.scheme == 'ws' || uri.scheme == 'wss'),
-    };
-    if (url.isEmpty || !schemeCompatible) {
-      _sttBaseUrlController.text = toDefaults.url;
-      if (model.isEmpty || model == fromDefaults.model || !schemeCompatible) {
-        _sttModelController.text = toDefaults.model;
-      }
-    } else if (model.isEmpty || model == fromDefaults.model) {
-      _sttModelController.text = toDefaults.model;
-    }
-  }
-
-  SttSettingsDraft? _readSttDraft() {
-    if (_sttBaseUrlController.text.trim().isEmpty ||
-        _sttModelController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请填写语音服务地址和模型名称。')));
-      return null;
-    }
-    final key = _sttApiKeyController.text.trim();
-    return SttSettingsDraft(
-      provider: _sttProvider,
-      baseUrl: _sttBaseUrlController.text.trim(),
-      model: _sttModelController.text.trim(),
-      apiKey: key.isEmpty ? null : key,
-    );
-  }
-
-  Future<void> _saveStt(SttSettingsViewModel viewModel) async {
-    final draft = _readSttDraft();
-    if (draft == null) {
-      return;
-    }
-    final saved = await viewModel.save(draft);
-    if (saved && mounted) {
-      _sttApiKeyController.clear();
-    }
-  }
-
-  Future<void> _confirmForgetSttKey(SttSettingsViewModel viewModel) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('stt-forget-key-dialog'),
-        title: const Text('忘记语音服务的 API Key？'),
-        content: const Text(
-          '忘记后本机不再保存这个 Key，语音输入暂时不可用，直到你重新输入。'
-          '语音服务的地址和模型不受影响。',
-        ),
-        actions: [
-          TextButton(
-            key: const Key('stt-forget-key-cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('再想想'),
-          ),
-          FilledButton(
-            key: const Key('stt-forget-key-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('忘记 Key'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await viewModel.forgetApiKey();
-    }
-  }
-
-  void _syncTts(TtsSettings? settings) {
-    if (settings == null || identical(settings, _syncedTtsSettings)) {
-      return;
-    }
-    _syncedTtsSettings = settings;
-    _ttsProvider = settings.provider;
-    if (settings.configured) {
-      _ttsBaseUrlController.text = settings.baseUrl ?? '';
-      _ttsModelController.text = settings.model ?? '';
-      _ttsVoiceController.text = settings.voice ?? '';
-      _ttsSpeed = settings.speed;
-    }
-    _ttsApiKeyController.clear();
-  }
-
-  void _selectTtsProvider(String wireName) {
-    final next = wireName == 'volc_tts'
-        ? TtsServiceKind.volcTts
-        : TtsServiceKind.openAiCompatible;
-    if (next == _ttsProvider) {
-      return;
-    }
-    setState(() {
-      _ttsProvider = next;
-      // 换协议等于换服务商：地址与模型换成新协议缺省（豆包的端点是
-      // 订阅专属完整地址，不能沿用别家的 base URL）；音色文本保留，
-      // 由用户自己决定是否换。
-      final defaults = _ttsProtocolDefaults(next);
-      _ttsBaseUrlController.text = defaults.url;
-      _ttsModelController.text = defaults.model;
-    });
-  }
-
-  TtsSettingsDraft? _readTtsDraft() {
-    if (_ttsBaseUrlController.text.trim().isEmpty ||
-        _ttsModelController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请填写语音合成服务地址和模型名称。')));
-      return null;
-    }
-    final key = _ttsApiKeyController.text.trim();
-    final voice = _ttsVoiceController.text.trim();
-    return TtsSettingsDraft(
-      provider: _ttsProvider,
-      baseUrl: _ttsBaseUrlController.text.trim(),
-      model: _ttsModelController.text.trim(),
-      apiKey: key.isEmpty ? null : key,
-      voice: voice.isEmpty ? null : voice,
-      speed: _ttsSpeed,
-    );
-  }
-
-  Future<void> _saveTts(TtsSettingsViewModel viewModel) async {
-    final draft = _readTtsDraft();
-    if (draft == null) {
-      return;
-    }
-    final saved = await viewModel.save(draft);
-    if (saved && mounted) {
-      _ttsApiKeyController.clear();
-    }
-  }
-
-  Future<void> _confirmForgetTtsKey(TtsSettingsViewModel viewModel) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('tts-forget-key-dialog'),
-        title: const Text('忘记语音合成的 API Key？'),
-        content: const Text(
-          '忘记后本机不再保存这个 Key，栖语暂时读不出声，直到你重新输入。'
-          '语音合成服务的地址、模型、音色和语速不受影响。',
-        ),
-        actions: [
-          TextButton(
-            key: const Key('tts-forget-key-cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('再想想'),
-          ),
-          FilledButton(
-            key: const Key('tts-forget-key-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('忘记 Key'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await viewModel.forgetApiKey();
+    if (!_apiKeyFocusNode.hasFocus && _apiKeyController.text.isNotEmpty) {
+      _apiKeyController.clear();
     }
   }
 
@@ -495,6 +315,1224 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
     }
   }
 
+  Widget _credentialSection(
+    BuildContext context,
+    ProviderSettingsViewModel viewModel,
+  ) {
+    final keySet = viewModel.settings?.keySet ?? false;
+    return _SettingsPanel(
+      children: [
+        Text(
+          keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存 API Key',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          keySet
+              ? '留空即可继续使用；输入新值会覆盖旧值，也可以直接编辑 provider.json 更换。'
+              : 'Ollama 本地服务通常可以留空。',
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('provider-api-key'),
+          controller: _apiKeyController,
+          focusNode: _apiKeyFocusNode,
+          obscureText: true,
+          enableSuggestions: false,
+          autocorrect: false,
+          decoration: const InputDecoration(
+            labelText: 'API Key',
+            hintText: '保存后写入本机 provider.json',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        if (keySet) ...[
+          const SizedBox(height: 8),
+          TextButton(
+            key: const Key('forget-api-key'),
+            onPressed: viewModel.saving
+                ? null
+                : () => unawaited(_confirmForgetKey(viewModel)),
+            child: const Text('忘记已保存的 Key'),
+          ),
+        ],
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<ProviderSettingsViewModel>(
+      builder: (context, viewModel, child) {
+        _sync(viewModel.settings);
+        final theme = Theme.of(context);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '模型连接',
+              style: theme.textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w500,
+                letterSpacing: -0.8,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '把模型留在本机这端。普通配置和 API Key 都保存在本机 '
+              'provider.json 文件里，可以直接编辑该文件更换 Key；'
+              '页面只显示是否已保存，无法取回明文。',
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                height: 1.55,
+              ),
+            ),
+            const SizedBox(height: 28),
+            if (viewModel.loading)
+              const Center(child: CircularProgressIndicator())
+            else ...[
+              _ControlledDropdown(
+                dropdownKey: const Key('provider-preset'),
+                label: '提供商',
+                value: _selectedProviderId,
+                items: [
+                  for (final provider in providerCatalog)
+                    DropdownMenuItem(
+                      value: provider.id,
+                      child: Text(provider.label),
+                    ),
+                ],
+                onChanged: _selectProvider,
+              ),
+              const SizedBox(height: 16),
+              _ControlledDropdown(
+                dropdownKey: const Key('provider-connection'),
+                label: '套餐 / 接口类型',
+                value: _selectedConnectionId,
+                items: [
+                  for (final connection in _selectedProvider.connections)
+                    DropdownMenuItem(
+                      value: connection.id,
+                      child: Text(connection.label),
+                    ),
+                ],
+                onChanged: _selectConnection,
+              ),
+              const SizedBox(height: 16),
+              _ControlledDropdown(
+                dropdownKey: const Key('provider-model-preset'),
+                label: '模型',
+                value: _customModel ||
+                        !_selectedConnection.models
+                            .contains(_modelController.text)
+                    ? customModelValue
+                    : _modelController.text,
+                items: [
+                  for (final model in _selectedConnection.models)
+                    DropdownMenuItem(value: model, child: Text(model)),
+                  const DropdownMenuItem(
+                    value: customModelValue,
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit_outlined, size: 18),
+                        SizedBox(width: 8),
+                        Text('输入其他模型名称'),
+                      ],
+                    ),
+                  ),
+                ],
+                onChanged: _selectModel,
+              ),
+              if (_customModel) ...[
+                const SizedBox(height: 16),
+                TextField(
+                  key: const Key('provider-model'),
+                  controller: _modelController,
+                  focusNode: _modelFocusNode,
+                  decoration: const InputDecoration(
+                    labelText: '模型名称',
+                    hintText: '输入服务商提供的 Model ID',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              if (_selectedConnection.editableBaseUrl)
+                TextField(
+                  key: const Key('provider-base-url'),
+                  controller: _baseUrlController,
+                  focusNode: _baseUrlFocusNode,
+                  decoration: const InputDecoration(
+                    labelText: '服务地址',
+                    hintText: 'https://example.com/v1',
+                    border: OutlineInputBorder(),
+                  ),
+                )
+              else
+                _ResolvedConnection(
+                  provider: _selectedConnection.provider,
+                  baseUrl: _selectedConnection.baseUrl,
+                ),
+              const SizedBox(height: 8),
+              ExpansionTile(
+                key: const Key('provider-advanced-settings'),
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(bottom: 8),
+                title: const Text('高级参数'),
+                subtitle: const Text('temperature 与请求超时'),
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          key: const Key('provider-temperature'),
+                          controller: _temperatureController,
+                          focusNode: _temperatureFocusNode,
+                          keyboardType:
+                              const TextInputType.numberWithOptions(
+                                decimal: true,
+                              ),
+                          decoration: const InputDecoration(
+                            labelText: 'temperature',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: TextField(
+                          key: const Key('provider-timeout'),
+                          controller: _timeoutController,
+                          focusNode: _timeoutFocusNode,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: '超时（秒）',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _credentialSection(context, viewModel),
+              const SizedBox(height: 24),
+              if (viewModel.errorMessage case final message?)
+                _StatusMessage(message: message, succeeded: false),
+              if (viewModel.testResult case final result?)
+                _StatusMessage(
+                  message: result.message,
+                  succeeded: result.succeeded,
+                ),
+              if (viewModel.errorMessage != null ||
+                  viewModel.testResult != null)
+                const SizedBox(height: 18),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  FilledButton.icon(
+                    key: const Key('save-provider-settings'),
+                    onPressed: viewModel.saving
+                        ? null
+                        : () => unawaited(_save(viewModel)),
+                    icon: _busyOr(viewModel.saving, Icons.lock_outline),
+                    label: const Text('保存到本机'),
+                  ),
+                  OutlinedButton.icon(
+                    key: const Key('test-provider-connection'),
+                    onPressed: viewModel.testing
+                        ? null
+                        : () {
+                            final draft = _readDraft();
+                            if (draft != null) {
+                              unawaited(viewModel.testConnection(draft));
+                            }
+                          },
+                    icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
+                    label: const Text('测试连接'),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 联网搜索设置区块：AnySearch API Key 配置与保存。
+class _WebSearchSection extends StatefulWidget {
+  const _WebSearchSection();
+
+  @override
+  State<_WebSearchSection> createState() => _WebSearchSectionState();
+}
+
+class _WebSearchSectionState extends State<_WebSearchSection> {
+  final _webSearchApiKeyController = TextEditingController();
+  final _webSearchApiKeyFocusNode = FocusNode();
+  WebSearchSettings? _syncedWebSearchSettings;
+
+  @override
+  void dispose() {
+    _webSearchApiKeyController.dispose();
+    _webSearchApiKeyFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _syncWebSearch(WebSearchSettings? settings) {
+    if (settings == null || identical(settings, _syncedWebSearchSettings)) {
+      return;
+    }
+    _syncedWebSearchSettings = settings;
+    if (!_webSearchApiKeyFocusNode.hasFocus &&
+        _webSearchApiKeyController.text.isNotEmpty) {
+      _webSearchApiKeyController.clear();
+    }
+  }
+
+  Future<void> _saveWebSearch(WebSearchSettingsViewModel viewModel) async {
+    final key = _webSearchApiKeyController.text.trim();
+    try {
+      await viewModel.save(
+        WebSearchSettingsDraft(apiKey: key.isEmpty ? null : key),
+      );
+    } finally {
+      if (mounted) {
+        _webSearchApiKeyController.clear();
+      }
+    }
+  }
+
+  Future<void> _confirmForgetWebSearchKey(
+    WebSearchSettingsViewModel viewModel,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const Key('web-search-forget-key-dialog'),
+        title: const Text('忘记 AnySearch API Key？'),
+        content: const Text(
+          '忘记后本机不再保存这个 Key，联网搜索会立即停用，'
+          '普通聊天仍可照常使用。',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('web-search-forget-key-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('再想想'),
+          ),
+          FilledButton(
+            key: const Key('web-search-forget-key-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('忘记 Key'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await viewModel.forgetApiKey();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<WebSearchSettingsViewModel>(
+      builder: (context, viewModel, child) {
+        _syncWebSearch(viewModel.settings);
+        final theme = Theme.of(context);
+        final keySet = viewModel.settings?.keySet ?? false;
+        return _SettingsPanel(
+          children: [
+            Text(
+              '联网搜索',
+              style: theme.textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w500,
+                letterSpacing: -0.8,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '需要当前时间、天气、新闻等变化中的事实时，栖语可以按需搜索。'
+              'Key 只保存在本机 provider.json，页面不会取回明文。',
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                height: 1.55,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (viewModel.loading)
+              const Center(child: CircularProgressIndicator())
+            else ...[
+              Text(
+                keySet ? 'AnySearch Key 已保存在本机' : '尚未保存 AnySearch Key',
+                style: theme.textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                key: const Key('web-search-api-key'),
+                controller: _webSearchApiKeyController,
+                focusNode: _webSearchApiKeyFocusNode,
+                obscureText: true,
+                enableSuggestions: false,
+                autocorrect: false,
+                decoration: InputDecoration(
+                  labelText: 'ANYSEARCH_API_KEY',
+                  hintText: keySet
+                      ? '留空即可继续使用已保存的 Key'
+                      : '保存后写入本机 provider.json',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              if (keySet) ...[
+                const SizedBox(height: 8),
+                TextButton(
+                  key: const Key('forget-web-search-key'),
+                  onPressed: viewModel.saving
+                      ? null
+                      : () => unawaited(_confirmForgetWebSearchKey(viewModel)),
+                  child: const Text('忘记 AnySearch Key'),
+                ),
+              ],
+              const SizedBox(height: 20),
+              if (viewModel.errorMessage case final message?) ...[
+                _StatusMessage(message: message, succeeded: false),
+                const SizedBox(height: 14),
+              ],
+              FilledButton.icon(
+                key: const Key('save-web-search-settings'),
+                onPressed: viewModel.saving
+                    ? null
+                    : () => unawaited(_saveWebSearch(viewModel)),
+                icon: _busyOr(viewModel.saving, Icons.lock_outline),
+                label: const Text('保存到本机'),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 语音输入（STT）服务配置区块：与聊天 Provider 同构的表单与 Key 规则。
+class _SttSection extends StatefulWidget {
+  const _SttSection();
+
+  @override
+  State<_SttSection> createState() => _SttSectionState();
+}
+
+class _SttSectionState extends State<_SttSection> {
+  final _sttBaseUrlController = TextEditingController();
+  final _sttModelController = TextEditingController();
+  final _sttApiKeyController = TextEditingController();
+
+  final _sttBaseUrlFocusNode = FocusNode();
+  final _sttModelFocusNode = FocusNode();
+  final _sttApiKeyFocusNode = FocusNode();
+
+  SttServiceKind _sttProvider = SttServiceKind.openaiCompatible;
+  SttSettings? _syncedSttSettings;
+
+  @override
+  void dispose() {
+    _sttBaseUrlController.dispose();
+    _sttModelController.dispose();
+    _sttApiKeyController.dispose();
+    _sttBaseUrlFocusNode.dispose();
+    _sttModelFocusNode.dispose();
+    _sttApiKeyFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _syncStt(SttSettings? settings) {
+    if (settings == null || identical(settings, _syncedSttSettings)) {
+      return;
+    }
+    _syncedSttSettings = settings;
+    _sttProvider = settings.provider;
+    if (settings.configured) {
+      _syncField(
+        _sttBaseUrlController,
+        _sttBaseUrlFocusNode,
+        settings.baseUrl ?? '',
+      );
+      _syncField(
+        _sttModelController,
+        _sttModelFocusNode,
+        settings.model ?? '',
+      );
+    } else {
+      final defaults = _sttProtocolDefaults(_sttProvider);
+      _syncField(_sttBaseUrlController, _sttBaseUrlFocusNode, defaults.url);
+      _syncField(_sttModelController, _sttModelFocusNode, defaults.model);
+    }
+    if (!_sttApiKeyFocusNode.hasFocus && _sttApiKeyController.text.isNotEmpty) {
+      _sttApiKeyController.clear();
+    }
+  }
+
+  void _selectSttProvider(String wireName) {
+    final next = wireName == 'volc_seed_asr'
+        ? SttServiceKind.volcSeedAsr
+        : SttServiceKind.openaiCompatible;
+    if (next == _sttProvider) {
+      return;
+    }
+    setState(() {
+      final previous = _sttProvider;
+      _sttProvider = next;
+      _applySttProtocolDefaults(from: previous, to: next);
+    });
+  }
+
+  /// 切换协议时，若地址空白或 scheme 与新协议不兼容（https 不能给豆包，
+  /// wss 不能给 OpenAI 兼容），换成新协议的缺省地址和模型。
+  void _applySttProtocolDefaults({
+    required SttServiceKind from,
+    required SttServiceKind to,
+  }) {
+    final url = _sttBaseUrlController.text.trim();
+    final model = _sttModelController.text.trim();
+    final fromDefaults = _sttProtocolDefaults(from);
+    final toDefaults = _sttProtocolDefaults(to);
+    final uri = Uri.tryParse(url);
+    final schemeCompatible = switch (to) {
+      SttServiceKind.openaiCompatible =>
+        uri != null && (uri.scheme == 'http' || uri.scheme == 'https'),
+      SttServiceKind.volcSeedAsr =>
+        uri != null && (uri.scheme == 'ws' || uri.scheme == 'wss'),
+    };
+    if (url.isEmpty || !schemeCompatible) {
+      _sttBaseUrlController.text = toDefaults.url;
+      if (model.isEmpty || model == fromDefaults.model || !schemeCompatible) {
+        _sttModelController.text = toDefaults.model;
+      }
+    } else if (model.isEmpty || model == fromDefaults.model) {
+      _sttModelController.text = toDefaults.model;
+    }
+  }
+
+  SttSettingsDraft? _readSttDraft() {
+    if (_sttBaseUrlController.text.trim().isEmpty ||
+        _sttModelController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请填写语音服务地址和模型名称。')));
+      return null;
+    }
+    final key = _sttApiKeyController.text.trim();
+    return SttSettingsDraft(
+      provider: _sttProvider,
+      baseUrl: _sttBaseUrlController.text.trim(),
+      model: _sttModelController.text.trim(),
+      apiKey: key.isEmpty ? null : key,
+    );
+  }
+
+  Future<void> _saveStt(SttSettingsViewModel viewModel) async {
+    final draft = _readSttDraft();
+    if (draft == null) {
+      return;
+    }
+    final saved = await viewModel.save(draft);
+    if (saved && mounted) {
+      _sttApiKeyController.clear();
+    }
+  }
+
+  Future<void> _confirmForgetSttKey(SttSettingsViewModel viewModel) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const Key('stt-forget-key-dialog'),
+        title: const Text('忘记语音服务的 API Key？'),
+        content: const Text(
+          '忘记后本机不再保存这个 Key，语音输入暂时不可用，直到你重新输入。'
+          '语音服务的地址和模型不受影响。',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('stt-forget-key-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('再想想'),
+          ),
+          FilledButton(
+            key: const Key('stt-forget-key-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('忘记 Key'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await viewModel.forgetApiKey();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<SttSettingsViewModel>(
+      builder: (context, viewModel, child) {
+        _syncStt(viewModel.settings);
+        final theme = Theme.of(context);
+        final keySet = viewModel.settings?.keySet ?? false;
+        return _SettingsPanel(
+          children: [
+            Text(
+              '语音输入',
+              style: theme.textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w500,
+                letterSpacing: -0.8,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _sttProvider == SttServiceKind.volcSeedAsr
+                  ? '把说的话转成文字。豆包走官方语音识别协议；'
+                        'Key 只保存在本机 provider.json；录音只存在内存里，'
+                        '转写完成即丢弃，不会进入会话与记忆。'
+                  : '把说的话转成文字的服务（OpenAI 兼容转写，如 whisper 系列）。'
+                        'Key 只保存在本机 provider.json；录音只存在内存里，'
+                        '转写完成即丢弃，不会进入会话与记忆。',
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                height: 1.55,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _ControlledDropdown(
+              dropdownKey: const Key('stt-provider'),
+              label: '服务类型',
+              value: _sttProvider == SttServiceKind.volcSeedAsr
+                  ? 'volc_seed_asr'
+                  : 'openai_compatible',
+              items: const [
+                DropdownMenuItem(
+                  value: 'openai_compatible',
+                  child: Text('OpenAI 兼容转写'),
+                ),
+                DropdownMenuItem(
+                  value: 'volc_seed_asr',
+                  child: Text('豆包流式语音识别'),
+                ),
+              ],
+              onChanged: _selectSttProvider,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              key: const Key('stt-base-url'),
+              controller: _sttBaseUrlController,
+              focusNode: _sttBaseUrlFocusNode,
+              decoration: InputDecoration(
+                labelText: '服务地址',
+                hintText: _sttProtocolDefaults(_sttProvider).urlHint,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              key: const Key('stt-model'),
+              controller: _sttModelController,
+              focusNode: _sttModelFocusNode,
+              decoration: InputDecoration(
+                labelText: _sttProvider == SttServiceKind.volcSeedAsr
+                    ? 'Resource-Id'
+                    : '模型名称',
+                hintText: _sttProtocolDefaults(_sttProvider).modelHint,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存语音服务的 API Key',
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              key: const Key('stt-api-key'),
+              controller: _sttApiKeyController,
+              focusNode: _sttApiKeyFocusNode,
+              obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+              decoration: InputDecoration(
+                labelText: 'API Key',
+                hintText: keySet
+                    ? '留空即可继续使用已保存的 Key'
+                    : '保存后写入本机 provider.json',
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            if (keySet) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                key: const Key('forget-stt-key'),
+                onPressed: viewModel.saving
+                    ? null
+                    : () => unawaited(_confirmForgetSttKey(viewModel)),
+                child: const Text('忘记语音服务的 Key'),
+              ),
+            ],
+            const SizedBox(height: 20),
+            if (viewModel.errorMessage case final message?)
+              _StatusMessage(message: message, succeeded: false),
+            if (viewModel.testResult case final result?)
+              _StatusMessage(
+                message: result.message,
+                succeeded: result.succeeded,
+              ),
+            if (viewModel.errorMessage != null || viewModel.testResult != null)
+              const SizedBox(height: 14),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                FilledButton.icon(
+                  key: const Key('save-stt-settings'),
+                  onPressed: viewModel.saving
+                      ? null
+                      : () => unawaited(_saveStt(viewModel)),
+                  icon: _busyOr(viewModel.saving, Icons.lock_outline),
+                  label: const Text('保存到本机'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('test-stt-connection'),
+                  onPressed: viewModel.testing
+                      ? null
+                      : () {
+                          final draft = _readSttDraft();
+                          if (draft != null) {
+                            unawaited(viewModel.testConnection(draft));
+                          }
+                        },
+                  icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
+                  label: const Text('测试连接'),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 语音朗读（TTS）服务配置区块：音色选择、语速微调、高级参数与试听。
+class _TtsSection extends StatefulWidget {
+  const _TtsSection();
+
+  @override
+  State<_TtsSection> createState() => _TtsSectionState();
+}
+
+class _TtsSectionState extends State<_TtsSection> {
+  final _ttsBaseUrlController = TextEditingController();
+  final _ttsModelController = TextEditingController();
+  final _ttsApiKeyController = TextEditingController();
+  final _ttsVoiceController = TextEditingController();
+  final _ttsExtraParamsController = TextEditingController();
+
+  final _ttsBaseUrlFocusNode = FocusNode();
+  final _ttsModelFocusNode = FocusNode();
+  final _ttsApiKeyFocusNode = FocusNode();
+  final _ttsVoiceFocusNode = FocusNode();
+  final _ttsExtraParamsFocusNode = FocusNode();
+
+  TtsServiceKind _ttsProvider = TtsServiceKind.openAiCompatible;
+  bool _customTtsVoice = false;
+  double? _ttsSpeed;
+  TtsSettings? _syncedTtsSettings;
+
+  @override
+  void dispose() {
+    _ttsBaseUrlController.dispose();
+    _ttsModelController.dispose();
+    _ttsApiKeyController.dispose();
+    _ttsVoiceController.dispose();
+    _ttsExtraParamsController.dispose();
+    _ttsBaseUrlFocusNode.dispose();
+    _ttsModelFocusNode.dispose();
+    _ttsApiKeyFocusNode.dispose();
+    _ttsVoiceFocusNode.dispose();
+    _ttsExtraParamsFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _syncTts(TtsSettings? settings) {
+    if (settings == null || identical(settings, _syncedTtsSettings)) {
+      return;
+    }
+    _syncedTtsSettings = settings;
+    _ttsProvider = settings.provider;
+    final presets = ttsVoicePresetsFor(_ttsProvider);
+    if (settings.configured) {
+      _syncField(
+        _ttsBaseUrlController,
+        _ttsBaseUrlFocusNode,
+        settings.baseUrl ?? '',
+      );
+      _syncField(
+        _ttsModelController,
+        _ttsModelFocusNode,
+        settings.model ?? '',
+      );
+      final voice = settings.voice?.trim() ?? '';
+      _syncField(_ttsVoiceController, _ttsVoiceFocusNode, voice);
+      _customTtsVoice = voice.isNotEmpty && !presets.any((p) => p.id == voice);
+      _ttsSpeed = settings.speed;
+      final extraText =
+          (settings.extraParams != null && settings.extraParams!.isNotEmpty)
+              ? const JsonEncoder.withIndent('  ').convert(settings.extraParams)
+              : '';
+      _syncField(
+        _ttsExtraParamsController,
+        _ttsExtraParamsFocusNode,
+        extraText,
+      );
+    } else {
+      final defaults = _ttsProtocolDefaults(_ttsProvider);
+      _syncField(_ttsBaseUrlController, _ttsBaseUrlFocusNode, defaults.url);
+      _syncField(_ttsModelController, _ttsModelFocusNode, defaults.model);
+      final defaultVoice = presets.isNotEmpty ? presets.first.id : '';
+      _syncField(_ttsVoiceController, _ttsVoiceFocusNode, defaultVoice);
+      _customTtsVoice = false;
+      _ttsSpeed = null;
+      _syncField(_ttsExtraParamsController, _ttsExtraParamsFocusNode, '');
+    }
+    if (!_ttsApiKeyFocusNode.hasFocus && _ttsApiKeyController.text.isNotEmpty) {
+      _ttsApiKeyController.clear();
+    }
+  }
+
+  void _selectTtsProvider(String wireName) {
+    final next = wireName == 'volc_tts'
+        ? TtsServiceKind.volcTts
+        : TtsServiceKind.openAiCompatible;
+    if (next == _ttsProvider) {
+      return;
+    }
+    setState(() {
+      _ttsProvider = next;
+      _customTtsVoice = false;
+      final presets = ttsVoicePresetsFor(next);
+      final defaults = _ttsProtocolDefaults(next);
+      _ttsBaseUrlController.text = defaults.url;
+      _ttsModelController.text = defaults.model;
+      _ttsVoiceController.text = presets.isNotEmpty ? presets.first.id : '';
+    });
+  }
+
+  void _selectTtsVoice(String voice) {
+    setState(() {
+      _customTtsVoice = voice == customVoiceValue;
+      _ttsVoiceController.text = _customTtsVoice ? '' : voice;
+    });
+  }
+
+  TtsSettingsDraft? _readTtsDraft() {
+    if (_ttsBaseUrlController.text.trim().isEmpty ||
+        _ttsModelController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请填写语音合成服务地址和模型名称。')));
+      return null;
+    }
+    final key = _ttsApiKeyController.text.trim();
+    final voice = _ttsVoiceController.text.trim();
+    Map<String, Object?>? extraParams;
+    final extraText = _ttsExtraParamsController.text.trim();
+    if (extraText.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(extraText);
+        if (decoded is! Map) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('自定义高级参数必须是 JSON 对象。')),
+          );
+          return null;
+        }
+        extraParams = decoded.cast<String, Object?>();
+      } on FormatException {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('自定义高级参数 JSON 格式不正确，请检查语法。')),
+        );
+        return null;
+      }
+    }
+    return TtsSettingsDraft(
+      provider: _ttsProvider,
+      baseUrl: _ttsBaseUrlController.text.trim(),
+      model: _ttsModelController.text.trim(),
+      apiKey: key.isEmpty ? null : key,
+      voice: voice.isEmpty ? null : voice,
+      speed: _ttsSpeed,
+      extraParams: extraParams,
+    );
+  }
+
+  Future<void> _saveTts(TtsSettingsViewModel viewModel) async {
+    final draft = _readTtsDraft();
+    if (draft == null) {
+      return;
+    }
+    final saved = await viewModel.save(draft);
+    if (saved && mounted) {
+      _ttsApiKeyController.clear();
+    }
+  }
+
+  Future<void> _confirmForgetTtsKey(TtsSettingsViewModel viewModel) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const Key('tts-forget-key-dialog'),
+        title: const Text('忘记语音合成的 API Key？'),
+        content: const Text(
+          '忘记后本机不再保存这个 Key，栖语暂时读不出声，直到你重新输入。'
+          '语音合成服务的地址、模型、音色和语速不受影响。',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('tts-forget-key-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('再想想'),
+          ),
+          FilledButton(
+            key: const Key('tts-forget-key-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('忘记 Key'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await viewModel.forgetApiKey();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<TtsSettingsViewModel>(
+      builder: (context, viewModel, child) {
+        _syncTts(viewModel.settings);
+        final theme = Theme.of(context);
+        final keySet = viewModel.settings?.keySet ?? false;
+        final testResult = viewModel.testResult;
+        return _SettingsPanel(
+          children: [
+            Text(
+              '语音朗读',
+              style: theme.textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w500,
+                letterSpacing: -0.8,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _ttsProvider == TtsServiceKind.volcTts
+                  ? '把栖语写完的话读出来。豆包语音合成走火山方舟的 HTTP 接口，'
+                        '模型名称填 Resource-Id；Key 只存本机 provider.json；'
+                        '音频只存在内存，播完即丢。'
+                  : '把栖语写完的话读出来的服务（OpenAI 兼容语音合成，如 tts-1）。'
+                        '她先把每句完整写好、过了安全检查才开口读；音频只存在内存，'
+                        '播完即丢，本机不留声音文件。',
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                height: 1.55,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _ControlledDropdown(
+              dropdownKey: const Key('tts-provider'),
+              label: '服务类型',
+              value: _ttsProvider == TtsServiceKind.volcTts
+                  ? 'volc_tts'
+                  : 'openai_compatible',
+              items: const [
+                DropdownMenuItem(
+                  value: 'openai_compatible',
+                  child: Text('OpenAI 兼容语音合成'),
+                ),
+                DropdownMenuItem(value: 'volc_tts', child: Text('豆包语音合成')),
+              ],
+              onChanged: _selectTtsProvider,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              key: const Key('tts-base-url'),
+              controller: _ttsBaseUrlController,
+              focusNode: _ttsBaseUrlFocusNode,
+              decoration: InputDecoration(
+                labelText: '服务地址',
+                hintText: _ttsProtocolDefaults(_ttsProvider).urlHint,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              key: const Key('tts-model'),
+              controller: _ttsModelController,
+              focusNode: _ttsModelFocusNode,
+              decoration: InputDecoration(
+                labelText: _ttsProvider == TtsServiceKind.volcTts
+                    ? 'Resource-Id'
+                    : '模型名称',
+                hintText: _ttsProtocolDefaults(_ttsProvider).modelHint,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Builder(
+              builder: (context) {
+                final voicePresets = ttsVoicePresetsFor(_ttsProvider);
+                final currentVoice = _ttsVoiceController.text.trim();
+                final effectiveVoiceValue = _customTtsVoice
+                    ? customVoiceValue
+                    : (currentVoice.isEmpty
+                        ? (voicePresets.isNotEmpty
+                            ? voicePresets.first.id
+                            : customVoiceValue)
+                        : (voicePresets.any((p) => p.id == currentVoice)
+                            ? currentVoice
+                            : customVoiceValue));
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _ControlledDropdown(
+                      dropdownKey: const Key('tts-voice-preset'),
+                      label: '朗读音色',
+                      value: effectiveVoiceValue,
+                      items: [
+                        for (final preset in voicePresets)
+                          DropdownMenuItem(
+                            value: preset.id,
+                            child: Text(
+                              preset.category != null
+                                  ? '【${preset.category}】${preset.label}'
+                                  : preset.label,
+                            ),
+                          ),
+                        const DropdownMenuItem(
+                          value: customVoiceValue,
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit_outlined, size: 18),
+                              SizedBox(width: 8),
+                              Text('输入其他音色 ID'),
+                            ],
+                          ),
+                        ),
+                      ],
+                      onChanged: _selectTtsVoice,
+                    ),
+                    if (_customTtsVoice ||
+                        (currentVoice.isNotEmpty &&
+                            voicePresets.every((p) => p.id != currentVoice))) ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        key: const Key('tts-voice'),
+                        controller: _ttsVoiceController,
+                        focusNode: _ttsVoiceFocusNode,
+                        decoration: InputDecoration(
+                          labelText: '音色 ID',
+                          hintText: _ttsProvider == TtsServiceKind.volcTts
+                              ? 'zh_female_vv_uranus_bigtts'
+                              : 'alloy',
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+            MergeSemantics(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _ttsSpeed == null
+                              ? '语速：默认'
+                              : '语速：${_ttsSpeed!.toStringAsFixed(2)} 倍',
+                          style: theme.textTheme.titleSmall,
+                        ),
+                      ),
+                      if (_ttsSpeed != null)
+                        TextButton(
+                          key: const Key('tts-speed-reset'),
+                          onPressed: () => setState(() => _ttsSpeed = null),
+                          child: const Text('默认'),
+                        ),
+                    ],
+                  ),
+                  Slider(
+                    key: const Key('tts-speed-slider'),
+                    value: _ttsSpeed ?? 1.0,
+                    min: 0.5,
+                    max: 2.0,
+                    divisions: 6,
+                    label: (_ttsSpeed ?? 1.0).toStringAsFixed(2),
+                    onChanged: (value) => setState(() => _ttsSpeed = value),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存语音合成的 API Key',
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              key: const Key('tts-api-key'),
+              controller: _ttsApiKeyController,
+              focusNode: _ttsApiKeyFocusNode,
+              obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+              decoration: InputDecoration(
+                labelText: 'API Key',
+                hintText: keySet
+                    ? '留空即可继续使用已保存的 Key'
+                    : '保存后写入本机 provider.json',
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            if (keySet) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                key: const Key('forget-tts-key'),
+                onPressed: viewModel.saving
+                    ? null
+                    : () => unawaited(_confirmForgetTtsKey(viewModel)),
+                child: const Text('忘记语音合成的 Key'),
+              ),
+            ],
+            const SizedBox(height: 16),
+            ExpansionTile(
+              key: const Key('tts-advanced-params-tile'),
+              title: const Text('高级参数'),
+              subtitle: const Text('自定义云端扩展参数 (JSON)'),
+              tilePadding: EdgeInsets.zero,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0, bottom: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _ttsProvider == TtsServiceKind.volcTts
+                            ? '配置豆包语音合成的深合并参数，例如：\n'
+                              '{\n'
+                              '  "audio_params": { "sample_rate": 16000 },\n'
+                              '  "additions": { "explicit_dialect": "sichuan" }\n'
+                              '}'
+                            : '配置 OpenAI 兼容语音合成的顶层扩展参数，例如：\n'
+                              '{\n'
+                              '  "response_format": "mp3"\n'
+                              '}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: const Key('tts-extra-params'),
+                        controller: _ttsExtraParamsController,
+                        focusNode: _ttsExtraParamsFocusNode,
+                        keyboardType: TextInputType.multiline,
+                        maxLines: 5,
+                        decoration: const InputDecoration(
+                          labelText: '自定义扩展参数 (JSON)',
+                          hintText:
+                              '{\n  "audio_params": {\n    "sample_rate": 16000\n  }\n}',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            if (viewModel.errorMessage case final message?)
+              _StatusMessage(message: message, succeeded: false),
+            if (viewModel.errorMessage == null)
+              if (testResult case final result?)
+                _StatusMessage(
+                  message: result.message,
+                  succeeded: result.succeeded,
+                ),
+            if (testResult != null && testResult.succeeded) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                key: const Key('tts-replay-preview'),
+                onPressed: () => unawaited(viewModel.replayPreview()),
+                icon: const Icon(Icons.volume_up_outlined),
+                label: const Text('再听一次试听'),
+              ),
+            ],
+            if (viewModel.errorMessage != null || testResult != null)
+              const SizedBox(height: 14),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                FilledButton.icon(
+                  key: const Key('save-tts-settings'),
+                  onPressed: viewModel.saving
+                      ? null
+                      : () => unawaited(_saveTts(viewModel)),
+                  icon: _busyOr(viewModel.saving, Icons.lock_outline),
+                  label: const Text('保存到本机'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('test-tts-connection'),
+                  onPressed: viewModel.testing
+                    ? null
+                    : () {
+                        final draft = _readTtsDraft();
+                        if (draft != null) {
+                          unawaited(viewModel.testConnection(draft));
+                        }
+                      },
+                  icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
+                  label: const Text('测试连接并试听'),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 本地数据管理区块：本地路径、备份恢复、记忆控制总览与清除数据。
+class _LocalDataSection extends StatefulWidget {
+  const _LocalDataSection({
+    this.backupGateway,
+    this.backupPlatform,
+  });
+
+  final BackupGateway? backupGateway;
+  final BackupPlatform? backupPlatform;
+
+  @override
+  State<_LocalDataSection> createState() => _LocalDataSectionState();
+}
+
+class _LocalDataSectionState extends State<_LocalDataSection> {
   Future<void> _showMemoryControls(SettingsViewModel viewModel) async {
     unawaited(viewModel.loadMemoryControls());
     await showDialog<void>(
@@ -526,755 +1564,83 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
 
   @override
   Widget build(BuildContext context) {
-    final viewModel = context.watch<ProviderSettingsViewModel>();
-    final sttViewModel = context.watch<SttSettingsViewModel>();
-    final ttsViewModel = context.watch<TtsSettingsViewModel>();
-    final webSearchViewModel = context.watch<WebSearchSettingsViewModel>();
-    final settingsViewModel = context.watch<SettingsViewModel>();
-    _sync(viewModel.settings);
-    _syncStt(sttViewModel.settings);
-    _syncTts(ttsViewModel.settings);
-    _syncWebSearch(webSearchViewModel.settings);
-    final theme = Theme.of(context);
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: ListView(
-              key: const Key('settings-scroll'),
-              padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
-              children: [
-                Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => backToPrevious(context),
-                      tooltip: '返回上一页',
-                      icon: const Icon(Icons.arrow_back),
-                    ),
-                    const SizedBox(width: 8),
-                    Text('设置', style: theme.textTheme.headlineSmall),
-                  ],
-                ),
-                const SizedBox(height: 30),
-                Text(
-                  '模型连接',
-                  style: theme.textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: -0.8,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  '把模型留在本机这端。普通配置和 API Key 都保存在本机 '
-                  'provider.json 文件里，可以直接编辑该文件更换 Key；'
-                  '页面只显示是否已保存，无法取回明文。',
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    height: 1.55,
-                  ),
-                ),
-                const SizedBox(height: 28),
-                if (viewModel.loading)
-                  const Center(child: CircularProgressIndicator())
-                else ...[
-                  _ControlledDropdown(
-                    dropdownKey: const Key('provider-preset'),
-                    label: '提供商',
-                    value: _selectedProviderId,
-                    items: [
-                      for (final provider in providerCatalog)
-                        DropdownMenuItem(
-                          value: provider.id,
-                          child: Text(provider.label),
-                        ),
-                    ],
-                    onChanged: _selectProvider,
-                  ),
-                  const SizedBox(height: 16),
-                  _ControlledDropdown(
-                    dropdownKey: const Key('provider-connection'),
-                    label: '套餐 / 接口类型',
-                    value: _selectedConnectionId,
-                    items: [
-                      for (final connection in _selectedProvider.connections)
-                        DropdownMenuItem(
-                          value: connection.id,
-                          child: Text(connection.label),
-                        ),
-                    ],
-                    onChanged: _selectConnection,
-                  ),
-                  const SizedBox(height: 16),
-                  _ControlledDropdown(
-                    dropdownKey: const Key('provider-model-preset'),
-                    label: '模型',
-                    value: _customModel
-                        ? customModelValue
-                        : _modelController.text,
-                    items: [
-                      for (final model in _selectedConnection.models)
-                        DropdownMenuItem(value: model, child: Text(model)),
-                      const DropdownMenuItem(
-                        value: customModelValue,
-                        child: Row(
-                          children: [
-                            Icon(Icons.edit_outlined, size: 18),
-                            SizedBox(width: 8),
-                            Text('输入其他模型名称'),
-                          ],
-                        ),
-                      ),
-                    ],
-                    onChanged: _selectModel,
-                  ),
-                  if (_customModel) ...[
-                    const SizedBox(height: 16),
-                    TextField(
-                      key: const Key('provider-model'),
-                      controller: _modelController,
-                      decoration: const InputDecoration(
-                        labelText: '模型名称',
-                        hintText: '输入服务商提供的 Model ID',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  if (_selectedConnection.editableBaseUrl)
-                    TextField(
-                      key: const Key('provider-base-url'),
-                      controller: _baseUrlController,
-                      decoration: const InputDecoration(
-                        labelText: '服务地址',
-                        hintText: 'https://example.com/v1',
-                        border: OutlineInputBorder(),
-                      ),
-                    )
-                  else
-                    _ResolvedConnection(
-                      provider: _selectedConnection.provider,
-                      baseUrl: _selectedConnection.baseUrl,
-                    ),
-                  const SizedBox(height: 8),
-                  ExpansionTile(
-                    key: const Key('provider-advanced-settings'),
-                    tilePadding: EdgeInsets.zero,
-                    childrenPadding: const EdgeInsets.only(bottom: 8),
-                    title: const Text('高级参数'),
-                    subtitle: const Text('temperature 与请求超时'),
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              key: const Key('provider-temperature'),
-                              controller: _temperatureController,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                              decoration: const InputDecoration(
-                                labelText: 'temperature',
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: TextField(
-                              key: const Key('provider-timeout'),
-                              controller: _timeoutController,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: '超时（秒）',
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  _credentialSection(context, viewModel),
-                  const SizedBox(height: 24),
-                  if (viewModel.errorMessage case final message?)
-                    _StatusMessage(message: message, succeeded: false),
-                  if (viewModel.testResult case final result?)
-                    _StatusMessage(
-                      message: result.message,
-                      succeeded: result.succeeded,
-                    ),
-                  if (viewModel.errorMessage != null ||
-                      viewModel.testResult != null)
-                    const SizedBox(height: 18),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      FilledButton.icon(
-                        key: const Key('save-provider-settings'),
-                        onPressed: viewModel.saving
-                            ? null
-                            : () => unawaited(_save(viewModel)),
-                        icon: _busyOr(viewModel.saving, Icons.lock_outline),
-                        label: const Text('保存到本机'),
-                      ),
-                      OutlinedButton.icon(
-                        key: const Key('test-provider-connection'),
-                        onPressed: viewModel.testing
-                            ? null
-                            : () {
-                                final draft = _readDraft();
-                                if (draft != null) {
-                                  unawaited(viewModel.testConnection(draft));
-                                }
-                              },
-                        icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
-                        label: const Text('测试连接'),
-                      ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 40),
-                _webSearchSection(context, webSearchViewModel),
-                const SizedBox(height: 24),
-                _sttSection(context, sttViewModel),
-                const SizedBox(height: 24),
-                _ttsSection(context, ttsViewModel),
-                const SizedBox(height: 24),
-                _localDataSection(context, settingsViewModel),
-                const SizedBox(height: 24),
-                _privacySection(context),
-                const SizedBox(height: 24),
-                _developerSection(context, settingsViewModel),
-                if (settingsViewModel.errorMessage case final message?) ...[
-                  const SizedBox(height: 16),
-                  _StatusMessage(message: message, succeeded: false),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _credentialSection(
-    BuildContext context,
-    ProviderSettingsViewModel viewModel,
-  ) {
-    final keySet = viewModel.settings?.keySet ?? false;
-    return _SettingsPanel(
-      children: [
-        Text(
-          keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存 API Key',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 6),
-        Text(
-          keySet
-              ? '留空即可继续使用；输入新值会覆盖旧值，也可以直接编辑 provider.json 更换。'
-              : 'Ollama 本地服务通常可以留空。',
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          key: const Key('provider-api-key'),
-          controller: _apiKeyController,
-          obscureText: true,
-          enableSuggestions: false,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            labelText: 'API Key',
-            hintText: '保存后写入本机 provider.json',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        if (keySet) ...[
-          const SizedBox(height: 8),
-          TextButton(
-            key: const Key('forget-api-key'),
-            onPressed: viewModel.saving
-                ? null
-                : () => unawaited(_confirmForgetKey(viewModel)),
-            child: const Text('忘记已保存的 Key'),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _webSearchSection(
-    BuildContext context,
-    WebSearchSettingsViewModel viewModel,
-  ) {
-    final theme = Theme.of(context);
-    final keySet = viewModel.settings?.keySet ?? false;
-    return _SettingsPanel(
-      children: [
-        Text(
-          '联网搜索',
-          style: theme.textTheme.headlineMedium?.copyWith(
-            fontWeight: FontWeight.w500,
-            letterSpacing: -0.8,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          '需要当前时间、天气、新闻等变化中的事实时，栖语可以按需搜索。'
-          'Key 只保存在本机 provider.json，页面不会取回明文。',
-          style: theme.textTheme.bodyLarge?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            height: 1.55,
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (viewModel.loading)
-          const Center(child: CircularProgressIndicator())
-        else ...[
-          Text(
-            keySet ? 'AnySearch Key 已保存在本机' : '尚未保存 AnySearch Key',
-            style: theme.textTheme.titleSmall,
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            key: const Key('web-search-api-key'),
-            controller: _webSearchApiKeyController,
-            obscureText: true,
-            enableSuggestions: false,
-            autocorrect: false,
-            decoration: InputDecoration(
-              labelText: 'ANYSEARCH_API_KEY',
-              hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
-              border: const OutlineInputBorder(),
-            ),
-          ),
-          if (keySet) ...[
-            const SizedBox(height: 8),
-            TextButton(
-              key: const Key('forget-web-search-key'),
-              onPressed: viewModel.saving
-                  ? null
-                  : () => unawaited(_confirmForgetWebSearchKey(viewModel)),
-              child: const Text('忘记 AnySearch Key'),
-            ),
-          ],
-          const SizedBox(height: 20),
-          if (viewModel.errorMessage case final message?) ...[
-            _StatusMessage(message: message, succeeded: false),
-            const SizedBox(height: 14),
-          ],
-          FilledButton.icon(
-            key: const Key('save-web-search-settings'),
-            onPressed: viewModel.saving
-                ? null
-                : () => unawaited(_saveWebSearch(viewModel)),
-            icon: _busyOr(viewModel.saving, Icons.lock_outline),
-            label: const Text('保存到本机'),
-          ),
-        ],
-      ],
-    );
-  }
-
-  /// 语音输入（STT）服务配置：与聊天 Provider 同构的表单与 Key 规则。
-  Widget _sttSection(BuildContext context, SttSettingsViewModel viewModel) {
-    final theme = Theme.of(context);
-    final keySet = viewModel.settings?.keySet ?? false;
-    return _SettingsPanel(
-      children: [
-        Text(
-          '语音输入',
-          style: theme.textTheme.headlineMedium?.copyWith(
-            fontWeight: FontWeight.w500,
-            letterSpacing: -0.8,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          _sttProvider == SttServiceKind.volcSeedAsr
-              ? '把说的话转成文字。豆包走官方语音识别协议；'
-                    'Key 只保存在本机 provider.json；录音只存在内存里，'
-                    '转写完成即丢弃，不会进入会话与记忆。'
-              : '把说的话转成文字的服务（OpenAI 兼容转写，如 whisper 系列）。'
-                    'Key 只保存在本机 provider.json；录音只存在内存里，'
-                    '转写完成即丢弃，不会进入会话与记忆。',
-          style: theme.textTheme.bodyLarge?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            height: 1.55,
-          ),
-        ),
-        const SizedBox(height: 16),
-        _ControlledDropdown(
-          dropdownKey: const Key('stt-provider'),
-          label: '服务类型',
-          value: _sttProvider == SttServiceKind.volcSeedAsr
-              ? 'volc_seed_asr'
-              : 'openai_compatible',
-          items: const [
-            DropdownMenuItem(
-              value: 'openai_compatible',
-              child: Text('OpenAI 兼容转写'),
-            ),
-            DropdownMenuItem(value: 'volc_seed_asr', child: Text('豆包流式语音识别')),
-          ],
-          onChanged: _selectSttProvider,
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          key: const Key('stt-base-url'),
-          controller: _sttBaseUrlController,
-          decoration: InputDecoration(
-            labelText: '服务地址',
-            hintText: _sttProtocolDefaults(_sttProvider).urlHint,
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          key: const Key('stt-model'),
-          controller: _sttModelController,
-          decoration: InputDecoration(
-            labelText: _sttProvider == SttServiceKind.volcSeedAsr
-                ? 'Resource-Id'
-                : '模型名称',
-            hintText: _sttProtocolDefaults(_sttProvider).modelHint,
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存语音服务的 API Key',
-          style: theme.textTheme.titleSmall,
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          key: const Key('stt-api-key'),
-          controller: _sttApiKeyController,
-          obscureText: true,
-          enableSuggestions: false,
-          autocorrect: false,
-          decoration: InputDecoration(
-            labelText: 'API Key',
-            hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        if (keySet) ...[
-          const SizedBox(height: 8),
-          TextButton(
-            key: const Key('forget-stt-key'),
-            onPressed: viewModel.saving
-                ? null
-                : () => unawaited(_confirmForgetSttKey(viewModel)),
-            child: const Text('忘记语音服务的 Key'),
-          ),
-        ],
-        const SizedBox(height: 20),
-        if (viewModel.errorMessage case final message?)
-          _StatusMessage(message: message, succeeded: false),
-        if (viewModel.testResult case final result?)
-          _StatusMessage(message: result.message, succeeded: result.succeeded),
-        if (viewModel.errorMessage != null || viewModel.testResult != null)
-          const SizedBox(height: 14),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
+    return Consumer<SettingsViewModel>(
+      builder: (context, viewModel, child) {
+        final theme = Theme.of(context);
+        final preview = viewModel.clearPreview;
+        return _SettingsPanel(
           children: [
-            FilledButton.icon(
-              key: const Key('save-stt-settings'),
-              onPressed: viewModel.saving
-                  ? null
-                  : () => unawaited(_saveStt(viewModel)),
-              icon: _busyOr(viewModel.saving, Icons.lock_outline),
-              label: const Text('保存到本机'),
+            Text('本地数据', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 6),
+            Text(
+              '全部会话与记忆都是这台电脑上的 Markdown 文件，不会上传到任何服务器。',
+              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             ),
-            OutlinedButton.icon(
-              key: const Key('test-stt-connection'),
-              onPressed: viewModel.testing
-                  ? null
-                  : () {
-                      final draft = _readSttDraft();
-                      if (draft != null) {
-                        unawaited(viewModel.testConnection(draft));
-                      }
-                    },
-              icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
-              label: const Text('测试连接'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  /// 语音朗读（TTS）服务配置：与语音输入同构的表单，外加音色与语速；
-  /// 测试连接成功即用所选音色语速试听一句话。
-  Widget _ttsSection(BuildContext context, TtsSettingsViewModel viewModel) {
-    final theme = Theme.of(context);
-    final keySet = viewModel.settings?.keySet ?? false;
-    final testResult = viewModel.testResult;
-    return _SettingsPanel(
-      children: [
-        Text(
-          '语音朗读',
-          style: theme.textTheme.headlineMedium?.copyWith(
-            fontWeight: FontWeight.w500,
-            letterSpacing: -0.8,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          _ttsProvider == TtsServiceKind.volcTts
-              ? '把栖语写完的话读出来。豆包语音合成走火山方舟的 HTTP 接口，'
-                    '模型名称填 Resource-Id；Key 只存本机 provider.json；'
-                    '音频只存在内存，播完即丢。'
-              : '把栖语写完的话读出来的服务（OpenAI 兼容语音合成，如 tts-1）。'
-                    '她先把每句完整写好、过了安全检查才开口读；音频只存在内存，'
-                    '播完即丢，本机不留声音文件。',
-          style: theme.textTheme.bodyLarge?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            height: 1.55,
-          ),
-        ),
-        const SizedBox(height: 16),
-        _ControlledDropdown(
-          dropdownKey: const Key('tts-provider'),
-          label: '服务类型',
-          value: _ttsProvider == TtsServiceKind.volcTts
-              ? 'volc_tts'
-              : 'openai_compatible',
-          items: const [
-            DropdownMenuItem(
-              value: 'openai_compatible',
-              child: Text('OpenAI 兼容语音合成'),
-            ),
-            DropdownMenuItem(value: 'volc_tts', child: Text('豆包语音合成')),
-          ],
-          onChanged: _selectTtsProvider,
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          key: const Key('tts-base-url'),
-          controller: _ttsBaseUrlController,
-          decoration: InputDecoration(
-            labelText: '服务地址',
-            hintText: _ttsProtocolDefaults(_ttsProvider).urlHint,
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          key: const Key('tts-model'),
-          controller: _ttsModelController,
-          decoration: InputDecoration(
-            labelText: _ttsProvider == TtsServiceKind.volcTts
-                ? 'Resource-Id'
-                : '模型名称',
-            hintText: _ttsProtocolDefaults(_ttsProvider).modelHint,
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          key: const Key('tts-voice'),
-          controller: _ttsVoiceController,
-          decoration: InputDecoration(
-            labelText: '音色（可选）',
-            hintText: _ttsProvider == TtsServiceKind.volcTts
-                ? 'zh_female_vv_uranus_bigtts'
-                : 'alloy',
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        MergeSemantics(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _ttsSpeed == null
-                          ? '语速：默认'
-                          : '语速：${_ttsSpeed!.toStringAsFixed(2)} 倍',
-                      style: theme.textTheme.titleSmall,
-                    ),
-                  ),
-                  if (_ttsSpeed != null)
-                    TextButton(
-                      key: const Key('tts-speed-reset'),
-                      onPressed: () => setState(() => _ttsSpeed = null),
-                      child: const Text('默认'),
-                    ),
-                ],
-              ),
-              Slider(
-                key: const Key('tts-speed-slider'),
-                value: _ttsSpeed ?? 1.0,
-                min: 0.5,
-                max: 2.0,
-                divisions: 6,
-                label: (_ttsSpeed ?? 1.0).toStringAsFixed(2),
-                // 滑过即存显式值（1.0 也算「用户选的」）；「默认」语义由
-                // 重置按钮回到 null（不传 speed 字段）。
-                onChanged: (value) => setState(() => _ttsSpeed = value),
+            if (preview != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                '数据位置：${preview.memoryDirectory}',
+                key: const Key('local-data-location'),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存语音合成的 API Key',
-          style: theme.textTheme.titleSmall,
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          key: const Key('tts-api-key'),
-          controller: _ttsApiKeyController,
-          obscureText: true,
-          enableSuggestions: false,
-          autocorrect: false,
-          decoration: InputDecoration(
-            labelText: 'API Key',
-            hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        if (keySet) ...[
-          const SizedBox(height: 8),
-          TextButton(
-            key: const Key('forget-tts-key'),
-            onPressed: viewModel.saving
-                ? null
-                : () => unawaited(_confirmForgetTtsKey(viewModel)),
-            child: const Text('忘记语音合成的 Key'),
-          ),
-        ],
-        const SizedBox(height: 20),
-        if (viewModel.errorMessage case final message?)
-          _StatusMessage(message: message, succeeded: false),
-        if (viewModel.errorMessage == null)
-          if (testResult case final result?)
-            _StatusMessage(
-              message: result.message,
-              succeeded: result.succeeded,
-            ),
-        if (testResult != null && testResult.succeeded) ...[
-          const SizedBox(height: 8),
-          TextButton.icon(
-            key: const Key('tts-replay-preview'),
-            onPressed: () => unawaited(viewModel.replayPreview()),
-            icon: const Icon(Icons.volume_up_outlined),
-            label: const Text('再听一次试听'),
-          ),
-        ],
-        if (viewModel.errorMessage != null || testResult != null)
-          const SizedBox(height: 14),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            FilledButton.icon(
-              key: const Key('save-tts-settings'),
-              onPressed: viewModel.saving
-                  ? null
-                  : () => unawaited(_saveTts(viewModel)),
-              icon: _busyOr(viewModel.saving, Icons.lock_outline),
-              label: const Text('保存到本机'),
-            ),
-            OutlinedButton.icon(
-              key: const Key('test-tts-connection'),
-              onPressed: viewModel.testing
-                  ? null
-                  : () {
-                      final draft = _readTtsDraft();
-                      if (draft != null) {
-                        unawaited(viewModel.testConnection(draft));
-                      }
-                    },
-              icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
-              label: const Text('测试连接并试听'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _localDataSection(BuildContext context, SettingsViewModel viewModel) {
-    final theme = Theme.of(context);
-    final preview = viewModel.clearPreview;
-    return _SettingsPanel(
-      children: [
-        Text('本地数据', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 6),
-        Text(
-          '全部会话与记忆都是这台电脑上的 Markdown 文件，不会上传到任何服务器。',
-          style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-        ),
-        if (preview != null) ...[
-          const SizedBox(height: 10),
-          Text(
-            '数据位置：${preview.memoryDirectory}',
-            key: const Key('local-data-location'),
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-        const SizedBox(height: 14),
-        Wrap(
-          spacing: 12,
-          runSpacing: 10,
-          children: [
-            OutlinedButton.icon(
-              key: const Key('settings-backup'),
-              onPressed: () => unawaited(
-                showBackupDialog(
-                  context,
-                  gateway: widget.backupGateway,
-                  platform: widget.backupPlatform,
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 12,
+              runSpacing: 10,
+              children: [
+                OutlinedButton.icon(
+                  key: const Key('settings-backup'),
+                  onPressed: () => unawaited(
+                    showBackupDialog(
+                      context,
+                      gateway: widget.backupGateway,
+                      platform: widget.backupPlatform,
+                    ),
+                  ),
+                  icon: const Icon(Icons.archive_outlined),
+                  label: const Text('备份与恢复'),
                 ),
-              ),
-              icon: const Icon(Icons.archive_outlined),
-              label: const Text('备份与恢复'),
-            ),
-            OutlinedButton.icon(
-              key: const Key('settings-memory-center'),
-              onPressed: () => context.push('/memory'),
-              icon: const Icon(Icons.menu_book_outlined),
-              label: const Text('记忆中心'),
-            ),
-            OutlinedButton.icon(
-              key: const Key('settings-memory-controls'),
-              onPressed: () => unawaited(_showMemoryControls(viewModel)),
-              icon: const Icon(Icons.shield_outlined),
-              label: const Text('记忆控制总览'),
-            ),
-            TextButton.icon(
-              key: const Key('settings-clear-data'),
-              style: TextButton.styleFrom(
-                foregroundColor: theme.colorScheme.error,
-              ),
-              onPressed: viewModel.clearing
-                  ? null
-                  : () => unawaited(_confirmClearData(viewModel)),
-              icon: _busyOr(viewModel.clearing, Icons.delete_outline),
-              label: const Text('清除产品数据'),
+                OutlinedButton.icon(
+                  key: const Key('settings-memory-center'),
+                  onPressed: () => context.push('/memory'),
+                  icon: const Icon(Icons.menu_book_outlined),
+                  label: const Text('记忆中心'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('settings-memory-controls'),
+                  onPressed: () => unawaited(_showMemoryControls(viewModel)),
+                  icon: const Icon(Icons.shield_outlined),
+                  label: const Text('记忆控制总览'),
+                ),
+                TextButton.icon(
+                  key: const Key('settings-clear-data'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: theme.colorScheme.error,
+                  ),
+                  onPressed: viewModel.clearing
+                      ? null
+                      : () => unawaited(_confirmClearData(viewModel)),
+                  icon: _busyOr(viewModel.clearing, Icons.delete_outline),
+                  label: const Text('清除产品数据'),
+                ),
+              ],
             ),
           ],
-        ),
-      ],
+        );
+      },
     );
   }
+}
 
-  Widget _privacySection(BuildContext context) {
+/// 隐私与边界区块：展示隐私说明入口。
+class _PrivacySection extends StatelessWidget {
+  const _PrivacySection();
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return _SettingsPanel(
       children: [
@@ -1294,50 +1660,74 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       ],
     );
   }
+}
 
-  Widget _developerSection(BuildContext context, SettingsViewModel viewModel) {
-    final theme = Theme.of(context);
-    return _SettingsPanel(
-      children: [
-        Text('体验与开发者选项', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 10),
-        // 说明文字与开关合并为一个语义节点：屏幕阅读器一次读全
-        // 「开发者模式」的含义与开关状态（ticket 24）。
-        MergeSemantics(
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('开发者模式', style: theme.textTheme.titleSmall),
-                    Text(
-                      '开启后出现开发者诊断入口。诊断只读，不修改任何数据。',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+/// 体验与开发者选项区块：开发者模式开关与开发者诊断入口。
+class _DeveloperSection extends StatefulWidget {
+  const _DeveloperSection();
+
+  @override
+  State<_DeveloperSection> createState() => _DeveloperSectionState();
+}
+
+class _DeveloperSectionState extends State<_DeveloperSection> {
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<SettingsViewModel>(
+      builder: (context, viewModel, child) {
+        final theme = Theme.of(context);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SettingsPanel(
+              children: [
+                Text('体验与开发者选项', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 10),
+                MergeSemantics(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('开发者模式', style: theme.textTheme.titleSmall),
+                            Text(
+                              '开启后出现开发者诊断入口。诊断只读，不修改任何数据。',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                      Switch(
+                        key: const Key('developer-mode-switch'),
+                        value: viewModel.developerMode,
+                        onChanged: viewModel.busy
+                            ? null
+                            : (value) => unawaited(
+                                viewModel.setDeveloperMode(value),
+                              ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              Switch(
-                key: const Key('developer-mode-switch'),
-                value: viewModel.developerMode,
-                onChanged: viewModel.busy
-                    ? null
-                    : (value) => unawaited(viewModel.setDeveloperMode(value)),
-              ),
+                if (viewModel.developerMode)
+                  OutlinedButton.icon(
+                    key: const Key('settings-diagnostics'),
+                    onPressed: () => context.push('/settings/diagnostics'),
+                    icon: const Icon(Icons.monitor_heart_outlined),
+                    label: const Text('开发者诊断'),
+                  ),
+              ],
+            ),
+            if (viewModel.errorMessage case final message?) ...[
+              const SizedBox(height: 16),
+              _StatusMessage(message: message, succeeded: false),
             ],
-          ),
-        ),
-        if (viewModel.developerMode)
-          OutlinedButton.icon(
-            key: const Key('settings-diagnostics'),
-            onPressed: () => context.push('/settings/diagnostics'),
-            icon: const Icon(Icons.monitor_heart_outlined),
-            label: const Text('开发者诊断'),
-          ),
-      ],
+          ],
+        );
+      },
     );
   }
 }
@@ -1350,11 +1740,12 @@ class _SettingsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainer,
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainer,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        side: BorderSide(color: theme.colorScheme.outlineVariant),
       ),
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -1367,7 +1758,7 @@ class _SettingsPanel extends StatelessWidget {
   }
 }
 
-/// 按钮图标在忙碌时换成小号进度指示，三个动作按钮共用同一形态。
+/// 按钮图标在忙碌时换成小号进度指示，动作按钮共用同一形态。
 Widget _busyOr(bool busy, IconData icon) => busy
     ? const SizedBox.square(
         dimension: 16,

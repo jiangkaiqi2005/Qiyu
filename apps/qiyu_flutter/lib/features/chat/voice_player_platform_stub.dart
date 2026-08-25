@@ -11,9 +11,16 @@ final class UnsupportedVoicePlayerPlatform implements VoicePlayerPlatform {
   bool get supported => false;
 
   @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
   Future<VoicePlayback?> play(
     Uint8List bytes, {
     required String mimeType,
+    double volume = 1.0,
   }) async => null;
 }
 
