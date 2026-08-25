@@ -478,6 +478,77 @@ void main() {
   });
 
   group('索引', () {
+    test('未归档的有效记录缺席索引时不报损坏且不重写索引', () async {
+      await seedEpisodeDay(
+        '2026-08-18',
+        [entry('2026-08-18', 'e1', '用户在准备演讲')],
+        summary: '演讲准备中',
+        finalized: false,
+      );
+      final indexStore = EpisodeIndexStore(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      expect(await indexStore.readTopIndex(), isNull);
+
+      final report = await recovery.sweepAndRecover();
+
+      expect(report.healthy, isTrue);
+      expect(report.findings, isEmpty);
+      expect(await indexStore.readTopIndex(), isNull);
+      expect(quarantineCount(), 0);
+      final logFile = File(
+        path.join(memoryDirectory, 'recovery', 'recovery.log'),
+      );
+      expect(await logFile.exists(), isFalse);
+    });
+
+    test('真实已归档记录缺席索引时按 stale 完整重建且保持健康可用', () async {
+      await seedEpisodeDay(
+        '2026-08-04',
+        [entry('2026-08-04', 'e1', '用户准备演讲')],
+        summary: '演讲',
+        finalized: true,
+      );
+      await seedEpisodeDay(
+        '2026-08-05',
+        [entry('2026-08-05', 'e2', '用户完成了演讲')],
+        summary: '完成演讲',
+        finalized: true,
+      );
+      final indexStore = EpisodeIndexStore(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      // 先只建立 2026-08-04 的索引，制造 2026-08-05 的真实 stale
+      await pipeline.synchronizedOnDayFiles(
+        () => indexStore.rebuild(),
+      );
+      final monthFile = indexStore.monthIndexFile('2026-08');
+      final currentLines = await monthFile.readAsLines();
+      final filteredLines = currentLines
+          .where((line) => !line.contains('2026-08-05'))
+          .join('\n');
+      await overwrite(monthFile, '$filteredLines\n');
+
+      final report = await recovery.sweepAndRecover();
+
+      final monthIndex = await indexStore.readMonthIndex('2026-08');
+      expect(monthIndex, isNotNull);
+      expect(
+        monthIndex!.map((line) => line.date),
+        containsAll(['2026-08-04', '2026-08-05']),
+      );
+      final finding = findByKey(report, 'month-index');
+      expect(finding, isNotNull);
+      expect(finding!.kind, MemoryDamageKind.stale);
+      expect(finding.outcome, MemoryRecoveryOutcome.full);
+      expect(finding.loss, isNull);
+      expect(finding.quarantined, isFalse);
+      expect(report.healthy, isTrue);
+      expect(quarantineCount(), 0);
+    });
+
     test('损坏的月份索引从有效每日记录重建', () async {
       await seedEpisodeDay(
         '2026-08-05',
@@ -489,7 +560,7 @@ void main() {
         episodePipeline: pipeline,
       );
       await pipeline.synchronizedOnDayFiles(
-        () => indexStore.rebuild(includeUnfinalized: true),
+        () => indexStore.rebuild(),
       );
       expect(await indexStore.readTopIndex(), isNotNull);
       await overwrite(indexStore.topIndexFile, '索引乱码');
@@ -503,6 +574,35 @@ void main() {
       expect(finding, isNotNull);
       expect(finding!.kind, MemoryDamageKind.corrupt);
       expect(finding.outcome, MemoryRecoveryOutcome.full);
+      expect(report.healthy, isTrue);
+      expect(quarantineCount(), 0);
+    });
+
+    test('损坏索引只从已归档有效记录重建，排除未归档记录', () async {
+      await seedEpisodeDay(
+        '2026-08-04',
+        [entry('2026-08-04', 'e1', '已归档内容')],
+        summary: '已归档',
+        finalized: true,
+      );
+      await seedEpisodeDay(
+        '2026-08-05',
+        [entry('2026-08-05', 'e2', '未归档内容')],
+        summary: '未归档',
+        finalized: false,
+      );
+      final indexStore = EpisodeIndexStore(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      await overwrite(indexStore.topIndexFile, '顶层索引乱码');
+
+      final report = await recovery.sweepAndRecover();
+
+      final monthIndex = await indexStore.readMonthIndex('2026-08');
+      expect(monthIndex, isNotNull);
+      expect(monthIndex!.map((line) => line.date), ['2026-08-04']);
+      expect(report.healthy, isTrue);
       expect(quarantineCount(), 0);
     });
 
@@ -517,7 +617,7 @@ void main() {
         episodePipeline: pipeline,
       );
       await pipeline.synchronizedOnDayFiles(
-        () => indexStore.rebuild(includeUnfinalized: true),
+        () => indexStore.rebuild(),
       );
       final monthFile = indexStore.monthIndexFile('2026-08');
       await overwrite(
@@ -557,6 +657,51 @@ void main() {
       final finding = findByKey(report, 'top-index');
       expect(finding, isNotNull);
       expect(finding!.kind, MemoryDamageKind.missing);
+    });
+
+    test('恢复扫描先于启动补归档运行后，后续补归档正常完成且最终状态健康', () async {
+      await seedSession('2026-08-18', 1, [
+        ('用户', '今天写完了方案'),
+        ('栖语', '太棒了！'),
+      ]);
+      await seedEpisodeDay(
+        '2026-08-18',
+        [entry('2026-08-18', 'e1', '用户写完了方案')],
+        summary: '写方案',
+        finalized: false,
+      );
+      final indexStore = EpisodeIndexStore(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+
+      // 第一步：先运行恢复扫描
+      final firstReport = await recovery.sweepAndRecover();
+      expect(firstReport.healthy, isTrue);
+      expect(firstReport.findings, isEmpty);
+      expect(await indexStore.readTopIndex(), isNull);
+
+      // 第二步：模拟启动补归档完成
+      await pipeline.synchronizedOnDayFiles(() async {
+        await pipeline.writeFinalization(
+          '2026-08-18',
+          entries: [entry('2026-08-18', 'e1', '用户写完了方案')],
+          summary: '写方案',
+          finalized: true,
+          finalizedAt: clock,
+        );
+        await indexStore.rebuild();
+      });
+
+      // 第三步：验证索引与健康状态
+      final monthIndex = await indexStore.readMonthIndex('2026-08');
+      expect(monthIndex, isNotNull);
+      expect(monthIndex!.map((line) => line.date), ['2026-08-18']);
+
+      final secondReport = await recovery.sweepAndRecover();
+      expect(secondReport.healthy, isTrue);
+      expect(secondReport.findings, isEmpty);
+      expect(quarantineCount(), 0);
     });
   });
 
@@ -1018,7 +1163,7 @@ void main() {
         () => EpisodeIndexStore(
           memoryDirectory: memoryDirectory,
           episodePipeline: pipeline,
-        ).rebuild(includeUnfinalized: true),
+        ).rebuild(),
       );
 
       final report = await recovery.sweepAndRecover();
@@ -1026,6 +1171,68 @@ void main() {
       expect(report.healthy, isTrue);
       expect(report.findings, isEmpty);
       expect(quarantineCount(), 0);
+    });
+
+    test('旧版 stale+full+0隔离报告反序列化推导为健康可用', () {
+      final json = {
+        'schemaVersion': 1,
+        'generatedAt': '2026-08-25T11:44:36.000Z',
+        'quarantinedFiles': 0,
+        'findings': [
+          {
+            'layerKey': 'month-index',
+            'layer': '每日索引（2026-08）',
+            'kind': 'stale',
+            'outcome': 'full',
+            'evidence': '从当月有效每日记录重建',
+            'quarantined': false,
+          },
+        ],
+      };
+      final report = MemoryRecoveryReport.fromJson(json);
+      expect(report, isNotNull);
+      expect(report!.healthy, isTrue);
+    });
+
+    test('包含 pending、partial 或隔离原件的报告判定为不健康需关注', () {
+      final pendingReport = MemoryRecoveryReport(
+        generatedAt: clock,
+        findings: const [
+          MemoryRecoveryFinding(
+            layerKey: 'session',
+            layer: '原始会话',
+            kind: MemoryDamageKind.corrupt,
+            outcome: MemoryRecoveryOutcome.pending,
+            loss: '会话头信息丢失',
+            quarantined: true,
+          ),
+        ],
+        quarantinedFiles: 1,
+      );
+      expect(pendingReport.healthy, isFalse);
+
+      final partialReport = MemoryRecoveryReport(
+        generatedAt: clock,
+        findings: const [
+          MemoryRecoveryFinding(
+            layerKey: 'open-loops',
+            layer: '未闭环事项',
+            kind: MemoryDamageKind.corrupt,
+            outcome: MemoryRecoveryOutcome.partial,
+            loss: '未闭环事项内容',
+            quarantined: true,
+          ),
+        ],
+        quarantinedFiles: 1,
+      );
+      expect(partialReport.healthy, isFalse);
+
+      final quarantineOnlyReport = MemoryRecoveryReport(
+        generatedAt: clock,
+        findings: const [],
+        quarantinedFiles: 1,
+      );
+      expect(quarantineOnlyReport.healthy, isFalse);
     });
   });
 }

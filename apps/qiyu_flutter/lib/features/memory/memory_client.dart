@@ -34,6 +34,24 @@ enum MemoryControlStatus {
   };
 }
 
+/// 恢复状态结果的用户语言：已完整恢复、部分恢复、待恢复。
+enum MemoryRecoveryOutcome {
+  full('已完整恢复'),
+  partial('部分恢复'),
+  pending('待恢复');
+
+  const MemoryRecoveryOutcome(this.label);
+
+  final String label;
+
+  static MemoryRecoveryOutcome? fromWire(Object? value) => switch (value) {
+    'full' => MemoryRecoveryOutcome.full,
+    'partial' => MemoryRecoveryOutcome.partial,
+    'pending' => MemoryRecoveryOutcome.pending,
+    _ => null,
+  };
+}
+
 final class MemoryEntryCard {
   const MemoryEntryCard({
     required this.id,
@@ -346,7 +364,8 @@ final class MemoryRecoveryFindingCard {
       MemoryRecoveryFindingCard(
         layer: json['layer']! as String,
         kind: json['kind']! as String,
-        outcome: json['outcome']! as String,
+        outcome: MemoryRecoveryOutcome.fromWire(json['outcome']) ??
+            MemoryRecoveryOutcome.pending,
         evidence: json['evidence'] as String?,
         loss: json['loss'] as String?,
         quarantined: json['quarantined'] == true,
@@ -354,10 +373,12 @@ final class MemoryRecoveryFindingCard {
 
   final String layer;
   final String kind;
-  final String outcome;
+  final MemoryRecoveryOutcome outcome;
   final String? evidence;
   final String? loss;
   final bool quarantined;
+
+  bool get isFullyRecovered => outcome == MemoryRecoveryOutcome.full;
 
   String get kindLabel => switch (kind) {
     'missing' => '缺失',
@@ -368,12 +389,7 @@ final class MemoryRecoveryFindingCard {
     _ => '异常',
   };
 
-  String get outcomeLabel => switch (outcome) {
-    'full' => '已完整恢复',
-    'partial' => '部分恢复',
-    'pending' => '待恢复',
-    _ => '未知',
-  };
+  String get outcomeLabel => outcome.label;
 }
 
 /// 恢复状态区：健康时 [healthy] 为 true 且不展示；有发现时逐条呈现
@@ -385,15 +401,22 @@ final class MemoryRecoverySection {
     required this.findings,
   });
 
-  factory MemoryRecoverySection.fromJson(Map<String, Object?> json) =>
-      MemoryRecoverySection(
-        healthy: json['healthy'] == true,
-        quarantinedFiles: json['quarantinedFiles'] as int? ?? 0,
-        findings: (json['findings'] as List<Object?>? ?? const [])
-            .whereType<Map<String, Object?>>()
-            .map(MemoryRecoveryFindingCard.fromJson)
-            .toList(),
-      );
+  factory MemoryRecoverySection.fromJson(Map<String, Object?> json) {
+    final findings = (json['findings'] as List<Object?>? ?? const [])
+        .whereType<Map<String, Object?>>()
+        .map(MemoryRecoveryFindingCard.fromJson)
+        .toList();
+    final quarantinedFiles = json['quarantinedFiles'] as int? ?? 0;
+    final derivedHealthy = quarantinedFiles == 0 &&
+        findings.every(
+          (finding) => !finding.quarantined && finding.isFullyRecovered,
+        );
+    return MemoryRecoverySection(
+      healthy: derivedHealthy,
+      quarantinedFiles: quarantinedFiles,
+      findings: findings,
+    );
+  }
 
   final bool healthy;
   final int quarantinedFiles;

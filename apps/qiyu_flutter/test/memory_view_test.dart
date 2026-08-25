@@ -696,6 +696,68 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets(
+    'legacy report with stale and full outcome and zero quarantine does not show damage banner',
+    (tester) async {
+      // 模拟旧版 Host 返回的 JSON：healthy 字段可能因旧逻辑为 false，但全部 finding 为 full 且无隔离
+      final legacyJson = {
+        'generatedAt': '2026-08-25T11:44:36.000Z',
+        'recent': {'days': []},
+        'longTerm': {
+          'present': false,
+          'readable': true,
+          'organizedAt': null,
+          'groups': [],
+        },
+        'persona': {'branches': []},
+        'relationship': {
+          'present': false,
+          'stage': null,
+          'since': null,
+          'confirmed': [],
+          'probes': [],
+          'recentChanges': [],
+          'sharedPast': [],
+        },
+        'recovery': {
+          'healthy': false, // 旧版 Host 将有 finding 误标为 false
+          'quarantinedFiles': 0,
+          'findings': [
+            {
+              'layer': '每日索引（2026-08）',
+              'kind': 'stale',
+              'outcome': 'full',
+              'evidence': '从当月有效每日记录重建',
+              'loss': null,
+              'quarantined': false,
+            },
+          ],
+        },
+      };
+
+      final overview = MemoryOverview.fromJson(legacyJson);
+      final gateway = _FakeMemoryGateway(overview);
+      final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+      await memoryViewModel.refresh();
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: _chatViewModel(),
+          onboardingViewModel: await _onboardingViewModel(),
+          memoryViewModel: memoryViewModel,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-go-memory')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('memory-recovery-banner')), findsNothing);
+      expect(find.text('部分记忆文件出现过损坏'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('memory-back')));
+      await tester.pumpAndSettle();
+    },
+  );
+
   testWidgets('masked detail content reveals once and re-masks on timeout', (
     tester,
   ) async {
@@ -1252,7 +1314,7 @@ MemoryOverview _recoveryOverview() => MemoryOverview(
       MemoryRecoveryFindingCard(
         layer: '长期印象',
         kind: 'corrupt',
-        outcome: 'pending',
+        outcome: MemoryRecoveryOutcome.pending,
         evidence: '无有效 Dream 备份',
         loss: '长期印象内容',
         quarantined: true,
@@ -1260,7 +1322,7 @@ MemoryOverview _recoveryOverview() => MemoryOverview(
       MemoryRecoveryFindingCard(
         layer: '原始会话（2026-08-05 第 1 段）',
         kind: 'incomplete',
-        outcome: 'partial',
+        outcome: MemoryRecoveryOutcome.partial,
         evidence: '从文件内完整对话块 2 段抢救',
         loss: '未完整解析的对话块',
         quarantined: true,

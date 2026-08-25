@@ -447,6 +447,142 @@ void main() {
     final detail = await service.itemDetail(entry.id);
     expect((detail! as EpisodeEntryDetail).userEdited, isTrue);
   });
+
+  test(
+    'overview reports recovery section as healthy when all findings are full with 0 quarantine',
+    () async {
+      final pipeline = EpisodeMemoryPipeline(memoryDirectory: memoryDirectory);
+      final memoryControls = MemoryControlsStore(
+        memoryDirectory: memoryDirectory,
+      );
+      final personaTree = PersonaTreeStore(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      final monthlySummary = MonthlySummaryStore(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      final relationshipLifecycle = RelationshipLifecycle(
+        memoryDirectory: memoryDirectory,
+      );
+      final dreamService = DreamService(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      final actions = MemoryActionService(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryControls: memoryControls,
+        openLoopStore: OpenLoopStore(
+          memoryDirectory: memoryDirectory,
+          memoryControls: memoryControls,
+        ),
+        monthlySummary: monthlySummary,
+        relationshipLifecycle: relationshipLifecycle,
+      );
+      final recovery = MemoryRecoveryService(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+        memoryControls: memoryControls,
+        personaTree: personaTree,
+        dreamService: dreamService,
+        monthlySummary: monthlySummary,
+        relationshipLifecycle: relationshipLifecycle,
+        memoryActions: actions,
+      );
+
+      // 制造一个已归档日期缺席索引的恢复场景（stale + full + 0 隔离）
+      await _seedEpisodes({
+        '2026-08-16': [
+          _entry('s1:r1:0', '用户准备演讲', at: DateTime(2026, 8, 16, 20)),
+        ],
+      }, finalizedDates: {'2026-08-16': '演讲'});
+
+      await recovery.sweepAndRecover();
+
+      final service = MemoryCenterService(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryControls: memoryControls,
+        dreamService: dreamService,
+        memoryRecovery: recovery,
+      );
+      final overview = await service.overview();
+      expect(overview.recovery.healthy, isTrue);
+      expect(overview.recovery.quarantinedFiles, 0);
+    },
+  );
+
+  test(
+    'overview reports recovery section as unhealthy when pending, partial or quarantined files exist',
+    () async {
+      final pipeline = EpisodeMemoryPipeline(memoryDirectory: memoryDirectory);
+      final memoryControls = MemoryControlsStore(
+        memoryDirectory: memoryDirectory,
+      );
+      final personaTree = PersonaTreeStore(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      final monthlySummary = MonthlySummaryStore(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      final relationshipLifecycle = RelationshipLifecycle(
+        memoryDirectory: memoryDirectory,
+      );
+      final dreamService = DreamService(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      final actions = MemoryActionService(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryControls: memoryControls,
+        openLoopStore: OpenLoopStore(
+          memoryDirectory: memoryDirectory,
+          memoryControls: memoryControls,
+        ),
+        monthlySummary: monthlySummary,
+        relationshipLifecycle: relationshipLifecycle,
+      );
+      final recovery = MemoryRecoveryService(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+        memoryControls: memoryControls,
+        personaTree: personaTree,
+        dreamService: dreamService,
+        monthlySummary: monthlySummary,
+        relationshipLifecycle: relationshipLifecycle,
+        memoryActions: actions,
+      );
+
+      // 写入损坏的 open-loops.md
+      final openLoopsFile = File(
+        path.join(memoryDirectory, 'open-loops.md'),
+      );
+      await openLoopsFile.writeAsString('# open-loops\n- 损坏的内容没有时间戳');
+
+      await recovery.sweepAndRecover();
+
+      final service = MemoryCenterService(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryControls: memoryControls,
+        dreamService: dreamService,
+        memoryRecovery: recovery,
+      );
+      final overview = await service.overview();
+      expect(overview.recovery.healthy, isFalse);
+      expect(overview.recovery.findings, isNotEmpty);
+      expect(overview.recovery.quarantinedFiles, greaterThanOrEqualTo(1));
+    },
+  );
 }
 
 /// 播种一套覆盖四区的完整记忆：两日 episode（含证据、关系信号、

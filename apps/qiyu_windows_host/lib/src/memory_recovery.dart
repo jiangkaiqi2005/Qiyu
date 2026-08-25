@@ -145,7 +145,15 @@ final class MemoryRecoveryReport {
   /// 隔离区保留的原件份数。
   final int quarantinedFiles;
 
-  bool get healthy => findings.isEmpty;
+  /// 当没有 finding，或所有 findings 均为完整恢复且无隔离原件时，
+  /// 系统处于健康可用状态；存在待恢复、部分恢复或隔离原件时才需要关注。
+  bool get healthy =>
+      quarantinedFiles == 0 &&
+      findings.every(
+        (finding) =>
+            !finding.quarantined &&
+            finding.outcome == MemoryRecoveryOutcome.full,
+      );
 
   Map<String, Object?> toJson() => {
     'schemaVersion': 1,
@@ -921,7 +929,9 @@ final class MemoryRecoveryService {
     final validDates = <String>{};
     for (final date in dates) {
       final day = await episodePipeline.readDay(date);
-      if (!day.readable || validEpisodeEntries(day.entries).isEmpty) {
+      if (!day.readable ||
+          !day.finalized ||
+          validEpisodeEntries(day.entries).isEmpty) {
         continue;
       }
       validDates.add(date);
@@ -1040,7 +1050,7 @@ final class MemoryRecoveryService {
     }
 
     if (dirty) {
-      await _indexStore.rebuild(includeUnfinalized: true);
+      await _indexStore.rebuild();
       // 索引可完全从现存每日记录推导：重建成功后隔离副本删除。
       for (final quarantinePath in quarantined) {
         await _deleteIfExists(File(quarantinePath));

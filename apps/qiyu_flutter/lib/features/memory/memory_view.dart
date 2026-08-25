@@ -158,10 +158,10 @@ class _RecoveryBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final pending = section.findings
-        .where((finding) => finding.outcome == 'pending')
+        .where((finding) => finding.outcome == MemoryRecoveryOutcome.pending)
         .length;
     final partial = section.findings
-        .where((finding) => finding.outcome == 'partial')
+        .where((finding) => finding.outcome == MemoryRecoveryOutcome.partial)
         .length;
     final subtitle = [
       if (pending > 0) '$pending 项待恢复',

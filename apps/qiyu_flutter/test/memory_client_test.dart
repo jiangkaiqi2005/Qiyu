@@ -230,6 +230,88 @@ void main() {
       expect(result.retryable, isFalse);
     },
   );
+
+  test('parses recovery findings and derives health state accurately', () {
+    expect(MemoryRecoveryOutcome.fromWire('full'), MemoryRecoveryOutcome.full);
+    expect(
+      MemoryRecoveryOutcome.fromWire('partial'),
+      MemoryRecoveryOutcome.partial,
+    );
+    expect(
+      MemoryRecoveryOutcome.fromWire('pending'),
+      MemoryRecoveryOutcome.pending,
+    );
+    expect(MemoryRecoveryOutcome.fromWire('unknown'), isNull);
+    expect(MemoryRecoveryOutcome.fromWire(null), isNull);
+
+    final fullFinding = MemoryRecoveryFindingCard.fromJson({
+      'layer': '长期印象',
+      'kind': 'stale',
+      'outcome': 'full',
+      'evidence': '从备份恢复',
+      'quarantined': false,
+    });
+    expect(fullFinding.isFullyRecovered, isTrue);
+    expect(fullFinding.outcome, MemoryRecoveryOutcome.full);
+    expect(fullFinding.outcomeLabel, '已完整恢复');
+
+    final partialFinding = MemoryRecoveryFindingCard.fromJson({
+      'layer': '长期印象',
+      'kind': 'corrupt',
+      'outcome': 'partial',
+      'evidence': null,
+      'quarantined': false,
+    });
+    expect(partialFinding.isFullyRecovered, isFalse);
+    expect(partialFinding.outcome, MemoryRecoveryOutcome.partial);
+    expect(partialFinding.outcomeLabel, '部分恢复');
+
+    final pendingFinding = MemoryRecoveryFindingCard.fromJson({
+      'layer': '长期印象',
+      'kind': 'corrupt',
+      'outcome': 'pending',
+      'evidence': null,
+      'quarantined': false,
+    });
+    expect(pendingFinding.isFullyRecovered, isFalse);
+    expect(pendingFinding.outcome, MemoryRecoveryOutcome.pending);
+    expect(pendingFinding.outcomeLabel, '待恢复');
+
+    final unknownFinding = MemoryRecoveryFindingCard.fromJson({
+      'layer': '长期印象',
+      'kind': 'corrupt',
+      'outcome': 'unknown_variant',
+      'evidence': null,
+      'quarantined': false,
+    });
+    expect(unknownFinding.outcome, MemoryRecoveryOutcome.pending);
+
+    final healthySection = MemoryRecoverySection.fromJson({
+      'quarantinedFiles': 0,
+      'findings': [
+        {
+          'layer': '长期印象',
+          'kind': 'stale',
+          'outcome': 'full',
+          'quarantined': false,
+        },
+      ],
+    });
+    expect(healthySection.healthy, isTrue);
+
+    final unhealthySection = MemoryRecoverySection.fromJson({
+      'quarantinedFiles': 0,
+      'findings': [
+        {
+          'layer': '长期印象',
+          'kind': 'corrupt',
+          'outcome': 'partial',
+          'quarantined': false,
+        },
+      ],
+    });
+    expect(unhealthySection.healthy, isFalse);
+  });
 }
 
 http.Response _jsonResponse(Object body, int statusCode) => http.Response(
