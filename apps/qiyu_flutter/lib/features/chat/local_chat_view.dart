@@ -20,6 +20,16 @@ final class _SendChatIntent extends Intent {
   const _SendChatIntent();
 }
 
+/// 空会话占位按当前时段分流。产品定位是夜间陪伴，但白天打开也该
+/// 贴合当下时段；凌晨到清晨都归入「今晚」，守住睡前陪伴的基调。
+String qiyuEmptyChatHint(DateTime now) {
+  final hour = now.hour;
+  if (hour >= 5 && hour < 11) return '早上想说点什么？';
+  if (hour >= 11 && hour < 13) return '中午想说点什么？';
+  if (hour >= 13 && hour < 18) return '下午想说点什么？';
+  return '今晚想说点什么？';
+}
+
 final class _InsertLineBreakIntent extends Intent {
   const _InsertLineBreakIntent();
 }
@@ -624,7 +634,7 @@ class _LocalChatViewState extends State<LocalChatView> {
     if (viewModel.messages.isEmpty &&
         !viewModel.waiting &&
         viewModel.streamingText.isEmpty) {
-      return const Center(child: Text('今晚想说点什么？'));
+      return Center(child: Text(qiyuEmptyChatHint(DateTime.now())));
     }
     final transientCount =
         viewModel.waiting || viewModel.streamingText.isNotEmpty ? 1 : 0;
