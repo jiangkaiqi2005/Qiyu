@@ -87,6 +87,10 @@
 ## Further Notes
 
 1. **剩余待打磨项**：只剩品牌图标的最终图形设计——本轮用中性几何占位落地，图形另行设计。连接状态呈现形式、背景图入库资产工艺、字体子集化工艺均已收口，不再属待打磨项。
-2. 原型 `.scratch/qiyu-prototype/` 不入库（在 `.scratch` 下），但实现期间是视觉真相源；其中的 CSS token 值与 design-system.md 完全一致，任一侧改动必须同步另一侧。唯一例外：原型的品牌图标占位（紫色渐变圆 + 自造波纹）不作数，实现改用中性几何占位（不着紫、无渐变）。
+2. 原型 `.scratch/qiyu-prototype/` 不入库（在 `.scratch` 下），实现期间它是**视觉真相源**，但只在形态与观感这一层成立：**token 命名与个别数值以 `docs/product/design-system.md` 为准**，两侧不一致时以规范为准并回报。原「任一侧改动必须同步另一侧」的说法做不到，撤掉——不要为了「凑一致」去改规范，也不要照抄下面这些已知不符规范的写法：
+   - `--accent-deep-a: #55489c` / `--accent-deep-b: #463a85`：历史命名与命名值都不在 §2 的 token 表里。§2 定稿的强调渐变是 `accent-glass` 的 `rgba(75,64,146,.62) → rgba(51,43,97,.5)`（半透明两端 + 背景模糊），实现一律取 `QiyuColors.accentGlassA/B`。
+   - `.toggle.on` 的选中实底用紫渐变：与三色纪律（§1、§2）和 User Story 9「除了发送按钮和键盘焦点外没有任何紫色」冲突。开关选中态属中性档，实现在主题层 `switchTheme` 里压回中性，视觉验收不得按原型的紫底返工。
+   - `.brand-btn:hover`、`.nav-item:hover`、`.icon-btn:hover`、`.text-btn:hover`、`.mem-action:hover` 的悬停底是 `rgba(157,143,224,.06–.10)` 淡紫：§8 组件 7 定的是「悬停轻提亮」，实现取中性提亮。
+   - 品牌图标占位（紫色渐变圆 + 自造波纹）不作数，实现改用中性几何占位（不着紫、无渐变，见 Implementation Decisions 第 9 条）；它原先还带一层 `inset 0 1px 1px rgba(255,255,255,.25)` 白色高光，直接违反 §8 组件 4「无描边、无白色高光」，已于 2026-08-28 从原型 CSS 删除。
 3. 本次改造会触碰大量现有视觉断言，提交分段（用户 2026-08-28 定）：commit 0 文档基准（本 Spec 与设计规范/决策日志/ADR/CONTEXT 先行入库，作为 review 基准点）→ token 主题层与字体、背景图资产 → 合一页与导航壳（含连接状态）→ 历史 → 记忆中心 → 设置 → 硬编码色值收口与门禁复核；每段独立可测。
 4. 设计规范与决策日志的权威版本在 `docs/product/design-system.md` 与 `docs/product/frontend-design-decisions.md`；本 Spec 与其冲突时以规范文档为准并回报。
