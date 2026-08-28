@@ -49,7 +49,16 @@ void main() {
     });
 
     testWidgets('导航项选中态取中性暗底 + 近白文字，绝不用紫', (tester) async {
-      await _pumpShell(tester, width: 1200, height: 800, at: '/history');
+      await _pumpShell(
+        tester,
+        width: 1200,
+        height: 800,
+        at: '/history',
+        // 选中态只有在「功能页也套着壳」时才看得见；真实 app.dart 本段只把壳
+        // 挂在 / 与 /chat（路由一条没动），壳包住历史/记忆/设置是第 3–5 段的事。
+        // 这里由 harness 给占位页套上同一个壳，专门验导航项的选中绘制。
+        shellOnFeaturePages: true,
+      );
 
       final selected = _navItemContainer(tester, 'nav-history');
       expect(selected.color, QiyuColors.selectedNeutral);
@@ -57,7 +66,7 @@ void main() {
       expect(selected.color, isNot(QiyuColors.accentBright));
       expect(selected.color, isNot(QiyuColors.danger));
       final labelColor = _navItemLabel(tester, 'nav-history').style!.color;
-      expect(labelColor, QiyuColors.onAccent);
+      expect(labelColor, QiyuColors.neutralEmphasis);
 
       // 未选中项保持 muted。
       expect(
@@ -82,14 +91,17 @@ void main() {
       expect(find.byKey(const Key('nav-settings')), findsOneWidget);
       // 连接状态与桌面同款形态收进抽屉底部，不另设降级形态。
       expect(find.byKey(const Key('conn-status')), findsOneWidget);
-      // 抽屉宽约视口 2/3。
-      final drawerWidth = tester.getSize(find.byKey(const Key('nav-memory')));
-      expect(drawerWidth.width, lessThanOrEqualTo(420 * 0.7));
+      // 抽屉宽约视口 2/3（按 nav-drawer 量抽屉本体，不是量导航项）。
+      final drawerRect = tester.getRect(find.byKey(const Key('nav-drawer')));
+      expect(drawerRect.width, 420 * QiyuLayout.drawerWidthFraction);
+      // 抽屉贴左缘停靠，右侧留出可点的遮罩。
+      expect(drawerRect.left, 0);
 
-      // 点遮罩收回。
-      await tester.tap(find.byKey(const Key('nav-scrim')));
+      // 点遮罩收回：必须落在抽屉之外的遮罩区域，点在抽屉上不算点遮罩。
+      await tester.tapAt(Offset(drawerRect.right + 40, 450));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('nav-history')), findsNothing);
+      expect(find.byKey(const Key('nav-scrim')), findsNothing);
     });
 
     testWidgets('窄屏点三条杠同样收回抽屉', (tester) async {
@@ -215,7 +227,7 @@ void main() {
           findsOneWidget,
           reason: '$location 也要直接可聊',
         );
-        expect(find.byType(QiyuShell), findsOneWidget, reason: '$location');
+        expect(find.byType(QiyuShell), findsOneWidget, reason: location);
         await tester.pumpWidget(const SizedBox.shrink());
       }
     });
@@ -256,27 +268,22 @@ void main() {
     });
 
     testWidgets('用户水滴气泡与栖语无气泡（§7）', (tester) async {
-      final gateway = _StubChatGateway();
-      await tester.pumpWidget(
-        _app(
-          viewModel: await _viewModel(
-            gateway,
-            restored: const [
-              LocalChatMessage(
-                requestId: 'r-1',
-                speaker: LocalChatSpeaker.user,
-                text: '今晚有点睡不着',
-              ),
-              LocalChatMessage(
-                requestId: 'r-1',
-                speaker: LocalChatSpeaker.qiyu,
-                text: '嗯，坐着说。',
-                source: ReplySource.local,
-              ),
-            ],
+      final gateway = _StubChatGateway(
+        restored: const [
+          LocalChatMessage(
+            requestId: 'r-1',
+            speaker: LocalChatSpeaker.user,
+            text: '今晚有点睡不着',
           ),
-        ),
+          LocalChatMessage(
+            requestId: 'r-1',
+            speaker: LocalChatSpeaker.qiyu,
+            text: '嗯，坐着说。',
+            source: ReplySource.local,
+          ),
+        ],
       );
+      await tester.pumpWidget(await _app(viewModel: await _viewModel(gateway)));
       await tester.pumpAndSettle();
 
       final user = tester.widget<Container>(
@@ -316,11 +323,14 @@ void main() {
       await tester.pumpWidget(await _app(viewModel: await _viewModel(gateway)));
       await tester.pumpAndSettle();
 
+      // 渐变画在 Ink 上，chat-send 键在内层 InkWell 上：Ink 是它的祖先。
       final ink = tester.widget<Ink>(
-        find.descendant(
-          of: find.byKey(const Key('chat-send')),
-          matching: find.byType(Ink),
-        ).first,
+        find
+            .ancestor(
+              of: find.byKey(const Key('chat-send')),
+              matching: find.byType(Ink),
+            )
+            .first,
       );
       final decoration = ink.decoration! as BoxDecoration;
       expect(decoration.shape, BoxShape.circle);
@@ -331,17 +341,21 @@ void main() {
       ]);
       // 无描边（也没有白色发丝高光）。
       expect(decoration.border, null);
-      final glow = (tester
-              .widget<DecoratedBox>(
-                find
-                    .ancestor(
-                      of: find.byKey(const Key('chat-send')),
-                      matching: find.byType(DecoratedBox),
-                    )
-                    .first
-              )
-              .decoration as BoxDecoration)
-          .boxShadow!;
+      // 光晕：往外找第一个带 boxShadow 的 DecoratedBox。
+      final glowBox = tester.widget<DecoratedBox>(
+        find
+            .ancestor(
+              of: find.byKey(const Key('chat-send')),
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is DecoratedBox &&
+                    widget.decoration is BoxDecoration &&
+                    (widget.decoration as BoxDecoration).boxShadow != null,
+              ),
+            )
+            .first,
+      );
+      final glow = (glowBox.decoration as BoxDecoration).boxShadow!;
       expect(glow.single.color, QiyuColors.sendGlow);
       expect(
         tester.widget<Icon>(find.byIcon(Icons.arrow_upward_rounded)).color,
@@ -369,13 +383,15 @@ void main() {
                   .decoration
               as BoxDecoration);
 
-      // 空态里 TextField 自动获焦，聚焦描边就是 composerFocusLine。
+      // 空态里 TextField 自动获焦：胶囊全圆角 + 聚焦描边 composerFocusLine，
+      // 紫度 0.13（§8 组件 5），线宽走 QiyuLine.hairline 不另写数字。
       expect(panel().borderRadius, QiyuRadii.pillBorder);
       expect(panel().border!.top.color, QiyuColors.composerFocusLine);
-      expect(panel().border!.top.width, 1);
+      expect(panel().border!.top.color.a, closeTo(0.13, 0.005));
+      expect(panel().border!.top.width, QiyuLine.hairline);
 
-      // 点别处失焦后回到 line 发丝线。
-      await tester.tap(find.byKey(const Key('home-greeting')));
+      // 显式弃焦（点空白不会把焦点从输入框拿走）后回到 line 发丝线。
+      FocusManager.instance.primaryFocus?.unfocus();
       await tester.pumpAndSettle();
       expect(panel().border!.top.color, QiyuColors.line);
     });
@@ -403,17 +419,42 @@ void main() {
       tester,
     ) async {
       await _pumpShell(tester, width: 1200, height: 800);
-      expect(_ringBorder(tester, 'nav-history').color, isNot(QiyuColors.accentBright));
+      // 初始焦点在 composer，导航项的环是透明的：留白常驻，出现与消失都不跳版。
+      expect(
+        _ringBorder(tester, 'nav-history').color,
+        isNot(QiyuColors.accentBright),
+      );
 
-      // Tab 依次落在品牌槽、第一项导航。
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
+      // 遍历顺序按阅读序、且起点在输入框，所以逐次 Tab 直到落进导航项；
+      // 落不进去就是缺陷，不能靠放宽断言蒙过去。
+      var landed = false;
+      for (var i = 0; i < 8 && !landed; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        landed =
+            _ringBorder(tester, 'nav-history').color == QiyuColors.accentBright;
+      }
+      expect(landed, isTrue, reason: '键盘 Tab 落到导航项必须出现 accentBright 外环');
 
       final border = _ringBorder(tester, 'nav-history');
       expect(border.width, QiyuLayout.focusRingWidth);
       expect(border.color, QiyuColors.accentBright);
+      // offset 由环外那圈**常驻**留白给出（未聚焦时也占位，所以出现与消失
+      // 都不跳版）：留白必须是 focusRingOffset，配上上面的环宽才是定稿的
+      // 「2px accentBright + offset 3px」——Material 的 focusColor 只会把
+      // 高亮铺在控件表面上，给不出这一圈留白外环。
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('nav-history')),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Padding &&
+                widget.padding ==
+                    const EdgeInsets.all(QiyuLayout.focusRingOffset),
+          ),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('reduced-motion 下抽屉直接到位，不做平移动效', (tester) async {
@@ -425,11 +466,12 @@ void main() {
         settle: false,
       );
       await tester.tap(find.byKey(const Key('nav-menu-button')));
-      // 只推进一帧：动画时长被压成 0，抽屉应已完全进入视口。
+      // 只推进一帧：时长被压成 0，抽屉直接落到与桌面侧边栏同一条基线上
+      // （面板有 16px 水平内边距，导航项的落位左边就是那个内边距）。
       await tester.pump();
       expect(
         tester.getRect(find.byKey(const Key('nav-history'))).left,
-        greaterThanOrEqualTo(0),
+        QiyuLayout.sidebarPaddingHorizontal,
       );
     });
 
@@ -443,7 +485,10 @@ void main() {
         lessThan(0),
       );
       await tester.pumpAndSettle();
-      expect(tester.getRect(find.byKey(const Key('nav-history'))).left, 0);
+      expect(
+        tester.getRect(find.byKey(const Key('nav-history'))).left,
+        QiyuLayout.sidebarPaddingHorizontal,
+      );
     });
   });
 }
@@ -460,6 +505,7 @@ Future<void> _pumpShell(
   bool drawerOpen = false,
   bool settle = true,
   bool reducedMotion = false,
+  bool shellOnFeaturePages = false,
   _StubProbe? probe,
   LocalChatViewModel? viewModel,
 }) async {
@@ -472,6 +518,7 @@ Future<void> _pumpShell(
       probe: probe,
       viewModel: viewModel,
       reducedMotion: reducedMotion,
+      shellOnFeaturePages: shellOnFeaturePages,
     ),
   );
   if (settle) {
@@ -490,14 +537,14 @@ Future<Widget> _app({
   _StubProbe? probe,
   LocalChatViewModel? viewModel,
   bool reducedMotion = false,
+  bool shellOnFeaturePages = false,
 }) async {
   final chat =
-      viewModel ??
-      await _viewModel(_StubChatGateway(), probe: probe);
+      viewModel ?? await _viewModel(_StubChatGateway(), probe: probe);
   return MultiProvider(
     providers: [ChangeNotifierProvider.value(value: chat)],
     child: MaterialApp.router(
-      routerConfig: _router(at),
+      routerConfig: _router(at, shellOnFeaturePages: shellOnFeaturePages),
       theme: qiyuDarkTheme(),
       // reduced-motion：Web 引擎把 prefers-reduced-motion 映射到
       // AccessibilityFeatures.disableAnimations，测试侧同样从这一位进。
@@ -505,7 +552,7 @@ Future<Widget> _app({
           ? (context, child) => MediaQuery(
               data: MediaQuery.of(
                 context,
-              ).data.copyWith(disableAnimations: true),
+              ).copyWith(disableAnimations: true),
               child: child ?? const SizedBox.shrink(),
             )
           : null,
@@ -513,62 +560,74 @@ Future<Widget> _app({
   );
 }
 
-/// 与被改造应用同构的最小路由：路径与真实的 8 条一致，功能页用占位页，
-/// 本段只验壳与合一页。
-GoRouter _router(String initialLocation, {_StubProbe? probe}) => GoRouter(
-  initialLocation: initialLocation,
-  routes: [
-    GoRoute(
-      path: '/',
-      builder: (context, state) => const QiyuShell(child: LocalChatView()),
-    ),
-    GoRoute(
-      path: '/chat',
-      builder: (context, state) => const QiyuShell(child: LocalChatView()),
-    ),
-    GoRoute(
-      path: '/history',
-      builder: (context, state) =>
-          const Scaffold(body: Center(child: Text('历史占位页'))),
-    ),
-    GoRoute(
-      path: '/history/:sessionId',
-      builder: (context, state) => const Scaffold(
-        body: Center(child: Text('历史会话占位页')),
+/// 与被改造应用同构的最小路由：9 条路径与 `lib/app.dart` 完全一致（本段一条
+/// 都没改），功能页用占位页，本段只验壳与合一页。
+GoRouter _router(String initialLocation, {bool shellOnFeaturePages = false}) {
+  // 三个导航目标占位页是否套壳由用例决定（见 _pumpShell 的注释）；路径本身
+  // 与 lib/app.dart 的 9 条一一对应，本段一条都没动。
+  Widget page(Widget child) =>
+      shellOnFeaturePages ? QiyuShell(child: child) : child;
+  return GoRouter(
+    initialLocation: initialLocation,
+    routes: [
+      GoRoute(
+        path: '/',
+        builder: (context, state) => const QiyuShell(child: LocalChatView()),
       ),
-    ),
-    GoRoute(
-      path: '/memory',
-      builder: (context, state) =>
-          const Scaffold(body: Center(child: Text('记忆中心占位页'))),
-    ),
-    GoRoute(
-      path: '/memory/item/:itemId',
-      builder: (context, state) => const Scaffold(
-        body: Center(child: Text('记忆条目占位页')),
+      GoRoute(
+        path: '/chat',
+        builder: (context, state) => const QiyuShell(child: LocalChatView()),
       ),
-    ),
-    GoRoute(
-      path: '/settings',
-      builder: (context, state) =>
-          const Scaffold(body: Center(child: Text('设置占位页'))),
-    ),
-    GoRoute(
-      path: '/settings/diagnostics',
-      builder: (context, state) =>
-          const Scaffold(body: Center(child: Text('诊断占位页'))),
-    ),
-    GoRoute(
-      path: '/privacy',
-      builder: (context, state) =>
-          const Scaffold(body: Center(child: Text('隐私占位页'))),
-    ),
-  ],
-);
+      GoRoute(
+        path: '/history',
+        builder: (context, state) =>
+            page(const Scaffold(body: Center(child: Text('历史占位页')))),
+      ),
+      GoRoute(
+        path: '/history/:sessionId',
+        builder: (context, state) => const Scaffold(
+          body: Center(child: Text('历史会话占位页')),
+        ),
+      ),
+      GoRoute(
+        path: '/memory',
+        builder: (context, state) =>
+            page(const Scaffold(body: Center(child: Text('记忆中心占位页')))),
+      ),
+      GoRoute(
+        path: '/memory/item/:itemId',
+        builder: (context, state) => const Scaffold(
+          body: Center(child: Text('记忆条目占位页')),
+        ),
+      ),
+      GoRoute(
+        path: '/settings',
+        builder: (context, state) =>
+            page(const Scaffold(body: Center(child: Text('设置占位页')))),
+      ),
+      GoRoute(
+        path: '/settings/diagnostics',
+        builder: (context, state) =>
+            const Scaffold(body: Center(child: Text('诊断占位页'))),
+      ),
+      GoRoute(
+        path: '/privacy',
+        builder: (context, state) =>
+            const Scaffold(body: Center(child: Text('隐私占位页'))),
+      ),
+    ],
+  );
+}
+
+/// 当前路由路径：go_router 17 的 `GoRouterState` 没有对外可读的当前位置，
+/// 只能从 delegate 读。壳在 `/` 与 `/chat` 都在树里，所以拿它当锚点。
+String _location(WidgetTester tester) =>
+    GoRouter.of(
+      tester.element(find.byType(QiyuShell)),
+    ).routerDelegate.currentConfiguration.uri.path;
 
 Future<LocalChatViewModel> _viewModel(
   StreamingLocalChatGateway gateway, {
-  List<LocalChatMessage> restored = const [],
   HostConnectionProbe? probe,
   bool hostStopped = false,
 }) async {
@@ -588,7 +647,7 @@ BoxDecoration _navItemContainer(WidgetTester tester, String ringKey) {
       matching: find.byType(AnimatedContainer),
     ),
   );
-  return container.decoration!;
+  return container.decoration! as BoxDecoration;
 }
 
 Text _navItemLabel(WidgetTester tester, String ringKey) => tester.widget<Text>(
@@ -609,13 +668,13 @@ BorderSide _ringBorder(WidgetTester tester, String ringKey) {
             (widget) =>
                 widget is DecoratedBox &&
                 widget.decoration is BoxDecoration &&
-                (widget.decoration! as BoxDecoration).border?.top.width ==
+                (widget.decoration as BoxDecoration).border?.top.width ==
                     QiyuLayout.focusRingWidth,
           ),
         )
         .first,
   );
-  return (ring.decoration! as BoxDecoration).border!.top;
+  return (ring.decoration as BoxDecoration).border!.top;
 }
 
 final class _StubProbe implements HostConnectionProbe {
@@ -639,9 +698,9 @@ final class _StubChatGateway implements StreamingLocalChatGateway {
 
   /// true 时回复流停在最后一个事件之前：用来验「生成中」态与停止钮。
   final bool hold;
-  final _gate = StreamController<void>();
+  final _gate = Completer<void>();
 
-  void release() => _gate.close();
+  void release() => _gate.complete();
 
   @override
   Future<LocalChatSnapshot> restore({String? sessionId}) async => _restored;
@@ -671,7 +730,7 @@ final class _StubChatGateway implements StreamingLocalChatGateway {
       requestId: requestId,
     );
     if (hold) {
-      await _gate.stream;
+      await _gate.future;
     }
     yield LocalChatDeliveryEvent(
       kind: LocalChatEventKind.delta,

@@ -133,6 +133,9 @@ class _QiyuShellState extends State<QiyuShell>
             ),
           if (_drawerMounted)
             Positioned(
+              // 抽屉本体定位键：宽度与停靠位置只能按键量，文案在侧边栏
+              // 与抽屉里是同一批。
+              key: const Key('nav-drawer'),
               top: 0,
               bottom: 0,
               left: 0,
