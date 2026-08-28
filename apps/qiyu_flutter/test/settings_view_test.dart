@@ -360,7 +360,7 @@ void main() {
     final helpTextFinder = find.textContaining('配置豆包语音合成的深合并参数');
     expect(helpTextFinder, findsOneWidget);
     final helpTextWidget = tester.widget<Text>(helpTextFinder);
-    expect(helpTextWidget.style?.fontFamily, 'Noto Sans SC');
+    expect(helpTextWidget.style?.fontFamily, 'Noto Serif SC');
 
     expect(
       tester

@@ -29,6 +29,7 @@ import 'features/settings/stt_settings_view_model.dart';
 import 'features/settings/tts_settings_view_model.dart';
 import 'features/settings/web_search_settings_client.dart';
 import 'features/settings/web_search_settings_view_model.dart';
+import 'theme/qiyu_theme.dart';
 
 GoRouter _createRouter() => GoRouter(
   routes: [
@@ -218,17 +219,9 @@ class _QiyuAppState extends State<QiyuApp> {
       title: '栖语',
       debugShowCheckedModeBanner: false,
       routerConfig: _router,
-      theme: ThemeData(
-        fontFamily: 'Noto Sans SC',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF8C86B8),
-          brightness: Brightness.dark,
-        ),
-        scaffoldBackgroundColor: const Color(0xFF15131A),
-        useMaterial3: true,
-        // 键盘焦点高亮在深色底上必须清晰可见，对比度留足余量（ticket 24）。
-        focusColor: const Color(0x80CFC8F5),
-      ),
+      // 紫夜主题：色板、字族、几何与组件主题全部来自 token 层
+      // （lib/theme/qiyu_tokens.dart），这里不再写任何视觉值。
+      theme: qiyuDarkTheme(),
     );
   }
 }

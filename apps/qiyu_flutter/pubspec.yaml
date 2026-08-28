@@ -27,11 +27,15 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/fonts/OFL-NotoSansSC.txt
+    - assets/fonts/OFL-NotoSerifSC.txt
+    - assets/images/home-night-backdrop.jpg
   fonts:
-    - family: Noto Sans SC
+    # 全局唯一字族：思源宋体静态子集（紫夜规范 §3）。
+    - family: Noto Serif SC
       fonts:
-        - asset: assets/fonts/NotoSansSC-QiyuBaseline.ttf
+        - asset: assets/fonts/NotoSerifSC-QiyuSubset.ttf
+    # Roboto 别名必须保留：Material 内部默认引用 Roboto，若不随包提供会触发
+    # gstatic 远程回退，本机 loopback 场景下直接卡死启动（2026-08 修复）。
     - family: Roboto
       fonts:
-        - asset: assets/fonts/NotoSansSC-QiyuBaseline.ttf
+        - asset: assets/fonts/NotoSerifSC-QiyuSubset.ttf
