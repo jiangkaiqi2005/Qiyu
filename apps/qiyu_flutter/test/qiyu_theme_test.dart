@@ -9,14 +9,17 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 ///
 /// 这是紫夜视觉改造的接缝：主题层是唯一色值来源，页面只准消费它。
 /// 本文件锁住四件事——
-/// 1. token 的字面值与 `docs/product/design-system.md` 第 2/3/8 节一字不差；
-/// 2. `ColorScheme` 每个语义槽位取的都是 token，而不是第三处写死的色值；
+/// 1. token 的字面值与 `docs/product/design-system.md` 第 2/3/8 节一字不差，
+///    含三个中性功能角色（强调位近白、填充位暗一档、强填充位灰档）；
+/// 2. `ColorScheme` 每个语义槽位取的都是 token，而不是第三处写死的色值；强调槽位
+///    （primary/secondary/tertiary）与拇指这类**强调位**取中性近白，绝不允许拿 §2 的
+///    次要文字色 `muted` 或任何紫来当；
 /// 3. 三色纪律在**主题层**就成立：紫只准出现在「文字/图标强调」与「键盘焦点环」
 ///    两处（Spec User Story 9），任何被 M3 当填充/表面用的槽位与组件主题都不得
-///    解析出 `accentBright`；
+///    解析出 `accentBright`；组件状态色全部由主题层那份共享中性状态表给出；
 /// 4. 回归锁——旧种子色派生（`ColorScheme.fromSeed`、`0xFF8C86B8`、`0xFF15131A`、
-///    黑体字族）已退场，`lib/features/**` 的裸 `Color(0x…)` 字面量不得超出棘轮
-///    允许清单，且发布门禁脚本引用的资产名与 pubspec 一致。
+///    黑体字族）已退场；整个 `lib/**`（只放行 `lib/theme/**`）的裸色值不得超出棘轮
+///    允许清单；发布门禁脚本引用的资产名与 pubspec 一致（独立一条测试）。
 ///
 /// 扫描一律读源码文件，不依赖任何构建产物。
 
@@ -30,6 +33,13 @@ Iterable<File> _dartFilesUnder(String relativeDir) =>
         .listSync(recursive: true)
         .whereType<File>()
         .where((f) => f.path.endsWith('.dart'));
+
+/// 归一成 `lib/xxx/yyy.dart`：Windows 的反斜杠与 `./` 前缀都要抹掉，
+/// 否则台账条目和放行目录判断会因路径写法不同而失效。
+String _relativePath(File file) => file.path
+    .replaceAll(r'\', '/')
+    .replaceFirst('./', '')
+    .replaceFirst(RegExp(r'^/'), '');
 
 /// 把单个控件装进本主题下渲染，用于读取**实际解析出来**的颜色。
 Future<void> _pumpInTheme(
@@ -92,6 +102,21 @@ void main() {
       // composer 聚焦描边紫度 0.13，只比无焦点略紫。
       expect(QiyuColors.composerFocusLine.a, closeTo(0.13, 0.005));
     });
+
+    test('中性功能角色只复用已有中性色值，不引入新色相', () {
+      // 三个角色是 M3「强调位 / 填充位」的语义入口（见 QiyuColors 内的说明），
+      // 取值必须逐个等于它复用的 §2 中性档：新增色相就等于绕过 §2 的色板。
+      expect(QiyuColors.neutralEmphasis, QiyuColors.onAccent);
+      expect(QiyuColors.neutralEmphasis.toARGB32(), 0xFFF5F3FA);
+      expect(QiyuColors.neutralFill, QiyuColors.bubbleUser);
+      expect(QiyuColors.neutralFill.toARGB32(), 0xFF28272E);
+      expect(QiyuColors.neutralFillStrong, QiyuColors.muted);
+      expect(QiyuColors.neutralFillStrong.toARGB32(), 0xFF9A94A8);
+      // 中性角色不得是任何紫（三色纪律，design-system §1、§2）。
+      expect(QiyuColors.neutralEmphasis, isNot(QiyuColors.accentBright));
+      expect(QiyuColors.neutralFill, isNot(QiyuColors.accentGlassA));
+      expect(QiyuColors.neutralFillStrong, isNot(QiyuColors.accentGlassB));
+    });
   });
 
   group('ColorScheme 逐槽位消费 token', () {
@@ -99,21 +124,38 @@ void main() {
       final scheme = theme.colorScheme;
       Color argb(Color color) => Color(color.toARGB32());
 
-      // M3 把 primary 同时当作「填充色」和「图标/文字强调色」用（FilledButton 底、
-      // Switch 轨道、Slider 轨道、进度条，以及页面里直接读 colorScheme.primary 的
-      // 图标）。大面积填充由下面的组件主题逐个压到 bubbleUser 暗档，槽位本身取
-      // 中性灰 muted：这样任何没被显式覆盖的派生点既不着紫、也不会暗到看不见。
-      expect(argb(scheme.primary), argb(QiyuColors.muted));
+      // 三色纪律 + 档位纪律：M3 把 primary 同时当作「填充色」和「图标/文字强调色」
+      // 用（FilledButton 底、Switch 轨道、Slider 轨道与拇指、进度条，以及页面里直接
+      // 读 colorScheme.primary 的图标件），所以它必须是**中性近白的强调位**。拿 §2 的
+      // 次要文字色 muted 填这里就是回归本身：名字骗人，而且所有直接读 primary 的
+      // 图形件在暗底上糊成一片暗灰（音量滑块的拇指与轨道同色、设置页成功图标转灰）。
+      expect(argb(scheme.primary), argb(QiyuColors.neutralEmphasis));
+      expect(argb(scheme.secondary), argb(QiyuColors.neutralEmphasis));
+      expect(argb(scheme.tertiary), argb(QiyuColors.neutralEmphasis));
+      expect(
+        scheme.primary.toARGB32(),
+        isNot(QiyuColors.muted.toARGB32()),
+        reason: 'primary 退回次要文字色 muted：直接读 colorScheme.primary 的图形件会变暗灰',
+      );
+      expect(
+        scheme.secondary.toARGB32(),
+        isNot(QiyuColors.muted.toARGB32()),
+        reason: 'secondary 退回 muted，同上',
+      );
+      expect(
+        scheme.tertiary.toARGB32(),
+        isNot(QiyuColors.muted.toARGB32()),
+        reason: 'tertiary 退回 muted，同上',
+      );
       expect(argb(scheme.onPrimary), argb(QiyuColors.night));
-      // F2：accent-glass 是「半透明渐变两端 + 背景模糊」的组合体，只属于发送按钮与
-      // 主按钮，把渐变末色当单色容器槽位用是错映射。用户气泡面色定值是 bubble-user。
-      expect(argb(scheme.primaryContainer), argb(QiyuColors.bubbleUser));
+      // accent-glass 是「半透明渐变两端 + 背景模糊」的组合体，只属于发送按钮与
+      // 主按钮，把渐变末色当单色容器槽位用是错映射。通用中性填充取 neutralFill，
+      // 不再拿文档用途只有「用户气泡」的 bubbleUser 兼职。
+      expect(argb(scheme.primaryContainer), argb(QiyuColors.neutralFill));
       expect(argb(scheme.onPrimaryContainer), argb(QiyuColors.ink));
-      expect(argb(scheme.secondary), argb(QiyuColors.muted));
       expect(argb(scheme.onSecondary), argb(QiyuColors.night));
       expect(argb(scheme.secondaryContainer), argb(QiyuColors.panel));
       expect(argb(scheme.onSecondaryContainer), argb(QiyuColors.ink));
-      expect(argb(scheme.tertiary), argb(QiyuColors.muted));
       expect(argb(scheme.onTertiary), argb(QiyuColors.night));
       expect(argb(scheme.tertiaryContainer), argb(QiyuColors.panel));
       expect(argb(scheme.onTertiaryContainer), argb(QiyuColors.ink));
@@ -128,8 +170,12 @@ void main() {
       expect(argb(scheme.surfaceContainerLowest), argb(QiyuColors.night));
       expect(argb(scheme.surfaceContainerLow), argb(QiyuColors.panel));
       expect(argb(scheme.surfaceContainer), argb(QiyuColors.panel));
-      expect(argb(scheme.surfaceContainerHigh), argb(QiyuColors.bubbleUser));
-      expect(argb(scheme.surfaceContainerHighest), argb(QiyuColors.bubbleUser));
+      expect(argb(scheme.surfaceBright), argb(QiyuColors.neutralFill));
+      expect(argb(scheme.surfaceContainerHigh), argb(QiyuColors.neutralFill));
+      expect(
+        argb(scheme.surfaceContainerHighest),
+        argb(QiyuColors.neutralFill),
+      );
       expect(argb(scheme.inverseSurface), argb(QiyuColors.ink));
       expect(argb(scheme.onInverseSurface), argb(QiyuColors.night));
       expect(argb(scheme.shadow), argb(QiyuColors.night));
@@ -181,6 +227,10 @@ void main() {
         0xFF9D8FE0, // accent-bright
         0x9E4B4092, // accent-glass 渐变首色
         0x80332B61, // accent-glass 渐变末色
+        // 原型历史命名 --accent-deep-a / --accent-deep-b：既不在 §2 的 token 表里，
+        // 也不属于任何中性档（Spec Further Notes 第 2 条点名实现不得照抄）。
+        0xFF55489C,
+        0xFF463A85,
       };
       for (final entry in slots.entries) {
         expect(
@@ -206,7 +256,7 @@ void main() {
       );
     });
 
-    test('页面底色与焦点取 token（F4：焦点环留给自绘）', () {
+    test('页面底色与焦点取 token（焦点环留给自绘）', () {
       expect(
         theme.scaffoldBackgroundColor.toARGB32(),
         QiyuColors.night.toARGB32(),
@@ -240,7 +290,7 @@ void main() {
         reason: 'FilledButton 拿亮紫当填充色，紫色越界',
       );
       // 中性暗底一档（design-system §2 中性色家族），文字取 ink。
-      expect(fill.toARGB32(), QiyuColors.bubbleUser.toARGB32());
+      expect(fill.toARGB32(), QiyuColors.neutralFill.toARGB32());
       expect(
         _labelColor(tester, find.byType(FilledButton))?.toARGB32(),
         QiyuColors.ink.toARGB32(),
@@ -270,32 +320,58 @@ void main() {
       );
     });
 
-    testWidgets('Switch 与 Slider 的填充色在主题层显式取中性', (tester) async {
+    testWidgets('Switch 与 Slider：轨道取中性强填充，拇指取中性近白', (tester) async {
       Color? argb(Color? color) =>
           color == null ? null : Color(color.toARGB32());
       const selected = <WidgetState>{WidgetState.selected};
       const unselected = <WidgetState>{};
 
+      // 轨道是「压在文字之下的可见中性填充」→ neutralFillStrong；描边档 line 留给
+      // 未激活的一侧。两者都不是紫，也不再借用语义为次要文字的 muted 角色名。
       expect(
         argb(theme.switchTheme.trackColor?.resolve(selected)),
-        argb(QiyuColors.muted),
-        reason: '选中轨道必须由主题层显式给定中性值',
-      );
-      expect(
-        argb(theme.switchTheme.thumbColor?.resolve(selected)),
-        argb(QiyuColors.night),
+        argb(QiyuColors.neutralFillStrong),
+        reason: '选中轨道必须由主题层显式给定中性强填充，不得退回 M3 派生',
       );
       expect(
         argb(theme.switchTheme.trackColor?.resolve(unselected)),
         argb(QiyuColors.line),
       );
       expect(
-        argb(theme.switchTheme.thumbColor?.resolve(unselected)),
-        argb(QiyuColors.muted),
+        argb(theme.sliderTheme.activeTrackColor),
+        argb(QiyuColors.neutralFillStrong),
       );
-      expect(argb(theme.sliderTheme.activeTrackColor), argb(QiyuColors.muted));
       expect(argb(theme.sliderTheme.inactiveTrackColor), argb(QiyuColors.line));
-      expect(argb(theme.sliderTheme.thumbColor), argb(QiyuColors.ink));
+      // 拇指属强调位：一律中性近白。它一旦跟着 primary 落到 muted，就会和轨道同色
+      // 糊成一条（音量滑块就是这么坏的），所以逐位显式压回近白档并锁死不是灰档。
+      expect(
+        argb(theme.switchTheme.thumbColor?.resolve(selected)),
+        argb(QiyuColors.neutralEmphasis),
+      );
+      expect(
+        argb(theme.switchTheme.thumbColor?.resolve(unselected)),
+        argb(QiyuColors.neutralEmphasis),
+      );
+      expect(
+        argb(theme.sliderTheme.thumbColor),
+        argb(QiyuColors.neutralEmphasis),
+      );
+      for (final entry in <String, Color?>{
+        'slider.thumb': theme.sliderTheme.thumbColor,
+        'switch.thumb.on': theme.switchTheme.thumbColor?.resolve(selected),
+        'switch.thumb.off': theme.switchTheme.thumbColor?.resolve(unselected),
+      }.entries) {
+        expect(
+          entry.value?.toARGB32(),
+          isNot(QiyuColors.muted.toARGB32()),
+          reason: '${entry.key} 退回 muted 灰档：拇指会和轨道糊成一条',
+        );
+        expect(
+          entry.value?.toARGB32(),
+          QiyuColors.neutralEmphasis.toARGB32(),
+          reason: '${entry.key} 必须是中性近白强调位',
+        );
+      }
 
       // 渲染出来的开关与滑块确实不是紫。
       await _pumpInTheme(
@@ -313,7 +389,7 @@ void main() {
       expect(find.byType(Slider), findsOneWidget);
     });
 
-    test('所有显式压回的组件主题解析值都落在中性色集合内', () {
+    test('每个组件状态位都显式压回中性，且逐位等于登记的中性角色', () {
       const neutralArgb = <int>{
         0xFF0F0E14, // night
         0xFF181719, // panel
@@ -328,8 +404,10 @@ void main() {
       };
       const selected = <WidgetState>{WidgetState.selected};
       const plain = <WidgetState>{};
+      Color? argb(Color? color) =>
+          color == null ? null : Color(color.toARGB32());
       // 每一处都必须是主题层显式给定的值：null 意味着退回 M3 派生，正是这次要堵掉的。
-      final fills = <String, Color?>{
+      final states = <String, Color?>{
         'filledButton.background': theme
             .filledButtonTheme
             .style
@@ -355,26 +433,75 @@ void main() {
         'checkbox.fill.selected': theme.checkboxTheme.fillColor?.resolve(
           selected,
         ),
+        'checkbox.fill.unselected': theme.checkboxTheme.fillColor?.resolve(
+          plain,
+        ),
         'checkbox.check.selected': theme.checkboxTheme.checkColor?.resolve(
           selected,
         ),
         'radio.fill.selected': theme.radioTheme.fillColor?.resolve(selected),
+        'radio.fill.unselected': theme.radioTheme.fillColor?.resolve(plain),
         'segmentedButton.background.selected': theme
             .segmentedButtonTheme
             .style
             ?.backgroundColor
             ?.resolve(selected),
+        'segmentedButton.background.unselected': theme
+            .segmentedButtonTheme
+            .style
+            ?.backgroundColor
+            ?.resolve(plain),
         'segmentedButton.foreground.selected': theme
             .segmentedButtonTheme
             .style
             ?.foregroundColor
             ?.resolve(selected),
+        'segmentedButton.foreground.unselected': theme
+            .segmentedButtonTheme
+            .style
+            ?.foregroundColor
+            ?.resolve(plain),
         'chip.selected': theme.chipTheme.color?.resolve(selected),
         'navigationBar.indicator': theme.navigationBarTheme.indicatorColor,
         'navigationRail.indicator': theme.navigationRailTheme.indicatorColor,
         'tabBar.label': theme.tabBarTheme.labelColor,
       };
-      for (final entry in fills.entries) {
+      // 光「落在中性集合里」还不够——档位选错一样看不见：填充位取到灰档、拇指位
+      // 取到暗档都是回归。逐位钉死它该取哪个中性角色，角色只有四类：
+      // 实底填充 neutralFill / 可见强填充（轨道、进度）neutralFillStrong /
+      // 强调件（拇指）neutralEmphasis / 前景文字与描边 ink、muted、line。
+      final roleOf = <String, Color>{
+        'filledButton.background': QiyuColors.neutralFill,
+        'filledButton.foreground': QiyuColors.ink,
+        'switch.track.selected': QiyuColors.neutralFillStrong,
+        'switch.track.unselected': QiyuColors.line,
+        'switch.thumb.selected': QiyuColors.neutralEmphasis,
+        'switch.thumb.unselected': QiyuColors.neutralEmphasis,
+        'slider.activeTrack': QiyuColors.neutralFillStrong,
+        'slider.inactiveTrack': QiyuColors.line,
+        'slider.thumb': QiyuColors.neutralEmphasis,
+        'progressIndicator': QiyuColors.neutralFillStrong,
+        'checkbox.fill.selected': QiyuColors.neutralFill,
+        'checkbox.fill.unselected': QiyuColors.panel,
+        'checkbox.check.selected': QiyuColors.ink,
+        'radio.fill.selected': QiyuColors.neutralFill,
+        'radio.fill.unselected': QiyuColors.panel,
+        'segmentedButton.background.selected': QiyuColors.neutralFill,
+        'segmentedButton.background.unselected': QiyuColors.panel,
+        'segmentedButton.foreground.selected': QiyuColors.ink,
+        'segmentedButton.foreground.unselected': QiyuColors.muted,
+        'chip.selected': QiyuColors.neutralFill,
+        'navigationBar.indicator': QiyuColors.neutralFill,
+        'navigationRail.indicator': QiyuColors.neutralFill,
+        'tabBar.label': QiyuColors.ink,
+      };
+      // 新登记了状态位却没写角色 → 红；角色表写了位子里没有 → 也红。
+      expect(
+        roleOf.keys.toSet(),
+        states.keys.toSet(),
+        reason: '组件状态位与中性角色登记表必须一一对应',
+      );
+      for (final entry in states.entries) {
         final color = entry.value;
         expect(color, isNotNull, reason: '${entry.key} 没有由主题层显式压回中性，会退回 M3 派生');
         expect(
@@ -383,11 +510,43 @@ void main() {
           reason:
               '${entry.key} 取到中性集合外的色：#${color.toARGB32().toRadixString(16)}',
         );
+        expect(
+          argb(color),
+          argb(roleOf[entry.key]),
+          reason:
+              '${entry.key} 档位不对，登记表要求 #'
+              '${argb(roleOf[entry.key])?.toARGB32().toRadixString(16)}',
+        );
       }
     });
 
+    test('组件状态色共用一份中性状态表，不再各写 resolveWith', () {
+      // 此前为十几个 M3 组件逐个复制了同形状的 `resolveWith`（选中? A : B），
+      // 加一个组件就要再记一遍「槽位不得显紫」。现在这份知识只在
+      // `qiyuNeutralStates` 里写一次，所以状态解析在主题层只准出现一处。
+      final themeSource = _read('lib/theme/qiyu_theme.dart');
+      expect(
+        RegExp(
+          r'WidgetStateProperty\.resolveWith',
+        ).allMatches(themeSource).length,
+        1,
+        reason: '状态解析只允许写在共享 helper 里；组件主题请登记角色取值，不要再复制形状',
+      );
+    });
+
+    test('主题层不再拿用户气泡面色兼职通用填充', () {
+      // `bubbleUser` 在 §2 的文档用途只有「用户消息气泡」。主题层一旦再引用它，
+      // 说明又有人拿气泡色当通用中性填充，档位语义会重新糊在一起。
+      final themeSource = _read('lib/theme/qiyu_theme.dart');
+      expect(
+        RegExp(r'QiyuColors\.bubbleUser').allMatches(themeSource).length,
+        0,
+        reason: '通用中性填充请取 QiyuColors.neutralFill',
+      );
+    });
+
     test('记忆中心 tab：中性底上的选中文字取 ink，下划线走 token', () {
-      // F3：on-accent 的语义是「强调底色上的文字」，tab 是中性底，选中态必须取 ink
+      // on-accent 的语义是「强调底色上的文字」，tab 是中性底，选中态必须取 ink
       // （原型 .tab.active 亦为 var(--ink)，design-system §8 补充约定「选中态全站统一中性」）。
       expect(
         theme.tabBarTheme.labelColor?.toARGB32(),
@@ -405,8 +564,15 @@ void main() {
         underline.borderSide.color.toARGB32(),
         QiyuColors.indicatorNeutral.toARGB32(),
       );
-      // 原型 .tab 的下划线紧贴标签底部，没有内缩；原来的 6px 既无出处也不在 4px 网格上。
-      expect(underline.insets, EdgeInsets.zero);
+      // 指示器内缩是**基准对齐**：原型 `.tab` 的 border-bottom 贴在标签自身盒子
+      // 底边，Flutter 的 UnderlineTabIndicator 画在整条 TabBar 底边，不内缩会把
+      // 下划线推离标签。值收在 QiyuLine.tabIndicatorInset，刻意不进 §8 的 4px 间距体系。
+      expect(
+        underline.insets,
+        const EdgeInsets.only(bottom: QiyuLine.tabIndicatorInset),
+        reason: 'tab 下划线缺少基准对齐内缩，会贴到整条 TabBar 底边、离开标签',
+      );
+      expect(QiyuLine.tabIndicatorInset, 6);
     });
   });
 
@@ -462,11 +628,37 @@ void main() {
       expect(theme.textTheme.bodySmall!.height, isNull);
     });
 
-    test('问候档的字重与字距取自原型 .home-greet（视觉真相源）', () {
-      // design-system §3 只定字号；字重与字距的出处是原型 index.html 的
-      // `.home-greet { font-weight: 300; letter-spacing: 3px }`， Spec Further Notes 第 2 条。
+    test('字重与字距只准有出处的档位写，其余退回默认', () {
+      // design-system §3 只定字号与「栖语的话行高 1.9」，字重与字距一律不自造。
+      // 唯一有出处的是问候档：原型 `.home-greet { font-weight: 300; letter-spacing: 3px }`
+      // （Spec Further Notes 第 2 条把原型列为形态与观感的视觉真相源）。
       expect(QiyuTypography.greeting.fontWeight, FontWeight.w300);
       expect(QiyuTypography.greeting.letterSpacing, 3);
+      // 标题档不自洽：原型 `.page-title` 是 400/2px、`.set-section h3` 是 500/2px，
+      // 两个出处互相打架，§3 又没定，所以原来的 w500 + 1px 属自造值，去掉退回默认，
+      // 等视觉验收段连同字阶一起定夺。
+      expect(
+        QiyuTypography.title.fontWeight,
+        isNull,
+        reason: '标题字重没有唯一出处，不许保留自造的 w500',
+      );
+      expect(
+        QiyuTypography.title.letterSpacing,
+        isNull,
+        reason: '标题的 1px 字距在规范与原型里都查不到，去掉用默认',
+      );
+      for (final entry in <String, TextStyle>{
+        'body': QiyuTypography.body,
+        'secondary': QiyuTypography.secondary,
+        'tiny': QiyuTypography.tiny,
+        'qiyuMessage': QiyuTypography.qiyuMessage,
+      }.entries) {
+        expect(entry.value.fontWeight, isNull, reason: '${entry.key} 自造了字重');
+        expect(entry.value.letterSpacing, isNull, reason: '${entry.key} 自造了字距');
+      }
+      // 装配到 Material 档位上之后同样不得漏出紫夜规范没定的字重/字距。
+      expect(theme.textTheme.headlineSmall?.fontWeight, isNull);
+      expect(theme.textTheme.headlineSmall?.letterSpacing, isNull);
     });
   });
 
@@ -480,11 +672,25 @@ void main() {
       expect(QiyuRadii.pillBorder.topLeft.x, 999);
     });
 
-    test('圆形不用 radius 常量表达（§8 圆形与胶囊是两种形状）', () {
-      // 旧 QiyuRadii.circle = 999 与 pill 同值，语义上区分不出「圆形（图标按钮、
-      // 发送钮）」与「胶囊形（输入框）」。圆形由 ShapeBorder/BoxShape 语义承载。
-      expect(QiyuShapes.circleBorder, isA<CircleBorder>());
-      expect(QiyuRadii.pill, 999, reason: '胶囊仍然只有 pill 这一处 999');
+    test('圆形不由 radius 档表达：999 只属于胶囊一个档位', () {
+      // 旧写法是 QiyuRadii.circle = 999 与 pill 同值，代码里根本分不出
+      // 「圆形（图标按钮、发送钮）」与「胶囊形（输入框）」两种形状。
+      expect(QiyuRadii.pill, 999);
+      final tokensSource = _read('lib/theme/qiyu_tokens.dart');
+      expect(
+        RegExp(
+          r'static const double \w+ = 999\b',
+        ).allMatches(tokensSource).length,
+        1,
+        reason: 'token 层出现第二个 999 档位：圆形又不拿 radius 凑胶囊了',
+      );
+      // 零消费的 QiyuShapes.circleBorder 已删除；第 2 段圆形图标按钮与发送钮真的
+      // 需要共享轮廓时再加，不在这里摆一个没人读、测试又永真的常量。
+      expect(
+        tokensSource,
+        isNot(contains('class QiyuShapes')),
+        reason: 'QiyuShapes 重新出现但库内仍无消费方',
+      );
     });
 
     test('气泡为水滴形 20/20/6/20，指向角在右下', () {
@@ -524,11 +730,17 @@ void main() {
       expect(QiyuLayout.composerIconButtonSize, 34);
     });
 
-    test('毛玻璃模糊半径取定值，不拿验收区间当契约', () {
+    test('毛玻璃模糊半径：定值 20，且必须落在 §2 的 16–24 可微调区间内', () {
       expect(QiyuGlass.sendButtonBlur, 8);
-      // §2 的 16–24 是「凭视觉验收微调」的区间，不该变成测试契约；
-      // 定值出处是原型 `:root { --blur: blur(20px) }`。
+      // 定值出处是原型 `:root { --blur: blur(20px) }`；区间 16–24 是 design-system
+      // §2 的硬契约（「实现时凭视觉验收微调」指的是在区间内调），所以两头都锁：
+      // 改定值要看得见，改成 4 或 60 这类越界值直接红。
       expect(QiyuGlass.panelBlur, 20);
+      expect(
+        QiyuGlass.panelBlur,
+        inInclusiveRange(16, 24),
+        reason: '§2 定的是 16–24px 可微调区间，越界即脱离规范',
+      );
     });
 
     test('线条宽度：发丝 1px、tab 下划线 2px', () {
@@ -600,36 +812,76 @@ void main() {
       }
     });
 
-    test('棘轮：features 层的裸 Color(0x…) 不得超出允许清单', () {
-      // Spec Testing Decisions 2 真正要防的是「实现时又散出新色值」。上面那条
-      // 字面值黑名单只挡得住四个旧值，这里按文件逐个清点现存的裸色值。
+    test('棘轮：整个 lib 层的裸色值只准住在 theme 层，其余按台账清空', () {
+      // Spec Testing Decisions 2 要防的是「实现时又散出新色值」。上面那条字面值
+      // 黑名单只挡得住四个旧值，这里按文件逐个清点**全部**裸色值写法：
+      // `Color(0x…)`、`Color.fromARGB(`、`Color.fromRGBO(`、`Colors.<常量>`。
+      // 扫描范围是整个 `lib/**`（含 `lib/app.dart` 与未来的 `lib/widgets/`），
+      // 唯一放行目录是 `lib/theme/**`——全应用只有这一层可以写死色值。
       //
-      // 允许清单 = 硬编码色值收口段（Spec Further Notes 3 最后一段）开工前的历史
-      // 残留台账：后续每清掉一处，这里的条目必须同步缩短，收口完成时它必须降为
-      // 空集——不要往回加条目，新写的色值一律进 token 层。
+      // 台账 = 硬编码色值收口段（Spec Further Notes 3 最后一段）开工前的历史残留：
+      // 每清掉一处，这里的条目必须同步缩短，收口完成时它必须降为空集——不要往回加
+      // 条目，新写的色值一律进 token 层。集合相等断言：新增会红，清掉了不改这里也红。
       const bareColorAllowList = <String>{
         'lib/features/memory/memory_view.dart :: Color(0xFF9C5C13)',
+        // 注意：这是 **Material 3 基线红**，与 design-system §2 定稿的危险色
+        // `danger #cc9999` 直接冲突。它留在台账里只是记账，不是合法值——第 4 段
+        // （记忆中心换皮）必须换成 `QiyuColors.danger`，后续段不要照抄它。
         'lib/features/memory/memory_view.dart :: Color(0xFFB3261E)',
         'lib/features/memory/memory_view.dart :: Color(0xFFFFFFFF)',
         'lib/features/settings/provider_settings_view.dart :: Color(0xFF91C7A7)',
       };
+      // 无色相、不承载任何设计语义的 Material 常量：允许在页面直接用（遮罩、
+      // 渐变透明端这类）。放行项**逐个点名**写在这里，不用正则模糊掉——否则
+      // `Colors.purple` 也会跟着溜过去。要新增成员必须在评审里说明为什么不走 token。
+      const huelessMaterialConstants = <String>{
+        'Colors.transparent',
+        'Colors.white',
+        'Colors.black',
+      };
+      final bareColor = RegExp(
+        r'\bColor\(0x[0-9A-Fa-f]{2,8}\)'
+        r'|\bColor\.fromARGB\('
+        r'|\bColor\.fromRGBO\('
+        r'|\bColors\.[a-zA-Z][a-zA-Z0-9_]*',
+      );
       final found = <String>{};
-      for (final file in _dartFilesUnder('lib/features')) {
-        final relative = file.path
-            .replaceAll(r'\', '/')
-            .replaceFirst('./', '')
-            .replaceFirst(RegExp(r'^/'), '');
-        for (final match in RegExp(
-          r'Color\(0x[0-9A-Fa-f]{2,8}\)',
-        ).allMatches(file.readAsStringSync())) {
-          found.add('$relative :: ${match[0]}');
+      var themeLayerHits = 0;
+      final scanned = <String>{};
+      for (final file in _dartFilesUnder('lib')) {
+        final relative = _relativePath(file);
+        scanned.add(relative);
+        final isThemeLayer = relative.startsWith('lib/theme/');
+        for (final match in bareColor.allMatches(file.readAsStringSync())) {
+          final literal = match[0]!;
+          if (isThemeLayer) {
+            themeLayerHits++;
+          } else if (!huelessMaterialConstants.contains(literal)) {
+            found.add('$relative :: $literal');
+          }
         }
       }
+      // 别让扫描静默空转：范围必须真的覆盖到 app.dart 与 theme 层自身。
+      expect(scanned, contains('lib/app.dart'));
+      expect(
+        scanned.any((p) => p.startsWith('lib/theme/')),
+        isTrue,
+        reason: '没扫到 theme 层，放行目录的判断是空的',
+      );
+      expect(
+        themeLayerHits,
+        greaterThan(0),
+        reason: 'theme 层自身一处裸色值都没有？扫描的形状不匹配了',
+      );
       expect(found.length, bareColorAllowList.length, reason: '$found');
       expect(found, bareColorAllowList);
     });
+  });
 
-    test('发布门禁脚本引用的资产名与 pubspec 同步', () {
+  group('发布门禁脚本与字体资产名保持同步', () {
+    // 这条与「token 契约」不是一回事：它管的是 PowerShell 发布脚本里写死的资产
+    // 文件名有没有跟着 pubspec 的字族改名一起改，独立成组免得混进颜色断言里。
+    test('verify 脚本引用的字族资产名与 pubspec 一致', () {
       for (final script in <String>[
         '../../scripts/verify-release-baseline.ps1',
         '../../scripts/verify-windows-package.ps1',

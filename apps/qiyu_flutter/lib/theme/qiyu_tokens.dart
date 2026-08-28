@@ -11,9 +11,10 @@ import 'package:flutter/painting.dart';
 /// 三色纪律：紫只住强调位（文字/图标强调与键盘焦点环、玻璃紫的主按钮与发送钮），
 /// 暗红只住危险位（破坏性操作），其余表面、线条、选中态一律中性暗夜色。
 ///
-/// 本层除色值外还收着圆角（[QiyuRadii]）、形状（[QiyuShapes]）、线宽（[QiyuLine]）、
-/// 间距、字族字阶、布局与玻璃常量。`lib/features/**` 现存的裸 `Color(0x…)` 字面量由
-/// 测试里的棘轮允许清单逐段清空（见 `test/qiyu_theme_test.dart` 的「回归锁」组）。
+/// 本层除色值外还收着圆角（[QiyuRadii]）、线宽与指示器几何（[QiyuLine]）、间距、
+/// 字族字阶、布局与玻璃常量。全应用**只有本层可以出现裸色值**：`test/qiyu_theme_test.dart`
+/// 的棘轮扫描覆盖整个 `lib/**`（含 `lib/app.dart` 与未来的 `lib/widgets/`），
+/// 只放行 `lib/theme/**`，现存的历史残留逐段清空。
 
 /// 语义色板（design-system §2）。
 abstract final class QiyuColors {
@@ -27,6 +28,9 @@ abstract final class QiyuColors {
   static const Color ink = Color(0xFFECE9F2);
 
   /// 次要字：次要文字、占位符。
+  ///
+  /// 只服务**文字位**。要一个看得见、压在文字之下的中性**填充**（活动轨道、
+  /// 进度条、开关选中轨道），请取 [neutralFillStrong]，不要直接拿本常量去填。
   static const Color muted = Color(0xFF9A94A8);
 
   /// 强调-交互起点：玻璃紫渐变首色 `rgba(75,64,146,.62)`。
@@ -49,7 +53,8 @@ abstract final class QiyuColors {
   /// 禁止把它写进任何会被 M3 当**填充/表面**用的 `ColorScheme` 槽位
   /// （primary/secondary/tertiary 及其容器、onPrimary 等）——M3 会顺着这些槽位把亮紫
   /// 铺到 FilledButton、Switch、Slider、Checkbox、进度条上。`test/qiyu_theme_test.dart`
-  /// 的槽位清扫与组件填充断言就是用来抓这个回退的。
+  /// 的槽位清扫与组件填充断言就是用来抓这个回退的。需要「中性强调」时用
+  /// [neutralEmphasis]，它才是 M3 强调槽位与拇指的正确档位。
   static const Color accentBright = Color(0xFF9D8FE0);
 
   /// 图标近白：强调底色上的图标与文字。
@@ -59,7 +64,38 @@ abstract final class QiyuColors {
   static const Color onAccent = Color(0xFFF5F3FA);
 
   /// 用户气泡面色：中性暗、无描边，靠面色与背景拉开层次。
+  ///
+  /// 文档用途**只有**「用户消息气泡」（design-system §2、§7）。它一度被主题层
+  /// 当通用中性填充到处兼职，那件事现在由 [neutralFill] 接管；本常量不要再被
+  /// 拿去填按钮、chip、导航指示器或 surface 色阶。
   static const Color bubbleUser = Color(0xFF28272E);
+
+  // ── 中性功能角色 ───────────────────────────────────────────────────────────
+  // §2 的 token 表是按「文字 / 气泡 / 描边」这些**用途**命名的，而 M3 的
+  // ColorScheme 槽位与组件状态要的是「强调位 / 填充位」这类**功能**角色。直接
+  // 拿文字角色去填功能位会同时犯两个错：名字骗人，以及档位选错（例如拿次要字
+  // 色 muted 当 primary，所有直接读 colorScheme.primary 的图形件立刻变成暗灰，
+  // 音量滑块的拇指与轨道同色糊成一条）。下面三个角色只复用上面已有的中性色值，
+  // **不引入任何新的色相**，取值由契约测试逐个锁死。
+
+  /// 中性强调位：M3 的 primary/secondary/tertiary 槽位、滑块与开关的拇指、
+  /// 以及页面里直接读 `colorScheme.primary` 的图标。
+  ///
+  /// 与 [onAccent] 同值（中性近白），但语义不同：[onAccent] 专指「紫/暗红这类
+  /// 强调底色之上的文字与图标」，本角色指「中性底之上的强调件」。
+  static const Color neutralEmphasis = onAccent;
+
+  /// 通用中性填充位：实底按钮、选中容器、chip、导航指示器、抬升 surface 色阶。
+  ///
+  /// 与 [bubbleUser] 同值（中性暗一档），语义是「填充」而不是「用户气泡」。
+  static const Color neutralFill = bubbleUser;
+
+  /// 中性强填充位：活动轨道、开关选中轨道、进度条这类**要看得见、但压在文字
+  /// 之下**的填充件。
+  ///
+  /// 与 [muted] 同值（中性灰档），但 [muted] 在 §2 的语义是次要文字与占位符；
+  /// 填充位取本角色，文字位取 [muted]，两者靠契约测试保持同值。
+  static const Color neutralFillStrong = muted;
 
   /// 描边：发丝线（中性暗）。
   static const Color line = Color(0xFF232227);
@@ -93,7 +129,9 @@ abstract final class QiyuColors {
 ///
 /// §8 的圆角是**三种**形状：小圆角 8、卡片 18、胶囊（输入框）；「圆形」（图标按钮、
 /// 发送钮）不在这里——用一个 999 的 radius 表达圆形会和胶囊撞值，语义上分不出两种
-/// 形状，所以圆形走 [QiyuShapes.circleBorder] / `BoxShape.circle` 的形状语义。
+/// 形状，所以圆形由 `BoxShape.circle` / `CircleBorder` 的**形状语义**承载。主题层
+/// 当前没有任何圆形消费方，因此不再预登记 ShapeBorder 常量（零消费即删）；等第 2 段
+/// 圆形图标按钮与发送钮落地、真的需要共享轮廓时再加。
 abstract final class QiyuRadii {
   /// 小元素。
   static const double small = 8;
@@ -129,16 +167,7 @@ abstract final class QiyuRadii {
   );
 }
 
-/// 形状 token：圆形（design-system §8 组件 3「圆形图标按钮」、组件 4「发送按钮」）。
-///
-/// 圆形不要拿 [QiyuRadii.pill] 的 999 当「够大的圆角」凑——那会让胶囊和圆形在代码里
-/// 长得一样。实心底用 `BoxShape.circle`，带描边/可点击的用本常量。
-abstract final class QiyuShapes {
-  /// 圆形轮廓：图标按钮、发送钮、状态圆点。
-  static const CircleBorder circleBorder = CircleBorder();
-}
-
-/// 线条宽度 token：规范里只有两种线。
+/// 线条宽度与状态线几何。
 ///
 /// 发丝线 1px（design-system §2 `line`、§8 组件 5「`line` 发丝描边」）与焦点/tab
 /// 这类状态线 2px（§9 焦点环 2px；原型 `.tab.active` 的 `border-bottom: 2px`）。
@@ -149,6 +178,17 @@ abstract final class QiyuLine {
 
   /// 状态线：tab 下划线（焦点环的 2px 同值，见 §9）。
   static const double tabIndicator = 2;
+
+  /// tab 指示器的下内缩：**几何修正值，不是间距档**。
+  ///
+  /// 两种基准不一样：原型 `.tab` 的 `border-bottom: 2px`（配 `padding: 10px 16px`
+  /// 与 `margin-bottom: -1px`）贴在**标签自身盒子**的底边上，而 Flutter 的
+  /// `UnderlineTabIndicator` 画在**整条 TabBar 的底边**，label 之下的留白会让线
+  /// 落得比原型低一档。去掉内缩就是把下划线推离标签、贴到栏框上去。6px 是为对齐
+  /// 这两种基准留下的实现期修正值（非规范定值，记忆中心接线时随原型复验），因此
+  /// 刻意不收进 §8 的 4px 间距体系——那套体系管的是 padding 与 gap，别把它当档位
+  /// 拿去复用作间距。
+  static const double tabIndicatorInset = 6;
 }
 
 /// 间距 token：4px 基础网格（design-system §8）。
@@ -215,16 +255,20 @@ abstract final class QiyuLayout {
   /// 键盘焦点环（design-system §9）：2px 实线 accent-bright、offset 3px。
   ///
   /// Material 的 `ThemeData.focusColor` 只能贴在控件表面上，画不出带 offset 的
-  /// 外环，所以真正的焦点环由 `QiyuFocusRing` 自绘（第 2 段落地），这里只定值。
+  /// 外环。**唯一消费方**是 `QiyuFocusRing`——全站自绘焦点环组件，导航壳与
+  /// composer 段创建；它还没落地，所以这两个值当前在库内无人读取，属预定义值：
+  /// 不要当死代码删掉，也不要在页面里另写一份 2/3。
   static const double focusRingWidth = 2;
   static const double focusRingOffset = 3;
 }
 
 /// 毛玻璃模糊半径（design-system §2、§8）。
 ///
-/// §2 的 16–24 是「凭视觉验收微调」的区间，不是契约，所以这里只留**一个定值**：
-/// 面板/侧边栏/抽屉取原型 `:root { --blur: blur(20px) }` 的 20，验收不通过时直接改
-/// 这一个值（改完同步原型），不要再拆成 min/max 让测试去锁区间。
+/// §2 定的是**区间**：16–24px，「实现时凭视觉验收微调」。区间本身是契约，由
+/// `test/qiyu_theme_test.dart` 的 `inInclusiveRange(16, 24)` 范围锁守住（防止有人
+/// 微调时改成 4 或 60 这类越界值）；区间内取哪一个值不是契约，所以这里只留**一个
+/// 可微调定值**：面板/侧边栏/抽屉取原型 `:root { --blur: blur(20px) }` 的 20，
+/// 验收不通过时直接改这一个值并同步原型，不要再拆成 min/max 两个常量。
 abstract final class QiyuGlass {
   /// 发送按钮的模糊半径（§8 组件 4）。
   static const double sendButtonBlur = 8;
