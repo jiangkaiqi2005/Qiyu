@@ -213,7 +213,7 @@ class _NavPanel extends StatelessWidget {
       borderRadius: BorderRadius.zero,
       // 原型 `.sidebar` 只有 border-right：抽屉与侧边栏同理，左缘贴屏幕边。
       border: const BorderDirectional(
-        end: BorderSide(width: 1, color: QiyuColors.line),
+        end: BorderSide(width: QiyuLine.hairline, color: QiyuColors.line),
       ),
       padding: const EdgeInsets.symmetric(
         horizontal: QiyuLayout.sidebarPaddingHorizontal,
@@ -306,8 +306,11 @@ class _BrandSlotState extends State<_BrandSlot> {
                 height: QiyuLayout.brandMarkSize,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(width: 1, color: QiyuColors.line),
-                  color: QiyuColors.panel,
+                  border: Border.all(
+                    width: QiyuLine.hairline,
+                    color: QiyuColors.line,
+                  ),
+                  color: QiyuColors.neutralFill,
                 ),
                 child: const Center(
                   child: SizedBox.square(
@@ -372,7 +375,9 @@ class _NavItemState extends State<_NavItem> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    final labelColor = selected ? QiyuColors.onAccent : QiyuColors.muted;
+    final labelColor = selected
+        ? QiyuColors.neutralEmphasis
+        : QiyuColors.muted;
     return QiyuFocusRing(
       focusNode: _focusNode,
       child: InkWell(

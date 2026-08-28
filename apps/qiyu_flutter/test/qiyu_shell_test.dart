@@ -412,7 +412,7 @@ void main() {
       await tester.pump();
 
       final border = _ringBorder(tester, 'nav-history');
-      expect(border.width, QiyuFocus.ringWidth);
+      expect(border.width, QiyuLayout.focusRingWidth);
       expect(border.color, QiyuColors.accentBright);
     });
 
@@ -610,7 +610,7 @@ BorderSide _ringBorder(WidgetTester tester, String ringKey) {
                 widget is DecoratedBox &&
                 widget.decoration is BoxDecoration &&
                 (widget.decoration! as BoxDecoration).border?.top.width ==
-                    QiyuFocus.ringWidth,
+                    QiyuLayout.focusRingWidth,
           ),
         )
         .first,

@@ -45,7 +45,8 @@ class QiyuGlassPanel extends StatelessWidget {
             // 自定义边线（如侧边栏的单侧发丝线）不是均匀边，BoxDecoration
             // 此时不接受圆角；圆角已经由外层 ClipRRect 裁出，视觉一致。
             borderRadius: border == null ? borderRadius : null,
-            border: border ?? Border.all(width: 1, color: borderColor),
+            border: border ??
+                Border.all(width: QiyuLine.hairline, color: borderColor),
           ),
           child: Padding(
             padding: padding ?? EdgeInsets.zero,
@@ -91,12 +92,12 @@ class QiyuFocusRing extends StatelessWidget {
         // 但规范 §9 的硬要求是「键盘焦点必须可见」，宁可多显不可漏显。
         final showRing = focusNode.hasFocus;
         return Padding(
-          padding: const EdgeInsets.all(QiyuFocus.ringOffset),
+          padding: const EdgeInsets.all(QiyuLayout.focusRingOffset),
           child: DecoratedBox(
             decoration: BoxDecoration(
               borderRadius: borderRadius,
               border: Border.all(
-                width: QiyuFocus.ringWidth,
+                width: QiyuLayout.focusRingWidth,
                 color: showRing
                     ? QiyuColors.accentBright
                     : Colors.transparent,
