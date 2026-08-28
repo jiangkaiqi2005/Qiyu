@@ -139,7 +139,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('嗨。我是栖语。'), findsNothing);
-    expect(find.text('回来了。'), findsOneWidget);
+    // 问候位改由时段问候渲染（首页四张入口卡随合一页退场），断言
+    // 强度不变：仍在原位、仍然只有一个。
+    expect(find.byKey(const Key('home-greeting')), findsOneWidget);
     expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
     expect(find.byKey(const Key('home-go-history')), findsOneWidget);
     expect(find.byKey(const Key('home-go-settings')), findsOneWidget);
@@ -154,7 +156,7 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('home chat entry invites a new talk before today first chat', (
+  testWidgets('merged home stays in the empty state before today first chat', (
     tester,
   ) async {
     final onboardingGateway = _FakeOnboardingGateway(completed: true);
@@ -179,11 +181,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('今天想聊点什么'), findsOneWidget);
-    expect(find.text('接着上次说'), findsNothing);
+    // 今天还没聊过：合一页停在空状态首页（问候 + 夜景背景），不开消息流。
+    expect(find.byKey(const Key('home-greeting')), findsOneWidget);
+    expect(find.byKey(const Key('home-backdrop')), findsOneWidget);
+    expect(find.byKey(const Key('chat-message-0')), findsNothing);
   });
 
-  testWidgets('home chat entry keeps resuming once today has messages', (
+  testWidgets('merged page resumes straight into the chat once today has messages', (
     tester,
   ) async {
     final onboardingGateway = _FakeOnboardingGateway(completed: true);
@@ -214,8 +218,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('接着上次说'), findsOneWidget);
-    expect(find.text('今天想聊点什么'), findsNothing);
+    // 当天已有会话：直接是「已有消息」状态，问候与背景图退场。
+    expect(find.text('今天有点累'), findsOneWidget);
+    expect(find.byKey(const Key('chat-message-0')), findsOneWidget);
+    expect(find.byKey(const Key('home-greeting')), findsNothing);
+    expect(find.byKey(const Key('home-backdrop')), findsNothing);
   });
 
   testWidgets('clearing local product data reopens the first meeting', (
@@ -230,7 +237,7 @@ void main() {
       QiyuApp(viewModel: _chatViewModel(), onboardingViewModel: firstRun),
     );
     await tester.pumpAndSettle();
-    expect(find.text('回来了。'), findsOneWidget);
+    expect(find.byKey(const Key('home-greeting')), findsOneWidget);
 
     onboardingGateway.completed = false;
     final afterClear = await _onboardingViewModel(
@@ -278,7 +285,7 @@ void main() {
 
     await tester.tap(find.byTooltip('返回上一页'));
     await tester.pumpAndSettle();
-    expect(find.text('回来了。'), findsOneWidget);
+    expect(find.byKey(const Key('home-greeting')), findsOneWidget);
   });
 
   testWidgets(

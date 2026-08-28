@@ -16,7 +16,6 @@ import 'package:qiyu_flutter/features/history/history_view_model.dart';
 import 'package:qiyu_flutter/features/memory/memory_client.dart';
 import 'package:qiyu_flutter/features/memory/memory_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/first_meeting_view.dart';
-import 'package:qiyu_flutter/features/onboarding/home_view.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
@@ -30,6 +29,7 @@ import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
+import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
 
 void main() {
   testWidgets('keyboard alone navigates from home into the chat', (
@@ -142,7 +142,9 @@ void main() {
       await tester.pumpAndSettle();
       await _goHome(tester);
       expect(tester.takeException(), isNull);
-      expect(find.byKey(const Key('home-greeting')), findsOneWidget);
+      // 本用例的网关恢复出的会话已带消息：合一页此时直接落在「已有消息」
+      // 状态（空态问候位只在今天还没聊过时出现），断言消息流首条已渲染。
+      expect(find.byKey(const Key('chat-message-0')), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('home-go-chat')));
       await tester.pumpAndSettle();
@@ -383,22 +385,36 @@ void main() {
     },
   );
 
-  testWidgets('high contrast mode outlines cards that rely on fill color', (
+  testWidgets('high contrast mode outlines blocks that rely on fill color', (
     tester,
   ) async {
     // 负例：普通模式不加多余边框；正例：高对比模式（如 Windows 强制
-    // 颜色）下依赖底色区分的卡片要有可见边框（ticket 24 验收 4）。
-    await _pumpScaled(tester, _homeWithChatViewModel(), scale: 1.0);
-    await tester.pumpAndSettle();
-    final normalCard = tester.widget<Card>(find.byType(Card).first);
-    expect((normalCard.shape as RoundedRectangleBorder).side, BorderSide.none);
+    // 颜色）下依赖底色区分的块级容器要有可见边框（ticket 24 验收 4）。
+    // 主体是用户水滴气泡：定稿要求它「无描边、靠面色 bubble-user 与背景
+    // 拉开层次」（design-system §7），正是只靠面色区分的块。
+    BoxDecoration bubbleDecoration(WidgetTester tester) {
+      final bubble = tester.widget<Container>(
+        find.descendant(
+          of: find.byKey(const Key('chat-message-0')),
+          matching: find.byType(Container),
+        ),
+      );
+      return bubble.decoration! as BoxDecoration;
+    }
 
-    await _pumpHighContrast(tester, _homeWithChatViewModel());
+    await _pumpScaled(tester, await _mergedHomeWithSession(), scale: 1.0);
     await tester.pumpAndSettle();
-    final contrastCard = tester.widget<Card>(find.byType(Card).first);
     expect(
-      (contrastCard.shape as RoundedRectangleBorder).side,
+      bubbleDecoration(tester).border,
+      Border.fromBorderSide(BorderSide.none),
+    );
+
+    await _pumpHighContrast(tester, await _mergedHomeWithSession());
+    await tester.pumpAndSettle();
+    expect(
+      bubbleDecoration(tester).border!.top,
       isNot(BorderSide.none),
+      reason: '高对比模式下靠面色分层的水滴气泡必须给出可见边界',
     );
   });
 
@@ -500,15 +516,47 @@ Finder _verticalScrollable() => find.byWidgetPredicate(
       widget is Scrollable && widget.axisDirection == AxisDirection.down,
 );
 
-/// 首页依赖应用级的聊天 view model（副标题按当前会话状态切换）。
+/// 合一页的空状态即首页，仍依赖应用级的聊天 view model（问候与入口
+/// 副标题按当前会话状态切换），因此外壳与对话视图一起泵。
 Widget _homeWithChatViewModel() => ChangeNotifierProvider.value(
   value: LocalChatViewModel(
     _FakeChatGateway(),
     hostConnectionProbe: _FixedProbe(),
     autoStart: false,
   ),
-  child: const HomeView(),
+  child: const QiyuShell(child: LocalChatView()),
 );
+
+/// 带历史的合一页：高对比用例要在消息流里取用户气泡（靠面色区分的块）。
+Future<Widget> _mergedHomeWithSession() async {
+  final chatViewModel = LocalChatViewModel(
+    _FakeChatGateway(
+      restored: const LocalChatSnapshot(
+        sessionId: 'session-1',
+        messages: [
+          LocalChatMessage(
+            requestId: 'r-1',
+            speaker: LocalChatSpeaker.user,
+            text: '我回来了',
+          ),
+          LocalChatMessage(
+            requestId: 'r-1',
+            speaker: LocalChatSpeaker.qiyu,
+            text: '嗯，坐吧。',
+            source: ReplySource.local,
+          ),
+        ],
+      ),
+    ),
+    hostConnectionProbe: _FixedProbe(),
+    autoStart: false,
+  );
+  await chatViewModel.initialize();
+  return ChangeNotifierProvider.value(
+    value: chatViewModel,
+    child: const QiyuShell(child: LocalChatView()),
+  );
+}
 
 /// 按高对比模式泵入单页（验证强制颜色等场景下的边框兜底）。
 Future<void> _pumpHighContrast(WidgetTester tester, Widget child) async {

@@ -65,6 +65,26 @@ abstract final class QiyuColors {
   ///  elevation 色调叠加：本设计不靠 M3 的 tint 提亮（会把紫铺满抬升面），
   /// 抬升层次改用中性面板色阶。
   static const Color elevationTint = Color(0x00000000);
+
+  /// 窄屏抽屉遮罩：底色压深到 0.55（design-system §5 窄屏；原型 `.scrim` 定值
+  /// `rgba(10,9,14,.55)`）。中性夜色，不着紫。
+  static const Color scrimSoft = Color(0x8C0A090E);
+
+  /// 首页背景左右两端暗角 `rgba(15,14,20,.92)`（design-system §6「暗角要足」）。
+  static const Color backdropVeilEdge = Color(0xEB0F0E14);
+
+  /// 首页背景中部过渡 `rgba(15,14,20,.25)`。
+  static const Color backdropVeilMid = Color(0x400F0E14);
+
+  /// 中心渐晕内圈 `rgba(15,14,20,.15)`。
+  static const Color backdropVignetteInner = Color(0x260F0E14);
+
+  /// 中心渐晕外圈 `rgba(15,14,20,.78)`。
+  static const Color backdropVignetteOuter = Color(0xC70F0E14);
+
+  /// 发送钮光晕：`rgba(70,60,125,.30)`——规范 §8 组件 4 只允许「极淡紫色光晕」，
+  /// 无描边、无白色高光。
+  static const Color sendGlow = Color(0x4D463C7D);
 }
 
 /// 几何 token：圆角（design-system §8）。
@@ -164,6 +184,73 @@ abstract final class QiyuLayout {
   /// composer 内边距与图标按钮高度（占位字靠它垂直居中）。
   static const double composerPadding = 6;
   static const double composerIconButtonSize = 34;
+
+  /// 侧边栏内边距：上下 24、左右 16（原型 `.sidebar` padding 定值）。
+  static const double sidebarPaddingVertical = QiyuSpacing.lg;
+  static const double sidebarPaddingHorizontal = QiyuSpacing.md;
+
+  /// 导航项内边距：上下 10、左右 12，图标与文字间距 12。
+  static const double navItemPaddingVertical = 10;
+  static const double navItemPaddingHorizontal = QiyuSpacing.sm;
+  static const double navItemIconGap = QiyuSpacing.sm;
+
+  /// 品牌槽的几何占位尺寸：与 composer 图标按钮同档（34）。
+  static const double brandMarkSize = composerIconButtonSize;
+
+  /// 窄屏三条杠圆钮直径（原型 `.menu-btn` 定值 40）。
+  static const double menuButtonSize = 40;
+
+  /// 空状态首页内容宽度：min(560, 86vw)（原型 `.home-content`）。
+  static const double homeContentMaxWidth = 560;
+  static const double homeContentWidthFraction = 0.86;
+
+  /// 连接状态小圆点直径（design-system §5：6px）。
+  static const double connectionDotSize = 6;
+}
+
+/// 首页背景图的运行时滤镜定值（design-system §6）：入库图保持原构图，
+/// 虚化、亮度、饱和度全部运行时施加，调参不必重新出图。
+abstract final class QiyuBackdrop {
+  /// 模糊半径 5px（原型 `.home-bg` filter: blur(5px)）。
+  static const double blurSigma = 5;
+
+  /// 整体偏暗：亮度 0.45。
+  static const double brightness = 0.45;
+
+  /// 饱和度 0.55。
+  static const double saturation = 0.55;
+
+  /// 模糊会把边缘透出透明，放大 1.03 盖住（原型 transform: scale(1.03)）。
+  static const double scale = 1.03;
+
+  /// 构图焦点偏上（原型 `center 40%`）。
+  static const Alignment alignment = Alignment(0, -0.2);
+}
+
+/// 动效档位（design-system §9）：一律 150–250ms 轻缓动。reduced-motion
+/// 下由 `qiyuMotion()` 统一压成 `Duration.zero`，页面不得自写时长。
+abstract final class QiyuMotion {
+  static const Duration fast = Duration(milliseconds: 160);
+  static const Duration base = Duration(milliseconds: 200);
+  static const Duration drawer = Duration(milliseconds: 220);
+}
+
+/// 自绘键盘焦点环几何（design-system §9）：Material 的 `focusColor` 只能
+/// 贴在控件表面，画不出带 offset 的外环。
+abstract final class QiyuFocus {
+  /// 环宽 2px，取 `accentBright`。
+  static const double ringWidth = 2;
+
+  /// 环与控件之间留 3px。
+  static const double ringOffset = 3;
+}
+
+/// 图标尺寸（design-system §4）：统一 24px、outlined、细描边风格。
+abstract final class QiyuIconSpec {
+  static const double size = 24;
+
+  /// 发送钮里的上箭头图形：圆形 34 直径下收一档。
+  static const double sendGlyph = 18;
 }
 
 /// 毛玻璃模糊半径（design-system §2、§8；16–24 为验收区间，凭视觉微调）。

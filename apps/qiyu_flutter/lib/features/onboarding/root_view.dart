@@ -3,10 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../chat/local_chat_view.dart';
+import '../shell/qiyu_shell.dart';
 import 'first_meeting_view.dart';
-import 'home_view.dart';
 import 'onboarding_view_model.dart';
 
+/// 应用根：只见面的门禁压在最前，放行后就是**合一页**——导航壳包住的
+/// 对话视图，空状态即首页（design-system §5）。旧首页的四张入口卡已
+/// 废弃，导航职责交给侧边栏与抽屉。
 class RootView extends StatelessWidget {
   const RootView({super.key});
 
@@ -42,7 +46,7 @@ class RootView extends StatelessWidget {
       );
     }
     return viewModel.completed
-        ? const HomeView()
+        ? const QiyuShell(child: LocalChatView())
         : const FirstMeetingView();
   }
 }

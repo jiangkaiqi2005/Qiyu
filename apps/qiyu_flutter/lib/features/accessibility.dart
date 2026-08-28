@@ -46,3 +46,15 @@ class QiyuCenteredScrollable extends StatelessWidget {
     );
   }
 }
+
+/// reduced-motion 判定（design-system §9）：Flutter Web 引擎把浏览器的
+/// `prefers-reduced-motion: reduce` 映射到 `AccessibilityFeatures
+/// .disableAnimations`，`MediaQuery.disableAnimationsOf` 是唯一可靠读数口。
+/// 原生平台该位为 false，等价于「按开关走」，不影响动效。
+bool qiyuReducedMotion(BuildContext context) =>
+    MediaQuery.disableAnimationsOf(context);
+
+/// 动效时长统一出口：系统要求减少动态效果时一律 0（关闭全部过渡与渐显），
+/// 否则用 token 层给的 150–250ms 档位。本段新增的过渡都必须走这里。
+Duration qiyuMotion(BuildContext context, Duration duration) =>
+    qiyuReducedMotion(context) ? Duration.zero : duration;

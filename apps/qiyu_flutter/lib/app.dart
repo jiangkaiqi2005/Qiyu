@@ -29,12 +29,20 @@ import 'features/settings/stt_settings_view_model.dart';
 import 'features/settings/tts_settings_view_model.dart';
 import 'features/settings/web_search_settings_client.dart';
 import 'features/settings/web_search_settings_view_model.dart';
+import 'features/shell/qiyu_shell.dart';
 import 'theme/qiyu_theme.dart';
 
+/// 路由表：8 条 GoRoute、路径与重定向逻辑一律不动（Spec Implementation
+/// Decisions 第 18 条行为不变量）。紫夜改造后的「合一页」不落在新路由上，
+/// 而是让 `/` 与 `/chat` 渲染**同一个**由 [QiyuShell] 包住的对话视图：
+/// `/` 前头仍压着 [RootView] 的初见门禁，`/chat` 直接进对话态。
 GoRouter _createRouter() => GoRouter(
   routes: [
     GoRoute(path: '/', builder: (context, state) => const RootView()),
-    GoRoute(path: '/chat', builder: (context, state) => const LocalChatView()),
+    GoRoute(
+      path: '/chat',
+      builder: (context, state) => const QiyuShell(child: LocalChatView()),
+    ),
     GoRoute(path: '/history', builder: (context, state) => const HistoryView()),
     GoRoute(
       path: '/history/:sessionId',
