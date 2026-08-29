@@ -111,14 +111,12 @@ final class VoiceOutputController extends ChangeNotifier {
 
   /// 停止播放并清空队列（停止按钮 / Esc / 点麦克风立即停播）。
   void stopAll() {
-    _abandonActive(incrementGeneration: true);
-    _phase = VoiceOutputPhase.idle;
-    _nowReading = null;
+    _haltNow();
     notifyListeners();
   }
 
-  /// 离开聊天页时的停播（ADR 0002）：动作与 [stopAll] **完全一致**——立刻停
-  /// 声、清掉排队的气泡、作废在途合成——只有通知时机不同。
+  /// 离开聊天页时的停播（ADR 0002）：动作与 [stopAll] **完全一致**（同走
+  /// [_haltNow]）——立刻停声、清掉排队的气泡、作废在途合成——只有通知时机不同。
   ///
   /// 页面卸载跑在框架锁定树的阶段，而卸载顺序是「先子后父」：轮到 `State.dispose`
   /// 时本页的 `AnimatedBuilder` 已经 defunct 却可能还没解除订阅，同步
@@ -128,15 +126,21 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 消失的监听者届时已解除订阅，还活着的监听者（例如路由过渡期同时挂着的另一个
   /// 聊天页）照常收到更新。
   void stopAllForLeavingPage() {
-    _abandonActive(incrementGeneration: true);
-    _phase = VoiceOutputPhase.idle;
-    _nowReading = null;
+    _haltNow();
     scheduleMicrotask(() {
       if (_disposed) {
         return;
       }
       notifyListeners();
     });
+  }
+
+  /// 立即停播的公共动作：作废在途的合成/播放并清队，状态回到 idle。
+  /// 唯一的差别（要不要通知、什么时候通知）留在两个调用方身上。
+  void _haltNow() {
+    _abandonActive(incrementGeneration: true);
+    _phase = VoiceOutputPhase.idle;
+    _nowReading = null;
   }
 
   void consumeFailureNotice() {

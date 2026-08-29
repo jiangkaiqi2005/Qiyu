@@ -246,11 +246,13 @@ class _QiyuAppState extends State<QiyuApp> {
       routerConfig: _router,
       // 紫夜主题：色板、字族、几何与组件主题全部来自 token 层
       // （lib/theme/qiyu_tokens.dart），这里不再写任何视觉值。
-      theme: qiyuDarkTheme(),
-      // reduced-motion 要盖住**全部**过渡（design-system §9），而路由过渡与
-      // ink ripple 都长在 ThemeData 上，主题层拿不到 MediaQuery。因此在
-      // MediaQuery 已可用的这一层读出系统读数，再按它重建一份主题往下发：
-      // 开启减少动态效果时路由过渡时长归零、ripple 关闭。
+      //
+      // **全应用只有 builder 这一份生效主题**：reduced-motion 要盖住全部过渡
+      // （design-system §9），而路由过渡与 ink ripple 都长在 ThemeData 上、
+      // 主题层拿不到 MediaQuery，所以只能在 MediaQuery 已可用的这一层读系统
+      // 读数，按它建一份主题往下发。`MaterialApp.theme` 因此留空——在那儿
+      // 再写一份 `qiyuDarkTheme()` 会在 builder 的 Theme 处被整个覆盖，
+      // 只是白建一份永远不生效的 ThemeData。
       builder: (context, child) => Theme(
         data: qiyuDarkTheme(reduceMotion: qiyuReducedMotion(context)),
         child: child ?? const SizedBox.shrink(),

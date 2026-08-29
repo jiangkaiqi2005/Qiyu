@@ -6,11 +6,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
-import 'package:qiyu_flutter/features/navigation.dart';
+import 'package:qiyu_flutter/features/history/history_client.dart';
+import 'package:qiyu_flutter/features/history/history_view_model.dart';
+import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
+import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
+import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_connection_status.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
@@ -50,16 +55,9 @@ void main() {
     });
 
     testWidgets('导航项选中态取中性暗底 + 近白文字，绝不用紫', (tester) async {
-      await _pumpShell(
-        tester,
-        width: 1200,
-        height: 800,
-        at: '/history',
-        // 选中态只有在「功能页也套着壳」时才看得见；真实 `lib/app.dart` 已经把
-        // 壳挂到历史/记忆/设置三页（User Story 5），harness 用占位页代表它们，
-        // 是否给占位页套壳仍由用例给定的开关决定，这里要壳来验导航项选中绘制。
-        shellOnFeaturePages: true,
-      );
+      await _pumpShell(tester, width: 1200, height: 800, at: '/history');
+      // 生产路由把壳挂在功能页上（User Story 5），所以 `/history` 这一跳
+      // 是真的落在挂着侧边栏的历史页上，选中态才有得验。
 
       final selected = _navItemContainer(tester, 'nav-history');
       expect(selected.color, QiyuColors.selectedNeutral);
@@ -178,6 +176,44 @@ void main() {
         tester.widget<Text>(find.byKey(const Key('conn-status-text'))).style!.fontSize,
         QiyuType.secondarySize,
       );
+    });
+
+    testWidgets('一次都还没探过时不宣称正常：中性形态 + 进行时措辞，不给重试', (
+      tester,
+    ) async {
+      // 三态里的第一态：构造出 view model 但**不调用 initialize**，探测结果
+      // 还是 null（hostStatusKnown == false）。这时既不能说「栖语在本机」，
+      // 也不能说连不上。
+      final chat = LocalChatViewModel(
+        _StubChatGateway(),
+        hostConnectionProbe: _StubProbe(available: true),
+        autoStart: false,
+      );
+      expect(chat.hostStatusKnown, isFalse, reason: '前提：一次都还没探过');
+      await _pumpShell(tester, width: 1200, height: 800, viewModel: chat);
+
+      final text = tester.widget<Text>(
+        find.byKey(const Key('conn-status-text')),
+      );
+      final dotColor =
+          (tester
+                      .widget<Container>(
+                        find.byKey(const Key('conn-status-dot')),
+                      )
+                      .decoration!
+                  as BoxDecoration)
+              .color;
+      // 形态与正常态同款：中性圆点 + muted 次要字，不加第三种颜色。
+      expect(text.data, QiyuConnectionStatus.probingLabel);
+      expect(dotColor, QiyuColors.muted);
+      expect(text.style!.color, QiyuColors.muted);
+      // 但结论不给：既不宣称本机正常，也不宣称故障，也不是可点的重试。
+      expect(text.data, isNot(QiyuConnectionStatus.normalLabel));
+      expect(text.data, isNot(QiyuConnectionStatus.failedLabel));
+      expect(dotColor, isNot(QiyuColors.danger));
+      expect(text.style!.color, isNot(QiyuColors.danger));
+      expect(find.byKey(const Key('conn-status-retry')), findsNothing);
+      expect(find.text(QiyuConnectionStatus.normalLabel), findsNothing);
     });
 
     testWidgets('探测失败态：圆点与文案同转 danger，点击重新探测', (
@@ -540,57 +576,44 @@ void main() {
 
   group('导航返回栈（行为不变量，本轮纯视觉换皮不动它）', () {
     testWidgets('换栈进功能页后，侧边栏选中态跟着当前目的地走', (tester) async {
-      await _pumpShell(
-        tester,
-        width: 1200,
-        height: 800,
-        shellOnFeaturePages: true,
-      );
+      await _pumpShell(tester, width: 1200, height: 800);
 
-      await tester.tap(find.byKey(const Key('home-go-settings')));
+      await tester.tap(find.byKey(const Key('home-go-history')));
       await tester.pumpAndSettle();
 
-      expect(find.text('设置占位页'), findsOneWidget);
-      expect(_navItemContainer(tester, 'nav-settings').color, isNotNull);
-      expect(
-        _navItemContainer(tester, 'nav-settings').color,
-        QiyuColors.selectedNeutral,
-        reason: '`go` 换栈之后当前位置就是设置，选中态必须落在它上面',
-      );
+      expect(_location(tester), '/history');
+      expect(find.byType(QiyuShell), findsOneWidget, reason: '功能页也挂着壳');
       expect(
         _navItemContainer(tester, 'nav-history').color,
+        QiyuColors.selectedNeutral,
+        reason: '`go` 换栈之后当前位置就是历史，选中态必须落在它上面',
+      );
+      expect(
+        _navItemContainer(tester, 'nav-memory').color,
         isNot(QiyuColors.selectedNeutral),
       );
     });
 
-    testWidgets('侧边栏是换栈：连跳两地后页内返回落回合一页，不是路过的那一站', (
+    testWidgets('侧边栏是换栈：过去的一站不留在栈里，页内返回落回合一页', (
       tester,
     ) async {
-      await _pumpShell(
-        tester,
-        width: 1200,
-        height: 800,
-        shellOnFeaturePages: true,
-      );
-
-      await tester.tap(find.byKey(const Key('home-go-settings')));
-      await tester.pumpAndSettle();
-      expect(find.text('设置占位页'), findsOneWidget);
+      await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
+      expect(_location(tester), '/chat');
 
       await tester.tap(find.byKey(const Key('home-go-history')));
       await tester.pumpAndSettle();
-      expect(find.text('历史占位页'), findsOneWidget);
+      expect(_location(tester), '/history');
 
-      await tester.tap(find.byKey(const Key('placeholder-back')));
+      await tester.tap(find.byKey(const Key('history-back')));
       await tester.pumpAndSettle();
 
-      // 常驻顶层导航每次换掉当前位置，所以这一跳没有可弹的层，返回落回合一页；
-      // 上一段那种「目标不在栈里就 push 叠栈」的写法会回到路过的设置页。
-      expect(find.text('设置占位页'), findsNothing);
+      // 常驻顶层导航每次换掉当前位置，所以这一跳没有可弹的层，返回落回合一页
+      // （`/`）；上一段那种「目标不在栈里就 push 叠栈」的写法会回到路过的 /chat。
+      expect(_location(tester), '/');
       expect(find.byKey(const Key('chat-input')), findsOneWidget);
     });
 
-    testWidgets('工具条入口是叠栈：进设置再返回，回到的是原来那段会话', (
+    testWidgets('工具条入口是叠栈：进历史再返回，回到的是原来那段会话', (
       tester,
     ) async {
       final gateway = _StubChatGateway(
@@ -606,19 +629,19 @@ void main() {
         tester,
         width: 1200,
         height: 800,
-        shellOnFeaturePages: true,
+        at: '/chat',
         viewModel: await _viewModel(gateway),
       );
       expect(find.text('昨晚聊到一半'), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('open-provider-settings')));
+      await tester.tap(find.byKey(const Key('open-history')));
       await tester.pumpAndSettle();
-      expect(find.text('设置占位页'), findsOneWidget);
+      expect(_location(tester), '/history');
 
-      await tester.tap(find.byKey(const Key('placeholder-back')));
+      await tester.tap(find.byKey(const Key('history-back')));
       await tester.pumpAndSettle();
 
-      expect(find.text('设置占位页'), findsNothing);
+      expect(_location(tester), '/chat', reason: '弹出的是刚压上去的那一层');
       expect(find.byKey(const Key('chat-input')), findsOneWidget);
       expect(find.text('昨晚聊到一半'), findsOneWidget, reason: '还是原来那个会话');
     });
@@ -627,8 +650,15 @@ void main() {
 
 // ---------- 装配 ----------
 
-/// 只壳 + 合一页的 harness：视口、路由位置、探测结果与 reduced-motion
+/// 壳 + 合一页的 harness：视口、路由位置、探测结果与 reduced-motion
 /// 都在这里注入，用例只断言外部可观察行为。
+///
+/// 路由表**就是生产的 [qiyuRoutes]**，harness 只额外指定初始位置。之前这里
+/// 自抄了一份九条路由的副本（注释还写着「与 lib/app.dart 完全一致」），验的
+/// 其实是副本：生产把壳挂到哪些页、路径集合怎么改，这里都不会变红。
+///
+/// 页面需要的依赖仍在外层注入：合一页要 [LocalChatViewModel]，`/` 的初见门禁
+/// 要一个已完成的 [OnboardingViewModel]，`/history` 要 [HistoryViewModel]。
 Future<void> _pumpShell(
   WidgetTester tester, {
   required double width,
@@ -637,7 +667,6 @@ Future<void> _pumpShell(
   bool drawerOpen = false,
   bool settle = true,
   bool reducedMotion = false,
-  bool shellOnFeaturePages = false,
   _StubProbe? probe,
   LocalChatViewModel? viewModel,
 }) async {
@@ -650,7 +679,6 @@ Future<void> _pumpShell(
       probe: probe,
       viewModel: viewModel,
       reducedMotion: reducedMotion,
-      shellOnFeaturePages: shellOnFeaturePages,
     ),
   );
   if (settle) {
@@ -669,14 +697,17 @@ Future<Widget> _app({
   _StubProbe? probe,
   LocalChatViewModel? viewModel,
   bool reducedMotion = false,
-  bool shellOnFeaturePages = false,
 }) async {
   final chat =
       viewModel ?? await _viewModel(_StubChatGateway(), probe: probe);
   return MultiProvider(
-    providers: [ChangeNotifierProvider.value(value: chat)],
+    providers: [
+      ChangeNotifierProvider.value(value: chat),
+      ChangeNotifierProvider.value(value: await _onboardingViewModel()),
+      ChangeNotifierProvider.value(value: _historyViewModel()),
+    ],
     child: MaterialApp.router(
-      routerConfig: _router(at, shellOnFeaturePages: shellOnFeaturePages),
+      routerConfig: GoRouter(initialLocation: at, routes: qiyuRoutes()),
       theme: qiyuDarkTheme(),
       // reduced-motion：Web 引擎把 prefers-reduced-motion 映射到
       // AccessibilityFeatures.disableAnimations，测试侧同样从这一位进。
@@ -692,99 +723,36 @@ Future<Widget> _app({
   );
 }
 
-/// 与被改造应用同构的最小路由：9 条路径与 `lib/app.dart` 完全一致（本段一条
-/// 都没改），功能页用占位页，本段只验壳与合一页。
-GoRouter _router(String initialLocation, {bool shellOnFeaturePages = false}) {
-  // 三个导航目标占位页是否套壳由用例决定（见 _pumpShell 的注释）；路径本身
-  // 与 lib/app.dart 的 9 条一一对应，本段一条都没动。
-  Widget page(Widget child) =>
-      shellOnFeaturePages ? QiyuShell(child: child) : child;
-  return GoRouter(
-    initialLocation: initialLocation,
-    routes: [
-      GoRoute(
-        path: '/',
-        builder: (context, state) => const QiyuShell(
-          showHomeBackdrop: true,
-          child: LocalChatView(),
-        ),
-      ),
-      GoRoute(
-        path: '/chat',
-        builder: (context, state) => const QiyuShell(
-          showHomeBackdrop: true,
-          child: LocalChatView(),
-        ),
-      ),
-      GoRoute(
-        path: '/history',
-        builder: (context, state) => page(_featurePage('历史占位页')),
-      ),
-      GoRoute(
-        path: '/history/:sessionId',
-        builder: (context, state) => const Scaffold(
-          body: Center(child: Text('历史会话占位页')),
-        ),
-      ),
-      GoRoute(
-        path: '/memory',
-        builder: (context, state) => page(_featurePage('记忆中心占位页')),
-      ),
-      GoRoute(
-        path: '/memory/item/:itemId',
-        builder: (context, state) => const Scaffold(
-          body: Center(child: Text('记忆条目占位页')),
-        ),
-      ),
-      GoRoute(
-        path: '/settings',
-        builder: (context, state) => page(_featurePage('设置占位页')),
-      ),
-      GoRoute(
-        path: '/settings/diagnostics',
-        builder: (context, state) =>
-            const Scaffold(body: Center(child: Text('诊断占位页'))),
-      ),
-      GoRoute(
-        path: '/privacy',
-        builder: (context, state) =>
-            const Scaffold(body: Center(child: Text('隐私占位页'))),
-      ),
-    ],
+/// 初见已完成：`/` 走 [RootView] 的门禁后落回合一页，而不是停在初见页。
+Future<OnboardingViewModel> _onboardingViewModel() async {
+  final viewModel = OnboardingViewModel(
+    _CompletedOnboardingGateway(),
+    _UnconfiguredProviderGateway(),
+    autoStart: false,
   );
+  await viewModel.initialize();
+  return viewModel;
 }
 
-/// 代表「被壳包住的功能页」的占位页：只带一个页内返回按钮（动作取生产的
-/// [backToPrevious]，与真实三页同一出口）与标题文本，用来验返回栈的**外部
-/// 可观察行为**——从哪来回哪去，不去数栈里有几层。
-Widget _featurePage(String label) => Scaffold(
-  body: SafeArea(
-    child: Builder(
-      builder: (context) => Column(
-        children: [
-          Row(
-            children: [
-              IconButton(
-                key: const Key('placeholder-back'),
-                onPressed: () => backToPrevious(context),
-                tooltip: '返回上一页',
-                icon: const Icon(Icons.arrow_back),
-              ),
-              Text(label),
-            ],
-          ),
-        ],
-      ),
-    ),
-  ),
-);
+/// 历史页的 view model：本文件只借它的页面外壳验壳的位置与返回栈，
+/// 不验内容，所以 autoStart 关掉（列表保持空态，不留下转个不停的进度条）。
+HistoryViewModel _historyViewModel() =>
+    HistoryViewModel(
+      _EmptyHistoryGateway(),
+      onSessionDeleted: (_) {},
+      autoStart: false,
+    );
 
-/// 当前路由路径：go_router 17 的 `GoRouterState` 没有对外可读的当前位置，
-/// 只能从 delegate 读。壳在 `/` 与 `/chat` 都在树里，所以拿它当锚点。
-String _location(WidgetTester tester) =>
-    GoRouter.of(
-      tester.element(find.byType(QiyuShell)),
-    ).routerDelegate.currentConfiguration.uri.path;
+/// 当前路由路径：go_router 17 的 `GoRouterState` 没有对外可读的当前位置，只能
+/// 从代理的匹配列表读。取**最深一条** `matchedLocation`——`currentConfiguration
+/// .uri` 在 `push` 出来的那一层上不会跟着改（它留在换栈后的位置），只读它会把
+/// 叠栈看成没跳。壳在叠栈时树上有两份，用最上面那一份拿代理。
+String _location(WidgetTester tester) {
+  final matches = GoRouter.of(
+    tester.element(find.byType(QiyuShell).last),
+  ).routerDelegate.currentConfiguration.matches;
+  return matches.last.matchedLocation;
+}
 
 Future<LocalChatViewModel> _viewModel(
   StreamingLocalChatGateway gateway, {
@@ -858,6 +826,46 @@ final class _StubProbe implements HostConnectionProbe {
     calls += 1;
     return available;
   }
+}
+
+/// 初见已完成：让 `/` 过 [RootView] 的门禁后回到合一页。
+final class _CompletedOnboardingGateway implements OnboardingGateway {
+  @override
+  Future<OnboardingState> read() async => const OnboardingState(completed: true);
+
+  @override
+  Future<void> complete() async {}
+}
+
+/// 未配置模型服务：初见门禁只读这一个方法判断「配好了没有」。
+final class _UnconfiguredProviderGateway implements ProviderSettingsGateway {
+  @override
+  Future<ProviderSettings> read() async =>
+      const ProviderSettings(configured: false, keySet: false);
+
+  @override
+  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
+
+  @override
+  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
+      throw UnimplementedError();
+}
+
+/// 空历史：本文件只借历史页的外壳验壳的位置与返回栈，不验列表内容。
+final class _EmptyHistoryGateway implements HistoryGateway {
+  @override
+  Future<HistoryListing> fetchHistory() async => const HistoryListing(
+    latestSessionId: null,
+    days: [],
+    unavailable: [],
+  );
+
+  @override
+  Future<void> deleteSession(String sessionId) async {}
 }
 
 final class _StubChatGateway implements StreamingLocalChatGateway {

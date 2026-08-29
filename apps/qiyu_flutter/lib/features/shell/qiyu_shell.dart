@@ -9,6 +9,7 @@ import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../chat/local_chat_view_model.dart';
+import '../navigation.dart';
 import 'qiyu_connection_status.dart';
 import 'qiyu_home_backdrop.dart';
 import 'qiyu_widgets.dart';
@@ -147,14 +148,14 @@ class _QiyuShellState extends State<QiyuShell>
   /// 换页前无条件停播（ADR 0002：离开这一段话的语境就闭嘴，排队的 bubble 不得
   /// 跨页继续读）：退役前的 `_goHome` 就是这个语义，这里照搬。
   void _goTo(String location) {
-    _maybeChatViewModel(context)?.voiceOutput.stopAll();
+    _chatViewModel(context)?.voiceOutput.stopAll();
     context.go(location);
   }
 
   /// 品牌槽：回合一页的**空状态首页**。目的地固定为 `/`（不是「回来时那页」），
   /// 语义与退役前的 `_goHome` 一致，同样先无条件停播。
   void _goHome() {
-    _maybeChatViewModel(context)?.voiceOutput.stopAll();
+    _chatViewModel(context)?.voiceOutput.stopAll();
     context.go('/');
   }
 
@@ -339,6 +340,39 @@ class QiyuShellScope extends InheritedWidget {
   bool updateShouldNotify(QiyuShellScope oldWidget) => false;
 }
 
+/// 功能页页头 Row 的**左侧前缀**：桌面与「没被壳包住」时是自己的返回箭头，
+/// 窄屏且被壳包住时整块不出现（那个左上角归三条杠，导航交给抽屉）。
+///
+/// 历史 / 记忆中心 / 设置三页过去各抄一份逐字相同的 `if (!coversFrontNavigation)
+/// ...[IconButton, SizedBox]`，连撤箭头的理由都抄三遍；判定口径必须与
+/// [QiyuShellScope.coversFrontNavigation] 严格一致，否则页头会与三条杠打架，
+/// 所以收成这一处。各页仍传自己的按钮 Key，行为（[backToPrevious]）与位置不变。
+class QiyuPageHeaderBackButton extends StatelessWidget {
+  const QiyuPageHeaderBackButton({super.key, required this.buttonKey});
+
+  /// 页面自己的返回键（`history-back` / `memory-back` / `settings-back`）。
+  final Key buttonKey;
+
+  @override
+  Widget build(BuildContext context) {
+    if (QiyuShellScope.coversFrontNavigation(context)) {
+      return const SizedBox.shrink();
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          key: buttonKey,
+          onPressed: () => backToPrevious(context),
+          tooltip: '返回上一页',
+          icon: const Icon(Icons.arrow_back),
+        ),
+        const SizedBox(width: QiyuSpacing.xs),
+      ],
+    );
+  }
+}
+
 /// 当前路径：用于导航项选中态。go_router 17 的 `GoRouterState` 没有
 /// `maybeOf`，走 `GoRouter.maybeOf` 读代理的当前匹配；脱离路由单独 pump
 /// 本页时退化成空串（谁都不选中，不报错）。
@@ -352,14 +386,9 @@ String _currentLocation(BuildContext context) {
 
 /// 合一页与功能页共用的聊天 view model：`QiyuConnectionStatus` 与壳都要读它，
 /// 但本页可以被脱离 Provider 树单独 pump（旧测试），拿不到就退化成中性呈现，
-/// 不报错也不谎报。
-LocalChatViewModel? _maybeChatViewModel(BuildContext context) {
-  try {
-    return context.read<LocalChatViewModel>();
-  } on ProviderNotFoundException {
-    return null;
-  }
-}
+/// 不报错也不谎报。兜底形状与连接状态共用 `qiyu_widgets.dart` 的 [maybeProvider]。
+LocalChatViewModel? _chatViewModel(BuildContext context) =>
+    maybeProvider(() => context.read<LocalChatViewModel>());
 
 /// 侧边栏与抽屉共用的面板内容：品牌槽 → 三项导航 → 底部连接状态。
 ///

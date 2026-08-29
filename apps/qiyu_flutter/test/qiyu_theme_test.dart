@@ -275,6 +275,57 @@ void main() {
     });
   });
 
+  group('reduced-motion（§9 关闭全部过渡与渐显）', () {
+    test('开启后：任何平台上页面切换都不产生过渡时长', () {
+      final reduced = qiyuDarkTheme(reduceMotion: true);
+      final builders = reduced.pageTransitionsTheme.builders;
+      for (final platform in TargetPlatform.values) {
+        final builder = builders[platform];
+        expect(builder, isNotNull, reason: '$platform 没有登记过渡 builder');
+        // 断的是「切页要花多久」这个可观察结果，不是路上套了哪几层 widget：
+        // 时长为 0 就是没有过渡，平台漏登记则会退回框架默认的 300ms。
+        expect(
+          builder!.transitionDuration,
+          Duration.zero,
+          reason: '$platform 上页面切换仍带正向过渡时长',
+        );
+        expect(
+          builder.reverseTransitionDuration,
+          Duration.zero,
+          reason: '$platform 上返回同样要有零时长',
+        );
+      }
+    });
+
+    test('开启后：点击不再产生水波纹反馈', () {
+      expect(
+        qiyuDarkTheme(reduceMotion: true).splashFactory,
+        same(NoSplash.splashFactory),
+      );
+    });
+
+    test('没开启时这两样都得还在：关掉的是动效不是界面本身', () {
+      final theme = qiyuDarkTheme();
+      expect(theme.splashFactory, isNot(same(NoSplash.splashFactory)));
+      for (final builder in theme.pageTransitionsTheme.builders.values) {
+        expect(builder.transitionDuration, isNot(Duration.zero));
+      }
+    });
+
+    test('reduceMotion 只动「有没有过渡」，不动色板与焦点档', () {
+      final reduced = qiyuDarkTheme(reduceMotion: true);
+      expect(
+        reduced.colorScheme.primary.toARGB32(),
+        theme.colorScheme.primary.toARGB32(),
+      );
+      expect(
+        reduced.scaffoldBackgroundColor.toARGB32(),
+        theme.scaffoldBackgroundColor.toARGB32(),
+      );
+      expect(reduced.focusColor.toARGB32(), theme.focusColor.toARGB32());
+    });
+  });
+
   group('三色纪律：被当填充用的组件在主题层压回中性（User Story 9）', () {
     testWidgets('FilledButton 实际渲染出的底色不是 accent-bright', (tester) async {
       await _pumpInTheme(

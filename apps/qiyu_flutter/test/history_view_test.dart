@@ -32,7 +32,7 @@ void main() {
           onboardingViewModel: await _onboardingViewModel(),
         ),
       );
-      await _enterChatFromHome(tester);
+      await _settleMergedPage(tester);
 
       await tester.tap(find.byKey(const Key('open-history')));
       await tester.pumpAndSettle();
@@ -72,7 +72,7 @@ void main() {
         onboardingViewModel: await _onboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
     await tester.tap(find.byKey(const Key('open-history')));
     await tester.pumpAndSettle();
 
@@ -119,7 +119,7 @@ void main() {
           onboardingViewModel: await _onboardingViewModel(),
         ),
       );
-      await _enterChatFromHome(tester);
+      await _settleMergedPage(tester);
       await tester.tap(find.byKey(const Key('open-history')));
       await tester.pumpAndSettle();
 
@@ -174,7 +174,7 @@ void main() {
         onboardingViewModel: await _onboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
     await tester.tap(find.byKey(const Key('open-history')));
     await tester.pumpAndSettle();
 
@@ -208,7 +208,7 @@ void main() {
         onboardingViewModel: await _onboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
     await tester.tap(find.byKey(const Key('open-history')));
     await tester.pumpAndSettle();
 
@@ -242,7 +242,7 @@ void main() {
         onboardingViewModel: await _onboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
     await tester.tap(find.byKey(const Key('open-history')));
     await tester.pumpAndSettle();
 
@@ -282,7 +282,9 @@ Finder _historyPageTitle() => find.descendant(
   matching: find.text('历史'),
 );
 
-Future<void> _enterChatFromHome(WidgetTester tester) async {
+/// 合一页（design-system §5）没有「从首页进对话」这一跳，`home-go-chat` 现在
+/// 只是输入容器的定位键：这里做的只是推进到稳定态，不触发任何导航。
+Future<void> _settleMergedPage(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await tester.tap(find.byKey(const Key('home-go-chat')));
   await tester.pumpAndSettle();

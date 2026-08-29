@@ -67,7 +67,7 @@ void main() {
         onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
 
     expect(find.text('我回来了'), findsOneWidget);
     expect(find.text('嗯'), findsOneWidget);
@@ -122,7 +122,7 @@ void main() {
         onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
 
     expect(find.text('我回来了'), findsOneWidget);
     expect(find.text('后来好多了'), findsOneWidget);
@@ -148,7 +148,7 @@ void main() {
         onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
 
     // 第一轮走本地规则降级：标识出现。
     await tester.enterText(find.byKey(const Key('chat-input')), '有点累');
@@ -203,7 +203,7 @@ void main() {
         onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
 
     expect(find.text('**用户输入不当 Markdown 解析**'), findsOneWidget);
     expect(find.text('先**躺好**，慢慢说'), findsNothing);
@@ -229,7 +229,7 @@ void main() {
         onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '今天有点累');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -266,7 +266,7 @@ void main() {
           onboardingViewModel: await _completedOnboardingViewModel(),
         ),
       );
-      await _enterChatFromHome(tester);
+      await _settleMergedPage(tester);
 
       await tester.enterText(find.byKey(const Key('chat-input')), '还醒着');
       await tester.tap(find.byKey(const Key('chat-send')));
@@ -365,7 +365,7 @@ void main() {
         onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
     await tester.enterText(find.byKey(const Key('chat-input')), '先别说');
     await tester.tap(find.byKey(const Key('chat-send')));
     await tester.pump();
@@ -421,7 +421,7 @@ void main() {
         onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
 
     expect(find.text('本机程序已停止'), findsNothing);
 
@@ -455,7 +455,7 @@ void main() {
         onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '别丢掉这句');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -490,7 +490,7 @@ void main() {
         onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '别重复这句');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -538,7 +538,7 @@ void main() {
         onboardingViewModel: await _completedOnboardingViewModel(),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '别重复这句');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -578,7 +578,7 @@ void main() {
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
       ),
     );
-    await _enterChatFromHome(tester);
+    await _settleMergedPage(tester);
 
     await tester.tap(find.byKey(const Key('open-provider-settings')));
     await tester.pumpAndSettle();
@@ -769,7 +769,7 @@ void main() {
           onboardingViewModel: await _completedOnboardingViewModel(),
         ),
       );
-      await _enterChatFromHome(tester);
+      await _settleMergedPage(tester);
 
       // 恢复后粘在会话尾部：最新一轮可见，最早一轮在视口外。
       expect(find.textContaining('回复第 23 条'), findsOneWidget);
@@ -1059,7 +1059,10 @@ Future<OnboardingViewModel> _completedOnboardingViewModel() async {
   return viewModel;
 }
 
-Future<void> _enterChatFromHome(WidgetTester tester) async {
+/// 合一页（design-system §5）没有「从首页进对话」这一跳：`/` 与 `/chat` 渲染
+/// 的是同一个页面，composer 就在眼前。这里做的只是推进到稳定态——`home-go-chat`
+/// 在合一页之后是输入容器的定位键，点它不触发任何导航。
+Future<void> _settleMergedPage(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await tester.tap(find.byKey(const Key('home-go-chat')));
   await tester.pumpAndSettle();

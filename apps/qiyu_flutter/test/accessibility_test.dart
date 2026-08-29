@@ -323,6 +323,36 @@ void main() {
     expect(find.text('设置'), findsOneWidget);
   });
 
+  testWidgets('200% 字阶下导航壳与合一页不溢出（§9 深底留余量）', (
+    tester,
+  ) async {
+    // 侧边栏（240px）与抽屉（约视口 2/3）是全站最窄的两块排版，2.0 字阶最先
+    // 撑破的就是它们；合一页的页头条与空态问候同在这一档受检。
+    // 断的是「没有溢出异常」这个可观察结果，不去数树里有几层。
+    for (final page in [
+      _homeWithChatViewModel(),
+      await _mergedHomeWithSession(),
+    ]) {
+      await _pumpScaled(tester, page, scale: 2.0, size: const Size(1200, 800));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '桌面侧边栏 + 合一页');
+      expect(find.byKey(const Key('nav-history')), findsOneWidget);
+    }
+
+    // 窄屏：抽屉展开后，同一批导航文案要在约 2/3 视口宽里排。
+    await _pumpScaled(
+      tester,
+      await _mergedHomeWithSession(),
+      scale: 2.0,
+      size: const Size(420, 900),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav-menu-button')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: '窄屏抽屉展开');
+    expect(find.byKey(const Key('nav-history')), findsOneWidget);
+  });
+
   testWidgets(
     'messages carry speaker semantics and streaming is a live region',
     (tester) async {

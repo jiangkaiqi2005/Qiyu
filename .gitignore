@@ -9,8 +9,8 @@ qiyu.config.local.json
 # Mimosa security-scan runtime artifacts (hooks, ledgers, reports) at any depth.
 .mimosa/
 
-# Agent working trees / runtime artifacts. Each worktree holds a full copy of
-# this repo, so a stray `git add -A` would otherwise check the whole tree in.
+# Qoder working directory: per-checkout session and worktree data generated
+# locally by the tool. Local runtime output, never source.
 .qoder/
 
 # Codebase-memory knowledge graph artifacts, refreshed by the local indexer.

@@ -39,19 +39,11 @@ class HistoryView extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      // 窄屏且被壳包住时不再摆自己的返回箭头：那里三条杠浮在
-                      // 同一个左上角，导航交给抽屉。桌面的箭头保留——侧边栏在
-                      // 另一栏，不与它相交，而「回到打开这一页的那一层」只有
-                      // 它给得出（品牌槽回的是首页）。
-                      if (!QiyuShellScope.coversFrontNavigation(context)) ...[
-                        IconButton(
-                          key: const Key('history-back'),
-                          onPressed: () => backToPrevious(context),
-                          tooltip: '返回上一页',
-                          icon: const Icon(Icons.arrow_back),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
+                      // 返回箭头何时让位给三条杠由壳判定（窄屏且被壳包住时
+                      // 整块不出现），见 [QiyuPageHeaderBackButton]。
+                      const QiyuPageHeaderBackButton(
+                        buttonKey: Key('history-back'),
+                      ),
                       Text(
                         '历史',
                         style: Theme.of(context).textTheme.headlineSmall,

@@ -519,7 +519,7 @@ class _LocalChatViewState extends State<LocalChatView> {
     required IconData icon,
     required VoidCallback onPressed,
   }) {
-    return QiyuFocusRing.own(
+    return QiyuOwnFocusRing(
       borderRadius: QiyuRadii.circleBorder,
       builder: (context, focusNode) => IconButton(
         key: key,
@@ -827,7 +827,7 @@ class _LocalChatViewState extends State<LocalChatView> {
         },
       ),
     };
-    return QiyuFocusRing.own(
+    return QiyuOwnFocusRing(
       borderRadius: QiyuRadii.circleBorder,
       builder: (context, focusNode) => IconButton(
         key: Key(key),

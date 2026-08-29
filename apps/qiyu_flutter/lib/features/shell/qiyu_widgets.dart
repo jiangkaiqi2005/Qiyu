@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
@@ -8,6 +9,10 @@ import '../accessibility.dart';
 /// 紫夜薄包装层（design-system §8 组件清单的 M3 底子 + token 换皮）：
 /// 毛玻璃面板与自绘**键盘**焦点环。侧边栏、抽屉、composer、发送钮共用同一
 /// 份实现，保证「材质同源」，页面不得再各自抄一遍 Blur + ColoredBox。
+///
+/// 本文件另住着一件壳层共用件 [maybeProvider]：导航壳与连接状态都要读同一份
+/// 可能缺席的 `LocalChatViewModel`，那份 try/catch 形状只留一处（read / watch
+/// 的语义仍由各调用方的闭包决定）。
 
 /// 毛玻璃容器：玻璃基色 [QiyuColors.glass]（`rgba(19,18,23,0.72)`）+
 /// `BackdropFilter`（design-system §2）。
@@ -88,9 +93,9 @@ class QiyuGlassPanel extends StatelessWidget {
 ///
 /// 用法一（控件已有节点）：把调用方持有的 [focusNode] 同时交给环和它包住的
 /// `InkWell`，Enter/Space 仍由 InkResponse 激活。
-/// 用法二（`IconButton` 这类内部自建节点的控件）：用 [QiyuFocusRing.own]，环自己
-/// 持有节点并交给 [builder]，由子控件挂到树上；子控件不挂就永远不显环（宁可少显，
-/// 也不画出与焦点无关的环）。
+/// 用法二（`IconButton` 这类内部自建节点的控件）：用 [QiyuOwnFocusRing]，环自己
+/// 持有节点并交给它的 `builder`，由子控件挂到树上；子控件不挂就永远不显环（宁可
+/// 少显，也不画出与焦点无关的环）。
 ///
 /// 环的留白常驻（未聚焦时透明），因此出现与消失都不会引起布局跳动。
 class QiyuFocusRing extends StatefulWidget {
@@ -99,38 +104,66 @@ class QiyuFocusRing extends StatefulWidget {
     required this.focusNode,
     required this.child,
     this.borderRadius = QiyuRadii.smallBorder,
-  }) : builder = null;
+  });
 
-  /// 环自持焦点节点：[builder] 拿到的节点必须由子控件挂进焦点树。
-  const QiyuFocusRing.own({
-    super.key,
-    required this.builder,
-    this.borderRadius = QiyuRadii.smallBorder,
-  }) : focusNode = null,
-       child = null;
-
-  /// 调用方持有的节点（与内层 `InkWell` 共用）。
-  final FocusNode? focusNode;
+  /// 调用方持有的节点（与内层 `InkWell` 共用）。节点归调用方创建与释放。
+  final FocusNode focusNode;
+  final Widget child;
   final BorderRadius borderRadius;
-  final Widget? child;
-  final Widget Function(BuildContext context, FocusNode focusNode)? builder;
 
   @override
   State<QiyuFocusRing> createState() => _QiyuFocusRingState();
 }
 
-class _QiyuFocusRingState extends State<QiyuFocusRing> {
-  /// 仅 [QiyuFocusRing.own] 用：节点由环创建并负责释放。
-  FocusNode? _ownedNode;
+/// 用法二的包装：环**自持**焦点节点，把它交给 [builder]，由子控件挂进焦点树。
+///
+/// 单独一个组件是为了让「谁持有节点」这件事在类型上就说清楚：节点在这里
+/// 一次创建、`dispose` 一次释放，不存在「换节点时旧节点没人管」的中间地带。
+/// 绘制仍然委托 [QiyuFocusRing]，两种用法共用同一份环，不出现第二种画法。
+class QiyuOwnFocusRing extends StatefulWidget {
+  const QiyuOwnFocusRing({
+    super.key,
+    required this.builder,
+    this.borderRadius = QiyuRadii.smallBorder,
+  });
 
-  FocusNode get _node => widget.focusNode ?? (_ownedNode ??= FocusNode());
+  final Widget Function(BuildContext context, FocusNode focusNode) builder;
+  final BorderRadius borderRadius;
+
+  @override
+  State<QiyuOwnFocusRing> createState() => _QiyuOwnFocusRingState();
+}
+
+class _QiyuOwnFocusRingState extends State<QiyuOwnFocusRing> {
+  /// 环自持的节点：字段初始化即创建，`dispose` 即释放。子控件不挂它就一直
+  /// 不显环（宁可少显，也不画出与焦点无关的环）。
+  final _focusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return QiyuFocusRing(
+      focusNode: _focusNode,
+      borderRadius: widget.borderRadius,
+      child: widget.builder(context, _focusNode),
+    );
+  }
+}
+
+class _QiyuFocusRingState extends State<QiyuFocusRing> {
+  /// 环监听并据以判断画不画的节点：**永远**是调用方给的那一个（用法二由
+  /// [QiyuOwnFocusRing] 自持节点后再传进来），环自己不建节点，因此也不存在
+  /// 「环手里留着没人释放的节点」。
+  FocusNode get _node => widget.focusNode;
 
   @override
   void initState() {
     super.initState();
-    if (widget.builder != null) {
-      _ownedNode = FocusNode();
-    }
     // 高亮模式换了（键盘遍历 ↔ 触摸）就得重画：只监听 focusNode 收不到这个变化。
     _focusManager.addHighlightModeListener(_onHighlightModeChanged);
   }
@@ -138,6 +171,7 @@ class _QiyuFocusRingState extends State<QiyuFocusRing> {
   @override
   void didUpdateWidget(QiyuFocusRing oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 节点换了：旧节点归调用方释放，这里只负责改听新的那个并重画。
     if (oldWidget.focusNode != widget.focusNode) {
       setState(() {});
     }
@@ -152,7 +186,6 @@ class _QiyuFocusRingState extends State<QiyuFocusRing> {
   @override
   void dispose() {
     _focusManager.removeHighlightModeListener(_onHighlightModeChanged);
-    _ownedNode?.dispose();
     super.dispose();
   }
 
@@ -168,10 +201,6 @@ class _QiyuFocusRingState extends State<QiyuFocusRing> {
 
   @override
   Widget build(BuildContext context) {
-    final builder = widget.builder;
-    final child = builder != null
-        ? Builder(builder: (context) => builder(context, _node))
-        : widget.child!;
     return ListenableBuilder(
       listenable: _node,
       builder: (context, child) => Padding(
@@ -189,7 +218,22 @@ class _QiyuFocusRingState extends State<QiyuFocusRing> {
           child: child,
         ),
       ),
-      child: child,
+      child: widget.child,
     );
+  }
+}
+
+/// 读一份**可能不存在**的 Provider：壳层（导航壳、连接状态）可以被脱离
+/// `LocalChatViewModel` 单独 pump（旧测试、独立预览），拿不到不是错误，退化成
+/// null 让调用方走中性呈现。这一处 try/catch 由 `qiyu_shell` 与
+/// `qiyu_connection_status` 共用，两边不再各抄一份同形状的兜底。
+///
+/// `read` 与 `watch` 的差别由调用方传进来的闭包保留——`watch` 必须在 `build`
+/// 里就地调用才挂得上依赖，所以这里只做同步调用。
+T? maybeProvider<T>(T Function() lookup) {
+  try {
+    return lookup();
+  } on ProviderNotFoundException {
+    return null;
   }
 }

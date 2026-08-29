@@ -50,8 +50,9 @@ class _QiyuConnectionStatusState extends State<QiyuConnectionStatus> {
   @override
   Widget build(BuildContext context) {
     // 缺 LocalChatViewModel 时（本页被单独 pump）等同于「还没探过」：
-    // 中性呈现、不报错，但也**不**替它宣称本机正常。
-    final viewModel = _maybeViewModel(context);
+    // 中性呈现、不报错，但也**不**替它宣称本机正常。兜底的 try/catch 与
+    // 导航壳共用 [maybeProvider] 那一处。
+    final viewModel = maybeProvider(() => context.watch<LocalChatViewModel>());
     final failed = viewModel != null && viewModel.hostStopped;
     final probing = viewModel == null || !viewModel.hostStatusKnown;
     final label = failed
@@ -107,13 +108,5 @@ class _QiyuConnectionStatusState extends State<QiyuConnectionStatus> {
       button: failed,
       child: padded,
     );
-  }
-
-  LocalChatViewModel? _maybeViewModel(BuildContext context) {
-    try {
-      return context.watch<LocalChatViewModel>();
-    } on ProviderNotFoundException {
-      return null;
-    }
   }
 }

@@ -8,7 +8,6 @@ import 'package:provider/provider.dart';
 import '../memory/backup_client.dart';
 import '../memory/backup_platform.dart';
 import '../memory/backup_view.dart';
-import '../navigation.dart';
 import '../onboarding/onboarding_view_model.dart';
 import '../shell/qiyu_shell.dart';
 import 'provider_catalog.dart';
@@ -86,19 +85,11 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                   ),
                   child: Row(
                     children: [
-                      // 窄屏且被壳包住时不再摆自己的返回箭头：那里三条杠浮在同一个
-                      // 左上角，导航交给抽屉。桌面的箭头保留——侧边栏在另一栏，不与
-                      // 它相交，而「回到打开这一页的那一层」只有它给得出（品牌槽回
-                      // 的是首页）。
-                      if (!QiyuShellScope.coversFrontNavigation(context)) ...[
-                        IconButton(
-                          key: const Key('settings-back'),
-                          onPressed: () => backToPrevious(context),
-                          tooltip: '返回上一页',
-                          icon: const Icon(Icons.arrow_back),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
+                      // 返回箭头何时让位给三条杠由壳判定（窄屏且被壳包住时
+                      // 整块不出现），见 [QiyuPageHeaderBackButton]。
+                      const QiyuPageHeaderBackButton(
+                        buttonKey: Key('settings-back'),
+                      ),
                       Text('设置', style: theme.textTheme.headlineSmall),
                     ],
                   ),
