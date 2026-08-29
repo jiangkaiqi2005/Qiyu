@@ -157,6 +157,9 @@ abstract final class QiyuRadii {
   static const double small = 8;
 
   /// 卡片与列表项；12px 及以下的方正小圆角已验证偏 AI 感，不再使用。
+  ///
+  /// 侧边栏/抽屉的**导航项**也归这一档（§8 组件 6「导航项」与组件 7「列表项」同为
+  /// 列表项形态，2026-08-29 裁定取 18，不取实现里残留的 small 档）。
   static const double card = 18;
 
   /// 胶囊形：composer。
@@ -268,12 +271,21 @@ abstract final class QiyuLayout {
   /// 窄屏抽屉宽度约占视口 2/3。
   static const double drawerWidthFraction = 2 / 3;
 
-  /// 消息流最大宽度。
+  /// 消息流所在整列的最大宽度。
   ///
   /// 注意：680 取自原型 `.chat-stream { max-width: 680px }`，design-system 与 Spec
   /// 都没有定稿这个值（只在 `.scratch` 原型里存在）。视觉验收要调就直接改这里并同步
   /// 原型，不要把它当规范定值拒绝调整。
   static const double streamMaxWidth = 680;
+
+  /// 单条消息正文（用户水滴气泡、栖语的无气泡正文、流式增量）的最大宽度。
+  ///
+  /// 与 [streamMaxWidth] 是**两件事**：680 管整列消息流容器，520 管一条消息自身
+  /// 的行长——后者是紫夜改造之前的既有实现值（改造只是把三处裸写的 520 收进
+  /// 本 token），不是规范定值，视觉验收要调就改这里。以前它在
+  /// `qiyu_chat_bubble.dart` 两处与 `local_chat_view.dart` 流式回复一处各写一遍，
+  /// 改一处漏两处。
+  static const double messageMaxWidth = 520;
 
   /// composer 内边距与图标按钮高度（占位字靠它垂直居中）。
   /// 6px 是 §8 组件 5 的「矮一档」定值，不是 4px 网格档位。

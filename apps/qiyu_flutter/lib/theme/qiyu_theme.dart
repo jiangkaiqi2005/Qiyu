@@ -113,7 +113,12 @@ WidgetStateProperty<Color?> qiyuNeutralContentStates() =>
     qiyuNeutralStates(unselected: QiyuColors.muted, selected: QiyuColors.ink);
 
 /// 深色「紫夜」主题。全应用唯一的 ThemeData 来源。
-ThemeData qiyuDarkTheme() {
+///
+/// [reduceMotion] 对应系统的「减少动态效果」（design-system §9：开启后关闭
+/// **全部**过渡与渐显）。页面自写的动效走 `qiyuMotion()`，但路由页切换与
+/// Material ink ripple 是框架自带的、长在 ThemeData 上，只有这里能把它们关掉；
+/// 由 `lib/app.dart` 在能读到 MediaQuery 的那一层按系统读数重建主题传入。
+ThemeData qiyuDarkTheme({bool reduceMotion = false}) {
   const colorScheme = ColorScheme.dark(
     // 三色纪律（design-system §1、§2；Spec User Story 9）：**没有任何槽位是紫**。
     // M3 会顺着 primary/secondary/tertiary 把颜色铺进 FilledButton 底、Switch 选中
@@ -175,6 +180,22 @@ ThemeData qiyuDarkTheme() {
     scaffoldBackgroundColor: QiyuColors.night,
     canvasColor: QiyuColors.night,
     cardColor: QiyuColors.panel,
+    // ── reduced-motion（design-system §9）────────────────────────────────
+    // 页面自写的过渡已在 `qiyuMotion()` 一处压零；剩下两件是框架自带的、
+    // 只能从这里关：路由页切换动画与 Material ink ripple。
+    pageTransitionsTheme: reduceMotion
+        ? const PageTransitionsTheme(
+            builders: {
+              TargetPlatform.android: _NoMotionPageTransitionsBuilder(),
+              TargetPlatform.fuchsia: _NoMotionPageTransitionsBuilder(),
+              TargetPlatform.iOS: _NoMotionPageTransitionsBuilder(),
+              TargetPlatform.linux: _NoMotionPageTransitionsBuilder(),
+              TargetPlatform.macOS: _NoMotionPageTransitionsBuilder(),
+              TargetPlatform.windows: _NoMotionPageTransitionsBuilder(),
+            },
+          )
+        : null,
+    splashFactory: reduceMotion ? NoSplash.splashFactory : null,
     // 键盘焦点：真正的焦点环是 2px 实线 accent-bright + 3px offset，画在控件表面
     // **之外**，由 `QiyuFocusRing` 自绘（design-system §9，值见
     // QiyuLayout.focusRingWidth / focusRingOffset，第 2 段落地）。M3 的 focusColor
@@ -344,3 +365,27 @@ OutlineInputBorder _composerBorder(Color color) => OutlineInputBorder(
   borderRadius: QiyuRadii.pillBorder,
   borderSide: BorderSide(width: QiyuLine.hairline, color: color),
 );
+
+/// reduced-motion 下的路由过渡：**不做任何动画**，正向与反向时长都是 0。
+///
+/// design-system §9 要求开启减少动态效果后关掉全部过渡——路由页切换是框架
+/// 自带的那一类，页面里压零 `qiyuMotion()` 管不到它，只能在主题层的
+/// `pageTransitionsTheme` 上换掉。这里不自造新的动效档位，只是把动画摘掉。
+class _NoMotionPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _NoMotionPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) => child;
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Duration get reverseTransitionDuration => Duration.zero;
+}

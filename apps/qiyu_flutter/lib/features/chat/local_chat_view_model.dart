@@ -71,6 +71,19 @@ final class LocalChatViewModel extends ChangeNotifier {
   String get streamingText => _streamingText;
   bool get hostStopped => _hostAvailable == false;
 
+  /// 本机 Host 是否**已经探过一次**：true 之后 [hostStopped] 才是可信结论。
+  /// 探测结果三态（未探明 / 可用 / 不可用）里只有后两态可以拿去宣称，
+  /// 「未探明」既不能说正常、也不能说故障。
+  bool get hostStatusKnown => _hostAvailable != null;
+
+  /// 合一页（design-system §5）的**空状态 = 首页**唯一判定：一条消息都还没有、
+  /// 不在等待与流式之中，**且会话已经恢复完**。
+  ///
+  /// `loading` 必须在闸内：旧会话恢复期间 `messages` 暂时为空，如果这时算空态，
+  /// 打开应用会先闪一帧首页（背景 + 问候 + 居中 composer）再跳回消息流。
+  bool get isHomeState =>
+      !loading && messages.isEmpty && !waiting && streamingText.isEmpty;
+
   /// 「本地规则回复」标识只描述最近一次已完成的栖语回复：最后一条
   /// 栖语消息来自本地规则才显示；之后模型恢复正常即消失。流式等待
   /// 与半句候选不进 [_messages]，天然保持上一次的状态。

@@ -79,7 +79,9 @@ class QiyuChatBubble extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.only(bottom: QiyuSpacing.sm),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
+            constraints: const BoxConstraints(
+              maxWidth: QiyuLayout.messageMaxWidth,
+            ),
             child: body,
           ),
         ),

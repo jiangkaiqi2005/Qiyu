@@ -612,11 +612,14 @@ void main() {
     );
     // 设置页变长了（ticket 23 新增本地数据/隐私/开发者区块）：
     // 用滚动到可见代替固定位移，避免依赖具体页面高度。
-    // 设置页唯一的纵向滚动区（TextField 内部的横向滚动条不算）。
-    final settingsScrollable = find.byWidgetPredicate(
-      (widget) =>
-          widget is Scrollable && widget.axisDirection == AxisDirection.down,
-    );
+    // 设置页唯一的纵向滚动区（TextField 内部的横向滚动条不算）：桌面导航壳的
+    // 侧边栏同样是纵向可滚容器，因此按这一页列表的 Key 取它自己的 Scrollable。
+    final settingsScrollable = find
+        .descendant(
+          of: find.byKey(const Key('settings-scroll')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
     await tester.scrollUntilVisible(
       find.byKey(const Key('provider-api-key')),
       160,

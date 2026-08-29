@@ -9,6 +9,7 @@ import '../chat/local_chat_client.dart';
 import '../chat/local_chat_view_model.dart';
 import '../chat/qiyu_chat_bubble.dart';
 import '../navigation.dart';
+import '../shell/qiyu_shell.dart';
 import '../time_format.dart';
 import 'history_client.dart';
 import 'history_view_model.dart';
@@ -30,13 +31,19 @@ class HistoryView extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
                   child: Row(
                     children: [
-                      IconButton(
-                        key: const Key('history-back'),
-                        onPressed: () => backToPrevious(context),
-                        tooltip: '返回上一页',
-                        icon: const Icon(Icons.arrow_back),
-                      ),
-                      const SizedBox(width: 8),
+                      // 窄屏且被壳包住时不再摆自己的返回箭头：那里三条杠浮在
+                      // 同一个左上角，导航交给抽屉。桌面的箭头保留——侧边栏在
+                      // 另一栏，不与它相交，而「回到打开这一页的那一层」只有
+                      // 它给得出（品牌槽回的是首页）。
+                      if (!QiyuShellScope.coversFrontNavigation(context)) ...[
+                        IconButton(
+                          key: const Key('history-back'),
+                          onPressed: () => backToPrevious(context),
+                          tooltip: '返回上一页',
+                          icon: const Icon(Icons.arrow_back),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       Text(
                         '历史',
                         style: Theme.of(context).textTheme.headlineSmall,

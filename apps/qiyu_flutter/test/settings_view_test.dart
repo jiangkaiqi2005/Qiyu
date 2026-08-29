@@ -286,11 +286,15 @@ void main() {
     expect(ttsGateway.savedDrafts.last.provider, TtsServiceKind.volcTts);
 
     // 忘记 Key 需要确认；确认后 keySet 归零。
+    // 方向取负：`forget-tts-key` 在列表里位于上一步 ensureVisible 到的
+    // `save-tts-settings` **之上**，必须往上滚才回得去。设置页挂上导航壳后内容列
+    // 变窄（默认 800px 视口减去 240px 侧栏）、列表随之变长，之前向下滚能蒙对是
+    // 因为整页还装得下、目标始终在缓存区内。
     await tester.scrollUntilVisible(
       find.byKey(const Key('forget-tts-key')),
-      200,
+      -200,
       scrollable: _verticalScrollable(),
-      maxScrolls: 10,
+      maxScrolls: 20,
     );
     await tester.ensureVisible(find.byKey(const Key('forget-tts-key')));
     await tester.pumpAndSettle();
@@ -826,11 +830,30 @@ Future<void> _openSettings(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// 当前页自己的纵向滚动容器。
+///
+/// 必须排除导航壳的侧边栏/抽屉：那块 [Scrollable] 同样是纵向，且在树里排在页面
+/// 内容之前，取「第一个纵向 Scrollable」会误命中它（`/settings` 挂上壳之后才有的
+/// 问题）。生产侧正是为此在 `_NavPanel` 上留了 `nav-scroll` 键，这里按它摘出去。
+///
+/// 不能反过来按页内键（如 `settings-scroll`）锁死：设置页里再点进的开发者诊断页
+/// 与隐私页是各自独立的路由、不挂壳，也就没有那个键，锁死会让这些页上的滚动
+/// 断言取不到容器。
 Finder _verticalScrollable() => find
-    .byWidgetPredicate(
-      (widget) =>
-          widget is Scrollable && widget.axisDirection == AxisDirection.down,
-    )
+    .byElementPredicate((element) {
+      final widget = element.widget;
+      if (widget is! Scrollable || widget.axisDirection != AxisDirection.down) {
+        return false;
+      }
+      var insideNavPanel = false;
+      element.visitAncestorElements((ancestor) {
+        if (ancestor.widget.key == const Key('nav-scroll')) {
+          insideNavPanel = true;
+        }
+        return true;
+      });
+      return !insideNavPanel;
+    })
     .first;
 
 final class _FakeSettingsGateway implements SettingsGateway {

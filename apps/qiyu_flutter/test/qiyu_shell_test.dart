@@ -54,9 +54,9 @@ void main() {
         width: 1200,
         height: 800,
         at: '/history',
-        // 选中态只有在「功能页也套着壳」时才看得见；真实 app.dart 本段只把壳
-        // 挂在 / 与 /chat（路由一条没动），壳包住历史/记忆/设置是第 3–5 段的事。
-        // 这里由 harness 给占位页套上同一个壳，专门验导航项的选中绘制。
+        // 选中态只有在「功能页也套着壳」时才看得见；真实 `lib/app.dart` 已经把
+        // 壳挂到历史/记忆/设置三页（User Story 5），harness 用占位页代表它们，
+        // 是否给占位页套壳仍由用例给定的开关决定，这里要壳来验导航项选中绘制。
         shellOnFeaturePages: true,
       );
 
@@ -572,11 +572,17 @@ GoRouter _router(String initialLocation, {bool shellOnFeaturePages = false}) {
     routes: [
       GoRoute(
         path: '/',
-        builder: (context, state) => const QiyuShell(child: LocalChatView()),
+        builder: (context, state) => const QiyuShell(
+          showHomeBackdrop: true,
+          child: LocalChatView(),
+        ),
       ),
       GoRoute(
         path: '/chat',
-        builder: (context, state) => const QiyuShell(child: LocalChatView()),
+        builder: (context, state) => const QiyuShell(
+          showHomeBackdrop: true,
+          child: LocalChatView(),
+        ),
       ),
       GoRoute(
         path: '/history',

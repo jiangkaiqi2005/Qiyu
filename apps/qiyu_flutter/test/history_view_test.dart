@@ -7,6 +7,7 @@ import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/history/history_client.dart';
+import 'package:qiyu_flutter/features/history/history_view.dart';
 import 'package:qiyu_flutter/features/history/history_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
@@ -36,7 +37,8 @@ void main() {
       await tester.tap(find.byKey(const Key('open-history')));
       await tester.pumpAndSettle();
 
-      expect(find.text('历史'), findsOneWidget);
+      // 「历史」这个词侧边栏导航项也在渲染，整树取即歧义 → 限定在本页子树。
+      expect(_historyPageTitle(), findsOneWidget);
       expect(find.text('今天'), findsOneWidget);
       expect(find.text('昨天'), findsOneWidget);
       expect(find.text('今天想说的事'), findsOneWidget);
@@ -89,7 +91,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('history-session-back')));
     await tester.pumpAndSettle();
-    expect(find.text('历史'), findsOneWidget);
+    expect(_historyPageTitle(), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('history-back')));
     await tester.pumpAndSettle();
@@ -240,6 +242,13 @@ Future<OnboardingViewModel> _onboardingViewModel() async {
   await viewModel.initialize();
   return viewModel;
 }
+
+/// 历史列表页自己的标题：桌面导航壳的侧边栏同样渲染「历史」这个导航文案，
+/// 整树 `find.text` 命中两处即歧义（按 Key / 页面范围定位的既有约定）。
+Finder _historyPageTitle() => find.descendant(
+  of: find.byType(HistoryView),
+  matching: find.text('历史'),
+);
 
 Future<void> _enterChatFromHome(WidgetTester tester) async {
   await tester.pumpAndSettle();

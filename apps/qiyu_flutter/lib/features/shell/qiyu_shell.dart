@@ -1,29 +1,70 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
+import '../chat/local_chat_view_model.dart';
+import '../navigation.dart';
 import 'qiyu_connection_status.dart';
+import 'qiyu_home_backdrop.dart';
 import 'qiyu_widgets.dart';
+
+/// 三项导航的**唯一**出处：目的地、文案与图标（design-system §4 定案选型：
+/// 沙漏 / 翻开的书 / 圆形旋钮滑杆，§5 桌面侧边栏）。
+///
+/// 桌面侧边栏与窄屏抽屉遍历同一张表渲染（材质与文案同源）；聊天页工具条上的
+/// 「历史」「模型连接」入口也取这里的图标，不再各抄一份三元组。
+///
+/// 键位约定：外层（含焦点环）用 `nav-<name>`，内层点击沿用退役前首页入口卡片的
+/// 既有测试键 `home-go-<name>`——侧边栏与抽屉会同时渲染同一批文案，测试一律按
+/// Key 定位（Spec Testing Decisions 第 8 条）。
+enum QiyuNavDestination {
+  history('/history', '历史', Icons.hourglass_empty_outlined),
+  memory('/memory', '记忆中心', Icons.menu_book_outlined),
+  settings('/settings', '设置', Icons.tune_outlined);
+
+  const QiyuNavDestination(this.path, this.label, this.icon);
+
+  final String path;
+  final String label;
+  final IconData icon;
+
+  Key get outerKey => Key('nav-$name');
+  Key get tapKey => Key('home-go-$name');
+}
 
 /// 毛玻璃导航壳（design-system §5、Spec Implementation Decisions 第 7 条）。
 ///
+/// **分层**（这是毛玻璃成立的前提）：壳不再把页面背景与侧边栏并排摆（那样
+/// `BackdropFilter` 身后是同一层平涂夜色，糊不出任何东西），而是
+/// `Stack`：底层 = 全幅页面背景（夜色底 + 仅合一页空态的夜景图，横贯整个
+/// 视口，不被 240px 栏切掉）→ 上层 = 壳与内容，侧边栏与抽屉作为半透明层
+/// 叠在背景之上。被壳包住的页面因此必须把自己的 `Scaffold` 底色撤成透明。
+///
 /// - 桌面（宽度 ≥ [QiyuLayout.desktopBreakpoint]）：左侧常驻 240px 毛玻璃
 ///   侧边栏，自上而下是品牌图标槽 → 三项导航 → 底部连接状态；无三条杠、
-///   无底部导航。
+///   无底部导航。合一页与三个功能页都挂着它（User Story 5「桌面端始终看到
+///   侧边栏」）。
 /// - 窄屏：左上角三条杠打开约视口 2/3 宽的毛玻璃抽屉，内容与桌面**同源**
-///   （同一个 [_NavPanel]），点遮罩或再点三条杠收回。
-/// - 侧边栏与抽屉渲染同一批导航文案，因此三项导航、品牌槽、连接状态全部
-///   带 [Key]；widget 测试按 Key 定位，不用 `find.text`（Spec Testing
-///   Decisions 第 8 条）。
+///   （同一个 [_NavPanel]），点遮罩、再点三条杠或按 Esc 收回。
 class QiyuShell extends StatefulWidget {
-  const QiyuShell({super.key, required this.child});
+  const QiyuShell({
+    super.key,
+    this.showHomeBackdrop = false,
+    required this.child,
+  });
 
   /// 被壳包住的页面内容（合一页里就是 `LocalChatView`）。
   final Widget child;
+
+  /// 是否由壳负责渲染**合一页空态**的夜景背景：只有合一页（`/` 与 `/chat`）
+  /// 为 true，功能页不带背景图（§6「仅空状态出现」）。
+  final bool showHomeBackdrop;
 
   @override
   State<QiyuShell> createState() => _QiyuShellState();
@@ -37,7 +78,14 @@ class _QiyuShellState extends State<QiyuShell>
   /// 首次访问时于「正在卸载」的树上创建 ticker，直接炸断言。
   late final AnimationController _drawerController;
 
+  /// 抽屉平移曲线：**在 state 里建一次并 dispose**。放在 `build()` 里每次
+  /// 重建都会在 [_drawerController] 上留一个状态监听，壳每重绘一次就多一个。
+  late final Animation<Offset> _drawerSlide;
+
   final _menuFocusNode = FocusNode(debugLabel: 'nav-menu-button');
+
+  /// 遮罩的焦点节点：抽屉开着时它接管键盘，Esc 收回抽屉（§9 无障碍）。
+  final _scrimFocusNode = FocusNode(debugLabel: 'nav-scrim');
 
   @override
   void initState() {
@@ -47,6 +95,16 @@ class _QiyuShellState extends State<QiyuShell>
       duration: QiyuMotion.drawer,
       reverseDuration: QiyuMotion.drawer,
     )..addStatusListener(_onDrawerStatus);
+    _drawerSlide = Tween<Offset>(
+      begin: const Offset(-1.02, 0),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _drawerController,
+        curve: Curves.easeOut,
+        reverseCurve: Curves.easeIn,
+      ),
+    );
   }
 
   void _onDrawerStatus(AnimationStatus status) {
@@ -59,6 +117,7 @@ class _QiyuShellState extends State<QiyuShell>
       ..removeStatusListener(_onDrawerStatus)
       ..dispose();
     _menuFocusNode.dispose();
+    _scrimFocusNode.dispose();
     super.dispose();
   }
 
@@ -81,102 +140,150 @@ class _QiyuShellState extends State<QiyuShell>
   bool get _drawerMounted =>
       _drawerOpen || _drawerController.status != AnimationStatus.dismissed;
 
-  /// 导航动作与退役前的首页入口保持一致：`go` 到目标页，返回键仍回合一页。
+  /// 三项导航的目的地动作（与聊天页工具条入口同一口径）：[openInFront]——
+  /// 目标已在返回栈里就回退到那一层，不在才 push。
+  ///
+  /// 改造前这两处语义不一致（侧边栏 `go` 换栈、工具条 `push` 叠栈），同一个
+  /// 目的地有时能返回、有时不能。统一选 `openInFront` 的理由：侧边栏是常驻
+  /// 导航，反复点同一个目的地不得叠出好几层；而 Web 用户的浏览器返回键是真实
+  /// 出口，`go` 会连它一起换掉。真正该重置栈的只有「回首页」，见 [_goHome]。
+  ///
+  /// 换页前无条件停播（ADR 0002：离开这一段话的语境就闭嘴，排队的 bubble 不得
+  /// 跨页继续读）：退役前的 `_goHome` 就是这个语义，改造中途一度丢了，这里补回。
   void _goTo(String location) {
-    context.go(location);
+    _maybeChatViewModel(context)?.voiceOutput.stopAll();
+    openInFront(context, location);
+  }
+
+  /// 品牌槽：回合一页的**空状态首页**。这是唯一重置返回栈的导航动作（`go`），
+  /// 语义与退役前的 `_goHome` 一致，同样先无条件停播。
+  void _goHome() {
+    _maybeChatViewModel(context)?.voiceOutput.stopAll();
+    context.go('/');
   }
 
   @override
   Widget build(BuildContext context) {
     final viewport = MediaQuery.sizeOf(context);
     final desktop = viewport.width >= QiyuLayout.desktopBreakpoint;
-
-    if (desktop) {
-      return ColoredBox(
-        color: QiyuColors.night,
-        child: Row(
-          children: [
-            SizedBox(
-              width: QiyuLayout.sidebarWidth,
-              child: _NavPanel(onNavigate: _goTo),
-            ),
-            Expanded(child: widget.child),
-          ],
-        ),
-      );
-    }
-
-    final drawerWidth = viewport.width * QiyuLayout.drawerWidthFraction;
-    final slide = Tween<Offset>(begin: const Offset(-1.02, 0), end: Offset.zero)
-        .animate(
-          CurvedAnimation(
-            parent: _drawerController,
-            curve: Curves.easeOut,
-            reverseCurve: Curves.easeIn,
-          ),
+    final homeBackdrop = widget.showHomeBackdrop &&
+        context.select<LocalChatViewModel, bool>(
+          (viewModel) => viewModel.isHomeState,
         );
 
-    return ColoredBox(
-      color: QiyuColors.night,
+    return QiyuShellScope(
       child: Stack(
+        fit: StackFit.expand,
         children: [
-          widget.child,
-          if (_drawerMounted)
-            // 遮罩：点它就收回抽屉。
-            Positioned.fill(
-              child: GestureDetector(
-                key: const Key('nav-scrim'),
-                behavior: HitTestBehavior.opaque,
-                onTap: () => unawaited(_setDrawer(false)),
-                child: const ColoredBox(color: QiyuColors.scrimSoft),
-              ),
+          // ── 底层：全幅页面背景（横贯视口，不被侧边栏切断）───────────────
+          const Positioned.fill(child: ColoredBox(color: QiyuColors.night)),
+          // 仅合一页空态渲染夜景图；AnimatedSwitcher 淡出后把子树整块摘掉，
+          // 聊天态不再为全屏模糊买单（CanvasKit 掉帧时按规范改预烘焙资产）。
+          // 必须 Positioned.fill：这张图是整幅 ImageFiltered，拿不到确定尺寸就
+          // 合成不出栅格。
+          Positioned.fill(
+            child: AnimatedSwitcher(
+              duration: qiyuMotion(context, QiyuMotion.base),
+              child: homeBackdrop
+                  ? const QiyuHomeBackdrop(key: Key('home-backdrop'))
+                  : const SizedBox.shrink(key: Key('home-backdrop-gone')),
             ),
-          if (_drawerMounted)
-            Positioned(
-              // 抽屉本体定位键：宽度与停靠位置只能按键量，文案在侧边栏
-              // 与抽屉里是同一批。
-              key: const Key('nav-drawer'),
-              top: 0,
-              bottom: 0,
-              left: 0,
-              width: drawerWidth,
-              child: SlideTransition(
-                position: slide,
-                child: _NavPanel(
-                  onNavigate: (location) {
-                    unawaited(_setDrawer(false));
-                    _goTo(location);
-                  },
+          ),
+          // ── 上层：壳与内容（侧边栏/抽屉是叠在背景上的半透明层）──────────
+          if (desktop)
+            Row(
+              children: [
+                SizedBox(
+                  width: QiyuLayout.sidebarWidth,
+                  child: _NavPanel(onNavigate: _goTo, onHome: _goHome),
+                ),
+                Expanded(child: widget.child),
+              ],
+            )
+          else
+            _narrowLayer(viewport),
+        ],
+      ),
+    );
+  }
+
+  /// 窄屏：内容铺满视口（背景在它身下），抽屉与遮罩叠在其上。
+  Widget _narrowLayer(Size viewport) {
+    final drawerWidth = viewport.width * QiyuLayout.drawerWidthFraction;
+    return Stack(
+      children: [
+        widget.child,
+        if (_drawerMounted)
+          // 遮罩：点它就收回抽屉；键盘下 Esc 同样收回；语义上是按钮，读屏
+          // 用户点得到也听得懂（§9）。抽屉开着时焦点归它，Esc 才进得来。
+          Positioned.fill(
+            child: Focus(
+              focusNode: _scrimFocusNode,
+              canRequestFocus: true,
+              autofocus: true,
+              onKeyEvent: _onScrimKeyEvent,
+              child: Semantics(
+                button: true,
+                label: '关闭导航抽屉',
+                onTap: () => unawaited(_setDrawer(false)),
+                child: GestureDetector(
+                  key: const Key('nav-scrim'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => unawaited(_setDrawer(false)),
+                  child: const ColoredBox(color: QiyuColors.scrimSoft),
                 ),
               ),
             ),
-          // 三条杠：圆形图标按钮，玻璃底 + 发丝描边，细描边图形。
+          ),
+        if (_drawerMounted)
           Positioned(
+            // 抽屉本体定位键：宽度与停靠位置只能按键量，文案在侧边栏
+            // 与抽屉里是同一批。
+            key: const Key('nav-drawer'),
             top: 0,
+            bottom: 0,
             left: 0,
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(QiyuSpacing.md),
-                child: QiyuFocusRing(
-                  focusNode: _menuFocusNode,
+            width: drawerWidth,
+            child: SlideTransition(
+              position: _drawerSlide,
+              child: _NavPanel(
+                onNavigate: (location) {
+                  unawaited(_setDrawer(false));
+                  _goTo(location);
+                },
+                onHome: () {
+                  unawaited(_setDrawer(false));
+                  _goHome();
+                },
+              ),
+            ),
+          ),
+        // 三条杠：圆形图标按钮，玻璃底 + 发丝描边，细描边图形。
+        Positioned(
+          top: 0,
+          left: 0,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(QiyuSpacing.md),
+              child: QiyuFocusRing(
+                focusNode: _menuFocusNode,
+                borderRadius: QiyuRadii.circleBorder,
+                child: QiyuGlassPanel(
                   borderRadius: QiyuRadii.circleBorder,
-                  child: QiyuGlassPanel(
-                    borderRadius: QiyuRadii.circleBorder,
-                    child: InkWell(
-                      key: const Key('nav-menu-button'),
-                      focusNode: _menuFocusNode,
-                      customBorder: const CircleBorder(),
-                      onTap: () => unawaited(_setDrawer(!_drawerOpen)),
-                      child: SizedBox.square(
-                        dimension: QiyuLayout.menuButtonSize,
-                        child: Center(
-                          child: Icon(
-                            _drawerOpen
-                                ? Icons.close_rounded
-                                : Icons.menu_outlined,
-                            size: QiyuIconSpec.size,
-                            color: QiyuColors.ink,
-                          ),
+                  child: InkWell(
+                    key: const Key('nav-menu-button'),
+                    focusNode: _menuFocusNode,
+                    customBorder: const CircleBorder(),
+                    onTap: () => unawaited(_setDrawer(!_drawerOpen)),
+                    child: SizedBox.square(
+                      dimension: QiyuLayout.menuButtonSize,
+                      child: Center(
+                        child: Icon(
+                          _drawerOpen
+                              ? Icons.close_rounded
+                              : Icons.menu_outlined,
+                          size: QiyuIconSpec.size,
+                          color: QiyuColors.ink,
                         ),
                       ),
                     ),
@@ -185,10 +292,46 @@ class _QiyuShellState extends State<QiyuShell>
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
+
+  KeyEventResult _onScrimKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey != LogicalKeyboardKey.escape) {
+      return KeyEventResult.ignored;
+    }
+    unawaited(_setDrawer(false));
+    return KeyEventResult.handled;
+  }
+}
+
+/// 壳存在性标记：被 [QiyuShell] 包住的页面据此判断**前导航按钮归谁**。
+/// 页面保留自己的 `Scaffold`（信息架构不动），只在壳真的占用同一个角时把
+/// 前导航这一件事让给壳。
+class QiyuShellScope extends InheritedWidget {
+  const QiyuShellScope({super.key, required super.child});
+
+  static bool isPresent(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<QiyuShellScope>() != null;
+
+  /// 页面该不该撤掉自己的返回箭头：**只在窄屏**。
+  ///
+  /// 窄屏的三条杠浮在左上角，与页内返回箭头叠在同一个位置，这时导航交给
+  /// 抽屉。桌面不撤：侧边栏在内容列之外的另一栏，两者不相交，而「回到打开
+  /// 这一页的那一层」这条语义只有页内箭头给得出（壳的品牌槽回的是首页）。
+  static bool coversFrontNavigation(BuildContext context) {
+    if (!isPresent(context)) {
+      return false;
+    }
+    return MediaQuery.sizeOf(context).width < QiyuLayout.desktopBreakpoint;
+  }
+
+  @override
+  bool updateShouldNotify(QiyuShellScope oldWidget) => false;
 }
 
 /// 当前路径：用于导航项选中态。go_router 17 的 `GoRouterState` 没有
@@ -202,12 +345,26 @@ String _currentLocation(BuildContext context) {
   return router.routerDelegate.currentConfiguration.uri.path;
 }
 
+/// 合一页与功能页共用的聊天 view model：`QiyuConnectionStatus` 与壳都要读它，
+/// 但本页可以被脱离 Provider 树单独 pump（旧测试），拿不到就退化成中性呈现，
+/// 不报错也不谎报。
+LocalChatViewModel? _maybeChatViewModel(BuildContext context) {
+  try {
+    return context.read<LocalChatViewModel>();
+  } on ProviderNotFoundException {
+    return null;
+  }
+}
+
 /// 侧边栏与抽屉共用的面板内容：品牌槽 → 三项导航 → 底部连接状态。
-/// 小窗或字号放大时整块可滚动，绝不溢出（ticket 24 的同一口径）。
+///
+/// 整块**可滚动**：连接状态仍压在底部，但小窗或字号放大（ticket 24 的口径，
+/// §8 的列表项在 2.0 字阶下 240px 宽装不下）时整块能滚，绝不溢出。
 class _NavPanel extends StatelessWidget {
-  const _NavPanel({required this.onNavigate});
+  const _NavPanel({required this.onNavigate, required this.onHome});
 
   final void Function(String location) onNavigate;
+  final VoidCallback onHome;
 
   @override
   Widget build(BuildContext context) {
@@ -223,40 +380,38 @@ class _NavPanel extends StatelessWidget {
         vertical: QiyuLayout.sidebarPaddingVertical,
       ),
       child: SafeArea(
-        // 面板内容固定且短（品牌槽 + 三项导航 + 一枚连接状态），字号放大后
-        // 仍远在视口之内；这里不能用无界高度的滚动容器——连接状态靠
-        // Spacer 压到底，需要面板给出有界高度。
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _BrandSlot(onTap: () => onNavigate('/')),
-            const SizedBox(height: QiyuSpacing.lg),
-            _NavItem(
-              key: const Key('nav-history'),
-              tapKey: const Key('home-go-history'),
-              icon: Icons.hourglass_empty_outlined,
-              label: '历史',
-              selected: current == '/history',
-              onTap: () => onNavigate('/history'),
+        // 连接状态靠底部留白压到面板底；这份留白由 SliverFillRemaining 给，
+        // 放不下时它会缩成 0、整块转滚动，而不是把 RenderFlex 撑爆。
+        // `nav-scroll`：这块滚动容器与页面内容里的列表同为纵向，且排在页面
+        // 之前，测试取「页面自己的滚动区」时按这个键把它摘出去。
+        child: CustomScrollView(
+          key: const Key('nav-scroll'),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _BrandSlot(onTap: onHome),
+                  const SizedBox(height: QiyuSpacing.lg),
+                  for (final destination in QiyuNavDestination.values)
+                    _NavItem(
+                      key: destination.outerKey,
+                      tapKey: destination.tapKey,
+                      icon: destination.icon,
+                      label: destination.label,
+                      selected: current == destination.path,
+                      onTap: () => onNavigate(destination.path),
+                    ),
+                ],
+              ),
             ),
-            _NavItem(
-              key: const Key('nav-memory'),
-              tapKey: const Key('home-go-memory'),
-              icon: Icons.menu_book_outlined,
-              label: '记忆中心',
-              selected: current == '/memory',
-              onTap: () => onNavigate('/memory'),
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: QiyuConnectionStatus(),
+              ),
             ),
-            _NavItem(
-              key: const Key('nav-settings'),
-              tapKey: const Key('home-go-settings'),
-              icon: Icons.tune_outlined,
-              label: '设置',
-              selected: current == '/settings',
-              onTap: () => onNavigate('/settings'),
-            ),
-            const Spacer(),
-            const QiyuConnectionStatus(),
           ],
         ),
       ),
@@ -264,9 +419,9 @@ class _NavPanel extends StatelessWidget {
   }
 }
 
-/// 品牌图标槽（Spec Implementation Decisions 第 9 条）：本轮**不做图形设计**，
-/// 只落一个中性几何占位——不着紫、无渐变、无发光，点击回空状态首页。
-/// 原型里那个「紫色渐变圆 + 自造波纹」按定案不得沿用。
+/// 品牌图标槽（Spec Implementation Decisions 第 9 条、决策日志第一轮第 8 条）：
+/// **只放图形占位，不带「栖语」字标**——字标在第一轮就被列为被拒项。本轮不做
+/// 图形设计，落一个中性几何占位：不着紫、无渐变、无发光，点击回空状态首页。
 class _BrandSlot extends StatefulWidget {
   const _BrandSlot({required this.onTap});
 
@@ -294,48 +449,39 @@ class _BrandSlotState extends State<_BrandSlot> {
         // 键位随职责一起搬过来，不改名也不放宽断言。
         key: const Key('go-home'),
         focusNode: _focusNode,
-        borderRadius: QiyuRadii.smallBorder,
+        borderRadius: QiyuRadii.cardBorder,
         onTap: widget.onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: QiyuLayout.navItemPaddingHorizontal,
             vertical: QiyuSpacing.xs,
           ),
-          child: Row(
-            children: [
-              Container(
-                key: const Key('nav-brand'),
-                width: QiyuLayout.brandMarkSize,
-                height: QiyuLayout.brandMarkSize,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    width: QiyuLine.hairline,
-                    color: QiyuColors.line,
-                  ),
-                  color: QiyuColors.neutralFill,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              key: const Key('nav-brand'),
+              width: QiyuLayout.brandMarkSize,
+              height: QiyuLayout.brandMarkSize,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  width: QiyuLine.hairline,
+                  color: QiyuColors.line,
                 ),
-                child: const Center(
-                  child: SizedBox.square(
-                    dimension: 12,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: QiyuColors.muted,
-                      ),
+                color: QiyuColors.neutralFill,
+              ),
+              child: const Center(
+                child: SizedBox.square(
+                  dimension: 12,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: QiyuColors.muted,
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: QiyuLayout.navItemIconGap),
-              Text(
-                '栖语',
-                style: QiyuTypography.title.copyWith(
-                  color: QiyuColors.ink,
-                  letterSpacing: 2,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -343,8 +489,8 @@ class _BrandSlotState extends State<_BrandSlot> {
   }
 }
 
-/// 导航项（design-system §8 组件 6）：图标 + 文字，选中态用中性暗底 +
-/// 近白文字，**不得用紫**。
+/// 导航项（design-system §8 组件 6，圆角按用户裁定归入组件 7 的 18px 列表项档）：
+/// 图标 + 文字，选中态用中性暗底 + 近白文字，**不得用紫**。
 class _NavItem extends StatefulWidget {
   const _NavItem({
     super.key,
@@ -355,7 +501,7 @@ class _NavItem extends StatefulWidget {
     required this.onTap,
   });
 
-  /// 外层（含焦点环）定位键：`nav-history` / `nav-memory` / `nav-settings`。
+  /// 内层点击键沿用退役前首页入口卡片的既有测试键（home-go-*）。
   final Key tapKey;
   final IconData icon;
   final String label;
@@ -378,21 +524,19 @@ class _NavItemState extends State<_NavItem> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    final labelColor = selected
-        ? QiyuColors.neutralEmphasis
-        : QiyuColors.muted;
+    final labelColor = selected ? QiyuColors.neutralEmphasis : QiyuColors.muted;
     return QiyuFocusRing(
       focusNode: _focusNode,
+      borderRadius: QiyuRadii.cardBorder,
       child: InkWell(
-        // 内层点击键沿用退役前首页入口卡片的既有测试键（home-go-*）。
         key: widget.tapKey,
         focusNode: _focusNode,
-        borderRadius: QiyuRadii.smallBorder,
+        borderRadius: QiyuRadii.cardBorder,
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: qiyuMotion(context, QiyuMotion.fast),
           decoration: BoxDecoration(
-            borderRadius: QiyuRadii.smallBorder,
+            borderRadius: QiyuRadii.cardBorder,
             // 选中态中性暗底 rgba(255,255,255,0.04)，绝不用紫底。
             color: selected ? QiyuColors.selectedNeutral : Colors.transparent,
           ),

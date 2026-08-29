@@ -46,7 +46,12 @@ class RootView extends StatelessWidget {
       );
     }
     return viewModel.completed
-        ? const QiyuShell(child: LocalChatView())
+        ? const QiyuShell(
+            // 空状态首页的夜景背景由壳铺成**全幅底层**（不被侧边栏切断），
+            // 侧边栏/抽屉的玻璃层才有内容可糊。
+            showHomeBackdrop: true,
+            child: LocalChatView(),
+          )
         : const FirstMeetingView();
   }
 }

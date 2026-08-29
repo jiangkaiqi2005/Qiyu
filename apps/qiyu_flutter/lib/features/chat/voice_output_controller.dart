@@ -48,6 +48,16 @@ final class VoiceOutputController extends ChangeNotifier {
   VoiceOutputRequest? _nowReading;
   String? _failureNotice;
 
+  /// 控制器是否已释放：[stopAllForLeavingPage] 的通知排在微任务里，可能落在
+  /// 释放之后，那时再 notifyListeners 会撞 ChangeNotifier 的释放断言。
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
   VoiceOutputPhase get phase => _phase;
   VoiceOutputRequest? get nowReading => _nowReading;
   double get volume => _volume;
@@ -105,6 +115,28 @@ final class VoiceOutputController extends ChangeNotifier {
     _phase = VoiceOutputPhase.idle;
     _nowReading = null;
     notifyListeners();
+  }
+
+  /// 离开聊天页时的停播（ADR 0002）：动作与 [stopAll] **完全一致**——立刻停
+  /// 声、清掉排队的气泡、作废在途合成——只有通知时机不同。
+  ///
+  /// 页面卸载跑在框架锁定树的阶段，而卸载顺序是「先子后父」：轮到 `State.dispose`
+  /// 时本页的 `AnimatedBuilder` 已经 defunct 却可能还没解除订阅，同步
+  /// [notifyListeners] 会打在它们身上抛「setState() or markNeedsBuild() called
+  /// when widget tree was locked」。「只在 isReading 时才停」是靠削弱这条语义来
+  /// 绕开崩溃，代价是排队的 bubble 跨页继续朗读。改成把通知延到本帧之后：正在
+  /// 消失的监听者届时已解除订阅，还活着的监听者（例如路由过渡期同时挂着的另一个
+  /// 聊天页）照常收到更新。
+  void stopAllForLeavingPage() {
+    _abandonActive(incrementGeneration: true);
+    _phase = VoiceOutputPhase.idle;
+    _nowReading = null;
+    scheduleMicrotask(() {
+      if (_disposed) {
+        return;
+      }
+      notifyListeners();
+    });
   }
 
   void consumeFailureNotice() {

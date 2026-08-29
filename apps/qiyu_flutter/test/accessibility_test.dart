@@ -511,10 +511,15 @@ Future<void> _goHome(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-Finder _verticalScrollable() => find.byWidgetPredicate(
-  (widget) =>
-      widget is Scrollable && widget.axisDirection == AxisDirection.down,
-);
+/// 设置页自己的纵向滚动区：桌面导航壳的侧边栏同样是纵向可滚容器，按「所有
+/// 纵向 Scrollable」取会命中两个，`scrollUntilVisible` 因此要求唯一。
+/// 按 Key 取这一页的列表，再取它自己的 `Scrollable`（前序第一个）。
+Finder _verticalScrollable() => find
+    .descendant(
+      of: find.byKey(const Key('settings-scroll')),
+      matching: find.byType(Scrollable),
+    )
+    .first;
 
 /// 合一页的空状态即首页，仍依赖应用级的聊天 view model（问候与入口
 /// 副标题按当前会话状态切换），因此外壳与对话视图一起泵。
