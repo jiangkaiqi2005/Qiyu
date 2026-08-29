@@ -28,7 +28,15 @@ class HistoryView extends StatelessWidget {
             child: Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
+                  // 窄屏被壳包住时，三条杠浮在左上角：页头左内缩在自身 24 之外再让开
+                  // 它的占位（差额由壳给出），标题才不会被压在它下面。会话详情页
+                  // 不挂壳，用的是自己那一版固定内缩。
+                  padding: EdgeInsets.fromLTRB(
+                    24 + QiyuShellScope.headerLeftOverrun(context),
+                    20,
+                    24,
+                    12,
+                  ),
                   child: Row(
                     children: [
                       // 窄屏且被壳包住时不再摆自己的返回箭头：那里三条杠浮在

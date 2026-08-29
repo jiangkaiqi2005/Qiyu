@@ -2,12 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
-import '../navigation.dart';
 import '../settings/stt_settings_client.dart';
 import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
@@ -89,6 +89,15 @@ class _LocalChatViewState extends State<LocalChatView> {
     _chatViewModel.voiceOutput,
   ]);
 
+  /// 页面 body 那一层 Stack：问候的淡出层挂在它上面，量到的矩形也要换算到它的
+  /// 本地坐标，所以留一个键。
+  final _bodyStackKey = GlobalKey(debugLabel: 'chat-body-stack');
+
+  /// 空态最后一帧里问候**实际占到的矩形**（[_bodyStackKey] 的本地坐标）。
+  /// 空态→聊天态时整列布局换掉，淡出层照着这块矩形原地画问候，用户看到的
+  /// 就是它在自己位置上淡掉，而不是跳一处再消失（Spec User Story 2）。
+  Rect? _greetingRect;
+
   @override
   void initState() {
     super.initState();
@@ -148,16 +157,12 @@ class _LocalChatViewState extends State<LocalChatView> {
     if (mounted) setState(() {});
   }
 
-  /// 聊天页工具条上的顶层目的地（历史 / 模型连接）：与侧边栏三项导航**同一个
-  /// 语义出口** [openInFront]——目标已在返回栈里就回退到那一层，不在才 push。
-  /// 统一前是侧边栏 `go` 换栈、工具条 `push` 叠栈，同一个目的地有时能返回、
-  /// 有时不能；现在两边都「不叠加、返回键回到来的那一层」。页内详情（某一天
-  /// 的会话、某条记忆）本来就走这条出口，语义没有变化。
-  ///
-  /// 换页前无条件停播（ADR 0002），与 [QiyuShell] 的导航动作同一口径。
-  void _goToDestination(String location) {
+  /// 聊天页工具条上的顶层目的地（历史 / 模型连接）：**叠在当前位置之上**，
+  /// 因此页内的「返回上一页」回到的就是刚离开的那一页。换页前无条件停播
+  /// （ADR 0002），这一步与 [QiyuShell] 的导航动作同一口径。
+  void _pushAwayFromChat(String location) {
     _chatViewModel.voiceOutput.stopAll();
-    openInFront(context, location);
+    context.push(location);
   }
 
   // pixels 减少只可能来自用户上滑（程序跳转与内容增长不会减少），
@@ -247,7 +252,7 @@ class _LocalChatViewState extends State<LocalChatView> {
             ? null
             : SnackBarAction(
                 label: '去设置',
-                onPressed: () => _goToDestination('/settings'),
+                onPressed: () => _pushAwayFromChat('/settings'),
               ),
       ),
     );
@@ -278,19 +283,22 @@ class _LocalChatViewState extends State<LocalChatView> {
     // 渲染同一个视图。判定只有一处出处：`isHomeState`（含「会话恢复中不算
     // 空态」，所以打开应用不会先闪一帧首页）。
     final empty = viewModel.isHomeState;
-    // 空态↔聊天态之间**只有夜景背景会淡出**：它由 [QiyuShell] 的全幅层用
-    // `AnimatedSwitcher` 负责（时长走 `QiyuMotion`，reduced-motion 下归零）。
-    // 问候随下面的分支切换立即出树，不参与淡出——它和 composer 是同一组垂直
-    // 居中的内容，搬进全幅背景层就会压在被居中的 composer 之上，位置不再成立。
+    // 空态↔聊天态的淡出分两处，走同一套时长（`QiyuMotion.base`，reduced-motion
+    // 下归零）：夜景背景由 [QiyuShell] 的全幅层淡出；问候留在本页——空态那一列
+    // 里它和 composer 同组垂直居中，聊天态换成消息流，所以淡出层照着
+    // [_greetingRect]（空态最后一帧量到的位置）在原位画它，淡到底即出树。
     // 桌面两段式（空态居中→落底）；手机全程底部（Decision 10、§5、Story 23）。
     final narrow =
         MediaQuery.sizeOf(context).width < QiyuLayout.desktopBreakpoint;
+    // 淡出层的落点：只在聊天态取，空态下问候由 `_homeBody` 自己画。
+    final fadingGreeting = empty ? null : _greetingRect;
     return Scaffold(
       // 底色撤成透明：页面背景（夜色底 + 仅空态的夜景图）由 [QiyuShell] 铺成
       // **全幅底层**，侧边栏与抽屉作为半透明层叠在它之上。这里再铺一层不透明
       // night 会把底层整个盖住，毛玻璃就又退回平涂了。
       backgroundColor: Colors.transparent,
       body: Stack(
+        key: _bodyStackKey,
         children: [
           SafeArea(
             child: Column(
@@ -304,6 +312,19 @@ class _LocalChatViewState extends State<LocalChatView> {
               ],
             ),
           ),
+          // 聊天态才出现的问候淡出层：不接手势，也不参与命中测试。
+          if (fadingGreeting case final rect?)
+            Positioned.fromRect(
+              rect: rect,
+              child: IgnorePointer(
+                child: _GreetingFadeOut(
+                  key: const Key('home-greeting-fade'),
+                  duration: qiyuMotion(context, QiyuMotion.base),
+                  onFinished: _dropGreetingOverlay,
+                  child: _greeting(context),
+                ),
+              ),
+            ),
           if (viewModel.hostStopped)
             Positioned.fill(
               child: ColoredBox(
@@ -354,7 +375,7 @@ class _LocalChatViewState extends State<LocalChatView> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _greeting(context),
+            _homeGreeting(context),
             const SizedBox(height: QiyuSpacing.xl),
             _noticeBars(context, viewModel),
             _composer(context, viewModel),
@@ -370,7 +391,7 @@ class _LocalChatViewState extends State<LocalChatView> {
           child: QiyuCenteredScrollable(
             maxWidth: QiyuLayout.homeContentMaxWidth,
             padding: const EdgeInsets.all(QiyuSpacing.lg),
-            child: _greeting(context),
+            child: _homeGreeting(context),
           ),
         ),
         _noticeBars(context, viewModel),
@@ -378,6 +399,46 @@ class _LocalChatViewState extends State<LocalChatView> {
         const SizedBox(height: QiyuSpacing.lg),
       ],
     );
+  }
+
+  /// 空态那一列里的问候：除了绘制，还把这一帧实际占到的矩形记给聊天态的淡出层。
+  ///
+  /// 只记字段、不 setState——空态下问候本来就画在这里，重绘它没有任何意义；
+  /// 翻页那一帧读到的是上一帧的落点，正好是用户看到的位置。
+  Widget _homeGreeting(BuildContext context) {
+    return Builder(
+      builder: (context) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _captureGreetingRect(context),
+        );
+        return _greeting(context);
+      },
+    );
+  }
+
+  void _captureGreetingRect(BuildContext greetingContext) {
+    if (!mounted || !greetingContext.mounted) {
+      return;
+    }
+    final greeting = greetingContext.findRenderObject();
+    final stack = _bodyStackKey.currentContext?.findRenderObject();
+    if (greeting is! RenderBox ||
+        stack is! RenderBox ||
+        !greeting.attached ||
+        !greeting.hasSize) {
+      return;
+    }
+    _greetingRect =
+        (stack.globalToLocal(greeting.localToGlobal(Offset.zero))) &
+        greeting.size;
+  }
+
+  /// 淡到底了：把落点清空，淡出层随之出树。
+  void _dropGreetingOverlay() {
+    if (!mounted || _greetingRect == null) {
+      return;
+    }
+    setState(() => _greetingRect = null);
   }
 
   /// 空状态问候：沿用时段分档的既有口径（`qiyuEmptyChatHint`），22 档字阶、
@@ -393,8 +454,9 @@ class _LocalChatViewState extends State<LocalChatView> {
 
   /// 会话页自带的工具条：本地规则标识、朗读开关、历史与模型连接入口。
   /// 页面导航交给导航壳，这里只留会话自身的控件；两个入口与侧边栏去同一条
-  /// 目的地，因此目的地与图标都从 [QiyuNavDestination] 取，返回栈语义也一致
-  /// （`go`）。
+  /// 目的地，因此目的地与图标都从 [QiyuNavDestination] 取。返回栈语义**两边
+  /// 不同**（改造前就是这样，本轮纯视觉换皮不动它）：工具条 [_pushAwayFromChat]
+  /// 叠栈，页内「返回上一页」回到来的那一页；侧边栏是常驻顶层导航，走 `go` 换栈。
   Widget _utilityStrip(BuildContext context, LocalChatViewModel viewModel) {
     return Center(
       child: ConstrainedBox(
@@ -431,7 +493,7 @@ class _LocalChatViewState extends State<LocalChatView> {
                 tooltip: QiyuNavDestination.history.label,
                 icon: QiyuNavDestination.history.icon,
                 onPressed: () =>
-                    _goToDestination(QiyuNavDestination.history.path),
+                    _pushAwayFromChat(QiyuNavDestination.history.path),
               ),
               const SizedBox(width: QiyuSpacing.xs),
               _stripIconButton(
@@ -439,7 +501,7 @@ class _LocalChatViewState extends State<LocalChatView> {
                 tooltip: '模型连接',
                 icon: QiyuNavDestination.settings.icon,
                 onPressed: () =>
-                    _goToDestination(QiyuNavDestination.settings.path),
+                    _pushAwayFromChat(QiyuNavDestination.settings.path),
               ),
             ],
           ),
@@ -909,6 +971,68 @@ class _LocalChatViewState extends State<LocalChatView> {
         );
       },
     );
+  }
+}
+
+/// 空态→聊天态时问候的**淡出层**：从完全不透明淡到透明，淡完通知父级把自己
+/// 摘掉（Spec User Story 2「发出第一句后背景与问候淡出」）。
+///
+/// 时长由调用方给（`qiyuMotion(context, QiyuMotion.base)`，reduced-motion 下是
+/// [Duration.zero]，第一帧就到位、等于没有动效）。它在父级重建时**必须保持同一个
+/// 键**：`_chatBody` 每次 notify 都重建，键一变这个 State 就重造、动画从头再来，
+/// 淡出永远走不完——所以父级只把它当固定的一层挂在那里，不拿内容当 key。
+class _GreetingFadeOut extends StatefulWidget {
+  const _GreetingFadeOut({
+    super.key,
+    required this.duration,
+    required this.onFinished,
+    required this.child,
+  });
+
+  final Duration duration;
+  final VoidCallback onFinished;
+  final Widget child;
+
+  @override
+  State<_GreetingFadeOut> createState() => _GreetingFadeOutState();
+}
+
+class _GreetingFadeOutState extends State<_GreetingFadeOut>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: widget.duration,
+    value: 1.0,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    // 听 TickerFuture，不听状态监听：以 value 1.0 构造出来的控制器「上次上报的
+    // 状态」还是 dismissed，零时长（reduced-motion）下直接跳到 dismissed 不算
+    // 状态变化，监听器一次都不会触发，这一层就永远挂在树上。
+    _controller.reverse().whenComplete(_notifyFinished);
+  }
+
+  void _notifyFinished() {
+    // 再等这一帧画完才通知父级：whenComplete 的回调可能落在本帧 build 之后立刻
+    // 执行，那时 setState 会撞上「build 期间不得标脏」的限制。
+    WidgetsBinding.instance.addPostFrameCallback((_) => widget.onFinished());
+  }
+
+  @override
+  void dispose() {
+    // 父级提前摘掉这一层（例如又回到空态）时动画可能还在跑：先 stop，
+    // 不留活跃 ticker。
+    _controller
+      ..stop()
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(opacity: _controller, child: widget.child);
   }
 }
 

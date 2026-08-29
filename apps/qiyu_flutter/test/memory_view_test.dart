@@ -13,6 +13,7 @@ import 'package:qiyu_flutter/features/memory/backup_client.dart';
 import 'package:qiyu_flutter/features/memory/backup_platform.dart';
 import 'package:qiyu_flutter/features/memory/backup_view.dart';
 import 'package:qiyu_flutter/features/memory/memory_client.dart';
+import 'package:qiyu_flutter/features/memory/memory_view.dart';
 import 'package:qiyu_flutter/features/memory/memory_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
@@ -22,6 +23,7 @@ import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
+import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 void main() {
   testWidgets(
@@ -1062,6 +1064,52 @@ void main() {
     await tester.pumpAndSettle();
     expect(backupGateway.rollbackCalls, 1);
     expect(find.textContaining('已恢复到导入之前'), findsOneWidget);
+  });
+
+  testWidgets('窄屏页头让开三条杠：「记忆」标题不被浮层压住', (tester) async {
+    tester.view.physicalSize = const Size(420, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final memoryViewModel = MemoryCenterViewModel(
+      _FakeMemoryGateway(_fullOverview()),
+      autoStart: false,
+    );
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 窄屏没有常驻侧边栏：从三条杠打开抽屉，再由抽屉进记忆中心。
+    await tester.tap(find.byKey(const Key('nav-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+
+    // 这一页在窄屏撤掉了自己的返回箭头，页头必须自己让开浮在左上角的三条杠。
+    // 「记忆」两个字页内出现两次（18 的标题与 12 的小标签），按字阶取标题那一个。
+    final menu = tester.getRect(find.byKey(const Key('nav-menu-button')));
+    expect(
+      tester
+              .getTopLeft(
+                find.descendant(
+                  of: find.byType(MemoryView),
+                  matching: find.byWidgetPredicate(
+                    (widget) =>
+                        widget is Text &&
+                        widget.data == '记忆' &&
+                        widget.style?.fontSize == QiyuType.titleSize,
+                  ),
+                ),
+              )
+              .dx,
+      greaterThanOrEqualTo(menu.right),
+      reason: '「记忆」标题的左边界不得落在三条杠的命中区里',
+    );
   });
 }
 

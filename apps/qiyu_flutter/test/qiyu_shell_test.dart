@@ -10,6 +10,7 @@ import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/navigation.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_connection_status.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
@@ -267,6 +268,51 @@ void main() {
       );
     });
 
+    testWidgets('问候跟着切换淡出，不是立即消失（Story 2）', (tester) async {
+      final gateway = _StubChatGateway();
+      await tester.pumpWidget(await _app(viewModel: await _viewModel(gateway)));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('home-greeting')), findsOneWidget);
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pump();
+
+      // 聊天态已经挂上，但问候还留在原位：它这一帧正从完全不透明开始淡。
+      expect(find.byKey(const Key('home-greeting')), findsOneWidget);
+      expect(_greetingFadeOpacity(tester), greaterThan(0.0));
+
+      await tester.pump(QiyuMotion.base ~/ 2);
+      expect(
+        _greetingFadeOpacity(tester),
+        inInclusiveRange(0.1, 0.9),
+        reason: '切换后处于淡出途中，背景与问候走同一套 QiyuMotion 时长',
+      );
+
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('home-greeting')), findsNothing);
+      expect(find.byKey(const Key('home-greeting-fade')), findsNothing);
+    });
+
+    testWidgets('reduced-motion 下问候不留中间值（Story 22）', (tester) async {
+      final gateway = _StubChatGateway();
+      await tester.pumpWidget(
+        await _app(
+          viewModel: await _viewModel(gateway),
+          reducedMotion: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pump();
+
+      expect(_greetingFadeOpacity(tester), 0.0, reason: '动效归零，不留淡出途中');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('home-greeting')), findsNothing);
+    });
+
     testWidgets('用户水滴气泡与栖语无气泡（§7）', (tester) async {
       final gateway = _StubChatGateway(
         restored: const [
@@ -491,6 +537,92 @@ void main() {
       );
     });
   });
+
+  group('导航返回栈（行为不变量，本轮纯视觉换皮不动它）', () {
+    testWidgets('换栈进功能页后，侧边栏选中态跟着当前目的地走', (tester) async {
+      await _pumpShell(
+        tester,
+        width: 1200,
+        height: 800,
+        shellOnFeaturePages: true,
+      );
+
+      await tester.tap(find.byKey(const Key('home-go-settings')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('设置占位页'), findsOneWidget);
+      expect(_navItemContainer(tester, 'nav-settings').color, isNotNull);
+      expect(
+        _navItemContainer(tester, 'nav-settings').color,
+        QiyuColors.selectedNeutral,
+        reason: '`go` 换栈之后当前位置就是设置，选中态必须落在它上面',
+      );
+      expect(
+        _navItemContainer(tester, 'nav-history').color,
+        isNot(QiyuColors.selectedNeutral),
+      );
+    });
+
+    testWidgets('侧边栏是换栈：连跳两地后页内返回落回合一页，不是路过的那一站', (
+      tester,
+    ) async {
+      await _pumpShell(
+        tester,
+        width: 1200,
+        height: 800,
+        shellOnFeaturePages: true,
+      );
+
+      await tester.tap(find.byKey(const Key('home-go-settings')));
+      await tester.pumpAndSettle();
+      expect(find.text('设置占位页'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('home-go-history')));
+      await tester.pumpAndSettle();
+      expect(find.text('历史占位页'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('placeholder-back')));
+      await tester.pumpAndSettle();
+
+      // 常驻顶层导航每次换掉当前位置，所以这一跳没有可弹的层，返回落回合一页；
+      // 上一段那种「目标不在栈里就 push 叠栈」的写法会回到路过的设置页。
+      expect(find.text('设置占位页'), findsNothing);
+      expect(find.byKey(const Key('chat-input')), findsOneWidget);
+    });
+
+    testWidgets('工具条入口是叠栈：进设置再返回，回到的是原来那段会话', (
+      tester,
+    ) async {
+      final gateway = _StubChatGateway(
+        restored: const [
+          LocalChatMessage(
+            requestId: 'r-1',
+            speaker: LocalChatSpeaker.user,
+            text: '昨晚聊到一半',
+          ),
+        ],
+      );
+      await _pumpShell(
+        tester,
+        width: 1200,
+        height: 800,
+        shellOnFeaturePages: true,
+        viewModel: await _viewModel(gateway),
+      );
+      expect(find.text('昨晚聊到一半'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('open-provider-settings')));
+      await tester.pumpAndSettle();
+      expect(find.text('设置占位页'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('placeholder-back')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('设置占位页'), findsNothing);
+      expect(find.byKey(const Key('chat-input')), findsOneWidget);
+      expect(find.text('昨晚聊到一半'), findsOneWidget, reason: '还是原来那个会话');
+    });
+  });
 }
 
 // ---------- 装配 ----------
@@ -586,8 +718,7 @@ GoRouter _router(String initialLocation, {bool shellOnFeaturePages = false}) {
       ),
       GoRoute(
         path: '/history',
-        builder: (context, state) =>
-            page(const Scaffold(body: Center(child: Text('历史占位页')))),
+        builder: (context, state) => page(_featurePage('历史占位页')),
       ),
       GoRoute(
         path: '/history/:sessionId',
@@ -597,8 +728,7 @@ GoRouter _router(String initialLocation, {bool shellOnFeaturePages = false}) {
       ),
       GoRoute(
         path: '/memory',
-        builder: (context, state) =>
-            page(const Scaffold(body: Center(child: Text('记忆中心占位页')))),
+        builder: (context, state) => page(_featurePage('记忆中心占位页')),
       ),
       GoRoute(
         path: '/memory/item/:itemId',
@@ -608,8 +738,7 @@ GoRouter _router(String initialLocation, {bool shellOnFeaturePages = false}) {
       ),
       GoRoute(
         path: '/settings',
-        builder: (context, state) =>
-            page(const Scaffold(body: Center(child: Text('设置占位页')))),
+        builder: (context, state) => page(_featurePage('设置占位页')),
       ),
       GoRoute(
         path: '/settings/diagnostics',
@@ -624,6 +753,31 @@ GoRouter _router(String initialLocation, {bool shellOnFeaturePages = false}) {
     ],
   );
 }
+
+/// 代表「被壳包住的功能页」的占位页：只带一个页内返回按钮（动作取生产的
+/// [backToPrevious]，与真实三页同一出口）与标题文本，用来验返回栈的**外部
+/// 可观察行为**——从哪来回哪去，不去数栈里有几层。
+Widget _featurePage(String label) => Scaffold(
+  body: SafeArea(
+    child: Builder(
+      builder: (context) => Column(
+        children: [
+          Row(
+            children: [
+              IconButton(
+                key: const Key('placeholder-back'),
+                onPressed: () => backToPrevious(context),
+                tooltip: '返回上一页',
+                icon: const Icon(Icons.arrow_back),
+              ),
+              Text(label),
+            ],
+          ),
+        ],
+      ),
+    ),
+  ),
+);
 
 /// 当前路由路径：go_router 17 的 `GoRouterState` 没有对外可读的当前位置，
 /// 只能从 delegate 读。壳在 `/` 与 `/chat` 都在树里，所以拿它当锚点。
@@ -645,6 +799,16 @@ Future<LocalChatViewModel> _viewModel(
   await viewModel.initialize();
   return viewModel;
 }
+
+/// 问候淡出层当前的透明度：按固定键定位这一层，读它的 `FadeTransition`。
+/// 量的就是「问候淡到哪了」，不碰页面结构。
+double _greetingFadeOpacity(WidgetTester tester) =>
+    tester.widget<FadeTransition>(
+      find.descendant(
+        of: find.byKey(const Key('home-greeting-fade')),
+        matching: find.byType(FadeTransition),
+      ),
+    ).opacity.value;
 
 BoxDecoration _navItemContainer(WidgetTester tester, String ringKey) {
   final container = tester.widget<AnimatedContainer>(

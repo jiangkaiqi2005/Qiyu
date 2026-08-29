@@ -43,7 +43,14 @@ class MemoryView extends StatelessWidget {
               child: Column(
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 4),
+                    // 窄屏被壳包住时，三条杠浮在左上角：页头左内缩在自身 24 之外
+                    // 再让开它的占位（差额由壳给出），「记忆」标题才不会被压住。
+                    padding: EdgeInsets.fromLTRB(
+                      24 + QiyuShellScope.headerLeftOverrun(context),
+                      20,
+                      24,
+                      4,
+                    ),
                     child: Row(
                       children: [
                         // 窄屏且被壳包住时不再摆自己的返回箭头：那里三条杠浮在

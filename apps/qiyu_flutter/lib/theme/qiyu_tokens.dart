@@ -281,10 +281,16 @@ abstract final class QiyuLayout {
   /// 单条消息正文（用户水滴气泡、栖语的无气泡正文、流式增量）的最大宽度。
   ///
   /// 与 [streamMaxWidth] 是**两件事**：680 管整列消息流容器，520 管一条消息自身
-  /// 的行长——后者是紫夜改造之前的既有实现值（改造只是把三处裸写的 520 收进
-  /// 本 token），不是规范定值，视觉验收要调就改这里。以前它在
-  /// `qiyu_chat_bubble.dart` 两处与 `local_chat_view.dart` 流式回复一处各写一遍，
-  /// 改一处漏两处。
+  /// 的行长——后者是紫夜改造之前的既有实现值（改造只是把裸写的 520 收进本
+  /// token），不是规范定值，视觉验收要调就改这里。改造前它写在两处：
+  /// `qiyu_chat_bubble.dart` 当时的共用外层与 `local_chat_view.dart` 的流式回复；
+  /// 换皮把气泡拆成用户与栖语两条分支后，`qiyu_chat_bubble.dart` 变成两处，
+  /// 其中用户气泡那条一度仍写着裸值。现在这三条消费点全部取本 token。
+  ///
+  /// 与本 token **同值但无关**的 520 还剩两处页面自身的内容宽度：
+  /// `features/baseline/migration_baseline_view.dart` 与
+  /// `features/onboarding/first_meeting_view.dart`，它们管的不是消息行长，
+  /// 别算进本 token 的消费方，也不受这里调整影响。
   static const double messageMaxWidth = 520;
 
   /// composer 内边距与图标按钮高度（占位字靠它垂直居中）。
@@ -306,6 +312,20 @@ abstract final class QiyuLayout {
 
   /// 窄屏三条杠圆钮直径（原型 `.menu-btn` 定值 40）。
   static const double menuButtonSize = 40;
+
+  /// 窄屏三条杠浮层从**视口左缘**占到多远：外边距 [QiyuSpacing.md] +
+  /// 焦点环常驻留白 [focusRingOffset] + 圆钮直径 [menuButtonSize]。
+  ///
+  /// 派生值，不是新的规范定值：`qiyu_shell.dart` 的 `_narrowLayer` 就是按这三层
+  /// 摆的，改那里必须改这里。
+  static const double narrowMenuExtent =
+      QiyuSpacing.md + focusRingOffset + menuButtonSize;
+
+  /// 被壳包住的窄屏页头，在**自身已有左留白之外**还要再补的宽度：
+  /// [narrowMenuExtent] 再加一档 [QiyuSpacing.xs] 的间隔，减掉页头本来就有的
+  /// [QiyuSpacing.lg] 左留白。三条杠是浮层，不补就会把「历史」「记忆」压在它下面。
+  static const double narrowHeaderLeftOverrun =
+      narrowMenuExtent + QiyuSpacing.xs - QiyuSpacing.lg;
 
   /// 空状态首页内容宽度：min(560, 86vw)（原型 `.home-content`）。
   static const double homeContentMaxWidth = 560;

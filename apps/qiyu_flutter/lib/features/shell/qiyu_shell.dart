@@ -9,7 +9,6 @@ import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../chat/local_chat_view_model.dart';
-import '../navigation.dart';
 import 'qiyu_connection_status.dart';
 import 'qiyu_home_backdrop.dart';
 import 'qiyu_widgets.dart';
@@ -140,22 +139,19 @@ class _QiyuShellState extends State<QiyuShell>
   bool get _drawerMounted =>
       _drawerOpen || _drawerController.status != AnimationStatus.dismissed;
 
-  /// 三项导航的目的地动作（与聊天页工具条入口同一口径）：[openInFront]——
-  /// 目标已在返回栈里就回退到那一层，不在才 push。
-  ///
-  /// 改造前这两处语义不一致（侧边栏 `go` 换栈、工具条 `push` 叠栈），同一个
-  /// 目的地有时能返回、有时不能。统一选 `openInFront` 的理由：侧边栏是常驻
-  /// 导航，反复点同一个目的地不得叠出好几层；而 Web 用户的浏览器返回键是真实
-  /// 出口，`go` 会连它一起换掉。真正该重置栈的只有「回首页」，见 [_goHome]。
+  /// 三项导航的目的地动作：**换栈**到目的地（`go`），与退役前首页入口卡片的
+  /// `_HomeEntry` 完全同一语义（用户裁定：本轮纯视觉换皮，路由与返回栈一项不动）。
+  /// 侧边栏是常驻顶层导航，不是「往前翻一层」的内容跳转，所以它重置当前位置，
+  /// 页内的「返回上一页」在直接进这一页时退回落地的合一页。
   ///
   /// 换页前无条件停播（ADR 0002：离开这一段话的语境就闭嘴，排队的 bubble 不得
-  /// 跨页继续读）：退役前的 `_goHome` 就是这个语义，改造中途一度丢了，这里补回。
+  /// 跨页继续读）：退役前的 `_goHome` 就是这个语义，这里照搬。
   void _goTo(String location) {
     _maybeChatViewModel(context)?.voiceOutput.stopAll();
-    openInFront(context, location);
+    context.go(location);
   }
 
-  /// 品牌槽：回合一页的**空状态首页**。这是唯一重置返回栈的导航动作（`go`），
+  /// 品牌槽：回合一页的**空状态首页**。目的地固定为 `/`（不是「回来时那页」），
   /// 语义与退役前的 `_goHome` 一致，同样先无条件停播。
   void _goHome() {
     _maybeChatViewModel(context)?.voiceOutput.stopAll();
@@ -329,6 +325,15 @@ class QiyuShellScope extends InheritedWidget {
     }
     return MediaQuery.sizeOf(context).width < QiyuLayout.desktopBreakpoint;
   }
+
+  /// 页头左侧要为三条杠**再补**的内缩：被壳包住（窄屏）时是它的横向占位，
+  /// 其余情况是 0。
+  ///
+  /// 三条杠是浮在内容之上的层（见 `_narrowLayer`），而功能页的页头自带一档
+  /// 左留白，所以这里给的是「占位减去那档已有留白」的差额，页面把它加在
+  /// 自己的左内缩之上就够了，不必各自量一遍浮层的三层几何。
+  static double headerLeftOverrun(BuildContext context) =>
+      coversFrontNavigation(context) ? QiyuLayout.narrowHeaderLeftOverrun : 0;
 
   @override
   bool updateShouldNotify(QiyuShellScope oldWidget) => false;

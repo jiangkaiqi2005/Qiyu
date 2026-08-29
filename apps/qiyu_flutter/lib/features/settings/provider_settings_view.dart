@@ -78,23 +78,30 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
               key: const Key('settings-scroll'),
               padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
               children: [
-                Row(
-                  children: [
-                    // 窄屏且被壳包住时不再摆自己的返回箭头：那里三条杠浮在同一个
-                    // 左上角，导航交给抽屉。桌面的箭头保留——侧边栏在另一栏，不与
-                    // 它相交，而「回到打开这一页的那一层」只有它给得出（品牌槽回
-                    // 的是首页）。
-                    if (!QiyuShellScope.coversFrontNavigation(context)) ...[
-                      IconButton(
-                        key: const Key('settings-back'),
-                        onPressed: () => backToPrevious(context),
-                        tooltip: '返回上一页',
-                        icon: const Icon(Icons.arrow_back),
-                      ),
-                      const SizedBox(width: 8),
+                // 窄屏被壳包住时，三条杠浮在左上角：页头 Row 排在整列的 24 左留白
+                // 之内，所以在它身上再补一段壳给出的差额，「设置」标题才不会被压住。
+                Padding(
+                  padding: EdgeInsets.only(
+                    left: QiyuShellScope.headerLeftOverrun(context),
+                  ),
+                  child: Row(
+                    children: [
+                      // 窄屏且被壳包住时不再摆自己的返回箭头：那里三条杠浮在同一个
+                      // 左上角，导航交给抽屉。桌面的箭头保留——侧边栏在另一栏，不与
+                      // 它相交，而「回到打开这一页的那一层」只有它给得出（品牌槽回
+                      // 的是首页）。
+                      if (!QiyuShellScope.coversFrontNavigation(context)) ...[
+                        IconButton(
+                          key: const Key('settings-back'),
+                          onPressed: () => backToPrevious(context),
+                          tooltip: '返回上一页',
+                          icon: const Icon(Icons.arrow_back),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Text('设置', style: theme.textTheme.headlineSmall),
                     ],
-                    Text('设置', style: theme.textTheme.headlineSmall),
-                  ],
+                  ),
                 ),
                 const SizedBox(height: 30),
                 const _ProviderSection(),

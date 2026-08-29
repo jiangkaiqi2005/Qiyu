@@ -224,6 +224,38 @@ void main() {
     // 历史从聊天页 push 进入：返回键回到聊天页而不是首页。
     expect(find.byKey(const Key('open-history')), findsOneWidget);
   });
+
+  testWidgets('窄屏页头让开三条杠：标题左边界不被浮层命中区压住', (tester) async {
+    tester.view.physicalSize = const Size(420, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final historyViewModel = HistoryViewModel(
+      _FakeHistoryGateway(_testListing()),
+      onSessionDeleted: (_) {},
+      autoStart: false,
+    );
+    await historyViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        historyViewModel: historyViewModel,
+        onboardingViewModel: await _onboardingViewModel(),
+      ),
+    );
+    await _enterChatFromHome(tester);
+    await tester.tap(find.byKey(const Key('open-history')));
+    await tester.pumpAndSettle();
+
+    // 窄屏的三条杠是浮在内容之上的层，且本页此时不摆自己的返回箭头：
+    // 页头必须自己让开它的横向占位，标题才不会压在它下面。
+    final menu = tester.getRect(find.byKey(const Key('nav-menu-button')));
+    expect(menu.right, greaterThan(0), reason: '窄屏左上角才有三条杠');
+    expect(
+      tester.getTopLeft(_historyPageTitle()).dx,
+      greaterThanOrEqualTo(menu.right),
+      reason: '「历史」标题的左边界不得落在三条杠的命中区里',
+    );
+  });
 }
 
 LocalChatViewModel _chatViewModel([_FakeChatGateway? gateway]) =>

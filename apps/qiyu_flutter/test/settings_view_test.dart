@@ -10,6 +10,7 @@ import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/provider_settings_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
@@ -775,6 +776,39 @@ void main() {
       );
     },
   );
+
+  testWidgets('窄屏页头让开三条杠：「设置」标题不被浮层压住', (tester) async {
+    tester.view.physicalSize = const Size(420, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 窄屏没有常驻侧边栏：三条杠开抽屉，再由抽屉进设置。
+    await tester.tap(find.byKey(const Key('nav-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-settings')));
+    await tester.pumpAndSettle();
+
+    final menu = tester.getRect(find.byKey(const Key('nav-menu-button')));
+    expect(
+      tester
+              .getTopLeft(
+                find.descendant(
+                  of: find.byType(ProviderSettingsView),
+                  matching: find.text('设置'),
+                ),
+              )
+              .dx,
+      greaterThanOrEqualTo(menu.right),
+      reason: '「设置」标题的左边界不得落在三条杠的命中区里',
+    );
+  });
 }
 
 Future<Widget> _app({
