@@ -28,12 +28,19 @@ flutter:
   uses-material-design: true
   assets:
     - assets/fonts/OFL-NotoSerifSC.txt
+    - assets/fonts/APACHE-2.0-MaterialSymbolsOutlined.txt
     - assets/images/home-night-backdrop.jpg
   fonts:
     # 全局唯一字族：思源宋体静态子集（紫夜规范 §3）。
     - family: Noto Serif SC
       fonts:
         - asset: assets/fonts/NotoSerifSC-QiyuSubset.ttf
+    # 图标字族：Material Symbols Outlined 的 ExtraLight（wght 200）静态实例，
+    # 已裁成本项目用到的 45 字形子集。紫夜规范 §4 要 1.2 细描边，Flutter 内置
+    # Icons.* 是定宽字形且 Icon 没有 strokeWidth 入口，只有换字族才做得到。
+    - family: Material Symbols Outlined
+      fonts:
+        - asset: assets/fonts/MaterialSymbolsOutlined-QiyuSubset.ttf
     # Roboto 别名必须保留：Material 内部默认引用 Roboto，若不随包提供会触发
     # gstatic 远程回退，本机 loopback 场景下直接卡死启动（2026-08 修复）。
     - family: Roboto

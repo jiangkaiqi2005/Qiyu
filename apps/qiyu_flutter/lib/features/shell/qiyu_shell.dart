@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
@@ -24,9 +25,9 @@ import 'qiyu_widgets.dart';
 /// 既有测试键 `home-go-<name>`——侧边栏与抽屉会同时渲染同一批文案，测试一律按
 /// Key 定位（Spec Testing Decisions 第 8 条）。
 enum QiyuNavDestination {
-  history('/history', '历史', Icons.hourglass_empty_outlined),
-  memory('/memory', '记忆中心', Icons.menu_book_outlined),
-  settings('/settings', '设置', Icons.tune_outlined);
+  history('/history', '历史', QiyuIcons.hourglass_empty),
+  memory('/memory', '记忆中心', QiyuIcons.menu_book),
+  settings('/settings', '设置', QiyuIcons.tune);
 
   const QiyuNavDestination(this.path, this.label, this.icon);
 
@@ -277,8 +278,8 @@ class _QiyuShellState extends State<QiyuShell>
                       child: Center(
                         child: Icon(
                           _drawerOpen
-                              ? Icons.close_rounded
-                              : Icons.menu_outlined,
+                              ? QiyuIcons.close
+                              : QiyuIcons.menu,
                           size: QiyuIconSpec.size,
                           color: QiyuColors.ink,
                         ),
@@ -365,7 +366,7 @@ class QiyuPageHeaderBackButton extends StatelessWidget {
           key: buttonKey,
           onPressed: () => backToPrevious(context),
           tooltip: '返回上一页',
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(QiyuIcons.arrow_back),
         ),
         const SizedBox(width: QiyuSpacing.xs),
       ],

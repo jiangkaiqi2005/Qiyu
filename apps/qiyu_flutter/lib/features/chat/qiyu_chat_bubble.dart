@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
@@ -58,7 +59,7 @@ class QiyuChatBubble extends StatelessWidget {
                 const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.volume_up_outlined, size: 16),
+                    Icon(QiyuIcons.volume_up, size: 16),
                     SizedBox(width: 4),
                     Text('正在读', style: TextStyle(fontSize: 12)),
                   ],
@@ -126,7 +127,7 @@ class _ReplayButton extends StatelessWidget {
       constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
       tooltip: '再听一遍这句',
       onPressed: onReplay,
-      icon: const Icon(Icons.volume_up_outlined, size: 16),
+      icon: const Icon(QiyuIcons.volume_up, size: 16),
     );
   }
 }

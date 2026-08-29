@@ -106,6 +106,8 @@ try {
     'canvaskit\canvaskit.wasm',
     'assets\assets\fonts\NotoSerifSC-QiyuSubset.ttf',
     'assets\assets\fonts\OFL-NotoSerifSC.txt',
+    'assets\assets\fonts\MaterialSymbolsOutlined-QiyuSubset.ttf',
+    'assets\assets\fonts\APACHE-2.0-MaterialSymbolsOutlined.txt',
     'assets\assets\images\home-night-backdrop.jpg'
   )) {
     if (-not (Test-Path -LiteralPath (Join-Path 'build\web' $resource))) {

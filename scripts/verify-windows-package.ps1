@@ -53,6 +53,8 @@ $requiredFiles = @(
   'web\assets\NOTICES',
   'web\assets\assets\fonts\OFL-NotoSerifSC.txt',
   'web\assets\assets\fonts\NotoSerifSC-QiyuSubset.ttf',
+  'web\assets\assets\fonts\APACHE-2.0-MaterialSymbolsOutlined.txt',
+  'web\assets\assets\fonts\MaterialSymbolsOutlined-QiyuSubset.ttf',
   'web\assets\assets\images\home-night-backdrop.jpg',
   'persona-constitution.md',
   'Install-Qiyu.ps1',

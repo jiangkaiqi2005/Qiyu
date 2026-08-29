@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../theme/qiyu_icons.dart';
 import 'backup_client.dart';
 import 'backup_platform.dart';
 import 'memory_view_model.dart';
@@ -270,7 +271,7 @@ class _BackupDialogState extends State<_BackupDialog> {
                     key: const Key('backup-close'),
                     onPressed: () => Navigator.of(context).pop(),
                     tooltip: '关闭',
-                    icon: const Icon(Icons.close),
+                    icon: const Icon(QiyuIcons.close),
                   ),
                 ],
               ),
@@ -299,7 +300,7 @@ class _BackupDialogState extends State<_BackupDialog> {
                                   strokeWidth: 2,
                                 ),
                               )
-                            : const Icon(Icons.download_outlined),
+                            : const Icon(QiyuIcons.download),
                         label: Text(_exporting ? '正在打包…' : '导出备份'),
                       ),
                     ),
@@ -360,7 +361,7 @@ class _BackupDialogState extends State<_BackupDialog> {
               child: FilledButton.icon(
                 key: const Key('backup-import-pick'),
                 onPressed: widget.platform.supported ? _pickAndPreview : null,
-                icon: const Icon(Icons.upload_file_outlined),
+                icon: const Icon(QiyuIcons.upload_file),
                 label: const Text('选择备份文件'),
               ),
             ),

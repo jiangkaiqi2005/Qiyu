@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../theme/qiyu_icons.dart';
 import '../navigation.dart';
 
 /// 隐私说明页（ticket 23）：数据只在本机、何时调用用户选择的模型
@@ -25,7 +26,7 @@ class PrivacyView extends StatelessWidget {
                       key: const Key('privacy-back'),
                       onPressed: () => backToPrevious(context),
                       tooltip: '返回设置',
-                      icon: const Icon(Icons.arrow_back),
+                      icon: const Icon(QiyuIcons.arrow_back),
                     ),
                     const SizedBox(width: 8),
                     Text(

@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
+import 'icon_glyph_manifest.dart';
+
 /// 设计 token 层契约测试（Spec Testing Decisions 第 2、3、7 条）。
 ///
 /// 这是紫夜视觉改造的接缝：主题层是唯一色值来源，页面只准消费它。
@@ -19,7 +21,10 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 ///    解析出 `accentBright`；组件状态色全部由主题层那份共享中性状态表给出；
 /// 4. 回归锁——旧种子色派生（`ColorScheme.fromSeed`、`0xFF8C86B8`、`0xFF15131A`、
 ///    黑体字族）已退场；整个 `lib/**`（只放行 `lib/theme/**`）的裸色值不得超出棘轮
-///    允许清单；发布门禁脚本引用的资产名与 pubspec 一致（独立一条测试）。
+///    允许清单；发布门禁脚本引用的资产名与 pubspec 一致（独立一条测试）；
+/// 5. 图标走 §4 的细描边字族——入库的是 Material Symbols Outlined ExtraLight 的
+///    45 字形子集，`QiyuIcons` 每个码位都要在实测清单里对得上，`lib/**` 不再引用
+///    内置 `Icons.*`，图标码位也不许在页面里手写。
 ///
 /// 扫描一律读源码文件，不依赖任何构建产物。
 
@@ -811,6 +816,15 @@ void main() {
       }
     });
 
+    test('图标子集与 Apache 许可证随包存在（§4 细描边的落地凭据）', () {
+      for (final path in <String>[
+        'assets/fonts/MaterialSymbolsOutlined-QiyuSubset.ttf',
+        'assets/fonts/APACHE-2.0-MaterialSymbolsOutlined.txt',
+      ]) {
+        expect(File('$_packageRoot/$path').existsSync(), isTrue, reason: path);
+      }
+    });
+
     test('旧 Sans 基线字族与其 OFL 已删除（决策日志第四轮 8）', () {
       expect(
         File(
@@ -840,6 +854,104 @@ void main() {
       expect(pubspec, contains('- assets/images/home-night-backdrop.jpg'));
       expect(pubspec, contains('assets/fonts/OFL-NotoSerifSC.txt'));
       expect(pubspec, isNot(contains('NotoSansSC')));
+    });
+
+    test('pubspec 注册图标字族，Roboto 别名没被改指过去', () {
+      final pubspec = _read('pubspec.yaml');
+      expect(pubspec, contains('family: ${QiyuIconSpec.fontFamily}'));
+      expect(
+        pubspec,
+        contains('asset: assets/fonts/MaterialSymbolsOutlined-QiyuSubset.ttf'),
+      );
+      expect(
+        pubspec,
+        contains('- assets/fonts/APACHE-2.0-MaterialSymbolsOutlined.txt'),
+      );
+      // Roboto 别名是 2026-08 修「未随包字族触发远程回退导致卡死」时设的，
+      // 必须仍然整块指向宋体子集；改成图标子集会拿文字去喂 45 个字形。
+      expect(
+        RegExp(
+          r'- family: Roboto\s*\n\s*fonts:\s*\n\s*- asset: '
+          r'assets/fonts/NotoSerifSC-QiyuSubset\.ttf',
+        ).hasMatch(pubspec),
+        isTrue,
+        reason: 'Roboto 别名不再指向随包宋体子集，字体回退卡死的 bug 会回来',
+      );
+    });
+  });
+
+  group('图标子集与 QiyuIcons 码位对齐（design-system §4）', () {
+    test('qiyu_icons.dart 声明的图标集合与子集清单完全一致', () {
+      // 双向对账：清单来自实际入库字体的 glyph name → codepoint 表
+      // （.scratch/icon-subset/build-icon-subset.js 生成），常量表是消费侧。
+      // 少一个＝页面上取不到图形，多一个＝码位没进字体、渲染成豆腐块。
+      final declared =
+          RegExp(
+            r'static const IconData (\w+)',
+          ).allMatches(_read('lib/theme/qiyu_icons.dart')).map(
+            (m) => m.group(1)!,
+          ).toSet();
+      expect(declared, iconGlyphManifest.keys.toSet());
+      expect(declared.length, greaterThan(40));
+    });
+
+    test('每个常量的码位与字族都取实际子集里的那一份', () {
+      expect(qiyuIconCodePoints.keys.toSet(), iconGlyphManifest.keys.toSet());
+      for (final entry in qiyuIconCodePoints.entries) {
+        final expected = iconGlyphManifest[entry.key];
+        expect(
+          entry.value.codePoint,
+          expected,
+          reason: '${entry.key} 的码位与入库子集不一致',
+        );
+        expect(
+          entry.value.fontFamily,
+          QiyuIconSpec.fontFamily,
+          reason: '${entry.key} 没走细描边图标字族',
+        );
+        // 字族随应用本体入库，不是 package 资源：fontPackage 必须为空。
+        expect(entry.value.fontPackage, isNull, reason: entry.key);
+      }
+    });
+
+    test('§4 定案选型全部在册：导航三件套与记忆区/操作', () {
+      for (final name in <String>[
+        // 导航三件套：沙漏 / 翻开的书 / 圆形旋钮滑杆。
+        'hourglass_empty', 'menu_book', 'tune',
+        // 记忆四区：时钟 / 山形 / 单人 / 双人。
+        'schedule', 'landscape', 'person', 'groups',
+        // 记忆操作：铅笔 / 雪花 / 禁止圈 / 垃圾桶 / 眼睛。
+        'edit', 'ac_unit', 'block', 'delete', 'visibility',
+      ]) {
+        expect(iconGlyphManifest.containsKey(name), isTrue, reason: name);
+        expect(qiyuIconCodePoints.containsKey(name), isTrue, reason: name);
+      }
+    });
+
+    test('lib 层不再引用内置 MaterialIcons 字族的 Icons.*', () {
+      // 内置 Icons.* 是定宽字形且 Icon 没有 strokeWidth 入口，§4 的细描边
+      // 在它下面做不到；替换干净后这条是防回归的锁（`Icons.*` 这类文档写法
+      // 不在匹配范围内，只挡真实的常量引用）。
+      final builtin = RegExp(r'\bIcons\.[A-Za-z0-9_]');
+      for (final file in _dartFilesUnder('lib')) {
+        final matches = builtin.allMatches(file.readAsStringSync()).toList();
+        expect(matches, isEmpty, reason: _relativePath(file));
+      }
+    });
+
+    test('页面不自造码位：IconData 只准出现在 qiyu_icons.dart', () {
+      // 图标只有一个入口：字族、码位与尺寸都收在 theme 层，页面拿 QiyuIcons.*。
+      expect(QiyuIconSpec.size, 24);
+      expect(QiyuIconSpec.fontFamily, 'Material Symbols Outlined');
+      for (final file in _dartFilesUnder('lib')) {
+        final relative = _relativePath(file);
+        if (relative == 'lib/theme/qiyu_icons.dart') continue;
+        expect(
+          RegExp(r'\bIconData\(').hasMatch(file.readAsStringSync()),
+          isFalse,
+          reason: '$relative 绕过 QiyuIcons 直接写码位，字族会漏',
+        );
+      }
     });
   });
 
@@ -941,6 +1053,18 @@ void main() {
         expect(source, isNot(contains('NotoSansSC')), reason: script);
         expect(source, contains('NotoSerifSC-QiyuSubset.ttf'), reason: script);
         expect(source, contains('OFL-NotoSerifSC.txt'), reason: script);
+        // 图标子集换了字族就得跟着进包：漏掉的话构建产物里没有它，
+        // 运行时又会退回远程回退或豆腐块。
+        expect(
+          source,
+          contains('MaterialSymbolsOutlined-QiyuSubset.ttf'),
+          reason: script,
+        );
+        expect(
+          source,
+          contains('APACHE-2.0-MaterialSymbolsOutlined.txt'),
+          reason: script,
+        );
       }
     });
   });

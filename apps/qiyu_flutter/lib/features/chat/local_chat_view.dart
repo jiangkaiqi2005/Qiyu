@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
@@ -734,8 +735,8 @@ class _LocalChatViewState extends State<LocalChatView> {
             else
               Icon(
                 voice.status == VoiceInputStatus.retryable
-                    ? Icons.error_outline
-                    : Icons.graphic_eq,
+                    ? QiyuIcons.error
+                    : QiyuIcons.graphic_eq,
                 size: 16,
                 color: voice.status == VoiceInputStatus.retryable
                     ? Theme.of(context).colorScheme.error
@@ -771,14 +772,14 @@ class _LocalChatViewState extends State<LocalChatView> {
       VoiceInputStatus.unsupported || VoiceInputStatus.notConfigured => (
         'voice-mic',
         '语音输入（当前不可用）',
-        const Icon(Icons.mic_off_outlined),
+        const Icon(QiyuIcons.mic_off),
         theme.disabledColor,
         _showVoiceGuide,
       ),
       VoiceInputStatus.idle => (
         'voice-mic',
         '语音输入',
-        const Icon(Icons.mic_none),
+        const Icon(QiyuIcons.mic),
         null,
         // 点麦克风她立刻闭嘴（ADR 0002 硬规则）：她的声音不能被录进
         // 转写变成用户在自言自语。
@@ -796,7 +797,7 @@ class _LocalChatViewState extends State<LocalChatView> {
       VoiceInputStatus.recording => (
         'voice-mic-stop',
         '说完，转成文字',
-        const Icon(Icons.stop_circle_rounded),
+        const Icon(QiyuIcons.stop_circle),
         theme.colorScheme.error,
         // 转写和聊天都会跨越异步边界；说完的这次点击
         // 是语音闭环最后一个可用的浏览器用户手势。
@@ -816,7 +817,7 @@ class _LocalChatViewState extends State<LocalChatView> {
       VoiceInputStatus.retryable => (
         'voice-mic-retry',
         '重试转写',
-        const Icon(Icons.mic_rounded),
+        const Icon(QiyuIcons.mic),
         theme.colorScheme.error,
         // 与开始录音同规则：点麦克风即停播清队列。
         () {
@@ -863,7 +864,7 @@ class _LocalChatViewState extends State<LocalChatView> {
         child: Row(
           children: [
             if (voiceOutput.isReading) ...[
-              const Icon(Icons.volume_up_outlined, size: 18),
+              const Icon(QiyuIcons.volume_up, size: 18),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -877,7 +878,7 @@ class _LocalChatViewState extends State<LocalChatView> {
                 key: const Key('voice-output-stop'),
                 tooltip: '停止朗读',
                 onPressed: () => voiceOutput.stopAll(),
-                icon: const Icon(Icons.stop_rounded),
+                icon: const Icon(QiyuIcons.stop),
               ),
             ] else if (failure != null) ...[
               Expanded(
@@ -892,7 +893,7 @@ class _LocalChatViewState extends State<LocalChatView> {
               IconButton(
                 tooltip: '知道了',
                 onPressed: () => voiceOutput.consumeFailureNotice(),
-                icon: const Icon(Icons.close_rounded),
+                icon: const Icon(QiyuIcons.close),
               ),
             ],
           ],
@@ -1073,10 +1074,10 @@ class _VoiceOutputHeaderControlState extends State<_VoiceOutputHeaderControl> {
           final isMuted =
               !viewModel.voiceOutputEnabled || voiceOutput.volume == 0;
           final icon = isMuted
-              ? Icons.volume_off_rounded
+              ? QiyuIcons.volume_off
               : (voiceOutput.volume < 0.5
-                  ? Icons.volume_down_rounded
-                  : Icons.volume_up_rounded);
+                  ? QiyuIcons.volume_down
+                  : QiyuIcons.volume_up);
           return OverlayPortal(
             controller: _overlayController,
             overlayChildBuilder: (context) {
@@ -1217,8 +1218,8 @@ class _VolumePopupCard extends StatelessWidget {
               color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
               icon: Icon(
                 isMuted
-                    ? Icons.volume_off_rounded
-                    : Icons.volume_up_rounded,
+                    ? QiyuIcons.volume_off
+                    : QiyuIcons.volume_up,
               ),
               onPressed: () => unawaited(viewModel.toggleVoiceOutput()),
             ),

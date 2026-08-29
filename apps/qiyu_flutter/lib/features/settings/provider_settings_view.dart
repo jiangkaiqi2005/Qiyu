@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../theme/qiyu_icons.dart';
 import '../memory/backup_client.dart';
 import '../memory/backup_platform.dart';
 import '../memory/backup_view.dart';
@@ -442,7 +443,7 @@ class _ProviderSectionState extends State<_ProviderSection> {
                     value: customModelValue,
                     child: Row(
                       children: [
-                        Icon(Icons.edit_outlined, size: 18),
+                        Icon(QiyuIcons.edit, size: 18),
                         SizedBox(width: 8),
                         Text('输入其他模型名称'),
                       ],
@@ -545,7 +546,7 @@ class _ProviderSectionState extends State<_ProviderSection> {
                     onPressed: viewModel.saving
                         ? null
                         : () => unawaited(_save(viewModel)),
-                    icon: _busyOr(viewModel.saving, Icons.lock_outline),
+                    icon: _busyOr(viewModel.saving, QiyuIcons.lock),
                     label: const Text('保存到本机'),
                   ),
                   OutlinedButton.icon(
@@ -558,7 +559,7 @@ class _ProviderSectionState extends State<_ProviderSection> {
                               unawaited(viewModel.testConnection(draft));
                             }
                           },
-                    icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
+                    icon: _busyOr(viewModel.testing, QiyuIcons.bolt),
                     label: const Text('测试连接'),
                   ),
                 ],
@@ -715,7 +716,7 @@ class _WebSearchSectionState extends State<_WebSearchSection> {
                 onPressed: viewModel.saving
                     ? null
                     : () => unawaited(_saveWebSearch(viewModel)),
-                icon: _busyOr(viewModel.saving, Icons.lock_outline),
+                icon: _busyOr(viewModel.saving, QiyuIcons.lock),
                 label: const Text('保存到本机'),
               ),
             ],
@@ -1005,7 +1006,7 @@ class _SttSectionState extends State<_SttSection> {
                   onPressed: viewModel.saving
                       ? null
                       : () => unawaited(_saveStt(viewModel)),
-                  icon: _busyOr(viewModel.saving, Icons.lock_outline),
+                  icon: _busyOr(viewModel.saving, QiyuIcons.lock),
                   label: const Text('保存到本机'),
                 ),
                 OutlinedButton.icon(
@@ -1018,7 +1019,7 @@ class _SttSectionState extends State<_SttSection> {
                             unawaited(viewModel.testConnection(draft));
                           }
                         },
-                  icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
+                  icon: _busyOr(viewModel.testing, QiyuIcons.bolt),
                   label: const Text('测试连接'),
                 ),
               ],
@@ -1328,7 +1329,7 @@ class _TtsSectionState extends State<_TtsSection> {
                           value: customVoiceValue,
                           child: Row(
                             children: [
-                              Icon(Icons.edit_outlined, size: 18),
+                              Icon(QiyuIcons.edit, size: 18),
                               SizedBox(width: 8),
                               Text('输入其他音色 ID'),
                             ],
@@ -1484,7 +1485,7 @@ class _TtsSectionState extends State<_TtsSection> {
               TextButton.icon(
                 key: const Key('tts-replay-preview'),
                 onPressed: () => unawaited(viewModel.replayPreview()),
-                icon: const Icon(Icons.volume_up_outlined),
+                icon: const Icon(QiyuIcons.volume_up),
                 label: const Text('再听一次试听'),
               ),
             ],
@@ -1499,7 +1500,7 @@ class _TtsSectionState extends State<_TtsSection> {
                   onPressed: viewModel.saving
                       ? null
                       : () => unawaited(_saveTts(viewModel)),
-                  icon: _busyOr(viewModel.saving, Icons.lock_outline),
+                  icon: _busyOr(viewModel.saving, QiyuIcons.lock),
                   label: const Text('保存到本机'),
                 ),
                 OutlinedButton.icon(
@@ -1512,7 +1513,7 @@ class _TtsSectionState extends State<_TtsSection> {
                           unawaited(viewModel.testConnection(draft));
                         }
                       },
-                  icon: _busyOr(viewModel.testing, Icons.bolt_outlined),
+                  icon: _busyOr(viewModel.testing, QiyuIcons.bolt),
                   label: const Text('测试连接并试听'),
                 ),
               ],
@@ -1606,19 +1607,19 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
                       platform: widget.backupPlatform,
                     ),
                   ),
-                  icon: const Icon(Icons.archive_outlined),
+                  icon: const Icon(QiyuIcons.archive),
                   label: const Text('备份与恢复'),
                 ),
                 OutlinedButton.icon(
                   key: const Key('settings-memory-center'),
                   onPressed: () => context.push('/memory'),
-                  icon: const Icon(Icons.menu_book_outlined),
+                  icon: const Icon(QiyuIcons.menu_book),
                   label: const Text('记忆中心'),
                 ),
                 OutlinedButton.icon(
                   key: const Key('settings-memory-controls'),
                   onPressed: () => unawaited(_showMemoryControls(viewModel)),
-                  icon: const Icon(Icons.shield_outlined),
+                  icon: const Icon(QiyuIcons.shield),
                   label: const Text('记忆控制总览'),
                 ),
                 TextButton.icon(
@@ -1629,7 +1630,7 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
                   onPressed: viewModel.clearing
                       ? null
                       : () => unawaited(_confirmClearData(viewModel)),
-                  icon: _busyOr(viewModel.clearing, Icons.delete_outline),
+                  icon: _busyOr(viewModel.clearing, QiyuIcons.delete),
                   label: const Text('清除产品数据'),
                 ),
               ],
@@ -1660,7 +1661,7 @@ class _PrivacySection extends StatelessWidget {
         OutlinedButton.icon(
           key: const Key('settings-privacy'),
           onPressed: () => context.push('/privacy'),
-          icon: const Icon(Icons.privacy_tip_outlined),
+          icon: const Icon(QiyuIcons.privacy_tip),
           label: const Text('查看隐私说明'),
         ),
       ],
@@ -1722,7 +1723,7 @@ class _DeveloperSectionState extends State<_DeveloperSection> {
                   OutlinedButton.icon(
                     key: const Key('settings-diagnostics'),
                     onPressed: () => context.push('/settings/diagnostics'),
-                    icon: const Icon(Icons.monitor_heart_outlined),
+                    icon: const Icon(QiyuIcons.monitor_heart),
                     label: const Text('开发者诊断'),
                   ),
               ],
@@ -2009,6 +2010,9 @@ class _ControlledDropdown extends StatelessWidget {
         value: value,
         isExpanded: true,
         items: items,
+        // 下拉箭头是框架内置图标：DropdownButton 的 `icon` 可以整只替换，
+        // 颜色和尺寸仍由它自己的 IconTheme 继承，所以图形不变、只换细描边字族。
+        icon: const Icon(QiyuIcons.arrow_drop_down),
         onChanged: (next) {
           if (next != null) {
             onChanged(next);
@@ -2040,7 +2044,7 @@ class _ResolvedConnection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(
-              Icons.check_circle_outline,
+              QiyuIcons.check_circle,
               size: 20,
               color: theme.colorScheme.primary,
             ),
@@ -2093,7 +2097,7 @@ class _StatusMessage extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            succeeded ? Icons.check_circle_outline : Icons.info_outline,
+            succeeded ? QiyuIcons.check_circle : QiyuIcons.info,
             color: color,
           ),
           const SizedBox(width: 10),

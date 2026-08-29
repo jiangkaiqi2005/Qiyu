@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../theme/qiyu_icons.dart';
 import '../accessibility.dart';
 import '../chat/local_chat_client.dart';
 import '../chat/local_chat_view_model.dart';
@@ -55,7 +56,7 @@ class HistoryView extends StatelessWidget {
                             ? null
                             : () => unawaited(viewModel.refresh()),
                         tooltip: '刷新历史',
-                        icon: const Icon(Icons.refresh),
+                        icon: const Icon(QiyuIcons.refresh),
                       ),
                     ],
                   ),
@@ -195,7 +196,7 @@ class _SessionTile extends StatelessWidget {
                     ? null
                     : () => unawaited(_confirmDelete(context)),
                 tooltip: '删除这段会话',
-                icon: const Icon(Icons.delete_outline),
+                icon: const Icon(QiyuIcons.delete),
               ),
             ],
           ),
@@ -287,7 +288,7 @@ class _HistorySessionViewState extends State<HistorySessionView> {
                         key: const Key('history-session-back'),
                         onPressed: () => backToPrevious(context),
                         tooltip: '返回历史',
-                        icon: const Icon(Icons.arrow_back),
+                        icon: const Icon(QiyuIcons.arrow_back),
                       ),
                       const SizedBox(width: 8),
                       Text(

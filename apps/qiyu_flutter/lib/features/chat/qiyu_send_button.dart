@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../shell/qiyu_widgets.dart';
 
@@ -83,8 +84,8 @@ class _QiyuSendButtonState extends State<QiyuSendButton> {
                     child: Center(
                       child: Icon(
                         widget.sending
-                            ? Icons.stop_rounded
-                            : Icons.arrow_upward_rounded,
+                            ? QiyuIcons.stop
+                            : QiyuIcons.arrow_upward,
                         size: QiyuIconSpec.sendGlyph,
                         color: QiyuColors.onAccent,
                       ),

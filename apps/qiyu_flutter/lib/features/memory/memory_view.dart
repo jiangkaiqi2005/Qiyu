@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../theme/qiyu_icons.dart';
 import '../accessibility.dart';
 import '../navigation.dart';
 import '../shell/qiyu_shell.dart';
@@ -73,7 +74,7 @@ class MemoryView extends StatelessWidget {
                             ),
                           ),
                           tooltip: '备份与恢复',
-                          icon: const Icon(Icons.archive_outlined),
+                          icon: const Icon(QiyuIcons.archive),
                         ),
                         IconButton(
                           key: const Key('refresh-memory'),
@@ -81,7 +82,7 @@ class MemoryView extends StatelessWidget {
                               ? null
                               : () => unawaited(viewModel.refresh()),
                           tooltip: '刷新记忆',
-                          icon: const Icon(Icons.refresh),
+                          icon: const Icon(QiyuIcons.refresh),
                         ),
                       ],
                     ),
@@ -182,7 +183,7 @@ class _RecoveryBanner extends StatelessWidget {
         shape: const Border(),
         collapsedShape: const Border(),
         leading: Icon(
-          Icons.health_and_safety_outlined,
+          QiyuIcons.health_and_safety,
           color: theme.colorScheme.error,
         ),
         title: const Text('部分记忆文件出现过损坏'),
@@ -541,7 +542,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
                         key: const Key('memory-item-back'),
                         onPressed: () => backToPrevious(context),
                         tooltip: '返回记忆',
-                        icon: const Icon(Icons.arrow_back),
+                        icon: const Icon(QiyuIcons.arrow_back),
                       ),
                       const SizedBox(width: 8),
                       Text(

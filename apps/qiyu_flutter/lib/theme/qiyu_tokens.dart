@@ -372,6 +372,11 @@ abstract final class QiyuMotion {
 
 /// 图标尺寸（design-system §4）：统一 24px、outlined、细描边风格。
 abstract final class QiyuIconSpec {
+  /// 图标字族：Material Symbols Outlined 的 ExtraLight（wght 200）静态子集。
+  /// §4 的「1.2 细描边」只能靠换字族拿到——Flutter 内置 `Icons.*` 是定宽字形，
+  /// [Icon] 也没有 `strokeWidth` 入口。码位常量集中在 `qiyu_icons.dart`。
+  static const String fontFamily = 'Material Symbols Outlined';
+
   static const double size = 24;
 
   /// 发送钮里的上箭头图形：圆形 34 直径下收一档。

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../theme/qiyu_icons.dart';
 import '../navigation.dart';
 import 'settings_client.dart';
 import 'settings_view_model.dart';
@@ -49,7 +50,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
                       key: const Key('diagnostics-back'),
                       onPressed: () => backToPrevious(context),
                       tooltip: '返回设置',
-                      icon: const Icon(Icons.arrow_back),
+                      icon: const Icon(QiyuIcons.arrow_back),
                     ),
                     const SizedBox(width: 8),
                     Text('开发者诊断', style: theme.textTheme.headlineSmall),
@@ -60,7 +61,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
                           ? null
                           : () => unawaited(viewModel.loadDiagnostics()),
                       tooltip: '刷新诊断',
-                      icon: const Icon(Icons.refresh),
+                      icon: const Icon(QiyuIcons.refresh),
                     ),
                   ],
                 ),

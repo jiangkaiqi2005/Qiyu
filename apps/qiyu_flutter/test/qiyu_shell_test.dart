@@ -18,6 +18,7 @@ import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_connection_status.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
+import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
@@ -440,7 +441,7 @@ void main() {
       final glow = (glowBox.decoration as BoxDecoration).boxShadow!;
       expect(glow.single.color, QiyuColors.sendGlow);
       expect(
-        tester.widget<Icon>(find.byIcon(Icons.arrow_upward_rounded)).color,
+        tester.widget<Icon>(find.byIcon(QiyuIcons.arrow_upward)).color,
         QiyuColors.onAccent,
       );
     });
@@ -488,7 +489,7 @@ void main() {
       await tester.pump();
       expect(find.byKey(const Key('chat-stop')), findsOneWidget);
       expect(find.byKey(const Key('chat-send')), findsNothing);
-      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      expect(find.byIcon(QiyuIcons.stop), findsOneWidget);
 
       gateway.release();
       await tester.pumpAndSettle();
