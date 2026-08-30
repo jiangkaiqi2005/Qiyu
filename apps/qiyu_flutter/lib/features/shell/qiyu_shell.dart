@@ -131,8 +131,22 @@ class _QiyuShellState extends State<QiyuShell>
     setState(() => _drawerOpen = open);
     if (open) {
       await _drawerController.forward();
+      // 遮罩**显式**接管键盘：`Focus(autofocus: true)` 只在焦点作用域里还没有
+      // 人持焦时才生效，而合一页的 composer 是自动获焦的——只靠 autofocus 的话
+      // 焦点留在输入框，Esc 落不进遮罩、抽屉收不回来，所以开抽屉时要把焦点真的
+      // 交给遮罩（§9 键盘可关闭）。
+      if (mounted) {
+        _scrimFocusNode.requestFocus();
+      }
     } else {
       await _drawerController.reverse();
+      // 焦点交还三条杠：抽屉开着时焦点在遮罩上（它才接得住 Esc），而遮罩随
+      // 收回一起被摘出焦点树，不主动给回去的话键盘用户关掉抽屉就丢了位置
+      // （design-system §9）。放在 reverse 之后，是为了让环在抽屉真正合上、
+      // 遮罩节点已经不在焦点链上时才亮起。
+      if (mounted) {
+        _menuFocusNode.requestFocus();
+      }
     }
   }
 

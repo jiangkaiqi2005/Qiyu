@@ -115,6 +115,25 @@ void main() {
       expect(find.byKey(const Key('nav-history')), findsNothing);
     });
 
+    testWidgets('窄屏按 Esc 收回抽屉后焦点回到三条杠', (tester) async {
+      await _pumpShell(tester, width: 420, height: 900);
+      final menu = _menuButtonFocusNode(tester);
+
+      await tester.tap(find.byKey(const Key('nav-menu-button')));
+      await tester.pumpAndSettle();
+      // 前提：抽屉开着时是遮罩接管键盘（Esc 才接得住），焦点不在三条杠上。
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'nav-scrim');
+      expect(menu.hasFocus, isFalse);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      // 关掉了还得回到原来那一处：三条杠重新持焦，键盘用户不用从头 Tab。
+      expect(find.byKey(const Key('nav-history')), findsNothing);
+      expect(menu.hasFocus, isTrue);
+      expect(FocusManager.instance.primaryFocus, menu);
+    });
+
     testWidgets('点品牌槽回空状态首页', (tester) async {
       await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
       expect(_location(tester), '/chat');
@@ -778,6 +797,11 @@ double _greetingFadeOpacity(WidgetTester tester) =>
         matching: find.byType(FadeTransition),
       ),
     ).opacity.value;
+
+/// 三条杠的焦点节点：壳持有它并同时交给焦点环与 `InkWell`，测试从按钮上读
+/// 到的就是同一个节点——断言的是「焦点有没有落在这个可激活控件上」，不是树结构。
+FocusNode _menuButtonFocusNode(WidgetTester tester) =>
+    tester.widget<InkWell>(find.byKey(const Key('nav-menu-button'))).focusNode!;
 
 BoxDecoration _navItemContainer(WidgetTester tester, String ringKey) {
   final container = tester.widget<AnimatedContainer>(
