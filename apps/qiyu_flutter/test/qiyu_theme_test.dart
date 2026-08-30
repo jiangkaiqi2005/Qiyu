@@ -54,20 +54,38 @@ double _contrast(Color foreground, Color background) {
 }
 
 /// token 层里所有**裸写字面值**的色常量：读源码抓 `static const Color X =
-/// Color(0x…)`，不在测试里手抄清单。手抄的清单只会锁住抄下来的那几档，
-/// 新增一档危险色照样溜过去；读源码则任何新档位都必须过色相断言。
-/// 别名档（`neutralEmphasis = onAccent` 这类）复用已有色值、不带新色相，
-/// 因此不匹配本模式，也不需要匹配。
-Map<String, Color> _tokenColorLiterals() {
+/// Color(0x…)`，十六进制 6 到 8 位都收，值是源码里写下的那串数字（不是
+/// [Color]——位数本身要能被核）。只收 8 位的话，`Color(0xCC9999)` 这一档会
+/// 整条从扫描里漏掉，色相断言连看都看不到它。不在测试里手抄清单：手抄的清单
+/// 只会锁住抄下来的那几档，新增一档危险色照样溜过去；读源码则任何新档位都
+/// 必须过色相断言，前提是它得先被扫到——[_undocumentedColorDeclarations]
+/// 就是核这个前提的。别名档（`neutralEmphasis = onAccent` 这类）复用已有色值、
+/// 不带新色相，因此不匹配本模式，也不需要匹配。
+Map<String, String> _tokenColorLiterals() {
   final declaration = RegExp(
-    r'static const Color (\w+) = Color\(0x([0-9A-Fa-f]{8})\);',
+    r'static const Color (\w+) = Color\(0x([0-9A-Fa-f]{6,8})\);',
   );
   return {
     for (final match in declaration.allMatches(
       _read('lib/theme/qiyu_tokens.dart'),
     ))
-      match.group(1)!: Color(int.parse(match.group(2)!, radix: 16)),
+      match.group(1)!: match.group(2)!,
   };
+}
+
+/// token 层里既不被 [_tokenColorLiterals] 扫到、也不是「复用已有档」别名的
+/// [Color] 声明。色相纪律靠的是读源码，那么任何换了构造写法的档
+/// （`Color.fromARGB`、`Color.fromRGBO`、带命名参数的构造……）都必须在这里
+/// 现形，而不是悄悄绕过扫描；这条集合非空就是纪律漏口，不是测试该放宽的地方。
+Set<String> _undocumentedColorDeclarations() {
+  final source = _read('lib/theme/qiyu_tokens.dart');
+  final declared = RegExp(
+    r'static const Color (\w+)',
+  ).allMatches(source).map((m) => m.group(1)!).toSet();
+  final aliased = RegExp(
+    r'static const Color (\w+) = [A-Za-z_]\w*;',
+  ).allMatches(source).map((m) => m.group(1)!).toSet();
+  return declared.difference({..._tokenColorLiterals().keys, ...aliased});
 }
 
 /// 危险暖色相：红（0°）到琥珀（约 45°）这一段，加一点回绕的品红侧（≥340°）。
@@ -182,11 +200,27 @@ void main() {
       );
       // 三色纪律的色板侧：暖色相（红到琥珀这一段）在整个 token 层只准有
       // danger 一档。新增第二档红（或把旧值搬回来当「状态底色」）会直接落进
-      // 这个集合，让本条变红——不靠人记得去改台账。
-      final warmHuedTokens = _tokenColorLiterals().entries
-          .where((entry) => _isWarmHue(entry.value))
-          .map((entry) => entry.key)
-          .toSet();
+      // 这个集合，让本条变红——不靠人记得去改台账。前提是它得先被扫到，所以
+      // 扫描面本身也在这里核掉。
+      expect(
+        _undocumentedColorDeclarations(),
+        isEmpty,
+        reason: 'token 层有 Color 声明换了构造写法，色相扫描看不见它',
+      );
+      final literals = _tokenColorLiterals();
+      for (final entry in literals.entries) {
+        // 6 位等于 alpha 0（全透明），而 _isWarmHue 对透明档早退——那种写法
+        // 既在页面上画不出颜色，也顺手绕过了色相纪律，一律不许进 token 层。
+        expect(
+          entry.value.length,
+          8,
+          reason: '${entry.key} 的字面值没写满 8 位 alpha',
+        );
+      }
+      final warmHuedTokens = {
+        for (final entry in literals.entries)
+          if (_isWarmHue(Color(int.parse(entry.value, radix: 16)))) entry.key,
+      };
       expect(warmHuedTokens, {'danger'});
     });
 

@@ -24,9 +24,9 @@ const _revealTimeout = Duration(seconds: 20);
 
 /// 四区记忆中心（ticket 19 读取 / ticket 20 控制）：最近发生、长期
 /// 印象、关于你、我们的关系。导航只用用户语言；条目操作按钮常驻，
-/// 冻结/解除冻结与解除禁提直接执行，修正与敏感揭示要先过取内容与展示
-/// 原文的对话框，禁提与删除先经明确确认；结果以成功、部分失败、
-/// 可恢复失败三态呈现。
+/// 冻结/解除冻结与解除禁提直接执行，修正先过预填当下已有原文的对话框，
+/// 敏感揭示先取回原文再在一次性对话框里展示，禁提与删除先经明确确认；
+/// 结果以成功、部分失败、可恢复失败三态呈现。
 class MemoryView extends StatelessWidget {
   const MemoryView({super.key, this.backupGateway, this.backupPlatform});
 
@@ -999,12 +999,14 @@ class _MemoryCard extends StatelessWidget {
 /// 一颗都不隐藏，换的只有排法。与改造前的 Row 有一处确有意的不同：簇之间新留了
 /// [QiyuSpacing.xs] 的呼吸位，操作簇内部颗与颗之间不再另加容器间距。
 class _MemoryHeaderLine extends StatelessWidget {
-  const _MemoryHeaderLine({required this.leading, this.trailing = const []});
+  const _MemoryHeaderLine({required this.leading, required this.trailing});
 
   /// 左侧信息簇：状态芯片、正文或证据行。
   final Widget leading;
 
   /// 右侧簇，按传入顺序排入（时间戳 / 说明文字，最后是 [_MemoryActionButtons]）。
+  /// 传空表是真实语义：状态包行只读，右侧没有任何东西（T24 定稿），此时整行
+  /// 只剩左侧信息簇。
   final List<Widget> trailing;
 
   @override
