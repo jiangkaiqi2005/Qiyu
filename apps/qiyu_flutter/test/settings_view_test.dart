@@ -730,71 +730,65 @@ void main() {
     expect(find.byKey(const Key('forget-web-search-key')), findsNothing);
   });
 
-  testWidgets(
-    'FocusNode 保护与编辑态草稿：获焦编辑中绝不被覆盖，且 tts-extra-params 为 multiline',
-    (tester) async {
-      final ttsGateway = _MutableTtsSettingsGateway(
-        const TtsSettings(
-          configured: true,
-          keySet: true,
-          provider: TtsServiceKind.volcTts,
-          baseUrl:
-              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
-          model: 'seed-tts-2.0',
-          voice: 'zh_female_vv_uranus_bigtts',
-          extraParams: {'old': 'val'},
-        ),
-      );
-
-      await tester.pumpWidget(
-        await _app(
-          settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-          providerGateway: _FixedProviderSettingsGateway(configured: false),
-          ttsGateway: ttsGateway,
-        ),
-      );
-      await _openSettings(tester);
-      await _expandSection(tester, 'tts');
-
-      // 展开高级参数
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('tts-advanced-params-tile')),
-        200,
-        scrollable: _verticalScrollable(),
-        maxScrolls: 30,
-      );
-      await tester.ensureVisible(
-        find.byKey(const Key('tts-advanced-params-tile')),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
-      await tester.pumpAndSettle();
-
-      final extraField = find.byKey(const Key('tts-extra-params'));
-      final textFieldWidget = tester.widget<TextField>(extraField);
-      expect(textFieldWidget.keyboardType, TextInputType.multiline);
-      expect(textFieldWidget.focusNode, isNotNull);
-
-      // 用户正在获焦输入未保存的草稿
-      await tester.enterText(extraField, '{"user_draft": 123}');
-      await tester.pump();
-      expect(
-        tester.widget<TextField>(extraField).focusNode?.hasFocus,
-        isTrue,
-      );
-
-      // 重新触发组件树更新/重绘，草稿绝不被冲掉
-      await tester.pump();
-      expect(
-        tester.widget<TextField>(extraField).controller!.text,
-        '{"user_draft": 123}',
-      );
-    },
-  );
-
-  testWidgets('设置页是阅读式：分节不带卡片底，标题是可点的次要色小字距分节头', (
+  testWidgets('FocusNode 保护与编辑态草稿：获焦编辑中绝不被覆盖，且 tts-extra-params 为 multiline', (
     tester,
   ) async {
+    final ttsGateway = _MutableTtsSettingsGateway(
+      const TtsSettings(
+        configured: true,
+        keySet: true,
+        provider: TtsServiceKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        voice: 'zh_female_vv_uranus_bigtts',
+        extraParams: {'old': 'val'},
+      ),
+    );
+
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        ttsGateway: ttsGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'tts');
+
+    // 展开高级参数
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('tts-advanced-params-tile')),
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 30,
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('tts-advanced-params-tile')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
+    await tester.pumpAndSettle();
+
+    final extraField = find.byKey(const Key('tts-extra-params'));
+    final textFieldWidget = tester.widget<TextField>(extraField);
+    expect(textFieldWidget.keyboardType, TextInputType.multiline);
+    expect(textFieldWidget.focusNode, isNotNull);
+
+    // 用户正在获焦输入未保存的草稿
+    await tester.enterText(extraField, '{"user_draft": 123}');
+    await tester.pump();
+    expect(tester.widget<TextField>(extraField).focusNode?.hasFocus, isTrue);
+
+    // 重新触发组件树更新/重绘，草稿绝不被冲掉
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(extraField).controller!.text,
+      '{"user_draft": 123}',
+    );
+  });
+
+  testWidgets('设置页是阅读式：分节不带卡片底，标题是可点的次要色小字距分节头', (tester) async {
     // 整页层面的断言要七节同时在场（设置页是懒建的 ListView）。
     _useFullPageViewport(tester);
     await tester.pumpWidget(
@@ -883,9 +877,7 @@ void main() {
     }
   });
 
-  testWidgets('分节顺序按 §8 定案序排列，且每一格排的确实是点名的那一节', (
-    tester,
-  ) async {
+  testWidgets('分节顺序按 §8 定案序排列，且每一格排的确实是点名的那一节', (tester) async {
     // 整页层面的次序要七节同时在场。
     _useFullPageViewport(tester);
     await tester.pumpWidget(
@@ -925,9 +917,7 @@ void main() {
     }
   });
 
-  testWidgets('折叠默认档：只展开模型连接与本地数据，收起的节里控件不在树上', (
-    tester,
-  ) async {
+  testWidgets('折叠默认档：只展开模型连接与本地数据，收起的节里控件不在树上', (tester) async {
     // 整页层面的默认档要七节同时在场。
     _useFullPageViewport(tester);
     await tester.pumpWidget(
@@ -964,9 +954,7 @@ void main() {
     expect(find.byKey(const Key('settings-clear-data')), findsOneWidget);
   });
 
-  testWidgets('折叠只写本地 UI 存储：点标题能收也能展，一次都不碰主持久化链路', (
-    tester,
-  ) async {
+  testWidgets('折叠只写本地 UI 存储：点标题能收也能展，一次都不碰主持久化链路', (tester) async {
     final store = InMemorySettingsCollapseStore();
     final settingsGateway = await _pumpSettingsPage(
       tester,
@@ -977,11 +965,12 @@ void main() {
     // 收起的节能点开：正文与节内控件回到树上。
     await _expandSection(tester, 'web_search');
     expect(find.byKey(const Key('web-search-api-key')), findsOneWidget);
-    expect(
-      store.readCollapsed(),
-      {'tts', 'stt', 'privacy', 'developer'},
-      reason: '展开没写进本地 UI 存储',
-    );
+    expect(store.readCollapsed(), {
+      'tts',
+      'stt',
+      'privacy',
+      'developer',
+    }, reason: '展开没写进本地 UI 存储');
 
     // 默认展开的节能收回去，再点又能展开。
     expect(_isSectionExpanded(tester, 'local_data'), isTrue);
@@ -997,18 +986,15 @@ void main() {
       isTrue,
       reason: '再点标题没能把这一节展开回来',
     );
-    expect(
-      store.readCollapsed(),
-      {'tts', 'stt', 'privacy', 'developer'},
-      reason: '一收一展之后存储没跟着回到原样',
-    );
+    expect(store.readCollapsed(), {
+      'tts',
+      'stt',
+      'privacy',
+      'developer',
+    }, reason: '一收一展之后存储没跟着回到原样');
 
     // 折叠状态是 UI 状态：这一路点下来一次都没写 Host 那侧的偏好（§8）。
-    expect(
-      settingsGateway.prefWrites,
-      0,
-      reason: '折叠状态漏进了主持久化链路',
-    );
+    expect(settingsGateway.prefWrites, 0, reason: '折叠状态漏进了主持久化链路');
   });
 
   testWidgets('同一份本地存储重建页面后，上次收起来的节还收着', (tester) async {
@@ -1037,10 +1023,13 @@ void main() {
     );
     // 存的就是「收起的节 id 集合」：默认收起的五节里去掉联网搜索（展开了）、
     // 再加上本地数据（收起了）；模型连接这一路没碰过。
-    expect(
-      store.readCollapsed(),
-      {'tts', 'stt', 'privacy', 'developer', 'local_data'},
-    );
+    expect(store.readCollapsed(), {
+      'tts',
+      'stt',
+      'privacy',
+      'developer',
+      'local_data',
+    });
 
     // 防白测：上一枚 State 与存储此刻内容相同，光看上面两组断言分不出
     // 「读了存储」还是「State 原地留着」。这里把存储改成与上一枚 State 明显
@@ -1076,9 +1065,7 @@ void main() {
     expect(store.readCollapsed(), {'tts', 'privacy'});
   });
 
-  testWidgets('收起只藏正文，不卸载分节：填了一半的输入框展开回来还在', (
-    tester,
-  ) async {
+  testWidgets('收起只藏正文，不卸载分节：填了一半的输入框展开回来还在', (tester) async {
     await _pumpSettingsPage(tester, InMemorySettingsCollapseStore());
     await _expandSection(tester, 'web_search');
 
@@ -1113,9 +1100,7 @@ void main() {
     );
   });
 
-  testWidgets('状态文案不给成功着色：失败才是 danger，成功退回主题默认字色', (
-    tester,
-  ) async {
+  testWidgets('状态文案不给成功着色：失败才是 danger，成功退回主题默认字色', (tester) async {
     final gateway = _MutableProviderSettingsGateway();
     await tester.pumpWidget(
       await _app(
@@ -1168,7 +1153,9 @@ void main() {
     );
     expect(
       foregroundOf(successMessage),
-      DefaultTextStyle.of(tester.element(find.text(successMessage))).style.color,
+      DefaultTextStyle.of(
+        tester.element(find.text(successMessage)),
+      ).style.color,
       reason: '成功文案没走主题默认字色：它自带了前景色',
     );
     expect(statusIconOf().color, isNull);
@@ -1206,13 +1193,13 @@ void main() {
     final menu = tester.getRect(find.byKey(const Key('nav-menu-button')));
     expect(
       tester
-              .getTopLeft(
-                find.descendant(
-                  of: find.byType(ProviderSettingsView),
-                  matching: find.text('设置'),
-                ),
-              )
-              .dx,
+          .getTopLeft(
+            find.descendant(
+              of: find.byType(ProviderSettingsView),
+              matching: find.text('设置'),
+            ),
+          )
+          .dx,
       greaterThanOrEqualTo(menu.right),
       reason: '「设置」标题的左边界不得落在三条杠的命中区里',
     );
@@ -1322,8 +1309,10 @@ Future<void> _openSettings(WidgetTester tester) async {
 /// 判据是「正文那块在不在树上」——收起时 [_SettingsPanel] 只不画正文，分节自身
 /// 与它的标题都还在（标题就是唯一的导航入口）。不去看标题文本、也不去看指示符
 /// 朝向，两者在两种状态下都没差别或不足以定位。
-bool _isSectionExpanded(WidgetTester tester, String sectionId) =>
-    find.byKey(Key('settings-section-content-$sectionId')).evaluate().isNotEmpty;
+bool _isSectionExpanded(WidgetTester tester, String sectionId) => find
+    .byKey(Key('settings-section-content-$sectionId'))
+    .evaluate()
+    .isNotEmpty;
 
 /// 整页层面的断言要七节同时在场，而设置页是**懒建的 ListView**：默认 600 高的
 /// 视口只建得出头两三节，「某一节的正文在不在树上」这类判据会因为它还没被建
@@ -1402,9 +1391,7 @@ Future<_FakeSettingsGateway> _pumpSettingsPage(
         ),
         ChangeNotifierProvider.value(value: settingsViewModel),
       ],
-      child: MaterialApp(
-        home: ProviderSettingsView(collapseStore: store),
-      ),
+      child: MaterialApp(home: ProviderSettingsView(collapseStore: store)),
     ),
   );
   await tester.pumpAndSettle();
@@ -1437,22 +1424,20 @@ Future<void> _expandAllSections(WidgetTester tester) async {
 /// 不能反过来按页内键（如 `settings-scroll`）锁死：设置页里再点进的开发者诊断页
 /// 与隐私页是各自独立的路由、不挂壳，也就没有那个键，锁死会让这些页上的滚动
 /// 断言取不到容器。
-Finder _verticalScrollable() => find
-    .byElementPredicate((element) {
-      final widget = element.widget;
-      if (widget is! Scrollable || widget.axisDirection != AxisDirection.down) {
-        return false;
-      }
-      var insideNavPanel = false;
-      element.visitAncestorElements((ancestor) {
-        if (ancestor.widget.key == const Key('nav-scroll')) {
-          insideNavPanel = true;
-        }
-        return true;
-      });
-      return !insideNavPanel;
-    })
-    .first;
+Finder _verticalScrollable() => find.byElementPredicate((element) {
+  final widget = element.widget;
+  if (widget is! Scrollable || widget.axisDirection != AxisDirection.down) {
+    return false;
+  }
+  var insideNavPanel = false;
+  element.visitAncestorElements((ancestor) {
+    if (ancestor.widget.key == const Key('nav-scroll')) {
+      insideNavPanel = true;
+    }
+    return true;
+  });
+  return !insideNavPanel;
+}).first;
 
 final class _FakeSettingsGateway implements SettingsGateway {
   _FakeSettingsGateway({this.onCleared});

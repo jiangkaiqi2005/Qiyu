@@ -492,9 +492,11 @@ class _ProviderSectionState extends State<_ProviderSection> {
               _ControlledDropdown(
                 dropdownKey: const Key('provider-model-preset'),
                 label: '模型',
-                value: _customModel ||
-                        !_selectedConnection.models
-                            .contains(_modelController.text)
+                value:
+                    _customModel ||
+                        !_selectedConnection.models.contains(
+                          _modelController.text,
+                        )
                     ? customModelValue
                     : _modelController.text,
                 items: [
@@ -558,10 +560,9 @@ class _ProviderSectionState extends State<_ProviderSection> {
                           key: const Key('provider-temperature'),
                           controller: _temperatureController,
                           focusNode: _temperatureFocusNode,
-                          keyboardType:
-                              const TextInputType.numberWithOptions(
-                                decimal: true,
-                              ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
                           decoration: const InputDecoration(
                             labelText: 'temperature',
                             border: OutlineInputBorder(),
@@ -763,7 +764,8 @@ class _WebSearchSectionState extends State<_WebSearchSection> {
                     key: const Key('forget-web-search-key'),
                     onPressed: viewModel.saving
                         ? null
-                        : () => unawaited(_confirmForgetWebSearchKey(viewModel)),
+                        : () =>
+                              unawaited(_confirmForgetWebSearchKey(viewModel)),
                     child: const Text('忘记 AnySearch Key'),
                   ),
                 ),
@@ -832,11 +834,7 @@ class _SttSectionState extends State<_SttSection> {
         _sttBaseUrlFocusNode,
         settings.baseUrl ?? '',
       );
-      _syncField(
-        _sttModelController,
-        _sttModelFocusNode,
-        settings.model ?? '',
-      );
+      _syncField(_sttModelController, _sttModelFocusNode, settings.model ?? '');
     } else {
       final defaults = _sttProtocolDefaults(_sttProvider);
       _syncField(_sttBaseUrlController, _sttBaseUrlFocusNode, defaults.url);
@@ -1030,9 +1028,7 @@ class _SttSectionState extends State<_SttSection> {
               autocorrect: false,
               decoration: InputDecoration(
                 labelText: 'API Key',
-                hintText: keySet
-                    ? '留空即可继续使用已保存的 Key'
-                    : '保存后写入本机 provider.json',
+                hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -1147,19 +1143,15 @@ class _TtsSectionState extends State<_TtsSection> {
         _ttsBaseUrlFocusNode,
         settings.baseUrl ?? '',
       );
-      _syncField(
-        _ttsModelController,
-        _ttsModelFocusNode,
-        settings.model ?? '',
-      );
+      _syncField(_ttsModelController, _ttsModelFocusNode, settings.model ?? '');
       final voice = settings.voice?.trim() ?? '';
       _syncField(_ttsVoiceController, _ttsVoiceFocusNode, voice);
       _customTtsVoice = voice.isNotEmpty && !presets.any((p) => p.id == voice);
       _ttsSpeed = settings.speed;
       final extraText =
           (settings.extraParams != null && settings.extraParams!.isNotEmpty)
-              ? const JsonEncoder.withIndent('  ').convert(settings.extraParams)
-              : '';
+          ? const JsonEncoder.withIndent('  ').convert(settings.extraParams)
+          : '';
       _syncField(
         _ttsExtraParamsController,
         _ttsExtraParamsFocusNode,
@@ -1221,9 +1213,9 @@ class _TtsSectionState extends State<_TtsSection> {
       try {
         final decoded = jsonDecode(extraText);
         if (decoded is! Map) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('自定义高级参数必须是 JSON 对象。')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('自定义高级参数必须是 JSON 对象。')));
           return null;
         }
         extraParams = decoded.cast<String, Object?>();
@@ -1361,12 +1353,12 @@ class _TtsSectionState extends State<_TtsSection> {
                 final effectiveVoiceValue = _customTtsVoice
                     ? customVoiceValue
                     : (currentVoice.isEmpty
-                        ? (voicePresets.isNotEmpty
-                            ? voicePresets.first.id
-                            : customVoiceValue)
-                        : (voicePresets.any((p) => p.id == currentVoice)
-                            ? currentVoice
-                            : customVoiceValue));
+                          ? (voicePresets.isNotEmpty
+                                ? voicePresets.first.id
+                                : customVoiceValue)
+                          : (voicePresets.any((p) => p.id == currentVoice)
+                                ? currentVoice
+                                : customVoiceValue));
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1399,7 +1391,9 @@ class _TtsSectionState extends State<_TtsSection> {
                     ),
                     if (_customTtsVoice ||
                         (currentVoice.isNotEmpty &&
-                            voicePresets.every((p) => p.id != currentVoice))) ...[
+                            voicePresets.every(
+                              (p) => p.id != currentVoice,
+                            ))) ...[
                       const SizedBox(height: 16),
                       TextField(
                         key: const Key('tts-voice'),
@@ -1471,9 +1465,7 @@ class _TtsSectionState extends State<_TtsSection> {
               autocorrect: false,
               decoration: InputDecoration(
                 labelText: 'API Key',
-                hintText: keySet
-                    ? '留空即可继续使用已保存的 Key'
-                    : '保存后写入本机 provider.json',
+                hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -1505,14 +1497,14 @@ class _TtsSectionState extends State<_TtsSection> {
                       Text(
                         _ttsProvider == TtsServiceKind.volcTts
                             ? '配置豆包语音合成的深合并参数，例如：\n'
-                              '{\n'
-                              '  "audio_params": { "sample_rate": 16000 },\n'
-                              '  "additions": { "explicit_dialect": "sichuan" }\n'
-                              '}'
+                                  '{\n'
+                                  '  "audio_params": { "sample_rate": 16000 },\n'
+                                  '  "additions": { "explicit_dialect": "sichuan" }\n'
+                                  '}'
                             : '配置 OpenAI 兼容语音合成的顶层扩展参数，例如：\n'
-                              '{\n'
-                              '  "response_format": "mp3"\n'
-                              '}',
+                                  '{\n'
+                                  '  "response_format": "mp3"\n'
+                                  '}',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -1571,13 +1563,13 @@ class _TtsSectionState extends State<_TtsSection> {
                 OutlinedButton.icon(
                   key: const Key('test-tts-connection'),
                   onPressed: viewModel.testing
-                    ? null
-                    : () {
-                        final draft = _readTtsDraft();
-                        if (draft != null) {
-                          unawaited(viewModel.testConnection(draft));
-                        }
-                      },
+                      ? null
+                      : () {
+                          final draft = _readTtsDraft();
+                          if (draft != null) {
+                            unawaited(viewModel.testConnection(draft));
+                          }
+                        },
                   icon: _busyOr(viewModel.testing, QiyuIcons.bolt),
                   label: const Text('测试连接并试听'),
                 ),
@@ -1592,10 +1584,7 @@ class _TtsSectionState extends State<_TtsSection> {
 
 /// 本地数据管理区块：本地路径、备份恢复、记忆控制总览与清除数据。
 class _LocalDataSection extends StatefulWidget {
-  const _LocalDataSection({
-    this.backupGateway,
-    this.backupPlatform,
-  });
+  const _LocalDataSection({this.backupGateway, this.backupPlatform});
 
   final BackupGateway? backupGateway;
   final BackupPlatform? backupPlatform;
@@ -1776,7 +1765,8 @@ class _DeveloperSectionState extends State<_DeveloperSection> {
                     value: viewModel.developerMode,
                     onChanged: viewModel.busy
                         ? null
-                        : (value) => unawaited(viewModel.setDeveloperMode(value)),
+                        : (value) =>
+                              unawaited(viewModel.setDeveloperMode(value)),
                   ),
                 ],
               ),
@@ -2005,15 +1995,13 @@ class _SettingsSectionHeaderState extends State<_SettingsSectionHeader> {
     final theme = Theme.of(context);
     // 字号走 §3 已登记的次要档（13px），字重与字距按原型变体 B：
     // `font-weight: 400; letter-spacing: 3px`（index.html:229-230）。
-    final headerStyle =
-        theme.textTheme.bodySmall
-            ?.copyWith(
-              fontWeight: FontWeight.w400,
-              letterSpacing: QiyuType.sectionHeaderLetterSpacing,
-              color: _hovered
-                  ? QiyuColors.sectionHeaderHover
-                  : QiyuColors.sectionHeader,
-            );
+    final headerStyle = theme.textTheme.bodySmall?.copyWith(
+      fontWeight: FontWeight.w400,
+      letterSpacing: QiyuType.sectionHeaderLetterSpacing,
+      color: _hovered
+          ? QiyuColors.sectionHeaderHover
+          : QiyuColors.sectionHeader,
+    );
     return QiyuOwnFocusRing(
       builder: (context, focusNode) => InkWell(
         key: Key('settings-section-header-${widget.sectionId}'),
