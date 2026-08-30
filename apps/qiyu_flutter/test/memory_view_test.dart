@@ -1406,6 +1406,179 @@ void main() {
     expect(gateway.actionCalls, isNot(contains('delete:entry-1')));
   });
 
+  testWidgets('极窄窗口叠加放大字号：条目头部不溢出，时间与按钮全部在场', (
+    tester,
+  ) async {
+    // 上面那条只测到 400 逻辑像素且不放大字号；条目头部右侧是「时间 + 四颗
+    // 常驻按钮」的固定宽度簇，窗口再窄一档、字再大一档就撞上 ticket 24 立下的
+    // 「小窗/字号放大绝不产生 RenderFlex 溢出」不变量。溢出会作为布局异常把本条
+    // 用例直接判红，不需要额外断言兜着。
+    const width = 300.0;
+    tester.view.physicalSize = const Size(width, 800);
+    tester.view.devicePixelRatio = 1;
+    // 本仓 Flutter 版本的注入点是 textScaleFactor（TextScaler 由它派生）。
+    tester.platformDispatcher.textScaleFactorTestValue = 1.4;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await _pumpMemoryCenter(tester, _fullOverview(), viaDrawer: true);
+
+    // 信息一律不许丢：换行只准改变排法，不准收起时间戳或任何一颗按钮。
+    // 条目时间取的是「现在减一小时」的时:分，按形状定位而不是按字面量。
+    final tile = find.byKey(const Key('memory-entry-entry-1'));
+    final stamp = find.descendant(
+      of: tile,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            RegExp(r'^\d{2}:\d{2}$').hasMatch(widget.data ?? ''),
+      ),
+    );
+    expect(stamp, findsOneWidget, reason: '极窄窗口下条目时间不许被藏掉');
+    // 先确认字号真的放大到这一页上，否则这条用例退化成普通窄屏、什么也没测到。
+    expect(
+      MediaQuery.textScalerOf(tester.element(stamp)).scale(100),
+      140,
+      reason: 'textScaleFactor 注入没落到条目所在的 MediaQuery 上',
+    );
+    final stampRect = tester.getRect(stamp);
+    expect(stampRect.left, greaterThanOrEqualTo(0));
+    expect(stampRect.right, lessThanOrEqualTo(width));
+    expect(
+      stampRect.bottom,
+      lessThanOrEqualTo(800),
+      reason: '放大字号后条目头部顶出视口下沿',
+    );
+
+    for (final action in ['edit', 'freeze', 'ban', 'delete']) {
+      final finder = find.byKey(Key('memory-action-entry-1-$action'));
+      expect(finder, findsOneWidget, reason: '极窄窗口缺少 $action 按钮');
+      final rect = tester.getRect(finder);
+      expect(
+        rect.right,
+        lessThanOrEqualTo(width),
+        reason: '$action 按钮被裁出视口右侧',
+      );
+      expect(
+        rect.left,
+        greaterThanOrEqualTo(0),
+        reason: '$action 按钮被推出视口左缘',
+      );
+      expect(
+        rect.bottom,
+        lessThanOrEqualTo(800),
+        reason: '$action 按钮换行后落到视口之外',
+      );
+    }
+
+    // 四区条目用的是同一个常驻操作簇，逐区核一遍：TabBar 是横滚容器，
+    // 极窄窗口下标签本身要滚出来才点得到。
+    for (final tab in ['longterm', 'persona', 'relationship']) {
+      final tabFinder = find.byKey(Key('memory-tab-$tab'));
+      await tester.ensureVisible(tabFinder);
+      await tester.pumpAndSettle();
+      await tester.tap(tabFinder);
+      await tester.pumpAndSettle();
+      for (final element in find.byType(IconButton).evaluate()) {
+        final box = element.renderObject! as RenderBox;
+        final rect = box.localToGlobal(Offset.zero) & box.size;
+        final key = (element.widget as IconButton).key.toString();
+        expect(
+          rect.right,
+          lessThanOrEqualTo(width),
+          reason: '$tab 区 $key 被裁出视口右侧',
+        );
+        expect(
+          rect.left,
+          greaterThanOrEqualTo(0),
+          reason: '$tab 区 $key 被推出视口左缘',
+        );
+      }
+    }
+  });
+
+  testWidgets('宽屏下条目头部保持芯片在左、时间与操作贴右', (tester) async {
+    // 头部从 Row 换成两簇 Wrap 之后，宽屏表现必须和换之前一致：
+    // 常驻操作贴右边界、与时间戳和状态芯片同处一行。贴不到右边说明
+    // 外层没撑满整行宽（Wrap 的主轴尺寸会收缩到内容宽度）。
+    await _pumpMemoryCenter(tester, _fullOverview());
+    final tile = find.byKey(const Key('memory-entry-entry-1'));
+    final stamp = find.descendant(
+      of: tile,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            RegExp(r'^\d{2}:\d{2}$').hasMatch(widget.data ?? ''),
+      ),
+    );
+    final tileRect = tester.getRect(tile);
+    final stampRect = tester.getRect(stamp);
+    final deleteRect = tester.getRect(
+      find.byKey(const Key('memory-action-entry-1-delete')),
+    );
+    // 状态芯片是 lib 内私有组件，按它的文字定位：entry-1 的 kind 是 memory，
+    // 芯片标签就是「记忆」，在这条条目子树里唯一。
+    final kindChip = tester.getRect(
+      find.descendant(of: tile, matching: find.text('记忆')),
+    );
+    // 最右那颗按钮贴到卡片内容区的右边界：条目左右内边距 16，按钮盒之外还包着
+    // QiyuFocusRingScope 常驻的焦点环留白（左右各 3，实测差值 16+2×3）。
+    expect(
+      deleteRect.right,
+      closeTo(tileRect.right - 16 - 2 * QiyuLayout.focusRingOffset, 1),
+      reason: '操作簇没有贴右，外层 Wrap 没撑满整行宽',
+    );
+    expect(deleteRect.left, greaterThan(stampRect.right));
+    expect(deleteRect.center.dy, closeTo(stampRect.center.dy, 1));
+    // 芯片贴左：卡片左边界 + 16 内边距 + 芯片自身 8 内边距（余量给字形与描边）。
+    expect(
+      kindChip.left,
+      inInclusiveRange(tileRect.left + 23, tileRect.left + 30),
+    );
+    expect(kindChip.center.dy, closeTo(stampRect.center.dy, 1));
+  });
+
+  testWidgets('常驻操作按钮带无障碍语义标签，不只有 hover 才看得见的 tooltip', (
+    tester,
+  ) async {
+    // 记忆控制权「随时看得见」的承诺不许只兑现给鼠标用户：触屏没有 hover，
+    // 而实测 IconButton 的 tooltip 只进语义节点的 tooltip 属性、label 是空的，
+    // 所以动作名必须显式带进语义树。这里开语义树实测，不靠推测。
+    await _pumpMemoryCenter(tester, _fullOverview());
+    final handle = tester.ensureSemantics();
+    try {
+      for (final (action, label) in [
+        ('edit', '修正'),
+        ('freeze', '暂停使用'),
+        ('ban', '不再提起'),
+        ('delete', '删除'),
+      ]) {
+        // 标签合在按钮外层的 MergeSemantics 节点上，且只有汇成 SemanticsData
+        // 才读得到：节点自身的 label 在合并情况下仍是空的。
+        final data = tester
+            .getSemantics(
+              find.ancestor(
+                of: find.byKey(Key('memory-action-entry-1-$action')),
+                matching: find.byType(MergeSemantics),
+              ),
+            )
+            .getSemanticsData();
+        expect(
+          data.label,
+          label,
+          reason: '$action 按钮没把「$label」带进语义标签，触屏读不到动作名',
+        );
+        expect(
+          data.tooltip,
+          label,
+          reason: '$action 按钮的 tooltip 属性没带上动作名',
+        );
+        expect(data.flagsCollection.isButton, isTrue);
+      }
+    } finally {
+      handle.dispose();
+    }
+  });
+
   testWidgets('动作结果横幅只走中性底，失败态换成 danger 前景字', (
     tester,
   ) async {

@@ -990,6 +990,48 @@ class _MemoryCard extends StatelessWidget {
   }
 }
 
+/// 条目头部的一行：左侧信息簇，右侧「时间/说明 + 常驻操作」簇。
+///
+/// 不用 Row：右侧操作簇的宽度由按钮颗数定死、自身不收缩，而 Row 的非 flex 子项
+/// 是先按可用全宽量好的——极窄窗口叠加放大字号时两者相加超过这一行，就违反
+/// ticket 24 立下的「小窗 / 字号放大绝不产生 RenderFlex 溢出」不变量（实测
+/// 300 逻辑像素 + 1.4 倍字号下旧结构溢出 103px）。Wrap 是同时做得到「贴右」与
+/// 「换行」的容器：外层先用 [SizedBox] 撑满整行宽，`spaceBetween` 才有自由空间
+/// 可分配——宽屏下与原来的 Row 一模一样（信息在左、时间与操作贴右）；并排放不下
+/// 时整簇换到下一行，簇内再各自行内换行。信息一颗都不隐藏，换的只有排法。
+class _MemoryHeaderLine extends StatelessWidget {
+  const _MemoryHeaderLine({required this.leading, this.trailing = const []});
+
+  /// 左侧信息簇：状态芯片、正文或证据行。
+  final Widget leading;
+
+  /// 右侧簇，按传入顺序排入（时间戳 / 说明文字，最后是 [_MemoryActionButtons]）。
+  final List<Widget> trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: Wrap(
+        spacing: QiyuSpacing.xs,
+        runSpacing: QiyuSpacing.xs,
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          leading,
+          if (trailing.isNotEmpty)
+            Wrap(
+              spacing: QiyuSpacing.xs,
+              runSpacing: QiyuSpacing.xs,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: trailing,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _EntryTile extends StatelessWidget {
   const _EntryTile({super.key, required this.entry});
 
@@ -1007,27 +1049,24 @@ class _EntryTile extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  // 状态芯片可换行：窄窗口下不撑破布局（ticket 24）。
-                  Expanded(
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        _StatusChip(label: entry.kindLabel),
-                        if (entry.userEdited) const _StatusChip(label: '由你修正'),
-                        if (entry.control case final control?)
-                          _StatusChip(
-                            key: Key('memory-entry-control-${entry.id}'),
-                            label: control.label,
-                          ),
-                        if (entry.hasEvidence) const _StatusChip(label: '有摘录'),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
+              _MemoryHeaderLine(
+                // 状态芯片可换行：窄窗口下不撑破布局（ticket 24）。
+                leading: Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _StatusChip(label: entry.kindLabel),
+                    if (entry.userEdited) const _StatusChip(label: '由你修正'),
+                    if (entry.control case final control?)
+                      _StatusChip(
+                        key: Key('memory-entry-control-${entry.id}'),
+                        label: control.label,
+                      ),
+                    if (entry.hasEvidence) const _StatusChip(label: '有摘录'),
+                  ],
+                ),
+                trailing: [
                   Text(
                     '${twoDigits(time.hour)}:${twoDigits(time.minute)}',
                     style: Theme.of(context).textTheme.bodySmall,
@@ -1066,18 +1105,14 @@ class _LongTermTile extends StatelessWidget {
     return _MemoryCard(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text(_visibleOr(item.masked, item.content)),
-              ),
-            ),
-            if (item.control case final control?) ...[
-              const SizedBox(width: 8),
+        child: _MemoryHeaderLine(
+          leading: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(_visibleOr(item.masked, item.content)),
+          ),
+          trailing: [
+            if (item.control case final control?)
               _StatusChip(label: control.label),
-            ],
             if (!statePack)
               _MemoryActionButtons(
                 key: Key('memory-actions-${item.id}'),
@@ -1112,18 +1147,21 @@ class _RootTile extends StatelessWidget {
             children: [
               Text(_visibleOr(root.masked, root.claim)),
               const SizedBox(height: 6),
-              Row(
-                children: [
-                  if (root.control case final control?) ...[
-                    _StatusChip(label: control.label),
-                    const SizedBox(width: 8),
-                  ],
-                  Expanded(
-                    child: Text(
+              _MemoryHeaderLine(
+                leading: Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    if (root.control case final control?)
+                      _StatusChip(label: control.label),
+                    Text(
                       _evidenceSpanText(root),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
-                  ),
+                  ],
+                ),
+                trailing: [
                   _MemoryActionButtons(
                     key: Key('memory-actions-${root.id}'),
                     itemId: root.id,
@@ -1168,29 +1206,24 @@ class _MiddleTile extends StatelessWidget {
             children: [
               Text(_visibleOr(middle.masked, middle.claim)),
               const SizedBox(height: 6),
-              Row(
-                children: [
-                  Flexible(
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        _StatusChip(label: middle.type),
-                        if (middle.control case final control?)
-                          _StatusChip(label: control.label),
-                        if (middle.hasConflict)
-                          const _StatusChip(label: '有冲突证据'),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '形成 ${middle.formedOn} · 复核 ${middle.reviewedOn}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                      textAlign: TextAlign.end,
-                    ),
+              _MemoryHeaderLine(
+                leading: Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _StatusChip(label: middle.type),
+                    if (middle.control case final control?)
+                      _StatusChip(label: control.label),
+                    if (middle.hasConflict)
+                      const _StatusChip(label: '有冲突证据'),
+                  ],
+                ),
+                trailing: [
+                  Text(
+                    '形成 ${middle.formedOn} · 复核 ${middle.reviewedOn}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                    textAlign: TextAlign.end,
                   ),
                   _MemoryActionButtons(
                     key: Key('memory-actions-${middle.id}'),
@@ -1256,7 +1289,10 @@ class _LeafTile extends StatelessWidget {
 
 /// 条目可执行的动作：一个值对应一颗常驻按钮。
 ///
-/// [label] 是按钮的 tooltip 文案，按钮键的尾段取枚举名（`freeze`、`unban`…）；
+/// [label] 一份文案两个用途：按钮的 tooltip，以及带进语义树的无障碍标签
+/// （实测 IconButton 的 tooltip 只落到语义节点的 tooltip 属性上，label 是空的，
+/// 触屏与读屏都读不到动作名，所以标签由 [_MemoryActionButtons] 显式给出）。
+/// 按钮键的尾段取枚举名（`freeze`、`unban`…）；
 /// 动作与图形的对应关系在 [_MemoryActionButtons._actions]。
 enum _MemoryActionChoice {
   edit('修正'),
@@ -1359,20 +1395,31 @@ class _MemoryActionButtons extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final acting = context.watch<MemoryCenterViewModel>().acting;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    final actions = _actions();
+    // Wrap 而不是 Row：这一组按钮的总宽度等于颗数乘以各自的最小触摸宽度，
+    // 自身不会收缩；外层条目头部给不出那么多（极窄窗口、字号放大）时，
+    // 宁可让它行内换行，也不要把外层撑成 RenderFlex 溢出——一颗都不许丢。
+    return Wrap(
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        for (final action in _actions())
+        for (final action in actions)
           QiyuFocusRingScope(
             borderRadius: QiyuRadii.circleBorder,
-            child: IconButton(
-              key: Key('memory-action-$itemId-${action.choice.name}'),
-              onPressed: acting
-                  ? null
-                  : () => unawaited(_selected(context, action.choice)),
-              tooltip: action.choice.label,
-              style: qiyuQuietIconButtonStyle(),
-              icon: Icon(action.icon),
+            // tooltip 不是无障碍标签：IconButton 把它交给 MaterialTooltip，
+            // 最终只落在语义节点的 tooltip 属性上，label 仍是空的（实测
+            // find.bySemanticsLabel 读不到），而触屏没有 hover。动作名一律用
+            // 与 tooltip 同一份文案显式带进语义树，并合成一个按钮节点。
+            child: MergeSemantics(
+              child: IconButton(
+                key: Key('memory-action-$itemId-${action.choice.name}'),
+                onPressed: acting
+                    ? null
+                    : () => unawaited(_selected(context, action.choice)),
+                tooltip: action.choice.label,
+                style: qiyuQuietIconButtonStyle(),
+                icon: Icon(action.icon, semanticLabel: action.choice.label),
+              ),
             ),
           ),
       ],
