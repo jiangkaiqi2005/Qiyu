@@ -1998,9 +1998,6 @@ class _SettingsSectionHeaderState extends State<_SettingsSectionHeader> {
     final headerStyle = theme.textTheme.bodySmall?.copyWith(
       fontWeight: FontWeight.w400,
       letterSpacing: QiyuType.sectionHeaderLetterSpacing,
-      color: _hovered
-          ? QiyuColors.sectionHeaderHover
-          : QiyuColors.sectionHeader,
     );
     return QiyuOwnFocusRing(
       builder: (context, focusNode) => InkWell(
@@ -2008,37 +2005,55 @@ class _SettingsSectionHeaderState extends State<_SettingsSectionHeader> {
         focusNode: focusNode,
         onTap: widget.onToggle,
         onHover: (hovering) => setState(() => _hovered = hovering),
-        child: Row(
-          children: [
-            Expanded(
-              child: AnimatedDefaultTextStyle(
-                duration: qiyuMotion(context, QiyuMotion.fast),
-                style: headerStyle!,
-                // 定位键：本节头里还有一枚同样渲染成 RichText 的指示符，测试要
-                // 读「标题真正落下的那一份」就不能靠子树里的先后次序猜。
-                child: Text(
-                  widget.title,
-                  key: Key('settings-section-title-${widget.sectionId}'),
+        // **一条**过渡同时带着标题与指示符：原型的 `transition: color 160ms
+        // ease` 挂在 `h3` 上（index.html:231），而指示符是 `h3::after` 的生成
+        // 内容（`:233-234`），跟着标题一起变。先前只有标题走
+        // `AnimatedDefaultTextStyle`、指示符按 `_hovered` 直接换色，指针一上来
+        // 那枚三角是瞬变的。这里按进度把两档前景一起插值，而不是各起一条动画
+        // ——两条各自的曲线一旦错开，原型上「整行一起提亮」的观感就散了。
+        // 时长一律走 `qiyuMotion()`：§9 要求 reduced-motion 下压成零。
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0, end: _hovered ? 1 : 0),
+          duration: qiyuMotion(context, QiyuMotion.fast),
+          builder: (context, progress, _) {
+            final headerColor = Color.lerp(
+              QiyuColors.sectionHeader,
+              QiyuColors.sectionHeaderHover,
+              progress,
+            )!;
+            final caretColor = Color.lerp(
+              QiyuColors.sectionHeaderCaret,
+              QiyuColors.sectionHeaderCaretHover,
+              progress,
+            )!;
+            return Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.title,
+                    // 定位键：本节头里还有一枚同样渲染成 RichText 的指示符，
+                    // 测试要读「标题真正落下的那一份」就不能靠子树里的先后次序猜。
+                    key: Key('settings-section-title-${widget.sectionId}'),
+                    style: headerStyle?.copyWith(color: headerColor),
+                  ),
                 ),
-              ),
-            ),
-            // 指示符：原型 `h3::after { content: ' ▾' }` / 收起时 `' ▸'`
-            // （index.html:233-234）。**不照抄那两个字符**：U+25BE / U+25B8
-            // 不在随包宋体子集覆盖的字区里（决策日志第二轮 #7 的清单），
-            // 画出来是豆腐块；`Icons.*` 又被 §4 的细描边纪律锁死。取已入库
-            // 的 [QiyuIcons.arrow_drop_down]（实心下三角＝▾ 的同形），收起时
-            // 转 270°（顺时针）成右指（＝▸ 的同形），尺寸与不透明度仍按原型。
-            RotatedBox(
-              quarterTurns: widget.expanded ? 0 : 3,
-              child: Icon(
-                QiyuIcons.arrow_drop_down,
-                size: QiyuType.sectionHeaderCaretSize,
-                color: _hovered
-                    ? QiyuColors.sectionHeaderCaretHover
-                    : QiyuColors.sectionHeaderCaret,
-              ),
-            ),
-          ],
+                // 指示符：原型 `h3::after { content: ' ▾' }` / 收起时 `' ▸'`
+                // （index.html:233-234）。**不照抄那两个字符**：U+25BE / U+25B8
+                // 不在随包宋体子集覆盖的字区里（决策日志第二轮 #7 的清单），
+                // 画出来是豆腐块；`Icons.*` 又被 §4 的细描边纪律锁死。取已入库
+                // 的 [QiyuIcons.arrow_drop_down]（实心下三角＝▾ 的同形），收起时
+                // 转 270°（顺时针）成右指（＝▸ 的同形），尺寸与不透明度仍按原型。
+                RotatedBox(
+                  quarterTurns: widget.expanded ? 0 : 3,
+                  child: Icon(
+                    QiyuIcons.arrow_drop_down,
+                    size: QiyuType.sectionHeaderCaretSize,
+                    color: caretColor,
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );

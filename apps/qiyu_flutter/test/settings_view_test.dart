@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -823,8 +824,8 @@ void main() {
 
     // 分节头的形态＝原型变体 B `.settings-flat .set-section h3`：13px、w400、
     // 次要字色、3px 字距（`.scratch/qiyu-prototype/index.html:229-230`）。
-    // 读渲染出来的那一份：标题前景由 `AnimatedDefaultTextStyle` 下发，`Text`
-    // 自身不带 style，页面上真落的样式在 RichText 的 span 上。
+    // 读渲染出来的那一份：悬停过渡由一条 `TweenAnimationBuilder` 插值后落到
+    // `Text.style` 上，页面上真落的样式在 RichText 的 span 上，不看 widget 上写了什么。
     final headerStyle =
         (tester
                     .widget<RichText>(
@@ -875,6 +876,104 @@ void main() {
         reason: '$id 的分隔线档位不对：只有末节不画，且不得画成一圈描边',
       );
     }
+  });
+
+  testWidgets('分节头悬停：标题与指示符在同一条过渡里，指示符不瞬变', (tester) async {
+    await _pumpSettingsPage(tester, InMemorySettingsCollapseStore());
+
+    final header = find.byKey(const Key('settings-section-header-provider'));
+    // 读页面上真落的那两份颜色：标题取 span 前景，指示符取本节头里唯一那颗
+    // Icon 的 color。
+    Color titleColor() =>
+        (tester
+                    .widget<RichText>(
+                      find.descendant(
+                        of: find.byKey(
+                          const Key('settings-section-title-provider'),
+                        ),
+                        matching: find.byType(RichText),
+                      ),
+                    )
+                    .text
+                as TextSpan)
+            .style!
+            .color!;
+    Color caretColor() => tester
+        .widget<Icon>(find.descendant(of: header, matching: find.byType(Icon)))
+        .color!;
+
+    expect(titleColor(), QiyuColors.sectionHeader);
+    expect(caretColor(), QiyuColors.sectionHeaderCaret);
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(header));
+    // moveTo 只投递 hover 事件；onHover 的 setState 与过渡起程发生在这一帧，
+    // 40ms 必须从起程之后开始算，否则读到的还是 t=0 的静置色。
+    await tester.pump();
+    // 160ms 档（`QiyuMotion.fast`）只推进 40ms：两档前景都该还在路上。
+    await tester.pump(const Duration(milliseconds: 40));
+
+    expect(titleColor(), isNot(QiyuColors.sectionHeader), reason: '标题没随悬停起程');
+    expect(titleColor(), isNot(QiyuColors.sectionHeaderHover));
+    expect(
+      caretColor(),
+      isNot(QiyuColors.sectionHeaderCaret),
+      reason: '指示符没跟着走，还停在静置档',
+    );
+    expect(
+      caretColor(),
+      isNot(QiyuColors.sectionHeaderCaretHover),
+      reason:
+          '指示符一步跳到终值＝瞬变：原型的 transition 挂在 h3 上，'
+          '指示符是它的 ::after 生成内容，本应与标题一起渐变',
+    );
+
+    await tester.pumpAndSettle();
+    expect(titleColor(), QiyuColors.sectionHeaderHover);
+    expect(caretColor(), QiyuColors.sectionHeaderCaretHover);
+  });
+
+  testWidgets('reduced-motion 档下分节头的悬停过渡压成零：一帧到位', (tester) async {
+    await _pumpSettingsPage(
+      tester,
+      InMemorySettingsCollapseStore(),
+      reduceMotion: true,
+    );
+
+    final header = find.byKey(const Key('settings-section-header-provider'));
+    Color titleColor() =>
+        (tester
+                    .widget<RichText>(
+                      find.descendant(
+                        of: find.byKey(
+                          const Key('settings-section-title-provider'),
+                        ),
+                        matching: find.byType(RichText),
+                      ),
+                    )
+                    .text
+                as TextSpan)
+            .style!
+            .color!;
+    Color caretColor() => tester
+        .widget<Icon>(find.descendant(of: header, matching: find.byType(Icon)))
+        .color!;
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(header));
+    // 只走一帧、不 settle：时长没被压成零的话，两档前景会停在途中。
+    await tester.pump();
+
+    expect(
+      titleColor(),
+      QiyuColors.sectionHeaderHover,
+      reason: '§9 要求 reduced-motion 下关闭全部过渡，这里还留着渐变',
+    );
+    expect(caretColor(), QiyuColors.sectionHeaderCaretHover);
   });
 
   testWidgets('分节顺序按 §8 定案序排列，且每一格排的确实是点名的那一节', (tester) async {
@@ -1356,6 +1455,7 @@ Future<_FakeSettingsGateway> _pumpSettingsPage(
   WidgetTester tester,
   SettingsCollapseStore store, {
   _FakeSettingsGateway? settingsGateway,
+  bool reduceMotion = false,
 }) async {
   _useFullPageViewport(tester);
   await tester.pumpWidget(Container(key: UniqueKey()));
@@ -1391,7 +1491,19 @@ Future<_FakeSettingsGateway> _pumpSettingsPage(
         ),
         ChangeNotifierProvider.value(value: settingsViewModel),
       ],
-      child: MaterialApp(home: ProviderSettingsView(collapseStore: store)),
+      child: MaterialApp(
+        home: ProviderSettingsView(collapseStore: store),
+        // `qiyuReducedMotion()` 读的是 `MediaQuery.disableAnimationsOf`（Web
+        // 引擎把 `prefers-reduced-motion` 映射到这个特性位），测试侧同从这一位
+        // 进；画法与 `qiyu_shell_test.dart` 一致——套在 MaterialApp.builder 上，
+        // 保住框架自己那份 MediaQuery 的尺寸信息。
+        builder: reduceMotion
+            ? (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(disableAnimations: true),
+                child: child ?? const SizedBox.shrink(),
+              )
+            : null,
+      ),
     ),
   );
   await tester.pumpAndSettle();
