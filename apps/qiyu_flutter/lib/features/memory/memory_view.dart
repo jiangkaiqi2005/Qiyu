@@ -785,7 +785,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         ),
       const SizedBox(height: 8),
       Wrap(
-        spacing: 8,
+        spacing: QiyuSpacing.xs,
         children: [
           QiyuFocusRingScope(
             borderRadius: QiyuRadii.circleBorder,
@@ -1062,7 +1062,7 @@ class _EntryTile extends StatelessWidget {
               _MemoryHeaderLine(
                 // 状态芯片可换行：窄窗口下不撑破布局（ticket 24）。
                 leading: Wrap(
-                  spacing: 8,
+                  spacing: QiyuSpacing.xs,
                   runSpacing: 4,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
@@ -1159,7 +1159,7 @@ class _RootTile extends StatelessWidget {
               const SizedBox(height: 6),
               _MemoryHeaderLine(
                 leading: Wrap(
-                  spacing: 8,
+                  spacing: QiyuSpacing.xs,
                   runSpacing: 4,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
@@ -1218,7 +1218,7 @@ class _MiddleTile extends StatelessWidget {
               const SizedBox(height: 6),
               _MemoryHeaderLine(
                 leading: Wrap(
-                  spacing: 8,
+                  spacing: QiyuSpacing.xs,
                   runSpacing: 4,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
@@ -1271,7 +1271,7 @@ class _LeafTile extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Wrap(
-                      spacing: 8,
+                      spacing: QiyuSpacing.xs,
                       runSpacing: 4,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [

@@ -602,7 +602,7 @@ class _ProviderSectionState extends State<_ProviderSection> {
                   viewModel.testResult != null)
                 const SizedBox(height: 18),
               Wrap(
-                spacing: 12,
+                spacing: QiyuSpacing.sm,
                 runSpacing: 12,
                 children: [
                   FilledButton.icon(
@@ -1057,7 +1057,7 @@ class _SttSectionState extends State<_SttSection> {
             if (viewModel.errorMessage != null || viewModel.testResult != null)
               const SizedBox(height: 14),
             Wrap(
-              spacing: 12,
+              spacing: QiyuSpacing.sm,
               runSpacing: 12,
               children: [
                 FilledButton.icon(
@@ -1550,7 +1550,7 @@ class _TtsSectionState extends State<_TtsSection> {
             if (viewModel.errorMessage != null || testResult != null)
               const SizedBox(height: 14),
             Wrap(
-              spacing: 12,
+              spacing: QiyuSpacing.sm,
               runSpacing: 12,
               children: [
                 FilledButton.icon(
@@ -1650,7 +1650,7 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
             ],
             const SizedBox(height: 14),
             Wrap(
-              spacing: 12,
+              spacing: QiyuSpacing.sm,
               runSpacing: 10,
               children: [
                 OutlinedButton.icon(

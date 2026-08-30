@@ -168,7 +168,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
             padding: const EdgeInsets.only(bottom: 8),
             child: Wrap(
               crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 8,
+              spacing: QiyuSpacing.xs,
               runSpacing: 4,
               children: [
                 Text(

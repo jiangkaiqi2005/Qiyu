@@ -1355,6 +1355,60 @@ const Color topLevel = Color(0xFF667788);
       expect(found.length, bareColorAllowList.length, reason: '$found');
       expect(found, bareColorAllowList);
     });
+
+    test('棘轮：页面里的裸非零间距一律收进 QiyuSpacing', () {
+      // Spec Decision 1 要间距与色值同律——数值住主题层，页面只消费 token。裸色那
+      // 一档 2026-08-30 已降空（上一条），间距这一档当时漏建扫描，于是 10 处非零裸
+      // 间距（记忆中心 5、设置页 4、诊断页 1）静默住在三个页面里，design-system §10
+      // 把它记成「段6 收口项」。这里补上同款棘轮：扫 `lib/**` 的非注释行，放行目录
+      // 只有 `lib/theme/**`。
+      //
+      // 判据故意只数**非零**：`spacing: 0`（记忆中心常驻操作簇那颗）说的是「不留
+      // 缝」，不是一档间距，它由决策日志第五轮 #18 的量距用例单独锁。把 0 也算进来
+      // 只会诱导出一个 `none = 0` 的假档位——那是为过门禁而造 token。
+      //
+      // 正则按小写 `spacing:` 匹配，天然避开 Dart 侧的 `letterSpacing:` 与
+      // `crossAxisSpacing:`（大写 S）；CSS 写法 `letter-spacing: 3px` 只出现在注释
+      // 里，所以整行以 `//` 起头的先跳过。反证做过：把任一 `QiyuSpacing.xs` 改回
+      // `spacing: 8`，该用例当场判红。
+      const bareSpacingAllowList = <String, int>{};
+      final bareSpacing = RegExp(r'spacing:\s*[1-9]');
+      final found = <String, int>{};
+      final scanned = <String>{};
+      for (final file in _dartFilesUnder('lib')) {
+        final relative = _relativePath(file);
+        scanned.add(relative);
+        if (relative.startsWith('lib/theme/')) {
+          continue;
+        }
+        var hits = 0;
+        for (final line in file.readAsLinesSync()) {
+          if (line.trimLeft().startsWith('//')) {
+            continue;
+          }
+          if (bareSpacing.hasMatch(line)) {
+            hits++;
+          }
+        }
+        if (hits > 0) {
+          found[relative] = hits;
+        }
+      }
+      // 两条防空转的对照：扫描范围必须真覆盖到页面，正则必须真抓得住字面量。
+      expect(
+        scanned,
+        contains('lib/features/memory/memory_view.dart'),
+        reason: '没扫到页面文件，这条棘轮是空跑的',
+      );
+      expect(
+        bareSpacing.hasMatch('Wrap(spacing: 8, runSpacing: 0)'),
+        isTrue,
+        reason: '正则失配，这条棘轮会静默放行一切',
+      );
+      // 台账按**文件计数**而不是按条目点名：同文件里同值的裸间距有好多处，用集合
+      // 装它们会折叠成一条（实测 10 处只剩 3 条），少清一处也照样绿。
+      expect(found, bareSpacingAllowList);
+    });
   });
 
   group('发布门禁脚本与字体资产名保持同步', () {
