@@ -2,7 +2,7 @@
 
 日期：2026-08-28
 状态：ready-for-agent（仓库无外部 issue tracker，按惯例发布于本目录）
-设计依据：四轮设计定稿（含 2026-08-28 第四轮待定项收口），规范全文见 `docs/product/design-system.md`，决策清单见 `docs/product/frontend-design-decisions.md`，取舍理由见 ADR 0004；可交互视觉基准为 `.scratch/qiyu-prototype/index.html`。
+设计依据：四轮设计定稿（含 2026-08-28 第四轮待定项收口），规范全文见 `docs/product/design-system.md`，决策清单见 `docs/product/frontend-design-decisions.md`，取舍理由见 ADR 0004；可交互视觉基准为 `docs/product/prototype/index.html`。
 
 ## Problem Statement
 
@@ -69,7 +69,7 @@
 2. **新接缝——设计 token 层测试**：对主题模块写断言，锁死色板每个语义值、字族为思源宋体、圆角与字阶档位；这是防「实现时又散出色值」的主要新测试面。
 3. **既有接缝——现有 widget 测试**：`accessibility_test.dart`、`settings_view_test.dart`、`memory_view_test.dart`、`history_view_test.dart`、`voice_chat_view_test.dart`、`app_test.dart` 等中与旧颜色值绑定的断言（如 ticket 24 的焦点色）随 token 同步更新；行为断言一项不改、必须全绿。
 4. **最高门禁**：交付前跑 `verify-release-baseline.ps1` 全绿（Dart/Flutter/Host 分析测试、Web 构建、bundle、preflight、launch smoke），不依赖 Node/npm 的门禁结构不变。
-5. **视觉验收**：以 `.scratch/qiyu-prototype/index.html` 为视觉基准逐页人工对照（首页空态/对话态、历史、记忆中心四区、设置折叠与顺序、窄屏抽屉）。
+5. **视觉验收**：以 `docs/product/prototype/index.html` 为视觉基准逐页人工对照（首页空态/对话态、历史、记忆中心四区、设置折叠与顺序、窄屏抽屉）。
 6. **连接状态断言**：正常态圆点与文案取中性值，测试锁死「不得出现 `accent-*` 紫，也不得出现 `danger`」；探测失败态断言圆点与文案同转 `danger` 且该处可点击触发重探（三色纪律的可执行化）。
 7. **字体资产断言**：Dart 侧测试断言 `pubspec.yaml` 声明的宋体子集 asset 存在（`assets/fonts/NotoSerifSC-QiyuSubset.ttf`）、`Roboto` 别名仍指向随包字族且改指新子集、旧 `NotoSansSC-QiyuBaseline.ttf` 与其 OFL 已删除；字区 cmap 覆盖在资产准备期一次性核对（凭据为 Implementation Decisions 第 3 条清单，缺段即重新出图），不进 Dart/Flutter 门禁。
 8. **导航文案与定位约束**：三项导航文案（历史 / 记忆中心 / 设置）全站唯一，不做同义改写；侧边栏与抽屉会同时渲染同一批标签，widget 测试必须以 `Key` 定位导航项与连接状态，不用 `find.text`（文本命中两处即歧义）。
@@ -87,7 +87,7 @@
 ## Further Notes
 
 1. **剩余待打磨项**：只剩品牌图标的最终图形设计——本轮用中性几何占位落地，图形另行设计。连接状态呈现形式、背景图入库资产工艺、字体子集化工艺均已收口，不再属待打磨项。
-2. 原型 `.scratch/qiyu-prototype/` 不入库（在 `.scratch` 下），实现期间它是**视觉真相源**，但只在形态与观感这一层成立：**token 命名与个别数值以 `docs/product/design-system.md` 为准**，两侧不一致时以规范为准并回报。原「任一侧改动必须同步另一侧」的说法做不到，撤掉——不要为了「凑一致」去改规范，也不要照抄下面这些已知不符规范的写法：
+2. 原型 `docs/product/prototype/index.html`（连同本地预览用的 `server.js`）**已入库**。本条原话是「原型 `.scratch/qiyu-prototype/` 不入库」，2026-08-30 撤销：规范正文、决策日志与 lib / test 注释里有 16 处「数值出处是原型」全指向那个未跟踪路径，未入库就等于别人 clone 后一条也复核不了，故按裁定收进 `docs/`。入库副本与原稿唯一的差别是 `.home-bg`（`:108`）的背景改指已入库的压缩资产（6MB 未压缩原图不入库），**所有被引用的行号逐条复核未变**。实现期间它是**视觉真相源**，但只在形态与观感这一层成立：**token 命名与个别数值以 `docs/product/design-system.md` 为准**，两侧不一致时以规范为准并回报。原「任一侧改动必须同步另一侧」的说法做不到，撤掉——不要为了「凑一致」去改规范，也不要照抄下面这些已知不符规范的写法：
    - `--accent-deep-a: #55489c` / `--accent-deep-b: #463a85`：历史命名与命名值都不在 §2 的 token 表里。§2 定稿的强调渐变是 `accent-glass` 的 `rgba(75,64,146,.62) → rgba(51,43,97,.5)`（半透明两端 + 背景模糊），实现一律取 `QiyuColors.accentGlassA/B`。
    - `.toggle.on` 的选中实底用紫渐变：与三色纪律（§1、§2）和 User Story 9「除了发送按钮和键盘焦点外没有任何紫色」冲突。开关选中态属中性档，实现在主题层 `switchTheme` 里压回中性，视觉验收不得按原型的紫底返工。
    - `.brand-btn:hover`、`.nav-item:hover`、`.icon-btn:hover`、`.text-btn:hover`、`.mem-action:hover` 的悬停底是 `rgba(157,143,224,.06–.10)` 淡紫：§8 组件 7 定的是「悬停轻提亮」，实现取中性提亮。

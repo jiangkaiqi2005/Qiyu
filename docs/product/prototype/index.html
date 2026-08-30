@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>栖语 · 前端原型</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+/* ===== 语义 token（与 design-system.md 定稿一致）===== */
+:root {
+  --night: #0f0e14;
+  --panel: #181719;
+  --ink: #ece9f2;
+  --muted: #9a94a8;
+  --accent-deep-a: #55489c;
+  --accent-deep-b: #463a85;
+  --accent-bright: #9d8fe0;
+  --on-accent: #f5f3fa;
+  --bubble-user: #28272e;
+  --line: #232227;
+  --r-sm: 8px; --r-md: 12px; --r-lg: 16px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-6: 24px; --sp-8: 32px;
+  --fs-greet: 22px; --fs-h: 18px; --fs-body: 15px; --fs-sub: 13px; --fs-tiny: 12px;
+  --glass: rgba(19, 18, 23, 0.72);
+  --blur: blur(20px);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--night);
+  color: var(--ink);
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  overflow: hidden;
+}
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; border-radius: var(--r-sm); }
+svg { display: block; }
+.icon { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ===== 应用壳：侧边栏 + 主区 ===== */
+.app { display: flex; height: 100vh; }
+.sidebar {
+  width: 240px; flex: 0 0 240px;
+  background: var(--glass);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  padding: var(--sp-6) var(--sp-4);
+  z-index: 30;
+}
+.brand-btn {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-8);
+  border-radius: var(--r-md); color: var(--ink);
+  transition: background 180ms ease;
+}
+.brand-btn:hover { background: rgba(157, 143, 224, 0.08); }
+.brand-mark {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-deep-a), var(--accent-deep-b));
+  display: grid; place-items: center; color: var(--on-accent);
+  /* 无描边、无白色高光（design-system §8 组件 4、§2 accent-glass 用途栏），只留极淡紫色光晕。
+     品牌图形本身仍待设计，实现按中性几何占位落地，不沿用这里的紫渐变（Spec Implementation Decisions 9）。 */
+  box-shadow: 0 0 24px rgba(85, 72, 156, 0.35);
+}
+.brand-mark svg { width: 17px; height: 17px; }
+.brand-name { font-size: var(--fs-h); letter-spacing: 2px; }
+.nav { display: flex; flex-direction: column; gap: var(--sp-1); flex: 1; }
+.nav-item {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: 10px var(--sp-3); border-radius: var(--r-md);
+  color: var(--muted); font-size: var(--fs-body);
+  transition: background 180ms ease, color 180ms ease;
+  text-align: left;
+}
+.nav-item:hover { background: rgba(157, 143, 224, 0.06); color: var(--ink); }
+.nav-item.active { background: rgba(255, 255, 255, 0.04); color: var(--ink); }
+.conn-status {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--muted); font-size: var(--fs-tiny); letter-spacing: 1px;
+}
+.conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.main { flex: 1; position: relative; overflow: hidden; }
+.page { display: none; height: 100%; }
+.page.active { display: flex; flex-direction: column; }
+
+/* ===== 窄屏：三条杠 + 抽屉 ===== */
+.menu-btn { display: none; position: absolute; top: var(--sp-4); left: var(--sp-4); z-index: 40;
+  width: 40px; height: 40px; border-radius: 50%; color: var(--ink);
+  background: var(--glass); backdrop-filter: var(--blur); border: 1px solid var(--line);
+  place-items: center; }
+.scrim { display: none; position: fixed; inset: 0; background: rgba(10, 9, 14, 0.55); z-index: 25; }
+@media (max-width: 760px) {
+  .menu-btn { display: grid; }
+  .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 66vw; flex-basis: 66vw;
+    transform: translateX(-102%); transition: transform 220ms ease; }
+  .sidebar.open { transform: translateX(0); }
+  .scrim.show { display: block; }
+}
+
+/* ===== 首页（空状态）===== */
+#page-home { position: relative; align-items: center; justify-content: center; }
+.home-bg { position: absolute; inset: 0; background: url('../../../apps/qiyu_flutter/assets/images/home-night-backdrop.jpg') center 40% / cover no-repeat;
+  filter: blur(5px) brightness(0.45) saturate(0.55); transform: scale(1.03); }
+.home-veil { position: absolute; inset: 0;
+  background:
+    linear-gradient(to right, rgba(15,14,20,0.92) 0%, rgba(15,14,20,0.25) 30%, rgba(15,14,20,0.25) 70%, rgba(15,14,20,0.92) 100%),
+    radial-gradient(ellipse at center, rgba(15,14,20,0.15) 0%, rgba(15,14,20,0.78) 100%); }
+.home-content { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: var(--sp-8); width: min(560px, 86vw); }
+.home-greet { font-size: var(--fs-greet); font-weight: 300; letter-spacing: 3px; color: var(--ink);
+  text-shadow: 0 2px 20px rgba(10,9,14,0.8); }
+
+/* ===== 输入框（composer）===== */
+.composer {
+  width: 100%; display: flex; align-items: center; gap: var(--sp-2);
+  background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 6px 6px var(--sp-4);
+  transition: border-color 200ms ease;
+}
+.composer:focus-within { border-color: rgba(157, 143, 224, 0.13); }
+.composer input {
+  flex: 1; background: none; border: none; outline: none;
+  color: var(--ink); font-family: inherit; font-size: var(--fs-body);
+  line-height: 34px;
+}
+.composer input::placeholder { color: var(--muted); }
+.icon-btn {
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  color: var(--muted); transition: color 180ms ease, background 180ms ease; flex: 0 0 auto;
+}
+.icon-btn:hover { color: var(--ink); background: rgba(157, 143, 224, 0.08); }
+.send-btn {
+  width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto;
+  display: grid; place-items: center; color: var(--on-accent);
+  background: linear-gradient(145deg, rgba(75, 64, 146, 0.62) 0%, rgba(51, 43, 97, 0.5) 100%);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 12px rgba(70, 60, 125, 0.3);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.send-btn:hover { transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(70, 60, 125, 0.45); }
+.send-btn svg { width: 17px; height: 17px; }
+
+/* ===== 对话状态（单侧气泡）===== */
+#page-chat { background: var(--night); }
+.chat-scroll { flex: 1; overflow-y: auto; padding: var(--sp-8) var(--sp-6); }
+.chat-stream { max-width: 680px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--sp-6); }
+.msg-user { align-self: flex-end; max-width: 72%;
+  background: #28272e;
+  border-radius: 20px 20px 6px 20px;
+  padding: 11px var(--sp-4); line-height: 1.8; }
+.msg-qiyu { align-self: flex-start; max-width: 88%; line-height: 1.9; color: var(--ink); }
+.chat-composer-wrap { padding: var(--sp-4) var(--sp-6) var(--sp-6); }
+.chat-composer-wrap .composer { max-width: 680px; margin: 0 auto; }
+
+/* ===== 功能页通用头 ===== */
+.page-head {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 20px var(--sp-6) var(--sp-4);
+  max-width: 760px; width: 100%; margin: 0 auto;
+}
+.page-title { font-size: var(--fs-h); font-weight: 400; letter-spacing: 2px; }
+.page-body { flex: 1; overflow-y: auto; padding: 0 var(--sp-6) 48px; }
+.page-body-inner { max-width: 760px; margin: 0 auto; }
+
+/* ===== 历史 ===== */
+.day-header { color: var(--muted); font-size: var(--fs-sub); letter-spacing: 2px; margin: var(--sp-6) 0 var(--sp-3); }
+.session-card {
+  display: flex; align-items: center; gap: var(--sp-3);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+  padding: var(--sp-3) var(--sp-4); margin-bottom: var(--sp-2); cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease;
+}
+.session-card:hover { background: #1e1c26; border-color: rgba(157, 143, 224, 0.16); }
+.session-main { flex: 1; min-width: 0; }
+.session-meta { color: var(--muted); font-size: var(--fs-sub); margin-bottom: 3px; }
+.session-preview { font-size: var(--fs-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.text-btn { color: var(--accent-bright); font-size: var(--fs-sub); padding: 6px 10px; border-radius: var(--r-sm); white-space: nowrap;
+  transition: background 180ms ease; }
+.text-btn:hover { background: rgba(157, 143, 224, 0.1); }
+.del-btn { color: var(--muted); opacity: 0.55; }
+.session-card:hover .del-btn { opacity: 1; color: var(--ink); }
+
+/* ===== 记忆中心 ===== */
+.tabs { display: flex; gap: var(--sp-1); border-bottom: 1px solid var(--line);
+  max-width: 760px; margin: 0 auto; padding: 0 var(--sp-6); overflow-x: auto;
+  scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { padding: 10px var(--sp-4); color: var(--muted); font-size: var(--fs-body); letter-spacing: 1px;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap;
+  transition: color 180ms ease, border-color 180ms ease; }
+.tab:hover { color: var(--ink); }
+.tab.active { color: var(--ink); border-bottom-color: rgba(255, 255, 255, 0.3); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.mem-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+  padding: var(--sp-4); margin-top: var(--sp-3);
+}
+.mem-text { line-height: 1.8; }
+.mem-text.masked { color: var(--muted); font-style: italic; font-size: var(--fs-sub); }
+.mem-foot { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); flex-wrap: wrap; }
+.mem-time { color: var(--muted); font-size: var(--fs-tiny); margin-right: auto; letter-spacing: 1px; }
+.chip { font-size: var(--fs-tiny); color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; padding: 3px 10px; letter-spacing: 1px; }
+.chip.frozen { color: var(--accent-bright); border-color: rgba(157,143,224,.4); }
+.mem-action { font-size: var(--fs-sub); color: var(--muted); padding: 5px 10px; border-radius: var(--r-sm);
+  transition: color 180ms ease, background 180ms ease; }
+.mem-action:hover { color: var(--ink); background: rgba(157, 143, 224, 0.08); }
+.mem-action.danger:hover { color: #e0a0a0; }
+
+/* ===== 设置 ===== */
+.set-section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: var(--sp-4) var(--sp-4); margin-top: var(--sp-4); }
+.set-section h3 { font-size: var(--fs-body); font-weight: 500; letter-spacing: 2px; margin-bottom: var(--sp-3); }
+.set-row { display: flex; align-items: center; gap: var(--sp-3); padding: 10px 0; border-top: 1px solid rgba(35, 34, 39, 0.85); }
+.set-row:first-of-type { border-top: none; }
+/* 变体 B：阅读式（无卡片，标题 + 分隔线） */
+.settings-flat .set-section { background: none; border: none; border-radius: 0; padding: 0;
+  margin-top: 0; padding-bottom: var(--sp-6); margin-bottom: var(--sp-6);
+  border-bottom: 1px solid var(--line); }
+.settings-flat .set-section:last-of-type { border-bottom: none; margin-bottom: 0; }
+.settings-flat .set-section h3 { color: var(--muted); font-size: var(--fs-sub); font-weight: 400;
+  letter-spacing: 3px; margin-bottom: var(--sp-2); cursor: pointer; user-select: none;
+  transition: color 160ms ease; }
+.settings-flat .set-section h3:hover { color: var(--ink); }
+.settings-flat .set-section h3::after { content: ' ▾'; font-size: 10px; opacity: .5; }
+.settings-flat .set-section.collapsed h3::after { content: ' ▸'; }
+.settings-flat .set-section.collapsed > *:not(h3) { display: none; }
+.settings-flat .set-section.collapsed { border-bottom: none; margin-bottom: 0; padding-bottom: var(--sp-2); }
+.variant-switch { display: flex; gap: var(--sp-2); margin: var(--sp-4) auto 0; max-width: 760px;
+  padding: 0 var(--sp-6); }
+.variant-switch button { font-size: var(--fs-sub); color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; padding: 5px 14px; letter-spacing: 1px; transition: color 160ms ease, border-color 160ms ease; }
+.variant-switch button.on { color: var(--ink); border-color: rgba(255,255,255,0.3); }
+.set-label { flex: 1; }
+.set-label small { display: block; color: var(--muted); font-size: var(--fs-sub); margin-top: 2px; }
+.set-value { color: var(--muted); font-size: var(--fs-sub); }
+.toggle { width: 40px; height: 22px; border-radius: 999px; background: var(--line); position: relative; transition: background 180ms ease; flex: 0 0 auto; }
+.toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--muted); transition: transform 180ms ease, background 180ms ease; }
+.toggle.on { background: linear-gradient(135deg, var(--accent-deep-a), var(--accent-deep-b)); }
+.toggle.on::after { transform: translateX(18px); background: var(--on-accent); }
+.field { flex: 1; background: rgba(21,19,26,.6); border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 8px 12px; color: var(--ink); font-family: inherit; font-size: var(--fs-sub); outline: none; }
+.field:focus { border-color: rgba(157,143,224,.45); }
+.proto-note { text-align: center; color: var(--muted); font-size: var(--fs-tiny); letter-spacing: 2px; margin-top: var(--sp-8); opacity: .7; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 三条杠（窄屏） -->
+  <button class="menu-btn" id="menuBtn" aria-label="打开导航">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <div class="scrim" id="scrim"></div>
+
+  <!-- 毛玻璃侧边栏 -->
+  <aside class="sidebar" id="sidebar">
+    <button class="brand-btn" data-page="home" aria-label="回到栖语首页">
+      <span class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13.5C5.5 12 7 13.5 8.5 13.5S11.5 12 13 13.5 16 15 17.5 13.5 20.5 12 22 13.5" transform="translate(-1 -3)"/><circle cx="12" cy="15" r="6.5"/><path d="M12 8.5V7"/></svg>
+      </span>
+      <span class="brand-name">栖语</span>
+    </button>
+    <nav class="nav">
+      <button class="nav-item" data-page="history">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M7.5 4.5h9c0 3.8-3 4.9-3 7.5s3 3.7 3 7.5h-9c0-3.8 3-4.9 3-7.5s-3-3.7-3-7.5z"/><path d="M6 4.5h12M6 19.5h12"/></svg>
+        历史
+      </button>
+      <button class="nav-item" data-page="memory">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M12 6.5C10.5 5.2 8.2 4.6 5.5 4.9v13c2.7-.3 5 .3 6.5 1.6 1.5-1.3 3.8-1.9 6.5-1.6v-13C15.8 4.6 13.5 5.2 12 6.5z"/><path d="M12 6.5v13"/></svg>
+        记忆中心
+      </button>
+      <button class="nav-item" data-page="settings">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M4.5 7.5h15M4.5 12h15M4.5 16.5h15"/><circle cx="9" cy="7.5" r="1.8" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.8" fill="currentColor" stroke="none"/><circle cx="8" cy="16.5" r="1.8" fill="currentColor" stroke="none"/></svg>
+        设置
+      </button>
+    </nav>
+    <div class="conn-status"><span class="conn-dot"></span>栖语在本机 · 一切正常</div>
+  </aside>
+
+  <main class="main">
+
+    <!-- 首页：空状态 -->
+    <section class="page active" id="page-home">
+      <div class="home-bg"></div>
+      <div class="home-veil"></div>
+      <div class="home-content">
+        <p class="home-greet">今晚，想聊点什么</p>
+        <div class="composer">
+          <input type="text" id="homeInput" placeholder="想说点什么…" aria-label="输入想说的话">
+          <button class="icon-btn" aria-label="语音输入">
+            <svg class="icon" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+          </button>
+          <button class="send-btn" id="homeSend" aria-label="发送">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 对话状态（发出第一句后） -->
+    <section class="page" id="page-chat">
+      <div class="chat-scroll">
+        <div class="chat-stream">
+          <div class="msg-user" id="firstUserMsg">今晚有点睡不着。</div>
+          <div class="msg-qiyu">睡不着的时候，脑子里一般都在转些什么？不用讲清楚，想到哪说到哪就行。</div>
+          <div class="msg-user">就是白天开会的事，一直在复盘自己说得对不对。</div>
+          <div class="msg-qiyu">会反复回放白天的一段对话，说明那件事对你真的有分量。复盘到哪个地方最卡？是当时说出口的那句，还是没说出口的那句。</div>
+        </div>
+      </div>
+      <div class="chat-composer-wrap">
+        <div class="composer">
+          <input type="text" placeholder="想说点什么…" aria-label="输入想说的话">
+          <button class="icon-btn" aria-label="语音输入">
+            <svg class="icon" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+          </button>
+          <button class="send-btn" aria-label="发送">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 历史 -->
+    <section class="page" id="page-history">
+      <div class="page-head">
+        <button class="icon-btn" data-page="home" aria-label="返回"><svg class="icon" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <h1 class="page-title">历史</h1>
+      </div>
+      <div class="page-body"><div class="page-body-inner">
+        <p class="day-header">8月27日 · 昨晚</p>
+        <div class="session-card">
+          <div class="session-main">
+            <p class="session-meta">23:41 · 12 条消息</p>
+            <p class="session-preview">今晚有点睡不着。</p>
+          </div>
+          <button class="text-btn">继续这段对话</button>
+          <button class="icon-btn del-btn" aria-label="删除这段会话"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg></button>
+        </div>
+        <p class="day-header">8月25日</p>
+        <div class="session-card">
+          <div class="session-main">
+            <p class="session-meta">22:57 · 26 条消息</p>
+            <p class="session-preview">跟你说个事，我今天终于把拖了两周的报告交上去了。</p>
+          </div>
+          <button class="icon-btn del-btn" aria-label="删除这段会话"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg></button>
+        </div>
+        <div class="session-card">
+          <div class="session-main">
+            <p class="session-meta">00:18 · 5 条消息</p>
+            <p class="session-preview">就是随便聊聊，没什么特别的。</p>
+          </div>
+          <button class="icon-btn del-btn" aria-label="删除这段会话"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg></button>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- 记忆中心 -->
+    <section class="page" id="page-memory">
+      <div class="page-head">
+        <button class="icon-btn" data-page="home" aria-label="返回"><svg class="icon" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <h1 class="page-title">记忆</h1>
+      </div>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="recent"><svg class="icon" style="width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4l2.5 1.5"/></svg>最近发生</button>
+        <button class="tab" data-tab="longterm"><svg class="icon" style="width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24"><path d="M4 17.5l5-6 3.5 3.5L19 7.5"/><path d="M4 20.5h16"/></svg>长期印象</button>
+        <button class="tab" data-tab="persona"><svg class="icon" style="width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/></svg>关于你</button>
+        <button class="tab" data-tab="relationship"><svg class="icon" style="width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24"><circle cx="9" cy="9" r="3"/><circle cx="16" cy="10" r="2.5"/><path d="M4 19.5c.6-2.8 2.6-4.3 5-4.3s4.4 1.5 5 4.3"/><path d="M14.5 19.5c.4-1.9 1.7-3 3.5-3s2.6 1.1 3 3"/></svg>我们的关系</button>
+      </div>
+      <div class="page-body"><div class="page-body-inner">
+        <div class="tab-panel active" data-panel="recent">
+          <div class="mem-card">
+            <p class="mem-text">报告拖了两周，交上去的那天如释重负；习惯在深夜复盘白天说过的话。</p>
+            <div class="mem-foot">
+              <span class="mem-time">8月27日</span>
+          <button class="mem-action"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19l-4 1z"/></svg>编辑</button>
+          <button class="mem-action"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M12 3v18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M5 7.5l14 9M19 7.5l-14 9"/></svg>冻结</button>
+          <button class="mem-action"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/></svg>禁提</button>
+          <button class="mem-action danger"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>删除</button>
+            </div>
+          </div>
+          <div class="mem-card">
+            <p class="mem-text masked">这条内容涉及私密信息，暂不直接展示。</p>
+            <div class="mem-foot">
+              <span class="mem-time">8月25日</span>
+              <button class="mem-action"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M12 5.5c-4 0-6.5 3-6.5 6.5s2.5 6.5 6.5 6.5 6.5-3 6.5-6.5S16 5.5 12 5.5z"/><path d="M9.5 12c0-1.8 1-3 2.5-3"/></svg>临时查看</button>
+              <button class="mem-action danger"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>删除</button>
+            </div>
+          </div>
+        </div>
+        <div class="tab-panel" data-panel="longterm">
+          <div class="mem-card">
+            <p class="mem-text">对自己要求高，事情做完后常回头检查；近几个月睡得偏晚。</p>
+            <div class="mem-foot">
+              <span class="mem-time">长期</span>
+              <button class="mem-action"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19l-4 1z"/></svg>编辑</button>
+              <button class="mem-action"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M12 3v18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M5 7.5l14 9M19 7.5l-14 9"/></svg>冻结</button>
+              <button class="mem-action danger"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>删除</button>
+            </div>
+          </div>
+        </div>
+        <div class="tab-panel" data-panel="persona">
+          <div class="mem-card">
+            <p class="mem-text">在意说出口的话是否妥当，胜过在意事情本身的结果。</p>
+            <div class="mem-foot">
+              <span class="mem-time">关于你</span>
+              <span class="chip frozen">已冻结</span>
+              <button class="mem-action"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M12 3v18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M5 7.5l14 9M19 7.5l-14 9"/></svg>解除冻结</button>
+              <button class="mem-action danger"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>删除</button>
+            </div>
+          </div>
+        </div>
+        <div class="tab-panel" data-panel="relationship">
+          <div class="mem-card">
+            <p class="mem-text">从客气地聊天气，到会说「就是随便聊聊」；开始拿白天的小事来晚上讲。</p>
+            <div class="mem-foot">
+              <span class="mem-time">我们的关系</span>
+              <button class="mem-action"><svg class="icon" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:3px" viewBox="0 0 24 24"><path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19l-4 1z"/></svg>编辑</button>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </section>
+
+    <!-- 设置 -->
+    <section class="page" id="page-settings">
+      <div class="page-head">
+        <button class="icon-btn" data-page="home" aria-label="返回"><svg class="icon" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <h1 class="page-title">设置</h1>
+      </div>
+      <div class="page-body"><div class="page-body-inner settings-flat" id="settingsInner">
+        <div class="variant-switch">
+          <button id="variantCards">方案 A：卡片式</button>
+          <button id="variantFlat" class="on">方案 B：阅读式</button>
+        </div>
+        <div class="set-section" id="set-model">
+          <h3>模型连接</h3>
+          <div class="set-row">
+            <div class="set-label">服务商</div>
+            <input class="field" style="max-width:220px" value="OpenAI 兼容" aria-label="服务商">
+          </div>
+          <div class="set-row">
+            <div class="set-label">API Key<small>保存在本机，永远不进浏览器</small></div>
+            <input class="field" style="max-width:220px" type="password" value="sk-········" aria-label="API Key">
+          </div>
+          <div class="set-row">
+            <div class="set-label">连接测试</div>
+            <button class="text-btn">测试连接</button>
+          </div>
+        </div>
+        <div class="set-section collapsed" id="set-tts">
+          <h3>语音朗读</h3>
+          <div class="set-row">
+            <div class="set-label">音色<small>标准音色、方言音色与自定义音色 ID</small></div>
+            <input class="field" style="max-width:220px" value="灿灿" aria-label="音色">
+          </div>
+          <div class="set-row">
+            <div class="set-label">朗读回复</div>
+            <button class="toggle on" role="switch" aria-checked="true" aria-label="语音朗读开关"></button>
+          </div>
+        </div>
+        <div class="set-section collapsed" id="set-stt">
+          <h3>语音转写</h3>
+          <div class="set-row">
+            <div class="set-label">服务商</div>
+            <input class="field" style="max-width:220px" value="OpenAI 兼容" aria-label="转写服务商">
+          </div>
+          <div class="set-row">
+            <div class="set-label">API Key<small>与模型连接同构的 Key 规则</small></div>
+            <input class="field" style="max-width:220px" type="password" placeholder="未保存" aria-label="转写 API Key">
+          </div>
+          <div class="set-row">
+            <div class="set-label">说话输入</div>
+            <button class="toggle on" role="switch" aria-checked="true" aria-label="语音转写开关"></button>
+          </div>
+        </div>
+        <div class="set-section collapsed" id="set-search">
+          <h3>联网搜索</h3>
+          <div class="set-row">
+            <div class="set-label">AnySearch Key<small>保存后写入本机，页面不取回明文</small></div>
+            <input class="field" style="max-width:220px" type="password" placeholder="未保存" aria-label="AnySearch Key">
+          </div>
+          <div class="set-row">
+            <div class="set-label">保存到本机</div>
+            <button class="text-btn">保存</button>
+          </div>
+        </div>
+        <div class="set-section" id="set-data">
+          <h3>本地数据</h3>
+          <div class="set-row">
+            <div class="set-label">数据位置<small>%USERPROFILE%/.qiyu/memories · 全部在本机，不上传</small></div>
+          </div>
+          <div class="set-row">
+            <div class="set-label">备份与恢复</div>
+            <button class="text-btn">打开</button>
+          </div>
+          <div class="set-row">
+            <div class="set-label">记忆控制总览</div>
+            <button class="text-btn">查看</button>
+          </div>
+          <div class="set-row">
+            <div class="set-label">清除产品数据<small>删除后无法恢复</small></div>
+            <button class="text-btn" style="color:#cc9999">清除…</button>
+          </div>
+        </div>
+        <div class="set-section collapsed" id="set-privacy">
+          <h3>隐私与边界</h3>
+          <div class="set-row">
+            <div class="set-label">数据只在本机；只有你配置了模型服务才会联网；敏感信息永不被记住。</div>
+          </div>
+          <div class="set-row">
+            <div class="set-label">隐私说明</div>
+            <button class="text-btn">查看</button>
+          </div>
+        </div>
+        <div class="set-section collapsed" id="set-dev">
+          <h3>体验与开发者选项</h3>
+          <div class="set-row">
+            <div class="set-label">开发者模式<small>开启后出现诊断入口；诊断只读</small></div>
+            <button class="toggle" role="switch" aria-checked="false" aria-label="开发者模式"></button>
+          </div>
+        </div>
+        <p class="proto-note">栖语 · 前端设计原型 · 2026-08-27</p>
+      </div></div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+const pages = document.querySelectorAll('.page');
+const navItems = document.querySelectorAll('.nav-item');
+const sidebar = document.getElementById('sidebar');
+const scrim = document.getElementById('scrim');
+
+function show(pageId) {
+  pages.forEach(p => p.classList.toggle('active', p.id === 'page-' + pageId));
+  navItems.forEach(n => n.classList.toggle('active', n.dataset.page === pageId));
+  closeDrawer();
+}
+document.querySelectorAll('[data-page]').forEach(el => {
+  el.addEventListener('click', () => show(el.dataset.page));
+});
+
+// 窄屏抽屉
+document.getElementById('menuBtn').addEventListener('click', () => {
+  sidebar.classList.add('open'); scrim.classList.add('show');
+});
+function closeDrawer() { sidebar.classList.remove('open'); scrim.classList.remove('show'); }
+scrim.addEventListener('click', closeDrawer);
+
+// 首页发出第一句 → 对话状态（桌面两段式演示）
+function sendFromHome() {
+  const input = document.getElementById('homeInput');
+  const text = input.value.trim() || '今晚有点睡不着。';
+  document.getElementById('firstUserMsg').textContent = text;
+  show('chat');
+  input.value = '';
+}
+document.getElementById('homeSend').addEventListener('click', sendFromHome);
+document.getElementById('homeInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendFromHome();
+});
+
+// 记忆中心 tab
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.tab-panel').forEach(p =>
+      p.classList.toggle('active', p.dataset.panel === tab.dataset.tab));
+  });
+});
+
+// 设置分节折叠（点标题展开/收起），折叠状态持久化：上次收起来的，下次进来还收着
+document.querySelectorAll('#settingsInner .set-section h3').forEach(h3 => {
+  h3.addEventListener('click', () => {
+    const sec = h3.parentElement;
+    sec.classList.toggle('collapsed');
+    try {
+      const saved = JSON.parse(localStorage.getItem('qiyu-proto-folds') || '{}');
+      saved[sec.id] = sec.classList.contains('collapsed');
+      localStorage.setItem('qiyu-proto-folds', JSON.stringify(saved));
+    } catch (_) {}
+  });
+});
+try {
+  const saved = JSON.parse(localStorage.getItem('qiyu-proto-folds') || '{}');
+  Object.entries(saved).forEach(([id, collapsed]) => {
+    const sec = document.getElementById(id);
+    if (sec) sec.classList.toggle('collapsed', collapsed);
+  });
+} catch (_) {}
+// 设置页形态切换（拷问用）
+const settingsInner = document.getElementById('settingsInner');
+document.getElementById('variantCards').addEventListener('click', () => {
+  settingsInner.classList.remove('settings-flat');
+  document.getElementById('variantCards').classList.add('on');
+  document.getElementById('variantFlat').classList.remove('on');
+});
+document.getElementById('variantFlat').addEventListener('click', () => {
+  settingsInner.classList.add('settings-flat');
+  document.getElementById('variantFlat').classList.add('on');
+  document.getElementById('variantCards').classList.remove('on');
+});
+
+// 开关
+document.querySelectorAll('.toggle').forEach(t => {
+  t.addEventListener('click', () => {
+    t.classList.toggle('on');
+    t.setAttribute('aria-checked', t.classList.contains('on'));
+  });
+});
+</script>
+</body>
+</html>
+<!--
+  本文件是「紫夜」视觉决策的**入库凭据载体**：design-system §2/§3/§8、决策日志与
+  lib / test 里的注释都按「本文件路径 + 行号」引用这里的取值（颜色、字号、字距、
+  圆角、间距、过渡时长、图标清单）。2026-08-30 由 `docs/product/prototype/index.html`
+  收进版本库，与原稿唯一的差别是 `.home-bg`（:108）的背景改指仓库里已入库的那份
+  压缩资产 `apps/qiyu_flutter/assets/images/home-night-backdrop.jpg`——6MB 的未压缩
+  原图不入库，它只是那份压缩图的来源。
+
+  引用规矩两条：
+  1. 改数值前先确认有没有用例或规范正文在按行号读它；
+  2. 要加内容**只准加在本注释附近（文件末尾）**，中间插行会让所有被引用的行号集体
+     漂移——本项目已经因此错过一次凭据（决策日志第五轮 #12、#14）。
+
+  本地预览：`node docs/product/prototype/server.js`，然后开 http://127.0.0.1:4765/
+  （只给设计对照用，不在发布链路里；Release 门禁不依赖 Node/npm）。
+-->

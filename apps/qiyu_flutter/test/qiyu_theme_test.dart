@@ -203,7 +203,7 @@ void main() {
 
     test('设置页分节头只用 §2 已有的两档，指示符是它们各自的 .5 透明度', () {
       // design-system §8「设置页用阅读式：小字距次要色标题」——次要色与悬停
-      // 提亮的取值出处是原型变体 B `.scratch/qiyu-prototype/index.html:229-233`。
+      // 提亮的取值出处是原型变体 B `docs/product/prototype/index.html:229-233`。
       // 静置与悬停两档**同值派生**自 §2，不重抄 literal：§2 没有为设置页另开档。
       expect(QiyuColors.sectionHeader, QiyuColors.muted);
       expect(QiyuColors.sectionHeaderHover, QiyuColors.ink);
@@ -915,7 +915,7 @@ const Color topLevel = Color(0xFF667788);
 
     test('设置页分节头的字距 3px 与指示符字号 10px 收在 token 层', () {
       // 出处：原型变体 B `.settings-flat .set-section h3 { letter-spacing: 3px }`
-      // 与 `h3::after { font-size: 10px }`（`.scratch/qiyu-prototype/index.html:230`、
+      // 与 `h3::after { font-size: 10px }`（`docs/product/prototype/index.html:230`、
       // `:233`）。字号本身不另起档——§3 已登记的次要档 13px 就是原型的 `--fs-sub`。
       expect(QiyuType.sectionHeaderLetterSpacing, 3);
       expect(QiyuType.sectionHeaderCaretSize, 10);

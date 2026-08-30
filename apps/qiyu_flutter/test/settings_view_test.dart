@@ -823,7 +823,7 @@ void main() {
     }
 
     // 分节头的形态＝原型变体 B `.settings-flat .set-section h3`：13px、w400、
-    // 次要字色、3px 字距（`.scratch/qiyu-prototype/index.html:229-230`）。
+    // 次要字色、3px 字距（`docs/product/prototype/index.html:229-230`）。
     // 读渲染出来的那一份：悬停过渡由一条 `TweenAnimationBuilder` 插值后落到
     // `Text.style` 上，页面上真落的样式在 RichText 的 span 上，不看 widget 上写了什么。
     final headerStyle =

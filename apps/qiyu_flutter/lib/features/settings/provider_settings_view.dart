@@ -1867,7 +1867,7 @@ class _SectionCollapseScope extends InheritedWidget {
 /// 设置页的**阅读式分节**（design-system §8 补充约定「设置页用阅读式：分节不用
 /// 卡片，小字距次要色标题 + 发丝分隔线」）。卡片形态在决策日志第一轮 #6 被
 /// 「六七张卡片堆叠偏重」否掉，选定的是原型变体 B ——
-/// `.scratch/qiyu-prototype/index.html:224-236`，本件的每个数值都按它取。
+/// `docs/product/prototype/index.html:224-236`，本件的每个数值都按它取。
 ///
 /// 三件事在这一处承担：
 /// 1. **分节头**＝可点击的导航（[_SettingsSectionHeader]）：13px、w400、
@@ -1964,7 +1964,7 @@ class _SettingsPanel extends StatelessWidget {
 ///
 /// 静置 [QiyuColors.sectionHeader]、悬停转 [QiyuColors.sectionHeaderHover]，
 /// 160ms 过渡＝原型 `transition: color 160ms ease`
-/// （`.scratch/qiyu-prototype/index.html:231`）＝ [QiyuMotion.fast]，
+/// （`docs/product/prototype/index.html:231`）＝ [QiyuMotion.fast]，
 /// reduced-motion 下由 [qiyuMotion] 压成零（§9）。
 ///
 /// 焦点表意**不新造机制**：[QiyuOwnFocusRing] 自持节点交给 [InkWell]，环只在

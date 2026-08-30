@@ -115,7 +115,7 @@ abstract final class QiyuColors {
   /// 设置页分节头的静置字色：**与 [muted] 同值、语义不同**——这一档不是「随便
   /// 一段次要文字」，而是 design-system §8 里唯一的分节导航（§8「分节标题本身
   /// 就是导航」）。取值出处是原型变体 B `.settings-flat .set-section h3
-  /// { color: var(--muted) }`（`.scratch/qiyu-prototype/index.html:229`）。
+  /// { color: var(--muted) }`（`docs/product/prototype/index.html:229`）。
   ///
   /// 写成别名而不是重抄一遍字面值，同 [neutralEmphasis] 那三档的规矩：同值就
   /// 派生，改 [muted] 时这一档跟着走，不留两处可以各自漂移的 literal。
@@ -125,12 +125,12 @@ abstract final class QiyuColors {
   ///
   /// 与 [sectionHeader] 成对，是 §8 组件 7「悬停轻提亮」提**前景**这一条在
   /// 分节头上的落点；原型 `... h3:hover { color: var(--ink) }`
-  /// （`.scratch/qiyu-prototype/index.html:232`）。
+  /// （`docs/product/prototype/index.html:232`）。
   static const Color sectionHeaderHover = ink;
 
   /// 设置页分节头尾部的展开指示符色（静置）：[sectionHeader] 压到不透明度 .5。
   ///
-  /// 原型的 `h3::after`（`.scratch/qiyu-prototype/index.html:233`）写的是
+  /// 原型的 `h3::after`（`docs/product/prototype/index.html:233`）写的是
   /// `font-size: 10px; opacity: .5`，色继承 h3 自己——静置即 muted@.5，悬停即
   /// ink@.5，所以成对登记两档，页面只按状态取用、不现做 alpha 运算。这两档
   /// 带透明度、无法用别名派生，故写字面值：α = `round(.5 × 255) = 128 = 0x80`，
@@ -291,13 +291,13 @@ abstract final class QiyuType {
   /// 设置页分节头的字距：3px。
   ///
   /// 出处是原型变体 B（阅读式）`.settings-flat .set-section h3`
-  /// `letter-spacing: 3px`（`.scratch/qiyu-prototype/index.html:230`），与 §3
+  /// `letter-spacing: 3px`（`docs/product/prototype/index.html:230`），与 §3
   /// 字阶表里的字号档是两件事：字号取 [secondarySize]（同原型 `--fs-sub`），
   /// 字距只有这一处消费方，故单独命名而不是塞进字阶档。
   static const double sectionHeaderLetterSpacing = 3;
 
   /// 设置页分节头尾部指示符的字号：10px（原型 `h3::after`，
-  /// `.scratch/qiyu-prototype/index.html:233`）。比 [tinySize] 还小一档是刻意
+  /// `docs/product/prototype/index.html:233`）。比 [tinySize] 还小一档是刻意
   /// 的：指示符属「这里可以点开」的辅助记号，不承载任何要读的内容。
   static const double sectionHeaderCaretSize = 10;
 
