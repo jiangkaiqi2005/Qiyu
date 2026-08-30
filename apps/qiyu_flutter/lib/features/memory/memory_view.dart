@@ -24,8 +24,9 @@ const _revealTimeout = Duration(seconds: 20);
 
 /// 四区记忆中心（ticket 19 读取 / ticket 20 控制）：最近发生、长期
 /// 印象、关于你、我们的关系。导航只用用户语言；条目操作按钮常驻，
-/// 冻结/解除、修正与敏感揭示直接执行，禁提与删除先经明确确认，
-/// 结果以成功、部分失败、可恢复失败三态呈现。
+/// 冻结/解除冻结与解除禁提直接执行，修正与敏感揭示要先过取内容与展示
+/// 原文的对话框，禁提与删除先经明确确认；结果以成功、部分失败、
+/// 可恢复失败三态呈现。
 class MemoryView extends StatelessWidget {
   const MemoryView({super.key, this.backupGateway, this.backupPlatform});
 
