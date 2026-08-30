@@ -29,7 +29,7 @@
 
 毛玻璃 = **`rgba(19,18,23,0.72)`** + 背景模糊（模糊半径 16–24px，实现时凭视觉验收微调）。它比 `panel` 暗一档、自成独立 token，不从 `panel` 拼透明度得出——目的就是不透背景紫；`panel`（`#181719`）只作卡片与面板的实底色。选中态用中性暗底 `rgba(255,255,255,0.04)`，不用紫色底。
 
-既成事实登记：`danger` 在主题层**同时占两个字义槽**——`ColorScheme.error`（字档）与 `ColorScheme.errorContainer`（容器底），即 `lib/theme/qiyu_theme.dart` 里 `error:` 与 `errorContainer:` 这两处赋值（截至提交 `21c3fb9` 位于 `:214`、`:216`；行号会随文件漂移，核验请按槽位名）；`lib/features/settings/diagnostics_view.dart:292` 的强调诊断芯片确实拿它当**底色**渲染。本节把它当字档写的用法不覆盖这一处，两处并存是现状。
+既成事实登记：`danger` 在主题层**同时占两个字义槽**——`ColorScheme.error`（字档）与 `ColorScheme.errorContainer`（容器底），即 `lib/theme/qiyu_theme.dart` 里 `error:` 与 `errorContainer:` 这两处赋值（截至提交 `387fc4a` 位于 `:214`、`:216`；行号会随文件漂移，核验请按槽位名）；`lib/features/settings/diagnostics_view.dart:292` 的强调诊断芯片确实拿它当**底色**渲染。本节把它当字档写的用法不覆盖这一处，两处并存是现状。
 
 ## 3. 字体 (Typography)
 
