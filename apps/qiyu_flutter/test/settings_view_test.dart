@@ -1113,6 +1113,78 @@ void main() {
     );
   });
 
+  testWidgets('状态文案不给成功着色：失败才是 danger，成功退回主题默认字色', (
+    tester,
+  ) async {
+    final gateway = _MutableProviderSettingsGateway();
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: gateway,
+      ),
+    );
+    await _openSettings(tester);
+
+    // 结果行的作用域：整页只挂这一条被点名，行内恰好一颗图标 + 一段文字。
+    // 不按「文字的祖先 Row」找——一段文字会被多层 Row 同时命中，图标就成了
+    // 一组，测不出这一行自己的着色。
+    final statusRow = find.byKey(const Key('settings-status-connection'));
+
+    // 读页面上真正渲染的那一份：span 上的前景色，不看 widget 上写了什么。
+    // 这一行里有两颗 RichText——Icon 也是按字形渲染的，所以得按文案挑出正文那颗。
+    Color? foregroundOf(String message) {
+      final spans = tester
+          .widgetList<RichText>(
+            find.descendant(of: statusRow, matching: find.byType(RichText)),
+          )
+          .where((w) => w.text.toPlainText() == message)
+          .toList();
+      expect(spans, hasLength(1), reason: '结果行里这段文字没能唯一定位');
+      return spans.single.text.style?.color;
+    }
+
+    Icon statusIconOf() => tester.widget<Icon>(
+      find.descendant(of: statusRow, matching: find.byType(Icon)),
+    );
+
+    // 「测试连接」在展开后的长节里落在视口之外：不先滚进可见区，tap 的坐标会打到
+    // 别的东西上，结果文案根本不会出现。
+    Future<void> runConnectionTest() async {
+      final button = find.byKey(const Key('test-provider-connection'));
+      await tester.ensureVisible(button);
+      await tester.pumpAndSettle();
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+    }
+
+    // 成功：§2 色板里没有绿色档，§1 的暗红又只住「破坏性操作」与「故障/失败态」
+    // 两类，成功两样都不是——所以它不着色，前景完全交给页面默认字色。
+    await runConnectionTest();
+    const successMessage = '连接成功，栖语可以使用这个模型。';
+    expect(
+      foregroundOf(successMessage),
+      isNot(const Color(0xFF91C7A7)),
+      reason: '成功文案又穿回那枚色板外的绿了',
+    );
+    expect(
+      foregroundOf(successMessage),
+      DefaultTextStyle.of(tester.element(find.text(successMessage))).style.color,
+      reason: '成功文案没走主题默认字色：它自带了前景色',
+    );
+    expect(statusIconOf().color, isNull);
+
+    // 失败：故障/失败态是 §1 认可的两类危险之一，前景换成 danger
+    // （本主题的 colorScheme.error 即 §2 的 danger）。
+    gateway.testResult = const ProviderTestResult(
+      succeeded: false,
+      status: ProviderTestStatus.network,
+      message: '连不上这个模型。',
+    );
+    await runConnectionTest();
+    expect(foregroundOf('连不上这个模型。'), QiyuColors.danger);
+    expect(statusIconOf().color, QiyuColors.danger);
+  });
+
   testWidgets('窄屏页头让开三条杠：「设置」标题不被浮层压住', (tester) async {
     tester.view.physicalSize = const Size(420, 900);
     tester.view.devicePixelRatio = 1;
@@ -1503,6 +1575,14 @@ final class _MutableProviderSettingsGateway implements ProviderSettingsGateway {
   var keySet = true;
   int forgetCalls = 0;
 
+  /// 连接测试的回执：默认成功（既有「忘记 Key」用例只走保存与忘记，不读它）；
+  /// 要核成功/失败两态的着色纪律时用这一处切换。
+  ProviderTestResult testResult = const ProviderTestResult(
+    succeeded: true,
+    status: ProviderTestStatus.success,
+    message: '连接成功，栖语可以使用这个模型。',
+  );
+
   @override
   Future<ProviderSettings> read() async => ProviderSettings(
     configured: true,
@@ -1527,11 +1607,7 @@ final class _MutableProviderSettingsGateway implements ProviderSettingsGateway {
   @override
   Future<ProviderTestResult> testConnection(
     ProviderSettingsDraft draft,
-  ) async => const ProviderTestResult(
-    succeeded: true,
-    status: ProviderTestStatus.success,
-    message: '连接成功，栖语可以使用这个模型。',
-  );
+  ) async => testResult;
 }
 
 final class _FixedWebSearchSettingsGateway implements WebSearchSettingsGateway {

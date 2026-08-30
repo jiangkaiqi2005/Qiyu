@@ -592,6 +592,7 @@ class _ProviderSectionState extends State<_ProviderSection> {
                 _StatusMessage(message: message, succeeded: false),
               if (viewModel.testResult case final result?)
                 _StatusMessage(
+                  key: const Key('settings-status-connection'),
                   message: result.message,
                   succeeded: result.succeeded,
                 ),
@@ -2383,17 +2384,28 @@ class _ResolvedConnection extends StatelessWidget {
   }
 }
 
+/// 校验与连通测试的结果行。
+///
+/// **成功不着色，失败才着色**：§2 的色板里没有任何绿色档（这一处原先写的是
+/// 色板外成员 `#91C7A7`），而 §1 的三色纪律把暗红只留给「破坏性操作」与
+/// 「故障/失败态」两类——成功不在两类之内，于是它根本没有可用的着色语义，
+/// 一律走主题默认字色，成没成由文案自己说。判据与决策日志第五轮 #12（记忆动作
+/// 结果横幅「partial 不着色、失败只换前景」）、#15（`danger` 只占那两类）同源。
 class _StatusMessage extends StatelessWidget {
-  const _StatusMessage({required this.message, required this.succeeded});
+  const _StatusMessage({
+    super.key,
+    required this.message,
+    required this.succeeded,
+  });
 
   final String message;
   final bool succeeded;
 
   @override
   Widget build(BuildContext context) {
-    final color = succeeded
-        ? const Color(0xFF91C7A7)
-        : Theme.of(context).colorScheme.error;
+    // null＝不覆盖前景：图标退回 IconTheme、文字退回 DefaultTextStyle，
+    // 也就是页面主文字色——不着色是这条的默认档，不是漏了配色。
+    final color = succeeded ? null : Theme.of(context).colorScheme.error;
     // 校验与连通测试的结果作为 live region 播报：屏幕阅读器不在输入
     // 框上也能听到成败（ticket 24 错误关联）。
     return Semantics(

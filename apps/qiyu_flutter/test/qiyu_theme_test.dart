@@ -1304,9 +1304,12 @@ const Color topLevel = Color(0xFF667788);
       // 台账 = 硬编码色值收口段（Spec Further Notes 3 最后一段）开工前的历史残留：
       // 每清掉一处，这里的条目必须同步缩短，收口完成时它必须降为空集——不要往回加
       // 条目，新写的色值一律进 token 层。集合相等断言：新增会红，清掉了不改这里也红。
-      const bareColorAllowList = <String>{
-        'lib/features/settings/provider_settings_view.dart :: Color(0xFF91C7A7)',
-      };
+      //
+      // 2026-08-30 清空：最后一条是设置页 `_StatusMessage` 的 `#91C7A7`，它不是
+      // §2 成员（色板里根本没有绿色档），按 §1 三色纪律改成「成功不着色、失败走
+      // colorScheme.error」后连同条目一起消失。**此后它必须保持为空**——任何新条目
+      // 都意味着有人把色值写在了页面里，那一律进 token 层（lib/theme/qiyu_tokens.dart）。
+      const bareColorAllowList = <String>{};
       // 无色相、不承载任何设计语义的 Material 常量：允许在页面直接用（遮罩、
       // 渐变透明端这类）。放行项**逐个点名**写在这里，不用正则模糊掉——否则
       // `Colors.purple` 也会跟着溜过去。要新增成员必须在评审里说明为什么不走 token。
