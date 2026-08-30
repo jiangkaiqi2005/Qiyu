@@ -11,7 +11,15 @@ import 'qiyu_tokens.dart';
 /// 字族是 **Material Symbols Outlined 的 ExtraLight（wght 200）静态子集**，
 /// 不是 Flutter 内置的 `Icons.*`：内置图标是定宽字形，[Icon] 也没有
 /// `strokeWidth` 入口，§4 要的 1.2 细描边在那条路上做不到（用户裁定：引入
-/// Material Symbols Outlined 可变字体的细字重实例，一次性裁出本项目用到的子集）。
+/// Material Symbols Outlined 的 ExtraLight（wght 200）**静态实例**，一次性裁出
+/// 本项目用到的字形子集。取静态实例而不是可变字体是 §4 的定案：静态实例把字重
+/// 烘进轮廓，不需要运行时字轴支持，入库这份字体里也就没有 `fvar` 表。实测描边
+/// `40/960 em` ≈ 1.00px @24px，当时是用 `remove` 那个字形量的——该图形本轮没有
+/// 界面消费、已从下面的常量表删掉，字形仍留在字体里，实测值不受影响）。
+///
+/// 常量表只收**有消费方**的图形：零消费的码位删在这里，未裁剪的图形字形留在
+/// `assets/fonts/MaterialSymbolsOutlined-QiyuSubset.ttf` 里（`test/`
+/// `icon_glyph_manifest.dart` 记的是字体实测清单，比本表多是预期，见该文件）。
 ///
 /// 三条纪律：
 /// 1. **只用 outlined 字形**，不混用其他图标库；`_rounded` / `_outlined` /
@@ -291,63 +299,19 @@ abstract final class QiyuIcons {
     fontPackage: null,
   );
 
-  // ---- 派生状态备用（本轮无界面消费，先随子集入库）------------------------
-  /// 播放：朗读/录音回放的开始态。
-  static const IconData play_arrow = IconData(
-    0xE037,
-    fontFamily: QiyuIconSpec.fontFamily,
-    fontPackage: null,
-  );
-
-  /// 暂停：朗读中断态。
-  static const IconData pause = IconData(
-    0xE034,
-    fontFamily: QiyuIconSpec.fontFamily,
-    fontPackage: null,
-  );
-
-  /// 加号：新增条目。
-  static const IconData add = IconData(
-    0xE145,
-    fontFamily: QiyuIconSpec.fontFamily,
-    fontPackage: null,
-  );
-
-  /// 减号：收起或移除。（子集描边实测就是用它量的：40/960 em = 1.00px @24px。）
-  static const IconData remove = IconData(
-    0xE15B,
-    fontFamily: QiyuIconSpec.fontFamily,
-    fontPackage: null,
-  );
-
-  /// 勾：确认态（非带圈版）。
-  static const IconData check = IconData(
-    0xE5CA,
-    fontFamily: QiyuIconSpec.fontFamily,
-    fontPackage: null,
-  );
-
-  /// 向下折角：可展开区块的箭头。
-  ///
-  /// 注意：Material 的 [ExpansionTile] 只允许整体替换 `trailing`，换掉就拿不到
-  /// 框架自带的那个旋转动画，所以现网的展开箭头仍是内置字形，没有改用这里。
-  static const IconData expand_more = IconData(
-    0xE5CF,
-    fontFamily: QiyuIconSpec.fontFamily,
-    fontPackage: null,
-  );
-
+  // ---- 框架控件的图标替换 --------------------------------------------------
   /// 下拉框箭头：[DropdownButton] 的 `icon` 可以整只替换且不丢配色与尺寸继承，
   /// 所以设置页的下拉箭头用的是它（否则这一处仍是内置定宽字形）。
+  ///
+  /// 同一个问题的另一面：[ExpansionTile] 只允许整体替换 `trailing`，换掉就拿不到
+  /// 框架自带的旋转动画，所以现网的展开箭头仍是 SDK 自带字形——这是 design-system
+  /// §4 记明的例外，不打算补一个 [QiyuIcons] 常量去顶它。
+  ///
+  /// 播放 / 暂停 / 加号 / 减号 / 勾 / 向下折角 / 放大镜这些图形本轮没有界面消费，
+  /// 原先以「派生状态备用」为名常驻常量表；零消费即删，字形仍留在入库字体里
+  /// （见文件头与 `test/icon_glyph_manifest.dart`）。要用时按清单里的码位取回来。
   static const IconData arrow_drop_down = IconData(
     0xE5C5,
-    fontFamily: QiyuIconSpec.fontFamily,
-    fontPackage: null,
-  );
-
-  /// 放大镜：检索入口。
-  static const IconData search = IconData(
-    0xE8B6,
     fontFamily: QiyuIconSpec.fontFamily,
     fontPackage: null,
   );

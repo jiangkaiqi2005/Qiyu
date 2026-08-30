@@ -4,6 +4,14 @@ import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 // 由 .scratch/icon-subset/build-icon-subset.js 从 MaterialSymbolsOutlined-ExtraLight
 // 静态实例的 glyph name 表实测生成，请勿手改：它是发布门禁校验 QiyuIcons 码位
 // 与入库子集字体是否一致的凭据（子集里 post 表已不含 glyph name，只能按码位对账）。
+//
+// 两份清单的口径**不同**，别当成一份：
+// - [iconGlyphManifest] 是**实际入库字体**的实测记录，字体没重裁就仍是 45 条形。
+// - [qiyuIconCodePoints] 是 Dart 常量侧的镜像，只列还有常量的那些（现 38 条）。
+// 字体里留着本轮没有界面消费的图形字形是可接受的（play_arrow / pause / add /
+// remove / check / expand_more / search 的码位仍在这里，常量却已删），所以重跑
+// 裁剪脚本只会刷新上面那份，不会让下面这份自己长回来。两边因此按
+// 「常量表 ⊆ 字体清单」单向对账，写在 `test/qiyu_theme_test.dart`。
 
 /// 字形名 -> 实际入库子集字体里的码位，逐条来自子集 cmap 的实测结果。
 const Map<String, int> iconGlyphManifest = <String, int>{
@@ -93,12 +101,5 @@ const Map<String, IconData> qiyuIconCodePoints = <String, IconData>{
   'ac_unit': QiyuIcons.ac_unit,
   'block': QiyuIcons.block,
   'visibility': QiyuIcons.visibility,
-  'play_arrow': QiyuIcons.play_arrow,
-  'pause': QiyuIcons.pause,
-  'add': QiyuIcons.add,
-  'remove': QiyuIcons.remove,
-  'check': QiyuIcons.check,
-  'expand_more': QiyuIcons.expand_more,
-  'search': QiyuIcons.search,
   'arrow_drop_down': QiyuIcons.arrow_drop_down,
 };

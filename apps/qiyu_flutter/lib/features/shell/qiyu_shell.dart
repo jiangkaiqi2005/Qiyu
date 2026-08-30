@@ -167,8 +167,11 @@ class _QiyuShellState extends State<QiyuShell>
     context.go(location);
   }
 
-  /// 品牌槽：回合一页的**空状态首页**。目的地固定为 `/`（不是「回来时那页」），
-  /// 语义与退役前的 `_goHome` 一致，同样先无条件停播。
+  /// 品牌槽：**回合一页**。目的地固定为 `/`（不是「回来时那页」），语义与退役前
+  /// 的 `_goHome` 一致，同样先无条件停播。合一页是首页与对话页的同一个页面，所以
+  /// 本次会话已有消息时落回的仍是消息流——不借这个动作新建会话（用户裁定，见
+  /// 决策日志第五轮 #8 与 Spec Story 6 的 2026-08-30 收口；要做到字面上的「回
+  /// 空状态首页」只能引入新建会话，那是行为改动，越出换皮范围）。
   void _goHome() {
     _chatViewModel(context)?.voiceOutput.stopAll();
     context.go('/');
@@ -334,7 +337,8 @@ class QiyuShellScope extends InheritedWidget {
   ///
   /// 窄屏的三条杠浮在左上角，与页内返回箭头叠在同一个位置，这时导航交给
   /// 抽屉。桌面不撤：侧边栏在内容列之外的另一栏，两者不相交，而「回到打开
-  /// 这一页的那一层」这条语义只有页内箭头给得出（壳的品牌槽回的是首页）。
+  /// 这一页的那一层」这条语义只有页内箭头给得出（壳的品牌槽回的是合一页，
+  /// 不必然是空状态）。
   static bool coversFrontNavigation(BuildContext context) {
     if (!isPresent(context)) {
       return false;
@@ -470,7 +474,7 @@ class _NavPanel extends StatelessWidget {
 
 /// 品牌图标槽（Spec Implementation Decisions 第 9 条、决策日志第一轮第 8 条）：
 /// **只放图形占位，不带「栖语」字标**——字标在第一轮就被列为被拒项。本轮不做
-/// 图形设计，落一个中性几何占位：不着紫、无渐变、无发光，点击回空状态首页。
+/// 图形设计，落一个中性几何占位：不着紫、无渐变、无发光，点击回合一页。
 class _BrandSlot extends StatefulWidget {
   const _BrandSlot({required this.onTap});
 

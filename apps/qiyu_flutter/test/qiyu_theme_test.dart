@@ -33,6 +33,15 @@ const _packageRoot = '.';
 String _read(String relativePath) =>
     File('$_packageRoot/$relativePath').readAsStringSync();
 
+/// `qiyu_icons.dart` 声明的图标常量名：图标对账的两侧之一，另一侧是字体实测
+/// 清单 `iconGlyphManifest`（见 `test/icon_glyph_manifest.dart`）。
+Set<String> _declaredIconNames() =>
+    RegExp(
+      r'static const IconData (\w+)',
+    ).allMatches(_read('lib/theme/qiyu_icons.dart')).map(
+      (m) => m.group(1)!,
+    ).toSet();
+
 Iterable<File> _dartFilesUnder(String relativeDir) =>
     Directory('$_packageRoot/$relativeDir')
         .listSync(recursive: true)
@@ -881,22 +890,27 @@ void main() {
   });
 
   group('图标子集与 QiyuIcons 码位对齐（design-system §4）', () {
-    test('qiyu_icons.dart 声明的图标集合与子集清单完全一致', () {
-      // 双向对账：清单来自实际入库字体的 glyph name → codepoint 表
-      // （.scratch/icon-subset/build-icon-subset.js 生成），常量表是消费侧。
-      // 少一个＝页面上取不到图形，多一个＝码位没进字体、渲染成豆腐块。
-      final declared =
-          RegExp(
-            r'static const IconData (\w+)',
-          ).allMatches(_read('lib/theme/qiyu_icons.dart')).map(
-            (m) => m.group(1)!,
-          ).toSet();
-      expect(declared, iconGlyphManifest.keys.toSet());
-      expect(declared.length, greaterThan(40));
+    test('常量表引用的字形都在入库子集里（单向对账：常量表 ⊆ 字体清单）', () {
+      // 清单来自实际入库字体的 glyph name → codepoint 表（.scratch/icon-subset/
+      // build-icon-subset.js 生成），常量表是消费侧。**只单向要求**：常量表多出
+      // 清单＝码位没进字体、渲染成豆腐块，必须红；清单多出常量表＝字体里留着一个
+      // 本轮没有界面消费的图形字形，可接受（重跑裁剪不属当前范围）。
+      // 原先这里要求两侧严格相等，于是「删掉零消费常量」只剩两条路：把字体实测
+      // 清单手改成与字体不符的假清单，或者把没人用的常量请回来——两条都是坏事。
+      // 字体侧的完整性另有两处守：清单本身是脚本实测产物，§4 定案选型在册那条
+      // 用例点名核对导航三件套与记忆区/操作。
+      expect(
+        _declaredIconNames().difference(iconGlyphManifest.keys.toSet()),
+        isEmpty,
+        reason: '常量表引用了没入库的字形，页面会渲染成豆腐块',
+      );
+      expect(_declaredIconNames().length, greaterThan(30));
     });
 
     test('每个常量的码位与字族都取实际子集里的那一份', () {
-      expect(qiyuIconCodePoints.keys.toSet(), iconGlyphManifest.keys.toSet());
+      // Dart 镜像表与常量表严格一一对应：少一条就没人校验那个常量的码位与字族，
+      // 多一条指的是已删掉的常量（那会先编译不过）。
+      expect(qiyuIconCodePoints.keys.toSet(), _declaredIconNames());
       for (final entry in qiyuIconCodePoints.entries) {
         final expected = iconGlyphManifest[entry.key];
         expect(

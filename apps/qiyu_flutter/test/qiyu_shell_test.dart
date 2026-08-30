@@ -134,12 +134,14 @@ void main() {
       expect(FocusManager.instance.primaryFocus, menu);
     });
 
-    testWidgets('点品牌槽回空状态首页', (tester) async {
+    testWidgets('点品牌槽回合一页', (tester) async {
       await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
       expect(_location(tester), '/chat');
 
       await tester.tap(find.byKey(const Key('go-home')));
       await tester.pumpAndSettle();
+      // 落点是合一页那**一个页面**（`/`）：会话已有消息时这里还是消息流，
+      // 品牌槽不借这一跳新建会话（决策日志第五轮 #8）。
       expect(_location(tester), '/');
     });
 

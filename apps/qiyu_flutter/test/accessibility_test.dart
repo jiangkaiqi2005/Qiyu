@@ -451,9 +451,12 @@ void main() {
   testWidgets('reduced motion keeps streaming text and completion feedback', (
     tester,
   ) async {
-    // 关闭动画（尊重系统减少动态效果设置）不得影响流式文本与完成
-    // 反馈。应用没有自定义动画、不读取 disableAnimations，此测试锁的
-    // 是行为约束：无论默认过渡是否播放，发送与完成反馈都照常出现。
+    // 关闭动画（尊重系统减少动态效果设置）不得影响流式文本与完成反馈。
+    // 应用**确实**读这一位：`lib/app.dart` 的 builder 用 `qiyuReducedMotion`
+    // 把它送进 `qiyuDarkTheme(reduceMotion:)`（关掉路由转场与 ink ripple），
+    // 页面自写的过渡统一走 `qiyuMotion()`——背景与问候淡出、抽屉位移、导航项
+    // 选中底、玻璃描边都压成 0。本用例锁的是这条约束的行为面：动效关掉之后，
+    // 发送与完成反馈仍要照常出现，不能顺带把内容一起吞掉。
     final chatViewModel = LocalChatViewModel(
       _FakeChatGateway(),
       hostConnectionProbe: _FixedProbe(),
