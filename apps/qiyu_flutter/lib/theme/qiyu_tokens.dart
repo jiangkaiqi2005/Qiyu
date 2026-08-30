@@ -293,6 +293,40 @@ abstract final class QiyuLayout {
   /// 别算进本 token 的消费方，也不受这里调整影响。
   static const double messageMaxWidth = 520;
 
+  /// 顶层功能页内容列的最大宽度（历史列表、会话详情、记忆中心、记忆详情、
+  /// 开发者诊断）。
+  ///
+  /// **实现现值，规范未定值**：design-system §5、§8 与 Spec 都没给功能页内容列
+  /// 定过宽度，760 是这五处各自裸写的同一个数字，本轮只是把它收进本 token 去重
+  /// （值一字未改）。视觉验收要调就改这里，不要在页面里再写数字。
+  static const double pageReadingMaxWidth = 760;
+
+  /// 设置页与隐私页阅读列的最大宽度。
+  ///
+  /// 与 [pageReadingMaxWidth] 同性质：720 是这两页的既有裸写值，规范未定稿，
+  /// 本轮只去重。它比功能页窄一档是两页落地时各自的现值，**不合并**成同一个
+  /// 数——合并等于改视觉，不属去重。
+  static const double settingsReadingMaxWidth = 720;
+
+  /// 对话框内容列的最大宽度（记忆控制总览、清除产品数据确认的加载态与内容态）。
+  ///
+  /// 现值收口，规范未定稿：460 原先写在设置页三处 `ConstrainedBox` 上。它是
+  /// 「上限而非定宽」，窄窗口下随对话框收缩、不溢出（ticket 24 的口径）。
+  static const double dialogContentMaxWidth = 460;
+
+  /// 记忆摘录预览对话框的最大宽度。
+  ///
+  /// 同为未定稿的实现现值（420）。与 [dialogContentMaxWidth] 刻意分档不合并，
+  /// 理由同 [settingsReadingMaxWidth]：本轮只去重，不调视觉。
+  static const double evidenceDialogMaxWidth = 420;
+
+  /// 备份与恢复面板的尺寸上限（560 × 640，未定稿的实现现值）。
+  ///
+  /// 宽度与 [homeContentMaxWidth] **同值但无关**：那一档管的是空状态首页内容列，
+  /// 两者不受同一次调整影响。
+  static const double backupDialogMaxWidth = 560;
+  static const double backupDialogMaxHeight = 640;
+
   /// composer 内边距与图标按钮高度（占位字靠它垂直居中）。
   /// 6px 是 §8 组件 5 的「矮一档」定值，不是 4px 网格档位。
   static const double composerPadding = 6;

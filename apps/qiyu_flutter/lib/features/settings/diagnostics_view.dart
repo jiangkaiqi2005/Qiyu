@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
+import '../../theme/qiyu_tokens.dart';
 import '../navigation.dart';
 import 'settings_client.dart';
 import 'settings_view_model.dart';
@@ -40,7 +41,9 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
+            constraints: const BoxConstraints(
+              maxWidth: QiyuLayout.pageReadingMaxWidth,
+            ),
             child: ListView(
               padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
               children: [

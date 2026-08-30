@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
+import '../../theme/qiyu_tokens.dart';
 import 'backup_client.dart';
 import 'backup_platform.dart';
 import 'memory_view_model.dart';
@@ -256,7 +257,10 @@ class _BackupDialogState extends State<_BackupDialog> {
     final theme = Theme.of(context);
     return Dialog(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 640),
+        constraints: const BoxConstraints(
+          maxWidth: QiyuLayout.backupDialogMaxWidth,
+          maxHeight: QiyuLayout.backupDialogMaxHeight,
+        ),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(

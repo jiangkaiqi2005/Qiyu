@@ -42,7 +42,9 @@ class MemoryView extends StatelessWidget {
           length: 4,
           child: Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
+              constraints: const BoxConstraints(
+                maxWidth: QiyuLayout.pageReadingMaxWidth,
+              ),
               child: Column(
                 children: [
                   Padding(
@@ -545,7 +547,9 @@ class _MemoryItemViewState extends State<MemoryItemView> {
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
+            constraints: const BoxConstraints(
+              maxWidth: QiyuLayout.pageReadingMaxWidth,
+            ),
             child: Column(
               children: [
                 Padding(
@@ -936,7 +940,9 @@ class _MemoryItemViewState extends State<MemoryItemView> {
   }
 }
 
-/// 记忆卡片的统一外观：底部留白、12px 圆角与高对比模式下的可见描边。
+/// 记忆卡片的统一外观：底部留白、18px 圆角（[QiyuRadii.cardBorder]，design-system
+/// §8 卡片与列表项档；12px 及以下的方正小圆角已验证偏 AI 感，除小元素外不再使用）
+/// 与高对比模式下的可见描边。
 class _MemoryCard extends StatelessWidget {
   const _MemoryCard({required this.child});
 
@@ -949,7 +955,7 @@ class _MemoryCard extends StatelessWidget {
       child: Card(
         margin: const EdgeInsets.only(bottom: 8),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: QiyuRadii.cardBorder,
           side: highContrastSide(context),
         ),
         child: child,
@@ -968,7 +974,7 @@ class _EntryTile extends StatelessWidget {
     final time = entry.at.toLocal();
     return _MemoryCard(
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: QiyuRadii.cardBorder,
         onTap: () => openInFront(context, '/memory/item/${entry.id}'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1071,7 +1077,7 @@ class _RootTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return _MemoryCard(
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: QiyuRadii.cardBorder,
         onTap: () => openInFront(context, '/memory/item/${root.id}'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1127,7 +1133,7 @@ class _MiddleTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return _MemoryCard(
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: QiyuRadii.cardBorder,
         onTap: () => openInFront(context, '/memory/item/${middle.id}'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1185,7 +1191,7 @@ class _LeafTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return _MemoryCard(
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: QiyuRadii.cardBorder,
         onTap: () => openInFront(context, '/memory/item/${leaf.dayId}'),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1599,7 +1605,9 @@ class _DeletePreviewDialog extends StatelessWidget {
             // 内层用 Column 而非视口类列表（对话框要测量内容固有尺寸，
             // ListView 无法参与），外裹 SingleChildScrollView 兜住
             // 字号放大或小窗下的超高内容，与记忆控制总览对话框同模式。
-            constraints: const BoxConstraints(maxWidth: 420),
+            constraints: const BoxConstraints(
+              maxWidth: QiyuLayout.evidenceDialogMaxWidth,
+            ),
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,

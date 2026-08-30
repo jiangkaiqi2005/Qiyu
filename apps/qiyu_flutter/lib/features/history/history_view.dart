@@ -27,7 +27,9 @@ class HistoryView extends StatelessWidget {
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
+            constraints: const BoxConstraints(
+              maxWidth: QiyuLayout.pageReadingMaxWidth,
+            ),
             child: Column(
               children: [
                 Padding(
@@ -166,11 +168,11 @@ class _SessionTile extends StatelessWidget {
       child: Card(
         margin: const EdgeInsets.only(bottom: 12),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: QiyuRadii.cardBorder,
           side: highContrastSide(context),
         ),
         child: InkWell(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: QiyuRadii.cardBorder,
           onTap: () => openInFront(context, '/history/${session.sessionId}'),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -300,7 +302,9 @@ class _HistorySessionViewState extends State<HistorySessionView> {
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
+            constraints: const BoxConstraints(
+              maxWidth: QiyuLayout.pageReadingMaxWidth,
+            ),
             child: Column(
               children: [
                 Padding(

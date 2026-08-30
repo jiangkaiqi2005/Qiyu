@@ -75,7 +75,9 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
+            constraints: const BoxConstraints(
+              maxWidth: QiyuLayout.settingsReadingMaxWidth,
+            ),
             child: ListView(
               key: const Key('settings-scroll'),
               padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
@@ -1840,7 +1842,9 @@ class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
       title: const Text('记忆控制总览'),
       content: ConstrainedBox(
         // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
-        constraints: const BoxConstraints(maxWidth: 460),
+        constraints: const BoxConstraints(
+          maxWidth: QiyuLayout.dialogContentMaxWidth,
+        ),
         child: controls == null
             ? const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
@@ -1921,7 +1925,9 @@ class _ClearDataDialog extends StatelessWidget {
       content: preview == null
           ? ConstrainedBox(
               // 与内容分支同口径：上限而非定宽，窄窗口不溢出（ticket 24）。
-              constraints: const BoxConstraints(maxWidth: 460),
+              constraints: const BoxConstraints(
+                maxWidth: QiyuLayout.dialogContentMaxWidth,
+              ),
               child: const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
                 child: Center(child: CircularProgressIndicator()),
@@ -1929,7 +1935,9 @@ class _ClearDataDialog extends StatelessWidget {
             )
           : ConstrainedBox(
               // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
-              constraints: const BoxConstraints(maxWidth: 460),
+              constraints: const BoxConstraints(
+                maxWidth: QiyuLayout.dialogContentMaxWidth,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -2070,7 +2078,9 @@ class _ResolvedConnection extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
+        // 内衬块取 8px 小元素档（design-system §8）：它嵌在分节之内，不是
+        // 顶层卡片也不是列表项，套 18 会与外层分节的同档圆角打架。
+        borderRadius: QiyuRadii.smallBorder,
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Padding(

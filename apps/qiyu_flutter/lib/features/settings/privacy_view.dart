@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../theme/qiyu_icons.dart';
+import '../../theme/qiyu_tokens.dart';
 import '../navigation.dart';
 
 /// 隐私说明页（ticket 23）：数据只在本机、何时调用用户选择的模型
@@ -16,7 +17,9 @@ class PrivacyView extends StatelessWidget {
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
+            constraints: const BoxConstraints(
+              maxWidth: QiyuLayout.settingsReadingMaxWidth,
+            ),
             child: ListView(
               padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
               children: [
