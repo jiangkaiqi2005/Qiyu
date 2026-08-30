@@ -381,6 +381,66 @@ void main() {
     await tester.pumpAndSettle();
     expect(glyphColor(), QiyuColors.muted);
   });
+
+  testWidgets('删除按钮带无障碍语义标签，读屏动作名不依赖 hover', (
+    tester,
+  ) async {
+    // `test/accessibility_test.dart` 的探针用例已钉住事实：IconButton 的 tooltip
+    // 只落在语义节点的 tooltip 属性上，label 是空的，而触屏没有 hover。这颗删除
+    // 入口此前只有 tooltip，读屏器念不出动作名；现在动作名显式进语义树，并汇在
+    // 按钮那一个节点上。
+    final historyViewModel = HistoryViewModel(
+      _FakeHistoryGateway(_testListing()),
+      onSessionDeleted: (_) {},
+      autoStart: false,
+    );
+    await historyViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        historyViewModel: historyViewModel,
+        onboardingViewModel: await _onboardingViewModel(),
+      ),
+    );
+    await _settleMergedPage(tester);
+    await tester.tap(find.byKey(const Key('open-history')));
+    await tester.pumpAndSettle();
+
+    final handle = tester.ensureSemantics();
+    try {
+      // 标签合在按钮外层的 MergeSemantics 节点上，且只有汇成 SemanticsData
+      // 才读得到：节点自身的 label 在合并情况下仍是空的。
+      const deleteButton = Key('delete-session-session-today');
+      final data = tester
+          .getSemantics(
+            find.ancestor(
+              of: find.byKey(deleteButton),
+              matching: find.byType(MergeSemantics),
+            ),
+          )
+          .getSemanticsData();
+      expect(
+        data.label,
+        '删除这段会话',
+        reason: '删除入口没把动作名带进语义标签，触屏读不到',
+      );
+      expect(data.tooltip, '删除这段会话', reason: 'tooltip 与语义标签各写了一份');
+      expect(data.flagsCollection.isButton, isTrue);
+      // 读屏按 label 查要能命中这一颗。`find.bySemanticsLabel` 匹配的是带
+      // `semanticLabel` 的那个 Semantics 控件（由 Icon 生成，在按钮子树内），
+      // 而历史列表每段会话都有一颗同名按钮，所以限定在本颗的子树里查、不数全树。
+      expect(
+        find.descendant(
+          of: find.byKey(deleteButton),
+          matching: find.bySemanticsLabel('删除这段会话'),
+        ),
+        findsOneWidget,
+        reason: '读屏按语义标签查不到这颗删除按钮，动作名只剩 hover 才看得见',
+      );
+    } finally {
+      handle.dispose();
+    }
+  });
 }
 
 LocalChatViewModel _chatViewModel([_FakeChatGateway? gateway]) =>

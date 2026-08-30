@@ -163,6 +163,9 @@ class _SessionTile extends StatelessWidget {
     required this.viewModel,
   });
 
+  /// 动作名：tooltip 与无障碍标签共用一份，不许两头各写一遍再漂移。
+  static const _actionLabel = '删除这段会话';
+
   final HistorySessionSummary session;
   final bool isLatest;
   final HistoryViewModel viewModel;
@@ -210,16 +213,27 @@ class _SessionTile extends StatelessWidget {
                   ),
                 QiyuFocusRingScope(
                   borderRadius: QiyuRadii.circleBorder,
-                  child: IconButton(
-                    key: Key('delete-session-${session.sessionId}'),
-                    onPressed: viewModel.deleting
-                        ? null
-                        : () => unawaited(_confirmDelete(context)),
-                    tooltip: '删除这段会话',
-                    // 主题层的「常驻但安静」档：静置 muted 出自 Spec Decision 13
-                    // 「删除图标常驻次要色」，悬停提到 ink 出自 §8 组件 7。
-                    style: qiyuQuietIconButtonStyle(),
-                    icon: const Icon(QiyuIcons.delete),
+                  // tooltip 不是无障碍名：IconButton 把它交给 MaterialTooltip，
+                  // 最终只落在语义节点的 tooltip 属性上，label 仍是空的，按
+                  // bySemanticsLabel 读不到——这条事实由 test/accessibility_test.dart
+                  // 的「tooltip 只是语义节点的 tooltip 属性」探针用例锁住。触屏没有
+                  // hover，动作名一律用与 tooltip 同一份文案显式带进语义树，并合成
+                  // 一个按钮节点（同 `qiyu_chat_bubble` 的重听喇叭、记忆中心常驻钮）。
+                  child: MergeSemantics(
+                    child: IconButton(
+                      key: Key('delete-session-${session.sessionId}'),
+                      onPressed: viewModel.deleting
+                          ? null
+                          : () => unawaited(_confirmDelete(context)),
+                      tooltip: _actionLabel,
+                      // 主题层的「常驻但安静」档：静置 muted 出自 Spec Decision 13
+                      // 「删除图标常驻次要色」，悬停提到 ink 出自 §8 组件 7。
+                      style: qiyuQuietIconButtonStyle(),
+                      icon: const Icon(
+                        QiyuIcons.delete,
+                        semanticLabel: _actionLabel,
+                      ),
+                    ),
                   ),
                 ),
               ],
