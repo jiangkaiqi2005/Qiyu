@@ -993,8 +993,11 @@ class _MemoryCard extends StatelessWidget {
 /// ticket 24 立下的「小窗 / 字号放大绝不产生 RenderFlex 溢出」不变量（实测
 /// 300 逻辑像素 + 1.4 倍字号下旧结构溢出 103px）。Wrap 是同时做得到「贴右」与
 /// 「换行」的容器：外层先用 [SizedBox] 撑满整行宽，`spaceBetween` 才有自由空间
-/// 可分配——宽屏下与原来的 Row 一模一样（信息在左、时间与操作贴右）；并排放不下
-/// 时整簇换到下一行，簇内再各自行内换行。信息一颗都不隐藏，换的只有排法。
+/// 可分配。宽屏下这条用例真正锁住的是：信息在左、时间与常驻操作同处一行且贴到
+/// 内容区右边界（`test/memory_view_test.dart` 的「宽屏下条目头部保持芯片在左、
+/// 时间与操作贴右」）；并排放不下时整簇换到下一行，簇内再各自行内换行。信息一颗
+/// 都不隐藏，换的只有排法。与改造前的 Row 有一处确有意的不同：簇之间新留了
+/// [QiyuSpacing.xs] 的呼吸位，操作簇内部颗与颗之间不再另加容器间距。
 class _MemoryHeaderLine extends StatelessWidget {
   const _MemoryHeaderLine({required this.leading, this.trailing = const []});
 
@@ -1395,7 +1398,14 @@ class _MemoryActionButtons extends StatelessWidget {
     // Wrap 而不是 Row：这一组按钮的总宽度等于颗数乘以各自的最小触摸宽度，
     // 自身不会收缩；外层条目头部给不出那么多（极窄窗口、字号放大）时，
     // 宁可让它行内换行，也不要把外层撑成 RenderFlex 溢出——一颗都不许丢。
+    // spacing 显式写 0：颗与颗之间只许各自焦点环的 3px 留白相邻（改造前后的
+    // Row 也是这一处），不许容器再往里塞间距——外层那一处 8 是簇与簇之间的
+    // 呼吸位，套到颗上四颗就凭空多出 24px。这颗 0 原来由 Row 默认给出，换成
+    // 换行容器后不许再靠默认值隐式成立；相邻两颗的 x 距离由
+    // test/memory_view_test.dart 的「宽屏下条目头部保持芯片在左、时间与操作
+    // 贴右」逐对量着锁住。
     return Wrap(
+      spacing: 0,
       alignment: WrapAlignment.end,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [

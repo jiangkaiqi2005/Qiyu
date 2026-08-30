@@ -1497,9 +1497,9 @@ void main() {
   });
 
   testWidgets('宽屏下条目头部保持芯片在左、时间与操作贴右', (tester) async {
-    // 头部从 Row 换成两簇 Wrap 之后，宽屏表现必须和换之前一致：
-    // 常驻操作贴右边界、与时间戳和状态芯片同处一行。贴不到右边说明
-    // 外层没撑满整行宽（Wrap 的主轴尺寸会收缩到内容宽度）。
+    // 头部从 Row 换成两簇 Wrap 之后，宽屏必须仍然把信息放左、时间与常驻操作
+    // 放同一行并贴右边界。贴不到右边说明外层没撑满整行宽（Wrap 的主轴尺寸会
+    // 收缩到内容宽度）。簇之间新留的 8px 呼吸位是有意的，不在「与原来一致」之列。
     await _pumpMemoryCenter(tester, _fullOverview());
     final tile = find.byKey(const Key('memory-entry-entry-1'));
     final stamp = find.descendant(
@@ -1535,6 +1535,29 @@ void main() {
       inInclusiveRange(tileRect.left + 23, tileRect.left + 30),
     );
     expect(kindChip.center.dy, closeTo(stampRect.center.dy, 1));
+
+    // 相邻两颗的左边缘距离必须只等于「一颗的固有宽度 + 两侧焦点环留白」：
+    // QiyuFocusRingScope 各留 3，改造前后的 Row 都是这一处 6px，不是新添的。
+    // Wrap 的 spacing 只有落成 0 才守得住这条，一旦照搬外层簇间的 8px，差值
+    // 立刻多出 8、四颗凭空撑宽 24px——只断 findsOneWidget 测不出这一条。
+    final slots = [
+      for (final action in ['edit', 'freeze', 'ban', 'delete'])
+        tester.getRect(find.byKey(Key('memory-action-entry-1-$action'))),
+    ];
+    final slotWidth = slots.first.width;
+    final slotStride = slotWidth + 2 * QiyuLayout.focusRingOffset;
+    for (var i = 1; i < slots.length; i++) {
+      expect(
+        slots[i].width,
+        closeTo(slotWidth, 0.01),
+        reason: '第 $i 颗按钮的宽度与前一颗不一致，x 距离的基准不可用',
+      );
+      expect(
+        slots[i].left - slots[i - 1].left,
+        closeTo(slotStride, 0.01),
+        reason: '相邻两颗按钮之间多出焦点环之外的空隙，常驻操作簇凭空变宽',
+      );
+    }
   });
 
   testWidgets('常驻操作按钮带无障碍语义标签，不只有 hover 才看得见的 tooltip', (
