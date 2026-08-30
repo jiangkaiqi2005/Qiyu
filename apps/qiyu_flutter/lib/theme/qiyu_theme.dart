@@ -206,7 +206,11 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false}) {
     onTertiary: QiyuColors.night,
     tertiaryContainer: QiyuColors.panel,
     onTertiaryContainer: QiyuColors.ink,
-    // 暗红只住破坏性操作。
+    // 暗红同时占这两个槽：`error` 供破坏性动作与失败态的字色/图标色，
+    // `errorContainer` 供它的容器底（`diagnostics_view` 的强调诊断芯片确实
+    // 拿它当底色渲染）。§1 三色纪律把暗红分给两类危险语义——**破坏性操作**
+    // （删除、清除产品数据）与**故障/失败态**（本机 Host 不可用、某个动作没成），
+    // 两类之外禁用；§2 只有这一档红，不另造第二档或琥珀「实底」。
     error: QiyuColors.danger,
     onError: QiyuColors.night,
     errorContainer: QiyuColors.danger,
