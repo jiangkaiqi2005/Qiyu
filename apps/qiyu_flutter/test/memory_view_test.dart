@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -566,9 +567,8 @@ void main() {
     await tester.tap(find.byKey(const Key('home-go-memory')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('修正'));
+    // 操作常驻：直接点条目上的修正按钮，不再需要先点开菜单。
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-edit')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('memory-edit-field')), findsOneWidget);
@@ -610,25 +610,19 @@ void main() {
     await tester.pumpAndSettle();
 
     // 冻结直接生效，不需要确认。
-    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('暂停使用'));
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-freeze')));
     await tester.pumpAndSettle();
     expect(gateway.actionCalls, contains('freeze:entry-1'));
 
     // 禁提必须确认；取消不产生动作。
-    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('不再提起'));
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-ban')));
     await tester.pumpAndSettle();
     expect(find.text('不再提起这条记忆？'), findsOneWidget);
     await tester.tap(find.text('先不用'));
     await tester.pumpAndSettle();
     expect(gateway.actionCalls, isNot(contains('ban:entry-1')));
 
-    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('不再提起'));
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-ban')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('memory-ban-confirm')));
     await tester.pumpAndSettle();
@@ -656,9 +650,7 @@ void main() {
     await tester.tap(find.byKey(const Key('home-go-memory')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('删除'));
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-delete')));
     await tester.pumpAndSettle();
 
     // 影响范围先于删除呈现，表述准确不含糊。
@@ -694,11 +686,9 @@ void main() {
     await tester.tap(find.byKey(const Key('memory-tab-persona')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('memory-actions-root-1')));
-    await tester.pumpAndSettle();
-    // 画像只能通过对话纠正：菜单里没有修正入口。
-    expect(find.text('修正'), findsNothing);
-    await tester.tap(find.text('暂停使用'));
+    // 画像只能通过对话纠正：常驻按钮里没有修正这一颗。
+    expect(find.byKey(const Key('memory-action-root-1-edit')), findsNothing);
+    await tester.tap(find.byKey(const Key('memory-action-root-1-freeze')));
     await tester.pumpAndSettle();
     expect(gateway.actionCalls, contains('freeze:root-1'));
 
@@ -733,6 +723,137 @@ void main() {
     await tester.tap(find.byKey(const Key('memory-back')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('记忆条目操作常驻在条目上，按钮与该条目的状态一一对应', (
+    tester,
+  ) async {
+    await _pumpMemoryCenter(tester, _fullOverview());
+
+    // 不再有任何「点开才看得到」的操作菜单（design-system §8 补充约定）。
+    expect(find.bySubtype<PopupMenuButton<Object?>>(), findsNothing);
+
+    // 普通条目：修正 / 暂停使用 / 不再提起 / 删除四颗同时在场。
+    for (final action in ['edit', 'freeze', 'ban', 'delete']) {
+      expect(
+        find.byKey(Key('memory-action-entry-1-$action')),
+        findsOneWidget,
+        reason: '缺少常驻的 $action 按钮',
+      );
+    }
+    // 未遮罩、未冻结、未禁提：不该出现揭示与两种解除。
+    for (final absent in ['reveal', 'unfreeze', 'unban']) {
+      expect(
+        find.byKey(Key('memory-action-entry-1-$absent')),
+        findsNothing,
+        reason: '$absent 不适用于这条条目，不该多发',
+      );
+    }
+
+    // 画像条目：只能通过对话纠正，常驻按钮里没有修正这一颗。
+    await tester.tap(find.byKey(const Key('memory-tab-persona')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-action-root-1-edit')), findsNothing);
+    for (final action in ['freeze', 'ban', 'delete']) {
+      expect(
+        find.byKey(Key('memory-action-root-1-$action')),
+        findsOneWidget,
+        reason: '画像条目缺少 $action 控制权',
+      );
+    }
+  });
+
+  testWidgets('敏感与已冻结、已禁提条目只给当下可用的动作，点了就走到', (
+    tester,
+  ) async {
+    final gateway = await _pumpMemoryCenter(tester, _markedOverview());
+
+    // 遮罩条目：有临时查看，没有修正——不揭示原文就不能改。
+    expect(
+      find.byKey(const Key('memory-action-entry-sensitive-reveal')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('memory-action-entry-sensitive-edit')),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.byKey(const Key('memory-action-entry-sensitive-reveal')),
+    );
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('reveal:entry-sensitive:content'));
+    expect(find.byKey(const Key('memory-reveal-dialog')), findsOneWidget);
+    expect(find.text('揭示出的原文'), findsOneWidget);
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    // 列表侧不落揭示状态：关掉对话框就重新遮罩。
+    expect(find.text('揭示出的原文'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('memory-tab-longterm')));
+    await tester.pumpAndSettle();
+    // 已冻结：只有恢复使用，不再提供暂停或禁提。
+    expect(
+      find.byKey(const Key('memory-action-lt-frozen-unfreeze')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('memory-action-lt-frozen-freeze')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('memory-action-lt-frozen-ban')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const Key('memory-action-lt-frozen-unfreeze')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('unfreeze:lt-frozen'));
+
+    // 已禁提：只有解除禁提，且解除直接生效、不再要确认。
+    expect(
+      find.byKey(const Key('memory-action-lt-banned-unban')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('memory-action-lt-banned-ban')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const Key('memory-action-lt-banned-unban')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('unban:lt-banned'));
+    expect(find.text('不再提起这条记忆？'), findsNothing);
+  });
+
+  testWidgets('常驻操作按钮常态是中性次要色，悬停才提亮且不显紫', (
+    tester,
+  ) async {
+    await _pumpMemoryCenter(tester, _fullOverview());
+    const freeze = Key('memory-action-entry-1-freeze');
+
+    Color glyphColor() => IconTheme.of(
+      tester.element(
+        find.descendant(
+          of: find.byKey(freeze),
+          matching: find.byIcon(QiyuIcons.ac_unit),
+        ),
+      ),
+    ).color!;
+
+    // 未悬停：压成 §2 的次要字档，在场但不抢读。
+    expect(glyphColor(), QiyuColors.muted);
+
+    // 指针悬停：前景提到 ink（§8「次要色、悬停提亮」），底色仍是中性淡白。
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(find.byKey(freeze)));
+    await tester.pumpAndSettle();
+    expect(glyphColor(), QiyuColors.ink);
+    expect(glyphColor(), isNot(QiyuColors.accentBright));
+
+    await mouse.moveTo(Offset.zero);
+    await tester.pumpAndSettle();
+    expect(glyphColor(), QiyuColors.muted);
   });
 
   testWidgets('recovery findings show an honest banner with details', (
@@ -958,23 +1079,25 @@ void main() {
     await tester.tap(find.byKey(const Key('home-go-memory')));
     await tester.pumpAndSettle();
 
-    // 冻结动作挂起期间：菜单禁用，避免重复触发。
+    // 冻结动作挂起期间：这一条目上的常驻按钮全部禁用，避免重复触发。
+    const entryActions = ['edit', 'freeze', 'ban', 'delete'];
+    IconButton actionButton(String name) => tester.widget<IconButton>(
+      find.byKey(Key('memory-action-entry-1-$name')),
+    );
+
     gateway.holdFreeze = Completer<MemoryActionResult>();
-    await tester.tap(find.byKey(const Key('memory-actions-entry-1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('暂停使用'));
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-freeze')));
     await tester.pumpAndSettle();
     expect(gateway.actionCalls, contains('freeze:entry-1'));
+    for (final name in entryActions) {
+      expect(
+        actionButton(name).onPressed,
+        isNull,
+        reason: '动作执行中 $name 按钮不得可点',
+      );
+    }
 
-    PopupMenuButton<Object?> actionMenu() =>
-        tester.widget<PopupMenuButton<Object?>>(
-          find.byWidgetPredicate(
-            (widget) => widget is PopupMenuButton<Object?>,
-          ),
-        );
-    expect(actionMenu().enabled, isFalse);
-
-    // 完成后：结果三态呈现，入口恢复可用。
+    // 完成后：结果三态呈现，每一颗按钮都恢复可用。
     gateway.holdFreeze!.complete(
       const MemoryActionResult(
         status: MemoryActionStatus.success,
@@ -983,7 +1106,13 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('memory-action-result')), findsOneWidget);
-    expect(actionMenu().enabled, isTrue);
+    for (final name in entryActions) {
+      expect(
+        actionButton(name).onPressed,
+        isNotNull,
+        reason: '动作完成后 $name 按钮应恢复可用',
+      );
+    }
 
     await tester.tap(find.byKey(const Key('memory-back')));
     await tester.pumpAndSettle();
@@ -1199,6 +1328,62 @@ void main() {
       reason: '「记忆」标题的左边界不得落在三条杠的命中区里',
     );
   });
+
+  testWidgets('窄屏下条目操作按钮全部在场且点得到', (tester) async {
+    tester.view.physicalSize = const Size(400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await _pumpMemoryCenter(
+      tester,
+      _fullOverview(),
+      viaDrawer: true,
+    );
+
+    // 四颗常驻按钮都必须在视口之内：收了菜单才挤得下的旧假设已经不成立。
+    for (final action in ['edit', 'freeze', 'ban', 'delete']) {
+      final finder = find.byKey(Key('memory-action-entry-1-$action'));
+      expect(finder, findsOneWidget, reason: '窄屏缺少 $action 按钮');
+      final rect = tester.getRect(finder);
+      expect(rect.right, lessThanOrEqualTo(400));
+      expect(rect.left, greaterThanOrEqualTo(0));
+    }
+
+    // 最右那颗（删除）真的可点：确认框弹得出来，说明没被裁出命中区。
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-delete')));
+    await tester.pumpAndSettle();
+    expect(find.text('删除这条记忆？'), findsOneWidget);
+    await tester.tap(find.text('先不用'));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, isNot(contains('delete:entry-1')));
+  });
+}
+
+/// 进入记忆中心：注入桩网关并走完「首页 → 记忆」这一段导航，返回该网关
+/// 供用例查调用记录。窄屏没有常驻侧边栏，[viaDrawer] 为真时先开抽屉再进；
+/// 侧边栏与抽屉同时渲染同一批标签，所以入口一律按 Key 定位。
+Future<_FakeMemoryGateway> _pumpMemoryCenter(
+  WidgetTester tester,
+  MemoryOverview overview, {
+  bool viaDrawer = false,
+}) async {
+  final gateway = _FakeMemoryGateway(overview);
+  final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
+  await memoryViewModel.refresh();
+  await tester.pumpWidget(
+    QiyuApp(
+      viewModel: _chatViewModel(),
+      onboardingViewModel: await _onboardingViewModel(),
+      memoryViewModel: memoryViewModel,
+    ),
+  );
+  await tester.pumpAndSettle();
+  if (viaDrawer) {
+    await tester.tap(find.byKey(const Key('nav-menu-button')));
+    await tester.pumpAndSettle();
+  }
+  await tester.tap(find.byKey(const Key('home-go-memory')));
+  await tester.pumpAndSettle();
+  return gateway;
 }
 
 Future<void> _pumpBackupDialog(

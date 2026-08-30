@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
+import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../navigation.dart';
@@ -22,9 +23,9 @@ const _maskedPlaceholder = '这条内容涉及私密信息，暂不直接展示�
 const _revealTimeout = Duration(seconds: 20);
 
 /// 四区记忆中心（ticket 19 读取 / ticket 20 控制）：最近发生、长期
-/// 印象、关于你、我们的关系。导航只用用户语言；编辑、冻结/解除、
-/// 禁提/解除、删除与敏感揭示都经过明确确认，结果以成功、部分失败、
-/// 可恢复失败三态呈现。
+/// 印象、关于你、我们的关系。导航只用用户语言；条目操作按钮常驻，
+/// 冻结/解除、修正与敏感揭示直接执行，禁提与删除先经明确确认，
+/// 结果以成功、部分失败、可恢复失败三态呈现。
 class MemoryView extends StatelessWidget {
   const MemoryView({super.key, this.backupGateway, this.backupPlatform});
 
@@ -1025,7 +1026,7 @@ class _EntryTile extends StatelessWidget {
                     '${twoDigits(time.hour)}:${twoDigits(time.minute)}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  _MemoryActionMenu(
+                  _MemoryActionButtons(
                     key: Key('memory-actions-${entry.id}'),
                     itemId: entry.id,
                     control: entry.control,
@@ -1072,7 +1073,7 @@ class _LongTermTile extends StatelessWidget {
               _StatusChip(label: control.label),
             ],
             if (!statePack)
-              _MemoryActionMenu(
+              _MemoryActionButtons(
                 key: Key('memory-actions-${item.id}'),
                 itemId: item.id,
                 control: item.control,
@@ -1117,7 +1118,7 @@ class _RootTile extends StatelessWidget {
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
-                  _MemoryActionMenu(
+                  _MemoryActionButtons(
                     key: Key('memory-actions-${root.id}'),
                     itemId: root.id,
                     control: root.control,
@@ -1185,7 +1186,7 @@ class _MiddleTile extends StatelessWidget {
                       textAlign: TextAlign.end,
                     ),
                   ),
-                  _MemoryActionMenu(
+                  _MemoryActionButtons(
                     key: Key('memory-actions-${middle.id}'),
                     itemId: middle.id,
                     control: middle.control,
@@ -1247,8 +1248,10 @@ class _LeafTile extends StatelessWidget {
   }
 }
 
-/// 条目操作菜单（ticket 20）：修正、暂停/恢复使用、不再提起/解除、
-/// 删除。冻结直接生效；禁提与删除需要确认；画像不提供编辑。
+/// 条目可执行的动作：一个值对应一颗常驻按钮。
+///
+/// [label] 是按钮的 tooltip 文案，按钮键的尾段取枚举名（`freeze`、`unban`…）；
+/// 动作与图形的对应关系在 [_MemoryActionButtons._actions]。
 enum _MemoryActionChoice {
   edit('修正'),
   reveal('临时查看'),
@@ -1263,8 +1266,14 @@ enum _MemoryActionChoice {
   final String label;
 }
 
-class _MemoryActionMenu extends StatelessWidget {
-  const _MemoryActionMenu({
+/// 条目操作按钮组（ticket 20）：把 [_MemoryActionChoice] 里的动作**常驻**摆在
+/// 条目上，不再收进「⋯」菜单——记忆控制权是产品的信任承诺，必须随时看得见
+/// （design-system §8 补充约定、Spec Implementation Decision 14、决策日志第二轮 4）。
+///
+/// 呈现是次要色图标按钮 + 悬停提亮，取值在主题层 [qiyuQuietIconButtonStyle]。
+/// 改的只有入口形态：动作语义、出现条件与确认流程与收在菜单里时逐项一致。
+class _MemoryActionButtons extends StatelessWidget {
+  const _MemoryActionButtons({
     super.key,
     required this.itemId,
     required this.control,
@@ -1279,52 +1288,40 @@ class _MemoryActionMenu extends StatelessWidget {
   final bool editable;
   final String? currentText;
 
-  List<PopupMenuEntry<_MemoryActionChoice>> _items() {
-    final items = <PopupMenuEntry<_MemoryActionChoice>>[];
+  /// 这一条目当前该出现哪些操作：与改造前菜单逐项出现的条件完全一致。
+  /// 图形取 design-system §4 定案的五枚（铅笔 / 雪花 / 禁止圈 / 垃圾桶 /
+  /// 眼睛）；恢复使用与解除禁提沿用同一图形，两态靠条目上的状态芯片与
+  /// tooltip 上的动作名区分。
+  List<({IconData icon, _MemoryActionChoice choice})> _actions() {
+    final actions = <({IconData icon, _MemoryActionChoice choice})>[];
     if (editable && !masked) {
-      items.add(
-        const PopupMenuItem(value: _MemoryActionChoice.edit, child: Text('修正')),
-      );
+      actions.add((icon: QiyuIcons.edit, choice: _MemoryActionChoice.edit));
     }
     if (masked) {
-      items.add(
-        const PopupMenuItem(
-          value: _MemoryActionChoice.reveal,
-          child: Text('临时查看'),
-        ),
-      );
+      actions.add((
+        icon: QiyuIcons.visibility,
+        choice: _MemoryActionChoice.reveal,
+      ));
     }
     switch (control) {
       case MemoryControlStatus.frozen:
-        items.add(
-          const PopupMenuItem(
-            value: _MemoryActionChoice.unfreeze,
-            child: Text('恢复使用'),
-          ),
-        );
+        actions.add((
+          icon: QiyuIcons.ac_unit,
+          choice: _MemoryActionChoice.unfreeze,
+        ));
       case MemoryControlStatus.banned:
-        items.add(
-          const PopupMenuItem(
-            value: _MemoryActionChoice.unban,
-            child: Text('解除禁提'),
-          ),
-        );
+        actions.add((
+          icon: QiyuIcons.block,
+          choice: _MemoryActionChoice.unban,
+        ));
       case null:
-        items.addAll([
-          const PopupMenuItem(
-            value: _MemoryActionChoice.freeze,
-            child: Text('暂停使用'),
-          ),
-          const PopupMenuItem(
-            value: _MemoryActionChoice.ban,
-            child: Text('不再提起'),
-          ),
+        actions.addAll([
+          (icon: QiyuIcons.ac_unit, choice: _MemoryActionChoice.freeze),
+          (icon: QiyuIcons.block, choice: _MemoryActionChoice.ban),
         ]);
     }
-    items.add(
-      const PopupMenuItem(value: _MemoryActionChoice.delete, child: Text('删除')),
-    );
-    return items;
+    actions.add((icon: QiyuIcons.delete, choice: _MemoryActionChoice.delete));
+    return actions;
   }
 
   Future<void> _selected(
@@ -1356,11 +1353,23 @@ class _MemoryActionMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final acting = context.watch<MemoryCenterViewModel>().acting;
-    return PopupMenuButton<_MemoryActionChoice>(
-      tooltip: acting ? '正在整理…' : '记忆操作',
-      enabled: !acting,
-      itemBuilder: (context) => _items(),
-      onSelected: (choice) => unawaited(_selected(context, choice)),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final action in _actions())
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: IconButton(
+              key: Key('memory-action-$itemId-${action.choice.name}'),
+              onPressed: acting
+                  ? null
+                  : () => unawaited(_selected(context, action.choice)),
+              tooltip: action.choice.label,
+              style: qiyuQuietIconButtonStyle(),
+              icon: Icon(action.icon),
+            ),
+          ),
+      ],
     );
   }
 }

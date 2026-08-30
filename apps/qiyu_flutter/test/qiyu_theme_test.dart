@@ -639,6 +639,44 @@ void main() {
       );
       expect(QiyuLine.tabIndicatorInset, 6);
     });
+
+    test('常驻图标按钮的安静档：静置 muted、悬停提亮到 ink、禁用降透明度', () {
+      // design-system §8 补充约定「操作按钮常驻…次要色、悬停提亮」与 Spec
+      // Implementation Decision 14。三档都必须落在中性集合里——悬停是这一版
+      // 新增的角色位，最容易顺手把原型的淡紫底抄回来。
+      final quiet = qiyuQuietIconButtonStyle().foregroundColor!;
+      final plain = <WidgetState>{};
+      final hovered = <WidgetState>{WidgetState.hovered};
+      final disabled = <WidgetState>{WidgetState.disabled};
+      expect(quiet.resolve(plain), QiyuColors.muted);
+      expect(quiet.resolve(hovered), QiyuColors.ink);
+      expect(quiet.resolve(disabled), QiyuColors.muted.withValues(alpha: 0.38));
+      for (final color in [
+        quiet.resolve(plain),
+        quiet.resolve(hovered),
+        quiet.resolve(disabled),
+      ]) {
+        expect(
+          color,
+          isNot(QiyuColors.accentBright),
+          reason: '常驻操作按钮的任何一态都不许显紫（三色纪律）',
+        );
+      }
+
+      // 新角色位是**按需登记**的：不传 hovered / disabled 时，既有组件的档位
+      // 一格都不能变，否则这次扩展就把开关、勾选框的选中态悄悄改没了。
+      final untouched = qiyuNeutralStates(
+        unselected: QiyuColors.panel,
+        selected: QiyuColors.neutralFill,
+      );
+      expect(untouched.resolve(hovered), QiyuColors.panel);
+      expect(untouched.resolve(disabled), QiyuColors.panel);
+      final selectedDisabled = <WidgetState>{
+        WidgetState.selected,
+        WidgetState.disabled,
+      };
+      expect(untouched.resolve(selectedDisabled), QiyuColors.neutralFill);
+    });
   });
 
   group('字族与字阶', () {

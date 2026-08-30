@@ -82,23 +82,37 @@ TextTheme qiyuTextTheme() {
   );
 }
 
-/// 中性状态表：M3 组件「选中 / 未选中」两态的取值**只在这里解析一次**。
+/// 中性状态表：M3 组件「未选中 / 选中 / 悬停 / 禁用」这些态的取值**只在这里
+/// 解析一次**。
 ///
 /// 此前每个被当填充用的组件都各写一份同形状的 `resolveWith`（数到七份），加一个
 /// 组件就得再记一遍「这里不得显紫、不得取到看不见的档位」——典型的 Shotgun
 /// Surgery。现在这份知识收敛到一个 helper 加一张角色登记表：组件主题只登记
 /// 「哪一态取哪个中性角色」，状态解析逻辑全主题层只有这一处。
 ///
-/// 禁用态**刻意不另造色档**：§2 没有第三档中性，M3 的 disabled 由前景透明度降档
-/// 表达，这里让它沿用未选中值，避免冒出规范外的新值。
+/// [hovered] 与 [disabled] 都是**按需登记**的角色位，不传就退回未选中值：
+/// - [hovered]：§8 组件 7「悬停轻提亮」——指针上来只提**前景**，悬停底一律中性，
+///   原型的 `rgba(157,143,224,.08)` 淡紫底按 Spec Further Notes 2 压掉；
+/// - [disabled]：§2 没有第三档中性，禁用一律靠**透明度降档**表达而不是新色值；
+///   不登记就沿用未选中值，避免冒出规范外的新档。
 WidgetStateProperty<Color?> qiyuNeutralStates({
   required Color unselected,
   Color? selected,
-}) => WidgetStateProperty.resolveWith<Color?>(
-  (Set<WidgetState> states) => states.contains(WidgetState.selected)
+  Color? hovered,
+  Color? disabled,
+}) => WidgetStateProperty.resolveWith<Color?>((Set<WidgetState> states) {
+  final resting = states.contains(WidgetState.selected)
       ? (selected ?? unselected)
-      : unselected,
-);
+      : unselected;
+  if (states.contains(WidgetState.disabled)) {
+    // 没登记 disabled 角色就沿用静置值：透明度降档由控件自己表达。
+    return disabled ?? resting;
+  }
+  if (states.contains(WidgetState.hovered)) {
+    return hovered ?? resting;
+  }
+  return resting;
+});
 
 /// 中性「底」登记表：选中抬到 [QiyuColors.neutralFill]，未选中压回 panel。
 /// Checkbox 填充、Radio 填充、SegmentedButton 底色共用（三处此前各写一份）。
@@ -111,6 +125,28 @@ WidgetStateProperty<Color?> qiyuNeutralFillStates() => qiyuNeutralStates(
 /// Checkbox 勾色、SegmentedButton 文字共用。
 WidgetStateProperty<Color?> qiyuNeutralContentStates() =>
     qiyuNeutralStates(unselected: QiyuColors.muted, selected: QiyuColors.ink);
+
+/// 「常驻但安静」的图标按钮前景档：design-system §8 补充约定「操作按钮常驻…
+/// 次要色、悬停提亮」与 Spec Implementation Decision 14 的唯一取值处。
+///
+/// 放在主题层而不是页面里，理由同 [qiyuNeutralStates]：这条「静置压成次要字、
+/// 指针上来才提亮」的状态知识会被多组常驻图标按钮重复消费，写进页面就会各抄
+/// 一份解析器。这里**只登记角色**，解析仍在 [qiyuNeutralStates] 那一处。
+///
+/// - 静置 [QiyuColors.muted]：§2 的次要字档，按钮在场但不抢读；
+/// - 悬停 [QiyuColors.ink]：§8 组件 7 的「提亮」提的是**前景**；悬停底不在这里
+///   另写，沿用 M3 图标按钮的中性淡底（本主题 `onSurfaceVariant` 即 muted），
+///   与历史页那只常驻删除按钮同一份质感，原型那层淡紫悬停底按 Spec Further
+///   Notes 2 一律不取；
+/// - 禁用：照 [qiyuNeutralStates] 的纪律不另造色档，只把同一档 muted 按 M3
+///   图标按钮 disabled 前景的 0.38 透明度降档。
+ButtonStyle qiyuQuietIconButtonStyle() => ButtonStyle(
+  foregroundColor: qiyuNeutralStates(
+    unselected: QiyuColors.muted,
+    hovered: QiyuColors.ink,
+    disabled: QiyuColors.muted.withValues(alpha: 0.38),
+  ),
+);
 
 /// 深色「紫夜」主题。全应用唯一的 ThemeData 来源。
 ///
