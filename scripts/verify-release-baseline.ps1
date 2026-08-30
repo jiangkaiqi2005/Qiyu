@@ -86,12 +86,13 @@ try {
     'qiyu_edge'
   }
   if (-not $browserPlatform) {
-    throw 'Release 门禁需要 Chrome、Chromium 或 Edge 执行真实浏览器语音播放测试。'
+    throw 'Release 门禁需要 Chrome、Chromium 或 Edge 执行真实浏览器侧用例（语音播放、折叠状态存储）。'
   }
-  Invoke-Step 'Browser voice playback test' {
+  Invoke-Step 'Browser-side tests' {
     dart test --configuration dart_test.browser.yaml `
       --platform $browserPlatform `
-      test/voice_player_platform_web_test.dart
+      test/voice_player_platform_web_test.dart `
+      test/settings_collapse_platform_web_test.dart
   }
   Invoke-Step 'Flutter Web build' {
     flutter build web --no-web-resources-cdn

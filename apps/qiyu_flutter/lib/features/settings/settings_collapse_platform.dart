@@ -27,7 +27,9 @@ abstract interface class SettingsCollapseStore {
 
 /// 存储的**唯一键名**：值是节 id 的逗号串（形如 `tts,web_search`）。
 ///
-/// 键名单一是为了不留下第二份可以各自漂移的折叠状态；测试按它点名核对。
+/// 键名单一是为了不留下第二份可以各自漂移的折叠状态；`test/
+/// settings_collapse_platform_web_test.dart` 在真实浏览器里按这个常量读写，
+/// 其中一条用例专门断别的键名上的同类值读不进来。
 const String settingsCollapsedSectionsKey = 'qiyu_settings_collapsed_sections';
 
 // 工厂 `createSettingsCollapseStore()` 由条件导入的两份实现各自提供，
