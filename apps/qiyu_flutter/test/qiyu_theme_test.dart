@@ -915,7 +915,7 @@ const Color topLevel = Color(0xFF667788);
 
     test('设置页分节头的字距 3px 与指示符字号 10px 收在 token 层', () {
       // 出处：原型变体 B `.settings-flat .set-section h3 { letter-spacing: 3px }`
-      // 与 `h3::after { font-size: 10px }`（`.scratch/qiyu-prototype/index.html:229`、
+      // 与 `h3::after { font-size: 10px }`（`.scratch/qiyu-prototype/index.html:230`、
       // `:233`）。字号本身不另起档——§3 已登记的次要档 13px 就是原型的 `--fs-sub`。
       expect(QiyuType.sectionHeaderLetterSpacing, 3);
       expect(QiyuType.sectionHeaderCaretSize, 10);

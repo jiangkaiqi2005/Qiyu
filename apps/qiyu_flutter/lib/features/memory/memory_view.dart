@@ -103,17 +103,19 @@ class MemoryView extends StatelessWidget {
                   // 的近白文字与淡白下划线全部由主题层 `tabBarTheme` 供给，页面
                   // 不自写颜色。§8「横向滚动容器不留滚动控件」这一条**不在这里写
                   // 代码**：它由框架档满足——`MaterialScrollBehavior.buildScrollbar`
-                  // 对 `Axis.horizontal` 直接 `return child`（SDK
-                  // `packages/flutter/lib/src/material/app.dart:857-876`），TabBar
+                  // 对 `Axis.horizontal` 直接 `return child`（SDK 3.44.8
+                  // `packages/flutter/lib/src/material/app.dart`），TabBar
                   // 这个 `isScrollable` 的横滚容器本来就不画滚动条，纵向内容区仍按
                   // 同一档规则画。故意不再包一层 `ScrollConfiguration`：换到基类
                   // `ScrollBehavior` 唯有点名的横滚仍是空操作，代价却是把该容器的
                   // 越界回弹从 M3 的 `StretchingOverscrollIndicator` 换成基类的
-                  // `GlowingOverscrollIndicator`（对比 SDK
-                  // `packages/flutter/lib/src/widgets/scroll_configuration.dart:160-196`
-                  // 与 `material/app.dart:879-908`，本主题 `useMaterial3: true`），
-                  // 并把 `getPlatform` 从 `Theme.of(context).platform` 换成
-                  // `defaultTargetPlatform`。结果由 test/memory_view_test.dart 锁住。
+                  // `GlowingOverscrollIndicator`（对比 `widgets/scroll_configuration.dart`
+                  // 的 `ScrollBehavior.buildOverscrollIndicator` 与 `material/app.dart`
+                  // 的 `MaterialScrollBehavior.buildOverscrollIndicator`，本主题
+                  // `useMaterial3: true`），并把 `getPlatform` 从 `Theme.of(context)
+                  // .platform` 换成 `defaultTargetPlatform`。SDK 侧只按版本 + 方法名
+                  // 指路：行号会随版本漂移，按名 grep 才复核得动。结果由
+                  // test/memory_view_test.dart 锁住。
                   const TabBar(
                     isScrollable: true,
                     tabs: [

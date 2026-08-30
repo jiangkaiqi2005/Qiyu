@@ -291,7 +291,7 @@ abstract final class QiyuType {
   /// 设置页分节头的字距：3px。
   ///
   /// 出处是原型变体 B（阅读式）`.settings-flat .set-section h3`
-  /// `letter-spacing: 3px`（`.scratch/qiyu-prototype/index.html:229`），与 §3
+  /// `letter-spacing: 3px`（`.scratch/qiyu-prototype/index.html:230`），与 §3
   /// 字阶表里的字号档是两件事：字号取 [secondarySize]（同原型 `--fs-sub`），
   /// 字距只有这一处消费方，故单独命名而不是塞进字阶档。
   static const double sectionHeaderLetterSpacing = 3;

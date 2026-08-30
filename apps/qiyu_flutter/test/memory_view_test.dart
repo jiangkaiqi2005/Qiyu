@@ -190,15 +190,16 @@ void main() {
   ) async {
     // 锁的是**结果**，不是应用层的某个类：design-system §8「横向滚动容器不留滚动
     // 控件」由框架的 `MaterialScrollBehavior` 横向分支满足——`buildScrollbar` 对
-    // `Axis.horizontal` 直接 `return child`（SDK
-    // `packages/flutter/lib/src/material/app.dart:857-876`），四区 TabBar 本来就
+    // `Axis.horizontal` 直接 `return child`（SDK 3.44.8
+    // `packages/flutter/lib/src/material/app.dart`），四区 TabBar 本来就
     // 不画横滚条。应用层故意不再包一层：曾落地过的 `ScrollConfiguration` + 挂基类
     // `ScrollBehavior` 的包裹对它唯一点名的横滚是空操作，代价却是把该容器的越界
     // 回弹从 M3 的 `StretchingOverscrollIndicator` 换成基类的
-    // `GlowingOverscrollIndicator`（对比 SDK
-    // `packages/flutter/lib/src/widgets/scroll_configuration.dart:160-196` 与
-    // `material/app.dart:879-908`，本主题 `useMaterial3: true`），并把 `getPlatform`
-    // 从 `Theme.of(context).platform` 换成 `defaultTargetPlatform`。
+    // `GlowingOverscrollIndicator`（对比 `widgets/scroll_configuration.dart` 的
+    // `ScrollBehavior.buildOverscrollIndicator` 与 `material/app.dart` 的
+    // `MaterialScrollBehavior.buildOverscrollIndicator`，本主题 `useMaterial3: true`），
+    // 并把 `getPlatform` 从 `Theme.of(context).platform` 换成
+    // `defaultTargetPlatform`。SDK 侧按版本 + 方法名指路，不记行号（会漂）。
     //
     // 必须把平台按到桌面档再测，且在建树之前生效——触屏档下框架本来就不给纵向
     // 容器画滚动条，那时「TabBar 里没有滚动条」是一条怎么都成立的空断言。
