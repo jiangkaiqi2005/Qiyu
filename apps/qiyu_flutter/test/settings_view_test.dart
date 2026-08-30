@@ -883,6 +883,48 @@ void main() {
     }
   });
 
+  testWidgets('分节顺序按 §8 定案序排列，且每一格排的确实是点名的那一节', (
+    tester,
+  ) async {
+    // 整页层面的次序要七节同时在场。
+    _useFullPageViewport(tester);
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+      ),
+    );
+    await _openSettings(tester);
+
+    // 次序量的是**页面上的纵向位置**，不是「这一节的文本在场」：七节标题都在树
+    // 上（§8 的默认档收起只藏正文，标题就是导航），比的是每一节的顶边一节比一节低。
+    final headerTops = <String, double>{};
+    for (final id in _sectionIds) {
+      final header = find.byKey(Key('settings-section-header-$id'));
+      expect(header, findsOneWidget, reason: id);
+      // 排在这一格的必须是点名的那一节——id 与标题配错也要红。
+      expect(
+        find.descendant(
+          of: header,
+          matching: find.text(_sectionTitlesInOrder[id]!),
+        ),
+        findsOneWidget,
+        reason: '$id 的标题不是 §8 序上这一格应有的那一节',
+      );
+      headerTops[id] = tester.getRect(header).top;
+    }
+
+    for (var i = 1; i < _sectionIds.length; i++) {
+      final previous = _sectionIds[i - 1];
+      final current = _sectionIds[i];
+      expect(
+        headerTops[current]!,
+        greaterThan(headerTops[previous]!),
+        reason: '§8 要 $previous 在 $current 之前，实测两节标题的先后不是这样',
+      );
+    }
+  });
+
   testWidgets('折叠默认档：只展开模型连接与本地数据，收起的节里控件不在树上', (
     tester,
   ) async {
@@ -1110,13 +1152,29 @@ void main() {
 /// `_SettingsSectionId` 一致——折叠状态在本地存储里存的就是这些 id。
 const _sectionIds = <String>[
   'provider',
-  'web_search',
-  'stt',
   'tts',
+  'stt',
+  'web_search',
   'local_data',
   'privacy',
   'developer',
 ];
+
+/// 定案序上每一格**应有的分节标题**：次序用例除了比纵向位置，还要核排在这个
+/// 位置上的到底是哪一节——只挪顺序不改文案的漂移、以及 id 与标题配错，都挡得住。
+///
+/// 取值按页面现状。出入如实登记：§8／决策日志第一轮 #8／Spec Decision 15 把第三
+/// 节写作「语音转写」，页面渲染的是「语音输入」（`provider_settings_view.dart`
+/// 的 `_SttSection`），这条命名出入已上报、未裁定，本用例不替它作数。
+const _sectionTitlesInOrder = <String, String>{
+  'provider': '模型连接',
+  'tts': '语音朗读',
+  'stt': '语音输入',
+  'web_search': '联网搜索',
+  'local_data': '本地数据',
+  'privacy': '隐私与边界',
+  'developer': '体验与开发者选项',
+};
 
 /// 分节之间那条**只画底边**的 1px `line` 发丝线（原型 `:227`）。
 ///

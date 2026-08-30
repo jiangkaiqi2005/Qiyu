@@ -154,10 +154,16 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                     ),
                   ),
                   const SizedBox(height: 30),
+                  // 分节顺序由 design-system §8 固定（模型连接 → 语音朗读 →
+                  // 语音转写 → 联网搜索 → 本地数据 → 隐私与边界 →
+                  // 体验与开发者选项），settings_view_test 按各节标题在页面上的
+                  // 纵向位置核这条次序。命名有一处出入且未裁定：§8 点名第三节为
+                  // 「语音转写」，[_SttSection] 的标题渲染的是「语音输入」——
+                  // 这里只按 §8 排**次序**，不改标题文案。
                   const _ProviderSection(),
-                  const _WebSearchSection(),
-                  const _SttSection(),
                   const _TtsSection(),
+                  const _SttSection(),
+                  const _WebSearchSection(),
                   _LocalDataSection(
                     backupGateway: widget.backupGateway,
                     backupPlatform: widget.backupPlatform,
