@@ -1468,18 +1468,21 @@ Future<void> _deleteFlow(BuildContext context, String id) async {
 }
 
 SnackBar _resultSnackBar(MemoryActionResult result) {
-  // partial 底色加深到与白字对比 ≥4.5:1（AA），failed 维持原色（ticket 24）。
+  // 三态底色只在 partial/failed 两档显式给；success 走主题默认面板底。
   final color = switch (result.status) {
     MemoryActionStatus.success => null,
-    MemoryActionStatus.partial => const Color(0xFF9C5C13),
-    MemoryActionStatus.failed => const Color(0xFFB3261E),
+    MemoryActionStatus.partial => QiyuColors.statusPartialFill,
+    MemoryActionStatus.failed => QiyuColors.statusFailedFill,
   };
   return SnackBar(
     key: const Key('memory-action-result'),
-    // 自定义深色底必须显式配白字，保住对比度（ticket 24）。
+    // 自定义深色底必须显式配近白字：这两档底色配 onAccent 才过 AA 4.5:1
+    // （配 ink 时琥珀那档只有 4.43:1，ticket 24 的对比要求就守不住）。
     content: Text(
       result.message,
-      style: color == null ? null : const TextStyle(color: Color(0xFFFFFFFF)),
+      style: color == null
+          ? null
+          : const TextStyle(color: QiyuColors.onAccent),
     ),
     backgroundColor: color,
   );

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,6 +33,23 @@ const _packageRoot = '.';
 
 String _read(String relativePath) =>
     File('$_packageRoot/$relativePath').readAsStringSync();
+
+/// WCAG 2.1 的两色对比度：design-system §9「深底上所有文字对比度留足余量」与
+/// ticket 24 的 AA 口径要用数字判，不能靠「看着够亮」。
+double _contrast(Color foreground, Color background) {
+  double luminance(Color color) {
+    double channel(double value) => value <= 0.03928
+        ? value / 12.92
+        : math.pow((value + 0.055) / 1.055, 2.4).toDouble();
+    return 0.2126 * channel(color.r) +
+        0.7152 * channel(color.g) +
+        0.0722 * channel(color.b);
+  }
+
+  final hi = luminance(foreground);
+  final lo = luminance(background);
+  return (math.max(hi, lo) + 0.05) / (math.min(hi, lo) + 0.05);
+}
 
 /// `qiyu_icons.dart` 声明的图标常量名：图标对账的两侧之一，另一侧是字体实测
 /// 清单 `iconGlyphManifest`（见 `test/icon_glyph_manifest.dart`）。
@@ -115,6 +133,31 @@ void main() {
       expect(QiyuColors.indicatorNeutral.toARGB32(), 0x4DFFFFFF);
       // composer 聚焦描边紫度 0.13，只比无焦点略紫。
       expect(QiyuColors.composerFocusLine.a, closeTo(0.13, 0.005));
+    });
+
+    test('动作结果横幅的两档实底取 ticket 24 定值，配近白字过 AA', () {
+      // §2 的色板里没有「状态底色」这一族，这两档是把记忆中心的历史裸色值收进
+      // token 层，**值一字未改**，不是新增色相。
+      expect(QiyuColors.statusPartialFill.toARGB32(), 0xFF9C5C13);
+      expect(QiyuColors.statusFailedFill.toARGB32(), 0xFFB3261E);
+      // 底色档与危险字档是两件事：混为一谈就会有人拿 #cc9999 去填横幅。
+      expect(QiyuColors.statusFailedFill, isNot(QiyuColors.danger));
+      for (final fill in [
+        QiyuColors.statusPartialFill,
+        QiyuColors.statusFailedFill,
+      ]) {
+        expect(
+          _contrast(QiyuColors.onAccent, fill),
+          greaterThanOrEqualTo(4.5),
+          reason: '横幅上的近白字必须过 AA（design-system §9、ticket 24）',
+        );
+      }
+      // 换成 ink 就有一档掉到线以下——这是文字取 onAccent 而非 ink 的实测凭据，
+      // 不是「哪个看着更亮」的观感判断。
+      expect(
+        _contrast(QiyuColors.ink, QiyuColors.statusPartialFill),
+        lessThan(4.5),
+      );
     });
 
     test('中性功能角色只复用已有中性色值，不引入新色相', () {
@@ -1038,12 +1081,6 @@ void main() {
       // 每清掉一处，这里的条目必须同步缩短，收口完成时它必须降为空集——不要往回加
       // 条目，新写的色值一律进 token 层。集合相等断言：新增会红，清掉了不改这里也红。
       const bareColorAllowList = <String>{
-        'lib/features/memory/memory_view.dart :: Color(0xFF9C5C13)',
-        // 注意：这是 **Material 3 基线红**，与 design-system §2 定稿的危险色
-        // `danger #cc9999` 直接冲突。它留在台账里只是记账，不是合法值——第 4 段
-        // （记忆中心换皮）必须换成 `QiyuColors.danger`，后续段不要照抄它。
-        'lib/features/memory/memory_view.dart :: Color(0xFFB3261E)',
-        'lib/features/memory/memory_view.dart :: Color(0xFFFFFFFF)',
         'lib/features/settings/provider_settings_view.dart :: Color(0xFF91C7A7)',
       };
       // 无色相、不承载任何设计语义的 Material 常量：允许在页面直接用（遮罩、
