@@ -184,14 +184,14 @@ void main() {
       expect(QiyuColors.composerFocusLine.a, closeTo(0.13, 0.005));
     });
 
-    test('动作结果横幅只用中性底加 danger 字档，§2 不存在第二档红', () {
+    test('动作结果横幅只用中性底加 danger 前景，§2 不存在第二档红', () {
       // 决策日志第五轮 #12：三态横幅一律走主题默认的中性面板底，失败态只把
       // **前景**换成 danger。历史上被搬进 token 层的那两档「实底」（Material 3
       // 基线红 #B3261E、琥珀 #9C5C13）都不是 §2 色板成员，裸色台账当时的书面
       // 裁定就是「第 4 段（记忆中心换皮）必须换成 QiyuColors.danger」。
       // 横幅不传 backgroundColor，落到页面上的底就是主题这条默认值。
       expect(theme.snackBarTheme.backgroundColor, QiyuColors.panel);
-      // danger 是「深底上的危险字档」，对 panel 底实测 7.30:1，AA 4.5:1 有余量
+      // 前景与底的对比按实测判：danger 压在 panel 上 7.30:1，AA 4.5:1 有余量
       // （design-system §2、§9）。这里用实测值判，不按「看着挺亮」交差。
       expect(
         _contrast(QiyuColors.danger, QiyuColors.panel),

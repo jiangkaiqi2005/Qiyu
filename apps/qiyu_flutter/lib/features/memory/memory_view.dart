@@ -1531,11 +1531,10 @@ Future<void> _deleteFlow(BuildContext context, String id) async {
 }
 
 SnackBar _resultSnackBar(MemoryActionResult result) {
-  // 三态共用主题默认的中性面板底（design-system §1 三色纪律：紫住强调、暗红住
-  // 危险，其余一律中性；§2 里也没有任何红/琥珀的**底色**档）。只有失败态换
-  // 前景字色——`danger` 在 §2 的定义就是深底之上的危险**字档**。partial 不是
-  // 破坏性操作，不借危险红，三态的分别由它本来就写明白的文案承担
-  // （决策日志第五轮 #12）。
+  // 三态共用主题默认的中性面板底，只有失败态把前景换成 danger。依据是
+  // design-system §1 三色纪律的通则：暗红住「破坏性操作」与「故障/失败态」
+  // 两类，某个动作没成属后者（决策日志第五轮 #15）。partial 既非破坏也非
+  // 故障，不借危险红，三态的分别由它本来就写明白的文案承担（#12）。
   final failed = result.status == MemoryActionStatus.failed;
   return SnackBar(
     key: const Key('memory-action-result'),

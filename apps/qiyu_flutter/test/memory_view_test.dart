@@ -1644,15 +1644,16 @@ void main() {
       expect(find.byKey(const Key('memory-action-result')), findsNothing);
     }
 
-    // 失败态：危险字档当前景，底仍是主题默认的中性 panel（§2 只有 danger
-    // 一档危险色，且它是字档不是底色；决策日志第五轮 #12）。
+    // 失败态：danger 当前景，底仍是主题默认的中性 panel——§2 危险色只有
+    // danger 一档、不设第二档「实底」，失败态取它的依据是 §1 两类危险语义里的
+    // 「故障/失败态」（决策日志第五轮 #15、#12）。
     await show(MemoryActionStatus.failed);
     expect(bannerFill(), QiyuColors.panel);
     expect(bannerForeground(), QiyuColors.danger);
     await dismiss();
 
-    // 部分完成不是破坏性操作，不借危险红，也不另起一档琥珀底：三态的分别
-    // 由文案承担，视觉只给危险位上色。
+    // 部分完成既非破坏性操作也非故障，落在 §1 两类危险语义之外，因此不借
+    // 危险红、也不另起一档琥珀底：三态的分别由文案承担，视觉只给危险位上色。
     await show(MemoryActionStatus.partial);
     expect(bannerFill(), QiyuColors.panel);
     expect(bannerForeground(), isNot(QiyuColors.danger));
