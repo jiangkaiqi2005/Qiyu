@@ -137,7 +137,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final scheme = Theme.of(tester.element(find.text('开发者诊断'))).colorScheme;
-    // 读真落在那枚芯片上的底色（Container 的 BoxDecoration），不看 widget 传了什么。
+    // 读芯片实际拿到的底色：取带定位键那枚 Container 的 `decoration.color`，
+    // 也就是 `_chip` 内部按 `emphasized` 选出的那一档，而不是调用方传进去的布尔
+    // ——分档判据与配色两处任一漂移，这里都当场判红。
     Color fill(int index) {
       final container = tester.widget<Container>(
         find.byKey(Key('diagnostics-result-$index')),
@@ -1397,9 +1399,10 @@ const _sectionIds = <String>[
 /// 定案序上每一格**应有的分节标题**：次序用例除了比纵向位置，还要核排在这个
 /// 位置上的到底是哪一节——只挪顺序不改文案的漂移、以及 id 与标题配错，都挡得住。
 ///
-/// 取值按页面现状。出入如实登记：§8／决策日志第一轮 #8／Spec Decision 15 把第三
-/// 节写作「语音转写」，页面渲染的是「语音输入」（`provider_settings_view.dart`
-/// 的 `_SttSection`），这条命名出入已上报、未裁定，本用例不替它作数。
+/// 取值按页面现状。命名差一处已由 §8 登记：§8／决策日志第二轮 #8／Spec Decision
+/// 15 按**机制**把第三节写作「语音转写」，页面渲染的是「语音输入」
+/// （`provider_settings_view.dart` 的 `_SttSection`），§8 明写不声称页面上有
+/// 「语音转写」四个字。本用例按页面文案取值，不替规范另立一种叫法。
 const _sectionTitlesInOrder = <String, String>{
   'provider': '模型连接',
   'tts': '语音朗读',

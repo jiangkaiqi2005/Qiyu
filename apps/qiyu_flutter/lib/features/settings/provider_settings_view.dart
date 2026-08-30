@@ -157,9 +157,10 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                   // 分节顺序由 design-system §8 固定（模型连接 → 语音朗读 →
                   // 语音转写 → 联网搜索 → 本地数据 → 隐私与边界 →
                   // 体验与开发者选项），settings_view_test 按各节标题在页面上的
-                  // 纵向位置核这条次序。命名有一处出入且未裁定：§8 点名第三节为
-                  // 「语音转写」，[_SttSection] 的标题渲染的是「语音输入」——
-                  // 这里只按 §8 排**次序**，不改标题文案。
+                  // 纵向位置核这条次序。第三节的叫法两处不同且 §8 已登记：规范按
+                  // **机制**叫「语音转写」，[_SttSection] 渲染的标题是「语音输入」，
+                  // §8 明写不声称页面上有「语音转写」四个字——这里只按 §8 排
+                  // **次序**，不改标题文案。
                   const _ProviderSection(),
                   const _TtsSection(),
                   const _SttSection(),
@@ -1994,7 +1995,8 @@ class _SettingsSectionHeaderState extends State<_SettingsSectionHeader> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     // 字号走 §3 已登记的次要档（13px），字重与字距按原型变体 B：
-    // `font-weight: 400; letter-spacing: 3px`（index.html:229-230）。
+    // `font-weight: 400; letter-spacing: 3px`
+    // （`docs/product/prototype/index.html:229-230`）。
     final headerStyle = theme.textTheme.bodySmall?.copyWith(
       fontWeight: FontWeight.w400,
       letterSpacing: QiyuType.sectionHeaderLetterSpacing,
@@ -2006,15 +2008,20 @@ class _SettingsSectionHeaderState extends State<_SettingsSectionHeader> {
         onTap: widget.onToggle,
         onHover: (hovering) => setState(() => _hovered = hovering),
         // **一条**过渡同时带着标题与指示符：原型的 `transition: color 160ms
-        // ease` 挂在 `h3` 上（index.html:231），而指示符是 `h3::after` 的生成
-        // 内容（`:233-234`），跟着标题一起变。先前只有标题走
+        // ease` 挂在 `h3` 上
+        // （`docs/product/prototype/index.html:231`），而指示符是 `h3::after`
+        // 的生成内容（`:233-234`），跟着标题一起变。先前只有标题走
         // `AnimatedDefaultTextStyle`、指示符按 `_hovered` 直接换色，指针一上来
         // 那枚三角是瞬变的。这里按进度把两档前景一起插值，而不是各起一条动画
         // ——两条各自的曲线一旦错开，原型上「整行一起提亮」的观感就散了。
+        // 曲线显式给 `Curves.ease`：`TweenAnimationBuilder` 默认是 linear，而 CSS
+        // 的 `ease` 就是 `Cubic(0.25, 0.1, 0.25, 1.0)`——SDK 在 `animation/curves.dart`
+        // 里对 `Curves.ease` 的自陈就是「same as the CSS easing function `ease`」。
         // 时长一律走 `qiyuMotion()`：§9 要求 reduced-motion 下压成零。
         child: TweenAnimationBuilder<double>(
           tween: Tween<double>(begin: 0, end: _hovered ? 1 : 0),
           duration: qiyuMotion(context, QiyuMotion.fast),
+          curve: Curves.ease,
           builder: (context, progress, _) {
             final headerColor = Color.lerp(
               QiyuColors.sectionHeader,
@@ -2037,12 +2044,13 @@ class _SettingsSectionHeaderState extends State<_SettingsSectionHeader> {
                     style: headerStyle?.copyWith(color: headerColor),
                   ),
                 ),
-                // 指示符：原型 `h3::after { content: ' ▾' }` / 收起时 `' ▸'`
-                // （index.html:233-234）。**不照抄那两个字符**：U+25BE / U+25B8
-                // 不在随包宋体子集覆盖的字区里（决策日志第二轮 #7 的清单），
-                // 画出来是豆腐块；`Icons.*` 又被 §4 的细描边纪律锁死。取已入库
-                // 的 [QiyuIcons.arrow_drop_down]（实心下三角＝▾ 的同形），收起时
-                // 转 270°（顺时针）成右指（＝▸ 的同形），尺寸与不透明度仍按原型。
+                // 指示符：原型 `h3::after { content: ' ▾' }` / 收起时 `' ▸'`（
+                // `docs/product/prototype/index.html:233-234`）。**不照抄那两个
+                // 字符**：U+25BE / U+25B8 不在随包宋体子集覆盖的字区里（决策日志
+                // 第四轮 #7 的清单），画出来是豆腐块；`Icons.*` 又被 §4 的细描边
+                // 纪律锁死。取已入库的 [QiyuIcons.arrow_drop_down]（实心下三角＝▾
+                // 的同形），收起时转 270°（顺时针）成右指（＝▸ 的同形），尺寸与
+                // 不透明度仍按原型。
                 RotatedBox(
                   quarterTurns: widget.expanded ? 0 : 3,
                   child: Icon(
