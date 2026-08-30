@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
+import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../chat/local_chat_client.dart';
 import '../chat/local_chat_view_model.dart';
@@ -215,6 +216,9 @@ class _SessionTile extends StatelessWidget {
                         ? null
                         : () => unawaited(_confirmDelete(context)),
                     tooltip: '删除这段会话',
+                    // 主题层的「常驻但安静」档：静置 muted 出自 Spec Decision 13
+                    // 「删除图标常驻次要色」，悬停提到 ink 出自 §8 组件 7。
+                    style: qiyuQuietIconButtonStyle(),
                     icon: const Icon(QiyuIcons.delete),
                   ),
                 ),

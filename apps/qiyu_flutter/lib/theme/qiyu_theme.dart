@@ -127,7 +127,8 @@ WidgetStateProperty<Color?> qiyuNeutralContentStates() =>
     qiyuNeutralStates(unselected: QiyuColors.muted, selected: QiyuColors.ink);
 
 /// 「常驻但安静」的图标按钮前景档：design-system §8 补充约定「操作按钮常驻…
-/// 次要色、悬停提亮」与 Spec Implementation Decision 14 的唯一取值处。
+/// 次要色、悬停提亮」与 Spec Implementation Decision 13（历史页删除图标常驻
+/// 次要色）、14（记忆中心条目操作）的唯一取值处。
 ///
 /// 放在主题层而不是页面里，理由同 [qiyuNeutralStates]：这条「静置压成次要字、
 /// 指针上来才提亮」的状态知识会被多组常驻图标按钮重复消费，写进页面就会各抄
@@ -135,9 +136,9 @@ WidgetStateProperty<Color?> qiyuNeutralContentStates() =>
 ///
 /// - 静置 [QiyuColors.muted]：§2 的次要字档，按钮在场但不抢读；
 /// - 悬停 [QiyuColors.ink]：§8 组件 7 的「提亮」提的是**前景**；悬停底不在这里
-///   另写，沿用 M3 图标按钮的中性淡底（本主题 `onSurfaceVariant` 即 muted），
-///   与历史页那只常驻删除按钮同一份质感，原型那层淡紫悬停底按 Spec Further
-///   Notes 2 一律不取；
+///   另写，沿用 M3 图标按钮的中性淡底（本主题 `onSurfaceVariant` 即 muted）。
+///   两个消费方都走本档、质感同一：历史页会话卡片上的常驻删除按钮、记忆中心
+///   条目的常驻操作按钮；原型那层淡紫悬停底按 Spec Further Notes 2 一律不取；
 /// - 禁用：照 [qiyuNeutralStates] 的纪律不另造色档，只把同一档 muted 按 M3
 ///   图标按钮 disabled 前景的 0.38 透明度降档。
 ButtonStyle qiyuQuietIconButtonStyle() => ButtonStyle(

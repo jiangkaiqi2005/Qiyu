@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/app.dart';
@@ -12,6 +13,7 @@ import 'package:qiyu_flutter/features/history/history_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
+import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
@@ -328,6 +330,56 @@ void main() {
     expect(style.color?.toARGB32(), isNot(QiyuColors.ink.toARGB32()));
     // 字号同时锁在已登记的次要档上：退回未登记的 titleSmall 会连带把字号换回 14。
     expect(style.fontSize, QiyuType.secondarySize);
+  });
+
+  testWidgets('删除图标静置次要色、悬停提亮且不显紫', (tester) async {
+    // Spec Decision 13「删除图标常驻次要色」+ §8 组件 7「悬停轻提亮」。此前这颗
+    // 按钮不消费主题档，静置 muted 只来自全局 iconTheme，悬停根本不提亮。
+    final historyViewModel = HistoryViewModel(
+      _FakeHistoryGateway(_testListing()),
+      onSessionDeleted: (_) {},
+      autoStart: false,
+    );
+    await historyViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        historyViewModel: historyViewModel,
+        onboardingViewModel: await _onboardingViewModel(),
+      ),
+    );
+    await _settleMergedPage(tester);
+    await tester.tap(find.byKey(const Key('open-history')));
+    await tester.pumpAndSettle();
+
+    const deleteButton = Key('delete-session-session-today');
+    Color glyphColor() => IconTheme.of(
+      tester.element(
+        find.descendant(
+          of: find.byKey(deleteButton),
+          matching: find.byIcon(QiyuIcons.delete),
+        ),
+      ),
+    ).color!;
+
+    expect(glyphColor(), QiyuColors.muted);
+    expect(glyphColor(), isNot(QiyuColors.accentBright));
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(find.byKey(deleteButton)));
+    await tester.pumpAndSettle();
+    expect(
+      glyphColor(),
+      QiyuColors.ink,
+      reason: '悬停不提亮：这颗按钮没接上主题层的安静档',
+    );
+    expect(glyphColor(), isNot(QiyuColors.accentBright));
+
+    await mouse.moveTo(Offset.zero);
+    await tester.pumpAndSettle();
+    expect(glyphColor(), QiyuColors.muted);
   });
 }
 
