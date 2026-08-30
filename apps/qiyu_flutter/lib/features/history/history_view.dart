@@ -5,12 +5,14 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
+import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../chat/local_chat_client.dart';
 import '../chat/local_chat_view_model.dart';
 import '../chat/qiyu_chat_bubble.dart';
 import '../navigation.dart';
 import '../shell/qiyu_shell.dart';
+import '../shell/qiyu_widgets.dart';
 import '../time_format.dart';
 import 'history_client.dart';
 import 'history_view_model.dart';
@@ -50,13 +52,16 @@ class HistoryView extends StatelessWidget {
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                       const Spacer(),
-                      IconButton(
-                        key: const Key('refresh-history'),
-                        onPressed: viewModel.loading
-                            ? null
-                            : () => unawaited(viewModel.refresh()),
-                        tooltip: '刷新历史',
-                        icon: const Icon(QiyuIcons.refresh),
+                      QiyuFocusRingScope(
+                        borderRadius: QiyuRadii.circleBorder,
+                        child: IconButton(
+                          key: const Key('refresh-history'),
+                          onPressed: viewModel.loading
+                              ? null
+                              : () => unawaited(viewModel.refresh()),
+                          tooltip: '刷新历史',
+                          icon: const Icon(QiyuIcons.refresh),
+                        ),
                       ),
                     ],
                   ),
@@ -85,10 +90,13 @@ class HistoryView extends StatelessWidget {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
             const SizedBox(height: 12),
-            TextButton(
-              key: const Key('retry-history'),
-              onPressed: () => unawaited(viewModel.refresh()),
-              child: const Text('重试'),
+            QiyuFocusRingScope(
+              borderRadius: QiyuRadii.circleBorder,
+              child: TextButton(
+                key: const Key('retry-history'),
+                onPressed: () => unawaited(viewModel.refresh()),
+                child: const Text('重试'),
+              ),
             ),
           ],
         ),
@@ -153,52 +161,61 @@ class _SessionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final startedAt = session.startedAt.toLocal();
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: highContrastSide(context),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => openInFront(context, '/history/${session.sessionId}'),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${twoDigits(startedAt.hour)}:${twoDigits(startedAt.minute)} · '
-                      '${session.turnCount} 条消息',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      session.preview.isEmpty ? '（空会话）' : session.preview,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+    return QiyuFocusRingScope(
+      borderRadius: QiyuRadii.cardBorder,
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: highContrastSide(context),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => openInFront(context, '/history/${session.sessionId}'),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${twoDigits(startedAt.hour)}:${twoDigits(startedAt.minute)} · '
+                        '${session.turnCount} 条消息',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        session.preview.isEmpty ? '（空会话）' : session.preview,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              if (isLatest)
-                TextButton(
-                  key: const Key('resume-latest-session'),
-                  onPressed: () => context.go('/chat'),
-                  child: const Text('继续这段对话'),
+                if (isLatest)
+                  QiyuFocusRingScope(
+                    borderRadius: QiyuRadii.circleBorder,
+                    child: TextButton(
+                      key: const Key('resume-latest-session'),
+                      onPressed: () => context.go('/chat'),
+                      child: const Text('继续这段对话'),
+                    ),
+                  ),
+                QiyuFocusRingScope(
+                  borderRadius: QiyuRadii.circleBorder,
+                  child: IconButton(
+                    key: Key('delete-session-${session.sessionId}'),
+                    onPressed: viewModel.deleting
+                        ? null
+                        : () => unawaited(_confirmDelete(context)),
+                    tooltip: '删除这段会话',
+                    icon: const Icon(QiyuIcons.delete),
+                  ),
                 ),
-              IconButton(
-                key: Key('delete-session-${session.sessionId}'),
-                onPressed: viewModel.deleting
-                    ? null
-                    : () => unawaited(_confirmDelete(context)),
-                tooltip: '删除这段会话',
-                icon: const Icon(QiyuIcons.delete),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -212,15 +229,21 @@ class _SessionTile extends StatelessWidget {
         title: const Text('删除这段会话？'),
         content: Text('删除后，这段会话的 ${session.turnCount} 条消息无法恢复。'),
         actions: [
-          TextButton(
-            key: const Key('cancel-delete'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('取消'),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('cancel-delete'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
           ),
-          TextButton(
-            key: const Key('confirm-delete'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('删除'),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('confirm-delete'),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('删除'),
+            ),
           ),
         ],
       ),
@@ -284,11 +307,14 @@ class _HistorySessionViewState extends State<HistorySessionView> {
                   padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
                   child: Row(
                     children: [
-                      IconButton(
-                        key: const Key('history-session-back'),
-                        onPressed: () => backToPrevious(context),
-                        tooltip: '返回历史',
-                        icon: const Icon(QiyuIcons.arrow_back),
+                      QiyuFocusRingScope(
+                        borderRadius: QiyuRadii.circleBorder,
+                        child: IconButton(
+                          key: const Key('history-session-back'),
+                          onPressed: () => backToPrevious(context),
+                          tooltip: '返回历史',
+                          icon: const Icon(QiyuIcons.arrow_back),
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Text(

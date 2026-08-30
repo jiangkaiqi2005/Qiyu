@@ -6,11 +6,13 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
+import '../../theme/qiyu_tokens.dart';
 import '../memory/backup_client.dart';
 import '../memory/backup_platform.dart';
 import '../memory/backup_view.dart';
 import '../onboarding/onboarding_view_model.dart';
 import '../shell/qiyu_shell.dart';
+import '../shell/qiyu_widgets.dart';
 import 'provider_catalog.dart';
 import 'provider_settings_client.dart';
 import 'provider_settings_view_model.dart';
@@ -304,10 +306,13 @@ class _ProviderSectionState extends State<_ProviderSection> {
           '直到你重新输入。模型连接的其他设置不受影响。',
         ),
         actions: [
-          TextButton(
-            key: const Key('forget-key-cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('再想想'),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('forget-key-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('再想想'),
+            ),
           ),
           FilledButton(
             key: const Key('forget-key-confirm'),
@@ -358,12 +363,15 @@ class _ProviderSectionState extends State<_ProviderSection> {
         ),
         if (keySet) ...[
           const SizedBox(height: 8),
-          TextButton(
-            key: const Key('forget-api-key'),
-            onPressed: viewModel.saving
-                ? null
-                : () => unawaited(_confirmForgetKey(viewModel)),
-            child: const Text('忘记已保存的 Key'),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('forget-api-key'),
+              onPressed: viewModel.saving
+                  ? null
+                  : () => unawaited(_confirmForgetKey(viewModel)),
+              child: const Text('忘记已保存的 Key'),
+            ),
           ),
         ],
       ],
@@ -629,10 +637,13 @@ class _WebSearchSectionState extends State<_WebSearchSection> {
           '普通聊天仍可照常使用。',
         ),
         actions: [
-          TextButton(
-            key: const Key('web-search-forget-key-cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('再想想'),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('web-search-forget-key-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('再想想'),
+            ),
           ),
           FilledButton(
             key: const Key('web-search-forget-key-confirm'),
@@ -698,12 +709,15 @@ class _WebSearchSectionState extends State<_WebSearchSection> {
               ),
               if (keySet) ...[
                 const SizedBox(height: 8),
-                TextButton(
-                  key: const Key('forget-web-search-key'),
-                  onPressed: viewModel.saving
-                      ? null
-                      : () => unawaited(_confirmForgetWebSearchKey(viewModel)),
-                  child: const Text('忘记 AnySearch Key'),
+                QiyuFocusRingScope(
+                  borderRadius: QiyuRadii.circleBorder,
+                  child: TextButton(
+                    key: const Key('forget-web-search-key'),
+                    onPressed: viewModel.saving
+                        ? null
+                        : () => unawaited(_confirmForgetWebSearchKey(viewModel)),
+                    child: const Text('忘记 AnySearch Key'),
+                  ),
                 ),
               ],
               const SizedBox(height: 20),
@@ -865,10 +879,13 @@ class _SttSectionState extends State<_SttSection> {
           '语音服务的地址和模型不受影响。',
         ),
         actions: [
-          TextButton(
-            key: const Key('stt-forget-key-cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('再想想'),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('stt-forget-key-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('再想想'),
+            ),
           ),
           FilledButton(
             key: const Key('stt-forget-key-confirm'),
@@ -979,12 +996,15 @@ class _SttSectionState extends State<_SttSection> {
             ),
             if (keySet) ...[
               const SizedBox(height: 8),
-              TextButton(
-                key: const Key('forget-stt-key'),
-                onPressed: viewModel.saving
-                    ? null
-                    : () => unawaited(_confirmForgetSttKey(viewModel)),
-                child: const Text('忘记语音服务的 Key'),
+              QiyuFocusRingScope(
+                borderRadius: QiyuRadii.circleBorder,
+                child: TextButton(
+                  key: const Key('forget-stt-key'),
+                  onPressed: viewModel.saving
+                      ? null
+                      : () => unawaited(_confirmForgetSttKey(viewModel)),
+                  child: const Text('忘记语音服务的 Key'),
+                ),
               ),
             ],
             const SizedBox(height: 20),
@@ -1205,10 +1225,13 @@ class _TtsSectionState extends State<_TtsSection> {
           '语音合成服务的地址、模型、音色和语速不受影响。',
         ),
         actions: [
-          TextButton(
-            key: const Key('tts-forget-key-cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('再想想'),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('tts-forget-key-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('再想想'),
+            ),
           ),
           FilledButton(
             key: const Key('tts-forget-key-confirm'),
@@ -1375,10 +1398,13 @@ class _TtsSectionState extends State<_TtsSection> {
                         ),
                       ),
                       if (_ttsSpeed != null)
-                        TextButton(
-                          key: const Key('tts-speed-reset'),
-                          onPressed: () => setState(() => _ttsSpeed = null),
-                          child: const Text('默认'),
+                        QiyuFocusRingScope(
+                          borderRadius: QiyuRadii.circleBorder,
+                          child: TextButton(
+                            key: const Key('tts-speed-reset'),
+                            onPressed: () => setState(() => _ttsSpeed = null),
+                            child: const Text('默认'),
+                          ),
                         ),
                     ],
                   ),
@@ -1417,12 +1443,15 @@ class _TtsSectionState extends State<_TtsSection> {
             ),
             if (keySet) ...[
               const SizedBox(height: 8),
-              TextButton(
-                key: const Key('forget-tts-key'),
-                onPressed: viewModel.saving
-                    ? null
-                    : () => unawaited(_confirmForgetTtsKey(viewModel)),
-                child: const Text('忘记语音合成的 Key'),
+              QiyuFocusRingScope(
+                borderRadius: QiyuRadii.circleBorder,
+                child: TextButton(
+                  key: const Key('forget-tts-key'),
+                  onPressed: viewModel.saving
+                      ? null
+                      : () => unawaited(_confirmForgetTtsKey(viewModel)),
+                  child: const Text('忘记语音合成的 Key'),
+                ),
               ),
             ],
             const SizedBox(height: 16),
@@ -1855,10 +1884,13 @@ class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
               ),
       ),
       actions: [
-        TextButton(
-          key: const Key('memory-controls-close'),
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            key: const Key('memory-controls-close'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
         ),
         FilledButton(
           key: const Key('memory-controls-open-center'),
@@ -1921,10 +1953,13 @@ class _ClearDataDialog extends StatelessWidget {
               ),
             ),
       actions: [
-        TextButton(
-          key: const Key('clear-data-cancel'),
-          onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('先不清除'),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            key: const Key('clear-data-cancel'),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('先不清除'),
+          ),
         ),
         FilledButton(
           key: const Key('clear-data-confirm'),

@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
+import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../navigation.dart';
 import '../shell/qiyu_shell.dart';
+import '../shell/qiyu_widgets.dart';
 import '../time_format.dart';
 import 'backup_client.dart';
 import 'backup_platform.dart';
@@ -64,25 +66,31 @@ class MemoryView extends StatelessWidget {
                           style: Theme.of(context).textTheme.headlineSmall,
                         ),
                         const Spacer(),
-                        IconButton(
-                          key: const Key('memory-backup'),
-                          onPressed: () => unawaited(
-                            showBackupDialog(
-                              context,
-                              gateway: backupGateway,
-                              platform: backupPlatform,
+                        QiyuFocusRingScope(
+                          borderRadius: QiyuRadii.circleBorder,
+                          child: IconButton(
+                            key: const Key('memory-backup'),
+                            onPressed: () => unawaited(
+                              showBackupDialog(
+                                context,
+                                gateway: backupGateway,
+                                platform: backupPlatform,
+                              ),
                             ),
+                            tooltip: '备份与恢复',
+                            icon: const Icon(QiyuIcons.archive),
                           ),
-                          tooltip: '备份与恢复',
-                          icon: const Icon(QiyuIcons.archive),
                         ),
-                        IconButton(
-                          key: const Key('refresh-memory'),
-                          onPressed: viewModel.loading
-                              ? null
-                              : () => unawaited(viewModel.refresh()),
-                          tooltip: '刷新记忆',
-                          icon: const Icon(QiyuIcons.refresh),
+                        QiyuFocusRingScope(
+                          borderRadius: QiyuRadii.circleBorder,
+                          child: IconButton(
+                            key: const Key('refresh-memory'),
+                            onPressed: viewModel.loading
+                                ? null
+                                : () => unawaited(viewModel.refresh()),
+                            tooltip: '刷新记忆',
+                            icon: const Icon(QiyuIcons.refresh),
+                          ),
                         ),
                       ],
                     ),
@@ -122,10 +130,13 @@ class MemoryView extends StatelessWidget {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
             const SizedBox(height: 12),
-            TextButton(
-              key: const Key('retry-memory'),
-              onPressed: () => unawaited(viewModel.refresh()),
-              child: const Text('重试'),
+            QiyuFocusRingScope(
+              borderRadius: QiyuRadii.circleBorder,
+              child: TextButton(
+                key: const Key('retry-memory'),
+                onPressed: () => unawaited(viewModel.refresh()),
+                child: const Text('重试'),
+              ),
             ),
           ],
         ),
@@ -175,29 +186,32 @@ class _RecoveryBanner extends StatelessWidget {
       if (partial > 0) '$partial 项部分恢复',
       if (section.quarantinedFiles > 0) '${section.quarantinedFiles} 份原件保留在隔离区',
     ].join('，');
-    return Card(
-      key: const Key('memory-recovery-banner'),
-      margin: const EdgeInsets.fromLTRB(24, 8, 24, 0),
-      child: ExpansionTile(
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-        shape: const Border(),
-        collapsedShape: const Border(),
-        leading: Icon(
-          QiyuIcons.health_and_safety,
-          color: theme.colorScheme.error,
-        ),
-        title: const Text('部分记忆文件出现过损坏'),
-        subtitle: subtitle.isEmpty ? null : Text(subtitle),
-        children: [
-          for (final finding in section.findings)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(_findingText(finding)),
+    return QiyuFocusRingScope(
+      borderRadius: QiyuRadii.cardBorder,
+      child: Card(
+        key: const Key('memory-recovery-banner'),
+        margin: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          shape: const Border(),
+          collapsedShape: const Border(),
+          leading: Icon(
+            QiyuIcons.health_and_safety,
+            color: theme.colorScheme.error,
+          ),
+          title: const Text('部分记忆文件出现过损坏'),
+          subtitle: subtitle.isEmpty ? null : Text(subtitle),
+          children: [
+            for (final finding in section.findings)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(_findingText(finding)),
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -538,11 +552,14 @@ class _MemoryItemViewState extends State<MemoryItemView> {
                   padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
                   child: Row(
                     children: [
-                      IconButton(
-                        key: const Key('memory-item-back'),
-                        onPressed: () => backToPrevious(context),
-                        tooltip: '返回记忆',
-                        icon: const Icon(QiyuIcons.arrow_back),
+                      QiyuFocusRingScope(
+                        borderRadius: QiyuRadii.circleBorder,
+                        child: IconButton(
+                          key: const Key('memory-item-back'),
+                          onPressed: () => backToPrevious(context),
+                          tooltip: '返回记忆',
+                          icon: const Icon(QiyuIcons.arrow_back),
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Text(
@@ -586,10 +603,13 @@ class _MemoryItemViewState extends State<MemoryItemView> {
           children: [
             const Text('记忆中心暂时不可用，请稍后重试。', key: Key('memory-item-error')),
             const SizedBox(height: 12),
-            TextButton(
-              key: const Key('memory-item-retry'),
-              onPressed: () => unawaited(_load()),
-              child: const Text('重试'),
+            QiyuFocusRingScope(
+              borderRadius: QiyuRadii.circleBorder,
+              child: TextButton(
+                key: const Key('memory-item-retry'),
+                onPressed: () => unawaited(_load()),
+                child: const Text('重试'),
+              ),
             ),
           ],
         ),
@@ -637,10 +657,13 @@ class _MemoryItemViewState extends State<MemoryItemView> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(_maskedPlaceholder, style: Theme.of(context).textTheme.bodyMedium),
-        TextButton(
-          key: Key('memory-reveal-$field'),
-          onPressed: () => unawaited(_reveal(field)),
-          child: const Text('临时查看'),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            key: Key('memory-reveal-$field'),
+            onPressed: () => unawaited(_reveal(field)),
+            child: const Text('临时查看'),
+          ),
         ),
       ],
     );
@@ -704,72 +727,90 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         const _StatusChip(label: '整理中'),
       ],
       const SizedBox(height: 16),
-      TextButton(
-        key: const Key('memory-item-day'),
-        onPressed: () => openInFront(context, '/memory/item/${detail.dayId}'),
-        child: const Text('查看这一天的记录'),
+      QiyuFocusRingScope(
+        borderRadius: QiyuRadii.circleBorder,
+        child: TextButton(
+          key: const Key('memory-item-day'),
+          onPressed: () => openInFront(context, '/memory/item/${detail.dayId}'),
+          child: const Text('查看这一天的记录'),
+        ),
       ),
       if (detail.sessionId case final sessionId?)
-        TextButton(
-          key: const Key('memory-item-session'),
-          onPressed: () => openInFront(context, '/history/$sessionId'),
-          child: const Text('查看当时的对话'),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            key: const Key('memory-item-session'),
+            onPressed: () => openInFront(context, '/history/$sessionId'),
+            child: const Text('查看当时的对话'),
+          ),
         ),
       const SizedBox(height: 8),
       Wrap(
         spacing: 8,
         children: [
-          TextButton(
-            key: const Key('memory-item-edit'),
-            onPressed: detail.masked || acting
-                ? null
-                : () => unawaited(
-                    _editFlow(
-                      context,
-                      id: widget.itemId,
-                      current: detail.content ?? '',
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('memory-item-edit'),
+              onPressed: detail.masked || acting
+                  ? null
+                  : () => unawaited(
+                      _editFlow(
+                        context,
+                        id: widget.itemId,
+                        current: detail.content ?? '',
+                      ),
                     ),
-                  ),
-            child: const Text('修正'),
-          ),
-          TextButton(
-            key: const Key('memory-item-freeze'),
-            onPressed: acting
-                ? null
-                : () => unawaited(
-                    detail.control == MemoryControlStatus.frozen
-                        ? _runControl(
-                            (viewModel) => viewModel.unfreeze(widget.itemId),
-                          )
-                        : _runControl(
-                            (viewModel) => viewModel.freeze(widget.itemId),
-                          ),
-                  ),
-            child: Text(
-              detail.control == MemoryControlStatus.frozen ? '恢复使用' : '暂停使用',
+              child: const Text('修正'),
             ),
           ),
-          TextButton(
-            key: const Key('memory-item-ban'),
-            onPressed: acting
-                ? null
-                : () => unawaited(
-                    detail.control == MemoryControlStatus.banned
-                        ? _runControl(
-                            (viewModel) => viewModel.unban(widget.itemId),
-                          )
-                        : _banFlow(context, widget.itemId),
-                  ),
-            child: Text(
-              detail.control == MemoryControlStatus.banned ? '解除禁提' : '不再提起',
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('memory-item-freeze'),
+              onPressed: acting
+                  ? null
+                  : () => unawaited(
+                      detail.control == MemoryControlStatus.frozen
+                          ? _runControl(
+                              (viewModel) => viewModel.unfreeze(widget.itemId),
+                            )
+                          : _runControl(
+                              (viewModel) => viewModel.freeze(widget.itemId),
+                            ),
+                    ),
+              child: Text(
+                detail.control == MemoryControlStatus.frozen ? '恢复使用' : '暂停使用',
+              ),
             ),
           ),
-          TextButton(
-            key: const Key('memory-item-delete'),
-            onPressed: acting
-                ? null
-                : () => unawaited(_deleteFlow(context, widget.itemId)),
-            child: const Text('删除'),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('memory-item-ban'),
+              onPressed: acting
+                  ? null
+                  : () => unawaited(
+                      detail.control == MemoryControlStatus.banned
+                          ? _runControl(
+                              (viewModel) => viewModel.unban(widget.itemId),
+                            )
+                          : _banFlow(context, widget.itemId),
+                    ),
+              child: Text(
+                detail.control == MemoryControlStatus.banned ? '解除禁提' : '不再提起',
+              ),
+            ),
+          ),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('memory-item-delete'),
+              onPressed: acting
+                  ? null
+                  : () => unawaited(_deleteFlow(context, widget.itemId)),
+              child: const Text('删除'),
+            ),
           ),
         ],
       ),
@@ -903,13 +944,16 @@ class _MemoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: highContrastSide(context),
+    return QiyuFocusRingScope(
+      borderRadius: QiyuRadii.cardBorder,
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: highContrastSide(context),
+        ),
+        child: child,
       ),
-      child: child,
     );
   }
 }
@@ -1347,14 +1391,20 @@ Future<void> _banFlow(BuildContext context, String id) async {
       title: const Text('不再提起这条记忆？'),
       content: const Text('确认后，栖语不会再主动提起它，聊天和整理都会避开这条内容。以后可以随时解除。'),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('先不用'),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('先不用'),
+          ),
         ),
-        TextButton(
-          key: const Key('memory-ban-confirm'),
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('不再提起'),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            key: const Key('memory-ban-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('不再提起'),
+          ),
         ),
       ],
     ),
@@ -1434,14 +1484,20 @@ class _EditDialogState extends State<_EditDialog> {
         decoration: const InputDecoration(hintText: '按你的说法写'),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
         ),
-        TextButton(
-          key: const Key('memory-edit-save'),
-          onPressed: () => Navigator.of(context).pop(_controller.text),
-          child: const Text('保存'),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            key: const Key('memory-edit-save'),
+            onPressed: () => Navigator.of(context).pop(_controller.text),
+            child: const Text('保存'),
+          ),
         ),
       ],
     );
@@ -1494,9 +1550,12 @@ class _RevealDialogState extends State<_RevealDialog> {
         ],
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
         ),
       ],
     );
@@ -1558,18 +1617,24 @@ class _DeletePreviewDialog extends StatelessWidget {
         },
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('先不用'),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('先不用'),
+          ),
         ),
         FutureBuilder<MemoryDeleteImpact?>(
           future: impact,
           builder: (context, snapshot) {
             final ready = snapshot.hasData && snapshot.data != null;
-            return TextButton(
-              key: const Key('memory-delete-confirm'),
-              onPressed: ready ? () => Navigator.of(context).pop(true) : null,
-              child: const Text('确认删除'),
+            return QiyuFocusRingScope(
+              borderRadius: QiyuRadii.circleBorder,
+              child: TextButton(
+                key: const Key('memory-delete-confirm'),
+                onPressed: ready ? () => Navigator.of(context).pop(true) : null,
+                child: const Text('确认删除'),
+              ),
             );
           },
         ),
