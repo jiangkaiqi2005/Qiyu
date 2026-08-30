@@ -11,6 +11,7 @@ import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/chat/qiyu_chat_bubble.dart';
 import 'package:qiyu_flutter/features/history/history_client.dart';
 import 'package:qiyu_flutter/features/history/history_view_model.dart';
 import 'package:qiyu_flutter/features/memory/memory_client.dart';
@@ -30,6 +31,7 @@ import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
+import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 
 void main() {
   testWidgets('keyboard alone navigates from home into the chat', (
@@ -414,6 +416,109 @@ void main() {
       }
     },
   );
+
+  testWidgets('tooltip 只是语义节点的 tooltip 属性，不构成无障碍名', (
+    tester,
+  ) async {
+    // 一处事实的裁决用例，长期留着：`memory_view` 说 tooltip 读不到，
+    // `qiyu_chat_bubble` 说 tooltip 即无障碍名，两者只能有一个成立。
+    // 实测口径：Material Tooltip 把文案交给 RawTooltip 的 semanticsTooltip，
+    // 最终只写进语义节点的 tooltip 属性；IconButton 自己不把 tooltip 当 label，
+    // 而 find.bySemanticsLabel 匹配的是节点的 label。结论见下面的断言。
+    const action = '暂停使用';
+    final handle = tester.ensureSemantics();
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: Wrap(
+                children: [
+                  IconButton(
+                    key: const Key('probe-tooltip-only'),
+                    tooltip: action,
+                    onPressed: () {},
+                    icon: const Icon(QiyuIcons.close),
+                  ),
+                  IconButton(
+                    key: const Key('probe-explicit-label'),
+                    tooltip: action,
+                    onPressed: () {},
+                    // 记忆中心那批常驻按钮的画法：动作名显式带进语义树。
+                    icon: const Icon(QiyuIcons.close, semanticLabel: action),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // 只有 tooltip 的一颗：文案确实进了语义树，但只落在 tooltip 属性上，
+      // label 是空的——触屏没有 hover，读屏器拿不到动作名。
+      final onlyTooltip = tester
+          .getSemantics(find.byKey(const Key('probe-tooltip-only')))
+          .getSemanticsData();
+      expect(onlyTooltip.tooltip, action);
+      expect(
+        onlyTooltip.label,
+        isEmpty,
+        reason: 'tooltip 被当成了无障碍名？lib 内两处注释的取舍就此作废',
+      );
+
+      // 显式带标签的一颗：动作名进得了 label，才是读屏器可依赖的无障碍名。
+      expect(
+        tester
+            .getSemantics(find.byKey(const Key('probe-explicit-label')))
+            .getSemanticsData()
+            .label,
+        action,
+      );
+      // 按 label 全树只找得到后者一颗，直接证明 bySemanticsLabel 读不到 tooltip。
+      expect(find.bySemanticsLabel(action), findsOneWidget);
+    } finally {
+      handle.dispose();
+    }
+  });
+
+  testWidgets('重听喇叭带无障碍名，读屏动作名不依赖 hover', (tester) async {
+    // 上一条刚把「tooltip 给不出 label」钉成事实，这一条把它用到页面上：
+    // 栖语气泡尾部的重听入口此前只有 tooltip，触屏用户既悬不出提示也读不到
+    // 动作名。现在动作名显式进语义树，并汇在按钮自己那一个语义节点上。
+    final handle = tester.ensureSemantics();
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: QiyuChatBubble(
+              text: '晚安。',
+              fromUser: false,
+              onReplay: () {},
+              deliveryIndex: 0,
+            ),
+          ),
+        ),
+      );
+      // key 挂在 _ReplayButton 自身，合并节点是它的后代。
+      final data = tester
+          .getSemantics(
+            find.descendant(
+              of: find.byKey(const Key('chat-replay-0')),
+              matching: find.byType(MergeSemantics),
+            ),
+          )
+          .getSemanticsData();
+      expect(
+        data.label,
+        '再听一遍这句',
+        reason: '重听入口没把动作名带进语义标签，触屏读不到',
+      );
+      expect(data.flagsCollection.isButton, isTrue);
+      expect(find.bySemanticsLabel('再听一遍这句'), findsOneWidget);
+    } finally {
+      handle.dispose();
+    }
+  });
 
   testWidgets('high contrast mode outlines blocks that rely on fill color', (
     tester,

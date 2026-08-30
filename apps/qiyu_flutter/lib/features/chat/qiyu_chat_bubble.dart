@@ -113,21 +113,36 @@ class QiyuChatBubble extends StatelessWidget {
   }
 }
 
-/// 气泡尾部的重听小喇叭：语义按钮（tooltip 即无障碍名）。
+/// 气泡尾部的重听小喇叭：动作名必须显式带进语义树。
+///
+/// 这里不取「tooltip 即无障碍名」的说法——`test/accessibility_test.dart` 里的
+/// 探针用例实测：IconButton 只把 tooltip 写进语义节点的 **tooltip 属性**，
+/// label 仍是空的，`find.bySemanticsLabel` 读不到，而触屏没有 hover。
+/// 画法与记忆中心的常驻按钮一致：同一份文案既作 tooltip，也作图标语义标签，
+/// 再由 [MergeSemantics] 汇成按钮自己的那一个语义节点。
 class _ReplayButton extends StatelessWidget {
   const _ReplayButton({super.key, required this.onReplay});
+
+  /// 动作名：tooltip 与无障碍标签共用一份，不许两头各写一遍再漂移。
+  static const _actionLabel = '再听一遍这句';
 
   final VoidCallback onReplay;
 
   @override
   Widget build(BuildContext context) {
-    return IconButton(
-      visualDensity: VisualDensity.compact,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-      tooltip: '再听一遍这句',
-      onPressed: onReplay,
-      icon: const Icon(QiyuIcons.volume_up, size: 16),
+    return MergeSemantics(
+      child: IconButton(
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        tooltip: _actionLabel,
+        onPressed: onReplay,
+        icon: const Icon(
+          QiyuIcons.volume_up,
+          size: 16,
+          semanticLabel: _actionLabel,
+        ),
+      ),
     );
   }
 }

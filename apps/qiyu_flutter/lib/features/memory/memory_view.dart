@@ -1403,9 +1403,11 @@ class _MemoryActionButtons extends StatelessWidget {
           QiyuFocusRingScope(
             borderRadius: QiyuRadii.circleBorder,
             // tooltip 不是无障碍标签：IconButton 把它交给 MaterialTooltip，
-            // 最终只落在语义节点的 tooltip 属性上，label 仍是空的（实测
-            // find.bySemanticsLabel 读不到），而触屏没有 hover。动作名一律用
-            // 与 tooltip 同一份文案显式带进语义树，并合成一个按钮节点。
+            // 最终只落在语义节点的 tooltip 属性上，label 仍是空的，按
+            // bySemanticsLabel 读不到——这条事实由 test/accessibility_test.dart
+            // 的「tooltip 只是语义节点的 tooltip 属性」探针用例锁住。触屏没有
+            // hover，动作名一律用与 tooltip 同一份文案显式带进语义树，并合成
+            // 一个按钮节点。
             child: MergeSemantics(
               child: IconButton(
                 key: Key('memory-action-$itemId-${action.choice.name}'),
