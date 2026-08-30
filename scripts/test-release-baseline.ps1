@@ -123,12 +123,15 @@ foreach ($requiredCommand in @(
   Assert-Condition ($verificationScript -match [regex]::Escape($requiredCommand)) `
     "Release 1 全量门禁缺少：$requiredCommand"
 }
+$browserStep = [regex]::Match(
+  $verificationScript,
+  "Invoke-Step 'Browser-side tests' \{[\s\S]*?\n  \}"
+)
 Assert-Condition (
-  $verificationScript -match 'voice_player_platform_web_test\.dart'
-) 'Release 1 全量门禁没有接入浏览器语音播放测试。'
-Assert-Condition (
-  $verificationScript -match 'settings_collapse_platform_web_test\.dart'
-) 'Release 1 全量门禁没有接入设置页折叠状态的浏览器侧存储测试。'
+  $browserStep.Success -and
+  $browserStep.Value -match 'test/voice_player_platform_web_test\.dart' -and
+  $browserStep.Value -match 'test/settings_collapse_platform_web_test\.dart'
+) 'Release 1 的两份浏览器侧用例必须直接挂在 Browser-side tests 步骤的命令参数里（挪进步骤外的注释或正文不算接入）。'
 Assert-Condition (
   $verificationScript -match 'qiyu_edge' -and
   $verificationScript -match 'qiyu_chrome' -and
@@ -137,6 +140,9 @@ Assert-Condition (
 Assert-Condition (
   $verificationScript -notmatch 'browser voice playback test skipped'
 ) 'Release 1 不得在没有可用浏览器时跳过语音播放测试并继续成功。'
+Assert-Condition (
+  $verificationScript -match '门禁需要 Chrome、Chromium 或 Edge'
+) 'Release 1 的浏览器侧用例缺硬失败：没有可用浏览器时门禁必须 throw，不能探测不到就跳过当通过。'
 
 foreach ($relativePath in @(
   'README.md',
