@@ -1553,7 +1553,9 @@ void main() {
     expect(kindChip.center.dy, closeTo(stampRect.center.dy, 1));
 
     // 相邻两颗的左边缘距离必须只等于「一颗的固有宽度 + 两侧焦点环留白」：
-    // QiyuFocusRingScope 各留 3，改造前后的 Row 都是这一处 6px，不是新添的。
+    // QiyuFocusRingScope 各留 3，实测 54 = 固有宽 48 + 2×3。这 6px 是本容器自己
+    // 的画法要求，与改造前的形态无关——改造前这里是单独一颗弹出菜单，从来不存在
+    // 四颗并排的 Row，「改造前也一样」无从谈起。
     // Wrap 的 spacing 只有落成 0 才守得住这条，一旦照搬外层簇间的 8px，差值
     // 立刻多出 8、四颗凭空撑宽 24px——只断 findsOneWidget 测不出这一条。
     final slots = [
