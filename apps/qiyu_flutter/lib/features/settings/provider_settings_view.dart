@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
+import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
+import '../accessibility.dart';
 import '../memory/backup_client.dart';
 import '../memory/backup_platform.dart';
 import '../memory/backup_view.dart';
@@ -47,6 +50,17 @@ class ProviderSettingsView extends StatefulWidget {
 class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   bool _requestedInitialization = false;
 
+  /// 当前**收起**的分节 id 集合。空集＝全部展开（本集合只管「哪些节被收起来」，
+  /// 默认值与持久化在下一个提交接入，见 [_toggleSection]）。
+  Set<String> _collapsedSections = <String>{};
+
+  void _toggleSection(String sectionId) {
+    final collapsed = _collapsedSections.contains(sectionId)
+        ? _collapsedSections.difference(<String>{sectionId})
+        : _collapsedSections.union(<String>{sectionId});
+    setState(() => _collapsedSections = Set<String>.unmodifiable(collapsed));
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -78,45 +92,47 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
             constraints: const BoxConstraints(
               maxWidth: QiyuLayout.settingsReadingMaxWidth,
             ),
-            child: ListView(
-              key: const Key('settings-scroll'),
-              padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
-              children: [
-                // 窄屏被壳包住时，三条杠浮在左上角：页头 Row 排在整列的 24 左留白
-                // 之内，所以在它身上再补一段壳给出的差额，「设置」标题才不会被压住。
-                Padding(
-                  padding: EdgeInsets.only(
-                    left: QiyuShellScope.headerLeftOverrun(context),
+            // 折叠状态由这一层下发：七节各自透传两个参数会把表单代码埋掉，
+            // 壳与记忆中心同样用 InheritedWidget 传这类页面级 UI 状态。
+            child: _SectionCollapseScope(
+              collapsed: _collapsedSections,
+              onToggle: _toggleSection,
+              child: ListView(
+                key: const Key('settings-scroll'),
+                padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
+                // 分节之间不再另写 SizedBox：阅读式下节与节的留白由
+                // [_SettingsPanel] 按原型变体 B 自己给（展开 24 + 24，收起 8）。
+                children: [
+                  // 窄屏被壳包住时，三条杠浮在左上角：页头 Row 排在整列的 24 左留白
+                  // 之内，所以在它身上再补一段壳给出的差额，「设置」标题才不会被压住。
+                  Padding(
+                    padding: EdgeInsets.only(
+                      left: QiyuShellScope.headerLeftOverrun(context),
+                    ),
+                    child: Row(
+                      children: [
+                        // 返回箭头何时让位给三条杠由壳判定（窄屏且被壳包住时
+                        // 整块不出现），见 [QiyuPageHeaderBackButton]。
+                        const QiyuPageHeaderBackButton(
+                          buttonKey: Key('settings-back'),
+                        ),
+                        Text('设置', style: theme.textTheme.headlineSmall),
+                      ],
+                    ),
                   ),
-                  child: Row(
-                    children: [
-                      // 返回箭头何时让位给三条杠由壳判定（窄屏且被壳包住时
-                      // 整块不出现），见 [QiyuPageHeaderBackButton]。
-                      const QiyuPageHeaderBackButton(
-                        buttonKey: Key('settings-back'),
-                      ),
-                      Text('设置', style: theme.textTheme.headlineSmall),
-                    ],
+                  const SizedBox(height: 30),
+                  const _ProviderSection(),
+                  const _WebSearchSection(),
+                  const _SttSection(),
+                  const _TtsSection(),
+                  _LocalDataSection(
+                    backupGateway: widget.backupGateway,
+                    backupPlatform: widget.backupPlatform,
                   ),
-                ),
-                const SizedBox(height: 30),
-                const _ProviderSection(),
-                const SizedBox(height: 40),
-                const _WebSearchSection(),
-                const SizedBox(height: 24),
-                const _SttSection(),
-                const SizedBox(height: 24),
-                const _TtsSection(),
-                const SizedBox(height: 24),
-                _LocalDataSection(
-                  backupGateway: widget.backupGateway,
-                  backupPlatform: widget.backupPlatform,
-                ),
-                const SizedBox(height: 24),
-                const _PrivacySection(),
-                const SizedBox(height: 24),
-                const _DeveloperSection(),
-              ],
+                  const _PrivacySection(),
+                  const _DeveloperSection(),
+                ],
+              ),
             ),
           ),
         ),
@@ -334,7 +350,10 @@ class _ProviderSectionState extends State<_ProviderSection> {
     ProviderSettingsViewModel viewModel,
   ) {
     final keySet = viewModel.settings?.keySet ?? false;
-    return _SettingsPanel(
+    // 凭据块嵌在「模型连接」节内，不是分节：不套 [_SettingsPanel]，因此它
+    // 没有可点的分节头、不参与折叠，也不画外层分节的那道发丝线。
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存 API Key',
@@ -386,17 +405,10 @@ class _ProviderSectionState extends State<_ProviderSection> {
       builder: (context, viewModel, child) {
         _sync(viewModel.settings);
         final theme = Theme.of(context);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        return _SettingsPanel(
+          sectionId: _SettingsSectionId.provider,
+          title: '模型连接',
           children: [
-            Text(
-              '模型连接',
-              style: theme.textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w500,
-                letterSpacing: -0.8,
-              ),
-            ),
-            const SizedBox(height: 10),
             Text(
               '把模型留在本机这端。普通配置和 API Key 都保存在本机 '
               'provider.json 文件里，可以直接编辑该文件更换 Key；'
@@ -668,15 +680,9 @@ class _WebSearchSectionState extends State<_WebSearchSection> {
         final theme = Theme.of(context);
         final keySet = viewModel.settings?.keySet ?? false;
         return _SettingsPanel(
+          sectionId: _SettingsSectionId.webSearch,
+          title: '联网搜索',
           children: [
-            Text(
-              '联网搜索',
-              style: theme.textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w500,
-                letterSpacing: -0.8,
-              ),
-            ),
-            const SizedBox(height: 10),
             Text(
               '需要当前时间、天气、新闻等变化中的事实时，栖语可以按需搜索。'
               'Key 只保存在本机 provider.json，页面不会取回明文。',
@@ -910,15 +916,9 @@ class _SttSectionState extends State<_SttSection> {
         final theme = Theme.of(context);
         final keySet = viewModel.settings?.keySet ?? false;
         return _SettingsPanel(
+          sectionId: _SettingsSectionId.stt,
+          title: '语音输入',
           children: [
-            Text(
-              '语音输入',
-              style: theme.textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w500,
-                letterSpacing: -0.8,
-              ),
-            ),
-            const SizedBox(height: 10),
             Text(
               _sttProvider == SttServiceKind.volcSeedAsr
                   ? '把说的话转成文字。豆包走官方语音识别协议；'
@@ -1257,15 +1257,9 @@ class _TtsSectionState extends State<_TtsSection> {
         final keySet = viewModel.settings?.keySet ?? false;
         final testResult = viewModel.testResult;
         return _SettingsPanel(
+          sectionId: _SettingsSectionId.tts,
+          title: '语音朗读',
           children: [
-            Text(
-              '语音朗读',
-              style: theme.textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w500,
-                letterSpacing: -0.8,
-              ),
-            ),
-            const SizedBox(height: 10),
             Text(
               _ttsProvider == TtsServiceKind.volcTts
                   ? '把栖语写完的话读出来。豆包语音合成走火山方舟的 HTTP 接口，'
@@ -1607,9 +1601,9 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
         final theme = Theme.of(context);
         final preview = viewModel.clearPreview;
         return _SettingsPanel(
+          sectionId: _SettingsSectionId.localData,
+          title: '本地数据',
           children: [
-            Text('本地数据', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 6),
             Text(
               '全部会话与记忆都是这台电脑上的 Markdown 文件，不会上传到任何服务器。',
               style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
@@ -1681,9 +1675,9 @@ class _PrivacySection extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return _SettingsPanel(
+      sectionId: _SettingsSectionId.privacy,
+      title: '隐私与边界',
       children: [
-        Text('隐私与边界', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 6),
         Text(
           '数据只在本机；只有你配置了模型服务才会联网；敏感信息永不被记住。',
           style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
@@ -1714,51 +1708,46 @@ class _DeveloperSectionState extends State<_DeveloperSection> {
     return Consumer<SettingsViewModel>(
       builder: (context, viewModel, child) {
         final theme = Theme.of(context);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        return _SettingsPanel(
+          sectionId: _SettingsSectionId.developer,
+          title: '体验与开发者选项',
+          // §8 固定顺序里的末节：不画下沿发丝线（原型 `last-of-type`）。
+          isLast: true,
           children: [
-            _SettingsPanel(
-              children: [
-                Text('体验与开发者选项', style: theme.textTheme.titleMedium),
-                const SizedBox(height: 10),
-                MergeSemantics(
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('开发者模式', style: theme.textTheme.titleSmall),
-                            Text(
-                              '开启后出现开发者诊断入口。诊断只读，不修改任何数据。',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
+            MergeSemantics(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('开发者模式', style: theme.textTheme.titleSmall),
+                        Text(
+                          '开启后出现开发者诊断入口。诊断只读，不修改任何数据。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
                         ),
-                      ),
-                      Switch(
-                        key: const Key('developer-mode-switch'),
-                        value: viewModel.developerMode,
-                        onChanged: viewModel.busy
-                            ? null
-                            : (value) => unawaited(
-                                viewModel.setDeveloperMode(value),
-                              ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                if (viewModel.developerMode)
-                  OutlinedButton.icon(
-                    key: const Key('settings-diagnostics'),
-                    onPressed: () => context.push('/settings/diagnostics'),
-                    icon: const Icon(QiyuIcons.monitor_heart),
-                    label: const Text('开发者诊断'),
+                  Switch(
+                    key: const Key('developer-mode-switch'),
+                    value: viewModel.developerMode,
+                    onChanged: viewModel.busy
+                        ? null
+                        : (value) => unawaited(viewModel.setDeveloperMode(value)),
                   ),
-              ],
+                ],
+              ),
             ),
+            if (viewModel.developerMode)
+              OutlinedButton.icon(
+                key: const Key('settings-diagnostics'),
+                onPressed: () => context.push('/settings/diagnostics'),
+                icon: const Icon(QiyuIcons.monitor_heart),
+                label: const Text('开发者诊断'),
+              ),
             if (viewModel.errorMessage case final message?) ...[
               const SizedBox(height: 16),
               _StatusMessage(message: message, succeeded: false),
@@ -1770,26 +1759,227 @@ class _DeveloperSectionState extends State<_DeveloperSection> {
   }
 }
 
-/// 设置分区面板的统一外观：surfaceContainer 底、18px 圆角与细描边。
-class _SettingsPanel extends StatelessWidget {
-  const _SettingsPanel({required this.children});
+/// 设置页分节的 id：折叠状态在本地存储里存的就是这份名单的子集（design-system
+/// §8「折叠状态本地持久化（仅 UI 状态）」）。**改名等于改历史数据**——用户上次
+/// 收起来的节会凭一个陌生 id 变回默认态，所以这里只增不改不删。
+abstract final class _SettingsSectionId {
+  static const provider = 'provider';
+  static const tts = 'tts';
+  static const stt = 'stt';
+  static const webSearch = 'web_search';
+  static const localData = 'local_data';
+  static const privacy = 'privacy';
+  static const developer = 'developer';
+}
 
+/// 折叠状态的页内下发：由 [_ProviderSettingsViewState] 挂在整列之上，
+/// [_SettingsPanel] 就地读「我这一节展开没有」并把点击交回去。
+///
+/// 走 InheritedWidget 而不是给七个分节 widget 各加两个构造参数：那七个节是各自
+/// 持有 controller 与 FocusNode 的 StatefulWidget，参数只是为了把状态搬运一层，
+/// 搬运会把真正的表单代码埋掉。
+class _SectionCollapseScope extends InheritedWidget {
+  const _SectionCollapseScope({
+    required this.collapsed,
+    required this.onToggle,
+    required super.child,
+  });
+
+  /// 当前收起的节 id 集合。
+  final Set<String> collapsed;
+
+  /// 分节头被点（或键盘 Enter/Space 激活）时回调。
+  final void Function(String sectionId) onToggle;
+
+  bool isExpanded(String sectionId) => !collapsed.contains(sectionId);
+
+  static _SectionCollapseScope of(BuildContext context) {
+    final scope = context.getInheritedWidgetOfExactType<_SectionCollapseScope>();
+    assert(
+      scope != null,
+      '_SettingsPanel 必须在 ProviderSettingsView 之内使用：折叠状态由那一层下发。',
+    );
+    return scope!;
+  }
+
+  @override
+  bool updateShouldNotify(_SectionCollapseScope oldWidget) =>
+      !setEquals(oldWidget.collapsed, collapsed);
+}
+
+/// 设置页的**阅读式分节**（design-system §8 补充约定「设置页用阅读式：分节不用
+/// 卡片，小字距次要色标题 + 发丝分隔线」）。卡片形态在决策日志第一轮 #6 被
+/// 「六七张卡片堆叠偏重」否掉，选定的是原型变体 B ——
+/// `.scratch/qiyu-prototype/index.html:224-236`，本件的每个数值都按它取。
+///
+/// 三件事在这一处承担：
+/// 1. **分节头**＝可点击的导航（[_SettingsSectionHeader]）：13px、w400、
+///    [QiyuColors.sectionHeader] 次要字色、3px 字距，尾部指示符；§8「分节标题
+///    本身就是导航」，所以不再另做吸顶子导航。
+/// 2. **节与节之间**＝1px [QiyuColors.line] 发丝线，**最后一节不画**
+///    （原型 `:227` 画线、`:228` `last-of-type` 不画）。
+/// 3. **两套留白**＝展开时标题下 8px、节尾 24px 内衬再加 24px 下外边距
+///    （原型 `:226`、`:229-230`）；收起时内衬降为 8px、不画线、无下外边距
+///    （原型 `:236`）。
+///
+/// 收起时**只不画内容，本 widget 与分节自身都留在树上**：各节是持有
+/// `TextEditingController` / `FocusNode` 的 StatefulWidget，把整节换成占位件
+/// 会让用户填了一半的输入框随折叠丢状态。
+class _SettingsPanel extends StatelessWidget {
+  const _SettingsPanel({
+    required this.sectionId,
+    required this.title,
+    required this.children,
+    this.isLast = false,
+  });
+
+  /// 折叠持久化里存的节 id，见 [_SettingsSectionId]。
+  final String sectionId;
+
+  /// 分节标题：既是本节的名字，也是本节唯一的导航入口。
+  final String title;
+
+  /// 展开时才呈现的正文（标题不在这里，由本件统一排版）。
   final List<Widget> children;
+
+  /// 末节（体验与开发者选项）不画下沿发丝线；§8 的分节顺序固定，末节唯一。
+  final bool isLast;
+
+  @override
+  Widget build(BuildContext context) {
+    final collapse = _SectionCollapseScope.of(context);
+    final expanded = collapse.isExpanded(sectionId);
+    final body = Padding(
+      padding: EdgeInsets.only(
+        // 展开：节尾 `--sp-6` 24px 内衬；收起：内衬降为 `--sp-2` 8px。
+        bottom: expanded ? QiyuSpacing.lg : QiyuSpacing.xs,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SettingsSectionHeader(
+            sectionId: sectionId,
+            title: title,
+            expanded: expanded,
+            onToggle: () => collapse.onToggle(sectionId),
+          ),
+          if (expanded) ...[
+            // 标题下 `--sp-2` 8px（原型 `:230` `margin-bottom: var(--sp-2)`）。
+            const SizedBox(height: QiyuSpacing.xs),
+            // 正文与分节头左缘对齐：分节头外面常驻一圈 3px 的焦点环留白
+            // （§9 焦点环 offset，`_QiyuRing` 的 Padding 不因未聚焦而消失），
+            // 正文取同一档左缩进，两者左缘才在同一条阅读线上。
+            Padding(
+              padding: const EdgeInsets.only(left: QiyuLayout.focusRingOffset),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: children,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+    return Padding(
+      // 整节的定位键：测试据此核「这一节在不在树上」「画没画那条发丝线」，
+      // 不必去数内部结构。
+      key: Key('settings-section-$sectionId'),
+      // 展开时下外边距 24px（原型 `:226` `margin-bottom: var(--sp-6)`）；
+      // 收起时归零（原型 `:236` `margin-bottom: 0`）。
+      padding: EdgeInsets.only(bottom: expanded ? QiyuSpacing.lg : 0),
+      child: expanded && !isLast
+          ? DecoratedBox(
+              decoration: const BoxDecoration(
+                border: Border(bottom: qiyuHairlineSide),
+              ),
+              child: body,
+            )
+          : body,
+    );
+  }
+}
+
+/// 分节头：整行可点，是 §8「分节标题本身就是导航」的那一处导航。
+///
+/// 静置 [QiyuColors.sectionHeader]、悬停转 [QiyuColors.sectionHeaderHover]，
+/// 160ms 过渡＝原型 `transition: color 160ms ease`
+/// （`.scratch/qiyu-prototype/index.html:231`）＝ [QiyuMotion.fast]，
+/// reduced-motion 下由 [qiyuMotion] 压成零（§9）。
+///
+/// 焦点表意**不新造机制**：[QiyuOwnFocusRing] 自持节点交给 [InkWell]，环只在
+/// 键盘来源时画（§9 的画法与判据都在 [QiyuFocusRing] 那一处），Enter/Space
+/// 仍由 InkResponse 激活。
+class _SettingsSectionHeader extends StatefulWidget {
+  const _SettingsSectionHeader({
+    required this.sectionId,
+    required this.title,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final String sectionId;
+  final String title;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  State<_SettingsSectionHeader> createState() => _SettingsSectionHeaderState();
+}
+
+class _SettingsSectionHeaderState extends State<_SettingsSectionHeader> {
+  bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.surfaceContainer,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: children,
+    // 字号走 §3 已登记的次要档（13px），字重与字距按原型变体 B：
+    // `font-weight: 400; letter-spacing: 3px`（index.html:229-230）。
+    final headerStyle =
+        theme.textTheme.bodySmall
+            ?.copyWith(
+              fontWeight: FontWeight.w400,
+              letterSpacing: QiyuType.sectionHeaderLetterSpacing,
+              color: _hovered
+                  ? QiyuColors.sectionHeaderHover
+                  : QiyuColors.sectionHeader,
+            );
+    return QiyuOwnFocusRing(
+      builder: (context, focusNode) => InkWell(
+        key: Key('settings-section-header-${widget.sectionId}'),
+        focusNode: focusNode,
+        onTap: widget.onToggle,
+        onHover: (hovering) => setState(() => _hovered = hovering),
+        child: Row(
+          children: [
+            Expanded(
+              child: AnimatedDefaultTextStyle(
+                duration: qiyuMotion(context, QiyuMotion.fast),
+                style: headerStyle!,
+                // 定位键：本节头里还有一枚同样渲染成 RichText 的指示符，测试要
+                // 读「标题真正落下的那一份」就不能靠子树里的先后次序猜。
+                child: Text(
+                  widget.title,
+                  key: Key('settings-section-title-${widget.sectionId}'),
+                ),
+              ),
+            ),
+            // 指示符：原型 `h3::after { content: ' ▾' }` / 收起时 `' ▸'`
+            // （index.html:233-234）。**不照抄那两个字符**：U+25BE / U+25B8
+            // 不在随包宋体子集覆盖的字区里（决策日志第二轮 #7 的清单），
+            // 画出来是豆腐块；`Icons.*` 又被 §4 的细描边纪律锁死。取已入库
+            // 的 [QiyuIcons.arrow_drop_down]（实心下三角＝▾ 的同形），收起时
+            // 转 270°（顺时针）成右指（＝▸ 的同形），尺寸与不透明度仍按原型。
+            RotatedBox(
+              quarterTurns: widget.expanded ? 0 : 3,
+              child: Icon(
+                QiyuIcons.arrow_drop_down,
+                size: QiyuType.sectionHeaderCaretSize,
+                color: _hovered
+                    ? QiyuColors.sectionHeaderCaretHover
+                    : QiyuColors.sectionHeaderCaret,
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -201,6 +201,23 @@ void main() {
       expect(QiyuColors.composerFocusLine.a, closeTo(0.13, 0.005));
     });
 
+    test('设置页分节头只用 §2 已有的两档，指示符是它们各自的 .5 透明度', () {
+      // design-system §8「设置页用阅读式：小字距次要色标题」——次要色与悬停
+      // 提亮的取值出处是原型变体 B `.scratch/qiyu-prototype/index.html:229-233`。
+      // 静置与悬停两档**同值派生**自 §2，不重抄 literal：§2 没有为设置页另开档。
+      expect(QiyuColors.sectionHeader, QiyuColors.muted);
+      expect(QiyuColors.sectionHeaderHover, QiyuColors.ink);
+      // 指示符两档带不透明度，别名派生不出来，故写字面值：色相仍是同一档，
+      // α = round(.5 × 255) = 0x80（原型 `h3::after { opacity: .5 }`）。
+      expect(QiyuColors.sectionHeaderCaret.toARGB32(), 0x809A94A8);
+      expect(QiyuColors.sectionHeaderCaretHover.toARGB32(), 0x80ECE9F2);
+      expect(QiyuColors.sectionHeaderCaret.a, closeTo(0.5, 0.005));
+      expect(QiyuColors.sectionHeaderCaretHover.a, closeTo(0.5, 0.005));
+      // 三色纪律（§1）：分节标题不是强调位，紫不得出现在这里。
+      expect(QiyuColors.sectionHeader, isNot(QiyuColors.accentBright));
+      expect(QiyuColors.sectionHeaderHover, isNot(QiyuColors.accentBright));
+    });
+
     test('动作结果横幅只用中性底加 danger 前景，§2 不存在第二档红', () {
       // 决策日志第五轮 #12：三态横幅一律走主题默认的中性面板底，失败态只把
       // **前景**换成 danger。历史上被搬进 token 层的那两档「实底」（Material 3
@@ -894,6 +911,21 @@ const Color topLevel = Color(0xFF667788);
       expect(theme.textTheme.bodyMedium!.fontSize, QiyuType.bodySize);
       expect(theme.textTheme.bodySmall!.fontSize, QiyuType.secondarySize);
       expect(theme.textTheme.labelSmall!.fontSize, QiyuType.tinySize);
+    });
+
+    test('设置页分节头的字距 3px 与指示符字号 10px 收在 token 层', () {
+      // 出处：原型变体 B `.settings-flat .set-section h3 { letter-spacing: 3px }`
+      // 与 `h3::after { font-size: 10px }`（`.scratch/qiyu-prototype/index.html:229`、
+      // `:233`）。字号本身不另起档——§3 已登记的次要档 13px 就是原型的 `--fs-sub`。
+      expect(QiyuType.sectionHeaderLetterSpacing, 3);
+      expect(QiyuType.sectionHeaderCaretSize, 10);
+      expect(QiyuType.secondarySize, 13);
+      // 指示符比 §3 的极小档（12）还低一档是刻意的：它只是「这里可以点开」的
+      // 记号，不承载要读的内容。
+      expect(
+        QiyuType.sectionHeaderCaretSize,
+        lessThan(QiyuType.tinySize),
+      );
     });
 
     test('栖语的话行高 1.9（书页式），UI 档不自造行高', () {

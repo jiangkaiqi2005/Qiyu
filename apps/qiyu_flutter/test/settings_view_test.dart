@@ -20,6 +20,7 @@ import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
+import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 void main() {
   testWidgets(
@@ -777,6 +778,98 @@ void main() {
     },
   );
 
+  testWidgets('设置页是阅读式：分节不带卡片底，标题是可点的次要色小字距分节头', (
+    tester,
+  ) async {
+    // 整页层面的断言要七节同时在场，而设置页是**懒建的 ListView**：默认 600 高
+    // 的视口只建得出头两三节。把视口拉高比逐节滚动更直白，也不改变任何布局档位
+    // （宽度仍取 1200，内容列由 settingsReadingMaxWidth 限宽）。
+    tester.view.physicalSize = const Size(1200, 6000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+      ),
+    );
+    await _openSettings(tester);
+
+    final scheme = Theme.of(
+      tester.element(find.byKey(const Key('settings-scroll'))),
+    ).colorScheme;
+
+    // 七节各自成节，且每节都有一个可点的分节头——§8「分节标题本身就是导航」，
+    // 所以既不做吸顶子导航，也不给某节换成别的入口。
+    for (final id in _sectionIds) {
+      expect(
+        find.byKey(Key('settings-section-$id')),
+        findsOneWidget,
+        reason: id,
+      );
+      expect(
+        find.byKey(Key('settings-section-header-$id')),
+        findsOneWidget,
+        reason: id,
+      );
+    }
+
+    // 分节头的形态＝原型变体 B `.settings-flat .set-section h3`：13px、w400、
+    // 次要字色、3px 字距（`.scratch/qiyu-prototype/index.html:229-230`）。
+    // 读渲染出来的那一份：标题前景由 `AnimatedDefaultTextStyle` 下发，`Text`
+    // 自身不带 style，页面上真落的样式在 RichText 的 span 上。
+    final headerStyle =
+        (tester
+                    .widget<RichText>(
+                      find.descendant(
+                        of: find.byKey(
+                          const Key('settings-section-title-provider'),
+                        ),
+                        matching: find.byType(RichText),
+                      ),
+                    )
+                    .text
+                as TextSpan)
+            .style!;
+    expect(headerStyle.fontSize, QiyuType.secondarySize);
+    expect(headerStyle.fontWeight, FontWeight.w400);
+    expect(
+      headerStyle.letterSpacing,
+      QiyuType.sectionHeaderLetterSpacing,
+      reason: '阅读式的「小字距」是这一处唯一的表意，丢了就退回普通小标题',
+    );
+    expect(headerStyle.color, QiyuColors.sectionHeader);
+    // §1 三色纪律：分节标题不是强调位，不着紫也不着危险红。
+    expect(headerStyle.color, isNot(QiyuColors.accentBright));
+    expect(headerStyle.color, isNot(QiyuColors.danger));
+
+    // 卡片形态要拆掉的那三样之一：分节之内不再有 surfaceContainer 底的 Material。
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('settings-scroll')),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Material && widget.color == scheme.surfaceContainer,
+        ),
+      ),
+      findsNothing,
+      reason: '分节又变回带底色的卡片了（§8「分节不用卡片」）',
+    );
+
+    // 发丝分隔线：展开的非末节各画一条 1px `line` 底线，末节不画
+    // （原型 `:227` 画线、`:228` `last-of-type` 不画）。
+    for (final id in _sectionIds) {
+      expect(
+        find.descendant(
+          of: find.byKey(Key('settings-section-$id')),
+          matching: _bottomHairline,
+        ),
+        id == _sectionIds.last ? findsNothing : findsOneWidget,
+        reason: '$id 的分隔线档位不对：只有末节不画，且不得画成一圈描边',
+      );
+    }
+  });
+
   testWidgets('窄屏页头让开三条杠：「设置」标题不被浮层压住', (tester) async {
     tester.view.physicalSize = const Size(420, 900);
     tester.view.devicePixelRatio = 1;
@@ -810,6 +903,35 @@ void main() {
     );
   });
 }
+
+/// 页面上七个分节的 id，**按 design-system §8 固定的分节顺序**排列：末位
+/// （体验与开发者选项）不画分隔线。字符串与 `provider_settings_view.dart` 的
+/// `_SettingsSectionId` 一致——折叠状态在本地存储里存的就是这些 id。
+const _sectionIds = <String>[
+  'provider',
+  'web_search',
+  'stt',
+  'tts',
+  'local_data',
+  'privacy',
+  'developer',
+];
+
+/// 分节之间那条**只画底边**的 1px `line` 发丝线（原型 `:227`）。
+///
+/// 只认底边而不认「有任何描边」，是为了把重新长成卡片的可能挡回来：§8 要的是
+/// 分隔线，不是盒子。
+final _bottomHairline = find.byWidgetPredicate((widget) {
+  if (widget is! DecoratedBox) {
+    return false;
+  }
+  final decoration = widget.decoration;
+  final border = decoration is BoxDecoration ? decoration.border : null;
+  return border != null &&
+      border.bottom.color == QiyuColors.line &&
+      border.bottom.width == QiyuLine.hairline &&
+      border.top == BorderSide.none;
+});
 
 Future<Widget> _app({
   required SettingsViewModel settingsViewModel,
