@@ -188,6 +188,18 @@ void main() {
   testWidgets('四区 tab 的横滚容器不留滚动条，纵向内容区的滚动条不受牵连', (
     tester,
   ) async {
+    // 锁的是**结果**，不是应用层的某个类：design-system §8「横向滚动容器不留滚动
+    // 控件」由框架的 `MaterialScrollBehavior` 横向分支满足——`buildScrollbar` 对
+    // `Axis.horizontal` 直接 `return child`（SDK
+    // `packages/flutter/lib/src/material/app.dart:857-876`），四区 TabBar 本来就
+    // 不画横滚条。应用层故意不再包一层：曾落地过的 `ScrollConfiguration` + 挂基类
+    // `ScrollBehavior` 的包裹对它唯一点名的横滚是空操作，代价却是把该容器的越界
+    // 回弹从 M3 的 `StretchingOverscrollIndicator` 换成基类的
+    // `GlowingOverscrollIndicator`（对比 SDK
+    // `packages/flutter/lib/src/widgets/scroll_configuration.dart:160-196` 与
+    // `material/app.dart:879-908`，本主题 `useMaterial3: true`），并把 `getPlatform`
+    // 从 `Theme.of(context).platform` 换成 `defaultTargetPlatform`。
+    //
     // 必须把平台按到桌面档再测，且在建树之前生效——触屏档下框架本来就不给纵向
     // 容器画滚动条，那时「TabBar 里没有滚动条」是一条怎么都成立的空断言。
     // 用 try/finally 而不是 addTearDown 复位：框架的 debug 变量不变量检查跑在
@@ -210,24 +222,28 @@ void main() {
       await tester.tap(find.byKey(const Key('home-go-memory')));
       await tester.pumpAndSettle();
 
-      // 去掉的是绘制层，不是滚动能力：横滚容器不再套滚动条控件。
+      // 横滚容器内不留任何滚动控件：Material 档画的 `Scrollbar` 与基类档画的
+      // `RawScrollbar` 都在判内——只认前者，换成基类档那种绘制就溜过去了。
       expect(
         find.descendant(
           of: find.byType(TabBar),
-          matching: find.byType(Scrollbar),
+          matching: find.byWidgetPredicate(
+            (widget) => widget is Scrollbar || widget is RawScrollbar,
+          ),
         ),
         findsNothing,
         reason: '§8：横向滚动容器不留浏览器滚动控件',
       );
-      // 规范只要求去掉横滚的滚动条。整页套上去会把纵向的一起摘掉，所以同档平台下
-      // 纵向内容区必须还画得出来——这条对照守的就是那个作用域边界。
+      // 正向对照，不许删：同档平台下纵向内容区确实画得出滚动条。没有它，前半句
+      // 在「什么都不画」的状态下恒成立，整条用例退化成空断言；有人把去滚动条套到
+      // 整页上（§8 从未要求去掉纵向）也是在这里现形，而不是靠读实现判断。
       expect(
         find.descendant(
           of: find.byType(TabBarView),
           matching: find.byType(Scrollbar),
         ),
         findsWidgets,
-        reason: '纵向内容区的滚动条被牵连摘掉了，说明去滚动条套到了整页上',
+        reason: '纵向容器在该平台档下画不出滚动条，说明滚动条作用域被整页摘掉了',
       );
     } finally {
       debugDefaultTargetPlatformOverride = null;

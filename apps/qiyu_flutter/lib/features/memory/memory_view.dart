@@ -101,36 +101,43 @@ class MemoryView extends StatelessWidget {
                   ),
                   // 四区图标取 §4 定案选型（时钟 / 山形 / 单人 / 双人）；选中态
                   // 的近白文字与淡白下划线全部由主题层 `tabBarTheme` 供给，页面
-                  // 不自写颜色。§8 补充约定还要求横向滚动容器不留滚动条：TabBar
-                  // 是 isScrollable 的横滚容器，所以只包住它一层，纵向内容列表的
-                  // 滚动条不受影响。
-                  const ScrollConfiguration(
-                    behavior: QiyuNoScrollbarBehavior(),
-                    child: TabBar(
-                      isScrollable: true,
-                      tabs: [
-                        Tab(
-                          key: Key('memory-tab-recent'),
-                          icon: Icon(QiyuIcons.schedule),
-                          text: '最近发生',
-                        ),
-                        Tab(
-                          key: Key('memory-tab-longterm'),
-                          icon: Icon(QiyuIcons.landscape),
-                          text: '长期印象',
-                        ),
-                        Tab(
-                          key: Key('memory-tab-persona'),
-                          icon: Icon(QiyuIcons.person),
-                          text: '关于你',
-                        ),
-                        Tab(
-                          key: Key('memory-tab-relationship'),
-                          icon: Icon(QiyuIcons.groups),
-                          text: '我们的关系',
-                        ),
-                      ],
-                    ),
+                  // 不自写颜色。§8「横向滚动容器不留滚动控件」这一条**不在这里写
+                  // 代码**：它由框架档满足——`MaterialScrollBehavior.buildScrollbar`
+                  // 对 `Axis.horizontal` 直接 `return child`（SDK
+                  // `packages/flutter/lib/src/material/app.dart:857-876`），TabBar
+                  // 这个 `isScrollable` 的横滚容器本来就不画滚动条，纵向内容区仍按
+                  // 同一档规则画。故意不再包一层 `ScrollConfiguration`：换到基类
+                  // `ScrollBehavior` 唯有点名的横滚仍是空操作，代价却是把该容器的
+                  // 越界回弹从 M3 的 `StretchingOverscrollIndicator` 换成基类的
+                  // `GlowingOverscrollIndicator`（对比 SDK
+                  // `packages/flutter/lib/src/widgets/scroll_configuration.dart:160-196`
+                  // 与 `material/app.dart:879-908`，本主题 `useMaterial3: true`），
+                  // 并把 `getPlatform` 从 `Theme.of(context).platform` 换成
+                  // `defaultTargetPlatform`。结果由 test/memory_view_test.dart 锁住。
+                  const TabBar(
+                    isScrollable: true,
+                    tabs: [
+                      Tab(
+                        key: Key('memory-tab-recent'),
+                        icon: Icon(QiyuIcons.schedule),
+                        text: '最近发生',
+                      ),
+                      Tab(
+                        key: Key('memory-tab-longterm'),
+                        icon: Icon(QiyuIcons.landscape),
+                        text: '长期印象',
+                      ),
+                      Tab(
+                        key: Key('memory-tab-persona'),
+                        icon: Icon(QiyuIcons.person),
+                        text: '关于你',
+                      ),
+                      Tab(
+                        key: Key('memory-tab-relationship'),
+                        icon: Icon(QiyuIcons.groups),
+                        text: '我们的关系',
+                      ),
+                    ],
                   ),
                   const Divider(height: 1),
                   ?_recoveryBanner(viewModel.overview),
