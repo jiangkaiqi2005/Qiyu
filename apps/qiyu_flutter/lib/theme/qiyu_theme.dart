@@ -148,6 +148,27 @@ ButtonStyle qiyuQuietIconButtonStyle() => ButtonStyle(
   ),
 );
 
+/// 横向滚动容器不画滚动条：design-system §8 补充约定「横向滚动容器隐藏原生
+/// 滚动条，不留浏览器滚动控件」。
+///
+/// 做法是**换掉绘制层**而不是裁容器：`buildScrollbar` 直接返回 child，滚动、
+/// 惯性、指针手势与命中区域一律照旧，只是不再套一层 `Scrollbar`。也不取
+/// 「`thumbVisibility: false` + 透明拇指」那条路——滚条虽然画不出来，却会在容器
+/// 边缘留下一块看不见但吃命中的拖拽热区。
+///
+/// 必须**按容器作用域**用（`ScrollConfiguration` 只包住横向滚动的那个容器）：
+/// 纵向滚动条不在规范要求去掉之列，整页套上去就把两样一起摘了。
+class QiyuNoScrollbarBehavior extends ScrollBehavior {
+  const QiyuNoScrollbarBehavior();
+
+  @override
+  Widget buildScrollbar(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) => child;
+}
+
 /// 深色「紫夜」主题。全应用唯一的 ThemeData 来源。
 ///
 /// [reduceMotion] 对应系统的「减少动态效果」（design-system §9：开启后关闭

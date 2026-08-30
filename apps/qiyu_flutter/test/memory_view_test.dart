@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -183,6 +183,55 @@ void main() {
 
     await tester.tap(find.byKey(const Key('memory-back')));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('四区 tab 的横滚容器不留滚动条，纵向内容区的滚动条不受牵连', (
+    tester,
+  ) async {
+    // 必须把平台按到桌面档再测，且在建树之前生效——触屏档下框架本来就不给纵向
+    // 容器画滚动条，那时「TabBar 里没有滚动条」是一条怎么都成立的空断言。
+    // 用 try/finally 而不是 addTearDown 复位：框架的 debug 变量不变量检查跑在
+    // teardown 之前，漏一次就会把整条用例判失败。
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      final memoryViewModel = MemoryCenterViewModel(
+        _FakeMemoryGateway(_fullOverview()),
+        autoStart: false,
+      );
+      await memoryViewModel.refresh();
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: _chatViewModel(),
+          onboardingViewModel: await _onboardingViewModel(),
+          memoryViewModel: memoryViewModel,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-go-memory')));
+      await tester.pumpAndSettle();
+
+      // 去掉的是绘制层，不是滚动能力：横滚容器不再套滚动条控件。
+      expect(
+        find.descendant(
+          of: find.byType(TabBar),
+          matching: find.byType(Scrollbar),
+        ),
+        findsNothing,
+        reason: '§8：横向滚动容器不留浏览器滚动控件',
+      );
+      // 规范只要求去掉横滚的滚动条。整页套上去会把纵向的一起摘掉，所以同档平台下
+      // 纵向内容区必须还画得出来——这条对照守的就是那个作用域边界。
+      expect(
+        find.descendant(
+          of: find.byType(TabBarView),
+          matching: find.byType(Scrollbar),
+        ),
+        findsWidgets,
+        reason: '纵向内容区的滚动条被牵连摘掉了，说明去滚动条套到了整页上',
+      );
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets(

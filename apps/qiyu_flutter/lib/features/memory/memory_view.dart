@@ -98,33 +98,38 @@ class MemoryView extends StatelessWidget {
                       ],
                     ),
                   ),
-                  // design-system §4 定案选型：时钟 / 山形 / 单人 / 双人。
-                  // 选中态取色（近白文字与图标 + 淡白下划线）全部由主题层
-                  // `tabBarTheme` 供给，页面不自写颜色。
-                  const TabBar(
-                    isScrollable: true,
-                    tabs: [
-                      Tab(
-                        key: Key('memory-tab-recent'),
-                        icon: Icon(QiyuIcons.schedule),
-                        text: '最近发生',
-                      ),
-                      Tab(
-                        key: Key('memory-tab-longterm'),
-                        icon: Icon(QiyuIcons.landscape),
-                        text: '长期印象',
-                      ),
-                      Tab(
-                        key: Key('memory-tab-persona'),
-                        icon: Icon(QiyuIcons.person),
-                        text: '关于你',
-                      ),
-                      Tab(
-                        key: Key('memory-tab-relationship'),
-                        icon: Icon(QiyuIcons.groups),
-                        text: '我们的关系',
-                      ),
-                    ],
+                  // 四区图标取 §4 定案选型（时钟 / 山形 / 单人 / 双人）；选中态
+                  // 的近白文字与淡白下划线全部由主题层 `tabBarTheme` 供给，页面
+                  // 不自写颜色。§8 补充约定还要求横向滚动容器不留滚动条：TabBar
+                  // 是 isScrollable 的横滚容器，所以只包住它一层，纵向内容列表的
+                  // 滚动条不受影响。
+                  const ScrollConfiguration(
+                    behavior: QiyuNoScrollbarBehavior(),
+                    child: TabBar(
+                      isScrollable: true,
+                      tabs: [
+                        Tab(
+                          key: Key('memory-tab-recent'),
+                          icon: Icon(QiyuIcons.schedule),
+                          text: '最近发生',
+                        ),
+                        Tab(
+                          key: Key('memory-tab-longterm'),
+                          icon: Icon(QiyuIcons.landscape),
+                          text: '长期印象',
+                        ),
+                        Tab(
+                          key: Key('memory-tab-persona'),
+                          icon: Icon(QiyuIcons.person),
+                          text: '关于你',
+                        ),
+                        Tab(
+                          key: Key('memory-tab-relationship'),
+                          icon: Icon(QiyuIcons.groups),
+                          text: '我们的关系',
+                        ),
+                      ],
+                    ),
                   ),
                   const Divider(height: 1),
                   ?_recoveryBanner(viewModel.overview),
