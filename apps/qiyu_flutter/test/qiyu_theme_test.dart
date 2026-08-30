@@ -59,33 +59,50 @@ double _contrast(Color foreground, Color background) {
 /// 整条从扫描里漏掉，色相断言连看都看不到它。不在测试里手抄清单：手抄的清单
 /// 只会锁住抄下来的那几档，新增一档危险色照样溜过去；读源码则任何新档位都
 /// 必须过色相断言，前提是它得先被扫到——[_undocumentedColorDeclarations]
-/// 就是核这个前提的。别名档（`neutralEmphasis = onAccent` 这类）复用已有色值、
-/// 不带新色相，因此不匹配本模式，也不需要匹配。
-Map<String, String> _tokenColorLiterals() {
+/// 就是核这个前提的。本函数**只认这一种写法**，换成别的写法不在这儿现形，
+/// 由 [_declaredColorNames] 那条闭合面兜住。[source] 只给闭合断言喂临时文本用。
+Map<String, String> _tokenColorLiterals([String? source]) {
   final declaration = RegExp(
     r'static const Color (\w+) = Color\(0x([0-9A-Fa-f]{6,8})\);',
   );
   return {
     for (final match in declaration.allMatches(
-      _read('lib/theme/qiyu_tokens.dart'),
+      source ?? _read('lib/theme/qiyu_tokens.dart'),
     ))
       match.group(1)!: match.group(2)!,
   };
 }
 
+/// 源码里所有 [Color] 声明的名字，**三类写法都进得来**：类内 `static const`、
+/// 类内 `static final`、顶层 `const`。只认 `static const` 的话，把一档改成
+/// `static final` 或挪到顶层，就会同时躲过 [_tokenColorLiterals] 与
+/// [_undocumentedColorDeclarations] 两处扫描——色相纪律靠的是读源码，扫不到
+/// 就是漏口，不是测试该放宽的地方。一律锚在行首（允许缩进，靠 `multiLine` 而不是
+/// Dart 不支持的 `(?m)` 内联标志），免得把文档注释里提到的写法当成正文声明。
+Set<String> _declaredColorNames(String source) => RegExp(
+  r'^\s*(?:static (?:const|final)|const)\s+Color\s+(\w+)',
+  multiLine: true,
+).allMatches(source).map((m) => m.group(1)!).toSet();
+
+/// 「复用已有档」的别名声明（`static const Color neutralEmphasis = onAccent;`
+/// 这类）：复用已有色值、不带新色相，因此不算漏口。写法的覆盖面与
+/// [_declaredColorNames] 同步，别只跟着 `static const` 走。
+Set<String> _aliasedColorNames(String source) => RegExp(
+  r'^\s*(?:static (?:const|final)|const)\s+Color\s+(\w+) = [A-Za-z_]\w*;',
+  multiLine: true,
+).allMatches(source).map((m) => m.group(1)!).toSet();
+
 /// token 层里既不被 [_tokenColorLiterals] 扫到、也不是「复用已有档」别名的
 /// [Color] 声明。色相纪律靠的是读源码，那么任何换了构造写法的档
-/// （`Color.fromARGB`、`Color.fromRGBO`、带命名参数的构造……）都必须在这里
-/// 现形，而不是悄悄绕过扫描；这条集合非空就是纪律漏口，不是测试该放宽的地方。
-Set<String> _undocumentedColorDeclarations() {
-  final source = _read('lib/theme/qiyu_tokens.dart');
-  final declared = RegExp(
-    r'static const Color (\w+)',
-  ).allMatches(source).map((m) => m.group(1)!).toSet();
-  final aliased = RegExp(
-    r'static const Color (\w+) = [A-Za-z_]\w*;',
-  ).allMatches(source).map((m) => m.group(1)!).toSet();
-  return declared.difference({..._tokenColorLiterals().keys, ...aliased});
+/// （`Color.fromARGB`、`Color.fromRGBO`、带命名参数的构造……）或换了声明位置
+/// 与 `final` 关键字的档都必须在这里现形，而不是悄悄绕过扫描；这条集合非空就是
+/// 纪律漏口，不是测试该放宽的地方。[source] 只给闭合断言喂临时文本用——
+/// 证伪扫描面本身不该要求往 `lib` 里塞一个测试用色值。
+Set<String> _undocumentedColorDeclarations([String? source]) {
+  final text = source ?? _read('lib/theme/qiyu_tokens.dart');
+  return _declaredColorNames(text).difference(
+    {..._tokenColorLiterals(text).keys, ..._aliasedColorNames(text)},
+  );
 }
 
 /// 危险暖色相：红（0°）到琥珀（约 45°）这一段，加一点回绕的品红侧（≥340°）。
@@ -191,8 +208,17 @@ void main() {
       // 裁定就是「第 4 段（记忆中心换皮）必须换成 QiyuColors.danger」。
       // 横幅不传 backgroundColor，落到页面上的底就是主题这条默认值。
       expect(theme.snackBarTheme.backgroundColor, QiyuColors.panel);
-      // 前景与底的对比按实测判：danger 压在 panel 上 7.30:1，AA 4.5:1 有余量
+      // 前景与底的对比按实测判：danger 压在 panel 上 7.30:1（按 WCAG 2.1 相对
+      // 亮度公式复算，就是上面 `_contrast` 那条实现），AA 4.5:1 有 2.8 的余量
       // （design-system §2、§9）。这里用实测值判，不按「看着挺亮」交差。
+      // 两个判据各管一件事：7.30 钉住凭据本身——把这档红改暗一档（或把底改亮
+      // 一档）要先在数字上现形，而不是等谁「看着发暗」再提；≥4.5 才是 §9 的
+      // AA 判据，改到 4.6 也照样过，但余量凭据要重算。
+      expect(
+        _contrast(QiyuColors.danger, QiyuColors.panel),
+        closeTo(7.30, 0.05),
+        reason: 'danger 压在默认横幅底上的实测对比度变了，注释里的 7.30:1 要重算',
+      );
       expect(
         _contrast(QiyuColors.danger, QiyuColors.panel),
         greaterThanOrEqualTo(4.5),
@@ -222,6 +248,52 @@ void main() {
           if (_isWarmHue(Color(int.parse(entry.value, radix: 16)))) entry.key,
       };
       expect(warmHuedTokens, {'danger'});
+    });
+
+    test('色值扫描的覆盖面闭合：换声明写法的假档会判红', () {
+      // 上面那条「扫描面本身也在这里核掉」成立的前提是正则真的扫得到。这里喂一段
+      // 临时文本给同一套扫描函数证伪它——证伪扫描面不该要求往 `lib` 里塞一个
+      // 测试用色值：把一档改成 `static final Color`、或挪到顶层写成 `const Color`，
+      // 都必须落进 [_undocumentedColorDeclarations] 把门禁判红；反过来，文档注释里
+      // 提到的写法不算正文声明，别名档复用已有色值也不算漏口。
+      const probe = '''
+abstract final class ProbeColors {
+  /// 注释里提到的 static const Color docMention 不算声明。
+  static const Color literal = Color(0xFF112233);
+  static final Color viaFinal = Color(0xFF445566);
+  static const Color alias = literal;
+}
+
+const Color topLevel = Color(0xFF667788);
+''';
+      expect(_declaredColorNames(probe), {
+        'literal',
+        'viaFinal',
+        'alias',
+        'topLevel',
+      });
+      expect(
+        _undocumentedColorDeclarations(probe),
+        {'viaFinal', 'topLevel'},
+        reason: '换写法或换位置的 Color 声明绕过了色相扫描，闭合断言抓不到它',
+      );
+      // 别名与注释侧不许误报：漏口清单里只该有那两档。
+      expect(_aliasedColorNames(probe), {'alias'});
+      expect(_tokenColorLiterals(probe).keys, {'literal'});
+
+      // 正向对照：声明面必须至少盖住字面扫描面。没有它，真文件侧那条 isEmpty 可能
+      // 只是因为什么都没扫到而空转，整条闭合断言退化成空断言。
+      final tokenSource = _read('lib/theme/qiyu_tokens.dart');
+      expect(
+        _declaredColorNames(tokenSource),
+        containsAll(_tokenColorLiterals(tokenSource).keys),
+        reason: '声明面比字面扫描面还窄，收紧没生效',
+      );
+      expect(
+        _undocumentedColorDeclarations(tokenSource),
+        isEmpty,
+        reason: 'token 层有 Color 声明换了写法或构造，色相扫描看不见它',
+      );
     });
 
     test('中性功能角色只复用已有中性色值，不引入新色相', () {
