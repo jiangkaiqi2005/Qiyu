@@ -664,6 +664,12 @@ void main() {
           const Duration(milliseconds: 500),
         );
       } catch (error) {
+        // 只认「静不下来」这一种失败：实测 SDK 3.44.8 的
+        // `flutter_test/lib/src/widget_tester.dart`，`pumpAndSettle` 到点没静下来
+        // 抛的是 `FlutterError('pumpAndSettle timed out')`。溢出、装配错、断言失败
+        // 这些异常同样会让这棵树静不下来，但它们不证明环还在转，一律原样重抛让
+        // 用例判红——否则正例就退化成「这棵树出过任何岔子」都算通过。
+        if (!error.toString().contains('pumpAndSettle timed out')) rethrow;
         return error;
       }
       return null;
