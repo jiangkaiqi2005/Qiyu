@@ -19,6 +19,11 @@ class DiagnosticsView extends StatefulWidget {
   State<DiagnosticsView> createState() => _DiagnosticsViewState();
 }
 
+/// **设计内**降级的回退原因（wire 名，取自 `FallbackReason`）：这两类发生时系统
+/// 一切正常，故诊断页的结果芯片不给暗红底。判据见 design-system §1 与决策日志
+/// 第五轮 #15、#23。往这里加成员等于放宽危险色的使用范围，只能按裁定改。
+const _designedFallbackReasons = <String>{'safety', 'no_llm_config'};
+
 class _DiagnosticsViewState extends State<DiagnosticsView> {
   bool _requested = false;
 
@@ -158,7 +163,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final request in requests)
+        for (var i = 0; i < requests.length; i++)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Wrap(
@@ -167,19 +172,21 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
               runSpacing: 4,
               children: [
                 Text(
-                  request.at.toLocal().toString().substring(0, 19),
+                  requests[i].at.toLocal().toString().substring(0, 19),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                _chip(context, _sourceLabel(request.source)),
+                _chip(context, _sourceLabel(requests[i].source)),
                 _chip(
                   context,
-                  _resultLabel(request),
-                  emphasized: request.result == 'fallback' ||
-                      request.result == 'failed',
+                  _resultLabel(requests[i]),
+                  // 定位键：这一页唯一的着色判断就是「算不算故障」，用例必须能
+                  // 逐颗读到真落在那枚芯片上的底色，不能靠文案反推。
+                  key: Key('diagnostics-result-$i'),
+                  emphasized: _isFault(requests[i]),
                 ),
-                if (request.fallbackReason case final reason?)
+                if (requests[i].fallbackReason case final reason?)
                   _chip(context, reason),
               ],
             ),
@@ -187,6 +194,19 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
       ],
     );
   }
+
+  /// 这条请求算不算 §1 三色纪律里的「故障 / 失败态」（决策日志第五轮 #15、#23）。
+  ///
+  /// `result == 'fallback'` 覆盖 `FallbackReason` 全集，其中两枚是**设计内**降级：
+  /// `safety` 是危机 / 敏感输入命中本地分类，按规则**根本不该**调用 Provider；
+  /// `no_llm_config` 是没配模型，本机规则引擎就是产品形态。把这两样也标成暗红，
+  /// 等于用危险色宣布「一切正常」为异常。其余回退——模型超时、网络、鉴权、空回复、
+  /// 违禁词、人格越界、结构不合……都是模型侧没交付合格结果，属故障。
+  bool _isFault(RecentRequest request) => switch (request.result) {
+    'failed' => true,
+    'fallback' => !_designedFallbackReasons.contains(request.fallbackReason),
+    _ => false,
+  };
 
   Widget _finalization(BuildContext context, FinalizationHealth? health) {
     final theme = Theme.of(context);
@@ -283,9 +303,15 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
     _ => '未启用',
   };
 
-  Widget _chip(BuildContext context, String label, {bool emphasized = false}) {
+  Widget _chip(
+    BuildContext context,
+    String label, {
+    bool emphasized = false,
+    Key? key,
+  }) {
     final theme = Theme.of(context);
     return Container(
+      key: key,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: emphasized

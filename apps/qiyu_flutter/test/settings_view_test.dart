@@ -84,6 +84,82 @@ void main() {
     },
   );
 
+  testWidgets('诊断页只把真故障标暗红，设计内回退走中性底', (tester) async {
+    // 五枚按顺序铺开的最近请求：危险色的分档依据是**原因**，不是 result 本身。
+    _useFullPageViewport(tester);
+    final settingsGateway = _FakeSettingsGateway(
+      recentRequests: [
+        RecentRequest(
+          at: DateTime.parse('2026-08-19T13:55:00.000Z'),
+          source: 'chat',
+          result: 'failed',
+        ),
+        RecentRequest(
+          at: DateTime.parse('2026-08-19T13:56:00.000Z'),
+          source: 'chat',
+          result: 'fallback',
+          replySource: 'local',
+          fallbackReason: 'model_timeout',
+        ),
+        RecentRequest(
+          at: DateTime.parse('2026-08-19T13:57:00.000Z'),
+          source: 'chat',
+          result: 'fallback',
+          replySource: 'local',
+          fallbackReason: 'safety',
+        ),
+        RecentRequest(
+          at: DateTime.parse('2026-08-19T13:58:00.000Z'),
+          source: 'chat',
+          result: 'fallback',
+          replySource: 'local',
+          fallbackReason: 'no_llm_config',
+        ),
+        RecentRequest(
+          at: DateTime.parse('2026-08-19T13:59:00.000Z'),
+          source: 'chat',
+          result: 'ok',
+          replySource: 'local',
+        ),
+      ],
+    )..developerMode = true;
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(settingsGateway),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'developer');
+    await tester.ensureVisible(find.byKey(const Key('settings-diagnostics')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('settings-diagnostics')));
+    await tester.pumpAndSettle();
+
+    final scheme = Theme.of(tester.element(find.text('开发者诊断'))).colorScheme;
+    // 读真落在那枚芯片上的底色（Container 的 BoxDecoration），不看 widget 传了什么。
+    Color fill(int index) {
+      final container = tester.widget<Container>(
+        find.byKey(Key('diagnostics-result-$index')),
+      );
+      return ((container.decoration!) as BoxDecoration).color!;
+    }
+
+    expect(fill(0), scheme.errorContainer, reason: '失败态必须看着就是没成（§1）');
+    expect(fill(1), scheme.errorContainer, reason: '模型超时是模型侧没交付合格结果，属故障');
+    // 这两类是**设计内**降级：危机输入按规则根本不该问模型，未配模型时本机规则
+    // 引擎就是产品形态。给它们暗红等于用危险色宣布「一切正常」为异常。
+    expect(fill(2), scheme.surfaceContainerHighest, reason: 'safety 回退被误标故障');
+    expect(
+      fill(3),
+      scheme.surfaceContainerHighest,
+      reason: 'no_llm_config 回退被误标故障',
+    );
+    expect(fill(4), scheme.surfaceContainerHighest);
+    // 防这条用例退化成一枚颜色自证：两档必须真是两个颜色。
+    expect(scheme.errorContainer, isNot(scheme.surfaceContainerHighest));
+  });
+
   testWidgets('memory controls overview lists frozen and banned entries', (
     tester,
   ) async {
@@ -1551,11 +1627,26 @@ Finder _verticalScrollable() => find.byElementPredicate((element) {
   return !insideNavPanel;
 }).first;
 
+/// 诊断页默认供的那一枚：模型超时（真故障），既有入口用例按它断文案。
+List<RecentRequest> _defaultDiagnosticsRequests() => [
+  RecentRequest(
+    at: DateTime.parse('2026-08-19T13:59:00.000Z'),
+    source: 'chat',
+    result: 'fallback',
+    replySource: 'local',
+    fallbackReason: 'model_timeout',
+  ),
+];
+
 final class _FakeSettingsGateway implements SettingsGateway {
-  _FakeSettingsGateway({this.onCleared});
+  _FakeSettingsGateway({this.onCleared, this.recentRequests});
 
   bool developerMode = false;
   int clearCalls = 0;
+
+  /// 诊断页「最近请求」的数据源；不给就用 `_defaultDiagnosticsRequests()`
+  /// 那一枚模型超时（真故障）。分档那条用例按顺序传五枚进来逐档验危险色。
+  final List<RecentRequest>? recentRequests;
 
   /// 主持久化链路（Host `/api` 那侧）被写了几次：分节折叠按 design-system §8
   /// 只准走本地 UI 存储，这个计数一次都不该动。
@@ -1613,15 +1704,7 @@ final class _FakeSettingsGateway implements SettingsGateway {
   Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
     generatedAt: DateTime.parse('2026-08-19T14:00:00.000Z'),
     memoryDirectory: 'C:/qiyu/memories',
-    recentRequests: [
-      RecentRequest(
-        at: DateTime.parse('2026-08-19T13:59:00.000Z'),
-        source: 'chat',
-        result: 'fallback',
-        replySource: 'local',
-        fallbackReason: 'model_timeout',
-      ),
-    ],
+    recentRequests: recentRequests ?? _defaultDiagnosticsRequests(),
     finalization: const FinalizationHealth(
       today: '2026-08-19',
       todayFinalized: false,

@@ -8,7 +8,7 @@
 
 - 高级 = 小、轻、暗角重；不堆视觉重量，不搞霓虹发光、玻璃堆叠。
 - 颜色只存在语义 token 一层，组件只准消费 token，禁止直接写色值。
-- **三色纪律**：紫住强调（发送按钮、焦点描边），暗红住危险，其余表面、线条、选中态一律中性暗夜色。危险只有两类：**破坏性操作**（删除、清除产品数据）与**故障/失败态**（本机 Host 不可用、某个动作没成）。这两类之外禁用暗红，非强调位禁用紫。故障本身就是危险态，所以连接状态探测失败时圆点与文案转 `danger`（见第 5 节）是故障态的一例，不是这条纪律的例外。
+- **三色纪律**：紫住强调（发送按钮、焦点描边），暗红住危险，其余表面、线条、选中态一律中性暗夜色。危险只有两类：**破坏性操作**（删除、清除产品数据）与**故障/失败态**（本机 Host 不可用、某个动作没成）。这两类之外禁用暗红，非强调位禁用紫。故障本身就是危险态，所以连接状态探测失败时圆点与文案转 `danger`（见第 5 节）是故障态的一例，不是这条纪律的例外。**「故障」的边界**：指本该成而没成；按设计**故意**不走模型的那类回退——危机 / 敏感输入走本地安全回复、根本没配模型而落回本机规则引擎——不是故障，暗红不得用它（把「一切正常」宣布成异常是危险色最坏的一种误用）。据此开发者诊断页的回退芯片按**原因**分档而不是按 `result` 分档，见决策日志第五轮 #23。
 - **紫的合法出口就是「强调位」这一个语义**，不按控件形状数：玻璃紫的主按钮与发送钮、`accent-bright` 的键盘焦点环，以及§8 组件 2 那种无底色的文字按钮 / 次按钮（它承担的是「点这里去做那件正事」，属强调位）。判定看这一处是不是强调，不看它是不是按钮。「除了发送按钮和焦点外没有紫」这句说的是**表面不发紫**——底色、描边、选中态、悬停底一律中性。
 - 组件统一复用：Material 3 内置组件打底 + 栖语薄包装层，零第三方 UI 库依赖。
 
@@ -29,7 +29,7 @@
 
 毛玻璃 = **`rgba(19,18,23,0.72)`** + 背景模糊（模糊半径 16–24px，实现时凭视觉验收微调）。它比 `panel` 暗一档、自成独立 token，不从 `panel` 拼透明度得出——目的就是不透背景紫；`panel`（`#181719`）只作卡片与面板的实底色。选中态用中性暗底 `rgba(255,255,255,0.04)`，不用紫色底。
 
-既成事实登记：`danger` 在主题层**同时占两个字义槽**——`ColorScheme.error`（字档）与 `ColorScheme.errorContainer`（容器底），即 `lib/theme/qiyu_theme.dart` 里 `error:` 与 `errorContainer:` 这两处赋值（核验请按槽位名 grep：本规范不记这两个槽的行号，它随文件漂移，记了就迟早变成假凭据）；`lib/features/settings/diagnostics_view.dart:292` 的强调诊断芯片确实拿它当**底色**渲染。本节把它当字档写的用法不覆盖这一处，两处并存是现状。
+既成事实登记：`danger` 在主题层**同时占两个字义槽**——`ColorScheme.error`（字档）与 `ColorScheme.errorContainer`（容器底），即 `lib/theme/qiyu_theme.dart` 里 `error:` 与 `errorContainer:` 这两处赋值（核验请按槽位名 grep：本规范不记这两个槽的行号，它随文件漂移，记了就迟早变成假凭据）；`lib/features/settings/diagnostics_view.dart` 里 `_chip` 的 `emphasized` 分支确实拿它当**底色**渲染。本节把它当字档写的用法不覆盖这一处，两处并存是现状。
 
 ## 3. 字体 (Typography)
 
@@ -160,8 +160,10 @@ Material Symbols 系、统一 outlined 风格、24px，**描边 1.2 细线条**�
 | 字阶 `titleSmall` 未登记，lib 层 14 处消费走 M3 默认 | 待裁定。`qiyuTextTheme()` 只登记 §3 的五档，`titleSmall` 不在其中，读它的地方（记忆中心 8 处、设置页 6 处）拿到的是 Material 3 默认的 `onSurface` 近白 + w500——即「主文字色当小标题用」，与 §3 的档位表脱节。2026-08-30 已单独把历史页日分组那一处改指次要档（决策日志第五轮 #13），其余 14 处无规范出处，未一并改动 |
 | 无字图标按钮的读屏名尚未全站铺开 | 待办（非裁定）。实测计数：`grep -rn 'tooltip:' apps/qiyu_flutter/lib` 得 21 处，其中只有 3 处同时显式带 `Icon.semanticLabel`（记忆中心常驻四按钮、气泡重听、历史页删除——皆本轮按 #17 所改）。其余 18 处**未逐个核过**动作名是否只靠 tooltip 送达；#17 已证 tooltip 不进语义 `label`，所以这 18 处对读屏用户大概率无名。铺开属全站无障碍收口，超出本轮换皮分段范围，未顺手改（核验命令见左） |
 | 页面里仍有裸写的 `spacing: <数字>` | 段6 收口项。实测（2026-08-30 段5 落地后重跑）：`grep -rn 'spacing: [0-9]' apps/qiyu_flutter/lib` 得 **14 行命中**，其中 3 行是注释里写的 `letter-spacing: 3px` 字样（`qiyu_theme.dart`、`qiyu_tokens.dart`、`provider_settings_view.dart` 各一处），不是页面间距；**真实代码 11 处**——记忆中心 6（含 `memory_view.dart` 那颗刻意的 `spacing: 0`，见决策日志第五轮 #18）、设置页 4、诊断页 1。这条命令按 `spacing:` 前缀匹配，会把 CSS 侧的 `letter-spacing` 一起捞进来，所以引用它时必须报「命中数」与「代码数」两个数。上一版只记了「12 处（记忆中心 5、设置页 4、其余 3）」，段5 之后未回查即过期。Spec Decision 1 要求间距同样收进主题层、页面只准消费 token，故这批字面量应在收口时并进 `QiyuSpacing`；本轮不动，避免在换皮分段里混入全局重排 |
-| 诊断页把「已回退本地」与「失败」一律画成暗红底 | 待裁定（本轮不擅自裁定）。`lib/features/settings/diagnostics_view.dart` 的最近请求列表对 `result == 'fallback' || result == 'failed'` 统一传 `emphasized: true`，而 `_chip` 的 emphasized 分支取 `colorScheme.errorContainer`——即 §2 的 `danger`——当**底色**。按决策日志第五轮 #15 的两类判据：`failed` 是故障态，落在这条通则上没问题；但 `fallback` 覆盖 `FallbackReason` 全集（`packages/qiyu_behavior_core/lib/src/contracts.dart` 的 18 枚），其中 `safety`（危机/敏感输入按设计走本地回复）与 `no_llm_config`（未配置模型，AGENTS.md 明写「应用自动降级为本地规则引擎，功能完整可测」）既不是破坏性操作也不是故障，却被一并标成危险色。这页不属本轮换皮点名的范围（该列表由 ticket 23 落地，提交 `55a008a`），页面自身也没有任何一条着色用例，故未顺手改。**先要裁定的是语义**：「模型没成、走了本地」到底算不算 §1 的「故障/失败态」——若只算 Provider 侧失败，就得按 `fallbackReason` 分档而不是按 `result` 分档。核验：`grep -n emphasized apps/qiyu_flutter/lib/features/settings/diagnostics_view.dart` |
 
 以下四项曾记为「实现与规范有出入」，2026-08-30 已回写进本文各节，**不再是待打磨项**：图标细描边的取得机制（§4）、连接状态的未探明态（§5）、背景的中心渐晕与全幅底层（§6）、焦点表意按来源分开与 reduced-motion 范围（§9）。
 
-另有一项曾挂待裁定——所有「数值出处是原型」的凭据指向未入库的 `.scratch/qiyu-prototype/index.html`（16 处，分布在 2 份文档与 4 个代码 / 测试文件），clone 后一条也复核不了。2026-08-30 按裁定把原型收进 **`docs/product/prototype/index.html`**（连同本地预览 `server.js`），16 处引用一律改指新路径；入库副本与原稿唯一的差别是 `.home-bg`（`:108`）的背景改指已入库的压缩资产（6MB 未压缩原图不入库），**每一个被引用的行号都逐条复核过未漂移**。此后引用原型数值请直接写 `docs/product/prototype/index.html:NNN`，改动该文件时遵守文件末尾那段注释里的两条规矩（要加内容只往末尾加）。
+另有两项曾挂待裁定，2026-08-30 均已按裁定落地：
+
+1. **诊断页的危险色分档**。`lib/features/settings/diagnostics_view.dart` 原先对 `result == 'fallback' || 'failed'` 一律传 `emphasized: true`，把 §2 的 `danger` 当芯片**底色**——而 `fallback` 覆盖 `FallbackReason` 全集 18 枚，其中 `safety`（危机 / 敏感输入按规则本就不该问模型）与 `no_llm_config`（未配置模型，本机规则引擎即产品形态）属**设计内**降级，标成暗红等于宣布「一切正常」为异常。裁定为按 `fallbackReason` 分档：这两枚走中性底（`surfaceContainerHighest`），其余回退与 `failed` 继续走 `errorContainer`。落点是 `_isFault` 与 `_designedFallbackReasons`（往这两枚之外加成员等于放宽危险色范围，只能按裁定改）；用例见 `test/settings_view_test.dart`「诊断页只把真故障标暗红」一条；理由记决策日志第五轮 #23。
+2. **原型凭据入库**。所有「数值出处是原型」的凭据原先 16 处全指向未入库的 `.scratch/qiyu-prototype/index.html`（`.gitignore` 只忽略 `.scratch/ticket*/`），clone 后一条也复核不了。已按裁定收进 **`docs/product/prototype/index.html`**（连同本地预览 `server.js`），16 处引用一律改指新路径；入库副本与原稿唯一的差别是 `.home-bg`（`:108`）的背景改指已入库的压缩资产（6MB 未压缩原图不入库），**每一个被引用的行号都逐条复核过未漂移**。此后引用原型数值请直接写 `docs/product/prototype/index.html:NNN`，改动该文件时遵守其末尾那段注释里的规矩（要加内容只往末尾加）。
