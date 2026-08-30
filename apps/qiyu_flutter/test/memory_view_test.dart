@@ -23,6 +23,7 @@ import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
+import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 void main() {
@@ -95,6 +96,93 @@ void main() {
       expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
     },
   );
+
+  testWidgets('记忆四区 tab 带 §4 定案图标，选中态取中性档不显紫', (
+    tester,
+  ) async {
+    final memoryViewModel = MemoryCenterViewModel(
+      _FakeMemoryGateway(_fullOverview()),
+      autoStart: false,
+    );
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+
+    // §4 定案选型：时钟 / 山形 / 单人 / 双人，图标与文字并存。
+    const sectionIcons = <String, IconData>{
+      'memory-tab-recent': QiyuIcons.schedule,
+      'memory-tab-longterm': QiyuIcons.landscape,
+      'memory-tab-persona': QiyuIcons.person,
+      'memory-tab-relationship': QiyuIcons.groups,
+    };
+    for (final entry in sectionIcons.entries) {
+      final tab = tester.widget<Tab>(find.byKey(Key(entry.key)));
+      expect((tab.icon! as Icon).icon, entry.value, reason: entry.key);
+      expect(
+        find.descendant(
+          of: find.byKey(Key(entry.key)),
+          matching: find.byIcon(entry.value),
+        ),
+        findsOneWidget,
+        reason: '${entry.key} 的字形没有真的画出来',
+      );
+    }
+
+    // 取色不在页面自写：指示器与两态文字色一律由主题层的中性档供给。
+    final tabBar = tester.widget<TabBar>(find.byType(TabBar));
+    expect(tabBar.indicator, isNull);
+    expect(tabBar.labelColor, isNull);
+    expect(tabBar.unselectedLabelColor, isNull);
+    final indicator =
+        Theme.of(
+          tester.element(find.byType(TabBar)),
+        ).tabBarTheme.indicator!
+        as UnderlineTabIndicator;
+    expect(indicator.borderSide.color, QiyuColors.indicatorNeutral);
+    expect(indicator.borderSide.color, isNot(QiyuColors.accentBright));
+
+    Color labelColor(String key) => DefaultTextStyle.of(
+      tester.element(
+        find.descendant(of: find.byKey(Key(key)), matching: find.byType(Text)),
+      ),
+    ).style.color!;
+
+    Color glyphColor(IconData icon) =>
+        IconTheme.of(tester.element(find.byIcon(icon))).color!;
+
+    // 选中＝近白 ink，未选中＝次要 muted；两态都不是紫（§8「选中态全站中性」）。
+    expect(labelColor('memory-tab-recent'), QiyuColors.ink);
+    expect(glyphColor(QiyuIcons.schedule), QiyuColors.ink);
+    expect(labelColor('memory-tab-longterm'), QiyuColors.muted);
+    expect(glyphColor(QiyuIcons.landscape), QiyuColors.muted);
+
+    await tester.tap(find.byKey(const Key('memory-tab-longterm')));
+    await tester.pumpAndSettle();
+    expect(labelColor('memory-tab-longterm'), QiyuColors.ink);
+    expect(glyphColor(QiyuIcons.landscape), QiyuColors.ink);
+    expect(labelColor('memory-tab-recent'), QiyuColors.muted);
+    expect(glyphColor(QiyuIcons.schedule), QiyuColors.muted);
+    expect(
+      [
+        labelColor('memory-tab-recent'),
+        labelColor('memory-tab-longterm'),
+        glyphColor(QiyuIcons.schedule),
+        glyphColor(QiyuIcons.landscape),
+      ],
+      isNot(contains(QiyuColors.accentBright)),
+    );
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+  });
 
   testWidgets(
     'evidence drills from a conclusion to summaries, days and the session',
