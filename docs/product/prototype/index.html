@@ -627,8 +627,10 @@ document.querySelectorAll('.toggle').forEach(t => {
 <!--
   本文件是「紫夜」视觉决策的**入库凭据载体**：决策日志、本仓库的 Spec 与 lib / test
   里的注释按「本文件路径 + 行号」引用这里的取值（颜色、字号、字距、圆角、间距、
-  过渡时长）。按行号引用的一共 11 处——决策日志 1、lib 7、test 3；design-system
-  正文只在散文里提「原型」，不按行号引用它。2026-08-30 由本地未入库的
+  过渡时长）。按「本文件路径 + 行号」引用的处数只增不减，本注释不报现状数——要数
+  就现跑 `git grep -oE 'prototype/index[.]html:[0-9]+' HEAD`；收编时点（提交
+  14a3e0e）的 16 行 / 其中按行号引用 11 处那两个计数，连同口径一起记在
+  design-system §10 收口记录第 2 条与决策日志第五轮 #22。2026-08-30 由本地未入库的
   `.scratch/qiyu-prototype/index.html` 收进版本库，1–626 行与原稿唯一的差别是
   `.home-bg`（:108）的背景改指仓库里已入库的那份压缩资产
   `apps/qiyu_flutter/assets/images/home-night-backdrop.jpg`——6MB 的未压缩原图
