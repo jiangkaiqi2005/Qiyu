@@ -20,6 +20,7 @@ import 'provider_catalog.dart';
 import 'provider_settings_client.dart';
 import 'provider_settings_view_model.dart';
 import 'settings_client.dart';
+import 'settings_collapse_platform.dart';
 import 'settings_view_model.dart';
 import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
@@ -36,12 +37,19 @@ class ProviderSettingsView extends StatefulWidget {
     super.key,
     this.backupGateway,
     this.backupPlatform,
+    this.collapseStore,
   });
 
   /// 备份网关与浏览器能力接缝：缺省走真实 HTTP 与 Web 实现；
   /// widget 测试注入桩。
   final BackupGateway? backupGateway;
   final BackupPlatform? backupPlatform;
+
+  /// 分节折叠状态的本地存储：缺省走当前环境的实现（Web＝浏览器
+  /// localStorage，其余＝内存）。**只是 UI 状态**——不经 Host `/api`、
+  /// 不进 Markdown 会话（design-system §8）；widget 测试注入一份，
+  /// 用来核「离开再进来还收着」。
+  final SettingsCollapseStore? collapseStore;
 
   @override
   State<ProviderSettingsView> createState() => _ProviderSettingsViewState();
@@ -50,15 +58,40 @@ class ProviderSettingsView extends StatefulWidget {
 class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   bool _requestedInitialization = false;
 
-  /// 当前**收起**的分节 id 集合。空集＝全部展开（本集合只管「哪些节被收起来」，
-  /// 默认值与持久化在下一个提交接入，见 [_toggleSection]）。
-  Set<String> _collapsedSections = <String>{};
+  /// 折叠状态的本地存储：同步读写，只存 UI 状态（design-system §8）。
+  late final SettingsCollapseStore _collapseStore =
+      widget.collapseStore ?? createSettingsCollapseStore();
+
+  /// 当前**收起**的分节 id 集合。初值在 [initState] 从本地存储读一次
+  /// （见 [_readCollapsedSections]）；之后每次折叠都会换成一个新集合。
+  late Set<String> _collapsedSections;
+
+  @override
+  void initState() {
+    super.initState();
+    _collapsedSections = _readCollapsedSections();
+  }
+
+  /// §8 的默认档与本机存过的档二选一：存过（含「存过空集＝上次是全部展开」）
+  /// 就照存过的来，没存过才用默认档。存储里出现名单外的 id 一律不采纳——
+  /// 一节平白收起而用户找不回出口，比退回默认档更糟。
+  Set<String> _readCollapsedSections() {
+    final stored = _collapseStore.readCollapsed();
+    if (stored == null) {
+      return _SettingsSectionId.defaultCollapsed;
+    }
+    return Set<String>.unmodifiable(
+      stored.intersection(_SettingsSectionId.all),
+    );
+  }
 
   void _toggleSection(String sectionId) {
     final collapsed = _collapsedSections.contains(sectionId)
         ? _collapsedSections.difference(<String>{sectionId})
         : _collapsedSections.union(<String>{sectionId});
     setState(() => _collapsedSections = Set<String>.unmodifiable(collapsed));
+    // 写回是同步的，且实现侧吞掉异常：折叠偏好丢了只是下次进来回到默认档。
+    _collapseStore.writeCollapsed(_collapsedSections);
   }
 
   @override
@@ -1770,6 +1803,27 @@ abstract final class _SettingsSectionId {
   static const localData = 'local_data';
   static const privacy = 'privacy';
   static const developer = 'developer';
+
+  /// 七节全集：本地存储里出现的陌生 id 靠它做成员校验（认生的 id 不采纳）。
+  static const all = <String>{
+    provider,
+    tts,
+    stt,
+    webSearch,
+    localData,
+    privacy,
+    developer,
+  };
+
+  /// design-system §8 的默认档：展开「模型连接」「本地数据」，其余五节收起。
+  /// 它与 [all] 的差集就是默认展开的那两节。
+  static const defaultCollapsed = <String>{
+    tts,
+    stt,
+    webSearch,
+    privacy,
+    developer,
+  };
 }
 
 /// 折叠状态的页内下发：由 [_ProviderSettingsViewState] 挂在整列之上，
@@ -1794,7 +1848,13 @@ class _SectionCollapseScope extends InheritedWidget {
   bool isExpanded(String sectionId) => !collapsed.contains(sectionId);
 
   static _SectionCollapseScope of(BuildContext context) {
-    final scope = context.getInheritedWidgetOfExactType<_SectionCollapseScope>();
+    // 必须是**登记依赖**的这一种读法：七个分节在 [ListView] 里是 `const` 子节点，
+    // 页面 setState 时 `updateChild` 会因为子控件实例没变而整块跳过重建，
+    // `getInheritedWidgetOfExactType` 那种「只取值不挂钩」的读法于是永远拿不到新的
+    // collapsed——点分节头表面有涟漪、实际一栏都不展开。挂上依赖后由
+    // [InheritedElement] 精准通知，且只在 [updateShouldNotify] 为真时重建。
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<_SectionCollapseScope>();
     assert(
       scope != null,
       '_SettingsPanel 必须在 ProviderSettingsView 之内使用：折叠状态由那一层下发。',
@@ -1869,7 +1929,11 @@ class _SettingsPanel extends StatelessWidget {
             // 正文与分节头左缘对齐：分节头外面常驻一圈 3px 的焦点环留白
             // （§9 焦点环 offset，`_QiyuRing` 的 Padding 不因未聚焦而消失），
             // 正文取同一档左缩进，两者左缘才在同一条阅读线上。
+            //
+            // 这块的键是「展开/收起」唯一的可观察凭据：收起时它整块不在树上，
+            // 节内的输入框与按钮也就不在（原型 `:235` `display: none`）。
             Padding(
+              key: Key('settings-section-content-$sectionId'),
               padding: const EdgeInsets.only(left: QiyuLayout.focusRingOffset),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

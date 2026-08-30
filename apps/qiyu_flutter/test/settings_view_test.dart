@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
@@ -12,6 +13,7 @@ import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/settings_collapse_platform.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
@@ -34,6 +36,9 @@ void main() {
         ),
       );
       await _openSettings(tester);
+
+      // 「体验与开发者选项」按 §8 默认收起，先点标题展开才有开关。
+      await _expandSection(tester, 'developer');
 
       // 默认不打扰普通用户：诊断入口不存在。
       expect(find.byKey(const Key('settings-diagnostics')), findsNothing);
@@ -184,6 +189,7 @@ void main() {
       ),
     );
     await _openSettings(tester);
+    await _expandSection(tester, 'tts');
 
     // 已保存配置回填（含音色），Key 只显示已保存状态、绝不回显明文。
     await tester.scrollUntilVisible(
@@ -332,6 +338,7 @@ void main() {
       ),
     );
     await _openSettings(tester);
+    await _expandSection(tester, 'tts');
 
     await tester.scrollUntilVisible(
       find.byKey(const Key('tts-voice-preset')),
@@ -451,6 +458,7 @@ void main() {
       ),
     );
     await _openSettings(tester);
+    await _expandSection(tester, 'stt');
 
     // 已保存配置回填，Key 只显示已保存状态、绝不回显明文。
     await tester.scrollUntilVisible(
@@ -574,6 +582,7 @@ void main() {
       ),
     );
     await _openSettings(tester);
+    await _expandSection(tester, 'privacy');
 
     await tester.scrollUntilVisible(
       find.byKey(const Key('settings-privacy')),
@@ -626,6 +635,7 @@ void main() {
       ),
     );
     await _openSettings(tester);
+    await _expandSection(tester, 'web_search');
 
     final field = find.byKey(const Key('web-search-api-key'));
     await tester.scrollUntilVisible(
@@ -661,6 +671,8 @@ void main() {
     GoRouter.of(context).go('/');
     await tester.pumpAndSettle();
     await _openSettings(tester);
+    // 重新进来是一枚新的页面 State，折叠状态回到 §8 默认档（此节收起）。
+    await _expandSection(tester, 'web_search');
     await tester.scrollUntilVisible(
       field,
       200,
@@ -683,6 +695,7 @@ void main() {
       ),
     );
     await _openSettings(tester);
+    await _expandSection(tester, 'web_search');
 
     final field = find.byKey(const Key('web-search-api-key'));
     await tester.scrollUntilVisible(
@@ -741,6 +754,7 @@ void main() {
         ),
       );
       await _openSettings(tester);
+      await _expandSection(tester, 'tts');
 
       // 展开高级参数
       await tester.scrollUntilVisible(
@@ -781,12 +795,8 @@ void main() {
   testWidgets('设置页是阅读式：分节不带卡片底，标题是可点的次要色小字距分节头', (
     tester,
   ) async {
-    // 整页层面的断言要七节同时在场，而设置页是**懒建的 ListView**：默认 600 高
-    // 的视口只建得出头两三节。把视口拉高比逐节滚动更直白，也不改变任何布局档位
-    // （宽度仍取 1200，内容列由 settingsReadingMaxWidth 限宽）。
-    tester.view.physicalSize = const Size(1200, 6000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
+    // 整页层面的断言要七节同时在场（设置页是懒建的 ListView）。
+    _useFullPageViewport(tester);
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
@@ -794,6 +804,9 @@ void main() {
       ),
     );
     await _openSettings(tester);
+    // 默认档只展开两节，其余五节的正文根本不在树上；这里要看的是七节的形态，
+    // 所以先全部展开（折叠态自身的断言在折叠那几条用例里）。
+    await _expandAllSections(tester);
 
     final scheme = Theme.of(
       tester.element(find.byKey(const Key('settings-scroll'))),
@@ -868,6 +881,194 @@ void main() {
         reason: '$id 的分隔线档位不对：只有末节不画，且不得画成一圈描边',
       );
     }
+  });
+
+  testWidgets('折叠默认档：只展开模型连接与本地数据，收起的节里控件不在树上', (
+    tester,
+  ) async {
+    // 整页层面的默认档要七节同时在场。
+    _useFullPageViewport(tester);
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: _FixedProviderSettingsGateway(configured: false),
+      ),
+    );
+    await _openSettings(tester);
+
+    // §8：默认展开「模型连接」「本地数据」，其余五节收起。
+    for (final id in _sectionIds) {
+      expect(
+        _isSectionExpanded(tester, id),
+        _defaultExpandedSectionIds.contains(id),
+        reason: '$id 的默认档不对：design-system §8 只点名展开这两节',
+      );
+      // 标题永远在场——它就是那唯一的导航（§8 不做吸顶子导航）。
+      expect(
+        find.byKey(Key('settings-section-title-$id')),
+        findsOneWidget,
+        reason: id,
+      );
+    }
+
+    // 收起不是「看不见」：节内控件整块不在树上（原型 `:235` `display: none`）。
+    expect(find.byKey(const Key('web-search-api-key')), findsNothing);
+    expect(find.byKey(const Key('stt-base-url')), findsNothing);
+    expect(find.byKey(const Key('tts-base-url')), findsNothing);
+    expect(find.byKey(const Key('settings-privacy')), findsNothing);
+    expect(find.byKey(const Key('developer-mode-switch')), findsNothing);
+    // 正向对照：默认展开的两节里，控件确实在。
+    expect(find.byKey(const Key('provider-preset')), findsOneWidget);
+    expect(find.byKey(const Key('settings-clear-data')), findsOneWidget);
+  });
+
+  testWidgets('折叠只写本地 UI 存储：点标题能收也能展，一次都不碰主持久化链路', (
+    tester,
+  ) async {
+    final store = InMemorySettingsCollapseStore();
+    final settingsGateway = await _pumpSettingsPage(
+      tester,
+      store,
+      settingsGateway: _FakeSettingsGateway(),
+    );
+
+    // 收起的节能点开：正文与节内控件回到树上。
+    await _expandSection(tester, 'web_search');
+    expect(find.byKey(const Key('web-search-api-key')), findsOneWidget);
+    expect(
+      store.readCollapsed(),
+      {'tts', 'stt', 'privacy', 'developer'},
+      reason: '展开没写进本地 UI 存储',
+    );
+
+    // 默认展开的节能收回去，再点又能展开。
+    expect(_isSectionExpanded(tester, 'local_data'), isTrue);
+    await _tapSectionHeader(tester, 'local_data');
+    expect(
+      _isSectionExpanded(tester, 'local_data'),
+      isFalse,
+      reason: '点标题没把这一节收起来',
+    );
+    await _tapSectionHeader(tester, 'local_data');
+    expect(
+      _isSectionExpanded(tester, 'local_data'),
+      isTrue,
+      reason: '再点标题没能把这一节展开回来',
+    );
+    expect(
+      store.readCollapsed(),
+      {'tts', 'stt', 'privacy', 'developer'},
+      reason: '一收一展之后存储没跟着回到原样',
+    );
+
+    // 折叠状态是 UI 状态：这一路点下来一次都没写 Host 那侧的偏好（§8）。
+    expect(
+      settingsGateway.prefWrites,
+      0,
+      reason: '折叠状态漏进了主持久化链路',
+    );
+  });
+
+  testWidgets('同一份本地存储重建页面后，上次收起来的节还收着', (tester) async {
+    final store = InMemorySettingsCollapseStore();
+    await _pumpSettingsPage(tester, store);
+
+    // 离开前把默认档反过来：收起「本地数据」、展开「联网搜索」。
+    await _tapSectionHeader(tester, 'local_data');
+    await _tapSectionHeader(tester, 'web_search');
+    expect(_isSectionExpanded(tester, 'local_data'), isFalse);
+    expect(_isSectionExpanded(tester, 'web_search'), isTrue);
+
+    // 用同一份存储重建页面＝关掉设置页再进来（浏览器侧就是 localStorage）。
+    // 这里靠的是 _pumpSettingsPage 每次都先卸再挂：不换成一枚新的页面 State，
+    // 「还收着」就只是 State 原地留着，测不到存储那一路。
+    await _pumpSettingsPage(tester, store);
+    expect(
+      _isSectionExpanded(tester, 'local_data'),
+      isFalse,
+      reason: '上次收起来的节下次进来又展开了（§8「上次收起来的下次进来还收着」）',
+    );
+    expect(
+      _isSectionExpanded(tester, 'web_search'),
+      isTrue,
+      reason: '上次展开的节下次进来还开着',
+    );
+    // 存的就是「收起的节 id 集合」：默认收起的五节里去掉联网搜索（展开了）、
+    // 再加上本地数据（收起了）；模型连接这一路没碰过。
+    expect(
+      store.readCollapsed(),
+      {'tts', 'stt', 'privacy', 'developer', 'local_data'},
+    );
+
+    // 防白测：上一枚 State 与存储此刻内容相同，光看上面两组断言分不出
+    // 「读了存储」还是「State 原地留着」。这里把存储改成与上一枚 State 明显
+    // 分歧的一副样子，再重建一次——页面必须跟着存储走。
+    store.writeCollapsed({'provider', 'developer'});
+    await _pumpSettingsPage(tester, store);
+    expect(
+      _isSectionExpanded(tester, 'provider'),
+      isFalse,
+      reason: '新页面没重读存储，沿用了上一枚 State 的折叠集合',
+    );
+    expect(
+      _isSectionExpanded(tester, 'local_data'),
+      isTrue,
+      reason: '存储里这一节没收起，重建后却还收着——沿用的是上一枚 State',
+    );
+  });
+
+  testWidgets('存储里的陌生节 id 不采纳，回写时抹掉', (tester) async {
+    final store = InMemorySettingsCollapseStore()
+      ..writeCollapsed({'tts', 'renamed_section'});
+    await _pumpSettingsPage(tester, store);
+
+    // 认生的 id 不得把任何一节收起来：一节平白收起而用户找不回出口，
+    // 比退回默认档更糟。
+    expect(_isSectionExpanded(tester, 'tts'), isFalse);
+    for (final id in _sectionIds.where((id) => id != 'tts')) {
+      expect(_isSectionExpanded(tester, id), isTrue, reason: id);
+    }
+
+    // 任何一次折叠的回写都把陌生 id 洗掉，存储里只留名单内的节。
+    await _tapSectionHeader(tester, 'privacy');
+    expect(store.readCollapsed(), {'tts', 'privacy'});
+  });
+
+  testWidgets('收起只藏正文，不卸载分节：填了一半的输入框展开回来还在', (
+    tester,
+  ) async {
+    await _pumpSettingsPage(tester, InMemorySettingsCollapseStore());
+    await _expandSection(tester, 'web_search');
+
+    // 一串从没保存过的草稿。
+    final field = find.byKey(const Key('web-search-api-key'));
+    await tester.enterText(field, 'sk-填到一半');
+    await tester.pumpAndSettle();
+
+    // 收起：正文整块不在树上（§8 的呈现），但分节自身与它的标题必须在——
+    // 各节是持有 TextEditingController / FocusNode 的 StatefulWidget，把整节
+    // 换成占位件就等于把用户填了一半的东西丢掉。
+    await _tapSectionHeader(tester, 'web_search');
+    expect(_isSectionExpanded(tester, 'web_search'), isFalse);
+    expect(field, findsNothing);
+    expect(
+      find.byKey(const Key('settings-section-web_search')),
+      findsOneWidget,
+      reason: '折叠把分节自身也卸了：节内的输入态随 State 一起没了',
+    );
+    expect(
+      find.byKey(const Key('settings-section-title-web_search')),
+      findsOneWidget,
+      reason: '收起后标题就是唯一的出口，它不在用户就再也打不开这一节了',
+    );
+
+    // 再展开：草稿还在那一格里。
+    await _tapSectionHeader(tester, 'web_search');
+    expect(
+      tester.widget<TextField>(field).controller?.text,
+      'sk-填到一半',
+      reason: '折叠把用户填了一半的输入框状态弄丢了',
+    );
   });
 
   testWidgets('窄屏页头让开三条杠：「设置」标题不被浮层压住', (tester) async {
@@ -986,6 +1187,117 @@ Future<void> _openSettings(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// 这一节当前是否展开。
+///
+/// 判据是「正文那块在不在树上」——收起时 [_SettingsPanel] 只不画正文，分节自身
+/// 与它的标题都还在（标题就是唯一的导航入口）。不去看标题文本、也不去看指示符
+/// 朝向，两者在两种状态下都没差别或不足以定位。
+bool _isSectionExpanded(WidgetTester tester, String sectionId) =>
+    find.byKey(Key('settings-section-content-$sectionId')).evaluate().isNotEmpty;
+
+/// 整页层面的断言要七节同时在场，而设置页是**懒建的 ListView**：默认 600 高的
+/// 视口只建得出头两三节，「某一节的正文在不在树上」这类判据会因为它还没被建
+/// 出来而误判成收起。宽度仍取 1200（内容列由 `settingsReadingMaxWidth` 限宽），
+/// 只是把视口拉高，不改变任何布局档位。
+void _useFullPageViewport(WidgetTester tester) {
+  tester.view.physicalSize = const Size(1200, 6000);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+}
+
+/// §8 默认档里点名展开的两节；其余五节默认收起。
+const _defaultExpandedSectionIds = <String>['provider', 'local_data'];
+
+/// 点一次某一节的标题（不判当前状态，也不幂等）。
+Future<void> _tapSectionHeader(WidgetTester tester, String sectionId) async {
+  final header = find.byKey(Key('settings-section-header-$sectionId'));
+  await tester.scrollUntilVisible(
+    header,
+    200,
+    scrollable: _verticalScrollable(),
+    maxScrolls: 20,
+  );
+  await tester.ensureVisible(header);
+  await tester.pumpAndSettle();
+  await tester.tap(header);
+  await tester.pumpAndSettle();
+}
+
+/// 直接 pump 设置页本体并注入折叠存储；返回本页用的设置网关，供用例核写入次数。
+///
+/// 为什么不走路由：`/settings` 那条 GoRoute 与它的 builder 签名是行为不变量
+/// （Spec 实现决策 18），不能为了把 store 递进去而改路由表；这里按 widget 注入
+/// 的既有路子（同 `ProviderSettingsView` 的 `backupPlatform`）直接挂页面本体。
+///
+/// 每次调用都**先把页面整棵摘下再挂**：`pumpWidget` 给的是同类型、同 key 的
+/// widget 时会复用 Element，`initState` 不重跑，折叠集合就原地留在 State 里——
+/// 那样第二次「重建页面」根本没读过存储，持久化的断言会白测。先挂一枚空树，
+/// 才等价于浏览器里离开设置页再进来拿到一枚新的页面 State。
+Future<_FakeSettingsGateway> _pumpSettingsPage(
+  WidgetTester tester,
+  SettingsCollapseStore store, {
+  _FakeSettingsGateway? settingsGateway,
+}) async {
+  _useFullPageViewport(tester);
+  await tester.pumpWidget(Container(key: UniqueKey()));
+  await tester.pumpAndSettle();
+  final providerViewModel = ProviderSettingsViewModel(
+    _FixedProviderSettingsGateway(configured: false),
+    autoStart: false,
+  );
+  await providerViewModel.initialize();
+  final gateway = settingsGateway ?? _FakeSettingsGateway();
+  final settingsViewModel = SettingsViewModel(gateway);
+  await tester.pumpWidget(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: providerViewModel),
+        ChangeNotifierProvider.value(
+          value: SttSettingsViewModel(
+            const _FixedSttSettingsGateway(),
+            autoStart: false,
+          ),
+        ),
+        ChangeNotifierProvider.value(
+          value: TtsSettingsViewModel(
+            const _FixedTtsSettingsGateway(),
+            autoStart: false,
+          ),
+        ),
+        ChangeNotifierProvider.value(
+          value: WebSearchSettingsViewModel(
+            const _FixedWebSearchSettingsGateway(),
+            autoStart: false,
+          ),
+        ),
+        ChangeNotifierProvider.value(value: settingsViewModel),
+      ],
+      child: MaterialApp(
+        home: ProviderSettingsView(collapseStore: store),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return gateway;
+}
+
+/// 展开某一节（幂等）：§8 的默认档只展开「模型连接」「本地数据」，其余五节
+/// 的节内控件根本不在树上，任何要动它们的用例都得先把那一节展开。
+Future<void> _expandSection(WidgetTester tester, String sectionId) async {
+  if (_isSectionExpanded(tester, sectionId)) {
+    return;
+  }
+  await _tapSectionHeader(tester, sectionId);
+  expect(_isSectionExpanded(tester, sectionId), isTrue, reason: sectionId);
+}
+
+/// 按 §8 顺序把七节全部展开，供整页层面的视觉断言使用。
+Future<void> _expandAllSections(WidgetTester tester) async {
+  for (final id in _sectionIds) {
+    await _expandSection(tester, id);
+  }
+}
+
 /// 当前页自己的纵向滚动容器。
 ///
 /// 必须排除导航壳的侧边栏/抽屉：那块 [Scrollable] 同样是纵向，且在树里排在页面
@@ -1018,6 +1330,10 @@ final class _FakeSettingsGateway implements SettingsGateway {
   bool developerMode = false;
   int clearCalls = 0;
 
+  /// 主持久化链路（Host `/api` 那侧）被写了几次：分节折叠按 design-system §8
+  /// 只准走本地 UI 存储，这个计数一次都不该动。
+  int prefWrites = 0;
+
   /// 清除成功时的回调：测试用它同步翻转初见网关状态。
   final void Function()? onCleared;
 
@@ -1029,6 +1345,7 @@ final class _FakeSettingsGateway implements SettingsGateway {
   Future<ExperiencePreferences> savePreferences({
     required bool developerMode,
   }) async {
+    prefWrites += 1;
     this.developerMode = developerMode;
     return ExperiencePreferences(developerMode: developerMode);
   }

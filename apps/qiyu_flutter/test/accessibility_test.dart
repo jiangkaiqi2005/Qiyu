@@ -27,6 +27,7 @@ import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
+import 'package:qiyu_flutter/features/settings/settings_collapse_platform.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
@@ -179,6 +180,7 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('模型连接'), findsOneWidget);
 
+      await _expandSettingsSection(tester, 'privacy');
       await tester.scrollUntilVisible(
         find.byKey(const Key('settings-privacy')),
         200,
@@ -194,6 +196,7 @@ void main() {
 
       await tester.tap(find.byKey(const Key('privacy-back')));
       await tester.pumpAndSettle();
+      await _expandSettingsSection(tester, 'developer');
       await tester.scrollUntilVisible(
         find.byKey(const Key('developer-mode-switch')),
         200,
@@ -316,13 +319,40 @@ void main() {
           ),
           ChangeNotifierProvider.value(value: settingsViewModel),
         ],
-        child: const ProviderSettingsView(),
+        child: ProviderSettingsView(collapseStore: _allExpandedCollapseStore()),
       ),
       scale: 1.5,
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+    // 「此刻停在设置页」要在滚动之前断：页头条和别的内容一样是懒建列表的一格，
+    // 滚到末节时它已经被回收出树。
     expect(find.text('设置'), findsOneWidget);
+
+    // §8 的默认档只展开两节：这一档要量的是整页排版，所以照「全部展开」挂页面，
+    // 再一路滚到末节——滚得到就是正向对照，说明后面那几节的正文真的在排版，
+    // 而不是像默认档那样只铺出前两节就收工。懒建列表下不逐节点名断言在不在树上：
+    // 靠后的节没进视口就没有 build，那种断言测的是排版而不是折叠。
+    final lastSectionContent = find.byKey(
+      const Key('settings-section-content-developer'),
+    );
+    await tester.scrollUntilVisible(
+      lastSectionContent,
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 30,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      lastSectionContent,
+      findsOneWidget,
+      reason: '滚不到末节正文：它按默认档根本没展开',
+    );
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '七节全部展开后，150% 字阶下设置页溢出',
+    );
   });
 
   testWidgets('200% 字阶下导航壳与合一页不溢出（§9 深底留余量）', (
@@ -658,6 +688,50 @@ Finder _verticalScrollable() => find
       matching: find.byType(Scrollable),
     )
     .first;
+
+/// 这一节当前是否展开：判据是正文那块在不在树上（收起时整块不 build）。
+bool _isSettingsSectionExpanded(WidgetTester tester, String sectionId) => find
+    .byKey(Key('settings-section-content-$sectionId'))
+    .evaluate()
+    .isNotEmpty;
+
+/// 一份「七节全部展开」的折叠存储。
+///
+/// 存储里**存过空集**＝用户把七节都展开过，与「从没存过」（null → §8 默认档
+/// 只展开两节）是两种状态；放大字阶的溢出检查要的是前者——整页内容都在排版，
+/// 而不是只量到页面最上面那一截。
+SettingsCollapseStore _allExpandedCollapseStore() =>
+    InMemorySettingsCollapseStore()..writeCollapsed(<String>{});
+
+/// 展开设置页的某一节（幂等）。
+///
+/// design-system §8 的默认档只展开「模型连接」「本地数据」，其余五节收起——
+/// 收起时节内控件整块不在树上。首跑走查要点到那些节里的控件，就必须先点分节
+/// 标题（它是唯一的节导航），再滚到节内控件。
+Future<void> _expandSettingsSection(
+  WidgetTester tester,
+  String sectionId,
+) async {
+  if (_isSettingsSectionExpanded(tester, sectionId)) {
+    return;
+  }
+  final header = find.byKey(Key('settings-section-header-$sectionId'));
+  await tester.scrollUntilVisible(
+    header,
+    200,
+    scrollable: _verticalScrollable(),
+    maxScrolls: 20,
+  );
+  await tester.ensureVisible(header);
+  await tester.pumpAndSettle();
+  await tester.tap(header);
+  await tester.pumpAndSettle();
+  expect(
+    _isSettingsSectionExpanded(tester, sectionId),
+    isTrue,
+    reason: sectionId,
+  );
+}
 
 /// 合一页的空状态即首页，仍依赖应用级的聊天 view model（问候与入口
 /// 副标题按当前会话状态切换），因此外壳与对话视图一起泵。
