@@ -127,6 +127,9 @@ Assert-Condition (
   $verificationScript -match 'voice_player_platform_web_test\.dart'
 ) 'Release 1 全量门禁没有接入浏览器语音播放测试。'
 Assert-Condition (
+  $verificationScript -match 'settings_collapse_platform_web_test\.dart'
+) 'Release 1 全量门禁没有接入设置页折叠状态的浏览器侧存储测试。'
+Assert-Condition (
   $verificationScript -match 'qiyu_edge' -and
   $verificationScript -match 'qiyu_chrome' -and
   $verificationScript -match 'qiyu_chromium'

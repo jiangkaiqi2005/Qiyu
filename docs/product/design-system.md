@@ -146,7 +146,7 @@ Material Symbols 系、统一 outlined 风格、24px，**描边 1.2 细线条**�
 - **焦点表意按来源分开，两套不混用**：紫外环**只服务键盘焦点**，鼠标点击不得画出紫环；§8 组件 5 那条 0.13 淡紫描边**只服务输入框文本态**，与焦点环是两件事。
 - **来源如何判定（定案）**：自己记录「最近一次改变焦点的输入来自键盘还是指针」，据此决定画不画环。**只读 `FocusManager.highlightMode` 不够**——桌面 Web 上它初始就是 `traditional`，而指针事件里的鼠标分支不改写模式，结果鼠标点中按钮照样画环；`highlightMode` 只在「键盘 ↔ 触摸」这类跨输入方式切换时才可靠。自实现守三条：判定以**焦点变更**为边界（无新焦点不改判）、**不下放**到各控件各自猜、触摸设备永不画环。
 - 支持 `prefers-reduced-motion`：开启后关闭全部过渡与渐显——路由与页面转场、ink ripple（水波与高亮）、自绘的淡出与抽屉位移一律归零，不只是本段新增的那几条。
-- **明确豁免**：进度指示器（如旋转的加载环）属「正在进行」这一状态的表意，关掉等于谎报状态，不在「关闭全部过渡」之列。
+- **明确豁免**：进度指示器（如旋转的加载环）属「正在进行」这一状态的表意，关掉等于谎报状态，不在「关闭全部过渡」之列。这条由框架侧兜着——实测 SDK 3.44.8 的 `material/progress_indicator.dart`：不确定态的指示器 `initState` / `didUpdateWidget` 里一律 `_internalController.repeat()`，全文件不看 `MediaQuery.disableAnimations`。应用侧要守的是**别把环自己收进 reduced-motion 开关**（用 `qiyuMotion()` 门控它、或在关动效时换成静态图形）。用例见 `test/accessibility_test.dart`「reduced-motion 压掉过渡但不压进度指示器」一条：正例锁「开着关动效，只有加载环的那棵 `RootView` 静不下来」，负对照是同一容器里没有环的那一态（正常 settle，证明超时由环造成）；反证已做——把 `RootView` 的环改成定值 `value: 0.25`（不再要帧），该用例当场判红。
 - 动效一律 150–250ms 轻缓动，时长收在 `QiyuMotion`（fast 160 / base 200 / drawer 220），不做视差、弹跳等花活。
 - 深底上所有文字对比度留足余量。
 
@@ -155,7 +155,7 @@ Material Symbols 系、统一 outlined 风格、24px，**描边 1.2 细线条**�
 | 事项 | 状态 |
 |---|---|
 | 品牌图标样式 | 本轮以中性几何占位落地，图形待设计 |
-| Spec TD5 的视觉验收 | 待人工验收（非裁定）。Spec `Testing Decisions` 第 5 条点名五组界面：首页空态 / 对话态、历史、记忆中心四区、设置折叠与顺序、窄屏抽屉；本表此前只挂着「背景图实际效果验收」一项，其余四组在入库文档里零落点。Release 门禁全绿（widget 290 + 真实浏览器 10 + Host 532 + Web 构建 + bundle + preflight + launch smoke），可门禁锁的是行为与 token 契约，锁不到「看着对不对」。验收要本机跑 `apps/qiyu_windows_host\build\windows-bundle\qiyu_windows_host.exe`，对着 `docs/product/prototype/index.html` 逐页比 |
+| Spec TD5 的视觉验收 | 待人工验收（非裁定）。Spec `Testing Decisions` 第 5 条点名五组界面：首页空态 / 对话态、历史、记忆中心四区、设置折叠与顺序、窄屏抽屉；本表此前只挂着「背景图实际效果验收」一项，其余四组在入库文档里零落点。Release 门禁全绿（实测 2026-08-30：Dart core 52 + widget 291 + 真实浏览器 10 + Host 532 + Web 构建 + bundle + preflight + launch smoke），可门禁锁的是行为与 token 契约，锁不到「看着对不对」。这一项**本轮不安排**：等段6 全部跑完，由用户本机跑 `apps/qiyu_windows_host\build\windows-bundle\qiyu_windows_host.exe`，对着 `docs/product/prototype/index.html` 一次比完五组界面 |
 | 页面裸值的真实规模（按裁定不扩口径） | 挂账，段6 不因此扩大。下面「页面里仍有裸写的 `spacing: <数字>`」那一行只数 `spacing`，实测页面裸写的几何大头在别处：`grep -rn "EdgeInsets\." apps/qiyu_flutter/lib` 得 **96 行**（`lib/features` 各页 94 行，分布在 14 个文件）；`grep -rn "BorderRadius\.\|Radius\.circular" apps/qiyu_flutter/lib` 得 **18 行**，其中带数字字面量的 `circular(<n>)` 6 行（含 `diagnostics_view.dart` 里 `_chip` 那枚 6）。Spec Decision 1 要求间距收进主题层、页面只消费 token，把口径照它扩到 `EdgeInsets` 与圆角就是一次跨 14 个文件、要新增若干档位的全局重排。2026-08-30 裁定：**不扩**，段6 仍按现口径（棘轮降空 + 全量门禁）收口；本行只把真实规模登记在册，将来要做另按裁定单开一段，不在换皮分段里顺手重排 |
 | 折叠存储 web 侧异常吞掉零用例 | 待办（非裁定）。`lib/features/settings/settings_collapse_platform_web.dart` 读与写各有一处 `catch`（存储不可用或值解码失败时退回默认档），`test/settings_collapse_platform_web_test.dart` 那 5 条用例都不走这条路。不补用例的理由如实记：真浏览器里没法让 `window.localStorage` 主动抛，为此给接缝开一个只给测试用的口子，代价与收益不成比例。理由同步记在决策日志第五轮 #19 |
 | `dart format` 全仓尚未收敛 | 待办（非裁定，做之前先裁）。实测在 `apps/qiyu_flutter` 下跑 `dart format --output=none lib test`，报 **91 个文件里 33 个会改**。本轮为守住「逻辑提交不得混入纯重排」（AGENTS.md 提交规范），只把 `provider_settings_view.dart` 与 `settings_view_test.dart` 两份单独立成一次格式提交，判据是「格式化前的文件跑一遍格式化器，输出与提交内容逐字节相同」。剩下 33 份属纯机械、零行为影响的收敛，值得单开一次提交，但不与任何功能改动混编 |

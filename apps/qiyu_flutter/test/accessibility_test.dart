@@ -19,6 +19,7 @@ import 'package:qiyu_flutter/features/memory/memory_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/first_meeting_view.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
+import 'package:qiyu_flutter/features/onboarding/root_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
@@ -625,6 +626,75 @@ void main() {
     expect(find.text('睡了吗'), findsOneWidget);
     expect(find.text('咋了'), findsOneWidget);
   });
+
+  testWidgets('reduced-motion 压掉过渡但不压进度指示器：加载环仍在要帧', (tester) async {
+    // §9 把进度指示器明确豁免在「关闭全部过渡」之外——环停转等于向用户谎报
+    // 「正在进行」。观察面取真实加载态：`RootView` 在首见读数回来之前只画一枚
+    // `CircularProgressIndicator`。判据是这棵树一边开着 `disableAnimations` 一边
+    // 永远静不下来（`pumpAndSettle` 超时），因为反复要帧的只有那枚环；不去读框架
+    // 私有的 AnimationController。负对照用同一容器、同一开关下读数已回来的
+    // `FirstMeetingView`：那时没有环，`pumpAndSettle` 正常返回——证明上面那次超时
+    // 是环造成的，不是用例框架或路由转场自己在要帧。
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    Future<Object?> settleFailure(OnboardingViewModel viewModel) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(400, 800),
+              disableAnimations: true,
+            ),
+            child: ChangeNotifierProvider.value(
+              value: viewModel,
+              child: const RootView(),
+            ),
+          ),
+        ),
+      );
+      // 先把首帧与路由转场的时间走掉，剩下的「静不下来」才只可能来自环。
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      try {
+        await tester.pumpAndSettle(
+          const Duration(milliseconds: 50),
+          EnginePhase.sendSemanticsUpdate,
+          const Duration(milliseconds: 500),
+        );
+      } catch (error) {
+        return error;
+      }
+      return null;
+    }
+
+    final loadingViewModel = OnboardingViewModel(
+      _HangingOnboardingGateway(),
+      _FixedProviderGateway(configured: true),
+      autoStart: false,
+    );
+    unawaited(loadingViewModel.initialize());
+    expect(
+      await settleFailure(loadingViewModel),
+      isNotNull,
+      reason: '关动效后加载环不再要帧＝§9 的豁免被破坏，「正在进行」被谎报成已完成',
+    );
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    final readyViewModel = OnboardingViewModel(
+      _FakeOnboardingGateway(completed: false),
+      _FixedProviderGateway(configured: true),
+      autoStart: false,
+    );
+    await readyViewModel.initialize();
+    expect(
+      await settleFailure(readyViewModel),
+      isNull,
+      reason: '负对照：同一容器里没有环时应当静得下来',
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
 }
 
 // ---------- 装配 ----------
@@ -1108,6 +1178,17 @@ final class _FakeOnboardingGateway implements OnboardingGateway {
   Future<void> complete() async {
     completed = true;
   }
+}
+
+/// 读数永远不回来的首见网关：用来把 `RootView` 停在加载态（只画进度环）。
+final class _HangingOnboardingGateway implements OnboardingGateway {
+  final Completer<OnboardingState> _read = Completer<OnboardingState>();
+
+  @override
+  Future<OnboardingState> read() => _read.future;
+
+  @override
+  Future<void> complete() => Completer<void>().future;
 }
 
 final class _FixedProviderGateway implements ProviderSettingsGateway {
