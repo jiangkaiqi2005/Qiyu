@@ -6,7 +6,6 @@ import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_tokens.dart';
-import '../accessibility.dart';
 import '../chat/local_chat_client.dart';
 import '../chat/local_chat_view_model.dart';
 import '../chat/qiyu_chat_bubble.dart';
@@ -167,10 +166,6 @@ class _SessionTile extends StatelessWidget {
       borderRadius: QiyuRadii.cardBorder,
       child: Card(
         margin: const EdgeInsets.only(bottom: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: QiyuRadii.cardBorder,
-          side: highContrastSide(context),
-        ),
         child: InkWell(
           borderRadius: QiyuRadii.cardBorder,
           onTap: () => openInFront(context, '/history/${session.sessionId}'),

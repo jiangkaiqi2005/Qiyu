@@ -894,6 +894,62 @@ void main() {
     });
   });
 
+  group('卡片轮廓（§8 组件 8「panel 底 + line 发丝描边」）', () {
+    /// 卡片**真正画出来**的边界只体现在内部 `Material.shape` 上：消费点一旦覆盖
+    /// shape 就会把主题档整体换掉，所以只断 `theme.cardTheme.shape` 证明不了描边
+    /// 真的被画出来（此前的 `side: BorderSide.none` 正是这样停在主题层里）。
+    OutlinedBorder renderedCard(WidgetTester tester) => tester
+        .widget<Material>(
+          find.descendant(
+            of: find.byType(Card),
+            matching: find.byType(Material),
+          ),
+        )
+        .shape! as OutlinedBorder;
+
+    test('主题层的 cardTheme 取的就是 qiyuCardShape 这一处', () {
+      expect(theme.cardTheme.shape, qiyuCardShape);
+    });
+
+    testWidgets('渲染出来的卡片带 1px 的 line 发丝描边', (tester) async {
+      await _pumpInTheme(
+        tester,
+        theme,
+        const Card(child: SizedBox(height: 40)),
+      );
+      final side = renderedCard(tester).side;
+      expect(side, isNot(BorderSide.none), reason: '§8 卡片必须有发丝描边');
+      expect(side.width, QiyuLine.hairline);
+      expect(side.color.toARGB32(), QiyuColors.line.toARGB32());
+    });
+
+    testWidgets('高对比模式下卡片仍有可见边界（ticket 24 不得退化）', (
+      tester,
+    ) async {
+      // 高对比下这条边此前由 highContrastSide 给出，取 colorScheme.outline；
+      // 本主题的 outline 槽位就是 line（上面逐槽位断言过），描边恒在后两档同值。
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: theme,
+          home: const MediaQuery(
+            data: MediaQueryData(highContrast: true),
+            child: Scaffold(
+              body: Center(child: Card(child: SizedBox(height: 40))),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final side = renderedCard(tester).side;
+      expect(
+        side,
+        isNot(BorderSide.none),
+        reason: '高对比模式下靠底色分层的卡片必须看得见边界',
+      );
+      expect(side.color.toARGB32(), theme.colorScheme.outline.toARGB32());
+    });
+  });
+
   group('布局与玻璃常量（第 2 段起消费，值不得散落）', () {
     test('桌面断点、侧边栏宽度与抽屉比例精确相等', () {
       // 这些都是编译期常量，近似断言会白白放行 759–761 与 0.663–0.677。

@@ -148,6 +148,31 @@ ButtonStyle qiyuQuietIconButtonStyle() => ButtonStyle(
   ),
 );
 
+/// 发丝描边档（design-system §2 `line`、§8 组件 5/8）：1px，卡片与 composer 共用。
+const BorderSide qiyuHairlineSide = BorderSide(
+  width: QiyuLine.hairline,
+  color: QiyuColors.line,
+);
+
+/// 卡片/面板轮廓（design-system §8 组件 8「`panel` 底 + `line` 发丝描边」）的
+/// **唯一**取法：[QiyuRadii.cardBorder] 圆角 + [qiyuHairlineSide]。
+///
+/// 主题层的 `cardTheme.shape` 用它；页面上任何**必须**覆盖 shape 的消费点也必须
+/// 取这里的两个常量，不要自己 new 一份 `RoundedRectangleBorder`——shape 是整体覆盖
+/// 的，只写圆角就会把发丝边一起覆盖掉。此前历史页与记忆中心的卡片各传一份
+/// `side: highContrastSide(context)`，而它在普通模式解析成 `BorderSide.none`，
+/// 卡片因此一直没有任何描边。
+///
+/// 高对比模式（ticket 24「依赖底色区分的块级容器要有可见边界」）不需要在这里另开
+/// 分支：`highContrastSide` 给出的可见边取的是 `colorScheme.outline`，本主题的
+/// outline 槽位就是 `line`（`test/qiyu_theme_test.dart` 逐槽位断言），与这里的发丝
+/// 边同色同宽。卡片因此恒有边界；`highContrastSide` 继续服务**读不到 cardTheme**
+/// 的裸 Container（用户气泡、记忆条目头部）。
+const RoundedRectangleBorder qiyuCardShape = RoundedRectangleBorder(
+  borderRadius: QiyuRadii.cardBorder,
+  side: qiyuHairlineSide,
+);
+
 /// 横向滚动容器不画滚动条：design-system §8 补充约定「横向滚动容器隐藏原生
 /// 滚动条，不留浏览器滚动控件」。
 ///
@@ -265,10 +290,7 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false}) {
       color: QiyuColors.panel,
       surfaceTintColor: QiyuColors.elevationTint,
       elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: QiyuRadii.cardBorder,
-        side: BorderSide.none,
-      ),
+      shape: qiyuCardShape,
     ),
     dialogTheme: const DialogThemeData(
       backgroundColor: QiyuColors.panel,

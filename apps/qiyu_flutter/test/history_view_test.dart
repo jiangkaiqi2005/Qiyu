@@ -12,6 +12,7 @@ import 'package:qiyu_flutter/features/history/history_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
+import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 void main() {
@@ -255,6 +256,41 @@ void main() {
       greaterThanOrEqualTo(menu.right),
       reason: '「历史」标题的左边界不得落在三条杠的命中区里',
     );
+  });
+
+  testWidgets('会话卡片带 §8 的 line 发丝描边', (tester) async {
+    // §8 组件 8「卡片 / 面板 — panel 底 + line 发丝描边」此前只停在主题层，
+    // 页面覆盖 shape 时又把边换成了 none。这里断的是**画出来**的那条边。
+    final historyViewModel = HistoryViewModel(
+      _FakeHistoryGateway(_testListing()),
+      onSessionDeleted: (_) {},
+      autoStart: false,
+    );
+    await historyViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        historyViewModel: historyViewModel,
+        onboardingViewModel: await _onboardingViewModel(),
+      ),
+    );
+    await _settleMergedPage(tester);
+    await tester.tap(find.byKey(const Key('open-history')));
+    await tester.pumpAndSettle();
+
+    final card = tester.widget<Material>(
+      find.descendant(
+        of: find.byKey(const Key('history-session-tile-session-today')),
+        // 卡片自己那层 Material：卡内的文字按钮另有 Material 层，按 type 区分。
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Material && widget.type == MaterialType.card,
+        ),
+      ),
+    );
+    final side = (card.shape! as OutlinedBorder).side;
+    expect(side, isNot(BorderSide.none), reason: '普通模式下卡片没有描边');
+    expect(side.width, QiyuLine.hairline);
+    expect(side.color.toARGB32(), QiyuColors.line.toARGB32());
   });
 }
 

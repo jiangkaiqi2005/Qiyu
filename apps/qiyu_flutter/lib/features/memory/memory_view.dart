@@ -966,9 +966,9 @@ class _MemoryItemViewState extends State<MemoryItemView> {
   }
 }
 
-/// 记忆卡片的统一外观：底部留白、18px 圆角（[QiyuRadii.cardBorder]，design-system
-/// §8 卡片与列表项档；12px 及以下的方正小圆角已验证偏 AI 感，除小元素外不再使用）
-/// 与高对比模式下的可见描边。
+/// 记忆卡片的统一外观：底部留白，圆角与 `line` 发丝描边由主题层
+/// `cardTheme.shape`（[qiyuCardShape]，design-system §8 卡片档）给出，页面不再
+/// 覆盖 shape——shape 是整体覆盖的，只写圆角会把发丝边一起吃掉。
 class _MemoryCard extends StatelessWidget {
   const _MemoryCard({required this.child});
 
@@ -980,10 +980,6 @@ class _MemoryCard extends StatelessWidget {
       borderRadius: QiyuRadii.cardBorder,
       child: Card(
         margin: const EdgeInsets.only(bottom: 8),
-        shape: RoundedRectangleBorder(
-          borderRadius: QiyuRadii.cardBorder,
-          side: highContrastSide(context),
-        ),
         child: child,
       ),
     );
