@@ -1405,6 +1405,64 @@ void main() {
     await tester.pumpAndSettle();
     expect(gateway.actionCalls, isNot(contains('delete:entry-1')));
   });
+
+  testWidgets('动作结果横幅只走中性底，失败态换成 danger 前景字', (
+    tester,
+  ) async {
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
+
+    // 读页面上真正的那一份：底取 SnackBar 内部 Material 的 color，字色取合并
+    // 主题样式之后落在 RichText span 上的那一个——两处都不看 widget 上写了什么。
+    Color bannerFill() => tester
+        .widget<Material>(
+          find.descendant(
+            of: find.byKey(const Key('memory-action-result')),
+            matching: find.byType(Material),
+          ),
+        )
+        .color!;
+    Color bannerForeground() {
+      final richText = tester.widget<RichText>(
+        find.descendant(
+          of: find.byKey(const Key('memory-action-result')),
+          matching: find.byType(RichText),
+        ),
+      );
+      return (richText.text as TextSpan).style!.color!;
+    }
+
+    // 冻结是直接执行的动作：一条用例就能把三态里两态的着色纪律钉住。
+    Future<void> show(MemoryActionStatus status) async {
+      gateway.actionResult = MemoryActionResult(
+        status: status,
+        message: '结果横幅文案。',
+      );
+      await tester.tap(find.byKey(const Key('memory-action-entry-1-freeze')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('memory-action-result')), findsOneWidget);
+    }
+
+    Future<void> dismiss() async {
+      await tester.pump(const Duration(seconds: 5)); // 轻提示到期收起
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('memory-action-result')), findsNothing);
+    }
+
+    // 失败态：危险字档当前景，底仍是主题默认的中性 panel（§2 只有 danger
+    // 一档危险色，且它是字档不是底色；决策日志第五轮 #12）。
+    await show(MemoryActionStatus.failed);
+    expect(bannerFill(), QiyuColors.panel);
+    expect(bannerForeground(), QiyuColors.danger);
+    await dismiss();
+
+    // 部分完成不是破坏性操作，不借危险红，也不另起一档琥珀底：三态的分别
+    // 由文案承担，视觉只给危险位上色。
+    await show(MemoryActionStatus.partial);
+    expect(bannerFill(), QiyuColors.panel);
+    expect(bannerForeground(), isNot(QiyuColors.danger));
+    expect(bannerForeground(), QiyuColors.ink);
+    await dismiss();
+  });
 }
 
 /// 进入记忆中心：注入桩网关并走完「首页 → 记忆」这一段导航，返回该网关

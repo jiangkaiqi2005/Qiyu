@@ -1473,23 +1473,18 @@ Future<void> _deleteFlow(BuildContext context, String id) async {
 }
 
 SnackBar _resultSnackBar(MemoryActionResult result) {
-  // 三态底色只在 partial/failed 两档显式给；success 走主题默认面板底。
-  final color = switch (result.status) {
-    MemoryActionStatus.success => null,
-    MemoryActionStatus.partial => QiyuColors.statusPartialFill,
-    MemoryActionStatus.failed => QiyuColors.statusFailedFill,
-  };
+  // 三态共用主题默认的中性面板底（design-system §1 三色纪律：紫住强调、暗红住
+  // 危险，其余一律中性；§2 里也没有任何红/琥珀的**底色**档）。只有失败态换
+  // 前景字色——`danger` 在 §2 的定义就是深底之上的危险**字档**。partial 不是
+  // 破坏性操作，不借危险红，三态的分别由它本来就写明白的文案承担
+  // （决策日志第五轮 #12）。
+  final failed = result.status == MemoryActionStatus.failed;
   return SnackBar(
     key: const Key('memory-action-result'),
-    // 自定义深色底必须显式配近白字：这两档底色配 onAccent 才过 AA 4.5:1
-    // （配 ink 时琥珀那档只有 4.43:1，ticket 24 的对比要求就守不住）。
     content: Text(
       result.message,
-      style: color == null
-          ? null
-          : const TextStyle(color: QiyuColors.onAccent),
+      style: failed ? const TextStyle(color: QiyuColors.danger) : null,
     ),
-    backgroundColor: color,
   );
 }
 

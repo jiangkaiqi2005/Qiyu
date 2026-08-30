@@ -13,7 +13,9 @@ import 'icon_glyph_manifest.dart';
 /// 这是紫夜视觉改造的接缝：主题层是唯一色值来源，页面只准消费它。
 /// 本文件锁住四件事——
 /// 1. token 的字面值与 `docs/product/design-system.md` 第 2/3/8 节一字不差，
-///    含三个中性功能角色（强调位近白、填充位暗一档、强填充位灰档）；
+///    含三个中性功能角色（强调位近白、填充位暗一档、强填充位灰档），并且 token 层
+///    的**色相**扫得出越界：红到琥珀这段暖色相只准有 `danger` 一档（§1 三色纪律、
+///    决策日志第五轮 #12，防止有人把旧的「状态底色」裸值再搬成第二个红）；
 /// 2. `ColorScheme` 每个语义槽位取的都是 token，而不是第三处写死的色值；强调槽位
 ///    （primary/secondary/tertiary）与拇指这类**强调位**取中性近白，绝不允许拿 §2 的
 ///    次要文字色 `muted` 或任何紫来当；
@@ -49,6 +51,35 @@ double _contrast(Color foreground, Color background) {
   final hi = luminance(foreground);
   final lo = luminance(background);
   return (math.max(hi, lo) + 0.05) / (math.min(hi, lo) + 0.05);
+}
+
+/// token 层里所有**裸写字面值**的色常量：读源码抓 `static const Color X =
+/// Color(0x…)`，不在测试里手抄清单。手抄的清单只会锁住抄下来的那几档，
+/// 新增一档危险色照样溜过去；读源码则任何新档位都必须过色相断言。
+/// 别名档（`neutralEmphasis = onAccent` 这类）复用已有色值、不带新色相，
+/// 因此不匹配本模式，也不需要匹配。
+Map<String, Color> _tokenColorLiterals() {
+  final declaration = RegExp(
+    r'static const Color (\w+) = Color\(0x([0-9A-Fa-f]{8})\);',
+  );
+  return {
+    for (final match in declaration.allMatches(
+      _read('lib/theme/qiyu_tokens.dart'),
+    ))
+      match.group(1)!: Color(int.parse(match.group(2)!, radix: 16)),
+  };
+}
+
+/// 危险暖色相：红（0°）到琥珀（约 45°）这一段，加一点回绕的品红侧（≥340°）。
+/// design-system §1 三色纪律里只有危险位可以落在这里，其余表面与强调一律中性
+/// 或紫；所以 §2 色板（§2 里就是 [QiyuColors.danger] 一档）之外的暖色都算越界。
+/// 饱和度过低的近黑/近白中性档（panel、onAccent、night 这类）不参与判定。
+bool _isWarmHue(Color color) {
+  if (color.a == 0) {
+    return false; // 全透明占位（elevationTint）没有色相可言。
+  }
+  final hsl = HSLColor.fromColor(color);
+  return hsl.saturation >= 0.1 && (hsl.hue <= 45 || hsl.hue >= 340);
 }
 
 /// `qiyu_icons.dart` 声明的图标常量名：图标对账的两侧之一，另一侧是字体实测
@@ -135,29 +166,28 @@ void main() {
       expect(QiyuColors.composerFocusLine.a, closeTo(0.13, 0.005));
     });
 
-    test('动作结果横幅的两档实底取 ticket 24 定值，配近白字过 AA', () {
-      // §2 的色板里没有「状态底色」这一族，这两档是把记忆中心的历史裸色值收进
-      // token 层，**值一字未改**，不是新增色相。
-      expect(QiyuColors.statusPartialFill.toARGB32(), 0xFF9C5C13);
-      expect(QiyuColors.statusFailedFill.toARGB32(), 0xFFB3261E);
-      // 底色档与危险字档是两件事：混为一谈就会有人拿 #cc9999 去填横幅。
-      expect(QiyuColors.statusFailedFill, isNot(QiyuColors.danger));
-      for (final fill in [
-        QiyuColors.statusPartialFill,
-        QiyuColors.statusFailedFill,
-      ]) {
-        expect(
-          _contrast(QiyuColors.onAccent, fill),
-          greaterThanOrEqualTo(4.5),
-          reason: '横幅上的近白字必须过 AA（design-system §9、ticket 24）',
-        );
-      }
-      // 换成 ink 就有一档掉到线以下——这是文字取 onAccent 而非 ink 的实测凭据，
-      // 不是「哪个看着更亮」的观感判断。
+    test('动作结果横幅只用中性底加 danger 字档，§2 不存在第二档红', () {
+      // 决策日志第五轮 #12：三态横幅一律走主题默认的中性面板底，失败态只把
+      // **前景**换成 danger。历史上被搬进 token 层的那两档「实底」（Material 3
+      // 基线红 #B3261E、琥珀 #9C5C13）都不是 §2 色板成员，裸色台账当时的书面
+      // 裁定就是「第 4 段（记忆中心换皮）必须换成 QiyuColors.danger」。
+      // 横幅不传 backgroundColor，落到页面上的底就是主题这条默认值。
+      expect(theme.snackBarTheme.backgroundColor, QiyuColors.panel);
+      // danger 是「深底上的危险字档」，对 panel 底实测 7.30:1，AA 4.5:1 有余量
+      // （design-system §2、§9）。这里用实测值判，不按「看着挺亮」交差。
       expect(
-        _contrast(QiyuColors.ink, QiyuColors.statusPartialFill),
-        lessThan(4.5),
+        _contrast(QiyuColors.danger, QiyuColors.panel),
+        greaterThanOrEqualTo(4.5),
+        reason: '失败态的危险字必须压在默认横幅底上过 AA',
       );
+      // 三色纪律的色板侧：暖色相（红到琥珀这一段）在整个 token 层只准有
+      // danger 一档。新增第二档红（或把旧值搬回来当「状态底色」）会直接落进
+      // 这个集合，让本条变红——不靠人记得去改台账。
+      final warmHuedTokens = _tokenColorLiterals().entries
+          .where((entry) => _isWarmHue(entry.value))
+          .map((entry) => entry.key)
+          .toSet();
+      expect(warmHuedTokens, {'danger'});
     });
 
     test('中性功能角色只复用已有中性色值，不引入新色相', () {
