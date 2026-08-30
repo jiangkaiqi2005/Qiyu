@@ -116,7 +116,14 @@ class HistoryView extends StatelessWidget {
             padding: const EdgeInsets.only(top: 8, bottom: 8),
             child: Text(
               formatDayHeader(day.date),
-              style: Theme.of(context).textTheme.titleSmall,
+              // Spec Decision 13「日期分组次要色小标题」。不读 textTheme.titleSmall：
+              // 字阶表没登记那一档（design-system §10 待定表），读到的是 M3 默认的
+              // 近白主文字色 + w500。这里取已登记的次要档（§3 的 13px）并把前景压到
+              // onSurfaceVariant（本主题即 muted）。用户 2026-08-30 裁定只改历史页
+              // 这一处，不在主题表全局登记 titleSmall。
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
           for (final session in day.sessions)

@@ -292,6 +292,43 @@ void main() {
     expect(side.width, QiyuLine.hairline);
     expect(side.color.toARGB32(), QiyuColors.line.toARGB32());
   });
+
+  testWidgets('日期分组小标题取次要色档，不是主文字色', (tester) async {
+    // Spec Decision 13。此前这一处读 textTheme.titleSmall，而字阶表没有登记那一
+    // 档，落的是 Material 3 默认的 onSurface 近白——主文字色当小标题用会抢读。
+    final historyViewModel = HistoryViewModel(
+      _FakeHistoryGateway(_testListing()),
+      onSessionDeleted: (_) {},
+      autoStart: false,
+    );
+    await historyViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        historyViewModel: historyViewModel,
+        onboardingViewModel: await _onboardingViewModel(),
+      ),
+    );
+    await _settleMergedPage(tester);
+    await tester.tap(find.byKey(const Key('open-history')));
+    await tester.pumpAndSettle();
+
+    final header = tester.widget<RichText>(
+      find.descendant(
+        of: find.text('今天'),
+        matching: find.byType(RichText),
+      ),
+    );
+    final style = (header.text as TextSpan).style!;
+    expect(
+      style.color?.toARGB32(),
+      QiyuColors.muted.toARGB32(),
+      reason: '日分组标题不是次要字档',
+    );
+    expect(style.color?.toARGB32(), isNot(QiyuColors.ink.toARGB32()));
+    // 字号同时锁在已登记的次要档上：退回未登记的 titleSmall 会连带把字号换回 14。
+    expect(style.fontSize, QiyuType.secondarySize);
+  });
 }
 
 LocalChatViewModel _chatViewModel([_FakeChatGateway? gateway]) =>
