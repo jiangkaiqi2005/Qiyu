@@ -167,8 +167,9 @@ void main() {
       await tester.pumpAndSettle();
       // 历史是从聊天页 push 进来的：返回键回到聊天页而不是首页。
       expect(find.byKey(const Key('open-history')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('go-home')));
-      await tester.pumpAndSettle();
+      // 桌面已不设「回合一页」入口（2026-08-31 二次裁定）：临时切窄视口走
+      // 抽屉品牌槽完成这一跳，再恢复本用例的桌面尺寸继续走查。
+      await _returnToHomeViaDrawer(tester, restoreTo: size);
       await tester.tap(find.byKey(const Key('home-go-memory')));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
@@ -736,6 +737,24 @@ Future<Widget> _app({
 Future<void> _goHome(WidgetTester tester) async {
   final context = tester.element(find.byType(Scaffold).first);
   GoRouter.of(context).go('/');
+  await tester.pumpAndSettle();
+}
+
+/// 回合一页改走窄屏抽屉：桌面已不设任何「回合一页」入口（2026-08-31 二次
+/// 裁定），`go-home` 键只保留在抽屉品牌槽上。临时把视口切窄、开抽屉点品牌槽
+/// 落回合一页，随后恢复 [restoreTo] 的尺寸继续走查。
+Future<void> _returnToHomeViaDrawer(
+  WidgetTester tester, {
+  required Size restoreTo,
+}) async {
+  tester.view.physicalSize = const Size(420, 900);
+  await tester.pump();
+  await tester.tap(find.byKey(const Key('nav-menu-button')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('go-home')));
+  await tester.pumpAndSettle();
+  expect(find.byKey(const Key('chat-input')), findsOneWidget);
+  tester.view.physicalSize = restoreTo;
   await tester.pumpAndSettle();
 }
 

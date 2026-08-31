@@ -185,8 +185,23 @@ void main() {
 
       expect(find.byKey(const Key('chat-input')), findsOneWidget);
 
+      // 桌面已不设「回合一页」入口（2026-08-31 二次裁定）：`go-home` 键只保留
+      // 在窄屏抽屉品牌槽上，切到窄视口走抽屉完成同一动作；抽屉收回，落回
+      // 合一页仍可聊。
+      tester.view.physicalSize = const Size(420, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('nav-menu-button')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('go-home')));
       await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nav-history')),
+        findsNothing,
+        reason: '抽屉收回',
+      );
+      expect(find.byKey(const Key('chat-input')), findsOneWidget);
     },
   );
 

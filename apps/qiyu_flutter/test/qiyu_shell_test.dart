@@ -30,23 +30,30 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 void main() {
   group('导航壳 QiyuShell', () {
-    testWidgets('桌面默认展开 240px 毛玻璃侧边栏：品牌槽 + 三项导航 + 回合一页 + 连接状态', (tester) async {
+    testWidgets('桌面默认展开 240px 毛玻璃侧边栏：品牌图标 + 三项导航 + 连接状态，没有任何回合一页入口', (
+      tester,
+    ) async {
       await _pumpShell(tester, width: 1200, height: 800);
 
+      // 品牌图标是**常驻**的开合开关（2026-08-31 二次裁定）：默认展开时它在，
+      // 收起后它还在同一位置（位置恒定由后续几何用例钉）。
       expect(find.byKey(const Key('nav-brand')), findsOneWidget);
       expect(find.byKey(const Key('nav-history')), findsOneWidget);
       expect(find.byKey(const Key('nav-memory')), findsOneWidget);
       expect(find.byKey(const Key('nav-settings')), findsOneWidget);
-      // 展开态有独立的「回合一页」入口；收起态悬浮入口默认不出现（默认展开，
-      // 且不持久化收起状态）。
-      expect(find.byKey(const Key('go-home')), findsOneWidget);
-      expect(find.byKey(const Key('nav-sidebar-expand')), findsNothing);
+      // 桌面不设任何形式的「回合一页」入口：键与文案都找不到。
+      expect(find.byKey(const Key('go-home')), findsNothing);
+      expect(find.text('回合一页'), findsNothing);
       expect(find.byKey(const Key('conn-status')), findsOneWidget);
       // 桌面不出现三条杠，也不出现底部导航。
       expect(find.byKey(const Key('nav-menu-button')), findsNothing);
       expect(find.byType(BottomNavigationBar), findsNothing);
 
-      // 宽度取 token 的 240，而不是页面里另写一份。
+      // 面板宽度取 token 的 240；品牌图标占位不越出面板宽度。
+      expect(
+        tester.getSize(find.byKey(const Key('nav-sidebar-size'))).width,
+        QiyuLayout.sidebarWidth,
+      );
       expect(
         tester.getSize(find.byKey(const Key('nav-brand'))).width,
         lessThanOrEqualTo(QiyuLayout.sidebarWidth),
@@ -136,58 +143,62 @@ void main() {
       expect(FocusManager.instance.primaryFocus, menu);
     });
 
-    testWidgets('展开态「回合一页」入口（go-home）落回合一页', (tester) async {
+    testWidgets('桌面品牌图标是纯开合开关：点击只收起/展开，不带任何导航；桌面树上没有 go-home', (tester) async {
       await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
       expect(_location(tester), '/chat');
-
-      await tester.tap(find.byKey(const Key('go-home')));
-      await tester.pumpAndSettle();
-      // 落点是合一页那**一个页面**（`/`）：会话已有消息时这里还是消息流，
-      // 「回合一页」不借这一跳新建会话（决策日志第五轮 #8）。键位从品牌槽迁到
-      // 侧边栏里的独立入口，停播 + go('/') 的语义一字不动（2026-08-31 裁定）。
-      expect(_location(tester), '/');
-    });
-
-    testWidgets('点品牌图标收起侧边栏：面板离场、左缘出现悬浮入口，本次不回合一页', (tester) async {
-      await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
       expect(find.byKey(const Key('nav-history')), findsOneWidget);
-      expect(find.byKey(const Key('nav-sidebar-expand')), findsNothing);
+      expect(find.byKey(const Key('go-home')), findsNothing);
 
       await tester.tap(find.byKey(const Key('nav-brand')));
       await tester.pumpAndSettle();
 
-      // 收起：面板整体离场（导航项与回合一页入口都不再占用焦点/语义树），
-      // 左缘只剩一枚品牌图标大小的悬浮入口。
+      // 收起：面板整体离场（导航项不再占用焦点/语义树），路由纹丝不动。
       expect(find.byKey(const Key('nav-history')), findsNothing);
+      expect(_location(tester), '/chat', reason: '点击只管开合，不回合一页、不跳路由');
       expect(find.byKey(const Key('go-home')), findsNothing);
-      expect(find.byKey(const Key('nav-sidebar-expand')), findsOneWidget);
-      // 本次点击只收起，不回合一页。
-      expect(_location(tester), '/chat');
       // 内容区自然变宽，不产生溢出。
+      expect(tester.takeException(), isNull);
+
+      // 再点展开：导航项回来，同样不导航。
+      await tester.tap(find.byKey(const Key('nav-brand')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('nav-history')), findsOneWidget);
+      expect(_location(tester), '/chat', reason: '展开同样不回合一页');
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('点悬浮入口展开侧边栏；展开后品牌图标恢复收起语义', (tester) async {
+    testWidgets('品牌图标位置恒定：开合两态与过渡中途矩形逐帧一致，树上始终只有一枚', (tester) async {
       await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
-      await tester.tap(find.byKey(const Key('nav-brand')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('nav-sidebar-expand')), findsOneWidget);
+      final brand = find.byKey(const Key('nav-brand'));
+      final rect = tester.getRect(brand);
 
-      await tester.tap(find.byKey(const Key('nav-sidebar-expand')));
+      // 收起：起步帧、中途帧、收到底，图标矩形与初帧完全一致，没有重影，
+      // 也不得出现第二枚品牌图标（2026-08-31 二次裁定第 3、4 条）。
+      await tester.tap(brand);
+      await tester.pump();
+      expect(tester.getRect(brand), rect);
+      expect(brand, findsOneWidget);
+      await tester.pump(QiyuMotion.drawer ~/ 2);
+      expect(tester.getRect(brand), rect, reason: '过渡中途图标不得漂移');
+      expect(brand, findsOneWidget, reason: '任何时刻树上只有一枚品牌图标');
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('nav-history')), findsOneWidget);
-      expect(find.byKey(const Key('nav-sidebar-expand')), findsNothing);
-      expect(_location(tester), '/chat', reason: '展开同样不回合一页');
+      expect(tester.getRect(brand), rect, reason: '收起后图标留在原处');
+      expect(brand, findsOneWidget);
 
-      // 展开后品牌图标恢复展开态行为：点它还是收起。
-      await tester.tap(find.byKey(const Key('nav-brand')));
+      // 展开：同样逐帧不动。
+      await tester.tap(brand);
+      await tester.pump();
+      await tester.pump(QiyuMotion.drawer ~/ 2);
+      expect(tester.getRect(brand), rect);
+      expect(brand, findsOneWidget);
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('nav-history')), findsNothing);
-      expect(find.byKey(const Key('nav-sidebar-expand')), findsOneWidget);
-      expect(_location(tester), '/chat');
+      expect(tester.getRect(brand), rect, reason: '展开后图标仍在原处');
+      expect(brand, findsOneWidget);
     });
 
-    testWidgets('收起的宽度过渡走 QiyuMotion：默认有途中值，reduced-motion 归零', (tester) async {
+    testWidgets('开合的宽度过渡走 QiyuMotion：默认有途中值，收到底才离场；reduced-motion 一帧到位', (
+      tester,
+    ) async {
       await _pumpShell(tester, width: 1200, height: 800);
       await tester.tap(find.byKey(const Key('nav-brand')));
       await tester.pump();
@@ -202,6 +213,11 @@ void main() {
         tester.getSize(find.byKey(const Key('nav-sidebar-size'))).width,
         0,
       );
+      expect(
+        find.byKey(const Key('nav-history')),
+        findsNothing,
+        reason: '收到底后面板离场，不占焦点与语义树',
+      );
 
       // reduced-motion：时长压成 0，两帧内直接塌到底，不留途中值。
       await _pumpShell(tester, width: 1200, height: 800, reducedMotion: true);
@@ -212,20 +228,23 @@ void main() {
         tester.getSize(find.byKey(const Key('nav-sidebar-size'))).width,
         0,
       );
+      expect(find.byKey(const Key('nav-history')), findsNothing);
     });
 
-    testWidgets('收起态悬浮入口键盘可达：Tab 落焦、Enter 展开，有 tooltip 与语义标签', (tester) async {
+    testWidgets('桌面品牌图标键盘可达：Tab 落焦、Enter 开合，两态都有 tooltip 与显式语义标签', (
+      tester,
+    ) async {
       // 句柄必须在用例体内释放：框架在 tearDown 回调之前就校验句柄是否清空。
       final semantics = tester.ensureSemantics();
       await _pumpShell(tester, width: 1200, height: 800);
-      await tester.tap(find.byKey(const Key('nav-brand')));
-      await tester.pumpAndSettle();
 
-      expect(find.byTooltip('展开侧边栏'), findsOneWidget);
-      expect(find.bySemanticsLabel('展开侧边栏'), findsOneWidget);
+      // 展开态标签说「收起侧边栏」：无字图标按钮的读屏名必须显式给
+      // （决策日志第五轮 #17 的口径）。
+      expect(find.byTooltip('收起侧边栏'), findsOneWidget);
+      expect(find.bySemanticsLabel('收起侧边栏'), findsOneWidget);
 
       final focusNode = tester
-          .widget<InkWell>(find.byKey(const Key('nav-sidebar-expand')))
+          .widget<InkWell>(find.byKey(const Key('nav-sidebar-toggle')))
           .focusNode!;
       var landed = false;
       for (var i = 0; i < 12 && !landed; i++) {
@@ -233,27 +252,41 @@ void main() {
         await tester.pump();
         landed = focusNode.hasFocus;
       }
-      expect(landed, isTrue, reason: '悬浮入口必须能被键盘 Tab 走到');
+      expect(landed, isTrue, reason: '品牌图标必须能被键盘 Tab 走到');
 
+      // Enter 收起；两态标签随状态切换，同一枚按钮不留旧态文案。
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nav-history')),
+        findsNothing,
+        reason: 'Enter 激活应收起侧边栏',
+      );
+      expect(find.byTooltip('展开侧边栏'), findsOneWidget);
+      expect(find.bySemanticsLabel('展开侧边栏'), findsOneWidget);
+      expect(find.byTooltip('收起侧边栏'), findsNothing);
+
+      // 再按一次展开。
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(
         find.byKey(const Key('nav-history')),
         findsOneWidget,
-        reason: 'Enter 激活应展开侧边栏',
+        reason: '同一枚图标再按一次应展开侧边栏',
       );
       semantics.dispose();
     });
 
-    testWidgets('窄屏抽屉不回归：品牌槽仍回合一页，没有收起入口与独立回合一页项', (tester) async {
+    testWidgets('窄屏抽屉不回归：品牌槽仍回合一页（go-home），桌面开合开关不进抽屉', (tester) async {
       await _pumpShell(tester, width: 420, height: 900, at: '/chat');
       await tester.tap(find.byKey(const Key('nav-menu-button')));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('nav-sidebar-expand')), findsNothing);
-      expect(find.text('回合一页'), findsNothing);
-      // `go-home` 键仍在抽屉的品牌槽上。
+      // `go-home` 键只保留在抽屉品牌槽上；桌面那枚开合开关与「回合一页」
+      // 文案都不出现在窄屏。
       expect(find.byKey(const Key('go-home')), findsOneWidget);
+      expect(find.byKey(const Key('nav-sidebar-toggle')), findsNothing);
+      expect(find.text('回合一页'), findsNothing);
 
       await tester.tap(find.byKey(const Key('go-home')));
       await tester.pumpAndSettle();

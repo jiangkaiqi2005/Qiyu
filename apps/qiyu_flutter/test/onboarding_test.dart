@@ -80,8 +80,7 @@ void main() {
     expect(onboardingGateway.completeCalls, 1);
     expect(find.byKey(const Key('chat-input')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('go-home')));
-    await tester.pumpAndSettle();
+    await _returnToHomeViaDrawer(tester);
   });
 
   testWidgets(
@@ -111,8 +110,7 @@ void main() {
       expect(onboardingGateway.completeCalls, 1);
       expect(find.byKey(const Key('chat-input')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('go-home')));
-      await tester.pumpAndSettle();
+      await _returnToHomeViaDrawer(tester);
     },
   );
 
@@ -146,8 +144,7 @@ void main() {
       expect(onboardingGateway.completeCalls, 0);
       expect(find.byKey(const Key('chat-input')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('go-home')));
-      await tester.pumpAndSettle();
+      await _returnToHomeViaDrawer(tester);
     },
   );
 
@@ -336,6 +333,22 @@ LocalChatViewModel _chatViewModel() => LocalChatViewModel(
   hostConnectionProbe: _FakeHostConnectionProbe([true]),
   autoStart: false,
 );
+
+/// 回合一页改走窄屏抽屉：桌面已不设任何「回合一页」入口（2026-08-31 二次
+/// 裁定），`go-home` 键只保留在抽屉品牌槽上。切到窄视口开抽屉点品牌槽，
+/// 停播 + `go('/')` 的语义不变；抽屉收回后合一页仍可聊。
+Future<void> _returnToHomeViaDrawer(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(420, 900);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pump();
+  await tester.tap(find.byKey(const Key('nav-menu-button')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('go-home')));
+  await tester.pumpAndSettle();
+  expect(find.byKey(const Key('nav-history')), findsNothing, reason: '抽屉收回');
+  expect(find.byKey(const Key('chat-input')), findsOneWidget);
+}
 
 http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {
   return http.Response.bytes(
