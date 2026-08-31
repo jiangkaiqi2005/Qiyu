@@ -81,7 +81,7 @@ if (-not $SkipFlutterBuild) {
   try {
     Invoke-Step 'Flutter dependencies' { flutter pub get }
     Invoke-Step 'Flutter Web build' {
-      flutter build web --no-web-resources-cdn
+      flutter build web --wasm --no-web-resources-cdn
     }
   } finally {
     Pop-Location
@@ -90,6 +90,24 @@ if (-not $SkipFlutterBuild) {
 
 if (-not (Test-Path -LiteralPath (Join-Path $flutterWebPath 'index.html'))) {
   throw 'Flutter Web build is missing; run without -SkipFlutterBuild'
+}
+foreach ($resource in @(
+  'flutter_bootstrap.js',
+  'main.dart.wasm',
+  'main.dart.mjs',
+  'main.dart.js',
+  'canvaskit\skwasm.js',
+  'canvaskit\skwasm.wasm',
+  'canvaskit\skwasm_heavy.js',
+  'canvaskit\skwasm_heavy.wasm',
+  'canvaskit\canvaskit.js',
+  'canvaskit\canvaskit.wasm',
+  'canvaskit\chromium\canvaskit.js',
+  'canvaskit\chromium\canvaskit.wasm'
+)) {
+  if (-not (Test-Path -LiteralPath (Join-Path $flutterWebPath $resource))) {
+    throw "Flutter Web build is missing renderer resource: $resource"
+  }
 }
 
 New-Item -ItemType Directory -Force -Path $hostBuildPath | Out-Null

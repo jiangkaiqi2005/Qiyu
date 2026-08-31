@@ -5,5 +5,5 @@
 ```powershell
 flutter analyze
 flutter test
-flutter build web --no-web-resources-cdn
+flutter build web --wasm --no-web-resources-cdn
 ```

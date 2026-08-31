@@ -3,7 +3,7 @@
 ## 自动门禁
 
 - [x] 纯 Dart 行为契约、Flutter Widget、Windows Host 单元与集成测试通过。
-- [x] Flutter Web 以本地 CanvasKit、字体和静态资源构建，不引用远程 CDN。
+- [x] Flutter Web 优先使用本地 Skwasm，并保留本地 dart2js + CanvasKit 回退；字体和静态资源不引用远程 CDN。
 - [x] Windows 安装、升级、保留数据卸载与永久删除数据卸载边界通过。
 - [x] 候选包清单哈希、x64 架构、许可证、秘密扫描与旧 Node 产物排除通过。
 - [x] 候选 exe 可从仓库外工作目录预检并启动真实 Flutter 页面。

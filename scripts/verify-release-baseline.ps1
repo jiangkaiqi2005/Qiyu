@@ -95,16 +95,21 @@ try {
       test/settings_collapse_platform_web_test.dart
   }
   Invoke-Step 'Flutter Web build' {
-    flutter build web --no-web-resources-cdn
-  }
-  $flutterBootstrap = Get-Content -Raw -Encoding UTF8 `
-    'build\web\flutter_bootstrap.js'
-  if ($flutterBootstrap -notmatch '"useLocalCanvasKit":true') {
-    throw 'Flutter Web build is not configured to use its bundled CanvasKit'
+    flutter build web --wasm --no-web-resources-cdn
   }
   foreach ($resource in @(
+    'flutter_bootstrap.js',
+    'main.dart.wasm',
+    'main.dart.mjs',
+    'main.dart.js',
+    'canvaskit\skwasm.js',
+    'canvaskit\skwasm.wasm',
+    'canvaskit\skwasm_heavy.js',
+    'canvaskit\skwasm_heavy.wasm',
     'canvaskit\canvaskit.js',
     'canvaskit\canvaskit.wasm',
+    'canvaskit\chromium\canvaskit.js',
+    'canvaskit\chromium\canvaskit.wasm',
     'assets\assets\fonts\NotoSerifSC-QiyuSubset.ttf',
     'assets\assets\fonts\OFL-NotoSerifSC.txt',
     'assets\assets\fonts\MaterialSymbolsOutlined-QiyuSubset.ttf',

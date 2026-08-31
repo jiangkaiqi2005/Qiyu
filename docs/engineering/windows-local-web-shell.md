@@ -14,7 +14,7 @@ Windows Release 1 由编译后的 Dart Host 在 `127.0.0.1:0` 提供随包 Flutt
 
 ```powershell
 Push-Location apps\qiyu_flutter
-flutter build web --no-web-resources-cdn
+flutter build web --wasm --no-web-resources-cdn
 Pop-Location
 
 Push-Location apps\qiyu_windows_host
@@ -30,7 +30,7 @@ Pop-Location
 
 每次 Host 启动生成新的启动 token、本机会话、CSRF 和单实例激活凭据。浏览器首次访问 `/_session/start` 后收到 `HttpOnly; SameSite=Strict` cookie，再跳转到不含 token 的页面。宿主重启后旧 cookie 失效。
 
-所有请求必须使用当前回环端口的精确 Host。API 需要当前会话；修改请求还需同源 Origin 与 `x-qiyu-csrf`。静态资源策略只允许本地脚本、字体、图片和连接；构建使用 `--no-web-resources-cdn` 并随包携带 CanvasKit 与字体。
+所有请求必须使用当前回环端口的精确 Host。API 需要当前会话；修改请求还需同源 Origin 与 `x-qiyu-csrf`。静态资源策略只允许本地脚本、字体、图片和连接；构建使用 `--wasm --no-web-resources-cdn`，优先使用随包 Skwasm，并为不支持 WasmGC 的浏览器保留随包 dart2js + CanvasKit 回退，同时携带字体。
 
 Provider 请求由 Host 发起。Provider 配置（含 API Key）写入本机 runtime 的 `provider.json`，可直接编辑该文件更换 Key；Windows Credential Manager 只作升级前旧 Key 的只读回退。API 响应、日志、备份和 Markdown 不返回或保存明文 Key、Cookie、CSRF、第三方错误正文及真实用户路径。
 

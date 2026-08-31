@@ -49,7 +49,17 @@ $requiredFiles = @(
   'qiyu_windows_host.exe',
   'web\index.html',
   'web\flutter_bootstrap.js',
+  'web\main.dart.wasm',
+  'web\main.dart.mjs',
   'web\main.dart.js',
+  'web\canvaskit\skwasm.js',
+  'web\canvaskit\skwasm.wasm',
+  'web\canvaskit\skwasm_heavy.js',
+  'web\canvaskit\skwasm_heavy.wasm',
+  'web\canvaskit\canvaskit.js',
+  'web\canvaskit\canvaskit.wasm',
+  'web\canvaskit\chromium\canvaskit.js',
+  'web\canvaskit\chromium\canvaskit.wasm',
   'web\assets\NOTICES',
   'web\assets\assets\fonts\OFL-NotoSerifSC.txt',
   'web\assets\assets\fonts\NotoSerifSC-QiyuSubset.ttf',
@@ -118,10 +128,8 @@ try {
   $stream.Dispose()
 }
 
-$bootstrap = Get-Content -Raw -Encoding UTF8 `
-  (Join-Path $resolvedBundle 'web\flutter_bootstrap.js')
-Assert-Condition ($bootstrap -match '"useLocalCanvasKit":true') `
-  'Flutter Web 未固定使用包内 CanvasKit。'
+$bootstrapPath = Join-Path $resolvedBundle 'web\flutter_bootstrap.js'
+$bootstrap = Get-Content -Raw -Encoding UTF8 $bootstrapPath
 $index = Get-Content -Raw -Encoding UTF8 `
   (Join-Path $resolvedBundle 'web\index.html')
 foreach ($text in @($index, $bootstrap)) {
@@ -156,7 +164,9 @@ $secretPatterns = @(
   'sk-[A-Za-z0-9_-]{20,}'
 )
 $scanFiles = Get-ChildItem -LiteralPath $resolvedBundle -Recurse -File |
-  Where-Object Extension -In @('.html', '.js', '.json', '.md', '.txt', '.ps1', '.cmd') |
+  Where-Object Extension -In @(
+    '.html', '.js', '.mjs', '.json', '.md', '.txt', '.ps1', '.cmd'
+  ) |
   Where-Object FullName -NotMatch '\\licenses\\' |
   Where-Object Name -ne 'NOTICES'
 foreach ($file in $scanFiles) {

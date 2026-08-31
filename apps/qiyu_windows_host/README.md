@@ -5,7 +5,7 @@
 ```powershell
 # 开发运行
 Push-Location ..\qiyu_flutter
-flutter build web --no-web-resources-cdn
+flutter build web --wasm --no-web-resources-cdn
 Pop-Location
 dart run
 

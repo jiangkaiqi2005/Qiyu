@@ -105,6 +105,9 @@ Assert-Condition ($buildScript -notmatch 'package\.json|\bnpm\b|\bnode\b') `
   'Windows 构包脚本仍依赖 Node 产品元数据或命令。'
 Assert-Condition ($buildScript -match "'pubspec\.yaml'") `
   'Windows 构包脚本没有从 Dart Host 元数据读取版本。'
+Assert-Condition (
+  $buildScript -match 'flutter build web --wasm --no-web-resources-cdn'
+) 'Windows 构包脚本没有启用 Skwasm 首选构建。'
 
 & (Join-Path $repositoryRoot 'scripts\test-windows-bundle-publish.ps1')
 
@@ -123,6 +126,38 @@ foreach ($requiredCommand in @(
   Assert-Condition ($verificationScript -match [regex]::Escape($requiredCommand)) `
     "Release 1 全量门禁缺少：$requiredCommand"
 }
+Assert-Condition (
+  $verificationScript -match 'flutter build web --wasm --no-web-resources-cdn'
+) 'Release 1 全量门禁没有启用 Skwasm 首选构建。'
+$packageVerificationScript = Get-Content -Raw -Encoding UTF8 (
+  Join-Path $repositoryRoot 'scripts\verify-windows-package.ps1'
+)
+$releaseScripts = @(
+  @{ name = 'Windows 构包脚本'; content = $buildScript },
+  @{ name = 'Release 1 全量门禁'; content = $verificationScript },
+  @{ name = 'Windows 候选包校验'; content = $packageVerificationScript }
+)
+foreach ($requiredResource in @(
+  'flutter_bootstrap.js',
+  'main.dart.wasm',
+  'main.dart.mjs',
+  'main.dart.js',
+  'canvaskit\skwasm.js',
+  'canvaskit\skwasm.wasm',
+  'canvaskit\skwasm_heavy.js',
+  'canvaskit\skwasm_heavy.wasm',
+  'canvaskit\canvaskit.js',
+  'canvaskit\canvaskit.wasm',
+  'canvaskit\chromium\canvaskit.js',
+  'canvaskit\chromium\canvaskit.wasm'
+)) {
+  foreach ($releaseScript in $releaseScripts) {
+    Assert-Condition ($releaseScript.content.Contains($requiredResource)) `
+      "$($releaseScript.name)缺少 Flutter Web 资源校验：$requiredResource"
+  }
+}
+Assert-Condition ($packageVerificationScript.Contains("'.mjs'")) `
+  'Windows 候选包秘密扫描没有覆盖 main.dart.mjs。'
 $browserStep = [regex]::Match(
   $verificationScript,
   "Invoke-Step 'Browser-side tests' \{[\s\S]*?\n  \}"
@@ -172,4 +207,3 @@ foreach ($file in $dartFiles) {
 }
 
 Write-Host 'Release baseline policy tests passed'
-
