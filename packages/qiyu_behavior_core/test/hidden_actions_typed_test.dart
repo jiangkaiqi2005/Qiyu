@@ -63,7 +63,10 @@ void main() {
         LoopProactive.tryParseWireName('once'),
         LoopProactive.once,
       );
-      expect(PersonaTreeBranch.tryParseWireName('boundaries'), PersonaTreeBranch.boundaries);
+      expect(
+        PersonaTreeBranch.tryParseWireName('boundaries'),
+        PersonaTreeBranch.boundaries,
+      );
       expect(
         PersonaNature.tryParseWireName('self_report'),
         PersonaNature.selfReport,
@@ -192,7 +195,10 @@ void main() {
           signal: RelationshipSignal.temperature,
         ),
       ];
-      expect(actions.map(wire), HiddenActionKind.values.map((kind) => kind.wireName));
+      expect(
+        actions.map(wire),
+        HiddenActionKind.values.map((kind) => kind.wireName),
+      );
     });
 
     test('typed equality compares shape field by field', () {
