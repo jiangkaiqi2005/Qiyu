@@ -567,6 +567,458 @@ void main() {
       },
     );
   });
+
+  group('记忆删除 scope 口径统一', () {
+    // 手写画像分支文件：一个根断言（EX-R001，下挂根下中间理解
+    // EX-M001）、一个独立中间理解（EX-M002）、一个未归类叶
+    // （EX-L003）。四类节点文本互不包含，也不出现在其它记忆层，
+    // 供逐类构造「只命中这一类」的删除范围。
+    Future<void> seedPersonaTree() async {
+      final file = File(
+        path.join(memoryDirectory, 'persona-tree', 'expression.md'),
+      );
+      file.createSync(recursive: true);
+      file.writeAsStringSync('''
+# 性格表达
+
+## 未归根中间节点
+
+### [EX-M002] 重复模式｜独立理解熬夜赶工
+- 形成: 2026-08-16 · 复核: 2026-08-17
+- [EX-L002] 2026-08-17 | 行为观察 | support | 独立理解熬夜赶工的证据 | episodes/2026/08/2026-08-17.md [seed:s:1]
+
+## [EX-R001] 根主张求稳不求快
+
+### [EX-M001] 重复模式｜根下理解遇事先自嘲
+- 形成: 2026-08-16 · 复核: 2026-08-17
+- [EX-L001] 2026-08-16 | 行为观察 | support | 根下理解遇事先自嘲的证据 | episodes/2026/08/2026-08-16.md [seed:s:0]
+
+## 未归类叶
+- [EX-L003] 2026-08-17 | 行为观察 | support | 未归类叶深夜散步 | episodes/2026/08/2026-08-17.md [seed:s:2]
+''');
+    }
+
+    test('只命中根下中间理解：预览、定位与删除一致', () async {
+      await seedPersonaTree();
+
+      final preview = await actions.deletePreview(
+        const MemoryMiddleRef('expression', 'EX-M001'),
+      );
+      expect(preview, isNotNull);
+      expect(preview!.personaNodes, 1);
+      expect(preview.episodeEntries, 0);
+      expect(preview.episodeDaySummaries, 0);
+      expect(preview.longTermItems, 0);
+      expect(preview.monthSummaryItems, 0);
+      expect(preview.relationshipLines, 0);
+      expect(preview.dailyStateLines, 0);
+      expect(preview.openLoops, 0);
+
+      final result = await actions.deleteByScope('根下理解遇事先自嘲');
+      expect(result.status, MemoryActionStatus.success);
+
+      final expression =
+          (await personaTree.readSnapshot()).branches['expression']!;
+      // 落盘与预览一致：只删命中的根下中间理解，根保留，
+      // 独立中间理解与未归类叶不受影响。
+      expect(expression.roots.single.claim, '根主张求稳不求快');
+      expect(expression.roots.single.middles, isEmpty);
+      expect(expression.unrooted.single.claim, '独立理解熬夜赶工');
+      expect(expression.unclassified.single.summary, '未归类叶深夜散步');
+      expect(
+        (await memoryControls.load()).deletedSummaries,
+        contains('根下理解遇事先自嘲'),
+      );
+
+      // 同一范围第二次删除稳定返回无目标，且不追加控制记录。
+      final again = await actions.deleteByScope('根下理解遇事先自嘲');
+      expect(again.code, 'memory_delete_no_target');
+      expect((await memoryControls.load()).deleted, hasLength(1));
+      expect(
+        await actions.deletePreview(
+          const MemoryMiddleRef('expression', 'EX-M001'),
+        ),
+        isNull,
+      );
+    });
+
+    test('命中根断言：连子树整体删除', () async {
+      await seedPersonaTree();
+      final preview = await actions.deletePreview(
+        const MemoryRootRef('expression', 'EX-R001'),
+      );
+      expect(preview, isNotNull);
+      expect(preview!.personaNodes, 1);
+
+      final result = await actions.deleteByScope('根主张求稳不求快');
+      expect(result.status, MemoryActionStatus.success);
+
+      final expression =
+          (await personaTree.readSnapshot()).branches['expression']!;
+      // 根命中连子树删：根下中间理解随根消失，其余节点不受影响。
+      expect(expression.roots, isEmpty);
+      expect(expression.unrooted.single.claim, '独立理解熬夜赶工');
+      expect(expression.unclassified.single.summary, '未归类叶深夜散步');
+
+      expect(
+        (await actions.deleteByScope('根主张求稳不求快')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('只命中独立中间理解', () async {
+      await seedPersonaTree();
+      final preview = await actions.deletePreview(
+        const MemoryMiddleRef('expression', 'EX-M002'),
+      );
+      expect(preview, isNotNull);
+      expect(preview!.personaNodes, 1);
+
+      final result = await actions.deleteByScope('独立理解熬夜赶工');
+      expect(result.status, MemoryActionStatus.success);
+
+      final expression =
+          (await personaTree.readSnapshot()).branches['expression']!;
+      expect(expression.unrooted, isEmpty);
+      expect(expression.roots.single.middles.single.claim, '根下理解遇事先自嘲');
+      expect(expression.unclassified.single.summary, '未归类叶深夜散步');
+
+      expect(
+        (await actions.deleteByScope('独立理解熬夜赶工')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('只命中未归类叶', () async {
+      await seedPersonaTree();
+
+      final result = await actions.deleteByScope('未归类叶深夜散步');
+      expect(result.status, MemoryActionStatus.success);
+
+      final expression =
+          (await personaTree.readSnapshot()).branches['expression']!;
+      expect(expression.unclassified, isEmpty);
+      expect(expression.roots.single.middles, hasLength(1));
+      expect(expression.unrooted, hasLength(1));
+
+      expect(
+        (await actions.deleteByScope('未归类叶深夜散步')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('命中 episode 条目', () async {
+      await seedEntry('2026-08-19', '临时记忆条目', id: 'seed:t:0');
+      final result = await actions.deleteByScope('临时记忆条目');
+      expect(result.status, MemoryActionStatus.success);
+      expect((await pipeline.readDay('2026-08-19')).entries, isEmpty);
+      expect(
+        (await actions.deleteByScope('临时记忆条目')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('只命中当日小结：条目保留', () async {
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          '2026-08-19',
+          entries: [
+            EpisodeEntry(
+              id: 'seed:t:0',
+              sessionId: 'seed-session',
+              requestId: 'seed',
+              summary: '条目内容不命中',
+              at: DateTime.parse('2026-08-19T20:00:00').toUtc(),
+            ),
+          ],
+          summary: '当天的小结命中了',
+          finalized: true,
+          finalizedAt: DateTime.parse('2026-08-19T23:00:00').toUtc(),
+        ),
+      );
+      final result = await actions.deleteByScope('当天的小结命中了');
+      expect(result.status, MemoryActionStatus.success);
+      final day = await pipeline.readDay('2026-08-19');
+      expect(day.summary, isNull);
+      expect(day.entries.single.summary, '条目内容不命中');
+      expect(
+        (await actions.deleteByScope('当天的小结命中了')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('只命中长期印象', () async {
+      File(
+        path.join(memoryDirectory, 'long-memory.md'),
+      ).writeAsStringSync('# long-memory\n\n## 人与关系\n- 命中长期印象\n- 另一条长期印象\n');
+      final result = await actions.deleteByScope('命中长期印象');
+      expect(result.status, MemoryActionStatus.success);
+      final contents = File(
+        path.join(memoryDirectory, 'long-memory.md'),
+      ).readAsStringSync();
+      expect(contents, isNot(contains('命中长期印象')));
+      expect(contents, contains('- 另一条长期印象'));
+      expect(
+        (await actions.deleteByScope('命中长期印象')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('只命中月份摘要', () async {
+      await seedEntry('2026-08-16', '月摘要里记录的事', id: 'seed:z:0');
+      await monthlySummary.compressMonth('2026-08');
+      // 改写条目后，旧文本只剩月份摘要一处引用。
+      final edited = await actions.edit(
+        entryRef('2026-08-16', 'seed:z:0'),
+        '月摘要记录的事已经改写',
+      );
+      expect(edited.status, MemoryActionStatus.success);
+
+      final result = await actions.deleteByScope('月摘要里记录的事');
+      expect(result.status, MemoryActionStatus.success);
+      final summary = await monthlySummary.readMonthSummary('2026-08');
+      expect(
+        summary!.items.map((item) => item.text),
+        isNot(contains('月摘要里记录的事')),
+      );
+      // 条目本体（已改写）不受影响。
+      final day = await pipeline.readDay('2026-08-16');
+      expect(day.entries.single.summary, '月摘要记录的事已经改写');
+      expect(
+        (await actions.deleteByScope('月摘要里记录的事')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('只命中受管关系记录的行', () async {
+      File(path.join(memoryDirectory, 'relationship.md')).writeAsStringSync(
+        '# relationship\n\n'
+        'stage: 熟悉\n'
+        'since: 2026-08-01\n'
+        '阶段描述: 熟悉阶段。\n\n'
+        '## 当前相处方式\n'
+        '已确认：\n'
+        '- 可以自然提起说过的事\n\n'
+        '## 近期变化\n'
+        '- 2026-08-10 命中的关系变化\n',
+      );
+      final result = await actions.deleteByScope('命中的关系变化');
+      expect(result.status, MemoryActionStatus.success);
+      final contents = File(
+        path.join(memoryDirectory, 'relationship.md'),
+      ).readAsStringSync();
+      expect(contents, isNot(contains('命中的关系变化')));
+      expect(contents, contains('可以自然提起说过的事'));
+      expect(
+        (await actions.deleteByScope('命中的关系变化')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('手写关系文件不算删除目标', () async {
+      // 清除管线对不可解析的受管文件一律不动，定位也不得把它
+      // 当成命中——否则宽泛范围会借手写文件变成永久封禁。
+      File(
+        path.join(memoryDirectory, 'relationship.md'),
+      ).writeAsStringSync('# relationship\n\n- 关系记录的手写内容\n');
+      final result = await actions.deleteByScope('关系记录的手写内容');
+      expect(result.code, 'memory_delete_no_target');
+      expect(
+        File(path.join(memoryDirectory, 'memory-controls.md')).existsSync(),
+        isFalse,
+      );
+      expect(
+        File(path.join(memoryDirectory, 'relationship.md')).readAsStringSync(),
+        contains('关系记录的手写内容'),
+      );
+    });
+
+    test('只命中近日状态', () async {
+      File(
+        path.join(memoryDirectory, 'daily-state.md'),
+      ).writeAsStringSync('# daily-state\n\n## 近日状态\n- 命中的近日状态\n- 另一条近日状态\n');
+      final result = await actions.deleteByScope('命中的近日状态');
+      expect(result.status, MemoryActionStatus.success);
+      final contents = File(
+        path.join(memoryDirectory, 'daily-state.md'),
+      ).readAsStringSync();
+      expect(contents, isNot(contains('命中的近日状态')));
+      expect(contents, contains('- 另一条近日状态'));
+      expect(
+        (await actions.deleteByScope('命中的近日状态')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('只命中未闭环事项', () async {
+      File(path.join(memoryDirectory, 'open-loops.md')).writeAsStringSync(
+        '# open-loops\n\n'
+        '- [o1] 命中的未闭环事项\n'
+        '  proactive: yes\n'
+        '  status: active\n',
+      );
+      final result = await actions.deleteByScope('命中的未闭环事项');
+      expect(result.status, MemoryActionStatus.success);
+      expect(
+        File(path.join(memoryDirectory, 'open-loops.md')).readAsStringSync(),
+        isNot(contains('命中的未闭环事项')),
+      );
+      expect(
+        (await actions.deleteByScope('命中的未闭环事项')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('全部未命中：无目标且什么都不写', () async {
+      await seedPersonaTree();
+      await seedEntry('2026-08-19', '不相干的记忆条目', id: 'seed:t:0');
+      final result = await actions.deleteByScope('完全不相干的范围文本');
+      expect(result.code, 'memory_delete_no_target');
+      // 无目标时绝不写控制记录（宽泛范围不得变成永久封禁）。
+      expect(
+        File(path.join(memoryDirectory, 'memory-controls.md')).existsSync(),
+        isFalse,
+      );
+      final day = await pipeline.readDay('2026-08-19');
+      expect(day.entries.single.summary, '不相干的记忆条目');
+    });
+
+    test('范围超集不含带前缀整行：关系行不误报', () async {
+      File(path.join(memoryDirectory, 'relationship.md')).writeAsStringSync(
+        '# relationship\n\n'
+        'stage: 熟悉\n'
+        'since: 2026-08-01\n'
+        '阶段描述: 熟悉阶段。\n\n'
+        '## 近期变化\n'
+        '- 2026-08-10 关系变化\n',
+      );
+      // 范围文本包含行内容，却不包含带 "- " 前缀的整行：清除侧的包含
+      // 匹配不命中，扫描侧也不得报命中（否则预览会承诺删不掉的行）。
+      final result = await actions.deleteByScope('那次 2026-08-10 关系变化');
+      expect(result.code, 'memory_delete_no_target');
+      expect(
+        File(path.join(memoryDirectory, 'relationship.md')).readAsStringSync(),
+        contains('- 2026-08-10 关系变化'),
+      );
+      expect(
+        File(path.join(memoryDirectory, 'memory-controls.md')).existsSync(),
+        isFalse,
+      );
+    });
+
+    test('范围跨行前缀命中：整条关系行被定位并清除', () async {
+      File(path.join(memoryDirectory, 'relationship.md')).writeAsStringSync(
+        '# relationship\n\n'
+        'stage: 熟悉\n'
+        'since: 2026-08-01\n'
+        '阶段描述: 熟悉阶段。\n\n'
+        '## 当前相处方式\n'
+        '已确认：\n'
+        '- 深夜一起散步的记录\n',
+      );
+      // 范围文本只有连带 "- " 前缀才对整行构成包含：清除侧按整行匹配
+      // 会移除该行，扫描侧口径一致才不致漏报成无目标。
+      final result = await actions.deleteByScope('- 深夜一起散步');
+      expect(result.status, MemoryActionStatus.success);
+      expect(
+        File(path.join(memoryDirectory, 'relationship.md')).readAsStringSync(),
+        isNot(contains('深夜一起散步的记录')),
+      );
+      expect(
+        (await actions.deleteByScope('- 深夜一起散步')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('只命中当日理解元数据：扫描、定位与清除一致', () async {
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          '2026-08-19',
+          entries: [
+            EpisodeEntry(
+              id: 'seed:u:0',
+              sessionId: 'seed-session',
+              requestId: 'seed',
+              summary: '条目内容不命中',
+              at: DateTime.parse('2026-08-19T20:00:00').toUtc(),
+            ),
+          ],
+          summary: '小结也不命中',
+          finalized: true,
+          finalizedAt: DateTime.parse('2026-08-19T23:00:00').toUtc(),
+          understanding: DayUnderstanding(
+            loopCandidates: [
+              (
+                title: '命中理解的跟进候选',
+                due: null,
+                proactive: 'no',
+                note: null,
+              ),
+            ],
+          ).toJson(),
+        ),
+      );
+
+      // 扫描把清除管线会移除的理解元数据计入命中，而不是误报无目标。
+      final scanner = MemoryScopeScanner(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        openLoopStore: openLoopStore,
+        monthlySummary: monthlySummary,
+      );
+      final hit = await scanner.scan({'命中理解的跟进候选'});
+      expect(hit.episodeDayUnderstandings, 1);
+      expect(hit.episodeEntries, 0);
+      expect(hit.episodeDaySummaries, 0);
+      expect(hit.anyHit, isTrue);
+
+      final result = await actions.deleteByScope('命中理解的跟进候选');
+      expect(result.status, MemoryActionStatus.success);
+      final day = await pipeline.readDay('2026-08-19');
+      // 条目与小结原样保留，只有理解元数据里的命中内容被移除。
+      expect(day.entries.single.summary, '条目内容不命中');
+      expect(day.summary, '小结也不命中');
+      final filtered = day.understanding == null
+          ? const DayUnderstanding()
+          : DayUnderstanding.fromJson(day.understanding!);
+      expect(filtered.loopCandidates, isEmpty);
+      expect(
+        (await actions.deleteByScope('命中理解的跟进候选')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('条目与当日理解同时命中：预览两层都计数', () async {
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          '2026-08-19',
+          entries: [
+            EpisodeEntry(
+              id: 'seed:u:1',
+              sessionId: 'seed-session',
+              requestId: 'seed',
+              summary: '条目与理解都命中的内容',
+              at: DateTime.parse('2026-08-19T20:00:00').toUtc(),
+            ),
+          ],
+          finalized: true,
+          finalizedAt: DateTime.parse('2026-08-19T23:00:00').toUtc(),
+          understanding: DayUnderstanding(
+            indexKeywords: ['条目与理解都命中的内容'],
+          ).toJson(),
+        ),
+      );
+      final impact = await actions.deletePreview(
+        entryRef('2026-08-19', 'seed:u:1'),
+      );
+      expect(impact, isNotNull);
+      expect(impact!.episodeEntries, 1);
+      expect(impact.episodeDayUnderstandings, 1);
+      expect(impact.lines.join(), contains('当日理解元数据'));
+      expect(impact.toJson()['episodeDayUnderstandings'], 1);
+    });
+  });
 }
 
 Map<String, List<int>> _directorySnapshot(String root) {

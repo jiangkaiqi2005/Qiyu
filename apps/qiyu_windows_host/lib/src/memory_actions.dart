@@ -10,6 +10,7 @@ import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
+import 'memory_scope.dart';
 import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
@@ -73,6 +74,7 @@ final class MemoryDeleteImpact {
     required this.targetMasked,
     required this.episodeEntries,
     required this.episodeDaySummaries,
+    required this.episodeDayUnderstandings,
     required this.personaNodes,
     required this.longTermItems,
     required this.monthSummaryItems,
@@ -87,6 +89,10 @@ final class MemoryDeleteImpact {
 
   final int episodeEntries;
   final int episodeDaySummaries;
+
+  /// 会被过滤的当日理解元数据天数（清除管线逐日过 filterBanned 后
+  /// 重写移除命中内容），与统一范围扫描同一口径。
+  final int episodeDayUnderstandings;
 
   /// 会被清除的画像内容：根、根下与未归根的中间理解、未归类叶，
   /// 与 applyBan 的实际清除范围对齐。
@@ -111,6 +117,9 @@ final class MemoryDeleteImpact {
     }
     if (episodeDaySummaries > 0) {
       lines.add('当日小结：清除 $episodeDaySummaries 处。');
+    }
+    if (episodeDayUnderstandings > 0) {
+      lines.add('当日理解元数据：过滤 $episodeDayUnderstandings 天里的命中内容。');
     }
     if (personaNodes > 0) {
       lines.add('关于你的画像：清除 $personaNodes 处（根、理解与证据叶）。');
@@ -142,6 +151,7 @@ final class MemoryDeleteImpact {
     'targetMasked': targetMasked,
     'episodeEntries': episodeEntries,
     'episodeDaySummaries': episodeDaySummaries,
+    'episodeDayUnderstandings': episodeDayUnderstandings,
     'personaNodes': personaNodes,
     'longTermItems': longTermItems,
     'monthSummaryItems': monthSummaryItems,
@@ -178,7 +188,14 @@ final class MemoryActionService {
     required this.relationshipLifecycle,
     AtomicTextWriter? atomicWriter,
     void Function(String message)? diagnosticsSink,
-  }) : _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
+  }) : _scopeScanner = MemoryScopeScanner(
+         memoryDirectory: memoryDirectory,
+         episodePipeline: episodePipeline,
+         personaTree: personaTree,
+         openLoopStore: openLoopStore,
+         monthlySummary: monthlySummary,
+       ),
+       _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
   final String memoryDirectory;
@@ -188,6 +205,10 @@ final class MemoryActionService {
   final OpenLoopStore openLoopStore;
   final MonthlySummaryStore monthlySummary;
   final RelationshipLifecycle relationshipLifecycle;
+
+  /// 删除范围的唯一检查来源（ticket 01）：预览、定位与删除前检查
+  /// 全部消费它，口径以清除管线能触及的节点集合为准。
+  final MemoryScopeScanner _scopeScanner;
   final AtomicTextWriter _atomicWriter;
   final void Function(String) _diagnosticsSink;
 
@@ -536,6 +557,8 @@ final class MemoryActionService {
   // ---------- 删除 ----------
 
   /// 删除影响范围预览（只读）；引用指向的内容已不存在时返回 null。
+  /// 逐层计数全部来自统一范围扫描（[_scopeScanner]）——与定位和实际
+  /// 清除同一份口径，预览多少就删多少。
   Future<MemoryDeleteImpact?> deletePreview(MemoryItemRef ref) async {
     final text = await _itemText(ref);
     if (text == null) {
@@ -544,113 +567,19 @@ final class MemoryActionService {
     if (ref is MemoryRelationshipRef && ref.list != 'sharedPast') {
       return null;
     }
-    final hitText = _scopeHitText({normalizeMemoryText(text)});
-    final hitEntry = _scopeHitEntry(hitText);
-
-    final dates = await episodePipeline.listEpisodeDates();
-    var entries = 0;
-    var daySummaries = 0;
-    for (final date in dates) {
-      final day = await episodePipeline.readDay(date);
-      if (!day.readable) {
-        continue;
-      }
-      entries += day.entries.where(hitEntry).length;
-      final summary = day.summary;
-      if (summary != null && hitText(summary)) {
-        daySummaries += 1;
-      }
-    }
-
-    // 与 applyBan 的实际清除范围对齐：根、根下与未归根的中间理解、
-    // 未归类叶（命中即删，根命中连子树删）。
-    var personaNodes = 0;
-    final snapshot = await personaTree.readSnapshot();
-    for (final view in snapshot.branches.values) {
-      if (!view.readable) {
-        continue;
-      }
-      personaNodes += view.roots.where((root) => hitText(root.claim)).length;
-      for (final root in view.roots) {
-        personaNodes += root.middles
-            .where((middle) => hitText(middle.claim))
-            .length;
-      }
-      personaNodes += view.unrooted
-          .where((middle) => hitText(middle.claim))
-          .length;
-      personaNodes += view.unclassified
-          .where((leaf) => hitText(leaf.summary))
-          .length;
-    }
-
-    var longTermItems = 0;
-    final longMemory = await readFileIfExists(_longMemoryFile);
-    if (longMemory != null && longMemory.trim().isNotEmpty) {
-      final parsed = parseLongMemory(longMemory);
-      if (parsed.readable) {
-        longTermItems = parsed.allItems.where(hitText).length;
-      }
-    }
-
-    var monthSummaryItems = 0;
-    final months = <String>{for (final date in dates) date.substring(0, 7)};
-    for (final month in months) {
-      final summaryFile = await monthlySummary.readMonthSummary(month);
-      if (summaryFile == null || !summaryFile.readable) {
-        continue;
-      }
-      monthSummaryItems += summaryFile.items
-          .where((item) => hitText(item.text))
-          .length;
-    }
-
-    var relationshipLines = 0;
-    final relationship = await readFileIfExists(_relationshipFile);
-    if (relationship != null) {
-      final parsed = parseRelationshipFile(relationship);
-      if (parsed != null) {
-        bool hitLine(String line) {
-          final trimmed = line.trim();
-          if (!trimmed.startsWith('- ')) {
-            return false;
-          }
-          return hitText(trimmed.substring(2).trim());
-        }
-
-        relationshipLines =
-            parsed.confirmed.where(hitLine).length +
-            parsed.probes.where(hitLine).length +
-            parsed.recentChanges.where(hitLine).length;
-      }
-    }
-
-    var dailyStateLines = 0;
-    final dailyState = await readFileIfExists(_dailyStateFile);
-    if (dailyState != null) {
-      dailyStateLines = dailyState
-          .split('\n')
-          .where((line) => line.trim().startsWith('- ') && hitText(line.trim()))
-          .length;
-    }
-
-    var openLoops = 0;
-    final loops = await openLoopStore.readItems();
-    if (loops != null) {
-      openLoops = loops.where((item) => hitText(item.title)).length;
-    }
-
+    final hit = await _scopeScanner.scan({normalizeMemoryText(text)});
     return MemoryDeleteImpact(
       targetText: isSensitiveMemoryText(text) ? null : text,
       targetMasked: isSensitiveMemoryText(text),
-      episodeEntries: entries,
-      episodeDaySummaries: daySummaries,
-      personaNodes: personaNodes,
-      longTermItems: longTermItems,
-      monthSummaryItems: monthSummaryItems,
-      relationshipLines: relationshipLines,
-      dailyStateLines: dailyStateLines,
-      openLoops: openLoops,
+      episodeEntries: hit.episodeEntries,
+      episodeDaySummaries: hit.episodeDaySummaries,
+      episodeDayUnderstandings: hit.episodeDayUnderstandings,
+      personaNodes: hit.personaNodes,
+      longTermItems: hit.longTermItems,
+      monthSummaryItems: hit.monthSummaryItems,
+      relationshipLines: hit.relationshipLines,
+      dailyStateLines: hit.dailyStateLines,
+      openLoops: hit.openLoops,
     );
   }
 
@@ -697,74 +626,11 @@ final class MemoryActionService {
     return _executeDelete(summary, origin: origin);
   }
 
-  /// 定位扫描（只读）：episodes、长期印象、画像、未闭环事项、关系
-  /// 记录、近日状态、月摘要任一层命中即返回 true。
-  Future<bool> _locate(String normalized) async {
-    final hitText = _scopeHitText({normalized});
-    final hitEntry = _scopeHitEntry(hitText);
-
-    final dates = await episodePipeline.listEpisodeDates();
-    for (final date in dates) {
-      final day = await episodePipeline.readDay(date);
-      if (!day.readable) {
-        continue;
-      }
-      if (day.entries.any(hitEntry) ||
-          (day.summary != null && hitText(day.summary!))) {
-        return true;
-      }
-    }
-    final longMemory = await readFileIfExists(_longMemoryFile);
-    if (longMemory != null && longMemory.trim().isNotEmpty) {
-      final parsed = parseLongMemory(longMemory);
-      if (parsed.readable && parsed.allItems.any(hitText)) {
-        return true;
-      }
-    }
-    final snapshot = await personaTree.readSnapshot();
-    for (final view in snapshot.branches.values) {
-      if (!view.readable) {
-        continue;
-      }
-      final claims = [
-        for (final root in view.roots) root.claim,
-        for (final middle in view.unrooted) middle.claim,
-        for (final leaf in view.unclassified) leaf.summary,
-      ];
-      if (claims.any(hitText)) {
-        return true;
-      }
-    }
-    final items = await openLoopStore.readItems();
-    if (items != null && items.any((item) => hitText(item.title))) {
-      return true;
-    }
-    final relationship = await readFileIfExists(_relationshipFile);
-    if (relationship != null &&
-        relationship
-            .split('\n')
-            .any((line) => line.trim().startsWith('- ') && hitText(line))) {
-      return true;
-    }
-    final dailyState = await readFileIfExists(_dailyStateFile);
-    if (dailyState != null &&
-        dailyState
-            .split('\n')
-            .any((line) => line.trim().startsWith('- ') && hitText(line))) {
-      return true;
-    }
-    final months = <String>{for (final date in dates) date.substring(0, 7)};
-    for (final month in months) {
-      final summaryFile = await monthlySummary.readMonthSummary(month);
-      if (summaryFile == null || !summaryFile.readable) {
-        continue;
-      }
-      if (summaryFile.items.any((item) => hitText(item.text))) {
-        return true;
-      }
-    }
-    return false;
-  }
+  /// 定位扫描（只读）：统一范围扫描任一层命中即返回 true，口径与
+  /// 预览、实际清除完全一致（含根下中间理解；清除管线动不了的
+  /// 手写文件不算命中）。
+  Future<bool> _locate(String normalized) async =>
+      (await _scopeScanner.scan({normalized})).anyHit;
 
   Future<MemoryActionResult> _executeDelete(
     String text, {
@@ -808,8 +674,7 @@ final class MemoryActionService {
     Set<String> scope, {
     required String text,
   }) async {
-    final hitText = _scopeHitText(scope);
-    final hitEntry = _scopeHitEntry(hitText);
+    final hitEntry = scopeEntryHit(scopeTextHit(scope));
 
     final deferred = <String>[];
     try {
@@ -1084,17 +949,3 @@ final class MemoryActionService {
     return trimmed.isEmpty ? null : trimmed;
   }
 }
-
-/// 控制范围（禁提 ∪ 删除）的统一文本匹配谓词：与注入侧同一套
-/// 包含规则（bannedMemoryText），删除预览、定位扫描与派生清除共用，
-/// 绝不各写一套。
-bool Function(String) _scopeHitText(Set<String> scope) =>
-    (candidate) => bannedMemoryText(candidate, scope);
-
-/// episode 条目是否命中控制范围：簿记条目（open_loop_event，含受控
-/// 标题文字）不参与匹配；摘要与原始摘录任一命中即算。
-bool Function(EpisodeEntry) _scopeHitEntry(bool Function(String) hitText) =>
-    (entry) =>
-        entry.kind != episodeKindOpenLoopEvent &&
-        (hitText(entry.summary) ||
-            (entry.evidence != null && hitText(entry.evidence!)));
