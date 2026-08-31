@@ -270,6 +270,479 @@ final class HiddenActionParse {
   final List<String> diagnostics;
 }
 
+/// open_loop_status 的目标状态（定稿白名单的定型形态）。
+enum LoopStatus {
+  active('active'),
+  paused('paused'),
+  closed('closed');
+
+  const LoopStatus(this.wireName);
+
+  final String wireName;
+
+  static LoopStatus? tryParseWireName(String value) {
+    for (final status in values) {
+      if (status.wireName == value) {
+        return status;
+      }
+    }
+    return null;
+  }
+}
+
+/// open_loop_candidate 是否主动跟进（定稿白名单的定型形态）。
+enum LoopProactive {
+  no('no'),
+  once('once'),
+  yes('yes');
+
+  const LoopProactive(this.wireName);
+
+  final String wireName;
+
+  static LoopProactive? tryParseWireName(String value) {
+    for (final proactive in values) {
+      if (proactive.wireName == value) {
+        return proactive;
+      }
+    }
+    return null;
+  }
+}
+
+/// memory_signal 画像提示的 PersonaTree 分支（定稿白名单的定型形态）。
+enum PersonaTreeBranch {
+  identity('identity'),
+  expression('expression'),
+  valuePrinciples('values'),
+  preferences('preferences'),
+  boundaries('boundaries');
+
+  const PersonaTreeBranch(this.wireName);
+
+  final String wireName;
+
+  static PersonaTreeBranch? tryParseWireName(String value) {
+    for (final branch in values) {
+      if (branch.wireName == value) {
+        return branch;
+      }
+    }
+    return null;
+  }
+}
+
+/// memory_signal 画像提示的来源性质（定稿白名单的定型形态）。
+enum PersonaNature {
+  selfReport('self_report'),
+  behavior('behavior');
+
+  const PersonaNature(this.wireName);
+
+  final String wireName;
+
+  static PersonaNature? tryParseWireName(String value) {
+    for (final nature in values) {
+      if (nature.wireName == value) {
+        return nature;
+      }
+    }
+    return null;
+  }
+}
+
+/// relationship_signal 的信号类型（定稿白名单的定型形态）。
+enum RelationshipSignal {
+  deepTalk('deep_talk'),
+  temperature('temperature'),
+  boundaryOpen('boundary_open'),
+  boundaryClose('boundary_close');
+
+  const RelationshipSignal(this.wireName);
+
+  final String wireName;
+
+  static RelationshipSignal? tryParseWireName(String value) {
+    for (final signal in values) {
+      if (signal.wireName == value) {
+        return signal;
+      }
+    }
+    return null;
+  }
+}
+
+/// memory_signal 的画像提示：分支与来源性质成对出现，缺一即整体不成立。
+final class PersonaHint {
+  const PersonaHint({required this.branch, required this.nature});
+
+  final PersonaTreeBranch branch;
+  final PersonaNature nature;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PersonaHint &&
+      other.branch == branch &&
+      other.nature == nature;
+
+  @override
+  int get hashCode => Object.hash(branch, nature);
+}
+
+/// 隐藏动作的定型模型：每种 kind 一个子类，各自只携带解析器已校验的
+/// 精确字段，「kind 与字段不匹配」的状态在类型上无法构造。序列化仍走
+/// 原扁平协议的 wire 键；[toLegacy] 提供旧扁平视图，供尚未迁移的消费层
+/// 继续使用（扩-收模式的扩展步，消费层迁移完成后移除）。
+sealed class TypedHiddenAction {
+  const TypedHiddenAction();
+
+  HiddenActionKind get kind;
+
+  /// 与旧扁平结构逐字段一致的 wire 序列化。
+  Map<String, Object?> toJson();
+
+  /// 旧扁平兼容视图：字段取值与解析器旧输出完全一致。
+  HiddenAction toLegacy();
+}
+
+/// memory_signal：值得记下的事实。summary 必填；evidence 可选；
+/// 画像提示成对可选。
+final class MemorySignalAction extends TypedHiddenAction {
+  const MemorySignalAction({required this.summary, this.evidence, this.hint});
+
+  final String summary;
+  final String? evidence;
+  final PersonaHint? hint;
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.memorySignal;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'action': kind.wireName,
+    'summary': summary,
+    if (evidence != null) 'evidence': evidence,
+    if (hint != null) 'branch': hint!.branch.wireName,
+    if (hint != null) 'nature': hint!.nature.wireName,
+  };
+
+  @override
+  HiddenAction toLegacy() => HiddenAction(
+    kind: kind,
+    summary: summary,
+    evidence: evidence,
+    branch: hint?.branch.wireName,
+    nature: hint?.nature.wireName,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemorySignalAction &&
+      other.summary == summary &&
+      other.evidence == evidence &&
+      other.hint == hint;
+
+  @override
+  int get hashCode => Object.hash(summary, evidence, hint);
+}
+
+/// memory_recall：轮内查找。聊天轮只带 query；选择调用的回应才带
+/// months/dates 选择。
+final class MemoryRecallAction extends TypedHiddenAction {
+  MemoryRecallAction({required this.query, List<String>? months, List<String>? dates})
+    : months = months == null ? null : List.unmodifiable(months),
+      dates = dates == null ? null : List.unmodifiable(dates);
+
+  final String query;
+
+  /// 月份选择（`YYYY-MM`），未选择为 null。
+  final List<String>? months;
+
+  /// 日期选择（`YYYY-MM-DD`），未选择为 null。
+  final List<String>? dates;
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.memoryRecall;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'action': kind.wireName,
+    'query': query,
+    if (months != null) 'months': months,
+    if (dates != null) 'dates': dates,
+  };
+
+  @override
+  HiddenAction toLegacy() => HiddenAction(
+    kind: kind,
+    query: query,
+    months: months,
+    dates: dates,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemoryRecallAction &&
+      other.query == query &&
+      _sameSelections(other.months, months) &&
+      _sameSelections(other.dates, dates);
+
+  @override
+  int get hashCode => Object.hash(
+    query,
+    Object.hashAll(months ?? const []),
+    Object.hashAll(dates ?? const []),
+  );
+}
+
+/// no_action：模型明确表示没有动作。
+final class NoAction extends TypedHiddenAction {
+  const NoAction();
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.noAction;
+
+  @override
+  Map<String, Object?> toJson() => {'action': kind.wireName};
+
+  @override
+  HiddenAction toLegacy() => HiddenAction(kind: kind);
+
+  @override
+  bool operator ==(Object other) => other is NoAction;
+
+  @override
+  int get hashCode => kind.hashCode;
+}
+
+/// open_loop_candidate：日终候选事项。title 走 wire 的 summary 键。
+final class OpenLoopCandidateAction extends TypedHiddenAction {
+  const OpenLoopCandidateAction({
+    required this.title,
+    this.evidence,
+    this.due,
+    this.proactive,
+    this.note,
+  });
+
+  final String title;
+  final String? evidence;
+
+  /// 最早可跟进时间（`YYYY-MM-DD[ 时段]`）。
+  final String? due;
+  final LoopProactive? proactive;
+
+  /// 跟进时需要知道的背景。
+  final String? note;
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.openLoopCandidate;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'action': kind.wireName,
+    'summary': title,
+    if (evidence != null) 'evidence': evidence,
+    if (due != null) 'due': due,
+    if (proactive != null) 'proactive': proactive!.wireName,
+    if (note != null) 'note': note,
+  };
+
+  @override
+  HiddenAction toLegacy() => HiddenAction(
+    kind: kind,
+    summary: title,
+    evidence: evidence,
+    due: due,
+    proactive: proactive?.wireName,
+    note: note,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is OpenLoopCandidateAction &&
+      other.title == title &&
+      other.evidence == evidence &&
+      other.due == due &&
+      other.proactive == proactive &&
+      other.note == note;
+
+  @override
+  int get hashCode => Object.hash(title, evidence, due, proactive, note);
+}
+
+/// open_loop_status：事项闭环、暂缓或重新活跃。
+final class OpenLoopStatusAction extends TypedHiddenAction {
+  const OpenLoopStatusAction({required this.title, required this.status, this.result});
+
+  final String title;
+  final LoopStatus status;
+
+  /// 闭环结果的追溯说明。
+  final String? result;
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.openLoopStatus;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'action': kind.wireName,
+    'summary': title,
+    'status': status.wireName,
+    if (result != null) 'result': result,
+  };
+
+  @override
+  HiddenAction toLegacy() => HiddenAction(
+    kind: kind,
+    summary: title,
+    status: status.wireName,
+    result: result,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is OpenLoopStatusAction &&
+      other.title == title &&
+      other.status == status &&
+      other.result == result;
+
+  @override
+  int get hashCode => Object.hash(title, status, result);
+}
+
+/// 用户记忆控制动作（禁提 / 当轮遗忘 / 冻结 / 解冻 / 删除）的共同形状：
+/// 只携带控制对象的话题简称。
+sealed class MemoryControlAction extends TypedHiddenAction {
+  const MemoryControlAction({required this.title});
+
+  final String title;
+
+  @override
+  Map<String, Object?> toJson() => {'action': kind.wireName, 'summary': title};
+
+  @override
+  HiddenAction toLegacy() => HiddenAction(kind: kind, summary: title);
+}
+
+/// memory_ban：用户要求不再提及。
+final class MemoryBanAction extends MemoryControlAction {
+  const MemoryBanAction({required super.title});
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.memoryBan;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemoryBanAction && other.title == title;
+
+  @override
+  int get hashCode => Object.hash(kind, title);
+}
+
+/// memory_forget：用户要求本轮内容不进入记忆。
+final class MemoryForgetAction extends MemoryControlAction {
+  const MemoryForgetAction({required super.title});
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.memoryForget;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemoryForgetAction && other.title == title;
+
+  @override
+  int get hashCode => Object.hash(kind, title);
+}
+
+/// memory_freeze：用户要求冻结内容，只有明确解除才恢复。
+final class MemoryFreezeAction extends MemoryControlAction {
+  const MemoryFreezeAction({required super.title});
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.memoryFreeze;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemoryFreezeAction && other.title == title;
+
+  @override
+  int get hashCode => Object.hash(kind, title);
+}
+
+/// memory_unfreeze：用户明确解除冻结。
+final class MemoryUnfreezeAction extends MemoryControlAction {
+  const MemoryUnfreezeAction({required super.title});
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.memoryUnfreeze;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemoryUnfreezeAction && other.title == title;
+
+  @override
+  int get hashCode => Object.hash(kind, title);
+}
+
+/// memory_delete：用户要求删除记忆。
+final class MemoryDeleteAction extends MemoryControlAction {
+  const MemoryDeleteAction({required super.title});
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.memoryDelete;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemoryDeleteAction && other.title == title;
+
+  @override
+  int get hashCode => Object.hash(kind, title);
+}
+
+/// relationship_signal：深谈信号、温度变化、边界开合。边界开合必须带
+/// evidence 的约束属于字段间校验，由解析器执行。
+final class RelationshipSignalAction extends TypedHiddenAction {
+  const RelationshipSignalAction({
+    required this.summary,
+    required this.signal,
+    this.evidence,
+  });
+
+  final String summary;
+  final RelationshipSignal signal;
+  final String? evidence;
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.relationshipSignal;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'action': kind.wireName,
+    'summary': summary,
+    if (evidence != null) 'evidence': evidence,
+    'signal': signal.wireName,
+  };
+
+  @override
+  HiddenAction toLegacy() => HiddenAction(
+    kind: kind,
+    summary: summary,
+    signal: signal.wireName,
+    evidence: evidence,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is RelationshipSignalAction &&
+      other.summary == summary &&
+      other.signal == signal &&
+      other.evidence == evidence;
+
+  @override
+  int get hashCode => Object.hash(summary, signal, evidence);
+}
+
 final _hiddenActionBlock = RegExp(
   r'<\s*qiyu[-_]actions?\s*>([\s\S]*?)<\s*/\s*qiyu[-_]actions?\s*>',
   caseSensitive: false,
