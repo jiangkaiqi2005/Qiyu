@@ -898,14 +898,18 @@ HistoryViewModel _historyViewModel() => HistoryViewModel(
 );
 
 /// 当前路由路径：go_router 17 的 `GoRouterState` 没有对外可读的当前位置，只能
-/// 从代理的匹配列表读。取**最深一条** `matchedLocation`——`currentConfiguration
-/// .uri` 在 `push` 出来的那一层上不会跟着改（它留在换栈后的位置），只读它会把
-/// 叠栈看成没跳。壳在叠栈时树上有两份，用最上面那一份拿代理。
+/// 从代理的匹配列表读。四条挂壳路由收在同一个壳路由下（见 [qiyuRoutes] 的
+/// 注释），壳页之间的切换与叠栈都发生在壳匹配的内层，所以取最里层叶子的
+/// `matchedLocation`：直接读最外一层会把叠栈与换页都看成停在原地。
 String _location(WidgetTester tester) {
   final matches = GoRouter.of(
     tester.element(find.byType(QiyuShell).last),
   ).routerDelegate.currentConfiguration.matches;
-  return matches.last.matchedLocation;
+  var last = matches.last;
+  while (last is ShellRouteMatch) {
+    last = last.matches.last;
+  }
+  return last.matchedLocation;
 }
 
 Future<LocalChatViewModel> _viewModel(
