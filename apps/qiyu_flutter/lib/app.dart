@@ -33,27 +33,67 @@ import 'features/shell/qiyu_shell.dart';
 import 'features/accessibility.dart';
 import 'theme/qiyu_theme.dart';
 
-/// 生产路由表（9 条 GoRoute）：路径与 builder 签名是行为不变量（Spec
-/// Implementation Decisions 第 18 条），一条都没动。
+/// 生产路由表（9 条路径）：路径集合是行为不变量（Spec Implementation
+/// Decisions 第 18 条），一条都没动。
 ///
 /// 本表**公开**是为了测试能对着真实配置断言（路径集合、壳挂在哪些路由上），
 /// 而不是在测试里另抄一份然后验自己抄的那份。
 ///
+/// 四条挂壳路由（/chat、/history、/memory、/settings）收在同一个 [ShellRoute]
+/// 下：[QiyuShell] 挂在这一层，不再由每条路由各自新建——四项顶层页因此始终
+/// 挂着同一只壳（User Story 5：桌面端始终看得到侧边栏，导航选中态也才真的
+/// 成立），侧边栏 `go` 在四页之间切换时只换壳下的内容页，壳的 State 跨导航
+/// 存活，侧边栏、品牌图标与背景不随路由替换重放进场动画；壳页自身与壳下内容
+/// 页都走 [NoTransitionPage]，切换不带整页过渡（壳页之间的过渡是「整页跳闪」
+/// 的另一半病灶）。导航语义一项不动：侧边栏与抽屉仍是 `go`，聊天页工具条仍是
+/// `push`（推进来的页面仍留在壳里），页内详情沿用既有 `openInFront`。
+///
+/// 页内详情（某一天、某条记忆、诊断、隐私）仍是自己的页面：不挂壳、自带
+/// 页内返回，也保留各自的默认路由过渡（不在壳页之列）。
+///
 /// 紫夜改造后的「合一页」不落在新路由上：`/` 与 `/chat` 渲染**同一个**由
-/// [QiyuShell] 包住的对话视图——`/` 前头仍压着 [RootView] 的初见门禁，`/chat`
-/// 直接进对话态。三项导航的目标页（历史 / 记忆中心 / 设置）**同样挂壳**，
-/// 桌面端因此始终看得到侧边栏（User Story 5），导航选中态也才真的成立；
-/// 页内详情（某一天、某条记忆、诊断、隐私）仍是自己的页面，带自己的返回。
-List<GoRoute> qiyuRoutes() => [
+/// [QiyuShell] 包住的对话视图——`/` 前头仍压着 [RootView] 的初见门禁（门禁
+/// 放行后由它自己挂壳），`/chat` 直接进对话态。
+List<RouteBase> qiyuRoutes() => [
   GoRoute(path: '/', builder: (context, state) => const RootView()),
-  GoRoute(
-    path: '/chat',
-    builder: (context, state) =>
-        const QiyuShell(showHomeBackdrop: true, child: LocalChatView()),
-  ),
-  GoRoute(
-    path: '/history',
-    builder: (context, state) => const QiyuShell(child: HistoryView()),
+  ShellRoute(
+    pageBuilder: (context, state, navigationShell) => NoTransitionPage<void>(
+      key: state.pageKey,
+      child: QiyuShell(
+        showHomeBackdrop: state.matchedLocation == '/chat',
+        child: navigationShell,
+      ),
+    ),
+    routes: [
+      GoRoute(
+        path: '/chat',
+        pageBuilder: (context, state) => NoTransitionPage<void>(
+          key: state.pageKey,
+          child: const LocalChatView(),
+        ),
+      ),
+      GoRoute(
+        path: '/history',
+        pageBuilder: (context, state) => NoTransitionPage<void>(
+          key: state.pageKey,
+          child: const HistoryView(),
+        ),
+      ),
+      GoRoute(
+        path: '/memory',
+        pageBuilder: (context, state) => NoTransitionPage<void>(
+          key: state.pageKey,
+          child: const MemoryView(),
+        ),
+      ),
+      GoRoute(
+        path: '/settings',
+        pageBuilder: (context, state) => NoTransitionPage<void>(
+          key: state.pageKey,
+          child: const ProviderSettingsView(),
+        ),
+      ),
+    ],
   ),
   GoRoute(
     path: '/history/:sessionId',
@@ -61,17 +101,9 @@ List<GoRoute> qiyuRoutes() => [
         HistorySessionView(sessionId: state.pathParameters['sessionId']!),
   ),
   GoRoute(
-    path: '/memory',
-    builder: (context, state) => const QiyuShell(child: MemoryView()),
-  ),
-  GoRoute(
     path: '/memory/item/:itemId',
     builder: (context, state) =>
         MemoryItemView(itemId: state.pathParameters['itemId']!),
-  ),
-  GoRoute(
-    path: '/settings',
-    builder: (context, state) => const QiyuShell(child: ProviderSettingsView()),
   ),
   GoRoute(
     path: '/settings/diagnostics',
