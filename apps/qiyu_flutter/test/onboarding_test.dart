@@ -1,10 +1,8 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
@@ -16,20 +14,23 @@ import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 
+import 'support/host_transport.dart';
+
 void main() {
   test(
     'bootstraps CSRF, reads onboarding state, and completes with headers',
     () async {
       final requests = <http.Request>[];
-      final client = MockClient((request) async {
-        requests.add(request);
-        return switch (request.url.path) {
-          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-          '/api/onboarding' => _jsonResponse({'completed': false}, 200),
-          '/api/onboarding/complete' => _jsonResponse({'completed': true}, 200),
+      final client = hostTransportClient(
+        (request) => switch (request.url.path) {
+          '/api/onboarding' => hostJsonResponse({'completed': false}, 200),
+          '/api/onboarding/complete' => hostJsonResponse({
+            'completed': true,
+          }, 200),
           _ => http.Response('not found', 404),
-        };
-      });
+        },
+        requests: requests,
+      );
       final gateway = HttpOnboardingGateway(
         client: client,
         baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -43,11 +44,8 @@ void main() {
       final completeRequest = requests.last;
       expect(completeRequest.method, 'POST');
       expect(completeRequest.url.path, '/api/onboarding/complete');
-      expect(completeRequest.headers['x-qiyu-csrf'], 'csrf-1');
-      expect(
-        requests.where((request) => request.url.path == '/api/bootstrap'),
-        hasLength(1),
-      );
+      expectCsrfHeader(completeRequest);
+      expectBootstrapRequestedOnce(requests);
     },
   );
 
@@ -348,14 +346,6 @@ Future<void> _returnToHomeViaDrawer(WidgetTester tester) async {
   await tester.pumpAndSettle();
   expect(find.byKey(const Key('nav-history')), findsNothing, reason: '抽屉收回');
   expect(find.byKey(const Key('chat-input')), findsOneWidget);
-}
-
-http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {
-  return http.Response.bytes(
-    utf8.encode(jsonEncode(body)),
-    statusCode,
-    headers: const {'content-type': 'application/json; charset=utf-8'},
-  );
 }
 
 final class _FakeOnboardingGateway implements OnboardingGateway {

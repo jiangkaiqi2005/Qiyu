@@ -3,17 +3,17 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 
+import 'support/host_transport.dart';
+
 void main() {
   test('读取设置：configured/keySet/baseUrl/model，永不携带明文 Key', () async {
-    final client = MockClient(
-      (request) async => switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/stt' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt' => hostJsonResponse({
           'configured': true,
           'keySet': true,
           'baseUrl': 'https://stt.example.com/v1',
@@ -37,10 +37,9 @@ void main() {
   });
 
   test('读取设置：豆包协议回填 provider 并标记需要 WAV 转换', () async {
-    final client = MockClient(
-      (request) async => switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/stt' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt' => hostJsonResponse({
           'configured': true,
           'keySet': true,
           'provider': 'volc_seed_asr',
@@ -63,25 +62,24 @@ void main() {
 
   test('保存与忘记 Key 都带 CSRF 头且请求体形状正确', () async {
     final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/stt' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt' => hostJsonResponse({
           'configured': true,
           'keySet': true,
           'baseUrl': 'https://stt.example.com/v1',
           'model': 'whisper-test',
         }, 200),
-        '/api/provider/stt/key' => _jsonResponse({
+        '/api/provider/stt/key' => hostJsonResponse({
           'configured': true,
           'keySet': false,
           'baseUrl': 'https://stt.example.com/v1',
           'model': 'whisper-test',
         }, 200),
         _ => http.Response('not found', 404),
-      };
-    });
+      },
+      requests: requests,
+    );
     final gateway = HttpSttSettingsGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -97,7 +95,7 @@ void main() {
     expect(saved.keySet, isTrue);
     final saveRequest = requests.last;
     expect(saveRequest.method, 'PUT');
-    expect(saveRequest.headers['x-qiyu-csrf'], 'csrf-1');
+    expectCsrfHeader(saveRequest);
     expect(jsonDecode(saveRequest.body), {
       'provider': 'openai_compatible',
       'baseUrl': 'https://stt.example.com/v1',
@@ -110,23 +108,22 @@ void main() {
     final forgetRequest = requests.last;
     expect(forgetRequest.method, 'DELETE');
     expect(forgetRequest.url.path, '/api/provider/stt/key');
-    expect(forgetRequest.headers['x-qiyu-csrf'], 'csrf-1');
+    expectCsrfHeader(forgetRequest);
   });
 
   test('连接测试复用聊天的测试结果形状并区分鉴权失败', () async {
     final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/stt/test' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt/test' => hostJsonResponse({
           'ok': false,
           'status': 'authentication',
           'message': 'API Key 没有通过验证。',
         }, 200),
         _ => http.Response('not found', 404),
-      };
-    });
+      },
+      requests: requests,
+    );
     final gateway = HttpSttSettingsGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -147,24 +144,23 @@ void main() {
   test('聊天网关 transcribe：成功返回文本，失败抛出服务端人话', () async {
     final requests = <http.Request>[];
     var transcribeCalls = 0;
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
         '/api/chat/transcribe' => () {
           // 第一次成功，第二次服务端返回可重试失败。
           transcribeCalls += 1;
           return transcribeCalls == 1
-              ? _jsonResponse({'text': '今天有点累'}, 200)
-              : _jsonResponse({
+              ? hostJsonResponse({'text': '今天有点累'}, 200)
+              : hostJsonResponse({
                   'code': 'stt_no_speech',
                   'message': '没有识别到语音，可以再说一次。',
                   'retryable': true,
                 }, 400);
         }(),
         _ => http.Response('not found', 404),
-      };
-    });
+      },
+      requests: requests,
+    );
     final gateway = HttpLocalChatGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -177,7 +173,7 @@ void main() {
     expect(sent.method, 'POST');
     expect(sent.url.path, '/api/chat/transcribe');
     expect(sent.headers['content-type'], 'audio/webm');
-    expect(sent.headers['x-qiyu-csrf'], 'csrf-1');
+    expectCsrfHeader(sent);
     expect(sent.bodyBytes, audio);
 
     await expectLater(
@@ -191,12 +187,4 @@ void main() {
       ),
     );
   });
-}
-
-http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {
-  return http.Response.bytes(
-    utf8.encode(jsonEncode(body)),
-    statusCode,
-    headers: const {'content-type': 'application/json; charset=utf-8'},
-  );
 }
