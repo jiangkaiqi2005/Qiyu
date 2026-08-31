@@ -53,11 +53,8 @@ MockClient hostTransportClient(
 }
 
 /// 断言变更请求带上了 bootstrap 换来的 CSRF 头。
-void expectCsrfHeader(
-  http.Request request, {
-  String token = hostTestCsrfToken,
-}) {
-  expect(request.headers['x-qiyu-csrf'], token);
+void expectCsrfHeader(http.Request request) {
+  expect(request.headers['x-qiyu-csrf'], hostTestCsrfToken);
 }
 
 /// 断言只读请求没有携带 CSRF 头（GET 不触发 bootstrap）。
