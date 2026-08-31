@@ -10,10 +10,12 @@
 /// 哪些节点」。
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
+import 'daily_understanding.dart';
 import 'dream.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
@@ -42,6 +44,7 @@ final class MemoryScopeHit {
   const MemoryScopeHit({
     required this.episodeEntries,
     required this.episodeDaySummaries,
+    required this.episodeDayUnderstandings,
     required this.personaNodes,
     required this.longTermItems,
     required this.monthSummaryItems,
@@ -55,6 +58,11 @@ final class MemoryScopeHit {
 
   /// 命中的当日小结数（清除管线以摘要探针清掉整段小结）。
   final int episodeDaySummaries;
+
+  /// 命中的当日理解元数据天数：清除管线对每日落盘的理解元数据过一遍
+  /// [DayUnderstanding.filterBanned]，命中即重写移除；这里统计有内容
+  /// 被移除的天数（纯键序差异不算）。
+  final int episodeDayUnderstandings;
 
   /// 命中的画像节点数：根断言、根下中间理解、独立中间理解与
   /// 未归类叶，与 applyBan 的实际清除范围对齐。
@@ -71,6 +79,7 @@ final class MemoryScopeHit {
   bool get anyHit =>
       episodeEntries > 0 ||
       episodeDaySummaries > 0 ||
+      episodeDayUnderstandings > 0 ||
       personaNodes > 0 ||
       longTermItems > 0 ||
       monthSummaryItems > 0 ||
@@ -110,6 +119,7 @@ final class MemoryScopeScanner {
 
     var episodeEntries = 0;
     var episodeDaySummaries = 0;
+    var episodeDayUnderstandings = 0;
     final dates = await episodePipeline.listEpisodeDates();
     for (final date in dates) {
       final day = await episodePipeline.readDay(date);
@@ -121,6 +131,19 @@ final class MemoryScopeScanner {
       // 与 purgeEntriesMatching 的摘要探针一致：命中即清掉当日小结。
       if (summary != null && hitText(summary)) {
         episodeDaySummaries += 1;
+      }
+      // 当日理解元数据同样在清除管线触及范围：purgeDerivedScopes 把每日
+      // 落盘的理解元数据过一遍 filterBanned，命中即重写移除。这里复用同一
+      // 过滤，只统计确有内容被移除的天（两端都按规范化序列化比较，落盘
+      // 键序漂移触发的无内容重写不算命中）。
+      final rawUnderstanding = day.understanding;
+      if (rawUnderstanding != null) {
+        final understanding = DayUnderstanding.fromJson(rawUnderstanding);
+        final filtered = understanding.filterBanned(scope);
+        if (jsonEncode(filtered.toJson()) !=
+            jsonEncode(understanding.toJson())) {
+          episodeDayUnderstandings += 1;
+        }
       }
     }
 
@@ -173,31 +196,28 @@ final class MemoryScopeScanner {
       monthSummaryItems += summaryFile.theme.where(hitText).length;
     }
 
-    // 与 purgeBlockedTitles 一致：只有受管结构的三个列表参与清除；
-    // 手写文件（解析返回 null）管线动不了，扫描也不算命中。
+    // 与 purgeBlockedTitles 逐字一致：只有受管结构的三个列表参与清除，
+    // 手写文件（解析返回 null）管线动不了，扫描也不算命中；命中判断对
+    // 整条列表行（含 "- " 前缀）走同一份归一化与包含谓词（解析器保证
+    // 列表里只有带前缀的已修剪行，清除侧也没有额外前缀判断）。先剥
+    // 前缀再匹配会在反向包含的边界场景让两侧结论漂移：预览报出清除
+    // 管线实际删不掉的行，或漏报管线整行包含命中的行。
     var relationshipLines = 0;
     final relationship = await readFileIfExists(_relationshipFile);
     if (relationship != null) {
       final parsed = parseRelationshipFile(relationship);
       if (parsed != null) {
-        bool hitLine(String line) {
-          final trimmed = line.trim();
-          if (!trimmed.startsWith('- ')) {
-            return false;
-          }
-          return hitText(trimmed.substring(2).trim());
-        }
-
         relationshipLines =
-            parsed.confirmed.where(hitLine).length +
-            parsed.probes.where(hitLine).length +
-            parsed.recentChanges.where(hitLine).length;
+            parsed.confirmed.where(hitText).length +
+            parsed.probes.where(hitText).length +
+            parsed.recentChanges.where(hitText).length;
       }
     }
 
     var dailyStateLines = 0;
     final dailyState = await readFileIfExists(_dailyStateFile);
     if (dailyState != null) {
+      // 与 _purgeDailyStateLines 逐字一致：含 "- " 前缀的整行参与匹配。
       dailyStateLines = dailyState
           .split('\n')
           .where((line) => line.trim().startsWith('- ') && hitText(line.trim()))
@@ -213,6 +233,7 @@ final class MemoryScopeScanner {
     return MemoryScopeHit(
       episodeEntries: episodeEntries,
       episodeDaySummaries: episodeDaySummaries,
+      episodeDayUnderstandings: episodeDayUnderstandings,
       personaNodes: personaNodes,
       longTermItems: longTermItems,
       monthSummaryItems: monthSummaryItems,

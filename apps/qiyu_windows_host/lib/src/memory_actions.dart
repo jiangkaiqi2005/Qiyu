@@ -74,6 +74,7 @@ final class MemoryDeleteImpact {
     required this.targetMasked,
     required this.episodeEntries,
     required this.episodeDaySummaries,
+    required this.episodeDayUnderstandings,
     required this.personaNodes,
     required this.longTermItems,
     required this.monthSummaryItems,
@@ -88,6 +89,10 @@ final class MemoryDeleteImpact {
 
   final int episodeEntries;
   final int episodeDaySummaries;
+
+  /// 会被过滤的当日理解元数据天数（清除管线逐日过 filterBanned 后
+  /// 重写移除命中内容），与统一范围扫描同一口径。
+  final int episodeDayUnderstandings;
 
   /// 会被清除的画像内容：根、根下与未归根的中间理解、未归类叶，
   /// 与 applyBan 的实际清除范围对齐。
@@ -112,6 +117,9 @@ final class MemoryDeleteImpact {
     }
     if (episodeDaySummaries > 0) {
       lines.add('当日小结：清除 $episodeDaySummaries 处。');
+    }
+    if (episodeDayUnderstandings > 0) {
+      lines.add('当日理解元数据：过滤 $episodeDayUnderstandings 天里的命中内容。');
     }
     if (personaNodes > 0) {
       lines.add('关于你的画像：清除 $personaNodes 处（根、理解与证据叶）。');
@@ -143,6 +151,7 @@ final class MemoryDeleteImpact {
     'targetMasked': targetMasked,
     'episodeEntries': episodeEntries,
     'episodeDaySummaries': episodeDaySummaries,
+    'episodeDayUnderstandings': episodeDayUnderstandings,
     'personaNodes': personaNodes,
     'longTermItems': longTermItems,
     'monthSummaryItems': monthSummaryItems,
@@ -564,6 +573,7 @@ final class MemoryActionService {
       targetMasked: isSensitiveMemoryText(text),
       episodeEntries: hit.episodeEntries,
       episodeDaySummaries: hit.episodeDaySummaries,
+      episodeDayUnderstandings: hit.episodeDayUnderstandings,
       personaNodes: hit.personaNodes,
       longTermItems: hit.longTermItems,
       monthSummaryItems: hit.monthSummaryItems,

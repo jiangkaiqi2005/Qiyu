@@ -882,6 +882,142 @@ void main() {
       final day = await pipeline.readDay('2026-08-19');
       expect(day.entries.single.summary, '不相干的记忆条目');
     });
+
+    test('范围超集不含带前缀整行：关系行不误报', () async {
+      File(path.join(memoryDirectory, 'relationship.md')).writeAsStringSync(
+        '# relationship\n\n'
+        'stage: 熟悉\n'
+        'since: 2026-08-01\n'
+        '阶段描述: 熟悉阶段。\n\n'
+        '## 近期变化\n'
+        '- 2026-08-10 关系变化\n',
+      );
+      // 范围文本包含行内容，却不包含带 "- " 前缀的整行：清除侧的包含
+      // 匹配不命中，扫描侧也不得报命中（否则预览会承诺删不掉的行）。
+      final result = await actions.deleteByScope('那次 2026-08-10 关系变化');
+      expect(result.code, 'memory_delete_no_target');
+      expect(
+        File(path.join(memoryDirectory, 'relationship.md')).readAsStringSync(),
+        contains('- 2026-08-10 关系变化'),
+      );
+      expect(
+        File(path.join(memoryDirectory, 'memory-controls.md')).existsSync(),
+        isFalse,
+      );
+    });
+
+    test('范围跨行前缀命中：整条关系行被定位并清除', () async {
+      File(path.join(memoryDirectory, 'relationship.md')).writeAsStringSync(
+        '# relationship\n\n'
+        'stage: 熟悉\n'
+        'since: 2026-08-01\n'
+        '阶段描述: 熟悉阶段。\n\n'
+        '## 当前相处方式\n'
+        '已确认：\n'
+        '- 深夜一起散步的记录\n',
+      );
+      // 范围文本只有连带 "- " 前缀才对整行构成包含：清除侧按整行匹配
+      // 会移除该行，扫描侧口径一致才不致漏报成无目标。
+      final result = await actions.deleteByScope('- 深夜一起散步');
+      expect(result.status, MemoryActionStatus.success);
+      expect(
+        File(path.join(memoryDirectory, 'relationship.md')).readAsStringSync(),
+        isNot(contains('深夜一起散步的记录')),
+      );
+      expect(
+        (await actions.deleteByScope('- 深夜一起散步')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('只命中当日理解元数据：扫描、定位与清除一致', () async {
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          '2026-08-19',
+          entries: [
+            EpisodeEntry(
+              id: 'seed:u:0',
+              sessionId: 'seed-session',
+              requestId: 'seed',
+              summary: '条目内容不命中',
+              at: DateTime.parse('2026-08-19T20:00:00').toUtc(),
+            ),
+          ],
+          summary: '小结也不命中',
+          finalized: true,
+          finalizedAt: DateTime.parse('2026-08-19T23:00:00').toUtc(),
+          understanding: DayUnderstanding(
+            loopCandidates: [
+              (
+                title: '命中理解的跟进候选',
+                due: null,
+                proactive: 'no',
+                note: null,
+              ),
+            ],
+          ).toJson(),
+        ),
+      );
+
+      // 扫描把清除管线会移除的理解元数据计入命中，而不是误报无目标。
+      final scanner = MemoryScopeScanner(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        openLoopStore: openLoopStore,
+        monthlySummary: monthlySummary,
+      );
+      final hit = await scanner.scan({'命中理解的跟进候选'});
+      expect(hit.episodeDayUnderstandings, 1);
+      expect(hit.episodeEntries, 0);
+      expect(hit.episodeDaySummaries, 0);
+      expect(hit.anyHit, isTrue);
+
+      final result = await actions.deleteByScope('命中理解的跟进候选');
+      expect(result.status, MemoryActionStatus.success);
+      final day = await pipeline.readDay('2026-08-19');
+      // 条目与小结原样保留，只有理解元数据里的命中内容被移除。
+      expect(day.entries.single.summary, '条目内容不命中');
+      expect(day.summary, '小结也不命中');
+      final filtered = day.understanding == null
+          ? const DayUnderstanding()
+          : DayUnderstanding.fromJson(day.understanding!);
+      expect(filtered.loopCandidates, isEmpty);
+      expect(
+        (await actions.deleteByScope('命中理解的跟进候选')).code,
+        'memory_delete_no_target',
+      );
+    });
+
+    test('条目与当日理解同时命中：预览两层都计数', () async {
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          '2026-08-19',
+          entries: [
+            EpisodeEntry(
+              id: 'seed:u:1',
+              sessionId: 'seed-session',
+              requestId: 'seed',
+              summary: '条目与理解都命中的内容',
+              at: DateTime.parse('2026-08-19T20:00:00').toUtc(),
+            ),
+          ],
+          finalized: true,
+          finalizedAt: DateTime.parse('2026-08-19T23:00:00').toUtc(),
+          understanding: DayUnderstanding(
+            indexKeywords: ['条目与理解都命中的内容'],
+          ).toJson(),
+        ),
+      );
+      final impact = await actions.deletePreview(
+        entryRef('2026-08-19', 'seed:u:1'),
+      );
+      expect(impact, isNotNull);
+      expect(impact!.episodeEntries, 1);
+      expect(impact.episodeDayUnderstandings, 1);
+      expect(impact.lines.join(), contains('当日理解元数据'));
+      expect(impact.toJson()['episodeDayUnderstandings'], 1);
+    });
   });
 }
 
