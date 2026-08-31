@@ -22,13 +22,14 @@ final class InProcessChatHost {
     this.diagnosticsSink,
     this._cookie,
     this._csrfToken,
+    this.zoneErrors,
   );
 
   /// 拥有 webRoot、memories 与 provider.json 的临时根目录。
   final Directory rootDirectory;
 
   /// 脚本化模型网关；未配置 Provider 的用例里为 null。
-  final ScriptedModelGateway? modelGateway;
+  final StreamingModelGateway? modelGateway;
   final String personaConstitution;
   final Clock? clock;
   final AtomicTextWriter? atomicWriter;
@@ -41,6 +42,11 @@ final class InProcessChatHost {
   String _csrfToken;
   final HttpClient _client = HttpClient();
 
+  /// Host 侧顶层异步错误留档：交付流中途异常（如落盘失败）会在服务
+  /// 端留下未捕获错误；测试框架的错误区会让它们直接失败用例，因此
+  /// Host 在守护区里启动，错误记到这里供中断类用例断言。
+  final List<Object> zoneErrors;
+
   LocalAppHost get host => _host;
   Uri get origin => _host.origin;
   String get memoryDirectory =>
@@ -52,7 +58,7 @@ final class InProcessChatHost {
   static Future<InProcessChatHost> start({
     Directory? rootDirectory,
     String personaConstitution = '测试人格宪法',
-    ScriptedModelGateway? modelGateway,
+    StreamingModelGateway? modelGateway,
     bool configureProvider = true,
     Clock? clock,
     AtomicTextWriter? atomicWriter,
@@ -107,18 +113,22 @@ final class InProcessChatHost {
       }
     }
 
-    final host = await LocalAppHost.start(
-      webRoot: webRoot.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: personaConstitution,
-      providerSettingsService: providerSettings,
-      clock: clock,
-      atomicWriter: atomicWriter,
-      // 缺省抹掉分段停顿：与迁移前测试同律，避免真路径测试空等；
-      // 需要验证停顿本身时显式传入。
-      deliveryPause: deliveryPause ?? (_) async {},
-      recallWindowWait: recallWindowWait,
-      diagnosticsSink: diagnosticsSink,
+    final zoneErrors = <Object>[];
+    final host = await _startInGuardedZone(
+      zoneErrors,
+      () => LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: personaConstitution,
+        providerSettingsService: providerSettings,
+        clock: clock,
+        atomicWriter: atomicWriter,
+        // 缺省抹掉分段停顿：与迁移前测试同律，避免真路径测试空等；
+        // 需要验证停顿本身时显式传入。
+        deliveryPause: deliveryPause ?? (_) async {},
+        recallWindowWait: recallWindowWait,
+        diagnosticsSink: diagnosticsSink,
+      ),
     );
     final client = HttpClient();
     final session = await _login(host, client);
@@ -135,34 +145,55 @@ final class InProcessChatHost {
       diagnosticsSink,
       session.cookie,
       session.csrfToken,
+      zoneErrors,
     );
+  }
+
+  /// 在守护错误区里启动/重启 Host：交付流中途异常会在服务端留下顶层
+  /// 异步错误，测试框架的错误区会把它们直接放大成用例失败；收进
+  /// [zoneErrors] 后由中断类用例自行断言。启动本身的失败仍经返回的
+  /// Future 正常上抛。
+  static Future<LocalAppHost> _startInGuardedZone(
+    List<Object> zoneErrors,
+    Future<LocalAppHost> Function() starter,
+  ) {
+    final started = runZonedGuarded<Future<LocalAppHost>>(starter, (
+      error,
+      stackTrace,
+    ) {
+      zoneErrors.add(error);
+    });
+    return started!;
   }
 
   /// 用同一套启动参数与同一目录重启 Host（刷新/重启幂等场景）；
   /// 会话 Cookie 与 CSRF 重新兑换，旧会话随重启失效。
   Future<void> restart() async {
     await _host.close();
-    _host = await LocalAppHost.start(
-      webRoot: '${rootDirectory.path}${Platform.pathSeparator}web',
-      memoryDirectory: memoryDirectory,
-      personaConstitution: personaConstitution,
-      providerSettingsService: modelGateway == null
-          ? null
-          : ProviderSettingsService(
-              JsonProviderConfigRepository(
-                filePath:
-                    '${rootDirectory.path}${Platform.pathSeparator}'
-                    'provider.json',
+    _host = await _startInGuardedZone(
+      zoneErrors,
+      () => LocalAppHost.start(
+        webRoot: '${rootDirectory.path}${Platform.pathSeparator}web',
+        memoryDirectory: memoryDirectory,
+        personaConstitution: personaConstitution,
+        providerSettingsService: modelGateway == null
+            ? null
+            : ProviderSettingsService(
+                JsonProviderConfigRepository(
+                  filePath:
+                      '${rootDirectory.path}${Platform.pathSeparator}'
+                      'provider.json',
+                ),
+                const _FileOnlySecretStore(),
+                modelGateway!,
+                ModelPromptBuilder(personaConstitution),
               ),
-              const _FileOnlySecretStore(),
-              modelGateway!,
-              ModelPromptBuilder(personaConstitution),
-            ),
-      clock: clock,
-      atomicWriter: atomicWriter,
-      deliveryPause: deliveryPause ?? (_) async {},
-      recallWindowWait: recallWindowWait,
-      diagnosticsSink: diagnosticsSink,
+        clock: clock,
+        atomicWriter: atomicWriter,
+        deliveryPause: deliveryPause ?? (_) async {},
+        recallWindowWait: recallWindowWait,
+        diagnosticsSink: diagnosticsSink,
+      ),
     );
     final session = await _login(_host, _client);
     _cookie = session.cookie;
@@ -243,31 +274,42 @@ final class InProcessChatHost {
   }) {
     final stream = OpenChatStream._();
     () async {
-      final request = await _client.openUrl(
-        'POST',
-        _host.origin.resolve('/api/chat'),
-      );
-      _mutationHeaders().forEach(request.headers.set);
-      request.add(
-        utf8.encode(
-          jsonEncode({
-            'requestId': requestId,
-            'text': text,
-            'sessionId': ?sessionId,
-          }),
-        ),
-      );
-      final response = await request.close();
-      stream._status.complete(response.statusCode);
-      await for (final line
-          in response.transform(utf8.decoder).transform(const LineSplitter())) {
-        if (line.trim().isEmpty) {
-          continue;
+      try {
+        final request = await _client.openUrl(
+          'POST',
+          _host.origin.resolve('/api/chat'),
+        );
+        _mutationHeaders().forEach(request.headers.set);
+        request.add(
+          utf8.encode(
+            jsonEncode({
+              'requestId': requestId,
+              'text': text,
+              'sessionId': ?sessionId,
+            }),
+          ),
+        );
+        final response = await request.close();
+        stream._status.complete(response.statusCode);
+        await for (final line
+            in response
+                .transform(utf8.decoder)
+                .transform(const LineSplitter())) {
+          if (line.trim().isEmpty) {
+            continue;
+          }
+          final json = jsonDecode(line) as Map<String, Object?>;
+          stream._push(ChatDeliveryEvent.fromJson(json));
         }
-        final json = jsonDecode(line) as Map<String, Object?>;
-        stream._push(ChatDeliveryEvent.fromJson(json));
+        stream._finish();
+      } on Object catch (error) {
+        // 服务端把仓储层异常作为流错误向外传时，连接在交付中途断开；
+        // 测试按「流异常终止 + 已收到的部分事件」断言。
+        if (!stream._status.isCompleted) {
+          stream._status.complete(HttpStatus.internalServerError);
+        }
+        stream._finish(error);
       }
-      stream._finish();
     }();
     return stream;
   }
@@ -289,6 +331,18 @@ final class InProcessChatHost {
 
   /// `GET /api/history`：历史列表。
   Future<HttpResponse> readHistory() => _get('/api/history');
+
+  /// `DELETE /api/history/sessions/<id>`：删除会话。
+  Future<HttpResponse> deleteSession(String sessionId) async {
+    final request = await _client.openUrl(
+      'DELETE',
+      _host.origin.resolve('/api/history/sessions/$sessionId'),
+    );
+    _mutationHeaders().forEach(request.headers.set);
+    final response = await request.close();
+    final body = await response.transform(utf8.decoder).join();
+    return HttpResponse(response.statusCode, body);
+  }
 
   /// 以测试自己的时钟重开一个只读仓储视图，用于对照落盘。
   MarkdownMemoryRepository sessionReader() => MarkdownMemoryRepository(
@@ -380,6 +434,9 @@ final class OpenChatStream {
   final _finished = Completer<void>();
   final _arrivals = StreamController<void>.broadcast();
 
+  /// 流异常终止时的原因；正常交付完成为 null。
+  Object? terminationError;
+
   Future<int> get statusCode => _status.future;
   Future<void> get done => _finished.future;
 
@@ -401,7 +458,8 @@ final class OpenChatStream {
     _arrivals.add(null);
   }
 
-  void _finish() {
+  void _finish([Object? error]) {
+    terminationError = error;
     _arrivals.close();
     if (!_finished.isCompleted) {
       _finished.complete();
