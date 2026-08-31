@@ -61,7 +61,8 @@ abstract final class QiyuIcons {
     fontPackage: null,
   );
 
-  /// 二级页返回（历史详情、诊断、隐私、页头返回键）与抽屉收回。
+  /// 二级页返回（历史详情、诊断、隐私、页头返回键）、抽屉收回与桌面侧边栏
+  /// 「回合一页」入口。
   static const IconData arrow_back = IconData(
     0xE5C4,
     fontFamily: QiyuIconSpec.fontFamily,
