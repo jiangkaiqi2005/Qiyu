@@ -30,13 +30,17 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 void main() {
   group('导航壳 QiyuShell', () {
-    testWidgets('桌面常驻 240px 毛玻璃侧边栏：品牌槽 + 三项导航 + 连接状态', (tester) async {
+    testWidgets('桌面默认展开 240px 毛玻璃侧边栏：品牌槽 + 三项导航 + 回合一页 + 连接状态', (tester) async {
       await _pumpShell(tester, width: 1200, height: 800);
 
       expect(find.byKey(const Key('nav-brand')), findsOneWidget);
       expect(find.byKey(const Key('nav-history')), findsOneWidget);
       expect(find.byKey(const Key('nav-memory')), findsOneWidget);
       expect(find.byKey(const Key('nav-settings')), findsOneWidget);
+      // 展开态有独立的「回合一页」入口；收起态悬浮入口默认不出现（默认展开，
+      // 且不持久化收起状态）。
+      expect(find.byKey(const Key('go-home')), findsOneWidget);
+      expect(find.byKey(const Key('nav-sidebar-expand')), findsNothing);
       expect(find.byKey(const Key('conn-status')), findsOneWidget);
       // 桌面不出现三条杠，也不出现底部导航。
       expect(find.byKey(const Key('nav-menu-button')), findsNothing);
@@ -132,14 +136,132 @@ void main() {
       expect(FocusManager.instance.primaryFocus, menu);
     });
 
-    testWidgets('点品牌槽回合一页', (tester) async {
+    testWidgets('展开态「回合一页」入口（go-home）落回合一页', (tester) async {
       await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
       expect(_location(tester), '/chat');
 
       await tester.tap(find.byKey(const Key('go-home')));
       await tester.pumpAndSettle();
       // 落点是合一页那**一个页面**（`/`）：会话已有消息时这里还是消息流，
-      // 品牌槽不借这一跳新建会话（决策日志第五轮 #8）。
+      // 「回合一页」不借这一跳新建会话（决策日志第五轮 #8）。键位从品牌槽迁到
+      // 侧边栏里的独立入口，停播 + go('/') 的语义一字不动（2026-08-31 裁定）。
+      expect(_location(tester), '/');
+    });
+
+    testWidgets('点品牌图标收起侧边栏：面板离场、左缘出现悬浮入口，本次不回合一页', (tester) async {
+      await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
+      expect(find.byKey(const Key('nav-history')), findsOneWidget);
+      expect(find.byKey(const Key('nav-sidebar-expand')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('nav-brand')));
+      await tester.pumpAndSettle();
+
+      // 收起：面板整体离场（导航项与回合一页入口都不再占用焦点/语义树），
+      // 左缘只剩一枚品牌图标大小的悬浮入口。
+      expect(find.byKey(const Key('nav-history')), findsNothing);
+      expect(find.byKey(const Key('go-home')), findsNothing);
+      expect(find.byKey(const Key('nav-sidebar-expand')), findsOneWidget);
+      // 本次点击只收起，不回合一页。
+      expect(_location(tester), '/chat');
+      // 内容区自然变宽，不产生溢出。
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('点悬浮入口展开侧边栏；展开后品牌图标恢复收起语义', (tester) async {
+      await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
+      await tester.tap(find.byKey(const Key('nav-brand')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('nav-sidebar-expand')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('nav-sidebar-expand')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('nav-history')), findsOneWidget);
+      expect(find.byKey(const Key('nav-sidebar-expand')), findsNothing);
+      expect(_location(tester), '/chat', reason: '展开同样不回合一页');
+
+      // 展开后品牌图标恢复展开态行为：点它还是收起。
+      await tester.tap(find.byKey(const Key('nav-brand')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('nav-history')), findsNothing);
+      expect(find.byKey(const Key('nav-sidebar-expand')), findsOneWidget);
+      expect(_location(tester), '/chat');
+    });
+
+    testWidgets('收起的宽度过渡走 QiyuMotion：默认有途中值，reduced-motion 归零', (tester) async {
+      await _pumpShell(tester, width: 1200, height: 800);
+      await tester.tap(find.byKey(const Key('nav-brand')));
+      await tester.pump();
+      await tester.pump(QiyuMotion.drawer ~/ 2);
+      expect(
+        tester.getSize(find.byKey(const Key('nav-sidebar-size'))).width,
+        inInclusiveRange(1, QiyuLayout.sidebarWidth - 1),
+        reason: '默认动效下收起应处于宽度过渡途中，不是瞬间塌掉',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.getSize(find.byKey(const Key('nav-sidebar-size'))).width,
+        0,
+      );
+
+      // reduced-motion：时长压成 0，两帧内直接塌到底，不留途中值。
+      await _pumpShell(tester, width: 1200, height: 800, reducedMotion: true);
+      await tester.tap(find.byKey(const Key('nav-brand')));
+      await tester.pump();
+      await tester.pump();
+      expect(
+        tester.getSize(find.byKey(const Key('nav-sidebar-size'))).width,
+        0,
+      );
+    });
+
+    testWidgets('收起态悬浮入口键盘可达：Tab 落焦、Enter 展开，有 tooltip 与语义标签', (tester) async {
+      // 句柄必须在用例体内释放：框架在 tearDown 回调之前就校验句柄是否清空。
+      final semantics = tester.ensureSemantics();
+      await _pumpShell(tester, width: 1200, height: 800);
+      await tester.tap(find.byKey(const Key('nav-brand')));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('展开侧边栏'), findsOneWidget);
+      expect(find.bySemanticsLabel('展开侧边栏'), findsOneWidget);
+
+      final focusNode = tester
+          .widget<InkWell>(find.byKey(const Key('nav-sidebar-expand')))
+          .focusNode!;
+      var landed = false;
+      for (var i = 0; i < 12 && !landed; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        landed = focusNode.hasFocus;
+      }
+      expect(landed, isTrue, reason: '悬浮入口必须能被键盘 Tab 走到');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nav-history')),
+        findsOneWidget,
+        reason: 'Enter 激活应展开侧边栏',
+      );
+      semantics.dispose();
+    });
+
+    testWidgets('窄屏抽屉不回归：品牌槽仍回合一页，没有收起入口与独立回合一页项', (tester) async {
+      await _pumpShell(tester, width: 420, height: 900, at: '/chat');
+      await tester.tap(find.byKey(const Key('nav-menu-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('nav-sidebar-expand')), findsNothing);
+      expect(find.text('回合一页'), findsNothing);
+      // `go-home` 键仍在抽屉的品牌槽上。
+      expect(find.byKey(const Key('go-home')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('go-home')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nav-history')),
+        findsNothing,
+        reason: '抽屉收回',
+      );
       expect(_location(tester), '/');
     });
 

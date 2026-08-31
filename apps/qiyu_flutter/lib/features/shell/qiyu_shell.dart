@@ -47,10 +47,14 @@ enum QiyuNavDestination {
 /// 视口，不被 240px 栏切掉）→ 上层 = 壳与内容，侧边栏与抽屉作为半透明层
 /// 叠在背景之上。被壳包住的页面因此必须把自己的 `Scaffold` 底色撤成透明。
 ///
-/// - 桌面（宽度 ≥ [QiyuLayout.desktopBreakpoint]）：左侧常驻 240px 毛玻璃
-///   侧边栏，自上而下是品牌图标槽 → 三项导航 → 底部连接状态；无三条杠、
+/// - 桌面（宽度 ≥ [QiyuLayout.desktopBreakpoint]）：左侧 240px 毛玻璃侧边栏，
+///   自上而下是品牌图标槽 → 三项导航 → 「回合一页」入口 → 底部连接状态；无三条杠、
 ///   无底部导航。合一页与三个功能页都挂着它（User Story 5「桌面端始终看到
-///   侧边栏」）。
+///   侧边栏」）。侧边栏**可收起**（2026-08-31 用户裁定：收不回去的问题）：
+///   展开时点品牌图标 = 收起（本次不回合一页）；收起后左缘保留一枚品牌图标大小
+///   的毛玻璃悬浮入口，点它 = 展开（同样不回合一页）；「回合一页」语义迁到展开态
+///   面板里的独立入口（键 `go-home` 随之迁移）。收起状态**不持久化**，刷新/重启
+///   回到默认展开。
 /// - 窄屏：左上角三条杠打开约视口 2/3 宽的毛玻璃抽屉，内容与桌面**同源**
 ///   （同一个 [_NavPanel]），点遮罩、再点三条杠或按 Esc 收回。
 class QiyuShell extends StatefulWidget {
@@ -74,6 +78,14 @@ class QiyuShell extends StatefulWidget {
 class _QiyuShellState extends State<QiyuShell>
     with SingleTickerProviderStateMixin {
   bool _drawerOpen = false;
+
+  /// 桌面侧边栏收起态（2026-08-31 用户裁定）：**不持久化**——刷新/重启回到
+  /// 默认展开；只在桌面分支消费，窄屏抽屉不读它。
+  bool _sidebarCollapsed = false;
+
+  /// 面板是否在树里：收起动画到底（[_onSidebarAnimationEnd]）才摘出；展开时
+  /// 与宽度增长同帧挂回。默认展开即挂载。
+  bool _sidebarPanelMounted = true;
 
   /// 抽屉开合动画。必须在 initState 里建好：惰性字段初始化会在 dispose
   /// 首次访问时于「正在卸载」的树上创建 ticker，直接炸断言。
@@ -165,11 +177,14 @@ class _QiyuShellState extends State<QiyuShell>
     context.go(location);
   }
 
-  /// 品牌槽：**回合一页**。目的地固定为 `/`（不是「回来时那页」），语义与退役前
-  /// 的 `_goHome` 一致，同样先无条件停播。合一页是首页与对话页的同一个页面，所以
+  /// **回合一页**。目的地固定为 `/`（不是「回来时那页」），语义与退役前的
+  /// `_goHome` 一致，同样先无条件停播。合一页是首页与对话页的同一个页面，所以
   /// 本次会话已有消息时落回的仍是消息流——不借这个动作新建会话（用户裁定，见
   /// 决策日志第五轮 #8 与 Spec Story 6 的 2026-08-30 收口；要做到字面上的「回
   /// 空状态首页」只能引入新建会话，那是行为改动，越出换皮范围）。
+  ///
+  /// 消费方（2026-08-31 起）：桌面侧边栏展开态里独立的「回合一页」入口（键
+  /// `go-home`），以及窄屏抽屉的品牌槽。桌面品牌图标不再回合一页，只管收起。
   void _goHome() {
     _chatViewModel(context)?.voiceOutput.stopAll();
     context.go('/');
@@ -207,16 +222,117 @@ class _QiyuShellState extends State<QiyuShell>
           if (desktop)
             Row(
               children: [
-                SizedBox(
-                  width: QiyuLayout.sidebarWidth,
-                  child: _NavPanel(onNavigate: _goTo, onHome: _goHome),
+                // 收起/展开的宽度过渡。用 AnimatedContainer 这类隐式动画，生命
+                // 周期由框架自管，不另引入需要 dispose 的 AnimationController
+                // （见 _drawerController 处的纪律注释）。
+                //
+                // 两段编排：收起时宽度 240→0，面板先保持挂载、收到底（onEnd）才
+                // 离场，不占焦点与语义树（同抽屉 `_drawerMounted` 的口径）；展开
+                // 时面板挂回、宽度 0→240 长回来。全程面板都在 OverflowBox 里按
+                // 定宽 240 布局，不在过渡途中被压到小宽度重排（列表项里的固定
+                // 图标才不会挤爆），越出盒宽的部分由容器裁掉。
+                AnimatedContainer(
+                  key: const Key('nav-sidebar-size'),
+                  duration: qiyuMotion(context, QiyuMotion.drawer),
+                  curve: Curves.easeOut,
+                  width: _sidebarCollapsed ? 0 : QiyuLayout.sidebarWidth,
+                  // Container 只在带 decoration 时才接受非 none 的裁剪；空装饰
+                  // 只为放行这一条。
+                  decoration: const BoxDecoration(),
+                  clipBehavior: Clip.hardEdge,
+                  onEnd: _onSidebarAnimationEnd,
+                  child: _sidebarPanelMounted
+                      ? OverflowBox(
+                          alignment: Alignment.centerLeft,
+                          minWidth: QiyuLayout.sidebarWidth,
+                          maxWidth: QiyuLayout.sidebarWidth,
+                          child: SizedBox(
+                            width: QiyuLayout.sidebarWidth,
+                            child: _NavPanel(
+                              onNavigate: _goTo,
+                              onHome: _goHome,
+                              onCollapse: () =>
+                                  setState(() => _sidebarCollapsed = true),
+                            ),
+                          ),
+                        )
+                      : null,
                 ),
                 Expanded(child: widget.child),
               ],
             )
           else
             _narrowLayer(viewport),
+          // 收起态的左缘悬浮入口：叠在内容之上，点它展开（不回合一页）。
+          if (desktop && _sidebarCollapsed) _sidebarExpandEntry(),
         ],
+      ),
+    );
+  }
+
+  /// 收起动画到底后才把面板摘出树：宽度过渡期间它还在（内容跟着塌），塌到 0
+  /// 再离场；展开不需要这一步（挂载与宽度增长同帧开始）。仍在收起态才摘，是
+  /// 为了收/展在半途互相打断时不把还该在树里的面板误摘。
+  ///
+  /// setState 延到帧后：reduced-motion 下时长为 0，onEnd 会在 build 途中同步
+  /// 回调，当场 setState 直接撞「build 期间标脏」断言。
+  void _onSidebarAnimationEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _sidebarCollapsed && _sidebarPanelMounted) {
+        setState(() => _sidebarPanelMounted = false);
+      }
+    });
+  }
+
+  /// 收起态悬浮入口（2026-08-31 用户裁定）：左缘保留一枚品牌图标大小的毛玻璃
+  /// 圆钮，图形/尺寸沿用品牌槽那枚。键盘可达（自持焦点环）、带 tooltip 与
+  /// 语义标签（裁定第 2、7 条）。
+  Widget _sidebarExpandEntry() {
+    return Positioned(
+      top: 0,
+      left: 0,
+      child: SafeArea(
+        // 落位对齐品牌槽在展开面板里的坐标：面板上内边距 + 左内边距，再加
+        // 品牌槽自身那档水平内缩，收起/展开之间图标不跳位。
+        child: Padding(
+          padding: const EdgeInsets.only(
+            top: QiyuLayout.sidebarPaddingVertical,
+            left:
+                QiyuLayout.sidebarPaddingHorizontal +
+                QiyuLayout.navItemPaddingHorizontal,
+          ),
+          child: QiyuOwnFocusRing(
+            borderRadius: QiyuRadii.circleBorder,
+            builder: (context, focusNode) => QiyuGlassPanel(
+              borderRadius: QiyuRadii.circleBorder,
+              child: Semantics(
+                button: true,
+                label: '展开侧边栏',
+                child: Tooltip(
+                  message: '展开侧边栏',
+                  // 语义标签由外层 Semantics 单点给出，不在语义树里重复一份。
+                  excludeFromSemantics: true,
+                  child: InkWell(
+                    key: const Key('nav-sidebar-expand'),
+                    focusNode: focusNode,
+                    customBorder: const CircleBorder(),
+                    // 面板挂回与收起态翻转同帧发生：容器从 0 往 240 长回来。
+                    onTap: () => setState(() {
+                      _sidebarCollapsed = false;
+                      _sidebarPanelMounted = true;
+                    }),
+                    child: SizedBox.square(
+                      dimension: QiyuLayout.brandMarkSize,
+                      child: const Center(
+                        child: _BrandMark(key: Key('nav-brand')),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -411,10 +527,19 @@ LocalChatViewModel? _chatViewModel(BuildContext context) =>
 /// 整块**可滚动**：连接状态仍压在底部，但小窗或字号放大（ticket 24 的口径，
 /// §8 的列表项在 2.0 字阶下 240px 宽装不下）时整块能滚，绝不溢出。
 class _NavPanel extends StatelessWidget {
-  const _NavPanel({required this.onNavigate, required this.onHome});
+  const _NavPanel({
+    required this.onNavigate,
+    required this.onHome,
+    this.onCollapse,
+  });
 
   final void Function(String location) onNavigate;
   final VoidCallback onHome;
+
+  /// 桌面展开态传入：品牌图标点击改为**收起侧边栏**（本次不回合一页），
+  /// 「回合一页」语义移到面板里的独立入口；窄屏抽屉传 null，品牌槽保持
+  /// 「回合一页」语义不动（图标状态机，2026-08-31 用户裁定）。
+  final VoidCallback? onCollapse;
 
   @override
   Widget build(BuildContext context) {
@@ -441,7 +566,13 @@ class _NavPanel extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _BrandSlot(onTap: onHome),
+                  _BrandSlot(
+                    onTap: onCollapse ?? onHome,
+                    // `go-home` 键跟着「回合一页」职责走：桌面展开态该职责迁到
+                    // 下方独立入口，品牌槽只管收起，不再带这个键；窄屏抽屉保持
+                    // 品牌槽回合一页，键留在这里。
+                    tapKey: onCollapse == null ? const Key('go-home') : null,
+                  ),
                   const SizedBox(height: QiyuSpacing.lg),
                   for (final destination in QiyuNavDestination.values)
                     _NavItem(
@@ -452,6 +583,20 @@ class _NavPanel extends StatelessWidget {
                       selected: current == destination.path,
                       onTap: () => onNavigate(destination.path),
                     ),
+                  if (onCollapse != null) ...[
+                    const SizedBox(height: QiyuSpacing.lg),
+                    // 「回合一页」独立入口（2026-08-31 用户裁定）：原挂在品牌
+                    // 图标上的回合一页语义迁到这里，既有测试键 `go-home` 随职责
+                    // 一起搬过来。沿用 §8 列表项档与中性选中态，绝不用紫。
+                    _NavItem(
+                      key: const Key('nav-go-home'),
+                      tapKey: const Key('go-home'),
+                      icon: QiyuIcons.arrow_back,
+                      label: '回合一页',
+                      selected: current == '/' || current == '/chat',
+                      onTap: onHome,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -471,11 +616,19 @@ class _NavPanel extends StatelessWidget {
 
 /// 品牌图标槽（Spec Implementation Decisions 第 9 条、决策日志第一轮第 8 条）：
 /// **只放图形占位，不带「栖语」字标**——字标在第一轮就被列为被拒项。本轮不做
-/// 图形设计，落一个中性几何占位：不着紫、无渐变、无发光，点击回合一页。
+/// 图形设计，落一个中性几何占位：不着紫、无渐变、无发光。
+///
+/// 点击语义由壳按形态分派（2026-08-31 用户裁定的图标状态机）：桌面展开态点它
+/// **收起侧边栏**（键位不带 `go-home`，回合一页是面板里的独立入口）；窄屏抽屉
+/// 点它仍回合一页（键 `go-home` 留在这一侧）。
 class _BrandSlot extends StatefulWidget {
-  const _BrandSlot({required this.onTap});
+  const _BrandSlot({required this.onTap, this.tapKey});
 
   final VoidCallback onTap;
+
+  /// 内层点击键：窄屏抽屉传 `go-home`（品牌槽回合一页），桌面展开态传
+  /// `null`（品牌图标只管收起侧边栏）。
+  final Key? tapKey;
 
   @override
   State<_BrandSlot> createState() => _BrandSlotState();
@@ -495,9 +648,7 @@ class _BrandSlotState extends State<_BrandSlot> {
     return QiyuFocusRing(
       focusNode: _focusNode,
       child: InkWell(
-        // `go-home` 是既有测试键：合一页后「回首页」的入口就是品牌槽，
-        // 键位随职责一起搬过来，不改名也不放宽断言。
-        key: const Key('go-home'),
+        key: widget.tapKey,
         focusNode: _focusNode,
         borderRadius: QiyuRadii.cardBorder,
         onTap: widget.onTap,
@@ -506,31 +657,38 @@ class _BrandSlotState extends State<_BrandSlot> {
             horizontal: QiyuLayout.navItemPaddingHorizontal,
             vertical: QiyuSpacing.xs,
           ),
-          child: Align(
+          child: const Align(
             alignment: Alignment.centerLeft,
-            child: Container(
-              key: const Key('nav-brand'),
-              width: QiyuLayout.brandMarkSize,
-              height: QiyuLayout.brandMarkSize,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  width: QiyuLine.hairline,
-                  color: QiyuColors.line,
-                ),
-                color: QiyuColors.neutralFill,
-              ),
-              child: const Center(
-                child: SizedBox.square(
-                  dimension: 12,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: QiyuColors.muted,
-                    ),
-                  ),
-                ),
-              ),
+            child: _BrandMark(key: Key('nav-brand')),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 品牌图形本体：中性几何占位（发丝描边外圈 + 居中实心小圆点）。品牌槽与
+/// 收起态悬浮入口共用这同一份图形与尺寸，键 `nav-brand` 始终跟着品牌图标走。
+class _BrandMark extends StatelessWidget {
+  const _BrandMark({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: QiyuLayout.brandMarkSize,
+      height: QiyuLayout.brandMarkSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(width: QiyuLine.hairline, color: QiyuColors.line),
+        color: QiyuColors.neutralFill,
+      ),
+      child: const Center(
+        child: SizedBox.square(
+          dimension: 12,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: QiyuColors.muted,
             ),
           ),
         ),
