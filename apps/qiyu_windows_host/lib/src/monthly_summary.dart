@@ -325,17 +325,10 @@ final class MonthlySummaryStore {
     );
   }
 
-  /// 删除清除（定稿：月摘要是派生内容，删除必须清掉引用）：扫描已有
-  /// 月摘要，移除命中封禁集合的条目与主题关键词，原子重写有变化的
-  /// 月份。已完整覆盖的月份平时绝不重新生成，所以删除必须在这里
-  /// 显式清理。返回移除的条目与关键词总数。
-  Future<int> purgeBlocked(Set<String> blocked) async {
-    if (blocked.isEmpty) {
-      return 0;
-    }
-    var removed = 0;
-    // 按文件系统扫描已有摘要：即使某月的 episodes 已被删空，
-    // 残留的摘要文件也必须清理。
+  /// 已有月摘要的月份集合（按 episodes 目录扫描 summary.md）：即使
+  /// 某月的 episodes 已被删空，残留的摘要文件也必须被枚举到——
+  /// 删除清除与删除范围扫描共用这一份事实来源。
+  Future<List<String>> summaryMonths() async {
     final months = <String>{};
     final episodesRoot = Directory(path.join(memoryDirectory, 'episodes'));
     if (await episodesRoot.exists()) {
@@ -354,7 +347,19 @@ final class MonthlySummaryStore {
         }
       }
     }
-    for (final month in months.toList()..sort()) {
+    return months.toList()..sort();
+  }
+
+  /// 删除清除（定稿：月摘要是派生内容，删除必须清掉引用）：扫描已有
+  /// 月摘要，移除命中封禁集合的条目与主题关键词，原子重写有变化的
+  /// 月份。已完整覆盖的月份平时绝不重新生成，所以删除必须在这里
+  /// 显式清理。返回移除的条目与关键词总数。
+  Future<int> purgeBlocked(Set<String> blocked) async {
+    if (blocked.isEmpty) {
+      return 0;
+    }
+    var removed = 0;
+    for (final month in await summaryMonths()) {
       final summary = await readMonthSummary(month);
       if (summary == null || !summary.readable) {
         continue;
