@@ -32,14 +32,21 @@ class QiyuCenteredScrollable extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        // Center 必须在 maxWidth 约束**外面**：滚动视口会把比视口窄的子节点
+        // 顶到左缘，只有让 Center 占满视口宽度，≤maxWidth 的内容块才会水平
+        // 居中；minHeight 仍由外层 ConstrainedBox 保留「短内容垂直居中」。
         return SingleChildScrollView(
           padding: padding,
           child: ConstrainedBox(
             constraints: BoxConstraints(
-              maxWidth: maxWidth,
               minHeight: math.max(0, constraints.maxHeight - padding.vertical),
             ),
-            child: Center(child: child),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: maxWidth),
+                child: child,
+              ),
+            ),
           ),
         );
       },
