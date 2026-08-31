@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
@@ -494,6 +496,144 @@ void main() {
       privilege.diagnostics,
       contains(HiddenActionDiagnostics.privilegeViolation),
     );
+  });
+
+  group('parser emits the sealed typed models', () {
+    test('every kind lands on its exact typed shape', () {
+      final parse = parseHiddenActions('''都在。
+<qiyu-actions>[
+  {"action":"memory_signal","summary":"用户养了一只叫米子的猫","evidence":"我家米子","branch":"identity","nature":"self_report"},
+  {"action":"memory_recall","query":"火锅店","months":["2026-07"],"dates":["2026-07-14"]}
+]</qiyu-actions>''');
+
+      final signal = parse.typedActions.first;
+      expect(signal, isA<MemorySignalAction>());
+      signal as MemorySignalAction;
+      expect(signal.summary, '用户养了一只叫米子的猫');
+      expect(signal.evidence, '我家米子');
+      expect(
+        signal.hint,
+        const PersonaHint(
+          branch: PersonaTreeBranch.identity,
+          nature: PersonaNature.selfReport,
+        ),
+      );
+
+      final recall = parse.typedActions.last;
+      expect(recall, isA<MemoryRecallAction>());
+      recall as MemoryRecallAction;
+      expect(recall.query, '火锅店');
+      expect(recall.months, ['2026-07']);
+      expect(recall.dates, ['2026-07-14']);
+
+      final rest = parseHiddenActions('''好。
+<qiyu-actions>[
+  {"action":"no_action"},
+  {"action":"open_loop_candidate","summary":"人生第一次演讲","due":"2026-07-05 晚上","proactive":"once","note":"用户说这是人生第一次演讲","evidence":"下周三是人生第一次演讲"}
+]</qiyu-actions>''');
+      expect(rest.typedActions.first, const NoAction());
+      expect(
+        rest.typedActions.last,
+        const OpenLoopCandidateAction(
+          title: '人生第一次演讲',
+          evidence: '下周三是人生第一次演讲',
+          due: '2026-07-05 晚上',
+          proactive: LoopProactive.once,
+          note: '用户说这是人生第一次演讲',
+        ),
+      );
+
+      final status = parseHiddenActions(
+        '<qiyu-actions>[{"action":"open_loop_status",'
+        '"summary":"人生第一次演讲","status":"closed",'
+        '"result":"用户说演讲很顺利"}]</qiyu-actions>',
+      );
+      expect(
+        status.typedActions.single,
+        const OpenLoopStatusAction(
+          title: '人生第一次演讲',
+          status: LoopStatus.closed,
+          result: '用户说演讲很顺利',
+        ),
+      );
+
+      final controls = parseHiddenActions('''好。
+<qiyu-actions>[
+  {"action":"memory_ban","summary":"医院检查"},
+  {"action":"memory_forget","summary":"今晚的争吵"}
+]</qiyu-actions>''');
+      expect(
+        controls.typedActions.first,
+        const MemoryBanAction(title: '医院检查'),
+      );
+      expect(
+        controls.typedActions.last,
+        const MemoryForgetAction(title: '今晚的争吵'),
+      );
+
+      final moreControls = parseHiddenActions('''好。
+<qiyu-actions>[
+  {"action":"memory_freeze","summary":"换工作话题"},
+  {"action":"memory_unfreeze","summary":"换工作话题"}
+]</qiyu-actions>''');
+      expect(
+        moreControls.typedActions.first,
+        const MemoryFreezeAction(title: '换工作话题'),
+      );
+      expect(
+        moreControls.typedActions.last,
+        const MemoryUnfreezeAction(title: '换工作话题'),
+      );
+
+      final delete = parseHiddenActions(
+        '<qiyu-actions>[{"action":"memory_delete","summary":"医院检查"}]'
+        '</qiyu-actions>',
+      );
+      expect(
+        delete.typedActions.single,
+        const MemoryDeleteAction(title: '医院检查'),
+      );
+
+      final relationship = parseHiddenActions(
+        '<qiyu-actions>[{"action":"relationship_signal",'
+        '"signal":"boundary_open","summary":"用户接受了轻调侃",'
+        '"evidence":"被调侃后反逗了一句"}]</qiyu-actions>',
+      );
+      expect(
+        relationship.typedActions.single,
+        const RelationshipSignalAction(
+          summary: '用户接受了轻调侃',
+          signal: RelationshipSignal.boundaryOpen,
+          evidence: '被调侃后反逗了一句',
+        ),
+      );
+    });
+
+    test('invalid persona hints leave the typed hint absent', () {
+      final parse = parseHiddenActions(
+        '<qiyu-actions>[{"action":"memory_signal","summary":"用户像是老师",'
+        '"branch":"identity","nature":"behavior"}]</qiyu-actions>',
+      );
+      final signal = parse.typedActions.single;
+      expect(signal, isA<MemorySignalAction>());
+      expect((signal as MemorySignalAction).hint, isNull);
+      expect(parse.diagnostics, [HiddenActionDiagnostics.personaHintDropped]);
+    });
+
+    test('the legacy view stays field-identical to the typed source', () {
+      final parse = parseHiddenActions('''都在。
+<qiyu-actions>[
+  {"action":"memory_signal","summary":"用户养了一只叫米子的猫","evidence":"我家米子","branch":"identity","nature":"self_report"},
+  {"action":"memory_recall","query":"火锅店","months":["2026-07"],"dates":["2026-07-14"]}
+]</qiyu-actions>''');
+
+      for (var index = 0; index < parse.typedActions.length; index += 1) {
+        final typed = parse.typedActions[index];
+        final legacy = parse.actions[index];
+        expect(legacy, typed.toLegacy());
+        expect(jsonEncode(legacy.toJson()), jsonEncode(typed.toJson()));
+      }
+    });
   });
 }
 
