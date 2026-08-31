@@ -11,6 +11,36 @@ import 'voice_output_controller.dart';
 
 typedef RequestIdFactory = String Function();
 
+/// 一轮聊天事务：从发送到事件流终结。等待指示、流式文本与交付段进度
+/// 都属于事务自身；事务失效（新发送 / 恢复 / 丢弃会话）之后，旧流再来
+/// 的事件整体丢弃——不写状态、不通知界面。
+final class _ChatTurn {
+  _ChatTurn({
+    required this.generation,
+    required this.requestId,
+    required this.text,
+  });
+
+  /// 创建时取得的唯一代际标识：与视图模型的当前代数一致才允许落地。
+  final int generation;
+  final String requestId;
+  final String text;
+
+  bool waiting = false;
+  String streamingText = '';
+  bool accepted = false;
+
+  /// 收到过 done。
+  bool completed = false;
+
+  /// 至少一段交付成功落进气泡。
+  bool committed = false;
+
+  List<String>? finalMessages;
+  ReplySource? source;
+  FallbackReason? fallbackReason;
+}
+
 final class LocalChatViewModel extends ChangeNotifier {
   LocalChatViewModel(
     this._gateway, {
@@ -55,21 +85,30 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool _checkingHost = false;
   bool _initializing = false;
   bool _initialized = false;
-  bool _sending = false;
-  bool _waiting = false;
-  String _streamingText = '';
+
+  /// 唯一代数计数器：新发送、会话恢复与丢弃会话都推进它；原恢复代数
+  /// 并入这里，不再有两套代际。
+  int _generation = 0;
+
+  /// 当前活跃事务。为 null 即不在发送之中（事务完成、失败或被新一代
+  /// 取代都置空），`sending` / `waiting` / `streamingText` 都由它派生。
+  _ChatTurn? _activeTurn;
   String? _pendingRequestId;
   String? _pendingText;
-  int _restoreGeneration = 0;
 
   List<LocalChatMessage> get messages => List.unmodifiable(_messages);
   String? get errorMessage => _errorMessage;
   bool get loading => _initializing && !_initialized;
   bool get initialized => _initialized;
-  bool get sending => _sending;
-  bool get waiting => _waiting;
-  String get streamingText => _streamingText;
+  bool get sending => _activeTurn != null;
+  bool get waiting => _activeTurn?.waiting ?? false;
+  String get streamingText => _activeTurn?.streamingText ?? '';
   bool get hostStopped => _hostAvailable == false;
+
+  /// 代际归属校验：所有界面状态写入与副作用落地前先过这一关。新发送 /
+  /// 恢复 / 丢弃会话推进代数或取代活跃事务后，旧事务的任何事件都整体丢弃。
+  bool _belongsToActiveGeneration(_ChatTurn turn) =>
+      identical(_activeTurn, turn) && turn.generation == _generation;
 
   /// 本机 Host 是否**已经探过一次**：true 之后 [hostStopped] 才是可信结论。
   /// 探测结果三态（未探明 / 可用 / 不可用）里只有后两态可以拿去宣称，
@@ -115,8 +154,9 @@ final class LocalChatViewModel extends ChangeNotifier {
       return;
     }
     _initializing = true;
-    _restoreGeneration += 1;
-    final generation = _restoreGeneration;
+    _generation += 1;
+    final generation = _generation;
+    _activeTurn = null;
     notifyListeners();
     try {
       unawaited(refreshVoiceOutputStatus());
@@ -126,7 +166,7 @@ final class LocalChatViewModel extends ChangeNotifier {
       }
       await _applyRestore(generation, sessionId: _sessionId);
     } finally {
-      if (generation == _restoreGeneration) {
+      if (generation == _generation) {
         _initializing = false;
         notifyListeners();
       }
@@ -190,9 +230,11 @@ final class LocalChatViewModel extends ChangeNotifier {
   Future<void> _applyRestore(int generation, {String? sessionId}) async {
     try {
       final snapshot = await _gateway.restore(sessionId: sessionId);
-      if (generation != _restoreGeneration) {
+      if (generation != _generation) {
         return;
       }
+      // 恢复快照定义新一代：仍挂在旧事务上的流式状态随之失效。
+      _activeTurn = null;
       _sessionId = snapshot.sessionId;
       // 历史栖语消息也标注 deliveryIndex（同 requestId 内第 N 个栖语
       // turn，与 Host 朗读定位同口径、从 0 起）：恢复的气泡同样能点
@@ -237,7 +279,7 @@ final class LocalChatViewModel extends ChangeNotifier {
       _initialized = true;
       notifyListeners();
     } on Object catch (error) {
-      if (generation != _restoreGeneration) {
+      if (generation != _generation) {
         return;
       }
       _errorMessage = _readableError(error);
@@ -252,14 +294,14 @@ final class LocalChatViewModel extends ChangeNotifier {
     if (_sessionId != sessionId) {
       return;
     }
-    _restoreGeneration += 1;
-    final generation = _restoreGeneration;
+    _generation += 1;
+    final generation = _generation;
+    // 旧事务随代数失效：等待指示与流式半句一并消失，发送锁同时释放。
+    _activeTurn = null;
     _sessionId = null;
     _messages.clear();
     _pendingRequestId = null;
     _pendingText = null;
-    _streamingText = '';
-    _waiting = false;
     _errorMessage = null;
     notifyListeners();
     await _applyRestore(generation);
@@ -283,20 +325,28 @@ final class LocalChatViewModel extends ChangeNotifier {
 
   Future<bool> send(String text) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty || _sending || hostStopped) {
+    if (trimmed.isEmpty || sending || hostStopped) {
       return false;
     }
     if (_voiceOutputEnabled) {
       // send 由按钮/Enter 同步触发：先保住许可，再跨入聊天事件流。
       voiceOutput.prepareForUserInitiatedPlayback();
     }
-    _sending = true;
     _errorMessage = null;
     final requestId = _pendingText == trimmed && _pendingRequestId != null
         ? _pendingRequestId!
         : _requestIdFactory();
     _pendingRequestId = requestId;
     _pendingText = trimmed;
+    // 一轮聊天即一个事务：推进代数、接管活跃事务；此后凡是代际不符的
+    // 事件一律整体丢弃。
+    _generation += 1;
+    final turn = _ChatTurn(
+      generation: _generation,
+      requestId: requestId,
+      text: trimmed,
+    );
+    _activeTurn = turn;
     final optimisticallyAdded = !_hasUserTurn(requestId);
     if (optimisticallyAdded) {
       _messages.add(
@@ -310,142 +360,138 @@ final class LocalChatViewModel extends ChangeNotifier {
     notifyListeners();
     try {
       return await _sendStreaming(
-        requestId: requestId,
-        text: trimmed,
+        turn,
         optimisticallyAdded: optimisticallyAdded,
       );
     } on Object catch (error) {
-      _streamingText = '';
-      _waiting = false;
-      _errorMessage = _readableError(error);
+      if (_belongsToActiveGeneration(turn)) {
+        _errorMessage = _readableError(error);
+      }
       return false;
     } finally {
-      _sending = false;
-      _waiting = false;
-      notifyListeners();
+      // 只有仍属当前代际的事务收尾：被恢复/丢弃取代后，新一代界面自己
+      // 做主，旧事务的尾巴不再写状态、不再通知。
+      if (_belongsToActiveGeneration(turn)) {
+        _activeTurn = null;
+        notifyListeners();
+      }
     }
   }
 
-  Future<bool> _sendStreaming({
-    required String requestId,
-    required String text,
+  Future<bool> _sendStreaming(
+    _ChatTurn turn, {
     required bool optimisticallyAdded,
   }) async {
-    final generation = _restoreGeneration;
-    List<String>? finalMessages;
-    ReplySource? source;
-    FallbackReason? fallbackReason;
-    var completed = false;
-    var committed = false;
-    var accepted = false;
     try {
+      turnLoop:
       await for (final event in _gateway.deliver(
-        requestId: requestId,
-        text: text,
+        requestId: turn.requestId,
+        text: turn.text,
         sessionId: _sessionId,
       )) {
-        if (generation == _restoreGeneration) {
-          _sessionId = event.sessionId ?? _sessionId;
+        // 写入前校验代际归属：新发送 / 恢复 / 丢弃会话之后，旧事务已经
+        // 失效，它余下的事件整体丢弃——不写状态、不通知。
+        if (!_belongsToActiveGeneration(turn)) {
+          break;
         }
+        _sessionId = event.sessionId ?? _sessionId;
         switch (event.kind) {
           case LocalChatEventKind.accepted:
-            accepted = true;
-            if (generation == _restoreGeneration && !_hasUserTurn(requestId)) {
+            turn.accepted = true;
+            if (!_hasUserTurn(turn.requestId)) {
               _messages.add(
                 LocalChatMessage(
-                  requestId: requestId,
+                  requestId: turn.requestId,
                   speaker: LocalChatSpeaker.user,
-                  text: text,
+                  text: turn.text,
                 ),
               );
             }
           case LocalChatEventKind.waiting:
-            _waiting = true;
+            turn.waiting = true;
           case LocalChatEventKind.delta:
-            _waiting = false;
-            if (generation == _restoreGeneration) {
-              _streamingText += event.text ?? '';
-            }
+            turn.waiting = false;
+            turn.streamingText += event.text ?? '';
           case LocalChatEventKind.message:
-            finalMessages = event.messages;
+            turn.finalMessages = event.messages;
           case LocalChatEventKind.state:
-            source = event.source;
-            fallbackReason = event.fallbackReason;
+            turn.source = event.source;
+            turn.fallbackReason = event.fallbackReason;
           case LocalChatEventKind.fallback:
-            fallbackReason = event.fallbackReason;
+            turn.fallbackReason = event.fallbackReason;
           case LocalChatEventKind.done:
-            completed = true;
+            turn.completed = true;
             // 轮内召回的 bubble 2 会在同一条事件流里带来第二段
             // message/state/done：每个 done 提交已收齐的一段，
             // 而不是等流结束只保留最后一段。
-            final messages = finalMessages;
-            final replySource = source;
+            final messages = turn.finalMessages;
+            final replySource = turn.source;
             if (messages != null && replySource != null) {
-              committed = true;
+              turn.committed = true;
               // 该 requestId 的第 N 次交付段（轮内召回的 bubble 2 是
               // 第二段）：朗读定位与气泡的「正在朗读」指示共用。
-              final delivery = _announcedDeliveries[requestId] ?? 0;
-              _announcedDeliveries[requestId] = delivery + 1;
-              if (generation == _restoreGeneration) {
-                _messages.addAll(
-                  messages.map(
-                    (message) => LocalChatMessage(
-                      requestId: requestId,
-                      speaker: LocalChatSpeaker.qiyu,
-                      text: message,
-                      source: replySource,
-                      fallbackReason: fallbackReason,
-                      deliveryIndex: delivery,
-                    ),
-                  ),
-                );
-                _streamingText = '';
-                _waiting = false;
-                // ADR 0002：只有完整交付并落盘的栖语 turn 才朗读——
-                // done 交付即 Host 落盘完成，此时入队按序读。
-                voiceOutput.offer(
-                  VoiceOutputRequest(
-                    requestId: requestId,
+              final delivery = _announcedDeliveries[turn.requestId] ?? 0;
+              _announcedDeliveries[turn.requestId] = delivery + 1;
+              _messages.addAll(
+                messages.map(
+                  (message) => LocalChatMessage(
+                    requestId: turn.requestId,
+                    speaker: LocalChatSpeaker.qiyu,
+                    text: message,
+                    source: replySource,
+                    fallbackReason: turn.fallbackReason,
                     deliveryIndex: delivery,
-                    sessionId: _sessionId,
                   ),
-                  enabled: _voiceOutputEnabled,
-                );
-              }
-              finalMessages = null;
-              source = null;
-              fallbackReason = null;
+                ),
+              );
+              turn.streamingText = '';
+              turn.waiting = false;
+              // ADR 0002：只有完整交付并落盘的栖语 turn 才朗读——
+              // done 交付即 Host 落盘完成，此时入队按序读。
+              voiceOutput.offer(
+                VoiceOutputRequest(
+                  requestId: turn.requestId,
+                  deliveryIndex: delivery,
+                  sessionId: _sessionId,
+                ),
+                enabled: _voiceOutputEnabled,
+              );
+              turn.finalMessages = null;
+              turn.source = null;
+              turn.fallbackReason = null;
             }
           case LocalChatEventKind.cancelled:
-            _streamingText = '';
-            _waiting = false;
+            turn.streamingText = '';
+            turn.waiting = false;
+            notifyListeners();
+            // 取消即本轮终态：立刻停止消费，Host 缓冲里后续的到达都算
+            // 迟到事件，整体丢弃。
+            break turnLoop;
           case LocalChatEventKind.error:
             throw LocalChatGatewayException(event.text ?? '本地聊天暂时不可用，请稍后重试。');
         }
         notifyListeners();
       }
     } on Object {
-      if (!accepted &&
+      if (!turn.accepted &&
           optimisticallyAdded &&
-          generation == _restoreGeneration) {
-        _removeUserTurn(requestId);
-        notifyListeners();
+          _belongsToActiveGeneration(turn)) {
+        _removeUserTurn(turn.requestId);
       }
       rethrow;
     }
-    if (!completed || !committed) {
-      if (generation == _restoreGeneration) {
-        _streamingText = '';
-        if (!accepted && optimisticallyAdded) {
-          _removeUserTurn(requestId);
-        }
+    if (!turn.completed || !turn.committed) {
+      if (_belongsToActiveGeneration(turn) &&
+          !turn.accepted &&
+          optimisticallyAdded) {
+        _removeUserTurn(turn.requestId);
       }
       return false;
     }
-    if (generation != _restoreGeneration) {
+    if (!_belongsToActiveGeneration(turn)) {
       return false;
     }
-    _streamingText = '';
+    turn.streamingText = '';
     _pendingRequestId = null;
     _pendingText = null;
     return true;
@@ -453,7 +499,7 @@ final class LocalChatViewModel extends ChangeNotifier {
 
   Future<void> stop() async {
     final requestId = _pendingRequestId;
-    if (!_sending || requestId == null) {
+    if (!sending || requestId == null) {
       return;
     }
     await _gateway.cancel(requestId);
@@ -462,10 +508,10 @@ final class LocalChatViewModel extends ChangeNotifier {
   /// 等正在流式回复的一轮结束后再发送：语音转写完成时栖语可能仍在
   /// 回复，说完的话照常排队发出，不丢也不并发。
   Future<bool> sendWhenIdle(String text) async {
-    if (_sending) {
+    if (sending) {
       final idle = Completer<void>();
       void listener() {
-        if (!_sending && !idle.isCompleted) {
+        if (!sending && !idle.isCompleted) {
           idle.complete();
         }
       }
@@ -488,6 +534,9 @@ final class LocalChatViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _monitorTimer?.cancel();
+    // 活跃事务随释放失效：尚未消费完的旧流事件会在代际校验处整体丢弃，
+    // 不再写入或通知已销毁的视图模型。
+    _activeTurn = null;
     super.dispose();
   }
 }
