@@ -1,5 +1,20 @@
 import 'dart:convert';
 
+/// 白名单枚举按 wire 名解析的共用实现：按声明顺序查找，未命中返回
+/// null。各枚举的 `tryParseWireName` 只是对它的定型化调用。
+T? _parseWireName<T>(
+  List<T> values,
+  String value,
+  String Function(T) wireNameOf,
+) {
+  for (final candidate in values) {
+    if (wireNameOf(candidate) == value) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 /// 伪 Agent 隐藏动作白名单。模型只能在回复之外提出这些动作，
 /// 任何其它动作名一律丢弃并记入诊断。
 enum HiddenActionKind {
@@ -38,14 +53,8 @@ enum HiddenActionKind {
 
   final String wireName;
 
-  static HiddenActionKind? tryParseWireName(String value) {
-    for (final kind in values) {
-      if (kind.wireName == value) {
-        return kind;
-      }
-    }
-    return null;
-  }
+  static HiddenActionKind? tryParseWireName(String value) =>
+      _parseWireName(values, value, (kind) => kind.wireName);
 }
 
 /// 单条隐藏动作在可见回复中的最大数量。超出部分直接丢弃。
@@ -291,14 +300,8 @@ enum LoopStatus {
 
   final String wireName;
 
-  static LoopStatus? tryParseWireName(String value) {
-    for (final status in values) {
-      if (status.wireName == value) {
-        return status;
-      }
-    }
-    return null;
-  }
+  static LoopStatus? tryParseWireName(String value) =>
+      _parseWireName(values, value, (status) => status.wireName);
 }
 
 /// open_loop_candidate 是否主动跟进（定稿白名单的定型形态）。
@@ -311,14 +314,8 @@ enum LoopProactive {
 
   final String wireName;
 
-  static LoopProactive? tryParseWireName(String value) {
-    for (final proactive in values) {
-      if (proactive.wireName == value) {
-        return proactive;
-      }
-    }
-    return null;
-  }
+  static LoopProactive? tryParseWireName(String value) =>
+      _parseWireName(values, value, (proactive) => proactive.wireName);
 }
 
 /// memory_signal 画像提示的 PersonaTree 分支（定稿白名单的定型形态）。
@@ -333,14 +330,8 @@ enum PersonaTreeBranch {
 
   final String wireName;
 
-  static PersonaTreeBranch? tryParseWireName(String value) {
-    for (final branch in values) {
-      if (branch.wireName == value) {
-        return branch;
-      }
-    }
-    return null;
-  }
+  static PersonaTreeBranch? tryParseWireName(String value) =>
+      _parseWireName(values, value, (branch) => branch.wireName);
 }
 
 /// memory_signal 画像提示的来源性质（定稿白名单的定型形态）。
@@ -352,14 +343,8 @@ enum PersonaNature {
 
   final String wireName;
 
-  static PersonaNature? tryParseWireName(String value) {
-    for (final nature in values) {
-      if (nature.wireName == value) {
-        return nature;
-      }
-    }
-    return null;
-  }
+  static PersonaNature? tryParseWireName(String value) =>
+      _parseWireName(values, value, (nature) => nature.wireName);
 }
 
 /// relationship_signal 的信号类型（定稿白名单的定型形态）。
@@ -373,14 +358,8 @@ enum RelationshipSignal {
 
   final String wireName;
 
-  static RelationshipSignal? tryParseWireName(String value) {
-    for (final signal in values) {
-      if (signal.wireName == value) {
-        return signal;
-      }
-    }
-    return null;
-  }
+  static RelationshipSignal? tryParseWireName(String value) =>
+      _parseWireName(values, value, (signal) => signal.wireName);
 }
 
 /// memory_signal 的画像提示：分支与来源性质成对出现，缺一即整体不成立。
@@ -630,7 +609,8 @@ final class OpenLoopStatusAction extends TypedHiddenAction {
 }
 
 /// 用户记忆控制动作（禁提 / 当轮遗忘 / 冻结 / 解冻 / 删除）的共同形状：
-/// 只携带控制对象的话题简称。
+/// 只携带控制对象的话题简称。相等性也在本层统一：运行时类型（即 kind）
+/// 加话题简称逐字段比较，不同 kind 的实例互不相等。
 sealed class MemoryControlAction extends TypedHiddenAction {
   const MemoryControlAction({required this.title});
 
@@ -641,6 +621,15 @@ sealed class MemoryControlAction extends TypedHiddenAction {
 
   @override
   HiddenAction toLegacy() => HiddenAction(kind: kind, summary: title);
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemoryControlAction &&
+      other.runtimeType == runtimeType &&
+      other.title == title;
+
+  @override
+  int get hashCode => Object.hash(kind, title);
 }
 
 /// memory_ban：用户要求不再提及。
@@ -649,13 +638,6 @@ final class MemoryBanAction extends MemoryControlAction {
 
   @override
   HiddenActionKind get kind => HiddenActionKind.memoryBan;
-
-  @override
-  bool operator ==(Object other) =>
-      other is MemoryBanAction && other.title == title;
-
-  @override
-  int get hashCode => Object.hash(kind, title);
 }
 
 /// memory_forget：用户要求本轮内容不进入记忆。
@@ -664,13 +646,6 @@ final class MemoryForgetAction extends MemoryControlAction {
 
   @override
   HiddenActionKind get kind => HiddenActionKind.memoryForget;
-
-  @override
-  bool operator ==(Object other) =>
-      other is MemoryForgetAction && other.title == title;
-
-  @override
-  int get hashCode => Object.hash(kind, title);
 }
 
 /// memory_freeze：用户要求冻结内容，只有明确解除才恢复。
@@ -679,13 +654,6 @@ final class MemoryFreezeAction extends MemoryControlAction {
 
   @override
   HiddenActionKind get kind => HiddenActionKind.memoryFreeze;
-
-  @override
-  bool operator ==(Object other) =>
-      other is MemoryFreezeAction && other.title == title;
-
-  @override
-  int get hashCode => Object.hash(kind, title);
 }
 
 /// memory_unfreeze：用户明确解除冻结。
@@ -694,13 +662,6 @@ final class MemoryUnfreezeAction extends MemoryControlAction {
 
   @override
   HiddenActionKind get kind => HiddenActionKind.memoryUnfreeze;
-
-  @override
-  bool operator ==(Object other) =>
-      other is MemoryUnfreezeAction && other.title == title;
-
-  @override
-  int get hashCode => Object.hash(kind, title);
 }
 
 /// memory_delete：用户要求删除记忆。
@@ -709,13 +670,6 @@ final class MemoryDeleteAction extends MemoryControlAction {
 
   @override
   HiddenActionKind get kind => HiddenActionKind.memoryDelete;
-
-  @override
-  bool operator ==(Object other) =>
-      other is MemoryDeleteAction && other.title == title;
-
-  @override
-  int get hashCode => Object.hash(kind, title);
 }
 
 /// relationship_signal：深谈信号、温度变化、边界开合。边界开合必须带
