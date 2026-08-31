@@ -91,41 +91,9 @@ final _loopDuePattern = RegExp(
   r'(?: (?:早晨|上午|中午|下午|晚上|深夜|morning|afternoon|evening|night))?$',
 );
 
-/// open_loop_status 的目标状态白名单（定型形态见 [LoopStatus]）。
-final loopStatusValues = {
-  for (final status in LoopStatus.values) status.wireName,
-};
-
-/// open_loop_candidate 的 proactive 白名单；缺省由 Host 按 once 处理
-/// （定型形态见 [LoopProactive]）。
-final loopProactiveValues = {
-  for (final proactive in LoopProactive.values) proactive.wireName,
-};
-
 /// relationship_signal 的摘要长度上限（runes）。摘要必须是自然、抽象的
 /// 状态描述，不复制原话。
 const maxRelationshipSummaryRunes = 60;
-
-/// memory_signal 可携带的画像分支白名单（PersonaTree 真树机制定稿的
-/// 五个主分支，定型形态见 [PersonaTreeBranch]）。画像提示只影响叶指针
-/// 归类，缺失时记忆照常写入。
-final personaBranchValues = {
-  for (final branch in PersonaTreeBranch.values) branch.wireName,
-};
-
-/// memory_signal 画像信号的来源性质白名单：用户明确自述 / 栖语行为观察
-/// （定型形态见 [PersonaNature]）。来源性质是叶节点唯一的置信维度
-/// （定稿不引入数值 confidence）。
-final personaNatureValues = {
-  for (final nature in PersonaNature.values) nature.wireName,
-};
-
-/// relationship_signal 的信号类型白名单（定型形态见 [RelationshipSignal]）：
-/// deep_talk 深谈信号；temperature 冷暖变化；
-/// boundary_open 用户接受某相处方式；boundary_close 用户回避或拒绝。
-final relationshipSignalValues = {
-  for (final signal in RelationshipSignal.values) signal.wireName,
-};
 
 /// 动作诊断码：只进入本机诊断，绝不展示给用户。
 class HiddenActionDiagnostics {
