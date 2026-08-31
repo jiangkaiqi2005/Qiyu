@@ -157,10 +157,10 @@ void main() {
           return transcribeCalls == 1
               ? _jsonResponse({'text': '今天有点累'}, 200)
               : _jsonResponse({
-                'code': 'stt_no_speech',
-                'message': '没有识别到语音，可以再说一次。',
-                'retryable': true,
-              }, 400);
+                  'code': 'stt_no_speech',
+                  'message': '没有识别到语音，可以再说一次。',
+                  'retryable': true,
+                }, 400);
         }(),
         _ => http.Response('not found', 404),
       };
@@ -183,12 +183,11 @@ void main() {
     await expectLater(
       gateway.transcribe(audio: audio, mimeType: 'audio/webm'),
       throwsA(
-        isA<LocalChatGatewayException>()
-            .having(
-              (error) => error.message,
-              'message',
-              '没有识别到语音，可以再说一次。',
-            ),
+        isA<LocalChatGatewayException>().having(
+          (error) => error.message,
+          'message',
+          '没有识别到语音，可以再说一次。',
+        ),
       ),
     );
   });

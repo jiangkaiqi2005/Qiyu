@@ -364,7 +364,8 @@ final class MemoryRecoveryFindingCard {
       MemoryRecoveryFindingCard(
         layer: json['layer']! as String,
         kind: json['kind']! as String,
-        outcome: MemoryRecoveryOutcome.fromWire(json['outcome']) ??
+        outcome:
+            MemoryRecoveryOutcome.fromWire(json['outcome']) ??
             MemoryRecoveryOutcome.pending,
         evidence: json['evidence'] as String?,
         loss: json['loss'] as String?,
@@ -407,7 +408,8 @@ final class MemoryRecoverySection {
         .map(MemoryRecoveryFindingCard.fromJson)
         .toList();
     final quarantinedFiles = json['quarantinedFiles'] as int? ?? 0;
-    final derivedHealthy = quarantinedFiles == 0 &&
+    final derivedHealthy =
+        quarantinedFiles == 0 &&
         findings.every(
           (finding) => !finding.quarantined && finding.isFullyRecovered,
         );

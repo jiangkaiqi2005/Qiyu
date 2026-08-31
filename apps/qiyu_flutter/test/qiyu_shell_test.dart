@@ -30,9 +30,7 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 void main() {
   group('导航壳 QiyuShell', () {
-    testWidgets('桌面常驻 240px 毛玻璃侧边栏：品牌槽 + 三项导航 + 连接状态', (
-      tester,
-    ) async {
+    testWidgets('桌面常驻 240px 毛玻璃侧边栏：品牌槽 + 三项导航 + 连接状态', (tester) async {
       await _pumpShell(tester, width: 1200, height: 800);
 
       expect(find.byKey(const Key('nav-brand')), findsOneWidget);
@@ -145,9 +143,7 @@ void main() {
       expect(_location(tester), '/');
     });
 
-    testWidgets('双视口溢出冒烟：800x600 与 420x900 都不许溢出', (
-      tester,
-    ) async {
+    testWidgets('双视口溢出冒烟：800x600 与 420x900 都不许溢出', (tester) async {
       // 测试默认视口正好压在桌面断点上：240 rail 会挤掉内容宽度，
       // 因此两个视口都要真跑一遍。
       for (final size in const [Size(800, 600), Size(420, 900)]) {
@@ -163,18 +159,19 @@ void main() {
   });
 
   group('连接状态 conn-status（三色纪律的可执行化）', () {
-    testWidgets('正常态：6px 中性圆点 + 13px muted 文案，既不着紫也不用 danger', (
-      tester,
-    ) async {
+    testWidgets('正常态：6px 中性圆点 + 13px muted 文案，既不着紫也不用 danger', (tester) async {
       await _pumpShell(tester, width: 1200, height: 800);
 
-      final dot = tester.widget<Container>(find.byKey(const Key('conn-status-dot')));
+      final dot = tester.widget<Container>(
+        find.byKey(const Key('conn-status-dot')),
+      );
       final dotSize = tester.getSize(find.byKey(const Key('conn-status-dot')));
       expect(dotSize, const Size(6, 6));
       final dotColor = (dot.decoration! as BoxDecoration).color;
-      final textColor = tester.widget<Text>(
-        find.byKey(const Key('conn-status-text')),
-      ).style!.color!;
+      final textColor = tester
+          .widget<Text>(find.byKey(const Key('conn-status-text')))
+          .style!
+          .color!;
 
       expect(dotColor, QiyuColors.muted);
       expect(textColor, QiyuColors.muted);
@@ -195,14 +192,15 @@ void main() {
       );
       // 字号取 13 档（次要字），不是随手写的值。
       expect(
-        tester.widget<Text>(find.byKey(const Key('conn-status-text'))).style!.fontSize,
+        tester
+            .widget<Text>(find.byKey(const Key('conn-status-text')))
+            .style!
+            .fontSize,
         QiyuType.secondarySize,
       );
     });
 
-    testWidgets('一次都还没探过时不宣称正常：中性形态 + 进行时措辞，不给重试', (
-      tester,
-    ) async {
+    testWidgets('一次都还没探过时不宣称正常：中性形态 + 进行时措辞，不给重试', (tester) async {
       // 三态里的第一态：构造出 view model 但**不调用 initialize**，探测结果
       // 还是 null（hostStatusKnown == false）。这时既不能说「栖语在本机」，
       // 也不能说连不上。
@@ -238,19 +236,21 @@ void main() {
       expect(find.text(QiyuConnectionStatus.normalLabel), findsNothing);
     });
 
-    testWidgets('探测失败态：圆点与文案同转 danger，点击重新探测', (
-      tester,
-    ) async {
+    testWidgets('探测失败态：圆点与文案同转 danger，点击重新探测', (tester) async {
       final probe = _StubProbe(available: false);
       await _pumpShell(tester, width: 1200, height: 800, probe: probe);
 
       final dotColor =
           (tester
-                      .widget<Container>(find.byKey(const Key('conn-status-dot')))
+                      .widget<Container>(
+                        find.byKey(const Key('conn-status-dot')),
+                      )
                       .decoration!
                   as BoxDecoration)
               .color;
-      final text = tester.widget<Text>(find.byKey(const Key('conn-status-text')));
+      final text = tester.widget<Text>(
+        find.byKey(const Key('conn-status-text')),
+      );
 
       // 圆点与文案必须同时转色，不允许只改文案。
       expect(dotColor, QiyuColors.danger);
@@ -277,9 +277,7 @@ void main() {
   group('合一页：空状态首页与对话态', () {
     testWidgets('/ 与 /chat 渲染同一个对话视图，路由一条都没改', (tester) async {
       for (final location in const ['/', '/chat']) {
-        await tester.pumpWidget(
-          await _app(at: location),
-        );
+        await tester.pumpWidget(await _app(at: location));
         await tester.pumpAndSettle();
         expect(
           find.byKey(const Key('chat-input')),
@@ -291,13 +289,9 @@ void main() {
       }
     });
 
-    testWidgets('空状态：夜景背景 + 时段问候 + 居中 composer；发出第一句后背景淡出', (
-      tester,
-    ) async {
+    testWidgets('空状态：夜景背景 + 时段问候 + 居中 composer；发出第一句后背景淡出', (tester) async {
       final gateway = _StubChatGateway();
-      await tester.pumpWidget(
-        await _app(viewModel: await _viewModel(gateway)),
-      );
+      await tester.pumpWidget(await _app(viewModel: await _viewModel(gateway)));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('home-backdrop')), findsOneWidget);
@@ -355,10 +349,7 @@ void main() {
     testWidgets('reduced-motion 下问候不留中间值（Story 22）', (tester) async {
       final gateway = _StubChatGateway();
       await tester.pumpWidget(
-        await _app(
-          viewModel: await _viewModel(gateway),
-          reducedMotion: true,
-        ),
+        await _app(viewModel: await _viewModel(gateway), reducedMotion: true),
       );
       await tester.pumpAndSettle();
 
@@ -420,9 +411,7 @@ void main() {
   });
 
   group('玻璃 composer 与发送钮', () {
-    testWidgets('发送钮：玻璃紫渐变 + onAccent 图标，无描边无白色高光', (
-      tester,
-    ) async {
+    testWidgets('发送钮：玻璃紫渐变 + onAccent 图标，无描边无白色高光', (tester) async {
       final gateway = _StubChatGateway();
       await tester.pumpWidget(await _app(viewModel: await _viewModel(gateway)));
       await tester.pumpAndSettle();
@@ -467,9 +456,7 @@ void main() {
       );
     });
 
-    testWidgets('composer：胶囊全圆角 + line 发丝描边，聚焦描边紫度 0.13', (
-      tester,
-    ) async {
+    testWidgets('composer：胶囊全圆角 + line 发丝描边，聚焦描边紫度 0.13', (tester) async {
       final gateway = _StubChatGateway();
       await tester.pumpWidget(await _app(viewModel: await _viewModel(gateway)));
       await tester.pumpAndSettle();
@@ -519,9 +506,7 @@ void main() {
   });
 
   group('焦点环与 reduced-motion', () {
-    testWidgets('自绘焦点环：2px accentBright 带 offset 外环，随键盘焦点出现', (
-      tester,
-    ) async {
+    testWidgets('自绘焦点环：2px accentBright 带 offset 外环，随键盘焦点出现', (tester) async {
       await _pumpShell(tester, width: 1200, height: 800);
       // 初始焦点在 composer，导航项的环是透明的：留白常驻，出现与消失都不跳版。
       expect(
@@ -616,9 +601,7 @@ void main() {
       );
     });
 
-    testWidgets('侧边栏是换栈：过去的一站不留在栈里，页内返回落回合一页', (
-      tester,
-    ) async {
+    testWidgets('侧边栏是换栈：过去的一站不留在栈里，页内返回落回合一页', (tester) async {
       await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
       expect(_location(tester), '/chat');
 
@@ -635,9 +618,7 @@ void main() {
       expect(find.byKey(const Key('chat-input')), findsOneWidget);
     });
 
-    testWidgets('工具条入口是叠栈：进历史再返回，回到的是原来那段会话', (
-      tester,
-    ) async {
+    testWidgets('工具条入口是叠栈：进历史再返回，回到的是原来那段会话', (tester) async {
       final gateway = _StubChatGateway(
         restored: const [
           LocalChatMessage(
@@ -720,8 +701,7 @@ Future<Widget> _app({
   LocalChatViewModel? viewModel,
   bool reducedMotion = false,
 }) async {
-  final chat =
-      viewModel ?? await _viewModel(_StubChatGateway(), probe: probe);
+  final chat = viewModel ?? await _viewModel(_StubChatGateway(), probe: probe);
   return MultiProvider(
     providers: [
       ChangeNotifierProvider.value(value: chat),
@@ -735,9 +715,7 @@ Future<Widget> _app({
       // AccessibilityFeatures.disableAnimations，测试侧同样从这一位进。
       builder: reducedMotion
           ? (context, child) => MediaQuery(
-              data: MediaQuery.of(
-                context,
-              ).copyWith(disableAnimations: true),
+              data: MediaQuery.of(context).copyWith(disableAnimations: true),
               child: child ?? const SizedBox.shrink(),
             )
           : null,
@@ -758,12 +736,11 @@ Future<OnboardingViewModel> _onboardingViewModel() async {
 
 /// 历史页的 view model：本文件只借它的页面外壳验壳的位置与返回栈，
 /// 不验内容，所以 autoStart 关掉（列表保持空态，不留下转个不停的进度条）。
-HistoryViewModel _historyViewModel() =>
-    HistoryViewModel(
-      _EmptyHistoryGateway(),
-      onSessionDeleted: (_) {},
-      autoStart: false,
-    );
+HistoryViewModel _historyViewModel() => HistoryViewModel(
+  _EmptyHistoryGateway(),
+  onSessionDeleted: (_) {},
+  autoStart: false,
+);
 
 /// 当前路由路径：go_router 17 的 `GoRouterState` 没有对外可读的当前位置，只能
 /// 从代理的匹配列表读。取**最深一条** `matchedLocation`——`currentConfiguration
@@ -792,13 +769,15 @@ Future<LocalChatViewModel> _viewModel(
 
 /// 问候淡出层当前的透明度：按固定键定位这一层，读它的 `FadeTransition`。
 /// 量的就是「问候淡到哪了」，不碰页面结构。
-double _greetingFadeOpacity(WidgetTester tester) =>
-    tester.widget<FadeTransition>(
+double _greetingFadeOpacity(WidgetTester tester) => tester
+    .widget<FadeTransition>(
       find.descendant(
         of: find.byKey(const Key('home-greeting-fade')),
         matching: find.byType(FadeTransition),
       ),
-    ).opacity.value;
+    )
+    .opacity
+    .value;
 
 /// 三条杠的焦点节点：壳持有它并同时交给焦点环与 `InkWell`，测试从按钮上读
 /// 到的就是同一个节点——断言的是「焦点有没有落在这个可激活控件上」，不是树结构。
@@ -816,10 +795,9 @@ BoxDecoration _navItemContainer(WidgetTester tester, String ringKey) {
 }
 
 Text _navItemLabel(WidgetTester tester, String ringKey) => tester.widget<Text>(
-  find.descendant(
-    of: find.byKey(Key(ringKey)),
-    matching: find.byType(Text),
-  ).last,
+  find
+      .descendant(of: find.byKey(Key(ringKey)), matching: find.byType(Text))
+      .last,
 );
 
 /// 焦点环的描边：环是本仓库自绘的 2px 边框 DecoratedBox（玻璃面板 1px、
@@ -858,7 +836,8 @@ final class _StubProbe implements HostConnectionProbe {
 /// 初见已完成：让 `/` 过 [RootView] 的门禁后回到合一页。
 final class _CompletedOnboardingGateway implements OnboardingGateway {
   @override
-  Future<OnboardingState> read() async => const OnboardingState(completed: true);
+  Future<OnboardingState> read() async =>
+      const OnboardingState(completed: true);
 
   @override
   Future<void> complete() async {}
@@ -885,19 +864,21 @@ final class _UnconfiguredProviderGateway implements ProviderSettingsGateway {
 /// 空历史：本文件只借历史页的外壳验壳的位置与返回栈，不验列表内容。
 final class _EmptyHistoryGateway implements HistoryGateway {
   @override
-  Future<HistoryListing> fetchHistory() async => const HistoryListing(
-    latestSessionId: null,
-    days: [],
-    unavailable: [],
-  );
+  Future<HistoryListing> fetchHistory() async =>
+      const HistoryListing(latestSessionId: null, days: [], unavailable: []);
 
   @override
   Future<void> deleteSession(String sessionId) async {}
 }
 
 final class _StubChatGateway implements StreamingLocalChatGateway {
-  _StubChatGateway({List<LocalChatMessage> restored = const [], this.hold = false})
-    : _restored = LocalChatSnapshot(sessionId: 'session-1', messages: restored);
+  _StubChatGateway({
+    List<LocalChatMessage> restored = const [],
+    this.hold = false,
+  }) : _restored = LocalChatSnapshot(
+         sessionId: 'session-1',
+         messages: restored,
+       );
 
   final LocalChatSnapshot _restored;
 

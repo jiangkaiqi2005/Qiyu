@@ -5,11 +5,7 @@ const customModelValue = '__custom_model__';
 const customVoiceValue = '__custom_voice__';
 
 final class TtsVoicePreset {
-  const TtsVoicePreset({
-    required this.id,
-    required this.label,
-    this.category,
-  });
+  const TtsVoicePreset({required this.id, required this.label, this.category});
 
   final String id;
   final String label;

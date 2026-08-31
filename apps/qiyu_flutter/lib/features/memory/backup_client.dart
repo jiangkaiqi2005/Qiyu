@@ -61,7 +61,9 @@ final class BackupPreview {
       (key, value) => MapEntry(key, value! as int),
     ),
     items: (json['items']! as List<Object?>)
-        .map((item) => BackupPreviewItem.fromJson(item! as Map<String, Object?>))
+        .map(
+          (item) => BackupPreviewItem.fromJson(item! as Map<String, Object?>),
+        )
         .toList(),
   );
 
@@ -185,9 +187,7 @@ final class HttpBackupGateway implements BackupGateway {
 
   @override
   Future<({Uint8List bytes, String fileName})> exportBundle() async {
-    final response = await _client.get(
-      _baseUri.resolve('/api/backup/export'),
-    );
+    final response = await _client.get(_baseUri.resolve('/api/backup/export'));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw const BackupGatewayException('备份导出没有成功，可稍后重试。');
     }
@@ -236,10 +236,7 @@ final class HttpBackupGateway implements BackupGateway {
     await _ensureBootstrap();
     final response = await _client.post(
       _baseUri.resolve('/api/backup/rollback'),
-      headers: {
-        'content-type': 'application/json',
-        'x-qiyu-csrf': _csrfToken!,
-      },
+      headers: {'content-type': 'application/json', 'x-qiyu-csrf': _csrfToken!},
       body: jsonEncode({'snapshotId': ?snapshotId}),
     );
     return BackupRollbackResult.fromJson(_decodeSuccess(response));
@@ -249,10 +246,7 @@ final class HttpBackupGateway implements BackupGateway {
     await _ensureBootstrap();
     final response = await _client.post(
       _baseUri.resolve(path),
-      headers: {
-        'content-type': 'application/json',
-        'x-qiyu-csrf': _csrfToken!,
-      },
+      headers: {'content-type': 'application/json', 'x-qiyu-csrf': _csrfToken!},
       body: jsonEncode({'dataBase64': base64.encode(bundle)}),
     );
     return _decodeSuccess(response);

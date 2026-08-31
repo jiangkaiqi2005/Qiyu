@@ -613,11 +613,10 @@ class _LocalChatViewState extends State<LocalChatView> {
                 SingleActivator(LogicalKeyboardKey.enter): _SendChatIntent(),
                 SingleActivator(LogicalKeyboardKey.enter, shift: true):
                     _InsertLineBreakIntent(),
-                SingleActivator(
-                  LogicalKeyboardKey.enter,
-                  control: true,
-                ): _InsertLineBreakIntent(),
-                SingleActivator(LogicalKeyboardKey.escape): _VoiceEscapeIntent(),
+                SingleActivator(LogicalKeyboardKey.enter, control: true):
+                    _InsertLineBreakIntent(),
+                SingleActivator(LogicalKeyboardKey.escape):
+                    _VoiceEscapeIntent(),
               },
               child: Actions(
                 actions: {
@@ -802,7 +801,9 @@ class _LocalChatViewState extends State<LocalChatView> {
         // 转写和聊天都会跨越异步边界；说完的这次点击
         // 是语音闭环最后一个可用的浏览器用户手势。
         () {
-          context.read<LocalChatViewModel>().voiceOutput
+          context
+              .read<LocalChatViewModel>()
+              .voiceOutput
               .prepareForUserInitiatedPlayback();
           voice.handleMicTap();
         },
@@ -810,7 +811,10 @@ class _LocalChatViewState extends State<LocalChatView> {
       VoiceInputStatus.transcribing => (
         'voice-mic-busy',
         '正在转文字',
-        const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+        const SizedBox.square(
+          dimension: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
         null,
         null,
       ),
@@ -1076,8 +1080,8 @@ class _VoiceOutputHeaderControlState extends State<_VoiceOutputHeaderControl> {
           final icon = isMuted
               ? QiyuIcons.volume_off
               : (voiceOutput.volume < 0.5
-                  ? QiyuIcons.volume_down
-                  : QiyuIcons.volume_up);
+                    ? QiyuIcons.volume_down
+                    : QiyuIcons.volume_up);
           return OverlayPortal(
             controller: _overlayController,
             overlayChildBuilder: (context) {
@@ -1131,10 +1135,7 @@ class _VoiceOutputHeaderControlState extends State<_VoiceOutputHeaderControl> {
 }
 
 class _VolumePopupCard extends StatelessWidget {
-  const _VolumePopupCard({
-    required this.viewModel,
-    required this.voiceOutput,
-  });
+  const _VolumePopupCard({required this.viewModel, required this.voiceOutput});
 
   final LocalChatViewModel viewModel;
   final VoiceOutputController voiceOutput;
@@ -1216,11 +1217,7 @@ class _VolumePopupCard extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               tooltip: isMuted ? '解除静音' : '静音',
               color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
-              icon: Icon(
-                isMuted
-                    ? QiyuIcons.volume_off
-                    : QiyuIcons.volume_up,
-              ),
+              icon: Icon(isMuted ? QiyuIcons.volume_off : QiyuIcons.volume_up),
               onPressed: () => unawaited(viewModel.toggleVoiceOutput()),
             ),
           ],

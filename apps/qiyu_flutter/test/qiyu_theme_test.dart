@@ -100,9 +100,10 @@ Set<String> _aliasedColorNames(String source) => RegExp(
 /// 证伪扫描面本身不该要求往 `lib` 里塞一个测试用色值。
 Set<String> _undocumentedColorDeclarations([String? source]) {
   final text = source ?? _read('lib/theme/qiyu_tokens.dart');
-  return _declaredColorNames(text).difference(
-    {..._tokenColorLiterals(text).keys, ..._aliasedColorNames(text)},
-  );
+  return _declaredColorNames(text).difference({
+    ..._tokenColorLiterals(text).keys,
+    ..._aliasedColorNames(text),
+  });
 }
 
 /// 危险暖色相：红（0°）到琥珀（约 45°）这一段，加一点回绕的品红侧（≥340°）。
@@ -119,12 +120,10 @@ bool _isWarmHue(Color color) {
 
 /// `qiyu_icons.dart` 声明的图标常量名：图标对账的两侧之一，另一侧是字体实测
 /// 清单 `iconGlyphManifest`（见 `test/icon_glyph_manifest.dart`）。
-Set<String> _declaredIconNames() =>
-    RegExp(
-      r'static const IconData (\w+)',
-    ).allMatches(_read('lib/theme/qiyu_icons.dart')).map(
-      (m) => m.group(1)!,
-    ).toSet();
+Set<String> _declaredIconNames() => RegExp(r'static const IconData (\w+)')
+    .allMatches(_read('lib/theme/qiyu_icons.dart'))
+    .map((m) => m.group(1)!)
+    .toSet();
 
 Iterable<File> _dartFilesUnder(String relativeDir) =>
     Directory('$_packageRoot/$relativeDir')
@@ -254,11 +253,7 @@ void main() {
       for (final entry in literals.entries) {
         // 6 位等于 alpha 0（全透明），而 _isWarmHue 对透明档早退——那种写法
         // 既在页面上画不出颜色，也顺手绕过了色相纪律，一律不许进 token 层。
-        expect(
-          entry.value.length,
-          8,
-          reason: '${entry.key} 的字面值没写满 8 位 alpha',
-        );
+        expect(entry.value.length, 8, reason: '${entry.key} 的字面值没写满 8 位 alpha');
       }
       final warmHuedTokens = {
         for (final entry in literals.entries)
@@ -922,10 +917,7 @@ const Color topLevel = Color(0xFF667788);
       expect(QiyuType.secondarySize, 13);
       // 指示符比 §3 的极小档（12）还低一档是刻意的：它只是「这里可以点开」的
       // 记号，不承载要读的内容。
-      expect(
-        QiyuType.sectionHeaderCaretSize,
-        lessThan(QiyuType.tinySize),
-      );
+      expect(QiyuType.sectionHeaderCaretSize, lessThan(QiyuType.tinySize));
     });
 
     test('栖语的话行高 1.9（书页式），UI 档不自造行高', () {
@@ -1036,14 +1028,16 @@ const Color topLevel = Color(0xFF667788);
     /// 卡片**真正画出来**的边界只体现在内部 `Material.shape` 上：消费点一旦覆盖
     /// shape 就会把主题档整体换掉，所以只断 `theme.cardTheme.shape` 证明不了描边
     /// 真的被画出来（此前的 `side: BorderSide.none` 正是这样停在主题层里）。
-    OutlinedBorder renderedCard(WidgetTester tester) => tester
-        .widget<Material>(
-          find.descendant(
-            of: find.byType(Card),
-            matching: find.byType(Material),
-          ),
-        )
-        .shape! as OutlinedBorder;
+    OutlinedBorder renderedCard(WidgetTester tester) =>
+        tester
+                .widget<Material>(
+                  find.descendant(
+                    of: find.byType(Card),
+                    matching: find.byType(Material),
+                  ),
+                )
+                .shape!
+            as OutlinedBorder;
 
     test('主题层的 cardTheme 取的就是 qiyuCardShape 这一处', () {
       expect(theme.cardTheme.shape, qiyuCardShape);
@@ -1061,9 +1055,7 @@ const Color topLevel = Color(0xFF667788);
       expect(side.color.toARGB32(), QiyuColors.line.toARGB32());
     });
 
-    testWidgets('高对比模式下卡片仍有可见边界（ticket 24 不得退化）', (
-      tester,
-    ) async {
+    testWidgets('高对比模式下卡片仍有可见边界（ticket 24 不得退化）', (tester) async {
       // 高对比下这条边此前由 highContrastSide 给出，取 colorScheme.outline；
       // 本主题的 outline 槽位就是 line（上面逐槽位断言过），描边恒在后两档同值。
       await tester.pumpWidget(
@@ -1079,11 +1071,7 @@ const Color topLevel = Color(0xFF667788);
       );
       await tester.pumpAndSettle();
       final side = renderedCard(tester).side;
-      expect(
-        side,
-        isNot(BorderSide.none),
-        reason: '高对比模式下靠底色分层的卡片必须看得见边界',
-      );
+      expect(side, isNot(BorderSide.none), reason: '高对比模式下靠底色分层的卡片必须看得见边界');
       expect(side.color.toARGB32(), theme.colorScheme.outline.toARGB32());
     });
   });

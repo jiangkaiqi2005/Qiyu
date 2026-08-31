@@ -8,7 +8,14 @@ import 'voice_recorder_platform.dart';
 /// 语音输入状态机的可见状态（spec：idle → recording → transcribing →
 /// 成功回 idle / 失败进 retryable）。unsupported 与 notConfigured 是
 /// 进入 idle 前的门槛状态：按钮置灰并引导，不参与转移。
-enum VoiceInputStatus { unsupported, notConfigured, idle, recording, transcribing, retryable }
+enum VoiceInputStatus {
+  unsupported,
+  notConfigured,
+  idle,
+  recording,
+  transcribing,
+  retryable,
+}
 
 /// 语音服务状态探针的结果：是否已配置，以及是否需要浏览器端把录音
 /// 转换成 WAV（豆包协议只吃 16kHz/16-bit 单声道 WAV；OpenAI 兼容协议
@@ -78,7 +85,9 @@ final class VoiceInputController extends ChangeNotifier {
       return;
     }
     _wantsWavAudio = status.wantsWavAudio;
-    _status = status.configured ? VoiceInputStatus.idle : VoiceInputStatus.notConfigured;
+    _status = status.configured
+        ? VoiceInputStatus.idle
+        : VoiceInputStatus.notConfigured;
     notifyListeners();
   }
 

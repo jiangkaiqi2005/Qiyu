@@ -79,9 +79,9 @@ final class WebVoicePlayerPlatform
       // decodeAudioData，避免 offset/尾部字节污染解码。
       final copy =
           bytes.offsetInBytes == 0 &&
-                  bytes.lengthInBytes == bytes.buffer.lengthInBytes
-              ? bytes
-              : Uint8List.fromList(bytes);
+              bytes.lengthInBytes == bytes.buffer.lengthInBytes
+          ? bytes
+          : Uint8List.fromList(bytes);
       final decoded = await activeContext
           .decodeAudioData(copy.buffer.toJS)
           .toDart

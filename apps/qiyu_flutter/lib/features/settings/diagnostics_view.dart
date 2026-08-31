@@ -105,7 +105,11 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
                     '后台整理',
                     _finalization(context, snapshot.finalization),
                   ),
-                  _section(context, 'Dream 资格', _dream(context, snapshot.dream)),
+                  _section(
+                    context,
+                    'Dream 资格',
+                    _dream(context, snapshot.dream),
+                  ),
                   _section(
                     context,
                     '本地文件健康',
@@ -149,10 +153,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
     );
   }
 
-  Widget _recentRequests(
-    BuildContext context,
-    List<RecentRequest> requests,
-  ) {
+  Widget _recentRequests(BuildContext context, List<RecentRequest> requests) {
     final theme = Theme.of(context);
     if (requests.isEmpty) {
       return Text(
@@ -251,8 +252,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final line in [lastSuccess, interval, pending, provider, eligible])
-          if (line.isNotEmpty)
-            Text(line, style: theme.textTheme.bodyMedium),
+          if (line.isNotEmpty) Text(line, style: theme.textTheme.bodyMedium),
       ],
     );
   }
@@ -281,8 +281,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final row in rows)
-          Text(row, style: theme.textTheme.bodyMedium),
+        for (final row in rows) Text(row, style: theme.textTheme.bodyMedium),
       ],
     );
   }

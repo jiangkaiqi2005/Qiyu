@@ -68,10 +68,7 @@ class _QiyuSendButtonState extends State<QiyuSendButton> {
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [
-                      QiyuColors.accentGlassA,
-                      QiyuColors.accentGlassB,
-                    ],
+                    colors: [QiyuColors.accentGlassA, QiyuColors.accentGlassB],
                   ),
                 ),
                 child: InkWell(

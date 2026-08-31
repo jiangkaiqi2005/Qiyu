@@ -54,9 +54,7 @@ class FirstMeetingView extends StatelessWidget {
                   key: const Key('first-meeting-go-settings'),
                   onPressed: viewModel.completing
                       ? null
-                      : () => unawaited(
-                          _enterSettings(context, viewModel),
-                        ),
+                      : () => unawaited(_enterSettings(context, viewModel)),
                   child: const Text('先去连上模型'),
                 ),
                 const SizedBox(height: 8),

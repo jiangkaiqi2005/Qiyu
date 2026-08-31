@@ -68,15 +68,12 @@ const _wavTargetSampleRate = 16000;
 /// interop 调用全部经 lambda 显式调用（dart2js 禁止 tear-off）。
 Future<Uint8List> _decodeResampleAndPack(Uint8List bytes) async {
   // 用一次性 OfflineAudioContext 只做解码，避免动到真实音频设备。
-  final decodeContext = web.OfflineAudioContext(
-    1.toJS,
-    1,
-    48000,
-  );
+  final decodeContext = web.OfflineAudioContext(1.toJS, 1, 48000);
   // Uint8List 可能是某个更大 buffer 的视图：拷到独立拷贝再交出 JSArrayBuffer，
   // 避免 offset 不为 0 时 decodeAudioData 读到错字节。dart2js 上 JSUint8Array
   // 没有 .buffer 成员，必须走 ByteBuffer.toJS。
-  final copy = bytes.offsetInBytes == 0 &&
+  final copy =
+      bytes.offsetInBytes == 0 &&
           bytes.lengthInBytes == bytes.buffer.lengthInBytes
       ? bytes
       : Uint8List.fromList(bytes);
@@ -133,18 +130,18 @@ Uint8List _packWav(Float32List samples) {
   u32(dataBytes);
   for (final sample in samples) {
     // 浮点采样可能略越界：clamp 到 [-1, 1] 再放大成 Int16。
-    view.setInt16(offset, (sample.clamp(-1.0, 1.0) * 32767).round(), Endian.little);
+    view.setInt16(
+      offset,
+      (sample.clamp(-1.0, 1.0) * 32767).round(),
+      Endian.little,
+    );
     offset += 2;
   }
   return wav;
 }
 
 final class _WebVoiceRecordingSession implements VoiceRecordingSession {
-  _WebVoiceRecordingSession._(
-    this._stream,
-    this._recorder,
-    this._mimeType,
-  );
+  _WebVoiceRecordingSession._(this._stream, this._recorder, this._mimeType);
 
   final web.MediaStream _stream;
   final web.MediaRecorder _recorder;
@@ -168,18 +165,16 @@ final class _WebVoiceRecordingSession implements VoiceRecordingSession {
         // 容器类型去掉编解码参数再上送：转写服务只认容器。
         mimeType.split(';').first.trim(),
       );
-      recorder.ondataavailable =
-          ((web.BlobEvent event) {
-            if (!session._discarded) {
-              session._chunks.add(event.data);
-            }
-          }).toJS;
-      recorder.onstop =
-          ((web.Event _) {
-            if (!session._stopped.isCompleted) {
-              session._stopped.complete();
-            }
-          }).toJS;
+      recorder.ondataavailable = ((web.BlobEvent event) {
+        if (!session._discarded) {
+          session._chunks.add(event.data);
+        }
+      }).toJS;
+      recorder.onstop = ((web.Event _) {
+        if (!session._stopped.isCompleted) {
+          session._stopped.complete();
+        }
+      }).toJS;
       recorder.start();
       return session;
     }

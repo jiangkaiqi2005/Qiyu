@@ -139,9 +139,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.tap(
-        find.byKey(const Key('delete-session-session-today')),
-      );
+      await tester.tap(find.byKey(const Key('delete-session-session-today')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('confirm-delete')));
       await tester.pumpAndSettle();
@@ -161,35 +159,36 @@ void main() {
     },
   );
 
-  testWidgets('resume button returns to the chat and only for the latest session', (
-    tester,
-  ) async {
-    final historyViewModel = HistoryViewModel(
-      _FakeHistoryGateway(_testListing()),
-      onSessionDeleted: (_) {},
-      autoStart: false,
-    );
-    await historyViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        historyViewModel: historyViewModel,
-        onboardingViewModel: await _onboardingViewModel(),
-      ),
-    );
-    await _settleMergedPage(tester);
-    await tester.tap(find.byKey(const Key('open-history')));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'resume button returns to the chat and only for the latest session',
+    (tester) async {
+      final historyViewModel = HistoryViewModel(
+        _FakeHistoryGateway(_testListing()),
+        onSessionDeleted: (_) {},
+        autoStart: false,
+      );
+      await historyViewModel.refresh();
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: _chatViewModel(),
+          historyViewModel: historyViewModel,
+          onboardingViewModel: await _onboardingViewModel(),
+        ),
+      );
+      await _settleMergedPage(tester);
+      await tester.tap(find.byKey(const Key('open-history')));
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('resume-latest-session')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('resume-latest-session')));
-    await tester.pumpAndSettle();
+      expect(find.byKey(const Key('resume-latest-session')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('resume-latest-session')));
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('chat-input')), findsOneWidget);
+      expect(find.byKey(const Key('chat-input')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('go-home')));
-    await tester.pumpAndSettle();
-  });
+      await tester.tap(find.byKey(const Key('go-home')));
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets('history errors offer a retry without losing the page', (
     tester,
@@ -316,10 +315,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final header = tester.widget<RichText>(
-      find.descendant(
-        of: find.text('今天'),
-        matching: find.byType(RichText),
-      ),
+      find.descendant(of: find.text('今天'), matching: find.byType(RichText)),
     );
     final style = (header.text as TextSpan).style!;
     expect(
@@ -370,11 +366,7 @@ void main() {
     addTearDown(mouse.removePointer);
     await mouse.moveTo(tester.getCenter(find.byKey(deleteButton)));
     await tester.pumpAndSettle();
-    expect(
-      glyphColor(),
-      QiyuColors.ink,
-      reason: '悬停不提亮：这颗按钮没接上主题层的安静档',
-    );
+    expect(glyphColor(), QiyuColors.ink, reason: '悬停不提亮：这颗按钮没接上主题层的安静档');
     expect(glyphColor(), isNot(QiyuColors.accentBright));
 
     await mouse.moveTo(Offset.zero);
@@ -382,9 +374,7 @@ void main() {
     expect(glyphColor(), QiyuColors.muted);
   });
 
-  testWidgets('删除按钮带无障碍语义标签，读屏动作名不依赖 hover', (
-    tester,
-  ) async {
+  testWidgets('删除按钮带无障碍语义标签，读屏动作名不依赖 hover', (tester) async {
     // `test/accessibility_test.dart` 的探针用例已钉住事实：IconButton 的 tooltip
     // 只落在语义节点的 tooltip 属性上，label 是空的，而触屏没有 hover。这颗删除
     // 入口此前只有 tooltip，读屏器念不出动作名；现在动作名显式进语义树，并汇在
@@ -419,11 +409,7 @@ void main() {
             ),
           )
           .getSemanticsData();
-      expect(
-        data.label,
-        '删除这段会话',
-        reason: '删除入口没把动作名带进语义标签，触屏读不到',
-      );
+      expect(data.label, '删除这段会话', reason: '删除入口没把动作名带进语义标签，触屏读不到');
       expect(data.tooltip, '删除这段会话', reason: 'tooltip 与语义标签各写了一份');
       expect(data.flagsCollection.isButton, isTrue);
       // 读屏按 label 查要能命中这一颗。`find.bySemanticsLabel` 匹配的是带
@@ -462,10 +448,8 @@ Future<OnboardingViewModel> _onboardingViewModel() async {
 
 /// 历史列表页自己的标题：桌面导航壳的侧边栏同样渲染「历史」这个导航文案，
 /// 整树 `find.text` 命中两处即歧义（按 Key / 页面范围定位的既有约定）。
-Finder _historyPageTitle() => find.descendant(
-  of: find.byType(HistoryView),
-  matching: find.text('历史'),
-);
+Finder _historyPageTitle() =>
+    find.descendant(of: find.byType(HistoryView), matching: find.text('历史'));
 
 /// 合一页（design-system §5）没有「从首页进对话」这一跳，`home-go-chat` 现在
 /// 只是输入容器的定位键：这里做的只是推进到稳定态，不触发任何导航。
@@ -651,7 +635,6 @@ final class _FakeChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
-
 
   @override
   Future<String> transcribe({

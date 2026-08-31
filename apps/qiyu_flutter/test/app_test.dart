@@ -76,9 +76,7 @@ void main() {
     await _returnToHome(tester);
   });
 
-  testWidgets('历史含本地回复但最后一条是模型回复时不显示本地规则标识', (
-    tester,
-  ) async {
+  testWidgets('历史含本地回复但最后一条是模型回复时不显示本地规则标识', (tester) async {
     final gateway = _FakeLocalChatGateway(
       restored: const LocalChatSnapshot(
         sessionId: 'session-1',

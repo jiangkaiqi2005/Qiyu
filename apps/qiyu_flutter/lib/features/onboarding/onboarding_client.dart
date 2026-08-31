@@ -47,10 +47,7 @@ final class HttpOnboardingGateway implements OnboardingGateway {
     await _ensureBootstrap();
     final response = await _client.post(
       _baseUri.resolve('/api/onboarding/complete'),
-      headers: {
-        'content-type': 'application/json',
-        'x-qiyu-csrf': _csrfToken!,
-      },
+      headers: {'content-type': 'application/json', 'x-qiyu-csrf': _csrfToken!},
       body: '{}',
     );
     _decodeSuccess(response);

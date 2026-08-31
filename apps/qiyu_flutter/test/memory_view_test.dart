@@ -98,9 +98,7 @@ void main() {
     },
   );
 
-  testWidgets('记忆四区 tab 带 §4 定案图标，选中态取中性档不显紫', (
-    tester,
-  ) async {
+  testWidgets('记忆四区 tab 带 §4 定案图标，选中态取中性档不显紫', (tester) async {
     final memoryViewModel = MemoryCenterViewModel(
       _FakeMemoryGateway(_fullOverview()),
       autoStart: false,
@@ -143,10 +141,8 @@ void main() {
     expect(tabBar.labelColor, isNull);
     expect(tabBar.unselectedLabelColor, isNull);
     final indicator =
-        Theme.of(
-          tester.element(find.byType(TabBar)),
-        ).tabBarTheme.indicator!
-        as UnderlineTabIndicator;
+        Theme.of(tester.element(find.byType(TabBar))).tabBarTheme.indicator!
+            as UnderlineTabIndicator;
     expect(indicator.borderSide.color, QiyuColors.indicatorNeutral);
     expect(indicator.borderSide.color, isNot(QiyuColors.accentBright));
 
@@ -171,23 +167,18 @@ void main() {
     expect(glyphColor(QiyuIcons.landscape), QiyuColors.ink);
     expect(labelColor('memory-tab-recent'), QiyuColors.muted);
     expect(glyphColor(QiyuIcons.schedule), QiyuColors.muted);
-    expect(
-      [
-        labelColor('memory-tab-recent'),
-        labelColor('memory-tab-longterm'),
-        glyphColor(QiyuIcons.schedule),
-        glyphColor(QiyuIcons.landscape),
-      ],
-      isNot(contains(QiyuColors.accentBright)),
-    );
+    expect([
+      labelColor('memory-tab-recent'),
+      labelColor('memory-tab-longterm'),
+      glyphColor(QiyuIcons.schedule),
+      glyphColor(QiyuIcons.landscape),
+    ], isNot(contains(QiyuColors.accentBright)));
 
     await tester.tap(find.byKey(const Key('memory-back')));
     await tester.pumpAndSettle();
   });
 
-  testWidgets('四区 tab 的横滚容器不留滚动条，纵向内容区的滚动条不受牵连', (
-    tester,
-  ) async {
+  testWidgets('四区 tab 的横滚容器不留滚动条，纵向内容区的滚动条不受牵连', (tester) async {
     // 锁的是**结果**，不是应用层的某个类：design-system §8「横向滚动容器不留滚动
     // 控件」由框架的 `MaterialScrollBehavior` 横向分支满足——`buildScrollbar` 对
     // `Axis.horizontal` 直接 `return child`（SDK 3.44.8
@@ -373,57 +364,56 @@ void main() {
     },
   );
 
-  testWidgets(
-    'memory center back returns to the page it was opened from',
-    (tester) async {
-      final memoryGateway = _FakeMemoryGateway(_fullOverview());
-      final memoryViewModel = MemoryCenterViewModel(
-        memoryGateway,
-        autoStart: false,
-      );
-      await memoryViewModel.refresh();
-      await tester.pumpWidget(
-        QiyuApp(
-          viewModel: _chatViewModel(),
-          onboardingViewModel: await _onboardingViewModel(),
-          memoryViewModel: memoryViewModel,
-          providerSettingsViewModel: await _providerSettingsViewModel(),
-          sttSettingsViewModel: SttSettingsViewModel(
-            const _FixedSttSettingsGateway(),
-            autoStart: false,
-          ),
-          settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+  testWidgets('memory center back returns to the page it was opened from', (
+    tester,
+  ) async {
+    final memoryGateway = _FakeMemoryGateway(_fullOverview());
+    final memoryViewModel = MemoryCenterViewModel(
+      memoryGateway,
+      autoStart: false,
+    );
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+        providerSettingsViewModel: await _providerSettingsViewModel(),
+        sttSettingsViewModel: SttSettingsViewModel(
+          const _FixedSttSettingsGateway(),
+          autoStart: false,
         ),
-      );
-      await tester.pumpAndSettle();
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      // 设置 → 本地数据 → 记忆中心：返回键回到设置页而不是首页。
-      await tester.tap(find.byKey(const Key('home-go-settings')));
-      await tester.pumpAndSettle();
-      final settingsScrollable = find
-          .descendant(
-            of: find.byType(ListView),
-            matching: find.byType(Scrollable),
-          )
-          .first;
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('settings-memory-center')),
-        200,
-        scrollable: settingsScrollable,
-        maxScrolls: 20,
-      );
-      await tester.ensureVisible(find.byKey(const Key('settings-memory-center')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('settings-memory-center')));
-      await tester.pumpAndSettle();
-      expect(find.text('最近发生'), findsOneWidget);
+    // 设置 → 本地数据 → 记忆中心：返回键回到设置页而不是首页。
+    await tester.tap(find.byKey(const Key('home-go-settings')));
+    await tester.pumpAndSettle();
+    final settingsScrollable = find
+        .descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('settings-memory-center')),
+      200,
+      scrollable: settingsScrollable,
+      maxScrolls: 20,
+    );
+    await tester.ensureVisible(find.byKey(const Key('settings-memory-center')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('settings-memory-center')));
+    await tester.pumpAndSettle();
+    expect(find.text('最近发生'), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('memory-back')));
-      await tester.pumpAndSettle();
-      // 回到设置页（保持离开时的滚动位置），而不是首页。
-      expect(find.text('本地数据'), findsOneWidget);
-    },
-  );
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    // 回到设置页（保持离开时的滚动位置），而不是首页。
+    expect(find.text('本地数据'), findsOneWidget);
+  });
 
   testWidgets('stale item ids resolve to an honest gone state', (tester) async {
     final memoryGateway = _FakeMemoryGateway(_fullOverview());
@@ -791,9 +781,7 @@ void main() {
     expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
   });
 
-  testWidgets('记忆条目操作常驻在条目上，按钮与该条目的状态一一对应', (
-    tester,
-  ) async {
+  testWidgets('记忆条目操作常驻在条目上，按钮与该条目的状态一一对应', (tester) async {
     await _pumpMemoryCenter(tester, _fullOverview());
 
     // 不再有任何「点开才看得到」的操作菜单（design-system §8 补充约定）。
@@ -829,9 +817,7 @@ void main() {
     }
   });
 
-  testWidgets('敏感与已冻结、已禁提条目只给当下可用的动作，点了就走到', (
-    tester,
-  ) async {
+  testWidgets('敏感与已冻结、已禁提条目只给当下可用的动作，点了就走到', (tester) async {
     final gateway = await _pumpMemoryCenter(tester, _markedOverview());
 
     // 遮罩条目：有临时查看，没有修正——不揭示原文就不能改。
@@ -867,10 +853,7 @@ void main() {
       find.byKey(const Key('memory-action-lt-frozen-freeze')),
       findsNothing,
     );
-    expect(
-      find.byKey(const Key('memory-action-lt-frozen-ban')),
-      findsNothing,
-    );
+    expect(find.byKey(const Key('memory-action-lt-frozen-ban')), findsNothing);
     await tester.tap(find.byKey(const Key('memory-action-lt-frozen-unfreeze')));
     await tester.pumpAndSettle();
     expect(gateway.actionCalls, contains('unfreeze:lt-frozen'));
@@ -880,19 +863,14 @@ void main() {
       find.byKey(const Key('memory-action-lt-banned-unban')),
       findsOneWidget,
     );
-    expect(
-      find.byKey(const Key('memory-action-lt-banned-ban')),
-      findsNothing,
-    );
+    expect(find.byKey(const Key('memory-action-lt-banned-ban')), findsNothing);
     await tester.tap(find.byKey(const Key('memory-action-lt-banned-unban')));
     await tester.pumpAndSettle();
     expect(gateway.actionCalls, contains('unban:lt-banned'));
     expect(find.text('不再提起这条记忆？'), findsNothing);
   });
 
-  testWidgets('常驻操作按钮常态是中性次要色，悬停才提亮且不显紫', (
-    tester,
-  ) async {
+  testWidgets('常驻操作按钮常态是中性次要色，悬停才提亮且不显紫', (tester) async {
     await _pumpMemoryCenter(tester, _fullOverview());
     const freeze = Key('memory-action-entry-1-freeze');
 
@@ -1185,83 +1163,87 @@ void main() {
     expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
   });
 
-  testWidgets('memory page opens the backup dialog with honest platform state', (
-    tester,
-  ) async {
-    final memoryViewModel = MemoryCenterViewModel(
-      _FakeMemoryGateway(_fullOverview()),
-      autoStart: false,
-    );
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
+  testWidgets(
+    'memory page opens the backup dialog with honest platform state',
+    (tester) async {
+      final memoryViewModel = MemoryCenterViewModel(
+        _FakeMemoryGateway(_fullOverview()),
+        autoStart: false,
+      );
+      await memoryViewModel.refresh();
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: _chatViewModel(),
+          onboardingViewModel: await _onboardingViewModel(),
+          memoryViewModel: memoryViewModel,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-go-memory')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('memory-backup')));
+      await tester.pumpAndSettle();
+      expect(find.text('备份与恢复'), findsOneWidget);
+      expect(find.byKey(const Key('backup-export')), findsOneWidget);
+      // 测试环境没有浏览器文件能力：如实说明，不假装可用。
+      expect(find.textContaining('当前环境不支持选择文件'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('backup-close')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('memory-back')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'backup import previews differences and only writes after confirm',
+    (tester) async {
+      final backupGateway = _FakeBackupGateway();
+      final memoryViewModel = MemoryCenterViewModel(
+        _FakeMemoryGateway(_fullOverview()),
+        autoStart: false,
+      );
+      await memoryViewModel.refresh();
+      await _pumpBackupDialog(
+        tester,
         memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+        gateway: backupGateway,
+        platform: _FakeBackupPlatform(
+          picked: Uint8List.fromList(utf8.encode('备份字节')),
+        ),
+      );
 
-    await tester.tap(find.byKey(const Key('memory-backup')));
-    await tester.pumpAndSettle();
-    expect(find.text('备份与恢复'), findsOneWidget);
-    expect(find.byKey(const Key('backup-export')), findsOneWidget);
-    // 测试环境没有浏览器文件能力：如实说明，不假装可用。
-    expect(find.textContaining('当前环境不支持选择文件'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('backup-close')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('backup-import-pick')));
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
-  });
+      // 预览：差异计数、控制合并说明与逐条归类。
+      expect(find.byKey(const Key('backup-preview')), findsOneWidget);
+      expect(find.textContaining('新增 1'), findsOneWidget);
+      expect(find.textContaining('替换 1'), findsOneWidget);
+      expect(find.textContaining('冲突 1'), findsOneWidget);
+      expect(find.textContaining('不可恢复 1'), findsOneWidget);
+      expect(find.textContaining('并集'), findsOneWidget);
+      expect(
+        find.textContaining('冲突：sessions/2026/08/2026-08-05-001.md'),
+        findsOneWidget,
+      );
+      // 跳过项同样逐条可见，不是只有一个计数。
+      expect(find.textContaining('跳过：open-loops.md'), findsOneWidget);
+      expect(backupGateway.importCalls, 0);
 
-  testWidgets('backup import previews differences and only writes after confirm', (
-    tester,
-  ) async {
-    final backupGateway = _FakeBackupGateway();
-    final memoryViewModel = MemoryCenterViewModel(
-      _FakeMemoryGateway(_fullOverview()),
-      autoStart: false,
-    );
-    await memoryViewModel.refresh();
-    await _pumpBackupDialog(
-      tester,
-      memoryViewModel: memoryViewModel,
-      gateway: backupGateway,
-      platform: _FakeBackupPlatform(
-        picked: Uint8List.fromList(utf8.encode('备份字节')),
-      ),
-    );
-
-    await tester.tap(find.byKey(const Key('backup-import-pick')));
-    await tester.pumpAndSettle();
-
-    // 预览：差异计数、控制合并说明与逐条归类。
-    expect(find.byKey(const Key('backup-preview')), findsOneWidget);
-    expect(find.textContaining('新增 1'), findsOneWidget);
-    expect(find.textContaining('替换 1'), findsOneWidget);
-    expect(find.textContaining('冲突 1'), findsOneWidget);
-    expect(find.textContaining('不可恢复 1'), findsOneWidget);
-    expect(find.textContaining('并集'), findsOneWidget);
-    expect(
-      find.textContaining('冲突：sessions/2026/08/2026-08-05-001.md'),
-      findsOneWidget,
-    );
-    // 跳过项同样逐条可见，不是只有一个计数。
-    expect(find.textContaining('跳过：open-loops.md'), findsOneWidget);
-    expect(backupGateway.importCalls, 0);
-
-    await tester.ensureVisible(find.byKey(const Key('backup-import-confirm')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('backup-import-confirm')));
-    await tester.pumpAndSettle();
-    expect(backupGateway.importCalls, 1);
-    expect(find.textContaining('导入完成'), findsOneWidget);
-    expect(find.textContaining('记忆控制已按并集合并'), findsOneWidget);
-  });
+      await tester.ensureVisible(
+        find.byKey(const Key('backup-import-confirm')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('backup-import-confirm')));
+      await tester.pumpAndSettle();
+      expect(backupGateway.importCalls, 1);
+      expect(find.textContaining('导入完成'), findsOneWidget);
+      expect(find.textContaining('记忆控制已按并集合并'), findsOneWidget);
+    },
+  );
 
   testWidgets('cancelling an import preview writes nothing', (tester) async {
     final backupGateway = _FakeBackupGateway();
@@ -1296,9 +1278,7 @@ void main() {
     tester,
   ) async {
     final backupGateway = _FakeBackupGateway()
-      ..previewError = const BackupGatewayException(
-        '备份版本与当前栖语不兼容，已拒绝。',
-      );
+      ..previewError = const BackupGatewayException('备份版本与当前栖语不兼容，已拒绝。');
     final memoryViewModel = MemoryCenterViewModel(
       _FakeMemoryGateway(_fullOverview()),
       autoStart: false,
@@ -1378,18 +1358,18 @@ void main() {
     final menu = tester.getRect(find.byKey(const Key('nav-menu-button')));
     expect(
       tester
-              .getTopLeft(
-                find.descendant(
-                  of: find.byType(MemoryView),
-                  matching: find.byWidgetPredicate(
-                    (widget) =>
-                        widget is Text &&
-                        widget.data == '记忆' &&
-                        widget.style?.fontSize == QiyuType.titleSize,
-                  ),
-                ),
-              )
-              .dx,
+          .getTopLeft(
+            find.descendant(
+              of: find.byType(MemoryView),
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Text &&
+                    widget.data == '记忆' &&
+                    widget.style?.fontSize == QiyuType.titleSize,
+              ),
+            ),
+          )
+          .dx,
       greaterThanOrEqualTo(menu.right),
       reason: '「记忆」标题的左边界不得落在三条杠的命中区里',
     );
@@ -1423,9 +1403,7 @@ void main() {
     expect(gateway.actionCalls, isNot(contains('delete:entry-1')));
   });
 
-  testWidgets('极窄窗口叠加放大字号：条目头部不溢出，时间与按钮全部在场', (
-    tester,
-  ) async {
+  testWidgets('极窄窗口叠加放大字号：条目头部不溢出，时间与按钮全部在场', (tester) async {
     // 上面那条只测到 400 逻辑像素且不放大字号；条目头部右侧是「时间 + 四颗
     // 常驻按钮」的固定宽度簇，窗口再窄一档、字再大一档就撞上 ticket 24 立下的
     // 「小窗/字号放大绝不产生 RenderFlex 溢出」不变量。溢出会作为布局异常把本条
@@ -1460,26 +1438,14 @@ void main() {
     final stampRect = tester.getRect(stamp);
     expect(stampRect.left, greaterThanOrEqualTo(0));
     expect(stampRect.right, lessThanOrEqualTo(width));
-    expect(
-      stampRect.bottom,
-      lessThanOrEqualTo(800),
-      reason: '放大字号后条目头部顶出视口下沿',
-    );
+    expect(stampRect.bottom, lessThanOrEqualTo(800), reason: '放大字号后条目头部顶出视口下沿');
 
     for (final action in ['edit', 'freeze', 'ban', 'delete']) {
       final finder = find.byKey(Key('memory-action-entry-1-$action'));
       expect(finder, findsOneWidget, reason: '极窄窗口缺少 $action 按钮');
       final rect = tester.getRect(finder);
-      expect(
-        rect.right,
-        lessThanOrEqualTo(width),
-        reason: '$action 按钮被裁出视口右侧',
-      );
-      expect(
-        rect.left,
-        greaterThanOrEqualTo(0),
-        reason: '$action 按钮被推出视口左缘',
-      );
+      expect(rect.right, lessThanOrEqualTo(width), reason: '$action 按钮被裁出视口右侧');
+      expect(rect.left, greaterThanOrEqualTo(0), reason: '$action 按钮被推出视口左缘');
       expect(
         rect.bottom,
         lessThanOrEqualTo(800),
@@ -1579,9 +1545,7 @@ void main() {
     }
   });
 
-  testWidgets('常驻操作按钮带无障碍语义标签，不只有 hover 才看得见的 tooltip', (
-    tester,
-  ) async {
+  testWidgets('常驻操作按钮带无障碍语义标签，不只有 hover 才看得见的 tooltip', (tester) async {
     // 记忆控制权「随时看得见」的承诺不许只兑现给鼠标用户：触屏没有 hover，
     // 而实测 IconButton 的 tooltip 只进语义节点的 tooltip 属性、label 是空的，
     // 所以动作名必须显式带进语义树。这里开语义树实测，不靠推测。
@@ -1609,11 +1573,7 @@ void main() {
           label,
           reason: '$action 按钮没把「$label」带进语义标签，触屏读不到动作名',
         );
-        expect(
-          data.tooltip,
-          label,
-          reason: '$action 按钮的 tooltip 属性没带上动作名',
-        );
+        expect(data.tooltip, label, reason: '$action 按钮的 tooltip 属性没带上动作名');
         expect(data.flagsCollection.isButton, isTrue);
       }
     } finally {
@@ -1621,9 +1581,7 @@ void main() {
     }
   });
 
-  testWidgets('动作结果横幅只走中性底，失败态换成 danger 前景字', (
-    tester,
-  ) async {
+  testWidgets('动作结果横幅只走中性底，失败态换成 danger 前景字', (tester) async {
     final gateway = await _pumpMemoryCenter(tester, _fullOverview());
 
     // 读页面上真正的那一份：底取 SnackBar 内部 Material 的 color，字色取合并

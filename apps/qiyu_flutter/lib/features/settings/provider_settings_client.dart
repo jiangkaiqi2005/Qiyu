@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-
 import '../baseline/host_api_gateway.dart';
 
 enum ProviderKind {

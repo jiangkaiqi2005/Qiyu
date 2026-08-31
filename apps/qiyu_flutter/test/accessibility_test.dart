@@ -344,21 +344,11 @@ void main() {
       maxScrolls: 30,
     );
     await tester.pumpAndSettle();
-    expect(
-      lastSectionContent,
-      findsOneWidget,
-      reason: '滚不到末节正文：它按默认档根本没展开',
-    );
-    expect(
-      tester.takeException(),
-      isNull,
-      reason: '七节全部展开后，150% 字阶下设置页溢出',
-    );
+    expect(lastSectionContent, findsOneWidget, reason: '滚不到末节正文：它按默认档根本没展开');
+    expect(tester.takeException(), isNull, reason: '七节全部展开后，150% 字阶下设置页溢出');
   });
 
-  testWidgets('200% 字阶下导航壳与合一页不溢出（§9 深底留余量）', (
-    tester,
-  ) async {
+  testWidgets('200% 字阶下导航壳与合一页不溢出（§9 深底留余量）', (tester) async {
     // 侧边栏（240px）与抽屉（约视口 2/3）是全站最窄的两块排版，2.0 字阶最先
     // 撑破的就是它们；合一页的页头条与空态问候同在这一档受检。
     // 断的是「没有溢出异常」这个可观察结果，不去数树里有几层。
@@ -448,9 +438,7 @@ void main() {
     },
   );
 
-  testWidgets('tooltip 只是语义节点的 tooltip 属性，不构成无障碍名', (
-    tester,
-  ) async {
+  testWidgets('tooltip 只是语义节点的 tooltip 属性，不构成无障碍名', (tester) async {
     // 一处事实的裁决用例，长期留着：`memory_view` 说 tooltip 读不到，
     // `qiyu_chat_bubble` 说 tooltip 即无障碍名，两者只能有一个成立。
     // 实测口径：Material Tooltip 把文案交给 RawTooltip 的 semanticsTooltip，
@@ -539,11 +527,7 @@ void main() {
             ),
           )
           .getSemanticsData();
-      expect(
-        data.label,
-        '再听一遍这句',
-        reason: '重听入口没把动作名带进语义标签，触屏读不到',
-      );
+      expect(data.label, '再听一遍这句', reason: '重听入口没把动作名带进语义标签，触屏读不到');
       expect(data.flagsCollection.isButton, isTrue);
       expect(find.bySemanticsLabel('再听一遍这句'), findsOneWidget);
     } finally {

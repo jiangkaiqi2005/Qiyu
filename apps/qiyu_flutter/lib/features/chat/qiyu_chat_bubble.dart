@@ -98,9 +98,7 @@ class QiyuChatBubble extends StatelessWidget {
           horizontal: QiyuSpacing.md,
           vertical: QiyuSpacing.sm,
         ),
-        constraints: const BoxConstraints(
-          maxWidth: QiyuLayout.messageMaxWidth,
-        ),
+        constraints: const BoxConstraints(maxWidth: QiyuLayout.messageMaxWidth),
         decoration: BoxDecoration(
           color: QiyuColors.bubbleUser,
           borderRadius: QiyuRadii.bubbleBorder,

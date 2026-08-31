@@ -48,15 +48,12 @@ List<GoRoute> qiyuRoutes() => [
   GoRoute(path: '/', builder: (context, state) => const RootView()),
   GoRoute(
     path: '/chat',
-    builder: (context, state) => const QiyuShell(
-      showHomeBackdrop: true,
-      child: LocalChatView(),
-    ),
+    builder: (context, state) =>
+        const QiyuShell(showHomeBackdrop: true, child: LocalChatView()),
   ),
   GoRoute(
     path: '/history',
-    builder: (context, state) =>
-        const QiyuShell(child: HistoryView()),
+    builder: (context, state) => const QiyuShell(child: HistoryView()),
   ),
   GoRoute(
     path: '/history/:sessionId',
@@ -74,8 +71,7 @@ List<GoRoute> qiyuRoutes() => [
   ),
   GoRoute(
     path: '/settings',
-    builder: (context, state) =>
-        const QiyuShell(child: ProviderSettingsView()),
+    builder: (context, state) => const QiyuShell(child: ProviderSettingsView()),
   ),
   GoRoute(
     path: '/settings/diagnostics',

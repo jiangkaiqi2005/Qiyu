@@ -17,36 +17,39 @@ import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 
 void main() {
-  test('bootstraps CSRF, reads onboarding state, and completes with headers', () async {
-    final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/onboarding' => _jsonResponse({'completed': false}, 200),
-        '/api/onboarding/complete' => _jsonResponse({'completed': true}, 200),
-        _ => http.Response('not found', 404),
-      };
-    });
-    final gateway = HttpOnboardingGateway(
-      client: client,
-      baseUri: Uri.parse('http://127.0.0.1:5173/'),
-    );
+  test(
+    'bootstraps CSRF, reads onboarding state, and completes with headers',
+    () async {
+      final requests = <http.Request>[];
+      final client = MockClient((request) async {
+        requests.add(request);
+        return switch (request.url.path) {
+          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+          '/api/onboarding' => _jsonResponse({'completed': false}, 200),
+          '/api/onboarding/complete' => _jsonResponse({'completed': true}, 200),
+          _ => http.Response('not found', 404),
+        };
+      });
+      final gateway = HttpOnboardingGateway(
+        client: client,
+        baseUri: Uri.parse('http://127.0.0.1:5173/'),
+      );
 
-    final state = await gateway.read();
-    expect(state.completed, isFalse);
+      final state = await gateway.read();
+      expect(state.completed, isFalse);
 
-    await gateway.complete();
+      await gateway.complete();
 
-    final completeRequest = requests.last;
-    expect(completeRequest.method, 'POST');
-    expect(completeRequest.url.path, '/api/onboarding/complete');
-    expect(completeRequest.headers['x-qiyu-csrf'], 'csrf-1');
-    expect(
-      requests.where((request) => request.url.path == '/api/bootstrap'),
-      hasLength(1),
-    );
-  });
+      final completeRequest = requests.last;
+      expect(completeRequest.method, 'POST');
+      expect(completeRequest.url.path, '/api/onboarding/complete');
+      expect(completeRequest.headers['x-qiyu-csrf'], 'csrf-1');
+      expect(
+        requests.where((request) => request.url.path == '/api/bootstrap'),
+        hasLength(1),
+      );
+    },
+  );
 
   testWidgets('a fresh user without a Provider chooses local chat first', (
     tester,
@@ -67,10 +70,7 @@ void main() {
     expect(find.text('嗨。我是栖语。'), findsOneWidget);
     expect(find.textContaining('鸟归巢'), findsOneWidget);
     expect(find.byKey(const Key('first-meeting-start-local')), findsOneWidget);
-    expect(
-      find.byKey(const Key('first-meeting-go-settings')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('first-meeting-go-settings')), findsOneWidget);
     expect(find.byKey(const Key('first-meeting-start-chat')), findsNothing);
     expect(find.text('不连模型也能聊，只是回复会简单一些。'), findsOneWidget);
 
@@ -102,14 +102,8 @@ void main() {
 
       expect(find.text('嗨。我是栖语。'), findsOneWidget);
       expect(find.byKey(const Key('first-meeting-start-chat')), findsOneWidget);
-      expect(
-        find.byKey(const Key('first-meeting-start-local')),
-        findsNothing,
-      );
-      expect(
-        find.byKey(const Key('first-meeting-go-settings')),
-        findsNothing,
-      );
+      expect(find.byKey(const Key('first-meeting-start-local')), findsNothing);
+      expect(find.byKey(const Key('first-meeting-go-settings')), findsNothing);
 
       await tester.tap(find.byKey(const Key('first-meeting-start-chat')));
       await tester.pumpAndSettle();
@@ -122,39 +116,40 @@ void main() {
     },
   );
 
-  testWidgets('a returning user skips the first meeting and sees home entries', (
-    tester,
-  ) async {
-    final onboardingGateway = _FakeOnboardingGateway(completed: true);
-    final onboardingViewModel = await _onboardingViewModel(
-      onboardingGateway,
-      configured: false,
-    );
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: onboardingViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
+  testWidgets(
+    'a returning user skips the first meeting and sees home entries',
+    (tester) async {
+      final onboardingGateway = _FakeOnboardingGateway(completed: true);
+      final onboardingViewModel = await _onboardingViewModel(
+        onboardingGateway,
+        configured: false,
+      );
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: _chatViewModel(),
+          onboardingViewModel: onboardingViewModel,
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('嗨。我是栖语。'), findsNothing);
-    // 问候位改由时段问候渲染（首页四张入口卡随合一页退场），断言
-    // 强度不变：仍在原位、仍然只有一个。
-    expect(find.byKey(const Key('home-greeting')), findsOneWidget);
-    expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
-    expect(find.byKey(const Key('home-go-history')), findsOneWidget);
-    expect(find.byKey(const Key('home-go-settings')), findsOneWidget);
+      expect(find.text('嗨。我是栖语。'), findsNothing);
+      // 问候位改由时段问候渲染（首页四张入口卡随合一页退场），断言
+      // 强度不变：仍在原位、仍然只有一个。
+      expect(find.byKey(const Key('home-greeting')), findsOneWidget);
+      expect(find.byKey(const Key('home-go-chat')), findsOneWidget);
+      expect(find.byKey(const Key('home-go-history')), findsOneWidget);
+      expect(find.byKey(const Key('home-go-settings')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('home-go-chat')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-go-chat')));
+      await tester.pumpAndSettle();
 
-    expect(onboardingGateway.completeCalls, 0);
-    expect(find.byKey(const Key('chat-input')), findsOneWidget);
+      expect(onboardingGateway.completeCalls, 0);
+      expect(find.byKey(const Key('chat-input')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('go-home')));
-    await tester.pumpAndSettle();
-  });
+      await tester.tap(find.byKey(const Key('go-home')));
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets('merged home stays in the empty state before today first chat', (
     tester,
@@ -187,43 +182,47 @@ void main() {
     expect(find.byKey(const Key('chat-message-0')), findsNothing);
   });
 
-  testWidgets('merged page resumes straight into the chat once today has messages', (
-    tester,
-  ) async {
-    final onboardingGateway = _FakeOnboardingGateway(completed: true);
-    final onboardingViewModel = await _onboardingViewModel(
-      onboardingGateway,
-      configured: false,
-    );
-    final chatViewModel = LocalChatViewModel(
-      _RestoringChatGateway(
-        const LocalChatSnapshot(sessionId: 'session-today', messages: [
-          LocalChatMessage(
-            requestId: 'today-1',
-            speaker: LocalChatSpeaker.user,
-            text: '今天有点累',
+  testWidgets(
+    'merged page resumes straight into the chat once today has messages',
+    (tester) async {
+      final onboardingGateway = _FakeOnboardingGateway(completed: true);
+      final onboardingViewModel = await _onboardingViewModel(
+        onboardingGateway,
+        configured: false,
+      );
+      final chatViewModel = LocalChatViewModel(
+        _RestoringChatGateway(
+          const LocalChatSnapshot(
+            sessionId: 'session-today',
+            messages: [
+              LocalChatMessage(
+                requestId: 'today-1',
+                speaker: LocalChatSpeaker.user,
+                text: '今天有点累',
+              ),
+            ],
           ),
-        ]),
-      ),
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
-      autoStart: false,
-    );
-    await chatViewModel.initialize();
+        ),
+        hostConnectionProbe: _FakeHostConnectionProbe([true]),
+        autoStart: false,
+      );
+      await chatViewModel.initialize();
 
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: chatViewModel,
-        onboardingViewModel: onboardingViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: chatViewModel,
+          onboardingViewModel: onboardingViewModel,
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    // 当天已有会话：直接是「已有消息」状态，问候与背景图退场。
-    expect(find.text('今天有点累'), findsOneWidget);
-    expect(find.byKey(const Key('chat-message-0')), findsOneWidget);
-    expect(find.byKey(const Key('home-greeting')), findsNothing);
-    expect(find.byKey(const Key('home-backdrop')), findsNothing);
-  });
+      // 当天已有会话：直接是「已有消息」状态，问候与背景图退场。
+      expect(find.text('今天有点累'), findsOneWidget);
+      expect(find.byKey(const Key('chat-message-0')), findsOneWidget);
+      expect(find.byKey(const Key('home-greeting')), findsNothing);
+      expect(find.byKey(const Key('home-backdrop')), findsNothing);
+    },
+  );
 
   testWidgets('clearing local product data reopens the first meeting', (
     tester,
@@ -354,8 +353,7 @@ final class _FakeOnboardingGateway implements OnboardingGateway {
   var completeCalls = 0;
 
   @override
-  Future<OnboardingState> read() async =>
-      OnboardingState(completed: completed);
+  Future<OnboardingState> read() async => OnboardingState(completed: completed);
 
   @override
   Future<void> complete() async {
@@ -404,12 +402,13 @@ final class _FakeProviderSettingsGateway implements ProviderSettingsGateway {
   Future<ProviderSettings> forgetApiKey() async => current;
 
   @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) async =>
-      const ProviderTestResult(
-        succeeded: true,
-        status: ProviderTestStatus.success,
-        message: '连接成功，栖语可以使用这个模型。',
-      );
+  Future<ProviderTestResult> testConnection(
+    ProviderSettingsDraft draft,
+  ) async => const ProviderTestResult(
+    succeeded: true,
+    status: ProviderTestStatus.success,
+    message: '连接成功，栖语可以使用这个模型。',
+  );
 }
 
 final class _UnusedChatGateway implements StreamingLocalChatGateway {
@@ -426,7 +425,6 @@ final class _UnusedChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
-
 
   @override
   Future<String> transcribe({
@@ -452,7 +450,6 @@ final class _RestoringChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
-
 
   @override
   Future<String> transcribe({

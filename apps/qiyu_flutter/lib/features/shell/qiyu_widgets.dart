@@ -68,7 +68,8 @@ class QiyuGlassPanel extends StatelessWidget {
             // 自定义边线（如侧边栏的单侧发丝线）不是均匀边，BoxDecoration
             // 此时不接受圆角；圆角已经由外层 ClipRRect 裁出，视觉一致。
             borderRadius: border == null ? borderRadius : null,
-            border: border ??
+            border:
+                border ??
                 Border.all(width: QiyuLine.hairline, color: borderColor),
           ),
           child: Padding(
@@ -430,7 +431,6 @@ class _QiyuRingScope extends InheritedWidget {
   @override
   bool updateShouldNotify(_QiyuRingScope oldWidget) => false;
 }
-
 
 /// 读一份**可能不存在**的 Provider：壳层（导航壳、连接状态）可以被脱离
 /// `LocalChatViewModel` 单独 pump（旧测试、独立预览），拿不到不是错误，退化成

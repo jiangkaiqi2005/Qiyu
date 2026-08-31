@@ -23,13 +23,14 @@ void main() {
 
     test('reads experience preferences', () async {
       final requests = <http.Request>[];
-      final gateway = gatewayFor(requests, (request) => switch (
-        request.url.path
-      ) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/preferences' => _jsonResponse({'developerMode': true}, 200),
-        _ => http.Response('not found', 404),
-      });
+      final gateway = gatewayFor(
+        requests,
+        (request) => switch (request.url.path) {
+          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+          '/api/preferences' => _jsonResponse({'developerMode': true}, 200),
+          _ => http.Response('not found', 404),
+        },
+      );
 
       final preferences = await gateway.readPreferences();
 
@@ -39,13 +40,14 @@ void main() {
 
     test('saves developer mode with CSRF header', () async {
       final requests = <http.Request>[];
-      final gateway = gatewayFor(requests, (request) => switch (
-        request.url.path
-      ) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/preferences' => _jsonResponse({'developerMode': true}, 200),
-        _ => http.Response('not found', 404),
-      });
+      final gateway = gatewayFor(
+        requests,
+        (request) => switch (request.url.path) {
+          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+          '/api/preferences' => _jsonResponse({'developerMode': true}, 200),
+          _ => http.Response('not found', 404),
+        },
+      );
 
       final preferences = await gateway.savePreferences(developerMode: true);
 
@@ -58,22 +60,23 @@ void main() {
 
     test('reads the memory controls overview', () async {
       final requests = <http.Request>[];
-      final gateway = gatewayFor(requests, (request) => switch (
-        request.url.path
-      ) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/memory/controls' => _jsonResponse({
-          'readable': true,
-          'frozen': [
-            {'id': 1, 'origin': 'chat', 'summary': '一段冻结的记忆'},
-          ],
-          'banned': [
-            {'id': 2, 'origin': 'chat', 'summary': '一段禁提的往事'},
-          ],
-          'deletedCount': 3,
-        }, 200),
-        _ => http.Response('not found', 404),
-      });
+      final gateway = gatewayFor(
+        requests,
+        (request) => switch (request.url.path) {
+          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+          '/api/memory/controls' => _jsonResponse({
+            'readable': true,
+            'frozen': [
+              {'id': 1, 'origin': 'chat', 'summary': '一段冻结的记忆'},
+            ],
+            'banned': [
+              {'id': 2, 'origin': 'chat', 'summary': '一段禁提的往事'},
+            ],
+            'deletedCount': 3,
+          }, 200),
+          _ => http.Response('not found', 404),
+        },
+      );
 
       final overview = await gateway.readMemoryControls();
 
@@ -85,23 +88,24 @@ void main() {
 
     test('clear preview exposes data location and counts', () async {
       final requests = <http.Request>[];
-      final gateway = gatewayFor(requests, (request) => switch (
-        request.url.path
-      ) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/data/clear-preview' => _jsonResponse({
-          'memoryDirectory': 'C:/qiyu/memories',
-          'sessionCount': 4,
-          'episodeDayCount': 9,
-          'frozenCount': 1,
-          'bannedCount': 2,
-          'deletedCount': 0,
-          'snapshotCount': 1,
-          'providerConfigured': true,
-          'keySet': true,
-        }, 200),
-        _ => http.Response('not found', 404),
-      });
+      final gateway = gatewayFor(
+        requests,
+        (request) => switch (request.url.path) {
+          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+          '/api/data/clear-preview' => _jsonResponse({
+            'memoryDirectory': 'C:/qiyu/memories',
+            'sessionCount': 4,
+            'episodeDayCount': 9,
+            'frozenCount': 1,
+            'bannedCount': 2,
+            'deletedCount': 0,
+            'snapshotCount': 1,
+            'providerConfigured': true,
+            'keySet': true,
+          }, 200),
+          _ => http.Response('not found', 404),
+        },
+      );
 
       final preview = await gateway.readClearPreview();
 
@@ -115,13 +119,14 @@ void main() {
 
     test('clear data sends an explicit confirmation', () async {
       final requests = <http.Request>[];
-      final gateway = gatewayFor(requests, (request) => switch (
-        request.url.path
-      ) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/data/clear' => _jsonResponse({'cleared': true}, 200),
-        _ => http.Response('not found', 404),
-      });
+      final gateway = gatewayFor(
+        requests,
+        (request) => switch (request.url.path) {
+          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+          '/api/data/clear' => _jsonResponse({'cleared': true}, 200),
+          _ => http.Response('not found', 404),
+        },
+      );
 
       await gateway.clearData();
 
@@ -133,41 +138,42 @@ void main() {
 
     test('parses the developer diagnostics snapshot', () async {
       final requests = <http.Request>[];
-      final gateway = gatewayFor(requests, (request) => switch (
-        request.url.path
-      ) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/dev/diagnostics' => _jsonResponse({
-          'generatedAt': '2026-08-19T14:00:00.000Z',
-          'memoryDirectory': 'C:/qiyu/memories',
-          'recentRequests': [
-            {
-              'at': '2026-08-19T13:59:00.000Z',
-              'source': 'chat',
-              'result': 'fallback',
-              'replySource': 'local',
-              'fallbackReason': 'model_timeout',
+      final gateway = gatewayFor(
+        requests,
+        (request) => switch (request.url.path) {
+          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+          '/api/dev/diagnostics' => _jsonResponse({
+            'generatedAt': '2026-08-19T14:00:00.000Z',
+            'memoryDirectory': 'C:/qiyu/memories',
+            'recentRequests': [
+              {
+                'at': '2026-08-19T13:59:00.000Z',
+                'source': 'chat',
+                'result': 'fallback',
+                'replySource': 'local',
+                'fallbackReason': 'model_timeout',
+              },
+            ],
+            'finalization': {
+              'today': '2026-08-19',
+              'todayFinalized': false,
+              'pendingDays': 2,
+              'unreadableDays': 0,
             },
-          ],
-          'finalization': {
-            'today': '2026-08-19',
-            'todayFinalized': false,
-            'pendingDays': 2,
-            'unreadableDays': 0,
-          },
-          'dream': {
-            'lastSuccessAt': '2026-08-11T16:00:00.000Z',
-            'daysSinceLastSuccess': 8,
-            'pending': false,
-            'minIntervalDays': 3,
-            'intervalSatisfied': true,
-            'providerConfigured': true,
-            'eligible': true,
-          },
-          'fileHealth': {'episodeDays': 9},
-        }, 200),
-        _ => http.Response('not found', 404),
-      });
+            'dream': {
+              'lastSuccessAt': '2026-08-11T16:00:00.000Z',
+              'daysSinceLastSuccess': 8,
+              'pending': false,
+              'minIntervalDays': 3,
+              'intervalSatisfied': true,
+              'providerConfigured': true,
+              'eligible': true,
+            },
+            'fileHealth': {'episodeDays': 9},
+          }, 200),
+          _ => http.Response('not found', 404),
+        },
+      );
 
       final snapshot = await gateway.readDiagnostics();
 
@@ -181,17 +187,18 @@ void main() {
     });
 
     test('surfaces a readable error when the host rejects a request', () async {
-      final gateway = gatewayFor(<http.Request>[], (request) => switch (
-        request.url.path
-      ) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/data/clear' => _jsonResponse({
-          'code': 'invalid_request',
-          'message': '清除本机数据需要明确确认。',
-          'retryable': false,
-        }, 400),
-        _ => http.Response('not found', 404),
-      });
+      final gateway = gatewayFor(
+        <http.Request>[],
+        (request) => switch (request.url.path) {
+          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+          '/api/data/clear' => _jsonResponse({
+            'code': 'invalid_request',
+            'message': '清除本机数据需要明确确认。',
+            'retryable': false,
+          }, 400),
+          _ => http.Response('not found', 404),
+        },
+      );
 
       await expectLater(
         gateway.clearData(),

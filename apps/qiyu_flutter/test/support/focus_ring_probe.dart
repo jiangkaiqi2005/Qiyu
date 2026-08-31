@@ -62,8 +62,7 @@ Future<FocusRingReading?> tabUntilRingAppears(
 }) async {
   for (var i = 0; i < maxTabs; i++) {
     final reading = readFocusRing(tester, targetKey);
-    if (reading != null &&
-        reading.border.color == QiyuColors.accentBright) {
+    if (reading != null && reading.border.color == QiyuColors.accentBright) {
       return reading;
     }
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);

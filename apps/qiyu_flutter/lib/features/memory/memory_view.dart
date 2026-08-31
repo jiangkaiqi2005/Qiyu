@@ -987,10 +987,7 @@ class _MemoryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return QiyuFocusRingScope(
       borderRadius: QiyuRadii.cardBorder,
-      child: Card(
-        margin: const EdgeInsets.only(bottom: 8),
-        child: child,
-      ),
+      child: Card(margin: const EdgeInsets.only(bottom: 8), child: child),
     );
   }
 }
@@ -1225,8 +1222,7 @@ class _MiddleTile extends StatelessWidget {
                     _StatusChip(label: middle.type),
                     if (middle.control case final control?)
                       _StatusChip(label: control.label),
-                    if (middle.hasConflict)
-                      const _StatusChip(label: '有冲突证据'),
+                    if (middle.hasConflict) const _StatusChip(label: '有冲突证据'),
                   ],
                 ),
                 trailing: [
@@ -1362,10 +1358,7 @@ class _MemoryActionButtons extends StatelessWidget {
           choice: _MemoryActionChoice.unfreeze,
         ));
       case MemoryControlStatus.banned:
-        actions.add((
-          icon: QiyuIcons.block,
-          choice: _MemoryActionChoice.unban,
-        ));
+        actions.add((icon: QiyuIcons.block, choice: _MemoryActionChoice.unban));
       case null:
         actions.addAll([
           (icon: QiyuIcons.ac_unit, choice: _MemoryActionChoice.freeze),

@@ -32,10 +32,7 @@ class PrivacyView extends StatelessWidget {
                       icon: const Icon(QiyuIcons.arrow_back),
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      '隐私与边界',
-                      style: theme.textTheme.headlineSmall,
-                    ),
+                    Text('隐私与边界', style: theme.textTheme.headlineSmall),
                   ],
                 ),
                 const SizedBox(height: 30),
@@ -59,7 +56,8 @@ class PrivacyView extends StatelessWidget {
                 _PrivacySection(
                   tag: '本机',
                   title: '数据只保存在你的电脑上',
-                  body: '聊天记录、整理后的每日记录、长期印象、画像与关系、'
+                  body:
+                      '聊天记录、整理后的每日记录、长期印象、画像与关系、'
                       '记忆控制，全部是保存在本机「栖语数据目录」里的 '
                       'Markdown 文件，用任何文本编辑器都能直接打开查看。'
                       'API Key 以明文保存在本机 provider.json 里，不落进'
@@ -72,7 +70,8 @@ class PrivacyView extends StatelessWidget {
                 _PrivacySection(
                   tag: '模型',
                   title: '何时调用你选择的模型服务',
-                  body: '只有你在设置里配置了模型服务时，栖语才会联网，且只发往你填写的地址：'
+                  body:
+                      '只有你在设置里配置了模型服务时，栖语才会联网，且只发往你填写的地址：'
                       '你发来消息需要模型回应时、晚安后的当日整理、'
                       '间隔至少七天的 Dream 深度整理、对话中的记忆查找，'
                       '以及你主动发起的连接测试。'
@@ -82,7 +81,8 @@ class PrivacyView extends StatelessWidget {
                 _PrivacySection(
                   tag: '记忆',
                   title: '这些内容永远不会被提升为记忆',
-                  body: 'API Key、密码、口令、Cookie、验证码、身份证号、'
+                  body:
+                      'API Key、密码、口令、Cookie、验证码、身份证号、'
                       '银行卡号、私钥等敏感原文，在写入任何记忆文件之前一律过滤。'
                       '涉及私密内容的记忆在记忆中心默认打码展示，'
                       '单次揭示需要明确确认，页面不缓存原文。',
@@ -90,7 +90,8 @@ class PrivacyView extends StatelessWidget {
                 _PrivacySection(
                   tag: '诊断',
                   title: '日志与诊断统一脱敏',
-                  body: '本机日志和开发者诊断只记录请求来源、结果与错误类别，'
+                  body:
+                      '本机日志和开发者诊断只记录请求来源、结果与错误类别，'
                       '不记录任何对话正文；API Key、授权头、启动凭据和'
                       '默认遮罩的敏感原文绝不会出现在任何导出里。'
                       '开发者诊断默认关闭，只读，不触碰任何数据。',
@@ -157,9 +158,7 @@ class _PrivacySection extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              Expanded(
-                child: Text(title, style: theme.textTheme.titleMedium),
-              ),
+              Expanded(child: Text(title, style: theme.textTheme.titleMedium)),
             ],
           ),
           const SizedBox(height: 10),

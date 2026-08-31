@@ -331,9 +331,7 @@ Map<String, Object?> _decodeSuccess(http.Response response) {
     }
   }
   if (response.statusCode < 200 || response.statusCode >= 300) {
-    throw SettingsException(
-      json?['message'] as String? ?? '设置服务暂时不可用，请稍后重试。',
-    );
+    throw SettingsException(json?['message'] as String? ?? '设置服务暂时不可用，请稍后重试。');
   }
   return json!;
 }

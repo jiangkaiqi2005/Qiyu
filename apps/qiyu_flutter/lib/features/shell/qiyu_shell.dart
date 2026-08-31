@@ -96,16 +96,14 @@ class _QiyuShellState extends State<QiyuShell>
       duration: QiyuMotion.drawer,
       reverseDuration: QiyuMotion.drawer,
     )..addStatusListener(_onDrawerStatus);
-    _drawerSlide = Tween<Offset>(
-      begin: const Offset(-1.02, 0),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _drawerController,
-        curve: Curves.easeOut,
-        reverseCurve: Curves.easeIn,
-      ),
-    );
+    _drawerSlide =
+        Tween<Offset>(begin: const Offset(-1.02, 0), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _drawerController,
+            curve: Curves.easeOut,
+            reverseCurve: Curves.easeIn,
+          ),
+        );
   }
 
   void _onDrawerStatus(AnimationStatus status) {
@@ -181,7 +179,8 @@ class _QiyuShellState extends State<QiyuShell>
   Widget build(BuildContext context) {
     final viewport = MediaQuery.sizeOf(context);
     final desktop = viewport.width >= QiyuLayout.desktopBreakpoint;
-    final homeBackdrop = widget.showHomeBackdrop &&
+    final homeBackdrop =
+        widget.showHomeBackdrop &&
         context.select<LocalChatViewModel, bool>(
           (viewModel) => viewModel.isHomeState,
         );
@@ -294,9 +293,7 @@ class _QiyuShellState extends State<QiyuShell>
                       dimension: QiyuLayout.menuButtonSize,
                       child: Center(
                         child: Icon(
-                          _drawerOpen
-                              ? QiyuIcons.close
-                              : QiyuIcons.menu,
+                          _drawerOpen ? QiyuIcons.close : QiyuIcons.menu,
                           size: QiyuIconSpec.size,
                           color: QiyuColors.ink,
                         ),

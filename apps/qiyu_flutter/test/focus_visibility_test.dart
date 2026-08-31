@@ -69,11 +69,7 @@ void main() {
 
     await mouseClick(tester, find.byKey(fieldKey));
 
-    expect(
-      node.hasFocus,
-      isTrue,
-      reason: '前提：鼠标点进输入框确实把焦点交给了它',
-    );
+    expect(node.hasFocus, isTrue, reason: '前提：鼠标点进输入框确实把焦点交给了它');
     // 框架的 highlightMode 到这一步仍是 traditional：旧判据正是在这里判错
     // （持焦 + traditional 就画环），所以这一条在改判之前是红的。
     expect(
@@ -88,9 +84,7 @@ void main() {
     );
   });
 
-  testWidgets('键盘 Tab 把焦点走到同一只控件时出现 2px + offset 3px 紫环', (
-    tester,
-  ) async {
+  testWidgets('键盘 Tab 把焦点走到同一只控件时出现 2px + offset 3px 紫环', (tester) async {
     await pumpRingHarness(tester);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
@@ -120,11 +114,7 @@ void main() {
 
     await tester.tap(find.byKey(fieldKey));
     await tester.pumpAndSettle();
-    expect(
-      node.hasFocus,
-      isTrue,
-      reason: '前提：flutter_test 的 tap 是触摸指针',
-    );
+    expect(node.hasFocus, isTrue, reason: '前提：flutter_test 的 tap 是触摸指针');
 
     expect(
       readFocusRing(tester, fieldKey)!.border.color,

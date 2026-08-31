@@ -15,8 +15,9 @@ void backToPrevious(BuildContext context) {
 /// 而不是继续叠加。记忆详情之间会成环（条目 → 这一天 → 条目），
 /// 不加这道闸就会无限嵌套。
 void openInFront(BuildContext context, String location) {
-  final matches =
-      GoRouter.of(context).routerDelegate.currentConfiguration.matches;
+  final matches = GoRouter.of(
+    context,
+  ).routerDelegate.currentConfiguration.matches;
   // 目标已在栈里时取最深一个匹配，逐层回退到它而不是继续叠加。
   final targetDepth = matches.lastIndexWhere(
     (match) => match.matchedLocation == location,
