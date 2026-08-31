@@ -13,10 +13,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: QiyuCenteredScrollable(
-            maxWidth: 560,
-            child: child,
-          ),
+          body: QiyuCenteredScrollable(maxWidth: 560, child: child),
         ),
       ),
     );
