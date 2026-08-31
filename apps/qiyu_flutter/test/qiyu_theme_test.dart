@@ -1369,15 +1369,14 @@ const Color topLevel = Color(0xFF667788);
         if (relative.startsWith('lib/theme/')) {
           continue;
         }
-        var hits = 0;
-        for (final line in file.readAsLinesSync()) {
-          if (line.trimLeft().startsWith('//')) {
-            continue;
-          }
-          if (bareSpacing.hasMatch(line)) {
-            hits++;
-          }
-        }
+        // 剔掉整行注释后拼成一份文本再匹配：逐行匹配会放过 `spacing:` 与数字被换行
+        // 拆开的写法（Dart 允许参数值换行），拼文本后 `\s` 含换行，跨行也抓得住；
+        // 注释里的 CSS `letter-spacing: 3px` 依旧不进计数。
+        final code = file
+            .readAsLinesSync()
+            .where((line) => !line.trimLeft().startsWith('//'))
+            .join('\n');
+        final hits = bareSpacing.allMatches(code).length;
         if (hits > 0) {
           found[relative] = hits;
         }
@@ -1392,6 +1391,11 @@ const Color topLevel = Color(0xFF667788);
         bareSpacing.hasMatch('Wrap(spacing: 8, runSpacing: 0)'),
         isTrue,
         reason: '正则失配，这条棘轮会静默放行一切',
+      );
+      expect(
+        bareSpacing.allMatches('Wrap(spacing:\n  8,\n)').length,
+        1,
+        reason: '值换行写就抓不到，等于给绕开棘轮留了一条静默通道',
       );
       // 台账按**文件计数**而不是按条目点名：同文件里同值的裸间距有好多处，用集合
       // 装它们会折叠成一条（实测 10 处只剩 3 条），少清一处也照样绿。

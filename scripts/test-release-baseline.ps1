@@ -140,9 +140,15 @@ Assert-Condition (
 Assert-Condition (
   $verificationScript -notmatch 'browser voice playback test skipped'
 ) 'Release 1 不得在没有可用浏览器时跳过语音播放测试并继续成功。'
+$browserGuardBlock = [regex]::Match(
+  $verificationScript,
+  'if \(-not \$browserPlatform\) \{[\s\S]*?\n  \}'
+)
 Assert-Condition (
-  $verificationScript -match '门禁需要 Chrome、Chromium 或 Edge'
-) 'Release 1 的浏览器侧用例缺硬失败：没有可用浏览器时门禁必须 throw，不能探测不到就跳过当通过。'
+  $browserGuardBlock.Success -and
+  $browserGuardBlock.Value -match 'throw' -and
+  $browserGuardBlock.Value -match 'Chrome、Chromium 或 Edge'
+) 'Release 1 的浏览器侧用例缺硬失败：探测不到可用浏览器时，必须在那个探测分支里 throw，不能探测不到就跳过当通过。'
 
 foreach ($relativePath in @(
   'README.md',
