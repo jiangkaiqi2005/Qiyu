@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
@@ -1066,9 +1067,23 @@ Future<void> _settleMergedPage(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// 回合一页：桌面已不设任何「回合一页」入口（2026-08-31 二次裁定），`go-home`
+/// 键只保留在窄屏抽屉品牌槽上，所以这一步切到窄视口走抽屉完成同一动作：
+/// 停播 + `go('/')` 的语义不变，最后钉住落点确实是合一页。
 Future<void> _returnToHome(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(420, 900);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pump();
+  await tester.tap(find.byKey(const Key('nav-menu-button')));
+  await tester.pumpAndSettle();
   await tester.tap(find.byKey(const Key('go-home')));
   await tester.pumpAndSettle();
+  final router = GoRouter.of(tester.element(find.byType(Scaffold).first));
+  expect(
+    router.routerDelegate.currentConfiguration.matches.last.matchedLocation,
+    '/',
+  );
 }
 
 final class _FakeOnboardingGateway implements OnboardingGateway {
