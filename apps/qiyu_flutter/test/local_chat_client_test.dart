@@ -2,20 +2,19 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
+import 'support/host_transport.dart';
 
 void main() {
   test(
     'bootstraps CSRF, restores a session, and sends through the local API',
     () async {
       final requests = <http.Request>[];
-      final client = MockClient((request) async {
-        requests.add(request);
-        return switch (request.url.path) {
-          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-          '/api/chat/session' => _jsonResponse({
+      final client = hostTransportClient(
+        (request) => switch (request.url.path) {
+          '/api/chat/session' => hostJsonResponse({
             'sessionId': 'session-1',
             'turns': [
               {
@@ -52,8 +51,9 @@ void main() {
             {'event': 'done', 'requestId': 'new-1'},
           ]),
           _ => http.Response('not found', 404),
-        };
-      });
+        },
+        requests: requests,
+      );
       final gateway = HttpLocalChatGateway(
         client: client,
         baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -68,12 +68,9 @@ void main() {
 
       expect(restored.messages.single.text, '旧消息');
       expect(exchange.source, ReplySource.local);
-      expect(
-        requests.where((request) => request.url.path == '/api/bootstrap'),
-        hasLength(1),
-      );
+      expectBootstrapRequestedOnce(requests);
       final sendRequest = requests.last;
-      expect(sendRequest.headers['x-qiyu-csrf'], 'csrf-1');
+      expectCsrfHeader(sendRequest);
       expect(jsonDecode(sendRequest.body), {
         'requestId': 'new-1',
         'text': '在吗',
@@ -83,12 +80,10 @@ void main() {
   );
 
   test('surfaces the local API error message', () async {
-    final client = MockClient((request) async {
-      if (request.url.path == '/api/bootstrap') {
-        return _jsonResponse({'csrfToken': 'csrf-1'}, 200);
-      }
-      return _jsonResponse({'message': '无法保存本地聊天记录，请检查磁盘空间和目录权限。'}, 500);
-    });
+    final client = hostTransportClient(
+      (request) =>
+          hostJsonResponse({'message': '无法保存本地聊天记录，请检查磁盘空间和目录权限。'}, 500),
+    );
     final gateway = HttpLocalChatGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -108,18 +103,17 @@ void main() {
 
   test('speak：带 CSRF 的朗读请求与二进制音频响应', () async {
     final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
         '/api/chat/speak' => http.Response.bytes(
           [1, 2, 3],
           200,
           headers: const {'content-type': 'audio/mpeg'},
         ),
-        _ => _jsonResponse({'message': 'not found'}, 404),
-      };
-    });
+        _ => hostJsonResponse({'message': 'not found'}, 404),
+      },
+      requests: requests,
+    );
     final gateway = HttpLocalChatGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -134,21 +128,20 @@ void main() {
     final sent = requests.last;
     expect(sent.method, 'POST');
     expect(sent.url.path, '/api/chat/speak');
-    expect(sent.headers['x-qiyu-csrf'], 'csrf-1');
+    expectCsrfHeader(sent);
   });
 
   test('speak：服务端错误回人话异常', () async {
-    final client = MockClient((request) async {
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/chat/speak' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/chat/speak' => hostJsonResponse({
           'code': 'tts_turn_not_found',
           'message': '找不到这句话，请刷新后重试。',
           'retryable': false,
         }, 400),
-        _ => _jsonResponse({'message': 'not found'}, 404),
-      };
-    });
+        _ => hostJsonResponse({'message': 'not found'}, 404),
+      },
+    );
     final gateway = HttpLocalChatGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -168,16 +161,15 @@ void main() {
 
   test('speak：按 spec 发送 requestId 与 turnIndex 定位符', () async {
     late Map<String, Object?> payload;
-    final client = MockClient((request) async {
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
         '/api/chat/speak' => () {
           payload = (jsonDecode(request.body) as Map).cast<String, Object?>();
           return http.Response.bytes([1, 2, 3], 200);
         }(),
-        _ => _jsonResponse({'message': 'not found'}, 404),
-      };
-    });
+        _ => hostJsonResponse({'message': 'not found'}, 404),
+      },
+    );
     final gateway = HttpLocalChatGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -194,13 +186,5 @@ http.Response _streamResponse(List<Map<String, Object?>> events) {
     utf8.encode(body),
     200,
     headers: const {'content-type': 'application/x-ndjson; charset=utf-8'},
-  );
-}
-
-http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {
-  return http.Response.bytes(
-    utf8.encode(jsonEncode(body)),
-    statusCode,
-    headers: const {'content-type': 'application/json; charset=utf-8'},
   );
 }

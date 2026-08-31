@@ -2,15 +2,15 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
+
+import 'support/host_transport.dart';
 
 void main() {
   test('读取设置：configured/keySet/音色/语速/开关，永不携带明文 Key', () async {
-    final client = MockClient(
-      (request) async => switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/tts' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
           'configured': true,
           'keySet': true,
           'provider': 'openai_compatible',
@@ -40,10 +40,9 @@ void main() {
   });
 
   test('缺省字段：不带 voice/speed/autoSpeak 的快照按默认呈现', () async {
-    final client = MockClient(
-      (request) async => switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/tts' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
           'configured': true,
           'keySet': false,
           'baseUrl': 'https://tts.example.com/v1',
@@ -65,11 +64,9 @@ void main() {
 
   test('豆包协议：provider 往返一致，保存请求带 volc_tts', () async {
     final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/tts' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
           'configured': true,
           'keySet': true,
           'provider': 'volc_tts',
@@ -78,8 +75,9 @@ void main() {
           'model': 'seed-tts-2.0',
         }, 200),
         _ => http.Response('not found', 404),
-      };
-    });
+      },
+      requests: requests,
+    );
     final gateway = HttpTtsSettingsGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -103,25 +101,24 @@ void main() {
 
   test('保存与忘记 Key 都带 CSRF 头且请求体形状正确', () async {
     final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/tts' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
           'configured': true,
           'keySet': true,
           'baseUrl': 'https://tts.example.com/v1',
           'model': 'tts-test',
         }, 200),
-        '/api/provider/tts/key' => _jsonResponse({
+        '/api/provider/tts/key' => hostJsonResponse({
           'configured': true,
           'keySet': false,
           'baseUrl': 'https://tts.example.com/v1',
           'model': 'tts-test',
         }, 200),
         _ => http.Response('not found', 404),
-      };
-    });
+      },
+      requests: requests,
+    );
     final gateway = HttpTtsSettingsGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -139,7 +136,7 @@ void main() {
     expect(saved.keySet, isTrue);
     final saveRequest = requests.last;
     expect(saveRequest.method, 'PUT');
-    expect(saveRequest.headers['x-qiyu-csrf'], 'csrf-1');
+    expectCsrfHeader(saveRequest);
     expect(jsonDecode(saveRequest.body), {
       'provider': 'openai_compatible',
       'baseUrl': 'https://tts.example.com/v1',
@@ -154,24 +151,23 @@ void main() {
     final forgetRequest = requests.last;
     expect(forgetRequest.method, 'DELETE');
     expect(forgetRequest.url.path, '/api/provider/tts/key');
-    expect(forgetRequest.headers['x-qiyu-csrf'], 'csrf-1');
+    expectCsrfHeader(forgetRequest);
   });
 
   test('连接测试：成功带回试听音频，失败只回文案', () async {
     final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/tts/test' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts/test' => hostJsonResponse({
           'ok': true,
           'status': 'success',
           'message': '连接成功，点「听试听」可以听听栖语的声音。',
           'audioBase64': base64Encode([1, 2, 3]),
         }, 200),
         _ => http.Response('not found', 404),
-      };
-    });
+      },
+      requests: requests,
+    );
     final gateway = HttpTtsSettingsGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -188,10 +184,9 @@ void main() {
     expect(result.audio, [1, 2, 3]);
     expect(jsonDecode(requests.last.body), draft.toJson());
 
-    final failedClient = MockClient(
-      (request) async => switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/tts/test' => _jsonResponse({
+    final failedClient = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts/test' => hostJsonResponse({
           'ok': false,
           'status': 'authentication',
           'message': 'API Key 没有通过验证。',
@@ -210,11 +205,9 @@ void main() {
 
   test('setAutoSpeak：独立端点、带 CSRF、只传 enabled', () async {
     final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/tts/auto-speak' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts/auto-speak' => hostJsonResponse({
           'configured': true,
           'keySet': true,
           'baseUrl': 'https://tts.example.com/v1',
@@ -222,8 +215,9 @@ void main() {
           'autoSpeak': false,
         }, 200),
         _ => http.Response('not found', 404),
-      };
-    });
+      },
+      requests: requests,
+    );
     final gateway = HttpTtsSettingsGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -234,17 +228,15 @@ void main() {
     final sent = requests.last;
     expect(sent.method, 'PUT');
     expect(sent.url.path, '/api/provider/tts/auto-speak');
-    expect(sent.headers['x-qiyu-csrf'], 'csrf-1');
+    expectCsrfHeader(sent);
     expect(jsonDecode(sent.body), {'enabled': false});
   });
 
   test('extraParams：读取与保存往返正确，请求携带 JSON 对象', () async {
     final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/tts' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
           'configured': true,
           'keySet': true,
           'provider': 'volc_tts',
@@ -257,8 +249,9 @@ void main() {
           },
         }, 200),
         _ => http.Response('not found', 404),
-      };
-    });
+      },
+      requests: requests,
+    );
     final gateway = HttpTtsSettingsGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -287,12 +280,4 @@ void main() {
       'audio_params': {'sample_rate': 16000},
     });
   });
-}
-
-http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {
-  return http.Response.bytes(
-    utf8.encode(jsonEncode(body)),
-    statusCode,
-    headers: const {'content-type': 'application/json; charset=utf-8'},
-  );
 }
