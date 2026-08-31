@@ -12,7 +12,6 @@ import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 final class InProcessChatHost {
   InProcessChatHost._(
     this.rootDirectory,
-    this._host,
     this.modelGateway,
     this.personaConstitution,
     this.clock,
@@ -20,8 +19,6 @@ final class InProcessChatHost {
     this.deliveryPause,
     this.recallWindowWait,
     this.diagnosticsSink,
-    this._cookie,
-    this._csrfToken,
     this.zoneErrors,
   );
 
@@ -37,9 +34,9 @@ final class InProcessChatHost {
   final RecallWindowWait? recallWindowWait;
   final void Function(String message)? diagnosticsSink;
 
-  LocalAppHost _host;
-  String _cookie;
-  String _csrfToken;
+  late LocalAppHost _host;
+  late String _cookie;
+  late String _csrfToken;
   final HttpClient _client = HttpClient();
 
   /// Host 侧顶层异步错误留档：交付流中途异常（如落盘失败）会在服务
@@ -88,54 +85,23 @@ final class InProcessChatHost {
       await seedMemory(memoryDirectory);
     }
 
-    ProviderSettingsService? providerSettings;
-    if (modelGateway != null) {
-      final configRepository = JsonProviderConfigRepository(
+    if (modelGateway != null && configureProvider) {
+      await JsonProviderConfigRepository(
         filePath: '${root.path}${Platform.pathSeparator}provider.json',
+      ).save(
+        const ProviderConfig(
+          kind: ProviderKind.openAiCompatible,
+          baseUrl: 'https://scripted.invalid/v1',
+          model: 'scripted-model',
+          temperature: 0.6,
+          timeoutSeconds: 25,
+          apiKey: 'scripted-test-key',
+        ),
       );
-      providerSettings = ProviderSettingsService(
-        configRepository,
-        const _FileOnlySecretStore(),
-        modelGateway,
-        ModelPromptBuilder(personaConstitution),
-      );
-      if (configureProvider) {
-        await configRepository.save(
-          const ProviderConfig(
-            kind: ProviderKind.openAiCompatible,
-            baseUrl: 'https://scripted.invalid/v1',
-            model: 'scripted-model',
-            temperature: 0.6,
-            timeoutSeconds: 25,
-            apiKey: 'scripted-test-key',
-          ),
-        );
-      }
     }
 
-    final zoneErrors = <Object>[];
-    final host = await _startInGuardedZone(
-      zoneErrors,
-      () => LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: personaConstitution,
-        providerSettingsService: providerSettings,
-        clock: clock,
-        atomicWriter: atomicWriter,
-        // 缺省抹掉分段停顿：与迁移前测试同律，避免真路径测试空等；
-        // 需要验证停顿本身时显式传入。
-        deliveryPause: deliveryPause ?? (_) async {},
-        recallWindowWait: recallWindowWait,
-        diagnosticsSink: diagnosticsSink,
-      ),
-    );
-    final client = HttpClient();
-    final session = await _login(host, client);
-    client.close(force: true);
-    return InProcessChatHost._(
+    final instance = InProcessChatHost._(
       root,
-      host,
       modelGateway,
       personaConstitution,
       clock,
@@ -143,10 +109,15 @@ final class InProcessChatHost {
       deliveryPause,
       recallWindowWait,
       diagnosticsSink,
-      session.cookie,
-      session.csrfToken,
-      zoneErrors,
+      <Object>[],
     );
+    await instance._boot();
+    final client = HttpClient();
+    final session = await _login(instance.host, client);
+    client.close(force: true);
+    instance._cookie = session.cookie;
+    instance._csrfToken = session.csrfToken;
+    return instance;
   }
 
   /// 在守护错误区里启动/重启 Host：交付流中途异常会在服务端留下顶层
@@ -170,6 +141,18 @@ final class InProcessChatHost {
   /// 会话 Cookie 与 CSRF 重新兑换，旧会话随重启失效。
   Future<void> restart() async {
     await _host.close();
+    await _boot();
+    final session = await _login(_host, _client);
+    _cookie = session.cookie;
+    _csrfToken = session.csrfToken;
+  }
+
+  /// 首次启动与重启共用的装配：按注入的网关与人格宪法建（可能为空的）
+  /// Provider 设置服务，再在守护错误区里起 [LocalAppHost] 并赋给
+  /// [_host]。provider.json 只在首次启动前预写一次，重启时由服务自行
+  /// 从盘上读取；五个可选注入参数两路同律透传，[deliveryPause] 缺省
+  /// 抹掉分段停顿。
+  Future<void> _boot() async {
     _host = await _startInGuardedZone(
       zoneErrors,
       () => LocalAppHost.start(
@@ -190,14 +173,13 @@ final class InProcessChatHost {
               ),
         clock: clock,
         atomicWriter: atomicWriter,
+        // 缺省抹掉分段停顿：与迁移前测试同律，避免真路径测试空等；
+        // 需要验证停顿本身时显式传入。
         deliveryPause: deliveryPause ?? (_) async {},
         recallWindowWait: recallWindowWait,
         diagnosticsSink: diagnosticsSink,
       ),
     );
-    final session = await _login(_host, _client);
-    _cookie = session.cookie;
-    _csrfToken = session.csrfToken;
   }
 
   static Future<_HostSession> _login(
