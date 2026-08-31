@@ -51,38 +51,6 @@ final class LocalChatSnapshot {
   };
 }
 
-final class LocalChatExchange {
-  const LocalChatExchange({required this.session, required this.result});
-
-  final RawSession session;
-  final ChatResult result;
-
-  Map<String, Object?> toJson() => {
-    ...result.toJson(),
-    'sessionId': session.id,
-  };
-}
-
-typedef LocalChatEventKind = ChatDeliveryEventKind;
-
-final class LocalChatDeliveryEvent extends ChatDeliveryEvent {
-  const LocalChatDeliveryEvent({
-    required super.kind,
-    required super.requestId,
-    super.sessionId,
-    super.text,
-    super.messages,
-    super.source,
-    super.fallbackReason,
-    super.mode,
-    super.safety,
-    super.code,
-    super.retryable,
-    this.exchange,
-  });
-  final LocalChatExchange? exchange;
-}
-
 typedef DeliveryPause = Future<void> Function(Duration duration);
 
 /// 召回窗口预算的等待注入点：与流式分段停顿（[DeliveryPause]）语义
@@ -291,48 +259,14 @@ final class LocalChatService {
   Future<void> deleteSession(String sessionId) =>
       _serialized(() => _repository.deleteSession(sessionId));
 
-  Future<LocalChatExchange> send({
-    required String requestId,
-    required String text,
-    String? sessionId,
-  }) async {
-    LocalChatExchange? exchange;
-    LocalChatException? failure;
-    await for (final event in deliver(
-      requestId: requestId,
-      text: text,
-      sessionId: sessionId,
-    )) {
-      if (event.kind == LocalChatEventKind.error) {
-        failure = LocalChatException(
-          code: event.code!,
-          message: event.text!,
-          retryable: event.retryable!,
-        );
-      }
-      exchange = event.exchange ?? exchange;
-    }
-    if (failure != null) {
-      throw failure;
-    }
-    if (exchange == null) {
-      throw const LocalChatException(
-        code: 'cancelled',
-        message: '回复已停止。',
-        retryable: true,
-      );
-    }
-    return exchange;
-  }
-
-  Stream<LocalChatDeliveryEvent> deliver({
+  Stream<ChatDeliveryEvent> deliver({
     required String requestId,
     required String text,
     String? sessionId,
   }) {
     final trimmedRequestId = requestId.trim();
     final cancellation = _DeliveryCancellation();
-    final controller = StreamController<LocalChatDeliveryEvent>(
+    final controller = StreamController<ChatDeliveryEvent>(
       onCancel: cancellation.cancel,
     );
     _serialized(() async {
@@ -340,7 +274,7 @@ final class LocalChatService {
         _activeDeliveries[trimmedRequestId] = cancellation;
       }
       // 诊断记录（ticket 23）：只取交付事件的来源与回退元数据。
-      LocalChatDeliveryEvent? stateEvent;
+      ChatDeliveryEvent? stateEvent;
       var cancelled = false;
       String? failureDetail;
       try {
@@ -351,9 +285,9 @@ final class LocalChatService {
             sessionId: sessionId,
             cancellation: cancellation,
           ).map((event) {
-            if (event.kind == LocalChatEventKind.state) {
+            if (event.kind == ChatDeliveryEventKind.state) {
               stateEvent ??= event;
-            } else if (event.kind == LocalChatEventKind.cancelled) {
+            } else if (event.kind == ChatDeliveryEventKind.cancelled) {
               cancelled = true;
             }
             return event;
@@ -362,8 +296,8 @@ final class LocalChatService {
       } on LocalChatException catch (error) {
         failureDetail = error.code;
         controller.add(
-          LocalChatDeliveryEvent(
-            kind: LocalChatEventKind.error,
+          ChatDeliveryEvent(
+            kind: ChatDeliveryEventKind.error,
             requestId: trimmedRequestId,
             text: error.message,
             code: error.code,
@@ -373,8 +307,8 @@ final class LocalChatService {
       } on Object {
         failureDetail = 'internal_error';
         controller.add(
-          LocalChatDeliveryEvent(
-            kind: LocalChatEventKind.error,
+          ChatDeliveryEvent(
+            kind: ChatDeliveryEventKind.error,
             requestId: trimmedRequestId,
             text: '本地服务暂时不可用。',
             code: 'internal_error',
@@ -395,7 +329,7 @@ final class LocalChatService {
   /// 一次聊天请求交付结束后记一条诊断：有可见结果按结果记，其次
   /// 取消，最后失败；细节只保留错误码级。
   void _recordChatRequest(
-    LocalChatDeliveryEvent? stateEvent,
+    ChatDeliveryEvent? stateEvent,
     bool cancelled,
     String? failureDetail,
   ) {
@@ -435,7 +369,7 @@ final class LocalChatService {
     return true;
   }
 
-  Stream<LocalChatDeliveryEvent> _deliver({
+  Stream<ChatDeliveryEvent> _deliver({
     required String requestId,
     required String text,
     required String? sessionId,
@@ -472,16 +406,16 @@ final class LocalChatService {
       );
     }
     if (existingReply != null) {
-      final exchange = LocalChatExchange(
-        session: session,
-        result: _storedResult(session, existingReply),
-      );
-      yield LocalChatDeliveryEvent(
-        kind: LocalChatEventKind.accepted,
+      yield ChatDeliveryEvent(
+        kind: ChatDeliveryEventKind.accepted,
         requestId: trimmedRequestId,
         sessionId: session.id,
       );
-      yield* _deliverOutcome(exchange, cancellation);
+      yield* _deliverOutcome(
+        session,
+        _storedResult(session, existingReply),
+        cancellation,
+      );
       return;
     }
 
@@ -500,14 +434,14 @@ final class LocalChatService {
       );
     }
 
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    yield ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.accepted,
       requestId: trimmedRequestId,
       sessionId: session.id,
     );
     if (cancellation.isCancelled) {
-      yield LocalChatDeliveryEvent(
-        kind: LocalChatEventKind.cancelled,
+      yield ChatDeliveryEvent(
+        kind: ChatDeliveryEventKind.cancelled,
         requestId: trimmedRequestId,
         sessionId: session.id,
       );
@@ -529,8 +463,8 @@ final class LocalChatService {
       );
     }
     var outcome = localOutcome;
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
+    yield ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.waiting,
       requestId: trimmedRequestId,
       sessionId: session.id,
     );
@@ -571,8 +505,8 @@ final class LocalChatService {
         memoryRecall?.restorePendingContext(session.id, consumedContext);
       }
       if (cancellation.isCancelled) {
-        yield LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.cancelled,
+        yield ChatDeliveryEvent(
+          kind: ChatDeliveryEventKind.cancelled,
           requestId: trimmedRequestId,
           sessionId: session.id,
         );
@@ -604,18 +538,20 @@ final class LocalChatService {
       }
     }
 
-    final exchange = LocalChatExchange(session: session, result: outcome);
-    LocalChatDeliveryEvent? lastEvent;
+    final completion = _OutcomeCompletion();
+    ChatDeliveryEvent? lastEvent;
     await for (final event in _deliverOutcome(
-      exchange,
+      session,
+      outcome,
       cancellation,
       persist: true,
+      completion: completion,
     )) {
       lastEvent = event;
       yield event;
     }
-    if (lastEvent != null && lastEvent.kind == LocalChatEventKind.done) {
-      final completedSession = lastEvent.exchange!.session;
+    if (lastEvent != null && lastEvent.kind == ChatDeliveryEventKind.done) {
+      final completedSession = completion.session!;
       await _applyHiddenActions(
         completedSession,
         trimmedRequestId,
@@ -652,7 +588,7 @@ final class LocalChatService {
   ///
   /// 只有模型隐藏动作能触发查找（规则兜底已退役）；晚安信号与安全
   /// 回复不查找；未配置 Provider 不查找（保持现状）。
-  Stream<LocalChatDeliveryEvent> _recallBubble({
+  Stream<ChatDeliveryEvent> _recallBubble({
     required RawSession session,
     required StateSnapshot state,
     required String userText,
@@ -754,15 +690,13 @@ final class LocalChatService {
       return;
     }
     yield* _deliverOutcome(
-      LocalChatExchange(
-        session: session,
-        result: ChatResult(
-          requestId: requestId,
-          messages: validated.messages,
-          nextState: validated.nextState,
-          source: ReplySource.llm,
-          mode: validated.mode,
-        ),
+      session,
+      ChatResult(
+        requestId: requestId,
+        messages: validated.messages,
+        nextState: validated.nextState,
+        source: ReplySource.llm,
+        mode: validated.mode,
       ),
       cancellation,
       persist: true,
@@ -1146,12 +1080,13 @@ final class LocalChatService {
     return null;
   }
 
-  Stream<LocalChatDeliveryEvent> _deliverOutcome(
-    LocalChatExchange exchange,
+  Stream<ChatDeliveryEvent> _deliverOutcome(
+    RawSession session,
+    ChatResult result,
     _DeliveryCancellation cancellation, {
     bool persist = false,
+    _OutcomeCompletion? completion,
   }) async* {
-    final result = exchange.result;
     final requestId = result.requestId;
     if (requestId == null) {
       throw const LocalChatException(
@@ -1160,10 +1095,10 @@ final class LocalChatService {
         retryable: true,
       );
     }
-    final sessionId = exchange.session.id;
+    final sessionId = session.id;
     if (result.fallbackReason != null) {
-      yield LocalChatDeliveryEvent(
-        kind: LocalChatEventKind.fallback,
+      yield ChatDeliveryEvent(
+        kind: ChatDeliveryEventKind.fallback,
         requestId: requestId,
         sessionId: sessionId,
         fallbackReason: result.fallbackReason,
@@ -1179,38 +1114,38 @@ final class LocalChatService {
       }
       firstChunk = false;
       if (cancellation.isCancelled) {
-        yield LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.cancelled,
+        yield ChatDeliveryEvent(
+          kind: ChatDeliveryEventKind.cancelled,
           requestId: requestId,
           sessionId: sessionId,
         );
         return;
       }
-      yield LocalChatDeliveryEvent(
-        kind: LocalChatEventKind.delta,
+      yield ChatDeliveryEvent(
+        kind: ChatDeliveryEventKind.delta,
         requestId: requestId,
         sessionId: sessionId,
         text: chunk,
       );
     }
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
+    yield ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.message,
       requestId: requestId,
       sessionId: sessionId,
       messages: result.messages,
     );
     if (cancellation.isCancelled) {
-      yield LocalChatDeliveryEvent(
-        kind: LocalChatEventKind.cancelled,
+      yield ChatDeliveryEvent(
+        kind: ChatDeliveryEventKind.cancelled,
         requestId: requestId,
         sessionId: sessionId,
       );
       return;
     }
-    var completedSession = exchange.session;
+    var completedSession = session;
     if (persist) {
       completedSession = await _repository.appendTurn(
-        exchange.session,
+        session,
         RawSessionTurn.qiyu(
           requestId: requestId,
           messages: result.messages,
@@ -1222,12 +1157,9 @@ final class LocalChatService {
         ),
       );
     }
-    final completed = LocalChatExchange(
-      session: completedSession,
-      result: result,
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
+    completion?.session = completedSession;
+    yield ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.state,
       requestId: requestId,
       sessionId: completedSession.id,
       source: result.source,
@@ -1235,11 +1167,10 @@ final class LocalChatService {
       mode: result.mode,
       safety: result.safety,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
+    yield ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.done,
       requestId: requestId,
       sessionId: completedSession.id,
-      exchange: completed,
     );
   }
 
@@ -1248,6 +1179,13 @@ final class LocalChatService {
     _pending = result.then<void>((_) {}, onError: (_) {});
     return result;
   }
+}
+
+/// 一次可见结果交付完成后的最终会话快照：落盘发生在交付序列内部，
+/// 后续隐藏动作与轮内查找需要落盘后的会话，经此在私有实现内回传，
+/// 绝不随交付事件出服务边界。
+final class _OutcomeCompletion {
+  RawSession? session;
 }
 
 final class _DeliveryCancellation {
