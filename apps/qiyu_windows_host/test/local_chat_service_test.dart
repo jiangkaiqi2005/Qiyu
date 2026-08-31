@@ -1458,84 +1458,54 @@ void main() {
   });
 
   test('a fast in-turn recall delivers bubble 2 on the same request', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-recall-live-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final provider = _RecallScriptedProviderClient(
-      streamReplies: const [
-        ModelCompletion.reply('''一时没想起。
+    final gateway = ScriptedModelGateway(
+      streamScript: [
+        const ScriptedStreamReply('''一时没想起。
 <qiyu-actions>
 [{"action":"memory_recall","query":"爬山"}]
 </qiyu-actions>'''),
       ],
-      completions: [
-        ModelCompletion.reply(_recallSelection(dates: ['2026-08-05'])),
-        const ModelCompletion.reply('对了，你周末是要去爬山来着。'),
+      completeScript: [
+        ScriptedCompletionReply(_recallSelection(dates: ['2026-08-05'])),
+        const ScriptedCompletionReply('对了，你周末是要去爬山来着。'),
       ],
     );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
       clock: clock,
-    );
-    await _seedFinalizedEpisode(
-      pipeline,
-      '2026-08-05',
-      EpisodeEntry(
-        id: 'seed:1:0',
-        sessionId: 'seed',
-        requestId: 'seed',
-        summary: '用户说周末要去爬山',
-        evidence: '这周末打算去爬山',
-        at: DateTime(2026, 8, 5, 21).toUtc(),
-      ),
-    );
-    final recall = RecallOrchestrator(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      modelClient: provider,
-    );
-    await _rebuildUnderLock(recall, pipeline);
-    final service = LocalChatService(
-      MarkdownMemoryRepository(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      ),
-      providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
-      episodePipeline: pipeline,
-      memoryRecall: recall,
-      deliveryPause: (_) async {},
       // 窗口预算内等查找完成。
       recallWindowWait: (_) =>
           Future<void>.delayed(const Duration(milliseconds: 500)),
-      clock: clock,
+      seedMemory: (memoryDirectory) => _seedRecallEpisode(
+        memoryDirectory.path,
+        clock,
+        evidence: '这周末打算去爬山',
+      ),
     );
+    addTearDown(harness.dispose);
 
-    final events = await service
-        .deliver(requestId: 'recall-live', text: '我上次说爬山准备得怎么样了')
-        .toList();
+    final trace = await harness.sendChat(
+      requestId: 'recall-live',
+      text: '我上次说爬山准备得怎么样了',
+    );
 
     // bubble 1 与 bubble 2 各走一遍完整交付序列，同一条流。
-    expect(
-      events.where((event) => event.kind == LocalChatEventKind.done),
-      hasLength(2),
-    );
-    final messageEvents = events
-        .where((event) => event.kind == LocalChatEventKind.message)
-        .toList();
+    expect(trace.eventsOf(ChatDeliveryEventKind.done), hasLength(2));
+    final messageEvents = trace.eventsOf(ChatDeliveryEventKind.message);
     expect(messageEvents, hasLength(2));
     expect(messageEvents.first.messages, ['一时没想起。']);
     expect(messageEvents.last.messages, ['对了，你周末是要去爬山来着。']);
     // 隐藏动作绝不进入可见交付。
     expect(
-      events.map((event) => event.text ?? '').join(),
+      trace.events.map((event) => event.text ?? '').join(),
       isNot(contains('qiyu-actions')),
     );
 
     // bubble 2 落为同一 requestId 的栖语 turn。
-    final session = events.last.exchange!.session;
+    final session = await harness.sessionReader().openSession(
+      sessionId: trace.sessionId,
+    );
     final qiyuTurns = session.turns
         .where((turn) => turn.speaker == Speaker.qiyu)
         .toList();
@@ -1547,17 +1517,15 @@ void main() {
     expect(qiyuTurns.last.text, '对了，你周末是要去爬山来着。');
 
     // 重试同一 requestId 只复用已有回复，不重复 bubble 2。
-    final replay = await service
-        .deliver(requestId: 'recall-live', text: '我上次说爬山准备得怎么样了')
-        .toList();
-    expect(
-      replay.where((event) => event.kind == LocalChatEventKind.done),
-      hasLength(1),
+    final replay = await harness.sendChat(
+      requestId: 'recall-live',
+      text: '我上次说爬山准备得怎么样了',
+      sessionId: trace.sessionId,
     );
-    final replayed = await MarkdownMemoryRepository(
-      memoryDirectory: temporaryDirectory.path,
-      clock: clock,
-    ).openSession(sessionId: session.id);
+    expect(replay.eventsOf(ChatDeliveryEventKind.done), hasLength(1));
+    final replayed = await harness.sessionReader().openSession(
+      sessionId: trace.sessionId,
+    );
     expect(
       replayed.turns.where((turn) => turn.speaker == Speaker.qiyu),
       hasLength(2),
@@ -1565,93 +1533,66 @@ void main() {
   });
 
   test('a user stop inside the recall window suppresses bubble 2', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-recall-stop-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
     final composeGate = Completer<void>();
-    final provider = _GatedRecallProviderClient(
-      streamReply: const ModelCompletion.reply('''一时没想起。
+    final diagnostics = <String>[];
+    final gateway = ScriptedModelGateway(
+      streamScript: [
+        const ScriptedStreamReply('''一时没想起。
 <qiyu-actions>
 [{"action":"memory_recall","query":"爬山"}]
 </qiyu-actions>'''),
-      selectionReply: _recallSelection(dates: ['2026-08-05']),
-      composeReply: const ModelCompletion.reply('对了，你周末是要去爬山来着。'),
-      composeGate: composeGate.future,
+      ],
+      completeScript: [
+        // 附带一个编造日期：成员校验丢弃它时落下的诊断是后台保存
+        // 链的可见界标（诊断先于保存落 sink），供停止后续轮断言等待。
+        ScriptedCompletionReply(
+          _recallSelection(dates: ['2026-08-05', '2099-01-01']),
+        ),
+        ScriptedGatedCompletion(
+          gate: composeGate.future,
+          reply: '对了，你周末是要去爬山来着。',
+        ),
+      ],
     );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
       clock: clock,
-    );
-    await _seedFinalizedEpisode(
-      pipeline,
-      '2026-08-05',
-      EpisodeEntry(
-        id: 'seed:1:0',
-        sessionId: 'seed',
-        requestId: 'seed',
-        summary: '用户说周末要去爬山',
-        at: DateTime(2026, 8, 5, 21).toUtc(),
-      ),
-    );
-    final recall = RecallOrchestrator(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      modelClient: provider,
-    );
-    await _rebuildUnderLock(recall, pipeline);
-    final repository = MarkdownMemoryRepository(
-      memoryDirectory: temporaryDirectory.path,
-      clock: clock,
-    );
-    final service = LocalChatService(
-      repository,
-      providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
-      episodePipeline: pipeline,
-      memoryRecall: recall,
-      deliveryPause: (_) async {},
+      diagnosticsSink: diagnostics.add,
       // 窗口永不自行超时：只由取消/查找完成决定走向。
       recallWindowWait: (_) => Completer<void>().future,
-      clock: clock,
+      seedMemory: (memoryDirectory) =>
+          _seedRecallEpisode(memoryDirectory.path, clock),
     );
+    addTearDown(harness.dispose);
 
-    final events = <LocalChatDeliveryEvent>[];
-    final firstDone = Completer<void>();
-    final streamEnded = service
-        .deliver(requestId: 'recall-stop', text: '我上次说爬山的事')
-        .listen((event) {
-          events.add(event);
-          if (event.kind == LocalChatEventKind.done &&
-              !firstDone.isCompleted) {
-            firstDone.complete();
-          }
-        })
-        .asFuture<void>();
-
-    await firstDone.future;
+    final stream = harness.openChat(
+      requestId: 'recall-stop',
+      text: '我上次说爬山的事',
+    );
+    await gateway.awaitStreamOpened();
     // 等待选择调用进飞（bubble 1 交付与查找启动之间隔着记忆整理）。
-    final waited = DateTime.now().add(const Duration(seconds: 5));
-    while (provider.completeCalls.isEmpty) {
-      expect(DateTime.now().isBefore(waited), isTrue, reason: '选择调用迟迟未发生');
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
+    await gateway.awaitCompleteCalls(1);
     // 组织调用被门控挂起、窗口不超时：此时用户按下停止。
-    expect(service.cancel('recall-stop'), isTrue);
-    await streamEnded;
+    expect(await harness.cancelChat('recall-stop'), isTrue);
+    await stream.done;
 
     // bubble 2 不交付、不落盘。
     expect(
-      events.where((event) => event.kind == LocalChatEventKind.done),
+      stream.received.where(
+        (event) => event.kind == ChatDeliveryEventKind.done,
+      ),
       hasLength(1),
     );
     expect(
-      events.where((event) => event.kind == LocalChatEventKind.message),
+      stream.received.where(
+        (event) => event.kind == ChatDeliveryEventKind.message,
+      ),
       hasLength(1),
     );
-    final stored = await repository.openSession(
-      sessionId: events.first.sessionId,
+    final sessionId = stream.received.first.sessionId!;
+    final stored = await harness.sessionReader().openSession(
+      sessionId: sessionId,
     );
     expect(
       stored.turns.where((turn) => turn.speaker == Speaker.qiyu),
@@ -1660,415 +1601,278 @@ void main() {
 
     // 查找在后台继续完成：压缩结果并入下一用户轮注入。
     composeGate.complete();
-    await service.settlePendingRecalls();
+    await _awaitDiagnostic(
+      diagnostics,
+      'recall selection dropped date=2099-01-01',
+    );
 
-    await service.send(
+    await harness.sendChat(
       requestId: 'recall-stop-next',
       text: '嗯嗯',
-      sessionId: stored.id,
+      sessionId: sessionId,
     );
-    final nextPrompt = provider.messages!.last.content;
+    final nextPrompt = gateway.lastStreamMessages!.last.content;
     expect(nextPrompt, contains('<memory_context>'));
     expect(nextPrompt, contains('爬山'));
   });
 
   test('a slow recall misses the window and merges into the next turn', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-recall-late-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final provider = _RecallScriptedProviderClient(
-      streamReplies: const [
-        ModelCompletion.reply('''在的。
+    final diagnostics = <String>[];
+    final gateway = ScriptedModelGateway(
+      streamScript: [
+        const ScriptedStreamReply('''在的。
 <qiyu-actions>
 [{"action":"memory_recall","query":"爬山"}]
 </qiyu-actions>'''),
-        ModelCompletion.reply('在。'),
-        ModelCompletion.reply('嗯。'),
+        const ScriptedStreamReply('在。'),
+        const ScriptedStreamReply('嗯。'),
       ],
-      completions: [
-        ModelCompletion.reply(_recallSelection(dates: ['2026-08-05'])),
-        const ModelCompletion.reply('对了，你周末要去爬山。'),
+      completeScript: [
+        // 编造日期落下哨兵诊断：窗口超时后的后台保存链何时落定可观测。
+        ScriptedCompletionReply(
+          _recallSelection(dates: ['2026-08-05', '2099-01-01']),
+        ),
+        const ScriptedCompletionReply('对了，你周末要去爬山。'),
       ],
     );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
       clock: clock,
-    );
-    await _seedFinalizedEpisode(
-      pipeline,
-      '2026-08-05',
-      EpisodeEntry(
-        id: 'seed:1:0',
-        sessionId: 'seed',
-        requestId: 'seed',
-        summary: '用户说周末要去爬山',
-        evidence: '这周末打算去爬山',
-        at: DateTime(2026, 8, 5, 21).toUtc(),
-      ),
-    );
-    final recall = RecallOrchestrator(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      modelClient: provider,
-    );
-    await _rebuildUnderLock(recall, pipeline);
-    final service = LocalChatService(
-      MarkdownMemoryRepository(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      ),
-      providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
-      episodePipeline: pipeline,
-      memoryRecall: recall,
-      deliveryPause: (_) async {},
+      diagnosticsSink: diagnostics.add,
       // 窗口立即超时：查找结果走「并入下一用户轮」的现状路径。
       recallWindowWait: (_) async {},
-      clock: clock,
+      seedMemory: (memoryDirectory) => _seedRecallEpisode(
+        memoryDirectory.path,
+        clock,
+        evidence: '这周末打算去爬山',
+      ),
     );
+    addTearDown(harness.dispose);
 
-    final first = await service.send(
+    final first = await harness.sendChat(
       requestId: 'recall-1',
       text: '我上次说爬山的事',
     );
-    await service.settlePendingRecalls();
     // bubble 1 单独交付，本轮没有第二条气泡。
-    expect(first.result.messages, ['在的。']);
+    expect(first.event(ChatDeliveryEventKind.message).messages, ['在的。']);
+    expect(first.eventsOf(ChatDeliveryEventKind.done), hasLength(1));
+    await _awaitDiagnostic(
+      diagnostics,
+      'recall selection dropped date=2099-01-01',
+    );
 
     // 第二轮：压缩结果作为临时【检索结果】注入一次。
-    await service.send(
+    await harness.sendChat(
       requestId: 'recall-2',
       text: '最近在忙什么',
-      sessionId: first.session.id,
+      sessionId: first.sessionId,
     );
-    final secondTurn = provider.messages!.last.content;
+    final secondTurn = gateway.lastStreamMessages!.last.content;
     expect(secondTurn, contains('<memory_context>'));
     expect(secondTurn, contains('【检索结果】'));
     expect(secondTurn, contains('爬山'));
     expect(secondTurn, contains('2026-08-05'));
 
     // 第三轮：临时透镜只注入一次。
-    await service.send(
+    await harness.sendChat(
       requestId: 'recall-3',
       text: '嗯嗯',
-      sessionId: first.session.id,
+      sessionId: first.sessionId,
     );
-    expect(provider.messages!.last.content, isNot(contains('<memory_context>')));
+    expect(
+      gateway.lastStreamMessages!.last.content,
+      isNot(contains('<memory_context>')),
+    );
   });
 
   test('recall only starts from a model request, not from input phrasing', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-recall-nofallback-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final provider = _RecallScriptedProviderClient(
-      streamReplies: const [ModelCompletion.reply('在。')],
-      completions: const [],
+    final gateway = ScriptedModelGateway(
+      streamScript: [const ScriptedStreamReply('在。')],
     );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
       clock: clock,
+      seedMemory: (memoryDirectory) =>
+          _seedRecallEpisode(memoryDirectory.path, clock),
     );
-    await _seedFinalizedEpisode(
-      pipeline,
-      '2026-08-05',
-      EpisodeEntry(
-        id: 'seed:1:0',
-        sessionId: 'seed',
-        requestId: 'seed',
-        summary: '用户说周末要去爬山',
-        at: DateTime(2026, 8, 5, 21).toUtc(),
-      ),
-    );
-    final recall = RecallOrchestrator(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      modelClient: provider,
-    );
-    await _rebuildUnderLock(recall, pipeline);
-    final service = LocalChatService(
-      MarkdownMemoryRepository(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      ),
-      providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
-      episodePipeline: pipeline,
-      memoryRecall: recall,
-      deliveryPause: (_) async {},
-      clock: clock,
-    );
+    addTearDown(harness.dispose);
 
     // 召回式措辞本身不再触发查找：规则兜底已退役。
-    final exchange = await service.send(
+    final trace = await harness.sendChat(
       requestId: 'recall-none',
       text: '你还记得我上次说爬山的事吗',
     );
-    await service.settlePendingRecalls();
 
-    expect(provider.completeCalls, isEmpty);
-    expect(recall.consumePendingContext(exchange.session.id), isNull);
+    expect(trace.event(ChatDeliveryEventKind.message).messages, ['在。']);
+    expect(gateway.streamCalls, hasLength(1));
+    expect(gateway.completeCalls, isEmpty);
   });
 
   test('bubble 2 rejoins the model history on the following turn', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-recall-history-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final provider = _RecallScriptedProviderClient(
-      streamReplies: const [
-        ModelCompletion.reply('''一时没想起。
+    final gateway = ScriptedModelGateway(
+      streamScript: [
+        const ScriptedStreamReply('''一时没想起。
 <qiyu-actions>
 [{"action":"memory_recall","query":"爬山"}]
 </qiyu-actions>'''),
-        ModelCompletion.reply('嗯，在的。'),
+        const ScriptedStreamReply('嗯，在的。'),
       ],
-      completions: [
-        ModelCompletion.reply(_recallSelection(dates: ['2026-08-05'])),
-        const ModelCompletion.reply('对了，你周末是要去爬山来着。'),
+      completeScript: [
+        ScriptedCompletionReply(_recallSelection(dates: ['2026-08-05'])),
+        const ScriptedCompletionReply('对了，你周末是要去爬山来着。'),
       ],
     );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
       clock: clock,
-    );
-    await _seedFinalizedEpisode(
-      pipeline,
-      '2026-08-05',
-      EpisodeEntry(
-        id: 'seed:1:0',
-        sessionId: 'seed',
-        requestId: 'seed',
-        summary: '用户说周末要去爬山',
-        at: DateTime(2026, 8, 5, 21).toUtc(),
-      ),
-    );
-    final recall = RecallOrchestrator(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      modelClient: provider,
-    );
-    await _rebuildUnderLock(recall, pipeline);
-    final service = LocalChatService(
-      MarkdownMemoryRepository(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      ),
-      providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
-      episodePipeline: pipeline,
-      memoryRecall: recall,
-      deliveryPause: (_) async {},
       recallWindowWait: (_) =>
           Future<void>.delayed(const Duration(milliseconds: 500)),
-      clock: clock,
+      seedMemory: (memoryDirectory) =>
+          _seedRecallEpisode(memoryDirectory.path, clock),
     );
+    addTearDown(harness.dispose);
 
-    final first = await service.send(
+    final first = await harness.sendChat(
       requestId: 'recall-h1',
       text: '我上次说爬山的事',
     );
-    // send 返回本次交付的最终交换：bubble 2 赶上时即 bubble 2。
-    expect(first.result.messages, ['对了，你周末是要去爬山来着。']);
+    // 本轮最终可见结果：bubble 2 赶上时即 bubble 2。
+    final messages = first.eventsOf(ChatDeliveryEventKind.message);
+    expect(messages.last.messages, ['对了，你周末是要去爬山来着。']);
+    final session = await harness.sessionReader().openSession(
+      sessionId: first.sessionId,
+    );
     expect(
-      first.session.turns.where((turn) => turn.speaker == Speaker.qiyu),
+      session.turns.where((turn) => turn.speaker == Speaker.qiyu),
       hasLength(2),
     );
 
     // bubble 2 与 bubble 1 同 requestId：下一轮的历史组装必须带上它。
-    await service.send(
+    await harness.sendChat(
       requestId: 'recall-h2',
       text: '嗯嗯',
-      sessionId: first.session.id,
+      sessionId: first.sessionId,
     );
-    final history = provider.messages!
+    final history = gateway.lastStreamMessages!
         .map((message) => message.content)
         .join('\n');
     expect(history, contains('对了，你周末是要去爬山来着。'));
     // bubble 2 之后也没有把本轮的临时查找结果再注入一次。
     expect(
-      provider.messages!.last.content,
+      gateway.lastStreamMessages!.last.content,
       isNot(contains('<memory_context>')),
     );
   });
 
   test('bedtime turns never trigger recall searches', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-recall-bedtime-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final provider = _RecallScriptedProviderClient(
-      streamReplies: const [ModelCompletion.reply('不该被用到。')],
-      completions: const [],
+    final gateway = ScriptedModelGateway(
+      streamScript: [const ScriptedStreamReply('不该被用到。')],
     );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
       clock: clock,
+      seedMemory: (memoryDirectory) =>
+          _seedRecallEpisode(memoryDirectory.path, clock),
     );
-    await _seedFinalizedEpisode(
-      pipeline,
-      '2026-08-05',
-      EpisodeEntry(
-        id: 'seed:1:0',
-        sessionId: 'seed',
-        requestId: 'seed',
-        summary: '用户说周末要去爬山',
-        at: DateTime(2026, 8, 5, 21).toUtc(),
-      ),
-    );
-    final recall = RecallOrchestrator(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      modelClient: provider,
-    );
-    await _rebuildUnderLock(recall, pipeline);
-    final service = LocalChatService(
-      MarkdownMemoryRepository(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      ),
-      providerChatClient: provider,
-      episodePipeline: pipeline,
-      memoryRecall: recall,
-      deliveryPause: (_) async {},
-      clock: clock,
-    );
+    addTearDown(harness.dispose);
 
-    final exchange = await service.send(
+    final trace = await harness.sendChat(
       requestId: 'night-1',
       text: '你还记得爬山的事吗，先睡了晚安',
     );
 
-    expect(exchange.result.mode, 'llm');
-    await service.settlePendingRecalls();
-    // 晚安可见回复仍走 Provider，但不会开启额外的记忆查找小调用。
-    expect(provider.streamCalls, 1);
-    expect(provider.completeCalls, isEmpty);
-    expect(recall.consumePendingContext(exchange.session.id), isNull);
+    expect(trace.event(ChatDeliveryEventKind.state).mode, 'llm');
+    // 晚安可见回复仍走 Provider，但不会开启额外的记忆查找小调用；
+    // 当天没有落任何条目，日终与 Dream 也没有可理解的材料。
+    expect(gateway.streamCalls, hasLength(1));
+    expect(gateway.completeCalls, isEmpty);
   });
 
   test('an unconsumed recall context survives a failed model turn', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-recall-restore-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final provider = _RecallScriptedProviderClient(
-      streamReplies: const [
-        ModelCompletion.reply('''在。
+    final diagnostics = <String>[];
+    final gateway = ScriptedModelGateway(
+      streamScript: [
+        const ScriptedStreamReply('''在。
 <qiyu-actions>
 [{"action":"memory_recall","query":"爬山"}]
 </qiyu-actions>'''),
-        ModelCompletion.failure(ModelFailureKind.network),
-        ModelCompletion.reply('想起来了。'),
+        const ScriptedStreamFailure(ModelFailureKind.network),
+        const ScriptedStreamReply('想起来了。'),
       ],
-      completions: [
-        ModelCompletion.reply(_recallSelection(dates: ['2026-08-05'])),
-        const ModelCompletion.reply('对了，你周末要去爬山。'),
+      completeScript: [
+        ScriptedCompletionReply(
+          _recallSelection(dates: ['2026-08-05', '2099-01-01']),
+        ),
+        const ScriptedCompletionReply('对了，你周末要去爬山。'),
       ],
     );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
       clock: clock,
-    );
-    await _seedFinalizedEpisode(
-      pipeline,
-      '2026-08-05',
-      EpisodeEntry(
-        id: 'seed:1:0',
-        sessionId: 'seed',
-        requestId: 'seed',
-        summary: '用户说周末要去爬山',
-        at: DateTime(2026, 8, 5, 21).toUtc(),
-      ),
-    );
-    final recall = RecallOrchestrator(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      modelClient: provider,
-    );
-    await _rebuildUnderLock(recall, pipeline);
-    final service = LocalChatService(
-      MarkdownMemoryRepository(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      ),
-      providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
-      episodePipeline: pipeline,
-      memoryRecall: recall,
-      deliveryPause: (_) async {},
+      diagnosticsSink: diagnostics.add,
       // 窗口立即超时：压缩结果留给下一轮注入。
       recallWindowWait: (_) async {},
-      clock: clock,
+      seedMemory: (memoryDirectory) =>
+          _seedRecallEpisode(memoryDirectory.path, clock),
     );
+    addTearDown(harness.dispose);
 
-    final first = await service.send(
+    final first = await harness.sendChat(
       requestId: 'recall-r1',
       text: '我上次说爬山的事',
     );
-    await service.settlePendingRecalls();
+    await _awaitDiagnostic(
+      diagnostics,
+      'recall selection dropped date=2099-01-01',
+    );
 
     // 第二轮模型失败：已取用的短期 memory context 放回，不白白丢失。
-    await service.send(
+    await harness.sendChat(
       requestId: 'recall-r2',
       text: '最近在忙什么',
-      sessionId: first.session.id,
+      sessionId: first.sessionId,
     );
 
     // 第三轮模型恢复：检索结果这一轮才真正交给模型。
-    await service.send(
+    await harness.sendChat(
       requestId: 'recall-r3',
       text: '嗯嗯',
-      sessionId: first.session.id,
+      sessionId: first.sessionId,
     );
-    final restored = provider.messages!.last.content;
+    final restored = gateway.lastStreamMessages!.last.content;
     expect(restored, contains('<memory_context>'));
     expect(restored, contains('爬山'));
   });
 
   test('a broken index does not disturb ordinary chat', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-recall-broken-index-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final provider = _RecallScriptedProviderClient(
-      streamReplies: const [ModelCompletion.reply('在。')],
-      completions: const [],
+    final gateway = ScriptedModelGateway(
+      streamScript: [const ScriptedStreamReply('在。')],
     );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
       clock: clock,
+      seedMemory: (memoryDirectory) async {
+        File('${memoryDirectory.path}/episodes/index.md')
+          ..createSync(recursive: true)
+          ..writeAsStringSync('坏掉的索引内容\n', encoding: utf8);
+      },
     );
-    File('${temporaryDirectory.path}/episodes/index.md')
-      ..createSync(recursive: true)
-      ..writeAsStringSync('坏掉的索引内容\n', encoding: utf8);
-    final service = LocalChatService(
-      MarkdownMemoryRepository(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      ),
-      providerChatClient: provider,
-      modelPromptBuilder: const ModelPromptBuilder('测试人格宪法'),
-      episodePipeline: pipeline,
-      memoryRecall: RecallOrchestrator(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        modelClient: provider,
-      ),
-      clock: clock,
+    addTearDown(harness.dispose);
+
+    final trace = await harness.sendChat(requestId: 'plain-1', text: '在吗');
+
+    expect(trace.event(ChatDeliveryEventKind.message).messages, ['在。']);
+    expect(gateway.streamCalls, hasLength(1));
+    expect(
+      gateway.lastStreamMessages!.last.content,
+      isNot(contains('<memory_context>')),
     );
-
-    final exchange = await service.send(requestId: 'plain-1', text: '在吗');
-
-    expect(exchange.result.messages, ['在。']);
-    expect(provider.messages!.last.content, isNot(contains('<memory_context>')));
   });
 
   test('persona hints become leaves at once and middle understanding at day-end', () async {
@@ -2866,6 +2670,50 @@ Future<void> _seedFinalizedEpisode(
     finalizedAt: DateTime.parse('${date}T23:00:00').toUtc(),
   ),
 );
+
+/// 召回用例的整份播种：已归档的爬山日 + 两级索引，在 Host 启动前
+/// 写入，供进程内 Host 自己的 RecallOrchestrator 直接读取。
+Future<void> _seedRecallEpisode(
+  String memoryDirectory,
+  DateTime Function() clock, {
+  String? evidence,
+}) async {
+  final pipeline = EpisodeMemoryPipeline(
+    memoryDirectory: memoryDirectory,
+    clock: clock,
+  );
+  await _seedFinalizedEpisode(
+    pipeline,
+    '2026-08-05',
+    EpisodeEntry(
+      id: 'seed:1:0',
+      sessionId: 'seed',
+      requestId: 'seed',
+      summary: '用户说周末要去爬山',
+      evidence: evidence,
+      at: DateTime(2026, 8, 5, 21).toUtc(),
+    ),
+  );
+  final recall = RecallOrchestrator(
+    memoryDirectory: memoryDirectory,
+    episodePipeline: pipeline,
+  );
+  await _rebuildUnderLock(recall, pipeline);
+}
+
+/// 等待哨兵诊断出现：后台查找保存链在落盘前先同步写诊断，哨兵行
+/// 出现即保存完成，替代已退役旁路上的 settle 等待。
+Future<void> _awaitDiagnostic(List<String> diagnostics, String marker) async {
+  final waited = DateTime.now().add(const Duration(seconds: 5));
+  while (!diagnostics.any((line) => line.contains(marker))) {
+    expect(
+      DateTime.now().isBefore(waited),
+      isTrue,
+      reason: '诊断界标迟迟未出现：$marker',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
 
 /// 重建两级索引同样要求持锁。
 Future<void> _rebuildUnderLock(
