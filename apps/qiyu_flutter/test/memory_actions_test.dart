@@ -11,7 +11,11 @@ void main() {
   group('MemoryActionPlan 可用性矩阵（唯一一份）', () {
     test('普通条目：修正、暂停使用、不再提起、删除在场，揭示与两种解除不在场', () {
       const plan = MemoryActionPlan(
-        state: MemoryItemActionState(control: null, masked: false, editable: true),
+        state: MemoryItemActionState(
+          control: null,
+          masked: false,
+          editable: true,
+        ),
       );
       expect(plan.offeredActions, const [
         MemoryAction.edit,
@@ -38,7 +42,11 @@ void main() {
 
     test('已冻结条目：只给恢复使用，不再提供暂停或禁提', () {
       const plan = MemoryActionPlan(
-        state: MemoryItemActionState(control: MemoryControlStatus.frozen, masked: false, editable: true),
+        state: MemoryItemActionState(
+          control: MemoryControlStatus.frozen,
+          masked: false,
+          editable: true,
+        ),
       );
       expect(plan.offeredActions, const [
         MemoryAction.edit,
@@ -51,7 +59,11 @@ void main() {
 
     test('已禁提条目：只给解除禁提，不再提供暂停使用', () {
       const plan = MemoryActionPlan(
-        state: MemoryItemActionState(control: MemoryControlStatus.banned, masked: false, editable: true),
+        state: MemoryItemActionState(
+          control: MemoryControlStatus.banned,
+          masked: false,
+          editable: true,
+        ),
       );
       expect(plan.offeredActions, const [
         MemoryAction.edit,
@@ -94,7 +106,10 @@ void main() {
       const plan = MemoryActionPlan(
         state: MemoryItemActionState(control: null, masked: false),
       );
-      expect(plan.confirmationOf(MemoryAction.ban), MemoryActionConfirmation.ban);
+      expect(
+        plan.confirmationOf(MemoryAction.ban),
+        MemoryActionConfirmation.ban,
+      );
       expect(
         plan.confirmationOf(MemoryAction.delete),
         MemoryActionConfirmation.delete,
@@ -126,7 +141,10 @@ void main() {
       expect(gateway.calls, contains('freeze:e1'));
 
       gateway.hold?.complete(
-        const MemoryActionResult(status: MemoryActionStatus.success, message: '好了。'),
+        const MemoryActionResult(
+          status: MemoryActionStatus.success,
+          message: '好了。',
+        ),
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('memory-action-result')), findsOneWidget);
@@ -145,7 +163,10 @@ void main() {
       // 发起动作的那层界面随整棵树销毁；迟到结果不得再触碰它的上下文。
       await tester.pumpWidget(const SizedBox.shrink());
       gateway.hold?.complete(
-        const MemoryActionResult(status: MemoryActionStatus.success, message: '好了。'),
+        const MemoryActionResult(
+          status: MemoryActionStatus.success,
+          message: '好了。',
+        ),
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('memory-action-result')), findsNothing);
@@ -233,7 +254,10 @@ final class _HoldGateway implements MemoryGateway {
       return pending.future;
     }
     return Future.value(
-      const MemoryActionResult(status: MemoryActionStatus.success, message: '好了。'),
+      const MemoryActionResult(
+        status: MemoryActionStatus.success,
+        message: '好了。',
+      ),
     );
   }
 

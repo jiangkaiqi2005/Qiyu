@@ -91,8 +91,10 @@ final class MemoryActionPlan {
       };
 
   /// 按定序给出的全部在场动作（列表按钮的渲染序）。
-  List<MemoryAction> get offeredActions =>
-      [for (final action in MemoryAction.values) if (offered(action)) action];
+  List<MemoryAction> get offeredActions => [
+    for (final action in MemoryAction.values)
+      if (offered(action)) action,
+  ];
 }
 
 /// 记忆动作执行器：唯一一份「确认 → 执行 → 反馈」流程，列表按钮与
@@ -156,7 +158,12 @@ Future<void> runMemoryAction(
         itemId: itemId,
       );
     case MemoryAction.ban:
-      await _runBanFlow(context, viewModel: viewModel, messenger: messenger, itemId: itemId);
+      await _runBanFlow(
+        context,
+        viewModel: viewModel,
+        messenger: messenger,
+        itemId: itemId,
+      );
     case MemoryAction.delete:
       await _runDeleteFlow(
         context,
@@ -438,9 +445,7 @@ class _BanConfirmDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('不再提起这条记忆？'),
-      content: const Text(
-        '确认后，栖语不会再主动提起它，聊天和整理都会避开这条内容。以后可以随时解除。',
-      ),
+      content: const Text('确认后，栖语不会再主动提起它，聊天和整理都会避开这条内容。以后可以随时解除。'),
       actions: [
         QiyuFocusRingScope(
           borderRadius: QiyuRadii.circleBorder,
