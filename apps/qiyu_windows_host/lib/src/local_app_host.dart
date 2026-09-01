@@ -26,6 +26,7 @@ import 'memory_center.dart';
 import 'memory_controls.dart';
 import 'memory_recall.dart';
 import 'memory_recovery.dart';
+import 'memory_routes.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'monthly_summary.dart';
@@ -392,7 +393,14 @@ final class _LocalAppRequestHandler {
          defaultDocument: 'index.html',
          listDirectories: false,
        ),
-       _apiRoutes = [ChatRoutes(chatService: chatService)];
+       _apiRoutes = [
+         ChatRoutes(chatService: chatService),
+         MemoryRoutes(
+           memoryCenter: memoryCenter,
+           memoryActions: memoryActions,
+           memoryControls: memoryControls,
+         ),
+       ];
 
   String _startupToken;
   String get startupToken => _startupToken;
@@ -768,25 +776,6 @@ final class _LocalAppRequestHandler {
         );
       }
       if (request.method == 'GET' &&
-          request.url.path == 'api/memory/controls') {
-        final controls = await memoryControls.load();
-        Map<String, Object?> entryJson(MemoryControlEntry entry) => {
-          'id': entry.id,
-          'origin': entry.origin,
-          'summary': entry.summary,
-        };
-        return Response.ok(
-          jsonEncode({
-            'readable': controls.readable,
-            'frozen': [for (final entry in controls.frozen) entryJson(entry)],
-            'banned': [for (final entry in controls.banned) entryJson(entry)],
-            // 删除记录只存抽象防复活范围，只给数量不给内容。
-            'deletedCount': controls.deleted.length,
-          }),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'GET' &&
           request.url.path == 'api/data/clear-preview') {
         final preview = await localDataService.clearPreview();
         return Response.ok(jsonEncode(preview), headers: _jsonHeaders);
@@ -813,93 +802,6 @@ final class _LocalAppRequestHandler {
         }
         final snapshot = await developerDiagnostics.snapshot();
         return Response.ok(jsonEncode(snapshot), headers: _jsonHeaders);
-      }
-      if (request.method == 'GET' && request.url.path == 'api/memory') {
-        final overview = await memoryCenter.overview();
-        return Response.ok(
-          jsonEncode(overview.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'GET' &&
-          request.url.path.startsWith('api/memory/items/')) {
-        final itemId = request.url.path.substring('api/memory/items/'.length);
-        if (itemId.isEmpty || itemId.contains('/')) {
-          throw _invalidRequest('记忆条目标识格式不正确。');
-        }
-        final detail = await memoryCenter.itemDetail(itemId);
-        if (detail == null) {
-          return _memoryItemNotFound();
-        }
-        return Response.ok(jsonEncode(detail.toJson()), headers: _jsonHeaders);
-      }
-      if (request.method == 'POST' && request.url.path == 'api/memory/action') {
-        final Map<String, Object?> payload;
-        try {
-          payload = await _readJsonObject(request, maxBytes: 16 * 1024);
-        } on FormatException {
-          throw _invalidRequest('记忆操作请求格式不正确。');
-        }
-        final action = payload['action'];
-        final id = payload['id'];
-        if (action is! String ||
-            action.isEmpty ||
-            id is! String ||
-            id.isEmpty) {
-          throw _invalidRequest('记忆操作请求格式不正确。');
-        }
-        final ref = memoryCenter.resolveRef(id);
-        if (ref == null) {
-          return _memoryItemNotFound();
-        }
-        final MemoryActionResult result;
-        switch (action) {
-          case 'edit':
-            final text = payload['text'];
-            if (text is! String) {
-              throw _invalidRequest('记忆操作请求格式不正确。');
-            }
-            result = await memoryActions.edit(ref, text);
-          case 'freeze':
-            result = await memoryActions.freeze(ref);
-          case 'unfreeze':
-            result = await memoryActions.unfreeze(ref);
-          case 'ban':
-            result = await memoryActions.ban(ref);
-          case 'unban':
-            result = await memoryActions.unban(ref);
-          case 'delete-preview':
-            final impact = await memoryActions.deletePreview(ref);
-            if (impact == null) {
-              return _memoryItemNotFound();
-            }
-            return Response.ok(
-              jsonEncode(impact.toJson()),
-              headers: _jsonHeaders,
-            );
-          case 'delete':
-            result = await memoryActions.delete(ref);
-          case 'reveal':
-            final field = payload['field'];
-            result = await memoryActions.reveal(
-              ref,
-              field is String && field.isNotEmpty ? field : 'content',
-            );
-          default:
-            throw _invalidRequest('不支持的记忆操作。');
-        }
-        final statusCode = switch (result.code) {
-          'memory_item_not_found' => HttpStatus.notFound,
-          'memory_action_not_allowed' ||
-          'memory_item_not_masked' ||
-          'memory_delete_no_target' => HttpStatus.badRequest,
-          _ => HttpStatus.ok,
-        };
-        return Response(
-          statusCode,
-          body: jsonEncode(result.toJson()),
-          headers: _jsonHeaders,
-        );
       }
       if (request.method == 'GET' && request.url.path == 'api/backup/export') {
         final export = await memoryBackup.exportBundle();
@@ -1384,14 +1286,6 @@ Response _jsonError(
     headers: _jsonHeaders,
   );
 }
-
-/// 记忆条目定位失败的统一响应：ID 可能来自过期页面，提示返回刷新。
-Response _memoryItemNotFound() => _jsonError(
-  HttpStatus.notFound,
-  code: 'memory_item_not_found',
-  message: '这条记忆不存在或已经变化，请返回后刷新。',
-  retryable: false,
-);
 
 bool _sameOrigin(String value, Uri expected) {
   final candidate = Uri.tryParse(value);
