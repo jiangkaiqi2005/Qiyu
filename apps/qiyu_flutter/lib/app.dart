@@ -49,7 +49,10 @@ import 'theme/qiyu_theme.dart';
 /// `push`（推进来的页面仍留在壳里），页内详情沿用既有 `openInFront`。
 ///
 /// 页内详情（某一天、某条记忆、诊断、隐私）仍是自己的页面：不挂壳、自带
-/// 页内返回，也保留各自的默认路由过渡（不在壳页之列）。
+/// 页内返回。它们虽不在壳页之列，过渡同样收成 [NoTransitionPage]——壳页已
+/// 无整页过渡，详情若保留默认 MaterialPage 过渡，进出各播一次整页缩放淡入
+/// 淡出，点页内返回键时整页还要跳一下；收成无过渡后详情页出现与消失平静，
+/// 与壳页切换同一形态。
 ///
 /// 紫夜改造后的「合一页」不落在新路由上：`/` 与 `/chat` 渲染**同一个**由
 /// [QiyuShell] 包住的对话视图——`/` 前头仍压着 [RootView] 的初见门禁（门禁
@@ -97,19 +100,30 @@ List<RouteBase> qiyuRoutes() => [
   ),
   GoRoute(
     path: '/history/:sessionId',
-    builder: (context, state) =>
-        HistorySessionView(sessionId: state.pathParameters['sessionId']!),
+    pageBuilder: (context, state) => NoTransitionPage<void>(
+      key: state.pageKey,
+      child: HistorySessionView(sessionId: state.pathParameters['sessionId']!),
+    ),
   ),
   GoRoute(
     path: '/memory/item/:itemId',
-    builder: (context, state) =>
-        MemoryItemView(itemId: state.pathParameters['itemId']!),
+    pageBuilder: (context, state) => NoTransitionPage<void>(
+      key: state.pageKey,
+      child: MemoryItemView(itemId: state.pathParameters['itemId']!),
+    ),
   ),
   GoRoute(
     path: '/settings/diagnostics',
-    builder: (context, state) => const DiagnosticsView(),
+    pageBuilder: (context, state) => NoTransitionPage<void>(
+      key: state.pageKey,
+      child: const DiagnosticsView(),
+    ),
   ),
-  GoRoute(path: '/privacy', builder: (context, state) => const PrivacyView()),
+  GoRoute(
+    path: '/privacy',
+    pageBuilder: (context, state) =>
+        NoTransitionPage<void>(key: state.pageKey, child: const PrivacyView()),
+  ),
 ];
 
 class QiyuApp extends StatefulWidget {
