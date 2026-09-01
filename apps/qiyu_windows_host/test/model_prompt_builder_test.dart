@@ -36,7 +36,7 @@ void main() {
         .build(
           StateSnapshot.initial('local-user'),
           '现在几点',
-          webSearchEnabled: true,
+          hardRulesAddendum: webSearchSystemInstruction,
         )
         .first
         .content;

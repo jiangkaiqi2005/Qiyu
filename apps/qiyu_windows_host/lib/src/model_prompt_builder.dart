@@ -149,7 +149,7 @@ final class ModelPromptBuilder {
   List<ModelMessage> build(
     StateSnapshot state,
     String currentText, {
-    bool webSearchEnabled = false,
+    String hardRulesAddendum = '',
   }) {
     final systemSections = StringBuffer();
     void appendBlock(String tag, String label, String content) {
@@ -170,8 +170,11 @@ final class ModelPromptBuilder {
       ..writeln('</persona_constitution>')
       ..writeln('<hard_rules>')
       ..writeln(hardRulesBlock.trim());
-    if (webSearchEnabled) {
-      systemSections.writeln(webSearchSystemInstruction);
+    // 能力快照打包的追加条文（如联网检索纪律）原样并入硬规则块；
+    // 装配层不解释内容，空串即无追加。
+    final addendum = hardRulesAddendum.trim();
+    if (addendum.isNotEmpty) {
+      systemSections.writeln(addendum);
     }
     systemSections
       ..writeln('</hard_rules>')

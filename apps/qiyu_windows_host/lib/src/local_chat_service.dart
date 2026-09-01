@@ -73,7 +73,7 @@ final class LocalChatService {
   LocalChatService(
     this._repository, {
     QiyuBehaviorCore? behaviorCore,
-    this.providerChatClient,
+    this.providerPort,
     this.modelPromptBuilder = const ModelPromptBuilder(''),
     this.episodePipeline,
     this.dailyFinalization,
@@ -100,7 +100,8 @@ final class LocalChatService {
 
   final MemoryRepository _repository;
   final QiyuBehaviorCore _behaviorCore;
-  final StreamingProviderChatClient? providerChatClient;
+
+  final ProviderChatPort? providerPort;
   final ModelPromptBuilder modelPromptBuilder;
   final EpisodeMemoryPipeline? episodePipeline;
   final DailyFinalizationService? dailyFinalization;
@@ -468,29 +469,22 @@ final class LocalChatService {
       requestId: trimmedRequestId,
       sessionId: session.id,
     );
-    if (localOutcome.safety == null && providerChatClient != null) {
+    final providerPort = this.providerPort;
+    if (localOutcome.safety == null && providerPort != null) {
       ModelCompletion? completion;
       ModelPromptBuilder? requestBuilder;
       try {
         requestBuilder = await _promptBuilderForRequest(session.id);
-        if (providerChatClient
-            case final WebSearchCapableProviderChatClient webSearchProvider) {
-          final prepared = await webSearchProvider.prepareChatRequest();
-          if (prepared != null) {
-            completion = await _collectModelCompletion(
-              requestBuilder.build(
-                state,
-                trimmedText,
-                webSearchEnabled: prepared.webSearchEnabled,
-              ),
-              cancellation,
-              preparedRequest: prepared,
-            );
-          }
-        } else {
+        final prepared = await providerPort.prepareChatRequest();
+        if (prepared != null) {
           completion = await _collectModelCompletion(
-            requestBuilder.build(state, trimmedText),
+            requestBuilder.build(
+              state,
+              trimmedText,
+              hardRulesAddendum: prepared.hardRulesAddendum,
+            ),
             cancellation,
+            prepared: prepared,
           );
         }
       } on Object {
@@ -599,7 +593,7 @@ final class LocalChatService {
   }) async* {
     final recall = memoryRecall;
     if (recall == null ||
-        providerChatClient == null ||
+        providerPort == null ||
         outcome.safety != null ||
         bedtime) {
       return;
@@ -1023,66 +1017,57 @@ final class LocalChatService {
   Future<ModelCompletion?> _collectModelCompletion(
     List<ModelMessage> messages,
     _DeliveryCancellation cancellation, {
-    PreparedProviderChatRequest? preparedRequest,
+    required PreparedProviderChatRequest prepared,
   }) async {
-    final streaming = providerChatClient;
-    if (streaming != null) {
-      final stream = preparedRequest != null
-          ? await preparedRequest.openStream(
-              messages,
-              whenCancelled: cancellation.whenCancelled,
-            )
-          : streaming is CancellableStreamingProviderChatClient
-          ? await streaming.openCancellableStream(
-              messages,
-              cancellation.whenCancelled,
-            )
-          : await streaming.openStream(messages);
-      if (stream == null) {
-        return null;
-      }
-      final iterator = StreamIterator<ModelStreamEvent>(stream);
-      final buffer = StringBuffer();
-      var bufferedRunes = 0;
-      try {
-        while (true) {
-          final moveNext = iterator.moveNext();
-          final moved = await Future.any<Object?>([
-            moveNext,
-            cancellation.whenCancelled.then<Object?>((_) => null),
-          ]);
-          if (moved == null || cancellation.isCancelled) {
-            await iterator.cancel();
-            return null;
-          }
-          if (moved != true) {
-            break;
-          }
-          final event = iterator.current;
-          switch (event.kind) {
-            case ModelStreamEventKind.delta:
-              bufferedRunes += event.text!.runes.length;
-              if (bufferedRunes > _maxModelReplyRunes) {
-                await iterator.cancel();
-                return const ModelCompletion.failure(
-                  ModelFailureKind.incompatibleResponse,
-                );
-              }
-              buffer.write(event.text);
-            case ModelStreamEventKind.done:
-              return ModelCompletion.reply(buffer.toString());
-            case ModelStreamEventKind.failure:
-              return ModelCompletion.failure(event.failure!);
-          }
-        }
-        return buffer.isEmpty
-            ? const ModelCompletion.failure(ModelFailureKind.contentParsing)
-            : ModelCompletion.reply(buffer.toString());
-      } finally {
-        await iterator.cancel();
-      }
+    // 一次 open：协议适配、终止判定、错误分类与取消下传全部在快照与
+    // 网关内部完成；主链只对交付事件做缓冲与上限护栏。
+    final stream = await prepared.openStream(
+      messages,
+      whenCancelled: cancellation.whenCancelled,
+    );
+    if (stream == null) {
+      return null;
     }
-    return null;
+    final iterator = StreamIterator<ModelStreamEvent>(stream);
+    final buffer = StringBuffer();
+    var bufferedRunes = 0;
+    try {
+      while (true) {
+        final moveNext = iterator.moveNext();
+        final moved = await Future.any<Object?>([
+          moveNext,
+          cancellation.whenCancelled.then<Object?>((_) => null),
+        ]);
+        if (moved == null || cancellation.isCancelled) {
+          await iterator.cancel();
+          return null;
+        }
+        if (moved != true) {
+          break;
+        }
+        final event = iterator.current;
+        switch (event.kind) {
+          case ModelStreamEventKind.delta:
+            bufferedRunes += event.text!.runes.length;
+            if (bufferedRunes > _maxModelReplyRunes) {
+              await iterator.cancel();
+              return const ModelCompletion.failure(
+                ModelFailureKind.incompatibleResponse,
+              );
+            }
+            buffer.write(event.text);
+          case ModelStreamEventKind.done:
+            return ModelCompletion.reply(buffer.toString());
+          case ModelStreamEventKind.failure:
+            return ModelCompletion.failure(event.failure!);
+        }
+      }
+      return buffer.isEmpty
+          ? const ModelCompletion.failure(ModelFailureKind.contentParsing)
+          : ModelCompletion.reply(buffer.toString());
+    } finally {
+      await iterator.cancel();
+    }
   }
 
   Stream<ChatDeliveryEvent> _deliverOutcome(

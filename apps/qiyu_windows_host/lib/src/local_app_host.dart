@@ -231,7 +231,7 @@ final class LocalAppHost {
     );
     final chatService = LocalChatService(
       memoryRepository,
-      providerChatClient: effectiveProviderSettings,
+      providerPort: effectiveProviderSettings,
       requestDiagnostics: requestDiagnostics,
       modelPromptBuilder: modelPromptBuilder,
       episodePipeline: episodePipeline,
