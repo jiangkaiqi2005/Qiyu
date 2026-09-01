@@ -9,6 +9,28 @@ import 'package:test/test.dart';
 import 'support/in_process_chat_host.dart';
 
 void main() {
+  test('主链不再出现 Provider 能力类型判断（统一端口收口）', () {
+    // 扫描主链源码钉住收口：Provider 能力判定只允许存在于网关与
+    // Provider 层。
+    final source = File('lib/src/local_chat_service.dart').readAsStringSync();
+    for (final marker in [
+      'StreamingProviderChatClient',
+      'WebSearchCapableProviderChatClient',
+      'CancellableStreamingProviderChatClient',
+      'StreamingModelGateway',
+      'WebSearchStreamingModelGateway',
+      'CancellableProviderHttpClient',
+      'ProviderKind',
+      'webSearchEnabled',
+      'openCancellableStream',
+      "import 'provider_config.dart'",
+    ]) {
+      expect(source, isNot(contains(marker)), reason: marker);
+    }
+    expect(source, contains('prepareChatRequest'));
+    expect(source, contains('openStream'));
+  });
+
   test(
     'retries an interrupted exchange without duplicating the user turn',
     () async {
@@ -502,13 +524,13 @@ void main() {
       'qiyu-exclusive-slot-test-',
     );
     addTearDown(() => temporaryDirectory.delete(recursive: true));
-    final provider = _ControlledStreamingProviderChatClient();
+    final provider = _ControlledProviderPort();
     final repository = MarkdownMemoryRepository(
       memoryDirectory: temporaryDirectory.path,
     );
     final service = LocalChatService(
       repository,
-      providerChatClient: provider,
+      providerPort: provider,
       deliveryPause: (_) async {},
     );
 
@@ -2445,14 +2467,15 @@ final class _EpisodesFailingWriter implements AtomicTextWriter {
   }
 }
 
-final class _ControlledStreamingProviderChatClient
-    implements StreamingProviderChatClient {
+final class _ControlledProviderPort implements ProviderChatPort {
   final _controller = StreamController<ModelStreamEvent>();
 
   @override
-  Future<Stream<ModelStreamEvent>?> openStream(
-    List<ModelMessage> messages,
-  ) async => _controller.stream;
+  Future<PreparedProviderChatRequest?> prepareChatRequest() async =>
+      PreparedProviderChatRequest(
+        hardRulesAddendum: '',
+        openStream: (messages, whenCancelled) async => _controller.stream,
+      );
 
   void pushDelta(String text) => _controller.add(ModelStreamEvent.delta(text));
 
