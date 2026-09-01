@@ -10,7 +10,9 @@ import 'package:shelf_static/shelf_static.dart';
 import 'package:path/path.dart' as path;
 
 import 'anysearch_client.dart';
+import 'api_http.dart';
 import 'browser_launcher.dart';
+import 'chat_routes.dart';
 import 'daily_finalization.dart';
 import 'developer_diagnostics.dart';
 import 'dream.dart';
@@ -44,9 +46,6 @@ import 'web_search_settings_service.dart';
 
 const _sessionCookieName = 'qiyu_session';
 const _csrfHeaderName = 'x-qiyu-csrf';
-
-/// URL 路径里会话标识的形态上限：不透明 ID 只认这套字符与长度。
-final _sessionIdPattern = RegExp(r'^[A-Za-z0-9_-]{1,64}$');
 
 final class LocalAppHost {
   LocalAppHost._(this._server, this._requestHandler);
@@ -392,7 +391,8 @@ final class _LocalAppRequestHandler {
          webRoot,
          defaultDocument: 'index.html',
          listDirectories: false,
-       );
+       ),
+       _apiRoutes = [ChatRoutes(chatService: chatService)];
 
   String _startupToken;
   String get startupToken => _startupToken;
@@ -418,6 +418,7 @@ final class _LocalAppRequestHandler {
   final String _sessionToken;
   final String _csrfToken;
   final Handler _staticHandler;
+  final List<ApiRoutes> _apiRoutes;
   Uri? _origin;
 
   void attach(Uri origin) {
@@ -813,36 +814,6 @@ final class _LocalAppRequestHandler {
         final snapshot = await developerDiagnostics.snapshot();
         return Response.ok(jsonEncode(snapshot), headers: _jsonHeaders);
       }
-      if (request.method == 'GET' && request.url.path == 'api/chat/session') {
-        final snapshot = await chatService.restore(
-          sessionId: request.url.queryParameters['sessionId'],
-        );
-        return Response.ok(
-          jsonEncode(snapshot.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'GET' && request.url.path == 'api/history') {
-        final listing = await chatService.history();
-        return Response.ok(
-          jsonEncode(_historyJson(listing)),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'DELETE' &&
-          request.url.path.startsWith('api/history/sessions/')) {
-        final sessionId = request.url.path.substring(
-          'api/history/sessions/'.length,
-        );
-        if (!_sessionIdPattern.hasMatch(sessionId)) {
-          throw _invalidRequest('会话标识格式不正确。');
-        }
-        await chatService.deleteSession(sessionId);
-        return Response.ok(
-          jsonEncode({'deleted': true}),
-          headers: _jsonHeaders,
-        );
-      }
       if (request.method == 'GET' && request.url.path == 'api/memory') {
         final overview = await memoryCenter.overview();
         return Response.ok(
@@ -972,17 +943,6 @@ final class _LocalAppRequestHandler {
         final result = await memoryBackup.rollbackTo(snapshotId as String?);
         return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
       }
-      if (request.method == 'POST' && request.url.path == 'api/chat/cancel') {
-        final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
-        final requestId = payload['requestId'];
-        if (requestId is! String || requestId.trim().isEmpty) {
-          throw _invalidRequest('聊天请求格式不正确。');
-        }
-        return Response.ok(
-          jsonEncode({'cancelled': chatService.cancel(requestId)}),
-          headers: _jsonHeaders,
-        );
-      }
       if (request.method == 'POST' &&
           request.url.path == 'api/chat/transcribe') {
         final audio = await _readBytes(request, maxBytes: _transcribeMaxBytes);
@@ -1038,29 +998,6 @@ final class _LocalAppRequestHandler {
         }
         final audio = await ttsSettingsService.synthesize(turn.text);
         return Response.ok(audio, headers: _audioHeaders);
-      }
-      if (request.method == 'POST' && request.url.path == 'api/chat') {
-        final payload = await _readJsonObject(request, maxBytes: 64 * 1024);
-        final requestId = payload['requestId'];
-        final text = payload['text'];
-        final sessionId = payload['sessionId'];
-        if (requestId is! String ||
-            text is! String ||
-            (sessionId != null && sessionId is! String) ||
-            requestId.trim().isEmpty ||
-            text.trim().isEmpty) {
-          throw _invalidRequest('聊天请求格式不正确。');
-        }
-        return Response.ok(
-          chatService
-              .deliver(
-                requestId: requestId,
-                text: text,
-                sessionId: sessionId as String?,
-              )
-              .map((event) => utf8.encode('${jsonEncode(event.toJson())}\n')),
-          headers: _streamHeaders,
-        );
       }
     } on FormatException {
       return _jsonError(
@@ -1156,6 +1093,13 @@ final class _LocalAppRequestHandler {
         message: error.message,
         retryable: error.retryable,
       );
+    }
+    // 会话前置之后的请求交给领域路由模块；谁都不认领即按不存在处理。
+    for (final routes in _apiRoutes) {
+      final response = await routes.handle(request);
+      if (response != null) {
+        return response;
+      }
     }
     return _plainError(HttpStatus.notFound, 'Not found');
   }
@@ -1378,61 +1322,6 @@ Future<Map<String, Object?>> _readJsonObject(
   return decoded;
 }
 
-Map<String, Object?> _historyJson(HistoryListing listing) {
-  RawSession? latest;
-  for (final session in listing.sessions) {
-    if (latest == null || session.updatedAt.isAfter(latest.updatedAt)) {
-      latest = session;
-    }
-  }
-  final days = <Map<String, Object?>>[];
-  for (final session in listing.sessions) {
-    if (days.isEmpty || days.last['date'] != session.date) {
-      days.add({'date': session.date, 'sessions': <Map<String, Object?>>[]});
-    }
-    final daySessions = days.last['sessions']! as List<Map<String, Object?>>;
-    daySessions.add(_sessionSummaryJson(session));
-  }
-  return {
-    'latestSessionId': ?latest?.id,
-    'days': days,
-    'unavailable': [
-      for (final entry in listing.unavailable)
-        {'name': entry.name, 'message': entry.message},
-    ],
-  };
-}
-
-Map<String, Object?> _sessionSummaryJson(RawSession session) {
-  final startedAt = session.turns.isEmpty
-      ? session.createdAt
-      : session.turns.first.at;
-  return {
-    'sessionId': session.id,
-    'segment': session.segment,
-    'startedAt': startedAt.toUtc().toIso8601String(),
-    'updatedAt': session.updatedAt.toUtc().toIso8601String(),
-    'turnCount': session.turns.length,
-    'preview': _historyPreview(session),
-  };
-}
-
-String _historyPreview(RawSession session) {
-  if (session.turns.isEmpty) {
-    return '';
-  }
-  final lines = session.turns.first.text.replaceAll('\r\n', '\n').split('\n');
-  final firstLine = lines
-      .map((line) => line.trim())
-      .where((line) => line.isNotEmpty)
-      .firstOrNull;
-  final runes = (firstLine ?? '').runes.toList(growable: false);
-  if (runes.length <= 60) {
-    return String.fromCharCodes(runes);
-  }
-  return '${String.fromCharCodes(runes.sublist(0, 60))}…';
-}
-
 ProviderConfig _providerConfigFromPayload(Map<String, Object?> payload) {
   final provider = payload['provider'];
   final baseUrl = payload['baseUrl'];
@@ -1458,12 +1347,6 @@ ProviderConfig _providerConfigFromPayload(Map<String, Object?> payload) {
 const _jsonHeaders = {
   HttpHeaders.contentTypeHeader: 'application/json; charset=utf-8',
   HttpHeaders.cacheControlHeader: 'no-store',
-};
-
-const _streamHeaders = {
-  HttpHeaders.contentTypeHeader: 'application/x-ndjson; charset=utf-8',
-  HttpHeaders.cacheControlHeader: 'no-store',
-  'x-accel-buffering': 'no',
 };
 
 /// 朗读音频响应头：mp3 字节直出，浏览器 blob 播放，不落盘不缓存。
