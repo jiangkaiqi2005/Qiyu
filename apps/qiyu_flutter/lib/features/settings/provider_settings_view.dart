@@ -24,7 +24,7 @@ import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
 import 'tts_settings_client.dart';
 import 'tts_settings_view_model.dart';
-import 'web_search_settings_client.dart';
+import 'web_search_settings_section.dart';
 import 'web_search_settings_view_model.dart';
 
 /// 设置中心（ticket 23）：模型连接、本地数据管理（备份 / 记忆控制
@@ -165,7 +165,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                   const ProviderSettingsSection(),
                   const _TtsSection(),
                   const _SttSection(),
-                  const _WebSearchSection(),
+                  const WebSearchSettingsSection(),
                   _LocalDataSection(
                     backupGateway: widget.backupGateway,
                     backupPlatform: widget.backupPlatform,
@@ -178,162 +178,6 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// 联网搜索设置区块：AnySearch API Key 配置与保存。
-class _WebSearchSection extends StatefulWidget {
-  const _WebSearchSection();
-
-  @override
-  State<_WebSearchSection> createState() => _WebSearchSectionState();
-}
-
-class _WebSearchSectionState extends State<_WebSearchSection> {
-  final _webSearchApiKeyController = TextEditingController();
-  final _webSearchApiKeyFocusNode = FocusNode();
-  WebSearchSettings? _syncedWebSearchSettings;
-
-  @override
-  void dispose() {
-    _webSearchApiKeyController.dispose();
-    _webSearchApiKeyFocusNode.dispose();
-    super.dispose();
-  }
-
-  void _syncWebSearch(WebSearchSettings? settings) {
-    if (settings == null || identical(settings, _syncedWebSearchSettings)) {
-      return;
-    }
-    _syncedWebSearchSettings = settings;
-    if (!_webSearchApiKeyFocusNode.hasFocus &&
-        _webSearchApiKeyController.text.isNotEmpty) {
-      _webSearchApiKeyController.clear();
-    }
-  }
-
-  Future<void> _saveWebSearch(WebSearchSettingsViewModel viewModel) async {
-    final key = _webSearchApiKeyController.text.trim();
-    try {
-      await viewModel.save(
-        WebSearchSettingsDraft(apiKey: key.isEmpty ? null : key),
-      );
-    } finally {
-      if (mounted) {
-        _webSearchApiKeyController.clear();
-      }
-    }
-  }
-
-  Future<void> _confirmForgetWebSearchKey(
-    WebSearchSettingsViewModel viewModel,
-  ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('web-search-forget-key-dialog'),
-        title: const Text('忘记 AnySearch API Key？'),
-        content: const Text(
-          '忘记后本机不再保存这个 Key，联网搜索会立即停用，'
-          '普通聊天仍可照常使用。',
-        ),
-        actions: [
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('web-search-forget-key-cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('再想想'),
-            ),
-          ),
-          FilledButton(
-            key: const Key('web-search-forget-key-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('忘记 Key'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await viewModel.forgetApiKey();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Consumer<WebSearchSettingsViewModel>(
-      builder: (context, viewModel, child) {
-        _syncWebSearch(viewModel.settings);
-        final theme = Theme.of(context);
-        final keySet = viewModel.settings?.keySet ?? false;
-        return SettingsSectionPanel(
-          sectionId: SettingsSectionId.webSearch,
-          title: '联网搜索',
-          children: [
-            Text(
-              '需要当前时间、天气、新闻等变化中的事实时，栖语可以按需搜索。'
-              'Key 只保存在本机 provider.json，页面不会取回明文。',
-              style: theme.textTheme.bodyLarge?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                height: 1.55,
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (viewModel.loading)
-              const Center(child: CircularProgressIndicator())
-            else ...[
-              Text(
-                keySet ? 'AnySearch Key 已保存在本机' : '尚未保存 AnySearch Key',
-                style: theme.textTheme.titleSmall,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                key: const Key('web-search-api-key'),
-                controller: _webSearchApiKeyController,
-                focusNode: _webSearchApiKeyFocusNode,
-                obscureText: true,
-                enableSuggestions: false,
-                autocorrect: false,
-                decoration: InputDecoration(
-                  labelText: 'ANYSEARCH_API_KEY',
-                  hintText: keySet
-                      ? '留空即可继续使用已保存的 Key'
-                      : '保存后写入本机 provider.json',
-                  border: const OutlineInputBorder(),
-                ),
-              ),
-              if (keySet) ...[
-                const SizedBox(height: 8),
-                QiyuFocusRingScope(
-                  borderRadius: QiyuRadii.circleBorder,
-                  child: TextButton(
-                    key: const Key('forget-web-search-key'),
-                    onPressed: viewModel.saving
-                        ? null
-                        : () =>
-                              unawaited(_confirmForgetWebSearchKey(viewModel)),
-                    child: const Text('忘记 AnySearch Key'),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 20),
-              if (viewModel.errorMessage case final message?) ...[
-                SettingsStatusMessage(message: message, succeeded: false),
-                const SizedBox(height: 14),
-              ],
-              FilledButton.icon(
-                key: const Key('save-web-search-settings'),
-                onPressed: viewModel.saving
-                    ? null
-                    : () => unawaited(_saveWebSearch(viewModel)),
-                icon: settingsBusyOr(viewModel.saving, QiyuIcons.lock),
-                label: const Text('保存到本机'),
-              ),
-            ],
-          ],
-        );
-      },
     );
   }
 }
