@@ -454,11 +454,11 @@ final class _LocalAppRequestHandler {
   FutureOr<Response> call(Request request) {
     final origin = _origin;
     if (origin == null) {
-      return _plainError(HttpStatus.serviceUnavailable, 'Host is starting');
+      return plainError(HttpStatus.serviceUnavailable, 'Host is starting');
     }
 
     if (!_hasExpectedHost(request, origin)) {
-      return _plainError(HttpStatus.forbidden, 'Unexpected Host');
+      return plainError(HttpStatus.forbidden, 'Unexpected Host');
     }
 
     if (request.url.path == '_session/start') {
@@ -479,7 +479,7 @@ final class _LocalAppRequestHandler {
   Response _startSession(Request request) {
     if (request.method != 'GET' ||
         request.url.queryParameters['token'] != _startupToken) {
-      return _plainError(HttpStatus.unauthorized, 'Invalid startup credential');
+      return plainError(HttpStatus.unauthorized, 'Invalid startup credential');
     }
 
     // 兑换成功后立即轮换，登录 URL 只能使用一次。
@@ -503,11 +503,11 @@ final class _LocalAppRequestHandler {
         expectedToken == null ||
         activate == null ||
         request.headers['x-qiyu-activation'] != expectedToken) {
-      return _plainError(HttpStatus.forbidden, 'Invalid activation request');
+      return plainError(HttpStatus.forbidden, 'Invalid activation request');
     }
     final result = await activate();
     if (result.succeeded) {
-      return Response(HttpStatus.noContent, headers: _noStoreHeaders);
+      return Response(HttpStatus.noContent, headers: noStoreHeaders);
     }
     final displayUrl = origin.replace(
       path: '/_session/start',
@@ -516,20 +516,20 @@ final class _LocalAppRequestHandler {
     return Response(
       HttpStatus.serviceUnavailable,
       body: jsonEncode({'displayUrl': displayUrl.toString()}),
-      headers: _jsonHeaders,
+      headers: jsonHeaders,
     );
   }
 
   Future<Response> _handleApi(Request request, Uri origin) async {
     final modifying = request.method != 'GET' && request.method != 'HEAD';
     if (!_hasExpectedSource(request, origin, requireOrigin: modifying)) {
-      return _plainError(HttpStatus.forbidden, 'Unexpected request source');
+      return plainError(HttpStatus.forbidden, 'Unexpected request source');
     }
     if (!_hasSession(request)) {
-      return _plainError(HttpStatus.unauthorized, 'Invalid session');
+      return plainError(HttpStatus.unauthorized, 'Invalid session');
     }
     if (modifying && request.headers[_csrfHeaderName] != _csrfToken) {
-      return _plainError(HttpStatus.forbidden, 'Invalid CSRF token');
+      return plainError(HttpStatus.forbidden, 'Invalid CSRF token');
     }
 
     if (request.method == 'GET' && request.url.path == 'api/bootstrap') {
@@ -540,14 +540,14 @@ final class _LocalAppRequestHandler {
           'host': origin.host,
           'port': origin.port,
         }),
-        headers: _jsonHeaders,
+        headers: jsonHeaders,
       );
     }
     if (request.method == 'GET' && request.url.path == 'api/health') {
-      return Response.ok(jsonEncode({'status': 'ok'}), headers: _jsonHeaders);
+      return Response.ok(jsonEncode({'status': 'ok'}), headers: jsonHeaders);
     }
     if (request.method == 'POST' && request.url.path == 'api/session/verify') {
-      return Response(HttpStatus.noContent, headers: _noStoreHeaders);
+      return Response(HttpStatus.noContent, headers: noStoreHeaders);
     }
 
     // 会话前置之后的请求交给领域路由模块；谁都不认领即按不存在处理。
@@ -557,7 +557,7 @@ final class _LocalAppRequestHandler {
         return response;
       }
     }
-    return _plainError(HttpStatus.notFound, 'Not found');
+    return plainError(HttpStatus.notFound, 'Not found');
   }
 
   bool _hasExpectedHost(Request request, Uri origin) {
@@ -599,24 +599,6 @@ final class _LocalAppRequestHandler {
     }
     return false;
   }
-}
-
-const _jsonHeaders = {
-  HttpHeaders.contentTypeHeader: 'application/json; charset=utf-8',
-  HttpHeaders.cacheControlHeader: 'no-store',
-};
-
-const _noStoreHeaders = {HttpHeaders.cacheControlHeader: 'no-store'};
-
-Response _plainError(int statusCode, String message) {
-  return Response(
-    statusCode,
-    body: redactDiagnosticText(message),
-    headers: {
-      HttpHeaders.contentTypeHeader: 'text/plain; charset=utf-8',
-      HttpHeaders.cacheControlHeader: 'no-store',
-    },
-  );
 }
 
 bool _sameOrigin(String value, Uri expected) {

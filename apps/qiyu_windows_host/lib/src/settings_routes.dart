@@ -5,11 +5,9 @@ import 'package:shelf/shelf.dart';
 
 import 'api_http.dart';
 import 'developer_diagnostics.dart';
-import 'local_chat_service.dart';
 import 'local_data_service.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
-import 'secret_store.dart';
 import 'stt_settings_service.dart';
 import 'tts_settings_service.dart';
 import 'web_search_settings_service.dart';
@@ -40,37 +38,36 @@ final class SettingsRoutes implements ApiRoutes {
 
   @override
   Future<Response?> handle(Request request) async {
+    // 本领域没有共享口径之外的异常差异：请求体不可读、invalid_request、
+    // Provider 配置与凭据库故障、本地数据故障全走共享翻译前导。
     try {
       return await _route(request);
-    } on FormatException {
-      return invalidRequestBodyResponse();
-    } on LocalChatException catch (error) {
-      return localChatErrorResponse(error);
-    } on ProviderConfigException catch (error) {
-      return jsonError(
-        HttpStatus.badRequest,
-        code: 'invalid_provider_config',
-        message: error.message,
-        retryable: false,
-      );
-    } on SecretStoreException catch (error) {
-      return jsonError(
-        HttpStatus.internalServerError,
-        code: 'credential_store_error',
-        message: error.message,
-        retryable: true,
-      );
-    } on LocalDataException catch (error) {
-      return jsonError(
-        HttpStatus.internalServerError,
-        code: 'local_data_error',
-        message: error.message,
-        retryable: true,
-      );
+    } on Object catch (error) {
+      final shared = sharedApiErrorResponse(error);
+      if (shared == null) rethrow;
+      return shared;
     }
   }
 
+  /// 依次询问各子域；返回 null 表示请求不属于设置领域，交回总控。
   Future<Response?> _route(Request request) async {
+    for (final subdomain in [
+      _providerRoutes,
+      _webSearchRoutes,
+      _sttRoutes,
+      _ttsRoutes,
+      _preferenceRoutes,
+    ]) {
+      final response = await subdomain(request);
+      if (response != null) {
+        return response;
+      }
+    }
+    return null;
+  }
+
+  /// 模型 Provider 子域：配置读取/保存、连接测试与忘记 Key。
+  Future<Response?> _providerRoutes(Request request) async {
     final method = request.method;
     final path = request.url.path;
     if (method == 'GET' && path == 'api/provider') {
@@ -128,6 +125,13 @@ final class SettingsRoutes implements ApiRoutes {
         headers: jsonHeaders,
       );
     }
+    return null;
+  }
+
+  /// 联网搜索子域：Key 的保存、读取与忘记。
+  Future<Response?> _webSearchRoutes(Request request) async {
+    final method = request.method;
+    final path = request.url.path;
     if (method == 'GET' && path == 'api/provider/web-search') {
       final settings = await webSearchSettingsService.read();
       return Response.ok(
@@ -156,6 +160,13 @@ final class SettingsRoutes implements ApiRoutes {
         headers: jsonHeaders,
       );
     }
+    return null;
+  }
+
+  /// 语音转写（STT）子域：配置读取/保存、连接测试与忘记 Key。
+  Future<Response?> _sttRoutes(Request request) async {
+    final method = request.method;
+    final path = request.url.path;
     if (method == 'GET' && path == 'api/provider/stt') {
       final settings = await sttSettingsService.read();
       return Response.ok(
@@ -200,6 +211,14 @@ final class SettingsRoutes implements ApiRoutes {
         headers: jsonHeaders,
       );
     }
+    return null;
+  }
+
+  /// 语音合成（TTS）子域：配置读取/保存、连接测试、自动朗读开关与
+  /// 忘记 Key。
+  Future<Response?> _ttsRoutes(Request request) async {
+    final method = request.method;
+    final path = request.url.path;
     if (method == 'GET' && path == 'api/provider/tts') {
       final settings = await ttsSettingsService.read();
       return Response.ok(
@@ -263,6 +282,14 @@ final class SettingsRoutes implements ApiRoutes {
         headers: jsonHeaders,
       );
     }
+    return null;
+  }
+
+  /// 体验选项与开发者诊断子域：选项读写；诊断入口只在开发者模式
+  /// 开启时存在。
+  Future<Response?> _preferenceRoutes(Request request) async {
+    final method = request.method;
+    final path = request.url.path;
     if (method == 'GET' && path == 'api/preferences') {
       final settings = await experienceRepository.load();
       return Response.ok(

@@ -1,14 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:shelf/shelf.dart';
 
 import 'api_http.dart';
-import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
-import 'provider_config.dart';
 import 'stt_settings_service.dart';
 import 'tts_settings_service.dart';
 
@@ -43,25 +40,18 @@ final class VoiceRoutes implements ApiRoutes {
 
   @override
   Future<Response?> handle(Request request) async {
+    // 领域差异只有语音服务故障；请求体不可读、invalid_request、Provider
+    // 配置故障与记忆仓储故障走共享翻译前导。
     try {
       return await _route(request);
-    } on FormatException {
-      return invalidRequestBodyResponse();
-    } on LocalChatException catch (error) {
-      return localChatErrorResponse(error);
     } on SttServiceException catch (error) {
       return _voiceServiceError(error.code, error.message, error.retryable);
     } on TtsServiceException catch (error) {
       return _voiceServiceError(error.code, error.message, error.retryable);
-    } on ProviderConfigException catch (error) {
-      return jsonError(
-        HttpStatus.badRequest,
-        code: 'invalid_provider_config',
-        message: error.message,
-        retryable: false,
-      );
-    } on MemoryRepositoryException catch (error) {
-      return memoryRepositoryErrorResponse(error);
+    } on Object catch (error) {
+      final shared = sharedApiErrorResponse(error);
+      if (shared == null) rethrow;
+      return shared;
     }
   }
 
@@ -92,7 +82,11 @@ final class VoiceRoutes implements ApiRoutes {
     final method = request.method;
     final path = request.url.path;
     if (method == 'POST' && path == 'api/chat/transcribe') {
-      final audio = await _readBytes(request, maxBytes: _transcribeMaxBytes);
+      final audio = await readLimitedBytes(
+        request,
+        maxBytes: _transcribeMaxBytes,
+        onOversize: () => invalidRequest('录音文件太大，请录短一些再试。'),
+      );
       final contentType = request.headers[HttpHeaders.contentTypeHeader];
       final mimeType = contentType?.split(';').first.trim().toLowerCase();
       if (mimeType == null || !mimeType.startsWith('audio/')) {
@@ -148,31 +142,4 @@ final class VoiceRoutes implements ApiRoutes {
     }
     return null;
   }
-}
-
-/// 读取二进制请求体（语音转写）：与 JSON 读取同一套限长策略，Content-
-/// Length 与累计字节数双重校验覆盖 chunked 请求。
-Future<Uint8List> _readBytes(Request request, {required int maxBytes}) async {
-  final contentLength = request.contentLength;
-  if (contentLength != null && contentLength > maxBytes) {
-    throw LocalChatException(
-      code: 'invalid_request',
-      message: '录音文件太大，请录短一些再试。',
-      retryable: false,
-    );
-  }
-  final buffer = BytesBuilder(copy: false);
-  var totalBytes = 0;
-  await for (final chunk in request.read()) {
-    totalBytes += chunk.length;
-    if (totalBytes > maxBytes) {
-      throw LocalChatException(
-        code: 'invalid_request',
-        message: '录音文件太大，请录短一些再试。',
-        retryable: false,
-      );
-    }
-    buffer.add(chunk);
-  }
-  return buffer.takeBytes();
 }
