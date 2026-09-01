@@ -213,7 +213,7 @@ final class EpisodeUpdateResult {
 }
 
 /// 伪 Agent 隐藏动作的记忆写入端。只接受白名单校验后的
-/// [TypedHiddenAction]，把 memory_signal 增量写入当天 episode，并维护
+/// [HiddenAction]，把 memory_signal 增量写入当天 episode，并维护
 /// 可续跑的 checkpoint。模型从不直接写文件；这里的每一次写入都是
 /// 原子替换，且 checkpoint 只在 episode 写入成功后才前进。
 ///
@@ -344,7 +344,7 @@ final class EpisodeMemoryPipeline {
   Future<EpisodeUpdateResult> processReply({
     required RawSession session,
     required String requestId,
-    required List<TypedHiddenAction> hiddenActions,
+    required List<HiddenAction> hiddenActions,
     bool consumeWindow = true,
   }) => synchronizedOnDayFiles(
     () => _processReplyLocked(
@@ -358,7 +358,7 @@ final class EpisodeMemoryPipeline {
   Future<EpisodeUpdateResult> _processReplyLocked({
     required RawSession session,
     required String requestId,
-    required List<TypedHiddenAction> hiddenActions,
+    required List<HiddenAction> hiddenActions,
     required bool consumeWindow,
   }) async {
     final checkpoint = await readCheckpoint();
@@ -498,7 +498,7 @@ final class EpisodeMemoryPipeline {
   /// 把已通过白名单校验的隐藏动作落成当天 episode 条目。
   /// 候选保留四字段载荷供日终提升；状态变化与禁提作为事件条目留痕。
   EpisodeEntry? _entryForAction(
-    TypedHiddenAction action, {
+    HiddenAction action, {
     required RawSession session,
     required String requestId,
     required int index,

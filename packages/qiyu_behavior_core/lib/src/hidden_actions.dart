@@ -129,7 +129,7 @@ bool _sameSelections(List<String>? left, List<String>? right) {
 final class HiddenActionParse {
   HiddenActionParse({
     required this.visibleText,
-    required List<TypedHiddenAction> actions,
+    required List<HiddenAction> actions,
     required List<String> diagnostics,
   }) : actions = List.unmodifiable(actions),
        diagnostics = List.unmodifiable(diagnostics);
@@ -137,7 +137,7 @@ final class HiddenActionParse {
   final String visibleText;
 
   /// 每种 kind 一个定型子类，各自携带解析器已校验的精确形状。
-  final List<TypedHiddenAction> actions;
+  final List<HiddenAction> actions;
   final List<String> diagnostics;
 }
 
@@ -233,8 +233,8 @@ final class PersonaHint {
 /// 隐藏动作的定型模型：每种 kind 一个子类，各自只携带解析器已校验的
 /// 精确字段，「kind 与字段不匹配」的状态在类型上无法构造。序列化仍走
 /// 原扁平协议的 wire 键。
-sealed class TypedHiddenAction {
-  const TypedHiddenAction();
+sealed class HiddenAction {
+  const HiddenAction();
 
   HiddenActionKind get kind;
 
@@ -244,7 +244,7 @@ sealed class TypedHiddenAction {
 
 /// memory_signal：值得记下的事实。summary 必填；evidence 可选；
 /// 画像提示成对可选。
-final class MemorySignalAction extends TypedHiddenAction {
+final class MemorySignalAction extends HiddenAction {
   const MemorySignalAction({required this.summary, this.evidence, this.hint});
 
   final String summary;
@@ -276,7 +276,7 @@ final class MemorySignalAction extends TypedHiddenAction {
 
 /// memory_recall：轮内查找。聊天轮只带 query；选择调用的回应才带
 /// months/dates 选择。
-final class MemoryRecallAction extends TypedHiddenAction {
+final class MemoryRecallAction extends HiddenAction {
   MemoryRecallAction({
     required this.query,
     List<String>? months,
@@ -319,7 +319,7 @@ final class MemoryRecallAction extends TypedHiddenAction {
 }
 
 /// no_action：模型明确表示没有动作。
-final class NoAction extends TypedHiddenAction {
+final class NoAction extends HiddenAction {
   const NoAction();
 
   @override
@@ -336,7 +336,7 @@ final class NoAction extends TypedHiddenAction {
 }
 
 /// open_loop_candidate：日终候选事项。title 走 wire 的 summary 键。
-final class OpenLoopCandidateAction extends TypedHiddenAction {
+final class OpenLoopCandidateAction extends HiddenAction {
   const OpenLoopCandidateAction({
     required this.title,
     this.evidence,
@@ -382,7 +382,7 @@ final class OpenLoopCandidateAction extends TypedHiddenAction {
 }
 
 /// open_loop_status：事项闭环、暂缓或重新活跃。
-final class OpenLoopStatusAction extends TypedHiddenAction {
+final class OpenLoopStatusAction extends HiddenAction {
   const OpenLoopStatusAction({
     required this.title,
     required this.status,
@@ -420,7 +420,7 @@ final class OpenLoopStatusAction extends TypedHiddenAction {
 /// 用户记忆控制动作（禁提 / 当轮遗忘 / 冻结 / 解冻 / 删除）的共同形状：
 /// 只携带控制对象的话题简称。相等性也在本层统一：运行时类型（即 kind）
 /// 加话题简称逐字段比较，不同 kind 的实例互不相等。
-sealed class MemoryControlAction extends TypedHiddenAction {
+sealed class MemoryControlAction extends HiddenAction {
   const MemoryControlAction({required this.title});
 
   final String title;
@@ -480,7 +480,7 @@ final class MemoryDeleteAction extends MemoryControlAction {
 
 /// relationship_signal：深谈信号、温度变化、边界开合。边界开合必须带
 /// evidence 的约束属于字段间校验，由解析器执行。
-final class RelationshipSignalAction extends TypedHiddenAction {
+final class RelationshipSignalAction extends HiddenAction {
   const RelationshipSignalAction({
     required this.summary,
     required this.signal,
@@ -567,7 +567,7 @@ HiddenActionParse parseHiddenActions(String rawText) {
     diagnostics.add(HiddenActionDiagnostics.multipleBlocks);
   }
 
-  final actions = <TypedHiddenAction>[];
+  final actions = <HiddenAction>[];
   // JSON 解析失败与非数组、标量载荷同属 invalid_format：丢弃动作块并记诊断。
   Object? decoded;
   try {
@@ -618,7 +618,7 @@ HiddenActionParse parseHiddenActions(String rawText) {
   );
 }
 
-TypedHiddenAction? _validateAction(
+HiddenAction? _validateAction(
   Map<String, Object?> item,
   List<String> diagnostics,
 ) {

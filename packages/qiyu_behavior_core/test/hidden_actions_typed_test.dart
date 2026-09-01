@@ -165,7 +165,7 @@ void main() {
     });
 
     test('the sealed family stays exhaustive over all eleven kinds', () {
-      String wire(TypedHiddenAction action) => switch (action) {
+      String wire(HiddenAction action) => switch (action) {
         MemorySignalAction() => 'memory_signal',
         MemoryRecallAction() => 'memory_recall',
         NoAction() => 'no_action',
@@ -179,7 +179,7 @@ void main() {
         RelationshipSignalAction() => 'relationship_signal',
       };
 
-      final actions = <TypedHiddenAction>[
+      final actions = <HiddenAction>[
         const MemorySignalAction(summary: '甲'),
         MemoryRecallAction(query: '乙'),
         const NoAction(),

@@ -159,7 +159,7 @@ void main() {
         final date = '2026-08-${day.toString().padLeft(2, '0')}';
         dates.add(date);
         now = DateTime(2026, 8, day, 22);
-        final actions = <TypedHiddenAction>[
+        final actions = <HiddenAction>[
           const MemorySignalAction(summary: '聊了日常'),
           if (day == 3 || day == 7)
             RelationshipSignalAction(
@@ -552,7 +552,7 @@ Future<void> _reply(
   DateTime at, {
   required String requestId,
   required String session,
-  required List<TypedHiddenAction> actions,
+  required List<HiddenAction> actions,
 }) => pipeline.processReply(
   session: RawSession(
     id: session,

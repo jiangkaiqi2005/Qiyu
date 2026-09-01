@@ -449,7 +449,7 @@ final class LocalChatService {
     }
 
     final state = _stateFromCompletedTurns(session.turns, trimmedRequestId);
-    List<TypedHiddenAction> hiddenActions = const [];
+    List<HiddenAction> hiddenActions = const [];
     final localOutcome = _behaviorCore.reply(
       ChatRequest(requestId: trimmedRequestId, text: trimmedText),
       state,
@@ -592,7 +592,7 @@ final class LocalChatService {
     required RawSession session,
     required StateSnapshot state,
     required String userText,
-    required List<TypedHiddenAction> hiddenActions,
+    required List<HiddenAction> hiddenActions,
     required ChatResult outcome,
     required bool bedtime,
     required _DeliveryCancellation cancellation,
@@ -821,7 +821,7 @@ final class LocalChatService {
   Future<void> _applyHiddenActions(
     RawSession completedSession,
     String requestId,
-    List<TypedHiddenAction> hiddenActions, {
+    List<HiddenAction> hiddenActions, {
     required bool consumeWindow,
   }) async {
     // 不要记（当轮控制，不产生持久记录）：命中目标的记忆信号、

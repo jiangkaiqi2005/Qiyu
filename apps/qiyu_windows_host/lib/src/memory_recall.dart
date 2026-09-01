@@ -121,7 +121,7 @@ final class RecallOrchestrator {
   /// 执行一次轮内查找。绝不抛出：任何异常都降级为无结果并记诊断。
   Future<RecallTurnResult> runTurnRecall({
     required String userText,
-    required List<TypedHiddenAction> recallActions,
+    required List<HiddenAction> recallActions,
   }) async {
     final diagnostics = <String>[];
     try {
@@ -135,7 +135,7 @@ final class RecallOrchestrator {
 
   Future<RecallTurnResult> _runClean(
     String userText,
-    List<TypedHiddenAction> recallActions,
+    List<HiddenAction> recallActions,
     List<String> diagnostics,
   ) async {
     final client = modelClient;
