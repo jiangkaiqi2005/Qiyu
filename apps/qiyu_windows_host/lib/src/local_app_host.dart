@@ -38,6 +38,7 @@ import 'provider_settings_service.dart';
 import 'relationship_lifecycle.dart';
 import 'secure_token.dart';
 import 'secret_store.dart';
+import 'settings_routes.dart';
 import 'state_pack_reader.dart';
 import 'stt_gateway.dart';
 import 'stt_settings_service.dart';
@@ -400,6 +401,15 @@ final class _LocalAppRequestHandler {
            memoryActions: memoryActions,
            memoryControls: memoryControls,
          ),
+         SettingsRoutes(
+           providerSettingsService: providerSettingsService,
+           webSearchSettingsService: webSearchSettingsService,
+           sttSettingsService: sttSettingsService,
+           ttsSettingsService: ttsSettingsService,
+           experienceRepository: experienceRepository,
+           developerDiagnostics: developerDiagnostics,
+           requestDiagnostics: requestDiagnostics,
+         ),
        ];
 
   String _startupToken;
@@ -550,231 +560,6 @@ final class _LocalAppRequestHandler {
           headers: _jsonHeaders,
         );
       }
-      if (request.method == 'GET' && request.url.path == 'api/provider') {
-        final settings = await providerSettingsService.read();
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'PUT' && request.url.path == 'api/provider') {
-        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
-        final config = _providerConfigFromPayload(payload);
-        final settings = await providerSettingsService.save(
-          config: config,
-          apiKey: _apiKeyFromPayload(payload),
-        );
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'POST' && request.url.path == 'api/provider/test') {
-        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
-        final apiKey = _apiKeyFromPayload(payload);
-        final config = payload.isEmpty
-            ? (await providerSettingsService.read()).config
-            : _providerConfigFromPayload(payload);
-        if (config == null) {
-          const result = ProviderTestResult(
-            status: ProviderTestStatus.notConfigured,
-            message: '还没有保存模型配置。',
-          );
-          return Response.ok(
-            jsonEncode(result.toJson()),
-            headers: _jsonHeaders,
-          );
-        }
-        final result = await providerSettingsService.test(
-          config: config,
-          apiKey: apiKey,
-        );
-        requestDiagnostics?.record(
-          source: RecentRequestSources.providerTest,
-          result: result.succeeded
-              ? RecentRequestResults.ok
-              : RecentRequestResults.failed,
-          detail: 'status=${result.status.name}',
-        );
-        return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
-      }
-      if (request.method == 'DELETE' &&
-          request.url.path == 'api/provider/key') {
-        final settings = await providerSettingsService.forgetApiKey();
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'GET' &&
-          request.url.path == 'api/provider/web-search') {
-        final settings = await webSearchSettingsService.read();
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'PUT' &&
-          request.url.path == 'api/provider/web-search') {
-        final payload = await _readJsonObject(request, maxBytes: 8 * 1024);
-        final unexpected = payload.keys.where((key) => key != 'apiKey');
-        if (unexpected.isNotEmpty) {
-          throw const ProviderConfigException('联网搜索配置格式不正确。');
-        }
-        final settings = await webSearchSettingsService.save(
-          apiKey: _apiKeyFromPayload(payload),
-        );
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'DELETE' &&
-          request.url.path == 'api/provider/web-search/key') {
-        final settings = await webSearchSettingsService.forgetApiKey();
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'GET' && request.url.path == 'api/provider/stt') {
-        final settings = await sttSettingsService.read();
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'PUT' && request.url.path == 'api/provider/stt') {
-        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
-        final settings = await sttSettingsService.save(
-          provider: _sttProviderFromPayload(payload),
-          baseUrl: _sttTextField(payload, 'baseUrl'),
-          model: _sttTextField(payload, 'model'),
-          apiKey: _apiKeyFromPayload(payload),
-        );
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'POST' &&
-          request.url.path == 'api/provider/stt/test') {
-        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
-        final result = await sttSettingsService.test(
-          provider: _sttProviderFromPayload(payload),
-          baseUrl: _optionalSttTextField(payload, 'baseUrl'),
-          model: _optionalSttTextField(payload, 'model'),
-          apiKey: _apiKeyFromPayload(payload),
-        );
-        requestDiagnostics?.record(
-          source: RecentRequestSources.providerTest,
-          result: result.succeeded
-              ? RecentRequestResults.ok
-              : RecentRequestResults.failed,
-          detail: 'stt status=${result.status.name}',
-        );
-        return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
-      }
-      if (request.method == 'DELETE' &&
-          request.url.path == 'api/provider/stt/key') {
-        final settings = await sttSettingsService.forgetApiKey();
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'GET' && request.url.path == 'api/provider/tts') {
-        final settings = await ttsSettingsService.read();
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'PUT' && request.url.path == 'api/provider/tts') {
-        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
-        final settings = await ttsSettingsService.save(
-          provider: _ttsProviderFromPayload(payload),
-          baseUrl: _sttTextField(payload, 'baseUrl'),
-          model: _sttTextField(payload, 'model'),
-          apiKey: _apiKeyFromPayload(payload),
-          voice: _optionalSttTextField(payload, 'voice'),
-          speed: _ttsSpeedFromPayload(payload),
-          autoSpeak: _ttsAutoSpeakFromPayload(payload),
-          extraParams: _ttsExtraParamsFromPayload(payload),
-        );
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'POST' &&
-          request.url.path == 'api/provider/tts/test') {
-        final payload = await _readJsonObject(request, maxBytes: 32 * 1024);
-        final result = await ttsSettingsService.test(
-          provider: _ttsProviderFromPayload(payload),
-          baseUrl: _optionalSttTextField(payload, 'baseUrl'),
-          model: _optionalSttTextField(payload, 'model'),
-          apiKey: _apiKeyFromPayload(payload),
-          voice: _optionalSttTextField(payload, 'voice'),
-          speed: _ttsSpeedFromPayload(payload),
-          extraParams: _ttsExtraParamsFromPayload(payload),
-        );
-        requestDiagnostics?.record(
-          source: RecentRequestSources.providerTest,
-          result: result.succeeded
-              ? RecentRequestResults.ok
-              : RecentRequestResults.failed,
-          detail: 'tts status=${result.status.name}',
-        );
-        return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
-      }
-      if (request.method == 'PUT' &&
-          request.url.path == 'api/provider/tts/auto-speak') {
-        final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
-        final enabled = payload['enabled'];
-        if (enabled is! bool) {
-          throw _invalidRequest('朗读开关请求格式不正确。');
-        }
-        final settings = await ttsSettingsService.setAutoSpeak(enabled);
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'DELETE' &&
-          request.url.path == 'api/provider/tts/key') {
-        final settings = await ttsSettingsService.forgetApiKey();
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'GET' && request.url.path == 'api/preferences') {
-        final settings = await experienceRepository.load();
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'PUT' && request.url.path == 'api/preferences') {
-        final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
-        final developerMode = payload['developerMode'];
-        if (developerMode is! bool) {
-          throw _invalidRequest('体验选项请求格式不正确。');
-        }
-        final ExperienceSettings settings;
-        try {
-          settings = await experienceRepository.save(
-            ExperienceSettings(developerMode: developerMode),
-          );
-        } on Object catch (error) {
-          throw LocalDataException('体验选项保存失败，请稍后重试。', error);
-        }
-        return Response.ok(
-          jsonEncode(settings.toJson()),
-          headers: _jsonHeaders,
-        );
-      }
       if (request.method == 'GET' &&
           request.url.path == 'api/data/clear-preview') {
         final preview = await localDataService.clearPreview();
@@ -791,17 +576,6 @@ final class _LocalAppRequestHandler {
           () => localDataService.clear(),
         );
         return Response.ok(jsonEncode(result), headers: _jsonHeaders);
-      }
-      if (request.method == 'GET' &&
-          request.url.path == 'api/dev/diagnostics') {
-        // 实验室/开发者能力默认不打扰普通用户：未开启开发者模式时
-        // 端点直接按不存在处理；诊断只读，绝不修改生产数据。
-        final settings = await experienceRepository.load();
-        if (!settings.developerMode) {
-          return _plainError(HttpStatus.notFound, 'Not found');
-        }
-        final snapshot = await developerDiagnostics.snapshot();
-        return Response.ok(jsonEncode(snapshot), headers: _jsonHeaders);
       }
       if (request.method == 'GET' && request.url.path == 'api/backup/export') {
         final export = await memoryBackup.exportBundle();
@@ -1062,100 +836,6 @@ LocalChatException _invalidRequest(String message) => LocalChatException(
   retryable: false,
 );
 
-/// 从 Provider 相关请求体取可选 API Key；类型不对时按配置格式错误拒绝。
-String? _apiKeyFromPayload(Map<String, Object?> payload) {
-  final apiKey = payload['apiKey'];
-  if (apiKey != null && apiKey is! String) {
-    throw const ProviderConfigException('API Key 格式不正确。');
-  }
-  return apiKey as String?;
-}
-
-/// STT 设置必填文本字段：缺失或类型不对按配置格式错误拒绝。
-String _sttTextField(Map<String, Object?> payload, String key) {
-  final value = payload[key];
-  if (value is! String) {
-    throw const ProviderConfigException('语音服务配置格式不正确。');
-  }
-  return value;
-}
-
-/// STT 连接测试的可选文本字段：空负载（测试已保存配置）允许缺失。
-String? _optionalSttTextField(Map<String, Object?> payload, String key) {
-  final value = payload[key];
-  if (value == null) {
-    return null;
-  }
-  if (value is! String) {
-    throw const ProviderConfigException('语音服务配置格式不正确。');
-  }
-  return value;
-}
-
-/// STT 设置的服务类型（provider）：可选字段，缺省 openai_compatible；
-/// 非法协议名按配置格式错误拒绝，不落盘。
-SttProviderKind _sttProviderFromPayload(Map<String, Object?> payload) {
-  final value = payload['provider'];
-  if (value == null) {
-    return SttProviderKind.openAiCompatible;
-  }
-  if (value is! String) {
-    throw const ProviderConfigException('语音服务配置格式不正确。');
-  }
-  return SttProviderKind.fromWireName(value);
-}
-
-/// TTS 设置的服务类型（provider）：缺省与校验规则同 STT。
-TtsProviderKind _ttsProviderFromPayload(Map<String, Object?> payload) {
-  final value = payload['provider'];
-  if (value == null) {
-    return TtsProviderKind.openAiCompatible;
-  }
-  if (value is! String) {
-    throw const ProviderConfigException('语音服务配置格式不正确。');
-  }
-  return TtsProviderKind.fromWireName(value);
-}
-
-/// TTS 语速（speed）：可选数值字段；null/缺省不设置（沿用服务缺省），
-/// 类型不对按配置格式错误拒绝。
-double? _ttsSpeedFromPayload(Map<String, Object?> payload) {
-  final value = payload['speed'];
-  if (value == null) {
-    return null;
-  }
-  if (value is! num) {
-    throw const ProviderConfigException('语音服务配置格式不正确。');
-  }
-  return value.toDouble();
-}
-
-/// TTS 自动朗读开关（autoSpeak）：可选布尔字段，缺省 true。
-bool? _ttsAutoSpeakFromPayload(Map<String, Object?> payload) {
-  final value = payload['autoSpeak'];
-  if (value == null) {
-    return null;
-  }
-  if (value is! bool) {
-    throw const ProviderConfigException('语音服务配置格式不正确。');
-  }
-  return value;
-}
-
-/// TTS 自定义高级参数（extraParams）：可选 Map 对象。
-Map<String, Object?>? _ttsExtraParamsFromPayload(
-  Map<String, Object?> payload,
-) {
-  final value = payload['extraParams'] ?? payload['extra_params'];
-  if (value == null) {
-    return null;
-  }
-  if (value is! Map) {
-    throw const ProviderConfigException('语音服务配置格式不正确。');
-  }
-  return value.cast<String, Object?>();
-}
-
 /// 读取二进制请求体（语音转写）：与 JSON 读取同一套限长策略，Content-
 /// Length 与累计字节数双重校验覆盖 chunked 请求。
 Future<Uint8List> _readBytes(Request request, {required int maxBytes}) async {
@@ -1222,28 +902,6 @@ Future<Map<String, Object?>> _readJsonObject(
     throw const FormatException('request body must be an object');
   }
   return decoded;
-}
-
-ProviderConfig _providerConfigFromPayload(Map<String, Object?> payload) {
-  final provider = payload['provider'];
-  final baseUrl = payload['baseUrl'];
-  final model = payload['model'];
-  final temperature = payload['temperature'];
-  final timeoutSeconds = payload['timeoutSeconds'];
-  if (provider is! String ||
-      baseUrl is! String ||
-      model is! String ||
-      temperature is! num ||
-      timeoutSeconds is! int) {
-    throw const ProviderConfigException('模型配置格式不正确。');
-  }
-  return ProviderConfig(
-    kind: ProviderKind.fromWireName(provider),
-    baseUrl: baseUrl,
-    model: model,
-    temperature: temperature.toDouble(),
-    timeoutSeconds: timeoutSeconds,
-  );
 }
 
 const _jsonHeaders = {
