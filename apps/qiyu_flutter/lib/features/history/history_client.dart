@@ -1,6 +1,4 @@
-import 'dart:convert';
-
-import 'package:http/http.dart' as http;
+import '../baseline/host_api_gateway.dart';
 
 final class HistorySessionSummary {
   const HistorySessionSummary({
@@ -100,55 +98,29 @@ abstract interface class HistoryGateway {
   Future<void> deleteSession(String sessionId);
 }
 
-final class HttpHistoryGateway implements HistoryGateway {
-  HttpHistoryGateway({http.Client? client, Uri? baseUri})
-    : _client = client ?? http.Client(),
-      _baseUri = baseUri ?? Uri.base;
+final class HttpHistoryGateway extends HostApiGateway
+    implements HistoryGateway {
+  HttpHistoryGateway({super.client, super.baseUri});
 
-  final http.Client _client;
-  final Uri _baseUri;
-  String? _csrfToken;
+  @override
+  Object errorFor(String message) => HistoryGatewayException(message);
+
+  @override
+  String get unavailableMessage => '历史记录暂时不可用，请稍后重试。';
 
   @override
   Future<HistoryListing> fetchHistory() async {
-    await _ensureBootstrap();
-    final response = await _client.get(_baseUri.resolve('/api/history'));
-    return HistoryListing.fromJson(_decodeSuccess(response));
+    await ensureBootstrap();
+    final response = await httpClient.get(resolve('/api/history'));
+    return HistoryListing.fromJson(decodeSuccess(response));
   }
 
   @override
   Future<void> deleteSession(String sessionId) async {
-    await _ensureBootstrap();
-    final response = await _client.delete(
-      _baseUri.resolve('/api/history/sessions/$sessionId'),
-      headers: {'x-qiyu-csrf': _csrfToken!},
+    final response = await httpClient.delete(
+      resolve('/api/history/sessions/$sessionId'),
+      headers: await csrfHeaders(),
     );
-    _decodeSuccess(response);
+    decodeSuccess(response);
   }
-
-  Future<void> _ensureBootstrap() async {
-    if (_csrfToken != null) {
-      return;
-    }
-    final response = await _client.get(_baseUri.resolve('/api/bootstrap'));
-    final json = _decodeSuccess(response);
-    _csrfToken = json['csrfToken']! as String;
-  }
-}
-
-Map<String, Object?> _decodeSuccess(http.Response response) {
-  Map<String, Object?>? json;
-  try {
-    json = jsonDecode(response.body) as Map<String, Object?>;
-  } on Object {
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      throw const HistoryGatewayException('本机程序返回了无法读取的内容。');
-    }
-  }
-  if (response.statusCode < 200 || response.statusCode >= 300) {
-    throw HistoryGatewayException(
-      json?['message'] as String? ?? '历史记录暂时不可用，请稍后重试。',
-    );
-  }
-  return json!;
 }
