@@ -2445,8 +2445,7 @@ final class _EpisodesFailingWriter implements AtomicTextWriter {
   }
 }
 
-final class _ControlledStreamingProviderChatClient
-    implements ProviderChatPort {
+final class _ControlledStreamingProviderChatClient implements ProviderChatPort {
   final _controller = StreamController<ModelStreamEvent>();
 
   @override
