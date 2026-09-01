@@ -1,15 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
-import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
-import '../accessibility.dart';
 import '../memory/backup_client.dart';
 import '../memory/backup_platform.dart';
 import '../memory/backup_view.dart';
@@ -17,10 +14,11 @@ import '../onboarding/onboarding_view_model.dart';
 import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
 import 'provider_catalog.dart';
-import 'provider_settings_client.dart';
+import 'provider_settings_section.dart';
 import 'provider_settings_view_model.dart';
 import 'settings_client.dart';
 import 'settings_collapse_platform.dart';
+import 'settings_section_shell.dart';
 import 'settings_view_model.dart';
 import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
@@ -32,6 +30,11 @@ import 'web_search_settings_view_model.dart';
 /// 设置中心（ticket 23）：模型连接、本地数据管理（备份 / 记忆控制
 /// 总览 / 清除产品数据）、隐私说明与开发者选项。危险操作（忘记
 /// Key、清除产品数据）都有明确影响说明与确认。
+///
+/// 页面本体只承担**页面级**职责：分节折叠状态的持久化、四个设置领域
+/// 区块的装配、以及不属任何领域的三节（本地数据 / 隐私 / 开发者）。
+/// 各领域的控制器、默认值、校验与保存编排内聚在各自的领域模块里
+/// （`provider_settings_section.dart` 等）。
 class ProviderSettingsView extends StatefulWidget {
   const ProviderSettingsView({
     super.key,
@@ -78,11 +81,9 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   Set<String> _readCollapsedSections() {
     final stored = _collapseStore.readCollapsed();
     if (stored == null) {
-      return _SettingsSectionId.defaultCollapsed;
+      return SettingsSectionId.defaultCollapsed;
     }
-    return Set<String>.unmodifiable(
-      stored.intersection(_SettingsSectionId.all),
-    );
+    return Set<String>.unmodifiable(stored.intersection(SettingsSectionId.all));
   }
 
   void _toggleSection(String sectionId) {
@@ -127,14 +128,14 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
             ),
             // 折叠状态由这一层下发：七节各自透传两个参数会把表单代码埋掉，
             // 壳与记忆中心同样用 InheritedWidget 传这类页面级 UI 状态。
-            child: _SectionCollapseScope(
+            child: SettingsSectionCollapseScope(
               collapsed: _collapsedSections,
               onToggle: _toggleSection,
               child: ListView(
                 key: const Key('settings-scroll'),
                 padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
                 // 分节之间不再另写 SizedBox：阅读式下节与节的留白由
-                // [_SettingsPanel] 按原型变体 B 自己给（展开 24 + 24，收起 8）。
+                // [SettingsSectionPanel] 按原型变体 B 自己给（展开 24 + 24，收起 8）。
                 children: [
                   // 窄屏被壳包住时，三条杠浮在左上角：页头 Row 排在整列的 24 左留白
                   // 之内，所以在它身上再补一段壳给出的差额，「设置」标题才不会被压住。
@@ -161,7 +162,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
                   // **机制**叫「语音转写」，[_SttSection] 渲染的标题是「语音输入」，
                   // §8 明写不声称页面上有「语音转写」四个字——这里只按 §8 排
                   // **次序**，不改标题文案。
-                  const _ProviderSection(),
+                  const ProviderSettingsSection(),
                   const _TtsSection(),
                   const _SttSection(),
                   const _WebSearchSection(),
@@ -177,461 +178,6 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// 获焦安全保护字段同步：在输入框获焦时不覆盖用户正在输入的草稿。
-void _syncField(
-  TextEditingController controller,
-  FocusNode focusNode,
-  String newValue,
-) {
-  if (!focusNode.hasFocus && controller.text != newValue) {
-    controller.text = newValue;
-  }
-}
-
-/// 模型连接（Provider）配置区块：模型连接、参数设置与 API Key 凭据管理。
-class _ProviderSection extends StatefulWidget {
-  const _ProviderSection();
-
-  @override
-  State<_ProviderSection> createState() => _ProviderSectionState();
-}
-
-class _ProviderSectionState extends State<_ProviderSection> {
-  final _baseUrlController = TextEditingController();
-  final _modelController = TextEditingController();
-  final _temperatureController = TextEditingController(text: '0.7');
-  final _timeoutController = TextEditingController(text: '60');
-  final _apiKeyController = TextEditingController();
-
-  final _baseUrlFocusNode = FocusNode();
-  final _modelFocusNode = FocusNode();
-  final _temperatureFocusNode = FocusNode();
-  final _timeoutFocusNode = FocusNode();
-  final _apiKeyFocusNode = FocusNode();
-
-  String _selectedProviderId = 'openai';
-  String _selectedConnectionId = 'official';
-  bool _customModel = false;
-  ProviderSettings? _syncedSettings;
-
-  ProviderPreset get _selectedProvider =>
-      providerPresetById(_selectedProviderId);
-
-  ProviderConnectionPreset get _selectedConnection => _selectedProvider
-      .connections
-      .firstWhere((connection) => connection.id == _selectedConnectionId);
-
-  @override
-  void dispose() {
-    _baseUrlController.dispose();
-    _modelController.dispose();
-    _temperatureController.dispose();
-    _timeoutController.dispose();
-    _apiKeyController.dispose();
-    _baseUrlFocusNode.dispose();
-    _modelFocusNode.dispose();
-    _temperatureFocusNode.dispose();
-    _timeoutFocusNode.dispose();
-    _apiKeyFocusNode.dispose();
-    super.dispose();
-  }
-
-  void _sync(ProviderSettings? settings) {
-    if (settings == null || identical(settings, _syncedSettings)) {
-      return;
-    }
-    _syncedSettings = settings;
-    final selection = matchProviderSettings(settings);
-    _selectedProviderId = selection.providerId;
-    _selectedConnectionId = selection.connectionId;
-    _customModel = selection.customModel;
-    if (settings.configured) {
-      _syncField(_baseUrlController, _baseUrlFocusNode, settings.baseUrl ?? '');
-      _syncField(_modelController, _modelFocusNode, settings.model ?? '');
-      _syncField(
-        _temperatureController,
-        _temperatureFocusNode,
-        settings.temperature != null ? '${settings.temperature}' : '',
-      );
-      _syncField(
-        _timeoutController,
-        _timeoutFocusNode,
-        settings.timeoutSeconds != null ? '${settings.timeoutSeconds}' : '',
-      );
-    } else {
-      _syncField(
-        _baseUrlController,
-        _baseUrlFocusNode,
-        _selectedConnection.baseUrl,
-      );
-      _syncField(
-        _modelController,
-        _modelFocusNode,
-        _selectedConnection.models.isNotEmpty
-            ? _selectedConnection.models.first
-            : '',
-      );
-    }
-    if (!_apiKeyFocusNode.hasFocus && _apiKeyController.text.isNotEmpty) {
-      _apiKeyController.clear();
-    }
-  }
-
-  void _selectProvider(String providerId) {
-    final provider = providerPresetById(providerId);
-    setState(() {
-      _selectedProviderId = provider.id;
-      _selectedConnectionId = provider.connections.first.id;
-      _applyConnection(provider.connections.first);
-    });
-  }
-
-  void _selectConnection(String connectionId) {
-    final connection = _selectedProvider.connections.firstWhere(
-      (candidate) => candidate.id == connectionId,
-    );
-    setState(() {
-      _selectedConnectionId = connection.id;
-      _applyConnection(connection);
-    });
-  }
-
-  void _applyConnection(ProviderConnectionPreset connection) {
-    _baseUrlController.text = connection.baseUrl;
-    _customModel = connection.models.isEmpty;
-    _modelController.text = connection.models.isEmpty
-        ? ''
-        : connection.models.first;
-  }
-
-  void _selectModel(String model) {
-    setState(() {
-      _customModel = model == customModelValue;
-      _modelController.text = _customModel ? '' : model;
-    });
-  }
-
-  ProviderSettingsDraft? _readDraft() {
-    final temperature = double.tryParse(_temperatureController.text.trim());
-    final timeout = int.tryParse(_timeoutController.text.trim());
-    if (temperature == null || timeout == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请检查 temperature 和超时时间。')));
-      return null;
-    }
-    if (_baseUrlController.text.trim().isEmpty ||
-        _modelController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请填写服务地址和模型名称。')));
-      return null;
-    }
-    final key = _apiKeyController.text.trim();
-    return ProviderSettingsDraft(
-      provider: _selectedConnection.provider,
-      baseUrl: _baseUrlController.text.trim(),
-      model: _modelController.text.trim(),
-      temperature: temperature,
-      timeoutSeconds: timeout,
-      apiKey: key.isEmpty ? null : key,
-    );
-  }
-
-  Future<void> _save(ProviderSettingsViewModel viewModel) async {
-    final draft = _readDraft();
-    if (draft == null) {
-      return;
-    }
-    final saved = await viewModel.save(draft);
-    if (saved && mounted) {
-      _apiKeyController.clear();
-    }
-  }
-
-  Future<void> _confirmForgetKey(ProviderSettingsViewModel viewModel) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('forget-key-dialog'),
-        title: const Text('忘记已保存的 API Key？'),
-        content: const Text(
-          '忘记后本机不再保存这个 Key，栖语将无法调用模型服务，'
-          '直到你重新输入。模型连接的其他设置不受影响。',
-        ),
-        actions: [
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('forget-key-cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('再想想'),
-            ),
-          ),
-          FilledButton(
-            key: const Key('forget-key-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('忘记 Key'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await viewModel.forgetApiKey();
-    }
-  }
-
-  Widget _credentialSection(
-    BuildContext context,
-    ProviderSettingsViewModel viewModel,
-  ) {
-    final keySet = viewModel.settings?.keySet ?? false;
-    // 凭据块嵌在「模型连接」节内，不是分节：不套 [_SettingsPanel]，因此它
-    // 没有可点的分节头、不参与折叠，也不画外层分节的那道发丝线。
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存 API Key',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 6),
-        Text(
-          keySet
-              ? '留空即可继续使用；输入新值会覆盖旧值，也可以直接编辑 provider.json 更换。'
-              : 'Ollama 本地服务通常可以留空。',
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          key: const Key('provider-api-key'),
-          controller: _apiKeyController,
-          focusNode: _apiKeyFocusNode,
-          obscureText: true,
-          enableSuggestions: false,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            labelText: 'API Key',
-            hintText: '保存后写入本机 provider.json',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        if (keySet) ...[
-          const SizedBox(height: 8),
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('forget-api-key'),
-              onPressed: viewModel.saving
-                  ? null
-                  : () => unawaited(_confirmForgetKey(viewModel)),
-              child: const Text('忘记已保存的 Key'),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Consumer<ProviderSettingsViewModel>(
-      builder: (context, viewModel, child) {
-        _sync(viewModel.settings);
-        final theme = Theme.of(context);
-        return _SettingsPanel(
-          sectionId: _SettingsSectionId.provider,
-          title: '模型连接',
-          children: [
-            Text(
-              '把模型留在本机这端。普通配置和 API Key 都保存在本机 '
-              'provider.json 文件里，可以直接编辑该文件更换 Key；'
-              '页面只显示是否已保存，无法取回明文。',
-              style: theme.textTheme.bodyLarge?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                height: 1.55,
-              ),
-            ),
-            const SizedBox(height: 28),
-            if (viewModel.loading)
-              const Center(child: CircularProgressIndicator())
-            else ...[
-              _ControlledDropdown(
-                dropdownKey: const Key('provider-preset'),
-                label: '提供商',
-                value: _selectedProviderId,
-                items: [
-                  for (final provider in providerCatalog)
-                    DropdownMenuItem(
-                      value: provider.id,
-                      child: Text(provider.label),
-                    ),
-                ],
-                onChanged: _selectProvider,
-              ),
-              const SizedBox(height: 16),
-              _ControlledDropdown(
-                dropdownKey: const Key('provider-connection'),
-                label: '套餐 / 接口类型',
-                value: _selectedConnectionId,
-                items: [
-                  for (final connection in _selectedProvider.connections)
-                    DropdownMenuItem(
-                      value: connection.id,
-                      child: Text(connection.label),
-                    ),
-                ],
-                onChanged: _selectConnection,
-              ),
-              const SizedBox(height: 16),
-              _ControlledDropdown(
-                dropdownKey: const Key('provider-model-preset'),
-                label: '模型',
-                value:
-                    _customModel ||
-                        !_selectedConnection.models.contains(
-                          _modelController.text,
-                        )
-                    ? customModelValue
-                    : _modelController.text,
-                items: [
-                  for (final model in _selectedConnection.models)
-                    DropdownMenuItem(value: model, child: Text(model)),
-                  const DropdownMenuItem(
-                    value: customModelValue,
-                    child: Row(
-                      children: [
-                        Icon(QiyuIcons.edit, size: 18),
-                        SizedBox(width: 8),
-                        Text('输入其他模型名称'),
-                      ],
-                    ),
-                  ),
-                ],
-                onChanged: _selectModel,
-              ),
-              if (_customModel) ...[
-                const SizedBox(height: 16),
-                TextField(
-                  key: const Key('provider-model'),
-                  controller: _modelController,
-                  focusNode: _modelFocusNode,
-                  decoration: const InputDecoration(
-                    labelText: '模型名称',
-                    hintText: '输入服务商提供的 Model ID',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 16),
-              if (_selectedConnection.editableBaseUrl)
-                TextField(
-                  key: const Key('provider-base-url'),
-                  controller: _baseUrlController,
-                  focusNode: _baseUrlFocusNode,
-                  decoration: const InputDecoration(
-                    labelText: '服务地址',
-                    hintText: 'https://example.com/v1',
-                    border: OutlineInputBorder(),
-                  ),
-                )
-              else
-                _ResolvedConnection(
-                  provider: _selectedConnection.provider,
-                  baseUrl: _selectedConnection.baseUrl,
-                ),
-              const SizedBox(height: 8),
-              ExpansionTile(
-                key: const Key('provider-advanced-settings'),
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: const EdgeInsets.only(bottom: 8),
-                title: const Text('高级参数'),
-                subtitle: const Text('temperature 与请求超时'),
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          key: const Key('provider-temperature'),
-                          controller: _temperatureController,
-                          focusNode: _temperatureFocusNode,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'temperature',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: TextField(
-                          key: const Key('provider-timeout'),
-                          controller: _timeoutController,
-                          focusNode: _timeoutFocusNode,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: '超时（秒）',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              _credentialSection(context, viewModel),
-              const SizedBox(height: 24),
-              if (viewModel.errorMessage case final message?)
-                _StatusMessage(message: message, succeeded: false),
-              if (viewModel.testResult case final result?)
-                _StatusMessage(
-                  key: const Key('settings-status-connection'),
-                  message: result.message,
-                  succeeded: result.succeeded,
-                ),
-              if (viewModel.errorMessage != null ||
-                  viewModel.testResult != null)
-                const SizedBox(height: 18),
-              Wrap(
-                spacing: QiyuSpacing.sm,
-                runSpacing: 12,
-                children: [
-                  FilledButton.icon(
-                    key: const Key('save-provider-settings'),
-                    onPressed: viewModel.saving
-                        ? null
-                        : () => unawaited(_save(viewModel)),
-                    icon: _busyOr(viewModel.saving, QiyuIcons.lock),
-                    label: const Text('保存到本机'),
-                  ),
-                  OutlinedButton.icon(
-                    key: const Key('test-provider-connection'),
-                    onPressed: viewModel.testing
-                        ? null
-                        : () {
-                            final draft = _readDraft();
-                            if (draft != null) {
-                              unawaited(viewModel.testConnection(draft));
-                            }
-                          },
-                    icon: _busyOr(viewModel.testing, QiyuIcons.bolt),
-                    label: const Text('测试连接'),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        );
-      },
     );
   }
 }
@@ -721,8 +267,8 @@ class _WebSearchSectionState extends State<_WebSearchSection> {
         _syncWebSearch(viewModel.settings);
         final theme = Theme.of(context);
         final keySet = viewModel.settings?.keySet ?? false;
-        return _SettingsPanel(
-          sectionId: _SettingsSectionId.webSearch,
+        return SettingsSectionPanel(
+          sectionId: SettingsSectionId.webSearch,
           title: '联网搜索',
           children: [
             Text(
@@ -773,7 +319,7 @@ class _WebSearchSectionState extends State<_WebSearchSection> {
               ],
               const SizedBox(height: 20),
               if (viewModel.errorMessage case final message?) ...[
-                _StatusMessage(message: message, succeeded: false),
+                SettingsStatusMessage(message: message, succeeded: false),
                 const SizedBox(height: 14),
               ],
               FilledButton.icon(
@@ -781,7 +327,7 @@ class _WebSearchSectionState extends State<_WebSearchSection> {
                 onPressed: viewModel.saving
                     ? null
                     : () => unawaited(_saveWebSearch(viewModel)),
-                icon: _busyOr(viewModel.saving, QiyuIcons.lock),
+                icon: settingsBusyOr(viewModel.saving, QiyuIcons.lock),
                 label: const Text('保存到本机'),
               ),
             ],
@@ -830,16 +376,28 @@ class _SttSectionState extends State<_SttSection> {
     _syncedSttSettings = settings;
     _sttProvider = settings.provider;
     if (settings.configured) {
-      _syncField(
+      syncFocusProtectedField(
         _sttBaseUrlController,
         _sttBaseUrlFocusNode,
         settings.baseUrl ?? '',
       );
-      _syncField(_sttModelController, _sttModelFocusNode, settings.model ?? '');
+      syncFocusProtectedField(
+        _sttModelController,
+        _sttModelFocusNode,
+        settings.model ?? '',
+      );
     } else {
       final defaults = _sttProtocolDefaults(_sttProvider);
-      _syncField(_sttBaseUrlController, _sttBaseUrlFocusNode, defaults.url);
-      _syncField(_sttModelController, _sttModelFocusNode, defaults.model);
+      syncFocusProtectedField(
+        _sttBaseUrlController,
+        _sttBaseUrlFocusNode,
+        defaults.url,
+      );
+      syncFocusProtectedField(
+        _sttModelController,
+        _sttModelFocusNode,
+        defaults.model,
+      );
     }
     if (!_sttApiKeyFocusNode.hasFocus && _sttApiKeyController.text.isNotEmpty) {
       _sttApiKeyController.clear();
@@ -954,8 +512,8 @@ class _SttSectionState extends State<_SttSection> {
         _syncStt(viewModel.settings);
         final theme = Theme.of(context);
         final keySet = viewModel.settings?.keySet ?? false;
-        return _SettingsPanel(
-          sectionId: _SettingsSectionId.stt,
+        return SettingsSectionPanel(
+          sectionId: SettingsSectionId.stt,
           title: '语音输入',
           children: [
             Text(
@@ -972,7 +530,7 @@ class _SttSectionState extends State<_SttSection> {
               ),
             ),
             const SizedBox(height: 16),
-            _ControlledDropdown(
+            SettingsControlledDropdown(
               dropdownKey: const Key('stt-provider'),
               label: '服务类型',
               value: _sttProvider == SttServiceKind.volcSeedAsr
@@ -1048,9 +606,9 @@ class _SttSectionState extends State<_SttSection> {
             ],
             const SizedBox(height: 20),
             if (viewModel.errorMessage case final message?)
-              _StatusMessage(message: message, succeeded: false),
+              SettingsStatusMessage(message: message, succeeded: false),
             if (viewModel.testResult case final result?)
-              _StatusMessage(
+              SettingsStatusMessage(
                 message: result.message,
                 succeeded: result.succeeded,
               ),
@@ -1065,7 +623,7 @@ class _SttSectionState extends State<_SttSection> {
                   onPressed: viewModel.saving
                       ? null
                       : () => unawaited(_saveStt(viewModel)),
-                  icon: _busyOr(viewModel.saving, QiyuIcons.lock),
+                  icon: settingsBusyOr(viewModel.saving, QiyuIcons.lock),
                   label: const Text('保存到本机'),
                 ),
                 OutlinedButton.icon(
@@ -1078,7 +636,7 @@ class _SttSectionState extends State<_SttSection> {
                             unawaited(viewModel.testConnection(draft));
                           }
                         },
-                  icon: _busyOr(viewModel.testing, QiyuIcons.bolt),
+                  icon: settingsBusyOr(viewModel.testing, QiyuIcons.bolt),
                   label: const Text('测试连接'),
                 ),
               ],
@@ -1139,34 +697,54 @@ class _TtsSectionState extends State<_TtsSection> {
     _ttsProvider = settings.provider;
     final presets = ttsVoicePresetsFor(_ttsProvider);
     if (settings.configured) {
-      _syncField(
+      syncFocusProtectedField(
         _ttsBaseUrlController,
         _ttsBaseUrlFocusNode,
         settings.baseUrl ?? '',
       );
-      _syncField(_ttsModelController, _ttsModelFocusNode, settings.model ?? '');
+      syncFocusProtectedField(
+        _ttsModelController,
+        _ttsModelFocusNode,
+        settings.model ?? '',
+      );
       final voice = settings.voice?.trim() ?? '';
-      _syncField(_ttsVoiceController, _ttsVoiceFocusNode, voice);
+      syncFocusProtectedField(_ttsVoiceController, _ttsVoiceFocusNode, voice);
       _customTtsVoice = voice.isNotEmpty && !presets.any((p) => p.id == voice);
       _ttsSpeed = settings.speed;
       final extraText =
           (settings.extraParams != null && settings.extraParams!.isNotEmpty)
           ? const JsonEncoder.withIndent('  ').convert(settings.extraParams)
           : '';
-      _syncField(
+      syncFocusProtectedField(
         _ttsExtraParamsController,
         _ttsExtraParamsFocusNode,
         extraText,
       );
     } else {
       final defaults = _ttsProtocolDefaults(_ttsProvider);
-      _syncField(_ttsBaseUrlController, _ttsBaseUrlFocusNode, defaults.url);
-      _syncField(_ttsModelController, _ttsModelFocusNode, defaults.model);
+      syncFocusProtectedField(
+        _ttsBaseUrlController,
+        _ttsBaseUrlFocusNode,
+        defaults.url,
+      );
+      syncFocusProtectedField(
+        _ttsModelController,
+        _ttsModelFocusNode,
+        defaults.model,
+      );
       final defaultVoice = presets.isNotEmpty ? presets.first.id : '';
-      _syncField(_ttsVoiceController, _ttsVoiceFocusNode, defaultVoice);
+      syncFocusProtectedField(
+        _ttsVoiceController,
+        _ttsVoiceFocusNode,
+        defaultVoice,
+      );
       _customTtsVoice = false;
       _ttsSpeed = null;
-      _syncField(_ttsExtraParamsController, _ttsExtraParamsFocusNode, '');
+      syncFocusProtectedField(
+        _ttsExtraParamsController,
+        _ttsExtraParamsFocusNode,
+        '',
+      );
     }
     if (!_ttsApiKeyFocusNode.hasFocus && _ttsApiKeyController.text.isNotEmpty) {
       _ttsApiKeyController.clear();
@@ -1289,8 +867,8 @@ class _TtsSectionState extends State<_TtsSection> {
         final theme = Theme.of(context);
         final keySet = viewModel.settings?.keySet ?? false;
         final testResult = viewModel.testResult;
-        return _SettingsPanel(
-          sectionId: _SettingsSectionId.tts,
+        return SettingsSectionPanel(
+          sectionId: SettingsSectionId.tts,
           title: '语音朗读',
           children: [
             Text(
@@ -1307,7 +885,7 @@ class _TtsSectionState extends State<_TtsSection> {
               ),
             ),
             const SizedBox(height: 16),
-            _ControlledDropdown(
+            SettingsControlledDropdown(
               dropdownKey: const Key('tts-provider'),
               label: '服务类型',
               value: _ttsProvider == TtsServiceKind.volcTts
@@ -1363,7 +941,7 @@ class _TtsSectionState extends State<_TtsSection> {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _ControlledDropdown(
+                    SettingsControlledDropdown(
                       dropdownKey: const Key('tts-voice-preset'),
                       label: '朗读音色',
                       value: effectiveVoiceValue,
@@ -1531,10 +1109,10 @@ class _TtsSectionState extends State<_TtsSection> {
             ),
             const SizedBox(height: 20),
             if (viewModel.errorMessage case final message?)
-              _StatusMessage(message: message, succeeded: false),
+              SettingsStatusMessage(message: message, succeeded: false),
             if (viewModel.errorMessage == null)
               if (testResult case final result?)
-                _StatusMessage(
+                SettingsStatusMessage(
                   message: result.message,
                   succeeded: result.succeeded,
                 ),
@@ -1558,7 +1136,7 @@ class _TtsSectionState extends State<_TtsSection> {
                   onPressed: viewModel.saving
                       ? null
                       : () => unawaited(_saveTts(viewModel)),
-                  icon: _busyOr(viewModel.saving, QiyuIcons.lock),
+                  icon: settingsBusyOr(viewModel.saving, QiyuIcons.lock),
                   label: const Text('保存到本机'),
                 ),
                 OutlinedButton.icon(
@@ -1571,7 +1149,7 @@ class _TtsSectionState extends State<_TtsSection> {
                             unawaited(viewModel.testConnection(draft));
                           }
                         },
-                  icon: _busyOr(viewModel.testing, QiyuIcons.bolt),
+                  icon: settingsBusyOr(viewModel.testing, QiyuIcons.bolt),
                   label: const Text('测试连接并试听'),
                 ),
               ],
@@ -1630,8 +1208,8 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
       builder: (context, viewModel, child) {
         final theme = Theme.of(context);
         final preview = viewModel.clearPreview;
-        return _SettingsPanel(
-          sectionId: _SettingsSectionId.localData,
+        return SettingsSectionPanel(
+          sectionId: SettingsSectionId.localData,
           title: '本地数据',
           children: [
             Text(
@@ -1685,7 +1263,7 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
                   onPressed: viewModel.clearing
                       ? null
                       : () => unawaited(_confirmClearData(viewModel)),
-                  icon: _busyOr(viewModel.clearing, QiyuIcons.delete),
+                  icon: settingsBusyOr(viewModel.clearing, QiyuIcons.delete),
                   label: const Text('清除产品数据'),
                 ),
               ],
@@ -1704,8 +1282,8 @@ class _PrivacySection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return _SettingsPanel(
-      sectionId: _SettingsSectionId.privacy,
+    return SettingsSectionPanel(
+      sectionId: SettingsSectionId.privacy,
       title: '隐私与边界',
       children: [
         Text(
@@ -1738,8 +1316,8 @@ class _DeveloperSectionState extends State<_DeveloperSection> {
     return Consumer<SettingsViewModel>(
       builder: (context, viewModel, child) {
         final theme = Theme.of(context);
-        return _SettingsPanel(
-          sectionId: _SettingsSectionId.developer,
+        return SettingsSectionPanel(
+          sectionId: SettingsSectionId.developer,
           title: '体验与开发者选项',
           // §8 固定顺序里的末节：不画下沿发丝线（原型 `last-of-type`）。
           isLast: true,
@@ -1781,7 +1359,7 @@ class _DeveloperSectionState extends State<_DeveloperSection> {
               ),
             if (viewModel.errorMessage case final message?) ...[
               const SizedBox(height: 16),
-              _StatusMessage(message: message, succeeded: false),
+              SettingsStatusMessage(message: message, succeeded: false),
             ],
           ],
         );
@@ -1789,292 +1367,6 @@ class _DeveloperSectionState extends State<_DeveloperSection> {
     );
   }
 }
-
-/// 设置页分节的 id：折叠状态在本地存储里存的就是这份名单的子集（design-system
-/// §8「折叠状态本地持久化（仅 UI 状态）」）。**改名等于改历史数据**——用户上次
-/// 收起来的节会凭一个陌生 id 变回默认态，所以这里只增不改不删。
-abstract final class _SettingsSectionId {
-  static const provider = 'provider';
-  static const tts = 'tts';
-  static const stt = 'stt';
-  static const webSearch = 'web_search';
-  static const localData = 'local_data';
-  static const privacy = 'privacy';
-  static const developer = 'developer';
-
-  /// 七节全集：本地存储里出现的陌生 id 靠它做成员校验（认生的 id 不采纳）。
-  static const all = <String>{
-    provider,
-    tts,
-    stt,
-    webSearch,
-    localData,
-    privacy,
-    developer,
-  };
-
-  /// design-system §8 的默认档：展开「模型连接」「本地数据」，其余五节收起。
-  /// 它与 [all] 的差集就是默认展开的那两节。
-  static const defaultCollapsed = <String>{
-    tts,
-    stt,
-    webSearch,
-    privacy,
-    developer,
-  };
-}
-
-/// 折叠状态的页内下发：由 [_ProviderSettingsViewState] 挂在整列之上，
-/// [_SettingsPanel] 就地读「我这一节展开没有」并把点击交回去。
-///
-/// 走 InheritedWidget 而不是给七个分节 widget 各加两个构造参数：那七个节是各自
-/// 持有 controller 与 FocusNode 的 StatefulWidget，参数只是为了把状态搬运一层，
-/// 搬运会把真正的表单代码埋掉。
-class _SectionCollapseScope extends InheritedWidget {
-  const _SectionCollapseScope({
-    required this.collapsed,
-    required this.onToggle,
-    required super.child,
-  });
-
-  /// 当前收起的节 id 集合。
-  final Set<String> collapsed;
-
-  /// 分节头被点（或键盘 Enter/Space 激活）时回调。
-  final void Function(String sectionId) onToggle;
-
-  bool isExpanded(String sectionId) => !collapsed.contains(sectionId);
-
-  static _SectionCollapseScope of(BuildContext context) {
-    // 必须是**登记依赖**的这一种读法：七个分节在 [ListView] 里是 `const` 子节点，
-    // 页面 setState 时 `updateChild` 会因为子控件实例没变而整块跳过重建，
-    // `getInheritedWidgetOfExactType` 那种「只取值不挂钩」的读法于是永远拿不到新的
-    // collapsed——点分节头表面有涟漪、实际一栏都不展开。挂上依赖后由
-    // [InheritedElement] 精准通知，且只在 [updateShouldNotify] 为真时重建。
-    final scope = context
-        .dependOnInheritedWidgetOfExactType<_SectionCollapseScope>();
-    assert(
-      scope != null,
-      '_SettingsPanel 必须在 ProviderSettingsView 之内使用：折叠状态由那一层下发。',
-    );
-    return scope!;
-  }
-
-  @override
-  bool updateShouldNotify(_SectionCollapseScope oldWidget) =>
-      !setEquals(oldWidget.collapsed, collapsed);
-}
-
-/// 设置页的**阅读式分节**（design-system §8 补充约定「设置页用阅读式：分节不用
-/// 卡片，小字距次要色标题 + 发丝分隔线」）。卡片形态在决策日志第一轮 #6 被
-/// 「六七张卡片堆叠偏重」否掉，选定的是原型变体 B ——
-/// `docs/product/prototype/index.html:224-236`，本件的每个数值都按它取。
-///
-/// 三件事在这一处承担：
-/// 1. **分节头**＝可点击的导航（[_SettingsSectionHeader]）：13px、w400、
-///    [QiyuColors.sectionHeader] 次要字色、3px 字距，尾部指示符；§8「分节标题
-///    本身就是导航」，所以不再另做吸顶子导航。
-/// 2. **节与节之间**＝1px [QiyuColors.line] 发丝线，**最后一节不画**
-///    （原型 `:227` 画线、`:228` `last-of-type` 不画）。
-/// 3. **两套留白**＝展开时标题下 8px、节尾 24px 内衬再加 24px 下外边距
-///    （原型 `:226`、`:229-230`）；收起时内衬降为 8px、不画线、无下外边距
-///    （原型 `:236`）。
-///
-/// 收起时**只不画内容，本 widget 与分节自身都留在树上**：各节是持有
-/// `TextEditingController` / `FocusNode` 的 StatefulWidget，把整节换成占位件
-/// 会让用户填了一半的输入框随折叠丢状态。
-class _SettingsPanel extends StatelessWidget {
-  const _SettingsPanel({
-    required this.sectionId,
-    required this.title,
-    required this.children,
-    this.isLast = false,
-  });
-
-  /// 折叠持久化里存的节 id，见 [_SettingsSectionId]。
-  final String sectionId;
-
-  /// 分节标题：既是本节的名字，也是本节唯一的导航入口。
-  final String title;
-
-  /// 展开时才呈现的正文（标题不在这里，由本件统一排版）。
-  final List<Widget> children;
-
-  /// 末节（体验与开发者选项）不画下沿发丝线；§8 的分节顺序固定，末节唯一。
-  final bool isLast;
-
-  @override
-  Widget build(BuildContext context) {
-    final collapse = _SectionCollapseScope.of(context);
-    final expanded = collapse.isExpanded(sectionId);
-    final body = Padding(
-      padding: EdgeInsets.only(
-        // 展开：节尾 `--sp-6` 24px 内衬；收起：内衬降为 `--sp-2` 8px。
-        bottom: expanded ? QiyuSpacing.lg : QiyuSpacing.xs,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _SettingsSectionHeader(
-            sectionId: sectionId,
-            title: title,
-            expanded: expanded,
-            onToggle: () => collapse.onToggle(sectionId),
-          ),
-          if (expanded) ...[
-            // 标题下 `--sp-2` 8px（原型 `:230` `margin-bottom: var(--sp-2)`）。
-            const SizedBox(height: QiyuSpacing.xs),
-            // 正文与分节头左缘对齐：分节头外面常驻一圈 3px 的焦点环留白
-            // （§9 焦点环 offset，`_QiyuRing` 的 Padding 不因未聚焦而消失），
-            // 正文取同一档左缩进，两者左缘才在同一条阅读线上。
-            //
-            // 这块的键是「展开/收起」唯一的可观察凭据：收起时它整块不在树上，
-            // 节内的输入框与按钮也就不在（原型 `:235` `display: none`）。
-            Padding(
-              key: Key('settings-section-content-$sectionId'),
-              padding: const EdgeInsets.only(left: QiyuLayout.focusRingOffset),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: children,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-    return Padding(
-      // 整节的定位键：测试据此核「这一节在不在树上」「画没画那条发丝线」，
-      // 不必去数内部结构。
-      key: Key('settings-section-$sectionId'),
-      // 展开时下外边距 24px（原型 `:226` `margin-bottom: var(--sp-6)`）；
-      // 收起时归零（原型 `:236` `margin-bottom: 0`）。
-      padding: EdgeInsets.only(bottom: expanded ? QiyuSpacing.lg : 0),
-      child: expanded && !isLast
-          ? DecoratedBox(
-              decoration: const BoxDecoration(
-                border: Border(bottom: qiyuHairlineSide),
-              ),
-              child: body,
-            )
-          : body,
-    );
-  }
-}
-
-/// 分节头：整行可点，是 §8「分节标题本身就是导航」的那一处导航。
-///
-/// 静置 [QiyuColors.sectionHeader]、悬停转 [QiyuColors.sectionHeaderHover]，
-/// 160ms 过渡＝原型 `transition: color 160ms ease`
-/// （`docs/product/prototype/index.html:231`）＝ [QiyuMotion.fast]，
-/// reduced-motion 下由 [qiyuMotion] 压成零（§9）。
-///
-/// 焦点表意**不新造机制**：[QiyuOwnFocusRing] 自持节点交给 [InkWell]，环只在
-/// 键盘来源时画（§9 的画法与判据都在 [QiyuFocusRing] 那一处），Enter/Space
-/// 仍由 InkResponse 激活。
-class _SettingsSectionHeader extends StatefulWidget {
-  const _SettingsSectionHeader({
-    required this.sectionId,
-    required this.title,
-    required this.expanded,
-    required this.onToggle,
-  });
-
-  final String sectionId;
-  final String title;
-  final bool expanded;
-  final VoidCallback onToggle;
-
-  @override
-  State<_SettingsSectionHeader> createState() => _SettingsSectionHeaderState();
-}
-
-class _SettingsSectionHeaderState extends State<_SettingsSectionHeader> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    // 字号走 §3 已登记的次要档（13px），字重与字距按原型变体 B：
-    // `font-weight: 400; letter-spacing: 3px`
-    // （`docs/product/prototype/index.html:229-230`）。
-    final headerStyle = theme.textTheme.bodySmall?.copyWith(
-      fontWeight: FontWeight.w400,
-      letterSpacing: QiyuType.sectionHeaderLetterSpacing,
-    );
-    return QiyuOwnFocusRing(
-      builder: (context, focusNode) => InkWell(
-        key: Key('settings-section-header-${widget.sectionId}'),
-        focusNode: focusNode,
-        onTap: widget.onToggle,
-        onHover: (hovering) => setState(() => _hovered = hovering),
-        // **一条**过渡同时带着标题与指示符：原型的 `transition: color 160ms
-        // ease` 挂在 `h3` 上
-        // （`docs/product/prototype/index.html:231`），而指示符是 `h3::after`
-        // 的生成内容（`:233-234`），跟着标题一起变。先前只有标题走
-        // `AnimatedDefaultTextStyle`、指示符按 `_hovered` 直接换色，指针一上来
-        // 那枚三角是瞬变的。这里按进度把两档前景一起插值，而不是各起一条动画
-        // ——两条各自的曲线一旦错开，原型上「整行一起提亮」的观感就散了。
-        // 曲线显式给 `Curves.ease`：`TweenAnimationBuilder` 默认是 linear，而 CSS
-        // 的 `ease` 就是 `Cubic(0.25, 0.1, 0.25, 1.0)`——SDK 在 `animation/curves.dart`
-        // 里对 `Curves.ease` 的自陈就是「same as the CSS easing function `ease`」。
-        // 时长一律走 `qiyuMotion()`：§9 要求 reduced-motion 下压成零。
-        child: TweenAnimationBuilder<double>(
-          tween: Tween<double>(begin: 0, end: _hovered ? 1 : 0),
-          duration: qiyuMotion(context, QiyuMotion.fast),
-          curve: Curves.ease,
-          builder: (context, progress, _) {
-            final headerColor = Color.lerp(
-              QiyuColors.sectionHeader,
-              QiyuColors.sectionHeaderHover,
-              progress,
-            )!;
-            final caretColor = Color.lerp(
-              QiyuColors.sectionHeaderCaret,
-              QiyuColors.sectionHeaderCaretHover,
-              progress,
-            )!;
-            return Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    widget.title,
-                    // 定位键：本节头里还有一枚同样渲染成 RichText 的指示符，
-                    // 测试要读「标题真正落下的那一份」就不能靠子树里的先后次序猜。
-                    key: Key('settings-section-title-${widget.sectionId}'),
-                    style: headerStyle?.copyWith(color: headerColor),
-                  ),
-                ),
-                // 指示符：原型 `h3::after { content: ' ▾' }` / 收起时 `' ▸'`（
-                // `docs/product/prototype/index.html:233-234`）。**不照抄那两个
-                // 字符**：U+25BE / U+25B8 不在随包宋体子集覆盖的字区里（决策日志
-                // 第四轮 #7 的清单），画出来是豆腐块；`Icons.*` 又被 §4 的细描边
-                // 纪律锁死。取已入库的 [QiyuIcons.arrow_drop_down]（实心下三角＝▾
-                // 的同形），收起时转 270°（顺时针）成右指（＝▸ 的同形），尺寸与
-                // 不透明度仍按原型。
-                RotatedBox(
-                  quarterTurns: widget.expanded ? 0 : 3,
-                  child: Icon(
-                    QiyuIcons.arrow_drop_down,
-                    size: QiyuType.sectionHeaderCaretSize,
-                    color: caretColor,
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-/// 按钮图标在忙碌时换成小号进度指示，动作按钮共用同一形态。
-Widget _busyOr(bool busy, IconData icon) => busy
-    ? const SizedBox.square(
-        dimension: 16,
-        child: CircularProgressIndicator(strokeWidth: 2),
-      )
-    : Icon(icon);
 
 /// 记忆控制总览对话框：冻结与禁提逐条列出，删除只给数量；具体
 /// 管理去记忆中心。
@@ -2296,144 +1588,3 @@ _ttsProtocolDefaults(TtsServiceKind kind) => switch (kind) {
     modelHint: 'seed-tts-2.0',
   ),
 };
-
-class _ControlledDropdown extends StatelessWidget {
-  const _ControlledDropdown({
-    required this.dropdownKey,
-    required this.label,
-    required this.value,
-    required this.items,
-    required this.onChanged,
-  });
-
-  final Key dropdownKey;
-  final String label;
-  final String value;
-  final List<DropdownMenuItem<String>> items;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) => InputDecorator(
-    decoration: InputDecoration(
-      labelText: label,
-      border: const OutlineInputBorder(),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-    ),
-    child: DropdownButtonHideUnderline(
-      child: DropdownButton<String>(
-        key: dropdownKey,
-        value: value,
-        isExpanded: true,
-        items: items,
-        // 下拉箭头是框架内置图标：DropdownButton 的 `icon` 可以整只替换，
-        // 颜色和尺寸仍由它自己的 IconTheme 继承，所以图形不变、只换细描边字族。
-        icon: const Icon(QiyuIcons.arrow_drop_down),
-        onChanged: (next) {
-          if (next != null) {
-            onChanged(next);
-          }
-        },
-      ),
-    ),
-  );
-}
-
-class _ResolvedConnection extends StatelessWidget {
-  const _ResolvedConnection({required this.provider, required this.baseUrl});
-
-  final ProviderKind provider;
-  final String baseUrl;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        // 内衬块取 8px 小元素档（design-system §8）：它嵌在分节之内，不是
-        // 顶层卡片也不是列表项，套 18 会与外层分节的同档圆角打架。
-        borderRadius: QiyuRadii.smallBorder,
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              QiyuIcons.check_circle,
-              size: 20,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${provider.label}协议与服务地址已自动配置',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  SelectionArea(
-                    child: Text(
-                      baseUrl,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 校验与连通测试的结果行。
-///
-/// **成功不着色，失败才着色**：§2 的色板里没有任何绿色档（这一处原先写的是
-/// 色板外成员 `#91C7A7`），而 §1 的三色纪律把暗红只留给「破坏性操作」与
-/// 「故障/失败态」两类——成功不在两类之内，于是它根本没有可用的着色语义，
-/// 一律走主题默认字色，成没成由文案自己说。判据与决策日志第五轮 #12（记忆动作
-/// 结果横幅「partial 不着色、失败只换前景」）、#15（`danger` 只占那两类）同源。
-class _StatusMessage extends StatelessWidget {
-  const _StatusMessage({
-    super.key,
-    required this.message,
-    required this.succeeded,
-  });
-
-  final String message;
-  final bool succeeded;
-
-  @override
-  Widget build(BuildContext context) {
-    // null＝不覆盖前景：图标退回 IconTheme、文字退回 DefaultTextStyle，
-    // 也就是页面主文字色——不着色是这条的默认档，不是漏了配色。
-    final color = succeeded ? null : Theme.of(context).colorScheme.error;
-    // 校验与连通测试的结果作为 live region 播报：屏幕阅读器不在输入
-    // 框上也能听到成败（ticket 24 错误关联）。
-    return Semantics(
-      liveRegion: true,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            succeeded ? QiyuIcons.check_circle : QiyuIcons.info,
-            color: color,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(message, style: TextStyle(color: color)),
-          ),
-        ],
-      ),
-    );
-  }
-}
