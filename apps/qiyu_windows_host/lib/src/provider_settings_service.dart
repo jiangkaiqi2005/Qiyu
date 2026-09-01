@@ -72,37 +72,36 @@ abstract interface class ProviderChatClient {
   });
 }
 
-abstract interface class StreamingProviderChatClient {
-  Future<Stream<ModelStreamEvent>?> openStream(List<ModelMessage> messages);
-}
-
-abstract interface class CancellableStreamingProviderChatClient
-    implements StreamingProviderChatClient {
-  Future<Stream<ModelStreamEvent>?> openCancellableStream(
-    List<ModelMessage> messages,
-    Future<void> whenCancelled,
-  );
-}
-
-abstract interface class WebSearchCapableProviderChatClient {
+/// 聊天主链的 Provider 统一端口：一次 prepare 完成能力快照。该
+/// Provider 支持普通、流式、可取消与 Web Search 中的哪些由网关内部
+/// 判定并打包进快照，主链只拿快照对象，不感知 Provider kind、可取消
+/// 性或 web-search 能力标记。未配置 Provider 时返回 null。
+abstract interface class ProviderChatPort {
   Future<PreparedProviderChatRequest?> prepareChatRequest();
 }
 
-/// 单次主聊天的 Provider 快照：提示词能力与打开流共用
-/// 同一份 Provider/AnySearch 配置，不会在两步之间重读配置。
+/// 单次主聊天的 Provider 能力快照：prepare 一次锁定提示词追加条文与
+/// 打开流的方式，open 一次完成流式交付——协议适配（OpenAI SSE、
+/// Anthropic SSE、Ollama NDJSON）、终止判定、错误分类与取消下传全部
+/// 留在快照与网关内部，主链只消费事件流。
 final class PreparedProviderChatRequest {
   const PreparedProviderChatRequest({
-    required this.webSearchEnabled,
+    required this.hardRulesAddendum,
     required this._openStream,
   });
 
-  final bool webSearchEnabled;
+  /// prepare 按能力判定打包的硬规则追加条文（如 Web Search 激活时
+  /// 的检索纪律）；主链原样注入提示词，不解释内容，无追加时为空串。
+  final String hardRulesAddendum;
+
   final Future<Stream<ModelStreamEvent>?> Function(
     List<ModelMessage> messages,
     Future<void>? whenCancelled,
   )
   _openStream;
 
+  /// 一次 open：按快照内部判定的能力路径打开本轮模型流；取消信号
+  /// 由快照自行决定是否下传，主链无需区分可取消性。
   Future<Stream<ModelStreamEvent>?> openStream(
     List<ModelMessage> messages, {
     Future<void>? whenCancelled,
@@ -110,10 +109,7 @@ final class PreparedProviderChatRequest {
 }
 
 final class ProviderSettingsService
-    implements
-        ProviderChatClient,
-        CancellableStreamingProviderChatClient,
-        WebSearchCapableProviderChatClient {
+    implements ProviderChatClient, ProviderChatPort {
   const ProviderSettingsService(
     this.configRepository,
     this.secretStore,
@@ -299,16 +295,15 @@ final class ProviderSettingsService
   }
 
   @override
-  Future<Stream<ModelStreamEvent>?> openStream(List<ModelMessage> messages) =>
-      _openStream(messages);
-
-  @override
   Future<PreparedProviderChatRequest?> prepareChatRequest() async {
     final config = await configRepository.load();
     if (config == null) {
       return null;
     }
     final apiKey = await _resolveApiKey(config);
+    // 能力判定只在网关侧进行：Web Search 需要 Anthropic 协议、
+    // AnySearch 客户端与配置三者齐备；主链只看到打包后的追加条文，
+    // 普通回退与流式路径的选择同样封在快照内部。
     final webSearchConfig =
         config.kind == ProviderKind.anthropic &&
             webSearchClient != null &&
@@ -316,7 +311,9 @@ final class ProviderSettingsService
         ? await webSearchConfigRepository?.loadWebSearch()
         : null;
     return PreparedProviderChatRequest(
-      webSearchEnabled: webSearchConfig != null,
+      hardRulesAddendum: webSearchConfig == null
+          ? ''
+          : webSearchSystemInstruction,
       openStream: (messages, whenCancelled) => _openStreamWithSnapshot(
         config,
         apiKey,
@@ -327,23 +324,6 @@ final class ProviderSettingsService
     );
   }
 
-  @override
-  Future<Stream<ModelStreamEvent>?> openCancellableStream(
-    List<ModelMessage> messages,
-    Future<void> whenCancelled,
-  ) => _openStream(messages, whenCancelled: whenCancelled);
-
-  Future<Stream<ModelStreamEvent>?> _openStream(
-    List<ModelMessage> messages, {
-    Future<void>? whenCancelled,
-  }) async {
-    final request = await prepareChatRequest();
-    if (request == null) {
-      return null;
-    }
-    return request.openStream(messages, whenCancelled: whenCancelled);
-  }
-
   Future<Stream<ModelStreamEvent>?> _openStreamWithSnapshot(
     ProviderConfig config,
     String? apiKey,
@@ -351,18 +331,18 @@ final class ProviderSettingsService
     List<ModelMessage> messages, {
     Future<void>? whenCancelled,
   }) async {
-    if (webSearchConfig != null &&
-        webSearchClient != null &&
-        modelGateway is WebSearchStreamingModelGateway) {
-      final gateway = modelGateway as WebSearchStreamingModelGateway;
-      return gateway.streamWithWebSearch(
-        config: config,
-        apiKey: apiKey,
-        messages: messages,
-        webSearchApiKey: webSearchConfig.apiKey,
-        webSearchClient: webSearchClient!,
-        whenCancelled: whenCancelled,
-      );
+    // webSearchConfig 只在 prepare 判定联网能力齐备时才非空，这里
+    // 直接沿快照走对应路径，不再重复类型判断。
+    if (webSearchConfig != null) {
+      return (modelGateway as WebSearchStreamingModelGateway)
+          .streamWithWebSearch(
+            config: config,
+            apiKey: apiKey,
+            messages: messages,
+            webSearchApiKey: webSearchConfig.apiKey,
+            webSearchClient: webSearchClient!,
+            whenCancelled: whenCancelled,
+          );
     }
     if (modelGateway case final StreamingModelGateway streamingGateway) {
       return streamingGateway.stream(

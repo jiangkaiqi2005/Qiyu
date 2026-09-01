@@ -30,10 +30,10 @@ void main() {
     final messages = promptBuilder.build(
       StateSnapshot.initial('local-user'),
       '现在几点',
-      webSearchEnabled: true,
+      hardRulesAddendum: webSearchSystemInstruction,
     );
     final request = await service.prepareChatRequest();
-    expect(request!.webSearchEnabled, isTrue);
+    expect(request!.hardRulesAddendum, webSearchSystemInstruction);
     await (await request.openStream(messages))!.drain<void>();
 
     final prompt = gateway.messages!.first.content;
@@ -74,7 +74,7 @@ void main() {
     final messages = promptBuilder.build(
       StateSnapshot.initial('local-user'),
       '今天新闻',
-      webSearchEnabled: request!.webSearchEnabled,
+      hardRulesAddendum: request!.hardRulesAddendum,
     );
     await (await request.openStream(messages))!.drain<void>();
 
@@ -130,7 +130,7 @@ void main() {
     ];
 
     var request = await service.prepareChatRequest();
-    expect(request!.webSearchEnabled, isFalse);
+    expect(request!.hardRulesAddendum, isEmpty);
     await (await request.openStream(messages))!.drain<void>();
     expect(gateway.messages!.first.content, isNot(contains('web_search')));
 
@@ -144,7 +144,7 @@ void main() {
       apiKey: 'provider-key',
     );
     request = await service.prepareChatRequest();
-    expect(request!.webSearchEnabled, isFalse);
+    expect(request!.hardRulesAddendum, isEmpty);
     await (await request.openStream(messages))!.drain<void>();
     expect(gateway.messages!.first.content, isNot(contains('web_search')));
   });

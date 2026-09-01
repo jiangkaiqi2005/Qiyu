@@ -508,7 +508,7 @@ void main() {
     );
     final service = LocalChatService(
       repository,
-      providerChatClient: provider,
+      providerPort: provider,
       deliveryPause: (_) async {},
     );
 
@@ -2446,13 +2446,15 @@ final class _EpisodesFailingWriter implements AtomicTextWriter {
 }
 
 final class _ControlledStreamingProviderChatClient
-    implements StreamingProviderChatClient {
+    implements ProviderChatPort {
   final _controller = StreamController<ModelStreamEvent>();
 
   @override
-  Future<Stream<ModelStreamEvent>?> openStream(
-    List<ModelMessage> messages,
-  ) async => _controller.stream;
+  Future<PreparedProviderChatRequest?> prepareChatRequest() async =>
+      PreparedProviderChatRequest(
+        hardRulesAddendum: '',
+        openStream: (messages, whenCancelled) async => _controller.stream,
+      );
 
   void pushDelta(String text) => _controller.add(ModelStreamEvent.delta(text));
 
