@@ -750,69 +750,67 @@ void main() {
     expect(freshJson['sessionId'], isNot(trace.sessionId));
     expect(freshJson['turns']! as List<Object?>, isEmpty);
   });
-  test('hidden actions update today episode without leaking into the reply', () async {
-    final diagnostics = <String>[];
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''面试前紧张很正常。
+  test(
+    'hidden actions update today episode without leaking into the reply',
+    () async {
+      final diagnostics = <String>[];
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''面试前紧张很正常。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户明天有面试","evidence":"明天要面试，有点紧张"}]
 </qiyu-actions>'''),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      diagnosticsSink: diagnostics.add,
-      clock: () => DateTime(2026, 8, 11, 22, 30),
-    );
-    addTearDown(harness.dispose);
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        diagnosticsSink: diagnostics.add,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      );
+      addTearDown(harness.dispose);
 
-    final trace = await harness.sendChat(
-      requestId: 'action-1',
-      text: '明天要面试，有点紧张',
-    );
+      final trace = await harness.sendChat(
+        requestId: 'action-1',
+        text: '明天要面试，有点紧张',
+      );
 
-    expect(
-      trace.event(ChatDeliveryEventKind.state).source,
-      ReplySource.llm,
-    );
-    expect(trace.event(ChatDeliveryEventKind.message).messages, [
-      '面试前紧张很正常。',
-    ]);
-    final everyVisibleText = trace.events
-        .where((event) => event.text != null)
-        .map((event) => event.text)
-        .join();
-    expect(everyVisibleText, isNot(contains('qiyu-actions')));
-    expect(everyVisibleText, isNot(contains('memory_signal')));
+      expect(trace.event(ChatDeliveryEventKind.state).source, ReplySource.llm);
+      expect(trace.event(ChatDeliveryEventKind.message).messages, [
+        '面试前紧张很正常。',
+      ]);
+      final everyVisibleText = trace.events
+          .where((event) => event.text != null)
+          .map((event) => event.text)
+          .join();
+      expect(everyVisibleText, isNot(contains('qiyu-actions')));
+      expect(everyVisibleText, isNot(contains('memory_signal')));
 
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: harness.memoryDirectory,
-      clock: () => DateTime(2026, 8, 11, 22, 31),
-    );
-    final day = await pipeline.readToday();
-    expect(day.entries, hasLength(1));
-    expect(day.entries.single.summary, '用户明天有面试');
-    expect((await pipeline.readCheckpoint())!.lastRequestId, 'action-1');
-    expect(diagnostics, isEmpty);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: () => DateTime(2026, 8, 11, 22, 31),
+      );
+      final day = await pipeline.readToday();
+      expect(day.entries, hasLength(1));
+      expect(day.entries.single.summary, '用户明天有面试');
+      expect((await pipeline.readCheckpoint())!.lastRequestId, 'action-1');
+      expect(diagnostics, isEmpty);
 
-    final sessionFile = File(
-      '${harness.memoryDirectory}/sessions/2026/08/2026-08-11-001.md',
-    );
-    expect(
-      await sessionFile.readAsString(encoding: utf8),
-      isNot(contains('qiyu-actions')),
-    );
-  });
+      final sessionFile = File(
+        '${harness.memoryDirectory}/sessions/2026/08/2026-08-11-001.md',
+      );
+      expect(
+        await sessionFile.readAsString(encoding: utf8),
+        isNot(contains('qiyu-actions')),
+      );
+    },
+  );
 
   test('unknown hidden actions are dropped into diagnostics only', () async {
     final diagnostics = <String>[];
     final gateway = ScriptedModelGateway(
       streamScript: [
-        const ScriptedStreamReply(
-          r'''在。
-<qiyu-actions>[{"action":"format_disk","target":"C:\\"}]</qiyu-actions>''',
-        ),
+        const ScriptedStreamReply(r'''在。
+<qiyu-actions>[{"action":"format_disk","target":"C:\\"}]</qiyu-actions>'''),
       ],
     );
     final harness = await InProcessChatHost.start(
@@ -838,8 +836,10 @@ void main() {
     final diagnostics = <String>[];
     final gateway = ScriptedModelGateway(
       streamScript: [
-        const ScriptedStreamReply('''在。
-<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢热牛奶"}]</qiyu-actions>'''),
+        const ScriptedStreamReply(
+          '''在。
+<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢热牛奶"}]</qiyu-actions>''',
+        ),
       ],
     );
     final harness = await InProcessChatHost.start(
@@ -856,10 +856,7 @@ void main() {
     );
 
     expect(trace.event(ChatDeliveryEventKind.message).messages, ['在。']);
-    expect(
-      trace.event(ChatDeliveryEventKind.state).source,
-      ReplySource.llm,
-    );
+    expect(trace.event(ChatDeliveryEventKind.state).source, ReplySource.llm);
     final session = await harness.sessionReader().openSession(
       sessionId: trace.sessionId,
     );
@@ -871,8 +868,10 @@ void main() {
   test('retrying a stored reply never duplicates the episode entry', () async {
     final gateway = ScriptedModelGateway(
       streamScript: [
-        const ScriptedStreamReply('''在。
-<qiyu-actions>[{"action":"memory_signal","summary":"用户下周搬家"}]</qiyu-actions>'''),
+        const ScriptedStreamReply(
+          '''在。
+<qiyu-actions>[{"action":"memory_signal","summary":"用户下周搬家"}]</qiyu-actions>''',
+        ),
       ],
     );
     final harness = await InProcessChatHost.start(
@@ -892,92 +891,92 @@ void main() {
     expect(gateway.streamCalls, hasLength(1));
   });
 
-  test('bedtime triggers end-of-day finalization after the reply is delivered', () async {
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''早点休息。
+  test(
+    'bedtime triggers end-of-day finalization after the reply is delivered',
+    () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''早点休息。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户今天完成了演讲"}]
 </qiyu-actions>'''),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: () => DateTime(2026, 8, 11, 22, 30),
-    );
-    addTearDown(harness.dispose);
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      );
+      addTearDown(harness.dispose);
 
-    final day1 = await harness.sendChat(
-      requestId: 'day-1',
-      text: '演讲结束了',
-    );
-    expect(
-      day1.event(ChatDeliveryEventKind.state).source,
-      ReplySource.llm,
-    );
-    final bedtime = await harness.sendChat(
-      requestId: 'night-1',
-      text: '晚安',
-      sessionId: day1.sessionId,
-    );
-    expect(bedtime.event(ChatDeliveryEventKind.state).mode, 'llm');
-    // Host 收尾等待后台日终归档链完成；归档产物落盘后目录保留可读。
-    await harness.close();
+      final day1 = await harness.sendChat(requestId: 'day-1', text: '演讲结束了');
+      expect(day1.event(ChatDeliveryEventKind.state).source, ReplySource.llm);
+      final bedtime = await harness.sendChat(
+        requestId: 'night-1',
+        text: '晚安',
+        sessionId: day1.sessionId,
+      );
+      expect(bedtime.event(ChatDeliveryEventKind.state).mode, 'llm');
+      // Host 收尾等待后台日终归档链完成；归档产物落盘后目录保留可读。
+      await harness.close();
 
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: harness.memoryDirectory,
-      clock: () => DateTime(2026, 8, 11, 22, 35),
-    );
-    final day = await pipeline.readDay('2026-08-11');
-    expect(day.finalized, isTrue);
-    expect(day.summary, contains('用户今天完成了演讲'));
-    expect(
-      File('${harness.memoryDirectory}/daily-state.md').existsSync(),
-      isTrue,
-    );
-    expect(
-      File('${harness.memoryDirectory}/episodes/index.md').existsSync(),
-      isTrue,
-    );
-  });
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: () => DateTime(2026, 8, 11, 22, 35),
+      );
+      final day = await pipeline.readDay('2026-08-11');
+      expect(day.finalized, isTrue);
+      expect(day.summary, contains('用户今天完成了演讲'));
+      expect(
+        File('${harness.memoryDirectory}/daily-state.md').existsSync(),
+        isTrue,
+      );
+      expect(
+        File('${harness.memoryDirectory}/episodes/index.md').existsSync(),
+        isTrue,
+      );
+    },
+  );
 
-  test('common bedtime phrases trigger finalization while complaints do not', () async {
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''在的。
+  test(
+    'common bedtime phrases trigger finalization while complaints do not',
+    () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''在的。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户睡前发消息"}]
 </qiyu-actions>'''),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: () => DateTime(2026, 8, 22, 23, 50),
-    );
-    addTearDown(harness.dispose);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: harness.memoryDirectory,
-      clock: () => DateTime(2026, 8, 22, 23, 50),
-    );
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 8, 22, 23, 50),
+      );
+      addTearDown(harness.dispose);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: () => DateTime(2026, 8, 22, 23, 50),
+      );
 
-    // 光秃秃的「睡觉」带着否定，是抱怨不是道别：不该归档。
-    final complaint = await harness.sendChat(
-      requestId: 'night-a',
-      text: '失眠了，根本没睡觉，烦死',
-    );
-    expect(complaint.event(ChatDeliveryEventKind.state).mode, 'llm');
-    expect((await pipeline.readDay('2026-08-22')).finalized, isFalse);
+      // 光秃秃的「睡觉」带着否定，是抱怨不是道别：不该归档。
+      final complaint = await harness.sendChat(
+        requestId: 'night-a',
+        text: '失眠了，根本没睡觉，烦死',
+      );
+      expect(complaint.event(ChatDeliveryEventKind.state).mode, 'llm');
+      expect((await pipeline.readDay('2026-08-22')).finalized, isFalse);
 
-    // 8-22 的真实句式：嘴上道了别，词根也必须认出来。
-    final bedtime = await harness.sendChat(
-      requestId: 'night-b',
-      text: '哎呀，算了，我要睡觉了，今天好累呀',
-      sessionId: complaint.sessionId,
-    );
-    expect(bedtime.event(ChatDeliveryEventKind.state).mode, 'llm');
-    await harness.close();
-    expect((await pipeline.readDay('2026-08-22')).finalized, isTrue);
-  });
+      // 8-22 的真实句式：嘴上道了别，词根也必须认出来。
+      final bedtime = await harness.sendChat(
+        requestId: 'night-b',
+        text: '哎呀，算了，我要睡觉了，今天好累呀',
+        sessionId: complaint.sessionId,
+      );
+      expect(bedtime.event(ChatDeliveryEventKind.state).mode, 'llm');
+      await harness.close();
+      expect((await pipeline.readDay('2026-08-22')).finalized, isTrue);
+    },
+  );
 
   test('a normal chat never finalizes the still-active current day', () async {
     final gateway = ScriptedModelGateway(
@@ -1008,323 +1007,338 @@ void main() {
     );
   });
 
-  test('the first chat after midnight catches up the unfinalized previous day', () async {
-    var now = DateTime(2026, 8, 11, 23, 50);
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''嗯，我在。
+  test(
+    'the first chat after midnight catches up the unfinalized previous day',
+    () async {
+      var now = DateTime(2026, 8, 11, 23, 50);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''嗯，我在。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户昨晚睡得晚"}]
 </qiyu-actions>'''),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: () => now,
-    );
-    addTearDown(harness.dispose);
-    final first = await harness.sendChat(requestId: 'before', text: '睡不着');
-
-    now = DateTime(2026, 8, 12, 0, 20);
-    await harness.sendChat(
-      requestId: 'after',
-      text: '早',
-      sessionId: first.sessionId,
-    );
-    await harness.close();
-
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: harness.memoryDirectory,
-      clock: () => now,
-    );
-    expect((await pipeline.readDay('2026-08-11')).finalized, isTrue);
-    expect((await pipeline.readDay('2026-08-12')).finalized, isFalse);
-  });
-
-  test('initialize catches up unfinalized days discovered at startup', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-startup-finalization-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
-    final seedPipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: () => DateTime(2026, 8, 10, 22),
-    );
-    await seedPipeline.processReply(
-      session: RawSession(
-        id: 'old-session',
-        date: '2026-08-10',
-        segment: 1,
-        createdAt: DateTime(2026, 8, 10, 22).toUtc(),
-        updatedAt: DateTime(2026, 8, 10, 22).toUtc(),
-        turns: [
-          RawSessionTurn.user(
-            requestId: 'old-req',
-            text: '第 1 轮',
-            at: DateTime(2026, 8, 10, 22),
-          ),
         ],
-      ),
-      requestId: 'old-req',
-      hiddenActions: const [
-        HiddenAction(
-          kind: HiddenActionKind.memorySignal,
-          summary: '前天留下的未归档记忆',
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => now,
+      );
+      addTearDown(harness.dispose);
+      final first = await harness.sendChat(requestId: 'before', text: '睡不着');
+
+      now = DateTime(2026, 8, 12, 0, 20);
+      await harness.sendChat(
+        requestId: 'after',
+        text: '早',
+        sessionId: first.sessionId,
+      );
+      await harness.close();
+
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: () => now,
+      );
+      expect((await pipeline.readDay('2026-08-11')).finalized, isTrue);
+      expect((await pipeline.readDay('2026-08-12')).finalized, isFalse);
+    },
+  );
+
+  test(
+    'initialize catches up unfinalized days discovered at startup',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-startup-finalization-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      final seedPipeline = EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => DateTime(2026, 8, 10, 22),
+      );
+      await seedPipeline.processReply(
+        session: RawSession(
+          id: 'old-session',
+          date: '2026-08-10',
+          segment: 1,
+          createdAt: DateTime(2026, 8, 10, 22).toUtc(),
+          updatedAt: DateTime(2026, 8, 10, 22).toUtc(),
+          turns: [
+            RawSessionTurn.user(
+              requestId: 'old-req',
+              text: '第 1 轮',
+              at: DateTime(2026, 8, 10, 22),
+            ),
+          ],
         ),
-      ],
-    );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: () => DateTime(2026, 8, 12, 9),
-    );
-    final service = LocalChatService(
-      MarkdownMemoryRepository(
+        requestId: 'old-req',
+        hiddenActions: const [MemorySignalAction(summary: '前天留下的未归档记忆')],
+      );
+      final pipeline = EpisodeMemoryPipeline(
         memoryDirectory: temporaryDirectory.path,
         clock: () => DateTime(2026, 8, 12, 9),
-      ),
-      episodePipeline: pipeline,
-      dailyFinalization: DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
+      );
+      final service = LocalChatService(
+        MarkdownMemoryRepository(
+          memoryDirectory: temporaryDirectory.path,
+          clock: () => DateTime(2026, 8, 12, 9),
+        ),
         episodePipeline: pipeline,
+        dailyFinalization: DailyFinalizationService(
+          memoryDirectory: temporaryDirectory.path,
+          episodePipeline: pipeline,
+          clock: () => DateTime(2026, 8, 12, 9),
+        ),
         clock: () => DateTime(2026, 8, 12, 9),
-      ),
-      clock: () => DateTime(2026, 8, 12, 9),
-    );
+      );
 
-    await service.initialize();
-    await service.finalizePending();
+      await service.initialize();
+      await service.finalizePending();
 
-    final day = await pipeline.readDay('2026-08-10');
-    expect(day.finalized, isTrue);
-    expect(day.summary, contains('前天留下的未归档记忆'));
-  });
+      final day = await pipeline.readDay('2026-08-10');
+      expect(day.finalized, isTrue);
+      expect(day.summary, contains('前天留下的未归档记忆'));
+    },
+  );
 
-  test('a day with only secret-laden signals finalizes without any memory', () async {
-    final diagnostics = <String>[];
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''好。
+  test(
+    'a day with only secret-laden signals finalizes without any memory',
+    () async {
+      final diagnostics = <String>[];
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''好。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"密码: hunter2abc","evidence":"密码: hunter2abc"}]
 </qiyu-actions>'''),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      diagnosticsSink: diagnostics.add,
-      clock: () => DateTime(2026, 8, 11, 22, 30),
-    );
-    addTearDown(harness.dispose);
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        diagnosticsSink: diagnostics.add,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+      );
+      addTearDown(harness.dispose);
 
-    await harness.sendChat(requestId: 'secret-1', text: '帮我记个东西');
-    await harness.sendChat(requestId: 'night-secret', text: '晚安');
-    await harness.close();
+      await harness.sendChat(requestId: 'secret-1', text: '帮我记个东西');
+      await harness.sendChat(requestId: 'night-secret', text: '晚安');
+      await harness.close();
 
-    expect(diagnostics.any((line) => line.contains('hidden_action_sensitive')), isTrue);
-    expect(
-      File('${harness.memoryDirectory}/episodes/2026/08/2026-08-11.md')
-          .existsSync(),
-      isFalse,
-      reason: '敏感动作被丢弃后当天没有条目，不得产生记忆文件',
-    );
-    expect(
-      File('${harness.memoryDirectory}/daily-state.md').existsSync(),
-      isFalse,
-    );
-    expect(
-      File('${harness.memoryDirectory}/relationship.md').existsSync(),
-      isFalse,
-    );
-    expect(
-      File('${harness.memoryDirectory}/episodes/index.md').existsSync(),
-      isFalse,
-    );
-  });
+      expect(
+        diagnostics.any((line) => line.contains('hidden_action_sensitive')),
+        isTrue,
+      );
+      expect(
+        File(
+          '${harness.memoryDirectory}/episodes/2026/08/2026-08-11.md',
+        ).existsSync(),
+        isFalse,
+        reason: '敏感动作被丢弃后当天没有条目，不得产生记忆文件',
+      );
+      expect(
+        File('${harness.memoryDirectory}/daily-state.md').existsSync(),
+        isFalse,
+      );
+      expect(
+        File('${harness.memoryDirectory}/relationship.md').existsSync(),
+        isFalse,
+      );
+      expect(
+        File('${harness.memoryDirectory}/episodes/index.md').existsSync(),
+        isFalse,
+      );
+    },
+  );
 
-  test('model-proposed candidates become open-loops at bedtime finalization', () async {
-    DateTime clock() => DateTime(2026, 8, 11, 22, 30);
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''到时候轻轻问一次。
+  test(
+    'model-proposed candidates become open-loops at bedtime finalization',
+    () async {
+      DateTime clock() => DateTime(2026, 8, 11, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''到时候轻轻问一次。
 <qiyu-actions>
 [{"action":"open_loop_candidate","summary":"人生第一次演讲","due":"2026-08-12 晚上","evidence":"明天是我人生第一次演讲"}]
 </qiyu-actions>'''),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: clock,
-    );
-    addTearDown(harness.dispose);
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+      );
+      addTearDown(harness.dispose);
 
-    final first = await harness.sendChat(
-      requestId: 'cand-1',
-      text: '明天是我人生第一次演讲',
-    );
-    expect(
-      first.event(ChatDeliveryEventKind.state).source,
-      ReplySource.llm,
-    );
-    // 对话中只产生候选：open-loops.md 要等日终才出现。
-    expect(
-      File('${harness.memoryDirectory}/open-loops.md').existsSync(),
-      isFalse,
-    );
+      final first = await harness.sendChat(
+        requestId: 'cand-1',
+        text: '明天是我人生第一次演讲',
+      );
+      expect(first.event(ChatDeliveryEventKind.state).source, ReplySource.llm);
+      // 对话中只产生候选：open-loops.md 要等日终才出现。
+      expect(
+        File('${harness.memoryDirectory}/open-loops.md').existsSync(),
+        isFalse,
+      );
 
-    final bedtime = await harness.sendChat(
-      requestId: 'night-1',
-      text: '晚安',
-      sessionId: first.sessionId,
-    );
-    expect(bedtime.event(ChatDeliveryEventKind.state).mode, 'llm');
-    await harness.close();
+      final bedtime = await harness.sendChat(
+        requestId: 'night-1',
+        text: '晚安',
+        sessionId: first.sessionId,
+      );
+      expect(bedtime.event(ChatDeliveryEventKind.state).mode, 'llm');
+      await harness.close();
 
-    final loops = await File(
-      '${harness.memoryDirectory}/open-loops.md',
-    ).readAsString(encoding: utf8);
-    expect(loops, contains('- [o1] 人生第一次演讲'));
-    expect(loops, contains('due: 2026-08-12 晚上'));
-    expect(loops, contains('status: active'));
-  });
+      final loops = await File(
+        '${harness.memoryDirectory}/open-loops.md',
+      ).readAsString(encoding: utf8);
+      expect(loops, contains('- [o1] 人生第一次演讲'));
+      expect(loops, contains('due: 2026-08-12 晚上'));
+      expect(loops, contains('status: active'));
+    },
+  );
 
-  test('a user reply closes the loop now and archives it at next bedtime', () async {
-    var now = DateTime(2026, 8, 11, 22, 30);
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''到时候轻轻问一次。
+  test(
+    'a user reply closes the loop now and archives it at next bedtime',
+    () async {
+      var now = DateTime(2026, 8, 11, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''到时候轻轻问一次。
 <qiyu-actions>
 [{"action":"open_loop_candidate","summary":"人生第一次演讲","due":"2026-08-12 晚上"}]
 </qiyu-actions>'''),
-        const ScriptedStreamReply('''那就好。
+          const ScriptedStreamReply('''那就好。
 <qiyu-actions>
 [{"action":"open_loop_status","summary":"人生第一次演讲","status":"closed","result":"用户说演讲很顺利"}]
 </qiyu-actions>'''),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: () => now,
-    );
-    addTearDown(harness.dispose);
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => now,
+      );
+      addTearDown(harness.dispose);
 
-    final first = await harness.sendChat(
-      requestId: 'day-1',
-      text: '明天是我人生第一次演讲',
-    );
-    await harness.sendChat(
-      requestId: 'night-1',
-      text: '晚安',
-      sessionId: first.sessionId,
-    );
-    await harness.close();
-    expect(
-      await OpenLoopStore(memoryDirectory: harness.memoryDirectory)
-          .readItems(),
-      hasLength(1),
-    );
+      final first = await harness.sendChat(
+        requestId: 'day-1',
+        text: '明天是我人生第一次演讲',
+      );
+      await harness.sendChat(
+        requestId: 'night-1',
+        text: '晚安',
+        sessionId: first.sessionId,
+      );
+      await harness.close();
+      expect(
+        await OpenLoopStore(
+          memoryDirectory: harness.memoryDirectory,
+        ).readItems(),
+        hasLength(1),
+      );
 
-    // 次日重启续聊：用户告知结果，状态变化在回复落盘后立即生效，不等日终。
-    await harness.restart();
-    now = DateTime(2026, 8, 12, 22, 30);
-    await harness.sendChat(
-      requestId: 'day-2',
-      text: '演讲很顺利',
-      sessionId: first.sessionId,
-    );
-    expect(
-      (await OpenLoopStore(memoryDirectory: harness.memoryDirectory)
-              .readItems())!
-          .single
-          .status,
-      OpenLoopStatus.closed,
-      reason: '闭环必须在当轮回复后立即生效',
-    );
+      // 次日重启续聊：用户告知结果，状态变化在回复落盘后立即生效，不等日终。
+      await harness.restart();
+      now = DateTime(2026, 8, 12, 22, 30);
+      await harness.sendChat(
+        requestId: 'day-2',
+        text: '演讲很顺利',
+        sessionId: first.sessionId,
+      );
+      expect(
+        (await OpenLoopStore(
+          memoryDirectory: harness.memoryDirectory,
+        ).readItems())!.single.status,
+        OpenLoopStatus.closed,
+        reason: '闭环必须在当轮回复后立即生效',
+      );
 
-    // 晚安日终把 closed 条目挪入归档，热层不再出现。
-    await harness.sendChat(requestId: 'night-2', text: '晚安');
-    await harness.close();
-    expect(
-      await OpenLoopStore(memoryDirectory: harness.memoryDirectory)
-          .readItems(),
-      isEmpty,
-    );
-    final archive = await File(
-      '${harness.memoryDirectory}/open-loops.archive.md',
-    ).readAsString(encoding: utf8);
-    expect(archive, contains('- 人生第一次演讲 | 闭环: 2026-08-12 | 用户说演讲很顺利'));
-  });
+      // 晚安日终把 closed 条目挪入归档，热层不再出现。
+      await harness.sendChat(requestId: 'night-2', text: '晚安');
+      await harness.close();
+      expect(
+        await OpenLoopStore(
+          memoryDirectory: harness.memoryDirectory,
+        ).readItems(),
+        isEmpty,
+      );
+      final archive = await File(
+        '${harness.memoryDirectory}/open-loops.archive.md',
+      ).readAsString(encoding: utf8);
+      expect(archive, contains('- 人生第一次演讲 | 闭环: 2026-08-12 | 用户说演讲很顺利'));
+    },
+  );
 
-  test('memory ban applies immediately and survives later end-of-day runs', () async {
-    var now = DateTime(2026, 8, 11, 22, 30);
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''好，到时候提醒你。
+  test(
+    'memory ban applies immediately and survives later end-of-day runs',
+    () async {
+      var now = DateTime(2026, 8, 11, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''好，到时候提醒你。
 <qiyu-actions>
 [{"action":"open_loop_candidate","summary":"医院检查","proactive":"no"}]
 </qiyu-actions>'''),
-        const ScriptedStreamReply('晚点再睡也行。'),
-        const ScriptedStreamReply('''好，以后不提了。
+          const ScriptedStreamReply('晚点再睡也行。'),
+          const ScriptedStreamReply('''好，以后不提了。
 <qiyu-actions>
 [{"action":"memory_ban","summary":"医院检查"}]
 </qiyu-actions>'''),
-        const ScriptedStreamReply('''嗯。
+          const ScriptedStreamReply('''嗯。
 <qiyu-actions>
 [{"action":"open_loop_candidate","summary":"医院检查","proactive":"no"}]
 </qiyu-actions>'''),
-        const ScriptedStreamReply('晚安。'),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: () => now,
-    );
-    addTearDown(harness.dispose);
+          const ScriptedStreamReply('晚安。'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => now,
+      );
+      addTearDown(harness.dispose);
 
-    final first = await harness.sendChat(
-      requestId: 'day-1',
-      text: '下周去医院检查',
-    );
-    await harness.sendChat(
-      requestId: 'night-1',
-      text: '晚安',
-      sessionId: first.sessionId,
-    );
-    await harness.close();
-    expect(
-      await OpenLoopStore(memoryDirectory: harness.memoryDirectory)
-          .readItems(),
-      hasLength(1),
-    );
+      final first = await harness.sendChat(requestId: 'day-1', text: '下周去医院检查');
+      await harness.sendChat(
+        requestId: 'night-1',
+        text: '晚安',
+        sessionId: first.sessionId,
+      );
+      await harness.close();
+      expect(
+        await OpenLoopStore(
+          memoryDirectory: harness.memoryDirectory,
+        ).readItems(),
+        hasLength(1),
+      );
 
-    // 重启续聊：用户要求不再提，回复落盘后立即生效，不等日终。
-    await harness.restart();
-    await harness.sendChat(
-      requestId: 'day-2',
-      text: '检查的事以后别跟我提了',
-      sessionId: first.sessionId,
-    );
-    expect(
-      await OpenLoopStore(memoryDirectory: harness.memoryDirectory)
-          .readItems(),
-      isEmpty,
-    );
-    final controls = await File(
-      '${harness.memoryDirectory}/memory-controls.md',
-    ).readAsString(encoding: utf8);
-    expect(controls, contains('## banned'));
-    expect(controls, contains('医院检查'));
+      // 重启续聊：用户要求不再提，回复落盘后立即生效，不等日终。
+      await harness.restart();
+      await harness.sendChat(
+        requestId: 'day-2',
+        text: '检查的事以后别跟我提了',
+        sessionId: first.sessionId,
+      );
+      expect(
+        await OpenLoopStore(
+          memoryDirectory: harness.memoryDirectory,
+        ).readItems(),
+        isEmpty,
+      );
+      final controls = await File(
+        '${harness.memoryDirectory}/memory-controls.md',
+      ).readAsString(encoding: utf8);
+      expect(controls, contains('## banned'));
+      expect(controls, contains('医院检查'));
 
-    // 模型之后再提同一事项：日终归档不得重新激活。
-    now = DateTime(2026, 8, 12, 22, 30);
-    await harness.sendChat(requestId: 'day-3', text: '随便聊聊');
-    await harness.sendChat(requestId: 'night-2', text: '晚安');
-    await harness.close();
-    expect(
-      await OpenLoopStore(memoryDirectory: harness.memoryDirectory)
-          .readItems(),
-      isEmpty,
-    );
-  });
+      // 模型之后再提同一事项：日终归档不得重新激活。
+      now = DateTime(2026, 8, 12, 22, 30);
+      await harness.sendChat(requestId: 'day-3', text: '随便聊聊');
+      await harness.sendChat(requestId: 'night-2', text: '晚安');
+      await harness.close();
+      expect(
+        await OpenLoopStore(
+          memoryDirectory: harness.memoryDirectory,
+        ).readItems(),
+        isEmpty,
+      );
+    },
+  );
 
   test('the state pack injection carries gated follow-up candidates', () async {
     DateTime clock() => DateTime(2026, 8, 11, 22, 30);
@@ -1406,56 +1420,59 @@ void main() {
     expect(gated, contains('不调侃、不翻旧账'));
   });
 
-  test('a deep-talk signal lands in episodes and the next end-of-day relationship', () async {
-    var now = DateTime(2026, 8, 11, 22, 30);
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''嗯，我在。
+  test(
+    'a deep-talk signal lands in episodes and the next end-of-day relationship',
+    () async {
+      var now = DateTime(2026, 8, 11, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''嗯，我在。
 <qiyu-actions>
 [{"action":"relationship_signal","signal":"deep_talk","summary":"用户愿意聊到更深的家庭关系"}]
 </qiyu-actions>'''),
-        const ScriptedStreamReply('晚点睡也行。'),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: () => now,
-    );
-    addTearDown(harness.dispose);
+          const ScriptedStreamReply('晚点睡也行。'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => now,
+      );
+      addTearDown(harness.dispose);
 
-    final first = await harness.sendChat(
-      requestId: 'deep-1',
-      text: '其实最近和我妈的关系让我很累',
-    );
-    // 深谈信号当轮只落 episode：relationship 要等日终，不即时改写。
-    expect(
-      File('${harness.memoryDirectory}/relationship.md').existsSync(),
-      isFalse,
-    );
+      final first = await harness.sendChat(
+        requestId: 'deep-1',
+        text: '其实最近和我妈的关系让我很累',
+      );
+      // 深谈信号当轮只落 episode：relationship 要等日终，不即时改写。
+      expect(
+        File('${harness.memoryDirectory}/relationship.md').existsSync(),
+        isFalse,
+      );
 
-    await harness.sendChat(
-      requestId: 'night-1',
-      text: '晚安',
-      sessionId: first.sessionId,
-    );
-    await harness.close();
+      await harness.sendChat(
+        requestId: 'night-1',
+        text: '晚安',
+        sessionId: first.sessionId,
+      );
+      await harness.close();
 
-    final relationship = await File(
-      '${harness.memoryDirectory}/relationship.md',
-    ).readAsString(encoding: utf8);
-    expect(relationship, contains('stage: 初识'));
-    expect(relationship, contains('用户愿意聊到更深的家庭关系'));
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: harness.memoryDirectory,
-      clock: () => now,
-    );
-    final day = await pipeline.readDay('2026-08-11');
-    final signal = day.entries.singleWhere(
-      (entry) => entry.kind == episodeKindRelationshipSignal,
-    );
-    expect(signal.signal, 'deep_talk');
-    expect(signal.summary, '用户愿意聊到更深的家庭关系');
-  });
+      final relationship = await File(
+        '${harness.memoryDirectory}/relationship.md',
+      ).readAsString(encoding: utf8);
+      expect(relationship, contains('stage: 初识'));
+      expect(relationship, contains('用户愿意聊到更深的家庭关系'));
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: () => now,
+      );
+      final day = await pipeline.readDay('2026-08-11');
+      final signal = day.entries.singleWhere(
+        (entry) => entry.kind == episodeKindRelationshipSignal,
+      );
+      expect(signal.signal, 'deep_talk');
+      expect(signal.summary, '用户愿意聊到更深的家庭关系');
+    },
+  );
 
   test('a fast in-turn recall delivers bubble 2 on the same request', () async {
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
@@ -1477,11 +1494,8 @@ void main() {
       // 窗口预算内等查找完成。
       recallWindowWait: (_) =>
           Future<void>.delayed(const Duration(milliseconds: 500)),
-      seedMemory: (memoryDirectory) => _seedRecallEpisode(
-        memoryDirectory.path,
-        clock,
-        evidence: '这周末打算去爬山',
-      ),
+      seedMemory: (memoryDirectory) =>
+          _seedRecallEpisode(memoryDirectory.path, clock, evidence: '这周末打算去爬山'),
     );
     addTearDown(harness.dispose);
 
@@ -1566,10 +1580,7 @@ void main() {
     );
     addTearDown(harness.dispose);
 
-    final stream = harness.openChat(
-      requestId: 'recall-stop',
-      text: '我上次说爬山的事',
-    );
+    final stream = harness.openChat(requestId: 'recall-stop', text: '我上次说爬山的事');
     await gateway.awaitStreamOpened();
     // 等待选择调用进飞（bubble 1 交付与查找启动之间隔着记忆整理）。
     await gateway.awaitCompleteCalls(1);
@@ -1616,99 +1627,105 @@ void main() {
     expect(nextPrompt, contains('爬山'));
   });
 
-  test('a slow recall misses the window and merges into the next turn', () async {
-    DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final diagnostics = <String>[];
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''在的。
+  test(
+    'a slow recall misses the window and merges into the next turn',
+    () async {
+      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+      final diagnostics = <String>[];
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''在的。
 <qiyu-actions>
 [{"action":"memory_recall","query":"爬山"}]
 </qiyu-actions>'''),
-        const ScriptedStreamReply('在。'),
-        const ScriptedStreamReply('嗯。'),
-      ],
-      completeScript: [
-        // 编造日期落下哨兵诊断：窗口超时后的后台保存链何时落定可观测。
-        ScriptedCompletionReply(
-          _recallSelection(dates: ['2026-08-05', '2099-01-01']),
+          const ScriptedStreamReply('在。'),
+          const ScriptedStreamReply('嗯。'),
+        ],
+        completeScript: [
+          // 编造日期落下哨兵诊断：窗口超时后的后台保存链何时落定可观测。
+          ScriptedCompletionReply(
+            _recallSelection(dates: ['2026-08-05', '2099-01-01']),
+          ),
+          const ScriptedCompletionReply('对了，你周末要去爬山。'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        diagnosticsSink: diagnostics.add,
+        // 窗口立即超时：查找结果走「并入下一用户轮」的现状路径。
+        recallWindowWait: (_) async {},
+        seedMemory: (memoryDirectory) => _seedRecallEpisode(
+          memoryDirectory.path,
+          clock,
+          evidence: '这周末打算去爬山',
         ),
-        const ScriptedCompletionReply('对了，你周末要去爬山。'),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: clock,
-      diagnosticsSink: diagnostics.add,
-      // 窗口立即超时：查找结果走「并入下一用户轮」的现状路径。
-      recallWindowWait: (_) async {},
-      seedMemory: (memoryDirectory) => _seedRecallEpisode(
-        memoryDirectory.path,
-        clock,
-        evidence: '这周末打算去爬山',
-      ),
-    );
-    addTearDown(harness.dispose);
+      );
+      addTearDown(harness.dispose);
 
-    final first = await harness.sendChat(
-      requestId: 'recall-1',
-      text: '我上次说爬山的事',
-    );
-    // bubble 1 单独交付，本轮没有第二条气泡。
-    expect(first.event(ChatDeliveryEventKind.message).messages, ['在的。']);
-    expect(first.eventsOf(ChatDeliveryEventKind.done), hasLength(1));
-    await _awaitDiagnostic(
-      diagnostics,
-      'recall selection dropped date=2099-01-01',
-    );
+      final first = await harness.sendChat(
+        requestId: 'recall-1',
+        text: '我上次说爬山的事',
+      );
+      // bubble 1 单独交付，本轮没有第二条气泡。
+      expect(first.event(ChatDeliveryEventKind.message).messages, ['在的。']);
+      expect(first.eventsOf(ChatDeliveryEventKind.done), hasLength(1));
+      await _awaitDiagnostic(
+        diagnostics,
+        'recall selection dropped date=2099-01-01',
+      );
 
-    // 第二轮：压缩结果作为临时【检索结果】注入一次。
-    await harness.sendChat(
-      requestId: 'recall-2',
-      text: '最近在忙什么',
-      sessionId: first.sessionId,
-    );
-    final secondTurn = gateway.lastStreamMessages!.last.content;
-    expect(secondTurn, contains('<memory_context>'));
-    expect(secondTurn, contains('【检索结果】'));
-    expect(secondTurn, contains('爬山'));
-    expect(secondTurn, contains('2026-08-05'));
+      // 第二轮：压缩结果作为临时【检索结果】注入一次。
+      await harness.sendChat(
+        requestId: 'recall-2',
+        text: '最近在忙什么',
+        sessionId: first.sessionId,
+      );
+      final secondTurn = gateway.lastStreamMessages!.last.content;
+      expect(secondTurn, contains('<memory_context>'));
+      expect(secondTurn, contains('【检索结果】'));
+      expect(secondTurn, contains('爬山'));
+      expect(secondTurn, contains('2026-08-05'));
 
-    // 第三轮：临时透镜只注入一次。
-    await harness.sendChat(
-      requestId: 'recall-3',
-      text: '嗯嗯',
-      sessionId: first.sessionId,
-    );
-    expect(
-      gateway.lastStreamMessages!.last.content,
-      isNot(contains('<memory_context>')),
-    );
-  });
+      // 第三轮：临时透镜只注入一次。
+      await harness.sendChat(
+        requestId: 'recall-3',
+        text: '嗯嗯',
+        sessionId: first.sessionId,
+      );
+      expect(
+        gateway.lastStreamMessages!.last.content,
+        isNot(contains('<memory_context>')),
+      );
+    },
+  );
 
-  test('recall only starts from a model request, not from input phrasing', () async {
-    DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final gateway = ScriptedModelGateway(
-      streamScript: [const ScriptedStreamReply('在。')],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: clock,
-      seedMemory: (memoryDirectory) =>
-          _seedRecallEpisode(memoryDirectory.path, clock),
-    );
-    addTearDown(harness.dispose);
+  test(
+    'recall only starts from a model request, not from input phrasing',
+    () async {
+      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [const ScriptedStreamReply('在。')],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        seedMemory: (memoryDirectory) =>
+            _seedRecallEpisode(memoryDirectory.path, clock),
+      );
+      addTearDown(harness.dispose);
 
-    // 召回式措辞本身不再触发查找：规则兜底已退役。
-    final trace = await harness.sendChat(
-      requestId: 'recall-none',
-      text: '你还记得我上次说爬山的事吗',
-    );
+      // 召回式措辞本身不再触发查找：规则兜底已退役。
+      final trace = await harness.sendChat(
+        requestId: 'recall-none',
+        text: '你还记得我上次说爬山的事吗',
+      );
 
-    expect(trace.event(ChatDeliveryEventKind.message).messages, ['在。']);
-    expect(gateway.streamCalls, hasLength(1));
-    expect(gateway.completeCalls, isEmpty);
-  });
+      expect(trace.event(ChatDeliveryEventKind.message).messages, ['在。']);
+      expect(gateway.streamCalls, hasLength(1));
+      expect(gateway.completeCalls, isEmpty);
+    },
+  );
 
   test('bubble 2 rejoins the model history on the following turn', () async {
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
@@ -1875,70 +1892,72 @@ void main() {
     );
   });
 
-  test('persona hints become leaves at once and middle understanding at day-end', () async {
-    DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''记下了。
+  test(
+    'persona hints become leaves at once and middle understanding at day-end',
+    () async {
+      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''记下了。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户是中学老师","branch":"identity","nature":"self_report"}]
 </qiyu-actions>'''),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: clock,
-    );
-    addTearDown(harness.dispose);
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+      );
+      addTearDown(harness.dispose);
 
-    final exchange = await harness.sendChat(
-      requestId: 'p-1',
-      text: '我是中学老师',
-    );
-    expect(
-      exchange.event(ChatDeliveryEventKind.state).source,
-      ReplySource.llm,
-    );
+      final exchange = await harness.sendChat(requestId: 'p-1', text: '我是中学老师');
+      expect(
+        exchange.event(ChatDeliveryEventKind.state).source,
+        ReplySource.llm,
+      );
 
-    // 随手记立刻建叶；中间理解要等日终。
-    final leaves = File(
-      '${harness.memoryDirectory}/persona-tree/identity.md',
-    ).readAsStringSync();
-    expect(leaves, contains('[ID-L001]'));
-    expect(leaves, isNot(contains('待稳定事实')));
+      // 随手记立刻建叶；中间理解要等日终。
+      final leaves = File(
+        '${harness.memoryDirectory}/persona-tree/identity.md',
+      ).readAsStringSync();
+      expect(leaves, contains('[ID-L001]'));
+      expect(leaves, isNot(contains('待稳定事实')));
 
-    await harness.sendChat(
-      requestId: 'p-2',
-      text: '晚安',
-      sessionId: exchange.sessionId,
-    );
-    await harness.close();
+      await harness.sendChat(
+        requestId: 'p-2',
+        text: '晚安',
+        sessionId: exchange.sessionId,
+      );
+      await harness.close();
 
-    // 日终第 6 步：单条明确自述形成待稳定事实。
-    final tree = File(
-      '${harness.memoryDirectory}/persona-tree/identity.md',
-    ).readAsStringSync();
-    expect(tree, contains('### [ID-M001] 待稳定事实｜用户是中学老师'));
-  });
+      // 日终第 6 步：单条明确自述形成待稳定事实。
+      final tree = File(
+        '${harness.memoryDirectory}/persona-tree/identity.md',
+      ).readAsStringSync();
+      expect(tree, contains('### [ID-M001] 待稳定事实｜用户是中学老师'));
+    },
+  );
 
-  test('an identity correction revokes the rooted claim within the same turn', () async {
-    DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''记下了。
+  test(
+    'an identity correction revokes the rooted claim within the same turn',
+    () async {
+      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''记下了。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户不是中学老师","branch":"identity","nature":"self_report"}]
 </qiyu-actions>'''),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: clock,
-      seedMemory: (memoryDirectory) async {
-        // 已生根的旧印象与它的投影。
-        File('${memoryDirectory.path}/persona-tree/identity.md')
-          ..createSync(recursive: true)
-          ..writeAsStringSync('''# 身份事实
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        seedMemory: (memoryDirectory) async {
+          // 已生根的旧印象与它的投影。
+          File('${memoryDirectory.path}/persona-tree/identity.md')
+            ..createSync(recursive: true)
+            ..writeAsStringSync('''# 身份事实
 
 ## [ID-R001] 用户是中学老师
 
@@ -1946,34 +1965,35 @@ void main() {
 - 形成: 2026-07-01 · 复核: 2026-07-01
 - [ID-L001] 2026-07-01 | 明确自述 | support | 用户是中学老师 | episodes/2026/07/2026-07-01.md [m1]
 ''');
-        File('${memoryDirectory.path}/persona.md').writeAsStringSync(
-          '# persona\n\n## 身份与客观事实\n- 用户是中学老师\n',
-          encoding: utf8,
-        );
-      },
-    );
-    addTearDown(harness.dispose);
+          File('${memoryDirectory.path}/persona.md').writeAsStringSync(
+            '# persona\n\n## 身份与客观事实\n- 用户是中学老师\n',
+            encoding: utf8,
+          );
+        },
+      );
+      addTearDown(harness.dispose);
 
-    await harness.sendChat(requestId: 'correct-1', text: '我不是中学老师');
+      await harness.sendChat(requestId: 'correct-1', text: '我不是中学老师');
 
-    // 不等日终：当轮自述立即撤根（唯一在线撤根例外）并归档旧路径。
-    final active = File(
-      '${harness.memoryDirectory}/persona-tree/identity.md',
-    ).readAsStringSync();
-    expect(active, isNot(contains('[ID-R001]')));
-    final archive = File(
-      '${harness.memoryDirectory}/persona-tree/archive/identity.md',
-    ).readAsStringSync();
-    expect(archive, contains('## [ID-R001] 用户是中学老师'));
-    expect(archive, contains('原因: 明确纠正'));
-    expect(archive, contains('关联: ID-M001'));
-    // persona.md 当场重投影：旧主张当轮停止生效。
-    final persona = File('${harness.memoryDirectory}/persona.md');
-    expect(
-      persona.existsSync() ? persona.readAsStringSync() : '',
-      isNot(contains('用户是中学老师')),
-    );
-  });
+      // 不等日终：当轮自述立即撤根（唯一在线撤根例外）并归档旧路径。
+      final active = File(
+        '${harness.memoryDirectory}/persona-tree/identity.md',
+      ).readAsStringSync();
+      expect(active, isNot(contains('[ID-R001]')));
+      final archive = File(
+        '${harness.memoryDirectory}/persona-tree/archive/identity.md',
+      ).readAsStringSync();
+      expect(archive, contains('## [ID-R001] 用户是中学老师'));
+      expect(archive, contains('原因: 明确纠正'));
+      expect(archive, contains('关联: ID-M001'));
+      // persona.md 当场重投影：旧主张当轮停止生效。
+      final persona = File('${harness.memoryDirectory}/persona.md');
+      expect(
+        persona.existsSync() ? persona.readAsStringSync() : '',
+        isNot(contains('用户是中学老师')),
+      );
+    },
+  );
 
   test('a user ban clears persona tree content immediately', () async {
     DateTime clock() => DateTime(2026, 8, 16, 22, 30);
@@ -1995,10 +2015,7 @@ void main() {
     );
     addTearDown(harness.dispose);
 
-    final exchange = await harness.sendChat(
-      requestId: 'b-1',
-      text: '我是中学老师',
-    );
+    final exchange = await harness.sendChat(requestId: 'b-1', text: '我是中学老师');
     final branchFile = File(
       '${harness.memoryDirectory}/persona-tree/identity.md',
     );
@@ -2017,131 +2034,133 @@ void main() {
       clock: clock,
     );
     final day = await pipeline.readDay('2026-08-16');
-    expect(
-      day.entries.map((entry) => entry.summary),
-      contains('禁提: 用户是中学老师'),
-    );
+    expect(day.entries.map((entry) => entry.summary), contains('禁提: 用户是中学老师'));
   });
 
-  test('the first chat of a new month compresses the previous month idempotently', () async {
-    var now = DateTime(2026, 8, 1, 9);
-    final harness = await InProcessChatHost.start(
-      configureProvider: false,
-      clock: () => now,
-      seedMemory: (memoryDirectory) async {
-        final pipeline = EpisodeMemoryPipeline(
-          memoryDirectory: memoryDirectory.path,
-          clock: () => DateTime(2026, 7, 2, 22),
-        );
-        await pipeline.synchronizedOnDayFiles(
-          () => pipeline.writeFinalization(
-            '2026-07-02',
-            entries: [
-              EpisodeEntry(
-                id: 's1:r1:0',
-                sessionId: 's1',
-                requestId: 'r1',
-                summary: '用户完成了演讲',
-                at: DateTime(2026, 7, 2, 21).toUtc(),
-              ),
-            ],
-            summary: '用户完成了演讲',
-            finalized: true,
-            finalizedAt: DateTime(2026, 7, 2, 23).toUtc(),
-          ),
-        );
-      },
-    );
-    addTearDown(harness.dispose);
+  test(
+    'the first chat of a new month compresses the previous month idempotently',
+    () async {
+      var now = DateTime(2026, 8, 1, 9);
+      final harness = await InProcessChatHost.start(
+        configureProvider: false,
+        clock: () => now,
+        seedMemory: (memoryDirectory) async {
+          final pipeline = EpisodeMemoryPipeline(
+            memoryDirectory: memoryDirectory.path,
+            clock: () => DateTime(2026, 7, 2, 22),
+          );
+          await pipeline.synchronizedOnDayFiles(
+            () => pipeline.writeFinalization(
+              '2026-07-02',
+              entries: [
+                EpisodeEntry(
+                  id: 's1:r1:0',
+                  sessionId: 's1',
+                  requestId: 'r1',
+                  summary: '用户完成了演讲',
+                  at: DateTime(2026, 7, 2, 21).toUtc(),
+                ),
+              ],
+              summary: '用户完成了演讲',
+              finalized: true,
+              finalizedAt: DateTime(2026, 7, 2, 23).toUtc(),
+            ),
+          );
+        },
+      );
+      addTearDown(harness.dispose);
 
-    // 启动补扫即补上上月压缩；收尾等待后台链落定。
-    await harness.close();
-    final summaryFile = File(
-      '${harness.memoryDirectory}/episodes/2026/07/summary.md',
-    );
-    expect(summaryFile.existsSync(), isTrue);
-    expect(summaryFile.readAsStringSync(), contains('用户完成了演讲'));
-    final before = summaryFile.readAsStringSync();
+      // 启动补扫即补上上月压缩；收尾等待后台链落定。
+      await harness.close();
+      final summaryFile = File(
+        '${harness.memoryDirectory}/episodes/2026/07/summary.md',
+      );
+      expect(summaryFile.existsSync(), isTrue);
+      expect(summaryFile.readAsStringSync(), contains('用户完成了演讲'));
+      final before = summaryFile.readAsStringSync();
 
-    // 重启后新月第一条消息走日期变化路径再次触发也幂等。
-    await harness.restart();
-    await harness.sendChat(requestId: 'm-1', text: '你好');
-    await harness.close();
-    expect(summaryFile.readAsStringSync(), before);
-  });
+      // 重启后新月第一条消息走日期变化路径再次触发也幂等。
+      await harness.restart();
+      await harness.sendChat(requestId: 'm-1', text: '你好');
+      await harness.close();
+      expect(summaryFile.readAsStringSync(), before);
+    },
+  );
 
-  test('a bedtime dream accepted impressions into the next chat hot layer', () async {
-    var now = DateTime(2026, 8, 11, 22, 30);
-    final gateway = ScriptedModelGateway(
-      streamScript: [
-        const ScriptedStreamReply('''记下了。
+  test(
+    'a bedtime dream accepted impressions into the next chat hot layer',
+    () async {
+      var now = DateTime(2026, 8, 11, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''记下了。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户最近有面试安排","evidence":"下周有面试"}]
 </qiyu-actions>'''),
-        const ScriptedStreamReply('在。'),
-      ],
-      completeScript: [
-        // 晚安后台链上先日终理解、后 Dream 候选：理解输出作废走确定性，
-        // Dream 候选按序消费第二条。
-        const ScriptedCompletionReply('（理解占位，不是合法输出）'),
-        ScriptedCompletionReply(jsonEncode({
-          'items': [
-            {
-              'section': '重要事件',
-              'text': '用户最近有面试安排',
-              'evidence': ['2026-08-11'],
-            },
-          ],
-        })),
-      ],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: () => now,
-    );
-    addTearDown(harness.dispose);
+          const ScriptedStreamReply('在。'),
+        ],
+        completeScript: [
+          // 晚安后台链上先日终理解、后 Dream 候选：理解输出作废走确定性，
+          // Dream 候选按序消费第二条。
+          const ScriptedCompletionReply('（理解占位，不是合法输出）'),
+          ScriptedCompletionReply(
+            jsonEncode({
+              'items': [
+                {
+                  'section': '重要事件',
+                  'text': '用户最近有面试安排',
+                  'evidence': ['2026-08-11'],
+                },
+              ],
+            }),
+          ),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => now,
+      );
+      addTearDown(harness.dispose);
 
-    final first = await harness.sendChat(
-      requestId: 'dream-day',
-      text: '下周有面试',
-    );
-    expect(
-      first.event(ChatDeliveryEventKind.state).source,
-      ReplySource.llm,
-    );
-    await harness.sendChat(
-      requestId: 'dream-night',
-      text: '晚安',
-      sessionId: first.sessionId,
-    );
-    await harness.close();
+      final first = await harness.sendChat(
+        requestId: 'dream-day',
+        text: '下周有面试',
+      );
+      expect(first.event(ChatDeliveryEventKind.state).source, ReplySource.llm);
+      await harness.sendChat(
+        requestId: 'dream-night',
+        text: '晚安',
+        sessionId: first.sessionId,
+      );
+      await harness.close();
 
-    // 晚安归档之后 Dream 接纳：长期印象落盘（理解 + 候选各一次调用）。
-    final longMemory = File(
-      '${harness.memoryDirectory}/long-memory.md',
-    ).readAsStringSync();
-    expect(longMemory, contains('- 用户最近有面试安排'));
-    expect(gateway.completeCalls, hasLength(2));
+      // 晚安归档之后 Dream 接纳：长期印象落盘（理解 + 候选各一次调用）。
+      final longMemory = File(
+        '${harness.memoryDirectory}/long-memory.md',
+      ).readAsStringSync();
+      expect(longMemory, contains('- 用户最近有面试安排'));
+      expect(gateway.completeCalls, hasLength(2));
 
-    // 次日聊天：长期印象进入热层注入。
-    await harness.restart();
-    now = DateTime(2026, 8, 12, 21);
-    await harness.sendChat(requestId: 'dream-next', text: '在吗');
-    final system = gateway.lastStreamMessages!.first.content;
-    expect(system, contains('<long_memory>'));
-    expect(system, contains('【长期印象】'));
-    expect(system, contains('用户最近有面试安排'));
+      // 次日聊天：长期印象进入热层注入。
+      await harness.restart();
+      now = DateTime(2026, 8, 12, 21);
+      await harness.sendChat(requestId: 'dream-next', text: '在吗');
+      final system = gateway.lastStreamMessages!.first.content;
+      expect(system, contains('<long_memory>'));
+      expect(system, contains('【长期印象】'));
+      expect(system, contains('用户最近有面试安排'));
 
-    // 七天内的下一次晚安不会重跑 Dream：第二晚只有当天日终的理解
-    // 调用（输出作废降级），长期印象原样不动。
-    await harness.sendChat(requestId: 'dream-night-2', text: '晚安');
-    await harness.close();
-    expect(gateway.completeCalls, hasLength(3));
-    expect(
-      File('${harness.memoryDirectory}/long-memory.md').readAsStringSync(),
-      longMemory,
-    );
-  });
+      // 七天内的下一次晚安不会重跑 Dream：第二晚只有当天日终的理解
+      // 调用（输出作废降级），长期印象原样不动。
+      await harness.sendChat(requestId: 'dream-night-2', text: '晚安');
+      await harness.close();
+      expect(gateway.completeCalls, hasLength(3));
+      expect(
+        File('${harness.memoryDirectory}/long-memory.md').readAsStringSync(),
+        longMemory,
+      );
+    },
+  );
 
   test('startup catches up a bedtime dream that failed overnight', () async {
     var now = DateTime(2026, 8, 11, 22, 30);
@@ -2156,15 +2175,17 @@ void main() {
         // 夜里日终理解与 Dream 候选先后失败；次日启动补跑才应答候选。
         const ScriptedCompletionFailure(ModelFailureKind.network),
         const ScriptedCompletionFailure(ModelFailureKind.network),
-        ScriptedCompletionReply(jsonEncode({
-          'items': [
-            {
-              'section': '重要事件',
-              'text': '用户搬了一次家',
-              'evidence': ['2026-08-11'],
-            },
-          ],
-        })),
+        ScriptedCompletionReply(
+          jsonEncode({
+            'items': [
+              {
+                'section': '重要事件',
+                'text': '用户搬了一次家',
+                'evidence': ['2026-08-11'],
+              },
+            ],
+          }),
+        ),
       ],
     );
     final harness = await InProcessChatHost.start(
@@ -2172,10 +2193,7 @@ void main() {
       clock: () => now,
     );
     addTearDown(harness.dispose);
-    final first = await harness.sendChat(
-      requestId: 'night-fail',
-      text: '下周搬家',
-    );
+    final first = await harness.sendChat(requestId: 'night-fail', text: '下周搬家');
     await harness.sendChat(
       requestId: 'night-fail-bed',
       text: '晚安',
@@ -2217,10 +2235,9 @@ void main() {
             ],
         });
         expect(oversized.runes.length, greaterThan(hotLayerMaxRunes));
-        File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
-          oversized,
-          encoding: utf8,
-        );
+        File(
+          '${memoryDirectory.path}/long-memory.md',
+        ).writeAsStringSync(oversized, encoding: utf8);
         File('${memoryDirectory.path}/relationship.md').writeAsStringSync(
           '# relationship\n\nstage: 初识\nsince: 2026-08-01\n'
           '阶段描述: 初识阶段：以回应当前话题、倾听为主；不调侃、不翻旧账、不引用共同过往、不主动追问私事。\n',
@@ -2246,140 +2263,149 @@ void main() {
     expect(injected, isNot(contains('共同过往的长期印象条目内容测试文本34')));
   });
 
-  test('persona projection enters the hot layer without long-memory pressure', () async {
-    DateTime clock() => DateTime(2026, 8, 12, 21);
-    final gateway = ScriptedModelGateway(
-      streamScript: [const ScriptedStreamReply('在。')],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: clock,
-      seedMemory: (memoryDirectory) async {
-        File('${memoryDirectory.path}/persona.md').writeAsStringSync(
-          '# persona\n\n## 身份与客观事实\n- 用户在互联网行业工作\n\n'
-          '## 边界与禁区\n- 家庭话题只接不探\n',
-          encoding: utf8,
-        );
-        File('${memoryDirectory.path}/relationship.md').writeAsStringSync(
-          '# relationship\n\nstage: 初识\nsince: 2026-08-01\n'
-          '阶段描述: 初识阶段：以回应当前话题、倾听为主；不调侃、不翻旧账、不引用共同过往、不主动追问私事。\n',
-          encoding: utf8,
-        );
-      },
-    );
-    addTearDown(harness.dispose);
+  test(
+    'persona projection enters the hot layer without long-memory pressure',
+    () async {
+      DateTime clock() => DateTime(2026, 8, 12, 21);
+      final gateway = ScriptedModelGateway(
+        streamScript: [const ScriptedStreamReply('在。')],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        seedMemory: (memoryDirectory) async {
+          File('${memoryDirectory.path}/persona.md').writeAsStringSync(
+            '# persona\n\n## 身份与客观事实\n- 用户在互联网行业工作\n\n'
+            '## 边界与禁区\n- 家庭话题只接不探\n',
+            encoding: utf8,
+          );
+          File('${memoryDirectory.path}/relationship.md').writeAsStringSync(
+            '# relationship\n\nstage: 初识\nsince: 2026-08-01\n'
+            '阶段描述: 初识阶段：以回应当前话题、倾听为主；不调侃、不翻旧账、不引用共同过往、不主动追问私事。\n',
+            encoding: utf8,
+          );
+        },
+      );
+      addTearDown(harness.dispose);
 
-    await harness.sendChat(requestId: 'persona-1', text: '在吗');
+      await harness.sendChat(requestId: 'persona-1', text: '在吗');
 
-    final system = gateway.lastStreamMessages!.first.content;
-    final match = RegExp(
-      r'<persona>\n【用户画像】\n([\s\S]*?)\n</persona>',
-    ).firstMatch(system);
-    expect(match, isNotNull);
-    final injected = match!.group(1)!;
-    expect(injected, contains('## 身份与客观事实'));
-    expect(injected, contains('- 用户在互联网行业工作'));
-    expect(injected, contains('- 家庭话题只接不探'));
-    // 文件首行的 `# persona` 属于文件格式，不进注入内容。
-    expect(injected, isNot(contains('# persona')));
-    // 无长期印象文件时长期印象块不输出。
-    expect(system, isNot(contains('<long_memory>')));
-  });
+      final system = gateway.lastStreamMessages!.first.content;
+      final match = RegExp(
+        r'<persona>\n【用户画像】\n([\s\S]*?)\n</persona>',
+      ).firstMatch(system);
+      expect(match, isNotNull);
+      final injected = match!.group(1)!;
+      expect(injected, contains('## 身份与客观事实'));
+      expect(injected, contains('- 用户在互联网行业工作'));
+      expect(injected, contains('- 家庭话题只接不探'));
+      // 文件首行的 `# persona` 属于文件格式，不进注入内容。
+      expect(injected, isNot(contains('# persona')));
+      // 无长期印象文件时长期印象块不输出。
+      expect(system, isNot(contains('<long_memory>')));
+    },
+  );
 
-  test('under hot-layer pressure long-memory is clipped before persona, and persona boundaries never are', () async {
-    DateTime clock() => DateTime(2026, 8, 12, 21);
-    final gateway = ScriptedModelGateway(
-      streamScript: [const ScriptedStreamReply('在。')],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: clock,
-      seedMemory: (memoryDirectory) async {
-        // 大体量关系文件把热层预算挤紧：先裁长期印象，再裁画像可裁节。
-        // 体量放进受管结构的近期变化条目里。
-        File('${memoryDirectory.path}/relationship.md').writeAsStringSync(
-          '# relationship\n\nstage: 初识\nsince: 2026-08-01\n'
-          '阶段描述: 初识阶段：以回应当前话题、倾听为主；不调侃、不翻旧账、不引用共同过往、不主动追问私事。\n'
-          '\n## 近期变化\n- ${'关' * 2500}\n',
-          encoding: utf8,
-        );
-        File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
-          renderLongMemory({
-            '重要事件': ['用户完成过一次公开演讲'],
-          }),
-          encoding: utf8,
-        );
-        final preferences = [
-          for (var i = 1; i <= 12; i += 1) '- 用户偏好第$i项${'长' * 53}',
-        ].join('\n');
-        File('${memoryDirectory.path}/persona.md').writeAsStringSync(
-          '# persona\n\n## 偏好与习惯\n$preferences\n\n'
-          '## 边界与禁区\n- 家庭话题只接不探\n',
-          encoding: utf8,
-        );
-      },
-    );
-    addTearDown(harness.dispose);
+  test(
+    'under hot-layer pressure long-memory is clipped before persona, and persona boundaries never are',
+    () async {
+      DateTime clock() => DateTime(2026, 8, 12, 21);
+      final gateway = ScriptedModelGateway(
+        streamScript: [const ScriptedStreamReply('在。')],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        seedMemory: (memoryDirectory) async {
+          // 大体量关系文件把热层预算挤紧：先裁长期印象，再裁画像可裁节。
+          // 体量放进受管结构的近期变化条目里。
+          File('${memoryDirectory.path}/relationship.md').writeAsStringSync(
+            '# relationship\n\nstage: 初识\nsince: 2026-08-01\n'
+            '阶段描述: 初识阶段：以回应当前话题、倾听为主；不调侃、不翻旧账、不引用共同过往、不主动追问私事。\n'
+            '\n## 近期变化\n- ${'关' * 2500}\n',
+            encoding: utf8,
+          );
+          File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
+            renderLongMemory({
+              '重要事件': ['用户完成过一次公开演讲'],
+            }),
+            encoding: utf8,
+          );
+          final preferences = [
+            for (var i = 1; i <= 12; i += 1) '- 用户偏好第$i项${'长' * 53}',
+          ].join('\n');
+          File('${memoryDirectory.path}/persona.md').writeAsStringSync(
+            '# persona\n\n## 偏好与习惯\n$preferences\n\n'
+            '## 边界与禁区\n- 家庭话题只接不探\n',
+            encoding: utf8,
+          );
+        },
+      );
+      addTearDown(harness.dispose);
 
-    await harness.sendChat(requestId: 'persona-budget-1', text: '在吗');
+      await harness.sendChat(requestId: 'persona-budget-1', text: '在吗');
 
-    final system = gateway.lastStreamMessages!.first.content;
-    expect(system, contains('<daily_state>'));
-    final personaMatch = RegExp(
-      r'<persona>\n【用户画像】\n([\s\S]*?)\n</persona>',
-    ).firstMatch(system);
-    expect(personaMatch, isNotNull);
-    final personaInjected = personaMatch!.group(1)!;
-    // 边界禁区永不裁；偏好习惯是可裁节，超预算时先被压缩。
-    expect(personaInjected, contains('- 家庭话题只接不探'));
-    expect('- 用户偏好第'.allMatches(personaInjected).length, lessThan(12));
-    // 长期印象先被压缩：整份热层不超硬上限。
-    final dailyMatch = RegExp(
-      r'<daily_state>\n【近况】\n([\s\S]*?)\n</daily_state>',
-    ).firstMatch(system);
-    final longMatch = RegExp(
-      r'<long_memory>\n【长期印象】\n([\s\S]*?)\n</long_memory>',
-    ).firstMatch(system);
-    final total =
-        (dailyMatch?.group(1) ?? '').runes.length +
-        (longMatch?.group(1) ?? '').runes.length +
-        personaInjected.runes.length;
-    expect(total, lessThanOrEqualTo(hotLayerMaxRunes));
-  });
+      final system = gateway.lastStreamMessages!.first.content;
+      expect(system, contains('<daily_state>'));
+      final personaMatch = RegExp(
+        r'<persona>\n【用户画像】\n([\s\S]*?)\n</persona>',
+      ).firstMatch(system);
+      expect(personaMatch, isNotNull);
+      final personaInjected = personaMatch!.group(1)!;
+      // 边界禁区永不裁；偏好习惯是可裁节，超预算时先被压缩。
+      expect(personaInjected, contains('- 家庭话题只接不探'));
+      expect('- 用户偏好第'.allMatches(personaInjected).length, lessThan(12));
+      // 长期印象先被压缩：整份热层不超硬上限。
+      final dailyMatch = RegExp(
+        r'<daily_state>\n【近况】\n([\s\S]*?)\n</daily_state>',
+      ).firstMatch(system);
+      final longMatch = RegExp(
+        r'<long_memory>\n【长期印象】\n([\s\S]*?)\n</long_memory>',
+      ).firstMatch(system);
+      final total =
+          (dailyMatch?.group(1) ?? '').runes.length +
+          (longMatch?.group(1) ?? '').runes.length +
+          personaInjected.runes.length;
+      expect(total, lessThanOrEqualTo(hotLayerMaxRunes));
+    },
+  );
 
-  test('shared-past memories inject, but stranger-stage discipline locks them', () async {
-    DateTime clock() => DateTime(2026, 8, 12, 21);
-    final gateway = ScriptedModelGateway(
-      streamScript: [const ScriptedStreamReply('在。')],
-    );
-    final harness = await InProcessChatHost.start(
-      modelGateway: gateway,
-      clock: clock,
-      seedMemory: (memoryDirectory) async {
-        // 共同过往来自双方真实互动（Dream 证据关已保证有整理日期依据），
-        // 允许进入热层；能否在回复里引用由关系阶段纪律门控。
-        File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
-          '# long-memory\n\n## 共同过往\n- 深夜聊天的梗\n',
-          encoding: utf8,
-        );
-        File('${memoryDirectory.path}/relationship.md').writeAsStringSync(
-          '# relationship\n\nstage: 初识\nsince: 2026-08-01\n'
-          '阶段描述: 初识阶段：以回应当前话题、倾听为主；不调侃、不翻旧账、不引用共同过往、不主动追问私事。\n',
-          encoding: utf8,
-        );
-      },
-    );
-    addTearDown(harness.dispose);
+  test(
+    'shared-past memories inject, but stranger-stage discipline locks them',
+    () async {
+      DateTime clock() => DateTime(2026, 8, 12, 21);
+      final gateway = ScriptedModelGateway(
+        streamScript: [const ScriptedStreamReply('在。')],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        seedMemory: (memoryDirectory) async {
+          // 共同过往来自双方真实互动（Dream 证据关已保证有整理日期依据），
+          // 允许进入热层；能否在回复里引用由关系阶段纪律门控。
+          File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
+            '# long-memory\n\n## 共同过往\n- 深夜聊天的梗\n',
+            encoding: utf8,
+          );
+          File('${memoryDirectory.path}/relationship.md').writeAsStringSync(
+            '# relationship\n\nstage: 初识\nsince: 2026-08-01\n'
+            '阶段描述: 初识阶段：以回应当前话题、倾听为主；不调侃、不翻旧账、不引用共同过往、不主动追问私事。\n',
+            encoding: utf8,
+          );
+        },
+      );
+      addTearDown(harness.dispose);
 
-    await harness.sendChat(requestId: 'shared-past-1', text: '在吗');
+      await harness.sendChat(requestId: 'shared-past-1', text: '在吗');
 
-    final system = gateway.lastStreamMessages!.first.content;
-    // 共同过往进入热层。
-    expect(system, contains('<long_memory>'));
-    expect(system, contains('- 深夜聊天的梗'));
-    // 初识阶段纪律同时注入：不引用共同过往。是否开口由模型按纪律判断。
-    expect(system, contains('不引用共同过往'));
-  });
+      final system = gateway.lastStreamMessages!.first.content;
+      // 共同过往进入热层。
+      expect(system, contains('<long_memory>'));
+      expect(system, contains('- 深夜聊天的梗'));
+      // 初识阶段纪律同时注入：不引用共同过往。是否开口由模型按纪律判断。
+      expect(system, contains('不引用共同过往'));
+    },
+  );
 }
 
 /// 只计 sessions/ 下的写入并在第 [failOnCall] 次失败一次：真路径上
@@ -2393,7 +2419,9 @@ final class _FailOnceSessionWriter implements AtomicTextWriter {
 
   @override
   Future<void> replace(String path, String contents) {
-    if (path.contains('${Platform.pathSeparator}sessions${Platform.pathSeparator}')) {
+    if (path.contains(
+      '${Platform.pathSeparator}sessions${Platform.pathSeparator}',
+    )) {
       _calls += 1;
       if (_calls == failOnCall) {
         throw const FileSystemException('mock interrupted write');

@@ -610,8 +610,7 @@ final class LocalChatService {
     }
     final hasRecallRequest = hiddenActions.any(
       (action) =>
-          action.kind == HiddenActionKind.memoryRecall &&
-          (action.query ?? '').trim().isNotEmpty,
+          action is MemoryRecallAction && action.query.trim().isNotEmpty,
     );
     if (!hasRecallRequest) {
       return;
@@ -829,19 +828,23 @@ final class LocalChatService {
     // 未完事项候选与关系证据一律不落 episode——内容不进提升、索引
     // 或 PersonaTree；控制动作自身保留为审计条目。
     final forgetTargets = hiddenActions
-        .where((action) => action.kind == HiddenActionKind.memoryForget)
-        .map((action) => normalizeMemoryText(action.summary ?? ''))
+        .whereType<MemoryForgetAction>()
+        .map((action) => normalizeMemoryText(action.title))
         .where((summary) => summary.isNotEmpty)
         .toSet();
     var effectiveActions = hiddenActions;
     if (forgetTargets.isNotEmpty) {
       effectiveActions = hiddenActions.where((action) {
-        final isContentAction =
-            action.kind == HiddenActionKind.memorySignal ||
-            action.kind == HiddenActionKind.openLoopCandidate ||
-            action.kind == HiddenActionKind.relationshipSignal;
-        final summary = action.summary;
-        if (!isContentAction || summary == null) {
+        final summary = switch (action) {
+          MemorySignalAction() => action.summary,
+          OpenLoopCandidateAction() => action.title,
+          RelationshipSignalAction() => action.summary,
+          OpenLoopStatusAction() ||
+          MemoryControlAction() ||
+          MemoryRecallAction() ||
+          NoAction() => null,
+        };
+        if (summary == null) {
           return true;
         }
         return !bannedMemoryText(summary, forgetTargets);
@@ -879,55 +882,57 @@ final class LocalChatService {
     final store = openLoopStore;
     for (final action in hiddenActions) {
       try {
-        if (action.kind == HiddenActionKind.openLoopStatus &&
-            action.summary != null &&
-            action.status != null) {
-          await store?.applyStatusChange(
-            title: action.summary!,
-            status: action.status!,
-            result: action.result,
-          );
-        } else if (action.kind == HiddenActionKind.memoryBan &&
-            action.summary != null) {
-          final banned =
-              await store?.banTitle(action.summary!, origin: 'chat') ?? false;
-          if (!banned) {
-            // controls 不可写：禁提没有落盘，热层也保持不动，
-            // 等待下次触发重试，绝不留下半生效状态。
-            _diagnosticsSink(
-              'memory ban deferred [controls not writable] '
-              'request=$requestId',
+        switch (action) {
+          case OpenLoopStatusAction():
+            await store?.applyStatusChange(
+              title: action.title,
+              status: action.status.wireName,
+              result: action.result,
             );
-          } else {
-            // 用户禁提高于 PersonaTree 提炼：立即清出树（ticket 14）。
-            final tree = personaTree;
-            if (tree != null) {
-              await tree.applyBan(action.summary!);
+          case MemoryBanAction():
+            final banned =
+                await store?.banTitle(action.title, origin: 'chat') ?? false;
+            if (!banned) {
+              // controls 不可写：禁提没有落盘，热层也保持不动，
+              // 等待下次触发重试，绝不留下半生效状态。
+              _diagnosticsSink(
+                'memory ban deferred [controls not writable] '
+                'request=$requestId',
+              );
+            } else {
+              // 用户禁提高于 PersonaTree 提炼：立即清出树（ticket 14）。
+              final tree = personaTree;
+              if (tree != null) {
+                await tree.applyBan(action.title);
+              }
             }
-          }
-        } else if (action.kind == HiddenActionKind.memoryFreeze &&
-            action.summary != null) {
-          final controls = memoryControls;
-          final frozen = await controls?.freeze(action.summary!) ?? false;
-          if (!frozen) {
-            _diagnosticsSink(
-              'memory freeze deferred [controls not writable] '
-              'request=$requestId',
-            );
-          }
-        } else if (action.kind == HiddenActionKind.memoryUnfreeze &&
-            action.summary != null) {
-          final controls = memoryControls;
-          final removed = await controls?.unfreeze(action.summary!);
-          if (removed == null) {
-            _diagnosticsSink(
-              'memory unfreeze deferred [controls not writable] '
-              'request=$requestId',
-            );
-          }
-        } else if (action.kind == HiddenActionKind.memoryDelete &&
-            action.summary != null) {
-          await _applyDelete(action.summary!, requestId);
+          case MemoryFreezeAction():
+            final controls = memoryControls;
+            final frozen = await controls?.freeze(action.title) ?? false;
+            if (!frozen) {
+              _diagnosticsSink(
+                'memory freeze deferred [controls not writable] '
+                'request=$requestId',
+              );
+            }
+          case MemoryUnfreezeAction():
+            final controls = memoryControls;
+            final removed = await controls?.unfreeze(action.title);
+            if (removed == null) {
+              _diagnosticsSink(
+                'memory unfreeze deferred [controls not writable] '
+                'request=$requestId',
+              );
+            }
+          case MemoryDeleteAction():
+            await _applyDelete(action.title, requestId);
+          case MemorySignalAction() ||
+              OpenLoopCandidateAction() ||
+              RelationshipSignalAction() ||
+              MemoryForgetAction() ||
+              MemoryRecallAction() ||
+              NoAction():
+            break;
         }
         // memory_forget 是当轮控制：内容过滤已在上面执行，
         // 审计条目随 episode 落盘，没有额外的持久动作。
