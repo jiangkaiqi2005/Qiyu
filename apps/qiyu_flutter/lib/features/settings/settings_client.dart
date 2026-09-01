@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
+import '../baseline/host_api_gateway.dart';
 
 final class SettingsException implements Exception {
   const SettingsException(this.message);
@@ -239,99 +239,63 @@ abstract interface class SettingsGateway {
   Future<DiagnosticsSnapshot> readDiagnostics();
 }
 
-final class HttpSettingsGateway implements SettingsGateway {
-  HttpSettingsGateway({http.Client? client, Uri? baseUri})
-    : _client = client ?? http.Client(),
-      _baseUri = baseUri ?? Uri.base;
+final class HttpSettingsGateway extends HostApiGateway
+    implements SettingsGateway {
+  HttpSettingsGateway({super.client, super.baseUri});
 
-  final http.Client _client;
-  final Uri _baseUri;
-  String? _csrfToken;
+  @override
+  Object errorFor(String message) => SettingsException(message);
+
+  @override
+  String get unavailableMessage => '设置服务暂时不可用，请稍后重试。';
 
   @override
   Future<ExperiencePreferences> readPreferences() async {
-    await _ensureBootstrap();
-    final response = await _client.get(_baseUri.resolve('/api/preferences'));
-    return ExperiencePreferences.fromJson(_decodeSuccess(response));
+    await ensureBootstrap();
+    final response = await httpClient.get(resolve('/api/preferences'));
+    return ExperiencePreferences.fromJson(decodeSuccess(response));
   }
 
   @override
   Future<ExperiencePreferences> savePreferences({
     required bool developerMode,
   }) async {
-    await _ensureBootstrap();
-    final response = await _client.put(
-      _baseUri.resolve('/api/preferences'),
-      headers: _modifyingHeaders,
+    final response = await httpClient.put(
+      resolve('/api/preferences'),
+      headers: await modifyingHeaders(),
       body: jsonEncode({'developerMode': developerMode}),
     );
-    return ExperiencePreferences.fromJson(_decodeSuccess(response));
+    return ExperiencePreferences.fromJson(decodeSuccess(response));
   }
 
   @override
   Future<MemoryControlsOverview> readMemoryControls() async {
-    await _ensureBootstrap();
-    final response = await _client.get(
-      _baseUri.resolve('/api/memory/controls'),
-    );
-    return MemoryControlsOverview.fromJson(_decodeSuccess(response));
+    await ensureBootstrap();
+    final response = await httpClient.get(resolve('/api/memory/controls'));
+    return MemoryControlsOverview.fromJson(decodeSuccess(response));
   }
 
   @override
   Future<ClearPreview> readClearPreview() async {
-    await _ensureBootstrap();
-    final response = await _client.get(
-      _baseUri.resolve('/api/data/clear-preview'),
-    );
-    return ClearPreview.fromJson(_decodeSuccess(response));
+    await ensureBootstrap();
+    final response = await httpClient.get(resolve('/api/data/clear-preview'));
+    return ClearPreview.fromJson(decodeSuccess(response));
   }
 
   @override
   Future<void> clearData() async {
-    await _ensureBootstrap();
-    final response = await _client.post(
-      _baseUri.resolve('/api/data/clear'),
-      headers: _modifyingHeaders,
+    final response = await httpClient.post(
+      resolve('/api/data/clear'),
+      headers: await modifyingHeaders(),
       body: jsonEncode({'confirm': true}),
     );
-    _decodeSuccess(response);
+    decodeSuccess(response);
   }
 
   @override
   Future<DiagnosticsSnapshot> readDiagnostics() async {
-    await _ensureBootstrap();
-    final response = await _client.get(
-      _baseUri.resolve('/api/dev/diagnostics'),
-    );
-    return DiagnosticsSnapshot.fromJson(_decodeSuccess(response));
+    await ensureBootstrap();
+    final response = await httpClient.get(resolve('/api/dev/diagnostics'));
+    return DiagnosticsSnapshot.fromJson(decodeSuccess(response));
   }
-
-  Map<String, String> get _modifyingHeaders => {
-    'content-type': 'application/json',
-    'x-qiyu-csrf': _csrfToken!,
-  };
-
-  Future<void> _ensureBootstrap() async {
-    if (_csrfToken != null) {
-      return;
-    }
-    final response = await _client.get(_baseUri.resolve('/api/bootstrap'));
-    final json = _decodeSuccess(response);
-    _csrfToken = json['csrfToken']! as String;
-  }
-}
-
-Map<String, Object?> _decodeSuccess(http.Response response) {
-  Map<String, Object?>? json;
-  try {
-    json = jsonDecode(response.body) as Map<String, Object?>;
-  } on Object {
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      throw const SettingsException('本机程序返回了无法读取的内容。');
-    }
-  }
-  if (response.statusCode < 200 || response.statusCode >= 300) {
-    throw SettingsException(json?['message'] as String? ?? '设置服务暂时不可用，请稍后重试。');
-  }
-  return json!;
 }

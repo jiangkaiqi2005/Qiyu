@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../baseline/host_api_gateway.dart';
+
 /// 条目来源的用户语言标签（与 Host 侧 wire 取值一一对应）。
 String memoryKindLabel(String kind) => switch (kind) {
   'concern' => '关注的事',
@@ -761,30 +763,28 @@ abstract interface class MemoryGateway {
   Future<MemoryActionResult> revealItem(String id, {String field = 'content'});
 }
 
-final class HttpMemoryGateway implements MemoryGateway {
-  HttpMemoryGateway({http.Client? client, Uri? baseUri})
-    : _client = client ?? http.Client(),
-      _baseUri = baseUri ?? Uri.base;
+final class HttpMemoryGateway extends HostApiGateway implements MemoryGateway {
+  HttpMemoryGateway({super.client, super.baseUri});
 
-  final http.Client _client;
-  final Uri _baseUri;
-  String? _csrfToken;
+  @override
+  Object errorFor(String message) => MemoryGatewayException(message);
+
+  @override
+  String get unavailableMessage => '记忆中心暂时不可用，请稍后重试。';
 
   @override
   Future<MemoryOverview> fetchOverview() async {
-    final response = await _client.get(_baseUri.resolve('/api/memory'));
-    return MemoryOverview.fromJson(_decodeSuccess(response));
+    final response = await httpClient.get(resolve('/api/memory'));
+    return MemoryOverview.fromJson(decodeSuccess(response));
   }
 
   @override
   Future<MemoryItemDetail?> fetchItemDetail(String id) async {
-    final response = await _client.get(
-      _baseUri.resolve('/api/memory/items/$id'),
-    );
+    final response = await httpClient.get(resolve('/api/memory/items/$id'));
     if (response.statusCode == 404) {
       return null;
     }
-    return MemoryItemDetail.fromJson(_decodeSuccess(response));
+    return MemoryItemDetail.fromJson(decodeSuccess(response));
   }
 
   @override
@@ -809,16 +809,15 @@ final class HttpMemoryGateway implements MemoryGateway {
 
   @override
   Future<MemoryDeleteImpact?> previewDelete(String id) async {
-    await _ensureBootstrap();
-    final response = await _client.post(
-      _baseUri.resolve('/api/memory/action'),
-      headers: {'content-type': 'application/json', 'x-qiyu-csrf': _csrfToken!},
+    final response = await httpClient.post(
+      resolve('/api/memory/action'),
+      headers: await modifyingHeaders(),
       body: jsonEncode({'action': 'delete-preview', 'id': id}),
     );
     if (response.statusCode == 404) {
       return null;
     }
-    return MemoryDeleteImpact.fromJson(_decodeSuccess(response));
+    return MemoryDeleteImpact.fromJson(decodeSuccess(response));
   }
 
   @override
@@ -832,13 +831,12 @@ final class HttpMemoryGateway implements MemoryGateway {
   }) => _action({'action': 'reveal', 'id': id, 'field': field});
 
   Future<MemoryActionResult> _action(Map<String, Object?> payload) async {
-    await _ensureBootstrap();
-    final response = await _client.post(
-      _baseUri.resolve('/api/memory/action'),
-      headers: {'content-type': 'application/json', 'x-qiyu-csrf': _csrfToken!},
+    final response = await httpClient.post(
+      resolve('/api/memory/action'),
+      headers: await modifyingHeaders(),
       body: jsonEncode(payload),
     );
-    final json = _decodePayload(response);
+    final json = _decodeActionPayload(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       // 错误响应体可能没有 status 字段：不信任解析结果，一律按
       // 可重试失败呈现，旧有效数据保持可用。
@@ -851,32 +849,14 @@ final class HttpMemoryGateway implements MemoryGateway {
     return MemoryActionResult.fromJson(json);
   }
 
-  Future<void> _ensureBootstrap() async {
-    if (_csrfToken != null) {
-      return;
-    }
-    final response = await _client.get(_baseUri.resolve('/api/bootstrap'));
-    final json = jsonDecode(response.body) as Map<String, Object?>;
-    _csrfToken = json['csrfToken']! as String;
-  }
-
-  Map<String, Object?> _decodeSuccess(http.Response response) {
-    final json = _decodePayload(response);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw MemoryGatewayException(
-        json['message'] as String? ?? '记忆中心暂时不可用，请稍后重试。',
-      );
-    }
-    return json;
-  }
-
-  /// 动作端点在 4xx 上也返回结构化结果（三态与错误码），解析
-  /// 失败才抛异常。
-  Map<String, Object?> _decodePayload(http.Response response) {
+  /// 动作端点在 4xx 上也返回结构化结果（三态与错误码），所以这里
+  /// 不能走底座「非 2xx 即抛」的成功解码：先取回响应体，状态码的
+  /// 判读交给 [_action]；解析失败才抛异常。
+  Map<String, Object?> _decodeActionPayload(http.Response response) {
     try {
       return jsonDecode(response.body) as Map<String, Object?>;
     } on Object {
-      throw const MemoryGatewayException('本机程序返回了无法读取的内容。');
+      throw errorFor('本机程序返回了无法读取的内容。');
     }
   }
 }
