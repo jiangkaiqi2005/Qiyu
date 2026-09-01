@@ -1088,7 +1088,7 @@ since: 2026-08-01
 <qiyu-actions>
 [{"action":"memory_freeze","summary":"加班"}]
 </qiyu-actions>''');
-      final freeze = parse.typedActions.single as MemoryFreezeAction;
+      final freeze = parse.actions.single as MemoryFreezeAction;
       expect(freeze.kind, HiddenActionKind.memoryFreeze);
       expect(freeze.title, '加班');
 
@@ -1101,7 +1101,7 @@ since: 2026-08-01
           '<qiyu-actions>[{"action":"$wireName","summary":"某件事"}]'
           '</qiyu-actions>',
         );
-        expect(single.typedActions, hasLength(1), reason: wireName);
+        expect(single.actions, hasLength(1), reason: wireName);
         expect(single.diagnostics, isEmpty, reason: wireName);
       }
     });
@@ -1116,7 +1116,7 @@ since: 2026-08-01
         final missing = parseHiddenActions(
           '<qiyu-actions>[{"action":"$wireName"}]</qiyu-actions>',
         );
-        expect(missing.typedActions, isEmpty, reason: wireName);
+        expect(missing.actions, isEmpty, reason: wireName);
         expect(
           missing.diagnostics,
           contains(HiddenActionDiagnostics.invalidFields),
@@ -1126,7 +1126,7 @@ since: 2026-08-01
           '<qiyu-actions>[{"action":"$wireName","summary":"密码: abc123"}]'
           '</qiyu-actions>',
         );
-        expect(secret.typedActions, isEmpty, reason: wireName);
+        expect(secret.actions, isEmpty, reason: wireName);
         expect(
           secret.diagnostics,
           contains(HiddenActionDiagnostics.sensitiveContent),

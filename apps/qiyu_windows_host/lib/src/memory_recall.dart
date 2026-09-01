@@ -477,9 +477,7 @@ final class RecallOrchestrator {
       return null;
     }
     final parsed = parseHiddenActions(text);
-    final action = parsed.typedActions
-        .whereType<MemoryRecallAction>()
-        .firstOrNull;
+    final action = parsed.actions.whereType<MemoryRecallAction>().firstOrNull;
     for (final diagnostic in parsed.diagnostics) {
       diagnostics.add('recall selection dropped [$diagnostic]');
     }

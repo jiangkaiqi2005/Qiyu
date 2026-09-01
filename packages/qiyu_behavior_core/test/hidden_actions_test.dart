@@ -6,7 +6,7 @@ void main() {
     final parse = parseHiddenActions('在。');
 
     expect(parse.visibleText, '在。');
-    expect(parse.typedActions, isEmpty);
+    expect(parse.actions, isEmpty);
     expect(parse.diagnostics, isEmpty);
   });
 
@@ -19,8 +19,8 @@ void main() {
 </qiyu-actions>''');
 
       expect(parse.visibleText, '嗯，面试前紧张很正常。');
-      expect(parse.typedActions, hasLength(1));
-      final signal = parse.typedActions.single as MemorySignalAction;
+      expect(parse.actions, hasLength(1));
+      final signal = parse.actions.single as MemorySignalAction;
       expect(signal.kind, HiddenActionKind.memorySignal);
       expect(signal.summary, '用户明天有面试');
       expect(signal.evidence, '明天要面试，有点紧张');
@@ -35,11 +35,11 @@ void main() {
   {"action":"no_action"}
 ]</qiyu-actions>''');
 
-    expect(parse.typedActions.map((action) => action.kind), [
+    expect(parse.actions.map((action) => action.kind), [
       HiddenActionKind.memoryRecall,
       HiddenActionKind.noAction,
     ]);
-    final recall = parse.typedActions.first as MemoryRecallAction;
+    final recall = parse.actions.first as MemoryRecallAction;
     expect(recall.query, '上次说的那本书');
     // 聊天轮的检索请求不带选择字段。
     expect(recall.months, isNull);
@@ -53,8 +53,8 @@ void main() {
       '"2026-07-14"]}]</qiyu-actions>',
     );
 
-    expect(parse.typedActions, hasLength(1));
-    final action = parse.typedActions.single as MemoryRecallAction;
+    expect(parse.actions, hasLength(1));
+    final action = parse.actions.single as MemoryRecallAction;
     expect(action.query, '火锅店');
     expect(action.months, ['2026-07']);
     expect(action.dates, ['2026-07-14']);
@@ -74,11 +74,8 @@ void main() {
       '"dates":[$dates]}]</qiyu-actions>',
     );
 
-    expect(parse.typedActions, hasLength(1));
-    expect(
-      (parse.typedActions.single as MemoryRecallAction).dates,
-      hasLength(40),
-    );
+    expect(parse.actions, hasLength(1));
+    expect((parse.actions.single as MemoryRecallAction).dates, hasLength(40));
     expect(parse.diagnostics, isEmpty);
   });
 
@@ -88,8 +85,8 @@ void main() {
       '"months":"2026-07"}]</qiyu-actions>',
     );
 
-    expect(parse.typedActions, hasLength(1));
-    expect((parse.typedActions.single as MemoryRecallAction).months, isNull);
+    expect(parse.actions, hasLength(1));
+    expect((parse.actions.single as MemoryRecallAction).months, isNull);
     expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
   });
 
@@ -100,7 +97,7 @@ void main() {
       '"query":${_json('密码: hunter2abc')}}]</qiyu-actions>',
     );
 
-    expect(parse.typedActions, isEmpty);
+    expect(parse.actions, isEmpty);
     expect(parse.diagnostics, [HiddenActionDiagnostics.privilegeViolation]);
   });
 
@@ -111,11 +108,8 @@ void main() {
   {"action":"memory_signal","summary":"用户喜欢热牛奶"}
 ]</qiyu-actions>''');
 
-    expect(parse.typedActions, hasLength(1));
-    expect(
-      (parse.typedActions.single as MemorySignalAction).summary,
-      '用户喜欢热牛奶',
-    );
+    expect(parse.actions, hasLength(1));
+    expect((parse.actions.single as MemorySignalAction).summary, '用户喜欢热牛奶');
     expect(parse.diagnostics, contains(HiddenActionDiagnostics.unknownAction));
   });
 
@@ -124,7 +118,7 @@ void main() {
 <qiyu-actions>{not json</qiyu-actions>''');
 
     expect(parse.visibleText, '在。');
-    expect(parse.typedActions, isEmpty);
+    expect(parse.actions, isEmpty);
     expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFormat]);
   });
 
@@ -132,7 +126,7 @@ void main() {
     final parse = parseHiddenActions('''在。
 <qiyu-actions>"memory_signal"</qiyu-actions>''');
 
-    expect(parse.typedActions, isEmpty);
+    expect(parse.actions, isEmpty);
     expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFormat]);
   });
 
@@ -140,14 +134,14 @@ void main() {
     final missing = parseHiddenActions(
       '<qiyu-actions>[{"action":"memory_signal"}]</qiyu-actions>',
     );
-    expect(missing.typedActions, isEmpty);
+    expect(missing.actions, isEmpty);
     expect(missing.diagnostics, [HiddenActionDiagnostics.invalidFields]);
 
     final oversized = parseHiddenActions(
       '<qiyu-actions>[{"action":"memory_signal","summary":"${'长' * 121}"}]'
       '</qiyu-actions>',
     );
-    expect(oversized.typedActions, isEmpty);
+    expect(oversized.actions, isEmpty);
     expect(oversized.diagnostics, [HiddenActionDiagnostics.invalidFields]);
   });
 
@@ -163,7 +157,7 @@ void main() {
         '<qiyu-actions>[{"action":"memory_signal","summary":${_json(summary)}}]'
         '</qiyu-actions>',
       );
-      expect(parse.typedActions, isEmpty, reason: summary);
+      expect(parse.actions, isEmpty, reason: summary);
       expect(
         parse.diagnostics,
         contains(HiddenActionDiagnostics.sensitiveContent),
@@ -183,7 +177,7 @@ void main() {
         '<qiyu-actions>[{"action":"memory_signal","summary":${_json(value)}}]'
         '</qiyu-actions>',
       );
-      expect(parse.typedActions, isEmpty, reason: value);
+      expect(parse.actions, isEmpty, reason: value);
       expect(
         parse.diagnostics,
         contains(HiddenActionDiagnostics.privilegeViolation),
@@ -200,7 +194,7 @@ void main() {
   {"action":"memory_signal","summary":"第三件"}
 ]</qiyu-actions>''');
 
-    expect(parse.typedActions, hasLength(2));
+    expect(parse.actions, hasLength(2));
     expect(parse.diagnostics, contains(HiddenActionDiagnostics.overLimit));
   });
 
@@ -213,8 +207,8 @@ void main() {
 <qiyu-actions>[{"action":"memory_signal","summary":"第二块"}]</qiyu-actions>''');
 
       expect(parse.visibleText, '在。\n\n中间的话。');
-      expect(parse.typedActions, hasLength(1));
-      expect(parse.typedActions.single.kind, HiddenActionKind.noAction);
+      expect(parse.actions, hasLength(1));
+      expect(parse.actions.single.kind, HiddenActionKind.noAction);
       expect(parse.diagnostics, [HiddenActionDiagnostics.multipleBlocks]);
     },
   );
@@ -234,7 +228,7 @@ void main() {
       '</QIYU-ACTIONS>',
     );
     expect(parse.visibleText, isEmpty);
-    expect(parse.typedActions, hasLength(1));
+    expect(parse.actions, hasLength(1));
   });
 
   test('an open-loop candidate keeps its four lifecycle fields', () {
@@ -244,8 +238,8 @@ void main() {
 </qiyu-actions>''');
 
     expect(parse.visibleText, '那到时候轻轻问一次。');
-    expect(parse.typedActions, hasLength(1));
-    final action = parse.typedActions.single as OpenLoopCandidateAction;
+    expect(parse.actions, hasLength(1));
+    final action = parse.actions.single as OpenLoopCandidateAction;
     expect(action.kind, HiddenActionKind.openLoopCandidate);
     expect(action.title, '人生第一次演讲');
     expect(action.due, '2026-07-05 晚上');
@@ -260,23 +254,23 @@ void main() {
       '<qiyu-actions>[{"action":"open_loop_candidate","summary":"事项",'
       '"due":"下周三"}]</qiyu-actions>',
     );
-    expect(badDue.typedActions, isEmpty);
+    expect(badDue.actions, isEmpty);
     expect(badDue.diagnostics, [HiddenActionDiagnostics.invalidFields]);
 
     final badProactive = parseHiddenActions(
       '<qiyu-actions>[{"action":"open_loop_candidate","summary":"事项",'
       '"proactive":"always"}]</qiyu-actions>',
     );
-    expect(badProactive.typedActions, isEmpty);
+    expect(badProactive.actions, isEmpty);
     expect(badProactive.diagnostics, [HiddenActionDiagnostics.invalidFields]);
 
     final bareDate = parseHiddenActions(
       '<qiyu-actions>[{"action":"open_loop_candidate","summary":"事项",'
       '"due":"2026-07-05"}]</qiyu-actions>',
     );
-    expect(bareDate.typedActions, hasLength(1));
+    expect(bareDate.actions, hasLength(1));
     expect(
-      (bareDate.typedActions.single as OpenLoopCandidateAction).due,
+      (bareDate.actions.single as OpenLoopCandidateAction).due,
       '2026-07-05',
     );
   });
@@ -286,8 +280,8 @@ void main() {
 <qiyu-actions>
 [{"action":"open_loop_status","summary":"人生第一次演讲","status":"closed","result":"用户说演讲很顺利"}]
 </qiyu-actions>''');
-    expect(parse.typedActions, hasLength(1));
-    final status = parse.typedActions.single as OpenLoopStatusAction;
+    expect(parse.actions, hasLength(1));
+    final status = parse.actions.single as OpenLoopStatusAction;
     expect(status.kind, HiddenActionKind.openLoopStatus);
     expect(status.title, '人生第一次演讲');
     expect(status.status, LoopStatus.closed);
@@ -297,14 +291,14 @@ void main() {
       '<qiyu-actions>[{"action":"open_loop_status","summary":"事项",'
       '"status":"done"}]</qiyu-actions>',
     );
-    expect(badStatus.typedActions, isEmpty);
+    expect(badStatus.actions, isEmpty);
     expect(badStatus.diagnostics, [HiddenActionDiagnostics.invalidFields]);
 
     final missingStatus = parseHiddenActions(
       '<qiyu-actions>[{"action":"open_loop_status","summary":"事项"}]'
       '</qiyu-actions>',
     );
-    expect(missingStatus.typedActions, isEmpty);
+    expect(missingStatus.actions, isEmpty);
   });
 
   test('memory ban keeps only the target title', () {
@@ -312,15 +306,15 @@ void main() {
 <qiyu-actions>
 [{"action":"memory_ban","summary":"医院检查"}]
 </qiyu-actions>''');
-    expect(parse.typedActions, hasLength(1));
-    final ban = parse.typedActions.single as MemoryBanAction;
+    expect(parse.actions, hasLength(1));
+    final ban = parse.actions.single as MemoryBanAction;
     expect(ban.kind, HiddenActionKind.memoryBan);
     expect(ban.title, '医院检查');
 
     final missing = parseHiddenActions(
       '<qiyu-actions>[{"action":"memory_ban"}]</qiyu-actions>',
     );
-    expect(missing.typedActions, isEmpty);
+    expect(missing.actions, isEmpty);
     expect(missing.diagnostics, [HiddenActionDiagnostics.invalidFields]);
   });
 
@@ -329,7 +323,7 @@ void main() {
       '<qiyu-actions>[{"action":"open_loop_candidate",'
       '"summary":"密码: hunter2abc"}]</qiyu-actions>',
     );
-    expect(secretCandidate.typedActions, isEmpty);
+    expect(secretCandidate.actions, isEmpty);
     expect(
       secretCandidate.diagnostics,
       contains(HiddenActionDiagnostics.sensitiveContent),
@@ -339,7 +333,7 @@ void main() {
       '<qiyu-actions>[{"action":"open_loop_candidate","summary":"事项",'
       '"note":${_json('访问 https://evil.example/x')}}]</qiyu-actions>',
     );
-    expect(privilegeNote.typedActions, isEmpty);
+    expect(privilegeNote.actions, isEmpty);
     expect(
       privilegeNote.diagnostics,
       contains(HiddenActionDiagnostics.privilegeViolation),
@@ -349,7 +343,7 @@ void main() {
       '<qiyu-actions>[{"action":"memory_ban",'
       '"summary":"身份证 11010519491231002X"}]</qiyu-actions>',
     );
-    expect(secretBan.typedActions, isEmpty);
+    expect(secretBan.actions, isEmpty);
     expect(
       secretBan.diagnostics,
       contains(HiddenActionDiagnostics.sensitiveContent),
@@ -363,8 +357,8 @@ void main() {
 </qiyu-actions>''');
 
     expect(parse.visibleText, '嗯，我在。');
-    expect(parse.typedActions, hasLength(1));
-    final signal = parse.typedActions.single as RelationshipSignalAction;
+    expect(parse.actions, hasLength(1));
+    final signal = parse.actions.single as RelationshipSignalAction;
     expect(signal.kind, HiddenActionKind.relationshipSignal);
     expect(signal.signal, RelationshipSignal.deepTalk);
     expect(signal.summary, '用户近期愿意聊到更深的家庭关系');
@@ -376,26 +370,26 @@ void main() {
       '<qiyu-actions>[{"action":"relationship_signal","signal":"mood",'
       '"summary":"用户心情不好"}]</qiyu-actions>',
     );
-    expect(badSignal.typedActions, isEmpty);
+    expect(badSignal.actions, isEmpty);
     expect(badSignal.diagnostics, [HiddenActionDiagnostics.invalidFields]);
 
     final missingSignal = parseHiddenActions(
       '<qiyu-actions>[{"action":"relationship_signal",'
       '"summary":"用户心情不好"}]</qiyu-actions>',
     );
-    expect(missingSignal.typedActions, isEmpty);
+    expect(missingSignal.actions, isEmpty);
 
     final missingSummary = parseHiddenActions(
       '<qiyu-actions>[{"action":"relationship_signal",'
       '"signal":"temperature"}]</qiyu-actions>',
     );
-    expect(missingSummary.typedActions, isEmpty);
+    expect(missingSummary.actions, isEmpty);
 
     final oversized = parseHiddenActions(
       '<qiyu-actions>[{"action":"relationship_signal",'
       '"signal":"deep_talk","summary":"${'深' * 61}"}]</qiyu-actions>',
     );
-    expect(oversized.typedActions, isEmpty);
+    expect(oversized.actions, isEmpty);
     expect(oversized.diagnostics, [HiddenActionDiagnostics.invalidFields]);
   });
 
@@ -405,7 +399,7 @@ void main() {
       '<qiyu-actions>[{"action":"relationship_signal",'
       '"signal":"boundary_close","summary":"用户回避了医院话题"}]</qiyu-actions>',
     );
-    expect(missingEvidence.typedActions, isEmpty);
+    expect(missingEvidence.actions, isEmpty);
     expect(missingEvidence.diagnostics, [
       HiddenActionDiagnostics.invalidFields,
     ]);
@@ -415,7 +409,7 @@ void main() {
       '"signal":"boundary_open","summary":"用户接受了轻调侃",'
       '"evidence":"被调侃后反逗了一句"}]</qiyu-actions>',
     );
-    expect(withEvidence.typedActions, hasLength(1));
+    expect(withEvidence.actions, hasLength(1));
 
     // 一轮最多一个 relationship_signal：第二条丢弃并记诊断。
     final duplicate = parseHiddenActions(
@@ -423,9 +417,9 @@ void main() {
       '"summary":"愿意聊家庭"},{"action":"relationship_signal",'
       '"signal":"temperature","summary":"今晚话少"}]</qiyu-actions>',
     );
-    expect(duplicate.typedActions, hasLength(1));
+    expect(duplicate.actions, hasLength(1));
     expect(
-      (duplicate.typedActions.single as RelationshipSignalAction).summary,
+      (duplicate.actions.single as RelationshipSignalAction).summary,
       '愿意聊家庭',
     );
     expect(duplicate.diagnostics, [
@@ -439,8 +433,8 @@ void main() {
 [{"action":"memory_signal","summary":"用户养了一只叫米子的猫","branch":"identity","nature":"self_report"}]
 </qiyu-actions>''');
 
-    expect(parse.typedActions, hasLength(1));
-    final signal = parse.typedActions.single as MemorySignalAction;
+    expect(parse.actions, hasLength(1));
+    final signal = parse.actions.single as MemorySignalAction;
     expect(signal.kind, HiddenActionKind.memorySignal);
     expect(signal.hint?.branch, PersonaTreeBranch.identity);
     expect(signal.hint?.nature, PersonaNature.selfReport);
@@ -453,15 +447,12 @@ void main() {
       '<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢爬山",'
       '"branch":"hobby","nature":"behavior"}]</qiyu-actions>',
     );
-    expect(unknownBranch.typedActions, hasLength(1));
+    expect(unknownBranch.actions, hasLength(1));
     expect(
-      (unknownBranch.typedActions.single as MemorySignalAction).summary,
+      (unknownBranch.actions.single as MemorySignalAction).summary,
       '用户喜欢爬山',
     );
-    expect(
-      (unknownBranch.typedActions.single as MemorySignalAction).hint,
-      isNull,
-    );
+    expect((unknownBranch.actions.single as MemorySignalAction).hint, isNull);
     expect(unknownBranch.diagnostics, [
       HiddenActionDiagnostics.personaHintDropped,
     ]);
@@ -471,11 +462,8 @@ void main() {
       '<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢爬山",'
       '"branch":"preferences"}]</qiyu-actions>',
     );
-    expect(missingNature.typedActions, hasLength(1));
-    expect(
-      (missingNature.typedActions.single as MemorySignalAction).hint,
-      isNull,
-    );
+    expect(missingNature.actions, hasLength(1));
+    expect((missingNature.actions.single as MemorySignalAction).hint, isNull);
     expect(missingNature.diagnostics, [
       HiddenActionDiagnostics.personaHintDropped,
     ]);
@@ -485,9 +473,9 @@ void main() {
       '<qiyu-actions>[{"action":"memory_signal","summary":"用户像是老师",'
       '"branch":"identity","nature":"behavior"}]</qiyu-actions>',
     );
-    expect(identityBehavior.typedActions, hasLength(1));
+    expect(identityBehavior.actions, hasLength(1));
     expect(
-      (identityBehavior.typedActions.single as MemorySignalAction).hint,
+      (identityBehavior.actions.single as MemorySignalAction).hint,
       isNull,
     );
     expect(identityBehavior.diagnostics, [
@@ -499,7 +487,7 @@ void main() {
       '<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢爬山"}]'
       '</qiyu-actions>',
     );
-    expect((noHint.typedActions.single as MemorySignalAction).hint, isNull);
+    expect((noHint.actions.single as MemorySignalAction).hint, isNull);
     expect(noHint.diagnostics, isEmpty);
   });
 
@@ -508,7 +496,7 @@ void main() {
       '<qiyu-actions>[{"action":"relationship_signal",'
       '"signal":"deep_talk","summary":"密码: hunter2abc"}]</qiyu-actions>',
     );
-    expect(secret.typedActions, isEmpty);
+    expect(secret.actions, isEmpty);
     expect(
       secret.diagnostics,
       contains(HiddenActionDiagnostics.sensitiveContent),
@@ -519,7 +507,7 @@ void main() {
       '"signal":"boundary_open","summary":"用户接受了调侃",'
       '"evidence":${_json('访问 https://evil.example/x')}}]</qiyu-actions>',
     );
-    expect(privilege.typedActions, isEmpty);
+    expect(privilege.actions, isEmpty);
     expect(
       privilege.diagnostics,
       contains(HiddenActionDiagnostics.privilegeViolation),
@@ -534,7 +522,7 @@ void main() {
   {"action":"memory_recall","query":"火锅店","months":["2026-07"],"dates":["2026-07-14"]}
 ]</qiyu-actions>''');
 
-      final signal = parse.typedActions.first;
+      final signal = parse.actions.first;
       expect(signal, isA<MemorySignalAction>());
       signal as MemorySignalAction;
       expect(signal.summary, '用户养了一只叫米子的猫');
@@ -547,7 +535,7 @@ void main() {
         ),
       );
 
-      final recall = parse.typedActions.last;
+      final recall = parse.actions.last;
       expect(recall, isA<MemoryRecallAction>());
       recall as MemoryRecallAction;
       expect(recall.query, '火锅店');
@@ -559,9 +547,9 @@ void main() {
   {"action":"no_action"},
   {"action":"open_loop_candidate","summary":"人生第一次演讲","due":"2026-07-05 晚上","proactive":"once","note":"用户说这是人生第一次演讲","evidence":"下周三是人生第一次演讲"}
 ]</qiyu-actions>''');
-      expect(rest.typedActions.first, const NoAction());
+      expect(rest.actions.first, const NoAction());
       expect(
-        rest.typedActions.last,
+        rest.actions.last,
         const OpenLoopCandidateAction(
           title: '人生第一次演讲',
           evidence: '下周三是人生第一次演讲',
@@ -577,7 +565,7 @@ void main() {
         '"result":"用户说演讲很顺利"}]</qiyu-actions>',
       );
       expect(
-        status.typedActions.single,
+        status.actions.single,
         const OpenLoopStatusAction(
           title: '人生第一次演讲',
           status: LoopStatus.closed,
@@ -590,11 +578,8 @@ void main() {
   {"action":"memory_ban","summary":"医院检查"},
   {"action":"memory_forget","summary":"今晚的争吵"}
 ]</qiyu-actions>''');
-      expect(controls.typedActions.first, const MemoryBanAction(title: '医院检查'));
-      expect(
-        controls.typedActions.last,
-        const MemoryForgetAction(title: '今晚的争吵'),
-      );
+      expect(controls.actions.first, const MemoryBanAction(title: '医院检查'));
+      expect(controls.actions.last, const MemoryForgetAction(title: '今晚的争吵'));
 
       final moreControls = parseHiddenActions('''好。
 <qiyu-actions>[
@@ -602,11 +587,11 @@ void main() {
   {"action":"memory_unfreeze","summary":"换工作话题"}
 ]</qiyu-actions>''');
       expect(
-        moreControls.typedActions.first,
+        moreControls.actions.first,
         const MemoryFreezeAction(title: '换工作话题'),
       );
       expect(
-        moreControls.typedActions.last,
+        moreControls.actions.last,
         const MemoryUnfreezeAction(title: '换工作话题'),
       );
 
@@ -614,10 +599,7 @@ void main() {
         '<qiyu-actions>[{"action":"memory_delete","summary":"医院检查"}]'
         '</qiyu-actions>',
       );
-      expect(
-        delete.typedActions.single,
-        const MemoryDeleteAction(title: '医院检查'),
-      );
+      expect(delete.actions.single, const MemoryDeleteAction(title: '医院检查'));
 
       final relationship = parseHiddenActions(
         '<qiyu-actions>[{"action":"relationship_signal",'
@@ -625,7 +607,7 @@ void main() {
         '"evidence":"被调侃后反逗了一句"}]</qiyu-actions>',
       );
       expect(
-        relationship.typedActions.single,
+        relationship.actions.single,
         const RelationshipSignalAction(
           summary: '用户接受了轻调侃',
           signal: RelationshipSignal.boundaryOpen,
@@ -639,7 +621,7 @@ void main() {
         '<qiyu-actions>[{"action":"memory_signal","summary":"用户像是老师",'
         '"branch":"identity","nature":"behavior"}]</qiyu-actions>',
       );
-      final signal = parse.typedActions.single;
+      final signal = parse.actions.single;
       expect(signal, isA<MemorySignalAction>());
       expect((signal as MemorySignalAction).hint, isNull);
       expect(parse.diagnostics, [HiddenActionDiagnostics.personaHintDropped]);

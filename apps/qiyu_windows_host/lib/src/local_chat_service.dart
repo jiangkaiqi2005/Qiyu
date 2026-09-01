@@ -518,7 +518,7 @@ final class LocalChatService {
         // 动作只在 runtime 内部流转，绝不进入交付事件。
         final parsed = rawText == null ? null : parseHiddenActions(rawText);
         if (parsed != null) {
-          hiddenActions = parsed.typedActions;
+          hiddenActions = parsed.actions;
           for (final diagnostic in parsed.diagnostics) {
             _diagnosticsSink(
               'hidden-action dropped [$diagnostic] request=$trimmedRequestId',
