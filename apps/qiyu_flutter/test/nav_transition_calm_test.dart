@@ -8,11 +8,15 @@ import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/history/history_client.dart';
+import 'package:qiyu_flutter/features/history/history_view.dart';
 import 'package:qiyu_flutter/features/history/history_view_model.dart';
 import 'package:qiyu_flutter/features/memory/memory_client.dart';
+import 'package:qiyu_flutter/features/memory/memory_view.dart';
 import 'package:qiyu_flutter/features/memory/memory_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
+import 'package:qiyu_flutter/features/settings/diagnostics_view.dart';
+import 'package:qiyu_flutter/features/settings/privacy_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
@@ -157,6 +161,89 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(QiyuShell), findsNothing, reason: '隐私页不挂壳');
       expect(find.byKey(const Key('privacy-back')), findsOneWidget);
+    });
+  });
+
+  group('页内详情进出的稳定（修复：整页动画跳闪）', () {
+    // 四条不挂壳的页内详情：(location, 返回键, 视图类型)。
+    const detailRoutes = <(String, String, Type)>[
+      ('/history/session-1', 'history-session-back', HistorySessionView),
+      ('/memory/item/item-1', 'memory-item-back', MemoryItemView),
+      ('/settings/diagnostics', 'diagnostics-back', DiagnosticsView),
+      ('/privacy', 'privacy-back', PrivacyView),
+    ];
+
+    testWidgets('四条详情路由的过渡时长全为零：默认整页过渡无处重放', (tester) async {
+      await _pumpDesktop(tester);
+      final router = GoRouter.of(tester.element(find.byType(QiyuShell)));
+
+      for (final (location, backKey, _) in detailRoutes) {
+        router.push(location);
+        await tester.pumpAndSettle();
+        final route = ModalRoute.of(tester.element(find.byKey(Key(backKey))));
+        expect(route, isNotNull, reason: location);
+        expect(
+          route!.transitionDuration,
+          Duration.zero,
+          reason: '$location 进场不得有整页过渡',
+        );
+        expect(
+          route.reverseTransitionDuration,
+          Duration.zero,
+          reason: '$location 退场不得有整页过渡',
+        );
+
+        await tester.tap(find.byKey(Key(backKey)));
+        await tester.pumpAndSettle();
+      }
+    });
+
+    testWidgets('进入详情第一帧即满幅落定：不得处于缩放/淡入途中', (tester) async {
+      await _pumpDesktop(tester);
+      final router = GoRouter.of(tester.element(find.byType(QiyuShell)));
+      final brand = find.byKey(const Key('nav-brand'));
+      final brandRect = tester.getRect(brand);
+
+      // push（openInFront 目标不在栈时的生产路径）推进诊断页：过渡的
+      // 第一帧就必须是落定态。默认 MaterialPage 过渡第一帧还在缩放淡入
+      // 途中，这里判红。
+      router.push('/settings/diagnostics');
+      await tester.pump();
+      final firstFrame = tester.getRect(find.byType(DiagnosticsView));
+      await tester.pump(const Duration(milliseconds: 100));
+      final midFrame = tester.getRect(find.byType(DiagnosticsView));
+      await tester.pumpAndSettle();
+      final settled = tester.getRect(find.byType(DiagnosticsView));
+      expect(firstFrame, settled, reason: '第一帧必须已落定，不得处于整页过渡途中');
+      expect(midFrame, settled, reason: '过渡途中不得有整页位移或缩放');
+
+      await tester.tap(find.byKey(const Key('diagnostics-back')));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(brand), brandRect, reason: '返回后侧边栏原位');
+    });
+
+    testWidgets('点返回键一帧即回壳页：详情页无退场残留，壳层矩形原位', (tester) async {
+      await _pumpDesktop(tester);
+      final router = GoRouter.of(tester.element(find.byType(QiyuShell)));
+      final brand = find.byKey(const Key('nav-brand'));
+      final brandRect = tester.getRect(brand);
+      final home = _location(tester);
+
+      for (final (location, backKey, viewType) in detailRoutes) {
+        router.push(location);
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(Key(backKey)));
+        await tester.pump();
+        expect(
+          find.byType(viewType),
+          findsNothing,
+          reason: '$location 返回第一帧即消失，不得有退场动画残留',
+        );
+        await tester.pumpAndSettle();
+        expect(_location(tester), home, reason: '$location 弹回的是压上去前的壳页');
+        expect(tester.getRect(brand), brandRect, reason: '$location 返回后侧边栏原位');
+      }
     });
   });
 }
