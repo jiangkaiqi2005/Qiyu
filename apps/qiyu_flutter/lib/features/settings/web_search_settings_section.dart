@@ -19,10 +19,9 @@ import 'web_search_settings_view_model.dart';
 /// 异步编排（网关调用、加载与错误态）仍归 [WebSearchSettingsViewModel]。
 
 /// 联网搜索领域的表单控制器：Key 输入框的控制器与焦点、已保存设置
-/// 的同步、草稿校验与保存编排。
+/// 的同步、草稿读取与保存编排。
 ///
-/// 本类不是 widget，也不持有任何 UI 呈现；错误提示等「怎么说给人听」
-/// 的呈现通过 [readDraftOrReport] 的回调交给区块 widget。
+/// 本类不是 widget，也不持有任何 UI 呈现。
 final class WebSearchSettingsForm {
   WebSearchSettingsForm();
 
@@ -54,11 +53,8 @@ final class WebSearchSettingsForm {
   }
 
   /// 读草稿：Key 去除首尾空白，空白等价于「不换 Key」（存 null）。
-  /// 本领域暂无必填校验；将来新增校验时经 [report] 给出人话并返回
-  /// null——呈现方式（SnackBar）由区块决定。
-  WebSearchSettingsDraft? readDraftOrReport(
-    void Function(String message) report,
-  ) {
+  /// 本领域没有必填校验，草稿永远合法，返回值不为空。
+  WebSearchSettingsDraft readDraft() {
     final key = apiKeyController.text.trim();
     return WebSearchSettingsDraft(apiKey: key.isEmpty ? null : key);
   }
@@ -67,8 +63,7 @@ final class WebSearchSettingsForm {
   /// 草稿，不让明文留在输入框（失败时页面显示人话错误，Key 不回填）。
   /// 返回是否真的保存成功。
   Future<bool> save(WebSearchSettingsViewModel viewModel) async {
-    final draft = readDraftOrReport((_) {});
-    final saved = await viewModel.save(draft!);
+    final saved = await viewModel.save(readDraft());
     if (!_disposed) {
       apiKeyController.clear();
     }
@@ -95,33 +90,15 @@ class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection> {
   }
 
   Future<void> _confirmForgetKey(WebSearchSettingsViewModel viewModel) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmSettingsForgetKey(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('web-search-forget-key-dialog'),
-        title: const Text('忘记 AnySearch API Key？'),
-        content: const Text(
+      keyPrefix: 'web-search-',
+      title: '忘记 AnySearch API Key？',
+      content:
           '忘记后本机不再保存这个 Key，联网搜索会立即停用，'
           '普通聊天仍可照常使用。',
-        ),
-        actions: [
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('web-search-forget-key-cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('再想想'),
-            ),
-          ),
-          FilledButton(
-            key: const Key('web-search-forget-key-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('忘记 Key'),
-          ),
-        ],
-      ),
     );
-    if (confirmed == true) {
+    if (confirmed) {
       await viewModel.forgetApiKey();
     }
   }

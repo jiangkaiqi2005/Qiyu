@@ -8,7 +8,8 @@ import '../accessibility.dart';
 import '../shell/qiyu_widgets.dart';
 
 /// 设置页各分节共享的壳层：分节 id 名单、折叠状态下发、阅读式分节板、
-/// 分节头与几枚各领域共用的表单元件（受控下拉、结果横幅、忙碌图标）。
+/// 分节头与几枚各领域共用的表单元件与小机制（受控下拉、结果横幅、忙碌
+/// 图标、忘记 Key 确认框、校验结论播报）。
 ///
 /// 这里只有**页面级的呈现骨架**，不含任何领域的表单状态、校验或保存
 /// 编排——那些在各自的领域模块（`provider_settings_section.dart` 等）里。
@@ -310,6 +311,56 @@ Widget settingsBusyOr(bool busy, IconData icon) => busy
         child: CircularProgressIndicator(strokeWidth: 2),
       )
     : Icon(icon);
+
+/// 领域校验结论的页面呈现：SnackBar 播报。带草稿校验的领域（模型连接、
+/// 语音朗读、语音输入）都以这一种形态播报校验失败，机制收拢为这一处；
+/// 表单持有的 `void Function(String)` 回调由区块闭包绑定 [context] 后
+/// 转来，本件只管「怎么说给人听」。
+void showSettingsSnackBar(BuildContext context, String message) {
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+}
+
+/// 「忘记已保存 Key」的确认对话框：AlertDialog＋「再想想 / 忘记 Key」
+/// 两枚按钮＋`pop(bool)`，四个凭据领域（模型连接、语音朗读、语音输入、
+/// 联网搜索）逐字同构，机制收在这里，各领域只带标题与正文文案；取消与
+/// 确认的固定字样、确认键的破坏性形态（FilledButton）也一并固定，避免
+/// 四处漂移。
+///
+/// [keyPrefix] 只用于拼测试定位键（`<prefix>forget-key-dialog` 等）；
+/// 模型连接域的既有键没有领域前缀，传空串沿用。返回用户是否确认——
+/// 取消与摸掉对话框都算未确认；确认后的领域动作（`forgetApiKey`）由
+/// 调用方接手，壳层不碰任何一节的视图模型。
+Future<bool> confirmSettingsForgetKey({
+  required BuildContext context,
+  required String keyPrefix,
+  required String title,
+  required String content,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      key: Key('${keyPrefix}forget-key-dialog'),
+      title: Text(title),
+      content: Text(content),
+      actions: [
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            key: Key('${keyPrefix}forget-key-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('再想想'),
+          ),
+        ),
+        FilledButton(
+          key: Key('${keyPrefix}forget-key-confirm'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('忘记 Key'),
+        ),
+      ],
+    ),
+  );
+  return confirmed ?? false;
+}
 
 /// 各设置领域共用的受控下拉：外层 [InputDecorator] 撑起与文本框一致的
 /// 标签与边框，内层下拉去下划线铺满。

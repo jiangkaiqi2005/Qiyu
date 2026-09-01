@@ -183,40 +183,19 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
   }
 
   /// 领域校验结论的呈现：SnackBar 播报。
-  void _reportInvalidDraft(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
-  }
+  void _reportInvalidDraft(String message) =>
+      showSettingsSnackBar(context, message);
 
   Future<void> _confirmForgetKey(SttSettingsViewModel viewModel) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmSettingsForgetKey(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('stt-forget-key-dialog'),
-        title: const Text('忘记语音服务的 API Key？'),
-        content: const Text(
+      keyPrefix: 'stt-',
+      title: '忘记语音服务的 API Key？',
+      content:
           '忘记后本机不再保存这个 Key，语音输入暂时不可用，直到你重新输入。'
           '语音服务的地址和模型不受影响。',
-        ),
-        actions: [
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('stt-forget-key-cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('再想想'),
-            ),
-          ),
-          FilledButton(
-            key: const Key('stt-forget-key-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('忘记 Key'),
-          ),
-        ],
-      ),
     );
-    if (confirmed == true) {
+    if (confirmed) {
       await viewModel.forgetApiKey();
     }
   }

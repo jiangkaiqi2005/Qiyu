@@ -228,44 +228,24 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
   }
 
   /// 领域校验结论的呈现：SnackBar 播报。
-  void _reportInvalidDraft(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
-  }
+  void _reportInvalidDraft(String message) =>
+      showSettingsSnackBar(context, message);
 
   Future<void> _save(ProviderSettingsViewModel viewModel) async {
     await _form.save(viewModel, report: _reportInvalidDraft);
   }
 
   Future<void> _confirmForgetKey(ProviderSettingsViewModel viewModel) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmSettingsForgetKey(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('forget-key-dialog'),
-        title: const Text('忘记已保存的 API Key？'),
-        content: const Text(
+      // 模型连接域的对话框定位键没有领域前缀（历史如此），空串沿用。
+      keyPrefix: '',
+      title: '忘记已保存的 API Key？',
+      content:
           '忘记后本机不再保存这个 Key，栖语将无法调用模型服务，'
           '直到你重新输入。模型连接的其他设置不受影响。',
-        ),
-        actions: [
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('forget-key-cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('再想想'),
-            ),
-          ),
-          FilledButton(
-            key: const Key('forget-key-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('忘记 Key'),
-          ),
-        ],
-      ),
     );
-    if (confirmed == true) {
+    if (confirmed) {
       await viewModel.forgetApiKey();
     }
   }

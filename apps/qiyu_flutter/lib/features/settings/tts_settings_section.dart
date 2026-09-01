@@ -255,40 +255,19 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
   }
 
   /// 领域校验结论的呈现：SnackBar 播报。
-  void _reportInvalidDraft(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
-  }
+  void _reportInvalidDraft(String message) =>
+      showSettingsSnackBar(context, message);
 
   Future<void> _confirmForgetKey(TtsSettingsViewModel viewModel) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmSettingsForgetKey(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('tts-forget-key-dialog'),
-        title: const Text('忘记语音合成的 API Key？'),
-        content: const Text(
+      keyPrefix: 'tts-',
+      title: '忘记语音合成的 API Key？',
+      content:
           '忘记后本机不再保存这个 Key，栖语暂时读不出声，直到你重新输入。'
           '语音合成服务的地址、模型、音色和语速不受影响。',
-        ),
-        actions: [
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('tts-forget-key-cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('再想想'),
-            ),
-          ),
-          FilledButton(
-            key: const Key('tts-forget-key-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('忘记 Key'),
-          ),
-        ],
-      ),
     );
-    if (confirmed == true) {
+    if (confirmed) {
       await viewModel.forgetApiKey();
     }
   }
