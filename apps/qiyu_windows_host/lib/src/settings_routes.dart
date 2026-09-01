@@ -5,11 +5,9 @@ import 'package:shelf/shelf.dart';
 
 import 'api_http.dart';
 import 'developer_diagnostics.dart';
-import 'local_chat_service.dart';
 import 'local_data_service.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
-import 'secret_store.dart';
 import 'stt_settings_service.dart';
 import 'tts_settings_service.dart';
 import 'web_search_settings_service.dart';
@@ -40,33 +38,14 @@ final class SettingsRoutes implements ApiRoutes {
 
   @override
   Future<Response?> handle(Request request) async {
+    // 本领域没有共享口径之外的异常差异：请求体不可读、invalid_request、
+    // Provider 配置与凭据库故障、本地数据故障全走共享翻译前导。
     try {
       return await _route(request);
-    } on FormatException {
-      return invalidRequestBodyResponse();
-    } on LocalChatException catch (error) {
-      return localChatErrorResponse(error);
-    } on ProviderConfigException catch (error) {
-      return jsonError(
-        HttpStatus.badRequest,
-        code: 'invalid_provider_config',
-        message: error.message,
-        retryable: false,
-      );
-    } on SecretStoreException catch (error) {
-      return jsonError(
-        HttpStatus.internalServerError,
-        code: 'credential_store_error',
-        message: error.message,
-        retryable: true,
-      );
-    } on LocalDataException catch (error) {
-      return jsonError(
-        HttpStatus.internalServerError,
-        code: 'local_data_error',
-        message: error.message,
-        retryable: true,
-      );
+    } on Object catch (error) {
+      final shared = sharedApiErrorResponse(error);
+      if (shared == null) rethrow;
+      return shared;
     }
   }
 

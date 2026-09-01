@@ -7,10 +7,7 @@ import 'package:shelf/shelf.dart';
 import 'api_http.dart';
 import 'local_chat_service.dart';
 import 'local_data_service.dart';
-import 'markdown_memory_repository.dart';
 import 'memory_backup.dart';
-import 'provider_config.dart';
-import 'secret_store.dart';
 
 /// 备份与数据管理领域路由：Markdown 备份的导出/导入/预览/快照/回滚，
 /// 以及「清除产品数据」的影响预览与执行。
@@ -30,12 +27,10 @@ final class BackupRoutes implements ApiRoutes {
 
   @override
   Future<Response?> handle(Request request) async {
+    // 领域差异只有备份包校验失败；请求体不可读、invalid_request、
+    // Provider 配置与凭据库故障、本地数据与记忆仓储故障走共享翻译前导。
     try {
       return await _route(request);
-    } on FormatException {
-      return invalidRequestBodyResponse();
-    } on LocalChatException catch (error) {
-      return localChatErrorResponse(error);
     } on BackupValidationException catch (error) {
       return jsonError(
         HttpStatus.badRequest,
@@ -43,29 +38,10 @@ final class BackupRoutes implements ApiRoutes {
         message: error.message,
         retryable: false,
       );
-    } on ProviderConfigException catch (error) {
-      return jsonError(
-        HttpStatus.badRequest,
-        code: 'invalid_provider_config',
-        message: error.message,
-        retryable: false,
-      );
-    } on SecretStoreException catch (error) {
-      return jsonError(
-        HttpStatus.internalServerError,
-        code: 'credential_store_error',
-        message: error.message,
-        retryable: true,
-      );
-    } on LocalDataException catch (error) {
-      return jsonError(
-        HttpStatus.internalServerError,
-        code: 'local_data_error',
-        message: error.message,
-        retryable: true,
-      );
-    } on MemoryRepositoryException catch (error) {
-      return memoryRepositoryErrorResponse(error);
+    } on Object catch (error) {
+      final shared = sharedApiErrorResponse(error);
+      if (shared == null) rethrow;
+      return shared;
     }
   }
 

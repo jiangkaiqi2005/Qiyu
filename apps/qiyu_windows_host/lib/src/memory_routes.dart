@@ -4,8 +4,6 @@ import 'dart:io';
 import 'package:shelf/shelf.dart';
 
 import 'api_http.dart';
-import 'local_chat_service.dart';
-import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
@@ -28,14 +26,15 @@ final class MemoryRoutes implements ApiRoutes {
 
   @override
   Future<Response?> handle(Request request) async {
+    // 本领域没有共享口径之外的异常差异：请求体不可读、invalid_request、
+    // 记忆仓储故障全走共享翻译前导；动作结果码到 HTTP 状态的映射在
+    // _route 内按动作完成。
     try {
       return await _route(request);
-    } on FormatException {
-      return invalidRequestBodyResponse();
-    } on LocalChatException catch (error) {
-      return localChatErrorResponse(error);
-    } on MemoryRepositoryException catch (error) {
-      return memoryRepositoryErrorResponse(error);
+    } on Object catch (error) {
+      final shared = sharedApiErrorResponse(error);
+      if (shared == null) rethrow;
+      return shared;
     }
   }
 
