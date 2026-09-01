@@ -502,6 +502,59 @@ void main() {
         );
       }
     });
+
+    testWidgets('写入挂起期间：详情字段旁揭示入口与列表侧揭示按钮同步灰掉', (tester) async {
+      final gateway = _HoldGateway()..revealText = '揭示出的原文';
+      final viewModel = MemoryCenterViewModel(gateway, autoStart: false);
+      await pumpBothSides(
+        tester,
+        gateway,
+        viewModel,
+        stateTag: 'masked',
+        control: null,
+        masked: true,
+      );
+      final detailReveal = find.descendant(
+        of: find.byKey(Key('consistency-detail-$detailTag')),
+        matching: find.byKey(const Key('memory-reveal-content')),
+      );
+      expect(tester.widget<TextButton>(detailReveal).onPressed, isNotNull);
+
+      // 揭示只取一次原文、不置忙碌态，busy 由写入动作驱动：挂起一个
+      // 冻结，两侧揭示入口应按同一份计划的 busy 规则同步灰掉。
+      gateway.hold = Completer<MemoryActionResult>();
+      await tester.tap(listAction('freeze'));
+      await tester.pump();
+      expect(gateway.calls, contains('freeze:e1'));
+      expect(
+        tester.widget<IconButton>(listAction('reveal')).onPressed,
+        isNull,
+        reason: '列表侧揭示按钮 busy 灰掉',
+      );
+      expect(
+        tester.widget<TextButton>(detailReveal).onPressed,
+        isNull,
+        reason: '详情字段旁揭示入口 busy 灰掉',
+      );
+
+      gateway.hold!.complete(
+        const MemoryActionResult(
+          status: MemoryActionStatus.success,
+          message: '好了。',
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<IconButton>(listAction('reveal')).onPressed,
+        isNotNull,
+        reason: '列表侧揭示按钮恢复可点',
+      );
+      expect(
+        tester.widget<TextButton>(detailReveal).onPressed,
+        isNotNull,
+        reason: '详情字段旁揭示入口恢复可点',
+      );
+    });
   });
 }
 

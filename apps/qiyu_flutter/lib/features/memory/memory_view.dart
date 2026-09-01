@@ -698,12 +698,27 @@ class _MemoryItemViewState extends State<MemoryItemView> {
           borderRadius: QiyuRadii.circleBorder,
           child: TextButton(
             key: Key('memory-reveal-$field'),
-            onPressed: () => unawaited(_reveal(field)),
+            onPressed: _revealEnabled()
+                ? () => unawaited(_reveal(field))
+                : null,
             child: const Text('临时查看'),
           ),
         ),
       ],
     );
+  }
+
+  /// 字段旁揭示入口的可点性，与列表侧揭示按钮取同一份计划：在场性
+  /// 由本方法只在遮罩分支被调用给出（计划里 reveal 的在场条件就是
+  /// 遮罩，快照如实带这一态）；控制状态不参与揭示的可用性，条目被
+  /// 暂停或禁提时入口照给，与列表一致。busy 期间与列表按钮同步灰掉
+  /// ——同一计划的 busy 规则，一处可点另一处灰掉的矛盾在这里杜绝。
+  bool _revealEnabled() {
+    final plan = MemoryActionPlan(
+      state: const MemoryItemActionState(control: null, masked: true),
+      busy: context.watch<MemoryCenterViewModel>().acting,
+    );
+    return plan.enabled(MemoryAction.reveal);
   }
 
   List<Widget> _episodeEntryBody(
@@ -987,7 +1002,7 @@ class _MemoryHeaderLine extends StatelessWidget {
   /// 左侧信息簇：状态芯片、正文或证据行。
   final Widget leading;
 
-  /// 右侧簇，按传入顺序排入（时间戳 / 说明文字，最后是 [_MemoryActionButtons]）。
+  /// 右侧簇，按传入顺序排入（时间戳 / 说明文字，最后是 [MemoryActionButtons]）。
   /// 传空表是真实语义：状态包行只读，右侧没有任何东西（T24 定稿），此时整行
   /// 只剩左侧信息簇。
   final List<Widget> trailing;

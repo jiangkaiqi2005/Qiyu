@@ -57,8 +57,9 @@ final class MemoryItemActionState {
 enum MemoryActionConfirmation { none, ban, delete }
 
 /// 定型动作计划：**唯一一份**「可用性 × 确认」矩阵。列表按钮与详情页
-/// 动作都从这里取在场与可点，不各自维护一套条件——一处可点、另一处
-/// 灰掉的矛盾从这里杜绝。
+/// 动作都从这里取在场与可点，执行器也从这里取确认要求来分派确认
+/// 流程，不各自维护一套条件——一处可点另一处灰掉、确认要求两份口径
+/// 的矛盾都从这里杜绝。
 final class MemoryActionPlan {
   const MemoryActionPlan({required this.state, this.busy = false});
 
@@ -83,6 +84,9 @@ final class MemoryActionPlan {
   /// 该动作此刻是否可点：在场且没有写入动作挂起。
   bool enabled(MemoryAction action) => offered(action) && !busy;
 
+  /// 该动作的确认要求：动作的定型属性、不随条目状态变化（T25 定稿
+  /// 对所有条目一视同仁），任意状态快照上查询等价——执行器据此分派
+  /// 确认流程，动作是否需要确认只在这里回答一次。
   MemoryActionConfirmation confirmationOf(MemoryAction action) =>
       switch (action) {
         MemoryAction.ban => MemoryActionConfirmation.ban,
@@ -98,7 +102,10 @@ final class MemoryActionPlan {
 }
 
 /// 记忆动作执行器：唯一一份「确认 → 执行 → 反馈」流程，列表按钮与
-/// 详情页动作都从它走。
+/// 详情页动作都从它走。确认要求只认 [MemoryActionPlan.confirmationOf]
+/// 这一份矩阵：计划要求确认的动作先过各自的确认对话框，取消不产生
+/// 任何动作；计划放行的动作才进入直接执行分派。新增需确认动作时只
+/// 改计划矩阵并提供对应流程，这里不再各写一份「动作 → 是否确认」。
 ///
 /// 上下文存活防护统一收在这里：发起动作的界面（列表条目或详情页）在
 /// 任一 await 之后已销毁时，续段立即收手——不再弹对话框、不再落揭示
@@ -118,6 +125,11 @@ Future<void> runMemoryAction(
   // await 之前取齐全部上下文依赖：viewModel 与 messenger。
   final viewModel = context.read<MemoryCenterViewModel>();
   final messenger = ScaffoldMessenger.of(context);
+  // 确认要求不随条目状态变化（见 [MemoryActionPlan.confirmationOf]），
+  // 用任意状态快照查询即可；这里没有条目状态，也不为查确认编造。
+  const plan = MemoryActionPlan(
+    state: MemoryItemActionState(control: null, masked: false),
+  );
   switch (action) {
     case MemoryAction.edit:
       await _runEditFlow(
@@ -158,19 +170,28 @@ Future<void> runMemoryAction(
         itemId: itemId,
       );
     case MemoryAction.ban:
-      await _runBanFlow(
-        context,
-        viewModel: viewModel,
-        messenger: messenger,
-        itemId: itemId,
-      );
     case MemoryAction.delete:
-      await _runDeleteFlow(
-        context,
-        viewModel: viewModel,
-        messenger: messenger,
-        itemId: itemId,
-      );
+      // 确认流程按计划矩阵分派，ban/delete 自己不再各写一份「要不要
+      // 确认」。计划把确认要求改成 none 而这里没跟上时，宁可在测试期
+      // 断言失败，也不静默执行或跳过一个破坏性动作。
+      switch (plan.confirmationOf(action)) {
+        case MemoryActionConfirmation.ban:
+          await _runBanFlow(
+            context,
+            viewModel: viewModel,
+            messenger: messenger,
+            itemId: itemId,
+          );
+        case MemoryActionConfirmation.delete:
+          await _runDeleteFlow(
+            context,
+            viewModel: viewModel,
+            messenger: messenger,
+            itemId: itemId,
+          );
+        case MemoryActionConfirmation.none:
+          assert(false, '$action 不再要求确认，需要补直接执行流程');
+      }
   }
 }
 
@@ -320,7 +341,8 @@ class MemoryActionButtons extends StatelessWidget {
   final MemoryControlStatus? control;
   final bool masked;
 
-  /// 条目类别是否提供修正（episode 条目可，画像条目不可）。
+  /// 是否提供修正：语义与取值边界见 [MemoryItemActionState.editable]，
+  /// 这里只作透传。
   final bool editable;
 
   /// 修正对话框的预填原文。
