@@ -195,8 +195,9 @@ void main() {
       expect(day.entries.map((entry) => entry.summary), ['不记录: 用户正在找新工作']);
       expect(day.entries.single.kind, episodeKindOpenLoopEvent);
       expect(
-        File('${harness.memoryDirectory}/persona-tree/preferences.md')
-            .existsSync(),
+        File(
+          '${harness.memoryDirectory}/persona-tree/preferences.md',
+        ).existsSync(),
         isFalse,
       );
       // 不记录是当轮控制：memory-controls.md 不产生持久记录。
@@ -793,9 +794,7 @@ since: 2026-08-01
             );
             await monthlySummary.compressMonth('2026-07');
             expect(
-              File(
-                '$directory/episodes/2026/07/summary.md',
-              ).readAsStringSync(),
+              File('$directory/episodes/2026/07/summary.md').readAsStringSync(),
               contains('用户在青岛工作'),
             );
 
@@ -819,8 +818,7 @@ since: 2026-08-01
 ''',
             );
             // 未闭环事项与长期印象各放一条命中内容。
-            File('$directory/open-loops.md').writeAsStringSync(
-              '''# open-loops
+            File('$directory/open-loops.md').writeAsStringSync('''# open-loops
 
 - [o1] 青岛旅行计划
   proactive: yes
@@ -828,16 +826,13 @@ since: 2026-08-01
 - [o2] 买牛奶
   proactive: yes
   status: active
-''',
-            );
-            File('$directory/long-memory.md').writeAsStringSync(
-              '''# long-memory
+''');
+            File('$directory/long-memory.md').writeAsStringSync('''# long-memory
 
 ## 人与关系
 - 用户在青岛工作
 - 用户喜欢喝热牛奶
-''',
-            );
+''');
             final personaTree = PersonaTreeStore(
               memoryDirectory: directory,
               episodePipeline: pipeline,
@@ -893,9 +888,7 @@ since: 2026-08-01
         );
 
         // 4. 长期印象只删命中条目。
-        final longMemory = File(
-          '$directory/long-memory.md',
-        ).readAsStringSync();
+        final longMemory = File('$directory/long-memory.md').readAsStringSync();
         expect(longMemory, isNot(contains('青岛')));
         expect(longMemory, contains('用户喜欢喝热牛奶'));
 
@@ -923,9 +916,7 @@ since: 2026-08-01
         expect(relationship, contains('stage: 熟悉'));
 
         // 8. 未闭环事项清除命中条目。
-        final loops = File(
-          '$directory/open-loops.md',
-        ).readAsStringSync();
+        final loops = File('$directory/open-loops.md').readAsStringSync();
         expect(loops, isNot(contains('青岛旅行计划')));
         expect(loops, contains('买牛奶'));
 

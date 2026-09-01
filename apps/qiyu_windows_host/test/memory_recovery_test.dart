@@ -219,14 +219,8 @@ void main() {
       final contents = await file.readAsString();
       // 在第三个对话块（第二条用户轮）的标记中间截断。
       final firstTurn = contents.indexOf('<!-- qiyu-turn:');
-      final secondTurn = contents.indexOf(
-        '<!-- qiyu-turn:',
-        firstTurn + 10,
-      );
-      final thirdTurn = contents.indexOf(
-        '<!-- qiyu-turn:',
-        secondTurn + 10,
-      );
+      final secondTurn = contents.indexOf('<!-- qiyu-turn:', firstTurn + 10);
+      final thirdTurn = contents.indexOf('<!-- qiyu-turn:', secondTurn + 10);
       await overwrite(file, contents.substring(0, thirdTurn + 20));
 
       final report = await recovery.sweepAndRecover();
@@ -309,12 +303,10 @@ void main() {
 
   group('episodes', () {
     test('截断每日记录抢救完整条目，摘要与归档标记保留', () async {
-      await seedEpisodeDay(
-        '2026-08-05',
-        [entry('2026-08-05', 'e1', '用户在准备演讲'),
-         entry('2026-08-05', 'e2', '用户睡了个好觉')],
-        summary: '聊了演讲和睡眠',
-      );
+      await seedEpisodeDay('2026-08-05', [
+        entry('2026-08-05', 'e1', '用户在准备演讲'),
+        entry('2026-08-05', 'e2', '用户睡了个好觉'),
+      ], summary: '聊了演讲和睡眠');
       final file = dayFile('2026-08-05');
       final contents = await file.readAsString();
       final secondEntry = contents.indexOf('<!-- qiyu-episode-entry:');
@@ -341,11 +333,9 @@ void main() {
     });
 
     test('元数据损坏时条目保留，摘要与归档标记诚实重置', () async {
-      await seedEpisodeDay(
-        '2026-08-05',
-        [entry('2026-08-05', 'e1', '用户在准备演讲')],
-        summary: '今日摘要',
-      );
+      await seedEpisodeDay('2026-08-05', [
+        entry('2026-08-05', 'e1', '用户在准备演讲'),
+      ], summary: '今日摘要');
       final file = dayFile('2026-08-05');
       final contents = await file.readAsString();
       await overwrite(
@@ -392,8 +382,9 @@ void main() {
       final report = await recovery.sweepAndRecover();
 
       expect(
-        File(path.join(memoryDirectory, 'episodes', 'checkpoint.md'))
-            .existsSync(),
+        File(
+          path.join(memoryDirectory, 'episodes', 'checkpoint.md'),
+        ).existsSync(),
         isFalse,
       );
       final finding = findByKey(report, 'checkpoint');
@@ -407,12 +398,7 @@ void main() {
       await overwrite(
         File(path.join(memoryDirectory, 'episodes', 'checkpoint.md')),
         '# 栖语整理检查点\n\n'
-        '<!-- qiyu-checkpoint:${b64({
-          'schemaVersion': 1,
-          'sessionId': 'ghost-session',
-          'lastRequestId': 'r0',
-          'updatedAt': clock.toUtc().toIso8601String(),
-        })} -->\n',
+        '<!-- qiyu-checkpoint:${b64({'schemaVersion': 1, 'sessionId': 'ghost-session', 'lastRequestId': 'r0', 'updatedAt': clock.toUtc().toIso8601String()})} -->\n',
       );
 
       final report = await recovery.sweepAndRecover();
@@ -421,8 +407,9 @@ void main() {
       expect(finding, isNotNull);
       expect(finding!.kind, MemoryDamageKind.orphaned);
       expect(
-        File(path.join(memoryDirectory, 'episodes', 'checkpoint.md'))
-            .existsSync(),
+        File(
+          path.join(memoryDirectory, 'episodes', 'checkpoint.md'),
+        ).existsSync(),
         isFalse,
       );
     });
@@ -521,9 +508,7 @@ void main() {
         episodePipeline: pipeline,
       );
       // 先只建立 2026-08-04 的索引，制造 2026-08-05 的真实 stale
-      await pipeline.synchronizedOnDayFiles(
-        () => indexStore.rebuild(),
-      );
+      await pipeline.synchronizedOnDayFiles(() => indexStore.rebuild());
       final monthFile = indexStore.monthIndexFile('2026-08');
       final currentLines = await monthFile.readAsLines();
       final filteredLines = currentLines
@@ -550,18 +535,14 @@ void main() {
     });
 
     test('损坏的月份索引从有效每日记录重建', () async {
-      await seedEpisodeDay(
-        '2026-08-05',
-        [entry('2026-08-05', 'e1', '用户在准备演讲')],
-        summary: '演讲',
-      );
+      await seedEpisodeDay('2026-08-05', [
+        entry('2026-08-05', 'e1', '用户在准备演讲'),
+      ], summary: '演讲');
       final indexStore = EpisodeIndexStore(
         memoryDirectory: memoryDirectory,
         episodePipeline: pipeline,
       );
-      await pipeline.synchronizedOnDayFiles(
-        () => indexStore.rebuild(),
-      );
+      await pipeline.synchronizedOnDayFiles(() => indexStore.rebuild());
       expect(await indexStore.readTopIndex(), isNotNull);
       await overwrite(indexStore.topIndexFile, '索引乱码');
 
@@ -607,18 +588,14 @@ void main() {
     });
 
     test('每日索引的孤儿行重建后消失', () async {
-      await seedEpisodeDay(
-        '2026-08-05',
-        [entry('2026-08-05', 'e1', '用户在准备演讲')],
-        summary: '演讲',
-      );
+      await seedEpisodeDay('2026-08-05', [
+        entry('2026-08-05', 'e1', '用户在准备演讲'),
+      ], summary: '演讲');
       final indexStore = EpisodeIndexStore(
         memoryDirectory: memoryDirectory,
         episodePipeline: pipeline,
       );
-      await pipeline.synchronizedOnDayFiles(
-        () => indexStore.rebuild(),
-      );
+      await pipeline.synchronizedOnDayFiles(() => indexStore.rebuild());
       final monthFile = indexStore.monthIndexFile('2026-08');
       await overwrite(
         monthFile,
@@ -640,11 +617,9 @@ void main() {
     });
 
     test('缺失的索引按缺失重建', () async {
-      await seedEpisodeDay(
-        '2026-08-05',
-        [entry('2026-08-05', 'e1', '用户在准备演讲')],
-        summary: '演讲',
-      );
+      await seedEpisodeDay('2026-08-05', [
+        entry('2026-08-05', 'e1', '用户在准备演讲'),
+      ], summary: '演讲');
       final indexStore = EpisodeIndexStore(
         memoryDirectory: memoryDirectory,
         episodePipeline: pipeline,
@@ -660,10 +635,7 @@ void main() {
     });
 
     test('恢复扫描先于启动补归档运行后，后续补归档正常完成且最终状态健康', () async {
-      await seedSession('2026-08-18', 1, [
-        ('用户', '今天写完了方案'),
-        ('栖语', '太棒了！'),
-      ]);
+      await seedSession('2026-08-18', 1, [('用户', '今天写完了方案'), ('栖语', '太棒了！')]);
       await seedEpisodeDay(
         '2026-08-18',
         [entry('2026-08-18', 'e1', '用户写完了方案')],
@@ -707,11 +679,9 @@ void main() {
 
   group('月度摘要', () {
     test('损坏的月摘要从同月每日记录重新压缩', () async {
-      await seedEpisodeDay(
-        '2026-07-05',
-        [entry('2026-07-05', 'e1', '用户去了海边')],
-        summary: '海边',
-      );
+      await seedEpisodeDay('2026-07-05', [
+        entry('2026-07-05', 'e1', '用户去了海边'),
+      ], summary: '海边');
       await monthlySummary.compressMonth('2026-07');
       final summaryFile = monthlySummary.summaryFile('2026-07');
       expect(await summaryFile.exists(), isTrue);
@@ -836,8 +806,7 @@ void main() {
       final report = await recovery.sweepAndRecover();
 
       expect(
-        await File(path.join(memoryDirectory, 'long-memory.md'))
-            .readAsString(),
+        await File(path.join(memoryDirectory, 'long-memory.md')).readAsString(),
         backupContent,
       );
       final finding = findByKey(report, 'long-memory');
@@ -868,13 +837,9 @@ void main() {
 
     test('长期印象从备份恢复后，被删除内容不随旧备份复活', () async {
       // 现行控制（健康文件）：用户已删除「痛苦回忆」。
-      expect(
-        await memoryControls.recordDelete('痛苦回忆', origin: 'user'),
-        isTrue,
-      );
+      expect(await memoryControls.recordDelete('痛苦回忆', origin: 'user'), isTrue);
       // Dream 备份定格在删除之前：仍含命中删除范围的条目。
-      const backupContent =
-          '# long-memory\n\n## 人与关系\n- 痛苦回忆的细节\n- 一条正常印象\n';
+      const backupContent = '# long-memory\n\n## 人与关系\n- 痛苦回忆的细节\n- 一条正常印象\n';
       await overwrite(
         File(path.join(memoryDirectory, 'dream', 'backup', 'long-memory.md')),
         backupContent,
@@ -966,8 +931,9 @@ void main() {
       final report = await recovery.sweepAndRecover();
 
       expect(
-        File(path.join(memoryDirectory, 'persona-tree', 'identity.md'))
-            .existsSync(),
+        File(
+          path.join(memoryDirectory, 'persona-tree', 'identity.md'),
+        ).existsSync(),
         isFalse,
       );
       final finding = findByKey(report, 'persona-branch-identity');
@@ -978,19 +944,12 @@ void main() {
 
     test('归档无法恢复时暂停受影响分支的根节点操作', () async {
       // 留下已归档的日期材料供 Dream 输入使用。
-      await seedEpisodeDay(
-        '2026-08-05',
-        [entry('2026-08-05', 'e1', '用户是一名教师')],
-        summary: '职业',
-      );
+      await seedEpisodeDay('2026-08-05', [
+        entry('2026-08-05', 'e1', '用户是一名教师'),
+      ], summary: '职业');
       await overwrite(
         File(
-          path.join(
-            memoryDirectory,
-            'persona-tree',
-            'archive',
-            'identity.md',
-          ),
+          path.join(memoryDirectory, 'persona-tree', 'archive', 'identity.md'),
         ),
         '归档乱码',
       );
@@ -1026,19 +985,14 @@ void main() {
       await overwrite(
         File(path.join(memoryDirectory, 'dream', 'state.md')),
         '# dream-state\n\n'
-        '<!-- qiyu-dream-state:${b64({
-          'schemaVersion': 1,
-          'pending': true,
-        })} -->\n',
+        '<!-- qiyu-dream-state:${b64({'schemaVersion': 1, 'pending': true})} -->\n',
       );
       final outcome = await dream.run(bedtime: false);
       expect(outcome.status, DreamStatus.accepted);
       expect(outcome.rootOpsApplied, 0);
       expect(outcome.rootOpsRejected, 1);
       expect(
-        diagnostics.any(
-          (message) => message.contains('archive-unavailable'),
-        ),
+        diagnostics.any((message) => message.contains('archive-unavailable')),
         isTrue,
       );
     });
@@ -1046,11 +1000,9 @@ void main() {
 
   group('热层', () {
     test('关系记录从剧集证据整体重建，完整恢复不留隔离副本', () async {
-      await seedEpisodeDay(
-        '2026-08-05',
-        [entry('2026-08-05', 'e1', '用户打了招呼')],
-        summary: '打招呼',
-      );
+      await seedEpisodeDay('2026-08-05', [
+        entry('2026-08-05', 'e1', '用户打了招呼'),
+      ], summary: '打招呼');
       await overwrite(
         File(path.join(memoryDirectory, 'relationship.md')),
         '# relationship\n{损坏的结构',
@@ -1060,10 +1012,7 @@ void main() {
 
       final rebuilt = File(path.join(memoryDirectory, 'relationship.md'));
       expect(await rebuilt.exists(), isTrue);
-      expect(
-        parseRelationshipFile(await rebuilt.readAsString()),
-        isNotNull,
-      );
+      expect(parseRelationshipFile(await rebuilt.readAsString()), isNotNull);
       final finding = findByKey(report, 'relationship');
       expect(finding, isNotNull);
       expect(finding!.outcome, MemoryRecoveryOutcome.full);
@@ -1075,16 +1024,12 @@ void main() {
   group('整体', () {
     test('多层同时损坏不阻塞健康日期浏览与恢复呈现', () async {
       await seedSession('2026-08-04', 1, [('用户', '你好'), ('栖语', '你好呀')]);
-      await seedEpisodeDay(
-        '2026-08-04',
-        [entry('2026-08-04', 'ok', '用户打了招呼')],
-        summary: '打招呼',
-      );
-      await seedEpisodeDay(
-        '2026-08-05',
-        [entry('2026-08-05', 'bad', '本条随文件损坏')],
-        summary: '损坏日',
-      );
+      await seedEpisodeDay('2026-08-04', [
+        entry('2026-08-04', 'ok', '用户打了招呼'),
+      ], summary: '打招呼');
+      await seedEpisodeDay('2026-08-05', [
+        entry('2026-08-05', 'bad', '本条随文件损坏'),
+      ], summary: '损坏日');
       final badDay = dayFile('2026-08-05');
       final contents = await badDay.readAsString();
       final marker = contents.indexOf('<!-- qiyu-episode-entry:');
@@ -1154,11 +1099,9 @@ void main() {
 
     test('健康记忆库扫描后保持健康', () async {
       await seedSession('2026-08-04', 1, [('用户', '你好')]);
-      await seedEpisodeDay(
-        '2026-08-04',
-        [entry('2026-08-04', 'ok', '用户打了招呼')],
-        summary: '打招呼',
-      );
+      await seedEpisodeDay('2026-08-04', [
+        entry('2026-08-04', 'ok', '用户打了招呼'),
+      ], summary: '打招呼');
       await pipeline.synchronizedOnDayFiles(
         () => EpisodeIndexStore(
           memoryDirectory: memoryDirectory,

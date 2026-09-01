@@ -12,19 +12,22 @@ void main() {
     expect(parse.diagnostics, isEmpty);
   });
 
-  test('a whitelisted memory signal is parsed and hidden from visible text', () {
-    final parse = parseHiddenActions('''嗯，面试前紧张很正常。
+  test(
+    'a whitelisted memory signal is parsed and hidden from visible text',
+    () {
+      final parse = parseHiddenActions('''嗯，面试前紧张很正常。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户明天有面试","evidence":"明天要面试，有点紧张"}]
 </qiyu-actions>''');
 
-    expect(parse.visibleText, '嗯，面试前紧张很正常。');
-    expect(parse.actions, hasLength(1));
-    expect(parse.actions.single.kind, HiddenActionKind.memorySignal);
-    expect(parse.actions.single.summary, '用户明天有面试');
-    expect(parse.actions.single.evidence, '明天要面试，有点紧张');
-    expect(parse.diagnostics, isEmpty);
-  });
+      expect(parse.visibleText, '嗯，面试前紧张很正常。');
+      expect(parse.actions, hasLength(1));
+      expect(parse.actions.single.kind, HiddenActionKind.memorySignal);
+      expect(parse.actions.single.summary, '用户明天有面试');
+      expect(parse.actions.single.evidence, '明天要面试，有点紧张');
+      expect(parse.diagnostics, isEmpty);
+    },
+  );
 
   test('recall and no-action complete the whitelist', () {
     final parse = parseHiddenActions('''在。
@@ -195,17 +198,20 @@ void main() {
     expect(parse.diagnostics, contains(HiddenActionDiagnostics.overLimit));
   });
 
-  test('only the first block is parsed and every block leaves visible text', () {
-    final parse = parseHiddenActions('''在。
+  test(
+    'only the first block is parsed and every block leaves visible text',
+    () {
+      final parse = parseHiddenActions('''在。
 <qiyu-actions>[{"action":"no_action"}]</qiyu-actions>
 中间的话。
 <qiyu-actions>[{"action":"memory_signal","summary":"第二块"}]</qiyu-actions>''');
 
-    expect(parse.visibleText, '在。\n\n中间的话。');
-    expect(parse.actions, hasLength(1));
-    expect(parse.actions.single.kind, HiddenActionKind.noAction);
-    expect(parse.diagnostics, [HiddenActionDiagnostics.multipleBlocks]);
-  });
+      expect(parse.visibleText, '在。\n\n中间的话。');
+      expect(parse.actions, hasLength(1));
+      expect(parse.actions.single.kind, HiddenActionKind.noAction);
+      expect(parse.diagnostics, [HiddenActionDiagnostics.multipleBlocks]);
+    },
+  );
 
   test('visible text never leaks raw action payloads', () {
     final parse = parseHiddenActions('''晚安。
@@ -390,7 +396,9 @@ void main() {
       '"signal":"boundary_close","summary":"用户回避了医院话题"}]</qiyu-actions>',
     );
     expect(missingEvidence.actions, isEmpty);
-    expect(missingEvidence.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+    expect(missingEvidence.diagnostics, [
+      HiddenActionDiagnostics.invalidFields,
+    ]);
 
     final withEvidence = parseHiddenActions(
       '<qiyu-actions>[{"action":"relationship_signal",'
@@ -407,10 +415,9 @@ void main() {
     );
     expect(duplicate.actions, hasLength(1));
     expect(duplicate.actions.single.summary, '愿意聊家庭');
-    expect(
-      duplicate.diagnostics,
-      [HiddenActionDiagnostics.duplicateRelationshipSignal],
-    );
+    expect(duplicate.diagnostics, [
+      HiddenActionDiagnostics.duplicateRelationshipSignal,
+    ]);
   });
 
   test('a memory signal may carry a valid persona hint', () {
@@ -437,10 +444,9 @@ void main() {
     expect(unknownBranch.actions.single.summary, '用户喜欢爬山');
     expect(unknownBranch.actions.single.branch, isNull);
     expect(unknownBranch.actions.single.nature, isNull);
-    expect(
-      unknownBranch.diagnostics,
-      [HiddenActionDiagnostics.personaHintDropped],
-    );
+    expect(unknownBranch.diagnostics, [
+      HiddenActionDiagnostics.personaHintDropped,
+    ]);
 
     // 只有 branch 没有 nature：同样丢提示。
     final missingNature = parseHiddenActions(
@@ -449,10 +455,9 @@ void main() {
     );
     expect(missingNature.actions, hasLength(1));
     expect(missingNature.actions.single.branch, isNull);
-    expect(
-      missingNature.diagnostics,
-      [HiddenActionDiagnostics.personaHintDropped],
-    );
+    expect(missingNature.diagnostics, [
+      HiddenActionDiagnostics.personaHintDropped,
+    ]);
 
     // 身份事实禁止行为推断：丢提示。
     final identityBehavior = parseHiddenActions(
@@ -461,10 +466,9 @@ void main() {
     );
     expect(identityBehavior.actions, hasLength(1));
     expect(identityBehavior.actions.single.branch, isNull);
-    expect(
-      identityBehavior.diagnostics,
-      [HiddenActionDiagnostics.personaHintDropped],
-    );
+    expect(identityBehavior.diagnostics, [
+      HiddenActionDiagnostics.personaHintDropped,
+    ]);
 
     // 没有画像提示时不产生诊断。
     final noHint = parseHiddenActions(
@@ -562,10 +566,7 @@ void main() {
   {"action":"memory_ban","summary":"医院检查"},
   {"action":"memory_forget","summary":"今晚的争吵"}
 ]</qiyu-actions>''');
-      expect(
-        controls.typedActions.first,
-        const MemoryBanAction(title: '医院检查'),
-      );
+      expect(controls.typedActions.first, const MemoryBanAction(title: '医院检查'));
       expect(
         controls.typedActions.last,
         const MemoryForgetAction(title: '今晚的争吵'),

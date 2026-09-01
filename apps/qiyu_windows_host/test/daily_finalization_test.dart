@@ -228,77 +228,69 @@ void main() {
     },
   );
 
-  test(
-    'pure bedtime farewells stay out of the backfill scope',
-    () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-pure-bedtime-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
-      DateTime clock() => DateTime(2026, 8, 22, 23, 50);
-      final repository = MarkdownMemoryRepository(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
-      var session = await repository.createSession();
-      session = await repository.appendTurn(
-        session,
-        RawSessionTurn.user(
-          requestId: 'tired-1',
-          text: '今天实训第一天，累瘫了',
-          at: clock(),
-        ),
-      );
-      // 整轮只是道别：不产生记忆条目，也不进待补范围。
-      session = await repository.appendTurn(
-        session,
-        RawSessionTurn.user(
-          requestId: 'tired-2',
-          text: '该睡了',
-          at: clock(),
-        ),
-      );
-      final client = _RecordingUnderstandingClient(
-        jsonEncode({
-          'episode_entries': [
-            {
-              'request_id': 'tired-1',
-              'summary': '用户实训第一天很累',
-              'evidence': '今天实训第一天，累瘫了',
-            },
-          ],
-          'covered_request_ids': ['tired-1'],
-          'summary': '用户实训第一天很累，早早道了晚安',
-          'index_keywords': ['实训', '晚安'],
-        }),
-      );
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        modelClient: client,
-        clock: clock,
-      );
+  test('pure bedtime farewells stay out of the backfill scope', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-finalization-pure-bedtime-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    DateTime clock() => DateTime(2026, 8, 22, 23, 50);
+    final repository = MarkdownMemoryRepository(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    var session = await repository.createSession();
+    session = await repository.appendTurn(
+      session,
+      RawSessionTurn.user(
+        requestId: 'tired-1',
+        text: '今天实训第一天，累瘫了',
+        at: clock(),
+      ),
+    );
+    // 整轮只是道别：不产生记忆条目，也不进待补范围。
+    session = await repository.appendTurn(
+      session,
+      RawSessionTurn.user(requestId: 'tired-2', text: '该睡了', at: clock()),
+    );
+    final client = _RecordingUnderstandingClient(
+      jsonEncode({
+        'episode_entries': [
+          {
+            'request_id': 'tired-1',
+            'summary': '用户实训第一天很累',
+            'evidence': '今天实训第一天，累瘫了',
+          },
+        ],
+        'covered_request_ids': ['tired-1'],
+        'summary': '用户实训第一天很累，早早道了晚安',
+        'index_keywords': ['实训', '晚安'],
+      }),
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    final service = DailyFinalizationService(
+      memoryDirectory: temporaryDirectory.path,
+      episodePipeline: pipeline,
+      modelClient: client,
+      clock: clock,
+    );
 
-      final report = await service.finalizeForBedtime(date: '2026-08-22');
+    final report = await service.finalizeForBedtime(date: '2026-08-22');
 
-      final userMessage = client
-          .lastMessages!
-          .singleWhere((message) => message.role == ModelMessageRole.user)
-          .content;
-      expect(userMessage, contains('今天实训第一天，累瘫了'));
-      expect(userMessage, isNot(contains('该睡了')));
-      // 待补清单只含实质轮次，纯道别轮不要求模型覆盖。
-      expect(userMessage, isNot(contains('- tired-2')));
-      expect(report.outcomes.single.status, FinalizationStatus.finalized);
-      final day = await pipeline.readDay('2026-08-22');
-      expect(day.entries, hasLength(1));
-      expect(day.entries.single.requestId, 'tired-1');
-    },
-  );
+    final userMessage = client.lastMessages!
+        .singleWhere((message) => message.role == ModelMessageRole.user)
+        .content;
+    expect(userMessage, contains('今天实训第一天，累瘫了'));
+    expect(userMessage, isNot(contains('该睡了')));
+    // 待补清单只含实质轮次，纯道别轮不要求模型覆盖。
+    expect(userMessage, isNot(contains('- tired-2')));
+    expect(report.outcomes.single.status, FinalizationStatus.finalized);
+    final day = await pipeline.readDay('2026-08-22');
+    expect(day.entries, hasLength(1));
+    expect(day.entries.single.requestId, 'tired-1');
+  });
 
   test(
     'a turn that sanitizes to nothing never blocks the backfill gate',
@@ -487,14 +479,8 @@ void main() {
     final client = _RecordingUnderstandingClient(
       jsonEncode({
         'episode_entries': [
-          {
-            'request_id': 'real-1',
-            'summary': '用户午饭吃了米线',
-          },
-          {
-            'request_id': 'hallucinated-x',
-            'summary': '模型编造的内容',
-          },
+          {'request_id': 'real-1', 'summary': '用户午饭吃了米线'},
+          {'request_id': 'hallucinated-x', 'summary': '模型编造的内容'},
         ],
         'covered_request_ids': ['real-1', 'real-2', 'hallucinated-x'],
       }),
@@ -544,11 +530,7 @@ void main() {
       var session = await repository.createSession();
       session = await repository.appendTurn(
         session,
-        RawSessionTurn.user(
-          requestId: 'day-1',
-          text: '开始养绿萝了。',
-          at: clock(),
-        ),
+        RawSessionTurn.user(requestId: 'day-1', text: '开始养绿萝了。', at: clock()),
       );
       final firstResponse = jsonEncode({
         'episode_entries': [
@@ -588,31 +570,25 @@ void main() {
       // 归档后又聊了一轮，再次晚安触发增量补建。
       session = await repository.appendTurn(
         session,
-        RawSessionTurn.user(
-          requestId: 'day-2',
-          text: '晚饭吃了米线。',
-          at: clock(),
-        ),
+        RawSessionTurn.user(requestId: 'day-2', text: '晚饭吃了米线。', at: clock()),
       );
-      final secondReport = await service.finalizeForBedtime(
-        date: '2026-08-14',
-      );
+      final secondReport = await service.finalizeForBedtime(date: '2026-08-14');
       expect(secondReport.outcomes.single.status, FinalizationStatus.finalized);
       expect(client.calls, 2);
 
       final day = await pipeline.readDay('2026-08-14');
       expect(day.finalized, isTrue);
-      expect(
-        day.entries.map((entry) => entry.requestId).toSet(),
-        {'day-1', 'day-2'},
-      );
+      expect(day.entries.map((entry) => entry.requestId).toSet(), {
+        'day-1',
+        'day-2',
+      });
       final understanding = day.understanding!;
       // 整体结论保留第一次归档的；覆盖清单合并两批。
       expect(understanding['summary'], '第一天完整理解');
-      expect(
-        (understanding['coveredRequestIds'] as List<Object?>).toSet(),
-        {'day-1', 'day-2'},
-      );
+      expect((understanding['coveredRequestIds'] as List<Object?>).toSet(), {
+        'day-1',
+        'day-2',
+      });
     },
   );
 

@@ -61,14 +61,16 @@ void main() {
       final json = recorder.recent().single.toJson();
       expect(
         json.keys,
-        everyElement(isIn(const [
-          'at',
-          'source',
-          'result',
-          'replySource',
-          'fallbackReason',
-          'detail',
-        ])),
+        everyElement(
+          isIn(const [
+            'at',
+            'source',
+            'result',
+            'replySource',
+            'fallbackReason',
+            'detail',
+          ]),
+        ),
       );
       expect(json['fallbackReason'], 'model_timeout');
       expect(json['replySource'], 'local');
@@ -233,10 +235,12 @@ void main() {
       expect(dreamJson['eligible'], isFalse);
 
       // 两天前刚成功：间隔未满（2 < 3），即使配置了 Provider 也不合格。
-      await File(path.join(memoryDirectory, 'dream', 'state.md'))
-          .create(recursive: true);
-      await File(path.join(memoryDirectory, 'dream', 'state.md'))
-          .writeAsString(_encodedDreamState(lastSuccess: DateTime(2026, 8, 12)));
+      await File(
+        path.join(memoryDirectory, 'dream', 'state.md'),
+      ).create(recursive: true);
+      await File(
+        path.join(memoryDirectory, 'dream', 'state.md'),
+      ).writeAsString(_encodedDreamState(lastSuccess: DateTime(2026, 8, 12)));
       snapshot = await service(
         dreamService: dream,
         providerConfiguredReader: () async => true,
@@ -248,8 +252,9 @@ void main() {
       expect(dreamJson['eligible'], isFalse);
 
       // 三天前成功：间隔已满（3 >= 3）且配置齐全 → 合格。
-      await File(path.join(memoryDirectory, 'dream', 'state.md'))
-          .writeAsString(_encodedDreamState(lastSuccess: DateTime(2026, 8, 11)));
+      await File(
+        path.join(memoryDirectory, 'dream', 'state.md'),
+      ).writeAsString(_encodedDreamState(lastSuccess: DateTime(2026, 8, 11)));
       snapshot = await service(
         dreamService: dream,
         providerConfiguredReader: () async => true,
@@ -260,42 +265,46 @@ void main() {
       expect(dreamJson['eligible'], isTrue);
     });
 
-    test('file health reports corrupted long-memory and unreadable session', () async {
-      File(
-        path.join(memoryDirectory, 'long-memory.md'),
-      ).writeAsStringSync('这根本不是 long-memory 结构');
-      final sessionsDirectory = Directory(
-        path.join(memoryDirectory, 'sessions', '2026', '08'),
-      )..createSync(recursive: true);
-      File(
-        path.join(sessionsDirectory.path, 'broken.md'),
-      ).writeAsStringSync('坏的会话文件');
-      final repository = MarkdownMemoryRepository(
-        memoryDirectory: memoryDirectory,
-      );
-      await repository.initialize();
-      final controls = MemoryControlsStore(
-        memoryDirectory: memoryDirectory,
-        diagnosticsSink: (_) {},
-      );
+    test(
+      'file health reports corrupted long-memory and unreadable session',
+      () async {
+        File(
+          path.join(memoryDirectory, 'long-memory.md'),
+        ).writeAsStringSync('这根本不是 long-memory 结构');
+        final sessionsDirectory = Directory(
+          path.join(memoryDirectory, 'sessions', '2026', '08'),
+        )..createSync(recursive: true);
+        File(
+          path.join(sessionsDirectory.path, 'broken.md'),
+        ).writeAsStringSync('坏的会话文件');
+        final repository = MarkdownMemoryRepository(
+          memoryDirectory: memoryDirectory,
+        );
+        await repository.initialize();
+        final controls = MemoryControlsStore(
+          memoryDirectory: memoryDirectory,
+          diagnosticsSink: (_) {},
+        );
 
-      final snapshot = await service(
-        memoryControls: controls,
-        repository: repository,
-      ).snapshot();
-      final health = snapshot['fileHealth']! as Map<String, Object?>;
-      expect(health['longMemory'], {'exists': true, 'readable': false});
-      expect(health['memoryControls'], {'exists': false, 'readable': true});
-      expect(health['sessionsUnavailable'], 1);
-      expect(health['episodeDays'], 0);
-    });
+        final snapshot = await service(
+          memoryControls: controls,
+          repository: repository,
+        ).snapshot();
+        final health = snapshot['fileHealth']! as Map<String, Object?>;
+        expect(health['longMemory'], {'exists': true, 'readable': false});
+        expect(health['memoryControls'], {'exists': false, 'readable': true});
+        expect(health['sessionsUnavailable'], 1);
+        expect(health['episodeDays'], 0);
+      },
+    );
 
     test('snapshot json survives the sensitive-field scan', () async {
       final recorder = RequestDiagnosticsRecorder();
       recorder.record(
         source: RecentRequestSources.providerTest,
         result: RecentRequestResults.failed,
-        detail: 'authorization: Bearer sk-abcdefABCDEF1234567890 '
+        detail:
+            'authorization: Bearer sk-abcdefABCDEF1234567890 '
             'api_key: sk-9876543210zyxwvuSRQP '
             'cookie=session=abc123 '
             'prompt: 用户输入了密码=secret',
@@ -334,7 +343,8 @@ void main() {
 String _encodedDreamState({DateTime? lastSuccess, bool pending = false}) {
   final json = <String, Object?>{
     'schemaVersion': 1,
-    if (lastSuccess != null) 'lastSuccess': lastSuccess.toUtc().toIso8601String(),
+    if (lastSuccess != null)
+      'lastSuccess': lastSuccess.toUtc().toIso8601String(),
     'pending': pending,
   };
   final encoded = base64Url

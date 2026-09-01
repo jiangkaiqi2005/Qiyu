@@ -75,7 +75,8 @@ final class RecallOrchestrator {
     EpisodeIndexStore? indexStore,
     this.openLoopStore,
   }) : _episodePipeline = episodePipeline,
-       _indexStore = indexStore ??
+       _indexStore =
+           indexStore ??
            EpisodeIndexStore(
              memoryDirectory: memoryDirectory,
              episodePipeline: episodePipeline,
@@ -144,11 +145,11 @@ final class RecallOrchestrator {
     }
     final query = sanitizeUserInput(
       recallActions
-          .where((action) => action.kind == HiddenActionKind.memoryRecall)
-          .map((action) => action.query ?? '')
-          .where((value) => value.trim().isNotEmpty)
-          .firstOrNull ??
-      '',
+              .where((action) => action.kind == HiddenActionKind.memoryRecall)
+              .map((action) => action.query ?? '')
+              .where((value) => value.trim().isNotEmpty)
+              .firstOrNull ??
+          '',
     ).trim();
     if (query.isEmpty) {
       diagnostics.add('recall skipped reason=empty-query');
@@ -181,8 +182,7 @@ final class RecallOrchestrator {
     // 递回目录：顶层索引全部月份 + 近期月份的每日索引。
     final topMonths = topIndex.map((line) => line.month).toSet();
     final dayIndexByMonth = <String, List<DayIndexLine>>{};
-    final recentMonths = (topIndex.map((line) => line.month).toList()
-          ..sort())
+    final recentMonths = (topIndex.map((line) => line.month).toList()..sort())
         .reversed
         .take(recallRecentMonthCount)
         .toList()
@@ -533,8 +533,7 @@ final class RecallOrchestrator {
   /// 短期 memory context 内容：压缩后的证据 + 使用纪律。
   /// 只带回与问题相关的压缩结果，不搬运选中文件全文。
   String _buildPendingContext(List<(String, List<EpisodeEntry>)> rawDays) {
-    final buffer = StringBuffer()
-      ..writeln('此前对话的后台整理记录（临时参考，不是新发生的事）：');
+    final buffer = StringBuffer()..writeln('此前对话的后台整理记录（临时参考，不是新发生的事）：');
     for (final (date, entries) in rawDays) {
       for (final entry in entries) {
         buffer.writeln(
@@ -548,9 +547,7 @@ final class RecallOrchestrator {
         }
       }
     }
-    buffer.write(
-      '语境合适时自然补上；与当前话题无关就不提；拿不准时保持不确定，不声称一直记得。',
-    );
+    buffer.write('语境合适时自然补上；与当前话题无关就不提；拿不准时保持不确定，不声称一直记得。');
     return buffer.toString();
   }
 
@@ -604,7 +601,8 @@ final class RecallOrchestrator {
     required String userText,
     required List<(String, List<EpisodeEntry>)> rawDays,
   }) {
-    const system = '''
+    const system =
+        '''
 你是栖语。刚才用户提起一件旧事，你先按一时没想起回应了；现在后台查找有了结果，你要自然地补一句。
 要求：
 1. 只输出要补给用户的一到两句话本身；不输出标签、解释、前缀或隐藏块。
