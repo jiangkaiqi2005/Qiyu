@@ -44,7 +44,7 @@ final class ApiRequestException implements Exception {
   String toString() => message;
 }
 
-/// API 请求参数或请求体不合法的统一异常（HTTP 400 + invalid_request）。
+/// API 请求参数或请求体不合法的统一异常（HTTP 400 + invalid_request）的抛出辅助。
 ApiRequestException invalidRequest(String message) => ApiRequestException(message);
 
 /// 读取限长二进制请求体：Content-Length 与累计字节数双重校验覆盖
@@ -91,13 +91,13 @@ Future<Map<String, Object?>> readJsonObject(
 }
 
 /// 请求体不可读（超限/非 JSON/非对象体）的统一对外形状。文案沿用基线
-/// 总控对全部端点共用的「聊天请求格式不正确。」（chat 域逐字不变），
-/// 消息参数留作领域差异化的口子，当前基线下各领域一致。
-Response invalidRequestBodyResponse({String message = '聊天请求格式不正确。'}) =>
+/// 总控对全部端点共用的「聊天请求格式不正确。」（chat 域逐字不变，
+/// 其余领域基线亦共用此句）。
+Response invalidRequestBodyResponse() =>
     jsonError(
       HttpStatus.badRequest,
       code: 'invalid_request',
-      message: message,
+      message: '聊天请求格式不正确。',
       retryable: false,
     );
 
