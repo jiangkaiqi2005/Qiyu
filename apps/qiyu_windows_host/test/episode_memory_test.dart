@@ -22,11 +22,7 @@ void main() {
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
         hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.memorySignal,
-            summary: '用户明天有面试',
-            evidence: '明天要面试，有点紧张',
-          ),
+          MemorySignalAction(summary: '用户明天有面试', evidence: '明天要面试，有点紧张'),
         ],
       );
 
@@ -52,9 +48,7 @@ void main() {
       clock: () => DateTime(2026, 8, 14, 22, 30),
     );
     final session = _session('session-1', ['req-1']);
-    const signal = [
-      HiddenAction(kind: HiddenActionKind.memorySignal, summary: '用户下周搬家'),
-    ];
+    const signal = [MemorySignalAction(summary: '用户下周搬家')];
 
     await pipeline.processReply(
       session: session,
@@ -87,9 +81,7 @@ void main() {
       pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '写不进去的记忆'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '写不进去的记忆')],
       ),
       throwsA(
         isA<MemoryRepositoryException>().having(
@@ -154,7 +146,7 @@ void main() {
     final result = await pipeline.processReply(
       session: _session('session-1', ['req-1']),
       requestId: 'req-1',
-      hiddenActions: const [HiddenAction(kind: HiddenActionKind.noAction)],
+      hiddenActions: const [NoAction()],
     );
 
     expect(result.checkpointAdvanced, isTrue);
@@ -203,8 +195,7 @@ void main() {
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
         hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.memorySignal,
+          MemorySignalAction(
             summary: '密码: hunter2abc',
             evidence: '身份证 11010519491231002X',
           ),
@@ -237,9 +228,7 @@ void main() {
     final result = await pipeline.processReply(
       session: _session('session-1', ['req-1', 'req-2', 'req-3', 'req-4']),
       requestId: 'req-4',
-      hiddenActions: const [
-        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '新记忆'),
-      ],
+      hiddenActions: const [MemorySignalAction(summary: '新记忆')],
     );
 
     expect(result.skippedCorruptDay, isTrue);
@@ -283,7 +272,7 @@ void main() {
         'req-5',
       ]),
       requestId: 'req-5',
-      hiddenActions: const [HiddenAction(kind: HiddenActionKind.noAction)],
+      hiddenActions: const [NoAction()],
       consumeWindow: true,
     );
     expect(recovered.checkpointAdvanced, isFalse);
@@ -302,9 +291,7 @@ void main() {
     await first.processReply(
       session: _session('session-1', ['req-1']),
       requestId: 'req-1',
-      hiddenActions: const [
-        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '已记录'),
-      ],
+      hiddenActions: const [MemorySignalAction(summary: '已记录')],
     );
 
     // 模拟 Host 重启后的新管线实例。
@@ -324,9 +311,7 @@ void main() {
     final replay = await second.processReply(
       session: _session('session-1', ['req-1']),
       requestId: 'req-1',
-      hiddenActions: const [
-        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '已记录'),
-      ],
+      hiddenActions: const [MemorySignalAction(summary: '已记录')],
     );
     expect(replay.writtenEntries, 0);
     expect(replay.skippedDuplicates, 1);

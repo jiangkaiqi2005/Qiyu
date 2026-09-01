@@ -111,116 +111,6 @@ class HiddenActionDiagnostics {
   static const personaHintDropped = 'hidden_action_persona_hint_dropped';
 }
 
-final class HiddenAction {
-  const HiddenAction({
-    required this.kind,
-    this.summary,
-    this.evidence,
-    this.query,
-    this.months,
-    this.dates,
-    this.branch,
-    this.nature,
-    this.due,
-    this.proactive,
-    this.note,
-    this.result,
-    this.status,
-    this.signal,
-  });
-
-  final HiddenActionKind kind;
-  final String? summary;
-  final String? evidence;
-  final String? query;
-
-  /// memory_recall 轮内查找的月份选择（`YYYY-MM`），只出现在选择调用
-  /// 的回应里；聊天轮的检索请求只有 query。
-  final List<String>? months;
-
-  /// memory_recall 轮内查找的日期选择（`YYYY-MM-DD`）。
-  final List<String>? dates;
-
-  /// memory_signal 画像提示：所属 PersonaTree 分支
-  /// （identity/expression/values/preferences/boundaries）。
-  final String? branch;
-
-  /// memory_signal 画像提示：来源性质（self_report / behavior）。
-  final String? nature;
-
-  /// open_loop_candidate：最早可跟进时间（`YYYY-MM-DD[ 时段]`）。
-  final String? due;
-
-  /// open_loop_candidate：no / once / yes。
-  final String? proactive;
-
-  /// open_loop_candidate：跟进时需要知道的背景。
-  final String? note;
-
-  /// open_loop_status：闭环结果的追溯说明。
-  final String? result;
-
-  /// open_loop_status：目标状态（active / paused / closed）。
-  final String? status;
-
-  /// relationship_signal：信号类型
-  /// （deep_talk / temperature / boundary_open / boundary_close）。
-  final String? signal;
-
-  Map<String, Object?> toJson() => {
-    'action': kind.wireName,
-    if (summary != null) 'summary': summary,
-    if (evidence != null) 'evidence': evidence,
-    if (query != null) 'query': query,
-    if (months != null) 'months': months,
-    if (dates != null) 'dates': dates,
-    if (branch != null) 'branch': branch,
-    if (nature != null) 'nature': nature,
-    if (due != null) 'due': due,
-    if (proactive != null) 'proactive': proactive,
-    if (note != null) 'note': note,
-    if (result != null) 'result': result,
-    if (status != null) 'status': status,
-    if (signal != null) 'signal': signal,
-  };
-
-  @override
-  bool operator ==(Object other) =>
-      other is HiddenAction &&
-      other.kind == kind &&
-      other.summary == summary &&
-      other.evidence == evidence &&
-      other.query == query &&
-      _sameSelections(other.months, months) &&
-      _sameSelections(other.dates, dates) &&
-      other.branch == branch &&
-      other.nature == nature &&
-      other.due == due &&
-      other.proactive == proactive &&
-      other.note == note &&
-      other.result == result &&
-      other.status == status &&
-      other.signal == signal;
-
-  @override
-  int get hashCode => Object.hash(
-    kind,
-    summary,
-    evidence,
-    query,
-    Object.hashAll(months ?? const []),
-    Object.hashAll(dates ?? const []),
-    branch,
-    nature,
-    due,
-    proactive,
-    note,
-    result,
-    status,
-    signal,
-  );
-}
-
 bool _sameSelections(List<String>? left, List<String>? right) {
   if (identical(left, right)) {
     return true;
@@ -239,21 +129,14 @@ bool _sameSelections(List<String>? left, List<String>? right) {
 final class HiddenActionParse {
   HiddenActionParse({
     required this.visibleText,
-    required List<TypedHiddenAction> typedActions,
+    required List<HiddenAction> actions,
     required List<String> diagnostics,
-  }) : typedActions = List.unmodifiable(typedActions),
-       actions = List.unmodifiable(
-         typedActions.map((action) => action.toLegacy()),
-       ),
+  }) : actions = List.unmodifiable(actions),
        diagnostics = List.unmodifiable(diagnostics);
 
   final String visibleText;
 
-  /// 定型视图：每种 kind 一个子类，各自携带解析器已校验的精确形状。
-  final List<TypedHiddenAction> typedActions;
-
-  /// 旧扁平兼容视图（扩-收模式的扩展步）：供尚未迁移的消费层继续按
-  /// 原接口读取，字段取值与定型视图逐字段一致；消费层迁移完成后移除。
+  /// 每种 kind 一个定型子类，各自携带解析器已校验的精确形状。
   final List<HiddenAction> actions;
   final List<String> diagnostics;
 }
@@ -349,23 +232,19 @@ final class PersonaHint {
 
 /// 隐藏动作的定型模型：每种 kind 一个子类，各自只携带解析器已校验的
 /// 精确字段，「kind 与字段不匹配」的状态在类型上无法构造。序列化仍走
-/// 原扁平协议的 wire 键；[toLegacy] 提供旧扁平视图，供尚未迁移的消费层
-/// 继续使用（扩-收模式的扩展步，消费层迁移完成后移除）。
-sealed class TypedHiddenAction {
-  const TypedHiddenAction();
+/// 原扁平协议的 wire 键。
+sealed class HiddenAction {
+  const HiddenAction();
 
   HiddenActionKind get kind;
 
   /// 与旧扁平结构逐字段一致的 wire 序列化。
   Map<String, Object?> toJson();
-
-  /// 旧扁平兼容视图：字段取值与解析器旧输出完全一致。
-  HiddenAction toLegacy();
 }
 
 /// memory_signal：值得记下的事实。summary 必填；evidence 可选；
 /// 画像提示成对可选。
-final class MemorySignalAction extends TypedHiddenAction {
+final class MemorySignalAction extends HiddenAction {
   const MemorySignalAction({required this.summary, this.evidence, this.hint});
 
   final String summary;
@@ -385,15 +264,6 @@ final class MemorySignalAction extends TypedHiddenAction {
   };
 
   @override
-  HiddenAction toLegacy() => HiddenAction(
-    kind: kind,
-    summary: summary,
-    evidence: evidence,
-    branch: hint?.branch.wireName,
-    nature: hint?.nature.wireName,
-  );
-
-  @override
   bool operator ==(Object other) =>
       other is MemorySignalAction &&
       other.summary == summary &&
@@ -406,7 +276,7 @@ final class MemorySignalAction extends TypedHiddenAction {
 
 /// memory_recall：轮内查找。聊天轮只带 query；选择调用的回应才带
 /// months/dates 选择。
-final class MemoryRecallAction extends TypedHiddenAction {
+final class MemoryRecallAction extends HiddenAction {
   MemoryRecallAction({
     required this.query,
     List<String>? months,
@@ -434,14 +304,6 @@ final class MemoryRecallAction extends TypedHiddenAction {
   };
 
   @override
-  HiddenAction toLegacy() => HiddenAction(
-    kind: kind,
-    query: query,
-    months: months,
-    dates: dates,
-  );
-
-  @override
   bool operator ==(Object other) =>
       other is MemoryRecallAction &&
       other.query == query &&
@@ -457,7 +319,7 @@ final class MemoryRecallAction extends TypedHiddenAction {
 }
 
 /// no_action：模型明确表示没有动作。
-final class NoAction extends TypedHiddenAction {
+final class NoAction extends HiddenAction {
   const NoAction();
 
   @override
@@ -467,9 +329,6 @@ final class NoAction extends TypedHiddenAction {
   Map<String, Object?> toJson() => {'action': kind.wireName};
 
   @override
-  HiddenAction toLegacy() => HiddenAction(kind: kind);
-
-  @override
   bool operator ==(Object other) => other is NoAction;
 
   @override
@@ -477,7 +336,7 @@ final class NoAction extends TypedHiddenAction {
 }
 
 /// open_loop_candidate：日终候选事项。title 走 wire 的 summary 键。
-final class OpenLoopCandidateAction extends TypedHiddenAction {
+final class OpenLoopCandidateAction extends HiddenAction {
   const OpenLoopCandidateAction({
     required this.title,
     this.evidence,
@@ -510,16 +369,6 @@ final class OpenLoopCandidateAction extends TypedHiddenAction {
   };
 
   @override
-  HiddenAction toLegacy() => HiddenAction(
-    kind: kind,
-    summary: title,
-    evidence: evidence,
-    due: due,
-    proactive: proactive?.wireName,
-    note: note,
-  );
-
-  @override
   bool operator ==(Object other) =>
       other is OpenLoopCandidateAction &&
       other.title == title &&
@@ -533,7 +382,7 @@ final class OpenLoopCandidateAction extends TypedHiddenAction {
 }
 
 /// open_loop_status：事项闭环、暂缓或重新活跃。
-final class OpenLoopStatusAction extends TypedHiddenAction {
+final class OpenLoopStatusAction extends HiddenAction {
   const OpenLoopStatusAction({
     required this.title,
     required this.status,
@@ -558,14 +407,6 @@ final class OpenLoopStatusAction extends TypedHiddenAction {
   };
 
   @override
-  HiddenAction toLegacy() => HiddenAction(
-    kind: kind,
-    summary: title,
-    status: status.wireName,
-    result: result,
-  );
-
-  @override
   bool operator ==(Object other) =>
       other is OpenLoopStatusAction &&
       other.title == title &&
@@ -579,16 +420,13 @@ final class OpenLoopStatusAction extends TypedHiddenAction {
 /// 用户记忆控制动作（禁提 / 当轮遗忘 / 冻结 / 解冻 / 删除）的共同形状：
 /// 只携带控制对象的话题简称。相等性也在本层统一：运行时类型（即 kind）
 /// 加话题简称逐字段比较，不同 kind 的实例互不相等。
-sealed class MemoryControlAction extends TypedHiddenAction {
+sealed class MemoryControlAction extends HiddenAction {
   const MemoryControlAction({required this.title});
 
   final String title;
 
   @override
   Map<String, Object?> toJson() => {'action': kind.wireName, 'summary': title};
-
-  @override
-  HiddenAction toLegacy() => HiddenAction(kind: kind, summary: title);
 
   @override
   bool operator ==(Object other) =>
@@ -642,7 +480,7 @@ final class MemoryDeleteAction extends MemoryControlAction {
 
 /// relationship_signal：深谈信号、温度变化、边界开合。边界开合必须带
 /// evidence 的约束属于字段间校验，由解析器执行。
-final class RelationshipSignalAction extends TypedHiddenAction {
+final class RelationshipSignalAction extends HiddenAction {
   const RelationshipSignalAction({
     required this.summary,
     required this.signal,
@@ -663,14 +501,6 @@ final class RelationshipSignalAction extends TypedHiddenAction {
     if (evidence != null) 'evidence': evidence,
     'signal': signal.wireName,
   };
-
-  @override
-  HiddenAction toLegacy() => HiddenAction(
-    kind: kind,
-    summary: summary,
-    signal: signal.wireName,
-    evidence: evidence,
-  );
 
   @override
   bool operator ==(Object other) =>
@@ -727,7 +557,7 @@ HiddenActionParse parseHiddenActions(String rawText) {
   if (blocks.isEmpty) {
     return HiddenActionParse(
       visibleText: visibleText,
-      typedActions: const [],
+      actions: const [],
       diagnostics: const [],
     );
   }
@@ -737,7 +567,7 @@ HiddenActionParse parseHiddenActions(String rawText) {
     diagnostics.add(HiddenActionDiagnostics.multipleBlocks);
   }
 
-  final actions = <TypedHiddenAction>[];
+  final actions = <HiddenAction>[];
   // JSON 解析失败与非数组、标量载荷同属 invalid_format：丢弃动作块并记诊断。
   Object? decoded;
   try {
@@ -754,7 +584,7 @@ HiddenActionParse parseHiddenActions(String rawText) {
     diagnostics.add(HiddenActionDiagnostics.invalidFormat);
     return HiddenActionParse(
       visibleText: visibleText,
-      typedActions: const [],
+      actions: const [],
       diagnostics: diagnostics,
     );
   }
@@ -783,12 +613,12 @@ HiddenActionParse parseHiddenActions(String rawText) {
 
   return HiddenActionParse(
     visibleText: visibleText,
-    typedActions: actions,
+    actions: actions,
     diagnostics: diagnostics,
   );
 }
 
-TypedHiddenAction? _validateAction(
+HiddenAction? _validateAction(
   Map<String, Object?> item,
   List<String> diagnostics,
 ) {

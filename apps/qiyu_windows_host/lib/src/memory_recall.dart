@@ -75,7 +75,8 @@ final class RecallOrchestrator {
     EpisodeIndexStore? indexStore,
     this.openLoopStore,
   }) : _episodePipeline = episodePipeline,
-       _indexStore = indexStore ??
+       _indexStore =
+           indexStore ??
            EpisodeIndexStore(
              memoryDirectory: memoryDirectory,
              episodePipeline: episodePipeline,
@@ -144,11 +145,11 @@ final class RecallOrchestrator {
     }
     final query = sanitizeUserInput(
       recallActions
-          .where((action) => action.kind == HiddenActionKind.memoryRecall)
-          .map((action) => action.query ?? '')
-          .where((value) => value.trim().isNotEmpty)
-          .firstOrNull ??
-      '',
+              .whereType<MemoryRecallAction>()
+              .map((action) => action.query)
+              .where((value) => value.trim().isNotEmpty)
+              .firstOrNull ??
+          '',
     ).trim();
     if (query.isEmpty) {
       diagnostics.add('recall skipped reason=empty-query');
@@ -181,8 +182,7 @@ final class RecallOrchestrator {
     // 递回目录：顶层索引全部月份 + 近期月份的每日索引。
     final topMonths = topIndex.map((line) => line.month).toSet();
     final dayIndexByMonth = <String, List<DayIndexLine>>{};
-    final recentMonths = (topIndex.map((line) => line.month).toList()
-          ..sort())
+    final recentMonths = (topIndex.map((line) => line.month).toList()..sort())
         .reversed
         .take(recallRecentMonthCount)
         .toList()
@@ -208,9 +208,9 @@ final class RecallOrchestrator {
       dayIndexByMonth: dayIndexByMonth,
       diagnostics: diagnostics,
     );
-    var dates = _memberDates(selection.dates, passedDates, diagnostics);
+    var dates = _memberDates(selection?.dates, passedDates, diagnostics);
     if (dates.isEmpty) {
-      final months = _memberMonths(selection.months, topMonths, diagnostics);
+      final months = _memberMonths(selection?.months, topMonths, diagnostics);
       if (months.isNotEmpty) {
         // 罕见路径：模型先指到月份（通常是没有递过每日索引的老月）。
         // Host 补读这些月的每日索引再递一次，重新选择；没有补到
@@ -241,7 +241,7 @@ final class RecallOrchestrator {
             diagnostics: diagnostics,
           );
           dates = _memberDates(
-            selection.dates,
+            selection?.dates,
             _datesOf(dayIndexByMonth),
             diagnostics,
           );
@@ -445,8 +445,8 @@ final class RecallOrchestrator {
   }
 
   /// 选择调用：把查找意图与递回的目录交给模型，收回 memory_recall
-  /// 选择。模型输出无法解析或没有给出动作时视作「没有头绪」。
-  Future<HiddenAction> _select(
+  /// 选择。模型输出无法解析或没有给出动作时返回 null（没有头绪）。
+  Future<MemoryRecallAction?> _select(
     ProviderChatClient client, {
     required String query,
     required String userText,
@@ -454,7 +454,6 @@ final class RecallOrchestrator {
     required Map<String, List<DayIndexLine>> dayIndexByMonth,
     required List<String> diagnostics,
   }) async {
-    final empty = const HiddenAction(kind: HiddenActionKind.memoryRecall);
     ModelCompletion? completion;
     try {
       completion = await client.complete(
@@ -467,7 +466,7 @@ final class RecallOrchestrator {
       );
     } on Object catch (error) {
       diagnostics.add('recall selection deferred [$error]');
-      return empty;
+      return null;
     }
     final text = completion?.text;
     if (text == null) {
@@ -475,18 +474,16 @@ final class RecallOrchestrator {
         'recall selection deferred '
         '[${completion?.failure?.name ?? 'no-provider'}]',
       );
-      return empty;
+      return null;
     }
     final parsed = parseHiddenActions(text);
-    final action = parsed.actions
-        .where((candidate) => candidate.kind == HiddenActionKind.memoryRecall)
-        .firstOrNull;
+    final action = parsed.actions.whereType<MemoryRecallAction>().firstOrNull;
     for (final diagnostic in parsed.diagnostics) {
       diagnostics.add('recall selection dropped [$diagnostic]');
     }
     if (action == null) {
       diagnostics.add('recall selection empty reason=no-action');
-      return empty;
+      return null;
     }
     return action;
   }
@@ -533,8 +530,7 @@ final class RecallOrchestrator {
   /// 短期 memory context 内容：压缩后的证据 + 使用纪律。
   /// 只带回与问题相关的压缩结果，不搬运选中文件全文。
   String _buildPendingContext(List<(String, List<EpisodeEntry>)> rawDays) {
-    final buffer = StringBuffer()
-      ..writeln('此前对话的后台整理记录（临时参考，不是新发生的事）：');
+    final buffer = StringBuffer()..writeln('此前对话的后台整理记录（临时参考，不是新发生的事）：');
     for (final (date, entries) in rawDays) {
       for (final entry in entries) {
         buffer.writeln(
@@ -548,9 +544,7 @@ final class RecallOrchestrator {
         }
       }
     }
-    buffer.write(
-      '语境合适时自然补上；与当前话题无关就不提；拿不准时保持不确定，不声称一直记得。',
-    );
+    buffer.write('语境合适时自然补上；与当前话题无关就不提；拿不准时保持不确定，不声称一直记得。');
     return buffer.toString();
   }
 
@@ -604,7 +598,8 @@ final class RecallOrchestrator {
     required String userText,
     required List<(String, List<EpisodeEntry>)> rawDays,
   }) {
-    const system = '''
+    const system =
+        '''
 你是栖语。刚才用户提起一件旧事，你先按一时没想起回应了；现在后台查找有了结果，你要自然地补一句。
 要求：
 1. 只输出要补给用户的一到两句话本身；不输出标签、解释、前缀或隐藏块。
