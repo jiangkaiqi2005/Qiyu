@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import '../baseline/host_api_gateway.dart';
+
 /// 导入预览中单个文件的归类（ticket 22）：与 Host 侧 wire 一一对应。
 /// 冲突与不可恢复的项目一律不会写入本机。
 enum BackupItemCategory {
@@ -176,18 +178,18 @@ abstract interface class BackupGateway {
   Future<BackupRollbackResult> rollback({String? snapshotId});
 }
 
-final class HttpBackupGateway implements BackupGateway {
-  HttpBackupGateway({http.Client? client, Uri? baseUri})
-    : _client = client ?? http.Client(),
-      _baseUri = baseUri ?? Uri.base;
+final class HttpBackupGateway extends HostApiGateway implements BackupGateway {
+  HttpBackupGateway({super.client, super.baseUri});
 
-  final http.Client _client;
-  final Uri _baseUri;
-  String? _csrfToken;
+  @override
+  Object errorFor(String message) => BackupGatewayException(message);
+
+  @override
+  String get unavailableMessage => '备份操作没有成功，可稍后重试。';
 
   @override
   Future<({Uint8List bytes, String fileName})> exportBundle() async {
-    final response = await _client.get(_baseUri.resolve('/api/backup/export'));
+    final response = await httpClient.get(resolve('/api/backup/export'));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw const BackupGatewayException('备份导出没有成功，可稍后重试。');
     }
@@ -219,10 +221,8 @@ final class HttpBackupGateway implements BackupGateway {
 
   @override
   Future<List<BackupSnapshotInfo>> snapshots() async {
-    final response = await _client.get(
-      _baseUri.resolve('/api/backup/snapshots'),
-    );
-    final json = _decodeSuccess(response);
+    final response = await httpClient.get(resolve('/api/backup/snapshots'));
+    final json = decodeSuccess(response);
     return (json['snapshots']! as List<Object?>)
         .map(
           (snapshot) =>
@@ -233,46 +233,20 @@ final class HttpBackupGateway implements BackupGateway {
 
   @override
   Future<BackupRollbackResult> rollback({String? snapshotId}) async {
-    await _ensureBootstrap();
-    final response = await _client.post(
-      _baseUri.resolve('/api/backup/rollback'),
-      headers: {'content-type': 'application/json', 'x-qiyu-csrf': _csrfToken!},
+    final response = await httpClient.post(
+      resolve('/api/backup/rollback'),
+      headers: await modifyingHeaders(),
       body: jsonEncode({'snapshotId': ?snapshotId}),
     );
-    return BackupRollbackResult.fromJson(_decodeSuccess(response));
+    return BackupRollbackResult.fromJson(decodeSuccess(response));
   }
 
   Future<Map<String, Object?>> _post(String path, Uint8List bundle) async {
-    await _ensureBootstrap();
-    final response = await _client.post(
-      _baseUri.resolve(path),
-      headers: {'content-type': 'application/json', 'x-qiyu-csrf': _csrfToken!},
+    final response = await httpClient.post(
+      resolve(path),
+      headers: await modifyingHeaders(),
       body: jsonEncode({'dataBase64': base64.encode(bundle)}),
     );
-    return _decodeSuccess(response);
-  }
-
-  Future<void> _ensureBootstrap() async {
-    if (_csrfToken != null) {
-      return;
-    }
-    final response = await _client.get(_baseUri.resolve('/api/bootstrap'));
-    final json = jsonDecode(response.body) as Map<String, Object?>;
-    _csrfToken = json['csrfToken']! as String;
-  }
-
-  Map<String, Object?> _decodeSuccess(http.Response response) {
-    Map<String, Object?>? json;
-    try {
-      json = jsonDecode(response.body) as Map<String, Object?>;
-    } on Object {
-      throw const BackupGatewayException('本机程序返回了无法读取的内容。');
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw BackupGatewayException(
-        json['message'] as String? ?? '备份操作没有成功，可稍后重试。',
-      );
-    }
-    return json;
+    return decodeSuccess(response);
   }
 }
