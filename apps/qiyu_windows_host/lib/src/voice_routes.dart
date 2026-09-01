@@ -8,6 +8,7 @@ import 'package:shelf/shelf.dart';
 import 'api_http.dart';
 import 'local_chat_service.dart';
 import 'markdown_memory_repository.dart';
+import 'provider_config.dart';
 import 'stt_settings_service.dart';
 import 'tts_settings_service.dart';
 
@@ -52,6 +53,13 @@ final class VoiceRoutes implements ApiRoutes {
       return _voiceServiceError(error.code, error.message, error.retryable);
     } on TtsServiceException catch (error) {
       return _voiceServiceError(error.code, error.message, error.retryable);
+    } on ProviderConfigException catch (error) {
+      return jsonError(
+        HttpStatus.badRequest,
+        code: 'invalid_provider_config',
+        message: error.message,
+        retryable: false,
+      );
     } on MemoryRepositoryException catch (error) {
       return memoryRepositoryErrorResponse(error);
     }

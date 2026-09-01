@@ -9,6 +9,8 @@ import 'local_chat_service.dart';
 import 'local_data_service.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_backup.dart';
+import 'provider_config.dart';
+import 'secret_store.dart';
 
 /// 备份与数据管理领域路由：Markdown 备份的导出/导入/预览/快照/回滚，
 /// 以及「清除产品数据」的影响预览与执行。
@@ -40,6 +42,20 @@ final class BackupRoutes implements ApiRoutes {
         code: error.code,
         message: error.message,
         retryable: false,
+      );
+    } on ProviderConfigException catch (error) {
+      return jsonError(
+        HttpStatus.badRequest,
+        code: 'invalid_provider_config',
+        message: error.message,
+        retryable: false,
+      );
+    } on SecretStoreException catch (error) {
+      return jsonError(
+        HttpStatus.internalServerError,
+        code: 'credential_store_error',
+        message: error.message,
+        retryable: true,
       );
     } on LocalDataException catch (error) {
       return jsonError(
