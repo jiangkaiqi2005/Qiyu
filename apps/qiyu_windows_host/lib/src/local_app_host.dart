@@ -75,6 +75,13 @@ final class LocalAppHost {
     WebSearchSettingsService? webSearchSettingsService,
     SttSettingsService? sttSettingsService,
     TtsSettingsService? ttsSettingsService,
+    // 时钟、原子写入、交付停顿与诊断出口沿用各组件既有的注入接缝，
+    // 缺省全部走生产默认；测试由此在真路径上获得确定性。
+    Clock? clock,
+    AtomicTextWriter? atomicWriter,
+    DeliveryPause? deliveryPause,
+    RecallWindowWait? recallWindowWait,
+    void Function(String message)? diagnosticsSink,
   }) async {
     final indexFile = File('$webRoot${Platform.pathSeparator}index.html');
     if (!indexFile.existsSync()) {
@@ -128,23 +135,31 @@ final class LocalAppHost {
     );
     final memoryRepository = MarkdownMemoryRepository(
       memoryDirectory: memoryDirectory,
+      clock: clock,
+      atomicWriter: atomicWriter,
     );
     final episodePipeline = EpisodeMemoryPipeline(
       memoryDirectory: memoryDirectory,
+      clock: clock,
+      atomicWriter: atomicWriter,
     );
     // 用户记忆控制记录的唯一读写者（ticket 18）：Open-loop 热层与
     // 聊天即时生效两条路径共享同一实例，避免双写覆盖。
     final memoryControls = MemoryControlsStore(
       memoryDirectory: memoryDirectory,
+      atomicWriter: atomicWriter,
     );
     // Open-loop 生命周期由日终归档与对话即时生效两条路径共享同一存储。
     final openLoopStore = OpenLoopStore(
       memoryDirectory: memoryDirectory,
       memoryControls: memoryControls,
+      atomicWriter: atomicWriter,
     );
     // 关系生命周期由日终归档与删除即时清除共享同一实例。
     final relationshipLifecycle = RelationshipLifecycle(
       memoryDirectory: memoryDirectory,
+      atomicWriter: atomicWriter,
+      clock: clock,
     );
     // PersonaTree 同样由随手记建叶与日终整理两条路径共享同一实例：
     // 树文件串行锁在实例内部，必须唯一。
@@ -152,12 +167,14 @@ final class LocalAppHost {
       memoryDirectory: memoryDirectory,
       episodePipeline: episodePipeline,
       openLoopStore: openLoopStore,
+      atomicWriter: atomicWriter,
     );
     // 月压缩由后台任务链触发（五段节奏第四动作），共享同一实例。
     final monthlySummary = MonthlySummaryStore(
       memoryDirectory: memoryDirectory,
       episodePipeline: episodePipeline,
       openLoopStore: openLoopStore,
+      atomicWriter: atomicWriter,
     );
     // Dream（五段节奏第五动作）：晚安后与启动补跑时深度重组产出
     // 长期印象，并保守维护 PersonaTree 根节点与 persona.md 投影；
@@ -170,6 +187,8 @@ final class LocalAppHost {
       monthlySummary: monthlySummary,
       personaTree: personaTree,
       modelClient: effectiveProviderSettings,
+      clock: clock,
+      atomicWriter: atomicWriter,
     );
     // 记忆动作执行端（ticket 20）：记忆中心 UI 的编辑、控制、删除
     // 与敏感揭示；聊天隐藏动作的删除管线共用同一实现。
@@ -181,6 +200,7 @@ final class LocalAppHost {
       openLoopStore: openLoopStore,
       monthlySummary: monthlySummary,
       relationshipLifecycle: relationshipLifecycle,
+      atomicWriter: atomicWriter,
     );
     // 损坏隔离与证据驱动恢复（ticket 21）：启动后台任务链上先于补
     // 归档执行；共享全部既有存储实例，写锁与各管线同律。
@@ -193,6 +213,8 @@ final class LocalAppHost {
       monthlySummary: monthlySummary,
       relationshipLifecycle: relationshipLifecycle,
       memoryActions: memoryActions,
+      clock: clock,
+      atomicWriter: atomicWriter,
     );
     // Markdown 备份导出与导入（ticket 22）：只依赖记忆目录与各存储
     // 实例，验证、差异、快照、回滚全部在写入前完成；共享控制与动作
@@ -203,6 +225,7 @@ final class LocalAppHost {
       episodePipeline: episodePipeline,
       personaTree: personaTree,
       memoryActions: memoryActions,
+      clock: clock,
     );
     final chatService = LocalChatService(
       memoryRepository,
@@ -219,11 +242,14 @@ final class LocalAppHost {
         // 日终一次模型理解调用与聊天共用同一 Provider 配置与凭据；
         // 未配置时日终自动走全确定性路径。
         modelClient: effectiveProviderSettings,
+        clock: clock,
+        atomicWriter: atomicWriter,
       ),
       openLoopStore: openLoopStore,
       statePackReader: StatePackReader(
         memoryDirectory: memoryDirectory,
         openLoopStore: openLoopStore,
+        clock: clock,
       ),
       memoryRecall: RecallOrchestrator(
         memoryDirectory: memoryDirectory,
@@ -240,6 +266,10 @@ final class LocalAppHost {
       relationshipLifecycle: relationshipLifecycle,
       memoryActions: memoryActions,
       memoryRecovery: memoryRecovery,
+      deliveryPause: deliveryPause,
+      recallWindowWait: recallWindowWait,
+      clock: clock,
+      diagnosticsSink: diagnosticsSink,
     );
     await chatService.initialize();
     // 四区记忆中心（ticket 19）：只依赖各存储的只读接口，不持有
@@ -252,6 +282,7 @@ final class LocalAppHost {
       memoryControls: memoryControls,
       dreamService: dreamService,
       memoryRecovery: memoryRecovery,
+      clock: clock,
     );
     final onboardingRepository = JsonOnboardingRepository(
       filePath: path.join(runtimeDirectory, 'onboarding.json'),
@@ -269,6 +300,7 @@ final class LocalAppHost {
       memoryRecovery: memoryRecovery,
       providerConfiguredReader: () async =>
           (await effectiveProviderSettings.read()).configured,
+      clock: clock,
     );
     // 本机数据管理：数据位置概览与「清除产品数据」（清除前先落快照）。
     final localDataService = LocalDataService(

@@ -5,6 +5,8 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/in_process_chat_host.dart';
+
 void main() {
   group('memory-controls store', () {
     test(
@@ -158,72 +160,55 @@ void main() {
 
   group('forget', () {
     test('memory_forget keeps the turn out of episodes and persona', () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-forget-test-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-      final provider = _SequencedProviderChatClient([
-        const ModelCompletion.reply('''好，不记这个。
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''好，不记这个。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户正在找新工作","branch":"preferences","nature":"behavior"},
 {"action":"memory_forget","summary":"用户正在找新工作"}]
 </qiyu-actions>'''),
-      ]);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
-        clock: clock,
-      );
-      final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
-      final personaTree = PersonaTreeStore(
-        memoryDirectory: directory.path,
-        episodePipeline: pipeline,
-        openLoopStore: openLoopStore,
-        diagnosticsSink: (_) {},
-      );
-      final service = LocalChatService(
-        MarkdownMemoryRepository(memoryDirectory: directory.path, clock: clock),
-        providerChatClient: provider,
-        episodePipeline: pipeline,
-        openLoopStore: openLoopStore,
-        personaTree: personaTree,
-        clock: clock,
-      );
-
-      final exchange = await service.send(requestId: 'f-1', text: '我在找工作，别记下来');
-
-      // 内容条目不落盘，只留审计簿记；没有条目能进提升、索引或画像。
-      final day = await pipeline.readDay('2026-08-16');
-      expect(day.entries.map((entry) => entry.summary), ['不记录: 用户正在找新工作']);
-      expect(day.entries.single.kind, episodeKindOpenLoopEvent);
-      expect(
-        File('${directory.path}/persona-tree/preferences.md').existsSync(),
-        isFalse,
-      );
-      // 不记录是当轮控制：memory-controls.md 不产生持久记录。
-      expect(
-        File('${directory.path}/memory-controls.md').existsSync(),
-        isFalse,
-      );
-      // 同轮未被遗忘的记忆照常写入。
-      final provider2 = _SequencedProviderChatClient([
-        const ModelCompletion.reply('''都记下了。
+          const ScriptedStreamReply('''都记下了。
 <qiyu-actions>
 [{"action":"memory_signal","summary":"用户对芒果过敏"},
 {"action":"memory_forget","summary":"找新工作"}]
 </qiyu-actions>'''),
-      ]);
-      final service2 = LocalChatService(
-        MarkdownMemoryRepository(memoryDirectory: directory.path, clock: clock),
-        providerChatClient: provider2,
-        episodePipeline: pipeline,
-        openLoopStore: openLoopStore,
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
         clock: clock,
       );
-      await service2.send(
+      addTearDown(harness.dispose);
+
+      final exchange = await harness.sendChat(
+        requestId: 'f-1',
+        text: '我在找工作，别记下来',
+      );
+
+      // 内容条目不落盘，只留审计簿记；没有条目能进提升、索引或画像。
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: clock,
+      );
+      final day = await pipeline.readDay('2026-08-16');
+      expect(day.entries.map((entry) => entry.summary), ['不记录: 用户正在找新工作']);
+      expect(day.entries.single.kind, episodeKindOpenLoopEvent);
+      expect(
+        File('${harness.memoryDirectory}/persona-tree/preferences.md')
+            .existsSync(),
+        isFalse,
+      );
+      // 不记录是当轮控制：memory-controls.md 不产生持久记录。
+      expect(
+        File('${harness.memoryDirectory}/memory-controls.md').existsSync(),
+        isFalse,
+      );
+      // 同轮未被遗忘的记忆照常写入。
+      await harness.sendChat(
         requestId: 'f-2',
         text: '顺便说我对芒果过敏',
-        sessionId: exchange.session.id,
+        sessionId: exchange.sessionId,
       );
       final dayAfter = await pipeline.readDay('2026-08-16');
       expect(
@@ -761,56 +746,69 @@ since: 2026-08-01
     test(
       'writes the control record first, then purges every derived layer',
       () async {
-        final directory = await Directory.systemTemp.createTemp(
-          'qiyu-delete-purge-test-',
-        );
-        addTearDown(() => directory.delete(recursive: true));
         DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-        final pipeline = EpisodeMemoryPipeline(
-          memoryDirectory: directory.path,
+        final gateway = ScriptedModelGateway(
+          streamScript: [
+            const ScriptedStreamReply('''好，都清掉。
+<qiyu-actions>
+[{"action":"memory_delete","summary":"青岛"}]
+</qiyu-actions>'''),
+            const ScriptedStreamReply('''已经删过了。
+<qiyu-actions>
+[{"action":"memory_delete","summary":"青岛"}]
+</qiyu-actions>'''),
+          ],
+        );
+        final harness = await InProcessChatHost.start(
+          modelGateway: gateway,
           clock: clock,
-        );
-        // 七月的一天：稍后进入月摘要。
-        await pipeline.synchronizedOnDayFiles(
-          () => pipeline.writeFinalization(
-            '2026-07-05',
-            entries: [
-              EpisodeEntry(
-                id: 'seed:july:0',
-                sessionId: 'seed',
-                requestId: 'seed',
+          seedMemory: (memoryDirectory) async {
+            final directory = memoryDirectory.path;
+            final pipeline = EpisodeMemoryPipeline(
+              memoryDirectory: directory,
+              clock: clock,
+            );
+            // 七月的一天：稍后进入月摘要。
+            await pipeline.synchronizedOnDayFiles(
+              () => pipeline.writeFinalization(
+                '2026-07-05',
+                entries: [
+                  EpisodeEntry(
+                    id: 'seed:july:0',
+                    sessionId: 'seed',
+                    requestId: 'seed',
+                    summary: '用户在青岛工作',
+                    at: DateTime(2026, 7, 5, 21).toUtc(),
+                  ),
+                ],
                 summary: '用户在青岛工作',
-                at: DateTime(2026, 7, 5, 21).toUtc(),
+                finalized: true,
+                finalizedAt: DateTime(2026, 7, 5, 23).toUtc(),
               ),
-            ],
-            summary: '用户在青岛工作',
-            finalized: true,
-            finalizedAt: DateTime(2026, 7, 5, 23).toUtc(),
-          ),
-        );
-        final monthlySummary = MonthlySummaryStore(
-          memoryDirectory: directory.path,
-          episodePipeline: pipeline,
-          diagnosticsSink: (_) {},
-        );
-        await monthlySummary.compressMonth('2026-07');
-        expect(
-          File(
-            '${directory.path}/episodes/2026/07/summary.md',
-          ).readAsStringSync(),
-          contains('用户在青岛工作'),
-        );
+            );
+            final monthlySummary = MonthlySummaryStore(
+              memoryDirectory: directory,
+              episodePipeline: pipeline,
+              diagnosticsSink: (_) {},
+            );
+            await monthlySummary.compressMonth('2026-07');
+            expect(
+              File(
+                '$directory/episodes/2026/07/summary.md',
+              ).readAsStringSync(),
+              contains('用户在青岛工作'),
+            );
 
-        final memoryControls = MemoryControlsStore(
-          memoryDirectory: directory.path,
-        );
-        final store = OpenLoopStore(
-          memoryDirectory: directory.path,
-          memoryControls: memoryControls,
-        );
-        // 关系证据：受管结构里带一条命中目标的近期变化。
-        File('${directory.path}/relationship.md').writeAsStringSync(
-          '''# relationship
+            final memoryControls = MemoryControlsStore(
+              memoryDirectory: directory,
+            );
+            final store = OpenLoopStore(
+              memoryDirectory: directory,
+              memoryControls: memoryControls,
+            );
+            // 关系证据：受管结构里带一条命中目标的近期变化。
+            File('$directory/relationship.md').writeAsStringSync(
+              '''# relationship
 
 stage: 熟悉
 since: 2026-08-01
@@ -819,10 +817,10 @@ since: 2026-08-01
 ## 近期变化
 - 2026-08-10 用户提到在青岛工作
 ''',
-        );
-        // 未闭环事项与长期印象各放一条命中内容。
-        File('${directory.path}/open-loops.md').writeAsStringSync(
-          '''# open-loops
+            );
+            // 未闭环事项与长期印象各放一条命中内容。
+            File('$directory/open-loops.md').writeAsStringSync(
+              '''# open-loops
 
 - [o1] 青岛旅行计划
   proactive: yes
@@ -831,74 +829,49 @@ since: 2026-08-01
   proactive: yes
   status: active
 ''',
-        );
-        File('${directory.path}/long-memory.md').writeAsStringSync(
-          '''# long-memory
+            );
+            File('$directory/long-memory.md').writeAsStringSync(
+              '''# long-memory
 
 ## 人与关系
 - 用户在青岛工作
 - 用户喜欢喝热牛奶
 ''',
+            );
+            final personaTree = PersonaTreeStore(
+              memoryDirectory: directory,
+              episodePipeline: pipeline,
+              openLoopStore: store,
+              diagnosticsSink: (_) {},
+            );
+            await personaTree.createLeaves([
+              EpisodeEntry(
+                id: 'seed:persona:0',
+                sessionId: 'seed',
+                requestId: 'seed',
+                summary: '用户在青岛工作',
+                at: DateTime(2026, 8, 12, 21).toUtc(),
+                personaBranch: 'identity',
+                personaNature: 'self_report',
+              ),
+            ]);
+          },
         );
-        final personaTree = PersonaTreeStore(
-          memoryDirectory: directory.path,
-          episodePipeline: pipeline,
-          openLoopStore: store,
-          diagnosticsSink: (_) {},
-        );
-        await personaTree.createLeaves([
-          EpisodeEntry(
-            id: 'seed:persona:0',
-            sessionId: 'seed',
-            requestId: 'seed',
-            summary: '用户在青岛工作',
-            at: DateTime(2026, 8, 12, 21).toUtc(),
-            personaBranch: 'identity',
-            personaNature: 'self_report',
-          ),
-        ]);
-        final relationshipLifecycle = RelationshipLifecycle(
-          memoryDirectory: directory.path,
-        );
-        final memoryActions = MemoryActionService(
-          memoryDirectory: directory.path,
-          episodePipeline: pipeline,
-          personaTree: personaTree,
-          memoryControls: memoryControls,
-          openLoopStore: store,
-          monthlySummary: monthlySummary,
-          relationshipLifecycle: relationshipLifecycle,
-          diagnosticsSink: (_) {},
-        );
-
-        final provider = _SequencedProviderChatClient([
-          const ModelCompletion.reply('''好，都清掉。
-<qiyu-actions>
-[{"action":"memory_delete","summary":"青岛"}]
-</qiyu-actions>'''),
-        ]);
-        final service = LocalChatService(
-          MarkdownMemoryRepository(
-            memoryDirectory: directory.path,
-            clock: clock,
-          ),
-          providerChatClient: provider,
-          episodePipeline: pipeline,
-          openLoopStore: store,
-          personaTree: personaTree,
-          monthlySummary: monthlySummary,
-          memoryControls: memoryControls,
-          relationshipLifecycle: relationshipLifecycle,
-          memoryActions: memoryActions,
+        addTearDown(harness.dispose);
+        final directory = harness.memoryDirectory;
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: directory,
           clock: clock,
         );
 
-        final exchange = await service.send(requestId: 'd-1', text: '把青岛的事都删了');
-        await service.finalizePending();
+        final exchange = await harness.sendChat(
+          requestId: 'd-1',
+          text: '把青岛的事都删了',
+        );
 
         // 1. 控制记录先落盘：deleted 区留下抽象防复活范围。
         final controlsContents = File(
-          '${directory.path}/memory-controls.md',
+          '$directory/memory-controls.md',
         ).readAsStringSync();
         expect(controlsContents, contains('## deleted'));
         expect(controlsContents, contains('- [MC001] chat | 青岛'));
@@ -910,7 +883,7 @@ since: 2026-08-01
 
         // 3. 索引重建后不再含受控关键词。
         final topIndex = await EpisodeIndexStore(
-          memoryDirectory: directory.path,
+          memoryDirectory: directory,
           episodePipeline: pipeline,
         ).readTopIndex();
         expect(
@@ -921,75 +894,56 @@ since: 2026-08-01
 
         // 4. 长期印象只删命中条目。
         final longMemory = File(
-          '${directory.path}/long-memory.md',
+          '$directory/long-memory.md',
         ).readAsStringSync();
         expect(longMemory, isNot(contains('青岛')));
         expect(longMemory, contains('用户喜欢喝热牛奶'));
 
         // 5. PersonaTree 节点清除。
-        final snapshot = await personaTree.readSnapshot();
+        final snapshot = await PersonaTreeStore(
+          memoryDirectory: directory,
+          episodePipeline: pipeline,
+          diagnosticsSink: (_) {},
+        ).readSnapshot();
         final identity = snapshot.branches['identity']!;
         expect(identity.roots, isEmpty);
         expect(identity.unrooted, isEmpty);
 
         // 6. 月摘要条目清除。
         final monthSummary = File(
-          '${directory.path}/episodes/2026/07/summary.md',
+          '$directory/episodes/2026/07/summary.md',
         ).readAsStringSync();
         expect(monthSummary, isNot(contains('青岛')));
 
         // 7. 关系证据行清除，结构保留。
         final relationship = File(
-          '${directory.path}/relationship.md',
+          '$directory/relationship.md',
         ).readAsStringSync();
         expect(relationship, isNot(contains('青岛')));
         expect(relationship, contains('stage: 熟悉'));
 
         // 8. 未闭环事项清除命中条目。
         final loops = File(
-          '${directory.path}/open-loops.md',
+          '$directory/open-loops.md',
         ).readAsStringSync();
         expect(loops, isNot(contains('青岛旅行计划')));
         expect(loops, contains('买牛奶'));
 
         // 9. sessions 保留：用户轮次仍在。
-        final session = await MarkdownMemoryRepository(
-          memoryDirectory: directory.path,
-          clock: clock,
-        ).openSession(sessionId: exchange.session.id);
+        final session = await harness.sessionReader().openSession(
+          sessionId: exchange.sessionId,
+        );
         expect(session.turns, isNotEmpty);
         expect(session.turns.map((turn) => turn.text), contains('把青岛的事都删了'));
 
         // 重复执行安全：再次删除没有新控制记录、不再扩大范围。
-        final again = _SequencedProviderChatClient([
-          const ModelCompletion.reply('''已经删过了。
-<qiyu-actions>
-[{"action":"memory_delete","summary":"青岛"}]
-</qiyu-actions>'''),
-        ]);
-        final serviceAgain = LocalChatService(
-          MarkdownMemoryRepository(
-            memoryDirectory: directory.path,
-            clock: clock,
-          ),
-          providerChatClient: again,
-          episodePipeline: pipeline,
-          openLoopStore: store,
-          personaTree: personaTree,
-          monthlySummary: monthlySummary,
-          memoryControls: memoryControls,
-          relationshipLifecycle: relationshipLifecycle,
-          memoryActions: memoryActions,
-          clock: clock,
-        );
-        await serviceAgain.send(
+        await harness.sendChat(
           requestId: 'd-2',
           text: '再删一次青岛',
-          sessionId: exchange.session.id,
+          sessionId: exchange.sessionId,
         );
-        await serviceAgain.finalizePending();
         final controlsAfter = File(
-          '${directory.path}/memory-controls.md',
+          '$directory/memory-controls.md',
         ).readAsStringSync();
         expect('- [MC'.allMatches(controlsAfter).length, 1);
       },
@@ -997,77 +951,64 @@ since: 2026-08-01
 
     test('delete filters day understanding metadata before index rebuild '
         '(M1)', () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-delete-understanding-test-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
-        clock: clock,
-      );
-      // 一天两条条目 + 日终理解元数据：索引重建优先取理解里的
-      // indexKeywords，删除若不过滤它，被删关键词会永久残留在索引。
-      await pipeline.synchronizedOnDayFiles(
-        () => pipeline.writeFinalization(
-          '2026-08-05',
-          entries: [
-            EpisodeEntry(
-              id: 'seed:m1:0',
-              sessionId: 'seed',
-              requestId: 'seed',
-              summary: '用户在青岛出差',
-              at: DateTime(2026, 8, 5, 20).toUtc(),
-            ),
-            EpisodeEntry(
-              id: 'seed:m1:1',
-              sessionId: 'seed',
-              requestId: 'seed',
-              summary: '用户喜欢喝热牛奶',
-              at: DateTime(2026, 8, 5, 21).toUtc(),
-            ),
-          ],
-          summary: '用户聊了青岛出差和热牛奶',
-          finalized: true,
-          finalizedAt: DateTime(2026, 8, 5, 23).toUtc(),
-          understanding: const {
-            'summary': '用户聊了青岛出差和热牛奶',
-            'indexKeywords': ['青岛', '热牛奶'],
-            'entryCount': 2,
-            'lastEntryId': 'seed:m1:1',
-          },
-        ),
-      );
-      final memoryControls = MemoryControlsStore(
-        memoryDirectory: directory.path,
-      );
-      final store = OpenLoopStore(
-        memoryDirectory: directory.path,
-        memoryControls: memoryControls,
-      );
-      final provider = _SequencedProviderChatClient([
-        const ModelCompletion.reply('''好，删掉。
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''好，删掉。
 <qiyu-actions>
 [{"action":"memory_delete","summary":"青岛"}]
 </qiyu-actions>'''),
-      ]);
-      final service = LocalChatService(
-        MarkdownMemoryRepository(memoryDirectory: directory.path, clock: clock),
-        providerChatClient: provider,
-        episodePipeline: pipeline,
-        openLoopStore: store,
-        memoryControls: memoryControls,
-        memoryActions: _chatMemoryActions(
-          memoryDirectory: directory.path,
-          pipeline: pipeline,
-          memoryControls: memoryControls,
-          openLoopStore: store,
-        ),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        seedMemory: (memoryDirectory) async {
+          final pipeline = EpisodeMemoryPipeline(
+            memoryDirectory: memoryDirectory.path,
+            clock: clock,
+          );
+          // 一天两条条目 + 日终理解元数据：索引重建优先取理解里的
+          // indexKeywords，删除若不过滤它，被删关键词会永久残留在索引。
+          await pipeline.synchronizedOnDayFiles(
+            () => pipeline.writeFinalization(
+              '2026-08-05',
+              entries: [
+                EpisodeEntry(
+                  id: 'seed:m1:0',
+                  sessionId: 'seed',
+                  requestId: 'seed',
+                  summary: '用户在青岛出差',
+                  at: DateTime(2026, 8, 5, 20).toUtc(),
+                ),
+                EpisodeEntry(
+                  id: 'seed:m1:1',
+                  sessionId: 'seed',
+                  requestId: 'seed',
+                  summary: '用户喜欢喝热牛奶',
+                  at: DateTime(2026, 8, 5, 21).toUtc(),
+                ),
+              ],
+              summary: '用户聊了青岛出差和热牛奶',
+              finalized: true,
+              finalizedAt: DateTime(2026, 8, 5, 23).toUtc(),
+              understanding: const {
+                'summary': '用户聊了青岛出差和热牛奶',
+                'indexKeywords': ['青岛', '热牛奶'],
+                'entryCount': 2,
+                'lastEntryId': 'seed:m1:1',
+              },
+            ),
+          );
+        },
+      );
+      addTearDown(harness.dispose);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
         clock: clock,
       );
 
-      await service.send(requestId: 'm1-1', text: '把青岛的事删了');
-      await service.finalizePending();
+      await harness.sendChat(requestId: 'm1-1', text: '把青岛的事删了');
 
       // 条目层：命中条目清除，其余保留。
       final day = await pipeline.readDay('2026-08-05');
@@ -1078,7 +1019,7 @@ since: 2026-08-01
       expect(understanding['indexKeywords'], ['热牛奶']);
       // 索引重建后顶层索引不再含被删关键词。
       final topIndex = await EpisodeIndexStore(
-        memoryDirectory: directory.path,
+        memoryDirectory: harness.memoryDirectory,
         episodePipeline: pipeline,
       ).readTopIndex();
       expect(topIndex, isNotNull);
@@ -1091,51 +1032,25 @@ since: 2026-08-01
     test(
       'delete without any locatable target writes no control record',
       () async {
-        final directory = await Directory.systemTemp.createTemp(
-          'qiyu-delete-no-target-test-',
-        );
-        addTearDown(() => directory.delete(recursive: true));
         DateTime clock() => DateTime(2026, 8, 16, 22, 30);
-        final pipeline = EpisodeMemoryPipeline(
-          memoryDirectory: directory.path,
-          clock: clock,
-        );
-        final provider = _SequencedProviderChatClient([
-          const ModelCompletion.reply('''我一时找不到这个内容，你说的是哪件事？
+        final gateway = ScriptedModelGateway(
+          streamScript: [
+            const ScriptedStreamReply('''我一时找不到这个内容，你说的是哪件事？
 <qiyu-actions>
 [{"action":"memory_delete","summary":"从未提过的事"}]
 </qiyu-actions>'''),
-        ]);
-        final memoryControls = MemoryControlsStore(
-          memoryDirectory: directory.path,
+          ],
         );
-        final store = OpenLoopStore(
-          memoryDirectory: directory.path,
-          memoryControls: memoryControls,
-        );
-        final service = LocalChatService(
-          MarkdownMemoryRepository(
-            memoryDirectory: directory.path,
-            clock: clock,
-          ),
-          providerChatClient: provider,
-          episodePipeline: pipeline,
-          openLoopStore: store,
-          memoryControls: memoryControls,
-          memoryActions: _chatMemoryActions(
-            memoryDirectory: directory.path,
-            pipeline: pipeline,
-            memoryControls: memoryControls,
-            openLoopStore: store,
-          ),
+        final harness = await InProcessChatHost.start(
+          modelGateway: gateway,
           clock: clock,
         );
+        addTearDown(harness.dispose);
 
-        await service.send(requestId: 'd-0', text: '删掉那个');
-        await service.finalizePending();
+        await harness.sendChat(requestId: 'd-0', text: '删掉那个');
 
         // 没有可定位对象：不落控制记录，不产生宽泛封禁。
-        final file = File('${directory.path}/memory-controls.md');
+        final file = File('${harness.memoryDirectory}/memory-controls.md');
         if (file.existsSync()) {
           expect(file.readAsStringSync(), isNot(contains('从未提过的事')));
         }
@@ -1267,67 +1182,6 @@ Map<String, Object?> _item(
   String text,
   List<String> evidence,
 ) => {'section': section, 'text': text, 'evidence': evidence};
-
-/// 聊天删除路径用的 MemoryActionService 测试构造：多个用例共用同一
-/// 组装，避免漂移。PersonaTreeStore 必须注入 openLoopStore（applyBan
-/// 经它读取控制集合）。
-MemoryActionService _chatMemoryActions({
-  required String memoryDirectory,
-  required EpisodeMemoryPipeline pipeline,
-  required MemoryControlsStore memoryControls,
-  required OpenLoopStore openLoopStore,
-}) => MemoryActionService(
-  memoryDirectory: memoryDirectory,
-  episodePipeline: pipeline,
-  personaTree: PersonaTreeStore(
-    memoryDirectory: memoryDirectory,
-    episodePipeline: pipeline,
-    openLoopStore: openLoopStore,
-    diagnosticsSink: (_) {},
-  ),
-  memoryControls: memoryControls,
-  openLoopStore: openLoopStore,
-  monthlySummary: MonthlySummaryStore(
-    memoryDirectory: memoryDirectory,
-    episodePipeline: pipeline,
-    diagnosticsSink: (_) {},
-  ),
-  relationshipLifecycle: RelationshipLifecycle(
-    memoryDirectory: memoryDirectory,
-  ),
-  diagnosticsSink: (_) {},
-);
-
-final class _SequencedProviderChatClient
-    implements StreamingProviderChatClient {
-  _SequencedProviderChatClient(this.completions);
-
-  final List<ModelCompletion> completions;
-  List<ModelMessage>? messages;
-  var calls = 0;
-
-  @override
-  Future<Stream<ModelStreamEvent>?> openStream(
-    List<ModelMessage> messages,
-  ) async {
-    this.messages = messages;
-    final completion =
-        completions[calls < completions.length
-            ? calls
-            : completions.length - 1];
-    calls += 1;
-    return switch (completion) {
-      ModelCompletion(:final text?) => Stream.fromIterable([
-        ModelStreamEvent.delta(text),
-        const ModelStreamEvent.done(),
-      ]),
-      ModelCompletion(:final failure?) => Stream.value(
-        ModelStreamEvent.failure(failure, '测试故障'),
-      ),
-      _ => null,
-    };
-  }
-}
 
 final class _ScriptedModelClient implements ProviderChatClient {
   _ScriptedModelClient(this.completions);

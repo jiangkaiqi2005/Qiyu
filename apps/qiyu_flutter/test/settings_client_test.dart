@@ -2,8 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
+
+import 'support/host_transport.dart';
 
 void main() {
   group('HttpSettingsGateway', () {
@@ -11,10 +12,7 @@ void main() {
       List<http.Request> requests,
       http.Response Function(http.Request) respond,
     ) {
-      final client = MockClient((request) async {
-        requests.add(request);
-        return respond(request);
-      });
+      final client = hostTransportClient(respond, requests: requests);
       return HttpSettingsGateway(
         client: client,
         baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -26,8 +24,7 @@ void main() {
       final gateway = gatewayFor(
         requests,
         (request) => switch (request.url.path) {
-          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-          '/api/preferences' => _jsonResponse({'developerMode': true}, 200),
+          '/api/preferences' => hostJsonResponse({'developerMode': true}, 200),
           _ => http.Response('not found', 404),
         },
       );
@@ -43,8 +40,7 @@ void main() {
       final gateway = gatewayFor(
         requests,
         (request) => switch (request.url.path) {
-          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-          '/api/preferences' => _jsonResponse({'developerMode': true}, 200),
+          '/api/preferences' => hostJsonResponse({'developerMode': true}, 200),
           _ => http.Response('not found', 404),
         },
       );
@@ -54,7 +50,7 @@ void main() {
       expect(preferences.developerMode, isTrue);
       final save = requests.last;
       expect(save.method, 'PUT');
-      expect(save.headers['x-qiyu-csrf'], 'csrf-1');
+      expectCsrfHeader(save);
       expect(jsonDecode(save.body), {'developerMode': true});
     });
 
@@ -63,8 +59,7 @@ void main() {
       final gateway = gatewayFor(
         requests,
         (request) => switch (request.url.path) {
-          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-          '/api/memory/controls' => _jsonResponse({
+          '/api/memory/controls' => hostJsonResponse({
             'readable': true,
             'frozen': [
               {'id': 1, 'origin': 'chat', 'summary': '一段冻结的记忆'},
@@ -91,8 +86,7 @@ void main() {
       final gateway = gatewayFor(
         requests,
         (request) => switch (request.url.path) {
-          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-          '/api/data/clear-preview' => _jsonResponse({
+          '/api/data/clear-preview' => hostJsonResponse({
             'memoryDirectory': 'C:/qiyu/memories',
             'sessionCount': 4,
             'episodeDayCount': 9,
@@ -122,8 +116,7 @@ void main() {
       final gateway = gatewayFor(
         requests,
         (request) => switch (request.url.path) {
-          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-          '/api/data/clear' => _jsonResponse({'cleared': true}, 200),
+          '/api/data/clear' => hostJsonResponse({'cleared': true}, 200),
           _ => http.Response('not found', 404),
         },
       );
@@ -132,7 +125,7 @@ void main() {
 
       final clear = requests.last;
       expect(clear.method, 'POST');
-      expect(clear.headers['x-qiyu-csrf'], 'csrf-1');
+      expectCsrfHeader(clear);
       expect(jsonDecode(clear.body), {'confirm': true});
     });
 
@@ -141,8 +134,7 @@ void main() {
       final gateway = gatewayFor(
         requests,
         (request) => switch (request.url.path) {
-          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-          '/api/dev/diagnostics' => _jsonResponse({
+          '/api/dev/diagnostics' => hostJsonResponse({
             'generatedAt': '2026-08-19T14:00:00.000Z',
             'memoryDirectory': 'C:/qiyu/memories',
             'recentRequests': [
@@ -190,8 +182,7 @@ void main() {
       final gateway = gatewayFor(
         <http.Request>[],
         (request) => switch (request.url.path) {
-          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-          '/api/data/clear' => _jsonResponse({
+          '/api/data/clear' => hostJsonResponse({
             'code': 'invalid_request',
             'message': '清除本机数据需要明确确认。',
             'retryable': false,
@@ -212,12 +203,4 @@ void main() {
       );
     });
   });
-}
-
-http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {
-  return http.Response.bytes(
-    utf8.encode(jsonEncode(body)),
-    statusCode,
-    headers: const {'content-type': 'application/json; charset=utf-8'},
-  );
 }

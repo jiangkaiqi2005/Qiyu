@@ -1,20 +1,17 @@
-import 'dart:convert';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:qiyu_flutter/features/history/history_client.dart';
+
+import 'support/host_transport.dart';
 
 void main() {
   test(
     'bootstraps CSRF, fetches grouped history, and deletes with headers',
     () async {
       final requests = <http.Request>[];
-      final client = MockClient((request) async {
-        requests.add(request);
-        return switch (request.url.path) {
-          '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-          '/api/history' => _jsonResponse({
+      final client = hostTransportClient(
+        (request) => switch (request.url.path) {
+          '/api/history' => hostJsonResponse({
             'latestSessionId': 'session-2',
             'days': [
               {
@@ -51,12 +48,13 @@ void main() {
               },
             ],
           }, 200),
-          '/api/history/sessions/session-1' => _jsonResponse({
+          '/api/history/sessions/session-1' => hostJsonResponse({
             'deleted': true,
           }, 200),
           _ => http.Response('not found', 404),
-        };
-      });
+        },
+        requests: requests,
+      );
       final gateway = HttpHistoryGateway(
         client: client,
         baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -76,23 +74,17 @@ void main() {
       final deleteRequest = requests.last;
       expect(deleteRequest.method, 'DELETE');
       expect(deleteRequest.url.path, '/api/history/sessions/session-1');
-      expect(deleteRequest.headers['x-qiyu-csrf'], 'csrf-1');
-      expect(
-        requests.where((request) => request.url.path == '/api/bootstrap'),
-        hasLength(1),
-      );
+      expectCsrfHeader(deleteRequest);
+      expectBootstrapRequestedOnce(requests);
     },
   );
 
   test(
     'surfaces host error messages when deleting a missing session',
     () async {
-      final client = MockClient((request) async {
-        if (request.url.path == '/api/bootstrap') {
-          return _jsonResponse({'csrfToken': 'csrf-1'}, 200);
-        }
-        return _jsonResponse({'message': '没有找到这段本地会话，可能已经被删除。'}, 404);
-      });
+      final client = hostTransportClient(
+        (request) => hostJsonResponse({'message': '没有找到这段本地会话，可能已经被删除。'}, 404),
+      );
       final gateway = HttpHistoryGateway(
         client: client,
         baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -109,13 +101,5 @@ void main() {
         ),
       );
     },
-  );
-}
-
-http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {
-  return http.Response.bytes(
-    utf8.encode(jsonEncode(body)),
-    statusCode,
-    headers: const {'content-type': 'application/json; charset=utf-8'},
   );
 }

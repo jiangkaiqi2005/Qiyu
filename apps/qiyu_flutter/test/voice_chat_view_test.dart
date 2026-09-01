@@ -238,10 +238,16 @@ void main() {
     expect(mutableTts.autoSpeakWrites, [false]);
     expect(find.byKey(const Key('voice-output-toggle-off')), findsOneWidget);
 
+    // 弹窗开着时全屏遮罩盖住 composer：先点遮罩收起弹窗，发送才点得到。
+    await tester.tapAt(const Offset(10, 590));
+    await tester.pumpAndSettle();
+
     // 关了之后自动朗读不触发（纯文字）。
     await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
     await tester.tap(find.byKey(const Key('chat-send')));
     await tester.pumpAndSettle();
+    // 发送真实触发：回复落屏；只是不朗读。
+    expect(find.text('咋了'), findsOneWidget);
     expect(speakGateway.calls, isEmpty);
     expect(find.byKey(const Key('voice-output-status')), findsNothing);
 

@@ -5,19 +5,21 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:qiyu_flutter/features/memory/memory_client.dart';
 
+import 'support/host_transport.dart';
+
 void main() {
   test('reads the overview and item details with GET-only requests', () async {
     final requests = <http.Request>[];
     final client = MockClient((request) async {
       requests.add(request);
       if (request.url.path == '/api/memory') {
-        return _jsonResponse(_overviewJson(), 200);
+        return hostJsonResponse(_overviewJson(), 200);
       }
       if (request.url.path == '/api/memory/items/day-1') {
-        return _jsonResponse(_dayDetailJson(), 200);
+        return hostJsonResponse(_dayDetailJson(), 200);
       }
       if (request.url.path == '/api/memory/items/gone') {
-        return _jsonResponse({
+        return hostJsonResponse({
           'code': 'memory_item_not_found',
           'message': '这条记忆不存在或已经变化，请返回后刷新。',
           'retryable': false,
@@ -58,17 +60,17 @@ void main() {
     expect(requests, isNotEmpty);
     for (final request in requests) {
       expect(request.method, 'GET');
-      expect(request.headers.containsKey('x-qiyu-csrf'), isFalse);
+      expectNoCsrfHeader(request);
     }
   });
 
   test('parses masked, frozen, banned and conflict markers', () async {
     final client = MockClient((request) async {
       if (request.url.path == '/api/memory') {
-        return _jsonResponse(_markedOverviewJson(), 200);
+        return hostJsonResponse(_markedOverviewJson(), 200);
       }
       if (request.url.path == '/api/memory/items/middle-1') {
-        return _jsonResponse(_middleDetailJson(), 200);
+        return hostJsonResponse(_middleDetailJson(), 200);
       }
       return http.Response('not found', 404);
     });
@@ -100,7 +102,7 @@ void main() {
 
   test('surfaces readable host errors', () async {
     final client = MockClient(
-      (request) async => _jsonResponse({
+      (request) async => hostJsonResponse({
         'code': 'internal',
         'message': '记忆中心暂时不可用，请稍后重试。',
         'retryable': true,
@@ -126,46 +128,43 @@ void main() {
     'actions post to the unified endpoint with CSRF and tri-state results',
     () async {
       final requests = <http.Request>[];
-      final client = MockClient((request) async {
-        requests.add(request);
-        if (request.url.path == '/api/bootstrap') {
-          return _jsonResponse({
-            'csrfToken': 'csrf-1',
-            'session': 'active',
-          }, 200);
-        }
-        if (request.url.path == '/api/memory/action') {
-          final body = jsonDecode(request.body) as Map<String, Object?>;
-          return switch (body['action']) {
-            'freeze' => _jsonResponse({
-              'status': 'success',
-              'message': '已暂停使用这条记忆。',
-            }, 200),
-            'delete-preview' =>
-              body['id'] == 'gone'
-                  ? _jsonResponse({
-                      'code': 'memory_item_not_found',
-                      'message': '这条记忆不存在或已经变化，请返回后刷新。',
-                    }, 404)
-                  : _jsonResponse({
-                      'lines': ['将删除这条记忆：用户在青岛工作', '原始对话记录保留。'],
-                      'sessionsKept': true,
-                    }, 200),
-            'delete' => _jsonResponse({
-              'status': 'partial',
-              'message': '删除已生效。',
-              'deferred': ['画像的清理'],
-            }, 200),
-            'reveal' => _jsonResponse({
-              'status': 'success',
-              'message': '仅本次展示。',
-              'text': '用户的手机号是13812345678',
-            }, 200),
-            _ => http.Response('not found', 404),
-          };
-        }
-        return http.Response('not found', 404);
-      });
+      final client = hostTransportClient(
+        (request) {
+          if (request.url.path == '/api/memory/action') {
+            final body = jsonDecode(request.body) as Map<String, Object?>;
+            return switch (body['action']) {
+              'freeze' => hostJsonResponse({
+                'status': 'success',
+                'message': '已暂停使用这条记忆。',
+              }, 200),
+              'delete-preview' =>
+                body['id'] == 'gone'
+                    ? hostJsonResponse({
+                        'code': 'memory_item_not_found',
+                        'message': '这条记忆不存在或已经变化，请返回后刷新。',
+                      }, 404)
+                    : hostJsonResponse({
+                        'lines': ['将删除这条记忆：用户在青岛工作', '原始对话记录保留。'],
+                        'sessionsKept': true,
+                      }, 200),
+              'delete' => hostJsonResponse({
+                'status': 'partial',
+                'message': '删除已生效。',
+                'deferred': ['画像的清理'],
+              }, 200),
+              'reveal' => hostJsonResponse({
+                'status': 'success',
+                'message': '仅本次展示。',
+                'text': '用户的手机号是13812345678',
+              }, 200),
+              _ => http.Response('not found', 404),
+            };
+          }
+          return http.Response('not found', 404);
+        },
+        requests: requests,
+        bootstrapBody: {'csrfToken': hostTestCsrfToken, 'session': 'active'},
+      );
       final gateway = HttpMemoryGateway(
         client: client,
         baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -190,7 +189,7 @@ void main() {
       // 全部写动作走统一动作端点并携带 CSRF。
       for (final request in requests.where((r) => r.method == 'POST')) {
         expect(request.url.path, '/api/memory/action');
-        expect(request.headers['x-qiyu-csrf'], 'csrf-1');
+        expectCsrfHeader(request);
       }
       // 读取仍然是 GET。
       expect(
@@ -205,20 +204,15 @@ void main() {
   test(
     'error responses without a status field are never read as success',
     () async {
-      final client = MockClient((request) async {
-        if (request.url.path == '/api/bootstrap') {
-          return _jsonResponse({
-            'csrfToken': 'csrf-1',
-            'session': 'active',
-          }, 200);
-        }
-        // Host 的 4xx 错误体只有 code/message，没有 status 字段。
-        return _jsonResponse({
+      // Host 的 4xx 错误体只有 code/message，没有 status 字段。
+      final client = hostTransportClient(
+        (request) => hostJsonResponse({
           'code': 'memory_action_not_allowed',
           'message': '关系状态记录不支持这项操作。',
           'retryable': false,
-        }, 400);
-      });
+        }, 400),
+        bootstrapBody: {'csrfToken': hostTestCsrfToken, 'session': 'active'},
+      );
       final gateway = HttpMemoryGateway(
         client: client,
         baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -313,12 +307,6 @@ void main() {
     expect(unhealthySection.healthy, isFalse);
   });
 }
-
-http.Response _jsonResponse(Object body, int statusCode) => http.Response(
-  jsonEncode(body),
-  statusCode,
-  headers: {'content-type': 'application/json; charset=utf-8'},
-);
 
 Map<String, Object?> _overviewJson() => {
   'generatedAt': '2026-08-17T13:00:00.000Z',

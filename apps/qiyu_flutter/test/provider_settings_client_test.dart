@@ -2,17 +2,16 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
+
+import 'support/host_transport.dart';
 
 void main() {
   test('saves Provider settings without ever receiving the API Key', () async {
     final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider' => hostJsonResponse({
           'configured': true,
           'keySet': true,
           'provider': 'anthropic',
@@ -22,8 +21,9 @@ void main() {
           'timeoutSeconds': 45,
         }, 200),
         _ => http.Response('not found', 404),
-      };
-    });
+      },
+      requests: requests,
+    );
     final gateway = HttpProviderSettingsGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -44,7 +44,7 @@ void main() {
     expect(settings.toString(), isNot(contains('temporary-test-value')));
     final saveRequest = requests.last;
     expect(saveRequest.method, 'PUT');
-    expect(saveRequest.headers['x-qiyu-csrf'], 'csrf-1');
+    expectCsrfHeader(saveRequest);
     expect(jsonDecode(saveRequest.body), {
       'provider': 'anthropic',
       'baseUrl': 'https://api.anthropic.com/v1',
@@ -57,18 +57,17 @@ void main() {
 
   test('distinguishes an authentication test result', () async {
     final requests = <http.Request>[];
-    final client = MockClient((request) async {
-      requests.add(request);
-      return switch (request.url.path) {
-        '/api/bootstrap' => _jsonResponse({'csrfToken': 'csrf-1'}, 200),
-        '/api/provider/test' => _jsonResponse({
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/test' => hostJsonResponse({
           'ok': false,
           'status': 'authentication',
           'message': 'API Key 没有通过验证。',
         }, 200),
         _ => http.Response('not found', 404),
-      };
-    });
+      },
+      requests: requests,
+    );
     final gateway = HttpProviderSettingsGateway(
       client: client,
       baseUri: Uri.parse('http://127.0.0.1:5173/'),
@@ -88,12 +87,4 @@ void main() {
     expect(result.succeeded, isFalse);
     expect(jsonDecode(requests.last.body), draft.toJson());
   });
-}
-
-http.Response _jsonResponse(Map<String, Object?> body, int statusCode) {
-  return http.Response.bytes(
-    utf8.encode(jsonEncode(body)),
-    statusCode,
-    headers: const {'content-type': 'application/json; charset=utf-8'},
-  );
 }
