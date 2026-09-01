@@ -29,6 +29,7 @@ import 'memory_routes.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'monthly_summary.dart';
+import 'onboarding_routes.dart';
 import 'onboarding_state.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
@@ -375,7 +376,7 @@ final class _LocalAppRequestHandler {
     required SttSettingsService sttSettingsService,
     required TtsSettingsService ttsSettingsService,
     required MemoryRepository memoryRepository,
-    required this.onboardingRepository,
+    required OnboardingRepository onboardingRepository,
     required this.memoryCenter,
     required this.memoryActions,
     required MemoryBackupService memoryBackup,
@@ -420,6 +421,7 @@ final class _LocalAppRequestHandler {
            ttsSettingsService: ttsSettingsService,
            memoryRepository: memoryRepository,
          ),
+         OnboardingRoutes(onboardingRepository: onboardingRepository),
        ];
 
   String _startupToken;
@@ -428,7 +430,6 @@ final class _LocalAppRequestHandler {
   final ProviderSettingsService providerSettingsService;
   final WebSearchSettingsService webSearchSettingsService;
 
-  final OnboardingRepository onboardingRepository;
   final MemoryCenterService memoryCenter;
   final MemoryActionService memoryActions;
   final MemoryControlsStore memoryControls;
@@ -548,30 +549,7 @@ final class _LocalAppRequestHandler {
     if (request.method == 'POST' && request.url.path == 'api/session/verify') {
       return Response(HttpStatus.noContent, headers: _noStoreHeaders);
     }
-    try {
-      if (request.method == 'GET' && request.url.path == 'api/onboarding') {
-        final state = await onboardingRepository.load();
-        return Response.ok(
-          jsonEncode({'completed': state.completed}),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'POST' &&
-          request.url.path == 'api/onboarding/complete') {
-        final state = await onboardingRepository.markCompleted(DateTime.now());
-        return Response.ok(
-          jsonEncode({'completed': state.completed}),
-          headers: _jsonHeaders,
-        );
-      }
-    } on OnboardingStateException catch (error) {
-      return _jsonError(
-        HttpStatus.internalServerError,
-        code: 'onboarding_unavailable',
-        message: error.message,
-        retryable: true,
-      );
-    }
+
     // 会话前置之后的请求交给领域路由模块；谁都不认领即按不存在处理。
     for (final routes in _apiRoutes) {
       final response = await routes.handle(request);
@@ -638,23 +616,6 @@ Response _plainError(int statusCode, String message) {
       HttpHeaders.contentTypeHeader: 'text/plain; charset=utf-8',
       HttpHeaders.cacheControlHeader: 'no-store',
     },
-  );
-}
-
-Response _jsonError(
-  int statusCode, {
-  required String code,
-  required String message,
-  required bool retryable,
-}) {
-  return Response(
-    statusCode,
-    body: jsonEncode({
-      'code': code,
-      'message': redactDiagnosticText(message),
-      'retryable': retryable,
-    }),
-    headers: _jsonHeaders,
   );
 }
 
