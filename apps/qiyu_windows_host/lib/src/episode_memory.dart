@@ -213,7 +213,7 @@ final class EpisodeUpdateResult {
 }
 
 /// 伪 Agent 隐藏动作的记忆写入端。只接受白名单校验后的
-/// [HiddenAction]，把 memory_signal 增量写入当天 episode，并维护
+/// [TypedHiddenAction]，把 memory_signal 增量写入当天 episode，并维护
 /// 可续跑的 checkpoint。模型从不直接写文件；这里的每一次写入都是
 /// 原子替换，且 checkpoint 只在 episode 写入成功后才前进。
 ///
@@ -344,7 +344,7 @@ final class EpisodeMemoryPipeline {
   Future<EpisodeUpdateResult> processReply({
     required RawSession session,
     required String requestId,
-    required List<HiddenAction> hiddenActions,
+    required List<TypedHiddenAction> hiddenActions,
     bool consumeWindow = true,
   }) => synchronizedOnDayFiles(
     () => _processReplyLocked(
@@ -358,7 +358,7 @@ final class EpisodeMemoryPipeline {
   Future<EpisodeUpdateResult> _processReplyLocked({
     required RawSession session,
     required String requestId,
-    required List<HiddenAction> hiddenActions,
+    required List<TypedHiddenAction> hiddenActions,
     required bool consumeWindow,
   }) async {
     final checkpoint = await readCheckpoint();
@@ -384,16 +384,14 @@ final class EpisodeMemoryPipeline {
     // 生活与记忆控制动作。
     final consumable = hiddenActions
         .where(
-          (action) =>
-              action.kind == HiddenActionKind.memorySignal ||
-              action.kind == HiddenActionKind.openLoopCandidate ||
-              action.kind == HiddenActionKind.openLoopStatus ||
-              action.kind == HiddenActionKind.memoryBan ||
-              action.kind == HiddenActionKind.memoryForget ||
-              action.kind == HiddenActionKind.memoryFreeze ||
-              action.kind == HiddenActionKind.memoryUnfreeze ||
-              action.kind == HiddenActionKind.memoryDelete ||
-              action.kind == HiddenActionKind.relationshipSignal,
+          (action) => switch (action) {
+            MemorySignalAction() ||
+            OpenLoopCandidateAction() ||
+            OpenLoopStatusAction() ||
+            MemoryControlAction() ||
+            RelationshipSignalAction() => true,
+            MemoryRecallAction() || NoAction() => false,
+          },
         )
         .toList();
     if (consumable.isNotEmpty) {
@@ -421,7 +419,7 @@ final class EpisodeMemoryPipeline {
     }
 
     final hasExplicitNoAction = hiddenActions.any(
-      (action) => action.kind == HiddenActionKind.noAction,
+      (action) => action is NoAction,
     );
     final shouldAdvance =
         consumeWindow &&
@@ -500,7 +498,7 @@ final class EpisodeMemoryPipeline {
   /// 把已通过白名单校验的隐藏动作落成当天 episode 条目。
   /// 候选保留四字段载荷供日终提升；状态变化与禁提作为事件条目留痕。
   EpisodeEntry? _entryForAction(
-    HiddenAction action, {
+    TypedHiddenAction action, {
     required RawSession session,
     required String requestId,
     required int index,
@@ -508,92 +506,73 @@ final class EpisodeMemoryPipeline {
     String? redacted(String? value) =>
         value == null ? null : redactSessionText(value).trim();
     final id = '${session.id}:$requestId:$index';
-    switch (action.kind) {
-      case HiddenActionKind.memorySignal:
-        return EpisodeEntry(
-          id: id,
-          sessionId: session.id,
-          requestId: requestId,
-          summary: redactSessionText(action.summary ?? '').trim(),
-          evidence: redacted(action.evidence),
-          at: _clock().toUtc(),
-          personaBranch: action.branch,
-          personaNature: action.nature,
-        );
-      case HiddenActionKind.openLoopCandidate:
-        return EpisodeEntry(
-          id: id,
-          sessionId: session.id,
-          requestId: requestId,
-          summary: redactSessionText(action.summary ?? '').trim(),
-          evidence: redacted(action.evidence),
-          at: _clock().toUtc(),
-          kind: episodeKindOpenLoopCandidate,
-          due: action.due,
-          proactive: action.proactive,
-          note: redacted(action.note),
-        );
-      case HiddenActionKind.openLoopStatus:
-        return EpisodeEntry(
-          id: id,
-          sessionId: session.id,
-          requestId: requestId,
-          summary:
-              'Open-loop 状态: '
-              '${redactSessionText(action.summary ?? '').trim()} → '
-              '${action.status}',
-          evidence: redacted(action.result),
-          at: _clock().toUtc(),
-          kind: episodeKindOpenLoopEvent,
-        );
-      case HiddenActionKind.memoryBan:
-        return EpisodeEntry(
-          id: id,
-          sessionId: session.id,
-          requestId: requestId,
-          summary:
-              '$controlAuditPrefixBan'
-              '${redactSessionText(action.summary ?? '').trim()}',
-          at: _clock().toUtc(),
-          kind: episodeKindOpenLoopEvent,
-        );
-      case HiddenActionKind.memoryForget:
-      case HiddenActionKind.memoryFreeze:
-      case HiddenActionKind.memoryUnfreeze:
-      case HiddenActionKind.memoryDelete:
+    return switch (action) {
+      MemorySignalAction() => EpisodeEntry(
+        id: id,
+        sessionId: session.id,
+        requestId: requestId,
+        summary: redactSessionText(action.summary).trim(),
+        evidence: redacted(action.evidence),
+        at: _clock().toUtc(),
+        personaBranch: action.hint?.branch.wireName,
+        personaNature: action.hint?.nature.wireName,
+      ),
+      OpenLoopCandidateAction() => EpisodeEntry(
+        id: id,
+        sessionId: session.id,
+        requestId: requestId,
+        summary: redactSessionText(action.title).trim(),
+        evidence: redacted(action.evidence),
+        at: _clock().toUtc(),
+        kind: episodeKindOpenLoopCandidate,
+        due: action.due,
+        proactive: action.proactive?.wireName,
+        note: redacted(action.note),
+      ),
+      OpenLoopStatusAction() => EpisodeEntry(
+        id: id,
+        sessionId: session.id,
+        requestId: requestId,
+        summary:
+            'Open-loop 状态: '
+            '${redactSessionText(action.title).trim()} → '
+            '${action.status.wireName}',
+        evidence: redacted(action.result),
+        at: _clock().toUtc(),
+        kind: episodeKindOpenLoopEvent,
+      ),
+      MemoryControlAction control => EpisodeEntry(
+        id: id,
+        sessionId: session.id,
+        requestId: requestId,
         // 记忆控制事件留痕（审计）：簿记条目不进摘要、状态包、索引
         // 或 PersonaTree，只留在 episode 里做追溯。
-        final label = switch (action.kind) {
-          HiddenActionKind.memoryForget => controlAuditPrefixForget,
-          HiddenActionKind.memoryFreeze => controlAuditPrefixFreeze,
-          HiddenActionKind.memoryUnfreeze => controlAuditPrefixUnfreeze,
-          _ => controlAuditPrefixDelete,
-        };
-        return EpisodeEntry(
-          id: id,
-          sessionId: session.id,
-          requestId: requestId,
-          summary: '$label${redactSessionText(action.summary ?? '').trim()}',
-          at: _clock().toUtc(),
-          kind: episodeKindOpenLoopEvent,
-        );
-      case HiddenActionKind.relationshipSignal:
+        summary:
+            '${switch (control) {
+              MemoryBanAction() => controlAuditPrefixBan,
+              MemoryForgetAction() => controlAuditPrefixForget,
+              MemoryFreezeAction() => controlAuditPrefixFreeze,
+              MemoryUnfreezeAction() => controlAuditPrefixUnfreeze,
+              MemoryDeleteAction() => controlAuditPrefixDelete,
+            }}${redactSessionText(control.title).trim()}',
+        at: _clock().toUtc(),
+        kind: episodeKindOpenLoopEvent,
+      ),
+      RelationshipSignalAction() => EpisodeEntry(
+        id: id,
+        sessionId: session.id,
+        requestId: requestId,
         // 摘要本身就是自然、抽象的状态描述（白名单已校验），
         // 原话细节只留在 evidence 供追溯，不进任何注入投影。
-        return EpisodeEntry(
-          id: id,
-          sessionId: session.id,
-          requestId: requestId,
-          summary: redactSessionText(action.summary ?? '').trim(),
-          evidence: redacted(action.evidence),
-          at: _clock().toUtc(),
-          kind: episodeKindRelationshipSignal,
-          signal: action.signal,
-        );
-      case HiddenActionKind.memoryRecall:
-      case HiddenActionKind.noAction:
-        return null;
-    }
+        summary: redactSessionText(action.summary).trim(),
+        evidence: redacted(action.evidence),
+        at: _clock().toUtc(),
+        kind: episodeKindRelationshipSignal,
+        signal: action.signal.wireName,
+      ),
+      // 检索请求与「没有动作」都不落 episode 条目。
+      MemoryRecallAction() || NoAction() => null,
+    };
   }
 
   int _pendingUserTurns(EpisodeCheckpoint? checkpoint, RawSession session) {

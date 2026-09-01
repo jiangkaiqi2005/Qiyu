@@ -185,11 +185,7 @@ void main() {
         ),
         requestId: 'req-$date',
         hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.memorySignal,
-            summary: '用户那天过得还行',
-            evidence: '今天还好',
-          ),
+          MemorySignalAction(summary: '用户那天过得还行', evidence: '今天还好'),
         ],
       );
     }

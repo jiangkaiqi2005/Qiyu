@@ -436,10 +436,7 @@ void main() {
           ),
         ],
       );
-      const action = HiddenAction(
-        kind: HiddenActionKind.memorySignal,
-        summary: '用户喜欢海',
-      );
+      const action = MemorySignalAction(summary: '用户喜欢海');
       final first = await pipeline.processReply(
         session: session,
         requestId: 'req-1',

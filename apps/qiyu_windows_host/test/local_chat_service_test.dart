@@ -1070,12 +1070,7 @@ void main() {
           ],
         ),
         requestId: 'old-req',
-        hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.memorySignal,
-            summary: '前天留下的未归档记忆',
-          ),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '前天留下的未归档记忆')],
       );
       final pipeline = EpisodeMemoryPipeline(
         memoryDirectory: temporaryDirectory.path,

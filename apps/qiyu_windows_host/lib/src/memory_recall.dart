@@ -121,7 +121,7 @@ final class RecallOrchestrator {
   /// 执行一次轮内查找。绝不抛出：任何异常都降级为无结果并记诊断。
   Future<RecallTurnResult> runTurnRecall({
     required String userText,
-    required List<HiddenAction> recallActions,
+    required List<TypedHiddenAction> recallActions,
   }) async {
     final diagnostics = <String>[];
     try {
@@ -135,7 +135,7 @@ final class RecallOrchestrator {
 
   Future<RecallTurnResult> _runClean(
     String userText,
-    List<HiddenAction> recallActions,
+    List<TypedHiddenAction> recallActions,
     List<String> diagnostics,
   ) async {
     final client = modelClient;
@@ -145,8 +145,8 @@ final class RecallOrchestrator {
     }
     final query = sanitizeUserInput(
       recallActions
-              .where((action) => action.kind == HiddenActionKind.memoryRecall)
-              .map((action) => action.query ?? '')
+              .whereType<MemoryRecallAction>()
+              .map((action) => action.query)
               .where((value) => value.trim().isNotEmpty)
               .firstOrNull ??
           '',
@@ -208,9 +208,9 @@ final class RecallOrchestrator {
       dayIndexByMonth: dayIndexByMonth,
       diagnostics: diagnostics,
     );
-    var dates = _memberDates(selection.dates, passedDates, diagnostics);
+    var dates = _memberDates(selection?.dates, passedDates, diagnostics);
     if (dates.isEmpty) {
-      final months = _memberMonths(selection.months, topMonths, diagnostics);
+      final months = _memberMonths(selection?.months, topMonths, diagnostics);
       if (months.isNotEmpty) {
         // 罕见路径：模型先指到月份（通常是没有递过每日索引的老月）。
         // Host 补读这些月的每日索引再递一次，重新选择；没有补到
@@ -241,7 +241,7 @@ final class RecallOrchestrator {
             diagnostics: diagnostics,
           );
           dates = _memberDates(
-            selection.dates,
+            selection?.dates,
             _datesOf(dayIndexByMonth),
             diagnostics,
           );
@@ -445,8 +445,8 @@ final class RecallOrchestrator {
   }
 
   /// 选择调用：把查找意图与递回的目录交给模型，收回 memory_recall
-  /// 选择。模型输出无法解析或没有给出动作时视作「没有头绪」。
-  Future<HiddenAction> _select(
+  /// 选择。模型输出无法解析或没有给出动作时返回 null（没有头绪）。
+  Future<MemoryRecallAction?> _select(
     ProviderChatClient client, {
     required String query,
     required String userText,
@@ -454,7 +454,6 @@ final class RecallOrchestrator {
     required Map<String, List<DayIndexLine>> dayIndexByMonth,
     required List<String> diagnostics,
   }) async {
-    final empty = const HiddenAction(kind: HiddenActionKind.memoryRecall);
     ModelCompletion? completion;
     try {
       completion = await client.complete(
@@ -467,7 +466,7 @@ final class RecallOrchestrator {
       );
     } on Object catch (error) {
       diagnostics.add('recall selection deferred [$error]');
-      return empty;
+      return null;
     }
     final text = completion?.text;
     if (text == null) {
@@ -475,18 +474,18 @@ final class RecallOrchestrator {
         'recall selection deferred '
         '[${completion?.failure?.name ?? 'no-provider'}]',
       );
-      return empty;
+      return null;
     }
     final parsed = parseHiddenActions(text);
-    final action = parsed.actions
-        .where((candidate) => candidate.kind == HiddenActionKind.memoryRecall)
+    final action = parsed.typedActions
+        .whereType<MemoryRecallAction>()
         .firstOrNull;
     for (final diagnostic in parsed.diagnostics) {
       diagnostics.add('recall selection dropped [$diagnostic]');
     }
     if (action == null) {
       diagnostics.add('recall selection empty reason=no-action');
-      return empty;
+      return null;
     }
     return action;
   }

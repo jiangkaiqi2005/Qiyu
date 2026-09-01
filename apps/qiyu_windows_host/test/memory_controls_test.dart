@@ -346,9 +346,7 @@ void main() {
 
       final result = await recall.runTurnRecall(
         userText: '我之前说的运动',
-        recallActions: const [
-          HiddenAction(kind: HiddenActionKind.memoryRecall, query: '爬山'),
-        ],
+        recallActions: [MemoryRecallAction(query: '爬山')],
       );
       // 索引关键词全部命中冻结：目录整行隐藏，模型调用不发生。
       expect(result.bubbleText, isNull);
@@ -1090,8 +1088,9 @@ since: 2026-08-01
 <qiyu-actions>
 [{"action":"memory_freeze","summary":"加班"}]
 </qiyu-actions>''');
-      expect(parse.actions.single.kind, HiddenActionKind.memoryFreeze);
-      expect(parse.actions.single.summary, '加班');
+      final freeze = parse.typedActions.single as MemoryFreezeAction;
+      expect(freeze.kind, HiddenActionKind.memoryFreeze);
+      expect(freeze.title, '加班');
 
       for (final wireName in const [
         'memory_forget',
@@ -1102,7 +1101,7 @@ since: 2026-08-01
           '<qiyu-actions>[{"action":"$wireName","summary":"某件事"}]'
           '</qiyu-actions>',
         );
-        expect(single.actions, hasLength(1), reason: wireName);
+        expect(single.typedActions, hasLength(1), reason: wireName);
         expect(single.diagnostics, isEmpty, reason: wireName);
       }
     });
@@ -1117,7 +1116,7 @@ since: 2026-08-01
         final missing = parseHiddenActions(
           '<qiyu-actions>[{"action":"$wireName"}]</qiyu-actions>',
         );
-        expect(missing.actions, isEmpty, reason: wireName);
+        expect(missing.typedActions, isEmpty, reason: wireName);
         expect(
           missing.diagnostics,
           contains(HiddenActionDiagnostics.invalidFields),
@@ -1127,7 +1126,7 @@ since: 2026-08-01
           '<qiyu-actions>[{"action":"$wireName","summary":"密码: abc123"}]'
           '</qiyu-actions>',
         );
-        expect(secret.actions, isEmpty, reason: wireName);
+        expect(secret.typedActions, isEmpty, reason: wireName);
         expect(
           secret.diagnostics,
           contains(HiddenActionDiagnostics.sensitiveContent),

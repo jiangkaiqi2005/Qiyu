@@ -23,9 +23,7 @@ void main() {
 
     final result = await recall.runTurnRecall(
       userText: '我上次说的演讲准备得怎么样了',
-      recallActions: const [
-        HiddenAction(kind: HiddenActionKind.memoryRecall, query: '第一次演讲'),
-      ],
+      recallActions: [MemoryRecallAction(query: '第一次演讲')],
     );
 
     // 命中：bubble 2 候选 + 压缩结果都在。
@@ -69,9 +67,7 @@ void main() {
 
     final result = await recall.runTurnRecall(
       userText: '演讲的事',
-      recallActions: const [
-        HiddenAction(kind: HiddenActionKind.memoryRecall, query: '演讲'),
-      ],
+      recallActions: [MemoryRecallAction(query: '演讲')],
     );
 
     expect(result.bubbleText, '补一句。');
@@ -106,9 +102,7 @@ void main() {
 
       final result = await recall.runTurnRecall(
         userText: '以前聊过的书店',
-        recallActions: const [
-          HiddenAction(kind: HiddenActionKind.memoryRecall, query: '旧书店'),
-        ],
+        recallActions: [MemoryRecallAction(query: '旧书店')],
       );
 
       expect(result.bubbleText, '书店那件事想起来了。');
@@ -138,9 +132,7 @@ void main() {
 
     final result = await recall.runTurnRecall(
       userText: '潜水的事',
-      recallActions: const [
-        HiddenAction(kind: HiddenActionKind.memoryRecall, query: '潜水装备'),
-      ],
+      recallActions: [MemoryRecallAction(query: '潜水装备')],
     );
 
     expect(result.bubbleText, isNull);
@@ -159,9 +151,7 @@ void main() {
 
     final result = await recall.runTurnRecall(
       userText: '演讲的事',
-      recallActions: const [
-        HiddenAction(kind: HiddenActionKind.memoryRecall, query: '演讲'),
-      ],
+      recallActions: [MemoryRecallAction(query: '演讲')],
     );
 
     expect(result.bubbleText, isNull);
@@ -190,9 +180,7 @@ void main() {
 
       final result = await recall.runTurnRecall(
         userText: '演讲的事',
-        recallActions: const [
-          HiddenAction(kind: HiddenActionKind.memoryRecall, query: '演讲'),
-        ],
+        recallActions: [MemoryRecallAction(query: '演讲')],
       );
 
       expect(result.bubbleText, '想起来了。');
@@ -229,9 +217,7 @@ void main() {
 
     final result = await recall.runTurnRecall(
       userText: '上次说的火锅',
-      recallActions: const [
-        HiddenAction(kind: HiddenActionKind.memoryRecall, query: '火锅'),
-      ],
+      recallActions: [MemoryRecallAction(query: '火锅')],
     );
 
     expect(result.bubbleText, '火锅想起来了。');
@@ -267,9 +253,7 @@ void main() {
 
     final result = await recall.runTurnRecall(
       userText: '医院检查的事',
-      recallActions: const [
-        HiddenAction(kind: HiddenActionKind.memoryRecall, query: '医院检查'),
-      ],
+      recallActions: [MemoryRecallAction(query: '医院检查')],
     );
 
     expect(result.bubbleText, isNull);
@@ -304,9 +288,7 @@ void main() {
 
       final result = await recall.runTurnRecall(
         userText: '我周末的安排',
-        recallActions: const [
-          HiddenAction(kind: HiddenActionKind.memoryRecall, query: '周末安排'),
-        ],
+        recallActions: [MemoryRecallAction(query: '周末安排')],
       );
 
       // 摘要未命中禁提得以保留，命中的原话摘录整段丢掉。
@@ -344,9 +326,7 @@ void main() {
 
       final result = await recall.runTurnRecall(
         userText: '青岛的事',
-        recallActions: const [
-          HiddenAction(kind: HiddenActionKind.memoryRecall, query: '青岛'),
-        ],
+        recallActions: [MemoryRecallAction(query: '青岛')],
       );
 
       // 关键词全部被禁的索引行整体隐藏：日期不可选，成员校验丢弃。
@@ -388,9 +368,7 @@ void main() {
 
     final result = await recall.runTurnRecall(
       userText: '演讲的事',
-      recallActions: const [
-        HiddenAction(kind: HiddenActionKind.memoryRecall, query: '演讲'),
-      ],
+      recallActions: [MemoryRecallAction(query: '演讲')],
     );
 
     expect(result.bubbleText, isNull);
@@ -416,9 +394,7 @@ void main() {
 
       final result = await recall.runTurnRecall(
         userText: '演讲的事',
-        recallActions: const [
-          HiddenAction(kind: HiddenActionKind.memoryRecall, query: '演讲'),
-        ],
+        recallActions: [MemoryRecallAction(query: '演讲')],
       );
 
       expect(result.bubbleText, isNull);
@@ -444,9 +420,7 @@ void main() {
 
       final result = await recall.runTurnRecall(
         userText: '潜水的事',
-        recallActions: const [
-          HiddenAction(kind: HiddenActionKind.memoryRecall, query: '潜水'),
-        ],
+        recallActions: [MemoryRecallAction(query: '潜水')],
       );
 
       expect(result.bubbleText, isNull);

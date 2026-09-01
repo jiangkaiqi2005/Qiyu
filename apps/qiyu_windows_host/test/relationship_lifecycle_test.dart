@@ -124,9 +124,7 @@ void main() {
       now,
       requestId: 'req-1',
       session: 'session-1',
-      actions: const [
-        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '聊了工作'),
-      ],
+      actions: const [MemorySignalAction(summary: '聊了工作')],
     );
     final lifecycle = RelationshipLifecycle(
       memoryDirectory: temporaryDirectory.path,
@@ -161,15 +159,11 @@ void main() {
         final date = '2026-08-${day.toString().padLeft(2, '0')}';
         dates.add(date);
         now = DateTime(2026, 8, day, 22);
-        final actions = <HiddenAction>[
-          const HiddenAction(
-            kind: HiddenActionKind.memorySignal,
-            summary: '聊了日常',
-          ),
+        final actions = <TypedHiddenAction>[
+          const MemorySignalAction(summary: '聊了日常'),
           if (day == 3 || day == 7)
-            HiddenAction(
-              kind: HiddenActionKind.relationshipSignal,
-              signal: 'deep_talk',
+            RelationshipSignalAction(
+              signal: RelationshipSignal.deepTalk,
               summary: '深谈信号 $day',
             ),
         ];
@@ -232,9 +226,10 @@ void main() {
           requestId: 'req-$day',
           session: 'session-1',
           actions: [
-            HiddenAction(
-              kind: HiddenActionKind.relationshipSignal,
-              signal: day == 2 || day == 5 ? 'deep_talk' : 'temperature',
+            RelationshipSignalAction(
+              signal: day == 2 || day == 5
+                  ? RelationshipSignal.deepTalk
+                  : RelationshipSignal.temperature,
               summary: '关系证据 $day',
             ),
           ],
@@ -279,9 +274,7 @@ void main() {
       now,
       requestId: 'req-1',
       session: 'session-1',
-      actions: const [
-        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '只聊了一句'),
-      ],
+      actions: const [MemorySignalAction(summary: '只聊了一句')],
     );
     final lifecycle = RelationshipLifecycle(
       memoryDirectory: temporaryDirectory.path,
@@ -313,10 +306,10 @@ void main() {
       // 两天四条温度信号 + 三条边界开合：窗口只保留最近几条。
       // 活跃天数刻意压到 2（<3），保证阶段停在初识——温度不碰阶段。
       final signals = [
-        ('2026-08-09', 'temperature', '用户这几天火气比较大'),
-        ('2026-08-09', 'deep_talk', '用户愿意聊到更深的家庭关系'),
-        ('2026-08-10', 'temperature', '用户回复热度回升'),
-        ('2026-08-10', 'temperature', '用户今晚话很少'),
+        ('2026-08-09', RelationshipSignal.temperature, '用户这几天火气比较大'),
+        ('2026-08-09', RelationshipSignal.deepTalk, '用户愿意聊到更深的家庭关系'),
+        ('2026-08-10', RelationshipSignal.temperature, '用户回复热度回升'),
+        ('2026-08-10', RelationshipSignal.temperature, '用户今晚话很少'),
       ];
       for (var index = 0; index < signals.length; index += 1) {
         final (date, signal, summary) = signals[index];
@@ -331,13 +324,7 @@ void main() {
           now,
           requestId: 'req-signal-$index',
           session: 'session-1',
-          actions: [
-            HiddenAction(
-              kind: HiddenActionKind.relationshipSignal,
-              signal: signal,
-              summary: summary,
-            ),
-          ],
+          actions: [RelationshipSignalAction(signal: signal, summary: summary)],
         );
       }
       now = DateTime(2026, 8, 10, 22);
@@ -347,15 +334,13 @@ void main() {
         requestId: 'req-bounds-a',
         session: 'session-1',
         actions: const [
-          HiddenAction(
-            kind: HiddenActionKind.relationshipSignal,
-            signal: 'boundary_open',
+          RelationshipSignalAction(
+            signal: RelationshipSignal.boundaryOpen,
             summary: '熬夜可以轻调侃',
             evidence: '用户笑并反逗',
           ),
-          HiddenAction(
-            kind: HiddenActionKind.relationshipSignal,
-            signal: 'boundary_open',
+          RelationshipSignalAction(
+            signal: RelationshipSignal.boundaryOpen,
             summary: '咖啡胃疼可以翻旧账',
             evidence: '用户接受念叨',
           ),
@@ -368,15 +353,13 @@ void main() {
         requestId: 'req-bounds-b',
         session: 'session-1',
         actions: const [
-          HiddenAction(
-            kind: HiddenActionKind.relationshipSignal,
-            signal: 'boundary_open',
+          RelationshipSignalAction(
+            signal: RelationshipSignal.boundaryOpen,
             summary: '工作话题可以多问',
             evidence: '用户主动展开',
           ),
-          HiddenAction(
-            kind: HiddenActionKind.relationshipSignal,
-            signal: 'boundary_close',
+          RelationshipSignalAction(
+            signal: RelationshipSignal.boundaryClose,
             summary: '家庭话题能探多深',
             evidence: '用户绕开了',
           ),
@@ -428,9 +411,7 @@ void main() {
       now,
       requestId: 'req-1',
       session: 'session-1',
-      actions: const [
-        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '聊了工作'),
-      ],
+      actions: const [MemorySignalAction(summary: '聊了工作')],
     );
     final lifecycle = RelationshipLifecycle(
       memoryDirectory: temporaryDirectory.path,
@@ -483,9 +464,10 @@ void main() {
         requestId: 'req-$day',
         session: 'session-1',
         actions: [
-          HiddenAction(
-            kind: HiddenActionKind.relationshipSignal,
-            signal: day <= 2 ? 'deep_talk' : 'temperature',
+          RelationshipSignalAction(
+            signal: day <= 2
+                ? RelationshipSignal.deepTalk
+                : RelationshipSignal.temperature,
             summary: '关系证据 $day',
           ),
         ],
@@ -532,14 +514,12 @@ void main() {
           requestId: 'req-$day',
           session: 'session-1',
           actions: [
-            HiddenAction(
-              kind: HiddenActionKind.relationshipSignal,
-              signal: 'temperature',
+            RelationshipSignalAction(
+              signal: RelationshipSignal.temperature,
               summary: '很长的温度描述 ${'暖' * 50} $day',
             ),
-            HiddenAction(
-              kind: HiddenActionKind.relationshipSignal,
-              signal: 'boundary_open',
+            RelationshipSignalAction(
+              signal: RelationshipSignal.boundaryOpen,
               summary: '很长的边界描述 ${'开' * 50} $day',
               evidence: '很长的证据 ${'证' * 50}',
             ),
@@ -572,7 +552,7 @@ Future<void> _reply(
   DateTime at, {
   required String requestId,
   required String session,
-  required List<HiddenAction> actions,
+  required List<TypedHiddenAction> actions,
 }) => pipeline.processReply(
   session: RawSession(
     id: session,

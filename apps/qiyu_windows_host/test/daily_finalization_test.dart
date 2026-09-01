@@ -22,11 +22,7 @@ void main() {
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
         hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.memorySignal,
-            summary: '用户明天有面试',
-            evidence: '明天要面试，有点紧张',
-          ),
+          MemorySignalAction(summary: '用户明天有面试', evidence: '明天要面试，有点紧张'),
         ],
       );
       final service = DailyFinalizationService(
@@ -83,9 +79,7 @@ void main() {
     await pipeline.processReply(
       session: _session('session-1', ['req-1']),
       requestId: 'req-1',
-      hiddenActions: const [
-        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '用户下周搬家'),
-      ],
+      hiddenActions: const [MemorySignalAction(summary: '用户下周搬家')],
     );
     final service = DailyFinalizationService(
       memoryDirectory: temporaryDirectory.path,
@@ -117,20 +111,13 @@ void main() {
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
-        hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.memorySignal,
-            summary: '前天聊了旅行计划',
-          ),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '前天聊了旅行计划')],
       );
       now = DateTime(2026, 8, 14, 23, 30);
       await pipeline.processReply(
         session: _session('session-2', ['req-2']),
         requestId: 'req-2',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '今天讨论了面试'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '今天讨论了面试')],
       );
       final service = DailyFinalizationService(
         memoryDirectory: temporaryDirectory.path,
@@ -605,17 +592,13 @@ void main() {
     await pipeline.processReply(
       session: _session('session-1', ['req-1']),
       requestId: 'req-1',
-      hiddenActions: const [
-        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '昨天的事'),
-      ],
+      hiddenActions: const [MemorySignalAction(summary: '昨天的事')],
     );
     now = DateTime(2026, 8, 14, 9);
     await pipeline.processReply(
       session: _session('session-2', ['req-2']),
       requestId: 'req-2',
-      hiddenActions: const [
-        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '今天的事'),
-      ],
+      hiddenActions: const [MemorySignalAction(summary: '今天的事')],
     );
     final service = DailyFinalizationService(
       memoryDirectory: temporaryDirectory.path,
@@ -697,9 +680,7 @@ void main() {
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '用户在健身'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '用户在健身')],
       );
       final failingService = DailyFinalizationService(
         memoryDirectory: temporaryDirectory.path,
@@ -810,9 +791,7 @@ void main() {
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '今天随便聊聊'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '今天随便聊聊')],
       );
       File('${temporaryDirectory.path}/open-loops.md').writeAsStringSync(
         '# open-loops\n\n'
@@ -855,9 +834,7 @@ void main() {
       await pipeline.processReply(
         session: _session('session-1', ['req-2']),
         requestId: 'req-2',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '又过了一天'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '又过了一天')],
       );
       await service.finalizeDay('2026-08-14');
       final archiveAgain = await File(
@@ -880,9 +857,7 @@ void main() {
     await pipeline.processReply(
       session: _session('session-1', ['req-1']),
       requestId: 'req-1',
-      hiddenActions: const [
-        HiddenAction(kind: HiddenActionKind.memorySignal, summary: '聊了咖啡'),
-      ],
+      hiddenActions: const [MemorySignalAction(summary: '聊了咖啡')],
     );
     const custom = '# relationship\n\nstage: 朋友\nsince: 2026-01-01\n';
     File(
@@ -918,12 +893,7 @@ void main() {
     await pipeline.processReply(
       session: _session('session-old', ['req-old']),
       requestId: 'req-old',
-      hiddenActions: const [
-        HiddenAction(
-          kind: HiddenActionKind.memorySignal,
-          summary: '窗口外不应出现的很旧很旧的事情',
-        ),
-      ],
+      hiddenActions: const [MemorySignalAction(summary: '窗口外不应出现的很旧很旧的事情')],
     );
     for (var dayOffset = 0; dayOffset < 7; dayOffset += 1) {
       now = DateTime(2026, 8, 8 + dayOffset, 22);
@@ -931,8 +901,7 @@ void main() {
         session: _session('session-$dayOffset', ['req-$dayOffset']),
         requestId: 'req-$dayOffset',
         hiddenActions: [
-          HiddenAction(
-            kind: HiddenActionKind.memorySignal,
+          MemorySignalAction(
             summary:
                 '第$dayOffset天发生的一件需要很长描述才能说清楚的事情，'
                 '这里继续补充更多细节以撑大体积',
@@ -977,9 +946,7 @@ void main() {
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '正常的一天'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '正常的一天')],
       );
       final service = DailyFinalizationService(
         memoryDirectory: temporaryDirectory.path,
@@ -1019,17 +986,13 @@ void main() {
       await pipeline.processReply(
         session: _session('session-july', ['req-july']),
         requestId: 'req-july',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '七月最后一天'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '七月最后一天')],
       );
       now = DateTime(2026, 8, 1, 22);
       await pipeline.processReply(
         session: _session('session-aug', ['req-aug']),
         requestId: 'req-aug',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '八月第一天'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '八月第一天')],
       );
       final service = DailyFinalizationService(
         memoryDirectory: temporaryDirectory.path,
@@ -1079,9 +1042,7 @@ void main() {
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '说了晚安'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '说了晚安')],
       );
       await service.finalizeDay('2026-08-14');
       expect((await pipeline.readDay('2026-08-14')).finalized, isTrue);
@@ -1090,9 +1051,7 @@ void main() {
       await pipeline.processReply(
         session: _session('session-1', ['req-1', 'req-2']),
         requestId: 'req-2',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '又睡不着了'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '又睡不着了')],
       );
       final reopened = await pipeline.readDay('2026-08-14');
       expect(reopened.finalized, isFalse);
@@ -1122,9 +1081,8 @@ void main() {
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
         hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.openLoopCandidate,
-            summary: '人生第一次演讲',
+          OpenLoopCandidateAction(
+            title: '人生第一次演讲',
             due: '2026-08-20 晚上',
             evidence: '下周三是人生第一次演讲',
           ),
@@ -1154,12 +1112,7 @@ void main() {
       await pipeline.processReply(
         session: _session('session-1', ['req-1', 'req-2']),
         requestId: 'req-2',
-        hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.openLoopCandidate,
-            summary: '人生第一次演讲',
-          ),
-        ],
+        hiddenActions: const [OpenLoopCandidateAction(title: '人生第一次演讲')],
       );
       await service.finalizeDay('2026-08-14');
       contents = await loopsFile.readAsString(encoding: utf8);
@@ -1186,14 +1139,10 @@ void main() {
           session: _session('session-$day', ['req-$day']),
           requestId: 'req-$day',
           hiddenActions: [
-            const HiddenAction(
-              kind: HiddenActionKind.memorySignal,
-              summary: '聊了日常',
-            ),
+            const MemorySignalAction(summary: '聊了日常'),
             if (day == 2)
-              const HiddenAction(
-                kind: HiddenActionKind.relationshipSignal,
-                signal: 'deep_talk',
+              const RelationshipSignalAction(
+                signal: RelationshipSignal.deepTalk,
                 summary: '用户愿意聊到更深的工作困扰',
               ),
           ],
@@ -1247,11 +1196,7 @@ void main() {
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
         hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.openLoopCandidate,
-            summary: '医院检查',
-            proactive: 'no',
-          ),
+          OpenLoopCandidateAction(title: '医院检查', proactive: LoopProactive.no),
         ],
       );
       await service.finalizeDay('2026-08-14');
@@ -1266,12 +1211,7 @@ void main() {
       await pipeline.processReply(
         session: _session('session-2', ['req-2']),
         requestId: 'req-2',
-        hiddenActions: const [
-          HiddenAction(
-            kind: HiddenActionKind.openLoopCandidate,
-            summary: '医院检查',
-          ),
-        ],
+        hiddenActions: const [OpenLoopCandidateAction(title: '医院检查')],
       );
       await service.finalizeDay('2026-08-15');
       expect(await store.readItems(), isEmpty);
@@ -1309,9 +1249,7 @@ void main() {
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
-        hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '普通的一天'),
-        ],
+        hiddenActions: const [MemorySignalAction(summary: '普通的一天')],
       );
       final service = DailyFinalizationService(
         memoryDirectory: temporaryDirectory.path,
@@ -1346,11 +1284,10 @@ void main() {
         session: _session('session-1', ['req-1', 'req-2']),
         requestId: 'req-1',
         hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memorySignal, summary: '聊了周末的安排'),
-          HiddenAction(
-            kind: HiddenActionKind.openLoopStatus,
-            summary: '人生第一次演讲',
-            status: 'closed',
+          MemorySignalAction(summary: '聊了周末的安排'),
+          OpenLoopStatusAction(
+            title: '人生第一次演讲',
+            status: LoopStatus.closed,
             result: '用户说演讲很顺利',
           ),
         ],
@@ -1359,10 +1296,9 @@ void main() {
         session: _session('session-1', ['req-1', 'req-2']),
         requestId: 'req-2',
         hiddenActions: const [
-          HiddenAction(kind: HiddenActionKind.memoryBan, summary: '医院检查'),
-          HiddenAction(
-            kind: HiddenActionKind.relationshipSignal,
-            signal: 'deep_talk',
+          MemoryBanAction(title: '医院检查'),
+          RelationshipSignalAction(
+            signal: RelationshipSignal.deepTalk,
             summary: '用户愿意聊到更深的家庭关系',
           ),
         ],
