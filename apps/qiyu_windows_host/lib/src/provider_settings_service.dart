@@ -94,14 +94,15 @@ final class PreparedProviderChatRequest {
   /// 的检索纪律）；主链原样注入提示词，不解释内容，无追加时为空串。
   final String hardRulesAddendum;
 
+  /// 打开流的原始句柄。字段刻意走私有具名参数：调用方构造时仍写
+  /// `openStream:` 标签（Dart 对私有具名参数剥掉下划线），而句柄
+  /// 本身不暴露在快照上——打开流只经 [openStream] 这一个公开入口。
   final Future<Stream<ModelStreamEvent>?> Function(
     List<ModelMessage> messages,
     Future<void>? whenCancelled,
   )
   _openStream;
 
-  /// 一次 open：按快照内部判定的能力路径打开本轮模型流；取消信号
-  /// 由快照自行决定是否下传，主链无需区分可取消性。
   Future<Stream<ModelStreamEvent>?> openStream(
     List<ModelMessage> messages, {
     Future<void>? whenCancelled,

@@ -101,9 +101,6 @@ final class LocalChatService {
   final MemoryRepository _repository;
   final QiyuBehaviorCore _behaviorCore;
 
-  /// 聊天主链的 Provider 统一端口（ticket 11）：一次 prepare 拿能力
-  /// 快照，一次 open 完成流式交付；Provider kind、可取消性与
-  /// web-search 能力标记由网关内部判定，不进主链。
   final ProviderChatPort? providerPort;
   final ModelPromptBuilder modelPromptBuilder;
   final EpisodeMemoryPipeline? episodePipeline;
@@ -478,10 +475,6 @@ final class LocalChatService {
       ModelPromptBuilder? requestBuilder;
       try {
         requestBuilder = await _promptBuilderForRequest(session.id);
-        // 统一 prepare/open 端口（ticket 11）：一次 prepare 拿到能力
-        // 快照（普通/流式/可取消/Web Search 的判定全部封在网关内部），
-        // 一次 open 打开本轮模型流；主链只消费快照与事件流，不感知
-        // Provider kind、可取消性或 web-search 能力标记。
         final prepared = await providerPort.prepareChatRequest();
         if (prepared != null) {
           completion = await _collectModelCompletion(

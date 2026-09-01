@@ -3,11 +3,8 @@ import 'dart:async';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
-/// ticket 11 回归：OpenAI-compatible、Anthropic、Ollama 三种 Provider
-/// 逐一走统一 prepare/open 端口（ProviderSettingsService.prepareChatRequest
-/// → PreparedProviderChatRequest.openStream），覆盖四个象限——正常终止、
-/// 提前 EOF、超时/原生错误、底层订阅取消。协议适配与终止判定在网关
-/// 内部，回归全部经真实 ProviderModelGateway 驱动。
+/// 三种 Provider 经统一 prepare/open 端口、真实 ProviderModelGateway
+/// 逐一回归四个象限：正常终止、提前 EOF、超时/原生错误、底层订阅取消。
 void main() {
   const messages = [
     ModelMessage(ModelMessageRole.system, '你是栖语。'),
