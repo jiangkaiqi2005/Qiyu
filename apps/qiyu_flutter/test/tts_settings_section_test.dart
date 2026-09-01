@@ -142,11 +142,7 @@ void main() {
 
     final reported = <String>[];
     value.extraParamsController.text = '{oops';
-    expect(
-      value.readDraftOrReport(reported.add),
-      isNull,
-      reason: '语法错误要驳回',
-    );
+    expect(value.readDraftOrReport(reported.add), isNull, reason: '语法错误要驳回');
     expect(reported.single, '自定义高级参数 JSON 格式不正确，请检查语法。');
 
     reported.clear();
@@ -239,7 +235,9 @@ final class _RecordingTtsGateway implements TtsSettingsGateway {
   TtsSettings get snapshot => TtsSettings(
     configured: configured,
     keySet: configured,
-    provider: configured ? TtsServiceKind.volcTts : TtsServiceKind.openAiCompatible,
+    provider: configured
+        ? TtsServiceKind.volcTts
+        : TtsServiceKind.openAiCompatible,
     baseUrl: configured ? 'https://tts.example/v3' : null,
     model: configured ? 'tts-model' : null,
     voice: configured ? 'my-voice-id' : null,
@@ -294,7 +292,6 @@ final class _RecordingTtsGateway implements TtsSettingsGateway {
   }
 
   @override
-  Future<TtsConnectionTest> testConnection(
-    TtsSettingsDraft draft,
-  ) async => const TtsConnectionTest(succeeded: true, message: '连接成功。');
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
+      const TtsConnectionTest(succeeded: true, message: '连接成功。');
 }

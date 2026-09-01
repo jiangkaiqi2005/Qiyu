@@ -79,7 +79,11 @@ final class SttSettingsForm {
       );
     } else {
       final defaults = _sttProtocolDefaults(_provider);
-      syncFocusProtectedField(baseUrlController, baseUrlFocusNode, defaults.url);
+      syncFocusProtectedField(
+        baseUrlController,
+        baseUrlFocusNode,
+        defaults.url,
+      );
       syncFocusProtectedField(modelController, modelFocusNode, defaults.model);
     }
     if (!apiKeyFocusNode.hasFocus && apiKeyController.text.isNotEmpty) {
@@ -128,9 +132,7 @@ final class SttSettingsForm {
 
   /// 读草稿：必填校验在领域内。草稿不合法时经 [report] 给出人话并
   /// 返回 null——呈现方式（SnackBar）由区块决定。
-  SttSettingsDraft? readDraftOrReport(
-    void Function(String message) report,
-  ) {
+  SttSettingsDraft? readDraftOrReport(void Function(String message) report) {
     if (baseUrlController.text.trim().isEmpty ||
         modelController.text.trim().isEmpty) {
       report('请填写语音服务地址和模型名称。');
@@ -291,9 +293,7 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
             ),
             const SizedBox(height: 8),
             Text(
-              keySet
-                  ? 'API Key 已保存在本机 provider.json'
-                  : '尚未保存语音服务的 API Key',
+              keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存语音服务的 API Key',
               style: theme.textTheme.titleSmall,
             ),
             const SizedBox(height: 8),
@@ -306,9 +306,7 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
               autocorrect: false,
               decoration: InputDecoration(
                 labelText: 'API Key',
-                hintText: keySet
-                    ? '留空即可继续使用已保存的 Key'
-                    : '保存后写入本机 provider.json',
+                hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -343,8 +341,9 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
                   key: const Key('save-stt-settings'),
                   onPressed: viewModel.saving
                       ? null
-                      : () =>
-                            unawaited(_form.save(viewModel, report: _reportInvalidDraft)),
+                      : () => unawaited(
+                          _form.save(viewModel, report: _reportInvalidDraft),
+                        ),
                   icon: settingsBusyOr(viewModel.saving, QiyuIcons.lock),
                   label: const Text('保存到本机'),
                 ),

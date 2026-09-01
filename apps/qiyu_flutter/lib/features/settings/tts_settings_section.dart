@@ -81,8 +81,7 @@ final class TtsSettingsForm {
     final presets = ttsVoicePresetsFor(_provider);
     final currentVoice = voiceController.text.trim();
     return _customVoice ||
-        (currentVoice.isNotEmpty &&
-            presets.every((p) => p.id != currentVoice));
+        (currentVoice.isNotEmpty && presets.every((p) => p.id != currentVoice));
   }
 
   /// 页面卸载时释放全部控制器与焦点节点。
@@ -137,17 +136,17 @@ final class TtsSettingsForm {
       );
     } else {
       final defaults = _ttsProtocolDefaults(_provider);
-      syncFocusProtectedField(baseUrlController, baseUrlFocusNode, defaults.url);
+      syncFocusProtectedField(
+        baseUrlController,
+        baseUrlFocusNode,
+        defaults.url,
+      );
       syncFocusProtectedField(modelController, modelFocusNode, defaults.model);
       final defaultVoice = presets.isNotEmpty ? presets.first.id : '';
       syncFocusProtectedField(voiceController, voiceFocusNode, defaultVoice);
       _customVoice = false;
       _speed = null;
-      syncFocusProtectedField(
-        extraParamsController,
-        extraParamsFocusNode,
-        '',
-      );
+      syncFocusProtectedField(extraParamsController, extraParamsFocusNode, '');
     }
     if (!apiKeyFocusNode.hasFocus && apiKeyController.text.isNotEmpty) {
       apiKeyController.clear();
@@ -186,9 +185,7 @@ final class TtsSettingsForm {
   /// 读草稿：必填校验与 extraParams 的 JSON 对象校验都在领域内。草稿
   /// 不合法时经 [report] 给出人话并返回 null——呈现方式（SnackBar）
   /// 由区块决定。
-  TtsSettingsDraft? readDraftOrReport(
-    void Function(String message) report,
-  ) {
+  TtsSettingsDraft? readDraftOrReport(void Function(String message) report) {
     if (baseUrlController.text.trim().isEmpty ||
         modelController.text.trim().isEmpty) {
       report('请填写语音合成服务地址和模型名称。');
@@ -473,9 +470,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
               autocorrect: false,
               decoration: InputDecoration(
                 labelText: 'API Key',
-                hintText: keySet
-                    ? '留空即可继续使用已保存的 Key'
-                    : '保存后写入本机 provider.json',
+                hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -566,8 +561,9 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
                   key: const Key('save-tts-settings'),
                   onPressed: viewModel.saving
                       ? null
-                      : () =>
-                            unawaited(_form.save(viewModel, report: _reportInvalidDraft)),
+                      : () => unawaited(
+                          _form.save(viewModel, report: _reportInvalidDraft),
+                        ),
                   icon: settingsBusyOr(viewModel.saving, QiyuIcons.lock),
                   label: const Text('保存到本机'),
                 ),

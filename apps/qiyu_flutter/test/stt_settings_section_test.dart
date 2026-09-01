@@ -194,7 +194,9 @@ final class _RecordingSttGateway implements SttSettingsGateway {
   SttSettings get snapshot => SttSettings(
     configured: configured,
     keySet: configured,
-    provider: configured ? SttServiceKind.volcSeedAsr : SttServiceKind.openaiCompatible,
+    provider: configured
+        ? SttServiceKind.volcSeedAsr
+        : SttServiceKind.openaiCompatible,
     baseUrl: configured ? 'wss://example.example/wss' : null,
     model: configured ? 'asr-model' : null,
   );
@@ -236,11 +238,10 @@ final class _RecordingSttGateway implements SttSettingsGateway {
   }
 
   @override
-  Future<ProviderTestResult> testConnection(
-    SttSettingsDraft draft,
-  ) async => const ProviderTestResult(
-    succeeded: true,
-    status: ProviderTestStatus.success,
-    message: '连接成功。',
-  );
+  Future<ProviderTestResult> testConnection(SttSettingsDraft draft) async =>
+      const ProviderTestResult(
+        succeeded: true,
+        status: ProviderTestStatus.success,
+        message: '连接成功。',
+      );
 }
