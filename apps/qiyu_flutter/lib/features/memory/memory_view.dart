@@ -14,13 +14,11 @@ import '../time_format.dart';
 import 'backup_client.dart';
 import 'backup_platform.dart';
 import 'backup_view.dart';
+import 'memory_actions.dart';
 import 'memory_client.dart';
 import 'memory_view_model.dart';
 
 const _maskedPlaceholder = '这条内容涉及私密信息，暂不直接展示。';
-
-/// 临时揭示的自动重新遮罩时间：只作本次展示，离开页面立即失效。
-const _revealTimeout = Duration(seconds: 20);
 
 /// 四区记忆中心（ticket 19 读取 / ticket 20 控制）：最近发生、长期
 /// 印象、关于你、我们的关系。导航只用用户语言；条目操作按钮常驻，
@@ -549,31 +547,31 @@ class _MemoryItemViewState extends State<MemoryItemView> {
   }
 
   /// 明确的临时揭示动作：只取一次原文，超时自动重新遮罩；原文
-  /// 只存在于本页面的临时状态里。
-  Future<void> _reveal(String field) async {
-    final viewModel = context.read<MemoryCenterViewModel>();
-    final messenger = ScaffoldMessenger.of(context);
-    final result = await viewModel.reveal(widget.itemId, field: field);
-    if (!mounted) {
-      return;
-    }
-    if (result.status != MemoryActionStatus.success || result.text == null) {
-      messenger.showSnackBar(SnackBar(content: Text(result.message)));
-      return;
-    }
-    setState(() {
-      _reveals.remove(field)?.timer.cancel();
-      _reveals[field] = _RevealState(
-        result.text!,
-        Timer(_revealTimeout, () {
-          if (!mounted) {
-            return;
-          }
-          setState(() => _reveals.remove(field));
-        }),
-      );
-    });
-  }
+  /// 只存在于本页面的临时状态里。执行与存活防护统一走共享动作
+  /// 执行器，揭示成功的落点回本页的临时揭示状态。
+  Future<void> _reveal(String field) => runMemoryAction(
+    context,
+    action: MemoryAction.reveal,
+    itemId: widget.itemId,
+    revealField: field,
+    onRevealed: (text) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _reveals.remove(field)?.timer.cancel();
+        _reveals[field] = _RevealState(
+          text,
+          Timer(revealTimeout, () {
+            if (!mounted) {
+              return;
+            }
+            setState(() => _reveals.remove(field));
+          }),
+        );
+      });
+    },
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -700,12 +698,27 @@ class _MemoryItemViewState extends State<MemoryItemView> {
           borderRadius: QiyuRadii.circleBorder,
           child: TextButton(
             key: Key('memory-reveal-$field'),
-            onPressed: () => unawaited(_reveal(field)),
+            onPressed: _revealEnabled()
+                ? () => unawaited(_reveal(field))
+                : null,
             child: const Text('临时查看'),
           ),
         ),
       ],
     );
+  }
+
+  /// 字段旁揭示入口的可点性，与列表侧揭示按钮取同一份计划：在场性
+  /// 由本方法只在遮罩分支被调用给出（计划里 reveal 的在场条件就是
+  /// 遮罩，快照如实带这一态）；控制状态不参与揭示的可用性，条目被
+  /// 暂停或禁提时入口照给，与列表一致。busy 期间与列表按钮同步灰掉
+  /// ——同一计划的 busy 规则，一处可点另一处灰掉的矛盾在这里杜绝。
+  bool _revealEnabled() {
+    final plan = MemoryActionPlan(
+      state: const MemoryItemActionState(control: null, masked: true),
+      busy: context.watch<MemoryCenterViewModel>().acting,
+    );
+    return plan.enabled(MemoryAction.reveal);
   }
 
   List<Widget> _episodeEntryBody(
@@ -784,87 +797,8 @@ class _MemoryItemViewState extends State<MemoryItemView> {
           ),
         ),
       const SizedBox(height: 8),
-      Wrap(
-        spacing: QiyuSpacing.xs,
-        children: [
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('memory-item-edit'),
-              onPressed: detail.masked || acting
-                  ? null
-                  : () => unawaited(
-                      _editFlow(
-                        context,
-                        id: widget.itemId,
-                        current: detail.content ?? '',
-                      ),
-                    ),
-              child: const Text('修正'),
-            ),
-          ),
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('memory-item-freeze'),
-              onPressed: acting
-                  ? null
-                  : () => unawaited(
-                      detail.control == MemoryControlStatus.frozen
-                          ? _runControl(
-                              (viewModel) => viewModel.unfreeze(widget.itemId),
-                            )
-                          : _runControl(
-                              (viewModel) => viewModel.freeze(widget.itemId),
-                            ),
-                    ),
-              child: Text(
-                detail.control == MemoryControlStatus.frozen ? '恢复使用' : '暂停使用',
-              ),
-            ),
-          ),
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('memory-item-ban'),
-              onPressed: acting
-                  ? null
-                  : () => unawaited(
-                      detail.control == MemoryControlStatus.banned
-                          ? _runControl(
-                              (viewModel) => viewModel.unban(widget.itemId),
-                            )
-                          : _banFlow(context, widget.itemId),
-                    ),
-              child: Text(
-                detail.control == MemoryControlStatus.banned ? '解除禁提' : '不再提起',
-              ),
-            ),
-          ),
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('memory-item-delete'),
-              onPressed: acting
-                  ? null
-                  : () => unawaited(_deleteFlow(context, widget.itemId)),
-              child: const Text('删除'),
-            ),
-          ),
-        ],
-      ),
+      _DetailActionRow(itemId: widget.itemId, detail: detail, acting: acting),
     ];
-  }
-
-  /// 详情页控制动作的统一出口（冻结/解除/禁提解除）：调用方显式
-  /// 指定要执行的动作；禁提确认与删除走各自的确认流程。
-  Future<void> _runControl(
-    Future<MemoryActionResult> Function(MemoryCenterViewModel) action,
-  ) async {
-    final viewModel = context.read<MemoryCenterViewModel>();
-    final messenger = ScaffoldMessenger.of(context);
-    final result = await action(viewModel);
-    messenger.showSnackBar(_resultSnackBar(result));
   }
 
   List<Widget> _personaRootBody(PersonaRootDetail detail) {
@@ -975,6 +909,64 @@ class _MemoryItemViewState extends State<MemoryItemView> {
   }
 }
 
+/// 详情页的动作行：在场与可点一律取共享动作计划，与列表按钮同键、
+/// 同标签、同确认流程、同执行器；呈现差异只有图标按钮换文字按钮。
+/// 按钮键与列表一致（`memory-action-<id>-<动作>`）：同一记忆状态下
+/// 两处的可用性由同一份 [MemoryActionPlan] 给出，一致性测试按键逐颗
+/// 对照两处。
+///
+/// 揭示不进动作行：详情页的敏感字段（正文、摘录、主张、小结）各自
+/// 在字段旁内联「临时查看」，走同一执行器。
+class _DetailActionRow extends StatelessWidget {
+  const _DetailActionRow({
+    required this.itemId,
+    required this.detail,
+    required this.acting,
+  });
+
+  /// 条目 id 来自路由：EpisodeEntryDetail 本身不带 id，与列表卡片
+  /// 共用同一键位全靠它。
+  final String itemId;
+  final EpisodeEntryDetail detail;
+  final bool acting;
+
+  @override
+  Widget build(BuildContext context) {
+    final plan = MemoryActionPlan(
+      state: MemoryItemActionState(
+        control: detail.control,
+        masked: detail.masked,
+        editable: true,
+      ),
+      busy: acting,
+    );
+    return Wrap(
+      spacing: QiyuSpacing.xs,
+      children: [
+        for (final action in plan.offeredActions)
+          if (action != MemoryAction.reveal)
+            QiyuFocusRingScope(
+              borderRadius: QiyuRadii.circleBorder,
+              child: TextButton(
+                key: Key('memory-action-$itemId-${action.name}'),
+                onPressed: plan.enabled(action)
+                    ? () => unawaited(
+                        runMemoryAction(
+                          context,
+                          action: action,
+                          itemId: itemId,
+                          currentText: detail.content ?? '',
+                        ),
+                      )
+                    : null,
+                child: Text(action.label),
+              ),
+            ),
+      ],
+    );
+  }
+}
+
 /// 记忆卡片的统一外观：底部留白，圆角与 `line` 发丝描边由主题层
 /// `cardTheme.shape`（[qiyuCardShape]，design-system §8 卡片档）给出，页面不再
 /// 覆盖 shape——shape 是整体覆盖的，只写圆角会把发丝边一起吃掉。
@@ -1010,7 +1002,7 @@ class _MemoryHeaderLine extends StatelessWidget {
   /// 左侧信息簇：状态芯片、正文或证据行。
   final Widget leading;
 
-  /// 右侧簇，按传入顺序排入（时间戳 / 说明文字，最后是 [_MemoryActionButtons]）。
+  /// 右侧簇，按传入顺序排入（时间戳 / 说明文字，最后是 [MemoryActionButtons]）。
   /// 传空表是真实语义：状态包行只读，右侧没有任何东西（T24 定稿），此时整行
   /// 只剩左侧信息簇。
   final List<Widget> trailing;
@@ -1078,7 +1070,7 @@ class _EntryTile extends StatelessWidget {
                     '${twoDigits(time.hour)}:${twoDigits(time.minute)}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  _MemoryActionButtons(
+                  MemoryActionButtons(
                     key: Key('memory-actions-${entry.id}'),
                     itemId: entry.id,
                     control: entry.control,
@@ -1121,7 +1113,7 @@ class _LongTermTile extends StatelessWidget {
             if (item.control case final control?)
               _StatusChip(label: control.label),
             if (!statePack)
-              _MemoryActionButtons(
+              MemoryActionButtons(
                 key: Key('memory-actions-${item.id}'),
                 itemId: item.id,
                 control: item.control,
@@ -1169,7 +1161,7 @@ class _RootTile extends StatelessWidget {
                   ],
                 ),
                 trailing: [
-                  _MemoryActionButtons(
+                  MemoryActionButtons(
                     key: Key('memory-actions-${root.id}'),
                     itemId: root.id,
                     control: root.control,
@@ -1231,7 +1223,7 @@ class _MiddleTile extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodySmall,
                     textAlign: TextAlign.end,
                   ),
-                  _MemoryActionButtons(
+                  MemoryActionButtons(
                     key: Key('memory-actions-${middle.id}'),
                     itemId: middle.id,
                     control: middle.control,
@@ -1289,456 +1281,6 @@ class _LeafTile extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// 条目可执行的动作：一个值对应一颗常驻按钮。
-///
-/// [label] 一份文案两个用途：按钮的 tooltip，以及带进语义树的无障碍标签
-/// （实测 IconButton 的 tooltip 只落到语义节点的 tooltip 属性上，label 是空的，
-/// 触屏与读屏都读不到动作名，所以标签由 [_MemoryActionButtons] 显式给出）。
-/// 按钮键的尾段取枚举名（`freeze`、`unban`…）；
-/// 动作与图形的对应关系在 [_MemoryActionButtons._actions]。
-enum _MemoryActionChoice {
-  edit('修正'),
-  reveal('临时查看'),
-  freeze('暂停使用'),
-  unfreeze('恢复使用'),
-  ban('不再提起'),
-  unban('解除禁提'),
-  delete('删除');
-
-  const _MemoryActionChoice(this.label);
-
-  final String label;
-}
-
-/// 条目操作按钮组（ticket 20）：把 [_MemoryActionChoice] 里的动作**常驻**摆在
-/// 条目上，不再收进「⋯」菜单——记忆控制权是产品的信任承诺，必须随时看得见
-/// （design-system §8 补充约定、Spec Implementation Decision 14、决策日志第二轮 4）。
-///
-/// 呈现是次要色图标按钮 + 悬停提亮，取值在主题层 [qiyuQuietIconButtonStyle]。
-/// 改的只有入口形态：动作语义、出现条件与确认流程与收在菜单里时逐项一致。
-class _MemoryActionButtons extends StatelessWidget {
-  const _MemoryActionButtons({
-    super.key,
-    required this.itemId,
-    required this.control,
-    required this.masked,
-    this.editable = false,
-    this.currentText,
-  });
-
-  final String itemId;
-  final MemoryControlStatus? control;
-  final bool masked;
-  final bool editable;
-  final String? currentText;
-
-  /// 这一条目当前该出现哪些操作：与改造前菜单逐项出现的条件完全一致。
-  /// 图形取 design-system §4 定案的五枚（铅笔 / 雪花 / 禁止圈 / 垃圾桶 /
-  /// 眼睛）；恢复使用与解除禁提沿用同一图形，两态靠条目上的状态芯片与
-  /// tooltip 上的动作名区分。
-  List<({IconData icon, _MemoryActionChoice choice})> _actions() {
-    final actions = <({IconData icon, _MemoryActionChoice choice})>[];
-    if (editable && !masked) {
-      actions.add((icon: QiyuIcons.edit, choice: _MemoryActionChoice.edit));
-    }
-    if (masked) {
-      actions.add((
-        icon: QiyuIcons.visibility,
-        choice: _MemoryActionChoice.reveal,
-      ));
-    }
-    switch (control) {
-      case MemoryControlStatus.frozen:
-        actions.add((
-          icon: QiyuIcons.ac_unit,
-          choice: _MemoryActionChoice.unfreeze,
-        ));
-      case MemoryControlStatus.banned:
-        actions.add((icon: QiyuIcons.block, choice: _MemoryActionChoice.unban));
-      case null:
-        actions.addAll([
-          (icon: QiyuIcons.ac_unit, choice: _MemoryActionChoice.freeze),
-          (icon: QiyuIcons.block, choice: _MemoryActionChoice.ban),
-        ]);
-    }
-    actions.add((icon: QiyuIcons.delete, choice: _MemoryActionChoice.delete));
-    return actions;
-  }
-
-  Future<void> _selected(
-    BuildContext context,
-    _MemoryActionChoice choice,
-  ) async {
-    final viewModel = context.read<MemoryCenterViewModel>();
-    final messenger = ScaffoldMessenger.of(context);
-    switch (choice) {
-      case _MemoryActionChoice.edit:
-        await _editFlow(context, id: itemId, current: currentText ?? '');
-      case _MemoryActionChoice.reveal:
-        await _revealTileFlow(context, itemId);
-      case _MemoryActionChoice.freeze:
-        messenger.showSnackBar(_resultSnackBar(await viewModel.freeze(itemId)));
-      case _MemoryActionChoice.unfreeze:
-        messenger.showSnackBar(
-          _resultSnackBar(await viewModel.unfreeze(itemId)),
-        );
-      case _MemoryActionChoice.ban:
-        await _banFlow(context, itemId);
-      case _MemoryActionChoice.unban:
-        messenger.showSnackBar(_resultSnackBar(await viewModel.unban(itemId)));
-      case _MemoryActionChoice.delete:
-        await _deleteFlow(context, itemId);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final acting = context.watch<MemoryCenterViewModel>().acting;
-    final actions = _actions();
-    // Wrap 而不是 Row：这一组按钮的总宽度等于颗数乘以各自的最小触摸宽度，
-    // 自身不会收缩；外层条目头部给不出那么多（极窄窗口、字号放大）时，
-    // 宁可让它行内换行，也不要把外层撑成 RenderFlex 溢出——一颗都不许丢。
-    // spacing 显式写 0：颗与颗之间只许各自焦点环的 3px 留白相邻，不许容器再往
-    // 里塞间距——外层那一处 8 是簇与簇之间的呼吸位，套到颗上四颗就凭空多出
-    // 24px。相邻两颗的左边缘距离因此是 54 = 一颗的固有宽 48 + 左右焦点环各 3，
-    // 这 6px 是**本容器自己的画法要求**，与改造前的形态无关：改造前这里是单独
-    // 一颗弹出菜单，压根不存在并排的几颗可比。这颗 0 此前是 Row 没写 `spacing`
-    // 时由 `Flex` 的默认值 0.0 白给的，换成可换行容器后不许再靠默认值
-    // 隐式成立；相邻两颗的 x 距离由 test/memory_view_test.dart 的「宽屏下条目
-    // 头部保持芯片在左、时间与操作贴右」逐对量着锁住。
-    return Wrap(
-      spacing: 0,
-      alignment: WrapAlignment.end,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (final action in actions)
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            // tooltip 不是无障碍标签：IconButton 把它交给 MaterialTooltip，
-            // 最终只落在语义节点的 tooltip 属性上，label 仍是空的，按
-            // bySemanticsLabel 读不到——这条事实由 test/accessibility_test.dart
-            // 的「tooltip 只是语义节点的 tooltip 属性」探针用例锁住。触屏没有
-            // hover，动作名一律用与 tooltip 同一份文案显式带进语义树，并合成
-            // 一个按钮节点。
-            child: MergeSemantics(
-              child: IconButton(
-                key: Key('memory-action-$itemId-${action.choice.name}'),
-                onPressed: acting
-                    ? null
-                    : () => unawaited(_selected(context, action.choice)),
-                tooltip: action.choice.label,
-                style: qiyuQuietIconButtonStyle(),
-                icon: Icon(action.icon, semanticLabel: action.choice.label),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-// ---------- 记忆动作流程（ticket 20） ----------
-
-/// 修正流程：对话框预填现有文本，保存按用户声明落盘。遮罩条目
-/// 不提供修正入口（不揭示原文就不能改）。
-Future<void> _editFlow(
-  BuildContext context, {
-  required String id,
-  required String current,
-}) async {
-  final viewModel = context.read<MemoryCenterViewModel>();
-  final messenger = ScaffoldMessenger.of(context);
-  final updated = await showDialog<String>(
-    context: context,
-    builder: (dialogContext) => _EditDialog(initial: current),
-  );
-  if (updated == null || updated.trim().isEmpty) {
-    return;
-  }
-  final result = await viewModel.edit(id, updated.trim());
-  messenger.showSnackBar(_resultSnackBar(result));
-}
-
-/// 列表遮罩条目的临时揭示：原文只出现在一次性对话框里，关闭即
-/// 重新遮罩，超时自动关闭；不落任何状态。
-Future<void> _revealTileFlow(BuildContext context, String id) async {
-  final viewModel = context.read<MemoryCenterViewModel>();
-  final messenger = ScaffoldMessenger.of(context);
-  final result = await viewModel.reveal(id);
-  if (!context.mounted) {
-    return;
-  }
-  if (result.status != MemoryActionStatus.success || result.text == null) {
-    messenger.showSnackBar(_resultSnackBar(result));
-    return;
-  }
-  await showDialog<void>(
-    context: context,
-    builder: (dialogContext) => _RevealDialog(text: result.text!),
-  );
-}
-
-/// 禁提确认流程（T25 定稿：禁提需要确认，冻结直接生效）。
-Future<void> _banFlow(BuildContext context, String id) async {
-  final viewModel = context.read<MemoryCenterViewModel>();
-  final messenger = ScaffoldMessenger.of(context);
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('不再提起这条记忆？'),
-      content: const Text('确认后，栖语不会再主动提起它，聊天和整理都会避开这条内容。以后可以随时解除。'),
-      actions: [
-        QiyuFocusRingScope(
-          borderRadius: QiyuRadii.circleBorder,
-          child: TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('先不用'),
-          ),
-        ),
-        QiyuFocusRingScope(
-          borderRadius: QiyuRadii.circleBorder,
-          child: TextButton(
-            key: const Key('memory-ban-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('不再提起'),
-          ),
-        ),
-      ],
-    ),
-  );
-  if (confirmed != true) {
-    return;
-  }
-  final result = await viewModel.ban(id);
-  messenger.showSnackBar(_resultSnackBar(result));
-}
-
-/// 删除流程：先取准确影响范围，展示后确认执行；影响范围取不到
-/// （条目已变化）时如实告知，不执行删除。
-Future<void> _deleteFlow(BuildContext context, String id) async {
-  final viewModel = context.read<MemoryCenterViewModel>();
-  final messenger = ScaffoldMessenger.of(context);
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) =>
-        _DeletePreviewDialog(impact: viewModel.deletePreview(id)),
-  );
-  if (confirmed != true) {
-    return;
-  }
-  final result = await viewModel.delete(id);
-  messenger.showSnackBar(_resultSnackBar(result));
-}
-
-SnackBar _resultSnackBar(MemoryActionResult result) {
-  // 三态共用主题默认的中性面板底，只有失败态把前景换成 danger。依据是
-  // design-system §1 三色纪律的通则：暗红住「破坏性操作」与「故障/失败态」
-  // 两类，某个动作没成属后者（决策日志第五轮 #15）。partial 既非破坏也非
-  // 故障，不借危险红，三态的分别由它本来就写明白的文案承担（#12）。
-  final failed = result.status == MemoryActionStatus.failed;
-  return SnackBar(
-    key: const Key('memory-action-result'),
-    content: Text(
-      result.message,
-      style: failed ? const TextStyle(color: QiyuColors.danger) : null,
-    ),
-  );
-}
-
-class _EditDialog extends StatefulWidget {
-  const _EditDialog({required this.initial});
-
-  final String initial;
-
-  @override
-  State<_EditDialog> createState() => _EditDialogState();
-}
-
-class _EditDialogState extends State<_EditDialog> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.initial,
-  );
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('修正这条记忆'),
-      content: TextField(
-        key: const Key('memory-edit-field'),
-        controller: _controller,
-        autofocus: true,
-        maxLines: 3,
-        maxLength: 120,
-        decoration: const InputDecoration(hintText: '按你的说法写'),
-      ),
-      actions: [
-        QiyuFocusRingScope(
-          borderRadius: QiyuRadii.circleBorder,
-          child: TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-        ),
-        QiyuFocusRingScope(
-          borderRadius: QiyuRadii.circleBorder,
-          child: TextButton(
-            key: const Key('memory-edit-save'),
-            onPressed: () => Navigator.of(context).pop(_controller.text),
-            child: const Text('保存'),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 临时揭示对话框：原文只作本次展示，超时自动关闭；关闭即重新
-/// 遮罩。
-class _RevealDialog extends StatefulWidget {
-  const _RevealDialog({required this.text});
-
-  final String text;
-
-  @override
-  State<_RevealDialog> createState() => _RevealDialogState();
-}
-
-class _RevealDialogState extends State<_RevealDialog> {
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer(_revealTimeout, () {
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      key: const Key('memory-reveal-dialog'),
-      title: const Text('仅本次展示'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 不提供选择复制：敏感原文只作本次呈现，不进剪贴板。
-          Text(widget.text),
-          const SizedBox(height: 8),
-          Text('关闭或稍后会自动重新遮罩。', style: Theme.of(context).textTheme.bodySmall),
-        ],
-      ),
-      actions: [
-        QiyuFocusRingScope(
-          borderRadius: QiyuRadii.circleBorder,
-          child: TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('关闭'),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 删除确认对话框：先呈现只读的影响范围预览，确认后返回 true。
-class _DeletePreviewDialog extends StatelessWidget {
-  const _DeletePreviewDialog({required this.impact});
-
-  final Future<MemoryDeleteImpact?> impact;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('删除这条记忆？'),
-      content: FutureBuilder<MemoryDeleteImpact?>(
-        future: impact,
-        builder: (context, snapshot) {
-          if (!snapshot.hasData && !snapshot.hasError) {
-            return const SizedBox(
-              height: 80,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 8),
-                    Text('正在核对影响范围…'),
-                  ],
-                ),
-              ),
-            );
-          }
-          final preview = snapshot.data;
-          if (preview == null) {
-            return const Text('这条记忆不存在或已经变化，请返回后刷新。');
-          }
-          return ConstrainedBox(
-            // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
-            // 内层用 Column 而非视口类列表（对话框要测量内容固有尺寸，
-            // ListView 无法参与），外裹 SingleChildScrollView 兜住
-            // 字号放大或小窗下的超高内容，与记忆控制总览对话框同模式。
-            constraints: const BoxConstraints(
-              maxWidth: QiyuLayout.evidenceDialogMaxWidth,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final line in preview.lines)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Text(line),
-                    ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-      actions: [
-        QiyuFocusRingScope(
-          borderRadius: QiyuRadii.circleBorder,
-          child: TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('先不用'),
-          ),
-        ),
-        FutureBuilder<MemoryDeleteImpact?>(
-          future: impact,
-          builder: (context, snapshot) {
-            final ready = snapshot.hasData && snapshot.data != null;
-            return QiyuFocusRingScope(
-              borderRadius: QiyuRadii.circleBorder,
-              child: TextButton(
-                key: const Key('memory-delete-confirm'),
-                onPressed: ready ? () => Navigator.of(context).pop(true) : null,
-                child: const Text('确认删除'),
-              ),
-            );
-          },
-        ),
-      ],
     );
   }
 }

@@ -1637,7 +1637,364 @@ void main() {
     expect(bannerForeground(), QiyuColors.ink);
     await dismiss();
   });
+
+  // ---------- 列表与详情两处动作一致性（架构深化 ticket 08） ----------
+
+  testWidgets('同一记忆状态下，列表与详情两处动作可用性一致', (tester) async {
+    await _pumpMemoryCenter(tester, _fullOverview());
+
+    // 列表侧基线：普通条目四颗常驻在场且可点，不适用的一颗都不多发。
+    const offered = ['edit', 'freeze', 'ban', 'delete'];
+    const absent = ['reveal', 'unfreeze', 'unban'];
+    for (final name in offered) {
+      expect(find.byKey(Key('memory-action-entry-1-$name')), findsOneWidget);
+      expect(
+        _everyTappable(tester, Key('memory-action-entry-1-$name')),
+        isTrue,
+        reason: name,
+      );
+    }
+    for (final name in absent) {
+      expect(find.byKey(Key('memory-action-entry-1-$name')), findsNothing);
+    }
+
+    // 打开同一条目的详情：详情页压在列表之上，同键按钮两处各一颗，
+    // 在场与可点必须逐颗一致。
+    await tester.tap(find.byKey(const Key('memory-entry-entry-1')));
+    await tester.pumpAndSettle();
+    expect(find.text('记忆详情'), findsOneWidget);
+    for (final name in offered) {
+      expect(
+        _bothSurfaces(Key('memory-action-entry-1-$name')),
+        findsNWidgets(2),
+        reason: '$name 在列表与详情两处都应在场',
+      );
+      expect(
+        _everyTappable(tester, Key('memory-action-entry-1-$name')),
+        isTrue,
+        reason: name,
+      );
+    }
+    for (final name in absent) {
+      expect(
+        find.byKey(Key('memory-action-entry-1-$name')),
+        findsNothing,
+        reason: '$name 在两处都不该出现',
+      );
+    }
+  });
+
+  testWidgets('遮罩条目在列表与详情两处可用性一致', (tester) async {
+    await _pumpMemoryCenter(tester, _maskedEntryOverview());
+
+    // 列表：遮罩条目有临时查看、没有修正。
+    expect(
+      find.byKey(const Key('memory-action-entry-masked-reveal')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('memory-action-entry-masked-edit')),
+      findsNothing,
+    );
+
+    // 详情：同样没有修正一颗，揭示内联在字段旁（memory-reveal-*），
+    // 控制权与删除两处各一颗。
+    await tester.tap(find.byKey(const Key('memory-entry-entry-masked')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-reveal-content')), findsOneWidget);
+    for (final name in ['freeze', 'ban', 'delete']) {
+      expect(
+        _bothSurfaces(Key('memory-action-entry-masked-$name')),
+        findsNWidgets(2),
+        reason: '$name 在遮罩条目的两处都应在场',
+      );
+    }
+    expect(
+      find.byKey(const Key('memory-action-entry-masked-edit')),
+      findsNothing,
+      reason: '遮罩条目两处都不提供修正：不揭示原文就不能改',
+    );
+  });
+
+  testWidgets('冻结条目在列表与详情同样只给恢复使用，详情执行也一致', (tester) async {
+    final gateway = await _pumpMemoryCenter(tester, _frozenEntryOverview());
+
+    // 列表：冻结条目只给 修正/恢复使用/删除，不再有暂停与禁提。
+    const offered = ['edit', 'unfreeze', 'delete'];
+    const absent = ['freeze', 'ban', 'unban', 'reveal'];
+    for (final name in offered) {
+      expect(
+        find.byKey(Key('memory-action-entry-frozen-$name')),
+        findsOneWidget,
+        reason: name,
+      );
+    }
+    for (final name in absent) {
+      expect(
+        find.byKey(Key('memory-action-entry-frozen-$name')),
+        findsNothing,
+        reason: name,
+      );
+    }
+
+    // 详情：同一份矩阵，一颗不多、一颗不少。
+    await tester.tap(find.byKey(const Key('memory-entry-entry-frozen')));
+    await tester.pumpAndSettle();
+    for (final name in offered) {
+      expect(
+        _bothSurfaces(Key('memory-action-entry-frozen-$name')),
+        findsNWidgets(2),
+        reason: '$name 在冻结条目的两处都应在场',
+      );
+    }
+    for (final name in absent) {
+      expect(
+        find.byKey(Key('memory-action-entry-frozen-$name')),
+        findsNothing,
+        reason: name,
+      );
+    }
+
+    // 恢复使用从详情发起：走同一执行器，直接生效并给结果横幅。
+    await tester.tap(
+      find.byKey(const Key('memory-action-entry-frozen-unfreeze')).last,
+    );
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('unfreeze:entry-frozen'));
+    expect(find.byKey(const Key('memory-action-result')), findsOneWidget);
+  });
+
+  testWidgets('详情页与列表共用同一份确认与执行流程', (tester) async {
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
+    await tester.tap(find.byKey(const Key('memory-entry-entry-1')));
+    await tester.pumpAndSettle();
+
+    // 禁提：同一份确认对话框（同文案、同确认键），取消不产生动作。
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-ban')).last);
+    await tester.pumpAndSettle();
+    expect(find.text('不再提起这条记忆？'), findsOneWidget);
+    await tester.tap(find.text('先不用'));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, isNot(contains('ban:entry-1')));
+
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-ban')).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-ban-confirm')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('ban:entry-1'));
+
+    // 删除：同一份影响范围预览与确认键。
+    await tester.tap(
+      find.byKey(const Key('memory-action-entry-1-delete')).last,
+    );
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('preview:entry-1'));
+    expect(find.text('将删除这条记忆：测试内容'), findsOneWidget);
+    expect(find.text('原始对话记录保留。'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('memory-delete-confirm')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('delete:entry-1'));
+
+    // 修正：预填当下已有原文，保存按用户声明落盘。
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-edit')).last);
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(
+      find.byKey(const Key('memory-edit-field')),
+    );
+    expect(field.controller!.text, '用户说这周在准备演讲');
+    await tester.enterText(
+      find.byKey(const Key('memory-edit-field')),
+      '按我的说法改一句',
+    );
+    await tester.tap(find.byKey(const Key('memory-edit-save')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('edit:entry-1:按我的说法改一句'));
+  });
+
+  testWidgets('动作挂起时，列表与详情两处按钮同步灰掉、同步恢复', (tester) async {
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
+
+    gateway.holdFreeze = Completer<MemoryActionResult>();
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-freeze')));
+    await tester.pumpAndSettle();
+
+    // 挂起期间打开详情：两处同键按钮全部灰掉，无一可点。详情页在
+    // 挂起期间一直转忙碌指示（无限动画），不能 pumpAndSettle，用定长
+    // pump 等页面转场到位。
+    await tester.tap(find.byKey(const Key('memory-entry-entry-1')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    const actions = ['edit', 'freeze', 'ban', 'delete'];
+    for (final name in actions) {
+      final matches = tester.widgetList(
+        _bothSurfaces(Key('memory-action-entry-1-$name')),
+      );
+      expect(matches, isNotEmpty, reason: name);
+      for (final widget in matches) {
+        expect((widget as dynamic).onPressed, isNull, reason: name);
+      }
+    }
+    // 详情页自己的忙碌指示也在。
+    expect(find.byKey(const Key('memory-item-acting')), findsOneWidget);
+
+    // 完成后：两处同步恢复可点。
+    gateway.holdFreeze!.complete(
+      const MemoryActionResult(
+        status: MemoryActionStatus.success,
+        message: '已暂停使用这条记忆。',
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final name in actions) {
+      expect(
+        _everyTappable(tester, Key('memory-action-entry-1-$name')),
+        isTrue,
+        reason: name,
+      );
+    }
+  });
+
+  testWidgets('列表发起冻结后离开页面：迟到结果不再触碰已销毁的界面', (tester) async {
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
+    final held = Completer<MemoryActionResult>();
+    gateway.holds['freeze'] = held;
+
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-freeze')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('freeze:entry-1'));
+
+    // 动作挂起期间离开记忆页：发起按钮所在的界面随之销毁。
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-back')), findsNothing);
+
+    held.complete(
+      const MemoryActionResult(
+        status: MemoryActionStatus.success,
+        message: '好了。',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-action-result')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('列表发起修正后离开页面：迟到结果不再触碰已销毁的界面', (tester) async {
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
+    final held = Completer<MemoryActionResult>();
+    gateway.holds['edit'] = held;
+
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-edit')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('memory-edit-field')),
+      '这周在准备一场辩论赛',
+    );
+    await tester.tap(find.byKey(const Key('memory-edit-save')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('edit:entry-1:这周在准备一场辩论赛'));
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+
+    held.complete(
+      const MemoryActionResult(
+        status: MemoryActionStatus.success,
+        message: '好了。',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-action-result')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('列表发起禁提后离开页面：迟到结果不再触碰已销毁的界面', (tester) async {
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
+    final held = Completer<MemoryActionResult>();
+    gateway.holds['ban'] = held;
+
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-ban')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-ban-confirm')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('ban:entry-1'));
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+
+    held.complete(
+      const MemoryActionResult(
+        status: MemoryActionStatus.success,
+        message: '好了。',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-action-result')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('列表发起删除后离开页面：迟到结果不再触碰已销毁的界面', (tester) async {
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
+    final held = Completer<MemoryActionResult>();
+    gateway.holds['delete'] = held;
+
+    await tester.tap(find.byKey(const Key('memory-action-entry-1-delete')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-delete-confirm')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('delete:entry-1'));
+
+    await tester.tap(find.byKey(const Key('memory-back')));
+    await tester.pumpAndSettle();
+
+    held.complete(
+      const MemoryActionResult(
+        status: MemoryActionStatus.success,
+        message: '好了。',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-action-result')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('详情页发起揭示后返回：迟到结果不再触碰已销毁的界面', (tester) async {
+    final gateway = await _pumpMemoryCenter(tester, _maskedEntryOverview());
+    await tester.tap(find.byKey(const Key('memory-entry-entry-masked')));
+    await tester.pumpAndSettle();
+
+    final held = Completer<MemoryActionResult>();
+    gateway.holds['reveal'] = held;
+    await tester.tap(find.byKey(const Key('memory-reveal-content')));
+    await tester.pumpAndSettle();
+    expect(gateway.actionCalls, contains('reveal:entry-masked:content'));
+
+    // 揭示挂起期间返回记忆列表：详情页随之销毁。
+    await tester.tap(find.byKey(const Key('memory-item-back')));
+    await tester.pumpAndSettle();
+
+    held.complete(
+      const MemoryActionResult(
+        status: MemoryActionStatus.failed,
+        message: '揭示失败。',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-action-result')), findsNothing);
+    expect(find.text('揭示出的原文'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
+
+/// 两处呈现（列表图标按钮、详情文字按钮）共用的可点性读法：键下的
+/// 每一颗按钮都必须真的可点。详情页压在列表上时被盖住的列表处于
+/// offstage，要把「两处各一颗」都数进来就得跳过 offstage 过滤。
+bool _everyTappable(WidgetTester tester, Key key) => tester
+    .widgetList(find.byKey(key, skipOffstage: false))
+    .every((widget) => (widget as dynamic).onPressed != null);
+
+/// 两处同键计数：同 [_everyTappable] 的理由，offstage 的列表侧也要数。
+Finder _bothSurfaces(Key key) => find.byKey(key, skipOffstage: false);
 
 /// 进入记忆中心：注入桩网关并走完「首页 → 记忆」这一段导航，返回该网关
 /// 供用例查调用记录。窄屏没有常驻侧边栏，[viaDrawer] 为真时先开抽屉再进；
@@ -1735,6 +2092,50 @@ MemoryOverview _maskedEntryOverview() => MemoryOverview(
   ),
   persona: MemoryPersonaSection(branches: []),
   relationship: MemoryRelationshipSection(
+    present: false,
+    stage: null,
+    since: null,
+    confirmed: [],
+    probes: [],
+    recentChanges: [],
+    sharedPast: [],
+  ),
+);
+
+/// 冻结条目总览：与列表同一冻结状态，供两处可用性一致性用例。
+MemoryOverview _frozenEntryOverview() => MemoryOverview(
+  generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
+  recent: MemoryRecentSection(
+    days: [
+      MemoryDayCard(
+        id: 'day-frozen',
+        date: _localDate(DateTime.now()),
+        summary: null,
+        summaryMasked: false,
+        finalized: true,
+        finalizedAt: null,
+        entries: [
+          MemoryEntryCard(
+            id: 'entry-frozen',
+            kind: 'memory',
+            content: '被冻结的记录',
+            masked: false,
+            control: MemoryControlStatus.frozen,
+            at: DateTime.now().subtract(const Duration(hours: 2)),
+            hasEvidence: false,
+          ),
+        ],
+      ),
+    ],
+  ),
+  longTerm: MemoryLongTermSection(
+    present: false,
+    readable: true,
+    organizedAt: null,
+    groups: [],
+  ),
+  persona: MemoryPersonaSection(branches: []),
+  relationship: const MemoryRelationshipSection(
     present: false,
     stage: null,
     since: null,
@@ -2166,6 +2567,18 @@ final class _FakeMemoryGateway implements MemoryGateway {
   /// 非 null 时冻结动作挂起在它上面，用于观察执行中的忙碌态。
   Completer<MemoryActionResult>? holdFreeze;
 
+  /// 按动作名（'edit' / 'ban' / 'delete' / 'reveal' / 'unfreeze'）注入
+  /// 的挂起点：动作停在 completer 上，供用例让结果晚于界面销毁到达。
+  final holds = <String, Completer<MemoryActionResult>>{};
+
+  Future<MemoryActionResult> _heldOrResult(String action) {
+    final pending = holds[action];
+    if (pending != null) {
+      return pending.future;
+    }
+    return Future.value(actionResult);
+  }
+
   @override
   Future<MemoryOverview> fetchOverview() async {
     calls.add('fetchOverview');
@@ -2179,13 +2592,13 @@ final class _FakeMemoryGateway implements MemoryGateway {
   @override
   Future<MemoryActionResult> editItem(String id, String text) async {
     actionCalls.add('edit:$id:$text');
-    return actionResult;
+    return _heldOrResult('edit');
   }
 
   @override
   Future<MemoryActionResult> freezeItem(String id) async {
     actionCalls.add('freeze:$id');
-    final hold = holdFreeze;
+    final hold = holdFreeze ?? holds['freeze'];
     if (hold != null) {
       return hold.future;
     }
@@ -2195,19 +2608,19 @@ final class _FakeMemoryGateway implements MemoryGateway {
   @override
   Future<MemoryActionResult> unfreezeItem(String id) async {
     actionCalls.add('unfreeze:$id');
-    return actionResult;
+    return _heldOrResult('unfreeze');
   }
 
   @override
   Future<MemoryActionResult> banItem(String id) async {
     actionCalls.add('ban:$id');
-    return actionResult;
+    return _heldOrResult('ban');
   }
 
   @override
   Future<MemoryActionResult> unbanItem(String id) async {
     actionCalls.add('unban:$id');
-    return actionResult;
+    return _heldOrResult('unban');
   }
 
   @override
@@ -2219,7 +2632,7 @@ final class _FakeMemoryGateway implements MemoryGateway {
   @override
   Future<MemoryActionResult> deleteItem(String id) async {
     actionCalls.add('delete:$id');
-    return actionResult;
+    return _heldOrResult('delete');
   }
 
   @override
@@ -2228,6 +2641,10 @@ final class _FakeMemoryGateway implements MemoryGateway {
     String field = 'content',
   }) async {
     actionCalls.add('reveal:$id:$field');
+    final pending = holds['reveal'];
+    if (pending != null) {
+      return pending.future;
+    }
     return const MemoryActionResult(
       status: MemoryActionStatus.success,
       message: '仅本次展示。',
@@ -2244,6 +2661,37 @@ final class _FakeMemoryGateway implements MemoryGateway {
     }
     detailCalls.add(id);
     return switch (id) {
+      // 列表条目 entry-1 的详情：与卡片同一状态（未遮罩、无控制），
+      // 供两处可用性一致性用例对照。
+      'entry-1' => EpisodeEntryDetail(
+        date: _localDate(DateTime.now()),
+        dayId: 'day-1',
+        entryKind: 'memory',
+        content: '用户说这周在准备演讲',
+        masked: false,
+        control: null,
+        at: DateTime.now().subtract(const Duration(hours: 1)),
+        evidence: '周四有个演讲',
+        evidenceMasked: false,
+        sessionId: null,
+        daySummary: '聊了演讲准备',
+        finalized: false,
+      ),
+      // 冻结条目 entry-frozen 的详情：同一冻结状态，供两处矩阵对照。
+      'entry-frozen' => EpisodeEntryDetail(
+        date: _localDate(DateTime.now()),
+        dayId: 'day-frozen',
+        entryKind: 'memory',
+        content: '被冻结的记录',
+        masked: false,
+        control: MemoryControlStatus.frozen,
+        at: DateTime.now().subtract(const Duration(hours: 2)),
+        evidence: null,
+        evidenceMasked: false,
+        sessionId: null,
+        daySummary: null,
+        finalized: true,
+      ),
       'root-1' => const PersonaRootDetail(
         branch: 'expression',
         branchTitle: '性格表达',
