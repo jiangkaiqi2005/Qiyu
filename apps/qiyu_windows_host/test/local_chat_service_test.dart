@@ -9,6 +9,29 @@ import 'package:test/test.dart';
 import 'support/in_process_chat_host.dart';
 
 void main() {
+  test('主链不再出现 Provider 能力类型判断（统一端口收口）', () {
+    // ticket 11：Provider kind、可取消性与 web-search 能力标记只允许
+    // 存在于网关与 Provider 层；聊天主链只经 ProviderChatPort 的
+    // prepare/open 消费能力快照与事件流。此测试扫描主链源码钉住收口。
+    final source = File('lib/src/local_chat_service.dart').readAsStringSync();
+    for (final marker in [
+      'StreamingProviderChatClient',
+      'WebSearchCapableProviderChatClient',
+      'CancellableStreamingProviderChatClient',
+      'StreamingModelGateway',
+      'WebSearchStreamingModelGateway',
+      'CancellableProviderHttpClient',
+      'ProviderKind',
+      'webSearchEnabled',
+      'openCancellableStream',
+      "import 'provider_config.dart'",
+    ]) {
+      expect(source, isNot(contains(marker)), reason: marker);
+    }
+    expect(source, contains('prepareChatRequest'));
+    expect(source, contains('openStream'));
+  });
+
   test(
     'retries an interrupted exchange without duplicating the user turn',
     () async {
