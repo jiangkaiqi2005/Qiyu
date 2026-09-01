@@ -11,6 +11,7 @@ import 'package:path/path.dart' as path;
 
 import 'anysearch_client.dart';
 import 'api_http.dart';
+import 'backup_routes.dart';
 import 'browser_launcher.dart';
 import 'chat_routes.dart';
 import 'daily_finalization.dart';
@@ -378,11 +379,11 @@ final class _LocalAppRequestHandler {
     required this.onboardingRepository,
     required this.memoryCenter,
     required this.memoryActions,
-    required this.memoryBackup,
+    required MemoryBackupService memoryBackup,
     required this.memoryControls,
     required this.experienceRepository,
     required this.developerDiagnostics,
-    required this.localDataService,
+    required LocalDataService localDataService,
     required this.requestDiagnostics,
     required this.activationToken,
     required this.onActivate,
@@ -410,6 +411,11 @@ final class _LocalAppRequestHandler {
            developerDiagnostics: developerDiagnostics,
            requestDiagnostics: requestDiagnostics,
          ),
+         BackupRoutes(
+           memoryBackup: memoryBackup,
+           localDataService: localDataService,
+           chatService: chatService,
+         ),
        ];
 
   String _startupToken;
@@ -425,11 +431,9 @@ final class _LocalAppRequestHandler {
   final OnboardingRepository onboardingRepository;
   final MemoryCenterService memoryCenter;
   final MemoryActionService memoryActions;
-  final MemoryBackupService memoryBackup;
   final MemoryControlsStore memoryControls;
   final ExperienceSettingsRepository experienceRepository;
   final DeveloperDiagnosticsService developerDiagnostics;
-  final LocalDataService localDataService;
   final RequestDiagnosticsRecorder? requestDiagnostics;
   final String? activationToken;
   final Future<BrowserLaunchResult> Function()? onActivate;
@@ -560,65 +564,6 @@ final class _LocalAppRequestHandler {
           headers: _jsonHeaders,
         );
       }
-      if (request.method == 'GET' &&
-          request.url.path == 'api/data/clear-preview') {
-        final preview = await localDataService.clearPreview();
-        return Response.ok(jsonEncode(preview), headers: _jsonHeaders);
-      }
-      if (request.method == 'POST' && request.url.path == 'api/data/clear') {
-        final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
-        if (payload['confirm'] != true) {
-          throw _invalidRequest('清除本机数据需要明确确认。');
-        }
-        // 经聊天服务的独占槽执行：等全部在途交付与后台任务完成，
-        // 期间没有新交付并发，清除才不会丢写入或复活已清除的数据。
-        final result = await chatService.runExclusively(
-          () => localDataService.clear(),
-        );
-        return Response.ok(jsonEncode(result), headers: _jsonHeaders);
-      }
-      if (request.method == 'GET' && request.url.path == 'api/backup/export') {
-        final export = await memoryBackup.exportBundle();
-        return Response.ok(
-          export.bytes,
-          headers: {
-            HttpHeaders.contentTypeHeader: 'application/zip',
-            'content-disposition': 'attachment; filename="${export.fileName}"',
-            HttpHeaders.cacheControlHeader: 'no-store',
-          },
-        );
-      }
-      if (request.method == 'POST' &&
-          request.url.path == 'api/backup/preview') {
-        final bundle = await _readBackupBundle(request);
-        final preview = await memoryBackup.previewImport(bundle);
-        return Response.ok(jsonEncode(preview.toJson()), headers: _jsonHeaders);
-      }
-      if (request.method == 'POST' && request.url.path == 'api/backup/import') {
-        final bundle = await _readBackupBundle(request);
-        final result = await memoryBackup.importBundle(bundle);
-        return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
-      }
-      if (request.method == 'GET' &&
-          request.url.path == 'api/backup/snapshots') {
-        final snapshots = await memoryBackup.listSnapshots();
-        return Response.ok(
-          jsonEncode({
-            'snapshots': [for (final snapshot in snapshots) snapshot.toJson()],
-          }),
-          headers: _jsonHeaders,
-        );
-      }
-      if (request.method == 'POST' &&
-          request.url.path == 'api/backup/rollback') {
-        final payload = await _readJsonObject(request, maxBytes: 4 * 1024);
-        final snapshotId = payload['snapshotId'];
-        if (snapshotId != null && snapshotId is! String) {
-          throw _invalidRequest('回滚请求格式不正确。');
-        }
-        final result = await memoryBackup.rollbackTo(snapshotId as String?);
-        return Response.ok(jsonEncode(result.toJson()), headers: _jsonHeaders);
-      }
       if (request.method == 'POST' &&
           request.url.path == 'api/chat/transcribe') {
         final audio = await _readBytes(request, maxBytes: _transcribeMaxBytes);
@@ -682,13 +627,6 @@ final class _LocalAppRequestHandler {
         message: '聊天请求格式不正确。',
         retryable: false,
       );
-    } on BackupValidationException catch (error) {
-      return _jsonError(
-        HttpStatus.badRequest,
-        code: error.code,
-        message: error.message,
-        retryable: false,
-      );
     } on LocalChatException catch (error) {
       final status = switch (error.code) {
         'invalid_request' => HttpStatus.badRequest,
@@ -742,13 +680,6 @@ final class _LocalAppRequestHandler {
       return _jsonError(
         HttpStatus.internalServerError,
         code: 'credential_store_error',
-        message: error.message,
-        retryable: true,
-      );
-    } on LocalDataException catch (error) {
-      return _jsonError(
-        HttpStatus.internalServerError,
-        code: 'local_data_error',
         message: error.message,
         retryable: true,
       );
@@ -821,10 +752,6 @@ final class _LocalAppRequestHandler {
   }
 }
 
-/// 备份请求体上限：base64 编码后的 zip。本机记忆是纯文本，正常备份
-/// 远小于该值；超限直接拒绝，不进入验证与写入。
-const _backupBundleMaxBytes = 96 * 1024 * 1024;
-
 /// 语音转写请求体上限：一次 60 秒以内的浏览器录音（opus/webm 远低于
 /// 该值）；超限直接拒绝，不进入转写。
 const _transcribeMaxBytes = 10 * 1024 * 1024;
@@ -861,22 +788,6 @@ Future<Uint8List> _readBytes(Request request, {required int maxBytes}) async {
     buffer.add(chunk);
   }
   return buffer.takeBytes();
-}
-
-Future<Uint8List> _readBackupBundle(Request request) async {
-  final payload = await _readJsonObject(
-    request,
-    maxBytes: _backupBundleMaxBytes,
-  );
-  final data = payload['dataBase64'];
-  if (data is! String || data.isEmpty) {
-    throw _invalidRequest('备份请求格式不正确。');
-  }
-  try {
-    return base64.decode(data);
-  } on Object {
-    throw _invalidRequest('备份文件读不出来，请重新选择。');
-  }
 }
 
 Future<Map<String, Object?>> _readJsonObject(
