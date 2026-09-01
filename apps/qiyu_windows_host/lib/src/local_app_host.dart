@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
-import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:shelf_static/shelf_static.dart';
 import 'package:path/path.dart' as path;
 
@@ -45,6 +43,7 @@ import 'stt_gateway.dart';
 import 'stt_settings_service.dart';
 import 'tts_gateway.dart';
 import 'tts_settings_service.dart';
+import 'voice_routes.dart';
 import 'web_search_settings_service.dart';
 
 const _sessionCookieName = 'qiyu_session';
@@ -373,9 +372,9 @@ final class _LocalAppRequestHandler {
     required this.chatService,
     required this.providerSettingsService,
     required this.webSearchSettingsService,
-    required this.sttSettingsService,
-    required this.ttsSettingsService,
-    required this.memoryRepository,
+    required SttSettingsService sttSettingsService,
+    required TtsSettingsService ttsSettingsService,
+    required MemoryRepository memoryRepository,
     required this.onboardingRepository,
     required this.memoryCenter,
     required this.memoryActions,
@@ -416,6 +415,11 @@ final class _LocalAppRequestHandler {
            localDataService: localDataService,
            chatService: chatService,
          ),
+         VoiceRoutes(
+           sttSettingsService: sttSettingsService,
+           ttsSettingsService: ttsSettingsService,
+           memoryRepository: memoryRepository,
+         ),
        ];
 
   String _startupToken;
@@ -423,11 +427,7 @@ final class _LocalAppRequestHandler {
   final LocalChatService chatService;
   final ProviderSettingsService providerSettingsService;
   final WebSearchSettingsService webSearchSettingsService;
-  final SttSettingsService sttSettingsService;
-  final TtsSettingsService ttsSettingsService;
 
-  /// 朗读端点从这里取已落盘的栖语 turn 文字（Host 是文字真相源）。
-  final MemoryRepository memoryRepository;
   final OnboardingRepository onboardingRepository;
   final MemoryCenterService memoryCenter;
   final MemoryActionService memoryActions;
@@ -564,141 +564,12 @@ final class _LocalAppRequestHandler {
           headers: _jsonHeaders,
         );
       }
-      if (request.method == 'POST' &&
-          request.url.path == 'api/chat/transcribe') {
-        final audio = await _readBytes(request, maxBytes: _transcribeMaxBytes);
-        final contentType = request.headers[HttpHeaders.contentTypeHeader];
-        final mimeType = contentType?.split(';').first.trim().toLowerCase();
-        if (mimeType == null || !mimeType.startsWith('audio/')) {
-          throw _invalidRequest('音频请求格式不正确。');
-        }
-        final text = await sttSettingsService.transcribe(
-          audio: audio,
-          mimeType: mimeType,
-        );
-        return Response.ok(jsonEncode({'text': text}), headers: _jsonHeaders);
-      }
-      if (request.method == 'POST' && request.url.path == 'api/chat/speak') {
-        final payload = await _readJsonObject(request, maxBytes: 8 * 1024);
-        final requestId = payload['requestId'];
-        final turnIndex = payload['turnIndex'];
-        final sessionId = payload['sessionId'];
-        if (requestId is! String ||
-            requestId.trim().isEmpty ||
-            turnIndex is! int ||
-            turnIndex < 0 ||
-            (sessionId != null && sessionId is! String)) {
-          throw _invalidRequest('朗读请求格式不正确。');
-        }
-        // Host 是文字真相源：浏览器只传定位符，朗读文字从已落盘的
-        // 栖语 turn 取（ADR 0002：只有完整交付并落盘的话才读）。
-        // turnIndex 是该 requestId 的第 N 个栖语 turn：轮内召回的
-        // bubble 2 落为同一 requestId 的第二个栖语 turn，一次交付 =
-        // 一段朗读。
-        final session = await memoryRepository.openSession(
-          sessionId: sessionId as String?,
-        );
-        var matched = 0;
-        RawSessionTurn? turn;
-        for (final candidate in session.turns) {
-          if (candidate.requestId == requestId &&
-              candidate.speaker == Speaker.qiyu) {
-            if (matched == turnIndex) {
-              turn = candidate;
-              break;
-            }
-            matched += 1;
-          }
-        }
-        if (turn == null) {
-          throw const TtsServiceException(
-            code: 'tts_turn_not_found',
-            message: '找不到这句话，请刷新后重试。',
-            retryable: false,
-          );
-        }
-        final audio = await ttsSettingsService.synthesize(turn.text);
-        return Response.ok(audio, headers: _audioHeaders);
-      }
-    } on FormatException {
-      return _jsonError(
-        HttpStatus.badRequest,
-        code: 'invalid_request',
-        message: '聊天请求格式不正确。',
-        retryable: false,
-      );
-    } on LocalChatException catch (error) {
-      final status = switch (error.code) {
-        'invalid_request' => HttpStatus.badRequest,
-        'request_id_conflict' => HttpStatus.conflict,
-        _ => HttpStatus.internalServerError,
-      };
-      return _jsonError(
-        status,
-        code: error.code,
-        message: error.message,
-        retryable: error.retryable,
-      );
-    } on ProviderConfigException catch (error) {
-      return _jsonError(
-        HttpStatus.badRequest,
-        code: 'invalid_provider_config',
-        message: error.message,
-        retryable: false,
-      );
-    } on SttServiceException catch (error) {
-      final status = switch (error.code) {
-        // 未配置、请求本身与本地配置无效按客户端错误；上游失败按网关错误。
-        'stt_not_configured' ||
-        'stt_no_speech' ||
-        'stt_config_invalid' => HttpStatus.badRequest,
-        _ => HttpStatus.badGateway,
-      };
-      return _jsonError(
-        status,
-        code: error.code,
-        message: error.message,
-        retryable: error.retryable,
-      );
-    } on TtsServiceException catch (error) {
-      final status = switch (error.code) {
-        // 与 STT 同口径：本地配置问题按客户端错误，上游失败按网关错误。
-        'tts_not_configured' ||
-        'tts_config_invalid' ||
-        'tts_empty_text' ||
-        'tts_text_too_long' ||
-        'tts_turn_not_found' => HttpStatus.badRequest,
-        _ => HttpStatus.badGateway,
-      };
-      return _jsonError(
-        status,
-        code: error.code,
-        message: error.message,
-        retryable: error.retryable,
-      );
-    } on SecretStoreException catch (error) {
-      return _jsonError(
-        HttpStatus.internalServerError,
-        code: 'credential_store_error',
-        message: error.message,
-        retryable: true,
-      );
     } on OnboardingStateException catch (error) {
       return _jsonError(
         HttpStatus.internalServerError,
         code: 'onboarding_unavailable',
         message: error.message,
         retryable: true,
-      );
-    } on MemoryRepositoryException catch (error) {
-      final status = error.code == 'session_not_found'
-          ? HttpStatus.notFound
-          : HttpStatus.internalServerError;
-      return _jsonError(
-        status,
-        code: error.code,
-        message: error.message,
-        retryable: error.retryable,
       );
     }
     // 会话前置之后的请求交给领域路由模块；谁都不认领即按不存在处理。
@@ -752,77 +623,8 @@ final class _LocalAppRequestHandler {
   }
 }
 
-/// 语音转写请求体上限：一次 60 秒以内的浏览器录音（opus/webm 远低于
-/// 该值）；超限直接拒绝，不进入转写。
-const _transcribeMaxBytes = 10 * 1024 * 1024;
-
-/// API 请求参数或请求体不合法的统一异常（HTTP 400 + invalid_request）。
-LocalChatException _invalidRequest(String message) => LocalChatException(
-  code: 'invalid_request',
-  message: message,
-  retryable: false,
-);
-
-/// 读取二进制请求体（语音转写）：与 JSON 读取同一套限长策略，Content-
-/// Length 与累计字节数双重校验覆盖 chunked 请求。
-Future<Uint8List> _readBytes(Request request, {required int maxBytes}) async {
-  final contentLength = request.contentLength;
-  if (contentLength != null && contentLength > maxBytes) {
-    throw LocalChatException(
-      code: 'invalid_request',
-      message: '录音文件太大，请录短一些再试。',
-      retryable: false,
-    );
-  }
-  final buffer = BytesBuilder(copy: false);
-  var totalBytes = 0;
-  await for (final chunk in request.read()) {
-    totalBytes += chunk.length;
-    if (totalBytes > maxBytes) {
-      throw LocalChatException(
-        code: 'invalid_request',
-        message: '录音文件太大，请录短一些再试。',
-        retryable: false,
-      );
-    }
-    buffer.add(chunk);
-  }
-  return buffer.takeBytes();
-}
-
-Future<Map<String, Object?>> _readJsonObject(
-  Request request, {
-  required int maxBytes,
-}) async {
-  final contentLength = request.contentLength;
-  if (contentLength != null && contentLength > maxBytes) {
-    throw const FormatException('request body is too large');
-  }
-  // 累计计数以覆盖无 Content-Length 的 chunked 请求体。
-  final buffer = BytesBuilder(copy: false);
-  var totalBytes = 0;
-  await for (final chunk in request.read()) {
-    totalBytes += chunk.length;
-    if (totalBytes > maxBytes) {
-      throw const FormatException('request body is too large');
-    }
-    buffer.add(chunk);
-  }
-  final decoded = jsonDecode(utf8.decode(buffer.takeBytes()));
-  if (decoded is! Map<String, Object?>) {
-    throw const FormatException('request body must be an object');
-  }
-  return decoded;
-}
-
 const _jsonHeaders = {
   HttpHeaders.contentTypeHeader: 'application/json; charset=utf-8',
-  HttpHeaders.cacheControlHeader: 'no-store',
-};
-
-/// 朗读音频响应头：mp3 字节直出，浏览器 blob 播放，不落盘不缓存。
-const _audioHeaders = {
-  HttpHeaders.contentTypeHeader: 'audio/mpeg',
   HttpHeaders.cacheControlHeader: 'no-store',
 };
 
