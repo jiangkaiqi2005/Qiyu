@@ -99,6 +99,10 @@ final _modelControlPatterns = [
 
 final _codeFenceLinePattern = RegExp(r'^```(?:[A-Za-z0-9_-]+)?$');
 final _speakerPrefixPattern = RegExp(r'^(?:栖语|她|他)\s*[：:]\s*');
+
+/// 装配时注入的行首时刻前缀（`[YYYY-MM-DD HH:mm]`）：模型复述时整段
+/// 剥离，可见回复不携带装配痕迹。格式与装配器前缀逐字对应。
+final _momentPrefixPattern = RegExp(r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\s*');
 final _bracketedPausePrefixPattern = RegExp(
   r'^[（(【\[]\s*(?:等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下)[。.!！?？,，、\s]*[）)】\]]\s*',
 );
@@ -337,6 +341,7 @@ String? _cleanVisibleLine(String value) {
   if (_codeFenceLinePattern.hasMatch(text)) {
     return null;
   }
+  text = text.replaceFirst(_momentPrefixPattern, '').trim();
   text = text.replaceFirst(_speakerPrefixPattern, '').trim();
   text = text.replaceFirst(_bracketedPausePrefixPattern, '').trim();
   if (text.isEmpty || _ellipsisOnlyPattern.hasMatch(text)) {

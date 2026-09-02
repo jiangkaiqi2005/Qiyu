@@ -79,6 +79,49 @@ void main() {
     expect(ErrorResult.fromJson(error.toJson()), error);
   });
 
+  test('turn moments round-trip as UTC ISO8601 wire strings', () {
+    final moment = DateTime.utc(2025, 12, 31, 15, 41);
+    final state = StateSnapshot(
+      userId: 'fixture-user',
+      relationshipStage: RelationshipStage.stranger,
+      turns: [
+        ChatTurn(speaker: Speaker.user, text: '睡了吗', at: moment),
+        const ChatTurn(speaker: Speaker.qiyu, text: '还没'),
+      ],
+      lastEmotion: const EmotionSnapshot(
+        kind: EmotionKind.neutral,
+        intensity: 0,
+      ),
+    );
+
+    final wire = state.toJson();
+    final wireTurns = wire['turns']! as List<Object?>;
+    expect(
+      wireTurns.first,
+      containsPair('at', '2025-12-31T15:41:00.000Z'),
+    );
+    // 无时刻的 turn 不产出 at 键，与既有契约 JSON 形状兼容。
+    expect(wireTurns.last, isNot(contains('at')));
+
+    final decoded = StateSnapshot.fromJson(wire);
+    expect(decoded.turns.first.at, moment);
+    expect(decoded.turns.first.at!.isUtc, isTrue);
+    expect(decoded.turns.last.at, isNull);
+    expect(decoded, state);
+  });
+
+  test('candidate reply strips a leading injected timestamp prefix', () {
+    final result = const QiyuBehaviorCore().reply(
+      const ChatRequest(requestId: 'echo-prefix', text: '在吗'),
+      StateSnapshot.initial('fixture-user'),
+      candidateReply: '[2025-12-31 23:41] 嗯，还没。',
+    );
+
+    expect(result, isA<ChatResult>());
+    expect((result as ChatResult).messages, ['嗯，还没。']);
+    expect(result.source, ReplySource.llm);
+  });
+
   test('streaming delivery wire round-trips through the shared contract', () {
     const event = ChatDeliveryEvent(
       kind: ChatDeliveryEventKind.state,

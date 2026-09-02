@@ -114,26 +114,39 @@ final class ChatRequest {
 }
 
 final class ChatTurn {
-  const ChatTurn({required this.speaker, required this.text});
+  const ChatTurn({required this.speaker, required this.text, this.at});
 
   factory ChatTurn.fromJson(Map<String, Object?> json) {
+    final rawAt = json['at'] as String?;
     return ChatTurn(
       speaker: Speaker.values.byName(json['speaker']! as String),
       text: json['text']! as String,
+      at: rawAt == null ? null : DateTime.parse(rawAt).toUtc(),
     );
   }
 
   final Speaker speaker;
   final String text;
 
-  Map<String, Object?> toJson() => {'speaker': speaker.name, 'text': text};
+  /// 消息时刻：本机 Host 落盘时的客观时刻。wire 为 UTC ISO8601
+  /// 字符串；可空，缺席即无时刻（与既有契约 JSON 形状兼容）。
+  final DateTime? at;
+
+  Map<String, Object?> toJson() => {
+    'speaker': speaker.name,
+    'text': text,
+    if (at != null) 'at': at!.toUtc().toIso8601String(),
+  };
 
   @override
   bool operator ==(Object other) =>
-      other is ChatTurn && other.speaker == speaker && other.text == text;
+      other is ChatTurn &&
+      other.speaker == speaker &&
+      other.text == text &&
+      other.at == at;
 
   @override
-  int get hashCode => Object.hash(speaker, text);
+  int get hashCode => Object.hash(speaker, text, at);
 }
 
 final class EmotionSnapshot {
