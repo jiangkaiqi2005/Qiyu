@@ -86,6 +86,36 @@ void main() {
       expect(opacity.opacity, closeTo(0.2, 0.001));
     });
 
+    testWidgets('形态随指针事件切换：先触后鼠，常驻转悬停显现', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(text: '晚安。', fromUser: false, moment: moment),
+      );
+
+      // 尚无指针事件：桌面平台档初始猜测是悬停显现，默认不可见。
+      expect(find.text(label), findsNothing);
+
+      // 触屏指针按下：转触屏路径，常驻淡显。
+      await tester.tap(find.text('晚安。'));
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+      expect(
+        tester
+            .widget<Opacity>(
+              find.ancestor(of: find.text(label), matching: find.byType(Opacity)),
+            )
+            .opacity,
+        closeTo(0.2, 0.001),
+      );
+
+      // 鼠标悬停接管：转桌面路径——悬停时可见，移开即消失。
+      final mouse = await _hoverMouse(tester, find.text('晚安。'));
+      expect(find.text(label), findsOneWidget);
+      await mouse.moveBy(const Offset(-600, -600));
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+    });
+
     testWidgets('时刻渲染进语义树，视觉弱化不丢信息', (tester) async {
       final handle = tester.ensureSemantics();
       try {

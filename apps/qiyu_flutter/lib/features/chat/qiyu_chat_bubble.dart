@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../theme/qiyu_icons.dart';
@@ -37,10 +38,13 @@ class QiyuChatBubble extends StatefulWidget {
   /// 访问 key 标识，widget 测试可精确定位。
   final int? deliveryIndex;
 
-  /// 消息时刻（Host 落盘的客观时刻）：消息下方的小号弱色文字。桌面
-  /// 指针默认**完全不渲染**，悬停整条消息才出现；触屏指针没有 hover，
-  /// 以约两成透明度常驻（Element Web 的「默认隐藏、悬停显现」+ 触屏
-  /// 常驻惯例的弱化版）。null（直播流尚未预显、无时刻数据）不渲染。
+  /// 消息时刻（Host 落盘的客观时刻）：消息下方的次要档弱色文字。鼠标
+  /// 指针默认**完全不渲染**，悬停整条消息才出现；触屏/手写笔指针没有
+  /// hover，以约两成透明度常驻（Element Web 的「默认隐藏、悬停显现」
+  /// + 触屏常驻惯例的弱化版）。形态由最近一次落在消息上的指针事件
+  /// 驱动——桌面触屏设备（Windows 平板浏览器）不再被平台档判成两头
+  /// 落空；尚无指针事件时按 Web 壳层平台档作初始猜测。null（直播流
+  /// 尚未预显、无时刻数据）不渲染。
   final DateTime? moment;
 
   @override
@@ -50,6 +54,37 @@ class QiyuChatBubble extends StatefulWidget {
 class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   /// 桌面指针当前是否悬停在整条消息上：时刻行的显隐开关。
   bool _hovering = false;
+
+  /// 最近一次落在消息上的指针类型：触屏判定改走事件驱动，桌面触屏
+  /// 设备（Windows 平板浏览器）不再被平台档判成两头落空。null 即
+  /// 尚无指针事件，按平台档作初始猜测。
+  PointerDeviceKind? _lastPointerKind;
+
+  /// 记录最近一次指针类型；类型没变就不重建（鼠标 hover 事件很密）。
+  void _rememberPointerKind(PointerEvent event) {
+    if (event.kind != _lastPointerKind) {
+      setState(() => _lastPointerKind = event.kind);
+    }
+  }
+
+  /// 触屏路径判定：touch/stylus 没有 hover，走常驻淡显；鼠标与触控板
+  /// 走悬停显现。尚无指针事件时按 Web 壳层 UA 映射的平台档取代理——
+  /// 移动端浏览器是 android/iOS，桌面浏览器是 windows/macos/linux，
+  /// 与「有没有鼠标」在这个产品里一一对应。
+  bool get _touchPointer {
+    final kind = _lastPointerKind;
+    if (kind == null) {
+      return switch (Theme.of(context).platform) {
+        TargetPlatform.android ||
+        TargetPlatform.iOS ||
+        TargetPlatform.fuchsia => true,
+        TargetPlatform.linux ||
+        TargetPlatform.macOS ||
+        TargetPlatform.windows => false,
+      };
+    }
+    return kind == PointerDeviceKind.touch || kind == PointerDeviceKind.stylus;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -65,10 +100,10 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
       ),
     );
 
-    // 触屏指针没有 hover，时刻不能等悬停：以弱透明度常驻。桌面平台
-    // （Windows/macOS/Linux 的 Web 壳）默认隐藏，悬停才渲染——不渲染
-    // 而非透明度 0：语义树里也不出现，页面保持干净。
-    final persistent = _isTouchPointer(context);
+    // 触屏/手写笔指针没有 hover，时刻不能等悬停：以弱透明度常驻。鼠标
+    // 指针默认隐藏，悬停才渲染——不渲染而非透明度 0：语义树里也不出现，
+    // 页面保持干净。
+    final persistent = _touchPointer;
     final momentLabel = widget.moment == null
         ? null
         : formatMessageMoment(widget.moment!);
@@ -142,15 +177,21 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
       );
     }
 
-    if (momentLabel == null || persistent) {
+    if (momentLabel == null) {
       return message;
     }
-    // 桌面指针：悬停整条消息（用户的气泡或栖语的文本块）才显出时刻。
-    // 不为消息加键盘焦点路径——消息没有键盘操作动作。
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: message,
+    // Listener 记录最近一次落在消息上的指针类型（触屏/鼠标形态随事件
+    // 切换），MouseRegion 管桌面悬停显隐：悬停整条消息（用户的气泡或
+    // 栖语的文本块）才显出时刻。不为消息加键盘焦点路径——消息没有
+    // 键盘操作动作。
+    return Listener(
+      onPointerDown: _rememberPointerKind,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovering = true),
+        onExit: (_) => setState(() => _hovering = false),
+        onHover: _rememberPointerKind,
+        child: message,
+      ),
     );
   }
 
@@ -164,20 +205,6 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     );
     return persistent ? Opacity(opacity: 0.2, child: line) : line;
   }
-
-  /// 触屏指针判定：框架没有暴露指针类型，Web 壳层按 UA 映射的
-  /// TargetPlatform 取代理——移动端浏览器是 android/iOS，桌面浏览器是
-  /// windows/macos/linux，与「有没有鼠标」在这个产品里一一对应。
-  bool _isTouchPointer(BuildContext context) => switch (
-        Theme.of(context).platform
-      ) {
-        TargetPlatform.android ||
-        TargetPlatform.iOS ||
-        TargetPlatform.fuchsia => true,
-        TargetPlatform.linux ||
-        TargetPlatform.macOS ||
-        TargetPlatform.windows => false,
-      };
 }
 
 /// 气泡尾部的重听小喇叭：动作名必须显式带进语义树。
