@@ -170,6 +170,14 @@ Color? _labelColor(WidgetTester tester, Finder button) {
   return span is TextSpan ? span.style?.color : null;
 }
 
+/// [color] 的 CSS 十六进制写法（`#rrggbb`）：web 壳层同步断言的诊断值。
+/// 从主题 token 派生，测试里不另抄一份色值字面量。
+String _cssHex(Color color) =>
+    '#${(color.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
+
+/// 解析 `#rrggbb` 为 24 位 RGB 值，与 token 比较时抹掉 alpha 位差。
+int _parseCssHexColor(String css) => int.parse(css.substring(1), radix: 16);
+
 void main() {
   final theme = qiyuDarkTheme();
 
@@ -1400,6 +1408,53 @@ const Color topLevel = Color(0xFF667788);
       // 台账按**文件计数**而不是按条目点名：同文件里同值的裸间距有好多处，用集合
       // 装它们会折叠成一条（实测 10 处只剩 3 条），少清一处也照样绿。
       expect(found, bareSpacingAllowList);
+    });
+  });
+
+  group('web 壳底色与主题底色同步', () {
+    // 页内返回是单帧硬切：Flutter 重栅格化的换帧瞬间会露出浏览器壳层底色，
+    // 壳底一旦不是主题夜色（模板默认就是白），实机上看到的是整页白闪。这里把
+    // web 壳层里所有底色（index.html 的 html/body 背景、manifest.json 的
+    // PWA 启动屏底色）与 [QiyuColors.night] 锁成同值：壳层一侧漂移、或 token
+    // 一侧改值没同步，比较都会当场判红。判据是数值而不是字符串写法，大小写与
+    // 格式变体不误报；壳层没写背景色或写成缩写/颜色名，扫描面收不到条目也判红，
+    // 不会静默放行。
+    test('index.html 的 html/body 背景色就是主题夜色底', () {
+      final html = _read('web/index.html');
+      final declared = RegExp(
+        r'background-color\s*:\s*(#[0-9A-Fa-f]{6})',
+      ).allMatches(html).map((m) => m.group(1)!).toSet();
+      expect(
+        declared,
+        isNotEmpty,
+        reason: 'index.html 没有可核对的壳层背景色声明，换帧瞬间会露出浏览器默认白底',
+      );
+      for (final color in declared) {
+        expect(
+          _parseCssHexColor(color),
+          QiyuColors.night.toARGB32() & 0xFFFFFF,
+          reason: '$color 与主题夜色底 ${_cssHex(QiyuColors.night)} 不一致，'
+              '返回硬切换帧瞬间会整页闪出异色',
+        );
+      }
+    });
+
+    test('manifest.json 的 PWA 启动屏底色就是主题夜色底', () {
+      final manifest = _read('web/manifest.json');
+      final declared = RegExp(
+        r'"background_color"\s*:\s*"(#[0-9A-Fa-f]{6})"',
+      ).firstMatch(manifest)?.group(1);
+      expect(
+        declared,
+        isNotNull,
+        reason: 'manifest.json 没有可核对的 PWA 启动屏底色声明',
+      );
+      expect(
+        _parseCssHexColor(declared!),
+        QiyuColors.night.toARGB32() & 0xFFFFFF,
+        reason: '$declared 与主题夜色底 ${_cssHex(QiyuColors.night)} 不一致，'
+            '安装启动屏会闪出异色',
+      );
     });
   });
 

@@ -31,6 +31,15 @@
 
   <title>栖语</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    /* 页内返回是单帧硬切：Flutter 重栅格化的换帧瞬间会露出浏览器壳底，
+       壳底必须是主题夜色（lib/theme/qiyu_tokens.dart 的 QiyuColors.night），
+       否则实机上会看到整页白闪。值由 test/qiyu_theme_test.dart 锁住同步。 */
+    html,
+    body {
+      background-color: #0f0e14;
+    }
+  </style>
 </head>
 <body>
   <!--
