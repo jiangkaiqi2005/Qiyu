@@ -102,7 +102,10 @@ void main() {
       expect(
         tester
             .widget<Opacity>(
-              find.ancestor(of: find.text(label), matching: find.byType(Opacity)),
+              find.ancestor(
+                of: find.text(label),
+                matching: find.byType(Opacity),
+              ),
             )
             .opacity,
         closeTo(0.2, 0.001),
@@ -123,11 +126,7 @@ void main() {
           tester,
           Theme(
             data: ThemeData(platform: TargetPlatform.android),
-            child: QiyuChatBubble(
-              text: '晚安。',
-              fromUser: false,
-              at: moment,
-            ),
+            child: QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
           ),
         );
 

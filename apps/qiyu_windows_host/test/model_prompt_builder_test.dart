@@ -285,8 +285,9 @@ void main() {
 
       final momentPattern = RegExp(r'\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]');
       // 时间不进 system 段（含格式提醒段）。
-      for (final message
-          in messages.where((m) => m.role == ModelMessageRole.system)) {
+      for (final message in messages.where(
+        (m) => m.role == ModelMessageRole.system,
+      )) {
         expect(message.content, isNot(matches(momentPattern)));
       }
       // 检索结果块不带时刻；带前缀的只有消息本身。

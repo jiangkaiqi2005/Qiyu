@@ -1252,7 +1252,9 @@ StateSnapshot _stateFromCompletedTurns(
       continue;
     }
     if (pendingUser == null && turn.requestId == lastPairedRequestId) {
-      completed.add(ChatTurn(speaker: Speaker.qiyu, text: turn.text, at: turn.at));
+      completed.add(
+        ChatTurn(speaker: Speaker.qiyu, text: turn.text, at: turn.at),
+      );
     }
   }
   final recent = completed.length <= maxStateTurns

@@ -96,10 +96,7 @@ void main() {
 
     final wire = state.toJson();
     final wireTurns = wire['turns']! as List<Object?>;
-    expect(
-      wireTurns.first,
-      containsPair('at', '2025-12-31T15:41:00.000Z'),
-    );
+    expect(wireTurns.first, containsPair('at', '2025-12-31T15:41:00.000Z'));
     // 无时刻的 turn 不产出 at 键，与既有契约 JSON 形状兼容。
     expect(wireTurns.last, isNot(contains('at')));
 
