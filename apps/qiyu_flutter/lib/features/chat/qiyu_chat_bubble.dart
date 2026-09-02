@@ -101,9 +101,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     final body = extras.isEmpty
         ? content
         : Column(
-            crossAxisAlignment: widget.fromUser
-                ? CrossAxisAlignment.end
-                : CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [content, ...extras],
           );
 
@@ -156,12 +154,13 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     );
   }
 
-  /// 时刻行：小号弱色文字。触屏常驻位再压到约两成透明度，弱到不干扰
+  /// 时刻行：次要档弱色文字（design-system §3 字阶表把时间戳归次要
+  /// 档，不落极小档）。触屏常驻位再压到约两成透明度，弱到不干扰
   /// 阅读，但要看随时在。
   Widget _momentLine(String label, bool persistent) {
     final line = Text(
       label,
-      style: QiyuTypography.tiny.copyWith(color: QiyuColors.muted),
+      style: QiyuTypography.secondary.copyWith(color: QiyuColors.muted),
     );
     return persistent ? Opacity(opacity: 0.2, child: line) : line;
   }
