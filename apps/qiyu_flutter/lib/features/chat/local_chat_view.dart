@@ -470,8 +470,8 @@ class _LocalChatViewState extends State<LocalChatView> {
             0,
           ),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              const Spacer(),
               if (viewModel.hasLocalFallback)
                 const Flexible(
                   child: Text(
