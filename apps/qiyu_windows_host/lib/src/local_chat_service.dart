@@ -489,7 +489,7 @@ final class LocalChatService {
               state,
               trimmedText,
               hardRulesAddendum: prepared.hardRulesAddendum,
-              currentMoment: pendingUserMoment,
+              at: pendingUserMoment,
             ),
             cancellation,
             prepared: prepared,

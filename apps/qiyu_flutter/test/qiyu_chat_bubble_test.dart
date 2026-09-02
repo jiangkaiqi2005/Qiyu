@@ -40,7 +40,7 @@ void main() {
     testWidgets('桌面端默认完全不可见', (tester) async {
       await _pump(
         tester,
-        QiyuChatBubble(text: '晚安。', fromUser: false, moment: moment),
+        QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
       );
 
       expect(find.text(label), findsNothing);
@@ -49,7 +49,7 @@ void main() {
     testWidgets('桌面端悬停栖语文本块后淡显时刻，移开后消失', (tester) async {
       await _pump(
         tester,
-        QiyuChatBubble(text: '晚安。', fromUser: false, moment: moment),
+        QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
       );
 
       final mouse = await _hoverMouse(tester, find.text('晚安。'));
@@ -63,7 +63,7 @@ void main() {
     testWidgets('桌面端悬停用户气泡同样淡显时刻', (tester) async {
       await _pump(
         tester,
-        QiyuChatBubble(text: '临睡随手记的', fromUser: true, moment: moment),
+        QiyuChatBubble(text: '临睡随手记的', fromUser: true, at: moment),
       );
 
       await _hoverMouse(tester, find.text('临睡随手记的'));
@@ -75,7 +75,7 @@ void main() {
         tester,
         Theme(
           data: ThemeData(platform: TargetPlatform.android),
-          child: QiyuChatBubble(text: '晚安。', fromUser: false, moment: moment),
+          child: QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
         ),
       );
 
@@ -89,7 +89,7 @@ void main() {
     testWidgets('形态随指针事件切换：先触后鼠，常驻转悬停显现', (tester) async {
       await _pump(
         tester,
-        QiyuChatBubble(text: '晚安。', fromUser: false, moment: moment),
+        QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
       );
 
       // 尚无指针事件：桌面平台档初始猜测是悬停显现，默认不可见。
@@ -126,7 +126,7 @@ void main() {
             child: QiyuChatBubble(
               text: '晚安。',
               fromUser: false,
-              moment: moment,
+              at: moment,
             ),
           ),
         );

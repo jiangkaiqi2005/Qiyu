@@ -151,7 +151,7 @@ final class ModelPromptBuilder {
     StateSnapshot state,
     String currentText, {
     String hardRulesAddendum = '',
-    DateTime? currentMoment,
+    DateTime? at,
   }) {
     final systemSections = StringBuffer();
     void appendBlock(String tag, String label, String content) {
@@ -200,9 +200,7 @@ final class ModelPromptBuilder {
         ..writeln('</memory_context>');
     }
     context.write(
-      currentMoment == null
-          ? currentText
-          : '${MomentPrefix.format(currentMoment)} $currentText',
+      at == null ? currentText : '${MomentPrefix.format(at)} $currentText',
     );
 
     return [

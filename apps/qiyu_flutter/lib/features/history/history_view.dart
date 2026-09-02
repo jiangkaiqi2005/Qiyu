@@ -384,7 +384,7 @@ class _HistorySessionViewState extends State<HistorySessionView> {
           return QiyuChatBubble(
             text: message.text,
             fromUser: fromUser,
-            moment: message.at,
+            at: message.at,
           );
         },
       ),

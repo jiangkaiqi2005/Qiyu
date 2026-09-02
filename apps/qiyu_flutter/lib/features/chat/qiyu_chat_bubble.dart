@@ -20,7 +20,7 @@ class QiyuChatBubble extends StatefulWidget {
     this.isSpeaking = false,
     this.onReplay,
     this.deliveryIndex,
-    this.moment,
+    this.at,
   });
 
   final String text;
@@ -45,7 +45,7 @@ class QiyuChatBubble extends StatefulWidget {
   /// 驱动——桌面触屏设备（Windows 平板浏览器）不再被平台档判成两头
   /// 落空；尚无指针事件时按 Web 壳层平台档作初始猜测。null（直播流
   /// 尚未预显、无时刻数据）不渲染。
-  final DateTime? moment;
+  final DateTime? at;
 
   @override
   State<QiyuChatBubble> createState() => _QiyuChatBubbleState();
@@ -104,9 +104,9 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     // 指针默认隐藏，悬停才渲染——不渲染而非透明度 0：语义树里也不出现，
     // 页面保持干净。
     final persistent = _touchPointer;
-    final momentLabel = widget.moment == null
+    final momentLabel = widget.at == null
         ? null
-        : formatMessageMoment(widget.moment!);
+        : formatMessageMoment(widget.at!);
     // moment 非空时 Dart 流分析已知 label 非空，无需再断言。
     final momentLine = momentLabel == null || (!persistent && !_hovering)
         ? null

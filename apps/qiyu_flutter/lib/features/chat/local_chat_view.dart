@@ -965,7 +965,7 @@ class _LocalChatViewState extends State<LocalChatView> {
           text: message.text,
           fromUser: !isQiyu,
           deliveryIndex: deliveryIndex,
-          moment: message.at,
+          at: message.at,
           isSpeaking:
               nowReading != null &&
               message.requestId == nowReading.requestId &&

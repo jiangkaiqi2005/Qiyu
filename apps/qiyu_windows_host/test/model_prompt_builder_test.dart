@@ -264,7 +264,7 @@ void main() {
       final messages = builder.build(
         momentState,
         '现在呢',
-        currentMoment: DateTime(2025, 12, 31, 23, 58),
+        at: DateTime(2025, 12, 31, 23, 58),
       );
 
       expect(messages.last.content, '[2025-12-31 23:58] 现在呢');
@@ -280,7 +280,7 @@ void main() {
       final messages = withRecall.build(
         momentState,
         '现在呢',
-        currentMoment: DateTime(2025, 12, 31, 23, 58),
+        at: DateTime(2025, 12, 31, 23, 58),
       );
 
       final momentPattern = RegExp(r'\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]');
