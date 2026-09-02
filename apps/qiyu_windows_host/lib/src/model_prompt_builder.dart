@@ -78,8 +78,9 @@ const hiddenActionsReminder =
 /// 按设计定稿的装配图组装模型上下文：
 /// 人格宪法 → 硬规则与优先级 → 隐藏块协议 →
 /// `<daily_state>`【近况】/ `<long_memory>`【长期印象】/ `<persona>`【用户画像】
-/// （空块不输出）→ 最近对话 → 格式提醒 → `<memory_context>`（命中才有）→
-/// 当前用户消息。
+/// （空块不输出）→ 最近对话（每条消息带时刻前缀）→ 格式提醒 →
+/// `<memory_context>`（命中才有）→ 当前用户消息（带本轮时刻前缀）。
+/// 时刻前缀只活在装配瞬间：不落盘、不进 system 段、检索块不带。
 final class ModelPromptBuilder {
   const ModelPromptBuilder(
     this.personaConstitution, {
@@ -150,6 +151,7 @@ final class ModelPromptBuilder {
     StateSnapshot state,
     String currentText, {
     String hardRulesAddendum = '',
+    DateTime? currentMoment,
   }) {
     final systemSections = StringBuffer();
     void appendBlock(String tag, String label, String content) {
@@ -197,20 +199,36 @@ final class ModelPromptBuilder {
         ..writeln(memoryContextTrimmed)
         ..writeln('</memory_context>');
     }
-    context.write(currentText);
+    context.write(
+      currentMoment == null
+          ? currentText
+          : '${_momentPrefix(currentMoment)} $currentText',
+    );
 
     return [
       ModelMessage(ModelMessageRole.system, systemSections.toString().trim()),
-      ...recentTurns.map(
-        (turn) => ModelMessage(
+      ...recentTurns.map((turn) {
+        final at = turn.at;
+        return ModelMessage(
           turn.speaker == Speaker.user
               ? ModelMessageRole.user
               : ModelMessageRole.assistant,
-          turn.text,
-        ),
-      ),
+          at == null ? turn.text : '${_momentPrefix(at)} ${turn.text}',
+        );
+      }),
       const ModelMessage(ModelMessageRole.system, hiddenActionsReminder),
       ModelMessage(ModelMessageRole.user, context.toString()),
     ];
   }
+}
+
+/// 装配瞬间的消息时刻前缀：`[YYYY-MM-DD HH:mm]`，本地时区、完整日期、
+/// 无时区偏移后缀（单机单用户时区恒定，偏移后缀是噪音）。与行为核心
+/// 候选清洗的行首时刻剥离模式逐字对应；前缀 ephemeral，不落盘。
+String _momentPrefix(DateTime at) {
+  final local = at.toLocal();
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '[${local.year.toString().padLeft(4, '0')}-'
+      '${two(local.month)}-${two(local.day)} '
+      '${two(local.hour)}:${two(local.minute)}]';
 }

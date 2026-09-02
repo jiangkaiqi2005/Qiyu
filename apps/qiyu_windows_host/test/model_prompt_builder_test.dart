@@ -225,4 +225,107 @@ void main() {
     expect(userMessage, isNot(contains('旧检索结果')));
     expect(userMessage, contains('<memory_context>'));
   });
+
+  group('moment prefixes on assembled conversation messages', () {
+    final momentState = StateSnapshot(
+      userId: 'local-user',
+      relationshipStage: RelationshipStage.stranger,
+      turns: [
+        ChatTurn(
+          speaker: Speaker.user,
+          text: '睡了吗',
+          at: DateTime(2025, 12, 31, 23, 41),
+        ),
+        ChatTurn(
+          speaker: Speaker.qiyu,
+          text: '还没',
+          at: DateTime(2025, 12, 31, 23, 43),
+        ),
+        const ChatTurn(speaker: Speaker.user, text: '没有时刻的旧消息'),
+      ],
+      lastEmotion: const EmotionSnapshot(
+        kind: EmotionKind.neutral,
+        intensity: 0,
+      ),
+    );
+
+    test('every recent turn carries its local-time moment prefix', () {
+      final messages = builder.build(momentState, '现在呢');
+
+      expect(messages[1].content, '[2025-12-31 23:41] 睡了吗');
+      // 栖语自己的消息同样带前缀，仍以 assistant 角色出现。
+      expect(messages[2].role, ModelMessageRole.assistant);
+      expect(messages[2].content, '[2025-12-31 23:43] 还没');
+      // 无时刻的 turn 保持原文，不渲染前缀。
+      expect(messages[3].content, '没有时刻的旧消息');
+    });
+
+    test('the current message carries the moment it was sent', () {
+      final messages = builder.build(
+        momentState,
+        '现在呢',
+        currentMoment: DateTime(2025, 12, 31, 23, 58),
+      );
+
+      expect(messages.last.content, '[2025-12-31 23:58] 现在呢');
+      // 不传当前时刻时不渲染前缀（连接测试等路径维持原状）。
+      expect(builder.build(momentState, '现在呢').last.content, '现在呢');
+    });
+
+    test('moments never reach the system sections or the recall block', () {
+      const withRecall = ModelPromptBuilder(
+        '测试人格宪法',
+        memoryContext: '2026-08-01 用户提过演讲',
+      );
+      final messages = withRecall.build(
+        momentState,
+        '现在呢',
+        currentMoment: DateTime(2025, 12, 31, 23, 58),
+      );
+
+      final momentPattern = RegExp(r'\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]');
+      // 时间不进 system 段（含格式提醒段）。
+      for (final message
+          in messages.where((m) => m.role == ModelMessageRole.system)) {
+        expect(message.content, isNot(matches(momentPattern)));
+      }
+      // 检索结果块不带时刻；带前缀的只有消息本身。
+      final userContent = messages.last.content;
+      final recallBlock = userContent.substring(
+        userContent.indexOf('<memory_context>'),
+        userContent.indexOf('</memory_context>'),
+      );
+      expect(recallBlock, isNot(matches(momentPattern)));
+      expect(userContent, matches(momentPattern));
+    });
+
+    test('UTC-stored moments render locally without an offset suffix', () {
+      final utcMoment = DateTime.utc(2025, 12, 31, 15, 41);
+      final messages = builder.build(
+        StateSnapshot(
+          userId: 'local-user',
+          relationshipStage: RelationshipStage.stranger,
+          turns: [ChatTurn(speaker: Speaker.user, text: '睡了吗', at: utcMoment)],
+          lastEmotion: const EmotionSnapshot(
+            kind: EmotionKind.neutral,
+            intensity: 0,
+          ),
+        ),
+        '在吗',
+      );
+
+      // 期望值由测试内独立换算出本地时区渲染，锁定「UTC 存储、本地渲染」。
+      final local = utcMoment.toLocal();
+      String two(int value) => value.toString().padLeft(2, '0');
+      final expected =
+          '[${local.year.toString().padLeft(4, '0')}-${two(local.month)}-'
+          '${two(local.day)} ${two(local.hour)}:${two(local.minute)}] 睡了吗';
+      expect(messages[1].content, expected);
+      // 完整日期、分钟粒度、无时区偏移后缀。
+      expect(
+        messages[1].content,
+        matches(RegExp(r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] ')),
+      );
+    });
+  });
 }
