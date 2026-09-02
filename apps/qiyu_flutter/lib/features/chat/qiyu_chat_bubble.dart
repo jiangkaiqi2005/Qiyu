@@ -104,16 +104,14 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     // 指针默认隐藏，悬停才渲染——不渲染而非透明度 0：语义树里也不出现，
     // 页面保持干净。
     final persistent = _touchPointer;
-    final momentLabel = widget.at == null
+    final atLabel = widget.at == null ? null : formatMessageMoment(widget.at!);
+    // at 非空时 Dart 流分析已知 label 非空，无需再断言。
+    final atLine = atLabel == null || (!persistent && !_hovering)
         ? null
-        : formatMessageMoment(widget.at!);
-    // moment 非空时 Dart 流分析已知 label 非空，无需再断言。
-    final momentLine = momentLabel == null || (!persistent && !_hovering)
-        ? null
-        : _momentLine(momentLabel, persistent);
+        : _atLine(atLabel, persistent);
 
     final extras = <Widget>[
-      if (momentLine != null) ...[const SizedBox(height: 2), momentLine],
+      if (atLine != null) ...[const SizedBox(height: 2), atLine],
       if (widget.isSpeaking) ...[
         const SizedBox(height: 6),
         // 正在读：动效位交给「正在读」文本，此时不叠重听键。
@@ -177,7 +175,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
       );
     }
 
-    if (momentLabel == null) {
+    if (atLabel == null) {
       return message;
     }
     // Listener 记录最近一次落在消息上的指针类型（触屏/鼠标形态随事件
@@ -198,7 +196,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   /// 时刻行：次要档弱色文字（design-system §3 字阶表把时间戳归次要
   /// 档，不落极小档）。触屏常驻位再压到约两成透明度，弱到不干扰
   /// 阅读，但要看随时在。
-  Widget _momentLine(String label, bool persistent) {
+  Widget _atLine(String label, bool persistent) {
     final line = Text(
       label,
       style: QiyuTypography.secondary.copyWith(color: QiyuColors.muted),
