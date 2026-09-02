@@ -100,9 +100,29 @@ final _modelControlPatterns = [
 final _codeFenceLinePattern = RegExp(r'^```(?:[A-Za-z0-9_-]+)?$');
 final _speakerPrefixPattern = RegExp(r'^(?:栖语|她|他)\s*[：:]\s*');
 
-/// 装配时注入的行首时刻前缀（`[YYYY-MM-DD HH:mm]`）：模型复述时整段
-/// 剥离，可见回复不携带装配痕迹。格式与装配器前缀逐字对应。
-final _momentPrefixPattern = RegExp(r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\s*');
+/// 行首消息时刻前缀的唯一权威：`[YYYY-MM-DD HH:mm]`——本地时区、完整
+/// 日期防跨零点歧义、分钟粒度、无时区偏移后缀（单机单用户时区恒定，
+/// 偏移后缀是噪音）。
+///
+/// 装配器生成前缀与候选清洗剥离前缀都必须走这里：[format] 渲染出的
+/// 前缀一定被 [pattern] 整段吃掉，core 测试的 lockstep 用例锁住同形。
+abstract final class MomentPrefix {
+  /// 行首时刻前缀的剥离模式：只吃 [format] 渲染出的整段前缀，模型
+  /// 复述装配痕迹时不进入可见回复。
+  static final RegExp pattern = RegExp(
+    r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\s*',
+  );
+
+  /// 渲染行首消息时刻前缀。
+  static String format(DateTime at) {
+    final local = at.toLocal();
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '[${local.year.toString().padLeft(4, '0')}-'
+        '${two(local.month)}-${two(local.day)} '
+        '${two(local.hour)}:${two(local.minute)}]';
+  }
+}
+
 final _bracketedPausePrefixPattern = RegExp(
   r'^[（(【\[]\s*(?:等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下)[。.!！?？,，、\s]*[）)】\]]\s*',
 );
@@ -341,7 +361,7 @@ String? _cleanVisibleLine(String value) {
   if (_codeFenceLinePattern.hasMatch(text)) {
     return null;
   }
-  text = text.replaceFirst(_momentPrefixPattern, '').trim();
+  text = text.replaceFirst(MomentPrefix.pattern, '').trim();
   text = text.replaceFirst(_speakerPrefixPattern, '').trim();
   text = text.replaceFirst(_bracketedPausePrefixPattern, '').trim();
   if (text.isEmpty || _ellipsisOnlyPattern.hasMatch(text)) {

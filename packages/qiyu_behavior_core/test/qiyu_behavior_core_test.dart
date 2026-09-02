@@ -122,6 +122,23 @@ void main() {
     expect(result.source, ReplySource.llm);
   });
 
+  test('moment prefix format and strip pattern stay in lockstep', () {
+    // 单一权威自检：format 渲染出的前缀必须被 pattern 整段吃掉，
+    // 装配注入的痕迹才保证剥得掉。
+    const visible = '嗯，还没。';
+    for (final at in [
+      DateTime(2025, 12, 31, 23, 41),
+      DateTime.utc(2026, 1, 1, 15, 41),
+      DateTime(2026, 9, 2, 5, 5),
+    ]) {
+      final line = '${MomentPrefix.format(at)} $visible';
+      final match = MomentPrefix.pattern.firstMatch(line);
+      expect(match, isNotNull);
+      expect(line.substring(match!.end), visible);
+    }
+    expect(MomentPrefix.pattern.firstMatch(visible), isNull);
+  });
+
   test('streaming delivery wire round-trips through the shared contract', () {
     const event = ChatDeliveryEvent(
       kind: ChatDeliveryEventKind.state,

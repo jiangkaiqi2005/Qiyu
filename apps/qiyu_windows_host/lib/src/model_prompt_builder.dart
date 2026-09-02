@@ -202,7 +202,7 @@ final class ModelPromptBuilder {
     context.write(
       currentMoment == null
           ? currentText
-          : '${_momentPrefix(currentMoment)} $currentText',
+          : '${MomentPrefix.format(currentMoment)} $currentText',
     );
 
     return [
@@ -213,22 +213,11 @@ final class ModelPromptBuilder {
           turn.speaker == Speaker.user
               ? ModelMessageRole.user
               : ModelMessageRole.assistant,
-          at == null ? turn.text : '${_momentPrefix(at)} ${turn.text}',
+          at == null ? turn.text : '${MomentPrefix.format(at)} ${turn.text}',
         );
       }),
       const ModelMessage(ModelMessageRole.system, hiddenActionsReminder),
       ModelMessage(ModelMessageRole.user, context.toString()),
     ];
   }
-}
-
-/// 装配瞬间的消息时刻前缀：`[YYYY-MM-DD HH:mm]`，本地时区、完整日期、
-/// 无时区偏移后缀（单机单用户时区恒定，偏移后缀是噪音）。与行为核心
-/// 候选清洗的行首时刻剥离模式逐字对应；前缀 ephemeral，不落盘。
-String _momentPrefix(DateTime at) {
-  final local = at.toLocal();
-  String two(int value) => value.toString().padLeft(2, '0');
-  return '[${local.year.toString().padLeft(4, '0')}-'
-      '${two(local.month)}-${two(local.day)} '
-      '${two(local.hour)}:${two(local.minute)}]';
 }
