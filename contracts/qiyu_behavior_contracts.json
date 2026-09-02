@@ -143,6 +143,27 @@
       }
     },
     {
+      "id": "injected-moment-prefix-is-stripped",
+      "request": {
+        "requestId": "fixture-moment-prefix",
+        "text": "在吗"
+      },
+      "provider": {
+        "configured": true,
+        "candidateReply": "[2025-12-31 23:41] 嗯，还没。"
+      },
+      "expected": {
+        "messages": ["嗯，还没。"],
+        "source": "llm",
+        "mode": "llm",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "在吗" },
+          { "speaker": "qiyu", "text": "嗯，还没。" }
+        ]
+      }
+    },
+    {
       "id": "recall-selection-block-stays-hidden",
       "request": {
         "requestId": "fixture-recall-selections",
