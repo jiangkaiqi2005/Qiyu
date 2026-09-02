@@ -149,6 +149,11 @@ final class LocalChatViewModel extends ChangeNotifier {
         message.speaker == LocalChatSpeaker.user,
   );
 
+  /// 直播流新消息的前端时钟预显时刻：Host 落盘权威值要等刷新或恢复
+  /// 才换上来，分钟粒度下两边不会可见地跳变——预显先保住消息在发送
+  /// 瞬间就有时刻，不必等落盘往返。
+  DateTime get _previewMoment => DateTime.now();
+
   Future<void> initialize() async {
     if (_initializing || _initialized) {
       return;
@@ -355,9 +360,7 @@ final class LocalChatViewModel extends ChangeNotifier {
           requestId: requestId,
           speaker: LocalChatSpeaker.user,
           text: trimmed,
-          // 前端时钟预显：Host 落盘权威值要等刷新或恢复才换上来，
-          // 分钟粒度下两边不会可见地跳变。
-          at: DateTime.now(),
+          at: _previewMoment,
         ),
       );
     }
@@ -408,7 +411,7 @@ final class LocalChatViewModel extends ChangeNotifier {
                   requestId: turn.requestId,
                   speaker: LocalChatSpeaker.user,
                   text: turn.text,
-                  at: DateTime.now(),
+                  at: _previewMoment,
                 ),
               );
             }
@@ -446,7 +449,7 @@ final class LocalChatViewModel extends ChangeNotifier {
                     source: replySource,
                     fallbackReason: turn.fallbackReason,
                     deliveryIndex: delivery,
-                    at: DateTime.now(),
+                    at: _previewMoment,
                   ),
                 ),
               );

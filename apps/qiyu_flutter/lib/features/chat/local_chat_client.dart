@@ -35,8 +35,9 @@ final class LocalChatMessage {
   final int? deliveryIndex;
 
   /// 消息时刻（Host 落盘的客观时刻，wire 格式 UTC ISO8601）。恢复的
-  /// 消息取 Host 权威值；直播流的新消息由视图模型用前端时钟预显，
-  /// 刷新或恢复后被 Host 值覆盖——分钟粒度下两者不会可见地打架。
+  /// 消息取 Host 权威值；直播流的新消息由视图模型用前端时钟预显、
+  /// 刷新或恢复后被 Host 值覆盖（预显的取舍见视图模型的
+  /// `_previewMoment`）。
   final DateTime? at;
 
   factory LocalChatMessage.fromJson(Map<String, Object?> json) {
