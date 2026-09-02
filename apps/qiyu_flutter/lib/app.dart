@@ -52,13 +52,20 @@ import 'theme/qiyu_theme.dart';
 /// 页内返回。它们虽不在壳页之列，过渡同样收成 [NoTransitionPage]——壳页已
 /// 无整页过渡，详情若保留默认 MaterialPage 过渡，进出各播一次整页缩放淡入
 /// 淡出，点页内返回键时整页还要跳一下；收成无过渡后详情页出现与消失平静，
-/// 与壳页切换同一形态。
+/// 与壳页切换同一形态。`/`（[RootView] 的初见门禁）同理收成无过渡：页内
+/// 返回键的栈空兜底已改落 `/chat`（见 `navigation.dart` 的 backToPrevious），
+/// 不再走 `/`，但窄屏抽屉品牌槽的 `go('/')` 仍走它，全表因此不再剩任何
+/// 默认整页转场。
 ///
 /// 紫夜改造后的「合一页」不落在新路由上：`/` 与 `/chat` 渲染**同一个**由
 /// [QiyuShell] 包住的对话视图——`/` 前头仍压着 [RootView] 的初见门禁（门禁
 /// 放行后由它自己挂壳），`/chat` 直接进对话态。
 List<RouteBase> qiyuRoutes() => [
-  GoRoute(path: '/', builder: (context, state) => const RootView()),
+  GoRoute(
+    path: '/',
+    pageBuilder: (context, state) =>
+        NoTransitionPage<void>(key: state.pageKey, child: const RootView()),
+  ),
   ShellRoute(
     pageBuilder: (context, state, navigationShell) => NoTransitionPage<void>(
       key: state.pageKey,

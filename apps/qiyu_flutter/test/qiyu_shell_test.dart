@@ -767,9 +767,11 @@ void main() {
       await tester.tap(find.byKey(const Key('history-back')));
       await tester.pumpAndSettle();
 
-      // 常驻顶层导航每次换掉当前位置，所以这一跳没有可弹的层，返回落回合一页
-      // （`/`）；上一段那种「目标不在栈里就 push 叠栈」的写法会回到路过的 /chat。
-      expect(_location(tester), '/');
+      // 常驻顶层导航每次换掉当前位置，所以这一跳没有可弹的层，返回兜底落回
+      // 合一页：`backToPrevious` 走 `/chat` 而不是 `/`——`/` 在壳外，跳过去
+      // 会销毁重建整只导航壳；落点页面是同一个，断言的是路由位置。上一段
+      // 那种「目标不在栈里就 push 叠栈」的写法会回到路过的 /chat。
+      expect(_location(tester), '/chat');
       expect(find.byKey(const Key('chat-input')), findsOneWidget);
     });
 

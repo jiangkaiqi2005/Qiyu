@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
+import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/history/history_client.dart';
 import 'package:qiyu_flutter/features/history/history_view.dart';
@@ -36,7 +37,8 @@ import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
 /// 重建，壳上的动画随之重放；GoRouter 默认的 MaterialPage 过渡再叠一层整页
 /// 淡入滑入。修复把四条挂壳路由收进同一个 ShellRoute：壳 State 跨导航存活，
 /// 壳页之间不再有路由过渡。本文件锁住这个结果，并复验导航语义与壳的挂载
-/// 范围一项没动。
+/// 范围一项没动。侧边栏页的页内返回键兜底同样不越过壳：落回壳内的
+/// `/chat`（与 `/` 渲染同一个合一页），壳不销毁重建。
 
 void main() {
   group('壳页切换的稳定（修复：整页动画跳闪）', () {
@@ -77,6 +79,28 @@ void main() {
         tester.state<State<QiyuShell>>(find.byType(QiyuShell)),
         same(shellState),
         reason: '回到对话页不得销毁重建壳',
+      );
+    });
+
+    testWidgets('侧边栏页的返回键兜底落回壳内合一页：壳 State 不销毁重建', (tester) async {
+      await _pumpDesktop(tester);
+
+      // 经侧边栏 go 进记忆中心，栈里没有上一层；记下这只壳的 State 作基线。
+      await tester.tap(find.byKey(const Key('home-go-memory')));
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/memory');
+      final shellState = tester.state<State<QiyuShell>>(find.byType(QiyuShell));
+
+      // 兜底走 `/` 会把整只壳销毁重建、再重放一次默认整页过渡（侧边栏页
+      // 返回闪白的病根）；落点改为壳内的 `/chat`——与 `/` 渲染同一个合一页。
+      await tester.tap(find.byKey(const Key('memory-back')));
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/chat');
+      expect(find.byType(LocalChatView), findsOneWidget);
+      expect(
+        tester.state<State<QiyuShell>>(find.byType(QiyuShell)),
+        same(shellState),
+        reason: '返回落回壳内不得销毁重建壳',
       );
     });
 
