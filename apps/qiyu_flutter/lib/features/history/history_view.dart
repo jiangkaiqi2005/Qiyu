@@ -380,8 +380,12 @@ class _HistorySessionViewState extends State<HistorySessionView> {
           final message = snapshot.messages[index];
           final fromUser = message.speaker == LocalChatSpeaker.user;
           // 与聊天页同口径：用户输入纯文本、栖语回复 Markdown，
-          // 语义标签带说话人（ticket 24）。
-          return QiyuChatBubble(text: message.text, fromUser: fromUser);
+          // 语义标签带说话人（ticket 24）；消息时刻同一组件同一行为。
+          return QiyuChatBubble(
+            text: message.text,
+            fromUser: fromUser,
+            moment: message.at,
+          );
         },
       ),
     );

@@ -67,6 +67,8 @@ void main() {
       );
 
       expect(restored.messages.single.text, '旧消息');
+      // Host 已把每轮时刻发下来：解析成 DateTime，显示层据此渲染。
+      expect(restored.messages.single.at, DateTime.utc(2026, 8, 11, 12));
       expect(exchange.source, ReplySource.local);
       expectBootstrapRequestedOnce(requests);
       final sendRequest = requests.last;

@@ -20,6 +20,7 @@ final class LocalChatMessage {
     this.source,
     this.fallbackReason,
     this.deliveryIndex,
+    this.at,
   });
 
   final String requestId;
@@ -33,9 +34,15 @@ final class LocalChatMessage {
   /// 的回复触发，与气泡的「正在朗读」指示共用。
   final int? deliveryIndex;
 
+  /// 消息时刻（Host 落盘的客观时刻，wire 格式 UTC ISO8601）。恢复的
+  /// 消息取 Host 权威值；直播流的新消息由视图模型用前端时钟预显，
+  /// 刷新或恢复后被 Host 值覆盖——分钟粒度下两者不会可见地打架。
+  final DateTime? at;
+
   factory LocalChatMessage.fromJson(Map<String, Object?> json) {
     final source = json['source'] as String?;
     final fallbackReason = json['fallbackReason'] as String?;
+    final rawAt = json['at'] as String?;
     return LocalChatMessage(
       requestId: json['requestId']! as String,
       speaker: LocalChatSpeaker.values.byName(json['speaker']! as String),
@@ -44,6 +51,7 @@ final class LocalChatMessage {
       fallbackReason: fallbackReason == null
           ? null
           : FallbackReason.fromWireName(fallbackReason),
+      at: rawAt == null ? null : DateTime.tryParse(rawAt),
     );
   }
 }

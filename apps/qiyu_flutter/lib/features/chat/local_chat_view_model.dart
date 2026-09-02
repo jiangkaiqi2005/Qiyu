@@ -256,6 +256,7 @@ final class LocalChatViewModel extends ChangeNotifier {
             source: message.source,
             fallbackReason: message.fallbackReason,
             deliveryIndex: delivery,
+            at: message.at,
           ),
         );
       }
@@ -354,6 +355,9 @@ final class LocalChatViewModel extends ChangeNotifier {
           requestId: requestId,
           speaker: LocalChatSpeaker.user,
           text: trimmed,
+          // 前端时钟预显：Host 落盘权威值要等刷新或恢复才换上来，
+          // 分钟粒度下两边不会可见地跳变。
+          at: DateTime.now(),
         ),
       );
     }
@@ -404,6 +408,7 @@ final class LocalChatViewModel extends ChangeNotifier {
                   requestId: turn.requestId,
                   speaker: LocalChatSpeaker.user,
                   text: turn.text,
+                  at: DateTime.now(),
                 ),
               );
             }
@@ -441,6 +446,7 @@ final class LocalChatViewModel extends ChangeNotifier {
                     source: replySource,
                     fallbackReason: turn.fallbackReason,
                     deliveryIndex: delivery,
+                    at: DateTime.now(),
                   ),
                 ),
               );
