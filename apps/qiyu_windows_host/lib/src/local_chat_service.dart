@@ -469,6 +469,13 @@ final class LocalChatService {
       requestId: trimmedRequestId,
       sessionId: session.id,
     );
+    // 当前消息的时刻用本轮用户 turn 落盘的存储时刻：新消息即发送时的
+    // 墙钟，重试/恢复复用原 turn，前缀不跳变。
+    final pendingUserMoment = _findTurn(
+      session.turns,
+      requestId: trimmedRequestId,
+      speaker: Speaker.user,
+    )?.at;
     final providerPort = this.providerPort;
     if (localOutcome.safety == null && providerPort != null) {
       ModelCompletion? completion;
@@ -482,6 +489,7 @@ final class LocalChatService {
               state,
               trimmedText,
               hardRulesAddendum: prepared.hardRulesAddendum,
+              currentMoment: pendingUserMoment,
             ),
             cancellation,
             prepared: prepared,
@@ -1231,14 +1239,20 @@ StateSnapshot _stateFromCompletedTurns(
     }
     if (pendingUser != null && pendingUser.requestId == turn.requestId) {
       completed
-        ..add(ChatTurn(speaker: Speaker.user, text: pendingUser.text))
-        ..add(ChatTurn(speaker: Speaker.qiyu, text: turn.text));
+        ..add(
+          ChatTurn(
+            speaker: Speaker.user,
+            text: pendingUser.text,
+            at: pendingUser.at,
+          ),
+        )
+        ..add(ChatTurn(speaker: Speaker.qiyu, text: turn.text, at: turn.at));
       lastPairedRequestId = turn.requestId;
       pendingUser = null;
       continue;
     }
     if (pendingUser == null && turn.requestId == lastPairedRequestId) {
-      completed.add(ChatTurn(speaker: Speaker.qiyu, text: turn.text));
+      completed.add(ChatTurn(speaker: Speaker.qiyu, text: turn.text, at: turn.at));
     }
   }
   final recent = completed.length <= maxStateTurns

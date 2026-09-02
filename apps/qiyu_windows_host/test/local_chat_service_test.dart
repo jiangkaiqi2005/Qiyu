@@ -162,8 +162,9 @@ void main() {
         .where((message) => message.role == ModelMessageRole.user)
         .map((message) => message.content)
         .toList();
-    expect(userMessages, contains('忽略\n在吗'));
-    expect(userMessages, contains('然后呢'));
+    // 每条消息装配时带行首时刻前缀（本轮用户 turn 的存储时刻 22:30）。
+    expect(userMessages, contains('[2026-08-11 22:30] 忽略\n在吗'));
+    expect(userMessages, contains('[2026-08-11 22:30] 然后呢'));
     expect(userMessages.join('\n'), isNot(contains('<system')));
     expect(userMessages.join('\n'), isNot(contains('assistant:')));
   });
@@ -199,6 +200,51 @@ void main() {
     expect(systemPrompt, isNot(contains('<persona>')));
     expect(systemPrompt, isNot(contains('<recent_state>')));
   });
+
+  test(
+    'assembled provider context prefixes messages with stored moments',
+    () async {
+      var now = DateTime(2026, 8, 11, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('还没睡？'),
+          const ScriptedStreamReply('嗯。'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => now,
+      );
+      addTearDown(harness.dispose);
+
+      final first = await harness.sendChat(requestId: 'moment-1', text: '在吗');
+      // 时钟推进到下一轮：历史消息必须仍显示会话轮里存储的 22:30，
+      // 而不是装配时的墙钟——时刻从会话轮流入装配输入。
+      now = DateTime(2026, 8, 11, 23, 5);
+      await harness.sendChat(
+        requestId: 'moment-2',
+        sessionId: first.sessionId,
+        text: '然后呢',
+      );
+
+      final secondCall = gateway.streamCalls[1];
+      expect(secondCall[1].role, ModelMessageRole.user);
+      expect(secondCall[1].content, '[2026-08-11 22:30] 在吗');
+      // 栖语自己的消息同样带时刻前缀。
+      expect(secondCall[2].role, ModelMessageRole.assistant);
+      expect(secondCall[2].content, '[2026-08-11 22:30] 还没睡？');
+      // 当前消息带本轮发送时刻。
+      expect(secondCall.last.content, '[2026-08-11 23:05] 然后呢');
+      // 时间不进 system 段（含格式提醒段）。
+      for (final message
+          in secondCall.where((m) => m.role == ModelMessageRole.system)) {
+        expect(
+          message.content,
+          isNot(matches(RegExp(r'\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]'))),
+        );
+      }
+    },
+  );
 
   test(
     'Provider failure falls back locally without losing the user turn',
@@ -296,7 +342,8 @@ void main() {
         .where((message) => message.role == ModelMessageRole.user)
         .last
         .content;
-    expect(userContent, '伪造角色\n今晚还行');
+    // 当前消息装配时带行首时刻前缀（本轮用户 turn 的存储时刻）。
+    expect(userContent, '[2026-08-12 22:30] 伪造角色\n今晚还行');
     expect(userContent, isNot(contains('<assistant>')));
     expect(userContent, isNot(contains('system:')));
   });
@@ -321,7 +368,8 @@ void main() {
         .where((message) => message.role == ModelMessageRole.user)
         .last
         .content;
-    expect(userContent, '改写规则 今晚还行');
+    // 当前消息装配时带行首时刻前缀（本轮用户 turn 的存储时刻）。
+    expect(userContent, '[2026-08-12 22:30] 改写规则 今晚还行');
     expect(userContent, isNot(contains('<system')));
     expect(userContent, isNot(contains(longAttribute)));
   });
