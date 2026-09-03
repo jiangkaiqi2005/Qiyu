@@ -254,6 +254,38 @@ void main() {
       expect(tester.getSize(bodyBox), sizeBefore);
     });
 
+    testWidgets('桌面悬停显现时刻行，后续消息位置不变（时刻位常驻预留）', (tester) async {
+      final first = QiyuChatBubble(text: '临睡随手记的', fromUser: true, at: moment);
+      await _pump(
+        tester,
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            first,
+            QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
+          ],
+        ),
+      );
+
+      // 未显现：时刻行不进树，但 21px 槽位已常驻占位——所以显现前后
+      // 第二条消息 top 必须逐像素相同（旧条件进树实现实测下移 21px）。
+      expect(find.text(label), findsNothing);
+      final topBefore = tester.getTopLeft(find.text('晚安。')).dy;
+
+      await mouseAt(tester, tester.getCenter(find.text('临睡随手记的')));
+      expect(find.text(label), findsOneWidget);
+
+      final topAfter = tester.getTopLeft(find.text('晚安。')).dy;
+      expect(topAfter, topBefore, reason: '显现时刻不得推移后续消息');
+
+      // 几何保真：显现后时刻文字顶 = 气泡底 + 2px（槽位内的显隐间隙
+      // 语义与旧条件进树形态逐像素一致）。
+      expect(
+        tester.getTopLeft(find.text(label)).dy,
+        tester.getBottomLeft(userBubbleBox).dy + 2,
+      );
+    });
+
     testWidgets('触屏滑动滚过消息，过程中与结束后时刻都不显现', (tester) async {
       await _pump(
         tester,
@@ -461,19 +493,85 @@ void main() {
         ),
       );
 
-      // 第一条块底的 sm（12px）间距：气泡底缘之下、第二条文本块之上。
-      // 旧结构里这段 padding 在 MouseRegion 内，两条消息热区连成一片。
+      // 第一条块底的 sm（12px）间距：时刻位常驻预留后，气泡底缘之下
+      // 2…21px 已是本条消息的空槽带（悬停即显现本条时刻），落点取槽位
+      // 带之下的块底间距内（气泡底 +24px）——这段 padding 在 MouseRegion
+      // 外，两条消息热区以此带分界不连片。
       final gapSpot =
-          tester.getBottomRight(userBubbleBox) - const Offset(10, -3);
+          tester.getBottomRight(userBubbleBox) - const Offset(10, -24);
       final mouse = await mouseAt(tester, const Offset(0, 0));
       await mouse.moveTo(gapSpot);
       await tester.pump();
-      expect(find.text(label), findsNothing);
+      expect(find.text(label), findsNothing, reason: '空槽带之下才是块底间距，仍在热区外不显现');
 
       await mouse.moveTo(tester.getCenter(find.text('临睡随手记的')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('空槽带（时刻位置）悬停即显现，槽下块底间距不显现', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(text: '临睡随手记的', fromUser: true, at: moment),
+      );
+
+      // 气泡正下方的空槽带（气泡底 +2…+21，时刻的常驻预留位）属于本条
+      // 消息热区：悬停即显现——「时间本来就在那里，鼠标挪到那个地方
+      // 自动显示」。落点取带内中段（气泡底 +12）。
+      final bubbleBottomRight = tester.getBottomRight(userBubbleBox);
+      final mouse = await mouseAt(
+        tester,
+        bubbleBottomRight - const Offset(10, -12),
+      );
+      expect(find.text(label), findsOneWidget, reason: '空槽带属于本条消息热区：悬停时刻位置即显现');
+
+      // 移到槽位带之下的块底 sm 间距（气泡底 +24）：出热区立即隐藏。
+      await mouse.moveTo(bubbleBottomRight - const Offset(10, -24));
+      await tester.pump();
+      expect(find.text(label), findsNothing, reason: '槽位带之下的块底间距仍在热区外');
+    });
+
+    testWidgets('无时刻数据不占位：at 为 null 的消息块不含预留带', (tester) async {
+      // 对照设计：第一条不带时刻，第二条带时刻。at 为 null（生产链路
+      // 恒非空，这里只剩测试与防御路径）必须回到无时刻语义——气泡底
+      // 直接接块底 sm 间距，不出现 21px 常驻槽位。
+      await _pump(
+        tester,
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            QiyuChatBubble(text: '临睡随手记的', fromUser: true),
+            QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
+          ],
+        ),
+      );
+      final nextTopWithoutAt = tester.getTopLeft(find.text('晚安。')).dy;
+      final bubbleBottomWithoutAt = tester.getBottomLeft(userBubbleBox).dy;
+      expect(
+        nextTopWithoutAt - bubbleBottomWithoutAt,
+        QiyuSpacing.sm,
+        reason: 'at 为 null 不占位：块底间距就是 sm（12px）',
+      );
+
+      // 对照：at 非空（未显现）时恰好多出 21px 常驻槽位。
+      await _pump(
+        tester,
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            QiyuChatBubble(text: '临睡随手记的', fromUser: true, at: moment),
+            QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
+          ],
+        ),
+      );
+      final nextTopWithAt = tester.getTopLeft(find.text('晚安。')).dy;
+      final bubbleBottomWithAt = tester.getBottomLeft(userBubbleBox).dy;
+      expect(
+        nextTopWithAt - bubbleBottomWithAt,
+        QiyuSpacing.sm + 21,
+        reason: 'at 非空未显现时槽位常驻：sm 间距 + 21px 槽位',
+      );
     });
 
     testWidgets('滚动开始即隐藏已显现的行（滚轮一格）', (tester) async {

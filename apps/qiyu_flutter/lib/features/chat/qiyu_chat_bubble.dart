@@ -49,7 +49,10 @@ class QiyuChatBubble extends StatefulWidget {
   /// 确认——轻点走手势竞技场，滑动滚动列表不算。形态由最近一次落在
   /// 消息上的指针事件驱动——桌面触屏设备（Windows 平板浏览器）不再被
   /// 平台档判成两头落空；尚无指针事件时按 Web 壳层平台档作初始猜测。
-  /// null（直播流尚未预显、无时刻数据）不渲染。
+  /// null 不占位也不渲染——但生产链路 at 恒非空（用户消息乐观插入即带
+  /// 预显时刻，栖语消息交付完成提交即带，Host 落盘恒写），null 只剩
+  /// 测试与防御路径。at 非空时时刻位**常驻预留**（见 [_atSlotHeight]）：
+  /// 显现只是往槽位里放文字，显隐全程零布局位移。
   final DateTime? at;
 
   @override
@@ -104,6 +107,17 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   /// Timer），或到期复查时行进抑制已生效（丢弃不显现不重排），两路都
   /// 拦得住；80ms 在「瞬间响应」的感知窗口（约 100ms）内，主动悬停无感。
   static const Duration revealDebounce = Duration(milliseconds: 80);
+
+  /// 时刻位常驻预留槽的总高：2px 显隐间隙 + 19px 时刻行自然行高
+  /// （Noto Serif SC 13px，hhea 垂直度量 1.437em ≈ 18.68px，引擎取整
+  /// 19）。at 非空时这条槽永远在树里——显现只是把时刻文字放进去，
+  /// 文字顶恒为气泡底 + 2px，后续消息零位移；字体或字号若变，此值
+  /// 必须与时刻行实际自然行高同步改，否则显现态会把文字挤出槽位或
+  /// 留出空当。已知边界：运行时 textScaler 大于 1 会把自然行高按比例
+  /// 抬过槽内区、被 RenderParagraph 静默裁切——生产轨道（Flutter Web）
+  /// textScaler 恒为 1.0，浏览器缩放走 devicePixelRatio 整体等比，
+  /// 登记备查。
+  static const double _atSlotHeight = 21;
 
   @override
   void didChangeDependencies() {
@@ -326,8 +340,12 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     // 出现即把气泡撑宽撑高）。用户消息的时刻行右对齐贴气泡尾部，栖语
     // 维持左对齐——Column 收缩到最宽子项后由 crossAxisAlignment 贴尾，
     // 不再依赖全宽 Align；块右/左缘贴着哪侧，外层 Align 不动就不动。
-    // 原先由气泡 margin / 文本块 padding 承担的消息间距统一挪到块外，
-    // 时刻行落位后与下一条消息的距离不变。
+    // 原先由气泡 margin / 文本块 padding 承担的消息间距统一挪到块外。
+    // at 非空时时刻位**常驻预留**（[_atSlotHeight] 槽位，槽顶 2px 内边距
+    // 就是那条显隐间隙）：未显现时槽位空占、时刻行不进树（findsNothing
+    // 与语义树语义都不变），显现只是往槽位里放文字，显隐全程零布局
+    // 位移；未显现态与下一条消息的距离因此比无时刻语义多 21px（用户
+    // 裁定接受——「对话离远了一点也应该显得优雅」）。
     final Widget messageBlock = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: widget.fromUser
@@ -335,7 +353,16 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
           : CrossAxisAlignment.start,
       children: [
         message,
-        if (atLine != null) ...[const SizedBox(height: 2), atLine],
+        if (atLabel != null)
+          SizedBox(
+            height: _atSlotHeight,
+            child: atLine == null
+                ? null
+                : Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: atLine,
+                  ),
+          ),
       ],
     );
 
@@ -344,7 +371,10 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     // 结构里全宽 Align 把 MouseRegion 撑成整条横条，同行空白处悬停即
     // 显现时刻，相邻消息的热区还经块底 padding 连成一片。现在
     // MouseRegion 的 bounds 收缩到内容紧致块（Column 收缩到最宽子项 =
-    // 气泡宽），空白与消息间距自动出热区。
+    // 气泡宽），同行空白与块底消息间距自动出热区；at 非空时常驻预留的
+    // 空槽带（时刻位置，气泡底 +2…+21）则**留在本条热区内**——未显现
+    // 时槽位就在 Column 里，悬停时刻位置即显现本条时刻（用户裁定
+    // 「时间本来就在那里，鼠标挪到那个地方自动显示」）。
     Widget block = messageBlock;
     if (atLabel != null) {
       // Listener 记录最近一次落在消息上的指针类型（触屏/鼠标形态随事件
