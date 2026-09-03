@@ -38,13 +38,15 @@ class QiyuChatBubble extends StatefulWidget {
   /// 访问 key 标识，widget 测试可精确定位。
   final int? deliveryIndex;
 
-  /// 消息时刻（Host 落盘的客观时刻）：消息下方的次要档弱色文字。鼠标
-  /// 指针默认**完全不渲染**，悬停整条消息才出现；触屏/手写笔指针没有
-  /// hover，以约两成透明度常驻（Element Web 的「默认隐藏、悬停显现」
-  /// + 触屏常驻惯例的弱化版）。形态由最近一次落在消息上的指针事件
-  /// 驱动——桌面触屏设备（Windows 平板浏览器）不再被平台档判成两头
-  /// 落空；尚无指针事件时按 Web 壳层平台档作初始猜测。null（直播流
-  /// 尚未预显、无时刻数据）不渲染。
+  /// 消息时刻（Host 落盘的客观时刻）：消息块下方**外部一行**的次要档
+  /// 弱色文字——用户消息右对齐贴气泡尾部，栖语靠左；不参与气泡内布局，
+  /// 气泡/文本块本体尺寸不随它显隐变化。鼠标指针默认**完全不渲染**，
+  /// 悬停整条消息（含时刻行）才出现；触屏/手写笔指针没有 hover，纯触屏
+  /// 平台档以约两成透明度常驻，桌面平台（触屏二合一设备）要轻点消息
+  /// 确认——轻点走手势竞技场，滑动滚动列表不算。形态由最近一次落在
+  /// 消息上的指针事件驱动——桌面触屏设备（Windows 平板浏览器）不再被
+  /// 平台档判成两头落空；尚无指针事件时按 Web 壳层平台档作初始猜测。
+  /// null（直播流尚未预显、无时刻数据）不渲染。
   final DateTime? at;
 
   @override
@@ -60,6 +62,15 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   /// 尚无指针事件，按平台档作初始猜测。
   PointerDeviceKind? _lastPointerKind;
 
+  /// 触屏常驻显现的轻点确认：桌面平台档（含触屏二合一设备）初始不
+  /// 显现时刻，要等触屏/手写笔**轻点**消息后才落这一位。轻点走
+  /// GestureDetector 的手势竞技场——滑动滚动列表时拖拽识别器胜出、
+  /// tap 被否决，滑过的气泡不再被误判成常驻（旧实现裸记
+  /// PointerDownEvent，按下即显现且无复位）。纯触屏平台档（见
+  /// [_platformDefaultIsTouch]）没有 hover 可依赖，不做这道确认，
+  /// 时刻默认常驻。
+  bool _touchRevealed = false;
+
   /// 记录最近一次指针类型；类型没变就不重建（鼠标 hover 事件很密）。
   void _rememberPointerKind(PointerEvent event) {
     if (event.kind != _lastPointerKind) {
@@ -67,21 +78,36 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     }
   }
 
+  /// 触屏轻点确认：只有 touch/stylus 的 tap 才落常驻显现。GestureDetector
+  /// 的 tap 对鼠标左键同样成立，但鼠标档本就有悬停显现，点击不额外
+  /// 改变状态。
+  void _handleTapped() {
+    final kind = _lastPointerKind;
+    if (kind == PointerDeviceKind.touch || kind == PointerDeviceKind.stylus) {
+      setState(() => _touchRevealed = true);
+    }
+  }
+
+  /// 平台档初始猜测：Web 壳层 UA 映射——移动端浏览器是 android/iOS，
+  /// 桌面浏览器是 windows/macos/linux，与「有没有鼠标」在这个产品里
+  /// 一一对应。尚无指针事件时由它定触屏形态与常驻显现的初始值。
+  bool get _platformDefaultIsTouch {
+    return switch (Theme.of(context).platform) {
+      TargetPlatform.android ||
+      TargetPlatform.iOS ||
+      TargetPlatform.fuchsia => true,
+      TargetPlatform.linux ||
+      TargetPlatform.macOS ||
+      TargetPlatform.windows => false,
+    };
+  }
+
   /// 触屏路径判定：touch/stylus 没有 hover，走常驻淡显；鼠标与触控板
-  /// 走悬停显现。尚无指针事件时按 Web 壳层 UA 映射的平台档取代理——
-  /// 移动端浏览器是 android/iOS，桌面浏览器是 windows/macos/linux，
-  /// 与「有没有鼠标」在这个产品里一一对应。
+  /// 走悬停显现。尚无指针事件时按平台档取代理（[_platformDefaultIsTouch]）。
   bool get _touchPointer {
     final kind = _lastPointerKind;
     if (kind == null) {
-      return switch (Theme.of(context).platform) {
-        TargetPlatform.android ||
-        TargetPlatform.iOS ||
-        TargetPlatform.fuchsia => true,
-        TargetPlatform.linux ||
-        TargetPlatform.macOS ||
-        TargetPlatform.windows => false,
-      };
+      return _platformDefaultIsTouch;
     }
     return kind == PointerDeviceKind.touch || kind == PointerDeviceKind.stylus;
   }
@@ -102,16 +128,20 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
 
     // 触屏/手写笔指针没有 hover，时刻不能等悬停：以弱透明度常驻。鼠标
     // 指针默认隐藏，悬停才渲染——不渲染而非透明度 0：语义树里也不出现，
-    // 页面保持干净。
+    // 页面保持干净。触屏常驻还有一道轻点确认（[_touchRevealed]）：纯
+    // 触屏平台档默认常驻，桌面平台（二合一设备）要轻点确认，滑动滚动
+    // 列表不再误判。
     final persistent = _touchPointer;
     final atLabel = widget.at == null ? null : formatMessageMoment(widget.at!);
     // at 非空时 Dart 流分析已知 label 非空，无需再断言。
-    final atLine = atLabel == null || (!persistent && !_hovering)
+    final revealed = persistent
+        ? (_platformDefaultIsTouch || _touchRevealed)
+        : _hovering;
+    final Widget? atLine = atLabel == null || !revealed
         ? null
         : _atLine(atLabel, persistent);
 
     final extras = <Widget>[
-      if (atLine != null) ...[const SizedBox(height: 2), atLine],
       if (widget.isSpeaking) ...[
         const SizedBox(height: 6),
         // 正在读：动效位交给「正在读」文本，此时不叠重听键。
@@ -143,14 +173,11 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
       // 栖语的话：完全没有气泡，靠左，行高 1.9 由 QiyuMarkdown 的字阶给出。
       message = Align(
         alignment: Alignment.centerLeft,
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: QiyuSpacing.sm),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: QiyuLayout.messageMaxWidth,
-            ),
-            child: body,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: QiyuLayout.messageMaxWidth,
           ),
+          child: body,
         ),
       );
     } else {
@@ -158,7 +185,6 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
       message = Align(
         alignment: Alignment.centerRight,
         child: Container(
-          margin: const EdgeInsets.only(bottom: QiyuSpacing.sm),
           padding: const EdgeInsets.symmetric(
             horizontal: QiyuSpacing.md,
             vertical: QiyuSpacing.sm,
@@ -177,27 +203,48 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
       );
     }
 
+    // 时刻行是消息块的**外部一行**：与气泡/文本块之间只隔一条小间隙，
+    // 气泡本体尺寸与形态不随它显隐变化（旧实现曾把它放进气泡 extras，
+    // 出现即把气泡撑宽撑高）。用户消息的时刻行右对齐贴气泡尾部，栖语
+    // 维持左对齐。原先由气泡 margin / 文本块 padding 承担的消息间距
+    // 统一挪到块外，时刻行落位后与下一条消息的距离不变。
+    final Widget messageBlock = Padding(
+      padding: const EdgeInsets.only(bottom: QiyuSpacing.sm),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: widget.fromUser
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
+        children: [
+          message,
+          if (atLine != null) ...[const SizedBox(height: 2), atLine],
+        ],
+      ),
+    );
+
     if (atLabel == null) {
-      return message;
+      return messageBlock;
     }
     // Listener 记录最近一次落在消息上的指针类型（触屏/鼠标形态随事件
-    // 切换），MouseRegion 管桌面悬停显隐：悬停整条消息（用户的气泡或
-    // 栖语的文本块）才显出时刻。不为消息加键盘焦点路径——消息没有
-    // 键盘操作动作。
+    // 切换），MouseRegion 管桌面悬停显隐并包住「气泡 + 时刻行」整体，
+    // 鼠标在两者之间移动不触发进出场抖动；GestureDetector 管触屏轻点
+    // 显现——tap 要过手势竞技场，滑动滚动列表（拖拽胜出）不再触发，
+    // 轻点命中只落在消息本体与时刻行上（deferToChild，按下也不再直接
+    // 显现）。不为消息加键盘焦点路径——消息没有键盘操作动作。
     return Listener(
       onPointerDown: _rememberPointerKind,
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovering = true),
         onExit: (_) => setState(() => _hovering = false),
         onHover: _rememberPointerKind,
-        child: message,
+        child: GestureDetector(onTap: _handleTapped, child: messageBlock),
       ),
     );
   }
 
   /// 时刻行：次要档弱色文字（design-system §3 字阶表把时间戳归次要
-  /// 档，不落极小档）。触屏常驻位再压到约两成透明度，弱到不干扰
-  /// 阅读，但要看随时在。
+  /// 档，不落极小档），渲染在气泡/文本块下方外部一行。触屏常驻位再压
+  /// 到约两成透明度，弱到不干扰阅读，但要看随时在。
   Widget _atLine(String label, bool persistent) {
     final line = Text(
       label,

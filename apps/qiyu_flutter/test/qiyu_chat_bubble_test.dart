@@ -14,6 +14,7 @@ import 'package:qiyu_flutter/features/history/history_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/time_format.dart';
+import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 void main() {
   // 本地时刻构造（不走 UTC 换算）：断言与测试机时区无关。
@@ -134,6 +135,172 @@ void main() {
       } finally {
         handle.dispose();
       }
+    });
+  });
+
+  group('时刻行布局与触屏显现回归锁', () {
+    // 用户气泡的装饰容器：带气泡圆角（20/20/6/20）的那个 DecoratedBox。
+    final Finder userBubbleBox = find.byWidgetPredicate(
+      (widget) =>
+          widget is DecoratedBox &&
+          (widget.decoration as BoxDecoration).borderRadius ==
+              QiyuRadii.bubbleBorder,
+    );
+
+    testWidgets('用户消息的时刻行渲染在气泡装饰容器之外，右缘与气泡对齐', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(text: '临睡随手记的', fromUser: true, at: moment),
+      );
+
+      // 对照组：气泡正文确实住在带气泡圆角的装饰容器里。
+      expect(
+        find.ancestor(of: find.text('临睡随手记的'), matching: userBubbleBox),
+        findsOneWidget,
+      );
+
+      await _hoverMouse(tester, find.text('临睡随手记的'));
+      expect(find.text(label), findsOneWidget);
+      // 时刻行在气泡外部：不是任何装饰容器的后代（旧实现曾住在气泡内，
+      // 出现即把气泡撑宽撑高）。
+      expect(
+        find.ancestor(
+          of: find.text(label),
+          matching: find.byType(DecoratedBox),
+        ),
+        findsNothing,
+      );
+      // 用户消息的时刻行贴气泡尾部：右缘与气泡右缘同线。
+      expect(
+        tester.getTopRight(find.text(label)).dx,
+        tester.getTopRight(userBubbleBox).dx,
+      );
+    });
+
+    testWidgets('桌面悬停显现时刻行，用户气泡本体尺寸保持不变', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(text: '临睡随手记的', fromUser: true, at: moment),
+      );
+
+      final sizeBefore = tester.getSize(userBubbleBox);
+      await _hoverMouse(tester, find.text('临睡随手记的'));
+      expect(find.text(label), findsOneWidget);
+      // 时刻行出现在气泡外，气泡本体不随之变宽变高（旧实现 +102×21px）。
+      expect(tester.getSize(userBubbleBox), sizeBefore);
+    });
+
+    testWidgets('桌面悬停显现时刻行，栖语文本块尺寸保持不变', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
+      );
+
+      // 栖语侧没有气泡装饰容器，改锁包住文本块的定宽 ConstrainedBox：
+      // 时刻行若回到文本块内部，它会被撑高。
+      final Finder bodyBox = find.byWidgetPredicate(
+        (widget) =>
+            widget is ConstrainedBox &&
+            widget.constraints.maxWidth == QiyuLayout.messageMaxWidth,
+      );
+      expect(
+        find.ancestor(of: find.text('晚安。'), matching: bodyBox),
+        findsOneWidget,
+      );
+      final sizeBefore = tester.getSize(bodyBox);
+      await _hoverMouse(tester, find.text('晚安。'));
+      expect(find.text(label), findsOneWidget);
+      expect(tester.getSize(bodyBox), sizeBefore);
+    });
+
+    testWidgets('触屏滑动滚过消息，过程中与结束后时刻都不显现', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
+      );
+
+      // 滑动滚动列表的起手式：按下后移动超过触摸 slop，拖拽识别器胜出、
+      // tap 被否决——按下（down）本身不得触发触屏常驻显现。
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('晚安。')),
+        kind: PointerDeviceKind.touch,
+      );
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, kTouchSlop + 20));
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+
+      await gesture.moveBy(const Offset(0, 30));
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+
+      await gesture.up();
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+    });
+
+    testWidgets('触屏轻点用户气泡显现时刻，仍走常驻 0.2 档', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(text: '临睡随手记的', fromUser: true, at: moment),
+      );
+
+      expect(find.text(label), findsNothing);
+      await tester.tap(find.text('临睡随手记的'));
+      await tester.pump();
+
+      expect(find.text(label), findsOneWidget);
+      expect(
+        tester
+            .widget<Opacity>(
+              find.ancestor(
+                of: find.text(label),
+                matching: find.byType(Opacity),
+              ),
+            )
+            .opacity,
+        closeTo(0.2, 0.001),
+      );
+    });
+
+    testWidgets('ListView 滚动起手压过消息，拖拽胜出且时刻不显现', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.windows),
+          home: Scaffold(
+            body: ListView(
+              children: [
+                // 20 条确保总高远超测试视口（600px），列表真实可滚。
+                for (var i = 0; i < 20; i++)
+                  QiyuChatBubble(text: '消息 $i', fromUser: i.isEven, at: moment),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('消息 0')),
+        kind: PointerDeviceKind.touch,
+      );
+      await tester.pump();
+      // 第一步越过 kTouchSlop：拖拽识别器胜出、tap 被否决（这步增量被
+      // 拖拽起点吞掉，列表还没动）；第二步才是真实的滚动位移。
+      await gesture.moveBy(const Offset(0, -(kTouchSlop + 10)));
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, -50));
+      await tester.pump();
+      // 拖拽真的赢了：列表滚起来了。
+      expect(
+        tester.state<ScrollableState>(find.byType(Scrollable)).position.pixels,
+        greaterThan(0),
+      );
+      expect(find.text(label), findsNothing);
+
+      await gesture.up();
+      await tester.pump();
+      expect(find.text(label), findsNothing);
     });
   });
 
