@@ -52,7 +52,7 @@ class MemoryView extends StatelessWidget {
                     // 再让开它的占位（差额由壳给出），「记忆」标题才不会被压住。
                     padding: EdgeInsets.fromLTRB(
                       24 + QiyuShellScope.headerLeftOverrun(context),
-                      20,
+                      QiyuLayout.pageHeaderBaseTopPadding,
                       24,
                       4,
                     ),

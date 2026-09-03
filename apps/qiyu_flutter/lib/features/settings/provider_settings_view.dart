@@ -133,13 +133,11 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
               onToggle: _toggleSection,
               child: ListView(
                 key: const Key('settings-scroll'),
-                // 顶留白与记忆/历史页页头的返回键纵向对齐：那两页页头顶
-                // 留白是 20，Row 右侧按钮带焦点环常驻占位（focusRingOffset）
-                // 把 Row 撑高，返回键在 Row 内垂直居中再下移同值；本页页头
-                // Row 没有环占位，差额直接补进顶留白。
+                // 顶留白取无环页头档：与记忆/历史页页头返回键的纵向同位
+                // 由页头同位回归测试锁定。
                 padding: const EdgeInsets.fromLTRB(
                   24,
-                  20 + QiyuLayout.focusRingOffset,
+                  QiyuLayout.pageHeaderTopPaddingNoRing,
                   24,
                   48,
                 ),

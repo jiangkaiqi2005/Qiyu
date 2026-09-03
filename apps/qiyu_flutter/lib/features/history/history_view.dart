@@ -38,7 +38,7 @@ class HistoryView extends StatelessWidget {
                   // 不挂壳，用的是自己那一版固定内缩。
                   padding: EdgeInsets.fromLTRB(
                     24 + QiyuShellScope.headerLeftOverrun(context),
-                    20,
+                    QiyuLayout.pageHeaderBaseTopPadding,
                     24,
                     12,
                   ),

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
@@ -21,16 +22,19 @@ import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
 
-/// 宽视口下历史、记忆中心、设置三页页头的返回键必须落在同一位置。
+/// 宽视口下历史、记忆中心、设置、隐私四页页头的返回键必须同位。
 ///
-/// 返回键本体三页共用同一个 `QiyuPageHeaderBackButton`；位置由外层页头
-/// 决定：三页必须用同一档阅读列宽（窄窗口下列宽贴边看不出差异，列居中的
-/// 宽窗口才会暴露），页头顶留白与页头 Row 的高度也必须一致（记忆/历史页
-/// Row 右侧按钮带焦点环常驻占位，Row 被撑高后返回键随居中下移）。这里
-/// 把三页返回键的 left/top 逐对钉死：列宽或页头几何再出现单页漂移，
-/// 本测试即红。窄视口下 ConstrainedBox 不生效，三页本就同位，不必断言。
+/// 返回键本体四页共用同一个 `QiyuPageHeaderBackButton`；位置由外层页头
+/// 决定：挂壳三页（历史/记忆/设置，桌面左侧 240px 侧边栏）必须用同一档
+/// 阅读列宽（窄窗口下列宽贴边看不出差异，列居中的宽窗口才会暴露），页头
+/// 顶留白与页头 Row 的高度也必须一致——记忆/历史页 Row 右侧按钮带焦点环
+/// 常驻占位，Row 被撑高后返回键随居中下移；设置页头无环，差额补进顶留白。
+/// 隐私页不挂壳（页内详情自带页内返回），内容列全视口居中，与挂壳页恒差
+/// 侧边栏占位 120，是锁定的结构性残差而非缺陷。top 断言四页两两钉死；
+/// left 分两层：挂壳三页两两同位，隐私页单独钉残差。列宽或页头几何再出现
+/// 漂移，本测试即红。窄视口下 ConstrainedBox 不生效，本就同位，不必断言。
 void main() {
-  testWidgets('宽视口下设置页返回键与历史页、记忆中心返回键同位', (tester) async {
+  testWidgets('宽视口下四页页头返回键同位（隐私页锁侧边栏残差）', (tester) async {
     tester.view.physicalSize = const Size(1600, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -72,17 +76,58 @@ void main() {
     await tester.pumpAndSettle();
 
     // 依次经侧边栏导航三页（NoTransitionPage 无过渡，一帧即稳），各自
-    // 当场量返回键几何——三页互斥挂载，离开后旧页的键不在树上。
+    // 当场量返回键几何——三页互斥挂载，离开后旧页的键不在树上。隐私页
+    // 不在侧边栏导航里（页内详情），直接 go 过去量。
     final backRects = <String, Rect>{};
     for (final page in const ['history', 'memory', 'settings']) {
       await tester.tap(find.byKey(Key('home-go-$page')));
       await tester.pumpAndSettle();
       backRects[page] = tester.getRect(find.byKey(Key('$page-back')));
     }
+    GoRouter.of(
+      tester.element(find.byKey(const Key('home-go-settings'))),
+    ).go('/privacy');
+    await tester.pumpAndSettle();
+    backRects['privacy'] = tester.getRect(find.byKey(const Key('privacy-back')));
 
     final historyBack = backRects['history']!;
     final memoryBack = backRects['memory']!;
     final settingsBack = backRects['settings']!;
+    final privacyBack = backRects['privacy']!;
+
+    // top：四页两两同位（同一纵向基线）。
+    expect(
+      settingsBack.top,
+      closeTo(historyBack.top, 0.5),
+      reason: '设置页返回键上缘应与历史页一致（同一页头几何）',
+    );
+    expect(
+      settingsBack.top,
+      closeTo(memoryBack.top, 0.5),
+      reason: '设置页返回键上缘应与记忆中心一致（同一页头几何）',
+    );
+    expect(
+      privacyBack.top,
+      closeTo(historyBack.top, 0.5),
+      reason: '隐私页返回键上缘应与历史页一致（同一页头几何）',
+    );
+    expect(
+      privacyBack.top,
+      closeTo(memoryBack.top, 0.5),
+      reason: '隐私页返回键上缘应与记忆中心一致（同一页头几何）',
+    );
+    expect(
+      privacyBack.top,
+      closeTo(settingsBack.top, 0.5),
+      reason: '隐私页返回键上缘应与设置页一致（同一页头几何）',
+    );
+    expect(
+      historyBack.top,
+      closeTo(memoryBack.top, 0.5),
+      reason: '历史页与记忆中心返回键上缘应一致（同一页头几何）',
+    );
+
+    // left：挂壳三页两两同位（同一阅读列宽 + 同一页头左内缩）。
     expect(
       settingsBack.left,
       closeTo(historyBack.left, 0.5),
@@ -94,14 +139,16 @@ void main() {
       reason: '设置页返回键左缘应与记忆中心一致（同一阅读列宽）',
     );
     expect(
-      settingsBack.top,
-      closeTo(historyBack.top, 0.5),
-      reason: '设置页返回键上缘应与历史页一致（同一页头几何）',
+      historyBack.left,
+      closeTo(memoryBack.left, 0.5),
+      reason: '历史页与记忆中心返回键左缘应一致（同一阅读列宽）',
     );
+    // 隐私页不挂壳、列全视口居中，与挂壳页恒差侧边栏占位 120（240 侧边栏
+    // 减去居中分摊），锁此残差防列宽漂移。
     expect(
-      settingsBack.top,
-      closeTo(memoryBack.top, 0.5),
-      reason: '设置页返回键上缘应与记忆中心一致（同一页头几何）',
+      privacyBack.left,
+      closeTo(settingsBack.left - 120, 0.5),
+      reason: '隐私页返回键左缘应与挂壳页恒差侧边栏占位 120',
     );
   });
 }

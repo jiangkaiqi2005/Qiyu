@@ -1094,6 +1094,10 @@ const Color topLevel = Color(0xFF667788);
       expect(QiyuLayout.streamMaxWidth, 680);
       expect(QiyuLayout.composerPadding, 6);
       expect(QiyuLayout.composerIconButtonSize, 34);
+      // 页头顶留白两档：带环页头基准档 20，无环页头派生档 20 + 焦点环
+      // 常驻占位 3。
+      expect(QiyuLayout.pageHeaderBaseTopPadding, 20);
+      expect(QiyuLayout.pageHeaderTopPaddingNoRing, 23);
     });
 
     test('毛玻璃模糊半径：定值 20，且必须落在 §2 的 16–24 可微调区间内', () {
