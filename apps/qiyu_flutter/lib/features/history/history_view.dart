@@ -10,6 +10,7 @@ import '../../theme/qiyu_tokens.dart';
 import '../chat/local_chat_client.dart';
 import '../chat/local_chat_view_model.dart';
 import '../chat/qiyu_chat_bubble.dart';
+import '../chat/qiyu_scroll_hover_gate.dart';
 import '../navigation.dart';
 import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
@@ -371,22 +372,26 @@ class _HistorySessionViewState extends State<HistorySessionView> {
     }
     // 只读回看页整页可选择：拖动即可跨气泡选中并复制文字；栖语回复
     // 的 Markdown 经 gpt_markdown 的 SelectableAdapter 参与同一选区。
+    // 与聊天页同口径：消息列表也套滚动抑制门控（design-system §10 第
+    // 11 条），回看时滚轮滑过的消息不会被静止光标误触发时刻显现。
     return SelectionArea(
-      child: ListView.builder(
-        key: const Key('history-session-messages'),
-        padding: const EdgeInsets.all(24),
-        itemCount: snapshot.messages.length,
-        itemBuilder: (context, index) {
-          final message = snapshot.messages[index];
-          final fromUser = message.speaker == LocalChatSpeaker.user;
-          // 与聊天页同口径：用户输入纯文本、栖语回复 Markdown，
-          // 语义标签带说话人（ticket 24）；消息时刻同一组件同一行为。
-          return QiyuChatBubble(
-            text: message.text,
-            fromUser: fromUser,
-            at: message.at,
-          );
-        },
+      child: QiyuScrollHoverGate(
+        child: ListView.builder(
+          key: const Key('history-session-messages'),
+          padding: const EdgeInsets.all(24),
+          itemCount: snapshot.messages.length,
+          itemBuilder: (context, index) {
+            final message = snapshot.messages[index];
+            final fromUser = message.speaker == LocalChatSpeaker.user;
+            // 与聊天页同口径：用户输入纯文本、栖语回复 Markdown，
+            // 语义标签带说话人（ticket 24）；消息时刻同一组件同一行为。
+            return QiyuChatBubble(
+              text: message.text,
+              fromUser: fromUser,
+              at: message.at,
+            );
+          },
+        ),
       ),
     );
   }

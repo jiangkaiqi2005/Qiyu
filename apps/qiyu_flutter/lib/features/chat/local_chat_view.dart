@@ -16,6 +16,7 @@ import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_chat_bubble.dart';
 import 'qiyu_markdown.dart';
+import 'qiyu_scroll_hover_gate.dart';
 import 'qiyu_send_button.dart';
 import 'voice_input_controller.dart';
 import 'voice_output_controller.dart';
@@ -918,64 +919,69 @@ class _LocalChatViewState extends State<LocalChatView> {
     }
     final transientCount =
         viewModel.waiting || viewModel.streamingText.isNotEmpty ? 1 : 0;
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.all(QiyuSpacing.lg),
-      itemCount: viewModel.messages.length + transientCount,
-      itemBuilder: (context, index) {
-        if (index == viewModel.messages.length) {
-          // 栖语的话无气泡（design-system §7）：流式增量同样直接以书页式
-          // 正文靠左呈现，只保留语义上的 live region。
-          return Padding(
-            padding: const EdgeInsets.only(bottom: QiyuSpacing.xs),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxWidth: QiyuLayout.messageMaxWidth,
-              ),
-              // live region 只承载状态标签：流式期间正文不进语义树，
-              // 避免每个 delta 都重读全文；交付完成后正文以历史消息
-              // 的说话人语义呈现（ticket 24）。
-              child: Semantics(
-                key: const Key('chat-streaming-reply'),
-                container: true,
+    // 滚动抑制门控（design-system §10 第 11 条）：滚轮滚动让消息滑到
+    // 静止光标下时 MouseTracker 会派发 onEnter，时刻被误显现——门控在
+    // 列表层收住（滚动通知只向上冒泡经过祖先，放进气泡收不到）。
+    return QiyuScrollHoverGate(
+      child: ListView.builder(
+        controller: _scrollController,
+        padding: const EdgeInsets.all(QiyuSpacing.lg),
+        itemCount: viewModel.messages.length + transientCount,
+        itemBuilder: (context, index) {
+          if (index == viewModel.messages.length) {
+            // 栖语的话无气泡（design-system §7）：流式增量同样直接以书页式
+            // 正文靠左呈现，只保留语义上的 live region。
+            return Padding(
+              padding: const EdgeInsets.only(bottom: QiyuSpacing.xs),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: QiyuLayout.messageMaxWidth,
+                ),
+                // live region 只承载状态标签：流式期间正文不进语义树，
+                // 避免每个 delta 都重读全文；交付完成后正文以历史消息
+                // 的说话人语义呈现（ticket 24）。
                 child: Semantics(
-                  liveRegion: true,
-                  label: viewModel.streamingText.isEmpty ? '栖语在想' : '栖语正在回复',
-                  child: ExcludeSemantics(
-                    child: viewModel.streamingText.isEmpty
-                        ? Text(
-                            '栖语在想…',
-                            style: QiyuTypography.qiyuMessage.copyWith(
-                              color: QiyuColors.muted,
-                            ),
-                          )
-                        : QiyuMarkdown(text: viewModel.streamingText),
+                  key: const Key('chat-streaming-reply'),
+                  container: true,
+                  child: Semantics(
+                    liveRegion: true,
+                    label: viewModel.streamingText.isEmpty ? '栖语在想' : '栖语正在回复',
+                    child: ExcludeSemantics(
+                      child: viewModel.streamingText.isEmpty
+                          ? Text(
+                              '栖语在想…',
+                              style: QiyuTypography.qiyuMessage.copyWith(
+                                color: QiyuColors.muted,
+                              ),
+                            )
+                          : QiyuMarkdown(text: viewModel.streamingText),
+                    ),
                   ),
                 ),
               ),
-            ),
+            );
+          }
+          final message = viewModel.messages[index];
+          final nowReading = viewModel.voiceOutput.nowReading;
+          final isQiyu = message.speaker == LocalChatSpeaker.qiyu;
+          final deliveryIndex = message.deliveryIndex;
+          return QiyuChatBubble(
+            key: Key('chat-message-$index'),
+            text: message.text,
+            fromUser: !isQiyu,
+            deliveryIndex: deliveryIndex,
+            at: message.at,
+            isSpeaking:
+                nowReading != null &&
+                message.requestId == nowReading.requestId &&
+                deliveryIndex == nowReading.deliveryIndex,
+            // 栖语气泡的重听小喇叭：点一下立即重读这句（重听=重新合成）。
+            onReplay: isQiyu && deliveryIndex != null
+                ? () => viewModel.replayVoiceOutput(message)
+                : null,
           );
-        }
-        final message = viewModel.messages[index];
-        final nowReading = viewModel.voiceOutput.nowReading;
-        final isQiyu = message.speaker == LocalChatSpeaker.qiyu;
-        final deliveryIndex = message.deliveryIndex;
-        return QiyuChatBubble(
-          key: Key('chat-message-$index'),
-          text: message.text,
-          fromUser: !isQiyu,
-          deliveryIndex: deliveryIndex,
-          at: message.at,
-          isSpeaking:
-              nowReading != null &&
-              message.requestId == nowReading.requestId &&
-              deliveryIndex == nowReading.deliveryIndex,
-          // 栖语气泡的重听小喇叭：点一下立即重读这句（重听=重新合成）。
-          onReplay: isQiyu && deliveryIndex != null
-              ? () => viewModel.replayVoiceOutput(message)
-              : null,
-        );
-      },
+        },
+      ),
     );
   }
 }

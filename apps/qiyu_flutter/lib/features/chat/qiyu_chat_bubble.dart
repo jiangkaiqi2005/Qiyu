@@ -7,6 +7,7 @@ import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../time_format.dart';
 import 'qiyu_markdown.dart';
+import 'qiyu_scroll_hover_gate.dart';
 
 /// 会话气泡：聊天页与历史回看页共用。按 design-system §7 的**单侧气泡**
 /// 形态——用户消息右对齐水滴气泡（圆角 20/20/6/20、无描边、面色
@@ -71,6 +72,25 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   /// 时刻默认常驻。
   bool _touchRevealed = false;
 
+  /// 列表层滚动抑制位的本地缓存：[didChangeDependencies] 里随 inherited
+  /// 值刷新，`onEnter`/`onHover` 回调只读缓存，不在回调里做依赖查找。
+  /// 没有列表门控（单气泡用法）时恒为 false——默认不抑制。
+  bool _scrollSuppressed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final suppressed = QiyuScrollHoverGate.hoverSuppressedOf(context);
+    // 滚动开始（抑制位由假转真）即复位已显现的悬停态：「滚动开始即隐藏
+    // 已显现的行」。依赖变化本身会触发重建（Element.didChangeDependencies
+    // 就是 markNeedsBuild），这里直接落字段即可；撤销抑制时不复位——
+    // 指针不动就不主动显现，恢复交给缓冲窗后的 onHover 放行。
+    if (suppressed && !_scrollSuppressed) {
+      _hovering = false;
+    }
+    _scrollSuppressed = suppressed;
+  }
+
   /// 记录最近一次指针类型；类型没变就不重建（鼠标 hover 事件很密）。
   void _rememberPointerKind(PointerEvent event) {
     if (event.kind != _lastPointerKind) {
@@ -86,6 +106,27 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     if (kind == PointerDeviceKind.touch || kind == PointerDeviceKind.stylus) {
       setState(() => _touchRevealed = true);
     }
+  }
+
+  /// 桌面悬停进入。滚动抑制期间不显现：滚轮滚动让消息滑到静止光标下
+  /// 时 MouseTracker 会派发 onEnter（缺陷 B），这一步把它挡住。onExit
+  /// 不门控——滚出光标立即隐藏。
+  void _handleMouseEnter(PointerEvent event) {
+    if (_scrollSuppressed) {
+      return;
+    }
+    setState(() => _hovering = true);
+  }
+
+  /// 桌面悬停移动：除记录指针类型外还承担「轻移放行显现」——缓冲窗
+  /// 过期后指针已在本块内，1px 轻移只派发 onHover 不派发 onEnter
+  /// （enter 只在进出边界时触发），缺这条会出现「轻移不显现」死角。
+  void _handleMouseHover(PointerEvent event) {
+    _rememberPointerKind(event);
+    if (_scrollSuppressed || _hovering) {
+      return;
+    }
+    setState(() => _hovering = true);
   }
 
   /// 平台档初始猜测：Web 壳层 UA 映射——移动端浏览器是 android/iOS，
@@ -171,73 +212,83 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     Widget message;
     if (!widget.fromUser) {
       // 栖语的话：完全没有气泡，靠左，行高 1.9 由 QiyuMarkdown 的字阶给出。
-      message = Align(
-        alignment: Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: QiyuLayout.messageMaxWidth,
-          ),
-          child: body,
-        ),
+      // 左右对齐不在这里做——整块（气泡/文本块 + 时刻行）的对齐由最外层
+      // Align 统一管，块内贴尾对齐由 Column.crossAxisAlignment 接管。
+      message = ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: QiyuLayout.messageMaxWidth),
+        child: body,
       );
     } else {
       // 用户消息：右对齐水滴气泡，靠面色与背景拉开层次，平时不给描边。
-      message = Align(
-        alignment: Alignment.centerRight,
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: QiyuSpacing.md,
-            vertical: QiyuSpacing.sm,
-          ),
-          constraints: const BoxConstraints(
-            maxWidth: QiyuLayout.messageMaxWidth,
-          ),
-          decoration: BoxDecoration(
-            color: QiyuColors.bubbleUser,
-            borderRadius: QiyuRadii.bubbleBorder,
-            // 高对比模式下面色不再可靠，才补一条可见边（ticket 24）。
-            border: Border.fromBorderSide(highContrastSide(context)),
-          ),
-          child: body,
+      message = Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: QiyuSpacing.md,
+          vertical: QiyuSpacing.sm,
         ),
+        constraints: const BoxConstraints(maxWidth: QiyuLayout.messageMaxWidth),
+        decoration: BoxDecoration(
+          color: QiyuColors.bubbleUser,
+          borderRadius: QiyuRadii.bubbleBorder,
+          // 高对比模式下面色不再可靠，才补一条可见边（ticket 24）。
+          border: Border.fromBorderSide(highContrastSide(context)),
+        ),
+        child: body,
       );
     }
 
     // 时刻行是消息块的**外部一行**：与气泡/文本块之间只隔一条小间隙，
     // 气泡本体尺寸与形态不随它显隐变化（旧实现曾把它放进气泡 extras，
     // 出现即把气泡撑宽撑高）。用户消息的时刻行右对齐贴气泡尾部，栖语
-    // 维持左对齐。原先由气泡 margin / 文本块 padding 承担的消息间距
-    // 统一挪到块外，时刻行落位后与下一条消息的距离不变。
-    final Widget messageBlock = Padding(
-      padding: const EdgeInsets.only(bottom: QiyuSpacing.sm),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: widget.fromUser
-            ? CrossAxisAlignment.end
-            : CrossAxisAlignment.start,
-        children: [
-          message,
-          if (atLine != null) ...[const SizedBox(height: 2), atLine],
-        ],
-      ),
+    // 维持左对齐——Column 收缩到最宽子项后由 crossAxisAlignment 贴尾，
+    // 不再依赖全宽 Align；块右/左缘贴着哪侧，外层 Align 不动就不动。
+    // 原先由气泡 margin / 文本块 padding 承担的消息间距统一挪到块外，
+    // 时刻行落位后与下一条消息的距离不变。
+    final Widget messageBlock = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: widget.fromUser
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
+      children: [
+        message,
+        if (atLine != null) ...[const SizedBox(height: 2), atLine],
+      ],
     );
 
-    if (atLabel == null) {
-      return messageBlock;
+    // 悬停热区收紧（design-system §10 第 10/11 条）：对齐（Align，允许
+    // 全宽）与块底消息间距（Padding）都留在 MouseRegion **之外**——旧
+    // 结构里全宽 Align 把 MouseRegion 撑成整条横条，同行空白处悬停即
+    // 显现时刻，相邻消息的热区还经块底 padding 连成一片。现在
+    // MouseRegion 的 bounds 收缩到内容紧致块（Column 收缩到最宽子项 =
+    // 气泡宽），空白与消息间距自动出热区。
+    Widget block = messageBlock;
+    if (atLabel != null) {
+      // Listener 记录最近一次落在消息上的指针类型（触屏/鼠标形态随事件
+      // 切换），MouseRegion 管桌面悬停显隐并包住「气泡 + 时刻行」整体，
+      // 鼠标在两者之间移动不触发进出场抖动；进出场回调经列表层滚动抑制
+      // 门控（[_handleMouseEnter]/[_handleMouseHover]，onExit 不门控）。
+      // GestureDetector 管触屏轻点显现——tap 要过手势竞技场，滑动滚动
+      // 列表（拖拽胜出）不再触发；behavior 显式 opaque：块收缩后
+      // RenderParagraph 只在文字处命中，deferToChild 会漏掉气泡 padding
+      // 区域的轻点。不为消息加键盘焦点路径——消息没有键盘操作动作。
+      block = Listener(
+        onPointerDown: _rememberPointerKind,
+        child: MouseRegion(
+          onEnter: _handleMouseEnter,
+          onExit: (_) => setState(() => _hovering = false),
+          onHover: _handleMouseHover,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _handleTapped,
+            child: block,
+          ),
+        ),
+      );
     }
-    // Listener 记录最近一次落在消息上的指针类型（触屏/鼠标形态随事件
-    // 切换），MouseRegion 管桌面悬停显隐并包住「气泡 + 时刻行」整体，
-    // 鼠标在两者之间移动不触发进出场抖动；GestureDetector 管触屏轻点
-    // 显现——tap 要过手势竞技场，滑动滚动列表（拖拽胜出）不再触发，
-    // 轻点命中只落在消息本体与时刻行上（deferToChild，按下也不再直接
-    // 显现）。不为消息加键盘焦点路径——消息没有键盘操作动作。
-    return Listener(
-      onPointerDown: _rememberPointerKind,
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovering = true),
-        onExit: (_) => setState(() => _hovering = false),
-        onHover: _rememberPointerKind,
-        child: GestureDetector(onTap: _handleTapped, child: messageBlock),
+    return Align(
+      alignment: widget.fromUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: QiyuSpacing.sm),
+        child: block,
       ),
     );
   }

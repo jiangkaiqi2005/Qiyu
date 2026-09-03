@@ -9,6 +9,7 @@ import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/chat/qiyu_chat_bubble.dart';
+import 'package:qiyu_flutter/features/chat/qiyu_scroll_hover_gate.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
 import 'package:qiyu_flutter/features/history/history_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
@@ -344,6 +345,264 @@ void main() {
       expect(find.text(label), findsNothing);
       await _hoverMouse(tester, find.text('昨晚说的话'));
       expect(find.text(label), findsOneWidget);
+    });
+  });
+
+  group('悬停热区收紧与滚动抑制回归锁', () {
+    // 用户气泡的装饰容器：带气泡圆角（20/20/6/20）的那个 DecoratedBox。
+    final Finder userBubbleBox = find.byWidgetPredicate(
+      (widget) =>
+          widget is DecoratedBox &&
+          (widget.decoration as BoxDecoration).borderRadius ==
+              QiyuRadii.bubbleBorder,
+    );
+
+    // 栖语侧没有气泡装饰容器，锁包住文本块的定宽 ConstrainedBox。
+    final Finder qiyuBodyBox = find.byWidgetPredicate(
+      (widget) =>
+          widget is ConstrainedBox &&
+          widget.constraints.maxWidth == QiyuLayout.messageMaxWidth,
+    );
+
+    // 门控 + 真实 ListView 的共用底座：消息正文足够长，气泡宽度盖过视口
+    // 中线——滚轮把消息滑到静止光标下时光标落得进 MouseRegion，不是
+    // 落在空白处凑数。
+    Future<void> pumpGatedList(WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.windows),
+          home: Scaffold(
+            body: QiyuScrollHoverGate(
+              child: ListView.builder(
+                padding: const EdgeInsets.all(QiyuSpacing.lg),
+                itemCount: 30,
+                itemBuilder: (context, index) => QiyuChatBubble(
+                  text:
+                      '第 $index 条消息：一段足够长的正文，确保气泡宽度'
+                      '盖过视口中线，滚轮把它滑到静止光标下时光标落得进气泡。',
+                  fromUser: index.isEven,
+                  at: moment,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    // 鼠标指针：先落到起点（自动按命中派发进出场），用完即摘。
+    Future<TestGesture> mouseAt(WidgetTester tester, Offset location) async {
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: location);
+      addTearDown(mouse.removePointer);
+      await tester.pump();
+      return mouse;
+    }
+
+    testWidgets('用户消息同行空白处悬停不显现时刻（热区收紧为内容块）', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(text: '临睡随手记的', fromUser: true, at: moment),
+      );
+
+      // 气泡贴视口右缘，同行空白在其左侧（旧结构里全宽 Align 使这一带
+      // 也在 MouseRegion 内，悬停即显现）。
+      final emptySpot =
+          tester.getTopLeft(userBubbleBox) - const Offset(60, -12);
+      final mouse = await mouseAt(tester, const Offset(0, 0));
+      await mouse.moveTo(emptySpot);
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+
+      // 同一指针移到气泡本体：照常显现——空白不显现不是鼠标事件没生效。
+      await mouse.moveTo(tester.getCenter(find.text('临睡随手记的')));
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('栖语消息同行空白处悬停不显现时刻（热区收紧为内容块）', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
+      );
+
+      // 文本块贴视口左缘，同行空白在其右侧。
+      final emptySpot = tester.getTopRight(qiyuBodyBox) + const Offset(60, 12);
+      final mouse = await mouseAt(tester, const Offset(780, 20));
+      await mouse.moveTo(emptySpot);
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+
+      await mouse.moveTo(tester.getCenter(find.text('晚安。')));
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('块底消息间距处悬停不显现时刻（相邻热区不再连片）', (tester) async {
+      await _pump(
+        tester,
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            QiyuChatBubble(text: '临睡随手记的', fromUser: true, at: moment),
+            QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
+          ],
+        ),
+      );
+
+      // 第一条块底的 sm（12px）间距：气泡底缘之下、第二条文本块之上。
+      // 旧结构里这段 padding 在 MouseRegion 内，两条消息热区连成一片。
+      final gapSpot =
+          tester.getBottomRight(userBubbleBox) - const Offset(10, -3);
+      final mouse = await mouseAt(tester, const Offset(0, 0));
+      await mouse.moveTo(gapSpot);
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+
+      await mouse.moveTo(tester.getCenter(find.text('临睡随手记的')));
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('滚动开始即隐藏已显现的行（滚轮一格）', (tester) async {
+      await pumpGatedList(tester);
+      final anchor = tester.getCenter(find.textContaining('第 1 条'));
+      await mouseAt(tester, anchor);
+      expect(find.text(label), findsOneWidget);
+
+      // 机制隔离：滚动量小于光标到文本块底缘的余量，滚动后光标仍留在
+      // 同一气泡内，onExit 不会派发——隐藏只能来自抑制位翻转触发的
+      // didChangeDependencies 复位；之后每帧 MouseTracker 重算命中所
+      // 派发的 onEnter 也被门控挡住。
+      final textRect = tester.getRect(find.textContaining('第 1 条'));
+      expect(textRect.bottom - anchor.dy, greaterThan(12));
+      await tester.sendEventToBinding(
+        PointerScrollEvent(position: anchor, scrollDelta: const Offset(0, 12)),
+      );
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+    });
+
+    testWidgets('静止光标下滚轮滚动：期间与缓冲窗内都不显现，过期后不动也不显现', (tester) async {
+      await pumpGatedList(tester);
+      // 光标停在列表顶部 padding（任何消息之外），量好消息 3 的落点后
+      // 滚动让它滑到光标下——没有门控时这一步会派发 onEnter 并显现。
+      const park = Offset(400, 8);
+      await mouseAt(tester, park);
+      final target = tester.getRect(find.textContaining('第 3 条'));
+      final delta = target.center.dy - park.dy;
+      expect(delta, greaterThan(0));
+
+      await tester.sendEventToBinding(
+        PointerScrollEvent(position: park, scrollDelta: Offset(0, delta)),
+      );
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text(label), findsNothing);
+      // 缓冲窗（250ms）已过期：指针没动就不会主动显现。
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsNothing);
+    });
+
+    testWidgets('缓冲窗过期后轻移 1px 经 onHover 显现', (tester) async {
+      await pumpGatedList(tester);
+      const park = Offset(400, 8);
+      final mouse = await mouseAt(tester, park);
+      final target = tester.getRect(find.textContaining('第 3 条'));
+      await tester.sendEventToBinding(
+        PointerScrollEvent(
+          position: park,
+          scrollDelta: Offset(0, target.center.dy - park.dy),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text(label), findsNothing);
+
+      // 轻移 1px：指针没有进出边界，onEnter 不会来，必须由 onHover
+      // 放行显现——缺这条会出现「轻移不显现」死角。
+      await mouse.moveBy(const Offset(1, 0));
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('jumpTo 滚动同样被门控：期间与缓冲窗内不显现，过期后轻移显现', (tester) async {
+      await pumpGatedList(tester);
+      const park = Offset(400, 8);
+      final mouse = await mouseAt(tester, park);
+      final target = tester.getRect(find.textContaining('第 3 条'));
+      // 滚轮之外的补充路径：jumpTo 同样成对派发 Start/Update/End。
+      tester
+          .state<ScrollableState>(find.byType(Scrollable))
+          .position
+          .jumpTo(target.center.dy - park.dy);
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text(label), findsNothing);
+      await mouse.moveBy(const Offset(1, 0));
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('气泡→2px 间隙→时刻行移动不产生进出场抖动', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(text: '晚安。', fromUser: false, at: moment),
+      );
+      final mouse = await _hoverMouse(tester, find.text('晚安。'));
+      expect(find.text(label), findsOneWidget);
+
+      // 移进气泡底缘与时刻行之间的 2px 间隙：仍在同一 MouseRegion 内
+      // （bounds 包住「气泡 + 时刻行」整体），不触发 onExit。
+      final textBottom = tester.getBottomLeft(find.text('晚安。'));
+      await mouse.moveTo(textBottom + const Offset(20, 1));
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+
+      // 继续移到时刻行本体：hover 保持。
+      await mouse.moveTo(tester.getCenter(find.text(label)));
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('滚轮滚动在真实 Scrollable 下派发 ScrollStart/Update/End 通知（门控依据）', (
+      tester,
+    ) async {
+      final kinds = <Type>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              kinds.add(notification.runtimeType);
+              return false;
+            },
+            child: ListView(children: const [SizedBox(height: 2000)]),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.sendEventToBinding(
+        const PointerScrollEvent(
+          position: Offset(400, 300),
+          scrollDelta: Offset(0, 100),
+        ),
+      );
+      await tester.pump();
+      // 滚轮路径确实派发全套通知，列表层门控（监听 ScrollNotification）
+      // 覆盖滚轮语义；若日后 Flutter 改掉这一点，这里先红。
+      expect(
+        kinds,
+        containsAllInOrder(const [
+          ScrollStartNotification,
+          ScrollUpdateNotification,
+          ScrollEndNotification,
+        ]),
+      );
     });
   });
 }
