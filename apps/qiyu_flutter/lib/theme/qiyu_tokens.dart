@@ -343,18 +343,18 @@ abstract final class QiyuLayout {
   static const double messageMaxWidth = 520;
 
   /// 顶层功能页内容列的最大宽度（历史列表、会话详情、记忆中心、记忆详情、
-  /// 开发者诊断）。
+  /// 开发者诊断；设置页为对齐三页页头返回键后加入，见 [settingsReadingMaxWidth]）。
   ///
   /// **实现现值，规范未定值**：design-system §5、§8 与 Spec 都没给功能页内容列
-  /// 定过宽度，760 是这五处各自裸写的同一个数字，本轮只是把它收进本 token 去重
+  /// 定过宽度，760 是这五处各自裸写的同一个数字，首轮只是把它收进本 token 去重
   /// （值一字未改）。视觉验收要调就改这里，不要在页面里再写数字。
   static const double pageReadingMaxWidth = 760;
 
-  /// 设置页与隐私页阅读列的最大宽度。
+  /// 隐私页阅读列的最大宽度。
   ///
-  /// 与 [pageReadingMaxWidth] 同性质：720 是这两页的既有裸写值，规范未定稿，
-  /// 本轮只去重。它比功能页窄一档是两页落地时各自的现值，**不合并**成同一个
-  /// 数——合并等于改视觉，不属去重。
+  /// 与 [pageReadingMaxWidth] 同性质：720 是隐私页的既有裸写值，规范未定稿。
+  /// 设置页原同属这一档，为对齐「历史/记忆中心/设置」三页页头返回键，
+  /// 已改投 [pageReadingMaxWidth]（760）；本 token 现在只剩隐私页一个消费方。
   static const double settingsReadingMaxWidth = 720;
 
   /// 对话框内容列的最大宽度（记忆控制总览、清除产品数据确认的加载态与内容态）。
@@ -420,8 +420,9 @@ abstract final class QiyuLayout {
   /// 键盘焦点环（design-system §9）：2px 实线 accent-bright、offset 3px。
   ///
   /// Material 的 `ThemeData.focusColor` 只能贴在控件表面上，画不出带 offset 的
-  /// 外环。**唯一消费方**是 `QiyuFocusRing`——全站自绘焦点环组件，导航壳与
-  /// composer 都走它；不要在页面里另写一份 2/3。
+  /// 外环。`QiyuFocusRing` 是全站自绘焦点环组件，导航壳与 composer 都走它，
+  /// 不要在页面里另写一份 2/3；[focusRingOffset] 另被设置页页头用作与记忆
+  /// 中心/历史页头同基线的纵向占位算术（第二消费方）。
   static const double focusRingWidth = 2;
   static const double focusRingOffset = 3;
 }

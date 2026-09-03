@@ -121,8 +121,10 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
+            // 与历史/记忆中心同一档功能页阅读列宽：三页页头返回键的左缘
+            // 必须对齐，列宽分档会让宽窗口下居中的内容列各偏各的。
             constraints: const BoxConstraints(
-              maxWidth: QiyuLayout.settingsReadingMaxWidth,
+              maxWidth: QiyuLayout.pageReadingMaxWidth,
             ),
             // 折叠状态由这一层下发：七节各自透传两个参数会把表单代码埋掉，
             // 壳与记忆中心同样用 InheritedWidget 传这类页面级 UI 状态。
@@ -131,7 +133,16 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
               onToggle: _toggleSection,
               child: ListView(
                 key: const Key('settings-scroll'),
-                padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
+                // 顶留白与记忆/历史页页头的返回键纵向对齐：那两页页头顶
+                // 留白是 20，Row 右侧按钮带焦点环常驻占位（focusRingOffset）
+                // 把 Row 撑高，返回键在 Row 内垂直居中再下移同值；本页页头
+                // Row 没有环占位，差额直接补进顶留白。
+                padding: const EdgeInsets.fromLTRB(
+                  24,
+                  20 + QiyuLayout.focusRingOffset,
+                  24,
+                  48,
+                ),
                 // 分节之间不再另写 SizedBox：阅读式下节与节的留白由
                 // [SettingsSectionPanel] 按原型变体 B 自己给（展开 24 + 24，收起 8）。
                 children: [
