@@ -1001,7 +1001,7 @@ final class _CompletedOnboardingGateway implements OnboardingGateway {
       const OnboardingState(completed: true);
 
   @override
-  Future<void> complete() async {}
+  Future<void> complete({String? appellation}) async {}
 }
 
 /// 未配置模型服务：初见门禁只读这一个方法判断「配好了没有」。

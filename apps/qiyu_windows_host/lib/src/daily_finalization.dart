@@ -543,6 +543,8 @@ final class DailyFinalizationService {
       bannedTitles: banned,
       sessions: sessions,
       pendingRequestIds: pendingRequestIds,
+      // 记忆表述惯例（称呼定稿）：有称呼用称呼、无称呼用「用户」。
+      appellation: await _personaTree.readAppellation(),
       diagnosticsSink: _diagnosticsSink,
     );
     if (understanding == null || restored == null || restored.isEmpty) {

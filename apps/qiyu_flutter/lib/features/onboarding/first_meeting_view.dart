@@ -7,8 +7,24 @@ import 'package:provider/provider.dart';
 import '../accessibility.dart';
 import 'onboarding_view_model.dart';
 
-class FirstMeetingView extends StatelessWidget {
+/// 首见页（称呼定稿 2026-09-03）：在「嗨。我是栖语。」那一页里加一个
+/// 可跳过的称呼输入框——只收称呼一项，用栖语的口吻问一句，不做注册
+/// 表单。空着点开始就是跳过，之后也可以在记忆中心补设。
+class FirstMeetingView extends StatefulWidget {
   const FirstMeetingView({super.key});
+
+  @override
+  State<FirstMeetingView> createState() => _FirstMeetingViewState();
+}
+
+class _FirstMeetingViewState extends State<FirstMeetingView> {
+  final _appellationController = TextEditingController();
+
+  @override
+  void dispose() {
+    _appellationController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +49,24 @@ class FirstMeetingView extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodyLarge,
               ),
               const SizedBox(height: 40),
+              TextField(
+                key: const Key('first-meeting-appellation-input'),
+                controller: _appellationController,
+                enabled: !viewModel.completing,
+                maxLength: 20,
+                decoration: const InputDecoration(
+                  hintText: '怎么称呼你？',
+                  counterText: '',
+                ),
+                onSubmitted: (_) =>
+                    unawaited(_enter(context, viewModel, '/chat')),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '名字、昵称、代号都行；不想说就先跳过。',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 24),
               if (viewModel.providerConfigured)
                 FilledButton(
                   key: const Key('first-meeting-start-chat'),
@@ -85,7 +119,9 @@ class FirstMeetingView extends StatelessWidget {
     OnboardingViewModel viewModel,
     String location,
   ) async {
-    final completed = await viewModel.complete();
+    final completed = await viewModel.complete(
+      appellation: _appellationController.text,
+    );
     if (completed && context.mounted) {
       context.go(location);
     }
@@ -95,7 +131,9 @@ class FirstMeetingView extends StatelessWidget {
     BuildContext context,
     OnboardingViewModel viewModel,
   ) async {
-    final completed = await viewModel.complete();
+    final completed = await viewModel.complete(
+      appellation: _appellationController.text,
+    );
     if (completed && context.mounted) {
       context.push('/settings');
     }

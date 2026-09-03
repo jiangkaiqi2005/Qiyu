@@ -206,6 +206,40 @@ void main() {
         isTrue,
       );
     });
+
+    test('the understanding prompt states the appellation wording rule', () async {
+      final client = _FakeUnderstandingClient(reply: '{}');
+      // 记忆表述惯例（称呼定稿）：有称呼用称呼、无称呼用「用户」。
+      await fetchDayUnderstanding(
+        client: client,
+        date: '2026-08-20',
+        entries: const [],
+        openLoops: '# open-loops\n',
+        relationship: '# relationship\n',
+        dailyState: '# daily-state\n',
+        bannedTitles: const {},
+        appellation: '老王',
+        diagnosticsSink: (_) {},
+      );
+      final system = client.lastMessages!.first.content;
+      expect(system, contains('一律用称呼「老王」'));
+      expect(system, contains('不要写「用户」'));
+      expect(system, contains('也不要替用户起昵称'));
+
+      await fetchDayUnderstanding(
+        client: client,
+        date: '2026-08-20',
+        entries: const [],
+        openLoops: '# open-loops\n',
+        relationship: '# relationship\n',
+        dailyState: '# daily-state\n',
+        bannedTitles: const {},
+        diagnosticsSink: (_) {},
+      );
+      final fallback = client.lastMessages!.first.content;
+      expect(fallback, contains('一律写「用户」'));
+      expect(fallback, contains('不要替用户起昵称'));
+    });
   });
 
   group('end-of-day finalization with a model understanding call', () {

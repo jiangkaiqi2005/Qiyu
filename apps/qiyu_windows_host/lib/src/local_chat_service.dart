@@ -562,6 +562,9 @@ final class LocalChatService {
         // pending，等 Provider 恢复后补跑。
         consumeWindow: outcome.source == ReplySource.llm,
       );
+      // 对话自述称呼（用户说「以后叫我老王」）当轮生效：与用户明确
+      // 纠正同一精神，用户当前明确说的话最高；本地降级轮同样生效。
+      await _applyAppellationSelfReport(trimmedText, trimmedRequestId);
       // 轮内召回循环：bubble 1 交付后才开始，绝不阻塞首响。
       yield* _recallBubble(
         session: completedSession,
@@ -941,6 +944,38 @@ final class LocalChatService {
       } on Object catch (error) {
         _diagnosticsSink('memory control deferred [$error] request=$requestId');
       }
+    }
+  }
+
+  /// 对话自述称呼的在线写路径（称呼定稿 2026-09-03）：用户在聊天里
+  /// 明确说「以后叫我老王」时当轮写入 persona.md 受保护设定行，复用
+  /// 「用户明确纠正」在线例外的精神——用户当前明确说的话最高。只认
+  /// 确定性句式，识别不出、格式不合法或写失败都只记诊断，绝不影响
+  /// 本轮交付。
+  Future<void> _applyAppellationSelfReport(
+    String userText,
+    String requestId,
+  ) async {
+    final tree = personaTree;
+    if (tree == null) {
+      return;
+    }
+    final candidate = extractAppellationSelfReport(userText);
+    if (candidate == null) {
+      return;
+    }
+    try {
+      final written = await tree.setAppellation(candidate);
+      if (written == null) {
+        _diagnosticsSink(
+          'appellation self-report rejected reason=format '
+          'request=$requestId',
+        );
+      }
+    } on Object catch (error) {
+      _diagnosticsSink(
+        'appellation self-report deferred [$error] request=$requestId',
+      );
     }
   }
 

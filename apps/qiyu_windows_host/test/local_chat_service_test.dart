@@ -2441,6 +2441,43 @@ void main() {
   );
 
   test(
+    '说「以后叫我老王」当轮写入称呼，下一轮注入 persona 块',
+    () async {
+      DateTime clock() => DateTime(2026, 8, 12, 21);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('好，记住了。'),
+          const ScriptedStreamReply('老王，我在。'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+      );
+      addTearDown(harness.dispose);
+
+      await harness.sendChat(requestId: 'call-me-1', text: '以后叫我老王');
+
+      // 受保护设定行当轮落盘。
+      final persona = File('${harness.memoryDirectory}/persona.md');
+      expect(persona.existsSync(), isTrue);
+      expect(persona.readAsStringSync(), contains('称呼：老王'));
+
+      // 下一轮随 persona.md 注入，装配器无需新增注入源。
+      await harness.sendChat(requestId: 'call-me-2', text: '在吗');
+      final system = gateway.lastStreamMessages!.first.content;
+      expect(system, contains('称呼：老王'));
+
+      // 普通消息不改动称呼。
+      await harness.sendChat(requestId: 'call-me-3', text: '今天有点累');
+      expect(
+        File('${harness.memoryDirectory}/persona.md').readAsStringSync(),
+        contains('称呼：老王'),
+      );
+    },
+  );
+
+  test(
     'shared-past memories inject, but stranger-stage discipline locks them',
     () async {
       DateTime clock() => DateTime(2026, 8, 12, 21);

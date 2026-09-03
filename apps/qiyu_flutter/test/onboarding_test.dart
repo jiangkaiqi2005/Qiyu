@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -46,8 +47,71 @@ void main() {
       expect(completeRequest.url.path, '/api/onboarding/complete');
       expectCsrfHeader(completeRequest);
       expectBootstrapRequestedOnce(requests);
+
+      // 带称呼完成：请求体携带称呼字段；跳过时不携带。
+      await gateway.complete(appellation: '凯奇');
+      expect(jsonDecode(requests.last.body), {'appellation': '凯奇'});
+      await gateway.complete();
+      expect(jsonDecode(requests.last.body), <String, Object?>{});
     },
   );
+
+  testWidgets('首见页输入称呼后完成，完成请求带上称呼', (tester) async {
+    final onboardingGateway = _FakeOnboardingGateway(completed: false);
+    final onboardingViewModel = await _onboardingViewModel(
+      onboardingGateway,
+      configured: false,
+    );
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: onboardingViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 栖语口吻的一问：不是注册表单。
+    expect(find.text('嗨。我是栖语。'), findsOneWidget);
+    expect(
+      find.byKey(const Key('first-meeting-appellation-input')),
+      findsOneWidget,
+    );
+    expect(find.text('怎么称呼你？'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('first-meeting-appellation-input')),
+      '凯奇',
+    );
+    await tester.tap(find.byKey(const Key('first-meeting-start-local')));
+    await tester.pumpAndSettle();
+
+    expect(onboardingGateway.completeCalls, 1);
+    expect(onboardingGateway.lastAppellation, '凯奇');
+    expect(find.byKey(const Key('chat-input')), findsOneWidget);
+  });
+
+  testWidgets('首见页跳过称呼直接完成，完成请求不带称呼', (tester) async {
+    final onboardingGateway = _FakeOnboardingGateway(completed: false);
+    final onboardingViewModel = await _onboardingViewModel(
+      onboardingGateway,
+      configured: true,
+    );
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: onboardingViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 不输入任何内容直接开始：与跳过等价。
+    await tester.tap(find.byKey(const Key('first-meeting-start-chat')));
+    await tester.pumpAndSettle();
+
+    expect(onboardingGateway.completeCalls, 1);
+    expect(onboardingGateway.lastAppellation, isNull);
+    expect(find.byKey(const Key('chat-input')), findsOneWidget);
+  });
 
   testWidgets('a fresh user without a Provider chooses local chat first', (
     tester,
@@ -355,12 +419,16 @@ final class _FakeOnboardingGateway implements OnboardingGateway {
   bool failComplete;
   var completeCalls = 0;
 
+  /// 最近一次完成请求携带的称呼；null 表示未带（跳过输入）。
+  String? lastAppellation;
+
   @override
   Future<OnboardingState> read() async => OnboardingState(completed: completed);
 
   @override
-  Future<void> complete() async {
+  Future<void> complete({String? appellation}) async {
     completeCalls += 1;
+    lastAppellation = appellation;
     if (failComplete) {
       throw const OnboardingGatewayException('首次见面状态无法保存。');
     }

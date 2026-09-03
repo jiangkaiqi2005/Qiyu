@@ -1854,7 +1854,7 @@ class _ClearableOnboardingGateway implements OnboardingGateway {
   Future<OnboardingState> read() async => OnboardingState(completed: completed);
 
   @override
-  Future<void> complete() async {
+  Future<void> complete({String? appellation}) async {
     completed = true;
   }
 }

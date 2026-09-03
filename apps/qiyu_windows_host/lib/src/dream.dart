@@ -996,11 +996,14 @@ final class DreamService {
     // 自动整理（否则模型可能据冻结主张写出新的长期印象条目）。
     PersonaTreeSnapshot? personaSnapshot;
     String? personaSection;
+    String? appellation;
     final tree = personaTree;
     if (tree != null) {
       personaSnapshot = await tree.readSnapshot();
       final rendered = _renderTreeForModel(personaSnapshot, frozen);
       personaSection = rendered.isEmpty ? null : rendered;
+      // 记忆表述惯例（称呼定稿）：新长期印象指称用户按称呼走。
+      appellation = await tree.readAppellation();
     }
 
     // 预算裁剪：关系与未闭环线索体量已有分块预算，PersonaTree 结构
@@ -1029,6 +1032,7 @@ final class DreamService {
       longMemory: longMemory,
       personaSnapshot: personaSnapshot,
       personaSection: personaSection,
+      appellation: appellation,
       banned: banned,
       frozen: frozen,
       validDates: {for (final entry in windowed) entry.date},
@@ -1617,7 +1621,13 @@ final class DreamService {
   }
 
   List<ModelMessage> _dreamMessages(_DreamInput input) {
-    const system = '''
+    // 记忆表述惯例（称呼定稿 2026-09-03）：有称呼用称呼、无称呼用
+    // 「用户」。称呼格式受控（无换行与控制字符、限长），可安全内嵌。
+    final appellationRule = input.appellation == null
+        ? '8. 印象文本指称用户时一律写「用户」，不要替用户起昵称。'
+        : '8. 印象文本指称用户时一律用称呼「${input.appellation}」，不要写'
+            '「用户」，也不要替用户起昵称。';
+    final system = '''
 你是栖语离线记忆的深度重组模块（Dream）。给你用户已整理的记忆与当前长期印象，请产出新长期印象的候选版。要求：
 1. 只输出一个 JSON 对象，不要输出任何其它文字、解释或代码块标记。
 2. 每条印象必须有给定材料中的依据，不得编造、不得引入材料外的事实。
@@ -1632,6 +1642,7 @@ final class DreamService {
    - {"op":"merge","branch":"…","roots":["XX-Rnnn","XX-Rnnn"],"claim":"合并后的稳定主张"}：只合并同义或过度细分的根。
    boundaries 分支的行为推断只能写成「少探问」「谨慎接近」这类软边界，不得伪装成用户明确禁止。
    提案的 claim 同样不得带「最近/这周/这几天」等时间限定，不得出现敏感或禁提内容。
+$appellationRule
 字段白名单：
 - items: 数组，最多24项，每项 {"section": 人与关系、重要事件、模式与轨迹、共同过往 之一, "text": 一行压缩印象，不超过60字, "evidence": 日期数组，每项形如 YYYY-MM-DD，必须取自递来的已整理记录日期，绝不编造}。
 - rootProposals: 可选数组，格式见第7条；不调整树时省略该字段。''';
@@ -1690,7 +1701,7 @@ final class DreamService {
       }
     }
     return [
-      const ModelMessage(ModelMessageRole.system, system),
+      ModelMessage(ModelMessageRole.system, system),
       ModelMessage(ModelMessageRole.user, redactSessionText(user.toString())),
     ];
   }
@@ -1729,6 +1740,7 @@ final class _DreamInput {
     required this.longMemory,
     required this.personaSnapshot,
     required this.personaSection,
+    required this.appellation,
     required this.banned,
     required this.frozen,
     required this.validDates,
@@ -1746,6 +1758,9 @@ final class _DreamInput {
 
   /// 递给模型的树结构渲染；无树或树为空时为 null。
   final String? personaSection;
+
+  /// 当前称呼（persona.md 受保护设定行）：印象文本指称用户的惯例依据。
+  final String? appellation;
 
   /// 封禁集合（禁提 ∪ 删除，规范化后）：草稿与根提案都不得触碰。
   final Set<String> banned;

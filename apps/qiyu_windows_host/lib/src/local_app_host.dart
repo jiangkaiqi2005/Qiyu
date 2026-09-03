@@ -326,6 +326,7 @@ final class LocalAppHost {
       onboardingRepository: onboardingRepository,
       memoryCenter: memoryCenter,
       memoryActions: memoryActions,
+      personaTree: personaTree,
       memoryBackup: memoryBackup,
       memoryControls: memoryControls,
       experienceRepository: experienceRepository,
@@ -379,6 +380,7 @@ final class _LocalAppRequestHandler {
     required OnboardingRepository onboardingRepository,
     required this.memoryCenter,
     required this.memoryActions,
+    required PersonaTreeStore personaTree,
     required MemoryBackupService memoryBackup,
     required this.memoryControls,
     required this.experienceRepository,
@@ -401,6 +403,7 @@ final class _LocalAppRequestHandler {
            memoryCenter: memoryCenter,
            memoryActions: memoryActions,
            memoryControls: memoryControls,
+           personaTree: personaTree,
          ),
          SettingsRoutes(
            providerSettingsService: providerSettingsService,
@@ -421,7 +424,10 @@ final class _LocalAppRequestHandler {
            ttsSettingsService: ttsSettingsService,
            memoryRepository: memoryRepository,
          ),
-         OnboardingRoutes(onboardingRepository: onboardingRepository),
+         OnboardingRoutes(
+           onboardingRepository: onboardingRepository,
+           personaTree: personaTree,
+         ),
        ];
 
   String _startupToken;

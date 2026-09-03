@@ -1234,6 +1234,139 @@ $leaves''');
       expect(clipPersonaBlock('这不是投影格式', 0), '');
     });
   });
+
+  // 称呼定稿 2026-09-03 / ADR 0005 的测试放在文件末尾的独立 group 里，
+  // 不与上方按 ticket 组织的用例混排。
+  group('appellation protected line', () {
+    test('setAppellation writes the protected line; readAppellation round-trips', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-persona-app-');
+      addTearDown(() => root.delete(recursive: true));
+      final store = _store(root.path);
+
+      // 没有画像根时也落最小 persona.md：称呼有地方住、能注入。
+      final written = await store.setAppellation('  凯奇  ');
+      expect(written, '凯奇');
+      final persona = File(
+        path.join(root.path, 'persona.md'),
+      ).readAsStringSync();
+      expect(persona, '# persona\n称呼：凯奇\n');
+      expect(await store.readAppellation(), '凯奇');
+    });
+
+    test('setAppellation rejects format violations without touching the file', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-persona-app-');
+      addTearDown(() => root.delete(recursive: true));
+      final store = _store(root.path);
+      expect(await store.setAppellation('凯奇'), '凯奇');
+
+      // 空（去空白后）、超 20 字、换行、控制字符一律拒绝。
+      expect(await store.setAppellation('   '), isNull);
+      expect(await store.setAppellation('a' * 21), isNull);
+      expect(await store.setAppellation('凯\n奇'), isNull);
+      expect(await store.setAppellation('凯\x07奇'), isNull);
+      final persona = File(
+        path.join(root.path, 'persona.md'),
+      ).readAsStringSync();
+      expect(persona, '# persona\n称呼：凯奇\n');
+    });
+
+    test('format validator flags empty, overlong, newline and control chars', () {
+      expect(appellationFormatError('凯奇'), isNull);
+      expect(appellationFormatError('  老王 '), isNull);
+      expect(appellationFormatError('   '), 'empty-appellation');
+      expect(appellationFormatError('a' * 21), 'long-appellation');
+      expect(appellationFormatError('a' * 20), isNull);
+      expect(appellationFormatError('凯\n奇'), 'invalid-char-appellation');
+      expect(appellationFormatError('凯\r奇'), 'invalid-char-appellation');
+      expect(appellationFormatError('凯\t奇'), 'invalid-char-appellation');
+    });
+
+    test('dream refresh and projection rebuilds preserve the protected line', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-persona-app-');
+      addTearDown(() => root.delete(recursive: true));
+      final store = _store(root.path);
+      _seedRootedBranch(root.path, 'preferences.md', '''# 偏好习惯
+
+## [PR-R001] 用户做重大决定前习惯先列清单
+
+### [PR-M001] 重复模式｜用户做重大决定前习惯先列清单
+- 形成: 2026-08-01 · 复核: 2026-08-09
+- [PR-L001] 2026-08-01 | 明确自述 | support | 用户做重大决定前习惯先列清单 | episodes/2026/08/2026-08-01.md [m1]
+''');
+      File(path.join(root.path, 'persona.md')).writeAsStringSync(
+        '# persona\n\n## 偏好与习惯\n- 用户做重大决定前习惯先列清单\n',
+      );
+      expect(await store.setAppellation('凯奇'), '凯奇');
+
+      // Dream 维护（重投影）后设定行原样保留，且在五节投影之前。
+      await store.applyDreamChanges(date: '2026-08-16', ops: const []);
+      final afterDream = File(
+        path.join(root.path, 'persona.md'),
+      ).readAsStringSync();
+      expect(afterDream, contains('称呼：凯奇'));
+      expect(afterDream, contains('- 用户做重大决定前习惯先列清单'));
+      expect(
+        afterDream.indexOf('称呼：凯奇'),
+        lessThan(afterDream.indexOf('## 偏好与习惯')),
+      );
+
+      // 更新称呼替换同一行，不新增第二行。
+      expect(await store.setAppellation('老王'), '老王');
+      final afterUpdate = File(
+        path.join(root.path, 'persona.md'),
+      ).readAsStringSync();
+      expect('称呼：'.allMatches(afterUpdate).length, 1);
+      expect(afterUpdate, contains('称呼：老王'));
+
+      // 投影重建入口（恢复流程共用）也保留。
+      await store.regeneratePersonaProjection();
+      expect(
+        File(path.join(root.path, 'persona.md')).readAsStringSync(),
+        contains('称呼：老王'),
+      );
+    });
+
+    test('empty projection with an appellation keeps the minimal file', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-persona-app-');
+      addTearDown(() => root.delete(recursive: true));
+      final store = _store(root.path);
+      expect(await store.setAppellation('凯奇'), '凯奇');
+
+      // 全分支为空的重投影：没有画像内容但设定行还在，文件不删。
+      await store.regeneratePersonaProjection();
+      final persona = File(path.join(root.path, 'persona.md'));
+      expect(persona.existsSync(), isTrue);
+      expect(persona.readAsStringSync(), '# persona\n称呼：凯奇\n');
+    });
+
+    test('clipPersonaBlock keeps the protected line and never trims it', () {
+      final persona =
+          '# persona\n称呼：凯奇\n\n## 偏好与习惯\n- 偏好甲\n\n## 边界与禁区\n- 家庭话题只接不探';
+      // 预算充足：原样返回。
+      expect(clipPersonaBlock(persona, persona.runes.length), persona);
+      // 预算收紧：设定行保留，可裁节照砍。
+      final clipped = clipPersonaBlock(persona, 30);
+      expect(clipped, contains('称呼：凯奇'));
+      expect(clipped, isNot(contains('- 偏好甲')));
+      expect(clipped, contains('## 边界与禁区'));
+      // 压到只剩设定行与边界时设定行仍最前（边界优先于预算）。
+      final squeezed = clipPersonaBlock(persona, 0);
+      expect(squeezed.startsWith('称呼：凯奇'), isTrue);
+      expect(squeezed, contains('## 边界与禁区'));
+      expect(squeezed, isNot(contains('## 偏好与习惯')));
+    });
+
+    test('self-report sentence extraction recognizes explicit namings only', () {
+      expect(extractAppellationSelfReport('以后叫我老王'), '老王');
+      expect(extractAppellationSelfReport('以后叫我老王吧'), '老王');
+      expect(extractAppellationSelfReport('你可以叫我小凯。'), '小凯');
+      expect(extractAppellationSelfReport('请称呼我为凯奇'), '凯奇');
+      expect(extractAppellationSelfReport('从现在起喊我大王！'), '大王');
+      // 没有明确指定句式不生效。
+      expect(extractAppellationSelfReport('今天天气不错'), isNull);
+      expect(extractAppellationSelfReport('我叫老王，你好'), isNull);
+    });
+  });
 }
 
 void _seedRootedBranch(String memoryDirectory, String fileName, String contents) {

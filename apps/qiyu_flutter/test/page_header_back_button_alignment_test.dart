@@ -169,7 +169,7 @@ final class _FakeOnboardingGateway implements OnboardingGateway {
       const OnboardingState(completed: true);
 
   @override
-  Future<void> complete() async {}
+  Future<void> complete({String? appellation}) async {}
 }
 
 final class _FakeHostConnectionProbe implements HostConnectionProbe {
@@ -236,6 +236,10 @@ final class _FixedMemoryGateway implements MemoryGateway {
 
   @override
   Future<MemoryOverview> fetchOverview() async => _emptyOverview;
+
+  @override
+  Future<void> setAppellation(String appellation) =>
+      throw UnimplementedError();
 
   @override
   Future<MemoryItemDetail?> fetchItemDetail(String id) =>

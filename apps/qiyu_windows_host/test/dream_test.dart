@@ -1620,6 +1620,73 @@ void main() {
       );
     });
   });
+
+  test('the dream prompt states the appellation wording rule', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-appellation-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: directory.path,
+      clock: () => DateTime(2026, 8, 15, 23, 10),
+    );
+    await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
+    File('${directory.path}/persona.md').writeAsStringSync(
+      '# persona\n称呼：老王\n',
+    );
+    final client = _ScriptedDreamClient([
+      ModelCompletion.reply(_candidate([
+        _item('重要事件', '老王换了新工作', ['2026-08-14']),
+      ])),
+    ]);
+    final dream = DreamService(
+      memoryDirectory: directory.path,
+      episodePipeline: pipeline,
+      personaTree: PersonaTreeStore(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+      ),
+      modelClient: client,
+      clock: () => DateTime(2026, 8, 15, 23, 10),
+    );
+
+    await dream.run(bedtime: true);
+
+    // 记忆表述惯例（称呼定稿）：有称呼用称呼、无称呼用「用户」。
+    final system = client.calls.single.first.content;
+    expect(system, contains('一律用称呼「老王」'));
+    expect(system, contains('不要写「用户」'));
+    expect(system, contains('也不要替用户起昵称'));
+  });
+
+  test('the dream prompt falls back to 用户 without an appellation', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-appellation-fallback-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: directory.path,
+      clock: () => DateTime(2026, 8, 15, 23, 10),
+    );
+    await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
+    final client = _ScriptedDreamClient([
+      ModelCompletion.reply(_candidate([
+        _item('重要事件', '用户换了新工作', ['2026-08-14']),
+      ])),
+    ]);
+    final dream = DreamService(
+      memoryDirectory: directory.path,
+      episodePipeline: pipeline,
+      modelClient: client,
+      clock: () => DateTime(2026, 8, 15, 23, 10),
+    );
+
+    await dream.run(bedtime: true);
+
+    final system = client.calls.single.first.content;
+    expect(system, contains('一律写「用户」'));
+    expect(system, contains('不要替用户起昵称'));
+  });
 }
 
 String _candidateWithRoots(

@@ -202,6 +202,53 @@ void main() {
   );
 
   test(
+    'setAppellation posts to its own endpoint and surfaces rejection',
+    () async {
+      final requests = <http.Request>[];
+      final client = hostTransportClient(
+        (request) {
+          if (request.url.path == '/api/memory/appellation') {
+            final body = jsonDecode(request.body) as Map<String, Object?>;
+            if (body['appellation'] == '老王') {
+              return hostJsonResponse({'appellation': '老王'}, 200);
+            }
+            return hostJsonResponse({
+              'code': 'invalid_appellation',
+              'message':
+                  '这个称呼用不了：去掉首尾空白后最长 20 个字，'
+                  '不能用换行或特殊控制字符。',
+              'retryable': false,
+            }, 400);
+          }
+          return http.Response('not found', 404);
+        },
+        requests: requests,
+        bootstrapBody: {'csrfToken': hostTestCsrfToken, 'session': 'active'},
+      );
+      final gateway = HttpMemoryGateway(
+        client: client,
+        baseUri: Uri.parse('http://127.0.0.1:5173/'),
+      );
+
+      await gateway.setAppellation('老王');
+      expect(requests.last.url.path, '/api/memory/appellation');
+      expectCsrfHeader(requests.last);
+
+      // 格式被拒时抛出带服务端提示的网关异常。
+      await expectLater(
+        gateway.setAppellation('两\n行'),
+        throwsA(
+          isA<MemoryGatewayException>().having(
+            (error) => error.message,
+            'message',
+            contains('这个称呼用不了'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
     'error responses without a status field are never read as success',
     () async {
       // Host 的 4xx 错误体只有 code/message，没有 status 字段。

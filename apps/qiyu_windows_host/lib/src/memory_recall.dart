@@ -7,6 +7,7 @@ import 'episode_memory.dart';
 import 'memory_controls.dart';
 import 'model_gateway.dart';
 import 'open_loop_store.dart';
+import 'persona_tree.dart';
 import 'provider_settings_service.dart';
 
 /// bubble 2 轮内窗口预算（节奏定稿：秒级常量）。窗口内命中且用户
@@ -500,7 +501,13 @@ final class RecallOrchestrator {
     ModelCompletion? completion;
     try {
       completion = await client.complete(
-        _composeMessages(query: query, userText: userText, rawDays: rawDays),
+        _composeMessages(
+          query: query,
+          userText: userText,
+          rawDays: rawDays,
+          // 表述惯例（称呼定稿）：称呼用户时按 persona.md 设定行走。
+          appellation: await readAppellationFromMemory(memoryDirectory),
+        ),
       );
     } on Object catch (error) {
       diagnostics.add('recall compose deferred [$error]');
@@ -597,8 +604,15 @@ final class RecallOrchestrator {
     required String query,
     required String userText,
     required List<(String, List<EpisodeEntry>)> rawDays,
+    String? appellation,
   }) {
-    const system =
+    // 称呼用户的惯例（称呼定稿 2026-09-03）：有称呼自然可用，没有就
+    // 用「你」；称呼格式受控（无换行与控制字符、限长），可安全内嵌。
+    final appellationRule = appellation == null
+        ? '6. 称呼用户时用「你」，不要替用户起昵称。'
+        : '6. 语境自然时可以用「$appellation」称呼用户，不要替用户起'
+              '其他昵称。';
+    final system =
         '''
 你是栖语。刚才用户提起一件旧事，你先按一时没想起回应了；现在后台查找有了结果，你要自然地补一句。
 要求：
@@ -606,7 +620,8 @@ final class RecallOrchestrator {
 2. 只能使用下面查到的记录里真实存在的内容；记录里没有的细节不提，不编造。
 3. 像刚想起来那样轻轻补上；不复述用户的话，不开新话题，不追问。
 4. 查到的记录与用户问的不是一回事时，只输出「$_recallNoBubbleSentinel」三个字。
-5. 禁止客服式话术；少说，安静，温暖。''';
+5. 禁止客服式话术；少说，安静，温暖。
+$appellationRule''';
 
     final user = StringBuffer()
       ..writeln('用户刚才说：$userText')
@@ -628,7 +643,7 @@ final class RecallOrchestrator {
       }
     }
     return [
-      const ModelMessage(ModelMessageRole.system, system),
+      ModelMessage(ModelMessageRole.system, system),
       ModelMessage(ModelMessageRole.user, user.toString()),
     ];
   }
