@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../navigation.dart';
+import '../shell/qiyu_shell.dart';
 
 /// 隐私说明页（ticket 23）：数据只在本机、何时调用用户选择的模型
 /// 服务、哪些敏感信息永不提升为记忆、日志与诊断统一脱敏。文案与
@@ -18,20 +18,23 @@ class PrivacyView extends StatelessWidget {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(
-              maxWidth: QiyuLayout.settingsReadingMaxWidth,
+              maxWidth: QiyuLayout.pageReadingMaxWidth,
             ),
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(24, 18, 24, 48),
+              padding: const EdgeInsets.fromLTRB(
+                24,
+                QiyuLayout.pageHeaderTopPaddingNoRing,
+                24,
+                48,
+              ),
               children: [
                 Row(
                   children: [
-                    IconButton(
-                      key: const Key('privacy-back'),
-                      onPressed: () => backToPrevious(context),
-                      tooltip: '返回设置',
-                      icon: const Icon(QiyuIcons.arrow_back),
+                    // 返回箭头何时让位给三条杠由壳判定（窄屏且被壳包住时
+                    // 整块不出现），见 [QiyuPageHeaderBackButton]。
+                    const QiyuPageHeaderBackButton(
+                      buttonKey: Key('privacy-back'),
                     ),
-                    const SizedBox(width: 8),
                     Text('隐私与边界', style: theme.textTheme.headlineSmall),
                   ],
                 ),

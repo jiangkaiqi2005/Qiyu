@@ -412,7 +412,11 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
               ExpansionTile(
                 key: const Key('provider-advanced-settings'),
                 tilePadding: EdgeInsets.zero,
-                childrenPadding: const EdgeInsets.only(bottom: 8),
+                // ExpansionTile 展开体自带恒裁剪的 ClipRect，完全展开时裁剪
+                // 上沿与首行字段顶边重合；InputDecorator 的悬浮标签以边框线
+                // 为中心、向上伸出约 5px，顶部留 8px 防截断（与 TTS 设置 tile
+                // 的 Padding(top: 8) 同值）。
+                childrenPadding: const EdgeInsets.only(top: 8, bottom: 8),
                 title: const Text('高级参数'),
                 subtitle: const Text('temperature 与请求超时'),
                 children: [

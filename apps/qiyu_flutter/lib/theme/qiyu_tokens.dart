@@ -343,19 +343,16 @@ abstract final class QiyuLayout {
   static const double messageMaxWidth = 520;
 
   /// 顶层功能页内容列的最大宽度（历史列表、会话详情、记忆中心、记忆详情、
-  /// 开发者诊断）。
+  /// 开发者诊断、设置页、隐私页）。
   ///
   /// **实现现值，规范未定值**：design-system §5、§8 与 Spec 都没给功能页内容列
-  /// 定过宽度，760 是这五处各自裸写的同一个数字，本轮只是把它收进本 token 去重
-  /// （值一字未改）。视觉验收要调就改这里，不要在页面里再写数字。
-  static const double pageReadingMaxWidth = 760;
-
-  /// 设置页与隐私页阅读列的最大宽度。
+  /// 定过宽度，760 是原有五处（历史列表、会话详情、记忆中心、记忆详情、开发者
+  /// 诊断）各自裸写的同一个数字，首轮只是把它收进本 token 去重（值一字未改）。
+  /// 视觉验收要调就改这里，不要在页面里再写数字。
   ///
-  /// 与 [pageReadingMaxWidth] 同性质：720 是这两页的既有裸写值，规范未定稿，
-  /// 本轮只去重。它比功能页窄一档是两页落地时各自的现值，**不合并**成同一个
-  /// 数——合并等于改视觉，不属去重。
-  static const double settingsReadingMaxWidth = 720;
+  /// 设置页与隐私页原各写 720（旧 settingsReadingMaxWidth 档），先后为页头
+  /// 返回键同位与阅读列统一改投本档。
+  static const double pageReadingMaxWidth = 760;
 
   /// 对话框内容列的最大宽度（记忆控制总览、清除产品数据确认的加载态与内容态）。
   ///
@@ -366,7 +363,7 @@ abstract final class QiyuLayout {
   /// 记忆摘录预览对话框的最大宽度。
   ///
   /// 同为未定稿的实现现值（420）。与 [dialogContentMaxWidth] 刻意分档不合并，
-  /// 理由同 [settingsReadingMaxWidth]：本轮只去重，不调视觉。
+  /// 理由同 [pageReadingMaxWidth]：本轮只去重，不调视觉。
   static const double evidenceDialogMaxWidth = 420;
 
   /// 备份与恢复面板的尺寸上限（560 × 640，未定稿的实现现值）。
@@ -417,11 +414,27 @@ abstract final class QiyuLayout {
   /// 连接状态小圆点直径（design-system §5：6px）。
   static const double connectionDotSize = 6;
 
+  /// 功能页页头的顶留白基准档。
+  ///
+  /// 带环页头（记忆中心/历史，页头 Row 右侧按钮被 `QiyuFocusRingScope` 包住）
+  /// 直接用它：环的常驻占位把 Row 撑高，返回键随居中下移。
+  static const double pageHeaderBaseTopPadding = 20;
+
+  /// 无环页头（设置/隐私）的顶留白。
+  ///
+  /// 派生值，不是新的规范定值：[pageHeaderBaseTopPadding] 加一档
+  /// [focusRingOffset]——Row 不被环撑高时把差额补进顶留白，返回键才与
+  /// 带环页头同纵基线。改基准或环占位时四个消费页（记忆中心/历史/设置/隐私）
+  /// 必须一起核，页头同位回归测试锁定。
+  static const double pageHeaderTopPaddingNoRing =
+      pageHeaderBaseTopPadding + focusRingOffset;
+
   /// 键盘焦点环（design-system §9）：2px 实线 accent-bright、offset 3px。
   ///
   /// Material 的 `ThemeData.focusColor` 只能贴在控件表面上，画不出带 offset 的
-  /// 外环。**唯一消费方**是 `QiyuFocusRing`——全站自绘焦点环组件，导航壳与
-  /// composer 都走它；不要在页面里另写一份 2/3。
+  /// 外环。`QiyuFocusRing` 是全站自绘焦点环组件，导航壳与 composer 都走它，
+  /// 不要在页面里另写一份 2/3；[focusRingOffset] 另被 [pageHeaderTopPaddingNoRing]
+  /// 用作页头纵向基线的差额。
   static const double focusRingWidth = 2;
   static const double focusRingOffset = 3;
 }

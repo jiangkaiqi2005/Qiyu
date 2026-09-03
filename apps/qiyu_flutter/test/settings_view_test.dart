@@ -1494,7 +1494,7 @@ bool _isSectionExpanded(WidgetTester tester, String sectionId) => find
 
 /// 整页层面的断言要七节同时在场，而设置页是**懒建的 ListView**：默认 600 高的
 /// 视口只建得出头两三节，「某一节的正文在不在树上」这类判据会因为它还没被建
-/// 出来而误判成收起。宽度仍取 1200（内容列由 `settingsReadingMaxWidth` 限宽），
+/// 出来而误判成收起。宽度仍取 1200（内容列由 `pageReadingMaxWidth` 限宽），
 /// 只是把视口拉高，不改变任何布局档位。
 void _useFullPageViewport(WidgetTester tester) {
   tester.view.physicalSize = const Size(1200, 6000);
