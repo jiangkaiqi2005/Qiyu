@@ -19,7 +19,13 @@ const types = {
 http.createServer((req, res) => {
   const urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   const file = path.join(root, urlPath === '/' ? entry : urlPath);
-  if (!file.startsWith(root)) { res.writeHead(403); res.end(); return; }
+  // 越界判定不能写 file.startsWith(root)：归一化后的根外路径（如
+  // root + '/../Qiyu-backup/x'）照样能通过前缀匹配。path.relative 出
+  // 根（'..' 开头）或得到绝对路径一律 403。
+  const rel = path.relative(root, file);
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+    res.writeHead(403); res.end(); return;
+  }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); res.end('not found'); return; }
     res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' });
