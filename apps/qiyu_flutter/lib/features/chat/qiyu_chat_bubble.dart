@@ -85,6 +85,14 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   /// 显现的行，鼠标在同一个大气泡内快速晃动时时刻保持已显是合理的。
   bool _scrollSuppressed = false;
 
+  /// 鼠标指针当前是否停在本块的 MouseRegion 内：由 enter/exit 成对维护。
+  /// enter 要在抑制拦截**之前**先记位——滚轮把气泡滑到静止光标下时
+  /// onEnter 必被门控拦下，若拦下时什么都不记，抑制解除时就无从知道
+  /// 「停稳的光标正停在谁身上」。MouseRegion 的进出场在内容滚动把块
+  /// 边界滑过静止光标时同样成对派发，这一位能正确跟踪「指针停稳时光
+  /// 标落在哪条消息上」；它不进 build，不需要 setState。
+  bool _pointerInside = false;
+
   /// 显现延迟阀的待触发 Timer：显现路径（`onEnter`/`onHover` 放行）不
   /// 立即落 setState，先过这道短延迟，到期再复查抑制位。
   Timer? _revealTimer;
@@ -105,15 +113,24 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     // 滚动开始（滚动位由假转真）即复位已显现的悬停态并撤掉待显现的
     // 延迟 Timer：「滚动开始即隐藏已显现的行」。依赖变化本身会触发重建
     // （Element.didChangeDependencies 就是 markNeedsBuild），这里直接落
-    // 字段即可；撤销抑制时不复位——指针不动就不主动显现，恢复交给
-    // 缓冲窗后的 onHover 放行。行进抑制单独翻转不复位（合并位变化、
-    // 滚动位没变），见 [_scrollSuppressed] 的注释。
+    // 字段即可。行进抑制单独翻转不复位（合并位变化、滚动位没变），见
+    // [_scrollSuppressed] 的注释。
     if (scrollSuppressed && !_scrollSuppressed) {
       _hovering = false;
       _cancelReveal();
     }
+    // 抑制解除（合并位由真翻假）且指针仍停在本块内：主动调度显现。
+    // 这是悬停显现「死区」的修复——指针停稳后 Flutter 不再派发任何
+    // 事件，此前显现只由新的 onEnter/onHover 触发，缓冲窗过期后就再无
+    // 显现时机；滚轮把气泡滑到光标下、快速移动停稳在气泡上都落这个
+    // 死角。走 [_scheduleReveal] 的 80ms 延迟阀，到期照常复查抑制位/
+    // mounted/未显现，天然防抖。旧值必须在下方缓存刷新**之前**取。
+    final wasSuppressed = _hoverSuppressed;
     _scrollSuppressed = scrollSuppressed;
     _hoverSuppressed = suppressed;
+    if (wasSuppressed && !suppressed && _pointerInside && !_hovering) {
+      _scheduleReveal();
+    }
   }
 
   /// 记录最近一次指针类型；类型没变就不重建（鼠标 hover 事件很密）。
@@ -139,16 +156,20 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   /// setState（见常量注释的「一事件滞后」）。onExit 不门控——滚出立即
   /// 隐藏。
   void _handleMouseEnter(PointerEvent event) {
+    // 先记位再查抑制：被门控拦下的 enter 同样要把「指针停进了本块」
+    // 记下来，抑制解除后的主动显现（[didChangeDependencies]）全靠
+    // 这一位，拦下时丢信息正是死区的成因之一。
+    _pointerInside = true;
     if (_hoverSuppressed) {
       return;
     }
     _scheduleReveal();
   }
 
-  /// 桌面悬停移动：除记录指针类型外还承担「轻移放行显现」——缓冲窗
-  /// 过期后指针已在本块内，1px 轻移只派发 onHover 不派发 onEnter
-  /// （enter 只在进出边界时触发），缺这条会出现「轻移不显现」死角。
-  /// 放行同样经延迟阀。
+  /// 桌面悬停移动：兜底显现路径。死区修复后，指针已在块内时的抑制解
+  /// 除由 [didChangeDependencies] 主动调度显现，从空白处跨进气泡块由
+  /// `onEnter` 放行——onHover 显现降为兜底，保留以覆盖时序缝隙并锚定
+  /// 既有行为；放行同样经延迟阀。
   void _handleMouseHover(PointerEvent event) {
     _rememberPointerKind(event);
     if (_hoverSuppressed || _hovering) {
@@ -161,6 +182,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   /// 延迟 Timer——80ms 内快速扫过的气泡靠这一手拦住（延迟到期前人已
   /// 经走了）。
   void _handleMouseExit(PointerEvent event) {
+    _pointerInside = false;
     _cancelReveal();
     setState(() => _hovering = false);
   }

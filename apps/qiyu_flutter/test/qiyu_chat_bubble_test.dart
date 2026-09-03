@@ -495,7 +495,7 @@ void main() {
       expect(find.text(label), findsNothing);
     });
 
-    testWidgets('静止光标下滚轮滚动：期间与缓冲窗内都不显现，过期后不动也不显现', (tester) async {
+    testWidgets('静止光标下滚轮滚动：期间与缓冲窗内不显现，过期后指针停在块上自动显现', (tester) async {
       await pumpGatedList(tester);
       // 光标停在列表顶部 padding（任何消息之外），量好消息 3 的落点后
       // 滚动让它滑到光标下——没有门控时这一步会派发 onEnter 并显现。
@@ -513,9 +513,12 @@ void main() {
 
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text(label), findsNothing);
-      // 缓冲窗（500ms）已过期：指针没动就不会主动显现。
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(find.text(label), findsNothing);
+      // 缓冲窗（500ms）已过期：指针停在消息块上，无需任何新指针事件
+      // 自动显现（死区修复的主语义）。抑制解除发生在过窗那一拍的帧末，
+      // 气泡侧 80ms 显现阀随后到期——再多泵一拍。
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
     });
 
     testWidgets('缓冲窗过期后轻移 1px 经 onHover 显现', (tester) async {
@@ -563,6 +566,61 @@ void main() {
       expect(find.text(label), findsNothing);
       await tester.pump(const Duration(milliseconds: 200));
       await mouse.moveBy(const Offset(1, 0));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('抑制解除时指针停在消息块上：不派发任何新指针事件也自动显现', (tester) async {
+      await pumpGatedList(tester);
+      const park = Offset(400, 8);
+      await mouseAt(tester, park);
+      final target = tester.getRect(find.textContaining('第 3 条'));
+      // 滚动把第 3 条滑到静止光标下：光标落进气泡，onEnter 被门控拦下
+      // 但指针已停在块上（旧实现拦下时什么都不记，解除后无从恢复）。
+      await tester.sendEventToBinding(
+        PointerScrollEvent(
+          position: park,
+          scrollDelta: Offset(0, target.center.dy - park.dy),
+        ),
+      );
+      await tester.pump();
+      expect(find.text(label), findsNothing, reason: '缓冲窗内不显现');
+
+      // 缓冲窗（500ms）整体过期 + 余量：全程零指针事件，时刻应自动
+      // 显现——指针停稳后 Flutter 不再派发事件，若显现只认新的
+      // onEnter/onHover，这里就是死区。抑制解除发生在过窗那一拍的帧
+      // 末，80ms 显现阀随后到期——再多泵一拍。
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('抑制解除时指针在列表空白处：不显现，轻移 1px 才显', (tester) async {
+      await pumpGatedList(tester);
+      // 量出第 0 条（用户气泡）的块顶（MouseRegion 上缘 = 气泡容器顶 =
+      // 文本顶 - 容器纵向内边距 sm），滚动量让它停在光标下方 1px 处：
+      // 指针全程停在顶部 padding 空白里，没有任何气泡滑到光标下。
+      const park = Offset(400, 8);
+      final mouse = await mouseAt(tester, park);
+      final textTop = tester.getTopLeft(find.textContaining('第 0 条')).dy;
+      final blockTop = textTop - QiyuSpacing.sm;
+      final delta = blockTop - park.dy - 1;
+      await tester.sendEventToBinding(
+        PointerScrollEvent(position: park, scrollDelta: Offset(0, delta)),
+      );
+      await tester.pump();
+      expect(find.text(label), findsNothing, reason: '缓冲窗内不显现');
+
+      // 缓冲窗整体过期 + 80ms 显现阀余量：指针不在任何消息块上，自动
+      // 显现不触发——与主锁互为对照，主动显现只落在「指针停在块上」
+      // 的情形。
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsNothing, reason: '空白处不自动显现');
+
+      // 轻移 1px 跨进气泡块：enter 放行（经 80ms 显现阀）后显现。
+      await mouse.moveBy(const Offset(0, 1));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsOneWidget);
@@ -634,7 +692,7 @@ void main() {
     // 显式给定——速度判定只看事件时间戳，与挂钟无关；衰减窗走 FakeAsync
     // 挂钟，用 pump 推进，快慢样本的时间戳间距刻意远离阈值（0.5px/ms）
     // 与地板（16ms），不贴边。
-    testWidgets('快速移动扫过多颗气泡：行进中与结束后缓冲窗内都不显现', (tester) async {
+    testWidgets('快速移动扫过多颗气泡：行进中与缓冲窗内不显现，过期后停在块上自动显现', (tester) async {
       await pumpGatedList(tester);
       final mouse = await mouseAt(tester, const Offset(400, 8));
       // 三个高速样本：第 1 → 3 → 4 条。第 1→3 步距跨过整颗第 2 条高
@@ -663,12 +721,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text(label), findsNothing);
 
-      // 缓冲窗过期后指针不动也不显现（无事件不主动显现）。
+      // 缓冲窗过期：指针停在消息块上，无需新指针事件自动显现。抑制
+      // 解除发生在过窗那一拍的帧末，80ms 显现阀随后到期——多泵一拍。
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text(label), findsNothing);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
     });
 
-    testWidgets('快速移动停稳满缓冲窗后轻移 1px：经显现延迟后出现', (tester) async {
+    testWidgets('快速移动停稳满缓冲窗后：停在块上自动显现，随后的轻移不再必要', (tester) async {
       await pumpGatedList(tester);
       final mouse = await mouseAt(tester, const Offset(400, 8));
       // 先原地轻挪落一个采样，再单步高速甩到第 2 条上（约 12px/ms），
@@ -684,11 +744,14 @@ void main() {
       );
       await tester.pump();
 
-      // 缓冲窗（500ms）过期前不显现；过期后指针不动也不显现。
+      // 缓冲窗（500ms）过期前不显现；过期后指针停在块上自动显现，
+      // 无需任何新指针事件（抑制解除在过窗那一拍的帧末生效，80ms 显
+      // 现阀多泵一拍到期）。
       await tester.pump(const Duration(milliseconds: 600));
-      expect(find.text(label), findsNothing);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
 
-      // 轻移 1px：经 80ms 显现延迟后出现。
+      // 已显现后的轻移无感：hover 放行路径仍在，但不改变状态。
       await mouse.moveBy(
         const Offset(1, 0),
         timeStamp: const Duration(milliseconds: 620),
@@ -754,7 +817,7 @@ void main() {
       expect(find.text(label), findsOneWidget);
     });
 
-    testWidgets('快速甩入气泡随即停稳：延迟到期复查丢弃，缓冲窗过期后轻移才显', (tester) async {
+    testWidgets('快速甩入气泡随即停稳：延迟到期复查丢弃，缓冲窗过期后停在块上自动显现', (tester) async {
       await pumpGatedList(tester);
       final mouse = await mouseAt(tester, const Offset(400, 8));
       // 先原地轻挪落一个采样，再单步高速甩进第 1 条——同一事件里气泡的
@@ -776,8 +839,10 @@ void main() {
       expect(find.text(label), findsNothing, reason: '延迟到期复查：行进抑制已生效，丢弃');
 
       await tester.pump(const Duration(milliseconds: 500));
-      expect(find.text(label), findsNothing, reason: '缓冲窗过期后停着不动不显现');
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget, reason: '缓冲窗过期：停在块上自动显现，无需轻移');
 
+      // 已显现后的轻移无感：hover 放行路径仍在，但不改变状态。
       await mouse.moveBy(
         const Offset(1, 0),
         timeStamp: const Duration(milliseconds: 620),
@@ -966,6 +1031,47 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsOneWidget, reason: '首采样不判行进：延迟到期放行');
+    });
+
+    testWidgets('死区中的快速轻移不再拖慢显现：窗过期后自动显现，无需恰好慢速的一下', (tester) async {
+      await pumpGatedList(tester);
+      final mouse = await mouseAt(tester, const Offset(400, 8));
+      // 原地落基线，再单步高速甩到第 2 条上，随即停稳（行进窗 500ms）。
+      await mouse.moveBy(
+        const Offset(0, 12),
+        timeStamp: const Duration(milliseconds: 10),
+      );
+      await tester.pump();
+      await mouse.moveTo(
+        tester.getCenter(find.textContaining('第 2 条')),
+        timeStamp: const Duration(milliseconds: 30),
+      );
+      await tester.pump();
+
+      // 窗内的「快速轻移」：起手颗距上次采样 200ms+，速度被摊薄成慢速
+      // （放行、基线推进）；随后加速颗 11px/16ms 判行进、衰减窗重启。
+      // 旧行为里起手颗调起的 80ms 显现阀被到期复查丢弃，动一下白动，
+      // 用户只能靠某次恰好慢速的轻移脱困。
+      await tester.pump(const Duration(milliseconds: 200));
+      await mouse.moveBy(
+        const Offset(1, 0),
+        timeStamp: const Duration(milliseconds: 230),
+      );
+      await tester.pump();
+      await mouse.moveBy(
+        const Offset(11, 0),
+        timeStamp: const Duration(milliseconds: 246),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(find.text(label), findsNothing, reason: '快速轻移被行进抑制压住');
+
+      // 衰减窗（从加速样本起算）过期：零指针事件，自动显现——不再需
+      // 要恰好慢速的一下。抑制解除在过窗那一拍的帧末生效，80ms 显现阀
+      // 多泵一拍到期。
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
     });
   });
 }
