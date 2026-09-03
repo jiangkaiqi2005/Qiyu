@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -6,8 +8,8 @@ import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../time_format.dart';
+import 'qiyu_hover_gate.dart';
 import 'qiyu_markdown.dart';
-import 'qiyu_scroll_hover_gate.dart';
 
 /// 会话气泡：聊天页与历史回看页共用。按 design-system §7 的**单侧气泡**
 /// 形态——用户消息右对齐水滴气泡（圆角 20/20/6/20、无描边、面色
@@ -72,23 +74,46 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   /// 时刻默认常驻。
   bool _touchRevealed = false;
 
-  /// 列表层滚动抑制位的本地缓存：[didChangeDependencies] 里随 inherited
-  /// 值刷新，`onEnter`/`onHover` 回调只读缓存，不在回调里做依赖查找。
-  /// 没有列表门控（单气泡用法）时恒为 false——默认不抑制。
+  /// 列表层门控抑制位的本地缓存（滚动与指针行进之或，[QiyuHoverGate.
+  /// hoverSuppressedOf]）：[didChangeDependencies] 里随 inherited 值刷新，
+  /// `onEnter`/`onHover` 回调与显现延迟的到期复查只读缓存，不在回调里
+  /// 做依赖查找。没有列表门控（单气泡用法）时恒为 false——默认不抑制。
+  bool _hoverSuppressed = false;
+
+  /// 滚动抑制位单独缓存（[QiyuHoverGate.scrollSuppressedOf]）：只用于
+  /// 判定「滚动开始即隐藏已显现的行」的复位时机——行进抑制不复位已
+  /// 显现的行，鼠标在同一个大气泡内快速晃动时时刻保持已显是合理的。
   bool _scrollSuppressed = false;
+
+  /// 显现延迟阀的待触发 Timer：显现路径（`onEnter`/`onHover` 放行）不
+  /// 立即落 setState，先过这道短延迟，到期再复查抑制位。
+  Timer? _revealTimer;
+
+  /// 显现延迟阀时长。为什么需要这道延迟——同一指针事件里 MouseTracker
+  /// 先派发气泡的 `onEnter`、后派发列表层门控的 `onHover`：快速扫入的
+  /// 第一颗气泡做判定时，门控还没来得及把该事件记为行进（一事件滞后），
+  /// 裸判会闪。80ms 内快速扫过的气泡必然已触发 `onExit`（取消待显现的
+  /// Timer），或到期复查时行进抑制已生效（丢弃不显现不重排），两路都
+  /// 拦得住；80ms 在「瞬间响应」的感知窗口（约 100ms）内，主动悬停无感。
+  static const Duration revealDebounce = Duration(milliseconds: 80);
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final suppressed = QiyuScrollHoverGate.hoverSuppressedOf(context);
-    // 滚动开始（抑制位由假转真）即复位已显现的悬停态：「滚动开始即隐藏
-    // 已显现的行」。依赖变化本身会触发重建（Element.didChangeDependencies
-    // 就是 markNeedsBuild），这里直接落字段即可；撤销抑制时不复位——
-    // 指针不动就不主动显现，恢复交给缓冲窗后的 onHover 放行。
-    if (suppressed && !_scrollSuppressed) {
+    final suppressed = QiyuHoverGate.hoverSuppressedOf(context);
+    final scrollSuppressed = QiyuHoverGate.scrollSuppressedOf(context);
+    // 滚动开始（滚动位由假转真）即复位已显现的悬停态并撤掉待显现的
+    // 延迟 Timer：「滚动开始即隐藏已显现的行」。依赖变化本身会触发重建
+    // （Element.didChangeDependencies 就是 markNeedsBuild），这里直接落
+    // 字段即可；撤销抑制时不复位——指针不动就不主动显现，恢复交给
+    // 缓冲窗后的 onHover 放行。行进抑制单独翻转不复位（合并位变化、
+    // 滚动位没变），见 [_scrollSuppressed] 的注释。
+    if (scrollSuppressed && !_scrollSuppressed) {
       _hovering = false;
+      _cancelReveal();
     }
-    _scrollSuppressed = suppressed;
+    _scrollSuppressed = scrollSuppressed;
+    _hoverSuppressed = suppressed;
   }
 
   /// 记录最近一次指针类型；类型没变就不重建（鼠标 hover 事件很密）。
@@ -108,25 +133,63 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     }
   }
 
-  /// 桌面悬停进入。滚动抑制期间不显现：滚轮滚动让消息滑到静止光标下
-  /// 时 MouseTracker 会派发 onEnter（缺陷 B），这一步把它挡住。onExit
-  /// 不门控——滚出光标立即隐藏。
+  /// 桌面悬停进入。门控抑制期间不显现：滚轮滚动让消息滑到静止光标下
+  /// 时 MouseTracker 会派发 onEnter（缺陷 B），这一步把它挡住。放行也
+  /// 不立即显现——经 [revealDebounce] 延迟阀，到期复查抑制位后再落
+  /// setState（见常量注释的「一事件滞后」）。onExit 不门控——滚出立即
+  /// 隐藏。
   void _handleMouseEnter(PointerEvent event) {
-    if (_scrollSuppressed) {
+    if (_hoverSuppressed) {
       return;
     }
-    setState(() => _hovering = true);
+    _scheduleReveal();
   }
 
   /// 桌面悬停移动：除记录指针类型外还承担「轻移放行显现」——缓冲窗
   /// 过期后指针已在本块内，1px 轻移只派发 onHover 不派发 onEnter
   /// （enter 只在进出边界时触发），缺这条会出现「轻移不显现」死角。
+  /// 放行同样经延迟阀。
   void _handleMouseHover(PointerEvent event) {
     _rememberPointerKind(event);
-    if (_scrollSuppressed || _hovering) {
+    if (_hoverSuppressed || _hovering) {
       return;
     }
-    setState(() => _hovering = true);
+    _scheduleReveal();
+  }
+
+  /// 桌面悬停退出：立即隐藏、不门控（语义不变量），同时撤掉待显现的
+  /// 延迟 Timer——80ms 内快速扫过的气泡靠这一手拦住（延迟到期前人已
+  /// 经走了）。
+  void _handleMouseExit(PointerEvent event) {
+    _cancelReveal();
+    setState(() => _hovering = false);
+  }
+
+  /// 调度显现：[revealDebounce] 到期时复查抑制位——仍被抑制（行进中/
+  /// 滚动中）就丢弃，不显现也不重排；已显现或已卸载同样不动。
+  void _scheduleReveal() {
+    _revealTimer?.cancel();
+    _revealTimer = Timer(revealDebounce, () {
+      _revealTimer = null;
+      if (!mounted || _hovering) {
+        return;
+      }
+      if (_hoverSuppressed) {
+        return;
+      }
+      setState(() => _hovering = true);
+    });
+  }
+
+  void _cancelReveal() {
+    _revealTimer?.cancel();
+    _revealTimer = null;
+  }
+
+  @override
+  void dispose() {
+    _cancelReveal();
+    super.dispose();
   }
 
   /// 平台档初始猜测：Web 壳层 UA 映射——移动端浏览器是 android/iOS，
@@ -264,17 +327,18 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     if (atLabel != null) {
       // Listener 记录最近一次落在消息上的指针类型（触屏/鼠标形态随事件
       // 切换），MouseRegion 管桌面悬停显隐并包住「气泡 + 时刻行」整体，
-      // 鼠标在两者之间移动不触发进出场抖动；进出场回调经列表层滚动抑制
-      // 门控（[_handleMouseEnter]/[_handleMouseHover]，onExit 不门控）。
-      // GestureDetector 管触屏轻点显现——tap 要过手势竞技场，滑动滚动
-      // 列表（拖拽胜出）不再触发；behavior 显式 opaque：块收缩后
-      // RenderParagraph 只在文字处命中，deferToChild 会漏掉气泡 padding
-      // 区域的轻点。不为消息加键盘焦点路径——消息没有键盘操作动作。
+      // 鼠标在两者之间移动不触发进出场抖动；进出场回调经列表层行进抑制
+      // 门控（[_handleMouseEnter]/[_handleMouseHover]，放行经显现延迟阀；
+      // onExit 不门控立即隐藏）。GestureDetector 管触屏轻点显现——tap 要
+      // 过手势竞技场，滑动滚动列表（拖拽胜出）不再触发；behavior 显式
+      // opaque：块收缩后 RenderParagraph 只在文字处命中，deferToChild 会
+      // 漏掉气泡 padding 区域的轻点。不为消息加键盘焦点路径——消息没有
+      // 键盘操作动作。
       block = Listener(
         onPointerDown: _rememberPointerKind,
         child: MouseRegion(
           onEnter: _handleMouseEnter,
-          onExit: (_) => setState(() => _hovering = false),
+          onExit: _handleMouseExit,
           onHover: _handleMouseHover,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,

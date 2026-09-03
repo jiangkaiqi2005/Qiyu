@@ -9,7 +9,7 @@ import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/chat/qiyu_chat_bubble.dart';
-import 'package:qiyu_flutter/features/chat/qiyu_scroll_hover_gate.dart';
+import 'package:qiyu_flutter/features/chat/qiyu_hover_gate.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
 import 'package:qiyu_flutter/features/history/history_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
@@ -21,6 +21,46 @@ void main() {
   // 本地时刻构造（不走 UTC 换算）：断言与测试机时区无关。
   final moment = DateTime(2026, 9, 2, 23, 41);
   const label = '9月2日 23:41';
+
+  // 门控 + 真实 ListView 的共用底座：消息正文足够长，气泡宽度盖过视口
+  // 中线——滚轮把它滑到静止光标下时光标落得进 MouseRegion，不是落在
+  // 空白处凑数；正文两行多行高，快扫跨气泡的样本距离也够拉开。
+  Future<void> pumpGatedList(WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: Scaffold(
+          body: QiyuHoverGate(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(QiyuSpacing.lg),
+              itemCount: 30,
+              itemBuilder: (context, index) => QiyuChatBubble(
+                text:
+                    '第 $index 条消息：一段足够长的正文，确保气泡宽度'
+                    '盖过视口中线，滚轮把它滑到静止光标下时光标落得进气泡。',
+                fromUser: index.isEven,
+                at: moment,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+  }
+
+  // 鼠标指针：先落到起点（自动按命中派发进出场），用完即摘。起点若压
+  // 着气泡，多泵一拍让显现延迟阀（80ms）到期——门控组里「滚动开始即
+  // 隐藏已显现的行」等用例依赖这一步真的显出来；起点在空白处时这一拍
+  // 无副作用。
+  Future<TestGesture> mouseAt(WidgetTester tester, Offset location) async {
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: location);
+    addTearDown(mouse.removePointer);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    return mouse;
+  }
 
   group('formatMessageMoment 口语化时刻', () {
     test('M月D日 HH:mm，时分补零', () {
@@ -364,41 +404,8 @@ void main() {
           widget.constraints.maxWidth == QiyuLayout.messageMaxWidth,
     );
 
-    // 门控 + 真实 ListView 的共用底座：消息正文足够长，气泡宽度盖过视口
-    // 中线——滚轮把消息滑到静止光标下时光标落得进 MouseRegion，不是
-    // 落在空白处凑数。
-    Future<void> pumpGatedList(WidgetTester tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData(platform: TargetPlatform.windows),
-          home: Scaffold(
-            body: QiyuScrollHoverGate(
-              child: ListView.builder(
-                padding: const EdgeInsets.all(QiyuSpacing.lg),
-                itemCount: 30,
-                itemBuilder: (context, index) => QiyuChatBubble(
-                  text:
-                      '第 $index 条消息：一段足够长的正文，确保气泡宽度'
-                      '盖过视口中线，滚轮把它滑到静止光标下时光标落得进气泡。',
-                  fromUser: index.isEven,
-                  at: moment,
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pump();
-    }
-
-    // 鼠标指针：先落到起点（自动按命中派发进出场），用完即摘。
-    Future<TestGesture> mouseAt(WidgetTester tester, Offset location) async {
-      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-      await mouse.addPointer(location: location);
-      addTearDown(mouse.removePointer);
-      await tester.pump();
-      return mouse;
-    }
+    // 门控底座 pumpGatedList 与 mouseAt 提升到 main 作用域：
+    // 「指针行进抑制与显现延迟回归锁」组同样要用。
 
     testWidgets('用户消息同行空白处悬停不显现时刻（热区收紧为内容块）', (tester) async {
       await _pump(
@@ -416,8 +423,10 @@ void main() {
       expect(find.text(label), findsNothing);
 
       // 同一指针移到气泡本体：照常显现——空白不显现不是鼠标事件没生效。
+      // 显现经 80ms 延迟阀，多泵一拍余量。
       await mouse.moveTo(tester.getCenter(find.text('临睡随手记的')));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsOneWidget);
     });
 
@@ -436,6 +445,7 @@ void main() {
 
       await mouse.moveTo(tester.getCenter(find.text('晚安。')));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsOneWidget);
     });
 
@@ -462,6 +472,7 @@ void main() {
 
       await mouse.moveTo(tester.getCenter(find.text('临睡随手记的')));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsOneWidget);
     });
 
@@ -500,10 +511,10 @@ void main() {
       await tester.pump();
       expect(find.text(label), findsNothing);
 
-      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump(const Duration(milliseconds: 400));
       expect(find.text(label), findsNothing);
-      // 缓冲窗（250ms）已过期：指针没动就不会主动显现。
-      await tester.pump(const Duration(milliseconds: 100));
+      // 缓冲窗（500ms）已过期：指针没动就不会主动显现。
+      await tester.pump(const Duration(milliseconds: 200));
       expect(find.text(label), findsNothing);
     });
 
@@ -518,13 +529,18 @@ void main() {
           scrollDelta: Offset(0, target.center.dy - park.dy),
         ),
       );
+      // 缓冲窗加长到 500ms：窗内不显现（400ms < 500ms 不贴边）。
       await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsNothing);
 
       // 轻移 1px：指针没有进出边界，onEnter 不会来，必须由 onHover
-      // 放行显现——缺这条会出现「轻移不显现」死角。
+      // 放行显现——缺这条会出现「轻移不显现」死角。放行经 80ms 延迟阀，
+      // 多泵一拍余量。
+      await tester.pump(const Duration(milliseconds: 200));
       await mouse.moveBy(const Offset(1, 0));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsOneWidget);
     });
 
@@ -541,10 +557,14 @@ void main() {
       await tester.pump();
       expect(find.text(label), findsNothing);
 
+      // 缓冲窗（500ms）内不显现；过期后轻移放行（经 80ms 延迟阀）。
       await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsNothing);
+      await tester.pump(const Duration(milliseconds: 200));
       await mouse.moveBy(const Offset(1, 0));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsOneWidget);
     });
 
@@ -605,6 +625,349 @@ void main() {
       );
     });
   });
+
+  group('指针行进抑制与显现延迟回归锁', () {
+    // 快速移动与滚轮同属「行进」：门控对 hover 事件做速度采样
+    // （0.5px/ms 阈值、16ms 采样地板），超速即压上与滚动相同的抑制位；
+    // 气泡侧显现经 80ms 延迟阀，兜「同一事件里气泡 onEnter 先于门控
+    // onHover」的一事件滞后。事件时间戳经 TestGesture 的 timeStamp 参数
+    // 显式给定——速度判定只看事件时间戳，与挂钟无关；衰减窗走 FakeAsync
+    // 挂钟，用 pump 推进，快慢样本的时间戳间距刻意远离阈值（0.5px/ms）
+    // 与地板（16ms），不贴边。
+    testWidgets('快速移动扫过多颗气泡：行进中与结束后缓冲窗内都不显现', (tester) async {
+      await pumpGatedList(tester);
+      final mouse = await mouseAt(tester, const Offset(400, 8));
+      // 三个高速样本：第 1 → 3 → 4 条。第 1→3 步距跨过整颗第 2 条高
+      // 气泡（正文多行），高速样本跨大气泡的覆盖就在这一步。
+      var t = const Duration(milliseconds: 20);
+      await mouse.moveTo(
+        tester.getCenter(find.textContaining('第 1 条')),
+        timeStamp: t,
+      );
+      await tester.pump();
+      t += const Duration(milliseconds: 20);
+      await mouse.moveTo(
+        tester.getCenter(find.textContaining('第 3 条')),
+        timeStamp: t,
+      );
+      await tester.pump();
+      t += const Duration(milliseconds: 20);
+      await mouse.moveTo(
+        tester.getCenter(find.textContaining('第 4 条')),
+        timeStamp: t,
+      );
+      await tester.pump();
+      expect(find.text(label), findsNothing, reason: '行进中不显现');
+
+      // 停稳：衰减窗（最后快速样本 +500ms）未过期，仍不显现。
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text(label), findsNothing);
+
+      // 缓冲窗过期后指针不动也不显现（无事件不主动显现）。
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text(label), findsNothing);
+    });
+
+    testWidgets('快速移动停稳满缓冲窗后轻移 1px：经显现延迟后出现', (tester) async {
+      await pumpGatedList(tester);
+      final mouse = await mouseAt(tester, const Offset(400, 8));
+      // 先原地轻挪落一个采样，再单步高速甩到第 2 条上（约 12px/ms），
+      // 随即停稳。
+      await mouse.moveBy(
+        const Offset(0, 12),
+        timeStamp: const Duration(milliseconds: 10),
+      );
+      await tester.pump();
+      await mouse.moveTo(
+        tester.getCenter(find.textContaining('第 2 条')),
+        timeStamp: const Duration(milliseconds: 30),
+      );
+      await tester.pump();
+
+      // 缓冲窗（500ms）过期前不显现；过期后指针不动也不显现。
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text(label), findsNothing);
+
+      // 轻移 1px：经 80ms 显现延迟后出现。
+      await mouse.moveBy(
+        const Offset(1, 0),
+        timeStamp: const Duration(milliseconds: 620),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('持续快速移动期间行进抑制一直保持（每个快速样本都重启衰减窗）', (tester) async {
+      await pumpGatedList(tester);
+      final center1 = tester.getCenter(find.textContaining('第 1 条'));
+      final center2 = tester.getCenter(find.textContaining('第 2 条'));
+      final mouse = await mouseAt(tester, const Offset(400, 8));
+      // 在两颗气泡间来回快速扫 12 趟：每趟约 100px/50ms = 2px/ms，挂钟
+      // 每趟推进 50ms——总时长 600ms 超过缓冲窗，若衰减窗不从最后一个
+      // 快速样本重算，停稳后轻移的时刻就对不上。
+      var t = const Duration(milliseconds: 20);
+      for (var i = 0; i < 12; i++) {
+        await mouse.moveTo(i.isEven ? center2 : center1, timeStamp: t);
+        await tester.pump(const Duration(milliseconds: 50));
+        t += const Duration(milliseconds: 50);
+        if (i == 5) {
+          expect(find.text(label), findsNothing, reason: '行进中不显现');
+        }
+      }
+      expect(find.text(label), findsNothing);
+
+      // 停稳：衰减窗从最后一个快速样本起算，停稳点 +500ms 内轻移被压住。
+      await tester.pump(const Duration(milliseconds: 150));
+      await mouse.moveBy(const Offset(1, 0), timeStamp: t);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsNothing, reason: '缓冲窗未过期：轻移不显现');
+
+      // 窗口过期后轻移放行。
+      await tester.pump(const Duration(milliseconds: 400));
+      await mouse.moveBy(
+        const Offset(1, 0),
+        timeStamp: t + const Duration(milliseconds: 550),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('慢速移动挪到气泡上：速度低于阈值不触发行进，经显现延迟后照常出现', (tester) async {
+      await pumpGatedList(tester);
+      final target = tester.getCenter(find.textContaining('第 1 条'));
+      final mouse = await mouseAt(tester, const Offset(400, 8));
+      // 三步慢速（每步约 50px/200ms ≈ 0.25px/ms，低于 0.5 阈值）挪到
+      // 第 1 条上：不触发行进抑制，显现只过多态延迟。
+      var t = const Duration(milliseconds: 200);
+      var position = const Offset(400, 8);
+      for (var i = 0; i < 3; i++) {
+        position += Offset(0, (target.dy - position.dy) / (3 - i));
+        await mouse.moveTo(position, timeStamp: t);
+        await tester.pump();
+        t += const Duration(milliseconds: 200);
+      }
+      expect(find.text(label), findsNothing, reason: '显现延迟（80ms）未到');
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('快速甩入气泡随即停稳：延迟到期复查丢弃，缓冲窗过期后轻移才显', (tester) async {
+      await pumpGatedList(tester);
+      final mouse = await mouseAt(tester, const Offset(400, 8));
+      // 先原地轻挪落一个采样，再单步高速甩进第 1 条——同一事件里气泡的
+      // onEnter 先于门控的 onHover 派发（一事件滞后），裸判会闪：显现
+      // 延迟到期复查时行进抑制已生效，丢弃不显现。
+      await mouse.moveBy(
+        const Offset(0, 12),
+        timeStamp: const Duration(milliseconds: 10),
+      );
+      await tester.pump();
+      await mouse.moveTo(
+        tester.getCenter(find.textContaining('第 1 条')),
+        timeStamp: const Duration(milliseconds: 30),
+      );
+      await tester.pump();
+      expect(find.text(label), findsNothing, reason: '显现延迟内');
+
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsNothing, reason: '延迟到期复查：行进抑制已生效，丢弃');
+
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text(label), findsNothing, reason: '缓冲窗过期后停着不动不显现');
+
+      await mouse.moveBy(
+        const Offset(1, 0),
+        timeStamp: const Duration(milliseconds: 620),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
+    });
+
+    testWidgets('滚动缓冲期内快速移动：抑制无缝衔接，滚动窗过期后行进继续压住', (tester) async {
+      await pumpGatedList(tester);
+      const park = Offset(400, 8);
+      final mouse = await mouseAt(tester, park);
+      final item3 = tester.getRect(find.textContaining('第 3 条'));
+      await tester.sendEventToBinding(
+        PointerScrollEvent(
+          position: park,
+          scrollDelta: Offset(0, item3.center.dy - park.dy),
+        ),
+      );
+      await tester.pump();
+      final item4 = tester.getRect(find.textContaining('第 4 条'));
+      // 滚动缓冲期内快速移动：先在原地落一个采样（挂钟推进到滚动窗中
+      // 段），再单步高速甩到第 4 条上——行进窗从这一样本起算，晚于
+      // 滚动窗过期。
+      await mouse.moveBy(
+        const Offset(0, 12),
+        timeStamp: const Duration(milliseconds: 200),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      await mouse.moveTo(
+        item4.center,
+        timeStamp: const Duration(milliseconds: 220),
+      );
+      await tester.pump();
+
+      // 滚动窗（≈600ms）过期、行进窗（≈800ms）未过期：轻移仍被压住。
+      await tester.pump(const Duration(milliseconds: 400));
+      await mouse.moveBy(
+        const Offset(1, 0),
+        timeStamp: const Duration(milliseconds: 700),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsNothing, reason: '滚动窗已过期，行进窗未过期——无缝衔接');
+
+      // 行进窗也过期后：轻移放行显现。
+      await tester.pump(const Duration(milliseconds: 200));
+      await mouse.moveBy(
+        const Offset(1, 0),
+        timeStamp: const Duration(milliseconds: 910),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget, reason: '两窗都过期后轻移放行');
+    });
+
+    testWidgets('行进缓冲期内开始滚动：ScrollStart 接管并复位已显现的行，衔接无缝', (tester) async {
+      await pumpGatedList(tester);
+      final center = tester.getCenter(find.textContaining('第 3 条'));
+      final mouse = await mouseAt(tester, const Offset(400, 8));
+      // 单步慢速挪到第 3 条上（首采样不判行进），经延迟显现。
+      await mouse.moveTo(center, timeStamp: const Duration(milliseconds: 10));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
+
+      // 气泡内快速小幅晃动（80px/20ms）：行进置位，已显现的行不复位。
+      await mouse.moveBy(
+        const Offset(80, 0),
+        timeStamp: const Duration(milliseconds: 30),
+      );
+      await tester.pump();
+      await mouse.moveBy(
+        const Offset(-80, 0),
+        timeStamp: const Duration(milliseconds: 50),
+      );
+      await tester.pump();
+      expect(find.text(label), findsOneWidget, reason: '行进抑制不复位已显现的行');
+
+      // 行进缓冲期内开始滚动（12px：光标留在第 3 条内，onExit 不派发，
+      // 复位只能来自滚动位翻转）——行进抑制压不住 ScrollStart 的复位。
+      await tester.sendEventToBinding(
+        PointerScrollEvent(position: center, scrollDelta: const Offset(0, 12)),
+      );
+      await tester.pump();
+      expect(find.text(label), findsNothing, reason: 'ScrollStart 复位已显现的行');
+
+      // 行进窗与滚动窗先后过期之间无缝：任一未过期都压住轻移。
+      await tester.pump(const Duration(milliseconds: 300));
+      await mouse.moveBy(
+        const Offset(1, 0),
+        timeStamp: const Duration(milliseconds: 380),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsNothing, reason: '两窗均未过期：轻移不显现');
+
+      await tester.pump(const Duration(milliseconds: 400));
+      await mouse.moveBy(
+        const Offset(1, 0),
+        timeStamp: const Duration(milliseconds: 890),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget, reason: '两窗都过期后轻移放行');
+    });
+
+    testWidgets('行进抑制不复位已显现的行：气泡上快晃时间保持，移出即隐藏', (tester) async {
+      await pumpGatedList(tester);
+      final center = tester.getCenter(find.textContaining('第 1 条'));
+      final mouse = await mouseAt(tester, const Offset(400, 8));
+      await mouse.moveTo(center, timeStamp: const Duration(milliseconds: 10));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
+
+      // 气泡内快速小幅晃动：行进置位，但已显现的行不复位——人还在
+      // 气泡上，时刻保持已显是合理的。
+      await mouse.moveBy(
+        const Offset(80, 0),
+        timeStamp: const Duration(milliseconds: 30),
+      );
+      await tester.pump();
+      await mouse.moveBy(
+        const Offset(-80, 0),
+        timeStamp: const Duration(milliseconds: 50),
+      );
+      await tester.pump();
+      expect(find.text(label), findsOneWidget, reason: '行进抑制不复位已显现的时刻');
+
+      // 移出气泡：onExit 立即隐藏（不门控），行进抑制拦不住退出路径。
+      await mouse.moveBy(
+        const Offset(-600, -600),
+        timeStamp: const Duration(milliseconds: 70),
+      );
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+    });
+
+    testWidgets('高刷新率采样（逐帧间隔低于地板）：距离累计过地板仍判行进', (tester) async {
+      await pumpGatedList(tester);
+      final mouse = await mouseAt(tester, const Offset(400, 8));
+      // 120Hz 屏的 pointermove 逐帧间隔约 8ms，全都低于 16ms 地板：
+      // 基线若逐事件推进，每对样本都过不了地板，行进判定静默失灵，
+      // 「快移闪时刻」原样复发。三段 8ms 间距样本在第 3 个事件（首个
+      // 累计满地板者）以 12px/16ms = 0.75px/ms 过阈值判出行进——随后
+      // 甩进第 2 条的显现经延迟阀到期复查被丢弃。
+      var t = const Duration(milliseconds: 8);
+      await mouse.moveTo(const Offset(400, 14), timeStamp: t);
+      await tester.pump();
+      t += const Duration(milliseconds: 8);
+      await mouse.moveTo(const Offset(400, 20), timeStamp: t);
+      await tester.pump();
+      t += const Duration(milliseconds: 8);
+      await mouse.moveTo(
+        tester.getCenter(find.textContaining('第 2 条')),
+        timeStamp: t,
+      );
+      await tester.pump();
+
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsNothing, reason: '延迟到期复查：行进已由累计样本判定');
+
+      await tester.pump(const Duration(milliseconds: 600));
+      await mouse.moveBy(
+        const Offset(1, 0),
+        timeStamp: const Duration(milliseconds: 700),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget, reason: '缓冲窗过期后轻移放行');
+    });
+
+    testWidgets('单步甩入随即停稳：首采样只落基线不判行进，延迟阀放行显现', (tester) async {
+      await pumpGatedList(tester);
+      // 指针在列表内只产生一个采样（甩入气泡这一步）：首个采样只落基
+      // 线，无从判行进——显现延迟到期复查放行。与「先有采样再甩入」
+      // 的用例（到期被行进压制）互补，锁住文档登记的兜底路径；快速扫
+      // 过则由 onExit 在延迟内撤销，不会闪。
+      final mouse = await mouseAt(tester, const Offset(400, 8));
+      await mouse.moveTo(
+        tester.getCenter(find.textContaining('第 2 条')),
+        timeStamp: const Duration(milliseconds: 20),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget, reason: '首采样不判行进：延迟到期放行');
+    });
+  });
 }
 
 Future<void> _pump(
@@ -622,13 +985,16 @@ Future<void> _pump(
   await tester.pump();
 }
 
-/// 桌面悬停：只有鼠标型指针才触发 MouseRegion 的进出场。
+/// 桌面悬停：只有鼠标型指针才触发 MouseRegion 的进出场。显现经 80ms
+/// 延迟阀，这里多泵一拍余量让时刻真的显出来（pump() 不推进时钟，Timer
+/// 不会到期）。
 Future<TestGesture> _hoverMouse(WidgetTester tester, Finder finder) async {
   final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
   await gesture.addPointer(location: Offset.zero);
   addTearDown(gesture.removePointer);
   await gesture.moveTo(tester.getCenter(finder));
   await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100));
   return gesture;
 }
 

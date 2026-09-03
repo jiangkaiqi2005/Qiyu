@@ -16,7 +16,7 @@ import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_chat_bubble.dart';
 import 'qiyu_markdown.dart';
-import 'qiyu_scroll_hover_gate.dart';
+import 'qiyu_hover_gate.dart';
 import 'qiyu_send_button.dart';
 import 'voice_input_controller.dart';
 import 'voice_output_controller.dart';
@@ -919,10 +919,11 @@ class _LocalChatViewState extends State<LocalChatView> {
     }
     final transientCount =
         viewModel.waiting || viewModel.streamingText.isNotEmpty ? 1 : 0;
-    // 滚动抑制门控（design-system §10 第 11 条）：滚轮滚动让消息滑到
-    // 静止光标下时 MouseTracker 会派发 onEnter，时刻被误显现——门控在
-    // 列表层收住（滚动通知只向上冒泡经过祖先，放进气泡收不到）。
-    return QiyuScrollHoverGate(
+    // 行进抑制门控（design-system §10 第 11 条）：滚轮滚动让消息滑到
+    // 静止光标下时 MouseTracker 会派发 onEnter，指针快速扫过时每颗气泡
+    // 也会闪时刻——门控在列表层收住（滚动通知只向上冒泡经过祖先，放出
+    // 气泡收不到）。
+    return QiyuHoverGate(
       child: ListView.builder(
         controller: _scrollController,
         padding: const EdgeInsets.all(QiyuSpacing.lg),
