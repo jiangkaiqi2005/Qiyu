@@ -993,6 +993,57 @@ void main() {
         isTrue,
       );
     });
+
+    test('重投影从损坏原件抢救称呼行，救不出退回未设置', () async {
+      // persona.md 损坏且带合法称呼行、树可读：重投影保住称呼行。
+      await overwrite(
+        File(path.join(memoryDirectory, 'persona.md')),
+        '# persona\n称呼：凯奇\n\n## 偏好与习惯\n这条投影坏了',
+      );
+
+      var report = await recovery.sweepAndRecover();
+
+      var persona = File(path.join(memoryDirectory, 'persona.md'));
+      expect(await persona.exists(), isTrue);
+      final contents = await persona.readAsString();
+      expect(contents, contains('称呼：凯奇'));
+      expect(await personaTree.readAppellation(), '凯奇');
+      var finding = findByKey(report, 'persona-projection');
+      expect(finding, isNotNull);
+      expect(finding!.outcome, MemoryRecoveryOutcome.full);
+      expect(quarantineCount(), 0);
+
+      // persona.md 与画像分支同时损坏：分支隔离（pending），persona.md
+      // 从（已空的）活跃树重投影，称呼行仍从原件抢救回来。
+      await overwrite(
+        File(path.join(memoryDirectory, 'persona-tree', 'identity.md')),
+        '分支乱码',
+      );
+      await overwrite(
+        File(path.join(memoryDirectory, 'persona.md')),
+        '# persona\n称呼：老王\n\n## 身份与客观事实\n这条投影坏了',
+      );
+
+      report = await recovery.sweepAndRecover();
+
+      persona = File(path.join(memoryDirectory, 'persona.md'));
+      expect(await persona.exists(), isTrue);
+      expect(await persona.readAsString(), '# persona\n称呼：老王\n');
+      expect(await personaTree.readAppellation(), '老王');
+      finding = findByKey(report, 'persona-projection');
+      expect(finding, isNotNull);
+      expect(finding!.outcome, MemoryRecoveryOutcome.full);
+      expect(quarantineCount(), 1);
+
+      // 反向：原件里没有合法称呼行时退回未设置（空投影不落文件）。
+      await overwrite(
+        File(path.join(memoryDirectory, 'persona.md')),
+        '# persona\n换行\n都出来了',
+      );
+      await recovery.sweepAndRecover();
+      expect(await personaTree.readAppellation(), isNull);
+      expect(await persona.exists(), isFalse);
+    });
   });
 
   group('热层', () {

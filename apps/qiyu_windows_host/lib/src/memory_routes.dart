@@ -7,8 +7,10 @@ import 'api_http.dart';
 import 'memory_actions.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
+import 'persona_tree.dart';
 
-/// 记忆领域路由：四区总览、条目详情、记忆动作与控制记录浏览。
+/// 记忆领域路由：四区总览、条目详情、记忆动作、称呼设定与控制记录
+/// 浏览。
 ///
 /// 本模块持有记忆领域的路径匹配、payload 解析、序列化与错误翻译
 /// （含记忆动作结果码到 HTTP 状态的映射）；删除本模块，这些职责会
@@ -18,11 +20,16 @@ final class MemoryRoutes implements ApiRoutes {
     required this.memoryCenter,
     required this.memoryActions,
     required this.memoryControls,
+    required this.personaTree,
   });
 
   final MemoryCenterService memoryCenter;
   final MemoryActionService memoryActions;
   final MemoryControlsStore memoryControls;
+
+  /// 称呼写入口之一（记忆中心）：Persona 区修改称呼落到 persona.md
+  /// 受保护设定行；与聊天自述、首见引导共用同一校验与写入实现。
+  final PersonaTreeStore personaTree;
 
   @override
   Future<Response?> handle(Request request) async {
@@ -124,6 +131,31 @@ final class MemoryRoutes implements ApiRoutes {
       return Response(
         statusCode,
         body: jsonEncode(result.toJson()),
+        headers: jsonHeaders,
+      );
+    }
+    if (method == 'POST' && path == 'api/memory/appellation') {
+      final Map<String, Object?> payload;
+      try {
+        payload = await readJsonObject(request, maxBytes: 16 * 1024);
+      } on FormatException {
+        throw invalidRequest('称呼设置请求格式不正确。');
+      }
+      final value = payload['appellation'];
+      if (value is! String) {
+        throw invalidRequest('称呼设置请求格式不正确。');
+      }
+      final written = await personaTree.setAppellation(value);
+      if (written == null) {
+        return jsonError(
+          HttpStatus.badRequest,
+          code: 'invalid_appellation',
+          message: appellationRejectedMessage,
+          retryable: false,
+        );
+      }
+      return Response.ok(
+        jsonEncode({'appellation': written}),
         headers: jsonHeaders,
       );
     }

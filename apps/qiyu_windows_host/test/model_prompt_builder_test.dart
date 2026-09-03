@@ -27,6 +27,22 @@ void main() {
     expect(messages.last.content, '在吗');
   });
 
+  test('hidden action protocol carries the appellation wording rule', () {
+    final system = builder
+        .build(StateSnapshot.initial('local-user'), '在吗')
+        .first
+        .content;
+    // 记忆表述惯例（称呼定稿）：有称呼用称呼、无称呼用「用户」；对话
+    // 侧只在自然时机称呼，不每轮都叫，无称呼用「你」。
+    expect(system, contains('表述惯例'));
+    expect(system, contains('称呼'));
+    expect(system, contains('没有就写「用户」'));
+    expect(system, contains('自然时机'));
+    expect(system, contains('不每轮都叫'));
+    expect(system, contains('就用「你」'));
+    expect(system, contains('绝不自创昵称'));
+  });
+
   test('web search instruction is injected exactly once only when enabled', () {
     final disabled = builder
         .build(StateSnapshot.initial('local-user'), '现在几点')

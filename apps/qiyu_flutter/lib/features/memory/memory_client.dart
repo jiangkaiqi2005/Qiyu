@@ -298,7 +298,7 @@ final class MemoryPersonaBranchCard {
 }
 
 final class MemoryPersonaSection {
-  const MemoryPersonaSection({required this.branches});
+  const MemoryPersonaSection({required this.branches, this.appellation});
 
   factory MemoryPersonaSection.fromJson(Map<String, Object?> json) =>
       MemoryPersonaSection(
@@ -306,9 +306,13 @@ final class MemoryPersonaSection {
           json['branches'],
           MemoryPersonaBranchCard.fromJson,
         ),
+        appellation: json['appellation'] as String?,
       );
 
   final List<MemoryPersonaBranchCard> branches;
+
+  /// 当前称呼（persona.md 受保护设定行）；未设置为 null。
+  final String? appellation;
 
   bool get isEmpty => branches.every((branch) => branch.isEmpty);
 }
@@ -744,6 +748,10 @@ abstract interface class MemoryGateway {
   /// ID 对应条目已不存在或已变化时返回 null。
   Future<MemoryItemDetail?> fetchItemDetail(String id);
 
+  /// 设置称呼（Persona 区，称呼定稿 2026-09-03）：格式被 Host 拒绝时
+  /// 抛出带服务端提示的网关异常。
+  Future<void> setAppellation(String appellation);
+
   Future<MemoryActionResult> editItem(String id, String text);
 
   Future<MemoryActionResult> freezeItem(String id);
@@ -785,6 +793,16 @@ final class HttpMemoryGateway extends HostApiGateway implements MemoryGateway {
       return null;
     }
     return MemoryItemDetail.fromJson(decodeSuccess(response));
+  }
+
+  @override
+  Future<void> setAppellation(String appellation) async {
+    final response = await httpClient.post(
+      resolve('/api/memory/appellation'),
+      headers: await modifyingHeaders(),
+      body: jsonEncode({'appellation': appellation}),
+    );
+    decodeSuccess(response);
   }
 
   @override

@@ -73,9 +73,11 @@ void main() {
       expect(find.text('用户和家人关系亲近'), findsOneWidget);
       expect(find.textContaining('最近一次深度整理'), findsOneWidget);
 
-      // 关于你：根主张与证据跨度。
+      // 关于你：称呼、根主张与证据跨度。
       await tester.tap(find.byKey(const Key('memory-tab-persona')));
       await tester.pumpAndSettle();
+      expect(find.text('栖语这样叫你'), findsOneWidget);
+      expect(find.text('凯奇'), findsOneWidget);
       expect(find.text('性格表达'), findsOneWidget);
       expect(find.text('用户尴尬时倾向自嘲'), findsOneWidget);
       expect(find.textContaining('2 条证据'), findsOneWidget);
@@ -494,6 +496,40 @@ void main() {
     await tester.tap(find.byKey(const Key('memory-back')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+  });
+
+  testWidgets('记忆中心 Persona 区可以查看并修改称呼', (tester) async {
+    final memoryGateway = _FakeMemoryGateway(_emptyOverview());
+    final memoryViewModel = MemoryCenterViewModel(
+      memoryGateway,
+      autoStart: false,
+    );
+    await memoryViewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        onboardingViewModel: await _onboardingViewModel(),
+        memoryViewModel: memoryViewModel,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-memory')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-tab-persona')));
+    await tester.pumpAndSettle();
+
+    // 未设置时安静留空，提供补设入口（错过首见也能设）。
+    expect(find.text('还没设置'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('memory-appellation-edit')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('memory-appellation-field')),
+      '老王',
+    );
+    await tester.tap(find.byKey(const Key('memory-appellation-save')));
+    await tester.pumpAndSettle();
+
+    expect(memoryGateway.actionCalls, contains('appellation:老王'));
   });
 
   testWidgets('sensitive entries are masked and statuses stay quiet', (
@@ -2378,6 +2414,7 @@ MemoryOverview _fullOverview() => MemoryOverview(
     ],
   ),
   persona: MemoryPersonaSection(
+    appellation: '凯奇',
     branches: [
       MemoryPersonaBranchCard(
         wire: 'expression',
@@ -2587,6 +2624,11 @@ final class _FakeMemoryGateway implements MemoryGateway {
       throw error;
     }
     return _overview;
+  }
+
+  @override
+  Future<void> setAppellation(String appellation) async {
+    actionCalls.add('appellation:$appellation');
   }
 
   @override
@@ -2831,7 +2873,7 @@ final class _FakeOnboardingGateway implements OnboardingGateway {
       const OnboardingState(completed: true);
 
   @override
-  Future<void> complete() async {}
+  Future<void> complete({String? appellation}) async {}
 }
 
 final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {

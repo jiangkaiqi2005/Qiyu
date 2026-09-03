@@ -480,7 +480,7 @@ final class _FakeOnboardingGateway implements OnboardingGateway {
       const OnboardingState(completed: true);
 
   @override
-  Future<void> complete() async {}
+  Future<void> complete({String? appellation}) async {}
 }
 
 final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {

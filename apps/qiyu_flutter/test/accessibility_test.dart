@@ -1070,6 +1070,9 @@ final class _FakeMemoryGateway implements MemoryGateway {
   Future<MemoryItemDetail?> fetchItemDetail(String id) async => null;
 
   @override
+  Future<void> setAppellation(String appellation) async {}
+
+  @override
   Future<MemoryActionResult> editItem(String id, String text) async =>
       const MemoryActionResult(
         status: MemoryActionStatus.success,
@@ -1184,7 +1187,7 @@ final class _FakeOnboardingGateway implements OnboardingGateway {
   Future<OnboardingState> read() async => OnboardingState(completed: completed);
 
   @override
-  Future<void> complete() async {
+  Future<void> complete({String? appellation}) async {
     completed = true;
   }
 }
@@ -1197,7 +1200,7 @@ final class _HangingOnboardingGateway implements OnboardingGateway {
   Future<OnboardingState> read() => _read.future;
 
   @override
-  Future<void> complete() => Completer<void>().future;
+  Future<void> complete({String? appellation}) => Completer<void>().future;
 }
 
 final class _FixedProviderGateway implements ProviderSettingsGateway {

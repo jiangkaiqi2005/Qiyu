@@ -943,6 +943,117 @@ void main() {
   );
 
   test(
+    'onboarding completion accepts an appellation and the memory center serves and edits it',
+    () async {
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+      );
+      final browser = await _openBrowserSession(host);
+
+      // 首见引导带称呼：落到 persona.md 受保护设定行。
+      final completed = await _send(
+        host.origin.resolve('/api/onboarding/complete'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{"appellation":"凯奇"}',
+      );
+      expect(completed.statusCode, HttpStatus.ok);
+      expect(
+        File(
+          '${memoryDirectory.path}${Platform.pathSeparator}persona.md',
+        ).readAsStringSync(),
+        contains('称呼：凯奇'),
+      );
+
+      // 记忆中心 Persona 区读到处呼。
+      final overviewResponse = await _send(
+        host.origin.resolve('/api/memory'),
+        headers: browser.readHeaders(host.origin),
+      );
+      final overview = jsonDecode(overviewResponse.body) as Map<String, Object?>;
+      final persona = overview['persona']! as Map<String, Object?>;
+      expect(persona['appellation'], '凯奇');
+
+      // 记忆中心修改称呼。
+      final updated = await _send(
+        host.origin.resolve('/api/memory/appellation'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{"appellation":"老王"}',
+      );
+      expect(updated.statusCode, HttpStatus.ok);
+      expect(
+        jsonDecode(updated.body) as Map<String, Object?>,
+        {'appellation': '老王'},
+      );
+      expect(
+        File(
+          '${memoryDirectory.path}${Platform.pathSeparator}persona.md',
+        ).readAsStringSync(),
+        contains('称呼：老王'),
+      );
+
+      // 格式校验：空、超长、换行都被拒，称呼保持原值。
+      for (final rejected in ['{"appellation":"  "}', '{"appellation":"${'长' * 21}"}', '{"appellation":"两\n行"}']) {
+        final response = await _send(
+          host.origin.resolve('/api/memory/appellation'),
+          method: 'POST',
+          headers: browser.mutationHeaders(host.origin),
+          requestBody: rejected,
+        );
+        expect(response.statusCode, HttpStatus.badRequest, reason: rejected);
+      }
+      expect(
+        File(
+          '${memoryDirectory.path}${Platform.pathSeparator}persona.md',
+        ).readAsStringSync(),
+        contains('称呼：老王'),
+      );
+      await host.close();
+    },
+  );
+
+  test(
+    'onboarding completion rejects an invalid appellation without completing',
+    () async {
+      final host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+      );
+      final browser = await _openBrowserSession(host);
+
+      final rejected = await _send(
+        host.origin.resolve('/api/onboarding/complete'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{"appellation":"${'长' * 21}"}',
+      );
+      expect(rejected.statusCode, HttpStatus.badRequest);
+      expect(
+        (jsonDecode(rejected.body) as Map<String, Object?>)['code'],
+        'invalid_appellation',
+      );
+
+      // 称呼被拒时引导保持未完成：留在首见页可改后重试或跳过。
+      final state = await _send(
+        host.origin.resolve('/api/onboarding'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(jsonDecode(state.body), {'completed': false});
+      expect(
+        File(
+          '${memoryDirectory.path}${Platform.pathSeparator}persona.md',
+        ).existsSync(),
+        isFalse,
+      );
+      await host.close();
+    },
+  );
+
+  test(
     'memory center endpoints serve the four read-only sections over HTTP',
     () async {
       final host = await LocalAppHost.start(

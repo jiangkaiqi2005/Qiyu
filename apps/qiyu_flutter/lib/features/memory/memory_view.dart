@@ -377,15 +377,18 @@ class _PersonaTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (section.isEmpty) {
-      return const _EmptyState(
-        key: Key('memory-empty-persona'),
-        text: '还没有形成关于你的画像。\n画像来自一次次聊天里的积累，慢慢来。',
-      );
-    }
+    // 称呼设定卡常驻（称呼定稿 2026-09-03）：错过首见也能在这里补设；
+    // 没设称呼且画像未成时仍保留诚实空态。
+    final branchesEmpty = section.branches.every((branch) => branch.isEmpty);
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
+        _AppellationCard(appellation: section.appellation),
+        if (section.appellation == null && branchesEmpty)
+          const _EmptyState(
+            key: Key('memory-empty-persona'),
+            text: '还没有形成关于你的画像。\n画像来自一次次聊天里的积累，慢慢来。',
+          ),
         for (final branch in section.branches) ...[
           Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 8),
@@ -414,6 +417,111 @@ class _PersonaTab extends StatelessWidget {
               ),
           ],
         ],
+      ],
+    );
+  }
+}
+
+/// 称呼设定卡：展示栖语当前怎么称呼用户，可修改——称呼始终由用户
+/// 掌握；未设置时安静留空，绝不替用户编一个。
+class _AppellationCard extends StatelessWidget {
+  const _AppellationCard({required this.appellation});
+
+  final String? appellation;
+
+  @override
+  Widget build(BuildContext context) {
+    final busy = context.select<MemoryCenterViewModel, bool>(
+      (viewModel) => viewModel.acting,
+    );
+    return _MemoryCard(
+      child: ListTile(
+        title: Text('栖语这样叫你', style: Theme.of(context).textTheme.titleSmall),
+        subtitle: Text(
+          appellation ?? '还没设置',
+          key: const Key('memory-appellation-value'),
+        ),
+        trailing: QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            key: const Key('memory-appellation-edit'),
+            onPressed: busy ? null : () => unawaited(_edit(context)),
+            child: Text(appellation == null ? '设置' : '修改'),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _edit(BuildContext context) async {
+    // await 之前取齐上下文依赖：发起处界面销毁后不再挂结果横幅。
+    final viewModel = context.read<MemoryCenterViewModel>();
+    final messenger = ScaffoldMessenger.of(context);
+    final updated = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => const _AppellationEditDialog(),
+    );
+    if (updated == null) {
+      return;
+    }
+    final trimmed = updated.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    final result = await viewModel.setAppellation(trimmed);
+    messenger.showSnackBar(memoryActionResultSnackBar(result));
+  }
+}
+
+/// 称呼编辑对话框：只此一项，不追问任何其他信息。
+class _AppellationEditDialog extends StatefulWidget {
+  const _AppellationEditDialog();
+
+  @override
+  State<_AppellationEditDialog> createState() => _AppellationEditDialogState();
+}
+
+class _AppellationEditDialogState extends State<_AppellationEditDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: context.read<MemoryCenterViewModel>().overview?.persona.appellation,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('栖语怎么称呼你？'),
+      content: TextField(
+        key: const Key('memory-appellation-field'),
+        controller: _controller,
+        autofocus: true,
+        maxLength: 20,
+        decoration: const InputDecoration(
+          hintText: '名字、昵称、代号都行',
+          counterText: '',
+        ),
+      ),
+      actions: [
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+        ),
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            key: const Key('memory-appellation-save'),
+            onPressed: () => Navigator.of(context).pop(_controller.text),
+            child: const Text('保存'),
+          ),
+        ),
       ],
     );
   }

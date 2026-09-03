@@ -372,6 +372,9 @@ final class _FakeMemoryGateway implements MemoryGateway {
   Future<MemoryOverview> fetchOverview() async => _overview;
 
   @override
+  Future<void> setAppellation(String appellation) async {}
+
+  @override
   Future<MemoryItemDetail?> fetchItemDetail(String id) async =>
       const PersonaRootDetail(
         branch: 'expression',

@@ -301,12 +301,16 @@ final class MemoryPersonaBranchCard {
 }
 
 final class MemoryPersonaSection {
-  const MemoryPersonaSection({required this.branches});
+  const MemoryPersonaSection({required this.branches, this.appellation});
 
   final List<MemoryPersonaBranchCard> branches;
 
+  /// 当前称呼（persona.md 受保护设定行）；未设置或读取失败为 null。
+  final String? appellation;
+
   Map<String, Object?> toJson() => {
     'branches': branches.map((branch) => branch.toJson()).toList(),
+    if (appellation != null) 'appellation': appellation,
   };
 }
 
@@ -915,7 +919,10 @@ final class MemoryCenterService {
         ),
       );
     }
-    return MemoryPersonaSection(branches: branches);
+    return MemoryPersonaSection(
+      branches: branches,
+      appellation: await personaTree.readAppellation(),
+    );
   }
 
   Future<MemoryRelationshipSection> _relationshipSection(

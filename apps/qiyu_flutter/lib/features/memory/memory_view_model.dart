@@ -55,6 +55,17 @@ final class MemoryCenterViewModel extends ChangeNotifier {
 
   // ---------- 记忆动作（ticket 20） ----------
 
+  /// 设置称呼（称呼定稿 2026-09-03）：成功后刷新总览；格式被拒时
+  /// 返回带服务端提示的失败结果，界面内联呈现。
+  Future<MemoryActionResult> setAppellation(String appellation) =>
+      _mutate(() async {
+        await _gateway.setAppellation(appellation);
+        return const MemoryActionResult(
+          status: MemoryActionStatus.success,
+          message: '称呼已更新。',
+        );
+      });
+
   Future<MemoryActionResult> edit(String id, String text) =>
       _mutate(() => _gateway.editItem(id, text));
 

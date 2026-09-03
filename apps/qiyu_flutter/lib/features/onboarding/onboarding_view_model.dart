@@ -64,14 +64,20 @@ final class OnboardingViewModel extends ChangeNotifier {
     await initialize();
   }
 
-  Future<bool> complete() async {
+  /// 完成初见引导。[appellation] 是首见页输入的称呼；null 或空串表示
+  /// 跳过（不发送称呼字段）。称呼被 Host 拒绝时引导保持未完成，留在
+  /// 首见页内联提示。
+  Future<bool> complete({String? appellation}) async {
     if (_completing) {
       return false;
     }
+    final trimmed = appellation?.trim() ?? '';
     _completing = true;
     _completeError = null;
     try {
-      await _onboardingGateway.complete();
+      await _onboardingGateway.complete(
+        appellation: trimmed.isEmpty ? null : trimmed,
+      );
       _completed = true;
       return true;
     } on Object catch (error) {

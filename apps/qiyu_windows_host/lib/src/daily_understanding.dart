@@ -380,6 +380,7 @@ Future<DayUnderstanding?> fetchDayUnderstanding({
   required Set<String> bannedTitles,
   List<RawSession> sessions = const [],
   Set<String> pendingRequestIds = const <String>{},
+  String? appellation,
   void Function(String message)? diagnosticsSink,
 }) async {
   final sink = diagnosticsSink ?? stderrDiagnostics;
@@ -395,6 +396,7 @@ Future<DayUnderstanding?> fetchDayUnderstanding({
         sessions: sessions,
         pendingRequestIds: pendingRequestIds,
         bannedTitles: bannedTitles,
+        appellation: appellation,
       ),
       maxTokens: understandingMaxOutputTokens,
     );
@@ -629,14 +631,23 @@ List<ModelMessage> _understandingMessages({
   required List<RawSession> sessions,
   required Set<String> pendingRequestIds,
   required Set<String> bannedTitles,
+  String? appellation,
 }) {
-  const system = '''
+  // 记忆表述惯例（称呼定稿 2026-09-03）：有称呼用称呼、无称呼用
+  // 「用户」。称呼格式受控（无换行与控制字符、限长），可安全内嵌。
+  final appellationRule = appellation == null
+      ? '6. 整理出的内容指称用户时一律写「用户」，不要替用户起昵称。'
+      : '6. 整理出的内容指称用户时一律用称呼「$appellation」，不要写'
+            '「用户」，也不要替用户起昵称。';
+  final system =
+      '''
 你是栖语日终归档的本机记忆整理模块。给你某一天的原始会话、已有对话整理记录与当前记忆状态，请产出当天的理解材料。要求：
 1. 只输出一个 JSON 对象，不要输出任何其它文字、解释或代码块标记。
 2. 所有内容必须来自给定材料，不得编造、不得引入材料外的事实；只做当天理解，不做跨天深度重组。
 3. 没有把握或材料中没有依据的字段直接省略。
 4. 密码、密钥、证件号、银行卡号等敏感内容一律不得出现。
 5. 从已有 sessions 补建缺失的 episode，而不是只处理已经存在的 episode。只补“待补 requestId”标出的用户轮；日常琐事、临时状态、随口提到的生活细节和项目进展也要记录，不要只挑长期稳定或重大事项。寒暄、重复内容和纯测试话语可以不生成 episode，但仍要在完整处理后写入 covered_request_ids。
+$appellationRule
 字段白名单：
 - episode_entries: 数组，从待补用户轮整理出的 episode；每项 {"request_id": 必须取自待补 requestId, "summary": 不超过60字的事实概括, "evidence": 可选的用户原话摘录，不超过80字}。同一轮有多件小事可以分成多项。
 - covered_request_ids: 数组。只有完整检查过全部待补用户轮时才输出；直接从「## 待补 requestId 清单」原样复制全部条目，不得遗漏、改写或编造。
@@ -716,7 +727,7 @@ List<ModelMessage> _understandingMessages({
     ..writeln('## 待补 requestId 清单')
     ..write(idList.isEmpty ? '（无）\n' : idList.toString());
   return [
-    const ModelMessage(ModelMessageRole.system, system),
+    ModelMessage(ModelMessageRole.system, system),
     ModelMessage(ModelMessageRole.user, user.toString()),
   ];
 }

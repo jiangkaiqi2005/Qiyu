@@ -119,6 +119,96 @@ const personaMaxRunes = 600;
 /// 身份事实最后省略；边界禁区不在裁剪顺序里，永不裁掉。
 const personaTrimOrder = ['偏好与习惯', '性格与表达', '价值观与原则', '身份与客观事实'];
 
+/// persona.md 受保护用户设定行（称呼，2026-09-03 定稿）：用户自填的
+/// 「怎么叫你」的名称，是用户设定而非画像内容，不经 PersonaTree 证据
+/// 链。行放在 `# persona` 标题之后、五节投影之前；未设置时该行不存在。
+/// 所有写 persona.md 的路径（Dream 刷新、日终维护、重建）都必须原样
+/// 保留这一行（ADR 0005）。
+const appellationLinePrefix = '称呼：';
+
+/// 称呼限长（runes，定稿）：约 20 字，覆盖名字、昵称与代号。
+const appellationMaxRunes = 20;
+
+/// 称呼禁止的字符（定稿）：换行与控制字符会破坏 persona.md 行结构与
+/// prompt 装配，一律拒绝；不做语义审查。
+final appellationForbiddenCharPattern = RegExp(r'[\n\r\u0000-\u001F\u007F]');
+
+/// 称呼格式校验（定稿）：去首尾空白后非空、不超过 20 字、不含换行与
+/// 控制字符。返回 null 表示通过，否则是原因码。
+String? appellationFormatError(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) {
+    return 'empty-appellation';
+  }
+  if (appellationForbiddenCharPattern.hasMatch(trimmed)) {
+    return 'invalid-char-appellation';
+  }
+  if (trimmed.runes.length > appellationMaxRunes) {
+    return 'long-appellation';
+  }
+  return null;
+}
+
+/// 称呼格式被拒时的对外提示（首见引导与记忆中心两个 HTTP 写入口共
+/// 用同一句话，避免逐字重复）。
+const appellationRejectedMessage = '这个称呼用不了：去掉首尾空白后最长 20 个字，'
+    '不能用换行或特殊控制字符。';
+
+/// 从 persona.md 原文提取受保护设定行：存在且值通过格式校验时返回
+/// 规范化整行（`称呼：值`），否则返回 null。损坏恢复从隔离原件抢救
+/// 这一行的唯一口径。
+String? extractAppellationLine(String? contents) {
+  if (contents == null) {
+    return null;
+  }
+  for (final rawLine in contents.replaceAll('\r\n', '\n').split('\n')) {
+    final line = rawLine.trim();
+    if (!line.startsWith(appellationLinePrefix)) {
+      continue;
+    }
+    final value = line.substring(appellationLinePrefix.length).trim();
+    if (appellationFormatError(value) != null) {
+      return null;
+    }
+    return '$appellationLinePrefix$value';
+  }
+  return null;
+}
+
+/// 对话自述称呼（「以后叫我老王」）的确定性识别：只认句尾的明确指定
+/// 句式，宁可不生效也不把普通消息里的名字误当称呼。返回未经格式校验
+/// 的候选值，无匹配返回 null。
+String? extractAppellationSelfReport(String text) {
+  final matches = _appellationSelfReportPattern.allMatches(text.trim());
+  if (matches.isEmpty) {
+    return null;
+  }
+  return matches.last.group(1)?.trim();
+}
+
+final _appellationSelfReportPattern = RegExp(
+  r'(?:以后|从现在起|从今以后|今后|往后)?(?:请|就|可以)?(?:叫我|称呼我|喊我)'
+  r'(?:为|做|是)?\s*([^\s。，、；;：:！!？?．.，,「」『』""''""\x27…·~～-]{1,24}?)'
+  r'(?:吧|呀|哦|啦|呗|就好|就行|就可以|就可以了)*\s*[。．.！!？?～~]*$',
+);
+
+/// 独立读取记忆目录里的当前称呼：供不持有 [PersonaTreeStore] 的整理
+/// 调用（日终理解、召回表述）使用。未设置或读取失败返回 null。
+Future<String?> readAppellationFromMemory(String memoryDirectory) async {
+  try {
+    final file = File(path.join(memoryDirectory, 'persona.md'));
+    if (!await file.exists()) {
+      return null;
+    }
+    final line = extractAppellationLine(
+      await file.readAsString(encoding: utf8),
+    );
+    return line?.substring(appellationLinePrefix.length);
+  } on Object {
+    return null;
+  }
+}
+
 /// 超预算时按 [personaTrimOrder] 从第一个可裁小节尾部丢弃一条；
 /// 只剩边界禁区等不可裁内容时返回 false。persona.md 写盘与注入关
 /// [clipPersonaBlock] 共用同一砍序。
@@ -595,6 +685,8 @@ final class PersonaTreeStore {
   File _branchFile(PersonaBranch branch) =>
       File(path.join(memoryDirectory, 'persona-tree', branch.fileName));
 
+  File get _personaFile => File(path.join(memoryDirectory, 'persona.md'));
+
   File _archiveFile(PersonaBranch branch) => File(
     path.join(memoryDirectory, 'persona-tree', 'archive', branch.fileName),
   );
@@ -853,6 +945,67 @@ final class PersonaTreeStore {
     }
     return updated;
   });
+
+  /// 读取当前称呼（persona.md 受保护设定行）。未设置、行无效或读取
+  /// 失败返回 null；记忆中心展示与整理 prompt 共用这一口径。
+  Future<String?> readAppellation() => readAppellationFromMemory(
+    memoryDirectory,
+  );
+
+  /// 写入或更新称呼设定行（三个写入口共用：首见引导、记忆中心、对话
+  /// 自述）。格式校验不通过返回 null；成功返回规范化后的称呼。与
+  /// persona.md 的全部重投影共用树内串行锁，设定行不会在写入间隙丢失。
+  Future<String?> setAppellation(String raw) => _locked(() async {
+    if (appellationFormatError(raw) != null) {
+      return null;
+    }
+    final value = raw.trim();
+    final line = '$appellationLinePrefix$value';
+    final merged = _mergeAppellationLine(await _readPersonaContents(), line);
+    await _atomicWriter.replace(_personaFile.path, merged);
+    return value;
+  });
+
+  /// 读取 persona.md 现有原文；不存在或读取失败返回 null。
+  Future<String?> _readPersonaContents() async {
+    try {
+      final file = _personaFile;
+      if (!await file.exists()) {
+        return null;
+      }
+      return await file.readAsString(encoding: utf8);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// 把设定行并入 persona.md 原文：替换全部旧行；无标题时补最小骨架。
+  /// 五节投影内容逐行原样保留。
+  String _mergeAppellationLine(String? contents, String line) {
+    final lines = contents
+        ?.replaceAll('\r\n', '\n')
+        .split('\n')
+        .where(
+          (existing) =>
+              existing.trim().startsWith(appellationLinePrefix) == false,
+        )
+        .toList();
+    if (lines == null || lines.isEmpty) {
+      return '# persona\n$line\n';
+    }
+    final headerIndex = lines.indexWhere(
+      (existing) => existing.trim() == '# persona',
+    );
+    if (headerIndex < 0) {
+      lines
+        ..insert(0, '# persona')
+        ..insert(1, line);
+    } else {
+      lines.insert(headerIndex + 1, line);
+    }
+    final merged = lines.join('\n');
+    return merged.endsWith('\n') ? merged : '$merged\n';
+  }
 
   /// Dream 只读快照：活跃根、未归根中间理解与归档主张（负面依据）。
   /// 读失败不回 null，用 readable=false 表达，Dream 对该分支不提案。
@@ -2054,10 +2207,16 @@ final class PersonaTreeStore {
     await _writePersona(states);
   }
 
-  /// persona.md：只逐条复制活跃根主张原文，不含节点 ID、证据提示、
-  /// 日期或二次概括；超预算按 [personaTrimOrder] 裁剪，边界禁区永不裁。
+  /// persona.md：开头是受保护用户设定行（称呼，如有），随后只逐条
+  /// 复制活跃根主张原文，不含节点 ID、证据提示、日期或二次概括；超
+  /// 预算按 [personaTrimOrder] 裁剪，边界禁区永不裁。重投影前先从
+  /// 现有文件抢救设定行（ADR 0005）：全部写 persona.md 的路径都经
+  /// 这里圆桩该行，遗漏即丢称呼。
   Future<void> _writePersona(Map<String, _BranchState> states) async {
-    final file = File(path.join(memoryDirectory, 'persona.md'));
+    final file = _personaFile;
+    final appellationLine = extractAppellationLine(
+      await _readPersonaContents(),
+    );
     final sections = <(String, List<String>)>[];
     for (final branch in personaBranches) {
       final claims = states[branch.wireName]!.roots
@@ -2069,7 +2228,13 @@ final class PersonaTreeStore {
       }
     }
     if (sections.isEmpty) {
-      if (await file.exists()) {
+      // 投影为空：只有还留着设定行时才保留最小文件，否则维持删除。
+      if (appellationLine != null) {
+        await _atomicWriter.replace(
+          file.path,
+          '# persona\n$appellationLine\n',
+        );
+      } else if (await file.exists()) {
         await file.delete();
       }
       return;
@@ -2081,11 +2246,20 @@ final class PersonaTreeStore {
       }
     }
     sections.removeWhere((entry) => entry.$2.isEmpty);
-    await _atomicWriter.replace(file.path, _renderPersona(sections));
+    await _atomicWriter.replace(
+      file.path,
+      _renderPersona(sections, appellationLine),
+    );
   }
 
-  String _renderPersona(List<(String, List<String>)> sections) {
+  String _renderPersona(
+    List<(String, List<String>)> sections, [
+    String? appellationLine,
+  ]) {
     final buffer = StringBuffer()..writeln('# persona');
+    if (appellationLine != null) {
+      buffer.writeln(appellationLine);
+    }
     for (final (title, claims) in sections) {
       buffer
         ..writeln()
@@ -2098,8 +2272,9 @@ final class PersonaTreeStore {
   }
 }
 
-/// 注入关裁剪 persona.md 投影：超预算按定稿砍序（偏好习惯 → 性格
-/// 表达 → 价值观与原则 → 身份事实）逐条丢弃条目；边界禁区永不裁掉。
+/// 注入关裁剪 persona.md 投影：受保护称呼设定行原样保留（不占裁剪
+/// 砍序，也不可裁），其余超预算按定稿砍序（偏好习惯 → 性格表达 →
+/// 价值观与原则 → 身份事实）逐条丢弃条目；边界禁区永不裁掉。
 /// 不可解析内容超预算时整体放弃（绝不注入裁半的内容）。极端情形下
 /// 预算被压到零甚至负数时，仍只保留边界禁区节——边界内容优先于
 /// 预算数字，宁可短暂超预算也不丢安全边界。
@@ -2109,6 +2284,7 @@ String clipPersonaBlock(String contents, int maxRunes) {
   }
   final sections = <(String, List<String>)>[];
   (String, List<String>)? current;
+  String? appellationLine;
   for (final rawLine in contents.replaceAll('\r\n', '\n').split('\n')) {
     final line = rawLine.trim();
     if (line.isEmpty || line == '# persona') {
@@ -2120,6 +2296,10 @@ String clipPersonaBlock(String contents, int maxRunes) {
       current = section;
       continue;
     }
+    if (appellationLine == null && line.startsWith(appellationLinePrefix)) {
+      appellationLine = line;
+      continue;
+    }
     if (line.startsWith('- ') && current != null) {
       current.$2.add(line.substring(2).trim());
       continue;
@@ -2129,6 +2309,9 @@ String clipPersonaBlock(String contents, int maxRunes) {
 
   String render() {
     final buffer = StringBuffer();
+    if (appellationLine != null) {
+      buffer.writeln(appellationLine);
+    }
     for (final (title, items) in sections) {
       if (items.isEmpty) {
         continue;

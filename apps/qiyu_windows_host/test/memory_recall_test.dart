@@ -48,6 +48,45 @@ void main() {
     expect(composeInput, contains('用户刚才说'));
   });
 
+  test('the recall compose prompt states the appellation wording rule', () async {
+    final root = await _seedEpisodes({
+      '2026-07-02': [_entry('seed:1:0', '用户准备第一次演讲')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    // 称呼来自 persona.md 受保护设定行（称呼定稿）。
+    File('${root.path}/persona.md').writeAsStringSync('# persona\n称呼：老王\n');
+    final (recall, pipeline) = _orchestrator(
+      root.path,
+      client: _ScriptedModelClient([
+        ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
+        ModelCompletion.reply('是想起来了，演讲那件事。'),
+        ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
+        ModelCompletion.reply('嗯，想起来了。'),
+      ]),
+    );
+    await _rebuildUnderLock(recall, pipeline);
+
+    await recall.runTurnRecall(
+      userText: '我上次说的演讲准备得怎么样了',
+      recallActions: [MemoryRecallAction(query: '第一次演讲')],
+    );
+    final client = recall.modelClient! as _ScriptedModelClient;
+    // 有称呼：语境自然时可以用称呼，绝不自创昵称。
+    final composeSystem = client.calls[1].first.content;
+    expect(composeSystem, contains('语境自然时可以用「老王」称呼用户'));
+    expect(composeSystem, contains('不要替用户起其他昵称'));
+
+    // 无称呼：退回「你」。
+    File('${root.path}/persona.md').deleteSync();
+    await recall.runTurnRecall(
+      userText: '再说说那天的事',
+      recallActions: [MemoryRecallAction(query: '演讲')],
+    );
+    final fallbackSystem = client.calls[3].first.content;
+    expect(fallbackSystem, contains('称呼用户时用「你」'));
+    expect(fallbackSystem, contains('不要替用户起昵称'));
+  });
+
   test('fabricated selections are dropped; members survive', () async {
     final root = await _seedEpisodes({
       '2026-07-02': [_entry('seed:1:0', '用户准备第一次演讲')],

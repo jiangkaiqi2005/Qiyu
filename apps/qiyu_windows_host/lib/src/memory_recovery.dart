@@ -1476,11 +1476,14 @@ final class MemoryRecoveryService {
       }
     }
 
-    // persona.md：纯投影，结构存疑时从活跃根重投影；树不完整时隔离
-    // 等待，绝不写出残缺画像。
+    // persona.md：纯投影＋受保护称呼设定行，结构存疑时从活跃根重投
+    // 影；树不完整时隔离等待，绝不写出残缺画像。隔离前先从原件抢救
+    // 称呼行（ADR 0005）：救出就落回最小 persona.md 等下次重投影带上，
+    // 救不出就退回「未设置」，绝不编一个称呼。
     final persona = File(path.join(memoryDirectory, 'persona.md'));
     if (await persona.exists()) {
       final contents = await _readOrNull(persona);
+      final salvagedAppellation = extractAppellationLine(contents);
       if (!_personaProjectionValid(contents)) {
         final freshSnapshot = await personaTree.readSnapshot();
         final allReadable = freshSnapshot.branches.values.every(
@@ -1492,6 +1495,7 @@ final class MemoryRecoveryService {
               persona,
               'persona-projection',
             );
+            // 重投影从仍在原地的原件抢救称呼行，隔离副本随后删除。
             await personaTree.regeneratePersonaProjection();
             await _deleteIfExists(File(quarantinePath));
             findings.add(
@@ -1509,13 +1513,21 @@ final class MemoryRecoveryService {
         } else {
           try {
             await _quarantineMove(persona, 'persona-projection');
+            if (salvagedAppellation != null) {
+              await _atomicWriter.replace(
+                persona.path,
+                '# persona\n$salvagedAppellation\n',
+              );
+            }
             findings.add(
-              const MemoryRecoveryFinding(
+              MemoryRecoveryFinding(
                 layerKey: 'persona-projection',
                 layer: '画像投影',
                 kind: MemoryDamageKind.corrupt,
                 outcome: MemoryRecoveryOutcome.pending,
-                evidence: '画像树尚不完整，等待分支恢复后重投影',
+                evidence: salvagedAppellation == null
+                    ? '画像树尚不完整，等待分支恢复后重投影'
+                    : '画像树尚不完整；称呼行已抢救，等待分支恢复后重投影',
                 loss: '画像投影',
                 quarantined: true,
               ),
@@ -1601,6 +1613,7 @@ final class MemoryRecoveryService {
     }
     final titles = {for (final branch in personaBranches) branch.personaTitle};
     var sawHeader = false;
+    var sawAppellation = false;
     for (final rawLine in contents.replaceAll('\r\n', '\n').split('\n')) {
       final line = rawLine.trim();
       if (line.isEmpty) {
@@ -1611,6 +1624,16 @@ final class MemoryRecoveryService {
           return false;
         }
         sawHeader = true;
+        continue;
+      }
+      // 受保护称呼设定行：只允许出现一次且值通过格式校验；只有设定
+      // 行没有投影节的最小文件（恢复抢救落回）同样有效。
+      if (line.startsWith(appellationLinePrefix)) {
+        if (sawAppellation ||
+            extractAppellationLine(line) == null) {
+          return false;
+        }
+        sawAppellation = true;
         continue;
       }
       if (line.startsWith('## ')) {

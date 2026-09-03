@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../baseline/host_api_gateway.dart';
 
 final class OnboardingState {
@@ -21,7 +23,9 @@ final class OnboardingGatewayException implements Exception {
 abstract interface class OnboardingGateway {
   Future<OnboardingState> read();
 
-  Future<void> complete();
+  /// [appellation] 为首见引导收集的称呼；null 表示不带称呼完成引导
+  /// （跳过输入），Host 对不带称呼的请求保持向后兼容。
+  Future<void> complete({String? appellation});
 }
 
 final class HttpOnboardingGateway extends HostApiGateway
@@ -42,11 +46,13 @@ final class HttpOnboardingGateway extends HostApiGateway
   }
 
   @override
-  Future<void> complete() async {
+  Future<void> complete({String? appellation}) async {
     final response = await httpClient.post(
       resolve('/api/onboarding/complete'),
       headers: await modifyingHeaders(),
-      body: '{}',
+      body: appellation == null
+          ? '{}'
+          : jsonEncode({'appellation': appellation}),
     );
     decodeSuccess(response);
   }

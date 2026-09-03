@@ -675,6 +675,9 @@ final class _HoldGateway implements MemoryGateway {
   Future<MemoryItemDetail?> fetchItemDetail(String id) async => detail;
 
   @override
+  Future<void> setAppellation(String appellation) async {}
+
+  @override
   Future<MemoryActionResult> unfreezeItem(String id) => _held('unfreeze:$id');
 
   @override
