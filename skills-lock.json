@@ -7,6 +7,12 @@
       "skillPath": "skills/frontend-design/SKILL.md",
       "computedHash": "516bd2154eb843a8240e43d5b285229129853114ad7075a5e141e1c08e408c84"
     },
+    "human-writing": {
+      "source": "KKKKhazix/human-writing",
+      "sourceType": "github",
+      "skillPath": "human-writing/SKILL.md",
+      "computedHash": "1753e7f740dea9f20a19418d0de342e0d427779ff85f01688333a1f2a886de4f"
+    },
     "humanizer": {
       "source": "blader/humanizer",
       "sourceType": "github",
