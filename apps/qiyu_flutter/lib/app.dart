@@ -302,8 +302,14 @@ class _QiyuAppState extends State<QiyuApp> {
       // 读数，按它建一份主题往下发。`MaterialApp.theme` 因此留空——在那儿
       // 再写一份 `qiyuDarkTheme()` 会在 builder 的 Theme 处被整个覆盖，
       // 只是白建一份永远不生效的 ThemeData。
+      //
+      // 窄屏字阶与 reduce-motion 同一模式：宽度判读（与壳层抽屉共用
+      // QiyuLayout.desktopBreakpoint 一道缝）也留在这里传给主题。
       builder: (context, child) => Theme(
-        data: qiyuDarkTheme(reduceMotion: qiyuReducedMotion(context)),
+        data: qiyuDarkTheme(
+          reduceMotion: qiyuReducedMotion(context),
+          narrow: QiyuTypography.isNarrow(context),
+        ),
         child: child ?? const SizedBox.shrink(),
       ),
     );

@@ -260,7 +260,9 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
         child: widget.fromUser
             ? Text(
                 widget.text,
-                style: QiyuTypography.body.copyWith(color: QiyuColors.ink),
+                style: QiyuTypography.of(
+                  context,
+                ).body.copyWith(color: QiyuColors.ink),
               )
             : QiyuMarkdown(text: widget.text),
       ),
@@ -285,12 +287,16 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
       if (widget.isSpeaking) ...[
         const SizedBox(height: 6),
         // 正在读：动效位交给「正在读」文本，此时不叠重听键。
-        const Row(
+        // 字号随档取极小档（design-system §3 窄屏列），全页面不留大字漏网。
+        Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(QiyuIcons.volume_up, size: 16),
-            SizedBox(width: 4),
-            Text('正在读', style: TextStyle(fontSize: 12)),
+            const Icon(QiyuIcons.volume_up, size: 16),
+            const SizedBox(width: 4),
+            Text(
+              '正在读',
+              style: TextStyle(fontSize: QiyuTypography.of(context).tinySize),
+            ),
           ],
         ),
       ] else if (widget.onReplay != null) ...[
@@ -415,7 +421,9 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   Widget _atLine(String label, bool persistent) {
     final line = Text(
       label,
-      style: QiyuTypography.secondary.copyWith(color: QiyuColors.muted),
+      style: QiyuTypography.of(
+        context,
+      ).secondary.copyWith(color: QiyuColors.muted),
     );
     return persistent ? Opacity(opacity: 0.2, child: line) : line;
   }

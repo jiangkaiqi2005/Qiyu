@@ -22,6 +22,8 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 /// ①空态 hint 与输入文字同一条基线（差 ≤1px），敲下首字不跳；
 /// ②主题显式声明与渲染生效样式都是 even，防样式装配路径变化后隐式
 /// 继承悄悄退回 proportional，把上重下轻字体的基线压向 34px 行盒深处。
+/// 另有一条窄屏用例：窄屏字阶（design-system §3 窄屏列）把正文换到 14
+/// 后，行盒比值 34÷14 是算法派生值，不得悄悄漂移。
 ///
 /// 做法：pump 真实 [LocalChatView] 的 composer，用 [FontLoader] 加载随包
 /// 宋体子集（避免 FlutterTest 字体度量失真——hint 行高是 34/15 的放大行盒，
@@ -96,6 +98,59 @@ void main() {
       reason: '空态占位字与输入文字基线相差 '
           '${(hintBaseline - textBaseline).abs().toStringAsFixed(2)}px：'
           '敲下首字会看到文字跳动',
+    );
+  });
+
+  testWidgets('窄屏档：占位字行盒随正文档缩到 34/14，且仍是 even 分布', (tester) async {
+    // 窄屏字阶把正文档换到 14：行高必须是「图标按钮高度 ÷ 当档正文字号」
+    // 的算法派生值 34/14，不许写死旧比值；装配链要把它真的落到渲染出的
+    // hint 上，even 分布的钉住同样不能因为换档而丢。
+    tester.view.physicalSize = const Size(420, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final viewModel = LocalChatViewModel(
+      _FakeChatGateway(),
+      hostConnectionProbe: _FixedProbe(),
+      autoStart: false,
+    );
+    await viewModel.initialize();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: qiyuDarkTheme(narrow: true),
+        home: Scaffold(
+          body: ChangeNotifierProvider.value(
+            value: viewModel,
+            child: const LocalChatView(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final themeHint = qiyuDarkTheme(
+      narrow: true,
+    ).inputDecorationTheme.hintStyle;
+    expect(themeHint?.fontSize, QiyuType.narrowBodySize);
+    expect(
+      themeHint?.height,
+      QiyuLayout.composerIconButtonSize / QiyuType.narrowBodySize,
+      reason: '主题层占位字行高必须是 34 ÷ 14 的比值，不写死新值',
+    );
+
+    final renderedHint = tester.widget<Text>(find.text('想说点什么…')).style;
+    expect(renderedHint?.fontSize, QiyuType.narrowBodySize);
+    expect(
+      renderedHint?.height,
+      QiyuLayout.composerIconButtonSize / QiyuType.narrowBodySize,
+      reason: '渲染出的占位字必须真的用上窄屏行盒',
+    );
+    expect(
+      renderedHint?.leadingDistribution,
+      TextLeadingDistribution.even,
+      reason:
+          '窄屏行盒变浅后 even 分布仍要钉住：宋体上重下轻，'
+          'proportional 会把基线压向行盒深处',
     );
   });
 }

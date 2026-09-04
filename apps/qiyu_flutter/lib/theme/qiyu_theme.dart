@@ -14,71 +14,159 @@ import 'qiyu_tokens.dart';
 /// `neutralFillStrong`，文字与描边用 `ink` / `muted` / `line`。组件状态解析只走
 /// [qiyuNeutralStates] 一处。契约测试见 `test/qiyu_theme_test.dart`。
 
-/// 紫夜五档字阶的具体样式（design-system §3）。
-///
-/// §3 只定了字号（22/18/15/13/12）与「栖语的话行高 1.9」，其余档位**不自造行高**，
-/// 退回随包宋体的默认行高；字重与字距只在有出处时才写，出处一律注明。
-abstract final class QiyuTypography {
-  /// 空状态问候：22，字重轻、留字距。
+/// 单档字阶样式集：六份样式的**形状**（字族、字重、字距、行高）只在
+/// [_qiyuTypeRamp] 一处写，字号由各档传入——桌面档与窄屏档（design-system §3；
+/// docs/adr/0006-narrow-screen-type-ramp.md）由同一份形状装配，改形状不会
+/// 漏改另一档。数值字段同时保留，供页面里散点的数值直读按同一道缝取档。
+class QiyuTypeRamp {
+  const QiyuTypeRamp({
+    required this.greetingSize,
+    required this.titleSize,
+    required this.bodySize,
+    required this.secondarySize,
+    required this.tinySize,
+    required this.greeting,
+    required this.title,
+    required this.body,
+    required this.secondary,
+    required this.tiny,
+    required this.qiyuMessage,
+  });
+
+  // 五档字号：样式档之外的数值入口，页面散点直读走这里，不回 token 直读
+  // （否则拿到的恒是桌面档）。
+
+  /// 空状态问候。
+  final double greetingSize;
+
+  /// 页面标题。
+  final double titleSize;
+
+  /// 消息与正文。
+  final double bodySize;
+
+  /// 时间戳、说明文字。
+  final double secondarySize;
+
+  /// 徽标、脚注。
+  final double tinySize;
+
+  // 六份样式。§3 只定字号与「栖语的话行高 1.9」，其余档位**不自造行高**，
+  // 退回随包宋体的默认行高；字重与字距只在有出处时才写，出处一律注明。
+
+  /// 空状态问候：字重轻、留字距。
   ///
   /// w300 + 3px 字距的出处是原型 `.home-greet { font-weight: 300; letter-spacing: 3px }`
   /// （视觉真相源，见 Spec Further Notes 第 2 条），不是现编值。
-  static const TextStyle greeting = TextStyle(
-    fontFamily: QiyuType.fontFamily,
-    fontSize: QiyuType.greetingSize,
-    fontWeight: FontWeight.w300,
-    letterSpacing: 3,
-  );
+  final TextStyle greeting;
 
-  /// 页面标题：18。
+  /// 页面标题。
   ///
   /// §3 只定字号；字重与字距**没有一致出处**——原型 `.page-title` 是 400/2px、
   /// `.set-section h3` 是 500/2px、`.settings-flat .set-section h3` 是 400/3px，
   /// 三处互相打架。原来的 w500 + 1px 两个值都查不到来源，一律去掉退回字族默认，
   /// 等视觉验收段随字阶一起定夺；不要为了保留而编出处。
-  static const TextStyle title = TextStyle(
-    fontFamily: QiyuType.fontFamily,
-    fontSize: QiyuType.titleSize,
-  );
+  final TextStyle title;
 
-  /// 正文：15。UI 常规行高不另定值，书页式的 1.9 只用于栖语的话。
-  static const TextStyle body = TextStyle(
-    fontFamily: QiyuType.fontFamily,
-    fontSize: QiyuType.bodySize,
-  );
+  /// 正文。UI 常规行高不另定值，书页式的 1.9 只用于栖语的话。
+  final TextStyle body;
 
-  /// 次要：13，时间戳与说明文字。
-  static const TextStyle secondary = TextStyle(
-    fontFamily: QiyuType.fontFamily,
-    fontSize: QiyuType.secondarySize,
-  );
+  /// 次要：时间戳与说明文字。
+  final TextStyle secondary;
 
-  /// 极小：12，徽标与脚注。
-  static const TextStyle tiny = TextStyle(
-    fontFamily: QiyuType.fontFamily,
-    fontSize: QiyuType.tinySize,
-  );
+  /// 极小：徽标与脚注。
+  final TextStyle tiny;
 
   /// 栖语的话：宋体正文、行高 1.9，无气泡书页式（design-system §7）。
-  static const TextStyle qiyuMessage = TextStyle(
-    fontFamily: QiyuType.fontFamily,
-    fontSize: QiyuType.bodySize,
-    height: QiyuType.qiyuBodyLineHeight,
-  );
+  final TextStyle qiyuMessage;
 }
 
-/// 紫夜字阶表：五档字阶落到 Material 的语义档位上。
-TextTheme qiyuTextTheme() {
-  return const TextTheme(
-    displaySmall: QiyuTypography.greeting,
-    headlineSmall: QiyuTypography.title,
-    titleMedium: QiyuTypography.title,
-    bodyLarge: QiyuTypography.body,
-    bodyMedium: QiyuTypography.body,
-    bodySmall: QiyuTypography.secondary,
-    labelLarge: QiyuTypography.body,
-    labelMedium: QiyuTypography.tiny,
-    labelSmall: QiyuTypography.tiny,
+/// 字阶形状工厂（唯一的一份形状）：按档传入五档字号，装配出该档的六份样式。
+/// Dart 的 const 构造器初始化列表里嵌套 const 构造调用不能引用参数，所以
+/// 两档样式集是 `static final` 而不是 `static const`；形状只写一份、
+/// [TextStyle] 本身按字段判等，样式值不受影响。
+QiyuTypeRamp _qiyuTypeRamp({
+  required double greetingSize,
+  required double titleSize,
+  required double bodySize,
+  required double secondarySize,
+  required double tinySize,
+}) => QiyuTypeRamp(
+  greetingSize: greetingSize,
+  titleSize: titleSize,
+  bodySize: bodySize,
+  secondarySize: secondarySize,
+  tinySize: tinySize,
+  greeting: TextStyle(
+    fontFamily: QiyuType.fontFamily,
+    fontSize: greetingSize,
+    fontWeight: FontWeight.w300,
+    letterSpacing: 3,
+  ),
+  title: TextStyle(fontFamily: QiyuType.fontFamily, fontSize: titleSize),
+  body: TextStyle(fontFamily: QiyuType.fontFamily, fontSize: bodySize),
+  secondary: TextStyle(
+    fontFamily: QiyuType.fontFamily,
+    fontSize: secondarySize,
+  ),
+  tiny: TextStyle(fontFamily: QiyuType.fontFamily, fontSize: tinySize),
+  qiyuMessage: TextStyle(
+    fontFamily: QiyuType.fontFamily,
+    fontSize: bodySize,
+    height: QiyuType.qiyuBodyLineHeight,
+  ),
+);
+
+/// 紫夜字阶的取档入口（design-system §3；docs/adr/0006-narrow-screen-type-ramp.md）。
+///
+/// 数值双档、形状单份：[desktop] 与 [narrow] 都由 [_qiyuTypeRamp] 的同一份
+/// 形状装配，只有五档字号不同（桌面 22/18/15/13/12，窄屏 20/16/14/12/11）。
+/// 页面消费一律走 [of]，不要直读某一档——散点数值直读（如「本地规则回复」的
+/// 次要档字号）同样走 `of(context).secondarySize` 这类数值字段，否则拿到的
+/// 恒是桌面档。
+abstract final class QiyuTypography {
+  /// 桌面档：design-system §3 定稿值。
+  static final QiyuTypeRamp desktop = _qiyuTypeRamp(
+    greetingSize: QiyuType.greetingSize,
+    titleSize: QiyuType.titleSize,
+    bodySize: QiyuType.bodySize,
+    secondarySize: QiyuType.secondarySize,
+    tinySize: QiyuType.tinySize,
+  );
+
+  /// 窄屏档：窗口宽 < 760 时启用（design-system §3 窄屏列）。
+  static final QiyuTypeRamp narrow = _qiyuTypeRamp(
+    greetingSize: QiyuType.narrowGreetingSize,
+    titleSize: QiyuType.narrowTitleSize,
+    bodySize: QiyuType.narrowBodySize,
+    secondarySize: QiyuType.narrowSecondarySize,
+    tinySize: QiyuType.narrowTinySize,
+  );
+
+  /// 当前窗口是否落在窄屏档。断点与壳层抽屉共用
+  /// [QiyuLayout.desktopBreakpoint] 一道缝，不另设第二判据——不会出现
+  /// 「抽屉出来了、字还是桌面档」的半窄状态。
+  static bool isNarrow(BuildContext context) =>
+      MediaQuery.sizeOf(context).width < QiyuLayout.desktopBreakpoint;
+
+  /// 按上下文取档：主题装配与页面直读样式统一从这里走。
+  static QiyuTypeRamp of(BuildContext context) =>
+      isNarrow(context) ? narrow : desktop;
+}
+
+/// 紫夜字阶表：五档字阶落到 Material 的语义档位上。样式按传入档位取
+/// （[QiyuTypography.desktop] 或 [QiyuTypography.narrow]）。
+TextTheme qiyuTextTheme(QiyuTypeRamp type) {
+  return TextTheme(
+    displaySmall: type.greeting,
+    headlineSmall: type.title,
+    titleMedium: type.title,
+    bodyLarge: type.body,
+    bodyMedium: type.body,
+    bodySmall: type.secondary,
+    labelLarge: type.body,
+    labelMedium: type.tiny,
+    labelSmall: type.tiny,
   );
 }
 
@@ -180,7 +268,15 @@ const RoundedRectangleBorder qiyuCardShape = RoundedRectangleBorder(
 /// **全部**过渡与渐显）。页面自写的动效走 `qiyuMotion()`，但路由页切换与
 /// Material ink ripple 是框架自带的、长在 ThemeData 上，只有这里能把它们关掉；
 /// 由 `lib/app.dart` 在能读到 MediaQuery 的那一层按系统读数重建主题传入。
-ThemeData qiyuDarkTheme({bool reduceMotion = false}) {
+///
+/// [narrow] 对应窄屏字阶（design-system §3 窄屏列；docs/adr/0006-narrow-screen-
+/// type-ramp.md）：宽度判读留在调用方（`QiyuTypography.isNarrow`），主题层只按
+/// 传入的布尔取档装配——与 [reduceMotion] 同一模式。字号五档随档切换，色板、
+/// 间距与控件几何一概不变。
+ThemeData qiyuDarkTheme({bool reduceMotion = false, bool narrow = false}) {
+  final QiyuTypeRamp type = narrow
+      ? QiyuTypography.narrow
+      : QiyuTypography.desktop;
   const colorScheme = ColorScheme.dark(
     // 三色纪律（design-system §1、§2；Spec User Story 9）：**没有任何槽位是紫**。
     // M3 会顺着 primary/secondary/tertiary 把颜色铺进 FilledButton 底、Switch 选中
@@ -267,7 +363,7 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false}) {
     // QiyuLayout.focusRingWidth / focusRingOffset，第 2 段落地）。M3 的 focusColor
     // 只能贴在控件表面上铺一层，所以这里取中性淡底 selectedNeutral，绝不落实心紫。
     focusColor: QiyuColors.selectedNeutral,
-    textTheme: qiyuTextTheme(),
+    textTheme: qiyuTextTheme(type),
     iconTheme: const IconThemeData(color: QiyuColors.muted, size: 24),
     dividerTheme: const DividerThemeData(color: QiyuColors.line, thickness: 1),
     cardTheme: const CardThemeData(
@@ -276,18 +372,18 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false}) {
       elevation: 0,
       shape: qiyuCardShape,
     ),
-    dialogTheme: const DialogThemeData(
+    dialogTheme: DialogThemeData(
       backgroundColor: QiyuColors.panel,
       surfaceTintColor: QiyuColors.elevationTint,
-      titleTextStyle: QiyuTypography.title,
-      contentTextStyle: QiyuTypography.body,
+      titleTextStyle: type.title,
+      contentTextStyle: type.body,
       shape: RoundedRectangleBorder(borderRadius: QiyuRadii.cardBorder),
     ),
-    snackBarTheme: const SnackBarThemeData(
+    snackBarTheme: SnackBarThemeData(
       backgroundColor: QiyuColors.panel,
       contentTextStyle: TextStyle(
         fontFamily: QiyuType.fontFamily,
-        fontSize: QiyuType.secondarySize,
+        fontSize: type.secondarySize,
         color: QiyuColors.ink,
       ),
       shape: RoundedRectangleBorder(borderRadius: QiyuRadii.smallBorder),
@@ -369,11 +465,11 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false}) {
     // 记忆中心四区 tab：选中态中性——ink 文字 + 淡白下划线，不用种子紫。
     // on-accent 的语义是「强调底色上的文字」，tab 是中性底，所以取 ink
     // （原型 `.tab.active` 亦为 var(--ink)）。
-    tabBarTheme: const TabBarThemeData(
+    tabBarTheme: TabBarThemeData(
       labelColor: QiyuColors.ink,
       unselectedLabelColor: QiyuColors.muted,
-      labelStyle: QiyuTypography.body,
-      unselectedLabelStyle: QiyuTypography.body,
+      labelStyle: type.body,
+      unselectedLabelStyle: type.body,
       indicatorSize: TabBarIndicatorSize.label,
       dividerColor: QiyuColors.line,
       indicator: UnderlineTabIndicator(
@@ -388,11 +484,11 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false}) {
         insets: EdgeInsets.only(bottom: QiyuLine.tabIndicatorInset),
       ),
     ),
-    listTileTheme: const ListTileThemeData(
+    listTileTheme: ListTileThemeData(
       iconColor: QiyuColors.muted,
       textColor: QiyuColors.ink,
-      titleTextStyle: QiyuTypography.body,
-      subtitleTextStyle: QiyuTypography.secondary,
+      titleTextStyle: type.body,
+      subtitleTextStyle: type.secondary,
       selectedTileColor: QiyuColors.selectedNeutral,
       shape: RoundedRectangleBorder(borderRadius: QiyuRadii.cardBorder),
     ),
@@ -406,13 +502,13 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false}) {
         horizontal: QiyuSpacing.md,
         vertical: QiyuLayout.composerPadding,
       ),
-      hintStyle: const TextStyle(
+      hintStyle: TextStyle(
         fontFamily: QiyuType.fontFamily,
-        fontSize: QiyuType.bodySize,
+        fontSize: type.bodySize,
         color: QiyuColors.muted,
         // 行高 = 图标按钮高度（§8 组件 5「占位字垂直居中，行高对齐按钮高度 34px」），
-        // 由 token 相除得出，不写死裸比值。
-        height: QiyuLayout.composerIconButtonSize / QiyuType.bodySize,
+        // 由 token 相除得出，不写死裸比值；分母取当档正文字号，窄屏档自动变 34/14。
+        height: QiyuLayout.composerIconButtonSize / type.bodySize,
         // 字体上重下轻（hhea 上行约占 80%），proportional 会把 34px 行盒内的
         // 基线压向盒底、占位字与光标偏下。M3 默认字体档目前隐式给了 even，
         // 这里显式写是钉住既有行为、不是行为修复：样式装配路径一变，隐式

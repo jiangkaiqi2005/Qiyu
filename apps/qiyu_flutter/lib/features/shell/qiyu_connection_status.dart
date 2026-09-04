@@ -76,7 +76,7 @@ class _QiyuConnectionStatusState extends State<QiyuConnectionStatus> {
             label,
             key: const Key('conn-status-text'),
             overflow: TextOverflow.ellipsis,
-            style: QiyuTypography.secondary.copyWith(color: color),
+            style: QiyuTypography.of(context).secondary.copyWith(color: color),
           ),
         ),
       ],

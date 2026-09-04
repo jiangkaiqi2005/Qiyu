@@ -18,8 +18,49 @@ import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 void main() {
+  testWidgets('窄视口主题槽位取窄屏字阶，宽视口取桌面档（窄屏字阶接线）', (tester) async {
+    // 接线缝在 QiyuApp 的 builder：宽度判读与壳层抽屉共用
+    // QiyuLayout.desktopBreakpoint 一道缝，主题按它重建。这里锁的是
+    // 可观察结果——bodyMedium 槽位随视口宽度在 15/14 之间切换，防接线缝
+    // 日后被人拆掉（testWidgets 逐槽位契约见 qiyu_theme_test.dart）。
+    Future<void> pumpAt(Size size) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        QiyuApp(
+          viewModel: LocalChatViewModel(
+            _FakeLocalChatGateway(),
+            hostConnectionProbe: _FakeHostConnectionProbe([true]),
+            autoStart: false,
+          ),
+          onboardingViewModel: await _completedOnboardingViewModel(),
+        ),
+      );
+      await tester.pump();
+    }
+
+    await pumpAt(const Size(1200, 800));
+    expect(
+      Theme.of(
+        tester.element(find.byType(Scaffold).first),
+      ).textTheme.bodyMedium!.fontSize,
+      QiyuType.bodySize,
+      reason: '宽视口（≥ 760）必须仍是桌面档正文 15',
+    );
+
+    await pumpAt(const Size(420, 900));
+    expect(
+      Theme.of(
+        tester.element(find.byType(Scaffold).first),
+      ).textTheme.bodyMedium!.fontSize,
+      QiyuType.narrowBodySize,
+      reason: '窄视口（< 760）必须切到窄屏档正文 14',
+    );
+  });
   testWidgets('默认聊天 ViewModel 复用应用级 TTS 设置网关', (tester) async {
     final ttsGateway = _RecordingTtsSettingsGateway();
     await tester.pumpWidget(

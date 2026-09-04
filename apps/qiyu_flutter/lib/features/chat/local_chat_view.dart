@@ -462,7 +462,9 @@ class _LocalChatViewState extends State<LocalChatView> {
       qiyuEmptyChatHint(DateTime.now()),
       key: const Key('home-greeting'),
       textAlign: TextAlign.center,
-      style: QiyuTypography.greeting.copyWith(color: QiyuColors.ink),
+      style: QiyuTypography.of(
+        context,
+      ).greeting.copyWith(color: QiyuColors.ink),
     );
   }
 
@@ -486,13 +488,15 @@ class _LocalChatViewState extends State<LocalChatView> {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               if (viewModel.hasLocalFallback)
-                const Flexible(
+                Flexible(
                   child: Text(
                     '本地规则回复',
                     overflow: TextOverflow.ellipsis,
+                    // 字号随档取次要档（散点数值直读走 QiyuTypography.of 的
+                    // 数值入口，不回 QiyuType 直读——那里只有桌面档）。
                     style: TextStyle(
                       fontFamily: QiyuType.fontFamily,
-                      fontSize: QiyuType.secondarySize,
+                      fontSize: QiyuTypography.of(context).secondarySize,
                       color: QiyuColors.muted,
                     ),
                   ),
@@ -694,7 +698,7 @@ class _LocalChatViewState extends State<LocalChatView> {
       minLines: 1,
       maxLines: 5,
       textInputAction: TextInputAction.newline,
-      style: QiyuTypography.body.copyWith(color: QiyuColors.ink),
+      style: QiyuTypography.of(context).body.copyWith(color: QiyuColors.ink),
       decoration: const InputDecoration(
         hintText: '想说点什么…',
         filled: false,
@@ -963,9 +967,9 @@ class _LocalChatViewState extends State<LocalChatView> {
                       child: viewModel.streamingText.isEmpty
                           ? Text(
                               '栖语在想…',
-                              style: QiyuTypography.qiyuMessage.copyWith(
-                                color: QiyuColors.muted,
-                              ),
+                              style: QiyuTypography.of(
+                                context,
+                              ).qiyuMessage.copyWith(color: QiyuColors.muted),
                             )
                           : QiyuMarkdown(text: viewModel.streamingText),
                     ),

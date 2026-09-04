@@ -791,7 +791,9 @@ class _NavItemState extends State<_NavItem> {
                 child: Text(
                   widget.label,
                   overflow: TextOverflow.ellipsis,
-                  style: QiyuTypography.body.copyWith(color: labelColor),
+                  style: QiyuTypography.of(
+                    context,
+                  ).body.copyWith(color: labelColor),
                 ),
               ),
             ],

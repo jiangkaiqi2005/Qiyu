@@ -904,11 +904,11 @@ const Color topLevel = Color(0xFF667788);
       expect(QiyuType.bodySize, 15);
       expect(QiyuType.secondarySize, 13);
       expect(QiyuType.tinySize, 12);
-      expect(QiyuTypography.greeting.fontSize, QiyuType.greetingSize);
-      expect(QiyuTypography.title.fontSize, QiyuType.titleSize);
-      expect(QiyuTypography.body.fontSize, QiyuType.bodySize);
-      expect(QiyuTypography.secondary.fontSize, QiyuType.secondarySize);
-      expect(QiyuTypography.tiny.fontSize, QiyuType.tinySize);
+      expect(QiyuTypography.desktop.greeting.fontSize, QiyuType.greetingSize);
+      expect(QiyuTypography.desktop.title.fontSize, QiyuType.titleSize);
+      expect(QiyuTypography.desktop.body.fontSize, QiyuType.bodySize);
+      expect(QiyuTypography.desktop.secondary.fontSize, QiyuType.secondarySize);
+      expect(QiyuTypography.desktop.tiny.fontSize, QiyuType.tinySize);
       expect(theme.textTheme.displaySmall!.fontSize, QiyuType.greetingSize);
       expect(theme.textTheme.headlineSmall!.fontSize, QiyuType.titleSize);
       expect(theme.textTheme.bodyMedium!.fontSize, QiyuType.bodySize);
@@ -930,15 +930,15 @@ const Color topLevel = Color(0xFF667788);
 
     test('栖语的话行高 1.9（书页式），UI 档不自造行高', () {
       expect(QiyuType.qiyuBodyLineHeight, 1.9);
-      expect(QiyuTypography.qiyuMessage.height, 1.9);
-      expect(QiyuTypography.qiyuMessage.fontSize, QiyuType.bodySize);
+      expect(QiyuTypography.desktop.qiyuMessage.height, 1.9);
+      expect(QiyuTypography.desktop.qiyuMessage.fontSize, QiyuType.bodySize);
       // §3 只定了「栖语的话行高 1.9」，其余档位的 1.3/1.4/1.5/1.6 无出处：
       // 不自造值，退回随包字族的默认行高。
-      expect(QiyuTypography.greeting.height, isNull);
-      expect(QiyuTypography.title.height, isNull);
-      expect(QiyuTypography.body.height, isNull);
-      expect(QiyuTypography.secondary.height, isNull);
-      expect(QiyuTypography.tiny.height, isNull);
+      expect(QiyuTypography.desktop.greeting.height, isNull);
+      expect(QiyuTypography.desktop.title.height, isNull);
+      expect(QiyuTypography.desktop.body.height, isNull);
+      expect(QiyuTypography.desktop.secondary.height, isNull);
+      expect(QiyuTypography.desktop.tiny.height, isNull);
       expect(theme.textTheme.bodySmall!.height, isNull);
     });
 
@@ -946,26 +946,26 @@ const Color topLevel = Color(0xFF667788);
       // design-system §3 只定字号与「栖语的话行高 1.9」，字重与字距一律不自造。
       // 唯一有出处的是问候档：原型 `.home-greet { font-weight: 300; letter-spacing: 3px }`
       // （Spec Further Notes 第 2 条把原型列为形态与观感的视觉真相源）。
-      expect(QiyuTypography.greeting.fontWeight, FontWeight.w300);
-      expect(QiyuTypography.greeting.letterSpacing, 3);
+      expect(QiyuTypography.desktop.greeting.fontWeight, FontWeight.w300);
+      expect(QiyuTypography.desktop.greeting.letterSpacing, 3);
       // 标题档不自洽：原型 `.page-title` 是 400/2px、`.set-section h3` 是 500/2px，
       // 两个出处互相打架，§3 又没定，所以原来的 w500 + 1px 属自造值，去掉退回默认，
       // 等视觉验收段连同字阶一起定夺。
       expect(
-        QiyuTypography.title.fontWeight,
+        QiyuTypography.desktop.title.fontWeight,
         isNull,
         reason: '标题字重没有唯一出处，不许保留自造的 w500',
       );
       expect(
-        QiyuTypography.title.letterSpacing,
+        QiyuTypography.desktop.title.letterSpacing,
         isNull,
         reason: '标题的 1px 字距在规范与原型里都查不到，去掉用默认',
       );
       for (final entry in <String, TextStyle>{
-        'body': QiyuTypography.body,
-        'secondary': QiyuTypography.secondary,
-        'tiny': QiyuTypography.tiny,
-        'qiyuMessage': QiyuTypography.qiyuMessage,
+        'body': QiyuTypography.desktop.body,
+        'secondary': QiyuTypography.desktop.secondary,
+        'tiny': QiyuTypography.desktop.tiny,
+        'qiyuMessage': QiyuTypography.desktop.qiyuMessage,
       }.entries) {
         expect(entry.value.fontWeight, isNull, reason: '${entry.key} 自造了字重');
         expect(entry.value.letterSpacing, isNull, reason: '${entry.key} 自造了字距');
@@ -973,6 +973,139 @@ const Color topLevel = Color(0xFF667788);
       // 装配到 Material 档位上之后同样不得漏出紫夜规范没定的字重/字距。
       expect(theme.textTheme.headlineSmall?.fontWeight, isNull);
       expect(theme.textTheme.headlineSmall?.letterSpacing, isNull);
+    });
+  });
+
+  group('窄屏字阶（窗口 < 760：20/16/14/12/11，桌面档零变化）', () {
+    // design-system §3 窄屏列与 docs/adr/0006-narrow-screen-type-ramp.md：
+    // 断点与壳层抽屉共用一道缝（QiyuLayout.desktopBreakpoint），只动字号，
+    // 行高、字重、字距、间距与控件几何不随档变。数值逐槽位锁住——日后改
+    // 窄屏数值必须是被测试逼着的、有意识的动作。
+    final narrowTheme = qiyuDarkTheme(narrow: true);
+
+    test('窄屏五档字面值：20/16/14/12/11', () {
+      expect(QiyuType.narrowGreetingSize, 20);
+      expect(QiyuType.narrowTitleSize, 16);
+      expect(QiyuType.narrowBodySize, 14);
+      expect(QiyuType.narrowSecondarySize, 12);
+      expect(QiyuType.narrowTinySize, 11);
+    });
+
+    test('窄屏样式集逐槽位取窄屏数值，数值入口随档', () {
+      expect(
+        QiyuTypography.narrow.greeting.fontSize,
+        QiyuType.narrowGreetingSize,
+      );
+      expect(QiyuTypography.narrow.title.fontSize, QiyuType.narrowTitleSize);
+      expect(QiyuTypography.narrow.body.fontSize, QiyuType.narrowBodySize);
+      expect(
+        QiyuTypography.narrow.secondary.fontSize,
+        QiyuType.narrowSecondarySize,
+      );
+      expect(QiyuTypography.narrow.tiny.fontSize, QiyuType.narrowTinySize);
+      // 数值字段是页面散点直读的取档入口，必须与样式同源。
+      expect(QiyuTypography.narrow.greetingSize, QiyuType.narrowGreetingSize);
+      expect(QiyuTypography.narrow.titleSize, QiyuType.narrowTitleSize);
+      expect(QiyuTypography.narrow.bodySize, QiyuType.narrowBodySize);
+      expect(QiyuTypography.narrow.secondarySize, QiyuType.narrowSecondarySize);
+      expect(QiyuTypography.narrow.tinySize, QiyuType.narrowTinySize);
+    });
+
+    test('形状单份：字族、字重、字距、行高两档一致，只有字号变', () {
+      final pairs = <String, List<TextStyle>>{
+        'greeting': [
+          QiyuTypography.desktop.greeting,
+          QiyuTypography.narrow.greeting,
+        ],
+        'title': [QiyuTypography.desktop.title, QiyuTypography.narrow.title],
+        'body': [QiyuTypography.desktop.body, QiyuTypography.narrow.body],
+        'secondary': [
+          QiyuTypography.desktop.secondary,
+          QiyuTypography.narrow.secondary,
+        ],
+        'tiny': [QiyuTypography.desktop.tiny, QiyuTypography.narrow.tiny],
+        'qiyuMessage': [
+          QiyuTypography.desktop.qiyuMessage,
+          QiyuTypography.narrow.qiyuMessage,
+        ],
+      };
+      for (final entry in pairs.entries) {
+        final desktop = entry.value[0];
+        final narrow = entry.value[1];
+        expect(narrow.fontFamily, desktop.fontFamily, reason: entry.key);
+        expect(narrow.fontWeight, desktop.fontWeight, reason: entry.key);
+        expect(narrow.letterSpacing, desktop.letterSpacing, reason: entry.key);
+        expect(narrow.height, desktop.height, reason: entry.key);
+        expect(narrow.fontSize, isNot(desktop.fontSize), reason: entry.key);
+      }
+      // 两档共用的出处值：问候档 w300 + 3px 字距、栖语的话 1.9 行高、
+      // 标题档无字重字距（窄屏档同样不得长出自造值）。
+      expect(QiyuTypography.narrow.greeting.fontWeight, FontWeight.w300);
+      expect(QiyuTypography.narrow.greeting.letterSpacing, 3);
+      expect(QiyuTypography.narrow.qiyuMessage.height, 1.9);
+      expect(QiyuTypography.narrow.title.fontWeight, isNull);
+      expect(QiyuTypography.narrow.title.letterSpacing, isNull);
+    });
+
+    test('窄屏主题槽位与组件主题取移动档，占位字比值算法随档', () {
+      expect(
+        narrowTheme.textTheme.displaySmall!.fontSize,
+        QiyuType.narrowGreetingSize,
+      );
+      expect(
+        narrowTheme.textTheme.headlineSmall!.fontSize,
+        QiyuType.narrowTitleSize,
+      );
+      expect(
+        narrowTheme.textTheme.bodyMedium!.fontSize,
+        QiyuType.narrowBodySize,
+      );
+      expect(
+        narrowTheme.textTheme.bodySmall!.fontSize,
+        QiyuType.narrowSecondarySize,
+      );
+      expect(
+        narrowTheme.textTheme.labelSmall!.fontSize,
+        QiyuType.narrowTinySize,
+      );
+      // 组件主题引用的是同一份窄屏样式：对话框、横幅、tab、列表项。
+      expect(
+        narrowTheme.dialogTheme.titleTextStyle?.fontSize,
+        QiyuType.narrowTitleSize,
+      );
+      expect(
+        narrowTheme.dialogTheme.contentTextStyle?.fontSize,
+        QiyuType.narrowBodySize,
+      );
+      expect(
+        narrowTheme.snackBarTheme.contentTextStyle?.fontSize,
+        QiyuType.narrowSecondarySize,
+      );
+      expect(
+        narrowTheme.tabBarTheme.labelStyle?.fontSize,
+        QiyuType.narrowBodySize,
+      );
+      expect(
+        narrowTheme.listTileTheme.titleTextStyle?.fontSize,
+        QiyuType.narrowBodySize,
+      );
+      expect(
+        narrowTheme.listTileTheme.subtitleTextStyle?.fontSize,
+        QiyuType.narrowSecondarySize,
+      );
+      // 占位字行高仍是「composer 按钮高度 ÷ 当档正文字号」：窄屏档 34 ÷ 14，
+      // 桌面档 34 ÷ 15 原样（§8 组件 5「占位字垂直居中」，不写死新比值）。
+      final hint = narrowTheme.inputDecorationTheme.hintStyle;
+      expect(hint?.fontSize, QiyuType.narrowBodySize);
+      expect(
+        hint?.height,
+        QiyuLayout.composerIconButtonSize / QiyuType.narrowBodySize,
+      );
+      expect(hint?.leadingDistribution, TextLeadingDistribution.even);
+      expect(
+        theme.inputDecorationTheme.hintStyle?.height,
+        QiyuLayout.composerIconButtonSize / QiyuType.bodySize,
+      );
     });
   });
 

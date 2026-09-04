@@ -1390,7 +1390,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // 这一页在窄屏撤掉了自己的返回箭头，页头必须自己让开浮在左上角的三条杠。
-    // 「记忆」两个字页内出现两次（18 的标题与 12 的小标签），按字阶取标题那一个。
+    // 「记忆」两个字页内出现两次（窄屏档 16 的标题与 11 的小标签，design-system
+    // §3 窄屏列），按字阶取标题那一个。
     final menu = tester.getRect(find.byKey(const Key('nav-menu-button')));
     expect(
       tester
@@ -1401,7 +1402,7 @@ void main() {
                 (widget) =>
                     widget is Text &&
                     widget.data == '记忆' &&
-                    widget.style?.fontSize == QiyuType.titleSize,
+                    widget.style?.fontSize == QiyuType.narrowTitleSize,
               ),
             ),
           )

@@ -304,6 +304,26 @@ abstract final class QiyuType {
   /// 徽标、脚注。
   static const double tinySize = 12;
 
+  // ── 窄屏字阶（design-system §3 窄屏列；docs/adr/0006-narrow-screen-type-ramp.md）──
+  // 窗口宽 < [QiyuLayout.desktopBreakpoint]（与壳层抽屉同一道缝）时五档字号换用
+  // 这一份数值集；桌面档原值不动。只动字号：行高、字重、字距、间距与控件几何
+  // 不随档变。等比缩放方案已否（出非整数、极小档掉到 ~10），数值整档手定。
+
+  /// 窄屏：空状态首页问候。
+  static const double narrowGreetingSize = 20;
+
+  /// 窄屏：页面标题。
+  static const double narrowTitleSize = 16;
+
+  /// 窄屏：消息与正文。
+  static const double narrowBodySize = 14;
+
+  /// 窄屏：时间戳、说明文字。
+  static const double narrowSecondarySize = 12;
+
+  /// 窄屏：徽标、脚注。
+  static const double narrowTinySize = 11;
+
   /// 栖语的话：书页式行高。
   static const double qiyuBodyLineHeight = 1.9;
 }
