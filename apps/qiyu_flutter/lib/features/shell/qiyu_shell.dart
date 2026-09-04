@@ -55,8 +55,9 @@ enum QiyuNavDestination {
 ///   的面板里，开/关两态停在同一位置，全程不重影、不残留，**桌面没有任何
 ///   「回合一页」入口**。收起状态**不持久化**，刷新/重启回到默认展开。
 /// - 窄屏：左上角三条杠打开约视口 2/3 宽的毛玻璃抽屉，内容与桌面**同源**
-///   （同一个 [_NavPanel]），点遮罩、再点三条杠或按 Esc 收回。抽屉里的品牌槽
-///   保持「点击回合一页」语义（键 `go-home` 只留在这里）。
+///   （同一个 [_NavPanel]），点遮罩或按 Esc 收回。抽屉开着时三条杠整块让位
+///   （它的命中盒正压在抽屉品牌槽上），抽屉里的品牌槽保持「点击回合一页」
+///   语义（键 `go-home` 只留在这里）。
 class QiyuShell extends StatefulWidget {
   const QiyuShell({
     super.key,
@@ -409,30 +410,36 @@ class _QiyuShellState extends State<QiyuShell>
               ),
             ),
           ),
-        // 三条杠：圆形图标按钮，玻璃底 + 发丝描边，细描边图形。
-        Positioned(
-          top: 0,
-          left: 0,
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(QiyuSpacing.md),
-              child: QiyuFocusRing(
-                focusNode: _menuFocusNode,
-                borderRadius: QiyuRadii.circleBorder,
-                child: QiyuGlassPanel(
+        // 三条杠：圆形图标按钮，玻璃底 + 发丝描边，细描边图形。抽屉开着时
+        // 不在树里（点收回的当帧就随抽屉外滑回到树里）：它的命中盒正压在
+        // 抽屉品牌槽的栖语图标上，抽屉开着还挂着就会挡住「回合一页」的点击；
+        // 关闭由此移交遮罩（点按/Esc）与抽屉内导航项，键盘焦点仍由
+        // [_setDrawer] 在收回后交还这枚按钮。
+        if (!_drawerOpen)
+          Positioned(
+            top: 0,
+            left: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(QiyuSpacing.md),
+                child: QiyuFocusRing(
+                  focusNode: _menuFocusNode,
                   borderRadius: QiyuRadii.circleBorder,
-                  child: InkWell(
-                    key: const Key('nav-menu-button'),
-                    focusNode: _menuFocusNode,
-                    customBorder: const CircleBorder(),
-                    onTap: () => unawaited(_setDrawer(!_drawerOpen)),
-                    child: SizedBox.square(
-                      dimension: QiyuLayout.menuButtonSize,
-                      child: Center(
-                        child: Icon(
-                          _drawerOpen ? QiyuIcons.close : QiyuIcons.menu,
-                          size: QiyuIconSpec.size,
-                          color: QiyuColors.ink,
+                  child: QiyuGlassPanel(
+                    borderRadius: QiyuRadii.circleBorder,
+                    child: InkWell(
+                      key: const Key('nav-menu-button'),
+                      focusNode: _menuFocusNode,
+                      customBorder: const CircleBorder(),
+                      onTap: () => unawaited(_setDrawer(!_drawerOpen)),
+                      child: SizedBox.square(
+                        dimension: QiyuLayout.menuButtonSize,
+                        child: const Center(
+                          child: Icon(
+                            QiyuIcons.menu,
+                            size: QiyuIconSpec.size,
+                            color: QiyuColors.ink,
+                          ),
                         ),
                       ),
                     ),
@@ -441,7 +448,6 @@ class _QiyuShellState extends State<QiyuShell>
               ),
             ),
           ),
-        ),
       ],
     );
   }

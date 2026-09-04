@@ -113,15 +113,24 @@ void main() {
       expect(find.byKey(const Key('nav-scrim')), findsNothing);
     });
 
-    testWidgets('窄屏点三条杠同样收回抽屉', (tester) async {
+    testWidgets('窄屏抽屉开着时三条杠不在树里：点遮罩收回后回到树里', (tester) async {
       await _pumpShell(tester, width: 420, height: 900);
+      // 抽屉合上时点三条杠打开（关态覆盖，见上条开合用例）。
       await tester.tap(find.byKey(const Key('nav-menu-button')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('nav-history')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('nav-menu-button')));
+      // 抽屉一开三条杠就整块摘出树：它的命中盒正压在品牌槽的栖语图标上，
+      // 关闭手段移交遮罩（点按/Esc）与抽屉内导航项。
+      expect(find.byKey(const Key('nav-menu-button')), findsNothing);
+      expect(find.byKey(const Key('nav-scrim')), findsOneWidget);
+
+      // 点抽屉之外的遮罩收回，三条杠回到树里，抽屉可以再次打开。
+      final drawerRect = tester.getRect(find.byKey(const Key('nav-drawer')));
+      await tester.tapAt(Offset(drawerRect.right + 40, 450));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('nav-history')), findsNothing);
+      expect(find.byKey(const Key('nav-menu-button')), findsOneWidget);
     });
 
     testWidgets('窄屏按 Esc 收回抽屉后焦点回到三条杠', (tester) async {
@@ -296,6 +305,21 @@ void main() {
         reason: '抽屉收回',
       );
       expect(_location(tester), '/');
+    });
+
+    testWidgets('窄屏抽屉打开后点栖语图标中心必须回合一页：不被浮在上层的三条杠拦截', (tester) async {
+      await _pumpShell(tester, width: 420, height: 900, at: '/chat');
+      await tester.tap(find.byKey(const Key('nav-menu-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('go-home')), findsOneWidget);
+
+      // 用户点的是左上角那枚**品牌图形本身**（三条杠后露出月牙边的那枚圆），
+      // 不是整条品牌槽 hit 区的中点：图形贴着抽屉左上角，与浮层三条杠同位。
+      // 点它必须回合一页；被三条杠吃掉、只收回抽屉不导航，就是这个缺陷。
+      await tester.tap(find.byKey(const Key('nav-brand')));
+      await tester.pumpAndSettle();
+
+      expect(_location(tester), '/', reason: '点栖语图标必须回合一页，而不是被三条杠拦截');
     });
 
     testWidgets('双视口溢出冒烟：800x600 与 420x900 都不许溢出', (tester) async {

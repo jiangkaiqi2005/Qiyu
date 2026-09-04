@@ -54,7 +54,7 @@ abstract final class QiyuIcons {
     fontPackage: null,
   );
 
-  /// 窄屏抽屉的三条杠：打开时换成 [close] 收回。
+  /// 窄屏抽屉合上时左上角的三条杠：点它打开抽屉。
   static const IconData menu = IconData(
     0xE5D2,
     fontFamily: QiyuIconSpec.fontFamily,
@@ -68,8 +68,7 @@ abstract final class QiyuIcons {
     fontPackage: null,
   );
 
-  /// 抽屉打开时的三条杠收回态、以及各类「关掉这一块」（朗读失败提示、
-  /// 备份面板关闭）。
+  /// 各类「关掉这一块」的图形：朗读失败提示、备份面板关闭。
   static const IconData close = IconData(
     0xE14C,
     fontFamily: QiyuIconSpec.fontFamily,
