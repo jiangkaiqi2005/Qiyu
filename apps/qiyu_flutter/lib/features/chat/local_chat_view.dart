@@ -360,6 +360,13 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
+  /// 空态首页底部垫高：居中会把 padding 对半分到上下，所以垫 2 倍、实际把
+  /// 内容上移 56——浏览器上边栏（标签页/地址栏/收藏栏）把窗口的视觉中心压到
+  /// 视口几何中心之上，居中内容在 maximized 窗口里看起来坠在下半（2026-09-04
+  /// 用户反馈「看起来很靠下」）。走 padding 而非 Transform：短窗滚动时垫高
+  /// 只是滚出界的尾巴，不破坏 ticket 24 的「绝不溢出」。
+  static const double _homeHeroRisePadding = 112;
+
   /// 空状态首页：桌面把问候与 composer 一起垂直居中（首页仪式感），窄屏问候
   /// 居中、composer **全程落底**。两种布局都保持「小窗与字号放大可滚动不溢出」。
   Widget _homeBody(
@@ -370,9 +377,14 @@ class _LocalChatViewState extends State<LocalChatView> {
     if (!narrow) {
       return QiyuCenteredScrollable(
         // 首页仍是「小窗与字号放大时整体可滚动、绝不溢出」的那一类非列表页
-        // （ticket 24）。
+        // （ticket 24）。底部垫高见 [_homeHeroRisePadding]。
         maxWidth: QiyuLayout.homeContentMaxWidth,
-        padding: const EdgeInsets.all(QiyuSpacing.lg),
+        padding: const EdgeInsets.fromLTRB(
+          QiyuSpacing.lg,
+          QiyuSpacing.lg,
+          QiyuSpacing.lg,
+          QiyuSpacing.lg + _homeHeroRisePadding,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
