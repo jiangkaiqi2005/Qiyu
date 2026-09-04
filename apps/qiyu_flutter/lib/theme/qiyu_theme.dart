@@ -413,6 +413,11 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false}) {
         // 行高 = 图标按钮高度（§8 组件 5「占位字垂直居中，行高对齐按钮高度 34px」），
         // 由 token 相除得出，不写死裸比值。
         height: QiyuLayout.composerIconButtonSize / QiyuType.bodySize,
+        // 字体上重下轻（hhea 上行约占 80%），proportional 会把 34px 行盒内的
+        // 基线压向盒底、占位字与光标偏下。M3 默认字体档目前隐式给了 even，
+        // 这里显式写是钉住既有行为、不是行为修复：样式装配路径一变，隐式
+        // 继承就会悄悄退回 proportional。
+        leadingDistribution: TextLeadingDistribution.even,
       ),
       border: _composerBorder(QiyuColors.line),
       enabledBorder: _composerBorder(QiyuColors.line),
