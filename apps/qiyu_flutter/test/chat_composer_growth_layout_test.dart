@@ -9,6 +9,7 @@ import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/shell/qiyu_widgets.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
@@ -83,6 +84,19 @@ void main() {
       60.0,
       reason: '静息面板高基线漂移：展开态留白必须只作用于多行展开态',
     );
+    // 静息内边距基线：左右 16/6、上下 6——展开态只许改下沿，其余三边钉死。
+    expect(
+      tester
+          .widget<QiyuGlassPanel>(find.byKey(const Key('home-go-chat')))
+          .padding,
+      const EdgeInsets.fromLTRB(
+        QiyuSpacing.md,
+        QiyuLayout.composerPadding,
+        QiyuLayout.composerPadding,
+        QiyuLayout.composerPadding,
+      ),
+      reason: '静息面板内边距基线漂移',
+    );
 
     await tester.enterText(
       find.byKey(const Key('chat-input')),
@@ -100,14 +114,30 @@ void main() {
       reason: '前置失败：3 行文本没有让 composer 长高，用例空转',
     );
 
-    // 展开态留白锁：多行后文字上下不再贴着发丝边（2026-09-05 用户反馈
-    // 「这种时候再拉高一点」），面板在静息 6 的基础上上下各再让一档 xs(8)。
-    // 3 行行盒（本环境 22/行）+ 上下 (6+8)×2 + 发丝 2 = 96；少 16 即展开留白
-    // 丢失（未加留白的旧实现实测 80）。
+    // 展开态留白分配锁（2026-09-05 用户反馈「上面太宽了，下面太窄了，离圆角
+    // 太近了」）：宋体行盒的空隙大头分在文字上方（行高按字体上伸比例分配、
+    // CJK 字面偏上），上下对称加白视觉上仍上宽下窄。故展开态上沿回到静息 6、
+    // 下沿 6+2×8=22，总留白 28 不变——高度断言区分不了分配，这里直接读面板
+    // 内边距钉住。
+    expect(
+      tester
+          .widget<QiyuGlassPanel>(find.byKey(const Key('home-go-chat')))
+          .padding,
+      const EdgeInsets.fromLTRB(
+        QiyuSpacing.md,
+        QiyuLayout.composerPadding,
+        QiyuLayout.composerPadding,
+        QiyuLayout.composerPadding + 2 * QiyuSpacing.xs,
+      ),
+      reason: '展开态留白应全在下沿（上 6 下 22），而不是上下对称',
+    );
+
+    // 展开态总高锁：3 行行盒（本环境 22/行）+ 上 6 + 下 22 + 发丝 2 = 96
+    // （未加展开留白的旧实现实测 80）。
     expect(
       composerAfter.height,
       96.0,
-      reason: '多行展开态面板高度：3 行行盒 + 上下各 14 留白 + 发丝 2',
+      reason: '多行展开态面板高度：3 行行盒 + 上 6 + 下 22 + 发丝 2',
     );
 
     final listAfter = tester.getRect(listView);

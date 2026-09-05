@@ -78,8 +78,8 @@ class _LocalChatViewState extends State<LocalChatView> {
   final _composerRowKey = GlobalKey(debugLabel: 'composer-row');
 
   /// composer 是否多行展开：输入行高过静息 [_composerRowRestingHeight] 即展开，
-  /// 面板上下各加 [_composerExpandedExtraPadding]；单行静息分毫不动（列表底部
-  /// 让位常量与基线测试的 492/516 都依赖这一点）。
+  /// 面板下沿加到 [_composerExpandedBottomPadding]（上沿不动）；单行静息分毫
+  /// 不动（列表底部让位常量与基线测试的 492/516 都依赖这一点）。
   bool _composerExpanded = false;
 
   String _lastListSignature = '';
@@ -373,10 +373,13 @@ class _LocalChatViewState extends State<LocalChatView> {
       _compactIconButtonSizeDelta +
       2 * QiyuLayout.focusRingOffset;
 
-  /// composer 多行展开态在 [QiyuLayout.composerPadding] 之上额外让出的上下
-  /// 留白：单行的紧边距有胶囊弧度兜着，多行后文字上下贴发丝边难看（2026-09-05
-  /// 用户反馈「这种时候再拉高一点」），展开后上下各让一档 [QiyuSpacing.xs]。
-  static const double _composerExpandedExtraPadding = QiyuSpacing.xs;
+  /// composer 多行展开态的下沿内边距：上沿保持静息 [QiyuLayout.composerPadding]
+  /// 不动——宋体行盒的空隙大头分在文字上方（行高按字体上伸比例分配、CJK 字面
+  /// 偏上），视觉上沿自带余量；留白全部补给下沿，让最后一行离圆角远一点
+  /// （2026-09-05 用户反馈「上面太宽了，下面太窄了，离圆角太近了」；总留白
+  /// 与先前的上下对称方案一致，只是分配不同）。
+  static const double _composerExpandedBottomPadding =
+      QiyuLayout.composerPadding + 2 * QiyuSpacing.xs;
 
   /// 聊天态消息列表的 bottom padding：composer 覆盖层的**静息占位**（单行输入、
   /// 通知条收起时，覆盖层从列表底缘算起占掉的高度）。取常量、不跟随 composer
@@ -662,8 +665,8 @@ class _LocalChatViewState extends State<LocalChatView> {
   }
 
   /// composer（design-system §8 组件 5）：毛玻璃胶囊、`line` 发丝描边、
-  /// 内边距 6（多行展开态上下再各让一档 [_composerExpandedExtraPadding]，
-  /// 单行静息不动）、聚焦描边压到紫度 0.13；占位字 `muted` 且靠 34px 行高居中。
+  /// 内边距 6（多行展开态下沿再让两档 xs、上沿不动，单行静息不动）、
+  /// 聚焦描边压到紫度 0.13；占位字 `muted` 且靠 34px 行高居中。
   ///
   /// `home-go-chat` 沿用退役前首页「去聊天」入口卡的既有测试键：合一页
   /// 之后进入对话的动作就是这个输入容器，键位随职责搬过来。
@@ -674,8 +677,9 @@ class _LocalChatViewState extends State<LocalChatView> {
     final lineColor = _inputFocusNode.hasFocus
         ? QiyuColors.composerFocusLine
         : QiyuColors.line;
-    final verticalPadding = QiyuLayout.composerPadding +
-        (_composerExpanded ? _composerExpandedExtraPadding : 0.0);
+    final bottomPadding = _composerExpanded
+        ? _composerExpandedBottomPadding
+        : QiyuLayout.composerPadding;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: QiyuSpacing.md),
       child: Center(
@@ -689,9 +693,9 @@ class _LocalChatViewState extends State<LocalChatView> {
             borderColor: lineColor,
             padding: EdgeInsets.fromLTRB(
               QiyuSpacing.md,
-              verticalPadding,
               QiyuLayout.composerPadding,
-              verticalPadding,
+              QiyuLayout.composerPadding,
+              bottomPadding,
             ),
             // 输入行本体：Enter 发送 / 软换行 / Esc 的快捷键作用域只包住它。
             child: Shortcuts(
