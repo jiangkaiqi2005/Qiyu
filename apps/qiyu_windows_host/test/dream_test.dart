@@ -65,6 +65,39 @@ void main() {
     expect(await pipeline.listEpisodeDates(), ['2026-08-14', '2026-08-15']);
   });
 
+  test('the dream model call carries an explicit output budget', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-budget-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    var now = DateTime(2026, 8, 15, 23, 10);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: directory.path,
+      clock: () => now,
+    );
+    await _seedFinalizedDay(pipeline, '2026-08-14', '用户完成了人生第一次演讲');
+    final client = _ScriptedDreamClient([
+      ModelCompletion.reply(
+        _candidate([
+          _item('重要事件', '用户完成人生第一次演讲', ['2026-08-14']),
+        ]),
+      ),
+    ]);
+    final dream = DreamService(
+      memoryDirectory: directory.path,
+      episodePipeline: pipeline,
+      modelClient: client,
+      clock: () => now,
+    );
+
+    final outcome = await dream.run(bedtime: true);
+
+    expect(outcome.status, DreamStatus.accepted);
+    // 理解类调用必须显式给足输出预算：缺省会吃聊天护栏 512，长结构
+    // JSON 被截断后解析必失败。
+    expect(client.maxTokens.single, 16384);
+  });
+
   test('less than three days later the bedtime dream stays ineligible', () async {
     final directory = await Directory.systemTemp.createTemp(
       'qiyu-dream-interval-test-',
@@ -1837,6 +1870,7 @@ final class _ScriptedDreamClient implements ProviderChatClient {
 
   final List<ModelCompletion?> completions;
   final List<List<ModelMessage>> calls = [];
+  final List<int?> maxTokens = [];
   var _index = 0;
 
   @override
@@ -1845,6 +1879,7 @@ final class _ScriptedDreamClient implements ProviderChatClient {
     int? maxTokens,
   }) async {
     calls.add(messages);
+    this.maxTokens.add(maxTokens);
     if (completions.isEmpty) {
       return null;
     }

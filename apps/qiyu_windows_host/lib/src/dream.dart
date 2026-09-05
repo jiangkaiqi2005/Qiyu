@@ -47,6 +47,11 @@ const dreamHistoryKeep = 4;
 /// 单次 Dream 接受的根节点提案上限：防止模型一次性大改树结构。
 const dreamMaxRootProposals = 8;
 
+/// Dream 重组调用的输出预算：一次要吐出全部分区草稿加根节点提案的
+/// 单个 JSON 对象，与日终理解同一量级，远超聊天的少说护栏。缺省吃
+/// 聊天上限 512 时输出被截断，JSON 解析必失败（材料积压期的真实事故）。
+const dreamMaxOutputTokens = 16384;
+
 final _rootIdPattern = RegExp(r'^[A-Z]{2}-R\d+$');
 final _middleIdPattern = RegExp(r'^[A-Z]{2}-M\d+$');
 
@@ -586,7 +591,10 @@ final class DreamService {
     }
     ModelCompletion completion;
     try {
-      final result = await client.complete(_dreamMessages(input));
+      final result = await client.complete(
+        _dreamMessages(input),
+        maxTokens: dreamMaxOutputTokens,
+      );
       if (result == null) {
         // Provider 未配置（complete 返回 null）：语义重组不做。
         return const DreamOutcome(status: DreamStatus.skippedNoProvider);
