@@ -385,6 +385,10 @@ class _LocalChatViewState extends State<LocalChatView> {
   static const double _composerExpandedBottomPadding =
       QiyuLayout.composerPadding + 2 * QiyuSpacing.xs;
 
+  /// composer 光标宽度：[_inputField] 显式传给 TextField（渲染不变，Flutter
+  /// 默认就是 2.0），展开态判定按它扣排版宽，见 [_updateComposerExpanded]。
+  static const double _inputCursorWidth = 2.0;
+
   /// 聊天态消息列表的 bottom padding：composer 覆盖层的**静息占位**（单行输入、
   /// 通知条收起时，覆盖层从列表底缘算起占掉的高度）。取常量、不跟随 composer
   /// 实际高度联动——联动会让列表随打字移动，违背「会话不动」；composer 长高时
@@ -770,7 +774,18 @@ class _LocalChatViewState extends State<LocalChatView> {
   }
 
   /// 展开态帧后核对：用与输入框**同源**的字体样式（[_inputTextStyle]）把当前
-  /// 文本按输入框实际宽度排版，行数 > 1 即展开，只在布尔翻转时 setState。
+  /// 文本按输入框实际可用宽度排版，行数 > 1 即展开，只在布尔翻转时 setState。
+  ///
+  /// 判定必须与真实渲染**双同源**，缺一处软折行边界就会漏判/过判（2026-09-05
+  /// 实测：`一`×35+'。' 真实渲染 2 行、判定 1 行，面板停在静息 60 下沿贴边，
+  /// 再补一个字符才跳展开——观感即「一个句号和两个句号差太多」）：
+  /// - 样式必须与渲染同源：[_inputTextStyle] 按 TextField 的实际装配方向取
+  ///   Theme `bodyLarge` merge（机制见其 doc）。裸 `QiyuTypography.body` 少了
+  ///   渲染样式自带的 `letterSpacing`，每行会比真实多容约 1 字符；
+  /// - 宽度必须扣光标边距：RenderEditable 的实际排版宽比容器窄
+  ///   `_caretMargin = 1.0 + cursorWidth`（rendering/editable.dart 的
+  ///   `_kCaretGap`），即下方的 `1.0 + _inputCursorWidth`；不扣会在临界长度
+  ///   再漏判一格。
   ///
   /// 判据必须是「内容行数」而非「输入行高超过按钮行（[_composerRowRestingHeight]）」：
   /// 窄屏字阶与浏览器缩放会把单行行盒压到 22px 上下，两行内容（44px）仍矮于
@@ -790,7 +805,7 @@ class _LocalChatViewState extends State<LocalChatView> {
         ),
         textDirection: TextDirection.ltr,
         textScaler: MediaQuery.textScalerOf(context),
-      )..layout(maxWidth: box.size.width);
+      )..layout(maxWidth: box.size.width - 1.0 - _inputCursorWidth);
       final expanded = painter.computeLineMetrics().length > 1;
       painter.dispose();
       if (expanded != _composerExpanded) {
@@ -800,7 +815,8 @@ class _LocalChatViewState extends State<LocalChatView> {
   }
 
   /// 输入框本体：字色与占位字都来自 token；描边交给外层玻璃面板，
-  /// 因此这里显式撤掉 TextField 自己的边框与填充。
+  /// 因此这里显式撤掉 TextField 自己的边框与填充。cursorWidth 显式传
+  /// [_inputCursorWidth]（值等于默认），让展开态判定扣的光标边距有同一出处。
   Widget _inputField() {
     return TextField(
       key: const Key('chat-input'),
@@ -810,6 +826,7 @@ class _LocalChatViewState extends State<LocalChatView> {
       minLines: 1,
       maxLines: 5,
       textInputAction: TextInputAction.newline,
+      cursorWidth: _inputCursorWidth,
       style: _inputTextStyle(context),
       decoration: const InputDecoration(
         hintText: '想说点什么…',
@@ -827,8 +844,20 @@ class _LocalChatViewState extends State<LocalChatView> {
 
   /// 输入框文本样式：[_inputField] 与展开态行数判定（[_updateComposerExpanded]）
   /// 必须共用同一份，行数才不会按另一份字体度量排版。
-  TextStyle _inputTextStyle(BuildContext context) =>
-      QiyuTypography.of(context).body.copyWith(color: QiyuColors.ink);
+  ///
+  /// 构造 = `Theme.of(context).textTheme.bodyLarge` merge `QiyuTypography.body`
+  /// + ink，**merge 方向必须 bodyLarge 在前**：TextStyle.merge 是 other 覆盖
+  /// this，而主题 `bodyLarge` 经 `Theme.of` 返回前的 Typography englishLike
+  /// 2021 几何 merge（theme_data.dart 的 `ThemeData.localize`）后 `inherit` 为
+  /// false——TextStyle.merge 对 inherit false 的 other 直接原样返回，反向
+  /// merge 会整个丢掉 `QiyuTypography` 当档字阶与 ink 的显式覆盖。正向 merge
+  /// 得到的样式自带渲染层的 `letterSpacing: 0.5` 与 `height: 1.5`，再过
+  /// TextField 内部的 `bodyLarge.merge(providedStyle)`（text_field.dart 的
+  /// `_m3InputStyle`）逐属性不变：渲染零变化，判定从此与渲染同源。
+  TextStyle _inputTextStyle(BuildContext context) => Theme.of(context)
+      .textTheme
+      .bodyLarge!
+      .merge(QiyuTypography.of(context).body.copyWith(color: QiyuColors.ink));
 
   /// 语音输入状态行：录音计时 / 转写等待 / 可重试提示。作为 live region
   /// 播报给屏幕阅读器；idle 无事可报时不占位。

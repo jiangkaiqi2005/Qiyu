@@ -25,6 +25,10 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 /// seam 与字体加载），960×600 下先量 ListView 静息矩形与贴底位置，再向输入框
 /// 注入 3 行文本，断言列表前后零位移。两案都带前置断言（composer 确实长高了 /
 /// 恢复后确实贴底了），防止改动布局后用例空转。
+///
+/// 后续补充的软折行用例锁展开判定的同源性：临界长度（无显式 `\n`）内容真实
+/// 渲染的行数必须与判定一致，且面板在临界组合两侧（一×34+'。'/一×35+'。'）
+/// 分居静息 60 与展开 76，见 `_updateComposerExpanded`。
 void main() {
   setUpAll(() async {
     // 测试环境的 FlutterTest 默认字体度量失真，加载随包真实字体
@@ -192,6 +196,120 @@ void main() {
       listBefore.height,
       reason: '消息列表视口高度必须不变：composer 长高应走覆盖层，而不是挤压列表',
     );
+  });
+
+  testWidgets('软折行临界：一×35+。即展开，一×34+。不展开', (tester) async {
+    await pumpChat(tester, messageCount: 1);
+
+    // 症状锁（2026-09-05 用户反馈「一个句号和两个句号差太多」）：`一`×35+'。'
+    // 在本环境真实渲染 2 行（渲染样式带 letterSpacing 0.5，单行总宽 558 > 排版
+    // 可用宽 551），面板必须展开到 76、下沿让出完整留白。修复前判定样式缺这层
+    // letterSpacing、宽度又没扣光标边距，把 2 行判成 1 行，面板停在静息 60
+    // （下沿贴边），再补一个字符才突然跳到 76。
+    await tester.enterText(
+      find.byKey(const Key('chat-input')),
+      '一' * 35 + '。',
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.getRect(find.byKey(const Key('home-go-chat'))).height,
+      76.0,
+      reason: '软折行临界组合（一×35+。）必须按真实 2 行展开，'
+          '而不是停在下沿贴边的静息 60',
+    );
+    expect(
+      tester
+          .widget<QiyuGlassPanel>(find.byKey(const Key('home-go-chat')))
+          .padding,
+      const EdgeInsets.fromLTRB(
+        QiyuSpacing.md,
+        QiyuLayout.composerPadding,
+        QiyuLayout.composerPadding,
+        QiyuLayout.composerPadding + 2 * QiyuSpacing.xs,
+      ),
+      reason: '软折行展开的下沿留白与显式换行展开同一分配（上 6 下 22）',
+    );
+
+    // 相邻防过判：`一`×34+'。' 真实渲染 1 行（单行总宽 542.5 ≤ 可用宽 551），
+    // 面板必须停在静息 60——临界组合往短挪一格就不得展开。
+    await tester.enterText(
+      find.byKey(const Key('chat-input')),
+      '一' * 34 + '。',
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.getRect(find.byKey(const Key('home-go-chat'))).height,
+      60.0,
+      reason: '比临界组合短一个字符的真实 1 行内容不得展开',
+    );
+  });
+
+  testWidgets('展开判定与真实渲染行数同源：临界组合不变量锁', (tester) async {
+    await pumpChat(tester, messageCount: 1);
+
+    final element = tester.element(find.byKey(const Key('chat-input')));
+
+    // 真实渲染行数：RenderEditable 对全文选中盒按 top 去重计数（同一行的盒
+    // top 相等，不同行相差一行距）。
+    int renderedLines(String text) {
+      final editable = tester
+          .state<EditableTextState>(find.byType(EditableText).first)
+          .renderEditable;
+      final tops = editable
+          .getBoxesForSelection(
+            TextSelection(baseOffset: 0, extentOffset: text.length),
+          )
+          .map((box) => box.top)
+          .toList()
+        ..sort();
+      var lines = 0;
+      double? last;
+      for (final top in tops) {
+        if (last == null || top - last > 0.5) {
+          lines++;
+        }
+        last = top;
+      }
+      return lines;
+    }
+
+    // 生产判定同款复算：样式与宽度构造和 [_updateComposerExpanded] 逐字一致
+    // （样式 = Theme bodyLarge merge QiyuTypography body + ink；宽度 = 输入盒
+    // 宽 − RenderEditable 的 caret margin 1.0 + cursorWidth 2.0）。判定样式或
+    // 宽度将来与渲染脱钩时，临界组合上两条行数就会分岔。这里刻意逐字复写
+    // 生产构造、不抽共享函数：共享后两边永远相等，不变量断言就成了同义复述；
+    // 复写本体的单侧漂移（谁改了样式或宽度构造而忘了另一侧）正是本锁要抓的。
+    int judgedLines(String text) {
+      final box = tester.renderObject<RenderBox>(
+        find.byKey(const Key('chat-input')),
+      );
+      final painter = TextPainter(
+        text: TextSpan(
+          text: text,
+          style: Theme.of(element).textTheme.bodyLarge!.merge(
+                QiyuTypography.of(element).body.copyWith(color: QiyuColors.ink),
+              ),
+        ),
+        textDirection: TextDirection.ltr,
+        textScaler: MediaQuery.textScalerOf(element),
+      )..layout(maxWidth: box.size.width - 1.0 - 2.0);
+      final lines = painter.computeLineMetrics().length;
+      painter.dispose();
+      return lines;
+    }
+
+    for (final text in ['一' * 34 + '。', '一' * 35 + '。', '一' * 36]) {
+      await tester.enterText(find.byKey(const Key('chat-input')), text);
+      await tester.pumpAndSettle();
+      final rendered = renderedLines(text);
+      final judged = judgedLines(text);
+      expect(
+        judged,
+        rendered,
+        reason: '「$text」判定行数（$judged）与真实渲染行数（$rendered）'
+            '不一致：判定样式或宽度构造已与渲染脱钩',
+      );
+    }
   });
 
   testWidgets('composer 长高不丢贴底', (tester) async {
