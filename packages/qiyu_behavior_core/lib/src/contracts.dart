@@ -87,8 +87,8 @@ final class ChatRequest {
   factory ChatRequest.fromJson(Map<String, Object?> json) {
     return ChatRequest(
       schemaVersion: json['schemaVersion'] as int? ?? contractSchemaVersion,
-      requestId: json['requestId']! as String,
-      text: json['text']! as String,
+      requestId: json['requestId'] as String,
+      text: json['text'] as String,
     );
   }
 
@@ -119,8 +119,8 @@ final class ChatTurn {
   factory ChatTurn.fromJson(Map<String, Object?> json) {
     final rawAt = json['at'] as String?;
     return ChatTurn(
-      speaker: Speaker.values.byName(json['speaker']! as String),
-      text: json['text']! as String,
+      speaker: Speaker.values.byName(json['speaker'] as String),
+      text: json['text'] as String,
       at: rawAt == null ? null : DateTime.parse(rawAt).toUtc(),
     );
   }
@@ -154,8 +154,8 @@ final class EmotionSnapshot {
 
   factory EmotionSnapshot.fromJson(Map<String, Object?> json) {
     return EmotionSnapshot(
-      kind: EmotionKind.values.byName(json['kind']! as String),
-      intensity: json['intensity']! as int,
+      kind: EmotionKind.values.byName(json['kind'] as String),
+      intensity: json['intensity'] as int,
     );
   }
 
@@ -191,18 +191,18 @@ final class StateSnapshot {
   );
 
   factory StateSnapshot.fromJson(Map<String, Object?> json) {
-    final rawTurns = json['turns']! as List<Object?>;
+    final rawTurns = json['turns'] as List<Object?>;
     return StateSnapshot(
       schemaVersion: json['schemaVersion'] as int? ?? contractSchemaVersion,
-      userId: json['userId']! as String,
+      userId: json['userId'] as String,
       relationshipStage: RelationshipStage.fromWireName(
-        json['relationshipStage']! as String,
+        json['relationshipStage'] as String,
       ),
       turns: rawTurns
-          .map((value) => ChatTurn.fromJson(value! as Map<String, Object?>))
+          .map((value) => ChatTurn.fromJson(value as Map<String, Object?>))
           .toList(),
       lastEmotion: EmotionSnapshot.fromJson(
-        json['lastEmotion']! as Map<String, Object?>,
+        json['lastEmotion'] as Map<String, Object?>,
       ),
     );
   }
@@ -270,8 +270,8 @@ final class ChatResult extends ChatOutcome {
   }) : messages = List.unmodifiable(messages);
 
   factory ChatResult.fromJson(Map<String, Object?> json) {
-    final rawMessages = json['messages']! as List<Object?>;
-    final debug = json['debug']! as Map<String, Object?>;
+    final rawMessages = json['messages'] as List<Object?>;
+    final debug = json['debug'] as Map<String, Object?>;
     final rawFallbackReason = json['fallbackReason'] as String?;
     final rawSafety = debug['safety'] as String?;
     return ChatResult(
@@ -279,13 +279,13 @@ final class ChatResult extends ChatOutcome {
       requestId: json['requestId'] as String?,
       messages: rawMessages.cast<String>(),
       nextState: StateSnapshot.fromJson(
-        json['nextState']! as Map<String, Object?>,
+        json['nextState'] as Map<String, Object?>,
       ),
-      source: ReplySource.values.byName(json['source']! as String),
+      source: ReplySource.values.byName(json['source'] as String),
       fallbackReason: rawFallbackReason == null
           ? null
           : FallbackReason.fromWireName(rawFallbackReason),
-      mode: debug['mode']! as String,
+      mode: debug['mode'] as String,
       safety: rawSafety == null ? null : SafetyKind.values.byName(rawSafety),
     );
   }
@@ -353,10 +353,10 @@ final class ErrorResult extends ChatOutcome {
   factory ErrorResult.fromJson(Map<String, Object?> json) {
     return ErrorResult(
       schemaVersion: json['schemaVersion'] as int? ?? contractSchemaVersion,
-      requestId: json['requestId']! as String,
-      code: ChatErrorCode.fromWireName(json['code']! as String),
-      message: json['message']! as String,
-      retryable: json['retryable']! as bool,
+      requestId: json['requestId'] as String,
+      code: ChatErrorCode.fromWireName(json['code'] as String),
+      message: json['message'] as String,
+      retryable: json['retryable'] as bool,
     );
   }
 
@@ -421,8 +421,8 @@ class ChatDeliveryEvent {
     final fallbackReason = json['fallbackReason'] as String?;
     final safety = json['safety'] as String?;
     return ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.values.byName(json['event']! as String),
-      requestId: json['requestId']! as String,
+      kind: ChatDeliveryEventKind.values.byName(json['event'] as String),
+      requestId: json['requestId'] as String,
       sessionId: json['sessionId'] as String?,
       text: json['text'] as String?,
       messages: (json['messages'] as List<Object?>?)?.cast<String>(),

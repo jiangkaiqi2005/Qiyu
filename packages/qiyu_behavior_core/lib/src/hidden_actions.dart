@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'shared_patterns.dart';
+
 /// 白名单枚举按 wire 名解析的共用实现：按声明顺序查找，未命中返回
 /// null。各枚举的 `tryParseWireName` 只是对它的定型化调用。
 T? _parseWireName<T>(
@@ -73,8 +75,7 @@ const maxHiddenQueryRunes = 100;
 final _recallMonthPattern = RegExp(r'^\d{4}-\d{2}$');
 final _recallDatePattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
 
-/// 动作块剥除后的空行折叠与字段内空白折叠。
-final _blankLinesPattern = RegExp(r'\n{3,}');
+/// 字段内空白折叠（空行折叠模式包内共享，见 shared_patterns.dart）。
 final _fieldWhitespaceRunsPattern = RegExp(r'\s{2,}');
 
 /// Open-loop 动作的字段长度上限（runes）。标题走 summary 字段，
@@ -552,7 +553,7 @@ HiddenActionParse parseHiddenActions(String rawText) {
   final blocks = _hiddenActionBlock.allMatches(rawText).toList();
   final visibleText = rawText
       .replaceAll(_hiddenActionBlock, '')
-      .replaceAll(_blankLinesPattern, '\n\n')
+      .replaceAll(blankLinesPattern, '\n\n')
       .trim();
   if (blocks.isEmpty) {
     return HiddenActionParse(
@@ -635,145 +636,15 @@ HiddenAction? _validateAction(
 
   switch (kind) {
     case HiddenActionKind.memorySignal:
-      final summary = _cleanFieldValue(item['summary']);
-      final evidence = _cleanFieldValue(item['evidence']);
-      if (summary == null || summary.runes.length > maxHiddenSummaryRunes) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      if (evidence != null && evidence.runes.length > maxHiddenEvidenceRunes) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final security = _fieldSecurityDiagnostic([summary, evidence]);
-      if (security != null) {
-        diagnostics.add(security);
-        return null;
-      }
-      // 画像提示是归类的附加线索：不合法时只丢提示、不丢记忆信号。
-      // 身份事实禁止行为推断（PersonaTree 定稿），违规组合同样丢提示。
-      final branch = _cleanFieldValue(item['branch']);
-      final nature = _cleanFieldValue(item['nature']);
-      PersonaHint? hint;
-      if (branch != null || nature != null) {
-        final typedBranch = branch == null
-            ? null
-            : PersonaTreeBranch.tryParseWireName(branch);
-        final typedNature = nature == null
-            ? null
-            : PersonaNature.tryParseWireName(nature);
-        if (typedBranch != null &&
-            typedNature != null &&
-            !(typedBranch == PersonaTreeBranch.identity &&
-                typedNature != PersonaNature.selfReport)) {
-          hint = PersonaHint(branch: typedBranch, nature: typedNature);
-        } else {
-          diagnostics.add(HiddenActionDiagnostics.personaHintDropped);
-        }
-      }
-      return MemorySignalAction(
-        summary: summary,
-        evidence: evidence,
-        hint: hint,
-      );
+      return _validateMemorySignal(item, diagnostics);
     case HiddenActionKind.memoryRecall:
-      final query = _cleanFieldValue(item['query']);
-      if (query == null || query.runes.length > maxHiddenQueryRunes) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      // 锁定行为：检索词命中越权或秘密一律记 privilegeViolation，
-      // 不走其它动作的 privilege/secret 分流（有测试钉住，勿"统一"）。
-      if (_violatesPrivilege(query) || _containsSecret(query)) {
-        diagnostics.add(HiddenActionDiagnostics.privilegeViolation);
-        return null;
-      }
-      // 轮内查找的选择字段（只出现在选择调用回应里）：逐项做格式校验，
-      // 不合规的项丢弃并记诊断。成员校验（选择必须来自 Host 递过的
-      // 目录）在 Host 编排层执行。
-      final months = _parseSelections(
-        item['months'],
-        _recallMonthPattern,
-        diagnostics,
-      );
-      final dates = _parseSelections(
-        item['dates'],
-        _recallDatePattern,
-        diagnostics,
-      );
-      return MemoryRecallAction(query: query, months: months, dates: dates);
+      return _validateMemoryRecall(item, diagnostics);
     case HiddenActionKind.noAction:
       return const NoAction();
     case HiddenActionKind.openLoopCandidate:
-      final title = _cleanFieldValue(item['summary']);
-      if (title == null || title.runes.length > maxLoopTitleRunes) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final evidence = _cleanFieldValue(item['evidence']);
-      if (evidence != null && evidence.runes.length > maxHiddenEvidenceRunes) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final due = _cleanFieldValue(item['due']);
-      if (due != null && !_loopDuePattern.hasMatch(due)) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final proactive = _cleanFieldValue(item['proactive']);
-      final typedProactive = proactive == null
-          ? null
-          : LoopProactive.tryParseWireName(proactive);
-      if (proactive != null && typedProactive == null) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final note = _cleanFieldValue(item['note']);
-      if (note != null && note.runes.length > maxLoopNoteRunes) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final security = _fieldSecurityDiagnostic([title, evidence, note]);
-      if (security != null) {
-        diagnostics.add(security);
-        return null;
-      }
-      return OpenLoopCandidateAction(
-        title: title,
-        evidence: evidence,
-        due: due,
-        proactive: typedProactive,
-        note: note,
-      );
+      return _validateOpenLoopCandidate(item, diagnostics);
     case HiddenActionKind.openLoopStatus:
-      final title = _cleanFieldValue(item['summary']);
-      if (title == null || title.runes.length > maxLoopTitleRunes) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final status = _cleanFieldValue(item['status']);
-      final typedStatus = status == null
-          ? null
-          : LoopStatus.tryParseWireName(status);
-      if (typedStatus == null) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final result = _cleanFieldValue(item['result']);
-      if (result != null && result.runes.length > maxLoopResultRunes) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final security = _fieldSecurityDiagnostic([title, result]);
-      if (security != null) {
-        diagnostics.add(security);
-        return null;
-      }
-      return OpenLoopStatusAction(
-        title: title,
-        status: typedStatus,
-        result: result,
-      );
+      return _validateOpenLoopStatus(item, diagnostics);
     case HiddenActionKind.memoryBan:
       return _validateMemoryControl(item, diagnostics, MemoryBanAction.new);
     case HiddenActionKind.memoryForget:
@@ -789,43 +660,246 @@ HiddenAction? _validateAction(
     case HiddenActionKind.memoryDelete:
       return _validateMemoryControl(item, diagnostics, MemoryDeleteAction.new);
     case HiddenActionKind.relationshipSignal:
-      final summary = _cleanFieldValue(item['summary']);
-      if (summary == null ||
-          summary.runes.length > maxRelationshipSummaryRunes) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final signal = _cleanFieldValue(item['signal']);
-      final typedSignal = signal == null
-          ? null
-          : RelationshipSignal.tryParseWireName(signal);
-      if (typedSignal == null) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final evidence = _cleanFieldValue(item['evidence']);
-      if (evidence != null && evidence.runes.length > maxHiddenEvidenceRunes) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      // 边界开合会投影进「当前相处方式」，定稿要求每条带依据，evidence 必备。
-      if ((typedSignal == RelationshipSignal.boundaryOpen ||
-            typedSignal == RelationshipSignal.boundaryClose) &&
-          evidence == null) {
-        diagnostics.add(HiddenActionDiagnostics.invalidFields);
-        return null;
-      }
-      final security = _fieldSecurityDiagnostic([summary, evidence]);
-      if (security != null) {
-        diagnostics.add(security);
-        return null;
-      }
-      return RelationshipSignalAction(
-        summary: summary,
-        signal: typedSignal,
-        evidence: evidence,
-      );
+      return _validateRelationshipSignal(item, diagnostics);
   }
+}
+
+HiddenAction? _validateMemorySignal(
+  Map<String, Object?> item,
+  List<String> diagnostics,
+) {
+  final summary = _cleanLimited(
+    item['summary'],
+    maxHiddenSummaryRunes,
+    diagnostics,
+  ).value;
+  if (summary == null) {
+    return null;
+  }
+  final evidence = _cleanLimited(
+    item['evidence'],
+    maxHiddenEvidenceRunes,
+    diagnostics,
+    optional: true,
+  );
+  if (!evidence.valid) {
+    return null;
+  }
+  final security = _fieldSecurityDiagnostic([summary, evidence.value]);
+  if (security != null) {
+    diagnostics.add(security);
+    return null;
+  }
+  // 画像提示是归类的附加线索：不合法时只丢提示、不丢记忆信号。
+  // 身份事实禁止行为推断（PersonaTree 定稿），违规组合同样丢提示。
+  final branch = _cleanFieldValue(item['branch']);
+  final nature = _cleanFieldValue(item['nature']);
+  PersonaHint? hint;
+  if (branch != null || nature != null) {
+    final typedBranch = branch == null
+        ? null
+        : PersonaTreeBranch.tryParseWireName(branch);
+    final typedNature = nature == null
+        ? null
+        : PersonaNature.tryParseWireName(nature);
+    if (typedBranch != null &&
+        typedNature != null &&
+        !(typedBranch == PersonaTreeBranch.identity &&
+            typedNature != PersonaNature.selfReport)) {
+      hint = PersonaHint(branch: typedBranch, nature: typedNature);
+    } else {
+      diagnostics.add(HiddenActionDiagnostics.personaHintDropped);
+    }
+  }
+  return MemorySignalAction(
+    summary: summary,
+    evidence: evidence.value,
+    hint: hint,
+  );
+}
+
+HiddenAction? _validateMemoryRecall(
+  Map<String, Object?> item,
+  List<String> diagnostics,
+) {
+  final query = _cleanLimited(
+    item['query'],
+    maxHiddenQueryRunes,
+    diagnostics,
+  ).value;
+  if (query == null) {
+    return null;
+  }
+  // 锁定行为：检索词命中越权或秘密一律记 privilegeViolation，
+  // 不走其它动作的 privilege/secret 分流（有测试钉住，勿"统一"）。
+  if (_violatesPrivilege(query) || _containsSecret(query)) {
+    diagnostics.add(HiddenActionDiagnostics.privilegeViolation);
+    return null;
+  }
+  // 轮内查找的选择字段（只出现在选择调用回应里）：逐项做格式校验，
+  // 不合规的项丢弃并记诊断。成员校验（选择必须来自 Host 递过的
+  // 目录）在 Host 编排层执行。
+  final months = _parseSelections(
+    item['months'],
+    _recallMonthPattern,
+    diagnostics,
+  );
+  final dates = _parseSelections(
+    item['dates'],
+    _recallDatePattern,
+    diagnostics,
+  );
+  return MemoryRecallAction(query: query, months: months, dates: dates);
+}
+
+HiddenAction? _validateOpenLoopCandidate(
+  Map<String, Object?> item,
+  List<String> diagnostics,
+) {
+  final title = _cleanLimited(
+    item['summary'],
+    maxLoopTitleRunes,
+    diagnostics,
+  ).value;
+  if (title == null) {
+    return null;
+  }
+  final evidence = _cleanLimited(
+    item['evidence'],
+    maxHiddenEvidenceRunes,
+    diagnostics,
+    optional: true,
+  );
+  if (!evidence.valid) {
+    return null;
+  }
+  final due = _cleanFieldValue(item['due']);
+  if (due != null && !_loopDuePattern.hasMatch(due)) {
+    diagnostics.add(HiddenActionDiagnostics.invalidFields);
+    return null;
+  }
+  final proactive = _cleanFieldValue(item['proactive']);
+  final typedProactive = proactive == null
+      ? null
+      : LoopProactive.tryParseWireName(proactive);
+  if (proactive != null && typedProactive == null) {
+    diagnostics.add(HiddenActionDiagnostics.invalidFields);
+    return null;
+  }
+  final note = _cleanLimited(
+    item['note'],
+    maxLoopNoteRunes,
+    diagnostics,
+    optional: true,
+  );
+  if (!note.valid) {
+    return null;
+  }
+  final security = _fieldSecurityDiagnostic([
+    title,
+    evidence.value,
+    note.value,
+  ]);
+  if (security != null) {
+    diagnostics.add(security);
+    return null;
+  }
+  return OpenLoopCandidateAction(
+    title: title,
+    evidence: evidence.value,
+    due: due,
+    proactive: typedProactive,
+    note: note.value,
+  );
+}
+
+HiddenAction? _validateOpenLoopStatus(
+  Map<String, Object?> item,
+  List<String> diagnostics,
+) {
+  final title = _cleanLimited(
+    item['summary'],
+    maxLoopTitleRunes,
+    diagnostics,
+  ).value;
+  if (title == null) {
+    return null;
+  }
+  final status = _cleanFieldValue(item['status']);
+  final typedStatus = status == null
+      ? null
+      : LoopStatus.tryParseWireName(status);
+  if (typedStatus == null) {
+    diagnostics.add(HiddenActionDiagnostics.invalidFields);
+    return null;
+  }
+  final result = _cleanLimited(
+    item['result'],
+    maxLoopResultRunes,
+    diagnostics,
+    optional: true,
+  );
+  if (!result.valid) {
+    return null;
+  }
+  final security = _fieldSecurityDiagnostic([title, result.value]);
+  if (security != null) {
+    diagnostics.add(security);
+    return null;
+  }
+  return OpenLoopStatusAction(
+    title: title,
+    status: typedStatus,
+    result: result.value,
+  );
+}
+
+HiddenAction? _validateRelationshipSignal(
+  Map<String, Object?> item,
+  List<String> diagnostics,
+) {
+  final summary = _cleanLimited(
+    item['summary'],
+    maxRelationshipSummaryRunes,
+    diagnostics,
+  ).value;
+  if (summary == null) {
+    return null;
+  }
+  final signal = _cleanFieldValue(item['signal']);
+  final typedSignal = signal == null
+      ? null
+      : RelationshipSignal.tryParseWireName(signal);
+  if (typedSignal == null) {
+    diagnostics.add(HiddenActionDiagnostics.invalidFields);
+    return null;
+  }
+  final evidence = _cleanLimited(
+    item['evidence'],
+    maxHiddenEvidenceRunes,
+    diagnostics,
+    optional: true,
+  );
+  if (!evidence.valid) {
+    return null;
+  }
+  // 边界开合会投影进「当前相处方式」，定稿要求每条带依据，evidence 必备。
+  if ((typedSignal == RelationshipSignal.boundaryOpen ||
+          typedSignal == RelationshipSignal.boundaryClose) &&
+      evidence.value == null) {
+    diagnostics.add(HiddenActionDiagnostics.invalidFields);
+    return null;
+  }
+  final security = _fieldSecurityDiagnostic([summary, evidence.value]);
+  if (security != null) {
+    diagnostics.add(security);
+    return null;
+  }
+  return RelationshipSignalAction(
+    summary: summary,
+    signal: typedSignal,
+    evidence: evidence.value,
+  );
 }
 
 /// 用户记忆控制动作共用同一校验：summary 是控制对象的话题简称，
@@ -835,9 +909,12 @@ MemoryControlAction? _validateMemoryControl(
   List<String> diagnostics,
   MemoryControlAction Function({required String title}) construct,
 ) {
-  final title = _cleanFieldValue(item['summary']);
-  if (title == null || title.runes.length > maxLoopTitleRunes) {
-    diagnostics.add(HiddenActionDiagnostics.invalidFields);
+  final title = _cleanLimited(
+    item['summary'],
+    maxLoopTitleRunes,
+    diagnostics,
+  ).value;
+  if (title == null) {
     return null;
   }
   final security = _fieldSecurityDiagnostic([title]);
@@ -859,6 +936,31 @@ String? _cleanFieldValue(Object? value) {
       .replaceAll(_fieldWhitespaceRunsPattern, ' ')
       .trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+/// 清洗字段并做限长校验：超限时记一条 invalidFields 诊断并返回
+/// valid=false。必填形缺失同样记诊断并以 value=null 表达，调用方判空
+/// value 即等价；可选形缺失原样通过（value=null、valid=true），调用方
+/// 须检查 valid 区分「缺失合法」与「超限丢弃」。
+({String? value, bool valid}) _cleanLimited(
+  Object? raw,
+  int maxRunes,
+  List<String> diagnostics, {
+  bool optional = false,
+}) {
+  final value = _cleanFieldValue(raw);
+  if (value == null) {
+    if (!optional) {
+      diagnostics.add(HiddenActionDiagnostics.invalidFields);
+      return (value: null, valid: false);
+    }
+    return (value: null, valid: true);
+  }
+  if (value.runes.length > maxRunes) {
+    diagnostics.add(HiddenActionDiagnostics.invalidFields);
+    return (value: null, valid: false);
+  }
+  return (value: value, valid: true);
 }
 
 /// 解析 memory_recall 的选择数组：字段缺失返回 null（未选择）；
