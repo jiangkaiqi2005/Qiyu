@@ -87,6 +87,44 @@ void main() {
     },
   );
 
+  test('conflicting requestId reuse fails without duplicating turns', () async {
+    final harness = await InProcessChatHost.start(
+      configureProvider: false,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+    );
+    addTearDown(harness.dispose);
+    final first = await harness.sendChat(requestId: 'conflict-1', text: '在吗');
+    expect(first.events.last.kind, ChatDeliveryEventKind.done);
+
+    // 冲突拒绝在首个交付事件前抛出：NDJSON 响应未发出头部即中断，
+    // LocalChatException 留档到 Host 守护错误区。deliver 包装层的聊天
+    // 级 error 事件当前不可达（addStream 把流错误原样转发给响应体），
+    // 回归断言因此落在异常自身的 code/message/retryable 字段上。
+    await expectLater(
+      harness.sendChat(requestId: 'conflict-1', text: '内容不同的重发'),
+      throwsA(isA<HttpException>()),
+    );
+    expect(
+      harness.zoneErrors,
+      contains(
+        isA<LocalChatException>()
+            .having((error) => error.code, 'code', 'request_id_conflict')
+            .having(
+              (error) => error.message,
+              'message',
+              '这条消息标识已被另一条内容使用，请重新发送。',
+            )
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
+    );
+    final session = await harness.sessionReader().openSession();
+    expect(session.turns, hasLength(2));
+    expect(session.turns.map((turn) => turn.speaker), [
+      Speaker.user,
+      Speaker.qiyu,
+    ]);
+  });
+
   test('starts a new segment when only one slot remains', () async {
     DateTime clock() => DateTime(2026, 8, 11, 22, 30);
     var almostFullId = '';

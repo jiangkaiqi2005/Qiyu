@@ -356,18 +356,26 @@ final class DeveloperDiagnosticsService {
     };
   }
 
+  /// 文件缺失的健康度口径：缺失视为可读（从未产生过材料），不计损坏。
+  static Map<String, Object?> _missing() => {'exists': false, 'readable': true};
+
+  static Map<String, Object?> _present(bool readable) => {
+    'exists': true,
+    'readable': readable,
+  };
+
   /// long-memory 可读性 = 结构可解析（与 Dream/恢复同口径），不是
   /// 单纯的 IO 可读。
   Future<Map<String, Object?>> _longMemoryReadability() async {
     final file = File(path.join(memoryDirectory, 'long-memory.md'));
     if (!await file.exists()) {
-      return {'exists': false, 'readable': true};
+      return _missing();
     }
     try {
       final parsed = parseLongMemory(await file.readAsString());
-      return {'exists': true, 'readable': parsed.readable};
+      return _present(parsed.readable);
     } on Object {
-      return {'exists': true, 'readable': false};
+      return _present(false);
     }
   }
 
@@ -375,26 +383,26 @@ final class DeveloperDiagnosticsService {
   Future<Map<String, Object?>> _dreamStateReadability() async {
     final file = File(path.join(memoryDirectory, 'dream', 'state.md'));
     if (!await file.exists()) {
-      return {'exists': false, 'readable': true};
+      return _missing();
     }
     final dream = dreamService;
     if (dream == null) {
-      return {'exists': true, 'readable': true};
+      return _present(true);
     }
-    return {'exists': true, 'readable': await dream.stateReadable()};
+    return _present(await dream.stateReadable());
   }
 
   Future<Map<String, Object?>> _controlsReadability() async {
     final store = memoryControls;
     if (store == null) {
-      return {'exists': false, 'readable': true};
+      return _missing();
     }
     final exists = await store.controlsFile.exists();
     if (!exists) {
-      return {'exists': false, 'readable': true};
+      return _missing();
     }
     final controls = await store.load();
-    return {'exists': true, 'readable': controls.readable};
+    return _present(controls.readable);
   }
 
   Future<bool?> _personaTreeReadable() async {
@@ -412,10 +420,7 @@ final class DeveloperDiagnosticsService {
 
   Future<Map<String, Object?>> _recoveryHealth() async {
     final recovery = memoryRecovery;
-    if (recovery == null) {
-      return {'reportExists': false, 'quarantinedFiles': 0};
-    }
-    final report = await recovery.readReport();
+    final report = recovery == null ? null : await recovery.readReport();
     if (report == null) {
       return {'reportExists': false, 'quarantinedFiles': 0};
     }

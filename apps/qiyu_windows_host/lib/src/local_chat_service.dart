@@ -164,13 +164,7 @@ final class LocalChatService {
     // 受损层跳过，绝不阻塞首个可见回应。
     final recovery = memoryRecovery;
     if (recovery != null) {
-      _finalizationTask = _finalizationTask.then((_) async {
-        try {
-          await recovery.sweepAndRecover();
-        } on Object catch (error) {
-          _diagnosticsSink('memory recovery deferred [$error]');
-        }
-      });
+      _chainFinalizationStep('memory recovery', recovery.sweepAndRecover);
     }
     // 启动补扫：发现 finalized 仍为 false 的历史日期并安全补做日终归档。
     // 后台执行，绝不阻塞首个可见回应。
@@ -184,6 +178,18 @@ final class LocalChatService {
     // 启动补跑 Dream：只兑现上次晚安留下且仍满足最小间隔
     // （dreamMinIntervalDays）的请求，没有晚安请求时绝不自行运行。
     _scheduleDream(bedtime: false);
+  }
+
+  /// 把一个后台整理步骤挂到串行任务链末尾：步骤之间不并发，失败只记
+  /// '<label> deferred [$error]' 诊断，绝不阻塞后续步骤与聊天。
+  void _chainFinalizationStep(String label, Future<void> Function() work) {
+    _finalizationTask = _finalizationTask.then((_) async {
+      try {
+        await work();
+      } on Object catch (error) {
+        _diagnosticsSink('$label deferred [$error]');
+      }
+    });
   }
 
   /// 等待已调度的后台日终归档完成。日终归档幂等且每一步原子写入，
@@ -295,26 +301,16 @@ final class LocalChatService {
             return event;
           }),
         );
-      } on LocalChatException catch (error) {
-        failureDetail = error.code;
+      } on Object catch (error) {
+        final chatError = error is LocalChatException ? error : null;
+        failureDetail = chatError?.code ?? 'internal_error';
         controller.add(
           ChatDeliveryEvent(
             kind: ChatDeliveryEventKind.error,
             requestId: trimmedRequestId,
-            text: error.message,
-            code: error.code,
-            retryable: error.retryable,
-          ),
-        );
-      } on Object {
-        failureDetail = 'internal_error';
-        controller.add(
-          ChatDeliveryEvent(
-            kind: ChatDeliveryEventKind.error,
-            requestId: trimmedRequestId,
-            text: '本地服务暂时不可用。',
-            code: 'internal_error',
-            retryable: true,
+            text: chatError?.message ?? '本地服务暂时不可用。',
+            code: chatError?.code ?? 'internal_error',
+            retryable: chatError?.retryable ?? true,
           ),
         );
       } finally {
@@ -408,11 +404,7 @@ final class LocalChatService {
       );
     }
     if (existingReply != null) {
-      yield ChatDeliveryEvent(
-        kind: ChatDeliveryEventKind.accepted,
-        requestId: trimmedRequestId,
-        sessionId: session.id,
-      );
+      yield _acceptedEvent(trimmedRequestId, session.id);
       yield* _deliverOutcome(
         session,
         _storedResult(session, existingReply),
@@ -436,17 +428,9 @@ final class LocalChatService {
       );
     }
 
-    yield ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.accepted,
-      requestId: trimmedRequestId,
-      sessionId: session.id,
-    );
+    yield _acceptedEvent(trimmedRequestId, session.id);
     if (cancellation.isCancelled) {
-      yield ChatDeliveryEvent(
-        kind: ChatDeliveryEventKind.cancelled,
-        requestId: trimmedRequestId,
-        sessionId: session.id,
-      );
+      yield _cancelledEvent(trimmedRequestId, session.id);
       return;
     }
 
@@ -456,15 +440,16 @@ final class LocalChatService {
       ChatRequest(requestId: trimmedRequestId, text: trimmedText),
       state,
     );
-    if (localOutcome is! ChatResult) {
-      final error = localOutcome as ErrorResult;
-      throw LocalChatException(
+    // ChatOutcome sealed 仅两子类，穷尽 switch 免去冗余强转：安全拒绝
+    // 与错误结果在此转为本地异常，可见回复直接拿到 ChatResult。
+    var outcome = switch (localOutcome) {
+      final ChatResult result => result,
+      final ErrorResult error => throw LocalChatException(
         code: error.code.wireName,
         message: error.message,
         retryable: error.retryable,
-      );
-    }
-    var outcome = localOutcome;
+      ),
+    };
     yield ChatDeliveryEvent(
       kind: ChatDeliveryEventKind.waiting,
       requestId: trimmedRequestId,
@@ -478,7 +463,7 @@ final class LocalChatService {
       speaker: Speaker.user,
     )?.at;
     final providerPort = this.providerPort;
-    if (localOutcome.safety == null && providerPort != null) {
+    if (outcome.safety == null && providerPort != null) {
       ModelCompletion? completion;
       ModelPromptBuilder? requestBuilder;
       try {
@@ -508,11 +493,7 @@ final class LocalChatService {
         memoryRecall?.restorePendingContext(session.id, consumedContext);
       }
       if (cancellation.isCancelled) {
-        yield ChatDeliveryEvent(
-          kind: ChatDeliveryEventKind.cancelled,
-          requestId: trimmedRequestId,
-          sessionId: session.id,
-        );
+        yield _cancelledEvent(trimmedRequestId, session.id);
         return;
       }
       if (completion != null) {
@@ -753,13 +734,10 @@ final class LocalChatService {
     }
     final now = _clock();
     final month = '${now.year}-${'${now.month}'.padLeft(2, '0')}';
-    _finalizationTask = _finalizationTask.then((_) async {
-      try {
-        await compressor.compressBefore(month);
-      } on Object catch (error) {
-        _diagnosticsSink('monthly compression deferred [$error]');
-      }
-    });
+    _chainFinalizationStep(
+      'monthly compression',
+      () => compressor.compressBefore(month),
+    );
   }
 
   /// 晚安触发预登记：排在晚安任务链最前面，把最小间隔
@@ -770,13 +748,7 @@ final class LocalChatService {
     if (dream == null) {
       return;
     }
-    _finalizationTask = _finalizationTask.then((_) async {
-      try {
-        await dream.markBedtime();
-      } on Object catch (error) {
-        _diagnosticsSink('dream bedtime mark deferred [$error]');
-      }
-    });
+    _chainFinalizationStep('dream bedtime mark', dream.markBedtime);
   }
 
   /// Dream 挂到日终归档同一条后台任务链上：补归档与月压缩先完成，
@@ -1022,23 +994,24 @@ final class LocalChatService {
         builder = builder.copyWithDailyState(block);
         final longMemory = await reader.readLongMemoryBlock();
         final persona = await reader.readPersonaBlock();
-        final overflow =
-            block.runes.length +
-            longMemory.runes.length +
-            persona.runes.length -
-            hotLayerMaxRunes;
+        // 裁前与裁长期印象后共用同一溢出公式，收成闭包防两处漂移。
+        int overflowOf(int longRunes, int personaRunes) =>
+            block.runes.length + longRunes + personaRunes - hotLayerMaxRunes;
         var clippedLongMemory = longMemory;
         var clippedPersona = persona;
+        final overflow = overflowOf(
+          longMemory.runes.length,
+          persona.runes.length,
+        );
         if (overflow > 0) {
           clippedLongMemory = clipLongMemoryBlock(
             longMemory,
             longMemory.runes.length - overflow,
           );
-          final remainingOverflow =
-              block.runes.length +
-              clippedLongMemory.runes.length +
-              persona.runes.length -
-              hotLayerMaxRunes;
+          final remainingOverflow = overflowOf(
+            clippedLongMemory.runes.length,
+            persona.runes.length,
+          );
           if (remainingOverflow > 0) {
             clippedPersona = clipPersonaBlock(
               persona,
@@ -1149,11 +1122,7 @@ final class LocalChatService {
       }
       firstChunk = false;
       if (cancellation.isCancelled) {
-        yield ChatDeliveryEvent(
-          kind: ChatDeliveryEventKind.cancelled,
-          requestId: requestId,
-          sessionId: sessionId,
-        );
+        yield _cancelledEvent(requestId, sessionId);
         return;
       }
       yield ChatDeliveryEvent(
@@ -1170,11 +1139,7 @@ final class LocalChatService {
       messages: result.messages,
     );
     if (cancellation.isCancelled) {
-      yield ChatDeliveryEvent(
-        kind: ChatDeliveryEventKind.cancelled,
-        requestId: requestId,
-        sessionId: sessionId,
-      );
+      yield _cancelledEvent(requestId, sessionId);
       return;
     }
     var completedSession = session;
@@ -1316,6 +1281,22 @@ ChatResult _storedResult(RawSession session, RawSessionTurn reply) {
     safety: reply.safety,
   );
 }
+
+/// 请求已受理事件：重放与新一轮交付共用同一形态。
+ChatDeliveryEvent _acceptedEvent(String requestId, String sessionId) =>
+    ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.accepted,
+      requestId: requestId,
+      sessionId: sessionId,
+    );
+
+/// 交付取消事件：取消语义只交付这一个事件，不带任何内容。
+ChatDeliveryEvent _cancelledEvent(String requestId, String sessionId) =>
+    ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.cancelled,
+      requestId: requestId,
+      sessionId: sessionId,
+    );
 
 Map<String, Object?> _turnToPublicJson(RawSessionTurn turn) => {
   'requestId': turn.requestId,
