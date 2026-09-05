@@ -27,26 +27,9 @@ const controlAuditPrefixUnfreeze = '解除冻结: ';
 const controlAuditPrefixDelete = '删除: ';
 const controlAuditPrefixForget = '不记录: ';
 
-/// 日文件与检查点的元数据标记（读取端；写入端见 [_writeDayFile] 与
-/// [_writeCheckpoint]）。
-final _episodeMetaPattern = RegExp(
-  r'^<!-- qiyu-episode:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
-final _checkpointMetaPattern = RegExp(
-  r'^<!-- qiyu-checkpoint:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
-
-/// 日文件「存在栖语元数据标记」的快速判断与条目标记（读取端）。
-final _episodeMetaPresentPattern = RegExp(
-  r'^<!-- qiyu-episode:',
-  multiLine: true,
-);
-final _episodeEntryMarkerPattern = RegExp(
-  r'^<!-- qiyu-episode-entry:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
+// 日文件与检查点的元数据标记（读取端；写入端见 [_writeDayFile] 与
+// [_writeCheckpoint]）与条目标记统一取自 memory_marker_codec.dart
+//（唯一权威，禁止另写变体副本）。
 
 final class EpisodeEntry {
   const EpisodeEntry({
@@ -313,7 +296,7 @@ final class EpisodeMemoryPipeline {
     try {
       final metadata = _decodeMarkerMetadata(
         await file.readAsString(encoding: utf8),
-        _checkpointMetaPattern,
+        checkpointMetaPattern,
         'Missing qiyu checkpoint metadata',
       );
       return EpisodeCheckpoint.fromJson(metadata);
@@ -607,7 +590,7 @@ final class EpisodeMemoryPipeline {
     }
     try {
       final contents = await file.readAsString(encoding: utf8);
-      if (!_episodeMetaPresentPattern.hasMatch(contents)) {
+      if (!episodeMetaPresentPattern.hasMatch(contents)) {
         // 没有栖语元数据标记：可能是用户手改的普通 Markdown，绝不覆盖。
         return EpisodeDay(
           date: date,
@@ -616,7 +599,7 @@ final class EpisodeMemoryPipeline {
           readable: false,
         );
       }
-      final entries = _episodeEntryMarkerPattern
+      final entries = episodeEntryMarkerPattern
           .allMatches(contents)
           .map((match) {
             return EpisodeEntry.fromJson(decodeMarkerPayload(match.group(1)!));
@@ -624,7 +607,7 @@ final class EpisodeMemoryPipeline {
           .toList();
       final metadata = _decodeMarkerMetadata(
         contents,
-        _episodeMetaPattern,
+        episodeMetaPattern,
         'Missing qiyu episode metadata',
       );
       final finalizedAt = metadata['finalizedAt'] as String?;

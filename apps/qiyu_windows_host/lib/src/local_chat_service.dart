@@ -139,7 +139,8 @@ final class LocalChatService {
   final MonthlySummaryStore? monthlySummary;
 
   /// Dream（ticket 16，五段节奏第五动作）：晚安后且距上次成功至少
-  /// 七天时深度重组产出长期印象；启动时补跑上次晚安未成功的请求。
+  /// [dreamMinIntervalDays] 天时深度重组产出长期印象；启动时补跑
+  /// 上次晚安未成功的请求。
   /// 与日终归档、月压缩挂同一条后台任务链，保证只看到 finalized 材料。
   final DreamService? dreamService;
 
@@ -180,8 +181,8 @@ final class LocalChatService {
     );
     // 启动也补做月压缩：跨月停机后重新打开时，上月摘要在这里补齐。
     _scheduleMonthlyCompression();
-    // 启动补跑 Dream：只兑现上次晚安留下且仍满足七天间隔的请求，
-    // 没有晚安请求时绝不自行运行。
+    // 启动补跑 Dream：只兑现上次晚安留下且仍满足最小间隔
+    // （dreamMinIntervalDays）的请求，没有晚安请求时绝不自行运行。
     _scheduleDream(bedtime: false);
   }
 
@@ -761,8 +762,9 @@ final class LocalChatService {
     });
   }
 
-  /// 晚安触发预登记：排在晚安任务链最前面，把七天间隔已到的请求先
-  /// 落成 pending；失败只记诊断。
+  /// 晚安触发预登记：排在晚安任务链最前面，把最小间隔
+  /// （[dreamMinIntervalDays] 天）已到的请求先落成 pending；失败只记
+  /// 诊断。
   void _markDreamBedtime() {
     final dream = dreamService;
     if (dream == null) {

@@ -564,9 +564,10 @@ final class MemoryActionService {
       return null;
     }
     final hit = await _scopeScanner.scan({normalizeMemoryText(text)});
+    final sensitive = isSensitiveMemoryText(text);
     return MemoryDeleteImpact(
-      targetText: isSensitiveMemoryText(text) ? null : text,
-      targetMasked: isSensitiveMemoryText(text),
+      targetText: sensitive ? null : text,
+      targetMasked: sensitive,
       episodeEntries: hit.episodeEntries,
       episodeDaySummaries: hit.episodeDaySummaries,
       episodeDayUnderstandings: hit.episodeDayUnderstandings,
@@ -601,23 +602,20 @@ final class MemoryActionService {
     String origin = 'chat',
     String? requestId,
   }) async {
+    const noTarget = MemoryActionResult(
+      status: MemoryActionStatus.failed,
+      message: '没有可定位的删除目标。',
+      code: 'memory_delete_no_target',
+    );
     final normalized = normalizeMemoryText(summary);
     if (normalized.isEmpty) {
-      return const MemoryActionResult(
-        status: MemoryActionStatus.failed,
-        message: '没有可定位的删除目标。',
-        code: 'memory_delete_no_target',
-      );
+      return noTarget;
     }
     if (!await _locate(normalized)) {
       _diagnosticsSink(
         'memory delete skipped [no target] request=${requestId ?? '-'}',
       );
-      return const MemoryActionResult(
-        status: MemoryActionStatus.failed,
-        message: '没有可定位的删除目标。',
-        code: 'memory_delete_no_target',
-      );
+      return noTarget;
     }
     return _executeDelete(summary, origin: origin);
   }
@@ -757,18 +755,7 @@ final class MemoryActionService {
     if (!parsed.readable) {
       return;
     }
-    var changed = false;
-    final sections = <String, List<String>>{};
-    for (final section in longMemorySections) {
-      final items = parsed.sections[section] ?? const <String>[];
-      final kept = items
-          .where((item) => !bannedMemoryText(item, scope))
-          .toList();
-      if (kept.length != items.length) {
-        changed = true;
-      }
-      sections[section] = kept;
-    }
+    final (:sections, :changed) = filterLongMemorySections(parsed, scope);
     if (changed) {
       await _atomicWriter.replace(
         _longMemoryFile.path,

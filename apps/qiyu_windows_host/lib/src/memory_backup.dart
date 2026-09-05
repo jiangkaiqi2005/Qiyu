@@ -221,10 +221,8 @@ final class IoBackupByteWriter implements BackupByteWriter {
   }
 }
 
-final _sessionMetaMarkerPattern = RegExp(
-  r'^<!-- qiyu-session:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
+// 会话元数据标记（读取端）统一取自 memory_marker_codec.dart
+//（唯一权威，禁止另写变体副本）。
 
 /// Markdown 备份导出与导入（ticket 22）。
 ///
@@ -893,7 +891,7 @@ final class MemoryBackupService {
     } on Object {
       return false;
     }
-    final match = _sessionMetaMarkerPattern.firstMatch(contents);
+    final match = sessionMetaMarkerPattern.firstMatch(contents);
     if (match == null) {
       return false;
     }

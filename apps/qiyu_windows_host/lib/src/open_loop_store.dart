@@ -83,7 +83,8 @@ final class OpenLoopItem {
 }
 
 /// 解析 due 开头的 `YYYY-MM-DD` 日期段；格式不合法返回 null。
-DateTime? parseDueDate(String due) {
+/// 仅本文件消费（判定入口是 [loopDueArrived]）。
+DateTime? _parseDueDate(String due) {
   final text = due.trim();
   if (text.runes.length < 10) {
     return null;
@@ -103,7 +104,7 @@ bool loopDueArrived(String? due, DateTime now) {
   if (due == null) {
     return true;
   }
-  final dueDate = parseDueDate(due);
+  final dueDate = _parseDueDate(due);
   if (dueDate == null) {
     return false;
   }
@@ -294,26 +295,15 @@ final class OpenLoopStore {
     if (closed.isEmpty) {
       return 0;
     }
-    final archiveLines = await _readArchiveLines();
-    final seen = archiveLines.toSet();
-    var moved = 0;
-    for (final item in closed) {
-      final line = _archiveLine(item.title, date, item.note ?? '已闭环');
-      if (seen.add(line)) {
-        archiveLines.add(line);
-      }
-      moved += 1;
-    }
-    await _atomicWriter.replace(
-      _archiveFile.path,
-      '${archiveLines.join('\n')}\n',
+    return _archiveAndRewrite(
+      selected: closed,
+      archiveLineFor: (item) =>
+          _archiveLine(item.title, date, item.note ?? '已闭环'),
+      kept: parsed.items
+          .where((item) => item.status != OpenLoopStatus.closed)
+          .map((item) => item.raw)
+          .toList(),
     );
-    final kept = parsed.items
-        .where((item) => item.status != OpenLoopStatus.closed)
-        .map((item) => item.raw)
-        .toList();
-    await _replaceLoops(_composeLoopsFile(kept));
-    return moved;
   });
 
   /// 过期清理：due 已过超过 [openLoopExpiryDays] 天仍未闭环的条目
@@ -337,10 +327,31 @@ final class OpenLoopStore {
       return 0;
     }
     final date = localSessionDate(now);
+    final staleTitles = stale
+        .map((item) => normalizeLoopTitle(item.title))
+        .toSet();
+    return _archiveAndRewrite(
+      selected: stale,
+      archiveLineFor: (item) => _archiveLine(item.title, date, '过期'),
+      kept: parsed.items
+          .where((item) => !staleTitles.contains(normalizeLoopTitle(item.title)))
+          .map((item) => item.raw)
+          .toList(),
+    );
+  });
+
+  /// 归档追加 + 热层重写的共享骨架：[selected] 为本次要归档的条目，
+  /// [archiveLineFor] 产出各自格式的归档行（重复行去重）；[kept] 是
+  /// 重写后的热层条目原文。返回归档条数（= [selected] 长度）。
+  Future<int> _archiveAndRewrite({
+    required List<OpenLoopItem> selected,
+    required String Function(OpenLoopItem item) archiveLineFor,
+    required List<String> kept,
+  }) async {
     final archiveLines = await _readArchiveLines();
     final seen = archiveLines.toSet();
-    for (final item in stale) {
-      final line = _archiveLine(item.title, date, '过期');
+    for (final item in selected) {
+      final line = archiveLineFor(item);
       if (seen.add(line)) {
         archiveLines.add(line);
       }
@@ -349,19 +360,12 @@ final class OpenLoopStore {
       _archiveFile.path,
       '${archiveLines.join('\n')}\n',
     );
-    final staleTitles = stale
-        .map((item) => normalizeLoopTitle(item.title))
-        .toSet();
-    final kept = parsed.items
-        .where((item) => !staleTitles.contains(normalizeLoopTitle(item.title)))
-        .map((item) => item.raw)
-        .toList();
     await _replaceLoops(_composeLoopsFile(kept));
-    return stale.length;
-  });
+    return selected.length;
+  }
 
   bool _dueExpired(String due, DateTime today) {
-    final dueDate = parseDueDate(due);
+    final dueDate = _parseDueDate(due);
     if (dueDate == null) {
       return false;
     }
@@ -541,13 +545,6 @@ final class OpenLoopStore {
     }
     return buffer.toString();
   }
-
-  String _composeLoopsFile(List<String> itemRaws) {
-    if (itemRaws.isEmpty) {
-      return '# open-loops\n';
-    }
-    return '# open-loops\n\n${itemRaws.join('\n')}\n';
-  }
 }
 
 /// proactive 字段白名单映射：只认 no/yes，其余一律按 once（定稿默认）。
@@ -568,6 +565,14 @@ final class _ParsedLoops {
 /// 标题规范化：与 [normalizeMemoryText] 同一规则（折叠空白并统一
 /// 大小写），用于去重、禁提与状态定位。
 String normalizeLoopTitle(String value) => normalizeMemoryText(value);
+
+/// open-loops.md 的规范文本（存储类与受控过滤共用同一份重渲染格式）。
+String _composeLoopsFile(List<String> itemRaws) {
+  if (itemRaws.isEmpty) {
+    return '# open-loops\n';
+  }
+  return '# open-loops\n\n${itemRaws.join('\n')}\n';
+}
 
 /// open-loops.md 的条目级受控过滤：文件缺失返回 null；结构不可识别
 /// 原样返回；有条目标题命中 [controlled] 时重渲染为只含未命中条目的
@@ -590,10 +595,7 @@ String? filterOpenLoopContents(
   if (kept.length == items.length) {
     return contents;
   }
-  if (kept.isEmpty) {
-    return '# open-loops\n';
-  }
-  return '# open-loops\n\n${kept.join('\n')}\n';
+  return _composeLoopsFile(kept);
 }
 
 /// 把 open-loops.md 拆成条目块并解析四字段；无法识别的结构返回 null。

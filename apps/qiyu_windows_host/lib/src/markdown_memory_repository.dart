@@ -566,16 +566,8 @@ final class MarkdownMemoryRepository implements MemoryRepository {
 /// 会话文件名形态（日期-段号.md）：不可读文件据此提取日期与段号。
 final _sessionFileNamePattern = RegExp(r'^(\d{4}-\d{2}-\d{2})-(\d{3})\.md$');
 
-/// 会话文件的元数据与轮次标记（读取端）：正则只编译一次，readHistory
-/// 会对每个会话文件执行。
-final _sessionMetaMarkerPattern = RegExp(
-  r'^<!-- qiyu-session:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
-final _sessionTurnMarkerPattern = RegExp(
-  r'^<!-- qiyu-turn:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
+// 会话文件的元数据与轮次标记（读取端）统一取自 memory_marker_codec.dart
+//（唯一权威，禁止另写变体副本）。
 
 final class _SessionRecord {
   const _SessionRecord({required this.file, this.session, this.unavailable});
@@ -619,12 +611,12 @@ String renderSessionMarkdown(RawSession session) {
 }
 
 RawSession _parseMarkdown(String markdown) {
-  final metadataMatch = _sessionMetaMarkerPattern.firstMatch(markdown);
+  final metadataMatch = sessionMetaMarkerPattern.firstMatch(markdown);
   if (metadataMatch == null) {
     throw const FormatException('Missing qiyu session metadata');
   }
   final metadata = decodeMarkerPayload(metadataMatch.group(1)!);
-  final turnMatches = _sessionTurnMarkerPattern.allMatches(markdown);
+  final turnMatches = sessionTurnMarkerPattern.allMatches(markdown);
   final turns = turnMatches
       .map((match) => RawSessionTurn.fromJson(decodeMarkerPayload(match.group(1)!)))
       .toList();
