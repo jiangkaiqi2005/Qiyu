@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'dream.dart';
@@ -36,12 +35,10 @@ final class StatePackReader {
   final OpenLoopStore _openLoopStore;
 
   File get _relationshipFile =>
-      File(path.join(memoryDirectory, 'relationship.md'));
-  File get _dailyStateFile =>
-      File(path.join(memoryDirectory, 'daily-state.md'));
-  File get _longMemoryFile =>
-      File(path.join(memoryDirectory, 'long-memory.md'));
-  File get _personaFile => File(path.join(memoryDirectory, 'persona.md'));
+      memoryFile(memoryDirectory, relationshipFileName);
+  File get _dailyStateFile => memoryFile(memoryDirectory, dailyStateFileName);
+  File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
+  File get _personaFile => memoryFile(memoryDirectory, personaFileName);
 
   /// 返回可直接注入的【长期印象】内容；文件不存在、为空或读取失败
   /// 时返回空串，空块不输出。受控过滤（ticket 18）：封禁（禁提 ∪

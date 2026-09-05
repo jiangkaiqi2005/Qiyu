@@ -492,7 +492,7 @@ final class DreamService {
   final AtomicTextWriter _atomicWriter;
   final void Function(String) _diagnosticsSink;
 
-  File get _longMemoryFile => File(path.join(memoryDirectory, 'long-memory.md'));
+  File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _stateFile => File(path.join(memoryDirectory, 'dream', 'state.md'));
   File get _changesFile => File(path.join(memoryDirectory, 'dream', 'changes.md'));
   File get _draftFile =>

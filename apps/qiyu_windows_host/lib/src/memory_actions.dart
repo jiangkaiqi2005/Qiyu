@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path/path.dart' as path;
-
 import 'daily_understanding.dart';
 import 'dream.dart';
 import 'episode_index.dart';
@@ -212,12 +210,10 @@ final class MemoryActionService {
   final AtomicTextWriter _atomicWriter;
   final void Function(String) _diagnosticsSink;
 
-  File get _longMemoryFile =>
-      File(path.join(memoryDirectory, 'long-memory.md'));
+  File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _relationshipFile =>
-      File(path.join(memoryDirectory, 'relationship.md'));
-  File get _dailyStateFile =>
-      File(path.join(memoryDirectory, 'daily-state.md'));
+      memoryFile(memoryDirectory, relationshipFileName);
+  File get _dailyStateFile => memoryFile(memoryDirectory, dailyStateFileName);
 
   static const _notFound = MemoryActionResult(
     status: MemoryActionStatus.failed,

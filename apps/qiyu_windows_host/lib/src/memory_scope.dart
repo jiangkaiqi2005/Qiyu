@@ -13,8 +13,6 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path/path.dart' as path;
-
 import 'daily_understanding.dart';
 import 'dream.dart';
 import 'episode_memory.dart';
@@ -105,12 +103,10 @@ final class MemoryScopeScanner {
   final OpenLoopStore openLoopStore;
   final MonthlySummaryStore monthlySummary;
 
-  File get _longMemoryFile =>
-      File(path.join(memoryDirectory, 'long-memory.md'));
+  File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _relationshipFile =>
-      File(path.join(memoryDirectory, 'relationship.md'));
-  File get _dailyStateFile =>
-      File(path.join(memoryDirectory, 'daily-state.md'));
+      memoryFile(memoryDirectory, relationshipFileName);
+  File get _dailyStateFile => memoryFile(memoryDirectory, dailyStateFileName);
 
   /// 按清除管线能触及的节点集合逐层统计命中。只读，绝不写盘。
   Future<MemoryScopeHit> scan(Set<String> scope) async {

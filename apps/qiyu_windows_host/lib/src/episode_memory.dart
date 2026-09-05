@@ -38,6 +38,16 @@ final _checkpointMetaPattern = RegExp(
   multiLine: true,
 );
 
+/// 日文件「存在栖语元数据标记」的快速判断与条目标记（读取端）。
+final _episodeMetaPresentPattern = RegExp(
+  r'^<!-- qiyu-episode:',
+  multiLine: true,
+);
+final _episodeEntryMarkerPattern = RegExp(
+  r'^<!-- qiyu-episode-entry:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
+
 final class EpisodeEntry {
   const EpisodeEntry({
     required this.id,
@@ -505,13 +515,14 @@ final class EpisodeMemoryPipeline {
   }) {
     String? redacted(String? value) =>
         value == null ? null : redactSessionText(value).trim();
+    String clean(String value) => redactSessionText(value).trim();
     final id = '${session.id}:$requestId:$index';
     return switch (action) {
       MemorySignalAction() => EpisodeEntry(
         id: id,
         sessionId: session.id,
         requestId: requestId,
-        summary: redactSessionText(action.summary).trim(),
+        summary: clean(action.summary),
         evidence: redacted(action.evidence),
         at: _clock().toUtc(),
         personaBranch: action.hint?.branch.wireName,
@@ -521,7 +532,7 @@ final class EpisodeMemoryPipeline {
         id: id,
         sessionId: session.id,
         requestId: requestId,
-        summary: redactSessionText(action.title).trim(),
+        summary: clean(action.title),
         evidence: redacted(action.evidence),
         at: _clock().toUtc(),
         kind: episodeKindOpenLoopCandidate,
@@ -534,9 +545,7 @@ final class EpisodeMemoryPipeline {
         sessionId: session.id,
         requestId: requestId,
         summary:
-            'Open-loop 状态: '
-            '${redactSessionText(action.title).trim()} → '
-            '${action.status.wireName}',
+            'Open-loop 状态: ${clean(action.title)} → ${action.status.wireName}',
         evidence: redacted(action.result),
         at: _clock().toUtc(),
         kind: episodeKindOpenLoopEvent,
@@ -554,7 +563,7 @@ final class EpisodeMemoryPipeline {
               MemoryFreezeAction() => controlAuditPrefixFreeze,
               MemoryUnfreezeAction() => controlAuditPrefixUnfreeze,
               MemoryDeleteAction() => controlAuditPrefixDelete,
-            }}${redactSessionText(control.title).trim()}',
+            }}${clean(control.title)}',
         at: _clock().toUtc(),
         kind: episodeKindOpenLoopEvent,
       ),
@@ -564,7 +573,7 @@ final class EpisodeMemoryPipeline {
         requestId: requestId,
         // 摘要本身就是自然、抽象的状态描述（白名单已校验），
         // 原话细节只留在 evidence 供追溯，不进任何注入投影。
-        summary: redactSessionText(action.summary).trim(),
+        summary: clean(action.summary),
         evidence: redacted(action.evidence),
         at: _clock().toUtc(),
         kind: episodeKindRelationshipSignal,
@@ -598,7 +607,7 @@ final class EpisodeMemoryPipeline {
     }
     try {
       final contents = await file.readAsString(encoding: utf8);
-      if (!RegExp(r'^<!-- qiyu-episode:', multiLine: true).hasMatch(contents)) {
+      if (!_episodeMetaPresentPattern.hasMatch(contents)) {
         // 没有栖语元数据标记：可能是用户手改的普通 Markdown，绝不覆盖。
         return EpisodeDay(
           date: date,
@@ -607,13 +616,12 @@ final class EpisodeMemoryPipeline {
           readable: false,
         );
       }
-      final entries =
-          RegExp(
-            r'^<!-- qiyu-episode-entry:([A-Za-z0-9_-]+) -->\r?$',
-            multiLine: true,
-          ).allMatches(contents).map((match) {
+      final entries = _episodeEntryMarkerPattern
+          .allMatches(contents)
+          .map((match) {
             return EpisodeEntry.fromJson(decodeMarkerPayload(match.group(1)!));
-          }).toList();
+          })
+          .toList();
       final metadata = _decodeMarkerMetadata(
         contents,
         _episodeMetaPattern,
@@ -645,6 +653,28 @@ final class EpisodeMemoryPipeline {
     }
   }
 
+  /// 日文件元数据载荷（写入端单一出处）：键序与条件含弃规则必须与
+  /// 读取端 [_readDay] 的解析保持一致；[summary] 传入未修剪原值。
+  Map<String, Object?> _dayMetadata({
+    required String date,
+    required String? summary,
+    required bool finalized,
+    required DateTime? finalizedAt,
+    required Map<String, Object?>? understanding,
+  }) {
+    final trimmed = summary?.trim();
+    return {
+      'schemaVersion': 1,
+      'date': date,
+      'updatedAt': _clock().toUtc().toIso8601String(),
+      if (trimmed != null && trimmed.isNotEmpty) 'summary': trimmed,
+      'finalized': finalized,
+      if (finalizedAt != null)
+        'finalizedAt': finalizedAt.toUtc().toIso8601String(),
+      'understanding': ?understanding,
+    };
+  }
+
   Future<void> _writeDayFile(
     String date,
     List<EpisodeEntry> entries, {
@@ -658,7 +688,7 @@ final class EpisodeMemoryPipeline {
       ..writeln('# 栖语每日记录')
       ..writeln()
       ..writeln(
-        '<!-- qiyu-episode:${encodeMarkerPayload({'schemaVersion': 1, 'date': date, 'updatedAt': _clock().toUtc().toIso8601String(), if (trimmedSummary != null && trimmedSummary.isNotEmpty) 'summary': trimmedSummary, 'finalized': finalized, if (finalizedAt != null) 'finalizedAt': finalizedAt.toUtc().toIso8601String(), 'understanding': ?understanding})} -->',
+        '<!-- qiyu-episode:${encodeMarkerPayload(_dayMetadata(date: date, summary: summary, finalized: finalized, finalizedAt: finalizedAt, understanding: understanding))} -->',
       )
       ..writeln();
     if (trimmedSummary != null && trimmedSummary.isNotEmpty) {
@@ -682,18 +712,13 @@ final class EpisodeMemoryPipeline {
         buffer.writeln();
       }
     }
-    try {
-      await _atomicWriter.replace(_dayFile(date).path, buffer.toString());
-    } on MemoryRepositoryException {
-      rethrow;
-    } on Object catch (error) {
-      throw MemoryRepositoryException(
-        code: 'episode_write_failed',
-        message: '无法保存今日记忆整理，对话不受影响。',
-        retryable: true,
-        cause: error,
-      );
-    }
+    await atomicReplace(
+      _atomicWriter,
+      _dayFile(date).path,
+      buffer.toString(),
+      code: 'episode_write_failed',
+      message: '无法保存今日记忆整理，对话不受影响。',
+    );
   }
 
   File _dayFile(String date) =>
@@ -706,18 +731,13 @@ final class EpisodeMemoryPipeline {
     final contents =
         '# 栖语整理检查点\n\n'
         '<!-- qiyu-checkpoint:${encodeMarkerPayload(checkpoint.toJson())} -->\n';
-    try {
-      await _atomicWriter.replace(_checkpointFile().path, contents);
-    } on MemoryRepositoryException {
-      rethrow;
-    } on Object catch (error) {
-      throw MemoryRepositoryException(
-        code: 'checkpoint_write_failed',
-        message: '无法保存整理进度，对话不受影响。',
-        retryable: true,
-        cause: error,
-      );
-    }
+    await atomicReplace(
+      _atomicWriter,
+      _checkpointFile().path,
+      contents,
+      code: 'checkpoint_write_failed',
+      message: '无法保存整理进度，对话不受影响。',
+    );
   }
 
   /// 从 Markdown 里定位元数据标记并解码载荷；标记缺失时按 [missing]
