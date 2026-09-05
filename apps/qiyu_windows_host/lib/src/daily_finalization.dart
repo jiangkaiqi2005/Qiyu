@@ -227,24 +227,8 @@ final class DailyFinalizationService {
   Future<FinalizationReport> catchUpUnfinalized({
     required String before,
   }) async {
-    final history = await _sessionRepository.readHistory();
-    final dates = {
-      ...await episodePipeline.listEpisodeDates(),
-      ...history.sessions.map((session) => session.date),
-    }.toList()..sort();
-    final past = dates.where((date) => date.compareTo(before) < 0).toList();
-    final pending = <String>[];
-    for (final date in past) {
-      final day = await episodePipeline.readDay(date);
-      if (day.readable &&
-          ((!day.finalized && day.exists) ||
-              _pendingSessionRequestIds(
-                day,
-                _sessionsOnDate(history.sessions, date),
-              ).isNotEmpty)) {
-        pending.add(date);
-      }
-    }
+    final (history, dates, past) = await _historyAndDatesBefore(before: before);
+    final pending = await _unfinalizedDates(past, history);
     final modelDates = pending.reversed.take(catchUpModelDayBudget).toSet();
     final outcomes = <FinalizationOutcome>[];
     for (final date in past) {
@@ -263,6 +247,51 @@ final class DailyFinalizationService {
       }
     }
     return FinalizationReport(outcomes: outcomes);
+  }
+
+  /// 是否存在早于 [before] 且需要补归档的日期（未定稿，或已定稿但
+  /// 有未消费的待补请求）。只读本机文件，绝不发起模型调用；完整覆盖
+  /// 判定仍由 [catchUpUnfinalized] 内部复查。供空闲补办轮询做「有没
+  /// 有活」的粗检查，判定与 [catchUpUnfinalized] 的待补收集共用
+  /// [_unfinalizedDates] 一处逻辑。
+  Future<bool> hasUnfinalized({required String before}) async {
+    final (history, _, past) = await _historyAndDatesBefore(before: before);
+    return (await _unfinalizedDates(past, history)).isNotEmpty;
+  }
+
+  /// 会话历史与早于 [before] 的已知日期收集（[past] 升序，[dates] 为
+  /// 全部已知日期）。补扫与轮询粗检查共用同一份收集，避免目录扫描
+  /// 形状在两处漂移。
+  Future<(HistoryListing history, List<String> dates, List<String> past)>
+  _historyAndDatesBefore({required String before}) async {
+    final history = await _sessionRepository.readHistory();
+    final dates = {
+      ...await episodePipeline.listEpisodeDates(),
+      ...history.sessions.map((session) => session.date),
+    }.toList()..sort();
+    final past = dates.where((date) => date.compareTo(before) < 0).toList();
+    return (history, dates, past);
+  }
+
+  /// 补归档待办收集：早于 [before]（即 [past]，已排序）的日期中，
+  /// 未定稿或有未消费待补请求的日期列表。补扫与轮询粗检查共用。
+  Future<List<String>> _unfinalizedDates(
+    List<String> past,
+    HistoryListing history,
+  ) async {
+    final pending = <String>[];
+    for (final date in past) {
+      final day = await episodePipeline.readDay(date);
+      if (day.readable &&
+          ((!day.finalized && day.exists) ||
+              _pendingSessionRequestIds(
+                day,
+                _sessionsOnDate(history.sessions, date),
+              ).isNotEmpty)) {
+        pending.add(date);
+      }
+    }
+    return pending;
   }
 
   /// 对指定日期执行一次日终归档。写入失败时抛出异常且 finalized 保持

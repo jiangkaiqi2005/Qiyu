@@ -69,6 +69,19 @@ const _maxModelReplyRunes = 8192;
 /// 认宽的代价只是提前归档一次。
 final _bedtimeSignalPattern = RegExp(r'晚安|睡了|先睡|睡觉了|想睡|去睡|困了|该睡了');
 
+/// 空闲补办轮询的待办类别，附每日尝试上限（spec：Dream 每天至多
+/// 8 次、日终归档补扫至多 10 轮、月压缩至多 10 轮）与诊断原因码。
+enum _IdleCatchupItem {
+  finalization(10, 'finalization'),
+  monthlyCompression(10, 'monthly-compression'),
+  dream(8, 'dream');
+
+  const _IdleCatchupItem(this._dailyAttemptLimit, this._wireName);
+
+  final int _dailyAttemptLimit;
+  final String _wireName;
+}
+
 final class LocalChatService {
   LocalChatService(
     this._repository, {
@@ -139,8 +152,9 @@ final class LocalChatService {
   final MonthlySummaryStore? monthlySummary;
 
   /// Dream（ticket 16，五段节奏第五动作）：晚安后且距上次成功至少
-  /// 七天时深度重组产出长期印象；启动时补跑上次晚安未成功的请求。
-  /// 与日终归档、月压缩挂同一条后台任务链，保证只看到 finalized 材料。
+  /// 七天时深度重组产出长期印象；启动或跨天首条消息时补跑上次晚安
+  /// 未成功的请求。与日终归档、月压缩挂同一条后台任务链，保证只看到
+  /// finalized 材料。
   final DreamService? dreamService;
 
   /// 开发者诊断最近请求记录器（ticket 23）：只记来源、结果与脱敏
@@ -155,6 +169,12 @@ final class LocalChatService {
   Future<void> _finalizationTask = Future.value();
   Future<void> _recallTask = Future.value();
   String? _lastDeliveryDate;
+
+  /// 空闲补办轮询：同一时刻至多一个补办块在跑（上轮未结束本轮跳过）；
+  /// 每日尝试上限只在内存按类计数，键为本地自然日，跨 0 点清零。
+  bool _catchupInFlight = false;
+  String? _catchupAttemptDate;
+  final Map<_IdleCatchupItem, int> _catchupAttempts = {};
 
   Future<void> initialize() async {
     await _repository.initialize();
@@ -192,6 +212,174 @@ final class LocalChatService {
   /// 等待已调度的后台召回检索完成。检索失败只记诊断，供测试断言使用。
   Future<void> settlePendingRecalls() => _recallTask;
 
+  /// 空闲补办轮询 tick（spec：空闲补办轮询器）。生产由
+  /// [PeriodicIdleCatchupPoller] 每 10 分钟调用一次；测试直接调用并配
+  /// 假时钟。按序检查三项记忆整理待办（未定稿日期、未压缩月份、待补
+  /// 跑 Dream，全部本机读取零模型调用），无在途聊天时把活排进后台
+  /// 任务链；各项资格（间隔、待补跑复查、完整覆盖判定）仍在各自服务
+  /// 内部复查，本方法只负责发现待办、让路与排程。
+  Future<void> pollTick() async {
+    try {
+      await _pollTick();
+    } on Object catch (error) {
+      _diagnosticsSink('idle catchup deferred [$error]');
+    }
+  }
+
+  Future<void> _pollTick() async {
+    // 未配置模型服务：安静地什么都不做，绝不用本地规则补写长期记忆。
+    final prepared = await providerPort?.prepareChatRequest();
+    if (prepared == null) {
+      return;
+    }
+    // 聊天永远优先：有在途交付就让路，且不消耗每日尝试上限。
+    if (_activeDeliveries.isNotEmpty) {
+      _diagnosticsSink('idle catchup skipped reason=busy-delivery');
+      return;
+    }
+    if (_catchupInFlight) {
+      _diagnosticsSink('idle catchup skipped reason=busy-catchup');
+      return;
+    }
+    final today = localSessionDate(_clock());
+    final month = today.substring(0, 7);
+    final scheduled = <_IdleCatchupItem>[];
+    final blocked = <_IdleCatchupItem>[];
+    void track(_IdleCatchupItem item) {
+      if (_attemptsForToday(item, today) >= item._dailyAttemptLimit) {
+        blocked.add(item);
+      } else {
+        scheduled.add(item);
+      }
+    }
+
+    // ① 存在未定稿日期（或已定稿但有未消费待补请求）→ 补日终归档；
+    //   沿用现有补扫入口（幂等），完整覆盖判定在补扫内部复查。
+    final finalization = dailyFinalization;
+    if (finalization != null &&
+        await finalization.hasUnfinalized(before: today)) {
+      track(_IdleCatchupItem.finalization);
+    }
+    // ② 上月未生成月摘要且有已定稿日期 → 补月压缩（幂等入口照旧）。
+    final compressor = monthlySummary;
+    if (compressor != null &&
+        await compressor.hasPendingCompression(beforeMonth: month)) {
+      track(_IdleCatchupItem.monthlyCompression);
+    }
+    // ③ Dream 状态存在待补跑请求 → 补跑（bedtime:false 只兑现 pending；
+    //   间隔复查在 DreamService 内部）。
+    final dream = dreamService;
+    if (dream != null && (await dream.readState()).pending) {
+      track(_IdleCatchupItem.dream);
+    }
+    for (final item in blocked) {
+      _diagnosticsSink(
+        'idle catchup blocked item=${item._wireName} reason=daily-limit',
+      );
+    }
+    if (scheduled.isEmpty) {
+      return;
+    }
+    // 排程复查与置位之间没有 await：并发到达的 tick 在此串行化，
+    // 同一时刻至多一个补办块在跑。
+    if (_catchupInFlight) {
+      _diagnosticsSink('idle catchup skipped reason=busy-catchup');
+      return;
+    }
+    _catchupInFlight = true;
+    _diagnosticsSink(
+      'idle catchup scheduled '
+      'items=${scheduled.map((item) => item._wireName).join(',')}',
+    );
+    _finalizationTask = _finalizationTask.then((_) async {
+      var failed = false;
+      try {
+        for (final item in scheduled) {
+          if (!await _runCatchupItem(item, today: today, month: month)) {
+            failed = true;
+          }
+        }
+      } finally {
+        _catchupInFlight = false;
+      }
+      _diagnosticsSink(
+        'idle catchup done status=${failed ? 'failed' : 'ok'} '
+        'items=${scheduled.map((item) => item._wireName).join(',')}',
+      );
+    });
+  }
+
+  /// 在后台任务链上执行一项补办并记账每日上限，返回是否成功。
+  Future<bool> _runCatchupItem(
+    _IdleCatchupItem item, {
+    required String today,
+    required String month,
+  }) async {
+    switch (item) {
+      case _IdleCatchupItem.finalization:
+        final service = dailyFinalization;
+        if (service == null) {
+          return true;
+        }
+        final succeeded = await _runFinalizationWork(
+          service,
+          'idle-catchup',
+          (service) => service.catchUpUnfinalized(before: today),
+        );
+        return _settleCatchupAttempt(item, succeeded: succeeded);
+      case _IdleCatchupItem.monthlyCompression:
+        final compressor = monthlySummary;
+        if (compressor == null) {
+          return true;
+        }
+        var succeeded = false;
+        try {
+          await compressor.compressBefore(month);
+          // 成功口径：尝试后不再存在待压缩月份（单月失败由压缩内部
+          // 记诊断不上抛，摘要仍缺时按失败计入每日上限）。
+          succeeded =
+              !(await compressor.hasPendingCompression(beforeMonth: month));
+        } on Object catch (error) {
+          _diagnosticsSink(
+            'monthly compression deferred [$error] reason=idle-catchup',
+          );
+        }
+        return _settleCatchupAttempt(item, succeeded: succeeded);
+      case _IdleCatchupItem.dream:
+        final dream = dreamService;
+        if (dream == null) {
+          return true;
+        }
+        final result = await _runDreamWork(dream, bedtime: false);
+        if (!result.attempted) {
+          // 资格不符（间隔未到等）：没有真正尝试，不消耗每日上限。
+          return true;
+        }
+        return _settleCatchupAttempt(item, succeeded: result.succeeded);
+    }
+  }
+
+  /// 记账一次补办尝试：成功清零该类计数，失败 +1。结算时刻取当前
+  /// 本地日期——补办块跨 0 点完成时，失败计入新的一天而不是发起 tick
+  /// 的昨天，保证新一天的可尝试额度不被少记一次。
+  bool _settleCatchupAttempt(_IdleCatchupItem item, {required bool succeeded}) {
+    final today = localSessionDate(_clock());
+    final attempts = _attemptsForToday(item, today);
+    _catchupAttempts[item] = succeeded ? 0 : attempts + 1;
+    return succeeded;
+  }
+
+  /// [item] 在自然日 [today] 的已尝试次数。有副作用：传入日期晚于
+  /// 记账日时先清空全部计数（每日上限按本地自然日口径跨 0 点清零），
+  /// 因此只应传「当前」本地日期，绝不作跨日纯读使用。
+  int _attemptsForToday(_IdleCatchupItem item, String today) {
+    if (_catchupAttemptDate != today) {
+      _catchupAttemptDate = today;
+      _catchupAttempts.clear();
+    }
+    return _catchupAttempts[item] ?? 0;
+  }
+
   /// 先等全部在途交付与后台任务（补归档、月压缩、Dream、召回保存）
   /// 完成，再独占交付串行槽运行 [operation]：期间新交付一律排在
   /// operation 之后，不会与之并发。「清除产品数据」这类整机危险操作
@@ -213,40 +401,52 @@ final class LocalChatService {
     if (service == null) {
       return;
     }
-    _finalizationTask = _finalizationTask.then((_) async {
-      try {
-        final report = await work(service);
-        var troubled = 0;
-        for (final outcome in report.outcomes) {
-          if (outcome.status == FinalizationStatus.failed ||
-              outcome.status == FinalizationStatus.skippedUnreadable) {
-            troubled += 1;
-            final detail = outcome.detail == null ? '' : ' [${outcome.detail}]';
-            _diagnosticsSink(
-              'finalization ${outcome.status.name} date=${outcome.date}'
-              '$detail reason=$reason',
-            );
-          }
+    _finalizationTask = _finalizationTask.then(
+      (_) => _runFinalizationWork(service, reason, work),
+    );
+  }
+
+  /// 执行一次日终归档并记诊断：全部日期成功（无 failed/不可读）返回
+  /// true。空闲补办轮询据此消耗每日尝试上限，触发点路径忽略返回值。
+  Future<bool> _runFinalizationWork(
+    DailyFinalizationService service,
+    String reason,
+    Future<FinalizationReport> Function(DailyFinalizationService service) work,
+  ) async {
+    try {
+      final report = await work(service);
+      var troubled = 0;
+      for (final outcome in report.outcomes) {
+        if (outcome.status == FinalizationStatus.failed ||
+            outcome.status == FinalizationStatus.skippedUnreadable) {
+          troubled += 1;
+          final detail = outcome.detail == null ? '' : ' [${outcome.detail}]';
+          _diagnosticsSink(
+            'finalization ${outcome.status.name} date=${outcome.date}'
+            '$detail reason=$reason',
+          );
         }
-        requestDiagnostics?.record(
-          source: RecentRequestSources.finalization,
-          result: troubled == 0
-              ? RecentRequestResults.ok
-              : RecentRequestResults.failed,
-          detail:
-              'dates=${report.outcomes.length} troubled=$troubled '
-              'reason=$reason',
-        );
-      } on Object catch (error) {
-        requestDiagnostics?.record(
-          source: RecentRequestSources.finalization,
-          result: RecentRequestResults.failed,
-          // 细节只记错误类别，不记第三方错误原文。
-          detail: '${error.runtimeType} reason=$reason',
-        );
-        _diagnosticsSink('finalization deferred [$error] reason=$reason');
       }
-    });
+      requestDiagnostics?.record(
+        source: RecentRequestSources.finalization,
+        result: troubled == 0
+            ? RecentRequestResults.ok
+            : RecentRequestResults.failed,
+        detail:
+            'dates=${report.outcomes.length} troubled=$troubled '
+            'reason=$reason',
+      );
+      return troubled == 0;
+    } on Object catch (error) {
+      requestDiagnostics?.record(
+        source: RecentRequestSources.finalization,
+        result: RecentRequestResults.failed,
+        // 细节只记错误类别，不记第三方错误原文。
+        detail: '${error.runtimeType} reason=$reason',
+      );
+      _diagnosticsSink('finalization deferred [$error] reason=$reason');
+      return false;
+    }
   }
 
   Future<LocalChatSnapshot> restore({String? sessionId}) => _serialized(
@@ -712,7 +912,8 @@ final class LocalChatService {
   ///   随后依次补月压缩（第四动作）与 Dream（第五动作，ticket 16）。
   ///   Dream 是独立动作：归档服务绝不调用它，资格在 DreamService 内复查。
   /// - 日期变化（含进程跨午夜后的第一条消息）：补做昨天及更早的未完成日期；
-  ///   当天仍在进行中，不归档。
+  ///   当天仍在进行中，不归档；随后与晚安分支同口径调度 Dream 补跑
+  ///   （只兑现 pending 请求）。
   void _scheduleEndOfDayTriggers({required bool bedtime}) {
     if (dailyFinalization == null) {
       return;
@@ -740,6 +941,11 @@ final class LocalChatService {
       // 新月（含跨年）的第一次对话在这里触发上月压缩（五段节奏
       // 第四动作）。压缩排在补归档之后：只收 finalized 日期。
       _scheduleMonthlyCompression();
+      // Dream 补跑与晚安分支同口径：排在补归档与月压缩之后、只兑现
+      // pending 请求（笔记定稿：当晚没跑成，下次启动/空闲时补），资格
+      // 在 DreamService 内复查。启动、跨天首条消息与晚安三个触发点都
+      // 会尝试兑现 pending，直到成功为止。
+      _scheduleDream(bedtime: false);
     }
   }
 
@@ -779,45 +985,66 @@ final class LocalChatService {
 
   /// Dream 挂到日终归档同一条后台任务链上：补归档与月压缩先完成，
   /// Dream 只看到 finalized 材料；失败只记诊断，绝不阻塞聊天，
-  /// 未成功的请求由下次晚安或启动补跑继续。
+  /// 未成功的请求由下次晚安、启动或跨天首条消息补跑继续。
   void _scheduleDream({required bool bedtime}) {
     final dream = dreamService;
     if (dream == null) {
       return;
     }
-    _finalizationTask = _finalizationTask.then((_) async {
-      try {
-        final outcome = await dream.run(bedtime: bedtime);
-        final status = outcome.status;
-        if (status == DreamStatus.modelFailed ||
-            status == DreamStatus.validationFailed ||
-            status == DreamStatus.writeFailed ||
-            status == DreamStatus.skippedUnreadable) {
-          final detail = outcome.detail == null ? '' : ' [${outcome.detail}]';
-          _diagnosticsSink('dream deferred status=${status.name}$detail');
-        }
-        requestDiagnostics?.record(
-          source: RecentRequestSources.dream,
-          result: switch (status) {
-            DreamStatus.accepted => RecentRequestResults.ok,
-            DreamStatus.notEligible ||
-            DreamStatus.notDue ||
-            DreamStatus.skippedNoMaterial ||
-            DreamStatus.skippedNoProvider => RecentRequestResults.skipped,
-            _ => RecentRequestResults.failed,
-          },
-          detail: 'status=${status.name}',
-        );
-      } on Object catch (error) {
-        requestDiagnostics?.record(
-          source: RecentRequestSources.dream,
-          result: RecentRequestResults.failed,
-          // 细节只记错误类别，不记第三方错误原文。
-          detail: '${error.runtimeType}',
-        );
-        _diagnosticsSink('dream deferred [$error]');
+    _finalizationTask = _finalizationTask.then(
+      (_) => _runDreamWork(dream, bedtime: bedtime),
+    );
+  }
+
+  /// 执行一次 Dream 并记诊断。返回结果供空闲补办轮询记账：
+  /// `attempted` 表示本轮真正发起了补跑（接纳、真正失败或执行异常，
+  /// 资格不符的 skipped 未消耗模型调用不算），`succeeded` 仅在接纳
+  /// 成功时为真。
+  Future<({bool attempted, bool succeeded})> _runDreamWork(
+    DreamService dream, {
+    required bool bedtime,
+  }) async {
+    try {
+      final outcome = await dream.run(bedtime: bedtime);
+      final status = outcome.status;
+      if (status == DreamStatus.modelFailed ||
+          status == DreamStatus.validationFailed ||
+          status == DreamStatus.writeFailed ||
+          status == DreamStatus.skippedUnreadable) {
+        final detail = outcome.detail == null ? '' : ' [${outcome.detail}]';
+        _diagnosticsSink('dream deferred status=${status.name}$detail');
       }
-    });
+      // skipped ⇔ 资格不符的四个状态（notEligible/notDue/skippedNoMaterial/
+      // skippedNoProvider，switch 全集覆盖）：它们未消耗模型调用，
+      // 不是真正的补跑尝试。
+      final result = switch (status) {
+        DreamStatus.accepted => RecentRequestResults.ok,
+        DreamStatus.notEligible ||
+        DreamStatus.notDue ||
+        DreamStatus.skippedNoMaterial ||
+        DreamStatus.skippedNoProvider =>
+          RecentRequestResults.skipped,
+        _ => RecentRequestResults.failed,
+      };
+      requestDiagnostics?.record(
+        source: RecentRequestSources.dream,
+        result: result,
+        detail: 'status=${status.name}',
+      );
+      return (
+        attempted: result != RecentRequestResults.skipped,
+        succeeded: status == DreamStatus.accepted,
+      );
+    } on Object catch (error) {
+      requestDiagnostics?.record(
+        source: RecentRequestSources.dream,
+        result: RecentRequestResults.failed,
+        // 细节只记错误类别，不记第三方错误原文。
+        detail: '${error.runtimeType}',
+      );
+      _diagnosticsSink('dream deferred [$error]');
+      return (attempted: true, succeeded: false);
+    }
   }
 
   /// 可见回复落盘之后的增量记忆整理：写失败只记诊断，不影响本轮回复。
@@ -1348,3 +1575,36 @@ FallbackReason _fallbackReasonFor(ModelFailureKind failure) =>
       ModelFailureKind.provider => FallbackReason.modelProvider,
       ModelFailureKind.internal => FallbackReason.modelInternal,
     };
+
+/// 空闲补办轮询定时器（spec：唯一新缝是 [LocalChatService.pollTick]，
+/// 真定时器只是可注入的薄壳；测试不启动真定时器，直接拨 tick 配假
+/// 时钟）。随宿主启动、随宿主收尾取消。
+abstract interface class IdleCatchupPoller {
+  void start();
+
+  void stop();
+}
+
+/// 生产实现：每 [interval] 调一次 [onTick]。薄到不做端到端测试
+/// （spec Out of Scope），随全量门禁冒烟覆盖。
+final class PeriodicIdleCatchupPoller implements IdleCatchupPoller {
+  PeriodicIdleCatchupPoller(
+    this._onTick, {
+    this.interval = const Duration(minutes: 10),
+  });
+
+  final Future<void> Function() _onTick;
+  final Duration interval;
+  Timer? _timer;
+
+  @override
+  void start() => _timer ??= Timer.periodic(interval, (_) {
+        unawaited(_onTick());
+      });
+
+  @override
+  void stop() {
+    _timer?.cancel();
+    _timer = null;
+  }
+}
