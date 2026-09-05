@@ -1,128 +1,61 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-
-import '../baseline/host_api_gateway.dart';
 import '../chat/voice_player_platform.dart';
+import 'keyed_settings_view_model.dart';
 import 'tts_settings_client.dart';
 
-/// 语音朗读设置的视图模型：与 SttSettingsViewModel 同构；连接测试成功
-/// 时用返回的试听音频直接经播放平台播出来（读不出声只影响试听，不
-/// 影响连接成功的结论）。
-final class TtsSettingsViewModel extends ChangeNotifier {
+/// 语音朗读设置的视图模型：与模型服务域共用
+/// [TestableKeyedSettingsViewModel] 的加载/保存/遗忘/测试状态机；连接
+/// 测试成功时用返回的试听音频直接经播放平台播出来（读不出声只影响
+/// 试听，不影响连接成功的结论）。
+final class TtsSettingsViewModel
+    extends
+        TestableKeyedSettingsViewModel<
+          TtsSettings,
+          TtsSettingsDraft,
+          TtsConnectionTest
+        > {
   TtsSettingsViewModel(
     this._gateway, {
     VoicePlayerPlatform? playerPlatform,
-    bool autoStart = true,
-  }) : _playerPlatform = playerPlatform ?? createVoicePlayerPlatform() {
-    if (autoStart) {
-      unawaited(initialize());
-    }
-  }
+    super.autoStart,
+  }) : _playerPlatform = playerPlatform ?? createVoicePlayerPlatform();
 
   final TtsSettingsGateway _gateway;
   final VoicePlayerPlatform _playerPlatform;
-  TtsSettings? _settings;
-  TtsConnectionTest? _testResult;
-  String? _errorMessage;
-  bool _loading = false;
-  bool _saving = false;
-  bool _testing = false;
-  bool _initialized = false;
 
-  TtsSettings? get settings => _settings;
-  TtsConnectionTest? get testResult => _testResult;
-  String? get errorMessage => _errorMessage;
-  bool get loading => _loading && !_initialized;
-  bool get saving => _saving;
-  bool get testing => _testing;
+  @override
+  String get errorFallback => '语音朗读设置暂时不可用，请稍后重试。';
 
-  Future<void> initialize() async {
-    if (_loading || _initialized) {
-      return;
-    }
-    _loading = true;
-    notifyListeners();
-    try {
-      _settings = await _gateway.read();
-      _errorMessage = null;
-      _initialized = true;
-    } on Object catch (error) {
-      _errorMessage = _readableError(error);
-    } finally {
-      _loading = false;
-      notifyListeners();
-    }
-  }
+  @override
+  Future<TtsSettings> readSettings() => _gateway.read();
 
-  Future<bool> save(TtsSettingsDraft draft) async {
-    if (_saving) {
-      return false;
-    }
-    _saving = true;
-    _testResult = null;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      _settings = await _gateway.save(draft);
-      return true;
-    } on Object catch (error) {
-      _errorMessage = _readableError(error);
-      return false;
-    } finally {
-      _saving = false;
-      notifyListeners();
-    }
-  }
+  @override
+  Future<TtsSettings> saveSettings(TtsSettingsDraft draft) =>
+      _gateway.save(draft);
 
-  Future<void> testConnection(TtsSettingsDraft draft) async {
-    if (_testing) {
-      return;
-    }
-    _prepareForUserInitiatedPlayback();
-    _testing = true;
-    _testResult = null;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      _testResult = await _gateway.testConnection(draft);
-      await _playPreview(_testResult);
-    } on Object catch (error) {
-      _errorMessage = _readableError(error);
-    } finally {
-      _testing = false;
-      notifyListeners();
-    }
-  }
+  @override
+  Future<TtsSettings> forgetKeySettings() => _gateway.forgetApiKey();
 
-  /// 再听一次最近一次成功的试听（音频只存在内存，页面离开即丢）。
-  Future<void> replayPreview() async {
-    _prepareForUserInitiatedPlayback();
-    await _playPreview(_testResult);
-    notifyListeners();
-  }
+  @override
+  Future<TtsConnectionTest> runConnectionTest(TtsSettingsDraft draft) =>
+      _gateway.testConnection(draft);
 
-  void _prepareForUserInitiatedPlayback() {
-    // 必须在按钮点击后的第一个 await 前同步发生。
+  @override
+  void beforeConnectionTest() {
+    // 必须在按钮点击后的第一个 await 前同步发生（基类钩子保证时机）。
     _playerPlatform.prepareForUserGesturePlayback();
   }
 
-  Future<void> forgetApiKey() async {
-    if (_saving) {
-      return;
-    }
-    _saving = true;
-    _testResult = null;
-    _errorMessage = null;
+  @override
+  Future<void>? afterConnectionTest(TtsConnectionTest? result) =>
+      _playPreview(result);
+
+  /// 再听一次最近一次成功的试听（音频只存在内存，页面离开即丢）。
+  Future<void> replayPreview() async {
+    _playerPlatform.prepareForUserGesturePlayback();
+    await _playPreview(testResult);
     notifyListeners();
-    try {
-      _settings = await _gateway.forgetApiKey();
-    } on Object catch (error) {
-      _errorMessage = _readableError(error);
-    } finally {
-      _saving = false;
-      notifyListeners();
-    }
   }
 
   Future<void> _playPreview(TtsConnectionTest? result) async {
@@ -132,14 +65,11 @@ final class TtsSettingsViewModel extends ChangeNotifier {
     }
     final playback = await _playerPlatform.play(audio, mimeType: 'audio/mpeg');
     if (playback == null) {
-      _errorMessage = '语音服务已连接，但浏览器没能播放试听。点「再听一次试听」重试。';
+      errorMessage = '语音服务已连接，但浏览器没能播放试听。点「再听一次试听」重试。';
       return;
     }
-    _errorMessage = null;
+    errorMessage = null;
     // 读取 done 让平台在播放结束后释放内存音频；试听本身不阻塞设置页交互。
     unawaited(playback.done);
   }
 }
-
-String _readableError(Object error) =>
-    readableError(error, fallback: '语音朗读设置暂时不可用，请稍后重试。');
