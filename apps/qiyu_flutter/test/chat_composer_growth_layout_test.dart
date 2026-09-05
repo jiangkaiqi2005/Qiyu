@@ -149,6 +149,51 @@ void main() {
     );
   });
 
+  testWidgets('两行即展开：行盒再矮，两行内容也必须有完整下沿留白', (tester) async {
+    await pumpChat(tester, messageCount: 1);
+
+    final listView = find.byType(ListView).first;
+    final listBefore = tester.getRect(listView);
+
+    await tester.enterText(
+      find.byKey(const Key('chat-input')),
+      '第一行\n第二行',
+    );
+    await tester.pumpAndSettle();
+
+    // 展开判据是「内容多于一行」，不是「输入行高超过按钮行」：测试字体行盒
+    // 22px 下两行内容 44px，仍矮于 46px 的按钮行——按高度判定时这里永远不
+    // 展开、下沿只剩 6（2026-09-05 用户 200% 缩放真机踩中：两行贴边、三行
+    // 才突然松开，观感即「两行和三行差太多」）。
+    expect(
+      tester
+          .widget<QiyuGlassPanel>(find.byKey(const Key('home-go-chat')))
+          .padding,
+      const EdgeInsets.fromLTRB(
+        QiyuSpacing.md,
+        QiyuLayout.composerPadding,
+        QiyuLayout.composerPadding,
+        QiyuLayout.composerPadding + 2 * QiyuSpacing.xs,
+      ),
+      reason: '两行内容就必须展开：下沿留白不得等行数涨到按钮行高度才出现',
+    );
+    // 两行面板总高：发丝 2 + 上 6 + 按钮行 46（两行 44 矮于按钮行，行不撑高）
+    // + 下 22 = 76。
+    expect(
+      tester.getRect(find.byKey(const Key('home-go-chat'))).height,
+      76.0,
+      reason: '两行展开态面板高度：按钮行 46 + 上 6 + 下 22 + 发丝 2',
+    );
+
+    final listAfter = tester.getRect(listView);
+    expect(listAfter.top, listBefore.top, reason: '消息列表视口顶部必须纹丝不动');
+    expect(
+      listAfter.height,
+      listBefore.height,
+      reason: '消息列表视口高度必须不变：composer 长高应走覆盖层，而不是挤压列表',
+    );
+  });
+
   testWidgets('composer 长高不丢贴底', (tester) async {
     await pumpChat(tester, messageCount: 40, linesPerMessage: 6);
 

@@ -73,13 +73,13 @@ class _LocalChatViewState extends State<LocalChatView> {
   /// 失焦回落到 `line` 发丝线（design-system §8 组件 5）。
   final _inputFocusNode = FocusNode(debugLabel: 'chat-input');
 
-  /// composer 输入行（Row）量高键：展开态判定只看它自身高度，展开加的留白在
-  /// 面板（它的外层），不会反馈成自身高度变化。
-  final _composerRowKey = GlobalKey(debugLabel: 'composer-row');
+  /// composer 输入框量宽键：展开态判定要按输入框的**实际可用宽度**排版数行，
+  /// 按钮列的宽度必须排除在外，所以键挂在输入框本体而不是整行。
+  final _composerFieldKey = GlobalKey(debugLabel: 'composer-field');
 
-  /// composer 是否多行展开：输入行高过静息 [_composerRowRestingHeight] 即展开，
-  /// 面板下沿加到 [_composerExpandedBottomPadding]（上沿不动）；单行静息分毫
-  /// 不动（列表底部让位常量与基线测试的 492/516 都依赖这一点）。
+  /// composer 输入是否多于一行：多于一行即展开，面板下沿加到
+  /// [_composerExpandedBottomPadding]（上沿不动）；单行静息分毫不动（列表底部
+  /// 让位常量与基线测试的 492/516 都依赖这一点）。
   bool _composerExpanded = false;
 
   String _lastListSignature = '';
@@ -368,6 +368,10 @@ class _LocalChatViewState extends State<LocalChatView> {
   /// 图标按钮 [QiyuLayout.composerIconButtonSize] + compact 渲染增量
   /// [_compactIconButtonSizeDelta] + 焦点环常驻留白上下
   /// 2×[QiyuLayout.focusRingOffset]。
+  ///
+  /// 只用于列表底部让位（[_chatListBottomInset]）的推导；**不再作展开判据**——
+  /// 窄屏字阶下两行内容仍矮于按钮行，按高度判定会漏翻（见
+  /// [_updateComposerExpanded]）。
   static const double _composerRowRestingHeight =
       QiyuLayout.composerIconButtonSize +
       _compactIconButtonSizeDelta +
@@ -736,9 +740,13 @@ class _LocalChatViewState extends State<LocalChatView> {
                   ),
                 },
                 child: Row(
-                  key: _composerRowKey,
                   children: [
-                    Expanded(child: _inputField()),
+                    Expanded(
+                      child: KeyedSubtree(
+                        key: _composerFieldKey,
+                        child: _inputField(),
+                      ),
+                    ),
                     const SizedBox(width: QiyuSpacing.xs),
                     AnimatedBuilder(
                       animation: _voiceInput,
@@ -761,16 +769,30 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
-  /// 展开态帧后核对：量输入行实际高度、与静息高比较出是否展开，只在布尔
-  /// 翻转时 setState。留白加在输入行外层的面板上，量到的对象不受其反馈影响，
-  /// 翻转一次即稳。0.5 容差只吞亚像素抖动。触发路径：控制器文本变化与
-  /// composer 每次 build（见 initState 与 [_composer]）。
+  /// 展开态帧后核对：用与输入框**同源**的字体样式（[_inputTextStyle]）把当前
+  /// 文本按输入框实际宽度排版，行数 > 1 即展开，只在布尔翻转时 setState。
+  ///
+  /// 判据必须是「内容行数」而非「输入行高超过按钮行（[_composerRowRestingHeight]）」：
+  /// 窄屏字阶与浏览器缩放会把单行行盒压到 22px 上下，两行内容（44px）仍矮于
+  /// 46px 的按钮行，按高度判定会漏翻——2026-09-05 用户 200% 缩放真机踩中，
+  /// 观感即「两行贴边、三行才突然松开，两行和三行差太多」。留白加在输入行
+  /// 外层的面板上，不反馈输入框自身宽度，量一次即稳。触发路径：控制器文本
+  /// 变化与 composer 每次 build（见 initState 与 [_composer]）。
   void _updateComposerExpanded() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final box = _composerRowKey.currentContext?.findRenderObject();
-      if (box is! RenderBox || !box.hasSize) return;
-      final expanded = box.size.height > _composerRowRestingHeight + 0.5;
+      final box = _composerFieldKey.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize || box.size.width <= 0) return;
+      final painter = TextPainter(
+        text: TextSpan(
+          text: _controller.text,
+          style: _inputTextStyle(context),
+        ),
+        textDirection: TextDirection.ltr,
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout(maxWidth: box.size.width);
+      final expanded = painter.computeLineMetrics().length > 1;
+      painter.dispose();
       if (expanded != _composerExpanded) {
         setState(() => _composerExpanded = expanded);
       }
@@ -788,7 +810,7 @@ class _LocalChatViewState extends State<LocalChatView> {
       minLines: 1,
       maxLines: 5,
       textInputAction: TextInputAction.newline,
-      style: QiyuTypography.of(context).body.copyWith(color: QiyuColors.ink),
+      style: _inputTextStyle(context),
       decoration: const InputDecoration(
         hintText: '想说点什么…',
         filled: false,
@@ -802,6 +824,11 @@ class _LocalChatViewState extends State<LocalChatView> {
       ),
     );
   }
+
+  /// 输入框文本样式：[_inputField] 与展开态行数判定（[_updateComposerExpanded]）
+  /// 必须共用同一份，行数才不会按另一份字体度量排版。
+  TextStyle _inputTextStyle(BuildContext context) =>
+      QiyuTypography.of(context).body.copyWith(color: QiyuColors.ink);
 
   /// 语音输入状态行：录音计时 / 转写等待 / 可重试提示。作为 live region
   /// 播报给屏幕阅读器；idle 无事可报时不占位。
