@@ -633,12 +633,10 @@ final class DreamService {
     if (parsed == null) {
       await _writeChanges(
         _buildChanges(
-          today,
-          state,
+          (today: today, previousState: state, result: 'rejected (unparseable)'),
           input,
           const [],
           existing,
-          'rejected (unparseable)',
           includeDetails: false,
         ),
       );
@@ -676,12 +674,10 @@ final class DreamService {
       // 只有通过全部自检的条目才允许持久化正文。
       await _writeChanges(
         _buildChanges(
-          today,
-          state,
+          (today: today, previousState: state, result: 'pending'),
           input,
           items,
           existing,
-          'pending',
           includeDetails: false,
         ),
       );
@@ -717,12 +713,14 @@ final class DreamService {
     if (gateFailure != null) {
       await _writeChanges(
         _buildChanges(
-          today,
-          state,
+          (
+            today: today,
+            previousState: state,
+            result: 'rejected ($gateFailure)',
+          ),
           input,
           items,
           existing,
-          'rejected ($gateFailure)',
           includeDetails: false,
           rootOps: [
             for (final op in proposals) _RootOpRecord(op, 'draft-rejected'),
@@ -806,12 +804,10 @@ final class DreamService {
       }
       await _writeChanges(
         _buildChanges(
-          today,
-          state,
+          (today: today, previousState: state, result: 'accepted'),
           input,
           items,
           existing,
-          'accepted',
           includeDetails: true,
           rootOps: opRecords,
         ),
@@ -1039,10 +1035,10 @@ final class DreamService {
     var total = _inputRunes(
       windowed,
       monthSummaries,
-      relationship,
-      openLoops,
-      longMemory,
-      personaSection,
+      relationship: relationship,
+      openLoops: openLoops,
+      longMemory: longMemory,
+      personaSection: personaSection,
     );
     while (total > dreamInputMaxRunes && monthSummaries.isNotEmpty) {
       total -= monthSummaries.removeAt(0).contents.runes.length;
@@ -1070,12 +1066,12 @@ final class DreamService {
 
   int _inputRunes(
     List<({String date, String summary})> summaries,
-    List<({String month, String contents})> monthSummaries,
-    String? relationship,
-    String? openLoops,
-    String? longMemory,
-    String? personaSection,
-  ) {
+    List<({String month, String contents})> monthSummaries, {
+    required String? relationship,
+    required String? openLoops,
+    required String? longMemory,
+    required String? personaSection,
+  }) {
     var total = 0;
     for (final entry in summaries) {
       total += '${entry.date}: ${entry.summary}'.runes.length;
@@ -1500,27 +1496,25 @@ final class DreamService {
   /// 待定的草稿可能携带敏感、禁提内容，清单绝不能落盘其原文，只记
   /// 结果码与数量——否则等于把模型吐出的密钥写进记忆目录。
   String _buildChanges(
-    String today,
-    DreamState previousState,
+    ({String today, DreamState previousState, String result}) run,
     _DreamInput input,
     List<DreamItem> items,
-    LongMemoryFile? existing,
-    String result, {
+    LongMemoryFile? existing, {
     required bool includeDetails,
     List<_RootOpRecord> rootOps = const [],
   }) {
-    final rangeStart = previousState.lastSuccess == null
+    final rangeStart = run.previousState.lastSuccess == null
         ? '最初'
-        : localSessionDate(previousState.lastSuccess!);
+        : localSessionDate(run.previousState.lastSuccess!);
     final buffer = StringBuffer()
       ..writeln('# dream-changes')
       ..writeln()
-      ..writeln('date: $today')
+      ..writeln('date: ${run.today}')
       ..writeln(
-        'range: $rangeStart → $today'
+        'range: $rangeStart → ${run.today}'
         '（日摘要 ${input.summaries.length} 天，月摘要 ${input.monthSummaries.length} 月）',
       )
-      ..writeln('result: $result')
+      ..writeln('result: ${run.result}')
       ..writeln('候选条目数: ${items.length}');
     if (rootOps.isNotEmpty) {
       buffer.writeln('根节点提案数: ${rootOps.length}');

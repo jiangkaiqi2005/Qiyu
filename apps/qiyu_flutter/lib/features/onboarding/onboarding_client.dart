@@ -11,9 +11,11 @@ final class OnboardingState {
   final bool completed;
 }
 
-final class OnboardingGatewayException implements Exception {
+final class OnboardingGatewayException
+    implements Exception, UserFacingException {
   const OnboardingGatewayException(this.message);
 
+  @override
   final String message;
 
   @override

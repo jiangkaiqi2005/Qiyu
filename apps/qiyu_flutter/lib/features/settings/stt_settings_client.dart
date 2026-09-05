@@ -1,6 +1,6 @@
 import '../baseline/host_api_gateway.dart';
 import 'provider_settings_client.dart'
-    show ProviderTestResult, ProviderSettingsException;
+    show ProviderTestResult, ProviderSettingsGatewayException;
 
 /// 语音转写（STT）的服务类型：与 Host 的 stt 段 provider 字段对应，
 /// 缺省 openai_compatible（存量配置不带该字段）。
@@ -81,7 +81,7 @@ final class HttpSttSettingsGateway extends HostApiGateway
   HttpSttSettingsGateway({super.client, super.baseUri});
 
   @override
-  Object errorFor(String message) => ProviderSettingsException(message);
+  Object errorFor(String message) => ProviderSettingsGatewayException(message);
 
   @override
   String get unavailableMessage => '语音设置暂时不可用，请稍后重试。';

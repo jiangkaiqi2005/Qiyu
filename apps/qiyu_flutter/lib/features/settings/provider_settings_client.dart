@@ -12,7 +12,8 @@ enum ProviderKind {
 
   static ProviderKind fromWireName(String value) => values.firstWhere(
     (provider) => provider.wireName == value,
-    orElse: () => throw const ProviderSettingsException('本机程序返回了未知的模型服务。'),
+    orElse: () =>
+        throw const ProviderSettingsGatewayException('本机程序返回了未知的模型服务。'),
   );
 }
 
@@ -113,9 +114,9 @@ final class ProviderTestResult {
   final String message;
 }
 
-final class ProviderSettingsException
+final class ProviderSettingsGatewayException
     implements Exception, UserFacingException {
-  const ProviderSettingsException(this.message);
+  const ProviderSettingsGatewayException(this.message);
 
   @override
   final String message;
@@ -139,7 +140,7 @@ final class HttpProviderSettingsGateway extends HostApiGateway
   HttpProviderSettingsGateway({super.client, super.baseUri});
 
   @override
-  Object errorFor(String message) => ProviderSettingsException(message);
+  Object errorFor(String message) => ProviderSettingsGatewayException(message);
 
   @override
   String get unavailableMessage => '模型设置暂时不可用，请稍后重试。';

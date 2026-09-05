@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../baseline/host_api_gateway.dart';
 import 'memory_client.dart';
 
 /// 记忆中心视图模型：总览加载、详情读取，以及经过确认的记忆动作
@@ -123,7 +124,5 @@ final class MemoryCenterViewModel extends ChangeNotifier {
   }
 }
 
-String _readableError(Object error) => switch (error) {
-  MemoryGatewayException() => error.message,
-  _ => '记忆中心暂时不可用，请稍后重试。',
-};
+String _readableError(Object error) =>
+    readableError(error, fallback: '记忆中心暂时不可用，请稍后重试。');

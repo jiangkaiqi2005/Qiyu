@@ -83,9 +83,11 @@ final class HistoryListing {
   final List<UnavailableHistoryEntry> unavailable;
 }
 
-final class HistoryGatewayException implements Exception {
+final class HistoryGatewayException
+    implements Exception, UserFacingException {
   const HistoryGatewayException(this.message);
 
+  @override
   final String message;
 
   @override

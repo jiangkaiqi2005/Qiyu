@@ -21,9 +21,9 @@ final class WebSearchSettingsDraft {
   Map<String, Object?> toJson() => {'apiKey': ?apiKey};
 }
 
-final class WebSearchSettingsException
+final class WebSearchSettingsGatewayException
     implements Exception, UserFacingException {
-  const WebSearchSettingsException(this.message);
+  const WebSearchSettingsGatewayException(this.message);
 
   @override
   final String message;
@@ -45,7 +45,8 @@ final class HttpWebSearchSettingsGateway extends HostApiGateway
   HttpWebSearchSettingsGateway({super.client, super.baseUri});
 
   @override
-  Object errorFor(String message) => WebSearchSettingsException(message);
+  Object errorFor(String message) =>
+      WebSearchSettingsGatewayException(message);
 
   @override
   String get unavailableMessage => '联网搜索设置暂时不可用，请稍后重试。';

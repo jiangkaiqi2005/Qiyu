@@ -107,7 +107,7 @@ final class _RecordingWebSearchGateway implements WebSearchSettingsGateway {
   Future<WebSearchSettings> save(WebSearchSettingsDraft draft) async {
     savedApiKeys.add(draft.apiKey);
     if (failSave) {
-      throw const WebSearchSettingsException('联网搜索设置暂时不可用，请稍后重试。');
+      throw const WebSearchSettingsGatewayException('联网搜索设置暂时不可用，请稍后重试。');
     }
     return snapshot;
   }

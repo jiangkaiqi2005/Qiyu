@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../baseline/host_api_gateway.dart';
-import 'provider_settings_client.dart' show ProviderSettingsException;
+import 'provider_settings_client.dart' show ProviderSettingsGatewayException;
 
 /// 语音合成（TTS）的服务类型：与 Host 的 tts 段 provider 字段对应，
 /// 缺省 openai_compatible（存量配置不带该字段）。
@@ -138,7 +138,7 @@ final class HttpTtsSettingsGateway extends HostApiGateway
   HttpTtsSettingsGateway({super.client, super.baseUri});
 
   @override
-  Object errorFor(String message) => ProviderSettingsException(message);
+  Object errorFor(String message) => ProviderSettingsGatewayException(message);
 
   @override
   String get unavailableMessage => '语音朗读设置暂时不可用，请稍后重试。';

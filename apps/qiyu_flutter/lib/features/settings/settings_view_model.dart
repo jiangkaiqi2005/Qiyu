@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../baseline/host_api_gateway.dart';
 import 'settings_client.dart';
 
 /// 设置页数据模型（ticket 23）：体验选项、记忆控制总览、清除产品
@@ -133,7 +134,5 @@ final class SettingsViewModel extends ChangeNotifier {
   }
 }
 
-String _readableError(Object error) => switch (error) {
-  SettingsException() => error.message,
-  _ => '设置服务暂时不可用，请稍后重试。',
-};
+String _readableError(Object error) =>
+    readableError(error, fallback: '设置服务暂时不可用，请稍后重试。');

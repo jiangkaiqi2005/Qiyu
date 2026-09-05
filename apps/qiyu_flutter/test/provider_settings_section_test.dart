@@ -239,7 +239,7 @@ final class _RecordingProviderGateway implements ProviderSettingsGateway {
   Future<ProviderSettings> save(ProviderSettingsDraft draft) async {
     saveCalls += 1;
     if (failSave) {
-      throw const ProviderSettingsException('模型设置暂时不可用，请稍后重试。');
+      throw const ProviderSettingsGatewayException('模型设置暂时不可用，请稍后重试。');
     }
     savedDrafts.add(draft);
     configured = true;

@@ -11,6 +11,9 @@ abstract interface class UserFacingException {
 /// 与本机 Host API 通信的网关底座：`/api/bootstrap` 换取 CSRF 令牌、
 /// 变更请求头与 JSON 成功/失败解码共用同一套口径（聊天、模型设置与
 /// 语音设置三个 HTTP 网关同形，收拢在此，不逐个复制）。
+///
+/// 命名口径：各域 `*_client.dart` 文件是该域 Gateway 接口 + DTO +
+/// HTTP 实现的聚合，类名统一为 `*Gateway`，文件名沿用 client 不改。
 abstract base class HostApiGateway {
   HostApiGateway({http.Client? client, Uri? baseUri})
     : _client = client ?? http.Client(),

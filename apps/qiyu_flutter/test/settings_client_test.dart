@@ -194,7 +194,7 @@ void main() {
       await expectLater(
         gateway.clearData(),
         throwsA(
-          isA<SettingsException>().having(
+          isA<SettingsGatewayException>().having(
             (error) => error.message,
             'message',
             '清除本机数据需要明确确认。',

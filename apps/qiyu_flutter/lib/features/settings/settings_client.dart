@@ -1,8 +1,10 @@
 import '../baseline/host_api_gateway.dart';
 
-final class SettingsException implements Exception {
-  const SettingsException(this.message);
+final class SettingsGatewayException
+    implements Exception, UserFacingException {
+  const SettingsGatewayException(this.message);
 
+  @override
   final String message;
 
   @override
@@ -242,7 +244,7 @@ final class HttpSettingsGateway extends HostApiGateway
   HttpSettingsGateway({super.client, super.baseUri});
 
   @override
-  Object errorFor(String message) => SettingsException(message);
+  Object errorFor(String message) => SettingsGatewayException(message);
 
   @override
   String get unavailableMessage => '设置服务暂时不可用，请稍后重试。';

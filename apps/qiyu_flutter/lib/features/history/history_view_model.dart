@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../baseline/host_api_gateway.dart';
 import 'history_client.dart';
 
 final class HistoryViewModel extends ChangeNotifier {
@@ -70,7 +71,5 @@ final class HistoryViewModel extends ChangeNotifier {
   }
 }
 
-String _readableError(Object error) => switch (error) {
-  HistoryGatewayException() => error.message,
-  _ => '历史记录暂时不可用，请稍后重试。',
-};
+String _readableError(Object error) =>
+    readableError(error, fallback: '历史记录暂时不可用，请稍后重试。');

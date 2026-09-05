@@ -213,7 +213,7 @@ final class _RecordingSttGateway implements SttSettingsGateway {
   Future<SttSettings> save(SttSettingsDraft draft) async {
     saveCalls += 1;
     if (failSave) {
-      throw const ProviderSettingsException('语音设置暂时不可用，请稍后重试。');
+      throw const ProviderSettingsGatewayException('语音设置暂时不可用，请稍后重试。');
     }
     savedDrafts.add(draft);
     return SttSettings(

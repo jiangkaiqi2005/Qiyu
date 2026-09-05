@@ -30,7 +30,7 @@ class MigrationBaselineView extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      viewModel.behaviorCoreConnected
+                      viewModel.checkBehaviorCore()
                           ? '纯 Dart 行为核心已连接'
                           : '行为核心启动前检查失败',
                     ),
