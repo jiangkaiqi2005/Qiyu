@@ -132,9 +132,7 @@ final class MonthlySummaryStore {
   File summaryFile(String month) => File(
     path.join(
       memoryDirectory,
-      'episodes',
-      month.substring(0, 4),
-      month.substring(5, 7),
+      episodeMonthRelativeDirectory(month),
       'summary.md',
     ),
   );
@@ -486,16 +484,10 @@ final class MonthlySummaryStore {
     return const [];
   }
 
-  /// 月压缩的受控集合 = 封禁（禁提 ∪ 删除）∪ 冻结：冻结停止整理，
-  /// 封禁内容不得进摘要。
-  Future<Set<String>> _controlledTitles() async {
-    final store = openLoopStore;
-    if (store == null) {
-      return const {};
-    }
-    final controls = await store.memoryControls.load();
-    return controls.controlledSummaries;
-  }
+  /// 月压缩的受控集合：冻结停止整理，封禁内容不得进摘要（并集定义
+  /// 见 [OpenLoopStore.controlledTitles]）。
+  Future<Set<String>> _controlledTitles() async =>
+      (await openLoopStore?.controlledTitles()) ?? const {};
 
   /// 当前仍未闭环（active/paused）的 open-loop 标题集合。
   Future<Set<String>> _activeLoopTitles() async {

@@ -95,9 +95,9 @@ final class StatePackReader {
     return visible.join('\n').trim();
   }
 
-  /// 受控集合 = 封禁（禁提 ∪ 删除）∪ 冻结：注入侧统一按它过滤。
-  Future<Set<String>> _controlledTitles() async =>
-      (await _openLoopStore.memoryControls.load()).controlledSummaries;
+  /// 注入侧的受控集合，统一按它过滤（并集定义见
+  /// [OpenLoopStore.controlledTitles]）。
+  Future<Set<String>> _controlledTitles() => _openLoopStore.controlledTitles();
 
   /// 返回可直接注入的【近况】内容；无任何可用内容时返回空串。
   /// 受控内容不出现在注入中（ticket 18）：open-loop 投影按标题过滤，

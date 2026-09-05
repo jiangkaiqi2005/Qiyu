@@ -630,6 +630,15 @@ String localSessionDate(DateTime value) {
       '${local.day.toString().padLeft(2, '0')}';
 }
 
+/// 解析 `YYYY-MM-DD` 日历日期为本地零时 [DateTime]；格式不符时抛
+/// FormatException。与 [localSessionDate] 同一份日期串格式：会话、
+/// episode 与日终归档的日期解析共用这一份实现。
+DateTime parseLocalSessionDate(String date) => DateTime(
+  int.parse(date.substring(0, 4)),
+  int.parse(date.substring(5, 7)),
+  int.parse(date.substring(8, 10)),
+);
+
 String _logicalSessionDate(DateTime value) =>
     localSessionDate(value.subtract(const Duration(hours: 4)));
 

@@ -340,7 +340,10 @@ final class RelationshipLifecycle {
     }
     final spanDays = earliest == null
         ? 0
-        : _parseDate(upTo).difference(_parseDate(earliest)).inDays + 1;
+        : parseLocalSessionDate(upTo)
+              .difference(parseLocalSessionDate(earliest))
+              .inDays +
+              1;
     return (
       evidence: RelationshipEvidence(
         totalEntries: totalEntries,
@@ -399,7 +402,7 @@ final class RelationshipLifecycle {
               summary.trim().isEmpty) {
             continue;
           }
-          final parsedDate = _parseDate(date);
+          final parsedDate = parseLocalSessionDate(date);
           entries.add(
             EpisodeEntry(
               id: 'finalize:$date:signal:$index',
@@ -487,7 +490,9 @@ final class RelationshipLifecycle {
     if (stage == RelationshipStage.stranger) {
       return base;
     }
-    final days = _parseDate(date).difference(_parseDate(since)).inDays;
+    final days = parseLocalSessionDate(date)
+        .difference(parseLocalSessionDate(since))
+        .inDays;
     if (days <= 0) {
       return base;
     }
@@ -620,12 +625,6 @@ final class _RelationshipSignals {
 /// 规范化用于去重比较：与 [normalizeMemoryText] 同一规则（折叠空白
 /// 并统一大小写）；不改变落盘原文。
 String normalizeRelationshipLine(String value) => normalizeMemoryText(value);
-
-DateTime _parseDate(String date) => DateTime(
-  int.parse(date.substring(0, 4)),
-  int.parse(date.substring(5, 7)),
-  int.parse(date.substring(8, 10)),
-);
 
 /// 从 relationship.md 解析关系阶段；缺失或不可识别按初识处理。
 RelationshipStage parseRelationshipStage(String? contents) {

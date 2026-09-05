@@ -50,6 +50,13 @@ List<EpisodeEntry> validEpisodeEntries(List<EpisodeEntry> entries) => entries
 final _monthPattern = RegExp(r'^\d{4}-\d{2}$');
 final _datePattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
 
+/// 月份在记忆目录内的相对路径段（正斜杠）：`episodes/YYYY/MM/`。
+/// 月索引与月摘要文件的落点、顶层索引行与召回提示词展示的月路径
+/// 共用同一换算——提示词展示的路径必须与索引实际写入的路径逐字
+/// 一致（两处必须同步），模型按行内路径指月。
+String episodeMonthRelativeDirectory(String month) =>
+    'episodes/${month.substring(0, 4)}/${month.substring(5, 7)}';
+
 /// 两级索引（月份索引 + 每日索引）的读取与重建。
 ///
 /// 索引只负责定位文件，永远不是事实来源：行内只放关键词和路径，
@@ -76,9 +83,7 @@ final class EpisodeIndexStore {
   File monthIndexFile(String month) => File(
     path.join(
       memoryDirectory,
-      'episodes',
-      month.substring(0, 4),
-      month.substring(5, 7),
+      episodeMonthRelativeDirectory(month),
       'index.md',
     ),
   );
@@ -190,8 +195,8 @@ final class EpisodeIndexStore {
           .take(indexMaxMonthKeywords)
           .join(', ');
       topLines.add(
-        '- $month | $keywords | episodes/${month.substring(0, 4)}/'
-        '${month.substring(5, 7)}/index.md',
+        '- $month | $keywords | '
+        '${episodeMonthRelativeDirectory(month)}/index.md',
       );
     }
     await _atomicWriter.replace(

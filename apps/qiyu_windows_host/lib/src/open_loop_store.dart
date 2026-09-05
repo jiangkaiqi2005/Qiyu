@@ -199,6 +199,12 @@ final class OpenLoopStore {
   Future<Set<String>> frozenTitles() async =>
       (await memoryControls.load()).frozenSummaries;
 
+  /// 受控集合 = 封禁（禁提 ∪ 删除）∪ 冻结：冻结同样停止注入、检索
+  /// 与自动整理，封禁内容不得被提升、注入或召回。各管线过滤的受控
+  /// 集合统一从这里取，不另写「封禁∪冻结」的重复换算。
+  Future<Set<String>> controlledTitles() async =>
+      (await memoryControls.load()).controlledSummaries;
+
   /// 主动跟进候选池：状态 active、允许主动、due 已到、关系阶段允许
   /// 且未被封禁（禁提/删除）或冻结的条目。只进入候选池，是否开口
   /// 由模型按语境选择。控制匹配按包含关系（与其余管线同律），
