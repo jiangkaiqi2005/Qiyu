@@ -2287,6 +2287,72 @@ void main() {
     expect(longMemory, contains('- 用户搬了一次家'));
   });
 
+  test('date-change first message catches up a bedtime dream that failed overnight',
+      () async {
+    // 晚安 Dream 因 Provider 失败留下 pending（既有设计正确保留）；
+    // 长驻进程跨天后的首条消息（date-change 分支）也要调度 Dream
+    // 补跑——「上一天没 Dream，下一天就补」（Dream.md 定稿）。
+    var now = DateTime(2026, 8, 11, 22, 30);
+    final gateway = ScriptedModelGateway(
+      streamScript: [
+        const ScriptedStreamReply('''记下了。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户下周搬家","evidence":"下周搬家"}]
+</qiyu-actions>'''),
+        const ScriptedStreamReply('早。'),
+      ],
+      completeScript: [
+        // 夜里日终理解与 Dream 候选先后失败（Provider 并发受限）。
+        const ScriptedCompletionFailure(ModelFailureKind.network),
+        const ScriptedCompletionFailure(ModelFailureKind.network),
+        // 次日跨天首条消息：补归档已无缺日、无月压缩，Dream 补跑直接兑现。
+        ScriptedCompletionReply(
+          jsonEncode({
+            'items': [
+              {
+                'section': '重要事件',
+                'text': '用户搬了一次家',
+                'evidence': ['2026-08-11'],
+              },
+            ],
+          }),
+        ),
+      ],
+    );
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => now,
+    );
+    addTearDown(harness.dispose);
+    final first = await harness.sendChat(requestId: 'night-fail', text: '下周搬家');
+    await harness.sendChat(
+      requestId: 'night-fail-bed',
+      text: '晚安',
+      sessionId: first.sessionId,
+    );
+    // 夜里模型失败：两次失败调用（理解 + Dream），长期印象不落盘。
+    await gateway.awaitCompleteCalls(2);
+    expect(
+      File('${harness.memoryDirectory}/long-memory.md').existsSync(),
+      isFalse,
+    );
+    expect(gateway.completeCalls, hasLength(2));
+
+    // 长驻进程跨天：次日首条消息（date-change 分支）调度 Dream 补跑。
+    now = DateTime(2026, 8, 12, 9);
+    await harness.sendChat(requestId: 'day2-morning', text: '早上好');
+    await harness.close();
+
+    final longMemoryFile = File(
+      '${harness.memoryDirectory}/long-memory.md',
+    );
+    expect(longMemoryFile.existsSync(), isTrue,
+        reason: '跨天首条消息应调度 Dream 补跑并落盘长期印象');
+    expect(longMemoryFile.readAsStringSync(), contains('- 用户搬了一次家'));
+    // 补跑只花一次模型调用；接纳后 pending 清除，不再有额外调用。
+    expect(gateway.completeCalls, hasLength(3));
+  });
+
   test('long-memory injection is clipped to the hot-layer budget', () async {
     DateTime clock() => DateTime(2026, 8, 12, 21);
     final gateway = ScriptedModelGateway(

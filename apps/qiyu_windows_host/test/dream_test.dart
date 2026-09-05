@@ -581,6 +581,62 @@ void main() {
     expect(File('${directory.path}/long-memory.md').existsSync(), isFalse);
   });
 
+  test('no-material bedtime skip keeps the pending request for catch-up',
+      () async {
+    // 晚安当晚归档失败（如 Provider 并发限制）→ 没有任何已定稿材料 →
+    // 材料为空的跳过绝不销毁补跑请求（Dream.md 定稿：当晚没跑成，
+    // 下次启动/空闲时补）；次日材料齐后启动补跑应兑现。
+    final directory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-nomaterial-catchup-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    var now = DateTime(2026, 9, 4, 22, 0);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: directory.path,
+      clock: () => now,
+    );
+    // 空脚本：材料为空时 Dream 绝不调模型；次日补跑的候选由用例现场追加。
+    final client = _ScriptedDreamClient([]);
+    final dream = DreamService(
+      memoryDirectory: directory.path,
+      episodePipeline: pipeline,
+      modelClient: client,
+      clock: () => now,
+    );
+
+    // 晚安预登记：间隔满足，pending 落盘。
+    await dream.markBedtime();
+    // 当晚归档失败 → 无已定稿材料 → Dream 跳过且不调模型。
+    final outcome = await dream.run(bedtime: true);
+    expect(outcome.status, DreamStatus.skippedNoMaterial);
+    expect(client.calls, isEmpty);
+
+    // 补跑请求原样保留：材料为空的跳过不写状态。
+    final stateAfterSkip = _decodeStateFile(
+      File('${directory.path}/dream/state.md').readAsStringSync(),
+    );
+    expect(stateAfterSkip['pending'], isTrue, reason: '补跑请求不销毁');
+
+    // 次日材料就绪（归档补跑成功），启动补跑兑现请求。
+    now = DateTime(2026, 9, 5, 9, 0);
+    await _seedFinalizedDay(pipeline, '2026-09-04', '用户聊了周末的安排');
+    client.completions.add(
+      ModelCompletion.reply(
+        _candidate([
+          _item('重要事件', '用户安排了周末的行程', ['2026-09-04']),
+        ]),
+      ),
+    );
+    final catchUp = await dream.run(bedtime: false);
+    expect(catchUp.status, DreamStatus.accepted);
+
+    // 接纳成功才清除 pending 并推进成功时间。
+    final stateAfterCatchUp = _decodeStateFile(
+      File('${directory.path}/dream/state.md').readAsStringSync(),
+    );
+    expect(stateAfterCatchUp['pending'], isFalse);
+  });
+
   test('no provider never fabricates long-term impressions', () async {
     final directory = await Directory.systemTemp.createTemp(
       'qiyu-dream-noprovider-test-',

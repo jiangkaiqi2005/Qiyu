@@ -124,7 +124,7 @@ final class DreamState {
   final DateTime? lastSuccess;
 
   /// 晚安时具备资格但未成功（模型失败、验证失败、写入失败或配置
-  /// 缺失）：下次启动补跑。只有成功才清除。
+  /// 缺失）：下次启动或跨天首条消息时补跑。只有成功才清除。
   final bool pending;
 }
 
@@ -444,7 +444,7 @@ List<String>? _idList(Object? value, RegExp pattern) {
 /// Dream（五段节奏第五动作，ticket 16 / T04 / T08 / T13 定稿）。
 ///
 /// 资格：触发必须来自晚安（[run] 的 bedtime 路径），或来自上次晚安
-/// 未成功留下的补跑请求（pending，启动/空闲时兑现）；且距上次成功
+/// 未成功留下的补跑请求（pending，启动、跨天首条消息时兑现）；且距上次成功
 /// Dream 的日历日差至少 [dreamMinIntervalDays] 天。日终归档与月压缩
 /// 每天都可以执行，但从不写入 Dream 状态，绝不重置或绕过该间隔。
 ///
@@ -504,7 +504,7 @@ final class DreamService {
 
   /// 晚安触发预登记：满足七天间隔时先把 pending 落盘。挂在晚安后台
   /// 任务链的最前面，保证即使进程在随后的归档/月压缩/Dream 链跑完前
-  /// 退出（「当晚没跑成」），下次启动补跑仍能兑现这次晚安请求。
+  /// 退出（「当晚没跑成」），下次启动或跨天首条消息补跑仍能兑现这次晚安请求。
   Future<void> markBedtime() async {
     final stateRead = await _readState();
     if (stateRead.corrupted) {
@@ -527,7 +527,7 @@ final class DreamService {
   }
 
   /// 执行一次 Dream。[bedtime] 为 true 表示本轮由晚安触发；为 false
-  /// 时只在存在待补跑请求（pending）时执行（启动补跑路径）。
+  /// 时只在存在待补跑请求（pending）时执行（启动/跨天首条消息补跑路径）。
   Future<DreamOutcome> run({required bool bedtime}) async {
     final now = _clock();
     final stateRead = await _readState();
@@ -574,9 +574,9 @@ final class DreamService {
       after: state.lastSuccess == null ? null : localSessionDate(state.lastSuccess!),
     );
     if (input.summaries.isEmpty && input.monthSummaries.isEmpty) {
-      // 没有任何已整理材料：不跑也不记成功，清掉 pending，下次晚安
-      // 有了材料再评估。
-      await _writeState(DreamState(lastSuccess: state.lastSuccess, pending: false));
+      // 没有任何已整理材料：不跑也不记成功，也不写状态——pending 已在
+      // 本轮开头落盘，原样保留即是保留补跑请求（笔记定稿：当晚没跑成，
+      // 下次启动/空闲时补；材料齐前的空跑不调模型，无配额代价）。
       return const DreamOutcome(status: DreamStatus.skippedNoMaterial);
     }
 

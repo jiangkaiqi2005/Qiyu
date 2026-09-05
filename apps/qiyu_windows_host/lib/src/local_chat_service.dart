@@ -139,8 +139,9 @@ final class LocalChatService {
   final MonthlySummaryStore? monthlySummary;
 
   /// Dream（ticket 16，五段节奏第五动作）：晚安后且距上次成功至少
-  /// 七天时深度重组产出长期印象；启动时补跑上次晚安未成功的请求。
-  /// 与日终归档、月压缩挂同一条后台任务链，保证只看到 finalized 材料。
+  /// 七天时深度重组产出长期印象；启动或跨天首条消息时补跑上次晚安
+  /// 未成功的请求。与日终归档、月压缩挂同一条后台任务链，保证只看到
+  /// finalized 材料。
   final DreamService? dreamService;
 
   /// 开发者诊断最近请求记录器（ticket 23）：只记来源、结果与脱敏
@@ -712,7 +713,8 @@ final class LocalChatService {
   ///   随后依次补月压缩（第四动作）与 Dream（第五动作，ticket 16）。
   ///   Dream 是独立动作：归档服务绝不调用它，资格在 DreamService 内复查。
   /// - 日期变化（含进程跨午夜后的第一条消息）：补做昨天及更早的未完成日期；
-  ///   当天仍在进行中，不归档。
+  ///   当天仍在进行中，不归档；随后与晚安分支同口径调度 Dream 补跑
+  ///   （只兑现 pending 请求）。
   void _scheduleEndOfDayTriggers({required bool bedtime}) {
     if (dailyFinalization == null) {
       return;
@@ -740,6 +742,11 @@ final class LocalChatService {
       // 新月（含跨年）的第一次对话在这里触发上月压缩（五段节奏
       // 第四动作）。压缩排在补归档之后：只收 finalized 日期。
       _scheduleMonthlyCompression();
+      // Dream 补跑与晚安分支同口径：排在补归档与月压缩之后、只兑现
+      // pending 请求（笔记定稿：当晚没跑成，下次启动/空闲时补），资格
+      // 在 DreamService 内复查。启动、跨天首条消息与晚安三个触发点都
+      // 会尝试兑现 pending，直到成功为止。
+      _scheduleDream(bedtime: false);
     }
   }
 
@@ -779,7 +786,7 @@ final class LocalChatService {
 
   /// Dream 挂到日终归档同一条后台任务链上：补归档与月压缩先完成，
   /// Dream 只看到 finalized 材料；失败只记诊断，绝不阻塞聊天，
-  /// 未成功的请求由下次晚安或启动补跑继续。
+  /// 未成功的请求由下次晚安、启动或跨天首条消息补跑继续。
   void _scheduleDream({required bool bedtime}) {
     final dream = dreamService;
     if (dream == null) {
