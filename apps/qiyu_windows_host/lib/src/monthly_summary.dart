@@ -8,6 +8,7 @@ import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
 import 'memory_marker_codec.dart';
+import 'memory_text_primitives.dart';
 import 'open_loop_store.dart';
 
 /// 月 summary 不注入、不占热层预算，体量控制在 800 字内（T07 定稿）。

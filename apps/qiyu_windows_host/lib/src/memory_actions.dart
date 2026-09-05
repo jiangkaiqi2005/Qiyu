@@ -9,6 +9,7 @@ import 'markdown_memory_repository.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
 import 'memory_scope.dart';
+import 'memory_text_primitives.dart';
 import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';

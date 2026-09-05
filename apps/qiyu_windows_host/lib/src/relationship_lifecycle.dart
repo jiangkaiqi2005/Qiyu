@@ -8,6 +8,7 @@ import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 
 /// relationship.md 写入关预算（设计定稿：150-300 tokens，按 rune 上限保守计）。
 const relationshipMaxRunes = 300;
@@ -92,104 +93,6 @@ String relationshipStageBehaviorLine(RelationshipStage stage) =>
       RelationshipStage.deep =>
         '可以挑战用户的想法、引用共同的深层过往；用户低落时不逗。',
     };
-
-/// 从 relationship.md 解析出的受管结构。
-final class ParsedRelationship {
-  const ParsedRelationship({
-    required this.stage,
-    required this.since,
-    required this.confirmed,
-    required this.probes,
-    required this.recentChanges,
-  });
-
-  final RelationshipStage stage;
-  final String since;
-  final List<String> confirmed;
-  final List<String> probes;
-  final List<String> recentChanges;
-}
-
-/// 解析受管结构的 relationship.md；不是受管结构（用户手写其它内容）
-/// 返回 null，调用方一切写操作都必须原样保留该文件。
-ParsedRelationship? parseRelationshipFile(String contents) {
-  final lines = contents.replaceAll('\r\n', '\n').split('\n');
-  var sawHeader = false;
-  RelationshipStage? stage;
-  String? since;
-  String? description;
-  var section = '';
-  var inProbe = false;
-  final confirmed = <String>[];
-  final probes = <String>[];
-  final recent = <String>[];
-  for (final rawLine in lines) {
-    final trimmed = rawLine.trim();
-    if (trimmed.isEmpty) {
-      continue;
-    }
-    if (trimmed == '# relationship') {
-      sawHeader = true;
-      continue;
-    }
-    if (!sawHeader || (trimmed.startsWith('#') && !trimmed.startsWith('## '))) {
-      return null;
-    }
-    if (trimmed.startsWith('## ')) {
-      section = trimmed;
-      inProbe = false;
-      continue;
-    }
-    final stageMatch = RegExp(r'^stage\s*[:：]\s*(.+)$').firstMatch(trimmed);
-    if (stageMatch != null) {
-      final value = stageMatch.group(1)!.trim();
-      final parsed = _stageFromWire(value);
-      if (parsed == null) {
-        return null;
-      }
-      stage = parsed;
-      continue;
-    }
-    final sinceMatch = RegExp(
-      r'^since\s*[:：]\s*(\d{4}-\d{2}-\d{2})$',
-    ).firstMatch(trimmed);
-    if (sinceMatch != null) {
-      since = sinceMatch.group(1);
-      continue;
-    }
-    if (RegExp(r'^阶段描述\s*[:：]').hasMatch(trimmed)) {
-      description = trimmed;
-      continue;
-    }
-    if (section == '## 当前相处方式' &&
-        (trimmed == '已确认：' || trimmed == '待试探：')) {
-      inProbe = trimmed == '待试探：';
-      continue;
-    }
-    if (trimmed.startsWith('- ')) {
-      switch (section) {
-        case '## 当前相处方式':
-          (inProbe ? probes : confirmed).add(trimmed);
-          continue;
-        case '## 近期变化':
-          recent.add(trimmed);
-          continue;
-      }
-    }
-    // 受管结构之外的内容：视为手写文件，整体不可改写。
-    return null;
-  }
-  if (!sawHeader || stage == null || since == null || description == null) {
-    return null;
-  }
-  return ParsedRelationship(
-    stage: stage,
-    since: since,
-    confirmed: confirmed,
-    probes: probes,
-    recentChanges: recent,
-  );
-}
 
 /// 关系阶段与温度的生命周期（日终归档固定顺序第 3 步）。
 ///
@@ -639,17 +542,5 @@ RelationshipStage parseRelationshipStage(String? contents) {
     return RelationshipStage.stranger;
   }
   final value = match.group(1)!.trim();
-  return _stageFromWire(value) ?? RelationshipStage.stranger;
-}
-
-/// wire 名 → 关系阶段；未知 wire 返回 null（供调用方按各自语义回退）。
-/// core 的 fromWireName 失败会抛，与宿主「解析失败退值」口径不同，
-/// 这里保持本地实现。
-RelationshipStage? _stageFromWire(String value) {
-  for (final stage in RelationshipStage.values) {
-    if (stage.wireName == value) {
-      return stage;
-    }
-  }
-  return null;
+  return relationshipStageFromWire(value) ?? RelationshipStage.stranger;
 }

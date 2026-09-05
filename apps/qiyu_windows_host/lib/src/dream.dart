@@ -9,6 +9,7 @@ import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
 import 'memory_marker_codec.dart';
+import 'memory_text_primitives.dart';
 import 'model_gateway.dart';
 import 'model_text_protocol.dart';
 import 'monthly_summary.dart';
@@ -49,9 +50,6 @@ const dreamMaxRootProposals = 8;
 
 final _rootIdPattern = RegExp(r'^[A-Z]{2}-R\d+$');
 final _middleIdPattern = RegExp(r'^[A-Z]{2}-M\d+$');
-
-/// long-memory 四分区（T03 定稿，顺序固定）。
-const longMemorySections = ['人与关系', '重要事件', '模式与轨迹', '共同过往'];
 
 final _dayPattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
 final _monthPattern = RegExp(r'^\d{4}-\d{2}$');
@@ -147,62 +145,6 @@ final class DreamHealthFacts {
 
   /// 最小间隔（[dreamMinIntervalDays] 天）是否已满足（从未成功视为满足）。
   final bool intervalSatisfied;
-}
-
-/// long-memory.md 解析结果。[readable] 为 false 表示结构无法识别
-/// （损坏或手写越界）：Dream 绝不覆盖，等待恢复流程（ticket 21）。
-final class LongMemoryFile {
-  const LongMemoryFile({required this.readable, this.sections = const {}});
-
-  final bool readable;
-  final Map<String, List<String>> sections;
-
-  List<String> get allItems => [
-    for (final section in longMemorySections) ...?sections[section],
-  ];
-}
-
-/// 解析 long-memory.md：只认 `# long-memory` 标题、四分区 `##` 小节
-/// 与 `- ` 条目行；其余一律视为不可读。
-LongMemoryFile parseLongMemory(String contents) {
-  final sections = <String, List<String>>{};
-  String? current;
-  var sawTitle = false;
-  for (final rawLine in contents.replaceAll('\r\n', '\n').split('\n')) {
-    final line = rawLine.trim();
-    if (line.isEmpty) {
-      continue;
-    }
-    if (!sawTitle) {
-      if (line != '# long-memory') {
-        return const LongMemoryFile(readable: false);
-      }
-      sawTitle = true;
-      continue;
-    }
-    if (line.startsWith('## ')) {
-      final title = line.substring(3).trim();
-      if (!longMemorySections.contains(title)) {
-        return const LongMemoryFile(readable: false);
-      }
-      current = title;
-      sections.putIfAbsent(title, () => <String>[]);
-      continue;
-    }
-    if (line.startsWith('- ') && current != null) {
-      final item = line.substring(2).trim();
-      if (item.isEmpty) {
-        return const LongMemoryFile(readable: false);
-      }
-      sections[current]!.add(item);
-      continue;
-    }
-    return const LongMemoryFile(readable: false);
-  }
-  if (!sawTitle) {
-    return const LongMemoryFile(readable: false);
-  }
-  return LongMemoryFile(readable: true, sections: sections);
 }
 
 /// 按四分区固定顺序渲染 long-memory.md；空分区不输出。

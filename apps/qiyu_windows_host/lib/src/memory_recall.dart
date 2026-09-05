@@ -4,7 +4,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'episode_index.dart';
 import 'episode_memory.dart';
-import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 import 'model_gateway.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';

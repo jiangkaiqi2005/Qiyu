@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
-import 'episode_index.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_text_primitives.dart';
 
 /// memory-controls.md 的一条控制记录：稳定 ID（删除后不复用）、
 /// 原归属与安全摘要。删除记录存的是抽象防复活范围，绝不保留原内容。
@@ -372,12 +372,6 @@ bool bannedTitleMatches(String normalizedText, Set<String> bannedTitles) {
   }
   return false;
 }
-
-/// 记忆原文级的受控筛查谓词：先经 [normalizeMemoryText] 归一化，再按
-/// [bannedTitleMatches] 的包含规则匹配。注入过滤、提炼闸门与删除清除
-/// 的「原文 + 受控集合」判断统一走这里，不再各自拼组合。
-bool bannedMemoryText(String text, Set<String> bannedTitles) =>
-    bannedTitleMatches(normalizeMemoryText(text), bannedTitles);
 
 /// 行级受控过滤：列表行（`- ` 开头）命中 [controlled] 即丢弃，其余
 /// 原样保留；null 原样返回。relationship.md / daily-state.md 这类

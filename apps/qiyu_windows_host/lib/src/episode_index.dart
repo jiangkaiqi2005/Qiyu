@@ -5,6 +5,7 @@ import 'package:path/path.dart' as path;
 
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_text_primitives.dart';
 
 /// 每日索引行的关键词上限（日终归档定稿）。
 const indexMaxDayKeywords = 4;
@@ -272,10 +273,6 @@ final class EpisodeIndexStore {
       .where((keyword) => keyword.isNotEmpty)
       .toList();
 }
-
-/// 规范化用于语义去重比较：折叠空白并统一大小写；不改变落盘原文。
-String normalizeMemoryText(String value) =>
-    value.replaceAll(RegExp(r'\s+'), ' ').toLowerCase().trim();
 
 /// 清洗模型理解产出的索引关键词：脱敏、修剪、去重、限长限量；没有
 /// 可用结果时返回空列表。日终解析闸门与索引重建共用同一份清洗规则。

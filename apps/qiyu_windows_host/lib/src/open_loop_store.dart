@@ -4,10 +4,10 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
-import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 
 /// 设计定稿分块预算：open-loops.md 100-250 tokens。
 /// 保守按 1 rune ≈ 1 token 估算，rune 上限即 token 上限。

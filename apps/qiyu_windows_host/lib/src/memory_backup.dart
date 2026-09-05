@@ -12,6 +12,7 @@ import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
 import 'memory_controls.dart';
 import 'memory_marker_codec.dart';
+import 'memory_text_primitives.dart';
 import 'persona_tree.dart';
 
 /// 备份包 schema 版本：导入时只接受完全一致的版本，不兼容即拒绝。

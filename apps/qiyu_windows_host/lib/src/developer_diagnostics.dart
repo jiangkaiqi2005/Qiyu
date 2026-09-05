@@ -8,6 +8,7 @@ import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
 import 'memory_recovery.dart';
+import 'memory_text_primitives.dart';
 import 'persona_tree.dart';
 
 /// 开发者诊断最近请求环形缓冲容量：只保留最近若干条、仅存内存、

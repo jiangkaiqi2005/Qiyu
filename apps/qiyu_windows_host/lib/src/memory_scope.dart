@@ -14,14 +14,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'daily_understanding.dart';
-import 'dream.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
-import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
-import 'relationship_lifecycle.dart';
 
 /// 控制范围（禁提 ∪ 删除）的统一文本谓词：先归一化再按包含规则
 /// 匹配，删除预览、定位扫描与派生清除共用同一份，绝不各写一套。

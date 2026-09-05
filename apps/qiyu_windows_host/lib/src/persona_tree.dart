@@ -6,7 +6,7 @@ import 'package:path/path.dart' as path;
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
-import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 import 'open_loop_store.dart';
 
 /// PersonaTree 五个主分支（真树机制定稿）：分支只是分类容器。

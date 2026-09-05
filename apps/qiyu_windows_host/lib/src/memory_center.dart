@@ -2,13 +2,12 @@ import 'dart:collection';
 import 'dart:io';
 
 import 'dream.dart';
-import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
 import 'memory_recovery.dart';
+import 'memory_text_primitives.dart';
 import 'persona_tree.dart';
-import 'relationship_lifecycle.dart';
 
 /// 「最近发生」区回看的窗口（天）：只展示近期整理记录，更早的内容
 /// 由月摘要与长期印象覆盖，不在本区重复。
