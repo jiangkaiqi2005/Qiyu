@@ -453,8 +453,8 @@ List<String>? _idList(Object? value, RegExp pattern) {
 /// Dream 的日历日差至少 [dreamMinIntervalDays] 天。日终归档与月压缩
 /// 每天都可以执行，但从不写入 Dream 状态，绝不重置或绕过该间隔。
 ///
-/// 输入（全部只读，遵守 [dreamInputMaxRunes] 预算）：上次成功之后的
-/// finalized 日摘要（窗口 [dreamSummaryWindowDays] 天）、月摘要（至多
+/// 输入（全部只读，遵守 [dreamInputMaxRunes] 预算）：上次成功当天及
+/// 之后的 finalized 日摘要（窗口 [dreamSummaryWindowDays] 天）、月摘要（至多
 /// [dreamMaxMonthSummaries] 月）、关系状态、未闭环线索、现有长期印象、
 /// 封禁（禁提 ∪ 删除）清单与冻结清单。受控内容在递给模型前按层过滤，
 /// 冻结的既有条目由模型原样带回。不读 sessions 原文，不写 episodes。
@@ -947,7 +947,9 @@ final class DreamService {
     final dates = await episodePipeline.listEpisodeDates();
     final summaries = <({String date, String summary})>[];
     for (final date in dates) {
-      if (after != null && date.compareTo(after) <= 0) {
+      // 含 after 当天：上次成功时刻（如当天凌晨补跑）早于当天日终归档，
+      // 当天的日摘要必然未被上一轮看过；重复纳入无害，漏看一天才是真缺口。
+      if (after != null && date.compareTo(after) < 0) {
         continue;
       }
       final day = await episodePipeline.readDay(date);
@@ -1396,17 +1398,22 @@ final class DreamService {
     if (draftContent.runes.length > longMemoryMaxRunes) {
       return 'over-budget';
     }
-    // 证据关：每条必须携带至少一个真实出处，且出处必须出自本轮递给
-    // 模型的整理日期/月份，编造的一律整份作废。
+    // 证据关：每条必须携带至少一个真实出处，编造的一律整份作废。
+    // 日摘要只是窗口采样，月摘要却覆盖整月：日期引用命中日摘要窗口、
+    // 或其所属月份的月摘要在场，即可核；PersonaTree、关系与未闭环是
+    // 状态快照不是记录，其日期仍不认。拒绝时诊断第一个被拒引用
+    // （只含日期，绝不含候选文本）。
     for (final item in items) {
       if (item.evidence.isEmpty) {
         return 'missing-evidence';
       }
       for (final ref in item.evidence) {
         final known = _dayPattern.hasMatch(ref)
-            ? validDates.contains(ref)
+            ? validDates.contains(ref) ||
+                  validMonths.contains(ref.substring(0, 7))
             : _monthPattern.hasMatch(ref) && validMonths.contains(ref);
         if (!known) {
+          _diagnosticsSink('dream evidence rejected [ref=$ref]');
           return 'unknown-evidence';
         }
       }
@@ -1652,7 +1659,7 @@ final class DreamService {
    提案的 claim 同样不得带「最近/这周/这几天」等时间限定，不得出现敏感或禁提内容。
 $appellationRule
 字段白名单：
-- items: 数组，最多24项，每项 {"section": 人与关系、重要事件、模式与轨迹、共同过往 之一, "text": 一行压缩印象，不超过60字, "evidence": 日期数组，每项形如 YYYY-MM-DD，必须取自递来的已整理记录日期，绝不编造}。
+- items: 数组，最多24项，每项 {"section": 人与关系、重要事件、模式与轨迹、共同过往 之一, "text": 一行压缩印象，不超过60字, "evidence": 日期数组，每项形如 YYYY-MM-DD 或 YYYY-MM，只能取自「可用证据清单」列出的日期/月份，绝不编造}。
 - rootProposals: 可选数组，格式见第7条；不调整树时省略该字段。''';
 
     final user = StringBuffer()
@@ -1677,6 +1684,23 @@ $appellationRule
         user
           ..writeln('### ${entry.month}')
           ..writeln(entry.contents);
+      }
+    }
+    // 证据清单显式列出可引用的日期/月份：长期印象、PersonaTree 叶证据
+    // 都带旧日期，模型无从自行判断哪些可作证据，显式清单是唯一可靠依据。
+    user
+      ..writeln()
+      ..writeln('## 可用证据清单');
+    final evidenceDates = input.validDates.toList()..sort();
+    final evidenceMonths = input.validMonths.toList()..sort();
+    if (evidenceDates.isEmpty && evidenceMonths.isEmpty) {
+      user.writeln('（无）');
+    } else {
+      if (evidenceDates.isNotEmpty) {
+        user.writeln('日期：${evidenceDates.join('、')}');
+      }
+      if (evidenceMonths.isNotEmpty) {
+        user.writeln('月份：${evidenceMonths.join('、')}');
       }
     }
     user

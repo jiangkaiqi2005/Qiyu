@@ -139,7 +139,7 @@ void main() {
       acceptedLongMemory,
     );
 
-    // 正好第三天：具备资格并接纳。证据白名单从上次成功之后算起，
+    // 正好第三天：具备资格并接纳。证据白名单从上次成功当天及之后算起，
     // 只能引用新递过去的整理日期。
     now = DateTime(2026, 8, 18, 23, 5);
     client.completions.add(
@@ -159,6 +159,46 @@ void main() {
       File('${directory.path}/dream/backup/long-memory.md').readAsStringSync(),
       acceptedLongMemory,
     );
+  });
+
+  test('a later dream also sees the previous success-day summary', () async {
+    // 上次成功时刻（如当天凌晨补跑）早于当天日终归档：成功当天的日
+    // 摘要必然未被上一轮看过，必须纳入本轮输入，否则每轮漏看一天。
+    final directory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-after-day-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    var now = DateTime(2026, 8, 15, 23, 10);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: directory.path,
+      clock: () => now,
+    );
+    await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
+    final client = _ScriptedDreamClient([
+      ModelCompletion.reply(_candidate([
+        _item('重要事件', '基准印象', ['2026-08-15']),
+      ])),
+    ]);
+    final dream = DreamService(
+      memoryDirectory: directory.path,
+      episodePipeline: pipeline,
+      modelClient: client,
+      clock: () => now,
+    );
+    expect((await dream.run(bedtime: true)).status, DreamStatus.accepted);
+
+    // 三天后再次 Dream：上次成功当天的日摘要在递给模型的记录里。
+    now = DateTime(2026, 8, 18, 23, 5);
+    client.completions.add(
+      ModelCompletion.reply(_candidate([
+        _item('重要事件', '近况延续的印象', ['2026-08-15']),
+      ])),
+    );
+    final outcome = await dream.run(bedtime: true);
+
+    expect(outcome.status, DreamStatus.accepted);
+    expect(client.calls, hasLength(2));
+    expect(client.calls.last.last.content, contains('2026-08-15: 用户聊了近况'));
   });
 
   test('without bedtime or pending dream never runs on its own', () async {
@@ -481,6 +521,38 @@ void main() {
         existingLongMemory: '# long-memory\n\n## 重要事件\n- 旧印象\n',
       );
     });
+  });
+
+  test('unknown-evidence diagnostics name the first rejected reference', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-evidence-diag-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final now = DateTime(2026, 8, 15, 23, 10);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: directory.path,
+      clock: () => now,
+    );
+    await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
+    final diagnostics = <String>[];
+    final dream = DreamService(
+      memoryDirectory: directory.path,
+      episodePipeline: pipeline,
+      modelClient: _ScriptedDreamClient([
+        ModelCompletion.reply(_candidate([
+          _item('重要事件', '编造的印象', ['2020-01-01', '2026-08-15']),
+        ])),
+      ]),
+      clock: () => now,
+      diagnosticsSink: diagnostics.add,
+    );
+
+    final outcome = await dream.run(bedtime: true);
+
+    expect(outcome.status, DreamStatus.validationFailed);
+    expect(outcome.detail, 'unknown-evidence');
+    // 诊断只报第一个被拒引用（只含日期），候选正文绝不进诊断。
+    expect(diagnostics, contains('dream evidence rejected [ref=2020-01-01]'));
   });
 
   test('a failed acceptance keeps the old long-memory byte for byte', () async {
@@ -852,7 +924,7 @@ void main() {
     }
     final client = _ScriptedDreamClient([
       ModelCompletion.reply(_candidate([
-        _item('重要事件', '编造旧日期', ['2026-08-01']),
+        _item('重要事件', '编造旧日期', ['2026-02-10']),
       ])),
     ]);
     final dream = DreamService(
@@ -863,8 +935,8 @@ void main() {
       clock: () => now,
     );
 
-    // 证据白名单与输入窗口同步收窄：窗口外日期不得作为证据。
-    // （先跑拒绝场景，成功后七天间隔会挡住同一天的下一次运行。）
+    // 编造日期（所属月份没有月摘要在场）仍被拒绝。先跑拒绝场景，接纳
+    // 成功后三天间隔会挡住同一天的下一次运行。
     final rejected = await dream.run(bedtime: true);
     expect(rejected.status, DreamStatus.validationFailed);
     expect(rejected.detail, 'unknown-evidence');
@@ -873,10 +945,11 @@ void main() {
         .join('\n');
     expect(rejectedPrompt, isNot(contains('2026-08-01:')));
 
-    // 换成合规候选：接纳，并检查输入窗口与月上限。
+    // 换成窗口外但当月月摘要在场的日期：月摘要覆盖整月，日期仍可核，
+    // 证据关应接纳；同时检查输入窗口与月上限。
     client.completions.add(
       ModelCompletion.reply(_candidate([
-        _item('重要事件', '近况印象', ['2026-08-20']),
+        _item('重要事件', '月初的近况印象', ['2026-08-01']),
       ])),
     );
     final outcome = await dream.run(bedtime: true);
@@ -885,6 +958,7 @@ void main() {
     final prompt = client.calls.last
         .map((message) => message.content)
         .join('\n');
+    expect(prompt, contains('## 可用证据清单'));
     // 日摘要窗口：最近 14 天在内，更早的被裁掉。
     expect(prompt, contains('2026-08-20: 第20天的摘要内容'));
     expect(prompt, contains('2026-08-07: 第7天的摘要内容'));
@@ -1708,6 +1782,51 @@ void main() {
         contains('rejected(apply-deferred)'),
       );
     });
+  });
+
+  test('the dream prompt lists the usable evidence dates and months', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'qiyu-dream-evidence-list-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final now = DateTime(2026, 8, 15, 23, 10);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: directory.path,
+      clock: () => now,
+    );
+    await _seedFinalizedDay(pipeline, '2026-07-30', '七月底的材料');
+    await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
+    await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了周末');
+    final compressor = MonthlySummaryStore(
+      memoryDirectory: directory.path,
+      episodePipeline: pipeline,
+      diagnosticsSink: (_) {},
+    );
+    await compressor.compressMonth('2026-07');
+    final client = _ScriptedDreamClient([
+      ModelCompletion.reply(_candidate([
+        _item('重要事件', '用户忙于七月收尾', ['2026-07-30']),
+      ])),
+    ]);
+    final dream = DreamService(
+      memoryDirectory: directory.path,
+      episodePipeline: pipeline,
+      monthlySummary: compressor,
+      modelClient: client,
+      clock: () => now,
+    );
+
+    final outcome = await dream.run(bedtime: true);
+
+    // 证据清单显式列出全部可用日期/月份（各自排序）：长期印象与叶证据
+    // 都带旧日期，模型无从自行判断哪些可引用；七月日期因月摘要在场可核。
+    expect(outcome.status, DreamStatus.accepted);
+    final user = client.calls.single.last.content;
+    expect(user, contains('## 可用证据清单'));
+    expect(user, contains('日期：2026-07-30、2026-08-14、2026-08-15'));
+    expect(user, contains('月份：2026-07'));
+    // 未递月摘要的月份不进清单（八月没有月摘要）。
+    expect(user, isNot(contains('月份：2026-08')));
   });
 
   test('the dream prompt states the appellation wording rule', () async {
