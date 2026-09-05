@@ -95,9 +95,7 @@ final class VoiceOutputController extends ChangeNotifier {
   void playNow(VoiceOutputRequest request) {
     prepareForUserInitiatedPlayback();
     _enterSession(request.sessionId);
-    _abandonActive(incrementGeneration: true);
-    _phase = VoiceOutputPhase.idle;
-    _nowReading = null;
+    _haltNow();
     _queue
       ..clear()
       ..addLast(request);
@@ -139,6 +137,11 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 唯一的差别（要不要通知、什么时候通知）留在两个调用方身上。
   void _haltNow() {
     _abandonActive(incrementGeneration: true);
+    _toIdle();
+  }
+
+  /// 状态回到 idle（清掉「正在读」的定位）；是否通知、何时通知由调用方决定。
+  void _toIdle() {
     _phase = VoiceOutputPhase.idle;
     _nowReading = null;
   }
@@ -213,8 +216,7 @@ final class VoiceOutputController extends ChangeNotifier {
       }
       _activePlayback = null;
     }
-    _phase = VoiceOutputPhase.idle;
-    _nowReading = null;
+    _toIdle();
     notifyListeners();
   }
 

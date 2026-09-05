@@ -204,15 +204,11 @@ final class VoiceInputController extends ChangeNotifier {
       // Esc）才把音频留在内存供重试；若已按第二次 Esc 丢弃（回
       // idle），音频随之丢弃，不留任何字节。
       if (_status == VoiceInputStatus.retryable) {
-        _pendingAudio = audio;
-        _pendingMimeType = session.mimeType;
-        _pendingAudioIsWav = false;
+        _retainPendingAudio(audio, session.mimeType);
       }
       return;
     }
-    _pendingAudio = audio;
-    _pendingMimeType = session.mimeType;
-    _pendingAudioIsWav = false;
+    _retainPendingAudio(audio, session.mimeType);
     await _runTranscribe(attempt);
   }
 
@@ -255,9 +251,7 @@ final class VoiceInputController extends ChangeNotifier {
     _session?.discard();
     _session = null;
     _attempt += 1;
-    _pendingAudio = null;
-    _pendingMimeType = '';
-    _pendingAudioIsWav = false;
+    _clearPendingAudio();
     _status = VoiceInputStatus.idle;
     _errorMessage = null;
     notifyListeners();
@@ -266,6 +260,21 @@ final class VoiceInputController extends ChangeNotifier {
   /// 登记一次新的转写尝试令牌：Esc 中止与丢弃都会递增 [_attempt]，
   /// 令牌过期的转写绝不发起、结果也绝不采纳。
   int _registerAttempt() => _attempt += 1;
+
+  /// 把「停止录音得到的音频」按待重传形态留在内存（豆包转换尚未发生，
+  /// isWav 恒为 false；转换成功后的形态更新走 [_runTranscribe]）。
+  void _retainPendingAudio(Uint8List audio, String mimeType) {
+    _pendingAudio = audio;
+    _pendingMimeType = mimeType;
+    _pendingAudioIsWav = false;
+  }
+
+  /// 清空待发音频三元组，不留任何字节。
+  void _clearPendingAudio() {
+    _pendingAudio = null;
+    _pendingMimeType = '';
+    _pendingAudioIsWav = false;
+  }
 
   Future<void> _runTranscribe(int attempt) async {
     if (_pendingAudio == null) {
@@ -307,9 +316,7 @@ final class VoiceInputController extends ChangeNotifier {
         _enterRetryable('没有识别到语音，可以再说一次。');
         return;
       }
-      _pendingAudio = null;
-      _pendingMimeType = '';
-      _pendingAudioIsWav = false;
+      _clearPendingAudio();
       _status = VoiceInputStatus.idle;
       _errorMessage = null;
       notifyListeners();
@@ -341,9 +348,7 @@ final class VoiceInputController extends ChangeNotifier {
     _cancelTimers();
     _session?.discard();
     _session = null;
-    _pendingAudio = null;
-    _pendingMimeType = '';
-    _pendingAudioIsWav = false;
+    _clearPendingAudio();
     super.dispose();
   }
 }

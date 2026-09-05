@@ -110,18 +110,16 @@ class _QiyuHoverGateState extends State<QiyuHoverGate> {
 
   bool _handleNotification(ScrollNotification notification) {
     if (notification is ScrollStartNotification) {
-      _revealTimer?.cancel();
-      _revealTimer = null;
+      _cancelRevealTimer();
       if (!_scrollSuppressed) {
         setState(() => _scrollSuppressed = true);
       }
     } else if (notification is ScrollUpdateNotification) {
       // 维持抑制（Start 已置位），关键是撤掉上一格 ScrollEnd 留下的
       // 缓冲 Timer：连续滚动期间不出现「窗口已过期」的缝隙。
-      _revealTimer?.cancel();
-      _revealTimer = null;
+      _cancelRevealTimer();
     } else if (notification is ScrollEndNotification) {
-      _revealTimer?.cancel();
+      _cancelRevealTimer();
       _revealTimer = Timer(QiyuHoverGate.revealDelay, () {
         if (mounted && _scrollSuppressed) {
           setState(() => _scrollSuppressed = false);
@@ -130,6 +128,13 @@ class _QiyuHoverGateState extends State<QiyuHoverGate> {
     }
     // 不拦截：别的祖先（如滚动条）同样需要这些通知。
     return false;
+  }
+
+  /// 撤掉待触发的显现缓冲 Timer（滚动开始/更新即撤，滚动结束时撤掉旧的
+  /// 再重排新的——见类注释「滚动时间线」）。
+  void _cancelRevealTimer() {
+    _revealTimer?.cancel();
+    _revealTimer = null;
   }
 
   /// 指针移动采样：算速度、判行进（语义见类注释「指针行进时间线」）。
