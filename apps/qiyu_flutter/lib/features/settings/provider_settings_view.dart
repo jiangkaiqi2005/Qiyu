@@ -514,23 +514,17 @@ class _ClearDataDialog extends StatelessWidget {
     return AlertDialog(
       key: const Key('clear-data-dialog'),
       title: const Text('清除产品数据？'),
-      content: preview == null
-          ? ConstrainedBox(
-              // 与内容分支同口径：上限而非定宽，窄窗口不溢出（ticket 24）。
-              constraints: const BoxConstraints(
-                maxWidth: QiyuLayout.dialogContentMaxWidth,
-              ),
-              child: const Padding(
+      content: ConstrainedBox(
+        // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
+        constraints: const BoxConstraints(
+          maxWidth: QiyuLayout.dialogContentMaxWidth,
+        ),
+        child: preview == null
+            ? const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
                 child: Center(child: CircularProgressIndicator()),
-              ),
-            )
-          : ConstrainedBox(
-              // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
-              constraints: const BoxConstraints(
-                maxWidth: QiyuLayout.dialogContentMaxWidth,
-              ),
-              child: Column(
+              )
+            : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -551,7 +545,7 @@ class _ClearDataDialog extends StatelessWidget {
                   ),
                 ],
               ),
-            ),
+      ),
       actions: [
         QiyuFocusRingScope(
           borderRadius: QiyuRadii.circleBorder,

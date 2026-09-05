@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import '../baseline/host_api_gateway.dart';
 
 enum ProviderKind {
@@ -147,38 +145,22 @@ final class HttpProviderSettingsGateway extends HostApiGateway
   String get unavailableMessage => '模型设置暂时不可用，请稍后重试。';
 
   @override
-  Future<ProviderSettings> read() async {
-    await ensureBootstrap();
-    final response = await httpClient.get(resolve('/api/provider'));
-    return ProviderSettings.fromJson(decodeSuccess(response));
-  }
+  Future<ProviderSettings> read() =>
+      getJson('/api/provider', ProviderSettings.fromJson);
 
   @override
-  Future<ProviderSettings> save(ProviderSettingsDraft draft) async {
-    final response = await httpClient.put(
-      resolve('/api/provider'),
-      headers: await modifyingHeaders(),
-      body: jsonEncode(draft.toJson()),
-    );
-    return ProviderSettings.fromJson(decodeSuccess(response));
-  }
+  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
+      putJson('/api/provider', draft.toJson(), ProviderSettings.fromJson);
 
   @override
-  Future<ProviderSettings> forgetApiKey() async {
-    final response = await httpClient.delete(
-      resolve('/api/provider/key'),
-      headers: await modifyingHeaders(),
-    );
-    return ProviderSettings.fromJson(decodeSuccess(response));
-  }
+  Future<ProviderSettings> forgetApiKey() =>
+      deleteJson('/api/provider/key', ProviderSettings.fromJson);
 
   @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) async {
-    final response = await httpClient.post(
-      resolve('/api/provider/test'),
-      headers: await modifyingHeaders(),
-      body: jsonEncode(draft.toJson()),
-    );
-    return ProviderTestResult.fromJson(decodeSuccess(response));
-  }
+  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
+      postJson(
+        '/api/provider/test',
+        draft.toJson(),
+        ProviderTestResult.fromJson,
+      );
 }

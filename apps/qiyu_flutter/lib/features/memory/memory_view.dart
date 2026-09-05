@@ -156,25 +156,11 @@ class MemoryView extends StatelessWidget {
       return const Center(child: CircularProgressIndicator());
     }
     if (viewModel.errorMessage case final message?) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              message,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-            const SizedBox(height: 12),
-            QiyuFocusRingScope(
-              borderRadius: QiyuRadii.circleBorder,
-              child: TextButton(
-                key: const Key('retry-memory'),
-                onPressed: () => unawaited(viewModel.refresh()),
-                child: const Text('重试'),
-              ),
-            ),
-          ],
-        ),
+      return QiyuErrorRetryState(
+        message: message,
+        messageStyle: TextStyle(color: Theme.of(context).colorScheme.error),
+        retryKey: const Key('retry-memory'),
+        onRetry: () => unawaited(viewModel.refresh()),
       );
     }
     final overview = viewModel.overview;
@@ -299,8 +285,7 @@ class _RecentTab extends StatelessWidget {
               ] else if (day.finalizedAt case final organizedAt?) ...[
                 const SizedBox(width: 8),
                 Text(
-                  '整理于 ${twoDigits(organizedAt.toLocal().hour)}:'
-                  '${twoDigits(organizedAt.toLocal().minute)}',
+                  '整理于 ${formatClock(organizedAt)}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -379,12 +364,11 @@ class _PersonaTab extends StatelessWidget {
   Widget build(BuildContext context) {
     // 称呼设定卡常驻（称呼定稿 2026-09-03）：错过首见也能在这里补设；
     // 没设称呼且画像未成时仍保留诚实空态。
-    final branchesEmpty = section.branches.every((branch) => branch.isEmpty);
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
         _AppellationCard(appellation: section.appellation),
-        if (section.appellation == null && branchesEmpty)
+        if (section.appellation == null && section.isEmpty)
           const _EmptyState(
             key: Key('memory-empty-persona'),
             text: '还没有形成关于你的画像。\n画像来自一次次聊天里的积累，慢慢来。',
@@ -742,22 +726,11 @@ class _MemoryItemViewState extends State<MemoryItemView> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_failed) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('记忆中心暂时不可用，请稍后重试。', key: Key('memory-item-error')),
-            const SizedBox(height: 12),
-            QiyuFocusRingScope(
-              borderRadius: QiyuRadii.circleBorder,
-              child: TextButton(
-                key: const Key('memory-item-retry'),
-                onPressed: () => unawaited(_load()),
-                child: const Text('重试'),
-              ),
-            ),
-          ],
-        ),
+      return QiyuErrorRetryState(
+        message: '记忆中心暂时不可用，请稍后重试。',
+        messageKey: const Key('memory-item-error'),
+        retryKey: const Key('memory-item-retry'),
+        onRetry: () => unawaited(_load()),
       );
     }
     if (_gone) {
@@ -779,7 +752,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
 
   /// 遮罩内容的揭示展示：已揭示时显示原文与倒计时提示，未揭示时
   /// 显示占位与「临时查看」入口。
-  Widget _maskedOrRevealed(String field, {Key? textKey}) {
+  Widget _maskedOrRevealed(String field) {
     final reveal = _reveals[field];
     if (reveal != null) {
       return Column(
@@ -787,7 +760,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         children: [
           Text(
             reveal.text,
-            key: textKey ?? Key('memory-revealed-$field'),
+            key: Key('memory-revealed-$field'),
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 4),
@@ -833,7 +806,6 @@ class _MemoryItemViewState extends State<MemoryItemView> {
     EpisodeEntryDetail detail, {
     required bool acting,
   }) {
-    final time = detail.at.toLocal();
     return [
       Row(
         children: [
@@ -860,8 +832,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         ),
       const SizedBox(height: 8),
       Text(
-        '${formatDayHeader(detail.date)} · ${twoDigits(time.hour)}:'
-        '${twoDigits(time.minute)}',
+        '${formatDayHeader(detail.date)} · ${formatClock(detail.at)}',
         style: Theme.of(context).textTheme.bodySmall,
       ),
       if (detail.evidenceMasked || detail.evidence != null) ...[
@@ -1092,6 +1063,33 @@ class _MemoryCard extends StatelessWidget {
   }
 }
 
+/// 可点记忆卡片的统一骨架：[_MemoryCard] 外观 + 卡片圆角 `InkWell` +
+/// 16/12 内衬 + 纵向左对齐内容列。条目、画像根与中间理解三处列表卡
+/// 共用；onTap 目标与内容键全部由调用方给定，提取只收骨架不动语义。
+class _TappableMemoryCard extends StatelessWidget {
+  const _TappableMemoryCard({required this.onTap, required this.children});
+
+  final VoidCallback onTap;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return _MemoryCard(
+      child: InkWell(
+        borderRadius: QiyuRadii.cardBorder,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: children,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 条目头部的一行：左侧信息簇，右侧「时间/说明 + 常驻操作」簇。
 ///
 /// 不用 Row：右侧操作簇的宽度由按钮颗数定死、自身不收缩，而 Row 的非 flex 子项
@@ -1146,54 +1144,44 @@ class _EntryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final time = entry.at.toLocal();
-    return _MemoryCard(
-      child: InkWell(
-        borderRadius: QiyuRadii.cardBorder,
-        onTap: () => openInFront(context, '/memory/item/${entry.id}'),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return _TappableMemoryCard(
+      onTap: () => openInFront(context, '/memory/item/${entry.id}'),
+      children: [
+        _MemoryHeaderLine(
+          // 状态芯片可换行：窄窗口下不撑破布局（ticket 24）。
+          leading: Wrap(
+            spacing: QiyuSpacing.xs,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              _MemoryHeaderLine(
-                // 状态芯片可换行：窄窗口下不撑破布局（ticket 24）。
-                leading: Wrap(
-                  spacing: QiyuSpacing.xs,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    _StatusChip(label: entry.kindLabel),
-                    if (entry.userEdited) const _StatusChip(label: '由你修正'),
-                    if (entry.control case final control?)
-                      _StatusChip(
-                        key: Key('memory-entry-control-${entry.id}'),
-                        label: control.label,
-                      ),
-                    if (entry.hasEvidence) const _StatusChip(label: '有摘录'),
-                  ],
+              _StatusChip(label: entry.kindLabel),
+              if (entry.userEdited) const _StatusChip(label: '由你修正'),
+              if (entry.control case final control?)
+                _StatusChip(
+                  key: Key('memory-entry-control-${entry.id}'),
+                  label: control.label,
                 ),
-                trailing: [
-                  Text(
-                    '${twoDigits(time.hour)}:${twoDigits(time.minute)}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  MemoryActionButtons(
-                    key: Key('memory-actions-${entry.id}'),
-                    itemId: entry.id,
-                    control: entry.control,
-                    masked: entry.masked,
-                    editable: true,
-                    currentText: entry.content,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(_visibleOr(entry.masked, entry.content)),
+              if (entry.hasEvidence) const _StatusChip(label: '有摘录'),
             ],
           ),
+          trailing: [
+            Text(
+              formatClock(entry.at),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            MemoryActionButtons(
+              key: Key('memory-actions-${entry.id}'),
+              itemId: entry.id,
+              control: entry.control,
+              masked: entry.masked,
+              editable: true,
+              currentText: entry.content,
+            ),
+          ],
         ),
-      ),
+        const SizedBox(height: 6),
+        Text(_visibleOr(entry.masked, entry.content)),
+      ],
     );
   }
 }
@@ -1243,44 +1231,35 @@ class _RootTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _MemoryCard(
-      child: InkWell(
-        borderRadius: QiyuRadii.cardBorder,
-        onTap: () => openInFront(context, '/memory/item/${root.id}'),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return _TappableMemoryCard(
+      onTap: () => openInFront(context, '/memory/item/${root.id}'),
+      children: [
+        Text(_visibleOr(root.masked, root.claim)),
+        const SizedBox(height: 6),
+        _MemoryHeaderLine(
+          leading: Wrap(
+            spacing: QiyuSpacing.xs,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text(_visibleOr(root.masked, root.claim)),
-              const SizedBox(height: 6),
-              _MemoryHeaderLine(
-                leading: Wrap(
-                  spacing: QiyuSpacing.xs,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    if (root.control case final control?)
-                      _StatusChip(label: control.label),
-                    Text(
-                      _evidenceSpanText(root),
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-                trailing: [
-                  MemoryActionButtons(
-                    key: Key('memory-actions-${root.id}'),
-                    itemId: root.id,
-                    control: root.control,
-                    masked: root.masked,
-                  ),
-                ],
+              if (root.control case final control?)
+                _StatusChip(label: control.label),
+              Text(
+                _evidenceSpanText(root),
+                style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
           ),
+          trailing: [
+            MemoryActionButtons(
+              key: Key('memory-actions-${root.id}'),
+              itemId: root.id,
+              control: root.control,
+              masked: root.masked,
+            ),
+          ],
         ),
-      ),
+      ],
     );
   }
 
@@ -1302,47 +1281,38 @@ class _MiddleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _MemoryCard(
-      child: InkWell(
-        borderRadius: QiyuRadii.cardBorder,
-        onTap: () => openInFront(context, '/memory/item/${middle.id}'),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return _TappableMemoryCard(
+      onTap: () => openInFront(context, '/memory/item/${middle.id}'),
+      children: [
+        Text(_visibleOr(middle.masked, middle.claim)),
+        const SizedBox(height: 6),
+        _MemoryHeaderLine(
+          leading: Wrap(
+            spacing: QiyuSpacing.xs,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text(_visibleOr(middle.masked, middle.claim)),
-              const SizedBox(height: 6),
-              _MemoryHeaderLine(
-                leading: Wrap(
-                  spacing: QiyuSpacing.xs,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    _StatusChip(label: middle.type),
-                    if (middle.control case final control?)
-                      _StatusChip(label: control.label),
-                    if (middle.hasConflict) const _StatusChip(label: '有冲突证据'),
-                  ],
-                ),
-                trailing: [
-                  Text(
-                    '形成 ${middle.formedOn} · 复核 ${middle.reviewedOn}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                    textAlign: TextAlign.end,
-                  ),
-                  MemoryActionButtons(
-                    key: Key('memory-actions-${middle.id}'),
-                    itemId: middle.id,
-                    control: middle.control,
-                    masked: middle.masked,
-                  ),
-                ],
-              ),
+              _StatusChip(label: middle.type),
+              if (middle.control case final control?)
+                _StatusChip(label: control.label),
+              if (middle.hasConflict) const _StatusChip(label: '有冲突证据'),
             ],
           ),
+          trailing: [
+            Text(
+              '形成 ${middle.formedOn} · 复核 ${middle.reviewedOn}',
+              style: Theme.of(context).textTheme.bodySmall,
+              textAlign: TextAlign.end,
+            ),
+            MemoryActionButtons(
+              key: Key('memory-actions-${middle.id}'),
+              itemId: middle.id,
+              control: middle.control,
+              masked: middle.masked,
+            ),
+          ],
         ),
-      ),
+      ],
     );
   }
 }

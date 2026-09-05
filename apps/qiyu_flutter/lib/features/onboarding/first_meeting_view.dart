@@ -88,7 +88,9 @@ class _FirstMeetingViewState extends State<FirstMeetingView> {
                   key: const Key('first-meeting-go-settings'),
                   onPressed: viewModel.completing
                       ? null
-                      : () => unawaited(_enterSettings(context, viewModel)),
+                      : () => unawaited(
+                          _enter(context, viewModel, '/settings', push: true),
+                        ),
                   child: const Text('先去连上模型'),
                 ),
                 const SizedBox(height: 8),
@@ -114,28 +116,23 @@ class _FirstMeetingViewState extends State<FirstMeetingView> {
     );
   }
 
+  /// 完成引导后跳转：聊天入口走 [context.go]，设置入口走
+  /// [context.push]（返回键回首见页）——跳转语义由 [push] 位区分。
   Future<void> _enter(
     BuildContext context,
     OnboardingViewModel viewModel,
-    String location,
-  ) async {
+    String location, {
+    bool push = false,
+  }) async {
     final completed = await viewModel.complete(
       appellation: _appellationController.text,
     );
     if (completed && context.mounted) {
-      context.go(location);
-    }
-  }
-
-  Future<void> _enterSettings(
-    BuildContext context,
-    OnboardingViewModel viewModel,
-  ) async {
-    final completed = await viewModel.complete(
-      appellation: _appellationController.text,
-    );
-    if (completed && context.mounted) {
-      context.push('/settings');
+      if (push) {
+        context.push(location);
+      } else {
+        context.go(location);
+      }
     }
   }
 }

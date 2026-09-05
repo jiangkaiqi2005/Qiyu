@@ -446,3 +446,47 @@ T? maybeProvider<T>(T Function() lookup) {
     return null;
   }
 }
+
+/// 页面加载失败态的统一出口：错误文案 + 12px 间隔 + 带焦点环的重试钮。
+/// 记忆中心列表页、记忆详情页与历史页共用这一份骨架，不再逐页复制。
+/// 文案、文案键与文案样式由调用方给定：列表页文案着错误色但不带键、
+/// 详情页文案带键但用默认字色——两处既有差异原样参数化，不在此合并。
+/// 加载态没有共享组件：`Center(child: CircularProgressIndicator())`
+/// 本就是最短表达。
+class QiyuErrorRetryState extends StatelessWidget {
+  const QiyuErrorRetryState({
+    super.key,
+    required this.message,
+    this.messageKey,
+    this.messageStyle,
+    required this.retryKey,
+    required this.onRetry,
+  });
+
+  final String message;
+  final Key? messageKey;
+  final TextStyle? messageStyle;
+  final Key retryKey;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(message, key: messageKey, style: messageStyle),
+          const SizedBox(height: 12),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: retryKey,
+              onPressed: onRetry,
+              child: const Text('重试'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

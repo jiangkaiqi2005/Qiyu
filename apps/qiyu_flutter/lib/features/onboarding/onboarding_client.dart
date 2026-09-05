@@ -50,9 +50,9 @@ final class HttpOnboardingGateway extends HostApiGateway
     final response = await httpClient.post(
       resolve('/api/onboarding/complete'),
       headers: await modifyingHeaders(),
-      body: appellation == null
-          ? '{}'
-          : jsonEncode({'appellation': appellation}),
+      // null-aware 元素：不带称呼时编码结果就是 {}，与 Host 的向后
+      // 兼容约定一致。
+      body: jsonEncode({'appellation': ?appellation}),
     );
     decodeSuccess(response);
   }

@@ -69,6 +69,58 @@ abstract base class HostApiGateway {
     }
     return json!;
   }
+
+  /// JSON GET 的终态收发：显式引导 → 请求 → 成功解码 → 终态构造。
+  /// 错误分流仍由 [decodeSuccess] 抛出的 [errorFor] 承担，本方法只收
+  /// HTTP 样板，不改错误语义。各设置网关的读取方法共用。
+  Future<T> getJson<T>(
+    String path,
+    T Function(Map<String, Object?> json) decode,
+  ) async {
+    await ensureBootstrap();
+    final response = await httpClient.get(resolve(path));
+    return decode(decodeSuccess(response));
+  }
+
+  /// JSON PUT 的终态收发：修改头（内含引导与 CSRF）→ 请求 → 解码构造。
+  Future<T> putJson<T>(
+    String path,
+    Object? body,
+    T Function(Map<String, Object?> json) decode,
+  ) async {
+    final response = await httpClient.put(
+      resolve(path),
+      headers: await modifyingHeaders(),
+      body: jsonEncode(body),
+    );
+    return decode(decodeSuccess(response));
+  }
+
+  /// JSON POST 的终态收发：修改头（内含引导与 CSRF）→ 请求 → 解码构造。
+  Future<T> postJson<T>(
+    String path,
+    Object? body,
+    T Function(Map<String, Object?> json) decode,
+  ) async {
+    final response = await httpClient.post(
+      resolve(path),
+      headers: await modifyingHeaders(),
+      body: jsonEncode(body),
+    );
+    return decode(decodeSuccess(response));
+  }
+
+  /// JSON DELETE 的终态收发：修改头（内含引导与 CSRF）→ 请求 → 解码构造。
+  Future<T> deleteJson<T>(
+    String path,
+    T Function(Map<String, Object?> json) decode,
+  ) async {
+    final response = await httpClient.delete(
+      resolve(path),
+      headers: await modifyingHeaders(),
+    );
+    return decode(decodeSuccess(response));
+  }
 }
 
 /// 网关异常透出其人话 message，其余错误按调用方默认文案兜底。
