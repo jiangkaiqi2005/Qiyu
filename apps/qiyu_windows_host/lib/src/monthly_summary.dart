@@ -158,12 +158,8 @@ final class MonthlySummaryStore {
   /// 压缩 [beforeMonth] 之前的全部月份（幂等）。当月与未来月份
   /// 永不触碰。
   Future<void> compressBefore(String beforeMonth) async {
-    final dates = await episodePipeline.listEpisodeDates();
-    final months = <String>{for (final date in dates) date.substring(0, 7)};
-    for (final month in months.toList()..sort()) {
-      if (month.compareTo(beforeMonth) >= 0) {
-        continue;
-      }
+    final (months, dates) = await _monthsBefore(beforeMonth: beforeMonth);
+    for (final month in months) {
       try {
         await compressMonth(month, episodeDates: dates);
       } on Object catch (error) {
@@ -171,6 +167,42 @@ final class MonthlySummaryStore {
         _diagnosticsSink('monthly compression deferred [$error] month=$month');
       }
     }
+  }
+
+  /// [beforeMonth] 之前出现过 episode 日期的月份（升序），连同 episode
+  /// 日期全集。压缩与轮询粗检查共用同一份收集，避免月份口径漂移。
+  Future<(List<String> months, List<String> dates)> _monthsBefore({
+    required String beforeMonth,
+  }) async {
+    final dates = await episodePipeline.listEpisodeDates();
+    final months = <String>{for (final date in dates) date.substring(0, 7)}
+        .toList()
+      ..sort();
+    return (
+      months.where((month) => month.compareTo(beforeMonth) < 0).toList(),
+      dates,
+    );
+  }
+
+  /// [beforeMonth] 之前是否存在未生成月摘要且该月有已定稿日期的月份。
+  /// 只读本机文件，绝不发起模型调用；完整覆盖与跳过日期判定仍由
+  /// [compressMonth] 内部复查。供空闲补办轮询做「有没有活」的粗检查：
+  /// 已有摘要的月份不算待办，缺摘要但全部未定稿的月份同样不算——
+  /// 等归档补齐后下一轮才会发现它。
+  Future<bool> hasPendingCompression({required String beforeMonth}) async {
+    final (months, dates) = await _monthsBefore(beforeMonth: beforeMonth);
+    for (final month in months) {
+      if (await readMonthSummary(month) != null) {
+        continue;
+      }
+      for (final date in dates.where((d) => d.substring(0, 7) == month)) {
+        final day = await episodePipeline.readDay(date);
+        if (day.readable && day.finalized) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /// 压缩单个月份。

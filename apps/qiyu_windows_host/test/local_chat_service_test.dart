@@ -6,6 +6,7 @@ import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
+import 'support/dream_state_fixture.dart';
 import 'support/in_process_chat_host.dart';
 
 void main() {
@@ -2579,6 +2580,647 @@ void main() {
       expect(system, contains('不引用共同过往'));
     },
   );
+
+  // ---- 空闲补办轮询器（spec：idle-catchup-poller）----
+  // 唯一新缝是聊天服务的轮询 tick；测试不启动真定时器，直接拨 tick
+  // 配假时钟，等待落定统一用 finalizePending / close 排空后台链。
+
+  test('idle poll tick catches up a pending dream without a restart', () async {
+    var now = DateTime(2026, 8, 11, 22, 30);
+    final gateway = ScriptedModelGateway(
+      streamScript: [
+        const ScriptedStreamReply('''记下了。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户下周搬家","evidence":"下周搬家"}]
+</qiyu-actions>'''),
+      ],
+      completeScript: [
+        // 夜里日终理解与 Dream 候选先后失败（Provider 并发受限）。
+        const ScriptedCompletionFailure(ModelFailureKind.network),
+        const ScriptedCompletionFailure(ModelFailureKind.network),
+        // 深夜空闲窗口：轮询补跑应答候选（证据日期须为晚安当天，
+        // 即本轮递给模型的整理日期）。
+        ScriptedCompletionReply(
+          jsonEncode({
+            'items': [
+              {
+                'section': '重要事件',
+                'text': '用户搬了一次家',
+                'evidence': ['2026-08-11'],
+              },
+            ],
+          }),
+        ),
+      ],
+    );
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => now,
+      diagnosticsSink: diagnostics.add,
+    );
+    addTearDown(harness.dispose);
+    final first = await harness.sendChat(
+      requestId: 'poll-night',
+      text: '下周搬家',
+    );
+    await harness.sendChat(
+      requestId: 'poll-night-bed',
+      text: '晚安',
+      sessionId: first.sessionId,
+    );
+    await gateway.awaitCompleteCalls(2);
+    await harness.finalizePending();
+    expect(
+      File('${harness.memoryDirectory}/long-memory.md').existsSync(),
+      isFalse,
+    );
+
+    // 宿主不重启：空闲轮询把晚安留下的待补跑 Dream 补上。
+    await harness.pollTick();
+    await harness.finalizePending();
+
+    final longMemory = File('${harness.memoryDirectory}/long-memory.md');
+    expect(longMemory.existsSync(), isTrue,
+        reason: '空闲轮询应补跑晚安留下的 Dream 请求');
+    expect(longMemory.readAsStringSync(), contains('- 用户搬了一次家'));
+    expect(gateway.completeCalls, hasLength(3));
+    expect(diagnostics.join('\n'), contains('idle catchup scheduled'));
+  });
+
+  test('idle poll tick is a no-op without pending memory work', () async {
+    final gateway = ScriptedModelGateway();
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+      diagnosticsSink: diagnostics.add,
+    );
+    addTearDown(harness.dispose);
+
+    await harness.pollTick();
+    await harness.finalizePending();
+
+    // 无活空转：零模型调用、零诊断。
+    expect(gateway.completeCalls, isEmpty);
+    expect(gateway.streamCalls, isEmpty);
+    expect(diagnostics.where((line) => line.contains('idle catchup')), isEmpty);
+  });
+
+  test('idle poll tick yields to an in-flight chat delivery', () async {
+    final gateway = ScriptedModelGateway(
+      streamScript: [const ScriptedLiveStream()],
+      completeScript: [ScriptedCompletionReply(_dreamCandidate())],
+    );
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+      diagnosticsSink: diagnostics.add,
+      seedMemory: (memoryDirectory) => _seedDreamMaterial(memoryDirectory.path),
+    );
+    addTearDown(harness.dispose);
+    // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询计数。
+    await harness.finalizePending();
+    await _seedPendingDream(harness.memoryDirectory,
+        lastSuccess: DateTime(2026, 8, 1));
+
+    final stream = harness.openChat(requestId: 'busy-1', text: '在吗');
+    await gateway.awaitStreamOpened();
+    await harness.pollTick();
+    expect(
+      diagnostics.join('\n'),
+      contains('idle catchup skipped reason=busy-delivery'),
+    );
+    expect(gateway.completeCalls, isEmpty);
+    expect(diagnostics.join('\n'), isNot(contains('idle catchup scheduled')));
+
+    // 交付结束后下个 tick 正常补办：让路的 tick 不消耗每日上限。
+    await harness.cancelChat('busy-1');
+    await stream.done;
+    await harness.pollTick();
+    await harness.finalizePending();
+
+    expect(gateway.completeCalls, hasLength(1));
+    expect(
+      File('${harness.memoryDirectory}/long-memory.md').readAsStringSync(),
+      contains('- 用户搬了一次家'),
+    );
+  });
+
+  test('busy-delivery ticks do not consume the daily attempt budget', () async {
+    var now = DateTime(2026, 8, 11, 22, 0);
+    final gateway = ScriptedModelGateway(
+      streamScript: [const ScriptedLiveStream()],
+      // complete 缺省抛脚本异常：每次补跑尝试都失败。
+    );
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => now,
+      diagnosticsSink: diagnostics.add,
+      seedMemory: (memoryDirectory) => _seedDreamMaterial(memoryDirectory.path),
+    );
+    addTearDown(harness.dispose);
+    // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询计数。
+    await harness.finalizePending();
+    await _seedPendingDream(harness.memoryDirectory,
+        lastSuccess: DateTime(2026, 8, 1));
+
+    // 七次失败尝试。
+    for (var attempt = 0; attempt < 7; attempt += 1) {
+      await harness.pollTick();
+      await harness.finalizePending();
+    }
+    expect(gateway.completeCalls, hasLength(7));
+
+    // 在途聊天期间的 tick 让路且不计入配额。
+    final stream = harness.openChat(requestId: 'busy-2', text: '在吗');
+    await gateway.awaitStreamOpened();
+    await harness.pollTick();
+    expect(
+      diagnostics.join('\n'),
+      contains('idle catchup skipped reason=busy-delivery'),
+    );
+    await harness.cancelChat('busy-2');
+    await stream.done;
+
+    // 第 8 次失败尝试恰好到达上限；若让路的 tick 消耗了配额，
+    // 这里会被提前闸住（只余 7 次调用）。
+    await harness.pollTick();
+    await harness.finalizePending();
+    expect(gateway.completeCalls, hasLength(8));
+
+    await harness.pollTick();
+    await harness.finalizePending();
+    expect(gateway.completeCalls, hasLength(8));
+    expect(
+      diagnostics.join('\n'),
+      contains('idle catchup blocked item=dream reason=daily-limit'),
+    );
+  });
+
+  test('daily dream attempt limit blocks until the midnight reset', () async {
+    var now = DateTime(2026, 8, 11, 22, 0);
+    final gateway = ScriptedModelGateway();
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => now,
+      diagnosticsSink: diagnostics.add,
+      seedMemory: (memoryDirectory) => _seedDreamMaterial(memoryDirectory.path),
+    );
+    addTearDown(harness.dispose);
+    // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询计数。
+    await harness.finalizePending();
+    await _seedPendingDream(harness.memoryDirectory,
+        lastSuccess: DateTime(2026, 8, 1));
+
+    // Dream 每日 8 次：八次失败后闸住，次日自动恢复。
+    for (var attempt = 0; attempt < 8; attempt += 1) {
+      await harness.pollTick();
+      await harness.finalizePending();
+    }
+    expect(gateway.completeCalls, hasLength(8));
+
+    await harness.pollTick();
+    await harness.finalizePending();
+    expect(gateway.completeCalls, hasLength(8));
+    expect(
+      diagnostics.join('\n'),
+      contains('idle catchup blocked item=dream reason=daily-limit'),
+    );
+
+    now = DateTime(2026, 8, 12, 0, 5);
+    await harness.pollTick();
+    await harness.finalizePending();
+    expect(gateway.completeCalls, hasLength(9));
+  });
+
+  test('a successful catch-up resets the daily attempt counter', () async {
+    final now = DateTime(2026, 8, 1, 9, 0);
+    final summaryWriter = _SummaryFailingWriter();
+    final gateway = ScriptedModelGateway();
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => now,
+      atomicWriter: summaryWriter,
+      diagnosticsSink: diagnostics.add,
+      seedMemory: (memoryDirectory) async {
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: memoryDirectory.path,
+          clock: () => DateTime(2026, 7, 2, 22),
+        );
+        await pipeline.synchronizedOnDayFiles(
+          () => pipeline.writeFinalization(
+            '2026-07-02',
+            entries: [
+              EpisodeEntry(
+                id: 's1:r1:0',
+                sessionId: 's1',
+                requestId: 'r1',
+                summary: '用户完成了演讲',
+                at: DateTime(2026, 7, 2, 21).toUtc(),
+              ),
+            ],
+            summary: '用户完成了演讲',
+            finalized: true,
+            finalizedAt: DateTime(2026, 7, 2, 23).toUtc(),
+          ),
+        );
+      },
+    );
+    addTearDown(harness.dispose);
+    final summaryFile = File(
+      '${harness.memoryDirectory}/episodes/2026/07/summary.md',
+    );
+
+    // 启动月压缩被写入器拦下：摘要缺失成为轮询待办。两次失败。
+    summaryWriter.failSummaryWrites = true;
+    for (var attempt = 0; attempt < 2; attempt += 1) {
+      await harness.pollTick();
+      await harness.finalizePending();
+    }
+    expect(summaryFile.existsSync(), isFalse);
+
+    // 放开写入器：第三次尝试成功，计数清零。
+    summaryWriter.failSummaryWrites = false;
+    await harness.pollTick();
+    await harness.finalizePending();
+    expect(summaryFile.existsSync(), isTrue);
+
+    // 再次制造积压：清零后的配额允许完整再试 10 轮，第 11 轮闸住。
+    summaryWriter.failSummaryWrites = true;
+    summaryFile.deleteSync();
+    for (var attempt = 0; attempt < 10; attempt += 1) {
+      await harness.pollTick();
+      await harness.finalizePending();
+    }
+    expect(summaryFile.existsSync(), isFalse);
+    await harness.pollTick();
+    await harness.finalizePending();
+    final scheduled = diagnostics
+        .where((line) => line.contains('idle catchup scheduled'))
+        .length;
+    // 2 次失败 + 1 次成功 + 10 次失败；若成功未清零则只有 9 次。
+    expect(scheduled, 13);
+    expect(
+      diagnostics.join('\n'),
+      contains('idle catchup blocked item=monthly-compression reason=daily-limit'),
+    );
+    // 月压缩全程零模型调用。
+    expect(gateway.completeCalls, isEmpty);
+  });
+
+  test('idle poll tick archives a day that never got finalized', () async {
+    final now = DateTime(2026, 8, 12, 9, 0);
+    final episodesWriter = _EpisodesToggleFailingWriter();
+    final gateway = ScriptedModelGateway(
+      completeScript: [
+        // 启动补扫先消耗一次（写入被拦、理解失败）；轮询补扫后成功归档。
+        const ScriptedCompletionFailure(ModelFailureKind.network),
+        const ScriptedCompletionFailure(ModelFailureKind.network),
+      ],
+    );
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => now,
+      atomicWriter: episodesWriter,
+      diagnosticsSink: diagnostics.add,
+      seedMemory: (memoryDirectory) async {
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: memoryDirectory.path,
+          clock: () => DateTime(2026, 8, 10, 22),
+        );
+        await pipeline.synchronizedOnDayFiles(
+          () => pipeline.writeFinalization(
+            '2026-08-10',
+            entries: [
+              EpisodeEntry(
+                id: 's1:r1:0',
+                sessionId: 's1',
+                requestId: 'r1',
+                summary: '用户完成了演讲',
+                at: DateTime(2026, 8, 10, 21).toUtc(),
+              ),
+            ],
+            summary: '用户完成了演讲',
+            finalized: false,
+          ),
+        );
+      },
+    );
+    addTearDown(harness.dispose);
+    final reader = EpisodeMemoryPipeline(
+      memoryDirectory: harness.memoryDirectory,
+      clock: () => now,
+    );
+
+    // 启动补扫因写入失败没有归档该日：轮询待办成立。
+    await harness.finalizePending();
+    expect((await reader.readDay('2026-08-10')).finalized, isFalse);
+
+    // 放开写入器：轮询补扫把日期归档。
+    episodesWriter.failEpisodeWrites = false;
+    await harness.pollTick();
+    await harness.finalizePending();
+
+    expect((await reader.readDay('2026-08-10')).finalized, isTrue);
+    expect(diagnostics.join('\n'), contains('idle catchup scheduled'));
+  });
+
+  test('idle poll tick runs coexisting backlog items in order', () async {
+    // 未定稿日期（归档待办）与待补跑 Dream 并存：一次 tick 按序排程
+    // 两项（先归档后 Dream），链内串行执行，各花一次模型调用。
+    final now = DateTime(2026, 8, 12, 9, 0);
+    final episodesWriter = _EpisodesToggleFailingWriter();
+    final gateway = ScriptedModelGateway(
+      completeScript: [
+        // 启动补扫先消耗一次（写入被拦、理解失败，日期保持未定稿）。
+        const ScriptedCompletionFailure(ModelFailureKind.network),
+        // 轮询：归档理解失败（确定性归档仍成功）→ Dream 候选接纳。
+        const ScriptedCompletionFailure(ModelFailureKind.network),
+        ScriptedCompletionReply(
+          jsonEncode({
+            'items': [
+              {
+                'section': '重要事件',
+                'text': '用户搬了一次家',
+                'evidence': ['2026-08-05'],
+              },
+            ],
+          }),
+        ),
+      ],
+    );
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => now,
+      atomicWriter: episodesWriter,
+      diagnosticsSink: diagnostics.add,
+      seedMemory: (memoryDirectory) async {
+        // Dream 材料：已定稿的 2026-08-05（晚于待补跑请求的上次成功）。
+        await _seedDreamMaterial(memoryDirectory.path);
+        // 归档待办：未定稿的 2026-08-10。
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: memoryDirectory.path,
+          clock: () => DateTime(2026, 8, 10, 22),
+        );
+        await pipeline.synchronizedOnDayFiles(
+          () => pipeline.writeFinalization(
+            '2026-08-10',
+            entries: [
+              EpisodeEntry(
+                id: 's2:r1:0',
+                sessionId: 's2',
+                requestId: 'r1',
+                summary: '用户完成了演讲',
+                at: DateTime(2026, 8, 10, 21).toUtc(),
+              ),
+            ],
+            summary: '用户完成了演讲',
+            finalized: false,
+          ),
+        );
+      },
+    );
+    addTearDown(harness.dispose);
+    final reader = EpisodeMemoryPipeline(
+      memoryDirectory: harness.memoryDirectory,
+      clock: () => now,
+    );
+    await harness.finalizePending();
+    expect((await reader.readDay('2026-08-10')).finalized, isFalse);
+    // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询计数。
+    await _seedPendingDream(harness.memoryDirectory,
+        lastSuccess: DateTime(2026, 8, 1));
+
+    episodesWriter.failEpisodeWrites = false;
+    await harness.pollTick();
+    await harness.finalizePending();
+
+    // 排程行按待办序（归档在前、Dream 在后）一次列出全部项。
+    expect(
+      diagnostics.join('\n'),
+      contains('idle catchup scheduled items=finalization,dream'),
+    );
+    expect((await reader.readDay('2026-08-10')).finalized, isTrue);
+    expect(
+      File('${harness.memoryDirectory}/long-memory.md').readAsStringSync(),
+      contains('- 用户搬了一次家'),
+    );
+    expect(gateway.completeCalls, hasLength(3));
+    expect(
+      diagnostics.join('\n'),
+      contains('idle catchup done status=ok items=finalization,dream'),
+    );
+  });
+
+  test('dream eligibility is unchanged under the idle poll', () async {
+    // 资格复查在 DreamService 内部、轮询只看 pending 标记：
+    // - pending 在但距上次成功不足 3 天（notDue）：补办发起后被拒，
+    //   零模型调用；
+    // - 没有已整理材料（skippedNoMaterial）：同样零调用，且与 notDue
+    //   走同一条「资格不符」推导——不消耗每日上限。额度证据用同一
+    //   自然日内的状态翻转锁定（跨 0 点清账会抹掉跨天的消耗痕迹）：
+    //   材料补齐后 8 次真实失败尝试全部放行，第 9 次 tick 才闸住。
+    var now = DateTime(2026, 8, 11, 22, 30);
+    final gateway = ScriptedModelGateway();
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => now,
+      diagnosticsSink: diagnostics.add,
+    );
+    addTearDown(harness.dispose);
+    // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询计数。
+    await harness.finalizePending();
+    await _seedPendingDream(harness.memoryDirectory,
+        lastSuccess: DateTime(2026, 8, 10));
+
+    await harness.pollTick();
+    await harness.finalizePending();
+
+    expect(gateway.completeCalls, isEmpty);
+    expect(diagnostics.join('\n'), contains('idle catchup scheduled'));
+
+    // 换成「无材料」的资格不符（同一自然日，间隔已足）：仍零调用。
+    await _seedPendingDream(harness.memoryDirectory,
+        lastSuccess: DateTime(2026, 8, 1));
+    await harness.pollTick();
+    await harness.finalizePending();
+    expect(gateway.completeCalls, isEmpty);
+
+    // 材料当天补齐：资格不符期间没有消耗额度。
+    await _seedDreamMaterial(harness.memoryDirectory);
+    for (var attempt = 0; attempt < 8; attempt += 1) {
+      await harness.pollTick();
+      await harness.finalizePending();
+    }
+    expect(gateway.completeCalls, hasLength(8));
+    await harness.pollTick();
+    await harness.finalizePending();
+    expect(gateway.completeCalls, hasLength(8));
+    expect(
+      diagnostics.join('\n'),
+      contains('idle catchup blocked item=dream reason=daily-limit'),
+    );
+  });
+
+  test('idle poll stays silent when no model service is configured', () async {
+    final gateway = ScriptedModelGateway();
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      configureProvider: false,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+      diagnosticsSink: diagnostics.add,
+      seedMemory: (memoryDirectory) => _seedDreamMaterial(memoryDirectory.path),
+    );
+    addTearDown(harness.dispose);
+    // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询计数。
+    await harness.finalizePending();
+    await _seedPendingDream(harness.memoryDirectory,
+        lastSuccess: DateTime(2026, 8, 1));
+
+    await harness.pollTick();
+    await harness.finalizePending();
+
+    // 未配模型服务：安静地什么都不做（连轮询诊断都不产生）。
+    expect(gateway.completeCalls, isEmpty);
+    expect(diagnostics.where((line) => line.contains('idle catchup')), isEmpty);
+  });
+
+  test(
+    'a successful poll catch-up keeps later natural triggers from re-calling the model',
+    () async {
+      var now = DateTime(2026, 8, 11, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''记下了。
+<qiyu-actions>
+[{"action":"memory_signal","summary":"用户下周搬家","evidence":"下周搬家"}]
+</qiyu-actions>'''),
+          const ScriptedStreamReply('早。'),
+        ],
+        completeScript: [
+          const ScriptedCompletionFailure(ModelFailureKind.network),
+          const ScriptedCompletionFailure(ModelFailureKind.network),
+          // 轮询补跑应答候选（证据日期为晚安当天）。
+          ScriptedCompletionReply(
+            jsonEncode({
+              'items': [
+                {
+                  'section': '重要事件',
+                  'text': '用户搬了一次家',
+                  'evidence': ['2026-08-11'],
+                },
+              ],
+            }),
+          ),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => now,
+      );
+      addTearDown(harness.dispose);
+      final first = await harness.sendChat(
+        requestId: 'overlap-night',
+        text: '下周搬家',
+      );
+      await harness.sendChat(
+        requestId: 'overlap-night-bed',
+        text: '晚安',
+        sessionId: first.sessionId,
+      );
+      await gateway.awaitCompleteCalls(2);
+      await harness.finalizePending();
+      await harness.pollTick();
+      await harness.finalizePending();
+      expect(gateway.completeCalls, hasLength(3));
+
+      // 跨天首条消息（date-change）与当晚晚安（markBedtime + bedtime
+      // Dream）都因待补跑已清、间隔未到而零 Dream 调用；第 4 次调用
+      // 是次日晚安对当天的日终理解，不是 Dream 重跑。
+      now = DateTime(2026, 8, 12, 9, 0);
+      await harness.sendChat(
+        requestId: 'overlap-morning',
+        text: '早上好',
+        sessionId: first.sessionId,
+      );
+      await harness.finalizePending();
+      expect(gateway.completeCalls, hasLength(3));
+      await harness.sendChat(
+        requestId: 'overlap-night-2',
+        text: '晚安',
+        sessionId: first.sessionId,
+      );
+      await harness.finalizePending();
+      expect(gateway.completeCalls, hasLength(4));
+      expect(
+        File('${harness.memoryDirectory}/long-memory.md').readAsStringSync(),
+        contains('- 用户搬了一次家'),
+      );
+    },
+  );
+
+  test('a running catch-up makes the next tick skip with one diagnostic',
+      () async {
+    final gate = Completer<void>();
+    final gateway = ScriptedModelGateway(
+      completeScript: [
+        ScriptedGatedCompletion(gate: gate.future, reply: _dreamCandidate()),
+      ],
+    );
+    final diagnostics = <String>[];
+    final harness = await InProcessChatHost.start(
+      modelGateway: gateway,
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+      diagnosticsSink: diagnostics.add,
+      seedMemory: (memoryDirectory) => _seedDreamMaterial(memoryDirectory.path),
+    );
+    addTearDown(harness.dispose);
+    // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询计数。
+    await harness.finalizePending();
+    await _seedPendingDream(harness.memoryDirectory,
+        lastSuccess: DateTime(2026, 8, 1));
+
+    await harness.pollTick();
+    await gateway.awaitCompleteCalls(1);
+    // 上轮补办未结束：本轮跳过并记一行诊断，绝不叠加第二个补办。
+    await harness.pollTick();
+    expect(
+      diagnostics.join('\n'),
+      contains('idle catchup skipped reason=busy-catchup'),
+    );
+    expect(gateway.completeCalls, hasLength(1));
+
+    gate.complete();
+    await harness.finalizePending();
+    expect(gateway.completeCalls, hasLength(1));
+    expect(
+      File('${harness.memoryDirectory}/long-memory.md').readAsStringSync(),
+      contains('- 用户搬了一次家'),
+    );
+  });
+
+  test('host close cancels the idle catchup poller', () async {
+    final poller = _RecordingIdleCatchupPoller();
+    final harness = await InProcessChatHost.start(
+      clock: () => DateTime(2026, 8, 11, 22, 30),
+      idleCatchupPoller: poller,
+    );
+    addTearDown(harness.dispose);
+
+    expect(poller.started, isTrue);
+    expect(poller.stopped, isFalse);
+    await harness.close();
+    expect(poller.stopped, isTrue);
+  });
 }
 
 /// 只计 sessions/ 下的写入并在第 [failOnCall] 次失败一次：真路径上
@@ -2735,5 +3377,95 @@ final class _ExplodingModelGateway implements StreamingModelGateway {
   }) {
     providerCalls += 1;
     throw StateError('safety input must not call understanding calls');
+  }
+}
+
+/// ---- 空闲补办轮询器测试辅助 ----
+
+/// 合法 Dream 候选输出（证据日期须在种子材料的已定稿日期内）。
+String _dreamCandidate() =>
+    jsonEncode({
+      'items': [
+        {
+          'section': '重要事件',
+          'text': '用户搬了一次家',
+          'evidence': ['2026-08-05'],
+        },
+      ],
+    });
+
+/// 播种 Dream 整理材料：一份已定稿的 episode 日期（2026-08-05），
+/// 保证候选接纳时证据关有依据。
+Future<void> _seedDreamMaterial(String memoryDirectory) async {
+  await _seedFinalizedEpisode(
+    EpisodeMemoryPipeline(
+      memoryDirectory: memoryDirectory,
+      clock: () => DateTime(2026, 8, 5, 22),
+    ),
+    '2026-08-05',
+    EpisodeEntry(
+      id: 'seed:1:0',
+      sessionId: 'seed',
+      requestId: 'seed',
+      summary: '用户说周末要去爬山',
+      at: DateTime(2026, 8, 5, 21).toUtc(),
+    ),
+  );
+}
+
+/// 与 DreamService 内部编码同构的测试夹具（共享编码见
+/// `support/dream_state_fixture.dart`）：直接落一份待补跑的
+/// dream/state.md（Host 启动后再写，避开启动补跑路径）。
+Future<void> _seedPendingDream(
+  String memoryDirectory, {
+  DateTime? lastSuccess,
+}) async {
+  await Directory('$memoryDirectory${Platform.pathSeparator}dream').create(
+    recursive: true,
+  );
+  File(
+    '$memoryDirectory${Platform.pathSeparator}dream${Platform.pathSeparator}state.md',
+  ).writeAsStringSync(encodedDreamState(lastSuccess: lastSuccess, pending: true));
+}
+
+/// 记录 start/stop 的定时器替身：断言宿主收尾时取消轮询。
+final class _RecordingIdleCatchupPoller implements IdleCatchupPoller {
+  var started = false;
+  var stopped = false;
+
+  @override
+  void start() => started = true;
+
+  @override
+  void stop() => stopped = true;
+}
+
+/// 可开关地拦截月摘要写入：制造「月压缩积压」待办与压缩失败轮次。
+final class _SummaryFailingWriter implements AtomicTextWriter {
+  bool failSummaryWrites = true;
+
+  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
+
+  @override
+  Future<void> replace(String path, String contents) {
+    if (failSummaryWrites && path.contains('summary.md')) {
+      throw const FileSystemException('mock interrupted summary write');
+    }
+    return _delegate.replace(path, contents);
+  }
+}
+
+/// 可开关地拦截 episodes 写入：制造「启动补扫归档失败」的未定稿日期。
+final class _EpisodesToggleFailingWriter implements AtomicTextWriter {
+  bool failEpisodeWrites = true;
+
+  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
+
+  @override
+  Future<void> replace(String path, String contents) {
+    if (failEpisodeWrites && path.contains('episodes')) {
+      throw const FileSystemException('mock interrupted episode write');
+    }
+    return _delegate.replace(path, contents);
   }
 }

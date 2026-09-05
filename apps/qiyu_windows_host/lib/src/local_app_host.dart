@@ -51,10 +51,15 @@ const _sessionCookieName = 'qiyu_session';
 const _csrfHeaderName = 'x-qiyu-csrf';
 
 final class LocalAppHost {
-  LocalAppHost._(this._server, this._requestHandler);
+  LocalAppHost._(
+    this._server,
+    this._requestHandler,
+    this._idleCatchupPoller,
+  );
 
   final HttpServer _server;
   final _LocalAppRequestHandler _requestHandler;
+  final IdleCatchupPoller _idleCatchupPoller;
 
   InternetAddress get address => _server.address;
 
@@ -66,6 +71,10 @@ final class LocalAppHost {
     path: '/_session/start',
     queryParameters: {'token': _requestHandler.startupToken},
   );
+
+  /// 空闲补办轮询 tick 的宿主侧通道（spec：唯一新缝是聊天服务的
+  /// 轮询 tick；测试由此拨动 tick 而不启动真定时器）。
+  LocalChatService get chatService => _requestHandler.chatService;
 
   static Future<LocalAppHost> start({
     required String webRoot,
@@ -84,6 +93,7 @@ final class LocalAppHost {
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
     void Function(String message)? diagnosticsSink,
+    IdleCatchupPoller? idleCatchupPoller,
   }) async {
     final indexFile = File('$webRoot${Platform.pathSeparator}index.html');
     if (!indexFile.existsSync()) {
@@ -348,13 +358,20 @@ final class LocalAppHost {
     requestHandler.attach(
       Uri(scheme: 'http', host: server.address.address, port: server.port),
     );
-    return LocalAppHost._(server, requestHandler);
+    // 空闲补办轮询（spec）：初始化完成后启动周期定时器壳；注入 null
+    // 时用生产默认（每 10 分钟拨一次 tick），测试可注入替身观察收尾。
+    final catchupPoller =
+        idleCatchupPoller ?? PeriodicIdleCatchupPoller(chatService.pollTick);
+    catchupPoller.start();
+    return LocalAppHost._(server, requestHandler, catchupPoller);
   }
 
-  /// 关闭前先等待后台日终归档与召回检索收尾；归档幂等且每步原子
-  /// 写入，超时或失败不阻塞关闭，未完成的归档由下次启动补扫继续，
-  /// 未完成的召回只是失去一次「晚一拍想起」，不丢记忆。
+  /// 关闭前先停掉空闲补办轮询定时器（不再产生新 tick），再等待后台
+  /// 日终归档与召回检索收尾；归档幂等且每步原子写入，超时或失败不
+  /// 阻塞关闭，未完成的归档由下次启动补扫继续，未完成的召回只是失去
+  /// 一次「晚一拍想起」，不丢记忆。
   Future<void> close() async {
+    _idleCatchupPoller.stop();
     try {
       final service = _requestHandler.chatService;
       await Future.wait<void>([
