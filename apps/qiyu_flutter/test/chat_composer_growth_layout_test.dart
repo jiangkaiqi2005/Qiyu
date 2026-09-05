@@ -76,6 +76,14 @@ void main() {
       find.byKey(const Key('home-go-chat')),
     );
 
+    // 静息面板高基线：输入行 46 + 上下内边距 12 + 发丝边框 2 = 60。多行展开
+    // 留白只许加在展开态，单行静息分毫不能动（面板顶 516 基线依赖这一点）。
+    expect(
+      composerBefore.height,
+      60.0,
+      reason: '静息面板高基线漂移：展开态留白必须只作用于多行展开态',
+    );
+
     await tester.enterText(
       find.byKey(const Key('chat-input')),
       '第一行\n第二行\n第三行',
@@ -90,6 +98,16 @@ void main() {
       composerAfter.height,
       greaterThan(composerBefore.height),
       reason: '前置失败：3 行文本没有让 composer 长高，用例空转',
+    );
+
+    // 展开态留白锁：多行后文字上下不再贴着发丝边（2026-09-05 用户反馈
+    // 「这种时候再拉高一点」），面板在静息 6 的基础上上下各再让一档 xs(8)。
+    // 3 行行盒（本环境 22/行）+ 上下 (6+8)×2 + 发丝 2 = 96；少 16 即展开留白
+    // 丢失（未加留白的旧实现实测 80）。
+    expect(
+      composerAfter.height,
+      96.0,
+      reason: '多行展开态面板高度：3 行行盒 + 上下各 14 留白 + 发丝 2',
     );
 
     final listAfter = tester.getRect(listView);

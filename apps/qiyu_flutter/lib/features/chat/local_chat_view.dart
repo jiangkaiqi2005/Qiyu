@@ -72,6 +72,16 @@ class _LocalChatViewState extends State<LocalChatView> {
   /// composer 焦点：聚焦态描边取 `composerFocusLine`（紫度 0.13），
   /// 失焦回落到 `line` 发丝线（design-system §8 组件 5）。
   final _inputFocusNode = FocusNode(debugLabel: 'chat-input');
+
+  /// composer 输入行（Row）量高键：展开态判定只看它自身高度，展开加的留白在
+  /// 面板（它的外层），不会反馈成自身高度变化。
+  final _composerRowKey = GlobalKey(debugLabel: 'composer-row');
+
+  /// composer 是否多行展开：输入行高过静息 [_composerRowRestingHeight] 即展开，
+  /// 面板上下各加 [_composerExpandedExtraPadding]；单行静息分毫不动（列表底部
+  /// 让位常量与基线测试的 492/516 都依赖这一点）。
+  bool _composerExpanded = false;
+
   String _lastListSignature = '';
 
   // 会话恢复与发送后默认跟到底部；只有用户主动上滑才离开，
@@ -105,6 +115,8 @@ class _LocalChatViewState extends State<LocalChatView> {
     super.initState();
     _scrollController.addListener(_trackStickToBottom);
     _inputFocusNode.addListener(_onInputFocusChange);
+    // 文本每次变化（打字、IME 组合、程序注入）都可能改变输入行行数。
+    _controller.addListener(_updateComposerExpanded);
     final chatViewModel = _chatViewModel = context.read<LocalChatViewModel>();
     final sttSettingsGateway = _resolveSttSettingsGateway();
     _voiceInput = VoiceInputController(
@@ -360,6 +372,11 @@ class _LocalChatViewState extends State<LocalChatView> {
       QiyuLayout.composerIconButtonSize +
       _compactIconButtonSizeDelta +
       2 * QiyuLayout.focusRingOffset;
+
+  /// composer 多行展开态在 [QiyuLayout.composerPadding] 之上额外让出的上下
+  /// 留白：单行的紧边距有胶囊弧度兜着，多行后文字上下贴发丝边难看（2026-09-05
+  /// 用户反馈「这种时候再拉高一点」），展开后上下各让一档 [QiyuSpacing.xs]。
+  static const double _composerExpandedExtraPadding = QiyuSpacing.xs;
 
   /// 聊天态消息列表的 bottom padding：composer 覆盖层的**静息占位**（单行输入、
   /// 通知条收起时，覆盖层从列表底缘算起占掉的高度）。取常量、不跟随 composer
@@ -645,14 +662,20 @@ class _LocalChatViewState extends State<LocalChatView> {
   }
 
   /// composer（design-system §8 组件 5）：毛玻璃胶囊、`line` 发丝描边、
-  /// 内边距 6、聚焦描边压到紫度 0.13；占位字 `muted` 且靠 34px 行高居中。
+  /// 内边距 6（多行展开态上下再各让一档 [_composerExpandedExtraPadding]，
+  /// 单行静息不动）、聚焦描边压到紫度 0.13；占位字 `muted` 且靠 34px 行高居中。
   ///
   /// `home-go-chat` 沿用退役前首页「去聊天」入口卡的既有测试键：合一页
   /// 之后进入对话的动作就是这个输入容器，键位随职责搬过来。
   Widget _composer(BuildContext context, LocalChatViewModel viewModel) {
+    // 窗口宽度变化会改折行数与字阶档位（进而改输入行高），这类变化不经过
+    // 文本控制器，靠每次 build 补一次帧后核对兜住。
+    _updateComposerExpanded();
     final lineColor = _inputFocusNode.hasFocus
         ? QiyuColors.composerFocusLine
         : QiyuColors.line;
+    final verticalPadding = QiyuLayout.composerPadding +
+        (_composerExpanded ? _composerExpandedExtraPadding : 0.0);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: QiyuSpacing.md),
       child: Center(
@@ -664,11 +687,11 @@ class _LocalChatViewState extends State<LocalChatView> {
             key: const Key('home-go-chat'),
             blurSigma: QiyuGlass.panelBlur,
             borderColor: lineColor,
-            padding: const EdgeInsets.fromLTRB(
+            padding: EdgeInsets.fromLTRB(
               QiyuSpacing.md,
+              verticalPadding,
               QiyuLayout.composerPadding,
-              QiyuLayout.composerPadding,
-              QiyuLayout.composerPadding,
+              verticalPadding,
             ),
             // 输入行本体：Enter 发送 / 软换行 / Esc 的快捷键作用域只包住它。
             child: Shortcuts(
@@ -709,6 +732,7 @@ class _LocalChatViewState extends State<LocalChatView> {
                   ),
                 },
                 child: Row(
+                  key: _composerRowKey,
                   children: [
                     Expanded(child: _inputField()),
                     const SizedBox(width: QiyuSpacing.xs),
@@ -731,6 +755,22 @@ class _LocalChatViewState extends State<LocalChatView> {
         ),
       ),
     );
+  }
+
+  /// 展开态帧后核对：量输入行实际高度、与静息高比较出是否展开，只在布尔
+  /// 翻转时 setState。留白加在输入行外层的面板上，量到的对象不受其反馈影响，
+  /// 翻转一次即稳。0.5 容差只吞亚像素抖动。触发路径：控制器文本变化与
+  /// composer 每次 build（见 initState 与 [_composer]）。
+  void _updateComposerExpanded() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box = _composerRowKey.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) return;
+      final expanded = box.size.height > _composerRowRestingHeight + 0.5;
+      if (expanded != _composerExpanded) {
+        setState(() => _composerExpanded = expanded);
+      }
+    });
   }
 
   /// 输入框本体：字色与占位字都来自 token；描边交给外层玻璃面板，
