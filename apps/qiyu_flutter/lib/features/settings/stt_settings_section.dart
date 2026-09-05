@@ -3,9 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../theme/qiyu_icons.dart';
-import '../../theme/qiyu_tokens.dart';
-import '../shell/qiyu_widgets.dart';
 import 'settings_section_shell.dart';
 import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
@@ -271,77 +268,55 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存语音服务的 API Key',
-              style: theme.textTheme.titleSmall,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              key: const Key('stt-api-key'),
+            SettingsApiKeyField(
+              fieldKey: const Key('stt-api-key'),
               controller: _form.apiKeyController,
               focusNode: _form.apiKeyFocusNode,
-              obscureText: true,
-              enableSuggestions: false,
-              autocorrect: false,
-              decoration: InputDecoration(
-                labelText: 'API Key',
-                hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
-                border: const OutlineInputBorder(),
-              ),
+              keySet: keySet,
+              title: keySet
+                  ? 'API Key 已保存在本机 provider.json'
+                  : '尚未保存语音服务的 API Key',
+              titleStyle: theme.textTheme.titleSmall,
+              label: 'API Key',
+              hint: keySet
+                  ? '留空即可继续使用已保存的 Key'
+                  : '保存后写入本机 provider.json',
+              forgetButtonKey: const Key('forget-stt-key'),
+              forgetLabel: '忘记语音服务的 Key',
+              onForgetKey: viewModel.saving
+                  ? null
+                  : () => unawaited(_confirmForgetKey(viewModel)),
             ),
-            if (keySet) ...[
-              const SizedBox(height: 8),
-              QiyuFocusRingScope(
-                borderRadius: QiyuRadii.circleBorder,
-                child: TextButton(
-                  key: const Key('forget-stt-key'),
-                  onPressed: viewModel.saving
-                      ? null
-                      : () => unawaited(_confirmForgetKey(viewModel)),
-                  child: const Text('忘记语音服务的 Key'),
-                ),
-              ),
-            ],
             const SizedBox(height: 20),
-            if (viewModel.errorMessage case final message?)
-              SettingsStatusMessage(message: message, succeeded: false),
-            if (viewModel.testResult case final result?)
-              SettingsStatusMessage(
-                message: result.message,
-                succeeded: result.succeeded,
+            ...settingsStatusBanners(
+              errorMessage: viewModel.errorMessage,
+              testResult: switch (viewModel.testResult) {
+                null => null,
+                final result => (
+                  message: result.message,
+                  succeeded: result.succeeded,
+                ),
+              },
+              trailingGap: 14,
+            ),
+            SettingsSaveTestButtons(
+              saveButtonKey: const Key('save-stt-settings'),
+              saveLabel: '保存到本机',
+              saveBusy: viewModel.saving,
+              onSave: () => unawaited(
+                _form.save(viewModel, report: _reportInvalidDraft),
               ),
-            if (viewModel.errorMessage != null || viewModel.testResult != null)
-              const SizedBox(height: 14),
-            Wrap(
-              spacing: QiyuSpacing.sm,
-              runSpacing: 12,
-              children: [
-                FilledButton.icon(
-                  key: const Key('save-stt-settings'),
-                  onPressed: viewModel.saving
-                      ? null
-                      : () => unawaited(
-                          _form.save(viewModel, report: _reportInvalidDraft),
-                        ),
-                  icon: settingsBusyOr(viewModel.saving, QiyuIcons.lock),
-                  label: const Text('保存到本机'),
-                ),
-                OutlinedButton.icon(
-                  key: const Key('test-stt-connection'),
-                  onPressed: viewModel.testing
-                      ? null
-                      : () {
-                          final draft = _form.readDraftOrReport(
-                            _reportInvalidDraft,
-                          );
-                          if (draft != null) {
-                            unawaited(viewModel.testConnection(draft));
-                          }
-                        },
-                  icon: settingsBusyOr(viewModel.testing, QiyuIcons.bolt),
-                  label: const Text('测试连接'),
-                ),
-              ],
+              test: (
+                buttonKey: const Key('test-stt-connection'),
+                label: '测试连接',
+                busy: viewModel.testing,
+                onPressed: () {
+                  final draft = _form.readDraftOrReport(_reportInvalidDraft);
+                  if (draft != null) {
+                    unawaited(viewModel.testConnection(draft));
+                  }
+                },
+              ),
             ),
           ],
         );

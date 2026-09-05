@@ -435,37 +435,25 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存语音合成的 API Key',
-              style: theme.textTheme.titleSmall,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              key: const Key('tts-api-key'),
+            SettingsApiKeyField(
+              fieldKey: const Key('tts-api-key'),
               controller: _form.apiKeyController,
               focusNode: _form.apiKeyFocusNode,
-              obscureText: true,
-              enableSuggestions: false,
-              autocorrect: false,
-              decoration: InputDecoration(
-                labelText: 'API Key',
-                hintText: keySet ? '留空即可继续使用已保存的 Key' : '保存后写入本机 provider.json',
-                border: const OutlineInputBorder(),
-              ),
+              keySet: keySet,
+              title: keySet
+                  ? 'API Key 已保存在本机 provider.json'
+                  : '尚未保存语音合成的 API Key',
+              titleStyle: theme.textTheme.titleSmall,
+              label: 'API Key',
+              hint: keySet
+                  ? '留空即可继续使用已保存的 Key'
+                  : '保存后写入本机 provider.json',
+              forgetButtonKey: const Key('forget-tts-key'),
+              forgetLabel: '忘记语音合成的 Key',
+              onForgetKey: viewModel.saving
+                  ? null
+                  : () => unawaited(_confirmForgetKey(viewModel)),
             ),
-            if (keySet) ...[
-              const SizedBox(height: 8),
-              QiyuFocusRingScope(
-                borderRadius: QiyuRadii.circleBorder,
-                child: TextButton(
-                  key: const Key('forget-tts-key'),
-                  onPressed: viewModel.saving
-                      ? null
-                      : () => unawaited(_confirmForgetKey(viewModel)),
-                  child: const Text('忘记语音合成的 Key'),
-                ),
-              ),
-            ],
             const SizedBox(height: 16),
             ExpansionTile(
               key: const Key('tts-advanced-params-tile'),
@@ -532,36 +520,24 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
             ],
             if (viewModel.errorMessage != null || testResult != null)
               const SizedBox(height: 14),
-            Wrap(
-              spacing: QiyuSpacing.sm,
-              runSpacing: 12,
-              children: [
-                FilledButton.icon(
-                  key: const Key('save-tts-settings'),
-                  onPressed: viewModel.saving
-                      ? null
-                      : () => unawaited(
-                          _form.save(viewModel, report: _reportInvalidDraft),
-                        ),
-                  icon: settingsBusyOr(viewModel.saving, QiyuIcons.lock),
-                  label: const Text('保存到本机'),
-                ),
-                OutlinedButton.icon(
-                  key: const Key('test-tts-connection'),
-                  onPressed: viewModel.testing
-                      ? null
-                      : () {
-                          final draft = _form.readDraftOrReport(
-                            _reportInvalidDraft,
-                          );
-                          if (draft != null) {
-                            unawaited(viewModel.testConnection(draft));
-                          }
-                        },
-                  icon: settingsBusyOr(viewModel.testing, QiyuIcons.bolt),
-                  label: const Text('测试连接并试听'),
-                ),
-              ],
+            SettingsSaveTestButtons(
+              saveButtonKey: const Key('save-tts-settings'),
+              saveLabel: '保存到本机',
+              saveBusy: viewModel.saving,
+              onSave: () => unawaited(
+                _form.save(viewModel, report: _reportInvalidDraft),
+              ),
+              test: (
+                buttonKey: const Key('test-tts-connection'),
+                label: '测试连接并试听',
+                busy: viewModel.testing,
+                onPressed: () {
+                  final draft = _form.readDraftOrReport(_reportInvalidDraft);
+                  if (draft != null) {
+                    unawaited(viewModel.testConnection(draft));
+                  }
+                },
+              ),
             ),
           ],
         );

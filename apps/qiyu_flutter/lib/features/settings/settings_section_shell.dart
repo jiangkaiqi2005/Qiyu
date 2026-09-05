@@ -8,8 +8,8 @@ import '../accessibility.dart';
 import '../shell/qiyu_widgets.dart';
 
 /// 设置页各分节共享的壳层：分节 id 名单、折叠状态下发、阅读式分节板、
-/// 分节头与几枚各领域共用的表单元件与小机制（受控下拉、结果横幅、忙碌
-/// 图标、忘记 Key 确认框、校验结论播报）。
+/// 分节头与几枚各领域共用的表单元件与小机制（受控下拉、钥匙字段、
+/// 保存/测试按钮组、结果横幅、忙碌图标、忘记 Key 确认框、校验结论播报）。
 ///
 /// 这里只有**页面级的呈现骨架**，不含任何领域的表单状态、校验或保存
 /// 编排——那些在各自的领域模块（`provider_settings_section.dart` 等）里。
@@ -448,3 +448,185 @@ class SettingsStatusMessage extends StatelessWidget {
     );
   }
 }
+
+/// 凭据领域的钥匙块：keySet 标题行（可带一行说明文字）＋ 密文输入框 ＋
+/// 「忘记已保存 Key」按钮。
+///
+/// 四个凭据领域（模型连接、语音朗读、语音输入、联网搜索）同构，只有文案
+/// 与视觉档位不同，全部参数化逐字保形：模型连接域多一行说明文字、标题取
+/// `titleMedium`、间距 6/16；其余三域无说明行、`titleSmall`、间距 8/8。
+/// 输入框与忘记按钮的定位键由参数透传，收拢不动测试定位；密文四属性
+/// （obscureText / enableSuggestions:false / autocorrect:false /
+/// OutlineInputBorder）固定在这里，新增凭据领域不再照抄。
+///
+/// 忘记的确认对话框与确认后的领域动作仍归各领域（[confirmSettingsForgetKey]
+/// 的调用方闭包），本件只管「画」；保存互斥时调用方传 null 让按钮禁用。
+class SettingsApiKeyField extends StatelessWidget {
+  const SettingsApiKeyField({
+    super.key,
+    required this.fieldKey,
+    required this.controller,
+    required this.focusNode,
+    required this.keySet,
+    required this.title,
+    required this.titleStyle,
+    this.description,
+    this.descriptionStyle,
+    this.gapBelowTitle = 8,
+    this.gapAboveField = 8,
+    required this.label,
+    required this.hint,
+    required this.forgetButtonKey,
+    required this.forgetLabel,
+    required this.onForgetKey,
+  }) : assert(
+         description == null || descriptionStyle != null,
+         '带说明文字就必须给它的样式。',
+       );
+
+  /// 输入框的测试定位键。
+  final Key fieldKey;
+  final TextEditingController controller;
+  final FocusNode focusNode;
+
+  /// 是否已保存 Key：决定「忘记已保存 Key」按钮的显隐（标题文案由调用方
+  /// 按 [keySet] 拼好传入）。
+  final bool keySet;
+  final String title;
+  final TextStyle? titleStyle;
+
+  /// 标题下的说明文字；只有模型连接域有这一行（如「留空即可继续使用」）。
+  final String? description;
+  final TextStyle? descriptionStyle;
+
+  /// 标题行与下一行之间、说明行与输入框之间的间距：无说明行的领域用默认
+  /// 8/8（后者不生效），模型连接域带说明行取 6/16。
+  final double gapBelowTitle;
+  final double gapAboveField;
+
+  final String label;
+  final String hint;
+
+  /// 忘记按钮的定位键与文案（「忘记已保存的 Key」各域叫法不同）。
+  final Key forgetButtonKey;
+  final String forgetLabel;
+
+  /// 忘记按钮的回调；null＝按钮禁用（如保存进行中的互斥）。
+  final VoidCallback? onForgetKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: titleStyle),
+        if (description case final descriptionText?) ...[
+          SizedBox(height: gapBelowTitle),
+          Text(descriptionText, style: descriptionStyle),
+          SizedBox(height: gapAboveField),
+        ] else
+          SizedBox(height: gapBelowTitle),
+        TextField(
+          key: fieldKey,
+          controller: controller,
+          focusNode: focusNode,
+          obscureText: true,
+          enableSuggestions: false,
+          autocorrect: false,
+          decoration: InputDecoration(
+            labelText: label,
+            hintText: hint,
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        if (keySet) ...[
+          const SizedBox(height: 8),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: forgetButtonKey,
+              onPressed: onForgetKey,
+              child: Text(forgetLabel),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// 保存 / 测试连接按钮组：[Wrap]（spacing sm、runSpacing 12）里一枚
+/// `FilledButton.icon`（保存，忙碌时图标转小号进度）加一枚可选的
+/// `OutlinedButton.icon`（测试连接，同一条忙碌形态）。
+///
+/// [test] 为 null 即本领域没有测试动作（联网搜索），只渲染保存钮。
+/// 测试前的草稿读取与校验编排归调用方闭包（模型连接域「先读草稿再
+/// 测试」的顺序留在那里），本件只收按钮形态。
+class SettingsSaveTestButtons extends StatelessWidget {
+  const SettingsSaveTestButtons({
+    super.key,
+    required this.saveButtonKey,
+    required this.saveLabel,
+    required this.saveBusy,
+    required this.onSave,
+    this.test,
+  });
+
+  final Key saveButtonKey;
+  final String saveLabel;
+  final bool saveBusy;
+  final VoidCallback onSave;
+
+  /// 测试按钮的可选档：null＝本领域没有测试动作。
+  final ({Key buttonKey, String label, bool busy, VoidCallback onPressed})?
+  test;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: QiyuSpacing.sm,
+      runSpacing: 12,
+      children: [
+        FilledButton.icon(
+          key: saveButtonKey,
+          onPressed: saveBusy ? null : onSave,
+          icon: settingsBusyOr(saveBusy, QiyuIcons.lock),
+          label: Text(saveLabel),
+        ),
+        if (test case final testButton?)
+          OutlinedButton.icon(
+            key: testButton.buttonKey,
+            onPressed: testButton.busy ? null : testButton.onPressed,
+            icon: settingsBusyOr(testButton.busy, QiyuIcons.bolt),
+            label: Text(testButton.label),
+          ),
+      ],
+    );
+  }
+}
+
+/// 凭据领域按钮组上方的状态消息块：错误横幅＋连接测试结果横幅，任一
+/// 出现时在尾部补一段占位间距（把横幅与下面的按钮组隔开）。
+///
+/// 两条横幅**并列渲染、互不排斥**——这是模型连接与语音输入（以及没有
+/// 测试位的联网搜索）的真实形状。合成域（语音朗读）在 errorMessage 非空
+/// 时**不**渲染 testResult 横幅：那是 testConnection 播放失败的真实行为
+/// 差异（连接已通、试听失败时不留成功横幅），且横幅与占位间距之间还插着
+/// 「再听一次试听」恢复入口，本件收不下，该域保持原样不并。
+List<Widget> settingsStatusBanners({
+  required String? errorMessage,
+  ({String message, bool succeeded})? testResult,
+  Key? testResultKey,
+  required double trailingGap,
+}) => [
+  if (errorMessage case final message?)
+    SettingsStatusMessage(message: message, succeeded: false),
+  if (testResult case final result?)
+    SettingsStatusMessage(
+      key: testResultKey,
+      message: result.message,
+      succeeded: result.succeeded,
+    ),
+  if (errorMessage != null || testResult != null)
+    SizedBox(height: trailingGap),
+];

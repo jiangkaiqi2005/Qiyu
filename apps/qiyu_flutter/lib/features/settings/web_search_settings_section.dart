@@ -3,9 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../theme/qiyu_icons.dart';
-import '../../theme/qiyu_tokens.dart';
-import '../shell/qiyu_widgets.dart';
 import 'settings_section_shell.dart';
 import 'web_search_settings_client.dart';
 import 'web_search_settings_view_model.dart';
@@ -126,51 +123,34 @@ class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection> {
             if (viewModel.loading)
               const Center(child: CircularProgressIndicator())
             else ...[
-              Text(
-                keySet ? 'AnySearch Key 已保存在本机' : '尚未保存 AnySearch Key',
-                style: theme.textTheme.titleSmall,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                key: const Key('web-search-api-key'),
+              SettingsApiKeyField(
+                fieldKey: const Key('web-search-api-key'),
                 controller: _form.apiKeyController,
                 focusNode: _form.apiKeyFocusNode,
-                obscureText: true,
-                enableSuggestions: false,
-                autocorrect: false,
-                decoration: InputDecoration(
-                  labelText: 'ANYSEARCH_API_KEY',
-                  hintText: keySet
-                      ? '留空即可继续使用已保存的 Key'
-                      : '保存后写入本机 provider.json',
-                  border: const OutlineInputBorder(),
-                ),
-              ),
-              if (keySet) ...[
-                const SizedBox(height: 8),
-                QiyuFocusRingScope(
-                  borderRadius: QiyuRadii.circleBorder,
-                  child: TextButton(
-                    key: const Key('forget-web-search-key'),
-                    onPressed: viewModel.saving
-                        ? null
-                        : () => unawaited(_confirmForgetKey(viewModel)),
-                    child: const Text('忘记 AnySearch Key'),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 20),
-              if (viewModel.errorMessage case final message?) ...[
-                SettingsStatusMessage(message: message, succeeded: false),
-                const SizedBox(height: 14),
-              ],
-              FilledButton.icon(
-                key: const Key('save-web-search-settings'),
-                onPressed: viewModel.saving
+                keySet: keySet,
+                title: keySet ? 'AnySearch Key 已保存在本机' : '尚未保存 AnySearch Key',
+                titleStyle: theme.textTheme.titleSmall,
+                label: 'ANYSEARCH_API_KEY',
+                hint: keySet
+                    ? '留空即可继续使用已保存的 Key'
+                    : '保存后写入本机 provider.json',
+                forgetButtonKey: const Key('forget-web-search-key'),
+                forgetLabel: '忘记 AnySearch Key',
+                onForgetKey: viewModel.saving
                     ? null
-                    : () => unawaited(_form.save(viewModel)),
-                icon: settingsBusyOr(viewModel.saving, QiyuIcons.lock),
-                label: const Text('保存到本机'),
+                    : () => unawaited(_confirmForgetKey(viewModel)),
+              ),
+              const SizedBox(height: 20),
+              ...settingsStatusBanners(
+                errorMessage: viewModel.errorMessage,
+                trailingGap: 14,
+              ),
+              SettingsSaveTestButtons(
+                saveButtonKey: const Key('save-web-search-settings'),
+                saveLabel: '保存到本机',
+                saveBusy: viewModel.saving,
+                // 联网搜索没有连接测试位：不传 test，只渲染保存钮。
+                onSave: () => unawaited(_form.save(viewModel)),
               ),
             ],
           ],
