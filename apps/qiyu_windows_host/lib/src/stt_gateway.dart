@@ -51,21 +51,7 @@ final class OpenAiTranscriptionGateway implements SttTranscriptionGateway {
     required String mimeType,
   }) async {
     config.validate();
-    final key = apiKey?.trim();
-    if (key == null || key.isEmpty) {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.authentication,
-        message: '还没有保存语音服务的 API Key。',
-      );
-    }
-    // 粘贴进表单的 Key 常带零宽空格/中文：脏字节会让 dart:io 在写头时
-    // 抛未分类异常，必须在出网前拦成人话。
-    if (containsNonVisibleAscii(key)) {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.provider,
-        message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
-      );
-    }
+    final key = requireSttApiKey(apiKey);
     final boundary = _newBoundary();
     final uri = appendProviderEndpoint(config.baseUrl, 'audio/transcriptions');
     // STT 是新增出网路径：出网前统一过 SSRF 校验（聊天 Provider 不走）。
@@ -255,3 +241,24 @@ Uint8List _multipartBody({
 
 SttGatewayException _fromModelFailure(ModelGatewayException failure) =>
     SttGatewayException(kind: failure.kind, message: failure.message);
+
+/// STT 家族（OpenAI 兼容与豆包流式）共用的 Key 前置校验：返回 trim 后
+/// 的 Key。空按未保存鉴权失败；脏字符按粘贴事故拦截——粘贴进表单的
+/// Key 常带零宽空格/中文，HTTP 写头与 WebSocket 建连遇脏字节都会抛
+/// 未分类异常，必须在出网前拦成人话。
+String requireSttApiKey(String? apiKey) {
+  final key = apiKey?.trim();
+  if (key == null || key.isEmpty) {
+    throw const SttGatewayException(
+      kind: ModelFailureKind.authentication,
+      message: '还没有保存语音服务的 API Key。',
+    );
+  }
+  if (containsNonVisibleAscii(key)) {
+    throw const SttGatewayException(
+      kind: ModelFailureKind.provider,
+      message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+    );
+  }
+  return key;
+}

@@ -246,6 +246,39 @@ bool _isPublicIpv6(Uint8List b) {
   return true;
 }
 
+/// 语音两段配置（转写/合成）共享的前半校验：地址脏字符→URI+scheme→
+/// 模型名空→模型名脏字符四连检；scheme 白名单用各协议现成的 allows
+/// 判定，全部人话文案按服务标签逐字拼装。
+void _validateSpeechEndpoint({
+  required String baseUrl,
+  required String model,
+  required String serviceLabel,
+  required bool Function(String scheme) allows,
+  required String schemeFailureMessage,
+}) {
+  // 粘贴事故优先拦截：地址里的脏字符会让 dart:io 写头时抛未分类异常，
+  // 用户只能看到黑盒 internal 错误，这里换成可定位的人话文案。与 URI
+  // 解析同口径用 trim 后的值：首尾空格按既有 trim 规则放过，只拦
+  // trim 去不掉的中间脏字符。
+  if (containsNonVisibleAscii(baseUrl.trim())) {
+    throw ProviderConfigException(
+      '$serviceLabel地址里混入了中文或看不见的字符，请重新复制粘贴。',
+    );
+  }
+  final uri = Uri.tryParse(baseUrl.trim());
+  if (uri == null || !uri.hasAuthority || !allows(uri.scheme)) {
+    throw ProviderConfigException(schemeFailureMessage);
+  }
+  if (model.trim().isEmpty) {
+    throw ProviderConfigException('请填写$serviceLabel的模型名称。');
+  }
+  if (containsNonVisibleAscii(model.trim())) {
+    throw ProviderConfigException(
+      '$serviceLabel的模型名称里混入了中文或看不见的字符，请重新填写。',
+    );
+  }
+}
+
 /// 语音转写（STT）服务配置：provider.json 顶层的可选 `stt` 段。
 final class SttConfig {
   const SttConfig({
@@ -298,27 +331,17 @@ final class SttConfig {
   };
 
   void validate() {
-    // 粘贴事故优先拦截：地址里的脏字符会让 dart:io 写头时抛未分类异常，
-    // 用户只能看到黑盒 internal 错误，这里换成可定位的人话文案。与 URI
-    // 解析同口径用 trim 后的值：首尾空格按既有 trim 规则放过，只拦
-    // trim 去不掉的中间脏字符。
-    if (containsNonVisibleAscii(baseUrl.trim())) {
-      throw const ProviderConfigException('语音服务地址里混入了中文或看不见的字符，请重新复制粘贴。');
-    }
-    final uri = Uri.tryParse(baseUrl.trim());
-    final label = switch (provider) {
+    final schemeFailureMessage = switch (provider) {
       SttProviderKind.openAiCompatible => '语音服务地址必须是有效的 HTTP 地址。',
       SttProviderKind.volcSeedAsr => '语音服务地址必须是有效的 WebSocket 地址。',
     };
-    if (uri == null || !uri.hasAuthority || !provider.allows(uri.scheme)) {
-      throw ProviderConfigException(label);
-    }
-    if (model.trim().isEmpty) {
-      throw const ProviderConfigException('请填写语音服务的模型名称。');
-    }
-    if (containsNonVisibleAscii(model.trim())) {
-      throw const ProviderConfigException('语音服务的模型名称里混入了中文或看不见的字符，请重新填写。');
-    }
+    _validateSpeechEndpoint(
+      baseUrl: baseUrl,
+      model: model,
+      serviceLabel: '语音服务',
+      allows: provider.allows,
+      schemeFailureMessage: schemeFailureMessage,
+    );
   }
 }
 
@@ -455,21 +478,13 @@ final class TtsConfig {
   };
 
   void validate() {
-    // 粘贴事故优先拦截：脏字符会让 dart:io 写头时抛未分类异常（STT
-    // 联调踩过的黑盒「内部出错」），这里换成可定位的人话文案。
-    if (containsNonVisibleAscii(baseUrl.trim())) {
-      throw const ProviderConfigException('语音合成服务地址里混入了中文或看不见的字符，请重新复制粘贴。');
-    }
-    final uri = Uri.tryParse(baseUrl.trim());
-    if (uri == null || !uri.hasAuthority || !provider.allows(uri.scheme)) {
-      throw const ProviderConfigException('语音合成服务地址必须是有效的 HTTP 地址。');
-    }
-    if (model.trim().isEmpty) {
-      throw const ProviderConfigException('请填写语音合成服务的模型名称。');
-    }
-    if (containsNonVisibleAscii(model.trim())) {
-      throw const ProviderConfigException('语音合成服务的模型名称里混入了中文或看不见的字符，请重新填写。');
-    }
+    _validateSpeechEndpoint(
+      baseUrl: baseUrl,
+      model: model,
+      serviceLabel: '语音合成服务',
+      allows: provider.allows,
+      schemeFailureMessage: '语音合成服务地址必须是有效的 HTTP 地址。',
+    );
     if (voice != null && containsNonVisibleAscii(voice!.trim())) {
       throw const ProviderConfigException('音色里混入了中文或看不见的字符，请重新填写。');
     }
@@ -583,68 +598,75 @@ final class JsonProviderConfigRepository
   }
 
   @override
-  Future<SttConfig?> loadStt() async {
-    final json = await _readRawMap(orThrow: true);
-    if (json == null) {
-      return null;
-    }
-    final section = json['stt'];
-    if (section == null) {
-      return null;
-    }
-    // 损坏的 stt 段只影响语音输入，不影响聊天配置。
-    if (section is! Map<String, Object?>) {
-      throw const ProviderConfigException('语音服务配置无法读取。');
-    }
-    try {
+  Future<SttConfig?> loadStt() => _loadSpeechSection(
+    'stt',
+    '语音服务配置无法读取。',
+    (section) {
       final config = SttConfig.fromJson(section);
       config.validate();
       return config;
-    } on ProviderConfigException {
-      rethrow;
-    } on Object catch (error) {
-      throw ProviderConfigException('语音服务配置无法读取。', error);
-    }
-  }
+    },
+  );
 
   @override
   Future<void> saveStt(SttConfig config) async {
     config.validate();
-    final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
-    json['stt'] = {...config.toJson(), 'apiKey': ?config.apiKey};
-    await _writeFile(json);
+    await _saveSection('stt', {...config.toJson(), 'apiKey': ?config.apiKey});
   }
 
   @override
-  Future<TtsConfig?> loadTts() async {
-    final json = await _readRawMap(orThrow: true);
-    if (json == null) {
-      return null;
-    }
-    final section = json['tts'];
-    if (section == null) {
-      return null;
-    }
-    // 损坏的 tts 段只影响语音朗读，不影响聊天与语音输入配置。
-    if (section is! Map<String, Object?>) {
-      throw const ProviderConfigException('语音合成服务配置无法读取。');
-    }
-    try {
+  Future<TtsConfig?> loadTts() => _loadSpeechSection(
+    'tts',
+    '语音合成服务配置无法读取。',
+    (section) {
       final config = TtsConfig.fromJson(section);
       config.validate();
       return config;
-    } on ProviderConfigException {
-      rethrow;
-    } on Object catch (error) {
-      throw ProviderConfigException('语音合成服务配置无法读取。', error);
-    }
-  }
+    },
+  );
 
   @override
   Future<void> saveTts(TtsConfig config) async {
     config.validate();
+    await _saveSection('tts', {...config.toJson(), 'apiKey': ?config.apiKey});
+  }
+
+  /// 语音两段（stt/tts）共享的段级加载：读原始 map→取段→段类型检查→
+  /// parse（fromJson+validate）→异常包装，段键与人话文案各段自带。
+  /// 顶层 load() 因聊天键的前置判定不同保持独立。
+  Future<T?> _loadSpeechSection<T extends Object>(
+    String sectionKey,
+    String failureMessage,
+    T Function(Map<String, Object?> section) parse,
+  ) async {
+    final json = await _readRawMap(orThrow: true);
+    if (json == null) {
+      return null;
+    }
+    final section = json[sectionKey];
+    if (section == null) {
+      return null;
+    }
+    // 损坏的段只影响本段功能，不影响其他配置。
+    if (section is! Map<String, Object?>) {
+      throw ProviderConfigException(failureMessage);
+    }
+    try {
+      return parse(section);
+    } on ProviderConfigException {
+      rethrow;
+    } on Object catch (error) {
+      throw ProviderConfigException(failureMessage, error);
+    }
+  }
+
+  /// 语音两段共享的段级保存：只替换本段，保留文件其余内容。
+  Future<void> _saveSection(
+    String sectionKey,
+    Map<String, Object?> sectionJson,
+  ) async {
     final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
-    json['tts'] = {...config.toJson(), 'apiKey': ?config.apiKey};
+    json[sectionKey] = sectionJson;
     await _writeFile(json);
   }
 

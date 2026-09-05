@@ -248,21 +248,16 @@ final class ProviderSettingsService
         message: '连接成功，栖语可以使用这个模型。',
       );
     } on ModelGatewayException catch (error) {
-      final status = switch (error.kind) {
-        ModelFailureKind.dns => ProviderTestStatus.dns,
-        ModelFailureKind.tls => ProviderTestStatus.tls,
-        ModelFailureKind.timeout => ProviderTestStatus.timeout,
-        ModelFailureKind.authentication => ProviderTestStatus.authentication,
-        ModelFailureKind.network => ProviderTestStatus.network,
-        ModelFailureKind.modelNotFound => ProviderTestStatus.modelNotFound,
-        ModelFailureKind.rateLimited => ProviderTestStatus.rateLimited,
-        ModelFailureKind.incompatibleResponse =>
-          ProviderTestStatus.incompatibleResponse,
-        ModelFailureKind.contentParsing => ProviderTestStatus.contentParsing,
-        ModelFailureKind.provider => ProviderTestStatus.provider,
-        ModelFailureKind.internal => ProviderTestStatus.internal,
-      };
-      return ProviderTestResult(status: status, message: _testMessage(status));
+      final status = providerTestStatusFromFailureKind(error.kind);
+      return ProviderTestResult(
+        status: status,
+        message: providerTestMessage(
+          status,
+          serviceLabel: '模型服务',
+          successMessage: '连接成功，栖语可以使用这个模型。',
+          notConfiguredMessage: '还没有保存模型配置。',
+        ),
+      );
     } on Object {
       return const ProviderTestResult(
         status: ProviderTestStatus.provider,
@@ -379,18 +374,45 @@ final class ProviderSettingsService
   }
 }
 
-String _testMessage(ProviderTestStatus status) => switch (status) {
-  ProviderTestStatus.success => '连接成功，栖语可以使用这个模型。',
-  ProviderTestStatus.notConfigured => '还没有保存模型配置。',
-  ProviderTestStatus.dns => '找不到模型服务域名，请检查地址或 DNS。',
-  ProviderTestStatus.tls => '模型服务的 TLS 安全连接失败。',
-  ProviderTestStatus.timeout => '连接模型服务超时。',
+/// 网关失败种类到连接测试状态的映射：聊天与语音输入、语音合成的
+/// 连接测试共用同一套 11 分支。
+ProviderTestStatus providerTestStatusFromFailureKind(ModelFailureKind kind) =>
+    switch (kind) {
+      ModelFailureKind.dns => ProviderTestStatus.dns,
+      ModelFailureKind.tls => ProviderTestStatus.tls,
+      ModelFailureKind.timeout => ProviderTestStatus.timeout,
+      ModelFailureKind.authentication => ProviderTestStatus.authentication,
+      ModelFailureKind.network => ProviderTestStatus.network,
+      ModelFailureKind.modelNotFound => ProviderTestStatus.modelNotFound,
+      ModelFailureKind.rateLimited => ProviderTestStatus.rateLimited,
+      ModelFailureKind.incompatibleResponse =>
+        ProviderTestStatus.incompatibleResponse,
+      ModelFailureKind.contentParsing => ProviderTestStatus.contentParsing,
+      ModelFailureKind.provider => ProviderTestStatus.provider,
+      ModelFailureKind.internal => ProviderTestStatus.internal,
+    };
+
+/// 三处连接测试（聊天/语音输入/语音合成）共享的状态文案表：除成功
+/// 与未配置两条各说各话外，其余 11 条只差服务标签（模型服务/语音
+/// 服务/语音合成服务），按标签逐字拼装。
+String providerTestMessage(
+  ProviderTestStatus status, {
+  required String serviceLabel,
+  required String successMessage,
+  required String notConfiguredMessage,
+}) => switch (status) {
+  ProviderTestStatus.success => successMessage,
+  ProviderTestStatus.notConfigured => notConfiguredMessage,
+  ProviderTestStatus.dns => '找不到$serviceLabel域名，请检查地址或 DNS。',
+  ProviderTestStatus.tls => '$serviceLabel的 TLS 安全连接失败。',
+  ProviderTestStatus.timeout => '连接$serviceLabel超时。',
   ProviderTestStatus.authentication => 'API Key 没有通过验证。',
-  ProviderTestStatus.network => '无法连接模型服务，请检查地址和网络。',
+  ProviderTestStatus.network => '无法连接$serviceLabel，请检查地址和网络。',
   ProviderTestStatus.modelNotFound => '找不到这个模型，请检查模型名称。',
-  ProviderTestStatus.rateLimited => '模型服务请求过于频繁，请稍后再试。',
-  ProviderTestStatus.incompatibleResponse => '模型服务返回了不兼容的响应格式。',
-  ProviderTestStatus.contentParsing => '模型服务返回的内容无法解析。',
-  ProviderTestStatus.provider => '模型服务拒绝了测试请求。',
+  ProviderTestStatus.rateLimited => '$serviceLabel请求过于频繁，请稍后再试。',
+  ProviderTestStatus.incompatibleResponse =>
+    '$serviceLabel返回了不兼容的响应格式。',
+  ProviderTestStatus.contentParsing => '$serviceLabel返回的内容无法解析。',
+  ProviderTestStatus.provider => '$serviceLabel拒绝了测试请求。',
   ProviderTestStatus.internal => '本机程序内部出错，请重试或重启栖语。',
 };

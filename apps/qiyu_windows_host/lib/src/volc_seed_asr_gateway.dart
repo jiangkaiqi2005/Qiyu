@@ -30,21 +30,7 @@ final class VolcSeedAsrGateway {
     required String mimeType,
   }) async {
     config.validate();
-    final key = apiKey?.trim();
-    if (key == null || key.isEmpty) {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.authentication,
-        message: '还没有保存语音服务的 API Key。',
-      );
-    }
-    // 粘贴进表单的 Key 常带零宽空格/中文：脏字节会让 dart:io 在写
-    // WebSocket 头时抛未分类异常，必须在建连前拦成人话。
-    if (containsNonVisibleAscii(key)) {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.provider,
-        message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
-      );
-    }
+    final key = requireSttApiKey(apiKey);
     try {
       return await _exchange(config: config, key: key, audio: audio).timeout(
         timeout,
