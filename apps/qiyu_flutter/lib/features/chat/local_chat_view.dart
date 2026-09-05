@@ -348,14 +348,60 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
-  /// 聊天态：消息流占满剩余高度，通知条与 composer 落底常驻。
+  /// M3 compact IconButton 在 tightFor([QiyuLayout.composerIconButtonSize])
+  /// 约束下的渲染增量（34 → 40，实测值）：SDK 密度调整的结果，无既有 token 可引。
+  static const double _compactIconButtonSizeDelta = 6;
+
+  /// composer 输入行（Row）的静息高，取最高子项（麦克风钮一侧）：
+  /// 图标按钮 [QiyuLayout.composerIconButtonSize] + compact 渲染增量
+  /// [_compactIconButtonSizeDelta] + 焦点环常驻留白上下
+  /// 2×[QiyuLayout.focusRingOffset]。
+  static const double _composerRowRestingHeight =
+      QiyuLayout.composerIconButtonSize +
+      _compactIconButtonSizeDelta +
+      2 * QiyuLayout.focusRingOffset;
+
+  /// 聊天态消息列表的 bottom padding：composer 覆盖层的**静息占位**（单行输入、
+  /// 通知条收起时，覆盖层从列表底缘算起占掉的高度）。取常量、不跟随 composer
+  /// 实际高度联动——联动会让列表随打字移动，违背「会话不动」；composer 长高时
+  /// 覆盖层向上生长盖住更早的消息，「滚到底」时最后一条消息完整落在覆盖层之上。
+  ///
+  /// 数值推导（自下而上）：
+  /// - [QiyuSpacing.lg]：面板之下原有的出屏留白（原 Column 底部的 SizedBox）；
+  /// - composer 静息面板：Row（[_composerRowRestingHeight]，实测 46）+ 上下
+  ///   内边距 2×[QiyuLayout.composerPadding] + 上下发丝边框 2×[QiyuLine.hairline]；
+  /// - [QiyuSpacing.lg]：一条通知条的近似余量（通知条 = 顶距 8 + 正文行盒约 21）。
+  ///   通知条出现时覆盖层向上吃掉这份余量，最多再侵入最后一条消息的底部边缘，
+  ///   属「会话不动」优先的既定取舍；这份 24 也接替了改造前列表自身的 bottom
+  ///   padding，静息外观与改造前一致（最后一条消息距面板顶 24px）。
+  static const double _chatListBottomInset =
+      QiyuSpacing.lg +
+      _composerRowRestingHeight +
+      2 * QiyuLayout.composerPadding +
+      2 * QiyuLine.hairline +
+      QiyuSpacing.lg;
+
+  /// 聊天态：消息流铺满整幅作底层，通知条与 composer 作为**覆盖层**落底常驻。
+  /// composer 随输入内容长高时只向上生长、盖住更早的消息，列表视口纹丝不动
+  /// （原 Column 结构里 `Expanded` 的列表视口会被精确压缩对应行高）。列表底部
+  /// 为覆盖层让位的 padding 常量见 [_chatListBottomInset]。
   Widget _chatBody(BuildContext context, LocalChatViewModel viewModel) {
-    return Column(
+    return Stack(
       children: [
-        Expanded(child: _messageArea(viewModel)),
-        _noticeBars(context, viewModel),
-        _composer(context, viewModel),
-        const SizedBox(height: QiyuSpacing.lg),
+        Positioned.fill(child: _messageArea(viewModel)),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _noticeBars(context, viewModel),
+              _composer(context, viewModel),
+              const SizedBox(height: QiyuSpacing.lg),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -942,7 +988,13 @@ class _LocalChatViewState extends State<LocalChatView> {
     return QiyuHoverGate(
       child: ListView.builder(
         controller: _scrollController,
-        padding: const EdgeInsets.all(QiyuSpacing.lg),
+        padding: const EdgeInsets.fromLTRB(
+          QiyuSpacing.lg,
+          QiyuSpacing.lg,
+          QiyuSpacing.lg,
+          // 覆盖层静息占位常量：推导与取舍见 [_chatListBottomInset]。
+          _chatListBottomInset,
+        ),
         itemCount: viewModel.messages.length + transientCount,
         itemBuilder: (context, index) {
           if (index == viewModel.messages.length) {
