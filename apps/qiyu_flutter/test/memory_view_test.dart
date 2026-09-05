@@ -31,23 +31,7 @@ void main() {
   testWidgets(
     'home offers a memory entry and the center loads all four sections',
     (tester) async {
-      final memoryGateway = _FakeMemoryGateway(_fullOverview());
-      final memoryViewModel = MemoryCenterViewModel(
-        memoryGateway,
-        autoStart: false,
-      );
-      await memoryViewModel.refresh();
-      await tester.pumpWidget(
-        QiyuApp(
-          viewModel: _chatViewModel(),
-          onboardingViewModel: await _onboardingViewModel(),
-          memoryViewModel: memoryViewModel,
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const Key('home-go-memory')));
-      await tester.pumpAndSettle();
+      final memoryGateway = await _pumpMemoryCenter(tester, _fullOverview());
 
       expect(find.text('记忆'), findsWidgets);
       // 四区导航只用用户语言，不暴露内部实现术语。
@@ -101,21 +85,7 @@ void main() {
   );
 
   testWidgets('记忆四区 tab 带 §4 定案图标，选中态取中性档不显紫', (tester) async {
-    final memoryViewModel = MemoryCenterViewModel(
-      _FakeMemoryGateway(_fullOverview()),
-      autoStart: false,
-    );
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    await _pumpMemoryCenter(tester, _fullOverview());
 
     // §4 定案选型：时钟 / 山形 / 单人 / 双人，图标与文字并存。
     const sectionIcons = <String, IconData>{
@@ -200,21 +170,7 @@ void main() {
     // teardown 之前，漏一次就会把整条用例判失败。
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     try {
-      final memoryViewModel = MemoryCenterViewModel(
-        _FakeMemoryGateway(_fullOverview()),
-        autoStart: false,
-      );
-      await memoryViewModel.refresh();
-      await tester.pumpWidget(
-        QiyuApp(
-          viewModel: _chatViewModel(),
-          onboardingViewModel: await _onboardingViewModel(),
-          memoryViewModel: memoryViewModel,
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('home-go-memory')));
-      await tester.pumpAndSettle();
+      await _pumpMemoryCenter(tester, _fullOverview());
 
       // 横滚容器内不留任何滚动控件：Material 档画的 `Scrollbar` 与基类档画的
       // `RawScrollbar` 都在判内——只认前者，换成基类档那种绘制就溜过去了。
@@ -247,23 +203,12 @@ void main() {
   testWidgets(
     'evidence drills from a conclusion to summaries, days and the session',
     (tester) async {
-      final memoryGateway = _FakeMemoryGateway(_fullOverview());
-      final memoryViewModel = MemoryCenterViewModel(
-        memoryGateway,
-        autoStart: false,
-      );
-      await memoryViewModel.refresh();
       final chatGateway = _FakeChatGateway();
-      await tester.pumpWidget(
-        QiyuApp(
-          viewModel: _chatViewModel(chatGateway),
-          onboardingViewModel: await _onboardingViewModel(),
-          memoryViewModel: memoryViewModel,
-        ),
+      final memoryGateway = await _pumpMemoryCenter(
+        tester,
+        _fullOverview(),
+        chatGateway: chatGateway,
       );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('home-go-memory')));
-      await tester.pumpAndSettle();
 
       // 结论 → 支持它的理解。
       await tester.tap(find.byKey(const Key('memory-tab-persona')));
@@ -305,31 +250,14 @@ void main() {
         await tester.tap(find.byKey(const Key('memory-item-back')));
         await tester.pumpAndSettle();
       }
-      await tester.tap(find.byKey(const Key('memory-back')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+      await _leaveMemoryCenter(tester);
     },
   );
 
   testWidgets(
     'revisiting a day already on the stack falls back instead of nesting deeper',
     (tester) async {
-      final memoryGateway = _FakeMemoryGateway(_fullOverview());
-      final memoryViewModel = MemoryCenterViewModel(
-        memoryGateway,
-        autoStart: false,
-      );
-      await memoryViewModel.refresh();
-      await tester.pumpWidget(
-        QiyuApp(
-          viewModel: _chatViewModel(),
-          onboardingViewModel: await _onboardingViewModel(),
-          memoryViewModel: memoryViewModel,
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('home-go-memory')));
-      await tester.pumpAndSettle();
+      await _pumpMemoryCenter(tester, _fullOverview());
 
       // 走到 条目 → 这一天 → 条目 的环：从条目详情再点「查看这一天的记录」。
       await tester.tap(find.byKey(const Key('memory-tab-persona')));
@@ -360,9 +288,7 @@ void main() {
         backs += 1;
       }
       expect(backs, 3);
-      await tester.tap(find.byKey(const Key('memory-back')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+      await _leaveMemoryCenter(tester);
     },
   );
 
@@ -418,22 +344,7 @@ void main() {
   });
 
   testWidgets('stale item ids resolve to an honest gone state', (tester) async {
-    final memoryGateway = _FakeMemoryGateway(_fullOverview());
-    final memoryViewModel = MemoryCenterViewModel(
-      memoryGateway,
-      autoStart: false,
-    );
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    await _pumpMemoryCenter(tester, _fullOverview());
     await tester.tap(find.byKey(const Key('memory-tab-persona')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('memory-root-root-1')));
@@ -453,29 +364,13 @@ void main() {
       await tester.tap(find.byKey(const Key('memory-item-back')));
       await tester.pumpAndSettle();
     }
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('empty sections stay honest without invented content', (
     tester,
   ) async {
-    final memoryViewModel = MemoryCenterViewModel(
-      _FakeMemoryGateway(_emptyOverview()),
-      autoStart: false,
-    );
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    await _pumpMemoryCenter(tester, _emptyOverview());
 
     expect(find.byKey(const Key('memory-empty-recent')), findsOneWidget);
     expect(find.textContaining('还没有最近的记录'), findsOneWidget);
@@ -493,28 +388,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('memory-empty-relationship')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('记忆中心 Persona 区可以查看并修改称呼', (tester) async {
-    final memoryGateway = _FakeMemoryGateway(_emptyOverview());
-    final memoryViewModel = MemoryCenterViewModel(
-      memoryGateway,
-      autoStart: false,
-    );
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    final memoryGateway = await _pumpMemoryCenter(tester, _emptyOverview());
     await tester.tap(find.byKey(const Key('memory-tab-persona')));
     await tester.pumpAndSettle();
 
@@ -535,21 +413,7 @@ void main() {
   testWidgets('sensitive entries are masked and statuses stay quiet', (
     tester,
   ) async {
-    final memoryViewModel = MemoryCenterViewModel(
-      _FakeMemoryGateway(_markedOverview()),
-      autoStart: false,
-    );
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    await _pumpMemoryCenter(tester, _markedOverview());
 
     // 敏感条目默认遮罩：原文不出现在界面任何地方。
     expect(find.textContaining('13812345678'), findsNothing);
@@ -567,30 +431,17 @@ void main() {
     expect(find.text('有冲突证据'), findsOneWidget);
     expect(find.text('待稳定事实'), findsWidgets);
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('item load failures stay distinct from stale ids', (
     tester,
   ) async {
-    final gateway = _FakeMemoryGateway(
+    final gateway = await _pumpMemoryCenter(
+      tester,
       _fullOverview(),
       detailError: const MemoryGatewayException('boom'),
     );
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('memory-tab-persona')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('memory-root-root-1')));
@@ -605,30 +456,17 @@ void main() {
 
     await tester.tap(find.byKey(const Key('memory-item-back')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('memory errors offer a retry without losing the page', (
     tester,
   ) async {
-    final gateway = _FakeMemoryGateway(
+    final gateway = await _pumpMemoryCenter(
+      tester,
       _fullOverview(),
       fetchError: const MemoryGatewayException('记忆中心暂时不可用。'),
     );
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
 
     expect(find.text('记忆中心暂时不可用。'), findsOneWidget);
     gateway.fetchError = null;
@@ -637,27 +475,13 @@ void main() {
 
     expect(find.text('用户说这周在准备演讲'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('editing an entry saves the correction as a user statement', (
     tester,
   ) async {
-    final gateway = _FakeMemoryGateway(_fullOverview());
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
 
     // 操作常驻：直接点条目上的修正按钮，不再需要先点开菜单。
     await tester.tap(find.byKey(const Key('memory-action-entry-1-edit')));
@@ -679,27 +503,13 @@ void main() {
     );
     expect(find.byKey(const Key('memory-action-result')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('freeze applies immediately, ban needs confirmation', (
     tester,
   ) async {
-    final gateway = _FakeMemoryGateway(_fullOverview());
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
 
     // 冻结直接生效，不需要确认。
     await tester.tap(find.byKey(const Key('memory-action-entry-1-freeze')));
@@ -720,27 +530,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(gateway.actionCalls, contains('ban:entry-1'));
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('delete previews the exact impact before executing', (
     tester,
   ) async {
-    final gateway = _FakeMemoryGateway(_fullOverview());
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
 
     await tester.tap(find.byKey(const Key('memory-action-entry-1-delete')));
     await tester.pumpAndSettle();
@@ -754,27 +550,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(gateway.actionCalls, contains('delete:entry-1'));
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('persona items can be controlled but never edited', (
     tester,
   ) async {
-    final gateway = _FakeMemoryGateway(_fullOverview());
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
     await tester.tap(find.byKey(const Key('memory-tab-persona')));
     await tester.pumpAndSettle();
 
@@ -784,25 +566,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(gateway.actionCalls, contains('freeze:root-1'));
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('state pack rows stay read-only', (tester) async {
-    final gateway = _FakeMemoryGateway(_fullOverview());
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    await _pumpMemoryCenter(tester, _fullOverview());
     await tester.tap(find.byKey(const Key('memory-tab-relationship')));
     await tester.pumpAndSettle();
 
@@ -812,9 +580,7 @@ void main() {
     // 共同过往属于长期印象，仍可操作。
     expect(find.byKey(const Key('memory-actions-lt-2')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('记忆条目操作常驻在条目上，按钮与该条目的状态一一对应', (tester) async {
@@ -939,19 +705,7 @@ void main() {
   testWidgets('recovery findings show an honest banner with details', (
     tester,
   ) async {
-    final gateway = _FakeMemoryGateway(_recoveryOverview());
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    await _pumpMemoryCenter(tester, _recoveryOverview());
 
     // 受影响范围、恢复结果与仍无法恢复的内容都诚实呈现。
     expect(find.byKey(const Key('memory-recovery-banner')), findsOneWidget);
@@ -961,25 +715,11 @@ void main() {
     expect(find.textContaining('长期印象内容'), findsOneWidget);
     expect(find.textContaining('从文件内完整对话块 2 段抢救'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('healthy recovery section stays invisible', (tester) async {
-    final gateway = _FakeMemoryGateway(_fullOverview());
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    await _pumpMemoryCenter(tester, _fullOverview());
 
     expect(find.byKey(const Key('memory-recovery-banner')), findsNothing);
 
@@ -1026,20 +766,7 @@ void main() {
         },
       };
 
-      final overview = MemoryOverview.fromJson(legacyJson);
-      final gateway = _FakeMemoryGateway(overview);
-      final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-      await memoryViewModel.refresh();
-      await tester.pumpWidget(
-        QiyuApp(
-          viewModel: _chatViewModel(),
-          onboardingViewModel: await _onboardingViewModel(),
-          memoryViewModel: memoryViewModel,
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('home-go-memory')));
-      await tester.pumpAndSettle();
+      await _pumpMemoryCenter(tester, MemoryOverview.fromJson(legacyJson));
 
       expect(find.byKey(const Key('memory-recovery-banner')), findsNothing);
       expect(find.text('部分记忆文件出现过损坏'), findsNothing);
@@ -1052,19 +779,7 @@ void main() {
   testWidgets('masked detail content reveals once and re-masks on timeout', (
     tester,
   ) async {
-    final gateway = _FakeMemoryGateway(_maskedEntryOverview());
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    final gateway = await _pumpMemoryCenter(tester, _maskedEntryOverview());
     await tester.tap(find.byKey(const Key('memory-entry-entry-masked')));
     await tester.pumpAndSettle();
 
@@ -1085,27 +800,13 @@ void main() {
 
     await tester.tap(find.byKey(const Key('memory-item-back')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('masked persona root and day summary offer a reveal entry', (
     tester,
   ) async {
-    final gateway = _FakeMemoryGateway(_maskedPersonaOverview());
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    final gateway = await _pumpMemoryCenter(tester, _maskedPersonaOverview());
 
     // 画像根详情：遮罩主张有临时查看入口，揭示后展示原文。
     await tester.tap(find.byKey(const Key('memory-tab-persona')));
@@ -1137,27 +838,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('memory-item-back')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets('action entries stay disabled while an action is in flight', (
     tester,
   ) async {
-    final gateway = _FakeMemoryGateway(_fullOverview());
-    final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    final gateway = await _pumpMemoryCenter(tester, _fullOverview());
 
     // 冻结动作挂起期间：这一条目上的常驻按钮全部禁用，避免重复触发。
     const entryActions = ['edit', 'freeze', 'ban', 'delete'];
@@ -1194,29 +881,13 @@ void main() {
       );
     }
 
-    await tester.tap(find.byKey(const Key('memory-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+    await _leaveMemoryCenter(tester);
   });
 
   testWidgets(
     'memory page opens the backup dialog with honest platform state',
     (tester) async {
-      final memoryViewModel = MemoryCenterViewModel(
-        _FakeMemoryGateway(_fullOverview()),
-        autoStart: false,
-      );
-      await memoryViewModel.refresh();
-      await tester.pumpWidget(
-        QiyuApp(
-          viewModel: _chatViewModel(),
-          onboardingViewModel: await _onboardingViewModel(),
-          memoryViewModel: memoryViewModel,
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('home-go-memory')));
-      await tester.pumpAndSettle();
+      await _pumpMemoryCenter(tester, _fullOverview());
 
       await tester.tap(find.byKey(const Key('memory-backup')));
       await tester.pumpAndSettle();
@@ -1227,9 +898,7 @@ void main() {
       await tester.tap(find.byKey(const Key('backup-close')));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('memory-back')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
+      await _leaveMemoryCenter(tester);
     },
   );
 
@@ -1369,25 +1038,7 @@ void main() {
     tester.view.physicalSize = const Size(420, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final memoryViewModel = MemoryCenterViewModel(
-      _FakeMemoryGateway(_fullOverview()),
-      autoStart: false,
-    );
-    await memoryViewModel.refresh();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: _chatViewModel(),
-        onboardingViewModel: await _onboardingViewModel(),
-        memoryViewModel: memoryViewModel,
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    // 窄屏没有常驻侧边栏：从三条杠打开抽屉，再由抽屉进记忆中心。
-    await tester.tap(find.byKey(const Key('nav-menu-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('home-go-memory')));
-    await tester.pumpAndSettle();
+    await _pumpMemoryCenter(tester, _fullOverview(), viaDrawer: true);
 
     // 这一页在窄屏撤掉了自己的返回箭头，页头必须自己让开浮在左上角的三条杠。
     // 「记忆」两个字页内出现两次（窄屏档 16 的标题与 11 的小标签，design-system
@@ -2036,17 +1687,26 @@ Finder _bothSurfaces(Key key) => find.byKey(key, skipOffstage: false);
 /// 进入记忆中心：注入桩网关并走完「首页 → 记忆」这一段导航，返回该网关
 /// 供用例查调用记录。窄屏没有常驻侧边栏，[viaDrawer] 为真时先开抽屉再进；
 /// 侧边栏与抽屉同时渲染同一批标签，所以入口一律按 Key 定位。
+/// [fetchError] 与 [detailError] 原样注入桩网关，[chatGateway] 供给聊天
+/// 视图模型（缺省为无脚本的桩）。
 Future<_FakeMemoryGateway> _pumpMemoryCenter(
   WidgetTester tester,
   MemoryOverview overview, {
+  Object? fetchError,
+  Object? detailError,
+  _FakeChatGateway? chatGateway,
   bool viaDrawer = false,
 }) async {
-  final gateway = _FakeMemoryGateway(overview);
+  final gateway = _FakeMemoryGateway(
+    overview,
+    fetchError: fetchError,
+    detailError: detailError,
+  );
   final memoryViewModel = MemoryCenterViewModel(gateway, autoStart: false);
   await memoryViewModel.refresh();
   await tester.pumpWidget(
     QiyuApp(
-      viewModel: _chatViewModel(),
+      viewModel: _chatViewModel(chatGateway),
       onboardingViewModel: await _onboardingViewModel(),
       memoryViewModel: memoryViewModel,
     ),
@@ -2059,6 +1719,14 @@ Future<_FakeMemoryGateway> _pumpMemoryCenter(
   await tester.tap(find.byKey(const Key('home-go-memory')));
   await tester.pumpAndSettle();
   return gateway;
+}
+
+/// 用例收尾：从记忆中心返回首页，确认中心入口重新可见，
+/// 保持测试间路由状态干净。
+Future<void> _leaveMemoryCenter(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('memory-back')));
+  await tester.pumpAndSettle();
+  expect(find.byKey(const Key('home-go-memory')), findsOneWidget);
 }
 
 Future<void> _pumpBackupDialog(
@@ -2096,31 +1764,14 @@ Future<void> _pumpBackupDialog(
   await tester.pumpAndSettle();
 }
 
-MemoryOverview _maskedEntryOverview() => MemoryOverview(
-  generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
-  recent: MemoryRecentSection(
-    days: [
-      MemoryDayCard(
-        id: 'day-1',
-        date: _localDate(DateTime.now()),
-        summary: null,
-        summaryMasked: false,
-        finalized: true,
-        finalizedAt: null,
-        entries: [
-          MemoryEntryCard(
-            id: 'entry-masked',
-            kind: 'memory',
-            content: null,
-            masked: true,
-            control: null,
-            at: DateTime.now().subtract(const Duration(hours: 1)),
-            hasEvidence: false,
-          ),
-        ],
-      ),
-    ],
-  ),
+/// 空区基座：长期印象、画像与关系三块区段的「空态」字段值在多份
+/// 总览构造里逐字重复，集中一处供各构造取用；字段值与抽基座前一致。
+({
+  MemoryLongTermSection longTerm,
+  MemoryPersonaSection persona,
+  MemoryRelationshipSection relationship,
+})
+_bareSections() => (
   longTerm: MemoryLongTermSection(
     present: false,
     readable: true,
@@ -2139,115 +1790,128 @@ MemoryOverview _maskedEntryOverview() => MemoryOverview(
   ),
 );
 
+MemoryOverview _maskedEntryOverview() {
+  final (:longTerm, :persona, :relationship) = _bareSections();
+  return MemoryOverview(
+    generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
+    recent: MemoryRecentSection(
+      days: [
+        MemoryDayCard(
+          id: 'day-1',
+          date: _localDate(DateTime.now()),
+          summary: null,
+          summaryMasked: false,
+          finalized: true,
+          finalizedAt: null,
+          entries: [
+            MemoryEntryCard(
+              id: 'entry-masked',
+              kind: 'memory',
+              content: null,
+              masked: true,
+              control: null,
+              at: DateTime.now().subtract(const Duration(hours: 1)),
+              hasEvidence: false,
+            ),
+          ],
+        ),
+      ],
+    ),
+    longTerm: longTerm,
+    persona: persona,
+    relationship: relationship,
+  );
+}
+
 /// 冻结条目总览：与列表同一冻结状态，供两处可用性一致性用例。
-MemoryOverview _frozenEntryOverview() => MemoryOverview(
-  generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
-  recent: MemoryRecentSection(
-    days: [
-      MemoryDayCard(
-        id: 'day-frozen',
-        date: _localDate(DateTime.now()),
-        summary: null,
-        summaryMasked: false,
-        finalized: true,
-        finalizedAt: null,
-        entries: [
-          MemoryEntryCard(
-            id: 'entry-frozen',
-            kind: 'memory',
-            content: '被冻结的记录',
-            masked: false,
-            control: MemoryControlStatus.frozen,
-            at: DateTime.now().subtract(const Duration(hours: 2)),
-            hasEvidence: false,
-          ),
-        ],
-      ),
-    ],
-  ),
-  longTerm: MemoryLongTermSection(
-    present: false,
-    readable: true,
-    organizedAt: null,
-    groups: [],
-  ),
-  persona: MemoryPersonaSection(branches: []),
-  relationship: const MemoryRelationshipSection(
-    present: false,
-    stage: null,
-    since: null,
-    confirmed: [],
-    probes: [],
-    recentChanges: [],
-    sharedPast: [],
-  ),
-);
+MemoryOverview _frozenEntryOverview() {
+  final (:longTerm, :persona, :relationship) = _bareSections();
+  return MemoryOverview(
+    generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
+    recent: MemoryRecentSection(
+      days: [
+        MemoryDayCard(
+          id: 'day-frozen',
+          date: _localDate(DateTime.now()),
+          summary: null,
+          summaryMasked: false,
+          finalized: true,
+          finalizedAt: null,
+          entries: [
+            MemoryEntryCard(
+              id: 'entry-frozen',
+              kind: 'memory',
+              content: '被冻结的记录',
+              masked: false,
+              control: MemoryControlStatus.frozen,
+              at: DateTime.now().subtract(const Duration(hours: 2)),
+              hasEvidence: false,
+            ),
+          ],
+        ),
+      ],
+    ),
+    longTerm: longTerm,
+    persona: persona,
+    relationship: relationship,
+  );
+}
 
 /// 画像根与当日小结被遮罩的总览：原文字段为 null，揭示入口仍要
 /// 在详情页可达。
-MemoryOverview _maskedPersonaOverview() => MemoryOverview(
-  generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
-  recent: MemoryRecentSection(
-    days: [
-      MemoryDayCard(
-        id: 'day-masked',
-        date: _localDate(DateTime.now()),
-        summary: null,
-        summaryMasked: true,
-        finalized: true,
-        finalizedAt: null,
-        entries: [
-          MemoryEntryCard(
-            id: 'entry-m2',
-            kind: 'memory',
-            content: '一条普通记录',
-            masked: false,
-            control: null,
-            at: DateTime.now().subtract(const Duration(hours: 1)),
-            hasEvidence: false,
-          ),
-        ],
-      ),
-    ],
-  ),
-  longTerm: MemoryLongTermSection(
-    present: false,
-    readable: true,
-    organizedAt: null,
-    groups: [],
-  ),
-  persona: MemoryPersonaSection(
-    branches: [
-      MemoryPersonaBranchCard(
-        wire: 'identity',
-        title: '身份事实',
-        readable: true,
-        roots: const [
-          MemoryPersonaRootCard(
-            id: 'root-masked',
-            claim: null,
-            masked: true,
-            control: null,
-            middleCount: 0,
-            leafCount: 0,
-            earliestEvidence: null,
-            latestEvidence: null,
-          ),
-        ],
-        unrooted: const [],
-      ),
-    ],
-  ),
-  relationship: MemoryRelationshipSection(
-    present: false,
-    stage: null,
-    since: null,
-    confirmed: [],
-    probes: [],
-    recentChanges: [],
-    sharedPast: [],
-  ),
-);
+MemoryOverview _maskedPersonaOverview() {
+  final (:longTerm, :relationship, persona: _) = _bareSections();
+  return MemoryOverview(
+    generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
+    recent: MemoryRecentSection(
+      days: [
+        MemoryDayCard(
+          id: 'day-masked',
+          date: _localDate(DateTime.now()),
+          summary: null,
+          summaryMasked: true,
+          finalized: true,
+          finalizedAt: null,
+          entries: [
+            MemoryEntryCard(
+              id: 'entry-m2',
+              kind: 'memory',
+              content: '一条普通记录',
+              masked: false,
+              control: null,
+              at: DateTime.now().subtract(const Duration(hours: 1)),
+              hasEvidence: false,
+            ),
+          ],
+        ),
+      ],
+    ),
+    longTerm: longTerm,
+    persona: MemoryPersonaSection(
+      branches: [
+        MemoryPersonaBranchCard(
+          wire: 'identity',
+          title: '身份事实',
+          readable: true,
+          roots: const [
+            MemoryPersonaRootCard(
+              id: 'root-masked',
+              claim: null,
+              masked: true,
+              control: null,
+              middleCount: 0,
+              leafCount: 0,
+              earliestEvidence: null,
+              latestEvidence: null,
+            ),
+          ],
+          unrooted: const [],
+        ),
+      ],
+    ),
+    relationship: relationship,
+  );
+}
 
 LocalChatViewModel _chatViewModel([_FakeChatGateway? gateway]) =>
     LocalChatViewModel(
@@ -2564,15 +2228,7 @@ MemoryOverview _markedOverview() => MemoryOverview(
       ),
     ],
   ),
-  relationship: const MemoryRelationshipSection(
-    present: false,
-    stage: null,
-    since: null,
-    confirmed: [],
-    probes: [],
-    recentChanges: [],
-    sharedPast: [],
-  ),
+  relationship: _bareSections().relationship,
 );
 
 final _sensitiveEntryAt = DateTime(2026, 8, 17, 12);
