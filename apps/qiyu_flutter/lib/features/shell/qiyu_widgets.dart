@@ -9,8 +9,10 @@ import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 
 /// 紫夜薄包装层（design-system §8 组件清单的 M3 底子 + token 换皮）：
-/// 毛玻璃面板与自绘**键盘**焦点环。侧边栏、抽屉、composer、发送钮共用同一
-/// 份实现，保证「材质同源」，页面不得再各自抄一遍 Blur + ColoredBox。
+/// 毛玻璃面板与自绘**键盘**焦点环。侧边栏、抽屉与 composer 的毛玻璃底共用
+/// 同一份 [QiyuGlassPanel]，保证「材质同源」，页面不得再各自抄一遍
+/// Blur + ColoredBox；发送钮的玻璃紫渐变是独立实现（自带 ClipOval +
+/// BackdropFilter，见 `features/chat/qiyu_send_button.dart`），只从这里取焦点环。
 ///
 /// 本文件另住着一件壳层共用件 [maybeProvider]：导航壳与连接状态都要读同一份
 /// 可能缺席的 `LocalChatViewModel`，那份 try/catch 形状只留一处（read / watch
@@ -297,9 +299,6 @@ class QiyuFocusSource extends ChangeNotifier {
     _origin = QiyuFocusOrigin.undetermined;
     _lastInput = QiyuFocusOrigin.undetermined;
   }
-
-  /// 当前结论：最近一次把焦点交出去的输入来自哪里。
-  QiyuFocusOrigin get origin => _origin;
 
   /// 环的唯一判据。只有键盘把焦点送到这里时才为 true（触摸与指针为 false）。
   bool get keyboardDriven {

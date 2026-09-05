@@ -364,8 +364,14 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false, bool narrow = false}) {
     // 只能贴在控件表面上铺一层，所以这里取中性淡底 selectedNeutral，绝不落实心紫。
     focusColor: QiyuColors.selectedNeutral,
     textTheme: qiyuTextTheme(type),
-    iconTheme: const IconThemeData(color: QiyuColors.muted, size: 24),
-    dividerTheme: const DividerThemeData(color: QiyuColors.line, thickness: 1),
+    iconTheme: const IconThemeData(
+      color: QiyuColors.muted,
+      size: QiyuIconSpec.size,
+    ),
+    dividerTheme: const DividerThemeData(
+      color: QiyuColors.line,
+      thickness: QiyuLine.hairline,
+    ),
     cardTheme: const CardThemeData(
       color: QiyuColors.panel,
       surfaceTintColor: QiyuColors.elevationTint,
@@ -381,11 +387,7 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false, bool narrow = false}) {
     ),
     snackBarTheme: SnackBarThemeData(
       backgroundColor: QiyuColors.panel,
-      contentTextStyle: TextStyle(
-        fontFamily: QiyuType.fontFamily,
-        fontSize: type.secondarySize,
-        color: QiyuColors.ink,
-      ),
+      contentTextStyle: type.secondary.copyWith(color: QiyuColors.ink),
       shape: RoundedRectangleBorder(borderRadius: QiyuRadii.smallBorder),
     ),
     // ── 会被 M3 当「填充/表面」用的组件：状态色全部从共享中性表取 ────────────
@@ -440,7 +442,7 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false, bool narrow = false}) {
       // 勾选态实底 neutralFill、勾取 ink；未勾选是 panel 底 + line 描边。
       fillColor: qiyuNeutralFillStates(),
       checkColor: qiyuNeutralContentStates(),
-      side: const BorderSide(width: QiyuLine.hairline, color: QiyuColors.line),
+      side: qiyuHairlineSide,
     ),
     radioTheme: RadioThemeData(fillColor: qiyuNeutralFillStates()),
     segmentedButtonTheme: SegmentedButtonThemeData(
@@ -502,9 +504,9 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false, bool narrow = false}) {
         horizontal: QiyuSpacing.md,
         vertical: QiyuLayout.composerPadding,
       ),
-      hintStyle: TextStyle(
-        fontFamily: QiyuType.fontFamily,
-        fontSize: type.bodySize,
+      // 占位字形状（字族、字号）取正文档，只覆写颜色与行盒两件事；
+      // height 公式与 leadingDistribution 是钉住既有行为的敏感点，值逐字不动。
+      hintStyle: type.body.copyWith(
         color: QiyuColors.muted,
         // 行高 = 图标按钮高度（§8 组件 5「占位字垂直居中，行高对齐按钮高度 34px」），
         // 由 token 相除得出，不写死裸比值；分母取当档正文字号，窄屏档自动变 34/14。
