@@ -154,9 +154,10 @@ final class BackupRollbackResult {
   final String safetySnapshotId;
 }
 
-final class BackupGatewayException implements Exception {
+final class BackupGatewayException implements Exception, UserFacingException {
   const BackupGatewayException(this.message);
 
+  @override
   final String message;
 
   @override
