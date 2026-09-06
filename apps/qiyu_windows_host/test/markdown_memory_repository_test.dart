@@ -4,6 +4,8 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/failing_atomic_writer.dart';
+
 void main() {
   late Directory temporaryDirectory;
   late DateTime now;
@@ -549,7 +551,10 @@ void main() {
     final failingRepository = MarkdownMemoryRepository(
       memoryDirectory: temporaryDirectory.path,
       clock: () => now,
-      atomicWriter: _FailingAtomicWriter(),
+      atomicWriter: FailingAtomicTextWriter(
+        shouldFail: (_) => true,
+        exception: const FileSystemException('mock write failure'),
+      ),
     );
     final session = await failingRepository.openSession(
       sessionId: writableSession.id,
@@ -695,11 +700,4 @@ String _localDate(DateTime value) {
   return '${local.year.toString().padLeft(4, '0')}-'
       '${local.month.toString().padLeft(2, '0')}-'
       '${local.day.toString().padLeft(2, '0')}';
-}
-
-final class _FailingAtomicWriter implements AtomicTextWriter {
-  @override
-  Future<void> replace(String path, String contents) {
-    throw const FileSystemException('mock write failure');
-  }
 }

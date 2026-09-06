@@ -1,17 +1,13 @@
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qiyu_flutter/app.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
-import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/history/history_client.dart';
 import 'package:qiyu_flutter/features/history/history_view_model.dart';
 import 'package:qiyu_flutter/features/memory/memory_client.dart';
 import 'package:qiyu_flutter/features/memory/memory_view_model.dart';
-import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
@@ -21,6 +17,7 @@ import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
+import 'support/shared_fakes.dart';
 
 /// 宽视口下历史、记忆中心、设置、隐私四页页头的返回键必须同位。
 ///
@@ -45,8 +42,8 @@ void main() {
     );
     await memoryViewModel.refresh();
     final chatViewModel = LocalChatViewModel(
-      _IdleChatGateway(),
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      FakeLocalChatGateway.silent(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     );
     await chatViewModel.initialize();
@@ -61,7 +58,7 @@ void main() {
         ),
         memoryViewModel: memoryViewModel,
         providerSettingsViewModel: ProviderSettingsViewModel(
-          const _FixedProviderSettingsGateway(),
+          const FixedProviderSettingsGateway(),
           autoStart: false,
         ),
         sttSettingsGateway: const _FixedSttSettingsGateway(),
@@ -70,7 +67,18 @@ void main() {
           const _FixedWebSearchSettingsGateway(),
           autoStart: false,
         ),
-        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        settingsViewModel: SettingsViewModel(
+          FakeSettingsGateway(
+            generatedAt: DateTime(2026, 9, 3),
+            finalization: const FinalizationHealth(
+              today: '2026-09-03',
+              todayFinalized: false,
+              pendingDays: 0,
+              unreadableDays: 0,
+            ),
+            dream: const DreamHealth(),
+          ),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -155,52 +163,12 @@ void main() {
 
 Future<OnboardingViewModel> _completedOnboardingViewModel() async {
   final viewModel = OnboardingViewModel(
-    _FakeOnboardingGateway(),
-    const _FixedProviderSettingsGateway(),
+    FakeOnboardingGateway(completed: true),
+    const FixedProviderSettingsGateway(),
     autoStart: false,
   );
   await viewModel.initialize();
   return viewModel;
-}
-
-final class _FakeOnboardingGateway implements OnboardingGateway {
-  @override
-  Future<OnboardingState> read() async =>
-      const OnboardingState(completed: true);
-
-  @override
-  Future<void> complete({String? appellation}) async {}
-}
-
-final class _FakeHostConnectionProbe implements HostConnectionProbe {
-  _FakeHostConnectionProbe(this._results);
-
-  final List<bool> _results;
-
-  @override
-  Future<bool> isHostAvailable() async => _results.first;
-}
-
-final class _IdleChatGateway implements StreamingLocalChatGateway {
-  @override
-  Future<LocalChatSnapshot> restore({String? sessionId}) async =>
-      const LocalChatSnapshot(sessionId: 'session-1', messages: []);
-
-  @override
-  Stream<LocalChatDeliveryEvent> deliver({
-    required String requestId,
-    required String text,
-    String? sessionId,
-  }) async* {}
-
-  @override
-  Future<bool> cancel(String requestId) async => true;
-
-  @override
-  Future<String> transcribe({
-    required Uint8List audio,
-    required String mimeType,
-  }) async => '语音测试转写';
 }
 
 final class _FixedHistoryGateway implements HistoryGateway {
@@ -278,25 +246,6 @@ final class _FixedMemoryGateway implements MemoryGateway {
   }) => throw UnimplementedError();
 }
 
-final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {
-  const _FixedProviderSettingsGateway();
-
-  @override
-  Future<ProviderSettings> read() async =>
-      const ProviderSettings(configured: false, keySet: false);
-
-  @override
-  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-
-  @override
-  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
-
-  @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-}
-
 final class _FixedSttSettingsGateway implements SttSettingsGateway {
   const _FixedSttSettingsGateway();
 
@@ -360,55 +309,4 @@ final class _FixedWebSearchSettingsGateway implements WebSearchSettingsGateway {
   @override
   Future<WebSearchSettings> forgetApiKey() async =>
       const WebSearchSettings(configured: false, keySet: false);
-}
-
-final class _FakeSettingsGateway implements SettingsGateway {
-  @override
-  Future<ExperiencePreferences> readPreferences() async =>
-      const ExperiencePreferences(developerMode: false);
-
-  @override
-  Future<ExperiencePreferences> savePreferences({
-    required bool developerMode,
-  }) async => ExperiencePreferences(developerMode: developerMode);
-
-  @override
-  Future<MemoryControlsOverview> readMemoryControls() async =>
-      const MemoryControlsOverview(
-        readable: true,
-        frozen: [],
-        banned: [],
-        deletedCount: 0,
-      );
-
-  @override
-  Future<ClearPreview> readClearPreview() async => const ClearPreview(
-    memoryDirectory: 'C:/qiyu-test/memories',
-    sessionCount: 0,
-    episodeDayCount: 0,
-    frozenCount: 0,
-    bannedCount: 0,
-    deletedCount: 0,
-    snapshotCount: 0,
-    providerConfigured: false,
-    keySet: false,
-  );
-
-  @override
-  Future<void> clearData() async {}
-
-  @override
-  Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
-    generatedAt: DateTime(2026, 9, 3),
-    memoryDirectory: 'C:/qiyu-test/memories',
-    recentRequests: const [],
-    finalization: const FinalizationHealth(
-      today: '2026-09-03',
-      todayFinalized: false,
-      pendingDays: 0,
-      unreadableDays: 0,
-    ),
-    dream: const DreamHealth(),
-    fileHealth: const {},
-  );
 }

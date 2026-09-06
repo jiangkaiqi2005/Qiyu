@@ -7,14 +7,12 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_flutter/app.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/chat/qiyu_chat_bubble.dart';
 import 'package:qiyu_flutter/features/history/history_client.dart';
 import 'package:qiyu_flutter/features/history/history_view_model.dart';
-import 'package:qiyu_flutter/features/memory/memory_client.dart';
 import 'package:qiyu_flutter/features/memory/memory_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/first_meeting_view.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
@@ -27,13 +25,14 @@ import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
-import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_collapse_platform.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
 import 'package:qiyu_flutter/theme/qiyu_icons.dart';
+
+import 'support/shared_fakes.dart';
 
 void main() {
   testWidgets('keyboard alone navigates from home into the chat', (
@@ -55,7 +54,7 @@ void main() {
   testWidgets(
     'enter sends while shift+enter and control+enter insert newlines',
     (tester) async {
-      final chatGateway = _FakeChatGateway();
+      final chatGateway = FakeLocalChatGateway();
       await tester.pumpWidget(await _app(chatGateway: chatGateway));
       await tester.pumpAndSettle();
       await _goHome(tester);
@@ -123,7 +122,7 @@ void main() {
       addTearDown(tester.view.reset);
       await tester.pumpWidget(
         await _app(
-          chatGateway: _FakeChatGateway(
+          chatGateway: FakeLocalChatGateway(
             restored: const LocalChatSnapshot(
               sessionId: 'session-1',
               messages: [
@@ -235,8 +234,8 @@ void main() {
     expect(tester.takeException(), isNull);
 
     final onboarding = OnboardingViewModel(
-      _FakeOnboardingGateway(completed: false),
-      _FixedProviderGateway(configured: false),
+      FakeOnboardingGateway(completed: false),
+      EchoingProviderSettingsGateway(configured: false),
       autoStart: false,
     );
     await onboarding.initialize();
@@ -256,7 +255,7 @@ void main() {
     tester,
   ) async {
     final chatViewModel = LocalChatViewModel(
-      _FakeChatGateway(
+      FakeLocalChatGateway(
         restored: const LocalChatSnapshot(
           sessionId: 'session-1',
           messages: [
@@ -274,7 +273,7 @@ void main() {
           ],
         ),
       ),
-      hostConnectionProbe: _FixedProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     );
     await chatViewModel.initialize();
@@ -291,11 +290,11 @@ void main() {
     expect(find.text('今天有点累'), findsOneWidget);
 
     final providerViewModel = ProviderSettingsViewModel(
-      _FixedProviderGateway(configured: false),
+      EchoingProviderSettingsGateway(configured: false),
       autoStart: false,
     );
     await providerViewModel.initialize();
-    final settingsViewModel = SettingsViewModel(_FakeSettingsGateway());
+    final settingsViewModel = SettingsViewModel(FakeSettingsGateway());
     await _pumpScaled(
       tester,
       MultiProvider(
@@ -579,8 +578,8 @@ void main() {
     // 选中底、玻璃描边都压成 0。本用例锁的是这条约束的行为面：动效关掉之后，
     // 发送与完成反馈仍要照常出现，不能顺带把内容一起吞掉。
     final chatViewModel = LocalChatViewModel(
-      _FakeChatGateway(),
-      hostConnectionProbe: _FixedProbe(),
+      FakeLocalChatGateway(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     );
     await chatViewModel.initialize();
@@ -662,7 +661,7 @@ void main() {
 
     final loadingViewModel = OnboardingViewModel(
       _HangingOnboardingGateway(),
-      _FixedProviderGateway(configured: true),
+      EchoingProviderSettingsGateway(configured: true),
       autoStart: false,
     );
     unawaited(loadingViewModel.initialize());
@@ -674,8 +673,8 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     final readyViewModel = OnboardingViewModel(
-      _FakeOnboardingGateway(completed: false),
-      _FixedProviderGateway(configured: true),
+      FakeOnboardingGateway(completed: false),
+      EchoingProviderSettingsGateway(configured: true),
       autoStart: false,
     );
     await readyViewModel.initialize();
@@ -694,21 +693,21 @@ Future<Widget> _app({
   StreamingLocalChatGateway? chatGateway,
   _FakeHistoryGateway? historyGateway,
 }) async {
-  final chat = chatGateway ?? _FakeChatGateway();
+  final chat = chatGateway ?? FakeLocalChatGateway();
   final chatViewModel = LocalChatViewModel(
     chat,
-    hostConnectionProbe: _FixedProbe(),
+    hostConnectionProbe: FakeHostConnectionProbe(const [true]),
     autoStart: false,
   );
   await chatViewModel.initialize();
   final onboarding = OnboardingViewModel(
-    _FakeOnboardingGateway(completed: true),
-    _FixedProviderGateway(configured: true),
+    FakeOnboardingGateway(completed: true),
+    EchoingProviderSettingsGateway(configured: true),
     autoStart: false,
   );
   await onboarding.initialize();
   final providerViewModel = ProviderSettingsViewModel(
-    _FixedProviderGateway(configured: true),
+    EchoingProviderSettingsGateway(configured: true),
     autoStart: false,
   );
   await providerViewModel.initialize();
@@ -728,8 +727,8 @@ Future<Widget> _app({
       historyGateway ?? _FakeHistoryGateway(),
       onSessionDeleted: (_) {},
     ),
-    memoryViewModel: MemoryCenterViewModel(_FakeMemoryGateway()),
-    settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+    memoryViewModel: MemoryCenterViewModel(FakeMemoryGateway()),
+    settingsViewModel: SettingsViewModel(FakeSettingsGateway()),
   );
 }
 
@@ -816,8 +815,8 @@ Future<void> _expandSettingsSection(
 /// 副标题按当前会话状态切换），因此外壳与对话视图一起泵。
 Widget _homeWithChatViewModel() => ChangeNotifierProvider.value(
   value: LocalChatViewModel(
-    _FakeChatGateway(),
-    hostConnectionProbe: _FixedProbe(),
+    FakeLocalChatGateway(),
+    hostConnectionProbe: FakeHostConnectionProbe(const [true]),
     autoStart: false,
   ),
   child: const QiyuShell(child: LocalChatView()),
@@ -826,7 +825,7 @@ Widget _homeWithChatViewModel() => ChangeNotifierProvider.value(
 /// 带历史的合一页：高对比用例要在消息流里取用户气泡（靠面色区分的块）。
 Future<Widget> _mergedHomeWithSession() async {
   final chatViewModel = LocalChatViewModel(
-    _FakeChatGateway(
+    FakeLocalChatGateway(
       restored: const LocalChatSnapshot(
         sessionId: 'session-1',
         messages: [
@@ -844,7 +843,7 @@ Future<Widget> _mergedHomeWithSession() async {
         ],
       ),
     ),
-    hostConnectionProbe: _FixedProbe(),
+    hostConnectionProbe: FakeHostConnectionProbe(const [true]),
     autoStart: false,
   );
   await chatViewModel.initialize();
@@ -891,67 +890,6 @@ Future<void> _pumpScaled(
 }
 
 // ---------- 假网关 ----------
-
-final class _FakeChatGateway implements StreamingLocalChatGateway {
-  _FakeChatGateway({
-    this.restored = const LocalChatSnapshot(
-      sessionId: 'session-1',
-      messages: [],
-    ),
-  });
-
-  final LocalChatSnapshot restored;
-  final List<String> sentTexts = [];
-
-  @override
-  Future<LocalChatSnapshot> restore({String? sessionId}) async => restored;
-
-  @override
-  Future<bool> cancel(String requestId) async => true;
-
-  @override
-  Future<String> transcribe({
-    required Uint8List audio,
-    required String mimeType,
-  }) async => '语音测试转写';
-
-  @override
-  Stream<LocalChatDeliveryEvent> deliver({
-    required String requestId,
-    required String text,
-    String? sessionId,
-  }) async* {
-    sentTexts.add(text);
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
-      requestId: requestId,
-      sessionId: restored.sessionId,
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
-      requestId: requestId,
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.delta,
-      requestId: requestId,
-      text: '咋了',
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
-      requestId: requestId,
-      messages: const ['咋了'],
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
-      requestId: requestId,
-      source: ReplySource.local,
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
-      requestId: requestId,
-    );
-  }
-}
 
 final class _StreamingChatGateway implements StreamingLocalChatGateway {
   final _controller = StreamController<LocalChatDeliveryEvent>();
@@ -1038,160 +976,6 @@ final class _FakeHistoryGateway implements HistoryGateway {
   }
 }
 
-final class _FakeMemoryGateway implements MemoryGateway {
-  @override
-  Future<MemoryOverview> fetchOverview() async => MemoryOverview(
-    generatedAt: DateTime(2026, 8, 19),
-    recent: const MemoryRecentSection(days: []),
-    longTerm: const MemoryLongTermSection(
-      present: false,
-      readable: true,
-      organizedAt: null,
-      groups: [],
-    ),
-    persona: const MemoryPersonaSection(branches: []),
-    relationship: const MemoryRelationshipSection(
-      present: false,
-      stage: null,
-      since: null,
-      confirmed: [],
-      probes: [],
-      recentChanges: [],
-      sharedPast: [],
-    ),
-    recovery: const MemoryRecoverySection(
-      healthy: true,
-      quarantinedFiles: 0,
-      findings: [],
-    ),
-  );
-
-  @override
-  Future<MemoryItemDetail?> fetchItemDetail(String id) async => null;
-
-  @override
-  Future<void> setAppellation(String appellation) async {}
-
-  @override
-  Future<MemoryActionResult> editItem(String id, String text) async =>
-      const MemoryActionResult(
-        status: MemoryActionStatus.success,
-        message: '已保存。',
-      );
-
-  @override
-  Future<MemoryActionResult> freezeItem(String id) async =>
-      const MemoryActionResult(
-        status: MemoryActionStatus.success,
-        message: '已暂停使用。',
-      );
-
-  @override
-  Future<MemoryActionResult> unfreezeItem(String id) async =>
-      const MemoryActionResult(
-        status: MemoryActionStatus.success,
-        message: '已恢复使用。',
-      );
-
-  @override
-  Future<MemoryActionResult> banItem(String id) async =>
-      const MemoryActionResult(
-        status: MemoryActionStatus.success,
-        message: '已不再提起。',
-      );
-
-  @override
-  Future<MemoryActionResult> unbanItem(String id) async =>
-      const MemoryActionResult(
-        status: MemoryActionStatus.success,
-        message: '已解除禁提。',
-      );
-
-  @override
-  Future<MemoryDeleteImpact?> previewDelete(String id) async => null;
-
-  @override
-  Future<MemoryActionResult> deleteItem(String id) async =>
-      const MemoryActionResult(
-        status: MemoryActionStatus.success,
-        message: '已删除。',
-      );
-
-  @override
-  Future<MemoryActionResult> revealItem(
-    String id, {
-    String field = 'content',
-  }) async => const MemoryActionResult(
-    status: MemoryActionStatus.failed,
-    message: '无可展示内容。',
-  );
-}
-
-final class _FakeSettingsGateway implements SettingsGateway {
-  var developerMode = false;
-
-  @override
-  Future<ExperiencePreferences> readPreferences() async =>
-      ExperiencePreferences(developerMode: developerMode);
-
-  @override
-  Future<ExperiencePreferences> savePreferences({
-    required bool developerMode,
-  }) async {
-    this.developerMode = developerMode;
-    return ExperiencePreferences(developerMode: developerMode);
-  }
-
-  @override
-  Future<MemoryControlsOverview> readMemoryControls() async =>
-      const MemoryControlsOverview(
-        readable: true,
-        frozen: [],
-        banned: [],
-        deletedCount: 0,
-      );
-
-  @override
-  Future<ClearPreview> readClearPreview() async => const ClearPreview(
-    memoryDirectory: 'C:/qiyu-test/memories',
-    sessionCount: 0,
-    episodeDayCount: 0,
-    frozenCount: 0,
-    bannedCount: 0,
-    deletedCount: 0,
-    snapshotCount: 0,
-    providerConfigured: false,
-    keySet: false,
-  );
-
-  @override
-  Future<void> clearData() async {}
-
-  @override
-  Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
-    generatedAt: DateTime(2026, 8, 19),
-    memoryDirectory: 'C:/qiyu-test/memories',
-    recentRequests: const [],
-    finalization: null,
-    dream: null,
-    fileHealth: const {},
-  );
-}
-
-final class _FakeOnboardingGateway implements OnboardingGateway {
-  _FakeOnboardingGateway({required this.completed});
-
-  bool completed;
-
-  @override
-  Future<OnboardingState> read() async => OnboardingState(completed: completed);
-
-  @override
-  Future<void> complete({String? appellation}) async {
-    completed = true;
-  }
-}
-
 /// 读数永远不回来的首见网关：用来把 `RootView` 停在加载态（只画进度环）。
 final class _HangingOnboardingGateway implements OnboardingGateway {
   final Completer<OnboardingState> _read = Completer<OnboardingState>();
@@ -1201,42 +985,6 @@ final class _HangingOnboardingGateway implements OnboardingGateway {
 
   @override
   Future<void> complete({String? appellation}) => Completer<void>().future;
-}
-
-final class _FixedProviderGateway implements ProviderSettingsGateway {
-  _FixedProviderGateway({required this.configured});
-  final bool configured;
-
-  @override
-  Future<ProviderSettings> read() async => ProviderSettings(
-    configured: configured,
-    keySet: configured,
-    provider: ProviderKind.openAiCompatible,
-    baseUrl: 'https://api.example.com/v1',
-    model: 'chat-model',
-    temperature: 0.7,
-    timeoutSeconds: 60,
-  );
-
-  @override
-  Future<ProviderSettings> save(ProviderSettingsDraft draft) async => read();
-
-  @override
-  Future<ProviderSettings> forgetApiKey() async => read();
-
-  @override
-  Future<ProviderTestResult> testConnection(
-    ProviderSettingsDraft draft,
-  ) async => const ProviderTestResult(
-    succeeded: true,
-    status: ProviderTestStatus.success,
-    message: '连接成功。',
-  );
-}
-
-final class _FixedProbe implements HostConnectionProbe {
-  @override
-  Future<bool> isHostAvailable() async => true;
 }
 
 final class _FixedWebSearchSettingsGateway implements WebSearchSettingsGateway {

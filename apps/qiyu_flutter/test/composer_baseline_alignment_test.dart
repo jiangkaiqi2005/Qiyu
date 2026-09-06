@@ -1,17 +1,16 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart' show FontLoader;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
-import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
+
+import 'support/shared_fakes.dart';
 
 /// composer 输入框空态/输入态的基线对齐回归锁。
 ///
@@ -48,8 +47,8 @@ void main() {
     addTearDown(tester.view.reset);
 
     final viewModel = LocalChatViewModel(
-      _FakeChatGateway(),
-      hostConnectionProbe: _FixedProbe(),
+      FakeLocalChatGateway.silent(transcribeText: ''),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     );
     await viewModel.initialize();
@@ -110,8 +109,8 @@ void main() {
     addTearDown(tester.view.reset);
 
     final viewModel = LocalChatViewModel(
-      _FakeChatGateway(),
-      hostConnectionProbe: _FixedProbe(),
+      FakeLocalChatGateway.silent(transcribeText: ''),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     );
     await viewModel.initialize();
@@ -175,31 +174,4 @@ RenderEditable _editableOf(WidgetTester tester) {
     current = current.child!;
   }
   return current as RenderEditable;
-}
-
-final class _FakeChatGateway implements StreamingLocalChatGateway {
-  @override
-  Future<LocalChatSnapshot> restore({String? sessionId}) async =>
-      const LocalChatSnapshot(sessionId: 'session-1', messages: []);
-
-  @override
-  Stream<LocalChatDeliveryEvent> deliver({
-    required String requestId,
-    required String text,
-    String? sessionId,
-  }) => const Stream.empty();
-
-  @override
-  Future<bool> cancel(String requestId) async => true;
-
-  @override
-  Future<String> transcribe({
-    required Uint8List audio,
-    required String mimeType,
-  }) async => '';
-}
-
-final class _FixedProbe implements HostConnectionProbe {
-  @override
-  Future<bool> isHostAvailable() async => true;
 }

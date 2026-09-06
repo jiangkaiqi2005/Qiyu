@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/app.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/memory/backup_client.dart';
@@ -16,7 +15,6 @@ import 'package:qiyu_flutter/features/memory/backup_view.dart';
 import 'package:qiyu_flutter/features/memory/memory_client.dart';
 import 'package:qiyu_flutter/features/memory/memory_view.dart';
 import 'package:qiyu_flutter/features/memory/memory_view_model.dart';
-import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
@@ -26,6 +24,9 @@ import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
 import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
+
+import 'support/shared_fakes.dart';
+import 'support/test_dates.dart';
 
 void main() {
   group('导航呈现', () {
@@ -1816,7 +1817,7 @@ MemoryOverview _maskedEntryOverview() {
       days: [
         MemoryDayCard(
           id: 'day-1',
-          date: _localDate(DateTime.now()),
+          date: localDate(DateTime.now()),
           summary: null,
           summaryMasked: false,
           finalized: true,
@@ -1850,7 +1851,7 @@ MemoryOverview _frozenEntryOverview() {
       days: [
         MemoryDayCard(
           id: 'day-frozen',
-          date: _localDate(DateTime.now()),
+          date: localDate(DateTime.now()),
           summary: null,
           summaryMasked: false,
           finalized: true,
@@ -1885,7 +1886,7 @@ MemoryOverview _maskedPersonaOverview() {
       days: [
         MemoryDayCard(
           id: 'day-masked',
-          date: _localDate(DateTime.now()),
+          date: localDate(DateTime.now()),
           summary: null,
           summaryMasked: true,
           finalized: true,
@@ -1934,14 +1935,14 @@ MemoryOverview _maskedPersonaOverview() {
 LocalChatViewModel _chatViewModel([_FakeChatGateway? gateway]) =>
     LocalChatViewModel(
       gateway ?? _FakeChatGateway(),
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     );
 
 Future<OnboardingViewModel> _onboardingViewModel() async {
   final viewModel = OnboardingViewModel(
-    _FakeOnboardingGateway(),
-    _FixedProviderSettingsGateway(),
+    FakeOnboardingGateway(completed: true),
+    FixedProviderSettingsGateway(),
     autoStart: false,
   );
   await viewModel.initialize();
@@ -1950,62 +1951,25 @@ Future<OnboardingViewModel> _onboardingViewModel() async {
 
 Future<ProviderSettingsViewModel> _providerSettingsViewModel() async {
   final viewModel = ProviderSettingsViewModel(
-    _FixedProviderSettingsGateway(),
+    FixedProviderSettingsGateway(),
     autoStart: false,
   );
   await viewModel.initialize();
   return viewModel;
 }
 
-final class _FakeSettingsGateway implements SettingsGateway {
-  @override
-  Future<ExperiencePreferences> readPreferences() async =>
-      ExperiencePreferences(developerMode: false);
-
-  @override
-  Future<ExperiencePreferences> savePreferences({
-    required bool developerMode,
-  }) async => ExperiencePreferences(developerMode: developerMode);
-
-  @override
-  Future<MemoryControlsOverview> readMemoryControls() async =>
-      const MemoryControlsOverview(
-        readable: true,
-        frozen: [],
-        banned: [],
-        deletedCount: 0,
+/// 设置网关替身：共享版之外补上本文件诊断快照的日终健康档位。
+class _FakeSettingsGateway extends FakeSettingsGateway {
+  _FakeSettingsGateway()
+    : super(
+        finalization: const FinalizationHealth(
+          today: '2026-08-19',
+          todayFinalized: false,
+          pendingDays: 0,
+          unreadableDays: 0,
+        ),
+        dream: const DreamHealth(),
       );
-
-  @override
-  Future<ClearPreview> readClearPreview() async => const ClearPreview(
-    memoryDirectory: 'C:/qiyu-test/memories',
-    sessionCount: 0,
-    episodeDayCount: 0,
-    frozenCount: 0,
-    bannedCount: 0,
-    deletedCount: 0,
-    snapshotCount: 0,
-    providerConfigured: false,
-    keySet: false,
-  );
-
-  @override
-  Future<void> clearData() async {}
-
-  @override
-  Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
-    generatedAt: DateTime(2026, 8, 19),
-    memoryDirectory: 'C:/qiyu-test/memories',
-    recentRequests: const [],
-    finalization: const FinalizationHealth(
-      today: '2026-08-19',
-      todayFinalized: false,
-      pendingDays: 0,
-      unreadableDays: 0,
-    ),
-    dream: const DreamHealth(),
-    fileHealth: const {},
-  );
 }
 
 /// 恢复状态呈现用总览（ticket 21）：受影响范围、采用证据与恢复结果
@@ -2059,7 +2023,7 @@ MemoryOverview _fullOverview() => MemoryOverview(
     days: [
       MemoryDayCard(
         id: 'day-1',
-        date: _localDate(DateTime.now()),
+        date: localDate(DateTime.now()),
         summary: '聊了演讲准备',
         summaryMasked: false,
         finalized: false,
@@ -2251,11 +2215,6 @@ MemoryOverview _markedOverview() => MemoryOverview(
 
 final _sensitiveEntryAt = DateTime(2026, 8, 17, 12);
 
-String _localDate(DateTime value) =>
-    '${value.year}-'
-    '${value.month.toString().padLeft(2, '0')}-'
-    '${value.day.toString().padLeft(2, '0')}';
-
 final class _FakeMemoryGateway implements MemoryGateway {
   _FakeMemoryGateway(this._overview, {this.fetchError, this.detailError});
 
@@ -2381,7 +2340,7 @@ final class _FakeMemoryGateway implements MemoryGateway {
       // 列表条目 entry-1 的详情：与卡片同一状态（未遮罩、无控制），
       // 供两处可用性一致性用例对照。
       'entry-1' => EpisodeEntryDetail(
-        date: _localDate(DateTime.now()),
+        date: localDate(DateTime.now()),
         dayId: 'day-1',
         entryKind: 'memory',
         content: '用户说这周在准备演讲',
@@ -2396,7 +2355,7 @@ final class _FakeMemoryGateway implements MemoryGateway {
       ),
       // 冻结条目 entry-frozen 的详情：同一冻结状态，供两处矩阵对照。
       'entry-frozen' => EpisodeEntryDetail(
-        date: _localDate(DateTime.now()),
+        date: localDate(DateTime.now()),
         dayId: 'day-frozen',
         entryKind: 'memory',
         content: '被冻结的记录',
@@ -2507,7 +2466,7 @@ final class _FakeMemoryGateway implements MemoryGateway {
         finalized: true,
       ),
       'entry-m2' => EpisodeEntryDetail(
-        date: _localDate(DateTime.now()),
+        date: localDate(DateTime.now()),
         dayId: 'day-masked',
         entryKind: 'memory',
         content: '一条普通记录',
@@ -2522,7 +2481,7 @@ final class _FakeMemoryGateway implements MemoryGateway {
       ),
       // 遮罩时原文字段为 null，只有遮罩标记：揭示入口必须仍在。
       'day-masked' => MemoryDayDetail(
-        date: _localDate(DateTime.now()),
+        date: localDate(DateTime.now()),
         summary: null,
         summaryMasked: true,
         finalized: true,
@@ -2540,32 +2499,6 @@ final class _FakeMemoryGateway implements MemoryGateway {
       _ => null,
     };
   }
-}
-
-final class _FakeOnboardingGateway implements OnboardingGateway {
-  @override
-  Future<OnboardingState> read() async =>
-      const OnboardingState(completed: true);
-
-  @override
-  Future<void> complete({String? appellation}) async {}
-}
-
-final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {
-  @override
-  Future<ProviderSettings> read() async =>
-      const ProviderSettings(configured: false, keySet: false);
-
-  @override
-  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-
-  @override
-  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
-
-  @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
 }
 
 final class _FakeChatGateway implements StreamingLocalChatGateway {
@@ -2604,22 +2537,6 @@ final class _FakeChatGateway implements StreamingLocalChatGateway {
     required Uint8List audio,
     required String mimeType,
   }) async => '语音测试转写';
-}
-
-final class _FakeHostConnectionProbe implements HostConnectionProbe {
-  _FakeHostConnectionProbe(this._results);
-
-  final List<bool> _results;
-  var _index = 0;
-
-  @override
-  Future<bool> isHostAvailable() async {
-    final result = _results[_index];
-    if (_index < _results.length - 1) {
-      _index += 1;
-    }
-    return result;
-  }
 }
 
 final class _FakeBackupGateway implements BackupGateway {

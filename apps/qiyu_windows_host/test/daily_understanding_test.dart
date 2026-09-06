@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/failing_atomic_writer.dart';
+
 void main() {
   group('parseDayUnderstanding whitelist validation', () {
     test('a fully valid payload parses into every field', () {
@@ -470,7 +472,21 @@ void main() {
             atomicWriter: writer,
             diagnosticsSink: (_) {},
           );
-      final failing = buildService(_DailyStateFailingWriter(failures: 1));
+      var dailyStateFailures = 1;
+      final failing = buildService(
+        FailingAtomicTextWriter(
+          shouldFail: (path) {
+            if (dailyStateFailures > 0 && path.endsWith('daily-state.md')) {
+              dailyStateFailures -= 1;
+              return true;
+            }
+            return false;
+          },
+          exception: const FileSystemException(
+            'mock interrupted daily-state write',
+          ),
+        ),
+      );
 
       // 写入失败抛异常且 finalized 保持 false（下次触发幂等重试）。
       await expectLater(
@@ -733,10 +749,22 @@ void main() {
           );
 
       // 第一次归档在 daily-state 写入处失败，理解已随第 1 步落盘。
+      var dailyStateFailures = 1;
       await expectLater(
-        buildService(_DailyStateFailingWriter(failures: 1)).finalizeDay(
-          '2026-08-14',
-        ),
+        buildService(
+          FailingAtomicTextWriter(
+            shouldFail: (path) {
+              if (dailyStateFailures > 0 && path.endsWith('daily-state.md')) {
+                dailyStateFailures -= 1;
+                return true;
+              }
+              return false;
+            },
+            exception: const FileSystemException(
+              'mock interrupted daily-state write',
+            ),
+          ),
+        ).finalizeDay('2026-08-14'),
         throwsA(isA<MemoryRepositoryException>()),
       );
       // 失败与重试之间用户新增禁提。
@@ -803,21 +831,5 @@ final class _FakeUnderstandingClient implements ProviderChatClient {
       return ModelCompletion.failure(kind);
     }
     return ModelCompletion.reply(reply ?? '{}');
-  }
-}
-
-final class _DailyStateFailingWriter implements AtomicTextWriter {
-  _DailyStateFailingWriter({required this.failures});
-
-  int failures;
-  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
-
-  @override
-  Future<void> replace(String path, String contents) {
-    if (failures > 0 && path.endsWith('daily-state.md')) {
-      failures -= 1;
-      throw const FileSystemException('mock interrupted daily-state write');
-    }
-    return _delegate.replace(path, contents);
   }
 }

@@ -7,6 +7,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
 import 'support/dream_state_fixture.dart';
+import 'support/failing_atomic_writer.dart';
 import 'support/in_process_chat_host.dart';
 
 void main() {
@@ -36,7 +37,18 @@ void main() {
     test(
       'retries an interrupted exchange without duplicating the user turn',
       () async {
-        final writer = _FailOnceSessionWriter(failOnCall: 3);
+        var sessionWrites = 0;
+        final writer = FailingAtomicTextWriter(
+          shouldFail: (path) {
+            if (!path.contains(
+              '${Platform.pathSeparator}sessions${Platform.pathSeparator}',
+            )) {
+              return false;
+            }
+            sessionWrites += 1;
+            return sessionWrites == 3;
+          },
+        );
         final harness = await InProcessChatHost.start(
           atomicWriter: writer,
           clock: () => DateTime(2026, 8, 11, 22, 30),
@@ -930,7 +942,12 @@ void main() {
       );
       final harness = await InProcessChatHost.start(
         modelGateway: gateway,
-        atomicWriter: const _EpisodesFailingWriter(),
+        atomicWriter: FailingAtomicTextWriter(
+          shouldFail: (path) => path.contains('episodes'),
+          exception: const FileSystemException(
+            'mock interrupted episode write',
+          ),
+        ),
         diagnosticsSink: diagnostics.add,
         clock: () => DateTime(2026, 8, 11, 22, 30),
       );
@@ -2818,7 +2835,11 @@ void main() {
 
     test('a successful catch-up resets the daily attempt counter', () async {
       final now = DateTime(2026, 8, 1, 9, 0);
-      final summaryWriter = _SummaryFailingWriter();
+      var failSummaryWrites = true;
+      final summaryWriter = FailingAtomicTextWriter(
+        shouldFail: (path) => failSummaryWrites && path.contains('summary.md'),
+        exception: const FileSystemException('mock interrupted summary write'),
+      );
       final gateway = ScriptedModelGateway();
       final diagnostics = <String>[];
       final harness = await InProcessChatHost.start(
@@ -2856,7 +2877,7 @@ void main() {
       );
   
       // 启动月压缩被写入器拦下：摘要缺失成为轮询待办。两次失败。
-      summaryWriter.failSummaryWrites = true;
+      failSummaryWrites = true;
       for (var attempt = 0; attempt < 2; attempt += 1) {
         await harness.pollTick();
         await harness.finalizePending();
@@ -2864,13 +2885,13 @@ void main() {
       expect(summaryFile.existsSync(), isFalse);
   
       // 放开写入器：第三次尝试成功，计数清零。
-      summaryWriter.failSummaryWrites = false;
+      failSummaryWrites = false;
       await harness.pollTick();
       await harness.finalizePending();
       expect(summaryFile.existsSync(), isTrue);
   
       // 再次制造积压：清零后的配额允许完整再试 10 轮，第 11 轮闸住。
-      summaryWriter.failSummaryWrites = true;
+      failSummaryWrites = true;
       summaryFile.deleteSync();
       for (var attempt = 0; attempt < 10; attempt += 1) {
         await harness.pollTick();
@@ -2894,7 +2915,11 @@ void main() {
 
     test('idle poll tick archives a day that never got finalized', () async {
       final now = DateTime(2026, 8, 12, 9, 0);
-      final episodesWriter = _EpisodesToggleFailingWriter();
+      var failEpisodeWrites = true;
+      final episodesWriter = FailingAtomicTextWriter(
+        shouldFail: (path) => failEpisodeWrites && path.contains('episodes'),
+        exception: const FileSystemException('mock interrupted episode write'),
+      );
       final gateway = ScriptedModelGateway(
         completeScript: [
           // 启动补扫先消耗一次（写入被拦、理解失败）；轮询补扫后成功归档。
@@ -2942,7 +2967,7 @@ void main() {
       expect((await reader.readDay('2026-08-10')).finalized, isFalse);
   
       // 放开写入器：轮询补扫把日期归档。
-      episodesWriter.failEpisodeWrites = false;
+      failEpisodeWrites = false;
       await harness.pollTick();
       await harness.finalizePending();
   
@@ -2954,7 +2979,11 @@ void main() {
       // 未定稿日期（归档待办）与待补跑 Dream 并存：一次 tick 按序排程
       // 两项（先归档后 Dream），链内串行执行，各花一次模型调用。
       final now = DateTime(2026, 8, 12, 9, 0);
-      final episodesWriter = _EpisodesToggleFailingWriter();
+      var failEpisodeWrites = true;
+      final episodesWriter = FailingAtomicTextWriter(
+        shouldFail: (path) => failEpisodeWrites && path.contains('episodes'),
+        exception: const FileSystemException('mock interrupted episode write'),
+      );
       final gateway = ScriptedModelGateway(
         completeScript: [
           // 启动补扫先消耗一次（写入被拦、理解失败，日期保持未定稿）。
@@ -3017,7 +3046,7 @@ void main() {
       await _seedPendingDream(harness.memoryDirectory,
           lastSuccess: DateTime(2026, 8, 1));
   
-      episodesWriter.failEpisodeWrites = false;
+      failEpisodeWrites = false;
       await harness.pollTick();
       await harness.finalizePending();
   
@@ -3243,43 +3272,6 @@ void main() {
   });
 }
 
-/// 只计 sessions/ 下的写入并在第 [failOnCall] 次失败一次：真路径上
-/// 后台恢复扫描也经同一原子写入器落盘，全量计数会让失败点漂移。
-final class _FailOnceSessionWriter implements AtomicTextWriter {
-  _FailOnceSessionWriter({required this.failOnCall});
-
-  final int failOnCall;
-  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
-  var _calls = 0;
-
-  @override
-  Future<void> replace(String path, String contents) {
-    if (path.contains(
-      '${Platform.pathSeparator}sessions${Platform.pathSeparator}',
-    )) {
-      _calls += 1;
-      if (_calls == failOnCall) {
-        throw const FileSystemException('mock interrupted write');
-      }
-    }
-    return _delegate.replace(path, contents);
-  }
-}
-
-final class _EpisodesFailingWriter implements AtomicTextWriter {
-  const _EpisodesFailingWriter();
-
-  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
-
-  @override
-  Future<void> replace(String path, String contents) {
-    if (path.contains('episodes')) {
-      throw const FileSystemException('mock interrupted episode write');
-    }
-    return _delegate.replace(path, contents);
-  }
-}
-
 final class _ControlledProviderPort implements ProviderChatPort {
   final _controller = StreamController<ModelStreamEvent>();
 
@@ -3458,34 +3450,4 @@ final class _RecordingIdleCatchupPoller implements IdleCatchupPoller {
 
   @override
   void stop() => stopped = true;
-}
-
-/// 可开关地拦截月摘要写入：制造「月压缩积压」待办与压缩失败轮次。
-final class _SummaryFailingWriter implements AtomicTextWriter {
-  bool failSummaryWrites = true;
-
-  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
-
-  @override
-  Future<void> replace(String path, String contents) {
-    if (failSummaryWrites && path.contains('summary.md')) {
-      throw const FileSystemException('mock interrupted summary write');
-    }
-    return _delegate.replace(path, contents);
-  }
-}
-
-/// 可开关地拦截 episodes 写入：制造「启动补扫归档失败」的未定稿日期。
-final class _EpisodesToggleFailingWriter implements AtomicTextWriter {
-  bool failEpisodeWrites = true;
-
-  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
-
-  @override
-  Future<void> replace(String path, String contents) {
-    if (failEpisodeWrites && path.contains('episodes')) {
-      throw const FileSystemException('mock interrupted episode write');
-    }
-    return _delegate.replace(path, contents);
-  }
 }

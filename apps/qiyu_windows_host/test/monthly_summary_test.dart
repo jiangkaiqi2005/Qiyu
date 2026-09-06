@@ -4,6 +4,8 @@ import 'package:path/path.dart' as path;
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/failing_atomic_writer.dart';
+
 void main() {
   test('a finished month compresses into four traceable sections', () async {
     final root = await Directory.systemTemp.createTemp('qiyu-month-basic-');
@@ -201,7 +203,10 @@ void main() {
     final failing = MonthlySummaryStore(
       memoryDirectory: root.path,
       episodePipeline: pipeline,
-      atomicWriter: const _SummaryFailingWriter(),
+      atomicWriter: FailingAtomicTextWriter(
+        shouldFail: (path) => path.endsWith('summary.md'),
+        exception: const FileSystemException('mock interrupted summary write'),
+      ),
       diagnosticsSink: (_) {},
     );
     await expectLater(
@@ -320,17 +325,3 @@ EpisodeEntry _entry(String id, String summary, {String kind = episodeKindMemory}
       at: DateTime(2026, 7, 2, 21).toUtc(),
       kind: kind,
     );
-
-final class _SummaryFailingWriter implements AtomicTextWriter {
-  const _SummaryFailingWriter();
-
-  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
-
-  @override
-  Future<void> replace(String path, String contents) {
-    if (path.endsWith('summary.md')) {
-      throw const FileSystemException('mock interrupted summary write');
-    }
-    return _delegate.replace(path, contents);
-  }
-}

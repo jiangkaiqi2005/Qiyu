@@ -6,6 +6,8 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/scripted_chat_client.dart';
+
 void main() {
   late Directory temporaryDirectory;
   late String memoryDirectory;
@@ -968,14 +970,17 @@ void main() {
         openLoopStore: openLoopStore,
         monthlySummary: monthlySummary,
         personaTree: personaTree,
-        modelClient: _ScriptedClient([
-          ModelCompletion.reply(
-            '{"items":[{"section":"人与关系","text":"一条印象",'
-            '"evidence":["2026-08-05"]}],'
-            '"rootProposals":[{"op":"promote","branch":"identity",'
-            '"claim":"用户是一名教师","middles":["ID-M001"]}]}',
-          ),
-        ]),
+        modelClient: ScriptedChatClient(
+          [
+            ModelCompletion.reply(
+              '{"items":[{"section":"人与关系","text":"一条印象",'
+              '"evidence":["2026-08-05"]}],'
+              '"rootProposals":[{"op":"promote","branch":"identity",'
+              '"claim":"用户是一名教师","middles":["ID-M001"]}]}',
+            ),
+          ],
+          repeatLastOnOverflow: false,
+        ),
         clock: () => clock,
         diagnosticsSink: diagnostics.add,
       );
@@ -1226,23 +1231,4 @@ void main() {
       expect(quarantineOnlyReport.healthy, isFalse);
     });
   });
-}
-
-/// 供 Dream 测试使用的脚本化模型客户端。
-final class _ScriptedClient implements ProviderChatClient {
-  _ScriptedClient(this.completions);
-
-  final List<ModelCompletion?> completions;
-  var _index = 0;
-
-  @override
-  Future<ModelCompletion?> complete(
-    List<ModelMessage> messages, {
-    int? maxTokens,
-  }) async {
-    if (_index >= completions.length) {
-      return null;
-    }
-    return completions[_index++];
-  }
 }

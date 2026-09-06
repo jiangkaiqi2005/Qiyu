@@ -4,7 +4,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
@@ -16,6 +15,8 @@ import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/time_format.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
+
+import 'support/shared_fakes.dart';
 
 void main() {
   // 本地时刻构造（不走 UTC 换算）：断言与测试机时区无关。
@@ -381,7 +382,7 @@ void main() {
     testWidgets('聊天页恢复的消息悬停可见时刻', (tester) async {
       final viewModel = LocalChatViewModel(
         _RestoredGateway(),
-        hostConnectionProbe: _FixedHostConnectionProbe(),
+        hostConnectionProbe: FakeHostConnectionProbe(const [true]),
         autoStart: false,
       );
       addTearDown(viewModel.dispose);
@@ -398,7 +399,7 @@ void main() {
     testWidgets('历史回看页共用气泡同样悬停可见时刻', (tester) async {
       final viewModel = LocalChatViewModel(
         _RestoredGateway(),
-        hostConnectionProbe: _FixedHostConnectionProbe(),
+        hostConnectionProbe: FakeHostConnectionProbe(const [true]),
         autoStart: false,
       );
       addTearDown(viewModel.dispose);
@@ -1214,11 +1215,6 @@ Widget _chatHarness(LocalChatViewModel viewModel) {
       ),
     ),
   );
-}
-
-final class _FixedHostConnectionProbe implements HostConnectionProbe {
-  @override
-  Future<bool> isHostAvailable() async => true;
 }
 
 final class _NoRecorderPlatform implements VoiceRecorderPlatform {

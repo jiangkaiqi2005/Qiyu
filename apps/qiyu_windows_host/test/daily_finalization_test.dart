@@ -5,6 +5,8 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/failing_atomic_writer.dart';
+
 void main() {
   test(
     'finalizes a day in fixed order: summary, state pack, indexes, flag',
@@ -579,7 +581,9 @@ void main() {
         memoryDirectory: temporaryDirectory.path,
         episodePipeline: pipeline,
         clock: clock,
-        atomicWriter: const _FailOnPath('daily-state'),
+        atomicWriter: FailingAtomicTextWriter(
+          shouldFail: (path) => path.contains('daily-state'),
+        ),
       );
 
       await expectLater(
@@ -1248,21 +1252,6 @@ RawSession _session(String id, List<String> requestIds) {
     updatedAt: base.toUtc(),
     turns: turns,
   );
-}
-
-final class _FailOnPath implements AtomicTextWriter {
-  const _FailOnPath(this.fragment);
-
-  final String fragment;
-  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
-
-  @override
-  Future<void> replace(String path, String contents) {
-    if (path.contains(fragment)) {
-      throw const FileSystemException('mock interrupted write');
-    }
-    return _delegate.replace(path, contents);
-  }
 }
 
 final class _RecordingUnderstandingClient implements ProviderChatClient {

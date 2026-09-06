@@ -6,7 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
@@ -16,6 +15,8 @@ import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
+
+import 'support/shared_fakes.dart';
 
 void main() {
   testWidgets('模型回复完整交付后自动朗读：指示与停止按钮', (tester) async {
@@ -27,7 +28,7 @@ void main() {
     );
     final viewModel = LocalChatViewModel(
       _VoiceChatGateway(),
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       ttsSettingsGateway: _FixedTtsGateway(configured: true),
       voiceOutput: controller,
       autoStart: false,
@@ -66,7 +67,7 @@ void main() {
     );
     final viewModel = LocalChatViewModel(
       _VoiceChatGateway(),
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       ttsSettingsGateway: _FixedTtsGateway(configured: true),
       voiceOutput: controller,
       autoStart: false,
@@ -109,7 +110,7 @@ void main() {
     );
     final viewModel = LocalChatViewModel(
       _VoiceChatGateway(),
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       ttsSettingsGateway: _FixedTtsGateway(configured: true),
       voiceOutput: controller,
       autoStart: false,
@@ -165,7 +166,7 @@ void main() {
     );
     final viewModel = LocalChatViewModel(
       _VoiceChatGateway(),
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       ttsSettingsGateway: _FixedTtsGateway(configured: true),
       voiceOutput: controller,
       autoStart: false,
@@ -209,7 +210,7 @@ void main() {
     final mutableTts = _MutableTtsGateway(configured: true, autoSpeak: true);
     final viewModel = LocalChatViewModel(
       _VoiceChatGateway(),
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       ttsSettingsGateway: mutableTts,
       voiceOutput: controller,
       autoStart: false,
@@ -274,7 +275,7 @@ void main() {
   testWidgets('未配语音合成：不显示朗读开关', (tester) async {
     final viewModel = LocalChatViewModel(
       _VoiceChatGateway(),
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       ttsSettingsGateway: _FixedTtsGateway(configured: false),
       voiceOutput: VoiceOutputController(
         _RecordingSpeakGateway(),
@@ -396,7 +397,7 @@ void main() {
     );
     final viewModel = LocalChatViewModel(
       gateway,
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       ttsSettingsGateway: _FixedTtsGateway(configured: true),
       voiceOutput: controller,
       autoStart: false,
@@ -433,7 +434,7 @@ void main() {
     );
     final viewModel = LocalChatViewModel(
       gateway,
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       ttsSettingsGateway: _FixedTtsGateway(configured: true),
       voiceOutput: controller,
       autoStart: false,
@@ -568,14 +569,9 @@ Widget _harness({
 LocalChatViewModel _chatViewModel([StreamingLocalChatGateway? gateway]) =>
     LocalChatViewModel(
       gateway ?? _VoiceChatGateway(),
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     );
-
-final class _FixedHostConnectionProbe implements HostConnectionProbe {
-  @override
-  Future<bool> isHostAvailable() async => true;
-}
 
 /// configured 可翻转的 STT 设置网关：模拟设置页保存前后的状态。
 final class _MutableSttGateway implements SttSettingsGateway {

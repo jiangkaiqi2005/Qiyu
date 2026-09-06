@@ -1,17 +1,13 @@
-import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/app.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
-import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
-import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
-import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
+import 'support/shared_fakes.dart';
 
 /// 回归回路（bug 诊断）：本地规则回复时聊天页工具条右上角的三枚图标
 /// （朗读开关 / 历史 / 模型连接）整体左移，模型回复后复位。
@@ -29,12 +25,12 @@ void main() {
     addTearDown(tester.view.reset);
 
     final ttsGateway = _ConfiguredTtsSettingsGateway();
-    final gateway = _FakeLocalChatGateway(
+    final gateway = FakeLocalChatGateway(
       replySources: const [ReplySource.local, ReplySource.llm],
     );
     final viewModel = LocalChatViewModel(
       gateway,
-      hostConnectionProbe: _AvailableHostProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
       ttsSettingsGateway: ttsGateway,
       requestIdFactory: () => 'strip-stability-request',
@@ -103,12 +99,12 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
-    final gateway = _FakeLocalChatGateway(
+    final gateway = FakeLocalChatGateway(
       replySources: const [ReplySource.local, ReplySource.llm],
     );
     final viewModel = LocalChatViewModel(
       gateway,
-      hostConnectionProbe: _AvailableHostProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
       requestIdFactory: () => 'sidebar-stability-request',
     );
@@ -175,109 +171,12 @@ final class _ConfiguredTtsSettingsGateway implements TtsSettingsGateway {
       const TtsConnectionTest(succeeded: true, message: '连接成功。');
 }
 
-final class _AvailableHostProbe implements HostConnectionProbe {
-  @override
-  Future<bool> isHostAvailable() async => true;
-}
-
-/// 每次发送按 [replySources] 顺序给出完成来源（超出沿用最后一个），
-/// 覆盖「本地规则回复 → 模型回复」的连续两轮。
-final class _FakeLocalChatGateway implements StreamingLocalChatGateway {
-  _FakeLocalChatGateway({this.replySources = const [ReplySource.local]});
-
-  final List<ReplySource> replySources;
-  final List<String> sentTexts = [];
-
-  @override
-  Future<LocalChatSnapshot> restore({String? sessionId}) async =>
-      const LocalChatSnapshot(sessionId: 'session-1', messages: []);
-
-  @override
-  Future<bool> cancel(String requestId) async => true;
-
-  @override
-  Future<String> transcribe({
-    required Uint8List audio,
-    required String mimeType,
-  }) async => '语音测试转写';
-
-  @override
-  Stream<LocalChatDeliveryEvent> deliver({
-    required String requestId,
-    required String text,
-    String? sessionId,
-  }) async* {
-    sentTexts.add(text);
-    final index = sentTexts.length - 1;
-    final source = index < replySources.length
-        ? replySources[index]
-        : replySources.last;
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
-      requestId: requestId,
-      sessionId: 'session-1',
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
-      requestId: requestId,
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.delta,
-      requestId: requestId,
-      text: '咋了',
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
-      requestId: requestId,
-      messages: const ['咋了'],
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
-      requestId: requestId,
-      source: source,
-      fallbackReason: source == ReplySource.local
-          ? FallbackReason.noLlmConfig
-          : null,
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
-      requestId: requestId,
-    );
-  }
-}
-
 Future<OnboardingViewModel> _completedOnboardingViewModel() async {
   final viewModel = OnboardingViewModel(
-    _CompletedOnboardingGateway(),
-    _FixedProviderSettingsGateway(),
+    FakeOnboardingGateway(completed: true),
+    FixedProviderSettingsGateway(),
     autoStart: false,
   );
   await viewModel.initialize();
   return viewModel;
-}
-
-final class _CompletedOnboardingGateway implements OnboardingGateway {
-  @override
-  Future<OnboardingState> read() async =>
-      const OnboardingState(completed: true);
-
-  @override
-  Future<void> complete({String? appellation}) async {}
-}
-
-final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {
-  @override
-  Future<ProviderSettings> read() async =>
-      const ProviderSettings(configured: false, keySet: false);
-
-  @override
-  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-
-  @override
-  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
-
-  @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
 }

@@ -5,6 +5,9 @@ import 'package:path/path.dart' as path;
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/failing_atomic_writer.dart';
+import 'support/scripted_chat_client.dart';
+
 void main() {
   test('the first bedtime dream accepts a validated draft', () async {
     var now = DateTime(2026, 8, 15, 23, 10);
@@ -14,7 +17,7 @@ void main() {
     );
     await _seedFinalizedDay(pipeline, '2026-08-14', '用户完成了人生第一次演讲');
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户和朋友去爬山');
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '用户完成人生第一次演讲', ['2026-08-14']),
         _item('人与关系', '用户有位常一起爬山的朋友', ['2026-08-15']),
@@ -72,7 +75,7 @@ void main() {
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-14', '用户完成了人生第一次演讲');
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(
         _candidate([
           _item('重要事件', '用户完成人生第一次演讲', ['2026-08-14']),
@@ -101,7 +104,7 @@ void main() {
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了工作');
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '用户换了新工作', ['2026-08-15']),
       ])),
@@ -166,7 +169,7 @@ void main() {
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '基准印象', ['2026-08-15']),
       ])),
@@ -200,7 +203,7 @@ void main() {
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-09-30', '用户聊了很久');
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '不应出现', ['2026-09-30']),
       ])),
@@ -234,7 +237,7 @@ void main() {
       '# long-memory\n\n## 重要事件\n- 旧印象保留\n',
       encoding: utf8,
     );
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       const ModelCompletion.failure(ModelFailureKind.network),
       ModelCompletion.reply(_candidate([
         _item('重要事件', '旧印象保留', ['2026-08-15']),
@@ -273,7 +276,7 @@ void main() {
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '用户喜欢爬山', ['2026-08-15']),
         _item('模式与轨迹', '用户喜欢爬山', ['2026-08-15']),
@@ -303,7 +306,7 @@ void main() {
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了搬家');
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       const ModelCompletion.reply('这一次没有按格式输出。'),
     ]);
     final dream = DreamService(
@@ -351,7 +354,7 @@ void main() {
         memoryDirectory: directory.path,
         episodePipeline: pipeline,
         openLoopStore: OpenLoopStore(memoryDirectory: directory.path),
-        modelClient: _ScriptedDreamClient([ModelCompletion.reply(candidate)]),
+        modelClient: ScriptedChatClient([ModelCompletion.reply(candidate)]),
         clock: () => now,
       );
 
@@ -510,7 +513,7 @@ void main() {
     final dream = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
-      modelClient: _ScriptedDreamClient([
+      modelClient: ScriptedChatClient([
         ModelCompletion.reply(_candidate([
           _item('重要事件', '编造的印象', ['2020-01-01', '2026-08-15']),
         ])),
@@ -547,9 +550,9 @@ void main() {
     final failingDream = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
-      modelClient: _ScriptedDreamClient([ModelCompletion.reply(candidate)]),
+      modelClient: ScriptedChatClient([ModelCompletion.reply(candidate)]),
       clock: () => now,
-      atomicWriter: _TargetedFailingWriter((path) => path == longMemoryPath),
+      atomicWriter: FailingAtomicTextWriter(shouldFail: (path) => path == longMemoryPath),
     );
 
     final failed = await failingDream.run(bedtime: true);
@@ -569,7 +572,7 @@ void main() {
     final recoveredDream = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
-      modelClient: _ScriptedDreamClient([ModelCompletion.reply(candidate)]),
+      modelClient: ScriptedChatClient([ModelCompletion.reply(candidate)]),
       clock: () => now,
     );
     final recovered = await recoveredDream.run(bedtime: false);
@@ -584,7 +587,7 @@ void main() {
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '基准印象', ['2026-08-15']),
       ])),
@@ -631,7 +634,7 @@ void main() {
       'qiyu-dream-nomaterial-test-',
       clock: () => now,
     );
-    final client = _ScriptedDreamClient(const []);
+    final client = ScriptedChatClient(const []);
     final dream = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
@@ -661,7 +664,7 @@ void main() {
       clock: () => now,
     );
     // 空脚本：材料为空时 Dream 绝不调模型；次日补跑的候选由用例现场追加。
-    final client = _ScriptedDreamClient([]);
+    final client = ScriptedChatClient([]);
     final dream = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
@@ -725,7 +728,7 @@ void main() {
     final configured = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
-      modelClient: _ScriptedDreamClient([
+      modelClient: ScriptedChatClient([
         ModelCompletion.reply(_candidate([
           _item('重要事件', '迟来的印象', ['2026-08-15']),
         ])),
@@ -752,7 +755,7 @@ void main() {
       corrupted,
       encoding: utf8,
     );
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '新印象', ['2026-08-15']),
       ])),
@@ -787,7 +790,7 @@ void main() {
     final dream = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
-      modelClient: _ScriptedDreamClient(const []),
+      modelClient: ScriptedChatClient(const []),
       clock: () => now,
     );
 
@@ -866,7 +869,7 @@ void main() {
       );
       await compressor.compressMonth(monthKey);
     }
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '编造旧日期', ['2026-02-10']),
       ])),
@@ -927,7 +930,7 @@ void main() {
     final dream = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
-      modelClient: _ScriptedDreamClient([
+      modelClient: ScriptedChatClient([
         ModelCompletion.reply(_candidate([
           _item('重要事件', '新印象', ['2026-08-15']),
         ])),
@@ -979,7 +982,7 @@ void main() {
     final accepted = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
-      modelClient: _ScriptedDreamClient([
+      modelClient: ScriptedChatClient([
         ModelCompletion.reply(_candidate([
           _item('重要事件', '一条印象', ['2026-08-15']),
         ])),
@@ -1018,7 +1021,7 @@ void main() {
       '# open-loops\n\n${'超长的未闭环线索内容。' * 811}',
       encoding: utf8,
     );
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '一条印象', ['2026-08-20']),
       ])),
@@ -1057,7 +1060,7 @@ void main() {
       '# open-loops\n\n${'超长的未闭环线索内容。' * 980}',
       encoding: utf8,
     );
-    final client = _ScriptedDreamClient(const []);
+    final client = ScriptedChatClient(const []);
     final dream = DreamService(
       memoryDirectory: directory.path,
       episodePipeline: pipeline,
@@ -1186,7 +1189,7 @@ void main() {
 - [EX-L001] 2026-07-20 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/07/2026-07-20.md [m1]
 - [EX-L002] 2026-08-02 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/08/2026-08-02.md [m2]
 ''');
-      final client = _ScriptedDreamClient([
+      final client = ScriptedChatClient([
         ModelCompletion.reply(_candidateWithRoots([
           _item('模式与轨迹', '2026年夏天起用户更愿意谈起尴尬经历', ['2026-08-14']),
         ], [
@@ -1266,7 +1269,7 @@ void main() {
 - [EX-L003] 2026-08-02 | 明确自述 | support | 用户尴尬时倾向自嘲 | episodes/2026/08/2026-08-02.md [m3]
 - [EX-L004] 2026-08-09 | 行为观察 | conflict | 用户被夸时一本正经道谢 | episodes/2026/08/2026-08-09.md [m4]
 ''');
-      final client = _ScriptedDreamClient([
+      final client = ScriptedChatClient([
         ModelCompletion.reply(_candidateWithRoots([
           _item('模式与轨迹', '用户近期常聊跑步', ['2026-08-14']),
         ], [
@@ -1356,7 +1359,7 @@ void main() {
 - [PR-L001] 2026-07-20 | 明确自述 | support | 用户靠跑步解压 | episodes/2026/07/2026-07-20.md [m1]
 - [PR-L002] 2026-08-02 | 明确自述 | support | 用户靠跑步解压 | episodes/2026/08/2026-08-02.md [m2]
 ''');
-      final client = _ScriptedDreamClient([
+      final client = ScriptedChatClient([
         ModelCompletion.reply(_candidateWithRoots([
           _item('模式与轨迹', '用户状态平稳', ['2026-08-14']),
         ], [
@@ -1454,7 +1457,7 @@ void main() {
 - [VA-L002] 2026-08-05 | 明确自述 | support | 用户看重说到做到 | episodes/2026/08/2026-08-05.md [m2]
 - [VA-L003] 2026-08-12 | 明确自述 | support | 用户看重说到做到 | episodes/2026/08/2026-08-12.md [m3]
 ''');
-      final client = _ScriptedDreamClient([
+      final client = ScriptedChatClient([
         ModelCompletion.reply(_candidateWithRoots([
           _item('模式与轨迹', '用户状态平稳', ['2026-08-14']),
         ], [
@@ -1527,7 +1530,7 @@ void main() {
 - [EX-L001] 2026-07-20 | 行为观察 | support | 用户靠跑步解压 | episodes/2026/07/2026-07-20.md [m1]
 ''';
       _seedPersonaBranch(directory.path, 'expression.md', branchSeed);
-      final client = _ScriptedDreamClient([
+      final client = ScriptedChatClient([
         // 第一次：引用不存在的反向理解、以及单日期证据的无关理解
         // → 两条都拒绝，树不动。
         ModelCompletion.reply(_candidateWithRoots([
@@ -1640,7 +1643,7 @@ void main() {
       final before = File(
         '${directory.path}/persona-tree/expression.md',
       ).readAsStringSync();
-      final client = _ScriptedDreamClient([
+      final client = ScriptedChatClient([
         ModelCompletion.reply(_candidateWithRoots([
           _item('模式与轨迹', '用户状态平稳', ['2026-08-14']),
         ], [
@@ -1658,7 +1661,7 @@ void main() {
         personaTree: PersonaTreeStore(
           memoryDirectory: directory.path,
           episodePipeline: pipeline,
-          atomicWriter: _TargetedFailingWriter(
+          atomicWriter: FailingAtomicTextWriter(shouldFail:
             (target) => target.contains('persona-tree'),
           ),
         ),
@@ -1707,7 +1710,7 @@ void main() {
       diagnosticsSink: (_) {},
     );
     await compressor.compressMonth('2026-07');
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '用户忙于七月收尾', ['2026-07-30']),
       ])),
@@ -1742,7 +1745,7 @@ void main() {
     File('${directory.path}/persona.md').writeAsStringSync(
       '# persona\n称呼：老王\n',
     );
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '老王换了新工作', ['2026-08-14']),
       ])),
@@ -1773,7 +1776,7 @@ void main() {
       clock: () => DateTime(2026, 8, 15, 23, 10),
     );
     await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
-    final client = _ScriptedDreamClient([
+    final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
         _item('重要事件', '用户换了新工作', ['2026-08-14']),
       ])),
@@ -1894,47 +1897,6 @@ Map<String, Object?> _decodeStateFile(String contents) {
   final padded = value.padRight(value.length + (4 - value.length % 4) % 4, '=');
   return jsonDecode(utf8.decode(base64Url.decode(padded)))
       as Map<String, Object?>;
-}
-
-final class _ScriptedDreamClient implements ProviderChatClient {
-  _ScriptedDreamClient(this.completions);
-
-  final List<ModelCompletion?> completions;
-  final List<List<ModelMessage>> calls = [];
-  final List<int?> maxTokens = [];
-  var _index = 0;
-
-  @override
-  Future<ModelCompletion?> complete(
-    List<ModelMessage> messages, {
-    int? maxTokens,
-  }) async {
-    calls.add(messages);
-    this.maxTokens.add(maxTokens);
-    if (completions.isEmpty) {
-      return null;
-    }
-    final completion = completions[
-      _index < completions.length ? _index : completions.length - 1
-    ];
-    _index += 1;
-    return completion;
-  }
-}
-
-final class _TargetedFailingWriter implements AtomicTextWriter {
-  _TargetedFailingWriter(this.shouldFail);
-
-  final bool Function(String path) shouldFail;
-  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
-
-  @override
-  Future<void> replace(String path, String contents) {
-    if (shouldFail(path)) {
-      throw const FileSystemException('mock interrupted write');
-    }
-    return _delegate.replace(path, contents);
-  }
 }
 
 /// 与 DreamService 内部编码同构的测试夹具：直接落一份 state.md。

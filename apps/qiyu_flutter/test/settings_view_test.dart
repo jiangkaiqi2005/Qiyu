@@ -6,8 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/app.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
-import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
@@ -25,6 +23,8 @@ import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
+import 'support/shared_fakes.dart';
+
 void main() {
   testWidgets(
     'developer diagnostics entry only appears after developer mode is on',
@@ -33,7 +33,7 @@ void main() {
       await tester.pumpWidget(
         await _app(
           settingsViewModel: SettingsViewModel(settingsGateway),
-          providerGateway: _FixedProviderSettingsGateway(configured: false),
+          providerGateway: FixedProviderSettingsGateway(configured: false),
         ),
       );
       await _openSettings(tester);
@@ -126,7 +126,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(settingsGateway),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
@@ -169,7 +169,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(settingsGateway),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
@@ -202,7 +202,7 @@ void main() {
   testWidgets('clearing product data previews impact and needs confirmation', (
     tester,
   ) async {
-    final onboardingGateway = _ClearableOnboardingGateway();
+    final onboardingGateway = FakeOnboardingGateway(completed: true);
     // 清除落地的同时初见记录也被清除：重读状态后当次会话重走初见引导。
     final settingsGateway = _FakeSettingsGateway(
       onCleared: () => onboardingGateway.completed = false,
@@ -210,7 +210,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(settingsGateway),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         onboardingGateway: onboardingGateway,
       ),
     );
@@ -263,7 +263,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         ttsGateway: ttsGateway,
       ),
     );
@@ -412,7 +412,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         ttsGateway: ttsGateway,
       ),
     );
@@ -532,7 +532,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         sttGateway: sttGateway,
       ),
     );
@@ -657,7 +657,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
@@ -709,7 +709,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         webSearchGateway: webSearchGateway,
       ),
     );
@@ -769,7 +769,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         webSearchGateway: webSearchGateway,
       ),
     );
@@ -828,7 +828,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         ttsGateway: ttsGateway,
       ),
     );
@@ -873,7 +873,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
@@ -1060,7 +1060,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
@@ -1100,7 +1100,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
@@ -1356,7 +1356,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await tester.pumpAndSettle();
@@ -1443,15 +1443,15 @@ Future<Widget> _app({
   );
   await providerViewModel.initialize();
   final onboardingViewModel = OnboardingViewModel(
-    onboardingGateway ?? _CompletedOnboardingGateway(),
-    _FixedProviderSettingsGateway(configured: true),
+    onboardingGateway ?? FakeOnboardingGateway(completed: true),
+    FixedProviderSettingsGateway(configured: true),
     autoStart: false,
   );
   await onboardingViewModel.initialize();
   return QiyuApp(
     viewModel: LocalChatViewModel(
-      _UnusedChatGateway(),
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      FakeLocalChatGateway.silent(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     ),
     providerSettingsViewModel: providerViewModel,
@@ -1540,7 +1540,7 @@ Future<_FakeSettingsGateway> _pumpSettingsPage(
   await tester.pumpWidget(Container(key: UniqueKey()));
   await tester.pumpAndSettle();
   final providerViewModel = ProviderSettingsViewModel(
-    _FixedProviderSettingsGateway(configured: false),
+    FixedProviderSettingsGateway(configured: false),
     autoStart: false,
   );
   await providerViewModel.initialize();
@@ -1641,117 +1641,59 @@ List<RecentRequest> _defaultDiagnosticsRequests() => [
   ),
 ];
 
-final class _FakeSettingsGateway implements SettingsGateway {
-  _FakeSettingsGateway({this.onCleared, this.recentRequests});
-
-  bool developerMode = false;
-  int clearCalls = 0;
-
-  /// 诊断页「最近请求」的数据源；不给就用 `_defaultDiagnosticsRequests()`
-  /// 那一枚模型超时（真故障）。分档那条用例按顺序传五枚进来逐档验危险色。
-  final List<RecentRequest>? recentRequests;
-
-  /// 主持久化链路（Host `/api` 那侧）被写了几次：分节折叠按 design-system §8
-  /// 只准走本地 UI 存储，这个计数一次都不该动。
-  int prefWrites = 0;
-
-  /// 清除成功时的回调：测试用它同步翻转初见网关状态。
-  final void Function()? onCleared;
-
-  @override
-  Future<ExperiencePreferences> readPreferences() async =>
-      ExperiencePreferences(developerMode: developerMode);
-
-  @override
-  Future<ExperiencePreferences> savePreferences({
-    required bool developerMode,
-  }) async {
-    prefWrites += 1;
-    this.developerMode = developerMode;
-    return ExperiencePreferences(developerMode: developerMode);
-  }
-
-  @override
-  Future<MemoryControlsOverview> readMemoryControls() async =>
-      const MemoryControlsOverview(
-        readable: true,
-        frozen: [
-          MemoryControlRecord(id: 1, origin: 'chat', summary: '一段冻结的记忆'),
-        ],
-        banned: [
-          MemoryControlRecord(id: 2, origin: 'chat', summary: '一段禁提的往事'),
-        ],
-        deletedCount: 3,
+/// 设置网关替身：在共享版之上换成本页的富档位——记忆控制/清数据预览
+/// 带真实计数，诊断快照按分档用例的需要给「最近请求」（缺省一枚模型
+/// 超时），时间戳与文件健康取本文件固化的那组。
+class _FakeSettingsGateway extends FakeSettingsGateway {
+  _FakeSettingsGateway({super.onCleared, List<RecentRequest>? recentRequests})
+    : super(
+        recentRequests: recentRequests ?? _defaultDiagnosticsRequests(),
+        memoryControls: const MemoryControlsOverview(
+          readable: true,
+          frozen: [
+            MemoryControlRecord(id: 1, origin: 'chat', summary: '一段冻结的记忆'),
+          ],
+          banned: [
+            MemoryControlRecord(id: 2, origin: 'chat', summary: '一段禁提的往事'),
+          ],
+          deletedCount: 3,
+        ),
+        clearPreview: const ClearPreview(
+          memoryDirectory: 'C:/qiyu/memories',
+          sessionCount: 4,
+          episodeDayCount: 9,
+          frozenCount: 1,
+          bannedCount: 2,
+          deletedCount: 0,
+          snapshotCount: 1,
+          providerConfigured: false,
+          keySet: false,
+        ),
+        generatedAt: DateTime.parse('2026-08-19T14:00:00.000Z'),
+        memoryDirectory: 'C:/qiyu/memories',
+        finalization: const FinalizationHealth(
+          today: '2026-08-19',
+          todayFinalized: false,
+          pendingDays: 2,
+          unreadableDays: 0,
+        ),
+        dream: DreamHealth(
+          lastSuccessAt: DateTime.parse('2026-08-11T16:00:00.000Z'),
+          daysSinceLastSuccess: 8,
+          pending: false,
+          minIntervalDays: 3,
+          intervalSatisfied: true,
+          providerConfigured: true,
+          eligible: true,
+        ),
+        fileHealth: const {
+          'sessionsReadable': 4,
+          'sessionsUnavailable': 0,
+          'episodeDays': 9,
+          'episodeUnfinalized': 2,
+          'episodeUnreadable': 0,
+        },
       );
-
-  @override
-  Future<ClearPreview> readClearPreview() async => const ClearPreview(
-    memoryDirectory: 'C:/qiyu/memories',
-    sessionCount: 4,
-    episodeDayCount: 9,
-    frozenCount: 1,
-    bannedCount: 2,
-    deletedCount: 0,
-    snapshotCount: 1,
-    providerConfigured: false,
-    keySet: false,
-  );
-
-  @override
-  Future<void> clearData() async {
-    clearCalls += 1;
-    onCleared?.call();
-  }
-
-  @override
-  Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
-    generatedAt: DateTime.parse('2026-08-19T14:00:00.000Z'),
-    memoryDirectory: 'C:/qiyu/memories',
-    recentRequests: recentRequests ?? _defaultDiagnosticsRequests(),
-    finalization: const FinalizationHealth(
-      today: '2026-08-19',
-      todayFinalized: false,
-      pendingDays: 2,
-      unreadableDays: 0,
-    ),
-    dream: DreamHealth(
-      lastSuccessAt: DateTime.parse('2026-08-11T16:00:00.000Z'),
-      daysSinceLastSuccess: 8,
-      pending: false,
-      minIntervalDays: 3,
-      intervalSatisfied: true,
-      providerConfigured: true,
-      eligible: true,
-    ),
-    fileHealth: const {
-      'sessionsReadable': 4,
-      'sessionsUnavailable': 0,
-      'episodeDays': 9,
-      'episodeUnfinalized': 2,
-      'episodeUnreadable': 0,
-    },
-  );
-}
-
-final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {
-  _FixedProviderSettingsGateway({required this.configured});
-
-  final bool configured;
-
-  @override
-  Future<ProviderSettings> read() async =>
-      ProviderSettings(configured: configured, keySet: configured);
-
-  @override
-  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-
-  @override
-  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
-
-  @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
 }
 
 final class _MutableProviderSettingsGateway implements ProviderSettingsGateway {
@@ -1842,48 +1784,6 @@ final class _MutableWebSearchSettingsGateway
     keySet = false;
     return read();
   }
-}
-
-final class _CompletedOnboardingGateway extends _ClearableOnboardingGateway {}
-
-/// 初见状态可翻转：清除产品数据测试用它模拟初见记录被一并清除。
-class _ClearableOnboardingGateway implements OnboardingGateway {
-  bool completed = true;
-
-  @override
-  Future<OnboardingState> read() async => OnboardingState(completed: completed);
-
-  @override
-  Future<void> complete({String? appellation}) async {
-    completed = true;
-  }
-}
-
-final class _FixedHostConnectionProbe implements HostConnectionProbe {
-  @override
-  Future<bool> isHostAvailable() async => true;
-}
-
-final class _UnusedChatGateway implements StreamingLocalChatGateway {
-  @override
-  Future<LocalChatSnapshot> restore({String? sessionId}) async =>
-      const LocalChatSnapshot(sessionId: 'session-1', messages: []);
-
-  @override
-  Stream<LocalChatDeliveryEvent> deliver({
-    required String requestId,
-    required String text,
-    String? sessionId,
-  }) async* {}
-
-  @override
-  Future<bool> cancel(String requestId) async => true;
-
-  @override
-  Future<String> transcribe({
-    required Uint8List audio,
-    required String mimeType,
-  }) async => '语音测试转写';
 }
 
 final class _FixedSttSettingsGateway implements SttSettingsGateway {

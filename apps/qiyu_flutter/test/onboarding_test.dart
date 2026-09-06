@@ -5,17 +5,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:qiyu_flutter/app.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
-import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 
 import 'support/host_transport.dart';
+import 'support/shared_fakes.dart';
 
 void main() {
   test(
@@ -222,7 +221,7 @@ void main() {
       _RestoringChatGateway(
         const LocalChatSnapshot(sessionId: 'session-today', messages: []),
       ),
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     );
     await chatViewModel.initialize();
@@ -262,7 +261,7 @@ void main() {
             ],
           ),
         ),
-        hostConnectionProbe: _FakeHostConnectionProbe([true]),
+        hostConnectionProbe: FakeHostConnectionProbe(const [true]),
         autoStart: false,
       );
       await chatViewModel.initialize();
@@ -328,7 +327,7 @@ void main() {
         viewModel: _chatViewModel(),
         providerSettingsViewModel: settingsViewModel,
         onboardingViewModel: onboardingViewModel,
-        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        settingsViewModel: SettingsViewModel(FakeSettingsGateway()),
       ),
     );
     await tester.pumpAndSettle();
@@ -383,7 +382,7 @@ Future<OnboardingViewModel> _onboardingViewModel(
 }) async {
   final viewModel = OnboardingViewModel(
     gateway,
-    _FixedProviderSettingsGateway(configured: configured),
+    FixedProviderSettingsGateway(configured: configured),
     autoStart: false,
   );
   await viewModel.initialize();
@@ -391,8 +390,8 @@ Future<OnboardingViewModel> _onboardingViewModel(
 }
 
 LocalChatViewModel _chatViewModel() => LocalChatViewModel(
-  _UnusedChatGateway(),
-  hostConnectionProbe: _FakeHostConnectionProbe([true]),
+  FakeLocalChatGateway.silent(),
+  hostConnectionProbe: FakeHostConnectionProbe(const [true]),
   autoStart: false,
 );
 
@@ -436,27 +435,6 @@ final class _FakeOnboardingGateway implements OnboardingGateway {
   }
 }
 
-final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {
-  _FixedProviderSettingsGateway({required this.configured});
-
-  final bool configured;
-
-  @override
-  Future<ProviderSettings> read() async =>
-      ProviderSettings(configured: configured, keySet: configured);
-
-  @override
-  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-
-  @override
-  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
-
-  @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-}
-
 final class _FakeProviderSettingsGateway implements ProviderSettingsGateway {
   ProviderSettings current = const ProviderSettings(
     configured: false,
@@ -482,28 +460,6 @@ final class _FakeProviderSettingsGateway implements ProviderSettingsGateway {
   );
 }
 
-final class _UnusedChatGateway implements StreamingLocalChatGateway {
-  @override
-  Future<LocalChatSnapshot> restore({String? sessionId}) async =>
-      const LocalChatSnapshot(sessionId: 'session-1', messages: []);
-
-  @override
-  Stream<LocalChatDeliveryEvent> deliver({
-    required String requestId,
-    required String text,
-    String? sessionId,
-  }) async* {}
-
-  @override
-  Future<bool> cancel(String requestId) async => true;
-
-  @override
-  Future<String> transcribe({
-    required Uint8List audio,
-    required String mimeType,
-  }) async => '语音测试转写';
-}
-
 final class _RestoringChatGateway implements StreamingLocalChatGateway {
   _RestoringChatGateway(this.snapshot);
 
@@ -527,66 +483,4 @@ final class _RestoringChatGateway implements StreamingLocalChatGateway {
     required Uint8List audio,
     required String mimeType,
   }) async => '语音测试转写';
-}
-
-final class _FakeHostConnectionProbe implements HostConnectionProbe {
-  _FakeHostConnectionProbe(this._results);
-
-  final List<bool> _results;
-  var _index = 0;
-
-  @override
-  Future<bool> isHostAvailable() async {
-    final result = _results[_index];
-    if (_index < _results.length - 1) {
-      _index += 1;
-    }
-    return result;
-  }
-}
-
-final class _FakeSettingsGateway implements SettingsGateway {
-  @override
-  Future<ExperiencePreferences> readPreferences() async =>
-      const ExperiencePreferences(developerMode: false);
-
-  @override
-  Future<ExperiencePreferences> savePreferences({
-    required bool developerMode,
-  }) async => ExperiencePreferences(developerMode: developerMode);
-
-  @override
-  Future<MemoryControlsOverview> readMemoryControls() async =>
-      const MemoryControlsOverview(
-        readable: true,
-        frozen: [],
-        banned: [],
-        deletedCount: 0,
-      );
-
-  @override
-  Future<ClearPreview> readClearPreview() async => const ClearPreview(
-    memoryDirectory: 'C:/qiyu-test/memories',
-    sessionCount: 0,
-    episodeDayCount: 0,
-    frozenCount: 0,
-    bannedCount: 0,
-    deletedCount: 0,
-    snapshotCount: 0,
-    providerConfigured: false,
-    keySet: false,
-  );
-
-  @override
-  Future<void> clearData() async {}
-
-  @override
-  Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
-    generatedAt: DateTime(2026, 8, 19),
-    memoryDirectory: 'C:/qiyu-test/memories',
-    recentRequests: const [],
-    finalization: null,
-    dream: null,
-    fileHealth: const {},
-  );
 }

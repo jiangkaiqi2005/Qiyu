@@ -2,13 +2,14 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/chat/voice_output_controller.dart';
 import 'package:qiyu_flutter/features/chat/voice_player_platform.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
+import 'support/shared_fakes.dart';
 
 void main() {
   test(
@@ -17,7 +18,7 @@ void main() {
       final gateway = _GatedGateway();
       final viewModel = LocalChatViewModel(
         gateway,
-        hostConnectionProbe: _AvailableProbe(),
+        hostConnectionProbe: FakeHostConnectionProbe(const [true]),
         requestIdFactory: () => 'pending-request',
         autoStart: false,
       );
@@ -44,7 +45,7 @@ void main() {
       final gateway = _TwoBubbleGateway();
       final viewModel = LocalChatViewModel(
         gateway,
-        hostConnectionProbe: _AvailableProbe(),
+        hostConnectionProbe: FakeHostConnectionProbe(const [true]),
         requestIdFactory: () => 'request-1',
         autoStart: false,
       );
@@ -72,7 +73,7 @@ void main() {
     final gateway = _TwoBubbleGateway(withBubble2: false);
     final viewModel = LocalChatViewModel(
       gateway,
-      hostConnectionProbe: _AvailableProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       requestIdFactory: () => 'request-2',
       autoStart: false,
     );
@@ -93,7 +94,7 @@ void main() {
     var counter = 0;
     final viewModel = LocalChatViewModel(
       gateway,
-      hostConnectionProbe: _AvailableProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       requestIdFactory: () => 'voice-${counter += 1}',
       autoStart: false,
     );
@@ -139,7 +140,7 @@ void main() {
     );
     final viewModel = LocalChatViewModel(
       _TwoBubbleGateway(),
-      hostConnectionProbe: _AvailableProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       requestIdFactory: () => 'request-voice',
       ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
       voiceOutput: controller,
@@ -166,7 +167,7 @@ void main() {
     );
     final viewModel = LocalChatViewModel(
       _TwoBubbleGateway(withBubble2: false),
-      hostConnectionProbe: _AvailableProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       requestIdFactory: () => 'request-auto-unlock',
       ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
       voiceOutput: controller,
@@ -198,7 +199,7 @@ void main() {
       );
       final viewModel = LocalChatViewModel(
         _TwoBubbleGateway(withBubble2: false),
-        hostConnectionProbe: _AvailableProbe(),
+        hostConnectionProbe: FakeHostConnectionProbe(const [true]),
         requestIdFactory: () => 'request-quiet',
         ttsSettingsGateway: ttsGateway,
         voiceOutput: controller,
@@ -217,7 +218,7 @@ void main() {
     final gateway = _MutableTtsSettingsGateway(autoSpeak: true);
     final viewModel = LocalChatViewModel(
       _TwoBubbleGateway(withBubble2: false),
-      hostConnectionProbe: _AvailableProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       requestIdFactory: () => 'request-toggle',
       ttsSettingsGateway: gateway,
       voiceOutput: VoiceOutputController(
@@ -245,7 +246,7 @@ void main() {
     var counter = 0;
     final viewModel = LocalChatViewModel(
       gateway,
-      hostConnectionProbe: _AvailableProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       requestIdFactory: () => 'request-${counter += 1}',
       autoStart: false,
     );
@@ -315,7 +316,7 @@ void main() {
     var counter = 0;
     final viewModel = LocalChatViewModel(
       gateway,
-      hostConnectionProbe: _AvailableProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       requestIdFactory: () => 'request-${counter += 1}',
       autoStart: false,
     );
@@ -380,7 +381,7 @@ void main() {
     var counter = 0;
     final viewModel = LocalChatViewModel(
       gateway,
-      hostConnectionProbe: _AvailableProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       requestIdFactory: () => 'request-${counter += 1}',
       autoStart: false,
     );
@@ -564,11 +565,6 @@ final class _GatedGateway implements StreamingLocalChatGateway {
   @override
   Future<LocalChatSnapshot> restore({String? sessionId}) async =>
       const LocalChatSnapshot(sessionId: 'session-1', messages: []);
-}
-
-final class _AvailableProbe implements HostConnectionProbe {
-  @override
-  Future<bool> isHostAvailable() async => true;
 }
 
 final class _FixedTtsSettingsGateway implements TtsSettingsGateway {

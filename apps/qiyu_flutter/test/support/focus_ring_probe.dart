@@ -12,6 +12,13 @@ typedef FocusRingReading = ({
   Size controlSize,
 });
 
+/// 本仓库自绘焦点环的唯一形状：2px 边框的 DecoratedBox。
+bool _isFocusRingBox(Widget widget) =>
+    widget is DecoratedBox &&
+    widget.decoration is BoxDecoration &&
+    (widget.decoration as BoxDecoration).border?.top.width ==
+        QiyuLayout.focusRingWidth;
+
 /// 量出包住 [targetKey] 那一层自绘焦点环：描边、外沿矩形与控件自身尺寸。
 ///
 /// 返回 null 表示这个控件**根本没套环**——页面漏挂时用例就是红的，
@@ -19,16 +26,7 @@ typedef FocusRingReading = ({
 FocusRingReading? readFocusRing(WidgetTester tester, Key targetKey) {
   final control = find.byKey(targetKey);
   final rings = find
-      .ancestor(
-        of: control,
-        matching: find.byWidgetPredicate(
-          (widget) =>
-              widget is DecoratedBox &&
-              widget.decoration is BoxDecoration &&
-              (widget.decoration as BoxDecoration).border?.top.width ==
-                  QiyuLayout.focusRingWidth,
-        ),
-      )
+      .ancestor(of: control, matching: find.byWidgetPredicate(_isFocusRingBox))
       .last;
   if (rings.evaluate().isEmpty) {
     return null;
@@ -50,6 +48,26 @@ FocusRingReading? readFocusRing(WidgetTester tester, Key targetKey) {
     outerRect: tester.getRect(offsets),
     controlSize: tester.getSize(control),
   );
+}
+
+/// 量挂在 [containerKey] 容器内侧的自绘焦点环描边。
+///
+/// 侧边栏导航项把环画在容器**内部**，与控件外围环的祖先方向查找相反，
+/// 所以单独一条读法；找不到环时与 [readFocusRing] 同一纪律——直接抛错
+/// 让用例红，不放宽。
+BorderSide readFocusRingBorderIn(
+  WidgetTester tester,
+  Key containerKey,
+) {
+  final ring = tester.widget<DecoratedBox>(
+    find
+        .descendant(
+          of: find.byKey(containerKey),
+          matching: find.byWidgetPredicate(_isFocusRingBox),
+        )
+        .first,
+  );
+  return (ring.decoration as BoxDecoration).border!.top;
 }
 
 /// 键盘 Tab 一直走到 [targetKey] 画出实紫环为止，返回那一份读数。

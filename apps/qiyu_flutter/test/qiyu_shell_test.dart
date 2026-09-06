@@ -21,6 +21,7 @@ import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
 import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
+import 'support/focus_ring_probe.dart';
 
 /// 第 2 段：合一页 + 毛玻璃导航壳 + 连接状态 + 玻璃 composer + 自绘焦点环
 /// + reduced-motion。
@@ -689,7 +690,7 @@ void main() {
       await _pumpShell(tester, width: 1200, height: 800);
       // 初始焦点在 composer，导航项的环是透明的：留白常驻，出现与消失都不跳版。
       expect(
-        _ringBorder(tester, 'nav-history').color,
+        readFocusRingBorderIn(tester, const Key('nav-history')).color,
         isNot(QiyuColors.accentBright),
       );
 
@@ -700,11 +701,11 @@ void main() {
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await tester.pump();
         landed =
-            _ringBorder(tester, 'nav-history').color == QiyuColors.accentBright;
+            readFocusRingBorderIn(tester, const Key('nav-history')).color == QiyuColors.accentBright;
       }
       expect(landed, isTrue, reason: '键盘 Tab 落到导航项必须出现 accentBright 外环');
 
-      final border = _ringBorder(tester, 'nav-history');
+      final border = readFocusRingBorderIn(tester, const Key('nav-history'));
       expect(border.width, QiyuLayout.focusRingWidth);
       expect(border.color, QiyuColors.accentBright);
       // offset 由环外那圈**常驻**留白给出（未聚焦时也占位，所以出现与消失
@@ -984,27 +985,6 @@ Text _navItemLabel(WidgetTester tester, String ringKey) => tester.widget<Text>(
       .descendant(of: find.byKey(Key(ringKey)), matching: find.byType(Text))
       .last,
 );
-
-/// 焦点环的描边：环是本仓库自绘的 2px 边框 DecoratedBox（玻璃面板 1px、
-/// 导航项容器没有 border），按宽度取它。
-BorderSide _ringBorder(WidgetTester tester, String ringKey) {
-  final ring = tester.widget<DecoratedBox>(
-    find
-        .descendant(
-          of: find.byKey(Key(ringKey)),
-          matching: find.byWidgetPredicate(
-            (widget) =>
-                widget is DecoratedBox &&
-                widget.decoration is BoxDecoration &&
-                (widget.decoration as BoxDecoration).border?.top.width ==
-                    QiyuLayout.focusRingWidth,
-          ),
-        )
-        .first,
-  );
-  return (ring.decoration as BoxDecoration).border!.top;
-}
-
 final class _StubProbe implements HostConnectionProbe {
   _StubProbe({required this.available});
 

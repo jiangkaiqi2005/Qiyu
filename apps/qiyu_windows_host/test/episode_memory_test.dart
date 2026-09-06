@@ -5,6 +5,8 @@ import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
+import 'support/failing_atomic_writer.dart';
+
 void main() {
   test(
     'a validated memory signal writes today episode and advances checkpoint',
@@ -74,7 +76,7 @@ void main() {
     final pipeline = EpisodeMemoryPipeline(
       memoryDirectory: temporaryDirectory.path,
       clock: () => DateTime(2026, 8, 14, 22, 30),
-      atomicWriter: const _AlwaysFailingWriter(),
+      atomicWriter: FailingAtomicTextWriter(shouldFail: (_) => true),
     );
 
     await expectLater(
@@ -338,13 +340,4 @@ RawSession _session(String id, List<String> requestIds) {
     updatedAt: base.toUtc(),
     turns: turns,
   );
-}
-
-final class _AlwaysFailingWriter implements AtomicTextWriter {
-  const _AlwaysFailingWriter();
-
-  @override
-  Future<void> replace(String path, String contents) async {
-    throw const FileSystemException('mock interrupted write');
-  }
 }
