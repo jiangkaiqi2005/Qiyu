@@ -39,11 +39,7 @@ void main() {
   test(
     'serves bundled Web assets on a random loopback port and releases it',
     () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-      );
+      final host = await _startHost(webRoot, memoryDirectory);
 
       expect(host.address.address, InternetAddress.loopbackIPv4.address);
       expect(host.port, greaterThan(0));
@@ -76,11 +72,7 @@ void main() {
   test(
     'issues a host-lifetime browser session and rejects invalid API sources',
     () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-      );
+      final host = await _startHost(webRoot, memoryDirectory);
 
       final sessionStart = await _send(host.launchUri);
       expect(sessionStart.statusCode, HttpStatus.seeOther);
@@ -179,11 +171,7 @@ void main() {
   );
 
   test('startup URL 只能兑换一次会话，兑换后旧凭据失效', () async {
-    final host = await LocalAppHost.start(
-      webRoot: webRoot.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: '测试人格宪法',
-    );
+    final host = await _startHost(webRoot, memoryDirectory);
 
     final originalUri = host.launchUri;
     final firstStart = await _send(originalUri);
@@ -196,12 +184,10 @@ void main() {
   });
 
   test('拒绝超过 64KB 的 chunked 聊天请求体与非对象 JSON', () async {
-    final host = await LocalAppHost.start(
-      webRoot: webRoot.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: '测试人格宪法',
+    final (host, session) = await _startHostWithBrowser(
+      webRoot,
+      memoryDirectory,
     );
-    final session = await _openBrowserSession(host);
 
     final client = HttpClient();
     final oversizeRequest = await client.openUrl(
@@ -257,18 +243,12 @@ void main() {
   test(
     'sends, persists, restarts, and restores one local chat exactly once',
     () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-      );
+      final host = await _startHost(webRoot, memoryDirectory);
       final firstSession = await _openBrowserSession(host);
-      final firstChat = await _send(
-        host.origin.resolve('/api/chat'),
-        method: 'POST',
-        headers: firstSession.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'restart-1', 'text': '今天有点累'}),
-      );
+      final firstChat = await _postJson(host, firstSession, '/api/chat', {
+        'requestId': 'restart-1',
+        'text': '今天有点累',
+      });
 
       expect(firstChat.statusCode, HttpStatus.ok);
       final firstEvents = _chatEvents(firstChat.body);
@@ -313,16 +293,11 @@ void main() {
       expect(restoredJson['sessionId'], sessionId);
       expect(restoredJson['turns'], hasLength(2));
 
-      final replay = await _send(
-        restarted.origin.resolve('/api/chat'),
-        method: 'POST',
-        headers: restartedSession.mutationHeaders(restarted.origin),
-        requestBody: jsonEncode({
-          'requestId': 'restart-1',
-          'sessionId': sessionId,
-          'text': '今天有点累',
-        }),
-      );
+      final replay = await _postJson(restarted, restartedSession, '/api/chat', {
+        'requestId': 'restart-1',
+        'sessionId': sessionId,
+        'text': '今天有点累',
+      });
       expect(replay.statusCode, HttpStatus.ok);
       expect(_chatEvent(_chatEvents(replay.body), 'message')['messages'], [
         '咋了',
@@ -342,8 +317,7 @@ void main() {
   test(
     'persists Provider settings, masks Key, tests it, and uses model chat',
     () async {
-      final configPath =
-          '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+      final configPath = _providerJsonPath(temporaryDirectory);
       final secrets = _MemorySecretStore();
       final gateway = _StaticModelGateway('还没睡？');
       ProviderSettingsService settingsService() => ProviderSettingsService(
@@ -352,10 +326,9 @@ void main() {
         gateway,
         const ModelPromptBuilder('测试人格宪法'),
       );
-      var host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
+      var host = await _startHost(
+        webRoot,
+        memoryDirectory,
         providerSettingsService: settingsService(),
       );
       var browser = await _openBrowserSession(host);
@@ -414,12 +387,10 @@ void main() {
         ),
       );
 
-      final chat = await _send(
-        host.origin.resolve('/api/chat'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'provider-chat', 'text': '在吗'}),
-      );
+      final chat = await _postJson(host, browser, '/api/chat', {
+        'requestId': 'provider-chat',
+        'text': '在吗',
+      });
       final chatEvents = _chatEvents(chat.body);
       expect(_chatEvent(chatEvents, 'message')['messages'], ['还没睡？']);
       expect(_chatEvent(chatEvents, 'state')['source'], 'llm');
@@ -429,8 +400,7 @@ void main() {
   );
 
   test('主聊天完成 web_search 两轮闭环且工具中间态不出现在流与落盘', () async {
-    final configPath =
-        '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+    final configPath = _providerJsonPath(temporaryDirectory);
     final repository = JsonProviderConfigRepository(filePath: configPath);
     final http = _WebSearchRoundTripHttpClient();
     final settings = ProviderSettingsService(
@@ -441,14 +411,12 @@ void main() {
       webSearchConfigRepository: repository,
       webSearchClient: AnySearchClient(http),
     );
-    final host = await LocalAppHost.start(
-      webRoot: webRoot.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: '测试人格宪法',
+    final (host, browser) = await _startHostWithBrowser(
+      webRoot,
+      memoryDirectory,
       providerSettingsService: settings,
       webSearchSettingsService: WebSearchSettingsService(repository),
     );
-    final browser = await _openBrowserSession(host);
     await _send(
       host.origin.resolve('/api/provider'),
       method: 'PUT',
@@ -475,15 +443,10 @@ void main() {
       requestBody: jsonEncode({'developerMode': true}),
     );
 
-    final chat = await _send(
-      host.origin.resolve('/api/chat'),
-      method: 'POST',
-      headers: browser.mutationHeaders(host.origin),
-      requestBody: jsonEncode({
-        'requestId': 'web-search-round-trip',
-        'text': '今天天气怎么样',
-      }),
-    );
+    final chat = await _postJson(host, browser, '/api/chat', {
+      'requestId': 'web-search-round-trip',
+      'text': '今天天气怎么样',
+    });
     final events = _chatEvents(chat.body);
     expect(_chatEvent(events, 'message')['messages'], ['查到了，今天会下雨。']);
     expect(chat.body, isNot(contains('web_search')));
@@ -519,15 +482,10 @@ void main() {
       expect(searchArguments['query'], isNot(contains(secret)), reason: secret);
     }
 
-    final replay = await _send(
-      host.origin.resolve('/api/chat'),
-      method: 'POST',
-      headers: browser.mutationHeaders(host.origin),
-      requestBody: jsonEncode({
-        'requestId': 'web-search-round-trip',
-        'text': '今天天气怎么样',
-      }),
-    );
+    final replay = await _postJson(host, browser, '/api/chat', {
+      'requestId': 'web-search-round-trip',
+      'text': '今天天气怎么样',
+    });
     expect(_chatEvent(_chatEvents(replay.body), 'message')['messages'], [
       '查到了，今天会下雨。',
     ]);
@@ -587,8 +545,7 @@ void main() {
   });
 
   test('chat API exposes only a diagnostic fallback category', () async {
-    final configPath =
-        '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+    final configPath = _providerJsonPath(temporaryDirectory);
     final secrets = _MemorySecretStore();
     final settings = ProviderSettingsService(
       JsonProviderConfigRepository(filePath: configPath),
@@ -606,23 +563,16 @@ void main() {
       ),
       apiKey: 'host-test-secret-value',
     );
-    final host = await LocalAppHost.start(
-      webRoot: webRoot.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: '测试人格宪法',
+    final (host, browser) = await _startHostWithBrowser(
+      webRoot,
+      memoryDirectory,
       providerSettingsService: settings,
     );
-    final browser = await _openBrowserSession(host);
 
-    final response = await _send(
-      host.origin.resolve('/api/chat'),
-      method: 'POST',
-      headers: browser.mutationHeaders(host.origin),
-      requestBody: jsonEncode({
-        'requestId': 'diagnostic-timeout',
-        'text': 'API Key: host-test-secret-value 今天有点累',
-      }),
-    );
+    final response = await _postJson(host, browser, '/api/chat', {
+      'requestId': 'diagnostic-timeout',
+      'text': 'API Key: host-test-secret-value 今天有点累',
+    });
 
     expect(response.statusCode, HttpStatus.ok);
     expect(
@@ -637,18 +587,12 @@ void main() {
   test(
     'history API lists by local day, survives restart, and deletes with CSRF',
     () async {
-      var host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-      );
+      var host = await _startHost(webRoot, memoryDirectory);
       var browser = await _openBrowserSession(host);
-      final chat = await _send(
-        host.origin.resolve('/api/chat'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'history-1', 'text': '今天有点累'}),
-      );
+      final chat = await _postJson(host, browser, '/api/chat', {
+        'requestId': 'history-1',
+        'text': '今天有点累',
+      });
       final sessionId =
           _chatEvent(_chatEvents(chat.body), 'accepted')['sessionId']!
               as String;
@@ -779,18 +723,14 @@ void main() {
   test(
     'an unreadable session file is reported without blocking browsing, chat, or deletion',
     () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
       );
-      final browser = await _openBrowserSession(host);
-      final chat = await _send(
-        host.origin.resolve('/api/chat'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'corrupt-1', 'text': '在吗'}),
-      );
+      final chat = await _postJson(host, browser, '/api/chat', {
+        'requestId': 'corrupt-1',
+        'text': '在吗',
+      });
       final sessionId =
           _chatEvent(_chatEvents(chat.body), 'accepted')['sessionId']!
               as String;
@@ -830,16 +770,11 @@ void main() {
       );
       expect(fullText.statusCode, HttpStatus.ok);
 
-      final continued = await _send(
-        host.origin.resolve('/api/chat'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({
-          'requestId': 'corrupt-2',
-          'sessionId': sessionId,
-          'text': '还想再说一句',
-        }),
-      );
+      final continued = await _postJson(host, browser, '/api/chat', {
+        'requestId': 'corrupt-2',
+        'sessionId': sessionId,
+        'text': '还想再说一句',
+      });
       expect(continued.statusCode, HttpStatus.ok);
       expect(
         _chatEvent(_chatEvents(continued.body), 'accepted')['sessionId'],
@@ -861,11 +796,7 @@ void main() {
   test(
     'onboarding starts open, persists completion across restarts, and reopens after clearing local data',
     () async {
-      var host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-      );
+      var host = await _startHost(webRoot, memoryDirectory);
       var browser = await _openBrowserSession(host);
 
       final fresh = await _send(
@@ -945,12 +876,10 @@ void main() {
   test(
     'onboarding completion accepts an appellation and the memory center serves and edits it',
     () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
       );
-      final browser = await _openBrowserSession(host);
 
       // 首见引导带称呼：落到 persona.md 受保护设定行。
       final completed = await _send(
@@ -1018,12 +947,10 @@ void main() {
   test(
     'onboarding completion rejects an invalid appellation without completing',
     () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
       );
-      final browser = await _openBrowserSession(host);
 
       final rejected = await _send(
         host.origin.resolve('/api/onboarding/complete'),
@@ -1056,11 +983,7 @@ void main() {
   test(
     'memory center endpoints serve the four read-only sections over HTTP',
     () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-      );
+      final host = await _startHost(webRoot, memoryDirectory);
       final pipeline = EpisodeMemoryPipeline(
         memoryDirectory: memoryDirectory.path,
       );
@@ -1172,11 +1095,7 @@ void main() {
   test(
     'memory action endpoint edits, controls, deletes and reveals over HTTP',
     () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-      );
+      final host = await _startHost(webRoot, memoryDirectory);
       final pipeline = EpisodeMemoryPipeline(
         memoryDirectory: memoryDirectory.path,
       );
@@ -1223,12 +1142,10 @@ void main() {
       expect(noCsrf.statusCode, HttpStatus.forbidden);
 
       // 未知 opaque ID → 404。
-      final unknown = await _send(
-        actionUri,
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'action': 'freeze', 'id': 'no-such-id'}),
-      );
+      final unknown = await _postJson(host, browser, '/api/memory/action', {
+        'action': 'freeze',
+        'id': 'no-such-id',
+      });
       expect(unknown.statusCode, HttpStatus.notFound);
 
       Future<Map<String, Object?>> overviewJson() async {
@@ -1261,15 +1178,11 @@ void main() {
       // 编辑 episode：修正按用户声明保存，摘录移除。
       final beforeEdit = await overviewJson();
       final editTarget = entryById(beforeEdit, '用户在准备演讲');
-      final editResponse = await _send(
-        actionUri,
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({
-          'action': 'edit',
-          'id': editTarget['id'],
-          'text': '用户在准备一场辩论赛',
-        }),
+      final editResponse = await _postJson(
+        host,
+        browser,
+        '/api/memory/action',
+        {'action': 'edit', 'id': editTarget['id'], 'text': '用户在准备一场辩论赛'},
       );
       expect(editResponse.statusCode, HttpStatus.ok);
       final edited = await overviewJson();
@@ -1278,23 +1191,20 @@ void main() {
       expect(editedEntry['hasEvidence'], isFalse);
 
       // 冻结与解除：控制状态立即反映到总览。
-      final freezeResponse = await _send(
-        actionUri,
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'action': 'freeze', 'id': editedEntry['id']}),
+      final freezeResponse = await _postJson(
+        host,
+        browser,
+        '/api/memory/action',
+        {'action': 'freeze', 'id': editedEntry['id']},
       );
       expect(freezeResponse.statusCode, HttpStatus.ok);
       final frozen = await overviewJson();
       expect(entryById(frozen, '用户在准备一场辩论赛')['control'], 'frozen');
-      final unfreezeResponse = await _send(
-        actionUri,
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({
-          'action': 'unfreeze',
-          'id': editedEntry['id'],
-        }),
+      final unfreezeResponse = await _postJson(
+        host,
+        browser,
+        '/api/memory/action',
+        {'action': 'unfreeze', 'id': editedEntry['id']},
       );
       expect(unfreezeResponse.statusCode, HttpStatus.ok);
       final unfrozen = await overviewJson();
@@ -1319,26 +1229,21 @@ void main() {
 
       final maskedEntryReal = masked();
       expect(maskedEntryReal['content'], isNull);
-      final revealResponse = await _send(
-        actionUri,
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({
-          'action': 'reveal',
-          'id': maskedEntryReal['id'],
-        }),
+      final revealResponse = await _postJson(
+        host,
+        browser,
+        '/api/memory/action',
+        {'action': 'reveal', 'id': maskedEntryReal['id']},
       );
       expect(revealResponse.statusCode, HttpStatus.ok);
       final revealJson =
           jsonDecode(revealResponse.body) as Map<String, Object?>;
       expect(revealJson['text'], '用户的手机号是13812345678');
       // 非敏感条目没有可揭示内容。
-      final plainReveal = await _send(
-        actionUri,
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'action': 'reveal', 'id': editedEntry['id']}),
-      );
+      final plainReveal = await _postJson(host, browser, '/api/memory/action', {
+        'action': 'reveal',
+        'id': editedEntry['id'],
+      });
       expect(plainReveal.statusCode, HttpStatus.badRequest);
       expect(
         (jsonDecode(plainReveal.body) as Map<String, Object?>)['code'],
@@ -1353,22 +1258,20 @@ void main() {
       final item =
           (group['items']! as List<Object?>).single! as Map<String, Object?>;
       expect(item['content'], '用户养了一只猫');
-      final preview = await _send(
-        actionUri,
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'action': 'delete-preview', 'id': item['id']}),
-      );
+      final preview = await _postJson(host, browser, '/api/memory/action', {
+        'action': 'delete-preview',
+        'id': item['id'],
+      });
       expect(preview.statusCode, HttpStatus.ok);
       final impact = jsonDecode(preview.body) as Map<String, Object?>;
       expect(impact['longTermItems'], 1);
       expect(impact['lines'], isA<List<Object?>>());
 
-      final deleteResponse = await _send(
-        actionUri,
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'action': 'delete', 'id': item['id']}),
+      final deleteResponse = await _postJson(
+        host,
+        browser,
+        '/api/memory/action',
+        {'action': 'delete', 'id': item['id']},
       );
       expect(deleteResponse.statusCode, HttpStatus.ok);
       final afterDelete = await overviewJson();
@@ -1387,20 +1290,16 @@ void main() {
   test(
     'backup export, preview, import and rollback stay honest end to end',
     () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
       );
-      final browser = await _openBrowserSession(host);
 
       // 先产生一份真实会话作为备份内容。
-      final chat = await _send(
-        host.origin.resolve('/api/chat'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'backup-1', 'text': '今天有点累'}),
-      );
+      final chat = await _postJson(host, browser, '/api/chat', {
+        'requestId': 'backup-1',
+        'text': '今天有点累',
+      });
       expect(chat.statusCode, HttpStatus.ok);
 
       // 导出：zip 字节流 + 附件下载头。
@@ -1426,24 +1325,16 @@ void main() {
       client.close(force: true);
 
       // 无效备份被拒绝：结构校验在写入之前完成。
-      final rejected = await _send(
-        host.origin.resolve('/api/backup/preview'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({
-          'dataBase64': base64.encode([1, 2, 3]),
-        }),
-      );
+      final rejected = await _postJson(host, browser, '/api/backup/preview', {
+        'dataBase64': base64.encode([1, 2, 3]),
+      });
       expect(rejected.statusCode, HttpStatus.badRequest);
       expect(rejected.body, contains('not-a-backup'));
 
       // 预览：本机数据完整时全部跳过。
-      final preview = await _send(
-        host.origin.resolve('/api/backup/preview'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'dataBase64': base64.encode(exportBytes)}),
-      );
+      final preview = await _postJson(host, browser, '/api/backup/preview', {
+        'dataBase64': base64.encode(exportBytes),
+      });
       expect(preview.statusCode, HttpStatus.ok);
       final previewJson = jsonDecode(preview.body) as Map<String, Object?>;
       final counts = previewJson['counts']! as Map<String, Object?>;
@@ -1451,12 +1342,9 @@ void main() {
       expect(counts['replaced'], 0);
 
       // 确认导入：生成快照，重复数据全部跳过。
-      final imported = await _send(
-        host.origin.resolve('/api/backup/import'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'dataBase64': base64.encode(exportBytes)}),
-      );
+      final imported = await _postJson(host, browser, '/api/backup/import', {
+        'dataBase64': base64.encode(exportBytes),
+      });
       expect(imported.statusCode, HttpStatus.ok);
       final importJson = jsonDecode(imported.body) as Map<String, Object?>;
       expect(importJson['added'], 0);
@@ -1472,11 +1360,11 @@ void main() {
       expect(snapshotsJson['snapshots']! as List<Object?>, isNotEmpty);
 
       // 回滚：恢复快照并留下保底快照。
-      final rollback = await _send(
-        host.origin.resolve('/api/backup/rollback'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({}),
+      final rollback = await _postJson(
+        host,
+        browser,
+        '/api/backup/rollback',
+        {},
       );
       expect(rollback.statusCode, HttpStatus.ok);
       final rollbackJson = jsonDecode(rollback.body) as Map<String, Object?>;
@@ -1498,12 +1386,10 @@ void main() {
   test(
     'developer diagnostics stay closed until developer mode is turned on',
     () async {
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
       );
-      final browser = await _openBrowserSession(host);
 
       // 体验选项默认关闭开发者模式。
       final preferences = await _send(
@@ -1574,8 +1460,7 @@ void main() {
   test(
     'diagnostics show recent chat source and fallback reason without secrets',
     () async {
-      final configPath =
-          '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+      final configPath = _providerJsonPath(temporaryDirectory);
       final settings = ProviderSettingsService(
         JsonProviderConfigRepository(filePath: configPath),
         _MemorySecretStore(),
@@ -1592,13 +1477,11 @@ void main() {
         ),
         apiKey: 'diagnostics-secret-key-value',
       );
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
         providerSettingsService: settings,
       );
-      final browser = await _openBrowserSession(host);
 
       await _send(
         host.origin.resolve('/api/preferences'),
@@ -1606,15 +1489,10 @@ void main() {
         headers: browser.mutationHeaders(host.origin),
         requestBody: jsonEncode({'developerMode': true}),
       );
-      final chat = await _send(
-        host.origin.resolve('/api/chat'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({
-          'requestId': 'diagnostics-chat',
-          'text': '今天有点累',
-        }),
-      );
+      final chat = await _postJson(host, browser, '/api/chat', {
+        'requestId': 'diagnostics-chat',
+        'text': '今天有点累',
+      });
       expect(chat.statusCode, HttpStatus.ok);
       expect(
         _chatEvent(_chatEvents(chat.body), 'fallback'),
@@ -1644,21 +1522,18 @@ void main() {
   test(
     'STT routes persist per-section, mask keys, test, and transcribe safely',
     () async {
-      final configPath =
-          '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+      final configPath = _providerJsonPath(temporaryDirectory);
       JsonProviderConfigRepository repository() =>
           JsonProviderConfigRepository(filePath: configPath);
       // 记录型出网客户端：转写返回固定文本，供路由全链路验证。
       final sttHttp = _RecordingSttHttpClient('{"text":"今天有点累"}');
       SttSettingsService sttService() =>
           SttSettingsService(repository(), SttModelGateway(sttHttp));
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
         sttSettingsService: sttService(),
       );
-      final browser = await _openBrowserSession(host);
 
       // 变更请求缺 CSRF / 缺 Origin / 缺会话一律拒绝。
       final noCsrf = await _send(
@@ -1865,19 +1740,16 @@ void main() {
   );
 
   test('STT provider 字段：豆包配置往返，非法协议名按中文报错拒绝', () async {
-    final configPath =
-        '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+    final configPath = _providerJsonPath(temporaryDirectory);
     final sttHttp = _RecordingSttHttpClient('{"text":"今天有点累"}');
-    final host = await LocalAppHost.start(
-      webRoot: webRoot.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: '测试人格宪法',
+    final (host, browser) = await _startHostWithBrowser(
+      webRoot,
+      memoryDirectory,
       sttSettingsService: SttSettingsService(
         JsonProviderConfigRepository(filePath: configPath),
         SttModelGateway(sttHttp),
       ),
     );
-    final browser = await _openBrowserSession(host);
 
     // 豆包配置保存与读回：provider 字段往返一致。
     final saved = await _send(
@@ -1929,19 +1801,16 @@ void main() {
   test(
     'TTS routes persist per-section, mask keys, and return preview audio',
     () async {
-      final configPath =
-          '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+      final configPath = _providerJsonPath(temporaryDirectory);
       final ttsGateway = _RecordingTtsGateway(audio: [1, 2, 3]);
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
         ttsSettingsService: TtsSettingsService(
           JsonProviderConfigRepository(filePath: configPath),
           ttsGateway,
         ),
       );
-      final browser = await _openBrowserSession(host);
 
       // 变更请求缺 CSRF / 缺 Origin / 缺会话一律拒绝。
       final noCsrf = await _send(
@@ -2135,13 +2004,11 @@ void main() {
   test(
     'speak reads the persisted qiyu turn and returns synthesized audio',
     () async {
-      final configPath =
-          '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+      final configPath = _providerJsonPath(temporaryDirectory);
       final ttsGateway = _RecordingTtsGateway(audio: [1, 2, 3]);
-      final host = await LocalAppHost.start(
-        webRoot: webRoot.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
         providerSettingsService: ProviderSettingsService(
           JsonProviderConfigRepository(filePath: configPath),
           _MemorySecretStore(),
@@ -2153,7 +2020,6 @@ void main() {
           ttsGateway,
         ),
       );
-      final browser = await _openBrowserSession(host);
 
       // 配置聊天与 TTS（否则回复不落模型 turn、朗读没 Key）。
       await _send(
@@ -2193,45 +2059,37 @@ void main() {
       expect(noCsrf.statusCode, HttpStatus.forbidden);
 
       // 聊天交付一轮：栖语 turn 完整落盘。
-      final chat = await _send(
-        host.origin.resolve('/api/chat'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'speak-1', 'text': '在吗'}),
-      );
+      final chat = await _postJson(host, browser, '/api/chat', {
+        'requestId': 'speak-1',
+        'text': '在吗',
+      });
       expect(chat.statusCode, HttpStatus.ok);
 
       // 朗读：Host 从落盘 turn 取该 bubble 的文字去合成。
-      final spoken = await _send(
-        host.origin.resolve('/api/chat/speak'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'speak-1', 'turnIndex': 0}),
-      );
+      final spoken = await _postJson(host, browser, '/api/chat/speak', {
+        'requestId': 'speak-1',
+        'turnIndex': 0,
+      });
       expect(spoken.statusCode, HttpStatus.ok);
       expect(spoken.headers.value(HttpHeaders.contentTypeHeader), 'audio/mpeg');
       expect(spoken.bodyBytes, [1, 2, 3]);
       expect(ttsGateway.lastText, '还没睡？');
 
       // turnIndex 越界与未知 requestId：允许列表诊断码。
-      final overflow = await _send(
-        host.origin.resolve('/api/chat/speak'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'speak-1', 'turnIndex': 9}),
-      );
+      final overflow = await _postJson(host, browser, '/api/chat/speak', {
+        'requestId': 'speak-1',
+        'turnIndex': 9,
+      });
       expect(overflow.statusCode, HttpStatus.badRequest);
       expect(
         jsonDecode(overflow.body),
         containsPair('code', 'tts_turn_not_found'),
       );
 
-      final unknown = await _send(
-        host.origin.resolve('/api/chat/speak'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'nope', 'turnIndex': 0}),
-      );
+      final unknown = await _postJson(host, browser, '/api/chat/speak', {
+        'requestId': 'nope',
+        'turnIndex': 0,
+      });
       expect(unknown.statusCode, HttpStatus.badRequest);
       expect(
         jsonDecode(unknown.body),
@@ -2239,12 +2097,10 @@ void main() {
       );
 
       // 请求格式不对（缺 requestId / turnIndex 非整数）。
-      final malformed = await _send(
-        host.origin.resolve('/api/chat/speak'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'speak-1', 'turnIndex': 'zero'}),
-      );
+      final malformed = await _postJson(host, browser, '/api/chat/speak', {
+        'requestId': 'speak-1',
+        'turnIndex': 'zero',
+      });
       expect(malformed.statusCode, HttpStatus.badRequest);
 
       // 上游合成失败映射为允许列表诊断码与人话文案，网关异常里的
@@ -2253,11 +2109,11 @@ void main() {
         kind: ModelFailureKind.rateLimited,
         message: '上游额度详情 secret-provider-body',
       );
-      final upstreamFailure = await _send(
-        host.origin.resolve('/api/chat/speak'),
-        method: 'POST',
-        headers: browser.mutationHeaders(host.origin),
-        requestBody: jsonEncode({'requestId': 'speak-1', 'turnIndex': 0}),
+      final upstreamFailure = await _postJson(
+        host,
+        browser,
+        '/api/chat/speak',
+        {'requestId': 'speak-1', 'turnIndex': 0},
       );
       expect(upstreamFailure.statusCode, HttpStatus.badGateway);
       expect(
@@ -2274,12 +2130,10 @@ void main() {
   );
 
   test('transcribe rejects unconfigured and oversize audio bodies', () async {
-    final configPath =
-        '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
-    final host = await LocalAppHost.start(
-      webRoot: webRoot.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: '测试人格宪法',
+    final configPath = _providerJsonPath(temporaryDirectory);
+    final host = await _startHost(
+      webRoot,
+      memoryDirectory,
       sttSettingsService: SttSettingsService(
         JsonProviderConfigRepository(filePath: configPath),
         SttModelGateway(_RecordingSttHttpClient('{"text":"x"}')),
@@ -2326,12 +2180,10 @@ void main() {
   });
 
   test('memory controls overview and clear-product-data flow', () async {
-    final host = await LocalAppHost.start(
-      webRoot: webRoot.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: '测试人格宪法',
+    final (host, browser) = await _startHostWithBrowser(
+      webRoot,
+      memoryDirectory,
     );
-    final browser = await _openBrowserSession(host);
 
     final webSearchEndpoint = host.origin.resolve('/api/provider/web-search');
     final webSearchSaved = await _send(
@@ -2346,12 +2198,10 @@ void main() {
     });
 
     // 先产生一条真实会话，并放一份控制记录夹具。
-    final chat = await _send(
-      host.origin.resolve('/api/chat'),
-      method: 'POST',
-      headers: browser.mutationHeaders(host.origin),
-      requestBody: jsonEncode({'requestId': 'clear-flow', 'text': '在吗'}),
-    );
+    final chat = await _postJson(host, browser, '/api/chat', {
+      'requestId': 'clear-flow',
+      'text': '在吗',
+    });
     expect(chat.statusCode, HttpStatus.ok);
     File(
       '${memoryDirectory.path}${Platform.pathSeparator}memory-controls.md',
@@ -2389,21 +2239,15 @@ void main() {
     expect(previewJson['bannedCount'], 1);
 
     // 未明确确认一律拒绝。
-    final unconfirmed = await _send(
-      host.origin.resolve('/api/data/clear'),
-      method: 'POST',
-      headers: browser.mutationHeaders(host.origin),
-      requestBody: jsonEncode({'confirm': false}),
-    );
+    final unconfirmed = await _postJson(host, browser, '/api/data/clear', {
+      'confirm': false,
+    });
     expect(unconfirmed.statusCode, HttpStatus.badRequest);
 
     // 确认后清除：产品数据消失，清除前快照保留。
-    final cleared = await _send(
-      host.origin.resolve('/api/data/clear'),
-      method: 'POST',
-      headers: browser.mutationHeaders(host.origin),
-      requestBody: jsonEncode({'confirm': true}),
-    );
+    final cleared = await _postJson(host, browser, '/api/data/clear', {
+      'confirm': true,
+    });
     expect(cleared.statusCode, HttpStatus.ok);
     expect(jsonDecode(cleared.body), containsPair('cleared', true));
     expect(
@@ -2427,9 +2271,7 @@ void main() {
       'keySet': false,
     });
     expect(
-      File(
-        '${temporaryDirectory.path}${Platform.pathSeparator}provider.json',
-      ).readAsStringSync(),
+      File(_providerJsonPath(temporaryDirectory)).readAsStringSync(),
       isNot(contains('clear-me-anysearch-key')),
     );
     final snapshots = await _send(
@@ -2442,11 +2284,7 @@ void main() {
   });
 
   test('Web Search 设置端点只返回状态并与其他配置段互不覆盖', () async {
-    var host = await LocalAppHost.start(
-      webRoot: webRoot.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: '测试人格宪法',
-    );
+    var host = await _startHost(webRoot, memoryDirectory);
     var endpoint = host.origin.resolve('/api/provider/web-search');
     final missingSession = await _send(endpoint);
     expect(missingSession.statusCode, HttpStatus.unauthorized);
@@ -2517,9 +2355,7 @@ void main() {
     );
     expect(jsonDecode(retained.body), {'configured': true, 'keySet': true});
 
-    final providerFile = File(
-      '${temporaryDirectory.path}${Platform.pathSeparator}provider.json',
-    );
+    final providerFile = File(_providerJsonPath(temporaryDirectory));
     expect(
       await providerFile.readAsString(),
       contains('replacement-secret-value'),
@@ -2592,6 +2428,59 @@ Future<_HttpResponse> _send(
   client.close(force: true);
   return result;
 }
+
+Future<LocalAppHost> _startHost(
+  Directory webRoot,
+  Directory memoryDirectory, {
+  ProviderSettingsService? providerSettingsService,
+  SttSettingsService? sttSettingsService,
+  TtsSettingsService? ttsSettingsService,
+  WebSearchSettingsService? webSearchSettingsService,
+}) => LocalAppHost.start(
+  webRoot: webRoot.path,
+  memoryDirectory: memoryDirectory.path,
+  personaConstitution: '测试人格宪法',
+  providerSettingsService: providerSettingsService,
+  sttSettingsService: sttSettingsService,
+  ttsSettingsService: ttsSettingsService,
+  webSearchSettingsService: webSearchSettingsService,
+);
+
+Future<(LocalAppHost, _BrowserSession)> _startHostWithBrowser(
+  Directory webRoot,
+  Directory memoryDirectory, {
+  ProviderSettingsService? providerSettingsService,
+  SttSettingsService? sttSettingsService,
+  TtsSettingsService? ttsSettingsService,
+  WebSearchSettingsService? webSearchSettingsService,
+}) async {
+  final host = await _startHost(
+    webRoot,
+    memoryDirectory,
+    providerSettingsService: providerSettingsService,
+    sttSettingsService: sttSettingsService,
+    ttsSettingsService: ttsSettingsService,
+    webSearchSettingsService: webSearchSettingsService,
+  );
+  final browser = await _openBrowserSession(host);
+  return (host, browser);
+}
+
+String _providerJsonPath(Directory temporaryDirectory) =>
+    '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
+
+/// POST + mutationHeaders + JSON 请求体的固定三参形状：内部仍走 [_send]。
+Future<_HttpResponse> _postJson(
+  LocalAppHost host,
+  _BrowserSession browser,
+  String path,
+  Object? body,
+) => _send(
+  host.origin.resolve(path),
+  method: 'POST',
+  headers: browser.mutationHeaders(host.origin),
+  requestBody: jsonEncode(body),
+);
 
 /// 与 [_send] 同构，但携带二进制请求体（语音转写路由）。
 Future<_HttpResponse> _sendBytes(

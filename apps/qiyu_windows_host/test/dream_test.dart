@@ -7,13 +7,9 @@ import 'package:test/test.dart';
 
 void main() {
   test('the first bedtime dream accepts a validated draft', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-accept-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     var now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-accept-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-14', '用户完成了人生第一次演讲');
@@ -66,13 +62,9 @@ void main() {
   });
 
   test('less than three days later the bedtime dream stays ineligible', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-interval-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     var now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-interval-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了工作');
@@ -129,13 +121,9 @@ void main() {
   });
 
   test('without bedtime or pending dream never runs on its own', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-eligibility-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     var now = DateTime(2026, 9, 30, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-eligibility-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-09-30', '用户聊了很久');
@@ -163,13 +151,9 @@ void main() {
   });
 
   test('model failure keeps old impressions and retries via catch-up', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-retry-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     var now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-retry-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了搬家');
@@ -210,13 +194,9 @@ void main() {
   });
 
   test('duplicate items are merged before the gates run', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-dedup-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     final now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-dedup-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
@@ -244,13 +224,9 @@ void main() {
   });
 
   test('an unparseable model reply rejects without touching memory', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-unparseable-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     var now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-unparseable-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了搬家');
@@ -283,13 +259,9 @@ void main() {
       String? existingLongMemory,
       Future<void> Function(Directory directory)? prepare,
     }) async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-dream-gate-test-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
       final now = DateTime(2026, 8, 15, 23, 10);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-gate-test-',
         clock: () => now,
       );
       await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
@@ -451,13 +423,9 @@ void main() {
   });
 
   test('a failed acceptance keeps the old long-memory byte for byte', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-atomic-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     var now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-atomic-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
@@ -505,13 +473,9 @@ void main() {
   });
 
   test('daily finalization never resets or bypasses the dream interval', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-finalization-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     var now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-finalization-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
@@ -557,13 +521,9 @@ void main() {
   });
 
   test('no finalized material means nothing to reorganize', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-nomaterial-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     final now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-nomaterial-test-',
       clock: () => now,
     );
     final client = _ScriptedDreamClient(const []);
@@ -582,13 +542,9 @@ void main() {
   });
 
   test('no provider never fabricates long-term impressions', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-noprovider-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     var now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-noprovider-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
@@ -624,13 +580,9 @@ void main() {
   });
 
   test('an unreadable long-memory waits for recovery instead of overwrite', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-corrupt-memory-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     final now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-corrupt-memory-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
@@ -662,13 +614,9 @@ void main() {
   });
 
   test('a corrupted dream state refuses to run', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-corrupt-state-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     final now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-corrupt-state-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
@@ -732,13 +680,9 @@ void main() {
   });
 
   test('input respects the summary window and the month cap', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-budget-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     var now = DateTime(2026, 8, 20, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-budget-test-',
       clock: () => now,
     );
     // 连续 20 天 finalized 摘要：窗口只递最近 14 天。
@@ -808,13 +752,9 @@ void main() {
   });
 
   test('a stale draft from an interrupted run is discarded', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-stale-draft-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     final now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-stale-draft-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
@@ -846,13 +786,9 @@ void main() {
   });
 
   test('markBedtime registers the request before the dream chain runs', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-mark-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     var now = DateTime(2026, 8, 15, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-mark-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
@@ -898,13 +834,9 @@ void main() {
   });
 
   test('an oversized side input is trimmed months first, then days', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-trim-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     final now = DateTime(2026, 8, 20, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-trim-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-07-05', '七月的月度材料');
@@ -952,13 +884,9 @@ void main() {
   });
 
   test('a side input that crowds out all organized material skips the model', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'qiyu-dream-trim-all-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
     final now = DateTime(2026, 8, 20, 23, 10);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-trim-all-test-',
       clock: () => now,
     );
     await _seedFinalizedDay(pipeline, '2026-08-20', '八月的日摘要内容');
@@ -1080,13 +1008,9 @@ void main() {
     });
 
     test('an accepted dream applies validated root proposals and projects persona.md', () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-dream-roots-accept-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
       final now = DateTime(2026, 8, 15, 23, 10);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-roots-accept-',
         clock: () => now,
       );
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊到一次尴尬经历');
@@ -1157,13 +1081,9 @@ void main() {
     });
 
     test('proposals without enough evidence are rejected and leave the tree untouched', () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-dream-roots-insufficient-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
       final now = DateTime(2026, 8, 15, 23, 10);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-roots-insufficient-',
         clock: () => now,
       );
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊到跑步');
@@ -1237,13 +1157,9 @@ void main() {
     });
 
     test('time-bound, sensitive and banned root claims are rejected one by one', () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-dream-roots-claims-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
       final now = DateTime(2026, 8, 15, 23, 10);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-roots-claims-',
         clock: () => now,
       );
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了近况');
@@ -1336,13 +1252,9 @@ void main() {
     });
 
     test('duplicate and archived claims never become roots again', () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-dream-roots-dup-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
       final now = DateTime(2026, 8, 15, 23, 10);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-roots-dup-',
         clock: () => now,
       );
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了习惯');
@@ -1426,13 +1338,9 @@ void main() {
     });
 
     test('demote needs a real counter understanding; with one it archives the root', () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-dream-roots-demote-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
       final now = DateTime(2026, 8, 15, 23, 10);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-roots-demote-',
         clock: () => now,
       );
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了解压方式');
@@ -1551,13 +1459,9 @@ void main() {
     });
 
     test('a tree write failure never rolls back the accepted long-memory', () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'qiyu-dream-roots-writefail-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
       final now = DateTime(2026, 8, 15, 23, 10);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: directory.path,
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-roots-writefail-',
         clock: () => now,
       );
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了习惯');
@@ -1622,12 +1526,8 @@ void main() {
   });
 
   test('the dream prompt states the appellation wording rule', () async {
-    final directory = await Directory.systemTemp.createTemp(
+    final (:directory, :pipeline) = await _dreamFixture(
       'qiyu-dream-appellation-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
       clock: () => DateTime(2026, 8, 15, 23, 10),
     );
     await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
@@ -1660,12 +1560,8 @@ void main() {
   });
 
   test('the dream prompt falls back to 用户 without an appellation', () async {
-    final directory = await Directory.systemTemp.createTemp(
+    final (:directory, :pipeline) = await _dreamFixture(
       'qiyu-dream-appellation-fallback-test-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: directory.path,
       clock: () => DateTime(2026, 8, 15, 23, 10),
     );
     await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
@@ -1687,6 +1583,22 @@ void main() {
     expect(system, contains('一律写「用户」'));
     expect(system, contains('不要替用户起昵称'));
   });
+}
+
+/// 建临时目录并装配 episode 管线：成员沿用用例原变量名。
+/// DreamService 构造参数各用例不同，一律留在用例内装配；
+/// 装配形态不同的用例（healthFacts 的管线内联在服务构造里）不迁移。
+Future<({Directory directory, EpisodeMemoryPipeline pipeline})> _dreamFixture(
+  String tempPrefix, {
+  required DateTime Function() clock,
+}) async {
+  final directory = await Directory.systemTemp.createTemp(tempPrefix);
+  addTearDown(() => directory.delete(recursive: true));
+  final pipeline = EpisodeMemoryPipeline(
+    memoryDirectory: directory.path,
+    clock: clock,
+  );
+  return (directory: directory, pipeline: pipeline);
 }
 
 String _candidateWithRoots(
