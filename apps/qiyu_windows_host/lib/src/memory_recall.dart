@@ -26,6 +26,10 @@ const recallRawEvidenceMaxRunes = 160;
 /// 并入下一用户轮的压缩整理记录用更紧的摘录预算（临时透镜只留线索）。
 const recallPendingEvidenceMaxRunes = 100;
 
+/// 选择/组织调用的输出预算：同属理解类调用，必须显式给足预算——
+/// 缺省会吃聊天护栏 512，材料变大后输出截断即整轮召回失败。
+const recallModelMaxOutputTokens = 16384;
+
 /// 轮内查找选择调用里「没有相关记录」的哨兵输出：模型宁可说没有，
 /// 也不得牵强组织 bubble 2。
 const _recallNoBubbleSentinel = '没有了';
@@ -453,6 +457,7 @@ final class RecallOrchestrator {
           topIndex: topIndex,
           dayIndexByMonth: dayIndexByMonth,
         ),
+        maxTokens: recallModelMaxOutputTokens,
       );
     } on Object catch (error) {
       diagnostics.add('recall selection deferred [$error]');
@@ -497,6 +502,7 @@ final class RecallOrchestrator {
           // 表述惯例（称呼定稿）：称呼用户时按 persona.md 设定行走。
           appellation: await readAppellationFromMemory(memoryDirectory),
         ),
+        maxTokens: recallModelMaxOutputTokens,
       );
     } on Object catch (error) {
       diagnostics.add('recall compose deferred [$error]');

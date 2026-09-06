@@ -19,6 +19,7 @@ final class InProcessChatHost {
     this.deliveryPause,
     this.recallWindowWait,
     this.diagnosticsSink,
+    this.idleCatchupPoller,
     this.zoneErrors,
   );
 
@@ -33,6 +34,10 @@ final class InProcessChatHost {
   final DeliveryPause? deliveryPause;
   final RecallWindowWait? recallWindowWait;
   final void Function(String message)? diagnosticsSink;
+
+  /// 注入的空闲补办轮询定时器（测试用它断言宿主收尾取消）；null 时
+  /// 宿主使用生产默认的周期定时器壳。
+  final IdleCatchupPoller? idleCatchupPoller;
 
   late LocalAppHost _host;
   late String _cookie;
@@ -62,6 +67,7 @@ final class InProcessChatHost {
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
     void Function(String message)? diagnosticsSink,
+    IdleCatchupPoller? idleCatchupPoller,
     FutureOr<void> Function(Directory memoryDirectory)? seedMemory,
   }) async {
     final root =
@@ -109,6 +115,7 @@ final class InProcessChatHost {
       deliveryPause,
       recallWindowWait,
       diagnosticsSink,
+      idleCatchupPoller,
       <Object>[],
     );
     await instance._boot();
@@ -178,6 +185,7 @@ final class InProcessChatHost {
         deliveryPause: deliveryPause ?? (_) async {},
         recallWindowWait: recallWindowWait,
         diagnosticsSink: diagnosticsSink,
+        idleCatchupPoller: idleCatchupPoller,
       ),
     );
   }
@@ -352,6 +360,14 @@ final class InProcessChatHost {
 
   /// 关闭 Host 但保留目录（供重启复用）；[dispose] 才删目录。
   Future<void> close() => _host.close();
+
+  /// 手动拨动一次空闲补办轮询 tick（spec：轮询 tick 唯一新缝；测试
+  /// 不启动真定时器，直接拨 tick 配假时钟）。补办排进后台任务链后
+  /// 返回，等待落定用 [finalizePending] 或 [close]。
+  Future<void> pollTick() => _host.chatService.pollTick();
+
+  /// 等待后台任务链（补归档、月压缩、Dream）排空。
+  Future<void> finalizePending() => _host.chatService.finalizePending();
 
   Future<void> dispose() async {
     _client.close(force: true);

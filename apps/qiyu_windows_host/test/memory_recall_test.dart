@@ -48,6 +48,33 @@ void main() {
     expect(composeInput, contains('用户刚才说'));
   });
 
+  test('recall selection and compose calls carry an explicit output budget', () async {
+    final root = await _seedEpisodes({
+      '2026-07-02': [_entry('seed:1:0', '用户准备第一次演讲', evidence: '下周第一次演讲，好紧张')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    final (recall, pipeline) = _orchestrator(
+      root.path,
+      client: _ScriptedModelClient([
+        ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
+        ModelCompletion.reply('是想起来了，演讲那件事。'),
+      ]),
+    );
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说的演讲准备得怎么样了',
+      recallActions: [MemoryRecallAction(query: '第一次演讲')],
+    );
+
+    expect(result.bubbleText, isNotNull);
+    // 理解类调用必须显式给足输出预算：缺省会吃聊天护栏 512，材料变
+    // 大后输出截断即整轮召回失败。
+    final client = recall.modelClient! as _ScriptedModelClient;
+    expect(client.calls, hasLength(2));
+    expect(client.maxTokens, [16384, 16384]);
+  });
+
   test('the recall compose prompt states the appellation wording rule', () async {
     final root = await _seedEpisodes({
       '2026-07-02': [_entry('seed:1:0', '用户准备第一次演讲')],
@@ -557,6 +584,7 @@ final class _ScriptedModelClient implements ProviderChatClient {
 
   final List<ModelCompletion?> completions;
   final List<List<ModelMessage>> calls = [];
+  final List<int?> maxTokens = [];
 
   @override
   Future<ModelCompletion?> complete(
@@ -564,6 +592,7 @@ final class _ScriptedModelClient implements ProviderChatClient {
     int? maxTokens,
   }) async {
     calls.add(messages);
+    this.maxTokens.add(maxTokens);
     final index = calls.length - 1 < completions.length
         ? calls.length - 1
         : completions.length - 1;

@@ -48,6 +48,11 @@ const dreamHistoryKeep = 4;
 /// 单次 Dream 接受的根节点提案上限：防止模型一次性大改树结构。
 const dreamMaxRootProposals = 8;
 
+/// Dream 重组调用的输出预算：一次要吐出全部分区草稿加根节点提案的
+/// 单个 JSON 对象，与日终理解同一量级，远超聊天的少说护栏。缺省吃
+/// 聊天上限 512 时输出被截断，JSON 解析必失败（材料积压期的真实事故）。
+const dreamMaxOutputTokens = 16384;
+
 final _rootIdPattern = RegExp(r'^[A-Z]{2}-R\d+$');
 final _middleIdPattern = RegExp(r'^[A-Z]{2}-M\d+$');
 
@@ -122,7 +127,7 @@ final class DreamState {
   final DateTime? lastSuccess;
 
   /// 晚安时具备资格但未成功（模型失败、验证失败、写入失败或配置
-  /// 缺失）：下次启动补跑。只有成功才清除。
+  /// 缺失）：下次启动或跨天首条消息时补跑。只有成功才清除。
   final bool pending;
 }
 
@@ -410,12 +415,12 @@ List<String>? _idList(Object? value, RegExp pattern) {
 /// Dream（五段节奏第五动作，ticket 16 / T04 / T08 / T13 定稿）。
 ///
 /// 资格：触发必须来自晚安（[run] 的 bedtime 路径），或来自上次晚安
-/// 未成功留下的补跑请求（pending，启动/空闲时兑现）；且距上次成功
+/// 未成功留下的补跑请求（pending，启动、跨天首条消息时兑现）；且距上次成功
 /// Dream 的日历日差至少 [dreamMinIntervalDays] 天。日终归档与月压缩
 /// 每天都可以执行，但从不写入 Dream 状态，绝不重置或绕过该间隔。
 ///
-/// 输入（全部只读，遵守 [dreamInputMaxRunes] 预算）：上次成功之后的
-/// finalized 日摘要（窗口 [dreamSummaryWindowDays] 天）、月摘要（至多
+/// 输入（全部只读，遵守 [dreamInputMaxRunes] 预算）：上次成功当天及
+/// 之后的 finalized 日摘要（窗口 [dreamSummaryWindowDays] 天）、月摘要（至多
 /// [dreamMaxMonthSummaries] 月）、关系状态、未闭环线索、现有长期印象、
 /// 封禁（禁提 ∪ 删除）清单与冻结清单。受控内容在递给模型前按层过滤，
 /// 冻结的既有条目由模型原样带回。不读 sessions 原文，不写 episodes。
@@ -473,7 +478,7 @@ final class DreamService {
   /// 晚安触发预登记：满足最小间隔（[dreamMinIntervalDays] 天）时先
   /// 把 pending 落盘。挂在晚安后台
   /// 任务链的最前面，保证即使进程在随后的归档/月压缩/Dream 链跑完前
-  /// 退出（「当晚没跑成」），下次启动补跑仍能兑现这次晚安请求。
+  /// 退出（「当晚没跑成」），下次启动或跨天首条消息补跑仍能兑现这次晚安请求。
   Future<void> markBedtime() async {
     final stateRead = await _readState();
     if (stateRead.corrupted) {
@@ -496,7 +501,7 @@ final class DreamService {
   }
 
   /// 执行一次 Dream。[bedtime] 为 true 表示本轮由晚安触发；为 false
-  /// 时只在存在待补跑请求（pending）时执行（启动补跑路径）。
+  /// 时只在存在待补跑请求（pending）时执行（启动/跨天首条消息补跑路径）。
   Future<DreamOutcome> run({required bool bedtime}) async {
     final now = _clock();
     final stateRead = await _readState();
@@ -543,9 +548,9 @@ final class DreamService {
       after: state.lastSuccess == null ? null : localSessionDate(state.lastSuccess!),
     );
     if (input.summaries.isEmpty && input.monthSummaries.isEmpty) {
-      // 没有任何已整理材料：不跑也不记成功，清掉 pending，下次晚安
-      // 有了材料再评估。
-      await _writeState(DreamState(lastSuccess: state.lastSuccess, pending: false));
+      // 没有任何已整理材料：不跑也不记成功，也不写状态——pending 已在
+      // 本轮开头落盘，原样保留即是保留补跑请求（笔记定稿：当晚没跑成，
+      // 下次启动/空闲时补；材料齐前的空跑不调模型，无配额代价）。
       return const DreamOutcome(status: DreamStatus.skippedNoMaterial);
     }
 
@@ -555,7 +560,10 @@ final class DreamService {
     }
     ModelCompletion completion;
     try {
-      final result = await client.complete(_dreamMessages(input));
+      final result = await client.complete(
+        _dreamMessages(input),
+        maxTokens: dreamMaxOutputTokens,
+      );
       if (result == null) {
         // Provider 未配置（complete 返回 null）：语义重组不做。
         return const DreamOutcome(status: DreamStatus.skippedNoProvider);
@@ -905,7 +913,9 @@ final class DreamService {
     final dates = await episodePipeline.listEpisodeDates();
     final summaries = <({String date, String summary})>[];
     for (final date in dates) {
-      if (after != null && date.compareTo(after) <= 0) {
+      // 含 after 当天：上次成功时刻（如当天凌晨补跑）早于当天日终归档，
+      // 当天的日摘要必然未被上一轮看过；重复纳入无害，漏看一天才是真缺口。
+      if (after != null && date.compareTo(after) < 0) {
         continue;
       }
       final day = await episodePipeline.readDay(date);
@@ -1341,17 +1351,22 @@ final class DreamService {
     if (draftContent.runes.length > longMemoryMaxRunes) {
       return 'over-budget';
     }
-    // 证据关：每条必须携带至少一个真实出处，且出处必须出自本轮递给
-    // 模型的整理日期/月份，编造的一律整份作废。
+    // 证据关：每条必须携带至少一个真实出处，编造的一律整份作废。
+    // 日摘要只是窗口采样，月摘要却覆盖整月：日期引用命中日摘要窗口、
+    // 或其所属月份的月摘要在场，即可核；PersonaTree、关系与未闭环是
+    // 状态快照不是记录，其日期仍不认。拒绝时诊断第一个被拒引用
+    // （只含日期，绝不含候选文本）。
     for (final item in items) {
       if (item.evidence.isEmpty) {
         return 'missing-evidence';
       }
       for (final ref in item.evidence) {
         final known = _dayPattern.hasMatch(ref)
-            ? validDates.contains(ref)
+            ? validDates.contains(ref) ||
+                  validMonths.contains(ref.substring(0, 7))
             : _monthPattern.hasMatch(ref) && validMonths.contains(ref);
         if (!known) {
+          _diagnosticsSink('dream evidence rejected [ref=$ref]');
           return 'unknown-evidence';
         }
       }
@@ -1595,7 +1610,7 @@ final class DreamService {
    提案的 claim 同样不得带「最近/这周/这几天」等时间限定，不得出现敏感或禁提内容。
 $appellationRule
 字段白名单：
-- items: 数组，最多24项，每项 {"section": 人与关系、重要事件、模式与轨迹、共同过往 之一, "text": 一行压缩印象，不超过60字, "evidence": 日期数组，每项形如 YYYY-MM-DD，必须取自递来的已整理记录日期，绝不编造}。
+- items: 数组，最多24项，每项 {"section": 人与关系、重要事件、模式与轨迹、共同过往 之一, "text": 一行压缩印象，不超过60字, "evidence": 日期数组，每项形如 YYYY-MM-DD 或 YYYY-MM，只能取自「可用证据清单」列出的日期/月份，绝不编造}。
 - rootProposals: 可选数组，格式见第7条；不调整树时省略该字段。''';
 
     final user = StringBuffer()
@@ -1630,6 +1645,23 @@ $appellationRule
           ...['### ${entry.month}', entry.contents],
       ],
     );
+    // 证据清单显式列出可引用的日期/月份：长期印象、PersonaTree 叶证据
+    // 都带旧日期，模型无从自行判断哪些可作证据，显式清单是唯一可靠依据。
+    user
+      ..writeln()
+      ..writeln('## 可用证据清单');
+    final evidenceDates = input.validDates.toList()..sort();
+    final evidenceMonths = input.validMonths.toList()..sort();
+    if (evidenceDates.isEmpty && evidenceMonths.isEmpty) {
+      user.writeln('（无）');
+    } else {
+      if (evidenceDates.isNotEmpty) {
+        user.writeln('日期：${evidenceDates.join('、')}');
+      }
+      if (evidenceMonths.isNotEmpty) {
+        user.writeln('月份：${evidenceMonths.join('、')}');
+      }
+    }
     user
       ..writeln()
       ..writeln('## PersonaTree 当前结构')

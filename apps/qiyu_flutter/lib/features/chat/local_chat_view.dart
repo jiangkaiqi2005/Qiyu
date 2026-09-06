@@ -72,6 +72,16 @@ class _LocalChatViewState extends State<LocalChatView> {
   /// composer 焦点：聚焦态描边取 `composerFocusLine`（紫度 0.13），
   /// 失焦回落到 `line` 发丝线（design-system §8 组件 5）。
   final _inputFocusNode = FocusNode(debugLabel: 'chat-input');
+
+  /// composer 输入框量宽键：展开态判定要按输入框的**实际可用宽度**排版数行，
+  /// 按钮列的宽度必须排除在外，所以键挂在输入框本体而不是整行。
+  final _composerFieldKey = GlobalKey(debugLabel: 'composer-field');
+
+  /// composer 输入是否多于一行：多于一行即展开，面板下沿加到
+  /// [_composerExpandedBottomPadding]（上沿不动）；单行静息分毫不动（列表底部
+  /// 让位常量与基线测试的 492/516 都依赖这一点）。
+  bool _composerExpanded = false;
+
   String _lastListSignature = '';
 
   // 会话恢复与发送后默认跟到底部；只有用户主动上滑才离开，
@@ -105,6 +115,8 @@ class _LocalChatViewState extends State<LocalChatView> {
     super.initState();
     _scrollController.addListener(_trackStickToBottom);
     _inputFocusNode.addListener(_onInputFocusChange);
+    // 文本每次变化（打字、IME 组合、程序注入）都可能改变输入行行数。
+    _controller.addListener(_updateComposerExpanded);
     final chatViewModel = _chatViewModel = context.read<LocalChatViewModel>();
     final sttSettingsGateway = _resolveSttSettingsGateway();
     _voiceInput = VoiceInputController(
@@ -346,14 +358,76 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
-  /// 聊天态：消息流占满剩余高度，通知条与 composer 落底常驻。
+  /// M3 compact IconButton 在 tightFor([QiyuLayout.composerIconButtonSize])
+  /// 约束下的渲染增量（34 → 40，实测值）：SDK 密度调整的结果，无既有 token 可引。
+  static const double _compactIconButtonSizeDelta = 6;
+
+  /// composer 输入行（Row）的静息高，取最高子项（麦克风钮一侧）：
+  /// 图标按钮 [QiyuLayout.composerIconButtonSize] + compact 渲染增量
+  /// [_compactIconButtonSizeDelta] + 焦点环常驻留白上下
+  /// 2×[QiyuLayout.focusRingOffset]。
+  ///
+  /// 只用于列表底部让位（[_chatListBottomInset]）的推导；**不再作展开判据**——
+  /// 窄屏字阶下两行内容仍矮于按钮行，按高度判定会漏翻（见
+  /// [_updateComposerExpanded]）。
+  static const double _composerRowRestingHeight =
+      QiyuLayout.composerIconButtonSize +
+      _compactIconButtonSizeDelta +
+      2 * QiyuLayout.focusRingOffset;
+
+  /// composer 多行展开态的下沿内边距：上沿保持静息 [QiyuLayout.composerPadding]
+  /// 不动——宋体行盒的空隙大头分在文字上方（行高按字体上伸比例分配、CJK 字面
+  /// 偏上），视觉上沿自带余量；留白全部补给下沿，让最后一行离圆角远一点
+  /// （2026-09-05 用户反馈「上面太宽了，下面太窄了，离圆角太近了」；总留白
+  /// 与先前的上下对称方案一致，只是分配不同）。
+  static const double _composerExpandedBottomPadding =
+      QiyuLayout.composerPadding + 2 * QiyuSpacing.xs;
+
+  /// composer 光标宽度：[_inputField] 显式传给 TextField（渲染不变，Flutter
+  /// 默认就是 2.0），展开态判定按它扣排版宽，见 [_updateComposerExpanded]。
+  static const double _inputCursorWidth = 2.0;
+
+  /// 聊天态消息列表的 bottom padding：composer 覆盖层的**静息占位**（单行输入、
+  /// 通知条收起时，覆盖层从列表底缘算起占掉的高度）。取常量、不跟随 composer
+  /// 实际高度联动——联动会让列表随打字移动，违背「会话不动」；composer 长高时
+  /// 覆盖层向上生长盖住更早的消息，「滚到底」时最后一条消息完整落在覆盖层之上。
+  ///
+  /// 数值推导（自下而上）：
+  /// - [QiyuSpacing.lg]：面板之下原有的出屏留白（原 Column 底部的 SizedBox）；
+  /// - composer 静息面板：Row（[_composerRowRestingHeight]，实测 46）+ 上下
+  ///   内边距 2×[QiyuLayout.composerPadding] + 上下发丝边框 2×[QiyuLine.hairline]；
+  /// - [QiyuSpacing.lg]：一条通知条的近似余量（通知条 = 顶距 8 + 正文行盒约 21）。
+  ///   通知条出现时覆盖层向上吃掉这份余量，最多再侵入最后一条消息的底部边缘，
+  ///   属「会话不动」优先的既定取舍；这份 24 也接替了改造前列表自身的 bottom
+  ///   padding，静息外观与改造前一致（最后一条消息距面板顶 24px）。
+  static const double _chatListBottomInset =
+      QiyuSpacing.lg +
+      _composerRowRestingHeight +
+      2 * QiyuLayout.composerPadding +
+      2 * QiyuLine.hairline +
+      QiyuSpacing.lg;
+
+  /// 聊天态：消息流铺满整幅作底层，通知条与 composer 作为**覆盖层**落底常驻。
+  /// composer 随输入内容长高时只向上生长、盖住更早的消息，列表视口纹丝不动
+  /// （原 Column 结构里 `Expanded` 的列表视口会被精确压缩对应行高）。列表底部
+  /// 为覆盖层让位的 padding 常量见 [_chatListBottomInset]。
   Widget _chatBody(BuildContext context, LocalChatViewModel viewModel) {
-    return Column(
+    return Stack(
       children: [
-        Expanded(child: _messageArea(viewModel)),
-        _noticeBars(context, viewModel),
-        _composer(context, viewModel),
-        const SizedBox(height: QiyuSpacing.lg),
+        Positioned.fill(child: _messageArea(viewModel)),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _noticeBars(context, viewModel),
+              _composer(context, viewModel),
+              const SizedBox(height: QiyuSpacing.lg),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -602,14 +676,21 @@ class _LocalChatViewState extends State<LocalChatView> {
   }
 
   /// composer（design-system §8 组件 5）：毛玻璃胶囊、`line` 发丝描边、
-  /// 内边距 6、聚焦描边压到紫度 0.13；占位字 `muted` 且靠 34px 行高居中。
+  /// 内边距 6（多行展开态下沿再让两档 xs、上沿不动，单行静息不动）、
+  /// 聚焦描边压到紫度 0.13；占位字 `muted` 且靠 34px 行高居中。
   ///
   /// `home-go-chat` 沿用退役前首页「去聊天」入口卡的既有测试键：合一页
   /// 之后进入对话的动作就是这个输入容器，键位随职责搬过来。
   Widget _composer(BuildContext context, LocalChatViewModel viewModel) {
+    // 窗口宽度变化会改折行数与字阶档位（进而改输入行高），这类变化不经过
+    // 文本控制器，靠每次 build 补一次帧后核对兜住。
+    _updateComposerExpanded();
     final lineColor = _inputFocusNode.hasFocus
         ? QiyuColors.composerFocusLine
         : QiyuColors.line;
+    final bottomPadding = _composerExpanded
+        ? _composerExpandedBottomPadding
+        : QiyuLayout.composerPadding;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: QiyuSpacing.md),
       child: _centeredStream(
@@ -617,11 +698,11 @@ class _LocalChatViewState extends State<LocalChatView> {
           key: const Key('home-go-chat'),
           blurSigma: QiyuGlass.panelBlur,
           borderColor: lineColor,
-          padding: const EdgeInsets.fromLTRB(
+          padding: EdgeInsets.fromLTRB(
             QiyuSpacing.md,
             QiyuLayout.composerPadding,
             QiyuLayout.composerPadding,
-            QiyuLayout.composerPadding,
+            bottomPadding,
           ),
           // 输入行本体：Enter 发送 / 软换行 / Esc 的快捷键作用域只包住它。
           child: Shortcuts(
@@ -661,7 +742,12 @@ class _LocalChatViewState extends State<LocalChatView> {
               },
               child: Row(
                 children: [
-                  Expanded(child: _inputField()),
+                  Expanded(
+                    child: KeyedSubtree(
+                      key: _composerFieldKey,
+                      child: _inputField(),
+                    ),
+                  ),
                   const SizedBox(width: QiyuSpacing.xs),
                   AnimatedBuilder(
                     animation: _voiceInput,
@@ -683,8 +769,50 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
+  /// 展开态帧后核对：用与输入框**同源**的字体样式（[_inputTextStyle]）把当前
+  /// 文本按输入框实际可用宽度排版，行数 > 1 即展开，只在布尔翻转时 setState。
+  ///
+  /// 判定必须与真实渲染**双同源**，缺一处软折行边界就会漏判/过判（2026-09-05
+  /// 实测：`一`×35+'。' 真实渲染 2 行、判定 1 行，面板停在静息 60 下沿贴边，
+  /// 再补一个字符才跳展开——观感即「一个句号和两个句号差太多」）：
+  /// - 样式必须与渲染同源：[_inputTextStyle] 按 TextField 的实际装配方向取
+  ///   Theme `bodyLarge` merge（机制见其 doc）。裸 `QiyuTypography.body` 少了
+  ///   渲染样式自带的 `letterSpacing`，每行会比真实多容约 1 字符；
+  /// - 宽度必须扣光标边距：RenderEditable 的实际排版宽比容器窄
+  ///   `_caretMargin = 1.0 + cursorWidth`（rendering/editable.dart 的
+  ///   `_kCaretGap`），即下方的 `1.0 + _inputCursorWidth`；不扣会在临界长度
+  ///   再漏判一格。
+  ///
+  /// 判据必须是「内容行数」而非「输入行高超过按钮行（[_composerRowRestingHeight]）」：
+  /// 窄屏字阶与浏览器缩放会把单行行盒压到 22px 上下，两行内容（44px）仍矮于
+  /// 46px 的按钮行，按高度判定会漏翻——2026-09-05 用户 200% 缩放真机踩中，
+  /// 观感即「两行贴边、三行才突然松开，两行和三行差太多」。留白加在输入行
+  /// 外层的面板上，不反馈输入框自身宽度，量一次即稳。触发路径：控制器文本
+  /// 变化与 composer 每次 build（见 initState 与 [_composer]）。
+  void _updateComposerExpanded() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box = _composerFieldKey.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize || box.size.width <= 0) return;
+      final painter = TextPainter(
+        text: TextSpan(
+          text: _controller.text,
+          style: _inputTextStyle(context),
+        ),
+        textDirection: TextDirection.ltr,
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout(maxWidth: box.size.width - 1.0 - _inputCursorWidth);
+      final expanded = painter.computeLineMetrics().length > 1;
+      painter.dispose();
+      if (expanded != _composerExpanded) {
+        setState(() => _composerExpanded = expanded);
+      }
+    });
+  }
+
   /// 输入框本体：字色与占位字都来自 token；描边交给外层玻璃面板，
-  /// 因此这里显式撤掉 TextField 自己的边框与填充。
+  /// 因此这里显式撤掉 TextField 自己的边框与填充。cursorWidth 显式传
+  /// [_inputCursorWidth]（值等于默认），让展开态判定扣的光标边距有同一出处。
   Widget _inputField() {
     return TextField(
       key: const Key('chat-input'),
@@ -694,7 +822,8 @@ class _LocalChatViewState extends State<LocalChatView> {
       minLines: 1,
       maxLines: 5,
       textInputAction: TextInputAction.newline,
-      style: QiyuTypography.of(context).body.copyWith(color: QiyuColors.ink),
+      cursorWidth: _inputCursorWidth,
+      style: _inputTextStyle(context),
       decoration: const InputDecoration(
         hintText: '想说点什么…',
         filled: false,
@@ -708,6 +837,23 @@ class _LocalChatViewState extends State<LocalChatView> {
       ),
     );
   }
+
+  /// 输入框文本样式：[_inputField] 与展开态行数判定（[_updateComposerExpanded]）
+  /// 必须共用同一份，行数才不会按另一份字体度量排版。
+  ///
+  /// 构造 = `Theme.of(context).textTheme.bodyLarge` merge `QiyuTypography.body`
+  /// + ink，**merge 方向必须 bodyLarge 在前**：TextStyle.merge 是 other 覆盖
+  /// this，而主题 `bodyLarge` 经 `Theme.of` 返回前的 Typography englishLike
+  /// 2021 几何 merge（theme_data.dart 的 `ThemeData.localize`）后 `inherit` 为
+  /// false——TextStyle.merge 对 inherit false 的 other 直接原样返回，反向
+  /// merge 会整个丢掉 `QiyuTypography` 当档字阶与 ink 的显式覆盖。正向 merge
+  /// 得到的样式自带渲染层的 `letterSpacing: 0.5` 与 `height: 1.5`，再过
+  /// TextField 内部的 `bodyLarge.merge(providedStyle)`（text_field.dart 的
+  /// `_m3InputStyle`）逐属性不变：渲染零变化，判定从此与渲染同源。
+  TextStyle _inputTextStyle(BuildContext context) => Theme.of(context)
+      .textTheme
+      .bodyLarge!
+      .merge(QiyuTypography.of(context).body.copyWith(color: QiyuColors.ink));
 
   /// 语音输入状态行：录音计时 / 转写等待 / 可重试提示。作为 live region
   /// 播报给屏幕阅读器；idle 无事可报时不占位。
@@ -951,7 +1097,13 @@ class _LocalChatViewState extends State<LocalChatView> {
     return QiyuHoverGate(
       child: ListView.builder(
         controller: _scrollController,
-        padding: const EdgeInsets.all(QiyuSpacing.lg),
+        padding: const EdgeInsets.fromLTRB(
+          QiyuSpacing.lg,
+          QiyuSpacing.lg,
+          QiyuSpacing.lg,
+          // 覆盖层静息占位常量：推导与取舍见 [_chatListBottomInset]。
+          _chatListBottomInset,
+        ),
         itemCount: viewModel.messages.length + transientCount,
         itemBuilder: (context, index) {
           if (index == viewModel.messages.length) {
