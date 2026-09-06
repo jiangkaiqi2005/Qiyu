@@ -46,16 +46,7 @@ void main() {
       expect(settingsGateway.developerMode, isFalse);
 
       // 打开开发者模式后入口出现。
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('developer-mode-switch')),
-        200,
-        scrollable: _verticalScrollable(),
-        maxScrolls: 20,
-      );
-      await tester.ensureVisible(
-        find.byKey(const Key('developer-mode-switch')),
-      );
-      await tester.pumpAndSettle();
+      await _reveal(tester, find.byKey(const Key('developer-mode-switch')));
       await tester.tap(find.byKey(const Key('developer-mode-switch')));
       await tester.pumpAndSettle();
 
@@ -174,16 +165,7 @@ void main() {
     );
     await _openSettings(tester);
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('settings-memory-controls')),
-      200,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(
-      find.byKey(const Key('settings-memory-controls')),
-    );
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('settings-memory-controls')));
     await tester.tap(find.byKey(const Key('settings-memory-controls')));
     await tester.pumpAndSettle();
 
@@ -216,14 +198,7 @@ void main() {
     );
     await _openSettings(tester);
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('settings-clear-data')),
-      200,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('settings-clear-data')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('settings-clear-data')));
     await tester.tap(find.byKey(const Key('settings-clear-data')));
     await tester.pumpAndSettle();
 
@@ -307,14 +282,11 @@ void main() {
       find.byKey(const Key('tts-api-key')),
       'tts-new-secret-value',
     );
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('save-tts-settings')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 10,
     );
-    await tester.ensureVisible(find.byKey(const Key('save-tts-settings')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('save-tts-settings')));
     await tester.pumpAndSettle();
     expect(ttsGateway.savedDrafts, hasLength(1));
@@ -340,14 +312,7 @@ void main() {
     expect(find.byKey(const Key('tts-replay-preview')), findsOneWidget);
 
     // 切到豆包：地址与模型换成订阅专属缺省（完整端点 + Resource-Id）。
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('tts-provider')),
-      -300,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('tts-provider')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('tts-provider')), delta: -300);
     await tester.tap(find.byKey(const Key('tts-provider')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('豆包语音合成').last);
@@ -377,14 +342,7 @@ void main() {
     // `save-tts-settings` **之上**，必须往上滚才回得去。设置页挂上导航壳后内容列
     // 变窄（默认 800px 视口减去 240px 侧栏）、列表随之变长，之前向下滚能蒙对是
     // 因为整页还装得下、目标始终在缓存区内。
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('forget-tts-key')),
-      -200,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('forget-tts-key')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('forget-tts-key')), delta: -200);
     await tester.tap(find.byKey(const Key('forget-tts-key')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('tts-forget-key-dialog')), findsOneWidget);
@@ -436,16 +394,11 @@ void main() {
     );
 
     // 展开高级参数面板，校验已回填 extraParams JSON
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('tts-advanced-params-tile')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 10,
     );
-    await tester.ensureVisible(
-      find.byKey(const Key('tts-advanced-params-tile')),
-    );
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
     await tester.pumpAndSettle();
 
@@ -467,14 +420,11 @@ void main() {
       find.byKey(const Key('tts-extra-params')),
       '{"audio_params": {"sample_rate": 16000}}',
     );
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('save-tts-settings')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 10,
     );
-    await tester.ensureVisible(find.byKey(const Key('save-tts-settings')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('save-tts-settings')));
     await tester.pumpAndSettle();
 
@@ -495,14 +445,7 @@ void main() {
     );
     await _openSettings(tester);
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('forget-api-key')),
-      200,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('forget-api-key')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('forget-api-key')));
     await tester.tap(find.byKey(const Key('forget-api-key')));
     await tester.pumpAndSettle();
 
@@ -568,14 +511,11 @@ void main() {
       find.byKey(const Key('stt-api-key')),
       'stt-new-secret-value',
     );
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('save-stt-settings')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 10,
     );
-    await tester.ensureVisible(find.byKey(const Key('save-stt-settings')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('save-stt-settings')));
     await tester.pumpAndSettle();
     expect(sttGateway.savedDrafts, hasLength(1));
@@ -600,14 +540,7 @@ void main() {
     expect(find.textContaining('连接成功，语音输入可以使用'), findsOneWidget);
 
     // 切到豆包：下拉在区块顶部，测试按钮之后可能已经滚下去，向上找回。
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('stt-provider')),
-      -300,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('stt-provider')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
     await tester.tap(find.byKey(const Key('stt-provider')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('豆包流式语音识别').last);
@@ -636,14 +569,11 @@ void main() {
     );
 
     // 忘记 Key：需要确认，确认后 keySet 归零。
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('forget-stt-key')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 10,
     );
-    await tester.ensureVisible(find.byKey(const Key('forget-stt-key')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('forget-stt-key')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('stt-forget-key-dialog')), findsOneWidget);
@@ -663,14 +593,7 @@ void main() {
     await _openSettings(tester);
     await _expandSection(tester, 'privacy');
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('settings-privacy')),
-      200,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('settings-privacy')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('settings-privacy')));
     await tester.tap(find.byKey(const Key('settings-privacy')));
     await tester.pumpAndSettle();
 
@@ -836,16 +759,11 @@ void main() {
     await _expandSection(tester, 'tts');
 
     // 展开高级参数
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('tts-advanced-params-tile')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 30,
     );
-    await tester.ensureVisible(
-      find.byKey(const Key('tts-advanced-params-tile')),
-    );
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
     await tester.pumpAndSettle();
 
@@ -1482,6 +1400,25 @@ Future<void> _openSettings(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// 滚动到 [finder] 可见并定格：scrollUntilVisible → ensureVisible → pumpAndSettle
+/// 三连。滚动参数逐字透传：[delta] 是每次滚动的距离（默认 200，个别用例
+/// -300/-200），[maxScrolls] 是最多滚动次数（默认 20，个别用例 30/10）。
+Future<void> _reveal(
+  WidgetTester tester,
+  Finder finder, {
+  double delta = 200,
+  int maxScrolls = 20,
+}) async {
+  await tester.scrollUntilVisible(
+    finder,
+    delta,
+    scrollable: _verticalScrollable(),
+    maxScrolls: maxScrolls,
+  );
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+}
+
 /// 这一节当前是否展开。
 ///
 /// 判据是「正文那块在不在树上」——收起时 [_SettingsPanel] 只不画正文，分节自身
@@ -1508,14 +1445,7 @@ const _defaultExpandedSectionIds = <String>['provider', 'local_data'];
 /// 点一次某一节的标题（不判当前状态，也不幂等）。
 Future<void> _tapSectionHeader(WidgetTester tester, String sectionId) async {
   final header = find.byKey(Key('settings-section-header-$sectionId'));
-  await tester.scrollUntilVisible(
-    header,
-    200,
-    scrollable: _verticalScrollable(),
-    maxScrolls: 20,
-  );
-  await tester.ensureVisible(header);
-  await tester.pumpAndSettle();
+  await _reveal(tester, header);
   await tester.tap(header);
   await tester.pumpAndSettle();
 }

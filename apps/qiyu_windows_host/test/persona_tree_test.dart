@@ -6,8 +6,7 @@ import 'package:test/test.dart';
 
 void main() {
   test('leaves store only pointer info, never the raw evidence text', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-leaf-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('leaf');
     final store = _store(root.path);
 
     await store.createLeaves([
@@ -37,8 +36,7 @@ void main() {
   });
 
   test('same-day similar signals merge; the same entry never duplicates', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-dup-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('dup');
     final store = _store(root.path);
     final entries = [
       _entry(
@@ -64,8 +62,7 @@ void main() {
   });
 
   test('cross-day repeat evidence forms a middle; single-day behavior does not', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-middle-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('middle');
     final store = _store(root.path);
     final day1 = [
       _entry(
@@ -104,8 +101,7 @@ void main() {
   });
 
   test('one self-reported identity leaf forms a pending fact; behavior never does', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-identity-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('identity');
     final store = _store(root.path);
     await _seedEpisodes(root.path, {
       '2026-08-02': [
@@ -140,8 +136,7 @@ void main() {
   });
 
   test('contradicting evidence coexists as a conflict leaf instead of overwriting', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-conflict-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('conflict');
     final store = _store(root.path);
     await _seedEpisodes(root.path, {
       '2026-08-02': [
@@ -187,8 +182,7 @@ void main() {
   });
 
   test('a second conflict on another date forms an opposing middle understanding', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-opposing-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('opposing');
     final store = _store(root.path);
     await _seedEpisodes(root.path, {
       '2026-08-02': [
@@ -246,8 +240,7 @@ void main() {
   });
 
   test('an explicit identity correction revokes the old understanding with archive trace', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-correct-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('correct');
     final store = _store(root.path);
     await _seedEpisodes(root.path, {
       '2026-07-01': [
@@ -292,8 +285,7 @@ void main() {
   });
 
   test('a user ban outranks extraction: banned content is deleted, not archived', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-ban-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('ban');
     final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
     final store = _store(root.path, openLoopStore: openLoopStore);
     await _seedEpisodes(root.path, {
@@ -346,8 +338,7 @@ void main() {
   });
 
   test('secrets are redacted before becoming leaf summaries', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-secret-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('secret');
     final store = _store(root.path);
 
     await store.createLeaves([
@@ -365,8 +356,7 @@ void main() {
   });
 
   test('a fresh store rebuilds the same tree from episodes across restarts', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-rebuild-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('rebuild');
     await _seedEpisodes(root.path, {
       '2026-08-02': [
         _entry(
@@ -408,8 +398,7 @@ void main() {
   });
 
   test('day-end finalization runs PersonaTree maintenance as step six', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-finalize-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('finalize');
     final pipeline = EpisodeMemoryPipeline(memoryDirectory: root.path);
     final service = DailyFinalizationService(
       memoryDirectory: root.path,
@@ -440,8 +429,7 @@ void main() {
   });
 
   test('an unreadable branch file is preserved, never overwritten', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-corrupt-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('corrupt');
     final diagnostics = <String>[];
     final store = _store(root.path, diagnostics: diagnostics);
     final file = File(path.join(root.path, 'persona-tree', 'identity.md'));
@@ -465,8 +453,7 @@ void main() {
   });
 
   test('entries with unsafe identifiers never become leaf pointers', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-ref-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('ref');
     final diagnostics = <String>[];
     final store = _store(root.path, diagnostics: diagnostics);
 
@@ -485,8 +472,7 @@ void main() {
   });
 
   test('a middle understanding missing meta lines survives a rewrite', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-meta-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('meta');
     final diagnostics = <String>[];
     final store = _store(root.path, diagnostics: diagnostics);
     final file = File(path.join(root.path, 'persona-tree', 'expression.md'));
@@ -534,8 +520,7 @@ void main() {
   });
 
   test('default-wired finalization still honors bans in the persona sweep', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-defban-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('defban');
     final pipeline = EpisodeMemoryPipeline(memoryDirectory: root.path);
     // 两个组件都不显式传入：全部默认接线。禁提清扫必须仍然生效，
     // 而不是因 PersonaTree 拿不到禁提列表静默失效。
@@ -579,8 +564,7 @@ void main() {
   });
 
   test('root blocks pass through untouched while new leaves are appended', () async {
-    final root = await Directory.systemTemp.createTemp('qiyu-persona-roots-');
-    addTearDown(() => root.delete(recursive: true));
+    final root = await _tempRoot('roots');
     final store = _store(root.path);
     final file = File(path.join(root.path, 'persona-tree', 'identity.md'));
     file.createSync(recursive: true);
@@ -622,8 +606,7 @@ void main() {
 
   group('dream root maintenance (ticket 17)', () {
     test('promote moves unrooted middles under a new root and projects persona.md', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-promote-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('promote');
       final store = _store(root.path);
       _seedRootedBranch(root.path, 'preferences.md', '''# 偏好习惯
 
@@ -664,8 +647,7 @@ void main() {
     });
 
     test('absorb moves same-claim middles under an existing root', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-absorb-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('absorb');
       final store = _store(root.path);
       _seedRootedBranch(root.path, 'expression.md', '''# 性格表达
 
@@ -702,8 +684,7 @@ void main() {
     });
 
     test('demote archives the root shell and returns its subtree to unrooted', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-demote-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('demote');
       final store = _store(root.path);
       _seedRootedBranch(root.path, 'expression.md', '''# 性格表达
 
@@ -744,8 +725,7 @@ void main() {
     });
 
     test('merge keeps the earliest root, absorbs subtrees and archives the rest as 去重', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-merge-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('merge');
       final store = _store(root.path);
       _seedRootedBranch(root.path, 'preferences.md', '''# 偏好习惯
 
@@ -788,8 +768,7 @@ void main() {
     });
 
     test('ops with unknown ids are skipped defensively, tree untouched', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-skip-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('skip');
       final store = _store(root.path);
       _seedRootedBranch(root.path, 'preferences.md', '''# 偏好习惯
 
@@ -828,8 +807,7 @@ void main() {
     });
 
     test('maintenance clears orphan leaves older than 30 days only', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-orphan-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('orphan');
       final store = _store(root.path);
       _seedRootedBranch(root.path, 'expression.md', '''# 性格表达
 
@@ -846,8 +824,7 @@ void main() {
     });
 
     test('maintenance trims middles to six representative leaves, never touching conflicts', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-trim-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('trim');
       final store = _store(root.path);
       final leaves = StringBuffer();
       for (var i = 1; i <= 8; i++) {
@@ -875,8 +852,7 @@ $leaves''');
     });
 
     test('maintenance trims to six while keeping conflict leaves intact', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-trim-conflict-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('trim-conflict');
       final store = _store(root.path);
       final leaves = StringBuffer();
       for (var i = 1; i <= 7; i++) {
@@ -907,8 +883,7 @@ $leaves''');
     });
 
     test('maintenance archives a root whose subtree was emptied by conflict escalation', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-empty-root-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('empty-root');
       final store = _store(root.path);
       _seedRootedBranch(root.path, 'expression.md', '''# 性格表达
 
@@ -928,8 +903,7 @@ $leaves''');
     });
 
     test('a ban deletes rooted content and re-projects persona.md', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-ban-root-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('ban-root');
       final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
       final store = _store(root.path, openLoopStore: openLoopStore);
       _seedRootedBranch(root.path, 'preferences.md', '''# 偏好习惯
@@ -971,8 +945,7 @@ $leaves''');
     });
 
     test('a day-end identity correction archives the whole rooted path', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-root-correct-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('root-correct');
       final store = _store(root.path);
       _seedRootedBranch(root.path, 'identity.md', '''# 身份事实
 
@@ -1020,8 +993,7 @@ $leaves''');
     });
 
     test('conflict leaves reach rooted middles and escalate without revoking the root', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-root-conflict-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('root-conflict');
       final store = _store(root.path);
       _seedRootedBranch(root.path, 'expression.md', '''# 性格表达
 
@@ -1071,8 +1043,7 @@ $leaves''');
     });
 
     test('persona.md over budget trims preferences first and never boundaries', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-budget-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('budget');
       final store = _store(root.path);
       // 12 条满长偏好根主张（≈720 runes）+ 边界与身份，逼出裁剪。
       final preferences = StringBuffer()..writeln('# 偏好习惯');
@@ -1239,8 +1210,7 @@ $leaves''');
   // 不与上方按 ticket 组织的用例混排。
   group('appellation protected line', () {
     test('setAppellation writes the protected line; readAppellation round-trips', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-app-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('app');
       final store = _store(root.path);
 
       // 没有画像根时也落最小 persona.md：称呼有地方住、能注入。
@@ -1254,8 +1224,7 @@ $leaves''');
     });
 
     test('setAppellation rejects format violations without touching the file', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-app-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('app');
       final store = _store(root.path);
       expect(await store.setAppellation('凯奇'), '凯奇');
 
@@ -1282,8 +1251,7 @@ $leaves''');
     });
 
     test('dream refresh and projection rebuilds preserve the protected line', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-app-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('app');
       final store = _store(root.path);
       _seedRootedBranch(root.path, 'preferences.md', '''# 偏好习惯
 
@@ -1327,8 +1295,7 @@ $leaves''');
     });
 
     test('empty projection with an appellation keeps the minimal file', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-persona-app-');
-      addTearDown(() => root.delete(recursive: true));
+      final root = await _tempRoot('app');
       final store = _store(root.path);
       expect(await store.setAppellation('凯奇'), '凯奇');
 
@@ -1390,6 +1357,13 @@ Future<void> _seedEpisodes(
       ),
     );
   }
+}
+
+/// 在系统临时目录建一枚 `qiyu-persona-<tag>-` 临时根，测试结束后递归删除。
+Future<Directory> _tempRoot(String tag) async {
+  final root = await Directory.systemTemp.createTemp('qiyu-persona-$tag-');
+  addTearDown(() => root.delete(recursive: true));
+  return root;
 }
 
 PersonaTreeStore _store(

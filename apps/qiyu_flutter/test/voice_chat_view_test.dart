@@ -20,23 +20,7 @@ import 'support/shared_fakes.dart';
 
 void main() {
   testWidgets('模型回复完整交付后自动朗读：指示与停止按钮', (tester) async {
-    final speakGateway = _RecordingSpeakGateway();
-    final player = _HoldingPlayerPlatform();
-    final controller = VoiceOutputController(
-      speakGateway,
-      playerPlatform: player,
-    );
-    final viewModel = LocalChatViewModel(
-      _VoiceChatGateway(),
-      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
-      ttsSettingsGateway: _FixedTtsGateway(configured: true),
-      voiceOutput: controller,
-      autoStart: false,
-    );
-    await viewModel.refreshVoiceOutputStatus();
-    await tester.pumpWidget(
-      _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
-    );
+    final (speakGateway, _, _) = await _pumpVoiceScene(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -53,29 +37,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('voice-output-status')), findsNothing);
     expect(find.text('正在读'), findsNothing);
-    await tester.pumpWidget(const SizedBox.shrink());
-    viewModel.dispose();
-    controller.dispose();
   });
 
   testWidgets('点麦克风与 Esc 都让栖语立即闭嘴（防自我循环）', (tester) async {
-    final speakGateway = _RecordingSpeakGateway();
-    final player = _HoldingPlayerPlatform();
-    final controller = VoiceOutputController(
-      speakGateway,
-      playerPlatform: player,
-    );
-    final viewModel = LocalChatViewModel(
-      _VoiceChatGateway(),
-      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
-      ttsSettingsGateway: _FixedTtsGateway(configured: true),
-      voiceOutput: controller,
-      autoStart: false,
-    );
-    await viewModel.refreshVoiceOutputStatus();
-    await tester.pumpWidget(
-      _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
-    );
+    await _pumpVoiceScene(tester);
 
     // 一轮回复后自动朗读中。
     await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
@@ -96,10 +61,6 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('voice-output-status')), findsNothing);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    viewModel.dispose();
-    controller.dispose();
   });
 
   testWidgets('离开聊天页立即停止朗读并清空队列', (tester) async {
@@ -158,23 +119,7 @@ void main() {
   });
 
   testWidgets('气泡小喇叭重听：播完后点喇叭立即再读一次', (tester) async {
-    final speakGateway = _RecordingSpeakGateway();
-    final player = _HoldingPlayerPlatform();
-    final controller = VoiceOutputController(
-      speakGateway,
-      playerPlatform: player,
-    );
-    final viewModel = LocalChatViewModel(
-      _VoiceChatGateway(),
-      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
-      ttsSettingsGateway: _FixedTtsGateway(configured: true),
-      voiceOutput: controller,
-      autoStart: false,
-    );
-    await viewModel.refreshVoiceOutputStatus();
-    await tester.pumpWidget(
-      _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
-    );
+    final (speakGateway, player, _) = await _pumpVoiceScene(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -194,10 +139,6 @@ void main() {
       'session-voice',
       'session-voice',
     ]);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    viewModel.dispose();
-    controller.dispose();
   });
 
   testWidgets('朗读开关：配了才显示，点按切 autoSpeak 并停播', (tester) async {
@@ -564,6 +505,37 @@ Widget _harness({
       ),
     ),
   );
+}
+
+/// 装配语音聊天场景：朗读网关 + 挂起播放器 + 朗读控制器 + 聊天 ViewModel，
+/// 推进到可朗读状态后挂上 harness；测试结束后按 pumpWidget(shrink) →
+/// viewModel.dispose() → controller.dispose() 的顺序释放。返回
+/// （朗读网关, 播放平台, 朗读控制器）三元组。
+Future<(_RecordingSpeakGateway, _HoldingPlayerPlatform, VoiceOutputController)>
+_pumpVoiceScene(WidgetTester tester) async {
+  final speakGateway = _RecordingSpeakGateway();
+  final player = _HoldingPlayerPlatform();
+  final controller = VoiceOutputController(
+    speakGateway,
+    playerPlatform: player,
+  );
+  final viewModel = LocalChatViewModel(
+    _VoiceChatGateway(),
+    hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+    ttsSettingsGateway: _FixedTtsGateway(configured: true),
+    voiceOutput: controller,
+    autoStart: false,
+  );
+  await viewModel.refreshVoiceOutputStatus();
+  await tester.pumpWidget(
+    _harness(viewModel: viewModel, platform: _FakeRecorderPlatform()),
+  );
+  addTearDown(() async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    viewModel.dispose();
+    controller.dispose();
+  });
+  return (speakGateway, player, controller);
 }
 
 LocalChatViewModel _chatViewModel([StreamingLocalChatGateway? gateway]) =>
