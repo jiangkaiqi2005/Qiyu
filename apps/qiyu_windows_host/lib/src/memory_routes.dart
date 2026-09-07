@@ -36,13 +36,7 @@ final class MemoryRoutes implements ApiRoutes {
     // 本领域没有共享口径之外的异常差异：请求体不可读、invalid_request、
     // 记忆仓储故障全走共享翻译前导；动作结果码到 HTTP 状态的映射在
     // _route 内按动作完成。
-    try {
-      return await _route(request);
-    } on Object catch (error) {
-      final shared = sharedApiErrorResponse(error);
-      if (shared == null) rethrow;
-      return shared;
-    }
+    return runApiRoute(() => _route(request));
   }
 
   Future<Response?> _route(Request request) async {

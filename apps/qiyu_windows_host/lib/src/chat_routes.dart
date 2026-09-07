@@ -31,13 +31,7 @@ final class ChatRoutes implements ApiRoutes {
     // 共享翻译前导覆盖本领域全部异常口径：请求体不可读、invalid_request
     // 与聊天服务真实抛出的 LocalChatException（冲突、模型回复缺陷等）、
     // 记忆仓储故障。
-    try {
-      return await _route(request);
-    } on Object catch (error) {
-      final shared = sharedApiErrorResponse(error);
-      if (shared == null) rethrow;
-      return shared;
-    }
+    return runApiRoute(() => _route(request));
   }
 
   Future<Response?> _route(Request request) async {

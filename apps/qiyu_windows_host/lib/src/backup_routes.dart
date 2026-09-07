@@ -29,20 +29,17 @@ final class BackupRoutes implements ApiRoutes {
   Future<Response?> handle(Request request) async {
     // 领域差异只有备份包校验失败；请求体不可读、invalid_request、
     // Provider 配置与凭据库故障、本地数据与记忆仓储故障走共享翻译前导。
-    try {
-      return await _route(request);
-    } on BackupValidationException catch (error) {
-      return jsonError(
-        HttpStatus.badRequest,
-        code: error.code,
-        message: error.message,
-        retryable: false,
-      );
-    } on Object catch (error) {
-      final shared = sharedApiErrorResponse(error);
-      if (shared == null) rethrow;
-      return shared;
-    }
+    return runApiRoute(
+      () => _route(request),
+      translateDomainError: (error) => error is BackupValidationException
+          ? jsonError(
+              HttpStatus.badRequest,
+              code: error.code,
+              message: error.message,
+              retryable: false,
+            )
+          : null,
+    );
   }
 
   Future<Response?> _route(Request request) async {

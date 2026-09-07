@@ -179,6 +179,25 @@ Response? sharedApiErrorResponse(Object error) {
   return null;
 }
 
+/// 领域路由 handle() 的统一执行壳：先按本领域差异翻译领域异常，其余
+/// 异常走共享翻译前导，不属于任何口径的原样外抛交回总控。六个领域
+/// 路由的 handle() 全部经由这里，异常翻译的先后顺序与对外形状只有
+/// 一份实现。
+Future<Response?> runApiRoute(
+  Future<Response?> Function() route, {
+  Response? Function(Object error)? translateDomainError,
+}) async {
+  try {
+    return await route();
+  } on Object catch (error) {
+    final domain = translateDomainError?.call(error);
+    if (domain != null) return domain;
+    final shared = sharedApiErrorResponse(error);
+    if (shared == null) rethrow;
+    return shared;
+  }
+}
+
 Response plainError(int statusCode, String message) {
   return Response(
     statusCode,

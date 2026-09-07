@@ -101,8 +101,14 @@ final class ClearPreview {
   final int frozenCount;
   final int bannedCount;
   final int deletedCount;
+
+  /// Host 回传但界面未消费，有意保留。
   final int snapshotCount;
+
+  /// Host 回传但界面未消费，有意保留。
   final bool providerConfigured;
+
+  /// Host 回传但界面未消费，有意保留。
   final bool keySet;
 }
 
@@ -130,6 +136,8 @@ final class RecentRequest {
   final String result;
   final String? replySource;
   final String? fallbackReason;
+
+  /// Host 回传但界面未消费，有意保留。
   final String? detail;
 }
 
