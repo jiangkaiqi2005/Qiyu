@@ -106,6 +106,9 @@ jobs:
     timeout-minutes: 40
     defaults:
       run:
+        # job 级 defaults 会整体覆盖工作流级设置，bash 必须在此重申，
+        # 否则 Windows 回退 pwsh，续行符语义不同
+        shell: bash
         working-directory: apps/qiyu_windows_host
     steps:
       - uses: actions/checkout@v4
