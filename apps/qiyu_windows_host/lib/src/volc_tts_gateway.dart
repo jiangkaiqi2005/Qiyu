@@ -32,21 +32,12 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
     final uri = Uri.parse(config.baseUrl.trim());
     ensureTtsOutboundAllowed(uri);
     final rawSpeaker = config.voice?.trim();
-    final String effectiveSpeaker;
-    final String? detectedDialect;
-    if (rawSpeaker != null && rawSpeaker.isNotEmpty) {
-      final dialect = _detectDialect(rawSpeaker);
-      if (dialect != null) {
-        effectiveSpeaker = defaultSpeaker;
-        detectedDialect = dialect;
-      } else {
-        effectiveSpeaker = rawSpeaker;
-        detectedDialect = null;
-      }
-    } else {
-      effectiveSpeaker = defaultSpeaker;
-      detectedDialect = null;
-    }
+    final detectedDialect =
+        (rawSpeaker == null || rawSpeaker.isEmpty) ? null : _detectDialect(rawSpeaker);
+    final effectiveSpeaker =
+        (detectedDialect != null || rawSpeaker == null || rawSpeaker.isEmpty)
+            ? defaultSpeaker
+            : rawSpeaker;
 
     final audioParams = <String, Object?>{
       'format': 'mp3',
