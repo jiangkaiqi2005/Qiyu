@@ -217,6 +217,36 @@ void main() {
     expect(viewModel.errorMessage, isNotNull);
     expect(value.apiKeyController.text, 'sk-tts');
   });
+
+  test('火山豆包保存与同步回显：方言音色（四川话）与滑动语速保存后正确回显且无状态丢失', () async {
+    final value = form();
+    value.selectProvider('volc_tts');
+    value.selectVoice('zh_female_sichuan_uranus_bigtts');
+    value.selectSpeed(0.8);
+    value.apiKeyController.text = 'ark-test-key';
+
+    final saved = await value.save(viewModel, report: (_) {});
+
+    expect(saved, isTrue);
+    final draft = gateway.savedDrafts.single;
+    expect(draft.provider, TtsServiceKind.volcTts);
+    expect(
+      draft.baseUrl,
+      'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+    );
+    expect(draft.model, 'seed-tts-2.0');
+    expect(draft.voice, 'zh_female_sichuan_uranus_bigtts');
+    expect(draft.speed, 0.8);
+    expect(draft.apiKey, 'ark-test-key');
+
+    // 视图模型更新并同步回表单
+    value.sync(viewModel.settings);
+    expect(value.provider, TtsServiceKind.volcTts);
+    expect(value.voiceController.text, 'zh_female_sichuan_uranus_bigtts');
+    expect(value.voiceDropdownValue, 'zh_female_sichuan_uranus_bigtts');
+    expect(value.showCustomVoiceField, isFalse);
+    expect(value.speed, 0.8);
+  });
 }
 
 final class _RecordingTtsGateway implements TtsSettingsGateway {

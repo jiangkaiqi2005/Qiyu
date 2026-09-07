@@ -414,6 +414,13 @@ void main() {
           .text,
       contains('"explicit_dialect": "sichuan"'),
     );
+    final ttsExtraField = tester.widget<TextField>(
+      find.byKey(const Key('tts-extra-params')),
+    );
+    expect(
+      (ttsExtraField.decoration?.border as OutlineInputBorder?)?.borderRadius,
+      QiyuRadii.smallBorder,
+    );
 
     // 修改 extraParams 并保存
     await tester.enterText(

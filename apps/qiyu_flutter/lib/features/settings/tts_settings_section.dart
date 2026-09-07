@@ -324,7 +324,11 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
               decoration: InputDecoration(
                 labelText: '服务地址',
                 hintText: defaults.urlHint,
-                border: const OutlineInputBorder(),
+                border: settingsOutlineBorder(color: QiyuColors.line),
+                enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+                focusedBorder: settingsOutlineBorder(
+                  color: QiyuColors.composerFocusLine,
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -337,7 +341,11 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
                     ? 'Resource-Id'
                     : '模型名称',
                 hintText: defaults.modelHint,
-                border: const OutlineInputBorder(),
+                border: settingsOutlineBorder(color: QiyuColors.line),
+                enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+                focusedBorder: settingsOutlineBorder(
+                  color: QiyuColors.composerFocusLine,
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -386,7 +394,13 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
                           hintText: provider == TtsServiceKind.volcTts
                               ? 'zh_female_vv_uranus_bigtts'
                               : 'alloy',
-                          border: const OutlineInputBorder(),
+                          border: settingsOutlineBorder(color: QiyuColors.line),
+                          enabledBorder: settingsOutlineBorder(
+                            color: QiyuColors.line,
+                          ),
+                          focusedBorder: settingsOutlineBorder(
+                            color: QiyuColors.composerFocusLine,
+                          ),
                         ),
                       ),
                     ],
@@ -488,11 +502,18 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
                         focusNode: _form.extraParamsFocusNode,
                         keyboardType: TextInputType.multiline,
                         maxLines: 5,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: '自定义扩展参数 (JSON)',
                           hintText:
                               '{\n  "audio_params": {\n    "sample_rate": 16000\n  }\n}',
-                          border: OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.all(16),
+                          border: settingsOutlineBorder(color: QiyuColors.line),
+                          enabledBorder: settingsOutlineBorder(
+                            color: QiyuColors.line,
+                          ),
+                          focusedBorder: settingsOutlineBorder(
+                            color: QiyuColors.composerFocusLine,
+                          ),
                         ),
                       ),
                     ],

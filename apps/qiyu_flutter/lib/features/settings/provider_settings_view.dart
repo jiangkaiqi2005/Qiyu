@@ -131,7 +131,21 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
             child: SettingsSectionCollapseScope(
               collapsed: _collapsedSections,
               onToggle: _toggleSection,
-              child: ListView(
+              child: Theme(
+                data: theme.copyWith(
+                  inputDecorationTheme: theme.inputDecorationTheme.copyWith(
+                    border: settingsOutlineBorder(color: QiyuColors.line),
+                    enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+                    focusedBorder: settingsOutlineBorder(
+                      color: QiyuColors.composerFocusLine,
+                    ),
+                    errorBorder: settingsOutlineBorder(color: QiyuColors.danger),
+                    focusedErrorBorder: settingsOutlineBorder(
+                      color: QiyuColors.danger,
+                    ),
+                  ),
+                ),
+                child: ListView(
                 key: const Key('settings-scroll'),
                 // 顶留白取无环页头档：与记忆/历史页页头返回键的纵向同位
                 // 由页头同位回归测试锁定。
@@ -185,8 +199,9 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 /// 本地数据管理区块：本地路径、备份恢复、记忆控制总览与清除数据。

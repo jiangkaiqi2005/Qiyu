@@ -7,6 +7,7 @@ import 'package:qiyu_flutter/features/settings/provider_settings_section.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_section_shell.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
+import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 /// 「高级参数」分节悬浮标签的几何回归。
 ///
@@ -57,6 +58,10 @@ void main() {
       (Key('provider-temperature'), 'temperature'),
       (Key('provider-timeout'), '超时（秒）'),
     ]) {
+      final field = tester.widget<TextField>(find.byKey(fieldKey));
+      final border = field.decoration?.border as OutlineInputBorder?;
+      expect(border?.borderRadius, QiyuRadii.smallBorder);
+
       final label = tester.renderObject<RenderParagraph>(
         find.descendant(
           of: find.byKey(fieldKey),

@@ -31,7 +31,14 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
     final key = requireTtsApiKey(apiKey);
     final uri = Uri.parse(config.baseUrl.trim());
     ensureTtsOutboundAllowed(uri);
-    final speaker = config.voice?.trim();
+    final rawSpeaker = config.voice?.trim();
+    final detectedDialect =
+        (rawSpeaker == null || rawSpeaker.isEmpty) ? null : _detectDialect(rawSpeaker);
+    final effectiveSpeaker =
+        (detectedDialect != null || rawSpeaker == null || rawSpeaker.isEmpty)
+            ? defaultSpeaker
+            : rawSpeaker;
+
     final audioParams = <String, Object?>{
       'format': 'mp3',
       'sample_rate': 24000,
@@ -42,18 +49,26 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
         (extra['audio_params'] as Map).cast<String, Object?>(),
       );
     }
+    // 火山方舟 seed-tts-2.0 语速字段在 audio_params 下的 speech_rate（[-50, 100]，0 为 1.0x）。
+    if (config.speed != null) {
+      audioParams['speech_rate'] =
+          ((config.speed! - 1.0) * 100).round().clamp(-50, 100);
+    }
+
+    final effectiveAdditions = _resolveAdditions(
+      extra: extra,
+      detectedDialect: detectedDialect,
+    );
+
     final reqParams = <String, Object?>{
       if (extra != null)
         for (final entry in extra.entries)
-          if (entry.key != 'audio_params') entry.key: entry.value,
+          if (entry.key != 'audio_params' && entry.key != 'additions')
+            entry.key: entry.value,
       'text': text,
-      'speaker': speaker == null || speaker.isEmpty
-          ? defaultSpeaker
-          : speaker,
+      'speaker': effectiveSpeaker,
       'audio_params': audioParams,
-      // 官方说明的示例未出现语速字段：按传统豆包 TTS 参数名 speed_ratio
-      // 传入（spec 定稿）；实测拒收则设置页禁用该协议下的语速，不假调节。
-      if (config.speed != null) 'speed_ratio': config.speed,
+      'additions': ?effectiveAdditions,
     };
     final body = jsonEncode({'req_params': reqParams});
     final response = await postTtsBytes(
@@ -153,6 +168,49 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
       );
     }
     return bytes;
+  }
+
+  /// 检测预设方言音色 ID，并返回对应的方言代码（如 sichuan, dongbei 等）。
+  /// 仅精准匹配预设音色库已定义的方言，避免误劫持用户自定义音色。
+  static String? _detectDialect(String voice) => _dialectVoiceMap[voice.trim()];
+
+  static const _dialectVoiceMap = <String, String>{
+    'zh_female_sichuan_uranus_bigtts': 'sichuan',
+    'zh_female_cantonese_uranus_bigtts': 'guangdong',
+    'zh_female_dongbei_uranus_bigtts': 'dongbei',
+    'zh_female_henan_uranus_bigtts': 'henan',
+    'zh_female_shanxi_uranus_bigtts': 'shaanxi',
+    'zh_female_tianjin_uranus_bigtts': 'tianjin',
+    'zh_female_shandong_uranus_bigtts': 'shandong',
+    'zh_female_minnan_uranus_bigtts': 'minnan',
+    'zh_female_wanwanxiaohe_moon_bigtts': 'taiwan',
+  };
+
+  /// 火山方舟 Go 服务端中 `additions` 字段类型是 `string`。
+  /// 自动注入方言参数或 extraParams 传入的对象统一序列化为 JSON 字符串，
+  /// 非空字符串直接保留。
+  static String? _resolveAdditions({
+    required Map<String, Object?>? extra,
+    required String? detectedDialect,
+  }) {
+    final rawAdditions = extra?['additions'];
+    if (rawAdditions is Map) {
+      final map = Map<String, Object?>.from(rawAdditions);
+      if (detectedDialect != null) {
+        map.putIfAbsent('explicit_dialect', () => detectedDialect);
+      }
+      return jsonEncode(map);
+    }
+
+    if (rawAdditions is String && rawAdditions.isNotEmpty) {
+      return rawAdditions;
+    }
+
+    if (detectedDialect != null) {
+      return jsonEncode({'explicit_dialect': detectedDialect});
+    }
+
+    return null;
   }
 }
 
