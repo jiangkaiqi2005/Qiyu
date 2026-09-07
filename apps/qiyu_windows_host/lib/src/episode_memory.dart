@@ -149,6 +149,12 @@ final class EpisodeDay {
   final Map<String, Object?>? understanding;
 
   bool hasEntryId(String id) => entries.any((entry) => entry.id == id);
+
+  /// 日终模型理解的情绪余波（若已存在且非空）；未持久化或损坏时为 null。
+  String? get mood {
+    final raw = understanding?['mood'];
+    return raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
+  }
 }
 
 final class EpisodeCheckpoint {

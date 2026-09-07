@@ -626,6 +626,15 @@ void main() {
       expect((signal as MemorySignalAction).hint, isNull);
       expect(parse.diagnostics, [HiddenActionDiagnostics.personaHintDropped]);
     });
+
+    test('trailing unclosed action block is stripped from visible text with invalidFormat diagnostic', () {
+      final parse = parseHiddenActions(
+        '明天天气很好。\n<qiyu-actions>[{"action":"memory_recall","query":"天气"',
+      );
+      expect(parse.visibleText, '明天天气很好。');
+      expect(parse.actions, isEmpty);
+      expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFormat]);
+    });
   });
 }
 

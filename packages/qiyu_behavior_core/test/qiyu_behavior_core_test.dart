@@ -336,4 +336,34 @@ void main() {
     expect(result.nextState.turns.first.text, isNot(contains('<|')));
     expect(result.nextState.turns.first.text, isNot(startsWith('system')));
   });
+
+  test('trailing unclosed hidden action or think block is stripped and reply accepted as llm', () {
+    final resultActions = const QiyuBehaviorCore().reply(
+      const ChatRequest(
+        requestId: 'truncated-actions',
+        text: '明天天气怎么样？',
+      ),
+      StateSnapshot.initial('fixture-user'),
+      candidateReply: '明天天气挺好的，适合出门走走。\n<qiyu-actions>[{"action":"memory_recall"',
+    );
+
+    expect(resultActions, isA<ChatResult>());
+    final chatResultActions = resultActions as ChatResult;
+    expect(chatResultActions.source, ReplySource.llm);
+    expect(chatResultActions.messages, ['明天天气挺好的，适合出门走走。']);
+
+    final resultThink = const QiyuBehaviorCore().reply(
+      const ChatRequest(
+        requestId: 'truncated-think',
+        text: '明天天气怎么样？',
+      ),
+      StateSnapshot.initial('fixture-user'),
+      candidateReply: '挺晴朗的。\n<think>模型尾部未闭合思考...',
+    );
+
+    expect(resultThink, isA<ChatResult>());
+    final chatResultThink = resultThink as ChatResult;
+    expect(chatResultThink.source, ReplySource.llm);
+    expect(chatResultThink.messages, ['挺晴朗的。']);
+  });
 }

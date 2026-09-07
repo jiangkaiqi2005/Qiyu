@@ -75,6 +75,9 @@ final class FinalizationOutcome {
   /// 未配置 Provider 时客户端立即返回空，同样计一次尝试，避免预算
   /// 被反复试探）。供补扫的模型日预算记账。
   final bool usedModel;
+
+  /// 本次归档是否成功定稿。
+  bool get isFinalized => status == FinalizationStatus.finalized;
 }
 
 final class FinalizationReport {
@@ -247,7 +250,27 @@ final class DailyFinalizationService {
         outcomes.add(_failedOutcome(date, error));
       }
     }
+    // 补扫中若发生了历史补录定稿，旧日期的 _rebuildDailyState 会将
+    // daily-state.md 覆盖为老日期（后续已定稿日被跳过不再重建）。
+    // 此处确保状态包按最新已定稿日期为窗口终点重建。
+    if (outcomes.any((outcome) => outcome.isFinalized)) {
+      await _restoreLatestDailyState(past: past, dates: dates);
+    }
     return FinalizationReport(outcomes: outcomes);
+  }
+
+  /// 补扫定稿后，确保近日状态包按已知最新定稿日为窗口终点重建。
+  Future<void> _restoreLatestDailyState({
+    required List<String> past,
+    required List<String> dates,
+  }) async {
+    for (final date in past.reversed) {
+      final day = await episodePipeline.readDay(date);
+      if (day.readable && day.finalized) {
+        await _rebuildDailyState(date, dates, mood: day.mood);
+        return;
+      }
+    }
   }
 
   /// 是否存在早于 [before] 且需要补归档的日期（未定稿，或已定稿但

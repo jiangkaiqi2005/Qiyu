@@ -551,20 +551,25 @@ final _secretPatterns = [
 /// 解析失败、未知动作或越权字段只被忽略并记录诊断，绝不进入可见回复。
 HiddenActionParse parseHiddenActions(String rawText) {
   final blocks = _hiddenActionBlock.allMatches(rawText).toList();
-  final visibleText = rawText
-      .replaceAll(_hiddenActionBlock, '')
+  final withoutClosed = rawText.replaceAll(_hiddenActionBlock, '');
+  final hasTrailingUnclosed =
+      trailingUnclosedActionBlockPattern.hasMatch(withoutClosed);
+  final visibleText = withoutClosed
+      .replaceFirst(trailingUnclosedActionBlockPattern, '')
       .replaceAll(blankLinesPattern, '\n\n')
       .trim();
   if (blocks.isEmpty) {
     return HiddenActionParse(
       visibleText: visibleText,
       actions: const [],
-      diagnostics: const [],
+      diagnostics: hasTrailingUnclosed
+          ? [HiddenActionDiagnostics.invalidFormat]
+          : const [],
     );
   }
 
   final diagnostics = <String>[];
-  if (blocks.length > 1) {
+  if (blocks.length > 1 || hasTrailingUnclosed) {
     diagnostics.add(HiddenActionDiagnostics.multipleBlocks);
   }
 

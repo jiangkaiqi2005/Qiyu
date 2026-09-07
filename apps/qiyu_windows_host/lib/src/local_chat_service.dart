@@ -389,7 +389,10 @@ final class LocalChatService {
             prepared: prepared,
           );
         }
-      } on Object {
+      } on Object catch (error) {
+        _diagnosticsSink(
+          'model dispatch error [$error] request=$trimmedRequestId',
+        );
         completion = const ModelCompletion.failure(ModelFailureKind.provider);
       }
       // 模型没有真正收到本轮（失败/无流/取消）时，把已取用的短期
