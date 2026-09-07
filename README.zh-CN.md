@@ -44,6 +44,8 @@
 
 Release 1 只面向 Windows x64，iOS 与 Android 留待后续适配。
 
+持续集成在每次代码评审和推送到主分支时自动运行：三个包各自做分析与测试，并守住锁定的测试覆盖率水位（`.github/workflows/ci.yml`、`scripts/coverage_gate.dart`）。推送到主分支时还会额外执行上面的完整发布基线。
+
 技术细节见[工程行为规范](docs/product/behavior-spec.md)、[Windows 发布基线](docs/engineering/windows-release-baseline.md)和[贡献者指南](AGENTS.md)。
 
 Bug 与功能建议请提交到 [GitHub Issues](https://github.com/jiangkaiqi2005/Qiyu/issues)。

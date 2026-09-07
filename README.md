@@ -42,6 +42,8 @@ Qiyu can work without a configured model for basic local replies. If you choose 
 & .\scripts\verify-release-baseline.ps1
 ```
 
+Continuous integration runs on every pull request and push to main: each package is analyzed, tested, and held to a locked line-coverage floor (`.github/workflows/ci.yml`, `scripts/coverage_gate.dart`). Pushes to main additionally run the full release baseline above.
+
 Release 1 targets Windows x64. iOS and Android are planned for later.
 
 Technical details are in the [behavior specification](docs/product/behavior-spec.md), [Windows release baseline](docs/engineering/windows-release-baseline.md), and [contributor guide](AGENTS.md).

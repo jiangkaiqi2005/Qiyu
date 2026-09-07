@@ -1,0 +1,158 @@
+# 栖语持续集成：三个包各自跑分析、测试与覆盖率门禁；推送到 main
+# 时额外执行完整的发布基线门禁（构建、打包、冒烟）。
+#
+# 覆盖率水位按 2026-09-07 本机实测基线锁定，只升不降：
+#   行为核心 89.11% → 水位 88；Windows宿主 92.17% → 91；应用界面 92.42% → 91。
+# 浏览器侧用例跑在真 Chrome 里，不计入覆盖率（平台限制）；
+# 覆盖率口径为虚拟机测试加载到的文件。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支的新提交会顶掉还在跑的旧检查，省分钟数
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  core:
+    name: 行为核心（分析+测试+覆盖率）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/qiyu_behavior_core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.12.2
+      - name: 依赖
+        run: dart pub get
+      - name: 分析
+        run: dart analyze
+      - name: 测试与覆盖率采集
+        run: dart test --coverage=coverage
+      - name: 生成覆盖率报告
+        run: |
+          dart run coverage:format_coverage --lcov \
+            --packages=.dart_tool/package_config.json \
+            --report-on=lib --in=coverage --out=coverage/lcov.info
+      - name: 覆盖率门禁
+        run: |
+          dart run ../../scripts/coverage_gate.dart \
+            --lcov coverage/lcov.info --min 88 --label 行为核心
+      - name: 上传覆盖率报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-core
+          path: packages/qiyu_behavior_core/coverage/lcov.info
+          retention-days: 7
+
+  flutter-app:
+    name: 应用界面（分析+测试+覆盖率+网页构建）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/qiyu_flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.8
+          channel: stable
+          cache: true
+      - name: 依赖
+        run: flutter pub get
+      - name: 分析
+        run: flutter analyze
+      - name: 测试与覆盖率采集
+        run: flutter test --coverage
+      # 与发布基线门禁同一调用方式；ubuntu 自带 Chrome
+      - name: 浏览器侧测试（真 Chrome，不计覆盖率）
+        run: |
+          dart test --configuration dart_test.browser.yaml \
+            --platform qiyu_chrome \
+            test/voice_player_platform_web_test.dart \
+            test/settings_collapse_platform_web_test.dart
+      - name: 网页构建检查
+        run: flutter build web --wasm --no-web-resources-cdn
+      - name: 覆盖率门禁
+        run: |
+          dart ../../scripts/coverage_gate.dart \
+            --lcov coverage/lcov.info --min 91 --label 应用界面
+      - name: 上传覆盖率报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-flutter
+          path: apps/qiyu_flutter/coverage/lcov.info
+          retention-days: 7
+
+  host:
+    name: Windows宿主（分析+测试+覆盖率）
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        # job 级 defaults 会整体覆盖工作流级设置，bash 必须在此重申，
+        # 否则 Windows 回退 pwsh，续行符语义不同
+        shell: bash
+        working-directory: apps/qiyu_windows_host
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.12.2
+      - name: 依赖
+        run: dart pub get
+      - name: 分析
+        run: dart analyze
+      - name: 测试与覆盖率采集
+        run: dart test --coverage=coverage
+      - name: 生成覆盖率报告
+        run: |
+          dart run coverage:format_coverage --lcov \
+            --packages=.dart_tool/package_config.json \
+            --report-on=lib --in=coverage --out=coverage/lcov.info
+      - name: 覆盖率门禁
+        run: |
+          dart run ../../scripts/coverage_gate.dart \
+            --lcov coverage/lcov.info --min 91 --label Windows宿主
+      - name: 上传覆盖率报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-host
+          path: apps/qiyu_windows_host/coverage/lcov.info
+          retention-days: 7
+
+  # 完整发布基线：Windows 打包 + 真浏览器用例 + 冒烟，
+  # 只在合入 main 或手动触发时执行
+  release-baseline:
+    name: 发布基线全量门禁
+    runs-on: windows-latest
+    timeout-minutes: 60
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.8
+          channel: stable
+          cache: true
+      - name: 运行发布基线门禁
+        shell: pwsh
+        run: .\scripts\verify-release-baseline.ps1
