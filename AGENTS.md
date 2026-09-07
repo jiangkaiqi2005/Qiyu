@@ -63,5 +63,6 @@ Release 1 = **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心*
 
 ## Notes
 
+- CI 在 `.github/workflows/ci.yml`：PR 与 main push 跑三包分析/测试/覆盖率门禁（阈值脚本 `scripts/coverage_gate.dart`，水位按 2026-09-07 基线锁定、只升不降：core 88 / host 91 / flutter 91）；main push 另跑 `verify-release-baseline.ps1` 全量门禁。浏览器侧用例不计入覆盖率。
 - 已建 codebase-memory 知识图谱（项目名 `qiyu`），可用 `search_graph` / `trace_path` / `get_architecture` 探索；结构性大改后重新 `index_repository`。
 - `.codebase-memory/` 产物不入库（已 `.gitignore`）：不要暂存、提交、还原或删除该目录任何文件。
