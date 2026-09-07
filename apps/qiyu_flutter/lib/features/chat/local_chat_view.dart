@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
@@ -12,6 +13,7 @@ import '../accessibility.dart';
 import '../settings/stt_settings_client.dart';
 import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
+import 'api_error_dialog.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_chat_bubble.dart';
@@ -21,6 +23,16 @@ import 'qiyu_send_button.dart';
 import 'voice_input_controller.dart';
 import 'voice_output_controller.dart';
 import 'voice_recorder_platform.dart';
+
+final class _ApiErrorNotice {
+  const _ApiErrorNotice({
+    required this.message,
+    this.showSettingsLink = true,
+  });
+
+  final String message;
+  final bool showSettingsLink;
+}
 
 /// 输入框里按 Enter 发送；Shift+Enter / Ctrl+Enter 插入软换行。
 final class _SendChatIntent extends Intent {
@@ -110,6 +122,11 @@ class _LocalChatViewState extends State<LocalChatView> {
   /// 就是它在自己位置上淡掉，而不是跳一处再消失（Spec User Story 2）。
   Rect? _greetingRect;
 
+  String? _lastTrackedSessionId;
+  final Set<ApiErrorCategory> _alertedErrorCategories = {};
+  _ApiErrorNotice? _apiErrorNotice;
+  bool _isShowingApiErrorDialog = false;
+
   @override
   void initState() {
     super.initState();
@@ -131,7 +148,9 @@ class _LocalChatViewState extends State<LocalChatView> {
       },
       chatViewModel.transcribeVoice,
       onTranscribed: (text) => unawaited(_sendTranscribed(chatViewModel, text)),
+      onApiError: _handleVoiceApiError,
     );
+    chatViewModel.voiceOutput.onApiError = _handleVoiceApiError;
     unawaited(_voiceInput.initialize());
   }
 
@@ -156,6 +175,9 @@ class _LocalChatViewState extends State<LocalChatView> {
     // 「只在 isReading 时才停」会让排队的 bubble 跨页继续读，不是可接受的取舍；
     // 卸载期不能同步通知监听者，这一点由 stopAllForLeavingPage 自己处理。
     _chatViewModel.voiceOutput.stopAllForLeavingPage();
+    if (_chatViewModel.voiceOutput.onApiError == _handleVoiceApiError) {
+      _chatViewModel.voiceOutput.onApiError = null;
+    }
     _voiceInput.dispose();
     _controller.dispose();
     _scrollController.dispose();
@@ -213,6 +235,9 @@ class _LocalChatViewState extends State<LocalChatView> {
       _controller.text = text;
       _controller.selection = TextSelection.collapsed(offset: text.length);
     }
+    if (sent && mounted) {
+      await _handleTurnApiErrors(viewModel);
+    }
   }
 
   void _insertLineBreak() {
@@ -241,6 +266,136 @@ class _LocalChatViewState extends State<LocalChatView> {
         text.trim().isNotEmpty) {
       _controller.text = text;
       _controller.selection = TextSelection.collapsed(offset: text.length);
+    }
+    if (sent && mounted) {
+      await _handleTurnApiErrors(viewModel);
+    }
+  }
+
+  void _syncSession(String? currentSessionId) {
+    if (_lastTrackedSessionId != null &&
+        currentSessionId != null &&
+        currentSessionId != _lastTrackedSessionId) {
+      _alertedErrorCategories.clear();
+      _apiErrorNotice = null;
+    } else if (currentSessionId == null && _lastTrackedSessionId != null) {
+      _alertedErrorCategories.clear();
+      _apiErrorNotice = null;
+    }
+    _lastTrackedSessionId = currentSessionId;
+  }
+
+  ApiErrorCategory? _categorizeFallbackReason(FallbackReason? reason) {
+    return switch (reason) {
+      FallbackReason.modelRateLimited => ApiErrorCategory.rateLimited,
+      FallbackReason.modelAuthentication => ApiErrorCategory.authentication,
+      FallbackReason.modelNotFound => ApiErrorCategory.modelNotFound,
+      FallbackReason.modelProvider => ApiErrorCategory.otherClientError,
+      _ => null,
+    };
+  }
+
+  Future<void> _handleTurnApiErrors(LocalChatViewModel viewModel) async {
+    final reason = viewModel.latestFallbackReason;
+    if (reason == null) {
+      if (_apiErrorNotice != null) {
+        setState(() => _apiErrorNotice = null);
+      }
+      return;
+    }
+
+    // 严格排除设计内降级：安全拦截与未配置模型绝对不弹窗
+    if (reason == FallbackReason.safety ||
+        reason == FallbackReason.noLlmConfig) {
+      if (_apiErrorNotice != null) {
+        setState(() => _apiErrorNotice = null);
+      }
+      return;
+    }
+
+    // 网络瞬态（超时/网络/DNS/TLS）：维持就地轻提示，绝不弹出模态配置修复窗
+    if (reason == FallbackReason.modelTimeout) {
+      setState(() {
+        _apiErrorNotice = const _ApiErrorNotice(
+          message: '⚠️ 网络连接超时，当前保持本地基础回复',
+          showSettingsLink: false,
+        );
+      });
+      return;
+    }
+    if (reason == FallbackReason.modelNetwork ||
+        reason == FallbackReason.modelDns ||
+        reason == FallbackReason.modelTls) {
+      setState(() {
+        _apiErrorNotice = const _ApiErrorNotice(
+          message: '⚠️ 网络连接异常，当前保持本地基础回复',
+          showSettingsLink: false,
+        );
+      });
+      return;
+    }
+
+    final category = _categorizeFallbackReason(reason);
+    if (category == null) {
+      return;
+    }
+
+    // 会话级频控去重：同会话内仅第 1 次弹窗；第 2 次及后续展示状态条轻提示
+    if (_alertedErrorCategories.contains(category)) {
+      setState(() {
+        _apiErrorNotice = _ApiErrorNotice(
+          message: category.noticeText,
+          showSettingsLink: true,
+        );
+      });
+    } else {
+      _alertedErrorCategories.add(category);
+      await _triggerApiErrorDialog(category);
+    }
+  }
+
+  Future<void> _triggerApiErrorDialog(ApiErrorCategory category) async {
+    if (_isShowingApiErrorDialog || !mounted) {
+      return;
+    }
+    _isShowingApiErrorDialog = true;
+    try {
+      final goToSettings = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => QiyuApiErrorDialog(
+          category: category,
+          onDismiss: () => Navigator.of(dialogContext).pop(false),
+          onGoToSettings: () => Navigator.of(dialogContext).pop(true),
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      if (goToSettings == true) {
+        _chatViewModel.voiceOutput.stopAll();
+        context.push('/settings');
+      } else {
+        _inputFocusNode.requestFocus();
+      }
+    } finally {
+      _isShowingApiErrorDialog = false;
+    }
+  }
+
+  void _handleVoiceApiError(ApiErrorCategory category) {
+    if (!mounted) {
+      return;
+    }
+    if (_alertedErrorCategories.contains(category)) {
+      setState(() {
+        _apiErrorNotice = _ApiErrorNotice(
+          message: category.noticeText,
+          showSettingsLink: true,
+        );
+      });
+    } else {
+      _alertedErrorCategories.add(category);
+      unawaited(_triggerApiErrorDialog(category));
     }
   }
 
@@ -275,6 +430,7 @@ class _LocalChatViewState extends State<LocalChatView> {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<LocalChatViewModel>();
+    _syncSession(viewModel.sessionId);
     // 会话恢复、新消息与流式增量都跟在列表尾部：签名变化时下一帧滚到底。
     final transient = _transientCount(viewModel);
     final signature =
@@ -651,6 +807,45 @@ class _LocalChatViewState extends State<LocalChatView> {
               child: Text(
                 message,
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+          ),
+        if (_apiErrorNotice case final notice?)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              QiyuSpacing.lg,
+              QiyuSpacing.xs,
+              QiyuSpacing.lg,
+              0,
+            ),
+            child: Semantics(
+              liveRegion: true,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      notice.message,
+                      key: const Key('api-error-notice-text'),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                  if (notice.showSettingsLink) ...[
+                    const SizedBox(width: QiyuSpacing.xs),
+                    InkWell(
+                      key: const Key('api-error-notice-settings'),
+                      onTap: () => _pushAwayFromChat('/settings'),
+                      child: const Text(
+                        '去设置检查',
+                        style: TextStyle(
+                          color: QiyuColors.accentBright,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),

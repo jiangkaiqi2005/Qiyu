@@ -3,6 +3,7 @@ import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 
+import 'api_error_dialog.dart';
 import 'local_chat_client.dart';
 import 'voice_player_platform.dart';
 
@@ -35,6 +36,9 @@ final class VoiceOutputController extends ChangeNotifier {
 
   final ChatSpeechGateway _gateway;
   final VoicePlayerPlatform _playerPlatform;
+
+  /// 朗读合成遇到 429 或 40x 异常时的回调。
+  void Function(ApiErrorCategory category)? onApiError;
 
   late double _volume;
   final Queue<VoiceOutputRequest> _queue = Queue();
@@ -183,11 +187,14 @@ final class VoiceOutputController extends ChangeNotifier {
           deliveryIndex: request.deliveryIndex,
           sessionId: request.sessionId,
         );
-      } on Object {
+      } on Object catch (error) {
         if (generation != _generation) {
           return;
         }
         _notifyFailureOnce('语音服务连不上，这条读不出来。');
+        if (isVoiceApiError(error)) {
+          onApiError?.call(ApiErrorCategory.ttsError);
+        }
         continue;
       }
       if (generation != _generation) {
