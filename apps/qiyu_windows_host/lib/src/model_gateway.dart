@@ -393,12 +393,14 @@ final class ProviderModelGateway
         timeout: Duration(seconds: config.timeoutSeconds),
       );
     } on TimeoutException {
+      _diagnosticsSink?.call('model connection timeout');
       yield const ModelStreamEvent.failure(
         ModelFailureKind.timeout,
         '连接模型服务超时。',
       );
       return;
     } on HandshakeException {
+      _diagnosticsSink?.call('model connection tls error');
       yield const ModelStreamEvent.failure(
         ModelFailureKind.tls,
         '模型服务的 TLS 安全连接失败。',
@@ -406,18 +408,22 @@ final class ProviderModelGateway
       return;
     } on SocketException catch (error) {
       final failure = _socketFailure(error);
+      _diagnosticsSink?.call('model connection socket error [${failure.kind}]');
       yield ModelStreamEvent.failure(failure.kind, failure.message);
       return;
     } on HttpException {
+      _diagnosticsSink?.call('model connection http error');
       yield const ModelStreamEvent.failure(
         ModelFailureKind.network,
         '模型服务连接中断。',
       );
       return;
     } on ModelGatewayException catch (error) {
+      _diagnosticsSink?.call('model gateway error [${error.kind}] ${error.message}');
       yield ModelStreamEvent.failure(error.kind, error.message);
       return;
-    } on Object {
+    } on Object catch (error) {
+      _diagnosticsSink?.call('model connection unexpected error [$error]');
       yield const ModelStreamEvent.failure(
         ModelFailureKind.internal,
         '本机程序内部出错。',
@@ -430,12 +436,14 @@ final class ProviderModelGateway
       try {
         body = await response.body.join();
       } on TimeoutException {
+        _diagnosticsSink?.call('model response error body timeout');
         yield const ModelStreamEvent.failure(
           ModelFailureKind.timeout,
           '模型服务响应超时。',
         );
         return;
-      } on Object {
+      } on Object catch (error) {
+        _diagnosticsSink?.call('model response error body read error [$error]');
         yield const ModelStreamEvent.failure(
           ModelFailureKind.network,
           '模型服务连接中断。',
@@ -443,6 +451,7 @@ final class ProviderModelGateway
         return;
       }
       final failure = _statusFailure(response.statusCode, body);
+      _diagnosticsSink?.call('model response status error [${failure.kind}] status=${response.statusCode}');
       yield ModelStreamEvent.failure(failure.kind, failure.message);
       return;
     }
@@ -459,6 +468,7 @@ final class ProviderModelGateway
         }
         if (event.done) {
           if (!emittedText) {
+            _diagnosticsSink?.call('model stream finished without visible text');
             yield const ModelStreamEvent.failure(
               ModelFailureKind.contentParsing,
               '模型服务返回的内容无法解析。',
@@ -470,28 +480,40 @@ final class ProviderModelGateway
         }
       }
     } on TimeoutException {
+      _diagnosticsSink?.call('model stream response timeout');
       yield const ModelStreamEvent.failure(
         ModelFailureKind.timeout,
         '模型服务响应超时。',
       );
       return;
-    } on ModelGatewayException catch (error) {
-      yield ModelStreamEvent.failure(error.kind, error.message);
-      return;
-    } on Object {
+    } on FormatException catch (error) {
+      _diagnosticsSink?.call('model stream format error [$error]');
       yield const ModelStreamEvent.failure(
         ModelFailureKind.incompatibleResponse,
         '模型服务返回了不兼容的响应格式。',
       );
       return;
+    } on ModelGatewayException catch (error) {
+      _diagnosticsSink?.call('model gateway error [${error.kind}] ${error.message}');
+      yield ModelStreamEvent.failure(error.kind, error.message);
+      return;
+    } on Object catch (error) {
+      _diagnosticsSink?.call('model stream unexpected error [$error]');
+      yield const ModelStreamEvent.failure(
+        ModelFailureKind.internal,
+        '本机程序内部出错。',
+      );
+      return;
     }
     if (!emittedText) {
+      _diagnosticsSink?.call('model stream eof without visible text');
       yield const ModelStreamEvent.failure(
         ModelFailureKind.contentParsing,
         '模型服务返回的内容无法解析。',
       );
       return;
     }
+    _diagnosticsSink?.call('model stream interrupted before completion');
     yield const ModelStreamEvent.failure(
       ModelFailureKind.network,
       '模型服务连接在回复完成前中断。',

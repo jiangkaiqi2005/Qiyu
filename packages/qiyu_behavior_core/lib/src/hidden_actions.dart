@@ -519,11 +519,6 @@ final _hiddenActionBlock = RegExp(
   caseSensitive: false,
 );
 
-final _trailingUnclosedActionBlock = RegExp(
-  r'<\s*qiyu[-_]actions?\b[^>]*>[\s\S]*$',
-  caseSensitive: false,
-);
-
 /// 越权内容特征：路径、URL、命令分隔、可执行结构。动作字段只能描述
 /// 对话内容本身，命中任一特征的动作整体丢弃。
 final _privilegePatterns = [
@@ -558,9 +553,9 @@ HiddenActionParse parseHiddenActions(String rawText) {
   final blocks = _hiddenActionBlock.allMatches(rawText).toList();
   final withoutClosed = rawText.replaceAll(_hiddenActionBlock, '');
   final hasTrailingUnclosed =
-      _trailingUnclosedActionBlock.hasMatch(withoutClosed);
+      trailingUnclosedActionBlockPattern.hasMatch(withoutClosed);
   final visibleText = withoutClosed
-      .replaceFirst(_trailingUnclosedActionBlock, '')
+      .replaceFirst(trailingUnclosedActionBlockPattern, '')
       .replaceAll(blankLinesPattern, '\n\n')
       .trim();
   if (blocks.isEmpty) {

@@ -251,6 +251,49 @@
           { "speaker": "qiyu", "text": "这个别听我瞎猜。药量这种事要问专业的人，别拿身体赌。" }
         ]
       }
+    },
+    {
+      "id": "trailing-unclosed-hidden-action-is-cleaned",
+      "request": {
+        "requestId": "fixture-unclosed-action",
+        "text": "明天天气怎么样"
+      },
+      "provider": {
+        "configured": true,
+        "candidateReply": "明天天气挺好的，适合出门走走。\n<qiyu-actions>[{\"action\":\"memory_recall\",\"query\":\"天气\""
+      },
+      "expected": {
+        "messages": ["明天天气挺好的，适合出门走走。"],
+        "source": "llm",
+        "mode": "llm",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "明天天气怎么样" },
+          { "speaker": "qiyu", "text": "明天天气挺好的，适合出门走走。" }
+        ]
+      }
+    },
+    {
+      "id": "trailing-unclosed-think-block-is-cleaned",
+      "request": {
+        "requestId": "fixture-unclosed-think",
+        "text": "睡了吗"
+      },
+      "provider": {
+        "configured": true,
+        "candidateReply": "还没睡呢。\n<think>模型尾部未闭合思考..."
+      },
+      "expected": {
+        "messages": ["还没睡呢。"],
+        "source": "llm",
+        "mode": "llm",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "睡了吗" },
+          { "speaker": "qiyu", "text": "还没睡呢。" }
+        ]
+      }
     }
   ]
 }
+

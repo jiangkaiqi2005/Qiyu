@@ -74,17 +74,6 @@ final _financialKeywordPattern = RegExp(r'股票|基金|币|投资|买入|卖出
 final _fatiguePattern = RegExp(r'累|疲惫|困');
 
 // —— 模型候选回复校验（_validateCandidateReply / _cleanVisibleLine）。——
-final _hiddenModelStructurePattern = RegExp(
-  r'<\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu[-_]actions?|actions?|memory_action)\b[^>]*>[\s\S]*?<\s*/\s*(?:think|analysis|reasoning|tool_call|function_call|qiyu[-_]actions?|actions?|memory_action)\s*>',
-  caseSensitive: false,
-);
-
-/// 尾部未闭合的隐藏动作或思考结构（直到文本末尾）：如模型输出截断或未闭合。
-final _trailingUnclosedHiddenStructurePattern = RegExp(
-  r'<\s*(?:think|qiyu[-_]actions?)\b[^>]*>[\s\S]*$',
-  caseSensitive: false,
-);
-
 /// 隐藏块剥除后仍不允许出现的动作控制词表；键形态与值形态两个模式共用。
 const _modelControlWords =
     'action|tool|function|tool_call|function_call|qiyu_action|memory_action';
@@ -330,9 +319,7 @@ List<String> _safetyMessages(SafetyKind safety) {
 ({List<String> messages, FallbackReason? failure}) _validateCandidateReply(
   String value,
 ) {
-  final withoutHiddenStructures = value
-      .replaceAll(_hiddenModelStructurePattern, '')
-      .replaceFirst(_trailingUnclosedHiddenStructurePattern, '');
+  final withoutHiddenStructures = stripHiddenStructures(value);
   if (_modelControlPatterns.any(
     (pattern) => pattern.hasMatch(withoutHiddenStructures),
   )) {

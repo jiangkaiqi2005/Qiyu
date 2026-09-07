@@ -527,6 +527,24 @@ void main() {
       );
     }
   });
+
+  test('stream records diagnostics and returns internal failure on unexpected error', () async {
+    final diagnostics = <String>[];
+    final client = _RecordingHttpClient(error: StateError('unexpected network driver failure'));
+    final gateway = ProviderModelGateway(client, diagnosticsSink: diagnostics.add);
+    final events = await gateway.stream(
+      config: _config(ProviderKind.openAiCompatible),
+      apiKey: 'test-key',
+      messages: const [ModelMessage(ModelMessageRole.user, 'hi')],
+    ).toList();
+
+    expect(events, hasLength(1));
+    expect(events.single.kind, ModelStreamEventKind.failure);
+    expect(events.single.failure, ModelFailureKind.internal);
+    expect(events.single.message, '本机程序内部出错。');
+    expect(diagnostics, isNotEmpty);
+    expect(diagnostics.single, contains('unexpected network driver failure'));
+  });
 }
 
 ProviderConfig _config(ProviderKind kind, {String? baseUrl}) => ProviderConfig(
