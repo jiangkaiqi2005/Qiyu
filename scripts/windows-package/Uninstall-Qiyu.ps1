@@ -14,6 +14,97 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# 快捷方式读取走 Shell 链接的 Unicode 接口：WScript.Shell 组件会把
+# 路径压到系统 ANSI 代码页，「栖语」在非中文区域设置的 Windows 上
+# 会被换成问号，导致整个安装或卸载失败。以下定义在两个安装脚本中
+# 保持逐字一致。
+if (-not ('Qiyu.Installer.ShortcutWriter' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+
+namespace Qiyu.Installer
+{
+    public static class ShortcutWriter
+    {
+        [ComImport]
+        [Guid("00021401-0000-0000-C000-000000000046")]
+        private class ShellLinkClass
+        {
+        }
+
+        [ComImport]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        [Guid("000214F9-0000-0000-C000-000000000046")]
+        private interface IShellLinkW
+        {
+            void GetPath(
+                [Out][MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile,
+                int cch,
+                IntPtr pfd,
+                uint fFlags);
+            void GetIDList(out IntPtr ppidl);
+            void SetIDList(IntPtr pidl);
+            void GetDescription(
+                [Out][MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName,
+                int cch);
+            void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+            void GetWorkingDirectory(
+                [Out][MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir,
+                int cch);
+            void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
+            void GetArguments(
+                [Out][MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs,
+                int cch);
+            void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+            void GetHotkey(out short pwHotkey);
+            void SetHotkey(short wHotkey);
+            void GetShowCmd(out int piShowCmd);
+            void SetShowCmd(int iShowCmd);
+            void GetIconLocation(
+                [Out][MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath,
+                int cch,
+                out int piIcon);
+            void SetIconLocation(
+                [MarshalAs(UnmanagedType.LPWStr)] string pszIconPath,
+                int iIcon);
+            void SetRelativePath(
+                [MarshalAs(UnmanagedType.LPWStr)] string pszPathRel,
+                uint dwReserved);
+            void Resolve(IntPtr hwnd, uint fFlags);
+            void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
+        }
+
+        public static void Create(
+            string shortcutPath,
+            string targetPath,
+            string workingDirectory,
+            string description)
+        {
+            IShellLinkW link = (IShellLinkW)new ShellLinkClass();
+            link.SetPath(targetPath);
+            link.SetWorkingDirectory(workingDirectory);
+            link.SetDescription(description);
+            IPersistFile persist = (IPersistFile)link;
+            persist.Save(shortcutPath, true);
+        }
+
+        public static string ReadTarget(string shortcutPath)
+        {
+            IShellLinkW link = (IShellLinkW)new ShellLinkClass();
+            IPersistFile persist = (IPersistFile)link;
+            persist.Load(shortcutPath, 0);
+            StringBuilder path = new StringBuilder(1024);
+            link.GetPath(path, path.Capacity, IntPtr.Zero, 0);
+            return path.ToString();
+        }
+    }
+}
+'@
+}
+
 function Resolve-SafeRemovalPath {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
@@ -124,10 +215,9 @@ function Remove-QiyuShortcut {
   if (-not (Test-Path -LiteralPath $ShortcutPath)) {
     return
   }
-  $shell = New-Object -ComObject WScript.Shell
-  $shortcut = $shell.CreateShortcut($ShortcutPath)
+  $target = [Qiyu.Installer.ShortcutWriter]::ReadTarget($ShortcutPath)
   if (
-    [IO.Path]::GetFullPath($shortcut.TargetPath) -eq
+    [IO.Path]::GetFullPath($target) -eq
     [IO.Path]::GetFullPath($ExecutablePath)
   ) {
     Remove-Item -LiteralPath $ShortcutPath -Force
