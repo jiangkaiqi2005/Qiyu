@@ -58,7 +58,7 @@ void main() {
     expect(reqParams['audio_params'], {'format': 'mp3', 'sample_rate': 24000});
   });
 
-  test('自定义音色与语速原样上送；结束码行后忽略多余内容', () async {
+  test('自定义通用音色与语速转入 audio_params.speech_rate；结束码行后忽略多余内容', () async {
     final client = _RecordingBytesHttpClient(
       response: lines([
         {
@@ -92,7 +92,12 @@ void main() {
         jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
     final reqParams = body['req_params']! as Map<String, Object?>;
     expect(reqParams['speaker'], 'zh_female_gaolengyujie_uranus_bigtts');
-    expect(reqParams['speed_ratio'], 0.8);
+    expect(reqParams.containsKey('speed_ratio'), isFalse);
+    expect(reqParams['audio_params'], {
+      'format': 'mp3',
+      'sample_rate': 24000,
+      'speech_rate': -20,
+    });
   });
 
   test('行内 code>0 按服务拒绝拒绝，不透出原始行', () async {
@@ -218,7 +223,7 @@ void main() {
     expect(client.called, isFalse);
   });
 
-  test('extraParams 智能深合并：audio_params 深度合并与顶层字段扩展', () async {
+  test('extraParams 智能深合并：audio_params 深度合并、additions 序列化为 JSON 字符串且方言音色映射为基础音色', () async {
     final client = _RecordingBytesHttpClient(
       response: lines([
         {
@@ -239,6 +244,7 @@ void main() {
         extraParams: {
           'audio_params': {'sample_rate': 16000, 'channel': 1},
           'additions': {'explicit_dialect': 'sichuan'},
+          'custom_field': 'custom_value',
         },
       ),
       apiKey: 'ark-test-key',
@@ -250,14 +256,320 @@ void main() {
         jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
     final reqParams = body['req_params']! as Map<String, Object?>;
     expect(reqParams['text'], '你好呀。');
-    expect(reqParams['speaker'], 'zh_female_sichuan_uranus_bigtts');
+    // 方言音色自动映射为基础音色 zh_female_vv_uranus_bigtts
+    expect(reqParams['speaker'], VolcTtsGateway.defaultSpeaker);
     // audio_params 保留 format: mp3 并合并 sample_rate 与 channel
     expect(reqParams['audio_params'], {
       'format': 'mp3',
       'sample_rate': 16000,
       'channel': 1,
     });
-    expect(reqParams['additions'], {'explicit_dialect': 'sichuan'});
+    // 火山 Go 服务端 additions 字段类型必须是 string
+    expect(reqParams['additions'], isA<String>());
+    expect(jsonDecode(reqParams['additions']! as String), {
+      'explicit_dialect': 'sichuan',
+    });
+    expect(reqParams['custom_field'], 'custom_value');
+  });
+
+  test('方言预设映射：四川话、粤语、东北话、河南话、陕西话等自动注入 additions 且 speaker 设为灿灿', () async {
+    final dialectCases = <String, String>{
+      'zh_female_sichuan_uranus_bigtts': 'sichuan',
+      'zh_female_cantonese_uranus_bigtts': 'guangdong',
+      'zh_female_dongbei_uranus_bigtts': 'dongbei',
+      'zh_female_henan_uranus_bigtts': 'henan',
+      'zh_female_shanxi_uranus_bigtts': 'shaanxi',
+      'zh_female_tianjin_uranus_bigtts': 'tianjin',
+      'zh_female_shandong_uranus_bigtts': 'shandong',
+      'zh_female_minnan_uranus_bigtts': 'minnan',
+      'zh_female_wanwanxiaohe_moon_bigtts': 'taiwan',
+      'sichuan': 'sichuan',
+      'my_dialect_dongbei_voice': 'dongbei',
+    };
+
+    for (final entry in dialectCases.entries) {
+      final client = _RecordingBytesHttpClient(
+        response: lines([
+          {
+            'code': 0,
+            'data': base64Encode([1]),
+          },
+          {'code': 20000000},
+        ]),
+      );
+
+      await TtsModelGateway(client).synthesize(
+        config: TtsConfig(
+          provider: TtsProviderKind.volcTts,
+          baseUrl:
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          model: 'seed-tts-2.0',
+          voice: entry.key,
+        ),
+        apiKey: 'ark-test-key',
+        text: '测试方言',
+      );
+
+      final body =
+          jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+      final reqParams = body['req_params']! as Map<String, Object?>;
+      expect(
+        reqParams['speaker'],
+        VolcTtsGateway.defaultSpeaker,
+        reason: '方言音色 ${entry.key} 必须映射为基础通用音色',
+      );
+      expect(
+        reqParams['additions'],
+        isA<String>(),
+        reason: 'additions 必须是 JSON 字符串',
+      );
+      expect(
+        jsonDecode(reqParams['additions']! as String),
+        {'explicit_dialect': entry.value},
+        reason: '${entry.key} 对应的方言代码应为 ${entry.value}',
+      );
+    }
+  });
+
+  test('通用音色保留原 speaker 且无 additions；若 extraParams 自带 additions 字符串则保持字符串', () async {
+    final client = _RecordingBytesHttpClient(
+      response: lines([
+        {
+          'code': 0,
+          'data': base64Encode([1]),
+        },
+        {'code': 20000000},
+      ]),
+    );
+
+    await TtsModelGateway(client).synthesize(
+      config: const TtsConfig(
+        provider: TtsProviderKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        voice: 'zh_female_gaolengyujie_uranus_bigtts',
+        extraParams: {
+          'additions': '{"explicit_dialect":"sichuan","custom_key":123}',
+        },
+      ),
+      apiKey: 'ark-test-key',
+      text: '你好',
+    );
+
+    final body =
+        jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+    final reqParams = body['req_params']! as Map<String, Object?>;
+    expect(reqParams['speaker'], 'zh_female_gaolengyujie_uranus_bigtts');
+    expect(reqParams['additions'], '{"explicit_dialect":"sichuan","custom_key":123}');
+  });
+
+  test('语速转换边界：1.0x -> 0, 1.5x -> 50, 2.0x -> 100, 0.5x -> -50', () async {
+    final speedCases = <double, int>{
+      1.0: 0,
+      1.5: 50,
+      2.0: 100,
+      0.5: -50,
+      0.8: -20,
+      1.25: 25,
+    };
+
+    for (final entry in speedCases.entries) {
+      final client = _RecordingBytesHttpClient(
+        response: lines([
+          {
+            'code': 0,
+            'data': base64Encode([1]),
+          },
+          {'code': 20000000},
+        ]),
+      );
+
+      await TtsModelGateway(client).synthesize(
+        config: TtsConfig(
+          provider: TtsProviderKind.volcTts,
+          baseUrl:
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          model: 'seed-tts-2.0',
+          speed: entry.key,
+        ),
+        apiKey: 'ark-test-key',
+        text: '测试语速',
+      );
+
+      final body =
+          jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+      final reqParams = body['req_params']! as Map<String, Object?>;
+      expect(reqParams.containsKey('speed_ratio'), isFalse);
+      final audioParams = reqParams['audio_params']! as Map<String, Object?>;
+      expect(
+        audioParams['speech_rate'],
+        entry.value,
+        reason: 'speed ${entry.key} 应换算为 speech_rate ${entry.value}',
+      );
+    }
+  });
+
+  test('x-tt-logid 响应头打入诊断日志；空白音色降级为默认音色', () async {
+    final client = _RecordingBytesHttpClient(
+      response: ProviderBytesHttpResponse(
+        statusCode: 200,
+        headers: {'x-tt-logid': 'logid-test-12345'},
+        body: Stream.value(
+          utf8.encode(
+            '{"code":0,"data":"${base64Encode([1])}"}\n{"code":20000000}\n',
+          ),
+        ),
+      ),
+    );
+
+    final audio = await TtsModelGateway(client).synthesize(
+      config: const TtsConfig(
+        provider: TtsProviderKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        voice: '   ',
+      ),
+      apiKey: 'ark-test-key',
+      text: '测试日志',
+    );
+
+    expect(audio, [1]);
+    final body =
+        jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+    final reqParams = body['req_params']! as Map<String, Object?>;
+    expect(reqParams['speaker'], VolcTtsGateway.defaultSpeaker);
+    expect(reqParams.containsKey('additions'), isFalse);
+  });
+
+  test('additions 边界：已为 JSON 字符串深合并方言、非法 JSON 保持原样、其它类型序列化', () async {
+    // 1. JSON 字符串 Map + 方言音色
+    final client1 = _RecordingBytesHttpClient(
+      response: lines([
+        {
+          'code': 0,
+          'data': base64Encode([1]),
+        },
+        {'code': 20000000},
+      ]),
+    );
+    await TtsModelGateway(client1).synthesize(
+      config: const TtsConfig(
+        provider: TtsProviderKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        voice: 'zh_female_sichuan_uranus_bigtts',
+        extraParams: {
+          'additions': '{"custom_flag":true}',
+          'audio_params': 'not-a-map',
+        },
+      ),
+      apiKey: 'ark-test-key',
+      text: '测试',
+    );
+    final body1 =
+        jsonDecode(utf8.decode(client1.bytesBody)) as Map<String, Object?>;
+    final reqParams1 = body1['req_params']! as Map<String, Object?>;
+    final additions1 = jsonDecode(
+      reqParams1['additions']! as String,
+    ) as Map<String, Object?>;
+    expect(additions1['custom_flag'], isTrue);
+    expect(additions1['explicit_dialect'], 'sichuan');
+
+    // 2. 非法 JSON 字符串 + 方言音色
+    final client2 = _RecordingBytesHttpClient(
+      response: lines([
+        {
+          'code': 0,
+          'data': base64Encode([1]),
+        },
+        {'code': 20000000},
+      ]),
+    );
+    await TtsModelGateway(client2).synthesize(
+      config: const TtsConfig(
+        provider: TtsProviderKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        voice: 'zh_female_sichuan_uranus_bigtts',
+        extraParams: {'additions': 'not-valid-json'},
+      ),
+      apiKey: 'ark-test-key',
+      text: '测试',
+    );
+    final body2 =
+        jsonDecode(utf8.decode(client2.bytesBody)) as Map<String, Object?>;
+    final reqParams2 = body2['req_params']! as Map<String, Object?>;
+    expect(reqParams2['additions'], 'not-valid-json');
+
+    // 3. 其它类型 additions（如 int）
+    final client3 = _RecordingBytesHttpClient(
+      response: lines([
+        {
+          'code': 0,
+          'data': base64Encode([1]),
+        },
+        {'code': 20000000},
+      ]),
+    );
+    await TtsModelGateway(client3).synthesize(
+      config: const TtsConfig(
+        provider: TtsProviderKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        extraParams: {'additions': 12345},
+      ),
+      apiKey: 'ark-test-key',
+      text: '测试',
+    );
+    final body3 =
+        jsonDecode(utf8.decode(client3.bytesBody)) as Map<String, Object?>;
+    final reqParams3 = body3['req_params']! as Map<String, Object?>;
+    expect(reqParams3['additions'], '12345');
+  });
+
+  test('更多方言关键词：北京话、粤语 yue、台湾普通话 wanwan', () async {
+    final dialectKeywords = {
+      'custom_beijing_voice': 'beijing',
+      'custom_yue_voice': 'guangdong',
+      'custom_wanwan_voice': 'taiwan',
+    };
+
+    for (final entry in dialectKeywords.entries) {
+      final client = _RecordingBytesHttpClient(
+        response: lines([
+          {
+            'code': 0,
+            'data': base64Encode([1]),
+          },
+          {'code': 20000000},
+        ]),
+      );
+
+      await TtsModelGateway(client).synthesize(
+        config: TtsConfig(
+          provider: TtsProviderKind.volcTts,
+          baseUrl:
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          model: 'seed-tts-2.0',
+          voice: entry.key,
+        ),
+        apiKey: 'ark-test-key',
+        text: '方言测试',
+      );
+
+      final body =
+          jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+      final reqParams = body['req_params']! as Map<String, Object?>;
+      final additions = jsonDecode(
+        reqParams['additions']! as String,
+      ) as Map<String, Object?>;
+      expect(additions['explicit_dialect'], entry.value);
+    }
   });
 }
 

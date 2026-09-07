@@ -5,13 +5,14 @@
 为了满足睡前陪伴场景下的多样化语言风格（如四川话、粤语、东北话等地方方言）与不同用户的细粒度参数微调诉求，同时保持极简易用的操作体验与向后兼容性：
 
 1. **预设音色库与方言支持**：
-   - 豆包 TTS（Volcengine）：预设标准音色（灿灿、御姐、醇厚男声、爽快女声）与 9 种地方方言音色（四川话、粤语、东北话、河南话、陕西话、天津话、山东话、闽南话、台湾普通话）。
+   - 豆包 TTS（Volcengine）：预设标准音色（灿灿、御姐、醇厚男声、爽快女声）与地方方言音色（四川话、粤语、东北话、河南话、陕西话、天津话、山东话、闽南话、台湾普通话）。在 `seed-tts-2.0` 协议下，方言音色自动映射为基础通用音色（灿灿 `zh_female_vv_uranus_bigtts`）并在 `additions` 中自动注入方言代码（如 `sichuan`、`guangdong`、`dongbei` 等）；由于火山 Go 服务端要求 `additions` 字段类型为 string，系统会自动将对象序列化为 JSON 字符串。
+   - 语速设置：`seed-tts-2.0` 下语速字段嵌套于 `audio_params.speech_rate`（整数 `[-50, 100]`，0 为默认 1.0x），网关层由 `config.speed` 自动换算。
    - OpenAI 兼容 TTS：预设 6 种官方音色（alloy, echo, fable, onyx, nova, shimmer）。
    - 保留「输入其他音色 ID」的自定义扩展能力，用户可自由输入未列出的新音色 ID。
 
 2. **自定义高级参数（extraParams）**：
    - 在 `TtsConfig` 中引入 `Map<String, Object?>? extraParams`（兼容 `extra_params` 别名解析与非空校验）。
-   - 豆包 TTS 请求体：`extraParams` 智能深合并入 `req_params`。其中 `audio_params` 做深度字典合并（保留 `format: mp3, sample_rate: 24000` 缺省值，支持覆盖或追加新字段），其它顶层字段（如 `additions: {"explicit_dialect": "sichuan"}` 等）安全合并入 `req_params`。
+   - 豆包 TTS 请求体：`extraParams` 智能深合并入 `req_params`。其中 `audio_params` 做深度字典合并（保留 `format: mp3, sample_rate: 24000` 缺省值，支持覆盖或追加新字段，语速由 `speech_rate` 自动注入），其它顶层字段（如 `additions: "{\"explicit_dialect\": \"sichuan\"}"` 等，Map 会被序列化为 JSON 字符串）安全合并入 `req_params`。
    - OpenAI 兼容 TTS 请求体：`extraParams` 展平合并至顶层 JSON。
    - 前端设置页面提供可折叠的「高级参数」面板与 JSON 语法校验。
 
