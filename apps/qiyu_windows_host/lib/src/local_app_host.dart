@@ -21,6 +21,7 @@ import 'local_data_service.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
 import 'memory_backup.dart';
+import 'memory_cadence.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
 import 'memory_recall.dart';
@@ -55,11 +56,13 @@ final class LocalAppHost {
     this._server,
     this._requestHandler,
     this._idleCatchupPoller,
+    this._memoryCadence,
   );
 
   final HttpServer _server;
   final _LocalAppRequestHandler _requestHandler;
   final IdleCatchupPoller _idleCatchupPoller;
+  final MemoryCadence _memoryCadence;
 
   InternetAddress get address => _server.address;
 
@@ -72,9 +75,9 @@ final class LocalAppHost {
     queryParameters: {'token': _requestHandler.startupToken},
   );
 
-  /// 空闲补办轮询 tick 的宿主侧通道（spec：唯一新缝是聊天服务的
-  /// 轮询 tick；测试由此拨动 tick 而不启动真定时器）。
-  LocalChatService get chatService => _requestHandler.chatService;
+  /// 记忆节奏（ticket 22）：空闲补办轮询 tick 的宿主侧通道（spec：
+  /// 唯一新缝是记忆节奏的轮询 tick；测试由此拨动 tick 而不启动真定时器）。
+  MemoryCadence get memoryCadence => _memoryCadence;
 
   static Future<LocalAppHost> start({
     required String webRoot,
@@ -239,12 +242,14 @@ final class LocalAppHost {
       memoryActions: memoryActions,
       clock: clock,
     );
-    final chatService = LocalChatService(
-      memoryRepository,
+    // 记忆节奏与聊天服务在构造期互需一个只读信号：节奏轮询要问聊天
+    // 服务「有无在途交付」，聊天服务要持「交付完成钩子」。先声明后
+    // 赋值的局部变量解开构造环；轮询定时器在两者装配完成后才启动，
+    // 环窗期内让路信号恒为不忙（与迁移前在途队列为空的语义一致）。
+    LocalChatService? wiredChatService;
+    final memoryCadence = MemoryCadence(
       providerPort: effectiveProviderSettings,
       requestDiagnostics: requestDiagnostics,
-      modelPromptBuilder: modelPromptBuilder,
-      episodePipeline: episodePipeline,
       dailyFinalization: DailyFinalizationService(
         memoryDirectory: memoryDirectory,
         episodePipeline: episodePipeline,
@@ -257,6 +262,19 @@ final class LocalAppHost {
         clock: clock,
         atomicWriter: atomicWriter,
       ),
+      monthlySummary: monthlySummary,
+      dreamService: dreamService,
+      memoryRecovery: memoryRecovery,
+      isDeliveryBusy: () => wiredChatService?.hasActiveDeliveries ?? false,
+      clock: clock,
+      diagnosticsSink: diagnosticsSink,
+    );
+    final chatService = LocalChatService(
+      memoryRepository,
+      providerPort: effectiveProviderSettings,
+      requestDiagnostics: requestDiagnostics,
+      modelPromptBuilder: modelPromptBuilder,
+      episodePipeline: episodePipeline,
       openLoopStore: openLoopStore,
       statePackReader: StatePackReader(
         memoryDirectory: memoryDirectory,
@@ -272,18 +290,21 @@ final class LocalAppHost {
         openLoopStore: openLoopStore,
       ),
       personaTree: personaTree,
-      monthlySummary: monthlySummary,
-      dreamService: dreamService,
       memoryControls: memoryControls,
       relationshipLifecycle: relationshipLifecycle,
       memoryActions: memoryActions,
-      memoryRecovery: memoryRecovery,
+      memoryCadence: memoryCadence,
       deliveryPause: deliveryPause,
       recallWindowWait: recallWindowWait,
       clock: clock,
       diagnosticsSink: diagnosticsSink,
     );
+    wiredChatService = chatService;
     await chatService.initialize();
+    // 启动节奏链由组合根直调（ticket 22 / ADR 0002）：仓库初始化之后
+    // 恢复扫描→补日终→补月压缩→补 Dream，全部挂后台任务链，绝不
+    // 阻塞首个可见回应。
+    memoryCadence.initialize();
     // 四区记忆中心（ticket 19）：只依赖各存储的只读接口，不持有
     // 模型客户端与任何写入器；浏览与证据展开不触发模型调用、重新
     // 整理或隐式写入。写入动作归 memoryActions（ticket 20）。
@@ -361,9 +382,9 @@ final class LocalAppHost {
     // 空闲补办轮询（spec）：初始化完成后启动周期定时器壳；注入 null
     // 时用生产默认（每 10 分钟拨一次 tick），测试可注入替身观察收尾。
     final catchupPoller =
-        idleCatchupPoller ?? PeriodicIdleCatchupPoller(chatService.pollTick);
+        idleCatchupPoller ?? PeriodicIdleCatchupPoller(memoryCadence.pollTick);
     catchupPoller.start();
-    return LocalAppHost._(server, requestHandler, catchupPoller);
+    return LocalAppHost._(server, requestHandler, catchupPoller, memoryCadence);
   }
 
   /// 关闭前先停掉空闲补办轮询定时器（不再产生新 tick），再等待后台
@@ -373,10 +394,9 @@ final class LocalAppHost {
   Future<void> close() async {
     _idleCatchupPoller.stop();
     try {
-      final service = _requestHandler.chatService;
       await Future.wait<void>([
-        service.finalizePending(),
-        service.settlePendingRecalls(),
+        _memoryCadence.finalizePending(),
+        _requestHandler.chatService.settlePendingRecalls(),
       ]).timeout(const Duration(seconds: 3));
     } on Object {
       // 归档中断安全：finalized 保持 false，启动补扫会重做。
