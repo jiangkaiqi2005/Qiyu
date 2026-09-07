@@ -21,6 +21,63 @@ enum _IdleCatchupItem {
   final String _wireName;
 }
 
+/// 后台失败记账（ticket 21）的任务类别：对外只透 [displayName] 的平实
+/// 中文名，绝不透代码里的诊断标签与错误细节。
+enum _CadenceTask {
+  finalization('日终归档'),
+  monthlyCompression('月压缩'),
+  dream('梦境整理'),
+  recovery('恢复扫描'),
+  idleCatchup('空闲补办');
+
+  const _CadenceTask(this.displayName);
+
+  final String displayName;
+}
+
+/// 一条后台失败记账（ticket 21）：同一任务同一晚的连续失败共享一条，
+/// 该任务之后成功即翻转为已恢复。纯内存旁路记录，不落盘。
+final class _BackgroundFailureRecord {
+  _BackgroundFailureRecord({required this.night, required this.failedAt})
+    : count = 1;
+
+  /// 记账时所在的「晚」（本机会话日期口径，与节奏模块其余记账同源）。
+  String night;
+
+  /// 最近一次失败时刻。
+  DateTime failedAt;
+
+  /// 本条记录累计失败次数（同一晚同一任务的重复失败只累计不另开）。
+  int count = 1;
+
+  /// 该任务失败之后是否已有一次成功（已恢复）。
+  bool recovered = false;
+}
+
+/// 后台最近失败的只读快照（ticket 21）：页面经只读 API 取用展示。只含
+/// 平实任务名、最近失败时刻、累计失败次数与是否已恢复，绝不透内部
+/// 错误原文、堆栈或路径。
+final class BackgroundFailureStatus {
+  const BackgroundFailureStatus({
+    required this.task,
+    required this.failedAt,
+    required this.count,
+    required this.recovered,
+  });
+
+  /// 任务的平实中文名（日终归档/月压缩/梦境整理/恢复扫描/空闲补办）。
+  final String task;
+
+  /// 该条记录最近一次失败的时刻（本机时间）。
+  final DateTime failedAt;
+
+  /// 本条失败记录累计失败次数。
+  final int count;
+
+  /// 该任务失败之后是否已有一次成功（已恢复）。
+  final bool recovered;
+}
+
 /// 记忆节奏（ticket 22 / ADR 0002）：交付后时间节奏链独立模块。
 /// 日终归档、月压缩与 Dream 的调度与执行，连同启动恢复扫描与空闲
 /// 补办，从聊天交付服务迁到这里集中编排：启动由组合根直调
@@ -81,6 +138,11 @@ final class MemoryCadence {
   String? _catchupAttemptDate;
   final Map<_IdleCatchupItem, int> _catchupAttempts = {};
 
+  /// 后台失败记账（ticket 21）：五员里「真正尝试过且失败」的旁路记录，
+  /// 与既有 attempted/succeeded 记账同口径但互不影响；失败出口逐处记
+  /// 一笔，只读状态经 [backgroundFailureStatus] 暴露给页面。
+  final Map<_CadenceTask, _BackgroundFailureRecord> _backgroundFailures = {};
+
   static bool _neverBusy() => false;
 
   /// 启动节奏链（组合根在仓库初始化之后直调）：恢复扫描→补日终→
@@ -91,7 +153,11 @@ final class MemoryCadence {
     // 受损层跳过，绝不阻塞首个可见回应。
     final recovery = memoryRecovery;
     if (recovery != null) {
-      _chainFinalizationStep('memory recovery', recovery.sweepAndRecover);
+      _chainFinalizationStep(
+        _CadenceTask.recovery,
+        'memory recovery',
+        recovery.sweepAndRecover,
+      );
     }
     // 启动补扫：发现 finalized 仍为 false 的历史日期并安全补做日终归档。
     // 后台执行，绝不阻塞首个可见回应。
@@ -108,12 +174,20 @@ final class MemoryCadence {
   }
 
   /// 把一个后台整理步骤挂到串行任务链末尾：步骤之间不并发，失败只记
-  /// '<label> deferred [$error]' 诊断，绝不阻塞后续步骤与聊天。
-  void _chainFinalizationStep(String label, Future<void> Function() work) {
+  /// '<label> deferred [$error]' 诊断并旁路记账该任务的失败（ticket 21），
+  /// 绝不阻塞后续步骤与聊天。步骤本身的无异常完成不在此记成功——恢复
+  /// 信号只由各自真正成功的出口给出（如接纳成功的 Dream 与全部成功的
+  /// 归档）。
+  void _chainFinalizationStep(
+    _CadenceTask task,
+    String label,
+    Future<void> Function() work,
+  ) {
     _finalizationTask = _finalizationTask.then((_) async {
       try {
         await work();
       } on Object catch (error) {
+        _recordBackgroundOutcome(task, succeeded: false);
         _diagnosticsSink('$label deferred [$error]');
       }
     });
@@ -122,6 +196,68 @@ final class MemoryCadence {
   /// 等待已调度的后台日终归档完成。日终归档幂等且每一步原子写入，
   /// 供测试断言与 Host 优雅收尾使用。
   Future<void> finalizePending() => _finalizationTask;
+
+  /// 后台最近失败的只读快照（ticket 21）：优先取最近失败的未恢复记录；
+  /// 没有未恢复时取今晚已恢复的那条（页面据此短暂展示「已恢复」再隐
+  /// 去）；都没有则安静返回 null。
+  BackgroundFailureStatus? get backgroundFailureStatus {
+    final tonight = localSessionDate(_clock());
+    _CadenceTask? failureTask;
+    _BackgroundFailureRecord? failure;
+    _CadenceTask? recoveredTask;
+    _BackgroundFailureRecord? recovered;
+    for (final entry in _backgroundFailures.entries) {
+      final record = entry.value;
+      if (!record.recovered) {
+        if (failure == null || record.failedAt.isAfter(failure.failedAt)) {
+          failureTask = entry.key;
+          failure = record;
+        }
+      } else if (record.night == tonight) {
+        if (recovered == null || record.failedAt.isAfter(recovered.failedAt)) {
+          recoveredTask = entry.key;
+          recovered = record;
+        }
+      }
+    }
+    final task = failureTask ?? recoveredTask;
+    final record = failure ?? recovered;
+    if (task == null || record == null) {
+      return null;
+    }
+    return BackgroundFailureStatus(
+      task: task.displayName,
+      failedAt: record.failedAt,
+      count: record.count,
+      recovered: record.recovered,
+    );
+  }
+
+  /// 记一次后台任务成败（ticket 21）：成功只把该任务未恢复的记录翻转
+  /// 为已恢复（回报一次「已恢复」）；失败在无记录、已恢复或跨晚时开新
+  /// 记录，否则只累计次数并刷新最近失败时刻——同一任务同一晚始终只有
+  /// 一条提示。纯旁路：不改变任何既有失败处理路径。
+  void _recordBackgroundOutcome(_CadenceTask task, {required bool succeeded}) {
+    final record = _backgroundFailures[task];
+    if (succeeded) {
+      if (record != null && !record.recovered) {
+        record.recovered = true;
+      }
+      return;
+    }
+    final now = _clock();
+    final tonight = localSessionDate(now);
+    if (record == null || record.recovered || record.night != tonight) {
+      _backgroundFailures[task] = _BackgroundFailureRecord(
+        night: tonight,
+        failedAt: now,
+      );
+    } else {
+      record
+        ..count += 1
+        ..failedAt = now;
+    }
+  }
 
   /// 空闲补办轮询 tick（spec：空闲补办轮询器）。生产由
   /// [PeriodicIdleCatchupPoller] 每 10 分钟调用一次；测试直接调用并配
@@ -132,7 +268,11 @@ final class MemoryCadence {
   Future<void> pollTick() async {
     try {
       await _pollTick();
+      // 轮询自身跑完即记成功（ticket 21）：各项整理的成败由它们自己的
+      // 失败出口记账，这里只关照轮询本身。
+      _recordBackgroundOutcome(_CadenceTask.idleCatchup, succeeded: true);
     } on Object catch (error) {
+      _recordBackgroundOutcome(_CadenceTask.idleCatchup, succeeded: false);
       _diagnosticsSink('idle catchup deferred [$error]');
     }
   }
@@ -255,6 +395,11 @@ final class MemoryCadence {
             'monthly compression deferred [$error] reason=idle-catchup',
           );
         }
+        // 后台失败记账（ticket 21）：与每日上限同一份成败口径。
+        _recordBackgroundOutcome(
+          _CadenceTask.monthlyCompression,
+          succeeded: succeeded,
+        );
         return _settleCatchupAttempt(item, succeeded: succeeded);
       case _IdleCatchupItem.dream:
         final dream = dreamService;
@@ -344,8 +489,18 @@ final class MemoryCadence {
     final now = _clock();
     final month = '${now.year}-${'${now.month}'.padLeft(2, '0')}';
     _chainFinalizationStep(
+      _CadenceTask.monthlyCompression,
       'monthly compression',
-      () => compressor.compressBefore(month),
+      // 成功口径与空闲补办一致：尝试后不再存在待压缩月份（单月失败由
+      // 压缩内部记诊断不上抛，摘要仍缺时按失败记账，ticket 21）。
+      () async {
+        await compressor.compressBefore(month);
+        _recordBackgroundOutcome(
+          _CadenceTask.monthlyCompression,
+          succeeded:
+              !(await compressor.hasPendingCompression(beforeMonth: month)),
+        );
+      },
     );
   }
 
@@ -357,7 +512,11 @@ final class MemoryCadence {
     if (dream == null) {
       return;
     }
-    _chainFinalizationStep('dream bedtime mark', dream.markBedtime);
+    _chainFinalizationStep(
+      _CadenceTask.dream,
+      'dream bedtime mark',
+      dream.markBedtime,
+    );
   }
 
   /// Dream 挂到日终归档同一条后台任务链上：补归档与月压缩先完成，
@@ -403,6 +562,14 @@ final class MemoryCadence {
           RecentRequestResults.skipped,
         _ => RecentRequestResults.failed,
       };
+      // 后台失败记账（ticket 21）：与 attempted/succeeded 同口径——资格
+      // 不符的跳过不记账，真正尝试且失败记一次，接纳成功翻转恢复。
+      if (result != RecentRequestResults.skipped) {
+        _recordBackgroundOutcome(
+          _CadenceTask.dream,
+          succeeded: status == DreamStatus.accepted,
+        );
+      }
       requestDiagnostics?.record(
         source: RecentRequestSources.dream,
         result: result,
@@ -413,6 +580,7 @@ final class MemoryCadence {
         succeeded: status == DreamStatus.accepted,
       );
     } on Object catch (error) {
+      _recordBackgroundOutcome(_CadenceTask.dream, succeeded: false);
       requestDiagnostics?.record(
         source: RecentRequestSources.dream,
         result: RecentRequestResults.failed,
@@ -468,6 +636,12 @@ final class MemoryCadence {
             'dates=${report.outcomes.length} troubled=$troubled '
             'reason=$reason',
       );
+      // 后台失败记账（ticket 21）：与「全部日期成功」的返回口径一致，
+      // 触发点路径与空闲补办路径都经这里。
+      _recordBackgroundOutcome(
+        _CadenceTask.finalization,
+        succeeded: troubled == 0,
+      );
       return troubled == 0;
     } on Object catch (error) {
       requestDiagnostics?.record(
@@ -476,6 +650,7 @@ final class MemoryCadence {
         // 细节只记错误类别，不记第三方错误原文。
         detail: '${error.runtimeType} reason=$reason',
       );
+      _recordBackgroundOutcome(_CadenceTask.finalization, succeeded: false);
       _diagnosticsSink('finalization deferred [$error] reason=$reason');
       return false;
     }

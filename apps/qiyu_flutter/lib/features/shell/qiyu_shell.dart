@@ -11,6 +11,7 @@ import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../chat/local_chat_view_model.dart';
 import '../navigation.dart';
+import 'qiyu_background_notice.dart';
 import 'qiyu_connection_status.dart';
 import 'qiyu_home_backdrop.dart';
 import 'qiyu_widgets.dart';
@@ -630,7 +631,16 @@ class _NavPanel extends StatelessWidget {
               hasScrollBody: false,
               child: Align(
                 alignment: Alignment.bottomLeft,
-                child: QiyuConnectionStatus(),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // 后台记忆整理提示位（ticket 21）：仅失败未恢复期间
+                    // 出现的安静位，与连接状态同区同风格，无失败时零占位。
+                    QiyuBackgroundNotice(),
+                    QiyuConnectionStatus(),
+                  ],
+                ),
               ),
             ),
           ],

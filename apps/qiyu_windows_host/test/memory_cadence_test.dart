@@ -373,6 +373,270 @@ void main() {
         isEmpty,
       );
     });
+
+    group('后台失败记账（ticket 21）', () {
+      test(
+        'same task failing twice in one night stays a single notice',
+        () async {
+          var now = DateTime(2026, 8, 12, 23, 10);
+          var failWrites = true;
+          final failingWriter = FailingAtomicTextWriter(
+            shouldFail: (_) => failWrites,
+          );
+          final seedPipeline = EpisodeMemoryPipeline(
+            memoryDirectory: memoryDirectory,
+            clock: () => DateTime(2026, 8, 10, 22),
+          );
+          await _seedEpisodeDay(
+            seedPipeline,
+            '2026-08-10',
+            summary: '用户完成了演讲',
+            finalized: false,
+          );
+          final cadence = MemoryCadence(
+            providerPort: const _PreparedProviderPort(),
+            dailyFinalization: DailyFinalizationService(
+              memoryDirectory: memoryDirectory,
+              episodePipeline: EpisodeMemoryPipeline(
+                memoryDirectory: memoryDirectory,
+                clock: () => now,
+                atomicWriter: failingWriter,
+              ),
+              clock: () => now,
+              atomicWriter: failingWriter,
+            ),
+            clock: () => now,
+            diagnosticsSink: diagnostics.add,
+          );
+
+          // 第一次失败：开一条记录，任务名对外用平实中文。
+          await cadence.pollTick();
+          await cadence.finalizePending();
+          var status = cadence.backgroundFailureStatus;
+          expect(status, isNotNull);
+          expect(status!.task, '日终归档');
+          expect(status.recovered, isFalse);
+          expect(status.count, 1);
+          expect(status.failedAt, now);
+
+          // 同一晚再次失败：仍是同一条记录（同任务同晚只提示一次），只
+          // 累计次数并刷新最近失败时刻。
+          now = DateTime(2026, 8, 12, 23, 40);
+          await cadence.pollTick();
+          await cadence.finalizePending();
+          status = cadence.backgroundFailureStatus;
+          expect(status!.task, '日终归档');
+          expect(status.count, 2);
+          expect(status.failedAt, DateTime(2026, 8, 12, 23, 40));
+          expect(status.recovered, isFalse);
+        },
+      );
+
+      test(
+        'a failure still unresolved into the next night re-notifies',
+        () async {
+          var now = DateTime(2026, 8, 12, 23, 10);
+          final failingWriter = FailingAtomicTextWriter(
+            shouldFail: (_) => true,
+          );
+          final seedPipeline = EpisodeMemoryPipeline(
+            memoryDirectory: memoryDirectory,
+            clock: () => DateTime(2026, 8, 10, 22),
+          );
+          await _seedEpisodeDay(
+            seedPipeline,
+            '2026-08-10',
+            summary: '用户完成了演讲',
+            finalized: false,
+          );
+          final cadence = MemoryCadence(
+            providerPort: const _PreparedProviderPort(),
+            dailyFinalization: DailyFinalizationService(
+              memoryDirectory: memoryDirectory,
+              episodePipeline: EpisodeMemoryPipeline(
+                memoryDirectory: memoryDirectory,
+                clock: () => now,
+                atomicWriter: failingWriter,
+              ),
+              clock: () => now,
+              atomicWriter: failingWriter,
+            ),
+            clock: () => now,
+            diagnosticsSink: diagnostics.add,
+          );
+
+          await cadence.pollTick();
+          await cadence.finalizePending();
+          expect(cadence.backgroundFailureStatus!.count, 1);
+
+          // 跨过本机会话日期口径的一晚：重新开一条记录，次数从一起算。
+          now = DateTime(2026, 8, 13, 5);
+          await cadence.pollTick();
+          await cadence.finalizePending();
+          final status = cadence.backgroundFailureStatus!;
+          expect(status.task, '日终归档');
+          expect(status.count, 1);
+          expect(status.failedAt, now);
+          expect(status.recovered, isFalse);
+        },
+      );
+
+      test('a later success reports recovery once', () async {
+        var failWrites = true;
+        final failingWriter = FailingAtomicTextWriter(
+          shouldFail: (_) => failWrites,
+        );
+        final seedPipeline = EpisodeMemoryPipeline(
+          memoryDirectory: memoryDirectory,
+          clock: () => DateTime(2026, 8, 10, 22),
+        );
+        await _seedEpisodeDay(
+          seedPipeline,
+          '2026-08-10',
+          summary: '用户完成了演讲',
+          finalized: false,
+        );
+        final cadence = MemoryCadence(
+          providerPort: const _PreparedProviderPort(),
+          dailyFinalization: DailyFinalizationService(
+            memoryDirectory: memoryDirectory,
+            episodePipeline: EpisodeMemoryPipeline(
+              memoryDirectory: memoryDirectory,
+              clock: () => DateTime(2026, 8, 12, 23, 10),
+              atomicWriter: failingWriter,
+            ),
+            clock: () => DateTime(2026, 8, 12, 23, 10),
+            atomicWriter: failingWriter,
+          ),
+          clock: () => DateTime(2026, 8, 12, 23, 10),
+          diagnosticsSink: diagnostics.add,
+        );
+
+        await cadence.pollTick();
+        await cadence.finalizePending();
+        expect(cadence.backgroundFailureStatus!.recovered, isFalse);
+
+        // 放开写入：补扫成功，该任务翻转为已恢复（回报一次）。
+        failWrites = false;
+        await cadence.pollTick();
+        await cadence.finalizePending();
+        var status = cadence.backgroundFailureStatus!;
+        expect(status.task, '日终归档');
+        expect(status.recovered, isTrue);
+        expect(status.count, 1);
+
+        // 已恢复之后同晚再失败（另播一天未定稿）：开新的一条重新提示。
+        await _seedEpisodeDay(
+          seedPipeline,
+          '2026-08-11',
+          summary: '用户聊了周末的安排',
+          finalized: false,
+        );
+        failWrites = true;
+        await cadence.pollTick();
+        await cadence.finalizePending();
+        status = cadence.backgroundFailureStatus!;
+        expect(status.recovered, isFalse);
+        expect(status.count, 1);
+      });
+
+      test('monthly compression failure is accounted under its plain name', () async {
+        final seedPipeline = EpisodeMemoryPipeline(
+          memoryDirectory: memoryDirectory,
+          clock: () => DateTime(2026, 7, 2, 22),
+        );
+        await _seedEpisodeDay(
+          seedPipeline,
+          '2026-07-02',
+          summary: '用户聊了搬家的计划',
+          finalized: true,
+        );
+        final failingWriter = FailingAtomicTextWriter(shouldFail: (_) => true);
+        final cadence = MemoryCadence(
+          providerPort: const _PreparedProviderPort(),
+          monthlySummary: MonthlySummaryStore(
+            memoryDirectory: memoryDirectory,
+            episodePipeline: EpisodeMemoryPipeline(
+              memoryDirectory: memoryDirectory,
+              clock: () => DateTime(2026, 8, 12, 9),
+              atomicWriter: failingWriter,
+            ),
+            atomicWriter: failingWriter,
+            diagnosticsSink: diagnostics.add,
+          ),
+          clock: () => DateTime(2026, 8, 12, 9),
+          diagnosticsSink: diagnostics.add,
+        );
+
+        await cadence.pollTick();
+        await cadence.finalizePending();
+
+        expect(cadence.backgroundFailureStatus!.task, '月压缩');
+        expect(cadence.backgroundFailureStatus!.recovered, isFalse);
+      });
+
+      test('ineligible skips never create a failure record', () async {
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: memoryDirectory,
+          clock: () => DateTime(2026, 8, 11, 22, 30),
+        );
+        await _seedEpisodeDay(
+          pipeline,
+          '2026-08-05',
+          summary: '用户说周末要去爬山',
+          finalized: true,
+        );
+        await _seedPendingDream(
+          memoryDirectory,
+          lastSuccess: DateTime(2026, 8, 1),
+        );
+        // 未配置模型客户端：Dream 整体跳过（skippedNoProvider）。
+        final cadence = MemoryCadence(
+          providerPort: const _PreparedProviderPort(),
+          dreamService: DreamService(
+            memoryDirectory: memoryDirectory,
+            episodePipeline: pipeline,
+            clock: () => DateTime(2026, 8, 11, 22, 30),
+          ),
+          clock: () => DateTime(2026, 8, 11, 22, 30),
+          diagnosticsSink: diagnostics.add,
+        );
+
+        await cadence.pollTick();
+        await cadence.finalizePending();
+
+        // 资格不符的跳过不是真正的尝试：不产生任何后台失败记账。
+        expect(cadence.backgroundFailureStatus, isNull);
+      });
+
+      test('no model port configured stays quiet', () async {
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: memoryDirectory,
+          clock: () => DateTime(2026, 8, 12, 9),
+        );
+        await _seedEpisodeDay(
+          pipeline,
+          '2026-08-10',
+          summary: '用户完成了演讲',
+          finalized: false,
+        );
+        final cadence = MemoryCadence(
+          dailyFinalization: DailyFinalizationService(
+            memoryDirectory: memoryDirectory,
+            episodePipeline: pipeline,
+            clock: () => DateTime(2026, 8, 12, 9),
+          ),
+          clock: () => DateTime(2026, 8, 12, 9),
+          diagnosticsSink: diagnostics.add,
+        );
+
+        // 有积压但未配置模型服务：轮询安静返回，不产生任何失败记账。
+        await cadence.pollTick();
+        await cadence.finalizePending();
+
+        expect(cadence.backgroundFailureStatus, isNull);
+      });
+    });
   });
 }
 

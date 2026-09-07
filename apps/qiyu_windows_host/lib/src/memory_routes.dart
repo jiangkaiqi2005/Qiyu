@@ -5,12 +5,13 @@ import 'package:shelf/shelf.dart';
 
 import 'api_http.dart';
 import 'memory_actions.dart';
+import 'memory_cadence.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
 import 'persona_tree.dart';
 
-/// 记忆领域路由：四区总览、条目详情、记忆动作、称呼设定与控制记录
-/// 浏览。
+/// 记忆领域路由：四区总览、条目详情、记忆动作、称呼设定、控制记录
+/// 浏览与后台失败状态。
 ///
 /// 本模块持有记忆领域的路径匹配、payload 解析、序列化与错误翻译
 /// （含记忆动作结果码到 HTTP 状态的映射）；删除本模块，这些职责会
@@ -21,6 +22,7 @@ final class MemoryRoutes implements ApiRoutes {
     required this.memoryActions,
     required this.memoryControls,
     required this.personaTree,
+    required this.memoryCadence,
   });
 
   final MemoryCenterService memoryCenter;
@@ -30,6 +32,10 @@ final class MemoryRoutes implements ApiRoutes {
   /// 称呼写入口之一（记忆中心）：Persona 区修改称呼落到 persona.md
   /// 受保护设定行；与聊天自述、首见引导共用同一校验与写入实现。
   final PersonaTreeStore personaTree;
+
+  /// 后台失败状态（ticket 21）：只读记忆节奏模块的最近失败记账，
+  /// 序列化时只透平实任务名、时刻、次数与是否已恢复。
+  final MemoryCadence memoryCadence;
 
   @override
   Future<Response?> handle(Request request) async {
@@ -167,6 +173,21 @@ final class MemoryRoutes implements ApiRoutes {
           'banned': [for (final entry in controls.banned) entryJson(entry)],
           // 删除记录只存抽象防复活范围，只给数量不给内容。
           'deletedCount': controls.deleted.length,
+        }),
+        headers: jsonHeaders,
+      );
+    }
+    if (method == 'GET' && path == 'api/memory/cadence-status') {
+      final status = memoryCadence.backgroundFailureStatus;
+      return Response.ok(
+        jsonEncode({
+          // 后台最近失败的只读状态（ticket 21）：对外只含平实任务名、
+          // 最近失败时刻、累计次数与是否已恢复，无失败时安静返回；绝不
+          // 透内部错误原文、堆栈或本机路径。
+          'task': status?.task,
+          if (status != null) 'failedAt': status.failedAt.toIso8601String(),
+          if (status != null) 'count': status.count,
+          if (status != null) 'recovered': status.recovered,
         }),
         headers: jsonHeaders,
       );

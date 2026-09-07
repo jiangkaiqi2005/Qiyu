@@ -5,6 +5,8 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/failing_atomic_writer.dart';
+
 void main() {
   late Directory temporaryDirectory;
   late Directory webRoot;
@@ -2411,6 +2413,92 @@ void main() {
       await host.close();
     });
   });
+
+  group('后台失败状态（ticket 21）', () {
+    test(
+      'exposes a sanitized background failure after a failed startup catch-up',
+      () async {
+        // 预置一份未定稿的历史日期；拦写注入只拦这一天的写入，让启动
+        // 补扫真正尝试并失败，其余启动写入不受影响。
+        await Directory(
+          memoryDirectory.path,
+        ).create(recursive: true);
+        await _seedUnfinalizedEpisodeDay(
+          memoryDirectory.path,
+          '2026-08-10',
+          summary: '用户完成了演讲',
+        );
+        final host = await LocalAppHost.start(
+          webRoot: webRoot.path,
+          memoryDirectory: memoryDirectory.path,
+          personaConstitution: '测试人格宪法',
+          atomicWriter: FailingAtomicTextWriter(
+            shouldFail: (path) => path.contains('2026-08-10'),
+          ),
+        );
+        await host.memoryCadence.finalizePending();
+
+        final browser = await _openBrowserSession(host);
+        final response = await _send(
+          host.origin.resolve('/api/memory/cadence-status'),
+          headers: browser.readHeaders(host.origin),
+        );
+        expect(response.statusCode, HttpStatus.ok);
+        final status = jsonDecode(response.body) as Map<String, Object?>;
+        expect(status['task'], '日终归档');
+        expect(status['failedAt'], isA<String>());
+        expect(status['count'], 1);
+        expect(status['recovered'], false);
+        // 脱敏：响应只含任务名、时刻、次数与是否已恢复，绝不含内部
+        // 错误原文与本机路径。
+        expect(response.body, isNot(contains('mock interrupted write')));
+        expect(response.body, isNot(contains('Exception')));
+        expect(response.body, isNot(contains(temporaryDirectory.path)));
+        await host.close();
+      },
+    );
+
+    test('stays quiet when no background failure was recorded', () async {
+      final host = await _startHost(webRoot, memoryDirectory);
+      final browser = await _openBrowserSession(host);
+      final response = await _send(
+        host.origin.resolve('/api/memory/cadence-status'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(response.statusCode, HttpStatus.ok);
+      expect(jsonDecode(response.body), {'task': null});
+      await host.close();
+    });
+  });
+}
+
+/// 播种一份未定稿的 episode 日文件（与记忆节奏模块测试同构）：
+/// writeFinalization 契约要求调用方持有 episode 日文件写锁，测试也照做。
+Future<void> _seedUnfinalizedEpisodeDay(
+  String memoryDirectory,
+  String date, {
+  required String summary,
+}) {
+  final pipeline = EpisodeMemoryPipeline(
+    memoryDirectory: memoryDirectory,
+    clock: () => DateTime(2026, 8, 10, 22),
+  );
+  return pipeline.synchronizedOnDayFiles(
+    () => pipeline.writeFinalization(
+      date,
+      entries: [
+        EpisodeEntry(
+          id: 'seed:1:0',
+          sessionId: 'seed',
+          requestId: 'seed',
+          summary: summary,
+          at: DateTime.parse('${date}T21:00:00').toUtc(),
+        ),
+      ],
+      summary: summary,
+      finalized: false,
+    ),
+  );
 }
 
 List<Map<String, Object?>> _chatEvents(String body) => body

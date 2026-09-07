@@ -364,6 +364,7 @@ final class LocalAppHost {
       developerDiagnostics: developerDiagnostics,
       localDataService: localDataService,
       requestDiagnostics: requestDiagnostics,
+      memoryCadence: memoryCadence,
       activationToken: activationToken,
       onActivate: onActivate,
     );
@@ -424,6 +425,7 @@ final class _LocalAppRequestHandler {
     required this.developerDiagnostics,
     required LocalDataService localDataService,
     required this.requestDiagnostics,
+    required MemoryCadence memoryCadence,
     required this.activationToken,
     required this.onActivate,
   }) : _startupToken = generateSecureToken(),
@@ -441,6 +443,7 @@ final class _LocalAppRequestHandler {
            memoryActions: memoryActions,
            memoryControls: memoryControls,
            personaTree: personaTree,
+           memoryCadence: memoryCadence,
          ),
          SettingsRoutes(
            providerSettingsService: providerSettingsService,
