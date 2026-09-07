@@ -19,6 +19,7 @@ export 'src/local_data_service.dart';
 export 'src/markdown_memory_repository.dart';
 export 'src/memory_actions.dart';
 export 'src/memory_backup.dart';
+export 'src/memory_cadence.dart';
 export 'src/memory_center.dart';
 export 'src/memory_controls.dart';
 export 'src/memory_marker_codec.dart';

@@ -42,17 +42,24 @@ final class VoiceRoutes implements ApiRoutes {
   Future<Response?> handle(Request request) async {
     // 领域差异只有语音服务故障；请求体不可读、invalid_request、Provider
     // 配置故障与记忆仓储故障走共享翻译前导。
-    try {
-      return await _route(request);
-    } on SttServiceException catch (error) {
-      return _voiceServiceError(error.code, error.message, error.retryable);
-    } on TtsServiceException catch (error) {
-      return _voiceServiceError(error.code, error.message, error.retryable);
-    } on Object catch (error) {
-      final shared = sharedApiErrorResponse(error);
-      if (shared == null) rethrow;
-      return shared;
-    }
+    return runApiRoute(
+      () => _route(request),
+      translateDomainError: (error) => switch (error) {
+        SttServiceException(
+          :final code,
+          :final message,
+          :final retryable,
+        ) =>
+          _voiceServiceError(code, message, retryable),
+        TtsServiceException(
+          :final code,
+          :final message,
+          :final retryable,
+        ) =>
+          _voiceServiceError(code, message, retryable),
+        _ => null,
+      },
+    );
   }
 
   /// 语音服务异常的统一口径：未配置、请求本身与本地配置无效等本地

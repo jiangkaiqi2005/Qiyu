@@ -1185,6 +1185,9 @@ void main() {
             clock: () => DateTime(2026, 8, 12, 9),
           ),
           episodePipeline: pipeline,
+          clock: () => DateTime(2026, 8, 12, 9),
+        );
+        final cadence = MemoryCadence(
           dailyFinalization: DailyFinalizationService(
             memoryDirectory: temporaryDirectory.path,
             episodePipeline: pipeline,
@@ -1192,9 +1195,10 @@ void main() {
           ),
           clock: () => DateTime(2026, 8, 12, 9),
         );
-  
+
         await service.initialize();
-        await service.finalizePending();
+        cadence.initialize();
+        await cadence.finalizePending();
   
         final day = await pipeline.readDay('2026-08-10');
         expect(day.finalized, isTrue);

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'features/baseline/background_status_client.dart';
 import 'features/chat/local_chat_client.dart';
 import 'features/chat/local_chat_view.dart';
 import 'features/chat/local_chat_view_model.dart';
@@ -209,6 +210,7 @@ class _QiyuAppState extends State<QiyuApp> {
           (context) => LocalChatViewModel(
             HttpLocalChatGateway(),
             ttsSettingsGateway: context.read<TtsSettingsGateway>(),
+            backgroundStatusGateway: HttpBackgroundStatusGateway(),
           ),
         ),
         _vm(

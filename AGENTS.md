@@ -12,7 +12,7 @@ Release 1 = **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心*
 
 - `packages/qiyu_behavior_core/` — 纯 Dart 行为与协议核心：安全分类、本地回复、模型输出清洗与人格边界校验、稳定 DTO 与 `ChatDeliveryEvent` 流式协议；不依赖 Flutter/DOM/Windows API/具体存储。
 - `apps/qiyu_flutter/` — Flutter Web UI，`features/` 下含 chat、settings、memory、history、onboarding、shell 等领域。
-- `apps/qiyu_windows_host/` — Dart Windows Host：`LocalAppHost`（loopback 站点 + 受会话/Origin/CSRF 保护的 API）、`LocalChatService`（交付编排）、`model_gateway.dart`（OpenAI-compatible / Anthropic / Ollama 适配）、Markdown 会话与记忆模块（episode_memory、dream、persona_tree、memory_recall 等）。
+- `apps/qiyu_windows_host/` — Dart Windows Host：`LocalAppHost`（loopback 站点 + 受会话/Origin/CSRF 保护的 API）、`LocalChatService`（交付编排）、`MemoryCadence`（记忆节奏：日终归档、月压缩、Dream、启动恢复扫描、空闲补办）、`model_gateway.dart`（OpenAI-compatible / Anthropic / Ollama 适配）、Markdown 会话与记忆模块（episode_memory、dream、persona_tree、memory_recall 等）。
 - `contracts/qiyu_behavior_contracts.json` — 当前行为契约，Core 直接消费；`legacy-migration-golden-cases.json` 只冻结旧迁移 golden，运行时不消费。
 - `docs/product/behavior-spec.md` — 从产品灵魂提炼的工程行为规范。
 

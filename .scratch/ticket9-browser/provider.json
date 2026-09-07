@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "provider": "openai_compatible",
-  "baseUrl": "https://api.deepseek.com",
-  "model": "deepseek-chat",
-  "temperature": 0.7,
-  "timeoutSeconds": 60
-}

@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../baseline/host_api_gateway.dart';
 import '../baseline/host_connection_probe.dart';
+import '../baseline/background_status_client.dart';
 import '../settings/tts_settings_client.dart';
 import 'local_chat_client.dart';
 import 'voice_output_controller.dart';
@@ -48,6 +49,7 @@ final class LocalChatViewModel extends ChangeNotifier {
     HostConnectionProbe? hostConnectionProbe,
     RequestIdFactory? requestIdFactory,
     TtsSettingsGateway? ttsSettingsGateway,
+    BackgroundStatusGateway? backgroundStatusGateway,
     VoiceOutputController? voiceOutput,
     bool autoStart = true,
     Duration monitorInterval = const Duration(seconds: 2),
@@ -55,6 +57,8 @@ final class LocalChatViewModel extends ChangeNotifier {
        _requestIdFactory = requestIdFactory ?? _defaultRequestId,
        // ignore: prefer_initializing_formals
        _ttsSettingsGateway = ttsSettingsGateway,
+       // ignore: prefer_initializing_formals
+       _backgroundStatusGateway = backgroundStatusGateway,
        // 缺省独立创建朗读网关（与聊天网关同构；widget 测试注入桩）。
        voiceOutput =
            voiceOutput ?? VoiceOutputController(HttpLocalChatGateway()) {
@@ -72,6 +76,9 @@ final class LocalChatViewModel extends ChangeNotifier {
   final RequestIdFactory _requestIdFactory;
   final TtsSettingsGateway? _ttsSettingsGateway;
 
+  /// 后台失败状态网关（ticket 21）：null 时安静位整体不工作（缺省关闭）。
+  final BackgroundStatusGateway? _backgroundStatusGateway;
+
   /// 语音朗读播放队列（ADR 0002）：view 观察它渲染「正在朗读」指示与
   /// 停止按钮。
   final VoiceOutputController voiceOutput;
@@ -86,6 +93,18 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool _checkingHost = false;
   bool _initializing = false;
   bool _initialized = false;
+
+  /// 后台失败状态（ticket 21）：随既有连接探测轮询取用的只读快照；
+  /// 取不到时保持原样，绝不打扰聊天主链路。
+  BackgroundFailureStatus? _backgroundFailure;
+  bool _backgroundFailureChecking = false;
+  bool _backgroundRecoveredNotice = false;
+  Timer? _backgroundRecoveredTimer;
+
+  /// 「已恢复」提示的停留时长：够读到一句话，不久留成常驻。
+  static const Duration _backgroundRecoveredNoticeDuration = Duration(
+    seconds: 4,
+  );
 
   /// 唯一代数计数器：新发送、会话恢复与丢弃会话都推进它；原恢复代数
   /// 并入这里，不再有两套代际。
@@ -114,6 +133,17 @@ final class LocalChatViewModel extends ChangeNotifier {
   /// 探测结果三态（未探明 / 可用 / 不可用）里只有后两态可以拿去宣称，
   /// 「未探明」既不能说正常、也不能说故障。
   bool get hostStatusKnown => _hostAvailable != null;
+
+  /// 当前需要提示的后台失败（ticket 21，未恢复才计）：null 即没有，
+  /// 壳层安静位整体不出现。
+  BackgroundFailureStatus? get backgroundFailure =>
+      _backgroundFailure == null || _backgroundFailure!.recovered
+      ? null
+      : _backgroundFailure;
+
+  /// 失败恢复后的短暂提示窗口：「已恢复」展示一会儿再隐去，由视图模型
+  /// 计时；窗口只在「此前真的展示过失败」时开启。
+  bool get backgroundRecoveredNotice => _backgroundRecoveredNotice;
 
   /// 合一页（design-system §5）的**空状态 = 首页**唯一判定：一条消息都还没有、
   /// 不在等待与流式之中，**且会话已经恢复完**。
@@ -324,8 +354,60 @@ final class LocalChatViewModel extends ChangeNotifier {
         _hostAvailable = available;
         notifyListeners();
       }
+      // Host 可达时顺带取一次后台失败状态（ticket 21）：不新开轮询，
+      // 随既有探测节奏走。
+      if (available) {
+        await _refreshBackgroundFailure();
+      }
     } finally {
       _checkingHost = false;
+    }
+  }
+
+  /// 取一次后台失败状态并推进安静位的显示状态（ticket 21）：有失败未
+  /// 恢复时持续展示；该任务重试成功时回报一次「已恢复」，短暂展示后
+  /// 隐去；无失败时整块不占位。状态取不到时保持原样。
+  Future<void> _refreshBackgroundFailure() async {
+    final gateway = _backgroundStatusGateway;
+    if (gateway == null || _backgroundFailureChecking) {
+      return;
+    }
+    _backgroundFailureChecking = true;
+    try {
+      final status = await gateway.read();
+      final previous = _backgroundFailure;
+      _backgroundFailure = status;
+      if (status != null && !status.recovered) {
+        // 有失败未恢复：撤掉恢复提示（若有），安静位持续展示失败。
+        _backgroundRecoveredTimer?.cancel();
+        _backgroundRecoveredTimer = null;
+        _backgroundRecoveredNotice = false;
+      } else if (previous != null &&
+          !previous.recovered &&
+          status != null &&
+          status.recovered) {
+        // 该任务重试成功：回报一次「已恢复」，短暂展示后隐去。
+        _backgroundRecoveredNotice = true;
+        _backgroundRecoveredTimer?.cancel();
+        _backgroundRecoveredTimer = Timer(
+          _backgroundRecoveredNoticeDuration,
+          () {
+            _backgroundRecoveredNotice = false;
+            notifyListeners();
+          },
+        );
+      } else if (status == null) {
+        _backgroundRecoveredTimer?.cancel();
+        _backgroundRecoveredTimer = null;
+        _backgroundRecoveredNotice = false;
+      }
+      if (previous != status) {
+        notifyListeners();
+      }
+    } on Object {
+      // 安静提示是旁路：状态取不到时保持原样。
+    } finally {
+      _backgroundFailureChecking = false;
     }
   }
 
@@ -543,6 +625,7 @@ final class LocalChatViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _monitorTimer?.cancel();
+    _backgroundRecoveredTimer?.cancel();
     // 活跃事务随释放失效：尚未消费完的旧流事件会在代际校验处整体丢弃，
     // 不再写入或通知已销毁的视图模型。
     _activeTurn = null;

@@ -22,21 +22,19 @@ final class OnboardingRoutes implements ApiRoutes {
 
   @override
   Future<Response?> handle(Request request) async {
-    try {
-      return await _route(request);
-    } on OnboardingStateException catch (error) {
-      return jsonError(
-        HttpStatus.internalServerError,
-        code: 'onboarding_unavailable',
-        message: error.message,
-        retryable: true,
-      );
-    } on Object catch (error) {
-      // 完成请求现在读取可选称呼字段，请求体缺陷走共享翻译口径。
-      final shared = sharedApiErrorResponse(error);
-      if (shared == null) rethrow;
-      return shared;
-    }
+    // 领域差异只有引导状态不可用；完成请求现在读取可选称呼字段，
+    // 请求体缺陷走共享翻译口径。
+    return runApiRoute(
+      () => _route(request),
+      translateDomainError: (error) => error is OnboardingStateException
+          ? jsonError(
+              HttpStatus.internalServerError,
+              code: 'onboarding_unavailable',
+              message: error.message,
+              retryable: true,
+            )
+          : null,
+    );
   }
 
   Future<Response?> _route(Request request) async {

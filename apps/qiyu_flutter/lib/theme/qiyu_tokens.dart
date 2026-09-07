@@ -427,9 +427,9 @@ abstract final class QiyuLayout {
   static const double narrowHeaderLeftOverrun =
       narrowMenuExtent + QiyuSpacing.xs - QiyuSpacing.lg;
 
-  /// 空状态首页内容宽度：min(560, 86vw)（原型 `.home-content`）。
+  /// 空状态首页内容宽度上限：560（原型 `.home-content` 定值；原型的
+  /// 86vw 视口钳制从未实现，实际只按这一档夹取）。
   static const double homeContentMaxWidth = 560;
-  static const double homeContentWidthFraction = 0.86;
 
   /// 连接状态小圆点直径（design-system §5：6px）。
   static const double connectionDotSize = 6;

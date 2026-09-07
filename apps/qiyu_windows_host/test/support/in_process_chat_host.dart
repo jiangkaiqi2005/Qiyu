@@ -364,10 +364,10 @@ final class InProcessChatHost {
   /// 手动拨动一次空闲补办轮询 tick（spec：轮询 tick 唯一新缝；测试
   /// 不启动真定时器，直接拨 tick 配假时钟）。补办排进后台任务链后
   /// 返回，等待落定用 [finalizePending] 或 [close]。
-  Future<void> pollTick() => _host.chatService.pollTick();
+  Future<void> pollTick() => _host.memoryCadence.pollTick();
 
   /// 等待后台任务链（补归档、月压缩、Dream）排空。
-  Future<void> finalizePending() => _host.chatService.finalizePending();
+  Future<void> finalizePending() => _host.memoryCadence.finalizePending();
 
   Future<void> dispose() async {
     _client.close(force: true);

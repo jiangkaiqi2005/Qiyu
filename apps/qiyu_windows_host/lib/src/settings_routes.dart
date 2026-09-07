@@ -40,13 +40,7 @@ final class SettingsRoutes implements ApiRoutes {
   Future<Response?> handle(Request request) async {
     // 本领域没有共享口径之外的异常差异：请求体不可读、invalid_request、
     // Provider 配置与凭据库故障、本地数据故障全走共享翻译前导。
-    try {
-      return await _route(request);
-    } on Object catch (error) {
-      final shared = sharedApiErrorResponse(error);
-      if (shared == null) rethrow;
-      return shared;
-    }
+    return runApiRoute(() => _route(request));
   }
 
   /// 依次询问各子域；返回 null 表示请求不属于设置领域，交回总控。
