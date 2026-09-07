@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../theme/qiyu_tokens.dart';
 import 'settings_section_shell.dart';
 import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
@@ -251,7 +252,11 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
               decoration: InputDecoration(
                 labelText: '服务地址',
                 hintText: defaults.urlHint,
-                border: const OutlineInputBorder(),
+                border: settingsOutlineBorder(color: QiyuColors.line),
+                enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+                focusedBorder: settingsOutlineBorder(
+                  color: QiyuColors.composerFocusLine,
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -264,7 +269,11 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
                     ? 'Resource-Id'
                     : '模型名称',
                 hintText: defaults.modelHint,
-                border: const OutlineInputBorder(),
+                border: settingsOutlineBorder(color: QiyuColors.line),
+                enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+                focusedBorder: settingsOutlineBorder(
+                  color: QiyuColors.composerFocusLine,
+                ),
               ),
             ),
             const SizedBox(height: 8),

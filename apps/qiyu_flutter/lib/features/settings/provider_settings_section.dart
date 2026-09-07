@@ -362,10 +362,14 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                   key: const Key('provider-model'),
                   controller: _form.modelController,
                   focusNode: _form.modelFocusNode,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: '模型名称',
                     hintText: '输入服务商提供的 Model ID',
-                    border: OutlineInputBorder(),
+                    border: settingsOutlineBorder(color: QiyuColors.line),
+                    enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+                    focusedBorder: settingsOutlineBorder(
+                      color: QiyuColors.composerFocusLine,
+                    ),
                   ),
                 ),
               ],
@@ -375,10 +379,14 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                   key: const Key('provider-base-url'),
                   controller: _form.baseUrlController,
                   focusNode: _form.baseUrlFocusNode,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: '服务地址',
                     hintText: 'https://example.com/v1',
-                    border: OutlineInputBorder(),
+                    border: settingsOutlineBorder(color: QiyuColors.line),
+                    enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+                    focusedBorder: settingsOutlineBorder(
+                      color: QiyuColors.composerFocusLine,
+                    ),
                   ),
                 )
               else
@@ -408,9 +416,15 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
                           ),
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             labelText: 'temperature',
-                            border: OutlineInputBorder(),
+                            border: settingsOutlineBorder(color: QiyuColors.line),
+                            enabledBorder: settingsOutlineBorder(
+                              color: QiyuColors.line,
+                            ),
+                            focusedBorder: settingsOutlineBorder(
+                              color: QiyuColors.composerFocusLine,
+                            ),
                           ),
                         ),
                       ),
@@ -421,9 +435,15 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                           controller: _form.timeoutController,
                           focusNode: _form.timeoutFocusNode,
                           keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             labelText: '超时（秒）',
-                            border: OutlineInputBorder(),
+                            border: settingsOutlineBorder(color: QiyuColors.line),
+                            enabledBorder: settingsOutlineBorder(
+                              color: QiyuColors.line,
+                            ),
+                            focusedBorder: settingsOutlineBorder(
+                              color: QiyuColors.composerFocusLine,
+                            ),
                           ),
                         ),
                       ),

@@ -364,6 +364,16 @@ Future<bool> confirmSettingsForgetKey({
 
 /// 各设置领域共用的受控下拉：外层 [InputDecorator] 撑起与文本框一致的
 /// 标签与边框，内层下拉去下划线铺满。
+
+/// 设置页表单输入框的微圆角描边（直边、8px 微圆角，取代过大的胶囊全圆角）。
+OutlineInputBorder settingsOutlineBorder({
+  Color color = QiyuColors.line,
+  double radius = QiyuRadii.small,
+}) => OutlineInputBorder(
+  borderRadius: BorderRadius.all(Radius.circular(radius)),
+  borderSide: BorderSide(width: QiyuLine.hairline, color: color),
+);
+
 class SettingsControlledDropdown extends StatelessWidget {
   const SettingsControlledDropdown({
     super.key,
@@ -384,7 +394,9 @@ class SettingsControlledDropdown extends StatelessWidget {
   Widget build(BuildContext context) => InputDecorator(
     decoration: InputDecoration(
       labelText: label,
-      border: const OutlineInputBorder(),
+      border: settingsOutlineBorder(color: QiyuColors.line),
+      enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+      focusedBorder: settingsOutlineBorder(color: QiyuColors.composerFocusLine),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
     ),
     child: DropdownButtonHideUnderline(
@@ -536,7 +548,11 @@ class SettingsApiKeyField extends StatelessWidget {
           decoration: InputDecoration(
             labelText: label,
             hintText: hint,
-            border: const OutlineInputBorder(),
+            border: settingsOutlineBorder(color: QiyuColors.line),
+            enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+            focusedBorder: settingsOutlineBorder(
+              color: QiyuColors.composerFocusLine,
+            ),
           ),
         ),
         if (keySet) ...[
