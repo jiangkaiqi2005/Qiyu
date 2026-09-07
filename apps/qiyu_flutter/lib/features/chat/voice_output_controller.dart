@@ -192,8 +192,9 @@ final class VoiceOutputController extends ChangeNotifier {
           return;
         }
         _notifyFailureOnce('语音服务连不上，这条读不出来。');
-        if (isVoiceApiError(error)) {
-          onApiError?.call(ApiErrorCategory.ttsError);
+        final category = categorizeVoiceApiError(error, isInput: false);
+        if (category != null) {
+          onApiError?.call(category);
         }
         continue;
       }

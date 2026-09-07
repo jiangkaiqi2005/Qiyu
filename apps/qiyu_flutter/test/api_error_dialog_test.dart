@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/features/chat/api_error_dialog.dart';
+import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
@@ -45,6 +46,8 @@ void main() {
       final settingsBtn = find.byKey(const Key('api-error-dialog-settings'));
       expect(settingsBtn, findsOneWidget);
       expect(find.text('前往设置'), findsOneWidget);
+      final settingsText = tester.widget<Text>(find.text('前往设置'));
+      expect(settingsText.style?.fontFamily, QiyuType.fontFamily);
 
       // 点击知道了
       await tester.tap(dismissBtn);
@@ -137,6 +140,96 @@ void main() {
       expect(isVoiceApiError('Connection timeout'), isFalse);
       expect(isVoiceApiError('Network connection lost'), isFalse);
       expect(isVoiceApiError('SocketException: host unreachable'), isFalse);
+    });
+
+    test('categorizeVoiceApiError 结构化错误码与降级规则', () {
+      // 结构化 code 优先
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('error', code: 'tts_model_not_found'),
+          isInput: false,
+        ),
+        ApiErrorCategory.modelNotFound,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('error', code: 'stt_model_not_found'),
+          isInput: true,
+        ),
+        ApiErrorCategory.modelNotFound,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('error', code: 'tts_rate_limited'),
+          isInput: false,
+        ),
+        ApiErrorCategory.rateLimited,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('error', code: 'stt_rate_limited'),
+          isInput: true,
+        ),
+        ApiErrorCategory.rateLimited,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('error', code: 'stt_auth_failed'),
+          isInput: true,
+        ),
+        ApiErrorCategory.authentication,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('error', code: 'tts_authentication'),
+          isInput: false,
+        ),
+        ApiErrorCategory.authentication,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('error', code: 'stt_service_error'),
+          isInput: true,
+        ),
+        ApiErrorCategory.sttError,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('error', code: 'tts_config_invalid'),
+          isInput: false,
+        ),
+        ApiErrorCategory.ttsError,
+      );
+
+      // code 为空时严格特征识别降级
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('模型不存在 404'),
+          isInput: false,
+        ),
+        ApiErrorCategory.modelNotFound,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('请求过于频繁 429'),
+          isInput: false,
+        ),
+        ApiErrorCategory.rateLimited,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('API Key 鉴权失败 401'),
+          isInput: true,
+        ),
+        ApiErrorCategory.authentication,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('network timeout'),
+          isInput: false,
+        ),
+        isNull,
+      );
     });
 
     test('noticeText 频控提示文案', () {

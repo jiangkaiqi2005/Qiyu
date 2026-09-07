@@ -16,6 +16,7 @@ import 'package:qiyu_flutter/features/settings/provider_settings_client.dart'
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
+import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 import 'support/shared_fakes.dart';
 
@@ -108,11 +109,43 @@ void main() {
       final settingsLink = find.text('去设置检查');
       expect(settingsLink, findsOneWidget);
 
+      // 验证状态行暗红底提示条 Container 样式与字体继承
+      final bannerFinder = find.byKey(const Key('api-error-notice-banner'));
+      expect(bannerFinder, findsOneWidget);
+      final banner = tester.widget<Container>(bannerFinder);
+      final decoration = banner.decoration as BoxDecoration;
+      expect(decoration.borderRadius, QiyuRadii.smallBorder);
+      expect(decoration.color, isNotNull);
+
+      final noticeWidget = tester.widget<Text>(
+        find.byKey(const Key('api-error-notice-text')),
+      );
+      expect(noticeWidget.style?.fontFamily, QiyuType.fontFamily);
+
       // 点击状态行里的【去设置检查】
       await tester.tap(settingsLink);
       await tester.pumpAndSettle();
 
       expect(find.text('设置页'), findsOneWidget);
+    });
+
+    testWidgets('流式落定后约 300ms 缓冲：未到 300ms 前不弹窗，到 300ms 后弹出', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.modelRateLimited],
+      );
+      await _pumpChatView(tester, gateway: gateway);
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '测试延迟');
+      await tester.tap(find.byKey(const Key('chat-send')));
+
+      // 推进 100ms：此时 300ms 缓冲未到，不应弹出模态窗口
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byKey(const Key('api-error-dialog')), findsNothing);
+
+      // 继续推进 250ms（累计 350ms，超过 300ms）：模态窗口已弹出
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.byKey(const Key('api-error-dialog')), findsOneWidget);
+      expect(find.text('服务请求受限'), findsOneWidget);
     });
 
     testWidgets('401 鉴权失败：弹出「API Key 鉴权失败」对话框', (tester) async {
@@ -223,7 +256,38 @@ void main() {
       expect(find.textContaining('语音服务请求受限或配置异常'), findsOneWidget);
     });
 
-    testWidgets('语音链路联动：TTS 429 触发「语音朗读受限」弹窗', (tester) async {
+    testWidgets('收敛 modelProvider：纯 5xx 或未识别内部错误不弹模态对话框', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.modelProvider],
+        fallbackDetails: const ['500 Internal Server Error'],
+      );
+      await _pumpChatView(tester, gateway: gateway);
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '测试 500');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+
+      // 纯 5xx 服务端错误不弹出模态配置弹窗
+      expect(find.byKey(const Key('api-error-dialog')), findsNothing);
+    });
+
+    testWidgets('收敛 modelProvider：带有 4xx 客户端特征时弹出「模型服务异常」对话框', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.modelProvider],
+        fallbackDetails: const ['400 bad_request: invalid prompt'],
+      );
+      await _pumpChatView(tester, gateway: gateway);
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '测试 400');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('api-error-dialog')), findsOneWidget);
+      expect(find.text('模型服务异常'), findsOneWidget);
+      expect(find.textContaining('服务商返回客户端请求异常'), findsOneWidget);
+    });
+
+    testWidgets('语音链路联动：TTS 429 依靠错误码精准触发「服务请求受限」弹窗', (tester) async {
       final gateway = _ConfigurableChatGateway(
         fallbackReasons: const [FallbackReason.noLlmConfig],
       );
@@ -243,7 +307,55 @@ void main() {
       await tester.tap(find.byKey(const Key('chat-send')));
       await tester.pumpAndSettle();
 
-      // 验证弹出语音朗读受限弹窗
+      // 验证弹出服务请求受限弹窗
+      expect(find.byKey(const Key('api-error-dialog')), findsOneWidget);
+      expect(find.text('服务请求受限'), findsOneWidget);
+      expect(find.textContaining('模型服务返回请求过于频繁（429）'), findsOneWidget);
+    });
+
+    testWidgets('语音链路联动：TTS 404 触发「模型名称不存在」弹窗', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.noLlmConfig],
+      );
+      gateway.speakError = const LocalChatGatewayException(
+        '模型未找到。',
+        code: 'tts_model_not_found',
+      );
+
+      await _pumpChatView(
+        tester,
+        gateway: gateway,
+        autoSpeak: true,
+      );
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '朗读测试');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('api-error-dialog')), findsOneWidget);
+      expect(find.text('模型名称不存在'), findsOneWidget);
+      expect(find.textContaining('服务商未找到当前配置的模型（404）'), findsOneWidget);
+    });
+
+    testWidgets('语音链路联动：TTS 通用配置异常触发「语音朗读受限」弹窗', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.noLlmConfig],
+      );
+      gateway.speakError = const LocalChatGatewayException(
+        '语音合成服务异常。',
+        code: 'tts_service_error',
+      );
+
+      await _pumpChatView(
+        tester,
+        gateway: gateway,
+        autoSpeak: true,
+      );
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '朗读测试');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+
       expect(find.byKey(const Key('api-error-dialog')), findsOneWidget);
       expect(find.text('语音朗读受限'), findsOneWidget);
       expect(find.textContaining('语音朗读合成请求受限或配置异常'), findsOneWidget);
@@ -304,9 +416,11 @@ final class _ConfigurableChatGateway
     implements StreamingLocalChatGateway, ChatSpeechGateway {
   _ConfigurableChatGateway({
     required this.fallbackReasons,
+    this.fallbackDetails,
   });
 
   final List<FallbackReason?> fallbackReasons;
+  final List<String?>? fallbackDetails;
   String sessionId = 'test-session-1';
   int deliverCallCount = 0;
   Object? transcribeError;
@@ -348,9 +462,13 @@ final class _ConfigurableChatGateway
     required String text,
     String? sessionId,
   }) async* {
-    final reason = deliverCallCount < fallbackReasons.length
-        ? fallbackReasons[deliverCallCount]
+    final index = deliverCallCount;
+    final reason = index < fallbackReasons.length
+        ? fallbackReasons[index]
         : (fallbackReasons.isNotEmpty ? fallbackReasons.last : null);
+    final detail = fallbackDetails != null && index < fallbackDetails!.length
+        ? fallbackDetails![index]
+        : null;
     deliverCallCount += 1;
 
     yield LocalChatDeliveryEvent(
@@ -372,6 +490,14 @@ final class _ConfigurableChatGateway
       requestId: requestId,
       messages: const ['本地基础回复'],
     );
+    if (reason != null) {
+      yield LocalChatDeliveryEvent(
+        kind: LocalChatEventKind.fallback,
+        requestId: requestId,
+        fallbackReason: reason,
+        code: detail,
+      );
+    }
     yield LocalChatDeliveryEvent(
       kind: LocalChatEventKind.state,
       requestId: requestId,

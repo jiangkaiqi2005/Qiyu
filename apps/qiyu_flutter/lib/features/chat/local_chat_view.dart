@@ -135,6 +135,8 @@ class _LocalChatViewState extends State<LocalChatView> {
     // 文本每次变化（打字、IME 组合、程序注入）都可能改变输入行行数。
     _controller.addListener(_updateComposerExpanded);
     final chatViewModel = _chatViewModel = context.read<LocalChatViewModel>();
+    chatViewModel.addListener(_onChatViewModelChanged);
+    _lastTrackedSessionId = chatViewModel.sessionId;
     final sttSettingsGateway = _resolveSttSettingsGateway();
     _voiceInput = VoiceInputController(
       widget.voiceRecorderPlatform ?? createVoiceRecorderPlatform(),
@@ -169,8 +171,20 @@ class _LocalChatViewState extends State<LocalChatView> {
     }
   }
 
+  void _onChatViewModelChanged() {
+    final currentSessionId = _chatViewModel.sessionId;
+    if (_lastTrackedSessionId != currentSessionId) {
+      _lastTrackedSessionId = currentSessionId;
+      _alertedErrorCategories.clear();
+      if (_apiErrorNotice != null && mounted) {
+        setState(() => _apiErrorNotice = null);
+      }
+    }
+  }
+
   @override
   void dispose() {
+    _chatViewModel.removeListener(_onChatViewModelChanged);
     // 离开本页立刻闭嘴（ADR 0002）：**无条件**停播，包括还在队列里没开口的气泡。
     // 「只在 isReading 时才停」会让排队的 bubble 跨页继续读，不是可接受的取舍；
     // 卸载期不能同步通知监听者，这一点由 stopAllForLeavingPage 自己处理。
@@ -272,27 +286,64 @@ class _LocalChatViewState extends State<LocalChatView> {
     }
   }
 
-  void _syncSession(String? currentSessionId) {
-    if (_lastTrackedSessionId != null &&
-        currentSessionId != null &&
-        currentSessionId != _lastTrackedSessionId) {
-      _alertedErrorCategories.clear();
-      _apiErrorNotice = null;
-    } else if (currentSessionId == null && _lastTrackedSessionId != null) {
-      _alertedErrorCategories.clear();
-      _apiErrorNotice = null;
+  ApiErrorCategory? _categorizeFallbackReason(
+    FallbackReason? reason, {
+    String? detail,
+  }) {
+    if (reason == null) {
+      return null;
     }
-    _lastTrackedSessionId = currentSessionId;
-  }
-
-  ApiErrorCategory? _categorizeFallbackReason(FallbackReason? reason) {
     return switch (reason) {
       FallbackReason.modelRateLimited => ApiErrorCategory.rateLimited,
       FallbackReason.modelAuthentication => ApiErrorCategory.authentication,
       FallbackReason.modelNotFound => ApiErrorCategory.modelNotFound,
-      FallbackReason.modelProvider => ApiErrorCategory.otherClientError,
+      FallbackReason.modelProvider when _isClient4xxError(detail) =>
+        ApiErrorCategory.otherClientError,
       _ => null,
     };
+  }
+
+  static bool _isClient4xxError(String? detail) {
+    if (detail == null || detail.isEmpty) {
+      return false;
+    }
+    final lower = detail.toLowerCase();
+    // 纯 5xx 或内部错误不归为客户端错误
+    if (lower.contains('500') ||
+        lower.contains('502') ||
+        lower.contains('503') ||
+        lower.contains('504') ||
+        lower.contains('internal_server_error')) {
+      return false;
+    }
+    return lower.contains('400') ||
+        lower.contains('422') ||
+        lower.contains('bad_request') ||
+        lower.contains('unprocessable') ||
+        lower.contains('invalid_request') ||
+        lower.contains('client_error');
+  }
+
+  /// 统一的异常分发与会话级频控判断逻辑：供文本聊天与语音链路共用。
+  Future<void> _dispatchApiError(
+    ApiErrorCategory category, {
+    bool delay = false,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+    // 会话级频控去重：同会话内仅第 1 次弹窗；第 2 次及后续展示状态条轻提示
+    if (_alertedErrorCategories.contains(category)) {
+      setState(() {
+        _apiErrorNotice = _ApiErrorNotice(
+          message: category.noticeText,
+          showSettingsLink: true,
+        );
+      });
+    } else {
+      _alertedErrorCategories.add(category);
+      await _triggerApiErrorDialog(category, delay: delay);
+    }
   }
 
   Future<void> _handleTurnApiErrors(LocalChatViewModel viewModel) async {
@@ -335,31 +386,34 @@ class _LocalChatViewState extends State<LocalChatView> {
       return;
     }
 
-    final category = _categorizeFallbackReason(reason);
+    final category = _categorizeFallbackReason(
+      reason,
+      detail: viewModel.latestFallbackDetail,
+    );
     if (category == null) {
       return;
     }
 
-    // 会话级频控去重：同会话内仅第 1 次弹窗；第 2 次及后续展示状态条轻提示
-    if (_alertedErrorCategories.contains(category)) {
-      setState(() {
-        _apiErrorNotice = _ApiErrorNotice(
-          message: category.noticeText,
-          showSettingsLink: true,
-        );
-      });
-    } else {
-      _alertedErrorCategories.add(category);
-      await _triggerApiErrorDialog(category);
-    }
+    // 流式落定后约 300ms 缓冲
+    await _dispatchApiError(category, delay: true);
   }
 
-  Future<void> _triggerApiErrorDialog(ApiErrorCategory category) async {
+  Future<void> _triggerApiErrorDialog(
+    ApiErrorCategory category, {
+    bool delay = false,
+  }) async {
     if (_isShowingApiErrorDialog || !mounted) {
       return;
     }
     _isShowingApiErrorDialog = true;
     try {
+      if (delay) {
+        // 流式落定后约 300ms 缓冲：与原型一致，留出视觉落定呼吸时间（Spec §2）
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        if (!mounted) {
+          return;
+        }
+      }
       final goToSettings = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => QiyuApiErrorDialog(
@@ -383,20 +437,7 @@ class _LocalChatViewState extends State<LocalChatView> {
   }
 
   void _handleVoiceApiError(ApiErrorCategory category) {
-    if (!mounted) {
-      return;
-    }
-    if (_alertedErrorCategories.contains(category)) {
-      setState(() {
-        _apiErrorNotice = _ApiErrorNotice(
-          message: category.noticeText,
-          showSettingsLink: true,
-        );
-      });
-    } else {
-      _alertedErrorCategories.add(category);
-      unawaited(_triggerApiErrorDialog(category));
-    }
+    unawaited(_dispatchApiError(category, delay: false));
   }
 
   Future<void> _showVoiceGuide() async {
@@ -430,7 +471,6 @@ class _LocalChatViewState extends State<LocalChatView> {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<LocalChatViewModel>();
-    _syncSession(viewModel.sessionId);
     // 会话恢复、新消息与流式增量都跟在列表尾部：签名变化时下一帧滚到底。
     final transient = _transientCount(viewModel);
     final signature =
@@ -806,46 +846,71 @@ class _LocalChatViewState extends State<LocalChatView> {
               liveRegion: true,
               child: Text(
                 message,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                style: QiyuTypography.of(context).secondary.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
               ),
             ),
           ),
         if (_apiErrorNotice case final notice?)
           Padding(
             padding: const EdgeInsets.fromLTRB(
-              QiyuSpacing.lg,
+              QiyuSpacing.md,
               QiyuSpacing.xs,
-              QiyuSpacing.lg,
-              0,
+              QiyuSpacing.md,
+              QiyuSpacing.xs,
             ),
-            child: Semantics(
-              liveRegion: true,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      notice.message,
-                      key: const Key('api-error-notice-text'),
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
+            child: _centeredStream(
+              child: Container(
+                key: const Key('api-error-notice-banner'),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .errorContainer
+                      .withValues(alpha: 0.12),
+                  borderRadius: QiyuRadii.smallBorder,
+                  border: Border.all(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .error
+                        .withValues(alpha: 0.3),
+                    width: QiyuLine.hairline,
                   ),
-                  if (notice.showSettingsLink) ...[
-                    const SizedBox(width: QiyuSpacing.xs),
-                    InkWell(
-                      key: const Key('api-error-notice-settings'),
-                      onTap: () => _pushAwayFromChat('/settings'),
-                      child: const Text(
-                        '去设置检查',
-                        style: TextStyle(
-                          color: QiyuColors.accentBright,
-                          decoration: TextDecoration.underline,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: QiyuSpacing.md,
+                  vertical: QiyuSpacing.sm,
+                ),
+                child: Semantics(
+                  liveRegion: true,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          notice.message,
+                          key: const Key('api-error-notice-text'),
+                          style: QiyuTypography.of(context).secondary.copyWith(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ],
+                      if (notice.showSettingsLink) ...[
+                        const SizedBox(width: QiyuSpacing.xs),
+                        InkWell(
+                          key: const Key('api-error-notice-settings'),
+                          onTap: () => _pushAwayFromChat('/settings'),
+                          child: Text(
+                            '去设置检查',
+                            style: QiyuTypography.of(context).secondary.copyWith(
+                              color: QiyuColors.accentBright,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
           ),

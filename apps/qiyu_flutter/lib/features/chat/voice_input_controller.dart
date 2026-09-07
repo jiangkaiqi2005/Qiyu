@@ -331,8 +331,9 @@ final class VoiceInputController extends ChangeNotifier {
         return;
       }
       _enterRetryable(_readableError(error));
-      if (isVoiceApiError(error)) {
-        onApiError?.call(ApiErrorCategory.sttError);
+      final category = categorizeVoiceApiError(error, isInput: true);
+      if (category != null) {
+        onApiError?.call(category);
       }
     }
   }
