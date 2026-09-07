@@ -4,7 +4,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'episode_index.dart';
 import 'episode_memory.dart';
-import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 import 'model_gateway.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
@@ -130,7 +130,7 @@ final class RecallOrchestrator {
   }) async {
     final diagnostics = <String>[];
     try {
-      return await _runClean(userText, recallActions, diagnostics);
+      return await _runTurnRecallInner(userText, recallActions, diagnostics);
     } on Object catch (error) {
       // 诊断只收进结果，由调用方统一落 sink，避免同一错误重复打印。
       diagnostics.add('recall deferred [$error]');
@@ -138,7 +138,7 @@ final class RecallOrchestrator {
     }
   }
 
-  Future<RecallTurnResult> _runClean(
+  Future<RecallTurnResult> _runTurnRecallInner(
     String userText,
     List<HiddenAction> recallActions,
     List<String> diagnostics,
@@ -213,9 +213,19 @@ final class RecallOrchestrator {
       dayIndexByMonth: dayIndexByMonth,
       diagnostics: diagnostics,
     );
-    var dates = _memberDates(selection?.dates, passedDates, diagnostics);
+    var dates = _memberSelections(
+      'date',
+      selection?.dates,
+      passedDates,
+      diagnostics,
+    );
     if (dates.isEmpty) {
-      final months = _memberMonths(selection?.months, topMonths, diagnostics);
+      final months = _memberSelections(
+        'month',
+        selection?.months,
+        topMonths,
+        diagnostics,
+      );
       if (months.isNotEmpty) {
         // 罕见路径：模型先指到月份（通常是没有递过每日索引的老月）。
         // Host 补读这些月的每日索引再递一次，重新选择；没有补到
@@ -245,7 +255,8 @@ final class RecallOrchestrator {
             dayIndexByMonth: dayIndexByMonth,
             diagnostics: diagnostics,
           );
-          dates = _memberDates(
+          dates = _memberSelections(
+            'date',
             selection?.dates,
             _datesOf(dayIndexByMonth),
             diagnostics,
@@ -401,53 +412,31 @@ final class RecallOrchestrator {
     return dates;
   }
 
-  /// 成员校验：月份选取必须出自递过的顶层索引，编造的丢弃并记诊断。
-  List<String> _memberMonths(
+  /// 成员校验：模型选取的月份/日期必须出自递过的索引目录，编造的
+  /// 丢弃并记诊断；[kind] 是诊断串里的字段名（month/date）。
+  List<String> _memberSelections(
+    String kind,
     List<String>? selections,
     Set<String> passed,
     List<String> diagnostics,
   ) {
     final kept = <String>[];
-    for (final month in selections ?? const <String>[]) {
-      if (passed.contains(month)) {
-        kept.add(month);
+    for (final value in selections ?? const <String>[]) {
+      if (passed.contains(value)) {
+        kept.add(value);
       } else {
         diagnostics.add(
-          'recall selection dropped month=$month reason=not-in-passed-index',
+          'recall selection dropped $kind=$value reason=not-in-passed-index',
         );
       }
     }
     return kept;
   }
 
-  /// 成员校验：日期选取必须出自递过的每日索引，编造的丢弃并记诊断。
-  List<String> _memberDates(
-    List<String>? selections,
-    Set<String> passed,
-    List<String> diagnostics,
-  ) {
-    final kept = <String>[];
-    for (final date in selections ?? const <String>[]) {
-      if (passed.contains(date)) {
-        kept.add(date);
-      } else {
-        diagnostics.add(
-          'recall selection dropped date=$date reason=not-in-passed-index',
-        );
-      }
-    }
-    return kept;
-  }
-
-  /// 检索封禁集合 = 封禁（禁提 ∪ 删除）∪ 冻结：冻结同样停止检索。
-  Future<Set<String>> _blockedTitles() async {
-    final store = openLoopStore;
-    if (store == null) {
-      return const {};
-    }
-    final controls = await store.memoryControls.load();
-    return controls.controlledSummaries;
-  }
+  /// 检索的受控集合：冻结同样停止检索（并集定义见
+  /// [OpenLoopStore.controlledTitles]）。
+  Future<Set<String>> _blockedTitles() async =>
+      (await openLoopStore?.controlledTitles()) ?? const {};
 
   /// 选择调用：把查找意图与递回的目录交给模型，收回 memory_recall
   /// 选择。模型输出无法解析或没有给出动作时返回 null（没有头绪）。
@@ -587,7 +576,7 @@ final class RecallOrchestrator {
     for (final line in topIndex) {
       user.writeln(
         '- ${line.month} | ${line.keywords.join(', ')} | '
-        'episodes/${line.month.substring(0, 4)}/${line.month.substring(5, 7)}/index.md',
+        '${episodeMonthRelativeDirectory(line.month)}/index.md',
       );
     }
     for (final MapEntry(:key, :value) in dayIndexByMonth.entries) {

@@ -8,6 +8,7 @@ import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
 import 'provider_settings_service.dart';
@@ -532,9 +533,9 @@ final class DailyFinalizationService {
     required List<RawSession> sessions,
     required Set<String> pendingRequestIds,
   }) async {
-    // 受控集合 = 封禁（禁提 ∪ 删除）∪ 冻结：冻结同样停止整理。
-    final controls = await _openLoopStore.memoryControls.load();
-    final banned = controls.controlledSummaries;
+    // 受控集合：冻结同样停止整理（并集定义见
+    // [OpenLoopStore.controlledTitles]）。
+    final banned = await _openLoopStore.controlledTitles();
     DayUnderstanding? restored;
     final persisted = day.understanding;
     if (persisted != null) {
@@ -576,11 +577,12 @@ final class DailyFinalizationService {
       appellation: await _personaTree.readAppellation(),
       diagnosticsSink: _diagnosticsSink,
     );
-    if (understanding == null || restored == null || restored.isEmpty) {
-      return (understanding: understanding, usedModel: true);
-    }
-    if (pendingRequestIds.isEmpty) {
-      // 无待补轮次的全新重理解（旧理解不覆盖当前条目）：整体替换。
+    // 三种情况都整体采用本次结果：模型没有产出、旧理解不存在或已空、
+    // 无待补轮次的全新重理解（旧理解不覆盖当前条目）。
+    if (understanding == null ||
+        restored == null ||
+        restored.isEmpty ||
+        pendingRequestIds.isEmpty) {
       return (understanding: understanding, usedModel: true);
     }
     // 已归档日期的增量补建：episode 与覆盖清单取本次结果，其余字段
@@ -755,7 +757,7 @@ final class DailyFinalizationService {
   }
 
   DateTime _endOfDayUtc(String date) {
-    final parsed = _parseDate(date);
+    final parsed = parseLocalSessionDate(date);
     return DateTime(parsed.year, parsed.month, parsed.day, 23).toUtc();
   }
 
@@ -840,7 +842,9 @@ final class DailyFinalizationService {
     String? mood,
   }) async {
     final cutoff = localSessionDate(
-      _parseDate(date).subtract(Duration(days: recentStateWindowDays - 1)),
+      parseLocalSessionDate(date).subtract(
+        Duration(days: recentStateWindowDays - 1),
+      ),
     );
     final perDay = <String, List<EpisodeEntry>>{};
     var readableDays = 0;
@@ -929,19 +933,19 @@ final class DailyFinalizationService {
           ]);
     final recentSection = recent.isEmpty ? '' : renderSection('用户当前近况', recent);
     var activeSection = active.isEmpty ? '' : renderSection('近日活跃', active);
-    var usedRunes = sections.toString().runes.length + moodSection.runes.length;
-    final headerRunes = usedRunes - moodSection.runes.length;
+    final headerRunes = sections.toString().runes.length;
     // 预算关（T09 砍序：气氛描述是 daily-state 内的可牺牲项）：超限
     // 先整体砍掉近日气氛，再砍近日活跃（最旧优先）；当前近况是最新
     // 一天的事实，预算上永远放得下，不参与裁剪。
-    if (usedRunes + activeSection.runes.length + recentSection.runes.length >
-        dailyStateMaxRunes) {
+    bool overBudget(int used) =>
+        used + activeSection.runes.length + recentSection.runes.length >
+        dailyStateMaxRunes;
+    var usedRunes = headerRunes + moodSection.runes.length;
+    if (overBudget(usedRunes)) {
       moodSection = '';
       usedRunes = headerRunes;
     }
-    while (usedRunes + activeSection.runes.length + recentSection.runes.length >
-            dailyStateMaxRunes &&
-        active.isNotEmpty) {
+    while (overBudget(usedRunes) && active.isNotEmpty) {
       active.removeAt(0);
       activeSection = active.isEmpty ? '' : renderSection('近日活跃', active);
     }
@@ -974,26 +978,17 @@ final class DailyFinalizationService {
     final local = now.toLocal();
     final weekday = weekdays[local.weekday - 1];
     final hour = local.hour;
-    final period = hour < 5
-        ? '凌晨'
-        : hour < 11
-        ? '上午'
-        : hour < 14
-        ? '中午'
-        : hour < 18
-        ? '下午'
-        : hour < 23
-        ? '晚上'
-        : '深夜';
+    final period = switch (hour) {
+      < 5 => '凌晨',
+      < 11 => '上午',
+      < 14 => '中午',
+      < 18 => '下午',
+      < 23 => '晚上',
+      _ => '深夜',
+    };
     return '$weekday$period';
   }
 }
-
-DateTime _parseDate(String date) => DateTime(
-  int.parse(date.substring(0, 4)),
-  int.parse(date.substring(5, 7)),
-  int.parse(date.substring(8, 10)),
-);
 
 final _bedtimeTriggerTailPattern = RegExp(r'[。！!~～…]+$');
 /// 整轮只是道别的白名单：这类轮次不产生记忆条目，也不进待补范围。

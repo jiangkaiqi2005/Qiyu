@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_tokens.dart';
+import '../baseline/host_api_gateway.dart';
 import 'backup_client.dart';
 import 'backup_platform.dart';
 import 'memory_view_model.dart';
@@ -247,10 +248,8 @@ class _BackupDialogState extends State<_BackupDialog> {
     }
   }
 
-  String _readable(Object error) => switch (error) {
-    BackupGatewayException() => error.message,
-    _ => '备份操作没有成功，可稍后重试。',
-  };
+  String _readable(Object error) =>
+      readableError(error, fallback: '备份操作没有成功，可稍后重试。');
 
   @override
   Widget build(BuildContext context) {

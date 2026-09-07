@@ -4,7 +4,7 @@ import 'daily_finalization.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
-import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 import 'model_gateway.dart';
 import 'model_text_protocol.dart';
 import 'persona_tree.dart';
@@ -664,13 +664,13 @@ $appellationRule
     if (bannedMemoryText(entry.summary, bannedTitles)) {
       continue;
     }
-    final label = entry.kind == episodeKindMemory
-        ? '记忆'
-        : entry.kind == episodeKindOpenLoopCandidate
-        ? '待跟进候选'
-        : entry.kind == episodeKindOpenLoopEvent
-        ? '跟进状态变化'
-        : '关系信号${entry.signal == null ? '' : ':${entry.signal}'}';
+    final label = switch (entry.kind) {
+      episodeKindMemory => '记忆',
+      episodeKindOpenLoopCandidate => '待跟进候选',
+      episodeKindOpenLoopEvent => '跟进状态变化',
+      // 其余（含关系信号与未知 kind）一律按关系信号渲染。
+      _ => '关系信号${entry.signal == null ? '' : ':${entry.signal}'}',
+    };
     entryLines.writeln('- [$label] ${redactSessionText(entry.summary).trim()}');
   }
   final sessionLines = StringBuffer();

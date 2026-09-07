@@ -8,6 +8,12 @@ String formatTime(DateTime value) {
       '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
 }
 
+/// 时分档（HH:mm）：条目行内与消息行内的时刻统一走这一档。
+String formatClock(DateTime value) {
+  final local = value.toLocal();
+  return '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
+}
+
 /// 消息时刻的口语化格式：「M月D日 HH:mm」。完整日期是刻意的：跨零点
 /// 的段落与凌晨恢复昨晚的会话，光秃秃的「23:41」分不清是昨晚还是今晚；
 /// 不带年份与「今天/昨天」的相对称呼，那是日期分隔条（formatDayHeader）

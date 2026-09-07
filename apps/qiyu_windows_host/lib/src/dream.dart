@@ -9,6 +9,7 @@ import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
 import 'memory_marker_codec.dart';
+import 'memory_text_primitives.dart';
 import 'model_gateway.dart';
 import 'model_text_protocol.dart';
 import 'monthly_summary.dart';
@@ -55,9 +56,6 @@ const dreamMaxOutputTokens = 16384;
 final _rootIdPattern = RegExp(r'^[A-Z]{2}-R\d+$');
 final _middleIdPattern = RegExp(r'^[A-Z]{2}-M\d+$');
 
-/// long-memory 四分区（T03 定稿，顺序固定）。
-const longMemorySections = ['人与关系', '重要事件', '模式与轨迹', '共同过往'];
-
 final _dayPattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
 final _monthPattern = RegExp(r'^\d{4}-\d{2}$');
 
@@ -79,7 +77,7 @@ enum DreamStatus {
   /// 既非晚安触发，也没有待补跑的晚安请求。
   notEligible,
 
-  /// 距上次成功 Dream 不足七天。
+  /// 距上次成功 Dream 不足 [dreamMinIntervalDays] 天。
   notDue,
 
   /// 没有已 finalized 的整理材料可供深度重组。
@@ -134,7 +132,8 @@ final class DreamState {
 }
 
 /// Dream 诊断事实（ticket 23）：供开发者诊断页只读展示。日差与
-/// 七天间隔判定与 [DreamService.run] 内部资格复查同一口径。
+/// 最小间隔（[dreamMinIntervalDays] 天）判定与 [DreamService.run]
+/// 内部资格复查同一口径。
 final class DreamHealthFacts {
   const DreamHealthFacts({
     required this.lastSuccess,
@@ -149,64 +148,8 @@ final class DreamHealthFacts {
   /// 距上次成功的本地日历日差；从未成功时为 null。
   final int? daysSinceLastSuccess;
 
-  /// 七天最小间隔是否已满足（从未成功视为满足）。
+  /// 最小间隔（[dreamMinIntervalDays] 天）是否已满足（从未成功视为满足）。
   final bool intervalSatisfied;
-}
-
-/// long-memory.md 解析结果。[readable] 为 false 表示结构无法识别
-/// （损坏或手写越界）：Dream 绝不覆盖，等待恢复流程（ticket 21）。
-final class LongMemoryFile {
-  const LongMemoryFile({required this.readable, this.sections = const {}});
-
-  final bool readable;
-  final Map<String, List<String>> sections;
-
-  List<String> get allItems => [
-    for (final section in longMemorySections) ...?sections[section],
-  ];
-}
-
-/// 解析 long-memory.md：只认 `# long-memory` 标题、四分区 `##` 小节
-/// 与 `- ` 条目行；其余一律视为不可读。
-LongMemoryFile parseLongMemory(String contents) {
-  final sections = <String, List<String>>{};
-  String? current;
-  var sawTitle = false;
-  for (final rawLine in contents.replaceAll('\r\n', '\n').split('\n')) {
-    final line = rawLine.trim();
-    if (line.isEmpty) {
-      continue;
-    }
-    if (!sawTitle) {
-      if (line != '# long-memory') {
-        return const LongMemoryFile(readable: false);
-      }
-      sawTitle = true;
-      continue;
-    }
-    if (line.startsWith('## ')) {
-      final title = line.substring(3).trim();
-      if (!longMemorySections.contains(title)) {
-        return const LongMemoryFile(readable: false);
-      }
-      current = title;
-      sections.putIfAbsent(title, () => <String>[]);
-      continue;
-    }
-    if (line.startsWith('- ') && current != null) {
-      final item = line.substring(2).trim();
-      if (item.isEmpty) {
-        return const LongMemoryFile(readable: false);
-      }
-      sections[current]!.add(item);
-      continue;
-    }
-    return const LongMemoryFile(readable: false);
-  }
-  if (!sawTitle) {
-    return const LongMemoryFile(readable: false);
-  }
-  return LongMemoryFile(readable: true, sections: sections);
 }
 
 /// 按四分区固定顺序渲染 long-memory.md；空分区不输出。
@@ -225,6 +168,28 @@ String renderLongMemory(Map<String, List<String>> sections) {
     }
   }
   return buffer.toString();
+}
+
+/// 长期印象四分区受控过滤：封禁命中条目从各分区剔除，返回过滤后的
+/// 分区与是否发生变化。Dream 输入过滤与删除清除管线共用同一份核心；
+/// 过滤谓词 [bannedMemoryText] 本体不动，解析与写入时机归调用方。
+({Map<String, List<String>> sections, bool changed}) filterLongMemorySections(
+  LongMemoryFile parsed,
+  Set<String> banned,
+) {
+  var changed = false;
+  final sections = <String, List<String>>{};
+  for (final section in longMemorySections) {
+    final items = parsed.sections[section] ?? const <String>[];
+    final kept = items
+        .where((item) => !bannedMemoryText(item, banned))
+        .toList();
+    if (kept.length != items.length) {
+      changed = true;
+    }
+    sections[section] = kept;
+  }
+  return (sections: sections, changed: changed);
 }
 
 /// 注入关裁剪 long-memory 到预算内：可解析内容按分区逆序（共同过往
@@ -247,11 +212,12 @@ String clipLongMemoryBlock(String contents, int maxRunes) {
   };
   for (final section in longMemorySections.reversed) {
     final items = sections[section]!;
-    while (renderLongMemory(sections).runes.length > maxRunes &&
-        items.isNotEmpty) {
+    var rendered = renderLongMemory(sections);
+    while (rendered.runes.length > maxRunes && items.isNotEmpty) {
       items.removeLast();
+      rendered = renderLongMemory(sections);
     }
-    if (renderLongMemory(sections).runes.length <= maxRunes) {
+    if (rendered.runes.length <= maxRunes) {
       break;
     }
   }
@@ -497,17 +463,20 @@ final class DreamService {
   final AtomicTextWriter _atomicWriter;
   final void Function(String) _diagnosticsSink;
 
-  File get _longMemoryFile => File(path.join(memoryDirectory, 'long-memory.md'));
+  File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _stateFile => File(path.join(memoryDirectory, 'dream', 'state.md'));
   File get _changesFile => File(path.join(memoryDirectory, 'dream', 'changes.md'));
-  File get _draftFile =>
-      File(path.join(memoryDirectory, 'dream', 'draft', 'long-memory.md'));
-  File get _backupFile =>
-      File(path.join(memoryDirectory, 'dream', 'backup', 'long-memory.md'));
+  File get _draftFile => File(
+    path.join(memoryDirectory, 'dream', 'draft', longMemoryFileName),
+  );
+  File get _backupFile => File(
+    path.join(memoryDirectory, 'dream', 'backup', longMemoryFileName),
+  );
   Directory get _historyDirectory =>
       Directory(path.join(memoryDirectory, 'dream', 'history'));
 
-  /// 晚安触发预登记：满足七天间隔时先把 pending 落盘。挂在晚安后台
+  /// 晚安触发预登记：满足最小间隔（[dreamMinIntervalDays] 天）时先
+  /// 把 pending 落盘。挂在晚安后台
   /// 任务链的最前面，保证即使进程在随后的归档/月压缩/Dream 链跑完前
   /// 退出（「当晚没跑成」），下次启动或跨天首条消息补跑仍能兑现这次晚安请求。
   Future<void> markBedtime() async {
@@ -614,12 +583,10 @@ final class DreamService {
     if (parsed == null) {
       await _writeChanges(
         _buildChanges(
-          today,
-          state,
+          (today: today, previousState: state, result: 'rejected (unparseable)'),
           input,
           const [],
           existing,
-          'rejected (unparseable)',
           includeDetails: false,
         ),
       );
@@ -657,12 +624,10 @@ final class DreamService {
       // 只有通过全部自检的条目才允许持久化正文。
       await _writeChanges(
         _buildChanges(
-          today,
-          state,
+          (today: today, previousState: state, result: 'pending'),
           input,
           items,
           existing,
-          'pending',
           includeDetails: false,
         ),
       );
@@ -698,12 +663,14 @@ final class DreamService {
     if (gateFailure != null) {
       await _writeChanges(
         _buildChanges(
-          today,
-          state,
+          (
+            today: today,
+            previousState: state,
+            result: 'rejected ($gateFailure)',
+          ),
           input,
           items,
           existing,
-          'rejected ($gateFailure)',
           includeDetails: false,
           rootOps: [
             for (final op in proposals) _RootOpRecord(op, 'draft-rejected'),
@@ -787,12 +754,10 @@ final class DreamService {
       }
       await _writeChanges(
         _buildChanges(
-          today,
-          state,
+          (today: today, previousState: state, result: 'accepted'),
           input,
           items,
           existing,
-          'accepted',
           includeDetails: true,
           rootOps: opRecords,
         ),
@@ -821,7 +786,8 @@ final class DreamService {
   Future<bool> stateReadable() async => !(await _readState()).corrupted;
 
   /// 开发者诊断事实（ticket 23）：上次成功时间、日历日差、待补跑与
-  /// 七天间隔是否满足。只读，不写状态；[today] 供测试注入当前日期。
+  /// 最小间隔（[dreamMinIntervalDays] 天）是否满足。只读，不写状态；
+  /// [today] 供测试注入当前日期。
   Future<DreamHealthFacts> healthFacts({String? today}) async {
     final state = await readState();
     final currentDate = today ?? localSessionDate(_clock());
@@ -1021,10 +987,10 @@ final class DreamService {
     var total = _inputRunes(
       windowed,
       monthSummaries,
-      relationship,
-      openLoops,
-      longMemory,
-      personaSection,
+      relationship: relationship,
+      openLoops: openLoops,
+      longMemory: longMemory,
+      personaSection: personaSection,
     );
     while (total > dreamInputMaxRunes && monthSummaries.isNotEmpty) {
       total -= monthSummaries.removeAt(0).contents.runes.length;
@@ -1052,12 +1018,12 @@ final class DreamService {
 
   int _inputRunes(
     List<({String date, String summary})> summaries,
-    List<({String month, String contents})> monthSummaries,
-    String? relationship,
-    String? openLoops,
-    String? longMemory,
-    String? personaSection,
-  ) {
+    List<({String month, String contents})> monthSummaries, {
+    required String? relationship,
+    required String? openLoops,
+    required String? longMemory,
+    required String? personaSection,
+  }) {
     var total = 0;
     for (final entry in summaries) {
       total += '${entry.date}: ${entry.summary}'.runes.length;
@@ -1111,18 +1077,7 @@ final class DreamService {
     if (!parsed.readable) {
       return contents;
     }
-    var changed = false;
-    final sections = <String, List<String>>{};
-    for (final section in longMemorySections) {
-      final items = parsed.sections[section] ?? const <String>[];
-      final kept = items
-          .where((item) => !bannedMemoryText(item, banned))
-          .toList();
-      if (kept.length != items.length) {
-        changed = true;
-      }
-      sections[section] = kept;
-    }
+    final (:sections, :changed) = filterLongMemorySections(parsed, banned);
     return changed ? renderLongMemory(sections) : contents;
   }
 
@@ -1199,6 +1154,31 @@ final class DreamService {
     if (!view.archiveReadable) {
       return 'archive-unavailable';
     }
+
+    // 按 ID 查活跃根 / 未归根中间理解并统一冻结命中判定：节点不存在
+    // 返回 'unknown-root'/'unknown-middle'，命中冻结集合返回 'frozen'
+    // （冻结停止自动整理：触碰冻结节点的提案一律拒绝）。拒绝码为
+    // null 时节点必非空。
+    (PersonaRoot?, String?) rootById(String id) {
+      final root = view.roots
+          .where((candidate) => candidate.id == id)
+          .firstOrNull;
+      if (root == null) {
+        return (null, 'unknown-root');
+      }
+      return (root, frozenTitleHit(root.claim, frozen) ? 'frozen' : null);
+    }
+
+    (PersonaMiddle?, String?) middleById(String id, String missingCode) {
+      final middle = view.unrooted
+          .where((candidate) => candidate.id == id)
+          .firstOrNull;
+      if (middle == null) {
+        return (null, missingCode);
+      }
+      return (middle, frozenTitleHit(middle.claim, frozen) ? 'frozen' : null);
+    }
+
     switch (op) {
       case PersonaPromoteOp(:final claim, :final middleIds):
         final claimFailure = rootClaimGateFailure(claim, banned: banned);
@@ -1211,16 +1191,11 @@ final class DreamService {
         final ids = middleIds.toSet();
         final middles = <PersonaMiddle>[];
         for (final id in ids) {
-          final middle = view.unrooted
-              .where((candidate) => candidate.id == id)
-              .firstOrNull;
-          if (middle == null) {
-            return 'unknown-middle';
+          final (middle, failure) = middleById(id, 'unknown-middle');
+          if (failure != null) {
+            return failure;
           }
-          if (frozenTitleHit(middle.claim, frozen)) {
-            return 'frozen';
-          }
-          middles.add(middle);
+          middles.add(middle!);
         }
         final leaves = [for (final middle in middles) ...middle.leaves];
         if (leaves.any((leaf) => leaf.relation == 'conflict')) {
@@ -1238,63 +1213,46 @@ final class DreamService {
         claimsCreatedThisRound.add(normalizeMemoryText(claim));
         return null;
       case PersonaAbsorbOp(:final rootId, :final middleIds):
-        final root = view.roots
-            .where((candidate) => candidate.id == rootId)
-            .firstOrNull;
-        if (root == null) {
-          return 'unknown-root';
-        }
-        if (frozenTitleHit(root.claim, frozen)) {
-          return 'frozen';
+        final (root, rootFailure) = rootById(rootId);
+        if (rootFailure != null) {
+          return rootFailure;
         }
         final ids = middleIds.toSet();
         for (final id in ids) {
-          final middle = view.unrooted
-              .where((candidate) => candidate.id == id)
-              .firstOrNull;
-          if (middle == null) {
-            return 'unknown-middle';
+          final (middle, failure) = middleById(id, 'unknown-middle');
+          if (failure != null) {
+            return failure;
           }
-          if (frozenTitleHit(middle.claim, frozen)) {
-            return 'frozen';
-          }
-          if (middle.leaves.any((leaf) => leaf.relation == 'conflict')) {
+          if (middle!.leaves.any((leaf) => leaf.relation == 'conflict')) {
             return 'unresolved-conflict';
           }
-          if (!sameClaim(middle.claim, root.claim)) {
+          if (!sameClaim(middle.claim, root!.claim)) {
             return 'claim-mismatch';
           }
         }
         return null;
       case PersonaDemoteOp(:final rootId, :final counterId):
-        final root = view.roots
-            .where((candidate) => candidate.id == rootId)
-            .firstOrNull;
-        if (root == null) {
-          return 'unknown-root';
+        final (root, rootFailure) = rootById(rootId);
+        if (rootFailure != null) {
+          return rootFailure;
         }
-        if (frozenTitleHit(root.claim, frozen)) {
-          return 'frozen';
-        }
-        final counter = view.unrooted
-            .where((candidate) => candidate.id == counterId)
-            .firstOrNull;
-        if (counter == null) {
-          return 'unknown-counter';
-        }
-        if (frozenTitleHit(counter.claim, frozen)) {
-          return 'frozen';
+        final (counter, counterFailure) = middleById(
+          counterId,
+          'unknown-counter',
+        );
+        if (counterFailure != null) {
+          return counterFailure;
         }
         // 降根只认「两个不同日期的反向行为已形成反向中间理解」的
         // 证据形态（日终冲突升级的产物）；单日期或无叶的引用不成立。
-        final counterDates = counter.leaves
+        final counterDates = counter!.leaves
             .map((leaf) => leaf.date)
             .toSet()
             .length;
         if (counter.leaves.length < 2 || counterDates < 2) {
           return 'counter-insufficient';
         }
-        if (sameClaim(counter.claim, root.claim)) {
+        if (sameClaim(counter.claim, root!.claim)) {
           return 'counter-same-claim';
         }
         return null;
@@ -1312,16 +1270,11 @@ final class DreamService {
         }
         final roots = <PersonaRoot>[];
         for (final id in ids) {
-          final root = view.roots
-              .where((candidate) => candidate.id == id)
-              .firstOrNull;
-          if (root == null) {
-            return 'unknown-root';
+          final (root, failure) = rootById(id);
+          if (failure != null) {
+            return failure;
           }
-          if (frozenTitleHit(root.claim, frozen)) {
-            return 'frozen';
-          }
-          roots.add(root);
+          roots.add(root!);
         }
         for (final root in roots) {
           if (root.allLeaves.any((leaf) => leaf.relation == 'conflict')) {
@@ -1500,27 +1453,25 @@ final class DreamService {
   /// 待定的草稿可能携带敏感、禁提内容，清单绝不能落盘其原文，只记
   /// 结果码与数量——否则等于把模型吐出的密钥写进记忆目录。
   String _buildChanges(
-    String today,
-    DreamState previousState,
+    ({String today, DreamState previousState, String result}) run,
     _DreamInput input,
     List<DreamItem> items,
-    LongMemoryFile? existing,
-    String result, {
+    LongMemoryFile? existing, {
     required bool includeDetails,
     List<_RootOpRecord> rootOps = const [],
   }) {
-    final rangeStart = previousState.lastSuccess == null
+    final rangeStart = run.previousState.lastSuccess == null
         ? '最初'
-        : localSessionDate(previousState.lastSuccess!);
+        : localSessionDate(run.previousState.lastSuccess!);
     final buffer = StringBuffer()
       ..writeln('# dream-changes')
       ..writeln()
-      ..writeln('date: $today')
+      ..writeln('date: ${run.today}')
       ..writeln(
-        'range: $rangeStart → $today'
+        'range: $rangeStart → ${run.today}'
         '（日摘要 ${input.summaries.length} 天，月摘要 ${input.monthSummaries.length} 月）',
       )
-      ..writeln('result: $result')
+      ..writeln('result: ${run.result}')
       ..writeln('候选条目数: ${items.length}');
     if (rootOps.isNotEmpty) {
       buffer.writeln('根节点提案数: ${rootOps.length}');
@@ -1664,28 +1615,36 @@ $appellationRule
 
     final user = StringBuffer()
       ..writeln('## 当前长期印象')
-      ..writeln(sectionOrEmpty(input.longMemory))
-      ..writeln()
-      ..writeln('## 已整理记录（finalized 摘要）');
-    if (input.summaries.isEmpty) {
-      user.writeln('（无）');
-    } else {
-      for (final entry in input.summaries) {
-        user.writeln('- ${entry.date}: ${entry.summary}');
+      ..writeln(sectionOrEmpty(input.longMemory));
+
+    // 「节标题 +（无）或逐行」的统一写法：材料为空写占位，否则逐行。
+    void writeList(String title, Iterable<String> lines) {
+      user
+        ..writeln()
+        ..writeln(title);
+      final items = lines.toList();
+      if (items.isEmpty) {
+        user.writeln('（无）');
+      } else {
+        for (final line in items) {
+          user.writeln(line);
+        }
       }
     }
-    user
-      ..writeln()
-      ..writeln('## 月摘要');
-    if (input.monthSummaries.isEmpty) {
-      user.writeln('（无）');
-    } else {
-      for (final entry in input.monthSummaries) {
-        user
-          ..writeln('### ${entry.month}')
-          ..writeln(entry.contents);
-      }
-    }
+
+    writeList(
+      '## 已整理记录（finalized 摘要）',
+      [
+        for (final entry in input.summaries) '- ${entry.date}: ${entry.summary}',
+      ],
+    );
+    writeList(
+      '## 月摘要',
+      [
+        for (final entry in input.monthSummaries)
+          ...['### ${entry.month}', entry.contents],
+      ],
+    );
     // 证据清单显式列出可引用的日期/月份：长期印象、PersonaTree 叶证据
     // 都带旧日期，模型无从自行判断哪些可作证据，显式清单是唯一可靠依据。
     user
@@ -1712,26 +1671,14 @@ $appellationRule
       ..writeln(sectionOrEmpty(input.relationship))
       ..writeln()
       ..writeln('## 未闭环线索')
-      ..writeln(sectionOrEmpty(input.openLoops))
-      ..writeln()
-      ..writeln('## 禁提清单（以下话题绝不出现）');
-    if (input.banned.isEmpty) {
-      user.writeln('（无）');
-    } else {
-      for (final title in input.banned) {
-        user.writeln('- $title');
-      }
-    }
-    user
-      ..writeln()
-      ..writeln('## 冻结清单（命中的现有长期印象必须原样保留，不得改写、合并或删除）');
-    if (input.frozen.isEmpty) {
-      user.writeln('（无）');
-    } else {
-      for (final title in input.frozen) {
-        user.writeln('- $title');
-      }
-    }
+      ..writeln(sectionOrEmpty(input.openLoops));
+    writeList('## 禁提清单（以下话题绝不出现）', [
+      for (final title in input.banned) '- $title',
+    ]);
+    writeList(
+      '## 冻结清单（命中的现有长期印象必须原样保留，不得改写、合并或删除）',
+      [for (final title in input.frozen) '- $title'],
+    );
     return [
       ModelMessage(ModelMessageRole.system, system),
       ModelMessage(ModelMessageRole.user, redactSessionText(user.toString())),
@@ -1817,10 +1764,7 @@ String _encodeState(DreamState state) {
 }
 
 DreamState? _decodeState(String contents) {
-  final match = RegExp(
-    r'^<!-- qiyu-dream-state:([A-Za-z0-9_-]+) -->\r?$',
-    multiLine: true,
-  ).firstMatch(contents);
+  final match = dreamStateMarkerPattern.firstMatch(contents);
   if (match == null) {
     return null;
   }

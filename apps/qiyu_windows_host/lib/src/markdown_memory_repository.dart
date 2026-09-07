@@ -10,6 +10,17 @@ import 'memory_marker_codec.dart';
 const maxRawSessionTurns = 80;
 const activeSessionHistoryWindow = Duration(days: 180);
 
+/// 记忆目录内固定文件名的单一出处：读取端 getter 与各写入端共用，
+/// 防止文件名字符串在多文件间漂移。
+const longMemoryFileName = 'long-memory.md';
+const relationshipFileName = 'relationship.md';
+const dailyStateFileName = 'daily-state.md';
+const personaFileName = 'persona.md';
+
+/// 记忆目录内文件句柄的统一拼装（`File(path.join(directory, name))`）。
+File memoryFile(String directory, String name) =>
+    File(path.join(directory, name));
+
 /// 跨 0 点回放窗口：睡前对话跨过午夜后短时间内（继续聊或刷新）仍
 /// 回放昨晚的段，窗口外按新的一天开新段。只影响回放，不影响写入分段
 /// 与按自然日的日终归档。
@@ -84,6 +95,31 @@ Future<String?> readFileIfExists(File file) async {
     return await file.readAsString(encoding: utf8);
   } on Object {
     return null;
+  }
+}
+
+/// 记忆域写入的统一异常壳：原子替换失败时 [MemoryRepositoryException]
+/// 原样上抛（已是写入语义），其余异常一律包成调用方指定的 code 与
+/// message（retryable 固定 true）。会话、episode 日文件与检查点三处
+/// 写入端共用，异常口径不再各写一套。
+Future<void> atomicReplace(
+  AtomicTextWriter writer,
+  String path,
+  String contents, {
+  required String code,
+  required String message,
+}) async {
+  try {
+    await writer.replace(path, contents);
+  } on MemoryRepositoryException {
+    rethrow;
+  } on Object catch (error) {
+    throw MemoryRepositoryException(
+      code: code,
+      message: message,
+      retryable: true,
+      cause: error,
+    );
   }
 }
 
@@ -449,7 +485,7 @@ final class MarkdownMemoryRepository implements MemoryRepository {
       }
     }
     final created = RawSession(
-      id: _newOpaqueId(),
+      id: newOpaqueId(),
       date: today,
       segment: maxSegment + 1,
       createdAt: now,
@@ -474,21 +510,13 @@ final class MarkdownMemoryRepository implements MemoryRepository {
     return updated;
   }
 
-  Future<void> _writeSession(RawSession session) async {
-    final targetPath = _sessionPath(session);
-    try {
-      await _atomicWriter.replace(targetPath, renderSessionMarkdown(session));
-    } on MemoryRepositoryException {
-      rethrow;
-    } on Object catch (error) {
-      throw MemoryRepositoryException(
-        code: 'session_write_failed',
-        message: '无法保存本地聊天记录，请检查磁盘空间和目录权限。',
-        retryable: true,
-        cause: error,
-      );
-    }
-  }
+  Future<void> _writeSession(RawSession session) => atomicReplace(
+    _atomicWriter,
+    _sessionPath(session),
+    renderSessionMarkdown(session),
+    code: 'session_write_failed',
+    message: '无法保存本地聊天记录，请检查磁盘空间和目录权限。',
+  );
 
   Future<List<_SessionRecord>> _readSessionRecords() async {
     final files = await _sessionsDirectory
@@ -538,6 +566,9 @@ final class MarkdownMemoryRepository implements MemoryRepository {
 /// 会话文件名形态（日期-段号.md）：不可读文件据此提取日期与段号。
 final _sessionFileNamePattern = RegExp(r'^(\d{4}-\d{2}-\d{2})-(\d{3})\.md$');
 
+// 会话文件的元数据与轮次标记（读取端）统一取自 memory_marker_codec.dart
+//（唯一权威，禁止另写变体副本）。
+
 final class _SessionRecord {
   const _SessionRecord({required this.file, this.session, this.unavailable});
 
@@ -580,18 +611,12 @@ String renderSessionMarkdown(RawSession session) {
 }
 
 RawSession _parseMarkdown(String markdown) {
-  final metadataMatch = RegExp(
-    r'^<!-- qiyu-session:([A-Za-z0-9_-]+) -->\r?$',
-    multiLine: true,
-  ).firstMatch(markdown);
+  final metadataMatch = sessionMetaMarkerPattern.firstMatch(markdown);
   if (metadataMatch == null) {
     throw const FormatException('Missing qiyu session metadata');
   }
   final metadata = decodeMarkerPayload(metadataMatch.group(1)!);
-  final turnMatches = RegExp(
-    r'^<!-- qiyu-turn:([A-Za-z0-9_-]+) -->\r?$',
-    multiLine: true,
-  ).allMatches(markdown);
+  final turnMatches = sessionTurnMarkerPattern.allMatches(markdown);
   final turns = turnMatches
       .map((match) => RawSessionTurn.fromJson(decodeMarkerPayload(match.group(1)!)))
       .toList();
@@ -605,10 +630,21 @@ String localSessionDate(DateTime value) {
       '${local.day.toString().padLeft(2, '0')}';
 }
 
+/// 解析 `YYYY-MM-DD` 日历日期为本地零时 [DateTime]；格式不符时抛
+/// FormatException。与 [localSessionDate] 同一份日期串格式：会话、
+/// episode 与日终归档的日期解析共用这一份实现。
+DateTime parseLocalSessionDate(String date) => DateTime(
+  int.parse(date.substring(0, 4)),
+  int.parse(date.substring(5, 7)),
+  int.parse(date.substring(8, 10)),
+);
+
 String _logicalSessionDate(DateTime value) =>
     localSessionDate(value.subtract(const Duration(hours: 4)));
 
-String _newOpaqueId() {
+/// 会话、episode 等记忆域记录的不透明 ID：Random.secure 生成 18 字节
+/// 后 base64Url 去填充。单一出处，记忆中心注册表共用。
+String newOpaqueId() {
   final random = Random.secure();
   final bytes = List<int>.generate(18, (_) => random.nextInt(256));
   return base64Url.encode(bytes).replaceAll('=', '');
@@ -674,9 +710,11 @@ final _diagnosticRedactPatterns = <RegExp>[
   RegExp(r'/(?:Users|home)/[^\r\n\s]+', caseSensitive: false),
 ];
 
-String redactSessionText(String text) {
+/// 依次套用脱敏规则：命中捕获组时保留组 1 前缀，其余替换为
+/// 「[已脱敏]」。会话与诊断两套规则共用同一替换体。
+String _applyRedactions(String text, List<RegExp> patterns) {
   var result = text;
-  for (final pattern in _sessionRedactPatterns) {
+  for (final pattern in patterns) {
     result = result.replaceAllMapped(pattern, (match) {
       final prefix = match.groupCount > 0 ? match.group(1) : null;
       return '${prefix ?? ''}[已脱敏]';
@@ -685,13 +723,10 @@ String redactSessionText(String text) {
   return result;
 }
 
-String redactDiagnosticText(String text) {
-  var result = redactSessionText(text);
-  for (final pattern in _diagnosticRedactPatterns) {
-    result = result.replaceAllMapped(pattern, (match) {
-      final prefix = match.groupCount > 0 ? match.group(1) : null;
-      return '${prefix ?? ''}[已脱敏]';
-    });
-  }
-  return result;
-}
+String redactSessionText(String text) =>
+    _applyRedactions(text, _sessionRedactPatterns);
+
+String redactDiagnosticText(String text) => _applyRedactions(
+  _applyRedactions(text, _sessionRedactPatterns),
+  _diagnosticRedactPatterns,
+);

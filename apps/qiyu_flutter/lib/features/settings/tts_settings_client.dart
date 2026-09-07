@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../baseline/host_api_gateway.dart';
-import 'provider_settings_client.dart' show ProviderSettingsException;
+import 'provider_settings_client.dart' show ProviderSettingsGatewayException;
 
 /// 语音合成（TTS）的服务类型：与 Host 的 tts 段 provider 字段对应，
 /// 缺省 openai_compatible（存量配置不带该字段）。
@@ -138,54 +138,34 @@ final class HttpTtsSettingsGateway extends HostApiGateway
   HttpTtsSettingsGateway({super.client, super.baseUri});
 
   @override
-  Object errorFor(String message) => ProviderSettingsException(message);
+  Object errorFor(String message) => ProviderSettingsGatewayException(message);
 
   @override
   String get unavailableMessage => '语音朗读设置暂时不可用，请稍后重试。';
 
   @override
-  Future<TtsSettings> read() async {
-    await ensureBootstrap();
-    final response = await httpClient.get(resolve('/api/provider/tts'));
-    return TtsSettings.fromJson(decodeSuccess(response));
-  }
+  Future<TtsSettings> read() =>
+      getJson('/api/provider/tts', TtsSettings.fromJson);
 
   @override
-  Future<TtsSettings> save(TtsSettingsDraft draft) async {
-    final response = await httpClient.put(
-      resolve('/api/provider/tts'),
-      headers: await modifyingHeaders(),
-      body: jsonEncode(draft.toJson()),
-    );
-    return TtsSettings.fromJson(decodeSuccess(response));
-  }
+  Future<TtsSettings> save(TtsSettingsDraft draft) =>
+      putJson('/api/provider/tts', draft.toJson(), TtsSettings.fromJson);
 
   @override
-  Future<TtsSettings> setAutoSpeak(bool enabled) async {
-    final response = await httpClient.put(
-      resolve('/api/provider/tts/auto-speak'),
-      headers: await modifyingHeaders(),
-      body: jsonEncode({'enabled': enabled}),
-    );
-    return TtsSettings.fromJson(decodeSuccess(response));
-  }
+  Future<TtsSettings> setAutoSpeak(bool enabled) => putJson(
+    '/api/provider/tts/auto-speak',
+    {'enabled': enabled},
+    TtsSettings.fromJson,
+  );
 
   @override
-  Future<TtsSettings> forgetApiKey() async {
-    final response = await httpClient.delete(
-      resolve('/api/provider/tts/key'),
-      headers: await modifyingHeaders(),
-    );
-    return TtsSettings.fromJson(decodeSuccess(response));
-  }
+  Future<TtsSettings> forgetApiKey() =>
+      deleteJson('/api/provider/tts/key', TtsSettings.fromJson);
 
   @override
-  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async {
-    final response = await httpClient.post(
-      resolve('/api/provider/tts/test'),
-      headers: await modifyingHeaders(),
-      body: jsonEncode(draft.toJson()),
-    );
-    return TtsConnectionTest.fromJson(decodeSuccess(response));
-  }
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) => postJson(
+    '/api/provider/tts/test',
+    draft.toJson(),
+    TtsConnectionTest.fromJson,
+  );
 }

@@ -1,11 +1,11 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'dream.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 import 'open_loop_store.dart';
 import 'relationship_lifecycle.dart';
 
@@ -36,12 +36,10 @@ final class StatePackReader {
   final OpenLoopStore _openLoopStore;
 
   File get _relationshipFile =>
-      File(path.join(memoryDirectory, 'relationship.md'));
-  File get _dailyStateFile =>
-      File(path.join(memoryDirectory, 'daily-state.md'));
-  File get _longMemoryFile =>
-      File(path.join(memoryDirectory, 'long-memory.md'));
-  File get _personaFile => File(path.join(memoryDirectory, 'persona.md'));
+      memoryFile(memoryDirectory, relationshipFileName);
+  File get _dailyStateFile => memoryFile(memoryDirectory, dailyStateFileName);
+  File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
+  File get _personaFile => memoryFile(memoryDirectory, personaFileName);
 
   /// 返回可直接注入的【长期印象】内容；文件不存在、为空或读取失败
   /// 时返回空串，空块不输出。受控过滤（ticket 18）：封禁（禁提 ∪
@@ -98,9 +96,9 @@ final class StatePackReader {
     return visible.join('\n').trim();
   }
 
-  /// 受控集合 = 封禁（禁提 ∪ 删除）∪ 冻结：注入侧统一按它过滤。
-  Future<Set<String>> _controlledTitles() async =>
-      (await _openLoopStore.memoryControls.load()).controlledSummaries;
+  /// 注入侧的受控集合，统一按它过滤（并集定义见
+  /// [OpenLoopStore.controlledTitles]）。
+  Future<Set<String>> _controlledTitles() => _openLoopStore.controlledTitles();
 
   /// 返回可直接注入的【近况】内容；无任何可用内容时返回空串。
   /// 受控内容不出现在注入中（ticket 18）：open-loop 投影按标题过滤，

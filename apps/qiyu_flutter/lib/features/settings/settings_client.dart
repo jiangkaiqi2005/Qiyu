@@ -1,10 +1,10 @@
-import 'dart:convert';
-
 import '../baseline/host_api_gateway.dart';
 
-final class SettingsException implements Exception {
-  const SettingsException(this.message);
+final class SettingsGatewayException
+    implements Exception, UserFacingException {
+  const SettingsGatewayException(this.message);
 
+  @override
   final String message;
 
   @override
@@ -244,58 +244,35 @@ final class HttpSettingsGateway extends HostApiGateway
   HttpSettingsGateway({super.client, super.baseUri});
 
   @override
-  Object errorFor(String message) => SettingsException(message);
+  Object errorFor(String message) => SettingsGatewayException(message);
 
   @override
   String get unavailableMessage => '设置服务暂时不可用，请稍后重试。';
 
   @override
-  Future<ExperiencePreferences> readPreferences() async {
-    await ensureBootstrap();
-    final response = await httpClient.get(resolve('/api/preferences'));
-    return ExperiencePreferences.fromJson(decodeSuccess(response));
-  }
+  Future<ExperiencePreferences> readPreferences() =>
+      getJson('/api/preferences', ExperiencePreferences.fromJson);
 
   @override
   Future<ExperiencePreferences> savePreferences({
     required bool developerMode,
-  }) async {
-    final response = await httpClient.put(
-      resolve('/api/preferences'),
-      headers: await modifyingHeaders(),
-      body: jsonEncode({'developerMode': developerMode}),
-    );
-    return ExperiencePreferences.fromJson(decodeSuccess(response));
-  }
+  }) => putJson('/api/preferences', {
+    'developerMode': developerMode,
+  }, ExperiencePreferences.fromJson);
 
   @override
-  Future<MemoryControlsOverview> readMemoryControls() async {
-    await ensureBootstrap();
-    final response = await httpClient.get(resolve('/api/memory/controls'));
-    return MemoryControlsOverview.fromJson(decodeSuccess(response));
-  }
+  Future<MemoryControlsOverview> readMemoryControls() =>
+      getJson('/api/memory/controls', MemoryControlsOverview.fromJson);
 
   @override
-  Future<ClearPreview> readClearPreview() async {
-    await ensureBootstrap();
-    final response = await httpClient.get(resolve('/api/data/clear-preview'));
-    return ClearPreview.fromJson(decodeSuccess(response));
-  }
+  Future<ClearPreview> readClearPreview() =>
+      getJson('/api/data/clear-preview', ClearPreview.fromJson);
 
   @override
-  Future<void> clearData() async {
-    final response = await httpClient.post(
-      resolve('/api/data/clear'),
-      headers: await modifyingHeaders(),
-      body: jsonEncode({'confirm': true}),
-    );
-    decodeSuccess(response);
-  }
+  Future<void> clearData() =>
+      postJson<void>('/api/data/clear', {'confirm': true}, (_) {});
 
   @override
-  Future<DiagnosticsSnapshot> readDiagnostics() async {
-    await ensureBootstrap();
-    final response = await httpClient.get(resolve('/api/dev/diagnostics'));
-    return DiagnosticsSnapshot.fromJson(decodeSuccess(response));
-  }
+  Future<DiagnosticsSnapshot> readDiagnostics() =>
+      getJson('/api/dev/diagnostics', DiagnosticsSnapshot.fromJson);
 }

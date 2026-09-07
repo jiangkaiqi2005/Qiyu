@@ -891,7 +891,7 @@ final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
     List<ModelMessage> messages,
     int maxTokens,
   ) => (
-    uri: _appendEndpoint(config.baseUrl, 'chat/completions'),
+    uri: appendProviderEndpoint(config.baseUrl, 'chat/completions'),
     headers: {
       'content-type': 'application/json',
       'authorization': 'Bearer ${apiKey!.trim()}',
@@ -1089,7 +1089,7 @@ final class _OllamaProtocol implements _ProviderProtocol {
       headers['authorization'] = 'Bearer ${apiKey.trim()}';
     }
     return (
-      uri: _appendEndpoint(config.baseUrl, 'api/chat', ollama: true),
+      uri: appendProviderEndpoint(config.baseUrl, 'api/chat', ollama: true),
       headers: headers,
       body: {
         'model': config.model.trim(),
@@ -1126,9 +1126,6 @@ Map<String, String> _messageJson(ModelMessage message) => {
   'role': message.role.name,
   'content': message.content,
 };
-
-Uri _appendEndpoint(String baseUrl, String suffix, {bool ollama = false}) =>
-    appendProviderEndpoint(baseUrl, suffix, ollama: ollama);
 
 /// 把服务地址与端点后缀拼接成完整请求地址：已以该端点结尾的地址原样
 /// 使用（用户可能直接填了完整端点）。聊天与语音转写共用。

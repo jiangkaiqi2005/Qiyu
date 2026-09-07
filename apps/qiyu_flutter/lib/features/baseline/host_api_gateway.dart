@@ -11,6 +11,9 @@ abstract interface class UserFacingException {
 /// 与本机 Host API 通信的网关底座：`/api/bootstrap` 换取 CSRF 令牌、
 /// 变更请求头与 JSON 成功/失败解码共用同一套口径（聊天、模型设置与
 /// 语音设置三个 HTTP 网关同形，收拢在此，不逐个复制）。
+///
+/// 命名口径：各域 `*_client.dart` 文件是该域 Gateway 接口 + DTO +
+/// HTTP 实现的聚合，类名统一为 `*Gateway`，文件名沿用 client 不改。
 abstract base class HostApiGateway {
   HostApiGateway({http.Client? client, Uri? baseUri})
     : _client = client ?? http.Client(),
@@ -68,6 +71,58 @@ abstract base class HostApiGateway {
       throw errorFor(json?['message'] as String? ?? unavailableMessage);
     }
     return json!;
+  }
+
+  /// JSON GET 的终态收发：显式引导 → 请求 → 成功解码 → 终态构造。
+  /// 错误分流仍由 [decodeSuccess] 抛出的 [errorFor] 承担，本方法只收
+  /// HTTP 样板，不改错误语义。各设置网关的读取方法共用。
+  Future<T> getJson<T>(
+    String path,
+    T Function(Map<String, Object?> json) decode,
+  ) async {
+    await ensureBootstrap();
+    final response = await httpClient.get(resolve(path));
+    return decode(decodeSuccess(response));
+  }
+
+  /// JSON PUT 的终态收发：修改头（内含引导与 CSRF）→ 请求 → 解码构造。
+  Future<T> putJson<T>(
+    String path,
+    Object? body,
+    T Function(Map<String, Object?> json) decode,
+  ) async {
+    final response = await httpClient.put(
+      resolve(path),
+      headers: await modifyingHeaders(),
+      body: jsonEncode(body),
+    );
+    return decode(decodeSuccess(response));
+  }
+
+  /// JSON POST 的终态收发：修改头（内含引导与 CSRF）→ 请求 → 解码构造。
+  Future<T> postJson<T>(
+    String path,
+    Object? body,
+    T Function(Map<String, Object?> json) decode,
+  ) async {
+    final response = await httpClient.post(
+      resolve(path),
+      headers: await modifyingHeaders(),
+      body: jsonEncode(body),
+    );
+    return decode(decodeSuccess(response));
+  }
+
+  /// JSON DELETE 的终态收发：修改头（内含引导与 CSRF）→ 请求 → 解码构造。
+  Future<T> deleteJson<T>(
+    String path,
+    T Function(Map<String, Object?> json) decode,
+  ) async {
+    final response = await httpClient.delete(
+      resolve(path),
+      headers: await modifyingHeaders(),
+    );
+    return decode(decodeSuccess(response));
   }
 }
 

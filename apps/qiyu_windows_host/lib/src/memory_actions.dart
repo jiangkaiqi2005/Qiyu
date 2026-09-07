@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path/path.dart' as path;
-
 import 'daily_understanding.dart';
 import 'dream.dart';
 import 'episode_index.dart';
@@ -11,6 +9,7 @@ import 'markdown_memory_repository.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
 import 'memory_scope.dart';
+import 'memory_text_primitives.dart';
 import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
@@ -212,12 +211,10 @@ final class MemoryActionService {
   final AtomicTextWriter _atomicWriter;
   final void Function(String) _diagnosticsSink;
 
-  File get _longMemoryFile =>
-      File(path.join(memoryDirectory, 'long-memory.md'));
+  File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _relationshipFile =>
-      File(path.join(memoryDirectory, 'relationship.md'));
-  File get _dailyStateFile =>
-      File(path.join(memoryDirectory, 'daily-state.md'));
+      memoryFile(memoryDirectory, relationshipFileName);
+  File get _dailyStateFile => memoryFile(memoryDirectory, dailyStateFileName);
 
   static const _notFound = MemoryActionResult(
     status: MemoryActionStatus.failed,
@@ -568,9 +565,10 @@ final class MemoryActionService {
       return null;
     }
     final hit = await _scopeScanner.scan({normalizeMemoryText(text)});
+    final sensitive = isSensitiveMemoryText(text);
     return MemoryDeleteImpact(
-      targetText: isSensitiveMemoryText(text) ? null : text,
-      targetMasked: isSensitiveMemoryText(text),
+      targetText: sensitive ? null : text,
+      targetMasked: sensitive,
       episodeEntries: hit.episodeEntries,
       episodeDaySummaries: hit.episodeDaySummaries,
       episodeDayUnderstandings: hit.episodeDayUnderstandings,
@@ -605,23 +603,20 @@ final class MemoryActionService {
     String origin = 'chat',
     String? requestId,
   }) async {
+    const noTarget = MemoryActionResult(
+      status: MemoryActionStatus.failed,
+      message: '没有可定位的删除目标。',
+      code: 'memory_delete_no_target',
+    );
     final normalized = normalizeMemoryText(summary);
     if (normalized.isEmpty) {
-      return const MemoryActionResult(
-        status: MemoryActionStatus.failed,
-        message: '没有可定位的删除目标。',
-        code: 'memory_delete_no_target',
-      );
+      return noTarget;
     }
     if (!await _locate(normalized)) {
       _diagnosticsSink(
         'memory delete skipped [no target] request=${requestId ?? '-'}',
       );
-      return const MemoryActionResult(
-        status: MemoryActionStatus.failed,
-        message: '没有可定位的删除目标。',
-        code: 'memory_delete_no_target',
-      );
+      return noTarget;
     }
     return _executeDelete(summary, origin: origin);
   }
@@ -761,18 +756,7 @@ final class MemoryActionService {
     if (!parsed.readable) {
       return;
     }
-    var changed = false;
-    final sections = <String, List<String>>{};
-    for (final section in longMemorySections) {
-      final items = parsed.sections[section] ?? const <String>[];
-      final kept = items
-          .where((item) => !bannedMemoryText(item, scope))
-          .toList();
-      if (kept.length != items.length) {
-        changed = true;
-      }
-      sections[section] = kept;
-    }
+    final (:sections, :changed) = filterLongMemorySections(parsed, scope);
     if (changed) {
       await _atomicWriter.replace(
         _longMemoryFile.path,

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:uuid/uuid.dart';
 
+import '../baseline/host_api_gateway.dart';
 import '../baseline/host_connection_probe.dart';
 import '../settings/tts_settings_client.dart';
 import 'local_chat_client.dart';
@@ -99,7 +100,6 @@ final class LocalChatViewModel extends ChangeNotifier {
   List<LocalChatMessage> get messages => List.unmodifiable(_messages);
   String? get errorMessage => _errorMessage;
   bool get loading => _initializing && !_initialized;
-  bool get initialized => _initialized;
   bool get sending => _activeTurn != null;
   bool get waiting => _activeTurn?.waiting ?? false;
   String get streamingText => _activeTurn?.streamingText ?? '';
@@ -554,7 +554,5 @@ final Uuid _requestIdUuid = Uuid();
 
 String _defaultRequestId() => 'chat-${_requestIdUuid.v4()}';
 
-String _readableError(Object error) => switch (error) {
-  LocalChatGatewayException() => error.message,
-  _ => '本地聊天暂时不可用，请稍后重试。',
-};
+String _readableError(Object error) =>
+    readableError(error, fallback: '本地聊天暂时不可用，请稍后重试。');

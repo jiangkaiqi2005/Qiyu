@@ -170,6 +170,16 @@ class QiyuApp extends StatefulWidget {
   State<QiyuApp> createState() => _QiyuAppState();
 }
 
+/// 注入优先、否则按需创建的 Provider 装配：`QiyuApp` 的九个 view model 槽位
+/// 同一形状，收敛到这一处。注入桩（测试）走 `.value`，未注入走惰性 create；
+/// create 收到的仍是 Provider 自己的 BuildContext，依赖读取时机不变。
+ChangeNotifierProvider<T> _vm<T extends ChangeNotifier>(
+  T? injected,
+  T Function(BuildContext) create,
+) => injected != null
+    ? ChangeNotifierProvider<T>.value(value: injected)
+    : ChangeNotifierProvider<T>(create: create);
+
 class _QiyuAppState extends State<QiyuApp> {
   /// 每个应用实例持有独立路由：返回键依赖真实导航栈，测试之间不得
   /// 共享栈状态。路由表读 [qiyuRoutes]，不再有第二份副本。
@@ -190,99 +200,69 @@ class _QiyuAppState extends State<QiyuApp> {
 
   @override
   Widget build(BuildContext context) {
-    final injectedChatViewModel = widget.viewModel;
-    final injectedSettingsViewModel = widget.providerSettingsViewModel;
-    final injectedSttSettingsViewModel = widget.sttSettingsViewModel;
-    final injectedTtsSettingsViewModel = widget.ttsSettingsViewModel;
-    final injectedWebSearchSettingsViewModel =
-        widget.webSearchSettingsViewModel;
-    final injectedHistoryViewModel = widget.historyViewModel;
-    final injectedOnboardingViewModel = widget.onboardingViewModel;
-    final injectedMemoryViewModel = widget.memoryViewModel;
-    final injectedAppSettingsViewModel = widget.settingsViewModel;
     return MultiProvider(
       providers: [
         Provider<SttSettingsGateway>.value(value: _effectiveSttGateway),
         Provider<TtsSettingsGateway>.value(value: _effectiveTtsGateway),
-        if (injectedChatViewModel != null)
-          ChangeNotifierProvider.value(value: injectedChatViewModel)
-        else
-          ChangeNotifierProvider(
-            create: (context) => LocalChatViewModel(
-              HttpLocalChatGateway(),
-              ttsSettingsGateway: context.read<TtsSettingsGateway>(),
+        _vm(
+          widget.viewModel,
+          (context) => LocalChatViewModel(
+            HttpLocalChatGateway(),
+            ttsSettingsGateway: context.read<TtsSettingsGateway>(),
+          ),
+        ),
+        _vm(
+          widget.providerSettingsViewModel,
+          (_) => ProviderSettingsViewModel(
+            HttpProviderSettingsGateway(),
+            autoStart: false,
+          ),
+        ),
+        _vm(
+          widget.sttSettingsViewModel,
+          (context) => SttSettingsViewModel(
+            context.read<SttSettingsGateway>(),
+            autoStart: false,
+          ),
+        ),
+        _vm(
+          widget.ttsSettingsViewModel,
+          (context) => TtsSettingsViewModel(
+            context.read<TtsSettingsGateway>(),
+            autoStart: false,
+          ),
+        ),
+        _vm(
+          widget.webSearchSettingsViewModel,
+          (_) => WebSearchSettingsViewModel(
+            HttpWebSearchSettingsGateway(),
+            autoStart: false,
+          ),
+        ),
+        _vm(
+          widget.historyViewModel,
+          (context) => HistoryViewModel(
+            HttpHistoryGateway(),
+            onSessionDeleted: (sessionId) => unawaited(
+              context.read<LocalChatViewModel>().discardSession(sessionId),
             ),
           ),
-        if (injectedSettingsViewModel != null)
-          ChangeNotifierProvider.value(value: injectedSettingsViewModel)
-        else
-          ChangeNotifierProvider(
-            create: (_) => ProviderSettingsViewModel(
-              HttpProviderSettingsGateway(),
-              autoStart: false,
-            ),
+        ),
+        _vm(
+          widget.onboardingViewModel,
+          (_) => OnboardingViewModel(
+            HttpOnboardingGateway(),
+            HttpProviderSettingsGateway(),
           ),
-        if (injectedSttSettingsViewModel != null)
-          ChangeNotifierProvider.value(value: injectedSttSettingsViewModel)
-        else
-          ChangeNotifierProvider(
-            create: (context) => SttSettingsViewModel(
-              context.read<SttSettingsGateway>(),
-              autoStart: false,
-            ),
-          ),
-        if (injectedTtsSettingsViewModel != null)
-          ChangeNotifierProvider.value(value: injectedTtsSettingsViewModel)
-        else
-          ChangeNotifierProvider(
-            create: (context) => TtsSettingsViewModel(
-              context.read<TtsSettingsGateway>(),
-              autoStart: false,
-            ),
-          ),
-        if (injectedWebSearchSettingsViewModel != null)
-          ChangeNotifierProvider.value(
-            value: injectedWebSearchSettingsViewModel,
-          )
-        else
-          ChangeNotifierProvider(
-            create: (_) => WebSearchSettingsViewModel(
-              HttpWebSearchSettingsGateway(),
-              autoStart: false,
-            ),
-          ),
-        if (injectedHistoryViewModel != null)
-          ChangeNotifierProvider.value(value: injectedHistoryViewModel)
-        else
-          ChangeNotifierProvider(
-            create: (context) => HistoryViewModel(
-              HttpHistoryGateway(),
-              onSessionDeleted: (sessionId) => unawaited(
-                context.read<LocalChatViewModel>().discardSession(sessionId),
-              ),
-            ),
-          ),
-        if (injectedOnboardingViewModel != null)
-          ChangeNotifierProvider.value(value: injectedOnboardingViewModel)
-        else
-          ChangeNotifierProvider(
-            create: (_) => OnboardingViewModel(
-              HttpOnboardingGateway(),
-              HttpProviderSettingsGateway(),
-            ),
-          ),
-        if (injectedMemoryViewModel != null)
-          ChangeNotifierProvider.value(value: injectedMemoryViewModel)
-        else
-          ChangeNotifierProvider(
-            create: (_) => MemoryCenterViewModel(HttpMemoryGateway()),
-          ),
-        if (injectedAppSettingsViewModel != null)
-          ChangeNotifierProvider.value(value: injectedAppSettingsViewModel)
-        else
-          ChangeNotifierProvider(
-            create: (_) => SettingsViewModel(HttpSettingsGateway()),
-          ),
+        ),
+        _vm(
+          widget.memoryViewModel,
+          (_) => MemoryCenterViewModel(HttpMemoryGateway()),
+        ),
+        _vm(
+          widget.settingsViewModel,
+          (_) => SettingsViewModel(HttpSettingsGateway()),
+        ),
       ],
       child: _buildMaterialApp(),
     );

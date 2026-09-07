@@ -13,3 +13,41 @@ Map<String, Object?> decodeMarkerPayload(String value) {
   return jsonDecode(utf8.decode(base64Url.decode(padded)))
       as Map<String, Object?>;
 }
+
+/// 各 qiyu-* 元数据标记的读取端正则（同样唯一权威）：会话、episode、
+/// checkpoint、dream-state、恢复报告等解析端共用这一组具名正则，
+/// 任何文件都不允许另写变体副本。
+final sessionMetaMarkerPattern = RegExp(
+  r'^<!-- qiyu-session:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
+final sessionTurnMarkerPattern = RegExp(
+  r'^<!-- qiyu-turn:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
+final episodeMetaPattern = RegExp(
+  r'^<!-- qiyu-episode:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
+
+/// 日文件「存在栖语元数据标记」的快速判断（只匹配标记前缀）。
+final episodeMetaPresentPattern = RegExp(
+  r'^<!-- qiyu-episode:',
+  multiLine: true,
+);
+final episodeEntryMarkerPattern = RegExp(
+  r'^<!-- qiyu-episode-entry:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
+final dreamStateMarkerPattern = RegExp(
+  r'^<!-- qiyu-dream-state:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
+final checkpointMetaPattern = RegExp(
+  r'^<!-- qiyu-checkpoint:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);
+final recoveryReportMarkerPattern = RegExp(
+  r'^<!-- qiyu-recovery-report:([A-Za-z0-9_-]+) -->\r?$',
+  multiLine: true,
+);

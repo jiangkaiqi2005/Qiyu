@@ -6,7 +6,7 @@ import 'package:path/path.dart' as path;
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
-import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 import 'open_loop_store.dart';
 
 /// PersonaTree 五个主分支（真树机制定稿）：分支只是分类容器。
@@ -517,8 +517,6 @@ final class PersonaDreamApplyResult {
   final List<String?> outcomes;
 
   int get appliedCount => outcomes.where((outcome) => outcome == null).length;
-
-  int get skippedCount => outcomes.length - appliedCount;
 }
 
 /// 根主张公共闸门：返回失败原因码，null 为通过。定稿要求根主张是
@@ -1074,19 +1072,16 @@ final class PersonaTreeStore {
   /// 供恢复流程判断哪些原件可以安全清理。
   Future<Set<String>> restoreBackupFiles(Map<String, String> files) =>
       _locked(() async {
-        final validNames = {
-          for (final branch in personaBranches) branch.fileName,
-        };
         final applied = <String>{};
         for (final MapEntry(:key, :value) in files.entries) {
           final archived = key.startsWith('archive/');
           final name = archived ? key.substring('archive/'.length) : key;
-          if (!validNames.contains(name) || value.trim().isEmpty) {
+          final branch = personaBranches
+              .where((candidate) => candidate.fileName == name)
+              .firstOrNull;
+          if (branch == null || value.trim().isEmpty) {
             continue;
           }
-          final branch = personaBranches.firstWhere(
-            (candidate) => candidate.fileName == name,
-          );
           if (archived) {
             if (!_parseArchive(value).readable) {
               _diagnosticsSink(
@@ -1146,93 +1141,140 @@ final class PersonaTreeStore {
         skip(op, 'branch-unreadable');
         continue;
       }
+      final String? failure;
       switch (op) {
-        case PersonaPromoteOp(:final claim, :final middleIds):
-          final middles = _collectUnrooted(state, middleIds.toSet());
-          if (middles == null) {
-            skip(op, middleIds.isEmpty ? 'no-middles' : 'unknown-middle');
-            continue;
-          }
-          state.unrooted.removeWhere(middles.contains);
-          final root = PersonaRoot(
-            id: _nextId(branch, 'R', state, archive),
-            claim: claim.trim(),
-            middles: middles,
-          );
-          state.roots.add(root);
-          dirty.add(op.branchWire);
-          outcomes.add(null);
-        case PersonaAbsorbOp(:final rootId, :final middleIds):
-          final root = _findRoot(state, rootId);
-          if (root == null) {
-            skip(op, 'unknown-root');
-            continue;
-          }
-          final middles = _collectUnrooted(state, middleIds.toSet());
-          if (middles == null) {
-            skip(op, middleIds.isEmpty ? 'no-middles' : 'unknown-middle');
-            continue;
-          }
-          state.unrooted.removeWhere(middles.contains);
-          root.middles.addAll(middles);
-          dirty.add(op.branchWire);
-          outcomes.add(null);
-        case PersonaDemoteOp(:final rootId, :final counterId):
-          final root = _findRoot(state, rootId);
-          if (root == null) {
-            skip(op, 'unknown-root');
-            continue;
-          }
-          // 快照与落盘之间有锁间隔：反向理解也必须仍在未归根区。
-          if (_findUnrooted(state, counterId) == null) {
-            skip(op, 'unknown-counter');
-            continue;
-          }
-          state.roots.remove(root);
-          final related = root.middles.map((middle) => middle.id).toList();
-          // 仍有自身证据支持的原中间理解退回未归根区；根壳入归档。
-          state.unrooted.addAll(root.middles);
-          root.middles.clear();
-          _archiveRoot(archive, root, archiveReasonConflict, date, related);
-          dirty.add(op.branchWire);
-          outcomes.add(null);
-        case PersonaMergeOp(:final claim, :final rootIds):
-          final ids = rootIds.toSet();
-          if (ids.length < 2) {
-            skip(op, 'needs-two-roots');
-            continue;
-          }
-          final roots = <PersonaRoot>[];
-          var unknown = false;
-          for (final id in ids) {
-            final root = _findRoot(state, id);
-            if (root == null) {
-              unknown = true;
-              break;
-            }
-            roots.add(root);
-          }
-          if (unknown) {
-            skip(op, 'unknown-root');
-            continue;
-          }
-          roots.sort((left, right) => left.id.compareTo(right.id));
-          final survivor = roots.first;
-          survivor.claim = claim.trim();
-          for (final other in roots.skip(1)) {
-            final related = other.middles.map((middle) => middle.id).toList();
-            survivor.middles.addAll(other.middles);
-            other.middles.clear();
-            state.roots.remove(other);
-            _archiveRoot(archive, other, archiveReasonDedup, date, related);
-          }
-          dirty.add(op.branchWire);
-          outcomes.add(null);
+        case PersonaPromoteOp():
+          failure = _applyPromoteOp(op, branch, state, archive);
+        case PersonaAbsorbOp():
+          failure = _applyAbsorbOp(op, state);
+        case PersonaDemoteOp():
+          failure = _applyDemoteOp(op, state, archive, date);
+        case PersonaMergeOp():
+          failure = _applyMergeOp(op, state, archive, date);
       }
+      if (failure != null) {
+        skip(op, failure);
+        continue;
+      }
+      dirty.add(op.branchWire);
+      outcomes.add(null);
     }
 
-    // Dream 维护职责：清理过期孤儿叶、裁剪冗余叶指针、归档零中间
-    // 理解的根（子树被冲突升级清空后的残留根壳）。
+    _maintainDreamHygiene(date, states, archives, dirty);
+    await _persistDreamBranches(states, archives, dirty);
+    return PersonaDreamApplyResult(outcomes: outcomes);
+  });
+
+  /// 升根提案落盘：把选中的未归根中间理解收拢为新根。返回失败原因
+  /// 码，null 为已变更。
+  String? _applyPromoteOp(
+    PersonaPromoteOp op,
+    PersonaBranch branch,
+    _BranchState state,
+    _ArchiveState archive,
+  ) {
+    final middles = _collectUnrooted(state, op.middleIds.toSet());
+    if (middles == null) {
+      return op.middleIds.isEmpty ? 'no-middles' : 'unknown-middle';
+    }
+    state.unrooted.removeWhere(middles.contains);
+    final root = PersonaRoot(
+      id: _nextId(branch, 'R', state, archive),
+      claim: op.claim.trim(),
+      middles: middles,
+    );
+    state.roots.add(root);
+    return null;
+  }
+
+  /// 吸纳提案落盘：把与根同主张的未归根中间理解归入该根。返回失败
+  /// 原因码，null 为已变更。
+  String? _applyAbsorbOp(PersonaAbsorbOp op, _BranchState state) {
+    final root = _findRoot(state, op.rootId);
+    if (root == null) {
+      return 'unknown-root';
+    }
+    final middles = _collectUnrooted(state, op.middleIds.toSet());
+    if (middles == null) {
+      return op.middleIds.isEmpty ? 'no-middles' : 'unknown-middle';
+    }
+    state.unrooted.removeWhere(middles.contains);
+    root.middles.addAll(middles);
+    return null;
+  }
+
+  /// 降根提案落盘：根壳入归档，原中间理解退回未归根区。返回失败
+  /// 原因码，null 为已变更。
+  String? _applyDemoteOp(
+    PersonaDemoteOp op,
+    _BranchState state,
+    _ArchiveState archive,
+    String date,
+  ) {
+    final root = _findRoot(state, op.rootId);
+    if (root == null) {
+      return 'unknown-root';
+    }
+    // 快照与落盘之间有锁间隔：反向理解也必须仍在未归根区。
+    if (_findUnrooted(state, op.counterId) == null) {
+      return 'unknown-counter';
+    }
+    state.roots.remove(root);
+    final related = root.middles.map((middle) => middle.id).toList();
+    // 仍有自身证据支持的原中间理解退回未归根区；根壳入归档。
+    state.unrooted.addAll(root.middles);
+    root.middles.clear();
+    _archiveRoot(archive, root, archiveReasonConflict, date, related);
+    return null;
+  }
+
+  /// 合并提案落盘：同义根合并到 ID 最小的存活根，其余根壳入归档。
+  /// 返回失败原因码，null 为已变更。
+  String? _applyMergeOp(
+    PersonaMergeOp op,
+    _BranchState state,
+    _ArchiveState archive,
+    String date,
+  ) {
+    final ids = op.rootIds.toSet();
+    if (ids.length < 2) {
+      return 'needs-two-roots';
+    }
+    final roots = <PersonaRoot>[];
+    var unknown = false;
+    for (final id in ids) {
+      final root = _findRoot(state, id);
+      if (root == null) {
+        unknown = true;
+        break;
+      }
+      roots.add(root);
+    }
+    if (unknown) {
+      return 'unknown-root';
+    }
+    roots.sort((left, right) => left.id.compareTo(right.id));
+    final survivor = roots.first;
+    survivor.claim = op.claim.trim();
+    for (final other in roots.skip(1)) {
+      final related = other.middles.map((middle) => middle.id).toList();
+      survivor.middles.addAll(other.middles);
+      other.middles.clear();
+      state.roots.remove(other);
+      _archiveRoot(archive, other, archiveReasonDedup, date, related);
+    }
+    return null;
+  }
+
+  /// Dream 维护职责：清理过期孤儿叶、裁剪冗余叶指针、归档零中间
+  /// 理解的根（子树被冲突升级清空后的残留根壳）。有改动的分支记入
+  /// [dirty]。
+  void _maintainDreamHygiene(
+    String date,
+    Map<String, _BranchState> states,
+    Map<String, _ArchiveState> archives,
+    Set<String> dirty,
+  ) {
     for (final branch in personaBranches) {
       final state = states[branch.wireName]!;
       final archive = archives[branch.wireName]!;
@@ -1271,7 +1313,15 @@ final class PersonaTreeStore {
         dirty.add(branch.wireName);
       }
     }
+  }
 
+  /// 落盘本轮 Dream 变更（先归档后活跃，与日终整理同一写序），最后
+  /// 从活跃根重投影 persona.md（任一分支不可读时保留旧投影）。
+  Future<void> _persistDreamBranches(
+    Map<String, _BranchState> states,
+    Map<String, _ArchiveState> archives,
+    Set<String> dirty,
+  ) async {
     for (final branch in personaBranches) {
       if (!dirty.contains(branch.wireName)) {
         continue;
@@ -1290,8 +1340,7 @@ final class PersonaTreeStore {
     } else {
       _diagnosticsSink('persona projection deferred reason=branch-unreadable');
     }
-    return PersonaDreamApplyResult(outcomes: outcomes);
-  });
+  }
 
   /// 按 ID 从未归根区收集中间理解；任一缺失（或集合为空）返回 null。
   List<PersonaMiddle>? _collectUnrooted(_BranchState state, Set<String> ids) {
@@ -1461,55 +1510,115 @@ final class PersonaTreeStore {
       changed = true;
     }
 
-    // 2. 身份事实的最新明确陈述胜出：新的自述与旧「待稳定事实」
-    //    冲突时归档旧理解，新说法走全新 ID，不拿旧证据背书。
-    //    用户明确纠正是唯一在线撤根例外：命中旧根时整条路径（根与
-    //    其全部中间理解）移入归档，persona.md 由调用方重投影。
+    // 2. 身份事实的最新明确陈述胜出（详见
+    //    [_retireOutdatedIdentityClaims]）。
     if (branch.wireName == 'identity') {
-      for (final leaf in [...state.unclassified]) {
-        if (leaf.nature != natureSelfReport) {
-          continue;
-        }
-        final outdated = state.unrooted
-            .where(
-              (middle) =>
-                  middle.type == middleTypePendingFact &&
-                  conflictTopic(leaf.summary, middle.claim),
-            )
-            .toList();
-        for (final middle in outdated) {
-          state.unrooted.remove(middle);
-          _archiveMiddle(archive, middle, archiveReasonCorrection, date);
-          changed = true;
-        }
-        final outdatedRoots = state.roots
-            .where(
-              (root) => root.middles.any(
-                (middle) =>
-                    middle.type == middleTypePendingFact &&
-                    conflictTopic(leaf.summary, middle.claim),
-              ),
-            )
-            .toList();
-        for (final root in outdatedRoots) {
-          state.roots.remove(root);
-          _archiveRoot(
-            archive,
-            root,
-            archiveReasonCorrection,
-            date,
-            root.middles.map((middle) => middle.id).toList(),
-          );
-          changed = true;
-          rootsChanged = true;
-        }
+      final (updated, rootsRemoved) = _retireOutdatedIdentityClaims(
+        state,
+        archive,
+        date,
+      );
+      if (updated) {
+        changed = true;
+      }
+      if (rootsRemoved) {
+        rootsChanged = true;
       }
     }
 
-    // 3. 挂载：未归类叶优先归入现有中间理解。同一主张挂 support；
-    //    同话题不同主张挂 conflict（并存不覆盖）。身份分支只认自述，
-    //    行为叶不得挂载或反驳身份事实。根下中间理解同样参与挂载：
-    //    新证据必须够得到高层理解，反向证据才能浮出并支撑降根裁决。
+    // 3. 挂载：未归类叶优先归入现有中间理解（详见
+    //    [_attachUnclassifiedLeaves]）。
+    if (_attachUnclassifiedLeaves(branch, state, date, frozen)) {
+      changed = true;
+    }
+
+    // 4. 冲突升级：反向证据组成新的反向中间理解，落在未归根区（详见
+    //    [_escalateConflicts]）。
+    if (branch.wireName != 'identity' &&
+        _escalateConflicts(branch, state, archive, date, frozen)) {
+      changed = true;
+    }
+
+    // 5. 建立：剩余未归类叶按同一主张分组，跨时间证据足够才成理解
+    //    （详见 [_buildMiddlesFromGroups]）。
+    if (_buildMiddlesFromGroups(branch, state, archive, date, frozen)) {
+      changed = true;
+    }
+
+    if (changed) {
+      // 先归档后活跃：两次原子写之间崩溃时，宁可活跃区多出
+      // 一条已被归档的理解（下次整理幂等补救），也不能丢归档
+      // 记录导致已归档 ID 被复用（定稿禁止）。
+      await _writeArchive(branch, archive);
+      await _writeBranch(branch, state);
+    }
+    return rootsChanged;
+  }
+
+  /// 「日终整理」步骤 2（身份分支）：新的自述与旧「待稳定事实」
+  /// 冲突时归档旧理解，新说法走全新 ID，不拿旧证据背书。用户明确
+  /// 纠正是唯一在线撤根例外：命中旧根时整条路径（根与其全部中间
+  /// 理解）移入归档，persona.md 由调用方重投影。返回 (是否改动,
+  /// 是否撤销过根)。
+  (bool, bool) _retireOutdatedIdentityClaims(
+    _BranchState state,
+    _ArchiveState archive,
+    String date,
+  ) {
+    var changed = false;
+    var rootsChanged = false;
+    for (final leaf in [...state.unclassified]) {
+      if (leaf.nature != natureSelfReport) {
+        continue;
+      }
+      final outdated = state.unrooted
+          .where(
+            (middle) =>
+                middle.type == middleTypePendingFact &&
+                conflictTopic(leaf.summary, middle.claim),
+          )
+          .toList();
+      for (final middle in outdated) {
+        state.unrooted.remove(middle);
+        _archiveMiddle(archive, middle, archiveReasonCorrection, date);
+        changed = true;
+      }
+      final outdatedRoots = state.roots
+          .where(
+            (root) => root.middles.any(
+              (middle) =>
+                  middle.type == middleTypePendingFact &&
+                  conflictTopic(leaf.summary, middle.claim),
+            ),
+          )
+          .toList();
+      for (final root in outdatedRoots) {
+        state.roots.remove(root);
+        _archiveRoot(
+          archive,
+          root,
+          archiveReasonCorrection,
+          date,
+          root.middles.map((middle) => middle.id).toList(),
+        );
+        changed = true;
+        rootsChanged = true;
+      }
+    }
+    return (changed, rootsChanged);
+  }
+
+  /// 「日终整理」步骤 3：未归类叶优先归入现有中间理解。同一主张挂
+  /// support；同话题不同主张挂 conflict（并存不覆盖）。身份分支只认
+  /// 自述，行为叶不得挂载或反驳身份事实。根下中间理解同样参与挂载：
+  /// 新证据必须够得到高层理解，反向证据才能浮出并支撑降根裁决。
+  bool _attachUnclassifiedLeaves(
+    PersonaBranch branch,
+    _BranchState state,
+    String date,
+    Set<String> frozen,
+  ) {
+    var changed = false;
     for (final leaf
         in state.unclassified.toList()
           ..sort((left, right) => left.date.compareTo(right.date))) {
@@ -1542,54 +1651,72 @@ final class PersonaTreeStore {
         }
       }
     }
+    return changed;
+  }
 
-    // 4. 冲突升级：两个不同日期的反向证据组成新的反向中间理解，
-    //    反向理解一律落在未归根区；旧理解保留仍成立的支持证据。
-    //    旧根不在日终撤销：根下中间理解被反驳时同样升级，根级裁决
-    //    （比较旧根与反向理解后降根与否）归下一次 Dream。
-    if (branch.wireName != 'identity') {
-      for (final middle in [...state.allMiddles]) {
-        if (frozenTitleHit(middle.claim, frozen)) {
-          continue;
-        }
-        final conflicts = middle.leaves
-            .where((leaf) => leaf.relation == 'conflict')
-            .toList();
-        final distinctDates = conflicts.map((leaf) => leaf.date).toSet().length;
-        if (conflicts.length < 2 || distinctDates < 2) {
-          continue;
-        }
-        middle.leaves.removeWhere(conflicts.contains);
-        middle.reviewedOn = date;
-        final counterClaim = _longestSummary(conflicts);
-        final counter = PersonaMiddle(
-          id: _nextId(branch, 'M', state, archive),
-          type: branch.wireName == 'boundaries'
-              ? middleTypeBoundarySignal
-              : middleTypeRepeatPattern,
-          claim: counterClaim,
-          formedOn: date,
-          reviewedOn: date,
-          leaves: [for (final leaf in conflicts) leaf.copyWith(relation: 'support')],
-        );
-        state.unrooted.add(counter);
-        if (middle.leaves.isEmpty) {
-          state.unrooted.remove(middle);
-          // 若该理解挂在根下，从根子树移除；根本身保留，等 Dream
-          // 比较反向理解后裁决（根为零中间理解时由 Dream 维护清理）。
-          for (final root in state.roots) {
-            if (root.middles.remove(middle)) {
-              break;
-            }
-          }
-          _archiveMiddle(archive, middle, archiveReasonConflict, date);
-        }
-        changed = true;
+  /// 「日终整理」步骤 4：两个不同日期的反向证据组成新的反向中间
+  /// 理解，反向理解一律落在未归根区；旧理解保留仍成立的支持证据。
+  /// 旧根不在日终撤销：根下中间理解被反驳时同样升级，根级裁决
+  /// （比较旧根与反向理解后降根与否）归下一次 Dream。
+  bool _escalateConflicts(
+    PersonaBranch branch,
+    _BranchState state,
+    _ArchiveState archive,
+    String date,
+    Set<String> frozen,
+  ) {
+    var changed = false;
+    for (final middle in [...state.allMiddles]) {
+      if (frozenTitleHit(middle.claim, frozen)) {
+        continue;
       }
+      final conflicts = middle.leaves
+          .where((leaf) => leaf.relation == 'conflict')
+          .toList();
+      final distinctDates = conflicts.map((leaf) => leaf.date).toSet().length;
+      if (conflicts.length < 2 || distinctDates < 2) {
+        continue;
+      }
+      middle.leaves.removeWhere(conflicts.contains);
+      middle.reviewedOn = date;
+      final counterClaim = _longestSummary(conflicts);
+      final counter = PersonaMiddle(
+        id: _nextId(branch, 'M', state, archive),
+        type: branch.wireName == 'boundaries'
+            ? middleTypeBoundarySignal
+            : middleTypeRepeatPattern,
+        claim: counterClaim,
+        formedOn: date,
+        reviewedOn: date,
+        leaves: [for (final leaf in conflicts) leaf.copyWith(relation: 'support')],
+      );
+      state.unrooted.add(counter);
+      if (middle.leaves.isEmpty) {
+        state.unrooted.remove(middle);
+        // 若该理解挂在根下，从根子树移除；根本身保留，等 Dream
+        // 比较反向理解后裁决（根为零中间理解时由 Dream 维护清理）。
+        for (final root in state.roots) {
+          if (root.middles.remove(middle)) {
+            break;
+          }
+        }
+        _archiveMiddle(archive, middle, archiveReasonConflict, date);
+      }
+      changed = true;
     }
+    return changed;
+  }
 
-    // 5. 建立：剩余未归类叶按同一主张分组，跨时间证据足够才成理解。
-    //    冻结的叶不参与新建理解，留在未归类区等待解除。
+  /// 「日终整理」步骤 5：剩余未归类叶按同一主张分组，跨时间证据足够
+  /// 才成理解。冻结的叶不参与新建理解，留在未归类区等待解除。
+  bool _buildMiddlesFromGroups(
+    PersonaBranch branch,
+    _BranchState state,
+    _ArchiveState archive,
+    String date,
+    Set<String> frozen,
+  ) {
+    var changed = false;
     final groups = <List<PersonaLeaf>>[];
     for (final leaf in [...state.unclassified]) {
       if (frozenTitleHit(leaf.summary, frozen)) {
@@ -1658,15 +1785,7 @@ final class PersonaTreeStore {
       state.unrooted.add(middle);
       changed = true;
     }
-
-    if (changed) {
-      // 先归档后活跃：两次原子写之间崩溃时，宁可活跃区多出
-      // 一条已被归档的理解（下次整理幂等补救），也不能丢归档
-      // 记录导致已归档 ID 被复用（定稿禁止）。
-      await _writeArchive(branch, archive);
-      await _writeBranch(branch, state);
-    }
-    return rootsChanged;
+    return changed;
   }
 
   void _archiveMiddle(

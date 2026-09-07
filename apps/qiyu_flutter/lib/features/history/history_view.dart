@@ -84,25 +84,11 @@ class HistoryView extends StatelessWidget {
       return const Center(child: CircularProgressIndicator());
     }
     if (viewModel.errorMessage case final message?) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              message,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-            const SizedBox(height: 12),
-            QiyuFocusRingScope(
-              borderRadius: QiyuRadii.circleBorder,
-              child: TextButton(
-                key: const Key('retry-history'),
-                onPressed: () => unawaited(viewModel.refresh()),
-                child: const Text('重试'),
-              ),
-            ),
-          ],
-        ),
+      return QiyuErrorRetryState(
+        message: message,
+        messageStyle: TextStyle(color: Theme.of(context).colorScheme.error),
+        retryKey: const Key('retry-history'),
+        onRetry: () => unawaited(viewModel.refresh()),
       );
     }
     final listing = viewModel.listing;
@@ -173,7 +159,6 @@ class _SessionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final startedAt = session.startedAt.toLocal();
     return QiyuFocusRingScope(
       borderRadius: QiyuRadii.cardBorder,
       child: Card(
@@ -190,7 +175,7 @@ class _SessionTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${twoDigits(startedAt.hour)}:${twoDigits(startedAt.minute)} · '
+                        '${formatClock(session.startedAt)} · '
                         '${session.turnCount} 条消息',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),

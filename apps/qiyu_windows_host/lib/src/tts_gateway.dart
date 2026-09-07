@@ -51,21 +51,7 @@ final class OpenAiSpeechGateway implements TtsSynthesisGateway {
     required String text,
   }) async {
     config.validate();
-    final key = apiKey?.trim();
-    if (key == null || key.isEmpty) {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.authentication,
-        message: '还没有保存语音合成服务的 API Key。',
-      );
-    }
-    // 粘贴进表单的 Key 常带零宽空格/中文：脏字节会让 dart:io 在写头时
-    // 抛未分类异常，必须在出网前拦成人话（STT 联调踩过的黑盒坑）。
-    if (containsNonVisibleAscii(key)) {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.provider,
-        message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
-      );
-    }
+    final key = requireTtsApiKey(apiKey);
     final uri = appendProviderEndpoint(config.baseUrl, 'audio/speech');
     // TTS 是新增出网路径：出网前统一过 SSRF 校验（与 STT 共用判定）。
     ensureTtsOutboundAllowed(uri);
@@ -78,62 +64,16 @@ final class OpenAiSpeechGateway implements TtsSynthesisGateway {
       'response_format': 'mp3',
       if (config.speed != null) 'speed': config.speed,
     });
-    final ProviderBytesHttpResponse response;
-    try {
-      response = await httpClient.postBytes(
-        uri: uri,
-        headers: {
-          'authorization': 'Bearer $key',
-          'content-type': 'application/json',
-        },
-        body: utf8.encode(body),
-        timeout: ttsRequestTimeout,
-      );
-    } on TimeoutException {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.timeout,
-        message: '连接语音合成服务超时。',
-      );
-    } on HandshakeException {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.tls,
-        message: '语音合成服务的 TLS 安全连接失败。',
-      );
-    } on SocketException catch (error) {
-      throw _fromModelFailure(
-        providerSocketFailure(error, serviceLabel: '语音合成服务'),
-      );
-    } on HttpException {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.network,
-        message: '语音合成服务连接中断。',
-      );
-    } on Object catch (error) {
-      // 只打异常类型不打消息：消息可能嵌着用户输入（Key/地址/模型名）。
-      stderrDiagnostics('tts unclassified exception: ${error.runtimeType}');
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.internal,
-        message: '本机程序内部出错。',
-      );
-    }
-
-    final buffer = BytesBuilder(copy: false);
-    try {
-      await for (final chunk in response.body) {
-        buffer.add(chunk);
-      }
-    } on TimeoutException {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.timeout,
-        message: '语音合成服务响应超时。',
-      );
-    } on Object {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.network,
-        message: '语音合成服务连接中断。',
-      );
-    }
-    final bytes = buffer.takeBytes();
+    final response = await postTtsBytes(
+      httpClient: httpClient,
+      uri: uri,
+      headers: {
+        'authorization': 'Bearer $key',
+        'content-type': 'application/json',
+      },
+      body: utf8.encode(body),
+    );
+    final bytes = await consumeTtsBytesResponse(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       // 错误体是文本 JSON：latin1 保留字节可读性，只用于错误分类。
       throw _fromModelFailure(
@@ -189,3 +129,92 @@ void ensureTtsOutboundAllowed(Uri uri) {
 
 TtsGatewayException _fromModelFailure(ModelGatewayException failure) =>
     TtsGatewayException(kind: failure.kind, message: failure.message);
+
+/// TTS 家族（OpenAI 兼容与豆包）共用的 Key 前置校验：返回 trim 后的
+/// Key。空按未保存鉴权失败；脏字符（粘贴进表单常带零宽空格/中文，会
+/// 让 dart:io 写头时抛未分类异常，STT 联调踩过的黑盒坑）按本通道人话
+/// 文案拦截。
+String requireTtsApiKey(String? apiKey) {
+  final key = apiKey?.trim();
+  if (key == null || key.isEmpty) {
+    throw const TtsGatewayException(
+      kind: ModelFailureKind.authentication,
+      message: '还没有保存语音合成服务的 API Key。',
+    );
+  }
+  if (containsNonVisibleAscii(key)) {
+    throw const TtsGatewayException(
+      kind: ModelFailureKind.provider,
+      message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
+    );
+  }
+  return key;
+}
+
+/// TTS 家族共用的出网 POST：两协议网关的异常映射链逐字一致（含
+/// unclassified 诊断标签），在这里收口。仅限 TTS 家族内部使用。
+Future<ProviderBytesHttpResponse> postTtsBytes({
+  required ProviderBytesHttpClient httpClient,
+  required Uri uri,
+  required Map<String, String> headers,
+  required List<int> body,
+}) async {
+  final ProviderBytesHttpResponse response;
+  try {
+    response = await httpClient.postBytes(
+      uri: uri,
+      headers: headers,
+      body: body,
+      timeout: ttsRequestTimeout,
+    );
+  } on TimeoutException {
+    throw const TtsGatewayException(
+      kind: ModelFailureKind.timeout,
+      message: '连接语音合成服务超时。',
+    );
+  } on HandshakeException {
+    throw const TtsGatewayException(
+      kind: ModelFailureKind.tls,
+      message: '语音合成服务的 TLS 安全连接失败。',
+    );
+  } on SocketException catch (error) {
+    throw _fromModelFailure(
+      providerSocketFailure(error, serviceLabel: '语音合成服务'),
+    );
+  } on HttpException {
+    throw const TtsGatewayException(
+      kind: ModelFailureKind.network,
+      message: '语音合成服务连接中断。',
+    );
+  } on Object catch (error) {
+    // 只打异常类型不打消息：消息可能嵌着用户输入（Key/地址/模型名）。
+    stderrDiagnostics('tts unclassified exception: ${error.runtimeType}');
+    throw const TtsGatewayException(
+      kind: ModelFailureKind.internal,
+      message: '本机程序内部出错。',
+    );
+  }
+  return response;
+}
+
+/// TTS 家族共用的响应字节消费：读完全量音频字节再返回，响应期超时与
+/// 连接中断按本通道文案映射。
+Future<Uint8List> consumeTtsBytesResponse(ProviderBytesHttpResponse response) async {
+  final buffer = BytesBuilder(copy: false);
+  try {
+    await for (final chunk in response.body) {
+      buffer.add(chunk);
+    }
+  } on TimeoutException {
+    throw const TtsGatewayException(
+      kind: ModelFailureKind.timeout,
+      message: '语音合成服务响应超时。',
+    );
+  } on Object {
+    throw const TtsGatewayException(
+      kind: ModelFailureKind.network,
+      message: '语音合成服务连接中断。',
+    );
+  }
+  return buffer.takeBytes();
+}

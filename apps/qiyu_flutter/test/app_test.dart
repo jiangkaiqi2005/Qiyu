@@ -5,10 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qiyu_flutter/app.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
-import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
@@ -19,6 +17,8 @@ import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
+
+import 'support/shared_fakes.dart';
 
 void main() {
   testWidgets('窄视口主题槽位取窄屏字阶，宽视口取桌面档（窄屏字阶接线）', (tester) async {
@@ -33,8 +33,8 @@ void main() {
       await tester.pumpWidget(
         QiyuApp(
           viewModel: LocalChatViewModel(
-            _FakeLocalChatGateway(),
-            hostConnectionProbe: _FakeHostConnectionProbe([true]),
+            FakeLocalChatGateway(),
+            hostConnectionProbe: FakeHostConnectionProbe([true]),
             autoStart: false,
           ),
           onboardingViewModel: await _completedOnboardingViewModel(),
@@ -77,7 +77,7 @@ void main() {
   testWidgets('restores the latest local session without duplicate messages', (
     tester,
   ) async {
-    final gateway = _FakeLocalChatGateway(
+    final gateway = FakeLocalChatGateway(
       restored: const LocalChatSnapshot(
         sessionId: 'session-1',
         messages: [
@@ -96,20 +96,7 @@ void main() {
         ],
       ),
     );
-    final viewModel = LocalChatViewModel(
-      gateway,
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
-      autoStart: false,
-    );
-    await viewModel.initialize();
-
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: viewModel,
-        onboardingViewModel: await _completedOnboardingViewModel(),
-      ),
-    );
-    await _settleMergedPage(tester);
+    await _pumpChatApp(tester, gateway);
 
     expect(find.text('我回来了'), findsOneWidget);
     expect(find.text('嗯'), findsOneWidget);
@@ -119,7 +106,7 @@ void main() {
   });
 
   testWidgets('历史含本地回复但最后一条是模型回复时不显示本地规则标识', (tester) async {
-    final gateway = _FakeLocalChatGateway(
+    final gateway = FakeLocalChatGateway(
       restored: const LocalChatSnapshot(
         sessionId: 'session-1',
         messages: [
@@ -149,20 +136,7 @@ void main() {
         ],
       ),
     );
-    final viewModel = LocalChatViewModel(
-      gateway,
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
-      autoStart: false,
-    );
-    await viewModel.initialize();
-
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: viewModel,
-        onboardingViewModel: await _completedOnboardingViewModel(),
-      ),
-    );
-    await _settleMergedPage(tester);
+    await _pumpChatApp(tester, gateway);
 
     expect(find.text('我回来了'), findsOneWidget);
     expect(find.text('后来好多了'), findsOneWidget);
@@ -172,23 +146,14 @@ void main() {
   });
 
   testWidgets('同一会话内先本地降级后模型恢复正常则隐藏标识', (tester) async {
-    final gateway = _FakeLocalChatGateway(
+    final gateway = FakeLocalChatGateway(
       replySources: const [ReplySource.local, ReplySource.llm],
     );
-    final viewModel = LocalChatViewModel(
+    await _pumpChatApp(
+      tester,
       gateway,
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
-      autoStart: false,
       requestIdFactory: () => 'fallback-request',
     );
-    await viewModel.initialize();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: viewModel,
-        onboardingViewModel: await _completedOnboardingViewModel(),
-      ),
-    );
-    await _settleMergedPage(tester);
 
     // 第一轮走本地规则降级：标识出现。
     await tester.enterText(find.byKey(const Key('chat-input')), '有点累');
@@ -212,7 +177,7 @@ void main() {
   testWidgets('renders Qiyu replies as markdown but keeps user input plain', (
     tester,
   ) async {
-    final gateway = _FakeLocalChatGateway(
+    final gateway = FakeLocalChatGateway(
       restored: const LocalChatSnapshot(
         sessionId: 'session-1',
         messages: [
@@ -230,20 +195,7 @@ void main() {
         ],
       ),
     );
-    final viewModel = LocalChatViewModel(
-      gateway,
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
-      autoStart: false,
-    );
-    await viewModel.initialize();
-
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: viewModel,
-        onboardingViewModel: await _completedOnboardingViewModel(),
-      ),
-    );
-    await _settleMergedPage(tester);
+    await _pumpChatApp(tester, gateway);
 
     expect(find.text('**用户输入不当 Markdown 解析**'), findsOneWidget);
     expect(find.text('先**躺好**，慢慢说'), findsNothing);
@@ -255,21 +207,12 @@ void main() {
   testWidgets('sends non-empty text and renders user and local Qiyu replies', (
     tester,
   ) async {
-    final gateway = _FakeLocalChatGateway();
-    final viewModel = LocalChatViewModel(
+    final gateway = FakeLocalChatGateway();
+    await _pumpChatApp(
+      tester,
       gateway,
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
-      autoStart: false,
       requestIdFactory: () => 'new-request',
     );
-    await viewModel.initialize();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: viewModel,
-        onboardingViewModel: await _completedOnboardingViewModel(),
-      ),
-    );
-    await _settleMergedPage(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '今天有点累');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -293,20 +236,11 @@ void main() {
     'shows waiting before validated streaming text and then commits once',
     (tester) async {
       final gateway = _StreamingFakeLocalChatGateway();
-      final viewModel = LocalChatViewModel(
+      final viewModel = await _pumpChatApp(
+        tester,
         gateway,
-        hostConnectionProbe: _FakeHostConnectionProbe([true]),
-        autoStart: false,
         requestIdFactory: () => 'stream-request',
       );
-      await viewModel.initialize();
-      await tester.pumpWidget(
-        QiyuApp(
-          viewModel: viewModel,
-          onboardingViewModel: await _completedOnboardingViewModel(),
-        ),
-      );
-      await _settleMergedPage(tester);
 
       await tester.enterText(find.byKey(const Key('chat-input')), '还醒着');
       await tester.tap(find.byKey(const Key('chat-send')));
@@ -392,20 +326,11 @@ void main() {
     tester,
   ) async {
     final gateway = _StreamingFakeLocalChatGateway();
-    final viewModel = LocalChatViewModel(
+    final viewModel = await _pumpChatApp(
+      tester,
       gateway,
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
-      autoStart: false,
       requestIdFactory: () => 'cancel-request',
     );
-    await viewModel.initialize();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: viewModel,
-        onboardingViewModel: await _completedOnboardingViewModel(),
-      ),
-    );
-    await _settleMergedPage(tester);
     await tester.enterText(find.byKey(const Key('chat-input')), '先别说');
     await tester.tap(find.byKey(const Key('chat-send')));
     await tester.pump();
@@ -450,8 +375,8 @@ void main() {
     tester,
   ) async {
     final viewModel = LocalChatViewModel(
-      _FakeLocalChatGateway(),
-      hostConnectionProbe: _FakeHostConnectionProbe([true, false, true]),
+      FakeLocalChatGateway(),
+      hostConnectionProbe: FakeHostConnectionProbe([true, false, true]),
       autoStart: false,
     );
     await viewModel.initialize();
@@ -479,23 +404,11 @@ void main() {
   testWidgets('shows storage errors without presenting an unsaved exchange', (
     tester,
   ) async {
-    final gateway = _FakeLocalChatGateway(
+    final gateway = FakeLocalChatGateway(
       sendError: const LocalChatGatewayException('无法保存本地聊天记录。'),
       failuresRemaining: 1,
     );
-    final viewModel = LocalChatViewModel(
-      gateway,
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
-      autoStart: false,
-    );
-    await viewModel.initialize();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: viewModel,
-        onboardingViewModel: await _completedOnboardingViewModel(),
-      ),
-    );
-    await _settleMergedPage(tester);
+    final viewModel = await _pumpChatApp(tester, gateway);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '别丢掉这句');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -513,24 +426,15 @@ void main() {
 
   testWidgets('retries a failed send with the same request id', (tester) async {
     var nextId = 0;
-    final gateway = _FakeLocalChatGateway(
+    final gateway = FakeLocalChatGateway(
       sendError: const LocalChatGatewayException('第一次写入失败。'),
       failuresRemaining: 1,
     );
-    final viewModel = LocalChatViewModel(
+    await _pumpChatApp(
+      tester,
       gateway,
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
-      autoStart: false,
       requestIdFactory: () => 'retry-${nextId++}',
     );
-    await viewModel.initialize();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: viewModel,
-        onboardingViewModel: await _completedOnboardingViewModel(),
-      ),
-    );
-    await _settleMergedPage(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '别重复这句');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -553,7 +457,7 @@ void main() {
   testWidgets('resumes a persisted user-only turn after a reload', (
     tester,
   ) async {
-    final gateway = _FakeLocalChatGateway(
+    final gateway = FakeLocalChatGateway(
       restored: const LocalChatSnapshot(
         sessionId: 'session-1',
         messages: [
@@ -565,20 +469,11 @@ void main() {
         ],
       ),
     );
-    final viewModel = LocalChatViewModel(
+    await _pumpChatApp(
+      tester,
       gateway,
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
-      autoStart: false,
       requestIdFactory: () => 'new-request',
     );
-    await viewModel.initialize();
-    await tester.pumpWidget(
-      QiyuApp(
-        viewModel: viewModel,
-        onboardingViewModel: await _completedOnboardingViewModel(),
-      ),
-    );
-    await _settleMergedPage(tester);
 
     await tester.enterText(find.byKey(const Key('chat-input')), '别重复这句');
     await tester.tap(find.byKey(const Key('chat-send')));
@@ -595,8 +490,8 @@ void main() {
     tester,
   ) async {
     final chatViewModel = LocalChatViewModel(
-      _FakeLocalChatGateway(),
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      FakeLocalChatGateway(),
+      hostConnectionProbe: FakeHostConnectionProbe([true]),
       autoStart: false,
     );
     await chatViewModel.initialize();
@@ -737,8 +632,8 @@ void main() {
     tester,
   ) async {
     final chatViewModel = LocalChatViewModel(
-      _FakeLocalChatGateway(),
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      FakeLocalChatGateway(),
+      hostConnectionProbe: FakeHostConnectionProbe([true]),
       autoStart: false,
     );
     await chatViewModel.initialize();
@@ -796,20 +691,11 @@ void main() {
       final gateway = _RestoredStreamingGateway(
         restored: LocalChatSnapshot(sessionId: 'session-1', messages: messages),
       );
-      final viewModel = LocalChatViewModel(
+      await _pumpChatApp(
+        tester,
         gateway,
-        hostConnectionProbe: _FakeHostConnectionProbe([true]),
-        autoStart: false,
         requestIdFactory: () => 'scroll-request',
       );
-      await viewModel.initialize();
-      await tester.pumpWidget(
-        QiyuApp(
-          viewModel: viewModel,
-          onboardingViewModel: await _completedOnboardingViewModel(),
-        ),
-      );
-      await _settleMergedPage(tester);
 
       // 恢复后粘在会话尾部：最新一轮可见，最早一轮在视口外。
       expect(find.textContaining('回复第 23 条'), findsOneWidget);
@@ -929,89 +815,6 @@ final class _RecordingTtsSettingsGateway implements TtsSettingsGateway {
       const TtsConnectionTest(succeeded: true, message: '连接成功。');
 }
 
-final class _FakeLocalChatGateway implements StreamingLocalChatGateway {
-  _FakeLocalChatGateway({
-    this.restored = const LocalChatSnapshot(
-      sessionId: 'session-1',
-      messages: [],
-    ),
-    this.sendError,
-    this.failuresRemaining = 0,
-    this.replySources = const [ReplySource.local],
-  });
-
-  final LocalChatSnapshot restored;
-  final List<String> sentTexts = [];
-  final List<String> sentRequestIds = [];
-  final Object? sendError;
-  int failuresRemaining;
-
-  /// 每次发送对应的完成来源（超出后沿用最后一个），供降级→恢复的
-  /// 连续轮次测试。
-  final List<ReplySource> replySources;
-
-  @override
-  Future<LocalChatSnapshot> restore({String? sessionId}) async => restored;
-
-  @override
-  Future<bool> cancel(String requestId) async => true;
-
-  @override
-  Future<String> transcribe({
-    required Uint8List audio,
-    required String mimeType,
-  }) async => '语音测试转写';
-
-  @override
-  Stream<LocalChatDeliveryEvent> deliver({
-    required String requestId,
-    required String text,
-    String? sessionId,
-  }) async* {
-    sentTexts.add(text);
-    sentRequestIds.add(requestId);
-    if (sendError case final error? when failuresRemaining > 0) {
-      failuresRemaining -= 1;
-      throw error;
-    }
-    final source = switch (sentTexts.length - 1) {
-      final index when index < replySources.length => replySources[index],
-      _ => replySources.last,
-    };
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
-      requestId: requestId,
-      sessionId: restored.sessionId,
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
-      requestId: requestId,
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.delta,
-      requestId: requestId,
-      text: '咋了',
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
-      requestId: requestId,
-      messages: const ['咋了'],
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
-      requestId: requestId,
-      source: source,
-      fallbackReason: source == ReplySource.local
-          ? FallbackReason.noLlmConfig
-          : null,
-    );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
-      requestId: requestId,
-    );
-  }
-}
-
 final class _StreamingFakeLocalChatGateway
     implements StreamingLocalChatGateway {
   final _controller = StreamController<LocalChatDeliveryEvent>();
@@ -1073,29 +876,37 @@ final class _RestoredStreamingGateway implements StreamingLocalChatGateway {
   Future<LocalChatSnapshot> restore({String? sessionId}) async => restored;
 }
 
-final class _FakeHostConnectionProbe implements HostConnectionProbe {
-  _FakeHostConnectionProbe(this._results);
-
-  final List<bool> _results;
-  var _index = 0;
-
-  @override
-  Future<bool> isHostAvailable() async {
-    final result = _results[_index];
-    if (_index < _results.length - 1) {
-      _index += 1;
-    }
-    return result;
-  }
-}
-
 Future<OnboardingViewModel> _completedOnboardingViewModel() async {
   final viewModel = OnboardingViewModel(
-    _FakeOnboardingGateway(completed: true),
-    _FixedProviderSettingsGateway(),
+    FakeOnboardingGateway(completed: true),
+    FixedProviderSettingsGateway(),
     autoStart: false,
   );
   await viewModel.initialize();
+  return viewModel;
+}
+
+/// 装配合一页聊天应用：LocalChatViewModel（探活恒真）→ initialize → pumpWidget
+/// → _settleMergedPage；[requestIdFactory] 有无逐字透传给 ViewModel。
+Future<LocalChatViewModel> _pumpChatApp(
+  WidgetTester tester,
+  StreamingLocalChatGateway gateway, {
+  RequestIdFactory? requestIdFactory,
+}) async {
+  final viewModel = LocalChatViewModel(
+    gateway,
+    hostConnectionProbe: FakeHostConnectionProbe([true]),
+    autoStart: false,
+    requestIdFactory: requestIdFactory,
+  );
+  await viewModel.initialize();
+  await tester.pumpWidget(
+    QiyuApp(
+      viewModel: viewModel,
+      onboardingViewModel: await _completedOnboardingViewModel(),
+    ),
+  );
+  await _settleMergedPage(tester);
   return viewModel;
 }
 
@@ -1125,37 +936,6 @@ Future<void> _returnToHome(WidgetTester tester) async {
     router.routerDelegate.currentConfiguration.matches.last.matchedLocation,
     '/',
   );
-}
-
-final class _FakeOnboardingGateway implements OnboardingGateway {
-  _FakeOnboardingGateway({required this.completed});
-
-  bool completed;
-
-  @override
-  Future<OnboardingState> read() async => OnboardingState(completed: completed);
-
-  @override
-  Future<void> complete({String? appellation}) async {
-    completed = true;
-  }
-}
-
-final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {
-  @override
-  Future<ProviderSettings> read() async =>
-      const ProviderSettings(configured: false, keySet: false);
-
-  @override
-  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-
-  @override
-  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
-
-  @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
 }
 
 final class _FakeProviderSettingsGateway implements ProviderSettingsGateway {
@@ -1209,63 +989,18 @@ final class _FakeProviderSettingsGateway implements ProviderSettingsGateway {
   }
 }
 
-final class _FakeSettingsGateway implements SettingsGateway {
-  bool developerMode = false;
-  int clearCalls = 0;
-
-  @override
-  Future<ExperiencePreferences> readPreferences() async =>
-      ExperiencePreferences(developerMode: developerMode);
-
-  @override
-  Future<ExperiencePreferences> savePreferences({
-    required bool developerMode,
-  }) async {
-    this.developerMode = developerMode;
-    return ExperiencePreferences(developerMode: developerMode);
-  }
-
-  @override
-  Future<MemoryControlsOverview> readMemoryControls() async =>
-      const MemoryControlsOverview(
-        readable: true,
-        frozen: [],
-        banned: [],
-        deletedCount: 0,
+/// 设置网关替身：共享版之外补上本文件诊断快照的日终健康档位。
+class _FakeSettingsGateway extends FakeSettingsGateway {
+  _FakeSettingsGateway()
+    : super(
+        finalization: const FinalizationHealth(
+          today: '2026-08-19',
+          todayFinalized: false,
+          pendingDays: 0,
+          unreadableDays: 0,
+        ),
+        dream: const DreamHealth(),
       );
-
-  @override
-  Future<ClearPreview> readClearPreview() async => const ClearPreview(
-    memoryDirectory: 'C:/qiyu-test/memories',
-    sessionCount: 0,
-    episodeDayCount: 0,
-    frozenCount: 0,
-    bannedCount: 0,
-    deletedCount: 0,
-    snapshotCount: 0,
-    providerConfigured: false,
-    keySet: false,
-  );
-
-  @override
-  Future<void> clearData() async {
-    clearCalls += 1;
-  }
-
-  @override
-  Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
-    generatedAt: DateTime(2026, 8, 19),
-    memoryDirectory: 'C:/qiyu-test/memories',
-    recentRequests: const [],
-    finalization: const FinalizationHealth(
-      today: '2026-08-19',
-      todayFinalized: false,
-      pendingDays: 0,
-      unreadableDays: 0,
-    ),
-    dream: const DreamHealth(),
-    fileHealth: const {},
-  );
 }
 
 final class _FixedSttSettingsGateway implements SttSettingsGateway {

@@ -1,8 +1,12 @@
 import 'dart:typed_data';
 
-import 'model_gateway.dart';
 import 'provider_config.dart';
-import 'provider_settings_service.dart' show ProviderTestResult, ProviderTestStatus;
+import 'provider_settings_service.dart'
+    show
+        ProviderTestResult,
+        ProviderTestStatus,
+        providerTestMessage,
+        providerTestStatusFromFailureKind;
 import 'stt_gateway.dart';
 
 /// 语音服务设置快照：经 HTTP 返回时绝不携带明文 Key。
@@ -155,8 +159,16 @@ final class SttSettingsService {
         message: '连接成功，语音输入可以使用。',
       );
     } on SttGatewayException catch (error) {
-      final status = _sttTestStatus(error.kind);
-      return ProviderTestResult(status: status, message: _sttTestMessage(status));
+      final status = providerTestStatusFromFailureKind(error.kind);
+      return ProviderTestResult(
+        status: status,
+        message: providerTestMessage(
+          status,
+          serviceLabel: '语音服务',
+          successMessage: '连接成功，语音输入可以使用。',
+          notConfiguredMessage: '还没有保存语音服务配置。',
+        ),
+      );
     } on Object {
       return const ProviderTestResult(
         status: ProviderTestStatus.provider,
@@ -221,37 +233,6 @@ final class SttSettingsService {
     }
   }
 }
-
-ProviderTestStatus _sttTestStatus(ModelFailureKind kind) => switch (kind) {
-  ModelFailureKind.dns => ProviderTestStatus.dns,
-  ModelFailureKind.tls => ProviderTestStatus.tls,
-  ModelFailureKind.timeout => ProviderTestStatus.timeout,
-  ModelFailureKind.authentication => ProviderTestStatus.authentication,
-  ModelFailureKind.network => ProviderTestStatus.network,
-  ModelFailureKind.modelNotFound => ProviderTestStatus.modelNotFound,
-  ModelFailureKind.rateLimited => ProviderTestStatus.rateLimited,
-  ModelFailureKind.incompatibleResponse =>
-    ProviderTestStatus.incompatibleResponse,
-  ModelFailureKind.contentParsing => ProviderTestStatus.contentParsing,
-  ModelFailureKind.provider => ProviderTestStatus.provider,
-  ModelFailureKind.internal => ProviderTestStatus.internal,
-};
-
-String _sttTestMessage(ProviderTestStatus status) => switch (status) {
-  ProviderTestStatus.success => '连接成功，语音输入可以使用。',
-  ProviderTestStatus.notConfigured => '还没有保存语音服务配置。',
-  ProviderTestStatus.dns => '找不到语音服务域名，请检查地址或 DNS。',
-  ProviderTestStatus.tls => '语音服务的 TLS 安全连接失败。',
-  ProviderTestStatus.timeout => '连接语音服务超时。',
-  ProviderTestStatus.authentication => 'API Key 没有通过验证。',
-  ProviderTestStatus.network => '无法连接语音服务，请检查地址和网络。',
-  ProviderTestStatus.modelNotFound => '找不到这个模型，请检查模型名称。',
-  ProviderTestStatus.rateLimited => '语音服务请求过于频繁，请稍后再试。',
-  ProviderTestStatus.incompatibleResponse => '语音服务返回了不兼容的响应格式。',
-  ProviderTestStatus.contentParsing => '语音服务返回的内容无法解析。',
-  ProviderTestStatus.provider => '语音服务拒绝了测试请求。',
-  ProviderTestStatus.internal => '本机程序内部出错，请重试或重启栖语。',
-};
 
 /// 内置静音音频（16kHz、16-bit 单声道 WAV，约 0.25 秒）：连接测试代发
 /// 转写请求用。内容为纯静音，服务返回空文本属于正常结果。

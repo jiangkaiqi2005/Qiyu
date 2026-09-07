@@ -261,7 +261,7 @@ final class _RecordingTtsGateway implements TtsSettingsGateway {
   Future<TtsSettings> save(TtsSettingsDraft draft) async {
     saveCalls += 1;
     if (failSave) {
-      throw const ProviderSettingsException('语音朗读设置暂时不可用，请稍后重试。');
+      throw const ProviderSettingsGatewayException('语音朗读设置暂时不可用，请稍后重试。');
     }
     savedDrafts.add(draft);
     return TtsSettings(

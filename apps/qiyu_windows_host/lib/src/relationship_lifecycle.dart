@@ -8,6 +8,7 @@ import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 
 /// relationship.md 写入关预算（设计定稿：150-300 tokens，按 rune 上限保守计）。
 const relationshipMaxRunes = 300;
@@ -93,106 +94,6 @@ String relationshipStageBehaviorLine(RelationshipStage stage) =>
         '可以挑战用户的想法、引用共同的深层过往；用户低落时不逗。',
     };
 
-/// 从 relationship.md 解析出的受管结构。
-final class ParsedRelationship {
-  const ParsedRelationship({
-    required this.stage,
-    required this.since,
-    required this.confirmed,
-    required this.probes,
-    required this.recentChanges,
-  });
-
-  final RelationshipStage stage;
-  final String since;
-  final List<String> confirmed;
-  final List<String> probes;
-  final List<String> recentChanges;
-}
-
-/// 解析受管结构的 relationship.md；不是受管结构（用户手写其它内容）
-/// 返回 null，调用方一切写操作都必须原样保留该文件。
-ParsedRelationship? parseRelationshipFile(String contents) {
-  final lines = contents.replaceAll('\r\n', '\n').split('\n');
-  var sawHeader = false;
-  RelationshipStage? stage;
-  String? since;
-  String? description;
-  var section = '';
-  var inProbe = false;
-  final confirmed = <String>[];
-  final probes = <String>[];
-  final recent = <String>[];
-  for (final rawLine in lines) {
-    final trimmed = rawLine.trim();
-    if (trimmed.isEmpty) {
-      continue;
-    }
-    if (trimmed == '# relationship') {
-      sawHeader = true;
-      continue;
-    }
-    if (!sawHeader || (trimmed.startsWith('#') && !trimmed.startsWith('## '))) {
-      return null;
-    }
-    if (trimmed.startsWith('## ')) {
-      section = trimmed;
-      inProbe = false;
-      continue;
-    }
-    final stageMatch = RegExp(r'^stage\s*[:：]\s*(.+)$').firstMatch(trimmed);
-    if (stageMatch != null) {
-      final value = stageMatch.group(1)!.trim();
-      final known = RelationshipStage.values.any(
-        (candidate) => candidate.wireName == value,
-      );
-      if (!known) {
-        return null;
-      }
-      stage = parseRelationshipStage('stage: $value');
-      continue;
-    }
-    final sinceMatch = RegExp(
-      r'^since\s*[:：]\s*(\d{4}-\d{2}-\d{2})$',
-    ).firstMatch(trimmed);
-    if (sinceMatch != null) {
-      since = sinceMatch.group(1);
-      continue;
-    }
-    if (RegExp(r'^阶段描述\s*[:：]').hasMatch(trimmed)) {
-      description = trimmed;
-      continue;
-    }
-    if (section == '## 当前相处方式' &&
-        (trimmed == '已确认：' || trimmed == '待试探：')) {
-      inProbe = trimmed == '待试探：';
-      continue;
-    }
-    if (trimmed.startsWith('- ')) {
-      switch (section) {
-        case '## 当前相处方式':
-          (inProbe ? probes : confirmed).add(trimmed);
-          continue;
-        case '## 近期变化':
-          recent.add(trimmed);
-          continue;
-      }
-    }
-    // 受管结构之外的内容：视为手写文件，整体不可改写。
-    return null;
-  }
-  if (!sawHeader || stage == null || since == null || description == null) {
-    return null;
-  }
-  return ParsedRelationship(
-    stage: stage,
-    since: since,
-    confirmed: confirmed,
-    probes: probes,
-    recentChanges: recent,
-  );
-}
-
 /// 关系阶段与温度的生命周期（日终归档固定顺序第 3 步）。
 ///
 /// 定稿规则：
@@ -253,9 +154,9 @@ final class RelationshipLifecycle {
       );
     }
 
-    final evidence = await _collectEvidence(pipeline, episodeDates, date);
+    final collected = await _collectEvidence(pipeline, episodeDates, date);
     final today = localSessionDate(_clock());
-    final target = evaluateTargetStage(evidence);
+    final target = evaluateTargetStage(collected.evidence);
     var stage = parsed.stage;
     var since = parsed.since;
     // 棘轮 + 每次日终最多一级 + 单日上限：since 早于今天才允许升级。
@@ -289,9 +190,13 @@ final class RelationshipLifecycle {
     if (await file.exists()) {
       return false;
     }
-    final evidence = await _collectEvidence(pipeline, episodeDates, today);
+    // 证据与最早互动日期一次读取同时得出，不再为 since 全量重读。
+    final (:evidence, :earliest) = await _collectEvidence(
+      pipeline,
+      episodeDates,
+      today,
+    );
     final stage = evaluateTargetStage(evidence);
-    final earliest = await _earliestEpisodeDate(pipeline, episodeDates);
     final since = earliest ?? today;
     final signals = await _collectSignals(pipeline, episodeDates);
     final contents = _compose(
@@ -306,7 +211,10 @@ final class RelationshipLifecycle {
     return true;
   }
 
-  Future<RelationshipEvidence> _collectEvidence(
+  /// 全量读取 day 文件：阶段证据与最早互动日期（两处 earliest 判定
+  /// 原本逐字相同）一次得出，重建路径借此省掉一次全量重读。
+  Future<({RelationshipEvidence evidence, String? earliest})>
+  _collectEvidence(
     EpisodeMemoryPipeline pipeline,
     List<String> episodeDates,
     String upTo,
@@ -335,12 +243,18 @@ final class RelationshipLifecycle {
     }
     final spanDays = earliest == null
         ? 0
-        : _parseDate(upTo).difference(_parseDate(earliest)).inDays + 1;
-    return RelationshipEvidence(
-      totalEntries: totalEntries,
-      activeDays: activeDates.length,
-      spanDays: spanDays,
-      deepTalkSignals: deepTalk,
+        : parseLocalSessionDate(upTo)
+              .difference(parseLocalSessionDate(earliest))
+              .inDays +
+              1;
+    return (
+      evidence: RelationshipEvidence(
+        totalEntries: totalEntries,
+        activeDays: activeDates.length,
+        spanDays: spanDays,
+        deepTalkSignals: deepTalk,
+      ),
+      earliest: earliest,
     );
   }
 
@@ -391,7 +305,7 @@ final class RelationshipLifecycle {
               summary.trim().isEmpty) {
             continue;
           }
-          final parsedDate = _parseDate(date);
+          final parsedDate = parseLocalSessionDate(date);
           entries.add(
             EpisodeEntry(
               id: 'finalize:$date:signal:$index',
@@ -430,22 +344,8 @@ final class RelationshipLifecycle {
 
   /// 已确认/待试探：按规范化摘要去重（同一边界只留最新证据），
   /// 按时间保留最近的几条。
-  List<String> _projectBoundaries(List<EpisodeEntry> entries, int max) {
-    final byKey = <String, EpisodeEntry>{};
-    for (final entry in entries) {
-      final key = normalizeRelationshipLine(entry.summary);
-      if (key.isNotEmpty) {
-        byKey[key] = entry;
-      }
-    }
-    final sorted = byKey.values.toList()
-      ..sort((left, right) => left.at.compareTo(right.at));
-    final overflow = sorted.length - max;
-    return sorted
-        .skip(overflow > 0 ? overflow : 0)
-        .map(_boundaryLine)
-        .toList();
-  }
+  List<String> _projectBoundaries(List<EpisodeEntry> entries, int max) =>
+      _keepLatest(entries, max).map(_boundaryLine).toList();
 
   String _boundaryLine(EpisodeEntry entry) {
     final summary = clipRunes(entry.summary.trim(), relationshipLineMaxRunes);
@@ -459,7 +359,16 @@ final class RelationshipLifecycle {
   }
 
   /// 近期变化：深谈与冷暖信号投影为带日期的自然抽象状态，新换旧。
-  List<String> _projectRecentChanges(List<EpisodeEntry> entries) {
+  List<String> _projectRecentChanges(List<EpisodeEntry> entries) =>
+      _keepLatest(entries, relationshipRecentMax).map((entry) {
+        final date = localSessionDate(entry.at.toLocal());
+        return '- $date '
+            '${clipRunes(entry.summary.trim(), relationshipLineMaxRunes)}';
+      }).toList();
+
+  /// 投影前置（已确认/待试探/近期变化共用）：按规范化摘要去重（同
+  /// 一摘要只留最新一条）→ 按时间升序 → 截尾保留最近 [max] 条。
+  List<EpisodeEntry> _keepLatest(List<EpisodeEntry> entries, int max) {
     final byKey = <String, EpisodeEntry>{};
     for (final entry in entries) {
       final key = normalizeRelationshipLine(entry.summary);
@@ -469,15 +378,8 @@ final class RelationshipLifecycle {
     }
     final sorted = byKey.values.toList()
       ..sort((left, right) => left.at.compareTo(right.at));
-    final overflow = sorted.length - relationshipRecentMax;
-    return sorted
-        .skip(overflow > 0 ? overflow : 0)
-        .map((entry) {
-          final date = localSessionDate(entry.at.toLocal());
-          return '- $date '
-              '${clipRunes(entry.summary.trim(), relationshipLineMaxRunes)}';
-        })
-        .toList();
+    final overflow = sorted.length - max;
+    return sorted.skip(overflow > 0 ? overflow : 0).toList();
   }
 
   /// 阶段描述：阶段行为边界 + 该用户的可追溯事实（认识时长）。
@@ -491,7 +393,9 @@ final class RelationshipLifecycle {
     if (stage == RelationshipStage.stranger) {
       return base;
     }
-    final days = _parseDate(date).difference(_parseDate(since)).inDays;
+    final days = parseLocalSessionDate(date)
+        .difference(parseLocalSessionDate(since))
+        .inDays;
     if (days <= 0) {
       return base;
     }
@@ -625,12 +529,6 @@ final class _RelationshipSignals {
 /// 并统一大小写）；不改变落盘原文。
 String normalizeRelationshipLine(String value) => normalizeMemoryText(value);
 
-DateTime _parseDate(String date) => DateTime(
-  int.parse(date.substring(0, 4)),
-  int.parse(date.substring(5, 7)),
-  int.parse(date.substring(8, 10)),
-);
-
 /// 从 relationship.md 解析关系阶段；缺失或不可识别按初识处理。
 RelationshipStage parseRelationshipStage(String? contents) {
   if (contents == null) {
@@ -644,10 +542,5 @@ RelationshipStage parseRelationshipStage(String? contents) {
     return RelationshipStage.stranger;
   }
   final value = match.group(1)!.trim();
-  for (final stage in RelationshipStage.values) {
-    if (stage.wireName == value) {
-      return stage;
-    }
-  }
-  return RelationshipStage.stranger;
+  return relationshipStageFromWire(value) ?? RelationshipStage.stranger;
 }

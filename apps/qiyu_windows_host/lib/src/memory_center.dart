@@ -1,18 +1,13 @@
 import 'dart:collection';
-import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
-
-import 'package:path/path.dart' as path;
 
 import 'dream.dart';
-import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
 import 'memory_recovery.dart';
+import 'memory_text_primitives.dart';
 import 'persona_tree.dart';
-import 'relationship_lifecycle.dart';
 
 /// 「最近发生」区回看的窗口（天）：只展示近期整理记录，更早的内容
 /// 由月摘要与长期印象覆盖，不在本区重复。
@@ -714,24 +709,37 @@ final class MemoryCenterService {
     quarantinedFiles: 0,
   );
 
-  File get _longMemoryFile =>
-      File(path.join(memoryDirectory, 'long-memory.md'));
+  File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _relationshipFile =>
-      File(path.join(memoryDirectory, 'relationship.md'));
+      memoryFile(memoryDirectory, relationshipFileName);
 
   /// 四区总览。每次调用都从磁盘重新读取，不缓存正文。
   Future<MemoryCenterOverview> overview() async {
     final controls = await memoryControls.load();
     final frozen = controls.frozenSummaries;
     final blocked = controls.blockedSummaries;
+    // long-memory.md 只读一次解析一次：长期印象与「我们的关系·共同
+    // 过往」共用同一快照，并发写入窗口内不会出现两区各读各的。
+    final longMemory = _parseLongMemoryFile(
+      await readFileIfExists(_longMemoryFile),
+    );
     return MemoryCenterOverview(
       generatedAt: _clock().toUtc(),
       recent: await _recentSection(frozen, blocked),
-      longTerm: await _longTermSection(frozen, blocked),
+      longTerm: await _longTermSection(frozen, blocked, longMemory),
       persona: await _personaSection(frozen, blocked),
-      relationship: await _relationshipSection(frozen, blocked),
+      relationship: await _relationshipSection(frozen, blocked, longMemory),
       recovery: await _recoverySection(),
     );
+  }
+
+  /// long-memory.md 原文 → 解析结果；文件缺失或内容为空时为 null。
+  LongMemoryFile? _parseLongMemoryFile(String? contents) {
+    final trimmed = contents?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    return parseLongMemory(trimmed);
   }
 
   /// 恢复区只读最近一次持久化报告；报告缺失（从未触发或不可读）
@@ -825,11 +833,10 @@ final class MemoryCenterService {
   Future<MemoryLongTermSection> _longTermSection(
     Set<String> frozen,
     Set<String> blocked,
+    LongMemoryFile? longMemory,
   ) async {
     final state = await dreamService.readState();
-    final contents = await readFileIfExists(_longMemoryFile);
-    final trimmed = contents?.trim() ?? '';
-    if (trimmed.isEmpty) {
+    if (longMemory == null) {
       return MemoryLongTermSection(
         present: false,
         readable: true,
@@ -837,8 +844,7 @@ final class MemoryCenterService {
         groups: const [],
       );
     }
-    final parsed = parseLongMemory(trimmed);
-    if (!parsed.readable) {
+    if (!longMemory.readable) {
       return MemoryLongTermSection(
         present: true,
         readable: false,
@@ -848,24 +854,31 @@ final class MemoryCenterService {
     }
     // 「共同过往」归入「我们的关系」区，长期印象只展示其余三分区；
     // 空分区不出现，没有内容的分区由诚实空状态承担。
-    final groups = [
-      for (final section in longMemorySections)
-        if (section != '共同过往' &&
-            (parsed.sections[section] ?? const <String>[]).isNotEmpty)
-          MemoryLongTermGroup(
-            section: section,
-            items: (parsed.sections[section] ?? const <String>[])
-                .map(
-                  (item) => _longTermItem(
-                    MemoryLongTermRef(section, item),
-                    item,
-                    frozen,
-                    blocked,
-                  ),
-                )
-                .toList(),
-          ),
-    ];
+    final groups = <MemoryLongTermGroup>[];
+    for (final section in longMemorySections) {
+      if (section == '共同过往') {
+        continue;
+      }
+      final items = longMemory.sections[section] ?? const <String>[];
+      if (items.isEmpty) {
+        continue;
+      }
+      groups.add(
+        MemoryLongTermGroup(
+          section: section,
+          items: items
+              .map(
+                (item) => _longTermItem(
+                  MemoryLongTermRef(section, item),
+                  item,
+                  frozen,
+                  blocked,
+                ),
+              )
+              .toList(),
+        ),
+      );
+    }
     return MemoryLongTermSection(
       present: true,
       readable: true,
@@ -928,8 +941,9 @@ final class MemoryCenterService {
   Future<MemoryRelationshipSection> _relationshipSection(
     Set<String> frozen,
     Set<String> blocked,
+    LongMemoryFile? longMemory,
   ) async {
-    final sharedPast = await _sharedPastItems(frozen, blocked);
+    final sharedPast = _sharedPastItems(frozen, blocked, longMemory);
     final contents = await readFileIfExists(_relationshipFile);
     final parsed = contents == null ? null : parseRelationshipFile(contents);
     if (parsed == null) {
@@ -964,20 +978,15 @@ final class MemoryCenterService {
     );
   }
 
-  Future<List<MemoryLongTermItem>> _sharedPastItems(
+  List<MemoryLongTermItem> _sharedPastItems(
     Set<String> frozen,
     Set<String> blocked,
-  ) async {
-    final contents = await readFileIfExists(_longMemoryFile);
-    final trimmed = contents?.trim() ?? '';
-    if (trimmed.isEmpty) {
+    LongMemoryFile? longMemory,
+  ) {
+    if (longMemory == null || !longMemory.readable) {
       return const [];
     }
-    final parsed = parseLongMemory(trimmed);
-    if (!parsed.readable) {
-      return const [];
-    }
-    return (parsed.sections['共同过往'] ?? const <String>[])
+    return (longMemory.sections['共同过往'] ?? const <String>[])
         .map(
           (item) => _longTermItem(
             MemoryLongTermRef('共同过往', item),
@@ -1277,17 +1286,11 @@ final class MemoryCenterService {
   }
 
   String _register(MemoryItemRef ref) {
-    final id = _newOpaqueId();
+    final id = newOpaqueId();
     _registry[id] = ref;
     while (_registry.length > _memoryCenterRegistryCapacity) {
       _registry.remove(_registry.keys.first);
     }
     return id;
   }
-}
-
-String _newOpaqueId() {
-  final random = Random.secure();
-  final bytes = List<int>.generate(18, (_) => random.nextInt(256));
-  return base64Url.encode(bytes).replaceAll('=', '');
 }

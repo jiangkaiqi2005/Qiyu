@@ -730,9 +730,10 @@ final class MemoryDeleteImpact {
   final bool sessionsKept;
 }
 
-final class MemoryGatewayException implements Exception {
+final class MemoryGatewayException implements Exception, UserFacingException {
   const MemoryGatewayException(this.message);
 
+  @override
   final String message;
 
   @override

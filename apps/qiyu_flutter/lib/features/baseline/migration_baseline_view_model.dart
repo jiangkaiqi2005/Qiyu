@@ -47,7 +47,8 @@ final class MigrationBaselineViewModel extends ChangeNotifier {
     }
   }
 
-  bool get behaviorCoreConnected {
+  /// 行为核心预检：每次调用实跑一次 reply() 探测，非缓存状态。
+  bool checkBehaviorCore() {
     final result = _behaviorCore.reply(
       const ChatRequest(requestId: 'flutter-preflight', text: '我到家了'),
       StateSnapshot.initial('local-user'),

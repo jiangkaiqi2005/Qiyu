@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
-import 'episode_index.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_text_primitives.dart';
 
 /// memory-controls.md 的一条控制记录：稳定 ID（删除后不复用）、
 /// 原归属与安全摘要。删除记录存的是抽象防复活范围，绝不保留原内容。
@@ -136,22 +136,22 @@ final class MemoryControlsStore {
   /// 「删除后不复用」约束的是活文件内部）。
   Future<bool> replaceForRecovery(MemoryControls controls) =>
       _withLock(() async {
-        String line(MemoryControlEntry entry) =>
-            '- [MC${entry.id.toString().padLeft(3, '0')}] '
-            '${entry.origin} | ${entry.summary}';
         final buffer = StringBuffer()
           ..writeln('# memory-controls')
           ..writeln('## frozen');
+        void writelnEntry(MemoryControlEntry entry) => buffer.writeln(
+          _formatControlEntry(entry.id, entry.origin, entry.summary),
+        );
         for (final entry in controls.frozen) {
-          buffer.writeln(line(entry));
+          writelnEntry(entry);
         }
         buffer.writeln('## banned');
         for (final entry in controls.banned) {
-          buffer.writeln(line(entry));
+          writelnEntry(entry);
         }
         buffer.writeln('## deleted');
         for (final entry in controls.deleted) {
-          buffer.writeln(line(entry));
+          writelnEntry(entry);
         }
         try {
           await _atomicWriter.replace(controlsFile.path, buffer.toString());
@@ -247,6 +247,11 @@ final class MemoryControlsStore {
         }
       });
 
+  /// 控制记录行渲染（写入端单一出处）：恢复重建与追加记录共用，
+  /// 形态与解析端 `_controlEntryPattern` 对齐。
+  String _formatControlEntry(int id, String origin, String summary) =>
+      '- [MC${id.toString().padLeft(3, '0')}] $origin | $summary';
+
   /// 解除匹配只认精确相等（与写侧幂等检查对称）：过度屏蔽是保守，
   /// 过度解除不是——解除 A 连带解除 B 违背「只能由明确操作解除」。
   bool _entryMatches(String line, String normalizedSummary) {
@@ -283,8 +288,7 @@ final class MemoryControlsStore {
         .allMatches(base)
         .map((match) => int.tryParse(match.group(1)!) ?? 0)
         .fold<int>(0, (max, value) => value > max ? value : max);
-    final line =
-        '- [MC${(maxId + 1).toString().padLeft(3, '0')}] $origin | $summary';
+    final line = _formatControlEntry(maxId + 1, origin, summary);
     final header = RegExp('^${RegExp.escape(section)}\\s*\$', multiLine: true);
     if (header.hasMatch(base)) {
       return base.replaceFirstMapped(header, (_) => '$section\n$line');
@@ -368,12 +372,6 @@ bool bannedTitleMatches(String normalizedText, Set<String> bannedTitles) {
   }
   return false;
 }
-
-/// 记忆原文级的受控筛查谓词：先经 [normalizeMemoryText] 归一化，再按
-/// [bannedTitleMatches] 的包含规则匹配。注入过滤、提炼闸门与删除清除
-/// 的「原文 + 受控集合」判断统一走这里，不再各自拼组合。
-bool bannedMemoryText(String text, Set<String> bannedTitles) =>
-    bannedTitleMatches(normalizeMemoryText(text), bannedTitles);
 
 /// 行级受控过滤：列表行（`- ` 开头）命中 [controlled] 即丢弃，其余
 /// 原样保留；null 原样返回。relationship.md / daily-state.md 这类

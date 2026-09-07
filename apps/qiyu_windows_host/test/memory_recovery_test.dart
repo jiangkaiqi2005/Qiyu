@@ -6,6 +6,8 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/scripted_chat_client.dart';
+
 void main() {
   late Directory temporaryDirectory;
   late String memoryDirectory;
@@ -208,6 +210,15 @@ void main() {
     return directory.listSync().whereType<File>().length;
   }
 
+  /// setUp 未装配的两样由用例按需构造；参数与其余组件逐字一致。
+  EpisodeIndexStore episodeIndexStore() => EpisodeIndexStore(
+    memoryDirectory: memoryDirectory,
+    episodePipeline: pipeline,
+  );
+
+  MarkdownMemoryRepository markdownMemoryRepository() =>
+      MarkdownMemoryRepository(memoryDirectory: memoryDirectory);
+
   group('sessions', () {
     test('截断会话按完整对话块抢救，隔离原件保留', () async {
       final file = await seedSession('2026-08-05', 1, [
@@ -225,9 +236,7 @@ void main() {
 
       final report = await recovery.sweepAndRecover();
 
-      final listing = await MarkdownMemoryRepository(
-        memoryDirectory: memoryDirectory,
-      ).readHistory();
+      final listing = await markdownMemoryRepository().readHistory();
       expect(listing.sessions, hasLength(1));
       expect(listing.sessions.single.turns, hasLength(2));
       expect(listing.unavailable, isEmpty);
@@ -269,9 +278,7 @@ void main() {
         ).existsSync(),
         isFalse,
       );
-      final listing = await MarkdownMemoryRepository(
-        memoryDirectory: memoryDirectory,
-      ).readHistory();
+      final listing = await markdownMemoryRepository().readHistory();
       expect(listing.sessions, hasLength(1));
       expect(listing.sessions.single.date, '2026-08-04');
 
@@ -469,10 +476,7 @@ void main() {
         summary: '演讲准备中',
         finalized: false,
       );
-      final indexStore = EpisodeIndexStore(
-        memoryDirectory: memoryDirectory,
-        episodePipeline: pipeline,
-      );
+      final indexStore = episodeIndexStore();
       expect(await indexStore.readTopIndex(), isNull);
 
       final report = await recovery.sweepAndRecover();
@@ -500,10 +504,7 @@ void main() {
         summary: '完成演讲',
         finalized: true,
       );
-      final indexStore = EpisodeIndexStore(
-        memoryDirectory: memoryDirectory,
-        episodePipeline: pipeline,
-      );
+      final indexStore = episodeIndexStore();
       // 先只建立 2026-08-04 的索引，制造 2026-08-05 的真实 stale
       await pipeline.synchronizedOnDayFiles(() => indexStore.rebuild());
       final monthFile = indexStore.monthIndexFile('2026-08');
@@ -535,10 +536,7 @@ void main() {
       await seedEpisodeDay('2026-08-05', [
         entry('2026-08-05', 'e1', '用户在准备演讲'),
       ], summary: '演讲');
-      final indexStore = EpisodeIndexStore(
-        memoryDirectory: memoryDirectory,
-        episodePipeline: pipeline,
-      );
+      final indexStore = episodeIndexStore();
       await pipeline.synchronizedOnDayFiles(() => indexStore.rebuild());
       expect(await indexStore.readTopIndex(), isNotNull);
       await overwrite(indexStore.topIndexFile, '索引乱码');
@@ -569,10 +567,7 @@ void main() {
         summary: '未归档',
         finalized: false,
       );
-      final indexStore = EpisodeIndexStore(
-        memoryDirectory: memoryDirectory,
-        episodePipeline: pipeline,
-      );
+      final indexStore = episodeIndexStore();
       await overwrite(indexStore.topIndexFile, '顶层索引乱码');
 
       final report = await recovery.sweepAndRecover();
@@ -588,10 +583,7 @@ void main() {
       await seedEpisodeDay('2026-08-05', [
         entry('2026-08-05', 'e1', '用户在准备演讲'),
       ], summary: '演讲');
-      final indexStore = EpisodeIndexStore(
-        memoryDirectory: memoryDirectory,
-        episodePipeline: pipeline,
-      );
+      final indexStore = episodeIndexStore();
       await pipeline.synchronizedOnDayFiles(() => indexStore.rebuild());
       final monthFile = indexStore.monthIndexFile('2026-08');
       await overwrite(
@@ -617,10 +609,7 @@ void main() {
       await seedEpisodeDay('2026-08-05', [
         entry('2026-08-05', 'e1', '用户在准备演讲'),
       ], summary: '演讲');
-      final indexStore = EpisodeIndexStore(
-        memoryDirectory: memoryDirectory,
-        episodePipeline: pipeline,
-      );
+      final indexStore = episodeIndexStore();
       expect(await indexStore.readTopIndex(), isNull);
 
       final report = await recovery.sweepAndRecover();
@@ -639,10 +628,7 @@ void main() {
         summary: '写方案',
         finalized: false,
       );
-      final indexStore = EpisodeIndexStore(
-        memoryDirectory: memoryDirectory,
-        episodePipeline: pipeline,
-      );
+      final indexStore = episodeIndexStore();
 
       // 第一步：先运行恢复扫描
       final firstReport = await recovery.sweepAndRecover();
@@ -968,14 +954,17 @@ void main() {
         openLoopStore: openLoopStore,
         monthlySummary: monthlySummary,
         personaTree: personaTree,
-        modelClient: _ScriptedClient([
-          ModelCompletion.reply(
-            '{"items":[{"section":"人与关系","text":"一条印象",'
-            '"evidence":["2026-08-05"]}],'
-            '"rootProposals":[{"op":"promote","branch":"identity",'
-            '"claim":"用户是一名教师","middles":["ID-M001"]}]}',
-          ),
-        ]),
+        modelClient: ScriptedChatClient(
+          [
+            ModelCompletion.reply(
+              '{"items":[{"section":"人与关系","text":"一条印象",'
+              '"evidence":["2026-08-05"]}],'
+              '"rootProposals":[{"op":"promote","branch":"identity",'
+              '"claim":"用户是一名教师","middles":["ID-M001"]}]}',
+            ),
+          ],
+          repeatLastOnOverflow: false,
+        ),
         clock: () => clock,
         diagnosticsSink: diagnostics.add,
       );
@@ -1226,23 +1215,4 @@ void main() {
       expect(quarantineOnlyReport.healthy, isFalse);
     });
   });
-}
-
-/// 供 Dream 测试使用的脚本化模型客户端。
-final class _ScriptedClient implements ProviderChatClient {
-  _ScriptedClient(this.completions);
-
-  final List<ModelCompletion?> completions;
-  var _index = 0;
-
-  @override
-  Future<ModelCompletion?> complete(
-    List<ModelMessage> messages, {
-    int? maxTokens,
-  }) async {
-    if (_index >= completions.length) {
-      return null;
-    }
-    return completions[_index++];
-  }
 }

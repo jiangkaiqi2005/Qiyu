@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'markdown_memory_repository.dart';
@@ -29,19 +28,7 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
     required String text,
   }) async {
     config.validate();
-    final key = apiKey?.trim();
-    if (key == null || key.isEmpty) {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.authentication,
-        message: '还没有保存语音合成服务的 API Key。',
-      );
-    }
-    if (containsNonVisibleAscii(key)) {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.provider,
-        message: 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。',
-      );
-    }
+    final key = requireTtsApiKey(apiKey);
     final uri = Uri.parse(config.baseUrl.trim());
     ensureTtsOutboundAllowed(uri);
     final speaker = config.voice?.trim();
@@ -69,77 +56,34 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
       if (config.speed != null) 'speed_ratio': config.speed,
     };
     final body = jsonEncode({'req_params': reqParams});
-    final ProviderBytesHttpResponse response;
-    try {
-      response = await httpClient.postBytes(
-        uri: uri,
-        headers: {
-          'X-Api-Key': key,
-          // 模型名称字段填的就是 Resource-Id（如 seed-tts-2.0）。
-          'X-Api-Resource-Id': config.model.trim(),
-          'X-Control-Require-Usage-Tokens-Return': '*',
-          'content-type': 'application/json',
-        },
-        body: utf8.encode(body),
-        timeout: ttsRequestTimeout,
-      );
-    } on TimeoutException {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.timeout,
-        message: '连接语音合成服务超时。',
-      );
-    } on HandshakeException {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.tls,
-        message: '语音合成服务的 TLS 安全连接失败。',
-      );
-    } on SocketException catch (error) {
-      throw _fromModelFailure(
-        providerSocketFailure(error, serviceLabel: '语音合成服务'),
-      );
-    } on HttpException {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.network,
-        message: '语音合成服务连接中断。',
-      );
-    } on Object catch (error) {
-      stderrDiagnostics('tts unclassified exception: ${error.runtimeType}');
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.internal,
-        message: '本机程序内部出错。',
-      );
-    }
+    final response = await postTtsBytes(
+      httpClient: httpClient,
+      uri: uri,
+      headers: {
+        'X-Api-Key': key,
+        // 模型名称字段填的就是 Resource-Id（如 seed-tts-2.0）。
+        'X-Api-Resource-Id': config.model.trim(),
+        'X-Control-Require-Usage-Tokens-Return': '*',
+        'content-type': 'application/json',
+      },
+      body: utf8.encode(body),
+    );
     // 官方接入建议：记录 X-Tt-Logid 便于排查（只进本机诊断）。
     if (response.headers['x-tt-logid'] case final logid?) {
       stderrDiagnostics('tts volc logid: $logid');
     }
 
-    final buffer = BytesBuilder(copy: false);
-    try {
-      await for (final chunk in response.body) {
-        buffer.add(chunk);
-      }
-    } on TimeoutException {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.timeout,
-        message: '语音合成服务响应超时。',
-      );
-    } on Object {
-      throw const TtsGatewayException(
-        kind: ModelFailureKind.network,
-        message: '语音合成服务连接中断。',
-      );
-    }
+    final bytes = await consumeTtsBytesResponse(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw _fromModelFailure(
         providerStatusFailure(
           response.statusCode,
-          latin1.decode(buffer.takeBytes(), allowInvalid: true),
+          latin1.decode(bytes, allowInvalid: true),
           serviceLabel: '语音合成服务',
         ),
       );
     }
-    return _parseChunkedAudio(buffer.takeBytes());
+    return _parseChunkedAudio(bytes);
   }
 
   /// 聚合 chunked 逐行 JSON 响应为完整音频字节。

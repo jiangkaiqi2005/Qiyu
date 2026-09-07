@@ -178,23 +178,12 @@ class _QiyuShellState extends State<QiyuShell>
     context.go(location);
   }
 
-  /// **回合一页**。目的地固定为 `/`（不是「回来时那页」），语义与退役前的
-  /// `_goHome` 一致，同样先无条件停播。合一页是首页与对话页的同一个页面，所以
-  /// 本次会话已有消息时落回的仍是消息流——不借这个动作新建会话（用户裁定，见
-  /// 决策日志第五轮 #8 与 Spec Story 6 的 2026-08-30 收口；要做到字面上的「回
-  /// 空状态首页」只能引入新建会话，那是行为改动，越出换皮范围）。
-  ///
-  /// 消费方（2026-08-31 二次裁定起）：**只剩窄屏抽屉的品牌槽**。桌面不设任何
-  /// 「回合一页」入口——品牌图标是侧边栏的常驻纯开合开关，点击不导航。
-  void _goHome() {
-    _chatViewModel(context)?.voiceOutput.stopAll();
-    context.go('/');
-  }
-
   @override
   Widget build(BuildContext context) {
     final viewport = MediaQuery.sizeOf(context);
-    final desktop = viewport.width >= QiyuLayout.desktopBreakpoint;
+    // 判窄走 [QiyuTypography.isNarrow] 一道缝：壳层抽屉与窄屏字阶、页头返回
+    // 键让位共用同一判据，不会出现半窄状态。
+    final desktop = !QiyuTypography.isNarrow(context);
     final homeBackdrop =
         widget.showHomeBackdrop &&
         context.select<LocalChatViewModel, bool>(
@@ -405,7 +394,13 @@ class _QiyuShellState extends State<QiyuShell>
                 },
                 onHome: () {
                   unawaited(_setDrawer(false));
-                  _goHome();
+                  // 回合一页：目的地固定 `/`（不是「回来时那页」），先无条件
+                  // 停播（[_goTo]）。合一页是首页与对话页的同一个页面，本次
+                  // 会话已有消息时落回的仍是消息流——不借这个动作新建会话
+                  // （决策日志第五轮 #8；要做到字面上的「回空状态首页」只能
+                  // 引入新建会话，那是行为改动）。全应用消费方只有这一处
+                  // 品牌槽，桌面不设「回合一页」入口（品牌图标只是开合开关）。
+                  _goTo('/');
                 },
               ),
             ),
@@ -470,20 +465,21 @@ class _QiyuShellState extends State<QiyuShell>
 class QiyuShellScope extends InheritedWidget {
   const QiyuShellScope({super.key, required super.child});
 
-  static bool isPresent(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<QiyuShellScope>() != null;
-
   /// 页面该不该撤掉自己的返回箭头：**只在窄屏**。
   ///
   /// 窄屏的三条杠浮在左上角，与页内返回箭头叠在同一个位置，这时导航交给
   /// 抽屉。桌面不撤：侧边栏在内容列之外的另一栏，两者不相交，而「回到打开
   /// 这一页的那一层」这条语义只有页内箭头给得出（壳的抽屉品牌槽回的是合一页，
   /// 不必然是空状态；桌面品牌图标只是开合开关，根本没有返回语义）。
+  ///
+  /// dependOnInheritedWidgetOfExactType 的调用同时完成依赖注册：被壳包住的
+  /// 页面据此在壳出现/消失时收到通知，判窄则走 [QiyuTypography.isNarrow]
+  /// 同一道缝。
   static bool coversFrontNavigation(BuildContext context) {
-    if (!isPresent(context)) {
+    if (context.dependOnInheritedWidgetOfExactType<QiyuShellScope>() == null) {
       return false;
     }
-    return MediaQuery.sizeOf(context).width < QiyuLayout.desktopBreakpoint;
+    return QiyuTypography.isNarrow(context);
   }
 
   /// 页头左侧要为三条杠**再补**的内缩：被壳包住（窄屏）时是它的横向占位，

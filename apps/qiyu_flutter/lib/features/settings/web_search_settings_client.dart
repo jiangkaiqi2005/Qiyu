@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import '../baseline/host_api_gateway.dart';
 
 final class WebSearchSettings {
@@ -23,9 +21,9 @@ final class WebSearchSettingsDraft {
   Map<String, Object?> toJson() => {'apiKey': ?apiKey};
 }
 
-final class WebSearchSettingsException
+final class WebSearchSettingsGatewayException
     implements Exception, UserFacingException {
-  const WebSearchSettingsException(this.message);
+  const WebSearchSettingsGatewayException(this.message);
 
   @override
   final String message;
@@ -47,34 +45,24 @@ final class HttpWebSearchSettingsGateway extends HostApiGateway
   HttpWebSearchSettingsGateway({super.client, super.baseUri});
 
   @override
-  Object errorFor(String message) => WebSearchSettingsException(message);
+  Object errorFor(String message) =>
+      WebSearchSettingsGatewayException(message);
 
   @override
   String get unavailableMessage => '联网搜索设置暂时不可用，请稍后重试。';
 
   @override
-  Future<WebSearchSettings> read() async {
-    await ensureBootstrap();
-    final response = await httpClient.get(resolve('/api/provider/web-search'));
-    return WebSearchSettings.fromJson(decodeSuccess(response));
-  }
+  Future<WebSearchSettings> read() =>
+      getJson('/api/provider/web-search', WebSearchSettings.fromJson);
 
   @override
-  Future<WebSearchSettings> save(WebSearchSettingsDraft draft) async {
-    final response = await httpClient.put(
-      resolve('/api/provider/web-search'),
-      headers: await modifyingHeaders(),
-      body: jsonEncode(draft.toJson()),
-    );
-    return WebSearchSettings.fromJson(decodeSuccess(response));
-  }
+  Future<WebSearchSettings> save(WebSearchSettingsDraft draft) => putJson(
+    '/api/provider/web-search',
+    draft.toJson(),
+    WebSearchSettings.fromJson,
+  );
 
   @override
-  Future<WebSearchSettings> forgetApiKey() async {
-    final response = await httpClient.delete(
-      resolve('/api/provider/web-search/key'),
-      headers: await modifyingHeaders(),
-    );
-    return WebSearchSettings.fromJson(decodeSuccess(response));
-  }
+  Future<WebSearchSettings> forgetApiKey() =>
+      deleteJson('/api/provider/web-search/key', WebSearchSettings.fromJson);
 }

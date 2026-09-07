@@ -5,13 +5,13 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'daily_finalization.dart';
 import 'developer_diagnostics.dart';
 import 'dream.dart';
-import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
 import 'memory_controls.dart';
 import 'memory_recall.dart';
 import 'memory_recovery.dart';
+import 'memory_text_primitives.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'monthly_summary.dart';
@@ -152,9 +152,9 @@ final class LocalChatService {
   final MonthlySummaryStore? monthlySummary;
 
   /// Dream（ticket 16，五段节奏第五动作）：晚安后且距上次成功至少
-  /// 七天时深度重组产出长期印象；启动或跨天首条消息时补跑上次晚安
-  /// 未成功的请求。与日终归档、月压缩挂同一条后台任务链，保证只看到
-  /// finalized 材料。
+  /// [dreamMinIntervalDays] 天时深度重组产出长期印象；启动或跨天首条
+  /// 消息时补跑上次晚安未成功的请求。与日终归档、月压缩挂同一条后台
+  /// 任务链，保证只看到 finalized 材料。
   final DreamService? dreamService;
 
   /// 开发者诊断最近请求记录器（ticket 23）：只记来源、结果与脱敏
@@ -183,13 +183,7 @@ final class LocalChatService {
     // 受损层跳过，绝不阻塞首个可见回应。
     final recovery = memoryRecovery;
     if (recovery != null) {
-      _finalizationTask = _finalizationTask.then((_) async {
-        try {
-          await recovery.sweepAndRecover();
-        } on Object catch (error) {
-          _diagnosticsSink('memory recovery deferred [$error]');
-        }
-      });
+      _chainFinalizationStep('memory recovery', recovery.sweepAndRecover);
     }
     // 启动补扫：发现 finalized 仍为 false 的历史日期并安全补做日终归档。
     // 后台执行，绝不阻塞首个可见回应。
@@ -200,9 +194,21 @@ final class LocalChatService {
     );
     // 启动也补做月压缩：跨月停机后重新打开时，上月摘要在这里补齐。
     _scheduleMonthlyCompression();
-    // 启动补跑 Dream：只兑现上次晚安留下且仍满足七天间隔的请求，
-    // 没有晚安请求时绝不自行运行。
+    // 启动补跑 Dream：只兑现上次晚安留下且仍满足最小间隔
+    // （dreamMinIntervalDays）的请求，没有晚安请求时绝不自行运行。
     _scheduleDream(bedtime: false);
+  }
+
+  /// 把一个后台整理步骤挂到串行任务链末尾：步骤之间不并发，失败只记
+  /// '<label> deferred [$error]' 诊断，绝不阻塞后续步骤与聊天。
+  void _chainFinalizationStep(String label, Future<void> Function() work) {
+    _finalizationTask = _finalizationTask.then((_) async {
+      try {
+        await work();
+      } on Object catch (error) {
+        _diagnosticsSink('$label deferred [$error]');
+      }
+    });
   }
 
   /// 等待已调度的后台日终归档完成。日终归档幂等且每一步原子写入，
@@ -494,26 +500,16 @@ final class LocalChatService {
             return event;
           }),
         );
-      } on LocalChatException catch (error) {
-        failureDetail = error.code;
+      } on Object catch (error) {
+        final chatError = error is LocalChatException ? error : null;
+        failureDetail = chatError?.code ?? 'internal_error';
         controller.add(
           ChatDeliveryEvent(
             kind: ChatDeliveryEventKind.error,
             requestId: trimmedRequestId,
-            text: error.message,
-            code: error.code,
-            retryable: error.retryable,
-          ),
-        );
-      } on Object {
-        failureDetail = 'internal_error';
-        controller.add(
-          ChatDeliveryEvent(
-            kind: ChatDeliveryEventKind.error,
-            requestId: trimmedRequestId,
-            text: '本地服务暂时不可用。',
-            code: 'internal_error',
-            retryable: true,
+            text: chatError?.message ?? '本地服务暂时不可用。',
+            code: chatError?.code ?? 'internal_error',
+            retryable: chatError?.retryable ?? true,
           ),
         );
       } finally {
@@ -607,11 +603,7 @@ final class LocalChatService {
       );
     }
     if (existingReply != null) {
-      yield ChatDeliveryEvent(
-        kind: ChatDeliveryEventKind.accepted,
-        requestId: trimmedRequestId,
-        sessionId: session.id,
-      );
+      yield _acceptedEvent(trimmedRequestId, session.id);
       yield* _deliverOutcome(
         session,
         _storedResult(session, existingReply),
@@ -635,17 +627,9 @@ final class LocalChatService {
       );
     }
 
-    yield ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.accepted,
-      requestId: trimmedRequestId,
-      sessionId: session.id,
-    );
+    yield _acceptedEvent(trimmedRequestId, session.id);
     if (cancellation.isCancelled) {
-      yield ChatDeliveryEvent(
-        kind: ChatDeliveryEventKind.cancelled,
-        requestId: trimmedRequestId,
-        sessionId: session.id,
-      );
+      yield _cancelledEvent(trimmedRequestId, session.id);
       return;
     }
 
@@ -655,15 +639,16 @@ final class LocalChatService {
       ChatRequest(requestId: trimmedRequestId, text: trimmedText),
       state,
     );
-    if (localOutcome is! ChatResult) {
-      final error = localOutcome as ErrorResult;
-      throw LocalChatException(
+    // ChatOutcome sealed 仅两子类，穷尽 switch 免去冗余强转：安全拒绝
+    // 与错误结果在此转为本地异常，可见回复直接拿到 ChatResult。
+    var outcome = switch (localOutcome) {
+      final ChatResult result => result,
+      final ErrorResult error => throw LocalChatException(
         code: error.code.wireName,
         message: error.message,
         retryable: error.retryable,
-      );
-    }
-    var outcome = localOutcome;
+      ),
+    };
     yield ChatDeliveryEvent(
       kind: ChatDeliveryEventKind.waiting,
       requestId: trimmedRequestId,
@@ -677,7 +662,7 @@ final class LocalChatService {
       speaker: Speaker.user,
     )?.at;
     final providerPort = this.providerPort;
-    if (localOutcome.safety == null && providerPort != null) {
+    if (outcome.safety == null && providerPort != null) {
       ModelCompletion? completion;
       ModelPromptBuilder? requestBuilder;
       try {
@@ -707,11 +692,7 @@ final class LocalChatService {
         memoryRecall?.restorePendingContext(session.id, consumedContext);
       }
       if (cancellation.isCancelled) {
-        yield ChatDeliveryEvent(
-          kind: ChatDeliveryEventKind.cancelled,
-          requestId: trimmedRequestId,
-          sessionId: session.id,
-        );
+        yield _cancelledEvent(trimmedRequestId, session.id);
         return;
       }
       if (completion != null) {
@@ -958,29 +939,21 @@ final class LocalChatService {
     }
     final now = _clock();
     final month = '${now.year}-${'${now.month}'.padLeft(2, '0')}';
-    _finalizationTask = _finalizationTask.then((_) async {
-      try {
-        await compressor.compressBefore(month);
-      } on Object catch (error) {
-        _diagnosticsSink('monthly compression deferred [$error]');
-      }
-    });
+    _chainFinalizationStep(
+      'monthly compression',
+      () => compressor.compressBefore(month),
+    );
   }
 
-  /// 晚安触发预登记：排在晚安任务链最前面，把七天间隔已到的请求先
-  /// 落成 pending；失败只记诊断。
+  /// 晚安触发预登记：排在晚安任务链最前面，把最小间隔
+  /// （[dreamMinIntervalDays] 天）已到的请求先落成 pending；失败只记
+  /// 诊断。
   void _markDreamBedtime() {
     final dream = dreamService;
     if (dream == null) {
       return;
     }
-    _finalizationTask = _finalizationTask.then((_) async {
-      try {
-        await dream.markBedtime();
-      } on Object catch (error) {
-        _diagnosticsSink('dream bedtime mark deferred [$error]');
-      }
-    });
+    _chainFinalizationStep('dream bedtime mark', dream.markBedtime);
   }
 
   /// Dream 挂到日终归档同一条后台任务链上：补归档与月压缩先完成，
@@ -1247,23 +1220,24 @@ final class LocalChatService {
         builder = builder.copyWithDailyState(block);
         final longMemory = await reader.readLongMemoryBlock();
         final persona = await reader.readPersonaBlock();
-        final overflow =
-            block.runes.length +
-            longMemory.runes.length +
-            persona.runes.length -
-            hotLayerMaxRunes;
+        // 裁前与裁长期印象后共用同一溢出公式，收成闭包防两处漂移。
+        int overflowOf(int longRunes, int personaRunes) =>
+            block.runes.length + longRunes + personaRunes - hotLayerMaxRunes;
         var clippedLongMemory = longMemory;
         var clippedPersona = persona;
+        final overflow = overflowOf(
+          longMemory.runes.length,
+          persona.runes.length,
+        );
         if (overflow > 0) {
           clippedLongMemory = clipLongMemoryBlock(
             longMemory,
             longMemory.runes.length - overflow,
           );
-          final remainingOverflow =
-              block.runes.length +
-              clippedLongMemory.runes.length +
-              persona.runes.length -
-              hotLayerMaxRunes;
+          final remainingOverflow = overflowOf(
+            clippedLongMemory.runes.length,
+            persona.runes.length,
+          );
           if (remainingOverflow > 0) {
             clippedPersona = clipPersonaBlock(
               persona,
@@ -1374,11 +1348,7 @@ final class LocalChatService {
       }
       firstChunk = false;
       if (cancellation.isCancelled) {
-        yield ChatDeliveryEvent(
-          kind: ChatDeliveryEventKind.cancelled,
-          requestId: requestId,
-          sessionId: sessionId,
-        );
+        yield _cancelledEvent(requestId, sessionId);
         return;
       }
       yield ChatDeliveryEvent(
@@ -1395,11 +1365,7 @@ final class LocalChatService {
       messages: result.messages,
     );
     if (cancellation.isCancelled) {
-      yield ChatDeliveryEvent(
-        kind: ChatDeliveryEventKind.cancelled,
-        requestId: requestId,
-        sessionId: sessionId,
-      );
+      yield _cancelledEvent(requestId, sessionId);
       return;
     }
     var completedSession = session;
@@ -1541,6 +1507,22 @@ ChatResult _storedResult(RawSession session, RawSessionTurn reply) {
     safety: reply.safety,
   );
 }
+
+/// 请求已受理事件：重放与新一轮交付共用同一形态。
+ChatDeliveryEvent _acceptedEvent(String requestId, String sessionId) =>
+    ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.accepted,
+      requestId: requestId,
+      sessionId: sessionId,
+    );
+
+/// 交付取消事件：取消语义只交付这一个事件，不带任何内容。
+ChatDeliveryEvent _cancelledEvent(String requestId, String sessionId) =>
+    ChatDeliveryEvent(
+      kind: ChatDeliveryEventKind.cancelled,
+      requestId: requestId,
+      sessionId: sessionId,
+    );
 
 Map<String, Object?> _turnToPublicJson(RawSessionTurn turn) => {
   'requestId': turn.requestId,

@@ -1,8 +1,6 @@
-import 'dart:convert';
-
 import '../baseline/host_api_gateway.dart';
 import 'provider_settings_client.dart'
-    show ProviderTestResult, ProviderSettingsException;
+    show ProviderTestResult, ProviderSettingsGatewayException;
 
 /// 语音转写（STT）的服务类型：与 Host 的 stt 段 provider 字段对应，
 /// 缺省 openai_compatible（存量配置不带该字段）。
@@ -83,44 +81,27 @@ final class HttpSttSettingsGateway extends HostApiGateway
   HttpSttSettingsGateway({super.client, super.baseUri});
 
   @override
-  Object errorFor(String message) => ProviderSettingsException(message);
+  Object errorFor(String message) => ProviderSettingsGatewayException(message);
 
   @override
   String get unavailableMessage => '语音设置暂时不可用，请稍后重试。';
 
   @override
-  Future<SttSettings> read() async {
-    await ensureBootstrap();
-    final response = await httpClient.get(resolve('/api/provider/stt'));
-    return SttSettings.fromJson(decodeSuccess(response));
-  }
+  Future<SttSettings> read() =>
+      getJson('/api/provider/stt', SttSettings.fromJson);
 
   @override
-  Future<SttSettings> save(SttSettingsDraft draft) async {
-    final response = await httpClient.put(
-      resolve('/api/provider/stt'),
-      headers: await modifyingHeaders(),
-      body: jsonEncode(draft.toJson()),
-    );
-    return SttSettings.fromJson(decodeSuccess(response));
-  }
+  Future<SttSettings> save(SttSettingsDraft draft) =>
+      putJson('/api/provider/stt', draft.toJson(), SttSettings.fromJson);
 
   @override
-  Future<SttSettings> forgetApiKey() async {
-    final response = await httpClient.delete(
-      resolve('/api/provider/stt/key'),
-      headers: await modifyingHeaders(),
-    );
-    return SttSettings.fromJson(decodeSuccess(response));
-  }
+  Future<SttSettings> forgetApiKey() =>
+      deleteJson('/api/provider/stt/key', SttSettings.fromJson);
 
   @override
-  Future<ProviderTestResult> testConnection(SttSettingsDraft draft) async {
-    final response = await httpClient.post(
-      resolve('/api/provider/stt/test'),
-      headers: await modifyingHeaders(),
-      body: jsonEncode(draft.toJson()),
-    );
-    return ProviderTestResult.fromJson(decodeSuccess(response));
-  }
+  Future<ProviderTestResult> testConnection(SttSettingsDraft draft) => postJson(
+    '/api/provider/stt/test',
+    draft.toJson(),
+    ProviderTestResult.fromJson,
+  );
 }

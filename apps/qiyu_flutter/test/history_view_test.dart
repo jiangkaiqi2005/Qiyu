@@ -4,18 +4,18 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/app.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/history/history_client.dart';
 import 'package:qiyu_flutter/features/history/history_view.dart';
 import 'package:qiyu_flutter/features/history/history_view_model.dart';
-import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
-import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
+import 'support/shared_fakes.dart';
+import 'support/test_dates.dart';
 
 void main() {
   testWidgets(
@@ -447,14 +447,14 @@ void main() {
 LocalChatViewModel _chatViewModel([_FakeChatGateway? gateway]) =>
     LocalChatViewModel(
       gateway ?? _FakeChatGateway(),
-      hostConnectionProbe: _FakeHostConnectionProbe([true]),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     );
 
 Future<OnboardingViewModel> _onboardingViewModel() async {
   final viewModel = OnboardingViewModel(
-    _FakeOnboardingGateway(),
-    _FixedProviderSettingsGateway(),
+    FakeOnboardingGateway(completed: true),
+    FixedProviderSettingsGateway(),
     autoStart: false,
   );
   await viewModel.initialize();
@@ -474,41 +474,10 @@ Future<void> _settleMergedPage(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-final class _FakeOnboardingGateway implements OnboardingGateway {
-  @override
-  Future<OnboardingState> read() async =>
-      const OnboardingState(completed: true);
-
-  @override
-  Future<void> complete({String? appellation}) async {}
-}
-
-final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {
-  @override
-  Future<ProviderSettings> read() async =>
-      const ProviderSettings(configured: false, keySet: false);
-
-  @override
-  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-
-  @override
-  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
-
-  @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-}
-
-String _localDate(DateTime value) =>
-    '${value.year}-'
-    '${value.month.toString().padLeft(2, '0')}-'
-    '${value.day.toString().padLeft(2, '0')}';
-
 HistoryListing _testListing() {
   final now = DateTime.now();
-  final today = _localDate(now);
-  final yesterday = _localDate(now.subtract(const Duration(days: 1)));
+  final today = localDate(now);
+  final yesterday = localDate(now.subtract(const Duration(days: 1)));
   return HistoryListing(
     latestSessionId: 'session-today',
     days: [
@@ -656,20 +625,4 @@ final class _FakeChatGateway implements StreamingLocalChatGateway {
     required Uint8List audio,
     required String mimeType,
   }) async => '语音测试转写';
-}
-
-final class _FakeHostConnectionProbe implements HostConnectionProbe {
-  _FakeHostConnectionProbe(this._results);
-
-  final List<bool> _results;
-  var _index = 0;
-
-  @override
-  Future<bool> isHostAvailable() async {
-    final result = _results[_index];
-    if (_index < _results.length - 1) {
-      _index += 1;
-    }
-    return result;
-  }
 }

@@ -341,6 +341,11 @@ final class InProcessChatHost {
     atomicWriter: atomicWriter,
   );
 
+  /// 按会话 id 读回落盘会话：`sessionReader().openSession(sessionId:)`
+  /// 的只读便捷形态，供对照落盘断言。
+  Future<RawSession> storedSession(String sessionId) =>
+      sessionReader().openSession(sessionId: sessionId);
+
   Future<HttpResponse> _get(String path) =>
       _send(_client, _host.origin.resolve(path), headers: _readHeaders());
 
@@ -416,6 +421,12 @@ final class ChatEventTrace {
 
   List<ChatDeliveryEvent> eventsOf(ChatDeliveryEventKind kind) =>
       events.where((event) => event.kind == kind).toList(growable: false);
+
+  /// message 事件：单次交付恰好一条最终回复消息。
+  ChatDeliveryEvent get message => event(ChatDeliveryEventKind.message);
+
+  /// state 事件：单次交付的回复状态包。
+  ChatDeliveryEvent get state => event(ChatDeliveryEventKind.state);
 
   /// accepted 事件里的会话标识。
   String get sessionId => event(ChatDeliveryEventKind.accepted).sessionId!;

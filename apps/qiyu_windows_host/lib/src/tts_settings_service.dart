@@ -2,7 +2,8 @@ import 'dart:convert';
 
 import 'model_gateway.dart';
 import 'provider_config.dart';
-import 'provider_settings_service.dart' show ProviderTestStatus;
+import 'provider_settings_service.dart'
+    show ProviderTestStatus, providerTestMessage, providerTestStatusFromFailureKind;
 import 'tts_gateway.dart';
 
 /// 语音合成设置快照：经 HTTP 返回时绝不携带明文 Key。
@@ -100,7 +101,7 @@ final class TtsSettingsService {
       provider: provider,
       baseUrl: baseUrl,
       model: model,
-      voice: _normalizeOptional(voice),
+      voice: ProviderConfig.normalizeKey(voice),
       speed: speed,
       autoSpeak: autoSpeak ?? previous?.autoSpeak ?? true,
       extraParams: extraParams,
@@ -185,8 +186,8 @@ final class TtsSettingsService {
       baseUrl: effectiveBaseUrl,
       model: effectiveModel,
       voice: useStoredOptionalSettings
-          ? _normalizeOptional(voice) ?? stored?.voice
-          : _normalizeOptional(voice),
+          ? ProviderConfig.normalizeKey(voice) ?? stored?.voice
+          : ProviderConfig.normalizeKey(voice),
       speed: useStoredOptionalSettings ? speed ?? stored?.speed : speed,
       extraParams: useStoredOptionalSettings
           ? extraParams ?? stored?.extraParams
@@ -305,11 +306,6 @@ const ttsMaxTextLength = 4000;
 /// 连接测试（试听）的内置示例句：有栖语味的一句话。
 const ttsConnectionTestSentence = '你好，我是栖语。今晚也想陪你慢慢说话。';
 
-String? _normalizeOptional(String? value) {
-  final trimmed = value?.trim();
-  return trimmed == null || trimmed.isEmpty ? null : trimmed;
-}
-
 const _dirtyApiKeyMessage = 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。';
 
 String? _normalizeApiKey(String? value) {
@@ -325,59 +321,25 @@ String? _normalizeApiKey(String? value) {
 
 ({String code, ProviderTestStatus status}) _ttsFailureDetails(
   ModelFailureKind kind,
-) => switch (kind) {
-  ModelFailureKind.dns => (code: 'tts_dns', status: ProviderTestStatus.dns),
-  ModelFailureKind.tls => (code: 'tts_tls', status: ProviderTestStatus.tls),
-  ModelFailureKind.timeout => (
-    code: 'tts_timeout',
-    status: ProviderTestStatus.timeout,
-  ),
-  ModelFailureKind.authentication => (
-    code: 'tts_authentication',
-    status: ProviderTestStatus.authentication,
-  ),
-  ModelFailureKind.network => (
-    code: 'tts_network',
-    status: ProviderTestStatus.network,
-  ),
-  ModelFailureKind.modelNotFound => (
-    code: 'tts_model_not_found',
-    status: ProviderTestStatus.modelNotFound,
-  ),
-  ModelFailureKind.rateLimited => (
-    code: 'tts_rate_limited',
-    status: ProviderTestStatus.rateLimited,
-  ),
-  ModelFailureKind.incompatibleResponse => (
-    code: 'tts_incompatible_response',
-    status: ProviderTestStatus.incompatibleResponse,
-  ),
-  ModelFailureKind.contentParsing => (
-    code: 'tts_content_parsing',
-    status: ProviderTestStatus.contentParsing,
-  ),
-  ModelFailureKind.provider => (
-    code: 'tts_provider',
-    status: ProviderTestStatus.provider,
-  ),
-  ModelFailureKind.internal => (
-    code: 'tts_internal',
-    status: ProviderTestStatus.internal,
-  ),
+) => (code: _ttsFailureCode(kind), status: providerTestStatusFromFailureKind(kind));
+
+String _ttsFailureCode(ModelFailureKind kind) => switch (kind) {
+  ModelFailureKind.dns => 'tts_dns',
+  ModelFailureKind.tls => 'tts_tls',
+  ModelFailureKind.timeout => 'tts_timeout',
+  ModelFailureKind.authentication => 'tts_authentication',
+  ModelFailureKind.network => 'tts_network',
+  ModelFailureKind.modelNotFound => 'tts_model_not_found',
+  ModelFailureKind.rateLimited => 'tts_rate_limited',
+  ModelFailureKind.incompatibleResponse => 'tts_incompatible_response',
+  ModelFailureKind.contentParsing => 'tts_content_parsing',
+  ModelFailureKind.provider => 'tts_provider',
+  ModelFailureKind.internal => 'tts_internal',
 };
 
-String _ttsTestMessage(ProviderTestStatus status) => switch (status) {
-  ProviderTestStatus.success => '连接成功，语音朗读可以使用。',
-  ProviderTestStatus.notConfigured => '还没有保存语音合成服务配置。',
-  ProviderTestStatus.dns => '找不到语音合成服务域名，请检查地址或 DNS。',
-  ProviderTestStatus.tls => '语音合成服务的 TLS 安全连接失败。',
-  ProviderTestStatus.timeout => '连接语音合成服务超时。',
-  ProviderTestStatus.authentication => 'API Key 没有通过验证。',
-  ProviderTestStatus.network => '无法连接语音合成服务，请检查地址和网络。',
-  ProviderTestStatus.modelNotFound => '找不到这个模型，请检查模型名称。',
-  ProviderTestStatus.rateLimited => '语音合成服务请求过于频繁，请稍后再试。',
-  ProviderTestStatus.incompatibleResponse => '语音合成服务返回了不兼容的响应格式。',
-  ProviderTestStatus.contentParsing => '语音合成服务返回的内容无法解析。',
-  ProviderTestStatus.provider => '语音合成服务拒绝了测试请求。',
-  ProviderTestStatus.internal => '本机程序内部出错，请重试或重启栖语。',
-};
+String _ttsTestMessage(ProviderTestStatus status) => providerTestMessage(
+  status,
+  serviceLabel: '语音合成服务',
+  successMessage: '连接成功，语音朗读可以使用。',
+  notConfiguredMessage: '还没有保存语音合成服务配置。',
+);

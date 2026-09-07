@@ -108,27 +108,19 @@ final class LocalDataService {
       throw LocalDataException('清除前快照创建失败，本次未删除任何数据。', error);
     }
     final root = Directory(memoryDirectory);
-    if (await root.exists()) {
-      try {
+    final onboarding = File(onboardingFilePath);
+    try {
+      if (await root.exists()) {
         await for (final entity in root.list(followLinks: false)) {
           if (path.basename(entity.path) == 'backups') {
             continue;
           }
           await entity.delete(recursive: true);
         }
-      } on Object catch (error) {
-        throw LocalDataException('本机数据清除未完成，请稍后重试。', error);
       }
-    }
-    final onboarding = File(onboardingFilePath);
-    if (await onboarding.exists()) {
-      try {
+      if (await onboarding.exists()) {
         await onboarding.delete();
-      } on Object catch (error) {
-        throw LocalDataException('本机数据清除未完成，请稍后重试。', error);
       }
-    }
-    try {
       await webSearchSettingsService.forgetApiKey();
     } on Object catch (error) {
       throw LocalDataException('本机数据清除未完成，请稍后重试。', error);

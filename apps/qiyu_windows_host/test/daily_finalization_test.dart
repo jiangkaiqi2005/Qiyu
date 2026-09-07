@@ -5,30 +5,21 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/failing_atomic_writer.dart';
+
 void main() {
   test(
     'finalizes a day in fixed order: summary, state pack, indexes, flag',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture('qiyu-finalization-test-', clock: clock);
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
         hiddenActions: const [
           MemorySignalAction(summary: '用户明天有面试', evidence: '明天要面试，有点紧张'),
         ],
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        clock: clock,
       );
 
       final outcome = await service.finalizeDay('2026-08-14');
@@ -67,24 +58,13 @@ void main() {
   );
 
   test('repeated finalization is an idempotent no-op', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-finalization-repeat-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: clock,
-    );
+    final (:temporaryDirectory, :pipeline, :service) =
+        await _finalizationFixture('qiyu-finalization-repeat-test-', clock: clock);
     await pipeline.processReply(
       session: _session('session-1', ['req-1']),
       requestId: 'req-1',
       hiddenActions: const [MemorySignalAction(summary: '用户下周搬家')],
-    );
-    final service = DailyFinalizationService(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      clock: clock,
     );
     await service.finalizeDay('2026-08-14');
     final before = _snapshotStateFiles(temporaryDirectory.path);
@@ -99,15 +79,12 @@ void main() {
   test(
     'bedtime finalizes today and catches up earlier unfinalized days',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-bedtime-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       var now = DateTime(2026, 8, 13, 22);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: () => now,
-      );
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture(
+            'qiyu-finalization-bedtime-test-',
+            clock: () => now,
+          );
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
@@ -118,11 +95,6 @@ void main() {
         session: _session('session-2', ['req-2']),
         requestId: 'req-2',
         hiddenActions: const [MemorySignalAction(summary: '今天讨论了面试')],
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        clock: () => now,
       );
 
       final report = await service.finalizeForBedtime(date: '2026-08-14');
@@ -148,24 +120,7 @@ void main() {
   test(
     'bedtime backfills a session-only day in the existing understanding call',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-session-backfill-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-      final repository = MarkdownMemoryRepository(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
-      var session = await repository.createSession();
-      session = await repository.appendTurn(
-        session,
-        RawSessionTurn.user(
-          requestId: 'small-1',
-          text: '晚饭吃了小馄饨，老板多送了两个。晚安。',
-          at: clock(),
-        ),
-      );
       final client = _RecordingUnderstandingClient(
         jsonEncode({
           'episode_entries': [
@@ -180,17 +135,25 @@ void main() {
           'index_keywords': ['晚饭', '小馄饨'],
         }),
       );
-      final pipeline = EpisodeMemoryPipeline(
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture(
+            'qiyu-finalization-session-backfill-test-',
+            clock: clock,
+            modelClient: client,
+          );
+      final repository = MarkdownMemoryRepository(
         memoryDirectory: temporaryDirectory.path,
         clock: clock,
       );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        modelClient: client,
-        clock: clock,
+      var session = await repository.createSession();
+      session = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(
+          requestId: 'small-1',
+          text: '晚饭吃了小馄饨，老板多送了两个。晚安。',
+          at: clock(),
+        ),
       );
-
       final report = await service.finalizeForBedtime(date: '2026-08-14');
 
       expect(client.calls, 1);
@@ -216,11 +179,27 @@ void main() {
   );
 
   test('pure bedtime farewells stay out of the backfill scope', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-finalization-pure-bedtime-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 22, 23, 50);
+    final client = _RecordingUnderstandingClient(
+      jsonEncode({
+        'episode_entries': [
+          {
+            'request_id': 'tired-1',
+            'summary': '用户实训第一天很累',
+            'evidence': '今天实训第一天，累瘫了',
+          },
+        ],
+        'covered_request_ids': ['tired-1'],
+        'summary': '用户实训第一天很累，早早道了晚安',
+        'index_keywords': ['实训', '晚安'],
+      }),
+    );
+    final (:temporaryDirectory, :pipeline, :service) =
+        await _finalizationFixture(
+          'qiyu-finalization-pure-bedtime-test-',
+          clock: clock,
+          modelClient: client,
+        );
     final repository = MarkdownMemoryRepository(
       memoryDirectory: temporaryDirectory.path,
       clock: clock,
@@ -239,31 +218,6 @@ void main() {
       session,
       RawSessionTurn.user(requestId: 'tired-2', text: '该睡了', at: clock()),
     );
-    final client = _RecordingUnderstandingClient(
-      jsonEncode({
-        'episode_entries': [
-          {
-            'request_id': 'tired-1',
-            'summary': '用户实训第一天很累',
-            'evidence': '今天实训第一天，累瘫了',
-          },
-        ],
-        'covered_request_ids': ['tired-1'],
-        'summary': '用户实训第一天很累，早早道了晚安',
-        'index_keywords': ['实训', '晚安'],
-      }),
-    );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: clock,
-    );
-    final service = DailyFinalizationService(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      modelClient: client,
-      clock: clock,
-    );
-
     final report = await service.finalizeForBedtime(date: '2026-08-22');
 
     final userMessage = client.lastMessages!
@@ -282,11 +236,27 @@ void main() {
   test(
     'a turn that sanitizes to nothing never blocks the backfill gate',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-empty-sanitize-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 22, 23, 50);
+      final client = _RecordingUnderstandingClient(
+        jsonEncode({
+          'episode_entries': [
+            {
+              'request_id': 'real-1',
+              'summary': '用户项目原型跑通',
+              'evidence': '项目原型今天跑通了',
+            },
+          ],
+          'covered_request_ids': ['real-1'],
+          'summary': '用户项目原型跑通',
+          'index_keywords': ['项目原型'],
+        }),
+      );
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture(
+            'qiyu-finalization-empty-sanitize-test-',
+            clock: clock,
+            modelClient: client,
+          );
       final repository = MarkdownMemoryRepository(
         memoryDirectory: temporaryDirectory.path,
         clock: clock,
@@ -310,31 +280,6 @@ void main() {
           at: clock(),
         ),
       );
-      final client = _RecordingUnderstandingClient(
-        jsonEncode({
-          'episode_entries': [
-            {
-              'request_id': 'real-1',
-              'summary': '用户项目原型跑通',
-              'evidence': '项目原型今天跑通了',
-            },
-          ],
-          'covered_request_ids': ['real-1'],
-          'summary': '用户项目原型跑通',
-          'index_keywords': ['项目原型'],
-        }),
-      );
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        modelClient: client,
-        clock: clock,
-      );
-
       final report = await service.finalizeForBedtime(date: '2026-08-22');
 
       expect(report.outcomes.single.status, FinalizationStatus.finalized);
@@ -347,11 +292,18 @@ void main() {
   test(
     'session backfill never sends controlled memory text to the model',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-session-control-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+      final client = _RecordingUnderstandingClient(
+        jsonEncode({
+          'covered_request_ids': ['controlled-1'],
+        }),
+      );
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture(
+            'qiyu-finalization-session-control-test-',
+            clock: clock,
+            modelClient: client,
+          );
       final repository = MarkdownMemoryRepository(
         memoryDirectory: temporaryDirectory.path,
         clock: clock,
@@ -368,22 +320,6 @@ void main() {
       await OpenLoopStore(
         memoryDirectory: temporaryDirectory.path,
       ).banTitle('医院检查');
-      final client = _RecordingUnderstandingClient(
-        jsonEncode({
-          'covered_request_ids': ['controlled-1'],
-        }),
-      );
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        modelClient: client,
-        clock: clock,
-      );
-
       final report = await service.finalizeForBedtime(date: '2026-08-14');
 
       final prompt = client.lastMessages!
@@ -399,11 +335,18 @@ void main() {
   test(
     'incomplete session coverage stays pending for a later backfill',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-session-coverage-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+      final client = _RecordingUnderstandingClient(
+        jsonEncode({
+          'covered_request_ids': ['coverage-1'],
+        }),
+      );
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture(
+            'qiyu-finalization-session-coverage-test-',
+            clock: clock,
+            modelClient: client,
+          );
       final repository = MarkdownMemoryRepository(
         memoryDirectory: temporaryDirectory.path,
         clock: clock,
@@ -418,22 +361,6 @@ void main() {
           RawSessionTurn.user(requestId: requestId, text: text, at: clock()),
         );
       }
-      final client = _RecordingUnderstandingClient(
-        jsonEncode({
-          'covered_request_ids': ['coverage-1'],
-        }),
-      );
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        modelClient: client,
-        clock: clock,
-      );
-
       final report = await service.finalizeForBedtime(date: '2026-08-14');
 
       expect(report.outcomes.single.status, FinalizationStatus.failed);
@@ -443,11 +370,25 @@ void main() {
   );
 
   test('extra hallucinated coverage ids no longer fail the backfill', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-finalization-session-extra-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final droppedDiagnostics = <String>[];
+    // 模型覆盖了全部真实轮次，但额外编造了一个不存在的 requestId。
+    final client = _RecordingUnderstandingClient(
+      jsonEncode({
+        'episode_entries': [
+          {'request_id': 'real-1', 'summary': '用户午饭吃了米线'},
+          {'request_id': 'hallucinated-x', 'summary': '模型编造的内容'},
+        ],
+        'covered_request_ids': ['real-1', 'real-2', 'hallucinated-x'],
+      }),
+    );
+    final (:temporaryDirectory, :pipeline, :service) =
+        await _finalizationFixture(
+          'qiyu-finalization-session-extra-test-',
+          clock: clock,
+          diagnosticsSink: droppedDiagnostics.add,
+          modelClient: client,
+        );
     final repository = MarkdownMemoryRepository(
       memoryDirectory: temporaryDirectory.path,
       clock: clock,
@@ -462,28 +403,6 @@ void main() {
         RawSessionTurn.user(requestId: requestId, text: text, at: clock()),
       );
     }
-    // 模型覆盖了全部真实轮次，但额外编造了一个不存在的 requestId。
-    final client = _RecordingUnderstandingClient(
-      jsonEncode({
-        'episode_entries': [
-          {'request_id': 'real-1', 'summary': '用户午饭吃了米线'},
-          {'request_id': 'hallucinated-x', 'summary': '模型编造的内容'},
-        ],
-        'covered_request_ids': ['real-1', 'real-2', 'hallucinated-x'],
-      }),
-    );
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: clock,
-    );
-    final droppedDiagnostics = <String>[];
-    final service = DailyFinalizationService(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      modelClient: client,
-      clock: clock,
-      diagnosticsSink: droppedDiagnostics.add,
-    );
 
     final report = await service.finalizeForBedtime(date: '2026-08-14');
 
@@ -505,20 +424,7 @@ void main() {
   test(
     'incremental backfill of an archived day keeps the old understanding',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-incremental-backfill-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-      final repository = MarkdownMemoryRepository(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
-      var session = await repository.createSession();
-      session = await repository.appendTurn(
-        session,
-        RawSessionTurn.user(requestId: 'day-1', text: '开始养绿萝了。', at: clock()),
-      );
       final firstResponse = jsonEncode({
         'episode_entries': [
           {'request_id': 'day-1', 'summary': '用户开始养绿萝'},
@@ -539,15 +445,20 @@ void main() {
         firstResponse,
         scriptedReplies: [firstResponse, secondResponse],
       );
-      final pipeline = EpisodeMemoryPipeline(
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture(
+            'qiyu-finalization-incremental-backfill-test-',
+            clock: clock,
+            modelClient: client,
+          );
+      final repository = MarkdownMemoryRepository(
         memoryDirectory: temporaryDirectory.path,
         clock: clock,
       );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        modelClient: client,
-        clock: clock,
+      var session = await repository.createSession();
+      session = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(requestId: 'day-1', text: '开始养绿萝了。', at: clock()),
       );
 
       // 第一次晚安：当天完整理解并归档。
@@ -580,15 +491,12 @@ void main() {
   );
 
   test('catch-up never finalizes the still-active current day', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-finalization-catchup-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     var now = DateTime(2026, 8, 13, 22);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: () => now,
-    );
+    final (:temporaryDirectory, :pipeline, :service) =
+        await _finalizationFixture(
+          'qiyu-finalization-catchup-test-',
+          clock: () => now,
+        );
     await pipeline.processReply(
       session: _session('session-1', ['req-1']),
       requestId: 'req-1',
@@ -600,11 +508,6 @@ void main() {
       requestId: 'req-2',
       hiddenActions: const [MemorySignalAction(summary: '今天的事')],
     );
-    final service = DailyFinalizationService(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      clock: () => now,
-    );
 
     await service.catchUpUnfinalized(before: '2026-08-14');
 
@@ -613,24 +516,7 @@ void main() {
   });
 
   test('startup catch-up includes session-only dates before today', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-finalization-startup-session-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime sessionClock() => DateTime(2026, 8, 14, 22, 30);
-    final repository = MarkdownMemoryRepository(
-      memoryDirectory: temporaryDirectory.path,
-      clock: sessionClock,
-    );
-    var session = await repository.createSession();
-    session = await repository.appendTurn(
-      session,
-      RawSessionTurn.user(
-        requestId: 'yesterday-1',
-        text: '路过楼下时看到新开了一家花店。',
-        at: sessionClock(),
-      ),
-    );
     final client = _RecordingUnderstandingClient(
       jsonEncode({
         'episode_entries': [
@@ -645,15 +531,24 @@ void main() {
         'index_keywords': ['楼下', '花店'],
       }),
     );
-    final pipeline = EpisodeMemoryPipeline(
+    final (:temporaryDirectory, :pipeline, :service) =
+        await _finalizationFixture(
+          'qiyu-finalization-startup-session-test-',
+          clock: () => DateTime(2026, 8, 15, 9),
+          modelClient: client,
+        );
+    final repository = MarkdownMemoryRepository(
       memoryDirectory: temporaryDirectory.path,
-      clock: () => DateTime(2026, 8, 15, 9),
+      clock: sessionClock,
     );
-    final service = DailyFinalizationService(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      modelClient: client,
-      clock: () => DateTime(2026, 8, 15, 9),
+    var session = await repository.createSession();
+    session = await repository.appendTurn(
+      session,
+      RawSessionTurn.user(
+        requestId: 'yesterday-1',
+        text: '路过楼下时看到新开了一家花店。',
+        at: sessionClock(),
+      ),
     );
 
     final report = await service.catchUpUnfinalized(before: '2026-08-15');
@@ -686,7 +581,9 @@ void main() {
         memoryDirectory: temporaryDirectory.path,
         episodePipeline: pipeline,
         clock: clock,
-        atomicWriter: const _FailOnPath('daily-state'),
+        atomicWriter: FailingAtomicTextWriter(
+          shouldFail: (path) => path.contains('daily-state'),
+        ),
       );
 
       await expectLater(
@@ -725,20 +622,12 @@ void main() {
   );
 
   test('a day without valid content never fabricates state pack files', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-finalization-empty-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: clock,
-    );
-    final service = DailyFinalizationService(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      clock: clock,
-    );
+    final (:temporaryDirectory, :pipeline, :service) =
+        await _finalizationFixture(
+          'qiyu-finalization-empty-test-',
+          clock: clock,
+        );
 
     // 没有 episode 文件的日期：归档直接跳过，不落任何文件。
     final missing = await service.finalizeDay('2026-08-14');
@@ -779,15 +668,12 @@ void main() {
   test(
     'closed open-loops are archived; active entries stay idempotently',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-openloops-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture(
+            'qiyu-finalization-openloops-test-',
+            clock: clock,
+          );
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
@@ -806,11 +692,6 @@ void main() {
         '  status: active\n'
         '  note: 用户主动提到时再接\n',
         encoding: utf8,
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        clock: clock,
       );
 
       await service.finalizeDay('2026-08-14');
@@ -845,15 +726,12 @@ void main() {
   );
 
   test('an existing relationship file is never overwritten', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-finalization-relationship-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: clock,
-    );
+    final (:temporaryDirectory, :pipeline, :service) =
+        await _finalizationFixture(
+          'qiyu-finalization-relationship-test-',
+          clock: clock,
+        );
     await pipeline.processReply(
       session: _session('session-1', ['req-1']),
       requestId: 'req-1',
@@ -863,11 +741,6 @@ void main() {
     File(
       '${temporaryDirectory.path}/relationship.md',
     ).writeAsStringSync(custom, encoding: utf8);
-    final service = DailyFinalizationService(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      clock: clock,
-    );
 
     await service.finalizeDay('2026-08-14');
 
@@ -880,15 +753,12 @@ void main() {
   });
 
   test('daily-state respects the budget and the seven-day window', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-finalization-budget-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
     var now = DateTime(2026, 8, 7, 22);
-    final pipeline = EpisodeMemoryPipeline(
-      memoryDirectory: temporaryDirectory.path,
-      clock: () => now,
-    );
+    final (:temporaryDirectory, :pipeline, :service) =
+        await _finalizationFixture(
+          'qiyu-finalization-budget-test-',
+          clock: () => now,
+        );
     // 窗口外的一天（8 天前）+ 窗口内 7 天，每天多条长摘要。
     await pipeline.processReply(
       session: _session('session-old', ['req-old']),
@@ -909,11 +779,6 @@ void main() {
         ],
       );
     }
-    final service = DailyFinalizationService(
-      memoryDirectory: temporaryDirectory.path,
-      episodePipeline: pipeline,
-      clock: () => now,
-    );
 
     await service.finalizeDay('2026-08-14');
 
@@ -1025,20 +890,12 @@ void main() {
   test(
     'a new entry after bedtime reopens the day for re-finalization',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-reopen-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        clock: clock,
-      );
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture(
+            'qiyu-finalization-reopen-test-',
+            clock: clock,
+          );
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
@@ -1068,15 +925,9 @@ void main() {
   test(
     'end-of-day promotes candidates and repeated runs never duplicate',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-promote-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture('qiyu-finalization-promote-test-', clock: clock);
       await pipeline.processReply(
         session: _session('session-1', ['req-1']),
         requestId: 'req-1',
@@ -1087,11 +938,6 @@ void main() {
             evidence: '下周三是人生第一次演讲',
           ),
         ],
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        clock: clock,
       );
 
       final outcome = await service.finalizeDay('2026-08-14');
@@ -1123,15 +969,12 @@ void main() {
   test(
     'end-of-day relationship step promotes once and replays stay stable',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-relationship-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       var now = DateTime(2026, 8, 1, 22);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: () => now,
-      );
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture(
+            'qiyu-finalization-relationship-test-',
+            clock: () => now,
+          );
       // 三个活跃日 + 一次深谈：证据够到熟悉。
       for (var day = 1; day <= 3; day += 1) {
         now = DateTime(2026, 8, day, 22);
@@ -1149,11 +992,6 @@ void main() {
         );
       }
       now = DateTime(2026, 8, 3, 22);
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        clock: () => now,
-      );
       final relationshipFile = File(
         '${temporaryDirectory.path}/relationship.md',
       );
@@ -1271,15 +1109,9 @@ void main() {
   test(
     'system bookkeeping entries stay out of summaries, state pack and indexes',
     () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-finalization-bookkeeping-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
       DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: clock,
-      );
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture('qiyu-finalization-bookkeeping-test-', clock: clock);
       await pipeline.processReply(
         session: _session('session-1', ['req-1', 'req-2']),
         requestId: 'req-1',
@@ -1302,11 +1134,6 @@ void main() {
             summary: '用户愿意聊到更深的家庭关系',
           ),
         ],
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: temporaryDirectory.path,
-        episodePipeline: pipeline,
-        clock: clock,
       );
 
       final outcome = await service.finalizeDay('2026-08-14');
@@ -1354,6 +1181,38 @@ void main() {
   );
 }
 
+/// 建临时目录并装配 episode 管线与日终服务：成员沿用用例原变量名。
+/// 装配形态不同的用例（双时钟、双服务、外部 openLoopStore）不迁移。
+Future<({
+  Directory temporaryDirectory,
+  EpisodeMemoryPipeline pipeline,
+  DailyFinalizationService service,
+})> _finalizationFixture(
+  String tempPrefix, {
+  required DateTime Function() clock,
+  ProviderChatClient? modelClient,
+  void Function(String message)? diagnosticsSink,
+}) async {
+  final temporaryDirectory = await Directory.systemTemp.createTemp(tempPrefix);
+  addTearDown(() => temporaryDirectory.delete(recursive: true));
+  final pipeline = EpisodeMemoryPipeline(
+    memoryDirectory: temporaryDirectory.path,
+    clock: clock,
+  );
+  final service = DailyFinalizationService(
+    memoryDirectory: temporaryDirectory.path,
+    episodePipeline: pipeline,
+    modelClient: modelClient,
+    diagnosticsSink: diagnosticsSink,
+    clock: clock,
+  );
+  return (
+    temporaryDirectory: temporaryDirectory,
+    pipeline: pipeline,
+    service: service,
+  );
+}
+
 Map<String, String> _snapshotStateFiles(String root) {
   final snapshot = <String, String>{};
   for (final relative in [
@@ -1393,21 +1252,6 @@ RawSession _session(String id, List<String> requestIds) {
     updatedAt: base.toUtc(),
     turns: turns,
   );
-}
-
-final class _FailOnPath implements AtomicTextWriter {
-  const _FailOnPath(this.fragment);
-
-  final String fragment;
-  final AtomicTextWriter _delegate = const IoAtomicTextWriter();
-
-  @override
-  Future<void> replace(String path, String contents) {
-    if (path.contains(fragment)) {
-      throw const FileSystemException('mock interrupted write');
-    }
-    return _delegate.replace(path, contents);
-  }
 }
 
 final class _RecordingUnderstandingClient implements ProviderChatClient {

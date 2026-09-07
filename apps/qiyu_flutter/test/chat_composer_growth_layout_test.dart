@@ -5,13 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_widgets.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
+
+import 'support/shared_fakes.dart';
 
 /// 聊天态 composer 长高覆盖层回归锁。
 ///
@@ -54,7 +55,7 @@ void main() {
         messageCount: messageCount,
         linesPerMessage: linesPerMessage,
       ),
-      hostConnectionProbe: _FixedProbe(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     );
     await viewModel.initialize();
@@ -460,9 +461,4 @@ final class _FakeChatGateway implements StreamingLocalChatGateway {
     required Uint8List audio,
     required String mimeType,
   }) async => '';
-}
-
-final class _FixedProbe implements HostConnectionProbe {
-  @override
-  Future<bool> isHostAvailable() async => true;
 }

@@ -276,9 +276,7 @@ class _LocalChatViewState extends State<LocalChatView> {
   Widget build(BuildContext context) {
     final viewModel = context.watch<LocalChatViewModel>();
     // 会话恢复、新消息与流式增量都跟在列表尾部：签名变化时下一帧滚到底。
-    final transient = viewModel.waiting || viewModel.streamingText.isNotEmpty
-        ? 1
-        : 0;
+    final transient = _transientCount(viewModel);
     final signature =
         '${viewModel.messages.length}|$transient|${viewModel.streamingText.length}';
     if (signature != _lastListSignature) {
@@ -348,7 +346,7 @@ class _LocalChatViewState extends State<LocalChatView> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text('本机程序已停止'),
-                      SizedBox(height: 8),
+                      SizedBox(height: QiyuSpacing.xs),
                       Text('请重新启动栖语本机程序。'),
                     ],
                   ),
@@ -542,61 +540,69 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
+  /// 聊天域内容的水平居中约束：工具条、消息区与 composer 共用同一档
+  /// `QiyuLayout.streamMaxWidth`，约束组合（Center > ConstrainedBox）收敛于此。
+  Widget _centeredStream({required Widget child}) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: QiyuLayout.streamMaxWidth),
+        child: child,
+      ),
+    );
+  }
+
   /// 会话页自带的工具条：本地规则标识、朗读开关、历史与模型连接入口。
   /// 页面导航交给导航壳，这里只留会话自身的控件；两个入口与侧边栏去同一条
   /// 目的地，因此目的地与图标都从 [QiyuNavDestination] 取。返回栈语义**两边
   /// 不同**（改造前就是这样，本轮纯视觉换皮不动它）：工具条 [_pushAwayFromChat]
   /// 叠栈，页内「返回上一页」回到来的那一页；侧边栏是常驻顶层导航，走 `go` 换栈。
   Widget _utilityStrip(BuildContext context, LocalChatViewModel viewModel) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: QiyuLayout.streamMaxWidth),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            QiyuSpacing.md,
-            QiyuSpacing.sm,
-            QiyuSpacing.md,
-            0,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (viewModel.hasLocalFallback)
-                Flexible(
-                  child: Text(
-                    '本地规则回复',
-                    overflow: TextOverflow.ellipsis,
-                    // 字号随档取次要档（散点数值直读走 QiyuTypography.of 的
-                    // 数值入口，不回 QiyuType 直读——那里只有桌面档）。
-                    style: TextStyle(
-                      fontFamily: QiyuType.fontFamily,
-                      fontSize: QiyuTypography.of(context).secondarySize,
-                      color: QiyuColors.muted,
-                    ),
+    return _centeredStream(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          QiyuSpacing.md,
+          QiyuSpacing.sm,
+          QiyuSpacing.md,
+          0,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            if (viewModel.hasLocalFallback)
+              Flexible(
+                child: Text(
+                  '本地规则回复',
+                  overflow: TextOverflow.ellipsis,
+                  // 字号随档取次要档（散点数值直读走 QiyuTypography.of 的
+                  // 数值入口，不回 QiyuType 直读——那里只有桌面档）。
+                  style: TextStyle(
+                    fontFamily: QiyuType.fontFamily,
+                    fontSize: QiyuTypography.of(context).secondarySize,
+                    color: QiyuColors.muted,
                   ),
                 ),
-              if (viewModel.voiceOutputConfigured) ...[
-                const SizedBox(width: QiyuSpacing.xs),
-                _VoiceOutputHeaderControl(viewModel: viewModel),
-              ],
-              const SizedBox(width: QiyuSpacing.xs),
-              _stripIconButton(
-                key: const Key('open-history'),
-                tooltip: QiyuNavDestination.history.label,
-                icon: QiyuNavDestination.history.icon,
-                onPressed: () =>
-                    _pushAwayFromChat(QiyuNavDestination.history.path),
               ),
+            if (viewModel.voiceOutputConfigured) ...[
               const SizedBox(width: QiyuSpacing.xs),
-              _stripIconButton(
-                key: const Key('open-provider-settings'),
-                tooltip: '模型连接',
-                icon: QiyuNavDestination.settings.icon,
-                onPressed: () =>
-                    _pushAwayFromChat(QiyuNavDestination.settings.path),
-              ),
+              _VoiceOutputHeaderControl(viewModel: viewModel),
             ],
-          ),
+            const SizedBox(width: QiyuSpacing.xs),
+            _stripIconButton(
+              key: const Key('open-history'),
+              tooltip: QiyuNavDestination.history.label,
+              icon: QiyuNavDestination.history.icon,
+              onPressed: () =>
+                  _pushAwayFromChat(QiyuNavDestination.history.path),
+            ),
+            const SizedBox(width: QiyuSpacing.xs),
+            _stripIconButton(
+              key: const Key('open-provider-settings'),
+              tooltip: '模型连接',
+              icon: QiyuNavDestination.settings.icon,
+              onPressed: () =>
+                  _pushAwayFromChat(QiyuNavDestination.settings.path),
+            ),
+          ],
         ),
       ),
     );
@@ -661,13 +667,10 @@ class _LocalChatViewState extends State<LocalChatView> {
   }
 
   Widget _messageArea(LocalChatViewModel viewModel) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: QiyuLayout.streamMaxWidth),
-        child: AnimatedBuilder(
-          animation: viewModel.voiceOutput,
-          builder: (context, _) => _messageList(viewModel),
-        ),
+    return _centeredStream(
+      child: AnimatedBuilder(
+        animation: viewModel.voiceOutput,
+        builder: (context, _) => _messageList(viewModel),
       ),
     );
   }
@@ -690,81 +693,74 @@ class _LocalChatViewState extends State<LocalChatView> {
         : QiyuLayout.composerPadding;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: QiyuSpacing.md),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: QiyuLayout.streamMaxWidth,
+      child: _centeredStream(
+        child: QiyuGlassPanel(
+          key: const Key('home-go-chat'),
+          blurSigma: QiyuGlass.panelBlur,
+          borderColor: lineColor,
+          padding: EdgeInsets.fromLTRB(
+            QiyuSpacing.md,
+            QiyuLayout.composerPadding,
+            QiyuLayout.composerPadding,
+            bottomPadding,
           ),
-          child: QiyuGlassPanel(
-            key: const Key('home-go-chat'),
-            blurSigma: QiyuGlass.panelBlur,
-            borderColor: lineColor,
-            padding: EdgeInsets.fromLTRB(
-              QiyuSpacing.md,
-              QiyuLayout.composerPadding,
-              QiyuLayout.composerPadding,
-              bottomPadding,
-            ),
-            // 输入行本体：Enter 发送 / 软换行 / Esc 的快捷键作用域只包住它。
-            child: Shortcuts(
-              shortcuts: const {
-                SingleActivator(LogicalKeyboardKey.enter): _SendChatIntent(),
-                SingleActivator(LogicalKeyboardKey.enter, shift: true):
-                    _InsertLineBreakIntent(),
-                SingleActivator(LogicalKeyboardKey.enter, control: true):
-                    _InsertLineBreakIntent(),
-                SingleActivator(LogicalKeyboardKey.escape):
-                    _VoiceEscapeIntent(),
-              },
-              child: Actions(
-                actions: {
-                  _SendChatIntent: CallbackAction<_SendChatIntent>(
-                    onInvoke: (intent) {
-                      if (!viewModel.sending) {
-                        unawaited(_send(viewModel));
-                      }
-                      return null;
-                    },
-                  ),
-                  _InsertLineBreakIntent:
-                      CallbackAction<_InsertLineBreakIntent>(
-                        onInvoke: (intent) {
-                          _insertLineBreak();
-                          return null;
-                        },
-                      ),
-                  _VoiceEscapeIntent: CallbackAction<_VoiceEscapeIntent>(
-                    onInvoke: (intent) {
-                      // 播放态下 Esc 等同停止按钮（ADR 0002 的打断规则）；
-                      // 录音/转写语义不变。
-                      viewModel.voiceOutput.stopAll();
-                      _voiceInput.handleEscape();
-                      return null;
-                    },
-                  ),
-                },
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: KeyedSubtree(
-                        key: _composerFieldKey,
-                        child: _inputField(),
-                      ),
-                    ),
-                    const SizedBox(width: QiyuSpacing.xs),
-                    AnimatedBuilder(
-                      animation: _voiceInput,
-                      builder: (context, _) => _voiceMicButton(),
-                    ),
-                    const SizedBox(width: QiyuSpacing.xs),
-                    QiyuSendButton(
-                      sending: viewModel.sending,
-                      onPressed: viewModel.sending
-                          ? () => unawaited(viewModel.stop())
-                          : () => unawaited(_send(viewModel)),
-                    ),
-                  ],
+          // 输入行本体：Enter 发送 / 软换行 / Esc 的快捷键作用域只包住它。
+          child: Shortcuts(
+            shortcuts: const {
+              SingleActivator(LogicalKeyboardKey.enter): _SendChatIntent(),
+              SingleActivator(LogicalKeyboardKey.enter, shift: true):
+                  _InsertLineBreakIntent(),
+              SingleActivator(LogicalKeyboardKey.enter, control: true):
+                  _InsertLineBreakIntent(),
+              SingleActivator(LogicalKeyboardKey.escape): _VoiceEscapeIntent(),
+            },
+            child: Actions(
+              actions: {
+                _SendChatIntent: CallbackAction<_SendChatIntent>(
+                  onInvoke: (intent) {
+                    if (!viewModel.sending) {
+                      unawaited(_send(viewModel));
+                    }
+                    return null;
+                  },
                 ),
+                _InsertLineBreakIntent: CallbackAction<_InsertLineBreakIntent>(
+                  onInvoke: (intent) {
+                    _insertLineBreak();
+                    return null;
+                  },
+                ),
+                _VoiceEscapeIntent: CallbackAction<_VoiceEscapeIntent>(
+                  onInvoke: (intent) {
+                    // 播放态下 Esc 等同停止按钮（ADR 0002 的打断规则）；
+                    // 录音/转写语义不变。
+                    viewModel.voiceOutput.stopAll();
+                    _voiceInput.handleEscape();
+                    return null;
+                  },
+                ),
+              },
+              child: Row(
+                children: [
+                  Expanded(
+                    child: KeyedSubtree(
+                      key: _composerFieldKey,
+                      child: _inputField(),
+                    ),
+                  ),
+                  const SizedBox(width: QiyuSpacing.xs),
+                  AnimatedBuilder(
+                    animation: _voiceInput,
+                    builder: (context, _) => _voiceMicButton(),
+                  ),
+                  const SizedBox(width: QiyuSpacing.xs),
+                  QiyuSendButton(
+                    sending: viewModel.sending,
+                    onPressed: viewModel.sending
+                        ? () => unawaited(viewModel.stop())
+                        : () => unawaited(_send(viewModel)),
+                  ),
+                ],
               ),
             ),
           ),
@@ -882,8 +878,14 @@ class _LocalChatViewState extends State<LocalChatView> {
     if (message == null) {
       return const SizedBox.shrink();
     }
+    final isRetryable = voice.status == VoiceInputStatus.retryable;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+      padding: const EdgeInsets.fromLTRB(
+        QiyuSpacing.lg,
+        QiyuSpacing.xs,
+        QiyuSpacing.lg,
+        0,
+      ),
       child: Semantics(
         liveRegion: true,
         child: Row(
@@ -896,21 +898,19 @@ class _LocalChatViewState extends State<LocalChatView> {
               )
             else
               Icon(
-                voice.status == VoiceInputStatus.retryable
-                    ? QiyuIcons.error
-                    : QiyuIcons.graphic_eq,
+                isRetryable ? QiyuIcons.error : QiyuIcons.graphic_eq,
                 size: 16,
-                color: voice.status == VoiceInputStatus.retryable
+                color: isRetryable
                     ? Theme.of(context).colorScheme.error
                     : Theme.of(context).colorScheme.onSurfaceVariant,
               ),
-            const SizedBox(width: 8),
+            const SizedBox(width: QiyuSpacing.xs),
             Expanded(
               child: Text(
                 message,
                 key: const Key('voice-status'),
                 style: TextStyle(
-                  color: voice.status == VoiceInputStatus.retryable
+                  color: isRetryable
                       ? Theme.of(context).colorScheme.error
                       : Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -1025,7 +1025,12 @@ class _LocalChatViewState extends State<LocalChatView> {
       return const SizedBox.shrink();
     }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+      padding: const EdgeInsets.fromLTRB(
+        QiyuSpacing.lg,
+        QiyuSpacing.xs,
+        QiyuSpacing.lg,
+        0,
+      ),
       child: Semantics(
         liveRegion: true,
         child: Row(
@@ -1069,6 +1074,11 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
+  /// 等待或流式期间消息列表尾部多出的那一行（瞬时回复位）：build 里算
+  /// 滚动签名与 [_messageList] 里算 itemCount 共用同一口径。
+  static int _transientCount(LocalChatViewModel viewModel) =>
+      viewModel.waiting || viewModel.streamingText.isNotEmpty ? 1 : 0;
+
   Widget _messageList(LocalChatViewModel viewModel) {
     // 会话恢复中：这里给出等待位。合一页的空态判定（`isHomeState`）已经把
     // loading 排除在外，所以恢复旧会话不会先闪一帧首页再回到消息流。
@@ -1079,8 +1089,7 @@ class _LocalChatViewState extends State<LocalChatView> {
       // 空列表的可见占位交给合一页的问候位，这里不再另画一份。
       return const SizedBox.shrink();
     }
-    final transientCount =
-        viewModel.waiting || viewModel.streamingText.isNotEmpty ? 1 : 0;
+    final transientCount = _transientCount(viewModel);
     // 行进抑制门控（design-system §10 第 11 条）：滚轮滚动让消息滑到
     // 静止光标下时 MouseTracker 会派发 onEnter，指针快速扫过时每颗气泡
     // 也会闪时刻——门控在列表层收住（滚动通知只向上冒泡经过祖先，放出
@@ -1329,7 +1338,7 @@ class _VolumePopupCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
         decoration: BoxDecoration(
           color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: QiyuRadii.cardBorder,
           border: Border.all(color: theme.colorScheme.outlineVariant),
           boxShadow: [
             BoxShadow(
@@ -1376,7 +1385,7 @@ class _VolumePopupCard extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: QiyuSpacing.xs),
             Text(
               '$percent%',
               style: theme.textTheme.labelLarge?.copyWith(

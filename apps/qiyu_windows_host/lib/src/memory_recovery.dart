@@ -10,6 +10,7 @@ import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
 import 'memory_controls.dart';
 import 'memory_marker_codec.dart';
+import 'memory_text_primitives.dart';
 import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
@@ -234,34 +235,6 @@ String _quarantineLayerLabel(String layerKey) {
 
 final _sessionFileNamePattern = RegExp(r'^(\d{4}-\d{2}-\d{2})-(\d{3})\.md$');
 final _tmpFilePattern = RegExp(r'\.\d+\.tmp$');
-final _sessionMetaPattern = RegExp(
-  r'^<!-- qiyu-session:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
-final _turnMarkerPattern = RegExp(
-  r'^<!-- qiyu-turn:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
-final _episodeMetaPattern = RegExp(
-  r'^<!-- qiyu-episode:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
-final _episodeEntryMarkerPattern = RegExp(
-  r'^<!-- qiyu-episode-entry:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
-final _dreamStateMarkerPattern = RegExp(
-  r'^<!-- qiyu-dream-state:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
-final _checkpointMetaPattern = RegExp(
-  r'^<!-- qiyu-checkpoint:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
-final _recoveryReportMarkerPattern = RegExp(
-  r'^<!-- qiyu-recovery-report:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
 
 /// 归档墓碑标记（ticket 21）：归档损坏且无备份可恢复时，原位留下
 /// 该标记保持「归档不可读」语义——受影响分支的根节点升降因此持续
@@ -373,12 +346,12 @@ final class MemoryRecoveryService {
 
   /// 最近一次持久化的恢复报告；不存在或不可读返回 null。
   Future<MemoryRecoveryReport?> readReport() async {
-    final contents = await _readOrNull(_reportFile);
+    final contents = await readFileIfExists(_reportFile);
     if (contents == null) {
       return null;
     }
     try {
-      final match = _recoveryReportMarkerPattern.firstMatch(contents);
+      final match = recoveryReportMarkerPattern.firstMatch(contents);
       if (match == null) {
         return null;
       }
@@ -465,7 +438,7 @@ final class MemoryRecoveryService {
         contents = await _readLenient(file);
       }
 
-      final metadataMatch = _sessionMetaPattern.firstMatch(contents);
+      final metadataMatch = sessionMetaMarkerPattern.firstMatch(contents);
       Map<String, Object?>? metadata;
       if (metadataMatch != null) {
         try {
@@ -474,7 +447,7 @@ final class MemoryRecoveryService {
           metadata = null;
         }
       }
-      final markers = _turnMarkerPattern.allMatches(contents).toList();
+      final markers = sessionTurnMarkerPattern.allMatches(contents).toList();
       final turns = <RawSessionTurn>[];
       var failedMarkers = 0;
       for (final marker in markers) {
@@ -590,14 +563,14 @@ final class MemoryRecoveryService {
         contents = await _readLenient(file);
       }
       final label = '每日记录（$date）';
-      if (!_episodeMetaPattern.hasMatch(contents) &&
-          !_episodeEntryMarkerPattern.hasMatch(contents)) {
+      if (!episodeMetaPattern.hasMatch(contents) &&
+          !episodeEntryMarkerPattern.hasMatch(contents)) {
         // 没有栖语元数据标记：可能是用户手写的普通 Markdown，绝不触碰。
         continue;
       }
       // 宽松解析会把尾部截断当成可读：按标记前缀计数找出丢失的块。
       final matchedMarkers =
-          _episodeEntryMarkerPattern.allMatches(contents).length;
+          episodeEntryMarkerPattern.allMatches(contents).length;
       final truncated =
           _countOccurrences(contents, '<!-- qiyu-episode-entry:') >
               matchedMarkers;
@@ -606,7 +579,7 @@ final class MemoryRecoveryService {
       }
 
       Map<String, Object?>? metadata;
-      final metadataMatch = _episodeMetaPattern.firstMatch(contents);
+      final metadataMatch = episodeMetaPattern.firstMatch(contents);
       if (metadataMatch != null) {
         try {
           metadata = decodeMarkerPayload(metadataMatch.group(1)!);
@@ -614,7 +587,7 @@ final class MemoryRecoveryService {
           metadata = null;
         }
       }
-      final markers = _episodeEntryMarkerPattern.allMatches(contents).toList();
+      final markers = episodeEntryMarkerPattern.allMatches(contents).toList();
       final entries = <EpisodeEntry>[];
       var failedMarkers = 0;
       for (final marker in markers) {
@@ -699,10 +672,10 @@ final class MemoryRecoveryService {
     if (!await file.exists()) {
       return;
     }
-    final contents = await _readOrNull(file);
+    final contents = await readFileIfExists(file);
     Map<String, Object?>? metadata;
     if (contents != null) {
-      final match = _checkpointMetaPattern.firstMatch(contents);
+      final match = checkpointMetaPattern.firstMatch(contents);
       if (match != null) {
         try {
           metadata = decodeMarkerPayload(match.group(1)!);
@@ -1156,7 +1129,8 @@ final class MemoryRecoveryService {
 
     // daily-state.md：编码失败才算损坏；重建归下一次日终归档。
     final dailyState = File(path.join(memoryDirectory, 'daily-state.md'));
-    if (await dailyState.exists() && await _readOrNull(dailyState) == null) {
+    if (await dailyState.exists() &&
+        await readFileIfExists(dailyState) == null) {
       try {
         await _quarantineMove(dailyState, 'daily-state');
         findings.add(
@@ -1178,7 +1152,7 @@ final class MemoryRecoveryService {
     // relationship.md：受管结构损坏时从全部有效剧集证据整体重建。
     final relationship = File(path.join(memoryDirectory, 'relationship.md'));
     if (await relationship.exists()) {
-      final contents = await _readOrNull(relationship);
+      final contents = await readFileIfExists(relationship);
       final managed =
           contents != null && contents.trimLeft().startsWith('# relationship');
       final broken = contents == null ||
@@ -1276,9 +1250,42 @@ final class MemoryRecoveryService {
 
     // long-memory.md：优先从最近有效 Dream 备份恢复；没有备份时隔离
     // 并等待语义恢复，绝不补写无法证明的长期内容。
-    final longMemory = File(path.join(memoryDirectory, 'long-memory.md'));
+    if (await _recoverLongMemoryFromBackup(findings)) {
+      restoredFromBackup = true;
+    }
+
+    // PersonaTree 分支与归档：优先 Dream 备份恢复；无备份时隔离并
+    // 暂停受影响分支的根节点操作（快照 archiveReadable 已驱动拒绝）。
+    // 恢复前先隔离损坏原件：备份落盘成功才删除副本，落盘失败保留
+    // （详见 [_recoverPersonaTreeFromBackup]）。
+    if (await _recoverPersonaTreeFromBackup(findings)) {
+      restoredFromBackup = true;
+    }
+
+    // persona.md：纯投影＋受保护称呼设定行，结构存疑时从活跃根重投
+    // 影；树不完整时隔离等待，绝不写出残缺画像（详见
+    // [_recoverPersonaProjection]）。
+    await _recoverPersonaProjection(findings);
+
+    // dream/state.md：损坏即隔离并重置为空状态（Dream 间隔证据丢失，
+    // 下一次晚安重新评估）。
+    await _recoverDreamState(findings);
+
+    if (restoredFromBackup) {
+      await _reapplyControlsAfterBackupRestore();
+    }
+  }
+
+  /// long-memory.md 恢复：优先从最近有效 Dream 备份恢复；没有备份时
+  /// 隔离并等待语义恢复，绝不补写无法证明的长期内容。返回是否完成过
+  /// 备份恢复。
+  Future<bool> _recoverLongMemoryFromBackup(
+    List<MemoryRecoveryFinding> findings,
+  ) async {
+    var restoredFromBackup = false;
+    final longMemory = File(path.join(memoryDirectory, longMemoryFileName));
     if (await longMemory.exists()) {
-      final contents = await _readOrNull(longMemory);
+      final contents = await readFileIfExists(longMemory);
       final managed =
           contents != null && contents.trimLeft().startsWith('# long-memory');
       final broken = contents == null ||
@@ -1326,10 +1333,17 @@ final class MemoryRecoveryService {
         }
       }
     }
+    return restoredFromBackup;
+  }
 
-    // PersonaTree 分支与归档：优先 Dream 备份恢复；无备份时隔离并
-    // 暂停受影响分支的根节点操作（快照 archiveReadable 已驱动拒绝）。
-    // 恢复前先隔离损坏原件：备份落盘成功才删除副本，落盘失败保留。
+  /// PersonaTree 分支与归档恢复：优先 Dream 备份恢复；无备份时隔离
+  /// 并暂停受影响分支的根节点操作（快照 archiveReadable 已驱动拒绝）。
+  /// 恢复前先隔离损坏原件：备份落盘成功才删除副本，落盘失败保留。
+  /// 返回是否完成过备份恢复。
+  Future<bool> _recoverPersonaTreeFromBackup(
+    List<MemoryRecoveryFinding> findings,
+  ) async {
+    var restoredFromBackup = false;
     final snapshot = await personaTree.readSnapshot();
     final backup = await dreamService.readPersonaTreeBackup();
     final restoreSet = <String, String>{};
@@ -1475,14 +1489,19 @@ final class MemoryRecoveryService {
         }
       }
     }
+    return restoredFromBackup;
+  }
 
-    // persona.md：纯投影＋受保护称呼设定行，结构存疑时从活跃根重投
-    // 影；树不完整时隔离等待，绝不写出残缺画像。隔离前先从原件抢救
-    // 称呼行（ADR 0005）：救出就落回最小 persona.md 等下次重投影带上，
-    // 救不出就退回「未设置」，绝不编一个称呼。
+  /// persona.md 投影恢复：纯投影＋受保护称呼设定行，结构存疑时从
+  /// 活跃根重投影；树不完整时隔离等待，绝不写出残缺画像。隔离前先
+  /// 从原件抢救称呼行（ADR 0005）：救出就落回最小 persona.md 等下次
+  /// 重投影带上，救不出就退回「未设置」，绝不编一个称呼。
+  Future<void> _recoverPersonaProjection(
+    List<MemoryRecoveryFinding> findings,
+  ) async {
     final persona = File(path.join(memoryDirectory, 'persona.md'));
     if (await persona.exists()) {
-      final contents = await _readOrNull(persona);
+      final contents = await readFileIfExists(persona);
       final salvagedAppellation = extractAppellationLine(contents);
       if (!_personaProjectionValid(contents)) {
         final freshSnapshot = await personaTree.readSnapshot();
@@ -1538,15 +1557,17 @@ final class MemoryRecoveryService {
         }
       }
     }
+  }
 
-    // dream/state.md：损坏即隔离并重置为空状态（Dream 间隔证据丢失，
-    // 下一次晚安重新评估）。
+  /// dream/state.md 恢复：损坏即隔离并重置为空状态（Dream 间隔证据
+  /// 丢失，下一次晚安重新评估）。
+  Future<void> _recoverDreamState(List<MemoryRecoveryFinding> findings) async {
     final state = File(path.join(memoryDirectory, 'dream', 'state.md'));
     if (await state.exists()) {
       var valid = false;
-      final contents = await _readOrNull(state);
+      final contents = await readFileIfExists(state);
       if (contents != null) {
-        final match = _dreamStateMarkerPattern.firstMatch(contents);
+        final match = dreamStateMarkerPattern.firstMatch(contents);
         if (match != null) {
           try {
             final json = decodeMarkerPayload(match.group(1)!);
@@ -1574,10 +1595,6 @@ final class MemoryRecoveryService {
           _diagnosticsSink('dream state quarantine deferred [$error]');
         }
       }
-    }
-
-    if (restoredFromBackup) {
-      await _reapplyControlsAfterBackupRestore();
     }
   }
 
@@ -1757,7 +1774,7 @@ final class MemoryRecoveryService {
         }
         // 日志同样走 temp+rename 原子替换（读旧内容拼接后整体写回），
         // 中断不会留下写了一半的追加行。
-        final existing = await _readOrNull(_logFile) ?? '';
+        final existing = await readFileIfExists(_logFile) ?? '';
         await _atomicWriter.replace(_logFile.path, existing + buffer.toString());
       }
       await _atomicWriter.replace(
@@ -1775,18 +1792,6 @@ final class MemoryRecoveryService {
   /// 禁止对它做字符串等值比较。
   File _episodeDayFile(String date) =>
       File(path.join(memoryDirectory, episodeDayRelativePath(date)));
-
-  /// UTF-8 文本读取；文件不存在或读取失败返回 null。
-  Future<String?> _readOrNull(File file) async {
-    try {
-      if (!await file.exists()) {
-        return null;
-      }
-      return await file.readAsString(encoding: utf8);
-    } on Object {
-      return null;
-    }
-  }
 
   /// 编码损坏时的宽松解码兜底：宁可带着替换字符抢救正文结构，也
   /// 不因外围编码失败丢弃原始证据。

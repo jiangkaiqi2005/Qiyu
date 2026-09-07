@@ -6,6 +6,7 @@ import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
 import 'support/in_process_chat_host.dart';
+import 'support/scripted_chat_client.dart';
 
 void main() {
   group('memory-controls store', () {
@@ -337,7 +338,7 @@ void main() {
       final recall = RecallOrchestrator(
         memoryDirectory: root.path,
         episodePipeline: pipeline,
-        modelClient: _ScriptedModelClient(const []),
+        modelClient: ScriptedChatClient(const []),
         openLoopStore: openLoopStore,
       );
       await pipeline.synchronizedOnDayFiles(() => recall.indexStore.rebuild());
@@ -351,7 +352,7 @@ void main() {
       // 索引关键词全部命中冻结：目录整行隐藏，模型调用不发生。
       expect(result.bubbleText, isNull);
       expect(result.diagnostics.join('\n'), contains('no-visible-months'));
-      expect((recall.modelClient! as _ScriptedModelClient).calls, isEmpty);
+      expect((recall.modelClient! as ScriptedChatClient).calls, isEmpty);
     });
 
     test('day-end organize leaves frozen leaves untouched', () async {
@@ -433,7 +434,7 @@ void main() {
       );
       final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
       expect(await openLoopStore.memoryControls.freeze('爬山'), isTrue);
-      final client = _ScriptedDreamClient([
+      final client = ScriptedChatClient([
         // 第一稿丢掉冻结条目。
         ModelCompletion.reply(
           _candidate([
@@ -499,7 +500,7 @@ void main() {
 ''');
       final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
       expect(await openLoopStore.memoryControls.freeze('跑步'), isTrue);
-      final client = _ScriptedDreamClient([
+      final client = ScriptedChatClient([
         ModelCompletion.reply(
           _candidateWithRoots(
             [
@@ -598,7 +599,7 @@ since: 2026-08-01
 - 用户睡眠平稳
 ''',
       );
-      final client = _ScriptedModelClient([
+      final client = ScriptedChatClient([
         ModelCompletion.reply('{"summary":"用户聊了工作"}'),
       ]);
       final service = DailyFinalizationService(
@@ -648,7 +649,7 @@ since: 2026-08-01
 ''');
       final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
       expect(await openLoopStore.memoryControls.freeze('跑步'), isTrue);
-      final client = _ScriptedDreamClient([
+      final client = ScriptedChatClient([
         ModelCompletion.reply(
           _candidate([
             _item('模式与轨迹', '用户靠跑步解压', ['2026-08-14']),
@@ -710,7 +711,7 @@ since: 2026-08-01
         // 强制带回该条目，否则每一稿都被拒，Dream 永久卡死。
         expect(await openLoopStore.memoryControls.freeze('爬山'), isTrue);
         expect(await openLoopStore.memoryControls.ban('爬山'), isTrue);
-        final client = _ScriptedDreamClient([
+        final client = ScriptedChatClient([
           ModelCompletion.reply(
             _candidate([
               _item('重要事件', '用户去年完成了第一个马拉松', ['2026-08-14']),
@@ -1059,7 +1060,7 @@ since: 2026-08-01
       await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
       final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
       expect(await openLoopStore.memoryControls.recordDelete('搬家'), isTrue);
-      final client = _ScriptedDreamClient([
+      final client = ScriptedChatClient([
         ModelCompletion.reply(
           _candidate([
             _item('重要事件', '用户搬家了', ['2026-08-14']),
@@ -1172,47 +1173,3 @@ Map<String, Object?> _item(
   String text,
   List<String> evidence,
 ) => {'section': section, 'text': text, 'evidence': evidence};
-
-final class _ScriptedModelClient implements ProviderChatClient {
-  _ScriptedModelClient(this.completions);
-
-  final List<ModelCompletion?> completions;
-  final List<List<ModelMessage>> calls = [];
-
-  @override
-  Future<ModelCompletion?> complete(
-    List<ModelMessage> messages, {
-    int? maxTokens,
-  }) async {
-    calls.add(messages);
-    final index = calls.length - 1 < completions.length
-        ? calls.length - 1
-        : completions.length - 1;
-    return completions.isEmpty ? null : completions[index];
-  }
-}
-
-final class _ScriptedDreamClient implements ProviderChatClient {
-  _ScriptedDreamClient(this.completions);
-
-  final List<ModelCompletion?> completions;
-  final List<List<ModelMessage>> calls = [];
-  var _index = 0;
-
-  @override
-  Future<ModelCompletion?> complete(
-    List<ModelMessage> messages, {
-    int? maxTokens,
-  }) async {
-    calls.add(messages);
-    if (completions.isEmpty) {
-      return null;
-    }
-    final completion =
-        completions[_index < completions.length
-            ? _index
-            : completions.length - 1];
-    _index += 1;
-    return completion;
-  }
-}

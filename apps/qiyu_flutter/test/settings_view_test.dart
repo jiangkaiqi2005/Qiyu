@@ -6,8 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/app.dart';
-import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
-import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
@@ -25,6 +23,8 @@ import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
+import 'support/shared_fakes.dart';
+
 void main() {
   testWidgets(
     'developer diagnostics entry only appears after developer mode is on',
@@ -33,7 +33,7 @@ void main() {
       await tester.pumpWidget(
         await _app(
           settingsViewModel: SettingsViewModel(settingsGateway),
-          providerGateway: _FixedProviderSettingsGateway(configured: false),
+          providerGateway: FixedProviderSettingsGateway(configured: false),
         ),
       );
       await _openSettings(tester);
@@ -46,16 +46,7 @@ void main() {
       expect(settingsGateway.developerMode, isFalse);
 
       // 打开开发者模式后入口出现。
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('developer-mode-switch')),
-        200,
-        scrollable: _verticalScrollable(),
-        maxScrolls: 20,
-      );
-      await tester.ensureVisible(
-        find.byKey(const Key('developer-mode-switch')),
-      );
-      await tester.pumpAndSettle();
+      await _reveal(tester, find.byKey(const Key('developer-mode-switch')));
       await tester.tap(find.byKey(const Key('developer-mode-switch')));
       await tester.pumpAndSettle();
 
@@ -126,7 +117,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(settingsGateway),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
@@ -169,21 +160,12 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(settingsGateway),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('settings-memory-controls')),
-      200,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(
-      find.byKey(const Key('settings-memory-controls')),
-    );
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('settings-memory-controls')));
     await tester.tap(find.byKey(const Key('settings-memory-controls')));
     await tester.pumpAndSettle();
 
@@ -202,7 +184,7 @@ void main() {
   testWidgets('clearing product data previews impact and needs confirmation', (
     tester,
   ) async {
-    final onboardingGateway = _ClearableOnboardingGateway();
+    final onboardingGateway = FakeOnboardingGateway(completed: true);
     // 清除落地的同时初见记录也被清除：重读状态后当次会话重走初见引导。
     final settingsGateway = _FakeSettingsGateway(
       onCleared: () => onboardingGateway.completed = false,
@@ -210,20 +192,13 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(settingsGateway),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         onboardingGateway: onboardingGateway,
       ),
     );
     await _openSettings(tester);
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('settings-clear-data')),
-      200,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('settings-clear-data')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('settings-clear-data')));
     await tester.tap(find.byKey(const Key('settings-clear-data')));
     await tester.pumpAndSettle();
 
@@ -263,7 +238,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         ttsGateway: ttsGateway,
       ),
     );
@@ -307,14 +282,11 @@ void main() {
       find.byKey(const Key('tts-api-key')),
       'tts-new-secret-value',
     );
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('save-tts-settings')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 10,
     );
-    await tester.ensureVisible(find.byKey(const Key('save-tts-settings')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('save-tts-settings')));
     await tester.pumpAndSettle();
     expect(ttsGateway.savedDrafts, hasLength(1));
@@ -340,14 +312,7 @@ void main() {
     expect(find.byKey(const Key('tts-replay-preview')), findsOneWidget);
 
     // 切到豆包：地址与模型换成订阅专属缺省（完整端点 + Resource-Id）。
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('tts-provider')),
-      -300,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('tts-provider')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('tts-provider')), delta: -300);
     await tester.tap(find.byKey(const Key('tts-provider')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('豆包语音合成').last);
@@ -377,14 +342,7 @@ void main() {
     // `save-tts-settings` **之上**，必须往上滚才回得去。设置页挂上导航壳后内容列
     // 变窄（默认 800px 视口减去 240px 侧栏）、列表随之变长，之前向下滚能蒙对是
     // 因为整页还装得下、目标始终在缓存区内。
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('forget-tts-key')),
-      -200,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('forget-tts-key')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('forget-tts-key')), delta: -200);
     await tester.tap(find.byKey(const Key('forget-tts-key')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('tts-forget-key-dialog')), findsOneWidget);
@@ -412,7 +370,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         ttsGateway: ttsGateway,
       ),
     );
@@ -436,16 +394,11 @@ void main() {
     );
 
     // 展开高级参数面板，校验已回填 extraParams JSON
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('tts-advanced-params-tile')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 10,
     );
-    await tester.ensureVisible(
-      find.byKey(const Key('tts-advanced-params-tile')),
-    );
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
     await tester.pumpAndSettle();
 
@@ -467,14 +420,11 @@ void main() {
       find.byKey(const Key('tts-extra-params')),
       '{"audio_params": {"sample_rate": 16000}}',
     );
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('save-tts-settings')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 10,
     );
-    await tester.ensureVisible(find.byKey(const Key('save-tts-settings')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('save-tts-settings')));
     await tester.pumpAndSettle();
 
@@ -495,14 +445,7 @@ void main() {
     );
     await _openSettings(tester);
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('forget-api-key')),
-      200,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('forget-api-key')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('forget-api-key')));
     await tester.tap(find.byKey(const Key('forget-api-key')));
     await tester.pumpAndSettle();
 
@@ -532,7 +475,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         sttGateway: sttGateway,
       ),
     );
@@ -568,14 +511,11 @@ void main() {
       find.byKey(const Key('stt-api-key')),
       'stt-new-secret-value',
     );
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('save-stt-settings')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 10,
     );
-    await tester.ensureVisible(find.byKey(const Key('save-stt-settings')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('save-stt-settings')));
     await tester.pumpAndSettle();
     expect(sttGateway.savedDrafts, hasLength(1));
@@ -600,14 +540,7 @@ void main() {
     expect(find.textContaining('连接成功，语音输入可以使用'), findsOneWidget);
 
     // 切到豆包：下拉在区块顶部，测试按钮之后可能已经滚下去，向上找回。
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('stt-provider')),
-      -300,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('stt-provider')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
     await tester.tap(find.byKey(const Key('stt-provider')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('豆包流式语音识别').last);
@@ -636,14 +569,11 @@ void main() {
     );
 
     // 忘记 Key：需要确认，确认后 keySet 归零。
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('forget-stt-key')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 10,
     );
-    await tester.ensureVisible(find.byKey(const Key('forget-stt-key')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('forget-stt-key')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('stt-forget-key-dialog')), findsOneWidget);
@@ -657,20 +587,13 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
     await _expandSection(tester, 'privacy');
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('settings-privacy')),
-      200,
-      scrollable: _verticalScrollable(),
-      maxScrolls: 20,
-    );
-    await tester.ensureVisible(find.byKey(const Key('settings-privacy')));
-    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('settings-privacy')));
     await tester.tap(find.byKey(const Key('settings-privacy')));
     await tester.pumpAndSettle();
 
@@ -709,7 +632,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         webSearchGateway: webSearchGateway,
       ),
     );
@@ -769,7 +692,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         webSearchGateway: webSearchGateway,
       ),
     );
@@ -828,7 +751,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
         ttsGateway: ttsGateway,
       ),
     );
@@ -836,16 +759,11 @@ void main() {
     await _expandSection(tester, 'tts');
 
     // 展开高级参数
-    await tester.scrollUntilVisible(
+    await _reveal(
+      tester,
       find.byKey(const Key('tts-advanced-params-tile')),
-      200,
-      scrollable: _verticalScrollable(),
       maxScrolls: 30,
     );
-    await tester.ensureVisible(
-      find.byKey(const Key('tts-advanced-params-tile')),
-    );
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
     await tester.pumpAndSettle();
 
@@ -873,7 +791,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
@@ -1060,7 +978,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
@@ -1100,7 +1018,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await _openSettings(tester);
@@ -1356,7 +1274,7 @@ void main() {
     await tester.pumpWidget(
       await _app(
         settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
-        providerGateway: _FixedProviderSettingsGateway(configured: false),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
       ),
     );
     await tester.pumpAndSettle();
@@ -1443,15 +1361,15 @@ Future<Widget> _app({
   );
   await providerViewModel.initialize();
   final onboardingViewModel = OnboardingViewModel(
-    onboardingGateway ?? _CompletedOnboardingGateway(),
-    _FixedProviderSettingsGateway(configured: true),
+    onboardingGateway ?? FakeOnboardingGateway(completed: true),
+    FixedProviderSettingsGateway(configured: true),
     autoStart: false,
   );
   await onboardingViewModel.initialize();
   return QiyuApp(
     viewModel: LocalChatViewModel(
-      _UnusedChatGateway(),
-      hostConnectionProbe: _FixedHostConnectionProbe(),
+      FakeLocalChatGateway.silent(),
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
       autoStart: false,
     ),
     providerSettingsViewModel: providerViewModel,
@@ -1482,6 +1400,25 @@ Future<void> _openSettings(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// 滚动到 [finder] 可见并定格：scrollUntilVisible → ensureVisible → pumpAndSettle
+/// 三连。滚动参数逐字透传：[delta] 是每次滚动的距离（默认 200，个别用例
+/// -300/-200），[maxScrolls] 是最多滚动次数（默认 20，个别用例 30/10）。
+Future<void> _reveal(
+  WidgetTester tester,
+  Finder finder, {
+  double delta = 200,
+  int maxScrolls = 20,
+}) async {
+  await tester.scrollUntilVisible(
+    finder,
+    delta,
+    scrollable: _verticalScrollable(),
+    maxScrolls: maxScrolls,
+  );
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+}
+
 /// 这一节当前是否展开。
 ///
 /// 判据是「正文那块在不在树上」——收起时 [_SettingsPanel] 只不画正文，分节自身
@@ -1508,14 +1445,7 @@ const _defaultExpandedSectionIds = <String>['provider', 'local_data'];
 /// 点一次某一节的标题（不判当前状态，也不幂等）。
 Future<void> _tapSectionHeader(WidgetTester tester, String sectionId) async {
   final header = find.byKey(Key('settings-section-header-$sectionId'));
-  await tester.scrollUntilVisible(
-    header,
-    200,
-    scrollable: _verticalScrollable(),
-    maxScrolls: 20,
-  );
-  await tester.ensureVisible(header);
-  await tester.pumpAndSettle();
+  await _reveal(tester, header);
   await tester.tap(header);
   await tester.pumpAndSettle();
 }
@@ -1540,7 +1470,7 @@ Future<_FakeSettingsGateway> _pumpSettingsPage(
   await tester.pumpWidget(Container(key: UniqueKey()));
   await tester.pumpAndSettle();
   final providerViewModel = ProviderSettingsViewModel(
-    _FixedProviderSettingsGateway(configured: false),
+    FixedProviderSettingsGateway(configured: false),
     autoStart: false,
   );
   await providerViewModel.initialize();
@@ -1641,117 +1571,59 @@ List<RecentRequest> _defaultDiagnosticsRequests() => [
   ),
 ];
 
-final class _FakeSettingsGateway implements SettingsGateway {
-  _FakeSettingsGateway({this.onCleared, this.recentRequests});
-
-  bool developerMode = false;
-  int clearCalls = 0;
-
-  /// 诊断页「最近请求」的数据源；不给就用 `_defaultDiagnosticsRequests()`
-  /// 那一枚模型超时（真故障）。分档那条用例按顺序传五枚进来逐档验危险色。
-  final List<RecentRequest>? recentRequests;
-
-  /// 主持久化链路（Host `/api` 那侧）被写了几次：分节折叠按 design-system §8
-  /// 只准走本地 UI 存储，这个计数一次都不该动。
-  int prefWrites = 0;
-
-  /// 清除成功时的回调：测试用它同步翻转初见网关状态。
-  final void Function()? onCleared;
-
-  @override
-  Future<ExperiencePreferences> readPreferences() async =>
-      ExperiencePreferences(developerMode: developerMode);
-
-  @override
-  Future<ExperiencePreferences> savePreferences({
-    required bool developerMode,
-  }) async {
-    prefWrites += 1;
-    this.developerMode = developerMode;
-    return ExperiencePreferences(developerMode: developerMode);
-  }
-
-  @override
-  Future<MemoryControlsOverview> readMemoryControls() async =>
-      const MemoryControlsOverview(
-        readable: true,
-        frozen: [
-          MemoryControlRecord(id: 1, origin: 'chat', summary: '一段冻结的记忆'),
-        ],
-        banned: [
-          MemoryControlRecord(id: 2, origin: 'chat', summary: '一段禁提的往事'),
-        ],
-        deletedCount: 3,
+/// 设置网关替身：在共享版之上换成本页的富档位——记忆控制/清数据预览
+/// 带真实计数，诊断快照按分档用例的需要给「最近请求」（缺省一枚模型
+/// 超时），时间戳与文件健康取本文件固化的那组。
+class _FakeSettingsGateway extends FakeSettingsGateway {
+  _FakeSettingsGateway({super.onCleared, List<RecentRequest>? recentRequests})
+    : super(
+        recentRequests: recentRequests ?? _defaultDiagnosticsRequests(),
+        memoryControls: const MemoryControlsOverview(
+          readable: true,
+          frozen: [
+            MemoryControlRecord(id: 1, origin: 'chat', summary: '一段冻结的记忆'),
+          ],
+          banned: [
+            MemoryControlRecord(id: 2, origin: 'chat', summary: '一段禁提的往事'),
+          ],
+          deletedCount: 3,
+        ),
+        clearPreview: const ClearPreview(
+          memoryDirectory: 'C:/qiyu/memories',
+          sessionCount: 4,
+          episodeDayCount: 9,
+          frozenCount: 1,
+          bannedCount: 2,
+          deletedCount: 0,
+          snapshotCount: 1,
+          providerConfigured: false,
+          keySet: false,
+        ),
+        generatedAt: DateTime.parse('2026-08-19T14:00:00.000Z'),
+        memoryDirectory: 'C:/qiyu/memories',
+        finalization: const FinalizationHealth(
+          today: '2026-08-19',
+          todayFinalized: false,
+          pendingDays: 2,
+          unreadableDays: 0,
+        ),
+        dream: DreamHealth(
+          lastSuccessAt: DateTime.parse('2026-08-11T16:00:00.000Z'),
+          daysSinceLastSuccess: 8,
+          pending: false,
+          minIntervalDays: 3,
+          intervalSatisfied: true,
+          providerConfigured: true,
+          eligible: true,
+        ),
+        fileHealth: const {
+          'sessionsReadable': 4,
+          'sessionsUnavailable': 0,
+          'episodeDays': 9,
+          'episodeUnfinalized': 2,
+          'episodeUnreadable': 0,
+        },
       );
-
-  @override
-  Future<ClearPreview> readClearPreview() async => const ClearPreview(
-    memoryDirectory: 'C:/qiyu/memories',
-    sessionCount: 4,
-    episodeDayCount: 9,
-    frozenCount: 1,
-    bannedCount: 2,
-    deletedCount: 0,
-    snapshotCount: 1,
-    providerConfigured: false,
-    keySet: false,
-  );
-
-  @override
-  Future<void> clearData() async {
-    clearCalls += 1;
-    onCleared?.call();
-  }
-
-  @override
-  Future<DiagnosticsSnapshot> readDiagnostics() async => DiagnosticsSnapshot(
-    generatedAt: DateTime.parse('2026-08-19T14:00:00.000Z'),
-    memoryDirectory: 'C:/qiyu/memories',
-    recentRequests: recentRequests ?? _defaultDiagnosticsRequests(),
-    finalization: const FinalizationHealth(
-      today: '2026-08-19',
-      todayFinalized: false,
-      pendingDays: 2,
-      unreadableDays: 0,
-    ),
-    dream: DreamHealth(
-      lastSuccessAt: DateTime.parse('2026-08-11T16:00:00.000Z'),
-      daysSinceLastSuccess: 8,
-      pending: false,
-      minIntervalDays: 3,
-      intervalSatisfied: true,
-      providerConfigured: true,
-      eligible: true,
-    ),
-    fileHealth: const {
-      'sessionsReadable': 4,
-      'sessionsUnavailable': 0,
-      'episodeDays': 9,
-      'episodeUnfinalized': 2,
-      'episodeUnreadable': 0,
-    },
-  );
-}
-
-final class _FixedProviderSettingsGateway implements ProviderSettingsGateway {
-  _FixedProviderSettingsGateway({required this.configured});
-
-  final bool configured;
-
-  @override
-  Future<ProviderSettings> read() async =>
-      ProviderSettings(configured: configured, keySet: configured);
-
-  @override
-  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
-
-  @override
-  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
-
-  @override
-  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
-      throw UnimplementedError();
 }
 
 final class _MutableProviderSettingsGateway implements ProviderSettingsGateway {
@@ -1842,48 +1714,6 @@ final class _MutableWebSearchSettingsGateway
     keySet = false;
     return read();
   }
-}
-
-final class _CompletedOnboardingGateway extends _ClearableOnboardingGateway {}
-
-/// 初见状态可翻转：清除产品数据测试用它模拟初见记录被一并清除。
-class _ClearableOnboardingGateway implements OnboardingGateway {
-  bool completed = true;
-
-  @override
-  Future<OnboardingState> read() async => OnboardingState(completed: completed);
-
-  @override
-  Future<void> complete({String? appellation}) async {
-    completed = true;
-  }
-}
-
-final class _FixedHostConnectionProbe implements HostConnectionProbe {
-  @override
-  Future<bool> isHostAvailable() async => true;
-}
-
-final class _UnusedChatGateway implements StreamingLocalChatGateway {
-  @override
-  Future<LocalChatSnapshot> restore({String? sessionId}) async =>
-      const LocalChatSnapshot(sessionId: 'session-1', messages: []);
-
-  @override
-  Stream<LocalChatDeliveryEvent> deliver({
-    required String requestId,
-    required String text,
-    String? sessionId,
-  }) async* {}
-
-  @override
-  Future<bool> cancel(String requestId) async => true;
-
-  @override
-  Future<String> transcribe({
-    required Uint8List audio,
-    required String mimeType,
-  }) async => '语音测试转写';
 }
 
 final class _FixedSttSettingsGateway implements SttSettingsGateway {

@@ -25,6 +25,7 @@ export 'src/memory_marker_codec.dart';
 export 'src/memory_recall.dart';
 export 'src/memory_recovery.dart';
 export 'src/memory_scope.dart';
+export 'src/memory_text_primitives.dart';
 export 'src/model_gateway.dart';
 export 'src/model_prompt_builder.dart';
 export 'src/model_text_protocol.dart';

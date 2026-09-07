@@ -13,17 +13,13 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path/path.dart' as path;
-
 import 'daily_understanding.dart';
-import 'dream.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
-import 'memory_controls.dart';
+import 'memory_text_primitives.dart';
 import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
-import 'relationship_lifecycle.dart';
 
 /// 控制范围（禁提 ∪ 删除）的统一文本谓词：先归一化再按包含规则
 /// 匹配，删除预览、定位扫描与派生清除共用同一份，绝不各写一套。
@@ -105,12 +101,10 @@ final class MemoryScopeScanner {
   final OpenLoopStore openLoopStore;
   final MonthlySummaryStore monthlySummary;
 
-  File get _longMemoryFile =>
-      File(path.join(memoryDirectory, 'long-memory.md'));
+  File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _relationshipFile =>
-      File(path.join(memoryDirectory, 'relationship.md'));
-  File get _dailyStateFile =>
-      File(path.join(memoryDirectory, 'daily-state.md'));
+      memoryFile(memoryDirectory, relationshipFileName);
+  File get _dailyStateFile => memoryFile(memoryDirectory, dailyStateFileName);
 
   /// 按清除管线能触及的节点集合逐层统计命中。只读，绝不写盘。
   Future<MemoryScopeHit> scan(Set<String> scope) async {

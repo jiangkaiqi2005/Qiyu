@@ -9,8 +9,10 @@ import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 
 /// 紫夜薄包装层（design-system §8 组件清单的 M3 底子 + token 换皮）：
-/// 毛玻璃面板与自绘**键盘**焦点环。侧边栏、抽屉、composer、发送钮共用同一
-/// 份实现，保证「材质同源」，页面不得再各自抄一遍 Blur + ColoredBox。
+/// 毛玻璃面板与自绘**键盘**焦点环。侧边栏、抽屉与 composer 的毛玻璃底共用
+/// 同一份 [QiyuGlassPanel]，保证「材质同源」，页面不得再各自抄一遍
+/// Blur + ColoredBox；发送钮的玻璃紫渐变是独立实现（自带 ClipOval +
+/// BackdropFilter，见 `features/chat/qiyu_send_button.dart`），只从这里取焦点环。
 ///
 /// 本文件另住着一件壳层共用件 [maybeProvider]：导航壳与连接状态都要读同一份
 /// 可能缺席的 `LocalChatViewModel`，那份 try/catch 形状只留一处（read / watch
@@ -298,9 +300,6 @@ class QiyuFocusSource extends ChangeNotifier {
     _lastInput = QiyuFocusOrigin.undetermined;
   }
 
-  /// 当前结论：最近一次把焦点交出去的输入来自哪里。
-  QiyuFocusOrigin get origin => _origin;
-
   /// 环的唯一判据。只有键盘把焦点送到这里时才为 true（触摸与指针为 false）。
   bool get keyboardDriven {
     _bind(FocusManager.instance);
@@ -444,5 +443,49 @@ T? maybeProvider<T>(T Function() lookup) {
     return lookup();
   } on ProviderNotFoundException {
     return null;
+  }
+}
+
+/// 页面加载失败态的统一出口：错误文案 + 12px 间隔 + 带焦点环的重试钮。
+/// 记忆中心列表页、记忆详情页与历史页共用这一份骨架，不再逐页复制。
+/// 文案、文案键与文案样式由调用方给定：列表页文案着错误色但不带键、
+/// 详情页文案带键但用默认字色——两处既有差异原样参数化，不在此合并。
+/// 加载态没有共享组件：`Center(child: CircularProgressIndicator())`
+/// 本就是最短表达。
+class QiyuErrorRetryState extends StatelessWidget {
+  const QiyuErrorRetryState({
+    super.key,
+    required this.message,
+    this.messageKey,
+    this.messageStyle,
+    required this.retryKey,
+    required this.onRetry,
+  });
+
+  final String message;
+  final Key? messageKey;
+  final TextStyle? messageStyle;
+  final Key retryKey;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(message, key: messageKey, style: messageStyle),
+          const SizedBox(height: 12),
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: retryKey,
+              onPressed: onRetry,
+              child: const Text('重试'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -1,4 +1,5 @@
 import 'contracts.dart';
+import 'shared_patterns.dart';
 
 const _forbiddenPhrases = [
   '我理解你的感受',
@@ -57,7 +58,6 @@ final _roleFenceLinePattern = RegExp(
 );
 final _leftAngleBracketPattern = RegExp(r'<(?=[!?/]?[A-Za-z_])');
 final _inlineSpacePattern = RegExp(r'[ \t]+');
-final _blankLinesPattern = RegExp(r'\n{3,}');
 
 // —— 安全分类（_classifySafety）。——
 final _crisisPattern = RegExp(
@@ -140,7 +140,7 @@ final class QiyuBehaviorCore {
     String? candidateReply,
     FallbackReason? modelFailure,
   }) {
-    final text = sanitizeUserInput(request.text).trim();
+    final text = sanitizeUserInput(request.text);
     if (text.isEmpty) {
       return ErrorResult(
         requestId: request.requestId,
@@ -268,7 +268,7 @@ String sanitizeUserInput(String value) {
       .split('\n')
       .map((line) => line.replaceAll(_inlineSpacePattern, ' ').trim())
       .join('\n');
-  return text.replaceAll(_blankLinesPattern, '\n\n').trim();
+  return text.replaceAll(blankLinesPattern, '\n\n').trim();
 }
 
 ({List<String> messages, String mode}) _localReply(String text) {

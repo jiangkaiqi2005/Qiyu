@@ -5,6 +5,8 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 import 'package:test/test.dart';
 
+import 'support/scripted_chat_client.dart';
+
 void main() {
   test('in-turn loop walks both index levels and composes bubble 2', () async {
     final root = await _seedEpisodes({
@@ -14,7 +16,7 @@ void main() {
     addTearDown(() => root.delete(recursive: true));
     final (recall, pipeline) = _orchestrator(
       root.path,
-      client: _ScriptedModelClient([
+      client: ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
         ModelCompletion.reply('是想起来了，演讲那件事。'),
       ]),
@@ -35,7 +37,7 @@ void main() {
     expect(result.pendingContext, contains('临时参考'));
 
     // 调用2 收到顶层索引与近期每日索引；调用3 收到回读的日原文。
-    final client = recall.modelClient! as _ScriptedModelClient;
+    final client = recall.modelClient! as ScriptedChatClient;
     expect(client.calls, hasLength(2));
     final selectionInput = client.calls[0].last.content;
     expect(selectionInput, contains('2026-07'));
@@ -55,7 +57,7 @@ void main() {
     addTearDown(() => root.delete(recursive: true));
     final (recall, pipeline) = _orchestrator(
       root.path,
-      client: _ScriptedModelClient([
+      client: ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
         ModelCompletion.reply('是想起来了，演讲那件事。'),
       ]),
@@ -70,7 +72,7 @@ void main() {
     expect(result.bubbleText, isNotNull);
     // 理解类调用必须显式给足输出预算：缺省会吃聊天护栏 512，材料变
     // 大后输出截断即整轮召回失败。
-    final client = recall.modelClient! as _ScriptedModelClient;
+    final client = recall.modelClient! as ScriptedChatClient;
     expect(client.calls, hasLength(2));
     expect(client.maxTokens, [16384, 16384]);
   });
@@ -84,7 +86,7 @@ void main() {
     File('${root.path}/persona.md').writeAsStringSync('# persona\n称呼：老王\n');
     final (recall, pipeline) = _orchestrator(
       root.path,
-      client: _ScriptedModelClient([
+      client: ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
         ModelCompletion.reply('是想起来了，演讲那件事。'),
         ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
@@ -97,7 +99,7 @@ void main() {
       userText: '我上次说的演讲准备得怎么样了',
       recallActions: [MemoryRecallAction(query: '第一次演讲')],
     );
-    final client = recall.modelClient! as _ScriptedModelClient;
+    final client = recall.modelClient! as ScriptedChatClient;
     // 有称呼：语境自然时可以用称呼，绝不自创昵称。
     final composeSystem = client.calls[1].first.content;
     expect(composeSystem, contains('语境自然时可以用「老王」称呼用户'));
@@ -121,7 +123,7 @@ void main() {
     addTearDown(() => root.delete(recursive: true));
     final (recall, pipeline) = _orchestrator(
       root.path,
-      client: _ScriptedModelClient([
+      client: ScriptedChatClient([
         // 编造的日期与真实日期混在一起。
         ModelCompletion.reply(
           _selectionReply(dates: ['2026-07-02', '2031-01-01']),
@@ -156,7 +158,7 @@ void main() {
       addTearDown(() => root.delete(recursive: true));
       final (recall, pipeline) = _orchestrator(
         root.path,
-        client: _ScriptedModelClient([
+        client: ScriptedChatClient([
           // 第一次只指到月份（老月没有递过每日索引）。
           ModelCompletion.reply(_selectionReply(months: ['2025-03'])),
           // 补读每日索引后给出具体日期。
@@ -172,7 +174,7 @@ void main() {
       );
 
       expect(result.bubbleText, '书店那件事想起来了。');
-      final client = recall.modelClient! as _ScriptedModelClient;
+      final client = recall.modelClient! as ScriptedChatClient;
       expect(client.calls, hasLength(3));
       // 第一次选择调用没有递老月每日索引，第二次补上了。
       expect(client.calls[0].last.content, isNot(contains('每日索引（2025-03）')));
@@ -192,7 +194,7 @@ void main() {
     addTearDown(() => root.delete(recursive: true));
     final (recall, pipeline) = _orchestrator(
       root.path,
-      client: _ScriptedModelClient([ModelCompletion.reply(_selectionReply())]),
+      client: ScriptedChatClient([ModelCompletion.reply(_selectionReply())]),
     );
     await _rebuildUnderLock(recall, pipeline);
 
@@ -204,7 +206,7 @@ void main() {
     expect(result.bubbleText, isNull);
     expect(result.pendingContext, isNull);
     expect(result.diagnostics.join('\n'), contains('no-date-selection'));
-    expect((recall.modelClient! as _ScriptedModelClient).calls, hasLength(1));
+    expect((recall.modelClient! as ScriptedChatClient).calls, hasLength(1));
   });
 
   test('an unconfigured provider skips the whole loop', () async {
@@ -234,7 +236,7 @@ void main() {
       addTearDown(() => root.delete(recursive: true));
       final (recall, pipeline) = _orchestrator(
         root.path,
-        client: _ScriptedModelClient([
+        client: ScriptedChatClient([
           ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
           ModelCompletion.reply('想起来了。'),
         ]),
@@ -274,7 +276,7 @@ void main() {
     );
     final (recall, _) = _orchestrator(
       root.path,
-      client: _ScriptedModelClient([
+      client: ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(dates: ['2026-08-14'])),
         ModelCompletion.reply('火锅想起来了。'),
       ]),
@@ -309,7 +311,7 @@ void main() {
       );
     final (recall, pipeline) = _orchestrator(
       root.path,
-      client: _ScriptedModelClient([
+      client: ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(dates: ['2026-07-03'])),
         ModelCompletion.reply('不该被组织出来。'),
       ]),
@@ -328,7 +330,7 @@ void main() {
     // 调用都不发生，被禁内容绝不递给模型。
     expect(result.diagnostics.join('\n'), contains('reason=blocked'));
     expect(result.diagnostics.join('\n'), contains('no-visible-months'));
-    expect((recall.modelClient! as _ScriptedModelClient).calls, isEmpty);
+    expect((recall.modelClient! as ScriptedChatClient).calls, isEmpty);
   });
 
   test(
@@ -344,7 +346,7 @@ void main() {
       expect(await openLoopStore.banTitle('医院检查'), isTrue);
       final (recall, pipeline) = _orchestrator(
         root.path,
-        client: _ScriptedModelClient([
+        client: ScriptedChatClient([
           ModelCompletion.reply(_selectionReply(dates: ['2026-07-03'])),
           ModelCompletion.reply('想起来了。'),
         ]),
@@ -363,7 +365,7 @@ void main() {
       expect(result.pendingContext, isNot(contains('医院检查')));
       expect(result.pendingContext, isNot(contains('原话摘录')));
       final composeInput =
-          (recall.modelClient! as _ScriptedModelClient).calls[1].last.content;
+          (recall.modelClient! as ScriptedChatClient).calls[1].last.content;
       expect(composeInput, contains('用户说周末有安排'));
       expect(composeInput, isNot(contains('医院检查')));
       expect(composeInput, isNot(contains('火锅')));
@@ -383,7 +385,7 @@ void main() {
       expect(await openLoopStore.banTitle('青岛行程'), isTrue);
       final (recall, pipeline) = _orchestrator(
         root.path,
-        client: _ScriptedModelClient([
+        client: ScriptedChatClient([
           ModelCompletion.reply(_selectionReply(dates: ['2026-07-03'])),
         ]),
         openLoopStore: openLoopStore,
@@ -397,7 +399,7 @@ void main() {
 
       // 关键词全部被禁的索引行整体隐藏：日期不可选，成员校验丢弃。
       final selectionInput =
-          (recall.modelClient! as _ScriptedModelClient).calls[0].last.content;
+          (recall.modelClient! as ScriptedChatClient).calls[0].last.content;
       expect(selectionInput, isNot(contains('2026-07-03')));
       expect(selectionInput, contains('2026-08-10'));
       expect(result.bubbleText, isNull);
@@ -426,7 +428,7 @@ void main() {
       );
     final (recall, _) = _orchestrator(
       root.path,
-      client: _ScriptedModelClient([
+      client: ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
         ModelCompletion.reply('不该被组织出来。'),
       ]),
@@ -451,7 +453,7 @@ void main() {
       addTearDown(() => root.delete(recursive: true));
       final (recall, pipeline) = _orchestrator(
         root.path,
-        client: _ScriptedModelClient([
+        client: ScriptedChatClient([
           ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
           const ModelCompletion.failure(ModelFailureKind.network),
         ]),
@@ -477,7 +479,7 @@ void main() {
       addTearDown(() => root.delete(recursive: true));
       final (recall, pipeline) = _orchestrator(
         root.path,
-        client: _ScriptedModelClient([
+        client: ScriptedChatClient([
           ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
           ModelCompletion.reply('没有了'),
         ]),
@@ -576,26 +578,4 @@ String _selectionReply({
   final datesJson = dates.map((date) => '"$date"').join(',');
   return '<qiyu-actions>[{"action":"memory_recall","query":"测试查找",'
       '"months":[$monthsJson],"dates":[$datesJson]}]</qiyu-actions>';
-}
-
-/// 按脚本应答 complete 调用；超出脚本长度后重复最后一项。
-final class _ScriptedModelClient implements ProviderChatClient {
-  _ScriptedModelClient(this.completions);
-
-  final List<ModelCompletion?> completions;
-  final List<List<ModelMessage>> calls = [];
-  final List<int?> maxTokens = [];
-
-  @override
-  Future<ModelCompletion?> complete(
-    List<ModelMessage> messages, {
-    int? maxTokens,
-  }) async {
-    calls.add(messages);
-    this.maxTokens.add(maxTokens);
-    final index = calls.length - 1 < completions.length
-        ? calls.length - 1
-        : completions.length - 1;
-    return completions[index];
-  }
 }

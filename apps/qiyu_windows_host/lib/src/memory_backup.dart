@@ -12,6 +12,7 @@ import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
 import 'memory_controls.dart';
 import 'memory_marker_codec.dart';
+import 'memory_text_primitives.dart';
 import 'persona_tree.dart';
 
 /// 备份包 schema 版本：导入时只接受完全一致的版本，不兼容即拒绝。
@@ -41,6 +42,24 @@ BackupValidationException _manifestIncomplete() =>
       'missing-manifest',
       '备份清单不完整，无法验证。',
     );
+
+/// 取备份文件里标记（`<!-- qiyu-backup-*:payload -->`）内嵌的载荷并
+/// 解码；标记缺失或未闭合返回 null。清单与快照读取共用同一提取，
+/// 载荷解码失败原样抛出，错误翻译留在各自调用侧。
+Map<String, Object?>? _markerPayloadOrNull(String contents, String marker) {
+  final start = contents.indexOf(marker);
+  if (start < 0) {
+    return null;
+  }
+  final payloadStart = start + marker.length;
+  final payloadEnd = contents.indexOf(' -->', payloadStart);
+  if (payloadEnd < 0) {
+    return null;
+  }
+  return decodeMarkerPayload(
+    contents.substring(payloadStart, payloadEnd).trim(),
+  );
+}
 
 /// 导入预览中每个文件的归类（ticket 22）：新增、替换、冲突、跳过、
 /// 不可恢复。冲突与不可恢复的项目一律不写入本机。
@@ -221,10 +240,8 @@ final class IoBackupByteWriter implements BackupByteWriter {
   }
 }
 
-final _sessionMetaMarkerPattern = RegExp(
-  r'^<!-- qiyu-session:([A-Za-z0-9_-]+) -->\r?$',
-  multiLine: true,
-);
+// 会话元数据标记（读取端）统一取自 memory_marker_codec.dart
+//（唯一权威，禁止另写变体副本）。
 
 /// Markdown 备份导出与导入（ticket 22）。
 ///
@@ -517,18 +534,10 @@ final class MemoryBackupService {
 
   Map<String, Object?> _parseManifest(String contents) {
     try {
-      final start = contents.indexOf(_manifestMarker);
-      if (start < 0) {
-        throw const FormatException('manifest marker missing');
+      final json = _markerPayloadOrNull(contents, _manifestMarker);
+      if (json == null) {
+        throw const FormatException('manifest marker missing or unterminated');
       }
-      final payloadStart = start + _manifestMarker.length;
-      final payloadEnd = contents.indexOf(' -->', payloadStart);
-      if (payloadEnd < 0) {
-        throw const FormatException('manifest marker unterminated');
-      }
-      final json = decodeMarkerPayload(
-        contents.substring(payloadStart, payloadEnd).trim(),
-      );
       if (json['kind'] != 'qiyu-memory-backup') {
         throw const FormatException('manifest kind mismatch');
       }
@@ -582,13 +591,14 @@ final class MemoryBackupService {
   /// 导入前验证与差异展示；只读，不写任何文件、不创建快照。
   Future<MemoryBackupPreview> previewImport(Uint8List bundle) async {
     final validated = await _validateBundle(bundle);
-    return _diff(validated.files, validated.generatedAt);
+    return (await _diff(validated.files, validated.generatedAt)).preview;
   }
 
-  Future<MemoryBackupPreview> _diff(
-    Map<String, Uint8List> files,
-    DateTime generatedAt,
-  ) async {
+  /// 差异预览；备份带控制记录时一并返回已解析的备份控制记录——
+  /// 此处已校验其可读（不可读直接拒绝），导入侧直接复用，不对同一
+  /// 字节二次解析。
+  Future<({MemoryBackupPreview preview, MemoryControls? backupControls})>
+  _diff(Map<String, Uint8List> files, DateTime generatedAt) async {
     final currentControls = await memoryControls.load();
     MemoryControls? backupControls;
     final backupControlsBytes = files['memory-controls.md'];
@@ -692,11 +702,14 @@ final class MemoryBackupService {
       );
     }
 
-    return MemoryBackupPreview(
-      schemaVersion: backupSchemaVersion,
-      generatedAt: generatedAt,
-      controlsMerge: controlsMerge,
-      items: items,
+    return (
+      preview: MemoryBackupPreview(
+        schemaVersion: backupSchemaVersion,
+        generatedAt: generatedAt,
+        controlsMerge: controlsMerge,
+        items: items,
+      ),
+      backupControls: backupControls,
     );
   }
 
@@ -707,21 +720,20 @@ final class MemoryBackupService {
   Future<MemoryBackupImportResult> importBundle(Uint8List bundle) async {
     final validated = await _validateBundle(bundle);
     final files = validated.files;
-    final preview = await _diff(files, validated.generatedAt);
+    final diff = await _diff(files, validated.generatedAt);
+    final preview = diff.preview;
     final snapshotId = await _createSnapshot();
 
     try {
       // 控制纪律（Memory.md 写入边界）：先落控制记录，再写内容文件。
       // 备份带来的控制与本机按并集合并；中断在两步之间时，留下的是
-      // 更保守的控制集合而不是更少的控制。
+      // 更保守的控制集合而不是更少的控制。备份控制记录已在 _diff
+      // 解析并校验可读，这里只复查本机控制记录可读。
       var controlsMerged = false;
-      final backupControlsBytes = files['memory-controls.md'];
-      if (backupControlsBytes != null) {
+      final backupControls = diff.backupControls;
+      if (backupControls != null) {
         final currentControls = await memoryControls.load();
-        final backupControls = parseMemoryControls(
-          utf8.decode(backupControlsBytes),
-        );
-        if (!currentControls.readable || !backupControls.readable) {
+        if (!currentControls.readable) {
           throw const BackupValidationException(
             'unexpected-content',
             '记忆控制记录当前无法安全合并，导入中止。',
@@ -893,7 +905,7 @@ final class MemoryBackupService {
     } on Object {
       return false;
     }
-    final match = _sessionMetaMarkerPattern.firstMatch(contents);
+    final match = sessionMetaMarkerPattern.firstMatch(contents);
     if (match == null) {
       return false;
     }
@@ -975,18 +987,10 @@ final class MemoryBackupService {
     }
     try {
       final contents = await marker.readAsString(encoding: utf8);
-      final start = contents.indexOf(_snapshotMarker);
-      if (start < 0) {
+      final json = _markerPayloadOrNull(contents, _snapshotMarker);
+      if (json == null) {
         return null;
       }
-      final payloadStart = start + _snapshotMarker.length;
-      final payloadEnd = contents.indexOf(' -->', payloadStart);
-      if (payloadEnd < 0) {
-        return null;
-      }
-      final json = decodeMarkerPayload(
-        contents.substring(payloadStart, payloadEnd).trim(),
-      );
       final id = json['id'];
       final createdAt = json['createdAt'];
       final fileCount = json['fileCount'];
