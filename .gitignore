@@ -3,8 +3,14 @@ node_modules/
 qiyu.config.local.json
 *.log
 
-# Local ticket acceptance workspaces. Already tracked evidence stays versioned.
-.scratch/ticket*/
+# Local agent-tool directories and files: skill packs, Claude and ZCode local
+# state, scratch notes, and the skills lockfile stay machine-local. The
+# .scratch pattern also matches scratch directories nested inside each app.
+.agents/
+.claude/
+.zcode/
+.scratch/
+skills-lock.json
 
 # Mimosa security-scan runtime artifacts (hooks, ledgers, reports) at any depth.
 .mimosa/

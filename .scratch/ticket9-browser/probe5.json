@@ -1,8 +1,0 @@
-﻿{"event":"accepted","requestId":"probe-episode-5","sessionId":"Ubm3IzA4uhQm2u8aIUyvlcMk"}
-{"event":"waiting","requestId":"probe-episode-5","sessionId":"Ubm3IzA4uhQm2u8aIUyvlcMk"}
-{"event":"delta","requestId":"probe-episode-5","sessionId":"Ubm3IzA4uhQm2u8aIUyvlcMk","text":"记住了。以后你要是点甜品"}
-{"event":"delta","requestId":"probe-episode-5","sessionId":"Ubm3IzA4uhQm2u8aIUyvlcMk","text":"，我会拦着你的。"}
-{"event":"message","requestId":"probe-episode-5","sessionId":"Ubm3IzA4uhQm2u8aIUyvlcMk","messages":["记住了。以后你要是点甜品，我会拦着你的。"]}
-{"event":"state","requestId":"probe-episode-5","sessionId":"Ubm3IzA4uhQm2u8aIUyvlcMk","source":"llm","mode":"llm"}
-{"event":"done","requestId":"probe-episode-5","sessionId":"Ubm3IzA4uhQm2u8aIUyvlcMk"}
-
