@@ -179,32 +179,9 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
     return bytes;
   }
 
-  /// 检测音色是否代表方言，并返回对应的方言代码（如 sichuan, dongbei 等）。
-  static String? _detectDialect(String voice) {
-    final normalized = voice.toLowerCase().trim();
-    if (_dialectVoiceMap.containsKey(normalized)) {
-      return _dialectVoiceMap[normalized];
-    }
-    if (normalized.contains('sichuan')) return 'sichuan';
-    if (normalized.contains('cantonese') ||
-        normalized.contains('guangdong') ||
-        normalized.contains('yue')) {
-      return 'guangdong';
-    }
-    if (normalized.contains('dongbei')) return 'dongbei';
-    if (normalized.contains('henan')) return 'henan';
-    if (normalized.contains('shaanxi') || normalized.contains('shanxi')) {
-      return 'shaanxi';
-    }
-    if (normalized.contains('tianjin')) return 'tianjin';
-    if (normalized.contains('shandong')) return 'shandong';
-    if (normalized.contains('minnan')) return 'minnan';
-    if (normalized.contains('wanwan') || normalized.contains('taiwan')) {
-      return 'taiwan';
-    }
-    if (normalized.contains('beijing')) return 'beijing';
-    return null;
-  }
+  /// 检测预设方言音色 ID，并返回对应的方言代码（如 sichuan, dongbei 等）。
+  /// 仅精准匹配预设音色库已定义的方言，避免误劫持用户自定义音色。
+  static String? _detectDialect(String voice) => _dialectVoiceMap[voice.trim()];
 
   static const _dialectVoiceMap = <String, String>{
     'zh_female_sichuan_uranus_bigtts': 'sichuan',
@@ -216,24 +193,16 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
     'zh_female_shandong_uranus_bigtts': 'shandong',
     'zh_female_minnan_uranus_bigtts': 'minnan',
     'zh_female_wanwanxiaohe_moon_bigtts': 'taiwan',
-    'zh_female_beijing_uranus_bigtts': 'beijing',
   };
 
   /// 火山方舟 Go 服务端中 `additions` 字段类型是 `string`。
-  /// 无论是自动注入方言参数，还是用户通过 extraParams 传入的对象，
-  /// 统一序列化为 JSON 字符串（若已经是字符串则保持）。
+  /// 自动注入方言参数或 extraParams 传入的对象统一序列化为 JSON 字符串，
+  /// 非空字符串直接保留。
   static String? _resolveAdditions({
     required Map<String, Object?>? extra,
     required String? detectedDialect,
   }) {
     final rawAdditions = extra?['additions'];
-    if (rawAdditions == null) {
-      if (detectedDialect == null) {
-        return null;
-      }
-      return jsonEncode({'explicit_dialect': detectedDialect});
-    }
-
     if (rawAdditions is Map) {
       final map = Map<String, Object?>.from(rawAdditions);
       if (detectedDialect != null) {
@@ -242,24 +211,15 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
       return jsonEncode(map);
     }
 
-    if (rawAdditions is String) {
-      if (detectedDialect == null) {
-        return rawAdditions;
-      }
-      try {
-        final decoded = jsonDecode(rawAdditions);
-        if (decoded is Map) {
-          final map = Map<String, Object?>.from(decoded);
-          map.putIfAbsent('explicit_dialect', () => detectedDialect);
-          return jsonEncode(map);
-        }
-      } on FormatException {
-        // 非 JSON 对象字符串，保持原样。
-      }
+    if (rawAdditions is String && rawAdditions.isNotEmpty) {
       return rawAdditions;
     }
 
-    return jsonEncode(rawAdditions);
+    if (detectedDialect != null) {
+      return jsonEncode({'explicit_dialect': detectedDialect});
+    }
+
+    return null;
   }
 }
 

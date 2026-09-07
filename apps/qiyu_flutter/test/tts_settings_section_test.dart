@@ -210,6 +210,7 @@ void main() {
     value.baseUrlController.text = 'https://api.example.com/v1';
     value.modelController.text = 'tts-1';
     value.apiKeyController.text = 'sk-tts';
+
     final saved = await value.save(viewModel, report: (_) {});
 
     expect(saved, isFalse);

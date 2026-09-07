@@ -283,8 +283,6 @@ void main() {
       'zh_female_shandong_uranus_bigtts': 'shandong',
       'zh_female_minnan_uranus_bigtts': 'minnan',
       'zh_female_wanwanxiaohe_moon_bigtts': 'taiwan',
-      'sichuan': 'sichuan',
-      'my_dialect_dongbei_voice': 'dongbei',
     };
 
     for (final entry in dialectCases.entries) {
@@ -443,8 +441,8 @@ void main() {
     expect(reqParams.containsKey('additions'), isFalse);
   });
 
-  test('additions 边界：已为 JSON 字符串深合并方言、非法 JSON 保持原样、其它类型序列化', () async {
-    // 1. JSON 字符串 Map + 方言音色
+  test('additions 处理：Map 形式合并方言并序列化为 JSON 字符串，非空字符串直接保留', () async {
+    // 1. Map 形式 additions + 方言音色合并 explicit_dialect
     final client1 = _RecordingBytesHttpClient(
       response: lines([
         {
@@ -462,7 +460,7 @@ void main() {
         model: 'seed-tts-2.0',
         voice: 'zh_female_sichuan_uranus_bigtts',
         extraParams: {
-          'additions': '{"custom_flag":true}',
+          'additions': {'custom_flag': true},
           'audio_params': 'not-a-map',
         },
       ),
@@ -478,7 +476,7 @@ void main() {
     expect(additions1['custom_flag'], isTrue);
     expect(additions1['explicit_dialect'], 'sichuan');
 
-    // 2. 非法 JSON 字符串 + 方言音色
+    // 2. 非空字符串形式 additions 直接保留
     final client2 = _RecordingBytesHttpClient(
       response: lines([
         {
@@ -494,8 +492,7 @@ void main() {
         baseUrl:
             'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
         model: 'seed-tts-2.0',
-        voice: 'zh_female_sichuan_uranus_bigtts',
-        extraParams: {'additions': 'not-valid-json'},
+        extraParams: {'additions': '{"custom_flag":true}'},
       ),
       apiKey: 'ark-test-key',
       text: '测试',
@@ -503,10 +500,11 @@ void main() {
     final body2 =
         jsonDecode(utf8.decode(client2.bytesBody)) as Map<String, Object?>;
     final reqParams2 = body2['req_params']! as Map<String, Object?>;
-    expect(reqParams2['additions'], 'not-valid-json');
+    expect(reqParams2['additions'], '{"custom_flag":true}');
+  });
 
-    // 3. 其它类型 additions（如 int）
-    final client3 = _RecordingBytesHttpClient(
+  test('自定义音色不匹配预设方言时不误劫持，保留原 speaker 且无 additions', () async {
+    final client = _RecordingBytesHttpClient(
       response: lines([
         {
           'code': 0,
@@ -515,61 +513,24 @@ void main() {
         {'code': 20000000},
       ]),
     );
-    await TtsModelGateway(client3).synthesize(
+
+    await TtsModelGateway(client).synthesize(
       config: const TtsConfig(
         provider: TtsProviderKind.volcTts,
         baseUrl:
             'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
         model: 'seed-tts-2.0',
-        extraParams: {'additions': 12345},
+        voice: 'custom_sichuan_voice',
       ),
       apiKey: 'ark-test-key',
-      text: '测试',
+      text: '自定义音色测试',
     );
-    final body3 =
-        jsonDecode(utf8.decode(client3.bytesBody)) as Map<String, Object?>;
-    final reqParams3 = body3['req_params']! as Map<String, Object?>;
-    expect(reqParams3['additions'], '12345');
-  });
 
-  test('更多方言关键词：北京话、粤语 yue、台湾普通话 wanwan', () async {
-    final dialectKeywords = {
-      'custom_beijing_voice': 'beijing',
-      'custom_yue_voice': 'guangdong',
-      'custom_wanwan_voice': 'taiwan',
-    };
-
-    for (final entry in dialectKeywords.entries) {
-      final client = _RecordingBytesHttpClient(
-        response: lines([
-          {
-            'code': 0,
-            'data': base64Encode([1]),
-          },
-          {'code': 20000000},
-        ]),
-      );
-
-      await TtsModelGateway(client).synthesize(
-        config: TtsConfig(
-          provider: TtsProviderKind.volcTts,
-          baseUrl:
-              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
-          model: 'seed-tts-2.0',
-          voice: entry.key,
-        ),
-        apiKey: 'ark-test-key',
-        text: '方言测试',
-      );
-
-      final body =
-          jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
-      final reqParams = body['req_params']! as Map<String, Object?>;
-      final additions = jsonDecode(
-        reqParams['additions']! as String,
-      ) as Map<String, Object?>;
-      expect(additions['explicit_dialect'], entry.value);
-    }
+    final body =
+        jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+    final reqParams = body['req_params']! as Map<String, Object?>;
+    expect(reqParams['speaker'], 'custom_sichuan_voice');
+    expect(reqParams.containsKey('additions'), isFalse);
   });
 }
 
