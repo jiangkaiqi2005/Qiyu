@@ -519,6 +519,11 @@ final _hiddenActionBlock = RegExp(
   caseSensitive: false,
 );
 
+final _trailingUnclosedActionBlock = RegExp(
+  r'<\s*qiyu[-_]actions?\b[^>]*>[\s\S]*$',
+  caseSensitive: false,
+);
+
 /// 越权内容特征：路径、URL、命令分隔、可执行结构。动作字段只能描述
 /// 对话内容本身，命中任一特征的动作整体丢弃。
 final _privilegePatterns = [
@@ -551,20 +556,25 @@ final _secretPatterns = [
 /// 解析失败、未知动作或越权字段只被忽略并记录诊断，绝不进入可见回复。
 HiddenActionParse parseHiddenActions(String rawText) {
   final blocks = _hiddenActionBlock.allMatches(rawText).toList();
-  final visibleText = rawText
-      .replaceAll(_hiddenActionBlock, '')
+  final withoutClosed = rawText.replaceAll(_hiddenActionBlock, '');
+  final hasTrailingUnclosed =
+      _trailingUnclosedActionBlock.hasMatch(withoutClosed);
+  final visibleText = withoutClosed
+      .replaceFirst(_trailingUnclosedActionBlock, '')
       .replaceAll(blankLinesPattern, '\n\n')
       .trim();
   if (blocks.isEmpty) {
     return HiddenActionParse(
       visibleText: visibleText,
       actions: const [],
-      diagnostics: const [],
+      diagnostics: hasTrailingUnclosed
+          ? [HiddenActionDiagnostics.invalidFormat]
+          : const [],
     );
   }
 
   final diagnostics = <String>[];
-  if (blocks.length > 1) {
+  if (blocks.length > 1 || hasTrailingUnclosed) {
     diagnostics.add(HiddenActionDiagnostics.multipleBlocks);
   }
 

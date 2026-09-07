@@ -247,6 +247,26 @@ final class DailyFinalizationService {
         outcomes.add(_failedOutcome(date, error));
       }
     }
+    // 补扫中若发生了历史补录定稿，旧日期的 _rebuildDailyState 会将
+    // daily-state.md 覆盖为老日期（后续已定稿日被跳过不再重建）。
+    // 此处确保状态包按最新已定稿日期为窗口终点重建。
+    if (outcomes.any((outcome) => outcome.status == FinalizationStatus.finalized)) {
+      for (final date in past.reversed) {
+        final day = await episodePipeline.readDay(date);
+        if (day.readable && day.finalized) {
+          String? mood;
+          if (day.understanding != null) {
+            try {
+              mood = DayUnderstanding.fromJson(day.understanding!).mood;
+            } on Object {
+              mood = null;
+            }
+          }
+          await _rebuildDailyState(date, dates, mood: mood);
+          break;
+        }
+      }
+    }
     return FinalizationReport(outcomes: outcomes);
   }
 

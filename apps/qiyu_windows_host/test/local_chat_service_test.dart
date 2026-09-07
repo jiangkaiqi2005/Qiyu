@@ -641,6 +641,37 @@ void main() {
     });
 
     test(
+      'model dispatch error in _deliver records detailed diagnostic and falls back',
+      () async {
+        final temporaryDirectory = await Directory.systemTemp.createTemp(
+          'qiyu-dispatch-error-test-',
+        );
+        addTearDown(() => temporaryDirectory.delete(recursive: true));
+        final diagnostics = <String>[];
+        final provider = _ThrowingProviderPort(StateError('dispatch exploded'));
+        final repository = MarkdownMemoryRepository(
+          memoryDirectory: temporaryDirectory.path,
+        );
+        final service = LocalChatService(
+          repository,
+          providerPort: provider,
+          deliveryPause: (_) async {},
+          diagnosticsSink: diagnostics.add,
+        );
+
+        final events = await service
+            .deliver(requestId: 'fail-req', text: '你好')
+            .toList();
+
+        expect(events, isNotEmpty);
+        expect(
+          diagnostics,
+          anyElement(contains('model dispatch error [Bad state: dispatch exploded] request=fail-req')),
+        );
+      },
+    );
+
+    test(
       'half-stream failure hides partial text and delivers local fallback',
       () async {
         final gateway = ScriptedModelGateway(
@@ -3289,6 +3320,15 @@ final class _ControlledProviderPort implements ProviderChatPort {
   void pushDelta(String text) => _controller.add(ModelStreamEvent.delta(text));
 
   Future<void> close() => _controller.close();
+}
+
+final class _ThrowingProviderPort implements ProviderChatPort {
+  const _ThrowingProviderPort(this.error);
+
+  final Object error;
+
+  @override
+  Future<PreparedProviderChatRequest?> prepareChatRequest() => throw error;
 }
 
 /// 播种已归档的 episode 日文件。writeFinalization 契约要求调用方

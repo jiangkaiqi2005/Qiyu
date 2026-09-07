@@ -561,6 +561,55 @@ void main() {
   });
 
   test(
+    'catchUpUnfinalized preserves daily-state on the latest finalized date when earlier days are caught up',
+    () async {
+      var now = DateTime(2026, 8, 10, 22);
+      final (:temporaryDirectory, :pipeline, :service) =
+          await _finalizationFixture(
+            'qiyu-finalization-catchup-rebuild-test-',
+            clock: () => now,
+          );
+      // Day 1: 2026-08-10 有条目，未定稿
+      await pipeline.processReply(
+        session: _session('session-10', ['req-10']),
+        requestId: 'req-10',
+        hiddenActions: const [MemorySignalAction(summary: '08-10 买了一束百合花')],
+      );
+
+      // Day 2: 2026-08-12 有条目，正常定稿
+      now = DateTime(2026, 8, 12, 23);
+      await pipeline.processReply(
+        session: _session('session-12', ['req-12']),
+        requestId: 'req-12',
+        hiddenActions: const [MemorySignalAction(summary: '08-12 开始看一本书')],
+      );
+      final outcome12 = await service.finalizeDay('2026-08-12');
+      expect(outcome12.status, FinalizationStatus.finalized);
+
+      // 此时 daily-state.md 在 2026-08-12
+      var dailyState = await File(
+        '${temporaryDirectory.path}/daily-state.md',
+      ).readAsString(encoding: utf8);
+      expect(dailyState, contains('date: 2026-08-12'));
+
+      // 启动补扫在 2026-08-13 触发
+      now = DateTime(2026, 8, 13, 10);
+      final report = await service.catchUpUnfinalized(before: '2026-08-13');
+      expect(
+        report.outcomes.firstWhere((o) => o.date == '2026-08-10').status,
+        FinalizationStatus.finalized,
+      );
+
+      // daily-state.md 必须保持重建在最新定稿日 2026-08-12，绝不能倒退到 2026-08-10
+      dailyState = await File(
+        '${temporaryDirectory.path}/daily-state.md',
+      ).readAsString(encoding: utf8);
+      expect(dailyState, contains('date: 2026-08-12'));
+      expect(dailyState, isNot(contains('date: 2026-08-10')));
+    },
+  );
+
+  test(
     'a failed step keeps finalized false; retry completes without duplicates',
     () async {
       final temporaryDirectory = await Directory.systemTemp.createTemp(

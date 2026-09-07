@@ -318,9 +318,15 @@ final class ModelStreamEvent {
 
 final class ProviderModelGateway
     implements StreamingModelGateway, WebSearchStreamingModelGateway {
-  const ProviderModelGateway(this.httpClient);
+  const ProviderModelGateway(
+    this.httpClient, {
+    void Function(String message)? diagnosticsSink,
+  }) :
+       // ignore: prefer_initializing_formals
+       _diagnosticsSink = diagnosticsSink;
 
   final ProviderHttpClient httpClient;
+  final void Function(String message)? _diagnosticsSink;
 
   @override
   Future<String> complete({
@@ -640,30 +646,38 @@ final class ProviderModelGateway
       yield const ModelStreamEvent.done();
     } on ProviderRequestCancelled {
       return;
-    } on TimeoutException {
+    } on TimeoutException catch (error) {
+      _diagnosticsSink?.call('web search timeout [$error]');
       yield const ModelStreamEvent.failure(
         ModelFailureKind.timeout,
         '模型服务响应超时。',
       );
-    } on HandshakeException {
+    } on HandshakeException catch (error) {
+      _diagnosticsSink?.call('web search tls error [$error]');
       yield const ModelStreamEvent.failure(
         ModelFailureKind.tls,
         '模型服务的 TLS 安全连接失败。',
       );
     } on SocketException catch (error) {
+      _diagnosticsSink?.call('web search socket error [$error]');
       final failure = _socketFailure(error);
       yield ModelStreamEvent.failure(failure.kind, failure.message);
-    } on HttpException {
+    } on HttpException catch (error) {
+      _diagnosticsSink?.call('web search http error [$error]');
       yield const ModelStreamEvent.failure(
         ModelFailureKind.network,
         '模型服务连接中断。',
       );
     } on ModelGatewayException catch (error) {
+      _diagnosticsSink?.call(
+        'web search model error [${error.kind}] ${error.message}',
+      );
       yield ModelStreamEvent.failure(error.kind, error.message);
-    } on Object {
+    } on Object catch (error) {
+      _diagnosticsSink?.call('web search unexpected error [$error]');
       yield const ModelStreamEvent.failure(
-        ModelFailureKind.incompatibleResponse,
-        '模型服务返回了不兼容的响应格式。',
+        ModelFailureKind.internal,
+        '本机程序内部出错。',
       );
     }
   }
@@ -681,7 +695,15 @@ final class ProviderModelGateway
         message: '模型服务请求了不支持的工具。',
       );
     }
-    final decodedInput = jsonDecode(toolUse.inputJson);
+    final Object? decodedInput;
+    try {
+      decodedInput = jsonDecode(toolUse.inputJson);
+    } on FormatException {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.incompatibleResponse,
+        message: '模型服务返回了不兼容的响应格式。',
+      );
+    }
     if (decodedInput is! Map<String, Object?> ||
         decodedInput.length != 1 ||
         decodedInput['query'] is! String) {

@@ -521,6 +521,28 @@ void main() {
     }
   });
 
+  test('streamWithWebSearch records diagnostic and preserves internal failure on unexpected error', () async {
+    final diagnostics = <String>[];
+    final http = _ThrowingHttpClient(StateError('unexpected crash'));
+    final gateway = ProviderModelGateway(http, diagnosticsSink: diagnostics.add);
+    final events = await gateway
+        .streamWithWebSearch(
+          config: _anthropicConfig,
+          apiKey: 'provider-secret',
+          messages: const [ModelMessage(ModelMessageRole.user, '新闻')],
+          webSearchApiKey: 'any-secret',
+          webSearchClient: _FakeWebSearchClient(),
+        )
+        .toList();
+
+    expect(events, hasLength(1));
+    expect(events.single.kind, ModelStreamEventKind.failure);
+    expect(events.single.failure, ModelFailureKind.internal);
+    expect(events.single.message, '本机程序内部出错。');
+    expect(diagnostics, hasLength(1));
+    expect(diagnostics.single, contains('unexpected crash'));
+  });
+
   test('第一轮模型、AnySearch 与第二轮模型三阶段均可取消', () async {
     for (final stage in _CancellationStage.values) {
       final http = _CancellableRoundTripHttpClient(stage);
@@ -972,3 +994,25 @@ ProviderHttpResponse _successfulSearchResponse() => ProviderHttpResponse(
     '"snippet":"内容"}]}}',
   ),
 );
+
+final class _ThrowingHttpClient implements ProviderHttpClient {
+  const _ThrowingHttpClient(this.error);
+
+  final Object error;
+
+  @override
+  Future<ProviderHttpResponse> postStream({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+  }) => throw error;
+
+  @override
+  Future<ProviderHttpResponse> post({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) => throw error;
+}

@@ -424,6 +424,57 @@ void main() {
     expect(viewModel.streamingText, isEmpty);
     expect(viewModel.waiting, isFalse);
   });
+
+  test(
+    'hasLocalFallback is suppressed while sending and only shows when the latest turn is local fallback',
+    () async {
+      final gateway = _ScriptedGateway();
+      var counter = 0;
+      final viewModel = LocalChatViewModel(
+        gateway,
+        hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+        requestIdFactory: () => 'req-${counter += 1}',
+        autoStart: false,
+      );
+      addTearDown(viewModel.dispose);
+
+      // 第一轮走本地降级
+      final first = viewModel.send('第一句');
+      await Future<void>.delayed(Duration.zero);
+      gateway
+        ..emitAccepted('req-1')
+        ..emitMessage('req-1', const ['本地回复'])
+        ..emitState('req-1', source: ReplySource.local)
+        ..emitDone('req-1')
+        ..closeStream('req-1');
+      expect(await first, isTrue);
+      expect(viewModel.hasLocalFallback, isTrue);
+
+      // 第二轮开始发送与等待期间，不展示过期的 fallback 标签
+      final second = viewModel.send('第二句');
+      await Future<void>.delayed(Duration.zero);
+      expect(viewModel.sending, isTrue);
+      expect(viewModel.hasLocalFallback, isFalse);
+
+      gateway
+        ..emitAccepted('req-2')
+        ..emitWaiting('req-2');
+      await Future<void>.delayed(Duration.zero);
+      expect(viewModel.hasLocalFallback, isFalse);
+
+      gateway.emitDelta('req-2', '流式中');
+      await Future<void>.delayed(Duration.zero);
+      expect(viewModel.hasLocalFallback, isFalse);
+
+      gateway
+        ..emitMessage('req-2', const ['流式中完成了'])
+        ..emitState('req-2')
+        ..emitDone('req-2')
+        ..closeStream('req-2');
+      expect(await second, isTrue);
+      expect(viewModel.hasLocalFallback, isFalse);
+    },
+  );
 }
 
 final class _TwoBubbleGateway implements StreamingLocalChatGateway {
@@ -668,13 +719,13 @@ final class _ScriptedGateway implements StreamingLocalChatGateway {
     ),
   );
 
-  void emitState(String requestId) => emit(
+  void emitState(String requestId, {ReplySource source = ReplySource.llm}) => emit(
     requestId,
     LocalChatDeliveryEvent(
       kind: LocalChatEventKind.state,
       requestId: requestId,
       sessionId: 'session-1',
-      source: ReplySource.llm,
+      source: source,
     ),
   );
 

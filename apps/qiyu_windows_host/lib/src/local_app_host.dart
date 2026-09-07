@@ -119,7 +119,10 @@ final class LocalAppHost {
         ProviderSettingsService(
           providerConfigRepository,
           const WindowsCredentialSecretStore(),
-          const ProviderModelGateway(providerHttpClient),
+          ProviderModelGateway(
+            providerHttpClient,
+            diagnosticsSink: diagnosticsSink,
+          ),
           modelPromptBuilder,
           webSearchConfigRepository: providerConfigRepository,
           webSearchClient: const AnySearchClient(providerHttpClient),

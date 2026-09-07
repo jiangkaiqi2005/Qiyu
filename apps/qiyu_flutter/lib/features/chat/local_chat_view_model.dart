@@ -153,16 +153,18 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool get isHomeState =>
       !loading && messages.isEmpty && !waiting && streamingText.isEmpty;
 
-  /// 「本地规则回复」标识只描述最近一次已完成的栖语回复：最后一条
-  /// 栖语消息来自本地规则才显示；之后模型恢复正常即消失。流式等待
-  /// 与半句候选不进 [_messages]，天然保持上一次的状态。
+  /// 「本地规则回复」标识只描述最近一次已完成且未开启新交互的栖语回复：
+  /// 在发送与等待流式期间不展示过期的 fallback 状态；仅当最后一条消息
+  /// 确为栖语的已完成本地规则回复时才显示。
   bool get hasLocalFallback {
-    for (final message in _messages.reversed) {
-      if (message.speaker == LocalChatSpeaker.qiyu) {
-        return message.source == ReplySource.local;
-      }
+    if (sending) {
+      return false;
     }
-    return false;
+    final last = _messages.lastOrNull;
+    if (last == null || last.speaker != LocalChatSpeaker.qiyu) {
+      return false;
+    }
+    return last.source == ReplySource.local;
   }
 
   /// 本轮用户 turn 的判定与失败回退：乐观插入去重、accepted 去重与
