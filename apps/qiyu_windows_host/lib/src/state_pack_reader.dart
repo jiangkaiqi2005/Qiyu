@@ -34,7 +34,10 @@ final class HotLayerBlocks {
   /// 【近况】块内容；读取失败时为 null。
   final String? dailyState;
 
-  /// 【长期印象】块内容（含跨块预算裁剪）；本轮未准备成功时为 null。
+  /// 【长期印象】块内容；长期印象自身准备（读取与裁剪）失败时为
+  /// null。成功时为本轮新值：正常路径含跨块预算裁剪；画像读取失败
+  /// 时为未经跨块裁剪的读入值（票 04：画像失败不撤销长期印象，跨块
+  /// 裁剪需画像内容参与、未进行）。
   final String? longMemory;
 
   /// 【用户画像】块内容（含跨块预算裁剪）；本轮未准备成功时为 null。
@@ -102,10 +105,12 @@ class StatePackReader {
   /// （clipPersonaBlock，边界禁区永不裁）；近况块内部的近日状态已在
   /// [readDailyStateBlock] 内先压过。
   ///
-  /// 部分成功语义（与基线逐字对齐）：近况块读取成功即已成立，后续
-  /// 任何阶段失败都不撤销它；长期印象与用户画像在两者读取与裁剪全部
-  /// 成功时才一起成立，中途失败则保持 null（调用方原值）。首个失败
-  /// 记入 [HotLayerBlocks.failure]，其后的读取不再进行。
+  /// 部分成功语义：近况块读取成功即已成立，后续任何阶段失败都不撤销
+  /// 它；长期印象在其自身准备（读取与 clipLongMemoryBlock 裁剪）完成
+  /// 时确立本轮新值，其后画像阶段（读取与裁剪）的失败不再撤销它（票
+  /// 04：画像失败保留已成功的长期印象），长期印象自身阶段的失败仍保
+  /// 持 null（调用方原值）；画像只在自身读取与裁剪成功时成立。首个
+  /// 失败记入 [HotLayerBlocks.failure]，其后的读取不再进行。
   Future<HotLayerBlocks> readHotLayerBlocks() async {
     String? dailyState;
     String? longMemory;
@@ -115,7 +120,19 @@ class StatePackReader {
       final dailyStateBlock = await readDailyStateBlock();
       dailyState = dailyStateBlock;
       final longMemoryBlock = await readLongMemoryBlock();
-      final personaBlock = await readPersonaBlock();
+      // 画像读取起属画像阶段：本阶段失败只保持画像原值，不撤销已成功
+      // 读入的长期印象（票 04），在此提前收束。
+      String personaBlock;
+      try {
+        personaBlock = await readPersonaBlock();
+      } on Object catch (error) {
+        return HotLayerBlocks(
+          dailyState: dailyState,
+          longMemory: longMemoryBlock,
+          persona: null,
+          failure: error,
+        );
+      }
       // 裁前与裁长期印象后共用同一溢出公式，收成闭包防两处漂移。
       int overflowOf(int longRunes, int personaRunes) =>
           dailyStateBlock.runes.length + longRunes + personaRunes -
@@ -131,6 +148,10 @@ class StatePackReader {
           longMemoryBlock,
           longMemoryBlock.runes.length - overflow,
         );
+        // 长期印象自身准备（读取与裁剪）到此完成：先确立本轮新值，其后
+        // 画像裁剪的失败不再撤销它（票 04）；自身阶段的失败仍走外层
+        // catch，长期印象保持 null（语义不变）。
+        longMemory = clippedLongMemory;
         final remainingOverflow = overflowOf(
           clippedLongMemory.runes.length,
           personaBlock.runes.length,

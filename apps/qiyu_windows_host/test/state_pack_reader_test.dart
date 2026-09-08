@@ -120,7 +120,7 @@ void main() {
     expect(builder.persona, '原画像');
   });
 
-  test('画像读取失败时长期印象同样保持原值（与基线裁剪时机一致）', () async {
+  test('画像读取失败时长期印象保留本轮新值，画像保持原值', () async {
     final memoryDirectory = await _seedMemory((memoryDirectory) async {
       _writeRelationship(memoryDirectory);
       File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
@@ -135,16 +135,62 @@ void main() {
       stage: _FaultStage.persona,
     ).readHotLayerBlocks();
 
-    // 基线行为：长期印象读取成功但尚未装配，画像失败后两者都保持
-    // builder 原值，只有近况成立。
+    // 票 04 修复语义：长期印象读取成功后，画像阶段的失败只保持画像
+    // 原值（null），不再撤销已读入的长期印象（本轮新值）。
     expect(prepared.dailyState, isNotNull);
-    expect(prepared.longMemory, isNull);
+    expect(prepared.longMemory, contains('- 用户完成过一次公开演讲'));
     expect(prepared.persona, isNull);
     expect(prepared.failure, isA<StateError>());
 
+    // 带初始内容的 builder：长期印象应用本轮新值，画像保持原值，
+    // 每日状态包保留本轮已成立的近况。
     final builder = prepared.applyTo(_initialBuilder);
     expect(builder.dailyState, contains('【关系温度】'));
-    expect(builder.longMemory, '原长期印象');
+    expect(builder.longMemory, contains('- 用户完成过一次公开演讲'));
+    expect(builder.persona, '原画像');
+  });
+
+  test('画像读取失败且长期印象超预算时保留未经跨块裁剪的完整读入值', () async {
+    // 跨块裁剪的溢出公式需要画像内容的 rune 数参与；画像读取失败时
+    // 裁剪无从进行，长期印象按设计笔记「受损层暂时跳过，其他有效记忆
+    // 继续使用」保留未经裁剪的完整读入值——rune 数允许超过
+    // hotLayerMaxRunes（字段文档锁定的权衡），不因预算压力丢弃内容。
+    final overflowItem = '超预算长条目${'记' * 3050}';
+    final memoryDirectory = await _seedMemory((memoryDirectory) async {
+      _writeRelationship(memoryDirectory);
+      // 长期印象块单独已超 hotLayerMaxRunes（无画像失败时必触发跨块
+      // 裁剪的量级）；超长条目置于末尾——若发生裁剪必被从尾部丢弃。
+      File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
+        renderLongMemory({
+          '重要事件': ['用户完成过一次公开演讲', overflowItem],
+        }),
+        encoding: utf8,
+      );
+    });
+    addTearDown(() => memoryDirectory.parent.delete(recursive: true));
+
+    final prepared = await _FaultInjectedReader(
+      memoryDirectory: memoryDirectory.path,
+      stage: _FaultStage.persona,
+    ).readHotLayerBlocks();
+
+    // 未经跨块裁剪的完整读入值：rune 数超过预算，且首条印象与末尾超长
+    // 条目完整保留（裁剪会把结果压回预算内并从尾部丢条目，二者任一
+    // 发生即断言失败）。
+    expect(prepared.longMemory, isNotNull);
+    expect(prepared.longMemory!.runes.length, greaterThan(hotLayerMaxRunes));
+    expect(prepared.longMemory, contains('- 用户完成过一次公开演讲'));
+    expect(prepared.longMemory, contains(overflowItem));
+    // 画像保持原值（null），failure 如实上报，近况保留本轮已成立值。
+    expect(prepared.persona, isNull);
+    expect(prepared.failure, isA<StateError>());
+    expect(prepared.dailyState, contains('【关系温度】'));
+
+    // 带初始内容的 builder：长期印象应用本轮完整新值，近况替换为本轮
+    // 已成立值，画像保持原值。
+    final builder = prepared.applyTo(_initialBuilder);
+    expect(builder.longMemory, prepared.longMemory);
+    expect(builder.dailyState, prepared.dailyState);
     expect(builder.persona, '原画像');
   });
 
@@ -282,15 +328,15 @@ void main() {
     expect(snapshot(), equals(before));
 
     // 部分失败路径：画像读取在近况与长期印象之后中断，同样不落任何
-    // 写入——失败路径与成功路径同律。
+    // 写入——失败路径与成功路径同律。画像失败只保持画像原值，长期
+    // 印象保留本轮读入的新值（票 04）。
     final faulted = await _FaultInjectedReader(
       memoryDirectory: memoryDirectory.path,
       stage: _FaultStage.persona,
     ).readHotLayerBlocks();
     expect(faulted.failure, isA<StateError>());
     expect(faulted.dailyState, isNotNull);
-    // 基线部分成功语义：画像失败后长期印象同样保持 null（未装配）。
-    expect(faulted.longMemory, isNull);
+    expect(faulted.longMemory, contains('- 用户完成过一次公开演讲'));
     expect(faulted.persona, isNull);
     expect(snapshot(), equals(before));
   });
