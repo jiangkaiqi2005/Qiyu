@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+import 'package:qiyu_flutter/features/chat/api_error_dialog.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
@@ -360,25 +362,286 @@ void main() {
       expect(find.text('语音朗读受限'), findsOneWidget);
       expect(find.textContaining('语音朗读合成请求受限或配置异常'), findsOneWidget);
     });
+
+    testWidgets('点击【知道了】：焦点返还且弹窗期间写下的草稿保持不变', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.modelRateLimited],
+      );
+      await _pumpChatView(tester, gateway: gateway);
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '你好');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('api-error-dialog')), findsOneWidget);
+
+      // 弹窗开着时用户继续往输入框写草稿：关闭弹窗不得弄丢它。
+      await tester.enterText(find.byKey(const Key('chat-input')), '等下还要发的草稿');
+      await tester.tap(find.byKey(const Key('api-error-dialog-dismiss')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('api-error-dialog')), findsNothing);
+      final input = tester.widget<TextField>(find.byKey(const Key('chat-input')));
+      expect(input.focusNode?.hasFocus, isTrue);
+      expect(input.controller!.text, '等下还要发的草稿');
+    });
+
+    testWidgets('sessionId 变化由既有监听复位频控：新会话同类错误再次弹窗且旧提示条清除', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [
+          FallbackReason.modelRateLimited,
+          FallbackReason.modelRateLimited,
+          FallbackReason.modelRateLimited,
+        ],
+      );
+      await _pumpChatView(tester, gateway: gateway);
+
+      // 第 1 次同类错误：弹窗，知道了关闭。
+      await tester.enterText(find.byKey(const Key('chat-input')), '第一句');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('api-error-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('api-error-dialog-dismiss')));
+      await tester.pumpAndSettle();
+
+      // 同会话第 2 次：频控生效，只出提示条。
+      await tester.enterText(find.byKey(const Key('chat-input')), '第二句');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('api-error-dialog')), findsNothing);
+      expect(find.byKey(const Key('api-error-notice-banner')), findsOneWidget);
+
+      // 会话切换：sessionId 由网关事件带进视图模型，页面的既有监听负责复位。
+      gateway.sessionId = 'test-session-2';
+      await tester.enterText(find.byKey(const Key('chat-input')), '第三句');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+
+      // 新会话复位频控：同类错误再次弹窗，旧会话的提示条随复位清除。
+      expect(find.byKey(const Key('api-error-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('api-error-notice-banner')), findsNothing);
+    });
+
+    testWidgets('跨通道共享频控：STT 429 弹窗后同会话文本 429 只出提示条', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [
+          // 第 1 轮无错误：本 harness（autoStart:false）挂载时会话尚未恢复，
+          // 首轮 accepted 事件首次写入 sessionId 会走一次复位路径。先落定
+          // 会话身份，排除它对频控集合的干扰，再对照语音与文本两个通道。
+          FallbackReason.noLlmConfig,
+          FallbackReason.modelRateLimited,
+        ],
+      );
+      gateway.transcribeError = const LocalChatGatewayException(
+        '语音服务请求过于频繁。',
+        code: 'stt_rate_limited',
+      );
+
+      await _pumpChatView(
+        tester,
+        gateway: gateway,
+        recorderPlatform: _FakeVoiceRecorder(),
+      );
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '先把会话安顿下来');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('api-error-dialog')), findsNothing);
+
+      // 语音通道触发通用 429 类别：立即弹窗（无 300ms 缓冲）。
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic-stop')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('api-error-dialog')), findsOneWidget);
+      expect(find.text('服务请求受限'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('api-error-dialog-dismiss')));
+      await tester.pumpAndSettle();
+
+      // 文本通道同类错误：与语音共享类别集合，只出提示条不再弹窗。
+      await tester.enterText(find.byKey(const Key('chat-input')), '换个说法');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('api-error-dialog')), findsNothing);
+      expect(find.byKey(const Key('api-error-notice-banner')), findsOneWidget);
+      expect(find.text('去设置检查'), findsOneWidget);
+    });
+
+    testWidgets('页面释放撤销本页 TTS 错误回调：onApiError 位置清空', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.noLlmConfig],
+      );
+      final voiceOutput = VoiceOutputController(
+        gateway,
+        playerPlatform: _FakeVoicePlayer(),
+      );
+      await _pumpChatView(tester, gateway: gateway, voiceOutput: voiceOutput);
+
+      // 页面挂载后回调由本页接管。
+      expect(voiceOutput.onApiError, isNotNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+
+      // 离开页面：本页只撤销自己登记的回调。
+      expect(voiceOutput.onApiError, isNull);
+      voiceOutput.dispose();
+    });
+
+    testWidgets('页面释放不误删其他所有者后来替换的 TTS 错误回调', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.noLlmConfig],
+      );
+      gateway.speakError = const LocalChatGatewayException(
+        '语音合成服务请求过于频繁，请稍后再试。',
+        code: 'tts_rate_limited',
+      );
+      final voiceOutput = VoiceOutputController(
+        gateway,
+        playerPlatform: _FakeVoicePlayer(),
+      );
+      await _pumpChatView(tester, gateway: gateway, voiceOutput: voiceOutput);
+
+      // 其他所有者在页面挂载后替换回调：页面释放时不得清掉它。
+      final replaced = <ApiErrorCategory>[];
+      voiceOutput.onApiError = replaced.add;
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(voiceOutput.onApiError, isNotNull);
+
+      // 页面释放后触发一次 TTS 失败：错误仍送达替换者。
+      voiceOutput.playNow(
+        const VoiceOutputRequest(
+          requestId: 'req-x',
+          deliveryIndex: 0,
+          sessionId: 'session-1',
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(replaced, [ApiErrorCategory.rateLimited]);
+      voiceOutput.dispose();
+    });
+
+    testWidgets('空态发出第一句：输入框焦点与可用性连续', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.noLlmConfig],
+      );
+      final viewModel = await _pumpChatView(tester, gateway: gateway);
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '你好');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+
+      // 空态→聊天态换布局：输入框仍就位、焦点不跳走，草稿按设计清空。
+      expect(find.text('你好'), findsOneWidget);
+      expect(find.byKey(const Key('chat-input')), findsOneWidget);
+      final input = tester.widget<TextField>(find.byKey(const Key('chat-input')));
+      expect(input.focusNode?.hasFocus, isTrue);
+      expect(input.controller!.text, isEmpty);
+
+      // 换位后继续输入与发送照常：没有留下重建副作用。
+      await tester.enterText(find.byKey(const Key('chat-input')), '继续说');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+      expect(
+        viewModel.messages
+            .where((message) => message.speaker == LocalChatSpeaker.user)
+            .length,
+        2,
+      );
+    });
+
+    testWidgets('发送失败前用户已重新输入：失败回填不覆盖新草稿', (tester) async {
+      final gateway = _HangingFailingChatGateway();
+      await _pumpChatView(tester, gateway: gateway);
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '第一句');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pump();
+
+      // 前置：发送已开始（用户轮已进场、输入框已清空），轮次还挂在流上。
+      expect(find.text('第一句'), findsOneWidget);
+      final inputDuringTurn = tester.widget<TextField>(
+        find.byKey(const Key('chat-input')),
+      );
+      expect(inputDuringTurn.controller!.text, isEmpty);
+
+      // 失败落地前用户已开始写新草稿。
+      await tester.enterText(find.byKey(const Key('chat-input')), '新草稿');
+      gateway.releaseFailure();
+      await tester.pumpAndSettle();
+
+      // 失败不回填「第一句」：输入框非空时回填必须让位给新草稿。
+      final input = tester.widget<TextField>(find.byKey(const Key('chat-input')));
+      expect(input.controller!.text, '新草稿');
+      // 已 accepted 的用户轮保留，错误就地提示。
+      expect(find.text('第一句'), findsOneWidget);
+      expect(find.text('本地聊天暂时不可用，请稍后重试。'), findsOneWidget);
+    });
+
+    testWidgets('转写经页面通道送达：空态与聊天态 composer 都已挂载且发送协调发生', (tester) async {
+      final gateway = _ConfigurableChatGateway(fallbackReasons: const []);
+      final viewModel = await _pumpChatView(
+        tester,
+        gateway: gateway,
+        recorderPlatform: _FakeVoiceRecorder(),
+      );
+
+      // 布局事实：composer 常驻空态、聊天态、窄屏三种布局，State 与页面同
+      // 生命周期；页面 onTranscribed 通道经 `_composerKey.currentState?.
+      // sendTranscribed` 送出转写。锁定现状：两种布局下转写到达即进入发送
+      // 协调（本用例发送成功，直接落为用户轮），不得因「恰好未挂载」被
+      // 空感知调用静默丢弃。
+
+      // 空态：composer 在问候列里，转写文本直接发送。
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic-stop')));
+      await tester.pumpAndSettle();
+      expect(
+        viewModel.messages
+            .where((message) => message.speaker == LocalChatSpeaker.user)
+            .map((message) => message.text),
+        contains('测试转写文本'),
+      );
+
+      // 聊天态：composer 换到消息流上方的覆盖层布局，仍是同一枚键、同一个
+      // State，转写照常送达发送协调。
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic-stop')));
+      await tester.pumpAndSettle();
+      expect(
+        viewModel.messages
+            .where((message) => message.speaker == LocalChatSpeaker.user)
+            .map((message) => message.text),
+        ['测试转写文本', '测试转写文本'],
+      );
+      // composer 仍挂载：输入框在树上，转写链路随时可继续。
+      expect(find.byKey(const Key('chat-input')), findsOneWidget);
+    });
   });
 }
 
-Future<void> _pumpChatView(
+/// 本文件聊天网关替身的公共形状：聊天事件流 + 语音合成双通道。
+abstract interface class _TestChatGateway
+    implements StreamingLocalChatGateway, ChatSpeechGateway {}
+
+Future<LocalChatViewModel> _pumpChatView(
   WidgetTester tester, {
-  required _ConfigurableChatGateway gateway,
+  required _TestChatGateway gateway,
   VoiceRecorderPlatform? recorderPlatform,
   bool autoSpeak = false,
+  VoiceOutputController? voiceOutput,
 }) async {
   final ttsGateway = _FixedTtsGateway(configured: autoSpeak, autoSpeak: autoSpeak);
-  final voiceOutput = VoiceOutputController(
-    gateway,
-    playerPlatform: _FakeVoicePlayer(),
-  );
   final viewModel = LocalChatViewModel(
     gateway,
     hostConnectionProbe: FakeHostConnectionProbe(const [true]),
     ttsSettingsGateway: ttsGateway,
-    voiceOutput: voiceOutput,
+    voiceOutput:
+        voiceOutput ?? VoiceOutputController(gateway, playerPlatform: _FakeVoicePlayer()),
     autoStart: false,
   );
   await viewModel.refreshVoiceOutputStatus();
@@ -410,10 +673,58 @@ Future<void> _pumpChatView(
     ),
   );
   await tester.pumpAndSettle();
+  return viewModel;
 }
 
-final class _ConfigurableChatGateway
-    implements StreamingLocalChatGateway, ChatSpeechGateway {
+/// 可挂起的失败网关：deliver 发出 accepted+waiting 后停住，等测试放行
+/// 再抛错——用来在「发送已开始、尚未失败」的窗口里注入用户新输入。
+final class _HangingFailingChatGateway implements _TestChatGateway {
+  final Completer<void> _release = Completer<void>();
+
+  /// 放行挂起的流：随后 deliver 抛错，send 以失败收尾。
+  void releaseFailure() => _release.complete();
+
+  @override
+  Future<LocalChatSnapshot> restore({String? sessionId}) async =>
+      const LocalChatSnapshot(sessionId: 'session-1', messages: []);
+
+  @override
+  Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async => '';
+
+  @override
+  Future<Uint8List> speak({
+    required String requestId,
+    required int deliveryIndex,
+    String? sessionId,
+  }) async => Uint8List.fromList([1, 2, 3]);
+
+  @override
+  Stream<LocalChatDeliveryEvent> deliver({
+    required String requestId,
+    required String text,
+    String? sessionId,
+  }) async* {
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.accepted,
+      requestId: requestId,
+      sessionId: 'session-1',
+    );
+    yield LocalChatDeliveryEvent(
+      kind: LocalChatEventKind.waiting,
+      requestId: requestId,
+    );
+    await _release.future;
+    throw const LocalChatGatewayException('本地聊天暂时不可用，请稍后重试。');
+  }
+}
+
+final class _ConfigurableChatGateway implements _TestChatGateway {
   _ConfigurableChatGateway({
     required this.fallbackReasons,
     this.fallbackDetails,

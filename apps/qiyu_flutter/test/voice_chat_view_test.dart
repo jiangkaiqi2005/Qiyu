@@ -487,6 +487,31 @@ void main() {
     expect(gateway.sentTexts, isEmpty);
     expect(find.byKey(const Key('voice-mic-retry')), findsOneWidget);
   });
+
+  testWidgets('转写发送失败：原文按既有条件回填输入框', (tester) async {
+    final gateway = _VoiceChatGateway()
+      ..deliverError = const LocalChatGatewayException('本地聊天暂时不可用，请稍后重试。')
+      ..deliverFailuresRemaining = 1;
+    await tester.pumpWidget(
+      _harness(
+        viewModel: _chatViewModel(gateway),
+        platform: _FakeRecorderPlatform(),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('voice-mic-stop')));
+    await tester.pumpAndSettle();
+
+    // 发送失败且输入框为空：转写文本回填，等待用户重发，不重复显示消息。
+    expect(gateway.sentTexts, ['今天有点累']);
+    expect(find.text('本地聊天暂时不可用，请稍后重试。'), findsOneWidget);
+    final input = tester.widget<TextField>(find.byKey(const Key('chat-input')));
+    expect(input.controller!.text, '今天有点累');
+    expect(find.byKey(const Key('voice-mic')), findsOneWidget);
+  });
 }
 
 Widget _harness({
@@ -596,7 +621,7 @@ final class _FixedSttGateway implements SttSettingsGateway {
       );
 }
 
-/// 聊天 + 转写双通道 fake：转写行为可编程（失败次数、挂起等待）。
+/// 聊天 + 转写双通道 fake：转写与发送行为均可编程（失败次数、挂起等待）。
 final class _VoiceChatGateway implements StreamingLocalChatGateway {
   final sentTexts = <String>[];
   final transcribeAudioCalls = <List<int>>[];
@@ -605,6 +630,8 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
   LocalChatGatewayException? transcribeError;
   bool hangTranscribe = false;
   final _hungCompleters = <Completer<String>>[];
+  int deliverFailuresRemaining = 0;
+  LocalChatGatewayException? deliverError;
 
   void completeHungTranscribe(String text) {
     for (final completer in _hungCompleters) {
@@ -647,6 +674,10 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
     String? sessionId,
   }) async* {
     sentTexts.add(text);
+    if (deliverError case final error? when deliverFailuresRemaining > 0) {
+      deliverFailuresRemaining -= 1;
+      throw error;
+    }
     yield LocalChatDeliveryEvent(
       kind: LocalChatEventKind.accepted,
       requestId: requestId,

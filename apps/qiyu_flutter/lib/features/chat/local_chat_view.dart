@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
@@ -17,9 +16,9 @@ import 'api_error_dialog.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_chat_bubble.dart';
+import 'qiyu_composer.dart';
 import 'qiyu_markdown.dart';
 import 'qiyu_hover_gate.dart';
-import 'qiyu_send_button.dart';
 import 'voice_input_controller.dart';
 import 'voice_output_controller.dart';
 import 'voice_recorder_platform.dart';
@@ -34,11 +33,6 @@ final class _ApiErrorNotice {
   final bool showSettingsLink;
 }
 
-/// 输入框里按 Enter 发送；Shift+Enter / Ctrl+Enter 插入软换行。
-final class _SendChatIntent extends Intent {
-  const _SendChatIntent();
-}
-
 /// 空会话占位按当前时段分流。产品定位是夜间陪伴，但白天打开也该
 /// 贴合当下时段；凌晨到清晨都归入「今晚」，守住睡前陪伴的基调。
 String qiyuEmptyChatHint(DateTime now) {
@@ -47,15 +41,6 @@ String qiyuEmptyChatHint(DateTime now) {
   if (hour >= 11 && hour < 13) return '中午想说点什么？';
   if (hour >= 13 && hour < 18) return '下午想说点什么？';
   return '今晚想说点什么？';
-}
-
-final class _InsertLineBreakIntent extends Intent {
-  const _InsertLineBreakIntent();
-}
-
-/// Esc 在语音输入各状态下的语义：录音中丢弃、转写中中止、可重试丢弃。
-final class _VoiceEscapeIntent extends Intent {
-  const _VoiceEscapeIntent();
 }
 
 class LocalChatView extends StatefulWidget {
@@ -78,21 +63,12 @@ class LocalChatView extends StatefulWidget {
 }
 
 class _LocalChatViewState extends State<LocalChatView> {
-  final _controller = TextEditingController();
   final _scrollController = ScrollController();
 
-  /// composer 焦点：聚焦态描边取 `composerFocusLine`（紫度 0.13），
-  /// 失焦回落到 `line` 发丝线（design-system §8 组件 5）。
-  final _inputFocusNode = FocusNode(debugLabel: 'chat-input');
-
-  /// composer 输入框量宽键：展开态判定要按输入框的**实际可用宽度**排版数行，
-  /// 按钮列的宽度必须排除在外，所以键挂在输入框本体而不是整行。
-  final _composerFieldKey = GlobalKey(debugLabel: 'composer-field');
-
-  /// composer 输入是否多于一行：多于一行即展开，面板下沿加到
-  /// [_composerExpandedBottomPadding]（上沿不动）；单行静息分毫不动（列表底部
-  /// 让位常量与基线测试的 492/516 都依赖这一点）。
-  bool _composerExpanded = false;
+  /// 输入模块的身份与操作键：状态与生命周期都在 [QiyuComposer] 内部，
+  /// 页面只经由它调用「恢复输入焦点」与「转写文本发送」两个操作；同一枚
+  /// 键传给 widget，空态↔聊天态换布局时 State 原位保留，输入连续。
+  final _composerKey = GlobalKey<QiyuComposerState>(debugLabel: 'chat-composer');
 
   String _lastListSignature = '';
 
@@ -131,9 +107,6 @@ class _LocalChatViewState extends State<LocalChatView> {
   void initState() {
     super.initState();
     _scrollController.addListener(_trackStickToBottom);
-    _inputFocusNode.addListener(_onInputFocusChange);
-    // 文本每次变化（打字、IME 组合、程序注入）都可能改变输入行行数。
-    _controller.addListener(_updateComposerExpanded);
     final chatViewModel = _chatViewModel = context.read<LocalChatViewModel>();
     chatViewModel.addListener(_onChatViewModelChanged);
     _lastTrackedSessionId = chatViewModel.sessionId;
@@ -149,7 +122,10 @@ class _LocalChatViewState extends State<LocalChatView> {
         );
       },
       chatViewModel.transcribeVoice,
-      onTranscribed: (text) => unawaited(_sendTranscribed(chatViewModel, text)),
+      // 转写文本交给输入模块的发送协调：清空、失败回填与页面收尾钩子
+      // 都在模块内部按既有口径执行。
+      onTranscribed: (text) =>
+          unawaited(_composerKey.currentState?.sendTranscribed(text)),
       onApiError: _handleVoiceApiError,
     );
     chatViewModel.voiceOutput.onApiError = _handleVoiceApiError;
@@ -193,18 +169,8 @@ class _LocalChatViewState extends State<LocalChatView> {
       _chatViewModel.voiceOutput.onApiError = null;
     }
     _voiceInput.dispose();
-    _controller.dispose();
     _scrollController.dispose();
-    _inputFocusNode
-      ..removeListener(_onInputFocusChange)
-      ..dispose();
     super.dispose();
-  }
-
-  /// 聚焦描边要跟着焦点重绘：`QiyuGlassPanel` 的装饰走 AnimatedContainer，
-  /// `line` ↔ `composerFocusLine` 是 200ms 过渡（reduced-motion 下为 0）。
-  void _onInputFocusChange() {
-    if (mounted) setState(() {});
   }
 
   /// 聊天页工具条上的顶层目的地（历史 / 模型连接）：**叠在当前位置之上**，
@@ -213,6 +179,12 @@ class _LocalChatViewState extends State<LocalChatView> {
   void _pushAwayFromChat(String location) {
     _chatViewModel.voiceOutput.stopAll();
     context.push(location);
+  }
+
+  /// composer 的发送起点回调（手打与转写共用）：发一条消息都视为用户要
+  /// 回到底部，与迁移前两条发送路径开头的 `_stickToBottom = true` 同口径。
+  void _onComposerSendStarted() {
+    _stickToBottom = true;
   }
 
   // pixels 减少只可能来自用户上滑（程序跳转与内容增长不会减少），
@@ -225,65 +197,6 @@ class _LocalChatViewState extends State<LocalChatView> {
       _stickToBottom = true;
     }
     _lastPixels = position.pixels;
-  }
-
-  Future<void> _send(LocalChatViewModel viewModel) async {
-    final text = _controller.text;
-    if (text.trim().isEmpty) {
-      return;
-    }
-    _stickToBottom = true;
-    final sending = viewModel.send(text);
-    if (mounted && _controller.text == text) {
-      _controller.clear();
-    }
-    final sent = await sending;
-    if (!sent &&
-        mounted &&
-        _controller.text.isEmpty &&
-        !viewModel.messages.any(
-          (message) =>
-              message.speaker == LocalChatSpeaker.user &&
-              message.text == text.trim(),
-        )) {
-      _controller.text = text;
-      _controller.selection = TextSelection.collapsed(offset: text.length);
-    }
-    if (sent && mounted) {
-      await _handleTurnApiErrors(viewModel);
-    }
-  }
-
-  void _insertLineBreak() {
-    final value = _controller.value;
-    final selection = value.selection;
-    final start = selection.isValid ? selection.start : value.text.length;
-    final end = selection.isValid ? selection.end : value.text.length;
-    final nextText = value.text.replaceRange(start, end, '\n');
-    _controller.value = TextEditingValue(
-      text: nextText,
-      selection: TextSelection.collapsed(offset: start + 1),
-    );
-  }
-
-  /// 语音转写出的文字直接发送：与手打共用同一条链路（requestId 幂等、
-  /// 乐观插入、失败回填输入框）。栖语正在回复时排队，回复结束即发。
-  Future<void> _sendTranscribed(
-    LocalChatViewModel viewModel,
-    String text,
-  ) async {
-    _stickToBottom = true;
-    final sent = await viewModel.sendWhenIdle(text);
-    if (!sent &&
-        mounted &&
-        _controller.text.isEmpty &&
-        text.trim().isNotEmpty) {
-      _controller.text = text;
-      _controller.selection = TextSelection.collapsed(offset: text.length);
-    }
-    if (sent && mounted) {
-      await _handleTurnApiErrors(viewModel);
-    }
   }
 
   ApiErrorCategory? _categorizeFallbackReason(
@@ -429,7 +342,7 @@ class _LocalChatViewState extends State<LocalChatView> {
         _chatViewModel.voiceOutput.stopAll();
         context.push('/settings');
       } else {
-        _inputFocusNode.requestFocus();
+        _composerKey.currentState?.restoreFocus();
       }
     } finally {
       _isShowingApiErrorDialog = false;
@@ -438,34 +351,6 @@ class _LocalChatViewState extends State<LocalChatView> {
 
   void _handleVoiceApiError(ApiErrorCategory category) {
     unawaited(_dispatchApiError(category, delay: false));
-  }
-
-  Future<void> _showVoiceGuide() async {
-    final voice = _voiceInput;
-    // 置灰态先惰性重查一次：从设置页配好回来点麦克风直接开始说话。
-    await voice.refreshConfigured();
-    if (!mounted) {
-      return;
-    }
-    if (voice.status == VoiceInputStatus.idle) {
-      voice.handleMicTap();
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          voice.status == VoiceInputStatus.unsupported
-              ? '当前浏览器不支持语音输入，请换 Chrome 或 Edge。'
-              : '还没有配置语音服务，先去设置页填写地址、模型和 Key。',
-        ),
-        action: voice.status == VoiceInputStatus.unsupported
-            ? null
-            : SnackBarAction(
-                label: '去设置',
-                onPressed: () => _pushAwayFromChat('/settings'),
-              ),
-      ),
-    );
   }
 
   @override
@@ -554,35 +439,6 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
-  /// M3 compact IconButton 在 tightFor([QiyuLayout.composerIconButtonSize])
-  /// 约束下的渲染增量（34 → 40，实测值）：SDK 密度调整的结果，无既有 token 可引。
-  static const double _compactIconButtonSizeDelta = 6;
-
-  /// composer 输入行（Row）的静息高，取最高子项（麦克风钮一侧）：
-  /// 图标按钮 [QiyuLayout.composerIconButtonSize] + compact 渲染增量
-  /// [_compactIconButtonSizeDelta] + 焦点环常驻留白上下
-  /// 2×[QiyuLayout.focusRingOffset]。
-  ///
-  /// 只用于列表底部让位（[_chatListBottomInset]）的推导；**不再作展开判据**——
-  /// 窄屏字阶下两行内容仍矮于按钮行，按高度判定会漏翻（见
-  /// [_updateComposerExpanded]）。
-  static const double _composerRowRestingHeight =
-      QiyuLayout.composerIconButtonSize +
-      _compactIconButtonSizeDelta +
-      2 * QiyuLayout.focusRingOffset;
-
-  /// composer 多行展开态的下沿内边距：上沿保持静息 [QiyuLayout.composerPadding]
-  /// 不动——宋体行盒的空隙大头分在文字上方（行高按字体上伸比例分配、CJK 字面
-  /// 偏上），视觉上沿自带余量；留白全部补给下沿，让最后一行离圆角远一点
-  /// （2026-09-05 用户反馈「上面太宽了，下面太窄了，离圆角太近了」；总留白
-  /// 与先前的上下对称方案一致，只是分配不同）。
-  static const double _composerExpandedBottomPadding =
-      QiyuLayout.composerPadding + 2 * QiyuSpacing.xs;
-
-  /// composer 光标宽度：[_inputField] 显式传给 TextField（渲染不变，Flutter
-  /// 默认就是 2.0），展开态判定按它扣排版宽，见 [_updateComposerExpanded]。
-  static const double _inputCursorWidth = 2.0;
-
   /// 聊天态消息列表的 bottom padding：composer 覆盖层的**静息占位**（单行输入、
   /// 通知条收起时，覆盖层从列表底缘算起占掉的高度）。取常量、不跟随 composer
   /// 实际高度联动——联动会让列表随打字移动，违背「会话不动」；composer 长高时
@@ -590,15 +446,15 @@ class _LocalChatViewState extends State<LocalChatView> {
   ///
   /// 数值推导（自下而上）：
   /// - [QiyuSpacing.lg]：面板之下原有的出屏留白（原 Column 底部的 SizedBox）；
-  /// - composer 静息面板：Row（[_composerRowRestingHeight]，实测 46）+ 上下
-  ///   内边距 2×[QiyuLayout.composerPadding] + 上下发丝边框 2×[QiyuLine.hairline]；
+  /// - composer 静息面板：Row（[QiyuComposer.restingRowHeight]，实测 46）+
+  ///   上下内边距 2×[QiyuLayout.composerPadding] + 上下发丝边框 2×[QiyuLine.hairline]；
   /// - [QiyuSpacing.lg]：一条通知条的近似余量（通知条 = 顶距 8 + 正文行盒约 21）。
   ///   通知条出现时覆盖层向上吃掉这份余量，最多再侵入最后一条消息的底部边缘，
   ///   属「会话不动」优先的既定取舍；这份 24 也接替了改造前列表自身的 bottom
   ///   padding，静息外观与改造前一致（最后一条消息距面板顶 24px）。
   static const double _chatListBottomInset =
       QiyuSpacing.lg +
-      _composerRowRestingHeight +
+      QiyuComposer.restingRowHeight +
       2 * QiyuLayout.composerPadding +
       2 * QiyuLine.hairline +
       QiyuSpacing.lg;
@@ -619,7 +475,7 @@ class _LocalChatViewState extends State<LocalChatView> {
             mainAxisSize: MainAxisSize.min,
             children: [
               _noticeBars(context, viewModel),
-              _composer(context, viewModel),
+              _composer(viewModel),
               const SizedBox(height: QiyuSpacing.lg),
             ],
           ),
@@ -660,7 +516,7 @@ class _LocalChatViewState extends State<LocalChatView> {
             _homeGreeting(context),
             const SizedBox(height: QiyuSpacing.xl),
             _noticeBars(context, viewModel),
-            _composer(context, viewModel),
+            _composer(viewModel),
           ],
         ),
       );
@@ -677,7 +533,7 @@ class _LocalChatViewState extends State<LocalChatView> {
           ),
         ),
         _noticeBars(context, viewModel),
-        _composer(context, viewModel),
+        _composer(viewModel),
         const SizedBox(height: QiyuSpacing.lg),
       ],
     );
@@ -736,24 +592,13 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
-  /// 聊天域内容的水平居中约束：工具条、消息区与 composer 共用同一档
-  /// `QiyuLayout.streamMaxWidth`，约束组合（Center > ConstrainedBox）收敛于此。
-  Widget _centeredStream({required Widget child}) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: QiyuLayout.streamMaxWidth),
-        child: child,
-      ),
-    );
-  }
-
   /// 会话页自带的工具条：本地规则标识、朗读开关、历史与模型连接入口。
   /// 页面导航交给导航壳，这里只留会话自身的控件；两个入口与侧边栏去同一条
   /// 目的地，因此目的地与图标都从 [QiyuNavDestination] 取。返回栈语义**两边
   /// 不同**（改造前就是这样，本轮纯视觉换皮不动它）：工具条 [_pushAwayFromChat]
   /// 叠栈，页内「返回上一页」回到来的那一页；侧边栏是常驻顶层导航，走 `go` 换栈。
   Widget _utilityStrip(BuildContext context, LocalChatViewModel viewModel) {
-    return _centeredStream(
+    return QiyuStreamWidthBox(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
           QiyuSpacing.md,
@@ -860,7 +705,7 @@ class _LocalChatViewState extends State<LocalChatView> {
               QiyuSpacing.md,
               QiyuSpacing.xs,
             ),
-            child: _centeredStream(
+            child: QiyuStreamWidthBox(
               child: Container(
                 key: const Key('api-error-notice-banner'),
                 decoration: BoxDecoration(
@@ -927,7 +772,7 @@ class _LocalChatViewState extends State<LocalChatView> {
   }
 
   Widget _messageArea(LocalChatViewModel viewModel) {
-    return _centeredStream(
+    return QiyuStreamWidthBox(
       child: AnimatedBuilder(
         animation: viewModel.voiceOutput,
         builder: (context, _) => _messageList(viewModel),
@@ -935,185 +780,22 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
-  /// composer（design-system §8 组件 5）：毛玻璃胶囊、`line` 发丝描边、
-  /// 内边距 6（多行展开态下沿再让两档 xs、上沿不动，单行静息不动）、
-  /// 聚焦描边压到紫度 0.13；占位字 `muted` 且靠 34px 行高居中。
-  ///
-  /// `home-go-chat` 沿用退役前首页「去聊天」入口卡的既有测试键：合一页
-  /// 之后进入对话的动作就是这个输入容器，键位随职责搬过来。
-  Widget _composer(BuildContext context, LocalChatViewModel viewModel) {
-    // 窗口宽度变化会改折行数与字阶档位（进而改输入行高），这类变化不经过
-    // 文本控制器，靠每次 build 补一次帧后核对兜住。
-    _updateComposerExpanded();
-    final lineColor = _inputFocusNode.hasFocus
-        ? QiyuColors.composerFocusLine
-        : QiyuColors.line;
-    final bottomPadding = _composerExpanded
-        ? _composerExpandedBottomPadding
-        : QiyuLayout.composerPadding;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: QiyuSpacing.md),
-      child: _centeredStream(
-        child: QiyuGlassPanel(
-          key: const Key('home-go-chat'),
-          blurSigma: QiyuGlass.panelBlur,
-          borderColor: lineColor,
-          padding: EdgeInsets.fromLTRB(
-            QiyuSpacing.md,
-            QiyuLayout.composerPadding,
-            QiyuLayout.composerPadding,
-            bottomPadding,
-          ),
-          // 输入行本体：Enter 发送 / 软换行 / Esc 的快捷键作用域只包住它。
-          child: Shortcuts(
-            shortcuts: const {
-              SingleActivator(LogicalKeyboardKey.enter): _SendChatIntent(),
-              SingleActivator(LogicalKeyboardKey.enter, shift: true):
-                  _InsertLineBreakIntent(),
-              SingleActivator(LogicalKeyboardKey.enter, control: true):
-                  _InsertLineBreakIntent(),
-              SingleActivator(LogicalKeyboardKey.escape): _VoiceEscapeIntent(),
-            },
-            child: Actions(
-              actions: {
-                _SendChatIntent: CallbackAction<_SendChatIntent>(
-                  onInvoke: (intent) {
-                    if (!viewModel.sending) {
-                      unawaited(_send(viewModel));
-                    }
-                    return null;
-                  },
-                ),
-                _InsertLineBreakIntent: CallbackAction<_InsertLineBreakIntent>(
-                  onInvoke: (intent) {
-                    _insertLineBreak();
-                    return null;
-                  },
-                ),
-                _VoiceEscapeIntent: CallbackAction<_VoiceEscapeIntent>(
-                  onInvoke: (intent) {
-                    // 播放态下 Esc 等同停止按钮（ADR 0002 的打断规则）；
-                    // 录音/转写语义不变。
-                    viewModel.voiceOutput.stopAll();
-                    _voiceInput.handleEscape();
-                    return null;
-                  },
-                ),
-              },
-              child: Row(
-                children: [
-                  Expanded(
-                    child: KeyedSubtree(
-                      key: _composerFieldKey,
-                      child: _inputField(),
-                    ),
-                  ),
-                  const SizedBox(width: QiyuSpacing.xs),
-                  AnimatedBuilder(
-                    animation: _voiceInput,
-                    builder: (context, _) => _voiceMicButton(),
-                  ),
-                  const SizedBox(width: QiyuSpacing.xs),
-                  QiyuSendButton(
-                    sending: viewModel.sending,
-                    onPressed: viewModel.sending
-                        ? () => unawaited(viewModel.stop())
-                        : () => unawaited(_send(viewModel)),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
+  /// 输入行：合一页与输入模块（[QiyuComposer]）的唯一接缝。输入的文本、
+  /// 选区、焦点、测量键、展开状态、文字度量、快捷键与监听生命周期全部
+  /// 收在模块内部；页面只接发送起点、轮次收尾（服务异常分类/频控/弹窗
+  /// 仍在页面协调）与导航三个页面侧回调，不管理输入内部状态。
+  Widget _composer(LocalChatViewModel viewModel) {
+    return QiyuComposer(
+      key: _composerKey,
+      viewModel: viewModel,
+      voiceInput: _voiceInput,
+      onSendStarted: _onComposerSendStarted,
+      // 回调无参：本轮视图模型就是模块持有的这一个，分类/频控/弹窗仍走
+      // [_handleTurnApiErrors]，页面侧闭包自取 viewModel。
+      onTurnCompleted: () => _handleTurnApiErrors(viewModel),
+      pushAwayFromChat: _pushAwayFromChat,
     );
   }
-
-  /// 展开态帧后核对：用与输入框**同源**的字体样式（[_inputTextStyle]）把当前
-  /// 文本按输入框实际可用宽度排版，行数 > 1 即展开，只在布尔翻转时 setState。
-  ///
-  /// 判定必须与真实渲染**双同源**，缺一处软折行边界就会漏判/过判（2026-09-05
-  /// 实测：`一`×35+'。' 真实渲染 2 行、判定 1 行，面板停在静息 60 下沿贴边，
-  /// 再补一个字符才跳展开——观感即「一个句号和两个句号差太多」）：
-  /// - 样式必须与渲染同源：[_inputTextStyle] 按 TextField 的实际装配方向取
-  ///   Theme `bodyLarge` merge（机制见其 doc）。裸 `QiyuTypography.body` 少了
-  ///   渲染样式自带的 `letterSpacing`，每行会比真实多容约 1 字符；
-  /// - 宽度必须扣光标边距：RenderEditable 的实际排版宽比容器窄
-  ///   `_caretMargin = 1.0 + cursorWidth`（rendering/editable.dart 的
-  ///   `_kCaretGap`），即下方的 `1.0 + _inputCursorWidth`；不扣会在临界长度
-  ///   再漏判一格。
-  ///
-  /// 判据必须是「内容行数」而非「输入行高超过按钮行（[_composerRowRestingHeight]）」：
-  /// 窄屏字阶与浏览器缩放会把单行行盒压到 22px 上下，两行内容（44px）仍矮于
-  /// 46px 的按钮行，按高度判定会漏翻——2026-09-05 用户 200% 缩放真机踩中，
-  /// 观感即「两行贴边、三行才突然松开，两行和三行差太多」。留白加在输入行
-  /// 外层的面板上，不反馈输入框自身宽度，量一次即稳。触发路径：控制器文本
-  /// 变化与 composer 每次 build（见 initState 与 [_composer]）。
-  void _updateComposerExpanded() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final box = _composerFieldKey.currentContext?.findRenderObject();
-      if (box is! RenderBox || !box.hasSize || box.size.width <= 0) return;
-      final painter = TextPainter(
-        text: TextSpan(
-          text: _controller.text,
-          style: _inputTextStyle(context),
-        ),
-        textDirection: TextDirection.ltr,
-        textScaler: MediaQuery.textScalerOf(context),
-      )..layout(maxWidth: box.size.width - 1.0 - _inputCursorWidth);
-      final expanded = painter.computeLineMetrics().length > 1;
-      painter.dispose();
-      if (expanded != _composerExpanded) {
-        setState(() => _composerExpanded = expanded);
-      }
-    });
-  }
-
-  /// 输入框本体：字色与占位字都来自 token；描边交给外层玻璃面板，
-  /// 因此这里显式撤掉 TextField 自己的边框与填充。cursorWidth 显式传
-  /// [_inputCursorWidth]（值等于默认），让展开态判定扣的光标边距有同一出处。
-  Widget _inputField() {
-    return TextField(
-      key: const Key('chat-input'),
-      controller: _controller,
-      focusNode: _inputFocusNode,
-      autofocus: true,
-      minLines: 1,
-      maxLines: 5,
-      textInputAction: TextInputAction.newline,
-      cursorWidth: _inputCursorWidth,
-      style: _inputTextStyle(context),
-      decoration: const InputDecoration(
-        hintText: '想说点什么…',
-        filled: false,
-        isDense: true,
-        contentPadding: EdgeInsets.zero,
-        border: InputBorder.none,
-        enabledBorder: InputBorder.none,
-        focusedBorder: InputBorder.none,
-        errorBorder: InputBorder.none,
-        focusedErrorBorder: InputBorder.none,
-      ),
-    );
-  }
-
-  /// 输入框文本样式：[_inputField] 与展开态行数判定（[_updateComposerExpanded]）
-  /// 必须共用同一份，行数才不会按另一份字体度量排版。
-  ///
-  /// 构造 = `Theme.of(context).textTheme.bodyLarge` merge `QiyuTypography.body`
-  /// + ink，**merge 方向必须 bodyLarge 在前**：TextStyle.merge 是 other 覆盖
-  /// this，而主题 `bodyLarge` 经 `Theme.of` 返回前的 Typography englishLike
-  /// 2021 几何 merge（theme_data.dart 的 `ThemeData.localize`）后 `inherit` 为
-  /// false——TextStyle.merge 对 inherit false 的 other 直接原样返回，反向
-  /// merge 会整个丢掉 `QiyuTypography` 当档字阶与 ink 的显式覆盖。正向 merge
-  /// 得到的样式自带渲染层的 `letterSpacing: 0.5` 与 `height: 1.5`，再过
-  /// TextField 内部的 `bodyLarge.merge(providedStyle)`（text_field.dart 的
-  /// `_m3InputStyle`）逐属性不变：渲染零变化，判定从此与渲染同源。
-  TextStyle _inputTextStyle(BuildContext context) => Theme.of(context)
-      .textTheme
-      .bodyLarge!
-      .merge(QiyuTypography.of(context).body.copyWith(color: QiyuColors.ink));
 
   /// 语音输入状态行：录音计时 / 转写等待 / 可重试提示。作为 live region
   /// 播报给屏幕阅读器；idle 无事可报时不占位。
@@ -1177,99 +859,6 @@ class _LocalChatViewState extends State<LocalChatView> {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  /// 麦克风按钮：置灰态（不支持/未配置）点击只做引导，其余状态按
-  /// 控制器状态机分派；转写中禁点（Esc 才是中止入口）。
-  ///
-  /// 五个状态共用 composer 的 34px 圆形图标按钮规格（design-system §8
-  /// 组件 3），键名、tooltip 与状态机语义逐一对应原实现。
-  Widget _voiceMicButton() {
-    final voice = _voiceInput;
-    final theme = Theme.of(context);
-    final (key, tooltip, icon, color, onPressed) = switch (voice.status) {
-      VoiceInputStatus.unsupported || VoiceInputStatus.notConfigured => (
-        'voice-mic',
-        '语音输入（当前不可用）',
-        const Icon(QiyuIcons.mic_off),
-        theme.disabledColor,
-        _showVoiceGuide,
-      ),
-      VoiceInputStatus.idle => (
-        'voice-mic',
-        '语音输入',
-        const Icon(QiyuIcons.mic),
-        null,
-        // 点麦克风她立刻闭嘴（ADR 0002 硬规则）：她的声音不能被录进
-        // 转写变成用户在自言自语。
-        () {
-          final viewModel = context.read<LocalChatViewModel>();
-          viewModel.voiceOutput.stopAll();
-          // 60 秒自动收尾没有第二次点击，必须在开始录音
-          // 的用户手势中先为稍后的回复朗读保留许可。
-          if (viewModel.voiceOutputEnabled) {
-            viewModel.voiceOutput.prepareForUserInitiatedPlayback();
-          }
-          voice.handleMicTap();
-        },
-      ),
-      VoiceInputStatus.recording => (
-        'voice-mic-stop',
-        '说完，转成文字',
-        const Icon(QiyuIcons.stop_circle),
-        theme.colorScheme.error,
-        // 转写和聊天都会跨越异步边界；说完的这次点击
-        // 是语音闭环最后一个可用的浏览器用户手势。
-        () {
-          context
-              .read<LocalChatViewModel>()
-              .voiceOutput
-              .prepareForUserInitiatedPlayback();
-          voice.handleMicTap();
-        },
-      ),
-      VoiceInputStatus.transcribing => (
-        'voice-mic-busy',
-        '正在转文字',
-        const SizedBox.square(
-          dimension: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        null,
-        null,
-      ),
-      VoiceInputStatus.retryable => (
-        'voice-mic-retry',
-        '重试转写',
-        const Icon(QiyuIcons.mic),
-        theme.colorScheme.error,
-        // 与开始录音同规则：点麦克风即停播清队列。
-        () {
-          final voiceOutput = context.read<LocalChatViewModel>().voiceOutput;
-          voiceOutput.stopAll();
-          voiceOutput.prepareForUserInitiatedPlayback();
-          voice.handleMicTap();
-        },
-      ),
-    };
-    return QiyuOwnFocusRing(
-      borderRadius: QiyuRadii.circleBorder,
-      builder: (context, focusNode) => IconButton(
-        key: Key(key),
-        focusNode: focusNode,
-        tooltip: tooltip,
-        color: color,
-        onPressed: onPressed,
-        icon: icon,
-        iconSize: QiyuIconSpec.size,
-        padding: EdgeInsets.zero,
-        visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints.tightFor(
-          width: QiyuLayout.composerIconButtonSize,
-          height: QiyuLayout.composerIconButtonSize,
         ),
       ),
     );
