@@ -6,15 +6,65 @@ import 'dream.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_controls.dart';
 import 'memory_text_primitives.dart';
+import 'model_prompt_builder.dart';
 import 'open_loop_store.dart';
+import 'persona_tree.dart';
 import 'relationship_lifecycle.dart';
 
 /// 热层注入硬上限（设计定稿）：总量超 3000 tokens 先砍再注入。
 /// 砍序：先压 long-memory → 再压 persona 投影的可裁节（边界禁区永不
 /// 裁）→ 再压 daily-state 的近日状态节；永不砍 relationship 与
-/// open-loops。注入关在聊天服务侧按剩余预算裁剪（clipLongMemoryBlock
-/// / clipPersonaBlock）。
+/// open-loops。三块的串行读取与跨块预算协调都在本模块内完成
+/// （见 [StatePackReader.readHotLayerBlocks]），聊天交付只消费
+/// 准备好的结果。
 const hotLayerMaxRunes = 3000;
+
+/// 一次热层准备的最终结果：每日状态包、长期印象与用户画像三块的
+/// 可注入内容。部分成功语义显式保留——null 表示该块本轮未准备成功，
+/// 调用方保持原值；非 null（含空串）表示已按既有规则准备好、可直接
+/// 整块替换的内容。
+final class HotLayerBlocks {
+  const HotLayerBlocks({
+    required this.dailyState,
+    required this.longMemory,
+    required this.persona,
+    required this.failure,
+  });
+
+  /// 【近况】块内容；读取失败时为 null。
+  final String? dailyState;
+
+  /// 【长期印象】块内容（含跨块预算裁剪）；本轮未准备成功时为 null。
+  final String? longMemory;
+
+  /// 【用户画像】块内容（含跨块预算裁剪）；本轮未准备成功时为 null。
+  final String? persona;
+
+  /// 首个读取阶段失败的错误；三块全部准备成功时为 null。诊断措辞
+  /// （state pack unavailable）仍由聊天交付侧落，本模块只负责如实
+  /// 上报失败，不改写错误语义。
+  final Object? failure;
+
+  /// 把准备结果装配进 [builder]：准备成功的块按近况 → 长期印象 →
+  /// 用户画像的既有替换顺序生效；准备失败的块保持 builder 原值
+  /// （部分成功：已成功更新的部分不撤销，未成功的块原状态保留）。
+  ModelPromptBuilder applyTo(ModelPromptBuilder builder) {
+    var next = builder;
+    final dailyState = this.dailyState;
+    if (dailyState != null) {
+      next = next.copyWithDailyState(dailyState);
+    }
+    final longMemory = this.longMemory;
+    if (longMemory != null) {
+      next = next.copyWithLongMemory(longMemory);
+    }
+    final persona = this.persona;
+    if (persona != null) {
+      next = next.copyWithPersona(persona);
+    }
+    return next;
+  }
+}
 
 /// 每日状态包装配（装配图定稿）：服务端每轮读状态包三个文件
 /// （open-loops / relationship / daily-state），各带小标题拼成
@@ -22,7 +72,11 @@ const hotLayerMaxRunes = 3000;
 ///
 /// 跟进门控的确定性部分在 Host 计算（状态/权限/到期/阶段/禁提），
 /// 以「主动跟进候选」批注呈现；语境是否自然、是否开口由模型判断。
-final class StatePackReader {
+///
+/// 本类同时是热层读取的单一所有者：三块内容读取、既有记忆控制
+/// 过滤与跨块预算协调（[readHotLayerBlocks]）都收拢在此。类保持
+/// 可继承，仅供测试在读取 seam 上注入故障。
+class StatePackReader {
   StatePackReader({
     required this.memoryDirectory,
     OpenLoopStore? openLoopStore,
@@ -41,11 +95,71 @@ final class StatePackReader {
   File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _personaFile => memoryFile(memoryDirectory, personaFileName);
 
+  /// 热层读取的单一入口：按既有顺序串行读取每日状态包、长期印象与
+  /// 用户画像（各次记忆控制读取保持原次数，不并行、不缓存、不共用
+  /// 快照），再按既有砍序做跨块预算协调——三块总量超 [hotLayerMaxRunes]
+  /// 时先压长期印象（clipLongMemoryBlock），再压用户画像可裁节
+  /// （clipPersonaBlock，边界禁区永不裁）；近况块内部的近日状态已在
+  /// [readDailyStateBlock] 内先压过。
+  ///
+  /// 部分成功语义（与基线逐字对齐）：近况块读取成功即已成立，后续
+  /// 任何阶段失败都不撤销它；长期印象与用户画像在两者读取与裁剪全部
+  /// 成功时才一起成立，中途失败则保持 null（调用方原值）。首个失败
+  /// 记入 [HotLayerBlocks.failure]，其后的读取不再进行。
+  Future<HotLayerBlocks> readHotLayerBlocks() async {
+    String? dailyState;
+    String? longMemory;
+    String? persona;
+    Object? failure;
+    try {
+      final dailyStateBlock = await readDailyStateBlock();
+      dailyState = dailyStateBlock;
+      final longMemoryBlock = await readLongMemoryBlock();
+      final personaBlock = await readPersonaBlock();
+      // 裁前与裁长期印象后共用同一溢出公式，收成闭包防两处漂移。
+      int overflowOf(int longRunes, int personaRunes) =>
+          dailyStateBlock.runes.length + longRunes + personaRunes -
+          hotLayerMaxRunes;
+      var clippedLongMemory = longMemoryBlock;
+      var clippedPersona = personaBlock;
+      final overflow = overflowOf(
+        longMemoryBlock.runes.length,
+        personaBlock.runes.length,
+      );
+      if (overflow > 0) {
+        clippedLongMemory = clipLongMemoryBlock(
+          longMemoryBlock,
+          longMemoryBlock.runes.length - overflow,
+        );
+        final remainingOverflow = overflowOf(
+          clippedLongMemory.runes.length,
+          personaBlock.runes.length,
+        );
+        if (remainingOverflow > 0) {
+          clippedPersona = clipPersonaBlock(
+            personaBlock,
+            personaBlock.runes.length - remainingOverflow,
+          );
+        }
+      }
+      longMemory = clippedLongMemory;
+      persona = clippedPersona;
+    } on Object catch (error) {
+      failure = error;
+    }
+    return HotLayerBlocks(
+      dailyState: dailyState,
+      longMemory: longMemory,
+      persona: persona,
+      failure: failure,
+    );
+  }
+
   /// 返回可直接注入的【长期印象】内容；文件不存在、为空或读取失败
   /// 时返回空串，空块不输出。受控过滤（ticket 18）：封禁（禁提 ∪
   /// 删除）与冻结条目不进注入；无法解析的文件按基线原样注入
-  /// （用户裁定 2026-08-18，D3 按基线）。预算裁剪由注入关按剩余
-  /// 热层预算执行，不在这里。
+  /// （用户裁定 2026-08-18，D3 按基线）。跨块预算裁剪统一在
+  /// [readHotLayerBlocks] 执行，单块读取不裁。
   Future<String> readLongMemoryBlock() async {
     final contents = await readFileIfExists(_longMemoryFile);
     final trimmed = contents?.trim() ?? '';
@@ -72,7 +186,7 @@ final class StatePackReader {
   /// 返回可直接注入的【用户画像】内容（persona.md 稳定根投影）；文件
   /// 不存在、为空或读取失败时返回空串，空块不输出。文件首行的
   /// `# persona` 标题属于文件格式，不进注入内容；命中受控范围的主张
-  /// 行不进注入；预算裁剪归注入关。
+  /// 行不进注入；跨块预算裁剪统一在 [readHotLayerBlocks] 执行。
   Future<String> readPersonaBlock() async {
     final contents = await readFileIfExists(_personaFile);
     final trimmed = contents?.trim() ?? '';

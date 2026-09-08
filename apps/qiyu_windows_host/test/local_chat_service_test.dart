@@ -2573,6 +2573,86 @@ void main() {
         expect(total, lessThanOrEqualTo(hotLayerMaxRunes));
       },
     );
+
+    test('热层文件存在但为空时对应块不输出，回复照常', () async {
+      DateTime clock() => DateTime(2026, 8, 12, 21);
+      final gateway = ScriptedModelGateway(
+        streamScript: [const ScriptedStreamReply('在。')],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        seedMemory: (memoryDirectory) async {
+          // 全部热层文件都存在但内容为空：与缺文件同为空块不输出。
+          for (final name in [
+            'long-memory.md',
+            'persona.md',
+            'relationship.md',
+            'daily-state.md',
+            'open-loops.md',
+          ]) {
+            File('${memoryDirectory.path}/$name').writeAsStringSync(
+              '',
+              encoding: utf8,
+            );
+          }
+        },
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(requestId: 'empty-hot-1', text: '在吗');
+
+      final system = gateway.lastStreamMessages!.first.content;
+      expect(system, isNot(contains('<daily_state>')));
+      expect(system, isNot(contains('<long_memory>')));
+      expect(system, isNot(contains('<persona>')));
+      // 热层缺席不改变回复管线：模型回复照常完整交付，不落降级。
+      expect(trace.message.messages, contains('在。'));
+      expect(trace.state.fallbackReason, isNull);
+    });
+
+    test('生僻字按 rune 计数参与热层预算裁剪', () async {
+      DateTime clock() => DateTime(2026, 8, 12, 21);
+      final gateway = ScriptedModelGateway(
+        streamScript: [const ScriptedStreamReply('在。')],
+      );
+      // U+1D569 是星平面字符：1 rune = 2 个 UTF-16 码元，rune 计数与
+      // 码元计数在此必然分叉，锁死「预算按 rune 口径」的现状。
+      const astral = '\u{1D569}';
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        seedMemory: (memoryDirectory) async {
+          final oversized = renderLongMemory({
+            '重要事件': [
+              for (var index = 0; index < 40; index += 1) astral * 100,
+            ],
+          });
+          expect(oversized.runes.length, greaterThan(hotLayerMaxRunes));
+          File(
+            '${memoryDirectory.path}/long-memory.md',
+          ).writeAsStringSync(oversized, encoding: utf8);
+        },
+      );
+      addTearDown(harness.dispose);
+
+      await harness.sendChat(requestId: 'astral-1', text: '在吗');
+
+      final system = gateway.lastStreamMessages!.first.content;
+      final match = RegExp(
+        r'<long_memory>\n【长期印象】\n([\s\S]*?)\n</long_memory>',
+      ).firstMatch(system);
+      expect(match, isNotNull);
+      final injected = match!.group(1)!;
+      expect(injected, contains('## 重要事件'));
+      // 40 条各 100 rune：溢出按 rune 计算后恰保留 28 条整条目。
+      expect(
+        '- ${astral * 100}'.allMatches(injected).length,
+        28,
+      );
+      // 每条幸存条目完整无裁半，总量锁进热层硬上限。
+      expect(injected.runes.length, lessThanOrEqualTo(hotLayerMaxRunes));
+    });
   });
   group('称呼与关系阶段', () {
 

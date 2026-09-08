@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'developer_diagnostics.dart';
-import 'dream.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
@@ -783,53 +782,24 @@ final class LocalChatService {
     }
   }
 
-  /// 每轮实测状态包，组装本轮【近况】、【长期印象】与【用户画像】块；
-  /// 读取失败降级为空块（空块不输出），绝不阻塞回复。注入关统一预算：
-  /// 近况 + 长期印象 + 用户画像总量超热层硬上限时按砍序先压长期印象
-  /// （clipLongMemoryBlock），再压用户画像可裁节（clipPersonaBlock，
-  /// 边界禁区永不裁）；近况块内部再压近日状态；relationship 与
-  /// open-loops 永不砍，当前安全信息与近况优先保住。
+  /// 组装本轮 prompt builder：热层三块（【近况】、【长期印象】、
+  /// 【用户画像】）的串行读取、既有记忆控制过滤与跨块预算协调全部
+  /// 由 StatePackReader.readHotLayerBlocks 完成，这里只消费准备结果
+  /// 并按部分成功语义装配（准备失败的块保持原值，已成功的部分不
+  /// 撤销），读取失败只记诊断降级空块，绝不阻塞回复，也绝不新映射
+  /// 成 Provider 错误。
   /// 同时消费该会话上一轮后台召回命中的短期 memory context（临时透镜，
   /// 只注入一次）。
   Future<ModelPromptBuilder> _promptBuilderForRequest(String sessionId) async {
     var builder = modelPromptBuilder;
     final reader = statePackReader;
     if (reader != null) {
-      try {
-        final block = await reader.readDailyStateBlock();
-        builder = builder.copyWithDailyState(block);
-        final longMemory = await reader.readLongMemoryBlock();
-        final persona = await reader.readPersonaBlock();
-        // 裁前与裁长期印象后共用同一溢出公式，收成闭包防两处漂移。
-        int overflowOf(int longRunes, int personaRunes) =>
-            block.runes.length + longRunes + personaRunes - hotLayerMaxRunes;
-        var clippedLongMemory = longMemory;
-        var clippedPersona = persona;
-        final overflow = overflowOf(
-          longMemory.runes.length,
-          persona.runes.length,
-        );
-        if (overflow > 0) {
-          clippedLongMemory = clipLongMemoryBlock(
-            longMemory,
-            longMemory.runes.length - overflow,
-          );
-          final remainingOverflow = overflowOf(
-            clippedLongMemory.runes.length,
-            persona.runes.length,
-          );
-          if (remainingOverflow > 0) {
-            clippedPersona = clipPersonaBlock(
-              persona,
-              persona.runes.length - remainingOverflow,
-            );
-          }
-        }
-        builder = builder.copyWithLongMemory(clippedLongMemory);
-        builder = builder.copyWithPersona(clippedPersona);
-      } on Object catch (error) {
-        _diagnosticsSink('state pack unavailable [$error]');
+      final prepared = await reader.readHotLayerBlocks();
+      final failure = prepared.failure;
+      if (failure != null) {
+        _diagnosticsSink('state pack unavailable [$failure]');
       }
+      builder = prepared.applyTo(builder);
     }
     final pendingContext = memoryRecall?.consumePendingContext(sessionId);
     if (pendingContext != null) {
