@@ -21,6 +21,14 @@ import '../baseline/host_connection_probe.dart';
 /// 本模块不接管聊天服务异常弹窗、会话频控、语音错误回调或约 300ms 缓冲
 /// ——那些是页面错误反馈；2 秒轮询与 4 秒恢复窗口也只服务于连接/后台
 /// 状态，不清空、不触发那些状态。
+///
+/// 释放语义：[dispose] 照旧取消两个计时器；在途的连接探测或后台状态
+/// 读取**不被取消**（探测适配器没有取消能力，与基线一致的不等待），但
+/// 其结果到达时被**静默丢弃**——不改连接三态与失败快照、不通知、不
+/// 开恢复提示窗口、不记诊断。释放后的手动探测 [checkHostNow] 是安全
+/// 空操作。理由：释放后在途结果再通知监听者会撞 ChangeNotifier 的
+/// 释放断言（debug 下抛「used after being disposed」），而这些旁路
+/// 状态此刻已没有任何展示去处。
 final class HostStatusMonitor extends ChangeNotifier {
   HostStatusMonitor({
     HostConnectionProbe? hostConnectionProbe,
@@ -45,6 +53,11 @@ final class HostStatusMonitor extends ChangeNotifier {
   Timer? _monitorTimer;
   bool? _hostAvailable;
   bool _checkingHost = false;
+
+  /// 监控是否已释放：dispose 置位。置位后在途结果静默丢弃——在途探测
+  /// 与后台读取无法取消，只能等结果到达时不再让它生效；每次 await 恢复
+  /// 处先查这一位，避免向已释放的监听者 notifyListeners。
+  bool _disposed = false;
 
   /// 后台失败状态（ticket 21）：随既有连接探测轮询取用的只读快照；
   /// 取不到时保持原样。
@@ -75,13 +88,21 @@ final class HostStatusMonitor extends ChangeNotifier {
 
   /// 探测一次连接并在 Host 可达时顺带取后台失败状态：手动探测与周期
   /// 轮询共用这一条路径，进行中再次触发直接忽略（重入保护）。
+  ///
+  /// 释放后调用是安全空操作：不启动新请求、不改状态、不抛错、不通知；
+  /// 在途探测在释放之后完成时，结果（含顺带的后台状态读取）整体静默
+  /// 丢弃。
   Future<void> checkHostNow() async {
-    if (_checkingHost) {
+    if (_disposed || _checkingHost) {
       return;
     }
     _checkingHost = true;
     try {
       final available = await _hostConnectionProbe.isHostAvailable();
+      if (_disposed) {
+        // 释放后到达的探测结果：静默丢弃，不触碰已释放的三态与监听者。
+        return;
+      }
       if (_hostAvailable != available) {
         _hostAvailable = available;
         notifyListeners();
@@ -98,7 +119,8 @@ final class HostStatusMonitor extends ChangeNotifier {
 
   /// 取一次后台失败状态并推进安静位的显示状态（ticket 21）：有失败未
   /// 恢复时持续展示；该任务重试成功时回报一次「已恢复」，短暂展示后
-  /// 隐去；无失败时整块不占位。状态取不到时保持原样。
+  /// 隐去；无失败时整块不占位。状态取不到时保持原样；释放之后到达的
+  /// 读取结果静默丢弃——不写快照、不开恢复窗口、不通知。
   Future<void> _refreshBackgroundFailure() async {
     final gateway = _backgroundStatusGateway;
     if (gateway == null || _backgroundFailureChecking) {
@@ -107,6 +129,10 @@ final class HostStatusMonitor extends ChangeNotifier {
     _backgroundFailureChecking = true;
     try {
       final status = await gateway.read();
+      if (_disposed) {
+        // 释放后到达的后台状态：静默丢弃，失败快照与恢复窗口保持原样。
+        return;
+      }
       final previous = _backgroundFailure;
       _backgroundFailure = status;
       if (status != null && !status.recovered) {
@@ -145,6 +171,10 @@ final class HostStatusMonitor extends ChangeNotifier {
 
   @override
   void dispose() {
+    // 先置释放标志：在途探测/后台读取不被取消（适配器无取消能力），其
+    // 结果到达时在各 await 恢复处静默丢弃——不改状态、不通知、不开恢
+    // 复提示窗口。两个计时器照旧取消。
+    _disposed = true;
     _monitorTimer?.cancel();
     _backgroundRecoveredTimer?.cancel();
     super.dispose();

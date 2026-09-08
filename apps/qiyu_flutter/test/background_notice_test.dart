@@ -174,6 +174,110 @@ void main() {
     });
   });
 
+  group('连接监控释放后的在途结果（票 06）：静默丢弃与空操作', () {
+    testWidgets('连接探测在途时释放：放闸后结果静默丢弃，不通知不触碰状态', (
+      tester,
+    ) async {
+      final probe = _StubProbe(available: true)..gate = Completer<bool>();
+      final gateway = _StubBackgroundGateway(_failure(recovered: false));
+      final viewModel = _nonAutoViewModel(gateway, probe: probe);
+
+      final pending = viewModel.checkHostNow();
+      await tester.pump();
+      expect(probe.calls, 1);
+      expect(
+        viewModel.hostStatusKnown,
+        isFalse,
+        reason: '探测未返回前连接保持未探明',
+      );
+
+      var notifications = 0;
+      viewModel.addListener(() => notifications += 1);
+
+      // 探测还在途就释放监控：请求不被取消（适配器无取消能力），但结果
+      // 到达时必须整体丢弃——不改三态、不通知、不顺带读取后台状态。
+      viewModel.dispose();
+      probe.gate!.complete(true);
+      await tester.pump();
+      await pending;
+
+      expect(notifications, 0, reason: '释放后在途探测结果不通知');
+      expect(viewModel.hostStatusKnown, isFalse, reason: '连接三态不被在途结果触碰');
+      expect(viewModel.hostStopped, isFalse);
+      expect(gateway.calls, 0, reason: '释放后不再随探测顺带读取后台状态');
+      expect(viewModel.backgroundFailure, isNull);
+    });
+
+    testWidgets('后台状态读取在途时释放：放闸后结果静默丢弃，旧快照与恢复窗口不被触碰', (
+      tester,
+    ) async {
+      final gateway = _StubBackgroundGateway(_failure(recovered: false));
+      final viewModel = _nonAutoViewModel(gateway);
+      await viewModel.checkHostNow();
+      final lastSnapshot = viewModel.backgroundFailure;
+      expect(lastSnapshot, isNotNull);
+
+      // 第二轮读取挂起在途，结果将翻转为已恢复：若不被丢弃，会改写失败
+      // 快照并开启 4 秒恢复提示窗口。
+      gateway.gate = Completer<BackgroundFailureStatus?>();
+      gateway.result = _failure(recovered: true);
+      final pending = viewModel.checkHostNow();
+      await tester.pump();
+      expect(gateway.calls, 2);
+
+      var notifications = 0;
+      viewModel.addListener(() => notifications += 1);
+
+      viewModel.dispose();
+      gateway.gate!.complete(_failure(recovered: true));
+      await tester.pump();
+      await pending;
+
+      expect(notifications, 0, reason: '释放后在途的后台状态结果不通知');
+      expect(
+        viewModel.backgroundFailure,
+        lastSnapshot,
+        reason: '失败快照保持旧值，不被在途结果触碰',
+      );
+      expect(
+        viewModel.backgroundRecoveredNotice,
+        isFalse,
+        reason: '释放后不开恢复提示窗口',
+      );
+    });
+
+    testWidgets('释放后手动探测是安全空操作：不发请求、不读后台、不改状态、不通知', (
+      tester,
+    ) async {
+      final probe = _StubProbe(available: true);
+      final gateway = _StubBackgroundGateway(_failure(recovered: false));
+      final viewModel = _nonAutoViewModel(gateway, probe: probe);
+      await viewModel.checkHostNow();
+      expect(probe.calls, 1);
+      expect(viewModel.hostStopped, isFalse);
+      final lastSnapshot = viewModel.backgroundFailure;
+      expect(lastSnapshot, isNotNull);
+
+      var notifications = 0;
+      viewModel.addListener(() => notifications += 1);
+
+      // 壳层重试入口在释放后再拨到也必须无害：整体空操作，不抛错。
+      viewModel.dispose();
+      await viewModel.checkHostNow();
+      await tester.pump();
+
+      expect(probe.calls, 1, reason: '释放后手动探测不启动新请求');
+      expect(gateway.calls, 1, reason: '释放后不读取后台状态');
+      expect(notifications, 0, reason: '释放后手动探测不通知');
+      expect(viewModel.hostStopped, isFalse, reason: '连接三态不被修改');
+      expect(
+        viewModel.backgroundFailure,
+        lastSnapshot,
+        reason: '失败快照不被修改',
+      );
+    });
+  });
+
   group('真实页面与壳层共存：服务异常提示与后台失败/恢复互不干扰', () {
     testWidgets('已有服务异常提示条时后台失败及恢复照常展示；4 秒窗口结束不清除聊天提示，不重置会话频控，不重复弹窗', (
       tester,
