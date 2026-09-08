@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../baseline/host_api_gateway.dart';
+import 'api_error_dialog.dart';
 import 'voice_recorder_platform.dart';
 
 /// 语音输入状态机的可见状态（spec：idle → recording → transcribing →
@@ -30,6 +31,7 @@ final class VoiceInputController extends ChangeNotifier {
     this._serviceStatus,
     this._transcribe, {
     required this.onTranscribed,
+    this.onApiError,
     this.autoStopAfter = const Duration(seconds: 60),
   });
 
@@ -41,6 +43,9 @@ final class VoiceInputController extends ChangeNotifier {
 
   /// 转写成功：文本交回聊天页走既有发送链路（与手打完全一致）。
   final void Function(String text) onTranscribed;
+
+  /// 转写遇到 429 或 40x 异常时的回调。
+  final void Function(ApiErrorCategory category)? onApiError;
 
   /// 录音上限：到点自动收尾并照常转写，不丢用户的话。
   final Duration autoStopAfter;
@@ -326,6 +331,10 @@ final class VoiceInputController extends ChangeNotifier {
         return;
       }
       _enterRetryable(_readableError(error));
+      final category = categorizeVoiceApiError(error, isInput: true);
+      if (category != null) {
+        onApiError?.call(category);
+      }
     }
   }
 

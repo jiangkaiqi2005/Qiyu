@@ -117,12 +117,27 @@ final class LocalChatViewModel extends ChangeNotifier {
   String? _pendingText;
 
   List<LocalChatMessage> get messages => List.unmodifiable(_messages);
+  String? get sessionId => _sessionId;
   String? get errorMessage => _errorMessage;
   bool get loading => _initializing && !_initialized;
   bool get sending => _activeTurn != null;
   bool get waiting => _activeTurn?.waiting ?? false;
   String get streamingText => _activeTurn?.streamingText ?? '';
   bool get hostStopped => _hostAvailable == false;
+
+  String? _latestFallbackDetail;
+
+  /// 最近一次已完成的栖语回复的 fallbackReason。
+  FallbackReason? get latestFallbackReason {
+    final last = _messages.lastOrNull;
+    if (last == null || last.speaker != LocalChatSpeaker.qiyu) {
+      return null;
+    }
+    return last.fallbackReason;
+  }
+
+  /// 最近一次 fallback 携带的详细信息或错误码。
+  String? get latestFallbackDetail => _latestFallbackDetail;
 
   /// 代际归属校验：所有界面状态写入与副作用落地前先过这一关。新发送 /
   /// 恢复 / 丢弃会话推进代数或取代活跃事务后，旧事务的任何事件都整体丢弃。
@@ -423,6 +438,7 @@ final class LocalChatViewModel extends ChangeNotifier {
       voiceOutput.prepareForUserInitiatedPlayback();
     }
     _errorMessage = null;
+    _latestFallbackDetail = null;
     final requestId = _pendingText == trimmed && _pendingRequestId != null
         ? _pendingRequestId!
         : _requestIdFactory();
@@ -511,6 +527,7 @@ final class LocalChatViewModel extends ChangeNotifier {
             turn.fallbackReason = event.fallbackReason;
           case LocalChatEventKind.fallback:
             turn.fallbackReason = event.fallbackReason;
+            _latestFallbackDetail = event.code ?? event.text;
           case LocalChatEventKind.done:
             turn.completed = true;
             // 轮内召回的 bubble 2 会在同一条事件流里带来第二段

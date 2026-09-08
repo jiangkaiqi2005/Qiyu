@@ -105,10 +105,11 @@ final class LocalChatExchange {
 
 final class LocalChatGatewayException
     implements Exception, UserFacingException {
-  const LocalChatGatewayException(this.message);
+  const LocalChatGatewayException(this.message, {this.code});
 
   @override
   final String message;
+  final String? code;
 
   @override
   String toString() => message;
@@ -228,7 +229,10 @@ final class HttpLocalChatGateway extends HostApiGateway
     final response = await httpClient.send(request);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final body = await response.stream.bytesToString();
-      throw LocalChatGatewayException(_decodeErrorMessage(body));
+      throw LocalChatGatewayException(
+        _decodeErrorMessage(body),
+        code: _decodeErrorCode(body),
+      );
     }
     await for (final line
         in response.stream
@@ -243,7 +247,10 @@ final class HttpLocalChatGateway extends HostApiGateway
       }
       final event = LocalChatDeliveryEvent.fromJson(decoded);
       if (event.kind == LocalChatEventKind.error) {
-        throw LocalChatGatewayException(event.text ?? '本机聊天暂时不可用，请稍后重试。');
+        throw LocalChatGatewayException(
+          event.text ?? '本机聊天暂时不可用，请稍后重试。',
+          code: event.fallbackReason?.wireName,
+        );
       }
       yield event;
     }
@@ -270,7 +277,13 @@ final class HttpLocalChatGateway extends HostApiGateway
       headers: {...await csrfHeaders(), 'content-type': mimeType},
       body: audio,
     );
-    final json = decodeSuccess(response);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw LocalChatGatewayException(
+        _decodeErrorMessage(response.body),
+        code: _decodeErrorCode(response.body),
+      );
+    }
+    final json = jsonDecode(response.body) as Map<String, Object?>;
     return json['text'] as String? ?? '';
   }
 
@@ -290,7 +303,10 @@ final class HttpLocalChatGateway extends HostApiGateway
       }),
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw LocalChatGatewayException(_decodeErrorMessage(response.body));
+      throw LocalChatGatewayException(
+        _decodeErrorMessage(response.body),
+        code: _decodeErrorCode(response.body),
+      );
     }
     return response.bodyBytes;
   }
@@ -302,5 +318,14 @@ String _decodeErrorMessage(String body) {
     return json['message'] as String? ?? '本机聊天暂时不可用，请稍后重试。';
   } on Object {
     return '本机聊天暂时不可用，请稍后重试。';
+  }
+}
+
+String? _decodeErrorCode(String body) {
+  try {
+    final json = jsonDecode(body) as Map<String, Object?>;
+    return json['code'] as String?;
+  } on Object {
+    return null;
   }
 }
