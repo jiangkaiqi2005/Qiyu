@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:qiyu_flutter/features/baseline/background_status_client.dart';
+import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/chat/voice_output_controller.dart';
@@ -475,6 +477,126 @@ void main() {
       expect(viewModel.hasLocalFallback, isFalse);
     },
   );
+
+  testWidgets('自动启动后按默认 2 秒周期轮询连接探测，只有这一条周期计时', (
+    tester,
+  ) async {
+    final probe = _CountingProbe();
+    final viewModel = LocalChatViewModel(
+      _TwoBubbleGateway(),
+      hostConnectionProbe: probe,
+      backgroundStatusGateway: _EmptyBackgroundGateway(),
+    );
+
+    await tester.pump();
+    await tester.pump();
+    final afterInit = probe.calls;
+    expect(afterInit, 1, reason: '初始化先探测一次连接');
+
+    await tester.pump(const Duration(milliseconds: 1900));
+    expect(probe.calls, afterInit, reason: '默认周期未到不再探测');
+
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(probe.calls, afterInit + 1, reason: '默认 2 秒到点再探测');
+
+    viewModel.dispose();
+  });
+
+  testWidgets('释放后周期探测停止：计时器随 dispose 取消', (tester) async {
+    final probe = _CountingProbe();
+    final viewModel = LocalChatViewModel(
+      _TwoBubbleGateway(),
+      hostConnectionProbe: probe,
+    );
+    await tester.pump();
+    await tester.pump();
+    final afterInit = probe.calls;
+
+    viewModel.dispose();
+    await tester.pump(const Duration(seconds: 5));
+
+    expect(probe.calls, afterInit, reason: 'dispose 后不再周期探测');
+  });
+
+  test('聊天恢复发生在初始化连接探测完成之后', () async {
+    final probe = _GatedProbe();
+    final gateway = _RestoreCountingGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: probe,
+      autoStart: false,
+    );
+    addTearDown(viewModel.dispose);
+
+    final initializing = viewModel.initialize();
+    await Future<void>.delayed(Duration.zero);
+    expect(probe.calls, 1);
+    expect(
+      gateway.restoreCalls,
+      0,
+      reason: '探测未完成不得开始恢复会话',
+    );
+
+    probe.gate.complete(true);
+    await initializing;
+    expect(gateway.restoreCalls, 1);
+  });
+}
+
+/// 计数连接探针：立即返回可用。
+final class _CountingProbe implements HostConnectionProbe {
+  int calls = 0;
+
+  @override
+  Future<bool> isHostAvailable() async {
+    calls += 1;
+    return true;
+  }
+}
+
+/// 可挂起的计数连接探针：用于锁定初始化顺序。
+final class _GatedProbe implements HostConnectionProbe {
+  final gate = Completer<bool>();
+  int calls = 0;
+
+  @override
+  Future<bool> isHostAvailable() async {
+    calls += 1;
+    return gate.future;
+  }
+}
+
+/// 立即返回无失败的后台状态网关。
+final class _EmptyBackgroundGateway implements BackgroundStatusGateway {
+  @override
+  Future<BackgroundFailureStatus?> read() async => null;
+}
+
+/// 记录会话恢复调用的聊天网关。
+final class _RestoreCountingGateway implements StreamingLocalChatGateway {
+  int restoreCalls = 0;
+
+  @override
+  Future<LocalChatSnapshot> restore({String? sessionId}) async {
+    restoreCalls += 1;
+    return const LocalChatSnapshot(sessionId: 'session-1', messages: []);
+  }
+
+  @override
+  Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async => '';
+
+  @override
+  Stream<LocalChatDeliveryEvent> deliver({
+    required String requestId,
+    required String text,
+    String? sessionId,
+  }) async* {}
 }
 
 final class _TwoBubbleGateway implements StreamingLocalChatGateway {

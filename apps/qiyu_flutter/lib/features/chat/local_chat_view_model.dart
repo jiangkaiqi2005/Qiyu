@@ -8,6 +8,7 @@ import '../baseline/host_api_gateway.dart';
 import '../baseline/host_connection_probe.dart';
 import '../baseline/background_status_client.dart';
 import '../settings/tts_settings_client.dart';
+import '../shell/host_status_monitor.dart';
 import 'local_chat_client.dart';
 import 'voice_output_controller.dart';
 
@@ -53,31 +54,40 @@ final class LocalChatViewModel extends ChangeNotifier {
     VoiceOutputController? voiceOutput,
     bool autoStart = true,
     Duration monitorInterval = const Duration(seconds: 2),
-  }) : _hostConnectionProbe = hostConnectionProbe ?? HttpHostConnectionProbe(),
-       _requestIdFactory = requestIdFactory ?? _defaultRequestId,
+  }) : _requestIdFactory = requestIdFactory ?? _defaultRequestId,
        // ignore: prefer_initializing_formals
        _ttsSettingsGateway = ttsSettingsGateway,
-       // ignore: prefer_initializing_formals
-       _backgroundStatusGateway = backgroundStatusGateway,
        // 缺省独立创建朗读网关（与聊天网关同构；widget 测试注入桩）。
        voiceOutput =
            voiceOutput ?? VoiceOutputController(HttpLocalChatGateway()) {
+    // 连接探测轮询与后台失败状态的唯一所有者：计时器、重入保护、恢复
+    // 提示窗口与对应生命周期都在监控模块内部，聊天事务只读它的结论。
+    _hostMonitor = HostStatusMonitor(
+      hostConnectionProbe: hostConnectionProbe,
+      backgroundStatusGateway: backgroundStatusGateway,
+      autoStart: autoStart,
+      monitorInterval: monitorInterval,
+    );
+    _hostMonitor.addListener(_onHostMonitorChanged);
     if (autoStart) {
       unawaited(initialize());
-      _monitorTimer = Timer.periodic(
-        monitorInterval,
-        (_) => unawaited(checkHostNow()),
-      );
     }
   }
 
   final StreamingLocalChatGateway _gateway;
-  final HostConnectionProbe _hostConnectionProbe;
   final RequestIdFactory _requestIdFactory;
   final TtsSettingsGateway? _ttsSettingsGateway;
 
-  /// 后台失败状态网关（ticket 21）：null 时安静位整体不工作（缺省关闭）。
-  final BackgroundStatusGateway? _backgroundStatusGateway;
+  /// 连接与后台状态监控（阶段 C 收拢）：周期轮询计时器、连接三态、后台
+  /// 失败快照与恢复提示窗口的唯一所有者。壳层装配仍经本视图模型读取
+  /// （对外 getter 原样保留），内部不存在第二份轮询状态。
+  late final HostStatusMonitor _hostMonitor;
+
+  /// 监控的状态变化按原语义透传给界面：监控只在连接三态或后台状态实际
+  /// 变化时通知，这里不做第二次去重。
+  void _onHostMonitorChanged() {
+    notifyListeners();
+  }
 
   /// 语音朗读播放队列（ADR 0002）：view 观察它渲染「正在朗读」指示与
   /// 停止按钮。
@@ -86,25 +96,10 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool _voiceOutputConfigured = false;
   final Map<String, int> _announcedDeliveries = {};
   final List<LocalChatMessage> _messages = [];
-  Timer? _monitorTimer;
   String? _sessionId;
   String? _errorMessage;
-  bool? _hostAvailable;
-  bool _checkingHost = false;
   bool _initializing = false;
   bool _initialized = false;
-
-  /// 后台失败状态（ticket 21）：随既有连接探测轮询取用的只读快照；
-  /// 取不到时保持原样，绝不打扰聊天主链路。
-  BackgroundFailureStatus? _backgroundFailure;
-  bool _backgroundFailureChecking = false;
-  bool _backgroundRecoveredNotice = false;
-  Timer? _backgroundRecoveredTimer;
-
-  /// 「已恢复」提示的停留时长：够读到一句话，不久留成常驻。
-  static const Duration _backgroundRecoveredNoticeDuration = Duration(
-    seconds: 4,
-  );
 
   /// 唯一代数计数器：新发送、会话恢复与丢弃会话都推进它；原恢复代数
   /// 并入这里，不再有两套代际。
@@ -123,7 +118,7 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool get sending => _activeTurn != null;
   bool get waiting => _activeTurn?.waiting ?? false;
   String get streamingText => _activeTurn?.streamingText ?? '';
-  bool get hostStopped => _hostAvailable == false;
+  bool get hostStopped => _hostMonitor.hostAvailable == false;
 
   String? _latestFallbackDetail;
 
@@ -147,18 +142,16 @@ final class LocalChatViewModel extends ChangeNotifier {
   /// 本机 Host 是否**已经探过一次**：true 之后 [hostStopped] 才是可信结论。
   /// 探测结果三态（未探明 / 可用 / 不可用）里只有后两态可以拿去宣称，
   /// 「未探明」既不能说正常、也不能说故障。
-  bool get hostStatusKnown => _hostAvailable != null;
+  bool get hostStatusKnown => _hostMonitor.hostAvailable != null;
 
   /// 当前需要提示的后台失败（ticket 21，未恢复才计）：null 即没有，
   /// 壳层安静位整体不出现。
   BackgroundFailureStatus? get backgroundFailure =>
-      _backgroundFailure == null || _backgroundFailure!.recovered
-      ? null
-      : _backgroundFailure;
+      _hostMonitor.backgroundFailure;
 
-  /// 失败恢复后的短暂提示窗口：「已恢复」展示一会儿再隐去，由视图模型
+  /// 失败恢复后的短暂提示窗口：「已恢复」展示一会儿再隐去，由监控模块
   /// 计时；窗口只在「此前真的展示过失败」时开启。
-  bool get backgroundRecoveredNotice => _backgroundRecoveredNotice;
+  bool get backgroundRecoveredNotice => _hostMonitor.backgroundRecoveredNotice;
 
   /// 合一页（design-system §5）的**空状态 = 首页**唯一判定：一条消息都还没有、
   /// 不在等待与流式之中，**且会话已经恢复完**。
@@ -360,73 +353,9 @@ final class LocalChatViewModel extends ChangeNotifier {
     await _applyRestore(generation);
   }
 
-  Future<void> checkHostNow() async {
-    if (_checkingHost) {
-      return;
-    }
-    _checkingHost = true;
-    try {
-      final available = await _hostConnectionProbe.isHostAvailable();
-      if (_hostAvailable != available) {
-        _hostAvailable = available;
-        notifyListeners();
-      }
-      // Host 可达时顺带取一次后台失败状态（ticket 21）：不新开轮询，
-      // 随既有探测节奏走。
-      if (available) {
-        await _refreshBackgroundFailure();
-      }
-    } finally {
-      _checkingHost = false;
-    }
-  }
-
-  /// 取一次后台失败状态并推进安静位的显示状态（ticket 21）：有失败未
-  /// 恢复时持续展示；该任务重试成功时回报一次「已恢复」，短暂展示后
-  /// 隐去；无失败时整块不占位。状态取不到时保持原样。
-  Future<void> _refreshBackgroundFailure() async {
-    final gateway = _backgroundStatusGateway;
-    if (gateway == null || _backgroundFailureChecking) {
-      return;
-    }
-    _backgroundFailureChecking = true;
-    try {
-      final status = await gateway.read();
-      final previous = _backgroundFailure;
-      _backgroundFailure = status;
-      if (status != null && !status.recovered) {
-        // 有失败未恢复：撤掉恢复提示（若有），安静位持续展示失败。
-        _backgroundRecoveredTimer?.cancel();
-        _backgroundRecoveredTimer = null;
-        _backgroundRecoveredNotice = false;
-      } else if (previous != null &&
-          !previous.recovered &&
-          status != null &&
-          status.recovered) {
-        // 该任务重试成功：回报一次「已恢复」，短暂展示后隐去。
-        _backgroundRecoveredNotice = true;
-        _backgroundRecoveredTimer?.cancel();
-        _backgroundRecoveredTimer = Timer(
-          _backgroundRecoveredNoticeDuration,
-          () {
-            _backgroundRecoveredNotice = false;
-            notifyListeners();
-          },
-        );
-      } else if (status == null) {
-        _backgroundRecoveredTimer?.cancel();
-        _backgroundRecoveredTimer = null;
-        _backgroundRecoveredNotice = false;
-      }
-      if (previous != status) {
-        notifyListeners();
-      }
-    } on Object {
-      // 安静提示是旁路：状态取不到时保持原样。
-    } finally {
-      _backgroundFailureChecking = false;
-    }
-  }
+  /// 探测一次连接并顺带取后台失败状态：转发给监控模块（手动探测与周期
+  /// 轮询共用同一条路径与重入保护），壳层重试入口与测试的既有入口不变。
+  Future<void> checkHostNow() => _hostMonitor.checkHostNow();
 
   Future<bool> send(String text) async {
     final trimmed = text.trim();
@@ -643,10 +572,11 @@ final class LocalChatViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
-    _monitorTimer?.cancel();
-    _backgroundRecoveredTimer?.cancel();
-    // 活跃事务随释放失效：尚未消费完的旧流事件会在代际校验处整体丢弃，
-    // 不再写入或通知已销毁的视图模型。
+    // 轮询计时器与恢复提示窗口随监控模块释放；活跃事务随释放失效：尚未
+    // 消费完的旧流事件会在代际校验处整体丢弃，不再写入或通知已销毁的
+    // 视图模型。
+    _hostMonitor.removeListener(_onHostMonitorChanged);
+    _hostMonitor.dispose();
     _activeTurn = null;
     super.dispose();
   }
