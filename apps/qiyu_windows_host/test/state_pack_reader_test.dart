@@ -12,13 +12,17 @@ import 'package:test/test.dart';
 enum _FaultStage { dailyState, longMemory, persona }
 
 class _FaultInjectedReader extends StatePackReader {
-  _FaultInjectedReader({required super.memoryDirectory, required this.stage});
+  _FaultInjectedReader({
+    required super.memoryDirectory,
+    _FaultStage? stage,
+    Set<_FaultStage>? stages,
+  }) : stages = {?stage, ...?stages};
 
-  final _FaultStage stage;
+  final Set<_FaultStage> stages;
 
   @override
   Future<String> readDailyStateBlock() async {
-    if (stage == _FaultStage.dailyState) {
+    if (stages.contains(_FaultStage.dailyState)) {
       throw StateError('注入的近况读取故障');
     }
     return super.readDailyStateBlock();
@@ -26,7 +30,7 @@ class _FaultInjectedReader extends StatePackReader {
 
   @override
   Future<String> readLongMemoryBlock() async {
-    if (stage == _FaultStage.longMemory) {
+    if (stages.contains(_FaultStage.longMemory)) {
       throw StateError('注入的长期印象读取故障');
     }
     return super.readLongMemoryBlock();
@@ -34,7 +38,7 @@ class _FaultInjectedReader extends StatePackReader {
 
   @override
   Future<String> readPersonaBlock() async {
-    if (stage == _FaultStage.persona) {
+    if (stages.contains(_FaultStage.persona)) {
       throw StateError('注入的画像读取故障');
     }
     return super.readPersonaBlock();
@@ -95,9 +99,13 @@ void main() {
     expect(prepared.persona, contains('- 用户在互联网行业工作'));
   });
 
-  test('近况成功而长期印象读取失败时保留部分成功并保持原值', () async {
+  test('长期印象读取失败时保留部分成功：长期印象保持原值，画像照常读取注入', () async {
     final memoryDirectory = await _seedMemory((memoryDirectory) async {
       _writeRelationship(memoryDirectory);
+      File('${memoryDirectory.path}/persona.md').writeAsStringSync(
+        '# persona\n\n## 身份与客观事实\n- 用户在互联网行业工作\n',
+        encoding: utf8,
+      );
     });
     addTearDown(() => memoryDirectory.parent.delete(recursive: true));
 
@@ -106,18 +114,20 @@ void main() {
       stage: _FaultStage.longMemory,
     ).readHotLayerBlocks();
 
-    // 近况已准备成立；长期印象与画像未准备成功，failure 如实上报。
+    // 近况已准备成立；长期印象未准备成功保持 null，failure 如实上报；
+    // 画像不再被连坐（票 05），照常读取并注入。
     expect(prepared.dailyState, isNotNull);
     expect(prepared.dailyState, contains('【关系温度】'));
     expect(prepared.longMemory, isNull);
-    expect(prepared.persona, isNull);
+    expect(prepared.persona, contains('- 用户在互联网行业工作'));
     expect(prepared.failure, isA<StateError>());
 
-    // 装配进带初始内容的 builder：只有近况被替换，其余两块原值保留。
+    // 装配进带初始内容的 builder：近况与画像替换为本轮新值，长期
+    // 印象原值保留。
     final builder = prepared.applyTo(_initialBuilder);
     expect(builder.dailyState, prepared.dailyState);
     expect(builder.longMemory, '原长期印象');
-    expect(builder.persona, '原画像');
+    expect(builder.persona, contains('- 用户在互联网行业工作'));
   });
 
   test('画像读取失败时长期印象保留本轮新值，画像保持原值', () async {
@@ -194,11 +204,15 @@ void main() {
     expect(builder.persona, '原画像');
   });
 
-  test('近况读取失败时三块全部保持原值', () async {
+  test('近况读取失败时近况保持原值，其余两层照常读取注入', () async {
     final memoryDirectory = await _seedMemory((memoryDirectory) async {
       _writeRelationship(memoryDirectory);
       File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
         '# long-memory\n\n## 重要事件\n- 用户完成过一次公开演讲\n',
+        encoding: utf8,
+      );
+      File('${memoryDirectory.path}/persona.md').writeAsStringSync(
+        '# persona\n\n## 身份与客观事实\n- 用户在互联网行业工作\n',
         encoding: utf8,
       );
     });
@@ -209,14 +223,85 @@ void main() {
       stage: _FaultStage.dailyState,
     ).readHotLayerBlocks();
 
+    // 票 05：近况失败不再连坐其后各层——长期印象与画像照常读取注入
+    //（近况缺席使跨块溢出无从计算，两层均为未经跨块裁剪的整段值）。
     expect(prepared.dailyState, isNull);
-    expect(prepared.longMemory, isNull);
-    expect(prepared.persona, isNull);
+    expect(prepared.longMemory, contains('- 用户完成过一次公开演讲'));
+    expect(prepared.persona, contains('- 用户在互联网行业工作'));
     expect(prepared.failure, isA<StateError>());
 
     final builder = prepared.applyTo(_initialBuilder);
     expect(builder.dailyState, '原近况');
-    expect(builder.longMemory, '原长期印象');
+    expect(builder.longMemory, contains('- 用户完成过一次公开演讲'));
+    expect(builder.persona, contains('- 用户在互联网行业工作'));
+  });
+
+  test('近况读取失败且长期印象超预算时其余两层整段注入', () async {
+    // 可计算性对照（票 05）：三块齐备时同量级溢出必触发跨块裁剪（见
+    // 「溢出时先裁长期印象再裁画像」与画像失败组合用例）；近况缺席使
+    // 溢出公式缺近况字数、无从计算，已读层按票 04 同一原则整段注入，
+    // 不因预算压力丢弃内容。
+    final overflowItem = '超预算长条目${'记' * 3050}';
+    final memoryDirectory = await _seedMemory((memoryDirectory) async {
+      File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
+        renderLongMemory({
+          '重要事件': ['用户完成过一次公开演讲', overflowItem],
+        }),
+        encoding: utf8,
+      );
+      File('${memoryDirectory.path}/persona.md').writeAsStringSync(
+        '# persona\n\n## 身份与客观事实\n- 用户在互联网行业工作\n',
+        encoding: utf8,
+      );
+    });
+    addTearDown(() => memoryDirectory.parent.delete(recursive: true));
+
+    final prepared = await _FaultInjectedReader(
+      memoryDirectory: memoryDirectory.path,
+      stage: _FaultStage.dailyState,
+    ).readHotLayerBlocks();
+
+    // 长期印象整段注入：rune 数超过预算，首条与末尾超长条目完整保留
+    //（若发生裁剪必被压回预算内并从尾部丢条目）；画像同样整段注入。
+    expect(prepared.dailyState, isNull);
+    expect(prepared.longMemory, isNotNull);
+    expect(prepared.longMemory!.runes.length, greaterThan(hotLayerMaxRunes));
+    expect(prepared.longMemory, contains('- 用户完成过一次公开演讲'));
+    expect(prepared.longMemory, contains(overflowItem));
+    expect(prepared.persona, contains('- 用户在互联网行业工作'));
+    expect(prepared.failure, isA<StateError>());
+
+    final builder = prepared.applyTo(_initialBuilder);
+    expect(builder.dailyState, '原近况');
+    expect(builder.longMemory, prepared.longMemory);
+    expect(builder.persona, prepared.persona);
+  });
+
+  test('多层同时失败时各层独立跳过且失败记首个', () async {
+    final memoryDirectory = await _seedMemory((memoryDirectory) async {
+      File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
+        '# long-memory\n\n## 重要事件\n- 用户完成过一次公开演讲\n',
+        encoding: utf8,
+      );
+    });
+    addTearDown(() => memoryDirectory.parent.delete(recursive: true));
+
+    final prepared = await _FaultInjectedReader(
+      memoryDirectory: memoryDirectory.path,
+      stages: {_FaultStage.dailyState, _FaultStage.persona},
+    ).readHotLayerBlocks();
+
+    // 近况与画像各自保持原值，长期印象独立读入；failure 是串行顺序
+    // 中的首个失败（近况），其后画像故障不覆盖它。
+    expect(prepared.dailyState, isNull);
+    expect(prepared.longMemory, contains('- 用户完成过一次公开演讲'));
+    expect(prepared.persona, isNull);
+    expect(prepared.failure, isA<StateError>());
+    expect((prepared.failure as StateError).message, '注入的近况读取故障');
+
+    final builder = prepared.applyTo(_initialBuilder);
+    expect(builder.dailyState, '原近况');
+    expect(builder.longMemory, contains('- 用户完成过一次公开演讲'));
     expect(builder.persona, '原画像');
   });
 
@@ -327,9 +412,9 @@ void main() {
     expect(prepared.persona, contains('- 用户在互联网行业工作'));
     expect(snapshot(), equals(before));
 
-    // 部分失败路径：画像读取在近况与长期印象之后中断，同样不落任何
-    // 写入——失败路径与成功路径同律。画像失败只保持画像原值，长期
-    // 印象保留本轮读入的新值（票 04）。
+    // 部分失败路径：画像读取失败只保持画像原值，长期印象保留本轮
+    // 读入的新值（票 04），同样不落任何写入——失败路径与成功路径
+    // 同律。
     final faulted = await _FaultInjectedReader(
       memoryDirectory: memoryDirectory.path,
       stage: _FaultStage.persona,

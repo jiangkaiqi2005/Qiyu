@@ -35,12 +35,16 @@ final class HotLayerBlocks {
   final String? dailyState;
 
   /// 【长期印象】块内容；长期印象自身准备（读取与裁剪）失败时为
-  /// null。成功时为本轮新值：正常路径含跨块预算裁剪；画像读取失败
-  /// 时为未经跨块裁剪的读入值（票 04：画像失败不撤销长期印象，跨块
-  /// 裁剪需画像内容参与、未进行）。
+  /// null。成功时为本轮新值：三块齐备时含跨块预算裁剪；近况或画像
+  /// 缺席使跨块溢出无从计算时为未经跨块裁剪的读入值（票 04/05：其
+  /// 余层照常注入，宁整段带上也不丢内容）。
   final String? longMemory;
 
-  /// 【用户画像】块内容（含跨块预算裁剪）；本轮未准备成功时为 null。
+  /// 【用户画像】块内容；画像自身准备（读取与裁剪）失败时为 null。
+  /// 成功时为本轮新值：三块齐备时含跨块预算裁剪；近况或长期印象缺
+  /// 席使跨块溢出无从计算，或三块齐备而长期印象裁剪失败（长期印象
+  /// 保持原值、长度不可知，溢出同样无从计算）时，为未经跨块裁剪的
+  /// 读入值（票 05 同一原则）。
   final String? persona;
 
   /// 首个读取阶段失败的错误；三块全部准备成功时为 null。诊断措辞
@@ -105,68 +109,113 @@ class StatePackReader {
   /// （clipPersonaBlock，边界禁区永不裁）；近况块内部的近日状态已在
   /// [readDailyStateBlock] 内先压过。
   ///
-  /// 部分成功语义：近况块读取成功即已成立，后续任何阶段失败都不撤销
-  /// 它；长期印象在其自身准备（读取与 clipLongMemoryBlock 裁剪）完成
-  /// 时确立本轮新值，其后画像阶段（读取与裁剪）的失败不再撤销它（票
-  /// 04：画像失败保留已成功的长期印象），长期印象自身阶段的失败仍保
-  /// 持 null（调用方原值）；画像只在自身读取与裁剪成功时成立。首个
-  /// 失败记入 [HotLayerBlocks.failure]，其后的读取不再进行。
+  /// 部分成功语义（票 05：三层完全独立）：某层读取或裁剪失败只跳过
+  /// 该层（该块保持 null，调用方原值），不再中断其后各层；近况块读
+  /// 取成功即已成立，长期印象在其自身裁剪成功时确立本轮新值，画像在
+  /// 其自身裁剪成功时成立。跨块裁剪只在三块全部读取成功时进行：溢出
+  /// 公式需要三块各自的 rune 数，缺席槽位由 builder 原值占据、其长
+  /// 度本层不可知，按 0 计会基于虚假前提丢内容，故任一层缺席时已成
+  /// 功读取的层整段注入、不做跨块裁剪（宁可整段带上也不丢内容，票
+  /// 04 先例同一原则）；三块齐备而长期印象裁剪失败时同理：长期印象
+  /// 保持原值，其长度不可知使溢出无从计算，画像整段注入。首个失败
+  /// 记入 [HotLayerBlocks.failure]，其后各层照常读取。
   Future<HotLayerBlocks> readHotLayerBlocks() async {
     String? dailyState;
     String? longMemory;
     String? persona;
     Object? failure;
     try {
-      final dailyStateBlock = await readDailyStateBlock();
-      dailyState = dailyStateBlock;
-      final longMemoryBlock = await readLongMemoryBlock();
-      // 画像读取起属画像阶段：本阶段失败只保持画像原值，不撤销已成功
-      // 读入的长期印象（票 04），在此提前收束。
-      String personaBlock;
+      // 三层读取彼此独立（票 05）：某层失败只跳过该层，其后各层照常
+      // 读取；failure 保持串行顺序中的首个失败。
+      String? dailyStateBlock;
+      try {
+        dailyStateBlock = await readDailyStateBlock();
+        dailyState = dailyStateBlock;
+      } on Object catch (error) {
+        failure ??= error;
+      }
+      String? longMemoryBlock;
+      try {
+        longMemoryBlock = await readLongMemoryBlock();
+      } on Object catch (error) {
+        failure ??= error;
+      }
+      String? personaBlock;
       try {
         personaBlock = await readPersonaBlock();
       } on Object catch (error) {
-        return HotLayerBlocks(
-          dailyState: dailyState,
-          longMemory: longMemoryBlock,
-          persona: null,
-          failure: error,
-        );
+        failure ??= error;
       }
-      // 裁前与裁长期印象后共用同一溢出公式，收成闭包防两处漂移。
-      int overflowOf(int longRunes, int personaRunes) =>
-          dailyStateBlock.runes.length + longRunes + personaRunes -
-          hotLayerMaxRunes;
-      var clippedLongMemory = longMemoryBlock;
-      var clippedPersona = personaBlock;
-      final overflow = overflowOf(
-        longMemoryBlock.runes.length,
-        personaBlock.runes.length,
-      );
-      if (overflow > 0) {
-        clippedLongMemory = clipLongMemoryBlock(
-          longMemoryBlock,
-          longMemoryBlock.runes.length - overflow,
-        );
-        // 长期印象自身准备（读取与裁剪）到此完成：先确立本轮新值，其后
-        // 画像裁剪的失败不再撤销它（票 04）；自身阶段的失败仍走外层
-        // catch，长期印象保持 null（语义不变）。
-        longMemory = clippedLongMemory;
-        final remainingOverflow = overflowOf(
-          clippedLongMemory.runes.length,
+      if (dailyStateBlock != null &&
+          longMemoryBlock != null &&
+          personaBlock != null) {
+        // 闭包捕获的变量不做类型提升，收成 final 局部量供公式读取。
+        final dailyBlock = dailyStateBlock;
+        // 裁前与裁长期印象后共用同一溢出公式，收成闭包防两处漂移。
+        int overflowOf(int longRunes, int personaRunes) =>
+            dailyBlock.runes.length + longRunes + personaRunes -
+            hotLayerMaxRunes;
+        var clippedLongMemory = longMemoryBlock;
+        var clippedPersona = personaBlock;
+        final overflow = overflowOf(
+          longMemoryBlock.runes.length,
           personaBlock.runes.length,
         );
-        if (remainingOverflow > 0) {
-          clippedPersona = clipPersonaBlock(
-            personaBlock,
-            personaBlock.runes.length - remainingOverflow,
-          );
+        if (overflow > 0) {
+          // 长期印象裁剪是否成功的显式信号；不借结果槽位非空兼作
+          // 成功判断，避免依赖槽位仅在此处赋值的隐含约定。
+          var longMemoryClipped = false;
+          try {
+            clippedLongMemory = clipLongMemoryBlock(
+              longMemoryBlock,
+              longMemoryBlock.runes.length - overflow,
+            );
+            // 长期印象自身准备（读取与裁剪）到此完成：先确立本轮新
+            // 值，其后画像阶段的失败不再撤销它（票 04）；自身裁剪失
+            // 败时本赋值不发生、长期印象保持原值（票 05）。
+            longMemory = clippedLongMemory;
+            longMemoryClipped = true;
+          } on Object catch (error) {
+            failure ??= error;
+          }
+          if (longMemoryClipped) {
+            // 画像按长期印象裁剪后的实际长度照常裁剪；长期印象裁剪
+            // 失败时其最终槽位是 builder 原值（长度不可知），溢出无
+            // 从计算，画像整段注入（与缺席层同律）。
+            try {
+              final remainingOverflow = overflowOf(
+                clippedLongMemory.runes.length,
+                personaBlock.runes.length,
+              );
+              if (remainingOverflow > 0) {
+                clippedPersona = clipPersonaBlock(
+                  personaBlock,
+                  personaBlock.runes.length - remainingOverflow,
+                );
+              }
+              // 画像自身准备（读取与裁剪）到此完成；裁剪失败时本赋
+              // 值不发生、画像保持原值，已确立的长期印象不受影响
+              // （票 04 语义）。
+              persona = clippedPersona;
+            } on Object catch (error) {
+              failure ??= error;
+            }
+          } else {
+            persona = personaBlock;
+          }
+        } else {
+          longMemory = clippedLongMemory;
+          persona = clippedPersona;
         }
+      } else {
+        // 任一层缺席使跨块溢出无从计算：已成功读取的层整段注入，
+        // 缺席层保持原值（宁可整段带上也不丢内容）。
+        longMemory = longMemoryBlock;
+        persona = personaBlock;
       }
-      longMemory = clippedLongMemory;
-      persona = clippedPersona;
     } on Object catch (error) {
-      failure = error;
+      // 兜底：热层读取绝不外抛，未预期异常同样按部分成功收束。
+      failure ??= error;
     }
     return HotLayerBlocks(
       dailyState: dailyState,
