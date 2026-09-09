@@ -11,6 +11,7 @@ import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 import 'package:qiyu_flutter/features/memory/backup_client.dart';
 import 'package:qiyu_flutter/features/memory/backup_platform.dart';
+import 'package:qiyu_flutter/features/memory/backup_platform_io.dart';
 import 'package:qiyu_flutter/features/memory/backup_view.dart';
 import 'package:qiyu_flutter/features/memory/memory_client.dart';
 import 'package:qiyu_flutter/features/memory/memory_view.dart';
@@ -1032,18 +1033,136 @@ void main() {
         gateway: backupGateway,
         platform: _FakeBackupPlatform(),
       );
-  
+
       expect(find.textContaining('最近快照'), findsOneWidget);
       await tester.ensureVisible(find.byKey(const Key('backup-rollback')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('backup-rollback')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('backup-rollback-confirm')), findsOneWidget);
-  
+
       await tester.tap(find.byKey(const Key('backup-rollback-go')));
       await tester.pumpAndSettle();
       expect(backupGateway.rollbackCalls, 1);
       expect(find.textContaining('已恢复到导入之前'), findsOneWidget);
+    });
+
+    testWidgets('导出入口旁明示：未导出即随卸载永久丢失', (tester) async {
+      final memoryViewModel = MemoryCenterViewModel(
+        _FakeMemoryGateway(_fullOverview()),
+        autoStart: false,
+      );
+      await memoryViewModel.refresh();
+      await _pumpBackupDialog(
+        tester,
+        memoryViewModel: memoryViewModel,
+        gateway: _FakeBackupGateway(),
+        platform: _FakeBackupPlatform(),
+      );
+
+      const warningKey = Key('backup-data-warning');
+      expect(find.byKey(warningKey), findsOneWidget);
+      expect(find.textContaining('未导出即随卸载永久丢失'), findsOneWidget);
+      // 位置锁：警示与导出按钮同一张卡（导出备份区），且在按钮上方——
+      // 是入口旁的明示，不是藏在别处的免责声明。
+      final warningCard = tester.widget<Card>(
+        find.ancestor(of: find.byKey(warningKey), matching: find.byType(Card)).first,
+      );
+      final exportCard = tester.widget<Card>(
+        find
+            .ancestor(
+              of: find.byKey(const Key('backup-export')),
+              matching: find.byType(Card),
+            )
+            .first,
+      );
+      expect(identical(warningCard, exportCard), isTrue);
+      expect(
+        tester.getTopLeft(find.byKey(warningKey)).dy,
+        lessThan(tester.getTopLeft(find.byKey(const Key('backup-export'))).dy),
+      );
+    });
+
+    testWidgets('安卓导出：Host 备份字节经 io 接缝交给系统分享器', (tester) async {
+      final memoryViewModel = MemoryCenterViewModel(
+        _FakeMemoryGateway(_fullOverview()),
+        autoStart: false,
+      );
+      await memoryViewModel.refresh();
+      final sharer = _RecordingSharer(result: true);
+      await _pumpBackupDialog(
+        tester,
+        memoryViewModel: memoryViewModel,
+        gateway: _FakeBackupGateway(),
+        platform: IoBackupPlatform(sharer: sharer, supported: true),
+      );
+
+      await tester.tap(find.byKey(const Key('backup-export')));
+      await tester.pumpAndSettle();
+
+      expect(sharer.calls, 1);
+      expect(sharer.sharedName, 'qiyu-backup-test.zip');
+      expect(sharer.sharedBytes, Uint8List.fromList(utf8.encode('zip')));
+      expect(find.textContaining('备份已导出'), findsOneWidget);
+    });
+
+    testWidgets('安卓导出失败：界面如实呈现可读提示，本地数据不动', (tester) async {
+      final memoryViewModel = MemoryCenterViewModel(
+        _FakeMemoryGateway(_fullOverview()),
+        autoStart: false,
+      );
+      await memoryViewModel.refresh();
+      await _pumpBackupDialog(
+        tester,
+        memoryViewModel: memoryViewModel,
+        gateway: _FakeBackupGateway(),
+        platform: IoBackupPlatform(
+          sharer: _ThrowingSharer(),
+          supported: true,
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('backup-export')));
+      await tester.pumpAndSettle();
+
+      // 分享器故障不是 UserFacingException，走网关约定的兜底文案；
+      // 导出链路只读不写，失败不触碰本地数据。
+      expect(find.textContaining('备份操作没有成功'), findsOneWidget);
+      expect(find.textContaining('备份已导出'), findsNothing);
+    });
+
+    testWidgets('安卓导入：io 接缝选中的文件走现有上传链路', (tester) async {
+      final memoryViewModel = MemoryCenterViewModel(
+        _FakeMemoryGateway(_fullOverview()),
+        autoStart: false,
+      );
+      await memoryViewModel.refresh();
+      final backupGateway = _FakeBackupGateway();
+      final picked = Uint8List.fromList(utf8.encode('安卓选中的备份'));
+      await _pumpBackupDialog(
+        tester,
+        memoryViewModel: memoryViewModel,
+        gateway: backupGateway,
+        platform: IoBackupPlatform(
+          picker: _FixedPicker(bytes: picked),
+          supported: true,
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('backup-import-pick')));
+      await tester.pumpAndSettle();
+
+      // 预览即上传链路的第一站：用户选中的字节原样交给网关验证。
+      expect(find.byKey(const Key('backup-preview')), findsOneWidget);
+      expect(backupGateway.lastPreviewBundle, picked);
+      expect(backupGateway.importCalls, 0);
+
+      await tester.ensureVisible(find.byKey(const Key('backup-import-confirm')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('backup-import-confirm')));
+      await tester.pumpAndSettle();
+      expect(backupGateway.importCalls, 1);
+      expect(find.textContaining('导入完成'), findsOneWidget);
     });
   });
   group('窄屏与布局样式', () {
@@ -2545,6 +2664,9 @@ final class _FakeBackupGateway implements BackupGateway {
   int importCalls = 0;
   int rollbackCalls = 0;
 
+  /// 最近一次送进预览（上传链路第一站）的字节：io 接缝透传断言用。
+  Uint8List? lastPreviewBundle;
+
   @override
   Future<({Uint8List bytes, String fileName})> exportBundle() async => (
     bytes: Uint8List.fromList(utf8.encode('zip')),
@@ -2554,6 +2676,7 @@ final class _FakeBackupGateway implements BackupGateway {
   @override
   Future<BackupPreview> previewBundle(Uint8List bundle) async {
     previewCalls += 1;
+    lastPreviewBundle = bundle;
     final error = previewError;
     if (error != null) {
       throw error;
@@ -2650,6 +2773,46 @@ final class _FakeBackupPlatform implements BackupPlatform {
 
   @override
   Future<Uint8List?> pickBackupFile() async => picked;
+}
+
+/// share_plus 通道的替身：记录交给系统分享器的文件名与字节。
+final class _RecordingSharer implements BackupSharer {
+  _RecordingSharer({required this.result});
+
+  final bool result;
+  int calls = 0;
+  String? sharedName;
+  Uint8List? sharedBytes;
+
+  @override
+  Future<bool> share(String fileName, Uint8List bytes) async {
+    calls += 1;
+    sharedName = fileName;
+    sharedBytes = bytes;
+    return result;
+  }
+}
+
+/// 故障注入的分享器替身：模拟 share_plus 打不开分享面板。
+final class _ThrowingSharer implements BackupSharer {
+  @override
+  Future<bool> share(String fileName, Uint8List bytes) async {
+    throw Exception('分享面板打不开');
+  }
+}
+
+/// file_picker 通道的替身：固定返回预置字节（null 表示用户取消）。
+final class _FixedPicker implements BackupFilePicker {
+  _FixedPicker({required this.bytes});
+
+  final Uint8List? bytes;
+  int calls = 0;
+
+  @override
+  Future<Uint8List?> pickBackupFile() async {
+    calls += 1;
+    return bytes;
+  }
 }
 
 final class _FixedSttSettingsGateway implements SttSettingsGateway {

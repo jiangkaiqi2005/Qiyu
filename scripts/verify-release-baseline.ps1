@@ -102,7 +102,8 @@ try {
     dart test --configuration dart_test.browser.yaml `
       --platform $browserPlatform `
       test/voice_player_platform_web_test.dart `
-      test/settings_collapse_platform_web_test.dart
+      test/settings_collapse_platform_web_test.dart `
+      test/backup_platform_web_test.dart
   }
   Invoke-Step 'Flutter Web build' {
     flutter build web --wasm --no-web-resources-cdn
