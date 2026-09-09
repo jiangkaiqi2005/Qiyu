@@ -2,18 +2,23 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
 import 'features/baseline/background_status_client.dart';
+import 'features/baseline/host_bootstrap.dart';
+import 'features/baseline/host_connection_probe.dart';
 import 'features/chat/local_chat_client.dart';
 import 'features/chat/local_chat_view.dart';
 import 'features/chat/local_chat_view_model.dart';
+import 'features/chat/voice_output_controller.dart';
 import 'features/history/history_client.dart';
 import 'features/history/history_view.dart';
 import 'features/history/history_view_model.dart';
 import 'features/memory/memory_client.dart';
 import 'features/memory/memory_view.dart';
 import 'features/memory/memory_view_model.dart';
+import 'features/memory/backup_client.dart';
 import 'features/onboarding/onboarding_client.dart';
 import 'features/onboarding/onboarding_view_model.dart';
 import 'features/onboarding/root_view.dart';
@@ -148,6 +153,7 @@ class QiyuApp extends StatefulWidget {
     this.onboardingViewModel,
     this.memoryViewModel,
     this.settingsViewModel,
+    this.hostBinding,
   });
 
   final LocalChatViewModel? viewModel;
@@ -167,6 +173,11 @@ class QiyuApp extends StatefulWidget {
   final MemoryCenterViewModel? memoryViewModel;
   final SettingsViewModel? settingsViewModel;
 
+  /// 进程内本机 Host 的装配绑定（票 04）：安卓壳由 `main()` 先起
+  /// Host 再经启动装配缝传入；web 构建为 null，全部网关维持同源
+  /// 缺省。非 null 时作为共享 client + 显式基址注入所有缺省网关。
+  final HostBinding? hostBinding;
+
   @override
   State<QiyuApp> createState() => _QiyuAppState();
 }
@@ -182,19 +193,30 @@ ChangeNotifierProvider<T> _vm<T extends ChangeNotifier>(
     : ChangeNotifierProvider<T>(create: create);
 
 class _QiyuAppState extends State<QiyuApp> {
+  /// 原生壳（Android）的会话接管 client 与显式基址：web 为 null，全部
+  /// 缺省网关回退同源 `Uri.base` 与浏览器自带的 Cookie/Origin/CSRF。
+  http.Client? get _hostClient => widget.hostBinding?.client;
+  Uri? get _hostBaseUri => widget.hostBinding?.baseUri;
+
   /// 每个应用实例持有独立路由：返回键依赖真实导航栈，测试之间不得
   /// 共享栈状态。路由表读 [qiyuRoutes]，不再有第二份副本。
   late final GoRouter _router = GoRouter(routes: qiyuRoutes());
 
   /// 未注入时的共享 STT 设置网关：聊天页的 configured 探测与设置页的
   /// 读写共用同一实例，CSRF 不重复换取。
-  late final SttSettingsGateway _defaultSttGateway = HttpSttSettingsGateway();
+  late final SttSettingsGateway _defaultSttGateway = HttpSttSettingsGateway(
+    client: _hostClient,
+    baseUri: _hostBaseUri,
+  );
 
   SttSettingsGateway get _effectiveSttGateway =>
       widget.sttSettingsGateway ?? _defaultSttGateway;
 
   /// 未注入时的共享 TTS 设置网关：同 STT。
-  late final TtsSettingsGateway _defaultTtsGateway = HttpTtsSettingsGateway();
+  late final TtsSettingsGateway _defaultTtsGateway = HttpTtsSettingsGateway(
+    client: _hostClient,
+    baseUri: _hostBaseUri,
+  );
 
   TtsSettingsGateway get _effectiveTtsGateway =>
       widget.ttsSettingsGateway ?? _defaultTtsGateway;
@@ -208,15 +230,33 @@ class _QiyuAppState extends State<QiyuApp> {
         _vm(
           widget.viewModel,
           (context) => LocalChatViewModel(
-            HttpLocalChatGateway(),
+            HttpLocalChatGateway(client: _hostClient, baseUri: _hostBaseUri),
+            // 原生壳的连接探测与朗读网关同样走接管 client；web 缺省
+            // 参数与 HostStatusMonitor/视图模型内部自建的缺省一致。
+            hostConnectionProbe: HttpHostConnectionProbe(
+              client: _hostClient,
+              healthUri: _hostBaseUri?.resolve('/api/health'),
+            ),
+            voiceOutput: VoiceOutputController(
+              HttpLocalChatGateway(
+                client: _hostClient,
+                baseUri: _hostBaseUri,
+              ),
+            ),
             ttsSettingsGateway: context.read<TtsSettingsGateway>(),
-            backgroundStatusGateway: HttpBackgroundStatusGateway(),
+            backgroundStatusGateway: HttpBackgroundStatusGateway(
+              client: _hostClient,
+              baseUri: _hostBaseUri,
+            ),
           ),
         ),
         _vm(
           widget.providerSettingsViewModel,
           (_) => ProviderSettingsViewModel(
-            HttpProviderSettingsGateway(),
+            HttpProviderSettingsGateway(
+              client: _hostClient,
+              baseUri: _hostBaseUri,
+            ),
             autoStart: false,
           ),
         ),
@@ -237,14 +277,17 @@ class _QiyuAppState extends State<QiyuApp> {
         _vm(
           widget.webSearchSettingsViewModel,
           (_) => WebSearchSettingsViewModel(
-            HttpWebSearchSettingsGateway(),
+            HttpWebSearchSettingsGateway(
+              client: _hostClient,
+              baseUri: _hostBaseUri,
+            ),
             autoStart: false,
           ),
         ),
         _vm(
           widget.historyViewModel,
           (context) => HistoryViewModel(
-            HttpHistoryGateway(),
+            HttpHistoryGateway(client: _hostClient, baseUri: _hostBaseUri),
             onSessionDeleted: (sessionId) => unawaited(
               context.read<LocalChatViewModel>().discardSession(sessionId),
             ),
@@ -253,17 +296,33 @@ class _QiyuAppState extends State<QiyuApp> {
         _vm(
           widget.onboardingViewModel,
           (_) => OnboardingViewModel(
-            HttpOnboardingGateway(),
-            HttpProviderSettingsGateway(),
+            HttpOnboardingGateway(client: _hostClient, baseUri: _hostBaseUri),
+            HttpProviderSettingsGateway(
+              client: _hostClient,
+              baseUri: _hostBaseUri,
+            ),
           ),
         ),
         _vm(
           widget.memoryViewModel,
-          (_) => MemoryCenterViewModel(HttpMemoryGateway()),
+          (_) => MemoryCenterViewModel(
+            HttpMemoryGateway(client: _hostClient, baseUri: _hostBaseUri),
+          ),
         ),
         _vm(
           widget.settingsViewModel,
-          (_) => SettingsViewModel(HttpSettingsGateway()),
+          (_) => SettingsViewModel(
+            HttpSettingsGateway(client: _hostClient, baseUri: _hostBaseUri),
+          ),
+        ),
+        // 备份与恢复对话框的缺省网关（backup_view 的 Provider 回退）：
+        // web 缺省路径不变（此前由对话框自建等价实例），安卓壳由此
+        // 拿到接管 client。
+        Provider<BackupGateway>(
+          create: (_) => HttpBackupGateway(
+            client: _hostClient,
+            baseUri: _hostBaseUri,
+          ),
         ),
       ],
       child: _buildMaterialApp(),
