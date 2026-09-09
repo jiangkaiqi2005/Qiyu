@@ -8,7 +8,7 @@
 
 ## 仓库形态
 
-Release 1 = **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心**。Host 只监听 `127.0.0.1`，负责静态资源、Provider 调用、凭据与 Markdown 持久化；浏览器只负责 UI，API Key 永不进入浏览器。仓库为双壳结构：Windows 壳与后续工单将落地的安卓壳依赖同一个平台无关服务包 `packages/qiyu_local_host`；安卓壳尚未落码。旧 Node/JS 产品轨道已退役，不迁移旧 localStorage 或旧 `qiyu.config.local.json`，勿重新引入浏览器持久化主链路。
+Release 1 = **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心**。Host 只监听 `127.0.0.1`，负责静态资源、Provider 调用、凭据与 Markdown 持久化；浏览器只负责 UI，API Key 永不进入浏览器。仓库为双壳结构：Windows 壳（`apps/qiyu_windows_host/`）与安卓壳（`apps/qiyu_flutter/android/`，进程内 Host + 原生编译 UI）依赖同一个平台无关服务包 `packages/qiyu_local_host`。旧 Node/JS 产品轨道已退役，不迁移旧 localStorage 或旧 `qiyu.config.local.json`，勿重新引入浏览器持久化主链路。
 
 - `packages/qiyu_behavior_core/` — 纯 Dart 行为与协议核心：安全分类、本地回复、模型输出清洗与人格边界校验、稳定 DTO 与 `ChatDeliveryEvent` 流式协议；不依赖 Flutter/DOM/Windows API/具体存储。
 - `packages/qiyu_local_host/` — 平台无关本机 Host 纯 Dart 核心包：`LocalAppHost`（loopback 站点 + 受会话/Origin/CSRF 保护的 API）、`LocalChatService`（交付编排）、`MemoryCadence`（记忆节奏：日终归档、月压缩、Dream、启动恢复扫描、空闲补办）、`model_gateway.dart`（OpenAI-compatible / Anthropic / Ollama 适配）、Markdown 会话与记忆模块（episode_memory、dream、persona_tree、memory_recall 等）、凭据仓接口 `SecretStore`（平台壳注入实现）；不依赖 Flutter/DOM/Windows API。
@@ -30,12 +30,15 @@ Release 1 = **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心*
 ```powershell
 & .\scripts\verify-release-baseline.ps1 # 交付前全量门禁（analyze/test/build/bundle/smoke，不得依赖 Node/npm）
 & .\scripts\build-windows-bundle.ps1    # 构建 Windows Host + Flutter Web 资源包
+& .\scripts\build-android-apk.ps1       # 构建并签名安卓 release APK（缺 android/key.properties 或 keystore 直接失败，不退回调试签名；不入 CI）
+cd apps\qiyu_flutter; flutter build apk --debug # 安卓调试包，无需 keystore
 ```
 
 - `packages/qiyu_behavior_core`：`dart analyze && dart test`
 - `packages/qiyu_local_host`：`dart analyze && dart test`
 - `apps/qiyu_flutter`：`flutter analyze && flutter test`
 - `apps/qiyu_windows_host`：`dart analyze && dart test`（单文件如 `dart test test/host_runner_test.dart`）
+- 安卓构建与签名、覆盖升级说明与真机冒烟清单见 `docs/engineering/android-release-build.md`。
 - 未配置 LLM 时自动降级本地规则引擎，功能完整可测。
 
 ## 回复管线不变量

@@ -1,0 +1,25 @@
+# release 签名配置模板。复制为同目录下的 key.properties（该文件与 keystore 都已 gitignore，绝不入库），
+# 再把下面四项换成真实值；任何口令都不得写进仓库或公开文档。
+# 完整步骤（生成 keystore、离线备份、构建与覆盖升级）见 docs/engineering/android-release-build.md。
+#
+# 这一把是终身签名身份，不是一次性的：生成后必须先离线备份（keystore 本体与口令分开存放），
+# 别名与口令一旦定了就不能再改——改了旧手机就装不上覆盖包，只能卸载重装，
+# 而会话与记忆全在 App 私有目录里，卸载即清空且不可逆。
+# 生成命令（一整行直接粘贴执行，参数自行替换）：
+#   keytool -genkeypair -v -keystore qiyu-release.keystore -alias qiyu -keyalg RSA -keysize 4096 -validity 10950
+#
+# 上面不带 -storetype，生成的是 PKCS12，而 PKCS12 不支持给单个密钥条目另设口令
+# （keytool 会忽略 -keypass）：这种格式下 keyPassword 必须与 storePassword 同值，
+# 否则要到 :app:packageRelease 才报 "Get Key failed: Given final block not properly padded"。
+# 想用两个不同口令，就显式加 -storetype JKS。
+#
+# storeFile 支持绝对路径，相对路径按 apps/qiyu_flutter/android/ 目录解析。
+# 绝对路径请写正斜杠（D:/keys/qiyu.keystore）或双写反斜杠：本文件按 Java
+# Properties 格式解析，值里的单个反斜杠是转义符，会被 gradle 吃掉。
+# 本文件要以 UTF-8 保存：构建脚本预检与 Gradle 解析都显式按 UTF-8 读它，用 ANSI 存过会两侧读出不同的值。
+# 口令建议只用 ASCII 可打印字符：口令要跨 keytool 控制台读入、脚本预检、Gradle 解析三个环节都不变形，
+# ASCII 最稳；差一个字节就等于换了一次签名身份。
+storeFile=qiyu-release.keystore
+storePassword=替换为密钥库口令
+keyAlias=qiyu
+keyPassword=替换为密钥口令（PKCS12 时与 storePassword 同值）
