@@ -4,6 +4,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 
+import 'android_secret_store.dart';
 import 'host_bootstrap.dart';
 import 'native_host_session_client.dart';
 
@@ -51,18 +52,21 @@ Future<HostBinding?> bootstrapHost() async {
 /// 会话接管绑定。目录与宪法由调用方给足，因此可被 dart 测试直接
 /// 驱动（真 127.0.0.1 服务器、本地规则引擎降级路径）。
 ///
-/// 凭据仓沿用 [LocalAppHost.start] 的缺省内存易失仓：本票（安卓壳
-/// 第一颗 tracer bullet）的已知限制，Provider Key 重启不驻留；票 05
-/// 换 Android Keystore 支撑的平台凭据仓，Host 侧接口零改动。
+/// 凭据仓注入（票 05）：缺省生产实现 [AndroidSecretStore]——密钥入
+/// AndroidKeyStore 不可导出，密文落应用私有存储，Host 的读取回退与
+/// 旧值清理路径在安卓上真实生效；显式传 [secretStore] 可覆盖（测试
+/// 在通道层模拟原生回包驱动真装配，Host 侧接口零改动）。
 Future<HostBinding> startEmbeddedHost({
   required String webRoot,
   required String memoryDirectory,
   required String personaConstitution,
+  SecretStore? secretStore,
 }) async {
   final host = await LocalAppHost.start(
     webRoot: webRoot,
     memoryDirectory: memoryDirectory,
     personaConstitution: personaConstitution,
+    secretStore: secretStore ?? const AndroidSecretStore(),
   );
   // 在任何引导发生前取出启动凭据（launchUri 是 getter，兑换成功即
   // 轮换）：共享 client 用它引导一次，此后每个请求回传会话 Cookie。
