@@ -1,7 +1,13 @@
 import 'dart:typed_data';
 
 export 'voice_recorder_platform_stub.dart'
-    if (dart.library.js_interop) 'voice_recorder_platform_web.dart';
+    if (dart.library.js_interop) 'voice_recorder_platform_web.dart'
+    if (dart.library.io) 'voice_recorder_platform_io.dart';
+
+/// 契约目标采样率：豆包流式语音识别只吃 16kHz、16-bit、单声道 WAV。
+/// web 与安卓两端共用这一个常量（与 [packWav16kMonoPcm] 写进 RIFF 头
+/// 的取值同源），不留两份可以各自漂移的值。
+const wav16kMonoTargetSampleRate = 16000;
 
 /// 一段完整录音（或其转换结果）：字节只存在于内存，随转写完成或
 /// 取消即丢弃，永不落盘。
@@ -41,4 +47,50 @@ abstract interface class VoiceRecordingSession {
 
   /// 丢弃录音：停止全部轨道并放弃已缓存字节，不产生任何数据。
   void discard();
+}
+
+/// 把 16kHz、16-bit、单声道、小端 PCM 打包成 44 字节 RIFF 头 + data 的
+/// 完整 WAV：RIFF 尺寸 = 36 + 数据长，fmt 块 16 字节（PCM=1、单声道、
+/// 16000Hz、字节率 32000、块对齐 2、位深 16），data 块紧随其后。
+///
+/// 这是 web 与安卓**唯一一份**头部实现——平台差异只留在各自喂进来的
+/// PCM 上（安卓：原生 AudioRecord 已按契约采样；web：浏览器解码重采样
+/// 后的 Float32 → Int16 小端量化），产物字节两端必然同构，改动不必
+/// 再两端同步。dart 层契约对齐测试逐字段断言。
+Uint8List packWav16kMonoPcm(Uint8List pcmLe) {
+  final wav = Uint8List(44 + pcmLe.length);
+  final view = ByteData.view(wav.buffer);
+  var offset = 0;
+  void ascii(String text) {
+    for (final code in text.codeUnits) {
+      view.setUint8(offset, code);
+      offset += 1;
+    }
+  }
+
+  void u32(int value) {
+    view.setUint32(offset, value, Endian.little);
+    offset += 4;
+  }
+
+  void u16(int value) {
+    view.setUint16(offset, value, Endian.little);
+    offset += 2;
+  }
+
+  ascii('RIFF');
+  u32(36 + pcmLe.length);
+  ascii('WAVE');
+  ascii('fmt ');
+  u32(16); // fmt 块长度
+  u16(1); // PCM
+  u16(1); // 单声道
+  u32(wav16kMonoTargetSampleRate);
+  u32(wav16kMonoTargetSampleRate * 2); // 字节率 = 采样率 × 块对齐
+  u16(2); // 块对齐 = 2 字节
+  u16(16); // 位深
+  ascii('data');
+  u32(pcmLe.length);
+  wav.setRange(44, wav.length, pcmLe);
+  return wav;
 }

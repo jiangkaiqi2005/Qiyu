@@ -154,7 +154,8 @@ final class VoiceInputController extends ChangeNotifier {
     }
     if (session == null) {
       // 授权被拒或设备不可用：留在 idle，错误就近平铺在语音状态行。
-      _errorMessage = '无法使用麦克风，请检查浏览器权限或换 Chrome / Edge。';
+      // 文案平台中性：web 是浏览器权限，安卓是系统麦克风权限。
+      _errorMessage = '无法使用麦克风，请检查麦克风权限或设备状态。';
       notifyListeners();
       return;
     }

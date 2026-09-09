@@ -4,6 +4,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 
+import '../chat/voice_player_platform_io.dart';
 import 'android_secret_store.dart';
 import 'host_bootstrap.dart';
 import 'native_host_session_client.dart';
@@ -29,6 +30,12 @@ const _placeholderIndexHtml = '<!doctype html><title>栖语</title>';
 Future<HostBinding?> bootstrapHost() async {
   final support = await getApplicationSupportDirectory();
   final cache = await getTemporaryDirectory();
+  // 朗读音量偏好的存储目录（票 06）：应用私有 support 目录，与
+  // provider.json 同级的 runtime 目录。取目录要 await 而 getInitialVolume()
+  // 是同步接口，注入只能落在装配阶段——本函数是唯一「已解析出目录、又早于
+  // main() 的 runApp（任何控制器构造之前）」的 io 壳装配点；main.dart 为
+  // web/安卓共用，不能引 chat 的 io 实现，故注入在这里而非应用入口。
+  IoVoicePlayerPlatform.configureDefaultVolumeStore(support);
   final webRoot = Directory(
     '${cache.path}${Platform.pathSeparator}host-web',
   )..createSync(recursive: true);

@@ -148,7 +148,7 @@ void main() {
       enabled: true,
     );
     await Future<void>.delayed(Duration.zero);
-    expect(controller.failureNotice, '浏览器没能播放，点小喇叭再听一次。');
+    expect(controller.failureNotice, '无法播放语音，点小喇叭再听一次。');
     expect(controller.phase, VoiceOutputPhase.idle);
   });
 

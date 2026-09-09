@@ -38,7 +38,9 @@ final class WebVoicePlayerPlatform
   @override
   double getInitialVolume() {
     try {
-      final saved = web.window.localStorage.getItem('qiyu_voice_output_volume');
+      final saved = web.window.localStorage.getItem(
+        voiceOutputVolumeStorageKey,
+      );
       if (saved != null) {
         final val = double.tryParse(saved);
         if (val != null && val.isFinite && val >= 0.0 && val <= 1.0) {
@@ -55,7 +57,7 @@ final class WebVoicePlayerPlatform
   void saveVolume(double volume) {
     try {
       web.window.localStorage.setItem(
-        'qiyu_voice_output_volume',
+        voiceOutputVolumeStorageKey,
         volume.clamp(0.0, 1.0).toStringAsFixed(2),
       );
     } on Object {

@@ -2,6 +2,10 @@
     <!-- 进程内本机 Host 走 127.0.0.1 loopback：即使是回环地址，
          Android 的 INTERNET 权限仍是网络套接字的前置条件。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 按住说话的麦克风采集（票 06）：普通（非危险豁免）声明，运行时
+         授权走系统弹窗，仅在用户点麦克风的动作里发起；拒绝后录音入口
+         如实报告不可用，文字输入与朗读链路不受影响。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <!-- 云备份与设备迁移必须关（端内形态隐私红线）：明文 Key 的
          provider.json、会话与记忆 Markdown 一旦随系统备份离开设备，
          「数据只在我手机上」就破了——跨设备唯一通道是手动导出。

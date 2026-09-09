@@ -65,7 +65,7 @@ final class TtsSettingsViewModel
     }
     final playback = await _playerPlatform.play(audio, mimeType: 'audio/mpeg');
     if (playback == null) {
-      errorMessage = '语音服务已连接，但浏览器没能播放试听。点「再听一次试听」重试。';
+      errorMessage = '语音服务已连接，但本机没能播放试听。点「再听一次试听」重试。';
       return;
     }
     errorMessage = null;

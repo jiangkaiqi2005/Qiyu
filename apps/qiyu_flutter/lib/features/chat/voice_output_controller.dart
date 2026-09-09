@@ -211,8 +211,9 @@ final class VoiceOutputController extends ChangeNotifier {
         return;
       }
       if (playback == null) {
-        // 合成已成功；浏览器策略、解码或音频设备失败不能冒充服务断线。
-        _notifyFailureOnce('浏览器没能播放，点小喇叭再听一次。');
+        // 合成已成功；播放许可、解码或音频设备失败不能冒充服务断线。
+        // 文案平台中性：web 是浏览器自动播放策略，安卓是系统音频设备。
+        _notifyFailureOnce('无法播放语音，点小喇叭再听一次。');
         continue;
       }
       _activePlayback = playback;

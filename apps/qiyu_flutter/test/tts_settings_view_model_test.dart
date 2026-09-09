@@ -43,7 +43,7 @@ void main() {
     );
 
     expect(viewModel.testResult?.succeeded, isTrue);
-    expect(viewModel.errorMessage, '语音服务已连接，但浏览器没能播放试听。点「再听一次试听」重试。');
+    expect(viewModel.errorMessage, '语音服务已连接，但本机没能播放试听。点「再听一次试听」重试。');
     viewModel.dispose();
   });
 

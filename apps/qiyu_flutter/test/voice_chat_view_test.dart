@@ -275,6 +275,32 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('麦克风权限被拒（安卓系统弹窗拒绝）：入口如实报错，文字主链路照常', (tester) async {
+    // 安卓真机上的拒绝路径：能力可用但系统权限被拒，start 返回 null。
+    final gateway = _VoiceChatGateway();
+    await tester.pumpWidget(
+      _harness(
+        viewModel: _chatViewModel(gateway),
+        platform: _FakeRecorderPlatform(permissionDenied: true),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pump();
+
+    // 录音入口如实报告不可用（就近平铺，留在 idle 可再试），不弹错误对话框。
+    expect(find.textContaining('无法使用麦克风'), findsOneWidget);
+    expect(find.byKey(const Key('voice-mic')), findsOneWidget);
+
+    // 拒绝不伤文字主链路：输入与发送一切照旧。
+    await tester.enterText(find.byKey(const Key('chat-input')), '今晚有点闷');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    expect(gateway.sentTexts, ['今晚有点闷']);
+    expect(find.text('今晚有点闷'), findsOneWidget);
+  });
+
   testWidgets('配置完成后置灰麦克风直接开始录音（无需刷新页面）', (tester) async {
     final sttGateway = _MutableSttGateway()..configured = false;
     await tester.pumpWidget(
@@ -702,15 +728,18 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
 }
 
 final class _FakeRecorderPlatform implements VoiceRecorderPlatform {
-  _FakeRecorderPlatform({this.supported = true});
+  _FakeRecorderPlatform({this.supported = true, this.permissionDenied = false});
 
   @override
   final bool supported;
+
+  /// 模拟安卓系统权限弹窗被拒：能力可用但 start 返回 null。
+  final bool permissionDenied;
   _FakeRecordingSession? session;
 
   @override
   Future<VoiceRecordingSession?> start() async =>
-      supported ? (session = _FakeRecordingSession()) : null;
+      supported && !permissionDenied ? (session = _FakeRecordingSession()) : null;
 
   @override
   Future<RecordedAudio> toWav16kMono(RecordedAudio audio) async =>

@@ -1,7 +1,14 @@
 import 'dart:typed_data';
 
 export 'voice_player_platform_stub.dart'
-    if (dart.library.js_interop) 'voice_player_platform_web.dart';
+    if (dart.library.js_interop) 'voice_player_platform_web.dart'
+    if (dart.library.io) 'voice_player_platform_io.dart';
+
+/// 播放音量偏好的**唯一存储键名**（值是 "0.00" ~ "1.00" 的小数串）：
+/// web 落 localStorage，安卓落应用私有目录同名文件，语义逐条同构。
+/// 键名单一是为了不留下第二份可以各自漂移的音量偏好（与
+/// `settingsCollapsedSectionsKey` 同一先例）。
+const String voiceOutputVolumeStorageKey = 'qiyu_voice_output_volume';
 
 /// 一次播放会话：done 在自然播完、被 stop 或播放出错时完成（不抛）。
 abstract interface class VoicePlayback {
