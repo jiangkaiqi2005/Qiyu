@@ -3,51 +3,16 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+// 平台无关 Host 逻辑整体在新包 qiyu_local_host（shelf 站点、聊天交付、
+// 记忆节奏、模型网关、Markdown 持久化、凭据仓接口），本壳只保留启动
+// 入口、Windows 凭据管理器实现与开浏览器实现。整体转发新包导出口，
+// 原有 import 缝（package:qiyu_windows_host）符号面保持不变。
+export 'package:qiyu_local_host/qiyu_local_host.dart';
+
 export 'src/browser_launcher.dart';
-export 'src/anysearch_client.dart';
-export 'src/daily_finalization.dart';
-export 'src/daily_understanding.dart';
-export 'src/developer_diagnostics.dart';
-export 'src/dream.dart';
-export 'src/episode_index.dart';
-export 'src/episode_memory.dart';
 export 'src/host_command.dart';
 export 'src/host_runner.dart';
-export 'src/local_app_host.dart';
-export 'src/local_chat_service.dart';
-export 'src/local_data_service.dart';
-export 'src/markdown_memory_repository.dart';
-export 'src/memory_actions.dart';
-export 'src/memory_backup.dart';
-export 'src/memory_cadence.dart';
-export 'src/memory_center.dart';
-export 'src/memory_controls.dart';
-export 'src/memory_marker_codec.dart';
-export 'src/memory_recall.dart';
-export 'src/memory_recovery.dart';
-export 'src/memory_scope.dart';
-export 'src/memory_text_primitives.dart';
-export 'src/model_gateway.dart';
-export 'src/model_prompt_builder.dart';
-export 'src/model_text_protocol.dart';
-export 'src/monthly_summary.dart';
-export 'src/onboarding_state.dart';
-export 'src/open_loop_store.dart';
-export 'src/persona_tree.dart';
-export 'src/provider_config.dart';
-export 'src/provider_settings_service.dart';
-export 'src/provider_web_socket.dart';
-export 'src/relationship_lifecycle.dart';
 export 'src/secret_store.dart';
-export 'src/state_pack_reader.dart';
-export 'src/stt_gateway.dart';
-export 'src/stt_settings_service.dart';
-export 'src/tts_gateway.dart';
-export 'src/volc_tts_gateway.dart';
-export 'src/tts_settings_service.dart';
-export 'src/volc_seed_asr_gateway.dart';
-export 'src/web_search_settings_service.dart';
-export 'src/web_search.dart';
 
 final class HostPreflightReport {
   HostPreflightReport({

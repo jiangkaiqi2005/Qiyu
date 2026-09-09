@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'browser_launcher.dart';
-import 'local_app_host.dart';
-import 'secure_token.dart';
+import 'package:qiyu_local_host/qiyu_local_host.dart';
+
+import 'secret_store.dart';
 import 'single_instance.dart';
 
 final class QiyuHostRunner {
@@ -47,6 +47,8 @@ final class QiyuHostRunner {
         memoryDirectory: memoryDirectory,
         personaConstitution: personaConstitution,
         activationToken: activationToken,
+        // 平台凭据仓注入：Windows 凭据管理器实现留在本壳。
+        secretStore: const WindowsCredentialSecretStore(),
         onActivate: () => browserLauncher.open(host.launchUri),
       );
       lease.writeDescriptor(

@@ -1,0 +1,653 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart' show sha256;
+import 'package:path/path.dart' as path;
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+import 'package:qiyu_local_host/qiyu_local_host.dart';
+import 'package:test/test.dart';
+
+void main() {
+  late Directory temporaryDirectory;
+  late String memoryDirectory;
+  late EpisodeMemoryPipeline pipeline;
+  late MemoryControlsStore memoryControls;
+  late OpenLoopStore openLoopStore;
+  late PersonaTreeStore personaTree;
+  late MonthlySummaryStore monthlySummary;
+  late RelationshipLifecycle relationshipLifecycle;
+  late MemoryActionService actions;
+  late MemoryBackupService backup;
+
+  final clock = DateTime(2026, 8, 19, 21);
+
+  setUp(() async {
+    temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-backup-test-',
+    );
+    memoryDirectory = path.join(temporaryDirectory.path, 'memories');
+    await Directory(memoryDirectory).create(recursive: true);
+    pipeline = EpisodeMemoryPipeline(memoryDirectory: memoryDirectory);
+    memoryControls = MemoryControlsStore(
+      memoryDirectory: memoryDirectory,
+      diagnosticsSink: (_) {},
+    );
+    openLoopStore = OpenLoopStore(
+      memoryDirectory: memoryDirectory,
+      memoryControls: memoryControls,
+    );
+    personaTree = PersonaTreeStore(
+      memoryDirectory: memoryDirectory,
+      episodePipeline: pipeline,
+      openLoopStore: openLoopStore,
+      diagnosticsSink: (_) {},
+    );
+    monthlySummary = MonthlySummaryStore(
+      memoryDirectory: memoryDirectory,
+      episodePipeline: pipeline,
+      diagnosticsSink: (_) {},
+    );
+    relationshipLifecycle = RelationshipLifecycle(
+      memoryDirectory: memoryDirectory,
+    );
+    actions = MemoryActionService(
+      memoryDirectory: memoryDirectory,
+      episodePipeline: pipeline,
+      personaTree: personaTree,
+      memoryControls: memoryControls,
+      openLoopStore: openLoopStore,
+      monthlySummary: monthlySummary,
+      relationshipLifecycle: relationshipLifecycle,
+      diagnosticsSink: (_) {},
+    );
+    backup = MemoryBackupService(
+      memoryDirectory: memoryDirectory,
+      memoryControls: memoryControls,
+      episodePipeline: pipeline,
+      personaTree: personaTree,
+      memoryActions: actions,
+      clock: () => clock,
+      diagnosticsSink: (_) {},
+    );
+  });
+
+  tearDown(() async {
+    if (temporaryDirectory.existsSync()) {
+      await temporaryDirectory.delete(recursive: true);
+    }
+  });
+
+  Future<File> seedSession(
+    String date,
+    int segment,
+    List<(String speaker, String text)> turns,
+  ) async {
+    final session = RawSession(
+      id: 'session-$date-$segment',
+      date: date,
+      segment: segment,
+      createdAt: DateTime.parse('${date}T20:00:00').toUtc(),
+      updatedAt: DateTime.parse('${date}T20:30:00').toUtc(),
+      turns: [
+        for (var index = 0; index < turns.length; index += 1)
+          turns[index].$1 == '用户'
+              ? RawSessionTurn.user(
+                  requestId: 'r$index',
+                  text: turns[index].$2,
+                  at: DateTime.parse(
+                    '${date}T20:${(10 + index).toString().padLeft(2, '0')}:00',
+                  ).toUtc(),
+                )
+              : RawSessionTurn.qiyu(
+                  requestId: 'r$index',
+                  messages: [turns[index].$2],
+                  at: DateTime.parse(
+                    '${date}T20:${(10 + index).toString().padLeft(2, '0')}:30',
+                  ).toUtc(),
+                  source: ReplySource.local,
+                  mode: 'local',
+                ),
+      ],
+    );
+    final file = File(
+      path.join(
+        memoryDirectory,
+        'sessions',
+        date.substring(0, 4),
+        date.substring(5, 7),
+        '$date-${segment.toString().padLeft(3, '0')}.md',
+      ),
+    );
+    await file.create(recursive: true);
+    await file.writeAsString(renderSessionMarkdown(session), flush: true);
+    return file;
+  }
+
+  EpisodeEntry entry(String date, String id, String summary) => EpisodeEntry(
+    id: id,
+    sessionId: 'seed-session',
+    requestId: 'seed',
+    summary: summary,
+    at: DateTime.parse('${date}T20:00:00').toUtc(),
+  );
+
+  Future<void> seedEpisodeDay(String date, List<EpisodeEntry> entries) =>
+      pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          date,
+          entries: entries,
+          summary: '当日摘要',
+          finalized: true,
+          finalizedAt: DateTime.parse('${date}T23:00:00').toUtc(),
+        ),
+      );
+
+  Future<void> seedRichMemory() async {
+    await seedSession('2026-08-05', 1, [('用户', '今天有点累'), ('栖语', '早点休息。')]);
+    await seedEpisodeDay(
+      '2026-08-05',
+      [entry('2026-08-05', 'e1', '用户那天很累')],
+    );
+    await File(path.join(memoryDirectory, 'long-memory.md')).writeAsString(
+      '# long-memory\n\n## 人与关系\n- 一条长期印象\n',
+      flush: true,
+    );
+  }
+
+  /// 手工构造备份包：按给定记忆文件生成清单与 zip，可注入版本与完整性
+  /// 故障。
+  Uint8List buildBundle(
+    Map<String, String> files, {
+    int schemaVersion = backupSchemaVersion,
+    bool dropManifestEntry = false,
+    String extraEntryPath = '',
+    String tamperEntryPath = '',
+  }) {
+    final entries = <Map<String, Object?>>[];
+    final archive = Archive();
+    for (final MapEntry(:key, :value) in files.entries) {
+      var bytes = Uint8List.fromList(utf8.encode(value));
+      if (key == tamperEntryPath) {
+        bytes = Uint8List.fromList(utf8.encode('$value（被篡改）'));
+      }
+      if (!dropManifestEntry || key != tamperEntryPath) {
+        entries.add({
+          'path': 'memory/$key',
+          'bytes':
+              key == tamperEntryPath && !dropManifestEntry
+                  ? utf8.encode(value).length
+                  : bytes.length,
+          'sha256': sha256.convert(utf8.encode(value)).toString(),
+        });
+      }
+      archive.addFile(ArchiveFile('memory/$key', bytes.length, bytes));
+    }
+    if (extraEntryPath.isNotEmpty) {
+      final bytes = Uint8List.fromList(utf8.encode('多余内容'));
+      archive.addFile(ArchiveFile(extraEntryPath, bytes.length, bytes));
+    }
+    final manifestJson = {
+      'kind': 'qiyu-memory-backup',
+      'schemaVersion': schemaVersion,
+      'generatedAt': clock.toUtc().toIso8601String(),
+      'fileCount': entries.length,
+      'files': entries,
+    };
+    final manifest =
+        '# 栖语记忆备份\n\n'
+        '<!-- qiyu-backup-manifest:'
+        '${base64Url.encode(utf8.encode(jsonEncode(manifestJson))).replaceAll('=', '')} -->\n';
+    final manifestBytes = Uint8List.fromList(utf8.encode(manifest));
+    archive.addFile(
+      ArchiveFile('manifest.md', manifestBytes.length, manifestBytes),
+    );
+    return Uint8List.fromList(ZipEncoder().encode(archive));
+  }
+
+  Map<String, String> snapshotMemoryTree() {
+    final result = <String, String>{};
+    final root = Directory(memoryDirectory);
+    if (!root.existsSync()) {
+      return result;
+    }
+    for (final entity in root.listSync(recursive: true, followLinks: false)) {
+      if (entity is! File) {
+        continue;
+      }
+      final relative = path.relative(entity.path, from: memoryDirectory);
+      if (relative.startsWith('backups${Platform.pathSeparator}')) {
+        continue;
+      }
+      result[relative] = entity.readAsStringSync();
+    }
+    return result;
+  }
+
+  group('导出', () {
+    test('导出包含全部记忆层，且不含 Key、凭据、缓存、日志与快照', () async {
+      await seedRichMemory();
+      expect(await memoryControls.ban('秘密项目', origin: 'user'), isTrue);
+      // 记忆目录外的宿主配置与凭据（含假 API Key）。
+      final fakeKey = 'sk-test-do-not-export-1234567890';
+      await File(
+        path.join(temporaryDirectory.path, 'provider.json'),
+      ).writeAsString('{"apiKey":"$fakeKey"}');
+      // 损坏隔离区与恢复日志（ticket 21 的诊断区）。
+      final quarantine = Directory(
+        path.join(memoryDirectory, 'recovery', 'quarantine'),
+      );
+      await quarantine.create(recursive: true);
+      await File(path.join(quarantine.path, '1__session__bad.md'))
+          .writeAsString('损坏原件');
+      await File(
+        path.join(memoryDirectory, 'recovery', 'recovery.log'),
+      ).writeAsString('2026-08-19 | 原始会话 | 待恢复 | 无\n');
+
+      final export = await backup.exportBundle();
+
+      expect(export.fileName, startsWith('qiyu-backup-'));
+      final archive = ZipDecoder().decodeBytes(export.bytes);
+      final names = archive.files.map((file) => file.name).toSet();
+      expect(names, contains('manifest.md'));
+      expect(names, contains('memory/long-memory.md'));
+      expect(names, contains('memory/memory-controls.md'));
+      expect(
+        names.any((name) => name.contains('sessions/')),
+        isTrue,
+      );
+      expect(
+        names.any((name) => name.contains('episodes/2026/08/2026-08-05.md')),
+        isTrue,
+      );
+      // 绝不包含：Key、宿主配置、隔离区、日志、快照。
+      for (final file in archive.files) {
+        final content = utf8.decode(file.content as List<int>);
+        expect(content, isNot(contains(fakeKey)));
+        expect(file.name, isNot(contains('provider.json')));
+        expect(file.name, isNot(contains('recovery/')));
+        expect(file.name, isNot(contains('backups/')));
+        expect(file.name, isNot(endsWith('.tmp')));
+      }
+      // 清单人类可读：版本、时间与文件清单不依赖数据库工具。
+      final manifestContent = utf8.decode(
+        archive.files.firstWhere((file) => file.name == 'manifest.md').content
+            as List<int>,
+      );
+      expect(manifestContent, contains('# 栖语记忆备份'));
+      expect(manifestContent, contains('qiyu-backup-manifest:'));
+      expect(manifestContent, contains('memory/long-memory.md'));
+      expect(manifestContent, contains('如何导入'));
+    });
+  });
+
+  group('完整往返', () {
+    test('导出后清空再导入，历史、记忆与最近会话都能重新打开', () async {
+      await seedRichMemory();
+      expect(await memoryControls.freeze('旧习惯', origin: 'user'), isTrue);
+      final export = await backup.exportBundle();
+
+      // 清空记忆目录，模拟换机或整体丢失。
+      await Directory(memoryDirectory).delete(recursive: true);
+      await Directory(memoryDirectory).create(recursive: true);
+
+      final preview = await backup.previewImport(export.bytes);
+      expect(preview.countOf(BackupItemCategory.added), 3);
+      expect(preview.countOf(BackupItemCategory.conflict), 0);
+
+      final result = await backup.importBundle(export.bytes);
+      expect(result.added, 3);
+      expect(result.replaced, 0);
+      expect(result.conflicts, 0);
+      expect(result.snapshotId, isNotEmpty);
+
+      // 历史（sessions）可重新打开。
+      final listing = await MarkdownMemoryRepository(
+        memoryDirectory: memoryDirectory,
+      ).readHistory();
+      expect(listing.sessions, hasLength(1));
+      expect(listing.sessions.single.turns, hasLength(2));
+
+      // 最近会话与记忆（episodes、控制）可读。
+      final day = await pipeline.readDay('2026-08-05');
+      expect(day.readable, isTrue);
+      expect(day.entries.single.summary, '用户那天很累');
+      final controls = await memoryControls.load();
+      expect(controls.frozenSummaries, contains('旧习惯'));
+
+      // 重复导入同一备份：全部跳过，不产生重复。
+      final second = await backup.importBundle(export.bytes);
+      expect(second.added, 0);
+      expect(second.replaced, 0);
+      expect(second.skipped, 3);
+    });
+  });
+
+  group('版本与完整性', () {
+    test('旧版本备份被拒绝，现有数据不变', () async {
+      await seedRichMemory();
+      final before = snapshotMemoryTree();
+      final bundle = buildBundle({
+        'long-memory.md': '# long-memory\n\n## 人与关系\n- 旧版备份的印象\n',
+      }, schemaVersion: 0);
+
+      await expectLater(
+        () => backup.importBundle(bundle),
+        throwsA(
+          isA<BackupValidationException>().having(
+            (error) => error.code,
+            'code',
+            'incompatible-version',
+          ),
+        ),
+      );
+      expect(snapshotMemoryTree(), before);
+    });
+
+    test('更高版本的备份被拒绝，现有数据不变', () async {
+      await seedRichMemory();
+      final before = snapshotMemoryTree();
+      final bundle = buildBundle({
+        'long-memory.md': '# long-memory\n\n## 人与关系\n- 新备份的印象\n',
+      }, schemaVersion: 2);
+
+      await expectLater(
+        () => backup.previewImport(bundle),
+        throwsA(
+          isA<BackupValidationException>().having(
+            (error) => error.code,
+            'code',
+            'incompatible-version',
+          ),
+        ),
+      );
+      expect(snapshotMemoryTree(), before);
+      expect(Directory(path.join(memoryDirectory, 'backups')).existsSync(), isFalse);
+    });
+
+    test('清单校验和损坏的备份被拒绝，现有数据不变', () async {
+      await seedRichMemory();
+      final before = snapshotMemoryTree();
+      final bundle = buildBundle({
+        'long-memory.md': '# long-memory\n\n## 人与关系\n- 一条印象\n',
+      }, tamperEntryPath: 'long-memory.md');
+
+      await expectLater(
+        () => backup.importBundle(bundle),
+        throwsA(
+          isA<BackupValidationException>().having(
+            (error) => error.code,
+            'code',
+            'integrity-mismatch',
+          ),
+        ),
+      );
+      expect(snapshotMemoryTree(), before);
+    });
+
+    test('文件与清单不一致（多余文件）的备份被拒绝', () async {
+      final bundle = buildBundle({
+        'long-memory.md': '# long-memory\n',
+      }, extraEntryPath: 'memory/evil.md');
+
+      await expectLater(
+        () => backup.previewImport(bundle),
+        throwsA(
+          isA<BackupValidationException>().having(
+            (error) => error.code,
+            'code',
+            'integrity-mismatch',
+          ),
+        ),
+      );
+    });
+
+    test('不是 zip 的字节流被拒绝', () async {
+      await expectLater(
+        () => backup.previewImport(
+          Uint8List.fromList(utf8.encode('这不是备份')),
+        ),
+        throwsA(
+          isA<BackupValidationException>().having(
+            (error) => error.code,
+            'code',
+            'not-a-backup',
+          ),
+        ),
+      );
+    });
+  });
+
+  group('冲突与控制', () {
+    test('同名原始会话内容不同时保留本机版本并如实报冲突', () async {
+      await seedSession('2026-08-05', 1, [('用户', '本机的原始证据')]);
+      final bundle = buildBundle({
+        'sessions/2026/08/2026-08-05-001.md': renderSessionMarkdown(
+          RawSession(
+            id: 'session-2026-08-05-1',
+            date: '2026-08-05',
+            segment: 1,
+            createdAt: DateTime.parse('2026-08-05T20:00:00').toUtc(),
+            updatedAt: DateTime.parse('2026-08-05T20:30:00').toUtc(),
+            turns: [
+              RawSessionTurn.user(
+                requestId: 'r0',
+                text: '备份里的不同内容',
+                at: DateTime.parse('2026-08-05T20:10:00').toUtc(),
+              ),
+            ],
+          ),
+        ),
+      });
+
+      final preview = await backup.previewImport(bundle);
+      expect(preview.countOf(BackupItemCategory.conflict), 1);
+
+      final result = await backup.importBundle(bundle);
+      expect(result.conflicts, 1);
+      expect(result.added, 0);
+      expect(result.replaced, 0);
+      final kept = await File(
+        path.join(
+          memoryDirectory,
+          'sessions',
+          '2026',
+          '08',
+          '2026-08-05-001.md',
+        ),
+      ).readAsString();
+      expect(kept, contains('本机的原始证据'));
+      expect(kept, isNot(contains('备份里的不同内容')));
+    });
+
+    test('导入尊重本机现有删除控制，被控内容不随备份复活', () async {
+      // 本机现行控制：已删除「痛苦回忆」。
+      expect(
+        await memoryControls.recordDelete('痛苦回忆', origin: 'user'),
+        isTrue,
+      );
+      // 备份定格在删除之前：长期印象与控制记录都还带着它。
+      final bundle = buildBundle({
+        'long-memory.md': '# long-memory\n\n## 人与关系\n'
+            '- 痛苦回忆的细节\n- 一条正常印象\n',
+        'memory-controls.md': '# memory-controls\n'
+            '## frozen\n## banned\n## deleted\n',
+      });
+
+      final preview = await backup.previewImport(bundle);
+      // 备份控制是本机控制的子集：并集不变，但清除仍按现行控制执行。
+      expect(preview.controlsMerge, 'identical');
+
+      final result = await backup.importBundle(bundle);
+      expect(result.controlsMerged, isFalse);
+
+      final controls = await memoryControls.load();
+      expect(controls.deletedSummaries, contains('痛苦回忆'));
+      final restored = await File(
+        path.join(memoryDirectory, 'long-memory.md'),
+      ).readAsString();
+      expect(restored, contains('一条正常印象'));
+      expect(restored, isNot(contains('痛苦回忆')));
+    });
+
+    test('备份中的控制记录与本机按并集合并', () async {
+      expect(await memoryControls.ban('本机禁提', origin: 'user'), isTrue);
+      final bundle = buildBundle({
+        'memory-controls.md': '# memory-controls\n'
+            '## frozen\n'
+            '- [MC001] chat | 备份冻结\n'
+            '## banned\n'
+            '- [MC002] chat | 备份禁提\n'
+            '## deleted\n',
+      });
+
+      final result = await backup.importBundle(bundle);
+      expect(result.controlsMerged, isTrue);
+      final controls = await memoryControls.load();
+      expect(controls.bannedSummaries, containsAll(['本机禁提', '备份禁提']));
+      expect(controls.frozenSummaries, contains('备份冻结'));
+    });
+
+    test('结构无法识别的会话归为不可恢复且不导入', () async {
+      final bundle = buildBundle({
+        'sessions/2026/08/2026-08-05-001.md': '无法识别的乱码',
+      });
+
+      final preview = await backup.previewImport(bundle);
+      expect(preview.countOf(BackupItemCategory.unrecoverable), 1);
+
+      final result = await backup.importBundle(bundle);
+      expect(result.unrecoverable, 1);
+      expect(
+        File(
+          path.join(
+            memoryDirectory,
+            'sessions',
+            '2026',
+            '08',
+            '2026-08-05-001.md',
+          ),
+        ).existsSync(),
+        isFalse,
+      );
+    });
+  });
+
+  group('取消、中断与回滚', () {
+    test('只预览不确认：不创建快照、不改变任何数据', () async {
+      await seedRichMemory();
+      final before = snapshotMemoryTree();
+      final export = await backup.exportBundle();
+      await Directory(memoryDirectory).delete(recursive: true);
+      await Directory(memoryDirectory).create(recursive: true);
+
+      final preview = await backup.previewImport(export.bytes);
+      expect(preview.items, isNotEmpty);
+
+      expect(snapshotMemoryTree(), isEmpty);
+      expect(
+        Directory(path.join(memoryDirectory, 'backups')).existsSync(),
+        isFalse,
+      );
+      expect(before, isNotEmpty);
+    });
+
+    test('导入中途失败时恢复到导入前状态', () async {
+      await seedRichMemory();
+      final indexStore = EpisodeIndexStore(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      await pipeline.synchronizedOnDayFiles(
+        () => indexStore.rebuild(includeUnfinalized: true),
+      );
+      // 导入前基准：索引已存在，恢复后的重建不会额外改变文件集合。
+      final before = snapshotMemoryTree();
+      // 备份带一个替换（long-memory 内容不同）与一个新增（daily-state），
+      // 第二次写入失败：第一次已写入的文件必须被恢复流程还原。
+      final bundle = buildBundle({
+        'daily-state.md': '# daily-state\n\n- 备份带来的近况\n',
+        'long-memory.md': '# long-memory\n\n## 人与关系\n- 备份里的印象\n',
+      });
+
+      final failingWriter = _FailingByteWriter(failOnWrite: 2);
+      final failingBackup = MemoryBackupService(
+        memoryDirectory: memoryDirectory,
+        memoryControls: memoryControls,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryActions: actions,
+        clock: () => clock,
+        byteWriter: failingWriter,
+        diagnosticsSink: (_) {},
+      );
+      await expectLater(
+        () => failingBackup.importBundle(bundle),
+        throwsA(
+          isA<BackupValidationException>().having(
+            (error) => error.code,
+            'code',
+            'import-failed',
+          ),
+        ),
+      );
+      expect(snapshotMemoryTree(), before);
+    });
+
+    test('导入成功后可回滚到导入前，回滚本身也有保底快照', () async {
+      await seedSession('2026-08-05', 1, [('用户', '旧会话')]);
+      await File(path.join(memoryDirectory, 'long-memory.md')).writeAsString(
+        '# long-memory\n\n## 人与关系\n- 导入前的印象\n',
+        flush: true,
+      );
+      final before = snapshotMemoryTree();
+
+      final bundle = buildBundle({
+        'long-memory.md': '# long-memory\n\n## 人与关系\n- 导入后的印象\n',
+        'relationship.md': '# relationship\n\nstage: familiar\n',
+      });
+      final result = await backup.importBundle(bundle);
+      expect(result.replaced, 1);
+      expect(result.added, 1);
+      expect(
+        await File(path.join(memoryDirectory, 'long-memory.md'))
+            .readAsString(),
+        contains('导入后的印象'),
+      );
+
+      final snapshots = await backup.listSnapshots();
+      expect(snapshots, isNotEmpty);
+      expect(snapshots.first.id, result.snapshotId);
+
+      final rollback = await backup.rollbackTo();
+      expect(rollback.snapshotId, result.snapshotId);
+      expect(rollback.safetySnapshotId, isNot(result.snapshotId));
+      expect(snapshotMemoryTree(), before);
+
+      // 回滚后再导入：导入前的状态仍可再次恢复（保底快照在）。
+      final snapshotsAfter = await backup.listSnapshots();
+      expect(snapshotsAfter.length, greaterThanOrEqualTo(2));
+    });
+  });
+}
+
+/// 导入中断模拟：第 [failOnWrite] 次写入抛错，其余正常落盘——模拟
+/// 磁盘偶发故障后恢复流程仍能完成。
+final class _FailingByteWriter implements BackupByteWriter {
+  _FailingByteWriter({required this.failOnWrite});
+
+  final int failOnWrite;
+  var _writes = 0;
+
+  @override
+  Future<void> write(String targetPath, Uint8List bytes) async {
+    _writes += 1;
+    if (_writes == failOnWrite) {
+      throw const FileSystemException('simulated disk failure');
+    }
+    final target = File(targetPath);
+    await target.create(recursive: true);
+    await target.writeAsBytes(bytes, flush: true);
+  }
+}

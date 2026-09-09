@@ -5,23 +5,8 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
+import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:win32/win32.dart';
-
-abstract interface class SecretStore {
-  Future<String?> readApiKey(String scope);
-
-  Future<void> deleteApiKey(String scope);
-}
-
-final class SecretStoreException implements Exception {
-  const SecretStoreException(this.message, [this.cause]);
-
-  final String message;
-  final Object? cause;
-
-  @override
-  String toString() => message;
-}
 
 final class WindowsCredentialSecretStore implements SecretStore {
   const WindowsCredentialSecretStore({
