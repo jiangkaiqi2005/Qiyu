@@ -58,7 +58,7 @@ class PrivacyView extends StatelessWidget {
                 const SizedBox(height: 28),
                 _PrivacySection(
                   tag: '本机',
-                  title: '数据只保存在你的电脑上',
+                  title: '数据只保存在你自己的设备上',
                   body:
                       '聊天记录、整理后的每日记录、长期印象、画像与关系、'
                       '记忆控制，全部是保存在本机「栖语数据目录」里的 '

@@ -607,7 +607,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('隐私与边界'), findsWidgets);
-    expect(find.textContaining('数据只保存在你的电脑上'), findsOneWidget);
+    expect(find.textContaining('数据只保存在你自己的设备上'), findsOneWidget);
 
     // 页面较长逐段滚动断言；危机输入绝不发给模型是必须讲清的边界。
     await tester.scrollUntilVisible(

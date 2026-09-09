@@ -258,7 +258,7 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
           title: '本地数据',
           children: [
             Text(
-              '全部会话与记忆都是这台电脑上的 Markdown 文件，不会上传到任何服务器。',
+              '全部会话与记忆都是这台设备上的 Markdown 文件，不会上传到任何服务器。',
               style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             ),
             if (preview != null) ...[
