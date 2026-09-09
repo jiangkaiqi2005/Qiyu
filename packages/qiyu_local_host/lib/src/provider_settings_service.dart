@@ -1,5 +1,6 @@
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'cleartext_policy.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'provider_config.dart';
@@ -168,6 +169,7 @@ final class ProviderSettingsService
     String? apiKey,
   }) async {
     config.validate();
+    _refusePublicCleartextTarget(config);
     final previous = await configRepository.load();
     final trimmed = apiKey?.trim();
     // 传入新 Key 就写入文件；没传时同作用域保留已存 Key，换作用域
@@ -214,11 +216,39 @@ final class ProviderSettingsService
     await secretStore.deleteApiKey(config.legacyCredentialScope);
   }
 
+  /// 明文 HTTP 允许列表的保存口（ticket 08）：公网网段的 http 地址
+  /// 直接拒绝保存，给出人话（允许列表矩阵见 cleartext_policy）。
+  void _refusePublicCleartextTarget(ProviderConfig config) {
+    final refusal = _chatCleartextRefusal(config);
+    if (refusal != null) {
+      throw ProviderConfigException(refusal);
+    }
+  }
+
+  /// 出网目标地址的明文拒绝原因：端点路径只由网关拼接，scheme 与
+  /// 主机在 base 地址上判定即可。
+  static String? _chatCleartextRefusal(ProviderConfig config) {
+    final uri = Uri.tryParse(config.baseUrl.trim());
+    if (uri == null || !uri.hasAuthority) {
+      return null;
+    }
+    return chatCleartextRefusalReason(uri);
+  }
+
   Future<ProviderTestResult> test({
     required ProviderConfig config,
     String? apiKey,
   }) async {
     config.validate();
+    // 明文公网目标在出网前拒绝并给出具体原因（网关侧同律兜底，这里
+    // 提前拦截是为了让测试结果携带完整文案而非笼统的 network 状态）。
+    final refusal = _chatCleartextRefusal(config);
+    if (refusal != null) {
+      return ProviderTestResult(
+        status: ProviderTestStatus.network,
+        message: refusal,
+      );
+    }
     final state = StateSnapshot.initial('provider-connection-test');
     const request = ChatRequest(
       requestId: 'provider-connection-test',

@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_section.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/proxy_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/proxy_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_section_shell.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
@@ -24,13 +26,27 @@ void main() {
       autoStart: false,
     );
     await viewModel.initialize();
+    // 区块内的出站代理块需要代理视图模型；本用例只关心高级参数几何，
+    // 给一个不触网的固定网关即可。
+    final proxyViewModel = ProxySettingsViewModel(
+      const _UnconfiguredProxySettingsGateway(),
+      autoStart: false,
+    );
+    await proxyViewModel.initialize();
 
     await tester.pumpWidget(
       MaterialApp(
         theme: qiyuDarkTheme(),
         home: Scaffold(
-          body: ChangeNotifierProvider<ProviderSettingsViewModel>.value(
-            value: viewModel,
+          body: MultiProvider(
+            providers: [
+              ChangeNotifierProvider<ProviderSettingsViewModel>.value(
+                value: viewModel,
+              ),
+              ChangeNotifierProvider<ProxySettingsViewModel>.value(
+                value: proxyViewModel,
+              ),
+            ],
             child: SingleChildScrollView(
               child: SettingsSectionCollapseScope(
                 collapsed: const <String>{},
@@ -135,5 +151,18 @@ final class _UnconfiguredProviderSettingsGateway
 
   @override
   Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
+      throw UnimplementedError();
+}
+
+/// 未配置代理的固定网关：给代理块一个不触网的快照，满足 Provider 装配。
+final class _UnconfiguredProxySettingsGateway implements ProxySettingsGateway {
+  const _UnconfiguredProxySettingsGateway();
+
+  @override
+  Future<ProxySettings> read() async =>
+      const ProxySettings(configured: false, enabled: false, host: '', port: 0);
+
+  @override
+  Future<ProxySettings> save(ProxySettingsDraft draft) =>
       throw UnimplementedError();
 }

@@ -36,6 +36,7 @@ import 'open_loop_store.dart';
 import 'persona_tree.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
+import 'proxy_settings_service.dart';
 import 'relationship_lifecycle.dart';
 import 'secure_token.dart';
 import 'secret_store.dart';
@@ -117,19 +118,32 @@ final class LocalAppHost {
     final providerConfigRepository = JsonProviderConfigRepository(
       filePath: path.join(runtimeDirectory, 'provider.json'),
     );
-    const providerHttpClient = DartIoProviderHttpClient();
+    // 出站代理（ticket 08）：设置面与模型网关出网共用同一份 provider.json
+    // `proxy` 段；每次请求现读现判，保存后下一条请求即生效。
+    final proxySettingsService = ProxySettingsService(providerConfigRepository);
+    // 聊天出网分两路：直连客户端照旧服务 Ollama、联网搜索与本地语音
+    // 之外的一切；代理客户端只服务 OpenAI 兼容／Anthropic 的模型调用
+    //（分叉在 ProviderModelGateway._outboundFor，局域网目标在客户端
+    // 内再摘一层）。语音直连网关（豆包 volc）各自装配独立直连客户端，
+    // 结构上不经过代理。
+    const directProviderHttpClient = DartIoProviderHttpClient();
+    final proxiedProviderHttpClient = DartIoProviderHttpClient(
+      proxyRulesSource: proxySettingsService.loadRules,
+    );
     final effectiveProviderSettings =
         providerSettingsService ??
         ProviderSettingsService(
           providerConfigRepository,
           secretStore ?? _VolatileSecretStore(),
           ProviderModelGateway(
-            providerHttpClient,
+            directProviderHttpClient,
+            proxyHttpClient: proxiedProviderHttpClient,
             diagnosticsSink: diagnosticsSink,
           ),
           modelPromptBuilder,
           webSearchConfigRepository: providerConfigRepository,
-          webSearchClient: const AnySearchClient(providerHttpClient),
+          // 联网搜索（AnySearch）是独立的国内服务，保持直连不走代理。
+          webSearchClient: const AnySearchClient(directProviderHttpClient),
         );
     final effectiveWebSearchSettings =
         webSearchSettingsService ??
@@ -358,6 +372,7 @@ final class LocalAppHost {
       chatService: chatService,
       providerSettingsService: effectiveProviderSettings,
       webSearchSettingsService: effectiveWebSearchSettings,
+      proxySettingsService: proxySettingsService,
       sttSettingsService: effectiveSttSettings,
       ttsSettingsService: effectiveTtsSettings,
       memoryRepository: memoryRepository,
@@ -419,6 +434,7 @@ final class _LocalAppRequestHandler {
     required this.chatService,
     required this.providerSettingsService,
     required this.webSearchSettingsService,
+    required ProxySettingsService proxySettingsService,
     required SttSettingsService sttSettingsService,
     required TtsSettingsService ttsSettingsService,
     required MemoryRepository memoryRepository,
@@ -455,6 +471,7 @@ final class _LocalAppRequestHandler {
          SettingsRoutes(
            providerSettingsService: providerSettingsService,
            webSearchSettingsService: webSearchSettingsService,
+           proxySettingsService: proxySettingsService,
            sttSettingsService: sttSettingsService,
            ttsSettingsService: ttsSettingsService,
            experienceRepository: experienceRepository,

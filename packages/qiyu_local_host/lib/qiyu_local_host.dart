@@ -2,6 +2,7 @@ library;
 
 export 'src/anysearch_client.dart';
 export 'src/browser_launcher.dart';
+export 'src/cleartext_policy.dart';
 export 'src/daily_finalization.dart';
 export 'src/daily_understanding.dart';
 export 'src/developer_diagnostics.dart';
@@ -32,6 +33,7 @@ export 'src/persona_tree.dart';
 export 'src/provider_config.dart';
 export 'src/provider_settings_service.dart';
 export 'src/provider_web_socket.dart';
+export 'src/proxy_settings_service.dart';
 export 'src/relationship_lifecycle.dart';
 export 'src/secret_store.dart';
 export 'src/secure_token.dart';

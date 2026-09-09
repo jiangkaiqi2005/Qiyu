@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'cleartext_policy.dart';
 import 'provider_config.dart';
 import 'web_search.dart';
 
@@ -146,12 +147,56 @@ final class ProviderRequestCancelled implements Exception {
   const ProviderRequestCancelled();
 }
 
+/// 出网 HttpClient 的创建工厂（代理入口，ticket 08）：入参为本请求
+/// 解析出的代理规则（未启用代理或目标不宜走代理时为 null）。缺省
+/// 忽略规则直接 `HttpClient()`；测试注入假件观察代理决策（findProxy
+/// 与连接目标），不真连。
+typedef ProviderHttpClientFactory = HttpClient Function(
+  ProxyRules? proxyRules,
+);
+
 final class DartIoProviderHttpClient
     implements
         ProviderHttpClient,
         CancellableProviderHttpClient,
         ProviderBytesHttpClient {
-  const DartIoProviderHttpClient();
+  const DartIoProviderHttpClient({
+    this.httpClientFactory = defaultHttpClientFactory,
+    this.proxyRulesSource,
+  });
+
+  /// 生产缺省工厂：不设 findProxy，所有目标直连。
+  static HttpClient defaultHttpClientFactory(ProxyRules? proxyRules) =>
+      HttpClient();
+
+  /// 每次请求创建出网 HttpClient 时调用的工厂。
+  final ProviderHttpClientFactory httpClientFactory;
+
+  /// 代理规则来源（缺省 null＝本客户端永远直连）：每次请求解析一次
+  /// 最新配置，保存代理设置后下一条请求即生效，无缓存失真。规则是
+  /// 可选注入——语音直连网关（豆包 volc）与搜索客户端装配本类时
+  /// 不传来源，即使 provider.json 里存了代理也绝不走代理。
+  final Future<ProxyRules?> Function()? proxyRulesSource;
+
+  /// 本请求的代理规则：未装配来源、目标主机是本机／私有网段（局域网
+  /// Ollama 等直连目标经外部代理不可达且不该出外网）时恒为 null。
+  Future<ProxyRules?> _proxyRulesFor(Uri uri) async {
+    final source = proxyRulesSource;
+    if (source == null || isPrivateOrLoopbackHost(uri.host)) {
+      return null;
+    }
+    return source();
+  }
+
+  Future<HttpClient> _createClient(Uri uri, Duration timeout) async {
+    final proxyRules = await _proxyRulesFor(uri);
+    final client = httpClientFactory(proxyRules);
+    client.connectionTimeout = timeout;
+    if (proxyRules != null) {
+      client.findProxy = (uri) => proxyRules.findProxyFor(uri);
+    }
+    return client;
+  }
 
   @override
   Future<ProviderHttpResponse> postStream({
@@ -215,7 +260,7 @@ final class DartIoProviderHttpClient
     required List<int> body,
     required Duration timeout,
   }) async {
-    final client = HttpClient()..connectionTimeout = timeout;
+    final client = await _createClient(uri, timeout);
     try {
       final request = await client.postUrl(uri).timeout(timeout);
       request.followRedirects = false;
@@ -240,7 +285,7 @@ final class DartIoProviderHttpClient
     required Duration timeout,
     Future<void>? whenCancelled,
   }) async {
-    final client = HttpClient()..connectionTimeout = timeout;
+    final client = await _createClient(uri, timeout);
     var cancelled = false;
     whenCancelled?.then((_) {
       cancelled = true;
@@ -320,13 +365,31 @@ final class ProviderModelGateway
     implements StreamingModelGateway, WebSearchStreamingModelGateway {
   const ProviderModelGateway(
     this.httpClient, {
+    ProviderHttpClient? proxyHttpClient,
     void Function(String message)? diagnosticsSink,
   }) :
+       // ignore: prefer_initializing_formals
+       _proxyHttpClient = proxyHttpClient,
        // ignore: prefer_initializing_formals
        _diagnosticsSink = diagnosticsSink;
 
   final ProviderHttpClient httpClient;
+
+  /// OpenAI 兼容／Anthropic 出站的代理通道（ticket 08）：代理作用于
+  /// 模型网关的 HTTP 客户端，直连客户端与代理客户端在这里分叉。缺省
+  /// null＝未装配代理通道，全部直连（行为与历史版本一致）。Ollama 是
+  /// 局域网／本机直连，恒走 [httpClient]，见 [_outboundFor]。
+  final ProviderHttpClient? _proxyHttpClient;
   final void Function(String message)? _diagnosticsSink;
+
+  /// 本请求的出网客户端：代理只服务受限的海外云端协议（OpenAI 兼容
+  /// 与 Anthropic）；Ollama 目标是本机／局域网服务，走代理不可达也不
+  /// 该出外网。豆包语音直连网关（volc）不经过本类，结构上不受影响。
+  ProviderHttpClient _outboundFor(ProviderKind kind) => switch (kind) {
+    ProviderKind.ollama => httpClient,
+    ProviderKind.openAiCompatible ||
+    ProviderKind.anthropic => _proxyHttpClient ?? httpClient,
+  };
 
   @override
   Future<String> complete({
@@ -384,9 +447,21 @@ final class ProviderModelGateway
       messages,
       maxTokens ?? _maxModelReplyTokens,
     );
+    // 明文 HTTP 默认拒绝（ticket 08）：应用层允许列表只放行用户显式
+    // 配置的本机／私有网段目标，公网目标一律要求 HTTPS。这是 dart:io
+    // 出站唯一生效的放行口（平台明文策略不管辖 dart:io）。
+    final cleartextRefusal = chatCleartextRefusalReason(request.uri);
+    if (cleartextRefusal != null) {
+      yield ModelStreamEvent.failure(
+        ModelFailureKind.network,
+        cleartextRefusal,
+      );
+      return;
+    }
+    final outbound = _outboundFor(config.kind);
     ProviderHttpResponse response;
     try {
-      response = await httpClient.postStream(
+      response = await outbound.postStream(
         uri: request.uri,
         headers: request.headers,
         body: jsonEncode(request.body),
@@ -554,6 +629,17 @@ final class ProviderModelGateway
       messages,
       maxTokens ?? _maxModelReplyTokens,
     );
+    // 与普通流式同律：明文公网目标在出网前拒绝（ticket 08）。
+    final cleartextRefusal = chatCleartextRefusalReason(request.uri);
+    if (cleartextRefusal != null) {
+      yield ModelStreamEvent.failure(
+        ModelFailureKind.network,
+        cleartextRefusal,
+      );
+      return;
+    }
+    // 联网搜索是 Anthropic 协议的模型调用，与普通流式共用代理分叉。
+    final outbound = _outboundFor(config.kind);
     final firstBody = <String, Object?>{
       ...request.body,
       'tools': const [
@@ -574,6 +660,7 @@ final class ProviderModelGateway
     };
     try {
       final first = await _readAnthropicTurn(
+        outbound: outbound,
         request: request,
         body: firstBody,
         timeout: Duration(seconds: config.timeoutSeconds),
@@ -653,6 +740,7 @@ final class ProviderModelGateway
         },
       ];
       final second = await _readAnthropicTurn(
+        outbound: outbound,
         request: request,
         body: {...request.body, 'messages': secondMessages},
         timeout: Duration(seconds: config.timeoutSeconds),
@@ -745,6 +833,7 @@ final class ProviderModelGateway
   }
 
   Future<_AnthropicTurn> _readAnthropicTurn({
+    required ProviderHttpClient outbound,
     required _ProviderRequest request,
     required Map<String, Object?> body,
     required Duration timeout,
@@ -754,16 +843,15 @@ final class ProviderModelGateway
     whenCancelled?.then((_) => cancelled = true);
     final encodedBody = jsonEncode(body);
     final response =
-        whenCancelled != null && httpClient is CancellableProviderHttpClient
-        ? await (httpClient as CancellableProviderHttpClient)
-              .postStreamCancellable(
+        whenCancelled != null && outbound is CancellableProviderHttpClient
+        ? await outbound.postStreamCancellable(
                 uri: request.uri,
                 headers: request.headers,
                 body: encodedBody,
                 timeout: timeout,
                 whenCancelled: whenCancelled,
               )
-        : await httpClient.postStream(
+        : await outbound.postStream(
             uri: request.uri,
             headers: request.headers,
             body: encodedBody,

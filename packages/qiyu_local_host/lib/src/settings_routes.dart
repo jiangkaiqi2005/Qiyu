@@ -8,12 +8,14 @@ import 'developer_diagnostics.dart';
 import 'local_data_service.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
+import 'proxy_settings_service.dart';
 import 'stt_settings_service.dart';
 import 'tts_settings_service.dart';
 import 'web_search_settings_service.dart';
 
 /// 设置领域路由：模型 Provider、联网搜索、语音转写（STT）、语音合成
-/// （TTS）四段配置的读写与连接测试，体验选项，以及开发者诊断入口。
+/// （TTS）四段配置的读写与连接测试，出站代理配置，体验选项，以及
+/// 开发者诊断入口。
 ///
 /// 本模块持有设置领域的路径匹配、payload 解析（含各字段的类型与缺省
 /// 规则）、序列化与错误翻译；删除本模块，这些职责会整体摊回路由总控。
@@ -26,6 +28,7 @@ final class SettingsRoutes implements ApiRoutes {
     required this.experienceRepository,
     required this.developerDiagnostics,
     required this.requestDiagnostics,
+    required this.proxySettingsService,
   });
 
   final ProviderSettingsService providerSettingsService;
@@ -35,6 +38,7 @@ final class SettingsRoutes implements ApiRoutes {
   final ExperienceSettingsRepository experienceRepository;
   final DeveloperDiagnosticsService developerDiagnostics;
   final RequestDiagnosticsRecorder? requestDiagnostics;
+  final ProxySettingsService proxySettingsService;
 
   @override
   Future<Response?> handle(Request request) async {
@@ -48,6 +52,7 @@ final class SettingsRoutes implements ApiRoutes {
     for (final subdomain in [
       _providerRoutes,
       _webSearchRoutes,
+      _proxyRoutes,
       _sttRoutes,
       _ttsRoutes,
       _preferenceRoutes,
@@ -149,6 +154,39 @@ final class SettingsRoutes implements ApiRoutes {
     }
     if (method == 'DELETE' && path == 'api/provider/web-search/key') {
       final settings = await webSearchSettingsService.forgetApiKey();
+      return Response.ok(
+        jsonEncode(settings.toJson()),
+        headers: jsonHeaders,
+      );
+    }
+    return null;
+  }
+
+  /// 出站代理子域：代理配置的读取与保存。地址与端口不是凭据，随
+  /// 快照回显；启用中的配置在服务层校验（地址必填、端口 1–65535）。
+  Future<Response?> _proxyRoutes(Request request) async {
+    final method = request.method;
+    final path = request.url.path;
+    if (method == 'GET' && path == 'api/provider/proxy') {
+      final settings = await proxySettingsService.read();
+      return Response.ok(
+        jsonEncode(settings.toJson()),
+        headers: jsonHeaders,
+      );
+    }
+    if (method == 'PUT' && path == 'api/provider/proxy') {
+      final payload = await readJsonObject(request, maxBytes: 4 * 1024);
+      final enabled = payload['enabled'];
+      final host = payload['host'];
+      final port = payload['port'];
+      if (enabled is! bool || host is! String || port is! int) {
+        throw const ProviderConfigException('代理配置格式不正确。');
+      }
+      final settings = await proxySettingsService.save(
+        enabled: enabled,
+        host: host,
+        port: port,
+      );
       return Response.ok(
         jsonEncode(settings.toJson()),
         headers: jsonHeaders,

@@ -525,6 +525,95 @@ abstract interface class WebSearchConfigRepository {
   Future<void> saveWebSearch(WebSearchConfig? config);
 }
 
+/// 出站代理配置（ticket 08）：provider.json 顶层的可选 `proxy` 段，
+/// 作用于模型网关的 OpenAI 兼容／Anthropic 出站。只承载地址与端口，
+/// 没有凭据字段（代理认证本期不做，因此无需要保密、禁止回显的代理
+/// 凭据）；启用与否由 [enabled] 表达。
+final class ProxyConfig {
+  const ProxyConfig({required this.enabled, required this.host, required this.port});
+
+  /// 段的 JSON 解码：字段缺失或类型不对抛 [ProviderConfigException]。
+  /// 「残缺按未配置处理」的兜底不在本构造——加载路径由
+  /// `JsonProviderConfigRepository.loadProxy` 捕获后返回 null（fail
+  /// toward direct），保存路径在 saveProxy 前经 [validate] 把残缺档
+  /// 挡在落盘之前。
+  factory ProxyConfig.fromJson(Map<String, Object?> json) {
+    final enabled = json['enabled'];
+    final host = json['host'];
+    final port = json['port'];
+    if (enabled is! bool || host is! String || port is! int) {
+      throw const ProviderConfigException('代理配置无法读取。');
+    }
+    return ProxyConfig(enabled: enabled, host: host, port: port);
+  }
+
+  final bool enabled;
+  final String host;
+  final int port;
+
+  /// [port] 为 0 表示「未填端口」（仅允许出现在关闭态＋空地址的组合，
+  /// 见 [validate]）。
+  bool get isEmptyOff => !enabled && host.trim().isEmpty && port == 0;
+
+  Map<String, Object?> toJson() => {
+    'enabled': enabled,
+    'host': host,
+    'port': port,
+  };
+
+  void validate() {
+    final trimmedHost = host.trim();
+    if (isEmptyOff) {
+      return;
+    }
+    if (enabled && trimmedHost.isEmpty) {
+      throw const ProviderConfigException('请填写代理地址。');
+    }
+    if (trimmedHost.isNotEmpty) {
+      if (containsNonVisibleAscii(trimmedHost)) {
+        throw const ProviderConfigException(
+          '代理地址里混入了中文或看不见的字符，请重新填写。',
+        );
+      }
+      if (trimmedHost.contains('/') ||
+          trimmedHost.contains(' ') ||
+          trimmedHost.contains('@') ||
+          trimmedHost.toLowerCase().startsWith('http://') ||
+          trimmedHost.toLowerCase().startsWith('https://')) {
+        throw const ProviderConfigException(
+          '代理地址填主机名或 IP 即可，不带 http:// 前缀与路径。',
+        );
+      }
+      // 端口有独立字段：地址里再带冒号只允许 IPv6 字面量（裸 `::1`
+      // 或 `[::1]` 括号形态都合法）。`1.2.3.4:8080` 这类「IP:端口」
+      // 会把 findProxy 串写畸形、拖到请求期才失败，在保存口拒绝。
+      if (trimmedHost.contains(':')) {
+        final bare = trimmedHost.startsWith('[') && trimmedHost.endsWith(']')
+            ? trimmedHost.substring(1, trimmedHost.length - 1)
+            : trimmedHost;
+        final address = InternetAddress.tryParse(bare);
+        if (address == null || address.type != InternetAddressType.IPv6) {
+          throw const ProviderConfigException(
+            '代理地址请填主机名或 IP，端口单独填。',
+          );
+        }
+      }
+    }
+    if (port < 0 || port > 65535) {
+      throw const ProviderConfigException('代理端口必须在 0 到 65535 之间。');
+    }
+    if (enabled && (port < 1 || port > 65535)) {
+      throw const ProviderConfigException('请填写 1 到 65535 之间的代理端口。');
+    }
+  }
+}
+
+abstract interface class ProxyConfigRepository {
+  Future<ProxyConfig?> loadProxy();
+
+  Future<void> saveProxy(ProxyConfig? config);
+}
+
 abstract interface class SttConfigRepository {
   Future<SttConfig?> loadStt();
 
@@ -542,7 +631,8 @@ final class JsonProviderConfigRepository
         ProviderConfigRepository,
         SttConfigRepository,
         TtsConfigRepository,
-        WebSearchConfigRepository {
+        WebSearchConfigRepository,
+        ProxyConfigRepository {
   const JsonProviderConfigRepository({
     required this.filePath,
     this.writer = const IoAtomicTextWriter(),
@@ -699,6 +789,36 @@ final class JsonProviderConfigRepository
       json.remove('webSearch');
     } else {
       json['webSearch'] = {'apiKey': config.apiKey.trim()};
+    }
+    await _writeFile(json);
+  }
+
+  @override
+  Future<ProxyConfig?> loadProxy() async {
+    final json = await _readRawMap(orThrow: true);
+    if (json == null || json['proxy'] == null) {
+      return null;
+    }
+    final section = json['proxy'];
+    if (section is! Map<String, Object?>) {
+      return null;
+    }
+    try {
+      return ProxyConfig.fromJson(section);
+    } on ProviderConfigException {
+      // 段残缺按未配置处理：代理静默回到关闭态，不影响其余配置。
+      return null;
+    }
+  }
+
+  @override
+  Future<void> saveProxy(ProxyConfig? config) async {
+    config?.validate();
+    final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
+    if (config == null) {
+      json.remove('proxy');
+    } else {
+      json['proxy'] = config.toJson();
     }
     await _writeFile(json);
   }

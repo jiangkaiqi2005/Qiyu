@@ -2412,6 +2412,154 @@ void main() {
       );
       await host.close();
     });
+
+    test('代理设置端点与局域网 Ollama（ticket 08）', () async {
+      var host = await _startHost(webRoot, memoryDirectory);
+      var browser = await _openBrowserSession(host);
+      final proxyEndpoint = host.origin.resolve('/api/provider/proxy');
+
+      // 初始关闭态；代理没有凭据字段，快照原样回显地址与端口。
+      final initial = await _send(
+        proxyEndpoint,
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(
+        jsonDecode(initial.body),
+        {'configured': false, 'enabled': false, 'host': '', 'port': 0},
+      );
+
+      // 类型不对的负载按配置格式错误拒绝。
+      final malformed = await _send(
+        proxyEndpoint,
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'enabled': 'yes'}),
+      );
+      expect(malformed.statusCode, HttpStatus.badRequest);
+
+      // 启用中的配置缺地址被拒。
+      final rejected = await _send(
+        proxyEndpoint,
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({'enabled': true, 'host': '', 'port': 7890}),
+      );
+      expect(rejected.statusCode, HttpStatus.badRequest);
+      expect(jsonDecode(rejected.body)['message'], contains('代理地址'));
+
+      // 正常保存：回显地址端口并落盘 provider.json。
+      final saved = await _send(
+        proxyEndpoint,
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'enabled': true,
+          'host': '192.168.1.2',
+          'port': 7890,
+        }),
+      );
+      expect(jsonDecode(saved.body), {
+        'configured': true,
+        'enabled': true,
+        'host': '192.168.1.2',
+        'port': 7890,
+      });
+      final providerFile = File(_providerJsonPath(temporaryDirectory));
+      final stored =
+          jsonDecode(await providerFile.readAsString()) as Map<String, Object?>;
+      expect((stored['proxy']! as Map)['host'], '192.168.1.2');
+      await host.close();
+
+      // 重启后照常读到（持久化语义与其余设置段一致）。
+      host = await LocalAppHost.start(
+        webRoot: webRoot.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+      );
+      browser = await _openBrowserSession(host);
+      final restored = await _send(
+        host.origin.resolve('/api/provider/proxy'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(jsonDecode(restored.body), {
+        'configured': true,
+        'enabled': true,
+        'host': '192.168.1.2',
+        'port': 7890,
+      });
+
+      // 局域网 Ollama（明文私网地址、无密钥）可以保存，不要求 Key。
+      final ollama = await _send(
+        host.origin.resolve('/api/provider'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'provider': 'ollama',
+          'baseUrl': 'http://192.168.1.10:11434',
+          'model': 'qwen3',
+          'temperature': 0.7,
+          'timeoutSeconds': 60,
+        }),
+      );
+      expect(ollama.statusCode, HttpStatus.ok);
+      expect(jsonDecode(ollama.body), containsPair('keySet', false));
+      expect(jsonDecode(ollama.body), containsPair('provider', 'ollama'));
+      await host.close();
+    });
+
+    test('明文公网模型地址拒绝保存并给出人话（ticket 08）', () async {
+      final host = await _startHost(webRoot, memoryDirectory);
+      final browser = await _openBrowserSession(host);
+
+      // 主机名形态：文案点「请直接填 IP」（它不是公网 IP，不误导）。
+      final hostnameRefused = await _send(
+        host.origin.resolve('/api/provider'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'provider': 'openai_compatible',
+          'baseUrl': 'http://api.example.com/v1',
+          'model': 'chat-model',
+          'temperature': 0.6,
+          'timeoutSeconds': 30,
+        }),
+      );
+      expect(hostnameRefused.statusCode, HttpStatus.badRequest);
+      expect(jsonDecode(hostnameRefused.body)['code'], 'invalid_provider_config');
+      expect(jsonDecode(hostnameRefused.body)['message'], contains('填 IP 地址'));
+
+      // 公网 IP 字面量：文案点「改用 HTTPS」。
+      final ipRefused = await _send(
+        host.origin.resolve('/api/provider'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'provider': 'openai_compatible',
+          'baseUrl': 'http://8.8.8.8/v1',
+          'model': 'chat-model',
+          'temperature': 0.6,
+          'timeoutSeconds': 30,
+        }),
+      );
+      expect(ipRefused.statusCode, HttpStatus.badRequest);
+      expect(jsonDecode(ipRefused.body)['message'], contains('私有网段'));
+
+      // 同一地址换 https 即放行。
+      final accepted = await _send(
+        host.origin.resolve('/api/provider'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'provider': 'openai_compatible',
+          'baseUrl': 'https://api.example.com/v1',
+          'model': 'chat-model',
+          'temperature': 0.6,
+          'timeoutSeconds': 30,
+        }),
+      );
+      expect(accepted.statusCode, HttpStatus.ok);
+      await host.close();
+    });
   });
 
   group('后台失败状态（ticket 21）', () {

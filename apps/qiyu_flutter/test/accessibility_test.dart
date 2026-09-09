@@ -25,6 +25,8 @@ import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/proxy_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/proxy_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_collapse_platform.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
@@ -315,6 +317,12 @@ void main() {
           ChangeNotifierProvider.value(
             value: WebSearchSettingsViewModel(
               const _FixedWebSearchSettingsGateway(),
+              autoStart: false,
+            ),
+          ),
+          ChangeNotifierProvider.value(
+            value: ProxySettingsViewModel(
+              const _FixedProxySettingsGateway(),
               autoStart: false,
             ),
           ),
@@ -1056,4 +1064,17 @@ final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
   @override
   Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
       const TtsConnectionTest(succeeded: false, message: '还没有保存语音合成服务配置。');
+}
+
+/// 未配置代理的固定网关：给出站代理块一个不触网的快照。
+final class _FixedProxySettingsGateway implements ProxySettingsGateway {
+  const _FixedProxySettingsGateway();
+
+  @override
+  Future<ProxySettings> read() async =>
+      const ProxySettings(configured: false, enabled: false, host: '', port: 0);
+
+  @override
+  Future<ProxySettings> save(ProxySettingsDraft draft) =>
+      throw UnimplementedError();
 }

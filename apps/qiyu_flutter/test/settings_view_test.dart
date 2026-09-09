@@ -12,6 +12,8 @@ import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/proxy_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/proxy_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_collapse_platform.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
@@ -1392,6 +1394,10 @@ Future<Widget> _app({
       webSearchGateway ?? const _FixedWebSearchSettingsGateway(),
       autoStart: false,
     ),
+    proxySettingsViewModel: ProxySettingsViewModel(
+      const _FixedProxySettingsGateway(),
+      autoStart: false,
+    ),
     onboardingViewModel: onboardingViewModel,
     settingsViewModel: settingsViewModel,
   );
@@ -1502,6 +1508,12 @@ Future<_FakeSettingsGateway> _pumpSettingsPage(
         ChangeNotifierProvider.value(
           value: WebSearchSettingsViewModel(
             const _FixedWebSearchSettingsGateway(),
+            autoStart: false,
+          ),
+        ),
+        ChangeNotifierProvider.value(
+          value: ProxySettingsViewModel(
+            const _FixedProxySettingsGateway(),
             autoStart: false,
           ),
         ),
@@ -1685,6 +1697,22 @@ final class _FixedWebSearchSettingsGateway implements WebSearchSettingsGateway {
 
   @override
   Future<WebSearchSettings> forgetApiKey() => throw UnimplementedError();
+}
+
+final class _FixedProxySettingsGateway implements ProxySettingsGateway {
+  const _FixedProxySettingsGateway();
+
+  @override
+  Future<ProxySettings> read() async => const ProxySettings(
+    configured: false,
+    enabled: false,
+    host: '',
+    port: 0,
+  );
+
+  @override
+  Future<ProxySettings> save(ProxySettingsDraft draft) =>
+      throw UnimplementedError();
 }
 
 final class _MutableWebSearchSettingsGateway

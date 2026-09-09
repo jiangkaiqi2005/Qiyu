@@ -8,6 +8,8 @@ import '../../theme/qiyu_tokens.dart';
 import 'provider_catalog.dart';
 import 'provider_settings_client.dart';
 import 'provider_settings_view_model.dart';
+import 'proxy_settings_client.dart';
+import 'proxy_settings_view_model.dart';
 import 'settings_section_shell.dart';
 
 /// 模型连接（Provider）设置领域：模型连接、参数设置与 API Key 凭据管理。
@@ -208,6 +210,87 @@ final class ProviderSettingsForm {
   }
 }
 
+/// 出站代理领域的表单控制器（ticket 08）：开关状态、地址与端口两个
+/// 输入框的控制器与焦点、已保存设置的同步、草稿校验与保存编排。
+///
+/// 本类不是 widget，也不持有任何 UI 呈现。
+final class ProxySettingsForm {
+  bool enabled = false;
+
+  final hostController = TextEditingController();
+  final portController = TextEditingController();
+  final hostFocusNode = FocusNode();
+  final portFocusNode = FocusNode();
+
+  ProxySettings? _syncedSettings;
+
+  /// 页面卸载时释放控制器与焦点节点。
+  void dispose() {
+    hostController.dispose();
+    portController.dispose();
+    hostFocusNode.dispose();
+    portFocusNode.dispose();
+  }
+
+  /// 已保存设置同步进表单：只处理新出现的设置对象（同一对象重复同步
+  /// 直接返回，开关与输入草稿不被重置）。地址端口不是凭据，随快照
+  /// 回显；端口 0 表示「未填」，同步为空串。
+  void sync(ProxySettings? settings) {
+    if (settings == null || identical(settings, _syncedSettings)) {
+      return;
+    }
+    _syncedSettings = settings;
+    enabled = settings.enabled;
+    syncFocusProtectedField(hostController, hostFocusNode, settings.host);
+    syncFocusProtectedField(
+      portController,
+      portFocusNode,
+      settings.port > 0 ? '${settings.port}' : '',
+    );
+  }
+
+  /// 读草稿：启用时地址与端口必填；关闭时保留已填值（关闭＋全空也
+  /// 合法，存回空档）。草稿不合法时经 [report] 给出人话并返回 null。
+  ProxySettingsDraft? readDraftOrReport(
+    void Function(String message) report,
+  ) {
+    final host = hostController.text.trim();
+    final portText = portController.text.trim();
+    final port = portText.isEmpty ? 0 : int.tryParse(portText) ?? -1;
+    if (host.contains(' ') ||
+        host.toLowerCase().startsWith('http://') ||
+        host.toLowerCase().startsWith('https://')) {
+      report('代理地址填主机名或 IP 即可，不带 http:// 前缀。');
+      return null;
+    }
+    if (enabled && host.isEmpty) {
+      report('启用代理时请填写代理地址。');
+      return null;
+    }
+    if (host.isEmpty && portText.isNotEmpty) {
+      report('请先填写代理地址，再填写代理端口。');
+      return null;
+    }
+    if ((host.isNotEmpty || enabled) && (port < 1 || port > 65535)) {
+      report('请填写 1 到 65535 之间的代理端口。');
+      return null;
+    }
+    return ProxySettingsDraft(enabled: enabled, host: host, port: port);
+  }
+
+  /// 一次保存的领域编排：读草稿 → 交视图模型。返回是否真的保存成功。
+  Future<bool> save(
+    ProxySettingsViewModel viewModel, {
+    void Function(String message)? report,
+  }) async {
+    final draft = readDraftOrReport(report ?? (_) {});
+    if (draft == null) {
+      return false;
+    }
+    return viewModel.save(draft);
+  }
+}
+
 /// 模型连接设置区块。
 class ProviderSettingsSection extends StatefulWidget {
   const ProviderSettingsSection({super.key});
@@ -382,6 +465,7 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                   decoration: InputDecoration(
                     labelText: '服务地址',
                     hintText: 'https://example.com/v1',
+                    helperText: '局域网地址请填 IP（明文 HTTP 不接受主机名）',
                     border: settingsOutlineBorder(color: QiyuColors.line),
                     enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                     focusedBorder: settingsOutlineBorder(
@@ -484,7 +568,147 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                   },
                 ),
               ),
+              // 出站代理块压在分节末尾（ticket 08）：凭据块与保存/测试
+              // 按钮的纵向位置不因它漂移，既有设置页滚动语义不变。
+              const SizedBox(height: 28),
+              const _ProxySettingsBlock(),
             ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 出站代理设置块（ticket 08）：嵌在「模型连接」节内，与凭据块同律
+/// ——不套 [SettingsSectionPanel]，没有可点的分节头、不参与折叠。
+/// 代理只作用于 OpenAI 兼容／Anthropic 的模型出站（Ollama 局域网直连
+/// 与语音直连不走代理），说明文字里写清这个边界。
+class _ProxySettingsBlock extends StatefulWidget {
+  const _ProxySettingsBlock();
+
+  @override
+  State<_ProxySettingsBlock> createState() => _ProxySettingsBlockState();
+}
+
+class _ProxySettingsBlockState extends State<_ProxySettingsBlock> {
+  final _form = ProxySettingsForm();
+
+  @override
+  void dispose() {
+    _form.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save(ProxySettingsViewModel viewModel) async {
+    await _form.save(
+      viewModel,
+      report: (message) => showSettingsSnackBar(context, message),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<ProxySettingsViewModel>(
+      builder: (context, viewModel, child) {
+        _form.sync(viewModel.settings);
+        final theme = Theme.of(context);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            MergeSemantics(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('出站代理', style: theme.textTheme.titleMedium),
+                        Text(
+                          '只作用于 OpenAI 兼容与 Anthropic 的模型出站；'
+                          '局域网 Ollama 与语音服务保持直连。'
+                          '配置保存在本机 provider.json。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    key: const Key('provider-proxy-enabled'),
+                    value: _form.enabled,
+                    onChanged: viewModel.saving
+                        ? null
+                        : (value) => setState(() => _form.enabled = value),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    key: const Key('provider-proxy-host'),
+                    controller: _form.hostController,
+                    focusNode: _form.hostFocusNode,
+                    decoration: InputDecoration(
+                      labelText: '代理地址',
+                      hintText: '如 127.0.0.1 或 proxy.example.com',
+                      border: settingsOutlineBorder(color: QiyuColors.line),
+                      enabledBorder: settingsOutlineBorder(
+                        color: QiyuColors.line,
+                      ),
+                      focusedBorder: settingsOutlineBorder(
+                        color: QiyuColors.composerFocusLine,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: TextField(
+                    key: const Key('provider-proxy-port'),
+                    controller: _form.portController,
+                    focusNode: _form.portFocusNode,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: '端口',
+                      hintText: '7890',
+                      border: settingsOutlineBorder(color: QiyuColors.line),
+                      enabledBorder: settingsOutlineBorder(
+                        color: QiyuColors.line,
+                      ),
+                      focusedBorder: settingsOutlineBorder(
+                        color: QiyuColors.composerFocusLine,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (viewModel.errorMessage case final message?) ...[
+              const SizedBox(height: 16),
+              SettingsStatusMessage(message: message, succeeded: false),
+            ],
+            const SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton(
+                key: const Key('save-proxy-settings'),
+                onPressed: viewModel.saving
+                    ? null
+                    : () => unawaited(_save(viewModel)),
+                child: viewModel.saving
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('保存代理设置'),
+              ),
+            ),
           ],
         );
       },

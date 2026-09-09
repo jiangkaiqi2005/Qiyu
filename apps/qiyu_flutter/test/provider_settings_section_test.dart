@@ -118,6 +118,25 @@ void main() {
     expect(value.modelController.text, 'deepseek-v4-flash');
   });
 
+  test('局域网 Ollama：地址可编辑，空 Key 也能保存（无密钥链路）', () async {
+    gateway.configured = false;
+    final value = form();
+    value.selectProvider('ollama');
+
+    expect(value.baseUrlController.text, 'http://127.0.0.1:11434');
+    // 局域网地址直接改在地址框里（Ollama 套餐的地址可编辑）。
+    value.baseUrlController.text = 'http://192.168.1.10:11434';
+    value.modelController.text = 'qwen3';
+    // 不填 Key：Ollama 本地服务通常留空。
+
+    final saved = await value.save(viewModel, report: (_) {});
+
+    expect(saved, isTrue);
+    expect(gateway.savedDrafts.single.provider, ProviderKind.ollama);
+    expect(gateway.savedDrafts.single.baseUrl, 'http://192.168.1.10:11434');
+    expect(gateway.savedDrafts.single.apiKey, isNull);
+  });
+
   test('校验驳回非数值 temperature / 超时，并给出人话且不触达网关', () async {
     final value = form();
     value.temperatureController.text = 'warm';

@@ -14,6 +14,7 @@ import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
 import 'provider_settings_section.dart';
 import 'provider_settings_view_model.dart';
+import 'proxy_settings_view_model.dart';
 import 'settings_client.dart';
 import 'settings_collapse_platform.dart';
 import 'settings_section_shell.dart';
@@ -109,6 +110,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       unawaited(context.read<SttSettingsViewModel>().initialize());
       unawaited(context.read<TtsSettingsViewModel>().initialize());
       unawaited(context.read<WebSearchSettingsViewModel>().initialize());
+      unawaited(context.read<ProxySettingsViewModel>().initialize());
       unawaited(settingsViewModel.loadPreferences());
       unawaited(settingsViewModel.loadClearPreview());
     });

@@ -27,6 +27,8 @@ import 'features/settings/privacy_view.dart';
 import 'features/settings/provider_settings_client.dart';
 import 'features/settings/provider_settings_view.dart';
 import 'features/settings/provider_settings_view_model.dart';
+import 'features/settings/proxy_settings_client.dart';
+import 'features/settings/proxy_settings_view_model.dart';
 import 'features/settings/settings_client.dart';
 import 'features/settings/settings_view_model.dart';
 import 'features/settings/stt_settings_client.dart';
@@ -149,6 +151,7 @@ class QiyuApp extends StatefulWidget {
     this.ttsSettingsViewModel,
     this.ttsSettingsGateway,
     this.webSearchSettingsViewModel,
+    this.proxySettingsViewModel,
     this.historyViewModel,
     this.onboardingViewModel,
     this.memoryViewModel,
@@ -168,6 +171,7 @@ class QiyuApp extends StatefulWidget {
   /// 语音朗读设置网关：同上，缺省共享单例；测试注入桩。
   final TtsSettingsGateway? ttsSettingsGateway;
   final WebSearchSettingsViewModel? webSearchSettingsViewModel;
+  final ProxySettingsViewModel? proxySettingsViewModel;
   final HistoryViewModel? historyViewModel;
   final OnboardingViewModel? onboardingViewModel;
   final MemoryCenterViewModel? memoryViewModel;
@@ -278,6 +282,16 @@ class _QiyuAppState extends State<QiyuApp> {
           widget.webSearchSettingsViewModel,
           (_) => WebSearchSettingsViewModel(
             HttpWebSearchSettingsGateway(
+              client: _hostClient,
+              baseUri: _hostBaseUri,
+            ),
+            autoStart: false,
+          ),
+        ),
+        _vm(
+          widget.proxySettingsViewModel,
+          (_) => ProxySettingsViewModel(
+            HttpProxySettingsGateway(
               client: _hostClient,
               baseUri: _hostBaseUri,
             ),
