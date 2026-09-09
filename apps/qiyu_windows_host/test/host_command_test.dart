@@ -53,10 +53,7 @@ void main() {
   );
 
   test('resolves the Flutter Web build next to the host project', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-command-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final temporaryDirectory = await _tempDirectory('qiyu-command-test-');
     final hostDirectory = Directory(
       path.join(temporaryDirectory.path, 'apps', 'qiyu_windows_host'),
     )..createSync(recursive: true);
@@ -81,10 +78,7 @@ void main() {
   });
 
   test('resolves bundled Web assets beside a movable executable', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'qiyu-bundle-test-',
-    );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final temporaryDirectory = await _tempDirectory('qiyu-bundle-test-');
     final bundleDirectory = Directory(
       path.join(temporaryDirectory.path, 'windows-bundle'),
     )..createSync();
@@ -119,8 +113,7 @@ void main() {
   });
 
   test('preflight includes bundled Web assets when a root is supplied', () {
-    final webRoot = Directory.systemTemp.createTempSync('qiyu-preflight-test-');
-    addTearDown(() => webRoot.deleteSync(recursive: true));
+    final webRoot = _tempDirectorySync('qiyu-preflight-test-');
     File(
       path.join(webRoot.path, 'index.html'),
     ).writeAsStringSync('<!doctype html>');
@@ -133,4 +126,111 @@ void main() {
     expect(report.ready, isTrue);
     expect(report.checks['webAssets'], isTrue);
   });
+
+  test('rejects unknown options and options missing their path value', () {
+    expect(
+      () => HostCommandOptions.parse(['--mystery']),
+      throwsFormatException,
+    );
+    expect(
+      () => HostCommandOptions.parse(['--web-root']),
+      throwsFormatException,
+    );
+    expect(
+      () => HostCommandOptions.parse(['--runtime-dir', '--check']),
+      throwsFormatException,
+    );
+  });
+
+  test('memory directory without any user directory fails loudly', () {
+    expect(
+      () => resolveHostMemoryDirectory(environment: const {}),
+      throwsStateError,
+    );
+  });
+
+  test('Web root override wins and missing assets fail resolution', () async {
+    final temporaryDirectory = await _tempDirectory(
+      'qiyu-web-root-override-test-',
+    );
+    final webDirectory = Directory(
+      path.join(temporaryDirectory.path, 'web'),
+    )..createSync();
+    File(
+      path.join(webDirectory.path, 'index.html'),
+    ).writeAsStringSync('<!doctype html>');
+    final emptyDirectory = Directory(
+      path.join(temporaryDirectory.path, 'empty'),
+    )..createSync();
+    final executablePath = path.join(temporaryDirectory.path, 'host.exe');
+
+    expect(
+      path.equals(
+        resolveHostWebRoot(
+          currentDirectory: temporaryDirectory.path,
+          executablePath: executablePath,
+          overridePath: webDirectory.path,
+        ),
+        webDirectory.path,
+      ),
+      isTrue,
+    );
+    expect(
+      () => resolveHostWebRoot(
+        currentDirectory: temporaryDirectory.path,
+        executablePath: executablePath,
+        overridePath: emptyDirectory.path,
+      ),
+      throwsA(isA<FileSystemException>()),
+    );
+  });
+
+  test(
+    'runtime directory prefers override, then LOCALAPPDATA, then system temp',
+    () {
+      expect(
+        resolveHostRuntimeDirectory(
+          environment: const {'LOCALAPPDATA': r'C:\AppData'},
+          overridePath: r'D:\Runtime',
+        ),
+        path.normalize(path.absolute(r'D:\Runtime')),
+      );
+      expect(
+        resolveHostRuntimeDirectory(
+          environment: const {'LOCALAPPDATA': r'C:\AppData'},
+        ),
+        path.join(r'C:\AppData', 'Qiyu', 'runtime'),
+      );
+      expect(
+        resolveHostRuntimeDirectory(environment: const {}),
+        path.join(Directory.systemTemp.path, 'Qiyu', 'runtime'),
+      );
+    },
+  );
+
+  test('persona constitution resolution fails when the file exists nowhere', () {
+    final temporaryDirectory = _tempDirectorySync(
+      'qiyu-persona-missing-test-',
+    );
+
+    expect(
+      () => resolvePersonaConstitutionPath(
+        currentDirectory: temporaryDirectory.path,
+        executablePath: path.join(temporaryDirectory.path, 'host.exe'),
+      ),
+      throwsA(isA<FileSystemException>()),
+    );
+  });
+}
+
+Future<Directory> _tempDirectory(String prefix) async {
+  final directory = await Directory.systemTemp.createTemp(prefix);
+  addTearDown(() => directory.delete(recursive: true));
+  return directory;
+}
+
+Directory _tempDirectorySync(String prefix) {
+  final directory = Directory.systemTemp.createTempSync(prefix);
+  addTearDown(() => directory.deleteSync(recursive: true));
+  return directory;
 }

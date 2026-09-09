@@ -26,6 +26,7 @@ function Invoke-Step {
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $corePath = Join-Path $repositoryRoot 'packages\qiyu_behavior_core'
+$localHostPath = Join-Path $repositoryRoot 'packages\qiyu_local_host'
 $flutterPath = Join-Path $repositoryRoot 'apps\qiyu_flutter'
 $hostPath = Join-Path $repositoryRoot 'apps\qiyu_windows_host'
 $bundlePath = Join-Path $hostPath 'build\windows-bundle'
@@ -49,6 +50,15 @@ try {
   Invoke-Step 'Dart core dependencies' { dart pub get }
   Invoke-Step 'Dart core analysis' { dart analyze }
   Invoke-Step 'Dart core contract tests' { dart test }
+} finally {
+  Pop-Location
+}
+
+Push-Location $localHostPath
+try {
+  Invoke-Step 'Local host dependencies' { dart pub get }
+  Invoke-Step 'Local host analysis' { dart analyze }
+  Invoke-Step 'Local host tests' { dart test }
 } finally {
   Pop-Location
 }

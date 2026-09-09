@@ -8,11 +8,12 @@
 
 ## 仓库形态
 
-Release 1 = **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心**。Host 只监听 `127.0.0.1`，负责静态资源、Provider 调用、凭据与 Markdown 持久化；浏览器只负责 UI，API Key 永不进入浏览器。旧 Node/JS 产品轨道已退役，不迁移旧 localStorage 或旧 `qiyu.config.local.json`，勿重新引入浏览器持久化主链路。
+Release 1 = **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心**。Host 只监听 `127.0.0.1`，负责静态资源、Provider 调用、凭据与 Markdown 持久化；浏览器只负责 UI，API Key 永不进入浏览器。仓库为双壳结构：Windows 壳与后续工单将落地的安卓壳依赖同一个平台无关服务包 `packages/qiyu_local_host`；安卓壳尚未落码。旧 Node/JS 产品轨道已退役，不迁移旧 localStorage 或旧 `qiyu.config.local.json`，勿重新引入浏览器持久化主链路。
 
 - `packages/qiyu_behavior_core/` — 纯 Dart 行为与协议核心：安全分类、本地回复、模型输出清洗与人格边界校验、稳定 DTO 与 `ChatDeliveryEvent` 流式协议；不依赖 Flutter/DOM/Windows API/具体存储。
+- `packages/qiyu_local_host/` — 平台无关本机 Host 纯 Dart 核心包：`LocalAppHost`（loopback 站点 + 受会话/Origin/CSRF 保护的 API）、`LocalChatService`（交付编排）、`MemoryCadence`（记忆节奏：日终归档、月压缩、Dream、启动恢复扫描、空闲补办）、`model_gateway.dart`（OpenAI-compatible / Anthropic / Ollama 适配）、Markdown 会话与记忆模块（episode_memory、dream、persona_tree、memory_recall 等）、凭据仓接口 `SecretStore`（平台壳注入实现）；不依赖 Flutter/DOM/Windows API。
 - `apps/qiyu_flutter/` — Flutter Web UI，`features/` 下含 chat、settings、memory、history、onboarding、shell 等领域。
-- `apps/qiyu_windows_host/` — Dart Windows Host：`LocalAppHost`（loopback 站点 + 受会话/Origin/CSRF 保护的 API）、`LocalChatService`（交付编排）、`MemoryCadence`（记忆节奏：日终归档、月压缩、Dream、启动恢复扫描、空闲补办）、`model_gateway.dart`（OpenAI-compatible / Anthropic / Ollama 适配）、Markdown 会话与记忆模块（episode_memory、dream、persona_tree、memory_recall 等）。
+- `apps/qiyu_windows_host/` — Dart Windows 薄壳：`bin/qiyu_windows_host.dart` 启动入口、`host_runner` 启动编排与单实例激活、`host_command` CLI 参数与 PC 路径缺省、`single_instance` 文件锁单实例、Windows 凭据管理器实现（`WindowsCredentialSecretStore`）、rundll32 浏览器引导（`WindowsDefaultBrowserLauncher`）与启动前自检；平台无关逻辑一律在 `qiyu_local_host`。
 - `contracts/qiyu_behavior_contracts.json` — 当前行为契约，Core 直接消费；`legacy-migration-golden-cases.json` 只冻结旧迁移 golden，运行时不消费。
 - `docs/product/behavior-spec.md` — 从产品灵魂提炼的工程行为规范。
 
@@ -32,8 +33,9 @@ Release 1 = **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心*
 ```
 
 - `packages/qiyu_behavior_core`：`dart analyze && dart test`
+- `packages/qiyu_local_host`：`dart analyze && dart test`
 - `apps/qiyu_flutter`：`flutter analyze && flutter test`
-- `apps/qiyu_windows_host`：`dart analyze && dart test`（单文件如 `dart test test/local_chat_service_test.dart`）
+- `apps/qiyu_windows_host`：`dart analyze && dart test`（单文件如 `dart test test/host_runner_test.dart`）
 - 未配置 LLM 时自动降级本地规则引擎，功能完整可测。
 
 ## 回复管线不变量
@@ -63,6 +65,6 @@ Release 1 = **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心*
 
 ## Notes
 
-- CI 在 `.github/workflows/ci.yml`：PR 与 main push 跑三包分析/测试/覆盖率门禁（阈值脚本 `scripts/coverage_gate.dart`，水位按 2026-09-07 基线锁定、只升不降：core 88 / host 91 / flutter 91）；main push 另跑 `verify-release-baseline.ps1` 全量门禁。浏览器侧用例不计入覆盖率。
+- CI 在 `.github/workflows/ci.yml`：PR 与 main push 跑四包分析/测试/覆盖率门禁（阈值脚本 `scripts/coverage_gate.dart`，水位只升不降：core 88 / host 91 / flutter 91（2026-09-07 基线）、local_host 92（2026-09-09 抽包后实测 92.74））；main push 另跑 `verify-release-baseline.ps1` 全量门禁。浏览器侧用例不计入覆盖率。
 - 已建 codebase-memory 知识图谱（项目名 `qiyu`），可用 `search_graph` / `trace_path` / `get_architecture` 探索；结构性大改后重新 `index_repository`。
 - `.codebase-memory/` 产物不入库（已 `.gitignore`）：不要暂存、提交、还原或删除该目录任何文件。
