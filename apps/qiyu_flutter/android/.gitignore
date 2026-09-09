@@ -7,6 +7,11 @@ gradle-wrapper.jar
 GeneratedPluginRegistrant.java
 .cxx/
 
+# 在 android/ 目录下直接跑 gradle 任务会生成聚合构建目录（票09 实测：
+# `./gradlew aR` 落 android/build/reports/problems/）。应用级 /build/ 只锚
+# apps/qiyu_flutter/ 自身，盖不到这里，而提交流程用 git add -A，会顺手吞进来。
+/build/
+
 # Remember to never publicly share your keystore.
 # See https://flutter.dev/to/reference-keystore
 key.properties
