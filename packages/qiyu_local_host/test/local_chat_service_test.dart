@@ -3401,7 +3401,7 @@ void main() {
       // 只拿住 close 返回的 Future、一次都不 await：close 的异步方法体在
       // 首个 await 之前同步跑完，因此这条断言成立即说明停轮询先于等待后台
       // 收尾与释放监听，不是收尾完成后的顺带结果。
-      // 前提：harness 的 close() 是箭头直通转发，别包成 async，否则本断言误红。
+      // 前提：harness 转发 close 之前不插 await，且 Host 的 stop 先于其自身首个 await。
       final closing = harness.close();
       expect(poller.stopped, isTrue);
       await closing;
@@ -3443,6 +3443,7 @@ void main() {
       // 明确的到达信号：召回已在飞，闸门释放前它不会自己结束。
       await gateway.awaitCompleteCalls(1);
 
+      final releasedAddress = harness.host.address;
       final releasedPort = harness.host.port;
       var closeReturned = false;
       final closing = harness.close().then((_) => closeReturned = true);
@@ -3460,7 +3461,7 @@ void main() {
         'recall selection dropped date=2099-01-01',
       );
       // 召回真的收尾完的那一刻，监听器也已释放：原端口可重新绑定。
-      await _expectPortRebindable(releasedPort);
+      await _expectPortRebindable(releasedAddress, releasedPort);
     });
 
     test('close stops waiting at the shared budget and never cancels the work',
@@ -3488,6 +3489,7 @@ void main() {
       await harness.pollTick();
       await gateway.awaitCompleteCalls(1);
 
+      final releasedAddress = harness.host.address;
       final releasedPort = harness.host.port;
       final longMemory = File('${harness.memoryDirectory}/long-memory.md');
       final stopwatch = Stopwatch()..start();
@@ -3510,7 +3512,7 @@ void main() {
       await harness.finalizePending();
       expect(longMemory.readAsStringSync(), contains('用户搬了一次家'));
       // 超时同样走到强制关闭监听：原端口可重新绑定。
-      await _expectPortRebindable(releasedPort);
+      await _expectPortRebindable(releasedAddress, releasedPort);
     });
 
     test('close shares one timeout across both shutdown tails', () async {
@@ -3675,10 +3677,11 @@ Future<void> _seedHikingRecallEpisode(
   evidence: '这周末打算去爬山',
 );
 
-/// 「Host 关闭收尾」用例共用：close 返回后立刻重绑一次原监听端口，
-/// 能绑上即证明 Host 没把监听器留在手里。
-Future<void> _expectPortRebindable(int port) async {
-  final rebound = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
+/// 「Host 关闭收尾」用例共用：用宿主关闭前实际绑定的那对地址与端口重绑一次，
+/// 能绑上即证明关闭路径最终释放了监听器。断言位置由调用点决定，不要求紧跟
+/// close 返回；地址与端口必须成对取自宿主本身，否则重绑的是另一个地址。
+Future<void> _expectPortRebindable(InternetAddress address, int port) async {
+  final rebound = await ServerSocket.bind(address, port);
   await rebound.close();
 }
 
