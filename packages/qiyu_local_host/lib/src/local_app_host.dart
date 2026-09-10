@@ -373,26 +373,46 @@ final class LocalAppHost {
       episodePipeline: episodePipeline,
       memoryControls: memoryControls,
     );
+    // 六领域路由在组合根一次装配完毕，集合顺序即分发优先级：聊天、记忆、
+    // 设置、备份、语音、引导。请求入口只消费这份已装配好的有序集合，
+    // 不再认识任何具体领域对象；调整某个领域的构造依赖不必再改安全入口。
+    final apiRoutes = <ApiRoutes>[
+      ChatRoutes(chatService: chatService),
+      MemoryRoutes(
+        memoryCenter: memoryCenter,
+        memoryActions: memoryActions,
+        memoryControls: memoryControls,
+        personaTree: personaTree,
+        memoryCadence: memoryCadence,
+      ),
+      SettingsRoutes(
+        providerSettingsService: effectiveProviderSettings,
+        webSearchSettingsService: effectiveWebSearchSettings,
+        proxySettingsService: proxySettingsService,
+        sttSettingsService: effectiveSttSettings,
+        ttsSettingsService: effectiveTtsSettings,
+        experienceRepository: experienceRepository,
+        developerDiagnostics: developerDiagnostics,
+        requestDiagnostics: requestDiagnostics,
+      ),
+      BackupRoutes(
+        memoryBackup: memoryBackup,
+        localDataService: localDataService,
+        chatService: chatService,
+      ),
+      VoiceRoutes(
+        sttSettingsService: effectiveSttSettings,
+        ttsSettingsService: effectiveTtsSettings,
+        memoryRepository: memoryRepository,
+      ),
+      OnboardingRoutes(
+        onboardingRepository: onboardingRepository,
+        personaTree: personaTree,
+      ),
+    ];
     final requestHandler = _LocalAppRequestHandler(
       webRoot,
-      chatService: chatService,
-      providerSettingsService: effectiveProviderSettings,
-      webSearchSettingsService: effectiveWebSearchSettings,
-      proxySettingsService: proxySettingsService,
-      sttSettingsService: effectiveSttSettings,
-      ttsSettingsService: effectiveTtsSettings,
-      memoryRepository: memoryRepository,
-      onboardingRepository: onboardingRepository,
-      memoryCenter: memoryCenter,
-      memoryActions: memoryActions,
-      personaTree: personaTree,
-      memoryBackup: memoryBackup,
-      memoryControls: memoryControls,
-      experienceRepository: experienceRepository,
-      developerDiagnostics: developerDiagnostics,
-      localDataService: localDataService,
-      requestDiagnostics: requestDiagnostics,
-      memoryCadence: memoryCadence,
+      apiRoutes,
       activationToken: activationToken,
       onActivate: onActivate,
     );
@@ -441,26 +461,12 @@ final class LocalAppHost {
 }
 
 final class _LocalAppRequestHandler {
+  /// 安全与分发入口：只认识静态资源根、组合根装配好的有序路由集合，
+  /// 以及启动/激活凭据与回调。凭据生成、Origin attach、会话与 CSRF
+  /// 检查都在本类内，领域对象的构造依赖与本类无关。
   _LocalAppRequestHandler(
-    String webRoot, {
-    required LocalChatService chatService,
-    required this.providerSettingsService,
-    required this.webSearchSettingsService,
-    required ProxySettingsService proxySettingsService,
-    required SttSettingsService sttSettingsService,
-    required TtsSettingsService ttsSettingsService,
-    required MemoryRepository memoryRepository,
-    required OnboardingRepository onboardingRepository,
-    required this.memoryCenter,
-    required this.memoryActions,
-    required PersonaTreeStore personaTree,
-    required MemoryBackupService memoryBackup,
-    required this.memoryControls,
-    required this.experienceRepository,
-    required this.developerDiagnostics,
-    required LocalDataService localDataService,
-    required this.requestDiagnostics,
-    required MemoryCadence memoryCadence,
+    String webRoot,
+    List<ApiRoutes> apiRoutes, {
     required this.activationToken,
     required this.onActivate,
   }) : _startupToken = generateSecureToken(),
@@ -471,52 +477,10 @@ final class _LocalAppRequestHandler {
          defaultDocument: 'index.html',
          listDirectories: false,
        ),
-       _apiRoutes = [
-         ChatRoutes(chatService: chatService),
-         MemoryRoutes(
-           memoryCenter: memoryCenter,
-           memoryActions: memoryActions,
-           memoryControls: memoryControls,
-           personaTree: personaTree,
-           memoryCadence: memoryCadence,
-         ),
-         SettingsRoutes(
-           providerSettingsService: providerSettingsService,
-           webSearchSettingsService: webSearchSettingsService,
-           proxySettingsService: proxySettingsService,
-           sttSettingsService: sttSettingsService,
-           ttsSettingsService: ttsSettingsService,
-           experienceRepository: experienceRepository,
-           developerDiagnostics: developerDiagnostics,
-           requestDiagnostics: requestDiagnostics,
-         ),
-         BackupRoutes(
-           memoryBackup: memoryBackup,
-           localDataService: localDataService,
-           chatService: chatService,
-         ),
-         VoiceRoutes(
-           sttSettingsService: sttSettingsService,
-           ttsSettingsService: ttsSettingsService,
-           memoryRepository: memoryRepository,
-         ),
-         OnboardingRoutes(
-           onboardingRepository: onboardingRepository,
-           personaTree: personaTree,
-         ),
-       ];
+       _apiRoutes = apiRoutes;
 
   String _startupToken;
   String get startupToken => _startupToken;
-  final ProviderSettingsService providerSettingsService;
-  final WebSearchSettingsService webSearchSettingsService;
-
-  final MemoryCenterService memoryCenter;
-  final MemoryActionService memoryActions;
-  final MemoryControlsStore memoryControls;
-  final ExperienceSettingsRepository experienceRepository;
-  final DeveloperDiagnosticsService developerDiagnostics;
-  final RequestDiagnosticsRecorder? requestDiagnostics;
   final String? activationToken;
   final Future<BrowserLaunchResult> Function()? onActivate;
   final String _sessionToken;

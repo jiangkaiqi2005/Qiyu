@@ -186,6 +186,198 @@ void main() {
       await host.close();
     });
   });
+  group('鉴权拒绝无副作用', () {
+    test(
+      '配置写入被鉴权拒绝时逐字保留 provider.json，且按基线最先检查到的那一步报错',
+      () async {
+        final (host, browser) = await _startHostWithBrowser(
+          webRoot,
+          memoryDirectory,
+        );
+        final endpoint = host.origin.resolve('/api/provider/proxy');
+        const payload = '{"enabled":true,"host":"192.168.1.2","port":7890}';
+
+        // 先按合法凭据写入一次：既确立「载荷本身有效、这条路径写得进去」，
+        // 也让后面的比较面对一份真实已有设置，而不是不存在的文件。
+        final seeded = await _send(
+          endpoint,
+          method: 'PUT',
+          headers: browser.mutationHeaders(host.origin),
+          requestBody: payload,
+        );
+        expect(seeded.statusCode, HttpStatus.ok);
+        // 启动后台任务链先排空，否则整理自身的写入会污染字节前后对照。
+        await host.memoryCadence.finalizePending();
+        final providerFile = File(_providerJsonPath(temporaryDirectory));
+        final bytesBefore = await providerFile.readAsBytes();
+
+        Future<void> expectRejected(
+          Map<String, String> headers,
+          int statusCode,
+          String message,
+        ) async {
+          final rejected = await _send(
+            endpoint,
+            method: 'PUT',
+            headers: headers,
+            requestBody: payload,
+          );
+          expect(rejected.statusCode, statusCode);
+          expect(rejected.body, message);
+          expect(await providerFile.readAsBytes(), equals(bytesBefore));
+        }
+
+        // 来源与会话都合法，只把 CSRF 令牌换掉：命中修改请求的 CSRF 检查。
+        await expectRejected(
+          browser.mutationHeaders(host.origin)..['x-qiyu-csrf'] = 'wrong-csrf',
+          HttpStatus.forbidden,
+          'Invalid CSRF token',
+        );
+        // Cookie、CSRF 都合法，只破坏来源 Origin。
+        await expectRejected(
+          browser.mutationHeaders(host.origin)
+            ..['origin'] = 'https://evil.example',
+          HttpStatus.forbidden,
+          'Unexpected request source',
+        );
+        // Origin、CSRF 都合法，只破坏来源 Referer。
+        await expectRejected(
+          browser.mutationHeaders(host.origin)
+            ..[HttpHeaders.refererHeader] = 'https://evil.example/x',
+          HttpStatus.forbidden,
+          'Unexpected request source',
+        );
+        // 载荷、来源与 CSRF 都合法，只移除会话 Cookie。
+        await expectRejected(
+          browser.mutationHeaders(host.origin)..remove(HttpHeaders.cookieHeader),
+          HttpStatus.unauthorized,
+          'Invalid session',
+        );
+        // 三样凭据同时错误：来源检查排在会话与 CSRF 之前，必须报来源错误。
+        await expectRejected(
+          browser.mutationHeaders(host.origin)
+            ..remove(HttpHeaders.cookieHeader)
+            ..['origin'] = 'https://evil.example'
+            ..['x-qiyu-csrf'] = 'wrong-csrf',
+          HttpStatus.forbidden,
+          'Unexpected request source',
+        );
+        // 未被认领的路径同样先过安全检查：无会话时报会话拒绝而不是 404。
+        final unknownWithoutSession = await _send(
+          host.origin.resolve('/api/no-such-namespace/endpoint'),
+          method: 'POST',
+          headers: browser
+              .mutationHeaders(host.origin)
+              ..remove(HttpHeaders.cookieHeader),
+          requestBody: payload,
+        );
+        expect(unknownWithoutSession.statusCode, HttpStatus.unauthorized);
+        expect(unknownWithoutSession.body, 'Invalid session');
+        final unknownWithSession = await _send(
+          host.origin.resolve('/api/no-such-namespace/endpoint'),
+          method: 'POST',
+          headers: browser.mutationHeaders(host.origin),
+          requestBody: payload,
+        );
+        expect(unknownWithSession.statusCode, HttpStatus.notFound);
+        expect(unknownWithSession.body, 'Not found');
+        expect(await providerFile.readAsBytes(), equals(bytesBefore));
+        await host.close();
+      },
+    );
+
+    test(
+      '聊天写入被鉴权拒绝时既不调用 Provider 也不新增会话落盘',
+      () async {
+        final gateway = _StaticModelGateway('还没睡？');
+        final configPath = _providerJsonPath(temporaryDirectory);
+        final settings = ProviderSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          _MemorySecretStore(),
+          gateway,
+          const ModelPromptBuilder('测试人格宪法'),
+        );
+        await settings.save(
+          config: const ProviderConfig(
+            kind: ProviderKind.openAiCompatible,
+            baseUrl: 'https://example.com/v1',
+            model: 'chat-model',
+            temperature: 0.6,
+            timeoutSeconds: 25,
+          ),
+          apiKey: 'auth-test-secret-value',
+        );
+        final (host, browser) = await _startHostWithBrowser(
+          webRoot,
+          memoryDirectory,
+          providerSettingsService: settings,
+        );
+        await host.memoryCadence.finalizePending();
+        final sessionsDirectory = Directory(
+          '${memoryDirectory.path}${Platform.pathSeparator}sessions',
+        );
+        final sessionsBefore = await _snapshotFiles(sessionsDirectory);
+        const payload = '{"requestId":"auth-chat-1","text":"在吗"}';
+        final endpoint = host.origin.resolve('/api/chat');
+
+        Future<void> expectRejected(
+          Map<String, String> headers,
+          int statusCode,
+          String message,
+        ) async {
+          final rejected = await _send(
+            endpoint,
+            method: 'POST',
+            headers: headers,
+            requestBody: payload,
+          );
+          expect(rejected.statusCode, statusCode);
+          expect(rejected.body, message);
+          // Provider 替身一次都没被调用，会话落盘集合与内容逐字不变。
+          expect(gateway.calls, 0);
+          expect(await _snapshotFiles(sessionsDirectory), sessionsBefore);
+        }
+
+        await expectRejected(
+          browser.mutationHeaders(host.origin)..['x-qiyu-csrf'] = 'wrong-csrf',
+          HttpStatus.forbidden,
+          'Invalid CSRF token',
+        );
+        await expectRejected(
+          browser.mutationHeaders(host.origin)
+            ..['origin'] = 'https://evil.example',
+          HttpStatus.forbidden,
+          'Unexpected request source',
+        );
+        await expectRejected(
+          browser.mutationHeaders(host.origin)..remove(HttpHeaders.cookieHeader),
+          HttpStatus.unauthorized,
+          'Invalid session',
+        );
+        await expectRejected(
+          browser.mutationHeaders(host.origin)
+            ..remove(HttpHeaders.cookieHeader)
+            ..['origin'] = 'https://evil.example'
+            ..['x-qiyu-csrf'] = 'wrong-csrf',
+          HttpStatus.forbidden,
+          'Unexpected request source',
+        );
+
+        // 对照组：同一载荷配上合法凭据确实会走到 Provider，
+        // 说明上面那条「调用数为 0」不是替身没接上线路造成的空断言。
+        final accepted = await _postJson(host, browser, '/api/chat', {
+          'requestId': 'auth-chat-ok',
+          'text': '在吗',
+        });
+        expect(accepted.statusCode, HttpStatus.ok);
+        expect(_chatEvent(_chatEvents(accepted.body), 'state')['source'], 'llm');
+        expect(gateway.calls, 1);
+        expect(await _snapshotFiles(sessionsDirectory), isNot(sessionsBefore));
+        await host.close();
+      },
+    );
+  });
+
   group('聊天交付与幂等', () {
 
     test('拒绝超过 64KB 的 chunked 聊天请求体与非对象 JSON', () async {
@@ -2727,6 +2919,21 @@ Future<(LocalAppHost, _BrowserSession)> _startHostWithBrowser(
 String _providerJsonPath(Directory temporaryDirectory) =>
     '${temporaryDirectory.path}${Platform.pathSeparator}provider.json';
 
+/// 目录内「绝对路径 → 文件字节」快照：落盘无副作用断言用它做前后对照，
+/// 既看文件集合有没有新增，也看已有文件的字节有没有变。
+Future<Map<String, List<int>>> _snapshotFiles(Directory directory) async {
+  final snapshot = <String, List<int>>{};
+  if (!await directory.exists()) {
+    return snapshot;
+  }
+  await for (final entity in directory.list(recursive: true)) {
+    if (entity is File) {
+      snapshot[entity.path] = await entity.readAsBytes();
+    }
+  }
+  return snapshot;
+}
+
 /// POST + mutationHeaders + JSON 请求体的固定三参形状：内部仍走 [_send]。
 Future<_HttpResponse> _postJson(
   LocalAppHost host,
@@ -2831,6 +3038,9 @@ final class _StaticModelGateway implements ModelGateway {
   final String reply;
   String? apiKey;
 
+  /// 被调用次数：鉴权拒绝无副作用用例用它断言被拒请求一次都没碰到 Provider。
+  int calls = 0;
+
   @override
   Future<String> complete({
     required ProviderConfig config,
@@ -2838,6 +3048,7 @@ final class _StaticModelGateway implements ModelGateway {
     required List<ModelMessage> messages,
     int? maxTokens,
   }) async {
+    calls += 1;
     this.apiKey = apiKey;
     return reply;
   }
