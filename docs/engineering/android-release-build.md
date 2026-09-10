@@ -57,7 +57,7 @@ keystore 文件本体和两个口令分开存放：口令只留在你自己记�
 | --- | --- |
 | 终身 keystore 已自建（路径与别名） | "E:\Agent\Qiyu\apps\qiyu_flutter\android\qiyu-release.keystore"，别名 `qiyu`，PKCS12 |
 | 证书 SHA-256 指纹 | 74c1dadc57d233c83290c9d1469d36b38406153ccd90c43d3ae1e3eb7f5c52d7 |
-| keystore 备份位置与日期 | 百度网盘，2026.9.10。同账号里还存着 `key.properties`，口令与本体没分开——按第 3 条这格算未合格 |
+| keystore 备份位置与日期 | 百度网盘，2026.9.10，只存本体；口令只留在本机 `key.properties`（网盘那份 2026-09-10 已删）。第 3 条成立，但「取回实测」还没做——下载回来 `keytool -list -v` 列出别名才算齐 |
 
 指纹怎么取，两条路都实测过：
 
