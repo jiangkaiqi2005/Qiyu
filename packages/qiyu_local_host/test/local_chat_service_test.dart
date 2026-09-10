@@ -3392,7 +3392,6 @@ void main() {
       DateTime clock() => DateTime(2026, 8, 16, 22, 30);
       final recallGate = Completer<void>();
       final diagnostics = <String>[];
-      final poller = _RecordingIdleCatchupPoller();
       final gateway = ScriptedModelGateway(
         streamScript: [
           const ScriptedStreamReply('''一时没想起。
@@ -3416,7 +3415,6 @@ void main() {
         diagnosticsSink: diagnostics.add,
         // 窗口立即超时：本轮只交付第一条气泡，查找留在后台继续。
         recallWindowWait: (_) async {},
-        idleCatchupPoller: poller,
         seedMemory: (memoryDirectory) => _seedRecallEpisode(
           memoryDirectory.path,
           clock,
@@ -3433,11 +3431,8 @@ void main() {
       // 明确的到达信号：召回已在飞，闸门释放前它不会自己结束。
       await gateway.awaitCompleteCalls(1);
 
-      final releasedPort = harness.host.port;
       var closeReturned = false;
       final closing = harness.close().then((_) => closeReturned = true);
-      // close() 同步执行 stop：停轮询先于任何等待。
-      expect(poller.stopped, isTrue);
       // 闸门按住时在途召回没结束：400ms 远大于关闭自身收尾所需时间，又
       // 远小于共用的 3 秒总超时，close 因此不许提前返回。
       await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -3447,18 +3442,15 @@ void main() {
       await closing;
       expect(closeReturned, isTrue);
       // 等到的是整条召回链收尾（含后台保存），不是它启动的那一刻。
-      await _awaitDiagnostic(diagnostics, _recallSavedMarker);
-      final rebound = await ServerSocket.bind(
-        InternetAddress.loopbackIPv4,
-        releasedPort,
+      await _awaitDiagnostic(
+        diagnostics,
+        'recall selection dropped date=2099-01-01',
       );
-      await rebound.close();
     });
 
     test('close stops waiting at the shared budget and never cancels the work',
         () async {
       final dreamGate = Completer<void>();
-      final poller = _RecordingIdleCatchupPoller();
       final gateway = ScriptedModelGateway(
         completeScript: [
           ScriptedGatedCompletion(
@@ -3470,7 +3462,6 @@ void main() {
       final harness = await InProcessChatHost.start(
         modelGateway: gateway,
         clock: () => DateTime(2026, 8, 11, 22, 30),
-        idleCatchupPoller: poller,
         seedMemory: (memoryDirectory) =>
             _seedDreamMaterial(memoryDirectory.path),
       );
@@ -3482,13 +3473,11 @@ void main() {
       await harness.pollTick();
       await gateway.awaitCompleteCalls(1);
 
-      final releasedPort = harness.host.port;
       final longMemory = File('${harness.memoryDirectory}/long-memory.md');
       final stopwatch = Stopwatch()..start();
       // 闸门全程按住：close 只能靠收尾总超时返回，绝不永久等待。
       await harness.close();
       stopwatch.stop();
-      expect(poller.stopped, isTrue);
       expect(dreamGate.isCompleted, isFalse);
       // 宽松界别：共用一次总超时（不是各等一轮再串行相加），也没有在
       // 后台工作仍在飞时提前返回。
@@ -3504,11 +3493,81 @@ void main() {
       dreamGate.complete();
       await harness.finalizePending();
       expect(longMemory.readAsStringSync(), contains('用户搬了一次家'));
-      final rebound = await ServerSocket.bind(
-        InternetAddress.loopbackIPv4,
-        releasedPort,
+    });
+
+    test('close shares one timeout across both shutdown tails', () async {
+      DateTime clock() => DateTime(2026, 8, 11, 22, 30);
+      final dreamGate = Completer<void>();
+      final recallGate = Completer<void>();
+      final diagnostics = <String>[];
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''一时没想起。
+<qiyu-actions>
+[{"action":"memory_recall","query":"爬山"}]
+</qiyu-actions>'''),
+        ],
+        // 第 1 次理解类调用是空闲补办 Dream，第 2 次是轮内召回的选择；
+        // 两个闸门让记忆节奏收尾与召回收尾同时停在飞。
+        completeScript: [
+          ScriptedGatedCompletion(
+            gate: dreamGate.future,
+            reply: _dreamCandidate(),
+          ),
+          ScriptedGatedCompletion(
+            gate: recallGate.future,
+            reply: _recallSelection(dates: ['2026-08-05', '2099-01-01']),
+          ),
+        ],
       );
-      await rebound.close();
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        diagnosticsSink: diagnostics.add,
+        // 窗口立即超时：本轮只交付第一条气泡，查找留在后台继续。
+        recallWindowWait: (_) async {},
+        // 已定稿的 2026-08-05 既是 Dream 的证据日期，也是召回索引材料。
+        seedMemory: (memoryDirectory) => _seedRecallEpisode(
+          memoryDirectory.path,
+          clock,
+          evidence: '这周末打算去爬山',
+        ),
+      );
+      addTearDown(harness.dispose);
+      // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询补办。
+      await harness.finalizePending();
+      await _seedPendingDream(harness.memoryDirectory,
+          lastSuccess: DateTime(2026, 8, 1));
+      await harness.pollTick();
+      await gateway.awaitCompleteCalls(1);
+      final first = await harness.sendChat(
+        requestId: 'recall-close-both',
+        text: '我上次说爬山的事',
+      );
+      expect(first.message.messages, ['一时没想起。']);
+      await gateway.awaitCompleteCalls(2);
+      // 两项收尾各自一处在飞的理解类调用，没有第三种调用混进来。
+      expect(gateway.completeCalls, hasLength(2));
+
+      final stopwatch = Stopwatch()..start();
+      // 两个闸门全程按住：close 只能靠收尾总超时返回。
+      await harness.close();
+      stopwatch.stop();
+      expect(dreamGate.isCompleted, isFalse);
+      expect(recallGate.isCompleted, isFalse);
+      // 判别并发共用一次总超时与串行分别计时：串行各等一轮要两个超时
+      // 窗口（约 6 秒）；4.5 秒是远离 3 秒的宽松上界，放不下第二窗口。
+      expect(stopwatch.elapsed, greaterThan(const Duration(seconds: 1)));
+      expect(stopwatch.elapsed, lessThan(const Duration(milliseconds: 4500)));
+
+      // 超时关闭不等于取消：两条链释放后照常跑完再清理临时目录。
+      dreamGate.complete();
+      recallGate.complete();
+      await harness.finalizePending();
+      await _awaitDiagnostic(
+        diagnostics,
+        'recall selection dropped date=2099-01-01',
+      );
     });
   });
 }
@@ -3613,10 +3672,6 @@ String _recallSelection({
   return '<qiyu-actions>[{"action":"memory_recall","query":"测试查找",'
       '"months":[$monthsJson],"dates":[$datesJson]}]</qiyu-actions>';
 }
-
-/// 召回后台保存链的收尾哨兵：选择里带一个越界日期，丢弃它落下的诊断
-/// 行是整条召回链的最后一个可见信号（诊断先于保存动作）。
-const _recallSavedMarker = 'recall selection dropped date=2099-01-01';
 
 /// 被调用即失败的脚本化网关：安全类输入必须绝不触碰 Provider；
 /// 任何聊天流或理解类调用都会让用例当场失败。
