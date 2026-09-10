@@ -1,8 +1,8 @@
 # release 签名配置模板。复制为同目录下的 key.properties（该文件与 keystore 都已 gitignore，绝不入库），
 # 再把下面四项换成真实值；任何口令都不得写进仓库或公开文档。
-# 完整步骤（生成 keystore、离线备份、构建与覆盖升级）见 docs/engineering/android-release-build.md。
+# 完整步骤（生成 keystore、另存备份、构建与覆盖升级）见 docs/engineering/android-release-build.md。
 #
-# 这一把是终身签名身份，不是一次性的：生成后必须先离线备份（keystore 本体与口令分开存放），
+# 这一把是终身签名身份，不是一次性的：生成后必须先在本机之外另存一份（介质不限），且口令不与它同处一处。
 # 别名与口令一旦定了就不能再改——改了旧手机就装不上覆盖包，只能卸载重装，
 # 而会话与记忆全在 App 私有目录里，卸载即清空且不可逆。
 # 生成命令（一整行直接粘贴执行，参数自行替换）：

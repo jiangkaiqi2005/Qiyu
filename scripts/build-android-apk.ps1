@@ -113,8 +113,8 @@ function Write-SigningGuidance {
   Write-Host '     （key.properties 与 keystore 都已被 gitignore，口令不得入库或写进文档）。'
   Write-Host '     缺省生成的 PKCS12 不支持条目独立口令：keyPassword 要与 storePassword 同值，'
   Write-Host '     否则要到打包那一步才报 "final block not properly padded"；要用两个不同口令请加 -storetype JKS。'
-  Write-Host '  3. keystore 本体请另行离线备份，备份与口令分开存放；'
-  Write-Host '     没有自建 keystore、没有记录证书指纹、没有完成离线备份之前，不要产出任何分发包。'
+  Write-Host '  3. keystore 本体在本机之外另存一份（网盘也算，介质不限），但口令不与它同处一处；'
+  Write-Host '     没有自建 keystore、没记下证书指纹、没做到这一条之前，不要产出任何分发包。'
 }
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
