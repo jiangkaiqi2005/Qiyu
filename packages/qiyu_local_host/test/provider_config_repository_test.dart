@@ -728,11 +728,30 @@ void main() {
     // 写入尝试计数沿用既有原子写入注入点：谓词闭包自带计数状态。
     JsonProviderConfigRepository repository() => JsonProviderConfigRepository(
       filePath: filePath,
-      writer: FailingAtomicTextWriter(shouldFail: (_) {
-        attempts += 1;
-        return false;
-      }),
+      writer: FailingAtomicTextWriter(
+        shouldFail: (_) {
+          attempts += 1;
+          return false;
+        },
+      ),
     );
+
+    // 同一注入点让写回必然失败，用于核对异常包装与「不新增 retry」。
+    JsonProviderConfigRepository failingRepository() =>
+        JsonProviderConfigRepository(
+          filePath: filePath,
+          writer: FailingAtomicTextWriter(
+            shouldFail: (_) {
+              attempts += 1;
+              return true;
+            },
+          ),
+        );
+
+    // 写回失败对外只有仓库既有的保存失败包装，cause 保留原始写异常。
+    final saveFailure = isA<ProviderConfigException>()
+        .having((error) => error.message, 'message', '本地模型配置无法保存。')
+        .having((error) => error.cause, 'cause', isA<FileSystemException>());
 
     test('夹具本身是规范态：原样重写 stt 段后文件字节不变', () async {
       await useFixture();
@@ -976,24 +995,7 @@ void main() {
 
     test('写入器失败保持原有异常包装、文案与一次尝试', () async {
       await useFixture();
-      final failingRepo = JsonProviderConfigRepository(
-        filePath: filePath,
-        writer: FailingAtomicTextWriter(shouldFail: (_) {
-          attempts += 1;
-          return true;
-        }),
-      );
-      final saveFailure = isA<ProviderConfigException>()
-          .having(
-            (error) => error.message,
-            'message',
-            '本地模型配置无法保存。',
-          )
-          .having(
-            (error) => error.cause,
-            'cause',
-            isA<FileSystemException>(),
-          );
+      final failingRepo = failingRepository();
 
       await expectLater(
         failingRepo.saveTts(
@@ -1012,6 +1014,35 @@ void main() {
       expect(await rawFile(), fixtureText);
     });
 
+    test('stt 替换写入失败同样是原包装与一次尝试', () async {
+      await useFixture();
+
+      await expectLater(
+        failingRepository().saveStt(
+          const SttConfig(
+            baseUrl: 'https://stt.example.com/v2',
+            model: 'whisper-fake-2',
+          ),
+        ),
+        throwsA(saveFailure),
+      );
+      expect(attempts, 1);
+      expect(await rawFile(), fixtureText);
+    });
+
+    test('webSearch 替换写入失败同样是原包装与一次尝试', () async {
+      await useFixture();
+
+      await expectLater(
+        failingRepository().saveWebSearch(
+          const WebSearchConfig(apiKey: 'fake-search-key-2-not-real'),
+        ),
+        throwsA(saveFailure),
+      );
+      expect(attempts, 1);
+      expect(await rawFile(), fixtureText);
+    });
+
     test('序列化基线字节对照：键序、两空格缩进与末尾换行', () async {
       await useFixture();
 
@@ -1023,9 +1054,7 @@ void main() {
           apiKey: 'fake-tts-key-2-not-real',
         ),
       );
-      expect(
-        await rawFile(),
-        '''
+      expect(await rawFile(), '''
 {
   "schemaVersion": 1,
   "provider": "openai_compatible",
@@ -1064,15 +1093,12 @@ void main() {
     true
   ]
 }
-''',
-      );
+''');
 
       // 删除 webSearch 段：整段键消失，缩进与末尾换行照旧。
       await useFixture();
       await repository().saveWebSearch(null);
-      expect(
-        await rawFile(),
-        '''
+      expect(await rawFile(), '''
 {
   "schemaVersion": 1,
   "provider": "openai_compatible",
@@ -1110,8 +1136,7 @@ void main() {
     true
   ]
 }
-''',
-      );
+''');
     });
 
     test('压缩写入的文件按基线重新缩进，未知键与新段位置不变', () async {
@@ -1119,23 +1144,20 @@ void main() {
         '{"zeta":1,"proxy":{"enabled":true,"host":"proxy.example.com","port":7890}}',
       );
       await repository().saveProxy(null);
-      expect(
-        await rawFile(),
-        '''
+      expect(await rawFile(), '''
 {
   "zeta": 1
 }
-''',
-      );
+''');
 
       // 段不存在时新增：追加在末尾，其余键序不动。
-      await File(filePath).writeAsString('{"zeta":1,"webSearch":{"apiKey":"k"}}');
+      await File(
+        filePath,
+      ).writeAsString('{"zeta":1,"webSearch":{"apiKey":"k"}}');
       await repository().saveProxy(
         const ProxyConfig(enabled: true, host: 'proxy.example.com', port: 7890),
       );
-      expect(
-        await rawFile(),
-        '''
+      expect(await rawFile(), '''
 {
   "zeta": 1,
   "webSearch": {
@@ -1147,8 +1169,7 @@ void main() {
     "port": 7890
   }
 }
-''',
-      );
+''');
     });
 
     test('读取差异保持：语音坏段抛错，搜索残缺按未配置', () async {
