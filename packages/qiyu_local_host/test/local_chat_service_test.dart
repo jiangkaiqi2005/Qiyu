@@ -3387,18 +3387,32 @@ void main() {
   });
 
   group('Host 关闭收尾', () {
+    test('close stops the catchup poller before awaiting any shutdown work',
+        () async {
+      final poller = _RecordingIdleCatchupPoller();
+      final harness = await InProcessChatHost.start(
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+        idleCatchupPoller: poller,
+      );
+      addTearDown(harness.dispose);
+
+      expect(poller.started, isTrue);
+      expect(poller.stopped, isFalse);
+      // 只拿住 close 返回的 Future、一次都不 await：close 的异步方法体在
+      // 首个 await 之前同步跑完，因此这条断言成立即说明停轮询先于等待后台
+      // 收尾与释放监听，不是收尾完成后的顺带结果。
+      final closing = harness.close();
+      expect(poller.stopped, isTrue);
+      await closing;
+    });
+
     test('close waits for the in-flight recall of the hosted chat service',
         () async {
       DateTime clock() => DateTime(2026, 8, 16, 22, 30);
       final recallGate = Completer<void>();
       final diagnostics = <String>[];
       final gateway = ScriptedModelGateway(
-        streamScript: [
-          const ScriptedStreamReply('''一时没想起。
-<qiyu-actions>
-[{"action":"memory_recall","query":"爬山"}]
-</qiyu-actions>'''),
-        ],
+        streamScript: [_recallStreamReply()],
         completeScript: [
           // 选择调用按闸门停住，整条召回链因此悬在飞；编造日期让后台
           // 保存链留下哨兵诊断，哨兵出现即召回链真的跑完了。
@@ -3415,11 +3429,8 @@ void main() {
         diagnosticsSink: diagnostics.add,
         // 窗口立即超时：本轮只交付第一条气泡，查找留在后台继续。
         recallWindowWait: (_) async {},
-        seedMemory: (memoryDirectory) => _seedRecallEpisode(
-          memoryDirectory.path,
-          clock,
-          evidence: '这周末打算去爬山',
-        ),
+        seedMemory: (memoryDirectory) =>
+            _seedHikingRecallEpisode(memoryDirectory, clock),
       );
       addTearDown(harness.dispose);
 
@@ -3431,6 +3442,7 @@ void main() {
       // 明确的到达信号：召回已在飞，闸门释放前它不会自己结束。
       await gateway.awaitCompleteCalls(1);
 
+      final releasedPort = harness.host.port;
       var closeReturned = false;
       final closing = harness.close().then((_) => closeReturned = true);
       // 闸门按住时在途召回没结束：400ms 远大于关闭自身收尾所需时间，又
@@ -3446,6 +3458,12 @@ void main() {
         diagnostics,
         'recall selection dropped date=2099-01-01',
       );
+      // 召回真的收尾完的那一刻，监听器也已释放：原端口可重新绑定。
+      final rebound = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        releasedPort,
+      );
+      await rebound.close();
     });
 
     test('close stops waiting at the shared budget and never cancels the work',
@@ -3473,6 +3491,7 @@ void main() {
       await harness.pollTick();
       await gateway.awaitCompleteCalls(1);
 
+      final releasedPort = harness.host.port;
       final longMemory = File('${harness.memoryDirectory}/long-memory.md');
       final stopwatch = Stopwatch()..start();
       // 闸门全程按住：close 只能靠收尾总超时返回，绝不永久等待。
@@ -3493,6 +3512,12 @@ void main() {
       dreamGate.complete();
       await harness.finalizePending();
       expect(longMemory.readAsStringSync(), contains('用户搬了一次家'));
+      // 超时同样走到强制关闭监听：原端口可重新绑定。
+      final rebound = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        releasedPort,
+      );
+      await rebound.close();
     });
 
     test('close shares one timeout across both shutdown tails', () async {
@@ -3501,14 +3526,10 @@ void main() {
       final recallGate = Completer<void>();
       final diagnostics = <String>[];
       final gateway = ScriptedModelGateway(
-        streamScript: [
-          const ScriptedStreamReply('''一时没想起。
-<qiyu-actions>
-[{"action":"memory_recall","query":"爬山"}]
-</qiyu-actions>'''),
-        ],
+        streamScript: [_recallStreamReply()],
         // 第 1 次理解类调用是空闲补办 Dream，第 2 次是轮内召回的选择；
-        // 两个闸门让记忆节奏收尾与召回收尾同时停在飞。
+        // 两个闸门让记忆节奏收尾与召回收尾同时停在飞。第 3 次是把召回
+        // 结果组织成第二条气泡，close 早已超时返回，它只能靠释放闸门跑完。
         completeScript: [
           ScriptedGatedCompletion(
             gate: dreamGate.future,
@@ -3518,6 +3539,7 @@ void main() {
             gate: recallGate.future,
             reply: _recallSelection(dates: ['2026-08-05', '2099-01-01']),
           ),
+          const ScriptedCompletionReply('对了，你周末要去爬山。'),
         ],
       );
       final harness = await InProcessChatHost.start(
@@ -3527,11 +3549,8 @@ void main() {
         // 窗口立即超时：本轮只交付第一条气泡，查找留在后台继续。
         recallWindowWait: (_) async {},
         // 已定稿的 2026-08-05 既是 Dream 的证据日期，也是召回索引材料。
-        seedMemory: (memoryDirectory) => _seedRecallEpisode(
-          memoryDirectory.path,
-          clock,
-          evidence: '这周末打算去爬山',
-        ),
+        seedMemory: (memoryDirectory) =>
+            _seedHikingRecallEpisode(memoryDirectory, clock),
       );
       addTearDown(harness.dispose);
       // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询补办。
@@ -3556,9 +3575,9 @@ void main() {
       expect(dreamGate.isCompleted, isFalse);
       expect(recallGate.isCompleted, isFalse);
       // 判别并发共用一次总超时与串行分别计时：串行各等一轮要两个超时
-      // 窗口（约 6 秒）；4.5 秒是远离 3 秒的宽松上界，放不下第二窗口。
+      // 窗口（约 6 秒）；5 秒是与姊妹用例同一档的宽松上界，放不下第二窗口。
       expect(stopwatch.elapsed, greaterThan(const Duration(seconds: 1)));
-      expect(stopwatch.elapsed, lessThan(const Duration(milliseconds: 4500)));
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
 
       // 超时关闭不等于取消：两条链释放后照常跑完再清理临时目录。
       dreamGate.complete();
@@ -3568,6 +3587,9 @@ void main() {
         diagnostics,
         'recall selection dropped date=2099-01-01',
       );
+      // 第三次调用（把召回结果组织成第二条气泡）确实发生：显式补的第三条
+      // 脚本条目被消费，召回链真的跑到末尾，不是脚本越界回放出来的假象。
+      expect(gateway.completeCalls, hasLength(3));
     });
   });
 }
@@ -3641,6 +3663,24 @@ Future<void> _seedRecallEpisode(
   );
   await _rebuildUnderLock(recall, pipeline);
 }
+
+/// 「Host 关闭收尾」用例共用的首条气泡：声明一次 memory_recall，本轮只交付
+/// 这一条，查找留在后台继续。
+ScriptedStreamReply _recallStreamReply() => const ScriptedStreamReply('''一时没想起。
+<qiyu-actions>
+[{"action":"memory_recall","query":"爬山"}]
+</qiyu-actions>''');
+
+/// 「Host 关闭收尾」用例共用的索引材料：带爬山证据的已归档片段，
+/// 恰好被 [_recallStreamReply] 声明的那次查找命中。
+Future<void> _seedHikingRecallEpisode(
+  Directory memoryDirectory,
+  DateTime Function() clock,
+) => _seedRecallEpisode(
+  memoryDirectory.path,
+  clock,
+  evidence: '这周末打算去爬山',
+);
 
 /// 等待哨兵诊断出现：后台查找保存链在落盘前先同步写诊断，哨兵行
 /// 出现即保存完成，替代已退役旁路上的 settle 等待。
