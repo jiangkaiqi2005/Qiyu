@@ -172,7 +172,7 @@ release 构建会顺带跑安卓 lint 致命检查（任务图里含 `:app:lintV
 
 ## 已知待裁与未核实
 
-- 清单第 3 项的判据按**现行实现**写：Provider Key 主存本机 `provider.json`，凭据仓（安卓 Keystore / Windows 凭据管理器）只做迁移回退与旧值清理。总规格里有两处文字与它冲突：用户故事 17「Provider Key 存在系统级安全存储、设置页永不回显明文」，以及实现决策第 4 条「凭据＝Android 系统安全存储（Keystore 支撑）」。这处出入由票05 评审暴露、卡内记为「架构出入待裁定」，其后（2026-09-09）的裁定是 Key 主存保持 `provider.json`（PC 与安卓同构）、不另开票迁入安全存储，但上述两处规格文字尚未同步。上机时按本清单判，不要因为故事 17 把这条判成不通过；规格文字与实现谁向谁收口属产品裁定范围，本票未擅自改动。
+- 清单第 3 项的判据：Provider Key 主存本机 `provider.json`，凭据仓（安卓 Keystore / Windows 凭据管理器）只做迁移回退与旧值清理。总规格原有两处写作「系统级安全存储」（用户故事 17、实现决策第 4 条），与实现不合——这处出入由票05 评审暴露，2026-09-09 裁定 Key 主存保持 `provider.json`（PC 与安卓同构）、不另开票迁入安全存储，2026-09-10 已按裁定把那两处规格文字订正一致。规格是 `.scratch` 下的工单材料、不入库，故在此留一句备查；上机按本清单判，这里不再是悬着的分歧。
 - 隐私与设置页原有的两处 PC 口径文案已订正为设备中性说法：`apps/qiyu_flutter/lib/features/settings/privacy_view.dart` 的分节标题现为「数据只保存在你自己的设备上」，`apps/qiyu_flutter/lib/features/settings/provider_settings_view.dart` 本地数据节现为「全部会话与记忆都是这台设备上的 Markdown 文件」。第 3、23 项按订正后的文字核对。
 - 聊天页麦克风置灰引导里「当前浏览器不支持语音输入，请换 Chrome 或 Edge。」（`apps/qiyu_flutter/lib/features/chat/qiyu_composer.dart`）在安卓上走不到：`IoVoiceRecorderPlatform.supported` 在安卓恒为真，机型采集失败是按第 13/14 项的「无法使用麦克风」口径报。这条仅作为浏览器侧文案存在，不影响本清单。
 - 返回键在产品规格里是用户故事 4（「按系统返回键时行为符合直觉：回上一界面或确认退出」），但九票拆分时没有一张票承接它，聊天页根路由也没挂任何 `PopScope`。它到底算不算已满足，只能由第 21 项的真机现象定；实测不接受就该另开票，不要就地改导航行为来凑。
