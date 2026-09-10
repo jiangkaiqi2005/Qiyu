@@ -2877,8 +2877,8 @@ Future<Map<String, List<int>>> _snapshotFiles(Directory directory) async {
 /// 「被拒之后本机状态分毫未动」的判据因写入口而异（配置口看文件字节，聊天口看模型
 /// 替身调用数与会话落盘），所以留在各自用例里，不进这张表。
 /// 字段名沿用本文件的 HTTP 词汇：statusCode 与 body 同名于 [_HttpResponse] 上被断言
-/// 的成员；headers 在本文件指真实请求头 map，这里放的是「产出被改坏后的请求头」的
-/// 函数，故按仓库既有的 xxxFor 写法命名为 headersFor。
+/// 的成员；headers 在本文件指真实请求头 map（_send 的 headers 具名实参），这里放的
+/// 是「产出被改坏后的请求头」的函数，故按仓库既有的 xxxFor 写法命名为 headersFor。
 typedef _RejectedMutationCase = ({
   String label,
   Map<String, String> Function(_BrowserSession browser, Uri origin) headersFor,

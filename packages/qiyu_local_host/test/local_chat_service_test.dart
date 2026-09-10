@@ -3680,7 +3680,10 @@ Future<void> _seedHikingRecallEpisode(
 /// 「Host 关闭收尾」用例共用：用宿主关闭前实际绑定的那对地址与端口重绑一次，
 /// 能绑上即证明关闭路径最终释放了监听器。断言位置由调用点决定，不要求紧跟
 /// close 返回；地址与端口必须成对取自宿主本身，否则重绑的是另一个地址。
-Future<void> _expectEndpointRebindable(InternetAddress address, int port) async {
+Future<void> _expectEndpointRebindable(
+  InternetAddress address,
+  int port,
+) async {
   final rebound = await ServerSocket.bind(address, port);
   await rebound.close();
 }
