@@ -220,8 +220,11 @@ void main() {
           method: 'PUT',
           payload: payload,
           cases: _configWriteRejectionCases,
-          expectNoSideEffect: () async =>
-              expect(await providerFile.readAsBytes(), equals(bytesBefore)),
+          expectEndpointUntouched: (label) async => expect(
+            await providerFile.readAsBytes(),
+            equals(bytesBefore),
+            reason: label,
+          ),
         );
         // 未被认领的路径同样先过安全检查：无会话时报会话拒绝而不是 404。
         final unknownWithoutSession = await _send(
@@ -288,10 +291,14 @@ void main() {
           '/api/chat',
           method: 'POST',
           payload: payload,
-          cases: _sharedRejectionCases,
-          expectNoSideEffect: () async {
-            expect(gateway.calls, 0);
-            expect(await _snapshotFiles(sessionsDirectory), sessionsBefore);
+          cases: _commonWriteRejectionCases,
+          expectEndpointUntouched: (label) async {
+            expect(gateway.calls, 0, reason: label);
+            expect(
+              await _snapshotFiles(sessionsDirectory),
+              sessionsBefore,
+              reason: label,
+            );
           },
         );
 
@@ -2869,68 +2876,80 @@ Future<Map<String, List<int>>> _snapshotFiles(Directory directory) async {
 /// 一条「凭据被破坏的产品写请求」用例：只记请求侧（怎么破坏、期望状态码、期望文案）。
 /// 「被拒之后本机状态分毫未动」的判据因写入口而异（配置口看文件字节，聊天口看模型
 /// 替身调用数与会话落盘），所以留在各自用例里，不进这张表。
+/// 字段名沿用本文件的 HTTP 词汇：statusCode 与 body 同名于 [_HttpResponse] 上被断言
+/// 的成员；headers 在本文件指真实请求头 map，这里放的是「产出被改坏后的请求头」的
+/// 函数，故按仓库既有的 xxxFor 写法命名为 headersFor。
 typedef _RejectedMutationCase = ({
   String label,
-  Map<String, String> Function(_BrowserSession browser, Uri origin) headers,
-  int status,
-  String message,
+  Map<String, String> Function(_BrowserSession browser, Uri origin) headersFor,
+  int statusCode,
+  String body,
 });
 
 /// 配置写入口与聊天写入口共用的四条破坏组合：每条只改坏一项凭据，其余保持合法，
 /// 最后一条三样同时坏，必须报基线最先检查到的那一步（来源）。
-final List<_RejectedMutationCase> _sharedRejectionCases =
+///
+/// **这张表的顺序就是两个写入口发出请求的顺序**，且入口专属条目只能追加在它后面。
+/// 套件里有「多个凭据同时错误时报基线最先检查到的那一步」这一优先级断言（末条），
+/// 重排任何一行之前先看那条还成不成立。
+final List<_RejectedMutationCase> _commonWriteRejectionCases =
     <_RejectedMutationCase>[
       (
         label: '只把 CSRF 令牌换掉，命中修改请求的 CSRF 检查',
-        headers: (browser, origin) =>
+        headersFor: (browser, origin) =>
             browser.mutationHeaders(origin)..['x-qiyu-csrf'] = 'wrong-csrf',
-        status: HttpStatus.forbidden,
-        message: 'Invalid CSRF token',
+        statusCode: HttpStatus.forbidden,
+        body: 'Invalid CSRF token',
       ),
       (
         label: 'Cookie、CSRF 都合法，只破坏来源 Origin',
-        headers: (browser, origin) =>
+        headersFor: (browser, origin) =>
             browser.mutationHeaders(origin)
               ..['origin'] = 'https://evil.example',
-        status: HttpStatus.forbidden,
-        message: 'Unexpected request source',
+        statusCode: HttpStatus.forbidden,
+        body: 'Unexpected request source',
       ),
       (
         label: '载荷、来源与 CSRF 都合法，只移除会话 Cookie',
-        headers: (browser, origin) =>
+        headersFor: (browser, origin) =>
             browser.mutationHeaders(origin)..remove(HttpHeaders.cookieHeader),
-        status: HttpStatus.unauthorized,
-        message: 'Invalid session',
+        statusCode: HttpStatus.unauthorized,
+        body: 'Invalid session',
       ),
       (
         label: '三样凭据同时错误：来源检查排在会话与 CSRF 之前',
-        headers: (browser, origin) => browser.mutationHeaders(origin)
+        headersFor: (browser, origin) => browser.mutationHeaders(origin)
           ..remove(HttpHeaders.cookieHeader)
           ..['origin'] = 'https://evil.example'
           ..['x-qiyu-csrf'] = 'wrong-csrf',
-        status: HttpStatus.forbidden,
-        message: 'Unexpected request source',
+        statusCode: HttpStatus.forbidden,
+        body: 'Unexpected request source',
       ),
     ];
 
-/// 配置写入口比聊天写入口多验一条「Origin 等其余凭据合法，只有 Referer 指向站外」。
+/// 配置写入口比聊天写入口多验一条「Origin 等其余凭据合法，只有 Referer 指向站外」，
+/// 追加在共用四条之后；顺序约束同 [_commonWriteRejectionCases]。
 final List<_RejectedMutationCase> _configWriteRejectionCases =
     <_RejectedMutationCase>[
-      ..._sharedRejectionCases,
+      ..._commonWriteRejectionCases,
       (
         label: 'Origin、CSRF 都合法，只破坏来源 Referer',
-        headers: (browser, origin) =>
+        headersFor: (browser, origin) =>
             browser.mutationHeaders(origin)
               ..[HttpHeaders.refererHeader] = 'https://evil.example/x',
-        status: HttpStatus.forbidden,
-        message: 'Unexpected request source',
+        statusCode: HttpStatus.forbidden,
+        body: 'Unexpected request source',
       ),
     ];
 
 /// 在 [path] 这个产品写入口逐条发出 [cases]：断言状态码与响应体文案精确相等，
-/// 紧接一次 [expectNoSideEffect] 复核这一条拒绝没碰本机任何状态。
-/// 端点、方法与载荷由用例传入，两个写入口各用一条独立用例把同一批破坏组合
-/// 对自己的副作用判据验一遍。
+/// 紧接把这一条的 label 交给 [expectEndpointUntouched] 复核一次。端点、方法与载荷由
+/// 用例传入，两个写入口各用一条独立用例把同一批破坏组合对自己的判据验一遍。
+///
+/// [expectEndpointUntouched] 的尺度只到该入口对应的那一片状态：配置口是
+/// provider.json 的字节，聊天口是 Provider 替身调用数与 sessions/ 落盘快照；两份判据
+/// 都不覆盖本机其它状态，helper 也不替用例补判据。传入空回调（`(label) async {}`）
+/// 照样通过类型检查，代价是整个入口的副作用判据被静默丢掉——这条判据必须由用例给出。
 Future<void> _expectRejectedMutations(
   LocalAppHost host,
   _BrowserSession browser,
@@ -2938,18 +2957,18 @@ Future<void> _expectRejectedMutations(
   required String method,
   required String payload,
   required List<_RejectedMutationCase> cases,
-  required Future<void> Function() expectNoSideEffect,
+  required Future<void> Function(String label) expectEndpointUntouched,
 }) async {
   for (final testCase in cases) {
     final rejected = await _send(
       host.origin.resolve(path),
       method: method,
-      headers: testCase.headers(browser, host.origin),
+      headers: testCase.headersFor(browser, host.origin),
       requestBody: payload,
     );
-    expect(rejected.statusCode, testCase.status, reason: testCase.label);
-    expect(rejected.body, testCase.message, reason: testCase.label);
-    await expectNoSideEffect();
+    expect(rejected.statusCode, testCase.statusCode, reason: testCase.label);
+    expect(rejected.body, testCase.body, reason: testCase.label);
+    await expectEndpointUntouched(testCase.label);
   }
 }
 
