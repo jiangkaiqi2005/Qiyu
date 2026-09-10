@@ -3460,8 +3460,8 @@ void main() {
         diagnostics,
         'recall selection dropped date=2099-01-01',
       );
-      // 召回真的收尾完的那一刻，监听器也已释放：原端口可重新绑定。
-      await _expectPortRebindable(releasedAddress, releasedPort);
+      // 召回真的收尾完的那一刻，监听器也已释放：原来那对地址端口可重新绑定。
+      await _expectEndpointRebindable(releasedAddress, releasedPort);
     });
 
     test('close stops waiting at the shared budget and never cancels the work',
@@ -3511,8 +3511,8 @@ void main() {
       dreamGate.complete();
       await harness.finalizePending();
       expect(longMemory.readAsStringSync(), contains('用户搬了一次家'));
-      // 超时同样走到强制关闭监听：原端口可重新绑定。
-      await _expectPortRebindable(releasedAddress, releasedPort);
+      // 超时同样走到强制关闭监听：原来那对地址端口可重新绑定。
+      await _expectEndpointRebindable(releasedAddress, releasedPort);
     });
 
     test('close shares one timeout across both shutdown tails', () async {
@@ -3680,7 +3680,7 @@ Future<void> _seedHikingRecallEpisode(
 /// 「Host 关闭收尾」用例共用：用宿主关闭前实际绑定的那对地址与端口重绑一次，
 /// 能绑上即证明关闭路径最终释放了监听器。断言位置由调用点决定，不要求紧跟
 /// close 返回；地址与端口必须成对取自宿主本身，否则重绑的是另一个地址。
-Future<void> _expectPortRebindable(InternetAddress address, int port) async {
+Future<void> _expectEndpointRebindable(InternetAddress address, int port) async {
   final rebound = await ServerSocket.bind(address, port);
   await rebound.close();
 }
