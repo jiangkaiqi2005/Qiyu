@@ -58,12 +58,18 @@ final class LocalAppHost {
     this._requestHandler,
     this._idleCatchupPoller,
     this._memoryCadence,
+    this._chatService,
   );
 
   final HttpServer _server;
   final _LocalAppRequestHandler _requestHandler;
   final IdleCatchupPoller _idleCatchupPoller;
   final MemoryCadence _memoryCadence;
+
+  /// 关闭收尾依赖：组合根启动时创建、并已交给聊天与备份路由的
+  /// 同一个 [LocalChatService] 实例（不是第二个实例），在途召回收尾
+  /// 必须由 Host 自己等它，不借道安全请求入口取回。
+  final LocalChatService _chatService;
 
   InternetAddress get address => _server.address;
 
@@ -407,7 +413,13 @@ final class LocalAppHost {
     final catchupPoller =
         idleCatchupPoller ?? PeriodicIdleCatchupPoller(memoryCadence.pollTick);
     catchupPoller.start();
-    return LocalAppHost._(server, requestHandler, catchupPoller, memoryCadence);
+    return LocalAppHost._(
+      server,
+      requestHandler,
+      catchupPoller,
+      memoryCadence,
+      chatService,
+    );
   }
 
   /// 关闭前先停掉空闲补办轮询定时器（不再产生新 tick），再等待后台
@@ -419,7 +431,7 @@ final class LocalAppHost {
     try {
       await Future.wait<void>([
         _memoryCadence.finalizePending(),
-        _requestHandler.chatService.settlePendingRecalls(),
+        _chatService.settlePendingRecalls(),
       ]).timeout(const Duration(seconds: 3));
     } on Object {
       // 归档中断安全：finalized 保持 false，启动补扫会重做。
@@ -431,7 +443,7 @@ final class LocalAppHost {
 final class _LocalAppRequestHandler {
   _LocalAppRequestHandler(
     String webRoot, {
-    required this.chatService,
+    required LocalChatService chatService,
     required this.providerSettingsService,
     required this.webSearchSettingsService,
     required ProxySettingsService proxySettingsService,
@@ -496,7 +508,6 @@ final class _LocalAppRequestHandler {
 
   String _startupToken;
   String get startupToken => _startupToken;
-  final LocalChatService chatService;
   final ProviderSettingsService providerSettingsService;
   final WebSearchSettingsService webSearchSettingsService;
 
