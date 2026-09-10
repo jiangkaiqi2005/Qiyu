@@ -749,7 +749,7 @@ void main() {
         );
 
     // 写回失败对外只有仓库既有的保存失败包装，cause 保留原始写异常。
-    final saveFailure = isA<ProviderConfigException>()
+    final saveFailureMatcher = isA<ProviderConfigException>()
         .having((error) => error.message, 'message', '本地模型配置无法保存。')
         .having((error) => error.cause, 'cause', isA<FileSystemException>());
 
@@ -993,7 +993,7 @@ void main() {
       expect(await rawFile(), fixtureText);
     });
 
-    test('写入器失败保持原有异常包装、文案与一次尝试', () async {
+    test('写入器失败保持原有异常包装与文案，替换与删除各一次尝试', () async {
       await useFixture();
       final failingRepo = failingRepository();
 
@@ -1004,27 +1004,31 @@ void main() {
             model: 'tts-fake',
           ),
         ),
-        throwsA(saveFailure),
+        throwsA(saveFailureMatcher),
       );
       expect(attempts, 1);
 
       // 删除分支同样抛出原包装文案、只尝试一次，原文件保持。
-      await expectLater(failingRepo.saveProxy(null), throwsA(saveFailure));
+      await expectLater(
+        failingRepo.saveProxy(null),
+        throwsA(saveFailureMatcher),
+      );
       expect(attempts, 2);
       expect(await rawFile(), fixtureText);
     });
 
     test('stt 替换写入失败同样是原包装与一次尝试', () async {
       await useFixture();
+      final failingRepo = failingRepository();
 
       await expectLater(
-        failingRepository().saveStt(
+        failingRepo.saveStt(
           const SttConfig(
             baseUrl: 'https://stt.example.com/v2',
             model: 'whisper-fake-2',
           ),
         ),
-        throwsA(saveFailure),
+        throwsA(saveFailureMatcher),
       );
       expect(attempts, 1);
       expect(await rawFile(), fixtureText);
@@ -1032,12 +1036,13 @@ void main() {
 
     test('webSearch 替换写入失败同样是原包装与一次尝试', () async {
       await useFixture();
+      final failingRepo = failingRepository();
 
       await expectLater(
-        failingRepository().saveWebSearch(
+        failingRepo.saveWebSearch(
           const WebSearchConfig(apiKey: 'fake-search-key-2-not-real'),
         ),
-        throwsA(saveFailure),
+        throwsA(saveFailureMatcher),
       );
       expect(attempts, 1);
       expect(await rawFile(), fixtureText);

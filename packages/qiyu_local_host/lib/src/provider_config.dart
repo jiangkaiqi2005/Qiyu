@@ -701,6 +701,7 @@ final class JsonProviderConfigRepository
   @override
   Future<void> saveStt(SttConfig config) async {
     config.validate();
+    // 入参恒非空：语音段只替换、不删除，不走助手的删除分支。
     await _saveSection('stt', {...config.toJson(), 'apiKey': ?config.apiKey});
   }
 
@@ -718,6 +719,7 @@ final class JsonProviderConfigRepository
   @override
   Future<void> saveTts(TtsConfig config) async {
     config.validate();
+    // 入参恒非空：语音段只替换、不删除，不走助手的删除分支。
     await _saveSection('tts', {...config.toJson(), 'apiKey': ?config.apiKey});
   }
 
