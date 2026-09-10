@@ -3401,6 +3401,7 @@ void main() {
       // 只拿住 close 返回的 Future、一次都不 await：close 的异步方法体在
       // 首个 await 之前同步跑完，因此这条断言成立即说明停轮询先于等待后台
       // 收尾与释放监听，不是收尾完成后的顺带结果。
+      // 前提：harness 的 close() 是箭头直通转发，别包成 async，否则本断言误红。
       final closing = harness.close();
       expect(poller.stopped, isTrue);
       await closing;
@@ -3459,11 +3460,7 @@ void main() {
         'recall selection dropped date=2099-01-01',
       );
       // 召回真的收尾完的那一刻，监听器也已释放：原端口可重新绑定。
-      final rebound = await ServerSocket.bind(
-        InternetAddress.loopbackIPv4,
-        releasedPort,
-      );
-      await rebound.close();
+      await _expectPortRebindable(releasedPort);
     });
 
     test('close stops waiting at the shared budget and never cancels the work',
@@ -3513,11 +3510,7 @@ void main() {
       await harness.finalizePending();
       expect(longMemory.readAsStringSync(), contains('用户搬了一次家'));
       // 超时同样走到强制关闭监听：原端口可重新绑定。
-      final rebound = await ServerSocket.bind(
-        InternetAddress.loopbackIPv4,
-        releasedPort,
-      );
-      await rebound.close();
+      await _expectPortRebindable(releasedPort);
     });
 
     test('close shares one timeout across both shutdown tails', () async {
@@ -3681,6 +3674,13 @@ Future<void> _seedHikingRecallEpisode(
   clock,
   evidence: '这周末打算去爬山',
 );
+
+/// 「Host 关闭收尾」用例共用：close 返回后立刻重绑一次原监听端口，
+/// 能绑上即证明 Host 没把监听器留在手里。
+Future<void> _expectPortRebindable(int port) async {
+  final rebound = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
+  await rebound.close();
+}
 
 /// 等待哨兵诊断出现：后台查找保存链在落盘前先同步写诊断，哨兵行
 /// 出现即保存完成，替代已退役旁路上的 settle 等待。
