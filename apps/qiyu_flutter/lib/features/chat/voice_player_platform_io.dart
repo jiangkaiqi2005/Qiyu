@@ -209,21 +209,19 @@ final class IoVoicePlayerPlatform implements VoicePlayerPlatform {
 
   @override
   double getInitialVolume() {
-    // 解析规则与 web 侧 localStorage 读取逐条对齐：可解析、有限且在
-    // 0..1 内才采纳，否则退回缺省 1.0。
-    final saved = _volumeStore?.read();
-    if (saved != null) {
-      final val = double.tryParse(saved);
-      if (val != null && val.isFinite && val >= 0.0 && val <= 1.0) {
-        return val;
-      }
+    // 解析规则与 web 侧共用一份纯函数；本侧不包 try/catch，存储替身抛出的
+    // 异常照旧向外传播，只负责「没有存储 / 文本不可用」时退回缺省 1.0。
+    final parsed = parseVoiceVolumePreference(_volumeStore?.read());
+    if (parsed != null) {
+      return parsed;
     }
     return 1.0;
   }
 
   @override
   void saveVolume(double volume) {
-    _volumeStore?.write(volume.clamp(0.0, 1.0).toStringAsFixed(2));
+    // 编码留作 write 的实参：未注入存储时整个调用短路，连编码都不求值。
+    _volumeStore?.write(encodeVoiceVolumePreference(volume));
   }
 
   @override

@@ -113,6 +113,210 @@ void main() {
       }
     });
 
+    test('解析矩阵：合法文本逐条读回对应音量（含静音 0）', () {
+      final store = FileVoiceVolumeStore(tempDir);
+      final platform = IoVoicePlayerPlatform(
+        supported: true,
+        volumeStore: store,
+      );
+
+      const legal = {
+        '0': 0.0,
+        '0.00': 0.0,
+        '0.05': 0.05,
+        '0.40': 0.4,
+        '1': 1.0,
+        '1.00': 1.0,
+      };
+      for (final entry in legal.entries) {
+        store.write(entry.key);
+        expect(
+          platform.getInitialVolume(),
+          entry.value,
+          reason: '内容 "${entry.key}" 应原样采纳',
+        );
+      }
+    });
+
+    test('解析矩阵：非法文本退回 1.0，越界值不被 clamp 后采纳', () {
+      final store = FileVoiceVolumeStore(tempDir);
+      final platform = IoVoicePlayerPlatform(
+        supported: true,
+        volumeStore: store,
+      );
+
+      const illegal = [
+        '',
+        'abc',
+        '1.5',
+        '-0.2',
+        '1.0000000000000002',
+        'NaN',
+        'nan',
+        'Infinity',
+        'infinity',
+        '-Infinity',
+        '1e400',
+        '0x0.8',
+      ];
+      for (final text in illegal) {
+        store.write(text);
+        expect(
+          platform.getInitialVolume(),
+          1.0,
+          reason: '内容 "$text" 应退回缺省，而不是收进 0..1 后采纳',
+        );
+      }
+    });
+
+    test('解析矩阵：现状就接受的写法继续接受（空格、.5、科学计数、区间上沿内极值）',
+        () {
+      final store = FileVoiceVolumeStore(tempDir);
+      final platform = IoVoicePlayerPlatform(
+        supported: true,
+        volumeStore: store,
+      );
+
+      const accepted = {
+        ' 0.5': 0.5,
+        '0.5 ': 0.5,
+        '.5': 0.5,
+        '5e-1': 0.5,
+        '1e-3': 0.001,
+        '0.9999999999999999': 0.9999999999999999,
+      };
+      for (final entry in accepted.entries) {
+        store.write(entry.key);
+        expect(
+          platform.getInitialVolume(),
+          entry.value,
+          reason: '内容 "${entry.key}" 按旧解析规则本就可采纳',
+        );
+      }
+    });
+
+    test('解析矩阵："-0.00" 读回的是负零音量（等于 0 但符号保留）', () {
+      final store = FileVoiceVolumeStore(tempDir);
+      store.write('-0.00');
+
+      final volume = IoVoicePlayerPlatform(
+        supported: true,
+        volumeStore: store,
+      ).getInitialVolume();
+
+      expect(volume, 0.0);
+      expect(volume.toString(), '-0.0');
+    });
+
+    test('编码矩阵：落盘文本逐条钉住（上下界、负零、非有限值、两位小数舍入临界）',
+        () {
+      final store = FileVoiceVolumeStore(tempDir);
+      final platform = IoVoicePlayerPlatform(
+        supported: true,
+        volumeStore: store,
+      );
+
+      const encoded = <({double volume, String stored})>[
+        (volume: 0.0, stored: '0.00'),
+        (volume: 0.4, stored: '0.40'),
+        (volume: 1.0, stored: '1.00'),
+        (volume: 1.7, stored: '1.00'),
+        (volume: -0.5, stored: '0.00'),
+        (volume: -0.0, stored: '0.00'),
+        (volume: double.nan, stored: '1.00'),
+        (volume: double.infinity, stored: '1.00'),
+        (volume: double.negativeInfinity, stored: '0.00'),
+        (volume: 0.005, stored: '0.01'),
+        (volume: 0.015, stored: '0.01'),
+        (volume: 0.025, stored: '0.03'),
+        (volume: 0.125, stored: '0.13'),
+        (volume: 0.375, stored: '0.38'),
+        (volume: 0.995, stored: '0.99'),
+        (volume: 0.9949999999999999, stored: '0.99'),
+        (volume: 0.999, stored: '1.00'),
+        (volume: 0.004999999999999999, stored: '0.00'),
+        (volume: 1e-7, stored: '0.00'),
+      ];
+      for (final entry in encoded) {
+        store.write('sentinel-before-save');
+        platform.saveVolume(entry.volume);
+        expect(
+          store.read(),
+          entry.stored,
+          reason: 'saveVolume(${entry.volume}) 的落盘文本是旧表达式的实际结果',
+        );
+      }
+    });
+
+    test('编码矩阵：两位小数是有损的，新实例读回的是落盘文本而非原值', () {
+      final store = FileVoiceVolumeStore(tempDir);
+
+      IoVoicePlayerPlatform(supported: true, volumeStore: store).saveVolume(
+        0.125,
+      );
+
+      expect(store.read(), '0.13');
+      expect(
+        IoVoicePlayerPlatform(
+          supported: true,
+          volumeStore: store,
+        ).getInitialVolume(),
+        0.13,
+      );
+    });
+
+    test('存储只被摸一次：读一次得音量、写一次且写的就是编码后的文本', () {
+      final store = _RecordingVolumeStore();
+      final platform = IoVoicePlayerPlatform(
+        supported: true,
+        volumeStore: store,
+      );
+
+      expect(platform.getInitialVolume(), 1.0);
+      expect(store.readCalls, 1);
+
+      platform.saveVolume(0.4);
+
+      expect(store.writes, ['0.40']);
+    });
+
+    test('注入读失败替身：异常照旧外抛（io 侧读取不包 try/catch）', () {
+      final platform = IoVoicePlayerPlatform(
+        supported: true,
+        volumeStore: _RecordingVolumeStore(failRead: true),
+      );
+
+      expect(() => platform.getInitialVolume(), throwsStateError);
+    });
+
+    test('注入写失败替身：编码完成后异常照旧外抛', () {
+      final store = _RecordingVolumeStore(failWrite: true);
+      final platform = IoVoicePlayerPlatform(
+        supported: true,
+        volumeStore: store,
+      );
+
+      expect(() => platform.saveVolume(0.4), throwsStateError);
+      expect(store.writes, ['0.40']);
+    });
+
+    test('文件存储自身读写失败仍静默：读不成返回 null，写不成不抛', () {
+      final blocker = File(
+        '${tempDir.path}${Platform.pathSeparator}blocker',
+      )..createSync();
+      final store = FileVoiceVolumeStore(Directory(blocker.path));
+
+      expect(store.read(), isNull);
+      expect(() => store.write('0.50'), returnsNormally);
+      expect(
+        IoVoicePlayerPlatform(
+          supported: true,
+          volumeStore: store,
+        ).getInitialVolume(),
+        1.0,
+      );
+    });
+
     test('保存目录不存在时自动创建并往返成功；读不存在的内容返回 null', () {
       final store = FileVoiceVolumeStore(Directory('${tempDir.path}/nested/deep'));
 
@@ -310,6 +514,35 @@ void main() {
 }
 
 Future<void> _pumpMicrotask() => Future<void>.delayed(Duration.zero);
+
+/// 音量存储替身：记录读次与写入文本，可按开关抛错，用来锁住 io 侧
+/// `getInitialVolume` / `saveVolume` 没有 try/catch 时的异常传播现状
+/// （真实 [FileVoiceVolumeStore] 自己在内部吞异常，两者不是一回事）。
+final class _RecordingVolumeStore implements VoiceVolumeStore {
+  _RecordingVolumeStore({this.failRead = false, this.failWrite = false});
+
+  final bool failRead;
+  final bool failWrite;
+  final writes = <String>[];
+  int readCalls = 0;
+
+  @override
+  String? read() {
+    readCalls += 1;
+    if (failRead) {
+      throw StateError('音量读取失败替身');
+    }
+    return null;
+  }
+
+  @override
+  void write(String value) {
+    writes.add(value);
+    if (failWrite) {
+      throw StateError('音量写入失败替身');
+    }
+  }
+}
 
 /// 播放通道 fake：记录起播参数与控制调用，手动派发完成回调。
 final class _FakePlayerChannel implements VoicePlayerNativeChannel {

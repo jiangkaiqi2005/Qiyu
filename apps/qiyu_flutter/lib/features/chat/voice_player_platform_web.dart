@@ -38,14 +38,11 @@ final class WebVoicePlayerPlatform
   @override
   double getInitialVolume() {
     try {
-      final saved = web.window.localStorage.getItem(
-        voiceOutputVolumeStorageKey,
+      final parsed = parseVoiceVolumePreference(
+        web.window.localStorage.getItem(voiceOutputVolumeStorageKey),
       );
-      if (saved != null) {
-        final val = double.tryParse(saved);
-        if (val != null && val.isFinite && val >= 0.0 && val <= 1.0) {
-          return val;
-        }
+      if (parsed != null) {
+        return parsed;
       }
     } on Object {
       // 忽略 localStorage 读取异常
@@ -58,7 +55,7 @@ final class WebVoicePlayerPlatform
     try {
       web.window.localStorage.setItem(
         voiceOutputVolumeStorageKey,
-        volume.clamp(0.0, 1.0).toStringAsFixed(2),
+        encodeVoiceVolumePreference(volume),
       );
     } on Object {
       // 忽略 localStorage 写入异常

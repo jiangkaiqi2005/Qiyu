@@ -7,6 +7,7 @@ import 'package:qiyu_flutter/features/chat/voice_player_platform.dart'
     hide createVoicePlayerPlatform;
 import 'package:qiyu_flutter/features/chat/voice_player_platform_web.dart';
 import 'package:test/test.dart';
+import 'package:web/web.dart' as web;
 
 void main() {
   test('真实 Web Audio 跨异步边界解码并播放内存音频，并能自然结束', () async {
@@ -79,7 +80,172 @@ void main() {
     );
     expect(playback, isNull);
   });
+
+  /// 音量偏好的真实浏览器现状矩阵（票 04）：与
+  /// `voice_player_platform_io_test.dart` 同一输入集，逐条对照 localStorage
+  /// 与安卓应用内文件的解析/编码结果。跑在真 `window.localStorage` 上，
+  /// 改键前记下旧值、用例结束原样放回（不清空整个存储，别的键属于别人）。
+  group('播放音量偏好（真实 localStorage）', () {
+    late WebVoicePlayerPlatform platform;
+    late String? storedBefore;
+
+    setUp(() {
+      storedBefore = _rawStoredVolume();
+      web.window.localStorage.removeItem(voiceOutputVolumeStorageKey);
+      platform = WebVoicePlayerPlatform();
+    });
+
+    tearDown(() {
+      final before = storedBefore;
+      if (before == null) {
+        web.window.localStorage.removeItem(voiceOutputVolumeStorageKey);
+      } else {
+        web.window.localStorage.setItem(voiceOutputVolumeStorageKey, before);
+      }
+    });
+
+    test('从未存过：退回缺省 1.0，且不凭空写出键', () {
+      expect(platform.getInitialVolume(), 1.0);
+      expect(_rawStoredVolume(), isNull);
+    });
+
+    test('解析矩阵：合法文本逐条读回对应音量（含静音 0）', () {
+      const legal = {
+        '0': 0.0,
+        '0.00': 0.0,
+        '0.05': 0.05,
+        '0.40': 0.4,
+        '1': 1.0,
+        '1.00': 1.0,
+      };
+      for (final entry in legal.entries) {
+        _storeRawVolume(entry.key);
+        expect(
+          platform.getInitialVolume(),
+          entry.value,
+          reason: '内容 "${entry.key}" 应原样采纳',
+        );
+      }
+    });
+
+    test('解析矩阵：非法文本退回 1.0，越界值不被 clamp 后采纳', () {
+      const illegal = [
+        '',
+        'abc',
+        '1.5',
+        '-0.2',
+        '1.0000000000000002',
+        'NaN',
+        'nan',
+        'Infinity',
+        'infinity',
+        '-Infinity',
+        '1e400',
+        '0x0.8',
+      ];
+      for (final text in illegal) {
+        _storeRawVolume(text);
+        expect(
+          platform.getInitialVolume(),
+          1.0,
+          reason: '内容 "$text" 应退回缺省，而不是收进 0..1 后采纳',
+        );
+      }
+    });
+
+    test('解析矩阵：现状就接受的写法继续接受（空格、.5、科学计数、区间上沿内极值）', () {
+      const accepted = {
+        ' 0.5': 0.5,
+        '0.5 ': 0.5,
+        '.5': 0.5,
+        '5e-1': 0.5,
+        '1e-3': 0.001,
+        '0.9999999999999999': 0.9999999999999999,
+      };
+      for (final entry in accepted.entries) {
+        _storeRawVolume(entry.key);
+        expect(
+          platform.getInitialVolume(),
+          entry.value,
+          reason: '内容 "${entry.key}" 按旧解析规则本就可采纳',
+        );
+      }
+    });
+
+    test('解析矩阵："-0.00" 读回的是负零音量（等于 0 但符号保留）', () {
+      _storeRawVolume('-0.00');
+
+      final volume = platform.getInitialVolume();
+
+      expect(volume, 0.0);
+      expect(volume.toString(), '-0.0');
+    });
+
+    test('编码矩阵：落盘文本逐条钉住（上下界、负零、非有限值、两位小数舍入临界）', () {
+      const encoded = <({double volume, String stored})>[
+        (volume: 0.0, stored: '0.00'),
+        (volume: 0.4, stored: '0.40'),
+        (volume: 1.0, stored: '1.00'),
+        (volume: 1.7, stored: '1.00'),
+        (volume: -0.5, stored: '0.00'),
+        (volume: -0.0, stored: '0.00'),
+        (volume: double.nan, stored: '1.00'),
+        (volume: double.infinity, stored: '1.00'),
+        (volume: double.negativeInfinity, stored: '0.00'),
+        (volume: 0.005, stored: '0.01'),
+        (volume: 0.015, stored: '0.01'),
+        (volume: 0.025, stored: '0.03'),
+        (volume: 0.125, stored: '0.13'),
+        (volume: 0.375, stored: '0.38'),
+        (volume: 0.995, stored: '0.99'),
+        (volume: 0.9949999999999999, stored: '0.99'),
+        (volume: 0.999, stored: '1.00'),
+        (volume: 0.004999999999999999, stored: '0.00'),
+        (volume: 1e-7, stored: '0.00'),
+      ];
+      for (final entry in encoded) {
+        _storeRawVolume('sentinel-before-save');
+        platform.saveVolume(entry.volume);
+        expect(
+          _rawStoredVolume(),
+          entry.stored,
+          reason: 'saveVolume(${entry.volume}) 的落盘文本是旧表达式的实际结果',
+        );
+      }
+    });
+
+    test('编码矩阵：两位小数是有损的，新建平台对象后读回落盘文本', () {
+      platform.saveVolume(0.125);
+
+      expect(_rawStoredVolume(), '0.13');
+      expect(WebVoicePlayerPlatform().getInitialVolume(), 0.13);
+    });
+
+    test('保存 0.4 与 0 后重建对象可读回；只认自己那一枚键', () {
+      platform.saveVolume(0.4);
+      expect(WebVoicePlayerPlatform().getInitialVolume(), 0.4);
+
+      platform.saveVolume(0);
+      expect(WebVoicePlayerPlatform().getInitialVolume(), 0.0);
+
+      web.window.localStorage.removeItem(voiceOutputVolumeStorageKey);
+      web.window.localStorage.setItem(
+        '${voiceOutputVolumeStorageKey}_neighbor',
+        '0.20',
+      );
+      expect(platform.getInitialVolume(), 1.0, reason: '读到了别的键名，说明键名不是单一定位');
+      web.window.localStorage.removeItem(
+        '${voiceOutputVolumeStorageKey}_neighbor',
+      );
+    });
+  });
 }
+
+void _storeRawVolume(String value) =>
+    web.window.localStorage.setItem(voiceOutputVolumeStorageKey, value);
+
+String? _rawStoredVolume() =>
+    web.window.localStorage.getItem(voiceOutputVolumeStorageKey);
 
 Uint8List _silentWav({int sampleCount = 1600, int sampleRate = 16000}) {
   final bytes = Uint8List(44 + sampleCount * 2);
