@@ -315,6 +315,260 @@ void main() {
         await host.close();
       },
     );
+
+    // Spec 实现决策 10「GET 与 HEAD 仍使用当前的『是否修改』判定」与 A 验收矩阵
+    // 「未知请求保持 404」两格的方法半边。以下两条用例的期望值全部取自未改动生产
+    // 实现上的实跑结果（HEAD 的正文按 HTTP 语义由服务器剥掉，故只比状态码、
+    // 空正文与 Content-Length）。
+    test(
+      'HEAD 走产品路径按基线方法判定：不被当修改请求，也不豁免来源与会话检查',
+      () async {
+        final gateway = _StaticModelGateway('还没睡？');
+        final configPath = _providerJsonPath(temporaryDirectory);
+        final settings = ProviderSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          _MemorySecretStore(),
+          gateway,
+          const ModelPromptBuilder('测试人格宪法'),
+        );
+        await settings.save(
+          config: const ProviderConfig(
+            kind: ProviderKind.openAiCompatible,
+            baseUrl: 'https://example.com/v1',
+            model: 'chat-model',
+            temperature: 0.6,
+            timeoutSeconds: 25,
+          ),
+          apiKey: 'head-case-secret-value',
+        );
+        final (host, browser) = await _startHostWithBrowser(
+          webRoot,
+          memoryDirectory,
+          providerSettingsService: settings,
+        );
+        await host.memoryCadence.finalizePending();
+        final sessionsDirectory = Directory(
+          '${memoryDirectory.path}${Platform.pathSeparator}sessions',
+        );
+        final sessionsBefore = await _snapshotFiles(sessionsDirectory);
+        final providerFile = File(configPath);
+        final bytesBefore = await providerFile.readAsBytes();
+
+        /// 发一次 HEAD：断言状态码、正文为空、Content-Length 与基线文案的字节数
+        /// 一致（HEAD 无正文，文案只能这样核对），随后复核该入口对应的落盘与
+        /// Provider 调用分毫未动。
+        Future<void> expectHead(
+          String label,
+          String path,
+          Map<String, String> headers,
+          int statusCode,
+          String baselineText,
+        ) async {
+          final response = await _send(
+            host.origin.resolve(path),
+            method: 'HEAD',
+            headers: headers,
+          );
+          expect(response.statusCode, statusCode, reason: label);
+          expect(response.bodyBytes, isEmpty, reason: label);
+          expect(
+            response.headers.contentLength,
+            utf8.encode(baselineText).length,
+            reason: '$label：HEAD 无正文，按基线文案字节数核对',
+          );
+          expect(gateway.calls, 0, reason: label);
+          expect(
+            await _snapshotFiles(sessionsDirectory),
+            sessionsBefore,
+            reason: label,
+          );
+          expect(
+            await providerFile.readAsBytes(),
+            equals(bytesBefore),
+            reason: label,
+          );
+        }
+
+        await expectHead(
+          '聊天入口带齐合法凭据的 HEAD 仍无人认领',
+          '/api/chat',
+          browser.mutationHeaders(host.origin),
+          HttpStatus.notFound,
+          'Not found',
+        );
+        await expectHead(
+          '聊天入口把 CSRF 换成错值的 HEAD：CSRF 只查修改请求，不因此被拒',
+          '/api/chat',
+          browser.mutationHeaders(host.origin)
+            ..['x-qiyu-csrf'] = 'wrong-csrf',
+          HttpStatus.notFound,
+          'Not found',
+        );
+        await expectHead(
+          '配置写入口的 HEAD 不触发写入',
+          '/api/provider/proxy',
+          browser.mutationHeaders(host.origin),
+          HttpStatus.notFound,
+          'Not found',
+        );
+        await expectHead(
+          '内建读入口 bootstrap 只认 GET，HEAD 落到未知请求',
+          '/api/bootstrap',
+          browser.mutationHeaders(host.origin),
+          HttpStatus.notFound,
+          'Not found',
+        );
+        await expectHead(
+          'HEAD 不豁免来源检查：Origin 指站外仍是来源拒绝',
+          '/api/chat',
+          browser.mutationHeaders(host.origin)
+            ..['origin'] = 'https://evil.example',
+          HttpStatus.forbidden,
+          'Unexpected request source',
+        );
+        await expectHead(
+          'HEAD 不豁免会话检查：缺会话 Cookie 仍是会话拒绝',
+          '/api/chat',
+          browser.mutationHeaders(host.origin)
+            ..remove(HttpHeaders.cookieHeader),
+          HttpStatus.unauthorized,
+          'Invalid session',
+        );
+
+        // 对照组：同一 Host 上合法 POST 聊天确实会走到 Provider 并新增落盘，
+        // 上面那些「调用数为 0、快照不变」才不是替身没接线造成的空断言。
+        final accepted = await _postJson(host, browser, '/api/chat', {
+          'requestId': 'head-case-ok',
+          'text': '在吗',
+        });
+        expect(accepted.statusCode, HttpStatus.ok);
+        expect(gateway.calls, 1);
+        expect(await _snapshotFiles(sessionsDirectory), isNot(sessionsBefore));
+        await host.close();
+      },
+    );
+
+    test(
+      '未使用方法 PATCH 保持未知请求的 404：按修改请求走 CSRF，也不绕过鉴权',
+      () async {
+        final gateway = _StaticModelGateway('还没睡？');
+        final configPath = _providerJsonPath(temporaryDirectory);
+        final settings = ProviderSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          _MemorySecretStore(),
+          gateway,
+          const ModelPromptBuilder('测试人格宪法'),
+        );
+        await settings.save(
+          config: const ProviderConfig(
+            kind: ProviderKind.openAiCompatible,
+            baseUrl: 'https://example.com/v1',
+            model: 'chat-model',
+            temperature: 0.6,
+            timeoutSeconds: 25,
+          ),
+          apiKey: 'patch-case-secret-value',
+        );
+        final (host, browser) = await _startHostWithBrowser(
+          webRoot,
+          memoryDirectory,
+          providerSettingsService: settings,
+        );
+        await host.memoryCadence.finalizePending();
+        final sessionsDirectory = Directory(
+          '${memoryDirectory.path}${Platform.pathSeparator}sessions',
+        );
+        final sessionsBefore = await _snapshotFiles(sessionsDirectory);
+        final providerFile = File(configPath);
+        final bytesBefore = await providerFile.readAsBytes();
+        const chatPayload = '{"requestId":"patch-case-1","text":"在吗"}';
+        const proxyPayload =
+            '{"enabled":true,"host":"192.168.1.2","port":7890}';
+
+        /// 在 [path] 上发一次 PATCH（本应用未使用的方法），断言状态码与响应体
+        /// 文案精确相等，随后复核 Provider 未被调用、会话与配置落盘字节未动。
+        Future<void> expectPatch(
+          String label,
+          String path,
+          Map<String, String> headers,
+          String? payload,
+          int statusCode,
+          String body,
+        ) async {
+          final response = await _send(
+            host.origin.resolve(path),
+            method: 'PATCH',
+            headers: headers,
+            requestBody: payload,
+          );
+          expect(response.statusCode, statusCode, reason: label);
+          expect(response.body, body, reason: label);
+          expect(gateway.calls, 0, reason: label);
+          expect(
+            await _snapshotFiles(sessionsDirectory),
+            sessionsBefore,
+            reason: label,
+          );
+          expect(
+            await providerFile.readAsBytes(),
+            equals(bytesBefore),
+            reason: label,
+          );
+        }
+
+        await expectPatch(
+          '未知路径上的 PATCH 与既有 POST/GET/DELETE 同样保持 404',
+          '/api/no-such-namespace/endpoint',
+          browser.mutationHeaders(host.origin),
+          proxyPayload,
+          HttpStatus.notFound,
+          'Not found',
+        );
+        await expectPatch(
+          '聊天入口收到 PATCH 时不认领，载荷再合法也不触发交付',
+          '/api/chat',
+          browser.mutationHeaders(host.origin),
+          chatPayload,
+          HttpStatus.notFound,
+          'Not found',
+        );
+        await expectPatch(
+          '配置写入口收到 PATCH 时不写入，provider.json 逐字未变',
+          '/api/provider/proxy',
+          browser.mutationHeaders(host.origin),
+          proxyPayload,
+          HttpStatus.notFound,
+          'Not found',
+        );
+        await expectPatch(
+          'PATCH 属修改请求：CSRF 错值先于分发被拒',
+          '/api/chat',
+          browser.mutationHeaders(host.origin)
+            ..['x-qiyu-csrf'] = 'wrong-csrf',
+          chatPayload,
+          HttpStatus.forbidden,
+          'Invalid CSRF token',
+        );
+        await expectPatch(
+          '未知路径上的 PATCH 也不绕过鉴权：缺 Cookie 先是会话拒绝',
+          '/api/no-such-namespace/endpoint',
+          browser.mutationHeaders(host.origin)
+            ..remove(HttpHeaders.cookieHeader),
+          proxyPayload,
+          HttpStatus.unauthorized,
+          'Invalid session',
+        );
+
+        final accepted = await _postJson(host, browser, '/api/chat', {
+          'requestId': 'patch-case-ok',
+          'text': '在吗',
+        });
+        expect(accepted.statusCode, HttpStatus.ok);
+        expect(gateway.calls, 1);
+        expect(await _snapshotFiles(sessionsDirectory), isNot(sessionsBefore));
+        await host.close();
+      },
+    );
   });
 
   group('聊天交付与幂等', () {
@@ -2877,8 +3131,9 @@ Future<Map<String, List<int>>> _snapshotFiles(Directory directory) async {
 /// 「被拒之后本机状态分毫未动」的判据因写入口而异（配置口看文件字节，聊天口看模型
 /// 替身调用数与会话落盘），所以留在各自用例里，不进这张表。
 /// 字段名沿用本文件的 HTTP 词汇：statusCode 与 body 同名于 [_HttpResponse] 上被断言
-/// 的成员；headers 在本文件指真实请求头 map（_send 的 headers 具名实参），这里放的
-/// 是「产出被改坏后的请求头」的函数，故按仓库既有的 xxxFor 写法命名为 headersFor。
+/// 的成员；请求侧的 headers 在本文件指真实请求头 map（[_send] 的 headers 具名实参），
+/// 这里放的是「产出被改坏后的请求头」的函数，故按仓库既有的 xxxFor 写法命名为
+/// headersFor。[_HttpResponse] 上的 headers 是响应头，不属这条先例。
 typedef _RejectedMutationCase = ({
   String label,
   Map<String, String> Function(_BrowserSession browser, Uri origin) headersFor,
