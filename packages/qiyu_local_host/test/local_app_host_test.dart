@@ -194,7 +194,8 @@ void main() {
           webRoot,
           memoryDirectory,
         );
-        final endpoint = host.origin.resolve('/api/provider/proxy');
+        const path = '/api/provider/proxy';
+        final endpoint = host.origin.resolve(path);
         const payload = '{"enabled":true,"host":"192.168.1.2","port":7890}';
 
         // 先按合法凭据写入一次：既确立「载荷本身有效、这条路径写得进去」，
@@ -211,56 +212,16 @@ void main() {
         final providerFile = File(_providerJsonPath(temporaryDirectory));
         final bytesBefore = await providerFile.readAsBytes();
 
-        Future<void> expectRejected(
-          Map<String, String> headers,
-          int statusCode,
-          String message,
-        ) async {
-          final rejected = await _send(
-            endpoint,
-            method: 'PUT',
-            headers: headers,
-            requestBody: payload,
-          );
-          expect(rejected.statusCode, statusCode);
-          expect(rejected.body, message);
-          expect(await providerFile.readAsBytes(), equals(bytesBefore));
-        }
-
-        // 来源与会话都合法，只把 CSRF 令牌换掉：命中修改请求的 CSRF 检查。
-        await expectRejected(
-          browser.mutationHeaders(host.origin)..['x-qiyu-csrf'] = 'wrong-csrf',
-          HttpStatus.forbidden,
-          'Invalid CSRF token',
-        );
-        // Cookie、CSRF 都合法，只破坏来源 Origin。
-        await expectRejected(
-          browser.mutationHeaders(host.origin)
-            ..['origin'] = 'https://evil.example',
-          HttpStatus.forbidden,
-          'Unexpected request source',
-        );
-        // Origin、CSRF 都合法，只破坏来源 Referer。
-        await expectRejected(
-          browser.mutationHeaders(host.origin)
-            ..[HttpHeaders.refererHeader] = 'https://evil.example/x',
-          HttpStatus.forbidden,
-          'Unexpected request source',
-        );
-        // 载荷、来源与 CSRF 都合法，只移除会话 Cookie。
-        await expectRejected(
-          browser.mutationHeaders(host.origin)..remove(HttpHeaders.cookieHeader),
-          HttpStatus.unauthorized,
-          'Invalid session',
-        );
-        // 三样凭据同时错误：来源检查排在会话与 CSRF 之前，必须报来源错误。
-        await expectRejected(
-          browser.mutationHeaders(host.origin)
-            ..remove(HttpHeaders.cookieHeader)
-            ..['origin'] = 'https://evil.example'
-            ..['x-qiyu-csrf'] = 'wrong-csrf',
-          HttpStatus.forbidden,
-          'Unexpected request source',
+        // 逐条单独破坏凭据：每一次都重新读 provider.json，断言字节与保存前逐字相同。
+        await _expectRejectedMutations(
+          host,
+          browser,
+          path,
+          method: 'PUT',
+          payload: payload,
+          cases: _configWriteRejectionCases,
+          expectNoSideEffect: () async =>
+              expect(await providerFile.readAsBytes(), equals(bytesBefore)),
         );
         // 未被认领的路径同样先过安全检查：无会话时报会话拒绝而不是 404。
         final unknownWithoutSession = await _send(
@@ -318,49 +279,20 @@ void main() {
         );
         final sessionsBefore = await _snapshotFiles(sessionsDirectory);
         const payload = '{"requestId":"auth-chat-1","text":"在吗"}';
-        final endpoint = host.origin.resolve('/api/chat');
 
-        Future<void> expectRejected(
-          Map<String, String> headers,
-          int statusCode,
-          String message,
-        ) async {
-          final rejected = await _send(
-            endpoint,
-            method: 'POST',
-            headers: headers,
-            requestBody: payload,
-          );
-          expect(rejected.statusCode, statusCode);
-          expect(rejected.body, message);
-          // Provider 替身一次都没被调用，会话落盘集合与内容逐字不变。
-          expect(gateway.calls, 0);
-          expect(await _snapshotFiles(sessionsDirectory), sessionsBefore);
-        }
-
-        await expectRejected(
-          browser.mutationHeaders(host.origin)..['x-qiyu-csrf'] = 'wrong-csrf',
-          HttpStatus.forbidden,
-          'Invalid CSRF token',
-        );
-        await expectRejected(
-          browser.mutationHeaders(host.origin)
-            ..['origin'] = 'https://evil.example',
-          HttpStatus.forbidden,
-          'Unexpected request source',
-        );
-        await expectRejected(
-          browser.mutationHeaders(host.origin)..remove(HttpHeaders.cookieHeader),
-          HttpStatus.unauthorized,
-          'Invalid session',
-        );
-        await expectRejected(
-          browser.mutationHeaders(host.origin)
-            ..remove(HttpHeaders.cookieHeader)
-            ..['origin'] = 'https://evil.example'
-            ..['x-qiyu-csrf'] = 'wrong-csrf',
-          HttpStatus.forbidden,
-          'Unexpected request source',
+        // 四条破坏组合逐条发出：Provider 替身一次都没被调用，
+        // 会话落盘集合与内容逐字不变。
+        await _expectRejectedMutations(
+          host,
+          browser,
+          '/api/chat',
+          method: 'POST',
+          payload: payload,
+          cases: _sharedRejectionCases,
+          expectNoSideEffect: () async {
+            expect(gateway.calls, 0);
+            expect(await _snapshotFiles(sessionsDirectory), sessionsBefore);
+          },
         );
 
         // 对照组：同一载荷配上合法凭据确实会走到 Provider，
@@ -2932,6 +2864,93 @@ Future<Map<String, List<int>>> _snapshotFiles(Directory directory) async {
     }
   }
   return snapshot;
+}
+
+/// 一条「凭据被破坏的产品写请求」用例：只记请求侧（怎么破坏、期望状态码、期望文案）。
+/// 「被拒之后本机状态分毫未动」的判据因写入口而异（配置口看文件字节，聊天口看模型
+/// 替身调用数与会话落盘），所以留在各自用例里，不进这张表。
+typedef _RejectedMutationCase = ({
+  String label,
+  Map<String, String> Function(_BrowserSession browser, Uri origin) headers,
+  int status,
+  String message,
+});
+
+/// 配置写入口与聊天写入口共用的四条破坏组合：每条只改坏一项凭据，其余保持合法，
+/// 最后一条三样同时坏，必须报基线最先检查到的那一步（来源）。
+final List<_RejectedMutationCase> _sharedRejectionCases =
+    <_RejectedMutationCase>[
+      (
+        label: '只把 CSRF 令牌换掉，命中修改请求的 CSRF 检查',
+        headers: (browser, origin) =>
+            browser.mutationHeaders(origin)..['x-qiyu-csrf'] = 'wrong-csrf',
+        status: HttpStatus.forbidden,
+        message: 'Invalid CSRF token',
+      ),
+      (
+        label: 'Cookie、CSRF 都合法，只破坏来源 Origin',
+        headers: (browser, origin) =>
+            browser.mutationHeaders(origin)
+              ..['origin'] = 'https://evil.example',
+        status: HttpStatus.forbidden,
+        message: 'Unexpected request source',
+      ),
+      (
+        label: '载荷、来源与 CSRF 都合法，只移除会话 Cookie',
+        headers: (browser, origin) =>
+            browser.mutationHeaders(origin)..remove(HttpHeaders.cookieHeader),
+        status: HttpStatus.unauthorized,
+        message: 'Invalid session',
+      ),
+      (
+        label: '三样凭据同时错误：来源检查排在会话与 CSRF 之前',
+        headers: (browser, origin) => browser.mutationHeaders(origin)
+          ..remove(HttpHeaders.cookieHeader)
+          ..['origin'] = 'https://evil.example'
+          ..['x-qiyu-csrf'] = 'wrong-csrf',
+        status: HttpStatus.forbidden,
+        message: 'Unexpected request source',
+      ),
+    ];
+
+/// 配置写入口比聊天写入口多验一条「Origin 等其余凭据合法，只有 Referer 指向站外」。
+final List<_RejectedMutationCase> _configWriteRejectionCases =
+    <_RejectedMutationCase>[
+      ..._sharedRejectionCases,
+      (
+        label: 'Origin、CSRF 都合法，只破坏来源 Referer',
+        headers: (browser, origin) =>
+            browser.mutationHeaders(origin)
+              ..[HttpHeaders.refererHeader] = 'https://evil.example/x',
+        status: HttpStatus.forbidden,
+        message: 'Unexpected request source',
+      ),
+    ];
+
+/// 在 [path] 这个产品写入口逐条发出 [cases]：断言状态码与响应体文案精确相等，
+/// 紧接一次 [expectNoSideEffect] 复核这一条拒绝没碰本机任何状态。
+/// 端点、方法与载荷由用例传入，两个写入口各用一条独立用例把同一批破坏组合
+/// 对自己的副作用判据验一遍。
+Future<void> _expectRejectedMutations(
+  LocalAppHost host,
+  _BrowserSession browser,
+  String path, {
+  required String method,
+  required String payload,
+  required List<_RejectedMutationCase> cases,
+  required Future<void> Function() expectNoSideEffect,
+}) async {
+  for (final testCase in cases) {
+    final rejected = await _send(
+      host.origin.resolve(path),
+      method: method,
+      headers: testCase.headers(browser, host.origin),
+      requestBody: payload,
+    );
+    expect(rejected.statusCode, testCase.status, reason: testCase.label);
+    expect(rejected.body, testCase.message, reason: testCase.label);
+    await expectNoSideEffect();
+  }
 }
 
 /// POST + mutationHeaders + JSON 请求体的固定三参形状：内部仍走 [_send]。
