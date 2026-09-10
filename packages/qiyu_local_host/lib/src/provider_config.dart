@@ -750,13 +750,19 @@ final class JsonProviderConfigRepository
     }
   }
 
-  /// 语音两段共享的段级保存：只替换本段，保留文件其余内容。
+  /// 子段共用的段级保存：读整份配置→只替换或删除本段→一次原子写回。
+  /// [sectionJson] 非空时替换本段，为空时移除本段键——「删除子段」与
+  /// 「把字段写成 null」不是一回事，各保存方保留自己的载荷构造与校验。
   Future<void> _saveSection(
     String sectionKey,
-    Map<String, Object?> sectionJson,
+    Map<String, Object?>? sectionJson,
   ) async {
     final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
-    json[sectionKey] = sectionJson;
+    if (sectionJson == null) {
+      json.remove(sectionKey);
+    } else {
+      json[sectionKey] = sectionJson;
+    }
     await _writeFile(json);
   }
 
@@ -784,13 +790,11 @@ final class JsonProviderConfigRepository
   @override
   Future<void> saveWebSearch(WebSearchConfig? config) async {
     config?.validate();
-    final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
-    if (config == null) {
-      json.remove('webSearch');
-    } else {
-      json['webSearch'] = {'apiKey': config.apiKey.trim()};
-    }
-    await _writeFile(json);
+    // 空配置（遗忘 Key）传达的是删除本段，不是写一个空段或 null 值。
+    await _saveSection(
+      'webSearch',
+      config == null ? null : {'apiKey': config.apiKey.trim()},
+    );
   }
 
   @override
@@ -814,13 +818,8 @@ final class JsonProviderConfigRepository
   @override
   Future<void> saveProxy(ProxyConfig? config) async {
     config?.validate();
-    final json = await _readRawMap(orThrow: false) ?? <String, Object?>{};
-    if (config == null) {
-      json.remove('proxy');
-    } else {
-      json['proxy'] = config.toJson();
-    }
-    await _writeFile(json);
+    // 关闭态仍是一个完整的 disabled 段（保留 host、port）；只有空配置才删除本段。
+    await _saveSection('proxy', config?.toJson());
   }
 
   /// 读取整份 provider.json；文件不存在返回 null。`orThrow` 为 true 时

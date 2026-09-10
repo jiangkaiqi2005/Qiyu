@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
+import 'support/failing_atomic_writer.dart';
+
 void main() {
   test('webSearch 段独立往返且损坏只使搜索不可用', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -651,5 +653,523 @@ void main() {
       repository.loadTts(),
       throwsA(isA<ProviderConfigException>()),
     );
+  });
+
+  group('子段读改写现状', () {
+    // 票 03 的现状回归夹具：一份规范态（键序显式、两空格缩进、末尾
+    // 换行）合成整文件，含聊天字段、四种子段与未知顶层键。所有凭据
+    // 都是明显的测试假值，文件只落在专用临时目录，不碰运行目录。
+    const fixtureText = '''
+{
+  "schemaVersion": 1,
+  "provider": "openai_compatible",
+  "baseUrl": "https://chat.example.com/v1",
+  "model": "chat-model",
+  "temperature": 0.6,
+  "timeoutSeconds": 25,
+  "apiKey": "fake-chat-key-not-real",
+  "stt": {
+    "provider": "openai_compatible",
+    "baseUrl": "https://stt.example.com/v1",
+    "model": "whisper-fake",
+    "apiKey": "fake-stt-key-not-real"
+  },
+  "tts": {
+    "provider": "openai_compatible",
+    "baseUrl": "https://tts.example.com/v1",
+    "model": "tts-fake",
+    "voice": "nova",
+    "speed": 1.25,
+    "autoSpeak": true,
+    "apiKey": "fake-tts-key-not-real"
+  },
+  "webSearch": {
+    "apiKey": "fake-search-key-not-real"
+  },
+  "proxy": {
+    "enabled": true,
+    "host": "proxy.example.com",
+    "port": 7890
+  },
+  "unknownObject": {
+    "keptByBaseline": "do-not-touch"
+  },
+  "unknownArray": [
+    1,
+    "two",
+    true
+  ]
+}
+''';
+    final fixtureJson = jsonDecode(fixtureText) as Map<String, Object?>;
+    final fixtureKeys = fixtureJson.keys.toList();
+
+    late Directory temp;
+    late String filePath;
+    var attempts = 0;
+
+    setUp(() async {
+      temp = await Directory.systemTemp.createTemp('qiyu-section-write-');
+      filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+      attempts = 0;
+    });
+    tearDown(() async {
+      if (temp.existsSync()) {
+        await temp.delete(recursive: true);
+      }
+    });
+
+    // 每个操作都从同一份初始内容开始，避免前一个动作改后一个的前置。
+    Future<void> useFixture() => File(filePath).writeAsString(fixtureText);
+    Future<String> rawFile() => File(filePath).readAsString();
+    Future<Map<String, Object?>> jsonFile() async =>
+        jsonDecode(await rawFile()) as Map<String, Object?>;
+
+    // 写入尝试计数沿用既有原子写入注入点：谓词闭包自带计数状态。
+    JsonProviderConfigRepository repository() => JsonProviderConfigRepository(
+      filePath: filePath,
+      writer: FailingAtomicTextWriter(shouldFail: (_) {
+        attempts += 1;
+        return false;
+      }),
+    );
+
+    test('夹具本身是规范态：原样重写 stt 段后文件字节不变', () async {
+      await useFixture();
+      await repository().saveStt(
+        const SttConfig(
+          baseUrl: 'https://stt.example.com/v1',
+          model: 'whisper-fake',
+          apiKey: 'fake-stt-key-not-real',
+        ),
+      );
+
+      expect(attempts, 1);
+      expect(await rawFile(), fixtureText);
+    });
+
+    test('四种子段分别只替换本段，未知顶层键与其余段原样保留', () async {
+      final repo = repository();
+
+      await useFixture();
+      await repo.saveStt(
+        const SttConfig(
+          baseUrl: 'https://stt.example.com/v2',
+          model: 'whisper-fake-2',
+          apiKey: 'fake-stt-key-2-not-real',
+        ),
+      );
+      var stored = await jsonFile();
+      expect(stored['stt'], {
+        'provider': 'openai_compatible',
+        'baseUrl': 'https://stt.example.com/v2',
+        'model': 'whisper-fake-2',
+        'apiKey': 'fake-stt-key-2-not-real',
+      });
+      expect(stored.keys.toList(), fixtureKeys);
+      expect({...stored}..remove('stt'), {...fixtureJson}..remove('stt'));
+
+      await useFixture();
+      await repo.saveTts(
+        const TtsConfig(
+          baseUrl: 'https://tts.example.com/v2',
+          model: 'tts-fake-2',
+          apiKey: 'fake-tts-key-2-not-real',
+        ),
+      );
+      stored = await jsonFile();
+      expect(stored['tts'], {
+        'provider': 'openai_compatible',
+        'baseUrl': 'https://tts.example.com/v2',
+        'model': 'tts-fake-2',
+        'autoSpeak': true,
+        'apiKey': 'fake-tts-key-2-not-real',
+      });
+      expect(stored.keys.toList(), fixtureKeys);
+      expect({...stored}..remove('tts'), {...fixtureJson}..remove('tts'));
+
+      // 联网搜索 Key 先过校验再 trim 落盘。
+      await useFixture();
+      await repo.saveWebSearch(
+        const WebSearchConfig(apiKey: '  fake-search-key-2-not-real  '),
+      );
+      stored = await jsonFile();
+      expect(stored['webSearch'], {'apiKey': 'fake-search-key-2-not-real'});
+      expect(stored.keys.toList(), fixtureKeys);
+      expect(
+        {...stored}..remove('webSearch'),
+        {...fixtureJson}..remove('webSearch'),
+      );
+
+      // 代理沿用自身序列化：enabled、host、port 三字段。
+      await useFixture();
+      await repo.saveProxy(
+        const ProxyConfig(
+          enabled: false,
+          host: 'proxy.example.com',
+          port: 7890,
+        ),
+      );
+      stored = await jsonFile();
+      expect(stored['proxy'], {
+        'enabled': false,
+        'host': 'proxy.example.com',
+        'port': 7890,
+      });
+      expect(stored.keys.toList(), fixtureKeys);
+      expect({...stored}..remove('proxy'), {...fixtureJson}..remove('proxy'));
+      // 关闭态仍是「保存一个 disabled 段」，地址端口不丢、读取口径不变。
+      final disabled = (await repo.loadProxy())!;
+      expect(disabled.enabled, isFalse);
+      expect(disabled.host, 'proxy.example.com');
+      expect(disabled.port, 7890);
+    });
+
+    test('空配置删除本段而非写 null，其余键保留', () async {
+      await useFixture();
+      final repo = repository();
+
+      await repo.saveWebSearch(null);
+      var stored = await jsonFile();
+      expect(stored.containsKey('webSearch'), isFalse);
+      expect(
+        stored.keys.toList(),
+        fixtureKeys.where((k) => k != 'webSearch').toList(),
+      );
+      expect(stored['proxy'], fixtureJson['proxy']);
+      expect(stored['stt'], fixtureJson['stt']);
+      expect(stored['unknownObject'], fixtureJson['unknownObject']);
+      expect(stored['unknownArray'], fixtureJson['unknownArray']);
+      expect(await repo.loadWebSearch(), isNull);
+
+      await repo.saveProxy(null);
+      stored = await jsonFile();
+      expect(stored.containsKey('proxy'), isFalse);
+      expect(stored['webSearch'], isNull);
+      expect(stored['unknownObject'], fixtureJson['unknownObject']);
+      expect(await repo.loadProxy(), isNull);
+      // 两次删除各一次写回。
+      expect(attempts, 2);
+    });
+
+    test('删除本来不存在的段仍执行一次写回且不扰动内容', () async {
+      await useFixture();
+      final repo = repository();
+      await repo.saveWebSearch(null);
+      await repo.saveProxy(null);
+      final stripped = await rawFile();
+      expect(stripped, isNot(contains('webSearch')));
+      expect(stripped, isNot(contains('"proxy"')));
+      expect(stripped, contains('unknownObject'));
+      expect(stripped, contains('fake-stt-key-not-real'));
+
+      attempts = 0;
+      await repo.saveWebSearch(null);
+      await repo.saveProxy(null);
+      expect(attempts, 2);
+      expect(await rawFile(), stripped);
+    });
+
+    test('整文件缺失时删除创建空对象文件并保留既有格式', () async {
+      final repo = repository();
+      expect(File(filePath).existsSync(), isFalse);
+
+      await repo.saveWebSearch(null);
+      expect(attempts, 1);
+      expect(await rawFile(), '{}\n');
+
+      await File(filePath).delete();
+      await repo.saveProxy(null);
+      expect(attempts, 2);
+      expect(await rawFile(), '{}\n');
+    });
+
+    test('整文件损坏或顶层非对象时保存按基线整体重建', () async {
+      await File(filePath).writeAsString('{ 这不是合法的 JSON');
+      await repository().saveStt(
+        const SttConfig(
+          baseUrl: 'https://stt.example.com/v1',
+          model: 'whisper-fake',
+        ),
+      );
+      var stored = await jsonFile();
+      expect(stored.keys.toList(), ['stt']);
+      expect(stored['stt'], {
+        'provider': 'openai_compatible',
+        'baseUrl': 'https://stt.example.com/v1',
+        'model': 'whisper-fake',
+      });
+
+      // 顶层是数组：与损坏同样按整体重建，不沿用读路径的抛错口径。
+      await File(filePath).writeAsString('[1, 2, 3]');
+      await repository().saveProxy(
+        const ProxyConfig(enabled: true, host: 'proxy.example.com', port: 7891),
+      );
+      stored = await jsonFile();
+      expect(stored.keys.toList(), ['proxy']);
+      expect(stored['proxy'], {
+        'enabled': true,
+        'host': 'proxy.example.com',
+        'port': 7891,
+      });
+
+      // 损坏文件上执行删除：结果同样是空对象文件。
+      await File(filePath).writeAsString('{ 这不是合法的 JSON');
+      await repository().saveWebSearch(null);
+      expect(await rawFile(), '{}\n');
+    });
+
+    test('非法配置在写入前抛错且文件字节不变', () async {
+      await useFixture();
+      final repo = repository();
+
+      await expectLater(
+        repo.saveStt(const SttConfig(baseUrl: '', model: 'whisper-fake')),
+        throwsA(
+          isA<ProviderConfigException>().having(
+            (error) => error.message,
+            'message',
+            '语音服务地址必须是有效的 HTTP 地址。',
+          ),
+        ),
+      );
+      await expectLater(
+        repo.saveTts(
+          const TtsConfig(
+            baseUrl: 'https://tts.example.com/v1',
+            model: 'tts-fake',
+            speed: 9,
+          ),
+        ),
+        throwsA(
+          isA<ProviderConfigException>().having(
+            (error) => error.message,
+            'message',
+            '语速必须在 0.25 到 4 之间。',
+          ),
+        ),
+      );
+      await expectLater(
+        repo.saveWebSearch(const WebSearchConfig(apiKey: '   ')),
+        throwsA(
+          isA<ProviderConfigException>().having(
+            (error) => error.message,
+            'message',
+            '请填写 ANYSEARCH_API_KEY。',
+          ),
+        ),
+      );
+      await expectLater(
+        repo.saveProxy(const ProxyConfig(enabled: true, host: '', port: 7890)),
+        throwsA(
+          isA<ProviderConfigException>().having(
+            (error) => error.message,
+            'message',
+            '请填写代理地址。',
+          ),
+        ),
+      );
+
+      expect(attempts, isZero);
+      expect(await rawFile(), fixtureText);
+    });
+
+    test('写入器失败保持原有异常包装、文案与一次尝试', () async {
+      await useFixture();
+      final failingRepo = JsonProviderConfigRepository(
+        filePath: filePath,
+        writer: FailingAtomicTextWriter(shouldFail: (_) {
+          attempts += 1;
+          return true;
+        }),
+      );
+      final saveFailure = isA<ProviderConfigException>()
+          .having(
+            (error) => error.message,
+            'message',
+            '本地模型配置无法保存。',
+          )
+          .having(
+            (error) => error.cause,
+            'cause',
+            isA<FileSystemException>(),
+          );
+
+      await expectLater(
+        failingRepo.saveTts(
+          const TtsConfig(
+            baseUrl: 'https://tts.example.com/v1',
+            model: 'tts-fake',
+          ),
+        ),
+        throwsA(saveFailure),
+      );
+      expect(attempts, 1);
+
+      // 删除分支同样抛出原包装文案、只尝试一次，原文件保持。
+      await expectLater(failingRepo.saveProxy(null), throwsA(saveFailure));
+      expect(attempts, 2);
+      expect(await rawFile(), fixtureText);
+    });
+
+    test('序列化基线字节对照：键序、两空格缩进与末尾换行', () async {
+      await useFixture();
+
+      // 替换 tts 段：目标段换成新载荷，其余行逐字不动。
+      await repository().saveTts(
+        const TtsConfig(
+          baseUrl: 'https://tts.example.com/v2',
+          model: 'tts-fake-2',
+          apiKey: 'fake-tts-key-2-not-real',
+        ),
+      );
+      expect(
+        await rawFile(),
+        '''
+{
+  "schemaVersion": 1,
+  "provider": "openai_compatible",
+  "baseUrl": "https://chat.example.com/v1",
+  "model": "chat-model",
+  "temperature": 0.6,
+  "timeoutSeconds": 25,
+  "apiKey": "fake-chat-key-not-real",
+  "stt": {
+    "provider": "openai_compatible",
+    "baseUrl": "https://stt.example.com/v1",
+    "model": "whisper-fake",
+    "apiKey": "fake-stt-key-not-real"
+  },
+  "tts": {
+    "provider": "openai_compatible",
+    "baseUrl": "https://tts.example.com/v2",
+    "model": "tts-fake-2",
+    "autoSpeak": true,
+    "apiKey": "fake-tts-key-2-not-real"
+  },
+  "webSearch": {
+    "apiKey": "fake-search-key-not-real"
+  },
+  "proxy": {
+    "enabled": true,
+    "host": "proxy.example.com",
+    "port": 7890
+  },
+  "unknownObject": {
+    "keptByBaseline": "do-not-touch"
+  },
+  "unknownArray": [
+    1,
+    "two",
+    true
+  ]
+}
+''',
+      );
+
+      // 删除 webSearch 段：整段键消失，缩进与末尾换行照旧。
+      await useFixture();
+      await repository().saveWebSearch(null);
+      expect(
+        await rawFile(),
+        '''
+{
+  "schemaVersion": 1,
+  "provider": "openai_compatible",
+  "baseUrl": "https://chat.example.com/v1",
+  "model": "chat-model",
+  "temperature": 0.6,
+  "timeoutSeconds": 25,
+  "apiKey": "fake-chat-key-not-real",
+  "stt": {
+    "provider": "openai_compatible",
+    "baseUrl": "https://stt.example.com/v1",
+    "model": "whisper-fake",
+    "apiKey": "fake-stt-key-not-real"
+  },
+  "tts": {
+    "provider": "openai_compatible",
+    "baseUrl": "https://tts.example.com/v1",
+    "model": "tts-fake",
+    "voice": "nova",
+    "speed": 1.25,
+    "autoSpeak": true,
+    "apiKey": "fake-tts-key-not-real"
+  },
+  "proxy": {
+    "enabled": true,
+    "host": "proxy.example.com",
+    "port": 7890
+  },
+  "unknownObject": {
+    "keptByBaseline": "do-not-touch"
+  },
+  "unknownArray": [
+    1,
+    "two",
+    true
+  ]
+}
+''',
+      );
+    });
+
+    test('压缩写入的文件按基线重新缩进，未知键与新段位置不变', () async {
+      await File(filePath).writeAsString(
+        '{"zeta":1,"proxy":{"enabled":true,"host":"proxy.example.com","port":7890}}',
+      );
+      await repository().saveProxy(null);
+      expect(
+        await rawFile(),
+        '''
+{
+  "zeta": 1
+}
+''',
+      );
+
+      // 段不存在时新增：追加在末尾，其余键序不动。
+      await File(filePath).writeAsString('{"zeta":1,"webSearch":{"apiKey":"k"}}');
+      await repository().saveProxy(
+        const ProxyConfig(enabled: true, host: 'proxy.example.com', port: 7890),
+      );
+      expect(
+        await rawFile(),
+        '''
+{
+  "zeta": 1,
+  "webSearch": {
+    "apiKey": "k"
+  },
+  "proxy": {
+    "enabled": true,
+    "host": "proxy.example.com",
+    "port": 7890
+  }
+}
+''',
+      );
+    });
+
+    test('读取差异保持：语音坏段抛错，搜索残缺按未配置', () async {
+      await File(filePath).writeAsString('{"stt":"not-an-object"}');
+      await expectLater(
+        repository().loadStt(),
+        throwsA(
+          isA<ProviderConfigException>().having(
+            (error) => error.message,
+            'message',
+            '语音服务配置无法读取。',
+          ),
+        ),
+      );
+
+      await File(filePath).writeAsString(
+        jsonEncode({
+          'webSearch': {'apiKey': '   '},
+        }),
+      );
+      expect(await repository().loadWebSearch(), isNull);
+    });
   });
 }
