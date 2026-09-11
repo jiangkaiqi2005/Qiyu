@@ -302,20 +302,13 @@ bool _applyServerFrame(List<int> frame, StringBuffer text) {
       final snapshot = StringBuffer();
       var hasText = false;
       final result = decoded['result'];
-      if (result is Map<String, Object?>) {
-        final chunk = result['text'];
-        if (chunk is String) {
-          hasText = true;
-          snapshot.write(chunk);
-        }
-      } else if (result is List<Object?>) {
-        for (final item in result) {
-          if (item is Map<String, Object?>) {
-            final chunk = item['text'];
-            if (chunk is String) {
-              hasText = true;
-              snapshot.write(chunk);
-            }
+      final items = result is List<Object?> ? result : [result];
+      for (final item in items) {
+        if (item is Map<String, Object?>) {
+          final chunk = item['text'];
+          if (chunk is String) {
+            hasText = true;
+            snapshot.write(chunk);
           }
         }
       }

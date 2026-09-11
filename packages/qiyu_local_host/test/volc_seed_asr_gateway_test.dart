@@ -249,6 +249,73 @@ void main() {
     expect(await future, '睡吧，明天再聊。');
   });
 
+  final resultScenarios = <({String name, Object? result, String expected})>[
+    (name: '缺失结果', result: null, expected: '已有快照'),
+    (name: '无效结果', result: 42, expected: '已有快照'),
+    (name: '对象缺失文本', result: {}, expected: '已有快照'),
+    (name: '对象文本为 null', result: {'text': null}, expected: '已有快照'),
+    (name: '对象文本非字符串', result: {'text': 42}, expected: '已有快照'),
+    (name: '对象明确空文本', result: {'text': ''}, expected: ''),
+    (name: '对象保留空白', result: {'text': '  重复重复\n'}, expected: '  重复重复\n'),
+    (name: '空列表', result: [], expected: '已有快照'),
+    (
+      name: '列表全为无效项',
+      result: [null, 42, '忽略', [], {}, {'text': null}, {'text': false}],
+      expected: '已有快照',
+    ),
+    (
+      name: '列表明确空文本',
+      result: [null, {'text': ''}, {'text': 42}],
+      expected: '',
+    ),
+    (
+      name: '混合列表保留顺序空白和重复',
+      result: [
+        {'text': '  先'}, null, {'text': 42}, '忽略',
+        {'text': '后'}, {'text': ''}, {'text': '后\n'},
+      ],
+      expected: '  先后后\n',
+    ),
+  ];
+  for (final scenario in resultScenarios) {
+    test('最终结果文本边界：${scenario.name}', () async {
+      final connector = _FakeWebSocketConnector();
+      final connection = connector.connection!;
+      final future = VolcSeedAsrGateway(connector).transcribe(
+        config: config, apiKey: 'ark-test-key', audio: wav(100), mimeType: 'audio/wav');
+      await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+      connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
+      await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
+      connection.serverSends(_responseFrame(flags: 0x91, payload: {
+        'result': {'text': '已有快照'},
+      }));
+      connection.serverSends(_responseFrame(flags: 0x93, payload: {
+        'result': scenario.result,
+      }));
+      expect(await future, scenario.expected);
+      expect(connection.closed, isTrue);
+    });
+  }
+
+  test('列表空进度文本不抹去已有快照', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final future = VolcSeedAsrGateway(connector).transcribe(
+      config: config, apiKey: 'ark-test-key', audio: wav(100), mimeType: 'audio/wav');
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {
+      'result': [{'text': '已有快照'}],
+    }));
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {
+      'result': [null, {'text': ''}, {'text': 42}],
+    }));
+    connection.serverSends(_responseFrame(flags: 0x93, payload: {}));
+    expect(await future, '已有快照');
+    expect(connection.closed, isTrue);
+  });
+
   test('响应帧带 event 字段（flags 0x04）时按动态偏移跳过', () async {
     final connector = _FakeWebSocketConnector();
     final connection = connector.connection!;
