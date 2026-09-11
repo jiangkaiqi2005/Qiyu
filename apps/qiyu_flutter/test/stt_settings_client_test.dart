@@ -183,7 +183,7 @@ void main() {
           (error) => error.message,
           'message',
           '没有识别到语音，可以再说一次。',
-        ),
+        ).having((error) => error.code, 'code', 'stt_no_speech'),
       ),
     );
   });

@@ -22,6 +22,28 @@ import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  testWidgets('安卓无语音结构化错误只提示重录不弹服务受限', (tester) async {
+    final gateway = _VoiceChatGateway()
+      ..transcribeFailuresRemaining = 1
+      ..transcribeError = const LocalChatGatewayException(
+        '没有识别到语音，可以再说一次。', code: 'stt_no_speech');
+    final recorder = _FakeRecorderPlatform();
+    await tester.pumpWidget(_harness(viewModel: _chatViewModel(gateway), platform: recorder));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pumpAndSettle();
+    await _recordAndroid(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('没有识别到语音，可以再说一次。'), findsOneWidget);
+    expect(find.text('语音服务受限'), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+    await tester.tap(find.widgetWithText(TextButton, '重新录制'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('voice-hold')), findsOneWidget);
+    expect(recorder.starts, 1);
+    expect(gateway.sentTexts, isEmpty);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
   testWidgets('安卓组合闭环保留草稿、语音只提交一次且重按打断朗读', (tester) async {
     final gateway = _VoiceChatGateway();
     final recorder = _FakeRecorderPlatform();

@@ -79,6 +79,8 @@ ApiErrorCategory? categorizeVoiceApiError(
   }
   if (code != null && code.isNotEmpty) {
     final c = code.toLowerCase();
+    // 无有效语音只需重试或重录，不代表服务配置或额度故障。
+    if (c == 'stt_no_speech') return null;
     if (c.contains('model_not_found') ||
         c.contains('not_found') ||
         c.contains('404')) {

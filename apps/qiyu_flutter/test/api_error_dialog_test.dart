@@ -143,6 +143,14 @@ void main() {
     });
 
     test('categorizeVoiceApiError 结构化错误码与降级规则', () {
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException(
+            '没有识别到语音，可以再说一次。', code: 'stt_no_speech'),
+          isInput: true,
+        ),
+        isNull,
+      );
       // 结构化 code 优先
       expect(
         categorizeVoiceApiError(
