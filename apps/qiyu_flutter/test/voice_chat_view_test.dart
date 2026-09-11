@@ -20,6 +20,182 @@ import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  for (final action in ['重试', '重新录制', '丢弃']) {
+    testWidgets(
+      '安卓转写失败可点 $action 且保留草稿',
+      (tester) async {
+        final gateway = _VoiceChatGateway()
+          ..transcribeFailuresRemaining = 1
+          ..transcribeError = const LocalChatGatewayException(
+            '没有识别到语音，可以再说一次。',
+          );
+        final platform = _FakeRecorderPlatform();
+        await tester.pumpWidget(
+          _harness(viewModel: _chatViewModel(gateway), platform: platform),
+        );
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byKey(const Key('chat-input')), '原草稿');
+        await tester.tap(find.byKey(const Key('voice-mic')));
+        await tester.pumpAndSettle();
+        await _recordAndroid(tester);
+        expect(find.textContaining('Esc'), findsNothing);
+        expect(find.text('重试'), findsOneWidget);
+        expect(find.text('重新录制'), findsOneWidget);
+        expect(find.text('丢弃'), findsOneWidget);
+        if (action == '重试') gateway.hangTranscribe = true;
+        await tester.tap(find.text(action));
+        // 重复点击同一帧也不能重入上传或开麦。
+        await tester.tap(find.text(action));
+        await tester.pump();
+        expect(platform.starts, 1);
+        if (action == '重试') {
+          expect(gateway.transcribeCalls, 2);
+          expect(
+            gateway.transcribeAudioCalls.first,
+            gateway.transcribeAudioCalls.last,
+          );
+          gateway.completeHungTranscribe('重试成功');
+          await tester.pumpAndSettle();
+          expect(gateway.sentTexts, ['重试成功']);
+        } else {
+          expect(gateway.sentTexts, isEmpty);
+          expect(find.byKey(const Key('voice-hold')), findsOneWidget);
+          await _recordAndroid(tester);
+          await tester.pumpAndSettle();
+          expect(gateway.sentTexts, ['今天有点累']);
+        }
+        await tester.tap(find.byKey(const Key('voice-text-mode')));
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<TextField>(find.byKey(const Key('chat-input')))
+              .controller!
+              .text,
+          '原草稿',
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+
+  for (final cancelFirst in [true, false]) {
+    testWidgets(
+      '安卓等待发送提交与取消竞争 cancelFirst=$cancelFirst',
+      (tester) async {
+        final gateway = _VoiceChatGateway()
+          ..pendingDelivery = Completer<void>();
+        final model = _chatViewModel(gateway);
+        await tester.pumpWidget(
+          _harness(viewModel: model, platform: _FakeRecorderPlatform()),
+        );
+        await tester.pumpAndSettle();
+        unawaited(model.send('先前文字'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('voice-mic')));
+        await tester.pumpAndSettle();
+        await _recordAndroid(tester);
+        final cancel = tester
+            .widget<TextButton>(find.widgetWithText(TextButton, '取消'))
+            .onPressed!;
+        if (cancelFirst) cancel();
+        gateway.pendingDelivery!.complete();
+        await tester.pumpAndSettle();
+        cancel();
+        await tester.pumpAndSettle();
+        expect(gateway.sentTexts, cancelFirst ? ['先前文字'] : ['先前文字', '今天有点累']);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+
+  testWidgets(
+    '安卓停止录音等待中取消不上传迟到字节',
+    (tester) async {
+      final gateway = _VoiceChatGateway();
+      final platform = _FakeRecorderPlatform()
+        ..pendingStop = Completer<Uint8List>();
+      await tester.pumpWidget(
+        _harness(viewModel: _chatViewModel(gateway), platform: platform),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      await _recordAndroid(tester);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      platform.pendingStop!.complete(Uint8List.fromList([4, 5, 6]));
+      await tester.pumpAndSettle();
+      expect(gateway.transcribeCalls, 0);
+      expect(gateway.sentTexts, isEmpty);
+      platform.pendingStop = null;
+      await _recordAndroid(tester);
+      await tester.pumpAndSettle();
+      expect(gateway.sentTexts, ['今天有点累']);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
+    '安卓取消等待发送的语音不停止已提交文字或回填草稿',
+    (tester) async {
+      final gateway = _VoiceChatGateway()..pendingDelivery = Completer<void>();
+      final model = _chatViewModel(gateway);
+      await tester.pumpWidget(
+        _harness(viewModel: model, platform: _FakeRecorderPlatform()),
+      );
+      await tester.pumpAndSettle();
+      unawaited(model.send('已提交文字'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('chat-input')), '后来草稿');
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      await _recordAndroid(tester);
+      await tester.pump();
+      expect(find.text('语音待发送，等待当前回复结束'), findsOneWidget);
+      await tester.tap(find.text('取消'));
+      await tester.pump();
+      expect(model.sending, isTrue);
+      gateway.pendingDelivery!.complete();
+      await tester.pumpAndSettle();
+      expect(gateway.sentTexts, ['已提交文字']);
+      await tester.tap(find.byKey(const Key('voice-text-mode')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('chat-input')))
+            .controller!
+            .text,
+        '后来草稿',
+      );
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
+    '安卓转写取消丢弃迟到结果并可重新录音',
+    (tester) async {
+      final gateway = _VoiceChatGateway()..hangTranscribe = true;
+      final platform = _FakeRecorderPlatform();
+      await tester.pumpWidget(
+        _harness(viewModel: _chatViewModel(gateway), platform: platform),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      await _recordAndroid(tester);
+      expect(find.textContaining('Esc'), findsNothing);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      gateway.completeHungTranscribe('已取消的内容');
+      await tester.pumpAndSettle();
+      expect(gateway.sentTexts, isEmpty);
+      gateway.hangTranscribe = false;
+      await _recordAndroid(tester);
+      await tester.pumpAndSettle();
+      expect(gateway.sentTexts, ['今天有点累']);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
   testWidgets(
     '安卓按住录音松手只发送一次并保留草稿',
     (tester) async {
@@ -1077,6 +1253,7 @@ final class _FakeRecorderPlatform
   Completer<VoicePermissionResult>? pendingPermission;
   VoicePermissionResult permission = VoicePermissionResult.ready;
   int starts = 0;
+  Completer<Uint8List>? pendingStop;
 
   @override
   Future<VoicePermissionResult> preparePermission() async =>
@@ -1087,7 +1264,7 @@ final class _FakeRecorderPlatform
     starts++;
     if (pendingStart != null) return pendingStart!.future;
     return supported && !permissionDenied
-        ? (session = _FakeRecordingSession())
+        ? (session = _FakeRecordingSession()..pendingStop = pendingStop)
         : null;
   }
 
@@ -1097,13 +1274,14 @@ final class _FakeRecorderPlatform
 }
 
 final class _FakeRecordingSession implements VoiceRecordingSession {
+  Completer<Uint8List>? pendingStop;
   int discardCalls = 0;
 
   @override
   String get mimeType => 'audio/webm';
 
   @override
-  Future<Uint8List> stop() async => Uint8List.fromList([1, 2, 3]);
+  Future<Uint8List> stop() async => pendingStop == null ? Uint8List.fromList([1, 2, 3]) : await pendingStop!.future;
 
   @override
   void discard() {
@@ -1299,4 +1477,12 @@ final class _MutableTtsGateway implements TtsSettingsGateway {
   @override
   Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
       throw UnimplementedError();
+}
+
+Future<void> _recordAndroid(WidgetTester tester) async {
+  final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('voice-hold'))));
+  await tester.pump(const Duration(milliseconds: 600));
+  await tester.pump(const Duration(milliseconds: 600));
+  await gesture.up();
+  await tester.pump(const Duration(milliseconds: 300));
 }

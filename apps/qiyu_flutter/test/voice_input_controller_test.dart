@@ -7,6 +7,36 @@ import 'package:qiyu_flutter/features/chat/voice_input_controller.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
 
 void main() {
+  test('取消重试立即释放保留音频，重复重试与迟到结果不发送', () async {
+    final sent = <String>[];
+    final late = Completer<String>();
+    var calls = 0;
+    final controller = _pumpController(
+      onTranscribed: sent.add,
+      transcribe: (_, _) async {
+        calls++;
+        if (calls == 1) throw const LocalChatGatewayException('连接语音服务超时。');
+        return late.future;
+      },
+    );
+    await controller.initialize();
+    await controller.startRecording();
+    await controller.stopAndTranscribe();
+    expect(controller.hasRetainedAudio, isTrue);
+    final retry = controller.retryTranscribe();
+    await controller.retryTranscribe();
+    expect(calls, 2);
+    controller.discard();
+    controller.discard();
+    expect(controller.hasRetainedAudio, isFalse);
+    expect(controller.status, VoiceInputStatus.idle);
+    late.complete('旧录音');
+    await retry;
+    expect(controller.hasRetainedAudio, isFalse);
+    expect(sent, isEmpty);
+    controller.dispose();
+  });
+
   test('浏览器不支持时停在 unsupported，不进入录音', () async {
     final controller = _pumpController(
       platform: _FakeRecorderPlatform(supported: false),

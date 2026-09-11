@@ -821,7 +821,9 @@ class _LocalChatViewState extends State<LocalChatView> {
             ? '正在录音 $minutes:$seconds，最长 60 秒'
             : '正在录音 $minutes:$seconds，再点一次说完，按 Esc 取消';
       case VoiceInputStatus.transcribing:
-        message = '正在转文字…（Esc 中止）';
+        message = !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+            ? '正在转文字…'
+            : '正在转文字…（Esc 中止）';
       case VoiceInputStatus.retryable:
         message = voice.errorMessage ?? '转写没有成功，点麦克风重试，Esc 丢弃。';
       case VoiceInputStatus.idle:

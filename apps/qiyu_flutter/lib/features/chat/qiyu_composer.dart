@@ -122,6 +122,7 @@ class QiyuComposerState extends State<QiyuComposer> {
   /// 让位常量与基线测试的 492/516 都依赖这一点）。
   bool _composerExpanded = false;
   bool _voiceMode = false;
+  Completer<void>? _pendingVoice;
   bool get _android =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -135,6 +136,8 @@ class QiyuComposerState extends State<QiyuComposer> {
 
   @override
   void dispose() {
+    _pendingVoice?.complete();
+    _pendingVoice = null;
     _controller.dispose();
     _focusNode
       ..removeListener(_onFocusChange)
@@ -162,8 +165,19 @@ class QiyuComposerState extends State<QiyuComposer> {
   /// 模块对外的另一个操作：页面把转写回调接进来后由此进入发送协调。
   Future<void> sendTranscribed(String text) async {
     final viewModel = widget.viewModel;
-    widget.onSendStarted();
-    final sent = await viewModel.sendWhenIdle(text);
+    final pending = _android ? Completer<void>() : null;
+    if (_android && _pendingVoice != null) return;
+    if (pending != null) setState(() => _pendingVoice = pending);
+    final sent = await viewModel.sendWhenIdle(
+      text,
+      cancelled: pending?.future,
+      isCancelled: pending == null ? null : () => pending.isCompleted,
+      onCommitted: () {
+        if (pending != null && mounted) setState(() => _pendingVoice = null);
+        widget.onSendStarted();
+      },
+    );
+    if (pending?.isCompleted ?? false) return;
     if (!sent &&
         mounted &&
         _controller.text.isEmpty &&
@@ -285,7 +299,11 @@ class QiyuComposerState extends State<QiyuComposer> {
                     // 播放态下 Esc 等同停止按钮（ADR 0002 的打断规则）；
                     // 录音/转写语义不变。
                     viewModel.voiceOutput.stopAll();
-                    widget.voiceInput.handleEscape();
+                    if (_android) {
+                      cancelUnsubmittedVoice();
+                    } else {
+                      widget.voiceInput.handleEscape();
+                    }
                     return null;
                   },
                 ),
@@ -513,34 +531,91 @@ class QiyuComposerState extends State<QiyuComposer> {
     );
   }
 
-  Widget _voiceRow() => Row(
-    children: [
-      IconButton(
-        key: const Key('voice-text-mode'),
-        tooltip: '切换到文字输入',
-        onPressed: () {
-          final status = widget.voiceInput.status;
-          if (status == VoiceInputStatus.preparing ||
-              status == VoiceInputStatus.recording ||
-              status == VoiceInputStatus.transcribing ||
-              status == VoiceInputStatus.retryable) {
-            widget.voiceInput.discard();
-          }
-          setState(() => _voiceMode = false);
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _focusNode.requestFocus();
-          });
-        },
-        icon: const Icon(QiyuIcons.edit),
-      ),
-      Expanded(
-        child: HoldToTalk(
-          voice: widget.voiceInput,
-          beforeStart: () => widget.viewModel.voiceOutput.stopAll(),
-        ),
-      ),
-    ],
+  Widget _voiceRow() => AnimatedBuilder(
+    animation: widget.voiceInput,
+    builder: (context, _) {
+      final voice = widget.voiceInput;
+      final transcribing = voice.status == VoiceInputStatus.transcribing;
+      final retryable = voice.status == VoiceInputStatus.retryable;
+      return Row(
+        children: [
+          IconButton(
+            key: const Key('voice-text-mode'),
+            tooltip: '切换到文字输入',
+            onPressed: () {
+              cancelUnsubmittedVoice();
+              setState(() => _voiceMode = false);
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _focusNode.requestFocus();
+              });
+            },
+            icon: const Icon(QiyuIcons.edit),
+          ),
+          Expanded(
+            child: _pendingVoice != null
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('语音待发送，等待当前回复结束'),
+                      TextButton(
+                        onPressed: cancelUnsubmittedVoice,
+                        child: const Text('取消'),
+                      ),
+                    ],
+                  )
+                : transcribing || retryable
+                ? Wrap(
+                    alignment: WrapAlignment.center,
+                    children: [
+                      if (retryable) ...[
+                        TextButton(
+                          onPressed: () => unawaited(voice.retryTranscribe()),
+                          child: const Text('重试'),
+                        ),
+                        TextButton(
+                          onPressed: cancelUnsubmittedVoice,
+                          child: const Text('重新录制'),
+                        ),
+                      ],
+                      TextButton(
+                        onPressed: cancelUnsubmittedVoice,
+                        child: Text(retryable ? '丢弃' : '取消'),
+                      ),
+                    ],
+                  )
+                : HoldToTalk(
+                    voice: voice,
+                    beforeStart: () => widget.viewModel.voiceOutput.stopAll(),
+                  ),
+          ),
+        ],
+      );
+    },
   );
+
+  /// 系统返回与中断只在有尚未提交的语音时消费动作。
+  bool get hasUnsubmittedVoice =>
+      _pendingVoice != null ||
+      widget.voiceInput.status == VoiceInputStatus.preparing ||
+      widget.voiceInput.status == VoiceInputStatus.recording ||
+      widget.voiceInput.status == VoiceInputStatus.transcribing ||
+      widget.voiceInput.status == VoiceInputStatus.retryable;
+
+  /// 返回与生命周期接线复用此意图，只取消尚未提交的语音输入。
+  void cancelUnsubmittedVoice() {
+    final pending = _pendingVoice;
+    if (pending != null) {
+      pending.complete();
+      setState(() => _pendingVoice = null);
+    }
+    final status = widget.voiceInput.status;
+    if (status == VoiceInputStatus.preparing ||
+        status == VoiceInputStatus.recording ||
+        status == VoiceInputStatus.transcribing ||
+        status == VoiceInputStatus.retryable) {
+      widget.voiceInput.discard();
+    }
+  }
 
   Future<void> _showVoiceGuide() async {
     final voice = widget.voiceInput;

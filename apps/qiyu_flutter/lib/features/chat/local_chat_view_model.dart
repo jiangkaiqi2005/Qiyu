@@ -546,8 +546,13 @@ final class LocalChatViewModel extends ChangeNotifier {
 
   /// 等正在流式回复的一轮结束后再发送：语音转写完成时栖语可能仍在
   /// 回复，说完的话照常排队发出，不丢也不并发。
-  Future<bool> sendWhenIdle(String text) async {
-    if (sending) {
+  Future<bool> sendWhenIdle(
+    String text, {
+    Future<void>? cancelled,
+    bool Function()? isCancelled,
+    VoidCallback? onCommitted,
+  }) async {
+    while (sending) {
       final idle = Completer<void>();
       void listener() {
         if (!sending && !idle.isCompleted) {
@@ -557,11 +562,17 @@ final class LocalChatViewModel extends ChangeNotifier {
 
       addListener(listener);
       try {
-        await idle.future;
+        await (cancelled == null
+            ? idle.future
+            : Future.any([idle.future, cancelled]));
       } finally {
         removeListener(listener);
       }
+      if (isCancelled?.call() ?? false) return false;
     }
+    if (isCancelled?.call() ?? false) return false;
+    // 检查与进入 send 之间不让出执行权，取消不能越过提交边界。
+    onCommitted?.call();
     return send(text);
   }
 

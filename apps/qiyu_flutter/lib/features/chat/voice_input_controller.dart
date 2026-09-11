@@ -149,7 +149,12 @@ final class VoiceInputController extends ChangeNotifier {
   }
 
   Future<void> startRecording({bool holdToTalk = false}) async {
-    if (_disposed || _starting || _status != VoiceInputStatus.idle) return;
+    if (_disposed ||
+        _starting ||
+        _stoppingRecording ||
+        _status != VoiceInputStatus.idle) {
+      return;
+    }
     _starting = true;
     final attempt = _registerAttempt();
     _holdRecording = holdToTalk;
@@ -390,12 +395,19 @@ final class VoiceInputController extends ChangeNotifier {
       _status = VoiceInputStatus.idle;
       _errorMessage = null;
       notifyListeners();
-      onTranscribed(text);
+      if (!_disposed && attempt == _attempt) onTranscribed(text);
     } on Object catch (error) {
       if (_disposed || attempt != _attempt) {
         return;
       }
-      _enterRetryable(_readableError(error));
+      _enterRetryable(
+        readableError(
+          error,
+          fallback: _holdRecording
+              ? '转写没有成功，请重试或重新录制。'
+              : '转写没有成功，点麦克风重试，Esc 丢弃。',
+        ),
+      );
       final category = categorizeVoiceApiError(error, isInput: true);
       if (category != null) {
         onApiError?.call(category);
@@ -428,6 +440,3 @@ final class VoiceInputController extends ChangeNotifier {
     super.dispose();
   }
 }
-
-String _readableError(Object error) =>
-    readableError(error, fallback: '转写没有成功，点麦克风重试，Esc 丢弃。');
