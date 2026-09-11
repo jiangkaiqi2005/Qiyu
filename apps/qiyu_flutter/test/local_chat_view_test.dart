@@ -23,6 +23,202 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  group('安卓键盘输入意图', () {
+    testWidgets(
+      '输入文字可长按选择复制，消息重听按钮仍执行',
+      (tester) async {
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        await _pumpChatView(tester, gateway: gateway, autoSpeak: true);
+        final field = find.byKey(const Key('chat-input'));
+        await tester.enterText(field, 'hello');
+        await tester.pumpAndSettle();
+        await tester.longPressAt(
+          tester.getTopLeft(field) + const Offset(15, 10),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<TextField>(field).controller!.selection.isCollapsed,
+          isFalse,
+        );
+        final copy = find.text('Copy');
+        expect(copy, findsOneWidget);
+        await tester.tap(copy);
+        await tester.pumpAndSettle();
+        expect(find.text('hello'), findsOneWidget);
+        await tester.tap(find.byKey(const Key('chat-send')));
+        await tester.pumpAndSettle();
+        expect(gateway.deliverCallCount, 1);
+        final beforeReplay = gateway.speakCallCount;
+        await tester.tap(find.byKey(const Key('chat-replay-0')));
+        await tester.pumpAndSettle();
+        expect(gateway.speakCallCount, beforeReplay + 1);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+    testWidgets(
+      '恢复长会话不弹键盘，拖列表收键盘且 inset 不拉回尾部',
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetViewInsets);
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        gateway.restoredMessages = List.generate(
+          40,
+          (index) => LocalChatMessage(
+            requestId: 'old-$index',
+            speaker: LocalChatSpeaker.user,
+            text: '旧消息 $index，保留阅读位置。',
+          ),
+        );
+        final viewModel = await _pumpChatView(tester, gateway: gateway);
+        await viewModel.initialize();
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
+        expect(
+          tester.testTextInput.log.where(
+            (call) => call.method == 'TextInput.show',
+          ),
+          isEmpty,
+        );
+        final field = find.byKey(const Key('chat-input'));
+        await tester.enterText(field, '草稿不丢');
+        const selection = TextSelection(baseOffset: 1, extentOffset: 3);
+        tester.testTextInput.updateEditingValue(
+          const TextEditingValue(text: '草稿不丢', selection: selection),
+        );
+        await tester.pump();
+        await tester.drag(find.byType(ListView), const Offset(0, 500));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
+        expect(
+          tester.widget<TextField>(field).controller!.selection,
+          selection,
+        );
+        final list = tester.widget<ListView>(find.byType(ListView));
+        final offset = list.controller!.offset;
+        expect(
+          offset,
+          lessThan(list.controller!.position.maxScrollExtent - 120),
+        );
+        await tester.tap(field);
+        await tester.pumpAndSettle();
+        tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+        await tester.pumpAndSettle();
+        expect(tester.getBottomRight(field).dy, lessThanOrEqualTo(500));
+        expect(tester.getTopLeft(field).dy, greaterThanOrEqualTo(0));
+        expect(list.controller!.offset, closeTo(offset, 1));
+        // 点击列表左侧 padding，是聊天态真正的空白区域。
+        await tester.tapAt(const Offset(5, 200));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
+        tester.view.viewInsets = const FakeViewPadding();
+        await tester.pumpAndSettle();
+        expect(list.controller!.offset, closeTo(offset, 1));
+        expect(find.text('草稿不丢'), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+    testWidgets(
+      '点空白收键盘且保留草稿选区，输入与语音切换仍可用',
+      (tester) async {
+        await _pumpChatView(
+          tester,
+          gateway: _ConfigurableChatGateway(fallbackReasons: const [null]),
+        );
+        final field = find.byKey(const Key('chat-input'));
+        await tester.enterText(field, '还没说完的草稿');
+        const selection = TextSelection(baseOffset: 1, extentOffset: 4);
+        tester.testTextInput.updateEditingValue(
+          const TextEditingValue(text: '还没说完的草稿', selection: selection),
+        );
+        await tester.pump();
+        await tester.tapAt(const Offset(15, 250));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
+        expect(
+          tester.widget<TextField>(field).controller!.selection,
+          selection,
+        );
+        expect(find.text('还没说完的草稿'), findsOneWidget);
+        await tester.tap(field);
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isTrue);
+        await tester.tap(find.byKey(const Key('voice-mic')));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
+        await tester.tap(find.byKey(const Key('voice-text-mode')));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isTrue);
+        expect(find.text('还没说完的草稿'), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+
+    testWidgets(
+      '关闭错误提示和功能页返回都不重新打开键盘',
+      (tester) async {
+        await _pumpChatView(
+          tester,
+          gateway: _ConfigurableChatGateway(
+            fallbackReasons: const [FallbackReason.modelRateLimited],
+          ),
+        );
+        await tester.enterText(find.byKey(const Key('chat-input')), '你好');
+        await tester.tap(find.byKey(const Key('chat-send')));
+        await tester.pumpAndSettle();
+        tester.testTextInput.log.clear();
+        await tester.tap(find.byKey(const Key('api-error-dialog-dismiss')));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
+        expect(
+          tester.testTextInput.log.where(
+            (call) => call.method == 'TextInput.show',
+          ),
+          isEmpty,
+        );
+
+        await tester.enterText(find.byKey(const Key('chat-input')), '保留草稿');
+        await tester.tap(find.byKey(const Key('open-provider-settings')));
+        await tester.pumpAndSettle();
+        tester.testTextInput.log.clear();
+        GoRouter.of(tester.element(find.text('设置页'))).pop();
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
+        expect(
+          tester.testTextInput.log.where(
+            (call) => call.method == 'TextInput.show',
+          ),
+          isEmpty,
+        );
+        expect(find.text('保留草稿'), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+
+    testWidgets(
+      '首次进入先阅读，点输入才请求键盘',
+      (tester) async {
+        await _pumpChatView(
+          tester,
+          gateway: _ConfigurableChatGateway(fallbackReasons: const [null]),
+        );
+        expect(tester.testTextInput.isVisible, isFalse);
+        expect(
+          tester.testTextInput.log.where(
+            (call) => call.method == 'TextInput.show',
+          ),
+          isEmpty,
+        );
+        await tester.tap(find.byKey(const Key('chat-input')));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isTrue);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  });
+
   group('LocalChatView 接口限流与 40x 异常提示弹窗', () {
     testWidgets('429 限流：流式完成后弹出模态弹窗，双按钮直达设置', (tester) async {
       final gateway = _ConfigurableChatGateway(
@@ -73,7 +269,7 @@ void main() {
       expect(find.byKey(const Key('api-error-dialog')), findsNothing);
       final input = tester.widget<TextField>(find.byKey(const Key('chat-input')));
       expect(input.focusNode?.hasFocus, isTrue);
-    });
+    }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
     testWidgets('会话级频控去重：同会话第 2 次不再弹窗，状态行展示轻提示与去设置链接', (tester) async {
       final gateway = _ConfigurableChatGateway(
@@ -736,10 +932,12 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
   int deliverCallCount = 0;
   Object? transcribeError;
   Object? speakError;
+  int speakCallCount = 0;
+  List<LocalChatMessage> restoredMessages = const [];
 
   @override
   Future<LocalChatSnapshot> restore({String? sessionId}) async =>
-      LocalChatSnapshot(sessionId: this.sessionId, messages: const []);
+      LocalChatSnapshot(sessionId: this.sessionId, messages: restoredMessages);
 
   @override
   Future<bool> cancel(String requestId) async => true;
@@ -761,6 +959,7 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
     required int deliveryIndex,
     String? sessionId,
   }) async {
+    speakCallCount += 1;
     if (speakError != null) {
       throw speakError!;
     }

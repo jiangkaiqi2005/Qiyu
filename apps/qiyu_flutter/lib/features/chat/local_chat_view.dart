@@ -186,6 +186,7 @@ class _LocalChatViewState extends State<LocalChatView> {
   /// 因此页内的「返回上一页」回到的就是刚离开的那一页。换页前无条件停播
   /// （ADR 0002），这一步与 [QiyuShell] 的导航动作同一口径。
   void _pushAwayFromChat(String location) {
+    _composerKey.currentState?.dismissKeyboard();
     _chatViewModel.voiceOutput.stopAll();
     context.push(location);
   }
@@ -336,6 +337,7 @@ class _LocalChatViewState extends State<LocalChatView> {
           return;
         }
       }
+      _composerKey.currentState?.dismissKeyboard();
       final goToSettings = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => QiyuApiErrorDialog(
@@ -407,9 +409,17 @@ class _LocalChatViewState extends State<LocalChatView> {
               children: [
                 _utilityStrip(context, viewModel),
                 Expanded(
-                  child: empty
-                      ? _homeBody(context, viewModel, narrow: narrow)
-                      : _chatBody(context, viewModel),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap:
+                        !kIsWeb &&
+                            defaultTargetPlatform == TargetPlatform.android
+                        ? () => _composerKey.currentState?.dismissKeyboard()
+                        : null,
+                    child: empty
+                        ? _homeBody(context, viewModel, narrow: narrow)
+                        : _chatBody(context, viewModel),
+                  ),
                 ),
               ],
             ),
@@ -961,6 +971,10 @@ class _LocalChatViewState extends State<LocalChatView> {
     return QiyuHoverGate(
       child: ListView.builder(
         controller: _scrollController,
+        keyboardDismissBehavior:
+            !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+            ? ScrollViewKeyboardDismissBehavior.onDrag
+            : ScrollViewKeyboardDismissBehavior.manual,
         padding: const EdgeInsets.fromLTRB(
           QiyuSpacing.lg,
           QiyuSpacing.lg,

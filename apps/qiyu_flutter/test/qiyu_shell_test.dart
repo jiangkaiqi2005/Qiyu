@@ -665,7 +665,7 @@ void main() {
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pumpAndSettle();
       expect(panel().border!.top.color, QiyuColors.line);
-    });
+    }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
     testWidgets('生成中发送钮变停止钮（chat-send → chat-stop）', (tester) async {
       final gateway = _StubChatGateway(hold: true);

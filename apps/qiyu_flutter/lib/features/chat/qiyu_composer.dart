@@ -154,10 +154,15 @@ class QiyuComposerState extends State<QiyuComposer> {
   /// 弹窗「知道了」等页面动作后的焦点返还：模块对外的两个操作之一。
   /// 只请求焦点，不碰文本与选区——调用前的草稿原样保留。
   void restoreFocus() {
-    if (!mounted) {
+    if (!mounted || _android) {
       return;
     }
     _focusNode.requestFocus();
+  }
+
+  /// 安卓阅读或离页时结束输入意图，文本和选区仍由同一控制器保留。
+  void dismissKeyboard() {
+    if (_android) _focusNode.unfocus();
   }
 
   /// 语音转写出的文字直接发送：与手打共用同一条链路（requestId 幂等、
@@ -388,7 +393,7 @@ class QiyuComposerState extends State<QiyuComposer> {
       key: const Key('chat-input'),
       controller: _controller,
       focusNode: _focusNode,
-      autofocus: true,
+      autofocus: !_android,
       minLines: 1,
       maxLines: 5,
       textInputAction: TextInputAction.newline,
