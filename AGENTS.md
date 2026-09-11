@@ -71,3 +71,4 @@ cd apps\qiyu_flutter; flutter build apk --debug # 安卓调试包，无需 keyst
 - CI 在 `.github/workflows/ci.yml`：PR 与 main push 跑四包分析/测试/覆盖率门禁（阈值脚本 `scripts/coverage_gate.dart`，水位只升不降：core 88 / host 91 / flutter 91（2026-09-07 基线）、local_host 92（2026-09-09 抽包后实测 92.74））；main push 另跑 `verify-release-baseline.ps1` 全量门禁。浏览器侧用例不计入覆盖率。
 - 已建 codebase-memory 知识图谱（项目名 `qiyu`），可用 `search_graph` / `trace_path` / `get_architecture` 探索；结构性大改后重新 `index_repository`。
 - `.codebase-memory/` 产物不入库（已 `.gitignore`）：不要暂存、提交、还原或删除该目录任何文件。
+- 技能真源只有 `.agents/skills/`。其余工具目录（`.claude/skills/`、`.codebuddy/skills/`）一律只放指向真源的相对软链 `../../.agents/skills/<name>`，不复制、不另写内容；新增技能时在真源建目录、再补软链。CodeBuddy 运行时的项目级技能目录硬编码为 `.codebuddy/skills`（用户级为 `~/.codebuddy/skills`），扫描时跟随符号链接。上述目录均属机器本地资产，不入库。
