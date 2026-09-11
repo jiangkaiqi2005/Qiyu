@@ -1553,6 +1553,10 @@ final class _FakeRecorderPlatform
   final interrupted = StreamController<void>.broadcast(sync: true);
   @override
   Stream<void> get interruptions => interrupted.stream;
+  @override
+  Future<void> prepareInput() async {}
+  @override
+  void cancelPreparation() {}
   _FakeRecorderPlatform({this.supported = true, this.permissionDenied = false});
 
   @override

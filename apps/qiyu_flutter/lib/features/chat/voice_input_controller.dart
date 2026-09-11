@@ -165,12 +165,20 @@ final class VoiceInputController extends ChangeNotifier {
     VoiceRecordingSession? session;
     try {
       final platform = _platform;
+      if (platform is InterruptibleVoiceRecorderPlatform) {
+        await (platform as InterruptibleVoiceRecorderPlatform).prepareInput();
+        if (_disposed || attempt != _attempt) {
+          _cancelPreparation();
+          return;
+        }
+      }
       if (holdToTalk && platform is PermissionAwareVoiceRecorderPlatform) {
         final permission =
             await (platform as PermissionAwareVoiceRecorderPlatform)
                 .preparePermission();
         if (_disposed || attempt != _attempt) return;
         if (permission != VoicePermissionResult.ready) {
+          _cancelPreparation();
           _status = VoiceInputStatus.idle;
           _errorMessage = permission == VoicePermissionResult.grantedNow
               ? '已允许麦克风，请重新按住说话。'
@@ -190,6 +198,7 @@ final class VoiceInputController extends ChangeNotifier {
       return;
     }
     if (session == null) {
+      _cancelPreparation();
       _status = VoiceInputStatus.idle;
       _errorMessage = '无法使用麦克风，请检查麦克风权限或设备状态。';
       notifyListeners();
@@ -323,6 +332,7 @@ final class VoiceInputController extends ChangeNotifier {
   /// 丢弃录音回 idle，不留任何字节。
   void discard() {
     _cancelTimers();
+    if (_starting) _cancelPreparation();
     _session?.discard();
     _session = null;
     _attempt += 1;
@@ -330,6 +340,13 @@ final class VoiceInputController extends ChangeNotifier {
     _status = VoiceInputStatus.idle;
     _errorMessage = null;
     notifyListeners();
+  }
+
+  void _cancelPreparation() {
+    final platform = _platform;
+    if (platform is InterruptibleVoiceRecorderPlatform) {
+      (platform as InterruptibleVoiceRecorderPlatform).cancelPreparation();
+    }
   }
 
   /// 登记一次新的转写尝试令牌：Esc 中止与丢弃都会递增 [_attempt]，
@@ -434,6 +451,7 @@ final class VoiceInputController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _cancelTimers();
+    if (_starting) _cancelPreparation();
     _session?.discard();
     _session = null;
     _clearPendingAudio();

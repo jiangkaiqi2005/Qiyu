@@ -45,6 +45,9 @@ abstract interface class PermissionAwareVoiceRecorderPlatform {
 /// 设备故障、输入路由断开或系统音频打断，均取消未提交输入。
 abstract interface class InterruptibleVoiceRecorderPlatform {
   Stream<void> get interruptions;
+  /// 权限检查之前开始本次输入设备监听；不申请音频焦点或采集。
+  Future<void> prepareInput();
+  void cancelPreparation();
 }
 
 /// 一次录音会话：音频字节只存在于内存缓冲，stop/discard 后即丢弃，

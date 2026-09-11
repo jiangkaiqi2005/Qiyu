@@ -77,6 +77,8 @@ internal object VoiceBridge {
     private var pcmBuffer: ByteArrayOutputStream? = null
     private var recorderChannel: MethodChannel? = null
     private var releaseCaptureObservers: (() -> Unit)? = null
+    private var releaseInputDevices: (() -> Unit)? = null
+    private var inputPrepared = false
     private var captureInterrupted = false
     private var foreground = false
 
@@ -127,22 +129,50 @@ internal object VoiceBridge {
         if (!value) interruptRecording()
     }
 
-    /** 只作废当前采集；焦点恢复或 Activity 恢复不启动任何录音。 */
+    /** 作废准备或采集；焦点恢复或 Activity 恢复不启动任何录音。 */
     fun interruptRecording() {
-        if (captureThread == null || captureInterrupted) return
+        if ((!inputPrepared && captureThread == null) || captureInterrupted) return
         captureInterrupted = true
+        finishInputPreparation()
         recording = false
         pcmBuffer = null
         releaseCaptureObservers?.invoke()
         releaseCaptureObservers = null
         recorderChannel?.invokeMethod("onRecordingInterrupted", null)
-        val thread = captureThread
+        val thread = captureThread ?: return
         executor.execute {
             thread?.join()
             mainHandler.post {
                 if (captureThread === thread) captureThread = null
             }
         }
+    }
+
+    /** 权限查询之前就观察输入设备，不占用麦克风或音频焦点。 */
+    private fun prepareRecording(): Boolean {
+        if (!foreground || captureThread != null) return false
+        finishInputPreparation()
+        val manager = activity?.getSystemService(AudioManager::class.java) ?: return false
+        inputPrepared = true
+        captureInterrupted = false
+        var observing = true
+        val devices = object : AudioDeviceCallback() {
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+                if (observing && removedDevices.any { it.isSource }) interruptRecording()
+            }
+        }
+        manager.registerAudioDeviceCallback(devices, mainHandler)
+        releaseInputDevices = {
+            observing = false
+            manager.unregisterAudioDeviceCallback(devices)
+        }
+        return true
+    }
+
+    private fun finishInputPreparation() {
+        inputPrepared = false
+        releaseInputDevices?.invoke()
+        releaseInputDevices = null
     }
 
     @Suppress("DEPRECATION")
@@ -165,11 +195,6 @@ internal object VoiceBridge {
             else manager.requestAudioFocus(listener, AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
         if (granted != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return false
-        val devices = object : AudioDeviceCallback() {
-            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
-                if (observing && removedDevices.any { it.isSource }) interruptRecording()
-            }
-        }
         val configurations = object : AudioManager.AudioRecordingCallback() {
             override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
                 if (observing && Build.VERSION.SDK_INT >= 29 && configs.any {
@@ -177,11 +202,9 @@ internal object VoiceBridge {
                     }) interruptRecording()
             }
         }
-        manager.registerAudioDeviceCallback(devices, mainHandler)
         manager.registerAudioRecordingCallback(configurations, mainHandler)
         releaseCaptureObservers = {
             observing = false
-            manager.unregisterAudioDeviceCallback(devices)
             manager.unregisterAudioRecordingCallback(configurations)
             if (focus != null) manager.abandonAudioFocusRequest(focus)
             else manager.abandonAudioFocus(listener)
@@ -191,6 +214,10 @@ internal object VoiceBridge {
 
     private fun handleRecorderCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "prepareRecording" -> {
+                if (prepareRecording()) result.success(null)
+                else result.error("INPUT_UNAVAILABLE", "当前无法准备麦克风。", null)
+            }
             "hasMicrophonePermission" -> result.success(
                 activity?.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
                     PackageManager.PERMISSION_GRANTED,
@@ -221,7 +248,7 @@ internal object VoiceBridge {
                 val host = activity
                 val granted = host?.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
                     PackageManager.PERMISSION_GRANTED
-                result.success(foreground && granted && startCapture())
+                result.success(foreground && inputPrepared && !captureInterrupted && granted && startCapture())
             }
             "stopRecording" -> stopCapture(returnBytes = true, result)
             "discardRecording" -> stopCapture(returnBytes = false, result)
@@ -323,6 +350,7 @@ internal object VoiceBridge {
      */
     private fun stopCapture(returnBytes: Boolean, result: MethodChannel.Result) {
         recording = false
+        finishInputPreparation()
         val thread = captureThread
         val out = pcmBuffer
         pcmBuffer = null

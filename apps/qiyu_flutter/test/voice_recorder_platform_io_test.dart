@@ -1,9 +1,11 @@
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform_io.dart';
+import 'package:qiyu_flutter/features/chat/voice_input_controller.dart';
 
 /// 录音平台缝 io（安卓）侧的契约对齐验收（票 06 硬验收）：
 ///
@@ -20,6 +22,81 @@ import 'package:qiyu_flutter/features/chat/voice_recorder_platform_io.dart';
 /// fake 通道验证我们自己的粘合与契约层。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final waiting in ['权限检查', '设备启动']) {
+    test('生产通道在$waiting前监听设备，中断作废迟到成功且释放准备', () async {
+      final gate = Completer<bool>();
+      final entered = Completer<void>();
+      final platform = IoVoiceRecorderPlatform(supported: true);
+      var observing = false;
+      var starts = 0;
+      var discards = 0;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(androidVoiceRecorderChannelName),
+        (call) async {
+          switch (call.method) {
+            case 'prepareRecording':
+              observing = true;
+              return null;
+            case 'hasMicrophonePermission':
+              expect(observing, isTrue);
+              if (waiting == '权限检查') {
+                entered.complete();
+                return gate.future;
+              }
+              return true;
+            case 'startRecording':
+              expect(observing, isTrue);
+              starts++;
+              entered.complete();
+              return gate.future;
+            case 'discardRecording':
+              observing = false;
+              discards++;
+              return null;
+          }
+          throw StateError('不应调用 ${call.method}');
+        },
+      );
+      final sent = <String>[];
+      final controller = VoiceInputController(
+        platform,
+        () async => (configured: true, wantsWavAudio: false),
+        (_, _) async => '半段不应转写',
+        onTranscribed: sent.add,
+      );
+      final subscription = platform.interruptions.listen(
+        (_) => controller.discard(),
+      );
+      addTearDown(() async {
+        await subscription.cancel();
+        controller.dispose();
+        messenger.setMockMethodCallHandler(
+          const MethodChannel(androidVoiceRecorderChannelName),
+          null,
+        );
+      });
+      await controller.initialize();
+      final starting = controller.startRecording(holdToTalk: true);
+      await entered.future;
+      await messenger.handlePlatformMessage(
+        androidVoiceRecorderChannelName,
+        const StandardMethodCodec().encodeMethodCall(
+          const MethodCall('onRecordingInterrupted'),
+        ),
+        (_) {},
+      );
+      expect(controller.status, VoiceInputStatus.idle);
+      gate.complete(true);
+      await starting;
+      await Future<void>.delayed(Duration.zero);
+      expect(observing, isFalse);
+      expect(discards, greaterThanOrEqualTo(1));
+      expect(starts, waiting == '权限检查' ? 0 : 1);
+      expect(sent, isEmpty);
+    });
+  }
   test('原生录音中断经现有通道通知且取消监听后可重新订阅', () async {
     final platform = IoVoiceRecorderPlatform(supported: true);
     var interruptions = 0;
@@ -259,6 +336,8 @@ extension on RecordedAudio {
 
 /// 录音通道 fake：记录调用序列，PCM 固定返回一小段可断言字节。
 final class _FakeRecorderChannel implements VoiceRecorderNativeChannel {
+  @override
+  Future<void> prepareRecording() async {}
   @override
   Stream<void> get interruptions => const Stream.empty();
   bool permissionGranted = true;

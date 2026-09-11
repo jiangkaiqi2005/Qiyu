@@ -12,6 +12,7 @@ const androidVoiceRecorderChannelName = 'dev.qiyu.app/voice_recorder';
 /// fake（平台通道行为本身归真机冒烟，不在 dart 测试里 mock 平台业务）。
 abstract interface class VoiceRecorderNativeChannel {
   Stream<void> get interruptions;
+  Future<void> prepareRecording();
 
   /// 请求麦克风权限（系统弹窗）。返回 true 表示已授权；拒绝或通道
   /// 不可用返回 false。
@@ -56,6 +57,10 @@ final class MethodVoiceRecorderChannel implements VoiceRecorderNativeChannel {
 
   @override
   Stream<void> get interruptions => _interruptions.stream;
+
+  @override
+  Future<void> prepareRecording() =>
+      _channel.invokeMethod<void>('prepareRecording');
 
   @override
   Future<bool> hasMicrophonePermission() async {
@@ -135,6 +140,12 @@ final class IoVoiceRecorderPlatform
 
   @override
   Stream<void> get interruptions => _channel.interruptions;
+
+  @override
+  Future<void> prepareInput() => _channel.prepareRecording();
+
+  @override
+  void cancelPreparation() => unawaited(_channel.discardRecording());
 
   @override
   Future<VoicePermissionResult> preparePermission() async {
