@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'api_error_dialog.dart';
 import 'local_chat_client.dart';
 import 'voice_player_platform.dart';
+import 'voice_playback_lifecycle.dart';
 
 /// 一条待朗读的栖语交付段定位：Host 按 (requestId, deliveryIndex) 从已
 /// 落盘 session 取文字（浏览器只传定位符，Host 是文字真相源）。
@@ -32,25 +33,20 @@ final class VoiceOutputController extends ChangeNotifier {
     : // 缺省走平台接缝：web 真播放，其余环境如实「不支持」降级。
       _playerPlatform = playerPlatform ?? createVoicePlayerPlatform() {
     _volume = _playerPlatform.getInitialVolume();
-    if (_playerPlatform case final InterruptibleVoicePlayerPlatform player) {
-      _unsubscribeInterruption = player.onOutputInterrupted(interruptOutput);
-    }
+    _playback = VoicePlaybackLifecycle(
+      _playerPlatform,
+      onInterrupted: interruptOutput,
+    );
   }
 
   final ChatSpeechGateway _gateway;
   final VoicePlayerPlatform _playerPlatform;
-  void Function()? _unsubscribeInterruption;
+  late final VoicePlaybackLifecycle _playback;
   bool _interrupted = false;
 
   void interruptOutput() {
     _interrupted = true;
     stopAll();
-  }
-
-  void _endOutput() {
-    if (_playerPlatform case final InterruptibleVoicePlayerPlatform player) {
-      player.endOutput();
-    }
   }
 
   /// 朗读合成遇到 429 或 40x 异常时的回调。
@@ -61,11 +57,9 @@ final class VoiceOutputController extends ChangeNotifier {
 
   late double _volume;
   final Queue<VoiceOutputRequest> _queue = Queue();
-  var _generation = 0;
   bool _failureNotified = false;
   bool _sessionInitialized = false;
   String? _sessionId;
-  VoicePlayback? _activePlayback;
 
   VoiceOutputPhase _phase = VoiceOutputPhase.idle;
   VoiceOutputRequest? _nowReading;
@@ -77,7 +71,7 @@ final class VoiceOutputController extends ChangeNotifier {
 
   @override
   void dispose() {
-    _unsubscribeInterruption?.call();
+    _playback.unsubscribe();
     _haltNow();
     _disposed = true;
     super.dispose();
@@ -94,7 +88,7 @@ final class VoiceOutputController extends ChangeNotifier {
     }
     _volume = clamped;
     _playerPlatform.saveVolume(_volume);
-    _activePlayback?.setVolume(_volume);
+    _playback.setVolume(_volume);
     notifyListeners();
   }
 
@@ -134,7 +128,7 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 用户发送消息或主动点播时调用；必须发生在第一个 await 前。
   void prepareForUserInitiatedPlayback() {
     _interrupted = false;
-    _playerPlatform.prepareForUserGesturePlayback();
+    _playback.prepareForUserGesture();
   }
 
   /// 停止播放并清空队列（停止按钮 / Esc / 点麦克风立即停播）。
@@ -154,7 +148,7 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 消失的监听者届时已解除订阅，还活着的监听者（例如路由过渡期同时挂着的另一个
   /// 聊天页）照常收到更新。
   void stopAllForLeavingPage() {
-    if (_playerPlatform is InterruptibleVoicePlayerPlatform) {
+    if (_playback.interruptible) {
       _interrupted = true;
     }
     _haltNow();
@@ -169,7 +163,8 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 立即停播的公共动作：作废在途的合成/播放并清队，状态回到 idle。
   /// 唯一的差别（要不要通知、什么时候通知）留在两个调用方身上。
   void _haltNow() {
-    _abandonActive(incrementGeneration: true);
+    _queue.clear();
+    _playback.stop();
     _toIdle();
   }
 
@@ -187,18 +182,6 @@ final class VoiceOutputController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 作废当前活动播放/合成并清空队列；generation 递增让在途异步结果
-  /// 完成时能识别出自己已被作废。
-  void _abandonActive({required bool incrementGeneration}) {
-    if (incrementGeneration) {
-      _generation += 1;
-    }
-    _queue.clear();
-    _activePlayback?.stop();
-    _activePlayback = null;
-    _endOutput();
-  }
-
   Future<void> _drain() async {
     if (_phase != VoiceOutputPhase.idle) {
       // 已有一段在读/在合成：新项已在队列里，按序等它读完。
@@ -206,14 +189,15 @@ final class VoiceOutputController extends ChangeNotifier {
     }
     while (_queue.isNotEmpty) {
       final request = _queue.removeFirst();
-      final generation = _generation;
+      final activity = _playback.capture();
       _phase = VoiceOutputPhase.synthesizing;
       _nowReading = request;
       notifyListeners();
       final Uint8List audio;
-      if (_playerPlatform case final InterruptibleVoicePlayerPlatform player) {
-        final allowed = await player.beginOutput();
-        if (generation != _generation) return;
+      final prepared = activity.prepare();
+      if (prepared != null) {
+        final allowed = await prepared;
+        if (!activity.isCurrent) return;
         if (!allowed) {
           interruptOutput();
           return;
@@ -226,10 +210,10 @@ final class VoiceOutputController extends ChangeNotifier {
           sessionId: request.sessionId,
         );
       } on Object catch (error) {
-        if (generation != _generation) {
+        if (!activity.isCurrent) {
           return;
         }
-        _endOutput();
+        activity.finish();
         _notifyFailureOnce('语音服务连不上，这条读不出来。');
         final category = categorizeVoiceApiError(error, isInput: false);
         if (category != null) {
@@ -237,34 +221,27 @@ final class VoiceOutputController extends ChangeNotifier {
         }
         continue;
       }
-      if (generation != _generation) {
+      if (!activity.isCurrent) {
         return;
       }
-      final playback = await _playerPlatform.play(
-        audio,
-        mimeType: 'audio/mpeg',
-        volume: _volume,
-      );
-      if (generation != _generation) {
-        playback?.stop();
+      final playback = await activity.play(audio, volume: _volume);
+      if (!activity.accept(playback)) {
         return;
       }
       if (playback == null) {
-        _endOutput();
+        activity.finish();
         // 合成已成功；播放许可、解码或音频设备失败不能冒充服务断线。
         // 文案平台中性：web 是浏览器自动播放策略，安卓是系统音频设备。
         _notifyFailureOnce('无法播放语音，点小喇叭再听一次。');
         continue;
       }
-      _activePlayback = playback;
       _phase = VoiceOutputPhase.playing;
       notifyListeners();
       await playback.done;
-      if (generation != _generation) {
+      if (!activity.isCurrent) {
         return;
       }
-      _activePlayback = null;
-      _endOutput();
+      activity.finish();
     }
     _toIdle();
     notifyListeners();
