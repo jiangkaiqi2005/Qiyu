@@ -449,6 +449,7 @@ class _LocalChatViewState extends State<LocalChatView>
         MediaQuery.sizeOf(context).width < QiyuLayout.desktopBreakpoint;
     // 淡出层的落点：只在聊天态取，空态下问候由 `_homeBody` 自己画。
     final fadingGreeting = empty ? null : _greetingRect;
+    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     return Scaffold(
       // 底色撤成透明：页面背景（夜色底 + 仅空态的夜景图）由 [QiyuShell] 铺成
       // **全幅底层**，侧边栏与抽屉作为半透明层叠在它之上。这里再铺一层不透明
@@ -458,23 +459,39 @@ class _LocalChatViewState extends State<LocalChatView>
         key: _bodyStackKey,
         children: [
           SafeArea(
-            child: Column(
-              children: [
-                _utilityStrip(context, viewModel),
-                Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap:
-                        !kIsWeb &&
-                            defaultTargetPlatform == TargetPlatform.android
-                        ? () => _composerKey.currentState?.dismissKeyboard()
-                        : null,
-                    child: empty
-                        ? _homeBody(context, viewModel, narrow: narrow)
-                        : _chatBody(context, viewModel),
-                  ),
-                ),
-              ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // 软键盘留下不足 200px 时优先保全编辑区；键盘收起即恢复工具栏。
+                // 用安全区内实际高度判布局，不把横屏或窗口宽度当作平台判断。
+                final compactKeyboard =
+                    qiyuAndroidTouch &&
+                    keyboardVisible &&
+                    constraints.maxHeight < 200;
+                return Column(
+                  children: [
+                    if (!compactKeyboard) _utilityStrip(context, viewModel),
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap:
+                            !kIsWeb &&
+                                defaultTargetPlatform == TargetPlatform.android
+                            ? () => _composerKey.currentState?.dismissKeyboard()
+                            : null,
+                        child: empty && !compactKeyboard
+                            ? _homeBody(context, viewModel, narrow: narrow)
+                            : _chatBody(
+                                context,
+                                viewModel,
+                                editorHeight: compactKeyboard
+                                    ? constraints.maxHeight
+                                    : null,
+                              ),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
           // 聊天态才出现的问候淡出层：不接手势，也不参与命中测试。
@@ -535,20 +552,39 @@ class _LocalChatViewState extends State<LocalChatView>
   /// composer 随输入内容长高时只向上生长、盖住更早的消息，列表视口纹丝不动
   /// （原 Column 结构里 `Expanded` 的列表视口会被精确压缩对应行高）。列表底部
   /// 为覆盖层让位的 padding 常量见 [_chatListBottomInset]。
-  Widget _chatBody(BuildContext context, LocalChatViewModel viewModel) {
+  Widget _chatBody(
+    BuildContext context,
+    LocalChatViewModel viewModel, {
+    double? editorHeight,
+  }) {
     return Stack(
       children: [
         Positioned.fill(child: _messageArea(viewModel)),
         Positioned(
           left: 0,
           right: 0,
+          top: editorHeight == null ? null : 0,
           bottom: 0,
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              _noticeBars(context, viewModel),
-              _composer(viewModel),
-              const SizedBox(height: QiyuSpacing.lg),
+              if (editorHeight == null) ...[
+                _noticeBars(context, viewModel),
+                _composer(viewModel),
+                const SizedBox(height: QiyuSpacing.lg),
+              ] else ...[
+                Flexible(
+                  child: SingleChildScrollView(
+                    reverse: true,
+                    child: _noticeBars(context, viewModel),
+                  ),
+                ),
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: editorHeight),
+                  child: _composer(viewModel),
+                ),
+              ],
             ],
           ),
         ),

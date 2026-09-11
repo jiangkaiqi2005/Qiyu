@@ -23,6 +23,66 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  for (final restored in [false, true]) {
+    for (final inset in [160.0, 203.0, 220.0]) {
+      for (final textScale in [1.0, 2.0]) {
+        testWidgets(
+          '横屏键盘下输入和发送完整可点 restored=$restored inset=$inset scale=$textScale',
+          (tester) async {
+            tester.view.physicalSize = const Size(800, 360);
+            tester.view.devicePixelRatio = 1;
+            tester.view.padding = const FakeViewPadding(top: 36);
+            addTearDown(tester.view.reset);
+            tester.platformDispatcher.textScaleFactorTestValue = textScale;
+            addTearDown(
+              tester.platformDispatcher.clearTextScaleFactorTestValue,
+            );
+            final gateway = _ConfigurableChatGateway(
+              fallbackReasons: const [null],
+            );
+            if (restored) {
+              gateway.restoredMessages = const [
+                LocalChatMessage(
+                  requestId: 'old',
+                  speaker: LocalChatSpeaker.user,
+                  text: '已有消息',
+                ),
+              ];
+            }
+            final model = await _pumpChatView(tester, gateway: gateway);
+            await model.initialize();
+            await tester.pumpAndSettle();
+            final input = find.byKey(const Key('chat-input'));
+            await tester.enterText(input, '横屏输入\n第二行\n第三行\n第四行\n第五行');
+            tester.view.viewInsets = FakeViewPadding(bottom: inset);
+            await tester.pumpAndSettle();
+            for (final key in ['chat-input', 'chat-send', 'voice-mic']) {
+              final target = find.byKey(Key(key));
+              final rect = tester.getRect(target);
+              expect(rect.top, greaterThanOrEqualTo(36));
+              expect(rect.bottom, lessThanOrEqualTo(360 - inset));
+              expect(target.hitTestable(), findsOneWidget);
+              if (key != 'chat-input') {
+                expect(rect.width, greaterThanOrEqualTo(48));
+                expect(rect.height, greaterThanOrEqualTo(48));
+              }
+            }
+            await tester.tap(find.byKey(const Key('chat-send')));
+            await tester.pumpAndSettle();
+            expect(gateway.deliverCallCount, 1);
+            tester.view.viewInsets = const FakeViewPadding();
+            await tester.pumpAndSettle();
+            expect(
+              find.byKey(const Key('open-provider-settings')).hitTestable(),
+              findsOneWidget,
+            );
+            expect(tester.takeException(), isNull);
+          },
+          variant: TargetPlatformVariant.only(TargetPlatform.android),
+        );
+      }
+    }
+  }
   group('安卓键盘输入意图', () {
     testWidgets(
       '输入文字可长按选择复制，消息重听按钮仍执行',
