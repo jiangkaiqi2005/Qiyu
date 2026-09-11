@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -15,6 +16,7 @@ import 'package:qiyu_flutter/features/history/history_client.dart';
 import 'package:qiyu_flutter/features/history/history_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
+import 'package:qiyu_flutter/features/navigation.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_connection_status.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
@@ -30,6 +32,208 @@ import 'support/focus_ring_probe.dart';
 /// 歧义（Spec Testing Decisions 第 8 条）。
 
 void main() {
+  for (final detail in {
+    '/privacy': 'privacy-back',
+    '/settings/diagnostics': 'diagnostics-back',
+    '/history/existing': 'history-session-back',
+    '/memory/item/existing': 'memory-item-back',
+  }.entries) {
+    testWidgets(
+      '安卓详情 ${detail.key} 系统与页头返回有栈回原路无栈回合一页',
+      (tester) async {
+        await tester.pumpWidget(
+          QiyuApp(
+            viewModel: await _viewModel(_StubChatGateway()),
+            onboardingViewModel: await _onboardingViewModel(),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final context = tester.element(find.byType(QiyuShell));
+        final router = GoRouter.of(context);
+        router.go('/history');
+        await tester.pumpAndSettle();
+        for (final system in [true, false]) {
+          openInFront(tester.element(find.byType(QiyuShell)), detail.key);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(find.byKey(Key(detail.value)), findsOneWidget);
+          if (system) {
+            await tester.binding.handlePopRoute();
+          } else {
+            await tester.tap(find.byKey(Key(detail.value)));
+          }
+          await tester.pumpAndSettle();
+          expect(router.routeInformationProvider.value.uri.path, '/history');
+        }
+        for (final system in [true, false]) {
+          router.go(detail.key);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          if (system) {
+            await tester.binding.handlePopRoute();
+          } else {
+            await tester.tap(find.byKey(Key(detail.value)));
+          }
+          await tester.pumpAndSettle();
+          expect(router.routeInformationProvider.value.uri.path, '/chat');
+        }
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+
+  testWidgets(
+    '安卓内容入栈返回原路且根页交给系统退出',
+    (tester) async {
+      final platformCalls = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          platformCalls.add(call.method);
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await _pumpShell(tester, width: 420, height: 900, at: '/chat');
+      final shell = tester.state(find.byType(QiyuShell));
+      await tester.tap(find.byKey(const Key('open-history')));
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/history');
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/chat');
+      expect(tester.state(find.byType(QiyuShell)), same(shell));
+      expect(platformCalls, isNot(contains('SystemNavigator.pop')));
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(
+        platformCalls.where((call) => call == 'SystemNavigator.pop'),
+        hasLength(1),
+      );
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  for (final destination in ['settings', 'memory', 'history']) {
+    testWidgets(
+      '安卓抽屉换栈 $destination 返回与页头同目标并保留会话',
+      (tester) async {
+        tester.view.physicalSize = const Size(420, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final model = await _viewModel(_StubChatGateway());
+        await model.send('已有对话');
+        final session = model.sessionId;
+        final messages = model.messages.toList();
+        await tester.pumpWidget(
+          QiyuApp(
+            viewModel: model,
+            onboardingViewModel: await _onboardingViewModel(),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('nav-menu-button')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(Key('home-go-$destination')));
+        await tester.pumpAndSettle();
+        final shell = tester.state(find.byType(QiyuShell));
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(_location(tester), '/chat');
+        expect(tester.state(find.byType(QiyuShell)), same(shell));
+        expect(model.sessionId, session);
+        expect(model.messages, messages);
+        tester.view.physicalSize = const Size(1200, 900);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(Key('home-go-$destination')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(Key('$destination-back')));
+        await tester.pumpAndSettle();
+        expect(_location(tester), '/chat');
+        expect(model.sessionId, session);
+        expect(model.messages, messages);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+
+  testWidgets(
+    '安卓系统返回依次关闭模态、键盘、抽屉和功能页',
+    (tester) async {
+      await _pumpShell(
+        tester,
+        width: 420,
+        height: 900,
+        at: '/history',
+        drawerOpen: true,
+      );
+      tester.view.viewInsets = const FakeViewPadding(bottom: 240);
+      await tester.pump();
+      unawaited(
+        showDialog<void>(
+          context: tester.element(find.byType(QiyuShell)),
+          builder: (_) => const AlertDialog(content: Text('当前模态')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('当前模态'), findsNothing);
+      expect(find.byKey(const Key('nav-drawer')), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('nav-drawer')), findsOneWidget);
+      expect(_location(tester), '/history');
+      tester.view.resetViewInsets();
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('nav-drawer')), findsNothing);
+      expect(_location(tester), '/history');
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/chat');
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  for (final path in ['/', '/chat', '/history']) {
+    testWidgets(
+      '安卓系统返回先关闭 $path 的抽屉而不离页',
+      (tester) async {
+        await _pumpShell(
+          tester,
+          width: 420,
+          height: 900,
+          at: path,
+          drawerOpen: true,
+        );
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('nav-drawer')), findsNothing);
+        expect(_location(tester), path);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+  testWidgets(
+    '安卓系统返回从无栈历史回合一页并保留导航壳',
+    (tester) async {
+      await _pumpShell(tester, width: 420, height: 900, at: '/history');
+      final shell = tester.state(find.byType(QiyuShell));
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/chat');
+      expect(tester.state(find.byType(QiyuShell)), same(shell));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
   group('导航壳 QiyuShell', () {
     testWidgets('桌面默认展开 240px 毛玻璃侧边栏：品牌图标 + 三项导航 + 连接状态，没有任何回合一页入口', (
       tester,

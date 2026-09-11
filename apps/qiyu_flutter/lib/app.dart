@@ -39,6 +39,7 @@ import 'features/settings/web_search_settings_client.dart';
 import 'features/settings/web_search_settings_view_model.dart';
 import 'features/shell/qiyu_shell.dart';
 import 'features/accessibility.dart';
+import 'features/navigation.dart';
 import 'theme/qiyu_theme.dart';
 
 /// 生产路由表（9 条路径）：路径集合是行为不变量（Spec Implementation
@@ -94,21 +95,21 @@ List<RouteBase> qiyuRoutes() => [
         path: '/history',
         pageBuilder: (context, state) => NoTransitionPage<void>(
           key: state.pageKey,
-          child: const HistoryView(),
+          child: const QiyuSystemBack(child: HistoryView()),
         ),
       ),
       GoRoute(
         path: '/memory',
         pageBuilder: (context, state) => NoTransitionPage<void>(
           key: state.pageKey,
-          child: const MemoryView(),
+          child: const QiyuSystemBack(child: MemoryView()),
         ),
       ),
       GoRoute(
         path: '/settings',
         pageBuilder: (context, state) => NoTransitionPage<void>(
           key: state.pageKey,
-          child: const ProviderSettingsView(),
+          child: const QiyuSystemBack(child: ProviderSettingsView()),
         ),
       ),
     ],
@@ -117,27 +118,35 @@ List<RouteBase> qiyuRoutes() => [
     path: '/history/:sessionId',
     pageBuilder: (context, state) => NoTransitionPage<void>(
       key: state.pageKey,
-      child: HistorySessionView(sessionId: state.pathParameters['sessionId']!),
+      child: QiyuSystemBack(
+        child: HistorySessionView(
+          sessionId: state.pathParameters['sessionId']!,
+        ),
+      ),
     ),
   ),
   GoRoute(
     path: '/memory/item/:itemId',
     pageBuilder: (context, state) => NoTransitionPage<void>(
       key: state.pageKey,
-      child: MemoryItemView(itemId: state.pathParameters['itemId']!),
+      child: QiyuSystemBack(
+        child: MemoryItemView(itemId: state.pathParameters['itemId']!),
+      ),
     ),
   ),
   GoRoute(
     path: '/settings/diagnostics',
     pageBuilder: (context, state) => NoTransitionPage<void>(
       key: state.pageKey,
-      child: const DiagnosticsView(),
+      child: const QiyuSystemBack(child: DiagnosticsView()),
     ),
   ),
   GoRoute(
     path: '/privacy',
-    pageBuilder: (context, state) =>
-        NoTransitionPage<void>(key: state.pageKey, child: const PrivacyView()),
+    pageBuilder: (context, state) => NoTransitionPage<void>(
+      key: state.pageKey,
+      child: const QiyuSystemBack(child: PrivacyView()),
+    ),
   ),
 ];
 

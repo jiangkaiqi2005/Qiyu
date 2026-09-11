@@ -192,6 +192,8 @@ class _QiyuShellState extends State<QiyuShell>
         );
 
     return QiyuShellScope(
+      drawerOpen: !desktop && _drawerOpen,
+      closeDrawer: () => unawaited(_setDrawer(false)),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -464,7 +466,15 @@ class _QiyuShellState extends State<QiyuShell>
 /// 页面保留自己的 `Scaffold`（信息架构不动），只在壳真的占用同一个角时把
 /// 前导航这一件事让给壳。
 class QiyuShellScope extends InheritedWidget {
-  const QiyuShellScope({super.key, required super.child});
+  const QiyuShellScope({
+    super.key,
+    required super.child,
+    this.drawerOpen = false,
+    this.closeDrawer,
+  });
+
+  final bool drawerOpen;
+  final VoidCallback? closeDrawer;
 
   /// 页面该不该撤掉自己的返回箭头：**只在窄屏**。
   ///
@@ -493,7 +503,8 @@ class QiyuShellScope extends InheritedWidget {
       coversFrontNavigation(context) ? QiyuLayout.narrowHeaderLeftOverrun : 0;
 
   @override
-  bool updateShouldNotify(QiyuShellScope oldWidget) => false;
+  bool updateShouldNotify(QiyuShellScope oldWidget) =>
+      drawerOpen != oldWidget.drawerOpen;
 }
 
 /// 功能页页头 Row 的**左侧前缀**：桌面与「没被壳包住」时是自己的返回箭头，

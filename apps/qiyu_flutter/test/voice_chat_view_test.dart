@@ -16,10 +16,136 @@ import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
+import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
 
 import 'support/shared_fakes.dart';
 
 void main() {
+  testWidgets(
+    '安卓转写时模态键盘抽屉分别消费返回后才取消语音',
+    (tester) async {
+      tester.view.physicalSize = const Size(420, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = _VoiceChatGateway()..hangTranscribe = true;
+      final model = _chatViewModel(gateway);
+      final router = GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, _) => QiyuShell(
+              child: LocalChatView(
+                voiceRecorderPlatform: _FakeRecorderPlatform(),
+                sttSettingsGateway: const _FixedSttGateway(configured: true),
+              ),
+            ),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: model,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      await _recordAndroid(tester);
+      await tester.tap(find.byKey(const Key('nav-menu-button')));
+      await tester.pump(const Duration(milliseconds: 300));
+      final context = tester.element(find.byType(LocalChatView));
+      unawaited(
+        showDialog<void>(
+          context: context,
+          builder: (_) => const AlertDialog(content: Text('模态遮挡')),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      tester.view.viewInsets = const FakeViewPadding(bottom: 200);
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('模态遮挡'), findsNothing);
+      expect(find.byKey(const Key('nav-drawer')), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(find.byKey(const Key('nav-drawer')), findsOneWidget);
+      tester.view.resetViewInsets();
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const Key('nav-drawer')), findsNothing);
+      expect(find.text('取消'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      gateway.completeHungTranscribe('不应发送');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('voice-hold')), findsOneWidget);
+      expect(gateway.sentTexts, isEmpty);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  for (final stage in ['准备', '录音', '转写', '重试', '待发送']) {
+    testWidgets(
+      '安卓系统返回取消$stage且不发送迟到语音',
+      (tester) async {
+        final gateway = _VoiceChatGateway();
+        final platform = _FakeRecorderPlatform();
+        if (stage == '准备') {
+          platform.pendingStart = Completer<VoiceRecordingSession?>();
+        }
+        if (stage == '转写') gateway.hangTranscribe = true;
+        if (stage == '重试') {
+          gateway.transcribeFailuresRemaining = 1;
+          gateway.transcribeError = const LocalChatGatewayException(
+            '没有识别到语音，可以再说一次。',
+          );
+        }
+        if (stage == '待发送') gateway.pendingDelivery = Completer<void>();
+        final model = _chatViewModel(gateway);
+        await tester.pumpWidget(_harness(viewModel: model, platform: platform));
+        await tester.pumpAndSettle();
+        if (stage == '待发送') {
+          unawaited(model.send('已提交文字'));
+          await tester.pumpAndSettle();
+        }
+        await tester.tap(find.byKey(const Key('voice-mic')));
+        await tester.pumpAndSettle();
+        if (stage == '准备' || stage == '录音') {
+          final gesture = await tester.startGesture(
+            tester.getCenter(find.byKey(const Key('voice-hold'))),
+          );
+          await tester.pump(const Duration(milliseconds: 600));
+          await tester.binding.handlePopRoute();
+          await tester.pump();
+          if (stage == '准备') {
+            final late = _FakeRecordingSession();
+            platform.pendingStart!.complete(late);
+            await tester.pumpAndSettle();
+            expect(late.discardCalls, 1);
+          } else {
+            expect(platform.session!.discardCalls, 1);
+          }
+          await gesture.up();
+        } else {
+          await _recordAndroid(tester);
+          await tester.binding.handlePopRoute();
+        }
+        await tester.pumpAndSettle();
+        if (stage == '转写') gateway.completeHungTranscribe('迟到语音');
+        if (stage == '待发送') gateway.pendingDelivery!.complete();
+        await tester.pumpAndSettle();
+        expect(gateway.sentTexts, stage == '待发送' ? ['已提交文字'] : isEmpty);
+        expect(find.byKey(const Key('voice-hold')), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+
   for (final action in ['重试', '重新录制', '丢弃']) {
     testWidgets(
       '安卓转写失败可点 $action 且保留草稿',

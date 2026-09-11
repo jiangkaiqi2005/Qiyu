@@ -8,6 +8,7 @@ import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../shell/qiyu_widgets.dart';
+import '../navigation.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_send_button.dart';
@@ -243,7 +244,17 @@ class QiyuComposerState extends State<QiyuComposer> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: widget.voiceInput,
+    builder: (context, child) => QiyuSystemBack(
+      hasUnsubmittedVoice: hasUnsubmittedVoice,
+      cancelUnsubmittedVoice: cancelUnsubmittedVoice,
+      child: child!,
+    ),
+    child: _inputPanel(context),
+  );
+
+  Widget _inputPanel(BuildContext context) {
     // 窗口宽度变化会改折行数与字阶档位（进而改输入行高），这类变化不经过
     // 文本控制器，靠每次 build 补一次帧后核对兜住。
     _updateComposerExpanded();
