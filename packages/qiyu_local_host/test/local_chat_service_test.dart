@@ -3433,7 +3433,18 @@ void main() {
         seedMemory: (memoryDirectory) =>
             _seedHikingRecallEpisode(memoryDirectory, clock),
       );
-      addTearDown(harness.dispose);
+      addTearDown(() async {
+        // 断言失败也先释放在途任务，收尾完成后才删除目录。
+        if (!recallGate.isCompleted) recallGate.complete();
+        await harness.finalizePending();
+        if (gateway.completeCalls.isNotEmpty) {
+          await _awaitDiagnostic(
+            diagnostics,
+            'recall selection dropped date=2099-01-01',
+          );
+        }
+        await harness.dispose();
+      });
 
       final first = await harness.sendChat(
         requestId: 'recall-close',
@@ -3481,7 +3492,11 @@ void main() {
         seedMemory: (memoryDirectory) =>
             _seedDreamMaterial(memoryDirectory.path),
       );
-      addTearDown(harness.dispose);
+      addTearDown(() async {
+        if (!dreamGate.isCompleted) dreamGate.complete();
+        await harness.finalizePending();
+        await harness.dispose();
+      });
       // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询补办。
       await harness.finalizePending();
       await _seedPendingDream(harness.memoryDirectory,
@@ -3547,7 +3562,19 @@ void main() {
         seedMemory: (memoryDirectory) =>
             _seedHikingRecallEpisode(memoryDirectory, clock),
       );
-      addTearDown(harness.dispose);
+      addTearDown(() async {
+        if (!dreamGate.isCompleted) dreamGate.complete();
+        if (!recallGate.isCompleted) recallGate.complete();
+        await harness.finalizePending();
+        // 第一次调用属于 Dream；第二次到达后才有召回需要等待。
+        if (gateway.completeCalls.length >= 2) {
+          await _awaitDiagnostic(
+            diagnostics,
+            'recall selection dropped date=2099-01-01',
+          );
+        }
+        await harness.dispose();
+      });
       // 排空启动链后再落待补跑状态：启动补跑路径不参与轮询补办。
       await harness.finalizePending();
       await _seedPendingDream(harness.memoryDirectory,
