@@ -166,8 +166,7 @@ const _volcAudioFlags = 0x21; // type 0010 + POS_SEQUENCE 0001
 const _volcAudioLastFlags = 0x23; // type 0010 + NEG_WITH_SEQUENCE 0011
 const _volcChunkSize = 6400;
 
-/// full client request 的配置 payload：字段集与官方示例完全一致
-/// （codec raw、enable_itn/ddc/utterances/nonstream）。
+/// full client request 沿用官方音频参数，并显式请求 full 全量结果。
 Uint8List _fullClientRequestFrame({required int sequence}) {
   final payload = utf8.encode(
     jsonEncode({
@@ -181,6 +180,7 @@ Uint8List _fullClientRequestFrame({required int sequence}) {
       },
       'request': {
         'model_name': 'bigmodel',
+        'result_type': 'full',
         'enable_itn': true,
         'enable_punc': true,
         'enable_ddc': true,
@@ -291,23 +291,34 @@ bool _applyServerFrame(List<int> frame, StringBuffer text) {
       if (decoded is! Map<String, Object?>) {
         throw parsingFailure();
       }
-      // 官方字段表是 list、示例是对象，两种形态都兼容；增量包与最终
-      // 包的 text 全量拼接。
+      // 明确请求 full：每帧是当前全量快照，后续帧可修订之前的文字。
+      // 官方字段表是 list、示例是对象；列表只在同一帧内拼合。
+      final snapshot = StringBuffer();
+      var hasText = false;
       final result = decoded['result'];
       if (result is Map<String, Object?>) {
         final chunk = result['text'];
         if (chunk is String) {
-          text.write(chunk);
+          hasText = true;
+          snapshot.write(chunk);
         }
       } else if (result is List<Object?>) {
         for (final item in result) {
           if (item is Map<String, Object?>) {
             final chunk = item['text'];
             if (chunk is String) {
-              text.write(chunk);
+              hasText = true;
+              snapshot.write(chunk);
             }
           }
         }
+      }
+      // 确认/进度帧的空结果不抹去已收到的文本；明确的最终空文本仍
+      // 交给上层按「没有识别到语音」处理，不能回退到过时的中间结果。
+      if (snapshot.isNotEmpty || (isLast && hasText)) {
+        text
+          ..clear()
+          ..write(snapshot);
       }
       return !isLast;
     case 0xF: // error：i32 错误码 + u32 消息长度 + UTF-8 消息。

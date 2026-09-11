@@ -75,6 +75,7 @@ void main() {
       },
       'request': {
         'model_name': 'bigmodel',
+        'result_type': 'full',
         'enable_itn': true,
         'enable_punc': true,
         'enable_ddc': true,
@@ -126,7 +127,7 @@ void main() {
     expect(_payloadAt(connection.sentFrames[1], 8), isEmpty);
   });
 
-  test('多响应全量拼接：确认帧续收、普通包续收、最终包结束', () async {
+  test('多响应 full 快照替换：累计文本只返回一次', () async {
     final connector = _FakeWebSocketConnector();
     final connection = connector.connection!;
     final gateway = VolcSeedAsrGateway(connector);
@@ -147,15 +148,77 @@ void main() {
     );
     connection.serverSends(
       _responseFrame(flags: 0x91, sequence: 2, payload: {
-        'result': {'text': '有点'},
+        'result': {'text': '今晚有点'},
       }),
     );
     connection.serverSends(
       _responseFrame(flags: 0x93, sequence: 3, payload: {
-        'result': {'text': '累。'},
+        'result': {'text': '今晚有点累。'},
       }),
     );
     expect(await future, '今晚有点累。');
+  });
+
+  test('空中间帧不抹去快照，无结果的终止帧返回最后快照', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final future = VolcSeedAsrGateway(connector).transcribe(
+      config: config, apiKey: 'ark-test-key', audio: wav(100), mimeType: 'audio/wav');
+    var completed = false;
+    unawaited(future.then((_) => completed = true));
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {
+      'result': {'text': '明天见。'},
+    }));
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {
+      'result': {'text': ''},
+    }));
+    await Future<void>.delayed(Duration.zero);
+    expect(completed, isFalse);
+    connection.serverSends(_responseFrame(flags: 0x93, payload: {}));
+    expect(await future, '明天见。');
+    expect(connection.closed, isTrue);
+  });
+
+  for (final finalText in ['明天见。', '再见，再见。', '']) {
+    test('最终 full 快照保留修订与原有重复：$finalText', () async {
+      final connector = _FakeWebSocketConnector();
+      final connection = connector.connection!;
+      final future = VolcSeedAsrGateway(connector).transcribe(
+        config: config, apiKey: 'ark-test-key', audio: wav(100), mimeType: 'audio/wav');
+      await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+      connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
+      await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
+      connection.serverSends(_responseFrame(flags: 0x91, payload: {
+        'result': {'text': '今天见。'},
+      }));
+      connection.serverSends(_responseFrame(flags: 0x91, payload: {
+        'result': {'text': finalText},
+      }));
+      connection.serverSends(_responseFrame(flags: 0x93, payload: {
+        'result': {'text': finalText},
+      }));
+      expect(await future, finalText);
+    });
+  }
+
+  test('已有 full 中间文本但没有最终标志就断开仍判失败', () async {
+    final connector = _FakeWebSocketConnector();
+    final connection = connector.connection!;
+    final future = VolcSeedAsrGateway(connector).transcribe(
+      config: config, apiKey: 'ark-test-key', audio: wav(100), mimeType: 'audio/wav');
+    final check = expectLater(future, throwsA(isA<SttGatewayException>()
+      .having((error) => error.kind, 'kind', ModelFailureKind.network)));
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
+    await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {
+      'result': {'text': '未完成的结果'},
+    }));
+    await connection.drop();
+    await check;
   });
 
   test('result 为列表形态时逐项拼接（官方字段表与示例两种形态都兼容）', () async {
@@ -172,6 +235,11 @@ void main() {
     await _pumpUntil(connection, (_) => connection.sentFrames.length == 1);
     connection.serverSends(_responseFrame(flags: 0x91, payload: {}));
     await _pumpUntil(connection, (_) => connection.sentFrames.length == 2);
+    connection.serverSends(_responseFrame(flags: 0x91, payload: {
+      'result': [
+        {'text': '睡吧'},
+      ],
+    }));
     connection.serverSends(_responseFrame(flags: 0x93, payload: {
       'result': [
         {'text': '睡吧'},
