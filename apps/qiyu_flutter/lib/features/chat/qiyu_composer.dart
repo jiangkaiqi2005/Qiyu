@@ -625,7 +625,9 @@ class QiyuComposerState extends State<QiyuComposer> {
       setState(() => _pendingVoice = null);
     }
     final status = widget.voiceInput.status;
-    if (status == VoiceInputStatus.preparing ||
+    // 转写完成通知与进入待发之间也可能被中断；idle 同样作废尝试令牌。
+    if (status == VoiceInputStatus.idle ||
+        status == VoiceInputStatus.preparing ||
         status == VoiceInputStatus.recording ||
         status == VoiceInputStatus.transcribing ||
         status == VoiceInputStatus.retryable) {

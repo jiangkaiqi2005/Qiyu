@@ -11,6 +11,8 @@ const androidVoiceRecorderChannelName = 'dev.qiyu.app/voice_recorder';
 /// 原生录音通道的抽缝：生产实现走 [MethodChannel]，dart 测试注入
 /// fake（平台通道行为本身归真机冒烟，不在 dart 测试里 mock 平台业务）。
 abstract interface class VoiceRecorderNativeChannel {
+  Stream<void> get interruptions;
+
   /// 请求麦克风权限（系统弹窗）。返回 true 表示已授权；拒绝或通道
   /// 不可用返回 false。
   Future<bool> requestMicrophonePermission();
@@ -42,6 +44,18 @@ final class MethodVoiceRecorderChannel implements VoiceRecorderNativeChannel {
   static const MethodChannel _channel = MethodChannel(
     androidVoiceRecorderChannelName,
   );
+
+  static final StreamController<void> _interruptions =
+      StreamController<void>.broadcast(
+        sync: true,
+        onListen: () => _channel.setMethodCallHandler((call) async {
+          if (call.method == 'onRecordingInterrupted') _interruptions.add(null);
+        }),
+        onCancel: () => _channel.setMethodCallHandler(null),
+      );
+
+  @override
+  Stream<void> get interruptions => _interruptions.stream;
 
   @override
   Future<bool> hasMicrophonePermission() async {
@@ -103,7 +117,10 @@ final class MethodVoiceRecorderChannel implements VoiceRecorderNativeChannel {
 /// widget 测试跑在桌面宿主上，[supported] 如实报告不可用（与 stub 同
 /// 语义）；接缝行为测试用构造参数注入 fake 通道并显式指定 [supported]。
 final class IoVoiceRecorderPlatform
-    implements VoiceRecorderPlatform, PermissionAwareVoiceRecorderPlatform {
+    implements
+        VoiceRecorderPlatform,
+        PermissionAwareVoiceRecorderPlatform,
+        InterruptibleVoiceRecorderPlatform {
   IoVoiceRecorderPlatform({
     VoiceRecorderNativeChannel? channel,
     bool? supported,
@@ -115,6 +132,9 @@ final class IoVoiceRecorderPlatform
 
   @override
   bool get supported => _supportedOverride ?? Platform.isAndroid;
+
+  @override
+  Stream<void> get interruptions => _channel.interruptions;
 
   @override
   Future<VoicePermissionResult> preparePermission() async {

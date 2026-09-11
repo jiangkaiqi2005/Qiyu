@@ -16,10 +16,27 @@ class HoldToTalk extends StatefulWidget {
   State<HoldToTalk> createState() => _HoldToTalkState();
 }
 
-class _HoldToTalkState extends State<HoldToTalk> {
+class _HoldToTalkState extends State<HoldToTalk> with WidgetsBindingObserver {
   static const cancelDistance = 48.0;
   int? _pointer;
   bool _cancelled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _cancelled = true;
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
   void _start() {
     if (_cancelled || widget.voice.status != VoiceInputStatus.idle) return;

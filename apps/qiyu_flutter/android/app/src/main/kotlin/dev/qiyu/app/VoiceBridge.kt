@@ -4,12 +4,18 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaDataSource
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Handler
+import android.os.Build
 import android.os.Looper
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -48,8 +54,7 @@ internal object VoiceBridge {
     private const val SAMPLE_RATE = 16000
     private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
     private const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
-    // 单次读取 2048 字节 ≈ 64ms @16kHz/16-bit/单声道；readBlocking 到点
-    // 即返回，停止线程最多等一个读取周期。
+    // 非阻塞读取，空缓冲只短暂让出线程；取消不依赖音频设备继续产出数据。
     private const val CHUNK_BYTES = 2048
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -70,6 +75,10 @@ internal object VoiceBridge {
 
     @Volatile
     private var pcmBuffer: ByteArrayOutputStream? = null
+    private var recorderChannel: MethodChannel? = null
+    private var releaseCaptureObservers: (() -> Unit)? = null
+    private var captureInterrupted = false
+    private var foreground = false
 
     // ---- 播放状态（允许多句柄并存：设置页试听与聊天朗读互不阻塞） ----
     private val nextPlaybackId = AtomicInteger(1)
@@ -81,8 +90,8 @@ internal object VoiceBridge {
         playbackChannel = MethodChannel(messenger, VOICE_PLAYER_CHANNEL).also { channel ->
             channel.setMethodCallHandler { call, result -> handlePlayerCall(call, result) }
         }
-        MethodChannel(messenger, VOICE_RECORDER_CHANNEL).setMethodCallHandler { call, result ->
-            handleRecorderCall(call, result)
+        recorderChannel = MethodChannel(messenger, VOICE_RECORDER_CHANNEL).also { channel ->
+            channel.setMethodCallHandler { call, result -> handleRecorderCall(call, result) }
         }
     }
 
@@ -100,7 +109,8 @@ internal object VoiceBridge {
      * 幽灵朗读（释放归本表，与 finishPlayback 同一去处）。
      */
     fun unregister() {
-        recording = false
+        foreground = false
+        interruptRecording()
         pendingPermissionResult.getAndSet(null)?.error(
             "ACTIVITY_DESTROYED",
             "界面已销毁，权限请求已取消。",
@@ -110,6 +120,73 @@ internal object VoiceBridge {
             players.remove(id)?.let { releaseQuietly(it) }
         }
         activity = null
+    }
+
+    fun onForegroundChanged(value: Boolean) {
+        foreground = value
+        if (!value) interruptRecording()
+    }
+
+    /** 只作废当前采集；焦点恢复或 Activity 恢复不启动任何录音。 */
+    fun interruptRecording() {
+        if (captureThread == null || captureInterrupted) return
+        captureInterrupted = true
+        recording = false
+        pcmBuffer = null
+        releaseCaptureObservers?.invoke()
+        releaseCaptureObservers = null
+        recorderChannel?.invokeMethod("onRecordingInterrupted", null)
+        val thread = captureThread
+        executor.execute {
+            thread?.join()
+            mainHandler.post {
+                if (captureThread === thread) captureThread = null
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun observeCapture(record: AudioRecord): Boolean {
+        val manager = activity?.getSystemService(AudioManager::class.java) ?: return false
+        var observing = true
+        val sessionId = record.audioSessionId
+        val listener = AudioManager.OnAudioFocusChangeListener { change ->
+            if (observing && change < 0) interruptRecording()
+        }
+        val focus = if (Build.VERSION.SDK_INT >= 26) {
+            AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                .setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                .setOnAudioFocusChangeListener(listener, mainHandler)
+                .build()
+        } else null
+        val granted = if (focus != null) manager.requestAudioFocus(focus)
+            else manager.requestAudioFocus(listener, AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+        if (granted != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return false
+        val devices = object : AudioDeviceCallback() {
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+                if (observing && removedDevices.any { it.isSource }) interruptRecording()
+            }
+        }
+        val configurations = object : AudioManager.AudioRecordingCallback() {
+            override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
+                if (observing && Build.VERSION.SDK_INT >= 29 && configs.any {
+                        it.clientAudioSessionId == sessionId && it.isClientSilenced
+                    }) interruptRecording()
+            }
+        }
+        manager.registerAudioDeviceCallback(devices, mainHandler)
+        manager.registerAudioRecordingCallback(configurations, mainHandler)
+        releaseCaptureObservers = {
+            observing = false
+            manager.unregisterAudioDeviceCallback(devices)
+            manager.unregisterAudioRecordingCallback(configurations)
+            if (focus != null) manager.abandonAudioFocusRequest(focus)
+            else manager.abandonAudioFocus(listener)
+        }
+        return true
     }
 
     private fun handleRecorderCall(call: MethodCall, result: MethodChannel.Result) {
@@ -144,7 +221,7 @@ internal object VoiceBridge {
                 val host = activity
                 val granted = host?.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
                     PackageManager.PERMISSION_GRANTED
-                result.success(granted && startCapture())
+                result.success(foreground && granted && startCapture())
             }
             "stopRecording" -> stopCapture(returnBytes = true, result)
             "discardRecording" -> stopCapture(returnBytes = false, result)
@@ -156,7 +233,7 @@ internal object VoiceBridge {
      *  构造器 lint，权限缺失时本函数不会被调用。 */
     @SuppressLint("MissingPermission")
     private fun startCapture(): Boolean {
-        if (recording) {
+        if (recording || captureThread != null) {
             return false
         }
         val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, ENCODING)
@@ -178,8 +255,13 @@ internal object VoiceBridge {
             releaseQuietly(record)
             return false
         }
+        if (!observeCapture(record)) {
+            releaseQuietly(record)
+            return false
+        }
         val out = ByteArrayOutputStream()
         pcmBuffer = out
+        captureInterrupted = false
         recording = true
         try {
             record.startRecording()
@@ -190,6 +272,8 @@ internal object VoiceBridge {
             releaseQuietly(record)
             recording = false
             pcmBuffer = null
+            releaseCaptureObservers?.invoke()
+            releaseCaptureObservers = null
             return false
         }
         // AudioRecord 的收尾归采集线程自己：只有停手不再 read 的人才有资格
@@ -197,17 +281,21 @@ internal object VoiceBridge {
         // record 是原生层崩溃隐患（见 stopCapture）。
         captureThread = Thread {
             val chunk = ByteArray(CHUNK_BYTES)
+            var failed = false
             try {
                 while (recording) {
                     val read = try {
-                        record.read(chunk, 0, chunk.size, AudioRecord.READ_BLOCKING)
+                        record.read(chunk, 0, chunk.size, AudioRecord.READ_NON_BLOCKING)
                     } catch (_: Exception) {
+                        failed = true
                         break
                     }
-                    if (read <= 0) {
+                    if (read < 0) {
+                        failed = true
                         break
                     }
-                    out.write(chunk, 0, read)
+                    if (read == 0) Thread.sleep(10)
+                    else if (recording) out.write(chunk, 0, read)
                 }
             } finally {
                 try {
@@ -216,31 +304,42 @@ internal object VoiceBridge {
                     // 从未成功起录时 stop 会抛，按无数据收尾。
                 }
                 releaseQuietly(record)
+                if (failed) {
+                    // 同步到主线程再通知，旧线程不得取消后来的一次录音。
+                    val failedThread = Thread.currentThread()
+                    mainHandler.post {
+                        if (captureThread === failedThread) interruptRecording()
+                    }
+                }
             }
         }.also { it.start() }
         return true
     }
 
     /**
-     * 收尾只做三件事：请采集线程停手、等它一个读取周期、把已采集字节回话。
+     * 请非阻塞采集线程停手，等待释放完成再回话。
      * 不碰 AudioRecord——它的 stop/release 归采集线程（见 startCapture），
-     * join 超时恰恰说明线程还可能阻塞在 read 里，此处释放即 use-after-free。
-     * ByteArrayOutputStream.toByteArray 自带同步，线程迟一步退出也只是少几个字节。
+     * 停止期间拒绝新起录；音频错误或中断优先于正常收尾，不回传半段字节。
      */
     private fun stopCapture(returnBytes: Boolean, result: MethodChannel.Result) {
         recording = false
         val thread = captureThread
         val out = pcmBuffer
-        captureThread = null
         pcmBuffer = null
+        releaseCaptureObservers?.invoke()
+        releaseCaptureObservers = null
         executor.execute {
             try {
-                thread?.join(1000)
+                thread?.join()
             } catch (_: InterruptedException) {
                 // 等待被打断也照常收尾：按已采集到的字节返回。
             }
-            val bytes = if (returnBytes) out?.toByteArray() ?: ByteArray(0) else ByteArray(0)
-            mainHandler.post { result.success(bytes) }
+            mainHandler.post {
+                if (captureThread === thread) captureThread = null
+                val bytes = if (returnBytes && !captureInterrupted)
+                    out?.toByteArray() ?: ByteArray(0) else ByteArray(0)
+                result.success(bytes)
+            }
         }
     }
 

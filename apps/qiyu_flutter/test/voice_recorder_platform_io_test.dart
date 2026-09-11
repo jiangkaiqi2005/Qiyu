@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform_io.dart';
@@ -18,6 +19,31 @@ import 'package:qiyu_flutter/features/chat/voice_recorder_platform_io.dart';
 /// 通道行为（AudioRecord 真采集、权限真弹窗）归真机冒烟；dart 测试注入
 /// fake 通道验证我们自己的粘合与契约层。
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test('原生录音中断经现有通道通知且取消监听后可重新订阅', () async {
+    final platform = IoVoiceRecorderPlatform(supported: true);
+    var interruptions = 0;
+    var subscription = platform.interruptions.listen((_) => interruptions++);
+    Future<void> interrupt() async {
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            androidVoiceRecorderChannelName,
+            const StandardMethodCodec().encodeMethodCall(
+              const MethodCall('onRecordingInterrupted'),
+            ),
+            (_) {},
+          );
+    }
+
+    await interrupt();
+    expect(interruptions, 1);
+    await subscription.cancel();
+    subscription = platform.interruptions.listen((_) => interruptions++);
+    await interrupt();
+    expect(interruptions, 2);
+    await subscription.cancel();
+  });
+
   /// 逐字段断言 WAV 头与 web `_packWav` 产物同构的共享断言。
   void expectWav16kMonoContract(Uint8List wav, int pcmLength) {
     final view = ByteData.view(wav.buffer);
@@ -233,6 +259,8 @@ extension on RecordedAudio {
 
 /// 录音通道 fake：记录调用序列，PCM 固定返回一小段可断言字节。
 final class _FakeRecorderChannel implements VoiceRecorderNativeChannel {
+  @override
+  Stream<void> get interruptions => const Stream.empty();
   bool permissionGranted = true;
   bool permissionRequestResult = false;
   bool startSucceeds = true;

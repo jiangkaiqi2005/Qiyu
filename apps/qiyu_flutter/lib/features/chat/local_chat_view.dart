@@ -63,7 +63,13 @@ class LocalChatView extends StatefulWidget {
   State<LocalChatView> createState() => _LocalChatViewState();
 }
 
-class _LocalChatViewState extends State<LocalChatView> {
+class _LocalChatViewState extends State<LocalChatView>
+    with WidgetsBindingObserver {
+  StreamSubscription<void>? _recordingInterruptions;
+  GoRouter? _router;
+  String? _chatLocation;
+  bool get _android =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   final _scrollController = ScrollController();
 
   /// 输入模块的身份与操作键：状态与生命周期都在 [QiyuComposer] 内部，
@@ -112,8 +118,10 @@ class _LocalChatViewState extends State<LocalChatView> {
     chatViewModel.addListener(_onChatViewModelChanged);
     _lastTrackedSessionId = chatViewModel.sessionId;
     final sttSettingsGateway = _resolveSttSettingsGateway();
+    final recorder =
+        widget.voiceRecorderPlatform ?? createVoiceRecorderPlatform();
     _voiceInput = VoiceInputController(
-      widget.voiceRecorderPlatform ?? createVoiceRecorderPlatform(),
+      recorder,
       // 服务类型决定是否要浏览器端 WAV 转换（豆包要 16kHz 单声道 WAV）。
       () async {
         final settings = await sttSettingsGateway.read();
@@ -132,11 +140,46 @@ class _LocalChatViewState extends State<LocalChatView> {
     chatViewModel.voiceOutput.onApiError = _handleVoiceApiError;
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       chatViewModel.voiceOutput.isMicrophoneInUse = _isMicrophoneInUse;
+      WidgetsBinding.instance.addObserver(this);
+      if (recorder is InterruptibleVoiceRecorderPlatform) {
+        _recordingInterruptions =
+            (recorder as InterruptibleVoiceRecorderPlatform).interruptions
+                .listen((_) {
+                  _cancelUnsubmittedVoice();
+                });
+      }
     }
     unawaited(_voiceInput.initialize());
   }
 
   bool _isMicrophoneInUse() => _voiceInput.isMicrophoneInUse;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_android) return;
+    final router = GoRouter.maybeOf(context);
+    if (router == _router) return;
+    _router?.routerDelegate.removeListener(_onRouteChanged);
+    _router = router;
+    _chatLocation =
+        router?.routerDelegate.currentConfiguration.last.matchedLocation;
+    router?.routerDelegate.addListener(_onRouteChanged);
+  }
+
+  void _onRouteChanged() {
+    final location =
+        _router?.routerDelegate.currentConfiguration.last.matchedLocation;
+    if (location != _chatLocation) _cancelUnsubmittedVoice();
+  }
+
+  void _cancelUnsubmittedVoice() =>
+      _composerKey.currentState?.cancelUnsubmittedVoice();
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _cancelUnsubmittedVoice();
+  }
 
   /// 语音设置网关解析：注入优先；其次复用 app Provider 树的共享实例
   /// （与设置页同一实例，CSRF 不重复换取）；只有脱离 app 树单独 pump
@@ -166,6 +209,9 @@ class _LocalChatViewState extends State<LocalChatView> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _router?.routerDelegate.removeListener(_onRouteChanged);
+    unawaited(_recordingInterruptions?.cancel());
     _chatViewModel.removeListener(_onChatViewModelChanged);
     // 离开本页立刻闭嘴（ADR 0002）：**无条件**停播，包括还在队列里没开口的气泡。
     // 「只在 isReading 时才停」会让排队的 bubble 跨页继续读，不是可接受的取舍；
@@ -186,6 +232,7 @@ class _LocalChatViewState extends State<LocalChatView> {
   /// 因此页内的「返回上一页」回到的就是刚离开的那一页。换页前无条件停播
   /// （ADR 0002），这一步与 [QiyuShell] 的导航动作同一口径。
   void _pushAwayFromChat(String location) {
+    if (_android) _cancelUnsubmittedVoice();
     _composerKey.currentState?.dismissKeyboard();
     _chatViewModel.voiceOutput.stopAll();
     context.push(location);

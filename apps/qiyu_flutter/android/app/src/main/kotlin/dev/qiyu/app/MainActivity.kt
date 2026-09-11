@@ -30,6 +30,16 @@ class MainActivity : FlutterActivity() {
         VoiceBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
     }
 
+    override fun onResume() {
+        super.onResume()
+        VoiceBridge.onForegroundChanged(true)
+    }
+
+    override fun onPause() {
+        VoiceBridge.onForegroundChanged(false)
+        super.onPause()
+    }
+
     override fun onDestroy() {
         // 隐私收尾：界面销毁后麦克风不该还亮着。趁引擎尚在先请 VoiceBridge
         // 收尾（等待中的权限回包还能送出），再交给父类拆引擎。
