@@ -115,9 +115,20 @@ abstract base class TestableKeyedSettingsViewModel<S, D, R>
 
   R? _testResult;
   bool _testing = false;
+  int _testAttempt = 0;
 
   R? get testResult => _testResult;
   bool get testing => _testing;
+
+  /// 需要中断的设置域主动释放测试忙碌位；旧异步收尾不再更改状态。
+  /// 通知时机由调用方决定，离页释放可以避开框架锁树阶段。
+  @protected
+  bool cancelConnectionTest() {
+    if (!_testing) return false;
+    _testAttempt++;
+    _testing = false;
+    return true;
+  }
 
   @override
   void resetTransientResults() {
@@ -145,21 +156,28 @@ abstract base class TestableKeyedSettingsViewModel<S, D, R>
       return;
     }
     beforeConnectionTest();
+    final attempt = ++_testAttempt;
     _testing = true;
     _testResult = null;
     _errorMessage = null;
     notifyListeners();
     try {
-      _testResult = await runConnectionTest(draft);
+      final result = await runConnectionTest(draft);
+      if (attempt != _testAttempt) return;
+      _testResult = result;
       final followUp = afterConnectionTest(_testResult);
       if (followUp != null) {
         await followUp;
       }
     } on Object catch (error) {
-      _errorMessage = readableError(error, fallback: errorFallback);
+      if (attempt == _testAttempt) {
+        _errorMessage = readableError(error, fallback: errorFallback);
+      }
     } finally {
-      _testing = false;
-      notifyListeners();
+      if (attempt == _testAttempt) {
+        _testing = false;
+        notifyListeners();
+      }
     }
   }
 }

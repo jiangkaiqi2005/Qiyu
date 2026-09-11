@@ -7,6 +7,50 @@ import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
 
 void main() {
+  for (final oldFails in [false, true]) {
+    test('试听中断立即解除忙碌，旧请求${oldFails ? '失败' : '完成'}不覆盖新请求', () async {
+      final gateway = _ConcurrentPreviewGateway();
+      final playback = _RecordingPlayback();
+      final model = TtsSettingsViewModel(
+        gateway,
+        playerPlatform: _PreviewPlayer(playback),
+        autoStart: false,
+      );
+      const draft = TtsSettingsDraft(
+        baseUrl: 'https://tts.example.com',
+        model: 'tts',
+      );
+      final old = model.testConnection(draft);
+      expect(model.testing, true);
+      model.stopPreview();
+      expect(model.testing, false);
+      final current = model.testConnection(draft);
+      expect(gateway.requests, hasLength(2));
+      if (oldFails) {
+        gateway.requests[0].completeError(Exception('旧请求失败'));
+      } else {
+        gateway.requests[0].complete(
+          const TtsConnectionTest(succeeded: false, message: '旧结果'),
+        );
+      }
+      await old;
+      expect(model.testing, true);
+      expect(model.testResult, isNull);
+      expect(model.errorMessage, isNull);
+      gateway.requests[1].complete(
+        TtsConnectionTest(
+          succeeded: true,
+          message: '新结果',
+          audio: Uint8List.fromList([1]),
+        ),
+      );
+      await current;
+      expect(model.testing, false);
+      expect(model.testResult?.message, '新结果');
+      expect(playback.doneReads, 1);
+      model.dispose();
+    });
+  }
   test('离页作废在途试听，迟到音频不能播放，主动重听仍可用', () async {
     final gateway = _PendingPreviewGateway();
     final playback = _RecordingPlayback();
@@ -102,6 +146,19 @@ void main() {
     player.finish();
     viewModel.dispose();
   });
+}
+
+final class _ConcurrentPreviewGateway implements TtsSettingsGateway {
+  final requests = <Completer<TtsConnectionTest>>[];
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) {
+    final request = Completer<TtsConnectionTest>();
+    requests.add(request);
+    return request.future;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 final class _PendingPreviewGateway implements TtsSettingsGateway {

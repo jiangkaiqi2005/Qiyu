@@ -30,6 +30,41 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  testWidgets('安卓后台中断挂起合成后按钮立即可重试，旧请求晚到不覆盖新试听', (tester) async {
+    final oldRequest = Completer<TtsConnectionTest>();
+    final gateway = _MutableTtsSettingsGateway(const TtsSettings(
+      configured: true, keySet: true, baseUrl: 'https://tts.example.com', model: 'tts'))
+      ..pendingTest = oldRequest;
+    final player = _HoldingPreviewPlayer();
+    await tester.pumpWidget(await _app(
+      settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+      providerGateway: FixedProviderSettingsGateway(configured: false),
+      ttsGateway: gateway, ttsPlayer: player,
+    ));
+    await _openSettings(tester);
+    await _expandSection(tester, 'tts');
+    final button = find.byKey(const Key('test-tts-connection'));
+    await _reveal(tester, button);
+    await tester.tap(button);
+    await tester.pump();
+    expect(gateway.testCalls, 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    gateway.pendingTest = null;
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(oldRequest.isCompleted, false);
+    expect(gateway.testCalls, 2);
+    expect(player.active, true);
+    oldRequest.complete(const TtsConnectionTest(succeeded: false, message: '旧请求失败'));
+    await tester.pumpAndSettle();
+    expect(player.active, true);
+    expect(find.text('旧请求失败'), findsNothing);
+    expect(find.byKey(const Key('tts-replay-preview')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
   for (final interruption in ['后台', '离页']) {
     testWidgets('安卓设置试听$interruption立即停止，恢复后安静，主动试听可用', (tester) async {
       final player = _HoldingPreviewPlayer();
@@ -1921,6 +1956,7 @@ final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
 }
 
 final class _MutableTtsSettingsGateway implements TtsSettingsGateway {
+  Completer<TtsConnectionTest>? pendingTest;
   _MutableTtsSettingsGateway(this._settings);
 
   TtsSettings _settings;
@@ -1969,6 +2005,7 @@ final class _MutableTtsSettingsGateway implements TtsSettingsGateway {
   @override
   Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async {
     testCalls += 1;
+    if (pendingTest != null) return pendingTest!.future;
     return TtsConnectionTest(
       succeeded: true,
       message: '连接成功，点「听试听」可以听听栖语的声音。',

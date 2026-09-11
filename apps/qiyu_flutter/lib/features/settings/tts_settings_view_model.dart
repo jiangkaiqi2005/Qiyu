@@ -41,6 +41,7 @@ final class TtsSettingsViewModel
   }
 
   void stopPreview({bool discardPreview = false}) {
+    if (cancelConnectionTest()) scheduleMicrotask(notifyListeners);
     _generation++;
     _preview?.stop();
     _preview = null;
