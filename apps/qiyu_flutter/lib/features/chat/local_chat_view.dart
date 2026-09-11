@@ -14,6 +14,7 @@ import '../settings/stt_settings_client.dart';
 import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
 import 'api_error_dialog.dart';
+import 'chat_voice_coordinator.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_chat_bubble.dart';
@@ -65,7 +66,7 @@ class LocalChatView extends StatefulWidget {
 
 class _LocalChatViewState extends State<LocalChatView>
     with WidgetsBindingObserver {
-  StreamSubscription<void>? _recordingInterruptions;
+  late final ChatVoiceCoordinator _voiceCoordinator;
   GoRouter? _router;
   String? _chatLocation;
   bool get _android =>
@@ -138,21 +139,16 @@ class _LocalChatViewState extends State<LocalChatView>
       onApiError: _handleVoiceApiError,
     );
     chatViewModel.voiceOutput.onApiError = _handleVoiceApiError;
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      chatViewModel.voiceOutput.isMicrophoneInUse = _isMicrophoneInUse;
-      WidgetsBinding.instance.addObserver(this);
-      if (recorder is InterruptibleVoiceRecorderPlatform) {
-        _recordingInterruptions =
-            (recorder as InterruptibleVoiceRecorderPlatform).interruptions
-                .listen((_) {
-                  _cancelUnsubmittedVoice();
-                });
-      }
-    }
+    _voiceCoordinator = ChatVoiceCoordinator(
+      viewModel: chatViewModel,
+      input: _voiceInput,
+      android: _android,
+      hasComposer: () => _composerKey.currentState != null,
+      recorder: recorder,
+    );
+    if (_android) WidgetsBinding.instance.addObserver(this);
     unawaited(_voiceInput.initialize());
   }
-
-  bool _isMicrophoneInUse() => _voiceInput.isMicrophoneInUse;
 
   @override
   void didChangeDependencies() {
@@ -171,19 +167,17 @@ class _LocalChatViewState extends State<LocalChatView>
     final location =
         _router?.routerDelegate.currentConfiguration.last.matchedLocation;
     if (location != _chatLocation) {
-      _cancelUnsubmittedVoice();
-      _chatViewModel.voiceOutput.stopAllForLeavingPage();
+      _voiceCoordinator.leaveRoute();
     }
   }
 
   void _cancelUnsubmittedVoice() =>
-      _composerKey.currentState?.cancelUnsubmittedVoice();
+      _voiceCoordinator.cancelForPage();
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) {
-      _cancelUnsubmittedVoice();
-      _chatViewModel.voiceOutput.interruptOutput();
+      _voiceCoordinator.enterBackground();
     }
   }
 
@@ -217,7 +211,7 @@ class _LocalChatViewState extends State<LocalChatView>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _router?.routerDelegate.removeListener(_onRouteChanged);
-    unawaited(_recordingInterruptions?.cancel());
+    _voiceCoordinator.unsubscribe();
     _chatViewModel.removeListener(_onChatViewModelChanged);
     // 离开本页立刻闭嘴（ADR 0002）：**无条件**停播，包括还在队列里没开口的气泡。
     // 「只在 isReading 时才停」会让排队的 bubble 跨页继续读，不是可接受的取舍；
@@ -226,9 +220,7 @@ class _LocalChatViewState extends State<LocalChatView>
     if (_chatViewModel.voiceOutput.onApiError == _handleVoiceApiError) {
       _chatViewModel.voiceOutput.onApiError = null;
     }
-    if (_chatViewModel.voiceOutput.isMicrophoneInUse == _isMicrophoneInUse) {
-      _chatViewModel.voiceOutput.isMicrophoneInUse = null;
-    }
+    _voiceCoordinator.dispose();
     _voiceInput.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -898,6 +890,7 @@ class _LocalChatViewState extends State<LocalChatView>
       key: _composerKey,
       viewModel: viewModel,
       voiceInput: _voiceInput,
+      voiceCoordinator: _voiceCoordinator,
       onSendStarted: _onComposerSendStarted,
       // 回调无参：本轮视图模型就是模块持有的这一个，分类/频控/弹窗仍走
       // [_handleTurnApiErrors]，页面侧闭包自取 viewModel。

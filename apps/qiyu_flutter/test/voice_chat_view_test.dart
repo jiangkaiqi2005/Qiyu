@@ -22,6 +22,38 @@ import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  for (final platform in [TargetPlatform.android, TargetPlatform.windows]) {
+    for (final replaceGuard in [false, true]) {
+      testWidgets('页面语音订阅与占用回调按拥有者解绑 $platform $replaceGuard', (tester) async {
+        final recorder = _FakeRecorderPlatform();
+        final viewModel = _chatViewModel();
+        final output = viewModel.voiceOutput;
+        bool originalGuard() => true;
+        bool replacementGuard() => false;
+        output.isMicrophoneInUse = originalGuard;
+        await tester.pumpWidget(_harness(viewModel: viewModel, platform: recorder));
+        await tester.pumpAndSettle();
+        final android = platform == TargetPlatform.android;
+        expect(recorder.interrupted.hasListener, android);
+        expect(output.isMicrophoneInUse!(), !android);
+        if (replaceGuard) output.isMicrophoneInUse = replacementGuard;
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        expect(recorder.interrupted.hasListener, isFalse);
+        expect(
+          output.isMicrophoneInUse,
+          replaceGuard ? replacementGuard : (android ? null : originalGuard),
+        );
+        recorder.interrupted.add(null);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        await recorder.interrupted.close();
+        viewModel.dispose();
+        output.dispose();
+      }, variant: TargetPlatformVariant.only(platform));
+    }
+  }
+
   for (final failure in [
     (code: 'stt_dns', message: '找不到语音服务域名。'),
     (code: 'stt_network', message: '无法连接语音服务。'),

@@ -10,6 +10,7 @@ import '../../theme/qiyu_tokens.dart';
 import '../shell/qiyu_widgets.dart';
 import '../navigation.dart';
 import '../accessibility.dart';
+import 'chat_voice_coordinator.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_send_button.dart';
@@ -32,7 +33,7 @@ final class _VoiceEscapeIntent extends Intent {
 
 /// 聊天输入模块（design-system §8 组件 5）：合一页输入行的完整职责单位。
 ///
-/// 拥有并收拢输入相关的全部内部状态与生命周期——文本与选区（控制器）、
+/// 拥有输入 UI 的状态与生命周期——文本与选区（控制器）、
 /// 焦点（FocusNode 与聚焦描边重绘）、输入宽度定位（测量键）、展开状态
 /// 与折行测量（同源样式 + 实际宽度 + 光标边距）、快捷键（Enter 发送、
 /// Shift/Ctrl+Enter 软换行、Esc 语音语义）以及监听与帧后回调的注册取消。
@@ -42,7 +43,8 @@ final class _VoiceEscapeIntent extends Intent {
 ///
 /// 发送后的清空与失败回填也在这里协调：手打与语音转写沿用各自既有的
 /// 判断条件与异步先后（见 [_send]、[QiyuComposerState.sendTranscribed]），
-/// 发出的轮次仍走同一个聊天视图模型——这里不建第二套 requestId、消息
+/// 待发令牌与语音中断归 ChatVoiceCoordinator；发出的轮次仍走同一个
+/// 聊天视图模型——这里不建第二套 requestId、消息
 /// 列表或发送锁。语音输入/朗读控制器由页面创建并复用传入，不在本模块
 /// 重建；麦克风按钮与 Esc 只是它们的展示与分派面。
 class QiyuComposer extends StatefulWidget {
@@ -50,6 +52,7 @@ class QiyuComposer extends StatefulWidget {
     super.key,
     required this.viewModel,
     required this.voiceInput,
+    required this.voiceCoordinator,
     required this.onSendStarted,
     required this.onTurnCompleted,
     required this.pushAwayFromChat,
@@ -59,6 +62,7 @@ class QiyuComposer extends StatefulWidget {
 
   /// 页面创建并拥有的语音输入控制器：麦克风按钮与 Esc 只分派它。
   final VoiceInputController voiceInput;
+  final ChatVoiceCoordinator voiceCoordinator;
 
   /// 发送起点回调（手打与转写共用）：页面据此把消息区拉回贴底。
   final VoidCallback onSendStarted;
@@ -124,13 +128,13 @@ class QiyuComposerState extends State<QiyuComposer> {
   /// 让位常量与基线测试的 492/516 都依赖这一点）。
   bool _composerExpanded = false;
   bool _voiceMode = false;
-  Completer<void>? _pendingVoice;
   bool get _android =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   @override
   void initState() {
     super.initState();
+    widget.voiceCoordinator.onPendingChanged = _onPendingChanged;
     _focusNode.addListener(_onFocusChange);
     // 文本每次变化（打字、IME 组合、程序注入）都可能改变输入行行数。
     _controller.addListener(_updateComposerExpanded);
@@ -138,8 +142,7 @@ class QiyuComposerState extends State<QiyuComposer> {
 
   @override
   void dispose() {
-    _pendingVoice?.complete();
-    _pendingVoice = null;
+    widget.voiceCoordinator.detachComposer();
     _controller.dispose();
     _focusNode
       ..removeListener(_onFocusChange)
@@ -167,34 +170,29 @@ class QiyuComposerState extends State<QiyuComposer> {
     if (_android) _focusNode.unfocus();
   }
 
+  void _onPendingChanged() => setState(() {});
+
   /// 语音转写出的文字直接发送：与手打共用同一条链路（requestId 幂等、
   /// 乐观插入、失败回填输入框）。栖语正在回复时排队，回复结束即发。
   /// 模块对外的另一个操作：页面把转写回调接进来后由此进入发送协调。
-  Future<void> sendTranscribed(String text) async {
-    final viewModel = widget.viewModel;
-    final pending = _android ? Completer<void>() : null;
-    if (_android && _pendingVoice != null) return;
-    if (pending != null) setState(() => _pendingVoice = pending);
-    final sent = await viewModel.sendWhenIdle(
-      text,
-      cancelled: pending?.future,
-      isCancelled: pending == null ? null : () => pending.isCompleted,
-      onCommitted: () {
-        if (pending != null && mounted) setState(() => _pendingVoice = null);
-        widget.onSendStarted();
-      },
-    );
-    if (pending?.isCompleted ?? false) return;
-    if (!sent &&
-        mounted &&
-        _controller.text.isEmpty &&
-        text.trim().isNotEmpty) {
-      _backfillDraft(text);
-    }
-    if (sent && mounted) {
-      await widget.onTurnCompleted();
-    }
-  }
+  Future<void> sendTranscribed(String text) =>
+      widget.voiceCoordinator.sendTranscribed(
+        text,
+        isMounted: () => mounted,
+        onCommitted: () => widget.onSendStarted(),
+        onFinished: (sent) {
+          if (!sent &&
+              mounted &&
+              _controller.text.isEmpty &&
+              text.trim().isNotEmpty) {
+            _backfillDraft(text);
+          }
+          if (sent && mounted) {
+            return widget.onTurnCompleted();
+          }
+          return null;
+        },
+      );
 
   Future<void> _send() async {
     final viewModel = widget.viewModel;
@@ -315,12 +313,7 @@ class QiyuComposerState extends State<QiyuComposer> {
                   onInvoke: (intent) {
                     // 播放态下 Esc 等同停止按钮（ADR 0002 的打断规则）；
                     // 录音/转写语义不变。
-                    viewModel.voiceOutput.stopAll();
-                    if (_android) {
-                      cancelUnsubmittedVoice();
-                    } else {
-                      widget.voiceInput.handleEscape();
-                    }
+                    widget.voiceCoordinator.escape();
                     return null;
                   },
                 ),
@@ -480,30 +473,14 @@ class QiyuComposerState extends State<QiyuComposer> {
         '语音输入',
         const Icon(QiyuIcons.mic),
         null,
-        // 点麦克风她立刻闭嘴（ADR 0002 硬规则）：她的声音不能被录进
-        // 转写变成用户在自言自语。
-        () {
-          final viewModel = widget.viewModel;
-          viewModel.voiceOutput.stopAll();
-          // 60 秒自动收尾没有第二次点击，必须在开始录音
-          // 的用户手势中先为稍后的回复朗读保留许可。
-          if (viewModel.voiceOutputEnabled) {
-            viewModel.voiceOutput.prepareForUserInitiatedPlayback();
-          }
-          voice.handleMicTap();
-        },
+        widget.voiceCoordinator.startRecording,
       ),
       VoiceInputStatus.recording => (
         'voice-mic-stop',
         '说完，转成文字',
         const Icon(QiyuIcons.stop_circle),
         theme.colorScheme.error,
-        // 转写和聊天都会跨越异步边界；说完的这次点击
-        // 是语音闭环最后一个可用的浏览器用户手势。
-        () {
-          widget.viewModel.voiceOutput.prepareForUserInitiatedPlayback();
-          voice.handleMicTap();
-        },
+        widget.voiceCoordinator.finishRecording,
       ),
       VoiceInputStatus.preparing || VoiceInputStatus.transcribing => (
         'voice-mic-busy',
@@ -520,13 +497,7 @@ class QiyuComposerState extends State<QiyuComposer> {
         '重试转写',
         const Icon(QiyuIcons.mic),
         theme.colorScheme.error,
-        // 与开始录音同规则：点麦克风即停播清队列。
-        () {
-          final voiceOutput = widget.viewModel.voiceOutput;
-          voiceOutput.stopAll();
-          voiceOutput.prepareForUserInitiatedPlayback();
-          voice.handleMicTap();
-        },
+        widget.voiceCoordinator.retryRecording,
       ),
     };
     return QiyuOwnFocusRing(
@@ -571,7 +542,7 @@ class QiyuComposerState extends State<QiyuComposer> {
             icon: const Icon(QiyuIcons.edit),
           ),
           Expanded(
-            child: _pendingVoice != null
+            child: widget.voiceCoordinator.hasPending
                 ? Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -608,7 +579,7 @@ class QiyuComposerState extends State<QiyuComposer> {
                   )
                 : HoldToTalk(
                     voice: voice,
-                    beforeStart: () => widget.viewModel.voiceOutput.stopAll(),
+                    beforeStart: widget.voiceCoordinator.beforeHoldToTalk,
                   ),
           ),
         ],
@@ -617,30 +588,9 @@ class QiyuComposerState extends State<QiyuComposer> {
   );
 
   /// 系统返回与中断只在有尚未提交的语音时消费动作。
-  bool get hasUnsubmittedVoice =>
-      _pendingVoice != null ||
-      widget.voiceInput.status == VoiceInputStatus.preparing ||
-      widget.voiceInput.status == VoiceInputStatus.recording ||
-      widget.voiceInput.status == VoiceInputStatus.transcribing ||
-      widget.voiceInput.status == VoiceInputStatus.retryable;
+  bool get hasUnsubmittedVoice => widget.voiceCoordinator.hasUnsubmitted;
 
-  /// 返回与生命周期接线复用此意图，只取消尚未提交的语音输入。
-  void cancelUnsubmittedVoice() {
-    final pending = _pendingVoice;
-    if (pending != null) {
-      pending.complete();
-      setState(() => _pendingVoice = null);
-    }
-    final status = widget.voiceInput.status;
-    // 转写完成通知与进入待发之间也可能被中断；idle 同样作废尝试令牌。
-    if (status == VoiceInputStatus.idle ||
-        status == VoiceInputStatus.preparing ||
-        status == VoiceInputStatus.recording ||
-        status == VoiceInputStatus.transcribing ||
-        status == VoiceInputStatus.retryable) {
-      widget.voiceInput.discard();
-    }
-  }
+  void cancelUnsubmittedVoice() => widget.voiceCoordinator.cancelUnsubmitted();
 
   Future<void> _showVoiceGuide() async {
     final voice = widget.voiceInput;
