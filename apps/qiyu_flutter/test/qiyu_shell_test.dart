@@ -32,6 +32,80 @@ import 'support/focus_ring_probe.dart';
 /// 歧义（Spec Testing Decisions 第 8 条）。
 
 void main() {
+  testWidgets('安卓页头和抽屉48像素命中区域边缘导航不重叠', (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(QiyuApp(
+      viewModel: await _viewModel(_StubChatGateway()),
+      onboardingViewModel: await _onboardingViewModel(),
+    ));
+    await tester.pumpAndSettle();
+    final router = GoRouter.of(tester.element(find.byType(QiyuShell)));
+    Rect target(String key) {
+      final finder = find.byKey(Key(key));
+      final rect = tester.getRect(finder);
+      expect(rect.width, greaterThanOrEqualTo(48), reason: key);
+      expect(rect.height, greaterThanOrEqualTo(48), reason: key);
+      expect(tester.getSemantics(finder).rect.width, greaterThanOrEqualTo(48), reason: key);
+      expect(tester.getSemantics(finder).rect.height, greaterThanOrEqualTo(48), reason: key);
+      return rect;
+    }
+    final menu = target('nav-menu-button');
+    final history = target('open-history');
+    final settings = target('open-provider-settings');
+    expect(menu.overlaps(history), isFalse);
+    expect(history.overlaps(settings), isFalse);
+    await tester.tapAt(history.topLeft + const Offset(1, 1));
+    await tester.pumpAndSettle();
+    expect(_location(tester), '/history');
+    expect(tester.takeException(), isNull, reason: '历史');
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    await tester.tapAt(target('open-provider-settings').bottomRight - const Offset(1, 1));
+    await tester.pumpAndSettle();
+    expect(_location(tester), '/settings');
+    expect(tester.takeException(), isNull, reason: '设置');
+    await tester.tapAt(target('nav-menu-button').topLeft + const Offset(1, 1));
+    await tester.pumpAndSettle();
+    final memory = target('home-go-memory');
+    await tester.tapAt(memory.bottomRight - const Offset(1, 1));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/memory');
+    expect(tester.takeException(), isNull, reason: '记忆中心');
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: '大字体记忆页头');
+    await tester.tapAt(target('nav-menu-button').bottomRight - const Offset(1, 1));
+    await tester.pumpAndSettle();
+    target('home-go-history');
+    target('home-go-memory');
+    target('home-go-settings');
+    expect(tester.takeException(), isNull, reason: '大字体抽屉');
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+    for (final detail in {
+      '/privacy': 'privacy-back',
+      '/settings/diagnostics': 'diagnostics-back',
+      '/history/existing': 'history-session-back',
+      '/memory/item/existing': 'memory-item-back',
+    }.entries) {
+      router.go(detail.key);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull, reason: detail.key);
+      await tester.tapAt(target(detail.value).topLeft + const Offset(1, 1));
+      await tester.pumpAndSettle();
+      expect(router.routeInformationProvider.value.uri.path, '/chat');
+    }
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
   for (final detail in {
     '/privacy': 'privacy-back',
     '/settings/diagnostics': 'diagnostics-back',
@@ -838,7 +912,8 @@ void main() {
         tester.widget<Icon>(find.byIcon(QiyuIcons.arrow_upward)).color,
         QiyuColors.onAccent,
       );
-    });
+      expect(tester.getSize(find.byKey(const Key('chat-send'))), const Size(34, 34));
+    }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
     testWidgets('composer：胶囊全圆角 + line 发丝描边，聚焦描边紫度 0.13', (tester) async {
       final gateway = _StubChatGateway();

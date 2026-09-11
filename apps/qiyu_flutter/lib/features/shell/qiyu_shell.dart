@@ -430,13 +430,19 @@ class _QiyuShellState extends State<QiyuShell>
                       focusNode: _menuFocusNode,
                       customBorder: const CircleBorder(),
                       onTap: () => unawaited(_setDrawer(!_drawerOpen)),
-                      child: SizedBox.square(
-                        dimension: QiyuLayout.menuButtonSize,
-                        child: const Center(
-                          child: Icon(
-                            QiyuIcons.menu,
-                            size: QiyuIconSpec.size,
-                            color: QiyuColors.ink,
+                      child: Semantics(
+                        label: '打开导航菜单',
+                        button: true,
+                        child: SizedBox.square(
+                          dimension: qiyuAndroidTouch
+                              ? 48
+                              : QiyuLayout.menuButtonSize,
+                          child: const Center(
+                            child: Icon(
+                              QiyuIcons.menu,
+                              size: QiyuIconSpec.size,
+                              color: QiyuColors.ink,
+                            ),
                           ),
                         ),
                       ),
@@ -500,7 +506,10 @@ class QiyuShellScope extends InheritedWidget {
   /// 左留白，所以这里给的是「占位减去那档已有留白」的差额，页面把它加在
   /// 自己的左内缩之上就够了，不必各自量一遍浮层的三层几何。
   static double headerLeftOverrun(BuildContext context) =>
-      coversFrontNavigation(context) ? QiyuLayout.narrowHeaderLeftOverrun : 0;
+      coversFrontNavigation(context)
+          ? QiyuLayout.narrowHeaderLeftOverrun +
+              (qiyuAndroidTouch ? 48 - QiyuLayout.menuButtonSize : 0)
+          : 0;
 
   @override
   bool updateShouldNotify(QiyuShellScope oldWidget) =>
@@ -530,6 +539,7 @@ class QiyuPageHeaderBackButton extends StatelessWidget {
       children: [
         IconButton(
           key: buttonKey,
+          style: qiyuAndroidTouchStyle,
           onPressed: () => backToPrevious(context),
           tooltip: '返回上一页',
           icon: const Icon(QiyuIcons.arrow_back),
@@ -787,6 +797,7 @@ class _NavItemState extends State<_NavItem> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: qiyuMotion(context, QiyuMotion.fast),
+          constraints: qiyuAndroidTouch ? const BoxConstraints(minHeight: 48) : null,
           decoration: BoxDecoration(
             borderRadius: QiyuRadii.cardBorder,
             // 选中态中性暗底 rgba(255,255,255,0.04)，绝不用紫底。
@@ -807,7 +818,7 @@ class _NavItemState extends State<_NavItem> {
               Expanded(
                 child: Text(
                   widget.label,
-                  overflow: TextOverflow.ellipsis,
+                  overflow: qiyuAndroidTouch ? null : TextOverflow.ellipsis,
                   style: QiyuTypography.of(
                     context,
                   ).body.copyWith(color: labelColor),

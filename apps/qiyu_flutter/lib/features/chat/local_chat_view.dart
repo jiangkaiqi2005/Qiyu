@@ -734,6 +734,7 @@ class _LocalChatViewState extends State<LocalChatView>
       borderRadius: QiyuRadii.circleBorder,
       builder: (context, focusNode) => IconButton(
         key: key,
+        style: qiyuAndroidTouchStyle,
         focusNode: focusNode,
         onPressed: onPressed,
         tooltip: tooltip,
@@ -741,9 +742,9 @@ class _LocalChatViewState extends State<LocalChatView>
         iconSize: QiyuIconSpec.size,
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints.tightFor(
-          width: QiyuLayout.composerIconButtonSize,
-          height: QiyuLayout.composerIconButtonSize,
+        constraints: BoxConstraints.tightFor(
+          width: qiyuAndroidTouch ? 48 : QiyuLayout.composerIconButtonSize,
+          height: qiyuAndroidTouch ? 48 : QiyuLayout.composerIconButtonSize,
         ),
         icon: Icon(icon),
       ),
@@ -1234,6 +1235,7 @@ class _VoiceOutputHeaderControlState extends State<_VoiceOutputHeaderControl> {
                 ),
                 focusNode: _focusNode,
                 color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
+                style: qiyuAndroidTouchStyle,
                 tooltip: viewModel.voiceOutputEnabled
                     ? '朗读音量与静音调节'
                     : '语音朗读已关闭，点击开启与调节',

@@ -9,6 +9,7 @@ import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../shell/qiyu_widgets.dart';
 import '../navigation.dart';
+import '../accessibility.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_send_button.dart';
@@ -450,6 +451,7 @@ class QiyuComposerState extends State<QiyuComposer> {
     if (_android) {
       return IconButton(
         key: const Key('voice-mic'),
+        style: qiyuAndroidTouchStyle,
         tooltip: '切换到按住说话',
         onPressed: () {
           _focusNode.unfocus();
@@ -557,6 +559,7 @@ class QiyuComposerState extends State<QiyuComposer> {
         children: [
           IconButton(
             key: const Key('voice-text-mode'),
+            style: qiyuAndroidTouchStyle,
             tooltip: '切换到文字输入',
             onPressed: () {
               cancelUnsubmittedVoice();
@@ -574,6 +577,7 @@ class QiyuComposerState extends State<QiyuComposer> {
                     children: [
                       const Text('语音待发送，等待当前回复结束'),
                       TextButton(
+                        style: qiyuAndroidTouchStyle,
                         onPressed: cancelUnsubmittedVoice,
                         child: const Text('取消'),
                       ),
@@ -585,15 +589,18 @@ class QiyuComposerState extends State<QiyuComposer> {
                     children: [
                       if (retryable) ...[
                         TextButton(
+                          style: qiyuAndroidTouchStyle,
                           onPressed: () => unawaited(voice.retryTranscribe()),
                           child: const Text('重试'),
                         ),
                         TextButton(
+                          style: qiyuAndroidTouchStyle,
                           onPressed: cancelUnsubmittedVoice,
                           child: const Text('重新录制'),
                         ),
                       ],
                       TextButton(
+                        style: qiyuAndroidTouchStyle,
                         onPressed: cancelUnsubmittedVoice,
                         child: Text(retryable ? '丢弃' : '取消'),
                       ),

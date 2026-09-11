@@ -17,10 +17,120 @@ import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
+import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 
 import 'support/shared_fakes.dart';
 
 void main() {
+  testWidgets('安卓输入控件具有48像素语义区域且边缘点击不串操作', (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final semantics = tester.ensureSemantics();
+    final gateway = _VoiceChatGateway()..pendingDelivery = Completer<void>();
+    final platform = _FakeRecorderPlatform();
+    await tester.pumpWidget(_harness(viewModel: _chatViewModel(gateway), platform: platform, touchTheme: true));
+    await tester.pumpAndSettle();
+    final mic = find.byKey(const Key('voice-mic'));
+    final send = find.byKey(const Key('chat-send'));
+    _expectTouchTarget(tester, mic);
+    _expectTouchTarget(tester, send);
+    expect(tester.getRect(mic).overlaps(tester.getRect(send)), isFalse);
+    await tester.enterText(find.byKey(const Key('chat-input')), '边缘发送');
+    await tester.tapAt(tester.getRect(send).topLeft + const Offset(1, 1));
+    await tester.pumpAndSettle();
+    expect(gateway.sentTexts, ['边缘发送']);
+    final stop = find.byKey(const Key('chat-stop'));
+    _expectTouchTarget(tester, stop);
+    await tester.tapAt(tester.getRect(stop).bottomRight - const Offset(1, 1));
+    await tester.pumpAndSettle();
+    expect(gateway.cancelCalls, 1);
+    await tester.tapAt(tester.getRect(mic).topLeft + const Offset(1, 1));
+    await tester.pumpAndSettle();
+    expect(platform.starts, 0);
+    _expectTouchTarget(tester, find.byKey(const Key('voice-hold')));
+    final textMode = find.byKey(const Key('voice-text-mode'));
+    _expectTouchTarget(tester, textMode);
+    await tester.tapAt(tester.getRect(textMode).bottomRight - const Offset(1, 1));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('chat-input')), findsOneWidget);
+    gateway.pendingDelivery!.complete();
+    await tester.pumpAndSettle();
+    semantics.dispose();
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
+  for (final viewport in [const Size(320, 640), const Size(640, 360)]) {
+    testWidgets('安卓大字体语音触摸区域与边缘操作 $viewport', (tester) async {
+      tester.view.physicalSize = viewport;
+      tester.view.devicePixelRatio = 1;
+      tester.view.viewInsets = FakeViewPadding(bottom: viewport.width == 320 ? 220 : 100);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewInsets);
+      final semantics = tester.ensureSemantics();
+      final gateway = _VoiceChatGateway()
+        ..transcribeFailuresRemaining = 2
+        ..transcribeError = const LocalChatGatewayException('没有识别到语音，可以再说一次。');
+      final platform = _FakeRecorderPlatform();
+      final model = _chatViewModel(gateway);
+      await model.send('已有消息');
+      for (var i = 0; i < 8; i++) {
+        await model.send('更早的消息$i');
+      }
+      await tester.pumpWidget(_harness(viewModel: model, platform: platform, touchTheme: true, textScale: 2));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      final hold = find.byKey(const Key('voice-hold'));
+      _expectTouchTarget(tester, hold);
+      await tester.tapAt(tester.getRect(hold).topLeft - const Offset(1, 1));
+      expect(platform.starts, 0);
+      final gesture = await tester.startGesture(tester.getRect(hold).bottomRight - const Offset(1, 1));
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(platform.starts, 1);
+      expect(tester.takeException(), isNull);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      for (final label in ['重试', '重新录制', '丢弃']) {
+        final button = find.widgetWithText(TextButton, label);
+        _expectTouchTarget(tester, button);
+        expect(tester.getRect(button).bottom, lessThanOrEqualTo(viewport.height - tester.view.viewInsets.bottom));
+      }
+      final retry = find.widgetWithText(TextButton, '重试');
+      expect(tester.getRect(find.text('咋了').last).bottom,
+          lessThanOrEqualTo(tester.getRect(find.byKey(const Key('home-go-chat'))).top));
+      await tester.tapAt(tester.getRect(retry).topLeft + const Offset(1, 1));
+      await tester.pumpAndSettle();
+      expect(gateway.transcribeCalls, 2);
+      final rerecord = find.widgetWithText(TextButton, '重新录制');
+      await tester.tapAt(tester.getRect(rerecord).bottomRight - const Offset(1, 1));
+      await tester.pumpAndSettle();
+      expect(hold, findsOneWidget);
+      expect(platform.starts, 1);
+      gateway.transcribeFailuresRemaining = 1;
+      await _recordAndroid(tester);
+      final discard = find.widgetWithText(TextButton, '丢弃');
+      _expectTouchTarget(tester, discard);
+      await tester.tapAt(tester.getRect(discard).topRight + const Offset(-1, 1));
+      await tester.pumpAndSettle();
+      expect(hold, findsOneWidget);
+      gateway.hangTranscribe = true;
+      await _recordAndroid(tester);
+      final cancel = find.widgetWithText(TextButton, '取消');
+      _expectTouchTarget(tester, cancel);
+      await tester.tapAt(tester.getRect(cancel).bottomLeft + const Offset(1, -1));
+      await tester.pumpAndSettle();
+      gateway.completeHungTranscribe('迟到内容');
+      await tester.pumpAndSettle();
+      expect(gateway.sentTexts, hasLength(9));
+      expect(hold, findsOneWidget);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+  }
+
   for (final state in [AppLifecycleState.inactive, AppLifecycleState.paused]) {
     testWidgets('安卓聊天朗读在$state停声清队，回前台不续播，主动重听可用', (tester) async {
       final (gateway, player, output) = await _pumpVoiceScene(tester);
@@ -797,6 +907,8 @@ void main() {
     await tester.pumpAndSettle();
     void act(String label) {
       final node = tester.getSemantics(find.byKey(const Key('voice-hold')));
+      expect(node.rect.width, greaterThanOrEqualTo(48));
+      expect(node.rect.height, greaterThanOrEqualTo(48));
       final id = node.getSemanticsData().customSemanticsActionIds!.singleWhere(
         (id) => CustomSemanticsAction.getAction(id)!.label == label,
       );
@@ -814,6 +926,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(platform.session!.discardCalls, 1);
     expect(gateway.transcribeCalls, 1);
+    final textMode = tester.getSemantics(find.byKey(const Key('voice-text-mode')));
+    expect(textMode.getSemanticsData().tooltip, '切换到文字输入');
+    tester.binding.renderViews.first.owner!.semanticsOwner!.performAction(textMode.id, SemanticsAction.tap);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('chat-input')), findsOneWidget);
+    final mic = tester.getSemantics(find.byKey(const Key('voice-mic')));
+    tester.binding.renderViews.first.owner!.semanticsOwner!.performAction(mic.id, SemanticsAction.tap);
+    await tester.pumpAndSettle();
+    expect(tester.getSemantics(find.byKey(const Key('voice-hold'))).label, '按住说话');
     semantics.dispose();
   }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 
@@ -1387,15 +1508,31 @@ void main() {
   }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 }
 
+void _expectTouchTarget(WidgetTester tester, Finder finder) {
+  final rect = tester.getRect(finder);
+  expect(rect.width, greaterThanOrEqualTo(48));
+  expect(rect.height, greaterThanOrEqualTo(48));
+  final semanticRect = tester.getSemantics(finder).rect;
+  expect(semanticRect.width, greaterThanOrEqualTo(48));
+  expect(semanticRect.height, greaterThanOrEqualTo(48));
+}
+
 Widget _harness({
   required LocalChatViewModel viewModel,
   required VoiceRecorderPlatform platform,
   bool sttConfigured = true,
   SttSettingsGateway? sttGateway,
+  bool touchTheme = false,
+  double textScale = 1,
 }) {
   return MultiProvider(
     providers: [ChangeNotifierProvider.value(value: viewModel)],
     child: MaterialApp(
+      theme: touchTheme ? qiyuDarkTheme(narrow: true) : null,
+      builder: textScale == 1 ? null : (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
       home: LocalChatView(
         voiceRecorderPlatform: platform,
         sttSettingsGateway:
@@ -1496,6 +1633,7 @@ final class _FixedSttGateway implements SttSettingsGateway {
 
 /// 聊天 + 转写双通道 fake：转写与发送行为均可编程（失败次数、挂起等待）。
 final class _VoiceChatGateway implements StreamingLocalChatGateway {
+  int cancelCalls = 0;
   final sentTexts = <String>[];
   final transcribeAudioCalls = <List<int>>[];
   int transcribeCalls = 0;
@@ -1520,7 +1658,10 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
       const LocalChatSnapshot(sessionId: 'session-voice', messages: []);
 
   @override
-  Future<bool> cancel(String requestId) async => true;
+  Future<bool> cancel(String requestId) async {
+    cancelCalls++;
+    return true;
+  }
 
   @override
   Future<String> transcribe({

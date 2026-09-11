@@ -66,6 +66,7 @@ class _HoldToTalkState extends State<HoldToTalk> with WidgetsBindingObserver {
             : '按住说话';
         return Semantics(
           button: true,
+          excludeSemantics: true,
           label: label,
           customSemanticsActions: {
             if (voice.status == VoiceInputStatus.idle)
