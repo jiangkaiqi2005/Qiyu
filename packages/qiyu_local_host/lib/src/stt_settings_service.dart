@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'model_gateway.dart' show ModelFailureKind;
 import 'provider_config.dart';
 import 'provider_settings_service.dart'
     show
@@ -226,7 +227,13 @@ final class SttSettingsService {
       );
     } on SttGatewayException catch (error) {
       throw SttServiceException(
-        code: 'stt_service_error',
+        code: switch (error.kind) {
+          ModelFailureKind.dns => 'stt_dns',
+          ModelFailureKind.network => 'stt_network',
+          ModelFailureKind.timeout => 'stt_timeout',
+          ModelFailureKind.tls => 'stt_tls',
+          _ => 'stt_service_error',
+        },
         message: error.message,
         retryable: true,
       );

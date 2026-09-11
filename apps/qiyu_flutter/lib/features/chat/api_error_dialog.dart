@@ -81,6 +81,10 @@ ApiErrorCategory? categorizeVoiceApiError(
     final c = code.toLowerCase();
     // 无有效语音只需重试或重录，不代表服务配置或额度故障。
     if (c == 'stt_no_speech') return null;
+    // 网络故障保留就地重试，不引导用户修改已正确的配置或额度。
+    if (const {'stt_dns', 'stt_network', 'stt_timeout', 'stt_tls'}.contains(c)) {
+      return null;
+    }
     if (c.contains('model_not_found') ||
         c.contains('not_found') ||
         c.contains('404')) {

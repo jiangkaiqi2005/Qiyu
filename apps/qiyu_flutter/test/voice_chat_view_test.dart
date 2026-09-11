@@ -22,6 +22,34 @@ import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  for (final failure in [
+    (code: 'stt_dns', message: '找不到语音服务域名。'),
+    (code: 'stt_network', message: '无法连接语音服务。'),
+    (code: 'stt_timeout', message: '连接语音服务超时。'),
+    (code: 'stt_tls', message: '语音服务的 TLS 安全连接失败。'),
+  ]) {
+    testWidgets('安卓网络转写失败只轻提示并可重试 ${failure.code}', (tester) async {
+      final gateway = _VoiceChatGateway()
+        ..transcribeFailuresRemaining = 1
+        ..transcribeError = LocalChatGatewayException(failure.message, code: failure.code);
+      final recorder = _FakeRecorderPlatform();
+      await tester.pumpWidget(_harness(viewModel: _chatViewModel(gateway), platform: recorder));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      await _recordAndroid(tester);
+      await tester.pumpAndSettle();
+      expect(find.text(failure.message), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      await tester.tap(find.widgetWithText(TextButton, '重试'));
+      await tester.pumpAndSettle();
+      expect(recorder.starts, 1);
+      expect(gateway.transcribeCalls, 2);
+      expect(gateway.transcribeAudioCalls.first, gateway.transcribeAudioCalls.last);
+      expect(gateway.sentTexts, ['今天有点累']);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+  }
+
   testWidgets('安卓无语音结构化错误只提示重录不弹服务受限', (tester) async {
     final gateway = _VoiceChatGateway()
       ..transcribeFailuresRemaining = 1

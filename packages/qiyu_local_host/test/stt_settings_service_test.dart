@@ -208,6 +208,24 @@ void main() {
     expect(http.lastBody, isNull);
   });
 
+  for (final scenario in [
+    (error: const SocketException('Failed host lookup'), code: 'stt_dns'),
+    (error: const SocketException('offline'), code: 'stt_network'),
+    (error: TimeoutException('timeout'), code: 'stt_timeout'),
+    (error: HandshakeException('TLS failed'), code: 'stt_tls'),
+  ]) {
+    test('网络失败保留可重试分类 ${scenario.code}', () async {
+      final service = SttSettingsService(repository(), SttModelGateway(
+        _StaticSttHttpClient('')..postError = scenario.error));
+      await service.save(baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-test', apiKey: 'stt-test-key');
+      await expectLater(service.transcribe(audio: [1, 2], mimeType: 'audio/webm'),
+        throwsA(isA<SttServiceException>()
+          .having((error) => error.code, 'code', scenario.code)
+          .having((error) => error.retryable, 'retryable', isTrue)));
+    });
+  }
+
   test('正式转写空文本视为失败，正常文本照常返回', () async {
     final service = SttSettingsService(repository(), _sttGateway(''));
     await service.save(
@@ -495,6 +513,7 @@ final class _StaticSttHttpClient implements ProviderHttpClient {
   _StaticSttHttpClient(this.responseBody, {this.statusCode = 200});
 
   final String responseBody;
+  Object? postError;
   final int statusCode;
   List<int>? lastBody;
   Map<String, String>? lastHeaders;
@@ -506,6 +525,7 @@ final class _StaticSttHttpClient implements ProviderHttpClient {
     required List<int> body,
     required Duration timeout,
   }) async {
+    if (postError case final error?) throw error;
     lastBody = body;
     lastHeaders = headers;
     return ProviderHttpResponse(
