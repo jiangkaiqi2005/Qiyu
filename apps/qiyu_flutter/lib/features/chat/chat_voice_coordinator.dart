@@ -121,7 +121,7 @@ final class ChatVoiceCoordinator {
     input.handleMicTap();
   }
 
-  void retryRecording() {
+  void retryTranscription() {
     final output = viewModel.voiceOutput;
     output.stopAll();
     output.prepareForUserInitiatedPlayback();

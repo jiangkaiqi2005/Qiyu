@@ -497,7 +497,7 @@ class QiyuComposerState extends State<QiyuComposer> {
         '重试转写',
         const Icon(QiyuIcons.mic),
         theme.colorScheme.error,
-        widget.voiceCoordinator.retryRecording,
+        widget.voiceCoordinator.retryTranscription,
       ),
     };
     return QiyuOwnFocusRing(
