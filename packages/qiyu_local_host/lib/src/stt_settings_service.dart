@@ -74,14 +74,7 @@ final class SttSettingsService {
     );
     config.validate();
     final previous = await configRepository.loadStt();
-    final trimmed = apiKey?.trim();
-    String? persistedKey;
-    if (trimmed != null && trimmed.isNotEmpty) {
-      persistedKey = trimmed;
-    } else if (previous != null &&
-        previous.credentialScope == config.credentialScope) {
-      persistedKey = previous.apiKey;
-    }
+    final persistedKey = _selectApiKey(config, previous, apiKey);
     await configRepository.saveStt(config.withApiKey(persistedKey));
     return read();
   }
@@ -132,14 +125,7 @@ final class SttSettingsService {
         message: error.message,
       );
     }
-    final trimmedKey = apiKey?.trim();
-    final effectiveKey =
-        trimmedKey != null && trimmedKey.isNotEmpty
-        ? trimmedKey
-        : (stored != null &&
-              stored.credentialScope == config.credentialScope
-          ? stored.apiKey
-          : null);
+    final effectiveKey = _selectApiKey(config, stored, apiKey);
     // 网关异常只按 kind 映射固定文案（message 被丢弃），Key 脏字符必须
     // 在这里提前拦截，人话文案才能到达用户。
     if (effectiveKey != null && containsNonVisibleAscii(effectiveKey)) {
@@ -176,6 +162,21 @@ final class SttSettingsService {
         message: '语音服务拒绝了测试请求。',
       );
     }
+  }
+
+  static String? _selectApiKey(
+    SttConfig config,
+    SttConfig? stored,
+    String? apiKey,
+  ) {
+    final trimmed = apiKey?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) {
+      return trimmed;
+    }
+    if (stored != null && stored.credentialScope == config.credentialScope) {
+      return stored.apiKey;
+    }
+    return null;
   }
 
   /// 正式转写：识别文本为空视为失败（「没有识别到语音」），录音留在

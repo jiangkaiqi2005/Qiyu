@@ -66,6 +66,124 @@ void main() {
     expect(moved.configured, isTrue);
   });
 
+  for (final scenario in [
+    (
+      name: '新 Key 优先并去空白',
+      storedUrl: 'https://stt.example.com/v1',
+      key: ' new-key ',
+      expected: 'new-key',
+    ),
+    (
+      name: 'null 沿用同作用域原值',
+      storedUrl: 'https://stt.example.com/v1/',
+      key: null,
+      expected: 'old-key',
+    ),
+    (
+      name: '空字符串沿用原值',
+      storedUrl: 'https://stt.example.com/v1',
+      key: '',
+      expected: 'old-key',
+    ),
+    (
+      name: '空白沿用原值',
+      storedUrl: 'https://stt.example.com/v1',
+      key: ' \t ',
+      expected: 'old-key',
+    ),
+    (
+      name: '换地址不沿用',
+      storedUrl: 'https://other.example.com/v1',
+      key: null,
+      expected: null,
+    ),
+    (
+      name: '换地址空白不沿用',
+      storedUrl: 'https://other.example.com/v1',
+      key: ' ',
+      expected: null,
+    ),
+    (
+      name: '换地址可提供新 Key',
+      storedUrl: 'https://other.example.com/v1',
+      key: ' new-key ',
+      expected: 'new-key',
+    ),
+    (name: '无历史配置且无 Key', storedUrl: null, key: null, expected: null),
+    (name: '无历史配置且空白 Key', storedUrl: null, key: ' ', expected: null),
+    (
+      name: '无历史配置可提供新 Key',
+      storedUrl: null,
+      key: ' new-key ',
+      expected: 'new-key',
+    ),
+  ]) {
+    test('保存与连接测试选择 Key：${scenario.name}', () async {
+      final previous = scenario.storedUrl == null
+          ? null
+          : SttConfig(
+              baseUrl: scenario.storedUrl!,
+              model: 'old-model',
+              apiKey: 'old-key',
+            );
+      final stored = _StaticSttConfigRepository(previous);
+      final http = _StaticSttHttpClient('{"text":""}');
+      final service = SttSettingsService(stored, SttModelGateway(http));
+
+      final result = await service.test(
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'new-model',
+        apiKey: scenario.key,
+      );
+
+      expect(stored.config, same(previous));
+      if (scenario.expected == null) {
+        expect(result.status, ProviderTestStatus.authentication);
+        expect(http.lastHeaders, isNull);
+      } else {
+        expect(result.succeeded, isTrue);
+        expect(
+          http.lastHeaders?['authorization'],
+          'Bearer ${scenario.expected!.trim()}',
+        );
+      }
+
+      final saved = await service.save(
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'new-model',
+        apiKey: scenario.key,
+      );
+      expect(saved.config!.apiKey, scenario.expected);
+      expect(stored.config!.apiKey, scenario.expected);
+      expect(saved.config!.model, 'new-model');
+    });
+  }
+
+  test('连接测试沿用的 Key 保留脏字符并在出网前拒绝', () async {
+    final http = _StaticSttHttpClient('{"text":""}');
+    final stored = _StaticSttConfigRepository(
+      const SttConfig(
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-test',
+        apiKey: '\told-key\t',
+      ),
+    );
+    final service = SttSettingsService(stored, SttModelGateway(http));
+
+    final result = await service.test(apiKey: ' ');
+
+    expect(result.status, ProviderTestStatus.contentParsing);
+    expect(result.message, 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。');
+    expect(http.lastHeaders, isNull);
+    expect(stored.config!.apiKey, '\told-key\t');
+    final saved = await service.save(
+      baseUrl: 'https://stt.example.com/v1',
+      model: 'whisper-test',
+      apiKey: ' ',
+    );
+    expect(saved.config!.apiKey, '\told-key\t');
+  });
+
   test('忘记 Key 只清 Key，地址与模型保留', () async {
     final service = SttSettingsService(repository(), _sttGateway('在吗'));
     await service.save(
