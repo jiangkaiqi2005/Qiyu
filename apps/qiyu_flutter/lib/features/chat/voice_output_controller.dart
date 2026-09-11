@@ -40,6 +40,9 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 朗读合成遇到 429 或 40x 异常时的回调。
   void Function(ApiErrorCategory category)? onApiError;
 
+  /// 页面连接录音设备占用状态，自动朗读和手动重听都在入口丢弃。
+  bool Function()? isMicrophoneInUse;
+
   late double _volume;
   final Queue<VoiceOutputRequest> _queue = Queue();
   var _generation = 0;
@@ -86,7 +89,7 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 自动朗读入口（message 事件 diff 出的新 bubble）。朗读开关关闭
   /// （enabled=false）时直接丢弃，不排队。
   void offer(VoiceOutputRequest request, {required bool enabled}) {
-    if (!enabled) {
+    if (!enabled || (isMicrophoneInUse?.call() ?? false)) {
       return;
     }
     _enterSession(request.sessionId);
@@ -97,6 +100,7 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 手动重听（气泡小喇叭）：用户主动点播优先于自动队列——立即播这
   /// 条，正在播的直接顶掉，清空自动排队（用户要听的是这一句）。
   void playNow(VoiceOutputRequest request) {
+    if (isMicrophoneInUse?.call() ?? false) return;
     prepareForUserInitiatedPlayback();
     _enterSession(request.sessionId);
     _haltNow();

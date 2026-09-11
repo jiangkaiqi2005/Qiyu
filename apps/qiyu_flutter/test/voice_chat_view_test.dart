@@ -304,6 +304,52 @@ void main() {
     semantics.dispose();
   }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 
+  for (final preparing in [true, false]) {
+    testWidgets('安卓${preparing ? '准备' : '录音'}中迟到回复和主动重听均不发声', (tester) async {
+      final gateway = _VoiceChatGateway()..pendingDelivery = Completer<void>();
+      final speak = _RecordingSpeakGateway();
+      final output = VoiceOutputController(speak, playerPlatform: _HoldingPlayerPlatform());
+      final platform = _FakeRecorderPlatform();
+      if (preparing) platform.pendingStart = Completer<VoiceRecordingSession?>();
+      final viewModel = LocalChatViewModel(
+        gateway,
+        hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+        ttsSettingsGateway: _FixedTtsGateway(configured: true),
+        voiceOutput: output,
+        autoStart: false,
+      );
+      await viewModel.refreshVoiceOutputStatus();
+      await tester.pumpWidget(_harness(viewModel: viewModel, platform: platform));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      final hold = await tester.startGesture(tester.getCenter(find.byKey(const Key('voice-hold'))), pointer: 1);
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pumpAndSettle();
+      gateway.pendingDelivery!.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('咋了'), findsOneWidget);
+      expect(speak.calls, isEmpty);
+      await tester.tap(find.byKey(const Key('chat-replay-0')), pointer: 2);
+      await tester.pumpAndSettle();
+      expect(speak.calls, isEmpty);
+      expect(find.byKey(const Key('voice-output-status')), findsNothing);
+      await hold.cancel();
+      if (preparing) platform.pendingStart!.complete(_FakeRecordingSession());
+      await tester.pumpAndSettle();
+      expect(speak.calls, isEmpty); // 结束录音不会补播录音期间的内容。
+      await tester.tap(find.byKey(const Key('chat-replay-0')));
+      await tester.pumpAndSettle();
+      expect(speak.calls, hasLength(1));
+      await tester.pumpWidget(const SizedBox.shrink());
+      viewModel.dispose();
+      output.dispose();
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+  }
+
   testWidgets('模型回复完整交付后自动朗读：指示与停止按钮', (tester) async {
     final (speakGateway, _, _) = await _pumpVoiceScene(tester);
 
@@ -945,6 +991,7 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
   bool hangTranscribe = false;
   final _hungCompleters = <Completer<String>>[];
   int deliverFailuresRemaining = 0;
+  Completer<void>? pendingDelivery;
   LocalChatGatewayException? deliverError;
 
   void completeHungTranscribe(String text) {
@@ -997,6 +1044,7 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
       requestId: requestId,
       sessionId: 'session-voice',
     );
+    if (pendingDelivery != null) await pendingDelivery!.future;
     yield LocalChatDeliveryEvent(
       kind: LocalChatEventKind.message,
       requestId: requestId,

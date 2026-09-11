@@ -130,8 +130,13 @@ class _LocalChatViewState extends State<LocalChatView> {
       onApiError: _handleVoiceApiError,
     );
     chatViewModel.voiceOutput.onApiError = _handleVoiceApiError;
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      chatViewModel.voiceOutput.isMicrophoneInUse = _isMicrophoneInUse;
+    }
     unawaited(_voiceInput.initialize());
   }
+
+  bool _isMicrophoneInUse() => _voiceInput.isMicrophoneInUse;
 
   /// 语音设置网关解析：注入优先；其次复用 app Provider 树的共享实例
   /// （与设置页同一实例，CSRF 不重复换取）；只有脱离 app 树单独 pump
@@ -168,6 +173,9 @@ class _LocalChatViewState extends State<LocalChatView> {
     _chatViewModel.voiceOutput.stopAllForLeavingPage();
     if (_chatViewModel.voiceOutput.onApiError == _handleVoiceApiError) {
       _chatViewModel.voiceOutput.onApiError = null;
+    }
+    if (_chatViewModel.voiceOutput.isMicrophoneInUse == _isMicrophoneInUse) {
+      _chatViewModel.voiceOutput.isMicrophoneInUse = null;
     }
     _voiceInput.dispose();
     _scrollController.dispose();

@@ -66,6 +66,7 @@ final class VoiceInputController extends ChangeNotifier {
   int _attempt = 0;
   bool _disposed = false;
   bool _starting = false;
+  bool _stoppingRecording = false;
   bool _holdRecording = false;
   bool _shortRecording = false;
   Timer? _minimumTimer;
@@ -75,6 +76,9 @@ final class VoiceInputController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   int get elapsedSeconds => _elapsedSeconds;
   bool get hasRetainedAudio => _pendingAudio != null;
+
+  /// 包括尚未返回的设备启动与停止，松手后释放前也不能混入朗读。
+  bool get isMicrophoneInUse => _starting || _session != null || _stoppingRecording;
 
   /// 聊天页初始化时拉一次：浏览器不支持或未配置语音服务都如实置灰。
   Future<void> initialize() async {
@@ -243,6 +247,7 @@ final class VoiceInputController extends ChangeNotifier {
     final attempt = _registerAttempt();
     _cancelTimers();
     _session = null;
+    _stoppingRecording = true;
     _status = VoiceInputStatus.transcribing;
     _errorMessage = null;
     notifyListeners();
@@ -257,6 +262,8 @@ final class VoiceInputController extends ChangeNotifier {
       _errorMessage = '录音结束失败，请重新说一次。';
       notifyListeners();
       return;
+    } finally {
+      _stoppingRecording = false;
     }
     if (_disposed) {
       return;
