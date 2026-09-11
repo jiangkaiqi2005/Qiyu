@@ -13,6 +13,7 @@ enum VoiceInputStatus {
   unsupported,
   notConfigured,
   idle,
+  preparing,
   recording,
   transcribing,
   retryable,
@@ -50,7 +51,7 @@ final class VoiceInputController extends ChangeNotifier {
   /// 录音上限：到点自动收尾并照常转写，不丢用户的话。
   final Duration autoStopAfter;
 
-  VoiceInputStatus _status = VoiceInputStatus.idle;
+  VoiceInputStatus _status = VoiceInputStatus.notConfigured;
   String? _errorMessage;
   VoiceRecordingSession? _session;
   Uint8List? _pendingAudio;
@@ -64,6 +65,11 @@ final class VoiceInputController extends ChangeNotifier {
   /// 转写尝试令牌：Esc 中止或丢弃后，迟到的转写结果一律作废。
   int _attempt = 0;
   bool _disposed = false;
+  bool _starting = false;
+  bool _holdRecording = false;
+  bool _shortRecording = false;
+  Timer? _minimumTimer;
+  bool cancelOnRelease = false;
 
   VoiceInputStatus get status => _status;
   String? get errorMessage => _errorMessage;
@@ -133,38 +139,70 @@ final class VoiceInputController extends ChangeNotifier {
       case VoiceInputStatus.unsupported:
       case VoiceInputStatus.notConfigured:
       case VoiceInputStatus.transcribing:
+      case VoiceInputStatus.preparing:
         break;
     }
   }
 
-  Future<void> startRecording() async {
-    if (_status != VoiceInputStatus.idle) {
-      return;
-    }
+  Future<void> startRecording({bool holdToTalk = false}) async {
+    if (_disposed || _starting || _status != VoiceInputStatus.idle) return;
+    _starting = true;
+    final attempt = _registerAttempt();
+    _holdRecording = holdToTalk;
+    cancelOnRelease = false;
+    _status = VoiceInputStatus.preparing;
     _errorMessage = null;
+    notifyListeners();
     VoiceRecordingSession? session;
     try {
+      final platform = _platform;
+      if (holdToTalk && platform is PermissionAwareVoiceRecorderPlatform) {
+        final permission =
+            await (platform as PermissionAwareVoiceRecorderPlatform)
+                .preparePermission();
+        if (_disposed || attempt != _attempt) return;
+        if (permission != VoicePermissionResult.ready) {
+          _status = VoiceInputStatus.idle;
+          _errorMessage = permission == VoicePermissionResult.grantedNow
+              ? '已允许麦克风，请重新按住说话。'
+              : '无法使用麦克风，请在安卓系统设置中允许麦克风权限。';
+          notifyListeners();
+          return;
+        }
+      }
       session = await _platform.start();
     } on Object {
       session = null;
+    } finally {
+      _starting = false;
     }
-    if (_disposed) {
+    if (_disposed || attempt != _attempt) {
       session?.discard();
       return;
     }
     if (session == null) {
-      // 授权被拒或设备不可用：留在 idle，错误就近平铺在语音状态行。
-      // 文案平台中性：web 是浏览器权限，安卓是系统麦克风权限。
+      _status = VoiceInputStatus.idle;
       _errorMessage = '无法使用麦克风，请检查麦克风权限或设备状态。';
       notifyListeners();
       return;
+    }
+    _shortRecording = holdToTalk;
+    if (holdToTalk) {
+      _minimumTimer = Timer(
+        const Duration(milliseconds: 500),
+        () => _shortRecording = false,
+      );
     }
     _session = session;
     _status = VoiceInputStatus.recording;
     _elapsedSeconds = 0;
     _autoStopTimer = Timer(autoStopAfter, () {
       if (_status == VoiceInputStatus.recording && !_disposed) {
-        unawaited(stopAndTranscribe());
+        if (_holdRecording) {
+          finishHold();
+        } else {
+          unawaited(stopAndTranscribe());
+        }
       }
     });
     _elapsedTimer = Timer.periodic(_tickInterval, (_) {
@@ -174,6 +212,24 @@ final class VoiceInputController extends ChangeNotifier {
       }
     });
     notifyListeners();
+  }
+
+  /// 松手与录音上限共用终态，准备态松手只作废设备结果。
+  void finishHold() {
+    if (_status == VoiceInputStatus.preparing) {
+      discard();
+    } else if (_status == VoiceInputStatus.recording) {
+      if (cancelOnRelease || _shortRecording) {
+        final short = _shortRecording && !cancelOnRelease;
+        discard();
+        if (short) {
+          _errorMessage = '说话时间太短，请重新按住说话';
+          notifyListeners();
+        }
+      } else {
+        unawaited(stopAndTranscribe());
+      }
+    }
   }
 
   /// 再点一次麦克风：结束录音并立即转写。
@@ -234,6 +290,7 @@ final class VoiceInputController extends ChangeNotifier {
   /// 可重试态丢弃。
   void handleEscape() {
     switch (_status) {
+      case VoiceInputStatus.preparing:
       case VoiceInputStatus.recording:
         discard();
       case VoiceInputStatus.transcribing:
@@ -346,6 +403,8 @@ final class VoiceInputController extends ChangeNotifier {
   }
 
   void _cancelTimers() {
+    _minimumTimer?.cancel();
+    _minimumTimer = null;
     _autoStopTimer?.cancel();
     _autoStopTimer = null;
     _elapsedTimer?.cancel();

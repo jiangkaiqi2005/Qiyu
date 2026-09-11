@@ -15,6 +15,8 @@ abstract interface class VoiceRecorderNativeChannel {
   /// 不可用返回 false。
   Future<bool> requestMicrophonePermission();
 
+  Future<bool> hasMicrophonePermission();
+
   /// 请求原生开始录音（AudioRecord → 内存 PCM 缓冲）。返回 false 表示
   /// 权限缺失、设备不可用或录音器初始化失败。
   Future<bool> startRecording();
@@ -42,11 +44,19 @@ final class MethodVoiceRecorderChannel implements VoiceRecorderNativeChannel {
   );
 
   @override
+  Future<bool> hasMicrophonePermission() async {
+    try {
+      return await _channel.invokeMethod<bool>('hasMicrophonePermission') ??
+          false;
+    } on Object {
+      return false;
+    }
+  }
+
+  @override
   Future<bool> requestMicrophonePermission() async {
     try {
-      return await _channel.invokeMethod<bool>(
-            'requestMicrophonePermission',
-          ) ??
+      return await _channel.invokeMethod<bool>('requestMicrophonePermission') ??
           false;
     } on Object {
       return false;
@@ -92,7 +102,8 @@ final class MethodVoiceRecorderChannel implements VoiceRecorderNativeChannel {
 ///
 /// widget 测试跑在桌面宿主上，[supported] 如实报告不可用（与 stub 同
 /// 语义）；接缝行为测试用构造参数注入 fake 通道并显式指定 [supported]。
-final class IoVoiceRecorderPlatform implements VoiceRecorderPlatform {
+final class IoVoiceRecorderPlatform
+    implements VoiceRecorderPlatform, PermissionAwareVoiceRecorderPlatform {
   IoVoiceRecorderPlatform({
     VoiceRecorderNativeChannel? channel,
     bool? supported,
@@ -106,13 +117,22 @@ final class IoVoiceRecorderPlatform implements VoiceRecorderPlatform {
   bool get supported => _supportedOverride ?? Platform.isAndroid;
 
   @override
+  Future<VoicePermissionResult> preparePermission() async {
+    if (await _channel.hasMicrophonePermission()) {
+      return VoicePermissionResult.ready;
+    }
+    return await _channel.requestMicrophonePermission()
+        ? VoicePermissionResult.grantedNow
+        : VoicePermissionResult.denied;
+  }
+
+  @override
   Future<VoiceRecordingSession?> start() async {
     if (!supported) {
       return null;
     }
-    // 先过系统权限弹窗（用户手势触发，一次点击至多一次弹窗；「不再
-    // 询问」后系统直接回拒，不构成重复骚扰），再请求原生开始采集。
-    if (!await _channel.requestMicrophonePermission()) {
+    // 授权由 preparePermission 独立完成；起录只复查，不打开系统弹窗。
+    if (!await _channel.hasMicrophonePermission()) {
       return null;
     }
     if (!await _channel.startRecording()) {
@@ -158,4 +178,5 @@ final class _AndroidVoiceRecordingSession implements VoiceRecordingSession {
   }
 }
 
-VoiceRecorderPlatform createVoiceRecorderPlatform() => IoVoiceRecorderPlatform();
+VoiceRecorderPlatform createVoiceRecorderPlatform() =>
+    IoVoiceRecorderPlatform();

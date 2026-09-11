@@ -76,7 +76,8 @@ void main() {
       // 手工构造 -1 与 1 两个 Int16 采样（小端），打包后 data 块原样可读。
       final pcm = Uint8List(4)
         ..[0] = 0xff
-        ..[1] = 0xff // -1
+        ..[1] =
+            0xff // -1
         ..[2] = 0x01
         ..[3] = 0x00; // 1
 
@@ -122,12 +123,11 @@ void main() {
       platform = IoVoiceRecorderPlatform(channel: channel, supported: true);
     });
 
-    test('权限授予 → 原生起录 → stop 返回契约格式 WAV，mimeType 为 audio/wav',
-        () async {
+    test('权限授予 → 原生起录 → stop 返回契约格式 WAV，mimeType 为 audio/wav', () async {
       final session = await platform.start();
 
       expect(session, isNotNull);
-      expect(channel.calls, ['requestMicrophonePermission', 'startRecording']);
+      expect(channel.calls, ['hasMicrophonePermission', 'startRecording']);
       expect(session!.mimeType, 'audio/wav');
 
       final audio = await session.stop();
@@ -136,13 +136,33 @@ void main() {
       expectWav16kMonoContract(audio, channel.pcmOnNativeSide.length);
     });
 
+    test('首次授权只完成准备，不启动原生采集', () async {
+      channel.permissionGranted = false;
+      channel.permissionRequestResult = true;
+      expect(
+        await platform.preparePermission(),
+        VoicePermissionResult.grantedNow,
+      );
+      expect(channel.calls, [
+        'hasMicrophonePermission',
+        'requestMicrophonePermission',
+      ]);
+    });
+
+    test('已授权无需弹窗，拒绝也不会启动采集', () async {
+      expect(await platform.preparePermission(), VoicePermissionResult.ready);
+      channel.permissionGranted = false;
+      expect(await platform.preparePermission(), VoicePermissionResult.denied);
+      expect(channel.calls, isNot(contains('startRecording')));
+    });
+
     test('权限拒绝：start 返回 null，绝不触碰原生录音', () async {
       channel.permissionGranted = false;
 
       final session = await platform.start();
 
       expect(session, isNull);
-      expect(channel.calls, ['requestMicrophonePermission']);
+      expect(channel.calls, ['hasMicrophonePermission']);
     });
 
     test('权限授予但设备不可用（起录失败）：start 返回 null', () async {
@@ -151,7 +171,7 @@ void main() {
       final session = await platform.start();
 
       expect(session, isNull);
-      expect(channel.calls, ['requestMicrophonePermission', 'startRecording']);
+      expect(channel.calls, ['hasMicrophonePermission', 'startRecording']);
     });
 
     test('discard 丢弃录音：不取字节，原生侧缓冲随通道丢弃', () async {
@@ -168,10 +188,7 @@ void main() {
 
       await session!.stop();
 
-      expect(
-        () => session.stop(),
-        throwsA(isA<StateError>()),
-      );
+      expect(() => session.stop(), throwsA(isA<StateError>()));
     });
 
     test('通道取不到字节时异常原样上抛，绝不降级成空 WAV', () async {
@@ -183,8 +200,7 @@ void main() {
       expect(() => session!.stop(), throwsA(isA<StateError>()));
     });
 
-    test('toWav16kMono 是恒等映射：录音本身已是 16kHz/16-bit/单声道 WAV',
-        () async {
+    test('toWav16kMono 是恒等映射：录音本身已是 16kHz/16-bit/单声道 WAV', () async {
       final recorded = RecordedAudio(
         bytes: Uint8List.fromList([9, 8, 7]),
         mimeType: 'audio/wav',
@@ -218,6 +234,7 @@ extension on RecordedAudio {
 /// 录音通道 fake：记录调用序列，PCM 固定返回一小段可断言字节。
 final class _FakeRecorderChannel implements VoiceRecorderNativeChannel {
   bool permissionGranted = true;
+  bool permissionRequestResult = false;
   bool startSucceeds = true;
   bool stopError = false;
   int discardCalls = 0;
@@ -227,9 +244,15 @@ final class _FakeRecorderChannel implements VoiceRecorderNativeChannel {
   );
 
   @override
+  Future<bool> hasMicrophonePermission() async {
+    calls.add('hasMicrophonePermission');
+    return permissionGranted;
+  }
+
+  @override
   Future<bool> requestMicrophonePermission() async {
     calls.add('requestMicrophonePermission');
-    return permissionGranted;
+    return permissionRequestResult;
   }
 
   @override

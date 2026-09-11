@@ -114,6 +114,10 @@ internal object VoiceBridge {
 
     private fun handleRecorderCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "hasMicrophonePermission" -> result.success(
+                activity?.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED,
+            )
             "requestMicrophonePermission" -> {
                 val host = activity
                 if (host == null) {

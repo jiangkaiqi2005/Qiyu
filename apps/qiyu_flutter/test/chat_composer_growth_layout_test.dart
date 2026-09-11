@@ -82,11 +82,11 @@ void main() {
       find.byKey(const Key('home-go-chat')),
     );
 
-    // 静息面板高基线：输入行 46 + 上下内边距 12 + 发丝边框 2 = 60。多行展开
+    // 安卓静息面板高基线：输入行 48 + 上下内边距 12 + 发丝边框 2 = 62。多行展开
     // 留白只许加在展开态，单行静息分毫不能动（面板顶 516 基线依赖这一点）。
     expect(
       composerBefore.height,
-      60.0,
+      62.0,
       reason: '静息面板高基线漂移：展开态留白必须只作用于多行展开态',
     );
     // 静息内边距基线：左右 16/6、上下 6——展开态只许改下沿，其余三边钉死。
@@ -186,8 +186,8 @@ void main() {
     // + 下 22 = 76。
     expect(
       tester.getRect(find.byKey(const Key('home-go-chat'))).height,
-      76.0,
-      reason: '两行展开态面板高度：按钮行 46 + 上 6 + 下 22 + 发丝 2',
+      78.0,
+      reason: '安卓两行展开态面板高度：按钮行 48 + 上 6 + 下 22 + 发丝 2',
     );
 
     final listAfter = tester.getRect(listView);
@@ -214,7 +214,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       tester.getRect(find.byKey(const Key('home-go-chat'))).height,
-      76.0,
+      78.0,
       reason: '软折行临界组合（一×35+。）必须按真实 2 行展开，'
           '而不是停在下沿贴边的静息 60',
     );
@@ -240,7 +240,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       tester.getRect(find.byKey(const Key('home-go-chat'))).height,
-      60.0,
+      62.0,
       reason: '比临界组合短一个字符的真实 1 行内容不得展开',
     );
   });

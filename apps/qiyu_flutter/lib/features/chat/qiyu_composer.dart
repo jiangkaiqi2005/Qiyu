@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../theme/qiyu_icons.dart';
@@ -11,6 +12,7 @@ import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_send_button.dart';
 import 'voice_input_controller.dart';
+import 'hold_to_talk.dart';
 
 /// 输入框里按 Enter 发送；Shift+Enter / Ctrl+Enter 插入软换行。
 final class _SendChatIntent extends Intent {
@@ -119,6 +121,9 @@ class QiyuComposerState extends State<QiyuComposer> {
   /// [_composerExpandedBottomPadding]（上沿不动）；单行静息分毫不动（列表底部
   /// 让位常量与基线测试的 492/516 都依赖这一点）。
   bool _composerExpanded = false;
+  bool _voiceMode = false;
+  bool get _android =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   @override
   void initState() {
@@ -285,28 +290,30 @@ class QiyuComposerState extends State<QiyuComposer> {
                   },
                 ),
               },
-              child: Row(
-                children: [
-                  Expanded(
-                    child: KeyedSubtree(
-                      key: _composerFieldKey,
-                      child: _inputField(),
+              child: _android && _voiceMode
+                  ? _voiceRow()
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: KeyedSubtree(
+                            key: _composerFieldKey,
+                            child: _inputField(),
+                          ),
+                        ),
+                        const SizedBox(width: QiyuSpacing.xs),
+                        AnimatedBuilder(
+                          animation: widget.voiceInput,
+                          builder: (context, _) => _voiceMicButton(),
+                        ),
+                        const SizedBox(width: QiyuSpacing.xs),
+                        QiyuSendButton(
+                          sending: viewModel.sending,
+                          onPressed: viewModel.sending
+                              ? () => unawaited(viewModel.stop())
+                              : () => unawaited(_send()),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(width: QiyuSpacing.xs),
-                  AnimatedBuilder(
-                    animation: widget.voiceInput,
-                    builder: (context, _) => _voiceMicButton(),
-                  ),
-                  const SizedBox(width: QiyuSpacing.xs),
-                  QiyuSendButton(
-                    sending: viewModel.sending,
-                    onPressed: viewModel.sending
-                        ? () => unawaited(viewModel.stop())
-                        : () => unawaited(_send()),
-                  ),
-                ],
-              ),
             ),
           ),
         ),
@@ -406,6 +413,22 @@ class QiyuComposerState extends State<QiyuComposer> {
   /// 五个状态共用 composer 的 34px 圆形图标按钮规格（design-system §8
   /// 组件 3），键名、tooltip 与状态机语义逐一对应原实现。
   Widget _voiceMicButton() {
+    if (_android) {
+      return IconButton(
+        key: const Key('voice-mic'),
+        tooltip: '切换到按住说话',
+        onPressed: () {
+          _focusNode.unfocus();
+          setState(() => _voiceMode = true);
+          final status = widget.voiceInput.status;
+          if (status == VoiceInputStatus.notConfigured ||
+              status == VoiceInputStatus.unsupported) {
+            unawaited(_showVoiceGuide());
+          }
+        },
+        icon: const Icon(QiyuIcons.mic),
+      );
+    }
     final voice = widget.voiceInput;
     final theme = Theme.of(context);
     final (key, tooltip, icon, color, onPressed) = switch (voice.status) {
@@ -446,7 +469,7 @@ class QiyuComposerState extends State<QiyuComposer> {
           voice.handleMicTap();
         },
       ),
-      VoiceInputStatus.transcribing => (
+      VoiceInputStatus.preparing || VoiceInputStatus.transcribing => (
         'voice-mic-busy',
         '正在转文字',
         const SizedBox.square(
@@ -490,6 +513,35 @@ class QiyuComposerState extends State<QiyuComposer> {
     );
   }
 
+  Widget _voiceRow() => Row(
+    children: [
+      IconButton(
+        key: const Key('voice-text-mode'),
+        tooltip: '切换到文字输入',
+        onPressed: () {
+          final status = widget.voiceInput.status;
+          if (status == VoiceInputStatus.preparing ||
+              status == VoiceInputStatus.recording ||
+              status == VoiceInputStatus.transcribing ||
+              status == VoiceInputStatus.retryable) {
+            widget.voiceInput.discard();
+          }
+          setState(() => _voiceMode = false);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _focusNode.requestFocus();
+          });
+        },
+        icon: const Icon(QiyuIcons.edit),
+      ),
+      Expanded(
+        child: HoldToTalk(
+          voice: widget.voiceInput,
+          beforeStart: () => widget.viewModel.voiceOutput.stopAll(),
+        ),
+      ),
+    ],
+  );
+
   Future<void> _showVoiceGuide() async {
     final voice = widget.voiceInput;
     // 置灰态先惰性重查一次：从设置页配好回来点麦克风直接开始说话。
@@ -498,14 +550,16 @@ class QiyuComposerState extends State<QiyuComposer> {
       return;
     }
     if (voice.status == VoiceInputStatus.idle) {
-      voice.handleMicTap();
+      if (!_android) voice.handleMicTap();
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           voice.status == VoiceInputStatus.unsupported
-              ? '当前浏览器不支持语音输入，请换 Chrome 或 Edge。'
+              ? (_android
+                    ? '当前设备无法使用麦克风，请检查安卓系统权限和设备状态。'
+                    : '当前浏览器不支持语音输入，请换 Chrome 或 Edge。')
               : '还没有配置语音服务，先去设置页填写地址、模型和 Key。',
         ),
         action: voice.status == VoiceInputStatus.unsupported

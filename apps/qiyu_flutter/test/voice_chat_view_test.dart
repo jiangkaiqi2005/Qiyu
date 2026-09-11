@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -19,6 +20,290 @@ import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  testWidgets(
+    '安卓按住录音松手只发送一次并保留草稿',
+    (tester) async {
+      final gateway = _VoiceChatGateway();
+      final platform = _FakeRecorderPlatform();
+      await tester.pumpWidget(
+        _harness(viewModel: _chatViewModel(gateway), platform: platform),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('chat-input')), '文字草稿');
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      expect(platform.session, isNull);
+      final hold = find.byKey(const Key('voice-hold'));
+      expect(hold, findsOneWidget);
+      final gesture = await tester.startGesture(tester.getCenter(hold));
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 600));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(gateway.transcribeCalls, 1);
+      expect(gateway.sentTexts, ['今天有点累']);
+      await tester.tap(find.byKey(const Key('voice-text-mode')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('chat-input')))
+            .controller!
+            .text,
+        '文字草稿',
+      );
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+  for (final action in ['上滑', '移回', '短点', '短录音', '指针取消', '多指', '上限', '取消区上限']) {
+    testWidgets(
+      '安卓手势 $action 的发送边界',
+      (tester) async {
+        final gateway = _VoiceChatGateway();
+        final platform = _FakeRecorderPlatform();
+        await tester.pumpWidget(
+          _harness(viewModel: _chatViewModel(gateway), platform: platform),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('voice-mic')));
+        await tester.pumpAndSettle();
+        final hold = find.byKey(const Key('voice-hold'));
+        final origin = tester.getCenter(hold);
+        final gesture = await tester.startGesture(origin, pointer: 1);
+        if (action != '短点') {
+          await tester.pump(const Duration(milliseconds: 600));
+          await tester.pump();
+        }
+        if (action != '短点' && action != '短录音') {
+          await tester.pump(const Duration(milliseconds: 600));
+        }
+        if (['上滑', '移回', '取消区上限'].contains(action)) {
+          await gesture.moveTo(origin - const Offset(0, 48));
+          await tester.pump();
+          expect(find.text('松开取消'), findsOneWidget);
+        }
+        if (action == '移回') {
+          await gesture.moveTo(origin - const Offset(0, 47));
+          await tester.pump();
+          expect(find.text('松开发送，上滑取消'), findsOneWidget);
+        }
+        if (action == '多指') {
+          final other = await tester.startGesture(origin, pointer: 2);
+          await other.up();
+        }
+        if (action.endsWith('上限')) {
+          await tester.pump(const Duration(seconds: 60));
+          await tester.pumpAndSettle();
+        }
+        if (action == '指针取消') {
+          await gesture.cancel();
+        } else {
+          await gesture.up();
+        }
+        await tester.pumpAndSettle();
+        final sends = action == '移回' || action == '上限';
+        expect(gateway.transcribeCalls, sends ? 1 : 0);
+        expect(gateway.sentTexts, sends ? ['今天有点累'] : isEmpty);
+        if (action == '短录音') {
+          expect(find.text('说话时间太短，请重新按住说话'), findsOneWidget);
+        }
+        if (!sends && action != '短点') expect(platform.session!.discardCalls, 1);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+
+  for (final permission in [
+    VoicePermissionResult.grantedNow,
+    VoicePermissionResult.denied,
+  ]) {
+    testWidgets(
+      '安卓首次授权 $permission 不自行起录',
+      (tester) async {
+        final gateway = _VoiceChatGateway();
+        final platform = _FakeRecorderPlatform()..permission = permission;
+        await tester.pumpWidget(
+          _harness(viewModel: _chatViewModel(gateway), platform: platform),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('voice-mic')));
+        await tester.pumpAndSettle();
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byKey(const Key('voice-hold'))),
+        );
+        await tester.pump(const Duration(milliseconds: 600));
+        await tester.pump();
+        expect(platform.starts, 0);
+        expect(
+          find.textContaining(
+            permission == VoicePermissionResult.grantedNow ? '重新按住' : '安卓系统设置',
+          ),
+          findsOneWidget,
+        );
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(gateway.transcribeCalls, 0);
+        platform.permission = VoicePermissionResult.ready;
+        final next = await tester.startGesture(
+          tester.getCenter(find.byKey(const Key('voice-hold'))),
+        );
+        await tester.pump(const Duration(milliseconds: 600));
+        await tester.pump(const Duration(milliseconds: 600));
+        await next.up();
+        await tester.pumpAndSettle();
+        expect(gateway.sentTexts, ['今天有点累']);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+
+  for (final waiting in ['设备', '授权']) {
+    testWidgets(
+      '安卓等待$waiting时松手作废迟到结果且不并发起录',
+      (tester) async {
+        final gateway = _VoiceChatGateway();
+        final platform = _FakeRecorderPlatform();
+        if (waiting == '设备') {
+          platform.pendingStart = Completer<VoiceRecordingSession?>();
+        } else {
+          platform.pendingPermission = Completer<VoicePermissionResult>();
+        }
+        await tester.pumpWidget(
+          _harness(viewModel: _chatViewModel(gateway), platform: platform),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('voice-mic')));
+        await tester.pumpAndSettle();
+        final origin = tester.getCenter(find.byKey(const Key('voice-hold')));
+        final gesture = await tester.startGesture(origin);
+        await tester.pump(const Duration(milliseconds: 600));
+        await tester.pump();
+        expect(find.text('正在准备麦克风…'), findsWidgets);
+        await gesture.up();
+        await tester.pump();
+        final repeat = await tester.startGesture(origin);
+        await tester.pump(const Duration(milliseconds: 600));
+        await repeat.up();
+        final late = _FakeRecordingSession();
+        if (waiting == '设备') {
+          platform.pendingStart!.complete(late);
+        } else {
+          platform.pendingPermission!.complete(
+            VoicePermissionResult.grantedNow,
+          );
+        }
+        await tester.pumpAndSettle();
+        expect(platform.starts, waiting == '设备' ? 1 : 0);
+        expect(late.discardCalls, waiting == '设备' ? 1 : 0);
+        expect(gateway.sentTexts, isEmpty);
+        expect(gateway.transcribeCalls, 0);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+
+  testWidgets('安卓起录前停止朗读', (tester) async {
+    await _pumpVoiceScene(tester);
+    await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('voice-output-status')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pumpAndSettle();
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('voice-hold'))),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
+    expect(find.byKey(const Key('voice-output-status')), findsNothing);
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
+  testWidgets(
+    '安卓未配置时切模式和查询完成均不自动起录',
+    (tester) async {
+      final platform = _FakeRecorderPlatform();
+      final settings = _MutableSttGateway();
+      await tester.pumpWidget(
+        _harness(
+          viewModel: _chatViewModel(),
+          platform: platform,
+          sttGateway: settings,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('还没有配置语音服务'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('voice-text-mode')));
+      await tester.pumpAndSettle();
+      settings.configured = true;
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      expect(platform.starts, 0);
+      expect(find.byKey(const Key('voice-hold')), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
+    '安卓慢设备在页面销毁后成功返回也释放',
+    (tester) async {
+      final gateway = _VoiceChatGateway();
+      final platform = _FakeRecorderPlatform()
+        ..pendingStart = Completer<VoiceRecordingSession?>();
+      await tester.pumpWidget(
+        _harness(viewModel: _chatViewModel(gateway), platform: platform),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(const Key('voice-hold'))),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pumpWidget(const SizedBox.shrink());
+      final late = _FakeRecordingSession();
+      platform.pendingStart!.complete(late);
+      await tester.pump();
+      await gesture.up();
+      expect(late.discardCalls, 1);
+      expect(gateway.sentTexts, isEmpty);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+
+  testWidgets('安卓读屏提供等价的开始结束和取消录音动作', (tester) async {
+    final semantics = tester.ensureSemantics();
+    final gateway = _VoiceChatGateway();
+    final platform = _FakeRecorderPlatform();
+    await tester.pumpWidget(_harness(viewModel: _chatViewModel(gateway), platform: platform));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pumpAndSettle();
+    void act(String label) {
+      final node = tester.getSemantics(find.byKey(const Key('voice-hold')));
+      final id = node.getSemanticsData().customSemanticsActionIds!.singleWhere(
+        (id) => CustomSemanticsAction.getAction(id)!.label == label,
+      );
+      tester.binding.renderViews.first.owner!.semanticsOwner!.performAction(node.id, SemanticsAction.customAction, id);
+    }
+    act('开始录音');
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 600));
+    act('结束并发送');
+    await tester.pumpAndSettle();
+    expect(gateway.sentTexts, ['今天有点累']);
+    act('开始录音');
+    await tester.pumpAndSettle();
+    act('取消录音');
+    await tester.pumpAndSettle();
+    expect(platform.session!.discardCalls, 1);
+    expect(gateway.transcribeCalls, 1);
+    semantics.dispose();
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
   testWidgets('模型回复完整交付后自动朗读：指示与停止按钮', (tester) async {
     final (speakGateway, _, _) = await _pumpVoiceScene(tester);
 
@@ -37,7 +322,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('voice-output-status')), findsNothing);
     expect(find.text('正在读'), findsNothing);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('点麦克风与 Esc 都让栖语立即闭嘴（防自我循环）', (tester) async {
     await _pumpVoiceScene(tester);
@@ -58,10 +343,11 @@ void main() {
     await tester.tap(find.byKey(const Key('chat-send')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('voice-output-status')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('chat-input')));
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('voice-output-status')), findsNothing);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('离开聊天页立即停止朗读并清空队列', (tester) async {
     final player = _HoldingPlayerPlatform();
@@ -116,7 +402,7 @@ void main() {
     router.dispose();
     viewModel.dispose();
     controller.dispose();
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('气泡小喇叭重听：播完后点喇叭立即再读一次', (tester) async {
     final (speakGateway, player, _) = await _pumpVoiceScene(tester);
@@ -139,7 +425,7 @@ void main() {
       'session-voice',
       'session-voice',
     ]);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('朗读开关：配了才显示，点按切 autoSpeak 并停播', (tester) async {
     final speakGateway = _RecordingSpeakGateway();
@@ -211,7 +497,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     viewModel.dispose();
     controller.dispose();
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('未配语音合成：不显示朗读开关', (tester) async {
     final viewModel = LocalChatViewModel(
@@ -232,7 +518,7 @@ void main() {
     expect(find.byKey(const Key('voice-output-toggle-on')), findsNothing);
     expect(find.byKey(const Key('voice-output-toggle-off')), findsNothing);
     viewModel.dispose();
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('未配置语音服务：置灰点按引导去设置页', (tester) async {
     await tester.pumpWidget(
@@ -254,7 +540,7 @@ void main() {
     // SnackBar 到期退出，避免挂起计时器。
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('浏览器不支持录音：明确提示而不是无声失败', (tester) async {
     await tester.pumpWidget(
@@ -273,7 +559,7 @@ void main() {
     expect(find.text('去设置'), findsNothing);
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('麦克风权限被拒（安卓系统弹窗拒绝）：入口如实报错，文字主链路照常', (tester) async {
     // 安卓真机上的拒绝路径：能力可用但系统权限被拒，start 返回 null。
@@ -299,7 +585,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(gateway.sentTexts, ['今晚有点闷']);
     expect(find.text('今晚有点闷'), findsOneWidget);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('配置完成后置灰麦克风直接开始录音（无需刷新页面）', (tester) async {
     final sttGateway = _MutableSttGateway()..configured = false;
@@ -321,7 +607,7 @@ void main() {
     // 重查成功：不弹引导，直接进入录音。
     expect(find.textContaining('还没有配置语音服务'), findsNothing);
     expect(find.byKey(const Key('voice-mic-stop')), findsOneWidget);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('录音 → 转写 → 成功只发一条用户消息', (tester) async {
     // 先挂起转写以观察「正在转文字」中间态，再放行到成功。
@@ -353,7 +639,7 @@ void main() {
     expect(find.text('今天有点累'), findsOneWidget);
     expect(find.text('咋了'), findsOneWidget);
     expect(find.byKey(const Key('voice-mic')), findsOneWidget);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('说完按停止先取得播放许可，异步转写和回复后仍自动朗读', (tester) async {
     final gateway = _VoiceChatGateway()..hangTranscribe = true;
@@ -390,7 +676,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     viewModel.dispose();
     controller.dispose();
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('60 秒自动收尾仍沿用开始录音的许可自动朗读', (tester) async {
     final gateway = _VoiceChatGateway()..hangTranscribe = true;
@@ -426,7 +712,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     viewModel.dispose();
     controller.dispose();
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('转写失败进重试态，点麦克风重传后照常发送', (tester) async {
     final gateway = _VoiceChatGateway()
@@ -461,7 +747,7 @@ void main() {
     );
     expect(gateway.sentTexts, ['今天有点累']);
     expect(find.text('今天有点累'), findsOneWidget);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('录音中按 Esc 丢弃：不转写也不发送', (tester) async {
     final platform = _FakeRecorderPlatform();
@@ -476,6 +762,7 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('voice-mic-stop')), findsOneWidget);
 
+    await tester.tap(find.byKey(const Key('chat-input')));
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();
 
@@ -484,7 +771,7 @@ void main() {
     expect(gateway.transcribeCalls, 0);
     expect(platform.session!.discardCalls, 1);
     expect(gateway.sentTexts, isEmpty);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('转写中按 Esc 中止：回重试态且迟到结果不发送', (tester) async {
     final gateway = _VoiceChatGateway()..hangTranscribe = true;
@@ -503,6 +790,7 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('voice-mic-busy')), findsOneWidget);
 
+    await tester.tap(find.byKey(const Key('chat-input')));
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();
     expect(find.byKey(const Key('voice-mic-retry')), findsOneWidget);
@@ -512,7 +800,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(gateway.sentTexts, isEmpty);
     expect(find.byKey(const Key('voice-mic-retry')), findsOneWidget);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('转写发送失败：原文按既有条件回填输入框', (tester) async {
     final gateway = _VoiceChatGateway()
@@ -537,7 +825,7 @@ void main() {
     final input = tester.widget<TextField>(find.byKey(const Key('chat-input')));
     expect(input.controller!.text, '今天有点累');
     expect(find.byKey(const Key('voice-mic')), findsOneWidget);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 }
 
 Widget _harness({
@@ -727,7 +1015,8 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
   }
 }
 
-final class _FakeRecorderPlatform implements VoiceRecorderPlatform {
+final class _FakeRecorderPlatform
+    implements VoiceRecorderPlatform, PermissionAwareVoiceRecorderPlatform {
   _FakeRecorderPlatform({this.supported = true, this.permissionDenied = false});
 
   @override
@@ -736,10 +1025,23 @@ final class _FakeRecorderPlatform implements VoiceRecorderPlatform {
   /// 模拟安卓系统权限弹窗被拒：能力可用但 start 返回 null。
   final bool permissionDenied;
   _FakeRecordingSession? session;
+  Completer<VoiceRecordingSession?>? pendingStart;
+  Completer<VoicePermissionResult>? pendingPermission;
+  VoicePermissionResult permission = VoicePermissionResult.ready;
+  int starts = 0;
 
   @override
-  Future<VoiceRecordingSession?> start() async =>
-      supported && !permissionDenied ? (session = _FakeRecordingSession()) : null;
+  Future<VoicePermissionResult> preparePermission() async =>
+      pendingPermission?.future ?? permission;
+
+  @override
+  Future<VoiceRecordingSession?> start() async {
+    starts++;
+    if (pendingStart != null) return pendingStart!.future;
+    return supported && !permissionDenied
+        ? (session = _FakeRecordingSession())
+        : null;
+  }
 
   @override
   Future<RecordedAudio> toWav16kMono(RecordedAudio audio) async =>

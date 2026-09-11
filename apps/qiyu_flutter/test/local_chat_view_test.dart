@@ -256,7 +256,7 @@ void main() {
       expect(find.byKey(const Key('api-error-dialog')), findsOneWidget);
       expect(find.text('语音服务受限'), findsOneWidget);
       expect(find.textContaining('语音服务请求受限或配置异常'), findsOneWidget);
-    });
+    }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
     testWidgets('收敛 modelProvider：纯 5xx 或未识别内部错误不弹模态对话框', (tester) async {
       final gateway = _ConfigurableChatGateway(
@@ -465,7 +465,7 @@ void main() {
       expect(find.byKey(const Key('api-error-dialog')), findsNothing);
       expect(find.byKey(const Key('api-error-notice-banner')), findsOneWidget);
       expect(find.text('去设置检查'), findsOneWidget);
-    });
+    }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
     testWidgets('页面释放撤销本页 TTS 错误回调：onApiError 位置清空', (tester) async {
       final gateway = _ConfigurableChatGateway(
@@ -620,7 +620,7 @@ void main() {
       );
       // composer 仍挂载：输入框在树上，转写链路随时可继续。
       expect(find.byKey(const Key('chat-input')), findsOneWidget);
-    });
+    }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
   });
 }
 

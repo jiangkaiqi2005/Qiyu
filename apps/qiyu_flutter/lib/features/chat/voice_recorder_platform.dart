@@ -35,6 +35,13 @@ abstract interface class VoiceRecorderPlatform {
   Future<RecordedAudio> toWav16kMono(RecordedAudio audio);
 }
 
+/// 安卓授权先独立完成，本次授权手势不能继续起录。
+enum VoicePermissionResult { ready, grantedNow, denied }
+
+abstract interface class PermissionAwareVoiceRecorderPlatform {
+  Future<VoicePermissionResult> preparePermission();
+}
+
 /// 一次录音会话：音频字节只存在于内存缓冲，stop/discard 后即丢弃，
 /// 永不落盘、不进会话记录。
 abstract interface class VoiceRecordingSession {

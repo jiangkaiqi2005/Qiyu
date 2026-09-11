@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
@@ -803,10 +804,14 @@ class _LocalChatViewState extends State<LocalChatView> {
     final voice = _voiceInput;
     final String? message;
     switch (voice.status) {
+      case VoiceInputStatus.preparing:
+        message = '正在准备麦克风…';
       case VoiceInputStatus.recording:
         final minutes = (voice.elapsedSeconds ~/ 60).toString().padLeft(2, '0');
         final seconds = (voice.elapsedSeconds % 60).toString().padLeft(2, '0');
-        message = '正在录音 $minutes:$seconds，再点一次说完，按 Esc 取消';
+        message = !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+            ? '正在录音 $minutes:$seconds，最长 60 秒'
+            : '正在录音 $minutes:$seconds，再点一次说完，按 Esc 取消';
       case VoiceInputStatus.transcribing:
         message = '正在转文字…（Esc 中止）';
       case VoiceInputStatus.retryable:
