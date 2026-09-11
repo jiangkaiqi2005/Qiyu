@@ -566,7 +566,7 @@ final class _FakePlayerChannel implements VoicePlayerNativeChannel {
   }
 
   @override
-  Future<int?> startPlayback(Uint8List bytes, {required double volume}) async {
+  Future<int?> startPlayback(Uint8List bytes, {required double volume, int? sessionId}) async {
     if (startFails) {
       return null;
     }

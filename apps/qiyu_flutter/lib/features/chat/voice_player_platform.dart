@@ -78,6 +78,13 @@ abstract interface class UserGestureVoicePlayerPlatform {
   void prepareForPlayback();
 }
 
+/// 安卓从合成前开始观察系统中断；停止也取消尚未取得句柄的准备工作。
+abstract interface class InterruptibleVoicePlayerPlatform {
+  Future<bool> beginOutput();
+  void endOutput();
+  void Function() onOutputInterrupted(void Function() handler);
+}
+
 extension VoicePlayerUserGesture on VoicePlayerPlatform {
   /// 在当前用户点击/按键的同步调用栈中预备后续异步音频播放。
   void prepareForUserGesturePlayback() {

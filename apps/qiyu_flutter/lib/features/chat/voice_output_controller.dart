@@ -32,10 +32,26 @@ final class VoiceOutputController extends ChangeNotifier {
     : // 缺省走平台接缝：web 真播放，其余环境如实「不支持」降级。
       _playerPlatform = playerPlatform ?? createVoicePlayerPlatform() {
     _volume = _playerPlatform.getInitialVolume();
+    if (_playerPlatform case final InterruptibleVoicePlayerPlatform player) {
+      _unsubscribeInterruption = player.onOutputInterrupted(interruptOutput);
+    }
   }
 
   final ChatSpeechGateway _gateway;
   final VoicePlayerPlatform _playerPlatform;
+  void Function()? _unsubscribeInterruption;
+  bool _interrupted = false;
+
+  void interruptOutput() {
+    _interrupted = true;
+    stopAll();
+  }
+
+  void _endOutput() {
+    if (_playerPlatform case final InterruptibleVoicePlayerPlatform player) {
+      player.endOutput();
+    }
+  }
 
   /// 朗读合成遇到 429 或 40x 异常时的回调。
   void Function(ApiErrorCategory category)? onApiError;
@@ -61,6 +77,8 @@ final class VoiceOutputController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _unsubscribeInterruption?.call();
+    _haltNow();
     _disposed = true;
     super.dispose();
   }
@@ -89,7 +107,10 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 自动朗读入口（message 事件 diff 出的新 bubble）。朗读开关关闭
   /// （enabled=false）时直接丢弃，不排队。
   void offer(VoiceOutputRequest request, {required bool enabled}) {
-    if (!enabled || (isMicrophoneInUse?.call() ?? false)) {
+    if (_disposed ||
+        _interrupted ||
+        !enabled ||
+        (isMicrophoneInUse?.call() ?? false)) {
       return;
     }
     _enterSession(request.sessionId);
@@ -100,7 +121,7 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 手动重听（气泡小喇叭）：用户主动点播优先于自动队列——立即播这
   /// 条，正在播的直接顶掉，清空自动排队（用户要听的是这一句）。
   void playNow(VoiceOutputRequest request) {
-    if (isMicrophoneInUse?.call() ?? false) return;
+    if (_disposed || (isMicrophoneInUse?.call() ?? false)) return;
     prepareForUserInitiatedPlayback();
     _enterSession(request.sessionId);
     _haltNow();
@@ -112,6 +133,7 @@ final class VoiceOutputController extends ChangeNotifier {
 
   /// 用户发送消息或主动点播时调用；必须发生在第一个 await 前。
   void prepareForUserInitiatedPlayback() {
+    _interrupted = false;
     _playerPlatform.prepareForUserGesturePlayback();
   }
 
@@ -132,6 +154,9 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 消失的监听者届时已解除订阅，还活着的监听者（例如路由过渡期同时挂着的另一个
   /// 聊天页）照常收到更新。
   void stopAllForLeavingPage() {
+    if (_playerPlatform is InterruptibleVoicePlayerPlatform) {
+      _interrupted = true;
+    }
     _haltNow();
     scheduleMicrotask(() {
       if (_disposed) {
@@ -171,6 +196,7 @@ final class VoiceOutputController extends ChangeNotifier {
     _queue.clear();
     _activePlayback?.stop();
     _activePlayback = null;
+    _endOutput();
   }
 
   Future<void> _drain() async {
@@ -185,6 +211,14 @@ final class VoiceOutputController extends ChangeNotifier {
       _nowReading = request;
       notifyListeners();
       final Uint8List audio;
+      if (_playerPlatform case final InterruptibleVoicePlayerPlatform player) {
+        final allowed = await player.beginOutput();
+        if (generation != _generation) return;
+        if (!allowed) {
+          interruptOutput();
+          return;
+        }
+      }
       try {
         audio = await _gateway.speak(
           requestId: request.requestId,
@@ -195,6 +229,7 @@ final class VoiceOutputController extends ChangeNotifier {
         if (generation != _generation) {
           return;
         }
+        _endOutput();
         _notifyFailureOnce('语音服务连不上，这条读不出来。');
         final category = categorizeVoiceApiError(error, isInput: false);
         if (category != null) {
@@ -215,6 +250,7 @@ final class VoiceOutputController extends ChangeNotifier {
         return;
       }
       if (playback == null) {
+        _endOutput();
         // 合成已成功；播放许可、解码或音频设备失败不能冒充服务断线。
         // 文案平台中性：web 是浏览器自动播放策略，安卓是系统音频设备。
         _notifyFailureOnce('无法播放语音，点小喇叭再听一次。');
@@ -228,6 +264,7 @@ final class VoiceOutputController extends ChangeNotifier {
         return;
       }
       _activePlayback = null;
+      _endOutput();
     }
     _toIdle();
     notifyListeners();

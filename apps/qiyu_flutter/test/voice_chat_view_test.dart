@@ -21,6 +21,34 @@ import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  for (final state in [AppLifecycleState.inactive, AppLifecycleState.paused]) {
+    testWidgets('安卓聊天朗读在$state停声清队，回前台不续播，主动重听可用', (tester) async {
+      final (gateway, player, output) = await _pumpVoiceScene(tester);
+      await tester.pumpAndSettle();
+      const request = VoiceOutputRequest(requestId: 'r', deliveryIndex: 0);
+      output.offer(request, enabled: true);
+      output.offer(const VoiceOutputRequest(requestId: 'queued', deliveryIndex: 0), enabled: true);
+      await tester.pump();
+      expect(player.activeCount, 1);
+      if (state == AppLifecycleState.paused) {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      }
+      tester.binding.handleAppLifecycleStateChanged(state);
+      await tester.pump();
+      expect(player.activeCount, 0);
+      if (state == AppLifecycleState.paused) {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      }
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(gateway.calls, hasLength(1));
+      output.playNow(request);
+      await tester.pump();
+      expect(player.activeCount, 1);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+  }
   testWidgets(
     '安卓授权中后台取消且再次主动长按可录音',
     (tester) async {

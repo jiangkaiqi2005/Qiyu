@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/chat/voice_player_platform.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
@@ -28,6 +30,44 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  for (final interruption in ['后台', '离页']) {
+    testWidgets('安卓设置试听$interruption立即停止，恢复后安静，主动试听可用', (tester) async {
+      final player = _HoldingPreviewPlayer();
+      await tester.pumpWidget(await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        ttsGateway: _MutableTtsSettingsGateway(const TtsSettings(
+          configured: true, keySet: true, baseUrl: 'https://tts.example.com', model: 'tts')),
+        ttsPlayer: player,
+      ));
+      await _openSettings(tester);
+      await _expandSection(tester, 'tts');
+      final button = find.byKey(const Key('test-tts-connection'));
+      await _reveal(tester, button);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(player.active, true);
+      if (interruption == '后台') {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        await tester.pump();
+        expect(player.active, false);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      } else {
+        GoRouter.of(tester.element(find.byType(ProviderSettingsView))).push('/history');
+        await tester.pumpAndSettle();
+        expect(player.active, false);
+        GoRouter.of(tester.element(find.byType(Scaffold).first)).pop();
+      }
+      await tester.pumpAndSettle();
+      expect(player.active, false);
+      await _reveal(tester, button);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(player.active, true);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(player.active, false);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+  }
   testWidgets(
     'developer diagnostics entry only appears after developer mode is on',
     (tester) async {
@@ -1362,6 +1402,7 @@ Future<Widget> _app({
   OnboardingGateway? onboardingGateway,
   SttSettingsGateway? sttGateway,
   TtsSettingsGateway? ttsGateway,
+  VoicePlayerPlatform? ttsPlayer,
   WebSearchSettingsGateway? webSearchGateway,
 }) async {
   final providerViewModel = ProviderSettingsViewModel(
@@ -1388,6 +1429,7 @@ Future<Widget> _app({
     ),
     ttsSettingsViewModel: TtsSettingsViewModel(
       ttsGateway ?? const _FixedTtsSettingsGateway(),
+      playerPlatform: ttsPlayer,
       autoStart: false,
     ),
     webSearchSettingsViewModel: WebSearchSettingsViewModel(
@@ -1823,6 +1865,29 @@ final class _MutableSttSettingsGateway implements SttSettingsGateway {
       message: '连接成功，语音输入可以使用。',
     );
   }
+}
+
+final class _HoldingPreviewPlayer implements VoicePlayerPlatform {
+  _PreviewPlayback? current;
+  bool get active => current != null && !current!.completed.isCompleted;
+  @override
+  bool get supported => true;
+  @override
+  double getInitialVolume() => 1;
+  @override
+  void saveVolume(double volume) {}
+  @override
+  Future<VoicePlayback?> play(Uint8List bytes, {required String mimeType, double volume = 1}) async => current = _PreviewPlayback();
+}
+
+final class _PreviewPlayback implements VoicePlayback {
+  final completed = Completer<void>();
+  @override
+  Future<void> get done => completed.future;
+  @override
+  void stop() { if (!completed.isCompleted) completed.complete(); }
+  @override
+  void setVolume(double volume) {}
 }
 
 final class _FixedTtsSettingsGateway implements TtsSettingsGateway {

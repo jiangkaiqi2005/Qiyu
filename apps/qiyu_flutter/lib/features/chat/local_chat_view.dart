@@ -170,7 +170,10 @@ class _LocalChatViewState extends State<LocalChatView>
   void _onRouteChanged() {
     final location =
         _router?.routerDelegate.currentConfiguration.last.matchedLocation;
-    if (location != _chatLocation) _cancelUnsubmittedVoice();
+    if (location != _chatLocation) {
+      _cancelUnsubmittedVoice();
+      _chatViewModel.voiceOutput.stopAllForLeavingPage();
+    }
   }
 
   void _cancelUnsubmittedVoice() =>
@@ -178,7 +181,10 @@ class _LocalChatViewState extends State<LocalChatView>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) _cancelUnsubmittedVoice();
+    if (state != AppLifecycleState.resumed) {
+      _cancelUnsubmittedVoice();
+      _chatViewModel.voiceOutput.interruptOutput();
+    }
   }
 
   /// 语音设置网关解析：注入优先；其次复用 app Provider 树的共享实例

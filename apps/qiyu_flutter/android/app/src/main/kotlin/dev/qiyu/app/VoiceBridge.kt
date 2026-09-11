@@ -3,6 +3,10 @@ package dev.qiyu.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
@@ -82,10 +86,83 @@ internal object VoiceBridge {
     private var captureInterrupted = false
     private var foreground = false
 
-    // ---- 播放状态（允许多句柄并存：设置页试听与聊天朗读互不阻塞） ----
+    // ---- 播放状态（合成前建立输出会话，准备与播放均由主线程收尾） ----
     private val nextPlaybackId = AtomicInteger(1)
     private val players = ConcurrentHashMap<Int, MediaPlayer>()
     private var playbackChannel: MethodChannel? = null
+    private var outputSession: Int? = null
+    private val pendingPlayers = mutableMapOf<Int, MethodChannel.Result>()
+    private var releaseOutputObservers: (() -> Unit)? = null
+
+    /** 合成前取得焦点并观察路由；没有延迟授权或自动恢复。 */
+    @Suppress("DEPRECATION")
+    private fun prepareOutput(session: Int): Boolean {
+        endOutput()
+        if (!foreground || inputPrepared || captureThread != null) return false
+        val host = activity ?: return false
+        val manager = host.getSystemService(AudioManager::class.java)
+        outputSession = session
+        var observing = true
+        val listener = AudioManager.OnAudioFocusChangeListener { change ->
+            if (observing && outputSession == session && change < 0) interruptOutput()
+        }
+        val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+        val focus = if (Build.VERSION.SDK_INT >= 26) {
+            AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                .setAudioAttributes(attributes).setWillPauseWhenDucked(true)
+                .setOnAudioFocusChangeListener(listener, mainHandler).build()
+        } else null
+        val granted = if (focus != null) manager.requestAudioFocus(focus)
+            else manager.requestAudioFocus(listener, AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        if (granted != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            outputSession = null
+            return false
+        }
+        val devices = object : AudioDeviceCallback() {
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+                if (observing && removedDevices.any { it.isSink }) interruptOutput()
+            }
+        }
+        val noisy = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (observing && intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                    interruptOutput()
+                }
+            }
+        }
+        manager.registerAudioDeviceCallback(devices, mainHandler)
+        val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+        if (Build.VERSION.SDK_INT >= 33) host.registerReceiver(noisy, filter, Context.RECEIVER_NOT_EXPORTED)
+        else host.registerReceiver(noisy, filter)
+        releaseOutputObservers = {
+            observing = false
+            manager.unregisterAudioDeviceCallback(devices)
+            host.unregisterReceiver(noisy)
+            if (focus != null) manager.abandonAudioFocusRequest(focus)
+            else manager.abandonAudioFocus(listener)
+        }
+        return true
+    }
+
+    private fun endOutput() {
+        outputSession = null
+        releaseOutputObservers?.invoke()
+        releaseOutputObservers = null
+        for (id in players.keys.toList()) {
+            players.remove(id)?.let { releaseQuietly(it) }
+            pendingPlayers.remove(id)?.success(null)
+        }
+    }
+
+    private fun interruptOutput() {
+        val session = outputSession
+        endOutput()
+        if (session != null) {
+            playbackChannel?.invokeMethod("onOutputInterrupted", mapOf("sessionId" to session))
+        }
+    }
 
     fun register(messenger: BinaryMessenger, hostActivity: MainActivity) {
         activity = hostActivity
@@ -118,15 +195,16 @@ internal object VoiceBridge {
             "界面已销毁，权限请求已取消。",
             null,
         )
-        for (id in players.keys.toList()) {
-            players.remove(id)?.let { releaseQuietly(it) }
-        }
+        interruptOutput()
         activity = null
     }
 
     fun onForegroundChanged(value: Boolean) {
         foreground = value
-        if (!value) interruptRecording()
+        if (!value) {
+            interruptRecording()
+            interruptOutput()
+        }
     }
 
     /** 作废准备或采集；焦点恢复或 Activity 恢复不启动任何录音。 */
@@ -373,20 +451,32 @@ internal object VoiceBridge {
 
     private fun handlePlayerCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "prepareOutput" -> {
+                val session = (call.arguments as? Map<*, *>)?.get("sessionId") as? Int
+                result.success(session != null && prepareOutput(session))
+            }
+            "endOutput" -> {
+                val session = (call.arguments as? Map<*, *>)?.get("sessionId") as? Int
+                if (session == outputSession) endOutput()
+                result.success(null)
+            }
             "startPlayback" -> {
                 val args = call.arguments as? Map<*, *>
                 val bytes = args?.get("bytes") as? ByteArray
                 val volume = (args?.get("volume") as? Number)?.toDouble() ?: 1.0
-                if (bytes == null || bytes.isEmpty()) {
+                val session = args?.get("sessionId") as? Int
+                if (bytes == null || bytes.isEmpty() || session == null ||
+                    session != outputSession || !foreground) {
                     result.success(null)
                     return
                 }
-                executor.execute { startPlayback(bytes, volume, result) }
+                startPlayback(bytes, volume, session, result)
             }
             "stopPlayback" -> {
                 val id = (call.arguments as? Map<*, *>)?.get("id") as? Int
                 if (id != null) {
                     players.remove(id)?.let { releaseQuietly(it) }
+                    pendingPlayers.remove(id)?.success(null)
                 }
                 result.success(null)
             }
@@ -402,9 +492,12 @@ internal object VoiceBridge {
         }
     }
 
-    private fun startPlayback(bytes: ByteArray, volume: Double, result: MethodChannel.Result) {
+    private fun startPlayback(bytes: ByteArray, volume: Double, session: Int,
+                              result: MethodChannel.Result) {
         val id = nextPlaybackId.getAndIncrement()
         val player = MediaPlayer()
+        players[id] = player
+        pendingPlayers[id] = result
         try {
             player.setAudioAttributes(
                 AudioAttributes.Builder()
@@ -433,25 +526,33 @@ internal object VoiceBridge {
                     override fun close() {}
                 },
             )
-            player.prepare()
-            val clamped = volume.toFloat().coerceIn(0.0f, 1.0f)
-            player.setVolume(clamped, clamped)
+            player.setOnPreparedListener {
+                if (players[id] !== player || outputSession != session || !foreground) {
+                    return@setOnPreparedListener
+                }
+                try {
+                    val clamped = volume.toFloat().coerceIn(0.0f, 1.0f)
+                    player.setVolume(clamped, clamped)
+                    player.start()
+                    pendingPlayers.remove(id)?.success(id)
+                } catch (_: Exception) {
+                    finishPlayback(id)
+                }
+            }
             player.setOnCompletionListener { finishPlayback(id) }
             player.setOnErrorListener { _, _, _ ->
                 finishPlayback(id)
                 true
             }
-            players[id] = player
-            player.start()
-            mainHandler.post { result.success(id) }
+            player.prepareAsync()
         } catch (_: Exception) {
-            releaseQuietly(player)
-            mainHandler.post { result.success(null) }
+            finishPlayback(id)
         }
     }
 
     private fun finishPlayback(id: Int) {
         players.remove(id)?.let { releaseQuietly(it) }
+        pendingPlayers.remove(id)?.success(null)
         mainHandler.post {
             playbackChannel?.invokeMethod("onPlaybackFinished", mapOf("id" to id))
         }

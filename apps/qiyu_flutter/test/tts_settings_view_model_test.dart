@@ -7,6 +7,36 @@ import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
 
 void main() {
+  test('离页作废在途试听，迟到音频不能播放，主动重听仍可用', () async {
+    final gateway = _PendingPreviewGateway();
+    final playback = _RecordingPlayback();
+    final model = TtsSettingsViewModel(
+      gateway,
+      playerPlatform: _PreviewPlayer(playback),
+      autoStart: false,
+    );
+    final testing = model.testConnection(
+      const TtsSettingsDraft(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+      ),
+    );
+    model.stopPreview();
+    gateway.complete();
+    await testing;
+    expect(playback.doneReads, 0);
+    expect(model.testResult?.audio, isNull);
+    await model.testConnection(
+      const TtsSettingsDraft(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+      ),
+    );
+    expect(playback.doneReads, 1);
+    model.stopPreview();
+    await playback.done;
+    model.dispose();
+  });
   test('试听订阅播放完成信号，让平台能在结束时释放内存音频', () async {
     final playback = _RecordingPlayback();
     final viewModel = TtsSettingsViewModel(

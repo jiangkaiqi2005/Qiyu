@@ -17,6 +17,7 @@ abstract interface class VoicePlayerNativeChannel {
   Future<int?> startPlayback(
     Uint8List bytes, {
     required double volume,
+    int? sessionId,
   });
 
   /// 停止并释放指定句柄的播放（幂等）。
@@ -30,6 +31,12 @@ abstract interface class VoicePlayerNativeChannel {
   void Function() onPlaybackFinished(void Function(int playbackId) handler);
 }
 
+abstract interface class InterruptibleVoicePlayerChannel {
+  Future<bool> prepareOutput(int sessionId);
+  Future<void> endOutput(int sessionId);
+  void Function() onOutputInterrupted(void Function(int sessionId) handler);
+}
+
 /// [VoicePlayerNativeChannel] 的 MethodChannel 真实现：进程级单例——
 /// 聊天朗读与设置页试听共用同一条底层通道，原生完成回调在此统一
 /// 分发给全部订阅者（多实例各自注册会互相顶掉底层 handler）。
@@ -37,7 +44,8 @@ abstract interface class VoicePlayerNativeChannel {
 /// 底层 handler 的注册是惰性的（首次订阅回调或首次起播时才发生）：
 /// 仅做音量偏好读写的路径不触碰 platform services，纯 dart 单测无需
 /// 测试绑定。
-final class MethodVoicePlayerChannel implements VoicePlayerNativeChannel {
+final class MethodVoicePlayerChannel
+    implements VoicePlayerNativeChannel, InterruptibleVoicePlayerChannel {
   MethodVoicePlayerChannel._();
 
   static final MethodVoicePlayerChannel instance = MethodVoicePlayerChannel._();
@@ -48,6 +56,36 @@ final class MethodVoicePlayerChannel implements VoicePlayerNativeChannel {
 
   bool _registered = false;
   final List<void Function(int)> _handlers = [];
+  final List<void Function(int)> _interruptHandlers = [];
+
+  @override
+  Future<bool> prepareOutput(int sessionId) async {
+    _ensureRegistered();
+    try {
+      return await _channel.invokeMethod<bool>('prepareOutput', {
+            'sessionId': sessionId,
+          }) ??
+          false;
+    } on Object {
+      return false;
+    }
+  }
+
+  @override
+  Future<void> endOutput(int sessionId) async {
+    try {
+      await _channel.invokeMethod<void>('endOutput', {'sessionId': sessionId});
+    } on Object {
+      /* 原生可能已收尾。 */
+    }
+  }
+
+  @override
+  void Function() onOutputInterrupted(void Function(int sessionId) handler) {
+    _ensureRegistered();
+    _interruptHandlers.add(handler);
+    return () => _interruptHandlers.remove(handler);
+  }
 
   void _ensureRegistered() {
     if (_registered) {
@@ -58,6 +96,14 @@ final class MethodVoicePlayerChannel implements VoicePlayerNativeChannel {
   }
 
   Future<void> _handleNativeCall(MethodCall call) async {
+    if (call.method == 'onOutputInterrupted') {
+      final session = (call.arguments as Map<Object?, Object?>?)?['sessionId'];
+      if (session is int) {
+        for (final handler in List.of(_interruptHandlers)) {
+          handler(session);
+        }
+      }
+    }
     if (call.method == 'onPlaybackFinished') {
       final id = (call.arguments as Map<Object?, Object?>?)?['id'];
       if (id is int) {
@@ -72,6 +118,7 @@ final class MethodVoicePlayerChannel implements VoicePlayerNativeChannel {
   Future<int?> startPlayback(
     Uint8List bytes, {
     required double volume,
+    int? sessionId,
   }) async {
     _ensureRegistered();
     try {
@@ -80,6 +127,7 @@ final class MethodVoicePlayerChannel implements VoicePlayerNativeChannel {
       return await _channel.invokeMethod<int>('startPlayback', {
         'bytes': bytes,
         'volume': volume.clamp(0.0, 1.0),
+        'sessionId': ?sessionId,
       });
     } on Object {
       return null;
@@ -175,7 +223,8 @@ final class FileVoiceVolumeStore implements VoiceVolumeStore {
 ///
 /// widget 测试跑在桌面宿主上，[supported] 如实报告不可用（与 stub 同
 /// 语义）；接缝行为测试用构造参数注入 fake 通道与音量存储。
-final class IoVoicePlayerPlatform implements VoicePlayerPlatform {
+final class IoVoicePlayerPlatform
+    implements VoicePlayerPlatform, InterruptibleVoicePlayerPlatform {
   IoVoicePlayerPlatform({
     VoicePlayerNativeChannel? channel,
     VoiceVolumeStore? volumeStore,
@@ -200,6 +249,52 @@ final class IoVoicePlayerPlatform implements VoicePlayerPlatform {
   final VoicePlayerNativeChannel _channel;
   final VoiceVolumeStore? _injectedVolumeStore;
   final bool? _supportedOverride;
+  static int _nextSession = 0;
+  int? _session;
+
+  @override
+  void Function() onOutputInterrupted(void Function() handler) {
+    if (!supported) return () {};
+    if (_channel case final InterruptibleVoicePlayerChannel channel) {
+      return channel.onOutputInterrupted((session) {
+        if (_session != session) return;
+        endOutput();
+        handler();
+      });
+    }
+    return () {};
+  }
+
+  @override
+  Future<bool> beginOutput() async {
+    endOutput();
+    // 非安卓宿主沿用既有合成/连接测试结果，再由 play 如实报告不可播放。
+    if (!supported) return true;
+    final session = ++_nextSession;
+    _session = session;
+    if (_channel case final InterruptibleVoicePlayerChannel channel) {
+      final allowed = await channel.prepareOutput(session);
+      if (_session != session) {
+        await channel.endOutput(session);
+        return false;
+      }
+      if (!allowed) {
+        endOutput();
+        return false;
+      }
+    }
+    return true;
+  }
+
+  @override
+  void endOutput() {
+    final session = _session;
+    _session = null;
+    if (session == null) return;
+    if (_channel case final InterruptibleVoicePlayerChannel channel) {
+      unawaited(channel.endOutput(session));
+    }
+  }
 
   VoiceVolumeStore? get _volumeStore =>
       _injectedVolumeStore ?? _defaultVolumeStore;
@@ -235,8 +330,20 @@ final class IoVoicePlayerPlatform implements VoicePlayerPlatform {
     }
     // mimeType 是接缝（web 需要它选解码器）要求的形参，安卓侧不收下：
     // 原生 MediaPlayer 自己嗅探容器，上送也没有消费方。
-    final id = await _channel.startPlayback(bytes, volume: volume);
+    // 直接调用平台的旧入口也遵守焦点策略；控制器在合成前已准备则复用。
+    if (_session == null && !await beginOutput()) return null;
+    final session = _session;
+    final id = await _channel.startPlayback(
+      bytes,
+      volume: volume,
+      sessionId: session,
+    );
     if (id == null) {
+      if (_session == session) endOutput();
+      return null;
+    }
+    if (_session != session) {
+      await _channel.stopPlayback(id);
       return null;
     }
     return _AndroidVoicePlayback(id, _channel);

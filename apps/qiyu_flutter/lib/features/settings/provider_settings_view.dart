@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
@@ -57,7 +58,30 @@ class ProviderSettingsView extends StatefulWidget {
   State<ProviderSettingsView> createState() => _ProviderSettingsViewState();
 }
 
-class _ProviderSettingsViewState extends State<ProviderSettingsView> {
+class _ProviderSettingsViewState extends State<ProviderSettingsView>
+    with WidgetsBindingObserver {
+  TtsSettingsViewModel? _tts;
+  GoRouter? _router;
+  String? _location;
+
+  void _onRouteChanged() {
+    if (_router?.routerDelegate.currentConfiguration.last.matchedLocation != _location) {
+      _tts?.stopPreview(discardPreview: true);
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _tts?.stopPreview();
+  }
+
+  @override
+  void dispose() {
+    _tts?.stopPreview(discardPreview: true);
+    _router?.routerDelegate.removeListener(_onRouteChanged);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
   bool _requestedInitialization = false;
 
   /// 折叠状态的本地存储：同步读写，只存 UI 状态（design-system §8）。
@@ -72,6 +96,9 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   void initState() {
     super.initState();
     _collapsedSections = _readCollapsedSections();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      WidgetsBinding.instance.addObserver(this);
+    }
   }
 
   /// §8 的默认档与本机存过的档二选一：存过（含「存过空集＝上次是全部展开」）
@@ -97,6 +124,14 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _tts = context.read<TtsSettingsViewModel>();
+    final router = GoRouter.maybeOf(context);
+    if (router != _router) {
+      _router?.routerDelegate.removeListener(_onRouteChanged);
+      _router = router;
+      _location = router?.routerDelegate.currentConfiguration.last.matchedLocation;
+      router?.routerDelegate.addListener(_onRouteChanged);
+    }
     if (_requestedInitialization) {
       return;
     }
