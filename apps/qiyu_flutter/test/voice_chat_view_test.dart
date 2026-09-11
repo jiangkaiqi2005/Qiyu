@@ -22,6 +22,59 @@ import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  testWidgets('安卓组合闭环保留草稿、语音只提交一次且重按打断朗读', (tester) async {
+    final gateway = _VoiceChatGateway();
+    final recorder = _FakeRecorderPlatform();
+    final speech = _RecordingSpeakGateway();
+    final player = _HoldingPlayerPlatform();
+    final output = VoiceOutputController(speech, playerPlatform: player);
+    final model = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+      ttsSettingsGateway: _FixedTtsGateway(configured: true),
+      voiceOutput: output,
+      autoStart: false,
+    );
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      model.dispose();
+      output.dispose();
+    });
+    await model.refreshVoiceOutputStatus();
+    await tester.pumpWidget(_harness(viewModel: model, platform: recorder));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isFalse);
+    await tester.enterText(find.byKey(const Key('chat-input')), '保留这段草稿');
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isFalse);
+    await _recordAndroid(tester);
+    expect(gateway.sentTexts, ['今天有点累']);
+    expect(find.text('今天有点累'), findsOneWidget);
+    expect(find.text('咋了'), findsOneWidget);
+    expect(speech.calls, hasLength(1));
+    expect(player.activeCount, 1);
+
+    final hold = find.byKey(const Key('voice-hold'));
+    final gesture = await tester.startGesture(tester.getCenter(hold));
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(player.activeCount, 0);
+    await gesture.moveBy(const Offset(0, -60));
+    await tester.pump();
+    expect(find.textContaining('松开取消'), findsOneWidget);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(gateway.transcribeCalls, 1);
+    expect(gateway.sentTexts, ['今天有点累']);
+    expect(player.activeCount, 0);
+    await tester.tap(find.byKey(const Key('voice-text-mode')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byKey(const Key('chat-input'))).controller!.text,
+        '保留这段草稿');
+    expect(tester.testTextInput.isVisible, isTrue);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
   testWidgets('安卓输入控件具有48像素语义区域且边缘点击不串操作', (tester) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
