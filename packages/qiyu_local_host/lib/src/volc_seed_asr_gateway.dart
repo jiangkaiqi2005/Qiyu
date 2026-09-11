@@ -51,7 +51,13 @@ final class VolcSeedAsrGateway {
       throw _fromModelFailure(
         providerSocketFailure(error, serviceLabel: '语音服务'),
       );
-    } on WebSocketException {
+    } on WebSocketException catch (error) {
+      final status = error.httpStatusCode;
+      if (status != null && status != HttpStatus.switchingProtocols) {
+        throw _fromModelFailure(
+          providerStatusFailure(status, '', serviceLabel: '语音服务'),
+        );
+      }
       throw const SttGatewayException(
         kind: ModelFailureKind.network,
         message: '无法连接语音服务。',

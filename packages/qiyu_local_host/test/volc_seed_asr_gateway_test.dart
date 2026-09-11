@@ -361,6 +361,16 @@ void main() {
   test('连接失败按 SocketException 消息分 dns/network，TLS 单独分类', () async {
     final scenarios = [
       (
+        error: const WebSocketException('invalid upgrade'),
+        kind: ModelFailureKind.network,
+        message: '无法连接语音服务。',
+      ),
+      (
+        error: const WebSocketException('invalid accept', 101),
+        kind: ModelFailureKind.network,
+        message: '无法连接语音服务。',
+      ),
+      (
         error: const SocketException(
           'Failed host lookup',
           osError: OSError('host not found', 11001),

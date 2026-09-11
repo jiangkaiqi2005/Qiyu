@@ -226,6 +226,28 @@ void main() {
     });
   }
 
+  for (final status in [401, 403, 429]) {
+    test('豆包真实 WebSocket 握手 $status 保留服务故障弹窗分类', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        request.response.statusCode = status;
+        await request.response.close();
+      });
+      final service = SttSettingsService(repository(), SttModelGateway(
+        _StaticSttHttpClient(''),
+        webSocketConnector: _LocalHandshakeConnector(server.port)));
+      await service.save(provider: SttProviderKind.volcSeedAsr,
+        baseUrl: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
+        model: 'volc.seedasr.sauc.duration', apiKey: 'stt-test-key');
+      await expectLater(service.transcribe(audio: [1, 2], mimeType: 'audio/wav'),
+        throwsA(isA<SttServiceException>()
+          .having((error) => error.code, 'code', 'stt_service_error')
+          .having((error) => error.message, 'message', status == 429
+            ? '语音服务请求过于频繁。' : 'API Key 未通过语音服务验证。')));
+    });
+  }
+
   test('正式转写空文本视为失败，正常文本照常返回', () async {
     final service = SttSettingsService(repository(), _sttGateway(''));
     await service.save(
@@ -543,4 +565,16 @@ final class _StaticSttHttpClient implements ProviderHttpClient {
   }) {
     throw UnsupportedError('STT 测试客户端只使用非流式 POST');
   }
+}
+
+/// 将测试请求送至本地握手服务器，连接与异常构造仍由真实 Dart 实现完成。
+final class _LocalHandshakeConnector implements ProviderWebSocketConnector {
+  _LocalHandshakeConnector(this.port);
+  final int port;
+
+  @override
+  Future<ProviderWebSocketConnection> connect({
+    required Uri uri, required Map<String, String> headers,
+  }) => const DartIoProviderWebSocketConnector().connect(
+    uri: Uri.parse('ws://127.0.0.1:$port/'), headers: headers);
 }
