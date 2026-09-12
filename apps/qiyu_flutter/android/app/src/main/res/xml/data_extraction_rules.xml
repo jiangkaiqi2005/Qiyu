@@ -5,7 +5,12 @@
      （sharedpref 域），AndroidKeyStore 里的密钥本就不进备份。root 域
      是 file/database/sharedpref 的父目录，逐域显式列出只为让每类
      数据都有名有姓的排除项。跨设备唯一通道是手动导出：手动备份落在
-     用户选定的外部位置，不属于应用沙盒，不受本规则影响。 -->
+     用户选定的外部位置，不属于应用沙盒，不受本规则影响。
+     device-transfer 之外，Android 16 QPR2 起还有跨平台迁移
+     （cross-platform-transfer，如迁往 iOS）：规则文件缺该节时该模式
+     默认全量启用，故同样逐域排除。栖语没有对应平台的另一端应用，
+     不提供 platform-specific-params；应用自身不写外部存储，故不列
+     external 域——将来若引入外部写入，两套规则都要跟着补。 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="root" path="."/>
@@ -19,4 +24,10 @@
         <exclude domain="database" path="."/>
         <exclude domain="sharedpref" path="."/>
     </device-transfer>
+    <cross-platform-transfer platform="ios">
+        <exclude domain="root" path="."/>
+        <exclude domain="file" path="."/>
+        <exclude domain="database" path="."/>
+        <exclude domain="sharedpref" path="."/>
+    </cross-platform-transfer>
 </data-extraction-rules>
