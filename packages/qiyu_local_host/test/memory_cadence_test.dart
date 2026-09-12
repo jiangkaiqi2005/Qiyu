@@ -5,6 +5,7 @@ import 'package:test/test.dart';
 
 import 'support/dream_state_fixture.dart';
 import 'support/failing_atomic_writer.dart';
+import 'support/prepared_provider_port.dart';
 
 void main() {
   group('记忆节奏', () {
@@ -227,7 +228,7 @@ void main() {
           diagnosticsSink: diagnostics.add,
         );
         final cadence = MemoryCadence(
-          providerPort: const _PreparedProviderPort(),
+          providerPort: const PreparedProviderPort(),
           dailyFinalization: DailyFinalizationService(
             memoryDirectory: memoryDirectory,
             episodePipeline: cadencePipeline,
@@ -311,7 +312,7 @@ void main() {
         );
         // 未配置模型客户端：Dream 整体跳过（skippedNoProvider）。
         final cadence = MemoryCadence(
-          providerPort: const _PreparedProviderPort(),
+          providerPort: const PreparedProviderPort(),
           dreamService: DreamService(
             memoryDirectory: memoryDirectory,
             episodePipeline: pipeline,
@@ -394,7 +395,7 @@ void main() {
             finalized: false,
           );
           final cadence = MemoryCadence(
-            providerPort: const _PreparedProviderPort(),
+            providerPort: const PreparedProviderPort(),
             dailyFinalization: DailyFinalizationService(
               memoryDirectory: memoryDirectory,
               episodePipeline: EpisodeMemoryPipeline(
@@ -450,7 +451,7 @@ void main() {
             finalized: false,
           );
           final cadence = MemoryCadence(
-            providerPort: const _PreparedProviderPort(),
+            providerPort: const PreparedProviderPort(),
             dailyFinalization: DailyFinalizationService(
               memoryDirectory: memoryDirectory,
               episodePipeline: EpisodeMemoryPipeline(
@@ -497,7 +498,7 @@ void main() {
           finalized: false,
         );
         final cadence = MemoryCadence(
-          providerPort: const _PreparedProviderPort(),
+          providerPort: const PreparedProviderPort(),
           dailyFinalization: DailyFinalizationService(
             memoryDirectory: memoryDirectory,
             episodePipeline: EpisodeMemoryPipeline(
@@ -553,7 +554,7 @@ void main() {
         );
         final failingWriter = FailingAtomicTextWriter(shouldFail: (_) => true);
         final cadence = MemoryCadence(
-          providerPort: const _PreparedProviderPort(),
+          providerPort: const PreparedProviderPort(),
           monthlySummary: MonthlySummaryStore(
             memoryDirectory: memoryDirectory,
             episodePipeline: EpisodeMemoryPipeline(
@@ -592,7 +593,7 @@ void main() {
         );
         // 未配置模型客户端：Dream 整体跳过（skippedNoProvider）。
         final cadence = MemoryCadence(
-          providerPort: const _PreparedProviderPort(),
+          providerPort: const PreparedProviderPort(),
           dreamService: DreamService(
             memoryDirectory: memoryDirectory,
             episodePipeline: pipeline,
@@ -684,17 +685,4 @@ Future<void> _seedPendingDream(
   ).writeAsStringSync(
     encodedDreamState(lastSuccess: lastSuccess, pending: true),
   );
-}
-
-/// 永远就绪的端口替身：轮询只取「已配置模型服务」信号；月压缩全程
-/// 零模型调用，打开流的句柄绝不会被使用。
-final class _PreparedProviderPort implements ProviderChatPort {
-  const _PreparedProviderPort();
-
-  @override
-  Future<PreparedProviderChatRequest?> prepareChatRequest() async =>
-      PreparedProviderChatRequest(
-        hardRulesAddendum: '',
-        openStream: (messages, whenCancelled) async => null,
-      );
 }

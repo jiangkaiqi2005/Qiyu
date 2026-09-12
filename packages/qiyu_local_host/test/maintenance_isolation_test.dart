@@ -7,7 +7,9 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
+import 'support/failing_atomic_writer.dart';
 import 'support/in_process_chat_host.dart';
+import 'support/prepared_provider_port.dart';
 
 void main() {
   group('维护独占边界（Host 端到端）', () {
@@ -258,6 +260,100 @@ void main() {
       expect((await reader.readDay('2026-08-10')).finalized, isTrue);
     });
 
+    test('待办检测途中进入维护，排程前复查让路不写盘', () async {
+      await seedUnfinalizedDay('2026-08-10', '用户聊了周末的安排');
+      final entered = Completer<void>();
+      final gate = Completer<void>();
+      final fixture = await _BoundaryFixture.build(
+        memoryDirectory: memoryDirectory,
+        clock: clock,
+        diagnostics: diagnostics,
+        providerPort: _GatedProviderPort(entered, gate),
+      );
+
+      // tick 已过首道维护检查，停在待办检测的 Provider 端 await 上。
+      final tick = fixture.cadence.pollTick();
+      await entered.future;
+
+      // 检测途中进入维护：排程置位前的最后同步复查必须让路。
+      final opEntered = Completer<void>();
+      final releaseOp = Completer<void>();
+      final exclusive = fixture.service.runExclusively(() async {
+        opEntered.complete();
+        await releaseOp.future;
+      });
+      await opEntered.future;
+      gate.complete();
+      await tick;
+      await fixture.cadence.finalizePending();
+
+      // 维护期间不排程不写盘：积压日期保持未定稿，让路原因可查。
+      expect(
+        diagnostics.join('\n'),
+        contains('idle catchup skipped reason=maintenance'),
+      );
+      final reader = EpisodeMemoryPipeline(
+        memoryDirectory: memoryDirectory,
+        clock: clock,
+      );
+      expect((await reader.readDay('2026-08-10')).finalized, isFalse);
+
+      // 恢复调度：跳过的当次补办在下一次 tick 补齐，不丢。
+      releaseOp.complete();
+      await exclusive;
+      await fixture.cadence.pollTick();
+      await fixture.cadence.finalizePending();
+      expect((await reader.readDay('2026-08-10')).finalized, isTrue);
+    });
+
+    test('维护跳过不消耗空闲补办的每日尝试上限', () async {
+      await seedUnfinalizedDay('2026-08-10', '用户聊了周末的安排');
+      var failWrites = true;
+      final failingWriter = FailingAtomicTextWriter(
+        shouldFail: (_) => failWrites,
+      );
+      final fixture = await _BoundaryFixture.build(
+        memoryDirectory: memoryDirectory,
+        clock: clock,
+        diagnostics: diagnostics,
+        atomicWriter: failingWriter,
+      );
+
+      // 九次失败尝试把当日额度用到 9/10（上限 10 次）。
+      for (var attempt = 0; attempt < 9; attempt += 1) {
+        await fixture.cadence.pollTick();
+        await fixture.cadence.finalizePending();
+      }
+
+      // 维护独占期间的 tick 让路：跳过本身不得消耗每日额度。
+      final opEntered = Completer<void>();
+      final releaseOp = Completer<void>();
+      final exclusive = fixture.service.runExclusively(() async {
+        opEntered.complete();
+        await releaseOp.future;
+      });
+      await opEntered.future;
+      await fixture.cadence.pollTick();
+      await fixture.cadence.finalizePending();
+      releaseOp.complete();
+      await exclusive;
+
+      // 跳过未消耗额度：下一次 tick 仍允许第 10 次尝试（失败），再下一
+      // 次才被闸住。若跳过消耗了额度，这里只有 9 次排程且直接闸住。
+      await fixture.cadence.pollTick();
+      await fixture.cadence.finalizePending();
+      await fixture.cadence.pollTick();
+      await fixture.cadence.finalizePending();
+      final scheduled = diagnostics
+          .where((line) => line.contains('idle catchup scheduled'))
+          .length;
+      expect(scheduled, 10);
+      expect(
+        diagnostics.join('\n'),
+        contains('blocked item=finalization reason=daily-limit'),
+      );
+    });
+
     test('维护抛异常后释放独占状态，后续维护与空闲补办恢复正常', () async {
       await seedUnfinalizedDay('2026-08-10', '用户聊了周末的安排');
       final fixture = await _BoundaryFixture.build(
@@ -372,10 +468,12 @@ final class _BoundaryFixture {
     required String memoryDirectory,
     required DateTime Function() clock,
     required List<String> diagnostics,
+    ProviderChatPort? providerPort,
+    AtomicTextWriter? atomicWriter,
   }) async {
     LocalChatService? wiredService;
     final cadence = MemoryCadence(
-      providerPort: const _PreparedProviderPort(),
+      providerPort: providerPort ?? const PreparedProviderPort(),
       dailyFinalization: DailyFinalizationService(
         memoryDirectory: memoryDirectory,
         episodePipeline: EpisodeMemoryPipeline(
@@ -383,6 +481,7 @@ final class _BoundaryFixture {
           clock: clock,
         ),
         clock: clock,
+        atomicWriter: atomicWriter,
       ),
       isDeliveryBusy: () => wiredService?.hasActiveDeliveries ?? false,
       clock: clock,
@@ -401,15 +500,24 @@ final class _BoundaryFixture {
   }
 }
 
-/// 轮询 tick 的 Provider 端假件：让待办检测照常进行，与
-/// memory_cadence_test 的同名假件同构。
-final class _PreparedProviderPort implements ProviderChatPort {
-  const _PreparedProviderPort();
+/// 待办检测可门控的 Provider 端假件：[entered] 在 `prepareChatRequest`
+/// 被调用（tick 已过首道维护检查）时置位，[gate] 放行检测继续，让测试
+/// 把 tick 钉在待办检测的 await 途中。
+final class _GatedProviderPort implements ProviderChatPort {
+  _GatedProviderPort(this.entered, this.gate);
+
+  final Completer<void> entered;
+  final Completer<void> gate;
 
   @override
-  Future<PreparedProviderChatRequest?> prepareChatRequest() async =>
-      PreparedProviderChatRequest(
-        hardRulesAddendum: '',
-        openStream: (messages, whenCancelled) async => null,
-      );
+  Future<PreparedProviderChatRequest?> prepareChatRequest() async {
+    if (!entered.isCompleted) {
+      entered.complete();
+    }
+    await gate.future;
+    return PreparedProviderChatRequest(
+      hardRulesAddendum: '',
+      openStream: (messages, whenCancelled) async => null,
+    );
+  }
 }
