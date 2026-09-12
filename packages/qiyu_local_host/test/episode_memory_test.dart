@@ -243,7 +243,7 @@ void main() {
     expect(await pipeline.readCheckpoint(), isNull);
   });
 
-  test('local fallback turns keep the window pending', () async {
+  test('a recovered turn never skips past backlogged turns', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-episode-pending-window-test-',
     );
@@ -253,18 +253,8 @@ void main() {
       clock: () => DateTime(2026, 8, 14, 22, 30),
     );
 
-    final result = await pipeline.processReply(
-      session: _session('session-1', ['req-1', 'req-2', 'req-3', 'req-4']),
-      requestId: 'req-4',
-      hiddenActions: const [],
-      consumeWindow: false,
-    );
-
-    expect(result.checkpointAdvanced, isFalse);
-    expect(result.pendingTurns, 4);
-    expect(await pipeline.readCheckpoint(), isNull);
-
-    // Provider 恢复后只判断了当前轮，不能顺带越过前四轮。
+    // 本地降级期间积压了四轮：恢复后的整理只判断当前轮，
+    // 不能顺带越过更早的轮次。
     final recovered = await pipeline.processReply(
       session: _session('session-1', [
         'req-1',
@@ -275,10 +265,10 @@ void main() {
       ]),
       requestId: 'req-5',
       hiddenActions: const [NoAction()],
-      consumeWindow: true,
     );
     expect(recovered.checkpointAdvanced, isFalse);
     expect(recovered.pendingTurns, 5);
+    expect(await pipeline.readCheckpoint(), isNull);
   });
 
   test('a fresh pipeline resumes from the persisted checkpoint', () async {

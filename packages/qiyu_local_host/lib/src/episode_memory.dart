@@ -360,17 +360,17 @@ final class EpisodeMemoryPipeline {
     );
   }
 
+  /// 只在模型回复最终被接受后调用：整理窗口由本轮消费，本地回退与
+  /// 失败轮根本不会走到这里。
   Future<EpisodeUpdateResult> processReply({
     required RawSession session,
     required String requestId,
     required List<HiddenAction> hiddenActions,
-    bool consumeWindow = true,
   }) => synchronizedOnDayFiles(
     () => _processReplyLocked(
       session: session,
       requestId: requestId,
       hiddenActions: hiddenActions,
-      consumeWindow: consumeWindow,
     ),
   );
 
@@ -378,7 +378,6 @@ final class EpisodeMemoryPipeline {
     required RawSession session,
     required String requestId,
     required List<HiddenAction> hiddenActions,
-    required bool consumeWindow,
   }) async {
     final checkpoint = await readCheckpoint();
     final pendingTurns = _pendingUserTurns(checkpoint, session);
@@ -440,10 +439,9 @@ final class EpisodeMemoryPipeline {
     final hasExplicitNoAction = hiddenActions.any(
       (action) => action is NoAction,
     );
-    final shouldAdvance =
-        consumeWindow &&
-        pendingTurns == 1 &&
-        (written > 0 || hasExplicitNoAction);
+    // 只在 pendingTurns 恰为 1 时推进：积压多轮（本地降级期间累积）
+    // 不越轮，等逐轮整理消化。
+    final shouldAdvance = pendingTurns == 1 && (written > 0 || hasExplicitNoAction);
     if (!shouldAdvance) {
       return EpisodeUpdateResult(
         writtenEntries: written,
