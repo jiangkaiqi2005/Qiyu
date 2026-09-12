@@ -273,6 +273,23 @@ void main() {
     expect(events.map((event) => event.kind), isNot(contains(ModelStreamEventKind.done)));
   });
 
+  test('预算通道内提前 EOF 不视为完成（Ollama）', () async {
+    final server = await _startServer((request) async {
+      request.response.add(
+        utf8.encode('{"message":{"role":"assistant","content":"半句"},"done":false}\n'),
+      );
+      await request.response.close();
+    });
+    final events = await ProviderModelGateway(const DartIoProviderHttpClient())
+        .stream(config: _ollamaConfig(server.port), apiKey: null, messages: messages)
+        .toList()
+        .timeout(_eventWaitLimit);
+
+    expect(events.last.kind, ModelStreamEventKind.failure);
+    expect(events.last.failure, ModelFailureKind.network);
+    expect(events.map((event) => event.kind), isNot(contains(ModelStreamEventKind.done)));
+  });
+
   test('预算通道内原生错误事件仍安全失败且不回传原文', () async {
     final server = await _startServer((request) async {
       request.response.add(
@@ -422,7 +439,6 @@ void main() {
           whenCancelled: cancel.future,
         );
     final firstChunk = Completer<void>();
-    final sw = Stopwatch()..start();
     late final StreamSubscription<String> subscription;
     subscription = response.body.listen(
       (_) {
@@ -439,7 +455,7 @@ void main() {
 
     // 服务器仍在持续发送：取消后流必须立刻终止（连接被强制关闭），
     // 否则会继续收到 keep-alive 事件。只断言在宽限内终止，不压具体
-    // 时延上限，避免慢环境抖动误报。
+    // 时延，避免慢环境抖动误报。
     await cancel.future;
     final terminated = Completer<void>();
     subscription.onData((_) {});
@@ -455,7 +471,6 @@ void main() {
     });
     await terminated.future.timeout(const Duration(seconds: 5));
     await subscription.cancel();
-    expect(sw.elapsed, lessThan(const Duration(minutes: 1)));
   });
 }
 

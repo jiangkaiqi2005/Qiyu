@@ -420,9 +420,9 @@ Duration _overallRemaining(Duration timeout, Stopwatch? watch) {
 ///
 /// 期限与字节预算直接压在原始响应流上，不经过任何异步生成器：期限
 /// 到点即取消响应订阅并把超时错误送抵消费方，投递不依赖响应持续产
-/// 出；超限以不兼容响应失败退出并即时停止读取，原生错误与取消按原
-/// 样转发；无论哪条路径退出（完成、错误、超限、超时、下游取消）都
-/// 取消期限并强制关闭连接。
+/// 出；超限以不兼容响应失败退出并即时停止读取，原生错误转发后同样
+/// 关闭流（等完成信号的消费方不悬挂）；无论哪条路径退出（完成、错
+/// 误、超限、超时、下游取消）都取消期限并强制关闭连接。
 Stream<String> _readBoundedResponse(
   HttpClientResponse response,
   HttpClient client,
@@ -510,10 +510,19 @@ Stream<String> _readBoundedResponse(
         },
         onError: (Object error, StackTrace stackTrace) {
           terminate();
+          // 强制关闭连接时响应流可能先错误后完成，终态只认先到者。
+          if (controller.isClosed) {
+            return;
+          }
           controller.addError(error, stackTrace);
+          // 与其余终态对齐：错误后同样关闭流，等完成信号的消费方不悬挂。
+          controller.close();
         },
         onDone: () {
           terminate();
+          if (controller.isClosed) {
+            return;
+          }
           if (heldTerminators.isNotEmpty) {
             controller.add(heldTerminators.takeBytes());
           }
