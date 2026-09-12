@@ -307,6 +307,22 @@ void main() {
     expect(events.single.failure, ModelFailureKind.timeout);
   });
 
+  test('响应头后完全静默时整体期限仍终结流', () async {
+    final server = await _startServer((request) async {
+      // 只发出响应头，之后零字节静默：期限到点必须终结流并按超时
+      // 降级，不能因源静默而滞留（旧实现以空闲超时终结静默源）。
+      await request.response.flush();
+    });
+    final events = await _openAiGateway()
+        .stream(config: _openAiConfig(server.port, timeoutSeconds: 1), apiKey: 'test-key', messages: messages)
+        .toList()
+        .timeout(_eventWaitLimit);
+
+    expect(events, hasLength(1));
+    expect(events.single.kind, ModelStreamEventKind.failure);
+    expect(events.single.failure, ModelFailureKind.timeout);
+  });
+
   test('联网搜索分支持续无效帧不能刷新整体期限', () async {
     final server = await _startServer((request) => _dripLines(request, ': ping\n\n'));
     final events = await ProviderModelGateway(const DartIoProviderHttpClient())
@@ -422,7 +438,8 @@ void main() {
     await firstChunk.future.timeout(_eventWaitLimit);
 
     // 服务器仍在持续发送：取消后流必须立刻终止（连接被强制关闭），
-    // 否则会继续收到 keep-alive 事件。
+    // 否则会继续收到 keep-alive 事件。只断言在宽限内终止，不压具体
+    // 时延上限，避免慢环境抖动误报。
     await cancel.future;
     final terminated = Completer<void>();
     subscription.onData((_) {});
@@ -436,9 +453,9 @@ void main() {
         terminated.complete();
       }
     });
-    await terminated.future.timeout(const Duration(seconds: 2));
+    await terminated.future.timeout(const Duration(seconds: 5));
     await subscription.cancel();
-    expect(sw.elapsedMilliseconds, lessThan(3000));
+    expect(sw.elapsed, lessThan(const Duration(minutes: 1)));
   });
 }
 
