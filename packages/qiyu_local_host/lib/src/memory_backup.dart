@@ -72,6 +72,14 @@ BackupValidationException _manifestIncomplete() =>
       '备份清单不完整，无法验证。',
     );
 
+/// 恢复未完成的统一拒绝码与文案：恢复写回或必要清理未完成时，本机
+/// 数据不能声称已回到目标状态；快照保留在本机，可再次恢复。
+BackupValidationException _restoreIncomplete() =>
+    const BackupValidationException(
+      'restore-incomplete',
+      '恢复没有完成，本机数据可能没有回到目标状态。快照已保留，可以稍后重试恢复。',
+    );
+
 /// 取备份文件里标记（`<!-- qiyu-backup-*:payload -->`）内嵌的载荷并
 /// 解码；标记缺失或未闭合返回 null。清单与快照读取共用同一提取，
 /// 载荷解码失败原样抛出，错误翻译留在各自调用侧。
@@ -230,8 +238,9 @@ final class MemoryBackupRollbackResult {
   };
 }
 
-/// 备份验证失败：结构、版本或完整性不通过。任何失败都发生在写入
-/// 之前，现有数据不被改变。
+/// 备份领域对外的统一拒绝码：验证失败（结构、版本或完整性不通过，
+/// 发生在写入之前，现有数据不被改变），以及导入中止、恢复未完成等
+/// 写入之后如实反馈结果的失败。对外统一按同一错误 JSON 结构返回。
 final class BackupValidationException implements Exception {
   const BackupValidationException(this.code, this.message);
 
@@ -370,6 +379,7 @@ final class MemoryBackupService {
     BackupByteWriter? byteWriter,
     this.budget = const MemoryBackupBudget(),
     void Function(String message)? diagnosticsSink,
+    Future<void> Function(String targetPath)? restoreFileDeleter,
   }) : _indexStore = indexStore ??
            EpisodeIndexStore(
              memoryDirectory: memoryDirectory,
@@ -377,6 +387,7 @@ final class MemoryBackupService {
            ),
        _clock = clock ?? DateTime.now,
        _byteWriter = byteWriter ?? const IoBackupByteWriter(),
+       _restoreFileDeleter = restoreFileDeleter ?? _deleteMemoryFile,
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
   final String memoryDirectory;
@@ -387,6 +398,11 @@ final class MemoryBackupService {
   final EpisodeIndexStore _indexStore;
   final Clock _clock;
   final BackupByteWriter _byteWriter;
+
+  /// 恢复清理的删除接缝：清理「快照中不存在的文件」时使用，默认
+  /// 直接删除真实文件；与字节写入接缝同构，测试可注入删除失败模拟
+  /// 清理中断。
+  final Future<void> Function(String targetPath) _restoreFileDeleter;
 
   /// 不可信备份包的解压预算：超限在写入任何产品数据之前拒绝。
   final MemoryBackupBudget budget;
@@ -882,6 +898,11 @@ final class MemoryBackupService {
     return true;
   }
 
+  /// 快照视角下的排除路径：快照目录自身（backups/）与临时文件
+  /// （.tmp）既不进快照，也不参与恢复清理与残留核对。
+  bool _isSnapshotExcludedPath(String relative) =>
+      relative.startsWith('backups/') || relative.endsWith('.tmp');
+
   /// 记忆目录内允许进入备份的相对路径（导出与导入共用同一白名单）。
   bool _allowedMemoryPath(String relative) {
     const rootFiles = {
@@ -1157,11 +1178,14 @@ final class MemoryBackupService {
           snapshotId: snapshotId,
         );
       } on Object catch (error) {
-        // 导入失败：按刚创建的快照恢复原样，绝不留下半导入状态。
+        // 导入失败：按刚创建的快照恢复原样。恢复本身失败时如实报告
+        // 恢复未完成——快照保留在本机，用户可再次恢复，绝不声称数据
+        // 已回到导入前的状态。
         try {
           await _restoreSnapshot(snapshotId);
         } on Object catch (restoreError) {
-          _diagnosticsSink('backup import rollback deferred [$restoreError]');
+          _diagnosticsSink('backup import rollback failed [$restoreError]');
+          throw _restoreIncomplete();
         }
         if (error is BackupValidationException) {
           rethrow;
@@ -1265,7 +1289,7 @@ final class MemoryBackupService {
     var fileCount = 0;
     final memoryFiles = await _listRelativeFiles(Directory(memoryDirectory));
     for (final MapEntry(:key, :value) in memoryFiles.entries) {
-      if (key.startsWith('backups/') || key.endsWith('.tmp')) {
+      if (_isSnapshotExcludedPath(key)) {
         continue;
       }
       final target = path.join(directory.path, key);
@@ -1355,7 +1379,16 @@ final class MemoryBackupService {
       );
     }
     final safetySnapshotId = await _createSnapshot();
-    final restored = await _restoreSnapshot(target.id);
+    final int restored;
+    try {
+      restored = await _restoreSnapshot(target.id);
+    } on Object catch (restoreError) {
+      // 恢复写回或必要清理失败：如实报告恢复未完成，不把底层文件
+      // 系统异常（可能携带本机路径）透出；目标快照与保底快照都保留，
+      // 可再次恢复。
+      _diagnosticsSink('backup rollback failed [$restoreError]');
+      throw _restoreIncomplete();
+    }
     await _pruneSnapshots();
     return MemoryBackupRollbackResult(
       snapshotId: target.id,
@@ -1385,19 +1418,34 @@ final class MemoryBackupService {
     for (final MapEntry(:key, :value) in snapshotFiles.entries) {
       await _byteWriter.write(path.join(memoryDirectory, key), value);
     }
-    // 清理快照中不存在的文件（导入后新增的），快照本身不动。
+    // 清理快照中不存在的文件（导入后新增的），快照本身不动。这是
+    // 恢复的必要清理：删不掉本机就带着导入期间多出的文件，不是导入
+    // 前的状态，失败如实计入恢复失败。
     final memoryFiles = await _listRelativeFiles(Directory(memoryDirectory));
     for (final MapEntry(:key, :value) in memoryFiles.entries) {
-      if (key.startsWith('backups/') || key.endsWith('.tmp')) {
+      if (_isSnapshotExcludedPath(key)) {
         continue;
       }
       if (!snapshotFiles.containsKey(key)) {
         try {
-          await value.delete();
+          await _restoreFileDeleter(value.path);
         } on Object catch (error) {
-          _diagnosticsSink('snapshot restore cleanup deferred [$error]');
+          _diagnosticsSink('snapshot restore cleanup failed [$error]');
+          throw _restoreIncomplete();
         }
       }
+    }
+    // 恢复完整性核对：写回与必要清理之后，记忆目录必须恰好回到快照
+    // 时点。任何原因留下的快照之外文件（含两趟之间的新增）都说明
+    // 恢复没有完成，按实际结果如实判定，绝不声称已恢复。
+    final remaining = await _listRelativeFiles(Directory(memoryDirectory));
+    final hasResidue = remaining.keys.any(
+      (key) =>
+          !_isSnapshotExcludedPath(key) && !snapshotFiles.containsKey(key),
+    );
+    if (hasResidue) {
+      _diagnosticsSink('snapshot restore residue detected');
+      throw _restoreIncomplete();
     }
     try {
       await episodePipeline.synchronizedOnDayFiles(
@@ -1453,6 +1501,9 @@ final class MemoryBackupService {
     return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 }
+
+/// 恢复清理的默认删除：直接删除真实文件。
+Future<void> _deleteMemoryFile(String targetPath) => File(targetPath).delete();
 
 /// 递归收集 [root] 下全部文件，键为正斜杠相对路径（导出、快照与
 /// 回滚清理共用同一种目录遍历）；目录不存在时返回空映射。两趟语义：

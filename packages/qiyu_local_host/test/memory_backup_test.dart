@@ -875,7 +875,7 @@ void main() {
         'long-memory.md': '# long-memory\n\n## 人与关系\n- 备份里的印象\n',
       });
 
-      final failingWriter = _FailingByteWriter(failOnWrite: 2);
+      final failingWriter = _FailingByteWriter(failOnWrite: {2});
       final failingBackup = MemoryBackupService(
         memoryDirectory: memoryDirectory,
         memoryControls: memoryControls,
@@ -896,6 +896,193 @@ void main() {
           ),
         ),
       );
+      expect(snapshotMemoryTree(), before);
+    });
+
+    test('恢复写回失败时如实报告未恢复，快照保留可再次恢复', () async {
+      await seedRichMemory();
+      final indexStore = EpisodeIndexStore(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: pipeline,
+      );
+      await pipeline.synchronizedOnDayFiles(
+        () => indexStore.rebuild(includeUnfinalized: true),
+      );
+      // 导入前基准：索引已存在，恢复后的重建不会额外改变文件集合。
+      final before = snapshotMemoryTree();
+      final bundle = buildBundle({
+        'daily-state.md': '# daily-state\n\n- 备份带来的近况\n',
+        'long-memory.md': '# long-memory\n\n## 人与关系\n- 备份里的印象\n',
+      });
+
+      // 导入第 2 次写入失败进入自动恢复；恢复的第一次写回再次失败：
+      // 自动恢复没有完成，绝不能声称数据已经回到导入前的状态。
+      final failingBackup = MemoryBackupService(
+        memoryDirectory: memoryDirectory,
+        memoryControls: memoryControls,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryActions: actions,
+        clock: () => clock,
+        byteWriter: _FailingByteWriter(failOnWrite: {2, 3}),
+        diagnosticsSink: (_) {},
+      );
+      await expectLater(
+        () => failingBackup.importBundle(bundle),
+        throwsA(
+          isA<BackupValidationException>()
+              .having((error) => error.code, 'code', 'restore-incomplete')
+              .having(
+                (error) => error.message,
+                'message',
+                isNot(contains(memoryDirectory)),
+              ),
+        ),
+      );
+      // 失败恢复所需的快照没有被提前清理，用正常写入可再次恢复。
+      final snapshots = await backup.listSnapshots();
+      expect(snapshots, isNotEmpty);
+      final restored = await backup.rollbackTo();
+      expect(restored.snapshotId, snapshots.first.id);
+      expect(snapshotMemoryTree(), before);
+    });
+
+    test('恢复清理失败时如实报告未恢复，快照保留', () async {
+      await seedRichMemory();
+      final bundle = buildBundle({
+        'daily-state.md': '# daily-state\n\n- 备份带来的近况\n',
+        'long-memory.md': '# long-memory\n\n## 人与关系\n- 备份里的印象\n',
+      });
+
+      // 导入第 2 次写入失败进入自动恢复；恢复的写回全部成功，但
+      // 删除导入新增文件的必要清理失败：本机没有回到导入前的状态，
+      // 必要清理失败计入恢复失败，不声称已恢复。
+      final failingBackup = MemoryBackupService(
+        memoryDirectory: memoryDirectory,
+        memoryControls: memoryControls,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryActions: actions,
+        clock: () => clock,
+        byteWriter: _FailingByteWriter(failOnWrite: {2}),
+        restoreFileDeleter: (targetPath) async {
+          if (targetPath == path.join(memoryDirectory, 'daily-state.md')) {
+            throw const FileSystemException('simulated undeletable file');
+          }
+          await File(targetPath).delete();
+        },
+        diagnosticsSink: (_) {},
+      );
+      await expectLater(
+        () => failingBackup.importBundle(bundle),
+        throwsA(
+          isA<BackupValidationException>()
+              .having((error) => error.code, 'code', 'restore-incomplete')
+              .having(
+                (error) => error.message,
+                'message',
+                isNot(contains(memoryDirectory)),
+              ),
+        ),
+      );
+      // 失败恢复所需的快照没有被提前清理，用正常服务可再次恢复。
+      final snapshots = await backup.listSnapshots();
+      expect(snapshots, isNotEmpty);
+      await backup.rollbackTo();
+      expect(
+        File(path.join(memoryDirectory, 'daily-state.md')).existsSync(),
+        isFalse,
+      );
+    });
+
+    test('清理之后冒出的快照外文件同样被核对拦下，不声称已恢复', () async {
+      await seedRichMemory();
+      final bundle = buildBundle({
+        'daily-state.md': '# daily-state\n\n- 备份带来的近况\n',
+        'long-memory.md': '# long-memory\n\n## 人与关系\n- 备份里的印象\n',
+      });
+
+      // 导入第 2 次写入失败进入自动恢复；恢复写回全部成功、清理也能
+      // 删掉导入新增的文件，但删除动作本身顺带制造了一个新的快照外
+      // 文件：核对按最终状态如实判定恢复未完成，绝不声称已恢复。
+      final failingBackup = MemoryBackupService(
+        memoryDirectory: memoryDirectory,
+        memoryControls: memoryControls,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryActions: actions,
+        clock: () => clock,
+        byteWriter: _FailingByteWriter(failOnWrite: {2}),
+        restoreFileDeleter: (targetPath) async {
+          await File(targetPath).delete();
+          File(path.join(memoryDirectory, 'sneaky-extra.md'))
+              .writeAsStringSync('清理之后冒出来的文件', flush: true);
+        },
+        diagnosticsSink: (_) {},
+      );
+      await expectLater(
+        () => failingBackup.importBundle(bundle),
+        throwsA(
+          isA<BackupValidationException>().having(
+            (error) => error.code,
+            'code',
+            'restore-incomplete',
+          ),
+        ),
+      );
+      // 快照保留：换回正常服务可再次恢复，把多出来的文件收拾干净。
+      expect(await backup.listSnapshots(), isNotEmpty);
+      await backup.rollbackTo();
+      expect(
+        File(path.join(memoryDirectory, 'sneaky-extra.md')).existsSync(),
+        isFalse,
+      );
+    });
+
+    test('回滚写回失败时返回恢复未完成且不删快照', () async {
+      await seedSession('2026-08-05', 1, [('用户', '旧会话')]);
+      await File(path.join(memoryDirectory, 'long-memory.md')).writeAsString(
+        '# long-memory\n\n## 人与关系\n- 导入前的印象\n',
+        flush: true,
+      );
+      final before = snapshotMemoryTree();
+      final bundle = buildBundle({
+        'long-memory.md': '# long-memory\n\n## 人与关系\n- 导入后的印象\n',
+      });
+      final result = await backup.importBundle(bundle);
+
+      // 回滚的第一次写回就失败：恢复没有完成要如实反馈，错误不携带
+      // 本机路径，快照不清理。
+      final failingBackup = MemoryBackupService(
+        memoryDirectory: memoryDirectory,
+        memoryControls: memoryControls,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryActions: actions,
+        clock: () => clock,
+        byteWriter: _FailingByteWriter(failOnWrite: {1}),
+        diagnosticsSink: (_) {},
+      );
+      await expectLater(
+        () => failingBackup.rollbackTo(result.snapshotId),
+        throwsA(
+          isA<BackupValidationException>()
+              .having((error) => error.code, 'code', 'restore-incomplete')
+              .having(
+                (error) => error.message,
+                'message',
+                isNot(contains(memoryDirectory)),
+              ),
+        ),
+      );
+      final snapshots = await backup.listSnapshots();
+      expect(
+        snapshots.map((snapshot) => snapshot.id),
+        contains(result.snapshotId),
+      );
+
+      // 快照还在：换回正常写入即可完成恢复。
+      await backup.rollbackTo(result.snapshotId);
       expect(snapshotMemoryTree(), before);
     });
 
@@ -1401,18 +1588,18 @@ String _renderLegacyEpisodeDay({
       '> $evidence\n\n';
 }
 
-/// 导入中断模拟：第 [failOnWrite] 次写入抛错，其余正常落盘——模拟
-/// 磁盘偶发故障后恢复流程仍能完成。
+/// 导入与恢复中断模拟：[failOnWrite] 中任一序号的写入抛错，其余正常
+/// 落盘——模拟磁盘偶发故障，覆盖导入与恢复两个阶段。
 final class _FailingByteWriter implements BackupByteWriter {
-  _FailingByteWriter({required this.failOnWrite});
+  _FailingByteWriter({this.failOnWrite = const {}});
 
-  final int failOnWrite;
+  final Set<int> failOnWrite;
   var _writes = 0;
 
   @override
   Future<void> write(String targetPath, Uint8List bytes) async {
     _writes += 1;
-    if (_writes == failOnWrite) {
+    if (failOnWrite.contains(_writes)) {
       throw const FileSystemException('simulated disk failure');
     }
     final target = File(targetPath);
