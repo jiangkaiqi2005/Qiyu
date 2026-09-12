@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'cleartext_policy.dart';
 import 'provider_config.dart';
@@ -143,6 +144,50 @@ abstract interface class CancellableProviderHttpClient
   });
 }
 
+/// 聊天／理解模型响应的字节预算：在解码、分行与聚合之前按原始字节
+/// 限制响应，防止无换行大帧、超大响应或超大错误响应占满内存。预算
+/// 按调用范围生效——只施加于模型 HTTP 请求，语音二进制与搜索通道
+/// 走既有方法，不受影响。
+final class ProviderResponseBudget {
+  const ProviderResponseBudget({
+    required this.maxFrameBytes,
+    required this.maxResponseBytes,
+    required this.maxErrorBodyBytes,
+  });
+
+  /// 单帧（一行，行终止符不计）最大字节数。
+  final int maxFrameBytes;
+
+  /// 单个 2xx 响应体最大总字节数。
+  final int maxResponseBytes;
+
+  /// 非 2xx 错误响应体最大总字节数。
+  final int maxErrorBodyBytes;
+}
+
+/// 带响应预算的模型 HTTP 通道：与 [ProviderHttpClient] 的区别仅在
+/// 响应侧——施加字节预算与单次请求整体期限。独立成接口避免逼既有
+/// 实现与测试假件改动（与 [CancellableProviderHttpClient] 同模式）。
+abstract interface class BoundedProviderHttpClient
+    implements ProviderHttpClient {
+  Future<ProviderHttpResponse> postStreamBounded({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+    required ProviderResponseBudget budget,
+  });
+
+  Future<ProviderHttpResponse> postStreamBoundedCancellable({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+    required ProviderResponseBudget budget,
+    required Future<void> whenCancelled,
+  });
+}
+
 final class ProviderRequestCancelled implements Exception {
   const ProviderRequestCancelled();
 }
@@ -159,7 +204,8 @@ final class DartIoProviderHttpClient
     implements
         ProviderHttpClient,
         CancellableProviderHttpClient,
-        ProviderBytesHttpClient {
+        ProviderBytesHttpClient,
+        BoundedProviderHttpClient {
   const DartIoProviderHttpClient({
     this.httpClientFactory = defaultHttpClientFactory,
     this.proxyRulesSource,
@@ -254,6 +300,42 @@ final class DartIoProviderHttpClient
   );
 
   @override
+  Future<ProviderHttpResponse> postStreamBounded({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+    required ProviderResponseBudget budget,
+  }) {
+    return _postBytes(
+      uri: uri,
+      headers: headers,
+      body: utf8.encode(body),
+      timeout: timeout,
+      budget: budget,
+    );
+  }
+
+  @override
+  Future<ProviderHttpResponse> postStreamBoundedCancellable({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+    required ProviderResponseBudget budget,
+    required Future<void> whenCancelled,
+  }) {
+    return _postBytes(
+      uri: uri,
+      headers: headers,
+      body: utf8.encode(body),
+      timeout: timeout,
+      budget: budget,
+      whenCancelled: whenCancelled,
+    );
+  }
+
+  @override
   Future<ProviderBytesHttpResponse> postBytes({
     required Uri uri,
     required Map<String, String> headers,
@@ -284,6 +366,7 @@ final class DartIoProviderHttpClient
     required List<int> body,
     required Duration timeout,
     Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
     final client = await _createClient(uri, timeout);
     var cancelled = false;
@@ -291,15 +374,25 @@ final class DartIoProviderHttpClient
       cancelled = true;
       client.close(force: true);
     });
+    // 预算路径的整体期限从发请求前起算，覆盖连接与响应消费；期间
+    // 到达的数据只消耗已流逝时间，不重置期限。无预算调用（语音、
+    // 搜索）保持原有分步超时语义不变。
+    final watch = budget == null ? null : (Stopwatch()..start());
     try {
-      final request = await client.postUrl(uri).timeout(timeout);
+      final request = await client
+          .postUrl(uri)
+          .timeout(_overallRemaining(timeout, watch));
       request.followRedirects = false;
       headers.forEach(request.headers.set);
       request.add(body);
-      final response = await request.close().timeout(timeout);
+      final response = await request
+          .close()
+          .timeout(_overallRemaining(timeout, watch));
       return ProviderHttpResponse(
         statusCode: response.statusCode,
-        body: _readResponse(response, client, timeout),
+        body: budget == null
+            ? _readResponse(response, client, timeout)
+            : _readBoundedResponse(response, client, timeout, budget, watch!),
       );
     } catch (_) {
       client.close(force: true);
@@ -309,6 +402,149 @@ final class DartIoProviderHttpClient
       rethrow;
     }
   }
+}
+
+/// 整体期限的剩余等待时间：未计时（无预算调用）返回完整期限；已
+/// 到期返回零，让 [Future.timeout] 立即失败。
+Duration _overallRemaining(Duration timeout, Stopwatch? watch) {
+  if (watch == null) {
+    return timeout;
+  }
+  final remaining = timeout - watch.elapsed;
+  return remaining.isNegative ? Duration.zero : remaining;
+}
+
+/// 带预算的模型响应读取：在解码与分行之前按原始字节限制（2xx 用
+/// 响应总量上限，非 2xx 用错误体上限；单帧按行终止符之间的字节计），
+/// 并施加从请求开始计时的整体期限。超限以不兼容响应失败退出，超时
+/// 以 [TimeoutException] 退出，取消由底层订阅取消传播；无论哪条路
+/// 径退出都在 finally 里强制关闭连接。
+Stream<String> _readBoundedResponse(
+  HttpClientResponse response,
+  HttpClient client,
+  Duration timeout,
+  ProviderResponseBudget budget,
+  Stopwatch watch,
+) async* {
+  try {
+    yield* _withOverallDeadline(
+      _enforceByteBudget(
+        response,
+        budget,
+        errorResponse: response.statusCode < 200 || response.statusCode >= 300,
+      ),
+      watch,
+      timeout,
+    ).transform(utf8.decoder);
+  } finally {
+    client.close(force: true);
+  }
+}
+
+/// 在解码与分行之前按原始字节限制响应：行终止符（\r、\n）之间的
+/// 字节计为帧长度，全响应累计计为总量；任一超限即抛不兼容响应失败，
+/// 未收到的后续字节不再进入解码与解析。
+///
+/// 行终止符扣住到「后续至少一个字节通过校验」才放行：终止符字节本
+/// 身可能恰好是超限字节（如响应总量恰超一字节时，超限的正是完成帧
+/// 之后的最后一个换行），若随传输块直接放行，完成帧会抢在总量校验
+/// 失败之前流入解析层，出现「先完成后失败」的事件序列。放行前缀截
+/// 到块内最后一个非终止符字节为止，块尾终止符串留给下一块首个通过
+/// 校验的字节或流结束冲刷；只要字节持续到达就有产出，整体期限的
+/// 超时错误不会因源静默而滞留。未终止的行内容照常放行——下游行装
+/// 配在终止符到达前不会交出行，超限失败时随流丢弃。
+Stream<List<int>> _enforceByteBudget(
+  Stream<List<int>> source,
+  ProviderResponseBudget budget, {
+  required bool errorResponse,
+}) async* {
+  final maxTotal = errorResponse
+      ? budget.maxErrorBodyBytes
+      : budget.maxResponseBytes;
+  var totalBytes = 0;
+  var frameBytes = 0;
+  final heldTerminators = BytesBuilder(copy: false);
+  await for (final chunk in source) {
+    // releaseEnd：本块可放行前缀的长度；其后是块尾终止符串，继续扣住。
+    var releaseEnd = 0;
+    for (var i = 0; i < chunk.length; i++) {
+      final byte = chunk[i];
+      totalBytes++;
+      if (totalBytes > maxTotal) {
+        throw const ModelGatewayException(
+          kind: ModelFailureKind.incompatibleResponse,
+          message: '模型服务返回了不兼容的响应格式。',
+        );
+      }
+      if (byte == 0x0D || byte == 0x0A) {
+        frameBytes = 0;
+      } else if (++frameBytes > budget.maxFrameBytes) {
+        throw const ModelGatewayException(
+          kind: ModelFailureKind.incompatibleResponse,
+          message: '模型服务返回了不兼容的响应格式。',
+        );
+      } else {
+        releaseEnd = i + 1;
+      }
+    }
+    // 扫描完成即本块至少一个字节通过校验：此前扣住的终止符获得确认，
+    // 与本块是否含非终止符字节无关（纯换行流也须持续放行）。
+    if (chunk.isNotEmpty && heldTerminators.isNotEmpty) {
+      yield heldTerminators.takeBytes();
+    }
+    if (releaseEnd > 0) {
+      yield releaseEnd == chunk.length ? chunk : chunk.sublist(0, releaseEnd);
+    }
+    if (releaseEnd < chunk.length) {
+      heldTerminators.add(chunk.sublist(releaseEnd));
+    }
+  }
+  if (heldTerminators.isNotEmpty) {
+    yield heldTerminators.takeBytes();
+  }
+}
+
+/// 给流施加从 [watch] 启动时算起的 [total] 整体期限：期限到点后取消
+/// 底层订阅，流以 [TimeoutException] 结束；期间到达的数据只消耗已
+/// 流逝的时间，不重置期限。
+Stream<T> _withOverallDeadline<T>(
+  Stream<T> source,
+  Stopwatch watch,
+  Duration total,
+) {
+  late final StreamController<T> controller;
+  StreamSubscription<T>? subscription;
+  Timer? deadline;
+
+  Future<void> shutdown() async {
+    deadline?.cancel();
+    await subscription?.cancel();
+  }
+
+  controller = StreamController<T>(
+    onListen: () {
+      final remaining = total - watch.elapsed;
+      if (remaining <= Duration.zero) {
+        controller.addError(TimeoutException('整体期限已到', total));
+        controller.close();
+        return;
+      }
+      deadline = Timer(remaining, () {
+        subscription?.cancel();
+        controller.addError(TimeoutException('整体期限已到', total));
+        controller.close();
+      });
+      subscription = source.listen(
+        controller.add,
+        onError: controller.addError,
+        onDone: controller.close,
+      );
+    },
+    onPause: () => subscription?.pause(),
+    onResume: () => subscription?.resume(),
+    onCancel: shutdown,
+  );
+  return controller.stream;
 }
 
 Stream<String> _readResponse(
@@ -459,14 +695,27 @@ final class ProviderModelGateway
       return;
     }
     final outbound = _outboundFor(config.kind);
+    final chatTimeout = Duration(seconds: config.timeoutSeconds);
+    final encodedBody = jsonEncode(request.body);
     ProviderHttpResponse response;
     try {
-      response = await outbound.postStream(
-        uri: request.uri,
-        headers: request.headers,
-        body: jsonEncode(request.body),
-        timeout: Duration(seconds: config.timeoutSeconds),
-      );
+      // 聊天与理解调用走预算通道（字节上限 + 单次请求整体期限）；
+      // 未实现预算接口的通道（测试假件）退回普通调用。
+      response = await switch (outbound) {
+        final BoundedProviderHttpClient bounded => bounded.postStreamBounded(
+          uri: request.uri,
+          headers: request.headers,
+          body: encodedBody,
+          timeout: chatTimeout,
+          budget: _chatResponseBudget,
+        ),
+        _ => outbound.postStream(
+          uri: request.uri,
+          headers: request.headers,
+          body: encodedBody,
+          timeout: chatTimeout,
+        ),
+      };
     } on TimeoutException {
       _diagnosticsSink?.call('model connection timeout');
       yield const ModelStreamEvent.failure(
@@ -516,6 +765,14 @@ final class ProviderModelGateway
           ModelFailureKind.timeout,
           '模型服务响应超时。',
         );
+        return;
+      } on ModelGatewayException catch (error) {
+        // 错误体读取超出预算（如超过错误体字节上限）时按其失败类别
+        // 降级，不透出错误体内容。
+        _diagnosticsSink?.call(
+          'model response error body failure [${error.kind}]',
+        );
+        yield ModelStreamEvent.failure(error.kind, error.message);
         return;
       } on Object catch (error) {
         _diagnosticsSink?.call('model response error body read error [$error]');
@@ -842,21 +1099,45 @@ final class ProviderModelGateway
     var cancelled = false;
     whenCancelled?.then((_) => cancelled = true);
     final encodedBody = jsonEncode(body);
-    final response =
-        whenCancelled != null && outbound is CancellableProviderHttpClient
-        ? await outbound.postStreamCancellable(
-                uri: request.uri,
-                headers: request.headers,
-                body: encodedBody,
-                timeout: timeout,
-                whenCancelled: whenCancelled,
-              )
-        : await outbound.postStream(
-            uri: request.uri,
-            headers: request.headers,
-            body: encodedBody,
-            timeout: timeout,
-          );
+    final cancellable = whenCancelled != null &&
+        outbound is CancellableProviderHttpClient;
+    // 联网搜索的模型调用同样走预算通道（每次 HTTP 请求一个整体期
+    // 限）；搜索客户端本身不经过本类，不受聊天预算影响。
+    final Future<ProviderHttpResponse> pendingResponse;
+    if (outbound is BoundedProviderHttpClient) {
+      pendingResponse = cancellable
+          ? outbound.postStreamBoundedCancellable(
+              uri: request.uri,
+              headers: request.headers,
+              body: encodedBody,
+              timeout: timeout,
+              budget: _chatResponseBudget,
+              whenCancelled: whenCancelled,
+            )
+          : outbound.postStreamBounded(
+              uri: request.uri,
+              headers: request.headers,
+              body: encodedBody,
+              timeout: timeout,
+              budget: _chatResponseBudget,
+            );
+    } else if (cancellable) {
+      pendingResponse = outbound.postStreamCancellable(
+        uri: request.uri,
+        headers: request.headers,
+        body: encodedBody,
+        timeout: timeout,
+        whenCancelled: whenCancelled,
+      );
+    } else {
+      pendingResponse = outbound.postStream(
+        uri: request.uri,
+        headers: request.headers,
+        body: encodedBody,
+        timeout: timeout,
+      );
+    }
+    final response = await pendingResponse;
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final String responseBody;
       try {
@@ -1003,6 +1284,16 @@ typedef _AnthropicStreamPart = ({
 
 /// 发给 Provider 的输出上限，各协议保持一致，防止失控的账单与超长候选。
 const _maxModelReplyTokens = 512;
+
+/// 聊天与理解模型响应的传输预算（ticket 08）：单帧（一行）1 MiB、
+/// 单个 2xx 响应 16 MiB、错误响应 64 KiB，在解码、分行与聚合之前按
+/// 原始字节生效。只施加于模型 HTTP 请求；语音二进制与搜索通道走同
+/// 客户端的普通方法，不受影响。
+const _chatResponseBudget = ProviderResponseBudget(
+  maxFrameBytes: 1 * 1024 * 1024,
+  maxResponseBytes: 16 * 1024 * 1024,
+  maxErrorBodyBytes: 64 * 1024,
+);
 
 _ProviderProtocol _providerProtocol(ProviderKind kind) => switch (kind) {
   ProviderKind.openAiCompatible => const _OpenAiCompatibleProtocol(),
