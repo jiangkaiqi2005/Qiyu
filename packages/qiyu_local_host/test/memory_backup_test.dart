@@ -356,16 +356,18 @@ void main() {
       await File(
         path.join(memoryDirectory, 'long-memory.md'),
       ).writeAsString('# long-memory\n\n- 服务器密码：$jsonSecret\n', flush: true);
-      // 控制记录是记忆元数据：导出保持原样。
+      // 控制记录是记忆元数据：结构标记原样，自由文本摘要仍按同一份
+      // 规则过滤（旧规则时代的摘要可能残留秘密）。
       expect(await memoryControls.freeze('旧习惯', origin: 'user'), isTrue);
-      final controlsBefore = await File(
-        path.join(memoryDirectory, 'memory-controls.md'),
-      ).readAsString();
+      expect(
+        await memoryControls.freeze('服务器密码：audit-only-controls'),
+        isTrue,
+      );
 
       final export = await backup.exportBundle();
       final archive = ZipDecoder().decodeBytes(export.bytes);
 
-      // 任何条目都不再携带旧秘密——包括 base64url 载荷里的那份。
+      // 任何条目都不再携带旧秘密——包括 base64url 载荷与控制摘要里的那份。
       for (final file in archive.files) {
         final content = utf8.decode(file.content as List<int>);
         expect(content, isNot(contains(jsonSecret)), reason: file.name);
@@ -376,6 +378,7 @@ void main() {
           reason: file.name,
         );
         expect(content, isNot(contains(legacyUserText)), reason: file.name);
+        expect(content, isNot(contains('audit-only-controls')), reason: file.name);
       }
 
       // 干净会话逐字节保持：未命中替换就不动文件。
@@ -394,14 +397,17 @@ void main() {
           ),
         ).readAsString(),
       );
-      // 控制记录原样。
+      // 控制记录结构标记保持可读：干净的摘要原样，脏摘要就地遮蔽。
+      final exportedControls = utf8.decode(
+        archive.files
+            .firstWhere((file) => file.name == 'memory/memory-controls.md')
+            .content as List<int>,
+      );
+      expect(exportedControls, contains('## frozen'));
+      expect(exportedControls, contains('- [MC001] user | 旧习惯'));
       expect(
-        utf8.decode(
-          archive.files
-              .firstWhere((file) => file.name == 'memory/memory-controls.md')
-              .content as List<int>,
-        ),
-        controlsBefore,
+        exportedControls,
+        contains('- [MC002] chat | 服务器密码：[已脱敏]'),
       );
 
       // 校验与回导一致：清空后整包导入成功，读回内容已脱敏、结构完好。
@@ -429,6 +435,42 @@ void main() {
       final controls = await memoryControls.load();
       expect(controls.readable, isTrue);
       expect(controls.frozenSummaries, contains('旧习惯'));
+      expect(controls.frozenSummaries, contains('服务器密码：[已脱敏]'));
+    });
+
+    test('无法按文本解读的文件导出时跳过并记诊断，其余文件不受影响', () async {
+      await seedRichMemory();
+      final diagnostics = <String>[];
+      final observing = MemoryBackupService(
+        memoryDirectory: memoryDirectory,
+        memoryControls: memoryControls,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryActions: actions,
+        clock: () => clock,
+        diagnosticsSink: diagnostics.add,
+      );
+      // 记忆目录内混入一份带非法字节序列的文件：无法可靠脱敏，
+      // 导出侧整份跳过。
+      await File(
+        path.join(memoryDirectory, 'long-memory.md'),
+      ).writeAsBytes(
+        Uint8List.fromList(const [0x23, 0x20, 0x6c, 0x6f, 0x6e, 0x67, 0xff, 0xfe]),
+        flush: true,
+      );
+
+      final export = await observing.exportBundle();
+
+      final names = ZipDecoder()
+          .decodeBytes(export.bytes)
+          .files
+          .map((file) => file.name)
+          .toSet();
+      expect(names, isNot(contains('memory/long-memory.md')));
+      expect(names.any((name) => name.contains('sessions/')), isTrue);
+      expect(names, contains('manifest.md'));
+      expect(diagnostics, hasLength(1));
+      expect(diagnostics.single, contains('backup export skipped'));
     });
   });
 

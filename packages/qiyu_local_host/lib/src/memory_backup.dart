@@ -352,15 +352,12 @@ final class MemoryBackupService {
     return files;
   }
 
-  /// 导出读取：控制记录原样保留（记忆元数据，导出两侧按同一份合并
-  /// 才能一致）；其余记忆文件先过导出脱敏——可见文本与 `qiyu-*`
-  /// 标记载荷里的自由文本共用会话脱敏规则，未命中替换时保持原始
-  /// 字节（正常往返逐字节一致），文本解不开的文件跳过不导出。
+  /// 导出读取：全部记忆文件先过导出脱敏——可见文本、`qiyu-*` 标记
+  /// 载荷里的自由文本与控制记录摘要共用会话脱敏规则，结构标记
+  /// （控制记录的段与条目前缀）不受影响；未命中替换时保持原始字节
+  /// （正常往返逐字节一致），文本解不开的文件跳过不导出。
   Future<Uint8List> _exportFileBytes(String relative, File file) async {
     final bytes = await file.readAsBytes();
-    if (relative == 'memory-controls.md') {
-      return bytes;
-    }
     final contents = utf8.decode(bytes, allowMalformed: false);
     final redacted = redactMemoryMarkdown(contents);
     if (redacted == null) {
@@ -588,7 +585,7 @@ final class MemoryBackupService {
       'open-loops.archive.md',
       'daily-state.md',
       'long-memory.md',
-      'memory-controls.md',
+      memoryControlsFileName,
     };
     if (relative.endsWith('.tmp')) {
       return false;
@@ -618,7 +615,7 @@ final class MemoryBackupService {
   _diff(Map<String, Uint8List> files, DateTime generatedAt) async {
     final currentControls = await memoryControls.load();
     MemoryControls? backupControls;
-    final backupControlsBytes = files['memory-controls.md'];
+    final backupControlsBytes = files[memoryControlsFileName];
     if (backupControlsBytes != null) {
       try {
         backupControls = parseMemoryControls(
@@ -646,7 +643,7 @@ final class MemoryBackupService {
     final items = <MemoryBackupPreviewItem>[];
     final paths = files.keys.toList()..sort();
     for (final relative in paths) {
-      if (relative == 'memory-controls.md') {
+      if (relative == memoryControlsFileName) {
         continue; // 控制记录走并集合并，不按文件替换。
       }
       final backupBytes = files[relative]!;
@@ -708,7 +705,7 @@ final class MemoryBackupService {
     if (backupControls != null) {
       items.add(
         MemoryBackupPreviewItem(
-          path: 'memory-controls.md',
+          path: memoryControlsFileName,
           category: controlsMerge == 'identical'
               ? BackupItemCategory.skipped
               : BackupItemCategory.replaced,
@@ -774,7 +771,7 @@ final class MemoryBackupService {
       var conflicts = 0;
       var unrecoverable = 0;
       for (final item in preview.items) {
-        if (item.path == 'memory-controls.md') {
+        if (item.path == memoryControlsFileName) {
           continue;
         }
         switch (item.category) {

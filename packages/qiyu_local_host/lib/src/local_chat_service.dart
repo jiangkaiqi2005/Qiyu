@@ -513,8 +513,10 @@ final class LocalChatService {
       return;
     }
 
+    // 召回子调用（选择/组织）把当前消息拼进提示发给 Provider：
+    // 与主链装配同一份脱敏规则先行过滤，秘密绝不随查找请求外发。
     final task = recall.runTurnRecall(
-      userText: userText,
+      userText: redactSessionText(userText),
       recallActions: hiddenActions,
     );
     // 保存延续与窗口竞态共享同一个任务：结果被窗口内inline处理时置位

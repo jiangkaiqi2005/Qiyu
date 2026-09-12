@@ -16,6 +16,7 @@ const longMemoryFileName = 'long-memory.md';
 const relationshipFileName = 'relationship.md';
 const dailyStateFileName = 'daily-state.md';
 const personaFileName = 'persona.md';
+const memoryControlsFileName = 'memory-controls.md';
 
 /// 记忆目录内文件句柄的统一拼装（`File(path.join(directory, name))`）。
 File memoryFile(String directory, String name) =>
@@ -652,10 +653,12 @@ String newOpaqueId() {
 
 /// 会话文本脱敏规则（每条消息、每段诊断都会过一遍，正则只编译一次）。
 /// JSON 形态的敏感键值：字段名带引号、值是双引号字符串，值替换到结束
-/// 引号之前，占位后 JSON 结构保持可读。整行 Cookie：多项分号串接只遮
-/// 第一项等于没遮，值段吃到行尾。PEM 私钥的类型词可缺省，覆盖
-/// PKCS#8（BEGIN PRIVATE KEY）与 RSA/EC/OpenSSH/DSA/加密形态；类型段
-/// 禁止连字符，防止跨标记误吃。
+/// 引号之前，占位后 JSON 结构保持可读。Cookie 两段式：行内出现至少
+/// 一个「名字=值」形态的项才整行遮蔽（多项串接与只带标志位的真实头
+/// 都盖住），纯口吻提及不遮；裸值形态（冒号后直接跟一长串无空格
+/// 令牌）单独遮值。PEM 私钥的类型词可缺省，覆盖 PKCS#8（BEGIN
+/// PRIVATE KEY）与 RSA/EC/OpenSSH/DSA/加密形态；类型段禁止连字符，
+/// 防止跨标记误吃。
 final _sessionRedactPatterns = <RegExp>[
   RegExp(r'as_sk_[A-Za-z0-9_-]{8,}', caseSensitive: false),
   RegExp(
@@ -689,11 +692,16 @@ final _sessionRedactPatterns = <RegExp>[
     caseSensitive: false,
   ),
   RegExp(
-    r'((?:set[- ])?cookie\s*[:=：]\s*)[^\r\n]+',
+    r'((?:set[- ])?cookie\s*[:=：]\s*'
+    r'(?=[^\r\n]*[A-Za-z0-9_~-]+\s*=[^\s；;，,]))[^\r\n]+',
     caseSensitive: false,
   ),
   RegExp(
-    r'((?:api[_ -]?key|token|cookie|password|密码|口令)\s*[:=：]\s*)[^\s；;，,]+',
+    r'((?:set[- ])?cookie\s*[:=：]\s*)[A-Za-z0-9._~+/=-]{10,}',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'((?:api[_ -]?key|token|password|密码|口令)\s*[:=：]\s*)[^\s；;，,]+',
     caseSensitive: false,
   ),
   RegExp(
@@ -791,15 +799,15 @@ const _markerStructuralKeys = {
   'compressedDates',
 };
 
-Object? _redactMarkerPayloadValue(String key, Object? value) {
-  if (_markerStructuralKeys.contains(key)) {
+Object? _redactMarkerPayloadValue(String? key, Object? value) {
+  if (key != null && _markerStructuralKeys.contains(key)) {
     return value;
   }
   if (value is String) {
     return redactSessionText(value);
   }
   if (value is List<Object?>) {
-    return [for (final item in value) _redactMarkerPayloadValue('', item)];
+    return [for (final item in value) _redactMarkerPayloadValue(null, item)];
   }
   if (value is Map<String, Object?>) {
     return {
@@ -824,7 +832,7 @@ String? redactMemoryMarkdown(String markdown) {
     var replacement = original;
     try {
       final payload = _redactMarkerPayloadValue(
-        '',
+        null,
         decodeMarkerPayload(match.group(2)!),
       ) as Map<String, Object?>;
       final encoded = encodeMarkerPayload(payload);

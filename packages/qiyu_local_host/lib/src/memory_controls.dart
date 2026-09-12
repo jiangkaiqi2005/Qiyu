@@ -94,7 +94,7 @@ final class MemoryControlsStore {
   Future<void> _lockTail = Future.value();
 
   File get controlsFile =>
-      File(path.join(memoryDirectory, 'memory-controls.md'));
+      File(path.join(memoryDirectory, memoryControlsFileName));
 
   Future<T> _withLock<T>(Future<T> Function() body) {
     final result = _lockTail.then((_) => body());

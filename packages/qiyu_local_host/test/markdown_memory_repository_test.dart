@@ -438,6 +438,7 @@ void main() {
         'Cookie: theme=dark; sid=audit-only-cookie': 'Cookie: [已脱敏]',
         'Set-Cookie: session=audit-only-session; HttpOnly':
             'Set-Cookie: [已脱敏]',
+        'Cookie: audit-only-cookie-value': 'Cookie: [已脱敏]',
         '-----BEGIN PRIVATE KEY-----\nAUDITONLYFAKEPKCS8\n'
                 '-----END PRIVATE KEY-----':
             '[已脱敏]',
@@ -485,7 +486,8 @@ void main() {
           '2026年9月12日见，订单一共 123456 元。\n'
           '我的手机是 13800138000，回头发你日历链接。\n'
           '密码: [已脱敏]\n'
-          '{"token":"[已脱敏]"}';
+          '{"token":"[已脱敏]"}\n'
+          'Cookie：它是浏览器存的小文件';
       final repository = MarkdownMemoryRepository(
         memoryDirectory: temporaryDirectory.path,
         clock: () => now,

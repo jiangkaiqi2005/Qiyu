@@ -3689,6 +3689,57 @@ void main() {
         );
       }
     });
+
+    test('召回子调用发给模型的上下文不带秘密', () async {
+      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [_recallStreamReply()],
+        completeScript: [
+          ScriptedCompletionReply(_recallSelection(dates: ['2026-08-05'])),
+          const ScriptedCompletionReply('对了，你之前提过这件事。'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        // 窗口预算内等查找完成，bubble 2 照常补上。
+        recallWindowWait: (_) =>
+            Future<void>.delayed(const Duration(milliseconds: 500)),
+        seedMemory: (memoryDirectory) =>
+            _seedRecallEpisodeWithSecret(memoryDirectory, clock),
+      );
+      addTearDown(harness.dispose);
+
+      // 本轮消息带秘密：选择与组织两次召回子调用都不得携带；
+      // 旧日条目里的秘密同样不得随回读证据外发。
+      const currentSecret = '{"password":"audit-only-current"}';
+      final trace = await harness.sendChat(
+        requestId: 'recall-secret',
+        text: '我上次说的那台服务器 $currentSecret 准备得怎么样了',
+      );
+
+      expect(trace.eventsOf(ChatDeliveryEventKind.done), hasLength(2));
+      expect(
+        trace.eventsOf(ChatDeliveryEventKind.message).last.messages,
+        ['对了，你之前提过这件事。'],
+      );
+
+      expect(gateway.completeCalls, hasLength(2));
+      for (final call in gateway.completeCalls) {
+        for (final message in call) {
+          expect(
+            message.content,
+            isNot(contains('audit-only-current')),
+            reason: message.content,
+          );
+          expect(
+            message.content,
+            isNot(contains('audit-only-episode')),
+            reason: message.content,
+          );
+        }
+      }
+    });
   });
 }
 
@@ -3724,6 +3775,55 @@ Future<void> _seedLegacySecretSession(
     '${memoryDirectory.path}/sessions/2026/08/2026-08-11-001.md',
   )..createSync(recursive: true);
   await file.writeAsString(renderSessionMarkdown(session), flush: true);
+}
+
+/// 召回用例的播种：手写「旧规则时代」的日文件（条目摘要与原话摘录
+/// 都带合成秘密），再照召回流程重建两级索引。
+Future<void> _seedRecallEpisodeWithSecret(
+  Directory memoryDirectory,
+  DateTime Function() clock,
+) async {
+  final pipeline = EpisodeMemoryPipeline(
+    memoryDirectory: memoryDirectory.path,
+    clock: clock,
+  );
+  const jsonSecret = '{"password":"audit-only-episode"}';
+  final at = DateTime.parse('2026-08-05T20:00:00Z').toUtc();
+  final meta = encodeMarkerPayload({
+    'schemaVersion': 1,
+    'date': '2026-08-05',
+    'updatedAt': at.toIso8601String(),
+    'summary': '当日摘要',
+    'finalized': true,
+    'finalizedAt': DateTime.parse(
+      '2026-08-05T23:00:00Z',
+    ).toUtc().toIso8601String(),
+  });
+  final entry = encodeMarkerPayload({
+    'id': 'legacy-r1',
+    'sessionId': 'legacy-recall-session',
+    'requestId': 'legacy-1',
+    'summary': '服务器密码：$jsonSecret',
+    'evidence': '用户原话：Cookie: sid=audit-only-episode-cookie',
+    'at': at.toIso8601String(),
+  });
+  final dayFile = File(
+    '${memoryDirectory.path}/episodes/2026/08/2026-08-05.md',
+  )..createSync(recursive: true);
+  await dayFile.writeAsString(
+    '# 栖语每日记录\n\n'
+    '<!-- qiyu-episode:$meta -->\n\n'
+    '## summary\n当日摘要\n\n'
+    '<!-- qiyu-episode-entry:$entry -->\n'
+    '## ${at.toLocal().toIso8601String()} · 服务器密码：$jsonSecret\n\n'
+    '> 用户原话：Cookie: sid=audit-only-episode-cookie\n\n',
+    flush: true,
+  );
+  final recall = RecallOrchestrator(
+    memoryDirectory: memoryDirectory.path,
+    episodePipeline: pipeline,
+  );
+  await _rebuildUnderLock(recall, pipeline);
 }
 
 final class _ControlledProviderPort implements ProviderChatPort {
