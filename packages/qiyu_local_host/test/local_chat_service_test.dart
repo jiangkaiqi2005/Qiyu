@@ -2361,14 +2361,63 @@ void main() {
         },
       );
       addTearDown(harness.dispose);
-  
+
       final trace = await harness.sendChat(requestId: 'plain-1', text: '在吗');
-  
+
       expect(trace.message.messages, ['在。']);
       expect(gateway.streamCalls, hasLength(1));
       expect(
         gateway.lastStreamMessages!.last.content,
         isNot(contains('<memory_context>')),
+      );
+    });
+
+    test('a self-reported appellation reaches the recall compose in the '
+        'same turn', () async {
+      DateTime clock() => DateTime(2026, 9, 12, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''一时没想起。
+<qiyu-actions>
+[{"action":"memory_recall","query":"爬山"}]
+</qiyu-actions>'''),
+        ],
+        completeScript: [
+          ScriptedCompletionReply(_recallSelection(dates: ['2026-08-05'])),
+          const ScriptedCompletionReply('对了，你周末是要去爬山来着。'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        // 窗口预算内等查找完成。
+        recallWindowWait: (_) =>
+            Future<void>.delayed(const Duration(milliseconds: 500)),
+        seedMemory: (memoryDirectory) => _seedRecallEpisode(
+          memoryDirectory.path,
+          clock,
+          evidence: '这周末打算去爬山',
+        ),
+      );
+      addTearDown(harness.dispose);
+
+      // 同一轮：用户自述称呼，被接受的候选带召回动作并走到 bubble 2。
+      final trace = await harness.sendChat(
+        requestId: 'recall-appellation',
+        text: '以后叫我老王',
+      );
+
+      expect(trace.eventsOf(ChatDeliveryEventKind.message), hasLength(2));
+      // 组织调用的称呼惯例行按当轮新称呼装配，不得拿旧称呼兜底；
+      // 用户原话也会进提示，断言必须钉住惯例行本身。
+      expect(
+        gateway.completeCalls.last.map((message) => message.content).join('\n'),
+        contains('可以用「老王」称呼用户'),
+      );
+      // persona.md 当轮写入，不等召回窗口结束。
+      expect(
+        File('${harness.memoryDirectory}/persona.md').readAsStringSync(),
+        contains('称呼：老王'),
       );
     });
   });

@@ -455,6 +455,13 @@ final class LocalChatService {
           trimmedRequestId,
           hiddenActions,
         );
+      }
+      // 对话自述称呼（用户说「以后叫我老王」）当轮生效：与用户明确
+      // 纠正同一精神，用户当前明确说的话最高；本地降级轮同样生效。
+      // 必须赶在轮内召回之前写入——召回的组织调用按 persona.md 的
+      // 称呼装配。
+      await _applyAppellationSelfReport(trimmedText, trimmedRequestId);
+      if (outcome.source == ReplySource.llm) {
         // 轮内召回循环：bubble 1 交付后才开始，绝不阻塞首响。
         yield* _recallBubble(
           session: completedSession,
@@ -466,9 +473,6 @@ final class LocalChatService {
           cancellation: cancellation,
         );
       }
-      // 对话自述称呼（用户说「以后叫我老王」）当轮生效：与用户明确
-      // 纠正同一精神，用户当前明确说的话最高；本地降级轮同样生效。
-      await _applyAppellationSelfReport(trimmedText, trimmedRequestId);
       memoryCadence?.onDeliveryComplete(bedtime: bedtime);
     }
   }
