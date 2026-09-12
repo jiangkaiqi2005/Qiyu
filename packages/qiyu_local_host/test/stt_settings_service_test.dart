@@ -552,6 +552,9 @@ final class _StaticSttConfigRepository implements SttConfigRepository {
 
   @override
   Future<void> saveStt(SttConfig config) async => this.config = config;
+
+  @override
+  Future<T> runTransaction<T>(Future<T> Function() action) => action();
 }
 
 /// 把豆包 audio 帧（正包与末片）解压拼接：验证整段音频原样上送。

@@ -170,41 +170,49 @@ final class ProviderSettingsService
   }) async {
     config.validate();
     _refusePublicCleartextTarget(config);
-    final previous = await configRepository.load();
-    final trimmed = apiKey?.trim();
-    // 传入新 Key 就写入文件；没传时同作用域保留已存 Key，换作用域
-    // 则清空——旧目标的 Key 绝不沿用给新目标。
-    String? persistedKey;
-    if (trimmed != null && trimmed.isNotEmpty) {
-      persistedKey = trimmed;
-    } else if (previous != null &&
-        previous.credentialScope == config.credentialScope) {
-      persistedKey = previous.apiKey;
-    }
-    await configRepository.save(config.withApiKey(persistedKey));
-    // 切换 Provider 或地址会更换凭据作用域：旧作用域在凭据管理器里
-    // 的遗留 Key 从此无人读取，保存成功后立即清掉（新旧两种 scope
-    // 字符串一并清，见 [_deleteStoredApiKeys]）。
-    if (previous != null &&
-        previous.credentialScope != config.credentialScope) {
-      await _deleteStoredApiKeys(previous);
-    }
-    // 文件一旦接管当前作用域的 Key，凭据管理器里的同作用域旧值即被
-    // 取代：立即清掉，避免用户日后手改文件清空 Key 时回退复活陈旧
-    // 凭据。纯旧安装（Key 只在凭据库、文件从未存过）不受影响。
-    if (persistedKey != null) {
-      await _deleteStoredApiKeys(config);
-    }
+    // 读取现值、Key 去留决定、写回与旧凭据清理同处一个共享事务：
+    // 并发保存或遗忘交错时，锁外读到的旧值与旧 Key 不得回灌。
+    await configRepository.runTransaction(() async {
+      final previous = await configRepository.load();
+      final trimmed = apiKey?.trim();
+      // 传入新 Key 就写入文件；没传时同作用域保留已存 Key，换作用域
+      // 则清空——旧目标的 Key 绝不沿用给新目标。
+      String? persistedKey;
+      if (trimmed != null && trimmed.isNotEmpty) {
+        persistedKey = trimmed;
+      } else if (previous != null &&
+          previous.credentialScope == config.credentialScope) {
+        persistedKey = previous.apiKey;
+      }
+      await configRepository.save(config.withApiKey(persistedKey));
+      // 切换 Provider 或地址会更换凭据作用域：旧作用域在凭据管理器里
+      // 的遗留 Key 从此无人读取，保存成功后立即清掉（新旧两种 scope
+      // 字符串一并清，见 [_deleteStoredApiKeys]）。
+      if (previous != null &&
+          previous.credentialScope != config.credentialScope) {
+        await _deleteStoredApiKeys(previous);
+      }
+      // 文件一旦接管当前作用域的 Key，凭据管理器里的同作用域旧值即被
+      // 取代：立即清掉，避免用户日后手改文件清空 Key 时回退复活陈旧
+      // 凭据。纯旧安装（Key 只在凭据库、文件从未存过）不受影响。
+      if (persistedKey != null) {
+        await _deleteStoredApiKeys(config);
+      }
+    });
     return read();
   }
 
   Future<ProviderSettingsSnapshot> forgetApiKey() async {
-    final config = await configRepository.load();
-    if (config != null) {
-      await configRepository.save(config.withApiKey(null));
-      // 一并清掉凭据管理器里的旧数据（升级前保存的 Key）。
-      await _deleteStoredApiKeys(config);
-    }
+    // 遗忘同样经共享事务：写回的配置以事务内现值为准，不会把锁外读
+    // 到的整份旧配置写回，覆盖并发保存的结果或复活已删的 Key。
+    await configRepository.runTransaction(() async {
+      final config = await configRepository.load();
+      if (config != null) {
+        await configRepository.save(config.withApiKey(null));
+        // 一并清掉凭据管理器里的旧数据（升级前保存的 Key）。
+        await _deleteStoredApiKeys(config);
+      }
+    });
     return read();
   }
 

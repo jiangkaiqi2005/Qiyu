@@ -194,6 +194,9 @@ final class _MemoryProviderConfigRepository
   Future<void> saveWebSearch(WebSearchConfig? config) async {
     webSearch = config;
   }
+
+  @override
+  Future<T> runTransaction<T>(Future<T> Function() action) => action();
 }
 
 final class _MemorySecretStore implements SecretStore {

@@ -501,7 +501,18 @@ final class TtsConfig {
   }
 }
 
-abstract interface class ProviderConfigRepository {
+/// provider.json 共享读改写事务的排队入口。聊天、语音转写、语音合成、
+/// 联网搜索与代理五类设置共用同一份文件，「读取现值 → 决定 Key 去留
+/// → 写回 → 旧凭据清理」的完整流程必须经 [runTransaction] 排队执行：
+/// 只有事务内的读取才能看到前一个事务的写回，锁外读到的旧值、旧 Key
+/// 一律不得带回事务内使用。同一仓储实例上的事务彼此串行，单个事务
+/// 失败（含写回失败）只影响自身，队列照常放行后续事务。
+abstract interface class ProviderConfigTransactionQueue {
+  Future<T> runTransaction<T>(Future<T> Function() action);
+}
+
+abstract interface class ProviderConfigRepository
+    implements ProviderConfigTransactionQueue {
   Future<ProviderConfig?> load();
 
   Future<void> save(ProviderConfig config);
@@ -519,7 +530,8 @@ final class WebSearchConfig {
   }
 }
 
-abstract interface class WebSearchConfigRepository {
+abstract interface class WebSearchConfigRepository
+    implements ProviderConfigTransactionQueue {
   Future<WebSearchConfig?> loadWebSearch();
 
   Future<void> saveWebSearch(WebSearchConfig? config);
@@ -608,24 +620,33 @@ final class ProxyConfig {
   }
 }
 
-abstract interface class ProxyConfigRepository {
+abstract interface class ProxyConfigRepository
+    implements ProviderConfigTransactionQueue {
   Future<ProxyConfig?> loadProxy();
 
   Future<void> saveProxy(ProxyConfig? config);
 }
 
-abstract interface class SttConfigRepository {
+abstract interface class SttConfigRepository
+    implements ProviderConfigTransactionQueue {
   Future<SttConfig?> loadStt();
 
   Future<void> saveStt(SttConfig config);
 }
 
-abstract interface class TtsConfigRepository {
+abstract interface class TtsConfigRepository
+    implements ProviderConfigTransactionQueue {
   Future<TtsConfig?> loadTts();
 
   Future<void> saveTts(TtsConfig config);
 }
 
+/// provider.json 的 JSON 仓储：五个仓储接口共用同一份文件。保存类
+/// 方法实现「读整份 → 只改本段 → 原子写回」，但排队边界在
+/// [runTransaction]——调用方必须把「读取现值 → 决定 Key 去留 → 写回
+/// → 旧凭据清理」的整段流程包进共享事务，在事务外直接保存会失去与
+/// 其他段的串行保障。全部设置服务共享同一仓储实例（组合根装配保
+/// 证）；队列只在实例内串行，不提供跨进程互斥。
 final class JsonProviderConfigRepository
     implements
         ProviderConfigRepository,
@@ -633,13 +654,25 @@ final class JsonProviderConfigRepository
         TtsConfigRepository,
         WebSearchConfigRepository,
         ProxyConfigRepository {
-  const JsonProviderConfigRepository({
+  JsonProviderConfigRepository({
     required this.filePath,
     this.writer = const IoAtomicTextWriter(),
   });
 
   final String filePath;
   final AtomicTextWriter writer;
+
+  /// 共享读改写队列的队尾：每个事务等前一个事务完全结束（成功或失
+  /// 败）后才开始，错误不在队列里传播——写回失败只拒绝自己的调用方，
+  /// 队列照常放行后续事务。
+  Future<void> _transactionTail = Future.value();
+
+  @override
+  Future<T> runTransaction<T>(Future<T> Function() action) {
+    final result = _transactionTail.then((_) => action());
+    _transactionTail = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
 
   @override
   Future<ProviderConfig?> load() async {

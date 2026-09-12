@@ -296,6 +296,9 @@ final class _FixedConfigRepository implements ProviderConfigRepository {
   Future<void> save(ProviderConfig config) async {
     throw UnimplementedError('回归测试不写配置');
   }
+
+  @override
+  Future<T> runTransaction<T>(Future<T> Function() action) => action();
 }
 
 final class _NoSecretStore implements SecretStore {

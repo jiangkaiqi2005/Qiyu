@@ -49,7 +49,8 @@ final class ProxySettingsService {
   }) async {
     final config = ProxyConfig(enabled: enabled, host: host, port: port);
     config.validate();
-    await repository.saveProxy(config);
+    // 保存进共享事务：与聊天、语音、搜索的读改写彼此串行，不互相覆盖。
+    await repository.runTransaction(() => repository.saveProxy(config));
     return read();
   }
 

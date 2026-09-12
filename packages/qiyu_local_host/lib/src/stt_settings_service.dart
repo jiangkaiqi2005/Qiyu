@@ -61,6 +61,8 @@ final class SttSettingsService {
 
   /// 与聊天 Key 同律但作用域独立：传入新 Key 就写入；没传时同地址保留
   /// 已存 Key，换地址则清空——旧服务商的 Key 不沿用给新服务商。
+  /// 现值读取与 Key 沿用决定进共享事务：并发保存或遗忘交错时，锁外
+  /// 旧 Key 不得复活。
   Future<SttSettingsSnapshot> save({
     required String baseUrl,
     required String model,
@@ -73,17 +75,21 @@ final class SttSettingsService {
       model: model,
     );
     config.validate();
-    final previous = await configRepository.loadStt();
-    final persistedKey = _selectApiKey(config, previous, apiKey);
-    await configRepository.saveStt(config.withApiKey(persistedKey));
+    await configRepository.runTransaction(() async {
+      final previous = await configRepository.loadStt();
+      final persistedKey = _selectApiKey(config, previous, apiKey);
+      await configRepository.saveStt(config.withApiKey(persistedKey));
+    });
     return read();
   }
 
   Future<SttSettingsSnapshot> forgetApiKey() async {
-    final config = await configRepository.loadStt();
-    if (config != null) {
-      await configRepository.saveStt(config.withApiKey(null));
-    }
+    await configRepository.runTransaction(() async {
+      final config = await configRepository.loadStt();
+      if (config != null) {
+        await configRepository.saveStt(config.withApiKey(null));
+      }
+    });
     return read();
   }
 

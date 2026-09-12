@@ -22,14 +22,17 @@ final class WebSearchSettingsService {
 
   Future<WebSearchSettingsSnapshot> save({String? apiKey}) async {
     final trimmed = apiKey?.trim();
+    // 单段保存同样进共享事务：与聊天、语音的读改写彼此串行。
     if (trimmed != null && trimmed.isNotEmpty) {
-      await repository.saveWebSearch(WebSearchConfig(apiKey: trimmed));
+      await repository.runTransaction(
+        () => repository.saveWebSearch(WebSearchConfig(apiKey: trimmed)),
+      );
     }
     return read();
   }
 
   Future<WebSearchSettingsSnapshot> forgetApiKey() async {
-    await repository.saveWebSearch(null);
+    await repository.runTransaction(() => repository.saveWebSearch(null));
     return read();
   }
 }

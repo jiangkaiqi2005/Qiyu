@@ -85,7 +85,8 @@ final class TtsSettingsService {
 
   /// 与聊天/STT Key 同律但作用域独立：传入新 Key 就写入；没传时同
   /// 地址保留已存 Key，换地址（或换协议）则清空——旧服务商的 Key 不
-  /// 沿用给新服务商。
+  /// 沿用给新服务商。现值读取与 Key 沿用决定进共享事务：并发保存或
+  /// 遗忘交错时，锁外旧 Key 不得复活。
   Future<TtsSettingsSnapshot> save({
     required String baseUrl,
     required String model,
@@ -96,60 +97,67 @@ final class TtsSettingsService {
     bool? autoSpeak,
     Map<String, Object?>? extraParams,
   }) async {
-    final previous = await configRepository.loadTts();
-    final config = TtsConfig(
-      provider: provider,
-      baseUrl: baseUrl,
-      model: model,
-      voice: ProviderConfig.normalizeKey(voice),
-      speed: speed,
-      autoSpeak: autoSpeak ?? previous?.autoSpeak ?? true,
-      extraParams: extraParams,
-    );
-    config.validate();
-    final normalizedKey = _normalizeApiKey(apiKey);
-    String? persistedKey;
-    if (normalizedKey != null) {
-      persistedKey = normalizedKey;
-    } else if (previous != null &&
-        previous.credentialScope == config.credentialScope) {
-      persistedKey = _normalizeApiKey(previous.apiKey);
-    }
-    // Key 作用域没变时，音色/语速/开关沿用已存值之外的字段更新。
-    await configRepository.saveTts(config.withApiKey(persistedKey));
+    await configRepository.runTransaction(() async {
+      final previous = await configRepository.loadTts();
+      final config = TtsConfig(
+        provider: provider,
+        baseUrl: baseUrl,
+        model: model,
+        voice: ProviderConfig.normalizeKey(voice),
+        speed: speed,
+        autoSpeak: autoSpeak ?? previous?.autoSpeak ?? true,
+        extraParams: extraParams,
+      );
+      config.validate();
+      final normalizedKey = _normalizeApiKey(apiKey);
+      String? persistedKey;
+      if (normalizedKey != null) {
+        persistedKey = normalizedKey;
+      } else if (previous != null &&
+          previous.credentialScope == config.credentialScope) {
+        persistedKey = _normalizeApiKey(previous.apiKey);
+      }
+      // Key 作用域没变时，音色/语速/开关沿用已存值之外的字段更新。
+      await configRepository.saveTts(config.withApiKey(persistedKey));
+    });
     return read();
   }
 
   /// 聊天页朗读开关：只改 autoSpeak 位，不动协议、地址、音色与 Key。
+  /// 读改写进共享事务，避免并发保存或遗忘把整段旧配置写回。
   Future<TtsSettingsSnapshot> setAutoSpeak(bool enabled) async {
-    final config = await configRepository.loadTts();
-    if (config == null) {
-      throw const TtsServiceException(
-        code: 'tts_not_configured',
-        message: '还没有配置语音合成服务，请先在设置页填写。',
-        retryable: false,
+    await configRepository.runTransaction(() async {
+      final config = await configRepository.loadTts();
+      if (config == null) {
+        throw const TtsServiceException(
+          code: 'tts_not_configured',
+          message: '还没有配置语音合成服务，请先在设置页填写。',
+          retryable: false,
+        );
+      }
+      await configRepository.saveTts(
+        TtsConfig(
+          provider: config.provider,
+          baseUrl: config.baseUrl,
+          model: config.model,
+          apiKey: config.apiKey,
+          voice: config.voice,
+          speed: config.speed,
+          autoSpeak: enabled,
+          extraParams: config.extraParams,
+        ),
       );
-    }
-    await configRepository.saveTts(
-      TtsConfig(
-        provider: config.provider,
-        baseUrl: config.baseUrl,
-        model: config.model,
-        apiKey: config.apiKey,
-        voice: config.voice,
-        speed: config.speed,
-        autoSpeak: enabled,
-        extraParams: config.extraParams,
-      ),
-    );
+    });
     return read();
   }
 
   Future<TtsSettingsSnapshot> forgetApiKey() async {
-    final config = await configRepository.loadTts();
-    if (config != null) {
-      await configRepository.saveTts(config.withApiKey(null));
-    }
+    await configRepository.runTransaction(() async {
+      final config = await configRepository.loadTts();
+      if (config != null) {
+        await configRepository.saveTts(config.withApiKey(null));
+      }
+    });
     return read();
   }
 

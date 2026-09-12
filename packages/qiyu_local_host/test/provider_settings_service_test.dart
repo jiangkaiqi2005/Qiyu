@@ -532,6 +532,9 @@ final class _MemoryProviderConfigRepository
   Future<void> save(ProviderConfig config) async {
     this.config = config;
   }
+
+  @override
+  Future<T> runTransaction<T>(Future<T> Function() action) => action();
 }
 
 final class _MemorySecretStore implements SecretStore {
@@ -580,6 +583,9 @@ final class _MemoryWebSearchRepository implements WebSearchConfigRepository {
   Future<void> saveWebSearch(WebSearchConfig? config) async {
     this.config = config;
   }
+
+  @override
+  Future<T> runTransaction<T>(Future<T> Function() action) => action();
 }
 
 final class _NoopWebSearchClient implements WebSearchClient {
