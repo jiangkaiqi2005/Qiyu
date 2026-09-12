@@ -132,6 +132,12 @@ final class MemoryCadence {
   Future<void> _finalizationTask = Future.value();
   String? _lastDeliveryDate;
 
+  /// 维护独占（spec「维护隔离及恢复」）：置位后空闲补办轮询不再发现并
+  /// 排程新活；已排入任务链的工作照常完成。复位后下一次 tick 重新按
+  /// 待办检测，维护期间跳过的当次补办不丢失。由聊天服务的维护独占
+  /// 入口置位并在 finally 里配对复位。
+  bool _schedulingPaused = false;
+
   /// 空闲补办轮询：同一时刻至多一个补办块在跑（上轮未结束本轮跳过）；
   /// 每日尝试上限只在内存按类计数，键为本地自然日，跨 0 点清零。
   bool _catchupInFlight = false;
@@ -196,6 +202,15 @@ final class MemoryCadence {
   /// 等待已调度的后台日终归档完成。日终归档幂等且每一步原子写入，
   /// 供测试断言与 Host 优雅收尾使用。
   Future<void> finalizePending() => _finalizationTask;
+
+  /// 维护独占进入等待前调用：抑制空闲补办轮询的新排程（spec：先抑制
+  /// 新后台排程，再等待已在途工作）。已排入任务链的工作照常完成，
+  /// 绝不在任务内部等待复位——否则维护入口等任务、任务等维护会互相
+  /// 卡死。必须与 [resumeBackgroundScheduling] 配对，复位放在 finally。
+  void pauseBackgroundScheduling() => _schedulingPaused = true;
+
+  /// 恢复常规调度：维护结束后未完成整理由下一次空闲补办 tick 补齐。
+  void resumeBackgroundScheduling() => _schedulingPaused = false;
 
   /// 后台最近失败的只读快照（ticket 21）：优先取最近失败的未恢复记录；
   /// 没有未恢复时取今晚已恢复的那条（页面据此短暂展示「已恢复」再隐
@@ -278,6 +293,13 @@ final class MemoryCadence {
   }
 
   Future<void> _pollTick() async {
+    // 维护独占期间整个 tick 让路（spec：期间新工作排队或跳过当次
+    // 补办）：不读数据、不排程，恢复调度后的下一次 tick 重新检测，
+    // 跳过的当次不丢失。
+    if (_schedulingPaused) {
+      _diagnosticsSink('idle catchup skipped reason=maintenance');
+      return;
+    }
     // 未配置模型服务：安静地什么都不做，绝不用本地规则补写长期记忆。
     final prepared = await providerPort?.prepareChatRequest();
     if (prepared == null) {
@@ -332,7 +354,13 @@ final class MemoryCadence {
       return;
     }
     // 排程复查与置位之间没有 await：并发到达的 tick 在此串行化，
-    // 同一时刻至多一个补办块在跑。
+    // 同一时刻至多一个补办块在跑。置位前最后同步复查一次维护抑制：
+    // 上面的待办检测有多个 await，检测途中可能已进入维护——
+    // 「检测时未维护、排程时已在维护」的插队窗口在这里关死。
+    if (_schedulingPaused) {
+      _diagnosticsSink('idle catchup skipped reason=maintenance');
+      return;
+    }
     if (_catchupInFlight) {
       _diagnosticsSink('idle catchup skipped reason=busy-catchup');
       return;

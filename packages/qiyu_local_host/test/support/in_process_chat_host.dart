@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
@@ -325,6 +326,23 @@ final class InProcessChatHost {
 
   /// `GET /api/history`：历史列表。
   Future<HttpResponse> readHistory() => _get('/api/history');
+
+  /// 供维护隔离等跨领域测试复用会话与变更头直接调用任意变更 API
+  /// （备份导入、回滚等），与私有帮助走同一条请求路径。
+  Future<HttpResponse> postJson(String path, Map<String, Object?> body) =>
+      _postJson(path, body);
+
+  /// GET 原始字节（如备份导出 zip）：不做 utf8 解码，保留二进制内容。
+  Future<(int, Uint8List)> getBytes(String path) async {
+    final request = await _client.openUrl('GET', _host.origin.resolve(path));
+    _readHeaders().forEach(request.headers.set);
+    final response = await request.close();
+    final builder = BytesBuilder();
+    await for (final chunk in response) {
+      builder.add(chunk);
+    }
+    return (response.statusCode, builder.toBytes());
+  }
 
   /// `DELETE /api/history/sessions/<id>`：删除会话。
   Future<HttpResponse> deleteSession(String sessionId) async {

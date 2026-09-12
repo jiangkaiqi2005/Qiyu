@@ -46,7 +46,12 @@ final class BackupRoutes implements ApiRoutes {
     final method = request.method;
     final path = request.url.path;
     if (method == 'GET' && path == 'api/backup/export') {
-      final export = await memoryBackup.exportBundle();
+      // 一致性导出与导入、回滚、清除共用维护独占边界（spec「维护隔离
+      // 及恢复」）：等在途交付与后台任务结束后再打包，期间新工作排队，
+      // 备份不混入不同时刻的数据。
+      final export = await _chatService.runExclusively(
+        () => memoryBackup.exportBundle(),
+      );
       return Response.ok(
         export.bytes,
         headers: {
@@ -62,8 +67,13 @@ final class BackupRoutes implements ApiRoutes {
       return Response.ok(jsonEncode(preview.toJson()), headers: jsonHeaders);
     }
     if (method == 'POST' && path == 'api/backup/import') {
+      // 请求体在边界外读：超大包校验失败不占用独占槽。
       final bundle = await _readBackupBundle(request);
-      final result = await memoryBackup.importBundle(bundle);
+      // 经聊天服务的维护独占边界执行：等在途交付、召回与后台整理全部
+      // 落定，期间没有新交付与新后台任务并发，导入才不会被旧数据写回。
+      final result = await _chatService.runExclusively(
+        () => memoryBackup.importBundle(bundle),
+      );
       return Response.ok(jsonEncode(result.toJson()), headers: jsonHeaders);
     }
     if (method == 'GET' && path == 'api/backup/snapshots') {
@@ -81,7 +91,11 @@ final class BackupRoutes implements ApiRoutes {
       if (snapshotId != null && snapshotId is! String) {
         throw invalidRequest('回滚请求格式不正确。');
       }
-      final result = await memoryBackup.rollbackTo(snapshotId as String?);
+      // 与导入、清除同一维护独占边界：恢复整目录数据必须等在途写入
+      // 全部落定，否则半途回复会把快照里已删掉的轮次写回来。
+      final result = await _chatService.runExclusively(
+        () => memoryBackup.rollbackTo(snapshotId as String?),
+      );
       return Response.ok(jsonEncode(result.toJson()), headers: jsonHeaders);
     }
     if (method == 'GET' && path == 'api/data/clear-preview') {

@@ -640,6 +640,88 @@ void main() {
       expect(ranExclusively, isTrue);
     });
 
+    test('runExclusively waits for the pending recall save to settle', () async {
+      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+      final composeGate = Completer<void>();
+      final events = <String>[];
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''一时没想起。
+<qiyu-actions>
+[{"action":"memory_recall","query":"爬山"}]
+</qiyu-actions>'''),
+        ],
+        completeScript: [
+          // 附带一个编造日期：成员校验丢弃它时落下的诊断是后台保存链的
+          // 可见界标（诊断先于保存落 sink），供维护顺序断言使用。
+          ScriptedCompletionReply(
+            _recallSelection(dates: ['2026-08-05', '2099-01-01']),
+          ),
+          ScriptedGatedCompletion(
+            gate: composeGate.future,
+            reply: '对了，你周末是要去爬山来着。',
+          ),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        diagnosticsSink: events.add,
+        // 窗口永不自行超时：只由取消/查找完成决定走向。
+        recallWindowWait: (_) => Completer<void>().future,
+        seedMemory: (memoryDirectory) =>
+            _seedRecallEpisode(memoryDirectory.path, clock),
+      );
+      addTearDown(harness.dispose);
+
+      // 先导出一份有效备份，供下面的维护入口使用。
+      final (exportStatus, bundle) = await harness.getBytes(
+        '/api/backup/export',
+      );
+      expect(exportStatus, HttpStatus.ok);
+
+      final stream = harness.openChat(
+        requestId: 'recall-exclusive',
+        text: '我上次说爬山的事',
+      );
+      await gateway.awaitStreamOpened();
+      await gateway.awaitCompleteCalls(1);
+      // 用户停止：交付结束，但查找的组织调用仍被门控挂起（在途召回）。
+      expect(await harness.cancelChat('recall-exclusive'), isTrue);
+      await stream.done;
+
+      // 在途召回未落定时，维护入口必须等它收尾，不得抢先改写数据：
+      // 红灯下导入两秒内必然自行完成；绿灯下它排在召回后面，超时兜底。
+      final importPending = harness
+          .postJson('/api/backup/import', {
+            'dataBase64': base64.encode(bundle),
+          })
+          .then((response) {
+            events.add('import-done:${response.statusCode}');
+            return response;
+          });
+      HttpResponse? earlyImport;
+      try {
+        earlyImport = await importPending.timeout(const Duration(seconds: 2));
+      } on TimeoutException {
+        earlyImport = null;
+      }
+      expect(earlyImport, isNull, reason: '在途召回未落定前维护不得执行');
+
+      composeGate.complete();
+      final imported = await importPending;
+      expect(imported.statusCode, HttpStatus.ok);
+      // 顺序界标：召回的后台保存先于维护执行完成。
+      final landmark = events.indexWhere(
+        (entry) => entry.startsWith('recall selection dropped date=2099-01-01'),
+      );
+      final importDone = events.indexWhere(
+        (entry) => entry.startsWith('import-done'),
+      );
+      expect(landmark, isNonNegative, reason: 'events=$events');
+      expect(landmark < importDone, isTrue);
+    });
+
     test(
       'model dispatch error in _deliver records detailed diagnostic and falls back',
       () async {

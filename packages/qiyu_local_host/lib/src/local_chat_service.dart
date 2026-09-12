@@ -151,16 +151,28 @@ final class LocalChatService {
   /// 等待已调度的后台召回检索完成。检索失败只记诊断，供测试断言使用。
   Future<void> settlePendingRecalls() => _recallTask;
 
-  /// 先等全部在途交付与后台任务（补归档、月压缩、Dream、召回保存）
-  /// 完成，再独占交付串行槽运行 [operation]：期间新交付一律排在
-  /// operation 之后，不会与之并发。「清除产品数据」这类整机危险操作
-  /// （ticket 23）必须经此执行——操作前落盘的写入都能被其快照覆盖，
-  /// 操作后也不会被在途写入把已清除的数据复活。
+  /// 维护独占边界（spec「维护隔离及恢复」）：导入、回滚、清除、一致
+  /// 性导出共用这唯一入口。先抑制记忆节奏的新后台排程，再等已在途的
+  /// 全部工作（在途交付、轮内召回与保存延续、补归档、月压缩、Dream、
+  /// 召回保存），然后独占交付串行槽运行 [operation]：期间新交付与
+  /// 并发维护请求一律排在 operation 之后，空闲补办 tick 跳过当次，
+  /// 不会与之并发。「清除产品数据」「备份导入」这类整机改写操作必须
+  /// 经此执行——操作前落盘的写入都能被其快照覆盖，操作后也不会被
+  /// 在途写入把已恢复的数据复活。
+  ///
+  /// 成功或失败都在 finally 里恢复常规调度：维护抛异常不卡死后续
+  /// 调度，未完成整理由下一次空闲补办继续。等待的只有已在途工作，
+  /// 维护入口自身不在任何被等待的任务链上，不会形成自身等待死锁。
   Future<T> runExclusively<T>(Future<T> Function() operation) =>
       _serialized(() async {
-        await memoryCadence?.finalizePending();
-        await _recallTask;
-        return operation();
+        memoryCadence?.pauseBackgroundScheduling();
+        try {
+          await memoryCadence?.finalizePending();
+          await _recallTask;
+          return await operation();
+        } finally {
+          memoryCadence?.resumeBackgroundScheduling();
+        }
       });
 
   Future<LocalChatSnapshot> restore({String? sessionId}) => _serialized(
