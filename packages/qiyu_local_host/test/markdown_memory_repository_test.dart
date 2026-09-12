@@ -431,6 +431,7 @@ void main() {
     () async {
       const cases = <String, String>{
         '{"password":"audit-only-password"}': '{"password":"[已脱敏]"}',
+        '{"password":"pass\\"word-tail"}': '{"password":"[已脱敏]"}',
         '{"api_key": "audit-only-key", "mode": "compact"}':
             '{"api_key": "[已脱敏]", "mode": "compact"}',
         '{"token":"audit-only-token","remember":true}':
@@ -474,6 +475,44 @@ void main() {
         expect(lines[index], entry.value, reason: entry.key);
         index += 1;
       }
+    },
+  );
+
+  test(
+    'colon key forms share the sensitive name list with the JSON form',
+    () async {
+      const cases = <String, String>{
+        '密钥： audit-only-key-123': '密钥： [已脱敏]',
+        'secret_key: audit-only-key-123': 'secret_key: [已脱敏]',
+        'passwd: audit-only-key-123': 'passwd: [已脱敏]',
+        'access_token: audit-only-key-123': 'access_token: [已脱敏]',
+      };
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final session = await repository.openSession();
+
+      final saved = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(
+          requestId: 'colon-keys',
+          text: [
+            ...cases.keys,
+            // 长键名内含敏感词：键名前缀可能保留，但值段必须遮蔽。
+            'client_secret: audit-only-key-123',
+          ].join('\n'),
+          at: now,
+        ),
+      );
+
+      final lines = saved.turns.single.text.split('\n');
+      var index = 0;
+      for (final entry in cases.entries) {
+        expect(lines[index], entry.value, reason: entry.key);
+        index += 1;
+      }
+      expect(lines[index], isNot(contains('audit-only-key-123')));
     },
   );
 

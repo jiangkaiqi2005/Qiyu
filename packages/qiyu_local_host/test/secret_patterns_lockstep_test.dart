@@ -107,9 +107,7 @@ void main() {
   RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(
-    r'("(?:api[_ -]?key|api[_ -]?secret|secret[_ -]?key|access[_ -]?token|'
-    r'refresh[_ -]?token|password|passwd|pwd|secret|token|cookie|'
-    r'密码|口令|密钥|令牌)"\s*:\s*")[^"]*',
+    r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
     caseSensitive: false,
   ),
   RegExp(
@@ -122,7 +120,7 @@ void main() {
     caseSensitive: false,
   ),
   RegExp(
-    r'((?:api[_ -]?key|token|password|密码|口令)\s*[:=：]\s*)[^\s；;，,]+',
+    r'((?:' + _sensitiveKeyNames + r')\s*[:=：]\s*)[^\s；;，,]+',
     caseSensitive: false,
   ),
   RegExp(

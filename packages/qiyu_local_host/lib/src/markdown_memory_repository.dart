@@ -651,14 +651,20 @@ String newOpaqueId() {
   return base64Url.encode(bytes).replaceAll('=', '');
 }
 
+/// 敏感键名清单：JSON 引号形态与冒号形态两段规则共用同一份词表，
+/// 补词只改这里（两形态覆盖面保持一致）。
+const String _sensitiveKeyNames =
+    r'api[_ -]?key|api[_ -]?secret|secret[_ -]?key|access[_ -]?token|'
+    r'refresh[_ -]?token|password|passwd|pwd|secret|token|密码|口令|密钥|令牌';
+
 /// 会话文本脱敏规则（每条消息、每段诊断都会过一遍，正则只编译一次）。
-/// JSON 形态的敏感键值：字段名带引号、值是双引号字符串，值替换到结束
-/// 引号之前，占位后 JSON 结构保持可读。Cookie 两段式：行内出现至少
-/// 一个「名字=值」形态的项才整行遮蔽（多项串接与只带标志位的真实头
-/// 都盖住），纯口吻提及不遮；裸值形态（冒号后直接跟一长串无空格
-/// 令牌）单独遮值。PEM 私钥的类型词可缺省，覆盖 PKCS#8（BEGIN
-/// PRIVATE KEY）与 RSA/EC/OpenSSH/DSA/加密形态；类型段禁止连字符，
-/// 防止跨标记误吃。
+/// JSON 形态的敏感键值：字段名带引号，值段匹配到未转义的结束引号
+/// （转义引号随值一并遮蔽），占位后 JSON 结构保持可读。Cookie 两段
+/// 式：行内出现至少一个「名字=值」形态的项才整行遮蔽（多项串接与
+/// 只带标志位的真实头都盖住），纯口吻提及不遮；裸值形态（冒号后
+/// 直接跟一长串无空格令牌）单独遮值。PEM 私钥的类型词可缺省，覆盖
+/// PKCS#8（BEGIN PRIVATE KEY）与 RSA/EC/OpenSSH/DSA/加密形态；类型
+/// 段禁止连字符，防止跨标记误吃。
 final _sessionRedactPatterns = <RegExp>[
   RegExp(r'as_sk_[A-Za-z0-9_-]{8,}', caseSensitive: false),
   RegExp(
@@ -686,9 +692,7 @@ final _sessionRedactPatterns = <RegExp>[
   RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(
-    r'("(?:api[_ -]?key|api[_ -]?secret|secret[_ -]?key|access[_ -]?token|'
-    r'refresh[_ -]?token|password|passwd|pwd|secret|token|cookie|'
-    r'密码|口令|密钥|令牌)"\s*:\s*")[^"]*',
+    r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
     caseSensitive: false,
   ),
   RegExp(
@@ -701,7 +705,7 @@ final _sessionRedactPatterns = <RegExp>[
     caseSensitive: false,
   ),
   RegExp(
-    r'((?:api[_ -]?key|token|password|密码|口令)\s*[:=：]\s*)[^\s；;，,]+',
+    r'((?:' + _sensitiveKeyNames + r')\s*[:=：]\s*)[^\s；;，,]+',
     caseSensitive: false,
   ),
   RegExp(

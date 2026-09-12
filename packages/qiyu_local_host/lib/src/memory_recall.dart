@@ -4,7 +4,6 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'episode_index.dart';
 import 'episode_memory.dart';
-import 'markdown_memory_repository.dart';
 import 'memory_text_primitives.dart';
 import 'model_gateway.dart';
 import 'open_loop_store.dart';
@@ -311,7 +310,7 @@ final class RecallOrchestrator {
       // 旧规则时代落盘的条目可能残留秘密：回读证据递给模型（组织
       // 调用与压缩注入）前按会话脱敏规则过滤自由文本，只动文本
       // 内容，不碰条目结构与索引语义。
-      rawDays.add((date, entries.map(_redactEntryForModel).toList()));
+      rawDays.add((date, entries.map((entry) => entry.redactedForModel()).toList()));
     }
     if (rawDays.isEmpty) {
       diagnostics.add('recall miss reason=no-evidence');
@@ -436,27 +435,6 @@ final class RecallOrchestrator {
     }
     return kept;
   }
-
-  /// 回读条目的文本过滤副本：摘要、原话摘录与备注是自由文本，统一
-  /// 套用会话脱敏规则；标识、时刻与枚举原样保留。
-  EpisodeEntry _redactEntryForModel(EpisodeEntry entry) => EpisodeEntry(
-    id: entry.id,
-    sessionId: entry.sessionId,
-    requestId: entry.requestId,
-    summary: redactSessionText(entry.summary),
-    evidence: entry.evidence == null
-        ? null
-        : redactSessionText(entry.evidence!),
-    at: entry.at,
-    kind: entry.kind,
-    personaBranch: entry.personaBranch,
-    personaNature: entry.personaNature,
-    due: entry.due,
-    proactive: entry.proactive,
-    note: entry.note == null ? null : redactSessionText(entry.note!),
-    signal: entry.signal,
-    userEdited: entry.userEdited,
-  );
 
   /// 检索的受控集合：冻结同样停止检索（并集定义见
   /// [OpenLoopStore.controlledTitles]）。

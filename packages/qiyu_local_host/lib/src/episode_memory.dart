@@ -114,6 +114,26 @@ final class EpisodeEntry {
     if (signal != null) 'signal': signal,
     if (userEdited) 'userEdited': true,
   };
+
+  /// 递给模型的文本过滤副本：摘要、原话摘录与备注是自由文本，统一
+  /// 套用会话脱敏规则；标识、时刻与枚举原样保留。字段增减时此副本
+  /// 与 [toJson] 同步维护，避免调用侧各抄一份漏掉新字段。
+  EpisodeEntry redactedForModel() => EpisodeEntry(
+    id: id,
+    sessionId: sessionId,
+    requestId: requestId,
+    summary: redactSessionText(summary),
+    evidence: evidence == null ? null : redactSessionText(evidence!),
+    at: at,
+    kind: kind,
+    personaBranch: personaBranch,
+    personaNature: personaNature,
+    due: due,
+    proactive: proactive,
+    note: note == null ? null : redactSessionText(note!),
+    signal: signal,
+    userEdited: userEdited,
+  );
 }
 
 final class EpisodeDay {
