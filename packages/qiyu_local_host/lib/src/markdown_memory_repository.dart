@@ -651,6 +651,11 @@ String newOpaqueId() {
 }
 
 /// 会话文本脱敏规则（每条消息、每段诊断都会过一遍，正则只编译一次）。
+/// JSON 形态的敏感键值：字段名带引号、值是双引号字符串，值替换到结束
+/// 引号之前，占位后 JSON 结构保持可读。整行 Cookie：多项分号串接只遮
+/// 第一项等于没遮，值段吃到行尾。PEM 私钥的类型词可缺省，覆盖
+/// PKCS#8（BEGIN PRIVATE KEY）与 RSA/EC/OpenSSH/DSA/加密形态；类型段
+/// 禁止连字符，防止跨标记误吃。
 final _sessionRedactPatterns = <RegExp>[
   RegExp(r'as_sk_[A-Za-z0-9_-]{8,}', caseSensitive: false),
   RegExp(
@@ -678,6 +683,16 @@ final _sessionRedactPatterns = <RegExp>[
   RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(
+    r'("(?:api[_ -]?key|api[_ -]?secret|secret[_ -]?key|access[_ -]?token|'
+    r'refresh[_ -]?token|password|passwd|pwd|secret|token|cookie|'
+    r'密码|口令|密钥|令牌)"\s*:\s*")[^"]*',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'((?:set[- ])?cookie\s*[:=：]\s*)[^\r\n]+',
+    caseSensitive: false,
+  ),
+  RegExp(
     r'((?:api[_ -]?key|token|cookie|password|密码|口令)\s*[:=：]\s*)[^\s；;，,]+',
     caseSensitive: false,
   ),
@@ -690,7 +705,8 @@ final _sessionRedactPatterns = <RegExp>[
   RegExp(r'(?<!\d)\d{17}[\dXx](?!\d)'),
   RegExp(r'(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)'),
   RegExp(
-    r'-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----',
+    r'-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?'
+    r'-----END [A-Z0-9 ]*PRIVATE KEY-----',
     caseSensitive: false,
   ),
 ];
@@ -730,3 +746,98 @@ String redactDiagnosticText(String text) => _applyRedactions(
   _applyRedactions(text, _sessionRedactPatterns),
   _diagnosticRedactPatterns,
 );
+
+/// 标记载荷里的结构字段：标识、时刻、枚举与计数。这些值不是自由
+/// 文本，导出脱敏不触碰（防止随机标识被令牌特征误改、时刻被误吃），
+/// 其下挂载的列表与映射一并保留。载荷里其余字符串值一律按会话
+/// 脱敏规则处理：宁可多遮一层，不可漏掉秘密。
+const _markerStructuralKeys = {
+  'schemaVersion',
+  'date',
+  'month',
+  'at',
+  'createdAt',
+  'updatedAt',
+  'finalized',
+  'finalizedAt',
+  'generatedAt',
+  'lastSuccess',
+  'pending',
+  'id',
+  'sessionId',
+  'requestId',
+  'lastRequestId',
+  'lastEntryId',
+  'coveredRequestIds',
+  'entryCount',
+  'fileCount',
+  'kind',
+  'layer',
+  'layerKey',
+  'outcome',
+  'quarantined',
+  'quarantinedFiles',
+  'status',
+  'source',
+  'mode',
+  'speaker',
+  'fallbackReason',
+  'safety',
+  'personaBranch',
+  'personaNature',
+  'proactive',
+  'signal',
+  'userEdited',
+  'compressedDates',
+};
+
+Object? _redactMarkerPayloadValue(String key, Object? value) {
+  if (_markerStructuralKeys.contains(key)) {
+    return value;
+  }
+  if (value is String) {
+    return redactSessionText(value);
+  }
+  if (value is List<Object?>) {
+    return [for (final item in value) _redactMarkerPayloadValue('', item)];
+  }
+  if (value is Map<String, Object?>) {
+    return {
+      for (final MapEntry(:key, :value) in value.entries)
+        key: _redactMarkerPayloadValue(key, value),
+    };
+  }
+  return value;
+}
+
+/// 记忆 Markdown 的导出侧脱敏（备份外发共用）：`qiyu-*` 标记载荷先
+/// 解码，自由文本字段按会话脱敏规则处理后重编码，秘密藏进 base64url
+/// 载荷也一并过滤；标记以外的可见文本直接套用同一规则。未发生任何
+/// 替换时返回 null，调用方沿用原始字节，正常备份往返逐字节一致；
+/// 解不开的载荷保持原样，绝不让脱敏损坏文件结构。
+String? redactMemoryMarkdown(String markdown) {
+  final buffer = StringBuffer();
+  var cursor = 0;
+  for (final match in memoryMarkerBlockPattern.allMatches(markdown)) {
+    buffer.write(redactSessionText(markdown.substring(cursor, match.start)));
+    final original = match.group(0)!;
+    var replacement = original;
+    try {
+      final payload = _redactMarkerPayloadValue(
+        '',
+        decodeMarkerPayload(match.group(2)!),
+      ) as Map<String, Object?>;
+      final encoded = encodeMarkerPayload(payload);
+      if (encoded != match.group(2)) {
+        replacement = '${match.group(1)}$encoded${match.group(3)}';
+      }
+    } on Object {
+      // 载荷解不开：保持原样（宁原样，不可损坏）。
+    }
+    buffer.write(replacement);
+    cursor = match.end;
+  }
+  buffer.write(redactSessionText(markdown.substring(cursor)));
+  final result = buffer.toString();
+  return result == markdown ? null : result;
+}

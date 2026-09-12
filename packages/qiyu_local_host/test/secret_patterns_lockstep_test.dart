@@ -74,7 +74,7 @@ void main() {
           extractPatternBlock(source, 'final _sessionRedactPatterns = <RegExp>[');
       expect(
         RegExp('RegExp\\(').allMatches(block).length,
-        17,
+        19,
         reason: 'host 落盘脱敏表的条目数变了：两份集合有意不同，'
             '改动一侧须评估另一侧是否同步',
       );
@@ -107,6 +107,16 @@ void main() {
   RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(
+    r'("(?:api[_ -]?key|api[_ -]?secret|secret[_ -]?key|access[_ -]?token|'
+    r'refresh[_ -]?token|password|passwd|pwd|secret|token|cookie|'
+    r'密码|口令|密钥|令牌)"\s*:\s*")[^"]*',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'((?:set[- ])?cookie\s*[:=：]\s*)[^\r\n]+',
+    caseSensitive: false,
+  ),
+  RegExp(
     r'((?:api[_ -]?key|token|cookie|password|密码|口令)\s*[:=：]\s*)[^\s；;，,]+',
     caseSensitive: false,
   ),
@@ -119,7 +129,8 @@ void main() {
   RegExp(r'(?<!\d)\d{17}[\dXx](?!\d)'),
   RegExp(r'(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)'),
   RegExp(
-    r'-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----',
+    r'-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?'
+    r'-----END [A-Z0-9 ]*PRIVATE KEY-----',
     caseSensitive: false,
   ),
 '''),

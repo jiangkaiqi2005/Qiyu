@@ -145,7 +145,10 @@ String _historyPreview(RawSession session) {
   if (session.turns.isEmpty) {
     return '';
   }
-  final lines = session.turns.first.text.replaceAll('\r\n', '\n').split('\n');
+  // 公开读取统一过滤：预览同样不得携带旧数据里的秘密。
+  final lines = redactSessionText(
+    session.turns.first.text,
+  ).replaceAll('\r\n', '\n').split('\n');
   final firstLine = lines
       .map((line) => line.trim())
       .where((line) => line.isNotEmpty)

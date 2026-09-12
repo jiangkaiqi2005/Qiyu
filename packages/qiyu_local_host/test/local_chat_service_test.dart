@@ -3614,6 +3614,116 @@ void main() {
       expect(gateway.completeCalls, hasLength(3));
     });
   });
+
+  group('秘密脱敏闭环', () {
+    // 旧数据样本：现有脱敏规则补齐前落盘的会话（JSON 键值躲过当时的
+    // 键值规则）。全部为固定合成文本，不含任何真实秘密。
+    const legacySecretJson = '{"password":"audit-only-password"}';
+
+    test('旧会话公开读取不带秘密，历史预览同样过滤，原始文件不重写', () async {
+      final harness = await InProcessChatHost.start(
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+        seedMemory: (memoryDirectory) =>
+            _seedLegacySecretSession(memoryDirectory, secretText: legacySecretJson),
+      );
+      addTearDown(harness.dispose);
+
+      final snapshot = await harness.readSession(
+        sessionId: 'legacy-secret-session',
+      );
+      expect(snapshot.statusCode, 200);
+      expect(snapshot.body, isNot(contains('audit-only-password')));
+      expect(snapshot.body, contains('[已脱敏]'));
+
+      final history = await harness.readHistory();
+      expect(history.statusCode, 200);
+      expect(history.body, isNot(contains('audit-only-password')));
+
+      // 不做批量迁移：落盘文件里的旧轮次原样保留。
+      final legacyFile = File(
+        '${harness.memoryDirectory}/sessions/2026/08/2026-08-11-001.md',
+      );
+      expect(await legacyFile.readAsString(), contains(legacySecretJson));
+    });
+
+    test('后续模型上下文不带旧会话与新消息里的秘密', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [const ScriptedStreamReply('嗯。')],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+        seedMemory: (memoryDirectory) =>
+            _seedLegacySecretSession(memoryDirectory, secretText: legacySecretJson),
+      );
+      addTearDown(harness.dispose);
+
+      // 下一轮普通消息：装配给模型的历史上下文不得携带旧秘密。
+      final plainTrace = await harness.sendChat(
+        requestId: 'next-plain',
+        text: '今天有点累',
+      );
+      expect(plainTrace.message.messages, ['嗯。']);
+      expect(gateway.lastStreamMessages, isNotNull);
+      for (final message in gateway.lastStreamMessages!) {
+        expect(
+          message.content,
+          isNot(contains('audit-only-password')),
+          reason: message.content,
+        );
+      }
+
+      // 本轮新消息自身带秘密：发往模型的当前消息同样过滤，
+      // 正常回复交付不受影响。
+      const currentSecret = '{"password":"audit-only-current"}';
+      final secretTrace = await harness.sendChat(
+        requestId: 'next-secret',
+        text: currentSecret,
+      );
+      expect(secretTrace.message.messages, ['嗯。']);
+      for (final message in gateway.lastStreamMessages!) {
+        expect(
+          message.content,
+          isNot(contains('audit-only-current')),
+          reason: message.content,
+        );
+      }
+    });
+  });
+}
+
+/// 播种一段「旧规则时代」落盘的会话：turn 载荷与可见行都带未脱敏
+/// 秘密。用与写入端相同的渲染器构造，保证结构可被正常解析。
+Future<void> _seedLegacySecretSession(
+  Directory memoryDirectory, {
+  required String secretText,
+}) async {
+  final at = DateTime.parse('2026-08-11T12:00:00Z').toUtc();
+  final session = RawSession(
+    id: 'legacy-secret-session',
+    date: '2026-08-11',
+    segment: 1,
+    createdAt: at,
+    updatedAt: at.add(const Duration(minutes: 1)),
+    turns: [
+      RawSessionTurn.user(
+        requestId: 'legacy-1',
+        text: secretText,
+        at: at,
+      ),
+      RawSessionTurn.qiyu(
+        requestId: 'legacy-1',
+        messages: const ['好的，记下了。'],
+        at: at.add(const Duration(minutes: 1)),
+        source: ReplySource.local,
+        mode: 'local',
+      ),
+    ],
+  );
+  final file = File(
+    '${memoryDirectory.path}/sessions/2026/08/2026-08-11-001.md',
+  )..createSync(recursive: true);
+  await file.writeAsString(renderSessionMarkdown(session), flush: true);
 }
 
 final class _ControlledProviderPort implements ProviderChatPort {

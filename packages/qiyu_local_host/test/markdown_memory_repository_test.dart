@@ -426,6 +426,82 @@ void main() {
   );
 
   test(
+    'redacts JSON key values, whole cookie lines, and common PEM keys '
+    'before session persistence',
+    () async {
+      const cases = <String, String>{
+        '{"password":"audit-only-password"}': '{"password":"[已脱敏]"}',
+        '{"api_key": "audit-only-key", "mode": "compact"}':
+            '{"api_key": "[已脱敏]", "mode": "compact"}',
+        '{"token":"audit-only-token","remember":true}':
+            '{"token":"[已脱敏]","remember":true}',
+        'Cookie: theme=dark; sid=audit-only-cookie': 'Cookie: [已脱敏]',
+        'Set-Cookie: session=audit-only-session; HttpOnly':
+            'Set-Cookie: [已脱敏]',
+        '-----BEGIN PRIVATE KEY-----\nAUDITONLYFAKEPKCS8\n'
+                '-----END PRIVATE KEY-----':
+            '[已脱敏]',
+        '-----BEGIN RSA PRIVATE KEY-----\nAUDITONLYFAKERSA\n'
+                '-----END RSA PRIVATE KEY-----':
+            '[已脱敏]',
+        '-----BEGIN EC PRIVATE KEY-----\nAUDITONLYFAKEEC\n'
+                '-----END EC PRIVATE KEY-----':
+            '[已脱敏]',
+        '-----BEGIN OPENSSH PRIVATE KEY-----\nAUDITONLYFAKEOPENSSH\n'
+                '-----END OPENSSH PRIVATE KEY-----':
+            '[已脱敏]',
+      };
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final session = await repository.openSession();
+
+      final saved = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(
+          requestId: 'structured-secrets',
+          text: cases.keys.join('\n'),
+          at: now,
+        ),
+      );
+
+      final lines = saved.turns.single.text.split('\n');
+      expect(lines, hasLength(cases.length));
+      var index = 0;
+      for (final entry in cases.entries) {
+        expect(lines[index], entry.value, reason: entry.key);
+        index += 1;
+      }
+    },
+  );
+
+  test(
+    'keeps normal text, dates, plain numbers, and redacted placeholders '
+    'intact during session persistence',
+    () async {
+      const text =
+          '2026-09-12 我们聊聊昨天的会议。\n'
+          '2026年9月12日见，订单一共 123456 元。\n'
+          '我的手机是 13800138000，回头发你日历链接。\n'
+          '密码: [已脱敏]\n'
+          '{"token":"[已脱敏]"}';
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final session = await repository.openSession();
+
+      final saved = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(requestId: 'normal-text', text: text, at: now),
+      );
+
+      expect(saved.turns.single.text, text);
+    },
+  );
+
+  test(
     'diagnostic redaction removes credentials, sensitive input, and paths',
     () {
       final redacted = redactDiagnosticText(

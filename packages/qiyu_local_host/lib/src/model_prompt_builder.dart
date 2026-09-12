@@ -1,5 +1,6 @@
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 
 /// 硬规则与优先级：精简自设计笔记，保留四节核心。
@@ -184,15 +185,15 @@ final class ModelPromptBuilder {
       ..writeln('<memory_actions>')
       ..writeln(hiddenActionsProtocolBlock.trim())
       ..writeln('</memory_actions>');
-    appendBlock('daily_state', '近况', dailyState);
-    appendBlock('long_memory', '长期印象', longMemory);
-    appendBlock('persona', '用户画像', persona);
+    appendBlock('daily_state', '近况', redactSessionText(dailyState));
+    appendBlock('long_memory', '长期印象', redactSessionText(longMemory));
+    appendBlock('persona', '用户画像', redactSessionText(persona));
 
     final recentTurns = state.turns.length <= 8
         ? state.turns
         : state.turns.sublist(state.turns.length - 8);
     final context = StringBuffer();
-    final memoryContextTrimmed = memoryContext.trim();
+    final memoryContextTrimmed = redactSessionText(memoryContext).trim();
     if (memoryContextTrimmed.isNotEmpty) {
       context
         ..writeln('<memory_context>')
@@ -200,19 +201,25 @@ final class ModelPromptBuilder {
         ..writeln(memoryContextTrimmed)
         ..writeln('</memory_context>');
     }
+    // Prompt 前过滤：历史轮次、记忆块与当前消息在装配时统一套用会话
+    // 脱敏规则，秘密绝不随上下文外发；已脱敏文本再过一遍是恒等变换。
+    final safeCurrentText = redactSessionText(currentText);
     context.write(
-      at == null ? currentText : '${MomentPrefix.format(at)} $currentText',
+      at == null
+          ? safeCurrentText
+          : '${MomentPrefix.format(at)} $safeCurrentText',
     );
 
     return [
       ModelMessage(ModelMessageRole.system, systemSections.toString().trim()),
       ...recentTurns.map((turn) {
         final at = turn.at;
+        final safeText = redactSessionText(turn.text);
         return ModelMessage(
           turn.speaker == Speaker.user
               ? ModelMessageRole.user
               : ModelMessageRole.assistant,
-          at == null ? turn.text : '${MomentPrefix.format(at)} ${turn.text}',
+          at == null ? safeText : '${MomentPrefix.format(at)} $safeText',
         );
       }),
       const ModelMessage(ModelMessageRole.system, hiddenActionsReminder),

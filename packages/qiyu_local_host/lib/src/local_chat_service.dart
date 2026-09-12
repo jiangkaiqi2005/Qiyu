@@ -1077,7 +1077,9 @@ ChatDeliveryEvent _cancelledEvent(String requestId, String sessionId) =>
 Map<String, Object?> _turnToPublicJson(RawSessionTurn turn) => {
   'requestId': turn.requestId,
   'speaker': turn.speaker.name,
-  'text': turn.text,
+  // 公开读取统一过滤：旧规则时代落盘的轮次在输出处脱敏，落盘文件
+  // 本身不做批量改写。
+  'text': redactSessionText(turn.text),
   'at': turn.at.toUtc().toIso8601String(),
   if (turn.source != null) 'source': turn.source!.name,
   if (turn.fallbackReason != null)

@@ -344,12 +344,29 @@ final class MemoryBackupService {
         continue;
       }
       try {
-        files[key] = await value.readAsBytes();
+        files[key] = await _exportFileBytes(key, value);
       } on Object catch (error) {
         _diagnosticsSink('backup export skipped unreadable file [$error]');
       }
     }
     return files;
+  }
+
+  /// 导出读取：控制记录原样保留（记忆元数据，导出两侧按同一份合并
+  /// 才能一致）；其余记忆文件先过导出脱敏——可见文本与 `qiyu-*`
+  /// 标记载荷里的自由文本共用会话脱敏规则，未命中替换时保持原始
+  /// 字节（正常往返逐字节一致），文本解不开的文件跳过不导出。
+  Future<Uint8List> _exportFileBytes(String relative, File file) async {
+    final bytes = await file.readAsBytes();
+    if (relative == 'memory-controls.md') {
+      return bytes;
+    }
+    final contents = utf8.decode(bytes, allowMalformed: false);
+    final redacted = redactMemoryMarkdown(contents);
+    if (redacted == null) {
+      return bytes;
+    }
+    return Uint8List.fromList(utf8.encode(redacted));
   }
 
   String _renderManifest(

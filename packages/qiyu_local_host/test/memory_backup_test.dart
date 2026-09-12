@@ -282,6 +282,156 @@ void main() {
     });
   });
 
+  group('导出脱敏', () {
+    test('旧记忆的秘密在导出处过滤：可见文本与载荷，干净文件逐字节保持', () async {
+      // 旧会话：手工构造「旧规则时代」落盘形态，turn 载荷与可见行都带
+      // 当时的脱敏规则漏掉的秘密。全部为固定合成文本。
+      const jsonSecret = 'audit-only-password';
+      const cookieSecret = 'audit-only-cookie';
+      const legacyUserText =
+          '{"password":"$jsonSecret"}\n'
+          'Cookie: theme=dark; sid=$cookieSecret\n'
+          '-----BEGIN PRIVATE KEY-----\nAUDITONLYFAKEPKCS8\n'
+          '-----END PRIVATE KEY-----';
+      final at = DateTime.parse('2026-08-05T12:00:00Z').toUtc();
+      final legacySessionFile = File(
+        path.join(
+          memoryDirectory,
+          'sessions',
+          '2026',
+          '08',
+          '2026-08-05-002.md',
+        ),
+      )..createSync(recursive: true);
+      legacySessionFile.writeAsStringSync(
+        renderSessionMarkdown(
+          RawSession(
+            id: 'legacy-secret-session',
+            date: '2026-08-05',
+            segment: 2,
+            createdAt: at,
+            updatedAt: at.add(const Duration(minutes: 1)),
+            turns: [
+              RawSessionTurn.user(
+                requestId: 'legacy-1',
+                text: legacyUserText,
+                at: at,
+              ),
+              RawSessionTurn.qiyu(
+                requestId: 'legacy-1',
+                messages: const ['好的。'],
+                at: at.add(const Duration(minutes: 1)),
+                source: ReplySource.local,
+                mode: 'local',
+              ),
+            ],
+          ),
+        ),
+        flush: true,
+      );
+      // 现规则写入的干净会话：正常往返必须逐字节保持。
+      await seedSession(
+        '2026-08-05',
+        1,
+        [('用户', '今天有点累'), ('栖语', '早点休息。')],
+      );
+      // 旧 episode 日文件：秘密同时藏在 base64url 载荷与可见行里。
+      final legacyDay = _renderLegacyEpisodeDay(
+        date: '2026-08-05',
+        summary: '当日摘要',
+        entrySummary: '服务器密码：$jsonSecret',
+        evidence: '用户原话：Cookie: sid=$cookieSecret',
+      );
+      File(
+        path.join(
+          memoryDirectory,
+          'episodes',
+          '2026',
+          '08',
+          '2026-08-05.md',
+        ),
+      )
+        ..createSync(recursive: true)
+        ..writeAsStringSync(legacyDay, flush: true);
+      await File(
+        path.join(memoryDirectory, 'long-memory.md'),
+      ).writeAsString('# long-memory\n\n- 服务器密码：$jsonSecret\n', flush: true);
+      // 控制记录是记忆元数据：导出保持原样。
+      expect(await memoryControls.freeze('旧习惯', origin: 'user'), isTrue);
+      final controlsBefore = await File(
+        path.join(memoryDirectory, 'memory-controls.md'),
+      ).readAsString();
+
+      final export = await backup.exportBundle();
+      final archive = ZipDecoder().decodeBytes(export.bytes);
+
+      // 任何条目都不再携带旧秘密——包括 base64url 载荷里的那份。
+      for (final file in archive.files) {
+        final content = utf8.decode(file.content as List<int>);
+        expect(content, isNot(contains(jsonSecret)), reason: file.name);
+        expect(content, isNot(contains(cookieSecret)), reason: file.name);
+        expect(
+          content,
+          isNot(contains('AUDITONLYFAKEPKCS8')),
+          reason: file.name,
+        );
+        expect(content, isNot(contains(legacyUserText)), reason: file.name);
+      }
+
+      // 干净会话逐字节保持：未命中替换就不动文件。
+      final cleanEntry = archive.files.firstWhere(
+        (file) => file.name == 'memory/sessions/2026/08/2026-08-05-001.md',
+      );
+      expect(
+        utf8.decode(cleanEntry.content as List<int>),
+        await File(
+          path.join(
+            memoryDirectory,
+            'sessions',
+            '2026',
+            '08',
+            '2026-08-05-001.md',
+          ),
+        ).readAsString(),
+      );
+      // 控制记录原样。
+      expect(
+        utf8.decode(
+          archive.files
+              .firstWhere((file) => file.name == 'memory/memory-controls.md')
+              .content as List<int>,
+        ),
+        controlsBefore,
+      );
+
+      // 校验与回导一致：清空后整包导入成功，读回内容已脱敏、结构完好。
+      await Directory(memoryDirectory).delete(recursive: true);
+      await Directory(memoryDirectory).create(recursive: true);
+      final result = await backup.importBundle(export.bytes);
+      expect(result.conflicts, 0);
+      expect(result.unrecoverable, 0);
+
+      final importedSession = await MarkdownMemoryRepository(
+        memoryDirectory: memoryDirectory,
+      ).openSession(sessionId: 'legacy-secret-session');
+      expect(
+        importedSession.turns.first.text,
+        isNot(contains(jsonSecret)),
+      );
+      expect(importedSession.turns.first.text, contains('[已脱敏]'));
+
+      final day = await pipeline.readDay('2026-08-05');
+      expect(day.readable, isTrue);
+      expect(day.entries, hasLength(1));
+      expect(day.entries.single.summary, isNot(contains(jsonSecret)));
+      expect(day.entries.single.summary, contains('[已脱敏]'));
+
+      final controls = await memoryControls.load();
+      expect(controls.readable, isTrue);
+      expect(controls.frozenSummaries, contains('旧习惯'));
+    });
+  });
+
   group('完整往返', () {
     test('导出后清空再导入，历史、记忆与最近会话都能重新打开', () async {
       await seedRichMemory();
@@ -630,6 +780,41 @@ void main() {
       expect(snapshotsAfter.length, greaterThanOrEqualTo(2));
     });
   });
+}
+
+/// 与 EpisodeMemoryPipeline 写入端同构的日文件渲染：手工构造「旧规则
+/// 时代」的日文件——标记载荷与可见行都带未脱敏秘密。
+String _renderLegacyEpisodeDay({
+  required String date,
+  required String summary,
+  required String entrySummary,
+  required String evidence,
+}) {
+  final at = DateTime.parse('${date}T20:00:00Z').toUtc();
+  final meta = encodeMarkerPayload({
+    'schemaVersion': 1,
+    'date': date,
+    'updatedAt': at.toIso8601String(),
+    'summary': summary,
+    'finalized': true,
+    'finalizedAt': DateTime.parse(
+      '${date}T23:00:00Z',
+    ).toUtc().toIso8601String(),
+  });
+  final entry = encodeMarkerPayload({
+    'id': 'legacy-e1',
+    'sessionId': 'legacy-secret-session',
+    'requestId': 'legacy-1',
+    'summary': entrySummary,
+    'evidence': evidence,
+    'at': at.toIso8601String(),
+  });
+  return '# 栖语每日记录\n\n'
+      '<!-- qiyu-episode:$meta -->\n\n'
+      '## summary\n$summary\n\n'
+      '<!-- qiyu-episode-entry:$entry -->\n'
+      '## ${at.toLocal().toIso8601String()} · $entrySummary\n\n'
+      '> $evidence\n\n';
 }
 
 /// 导入中断模拟：第 [failOnWrite] 次写入抛错，其余正常落盘——模拟

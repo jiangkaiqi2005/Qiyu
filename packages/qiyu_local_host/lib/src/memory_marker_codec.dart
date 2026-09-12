@@ -51,3 +51,9 @@ final recoveryReportMarkerPattern = RegExp(
   r'^<!-- qiyu-recovery-report:([A-Za-z0-9_-]+) -->\r?$',
   multiLine: true,
 );
+
+/// 任意 `qiyu-*` 标记块的整块匹配（前缀、载荷、结尾三组）：记忆文件
+/// 的导出脱敏用它定位所有标记载荷，不与上面按名读取的正则冲突。
+final memoryMarkerBlockPattern = RegExp(
+  r'(<!-- qiyu-[a-z-]+:)([A-Za-z0-9_-]+)( -->)',
+);
