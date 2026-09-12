@@ -3740,6 +3740,44 @@ void main() {
         }
       }
     });
+
+    test('召回组织调用的称呼不外发', () async {
+      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [_recallStreamReply()],
+        completeScript: [
+          ScriptedCompletionReply(_recallSelection(dates: ['2026-08-05'])),
+          const ScriptedCompletionReply('对了，你之前提过这件事。'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        // 窗口预算内等查找完成，组织调用照常发生。
+        recallWindowWait: (_) =>
+            Future<void>.delayed(const Duration(milliseconds: 500)),
+        seedMemory: (memoryDirectory) async {
+          await _seedRecallEpisodeWithSecret(memoryDirectory, clock);
+          // 称呼含秘密样式文本：限长内、无控制字符，格式校验放行。
+          File(
+            '${memoryDirectory.path}/persona.md',
+          ).writeAsStringSync('# 用户画像\n\n称呼：sk-abcdef1234567890\n');
+        },
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'recall-appellation',
+        text: '我上次说爬山准备得怎么样了',
+      );
+
+      expect(trace.eventsOf(ChatDeliveryEventKind.done), hasLength(2));
+      expect(gateway.completeCalls, hasLength(2));
+      // 组织调用的系统提示里，称呼值先过同一份脱敏规则。
+      final composeSystem = gateway.completeCalls[1].first.content;
+      expect(composeSystem, contains('称呼用户'));
+      expect(composeSystem, isNot(contains('sk-abcdef1234567890')));
+    });
   });
 }
 

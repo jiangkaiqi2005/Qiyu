@@ -47,6 +47,10 @@ void main() {
         '# 关系\n\n- 用户提到 Cookie: sid=audit-only-dream-cookie\n',
         flush: true,
       );
+      // 称呼含秘密样式文本：限长内、无控制字符，格式校验放行。
+      File(
+        '${directory.path}/persona.md',
+      ).writeAsStringSync('# 用户画像\n\n称呼：sk-abcdef1234567890\n');
       final client = ScriptedChatClient([
         ModelCompletion.reply(
           '{"items":[{"section":"重要事件","text":"用户状态平稳",'
@@ -56,6 +60,11 @@ void main() {
       final dream = DreamService(
         memoryDirectory: directory.path,
         episodePipeline: pipeline,
+        personaTree: PersonaTreeStore(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+          diagnosticsSink: (_) {},
+        ),
         modelClient: client,
         clock: () => now,
         diagnosticsSink: (_) {},
@@ -65,6 +74,10 @@ void main() {
 
       expect(outcome.status, DreamStatus.accepted);
       expect(client.calls, hasLength(1));
+      // 系统提示里的称呼与整块输入一样先过脱敏。
+      final systemMessage = client.calls.single.first.content;
+      expect(systemMessage, contains('称呼'));
+      expect(systemMessage, isNot(contains('sk-abcdef1234567890')));
       for (final message in client.calls.single) {
         expect(
           message.content,
@@ -113,6 +126,29 @@ void main() {
       expect(userMessage, contains('legacy-u1'));
       expect(userMessage, isNot(contains('audit-only-understanding')));
       expect(userMessage, contains('[已脱敏]'));
+    });
+
+    test('系统提示里的称呼不外发', () async {
+      final client = ScriptedChatClient([ModelCompletion.reply('{}')]);
+
+      await fetchDayUnderstanding(
+        client: client,
+        date: '2026-08-10',
+        entries: const [],
+        openLoops: null,
+        relationship: null,
+        dailyState: null,
+        sessions: const [],
+        pendingRequestIds: const <String>{},
+        bannedTitles: const {},
+        appellation: 'sk-abcdef1234567890',
+        diagnosticsSink: (_) {},
+      );
+
+      expect(client.calls, hasLength(1));
+      final systemMessage = client.calls.single.first.content;
+      expect(systemMessage, contains('用称呼「[已脱敏]」'));
+      expect(systemMessage, isNot(contains('sk-abcdef1234567890')));
     });
   });
 }

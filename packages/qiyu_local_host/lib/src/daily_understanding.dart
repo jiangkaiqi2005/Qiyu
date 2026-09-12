@@ -634,10 +634,14 @@ List<ModelMessage> _understandingMessages({
   String? appellation,
 }) {
   // 记忆表述惯例（称呼定稿 2026-09-03）：有称呼用称呼、无称呼用
-  // 「用户」。称呼格式受控（无换行与控制字符、限长），可安全内嵌。
-  final appellationRule = appellation == null
+  // 「用户」。称呼格式受控（无换行与控制字符、限长），可安全内嵌；
+  // 值与主链画像块同源，进提示前套用同一份脱敏规则。
+  final safeAppellation = appellation == null
+      ? null
+      : redactSessionText(appellation);
+  final appellationRule = safeAppellation == null
       ? '6. 整理出的内容指称用户时一律写「用户」，不要替用户起昵称。'
-      : '6. 整理出的内容指称用户时一律用称呼「$appellation」，不要写'
+      : '6. 整理出的内容指称用户时一律用称呼「$safeAppellation」，不要写'
             '「用户」，也不要替用户起昵称。';
   final system =
       '''

@@ -4,6 +4,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'episode_index.dart';
 import 'episode_memory.dart';
+import 'markdown_memory_repository.dart';
 import 'memory_text_primitives.dart';
 import 'model_gateway.dart';
 import 'open_loop_store.dart';
@@ -605,10 +606,14 @@ final class RecallOrchestrator {
     String? appellation,
   }) {
     // 称呼用户的惯例（称呼定稿 2026-09-03）：有称呼自然可用，没有就
-    // 用「你」；称呼格式受控（无换行与控制字符、限长），可安全内嵌。
-    final appellationRule = appellation == null
+    // 用「你」；称呼格式受控（无换行与控制字符、限长），可安全内嵌；
+    // 值可能与主链画像块同源，进提示前套用同一份脱敏规则。
+    final safeAppellation = appellation == null
+        ? null
+        : redactSessionText(appellation);
+    final appellationRule = safeAppellation == null
         ? '6. 称呼用户时用「你」，不要替用户起昵称。'
-        : '6. 语境自然时可以用「$appellation」称呼用户，不要替用户起'
+        : '6. 语境自然时可以用「$safeAppellation」称呼用户，不要替用户起'
               '其他昵称。';
     final system =
         '''

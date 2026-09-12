@@ -1588,10 +1588,14 @@ final class DreamService {
 
   List<ModelMessage> _dreamMessages(_DreamInput input) {
     // 记忆表述惯例（称呼定稿 2026-09-03）：有称呼用称呼、无称呼用
-    // 「用户」。称呼格式受控（无换行与控制字符、限长），可安全内嵌。
-    final appellationRule = input.appellation == null
+    // 「用户」。称呼格式受控（无换行与控制字符、限长），可安全内嵌；
+    // 值与主链画像块同源，进提示前套用同一份脱敏规则。
+    final safeAppellation = input.appellation == null
+        ? null
+        : redactSessionText(input.appellation!);
+    final appellationRule = safeAppellation == null
         ? '8. 印象文本指称用户时一律写「用户」，不要替用户起昵称。'
-        : '8. 印象文本指称用户时一律用称呼「${input.appellation}」，不要写'
+        : '8. 印象文本指称用户时一律用称呼「$safeAppellation」，不要写'
             '「用户」，也不要替用户起昵称。';
     final system = '''
 你是栖语离线记忆的深度重组模块（Dream）。给你用户已整理的记忆与当前长期印象，请产出新长期印象的候选版。要求：
