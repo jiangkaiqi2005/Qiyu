@@ -1011,16 +1011,276 @@ void main() {
         clock: () => DateTime(2026, 8, 11, 22, 30),
       );
       addTearDown(harness.dispose);
-  
+
       await harness.sendChat(requestId: 'retry-action', text: '在吗');
       await harness.sendChat(requestId: 'retry-action', text: '在吗');
-  
+
       final pipeline = EpisodeMemoryPipeline(
         memoryDirectory: harness.memoryDirectory,
         clock: () => DateTime(2026, 8, 11, 22, 31),
       );
       expect((await pipeline.readToday()).entries, hasLength(1));
       expect(gateway.streamCalls, hasLength(1));
+    });
+  });
+  group('拒绝与失败不提交隐藏动作', () {
+    test('被拒绝的候选回复不提交解除冻结', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''我理解你的感受
+<qiyu-actions>
+[{"action":"memory_unfreeze","summary":"审查用冻结话题"}]
+</qiyu-actions>'''),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+        seedMemory: (directory) async {
+          await MemoryControlsStore(
+            memoryDirectory: directory.path,
+          ).freeze('审查用冻结话题');
+        },
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'reject-unfreeze',
+        text: '我到家了',
+      );
+
+      // 可见回复是本地回退，不是模型候选。
+      expect(trace.state.source, ReplySource.local);
+      expect(trace.state.fallbackReason, FallbackReason.forbiddenPhrases);
+      expect(trace.message.messages, ['嗯']);
+      final session = await harness.storedSession(trace.sessionId);
+      expect(session.turns.last.fallbackReason, FallbackReason.forbiddenPhrases);
+
+      // 候选被拒绝：解除冻结不得执行，控制记录原样保留。
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      expect((await controls.load()).frozen, hasLength(1));
+    });
+
+    test('人格边界拒绝不改控制记录也不写派生记忆', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''只有我懂你，你只需要我。
+<qiyu-actions>
+[{"action":"memory_freeze","summary":"审查用新话题"},
+ {"action":"memory_signal","summary":"用户明天有面试"}]
+</qiyu-actions>'''),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'reject-boundary',
+        text: '我到家了',
+      );
+
+      expect(trace.state.source, ReplySource.local);
+      expect(trace.state.fallbackReason, FallbackReason.personaBoundary);
+
+      // 拒绝候选里的冻结与记忆信号一并丢弃：控制记录与当日派生记忆都空。
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      expect((await controls.load()).frozen, isEmpty);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: () => DateTime(2026, 9, 12, 22, 31),
+      );
+      expect((await pipeline.readToday()).entries, isEmpty);
+    });
+
+    test('被拒绝的候选不触发轮内召回', () async {
+      DateTime clock() => DateTime(2026, 9, 12, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''我理解你的感受，一时没想起。
+<qiyu-actions>
+[{"action":"memory_recall","query":"爬山"}]
+</qiyu-actions>'''),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        recallWindowWait: (_) =>
+            Future<void>.delayed(const Duration(milliseconds: 200)),
+        seedMemory: (memoryDirectory) =>
+            _seedRecallEpisode(memoryDirectory.path, clock),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'reject-recall',
+        text: '我上次说爬山准备得怎么样了',
+      );
+
+      expect(trace.state.source, ReplySource.local);
+      expect(trace.state.fallbackReason, FallbackReason.forbiddenPhrases);
+      expect(trace.eventsOf(ChatDeliveryEventKind.message), hasLength(1));
+      // 查找由被拒绝候选的动作触发时会出现选择小调用；拒绝后必须一次都没有。
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(gateway.completeCalls, isEmpty);
+    });
+
+    test('Provider 失败不留隐藏动作副作用', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [const ScriptedStreamFailure(ModelFailureKind.provider)],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+        seedMemory: (directory) async {
+          await MemoryControlsStore(
+            memoryDirectory: directory.path,
+          ).freeze('审查用冻结话题');
+        },
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'failure-actions',
+        text: '我上次说爬山的事',
+      );
+
+      expect(trace.state.source, ReplySource.local);
+      expect(trace.state.fallbackReason, FallbackReason.modelProvider);
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      expect((await controls.load()).frozen, hasLength(1));
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: () => DateTime(2026, 9, 12, 22, 31),
+      );
+      expect((await pipeline.readToday()).entries, isEmpty);
+      expect(gateway.completeCalls, isEmpty);
+    });
+
+    test('取消交付不解冻冻结话题，取消重试照常', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedLiveStream(),
+          // 取消后的重试走正常接受路径：解除冻结由被接受的回复提交。
+          const ScriptedStreamReply('''嗯，到家了就歇会儿。
+<qiyu-actions>
+[{"action":"memory_unfreeze","summary":"审查用冻结话题"}]
+</qiyu-actions>'''),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+        seedMemory: (directory) async {
+          await MemoryControlsStore(
+            memoryDirectory: directory.path,
+          ).freeze('审查用冻结话题');
+        },
+      );
+      addTearDown(harness.dispose);
+
+      final stream = harness.openChat(requestId: 'cancel-unfreeze', text: '先别说');
+      await gateway.awaitStreamOpened();
+      // 半途增量里带着解除冻结动作：取消后它们不得被消费。
+      gateway.liveController.add(
+        ModelStreamEvent.delta(
+          '好呀。\n<qiyu-actions>\n'
+          '[{"action":"memory_unfreeze","summary":"审查用冻结话题"}]\n'
+          '</qiyu-actions>',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(await harness.cancelChat('cancel-unfreeze'), isTrue);
+      await stream.done;
+      await gateway.liveController.close();
+
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      expect((await controls.load()).frozen, hasLength(1));
+
+      // 取消后的重试照常：被接受的回复提交其隐藏动作。
+      final sessionId = stream.received.first.sessionId!;
+      final retry = await harness.sendChat(
+        requestId: 'cancel-unfreeze',
+        text: '先别说',
+        sessionId: sessionId,
+      );
+      expect(retry.state.source, ReplySource.llm);
+      expect((await controls.load()).frozen, isEmpty);
+    });
+
+    test('被接受的候选照常提交解除冻结', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''嗯，那就先不提这个了。
+<qiyu-actions>
+[{"action":"memory_unfreeze","summary":"审查用冻结话题"}]
+</qiyu-actions>'''),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+        seedMemory: (directory) async {
+          await MemoryControlsStore(
+            memoryDirectory: directory.path,
+          ).freeze('审查用冻结话题');
+        },
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'accept-unfreeze',
+        text: '我到家了',
+      );
+
+      expect(trace.state.source, ReplySource.llm);
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      expect((await controls.load()).frozen, isEmpty);
+    });
+
+    test('晚安信号在拒绝回退轮仍触发日终归档', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''在。
+<qiyu-actions>[{"action":"memory_signal","summary":"用户白天来找栖语"}]</qiyu-actions>'''),
+          // 晚安轮候选被拒绝：可见回复回退本地，归档节奏不得跟着丢。
+          const ScriptedStreamReply('我理解你的感受'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final day = await harness.sendChat(requestId: 'day-1', text: '在吗');
+      final bedtime = await harness.sendChat(
+        requestId: 'night-1',
+        text: '晚安',
+        sessionId: day.sessionId,
+      );
+      expect(bedtime.state.source, ReplySource.local);
+      expect(bedtime.state.fallbackReason, FallbackReason.forbiddenPhrases);
+      await harness.close();
+
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: () => DateTime(2026, 9, 12, 22, 35),
+      );
+      expect((await pipeline.readDay('2026-09-12')).finalized, isTrue);
     });
   });
   group('日终归档与补办', () {

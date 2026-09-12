@@ -446,27 +446,29 @@ final class LocalChatService {
     }
     if (lastEvent != null && lastEvent.kind == ChatDeliveryEventKind.done) {
       final completedSession = completion.session!;
-      await _applyHiddenActions(
-        completedSession,
-        trimmedRequestId,
-        hiddenActions,
-        // 只有模型真正参与的本轮才消费整理窗口；本地降级保持
-        // pending，等 Provider 恢复后补跑。
-        consumeWindow: outcome.source == ReplySource.llm,
-      );
+      // 只有完整且最终被接受的模型回复才提交其隐藏动作：候选被行为
+      // 核心拒绝（回退本地回复）时整体丢弃——不改控制记录、不写派生
+      // 记忆、不触发轮内召回；失败与取消的轮次根本没有可提交的动作。
+      if (outcome.source == ReplySource.llm) {
+        await _applyHiddenActions(
+          completedSession,
+          trimmedRequestId,
+          hiddenActions,
+        );
+        // 轮内召回循环：bubble 1 交付后才开始，绝不阻塞首响。
+        yield* _recallBubble(
+          session: completedSession,
+          state: state,
+          userText: trimmedText,
+          hiddenActions: hiddenActions,
+          outcome: outcome,
+          bedtime: bedtime,
+          cancellation: cancellation,
+        );
+      }
       // 对话自述称呼（用户说「以后叫我老王」）当轮生效：与用户明确
       // 纠正同一精神，用户当前明确说的话最高；本地降级轮同样生效。
       await _applyAppellationSelfReport(trimmedText, trimmedRequestId);
-      // 轮内召回循环：bubble 1 交付后才开始，绝不阻塞首响。
-      yield* _recallBubble(
-        session: completedSession,
-        state: state,
-        userText: trimmedText,
-        hiddenActions: hiddenActions,
-        outcome: outcome,
-        bedtime: bedtime,
-        cancellation: cancellation,
-      );
       memoryCadence?.onDeliveryComplete(bedtime: bedtime);
     }
   }
@@ -603,13 +605,13 @@ final class LocalChatService {
 
   /// 可见回复落盘之后的增量记忆整理：写失败只记诊断，不影响本轮回复。
   /// 用户记忆控制（不记录/禁提/冻结/解除/删除）在回复后异步立即生效，
-  /// 不等日终（记忆控制定稿）。
+  /// 不等日终（记忆控制定稿）。只在模型回复最终被接受后调用：整理
+  /// 窗口由本轮消费。
   Future<void> _applyHiddenActions(
     RawSession completedSession,
     String requestId,
-    List<HiddenAction> hiddenActions, {
-    required bool consumeWindow,
-  }) async {
+    List<HiddenAction> hiddenActions,
+  ) async {
     // 不要记（当轮控制，不产生持久记录）：命中目标的记忆信号、
     // 未完事项候选与关系证据一律不落 episode——内容不进提升、索引
     // 或 PersonaTree；控制动作自身保留为审计条目。
@@ -644,7 +646,6 @@ final class LocalChatService {
           session: completedSession,
           requestId: requestId,
           hiddenActions: effectiveActions,
-          consumeWindow: consumeWindow,
         );
         if (result.skippedCorruptDay) {
           _diagnosticsSink(

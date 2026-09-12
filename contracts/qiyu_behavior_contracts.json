@@ -229,6 +229,28 @@
       }
     },
     {
+      "id": "rejected-candidate-with-actions-falls-back-locally",
+      "request": {
+        "requestId": "fixture-rejected-actions",
+        "text": "我到家了"
+      },
+      "provider": {
+        "configured": true,
+        "candidateReply": "我理解你的感受\n<qiyu-actions>[{\"action\":\"memory_unfreeze\",\"summary\":\"审查用冻结话题\"}]</qiyu-actions>"
+      },
+      "expected": {
+        "messages": ["嗯"],
+        "source": "local",
+        "fallbackReason": "forbidden_phrases",
+        "mode": "minimal",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "我到家了" },
+          { "speaker": "qiyu", "text": "嗯" }
+        ]
+      }
+    },
+    {
       "id": "direct-medical-advice-bypasses-provider",
       "request": {
         "requestId": "fixture-direct-medical",
