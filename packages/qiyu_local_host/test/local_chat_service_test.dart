@@ -1282,6 +1282,92 @@ void main() {
       );
       expect((await pipeline.readDay('2026-09-12')).finalized, isTrue);
     });
+
+    test('被拒绝的候选回复不提交删除动作', () async {
+      DateTime clock() => DateTime(2026, 9, 12, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''我理解你的感受
+<qiyu-actions>
+[{"action":"memory_delete","summary":"审查用删除话题"}]
+</qiyu-actions>'''),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        seedMemory: (memoryDirectory) => _seedDeletableEpisodes(
+          memoryDirectory.path,
+          clock,
+        ),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'reject-delete',
+        text: '我到家了',
+      );
+
+      expect(trace.state.source, ReplySource.local);
+      expect(trace.state.fallbackReason, FallbackReason.forbiddenPhrases);
+
+      // 候选被拒绝：删除不得执行，两条记忆原样保留，无删除控制记录。
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: clock,
+      );
+      final day = await pipeline.readDay('2026-09-10');
+      expect(day.entries.map((entry) => entry.summary), containsAll(<String>[
+        '审查用删除话题',
+        '用户喜欢喝热牛奶',
+      ]));
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      expect((await controls.load()).deleted, isEmpty);
+    });
+
+    test('被接受的候选照常提交删除动作', () async {
+      DateTime clock() => DateTime(2026, 9, 12, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''好，删掉了。
+<qiyu-actions>
+[{"action":"memory_delete","summary":"审查用删除话题"}]
+</qiyu-actions>'''),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        seedMemory: (memoryDirectory) => _seedDeletableEpisodes(
+          memoryDirectory.path,
+          clock,
+        ),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'accept-delete',
+        text: '把那个话题删了',
+      );
+
+      expect(trace.state.source, ReplySource.llm);
+
+      // 被接受的删除照常执行：命中条目清除、其余保留、控制记录落盘。
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: clock,
+      );
+      final day = await pipeline.readDay('2026-09-10');
+      expect(day.entries.map((entry) => entry.summary), [
+        '用户喜欢喝热牛奶',
+      ]);
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      expect((await controls.load()).deleted, hasLength(1));
+    });
   });
   group('日终归档与补办', () {
 
@@ -4163,6 +4249,42 @@ Future<void> _seedFinalizedEpisode(
     finalizedAt: DateTime.parse('${date}T23:00:00').toUtc(),
   ),
 );
+
+/// 删除动作用例的播种：同一天两条已归档条目，一条作为可定位的删除
+/// 目标，另一条用于对照「删除只清命中范围」。
+Future<void> _seedDeletableEpisodes(
+  String memoryDirectory,
+  DateTime Function() clock,
+) async {
+  final pipeline = EpisodeMemoryPipeline(
+    memoryDirectory: memoryDirectory,
+    clock: clock,
+  );
+  await pipeline.synchronizedOnDayFiles(
+    () => pipeline.writeFinalization(
+      '2026-09-10',
+      entries: [
+        EpisodeEntry(
+          id: 'seed:del:0',
+          sessionId: 'seed',
+          requestId: 'seed',
+          summary: '审查用删除话题',
+          at: DateTime(2026, 9, 10, 20).toUtc(),
+        ),
+        EpisodeEntry(
+          id: 'seed:del:1',
+          sessionId: 'seed',
+          requestId: 'seed',
+          summary: '用户喜欢喝热牛奶',
+          at: DateTime(2026, 9, 10, 21).toUtc(),
+        ),
+      ],
+      summary: '用户聊了删除话题和热牛奶',
+      finalized: true,
+      finalizedAt: DateTime(2026, 9, 10, 23).toUtc(),
+    ),
+  );
+}
 
 /// 召回用例的整份播种：已归档的爬山日 + 两级索引，在 Host 启动前
 /// 写入，供进程内 Host 自己的 RecallOrchestrator 直接读取。
