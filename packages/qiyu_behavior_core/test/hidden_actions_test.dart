@@ -152,6 +152,11 @@ void main() {
       '身份证 11010519491231002X',
       '银行卡 6222 0202 0000 1234 567',
       '验证码: 482913',
+      // JSON 引号键值：字段名带引号，冒号前多一个引号。
+      '{"password":"audit-only-secret"}',
+      // PKCS#8：BEGIN 与 PRIVATE KEY 之间没有类型词。动作字段清洗后
+      // 换行折叠为空格，这里按折叠后的形态验证。
+      '-----BEGIN PRIVATE KEY----- AUDIT ONLY FAKE KEY -----END PRIVATE KEY-----',
     ]) {
       final parse = parseHiddenActions(
         '<qiyu-actions>[{"action":"memory_signal","summary":${_json(summary)}}]'
@@ -163,6 +168,36 @@ void main() {
         contains(HiddenActionDiagnostics.sensitiveContent),
         reason: summary,
       );
+    }
+  });
+
+  test('multi-item cookie lines are dropped as privilege-shaped fields', () {
+    // 真实多项 Cookie 以分号串接：core 记忆闸门按越权特征（命令分隔）
+    // 整体丢弃，判定码与落盘脱敏表不同，但同样绝不提升为记忆。
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal",'
+      '"summary":${_json('Cookie: theme=dark; sid=audit-only-cookie')}}]'
+      '</qiyu-actions>',
+    );
+    expect(parse.actions, isEmpty);
+    expect(
+      parse.diagnostics,
+      contains(HiddenActionDiagnostics.privilegeViolation),
+    );
+  });
+
+  test('ordinary talk about secrets is still a memory signal', () {
+    for (final summary in [
+      '我把密码改成新的了',
+      '今晚聊了浏览器的 Cookie 是干嘛的',
+      '他说密钥管理要用专门的工具',
+    ]) {
+      final parse = parseHiddenActions(
+        '<qiyu-actions>[{"action":"memory_signal","summary":${_json(summary)}}]'
+        '</qiyu-actions>',
+      );
+      expect(parse.actions, hasLength(1), reason: summary);
+      expect(parse.diagnostics, isEmpty, reason: summary);
     }
   });
 

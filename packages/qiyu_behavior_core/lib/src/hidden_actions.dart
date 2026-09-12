@@ -529,20 +529,37 @@ final _privilegePatterns = [
   RegExp(r'\b(?:exec|powershell|cmd\.exe|bash|sh -c)\b', caseSensitive: false),
 ];
 
+/// 敏感键名词表：冒号形态与 JSON 引号形态共用，保证两种写法覆盖面
+/// 一致。与 host 落盘脱敏表的键名词表有意不同（差异见
+/// secret_patterns_lockstep_test.dart 的说明），补词须两表分别评估。
+const _sensitiveKeyNames =
+    r'api[_ -]?key|token|cookie|password|密码|口令|私钥|密钥';
+
 /// 秘密特征：命中即不允许提升为记忆。与 sessions 脱敏规则保持一致的
 /// 保守集合，覆盖密码、Key、令牌、验证码、私钥、证件与银行卡号。
+/// host 落盘脱敏表的「整行多项 Cookie」形态这里不收：真实 Cookie 多项
+/// 以分号串接，分号命中越权特征（命令分隔），动作已被越权闸门整体
+/// 丢弃；单项与裸值由下面的键值形态覆盖。JSON 引号键值与类型可缺省
+/// 的 PEM 私钥形态与 host 落盘脱敏表同形；两表用途不同（这里只判
+/// 命中丢弃动作，落盘表要做替换遮蔽），覆盖面差异由
+/// secret_patterns_lockstep_test.dart 钉住。
 final _secretPatterns = [
   RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(
-    r'(?:api[_ -]?key|token|cookie|password|密码|口令|私钥|密钥)\s*[:=：]\s*[^\s；;，,]+',
+    r'(?:' + _sensitiveKeyNames + r')\s*[:=：]\s*[^\s；;，,]+',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'"(?:' + _sensitiveKeyNames + r'"\s*:\s*")',
     caseSensitive: false,
   ),
   RegExp(r'(?:验证码|otp|verification code)\s*[:=：]?\s*\d{4,8}', caseSensitive: false),
   RegExp(r'(?<!\d)\d{17}[\dXx](?!\d)'),
   RegExp(r'(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)'),
   RegExp(
-    r'-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----',
+    r'-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?'
+    r'-----END [A-Z0-9 ]*PRIVATE KEY-----',
     caseSensitive: false,
   ),
 ];

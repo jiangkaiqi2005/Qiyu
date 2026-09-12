@@ -6,14 +6,19 @@ import 'package:test/test.dart';
 ///
 /// 两份秘密特征表是**有意不同**的集合，禁止合并：
 /// - core `hidden_actions.dart` 的 `_secretPatterns`：模型输出提升为记忆
-///   的闸门（隐藏动作的秘密判定）；
+///   的闸门（隐藏动作的秘密判定），命中即丢弃整个动作；
 /// - host `markdown_memory_repository.dart` 的 `_sessionRedactPatterns`：
 ///   会话与诊断落盘前的脱敏表，覆盖面更宽（另含 as_sk_/github_pat/
-///   ghp/glp/xox/AKIA/AIza/JWT 等令牌特征）。
+///   ghp/glp/xox/AKIA/AIza/JWT 等令牌特征与整行多项 Cookie 形态，
+///   命中后替换为「[已脱敏]」占位）。
+///
+/// host 独有的整行多项 Cookie 形态在 core 由越权闸门覆盖：真实多项
+/// Cookie 以分号串接，分号命中 core 的越权特征（命令分隔），动作先于
+/// 秘密判定被整体丢弃，接受/拒绝结果一致，只是诊断码不同。
 ///
 /// 两份符号都是私有的，本测试沿用主链静态检查的手法直接读源码，把
 /// 两侧的现行模式清单整块钉死：任一侧单边增删或改写模式，测试立即
-/// 失败。改动一侧前，必须先评估另一侧是否需要同步。
+/// 失败。改动一侧前，必须先评估另一侧是否同步。
 void main() {
   group('秘密特征表 lockstep 守门', () {
     // 相对各自包根的源码路径；dart test 固定在包根目录运行。
@@ -42,7 +47,7 @@ void main() {
           extractPatternBlock(source, 'final _secretPatterns = [');
       expect(
         RegExp('RegExp\\(').allMatches(block).length,
-        7,
+        8,
         reason: 'core 秘密特征表的条目数变了：两份集合有意不同，'
             '改动一侧须评估另一侧是否同步',
       );
@@ -52,14 +57,19 @@ void main() {
   RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(
-    r'(?:api[_ -]?key|token|cookie|password|密码|口令|私钥|密钥)\s*[:=：]\s*[^\s；;，,]+',
+    r'(?:' + _sensitiveKeyNames + r')\s*[:=：]\s*[^\s；;，,]+',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'"(?:' + _sensitiveKeyNames + r'"\s*:\s*")',
     caseSensitive: false,
   ),
   RegExp(r'(?:验证码|otp|verification code)\s*[:=：]?\s*\d{4,8}', caseSensitive: false),
   RegExp(r'(?<!\d)\d{17}[\dXx](?!\d)'),
   RegExp(r'(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)'),
   RegExp(
-    r'-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----',
+    r'-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?'
+    r'-----END [A-Z0-9 ]*PRIVATE KEY-----',
     caseSensitive: false,
   ),
 '''),
