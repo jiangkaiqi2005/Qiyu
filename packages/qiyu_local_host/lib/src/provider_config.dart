@@ -664,7 +664,8 @@ final class JsonProviderConfigRepository
 
   /// 共享读改写队列的队尾：每个事务等前一个事务完全结束（成功或失
   /// 败）后才开始，错误不在队列里传播——写回失败只拒绝自己的调用方，
-  /// 队列照常放行后续事务。
+  /// 队列照常放行后续事务。事务内不得再开启事务：同一实例上的嵌套
+  /// 调用会自等死锁，需要连带的多段操作应写进同一个事务动作。
   Future<void> _transactionTail = Future.value();
 
   @override

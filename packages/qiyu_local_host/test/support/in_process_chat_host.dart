@@ -169,6 +169,10 @@ final class InProcessChatHost {
         providerSettingsService: modelGateway == null
             ? null
             : ProviderSettingsService(
+                // 此处为聊天设置自建仓储实例，与 Host 内部五服务共用的
+                // 那个实例不同，读改写排队队列不共享；本装配只服务聊天
+                // 管线用例，不承载跨段并发验证——跨段交错由
+                // provider_config_transaction_test 的单实例用例覆盖。
                 JsonProviderConfigRepository(
                   filePath:
                       '${rootDirectory.path}${Platform.pathSeparator}'
