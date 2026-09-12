@@ -205,6 +205,118 @@ void main() {
     );
     return Uint8List.fromList(ZipEncoder().encode(archive));
   }
+  /// 手工拼装 zip 字节：本地头、中心目录与结束记录，固定字段按
+  /// 小端写入，条目按 [_RawZipEntry] 的声明取值。
+  Uint8List buildRawZip(List<_RawZipEntry> entries) {
+    void uint16(BytesBuilder sink, int value) {
+      final data = ByteData(2)..setUint16(0, value, Endian.little);
+      sink.add(data.buffer.asUint8List());
+    }
+
+    void uint32(BytesBuilder sink, int value) {
+      final data = ByteData(4)..setUint32(0, value, Endian.little);
+      sink.add(data.buffer.asUint8List());
+    }
+
+    final body = BytesBuilder();
+    final central = BytesBuilder();
+    var bodyLength = 0;
+    for (final entry in entries) {
+      final compressed = entry.compressedBytes ??
+          (entry.compressionMethod == 8
+              ? Uint8List.fromList(
+                  ZLibCodec(raw: true).encoder.convert(entry.realBytes),
+                )
+              : entry.realBytes);
+      final name = Uint8List.fromList(utf8.encode(entry.name));
+      final headerOffset = bodyLength;
+
+      uint32(body, 0x04034b50);
+      uint16(body, 20);
+      uint16(body, 0);
+      uint16(body, entry.compressionMethod);
+      uint16(body, 0);
+      uint16(body, 0x21);
+      uint32(body, 0);
+      uint32(body, compressed.length);
+      uint32(body, entry.declaredUncompressed);
+      uint16(body, name.length);
+      uint16(body, 0);
+      body.add(name);
+      body.add(compressed);
+      bodyLength += 30 + name.length + compressed.length;
+
+      final comment = Uint8List.fromList(utf8.encode(entry.fileComment));
+      uint32(central, 0x02014b50);
+      uint16(central, entry.versionMadeBy);
+      uint16(central, 20);
+      uint16(central, 0);
+      uint16(central, entry.compressionMethod);
+      uint16(central, 0);
+      uint16(central, 0x21);
+      uint32(central, 0);
+      uint32(central, compressed.length);
+      uint32(central, entry.declaredUncompressed);
+      uint16(central, name.length);
+      uint16(central, 0);
+      uint16(central, comment.length);
+      uint16(central, 0);
+      uint16(central, 0);
+      uint32(central, entry.externalAttributes);
+      uint32(central, headerOffset);
+      central.add(name);
+      central.add(comment);
+    }
+
+    final centralBytes = central.toBytes();
+    final eocd = BytesBuilder();
+    uint32(eocd, 0x06054b50);
+    uint16(eocd, 0);
+    uint16(eocd, 0);
+    uint16(eocd, entries.length);
+    uint16(eocd, entries.length);
+    uint32(eocd, centralBytes.length);
+    uint32(eocd, bodyLength);
+    uint16(eocd, 0);
+    return Uint8List.fromList([
+      ...body.toBytes(),
+      ...centralBytes,
+      ...eocd.toBytes(),
+    ]);
+  }
+
+  /// 组装带清单的原始 zip：[declared] 是清单声明（可虚报），[entries]
+  /// 是包内真实条目。ZipEncoder 只能写诚实头部，谎报声明必须手工
+  /// 拼装字节。
+  Uint8List buildRawBackup({
+    required List<(String, int, String)> declared,
+    required List<_RawZipEntry> entries,
+  }) {
+    final manifestJson = {
+      'kind': 'qiyu-memory-backup',
+      'schemaVersion': backupSchemaVersion,
+      'generatedAt': clock.toUtc().toIso8601String(),
+      'fileCount': declared.length,
+      'files': [
+        for (final (entryPath, bytes, sha) in declared)
+          {'path': entryPath, 'bytes': bytes, 'sha256': sha},
+      ],
+    };
+    final manifestContent =
+        '# 栖语记忆备份\n\n'
+        '<!-- qiyu-backup-manifest:'
+        '${base64Url.encode(utf8.encode(jsonEncode(manifestJson))).replaceAll('=', '')} -->\n';
+    final manifestBytes = Uint8List.fromList(utf8.encode(manifestContent));
+    return buildRawZip([
+      _RawZipEntry(
+        'manifest.md',
+        realBytes: manifestBytes,
+        compressionMethod: 0,
+      ),
+      ...entries,
+    ]);
+  }
+
 
   Map<String, String> snapshotMemoryTree() {
     final result = <String, String>{};
@@ -822,6 +934,436 @@ void main() {
       expect(snapshotsAfter.length, greaterThanOrEqualTo(2));
     });
   });
+
+
+  group('受限解压预算', () {
+    MemoryBackupService budgeted(MemoryBackupBudget budget) =>
+        MemoryBackupService(
+          memoryDirectory: memoryDirectory,
+          memoryControls: memoryControls,
+          episodePipeline: pipeline,
+          personaTree: personaTree,
+          memoryActions: actions,
+          clock: () => clock,
+          diagnosticsSink: (_) {},
+          budget: budget,
+        );
+
+    Matcher rejectedWith(String code) => throwsA(
+      isA<BackupValidationException>().having(
+        (error) => error.code,
+        'code',
+        code,
+      ),
+    );
+
+    test('高压缩率小体积包超出总预算被拒绝，现有数据不变', () async {
+      await seedRichMemory();
+      final before = snapshotMemoryTree();
+      // 一兆字节的零经 deflate 压到几 KB：小体积大展开的典型形态。
+      final bundle = buildBundle({
+        'sessions/2026/08/bomb.md': '0' * (1024 * 1024),
+      });
+
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(maxTotalBytes: 64 * 1024),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+      expect(snapshotMemoryTree(), before);
+    });
+
+    test('虚报声明大小不能绕过单项预算：按真实解压输出计数', () async {
+      // 头部与清单都按 8 字节谎报，真实解压输出是一兆字节的零。
+      final realBytes = Uint8List(1024 * 1024);
+      final bundle = buildRawBackup(
+        declared: [
+          (
+            'memory/sessions/2026/08/lie.md',
+            8,
+            sha256.convert(realBytes).toString(),
+          ),
+        ],
+        entries: [
+          _RawZipEntry(
+            'memory/sessions/2026/08/lie.md',
+            realBytes: realBytes,
+            declaredUncompressed: 8,
+          ),
+        ],
+      );
+
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(
+            maxTotalBytes: 4 * 1024 * 1024,
+            maxEntryBytes: 32 * 1024,
+          ),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('虚报声明大小不能绕过总量预算：逐块计数中途失败', () async {
+      // 第一条诚实（store，40 KB）；第二条头部与清单谎报 8 字节、
+      // 真实展开 40 KB：总账只能在第二条解压途中超限。
+      final honest = Uint8List.fromList(utf8.encode('a' * (40 * 1024)));
+      final lie = Uint8List(40 * 1024);
+      final bundle = buildRawBackup(
+        declared: [
+          (
+            'memory/sessions/2026/08/first.md',
+            honest.length,
+            sha256.convert(honest).toString(),
+          ),
+          (
+            'memory/sessions/2026/08/second.md',
+            8,
+            sha256.convert(lie).toString(),
+          ),
+        ],
+        entries: [
+          _RawZipEntry(
+            'memory/sessions/2026/08/first.md',
+            realBytes: honest,
+            compressionMethod: 0,
+          ),
+          _RawZipEntry(
+            'memory/sessions/2026/08/second.md',
+            realBytes: lie,
+            declaredUncompressed: 8,
+          ),
+        ],
+      );
+
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(
+            maxTotalBytes: 64 * 1024,
+            maxEntryBytes: 1024 * 1024,
+          ),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('单项声明超出预算在展开前拒绝', () async {
+      final bundle = buildBundle({
+        'sessions/2026/08/big-one.md': 'a' * (40 * 1024),
+        'sessions/2026/08/big-two.md': 'a' * (40 * 1024),
+      });
+
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(
+            maxTotalBytes: 4 * 1024 * 1024,
+            maxEntryBytes: 32 * 1024,
+          ),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('恰好在单项预算边界的内容可以预览，超出一个字节拒绝', () async {
+      const budget = MemoryBackupBudget(
+        maxTotalBytes: 1024 * 1024,
+        maxEntryBytes: 32 * 1024,
+      );
+      final atLimit = await budgeted(budget).previewImport(
+        buildBundle({'long-memory.md': 'a' * (32 * 1024)}),
+      );
+      expect(atLimit.countOf(BackupItemCategory.added), 1);
+
+      final overByOne = buildBundle({
+        'long-memory.md': 'a' * (32 * 1024 + 1),
+      });
+      await expectLater(
+        () => budgeted(budget).previewImport(overByOne),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('条目数量超出预算被拒绝', () async {
+      final bundle = buildBundle({
+        for (var index = 0; index < 201; index += 1)
+          'sessions/2026/08/filler-$index.md': '- 一条印象\n',
+      });
+
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(maxEntries: 200),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    // 中心目录名称 = 'memory/' + 相对路径，UTF-8 字节 32767；256 个
+    // 条目加上 'manifest.md' 条目名后合计 8388363 字节，恰在 8 MiB
+    // （生产默认目录元数据预算）之内；257 个条目即超出。
+    String longName(int index) =>
+        'sessions/2026/08/${index.toString().padRight(32740, 'a')}.md';
+
+    test('目录元数据恰在预算内可以预览', () async {
+      final preview = await backup.previewImport(
+        buildBundle({
+          for (var index = 0; index < 256; index += 1)
+            longName(index): '- 一条印象\n',
+        }),
+      );
+      // 会话结构无法识别归为不可恢复，但预览本身完成：预算内不拒绝。
+      expect(preview.countOf(BackupItemCategory.unrecoverable), 256);
+    });
+
+    test('目录元数据超出预算被拒绝', () async {
+      final bundle = buildBundle({
+        for (var index = 0; index < 257; index += 1)
+          longName(index): '- 一条印象\n',
+      });
+
+      await expectLater(
+        () => backup.previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('符号链接形态的条目被拒绝', () async {
+      final bytes = Uint8List.fromList(utf8.encode('../outside/target\n'));
+      final bundle = buildRawBackup(
+        declared: [
+          (
+            'memory/long-memory.md',
+            bytes.length,
+            sha256.convert(bytes).toString(),
+          ),
+        ],
+        entries: [
+          _RawZipEntry(
+            'memory/long-memory.md',
+            realBytes: bytes,
+            compressionMethod: 0,
+            versionMadeBy: (3 << 8) | 20,
+            externalAttributes: 0xa1a4 << 16,
+          ),
+        ],
+      );
+
+      await expectLater(
+        () => backup.previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('越界路径、绝对路径与反斜杠路径被拒绝', () async {
+      for (final evil in ['../evil.md', '/etc/evil.md']) {
+        final bundle = buildBundle({
+          'long-memory.md': '# ok\n',
+        }, extraEntryPath: evil);
+        await expectLater(
+          () => backup.previewImport(bundle),
+          rejectedWith('unexpected-content'),
+        );
+      }
+      // 反斜杠分隔名会被 ZipEncoder 规范化成斜杠，需要手工 zip 保留。
+      final okBytes = Uint8List.fromList(utf8.encode('# ok\n'));
+      final evilBytes = Uint8List.fromList(utf8.encode('evil\n'));
+      final bundle = buildRawBackup(
+        declared: [
+          (
+            'memory/long-memory.md',
+            okBytes.length,
+            sha256.convert(okBytes).toString(),
+          ),
+        ],
+        entries: [
+          _RawZipEntry(
+            'memory/long-memory.md',
+            realBytes: okBytes,
+            compressionMethod: 0,
+          ),
+          _RawZipEntry(
+            'memory\\evil.md',
+            realBytes: evilBytes,
+            compressionMethod: 0,
+          ),
+        ],
+      );
+      await expectLater(
+        () => backup.previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('导入路径超出预算同样拒绝，不建快照不变更数据', () async {
+      await seedRichMemory();
+      final before = snapshotMemoryTree();
+      final bundle = buildBundle({
+        'sessions/2026/08/bomb.md': '0' * (1024 * 1024),
+      });
+
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(maxTotalBytes: 64 * 1024),
+        ).importBundle(bundle),
+        rejectedWith('unexpected-content'),
+      );
+      expect(snapshotMemoryTree(), before);
+      // 预算失败发生在快照之前：不得出现任何保底快照。
+      expect(
+        Directory(path.join(memoryDirectory, 'backups')).existsSync(),
+        isFalse,
+      );
+    });
+
+    test('目录元数据按真实字节数计：非 ASCII 名称不能放大预算', () async {
+      // 每个名称约 9900 个汉字：码元数 3×9927+11≈2.98 万在注入预算内，
+      // UTF-8 字节数 3×29727+11≈8.9 万远超预算——按字节计必须拒绝。
+      String cjkName(int index) =>
+          'sessions/2026/08/${index.toString().padRight(9900, '记')}.md';
+      final bundle = buildBundle({
+        for (var index = 0; index < 3; index += 1) cjkName(index): '- 一条印象\n',
+      });
+
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(maxMetadataBytes: 30000),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('解压期间的意外失败留下诊断，仍按无效备份拒绝', () async {
+      final diagnostics = <String>[];
+      final probing = MemoryBackupService(
+        memoryDirectory: memoryDirectory,
+        memoryControls: memoryControls,
+        episodePipeline: pipeline,
+        personaTree: personaTree,
+        memoryActions: actions,
+        clock: () => clock,
+        diagnosticsSink: diagnostics.add,
+      );
+      // 压缩流是坏字节：解压立即失败。拒绝类别不变，但不能无声。
+      final bundle = buildRawBackup(
+        declared: [
+          (
+            'memory/long-memory.md',
+            8,
+            sha256.convert(Uint8List(8)).toString(),
+          ),
+        ],
+        entries: [
+          _RawZipEntry(
+            'memory/long-memory.md',
+            realBytes: Uint8List(8),
+            declaredUncompressed: 8,
+            compressedBytes: Uint8List.fromList(const [
+              0xff,
+              0xff,
+              0xff,
+              0xff,
+            ]),
+          ),
+        ],
+      );
+
+      await expectLater(
+        () => probing.previewImport(bundle),
+        rejectedWith('not-a-backup'),
+      );
+      expect(diagnostics, isNotEmpty);
+    });
+
+    test('AES 形态与方法号不可识别的条目被拒绝', () async {
+      // 方法号 99（AES）在解码库里被归一成无压缩且加密位不置位：
+      // 按中心头方法号原值拒绝，绝不当作明文内容放行。
+      final bytes = Uint8List.fromList(utf8.encode('aes-ciphertext\n'));
+      final bundle = buildRawBackup(
+        declared: [
+          (
+            'memory/long-memory.md',
+            bytes.length,
+            sha256.convert(bytes).toString(),
+          ),
+        ],
+        entries: [
+          _RawZipEntry(
+            'memory/long-memory.md',
+            realBytes: bytes,
+            compressionMethod: 99,
+          ),
+        ],
+      );
+
+      await expectLater(
+        () => backup.previewImport(bundle),
+        throwsA(
+          isA<BackupValidationException>()
+              .having((error) => error.code, 'code', 'unexpected-content')
+              .having(
+                (error) => error.message,
+                'message',
+                '备份包含不支持的加密或压缩方式，已拒绝。',
+              ),
+        ),
+      );
+    });
+
+    test('目录元数据把条目注释计入预算', () async {
+      // 条目注释同属中心目录元数据：约 6 万字节的注释远超注入预算。
+      final okBytes = Uint8List.fromList(utf8.encode('# ok\n'));
+      final bundle = buildRawBackup(
+        declared: [
+          (
+            'memory/long-memory.md',
+            okBytes.length,
+            sha256.convert(okBytes).toString(),
+          ),
+        ],
+        entries: [
+          _RawZipEntry(
+            'memory/long-memory.md',
+            realBytes: okBytes,
+            compressionMethod: 0,
+            fileComment: '注' * 20000,
+          ),
+        ],
+      );
+
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(maxMetadataBytes: 8 * 1024),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+  });
+}
+
+/// 手工构造的原始 zip 条目：内容按 [realBytes] 真实编码，头部的解压
+/// 声明、制造系统、条目注释与外部属性可独立指定，用来验证验证器
+/// 不信任头部声明、并识别符号链接形态；[compressedBytes] 可手工指定
+/// 坏压缩流。
+final class _RawZipEntry {
+  const _RawZipEntry(
+    this.name, {
+    required this.realBytes,
+    this.compressionMethod = 8,
+    int? declaredUncompressed,
+    this.compressedBytes,
+    this.fileComment = '',
+    this.versionMadeBy = 20,
+    this.externalAttributes = 0,
+  }) : declaredUncompressed = declaredUncompressed ?? realBytes.length;
+
+  final String name;
+  final Uint8List realBytes;
+  final int compressionMethod;
+  final int declaredUncompressed;
+  final Uint8List? compressedBytes;
+  final String fileComment;
+  final int versionMadeBy;
+  final int externalAttributes;
 }
 
 /// 与 EpisodeMemoryPipeline 写入端同构的日文件渲染：手工构造「旧规则

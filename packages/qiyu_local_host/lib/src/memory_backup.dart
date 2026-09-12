@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
-import 'package:crypto/crypto.dart' show sha256;
+import 'package:crypto/crypto.dart' show Digest, sha256;
 import 'package:path/path.dart' as path;
 
 import 'episode_index.dart';
@@ -22,10 +22,39 @@ const backupSchemaVersion = 1;
 const _manifestMarker = '<!-- qiyu-backup-manifest:';
 const _snapshotMarker = '<!-- qiyu-backup-snapshot:';
 
-/// 备份/快照内文件数量与解压总量的保守上限：本机备份防御异常大
-/// 包，不是存储限额。
+/// 备份/快照内文件数量、解压总量、单项解压量与目录元数据量的保守
+/// 上限：本机备份防御异常大包与高压缩炸弹，不是存储限额。
 const _maxBackupEntries = 20000;
 const _maxBackupTotalBytes = 1 << 30;
+const _maxBackupEntryBytes = 64 << 20;
+const _maxBackupMetadataBytes = 8 << 20;
+
+/// 受限解压的喂入块大小：输出经解码器固定内部缓冲逐块到达受限接收
+/// 器，喂入块只影响中断粒度与事件循环节奏，不影响内存上界。
+const _extractFeedChunkBytes = 256 * 1024;
+
+/// 备份解压预算：预览与导入共用。默认值即生产上限；测试可注入小预算
+/// 在安全资源规模内验证拒绝机制，不必真实撑大内存或磁盘。
+final class MemoryBackupBudget {
+  const MemoryBackupBudget({
+    this.maxEntries = _maxBackupEntries,
+    this.maxTotalBytes = _maxBackupTotalBytes,
+    this.maxEntryBytes = _maxBackupEntryBytes,
+    this.maxMetadataBytes = _maxBackupMetadataBytes,
+  });
+
+  /// 包内条目数量上限（含目录占位条目）。
+  final int maxEntries;
+
+  /// 全部条目解压输出的总量上限。
+  final int maxTotalBytes;
+
+  /// 单个条目解压输出的上限。
+  final int maxEntryBytes;
+
+  /// 中心目录名称、条目注释与扩展字段的总字节数上限。
+  final int maxMetadataBytes;
+}
 
 /// 快照保留份数：导入与回滚都会新增快照，只保留最近几份。
 const _snapshotKeepCount = 5;
@@ -213,6 +242,77 @@ final class BackupValidationException implements Exception {
   String toString() => message;
 }
 
+/// 解压预算超限的内部信号：统一在提取入口翻译为现有的
+/// unexpected-content 对外拒绝码，不新增对外错误类别。
+final class _BudgetExceededException implements Exception {
+  const _BudgetExceededException();
+}
+
+/// 受限解压的跨条目总账：同一包内所有条目的接收器共享一份累计值。
+final class _ExtractionProgress {
+  int totalWritten = 0;
+}
+
+/// 受限解压输出接收器：逐块累计条目与总量、滚动摘要并同步写临时
+/// 文件；任一预算超限立即抛出，解压在产出一个内部缓冲之前终止，
+/// 绝不在接收器内聚合整项输出。
+final class _BoundedExtractSink implements Sink<List<int>> {
+  _BoundedExtractSink({
+    required this.handle,
+    required this.hashSink,
+    required this.entryLimit,
+    required this.totalLimit,
+    required this.progress,
+  });
+
+  final RandomAccessFile handle;
+  final ByteConversionSink hashSink;
+  final int entryLimit;
+  final int totalLimit;
+  final _ExtractionProgress progress;
+
+  int entryWritten = 0;
+
+  @override
+  void add(List<int> chunk) {
+    entryWritten += chunk.length;
+    progress.totalWritten += chunk.length;
+    if (entryWritten > entryLimit || progress.totalWritten > totalLimit) {
+      throw const _BudgetExceededException();
+    }
+    hashSink.add(chunk);
+    handle.writeFromSync(chunk);
+  }
+
+  @override
+  void close() {}
+}
+
+/// sha256 滚动计算的收口：close 之后取最终摘要。
+final class _DigestCollector implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) => value = data;
+
+  @override
+  void close() {}
+}
+
+/// 受限解压的完成态：隔离临时目录、记忆相对路径 → 临时文件与清单
+/// 生成时间。临时目录由调用方用完负责清理。
+final class _ExtractedBundle {
+  const _ExtractedBundle({
+    required this.directory,
+    required this.files,
+    required this.generatedAt,
+  });
+
+  final Directory directory;
+  final Map<String, File> files;
+  final DateTime generatedAt;
+}
+
 /// 字节级原子写入接缝：temp+rename，与文本原子写同律。导入与快照
 /// 恢复共用；测试可注入失败模拟中断。
 abstract interface class BackupByteWriter {
@@ -268,6 +368,7 @@ final class MemoryBackupService {
     EpisodeIndexStore? indexStore,
     Clock? clock,
     BackupByteWriter? byteWriter,
+    this.budget = const MemoryBackupBudget(),
     void Function(String message)? diagnosticsSink,
   }) : _indexStore = indexStore ??
            EpisodeIndexStore(
@@ -286,6 +387,9 @@ final class MemoryBackupService {
   final EpisodeIndexStore _indexStore;
   final Clock _clock;
   final BackupByteWriter _byteWriter;
+
+  /// 不可信备份包的解压预算：超限在写入任何产品数据之前拒绝。
+  final MemoryBackupBudget budget;
   final void Function(String) _diagnosticsSink;
 
   Directory get _backupsDirectory =>
@@ -411,139 +515,341 @@ final class MemoryBackupService {
 
   // ---------- 验证 ----------
 
-  /// 完整验证备份包并解出文件；任何失败抛 [BackupValidationException]。
-  /// 只读操作，不触碰本机数据。返回记忆相对路径 → 字节与清单生成时间。
-  Future<({Map<String, Uint8List> files, DateTime generatedAt})>
-  _validateBundle(Uint8List bundle) async {
-    final Archive archive;
+  /// 完整验证备份包并把内容受限解压到隔离临时目录；任何失败抛
+  /// [BackupValidationException]，临时目录整体清理，本机数据不被
+  /// 触碰。返回记忆相对路径 → 临时文件与清单生成时间。
+  ///
+  /// 核验顺序（先验目录与声明，再按真实解压输出逐块计数）：中心目录
+  /// 解析 → 条目数量 → 目录元数据 → 路径与条目形态 → 清单与声明值 →
+  /// 逐条受限解压并核对真实大小与摘要。声明值只用于提前拒绝，不能
+  /// 替代实际计数。
+  Future<_ExtractedBundle> _extractValidatedBundle(Uint8List bundle) async {
+    final zipDirectory = ZipDirectory();
     try {
-      archive = ZipDecoder().decodeBytes(bundle);
+      zipDirectory.read(InputMemoryStream(bundle));
     } on Object {
       throw _notABackup();
     }
-    if (archive.files.isEmpty) {
+    if (zipDirectory.filePosition < 0 || zipDirectory.fileHeaders.isEmpty) {
       throw _notABackup();
     }
-    if (archive.files.length > _maxBackupEntries) {
+
+    final headers = zipDirectory.fileHeaders;
+    if (headers.length > budget.maxEntries) {
       throw const BackupValidationException(
         'unexpected-content',
         '备份包含的文件数量超出预期，已拒绝。',
       );
     }
 
-    Map<String, Object?>? manifest;
-    final files = <String, Uint8List>{};
-    var totalBytes = 0;
-    for (final entry in archive.files) {
-      if (!entry.isFile) {
-        continue;
+    // 中心目录预检：条目名称、形态与声明尺寸，全部发生在任何内容
+    // 解压之前。
+    var metadataBytes = 0;
+    var declaredTotalBytes = 0;
+    final seenNames = <String>{};
+    final contentHeaders = <ZipFileHeader>[];
+    ZipFileHeader? manifestHeader;
+    for (final header in headers) {
+      // 目录元数据按中心目录里的名称、条目注释与扩展字段计，名称与
+      // 注释精确按 UTF-8 字节计（按码元数近似会低估非 ASCII 内容，
+      // 放大预算）。
+      metadataBytes +=
+          utf8.encode(header.filename).length +
+          utf8.encode(header.fileComment).length +
+          (header.extraField?.length ?? 0);
+      if (metadataBytes > budget.maxMetadataBytes) {
+        throw const BackupValidationException(
+          'unexpected-content',
+          '备份目录信息超出预期，已拒绝。',
+        );
       }
-      final name = entry.name;
-      if (!_safeZipEntryName(name)) {
+      final name = header.filename;
+      if (name.endsWith('/')) {
+        continue; // 目录占位条目：只计入数量与元数据，没有内容。
+      }
+      // 符号链接形态（外部属性高位为链接类型）：栖语备份绝不包含，
+      // 且解码器会为读取链接目标而提前解压内容，必须在解析层拒绝。
+      if (!_safeZipEntryName(name) ||
+          ((header.externalFileAttributes >> 16) & 0xf000) == 0xa000) {
         throw const BackupValidationException(
           'unexpected-content',
           '备份包含不安全的文件路径，已拒绝。',
         );
       }
-      final bytes = Uint8List.fromList(entry.content as List<int>);
-      totalBytes += bytes.length;
-      if (totalBytes > _maxBackupTotalBytes) {
+      if (!seenNames.add(name)) {
+        throw const BackupValidationException(
+          'integrity-mismatch',
+          '备份文件与清单不一致，已拒绝。',
+        );
+      }
+      final file = header.file!;
+      // 加密与压缩方式在触碰内容前拒绝：本地头的加密位与归一化后的
+      // 方法号只允许未压缩或 deflate；中心目录里的原始方法号同样只认
+      // 这两种——加密压缩等无法识别的号段会被解码库归一成未压缩且不
+      // 置加密位，只看归一化结果会把密文当明文放行。
+      if ((file.flags & 0x1) != 0 ||
+          (header.compressionMethod != ZipFile.zipCompressionStore &&
+              header.compressionMethod != ZipFile.zipCompressionDeflate) ||
+          (file.compressionMethod != CompressionType.none &&
+              file.compressionMethod != CompressionType.deflate)) {
+        throw const BackupValidationException(
+          'unexpected-content',
+          '备份包含不支持的加密或压缩方式，已拒绝。',
+        );
+      }
+      if (file.uncompressedSize > budget.maxEntryBytes ||
+          (declaredTotalBytes += file.uncompressedSize) >
+              budget.maxTotalBytes) {
         throw const BackupValidationException(
           'unexpected-content',
           '备份解压后的体积超出预期，已拒绝。',
         );
       }
       if (name == 'manifest.md') {
-        manifest = _parseManifest(utf8.decode(bytes, allowMalformed: false));
-        continue;
+        manifestHeader = header;
+      } else {
+        contentHeaders.add(header);
       }
-      files[name] = bytes;
     }
-    if (manifest == null) {
+
+    if (manifestHeader == null) {
       throw const BackupValidationException(
         'missing-manifest',
         '备份缺少清单，无法验证来源与完整性。',
       );
     }
-    final schemaVersion = manifest['schemaVersion'];
-    if (schemaVersion != backupSchemaVersion) {
-      throw const BackupValidationException(
-        'incompatible-version',
-        '备份版本与当前栖语不兼容，已拒绝。',
-      );
-    }
 
-    final declaredRaw = manifest['files'];
-    if (declaredRaw is! List<Object?>) {
-      throw _manifestIncomplete();
-    }
-    final declared = <String, ({int bytes, String sha256})>{};
-    for (final item in declaredRaw) {
-      if (item is! Map<String, Object?>) {
-        throw _manifestIncomplete();
+    final extractionRoot = await Directory.systemTemp.createTemp(
+      'qiyu-backup-extract-',
+    );
+    try {
+      final progress = _ExtractionProgress();
+      Future<({File file, int bytes, String sha256})> extractVerified(
+        ZipFileHeader header,
+        int index,
+      ) async {
+        try {
+          return await _extractEntryBounded(
+            extractionRoot,
+            index,
+            header.file!,
+            entryLimit: budget.maxEntryBytes,
+            totalLimit: budget.maxTotalBytes,
+            progress: progress,
+          );
+        } on _BudgetExceededException {
+          throw const BackupValidationException(
+            'unexpected-content',
+            '备份解压后的体积超出预期，已拒绝。',
+          );
+        } on Object catch (error) {
+          // 预算之外的意外失败（坏压缩流、临时文件读写故障等）不能
+          // 无声拒绝：先留诊断再按既有类别对外拒绝；临时文件读写
+          // 故障与包本身无关，给出不同的拒绝文案，避免误指备份损坏。
+          _diagnosticsSink('backup extraction deferred [$error]');
+          if (error is FileSystemException) {
+            throw const BackupValidationException(
+              'not-a-backup',
+              '备份暂时无法读取，请稍后重试。',
+            );
+          }
+          throw _notABackup();
+        }
       }
-      final entryPath = item['path'];
-      final entryBytes = item['bytes'];
-      final entrySha = item['sha256'];
-      if (entryPath is! String || entryBytes is! int || entrySha is! String) {
-        throw _manifestIncomplete();
-      }
-      declared['memory/$entryPath'.replaceFirst(RegExp('^memory/'), '')] =
-          (bytes: entryBytes, sha256: entrySha);
-    }
-    // 清单与包内文件必须完全一致：缺失、多余都按损坏拒绝。
-    final declaredNames = declared.keys.toSet();
-    final actualNames = files.keys.toSet();
-    if (!declaredNames.containsAll(actualNames) ||
-        !actualNames.containsAll(declaredNames)) {
-      throw const BackupValidationException(
-        'integrity-mismatch',
-        '备份文件与清单不一致，已拒绝。',
+
+      final manifestExtracted = await extractVerified(manifestHeader, 0);
+      final manifest = _parseManifest(
+        utf8.decode(await manifestExtracted.file.readAsBytes()),
       );
-    }
-    for (final MapEntry(:key, :value) in declared.entries) {
-      final content = files[key];
-      if (content == null ||
-          content.length != value.bytes ||
-          sha256.convert(content).toString() != value.sha256) {
+
+      final schemaVersion = manifest['schemaVersion'];
+      if (schemaVersion != backupSchemaVersion) {
+        throw const BackupValidationException(
+          'incompatible-version',
+          '备份版本与当前栖语不兼容，已拒绝。',
+        );
+      }
+
+      final declaredRaw = manifest['files'];
+      if (declaredRaw is! List<Object?>) {
+        throw _manifestIncomplete();
+      }
+      final declared = <String, ({int bytes, String sha256})>{};
+      for (final item in declaredRaw) {
+        if (item is! Map<String, Object?>) {
+          throw _manifestIncomplete();
+        }
+        final entryPath = item['path'];
+        final entryBytes = item['bytes'];
+        final entrySha = item['sha256'];
+        if (entryPath is! String || entryBytes is! int || entrySha is! String) {
+          throw _manifestIncomplete();
+        }
+        declared['memory/$entryPath'.replaceFirst(RegExp('^memory/'), '')] = (
+          bytes: entryBytes,
+          sha256: entrySha,
+        );
+      }
+      // 清单与包内条目必须完全一致：缺失、多余都按损坏拒绝。
+      final declaredNames = declared.keys.toSet();
+      final actualNames = contentHeaders
+          .map((header) => header.filename)
+          .toSet();
+      if (!declaredNames.containsAll(actualNames) ||
+          !actualNames.containsAll(declaredNames)) {
         throw const BackupValidationException(
           'integrity-mismatch',
-          '备份完整性校验未通过，已拒绝。',
+          '备份文件与清单不一致，已拒绝。',
         );
       }
-      final relative = key.substring('memory/'.length);
-      if (!key.startsWith('memory/') || !_allowedMemoryPath(relative)) {
+
+      final headerByName = {
+        for (final header in contentHeaders) header.filename: header,
+      };
+      for (final MapEntry(:key, :value) in declared.entries) {
+        if (!key.startsWith('memory/')) {
+          throw const BackupValidationException(
+            'unexpected-content',
+            '备份包含记忆范围之外的文件，已拒绝。',
+          );
+        }
+        final relative = key.substring('memory/'.length);
+        if (!_allowedMemoryPath(relative)) {
+          throw const BackupValidationException(
+            'unexpected-content',
+            '备份包含记忆范围之外的文件，已拒绝。',
+          );
+        }
+        // 清单声明与压缩头部声明的解压尺寸必须一致；两边都说谎的
+        // 由受限解压的真实计数兜底。
+        if (headerByName[key]!.file!.uncompressedSize != value.bytes) {
+          throw const BackupValidationException(
+            'integrity-mismatch',
+            '备份完整性校验未通过，已拒绝。',
+          );
+        }
+      }
+
+      final files = <String, File>{};
+      var index = 1;
+      for (final header in contentHeaders) {
+        final extracted = await extractVerified(header, index);
+        index += 1;
+        final name = header.filename;
+        final declaredEntry = declared[name]!;
+        if (extracted.bytes != declaredEntry.bytes ||
+            extracted.sha256 != declaredEntry.sha256) {
+          throw const BackupValidationException(
+            'integrity-mismatch',
+            '备份完整性校验未通过，已拒绝。',
+          );
+        }
+        files[name.substring('memory/'.length)] = extracted.file;
+      }
+
+      final generatedAtRaw = manifest['generatedAt'];
+      DateTime generatedAt;
+      if (generatedAtRaw is! String) {
         throw const BackupValidationException(
-          'unexpected-content',
-          '备份包含记忆范围之外的文件，已拒绝。',
+          'missing-manifest',
+          '备份清单缺少生成时间，无法验证。',
         );
       }
-    }
+      try {
+        generatedAt = DateTime.parse(generatedAtRaw).toUtc();
+      } on Object {
+        throw const BackupValidationException(
+          'missing-manifest',
+          '备份清单的生成时间无法读取，已拒绝。',
+        );
+      }
 
-    final generatedAtRaw = manifest['generatedAt'];
-    DateTime generatedAt;
-    if (generatedAtRaw is! String) {
-      throw const BackupValidationException(
-        'missing-manifest',
-        '备份清单缺少生成时间，无法验证。',
+      return _ExtractedBundle(
+        directory: extractionRoot,
+        files: files,
+        generatedAt: generatedAt,
       );
-    }
-    try {
-      generatedAt = DateTime.parse(generatedAtRaw).toUtc();
     } on Object {
-      throw const BackupValidationException(
-        'missing-manifest',
-        '备份清单的生成时间无法读取，已拒绝。',
-      );
+      await _cleanupExtraction(extractionRoot);
+      rethrow;
     }
+  }
 
-    return (
-      files: {
-        for (final MapEntry(:key, :value) in files.entries)
-          key.substring('memory/'.length): value,
-      },
-      generatedAt: generatedAt,
+  /// 单个条目的受限解压：压缩数据按块喂入原生 zlib 分块解码器
+  /// （store 条目直接按块复制），输出到达受限接收器时逐块计数并同步
+  /// 写临时文件，任一预算超限立即抛出中断。临时文件名是平铺序号，
+  /// 不使用包内路径。返回临时文件、真实解压字节数与同一遍滚动计算
+  /// 的 sha256。
+  Future<({File file, int bytes, String sha256})> _extractEntryBounded(
+    Directory root,
+    int index,
+    ZipFile file, {
+    required int entryLimit,
+    required int totalLimit,
+    required _ExtractionProgress progress,
+  }) async {
+    final target = File(path.join(root.path, index.toString().padLeft(8, '0')));
+    final handle = await target.open(mode: FileMode.write);
+    final digestCollector = _DigestCollector();
+    final hashSink = sha256.startChunkedConversion(digestCollector);
+    final sink = _BoundedExtractSink(
+      handle: handle,
+      hashSink: hashSink,
+      entryLimit: entryLimit,
+      totalLimit: totalLimit,
+      progress: progress,
     );
+    try {
+      final rawStream = file.getStream(decompress: false);
+      if (file.compressionMethod == CompressionType.deflate) {
+        // 原生 zlib 分块解码：输出按解码器固定内部缓冲逐块到达受限
+        // 接收器，接收器抛出即整段中止；不用 archive 内部先聚合再
+        // 回调的便捷入口。
+        final conversion = ZLibCodec(
+          raw: true,
+        ).decoder.startChunkedConversion(sink);
+        while (!rawStream.isEOS) {
+          final chunk = rawStream
+              .readBytes(_extractFeedChunkBytes)
+              .toUint8List();
+          if (chunk.isEmpty) {
+            break;
+          }
+          conversion.add(chunk);
+        }
+        conversion.close();
+      } else {
+        while (!rawStream.isEOS) {
+          final chunk = rawStream
+              .readBytes(_extractFeedChunkBytes)
+              .toUint8List();
+          if (chunk.isEmpty) {
+            break;
+          }
+          sink.add(chunk);
+        }
+      }
+      hashSink.close();
+      await handle.flush();
+      return (
+        file: target,
+        bytes: sink.entryWritten,
+        sha256: digestCollector.value!.toString(),
+      );
+    } finally {
+      await handle.close();
+    }
+  }
+
+  /// 删除受限解压的临时目录；清理失败只记诊断，不影响导入结果。
+  Future<void> _cleanupExtraction(Directory directory) async {
+    try {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    } on Object catch (error) {
+      _diagnosticsSink('backup extraction cleanup deferred [$error]');
+    }
   }
 
   Map<String, Object?> _parseManifest(String contents) {
@@ -602,24 +908,31 @@ final class MemoryBackupService {
 
   // ---------- 差异预览 ----------
 
-  /// 导入前验证与差异展示；只读，不写任何文件、不创建快照。
+  /// 导入前验证与差异展示；只读，不写任何文件、不创建快照。验证与
+  /// 受限解压在隔离临时目录内完成，返回前清理。
   Future<MemoryBackupPreview> previewImport(Uint8List bundle) async {
-    final validated = await _validateBundle(bundle);
-    return (await _diff(validated.files, validated.generatedAt)).preview;
+    final extracted = await _extractValidatedBundle(bundle);
+    try {
+      return (await _diff(extracted.files, extracted.generatedAt)).preview;
+    } finally {
+      await _cleanupExtraction(extracted.directory);
+    }
   }
 
   /// 差异预览；备份带控制记录时一并返回已解析的备份控制记录——
   /// 此处已校验其可读（不可读直接拒绝），导入侧直接复用，不对同一
   /// 字节二次解析。
-  Future<({MemoryBackupPreview preview, MemoryControls? backupControls})>
-  _diff(Map<String, Uint8List> files, DateTime generatedAt) async {
+  Future<({MemoryBackupPreview preview, MemoryControls? backupControls})> _diff(
+    Map<String, File> files,
+    DateTime generatedAt,
+  ) async {
     final currentControls = await memoryControls.load();
     MemoryControls? backupControls;
-    final backupControlsBytes = files[memoryControlsFileName];
-    if (backupControlsBytes != null) {
+    final backupControlsFile = files[memoryControlsFileName];
+    if (backupControlsFile != null) {
       try {
         backupControls = parseMemoryControls(
-          utf8.decode(backupControlsBytes),
+          utf8.decode(await backupControlsFile.readAsBytes()),
         );
       } on Object {
         backupControls = const MemoryControls(readable: false);
@@ -646,7 +959,7 @@ final class MemoryBackupService {
       if (relative == memoryControlsFileName) {
         continue; // 控制记录走并集合并，不按文件替换。
       }
-      final backupBytes = files[relative]!;
+      final backupBytes = await files[relative]!.readAsBytes();
       if (!_sessionStructurallyValid(relative, backupBytes)) {
         items.add(
           MemoryBackupPreviewItem(
@@ -731,135 +1044,136 @@ final class MemoryBackupService {
 
   /// 确认后执行导入：重新验证 → 快照当前状态 → 原子写入 → 合并控制
   /// 并按现行控制清除派生内容 → 重建索引。中途失败按快照恢复。
+  /// 预算失败发生在验证与受限解压阶段，先于快照，不触碰产品数据。
   Future<MemoryBackupImportResult> importBundle(Uint8List bundle) async {
-    final validated = await _validateBundle(bundle);
-    final files = validated.files;
-    final diff = await _diff(files, validated.generatedAt);
-    final preview = diff.preview;
-    final snapshotId = await _createSnapshot();
-
+    final extracted = await _extractValidatedBundle(bundle);
     try {
-      // 控制纪律（Memory.md 写入边界）：先落控制记录，再写内容文件。
-      // 备份带来的控制与本机按并集合并；中断在两步之间时，留下的是
-      // 更保守的控制集合而不是更少的控制。备份控制记录已在 _diff
-      // 解析并校验可读，这里只复查本机控制记录可读。
-      var controlsMerged = false;
-      final backupControls = diff.backupControls;
-      if (backupControls != null) {
-        final currentControls = await memoryControls.load();
-        if (!currentControls.readable) {
-          throw const BackupValidationException(
-            'unexpected-content',
-            '记忆控制记录当前无法安全合并，导入中止。',
-          );
-        }
-        final merged = _mergeControls(currentControls, backupControls);
-        if (merged.changed) {
-          if (!await memoryControls.replaceForRecovery(merged.controls)) {
+      final files = extracted.files;
+      final diff = await _diff(files, extracted.generatedAt);
+      final preview = diff.preview;
+      final snapshotId = await _createSnapshot();
+
+      try {
+        // 控制纪律（Memory.md 写入边界）：先落控制记录，再写内容文件。
+        // 备份带来的控制与本机按并集合并；中断在两步之间时，留下的是
+        // 更保守的控制集合而不是更少的控制。备份控制记录已在 _diff
+        // 解析并校验可读，这里只复查本机控制记录可读。
+        var controlsMerged = false;
+        final backupControls = diff.backupControls;
+        if (backupControls != null) {
+          final currentControls = await memoryControls.load();
+          if (!currentControls.readable) {
             throw const BackupValidationException(
               'unexpected-content',
-              '记忆控制记录写入失败，导入中止。',
+              '记忆控制记录当前无法安全合并，导入中止。',
             );
           }
-          controlsMerged = true;
-        }
-      }
-
-      var added = 0;
-      var replaced = 0;
-      var skipped = 0;
-      var conflicts = 0;
-      var unrecoverable = 0;
-      for (final item in preview.items) {
-        if (item.path == memoryControlsFileName) {
-          continue;
-        }
-        switch (item.category) {
-          case BackupItemCategory.added ||
-              BackupItemCategory.replaced:
-            await _byteWriter.write(
-              path.join(memoryDirectory, item.path),
-              files[item.path]!,
-            );
-            if (item.category == BackupItemCategory.added) {
-              added += 1;
-            } else {
-              replaced += 1;
+          final merged = _mergeControls(currentControls, backupControls);
+          if (merged.changed) {
+            if (!await memoryControls.replaceForRecovery(merged.controls)) {
+              throw const BackupValidationException(
+                'unexpected-content',
+                '记忆控制记录写入失败，导入中止。',
+              );
             }
-          case BackupItemCategory.skipped:
-            skipped += 1;
-          case BackupItemCategory.conflict:
-            conflicts += 1;
-          case BackupItemCategory.unrecoverable:
-            unrecoverable += 1;
-        }
-      }
-
-      // 导入可能带回上次备份之后已被删除/禁提的内容：按合并后的
-      // 控制集合再清除一遍派生层，绝不让被控内容随备份复活。
-      final effectiveControls = await memoryControls.load();
-      if (effectiveControls.readable) {
-        for (final entry in [
-          ...effectiveControls.banned,
-          ...effectiveControls.deleted,
-        ]) {
-          try {
-            await memoryActions.purgeDerivedScopes(
-              {normalizeMemoryText(entry.summary)},
-              text: entry.summary,
-            );
-          } on Object catch (error) {
-            _diagnosticsSink('backup import purge deferred [$error]');
+            controlsMerged = true;
           }
         }
-      }
 
-      try {
-        await episodePipeline.synchronizedOnDayFiles(
-          () => _indexStore.rebuild(includeUnfinalized: true),
-        );
-      } on Object catch (error) {
-        _diagnosticsSink('backup import index rebuild deferred [$error]');
-      }
-      try {
-        final snapshot = await personaTree.readSnapshot();
-        final allReadable = snapshot.branches.values.every(
-          (branch) => branch.readable,
-        );
-        if (allReadable) {
-          await personaTree.regeneratePersonaProjection();
+        var added = 0;
+        var replaced = 0;
+        var skipped = 0;
+        var conflicts = 0;
+        var unrecoverable = 0;
+        for (final item in preview.items) {
+          if (item.path == memoryControlsFileName) {
+            continue;
+          }
+          switch (item.category) {
+            case BackupItemCategory.added || BackupItemCategory.replaced:
+              await _byteWriter.write(
+                path.join(memoryDirectory, item.path),
+                await files[item.path]!.readAsBytes(),
+              );
+              if (item.category == BackupItemCategory.added) {
+                added += 1;
+              } else {
+                replaced += 1;
+              }
+            case BackupItemCategory.skipped:
+              skipped += 1;
+            case BackupItemCategory.conflict:
+              conflicts += 1;
+            case BackupItemCategory.unrecoverable:
+              unrecoverable += 1;
+          }
         }
-      } on Object catch (error) {
-        _diagnosticsSink('backup import persona refresh deferred [$error]');
-      }
 
-      await _pruneSnapshots();
-      return MemoryBackupImportResult(
-        added: added,
-        replaced: replaced,
-        skipped: skipped,
-        conflicts: conflicts,
-        unrecoverable: unrecoverable,
-        controlsMerged: controlsMerged,
-        snapshotId: snapshotId,
-      );
-    } on Object catch (error) {
-      // 导入失败：按刚创建的快照恢复原样，绝不留下半导入状态。
-      try {
-        await _restoreSnapshot(snapshotId);
-      } on Object catch (restoreError) {
-        _diagnosticsSink(
-          'backup import rollback deferred [$restoreError]',
+        // 导入可能带回上次备份之后已被删除/禁提的内容：按合并后的
+        // 控制集合再清除一遍派生层，绝不让被控内容随备份复活。
+        final effectiveControls = await memoryControls.load();
+        if (effectiveControls.readable) {
+          for (final entry in [
+            ...effectiveControls.banned,
+            ...effectiveControls.deleted,
+          ]) {
+            try {
+              await memoryActions.purgeDerivedScopes({
+                normalizeMemoryText(entry.summary),
+              }, text: entry.summary);
+            } on Object catch (error) {
+              _diagnosticsSink('backup import purge deferred [$error]');
+            }
+          }
+        }
+
+        try {
+          await episodePipeline.synchronizedOnDayFiles(
+            () => _indexStore.rebuild(includeUnfinalized: true),
+          );
+        } on Object catch (error) {
+          _diagnosticsSink('backup import index rebuild deferred [$error]');
+        }
+        try {
+          final snapshot = await personaTree.readSnapshot();
+          final allReadable = snapshot.branches.values.every(
+            (branch) => branch.readable,
+          );
+          if (allReadable) {
+            await personaTree.regeneratePersonaProjection();
+          }
+        } on Object catch (error) {
+          _diagnosticsSink('backup import persona refresh deferred [$error]');
+        }
+
+        await _pruneSnapshots();
+        return MemoryBackupImportResult(
+          added: added,
+          replaced: replaced,
+          skipped: skipped,
+          conflicts: conflicts,
+          unrecoverable: unrecoverable,
+          controlsMerged: controlsMerged,
+          snapshotId: snapshotId,
+        );
+      } on Object catch (error) {
+        // 导入失败：按刚创建的快照恢复原样，绝不留下半导入状态。
+        try {
+          await _restoreSnapshot(snapshotId);
+        } on Object catch (restoreError) {
+          _diagnosticsSink('backup import rollback deferred [$restoreError]');
+        }
+        if (error is BackupValidationException) {
+          rethrow;
+        }
+        _diagnosticsSink('backup import deferred [$error]');
+        throw const BackupValidationException(
+          'import-failed',
+          '导入没有完成，本机数据已恢复到导入前的状态。',
         );
       }
-      if (error is BackupValidationException) {
-        rethrow;
-      }
-      _diagnosticsSink('backup import deferred [$error]');
-      throw const BackupValidationException(
-        'import-failed',
-        '导入没有完成，本机数据已恢复到导入前的状态。',
-      );
+    } finally {
+      await _cleanupExtraction(extracted.directory);
     }
   }
 
