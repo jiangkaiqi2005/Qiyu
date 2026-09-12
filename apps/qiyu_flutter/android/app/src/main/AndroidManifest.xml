@@ -9,14 +9,18 @@
     <!-- 云备份与设备迁移必须关（端内形态隐私红线）：明文 Key 的
          provider.json、会话与记忆 Markdown 一旦随系统备份离开设备，
          「数据只在我手机上」就破了——跨设备唯一通道是手动导出。
-         allowBackup=false 同时覆盖 Android 12+ 的云备份/D2D 迁移与
-         旧版的 adb/云备份；模板未引用 dataExtractionRules/fullBackup
-         Content，无需其他配置。 -->
+         allowBackup=false 是主开关，但官方文档指出部分厂商设备上它
+         只禁云备份、禁不掉设备到设备迁移，故再按版本显式排除应用
+         私有内部存储全域：Android 12+ 走 dataExtractionRules（云备份
+         与设备迁移分节都排除），Android 7–11 走 fullBackupContent。
+         手动导出落在用户选定的外部位置，不受这些规则影响。 -->
     <application
         android:label="栖语"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:allowBackup="false">
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"

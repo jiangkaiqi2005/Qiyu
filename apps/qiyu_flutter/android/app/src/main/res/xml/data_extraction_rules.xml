@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 云备份与设备迁移的排除规则（Android 12 及以上按此生效）。排除
+     应用私有内部存储全域：会话与记忆 Markdown、provider.json、音量
+     偏好都在 support 目录（file 域），凭据密文在 SharedPreferences
+     （sharedpref 域），AndroidKeyStore 里的密钥本就不进备份。root 域
+     是 file/database/sharedpref 的父目录，逐域显式列出只为让每类
+     数据都有名有姓的排除项。跨设备唯一通道是手动导出：手动备份落在
+     用户选定的外部位置，不属于应用沙盒，不受本规则影响。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="."/>
+        <exclude domain="file" path="."/>
+        <exclude domain="database" path="."/>
+        <exclude domain="sharedpref" path="."/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="."/>
+        <exclude domain="file" path="."/>
+        <exclude domain="database" path="."/>
+        <exclude domain="sharedpref" path="."/>
+    </device-transfer>
+</data-extraction-rules>
