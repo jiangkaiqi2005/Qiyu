@@ -551,7 +551,7 @@ final _secretPatterns = [
     caseSensitive: false,
   ),
   RegExp(
-    r'"(?:' + _sensitiveKeyNames + r'"\s*:\s*")',
+    r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
     caseSensitive: false,
   ),
   RegExp(r'(?:验证码|otp|verification code)\s*[:=：]?\s*\d{4,8}', caseSensitive: false),

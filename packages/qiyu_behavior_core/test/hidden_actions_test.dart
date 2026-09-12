@@ -191,6 +191,10 @@ void main() {
       '我把密码改成新的了',
       '今晚聊了浏览器的 Cookie 是干嘛的',
       '他说密钥管理要用专门的工具',
+      // 引号叙述：键名出现在引号里但后面不是「冒号+引号值」的键值形态。
+      '用户问"token是什么"',
+      '聊到"password怎么存"的话题',
+      '他说"密钥管理"很重要',
     ]) {
       final parse = parseHiddenActions(
         '<qiyu-actions>[{"action":"memory_signal","summary":${_json(summary)}}]'
