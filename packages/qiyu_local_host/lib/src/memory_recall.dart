@@ -577,11 +577,9 @@ final class RecallOrchestrator {
       ..writeln('用户当时的原话：$userText')
       ..writeln()
       ..writeln('## 月份索引（episodes/index.md）');
-    // 旧索引按逗号拆词；两层关键词栏都先拼回再脱敏，避免 JSON
-    // 凭据值中的逗号将秘密拆开。年月、日期和路径仍独立装配。
     for (final line in topIndex) {
       user.writeln(
-        '- ${line.month} | ${redactSessionText(line.keywords.join(', '))} | '
+        '- ${line.month} | ${_redactedIndexKeywords(line.keywords)} | '
         '${episodeMonthRelativeDirectory(line.month)}/index.md',
       );
     }
@@ -591,7 +589,7 @@ final class RecallOrchestrator {
         ..writeln('## 每日索引（$key）');
       for (final line in value) {
         user.writeln(
-          '- ${line.date} | ${redactSessionText(line.keywords.join(', '))} | '
+          '- ${line.date} | ${_redactedIndexKeywords(line.keywords)} | '
           '${line.date}.md',
         );
       }
@@ -600,6 +598,23 @@ final class RecallOrchestrator {
       const ModelMessage(ModelMessageRole.system, system),
       ModelMessage(ModelMessageRole.user, user.toString()),
     ];
+  }
+
+  String _redactedIndexKeywords(List<String> keywords) {
+    final text = keywords.join(', ');
+    final separated = StringBuffer();
+    var cursor = 0;
+    // 索引行本身没有换行。用已有 JSON 区间保护字符串内的逗号，
+    // 其余逗号两侧临时换行，让 Cookie 规则及空值后的空白匹配都
+    // 止于关键词边界。JSON 允许这些空白，数组归属与密码值不变。
+    for (final field in jsonScalarFields(text)) {
+      separated
+        ..write(text.substring(cursor, field.valueStart).replaceAll(',', '\n,\n'))
+        ..write(text.substring(field.valueStart, field.valueEnd));
+      cursor = field.valueEnd;
+    }
+    separated.write(text.substring(cursor).replaceAll(',', '\n,\n'));
+    return redactSessionText(separated.toString()).replaceAll('\n,\n', ',');
   }
 
   List<ModelMessage> _composeMessages({

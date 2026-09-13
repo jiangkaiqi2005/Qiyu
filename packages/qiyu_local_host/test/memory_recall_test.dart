@@ -173,6 +173,26 @@ void main() {
     ('旧书店, {"count":42}, 12345678', '旧书店, {"count":42}, 12345678'),
     ('{"pwd":"D1"}, 旧书店', '{"pwd":"[已脱敏]"}, 旧书店'),
     ('{"pwd":",D"}, 旧书店', '{"pwd":"[已脱敏]"}, 旧书店'),
+    (
+      'cookie:a=b, 旧书店, {"count":42}, 12345678',
+      'cookie:[已脱敏], 旧书店, {"count":42}, 12345678',
+    ),
+    ('Cookie:教程, page=42, 旧书店', 'Cookie:教程, page=42, 旧书店'),
+    ('Cookie:, page=42, 旧书店', 'Cookie:, page=42, 旧书店'),
+    ('Cookie:a=b, 旧书店, 12345678', 'Cookie:[已脱敏], 旧书店, 12345678'),
+    (
+      'cookie:a=b, {"pwd":",D"}, 旧书店, {"count":42}, 12345678',
+      'cookie:[已脱敏], {"pwd":"[已脱敏]"}, 旧书店, {"count":42}, 12345678',
+    ),
+    (
+      '{"cookie":["sid=a","other=b"]}, 旧书店, {"count":42}',
+      '{"cookie":["[已脱敏]", "[已脱敏]"]}, 旧书店, {"count":42}',
+    ),
+    (
+      'Cookie:教程, {"count":42,"note":"甲,乙"}, 旧书店, 12345678',
+      'Cookie:教程, {"count":42, "note":"甲, 乙"}, 旧书店, 12345678',
+    ),
+    ('cookie:a=b; c=d, 旧书店, 12345678', 'cookie:[已脱敏], 旧书店, 12345678'),
   ]) {
     test(
       'direct recall preserves a normal hit with keywords $keywords',
@@ -195,6 +215,10 @@ void main() {
         await recall.indexStore
             .monthIndexFile('2026-08')
             .writeAsString('# 旧索引\n- 2026-08-10 | $keywords | 2026-08-10.md\n');
+        final monthBytes = await recall.indexStore.topIndexFile.readAsBytes();
+        final dayBytes = await recall.indexStore
+            .monthIndexFile('2026-08')
+            .readAsBytes();
 
         final result = await recall.runTurnRecall(
           userText: '上次说的书店',
@@ -220,6 +244,11 @@ void main() {
         expect(result.pendingContext, contains('用户聊到旧书店的老板'));
         expect(result.pendingContext, contains('上回在旧书店挑了本画册'));
         expect(result.diagnostics, isEmpty);
+        expect(await recall.indexStore.topIndexFile.readAsBytes(), monthBytes);
+        expect(
+          await recall.indexStore.monthIndexFile('2026-08').readAsBytes(),
+          dayBytes,
+        );
       },
     );
   }
