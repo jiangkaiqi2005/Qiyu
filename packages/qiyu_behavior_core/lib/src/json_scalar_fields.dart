@@ -51,6 +51,7 @@ final _cookieArrayKeyPattern = RegExp(
 Iterable<JsonScalarField> jsonScalarFields(
   String text, {
   String? stringOwner,
+  String? rootArrayOwner,
   Iterable<JsonTextReplacement> Function(String text)? textReplacements,
 }) sync* {
   final trimmed = text.trim();
@@ -73,6 +74,9 @@ Iterable<JsonScalarField> jsonScalarFields(
   var cursor = 0;
   final contexts = _JsonTextContexts(textReplacements?.call(text) ?? const []);
   final owners = _CookieArrayOwners(text);
+  if (rootArrayOwner != null) {
+    owners.markArray(text.indexOf('['), rootArrayOwner);
+  }
   for (final match in _jsonScalarFieldPattern.allMatches(text)) {
     if (contexts.splits(match.start, match.end, anchored: true)) continue;
     owners.advanceTo(match.start);
@@ -309,6 +313,22 @@ final class _JsonTextContexts {
   }
 }
 
+// 只验证 Cookie 所属值的结构候选，完整 String 也须先进入对应解码层。
+bool _isStructuredJsonValue(String text) {
+  final trimmed = text.trim();
+  if (!(trimmed.startsWith('{') && trimmed.endsWith('}')) &&
+      !(trimmed.startsWith('[') && trimmed.endsWith(']')) &&
+      !(trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+    return false;
+  }
+  try {
+    final value = jsonDecode(trimmed);
+    return value is Map || value is List || value is String;
+  } on FormatException {
+    return false;
+  }
+}
+
 /// 检查解码后的字符串，包括字符串中再次序列化的 JSON。
 /// 只把实际替换映射回原串，保留每处未改变文本的转义和排版。
 String rewriteJsonStringValues(
@@ -324,7 +344,15 @@ String rewriteJsonStringValues(
       final field = frame.fields.current;
       frame.addTextReplacements(field.start, rewriteText);
       frame.cursor = field.valueEnd;
+      final cookieOwner = _cookieArrayKeyPattern.hasMatch(field.key ?? '')
+          ? field.key
+          : null;
+      final structured =
+          cookieOwner != null &&
+          field.stringValue != null &&
+          _isStructuredJsonValue(field.stringValue!);
       if (field.key != null &&
+          !structured &&
           isSecret(field.key!, field.stringValue ?? field._rawStringValue)) {
         frame.replacements.add(
           JsonTextReplacement(field.valueStart, field.valueEnd, '"[已脱敏]"'),
@@ -336,8 +364,10 @@ String rewriteJsonStringValues(
             field.stringValue!,
             true,
             rewriteText,
-            stringOwner: _cookieArrayKeyPattern.hasMatch(field.key ?? '')
-                ? field.key
+            stringOwner: cookieOwner,
+            rootArrayOwner:
+                structured && field.stringValue!.trimLeft().startsWith('[')
+                ? cookieOwner
                 : null,
           ),
         );
@@ -418,10 +448,12 @@ final class _JsonRewriteFrame {
     Iterable<JsonTextReplacement> Function(String text, bool decoded)
     rewriteText, {
     String? stringOwner,
+    String? rootArrayOwner,
   }) : fields = jsonScalarFields(
          text,
          // 只让完整字符串继续解码时继承 Cookie，不扩散给内部对象字段。
          stringOwner: stringOwner,
+         rootArrayOwner: rootArrayOwner,
          textReplacements: (value) => rewriteText(value, decoded),
        ).iterator;
 
