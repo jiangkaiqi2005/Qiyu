@@ -315,7 +315,8 @@ final class LocalChatService {
       requestId: trimmedRequestId,
       speaker: Speaker.qiyu,
     );
-    if (existingUser != null && existingUser.text != archivedText) {
+    if (existingUser != null &&
+        redactSessionText(existingUser.text) != archivedText) {
       throw const LocalChatException(
         code: 'request_id_conflict',
         message: '这条消息标识已被另一条内容使用，请重新发送。',
