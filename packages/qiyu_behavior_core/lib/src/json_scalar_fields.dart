@@ -70,8 +70,10 @@ Iterable<JsonScalarField> jsonScalarFields(
     }
   }
   var cursor = 0;
+  final contexts = _JsonTextContexts(textReplacements?.call(text) ?? const []);
   final owners = _CookieArrayOwners(text);
   for (final match in _jsonScalarFieldPattern.allMatches(text)) {
+    if (contexts.splits(match.start, match.end, anchored: true)) continue;
     owners.advanceTo(match.start);
     final rawValue = match.group(2) ?? match.group(3);
     try {
@@ -93,7 +95,13 @@ Iterable<JsonScalarField> jsonScalarFields(
         }
       }
       // 字段优先：普通文本的孤立引号不能与字段开引号拼成候选后吞掉字段。
-      yield* _jsonStringValues(text, cursor, match.start, textReplacements);
+      yield* _jsonStringValues(
+        text,
+        cursor,
+        match.start,
+        contexts,
+        textReplacements,
+      );
       cursor = match.end;
       if (rawKey != null) {
         yield JsonScalarField(
@@ -128,7 +136,13 @@ Iterable<JsonScalarField> jsonScalarFields(
       owners.skipTo(match.end);
     }
   }
-  yield* _jsonStringValues(text, cursor, text.length, textReplacements);
+  yield* _jsonStringValues(
+    text,
+    cursor,
+    text.length,
+    contexts,
+    textReplacements,
+  );
 }
 
 // 只追踪直接数组归属；不解析成员、复制数组或改变原始 primitive 值。
@@ -186,6 +200,7 @@ Iterable<JsonScalarField> _jsonStringValues(
   String text,
   int start,
   int end,
+  _JsonTextContexts contexts,
   Iterable<JsonTextReplacement> Function(String text)? textReplacements,
 ) sync* {
   if (start == end) return;
@@ -199,7 +214,8 @@ Iterable<JsonScalarField> _jsonStringValues(
     if (_jsonKeySeparatorPattern.matchAsPrefix(text, match.end) != null) {
       continue;
     }
-    // 完整带引号的文本凭据留在原上下文，不能拆开 password: 与其值。
+    if (contexts.splits(match.start, match.end)) continue;
+    // 延续完整值本身的保护；上下文区间额外阻止候选截走凭据键。
     while (replacementIndex < replacements.length &&
         replacements[replacementIndex].end < match.end - 1 - start) {
       replacementIndex += 1;
@@ -224,11 +240,72 @@ Iterable<JsonScalarField> _jsonStringValues(
 
 /// 当前文本中需要替换的半开区间；位置按 Dart 字符串的 UTF-16 计。
 final class JsonTextReplacement {
-  const JsonTextReplacement(this.start, this.end, this.value);
+  const JsonTextReplacement(
+    this.start,
+    this.end,
+    this.value, {
+    this.contextStart,
+    this.contextEnd,
+  });
 
   final int start;
   final int end;
   final String value;
+  // 完整键值上下文可大于实际替换值，结构候选不能把二者拆开。
+  final int? contextStart;
+  final int? contextEnd;
+}
+
+final class _JsonTextContexts {
+  _JsonTextContexts(Iterable<JsonTextReplacement> replacements) {
+    final ranges = [
+      for (final value in replacements)
+        if (value.contextStart != null && value.contextEnd != null)
+          (start: value.contextStart!, end: value.contextEnd!),
+    ]..sort((left, right) => left.start.compareTo(right.start));
+    for (final range in ranges) {
+      if (_ranges.isNotEmpty && range.start < _ranges.last.end) {
+        final previous = _ranges.removeLast();
+        _ranges.add((
+          start: previous.start,
+          end: range.end > previous.end ? range.end : previous.end,
+        ));
+      } else {
+        _ranges.add(range);
+      }
+    }
+  }
+
+  final _ranges = <({int start, int end})>[];
+
+  bool splits(int start, int end, {bool anchored = false}) {
+    var left = 0;
+    var right = _ranges.length;
+    while (left < right) {
+      final middle = (left + right) ~/ 2;
+      if (_ranges[middle].end <= start) {
+        left = middle + 1;
+      } else {
+        right = middle;
+      }
+    }
+    for (
+      var index = left;
+      index < _ranges.length && _ranges[index].start < end;
+      index += 1
+    ) {
+      final range = _ranges[index];
+      // 先起始的字段/数组成员保有自己的边界，不能被内部伪引号反抢。
+      if (anchored && start < range.start) {
+        // 本层匹配应交由值内重判，其越界尾部也不能抢占后续字段。
+        _ranges[index] = (start: range.end, end: range.end);
+        continue;
+      }
+      // 独立字符串必须完整包住上下文，不能截走凭据键或值。
+      if (!(start < range.start && end >= range.end)) return true;
+    }
+    return false;
+  }
 }
 
 /// 检查解码后的字符串，包括字符串中再次序列化的 JSON。

@@ -851,13 +851,23 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
       final rawValue = match.group(3)!;
       final value = credentialTextValue(rawValue);
       final key = match.group(2)!;
-      if (_jsonFieldContainsSecret(key, value.text) ||
-          (value.start != 0 && _jsonCookieKeyPattern.hasMatch(key) &&
-              isBareCookieTextValue(value.text, quoted: true))) {
+      final quotedCookie = value.start != 0 && _jsonCookieKeyPattern.hasMatch(key);
+      final secret = _jsonFieldContainsSecret(key, value.text) ||
+          (quotedCookie && isBareCookieTextValue(value.text, quoted: true));
+      if (secret) {
         final start = match.end - rawValue.length;
         replacements.add(JsonTextReplacement(
           start + value.start, start + value.end, '[已脱敏]',
+          contextStart: match.start, contextEnd: match.end,
         ));
+      }
+      if (quotedCookie && (secret || value.text == '[已脱敏]')) {
+        for (final part in cookieTextContinuationValues(text, match.end)) {
+          replacements.add(JsonTextReplacement(
+            part.start, part.end, '[已脱敏]',
+            contextStart: match.start, contextEnd: part.end,
+          ));
+        }
       }
     }
   }
@@ -871,6 +881,14 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
         previous.start,
         replacement.end > previous.end ? replacement.end : previous.end,
         '[已脱敏]',
+        contextStart: previous.contextStart == null ? replacement.contextStart
+            : replacement.contextStart == null ? previous.contextStart
+            : previous.contextStart! < replacement.contextStart!
+            ? previous.contextStart : replacement.contextStart,
+        contextEnd: previous.contextEnd == null ? replacement.contextEnd
+            : replacement.contextEnd == null ? previous.contextEnd
+            : previous.contextEnd! > replacement.contextEnd!
+            ? previous.contextEnd : replacement.contextEnd,
       ));
     } else {
       merged.add(replacement);
@@ -897,7 +915,8 @@ Iterable<JsonTextReplacement> _rawTextRedactions(String text) {
       start: match.start,
       end: match.end,
       replacement: JsonTextReplacement(
-        start + value.start, start + value.end, '[已脱敏]',
+        start, match.end, '[已脱敏]',
+        contextStart: match.start, contextEnd: match.end,
       ),
     ));
   }
@@ -910,7 +929,8 @@ Iterable<JsonTextReplacement> _rawTextRedactions(String text) {
       while (quotedIndex < quoted.length && quoted[quotedIndex].end <= start) {
         quotedIndex += 1;
       }
-      if (quotedIndex < quoted.length && quoted[quotedIndex].start <= start) {
+      if (quotedIndex < quoted.length && quoted[quotedIndex].start <= start &&
+          match.end <= quoted[quotedIndex].end) {
         continue;
       }
       replacements.add(JsonTextReplacement(start, match.end, '[已脱敏]'));

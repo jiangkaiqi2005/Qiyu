@@ -1074,10 +1074,12 @@ bool _containsAdditionalSecretText(String value, bool decoded) =>
         .allMatches(value).any((match) {
       final rawValue = match.group(3)!;
       final key = match.group(2)!;
-      final value = credentialTextValue(rawValue);
-      return _jsonFieldContainsSecret(key, value.text) ||
+      final credential = credentialTextValue(rawValue);
+      return _jsonFieldContainsSecret(key, credential.text) ||
           (decoded && _jsonCookieKeyPattern.hasMatch(key) &&
-              isBareCookieTextValue(value.text, quoted: value.start != 0));
+              (isBareCookieTextValue(credential.text, quoted: credential.start != 0) ||
+                  (credential.start != 0 && credential.text == '[已脱敏]' &&
+                      cookieTextContinuationValues(value, match.end).isNotEmpty)));
     }) ||
     _additionalJsonTextSecretPattern.allMatches(value).any((match) {
       try {

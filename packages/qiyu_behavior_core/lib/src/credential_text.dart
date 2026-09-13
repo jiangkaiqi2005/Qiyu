@@ -19,6 +19,31 @@ RegExp credentialTextPattern(String keys) => RegExp(
   caseSensitive: false,
 );
 
+final _cookieContinuationSeparator = RegExp(
+  r'[ \t]*[;；][ \t]*(?=[A-Za-z0-9_~-]+[ \t]*=)',
+);
+final _cookieContinuationValue = credentialTextPattern(r'[A-Za-z0-9_~-]+');
+
+/// 从已确认的引号 Cookie 值之后继续检查分号项，逗号或换行结束归属。
+Iterable<({int start, int end})> cookieTextContinuationValues(
+  String text,
+  int offset,
+) sync* {
+  while (offset < text.length) {
+    final separator = _cookieContinuationSeparator.matchAsPrefix(text, offset);
+    if (separator == null) return;
+    final match = _cookieContinuationValue.matchAsPrefix(text, separator.end);
+    if (match == null) return;
+    final rawValue = match.group(3)!;
+    final value = credentialTextValue(rawValue);
+    if (value.text.trim().isNotEmpty && value.text != '[已脱敏]') {
+      final start = match.end - rawValue.length;
+      yield (start: start + value.start, end: start + value.end);
+    }
+    offset = match.end;
+  }
+}
+
 /// 返回值语义与引号内的替换区间；普通未加引号值使用整个区间。
 ({String text, int start, int end}) credentialTextValue(String rawValue) {
   final quoted =
