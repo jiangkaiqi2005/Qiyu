@@ -19,13 +19,13 @@ final class JsonScalarField {
   final int valueEnd;
 }
 
-// 只消费完整标量字段；自由文本中的孤立引号不能吞掉后面的 JSON。
+// 只消费完整标量字段；孤立引号和非法裸控制字符不能吞掉后面的 JSON。
 final _jsonScalarFieldPattern = RegExp(
-  r'("(?:[^"\\]|\\.)*")\s*:\s*'
-  r'("(?:[^"\\]|\\.)*"|'
+  r'("(?:[^\x00-\x1F"\\]|\\.)*")\s*:\s*'
+  r'("(?:[^\x00-\x1F"\\]|\\.)*"|'
   r'-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?'
   r'(?=\s*(?:[,}\]]|$)))'
-  r'|(?<=[\[,])\s*("(?:[^"\\]|\\.)*")(?=\s*[,\]])',
+  r'|(?<=[\[,])\s*("(?:[^\x00-\x1F"\\]|\\.)*")(?=\s*[,\]])',
 );
 
 Iterable<JsonScalarField> jsonScalarFields(String text) sync* {
@@ -50,51 +50,82 @@ Iterable<JsonScalarField> jsonScalarFields(String text) sync* {
   }
 }
 
+/// 当前文本中需要替换的半开区间；位置按 Dart 字符串的 UTF-16 计。
+final class JsonTextReplacement {
+  const JsonTextReplacement(this.start, this.end, this.value);
+
+  final int start;
+  final int end;
+  final String value;
+}
+
 /// 检查解码后的字符串，包括字符串中再次序列化的 JSON。
-/// 已解析的键和值不会再次进入文本兜底；仅变化的值重新编码。
+/// 只把实际替换映射回原串，保留每处未改变文本的转义和排版。
 String rewriteJsonStringValues(
   String text, {
   required bool Function(String key, String? value) isSecret,
-  required String Function(String text, bool decoded) rewriteText,
+  required Iterable<JsonTextReplacement> Function(String text, bool decoded)
+  rewriteText,
 }) {
   final stack = [_JsonRewriteFrame(text, decoded: false)];
   while (true) {
     final frame = stack.last;
     if (frame.fields.moveNext()) {
       final field = frame.fields.current;
-      frame.buffer.write(
-        rewriteText(
-          frame.text.substring(frame.cursor, field.start),
-          frame.decoded,
-        ),
-      );
-      frame.buffer.write(frame.text.substring(field.start, field.valueStart));
+      frame.addTextReplacements(field.start, rewriteText);
       frame.cursor = field.valueEnd;
       if (field.key != null && isSecret(field.key!, field.stringValue)) {
-        frame.buffer.write('"[已脱敏]"');
+        frame.replacements.add(
+          JsonTextReplacement(field.valueStart, field.valueEnd, '"[已脱敏]"'),
+        );
       } else if (field.stringValue != null) {
         frame.pending = field;
         stack.add(_JsonRewriteFrame(field.stringValue!, decoded: true));
-      } else {
-        frame.buffer.write(
-          frame.text.substring(field.valueStart, field.valueEnd),
-        );
       }
       continue;
     }
-    frame.buffer.write(
-      rewriteText(frame.text.substring(frame.cursor), frame.decoded),
-    );
-    final result = frame.buffer.toString();
+    frame.addTextReplacements(frame.text.length, rewriteText);
     stack.removeLast();
-    if (stack.isEmpty) return result;
+    if (stack.isEmpty) {
+      final buffer = StringBuffer();
+      var cursor = 0;
+      for (final replacement in frame.replacements) {
+        buffer.write(text.substring(cursor, replacement.start));
+        buffer.write(replacement.value);
+        cursor = replacement.end;
+      }
+      buffer.write(text.substring(cursor));
+      return buffer.toString();
+    }
     final parent = stack.last;
     final field = parent.pending!;
-    parent.buffer.write(
-      result == field.stringValue
-          ? parent.text.substring(field.valueStart, field.valueEnd)
-          : jsonEncode(result),
-    );
+    // jsonDecode 已确认该字符串有效；只扫描替换端点，不分配逐字符映射表。
+    var rawOffset = field.valueStart + 1;
+    var decodedOffset = 0;
+    int rawEndpoint(int endpoint) {
+      while (decodedOffset < endpoint) {
+        rawOffset += parent.text.codeUnitAt(rawOffset) != 92
+            ? 1
+            : parent.text.codeUnitAt(rawOffset + 1) == 117
+            ? 6
+            : 2;
+        decodedOffset += 1;
+      }
+      return rawOffset;
+    }
+
+    for (final replacement in frame.replacements) {
+      final start = rawEndpoint(replacement.start);
+      final end = rawEndpoint(replacement.end);
+      final encoded = jsonEncode(replacement.value);
+      parent.replacements.add(
+        JsonTextReplacement(
+          start,
+          end,
+          encoded.substring(1, encoded.length - 1),
+        ),
+      );
+    }
     parent.pending = null;
   }
 }
@@ -107,7 +138,26 @@ final class _JsonRewriteFrame {
   final String text;
   final bool decoded;
   final Iterator<JsonScalarField> fields;
-  final buffer = StringBuffer();
+  final replacements = <JsonTextReplacement>[];
   var cursor = 0;
   JsonScalarField? pending;
+
+  void addTextReplacements(
+    int end,
+    Iterable<JsonTextReplacement> Function(String text, bool decoded)
+    rewriteText,
+  ) {
+    for (final replacement in rewriteText(
+      text.substring(cursor, end),
+      decoded,
+    )) {
+      replacements.add(
+        JsonTextReplacement(
+          cursor + replacement.start,
+          cursor + replacement.end,
+          replacement.value,
+        ),
+      );
+    }
+  }
 }

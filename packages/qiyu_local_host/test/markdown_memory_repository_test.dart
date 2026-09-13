@@ -42,6 +42,11 @@ void main() {
         RawSessionTurn.user(requestId: 'json-boundary', text: input, at: now),
       );
       expect(saved.turns.single.text, expected);
+      if (fixture['expectedJsonCount'] != null) {
+        expect(saved.turns.single.redacted().text, expected);
+        final json = jsonDecode(saved.turns.single.text) as Map<String, Object?>;
+        expect(json['count'], fixture['expectedJsonCount']);
+      }
       final file = temporaryDirectory
           .listSync(recursive: true)
           .whereType<File>()
@@ -66,6 +71,11 @@ void main() {
         input,
       );
       expect(messages.last.content, expected);
+      final savedMessages = const ModelPromptBuilder('合成人格').build(
+        StateSnapshot.initial('json-boundary'),
+        saved.turns.single.text,
+      );
+      expect(savedMessages.last.content, expected);
     });
   }
 

@@ -52,6 +52,32 @@ void main() {
   }
 
   group('秘密特征表 lockstep 守门', () {
+    test('既有 Provider Token 在 JSON 解码后同样过滤，短文本保留', () {
+      const tokens = [
+        'as_sk_abcdefghijklmnopqrstuvwxyz123456',
+        'ghp_abcdefghijklmnopqrstuvwxyz1234567890',
+        'github_pat_abcdefghijklmnopqrstuvwxyz_1234567890',
+        'glpat-abcdefghijklmnopqrst',
+        'xoxb-123456789012-abcdefghijklmnopqrstuvwx',
+        'AKIAIOSFODNN7EXAMPLE',
+        'AIzaSyA1234567890abcdefghijklmnopqrstuvwxyz',
+        'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop',
+      ];
+      for (final token in tokens) {
+        final escaped = r'\u' +
+            token.codeUnitAt(0).toRadixString(16).padLeft(4, '0') +
+            token.substring(1);
+        for (final value in [token, escaped]) {
+          expect(
+            redactSessionText('{"note":"$value","count":42}'),
+            '{"note":"[已脱敏]","count":42}',
+          );
+        }
+      }
+      const ordinary = r'{"note":"B\u0065arer 是一种认证方案","count":42}';
+      expect(redactSessionText(ordinary), ordinary);
+    });
+
     // 相对各自包根的源码路径；dart test 固定在包根目录运行。
     const coreSourcePath =
         '../../packages/qiyu_behavior_core/lib/src/hidden_actions.dart';
@@ -74,8 +100,9 @@ void main() {
 
     test('core 秘密特征表（记忆提升闸门）钉死现行清单', () {
       final source = File(coreSourcePath).readAsStringSync();
-      final block =
-          extractPatternBlock(source, 'final _secretPatterns = [');
+      final block = ['_tokenSecretPatterns', '_keyedSecretPatterns', '_otherSecretPatterns']
+          .map((name) => extractPatternBlock(source, 'final $name = ['))
+          .join('\n');
       expect(
         RegExp('RegExp\\(').allMatches(block).length,
         8,
@@ -111,8 +138,12 @@ void main() {
 
     test('host 落盘脱敏表钉死现行清单', () {
       final source = File(hostSourcePath).readAsStringSync();
-      final block =
-          extractPatternBlock(source, 'final _sessionRedactPatterns = <RegExp>[');
+      final block = [
+        '_sessionTokenRedactPatterns',
+        '_sessionKeyedRedactPatterns',
+        '_sessionOtherRedactPatterns',
+      ].map((name) => extractPatternBlock(source, 'final $name = <RegExp>['))
+          .join('\n');
       expect(
         RegExp('RegExp\\(').allMatches(block).length,
         20,
@@ -185,11 +216,11 @@ void main() {
 
     test('两侧清单保持有意差异：host 多覆盖的令牌特征不得反向并入 core', () {
       final coreSource = File(coreSourcePath).readAsStringSync();
-      final coreBlock = extractPatternBlock(coreSource, 'final _secretPatterns = [');
+      final coreBlock = extractPatternBlock(coreSource, 'final _tokenSecretPatterns = [');
       final hostSource = File(hostSourcePath).readAsStringSync();
       final hostBlock = extractPatternBlock(
         hostSource,
-        'final _sessionRedactPatterns = <RegExp>[',
+        'final _sessionTokenRedactPatterns = <RegExp>[',
       );
       // host 落盘脱敏表独有、core 记忆闸门刻意不含的令牌特征前缀。
       for (final hostOnlyMarker in [

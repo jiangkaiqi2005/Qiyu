@@ -676,7 +676,7 @@ final _cookieEntryPattern = RegExp(r'[A-Za-z0-9_~-]+\s*=[^\s；;，,]');
 /// 直接跟一长串无空格令牌）单独遮值。PEM 私钥的类型词可缺省，覆盖
 /// PKCS#8（BEGIN PRIVATE KEY）与 RSA/EC/OpenSSH/DSA/加密形态；类型
 /// 段禁止连字符，防止跨标记误吃。
-final _sessionRedactPatterns = <RegExp>[
+final _sessionTokenRedactPatterns = <RegExp>[
   RegExp(r'as_sk_[A-Za-z0-9_-]{8,}', caseSensitive: false),
   RegExp(
     r'(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9_])',
@@ -702,6 +702,8 @@ final _sessionRedactPatterns = <RegExp>[
   ),
   RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
+];
+final _sessionKeyedRedactPatterns = <RegExp>[
   RegExp(
     r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
     caseSensitive: false,
@@ -719,6 +721,8 @@ final _sessionRedactPatterns = <RegExp>[
     r'((?:' + _sensitiveKeyNames + r')\s*[:=：]\s*)[^\s；;，,]+',
     caseSensitive: false,
   ),
+];
+final _sessionOtherRedactPatterns = <RegExp>[
   RegExp(
     r'((?:验证码|otp|verification code)\s*[:=：]?\s*)\d{4,8}',
     caseSensitive: false,
@@ -732,6 +736,16 @@ final _sessionRedactPatterns = <RegExp>[
     r'-----END [A-Z0-9 ]*PRIVATE KEY-----',
     caseSensitive: false,
   ),
+];
+
+final _sessionRedactPatterns = <RegExp>[
+  ..._sessionTokenRedactPatterns,
+  ..._sessionKeyedRedactPatterns,
+  ..._sessionOtherRedactPatterns,
+];
+final _decodedValueRedactPatterns = <RegExp>[
+  ..._sessionTokenRedactPatterns,
+  ..._sessionOtherRedactPatterns,
 ];
 
 /// 诊断文本在会话脱敏之外的追加规则：授权头、Cookie、完整输入与本机路径。
@@ -776,6 +790,11 @@ final _decodedTextCredentialPattern = RegExp(
   r'|[^\s；;，,]+)',
   caseSensitive: false,
 );
+// 多项 Cookie 只在当前解码文本内遮蔽，不跨重新编码后的 JSON 值边界。
+final _decodedCookieTextPattern = RegExp(
+  r'((?:set[- ])?cookie\s*[:=：]\s*)([^\r\n]+)',
+  caseSensitive: false,
+);
 
 bool _jsonFieldContainsSecret(String key, String? value) {
   if (value != null && (value.trim().isEmpty || value == '[已脱敏]')) {
@@ -787,8 +806,14 @@ bool _jsonFieldContainsSecret(String key, String? value) {
   return _sensitiveJsonKeyPattern.hasMatch(key);
 }
 
-String _redactUnparsedJsonText(String text, bool decoded) {
-  var result = text.replaceAllMapped(_additionalJsonRedactPattern, (match) {
+Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded) {
+  final replacements = <JsonTextReplacement>[];
+  void replaceValue(Match match, int valueGroup) {
+    replacements.add(JsonTextReplacement(
+      match.end - match.group(valueGroup)!.length, match.end, '[已脱敏]',
+    ));
+  }
+  for (final match in _additionalJsonRedactPattern.allMatches(text)) {
     final rawValue = match.group(3)!;
     String value;
     try {
@@ -796,34 +821,52 @@ String _redactUnparsedJsonText(String text, bool decoded) {
     } on FormatException {
       value = rawValue;
     }
-    return _jsonFieldContainsSecret(match.group(2)!, value)
-        ? '${match.group(1)}[已脱敏]'
-        : match.group(0)!;
-  });
-  if (!decoded) return result;
+    if (_jsonFieldContainsSecret(match.group(2)!, value)) replaceValue(match, 3);
+  }
+  if (!decoded) return replacements;
   // 解码后的文本只按实际凭据值判定，不搬入旧原文规则的空值/占位行为。
-  result = result.replaceAllMapped(_decodedTextCredentialPattern, (match) {
+  for (final pattern in _decodedValueRedactPatterns) {
+    for (final match in pattern.allMatches(text)) {
+      final prefix = match.groupCount > 0 ? match.group(1)!.length : 0;
+      replacements.add(JsonTextReplacement(
+        match.start + prefix, match.end, '[已脱敏]',
+      ));
+    }
+  }
+  for (final match in _decodedCookieTextPattern.allMatches(text)) {
+    if (_cookieEntryPattern.hasMatch(match.group(2)!)) replaceValue(match, 2);
+  }
+  for (final match in _decodedTextCredentialPattern.allMatches(text)) {
     final rawValue = match.group(3)!;
     final value = rawValue.length >= 2 &&
             ((rawValue.startsWith('"') && rawValue.endsWith('"')) ||
                 (rawValue.startsWith("'") && rawValue.endsWith("'")))
         ? rawValue.substring(1, rawValue.length - 1)
         : rawValue;
-    final prefix = match.group(1)!;
-    return _jsonFieldContainsSecret(match.group(2)!, value)
-        ? '$prefix[已脱敏]'
-        : match.group(0)!;
-  });
-  return result;
+    if (_jsonFieldContainsSecret(match.group(2)!, value)) replaceValue(match, 3);
+  }
+  // 同一凭据可能同时命中 Token 和键值规则；仅合并重叠的替换区间。
+  replacements.sort((left, right) => left.start.compareTo(right.start));
+  final merged = <JsonTextReplacement>[];
+  for (final replacement in replacements) {
+    if (merged.isNotEmpty && replacement.start < merged.last.end) {
+      final previous = merged.removeLast();
+      merged.add(JsonTextReplacement(
+        previous.start,
+        replacement.end > previous.end ? replacement.end : previous.end,
+        '[已脱敏]',
+      ));
+    } else {
+      merged.add(replacement);
+    }
+  }
+  return merged;
 }
 
-String redactSessionText(String text) => _applyRedactions(
-  rewriteJsonStringValues(
-    text,
-    isSecret: _jsonFieldContainsSecret,
-    rewriteText: _redactUnparsedJsonText,
-  ),
-  _sessionRedactPatterns,
+String redactSessionText(String text) => rewriteJsonStringValues(
+  _applyRedactions(text, _sessionRedactPatterns),
+  isSecret: _jsonFieldContainsSecret,
+  rewriteText: _redactUnparsedJsonText,
 );
 
 String redactDiagnosticText(String text) => _applyRedactions(

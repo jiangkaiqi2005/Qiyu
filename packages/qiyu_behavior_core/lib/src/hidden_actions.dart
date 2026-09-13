@@ -542,8 +542,13 @@ final _sensitiveJsonKeyPattern = RegExp(
   '^(?:$_sensitiveKeyNames|$_additionalSensitiveKeyNames)\$',
   caseSensitive: false,
 );
-final _additionalTextSecretPattern = RegExp(
-  '(?:$_additionalSensitiveKeyNames)' r'\s*[:=：]\s*('
+final _additionalTextSecretPattern =
+    _textSecretPattern(_additionalSensitiveKeyNames);
+final _decodedTextSecretPattern =
+    _textSecretPattern('$_sensitiveKeyNames|$_additionalSensitiveKeyNames');
+
+RegExp _textSecretPattern(String keys) => RegExp(
+  '($keys)' r'\s*[:=：]\s*('
   r'''(?:"\[已脱敏\]"|'\[已脱敏\]'|\[已脱敏\]|"\s*"|'\s*')'''
   r'''(?=$|[\s；;，,。.!！?？）)\]}"'])'''
   r'|[^\s；;，,]+)',
@@ -567,9 +572,11 @@ final _cookieEntryPattern = RegExp(r'[A-Za-z0-9_~-]+\s*=[^\s；;，,]');
 /// 的 PEM 私钥形态与 host 落盘脱敏表同形；两表用途不同（这里只判
 /// 命中丢弃动作，落盘表要做替换遮蔽），覆盖面差异由
 /// secret_patterns_lockstep_test.dart 钉住。
-final _secretPatterns = [
+final _tokenSecretPatterns = [
   RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
+];
+final _keyedSecretPatterns = [
   RegExp(
     r'(?:' + _sensitiveKeyNames + r')\s*[:=：]\s*[^\s；;，,]+',
     caseSensitive: false,
@@ -578,6 +585,8 @@ final _secretPatterns = [
     r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
     caseSensitive: false,
   ),
+];
+final _otherSecretPatterns = [
   RegExp(r'(?:验证码|otp|verification code)\s*[:=：]?\s*\d{4,8}', caseSensitive: false),
   RegExp(r'(?<!\d)\d{17}[\dXx](?!\d)'),
   RegExp(r'(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)'),
@@ -586,6 +595,16 @@ final _secretPatterns = [
     r'-----END [A-Z0-9 ]*PRIVATE KEY-----',
     caseSensitive: false,
   ),
+];
+
+final _secretPatterns = [
+  ..._tokenSecretPatterns,
+  ..._keyedSecretPatterns,
+  ..._otherSecretPatterns,
+];
+final _decodedValueSecretPatterns = [
+  ..._tokenSecretPatterns,
+  ..._otherSecretPatterns,
 ];
 
 /// 从模型原始输出中分离隐藏动作块与用户可见文本。
@@ -1051,18 +1070,22 @@ bool _containsAdditionalSecrets(String value) =>
       value,
       isSecret: _jsonFieldContainsSecret,
       rewriteText: (text, decoded) =>
-          _containsAdditionalSecretText(text) ? '[已脱敏]' : text,
+          _containsAdditionalSecretText(text, decoded)
+              ? [JsonTextReplacement(0, text.length, '[已脱敏]')]
+              : const [],
     ) != value;
 
-bool _containsAdditionalSecretText(String value) =>
-    _additionalTextSecretPattern.allMatches(value).any((match) {
-      final text = match.group(1)!;
+bool _containsAdditionalSecretText(String value, bool decoded) =>
+    (decoded && _decodedValueSecretPatterns.any((pattern) => pattern.hasMatch(value))) ||
+    (decoded ? _decodedTextSecretPattern : _additionalTextSecretPattern)
+        .allMatches(value).any((match) {
+      final text = match.group(2)!;
       final unquoted = text.length >= 2 &&
               ((text.startsWith('"') && text.endsWith('"')) ||
                   (text.startsWith("'") && text.endsWith("'")))
           ? text.substring(1, text.length - 1)
           : text;
-      return unquoted.trim().isNotEmpty && unquoted != '[已脱敏]';
+      return _jsonFieldContainsSecret(match.group(1)!, unquoted);
     }) ||
     _additionalJsonTextSecretPattern.allMatches(value).any((match) {
       try {

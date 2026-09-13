@@ -4101,24 +4101,26 @@ void main() {
           .cast<Map<String, Object?>>();
       final input = fixtures.map((fixture) => fixture['input']).join('\n');
       final expected = fixtures.map((fixture) => fixture['redacted']).join('\n');
-      final harness = await InProcessChatHost.start(
-        clock: () => DateTime(2026, 8, 11, 22, 30),
-        seedMemory: (directory) =>
-            _seedLegacySecretSession(directory, secretText: input),
-      );
-      addTearDown(harness.dispose);
-      final file = File(
-        '${harness.memoryDirectory}/sessions/2026/08/2026-08-11-001.md',
-      );
-      final original = await file.readAsString();
-      final response = await harness.readSession(
-        sessionId: 'legacy-secret-session',
-      );
-      expect(response.statusCode, 200);
-      final body = jsonDecode(response.body) as Map<String, Object?>;
-      final turn = (body['turns']! as List<Object?>).first! as Map<String, Object?>;
-      expect(turn['text'], expected);
-      expect(await file.readAsString(), original);
+      for (final persistedText in [input, expected]) {
+        final harness = await InProcessChatHost.start(
+          clock: () => DateTime(2026, 8, 11, 22, 30),
+          seedMemory: (directory) =>
+              _seedLegacySecretSession(directory, secretText: persistedText),
+        );
+        addTearDown(harness.dispose);
+        final file = File(
+          '${harness.memoryDirectory}/sessions/2026/08/2026-08-11-001.md',
+        );
+        final original = await file.readAsString();
+        final response = await harness.readSession(
+          sessionId: 'legacy-secret-session',
+        );
+        expect(response.statusCode, 200);
+        final body = jsonDecode(response.body) as Map<String, Object?>;
+        final turn = (body['turns']! as List<Object?>).first! as Map<String, Object?>;
+        expect(turn['text'], expected);
+        expect(await file.readAsString(), original);
+      }
     });
 
     // 旧数据样本：现有脱敏规则补齐前落盘的会话（JSON 键值躲过当时的
