@@ -1506,11 +1506,14 @@ void main() {
           'api_key': 'audit04HttpDirectKey',
           'Cookie': 'sid=audit04HttpDirectCookie',
           'count': 42,
+          'password: audit04HttpKeyA': '普通说明甲',
+          'password: [已脱敏]': '原有占位说明',
+          'password: audit04HttpKeyB': '普通说明乙',
         },
       })} -->';
       final outer = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
         'id': 'outer-entry',
-        'summary': inner,
+        'summary': jsonEncode({'note': inner}).replaceAll('<', r'\u003c'),
         'evidence': '{"password":"audit04Before${clean}audit04After"}',
       })} -->';
       const ordinary = '复诊后心情低落，联系 audit04@example.test。';
@@ -1574,11 +1577,12 @@ void main() {
       );
       expect(payload['id'], 'outer-entry');
       expect(payload['evidence'], '{"password":"[已脱敏]"}');
+      expect(payload['summary'], contains(r'\u003c!-- qiyu-'));
+      final note = (jsonDecode(payload['summary']! as String) as Map)['note']
+          as String;
       expect(
         decodeMarkerPayload(
-          memoryMarkerBlockPattern
-              .firstMatch(payload['summary']! as String)!
-              .group(2)!,
+          memoryMarkerBlockPattern.firstMatch(note)!.group(2)!,
         ),
         {
           'id': 'inner-entry',
@@ -1588,6 +1592,9 @@ void main() {
             'api_key': '[已脱敏]',
             'Cookie': '[已脱敏]',
             'count': 42,
+            'password: [已脱敏] (2)': '普通说明甲',
+            'password: [已脱敏]': '原有占位说明',
+            'password: [已脱敏] (3)': '普通说明乙',
           },
         },
       );

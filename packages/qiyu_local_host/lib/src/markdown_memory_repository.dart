@@ -947,14 +947,20 @@ Iterable<JsonTextReplacement> _rawTextRedactions(String text) {
   return replacements;
 }
 
-String redactSessionText(String text) => rewriteJsonStringValues(
+String redactSessionText(String text) =>
+    _rewriteSessionText(text, _redactUnparsedJsonText);
+
+String _rewriteSessionText(
+  String text,
+  Iterable<JsonTextReplacement> Function(String text, bool decoded) rewriteText,
+) => rewriteJsonStringValues(
   // 这条旧规则完整消费 JSON 转义字符串，保留直接空值等既有输出。
   text.replaceAllMapped(
     _sessionKeyedRedactPatterns.first,
     (match) => '${match.group(1)}[已脱敏]',
   ),
   isSecret: _jsonFieldContainsSecret,
-  rewriteText: _redactUnparsedJsonText,
+  rewriteText: rewriteText,
 );
 
 String redactDiagnosticText(String text) => _applyRedactions(
@@ -1027,12 +1033,72 @@ Object? _redactMarkerPayloadValue(String? key, Object? value) {
     return [for (final item in value) _redactMarkerPayloadValue(owner, item)];
   }
   if (value is Map<String, Object?>) {
-    return {
-      for (final MapEntry(:key, :value) in value.entries)
-        key: _redactMarkerPayloadValue(key, value),
+    final keys = {
+      for (final key in value.keys)
+        key: _markerStructuralKeys.contains(key)
+            ? key
+            : redactMemoryMarkdown(key) ?? key,
     };
+    final unchangedKeys = {
+      for (final MapEntry(:key, :value) in keys.entries)
+        if (key == value) key,
+    };
+    final result = <String, Object?>{};
+    var suffix = 2;
+    for (final MapEntry(:key, :value) in value.entries) {
+      final redactedKey = keys[key]!;
+      var uniqueKey = redactedKey;
+      // 正常键先保留；改名冲突仅附序号，不能覆盖任何一个普通值。
+      while (result.containsKey(uniqueKey) ||
+          (uniqueKey != key && unchangedKeys.contains(uniqueKey))) {
+        uniqueKey = '$redactedKey (${suffix++})';
+      }
+      result[uniqueKey] = _redactMarkerPayloadValue(key, value);
+    }
+    return result;
   }
   return value;
+}
+
+String? _redactMarkerPayload(Match match) {
+  try {
+    final payload = _redactMarkerPayloadValue(
+      null,
+      decodeMarkerPayload(match.group(2)!),
+    ) as Map<String, Object?>;
+    final encoded = encodeMarkerPayload(payload);
+    return encoded == match.group(2) ? null : encoded;
+  } on Object {
+    // 载荷解不开：保持原样（宁原样，不可损坏）。
+    return null;
+  }
+}
+
+Iterable<JsonTextReplacement> _redactMemoryText(String text, bool decoded) {
+  final markers = memoryMarkerBlockPattern.allMatches(text).toList();
+  if (markers.isEmpty) return _redactUnparsedJsonText(text, decoded);
+  // 等长遮住编码体，普通规则仍看见完整凭据上下文，区间仍指向原串。
+  final protected = text.replaceAllMapped(
+    memoryMarkerBlockPattern,
+    (match) => '\uE000' * (match.end - match.start),
+  );
+  final replacements = _redactUnparsedJsonText(protected, decoded).toList();
+  for (final marker in markers) {
+    if (replacements.any((replacement) =>
+        replacement.start < marker.end && replacement.end > marker.start)) {
+      continue;
+    }
+    final encoded = _redactMarkerPayload(marker);
+    if (encoded != null) {
+      // 只替换载荷，JSON 层已有的前缀/后缀转义也保持原样。
+      replacements.add(JsonTextReplacement(
+        marker.start + marker.group(1)!.length,
+        marker.end - marker.group(3)!.length,
+        encoded,
+      ));
+    }
+  }
+  return replacements..sort((left, right) => left.start.compareTo(right.start));
 }
 
 /// 记忆 Markdown 的返回视图脱敏（备份外发与主动揭示共用）：`qiyu-*`
@@ -1051,27 +1117,17 @@ String? redactMemoryMarkdown(String markdown) {
         markers.add(match);
         return '\uE000${markers.length - 1}\uE001';
       });
-  final redacted = redactSessionText(protected);
+  final redacted = _rewriteSessionText(protected, _redactMemoryText);
   final result = redacted.replaceAllMapped(
     RegExp('\uE000(\uE000|([0-9]+)\uE001)'),
     (placeholder) {
       final index = placeholder.group(2);
       if (index == null) return '\uE000';
       final match = markers[int.parse(index)];
-      final original = match.group(0)!;
-      try {
-        final payload = _redactMarkerPayloadValue(
-          null,
-          decodeMarkerPayload(match.group(2)!),
-        ) as Map<String, Object?>;
-        final encoded = encodeMarkerPayload(payload);
-        if (encoded != match.group(2)) {
-          return '${match.group(1)}$encoded${match.group(3)}';
-        }
-      } on Object {
-        // 载荷解不开：保持原样（宁原样，不可损坏）。
-      }
-      return original;
+      final encoded = _redactMarkerPayload(match);
+      return encoded == null
+          ? match.group(0)!
+          : '${match.group(1)}$encoded${match.group(3)}';
     },
   );
   return result == markdown ? null : result;

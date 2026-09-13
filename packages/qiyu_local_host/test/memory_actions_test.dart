@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
@@ -513,6 +514,120 @@ void main() {
   });
 
   group('reveal', () {
+    test('redacts free marker keys without losing colliding values', () async {
+      final marker = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'id': 'normal-structural-id',
+        'details': {
+          'password: audit04KeyA': '普通说明甲',
+          'password: [已脱敏]': '原有占位说明',
+          'password: audit04KeyB': '普通说明乙',
+          'password: [已脱敏] (2)': '原有第二说明',
+          'note': '今天散步20分钟',
+          'count': 42,
+        },
+      })} -->';
+      const ordinary = '联系 audit04@example.test。';
+      await seedLegacyEpisode(
+        memoryDirectory,
+        '2026-08-17',
+        summary: '$ordinary$marker',
+      );
+      final before = _directorySnapshot(memoryDirectory);
+      final result = await actions.reveal(
+        entryRef('2026-08-17', 'legacy-entry'),
+        'content',
+      );
+      expect(result.status, MemoryActionStatus.success);
+      expect(result.revealedText, startsWith(ordinary));
+      expect(
+        decodeMarkerPayload(
+          memoryMarkerBlockPattern.firstMatch(result.revealedText!)!.group(2)!,
+        ),
+        {
+          'id': 'normal-structural-id',
+          'details': {
+            'password: [已脱敏] (3)': '普通说明甲',
+            'password: [已脱敏]': '原有占位说明',
+            'password: [已脱敏] (4)': '普通说明乙',
+            'password: [已脱敏] (2)': '原有第二说明',
+            'note': '今天散步20分钟',
+            'count': 42,
+          },
+        },
+      );
+      expect(_directorySnapshot(memoryDirectory), before);
+    });
+
+    test('redacts legal markers at decoded JSON string layers', () async {
+      final marker = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'summary': '{"password":"audit04Decoded"}',
+      })} -->';
+      final escaped = jsonEncode({'note': marker})
+          .replaceAll('<', r'\u003c')
+          .replaceAll('qiyu', r'qi\u0079u');
+      final outer = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'summary': escaped,
+      })} -->';
+      const ordinary = '联系 audit04@example.test。';
+      for (final (body, layers, unwrap) in [
+        (escaped, 1, false),
+        (jsonEncode(escaped), 2, false),
+        (outer, 1, true),
+      ]) {
+        await seedLegacyEpisode(
+          memoryDirectory,
+          '2026-08-17',
+          summary: '$ordinary$body',
+        );
+        final before = _directorySnapshot(memoryDirectory);
+        final result = await actions.reveal(
+          entryRef('2026-08-17', 'legacy-entry'),
+          'content',
+        );
+        expect(result.status, MemoryActionStatus.success);
+        expect(result.revealedText, startsWith(ordinary));
+        Object? decoded = result.revealedText!.substring(ordinary.length);
+        if (unwrap) {
+          decoded = decodeMarkerPayload(
+            memoryMarkerBlockPattern.firstMatch(decoded as String)!.group(2)!,
+          )['summary'];
+        }
+        for (var layer = 0; layer < layers; layer += 1) {
+          decoded = jsonDecode(decoded as String);
+        }
+        final returnedMarker = (decoded as Map)['note'] as String;
+        expect(
+          decodeMarkerPayload(
+            memoryMarkerBlockPattern.firstMatch(returnedMarker)!.group(2)!,
+          ),
+          {'summary': '{"password":"[已脱敏]"}'},
+        );
+        if (!unwrap && layers == 1) {
+          expect(result.revealedText, contains(r'\u003c!-- qi\u0079u-'));
+        }
+        expect(_directorySnapshot(memoryDirectory), before);
+      }
+
+      final clean = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'summary': 'A)>abcdefghijklmnop',
+      })} -->';
+      final cleanJson = '{ "note": ${jsonEncode(clean)}, '
+          '"count":1e2,"label":"\\u6563\\u6b65" }';
+      final cleanSummary = '$ordinary${cleanJson.replaceAll('<', r'\u003c')}';
+      await seedLegacyEpisode(
+        memoryDirectory,
+        '2026-08-17',
+        summary: cleanSummary,
+      );
+      final before = _directorySnapshot(memoryDirectory);
+      final result = await actions.reveal(
+        entryRef('2026-08-17', 'legacy-entry'),
+        'content',
+      );
+      expect(result.revealedText, cleanSummary);
+      expect(_directorySnapshot(memoryDirectory), before);
+    });
+
     test('redacts direct marker fields with their JSON key semantics', () async {
       final marker = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
         'id': {'password': 'structural-id'},
