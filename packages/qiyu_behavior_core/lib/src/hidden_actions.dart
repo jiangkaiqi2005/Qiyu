@@ -542,6 +542,16 @@ final _sensitiveJsonKeyPattern = RegExp(
   '^(?:$_sensitiveKeyNames)\$',
   caseSensitive: false,
 );
+final _jsonCookieKeyPattern = RegExp(
+  r'^(?:set[- ])?cookie$',
+  caseSensitive: false,
+);
+final _cookieEntryPattern = RegExp(r'[A-Za-z0-9_~-]+\s*=[^\s；;，,]');
+// 修正前的 JSON 键集合：这些原形式保持既有拒绝语义。
+final _legacyJsonKeyPattern = RegExp(
+  r'^(?:api[_ -]?key|token|cookie|password|密码|口令|私钥|密钥)$',
+  caseSensitive: false,
+);
 
 /// 秘密特征：命中即不允许提升为记忆。与 sessions 脱敏规则保持一致的
 /// 保守集合，覆盖密码、Key、令牌、验证码、私钥、证件与银行卡号。
@@ -1025,11 +1035,31 @@ List<String>? _parseSelections(
 bool _violatesPrivilege(String value) =>
     _privilegePatterns.any((pattern) => pattern.hasMatch(value));
 
-bool _containsSecret(String value) =>
-    _secretPatterns.any((pattern) => pattern.hasMatch(value)) ||
-    jsonScalarFields(value).any(
-      (field) => _sensitiveJsonKeyPattern.hasMatch(field.key),
-    );
+// 保留原文本规则的拒绝语义；补充的 JSON 解码分支只拦实际秘密。
+bool _containsSecret(String value) {
+  final fields = jsonScalarFields(value).toList(growable: false);
+  var text = value;
+  for (final field in fields.reversed) {
+    if (_sensitiveJsonKeyPattern.hasMatch(field.key) &&
+        !_legacyJsonKeyPattern.hasMatch(field.key) &&
+        !_jsonFieldContainsSecret(field)) {
+      // 新键的普通值不被扩展词表误拒；保留值供裸令牌等旧规则检查。
+      text = text.replaceRange(field.keyStart, field.keyEnd, '""');
+    }
+  }
+  return _secretPatterns.any((pattern) => pattern.hasMatch(text)) ||
+      fields.any(_jsonFieldContainsSecret);
+}
+
+bool _jsonFieldContainsSecret(JsonScalarField field) {
+  if (field.stringValue == '[已脱敏]') return false;
+  if (!_sensitiveJsonKeyPattern.hasMatch(field.key)) return false;
+  if (_jsonCookieKeyPattern.hasMatch(field.key)) {
+    return field.stringValue != null &&
+        _cookieEntryPattern.hasMatch(field.stringValue!);
+  }
+  return true;
+}
 
 /// 对动作字段做内容安全筛查：任一字段命中越权特征返回 privilegeViolation，
 /// 否则任一字段命中秘密特征返回 sensitiveContent，全部干净返回 null。
