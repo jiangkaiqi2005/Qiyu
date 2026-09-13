@@ -822,40 +822,43 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
     }
     if (_jsonFieldContainsSecret(match.group(2)!, value)) replaceValue(match, 3);
   }
-  if (!decoded) return replacements;
-  // 解码后的文本只按实际凭据值判定，不搬入旧原文规则的空值/占位行为。
-  for (final pattern in _decodedValueRedactPatterns) {
-    for (final match in pattern.allMatches(text)) {
-      final prefix = match.groupCount > 0 ? match.group(1)!.length : 0;
-      replacements.add(JsonTextReplacement(
-        match.start + prefix, match.end, '[已脱敏]',
-      ));
+  if (!decoded) {
+    replacements.addAll(_rawTextRedactions(text));
+  } else {
+    // 解码后的文本只按实际凭据值判定，不搬入旧原文规则的空值/占位行为。
+    for (final pattern in _decodedValueRedactPatterns) {
+      for (final match in pattern.allMatches(text)) {
+        final prefix = match.groupCount > 0 ? match.group(1)!.length : 0;
+        replacements.add(JsonTextReplacement(
+          match.start + prefix, match.end, '[已脱敏]',
+        ));
+      }
     }
-  }
-  for (final match in _decodedCookieTextPattern.allMatches(text)) {
-    final credential =
-        _decodedTextCredentialPattern.matchAsPrefix(text, match.start);
-    if (credential != null &&
-        credentialTextValue(credential.group(3)!).start != 0) {
-      // 完整引号值交给下方共享规则，后缀的 price=12 等不是 Cookie 内容。
-      continue;
+    for (final match in _decodedCookieTextPattern.allMatches(text)) {
+      final credential =
+          _decodedTextCredentialPattern.matchAsPrefix(text, match.start);
+      if (credential != null &&
+          credentialTextValue(credential.group(3)!).start != 0) {
+        // 完整引号值交给下方共享规则，后缀的 price=12 等不是 Cookie 内容。
+        continue;
+      }
+      if (_cookieEntryPattern.hasMatch(match.group(2)!)) replaceValue(match, 2);
     }
-    if (_cookieEntryPattern.hasMatch(match.group(2)!)) replaceValue(match, 2);
-  }
-  for (final match in _decodedBareCookieTextPattern.allMatches(text)) {
-    replaceValue(match, 2);
-  }
-  for (final match in _decodedTextCredentialPattern.allMatches(text)) {
-    final rawValue = match.group(3)!;
-    final value = credentialTextValue(rawValue);
-    final key = match.group(2)!;
-    if (_jsonFieldContainsSecret(key, value.text) ||
-        (value.start != 0 && _jsonCookieKeyPattern.hasMatch(key) &&
-            isBareCookieTextValue(value.text))) {
-      final start = match.end - rawValue.length;
-      replacements.add(JsonTextReplacement(
-        start + value.start, start + value.end, '[已脱敏]',
-      ));
+    for (final match in _decodedBareCookieTextPattern.allMatches(text)) {
+      replaceValue(match, 2);
+    }
+    for (final match in _decodedTextCredentialPattern.allMatches(text)) {
+      final rawValue = match.group(3)!;
+      final value = credentialTextValue(rawValue);
+      final key = match.group(2)!;
+      if (_jsonFieldContainsSecret(key, value.text) ||
+          (value.start != 0 && _jsonCookieKeyPattern.hasMatch(key) &&
+              isBareCookieTextValue(value.text, quoted: true))) {
+        final start = match.end - rawValue.length;
+        replacements.add(JsonTextReplacement(
+          start + value.start, start + value.end, '[已脱敏]',
+        ));
+      }
     }
   }
   // 同一凭据可能同时命中 Token 和键值规则；仅合并重叠的替换区间。
@@ -876,8 +879,52 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
   return merged;
 }
 
+// 旧规则只检查尚未被 JSON 字符串占用的原文，所有区间仍指向该原文。
+Iterable<JsonTextReplacement> _rawTextRedactions(String text) {
+  final quoted = <({int start, int end, JsonTextReplacement replacement})>[];
+  for (final match in _decodedTextCredentialPattern.allMatches(text)) {
+    final rawValue = match.group(3)!;
+    final value = credentialTextValue(rawValue);
+    final key = match.group(2)!;
+    if (value.start == 0 ||
+        (!_jsonFieldContainsSecret(key, value.text) &&
+            !(_jsonCookieKeyPattern.hasMatch(key) &&
+                isBareCookieTextValue(value.text, quoted: true)))) {
+      continue;
+    }
+    final start = match.end - rawValue.length;
+    quoted.add((
+      start: match.start,
+      end: match.end,
+      replacement: JsonTextReplacement(
+        start + value.start, start + value.end, '[已脱敏]',
+      ),
+    ));
+  }
+  final replacements = [for (final value in quoted) value.replacement];
+  for (final pattern in _sessionRedactPatterns) {
+    var quotedIndex = 0;
+    for (final match in pattern.allMatches(text)) {
+      final prefix = match.groupCount > 0 ? match.group(1)!.length : 0;
+      final start = match.start + prefix;
+      while (quotedIndex < quoted.length && quoted[quotedIndex].end <= start) {
+        quotedIndex += 1;
+      }
+      if (quotedIndex < quoted.length && quoted[quotedIndex].start <= start) {
+        continue;
+      }
+      replacements.add(JsonTextReplacement(start, match.end, '[已脱敏]'));
+    }
+  }
+  return replacements;
+}
+
 String redactSessionText(String text) => rewriteJsonStringValues(
-  _applyRedactions(text, _sessionRedactPatterns),
+  // 这条旧规则完整消费 JSON 转义字符串，保留直接空值等既有输出。
+  text.replaceAllMapped(
+    _sessionKeyedRedactPatterns.first,
+    (match) => '${match.group(1)}[已脱敏]',
+  ),
   isSecret: _jsonFieldContainsSecret,
   rewriteText: _redactUnparsedJsonText,
 );

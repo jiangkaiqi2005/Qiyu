@@ -3,8 +3,10 @@ import 'dart:convert';
 final _bareCookieTextValuePattern = RegExp(r'^[A-Za-z0-9._~+/=-]{10,}');
 
 /// 延续文本 Cookie 的长裸值规则，不用于 JSON Cookie 字段的食品描述。
-bool isBareCookieTextValue(String value) =>
-    _bareCookieTextValuePattern.hasMatch(value);
+bool isBareCookieTextValue(String value, {bool quoted = false}) {
+  final match = _bareCookieTextValuePattern.firstMatch(value);
+  return match != null && (!quoted || match.end == value.length);
+}
 
 /// 三个捕获组依次为前缀、键名、完整值；成对引号内允许空白与分隔符。
 RegExp credentialTextPattern(String keys) => RegExp(
