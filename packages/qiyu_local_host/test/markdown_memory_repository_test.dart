@@ -430,6 +430,8 @@ void main() {
     'before session persistence',
     () async {
       const cases = <String, String>{
+        '说明里用了 " 字符，配置：{"password":987654321,"count":42}':
+            '说明里用了 " 字符，配置：{"password":"[已脱敏]","count":42}',
         r'{"cookie":"sid\u003daudit-only-cookie; refresh\u003daudit-only-refresh", "count":42}':
             '{"cookie":"[已脱敏]", "count":42}',
         r'{ "client\u005fsecret" : "audit-only-client", "label":"\u997c\u5e72" }':
@@ -550,6 +552,7 @@ void main() {
       const text =
           '2026-09-12 我们聊聊昨天的会议。\n'
           '2026年9月12日见，订单一共 123456 元。\n'
+          '说明里用了 " 字符，配置：{"count":42,"snack":"饼干"}\n'
           '我的手机是 13800138000，回头发你日历链接。\n'
           '密码: [已脱敏]\n'
           '{"token":"[已脱敏]"}\n'

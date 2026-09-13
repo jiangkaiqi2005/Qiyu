@@ -19,6 +19,7 @@ void main() {
     final fixture = value! as Map<String, Object?>;
     final key = fixture['key']! as String;
     final accepted = fixture['placeholderAccepted']! as Map<String, Object?>;
+    final emptyAccepted = fixture['emptyAccepted']! as Map<String, Object?>;
     Map<String, String> forms(String text) => {
       'json': jsonEncode({key: text}),
       'escapedJson': '{"${fixture['escapedKey']}":${jsonEncode(text)}}',
@@ -27,8 +28,10 @@ void main() {
       'fullWidthColon': '$key：$text',
     };
     final secrets = forms(fixture['secretValue']! as String);
+    final empty = forms('');
     for (final form in forms('[已脱敏]').entries) {
       final cases = <String, (String, bool)>{
+        'empty': (empty[form.key]!, emptyAccepted[form.key]! as bool),
         'placeholder': (form.value, accepted[form.key]! as bool),
         'secret': (secrets[form.key]!, false),
         'mixed': ('${form.value}\npassword: audit-only-other', false),

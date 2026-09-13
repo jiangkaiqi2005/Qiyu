@@ -4098,7 +4098,7 @@ void main() {
     const legacySecretJson =
         '{"password":"audit-only-password","client_secret":"audit-only-client",'
         '"cookie":"sid=audit-only-cookie; refresh=audit-only-refresh"}\n'
-        '{"password":987654321,"count":42}\n'
+        '说明里用了 " 字符，配置：{"password":987654321,"count":42}\n'
         r'{"client\u005fsecret":"audit-only-escaped-client",'
         r'"cookie":"sid\u003daudit-only-escaped-cookie; refresh\u003daudit-only-refresh",'
         r'"pass\u0077ord":987654321,"count":42}';
@@ -4163,6 +4163,7 @@ void main() {
       // 本轮新消息自身带秘密：发往模型的当前消息同样过滤，
       // 正常回复交付不受影响。
       const currentSecret =
+          '说明里用了 " 字符，配置：'
           r'{"client\u005fsecret":"audit-only-current",'
           r'"cookie":"sid\u003daudit-only-cookie; refresh\u003daudit-only-refresh",'
           r'"pass\u0077ord":987654321,"count":42}';

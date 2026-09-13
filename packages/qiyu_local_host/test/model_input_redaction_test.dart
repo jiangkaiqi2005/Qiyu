@@ -101,7 +101,8 @@ void main() {
         turns: [
           RawSessionTurn.user(
             requestId: 'legacy-u1',
-            text: r'{"client\u005fsecret":"audit-only-understanding",'
+            text: '说明里用了 " 字符，配置：'
+                r'{"client\u005fsecret":"audit-only-understanding",'
                 r'"cookie":"sid\u003daudit-only-cookie; refresh\u003daudit-only-refresh",'
                 r'"pass\u0077ord":987654321,"count":42}',
             at: at,

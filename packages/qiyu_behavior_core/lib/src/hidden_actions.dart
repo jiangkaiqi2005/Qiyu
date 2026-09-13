@@ -1041,9 +1041,26 @@ List<String>? _parseSelections(
 bool _violatesPrivilege(String value) =>
     _privilegePatterns.any((pattern) => pattern.hasMatch(value));
 
-// 原规则照常检查全部文本；新增识别只排除完整占位，不跳过其余内容。
+// 旧规则照常检查原文；新增规则对 JSON 字符串按解码语义检查。
 bool _containsSecret(String value) =>
     _secretPatterns.any((pattern) => pattern.hasMatch(value)) ||
+    _containsAdditionalSecrets(value);
+
+bool _containsAdditionalSecrets(String value) {
+  var cursor = 0;
+  for (final field in jsonScalarFields(value)) {
+    if (_containsAdditionalSecretText(value.substring(cursor, field.valueStart)) ||
+        _jsonFieldContainsSecret(field.key, field.stringValue) ||
+        (field.stringValue != null &&
+            _containsAdditionalSecrets(field.stringValue!))) {
+      return true;
+    }
+    cursor = field.valueEnd;
+  }
+  return _containsAdditionalSecretText(value.substring(cursor));
+}
+
+bool _containsAdditionalSecretText(String value) =>
     _additionalTextSecretPattern.allMatches(value).any((match) {
       final text = match.group(1)!;
       return text != '[已脱敏]' && text != '"[已脱敏]"' && text != "'[已脱敏]'";
@@ -1056,12 +1073,10 @@ bool _containsSecret(String value) =>
         // 保留不完整或非法转义的秘密片段原有拒绝，不能借解析失败放行。
         return true;
       }
-    }) ||
-    jsonScalarFields(value).any(
-      (field) => _jsonFieldContainsSecret(field.key, field.stringValue),
-    );
+    });
 
 bool _jsonFieldContainsSecret(String key, String? value) {
+  if (value != null && value.trim().isEmpty) return false;
   if (value == '[已脱敏]') return false;
   if (!_sensitiveJsonKeyPattern.hasMatch(key)) return false;
   if (_jsonCookieKeyPattern.hasMatch(key)) {

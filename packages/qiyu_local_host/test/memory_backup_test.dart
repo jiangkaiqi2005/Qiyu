@@ -402,6 +402,7 @@ void main() {
       const cookieSecret = 'audit-only-cookie';
       const legacyUserText =
           '{"password":"$jsonSecret"}\n'
+          '说明里用了 " 字符，配置：{"password":987654321,"count":42}\n'
           '{"client_secret":"audit-only-client",'
           '"cookie":"sid=$cookieSecret; refresh=audit-only-refresh",'
           '"password":987654321,"count":42}\n'

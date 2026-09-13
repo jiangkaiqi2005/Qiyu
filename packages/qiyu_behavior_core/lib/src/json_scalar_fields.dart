@@ -16,18 +16,17 @@ final class JsonScalarField {
   final int valueEnd;
 }
 
-// 非字段字符串也整段消费，避免把普通字符串中的转义引号误当字段。
+// 只消费完整标量字段；自由文本中的孤立引号不能吞掉后面的 JSON。
 final _jsonScalarFieldPattern = RegExp(
-  r'("(?:[^"\\]|\\.)*")'
-  r'(?:\s*:\s*("(?:[^"\\]|\\.)*"|'
+  r'("(?:[^"\\]|\\.)*")\s*:\s*'
+  r'("(?:[^"\\]|\\.)*"|'
   r'-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?'
-  r'(?=\s*(?:[,}\]]|$))))?',
+  r'(?=\s*(?:[,}\]]|$)))',
 );
 
 Iterable<JsonScalarField> jsonScalarFields(String text) sync* {
   for (final match in _jsonScalarFieldPattern.allMatches(text)) {
-    final rawValue = match.group(2);
-    if (rawValue == null) continue;
+    final rawValue = match.group(2)!;
     try {
       final key = jsonDecode(match.group(1)!) as String;
       final value = rawValue.startsWith('"')
