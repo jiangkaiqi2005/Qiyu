@@ -782,17 +782,16 @@ final _additionalJsonRedactPattern = RegExp(
   r'((?:[^"\\]|\\.)*)',
   caseSensitive: false,
 );
-final _decodedTextCredentialPattern = RegExp(
-  '(($_sensitiveKeyNames|client[_ -]?secret|(?:set[- ])?cookie)'
-  r'\s*[:=：]\s*)('
-  r"""(?:"\[已脱敏\]"|'\[已脱敏\]'|\[已脱敏\]|"\s*"|'\s*')"""
-  r"""(?=$|[\s；;，,。.!！?？）)\]}"'])"""
-  r'|[^\s；;，,]+)',
-  caseSensitive: false,
+final _decodedTextCredentialPattern = credentialTextPattern(
+  '$_sensitiveKeyNames|client[_ -]?secret|(?:set[- ])?cookie',
 );
 // 多项 Cookie 只在当前解码文本内遮蔽，不跨重新编码后的 JSON 值边界。
 final _decodedCookieTextPattern = RegExp(
   r'((?:set[- ])?cookie\s*[:=：]\s*)([^\r\n]+)',
+  caseSensitive: false,
+);
+final _decodedBareCookieTextPattern = RegExp(
+  r'((?:set[- ])?cookie\s*[:=：]\s*)([A-Za-z0-9._~+/=-]{10,})',
   caseSensitive: false,
 );
 
@@ -836,14 +835,18 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
   for (final match in _decodedCookieTextPattern.allMatches(text)) {
     if (_cookieEntryPattern.hasMatch(match.group(2)!)) replaceValue(match, 2);
   }
+  for (final match in _decodedBareCookieTextPattern.allMatches(text)) {
+    replaceValue(match, 2);
+  }
   for (final match in _decodedTextCredentialPattern.allMatches(text)) {
     final rawValue = match.group(3)!;
-    final value = rawValue.length >= 2 &&
-            ((rawValue.startsWith('"') && rawValue.endsWith('"')) ||
-                (rawValue.startsWith("'") && rawValue.endsWith("'")))
-        ? rawValue.substring(1, rawValue.length - 1)
-        : rawValue;
-    if (_jsonFieldContainsSecret(match.group(2)!, value)) replaceValue(match, 3);
+    final value = credentialTextValue(rawValue);
+    if (_jsonFieldContainsSecret(match.group(2)!, value.text)) {
+      final start = match.end - rawValue.length;
+      replacements.add(JsonTextReplacement(
+        start + value.start, start + value.end, '[已脱敏]',
+      ));
+    }
   }
   // 同一凭据可能同时命中 Token 和键值规则；仅合并重叠的替换区间。
   replacements.sort((left, right) => left.start.compareTo(right.start));

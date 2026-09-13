@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'credential_text.dart';
 import 'json_scalar_fields.dart';
 import 'shared_patterns.dart';
 
@@ -543,17 +544,10 @@ final _sensitiveJsonKeyPattern = RegExp(
   caseSensitive: false,
 );
 final _additionalTextSecretPattern =
-    _textSecretPattern(_additionalSensitiveKeyNames);
+    credentialTextPattern(_additionalSensitiveKeyNames);
 final _decodedTextSecretPattern =
-    _textSecretPattern('$_sensitiveKeyNames|$_additionalSensitiveKeyNames');
-
-RegExp _textSecretPattern(String keys) => RegExp(
-  '($keys)' r'\s*[:=：]\s*('
-  r'''(?:"\[已脱敏\]"|'\[已脱敏\]'|\[已脱敏\]|"\s*"|'\s*')'''
-  r'''(?=$|[\s；;，,。.!！?？）)\]}"'])'''
-  r'|[^\s；;，,]+)',
-  caseSensitive: false,
-);
+    credentialTextPattern('$_sensitiveKeyNames|$_additionalSensitiveKeyNames');
+final _bareCookieValuePattern = RegExp(r'^[A-Za-z0-9._~+/=-]{10,}');
 final _additionalJsonTextSecretPattern = RegExp(
   '"($_additionalSensitiveKeyNames)' r'"\s*:\s*"((?:[^"\\]|\\.)*)',
   caseSensitive: false,
@@ -1079,13 +1073,11 @@ bool _containsAdditionalSecretText(String value, bool decoded) =>
     (decoded && _decodedValueSecretPatterns.any((pattern) => pattern.hasMatch(value))) ||
     (decoded ? _decodedTextSecretPattern : _additionalTextSecretPattern)
         .allMatches(value).any((match) {
-      final text = match.group(2)!;
-      final unquoted = text.length >= 2 &&
-              ((text.startsWith('"') && text.endsWith('"')) ||
-                  (text.startsWith("'") && text.endsWith("'")))
-          ? text.substring(1, text.length - 1)
-          : text;
-      return _jsonFieldContainsSecret(match.group(1)!, unquoted);
+      final rawValue = match.group(3)!;
+      final key = match.group(2)!;
+      return _jsonFieldContainsSecret(key, credentialTextValue(rawValue).text) ||
+          (decoded && _jsonCookieKeyPattern.hasMatch(key) &&
+              _bareCookieValuePattern.hasMatch(rawValue));
     }) ||
     _additionalJsonTextSecretPattern.allMatches(value).any((match) {
       try {

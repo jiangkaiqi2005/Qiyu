@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-/// JSON 标量字段或数组字符串的解码语义与原始位置。
+/// JSON 键、标量字段或数组字符串的解码语义与原始位置。
 final class JsonScalarField {
   const JsonScalarField({
     required this.key,
@@ -10,7 +10,7 @@ final class JsonScalarField {
     required this.valueEnd,
   });
 
-  // 数组元素没有键。
+  // 键自身和数组元素没有所属字段名。
   final String? key;
   // 数字值用 null 表示；识别凭据只依赖键名，不改变原始数字的精度。
   final String? stringValue;
@@ -25,22 +25,34 @@ final _jsonScalarFieldPattern = RegExp(
   r'("(?:[^\x00-\x1F"\\]|\\.)*"|'
   r'-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?'
   r'(?=\s*(?:[,}\]]|$)))'
-  r'|(?<=[\[,])\s*("(?:[^\x00-\x1F"\\]|\\.)*")(?=\s*[,\]])',
+  r'|(?<=[\[,])\s*("(?:[^\x00-\x1F"\\]|\\.)*")(?=\s*[,\]])'
+  r'|("(?:[^\x00-\x1F"\\]|\\.)*")'
+  r'(?=\s*:\s*(?:[\[{]|true\b|false\b|null\b))',
 );
 
 Iterable<JsonScalarField> jsonScalarFields(String text) sync* {
   for (final match in _jsonScalarFieldPattern.allMatches(text)) {
-    final rawValue = (match.group(2) ?? match.group(3))!;
+    final rawValue = match.group(2) ?? match.group(3);
     try {
-      final rawKey = match.group(1);
+      final rawKey = match.group(1) ?? match.group(4);
       final key = rawKey == null ? null : jsonDecode(rawKey) as String;
-      final value = rawValue.startsWith('"')
+      final value = rawValue != null && rawValue.startsWith('"')
           ? jsonDecode(rawValue) as String
           : null;
+      if (rawKey != null) {
+        yield JsonScalarField(
+          key: null,
+          stringValue: key,
+          start: match.start,
+          valueStart: match.start,
+          valueEnd: match.start + rawKey.length,
+        );
+      }
+      if (rawValue == null) continue;
       yield JsonScalarField(
         key: key,
         stringValue: value,
-        start: match.start,
+        start: match.start + (rawKey?.length ?? 0),
         valueStart: match.end - rawValue.length,
         valueEnd: match.end,
       );
