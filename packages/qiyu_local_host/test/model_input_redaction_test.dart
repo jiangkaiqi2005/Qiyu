@@ -101,7 +101,9 @@ void main() {
         turns: [
           RawSessionTurn.user(
             requestId: 'legacy-u1',
-            text: '{"password":"audit-only-understanding"}',
+            text: '{"client_secret":"audit-only-understanding",'
+                '"cookie":"sid=audit-only-cookie; refresh=audit-only-refresh",'
+                '"password":987654321,"count":42}',
             at: at,
           ),
         ],
@@ -125,6 +127,9 @@ void main() {
       // 待补标识必须原样保留（补建覆盖校验依赖模型原样回抄）。
       expect(userMessage, contains('legacy-u1'));
       expect(userMessage, isNot(contains('audit-only-understanding')));
+      expect(userMessage, isNot(contains('audit-only-cookie')));
+      expect(userMessage, isNot(contains('audit-only-refresh')));
+      expect(userMessage, isNot(contains('987654321')));
       expect(userMessage, contains('[已脱敏]'));
     });
 

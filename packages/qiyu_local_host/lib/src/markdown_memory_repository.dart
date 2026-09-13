@@ -655,11 +655,21 @@ String newOpaqueId() {
 /// 补词只改这里（两形态覆盖面保持一致）。
 const String _sensitiveKeyNames =
     r'api[_ -]?key|api[_ -]?secret|secret[_ -]?key|access[_ -]?token|'
-    r'refresh[_ -]?token|password|passwd|pwd|secret|token|密码|口令|密钥|令牌';
+    r'refresh[_ -]?token|client[_ -]?secret|password|passwd|pwd|secret|token|'
+    r'密码|口令|密钥|令牌';
+
+// 数字凭据替换为带引号的占位字符串，保留合法 JSON 与相邻普通字段。
+final _jsonNumericSecretPattern = RegExp(
+  '("(?:$_sensitiveKeyNames'
+  r')"\s*:\s*)-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?'
+  r'(?=\s*(?:[,}\]]|$))',
+  caseSensitive: false,
+);
 
 /// 会话文本脱敏规则（每条消息、每段诊断都会过一遍，正则只编译一次）。
 /// JSON 形态的敏感键值：字段名带引号，值段匹配到未转义的结束引号
-/// （转义引号随值一并遮蔽），占位后 JSON 结构保持可读。Cookie 两段
+/// （转义引号随值一并遮蔽），占位后 JSON 结构保持可读。JSON Cookie
+/// 只遮蔽含「名字=值」的整个字符串，不吞掉相邻字段。Cookie 文本两段
 /// 式：行内出现至少一个「名字=值」形态的项才整行遮蔽（多项串接与
 /// 只带标志位的真实头都盖住），纯口吻提及不遮；裸值形态（冒号后
 /// 直接跟一长串无空格令牌）单独遮值。PEM 私钥的类型词可缺省，覆盖
@@ -693,6 +703,12 @@ final _sessionRedactPatterns = <RegExp>[
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(
     r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'("(?:set[- ])?cookie"\s*:\s*")'
+    r'(?=(?:[^"\\]|\\.)*?[A-Za-z0-9_~-]+\s*=(?:[^\s；;，,"\\]|\\.))'
+    r'(?:[^"\\]|\\.)*',
     caseSensitive: false,
   ),
   RegExp(
@@ -751,11 +767,16 @@ String _applyRedactions(String text, List<RegExp> patterns) {
   return result;
 }
 
-String redactSessionText(String text) =>
-    _applyRedactions(text, _sessionRedactPatterns);
+String redactSessionText(String text) => _applyRedactions(
+  text.replaceAllMapped(
+    _jsonNumericSecretPattern,
+    (match) => '${match.group(1)}"[已脱敏]"',
+  ),
+  _sessionRedactPatterns,
+);
 
 String redactDiagnosticText(String text) => _applyRedactions(
-  _applyRedactions(text, _sessionRedactPatterns),
+  redactSessionText(text),
   _diagnosticRedactPatterns,
 );
 

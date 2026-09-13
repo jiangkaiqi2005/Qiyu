@@ -5,6 +5,14 @@
       "instruction": "涉及当前时间、天气、新闻或可能变化的事实时，按需调用 `web_search`。不得将用户的私密对话、密钥或身份信息写入搜索词。"
     }
   },
+  "memorySignalCases": [
+    { "id": "json-client-secret", "summary": "{\"client_secret\":\"audit-only-client\"}", "accepted": false },
+    { "id": "json-numeric-password", "summary": "{\"password\":987654321}", "accepted": false },
+    { "id": "json-numeric-access-token", "summary": "{\"access_token\":123456}", "accepted": false },
+    { "id": "json-cookie", "summary": "{\"cookie\":\"sid=audit-only-cookie; refresh=audit-only-refresh\"}", "accepted": false },
+    { "id": "ordinary-json", "summary": "{\"count\":987654321,\"date\":\"2026-09-13\"}", "accepted": true },
+    { "id": "ordinary-client-id", "summary": "{\"client_id\":\"public\",\"password_length\":12}", "accepted": true }
+  ],
   "cases": [
     {
       "id": "normal-local-reply",

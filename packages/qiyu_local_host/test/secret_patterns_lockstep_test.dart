@@ -16,6 +16,8 @@ import 'package:test/test.dart';
 /// Cookie 以分号串接，分号命中 core 的越权特征（命令分隔），动作先于
 /// 秘密判定被整体丢弃，接受/拒绝结果一致，只是诊断码不同。
 ///
+/// JSON 数字凭据在 host 单独替换为带引号的占位符，由会话持久化的
+/// 公共回归覆盖；core 在下面的清单中负责拒绝同类记忆提升。
 /// 两份符号都是私有的，本测试沿用主链静态检查的手法直接读源码，把
 /// 两侧的现行模式清单整块钉死：任一侧单边增删或改写模式，测试立即
 /// 失败。改动一侧前，必须先评估另一侧是否同步。
@@ -47,7 +49,7 @@ void main() {
           extractPatternBlock(source, 'final _secretPatterns = [');
       expect(
         RegExp('RegExp\\(').allMatches(block).length,
-        8,
+        9,
         reason: 'core 秘密特征表的条目数变了：两份集合有意不同，'
             '改动一侧须评估另一侧是否同步',
       );
@@ -62,6 +64,12 @@ void main() {
   ),
   RegExp(
     r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
+    caseSensitive: false,
+  ),
+  RegExp(
+    '"(?:$_sensitiveKeyNames'
+    r')"\s*:\s*-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?'
+    r'(?=\s*(?:[,}\]]|$))',
     caseSensitive: false,
   ),
   RegExp(r'(?:验证码|otp|verification code)\s*[:=：]?\s*\d{4,8}', caseSensitive: false),
@@ -84,7 +92,7 @@ void main() {
           extractPatternBlock(source, 'final _sessionRedactPatterns = <RegExp>[');
       expect(
         RegExp('RegExp\\(').allMatches(block).length,
-        20,
+        21,
         reason: 'host 落盘脱敏表的条目数变了：两份集合有意不同，'
             '改动一侧须评估另一侧是否同步',
       );
@@ -118,6 +126,12 @@ void main() {
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(
     r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
+    caseSensitive: false,
+  ),
+  RegExp(
+    r'("(?:set[- ])?cookie"\s*:\s*")'
+    r'(?=(?:[^"\\]|\\.)*?[A-Za-z0-9_~-]+\s*=(?:[^\s；;，,"\\]|\\.))'
+    r'(?:[^"\\]|\\.)*',
     caseSensitive: false,
   ),
   RegExp(

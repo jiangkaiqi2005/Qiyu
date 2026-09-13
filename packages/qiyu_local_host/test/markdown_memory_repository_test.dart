@@ -430,6 +430,21 @@ void main() {
     'before session persistence',
     () async {
       const cases = <String, String>{
+        '{"password":987654321,"count":42}':
+            '{"password":"[已脱敏]","count":42}',
+        '{ "password" : -12.5e+3 , "date":"2026-09-13"}':
+            '{ "password" : "[已脱敏]" , "date":"2026-09-13"}',
+        '{"pwd":0}': '{"pwd":"[已脱敏]"}',
+        '{"access_token":123456}': '{"access_token":"[已脱敏]"}',
+        '{"client_secret":"audit-only-client-secret","client_id":"public"}':
+            '{"client_secret":"[已脱敏]","client_id":"public"}',
+        '{ "CLIENT SECRET" : "audit-only-\\"client\\"", "count":2}':
+            '{ "CLIENT SECRET" : "[已脱敏]", "count":2}',
+        '{"set-cookie":"sid=\\"audit-only-quoted\\"","next":true}':
+            '{"set-cookie":"[已脱敏]","next":true}',
+        '{"cookie":"sid=audit-only-cookie; refresh=audit-only-refresh",'
+                '"snack":"饼干"}':
+            '{"cookie":"[已脱敏]","snack":"饼干"}',
         '{"password":"audit-only-password"}': '{"password":"[已脱敏]"}',
         '{"password":"pass\\"word-tail"}': '{"password":"[已脱敏]"}',
         '{"api_key": "audit-only-key", "mode": "compact"}':
@@ -475,6 +490,8 @@ void main() {
         expect(lines[index], entry.value, reason: entry.key);
         index += 1;
       }
+      final restored = await repository.openSession(sessionId: saved.id);
+      expect(restored.turns.single.text, cases.values.join('\n'));
     },
   );
 
@@ -526,6 +543,10 @@ void main() {
           '我的手机是 13800138000，回头发你日历链接。\n'
           '密码: [已脱敏]\n'
           '{"token":"[已脱敏]"}\n'
+          '{"cookie":"[已脱敏]","client_secret":"[已脱敏]"}\n'
+          '{"cookie":"chocolate chip","count":987654321,"date":"2026-09-13"}\n'
+          '{"password_length":12,"client_id":"public","secret_santa":"小王"}\n'
+          'Cookie: 今天烤了巧克力饼干\n'
           'Cookie：它是浏览器存的小文件';
       final repository = MarkdownMemoryRepository(
         memoryDirectory: temporaryDirectory.path,

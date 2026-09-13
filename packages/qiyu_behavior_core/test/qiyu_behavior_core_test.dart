@@ -14,6 +14,18 @@ void main() {
           as Map<String, Object?>;
   final fixtures = fixtureDocument['cases']! as List<Object?>;
 
+  for (final value in fixtureDocument['memorySignalCases']! as List<Object?>) {
+    final fixture = value! as Map<String, Object?>;
+    test('memory signal matches shared fixture: ${fixture['id']}', () {
+      final actions = jsonEncode([
+        {'action': 'memory_signal', 'summary': fixture['summary']},
+      ]);
+      final result = parseHiddenActions('嗯。<qiyu-actions>$actions</qiyu-actions>');
+      expect(result.visibleText, '嗯。');
+      expect(result.actions, hasLength(fixture['accepted'] == true ? 1 : 0));
+    });
+  }
+
   test('shared contract locks the minimal web search instruction', () {
     final promptModules =
         fixtureDocument['promptModules']! as Map<String, Object?>;

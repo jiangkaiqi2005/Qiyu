@@ -154,6 +154,13 @@ void main() {
       '验证码: 482913',
       // JSON 引号键值：字段名带引号，冒号前多一个引号。
       '{"password":"audit-only-secret"}',
+      '{"client_secret":"audit-only-client"}',
+      '{"password":987654321}',
+      '{"access_token":123456}',
+      '{"passwd":"audit-only-passwd"}',
+      '{"api_secret":"audit-only-api"}',
+      '{"secret_key":"audit-only-key"}',
+      '{"set-cookie":"sid=audit-only-cookie"}',
       // PKCS#8：BEGIN 与 PRIVATE KEY 之间没有类型词。动作字段清洗后
       // 换行折叠为空格，这里按折叠后的形态验证。
       '-----BEGIN PRIVATE KEY----- AUDIT ONLY FAKE KEY -----END PRIVATE KEY-----',

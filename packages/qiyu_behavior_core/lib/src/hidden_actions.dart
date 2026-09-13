@@ -533,7 +533,9 @@ final _privilegePatterns = [
 /// 一致。与 host 落盘脱敏表的键名词表有意不同（差异见
 /// secret_patterns_lockstep_test.dart 的说明），补词须两表分别评估。
 const _sensitiveKeyNames =
-    r'api[_ -]?key|token|cookie|password|密码|口令|私钥|密钥';
+    r'api[_ -]?key|api[_ -]?secret|secret[_ -]?key|access[_ -]?token|'
+    r'refresh[_ -]?token|client[_ -]?secret|password|passwd|pwd|secret|token|'
+    r'(?:set[- ])?cookie|密码|口令|私钥|密钥|令牌';
 
 /// 秘密特征：命中即不允许提升为记忆。与 sessions 脱敏规则保持一致的
 /// 保守集合，覆盖密码、Key、令牌、验证码、私钥、证件与银行卡号。
@@ -552,6 +554,12 @@ final _secretPatterns = [
   ),
   RegExp(
     r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
+    caseSensitive: false,
+  ),
+  RegExp(
+    '"(?:$_sensitiveKeyNames'
+    r')"\s*:\s*-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?'
+    r'(?=\s*(?:[,}\]]|$))',
     caseSensitive: false,
   ),
   RegExp(r'(?:验证码|otp|verification code)\s*[:=：]?\s*\d{4,8}', caseSensitive: false),

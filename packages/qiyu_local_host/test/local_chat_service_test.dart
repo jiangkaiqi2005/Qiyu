@@ -4095,7 +4095,10 @@ void main() {
   group('秘密脱敏闭环', () {
     // 旧数据样本：现有脱敏规则补齐前落盘的会话（JSON 键值躲过当时的
     // 键值规则）。全部为固定合成文本，不含任何真实秘密。
-    const legacySecretJson = '{"password":"audit-only-password"}';
+    const legacySecretJson =
+        '{"password":"audit-only-password","client_secret":"audit-only-client",'
+        '"cookie":"sid=audit-only-cookie; refresh=audit-only-refresh"}\n'
+        '{"password":987654321,"count":42}';
 
     test('旧会话公开读取不带秘密，历史预览同样过滤，原始文件不重写', () async {
       final harness = await InProcessChatHost.start(
@@ -4105,22 +4108,25 @@ void main() {
       );
       addTearDown(harness.dispose);
 
+      final legacyFile = File(
+        '${harness.memoryDirectory}/sessions/2026/08/2026-08-11-001.md',
+      );
+      final originalMarkdown = await legacyFile.readAsString();
       final snapshot = await harness.readSession(
         sessionId: 'legacy-secret-session',
       );
       expect(snapshot.statusCode, 200);
-      expect(snapshot.body, isNot(contains('audit-only-password')));
+      expect(snapshot.body, isNot(contains('audit-only-')));
+      expect(snapshot.body, isNot(contains('987654321')));
       expect(snapshot.body, contains('[已脱敏]'));
 
       final history = await harness.readHistory();
       expect(history.statusCode, 200);
-      expect(history.body, isNot(contains('audit-only-password')));
+      expect(history.body, isNot(contains('audit-only-')));
+      expect(history.body, isNot(contains('987654321')));
 
       // 不做批量迁移：落盘文件里的旧轮次原样保留。
-      final legacyFile = File(
-        '${harness.memoryDirectory}/sessions/2026/08/2026-08-11-001.md',
-      );
-      expect(await legacyFile.readAsString(), contains(legacySecretJson));
+      expect(await legacyFile.readAsString(), originalMarkdown);
     });
 
     test('后续模型上下文不带旧会话与新消息里的秘密', () async {
@@ -4145,14 +4151,18 @@ void main() {
       for (final message in gateway.lastStreamMessages!) {
         expect(
           message.content,
-          isNot(contains('audit-only-password')),
+          isNot(contains('audit-only-')),
           reason: message.content,
         );
+        expect(message.content, isNot(contains('987654321')));
       }
 
       // 本轮新消息自身带秘密：发往模型的当前消息同样过滤，
       // 正常回复交付不受影响。
-      const currentSecret = '{"password":"audit-only-current"}';
+      const currentSecret =
+          '{"client_secret":"audit-only-current",'
+          '"cookie":"sid=audit-only-cookie; refresh=audit-only-refresh",'
+          '"password":987654321,"count":42}';
       final secretTrace = await harness.sendChat(
         requestId: 'next-secret',
         text: currentSecret,
@@ -4161,9 +4171,10 @@ void main() {
       for (final message in gateway.lastStreamMessages!) {
         expect(
           message.content,
-          isNot(contains('audit-only-current')),
+          isNot(contains('audit-only-')),
           reason: message.content,
         );
+        expect(message.content, isNot(contains('987654321')));
       }
     });
 

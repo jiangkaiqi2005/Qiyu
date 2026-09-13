@@ -402,6 +402,9 @@ void main() {
       const cookieSecret = 'audit-only-cookie';
       const legacyUserText =
           '{"password":"$jsonSecret"}\n'
+          '{"client_secret":"audit-only-client",'
+          '"cookie":"sid=$cookieSecret; refresh=audit-only-refresh",'
+          '"password":987654321,"count":42}\n'
           'Cookie: theme=dark; sid=$cookieSecret\n'
           '-----BEGIN PRIVATE KEY-----\nAUDITONLYFAKEPKCS8\n'
           '-----END PRIVATE KEY-----';
@@ -484,6 +487,9 @@ void main() {
         final content = utf8.decode(file.content as List<int>);
         expect(content, isNot(contains(jsonSecret)), reason: file.name);
         expect(content, isNot(contains(cookieSecret)), reason: file.name);
+        expect(content, isNot(contains('audit-only-client')), reason: file.name);
+        expect(content, isNot(contains('audit-only-refresh')), reason: file.name);
+        expect(content, isNot(contains('987654321')), reason: file.name);
         expect(
           content,
           isNot(contains('AUDITONLYFAKEPKCS8')),
@@ -537,6 +543,9 @@ void main() {
         isNot(contains(jsonSecret)),
       );
       expect(importedSession.turns.first.text, contains('[已脱敏]'));
+      expect(importedSession.turns.first.text, isNot(contains('audit-only-')));
+      expect(importedSession.turns.first.text, isNot(contains('987654321')));
+      expect(importedSession.turns.first.text, contains('"count":42'));
 
       final day = await pipeline.readDay('2026-08-05');
       expect(day.readable, isTrue);
