@@ -22,6 +22,11 @@ RegExp credentialTextPattern(String keys) => RegExp(
 final _cookieContinuationSeparator = RegExp(r'[ \t]*[;；][ \t]*');
 // Cookie 名采用 HTTP token 词法，点号等合法名称字符不应终止后续检查。
 const _cookieName = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+final _cookieEntryPattern = RegExp('$_cookieName' r'\s*=[^\s；;，,]');
+
+/// JSON 字段与解码文本沿用续项名称词法，只识别带非空值的 Cookie 项。
+bool containsCookieEntry(String value) => _cookieEntryPattern.hasMatch(value);
+
 final _cookieContinuationName = RegExp(
   '($_cookieName)'
   r'[ \t]*(=)?[ \t]*',

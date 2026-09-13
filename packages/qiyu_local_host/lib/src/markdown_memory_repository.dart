@@ -665,7 +665,6 @@ final _jsonCookieKeyPattern = RegExp(
   r'^(?:set[- ])?cookie$',
   caseSensitive: false,
 );
-final _cookieEntryPattern = RegExp(r'[A-Za-z0-9_~-]+\s*=[^\s；;，,]');
 
 /// 会话文本脱敏规则（每条消息、每段诊断都会过一遍，正则只编译一次）。
 /// JSON 形态的敏感键值：字段名带引号，值段匹配到未转义的结束引号
@@ -800,7 +799,7 @@ bool _jsonFieldContainsSecret(String key, String? value) {
     return false;
   }
   if (_jsonCookieKeyPattern.hasMatch(key)) {
-    return value != null && _cookieEntryPattern.hasMatch(value);
+    return value != null && containsCookieEntry(value);
   }
   return _sensitiveJsonKeyPattern.hasMatch(key);
 }
@@ -842,7 +841,7 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
         // 完整引号值交给下方共享规则，后缀的 price=12 等不是 Cookie 内容。
         continue;
       }
-      if (_cookieEntryPattern.hasMatch(match.group(2)!)) replaceValue(match, 2);
+      if (containsCookieEntry(match.group(2)!)) replaceValue(match, 2);
     }
     for (final match in _decodedBareCookieTextPattern.allMatches(text)) {
       replaceValue(match, 2);

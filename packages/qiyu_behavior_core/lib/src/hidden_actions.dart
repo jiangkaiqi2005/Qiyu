@@ -555,7 +555,6 @@ final _jsonCookieKeyPattern = RegExp(
   r'^(?:set[- ])?cookie$',
   caseSensitive: false,
 );
-final _cookieEntryPattern = RegExp(r'[A-Za-z0-9_~-]+\s*=[^\s；;，,]');
 
 /// 秘密特征：命中即不允许提升为记忆。与 sessions 脱敏规则保持一致的
 /// 保守集合，覆盖密码、Key、令牌、验证码、私钥、证件与银行卡号。
@@ -1096,7 +1095,7 @@ bool _jsonFieldContainsSecret(String key, String? value) {
   if (value == '[已脱敏]') return false;
   if (!_sensitiveJsonKeyPattern.hasMatch(key)) return false;
   if (_jsonCookieKeyPattern.hasMatch(key)) {
-    return value != null && _cookieEntryPattern.hasMatch(value);
+    return value != null && containsCookieEntry(value);
   }
   return true;
 }
