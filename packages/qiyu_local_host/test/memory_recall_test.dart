@@ -8,6 +8,222 @@ import 'package:test/test.dart';
 import 'support/scripted_chat_client.dart';
 
 void main() {
+  test(
+    'legacy month keywords are redacted without changing an empty selection',
+    () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户聊到旧书店')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_selectionReply()),
+      ]);
+      final (recall, pipeline) = _orchestrator(root.path, client: client);
+      await _rebuildUnderLock(recall, pipeline);
+      final monthFile = recall.indexStore.topIndexFile;
+      final dayFile = recall.indexStore.monthIndexFile('2026-08');
+      await monthFile.writeAsString(
+        '# 旧索引\n'
+        '- 2026-08 | {"pwd":"M1"}, 旧书店, {"count":42}, 12345678 | '
+        'episodes/2026/08/index.md\n',
+      );
+      await dayFile.writeAsString(
+        '# 旧索引\n- 2026-08-10 | 旧书店 | 2026-08-10.md\n',
+      );
+      final monthBytes = await monthFile.readAsBytes();
+      final dayBytes = await dayFile.readAsBytes();
+
+      final result = await recall.runTurnRecall(
+        userText: '上次说的书店',
+        recallActions: [MemoryRecallAction(query: '旧书店')],
+      );
+
+      expect(client.calls, hasLength(1));
+      for (final message in client.calls.single) {
+        expect(message.content, isNot(contains('M1')));
+      }
+      expect(client.calls.single.map((message) => message.role), [
+        ModelMessageRole.system,
+        ModelMessageRole.user,
+      ]);
+      expect(
+        client.calls.single.last.content,
+        '查找意图：旧书店\n用户当时的原话：上次说的书店\n\n'
+        '## 月份索引（episodes/index.md）\n'
+        '- 2026-08 | {"pwd":"[已脱敏]"}, 旧书店, {"count":42}, 12345678 | '
+        'episodes/2026/08/index.md\n\n'
+        '## 每日索引（2026-08）\n'
+        '- 2026-08-10 | 旧书店 | 2026-08-10.md\n',
+      );
+      expect(client.maxTokens, [16384]);
+      expect(result.bubbleText, isNull);
+      expect(result.pendingContext, isNull);
+      expect(result.diagnostics, ['recall miss reason=no-date-selection']);
+      expect(await monthFile.readAsBytes(), monthBytes);
+      expect(await dayFile.readAsBytes(), dayBytes);
+    },
+  );
+
+  test(
+    'legacy daily keywords are redacted on initial and supplemental selections',
+    () async {
+      final root = await _seedEpisodes({
+        '2025-03-05': [_entry('seed:1:0', '用户聊到旧书店的老板')],
+        '2026-06-01': [_entry('seed:2:0', '用户最近在跑步')],
+        '2026-07-01': [_entry('seed:3:0', '用户说想去青岛')],
+        '2026-08-10': [_entry('seed:4:0', '用户去看了演唱会')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_selectionReply(months: ['2025-03'])),
+        ModelCompletion.reply(_selectionReply(dates: ['2025-03-05'])),
+        ModelCompletion.reply('书店那件事想起来了。'),
+      ]);
+      final (recall, pipeline) = _orchestrator(root.path, client: client);
+      await _rebuildUnderLock(recall, pipeline);
+      final monthFile = recall.indexStore.topIndexFile;
+      final recentDayFile = recall.indexStore.monthIndexFile('2026-08');
+      final oldDayFile = recall.indexStore.monthIndexFile('2025-03');
+      await monthFile.writeAsString(
+        '# 旧索引\n'
+        '- 2025-03 | {"pwd":"M1"}, 旧书店 | episodes/2025/03/index.md\n'
+        '- 2026-06 | 跑步 | episodes/2026/06/index.md\n'
+        '- 2026-07 | 青岛 | episodes/2026/07/index.md\n'
+        '- 2026-08 | 演唱会 | episodes/2026/08/index.md\n',
+      );
+      await recentDayFile.writeAsString(
+        '# 旧索引\n'
+        '- 2026-08-10 | {"pwd":"D1"}, 演唱会 | 2026-08-10.md\n',
+      );
+      await oldDayFile.writeAsString(
+        '# 旧索引\n'
+        '- 2025-03-05 | {"pwd":"D2"}, 旧书店, {"count":42}, 12345678 | '
+        '2025-03-05.md\n',
+      );
+      final monthBytes = await monthFile.readAsBytes();
+      final recentDayBytes = await recentDayFile.readAsBytes();
+      final oldDayBytes = await oldDayFile.readAsBytes();
+
+      final result = await recall.runTurnRecall(
+        userText: '以前聊过的书店',
+        recallActions: [MemoryRecallAction(query: '旧书店')],
+      );
+
+      expect(client.calls, hasLength(3));
+      expect(
+        client.calls
+            .expand((messages) => messages)
+            .map((message) => message.content),
+        everyElement(
+          allOf(
+            isNot(contains('M1')),
+            isNot(contains('D1')),
+            isNot(contains('D2')),
+          ),
+        ),
+      );
+      for (final selection in client.calls.take(2)) {
+        expect(selection.map((message) => message.role), [
+          ModelMessageRole.system,
+          ModelMessageRole.user,
+        ]);
+        expect(
+          selection.last.content,
+          contains(
+            '查找意图：旧书店\n用户当时的原话：以前聊过的书店\n\n'
+            '## 月份索引（episodes/index.md）\n'
+            '- 2025-03 | {"pwd":"[已脱敏]"}, 旧书店 | episodes/2025/03/index.md\n'
+            '- 2026-06 | 跑步 | episodes/2026/06/index.md\n'
+            '- 2026-07 | 青岛 | episodes/2026/07/index.md\n'
+            '- 2026-08 | 演唱会 | episodes/2026/08/index.md\n',
+          ),
+        );
+        expect(
+          selection.last.content,
+          contains(
+            '## 每日索引（2026-08）\n'
+            '- 2026-08-10 | {"pwd":"[已脱敏]"}, 演唱会 | 2026-08-10.md\n',
+          ),
+        );
+      }
+      expect(client.calls[1].first.content, client.calls[0].first.content);
+      expect(client.calls[0].last.content, isNot(contains('每日索引（2025-03）')));
+      expect(
+        client.calls[1].last.content,
+        contains(
+          '## 每日索引（2025-03）\n'
+          '- 2025-03-05 | {"pwd":"[已脱敏]"}, 旧书店, {"count":42}, 12345678 | '
+          '2025-03-05.md\n',
+        ),
+      );
+      expect(client.maxTokens, [16384, 16384, 16384]);
+      expect(result.bubbleText, '书店那件事想起来了。');
+      expect(result.pendingContext, contains('2025-03-05'));
+      expect(result.pendingContext, contains('用户聊到旧书店的老板'));
+      expect(result.diagnostics, [
+        'recall month index supplemented month=2025-03',
+      ]);
+      expect(await monthFile.readAsBytes(), monthBytes);
+      expect(await recentDayFile.readAsBytes(), recentDayBytes);
+      expect(await oldDayFile.readAsBytes(), oldDayBytes);
+    },
+  );
+
+  for (final (keywords, expectedKeywords) in [
+    ('旧书店, {"count":42}, 12345678', '旧书店, {"count":42}, 12345678'),
+    ('{"pwd":"D1"}, 旧书店', '{"pwd":"[已脱敏]"}, 旧书店'),
+    ('{"pwd":",D"}, 旧书店', '{"pwd":"[已脱敏]"}, 旧书店'),
+  ]) {
+    test(
+      'direct recall preserves a normal hit with keywords $keywords',
+      () async {
+        final root = await _seedEpisodes({
+          '2026-08-10': [
+            _entry('seed:1:0', '用户聊到旧书店的老板', evidence: '上回在旧书店挑了本画册'),
+          ],
+        });
+        addTearDown(() => root.delete(recursive: true));
+        final client = ScriptedChatClient([
+          ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
+          ModelCompletion.reply('想起来了，你在书店挑了本画册。'),
+        ]);
+        final (recall, pipeline) = _orchestrator(root.path, client: client);
+        await _rebuildUnderLock(recall, pipeline);
+        await recall.indexStore.topIndexFile.writeAsString(
+          '# 旧索引\n- 2026-08 | $keywords | episodes/2026/08/index.md\n',
+        );
+        await recall.indexStore
+            .monthIndexFile('2026-08')
+            .writeAsString('# 旧索引\n- 2026-08-10 | $keywords | 2026-08-10.md\n');
+
+        final result = await recall.runTurnRecall(
+          userText: '上次说的书店',
+          recallActions: [MemoryRecallAction(query: '旧书店')],
+        );
+
+        expect(client.calls, hasLength(2));
+        for (final message in client.calls.expand((messages) => messages)) {
+          expect(message.content, isNot(contains('D1')));
+        }
+        expect(
+          client.calls.first.last.content,
+          '查找意图：旧书店\n用户当时的原话：上次说的书店\n\n'
+          '## 月份索引（episodes/index.md）\n'
+          '- 2026-08 | $expectedKeywords | episodes/2026/08/index.md\n\n'
+          '## 每日索引（2026-08）\n'
+          '- 2026-08-10 | $expectedKeywords | 2026-08-10.md\n',
+        );
+        expect(client.calls.last.last.content, contains('上回在旧书店挑了本画册'));
+        expect(client.maxTokens, [16384, 16384]);
+        expect(result.bubbleText, '想起来了，你在书店挑了本画册。');
+        expect(result.pendingContext, contains('2026-08-10'));
+        expect(result.pendingContext, contains('用户聊到旧书店的老板'));
+        expect(result.pendingContext, contains('上回在旧书店挑了本画册'));
+        expect(result.diagnostics, isEmpty);
+      },
+    );
+  }
+
   test('in-turn loop walks both index levels and composes bubble 2', () async {
     final root = await _seedEpisodes({
       '2026-07-02': [_entry('seed:1:0', '用户准备第一次演讲', evidence: '下周第一次演讲，好紧张')],

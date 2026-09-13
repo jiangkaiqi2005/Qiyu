@@ -577,9 +577,11 @@ final class RecallOrchestrator {
       ..writeln('用户当时的原话：$userText')
       ..writeln()
       ..writeln('## 月份索引（episodes/index.md）');
+    // 旧索引按逗号拆词；两层关键词栏都先拼回再脱敏，避免 JSON
+    // 凭据值中的逗号将秘密拆开。年月、日期和路径仍独立装配。
     for (final line in topIndex) {
       user.writeln(
-        '- ${line.month} | ${line.keywords.join(', ')} | '
+        '- ${line.month} | ${redactSessionText(line.keywords.join(', '))} | '
         '${episodeMonthRelativeDirectory(line.month)}/index.md',
       );
     }
@@ -589,7 +591,8 @@ final class RecallOrchestrator {
         ..writeln('## 每日索引（$key）');
       for (final line in value) {
         user.writeln(
-          '- ${line.date} | ${line.keywords.join(', ')} | ${line.date}.md',
+          '- ${line.date} | ${redactSessionText(line.keywords.join(', '))} | '
+          '${line.date}.md',
         );
       }
     }
