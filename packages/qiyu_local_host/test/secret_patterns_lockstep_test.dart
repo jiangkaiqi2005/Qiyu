@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
 /// 秘密特征表 lockstep 守门（f16-B3）。
@@ -22,6 +24,33 @@ import 'package:test/test.dart';
 /// 两侧的现行模式清单整块钉死：任一侧单边增删或改写模式，测试立即
 /// 失败。改动一侧前，必须先评估另一侧是否同步。
 void main() {
+  final contract = jsonDecode(
+    File('../../contracts/qiyu_behavior_contracts.json').readAsStringSync(),
+  ) as Map<String, Object?>;
+  for (final value
+      in contract['credentialPlaceholderMatrix']! as List<Object?>) {
+    final fixture = value! as Map<String, Object?>;
+    final key = fixture['key']! as String;
+    Map<String, String> forms(String text) => {
+      'json': jsonEncode({key: text}),
+      'escapedJson': '{"${fixture['escapedKey']}":${jsonEncode(text)}}',
+      'colon': '$key: $text',
+      'equals': '$key=$text',
+      'fullWidthColon': '$key：$text',
+    };
+    final secrets = forms(fixture['secretValue']! as String);
+    for (final form in forms('[已脱敏]').entries) {
+      test('shared redaction matrix: $key/${form.key}', () {
+        expect(redactSessionText(form.value), form.value);
+        expect(redactSessionText(secrets[form.key]!), form.value);
+        expect(
+          redactSessionText('${form.value}\npassword: audit-only-other'),
+          '${form.value}\npassword: [已脱敏]',
+        );
+      });
+    }
+  }
+
   group('秘密特征表 lockstep 守门', () {
     // 相对各自包根的源码路径；dart test 固定在包根目录运行。
     const coreSourcePath =

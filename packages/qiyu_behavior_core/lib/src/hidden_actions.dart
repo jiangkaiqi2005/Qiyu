@@ -530,16 +530,27 @@ final _privilegePatterns = [
   RegExp(r'\b(?:exec|powershell|cmd\.exe|bash|sh -c)\b', caseSensitive: false),
 ];
 
-/// 敏感键名词表：冒号形态与 JSON 引号形态共用，保证两种写法覆盖面
-/// 一致。与 host 落盘脱敏表的键名词表有意不同（差异见
-/// secret_patterns_lockstep_test.dart 的说明），补词须两表分别评估。
+/// 基线文本词表保持原样，包含 token/cookie 的后缀匹配语义。
+/// 新键单独检查真实值，避免改变已脱敏内容原有的接受/拒绝结果。
 const _sensitiveKeyNames =
-    r'api[_ -]?key|api[_ -]?secret|secret[_ -]?key|access[_ -]?token|'
-    r'refresh[_ -]?token|client[_ -]?secret|password|passwd|pwd|secret|token|'
-    r'(?:set[- ])?cookie|密码|口令|私钥|密钥|令牌';
+    r'api[_ -]?key|token|cookie|password|密码|口令|私钥|密钥';
+const _additionalSensitiveKeyNames =
+    r'api[_ -]?secret|secret[_ -]?key|access[_ -]?token|refresh[_ -]?token|'
+    r'client[_ -]?secret|passwd|pwd|secret|set[- ]cookie|令牌';
 
 final _sensitiveJsonKeyPattern = RegExp(
-  '^(?:$_sensitiveKeyNames)\$',
+  '^(?:$_sensitiveKeyNames|$_additionalSensitiveKeyNames)\$',
+  caseSensitive: false,
+);
+final _additionalTextSecretPattern = RegExp(
+  '(?:$_additionalSensitiveKeyNames)' r'\s*[:=：]\s*('
+  r'''(?:"\[已脱敏\]"|'\[已脱敏\]'|\[已脱敏\])'''
+  r'''(?=$|[\s；;，,。.!！?？）)\]}"'])'''
+  r'|[^\s；;，,]+)',
+  caseSensitive: false,
+);
+final _additionalJsonTextSecretPattern = RegExp(
+  '"($_additionalSensitiveKeyNames)' r'"\s*:\s*"((?:[^"\\]|\\.)*)',
   caseSensitive: false,
 );
 final _jsonCookieKeyPattern = RegExp(
@@ -547,11 +558,6 @@ final _jsonCookieKeyPattern = RegExp(
   caseSensitive: false,
 );
 final _cookieEntryPattern = RegExp(r'[A-Za-z0-9_~-]+\s*=[^\s；;，,]');
-// 修正前的 JSON 键集合：这些原形式保持既有拒绝语义。
-final _legacyJsonKeyPattern = RegExp(
-  r'^(?:api[_ -]?key|token|cookie|password|密码|口令|私钥|密钥)$',
-  caseSensitive: false,
-);
 
 /// 秘密特征：命中即不允许提升为记忆。与 sessions 脱敏规则保持一致的
 /// 保守集合，覆盖密码、Key、令牌、验证码、私钥、证件与银行卡号。
@@ -1035,28 +1041,31 @@ List<String>? _parseSelections(
 bool _violatesPrivilege(String value) =>
     _privilegePatterns.any((pattern) => pattern.hasMatch(value));
 
-// 保留原文本规则的拒绝语义；补充的 JSON 解码分支只拦实际秘密。
-bool _containsSecret(String value) {
-  final fields = jsonScalarFields(value).toList(growable: false);
-  var text = value;
-  for (final field in fields.reversed) {
-    if (_sensitiveJsonKeyPattern.hasMatch(field.key) &&
-        !_legacyJsonKeyPattern.hasMatch(field.key) &&
-        !_jsonFieldContainsSecret(field)) {
-      // 新键的普通值不被扩展词表误拒；保留值供裸令牌等旧规则检查。
-      text = text.replaceRange(field.keyStart, field.keyEnd, '""');
-    }
-  }
-  return _secretPatterns.any((pattern) => pattern.hasMatch(text)) ||
-      fields.any(_jsonFieldContainsSecret);
-}
+// 原规则照常检查全部文本；新增识别只排除完整占位，不跳过其余内容。
+bool _containsSecret(String value) =>
+    _secretPatterns.any((pattern) => pattern.hasMatch(value)) ||
+    _additionalTextSecretPattern.allMatches(value).any((match) {
+      final text = match.group(1)!;
+      return text != '[已脱敏]' && text != '"[已脱敏]"' && text != "'[已脱敏]'";
+    }) ||
+    _additionalJsonTextSecretPattern.allMatches(value).any((match) {
+      try {
+        final text = jsonDecode('"${match.group(2)}"') as String;
+        return _jsonFieldContainsSecret(match.group(1)!, text);
+      } on FormatException {
+        // 保留不完整或非法转义的秘密片段原有拒绝，不能借解析失败放行。
+        return true;
+      }
+    }) ||
+    jsonScalarFields(value).any(
+      (field) => _jsonFieldContainsSecret(field.key, field.stringValue),
+    );
 
-bool _jsonFieldContainsSecret(JsonScalarField field) {
-  if (field.stringValue == '[已脱敏]') return false;
-  if (!_sensitiveJsonKeyPattern.hasMatch(field.key)) return false;
-  if (_jsonCookieKeyPattern.hasMatch(field.key)) {
-    return field.stringValue != null &&
-        _cookieEntryPattern.hasMatch(field.stringValue!);
+bool _jsonFieldContainsSecret(String key, String? value) {
+  if (value == '[已脱敏]') return false;
+  if (!_sensitiveJsonKeyPattern.hasMatch(key)) return false;
+  if (_jsonCookieKeyPattern.hasMatch(key)) {
+    return value != null && _cookieEntryPattern.hasMatch(value);
   }
   return true;
 }

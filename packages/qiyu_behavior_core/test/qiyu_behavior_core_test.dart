@@ -14,6 +14,40 @@ void main() {
           as Map<String, Object?>;
   final fixtures = fixtureDocument['cases']! as List<Object?>;
 
+  for (final value
+      in fixtureDocument['credentialPlaceholderMatrix']! as List<Object?>) {
+    final fixture = value! as Map<String, Object?>;
+    final key = fixture['key']! as String;
+    final accepted = fixture['placeholderAccepted']! as Map<String, Object?>;
+    Map<String, String> forms(String text) => {
+      'json': jsonEncode({key: text}),
+      'escapedJson': '{"${fixture['escapedKey']}":${jsonEncode(text)}}',
+      'colon': '$key: $text',
+      'equals': '$key=$text',
+      'fullWidthColon': '$key：$text',
+    };
+    final secrets = forms(fixture['secretValue']! as String);
+    for (final form in forms('[已脱敏]').entries) {
+      final cases = <String, (String, bool)>{
+        'placeholder': (form.value, accepted[form.key]! as bool),
+        'secret': (secrets[form.key]!, false),
+        'mixed': ('${form.value}\npassword: audit-only-other', false),
+      };
+      for (final entry in cases.entries) {
+        test('credential matrix: $key/${form.key}/${entry.key}', () {
+          final actions = jsonEncode([
+            {'action': 'memory_signal', 'summary': entry.value.$1},
+          ]);
+          final result = parseHiddenActions(
+            '嗯。<qiyu-actions>$actions</qiyu-actions>',
+          );
+          expect(result.visibleText, '嗯。');
+          expect(result.actions, hasLength(entry.value.$2 ? 1 : 0));
+        });
+      }
+    }
+  }
+
   for (final value in fixtureDocument['memorySignalCases']! as List<Object?>) {
     final fixture = value! as Map<String, Object?>;
     test('memory signal matches shared fixture: ${fixture['id']}', () {

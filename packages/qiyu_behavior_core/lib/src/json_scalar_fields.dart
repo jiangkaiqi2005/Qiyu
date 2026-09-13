@@ -5,8 +5,6 @@ final class JsonScalarField {
   const JsonScalarField({
     required this.key,
     required this.stringValue,
-    required this.keyStart,
-    required this.keyEnd,
     required this.valueStart,
     required this.valueEnd,
   });
@@ -14,8 +12,6 @@ final class JsonScalarField {
   final String key;
   // 数字值用 null 表示；识别凭据只依赖键名，不改变原始数字的精度。
   final String? stringValue;
-  final int keyStart;
-  final int keyEnd;
   final int valueStart;
   final int valueEnd;
 }
@@ -40,8 +36,6 @@ Iterable<JsonScalarField> jsonScalarFields(String text) sync* {
       yield JsonScalarField(
         key: key,
         stringValue: value,
-        keyStart: match.start,
-        keyEnd: match.start + match.group(1)!.length,
         valueStart: match.end - rawValue.length,
         valueEnd: match.end,
       );

@@ -156,6 +156,7 @@ void main() {
       '{"password":"audit-only-secret"}',
       r'{"client\u005fsecret":"audit-only-client"}',
       r'{"pass\u0077ord":987654321}',
+      r'{"client_secret":"audit\q-secret"}',
       '{"client_secret":"audit-only-client"}',
       '{"password":987654321}',
       '{"access_token":123456}',
