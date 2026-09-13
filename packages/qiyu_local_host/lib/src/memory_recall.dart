@@ -404,7 +404,17 @@ final class RecallOrchestrator {
   List<String> _filterBannedKeywords(
     List<String> keywords,
     Set<String> banned,
-  ) => keywords.where((keyword) => !bannedMemoryText(keyword, banned)).toList();
+  ) {
+    // 全受控行仍按原词项隐藏，不能因脱敏抹掉禁提词而重新可见。
+    if (keywords.every((keyword) => bannedMemoryText(keyword, banned))) {
+      return const [];
+    }
+    // 在剔除词项前保留完整凭据上下文，避免只剩失去键名的秘密尾部。
+    return _redactedIndexKeywords(keywords)
+        .split(', ')
+        .where((keyword) => !bannedMemoryText(keyword, banned))
+        .toList();
+  }
 
   Set<String> _datesOf(Map<String, List<DayIndexLine>> dayIndexByMonth) {
     final dates = <String>{};

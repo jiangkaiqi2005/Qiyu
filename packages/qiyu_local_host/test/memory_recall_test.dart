@@ -253,6 +253,133 @@ void main() {
     );
   }
 
+  test(
+    'blocked credential prefixes leave no fragments in recall indexes',
+    () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户傍晚去河边散步')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
+      expect(await openLoopStore.banTitle('书'), isTrue);
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
+        ModelCompletion.reply('想起来了，你去了河边。'),
+      ]);
+      final (recall, pipeline) = _orchestrator(
+        root.path,
+        client: client,
+        openLoopStore: openLoopStore,
+      );
+      await _rebuildUnderLock(recall, pipeline);
+      const keywords = '{"密码":"书,D"}, 旧书店, 散步, {"count":42}, 12345678';
+      final monthFile = recall.indexStore.topIndexFile;
+      final dayFile = recall.indexStore.monthIndexFile('2026-08');
+      await monthFile.writeAsString(
+        '# 旧索引\n- 2026-08 | $keywords | episodes/2026/08/index.md\n',
+      );
+      await dayFile.writeAsString(
+        '# 旧索引\n- 2026-08-10 | $keywords | 2026-08-10.md\n',
+      );
+      final monthBytes = await monthFile.readAsBytes();
+      final dayBytes = await dayFile.readAsBytes();
+
+      final result = await recall.runTurnRecall(
+        userText: '上次散步的事',
+        recallActions: [MemoryRecallAction(query: '散步')],
+      );
+
+      expect(client.calls, hasLength(2));
+      for (final message in client.calls.expand((messages) => messages)) {
+        expect(message.content, isNot(contains('D"}')));
+        expect(message.content, isNot(contains('书')));
+      }
+      final selection = client.calls.first.last.content;
+      expect(selection, contains('## 月份索引（episodes/index.md）\n- 2026-08 | '));
+      expect(selection, contains('## 每日索引（2026-08）\n- 2026-08-10 | '));
+      expect(
+        selection,
+        contains('散步, {"count":42}, 12345678 | episodes/2026/08/index.md'),
+      );
+      expect(selection, contains('散步, {"count":42}, 12345678 | 2026-08-10.md'));
+      expect(client.maxTokens, [16384, 16384]);
+      expect(result.bubbleText, '想起来了，你去了河边。');
+      expect(result.pendingContext, contains('2026-08-10'));
+      expect(result.pendingContext, contains('用户傍晚去河边散步'));
+      expect(result.diagnostics, isEmpty);
+      expect(await monthFile.readAsBytes(), monthBytes);
+      expect(await dayFile.readAsBytes(), dayBytes);
+    },
+  );
+
+  for (final hideMonth in [true, false]) {
+    test(
+      'fully blocked credential indexes stay hidden month=$hideMonth',
+      () async {
+        final root = await _seedEpisodes({
+          '2026-08-10': [_entry('seed:1:0', '用户傍晚去河边散步')],
+        });
+        addTearDown(() => root.delete(recursive: true));
+        final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
+        expect(await openLoopStore.banTitle('书'), isTrue);
+        final client = ScriptedChatClient([
+          ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
+        ]);
+        final (recall, pipeline) = _orchestrator(
+          root.path,
+          client: client,
+          openLoopStore: openLoopStore,
+        );
+        await _rebuildUnderLock(recall, pipeline);
+        const blockedKeywords = '{"密码":"书,书"}, 旧书店';
+        final monthKeywords = hideMonth ? blockedKeywords : '散步';
+        final monthFile = recall.indexStore.topIndexFile;
+        final dayFile = recall.indexStore.monthIndexFile('2026-08');
+        await monthFile.writeAsString(
+          '# 旧索引\n- 2026-08 | $monthKeywords | episodes/2026/08/index.md\n',
+        );
+        await dayFile.writeAsString(
+          '# 旧索引\n- 2026-08-10 | $blockedKeywords | 2026-08-10.md\n',
+        );
+        final monthBytes = await monthFile.readAsBytes();
+        final dayBytes = await dayFile.readAsBytes();
+
+        final result = await recall.runTurnRecall(
+          userText: '上次散步的事',
+          recallActions: [MemoryRecallAction(query: '散步')],
+        );
+
+        expect(client.calls, hasLength(hideMonth ? 0 : 1));
+        if (hideMonth) {
+          expect(
+            result.diagnostics,
+            contains('recall miss reason=no-visible-months'),
+          );
+        } else {
+          final selection = client.calls.single.last.content;
+          expect(
+            selection,
+            contains('- 2026-08 | 散步 | episodes/2026/08/index.md'),
+          );
+          expect(selection, isNot(contains('2026-08-10')));
+          expect(selection, isNot(contains('书')));
+          expect(
+            result.diagnostics.join('\n'),
+            contains('not-in-passed-index'),
+          );
+        }
+        expect(
+          result.diagnostics,
+          contains('recall index line hidden reason=blocked'),
+        );
+        expect(result.bubbleText, isNull);
+        expect(result.pendingContext, isNull);
+        expect(await monthFile.readAsBytes(), monthBytes);
+        expect(await dayFile.readAsBytes(), dayBytes);
+      },
+    );
+  }
+
   test('in-turn loop walks both index levels and composes bubble 2', () async {
     final root = await _seedEpisodes({
       '2026-07-02': [_entry('seed:1:0', '用户准备第一次演讲', evidence: '下周第一次演讲，好紧张')],
