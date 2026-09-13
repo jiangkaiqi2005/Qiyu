@@ -8,12 +8,23 @@ final class JsonScalarField {
     required this.start,
     required this.valueStart,
     required this.valueEnd,
-  });
+  }) : _rawStringValue = null;
+
+  const JsonScalarField._invalidString({
+    required this.key,
+    required String rawValue,
+    required this.start,
+    required this.valueStart,
+    required this.valueEnd,
+  }) : stringValue = null,
+       _rawStringValue = rawValue;
 
   // 键自身和数组元素没有所属字段名。
   final String? key;
-  // 数字值用 null 表示；识别凭据只依赖键名，不改变原始数字的精度。
+  // 已解码字符串；数字和无效字符串用 null 表示，不改变原始数字精度。
   final String? stringValue;
+  // 无效值保留原始内部文本供凭据判断，不当成已解码字符串继续遍历。
+  final String? _rawStringValue;
   final int start;
   final int valueStart;
   final int valueEnd;
@@ -59,9 +70,16 @@ Iterable<JsonScalarField> jsonScalarFields(
     try {
       final rawKey = match.group(1) ?? match.group(4);
       final key = rawKey == null ? null : jsonDecode(rawKey) as String;
-      final value = rawValue != null && rawValue.startsWith('"')
-          ? jsonDecode(rawValue) as String
-          : null;
+      String? value;
+      String? invalidValue;
+      if (rawValue != null && rawValue.startsWith('"')) {
+        try {
+          value = jsonDecode(rawValue) as String;
+        } on FormatException {
+          // 值失败不能丢弃已确认的键语义；不猜测非法转义的解码结果。
+          invalidValue = rawValue.substring(1, rawValue.length - 1);
+        }
+      }
       // 字段优先：普通文本的孤立引号不能与字段开引号拼成候选后吞掉字段。
       yield* _jsonStringValues(text, cursor, match.start, textReplacements);
       cursor = match.end;
@@ -75,6 +93,16 @@ Iterable<JsonScalarField> jsonScalarFields(
         );
       }
       if (rawValue == null) continue;
+      if (invalidValue != null) {
+        yield JsonScalarField._invalidString(
+          key: key,
+          rawValue: invalidValue,
+          start: match.start + (rawKey?.length ?? 0),
+          valueStart: match.end - rawValue.length,
+          valueEnd: match.end,
+        );
+        continue;
+      }
       yield JsonScalarField(
         key: key,
         stringValue: value,
@@ -153,7 +181,8 @@ String rewriteJsonStringValues(
       final field = frame.fields.current;
       frame.addTextReplacements(field.start, rewriteText);
       frame.cursor = field.valueEnd;
-      if (field.key != null && isSecret(field.key!, field.stringValue)) {
+      if (field.key != null &&
+          isSecret(field.key!, field.stringValue ?? field._rawStringValue)) {
         frame.replacements.add(
           JsonTextReplacement(field.valueStart, field.valueEnd, '"[已脱敏]"'),
         );

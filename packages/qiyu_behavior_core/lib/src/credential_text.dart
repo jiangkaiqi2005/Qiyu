@@ -10,7 +10,8 @@ bool isBareCookieTextValue(String value) =>
 RegExp credentialTextPattern(String keys) => RegExp(
   '(($keys)'
   r'\s*[:=：]\s*)('
-  r"""(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\[已脱敏\])"""
+  r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'"""
+  r'|\[已脱敏\]'
   r"""(?=$|[\s；;，,。.!！?？）)\]}"'])"""
   r'|[^\s；;，,]+)',
   caseSensitive: false,
