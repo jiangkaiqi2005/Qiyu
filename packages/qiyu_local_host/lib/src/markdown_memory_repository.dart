@@ -841,7 +841,10 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
   for (final match in _decodedTextCredentialPattern.allMatches(text)) {
     final rawValue = match.group(3)!;
     final value = credentialTextValue(rawValue);
-    if (_jsonFieldContainsSecret(match.group(2)!, value.text)) {
+    final key = match.group(2)!;
+    if (_jsonFieldContainsSecret(key, value.text) ||
+        (value.start != 0 && _jsonCookieKeyPattern.hasMatch(key) &&
+            isBareCookieTextValue(value.text))) {
       final start = match.end - rawValue.length;
       replacements.add(JsonTextReplacement(
         start + value.start, start + value.end, '[已脱敏]',

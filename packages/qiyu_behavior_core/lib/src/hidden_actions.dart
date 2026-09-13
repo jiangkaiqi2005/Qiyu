@@ -547,7 +547,6 @@ final _additionalTextSecretPattern =
     credentialTextPattern(_additionalSensitiveKeyNames);
 final _decodedTextSecretPattern =
     credentialTextPattern('$_sensitiveKeyNames|$_additionalSensitiveKeyNames');
-final _bareCookieValuePattern = RegExp(r'^[A-Za-z0-9._~+/=-]{10,}');
 final _additionalJsonTextSecretPattern = RegExp(
   '"($_additionalSensitiveKeyNames)' r'"\s*:\s*"((?:[^"\\]|\\.)*)',
   caseSensitive: false,
@@ -1075,9 +1074,10 @@ bool _containsAdditionalSecretText(String value, bool decoded) =>
         .allMatches(value).any((match) {
       final rawValue = match.group(3)!;
       final key = match.group(2)!;
-      return _jsonFieldContainsSecret(key, credentialTextValue(rawValue).text) ||
+      final text = credentialTextValue(rawValue).text;
+      return _jsonFieldContainsSecret(key, text) ||
           (decoded && _jsonCookieKeyPattern.hasMatch(key) &&
-              _bareCookieValuePattern.hasMatch(rawValue));
+              isBareCookieTextValue(text));
     }) ||
     _additionalJsonTextSecretPattern.allMatches(value).any((match) {
       try {

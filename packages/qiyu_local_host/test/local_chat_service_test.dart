@@ -4099,27 +4099,35 @@ void main() {
       ) as Map<String, Object?>;
       final fixtures = (contract['credentialJsonCases']! as List<Object?>)
           .cast<Map<String, Object?>>();
-      final input = fixtures.map((fixture) => fixture['input']).join('\n');
-      final expected = fixtures.map((fixture) => fixture['redacted']).join('\n');
-      for (final persistedText in [input, expected]) {
-        final harness = await InProcessChatHost.start(
-          clock: () => DateTime(2026, 8, 11, 22, 30),
-          seedMemory: (directory) =>
-              _seedLegacySecretSession(directory, secretText: persistedText),
-        );
-        addTearDown(harness.dispose);
-        final file = File(
-          '${harness.memoryDirectory}/sessions/2026/08/2026-08-11-001.md',
-        );
-        final original = await file.readAsString();
-        final response = await harness.readSession(
-          sessionId: 'legacy-secret-session',
-        );
-        expect(response.statusCode, 200);
-        final body = jsonDecode(response.body) as Map<String, Object?>;
-        final turn = (body['turns']! as List<Object?>).first! as Map<String, Object?>;
-        expect(turn['text'], expected);
-        expect(await file.readAsString(), original);
+      // 完整 JSON 字符串单独作为消息，其他样本仍验证相邻片段的边界。
+      final groups = [
+        fixtures.where((fixture) => fixture['rootString'] != true).toList(),
+        for (final fixture in fixtures.where((f) => f['rootString'] == true))
+          [fixture],
+      ];
+      for (final group in groups) {
+        final input = group.map((fixture) => fixture['input']).join('\n');
+        final expected = group.map((fixture) => fixture['redacted']).join('\n');
+        for (final persistedText in [input, expected]) {
+          final harness = await InProcessChatHost.start(
+            clock: () => DateTime(2026, 8, 11, 22, 30),
+            seedMemory: (directory) =>
+                _seedLegacySecretSession(directory, secretText: persistedText),
+          );
+          addTearDown(harness.dispose);
+          final file = File(
+            '${harness.memoryDirectory}/sessions/2026/08/2026-08-11-001.md',
+          );
+          final original = await file.readAsString();
+          final response = await harness.readSession(
+            sessionId: 'legacy-secret-session',
+          );
+          expect(response.statusCode, 200);
+          final body = jsonDecode(response.body) as Map<String, Object?>;
+          final turn = (body['turns']! as List<Object?>).first! as Map<String, Object?>;
+          expect(turn['text'], expected);
+          expect(await file.readAsString(), original);
+        }
       }
     });
 

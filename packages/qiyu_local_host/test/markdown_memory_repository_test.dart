@@ -42,6 +42,10 @@ void main() {
         RawSessionTurn.user(requestId: 'json-boundary', text: input, at: now),
       );
       expect(saved.turns.single.text, expected);
+      if (fixture['rootString'] == true) {
+        expect(jsonDecode(saved.turns.single.text), isA<String>());
+        expect(saved.turns.single.redacted().text, expected);
+      }
       if (fixture['expectedJsonCount'] != null) {
         expect(saved.turns.single.redacted().text, expected);
         final json = jsonDecode(saved.turns.single.text) as Map<String, Object?>;

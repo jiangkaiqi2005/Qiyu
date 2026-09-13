@@ -29,8 +29,31 @@ final _jsonScalarFieldPattern = RegExp(
   r'|("(?:[^\x00-\x1F"\\]|\\.)*")'
   r'(?=\s*:\s*(?:[\[{]|true\b|false\b|null\b))',
 );
+final _jsonStringPattern = RegExp(r'"(?:[^\x00-\x1F"\\]|\\.)*"');
+final _jsonKeySeparatorPattern = RegExp(r'\s*:');
 
-Iterable<JsonScalarField> jsonScalarFields(String text) sync* {
+Iterable<JsonScalarField> jsonScalarFields(
+  String text, {
+  Iterable<JsonTextReplacement> Function(String text)? textReplacements,
+}) sync* {
+  final trimmed = text.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      final value = jsonDecode(text) as String;
+      final start = text.indexOf('"');
+      yield JsonScalarField(
+        key: null,
+        stringValue: value,
+        start: start,
+        valueStart: start,
+        valueEnd: start + trimmed.length,
+      );
+      return;
+    } on FormatException {
+      // 非完整字符串仍按字段和数组元素定位，不吞掉相邻 JSON 片段。
+    }
+  }
+  var cursor = 0;
   for (final match in _jsonScalarFieldPattern.allMatches(text)) {
     final rawValue = match.group(2) ?? match.group(3);
     try {
@@ -39,6 +62,9 @@ Iterable<JsonScalarField> jsonScalarFields(String text) sync* {
       final value = rawValue != null && rawValue.startsWith('"')
           ? jsonDecode(rawValue) as String
           : null;
+      // 字段优先：普通文本的孤立引号不能与字段开引号拼成候选后吞掉字段。
+      yield* _jsonStringValues(text, cursor, match.start, textReplacements);
+      cursor = match.end;
       if (rawKey != null) {
         yield JsonScalarField(
           key: null,
@@ -60,6 +86,47 @@ Iterable<JsonScalarField> jsonScalarFields(String text) sync* {
       // 非法 JSON 转义不作语义猜测，由调用方既有文本规则继续处理。
     }
   }
+  yield* _jsonStringValues(text, cursor, text.length, textReplacements);
+}
+
+Iterable<JsonScalarField> _jsonStringValues(
+  String text,
+  int start,
+  int end,
+  Iterable<JsonTextReplacement> Function(String text)? textReplacements,
+) sync* {
+  if (start == end) return;
+  final replacements =
+      textReplacements?.call(text.substring(start, end)).toList() ??
+      const <JsonTextReplacement>[];
+  var replacementIndex = 0;
+  for (final match in _jsonStringPattern.allMatches(text, start)) {
+    if (match.end > end) break;
+    // 字段值含非法转义时，键仍留给原文兜底，不能被独立字符串拆走。
+    if (_jsonKeySeparatorPattern.matchAsPrefix(text, match.end) != null) {
+      continue;
+    }
+    // 完整带引号的文本凭据留在原上下文，不能拆开 password: 与其值。
+    while (replacementIndex < replacements.length &&
+        replacements[replacementIndex].end < match.end - 1 - start) {
+      replacementIndex += 1;
+    }
+    if (replacementIndex < replacements.length &&
+        replacements[replacementIndex].start <= match.start + 1 - start) {
+      continue;
+    }
+    try {
+      yield JsonScalarField(
+        key: null,
+        stringValue: jsonDecode(match.group(0)!) as String,
+        start: match.start,
+        valueStart: match.start,
+        valueEnd: match.end,
+      );
+    } on FormatException {
+      // 无效转义保留给既有文本规则。
+    }
+  }
 }
 
 /// 当前文本中需要替换的半开区间；位置按 Dart 字符串的 UTF-16 计。
@@ -79,7 +146,7 @@ String rewriteJsonStringValues(
   required Iterable<JsonTextReplacement> Function(String text, bool decoded)
   rewriteText,
 }) {
-  final stack = [_JsonRewriteFrame(text, decoded: false)];
+  final stack = [_JsonRewriteFrame(text, false, rewriteText)];
   while (true) {
     final frame = stack.last;
     if (frame.fields.moveNext()) {
@@ -92,7 +159,7 @@ String rewriteJsonStringValues(
         );
       } else if (field.stringValue != null) {
         frame.pending = field;
-        stack.add(_JsonRewriteFrame(field.stringValue!, decoded: true));
+        stack.add(_JsonRewriteFrame(field.stringValue!, true, rewriteText));
       }
       continue;
     }
@@ -144,8 +211,15 @@ String rewriteJsonStringValues(
 
 // 用显式栈遍历逐层解码的字符串，避免输入嵌套深度消耗调用栈。
 final class _JsonRewriteFrame {
-  _JsonRewriteFrame(this.text, {required this.decoded})
-    : fields = jsonScalarFields(text).iterator;
+  _JsonRewriteFrame(
+    this.text,
+    this.decoded,
+    Iterable<JsonTextReplacement> Function(String text, bool decoded)
+    rewriteText,
+  ) : fields = jsonScalarFields(
+        text,
+        textReplacements: (value) => rewriteText(value, decoded),
+      ).iterator;
 
   final String text;
   final bool decoded;
