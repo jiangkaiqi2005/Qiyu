@@ -1078,7 +1078,7 @@ bool _containsAdditionalSecretText(String value, bool decoded) =>
       return _jsonFieldContainsSecret(key, credential.text) ||
           (decoded && _jsonCookieKeyPattern.hasMatch(key) &&
               (isBareCookieTextValue(credential.text, quoted: credential.start != 0) ||
-                  (credential.start != 0 && credential.text == '[已脱敏]' &&
+                  (credential.start != 0 &&
                       cookieTextContinuationValues(value, match.end).isNotEmpty)));
     }) ||
     _additionalJsonTextSecretPattern.allMatches(value).any((match) {

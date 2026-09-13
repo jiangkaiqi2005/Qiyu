@@ -861,7 +861,7 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
           contextStart: match.start, contextEnd: match.end,
         ));
       }
-      if (quotedCookie && (secret || value.text == '[已脱敏]')) {
+      if (quotedCookie) {
         for (final part in cookieTextContinuationValues(text, match.end)) {
           replacements.add(JsonTextReplacement(
             part.start, part.end, '[已脱敏]',

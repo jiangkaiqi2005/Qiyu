@@ -19,10 +19,15 @@ RegExp credentialTextPattern(String keys) => RegExp(
   caseSensitive: false,
 );
 
-final _cookieContinuationSeparator = RegExp(
-  r'[ \t]*[;；][ \t]*(?=[A-Za-z0-9_~-]+[ \t]*=)',
+final _cookieContinuationSeparator = RegExp(r'[ \t]*[;；][ \t]*');
+// Cookie 名采用 HTTP token 词法，点号等合法名称字符不应终止后续检查。
+const _cookieName = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+final _cookieContinuationName = RegExp(
+  '($_cookieName)'
+  r'[ \t]*(=)?[ \t]*',
 );
-final _cookieContinuationValue = credentialTextPattern(r'[A-Za-z0-9_~-]+');
+final _cookieContinuationBoundary = RegExp(r'(?=[;；,，\r\n]|$)');
+final _cookieContinuationValue = credentialTextPattern(_cookieName);
 
 /// 从已确认的引号 Cookie 值之后继续检查分号项，逗号或换行结束归属。
 Iterable<({int start, int end})> cookieTextContinuationValues(
@@ -32,7 +37,19 @@ Iterable<({int start, int end})> cookieTextContinuationValues(
   while (offset < text.length) {
     final separator = _cookieContinuationSeparator.matchAsPrefix(text, offset);
     if (separator == null) return;
-    final match = _cookieContinuationValue.matchAsPrefix(text, separator.end);
+    offset = separator.end;
+    if (_cookieContinuationBoundary.matchAsPrefix(text, offset) != null) {
+      continue;
+    }
+    final name = _cookieContinuationName.matchAsPrefix(text, offset);
+    if (name == null) return;
+    if (name.group(2) == null ||
+        _cookieContinuationBoundary.matchAsPrefix(text, name.end) != null) {
+      // 空项、空值及无值标志保持原文，但不能取消后续分号项的归属。
+      offset = name.end;
+      continue;
+    }
+    final match = _cookieContinuationValue.matchAsPrefix(text, offset);
     if (match == null) return;
     final rawValue = match.group(3)!;
     final value = credentialTextValue(rawValue);
