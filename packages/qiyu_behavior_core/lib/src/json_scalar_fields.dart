@@ -254,6 +254,26 @@ String rewriteJsonStringValues(
       } else if (field.stringValue != null) {
         frame.pending = field;
         stack.add(_JsonRewriteFrame(field.stringValue!, true, rewriteText));
+      } else if (field._rawStringValue != null) {
+        // 无效字符串仍检查内部原文；不猜测转义，也不递归解码。
+        // 使用实际内容规则，避免把字符串外的旧引号边界规则搬入值内。
+        for (final replacement in rewriteText(field._rawStringValue, true)) {
+          frame.replacements.add(
+            JsonTextReplacement(
+              field.valueStart + 1 + replacement.start,
+              field.valueStart + 1 + replacement.end,
+              replacement.value,
+            ),
+          );
+        }
+      } else if (rewriteText(
+        frame.text.substring(field.valueStart, field.valueEnd),
+        true,
+      ).isNotEmpty) {
+        // 数字也保留内容特征检查；命中时替换完整标量，不能破坏 JSON。
+        frame.replacements.add(
+          JsonTextReplacement(field.valueStart, field.valueEnd, '"[已脱敏]"'),
+        );
       }
       continue;
     }
