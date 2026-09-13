@@ -964,8 +964,8 @@ String redactDiagnosticText(String text) => _applyRedactions(
 
 /// 标记载荷里的结构字段：标识、时刻、枚举与计数。这些值不是自由
 /// 文本，导出脱敏不触碰（防止随机标识被令牌特征误改、时刻被误吃），
-/// 其下挂载的列表与映射一并保留。载荷里其余字符串值按记忆文本
-/// 脱敏规则处理，包括字符串里再次嵌入的合法标记。
+/// 其下挂载的列表与映射一并保留。其余值保留 JSON 键值语义，
+/// 自由字符串按记忆文本脱敏，包括字符串里再次嵌入的合法标记。
 const _markerStructuralKeys = {
   'schemaVersion',
   'date',
@@ -1010,11 +1010,21 @@ Object? _redactMarkerPayloadValue(String? key, Object? value) {
   if (key != null && _markerStructuralKeys.contains(key)) {
     return value;
   }
+  if (key != null &&
+      (value is String || value is num) &&
+      _jsonFieldContainsSecret(key, value is String ? value : null)) {
+    // 保留键值上下文交给现有 JSON 规则；Cookie 内的普通序列化对象
+    // 等例外也由同一规则判断，不能仅凭键名遮掉整段内容。
+    final field = jsonEncode({key: value});
+    final redacted = redactMemoryMarkdown(field) ?? field;
+    return (jsonDecode(redacted) as Map<String, Object?>)[key];
+  }
   if (value is String) {
     return redactMemoryMarkdown(value) ?? value;
   }
   if (value is List<Object?>) {
-    return [for (final item in value) _redactMarkerPayloadValue(null, item)];
+    final owner = _jsonCookieKeyPattern.hasMatch(key ?? '') ? key : null;
+    return [for (final item in value) _redactMarkerPayloadValue(owner, item)];
   }
   if (value is Map<String, Object?>) {
     return {
@@ -1031,28 +1041,38 @@ Object? _redactMarkerPayloadValue(String? key, Object? value) {
 /// 替换时返回 null，调用方沿用原始字节，正常备份往返逐字节一致；
 /// 解不开的载荷保持原样，绝不让脱敏损坏文件结构。
 String? redactMemoryMarkdown(String markdown) {
-  final buffer = StringBuffer();
-  var cursor = 0;
-  for (final match in memoryMarkerBlockPattern.allMatches(markdown)) {
-    buffer.write(redactSessionText(markdown.substring(cursor, match.start)));
-    final original = match.group(0)!;
-    var replacement = original;
-    try {
-      final payload = _redactMarkerPayloadValue(
-        null,
-        decodeMarkerPayload(match.group(2)!),
-      ) as Map<String, Object?>;
-      final encoded = encodeMarkerPayload(payload);
-      if (encoded != match.group(2)) {
-        replacement = '${match.group(1)}$encoded${match.group(3)}';
+  // 标记先以不含凭据语法的占位符参与完整文本判定，避免切断外层
+  // JSON/Cookie 的值范围，也避免把合法 base64url 偶合字符当成令牌。
+  final markers = <Match>[];
+  // 原文中的占位起始字符先转义，恢复时一次消费，避免与用户文本碰撞。
+  final protected = markdown
+      .replaceAll('\uE000', '\uE000\uE000')
+      .replaceAllMapped(memoryMarkerBlockPattern, (match) {
+        markers.add(match);
+        return '\uE000${markers.length - 1}\uE001';
+      });
+  final redacted = redactSessionText(protected);
+  final result = redacted.replaceAllMapped(
+    RegExp('\uE000(\uE000|([0-9]+)\uE001)'),
+    (placeholder) {
+      final index = placeholder.group(2);
+      if (index == null) return '\uE000';
+      final match = markers[int.parse(index)];
+      final original = match.group(0)!;
+      try {
+        final payload = _redactMarkerPayloadValue(
+          null,
+          decodeMarkerPayload(match.group(2)!),
+        ) as Map<String, Object?>;
+        final encoded = encodeMarkerPayload(payload);
+        if (encoded != match.group(2)) {
+          return '${match.group(1)}$encoded${match.group(3)}';
+        }
+      } on Object {
+        // 载荷解不开：保持原样（宁原样，不可损坏）。
       }
-    } on Object {
-      // 载荷解不开：保持原样（宁原样，不可损坏）。
-    }
-    buffer.write(replacement);
-    cursor = match.end;
-  }
-  buffer.write(redactSessionText(markdown.substring(cursor)));
-  final result = buffer.toString();
+      return original;
+    },
+  );
   return result == markdown ? null : result;
 }

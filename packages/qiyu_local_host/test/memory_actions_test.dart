@@ -513,6 +513,122 @@ void main() {
   });
 
   group('reveal', () {
+    test('redacts direct marker fields with their JSON key semantics', () async {
+      final marker = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'id': {'password': 'structural-id'},
+        'details': {
+          'password': 'audit04DirectPassword',
+          'api_key': 'audit04DirectKey',
+          'Cookie': 'sid=audit04DirectCookie',
+          'count': 42,
+          'checks': [
+            {'api_key': 654321, 'password': null, 'token': false},
+            {
+              'Cookie': [
+                'sid=audit04ListCookie',
+                'chocolatechip',
+                {'note': 'sid=ordinary'},
+              ],
+            },
+            {'set-cookie': '{"note":"sid=ordinary"}'},
+            {'password': '', 'secret': ' ', 'token': '[已脱敏]'},
+          ],
+        },
+      })} -->';
+      const ordinary = '复诊后心情低落，联系 audit04@example.test。';
+      await seedLegacyEpisode(
+        memoryDirectory,
+        '2026-08-17',
+        summary: '$ordinary$marker',
+      );
+      final before = _directorySnapshot(memoryDirectory);
+      final result = await actions.reveal(
+        entryRef('2026-08-17', 'legacy-entry'),
+        'content',
+      );
+      expect(result.status, MemoryActionStatus.success);
+      expect(result.revealedText, startsWith(ordinary));
+      expect(
+        decodeMarkerPayload(
+          memoryMarkerBlockPattern.firstMatch(result.revealedText!)!.group(2)!,
+        ),
+        {
+          'id': {'password': 'structural-id'},
+          'details': {
+            'password': '[已脱敏]',
+            'api_key': '[已脱敏]',
+            'Cookie': '[已脱敏]',
+            'count': 42,
+            'checks': [
+              {'api_key': '[已脱敏]', 'password': null, 'token': false},
+              {
+                'Cookie': [
+                  '[已脱敏]',
+                  'chocolatechip',
+                  {'note': 'sid=ordinary'},
+                ],
+              },
+              {'set-cookie': '{"note":"sid=ordinary"}'},
+              {'password': '', 'secret': ' ', 'token': '[已脱敏]'},
+            ],
+          },
+        },
+      );
+      expect(_directorySnapshot(memoryDirectory), before);
+    });
+
+    test('keeps credential context across legal markers on reveal', () async {
+      final clean = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'summary': 'A)>abcdefghijklmnop',
+      })} -->';
+      final password = '{"password":"audit04Before${clean}audit04After"}';
+      final nested = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'summary': password,
+      })} -->';
+      const ordinary = '联系 audit04@example.test。';
+      final cases = [
+        (password, '{"password":"[已脱敏]"}', false),
+        (
+          'Cookie: sid=audit04Before${clean}audit04After',
+          'Cookie: [已脱敏]',
+          false,
+        ),
+        (
+          '{"Cookie":"sid=audit04Before${clean}audit04After"}',
+          '{"Cookie":"[已脱敏]"}',
+          false,
+        ),
+        ('$ordinary$nested', '{"password":"[已脱敏]"}', true),
+        ('$ordinary$clean', '$ordinary$clean', false),
+        (
+          '$ordinary\uE00099\uE001$clean',
+          '$ordinary\uE00099\uE001$clean',
+          false,
+        ),
+      ];
+      for (final (summary, expected, unwrap) in cases) {
+        await seedLegacyEpisode(
+          memoryDirectory,
+          '2026-08-17',
+          summary: summary,
+        );
+        final before = _directorySnapshot(memoryDirectory);
+        final result = await actions.reveal(
+          entryRef('2026-08-17', 'legacy-entry'),
+          'content',
+        );
+        expect(result.status, MemoryActionStatus.success);
+        final view = result.revealedText!;
+        final actual = unwrap
+            ? decodeMarkerPayload(
+                memoryMarkerBlockPattern.firstMatch(view)!.group(2)!,
+              )['summary']
+            : view;
+        expect(actual, expected);
+        expect(_directorySnapshot(memoryDirectory), before);
+      }
+    });
+
     test('reveals a legacy credential field with secrets redacted', () async {
       await seedLegacyEpisode(
         memoryDirectory,

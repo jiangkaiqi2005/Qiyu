@@ -1495,19 +1495,30 @@ void main() {
       final host = await _startHost(webRoot, memoryDirectory);
       addTearDown(host.close);
       final today = localSessionDate(DateTime.now());
+      final clean = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'summary': 'A)>abcdefghijklmnop',
+      })} -->';
       final inner = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
         'id': 'inner-entry',
         'summary': '{"Cookie":"sid=audit04HttpCookie"}',
+        'details': {
+          'password': 'audit04HttpDirectPassword',
+          'api_key': 'audit04HttpDirectKey',
+          'Cookie': 'sid=audit04HttpDirectCookie',
+          'count': 42,
+        },
       })} -->';
       final outer = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
         'id': 'outer-entry',
         'summary': inner,
+        'evidence': '{"password":"audit04Before${clean}audit04After"}',
       })} -->';
       const ordinary = '复诊后心情低落，联系 audit04@example.test。';
       await seedLegacyEpisode(
         memoryDirectory.path,
         today,
-        summary: '$ordinary {"password":"audit04HttpPassword"}\n$outer',
+        summary: '$ordinary '
+            '{"password":"audit04HttpPassword${clean}audit04HttpAfter"}\n$outer',
       );
       final browser = await _openBrowserSession(host);
       final overview = await _send(
@@ -1557,17 +1568,28 @@ void main() {
       final text = result['text']! as String;
       expect(text, startsWith('$ordinary {"password":"[已脱敏]"}\n'));
       expect(response.body, isNot(contains('audit04HttpPassword')));
+      expect(response.body, isNot(contains('audit04HttpAfter')));
       final payload = decodeMarkerPayload(
         memoryMarkerBlockPattern.firstMatch(text)!.group(2)!,
       );
       expect(payload['id'], 'outer-entry');
+      expect(payload['evidence'], '{"password":"[已脱敏]"}');
       expect(
         decodeMarkerPayload(
           memoryMarkerBlockPattern
               .firstMatch(payload['summary']! as String)!
               .group(2)!,
         ),
-        {'id': 'inner-entry', 'summary': '{"Cookie":"[已脱敏]"}'},
+        {
+          'id': 'inner-entry',
+          'summary': '{"Cookie":"[已脱敏]"}',
+          'details': {
+            'password': '[已脱敏]',
+            'api_key': '[已脱敏]',
+            'Cookie': '[已脱敏]',
+            'count': 42,
+          },
+        },
       );
     });
 
