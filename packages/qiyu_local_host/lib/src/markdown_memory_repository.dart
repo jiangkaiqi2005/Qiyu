@@ -833,6 +833,13 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
     }
   }
   for (final match in _decodedCookieTextPattern.allMatches(text)) {
+    final credential =
+        _decodedTextCredentialPattern.matchAsPrefix(text, match.start);
+    if (credential != null &&
+        credentialTextValue(credential.group(3)!).start != 0) {
+      // 完整引号值交给下方共享规则，后缀的 price=12 等不是 Cookie 内容。
+      continue;
+    }
     if (_cookieEntryPattern.hasMatch(match.group(2)!)) replaceValue(match, 2);
   }
   for (final match in _decodedBareCookieTextPattern.allMatches(text)) {

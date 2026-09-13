@@ -19,7 +19,7 @@ final class JsonScalarField {
   }) : stringValue = null,
        _rawStringValue = rawValue;
 
-  // 键自身和数组元素没有所属字段名。
+  // 键自身和普通数组元素没有所属字段名；多项 Cookie 继承其字段名。
   final String? key;
   // 已解码字符串；数字和无效字符串用 null 表示，不改变原始数字精度。
   final String? stringValue;
@@ -35,13 +35,19 @@ final _jsonScalarFieldPattern = RegExp(
   r'("(?:[^\x00-\x1F"\\]|\\.)*")\s*:\s*'
   r'("(?:[^\x00-\x1F"\\]|\\.)*"|'
   r'-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?'
-  r'(?=\s*(?:[,}\]]|$)))'
+  r'(?=\s*(?:[,}\]]|$))'
+  r'|\[\s*(?:"(?:[^\x00-\x1F"\\]|\\.)*"'
+  r'(?:\s*,\s*"(?:[^\x00-\x1F"\\]|\\.)*")*)?\s*\])'
   r'|(?<=[\[,])\s*("(?:[^\x00-\x1F"\\]|\\.)*")(?=\s*[,\]])'
   r'|("(?:[^\x00-\x1F"\\]|\\.)*")'
   r'(?=\s*:\s*(?:[\[{]|true\b|false\b|null\b))',
 );
 final _jsonStringPattern = RegExp(r'"(?:[^\x00-\x1F"\\]|\\.)*"');
 final _jsonKeySeparatorPattern = RegExp(r'\s*:');
+final _cookieArrayKeyPattern = RegExp(
+  r'^(?:set[- ])?cookie$',
+  caseSensitive: false,
+);
 
 Iterable<JsonScalarField> jsonScalarFields(
   String text, {
@@ -70,6 +76,10 @@ Iterable<JsonScalarField> jsonScalarFields(
     try {
       final rawKey = match.group(1) ?? match.group(4);
       final key = rawKey == null ? null : jsonDecode(rawKey) as String;
+      // 仅识别完整字符串数组，由 JSON 解码器验证整组语法。
+      final arrayValues = rawValue != null && rawValue.startsWith('[')
+          ? jsonDecode(rawValue) as List<Object?>
+          : null;
       String? value;
       String? invalidValue;
       if (rawValue != null && rawValue.startsWith('"')) {
@@ -93,6 +103,22 @@ Iterable<JsonScalarField> jsonScalarFields(
         );
       }
       if (rawValue == null) continue;
+      if (arrayValues != null) {
+        final arrayStart = match.end - rawValue.length;
+        // 多项 Cookie 保留所属键；其他数组沿用独立字符串的既有语义。
+        final owner = _cookieArrayKeyPattern.hasMatch(key ?? '') ? key : null;
+        var index = 0;
+        for (final item in _jsonStringPattern.allMatches(rawValue)) {
+          yield JsonScalarField(
+            key: owner,
+            stringValue: arrayValues[index++] as String,
+            start: arrayStart + item.start,
+            valueStart: arrayStart + item.start,
+            valueEnd: arrayStart + item.end,
+          );
+        }
+        continue;
+      }
       if (invalidValue != null) {
         yield JsonScalarField._invalidString(
           key: key,
