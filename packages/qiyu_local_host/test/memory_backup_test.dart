@@ -405,6 +405,9 @@ void main() {
           '{"client_secret":"audit-only-client",'
           '"cookie":"sid=$cookieSecret; refresh=audit-only-refresh",'
           '"password":987654321,"count":42}\n'
+          r'{"client\u005fsecret":"audit-only-client",'
+          r'"cookie":"sid\u003daudit-only-cookie; refresh\u003daudit-only-refresh",'
+          r'"pass\u0077ord":987654321,"label":"\u997c\u5e72"}' '\n'
           'Cookie: theme=dark; sid=$cookieSecret\n'
           '-----BEGIN PRIVATE KEY-----\nAUDITONLYFAKEPKCS8\n'
           '-----END PRIVATE KEY-----';
@@ -546,6 +549,7 @@ void main() {
       expect(importedSession.turns.first.text, isNot(contains('audit-only-')));
       expect(importedSession.turns.first.text, isNot(contains('987654321')));
       expect(importedSession.turns.first.text, contains('"count":42'));
+      expect(importedSession.turns.first.text, contains(r'"label":"\u997c\u5e72"'));
 
       final day = await pipeline.readDay('2026-08-05');
       expect(day.readable, isTrue);

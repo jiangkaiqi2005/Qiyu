@@ -658,13 +658,15 @@ const String _sensitiveKeyNames =
     r'refresh[_ -]?token|client[_ -]?secret|password|passwd|pwd|secret|token|'
     r'密码|口令|密钥|令牌';
 
-// 数字凭据替换为带引号的占位字符串，保留合法 JSON 与相邻普通字段。
-final _jsonNumericSecretPattern = RegExp(
-  '("(?:$_sensitiveKeyNames'
-  r')"\s*:\s*)-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?'
-  r'(?=\s*(?:[,}\]]|$))',
+final _sensitiveJsonKeyPattern = RegExp(
+  '^(?:$_sensitiveKeyNames)\$',
   caseSensitive: false,
 );
+final _jsonCookieKeyPattern = RegExp(
+  r'^(?:set[- ])?cookie$',
+  caseSensitive: false,
+);
+final _cookieEntryPattern = RegExp(r'[A-Za-z0-9_~-]+\s*=[^\s；;，,]');
 
 /// 会话文本脱敏规则（每条消息、每段诊断都会过一遍，正则只编译一次）。
 /// JSON 形态的敏感键值：字段名带引号，值段匹配到未转义的结束引号
@@ -767,13 +769,27 @@ String _applyRedactions(String text, List<RegExp> patterns) {
   return result;
 }
 
-String redactSessionText(String text) => _applyRedactions(
-  text.replaceAllMapped(
-    _jsonNumericSecretPattern,
-    (match) => '${match.group(1)}"[已脱敏]"',
-  ),
-  _sessionRedactPatterns,
-);
+// 只替换原始值区间；键名、转义和相邻普通字段的排版保持原样。
+String _redactJsonSecrets(String text) {
+  final buffer = StringBuffer();
+  var cursor = 0;
+  for (final field in jsonScalarFields(text)) {
+    final isCookie =
+        _jsonCookieKeyPattern.hasMatch(field.key) &&
+        field.stringValue != null &&
+        _cookieEntryPattern.hasMatch(field.stringValue!);
+    if (!_sensitiveJsonKeyPattern.hasMatch(field.key) && !isCookie) continue;
+    buffer.write(text.substring(cursor, field.valueStart));
+    buffer.write('"[已脱敏]"');
+    cursor = field.valueEnd;
+  }
+  if (cursor == 0) return text;
+  buffer.write(text.substring(cursor));
+  return buffer.toString();
+}
+
+String redactSessionText(String text) =>
+    _applyRedactions(_redactJsonSecrets(text), _sessionRedactPatterns);
 
 String redactDiagnosticText(String text) => _applyRedactions(
   redactSessionText(text),

@@ -154,6 +154,8 @@ void main() {
       '验证码: 482913',
       // JSON 引号键值：字段名带引号，冒号前多一个引号。
       '{"password":"audit-only-secret"}',
+      r'{"client\u005fsecret":"audit-only-client"}',
+      r'{"pass\u0077ord":987654321}',
       '{"client_secret":"audit-only-client"}',
       '{"password":987654321}',
       '{"access_token":123456}',

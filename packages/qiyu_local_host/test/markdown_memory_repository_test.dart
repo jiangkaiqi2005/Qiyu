@@ -430,6 +430,16 @@ void main() {
     'before session persistence',
     () async {
       const cases = <String, String>{
+        r'{"cookie":"sid\u003daudit-only-cookie; refresh\u003daudit-only-refresh", "count":42}':
+            '{"cookie":"[已脱敏]", "count":42}',
+        r'{ "client\u005fsecret" : "audit-only-client", "label":"\u997c\u5e72" }':
+            r'{ "client\u005fsecret" : "[已脱敏]", "label":"\u997c\u5e72" }',
+        r'{"pass\u0077ord":987654321,"count":42}':
+            r'{"pass\u0077ord":"[已脱敏]","count":42}',
+        r'{"coo\u006bie":"sid\u003daudit-only-cookie"}':
+            r'{"coo\u006bie":"[已脱敏]"}',
+        r'{"cookie":"sid=audit\q-cookie","count":42}':
+            '{"cookie":"[已脱敏]","count":42}',
         '{"password":987654321,"count":42}':
             '{"password":"[已脱敏]","count":42}',
         '{ "password" : -12.5e+3 , "date":"2026-09-13"}':
@@ -546,6 +556,9 @@ void main() {
           '{"cookie":"[已脱敏]","client_secret":"[已脱敏]"}\n'
           '{"cookie":"chocolate chip","count":987654321,"date":"2026-09-13"}\n'
           '{"password_length":12,"client_id":"public","secret_santa":"小王"}\n'
+          r'{"coo\u006bie":"\u997c\u5e72","count":42}' '\n'
+          r'{"client\\u005fsecret":"ordinary", "note":"quote\"tail"}' '\n'
+          r'{"note":"\uD83D\uDE00","code":"\u0061","count":42}' '\n'
           'Cookie: 今天烤了巧克力饼干\n'
           'Cookie：它是浏览器存的小文件';
       final repository = MarkdownMemoryRepository(

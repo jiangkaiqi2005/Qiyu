@@ -4098,7 +4098,10 @@ void main() {
     const legacySecretJson =
         '{"password":"audit-only-password","client_secret":"audit-only-client",'
         '"cookie":"sid=audit-only-cookie; refresh=audit-only-refresh"}\n'
-        '{"password":987654321,"count":42}';
+        '{"password":987654321,"count":42}\n'
+        r'{"client\u005fsecret":"audit-only-escaped-client",'
+        r'"cookie":"sid\u003daudit-only-escaped-cookie; refresh\u003daudit-only-refresh",'
+        r'"pass\u0077ord":987654321,"count":42}';
 
     test('旧会话公开读取不带秘密，历史预览同样过滤，原始文件不重写', () async {
       final harness = await InProcessChatHost.start(
@@ -4160,9 +4163,9 @@ void main() {
       // 本轮新消息自身带秘密：发往模型的当前消息同样过滤，
       // 正常回复交付不受影响。
       const currentSecret =
-          '{"client_secret":"audit-only-current",'
-          '"cookie":"sid=audit-only-cookie; refresh=audit-only-refresh",'
-          '"password":987654321,"count":42}';
+          r'{"client\u005fsecret":"audit-only-current",'
+          r'"cookie":"sid\u003daudit-only-cookie; refresh\u003daudit-only-refresh",'
+          r'"pass\u0077ord":987654321,"count":42}';
       final secretTrace = await harness.sendChat(
         requestId: 'next-secret',
         text: currentSecret,

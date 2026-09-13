@@ -6,6 +6,10 @@
     }
   },
   "memorySignalCases": [
+    { "id": "escaped-json-client-secret", "summary": "{\"client\\u005fsecret\":\"audit-only-client\"}", "accepted": false },
+    { "id": "escaped-json-numeric-password", "summary": "{\"pass\\u0077ord\":987654321}", "accepted": false },
+    { "id": "escaped-json-cookie", "summary": "{\"coo\\u006bie\":\"sid\\u003daudit-only-cookie\"}", "accepted": false },
+    { "id": "ordinary-escaped-json", "summary": "{\"co\\u0075nt\":42,\"snack\":\"\\u997c\\u5e72\"}", "accepted": true },
     { "id": "json-client-secret", "summary": "{\"client_secret\":\"audit-only-client\"}", "accepted": false },
     { "id": "json-numeric-password", "summary": "{\"password\":987654321}", "accepted": false },
     { "id": "json-numeric-access-token", "summary": "{\"access_token\":123456}", "accepted": false },

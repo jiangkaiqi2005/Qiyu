@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'json_scalar_fields.dart';
 import 'shared_patterns.dart';
 
 /// 白名单枚举按 wire 名解析的共用实现：按声明顺序查找，未命中返回
@@ -537,6 +538,11 @@ const _sensitiveKeyNames =
     r'refresh[_ -]?token|client[_ -]?secret|password|passwd|pwd|secret|token|'
     r'(?:set[- ])?cookie|密码|口令|私钥|密钥|令牌';
 
+final _sensitiveJsonKeyPattern = RegExp(
+  '^(?:$_sensitiveKeyNames)\$',
+  caseSensitive: false,
+);
+
 /// 秘密特征：命中即不允许提升为记忆。与 sessions 脱敏规则保持一致的
 /// 保守集合，覆盖密码、Key、令牌、验证码、私钥、证件与银行卡号。
 /// host 落盘脱敏表的「整行多项 Cookie」形态这里不收：真实 Cookie 多项
@@ -554,12 +560,6 @@ final _secretPatterns = [
   ),
   RegExp(
     r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
-    caseSensitive: false,
-  ),
-  RegExp(
-    '"(?:$_sensitiveKeyNames'
-    r')"\s*:\s*-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?'
-    r'(?=\s*(?:[,}\]]|$))',
     caseSensitive: false,
   ),
   RegExp(r'(?:验证码|otp|verification code)\s*[:=：]?\s*\d{4,8}', caseSensitive: false),
@@ -1026,7 +1026,10 @@ bool _violatesPrivilege(String value) =>
     _privilegePatterns.any((pattern) => pattern.hasMatch(value));
 
 bool _containsSecret(String value) =>
-    _secretPatterns.any((pattern) => pattern.hasMatch(value));
+    _secretPatterns.any((pattern) => pattern.hasMatch(value)) ||
+    jsonScalarFields(value).any(
+      (field) => _sensitiveJsonKeyPattern.hasMatch(field.key),
+    );
 
 /// 对动作字段做内容安全筛查：任一字段命中越权特征返回 privilegeViolation，
 /// 否则任一字段命中秘密特征返回 sensitiveContent，全部干净返回 null。

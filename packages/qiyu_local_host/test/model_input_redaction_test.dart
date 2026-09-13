@@ -101,9 +101,9 @@ void main() {
         turns: [
           RawSessionTurn.user(
             requestId: 'legacy-u1',
-            text: '{"client_secret":"audit-only-understanding",'
-                '"cookie":"sid=audit-only-cookie; refresh=audit-only-refresh",'
-                '"password":987654321,"count":42}',
+            text: r'{"client\u005fsecret":"audit-only-understanding",'
+                r'"cookie":"sid\u003daudit-only-cookie; refresh\u003daudit-only-refresh",'
+                r'"pass\u0077ord":987654321,"count":42}',
             at: at,
           ),
         ],
