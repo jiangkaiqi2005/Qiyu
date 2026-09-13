@@ -6,6 +6,7 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
 import 'support/failing_atomic_writer.dart';
+import 'support/legacy_episode_fixture.dart';
 
 void main() {
   late Directory temporaryDirectory;
@@ -1489,6 +1490,86 @@ void main() {
         await host.close();
       },
     );
+
+    test('memory reveal returns a safe legacy view over HTTP', () async {
+      final host = await _startHost(webRoot, memoryDirectory);
+      addTearDown(host.close);
+      final today = localSessionDate(DateTime.now());
+      final inner = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'id': 'inner-entry',
+        'summary': '{"Cookie":"sid=audit04HttpCookie"}',
+      })} -->';
+      final outer = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'id': 'outer-entry',
+        'summary': inner,
+      })} -->';
+      const ordinary = '复诊后心情低落，联系 audit04@example.test。';
+      await seedLegacyEpisode(
+        memoryDirectory.path,
+        today,
+        summary: '$ordinary {"password":"audit04HttpPassword"}\n$outer',
+      );
+      final browser = await _openBrowserSession(host);
+      final overview = await _send(
+        host.origin.resolve('/api/memory'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(overview.statusCode, HttpStatus.ok);
+      final overviewJson = jsonDecode(overview.body) as Map<String, Object?>;
+      final days = (overviewJson['recent']! as Map)['days']! as List;
+      final entry = ((days.single as Map)['entries']! as List).single as Map;
+      expect(entry['masked'], isTrue);
+      expect(entry['content'], isNull);
+      final request = {'action': 'reveal', 'id': entry['id']};
+      final uri = host.origin.resolve('/api/memory/action');
+      for (final headers in [
+        <String, String>{},
+        browser.mutationHeaders(host.origin)..remove('origin'),
+        browser.mutationHeaders(host.origin)..remove('x-qiyu-csrf'),
+      ]) {
+        final denied = await _send(
+          uri,
+          method: 'POST',
+          headers: headers,
+          requestBody: jsonEncode(request),
+        );
+        expect(denied.statusCode, HttpStatus.forbidden);
+        expect(denied.body, isNot(contains('audit04')));
+      }
+      final missing = await _postJson(host, browser, '/api/memory/action', {
+        'action': 'reveal',
+        'id': 'unknown-opaque-id',
+      });
+      expect(missing.statusCode, HttpStatus.notFound);
+      expect((jsonDecode(missing.body) as Map)['code'], 'memory_item_not_found');
+
+      final response = await _postJson(
+        host,
+        browser,
+        '/api/memory/action',
+        request,
+      );
+      expect(response.statusCode, HttpStatus.ok);
+      final result = jsonDecode(response.body) as Map<String, Object?>;
+      expect(result.keys, unorderedEquals(['status', 'message', 'text']));
+      expect(result['status'], 'success');
+      expect(result['message'], '仅本次展示，离开页面或稍后会自动重新遮罩。');
+      final text = result['text']! as String;
+      expect(text, startsWith('$ordinary {"password":"[已脱敏]"}\n'));
+      expect(response.body, isNot(contains('audit04HttpPassword')));
+      final payload = decodeMarkerPayload(
+        memoryMarkerBlockPattern.firstMatch(text)!.group(2)!,
+      );
+      expect(payload['id'], 'outer-entry');
+      expect(
+        decodeMarkerPayload(
+          memoryMarkerBlockPattern
+              .firstMatch(payload['summary']! as String)!
+              .group(2)!,
+        ),
+        {'id': 'inner-entry', 'summary': '{"Cookie":"[已脱敏]"}'},
+      );
+    });
 
     test(
       'memory action endpoint edits, controls, deletes and reveals over HTTP',

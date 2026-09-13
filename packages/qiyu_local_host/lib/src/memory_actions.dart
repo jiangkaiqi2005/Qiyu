@@ -51,7 +51,7 @@ final class MemoryActionResult {
   /// 部分失败时尚未完成的清理步骤（用户语言）。
   final List<String> deferred;
 
-  /// 揭示动作返回的原文；只在 reveal 成功时出现，服务端不缓存、
+  /// 揭示动作返回的脱敏视图；只在 reveal 成功时出现，服务端不缓存、
   /// 不写日志。
   final String? revealedText;
 
@@ -805,7 +805,7 @@ final class MemoryActionService {
     return MemoryActionResult(
       status: MemoryActionStatus.success,
       message: '仅本次展示，离开页面或稍后会自动重新遮罩。',
-      revealedText: text,
+      revealedText: redactMemoryMarkdown(text) ?? text,
     );
   }
 

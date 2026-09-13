@@ -4,6 +4,8 @@ import 'package:path/path.dart' as path;
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
+import 'support/legacy_episode_fixture.dart';
+
 void main() {
   late Directory temporaryDirectory;
   late String memoryDirectory;
@@ -511,6 +513,77 @@ void main() {
   });
 
   group('reveal', () {
+    test('reveals a legacy credential field with secrets redacted', () async {
+      await seedLegacyEpisode(
+        memoryDirectory,
+        '2026-08-17',
+        summary: '{"password":"audit04Password"}',
+      );
+      final before = _directorySnapshot(memoryDirectory);
+      final result = await actions.reveal(
+        entryRef('2026-08-17', 'legacy-entry'),
+        'content',
+      );
+
+      expect(result.status, MemoryActionStatus.success);
+      expect(result.toJson(), {
+        'status': 'success',
+        'message': '仅本次展示，离开页面或稍后会自动重新遮罩。',
+        'text': '{"password":"[已脱敏]"}',
+      });
+      expect(result.revealedText, '{"password":"[已脱敏]"}');
+      expect(_directorySnapshot(memoryDirectory), before);
+    });
+
+    test('redacts secrets through nested legal markers on reveal', () async {
+      final inner = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'id': 'inner-entry',
+        'summary': '{"password":"audit04Nested"}',
+      })} -->';
+      final outer = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'id': 'outer-entry',
+        'summary': inner,
+        'details': [
+          {'note': '{"Cookie":"sid=audit04Cookie"}'},
+          '{"api_key":"audit04Key"}',
+        ],
+        'evidence': '今天散步了20分钟，明天还想再去。',
+      })} -->';
+      const ordinary = '复诊后心情低落，联系 audit04@example.test。';
+      await seedLegacyEpisode(
+        memoryDirectory,
+        '2026-08-17',
+        summary: '$ordinary\n$outer',
+      );
+      final before = _directorySnapshot(memoryDirectory);
+      final result = await actions.reveal(
+        entryRef('2026-08-17', 'legacy-entry'),
+        'content',
+      );
+
+      expect(result.status, MemoryActionStatus.success);
+      expect(result.revealedText, startsWith('$ordinary\n'));
+      final payload = decodeMarkerPayload(
+        memoryMarkerBlockPattern.firstMatch(result.revealedText!)!.group(2)!,
+      );
+      expect(payload['id'], 'outer-entry');
+      expect(payload['details'], [
+        {'note': '{"Cookie":"[已脱敏]"}'},
+        '{"api_key":"[已脱敏]"}',
+      ]);
+      expect(payload['evidence'], '今天散步了20分钟，明天还想再去。');
+      final nestedPayload = decodeMarkerPayload(
+        memoryMarkerBlockPattern
+            .firstMatch(payload['summary']! as String)!
+            .group(2)!,
+      );
+      expect(nestedPayload, {
+        'id': 'inner-entry',
+        'summary': '{"password":"[已脱敏]"}',
+      });
+      expect(_directorySnapshot(memoryDirectory), before);
+    });
+
     test(
       'returns the masked text once and only for sensitive content',
       () async {
@@ -530,6 +603,116 @@ void main() {
         expect(plain.code, 'memory_item_not_masked');
       },
     );
+
+    test('redacts legacy episode and persona fields without rewriting', () async {
+      await seedLegacyEpisode(
+        memoryDirectory,
+        '2026-08-17',
+        summary: '{"password":"audit04Summary"}',
+        evidence: '记得散步。{"api_key":"audit04Evidence","count":42}',
+        daySummary: 'Cookie: sid=audit04Day',
+      );
+      final branch = File(
+        path.join(memoryDirectory, 'persona-tree', 'expression.md'),
+      );
+      await branch.parent.create(recursive: true);
+      await branch.writeAsString('''
+# 性格表达
+
+## 未归根中间节点
+
+### [EX-M002] 重复模式｜{"password":"audit04Unrooted"}
+- 形成: 2026-08-16 · 复核: 2026-08-17
+
+## [EX-R001] {"password":"audit04Root"}
+
+### [EX-M001] 重复模式｜{"api_key":"audit04Middle"}
+- 形成: 2026-08-16 · 复核: 2026-08-17
+''');
+      final before = _directorySnapshot(memoryDirectory);
+      final cases = <(MemoryItemRef, String, String)>[
+        (
+          entryRef('2026-08-17', 'legacy-entry'),
+          'content',
+          '{"password":"[已脱敏]"}',
+        ),
+        (
+          entryRef('2026-08-17', 'legacy-entry'),
+          'evidence',
+          '记得散步。{"api_key":"[已脱敏]","count":42}',
+        ),
+        (
+          const MemoryDayRef('2026-08-17'),
+          'summary',
+          'Cookie: [已脱敏]',
+        ),
+        (
+          const MemoryRootRef('expression', 'EX-R001'),
+          'content',
+          '{"password":"[已脱敏]"}',
+        ),
+        (
+          const MemoryMiddleRef('expression', 'EX-M001'),
+          'content',
+          '{"api_key":"[已脱敏]"}',
+        ),
+        (
+          const MemoryMiddleRef('expression', 'EX-M002'),
+          'content',
+          '{"password":"[已脱敏]"}',
+        ),
+      ];
+      for (final (ref, field, expected) in cases) {
+        final result = await actions.reveal(ref, field);
+        expect(result.status, MemoryActionStatus.success);
+        expect(result.revealedText, expected);
+        expect(result.toJson()['text'], expected);
+      }
+      expect(_directorySnapshot(memoryDirectory), before);
+    });
+
+    test('preserves ordinary private experiences and clean markers', () async {
+      final marker = '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'id': 'clean-entry',
+        'summary': '{"cookie":"chocolate chip","count":987654321}',
+        'evidence': '2026-08-17 散步20分钟',
+      })} -->';
+      final summary = '复诊后心情低落，联系 audit04@example.test，'
+          '手机号13812345678。\n$marker';
+      await seedLegacyEpisode(
+        memoryDirectory,
+        '2026-08-17',
+        summary: summary,
+      );
+      final before = _directorySnapshot(memoryDirectory);
+      final result = await actions.reveal(
+        entryRef('2026-08-17', 'legacy-entry'),
+        'content',
+      );
+      expect(result.status, MemoryActionStatus.success);
+      expect(result.revealedText, summary);
+      expect(_directorySnapshot(memoryDirectory), before);
+    });
+
+    test('keeps unavailable fields and unknown references unrevealable', () async {
+      await seedLegacyEpisode(
+        memoryDirectory,
+        '2026-08-17',
+        summary: '{"password":"audit04Summary"}',
+      );
+      final before = _directorySnapshot(memoryDirectory);
+      for (final ref in <MemoryItemRef>[
+        entryRef('2026-08-17', 'missing-entry'),
+        entryRef('2026-08-16', 'legacy-entry'),
+        const MemoryDayRef('2026-08-17'),
+      ]) {
+        final result = await actions.reveal(ref, 'content');
+        expect(result.code, 'memory_item_not_found');
+        expect(result.revealedText, isNull);
+        expect(result.toJson(), isNot(contains('text')));
+      }
+      expect(_directorySnapshot(memoryDirectory), before);
+    });
 
     test('reveal is read-only: no file changes on disk', () async {
       await seedEntry('2026-08-17', '用户的手机号是13812345678');

@@ -964,8 +964,8 @@ String redactDiagnosticText(String text) => _applyRedactions(
 
 /// 标记载荷里的结构字段：标识、时刻、枚举与计数。这些值不是自由
 /// 文本，导出脱敏不触碰（防止随机标识被令牌特征误改、时刻被误吃），
-/// 其下挂载的列表与映射一并保留。载荷里其余字符串值一律按会话
-/// 脱敏规则处理：宁可多遮一层，不可漏掉秘密。
+/// 其下挂载的列表与映射一并保留。载荷里其余字符串值按记忆文本
+/// 脱敏规则处理，包括字符串里再次嵌入的合法标记。
 const _markerStructuralKeys = {
   'schemaVersion',
   'date',
@@ -1011,7 +1011,7 @@ Object? _redactMarkerPayloadValue(String? key, Object? value) {
     return value;
   }
   if (value is String) {
-    return redactSessionText(value);
+    return redactMemoryMarkdown(value) ?? value;
   }
   if (value is List<Object?>) {
     return [for (final item in value) _redactMarkerPayloadValue(null, item)];
@@ -1025,8 +1025,8 @@ Object? _redactMarkerPayloadValue(String? key, Object? value) {
   return value;
 }
 
-/// 记忆 Markdown 的导出侧脱敏（备份外发共用）：`qiyu-*` 标记载荷先
-/// 解码，自由文本字段按会话脱敏规则处理后重编码，秘密藏进 base64url
+/// 记忆 Markdown 的返回视图脱敏（备份外发与主动揭示共用）：`qiyu-*`
+/// 标记载荷先解码，自由文本字段递归脱敏后重编码，秘密藏进 base64url
 /// 载荷也一并过滤；标记以外的可见文本直接套用同一规则。未发生任何
 /// 替换时返回 null，调用方沿用原始字节，正常备份往返逐字节一致；
 /// 解不开的载荷保持原样，绝不让脱敏损坏文件结构。
