@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
@@ -22,6 +23,51 @@ void main() {
       await temporaryDirectory.delete(recursive: true);
     }
   });
+
+  final contract = jsonDecode(
+    File('../../contracts/qiyu_behavior_contracts.json').readAsStringSync(),
+  ) as Map<String, Object?>;
+  for (final value in contract['credentialJsonCases']! as List<Object?>) {
+    final fixture = value! as Map<String, Object?>;
+    test('JSON credential boundary write/read/model: ${fixture['id']}', () async {
+      final input = fixture['input']! as String;
+      final expected = fixture['redacted']! as String;
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final session = await repository.openSession();
+      final saved = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(requestId: 'json-boundary', text: input, at: now),
+      );
+      expect(saved.turns.single.text, expected);
+      final file = temporaryDirectory
+          .listSync(recursive: true)
+          .whereType<File>()
+          .singleWhere((file) => file.path.endsWith('-001.md'));
+      final legacy = RawSession(
+        id: saved.id,
+        date: saved.date,
+        segment: saved.segment,
+        createdAt: saved.createdAt,
+        updatedAt: saved.updatedAt,
+        turns: [
+          RawSessionTurn.user(requestId: 'json-boundary', text: input, at: now),
+        ],
+      );
+      final original = renderSessionMarkdown(legacy);
+      file.writeAsStringSync(original);
+      final restored = await repository.openSession(sessionId: saved.id);
+      expect(restored.turns.single.redacted().toJson()['text'], expected);
+      expect(file.readAsStringSync(), original);
+      final messages = const ModelPromptBuilder('合成人格').build(
+        StateSnapshot.initial('json-boundary'),
+        input,
+      );
+      expect(messages.last.content, expected);
+    });
+  }
 
   test(
     'initializes sessions and atomically persists ordered Markdown turns',

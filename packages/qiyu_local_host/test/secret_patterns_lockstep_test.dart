@@ -115,7 +115,7 @@ void main() {
           extractPatternBlock(source, 'final _sessionRedactPatterns = <RegExp>[');
       expect(
         RegExp('RegExp\\(').allMatches(block).length,
-        21,
+        20,
         reason: 'host 落盘脱敏表的条目数变了：两份集合有意不同，'
             '改动一侧须评估另一侧是否同步',
       );
@@ -149,12 +149,6 @@ void main() {
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(
     r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
-    caseSensitive: false,
-  ),
-  RegExp(
-    r'("(?:set[- ])?cookie"\s*:\s*")'
-    r'(?=(?:[^"\\]|\\.)*?[A-Za-z0-9_~-]+\s*=(?:[^\s；;，,"\\]|\\.))'
-    r'(?:[^"\\]|\\.)*',
     caseSensitive: false,
   ),
   RegExp(

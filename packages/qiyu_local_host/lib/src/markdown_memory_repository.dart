@@ -651,15 +651,14 @@ String newOpaqueId() {
   return base64Url.encode(bytes).replaceAll('=', '');
 }
 
-/// 敏感键名清单：JSON 引号形态与冒号形态两段规则共用同一份词表，
-/// 补词只改这里（两形态覆盖面保持一致）。
+/// 既有原文规则共用的词表；新增 JSON 识别在解码后单独处理。
 const String _sensitiveKeyNames =
     r'api[_ -]?key|api[_ -]?secret|secret[_ -]?key|access[_ -]?token|'
-    r'refresh[_ -]?token|client[_ -]?secret|password|passwd|pwd|secret|token|'
+    r'refresh[_ -]?token|password|passwd|pwd|secret|token|'
     r'密码|口令|密钥|令牌';
 
 final _sensitiveJsonKeyPattern = RegExp(
-  '^(?:$_sensitiveKeyNames)\$',
+  '^(?:$_sensitiveKeyNames|client[_ -]?secret)\$',
   caseSensitive: false,
 );
 final _jsonCookieKeyPattern = RegExp(
@@ -705,12 +704,6 @@ final _sessionRedactPatterns = <RegExp>[
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
   RegExp(
     r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
-    caseSensitive: false,
-  ),
-  RegExp(
-    r'("(?:set[- ])?cookie"\s*:\s*")'
-    r'(?=(?:[^"\\]|\\.)*?[A-Za-z0-9_~-]+\s*=(?:[^\s；;，,"\\]|\\.))'
-    r'(?:[^"\\]|\\.)*',
     caseSensitive: false,
   ),
   RegExp(
@@ -769,27 +762,69 @@ String _applyRedactions(String text, List<RegExp> patterns) {
   return result;
 }
 
-// 只替换原始值区间；键名、转义和相邻普通字段的排版保持原样。
-String _redactJsonSecrets(String text) {
-  final buffer = StringBuffer();
-  var cursor = 0;
-  for (final field in jsonScalarFields(text)) {
-    final isCookie =
-        _jsonCookieKeyPattern.hasMatch(field.key) &&
-        field.stringValue != null &&
-        _cookieEntryPattern.hasMatch(field.stringValue!);
-    if (!_sensitiveJsonKeyPattern.hasMatch(field.key) && !isCookie) continue;
-    buffer.write(text.substring(cursor, field.valueStart));
-    buffer.write('"[已脱敏]"');
-    cursor = field.valueEnd;
+// 新增 JSON 兜底仅处理无法解码的片段，不重新匹配已识别的键和值。
+final _additionalJsonRedactPattern = RegExp(
+  r'("(client[_ -]?secret|(?:set[- ])?cookie)"\s*:\s*")'
+  r'((?:[^"\\]|\\.)*)',
+  caseSensitive: false,
+);
+final _decodedTextCredentialPattern = RegExp(
+  '(($_sensitiveKeyNames|client[_ -]?secret|(?:set[- ])?cookie)'
+  r'\s*[:=：]\s*)('
+  r"""(?:"\[已脱敏\]"|'\[已脱敏\]'|\[已脱敏\]|"\s*"|'\s*')"""
+  r"""(?=$|[\s；;，,。.!！?？）)\]}"'])"""
+  r'|[^\s；;，,]+)',
+  caseSensitive: false,
+);
+
+bool _jsonFieldContainsSecret(String key, String? value) {
+  if (value != null && (value.trim().isEmpty || value == '[已脱敏]')) {
+    return false;
   }
-  if (cursor == 0) return text;
-  buffer.write(text.substring(cursor));
-  return buffer.toString();
+  if (_jsonCookieKeyPattern.hasMatch(key)) {
+    return value != null && _cookieEntryPattern.hasMatch(value);
+  }
+  return _sensitiveJsonKeyPattern.hasMatch(key);
 }
 
-String redactSessionText(String text) =>
-    _applyRedactions(_redactJsonSecrets(text), _sessionRedactPatterns);
+String _redactUnparsedJsonText(String text, bool decoded) {
+  var result = text.replaceAllMapped(_additionalJsonRedactPattern, (match) {
+    final rawValue = match.group(3)!;
+    String value;
+    try {
+      value = jsonDecode('"$rawValue"') as String;
+    } on FormatException {
+      value = rawValue;
+    }
+    return _jsonFieldContainsSecret(match.group(2)!, value)
+        ? '${match.group(1)}[已脱敏]'
+        : match.group(0)!;
+  });
+  if (!decoded) return result;
+  // 解码后的文本只按实际凭据值判定，不搬入旧原文规则的空值/占位行为。
+  result = result.replaceAllMapped(_decodedTextCredentialPattern, (match) {
+    final rawValue = match.group(3)!;
+    final value = rawValue.length >= 2 &&
+            ((rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+                (rawValue.startsWith("'") && rawValue.endsWith("'")))
+        ? rawValue.substring(1, rawValue.length - 1)
+        : rawValue;
+    final prefix = match.group(1)!;
+    return _jsonFieldContainsSecret(match.group(2)!, value)
+        ? '$prefix[已脱敏]'
+        : match.group(0)!;
+  });
+  return result;
+}
+
+String redactSessionText(String text) => _applyRedactions(
+  rewriteJsonStringValues(
+    text,
+    isSecret: _jsonFieldContainsSecret,
+    rewriteText: _redactUnparsedJsonText,
+  ),
+  _sessionRedactPatterns,
+);
 
 String redactDiagnosticText(String text) => _applyRedactions(
   redactSessionText(text),

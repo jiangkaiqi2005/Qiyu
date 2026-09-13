@@ -4093,6 +4093,34 @@ void main() {
   });
 
   group('秘密脱敏闭环', () {
+    test('JSON credential boundary 旧 HTTP 会话保持正常字段', () async {
+      final contract = jsonDecode(
+        File('../../contracts/qiyu_behavior_contracts.json').readAsStringSync(),
+      ) as Map<String, Object?>;
+      final fixtures = (contract['credentialJsonCases']! as List<Object?>)
+          .cast<Map<String, Object?>>();
+      final input = fixtures.map((fixture) => fixture['input']).join('\n');
+      final expected = fixtures.map((fixture) => fixture['redacted']).join('\n');
+      final harness = await InProcessChatHost.start(
+        clock: () => DateTime(2026, 8, 11, 22, 30),
+        seedMemory: (directory) =>
+            _seedLegacySecretSession(directory, secretText: input),
+      );
+      addTearDown(harness.dispose);
+      final file = File(
+        '${harness.memoryDirectory}/sessions/2026/08/2026-08-11-001.md',
+      );
+      final original = await file.readAsString();
+      final response = await harness.readSession(
+        sessionId: 'legacy-secret-session',
+      );
+      expect(response.statusCode, 200);
+      final body = jsonDecode(response.body) as Map<String, Object?>;
+      final turn = (body['turns']! as List<Object?>).first! as Map<String, Object?>;
+      expect(turn['text'], expected);
+      expect(await file.readAsString(), original);
+    });
+
     // 旧数据样本：现有脱敏规则补齐前落盘的会话（JSON 键值躲过当时的
     // 键值规则）。全部为固定合成文本，不含任何真实秘密。
     const legacySecretJson =

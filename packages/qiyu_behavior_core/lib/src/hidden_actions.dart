@@ -544,7 +544,7 @@ final _sensitiveJsonKeyPattern = RegExp(
 );
 final _additionalTextSecretPattern = RegExp(
   '(?:$_additionalSensitiveKeyNames)' r'\s*[:=：]\s*('
-  r'''(?:"\[已脱敏\]"|'\[已脱敏\]'|\[已脱敏\])'''
+  r'''(?:"\[已脱敏\]"|'\[已脱敏\]'|\[已脱敏\]|"\s*"|'\s*')'''
   r'''(?=$|[\s；;，,。.!！?？）)\]}"'])'''
   r'|[^\s；;，,]+)',
   caseSensitive: false,
@@ -1046,24 +1046,23 @@ bool _containsSecret(String value) =>
     _secretPatterns.any((pattern) => pattern.hasMatch(value)) ||
     _containsAdditionalSecrets(value);
 
-bool _containsAdditionalSecrets(String value) {
-  var cursor = 0;
-  for (final field in jsonScalarFields(value)) {
-    if (_containsAdditionalSecretText(value.substring(cursor, field.valueStart)) ||
-        _jsonFieldContainsSecret(field.key, field.stringValue) ||
-        (field.stringValue != null &&
-            _containsAdditionalSecrets(field.stringValue!))) {
-      return true;
-    }
-    cursor = field.valueEnd;
-  }
-  return _containsAdditionalSecretText(value.substring(cursor));
-}
+bool _containsAdditionalSecrets(String value) =>
+    rewriteJsonStringValues(
+      value,
+      isSecret: _jsonFieldContainsSecret,
+      rewriteText: (text, decoded) =>
+          _containsAdditionalSecretText(text) ? '[已脱敏]' : text,
+    ) != value;
 
 bool _containsAdditionalSecretText(String value) =>
     _additionalTextSecretPattern.allMatches(value).any((match) {
       final text = match.group(1)!;
-      return text != '[已脱敏]' && text != '"[已脱敏]"' && text != "'[已脱敏]'";
+      final unquoted = text.length >= 2 &&
+              ((text.startsWith('"') && text.endsWith('"')) ||
+                  (text.startsWith("'") && text.endsWith("'")))
+          ? text.substring(1, text.length - 1)
+          : text;
+      return unquoted.trim().isNotEmpty && unquoted != '[已脱敏]';
     }) ||
     _additionalJsonTextSecretPattern.allMatches(value).any((match) {
       try {

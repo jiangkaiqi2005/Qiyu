@@ -394,6 +394,37 @@ void main() {
     });
   });
 
+  final jsonContract = jsonDecode(
+    File('../../contracts/qiyu_behavior_contracts.json').readAsStringSync(),
+  ) as Map<String, Object?>;
+  for (final value in jsonContract['credentialJsonCases']! as List<Object?>) {
+    final fixture = value! as Map<String, Object?>;
+    test('JSON credential boundary backup: ${fixture['id']}', () async {
+      final file = await seedSession('2026-08-05', 1, [
+        ('用户', fixture['input']! as String),
+      ]);
+      final original = await file.readAsString();
+      final exported = await backup.exportBundle();
+      final archive = ZipDecoder().decodeBytes(exported.bytes);
+      final entry = archive.files.singleWhere(
+        (file) => file.name == 'memory/sessions/2026/08/2026-08-05-001.md',
+      );
+      final markdown = utf8.decode(entry.content as List<int>);
+      expect(markdown, contains(fixture['redacted']! as String));
+      if (fixture['input'] == fixture['redacted']) {
+        expect(markdown, original);
+      }
+      expect(await file.readAsString(), original);
+      await file.delete();
+      final result = await backup.importBundle(exported.bytes);
+      expect(result.unrecoverable, 0);
+      final restored = await MarkdownMemoryRepository(
+        memoryDirectory: memoryDirectory,
+      ).openSession(sessionId: 'session-2026-08-05-1');
+      expect(restored.turns.single.text, fixture['redacted']);
+    });
+  }
+
   group('导出脱敏', () {
     test('旧记忆的秘密在导出处过滤：可见文本与载荷，干净文件逐字节保持', () async {
       // 旧会话：手工构造「旧规则时代」落盘形态，turn 载荷与可见行都带
