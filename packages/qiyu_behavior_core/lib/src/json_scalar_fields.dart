@@ -50,6 +50,7 @@ final _cookieArrayKeyPattern = RegExp(
 
 Iterable<JsonScalarField> jsonScalarFields(
   String text, {
+  String? stringOwner,
   Iterable<JsonTextReplacement> Function(String text)? textReplacements,
 }) sync* {
   final trimmed = text.trim();
@@ -58,7 +59,7 @@ Iterable<JsonScalarField> jsonScalarFields(
       final value = jsonDecode(text) as String;
       final start = text.indexOf('"');
       yield JsonScalarField(
-        key: null,
+        key: stringOwner,
         stringValue: value,
         start: start,
         valueStart: start,
@@ -330,7 +331,16 @@ String rewriteJsonStringValues(
         );
       } else if (field.stringValue != null) {
         frame.pending = field;
-        stack.add(_JsonRewriteFrame(field.stringValue!, true, rewriteText));
+        stack.add(
+          _JsonRewriteFrame(
+            field.stringValue!,
+            true,
+            rewriteText,
+            stringOwner: _cookieArrayKeyPattern.hasMatch(field.key ?? '')
+                ? field.key
+                : null,
+          ),
+        );
       } else if (field._rawStringValue != null) {
         // 无效字符串仍检查内部原文；不猜测转义，也不递归解码。
         // 使用实际内容规则，避免把字符串外的旧引号边界规则搬入值内。
@@ -406,11 +416,14 @@ final class _JsonRewriteFrame {
     this.text,
     this.decoded,
     Iterable<JsonTextReplacement> Function(String text, bool decoded)
-    rewriteText,
-  ) : fields = jsonScalarFields(
-        text,
-        textReplacements: (value) => rewriteText(value, decoded),
-      ).iterator;
+    rewriteText, {
+    String? stringOwner,
+  }) : fields = jsonScalarFields(
+         text,
+         // 只让完整字符串继续解码时继承 Cookie，不扩散给内部对象字段。
+         stringOwner: stringOwner,
+         textReplacements: (value) => rewriteText(value, decoded),
+       ).iterator;
 
   final String text;
   final bool decoded;

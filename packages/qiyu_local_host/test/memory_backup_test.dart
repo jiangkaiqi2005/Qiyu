@@ -410,7 +410,8 @@ void main() {
         (file) => file.name == 'memory/sessions/2026/08/2026-08-05-001.md',
       );
       final markdown = utf8.decode(entry.content as List<int>);
-      expect(markdown, contains(fixture['redacted']! as String));
+      final expectedText = fixture['redacted']! as String;
+      expect(markdown, contains(expectedText.replaceAll('\n', '\n> ')));
       if (fixture['input'] == fixture['redacted']) {
         expect(markdown, original);
       }

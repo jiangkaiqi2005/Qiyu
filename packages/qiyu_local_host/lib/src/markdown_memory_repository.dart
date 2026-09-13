@@ -899,10 +899,19 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
 // 旧规则只检查尚未被 JSON 字符串占用的原文，所有区间仍指向该原文。
 Iterable<JsonTextReplacement> _rawTextRedactions(String text) {
   final quoted = <({int start, int end, JsonTextReplacement replacement})>[];
+  final replacements = <JsonTextReplacement>[];
   for (final match in _decodedTextCredentialPattern.allMatches(text)) {
     final rawValue = match.group(3)!;
     final value = credentialTextValue(rawValue);
     final key = match.group(2)!;
+    if (value.start != 0 && _jsonCookieKeyPattern.hasMatch(key)) {
+      for (final part in cookieTextContinuationValues(text, match.end)) {
+        replacements.add(JsonTextReplacement(
+          part.start, part.end, '[已脱敏]',
+          contextStart: match.start, contextEnd: part.end,
+        ));
+      }
+    }
     if (value.start == 0 ||
         (!_jsonFieldContainsSecret(key, value.text) &&
             !(_jsonCookieKeyPattern.hasMatch(key) &&
@@ -919,7 +928,7 @@ Iterable<JsonTextReplacement> _rawTextRedactions(String text) {
       ),
     ));
   }
-  final replacements = [for (final value in quoted) value.replacement];
+  replacements.addAll(quoted.map((value) => value.replacement));
   for (final pattern in _sessionRedactPatterns) {
     var quotedIndex = 0;
     for (final match in pattern.allMatches(text)) {
