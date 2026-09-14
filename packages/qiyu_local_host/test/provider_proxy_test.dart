@@ -20,10 +20,10 @@ void main() {
       );
 
       await expectLater(
-        client.postStream(
+        client.post(
           uri: Uri.parse('https://api.openai.com/v1/chat/completions'),
           headers: const {'content-type': 'application/json'},
-          body: '{}',
+          body: utf8.encode('{}'),
           timeout: const Duration(milliseconds: 50),
         ),
         throwsA(isA<SocketException>()),
@@ -53,10 +53,10 @@ void main() {
       );
 
       await expectLater(
-        client.postStream(
+        client.post(
           uri: Uri.parse('http://192.168.1.10:11434/api/chat'),
           headers: const {'content-type': 'application/json'},
-          body: '{}',
+          body: utf8.encode('{}'),
           timeout: const Duration(milliseconds: 50),
         ),
         throwsA(isA<SocketException>()),
@@ -76,10 +76,10 @@ void main() {
       );
 
       await expectLater(
-        client.postStream(
+        client.post(
           uri: Uri.parse('https://api.openai.com/v1/chat/completions'),
           headers: const {},
-          body: '{}',
+          body: utf8.encode('{}'),
           timeout: const Duration(milliseconds: 50),
         ),
         throwsA(isA<SocketException>()),
@@ -397,26 +397,13 @@ final class _RecordingHttpClient implements ProviderHttpClient {
   late Map<String, String> headers;
 
   @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) async {
-    requestCount += 1;
-    this.uri = uri;
-    this.headers = headers;
-    return responses.length > 1
-        ? responses.removeAt(0)
-        : responses.single;
-  }
-
-  @override
   Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
     requestCount += 1;
     this.uri = uri;

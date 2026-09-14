@@ -3492,13 +3492,36 @@ final class _WebSearchRoundTripHttpClient implements ProviderHttpClient {
   final searchBodies = <Map<String, Object?>>[];
 
   @override
-  Future<ProviderHttpResponse> postStream({
+  Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,
-    required String body,
+    required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
-    providerBodies.add(jsonDecode(body) as Map<String, Object?>);
+    if (uri.toString() == anySearchEndpoint) {
+      searchBodies.add(jsonDecode(utf8.decode(body)) as Map<String, Object?>);
+      return ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.value(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': 'qiyu-web-search',
+            'result': {
+              'results': [
+                {
+                  'title': '天气来源',
+                  'url': 'https://example.com/weather',
+                  'snippet': resultMarker,
+                },
+              ],
+            },
+          }),
+        ),
+      );
+    }
+    providerBodies.add(jsonDecode(utf8.decode(body)) as Map<String, Object?>);
     if (providerBodies.length == 1) {
       return ProviderHttpResponse(
         statusCode: 200,
@@ -3531,34 +3554,6 @@ final class _WebSearchRoundTripHttpClient implements ProviderHttpClient {
       ]),
     );
   }
-
-  @override
-  Future<ProviderHttpResponse> post({
-    required Uri uri,
-    required Map<String, String> headers,
-    required List<int> body,
-    required Duration timeout,
-  }) async {
-    searchBodies.add(jsonDecode(utf8.decode(body)) as Map<String, Object?>);
-    return ProviderHttpResponse(
-      statusCode: 200,
-      body: Stream.value(
-        jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 'qiyu-web-search',
-          'result': {
-            'results': [
-              {
-                'title': '天气来源',
-                'url': 'https://example.com/weather',
-                'snippet': resultMarker,
-              },
-            ],
-          },
-        }),
-      ),
-    );
-  }
 }
 
 final class _RecordingSttHttpClient implements ProviderHttpClient {
@@ -3573,20 +3568,12 @@ final class _RecordingSttHttpClient implements ProviderHttpClient {
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async => ProviderHttpResponse(
     statusCode: statusCode,
     body: Stream.value(responseBody),
   );
-
-  @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) {
-    throw UnsupportedError('STT 测试客户端只使用非流式 POST');
-  }
 }
 
 /// TTS 网关测试替身：合成结果与异常可按用例改写，记录最近一次文本。

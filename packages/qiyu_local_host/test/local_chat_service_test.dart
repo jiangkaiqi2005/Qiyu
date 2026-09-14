@@ -22,7 +22,7 @@ void main() {
         'CancellableStreamingProviderChatClient',
         'StreamingModelGateway',
         'WebSearchStreamingModelGateway',
-        'CancellableProviderHttpClient',
+        'ProviderHttpClient',
         'ProviderKind',
         'webSearchEnabled',
         'openCancellableStream',

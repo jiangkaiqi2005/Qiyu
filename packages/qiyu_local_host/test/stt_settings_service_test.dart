@@ -667,6 +667,8 @@ final class _StaticSttHttpClient implements ProviderHttpClient {
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
     if (postError case final error?) throw error;
     lastBody = body;
@@ -675,16 +677,6 @@ final class _StaticSttHttpClient implements ProviderHttpClient {
       statusCode: statusCode,
       body: Stream.value(responseBody),
     );
-  }
-
-  @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) {
-    throw UnsupportedError('STT 测试客户端只使用非流式 POST');
   }
 }
 

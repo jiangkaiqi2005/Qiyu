@@ -47,21 +47,13 @@ final class AnySearchClient implements WebSearchClient {
           },
         }),
       );
-      final response =
-          whenCancelled != null && httpClient is CancellableProviderHttpClient
-          ? await (httpClient as CancellableProviderHttpClient).postCancellable(
-              uri: uri,
-              headers: headers,
-              body: requestBody,
-              timeout: const Duration(seconds: 20),
-              whenCancelled: whenCancelled,
-            )
-          : await httpClient.post(
-              uri: uri,
-              headers: headers,
-              body: requestBody,
-              timeout: const Duration(seconds: 20),
-            );
+      final response = await httpClient.post(
+        uri: uri,
+        headers: headers,
+        body: requestBody,
+        timeout: const Duration(seconds: 20),
+        whenCancelled: whenCancelled,
+      );
       final body = await response.body.join();
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw providerStatusFailure(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:qiyu_local_host/qiyu_local_host.dart';
@@ -27,12 +28,17 @@ void main() {
       ),
     );
 
+    final cancelled = Completer<void>();
     final results = await AnySearchClient(http).search(
       apiKey: 'any-secret',
       query: '天气 Bearer abcdefghijklmnop 验证码 123456',
+      whenCancelled: cancelled.future,
     );
 
     expect(http.uri.toString(), anySearchEndpoint);
+    expect(http.timeout, const Duration(seconds: 20));
+    expect(http.budget, isNull);
+    expect(http.whenCancelled, same(cancelled.future));
     expect(http.headers['authorization'], 'Bearer any-secret');
     expect(http.headers['X-Anysearch-Client'], anySearchClientName);
     expect(http.json['method'], 'tools/call');
@@ -231,6 +237,9 @@ final class _FakeHttpClient implements ProviderHttpClient {
   _FakeHttpClient(this.response);
 
   final ProviderHttpResponse response;
+  late Duration timeout;
+  ProviderResponseBudget? budget;
+  Future<void>? whenCancelled;
   late Uri uri;
   late Map<String, String> headers;
   late Map<String, Object?> json;
@@ -241,18 +250,15 @@ final class _FakeHttpClient implements ProviderHttpClient {
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
+    this.timeout = timeout;
+    this.budget = budget;
+    this.whenCancelled = whenCancelled;
     this.uri = uri;
     this.headers = headers;
     json = jsonDecode(utf8.decode(body)) as Map<String, Object?>;
     return response;
   }
-
-  @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) => throw UnimplementedError();
 }

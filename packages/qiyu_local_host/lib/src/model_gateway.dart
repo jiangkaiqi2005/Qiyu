@@ -95,8 +95,7 @@ final class ProviderBytesHttpResponse {
   final Map<String, String> headers;
 }
 
-/// 二进制响应出网调用（语音合成等）：与 [ProviderHttpClient.post] 同
-/// 一套超时与连接语义，独立成接口避免逼所有既有实现与 fake 改动。
+/// 二进制响应出网调用（语音合成等），保留原始音频字节。
 abstract interface class ProviderBytesHttpClient {
   Future<ProviderBytesHttpResponse> postBytes({
     required Uri uri,
@@ -107,46 +106,24 @@ abstract interface class ProviderBytesHttpClient {
 }
 
 abstract interface class ProviderHttpClient {
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  });
-
-  /// 非流式 POST（二进制请求体、整段文本响应）：语音转写等一次性
-  /// 出网调用使用；与 postStream 同一套超时语义。
+  /// 文本响应统一入口；请求体保持原始字节，兼容 JSON 与音频上传。
+  /// [whenCancelled] 覆盖建立与读取，取消后释放连接和响应订阅。
+  /// [budget] 在 UTF-8 解码前限制响应，并使 [timeout] 覆盖整个请求。
+  /// 不带预算时保留连接、响应头与文本读取各阶段原有的超时语义。
   Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
-  });
-}
-
-abstract interface class CancellableProviderHttpClient
-    implements ProviderHttpClient {
-  Future<ProviderHttpResponse> postStreamCancellable({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-    required Future<void> whenCancelled,
-  });
-
-  Future<ProviderHttpResponse> postCancellable({
-    required Uri uri,
-    required Map<String, String> headers,
-    required List<int> body,
-    required Duration timeout,
-    required Future<void> whenCancelled,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   });
 }
 
 /// 聊天／理解模型响应的字节预算：在解码、分行与聚合之前按原始字节
 /// 限制响应，防止无换行大帧、超大响应或超大错误响应占满内存。预算
 /// 按调用范围生效——只施加于模型 HTTP 请求，语音二进制与搜索通道
-/// 走既有方法，不受影响。
+/// 不传预算，不受影响。
 final class ProviderResponseBudget {
   const ProviderResponseBudget({
     required this.maxFrameBytes,
@@ -164,29 +141,6 @@ final class ProviderResponseBudget {
   final int maxErrorBodyBytes;
 }
 
-/// 带响应预算的模型 HTTP 通道：与 [ProviderHttpClient] 的区别仅在
-/// 响应侧——施加字节预算与单次请求整体期限。独立成接口避免逼既有
-/// 实现与测试假件改动（与 [CancellableProviderHttpClient] 同模式）。
-abstract interface class BoundedProviderHttpClient
-    implements ProviderHttpClient {
-  Future<ProviderHttpResponse> postStreamBounded({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-    required ProviderResponseBudget budget,
-  });
-
-  Future<ProviderHttpResponse> postStreamBoundedCancellable({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-    required ProviderResponseBudget budget,
-    required Future<void> whenCancelled,
-  });
-}
-
 final class ProviderRequestCancelled implements Exception {
   const ProviderRequestCancelled();
 }
@@ -200,11 +154,7 @@ typedef ProviderHttpClientFactory = HttpClient Function(
 );
 
 final class DartIoProviderHttpClient
-    implements
-        ProviderHttpClient,
-        CancellableProviderHttpClient,
-        ProviderBytesHttpClient,
-        BoundedProviderHttpClient {
+    implements ProviderHttpClient, ProviderBytesHttpClient {
   const DartIoProviderHttpClient({
     this.httpClientFactory = defaultHttpClientFactory,
     this.proxyRulesSource,
@@ -244,97 +194,6 @@ final class DartIoProviderHttpClient
   }
 
   @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) {
-    return _postBytes(
-      uri: uri,
-      headers: headers,
-      body: utf8.encode(body),
-      timeout: timeout,
-    );
-  }
-
-  @override
-  Future<ProviderHttpResponse> postStreamCancellable({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-    required Future<void> whenCancelled,
-  }) => _postBytes(
-    uri: uri,
-    headers: headers,
-    body: utf8.encode(body),
-    timeout: timeout,
-    whenCancelled: whenCancelled,
-  );
-
-  @override
-  Future<ProviderHttpResponse> post({
-    required Uri uri,
-    required Map<String, String> headers,
-    required List<int> body,
-    required Duration timeout,
-  }) {
-    return _postBytes(uri: uri, headers: headers, body: body, timeout: timeout);
-  }
-
-  @override
-  Future<ProviderHttpResponse> postCancellable({
-    required Uri uri,
-    required Map<String, String> headers,
-    required List<int> body,
-    required Duration timeout,
-    required Future<void> whenCancelled,
-  }) => _postBytes(
-    uri: uri,
-    headers: headers,
-    body: body,
-    timeout: timeout,
-    whenCancelled: whenCancelled,
-  );
-
-  @override
-  Future<ProviderHttpResponse> postStreamBounded({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-    required ProviderResponseBudget budget,
-  }) {
-    return _postBytes(
-      uri: uri,
-      headers: headers,
-      body: utf8.encode(body),
-      timeout: timeout,
-      budget: budget,
-    );
-  }
-
-  @override
-  Future<ProviderHttpResponse> postStreamBoundedCancellable({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-    required ProviderResponseBudget budget,
-    required Future<void> whenCancelled,
-  }) {
-    return _postBytes(
-      uri: uri,
-      headers: headers,
-      body: utf8.encode(body),
-      timeout: timeout,
-      budget: budget,
-      whenCancelled: whenCancelled,
-    );
-  }
-
-  @override
   Future<ProviderBytesHttpResponse> postBytes({
     required Uri uri,
     required Map<String, String> headers,
@@ -359,7 +218,8 @@ final class DartIoProviderHttpClient
     }
   }
 
-  Future<ProviderHttpResponse> _postBytes({
+  @override
+  Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,
     required List<int> body,
@@ -367,40 +227,111 @@ final class DartIoProviderHttpClient
     Future<void>? whenCancelled,
     ProviderResponseBudget? budget,
   }) async {
-    final client = await _createClient(uri, timeout);
+    HttpClient? client;
+    var abandoned = false;
     var cancelled = false;
-    whenCancelled?.then((_) {
-      cancelled = true;
-      client.close(force: true);
-    });
-    // 预算路径的整体期限从发请求前起算，覆盖连接与响应消费；期间
-    // 到达的数据只消耗已流逝时间，不重置期限。无预算调用（语音、
-    // 搜索）保持原有分步超时语义不变。
+    // 模型期限包括代理配置、连接、响应头和消费；无预算保留分步超时。
     final watch = budget == null ? null : (Stopwatch()..start());
+    final cancellation = whenCancelled?.then<Never>((_) {
+      cancelled = true;
+      client?.close(force: true);
+      throw const ProviderRequestCancelled();
+    });
+    Future<T> cancellable<T>(Future<T> pending) => cancellation == null
+        ? pending
+        : Future.any<T>([pending, cancellation]);
     try {
-      final request = await client
-          .postUrl(uri)
-          .timeout(_overallRemaining(timeout, watch));
+      final creating = _createClient(uri, timeout).then((created) {
+        client = created;
+        // 超时或取消后才完成的配置读取仍要释放新建客户端。
+        if (abandoned || cancelled) {
+          created.close(force: true);
+        }
+        return created;
+      });
+      final activeClient = await cancellable(
+        watch == null
+            ? creating
+            : creating.timeout(_overallRemaining(timeout, watch)),
+      );
+      final request = await cancellable(
+        activeClient.postUrl(uri),
+      ).timeout(_overallRemaining(timeout, watch));
       request.followRedirects = false;
       headers.forEach(request.headers.set);
       request.add(body);
-      final response = await request
-          .close()
-          .timeout(_overallRemaining(timeout, watch));
+      final response = await cancellable(
+        request.close(),
+      ).timeout(_overallRemaining(timeout, watch));
       return ProviderHttpResponse(
         statusCode: response.statusCode,
-        body: budget == null
-            ? _readResponse(response, client, timeout)
-            : _readBoundedResponse(response, client, timeout, budget, watch!),
+        body: _cancelResponse(
+          budget == null
+              ? _readResponse(response, activeClient, timeout)
+              : _readBoundedResponse(
+                  response, activeClient, timeout, budget, watch!,
+                ),
+          whenCancelled,
+          activeClient,
+        ),
       );
     } catch (_) {
-      client.close(force: true);
+      abandoned = true;
+      client?.close(force: true);
       if (cancelled) {
         throw const ProviderRequestCancelled();
       }
       rethrow;
     }
   }
+}
+
+/// 取消显式结束消费，不依赖 HttpClient.close 是否会为静默流派发事件。
+Stream<String> _cancelResponse(
+  Stream<String> body,
+  Future<void>? whenCancelled,
+  HttpClient client,
+) {
+  if (whenCancelled == null) {
+    return body;
+  }
+  late final StreamController<String> controller;
+  StreamSubscription<String>? subscription;
+  var finished = false;
+  void finish([Object? error, StackTrace? stackTrace]) {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    client.close(force: true);
+    subscription?.cancel();
+    if (error != null) {
+      controller.addError(error, stackTrace);
+    }
+    controller.close();
+  }
+
+  controller = StreamController<String>(
+    onListen: () {
+      if (finished) {
+        return;
+      }
+      subscription = body.listen(
+        controller.add,
+        onError: finish,
+        onDone: finish,
+      );
+    },
+    onPause: () => subscription?.pause(),
+    onResume: () => subscription?.resume(),
+    onCancel: () {
+      finished = true;
+      client.close(force: true);
+      return subscription?.cancel();
+    },
+  );
+  whenCancelled.then((_) => finish(const ProviderRequestCancelled()));
+  return controller.stream;
 }
 
 /// 整体期限的剩余等待时间：未计时（无预算调用）返回完整期限；已
@@ -702,26 +633,16 @@ final class ProviderModelGateway
     }
     final outbound = _outboundFor(config.kind);
     final chatTimeout = Duration(seconds: config.timeoutSeconds);
-    final encodedBody = jsonEncode(request.body);
+    final encodedBody = utf8.encode(jsonEncode(request.body));
     ProviderHttpResponse response;
     try {
-      // 聊天与理解调用走预算通道（字节上限 + 单次请求整体期限）；
-      // 未实现预算接口的通道（测试假件）退回普通调用。
-      response = await switch (outbound) {
-        final BoundedProviderHttpClient bounded => bounded.postStreamBounded(
-          uri: request.uri,
-          headers: request.headers,
-          body: encodedBody,
-          timeout: chatTimeout,
-          budget: _chatResponseBudget,
-        ),
-        _ => outbound.postStream(
-          uri: request.uri,
-          headers: request.headers,
-          body: encodedBody,
-          timeout: chatTimeout,
-        ),
-      };
+      response = await outbound.post(
+        uri: request.uri,
+        headers: request.headers,
+        body: encodedBody,
+        timeout: chatTimeout,
+        budget: _chatResponseBudget,
+      );
     } on TimeoutException {
       _diagnosticsSink?.call('model connection timeout');
       yield const ModelStreamEvent.failure(
@@ -1104,45 +1025,15 @@ final class ProviderModelGateway
   }) async {
     var cancelled = false;
     whenCancelled?.then((_) => cancelled = true);
-    final encodedBody = jsonEncode(body);
-    final cancellable = whenCancelled != null &&
-        outbound is CancellableProviderHttpClient;
-    // 联网搜索的模型调用同样走预算通道（每次 HTTP 请求一个整体期
-    // 限）；搜索客户端本身不经过本类，不受聊天预算影响。
-    final Future<ProviderHttpResponse> pendingResponse;
-    if (outbound is BoundedProviderHttpClient) {
-      pendingResponse = cancellable
-          ? outbound.postStreamBoundedCancellable(
-              uri: request.uri,
-              headers: request.headers,
-              body: encodedBody,
-              timeout: timeout,
-              budget: _chatResponseBudget,
-              whenCancelled: whenCancelled,
-            )
-          : outbound.postStreamBounded(
-              uri: request.uri,
-              headers: request.headers,
-              body: encodedBody,
-              timeout: timeout,
-              budget: _chatResponseBudget,
-            );
-    } else if (cancellable) {
-      pendingResponse = outbound.postStreamCancellable(
-        uri: request.uri,
-        headers: request.headers,
-        body: encodedBody,
-        timeout: timeout,
-        whenCancelled: whenCancelled,
-      );
-    } else {
-      pendingResponse = outbound.postStream(
-        uri: request.uri,
-        headers: request.headers,
-        body: encodedBody,
-        timeout: timeout,
-      );
-    }
+    // 每次工具模型请求有独立预算与整体期限；搜索请求不带模型预算。
+    final pendingResponse = outbound.post(
+      uri: request.uri,
+      headers: request.headers,
+      body: utf8.encode(jsonEncode(body)),
+      timeout: timeout,
+      budget: _chatResponseBudget,
+      whenCancelled: whenCancelled,
+    );
     final response = await pendingResponse;
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final String responseBody;

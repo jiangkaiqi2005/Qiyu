@@ -28,6 +28,9 @@ void main() {
     );
 
     expect(text, '今天有点累');
+    expect(client.timeout, const Duration(seconds: 60));
+    expect(client.budget, isNull);
+    expect(client.whenCancelled, isNull);
     expect(client.uri.toString(), 'https://stt.example.com/v1/audio/transcriptions');
     expect(client.headers['authorization'], 'Bearer stt-test-key');
     final contentType = client.headers['content-type']!;
@@ -298,6 +301,9 @@ final class _RecordingHttpClient implements ProviderHttpClient {
   final ProviderHttpResponse? response;
   final Object? error;
   bool called = false;
+  late Duration timeout;
+  ProviderResponseBudget? budget;
+  Future<void>? whenCancelled;
   late Uri uri;
   late Map<String, String> headers;
   late List<int> bytesBody;
@@ -308,8 +314,13 @@ final class _RecordingHttpClient implements ProviderHttpClient {
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
     called = true;
+    this.timeout = timeout;
+    this.budget = budget;
+    this.whenCancelled = whenCancelled;
     this.uri = uri;
     this.headers = headers;
     bytesBody = body;
@@ -317,16 +328,6 @@ final class _RecordingHttpClient implements ProviderHttpClient {
       throw failure;
     }
     return response!;
-  }
-
-  @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) {
-    throw UnsupportedError('STT 网关只使用非流式 POST');
   }
 }
 

@@ -563,6 +563,7 @@ void main() {
 
       expect(await eventsFuture, isEmpty, reason: stage.name);
       expect(http.blockedRequestCancelled, isTrue, reason: stage.name);
+      expect(http.cancellationSignals, everyElement(same(cancelled.future)));
       expect(
         http.providerCalls,
         stage == _CancellationStage.secondProvider ? 2 : 1,
@@ -709,23 +710,17 @@ final class _SequencedHttpClient implements ProviderHttpClient {
   final bodies = <Map<String, Object?>>[];
 
   @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) async {
-    bodies.add(jsonDecode(body) as Map<String, Object?>);
-    return responses[bodies.length - 1];
-  }
-
-  @override
   Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
-  }) => throw UnimplementedError();
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
+  }) async {
+    bodies.add(jsonDecode(utf8.decode(body)) as Map<String, Object?>);
+    return responses[bodies.length - 1];
+  }
 }
 
 final class _FakeWebSearchClient implements WebSearchClient {
@@ -774,24 +769,36 @@ final class _FailingSecondQueryWebSearchClient implements WebSearchClient {
 
 enum _CancellationStage { firstProvider, anySearch, secondProvider }
 
-final class _CancellableRoundTripHttpClient
-    implements CancellableProviderHttpClient {
+final class _CancellableRoundTripHttpClient implements ProviderHttpClient {
   _CancellableRoundTripHttpClient(this.stage);
 
   final _CancellationStage stage;
   final blockedRequestStarted = Completer<void>();
   var blockedRequestCancelled = false;
+  final cancellationSignals = <Future<void>?>[];
   var providerCalls = 0;
   var searchCalls = 0;
 
   @override
-  Future<ProviderHttpResponse> postStreamCancellable({
+  Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,
-    required String body,
+    required List<int> body,
     required Duration timeout,
-    required Future<void> whenCancelled,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
+    cancellationSignals.add(whenCancelled);
+    if (uri.toString() == anySearchEndpoint) {
+      searchCalls += 1;
+      if (stage == _CancellationStage.anySearch) {
+        blockedRequestStarted.complete();
+        await whenCancelled;
+        blockedRequestCancelled = true;
+        throw const ProviderRequestCancelled();
+      }
+      return _successfulSearchResponse();
+    }
     providerCalls += 1;
     final blocksHere =
         (stage == _CancellationStage.firstProvider && providerCalls == 1) ||
@@ -813,32 +820,15 @@ final class _CancellableRoundTripHttpClient
     }
     return _toolUseResponse();
   }
+}
 
-  @override
-  Future<ProviderHttpResponse> postCancellable({
-    required Uri uri,
-    required Map<String, String> headers,
-    required List<int> body,
-    required Duration timeout,
-    required Future<void> whenCancelled,
-  }) async {
-    searchCalls += 1;
-    if (stage == _CancellationStage.anySearch) {
-      blockedRequestStarted.complete();
-      await whenCancelled;
-      blockedRequestCancelled = true;
-      throw const ProviderRequestCancelled();
-    }
-    return _successfulSearchResponse();
-  }
-
-  @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) => throw UnimplementedError();
+/// 第一轮返回两个并行 web_search 调用；第一次搜索成功、第二次阻塞等待
+/// 取消信号，用来验证取消覆盖全部未完成搜索与第二轮模型请求。
+final class _ParallelSearchCancelHttpClient implements ProviderHttpClient {
+  final blockedSearchStarted = Completer<void>();
+  var blockedSearchCancelled = false;
+  var providerCalls = 0;
+  var searchCalls = 0;
 
   @override
   Future<ProviderHttpResponse> post({
@@ -846,26 +836,19 @@ final class _CancellableRoundTripHttpClient
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
-  }) => throw UnimplementedError();
-}
-
-/// 第一轮返回两个并行 web_search 调用；第一次搜索成功、第二次阻塞等待
-/// 取消信号，用来验证取消覆盖全部未完成搜索与第二轮模型请求。
-final class _ParallelSearchCancelHttpClient
-    implements CancellableProviderHttpClient {
-  final blockedSearchStarted = Completer<void>();
-  var blockedSearchCancelled = false;
-  var providerCalls = 0;
-  var searchCalls = 0;
-
-  @override
-  Future<ProviderHttpResponse> postStreamCancellable({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-    required Future<void> whenCancelled,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
+    if (uri.toString() == anySearchEndpoint) {
+      searchCalls += 1;
+      if (searchCalls == 1) {
+        return _successfulSearchResponse();
+      }
+      blockedSearchStarted.complete();
+      await whenCancelled;
+      blockedSearchCancelled = true;
+      throw const ProviderRequestCancelled();
+    }
     providerCalls += 1;
     return _sse([
       {
@@ -891,40 +874,6 @@ final class _ParallelSearchCancelHttpClient
       {'type': 'message_stop'},
     ]);
   }
-
-  @override
-  Future<ProviderHttpResponse> postCancellable({
-    required Uri uri,
-    required Map<String, String> headers,
-    required List<int> body,
-    required Duration timeout,
-    required Future<void> whenCancelled,
-  }) async {
-    searchCalls += 1;
-    if (searchCalls == 1) {
-      return _successfulSearchResponse();
-    }
-    blockedSearchStarted.complete();
-    await whenCancelled;
-    blockedSearchCancelled = true;
-    throw const ProviderRequestCancelled();
-  }
-
-  @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) => throw UnimplementedError();
-
-  @override
-  Future<ProviderHttpResponse> post({
-    required Uri uri,
-    required Map<String, String> headers,
-    required List<int> body,
-    required Duration timeout,
-  }) => throw UnimplementedError();
 }
 
 final class _FailingSearchRoundTripHttpClient implements ProviderHttpClient {
@@ -939,13 +888,22 @@ final class _FailingSearchRoundTripHttpClient implements ProviderHttpClient {
   var searchCalls = 0;
 
   @override
-  Future<ProviderHttpResponse> postStream({
+  Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,
-    required String body,
+    required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
-    providerBodies.add(jsonDecode(body) as Map<String, Object?>);
+    if (uri.toString() == anySearchEndpoint) {
+      searchCalls += 1;
+      if (searchError case final error?) {
+        throw error;
+      }
+      return searchResponse!;
+    }
+    providerBodies.add(jsonDecode(utf8.decode(body)) as Map<String, Object?>);
     if (providerBodies.length == 1) {
       return _toolUseResponse();
     }
@@ -956,20 +914,6 @@ final class _FailingSearchRoundTripHttpClient implements ProviderHttpClient {
       },
       {'type': 'message_stop'},
     ]);
-  }
-
-  @override
-  Future<ProviderHttpResponse> post({
-    required Uri uri,
-    required Map<String, String> headers,
-    required List<int> body,
-    required Duration timeout,
-  }) async {
-    searchCalls += 1;
-    if (searchError case final error?) {
-      throw error;
-    }
-    return searchResponse!;
   }
 }
 
@@ -1001,18 +945,12 @@ final class _ThrowingHttpClient implements ProviderHttpClient {
   final Object error;
 
   @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) => throw error;
-
-  @override
   Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) => throw error;
 }

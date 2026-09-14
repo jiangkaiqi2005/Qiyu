@@ -7,6 +7,113 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('统一文本请求等待响应头时可取消', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final received = Completer<void>();
+    server.listen((request) async {
+      await request.drain<void>();
+      received.complete();
+      // 有意不发响应头，验证取消不会等待读取阶段或请求超时。
+    });
+    final cancel = Completer<void>();
+    final pending = const DartIoProviderHttpClient().post(
+      uri: Uri.parse('http://127.0.0.1:${server.port}/test'),
+      headers: const {},
+      body: const [],
+      timeout: const Duration(seconds: 5),
+      whenCancelled: cancel.future,
+    );
+    final checked = expectLater(
+      pending, throwsA(isA<ProviderRequestCancelled>()),
+    );
+    await received.future.timeout(const Duration(seconds: 1));
+    cancel.complete();
+    await checked.timeout(const Duration(seconds: 1));
+  });
+
+  for (final cancelRequest in [true, false]) {
+    test('统一文本请求等待代理配置时${cancelRequest ? '可取消' : '计入整体期限'}', () async {
+      final transport = _ByteHttpClient([]);
+      final resolving = Completer<void>();
+      final rules = Completer<ProxyRules?>();
+      final cancel = Completer<void>();
+      final client = DartIoProviderHttpClient(
+        httpClientFactory: (_) => transport,
+        proxyRulesSource: () {
+          resolving.complete();
+          return rules.future;
+        },
+      );
+      final pending = client.post(
+        uri: Uri.parse('https://example.com/test'),
+        headers: const {},
+        body: const [],
+        timeout: const Duration(milliseconds: 100),
+        whenCancelled: cancel.future,
+        budget: const ProviderResponseBudget(
+          maxFrameBytes: 1024,
+          maxResponseBytes: 1024,
+          maxErrorBodyBytes: 1024,
+        ),
+      );
+      final checked = expectLater(
+        pending,
+        throwsA(
+          cancelRequest
+              ? isA<ProviderRequestCancelled>()
+              : isA<TimeoutException>(),
+        ),
+      );
+      await resolving.future;
+      if (cancelRequest) {
+        cancel.complete();
+      }
+      try {
+        await checked.timeout(const Duration(seconds: 1));
+      } finally {
+        rules.complete(null);
+      }
+      await Future<void>.delayed(Duration.zero);
+      expect(transport.closed, isTrue);
+      expect(transport.opened, isFalse);
+    });
+  }
+
+  test('统一文本请求在静默读取时取消订阅并只报告一次取消', () async {
+    for (final budget in <ProviderResponseBudget?>[
+      null,
+      const ProviderResponseBudget(
+        maxFrameBytes: 1024 * 1024,
+        maxResponseBytes: 16 * 1024 * 1024,
+        maxErrorBodyBytes: 64 * 1024,
+      ),
+    ]) {
+      final transport = _ByteHttpClient([]);
+      final cancel = Completer<void>();
+      final response = await transport.provider.post(
+        uri: Uri.parse('http://127.0.0.1/test'),
+        headers: const {},
+        body: const [],
+        timeout: const Duration(seconds: 5),
+        whenCancelled: cancel.future,
+        budget: budget,
+      );
+      final errors = <Object>[];
+      final done = Completer<void>();
+      final subscription = response.body.listen(
+        (_) => fail('静默响应不应产生数据'),
+        onError: errors.add,
+        onDone: done.complete,
+      );
+      addTearDown(subscription.cancel);
+      cancel.complete();
+      await done.future.timeout(const Duration(seconds: 1));
+      expect(errors, [isA<ProviderRequestCancelled>()]);
+      expect(transport.closed && transport.response.cancelled, isTrue);
+    }
+  });
+
   for (final scenario in [
     (name: '无工具纯文本', useTool: false, firstOpen: true),
     (name: '工具结果后第二回合', useTool: true, firstOpen: false),
@@ -132,7 +239,7 @@ void main() {
   });
 
   for (final fixture in _nativeCompletions) {
-    test('${fixture.name} 完整结束行在 HTTP 未 EOF 时完成，与普通通道一致', () async {
+    test('${fixture.name} 完整结束行在 HTTP 未 EOF 时完成', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
       server.listen((request) {
@@ -143,13 +250,12 @@ void main() {
         unawaited(request.response.flush().catchError((Object _) {}));
       });
 
-      for (final client in <ProviderHttpClient>[
-        const _UnboundedReference(),
+      final events = await _events(
         const DartIoProviderHttpClient(),
-      ]) {
-        final events = await _events(client, fixture.kind, port: server.port);
-        _expectCompleted(events);
-      }
+        fixture.kind,
+        port: server.port,
+      );
+      _expectCompleted(events);
     });
 
     for (final tail in [
@@ -281,10 +387,10 @@ void main() {
         utf8.encode('a\r'),
         utf8.encode('\nb'),
       ], keepOpen: false);
-      final response = await transport.provider.postStreamBounded(
+      final response = await transport.provider.post(
         uri: Uri.parse('http://127.0.0.1/test'),
         headers: const {},
-        body: '{}',
+        body: utf8.encode('{}'),
         timeout: const Duration(seconds: 1),
         budget: ProviderResponseBudget(
           maxFrameBytes: 1,
@@ -479,6 +585,7 @@ Future<List<ModelStreamEvent>> _searchEvents(
       messages: const [ModelMessage(ModelMessageRole.user, '在吗')],
       webSearchApiKey: 'synthetic-search-key',
       webSearchClient: search,
+      whenCancelled: Completer<void>().future,
     )
     .toList()
     .timeout(const Duration(seconds: 5));
@@ -574,36 +681,6 @@ void _expectCompleted(List<ModelStreamEvent> events) {
   expect(events.first.text, '在。');
 }
 
-final class _UnboundedReference implements ProviderHttpClient {
-  const _UnboundedReference();
-
-  @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) => const DartIoProviderHttpClient().postStream(
-    uri: uri,
-    headers: headers,
-    body: body,
-    timeout: timeout,
-  );
-
-  @override
-  Future<ProviderHttpResponse> post({
-    required Uri uri,
-    required Map<String, String> headers,
-    required List<int> body,
-    required Duration timeout,
-  }) => const DartIoProviderHttpClient().post(
-    uri: uri,
-    headers: headers,
-    body: body,
-    timeout: timeout,
-  );
-}
-
 /// 通过公开 HttpClient 工厂固定接收块，避免将服务器 flush 当作 TCP 边界。
 final class _ByteHttpClient implements HttpClient {
   _ByteHttpClient(
@@ -620,6 +697,7 @@ final class _ByteHttpClient implements HttpClient {
 
   final _ByteResponse response;
   bool closed = false;
+  bool opened = false;
   @override
   Duration? connectionTimeout;
 
@@ -627,7 +705,10 @@ final class _ByteHttpClient implements HttpClient {
       DartIoProviderHttpClient(httpClientFactory: (_) => this);
 
   @override
-  Future<HttpClientRequest> postUrl(Uri uri) async => _ByteRequest(response);
+  Future<HttpClientRequest> postUrl(Uri uri) async {
+    opened = true;
+    return _ByteRequest(response);
+  }
 
   @override
   void close({bool force = false}) => closed = true;

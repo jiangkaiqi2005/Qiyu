@@ -426,10 +426,10 @@ void main() {
     });
     final cancel = Completer<void>();
     final response = await const DartIoProviderHttpClient()
-        .postStreamBoundedCancellable(
+        .post(
           uri: Uri.parse('http://127.0.0.1:${server.port}/v1/chat/completions'),
           headers: const {'content-type': 'application/json'},
-          body: '{"model":"chat-model"}',
+          body: utf8.encode('{"model":"chat-model"}'),
           timeout: const Duration(seconds: 25),
           budget: const ProviderResponseBudget(
             maxFrameBytes: _frameLimit,

@@ -318,26 +318,18 @@ final class _ScriptedHttpClient implements ProviderHttpClient {
   final Object? error;
 
   @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) async {
-    if (error case final failure?) {
-      throw failure;
-    }
-    return response!;
-  }
-
-  @override
   Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
-    throw UnimplementedError('回归测试只走流式出网');
+    if (error case final failure?) {
+      throw failure;
+    }
+    return response!;
   }
 }
 

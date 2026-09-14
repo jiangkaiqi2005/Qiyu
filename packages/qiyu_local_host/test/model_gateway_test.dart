@@ -30,6 +30,10 @@ void main() {
     );
 
     expect(reply, '嗯。');
+    expect(client.timeout, const Duration(seconds: 25));
+    expect(client.budget?.maxFrameBytes, 1024 * 1024);
+    expect(client.budget?.maxResponseBytes, 16 * 1024 * 1024);
+    expect(client.budget?.maxErrorBodyBytes, 64 * 1024);
     expect(client.uri.path, '/v1/chat/completions');
     expect(client.headers['authorization'], 'Bearer test-key');
     expect(client.jsonBody, {
@@ -560,25 +564,12 @@ final class _RecordingHttpClient implements ProviderHttpClient {
 
   final ProviderHttpResponse? response;
   final Object? error;
+  late Duration timeout;
+  ProviderResponseBudget? budget;
+  Future<void>? whenCancelled;
   late Uri uri;
   late Map<String, String> headers;
   late Map<String, Object?> jsonBody;
-
-  @override
-  Future<ProviderHttpResponse> postStream({
-    required Uri uri,
-    required Map<String, String> headers,
-    required String body,
-    required Duration timeout,
-  }) async {
-    this.uri = uri;
-    this.headers = headers;
-    jsonBody = jsonDecode(body) as Map<String, Object?>;
-    if (error case final failure?) {
-      throw failure;
-    }
-    return response!;
-  }
 
   @override
   Future<ProviderHttpResponse> post({
@@ -586,9 +577,15 @@ final class _RecordingHttpClient implements ProviderHttpClient {
     required Map<String, String> headers,
     required List<int> body,
     required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
   }) async {
+    this.timeout = timeout;
+    this.budget = budget;
+    this.whenCancelled = whenCancelled;
     this.uri = uri;
     this.headers = headers;
+    jsonBody = jsonDecode(utf8.decode(body)) as Map<String, Object?>;
     if (error case final failure?) {
       throw failure;
     }
