@@ -133,7 +133,7 @@ Manifest 注释声称 `allowBackup=false` 同时覆盖 Android 12+ 的云备份�
 
 上文确认的 2 项 P1、3 项 P2 与 3 个优化点，随后按九张工单逐项修复，全部提交在 develop 分支本地完成（总基线 `f37257c`，至本节更新时 HEAD 为 `7f5397e`，未推送）。每张工单由独立执行者实施，并经至少两轮全新的规范轴与需求轴双轴审查（票 01 四轮，票 02、03、04、05、07、08 各三轮，票 06 两轮），全部有效问题清零。本票（09）自身的独立双轴审查在本次报告更新时尚未执行。
 
-2026-09-14 历史勘误：上述“尚未执行”为旧报告写作时状态，旧09后续已有两轮双轴报告。旧九票共留存 54 份报告，轮数为 4/3/3/3/3/2/3/3/2；这些静态文件不能单独证明当时代理身份或所有验收真实执行。Git 历史确认旧09报告提交为 `6c9c446607bdaba8a0757699bdab1de02bf8c799`，此前最后产品提交为 `7f5397ec70658b6e56c36857d08af29febec013e`；下表旧09的提交据此勘正，与本次报告提交区分。依据为本地 [历史提交核对](../../.scratch/security-followup-2026-09-13/logs/final-report-history-commit-check.md)及[旧实施复查](../../.scratch/security-implementation-review-20260913.md)。
+2026-09-14 历史勘误：上述“尚未执行”为旧报告写作时状态，旧09后续已有两轮双轴报告。按旧 `.scratch/security-hardening-2026-09-12/reviews/` 中正式规范/需求报告的文件名枚举，旧九票共留存 52 份报告，轮数 4/3/3/3/3/2/3/3/2 合计 26 轮 × 2 轴；[实际文件清单与数量核对](../../.scratch/security-followup-2026-09-13/logs/07-r3-fix-count-audit.json)与本轮规范审查的清单一致。这些静态文件不能单独证明当时代理身份或所有验收真实执行。Git 历史确认旧09报告提交为 `6c9c446607bdaba8a0757699bdab1de02bf8c799`，此前最后产品提交为 `7f5397ec70658b6e56c36857d08af29febec013e`；下表旧09的提交据此勘正，与本次报告提交区分。历史提交及旧验证局限的依据为本地 [历史提交核对](../../.scratch/security-followup-2026-09-13/logs/final-report-history-commit-check.md)及[旧实施复查](../../.scratch/security-implementation-review-20260913.md)。
 
 ### 提交清单
 
@@ -201,7 +201,7 @@ Manifest 注释声称 `allowBackup=false` 同时覆盖 Android 12+ 的云备份�
 
 每票按至少两轮换人双轴执行，有效发现交原执行者修正；上表的 0 是报告发现数，不是审查进程退出码。闭环不要求连续两轮零发现。流程与身份记录见本地 `logs/01-review-process-closure.md`、`02-review-process-closure.md`、`03-review-process-audit.md` 至 `07-review-process-audit.md`，对应各票最终两轴报告位于 `reviews/`。第01首轮规范轴原生全文未归档、需求轴缺 `AGENT_EXIT` 的历史局限保留，不以报告数量补证。
 
-第07首轮两轴各报 1P1，均为跨 messages 的 JSON 键值或 PEM 标记与正文丢失上下文。修正后第2轮两轴均为 0。**本次文档提交后的第3轮全新双轴仍待协调者安排**，需审查第07累计产品与文档差异；此处只确认产品闭环，不预填文档审查或整体任务完成。
+第07首轮两轴各报 1P1，均为跨 messages 的 JSON 键值或 PEM 标记与正文丢失上下文。修正后第2轮两轴均为 0。第3轮已审查至报告提交 `81cbcb58baf67ac8597b78226105d93fcd6c6989` 的第07累计产品与文档差异：[规范轴](../../.scratch/security-followup-2026-09-13/reviews/07-r3-standards.md)为 1P3（历史报告数量），[需求轴](../../.scratch/security-followup-2026-09-13/reviews/07-r3-spec.md)为 0，两轴产品问题均为 0。该数量已在本次文档修正中更正；后续复审结果见本地 [07-review-process-audit.md](../../.scratch/security-followup-2026-09-13/logs/07-review-process-audit.md)，此处不预填后续结论。
 
 ### 修复结果与正常功能对照
 
@@ -253,6 +253,6 @@ Manifest 注释声称 `allowBackup=false` 同时覆盖 Android 12+ 的云备份�
 
 ### 结论与剩余边界
 
-本轮七项已确认发现已完成处理，上述冻结产品树的分析、测试、完整发布门禁、新采集覆盖率以及新签名 APK 的签名和资源核对均通过。本次仅补录正式报告，不修改产品、不重复测试或构建；报告提交 SHA 及相对产品 SHA 只含本文档的 Git 差异由本地 `logs/07-final-report-implementation.md` 记录。第07文档后的新双轴仍待执行，不能据此宣称所有任务已结束或所有潜在安全问题已消除。
+本轮七项已确认产品发现已完成处理，上述冻结产品树的分析、测试、完整发布门禁、新采集覆盖率以及新签名 APK 的签名和资源核对均通过。本次仅更正文档，不修改产品、不重复测试或构建；报告提交 SHA 及相对产品 SHA 只含本文档的 Git 差异由本地 `logs/07-final-report-implementation.md`、`logs/07-r3-fix-implementation.md` 分别记录。第07已完成的第3轮结果及后续复审索引见上文，不能据此宣称所有任务已结束或所有潜在安全问题已消除。
 
 真机 D2D、跨平台迁移、覆盖升级、真实云模型攻击、浏览器自动化安全测试、持续资源压测及完整供应链审计仍未验证。合成 Host/假模型回归、19 项普通浏览器测试及 APK 反解分别不能替代这些验收；17 个直接依赖的公告核对仍限定在 2026-09-12，未冒充本轮重新核验。外部设计笔记的既知口径差异和未同步状态继续保留。
