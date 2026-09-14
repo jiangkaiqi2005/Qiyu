@@ -6,6 +6,7 @@ import 'dream.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_ban.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
 import 'memory_scope.dart';
@@ -197,6 +198,11 @@ final class MemoryActionService {
        _atomicWriter = episodePipeline.commits.wrap(atomicWriter),
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
+  late final MemoryBanExecution banExecution = MemoryBanExecution(
+    openLoopStore: openLoopStore,
+    personaTree: personaTree,
+  );
+
   final String memoryDirectory;
   final EpisodeMemoryPipeline episodePipeline;
   final PersonaTreeStore personaTree;
@@ -288,22 +294,19 @@ final class MemoryActionService {
     if (denied != null) {
       return denied;
     }
-    if (!await memoryControls.ban(text, origin: 'memory-center')) {
+    final result = await banExecution.execute(text, origin: 'memory-center');
+    if (!result.controlWritten) {
       return _controlNotWritable;
     }
-    final deferred = <String>[];
-    final scope = {normalizeMemoryText(text)};
-    try {
-      await openLoopStore.removeLoopsMatching(scope);
-    } on Object catch (error) {
-      deferred.add('未闭环事项的移出');
-      _diagnosticsSink('ban loop purge deferred [$error]');
-    }
-    try {
-      await personaTree.applyBan(text);
-    } on Object catch (error) {
-      deferred.add('画像的清理');
-      _diagnosticsSink('ban persona purge deferred [$error]');
+    final deferred = [
+      for (final step in result.deferred)
+        switch (step) {
+          MemoryBanCleanup.openLoops => '未闭环事项的移出',
+          MemoryBanCleanup.persona => '画像的清理',
+        },
+    ];
+    for (final step in result.deferred) {
+      _diagnosticsSink('memory ban deferred [${step.name}]');
     }
     if (deferred.isNotEmpty) {
       return MemoryActionResult(

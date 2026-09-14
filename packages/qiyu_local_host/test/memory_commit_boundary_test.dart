@@ -231,6 +231,32 @@ void main() {
     },
   );
 
+  test('a saved ban rejects old Dream while loop cleanup is unfinished', () async {
+    final writer = _PausedControlWriter(target: 'open-loops.md');
+    final fixture = await _fixture(writer: writer);
+    await File(path.join(fixture.actions.memoryDirectory, 'open-loops.md'))
+        .writeAsString('''# open-loops
+
+- [o1] $_original
+  due: someday
+  proactive: once
+  status: active
+  note: 合成事项
+''');
+    final pending = fixture.dream.run(bedtime: true);
+    await fixture.client.entered.future;
+    final banning = fixture.actions.ban(
+      const MemoryLongTermRef('重要事件', _original),
+    );
+    await writer.entered.future;
+    expect((await fixture.actions.memoryControls.load()).banned, hasLength(1));
+    fixture.client.answer.complete(ModelCompletion.reply(_candidate()));
+    writer.release.complete();
+    expect((await banning).status, MemoryActionStatus.success);
+    expect((await pending).status, DreamStatus.deferredConflict);
+    expect((await fixture.dream.readState()).pending, isTrue);
+    expect(await fixture.actions.openLoopStore.readItems(), isEmpty);
+  });
   test('partial cleanup cannot preserve an old Dream credential', () async {
     var fail = false;
     final writer = FailingAtomicTextWriter(
@@ -525,12 +551,14 @@ final class _ObservedWriter implements AtomicTextWriter {
 }
 
 final class _PausedControlWriter implements AtomicTextWriter {
+  _PausedControlWriter({this.target = memoryControlsFileName});
+  final String target;
   final entered = Completer<void>();
   final release = Completer<void>();
 
   @override
   Future<void> replace(String targetPath, String contents) async {
-    if (path.basename(targetPath) == memoryControlsFileName) {
+    if (path.basename(targetPath) == target) {
       entered.complete();
       await release.future;
     }

@@ -234,7 +234,7 @@ final class LocalAppHost {
       atomicWriter: atomicWriter,
     );
     // 记忆动作执行端（ticket 20）：记忆中心 UI 的编辑、控制、删除
-    // 与敏感揭示；聊天隐藏动作的删除管线共用同一实现。
+    // 与敏感揭示；聊天共用它的禁提执行器和删除管线，以及上述协调器。
     final memoryActions = MemoryActionService(
       memoryDirectory: memoryDirectory,
       episodePipeline: episodePipeline,

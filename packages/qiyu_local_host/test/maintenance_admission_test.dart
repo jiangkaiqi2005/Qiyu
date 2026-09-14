@@ -201,6 +201,35 @@ void main() {
       });
     }
 
+    test('聊天禁提不会与正在排空聊天的维护互相等待', () async {
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      final harness = await InProcessChatHost.start(
+        modelGateway: ScriptedModelGateway(
+          streamScript: const [ScriptedStreamReply('''记住了，以后就不提这件事了。
+<qiyu-actions>
+[{"action":"memory_ban","summary":"合成演讲"}]
+</qiyu-actions>''')],
+        ),
+        deliveryPause: (_) async {
+          if (!entered.isCompleted) entered.complete();
+          await release.future;
+        },
+      );
+      addTearDown(harness.dispose);
+      final chat = harness.openChat(requestId: 'ban', text: '以后别提合成演讲');
+      await entered.future;
+      final backup = harness.getBytes('/api/backup/export');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      release.complete();
+      await chat.done.timeout(const Duration(seconds: 3));
+      expect((await backup).$1, HttpStatus.ok);
+      final controls = await MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      ).load();
+      expect(controls.banned.single.summary, '合成演讲');
+      expect(controls.banned.single.origin, 'chat');
+    });
     test('聊天交付中的称呼更新不会与排队维护互相等待', () async {
       final entered = Completer<void>();
       final release = Completer<void>();

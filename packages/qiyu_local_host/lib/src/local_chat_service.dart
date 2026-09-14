@@ -6,6 +6,7 @@ import 'developer_diagnostics.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
+import 'memory_ban.dart';
 import 'memory_cadence.dart';
 import 'memory_controls.dart';
 import 'memory_recall.dart';
@@ -109,9 +110,18 @@ final class LocalChatService {
   /// 与日终归档共享同一实例。
   final RelationshipLifecycle? relationshipLifecycle;
 
-  /// 记忆动作执行端（ticket 20）：删除管线与记忆中心 UI 共用同一
-  /// 实现，保证聊天删除与界面删除的清理范围完全一致。
+  /// 记忆动作执行端：禁提执行器和删除管线与记忆中心 UI 共用，
+  /// 保持控制范围、清理结果一致。
   final MemoryActionService? memoryActions;
+
+  late final MemoryBanExecution? _banExecution =
+      memoryActions?.banExecution ??
+      (openLoopStore == null
+          ? null
+          : MemoryBanExecution(
+              openLoopStore: openLoopStore!,
+              personaTree: personaTree,
+            ));
 
   /// 记忆节奏（ticket 22 / ADR 0002）：交付后时间节奏链独立模块。
   /// 聊天服务只在每轮交付完成（轮内召回循环之后）调
@@ -713,20 +723,26 @@ final class LocalChatService {
               result: action.result,
             );
           case MemoryBanAction():
-            final banned =
-                await store?.banTitle(action.title, origin: 'chat') ?? false;
-            if (!banned) {
-              // controls 不可写：禁提没有落盘，热层也保持不动，
-              // 等待下次触发重试，绝不留下半生效状态。
+            final execution = _banExecution;
+            // 此处已经占有聊天槽，维护正在排空聊天时必须继续完成，
+            // 不能再等待新 UI 操作的准入。执行器只分步取得短写锁。
+            final result = await execution?.controls.commits.existingOperation(
+              () => execution.execute(action.title, origin: 'chat'),
+            );
+            if (result == null || !result.controlWritten) {
               _diagnosticsSink(
                 'memory ban deferred [controls not writable] '
                 'request=$requestId',
               );
             } else {
-              // 用户禁提高于 PersonaTree 提炼：立即清出树（ticket 14）。
-              final tree = personaTree;
-              if (tree != null) {
-                await tree.applyBan(action.title);
+              for (final step in result.deferred) {
+                final reason = switch (step) {
+                  MemoryBanCleanup.openLoops => 'open-loops',
+                  MemoryBanCleanup.persona => 'persona',
+                };
+                _diagnosticsSink(
+                  'memory ban deferred [$reason] request=$requestId',
+                );
               }
             }
           case MemoryFreezeAction():
