@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'cleartext_policy.dart';
 import 'provider_config.dart';
@@ -418,11 +417,10 @@ Duration _overallRemaining(Duration timeout, Stopwatch? watch) {
 /// 响应总量上限，非 2xx 用错误体上限；单帧按行终止符之间的字节计），
 /// 并施加从请求开始计时的整体期限。
 ///
-/// 期限与字节预算直接压在原始响应流上，不经过任何异步生成器：期限
-/// 到点即取消响应订阅并把超时错误送抵消费方，投递不依赖响应持续产
-/// 出；超限以不兼容响应失败退出并即时停止读取，原生错误转发后同样
-/// 关闭流（等完成信号的消费方不悬挂）；无论哪条路径退出（完成、错
-/// 误、超限、超时、下游取消）都取消期限并强制关闭连接。
+/// 每次最多放行到一个行终止符，等待消费方处理后再检查后续字节。
+/// 协议层因此能在原生完成行处取消读取，不受同一传输块尾部影响。
+/// 期限直接压在原始响应流上，静默或暂停时也会关闭连接；所有退出
+/// 路径都取消期限与响应订阅，不等待 HTTP EOF。
 Stream<String> _readBoundedResponse(
   HttpClientResponse response,
   HttpClient client,
@@ -435,103 +433,118 @@ Stream<String> _readBoundedResponse(
       : budget.maxResponseBytes;
   var totalBytes = 0;
   var frameBytes = 0;
-  final heldTerminators = BytesBuilder(copy: false);
   late final StreamController<List<int>> controller;
   StreamSubscription<List<int>>? subscription;
   Timer? deadline;
+  List<int>? pendingChunk;
+  var pendingOffset = 0;
+  var sourcePaused = false;
+  var terminated = false;
 
   // 终态收尾：取消期限定时器并强制关闭连接（重复调用无副作用）。
   void terminate() {
+    terminated = true;
+    pendingChunk = null;
     deadline?.cancel();
     client.close(force: true);
   }
 
-  void failOverBudget() {
+  void fail(Object error, [StackTrace? stackTrace]) {
+    if (terminated) {
+      return;
+    }
     terminate();
     subscription?.cancel();
-    controller.addError(const ModelGatewayException(
-      kind: ModelFailureKind.incompatibleResponse,
-      message: '模型服务返回了不兼容的响应格式。',
-    ));
+    controller.addError(error, stackTrace);
     controller.close();
+  }
+
+  void pauseSource() {
+    if (!sourcePaused) {
+      sourcePaused = true;
+      subscription?.pause();
+    }
+  }
+
+  void pump() {
+    if (terminated || controller.isPaused) {
+      return;
+    }
+    if (watch.elapsed >= timeout) {
+      fail(TimeoutException('整体期限已到', timeout));
+      return;
+    }
+    final chunk = pendingChunk;
+    if (chunk == null) {
+      if (sourcePaused) {
+        sourcePaused = false;
+        subscription?.resume();
+      }
+      return;
+    }
+    final start = pendingOffset;
+    while (pendingOffset < chunk.length) {
+      final byte = chunk[pendingOffset++];
+      totalBytes++;
+      final terminator = byte == 0x0D || byte == 0x0A;
+      frameBytes = terminator ? 0 : frameBytes + 1;
+      if (totalBytes > maxTotal || frameBytes > budget.maxFrameBytes) {
+        fail(
+          const ModelGatewayException(
+            kind: ModelFailureKind.incompatibleResponse,
+            message: '模型服务返回了不兼容的响应格式。',
+          ),
+        );
+        return;
+      }
+      if (terminator) {
+        break;
+      }
+    }
+    final end = pendingOffset;
+    if (end == chunk.length) {
+      pendingChunk = null;
+    }
+    controller.add(
+      start == 0 && end == chunk.length ? chunk : chunk.sublist(start, end),
+    );
+    // add 的异步投递先于下一次 pump；若消费方暂停或在终态取消，
+    // 下一次不会继续扫描。源订阅也保持暂停，避免积压后续传输块。
+    scheduleMicrotask(pump);
   }
 
   controller = StreamController<List<int>>(
     onListen: () {
       final remaining = timeout - watch.elapsed;
       if (remaining <= Duration.zero) {
-        terminate();
-        controller.addError(TimeoutException('整体期限已到', timeout));
-        controller.close();
+        fail(TimeoutException('整体期限已到', timeout));
         return;
       }
       deadline = Timer(remaining, () {
-        subscription?.cancel();
-        terminate();
-        controller.addError(TimeoutException('整体期限已到', timeout));
-        controller.close();
+        fail(TimeoutException('整体期限已到', timeout));
       });
       subscription = response.listen(
         (chunk) {
-          // releaseEnd：本块可放行前缀的长度；其后是块尾终止符串，
-          // 扣住到下一块首个通过校验的字节到达或流结束时放行。
-          var releaseEnd = 0;
-          for (var i = 0; i < chunk.length; i++) {
-            final byte = chunk[i];
-            totalBytes++;
-            if (totalBytes > maxTotal) {
-              failOverBudget();
-              return;
-            }
-            if (byte == 0x0D || byte == 0x0A) {
-              frameBytes = 0;
-            } else if (++frameBytes > budget.maxFrameBytes) {
-              failOverBudget();
-              return;
-            } else {
-              releaseEnd = i + 1;
-            }
-          }
-          // 扫描完成即本块至少一个字节通过校验：此前扣住的终止符获得
-          // 确认，与本块是否含非终止符字节无关（纯换行流也须持续放行）。
-          if (chunk.isNotEmpty && heldTerminators.isNotEmpty) {
-            controller.add(heldTerminators.takeBytes());
-          }
-          if (releaseEnd > 0) {
-            controller.add(
-              releaseEnd == chunk.length
-                  ? chunk
-                  : chunk.sublist(0, releaseEnd),
-            );
-          }
-          if (releaseEnd < chunk.length) {
-            heldTerminators.add(chunk.sublist(releaseEnd));
-          }
-        },
-        onError: (Object error, StackTrace stackTrace) {
-          terminate();
-          // 强制关闭连接时响应流可能先错误后完成，终态只认先到者。
-          if (controller.isClosed) {
+          if (terminated) {
             return;
           }
-          controller.addError(error, stackTrace);
-          // 与其余终态对齐：错误后同样关闭流，等完成信号的消费方不悬挂。
-          controller.close();
+          pauseSource();
+          pendingChunk = chunk;
+          pendingOffset = 0;
+          pump();
         },
+        onError: fail,
         onDone: () {
-          terminate();
-          if (controller.isClosed) {
+          if (terminated) {
             return;
           }
-          if (heldTerminators.isNotEmpty) {
-            controller.add(heldTerminators.takeBytes());
-          }
+          terminate();
           controller.close();
         },
       );
     },
-    onPause: () => subscription?.pause(),
-    onResume: () => subscription?.resume(),
+    onPause: pauseSource,
+    onResume: () => scheduleMicrotask(pump),
     onCancel: () {
       terminate();
       return subscription?.cancel();

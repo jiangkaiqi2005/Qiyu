@@ -501,7 +501,8 @@ String _openAiStopFrame(int frameBytes) =>
 /// 构造总字节数恰为 [totalBytes] 的 OpenAI SSE 字节流：先行填满中间
 /// 行（每行帧不超 1 MiB），末行携带完成标记。用于总量上限的精确边界。
 List<int> _exactSizeOpenAiBody(int totalBytes) {
-  final minStopLineBytes = _openAiDeltaPrefix.length + _openAiStopFrameTail.length + 2;
+  // 总量边界落在首个 LF：它使完成行成立，后续空行已在协议终态之后。
+  final minStopLineBytes = _openAiDeltaPrefix.length + _openAiStopFrameTail.length + 1;
   final maxMidContent = _frameLimit - _openAiDeltaPrefix.length - _openAiMidFrameTail.length;
   final maxStopContent = _frameLimit - _frameOverhead;
   final builder = BytesBuilder(copy: false);
@@ -515,7 +516,7 @@ List<int> _exactSizeOpenAiBody(int totalBytes) {
   if (stopContent < 0) {
     throw ArgumentError('总字节数过小，无法容纳完成行');
   }
-  builder.add(utf8.encode('$_openAiDeltaPrefix${'a' * stopContent}$_openAiStopFrameTail\n\n'));
+  builder.add(utf8.encode('$_openAiDeltaPrefix${'a' * stopContent}$_openAiStopFrameTail\n'));
   final bytes = builder.takeBytes();
   if (bytes.length != totalBytes) {
     throw StateError('构造字节数偏差：${bytes.length} != $totalBytes');
