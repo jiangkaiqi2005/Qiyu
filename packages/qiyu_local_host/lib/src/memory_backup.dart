@@ -15,6 +15,8 @@ import 'memory_marker_codec.dart';
 import 'memory_text_primitives.dart';
 import 'persona_tree.dart';
 
+part 'memory_backup_zip_preflight.dart';
+
 /// 备份包 schema 版本：导入时只接受完全一致的版本，不兼容即拒绝。
 const backupSchemaVersion = 1;
 
@@ -53,6 +55,7 @@ final class MemoryBackupBudget {
   final int maxEntryBytes;
 
   /// 中心目录名称、条目注释与扩展字段的总字节数上限。
+  /// 本地头扩展字段另用同量上限；本地名称须与中央名称逐字节一致。
   final int maxMetadataBytes;
 }
 
@@ -535,11 +538,12 @@ final class MemoryBackupService {
   /// [BackupValidationException]，临时目录整体清理，本机数据不被
   /// 触碰。返回记忆相对路径 → 临时文件与清单生成时间。
   ///
-  /// 核验顺序（先验目录与声明，再按真实解压输出逐块计数）：中心目录
-  /// 解析 → 条目数量 → 目录元数据 → 路径与条目形态 → 清单与声明值 →
+  /// 核验顺序（先验目录与声明，再按真实解压输出逐块计数）：原始目录
+  /// 与本地头预算、范围预检 → 成熟解析器 → 路径与条目形态 → 清单与声明值 →
   /// 逐条受限解压并核对真实大小与摘要。声明值只用于提前拒绝，不能
   /// 替代实际计数。
   Future<_ExtractedBundle> _extractValidatedBundle(Uint8List bundle) async {
+    _BackupZipPreflight(bundle, budget).validate();
     final zipDirectory = ZipDirectory();
     try {
       zipDirectory.read(InputMemoryStream(bundle));

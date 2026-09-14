@@ -207,7 +207,10 @@ void main() {
   }
   /// 手工拼装 zip 字节：本地头、中心目录与结束记录，固定字段按
   /// 小端写入，条目按 [_RawZipEntry] 的声明取值。
-  Uint8List buildRawZip(List<_RawZipEntry> entries) {
+  Uint8List buildRawZip(
+    List<_RawZipEntry> entries, {
+    bool zip64Directory = false,
+  }) {
     void uint16(BytesBuilder sink, int value) {
       final data = ByteData(2)..setUint16(0, value, Endian.little);
       sink.add(data.buffer.asUint8List());
@@ -218,11 +221,17 @@ void main() {
       sink.add(data.buffer.asUint8List());
     }
 
+    void uint64(BytesBuilder sink, int value) {
+      final data = ByteData(8)..setUint64(0, value, Endian.little);
+      sink.add(data.buffer.asUint8List());
+    }
+
     final body = BytesBuilder();
     final central = BytesBuilder();
     var bodyLength = 0;
     for (final entry in entries) {
-      final compressed = entry.compressedBytes ??
+      final compressed =
+          entry.compressedBytes ??
           (entry.compressionMethod == 8
               ? Uint8List.fromList(
                   ZLibCodec(raw: true).encoder.convert(entry.realBytes),
@@ -230,45 +239,115 @@ void main() {
               : entry.realBytes);
       final name = Uint8List.fromList(utf8.encode(entry.name));
       final headerOffset = bodyLength;
+      final localExtra = BytesBuilder();
+      final centralExtra = BytesBuilder();
+      if (entry.zip64Sizes) {
+        uint16(localExtra, 1);
+        uint16(localExtra, 16);
+        uint64(localExtra, entry.declaredUncompressed);
+        uint64(localExtra, compressed.length);
+      }
+      if (entry.zip64Sizes || entry.zip64Offset) {
+        uint16(centralExtra, 1);
+        uint16(
+          centralExtra,
+          (entry.zip64Sizes ? 16 : 0) + (entry.zip64Offset ? 8 : 0),
+        );
+        if (entry.zip64Sizes) {
+          uint64(centralExtra, entry.declaredUncompressed);
+          uint64(centralExtra, compressed.length);
+        }
+        if (entry.zip64Offset) uint64(centralExtra, headerOffset);
+      }
+      localExtra.add(entry.localExtra);
+      centralExtra.add(entry.centralExtra);
+      final localExtraBytes = localExtra.toBytes();
+      final centralExtraBytes = centralExtra.toBytes();
+      final flags = entry.dataDescriptor ? 8 : 0;
+      final version = entry.zip64Sizes || entry.zip64Offset ? 45 : 20;
 
       uint32(body, 0x04034b50);
-      uint16(body, 20);
-      uint16(body, 0);
+      uint16(body, version);
+      uint16(body, flags);
       uint16(body, entry.compressionMethod);
       uint16(body, 0);
       uint16(body, 0x21);
       uint32(body, 0);
-      uint32(body, compressed.length);
-      uint32(body, entry.declaredUncompressed);
+      uint32(
+        body,
+        entry.zip64Sizes
+            ? 0xffffffff
+            : entry.dataDescriptor
+            ? 0
+            : compressed.length,
+      );
+      uint32(
+        body,
+        entry.zip64Sizes
+            ? 0xffffffff
+            : entry.dataDescriptor
+            ? 0
+            : entry.declaredUncompressed,
+      );
       uint16(body, name.length);
-      uint16(body, 0);
+      uint16(body, localExtraBytes.length);
       body.add(name);
+      body.add(localExtraBytes);
       body.add(compressed);
-      bodyLength += 30 + name.length + compressed.length;
+      bodyLength +=
+          30 + name.length + localExtraBytes.length + compressed.length;
+      if (entry.dataDescriptor) {
+        if (entry.descriptorSignature) uint32(body, 0x08074b50);
+        uint32(body, 0);
+        uint32(body, compressed.length);
+        uint32(body, entry.declaredUncompressed);
+        bodyLength += entry.descriptorSignature ? 16 : 12;
+      }
 
       final comment = Uint8List.fromList(utf8.encode(entry.fileComment));
       uint32(central, 0x02014b50);
       uint16(central, entry.versionMadeBy);
-      uint16(central, 20);
-      uint16(central, 0);
+      uint16(central, version);
+      uint16(central, flags);
       uint16(central, entry.compressionMethod);
       uint16(central, 0);
       uint16(central, 0x21);
       uint32(central, 0);
-      uint32(central, compressed.length);
-      uint32(central, entry.declaredUncompressed);
+      uint32(central, entry.zip64Sizes ? 0xffffffff : compressed.length);
+      uint32(
+        central,
+        entry.zip64Sizes ? 0xffffffff : entry.declaredUncompressed,
+      );
       uint16(central, name.length);
-      uint16(central, 0);
+      uint16(central, centralExtraBytes.length);
       uint16(central, comment.length);
       uint16(central, 0);
       uint16(central, 0);
       uint32(central, entry.externalAttributes);
-      uint32(central, headerOffset);
+      uint32(central, entry.zip64Offset ? 0xffffffff : headerOffset);
       central.add(name);
+      central.add(centralExtraBytes);
       central.add(comment);
     }
 
     final centralBytes = central.toBytes();
+    final zip64End = BytesBuilder();
+    if (zip64Directory) {
+      uint32(zip64End, 0x06064b50);
+      uint64(zip64End, 44);
+      uint16(zip64End, 45);
+      uint16(zip64End, 45);
+      uint32(zip64End, 0);
+      uint32(zip64End, 0);
+      uint64(zip64End, entries.length);
+      uint64(zip64End, entries.length);
+      uint64(zip64End, centralBytes.length);
+      uint64(zip64End, bodyLength);
+      uint32(zip64End, 0x07064b50);
+      uint32(zip64End, 0);
+      uint64(zip64End, bodyLength + centralBytes.length);
+      uint32(zip64End, 1);
+    }
     final eocd = BytesBuilder();
     uint32(eocd, 0x06054b50);
     uint16(eocd, 0);
@@ -281,6 +360,7 @@ void main() {
     return Uint8List.fromList([
       ...body.toBytes(),
       ...centralBytes,
+      ...zip64End.toBytes(),
       ...eocd.toBytes(),
     ]);
   }
@@ -291,6 +371,7 @@ void main() {
   Uint8List buildRawBackup({
     required List<(String, int, String)> declared,
     required List<_RawZipEntry> entries,
+    bool zip64Directory = false,
   }) {
     final manifestJson = {
       'kind': 'qiyu-memory-backup',
@@ -314,9 +395,8 @@ void main() {
         compressionMethod: 0,
       ),
       ...entries,
-    ]);
+    ], zip64Directory: zip64Directory);
   }
-
 
   Map<String, String> snapshotMemoryTree() {
     final result = <String, String>{};
@@ -1190,6 +1270,23 @@ void main() {
       ),
     );
 
+    List<int> centralHeaders(Uint8List bundle) {
+      // 只定位本文件生成的正常夹具，故意破坏字段前调用。
+      final fields = ByteData.sublistView(bundle);
+      var cursor = fields.getUint32(bundle.length - 6, Endian.little);
+      final result = <int>[];
+      final count = fields.getUint16(bundle.length - 12, Endian.little);
+      for (var index = 0; index < count; index += 1) {
+        result.add(cursor);
+        cursor +=
+            46 +
+            fields.getUint16(cursor + 28, Endian.little) +
+            fields.getUint16(cursor + 30, Endian.little) +
+            fields.getUint16(cursor + 32, Endian.little);
+      }
+      return result;
+    }
+
     test('高压缩率小体积包超出总预算被拒绝，现有数据不变', () async {
       await seedRichMemory();
       final before = snapshotMemoryTree();
@@ -1330,6 +1427,374 @@ void main() {
         rejectedWith('unexpected-content'),
       );
     });
+
+    test('目录数量预算先于坏本地头解析拒绝', () async {
+      final bundle = buildBundle({'long-memory.md': '# ok\n'});
+      final fields = ByteData.sublistView(bundle);
+      final centralOffset = fields.getUint32(bundle.length - 6, Endian.little);
+      // 两项的 EOCD 已超过一项预算；若仍开始全量解析，第一项的越界
+      // 本地头会先产生 not-a-backup。错误类别约束拒绝发生的阶段。
+      fields.setUint32(centralOffset + 42, bundle.length + 1, Endian.little);
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(maxEntries: 1),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('目录元数据预算先于坏本地头解析拒绝', () async {
+      final bundle = buildBundle({'long-memory.md': '# ok\n'});
+      final fields = ByteData.sublistView(bundle);
+      final centralOffset = fields.getUint32(bundle.length - 6, Endian.little);
+      fields.setUint32(centralOffset + 42, bundle.length + 1, Endian.little);
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(maxMetadataBytes: 1),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('重复引用本地头的备份被拒绝且导入不改动数据', () async {
+      await seedRichMemory();
+      final before = snapshotMemoryTree();
+      final bundle = buildBundle({
+        'long-memory.md': '# ok\n',
+        'persona.md': '# ok\n',
+      });
+      // 两个合法路径、同内容同摘要的正常对照。
+      await backup.previewImport(bundle);
+      final fields = ByteData.sublistView(bundle);
+      final first = fields.getUint32(bundle.length - 6, Endian.little);
+      final second =
+          first +
+          46 +
+          fields.getUint16(first + 28, Endian.little) +
+          fields.getUint16(first + 30, Endian.little) +
+          fields.getUint16(first + 32, Endian.little);
+      fields.setUint32(
+        second + 42,
+        fields.getUint32(first + 42, Endian.little),
+        Endian.little,
+      );
+      await expectLater(
+        () => backup.previewImport(bundle),
+        rejectedWith('integrity-mismatch'),
+      );
+      await expectLater(
+        () => backup.importBundle(bundle),
+        rejectedWith('integrity-mismatch'),
+      );
+      expect(snapshotMemoryTree(), before);
+      expect(
+        Directory(path.join(memoryDirectory, 'backups')).existsSync(),
+        isFalse,
+      );
+    });
+
+    for (final (label, offset, width, value) in [
+      ('名称', 30, 1, 0x78),
+      ('名称长度', 26, 2, 1),
+      ('压缩方法', 8, 2, 0),
+      ('标志', 6, 2, 0x802),
+      ('CRC', 14, 4, 1),
+      ('压缩长度', 18, 4, 1),
+      ('解压长度', 22, 4, 1),
+    ]) {
+      test('本地头$label与中央目录不一致被拒绝', () async {
+        final bundle = buildBundle({'long-memory.md': '# ok\n'});
+        final fields = ByteData.sublistView(bundle);
+        switch (width) {
+          case 1:
+            fields.setUint8(offset, value);
+          case 2:
+            fields.setUint16(offset, value, Endian.little);
+          case 4:
+            fields.setUint32(offset, value, Endian.little);
+        }
+        await expectLater(
+          () => backup.previewImport(bundle),
+          rejectedWith('integrity-mismatch'),
+        );
+      });
+    }
+
+    for (final (label, sizes, offset, directory, descriptor, signature) in [
+      ('ZIP64 尺寸', true, false, false, false, false),
+      ('ZIP64 本地偏移', false, true, false, false, false),
+      ('ZIP64 目录与小值', true, true, true, false, false),
+      ('带签名 descriptor', false, false, false, true, true),
+      ('无签名 descriptor', false, false, false, true, false),
+    ]) {
+      test('正常$label备份兼容预览', () async {
+        final bytes = Uint8List.fromList(utf8.encode('# ok\n'));
+        final bundle = buildRawBackup(
+          declared: [
+            (
+              'memory/long-memory.md',
+              bytes.length,
+              sha256.convert(bytes).toString(),
+            ),
+          ],
+          entries: [
+            _RawZipEntry(
+              'memory/long-memory.md',
+              realBytes: bytes,
+              zip64Sizes: sizes,
+              zip64Offset: offset,
+              dataDescriptor: descriptor,
+              descriptorSignature: signature,
+            ),
+          ],
+          zip64Directory: directory,
+        );
+        final preview = await backup.previewImport(bundle);
+        expect(preview.countOf(BackupItemCategory.added), 1);
+      });
+    }
+
+    test('虚报较少条目仍按实际扫描数量提前拒绝', () async {
+      final bundle = buildBundle({'long-memory.md': '# ok\n'});
+      final second = centralHeaders(bundle)[1];
+      final fields = ByteData.sublistView(bundle)
+        ..setUint16(bundle.length - 14, 1, Endian.little)
+        ..setUint16(bundle.length - 12, 1, Endian.little);
+      fields.setUint32(second + 42, bundle.length + 1, Endian.little);
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(maxEntries: 1),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    for (final label in [
+      '计数虚报',
+      '目录越界',
+      '目录截短',
+      '本地头越界',
+      '本地签名',
+      '本地extra越界',
+    ]) {
+      test('畸形ZIP结构$label被拒绝', () async {
+        final bundle = buildBundle({'long-memory.md': '# ok\n'});
+        final first = centralHeaders(bundle).first;
+        final fields = ByteData.sublistView(bundle);
+        switch (label) {
+          case '计数虚报':
+            fields.setUint16(bundle.length - 14, 1, Endian.little);
+            fields.setUint16(bundle.length - 12, 1, Endian.little);
+          case '目录越界':
+            fields.setUint32(bundle.length - 6, bundle.length, Endian.little);
+          case '目录截短':
+            fields.setUint32(bundle.length - 10, 45, Endian.little);
+          case '本地头越界':
+            fields.setUint32(first + 42, first - 1, Endian.little);
+          case '本地签名':
+            fields.setUint32(0, 0, Endian.little);
+          case '本地extra越界':
+            fields.setUint16(28, 65535, Endian.little);
+        }
+        await expectLater(
+          () => backup.previewImport(bundle),
+          rejectedWith('not-a-backup'),
+        );
+      });
+    }
+
+    test('本地extra独立限额保留中央元数据边界', () async {
+      final bytes = Uint8List.fromList(utf8.encode('# ok\n'));
+      Uint8List sample(int extraLength) => buildRawBackup(
+        declared: [
+          (
+            'memory/long-memory.md',
+            bytes.length,
+            sha256.convert(bytes).toString(),
+          ),
+        ],
+        entries: [
+          _RawZipEntry(
+            'memory/long-memory.md',
+            realBytes: bytes,
+            // 未知 extra 的 payload 长度可变，中央名称总量为 32。
+            localExtra: [
+              0xfe,
+              0xca,
+              extraLength - 4,
+              0,
+              ...List.filled(extraLength - 4, 0),
+            ],
+            centralExtra: const [0xaa, 0xbb, 0, 0],
+          ),
+        ],
+      );
+      final service = budgeted(const MemoryBackupBudget(maxMetadataBytes: 36));
+      expect(
+        (await service.previewImport(
+          sample(36),
+        )).countOf(BackupItemCategory.added),
+        1,
+      );
+      await expectLater(
+        () => service.previewImport(sample(37)),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    test('ZIP64有效目录覆盖普通EOCD字段并保留sentinel组合', () async {
+      final bytes = Uint8List.fromList(utf8.encode('# ok\n'));
+      final bundle = buildRawBackup(
+        declared: [
+          (
+            'memory/long-memory.md',
+            bytes.length,
+            sha256.convert(bytes).toString(),
+          ),
+        ],
+        entries: [_RawZipEntry('memory/long-memory.md', realBytes: bytes)],
+        zip64Directory: true,
+      );
+      final fields = ByteData.sublistView(bundle);
+      fields.setUint16(bundle.length - 14, 0xffff, Endian.little);
+      fields.setUint16(bundle.length - 12, 0xffff, Endian.little);
+      fields.setUint32(bundle.length - 10, 0xffffffff, Endian.little);
+      fields.setUint32(bundle.length - 6, 0xffffffff, Endian.little);
+      expect(
+        (await backup.previewImport(bundle)).countOf(BackupItemCategory.added),
+        1,
+      );
+      // ZIP64 的真实计数超限先于其后坏范围，不消费普通 EOCD 的值。
+      final zip64 = bundle.length - 98;
+      fields.setUint64(zip64 + 24, 3, Endian.little);
+      fields.setUint64(zip64 + 32, 3, Endian.little);
+      fields.setUint64(zip64 + 48, bundle.length + 1, Endian.little);
+      await expectLater(
+        () => budgeted(
+          const MemoryBackupBudget(maxEntries: 2),
+        ).previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+    });
+
+    for (final label in [
+      'locator越界',
+      '记录长度',
+      '64位负值',
+      '缺少尺寸字段',
+      'extra范围错误',
+      '本地尺寸不一致',
+    ]) {
+      test('畸形ZIP64$label被拒绝', () async {
+        final bytes = Uint8List.fromList(utf8.encode('# ok\n'));
+        final bundle = buildRawBackup(
+          declared: [
+            (
+              'memory/long-memory.md',
+              bytes.length,
+              sha256.convert(bytes).toString(),
+            ),
+          ],
+          entries: [
+            _RawZipEntry(
+              'memory/long-memory.md',
+              realBytes: bytes,
+              zip64Sizes: true,
+              zip64Offset: true,
+            ),
+          ],
+          zip64Directory: true,
+        );
+        final second = centralHeaders(bundle)[1];
+        final fields = ByteData.sublistView(bundle);
+        final centralExtra =
+            second + 46 + fields.getUint16(second + 28, Endian.little);
+        final local =
+            30 +
+            fields.getUint16(26, Endian.little) +
+            fields.getUint32(18, Endian.little);
+        switch (label) {
+          case 'locator越界':
+            fields.setUint64(bundle.length - 34, bundle.length, Endian.little);
+          case '记录长度':
+            fields.setUint64(bundle.length - 94, 43, Endian.little);
+          case '64位负值':
+            fields.setUint64(bundle.length - 50, -1, Endian.little);
+          case '缺少尺寸字段':
+            fields.setUint16(centralExtra, 0xcafe, Endian.little);
+          case 'extra范围错误':
+            fields.setUint16(centralExtra + 2, 65535, Endian.little);
+          case '本地尺寸不一致':
+            final extra =
+                local + 30 + fields.getUint16(local + 26, Endian.little);
+            fields.setUint64(extra + 4, 1, Endian.little);
+        }
+        await expectLater(
+          () => backup.previewImport(bundle),
+          rejectedWith(
+            label == '本地尺寸不一致' ? 'integrity-mismatch' : 'not-a-backup',
+          ),
+        );
+      });
+    }
+
+    test('EOCD注释内候选与解码库采用同一搜索顺序', () async {
+      final base = buildBundle({'long-memory.md': '# ok\n'});
+      Uint8List commented(int length, int fakeOffset) {
+        final bundle = Uint8List(length)..setAll(0, base);
+        final fields = ByteData.sublistView(bundle)
+          ..setUint16(base.length - 2, length - base.length, Endian.little)
+          ..setUint32(fakeOffset, 0x06054b50, Endian.little)
+          ..setUint16(fakeOffset + 8, 3, Endian.little)
+          ..setUint16(fakeOffset + 10, 3, Endian.little);
+        fields.setUint32(fakeOffset + 16, length + 1, Endian.little);
+        return bundle;
+      }
+
+      final service = budgeted(const MemoryBackupBudget(maxEntries: 2));
+      await expectLater(
+        () => service.previewImport(commented(base.length + 30, base.length)),
+        rejectedWith('unexpected-content'),
+      );
+      // 4096 字节输入的 2042 处签名跨 archive 的 1024 字节搜索块，
+      // 成熟解析器跳过它而采用原 EOCD；前检必须接受相同的正常目录。
+      expect(
+        (await service.previewImport(
+          commented(4096, 2042),
+        )).countOf(BackupItemCategory.added),
+        1,
+      );
+    });
+
+    for (final signature in [false, true]) {
+      test('descriptor损坏不会用尾部尺寸覆盖中央声明（签名$signature）', () async {
+        final bytes = Uint8List.fromList(utf8.encode('# ok\n'));
+        final bundle = buildRawBackup(
+          declared: [
+            (
+              'memory/long-memory.md',
+              bytes.length,
+              sha256.convert(bytes).toString(),
+            ),
+          ],
+          entries: [
+            _RawZipEntry(
+              'memory/long-memory.md',
+              realBytes: bytes,
+              dataDescriptor: true,
+              descriptorSignature: signature,
+            ),
+          ],
+        );
+        final directory = centralHeaders(bundle).first;
+        // 第二个条目是最后一项，descriptor 紧接中央目录之前。
+        ByteData.sublistView(bundle).setUint32(directory - 8, 1, Endian.little);
+        await expectLater(
+          () => backup.previewImport(bundle),
+          rejectedWith('integrity-mismatch'),
+        );
+      });
+    }
 
     // 中心目录名称 = 'memory/' + 相对路径，UTF-8 字节 32767；256 个
     // 条目加上 'manifest.md' 条目名后合计 8388363 字节，恰在 8 MiB
@@ -1587,6 +2052,12 @@ final class _RawZipEntry {
     this.fileComment = '',
     this.versionMadeBy = 20,
     this.externalAttributes = 0,
+    this.localExtra = const [],
+    this.centralExtra = const [],
+    this.zip64Sizes = false,
+    this.zip64Offset = false,
+    this.dataDescriptor = false,
+    this.descriptorSignature = true,
   }) : declaredUncompressed = declaredUncompressed ?? realBytes.length;
 
   final String name;
@@ -1597,6 +2068,12 @@ final class _RawZipEntry {
   final String fileComment;
   final int versionMadeBy;
   final int externalAttributes;
+  final List<int> localExtra;
+  final List<int> centralExtra;
+  final bool zip64Sizes;
+  final bool zip64Offset;
+  final bool dataDescriptor;
+  final bool descriptorSignature;
 }
 
 /// 与 EpisodeMemoryPipeline 写入端同构的日文件渲染：手工构造「旧规则
