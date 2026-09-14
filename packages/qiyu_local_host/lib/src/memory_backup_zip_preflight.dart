@@ -43,6 +43,17 @@ final class _BackupZipPreflight {
     var metadata = 0;
     final localOffsets = <int>{};
     while (cursor < directoryEnd) {
+      _range(cursor, 4, directoryEnd);
+      // APPNOTE 4.3.12–13：文件头后可有一个数字签名记录。archive
+      // 遇到它便结束文件扫描；这里只验证结构和预算，不验证签名内容。
+      if (_u32(cursor) == 0x05054b50) {
+        _range(cursor, 6, directoryEnd);
+        final recordSize = 6 + _u16(cursor + 4);
+        _metadataSize(metadata + recordSize);
+        _range(cursor, recordSize, directoryEnd);
+        if (recordSize != directoryEnd - cursor) throw _notABackup();
+        break;
+      }
       _entryCount(++count);
       _range(cursor, 46, directoryEnd);
       if (_u32(cursor) != ZipFileHeader.signature) throw _notABackup();

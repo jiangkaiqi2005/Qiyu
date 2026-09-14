@@ -210,6 +210,7 @@ void main() {
   Uint8List buildRawZip(
     List<_RawZipEntry> entries, {
     bool zip64Directory = false,
+    List<int> directoryTail = const [],
   }) {
     void uint16(BytesBuilder sink, int value) {
       final data = ByteData(2)..setUint16(0, value, Endian.little);
@@ -330,6 +331,7 @@ void main() {
       central.add(comment);
     }
 
+    central.add(directoryTail);
     final centralBytes = central.toBytes();
     final zip64End = BytesBuilder();
     if (zip64Directory) {
@@ -372,6 +374,7 @@ void main() {
     required List<(String, int, String)> declared,
     required List<_RawZipEntry> entries,
     bool zip64Directory = false,
+    List<int> directoryTail = const [],
   }) {
     final manifestJson = {
       'kind': 'qiyu-memory-backup',
@@ -388,14 +391,18 @@ void main() {
         '<!-- qiyu-backup-manifest:'
         '${base64Url.encode(utf8.encode(jsonEncode(manifestJson))).replaceAll('=', '')} -->\n';
     final manifestBytes = Uint8List.fromList(utf8.encode(manifestContent));
-    return buildRawZip([
-      _RawZipEntry(
-        'manifest.md',
-        realBytes: manifestBytes,
-        compressionMethod: 0,
-      ),
-      ...entries,
-    ], zip64Directory: zip64Directory);
+    return buildRawZip(
+      [
+        _RawZipEntry(
+          'manifest.md',
+          realBytes: manifestBytes,
+          compressionMethod: 0,
+        ),
+        ...entries,
+      ],
+      zip64Directory: zip64Directory,
+      directoryTail: directoryTail,
+    );
   }
 
   Map<String, String> snapshotMemoryTree() {
@@ -1285,6 +1292,163 @@ void main() {
             fields.getUint16(cursor + 32, Endian.little);
       }
       return result;
+    }
+
+    Uint8List directorySignature(int payloadSize) {
+      final header = ByteData(6)
+        ..setUint32(0, 0x05054b50, Endian.little)
+        ..setUint16(4, payloadSize, Endian.little);
+      // 仅检查标准记录结构兼容性，payload 是合成不透明字节。
+      return Uint8List(6 + payloadSize)..setAll(0, header.buffer.asUint8List());
+    }
+
+    Uint8List withDirectoryTail(List<int> tail, {bool zip64 = false}) {
+      final bytes = Uint8List.fromList(
+        utf8.encode('# long-memory\n\n## 人与关系\n- 一条合成印象\n'),
+      );
+      return buildRawBackup(
+        declared: [
+          (
+            'memory/long-memory.md',
+            bytes.length,
+            sha256.convert(bytes).toString(),
+          ),
+        ],
+        entries: [_RawZipEntry('memory/long-memory.md', realBytes: bytes)],
+        zip64Directory: zip64,
+        directoryTail: tail,
+      );
+    }
+
+    for (final zip64 in [false, true]) {
+      test('中央目录可选签名记录支持预览和导入（ZIP64=$zip64）', () async {
+        final service = budgeted(
+          const MemoryBackupBudget(
+            maxEntries: 2,
+            maxTotalBytes: 4096,
+            maxEntryBytes: 2048,
+            maxMetadataBytes: 42,
+          ),
+        );
+        final ordinary = withDirectoryTail(const [], zip64: zip64);
+        expect(
+          (await service.previewImport(
+            ordinary,
+          )).countOf(BackupItemCategory.added),
+          1,
+        );
+        // 两个文件占满条目预算，32 字节名称加 10 字节签名记录占满
+        // 元数据预算；签名记录不能计为第三个文件。
+        final signed = withDirectoryTail(directorySignature(4), zip64: zip64);
+        expect(
+          (await service.previewImport(
+            signed,
+          )).countOf(BackupItemCategory.added),
+          1,
+        );
+        final imported = await service.importBundle(signed);
+        expect(imported.added, 1);
+        expect(imported.conflicts, 0);
+        expect(
+          (await service.previewImport(
+            ordinary,
+          )).countOf(BackupItemCategory.skipped),
+          1,
+        );
+        expect((await service.importBundle(signed)).skipped, 1);
+      });
+    }
+
+    test('中央目录签名记录元数据预算超出一字节拒绝且导入无副作用', () async {
+      await seedRichMemory();
+      final before = snapshotMemoryTree();
+      final service = budgeted(
+        const MemoryBackupBudget(maxEntries: 2, maxMetadataBytes: 42),
+      );
+      final bundle = withDirectoryTail(directorySignature(5));
+      await expectLater(
+        () => service.previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+      await expectLater(
+        () => service.importBundle(bundle),
+        rejectedWith('unexpected-content'),
+      );
+      expect(snapshotMemoryTree(), before);
+      expect(
+        Directory(path.join(memoryDirectory, 'backups')).existsSync(),
+        isFalse,
+      );
+    });
+
+    test('中央目录零长度签名记录可读取且不占文件数', () async {
+      final service = budgeted(
+        const MemoryBackupBudget(maxEntries: 2, maxMetadataBytes: 38),
+      );
+      expect(
+        (await service.previewImport(
+          withDirectoryTail(directorySignature(0)),
+        )).countOf(BackupItemCategory.added),
+        1,
+      );
+    });
+
+    for (final label in [
+      '未知记录',
+      '固定头截断',
+      'payload截断',
+      '长度越界',
+      '重复记录',
+      '记录后多余字节',
+      '文件头未结束',
+    ]) {
+      test('中央目录签名记录$label拒绝且导入无副作用', () async {
+        await seedRichMemory();
+        final before = snapshotMemoryTree();
+        var tail = directorySignature(4);
+        switch (label) {
+          case '未知记录':
+            ByteData.sublistView(tail).setUint32(0, 0x05064b50, Endian.little);
+          case '固定头截断':
+            tail = Uint8List.sublistView(tail, 0, 5);
+          case 'payload截断':
+            tail = Uint8List.sublistView(tail, 0, 8);
+          case '长度越界':
+            ByteData.sublistView(tail).setUint16(4, 5, Endian.little);
+          case '重复记录':
+            tail = Uint8List.fromList([...tail, ...tail]);
+          case '记录后多余字节':
+            tail = Uint8List.fromList([...tail, 0]);
+          case '文件头未结束':
+            tail = Uint8List(0);
+        }
+        final bundle = withDirectoryTail(tail);
+        if (label == '文件头未结束') {
+          final lastHeader = centralHeaders(bundle).last;
+          // 把第二个文件头伪装成恰到目录末端的签名记录，真实文件数
+          // 仍应与 EOCD 声明核对，不能因记录完整就略过剩余文件。
+          ByteData.sublistView(bundle)
+            ..setUint32(lastHeader, 0x05054b50, Endian.little)
+            ..setUint16(
+              lastHeader + 4,
+              bundle.length - 22 - lastHeader - 6,
+              Endian.little,
+            );
+        }
+        await expectLater(
+          () => backup.previewImport(bundle),
+          rejectedWith('not-a-backup'),
+        );
+        await expectLater(
+          () => backup.importBundle(bundle),
+          rejectedWith('not-a-backup'),
+        );
+        expect(snapshotMemoryTree(), before);
+        expect(
+          Directory(path.join(memoryDirectory, 'backups')).existsSync(),
+          isFalse,
+        );
+      });
     }
 
     test('高压缩率小体积包超出总预算被拒绝，现有数据不变', () async {

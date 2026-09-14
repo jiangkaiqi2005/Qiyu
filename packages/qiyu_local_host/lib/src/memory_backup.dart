@@ -55,6 +55,7 @@ final class MemoryBackupBudget {
   final int maxEntryBytes;
 
   /// 中心目录名称、条目注释与扩展字段的总字节数上限。
+  /// 可选目录签名记录的完整字节也计入此预算。
   /// 本地头扩展字段另用同量上限；本地名称须与中央名称逐字节一致。
   final int maxMetadataBytes;
 }
