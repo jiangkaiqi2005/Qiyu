@@ -691,6 +691,38 @@ void main() {
   }
 
   testWidgets(
+    '安卓排队转写随会话丢弃而退出等待，之后仍可录音发送',
+    (tester) async {
+      final gateway = _VoiceChatGateway()..pendingDelivery = Completer<void>();
+      final model = _chatViewModel(gateway);
+      await tester.pumpWidget(
+        _harness(viewModel: model, platform: _FakeRecorderPlatform()),
+      );
+      await tester.pumpAndSettle();
+      unawaited(model.send('旧会话文字'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('voice-mic')));
+      await tester.pumpAndSettle();
+      await _recordAndroid(tester);
+      expect(find.text('语音待发送，等待当前回复结束'), findsOneWidget);
+
+      await model.discardSession('session-voice');
+      await tester.pumpAndSettle();
+      expect(find.text('语音待发送，等待当前回复结束'), findsNothing);
+      gateway.pendingDelivery!.complete();
+      await tester.pumpAndSettle();
+      expect(gateway.sentTexts, ['旧会话文字']);
+      expect(model.messages, isEmpty);
+
+      gateway.pendingDelivery = null;
+      await _recordAndroid(tester);
+      await tester.pumpAndSettle();
+      expect(gateway.sentTexts, ['旧会话文字', '今天有点累']);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
     '安卓停止录音等待中取消不上传迟到字节',
     (tester) async {
       final gateway = _VoiceChatGateway();

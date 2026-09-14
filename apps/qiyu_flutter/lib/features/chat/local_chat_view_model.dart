@@ -14,6 +14,23 @@ import 'voice_output_controller.dart';
 
 typedef RequestIdFactory = String Function();
 
+enum ChatSendStatus {
+  notAccepted,
+  acceptedIncomplete,
+
+  /// 沿用交付语义：首段已完成后取消第二段，也保留完成结果。
+  completed,
+  staleSession,
+}
+
+/// 本次发送的草稿归属；拒绝或尚在排队时没有创建请求，requestId 为 null。
+final class ChatSendResult {
+  const ChatSendResult({required this.status, this.requestId});
+
+  final ChatSendStatus status;
+  final String? requestId;
+}
+
 /// 一轮聊天事务：从发送到事件流终结。等待指示、流式文本与交付段进度
 /// 都属于事务自身；事务失效（新发送 / 恢复 / 丢弃会话）之后，旧流再来
 /// 的事件整体丢弃——不写状态、不通知界面。
@@ -104,6 +121,9 @@ final class LocalChatViewModel extends ChangeNotifier {
   /// 唯一代数计数器：新发送、会话恢复与丢弃会话都推进它；原恢复代数
   /// 并入这里，不再有两套代际。
   int _generation = 0;
+
+  /// 发送结果与排队语音的会话归属；普通新轮不改变它，恢复/丢弃才使其失效。
+  Object _sessionScope = Object();
 
   /// 当前活跃事务。为 null 即不在发送之中（事务完成、失败或被新一代
   /// 取代都置空），`sending` / `waiting` / `streamingText` 都由它派生。
@@ -199,6 +219,7 @@ final class LocalChatViewModel extends ChangeNotifier {
       return;
     }
     _initializing = true;
+    _sessionScope = Object();
     _generation += 1;
     final generation = _generation;
     _activeTurn = null;
@@ -340,6 +361,7 @@ final class LocalChatViewModel extends ChangeNotifier {
     if (_sessionId != sessionId) {
       return;
     }
+    _sessionScope = Object();
     _generation += 1;
     final generation = _generation;
     // 旧事务随代数失效：等待指示与流式半句一并消失，发送锁同时释放。
@@ -357,11 +379,12 @@ final class LocalChatViewModel extends ChangeNotifier {
   /// 轮询共用同一条路径与重入保护），壳层重试入口与测试的既有入口不变。
   Future<void> checkHostNow() => _hostMonitor.checkHostNow();
 
-  Future<bool> send(String text) async {
+  Future<ChatSendResult> send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || sending || hostStopped) {
-      return false;
+      return const ChatSendResult(status: ChatSendStatus.notAccepted);
     }
+    final sessionScope = _sessionScope;
     if (_voiceOutputEnabled) {
       // send 由按钮/Enter 同步触发：先保住许可，再跨入聊天事件流。
       voiceOutput.prepareForUserInitiatedPlayback();
@@ -383,6 +406,8 @@ final class LocalChatViewModel extends ChangeNotifier {
     );
     _activeTurn = turn;
     final optimisticallyAdded = !_hasUserTurn(requestId);
+    // 重试或恢复出的用户轮已经归会话保管，本次连接未再受理也不退回草稿。
+    turn.accepted = !optimisticallyAdded;
     if (optimisticallyAdded) {
       _messages.add(
         LocalChatMessage(
@@ -394,8 +419,9 @@ final class LocalChatViewModel extends ChangeNotifier {
       );
     }
     notifyListeners();
+    var completed = false;
     try {
-      return await _sendStreaming(
+      completed = await _sendStreaming(
         turn,
         optimisticallyAdded: optimisticallyAdded,
       );
@@ -403,7 +429,6 @@ final class LocalChatViewModel extends ChangeNotifier {
       if (_belongsToActiveGeneration(turn)) {
         _errorMessage = _readableError(error);
       }
-      return false;
     } finally {
       // 只有仍属当前代际的事务收尾：被恢复/丢弃取代后，新一代界面自己
       // 做主，旧事务的尾巴不再写状态、不再通知。
@@ -412,6 +437,17 @@ final class LocalChatViewModel extends ChangeNotifier {
         notifyListeners();
       }
     }
+    final ChatSendStatus status;
+    if (sessionScope != _sessionScope) {
+      status = ChatSendStatus.staleSession;
+    } else if (completed) {
+      status = ChatSendStatus.completed;
+    } else if (turn.accepted) {
+      status = ChatSendStatus.acceptedIncomplete;
+    } else {
+      status = ChatSendStatus.notAccepted;
+    }
+    return ChatSendResult(requestId: requestId, status: status);
   }
 
   Future<bool> _sendStreaming(
@@ -546,12 +582,13 @@ final class LocalChatViewModel extends ChangeNotifier {
 
   /// 等正在流式回复的一轮结束后再发送：语音转写完成时栖语可能仍在
   /// 回复，说完的话照常排队发出，不丢也不并发。
-  Future<bool> sendWhenIdle(
+  Future<ChatSendResult> sendWhenIdle(
     String text, {
     Future<void>? cancelled,
     bool Function()? isCancelled,
     VoidCallback? onCommitted,
   }) async {
+    final sessionScope = _sessionScope;
     while (sending) {
       final idle = Completer<void>();
       void listener() {
@@ -568,9 +605,16 @@ final class LocalChatViewModel extends ChangeNotifier {
       } finally {
         removeListener(listener);
       }
-      if (isCancelled?.call() ?? false) return false;
+      if (sessionScope != _sessionScope) {
+        return const ChatSendResult(status: ChatSendStatus.staleSession);
+      }
+      if (isCancelled?.call() ?? false) {
+        return const ChatSendResult(status: ChatSendStatus.notAccepted);
+      }
     }
-    if (isCancelled?.call() ?? false) return false;
+    if (isCancelled?.call() ?? false) {
+      return const ChatSendResult(status: ChatSendStatus.notAccepted);
+    }
     // 检查与进入 send 之间不让出执行权，取消不能越过提交边界。
     onCommitted?.call();
     return send(text);
@@ -588,6 +632,8 @@ final class LocalChatViewModel extends ChangeNotifier {
     // 视图模型。
     _hostMonitor.removeListener(_onHostMonitorChanged);
     _hostMonitor.dispose();
+    _sessionScope = Object();
+    _generation += 1;
     _activeTurn = null;
     super.dispose();
   }

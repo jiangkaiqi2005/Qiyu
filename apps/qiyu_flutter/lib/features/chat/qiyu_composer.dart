@@ -11,7 +11,6 @@ import '../shell/qiyu_widgets.dart';
 import '../navigation.dart';
 import '../accessibility.dart';
 import 'chat_voice_coordinator.dart';
-import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_send_button.dart';
 import 'voice_input_controller.dart';
@@ -114,6 +113,8 @@ class QiyuComposerState extends State<QiyuComposer> {
   static const double _inputCursorWidth = 2.0;
 
   final _controller = TextEditingController();
+  int _draftRevision = 0;
+  String _draftText = '';
 
   /// composer 焦点：聚焦态描边取 `composerFocusLine`（紫度 0.13），
   /// 失焦回落到 `line` 发丝线（design-system §8 组件 5）。
@@ -137,7 +138,7 @@ class QiyuComposerState extends State<QiyuComposer> {
     widget.voiceCoordinator.onPendingChanged = _onPendingChanged;
     _focusNode.addListener(_onFocusChange);
     // 文本每次变化（打字、IME 组合、程序注入）都可能改变输入行行数。
-    _controller.addListener(_updateComposerExpanded);
+    _controller.addListener(_onDraftChanged);
   }
 
   @override
@@ -175,24 +176,15 @@ class QiyuComposerState extends State<QiyuComposer> {
   /// 语音转写出的文字直接发送：与手打共用同一条链路（requestId 幂等、
   /// 乐观插入、失败回填输入框）。栖语正在回复时排队，回复结束即发。
   /// 模块对外的另一个操作：页面把转写回调接进来后由此进入发送协调。
-  Future<void> sendTranscribed(String text) =>
-      widget.voiceCoordinator.sendTranscribed(
-        text,
-        isMounted: () => mounted,
-        onCommitted: () => widget.onSendStarted(),
-        onFinished: (sent) {
-          if (!sent &&
-              mounted &&
-              _controller.text.isEmpty &&
-              text.trim().isNotEmpty) {
-            _backfillDraft(text);
-          }
-          if (sent && mounted) {
-            return widget.onTurnCompleted();
-          }
-          return null;
-        },
-      );
+  Future<void> sendTranscribed(String text) {
+    final revision = _draftRevision;
+    return widget.voiceCoordinator.sendTranscribed(
+      text,
+      isMounted: () => mounted,
+      onCommitted: () => widget.onSendStarted(),
+      onFinished: (result) => _finishSend(result, text, revision),
+    );
+  }
 
   Future<void> _send() async {
     final viewModel = widget.viewModel;
@@ -205,26 +197,37 @@ class QiyuComposerState extends State<QiyuComposer> {
     if (mounted && _controller.text == text) {
       _controller.clear();
     }
-    final sent = await sending;
-    if (!sent &&
-        mounted &&
+    final revision = _draftRevision;
+    await _finishSend(await sending, text, revision);
+  }
+
+  Future<void> _finishSend(
+    ChatSendResult result,
+    String text,
+    int revision,
+  ) async {
+    if (!mounted) return;
+    if (result.status == ChatSendStatus.notAccepted &&
+        revision == _draftRevision &&
         _controller.text.isEmpty &&
-        !viewModel.messages.any(
-          (message) =>
-              message.speaker == LocalChatSpeaker.user &&
-              message.text == text.trim(),
-        )) {
+        text.trim().isNotEmpty) {
       _backfillDraft(text);
     }
-    if (sent && mounted) {
+    if (result.status == ChatSendStatus.completed) {
       await widget.onTurnCompleted();
     }
   }
 
+  void _onDraftChanged() {
+    if (_controller.text != _draftText) {
+      _draftText = _controller.text;
+      _draftRevision += 1;
+    }
+    _updateComposerExpanded();
+  }
+
   /// 发送失败的原文回填：文本写回输入框并把光标置尾，等待用户重发。
-  /// 手打（[_send]）与转写（[QiyuComposerState.sendTranscribed]）各自的
-  /// 守卫条件（输入框是否为空、去重、trim 非空）原样留在调用处，这里只
-  /// 收拢「回填 + 光标置尾」这一段同形操作。
+  /// 手打与转写共用 [_finishSend] 的本轮归属和草稿版本判定。
   void _backfillDraft(String text) {
     _controller.text = text;
     _controller.selection = TextSelection.collapsed(offset: text.length);

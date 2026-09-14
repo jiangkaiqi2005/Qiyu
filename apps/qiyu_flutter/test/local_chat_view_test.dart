@@ -808,6 +808,92 @@ void main() {
       );
     });
 
+    testWidgets('历史已有同文，本轮受理前失败仍恢复原稿', (tester) async {
+      final gateway = _HangingFailingChatGateway(
+        acceptBeforeFailure: false,
+        restoredMessages: const [
+          LocalChatMessage(
+            requestId: 'old-request',
+            speaker: LocalChatSpeaker.user,
+            text: '今天有点累',
+          ),
+          LocalChatMessage(
+            requestId: 'old-request',
+            speaker: LocalChatSpeaker.qiyu,
+            text: '嗯，歇一会儿。',
+          ),
+        ],
+      );
+      final viewModel = await _pumpChatView(tester, gateway: gateway);
+      await viewModel.initialize();
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '  今天有点累  ');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pump();
+      gateway.releaseFailure();
+      await tester.pumpAndSettle();
+
+      final input = tester.widget<TextField>(find.byKey(const Key('chat-input')));
+      expect(input.controller!.text, '  今天有点累  ');
+      expect(input.controller!.selection.baseOffset, '  今天有点累  '.length);
+      expect(viewModel.messages.map((message) => message.requestId), [
+        'old-request',
+        'old-request',
+      ]);
+    });
+
+    for (final voice in [false, true]) {
+      final inputMode = voice ? '转写' : '文字';
+      testWidgets('$inputMode 受理后失败不回填，消息保留原 requestId', (tester) async {
+        final gateway = _HangingFailingChatGateway();
+        final viewModel = await _pumpChatView(tester, gateway: gateway);
+        await _startPendingInput(tester, voice: voice);
+        final requestId = viewModel.messages.single.requestId;
+
+        gateway.releaseFailure();
+        await tester.pumpAndSettle();
+
+        final input = tester.widget<TextField>(find.byKey(const Key('chat-input')));
+        expect(input.controller!.text, isEmpty);
+        expect(viewModel.messages.single.requestId, requestId);
+        expect(viewModel.messages.single.text, '测试转写文本');
+      }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+
+      testWidgets('$inputMode 受理前失败不恢复用户已编辑又删空的草稿', (tester) async {
+        final gateway = _HangingFailingChatGateway(acceptBeforeFailure: false);
+        final viewModel = await _pumpChatView(tester, gateway: gateway);
+        await _startPendingInput(tester, voice: voice);
+        await tester.enterText(find.byKey(const Key('chat-input')), '后来写的新草稿');
+        await tester.enterText(find.byKey(const Key('chat-input')), '');
+
+        gateway.releaseFailure();
+        await tester.pumpAndSettle();
+
+        final input = tester.widget<TextField>(find.byKey(const Key('chat-input')));
+        expect(input.controller!.text, isEmpty);
+        expect(viewModel.messages, isEmpty);
+      }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+
+      testWidgets('$inputMode 旧会话受理前失败不回填新会话', (tester) async {
+        final gateway = _HangingFailingChatGateway(acceptBeforeFailure: false);
+        final viewModel = await _pumpChatView(tester, gateway: gateway);
+        await viewModel.initialize();
+        await tester.pumpAndSettle();
+        await _startPendingInput(tester, voice: voice);
+        await viewModel.discardSession('session-1');
+        await tester.pump();
+
+        gateway.releaseFailure();
+        await tester.pumpAndSettle();
+
+        final input = tester.widget<TextField>(find.byKey(const Key('chat-input')));
+        expect(input.controller!.text, isEmpty);
+        expect(viewModel.messages, isEmpty);
+        expect(viewModel.errorMessage, isNull);
+      }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+    }
+
     testWidgets('发送失败前用户已重新输入：失败回填不覆盖新草稿', (tester) async {
       final gateway = _HangingFailingChatGateway();
       await _pumpChatView(tester, gateway: gateway);
@@ -884,6 +970,18 @@ void main() {
 abstract interface class _TestChatGateway
     implements StreamingLocalChatGateway, ChatSpeechGateway {}
 
+Future<void> _startPendingInput(WidgetTester tester, {required bool voice}) async {
+  if (voice) {
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('voice-mic-stop')));
+  } else {
+    await tester.enterText(find.byKey(const Key('chat-input')), '测试转写文本');
+    await tester.tap(find.byKey(const Key('chat-send')));
+  }
+  await tester.pump();
+}
+
 Future<LocalChatViewModel> _pumpChatView(
   WidgetTester tester, {
   required _TestChatGateway gateway,
@@ -935,6 +1033,13 @@ Future<LocalChatViewModel> _pumpChatView(
 /// 可挂起的失败网关：deliver 发出 accepted+waiting 后停住，等测试放行
 /// 再抛错——用来在「发送已开始、尚未失败」的窗口里注入用户新输入。
 final class _HangingFailingChatGateway implements _TestChatGateway {
+  _HangingFailingChatGateway({
+    this.acceptBeforeFailure = true,
+    this.restoredMessages = const [],
+  });
+
+  final bool acceptBeforeFailure;
+  final List<LocalChatMessage> restoredMessages;
   final Completer<void> _release = Completer<void>();
 
   /// 放行挂起的流：随后 deliver 抛错，send 以失败收尾。
@@ -942,7 +1047,7 @@ final class _HangingFailingChatGateway implements _TestChatGateway {
 
   @override
   Future<LocalChatSnapshot> restore({String? sessionId}) async =>
-      const LocalChatSnapshot(sessionId: 'session-1', messages: []);
+      LocalChatSnapshot(sessionId: 'session-1', messages: restoredMessages);
 
   @override
   Future<bool> cancel(String requestId) async => true;
@@ -951,7 +1056,7 @@ final class _HangingFailingChatGateway implements _TestChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
-  }) async => '';
+  }) async => '测试转写文本';
 
   @override
   Future<Uint8List> speak({
@@ -966,11 +1071,13 @@ final class _HangingFailingChatGateway implements _TestChatGateway {
     required String text,
     String? sessionId,
   }) async* {
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
-      requestId: requestId,
-      sessionId: 'session-1',
-    );
+    if (acceptBeforeFailure) {
+      yield LocalChatDeliveryEvent(
+        kind: LocalChatEventKind.accepted,
+        requestId: requestId,
+        sessionId: 'session-1',
+      );
+    }
     yield LocalChatDeliveryEvent(
       kind: LocalChatEventKind.waiting,
       requestId: requestId,

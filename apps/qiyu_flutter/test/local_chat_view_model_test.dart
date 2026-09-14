@@ -14,6 +14,166 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  test('空白、发送占用及 Host 不可用的拒绝没有创建新请求', () async {
+    final gateway = _ScriptedGateway();
+    var counter = 0;
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [false]),
+      requestIdFactory: () => 'request-${counter += 1}',
+      autoStart: false,
+    );
+    addTearDown(viewModel.dispose);
+
+    final blank = await viewModel.send('  \n  ');
+    expect(blank.status, ChatSendStatus.notAccepted);
+    expect(blank.requestId, isNull);
+    final sending = viewModel.send('已有发送');
+    final busy = await viewModel.send('不能并发');
+    expect(busy.status, ChatSendStatus.notAccepted);
+    expect(busy.requestId, isNull);
+    gateway.closeStream('request-1');
+    await sending;
+    await viewModel.checkHostNow();
+    final unavailable = await viewModel.send('Host 已停止');
+    expect(unavailable.status, ChatSendStatus.notAccepted);
+    expect(unavailable.requestId, isNull);
+    expect(counter, 1);
+    expect(viewModel.messages, isEmpty);
+  });
+
+  for (final kind in [LocalChatEventKind.error, LocalChatEventKind.cancelled]) {
+    test('受理前 $kind 返回未接管与本轮 requestId', () async {
+      final gateway = _ScriptedGateway();
+      final viewModel = LocalChatViewModel(
+        gateway,
+        requestIdFactory: () => 'unaccepted-request',
+        autoStart: false,
+      );
+      addTearDown(viewModel.dispose);
+
+      final sending = viewModel.send('尚未接管的内容');
+      gateway.emit(
+        'unaccepted-request',
+        LocalChatDeliveryEvent(
+          kind: kind,
+          requestId: 'unaccepted-request',
+          text: kind == LocalChatEventKind.error ? '连接中断' : null,
+        ),
+      );
+      final result = await sending;
+      expect(result.status, ChatSendStatus.notAccepted);
+      expect(result.requestId, 'unaccepted-request');
+      expect(viewModel.messages, isEmpty);
+    });
+  }
+
+  test('第一段完成后取消第二段仍返回已完成，已交付气泡保持', () async {
+    final gateway = _ScriptedGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      requestIdFactory: () => 'two-bubbles',
+      autoStart: false,
+    );
+    addTearDown(viewModel.dispose);
+    final sending = viewModel.send('那次爬山');
+    gateway
+      ..emitAccepted('two-bubbles')
+      ..emitMessage('two-bubbles', const ['一时没想起。'])
+      ..emitState('two-bubbles')
+      ..emitDone('two-bubbles')
+      ..emitWaiting('two-bubbles')
+      ..emitDelta('two-bubbles', '对了，你');
+    await Future<void>.delayed(Duration.zero);
+    await viewModel.stop();
+    gateway.emitCancelled('two-bubbles');
+
+    final result = await sending;
+    expect(result.status, ChatSendStatus.completed);
+    expect(result.requestId, 'two-bubbles');
+    expect(gateway.cancelCalls, ['two-bubbles']);
+    expect(viewModel.messages.map((message) => message.text), [
+      '那次爬山',
+      '一时没想起。',
+    ]);
+    expect(viewModel.streamingText, isEmpty);
+    expect(viewModel.sending, isFalse);
+  });
+
+  test('丢弃会话后排队的转写失效，不发送到新会话', () async {
+    final gateway = _ScriptedGateway();
+    var counter = 0;
+    final viewModel = LocalChatViewModel(
+      gateway,
+      requestIdFactory: () => 'queue-${counter += 1}',
+      autoStart: false,
+    );
+    addTearDown(viewModel.dispose);
+
+    final first = viewModel.send('原会话消息');
+    gateway.emitAccepted('queue-1');
+    await Future<void>.delayed(Duration.zero);
+    final queued = viewModel.sendWhenIdle('原会话转写');
+    await viewModel.discardSession('session-1');
+    await Future<void>.delayed(Duration.zero);
+    gateway
+      ..closeStream('queue-1')
+      ..closeStream('queue-2');
+
+    final stale = await queued;
+    expect(stale.status, ChatSendStatus.staleSession);
+    expect(stale.requestId, isNull);
+    expect((await first).status, ChatSendStatus.staleSession);
+    expect(viewModel.messages, isEmpty);
+    expect(counter, 1);
+  });
+
+  test('已接管消息重试在受理前失败仍保留原请求归属', () async {
+    final gateway = _ScriptedGateway();
+    var counter = 0;
+    final viewModel = LocalChatViewModel(
+      gateway,
+      requestIdFactory: () => 'retry-${counter += 1}',
+      autoStart: false,
+    );
+    addTearDown(viewModel.dispose);
+
+    final first = viewModel.send('这句话已接管');
+    gateway
+      ..emitAccepted('retry-1')
+      ..emit(
+        'retry-1',
+        const LocalChatDeliveryEvent(
+          kind: LocalChatEventKind.error,
+          requestId: 'retry-1',
+          text: '连接中断',
+        ),
+      );
+    final failed = await first;
+    expect(failed.status, ChatSendStatus.acceptedIncomplete);
+    expect(failed.requestId, 'retry-1');
+
+    final retry = viewModel.send('这句话已接管');
+    gateway.closeStream('retry-1');
+    final interruptedRetry = await retry;
+    expect(interruptedRetry.status, ChatSendStatus.acceptedIncomplete);
+    expect(interruptedRetry.requestId, 'retry-1');
+    expect(viewModel.messages.map((message) => message.requestId), ['retry-1']);
+
+    final finalRetry = viewModel.send('这句话已接管');
+    gateway
+      ..emitAccepted('retry-1')
+      ..emitMessage('retry-1', const ['听见了。'])
+      ..emitState('retry-1')
+      ..emitDone('retry-1')
+      ..closeStream('retry-1');
+    final completed = await finalRetry;
+    expect(completed.status, ChatSendStatus.completed);
+    expect(completed.requestId, 'retry-1');
+    expect(viewModel.messages.map((message) => message.text), ['这句话已接管', '听见了。']);
+    expect(counter, 1);
+  });
+
   test(
     'a submitted user message is visible before the host accepts it',
     () async {
@@ -37,7 +197,7 @@ void main() {
       expect(viewModel.messages.single.text, '这条先显示');
 
       gateway.release();
-      expect(await send, isTrue);
+      expect((await send).status, ChatSendStatus.completed);
     },
   );
 
@@ -54,7 +214,7 @@ void main() {
 
       final sent = await viewModel.send('我上次说爬山的事');
 
-      expect(sent, isTrue);
+      expect(sent.status, ChatSendStatus.completed);
       final qiyuMessages = viewModel.messages
           .where((message) => message.speaker == LocalChatSpeaker.qiyu)
           .toList();
@@ -82,7 +242,7 @@ void main() {
 
     final sent = await viewModel.send('在吗');
 
-    expect(sent, isTrue);
+    expect(sent.status, ChatSendStatus.completed);
     final qiyuMessages = viewModel.messages
         .where((message) => message.speaker == LocalChatSpeaker.qiyu)
         .toList();
@@ -124,8 +284,8 @@ void main() {
     );
 
     gateway.release();
-    expect(await first, isTrue);
-    expect(await second, isTrue);
+    expect((await first).status, ChatSendStatus.completed);
+    expect((await second).status, ChatSendStatus.completed);
     expect(
       viewModel.messages
           .where((message) => message.speaker == LocalChatSpeaker.user)
@@ -149,7 +309,7 @@ void main() {
       autoStart: false,
     );
     await viewModel.refreshVoiceOutputStatus();
-    expect(await viewModel.send('我上次说爬山的事'), isTrue);
+    expect((await viewModel.send('我上次说爬山的事')).status, ChatSendStatus.completed);
     // 等朗读队列消化完两段。
     await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(speakGateway.calls, [
@@ -180,7 +340,7 @@ void main() {
     player.gestureActive = true;
     final sending = viewModel.send('在吗');
     player.gestureActive = false;
-    expect(await sending, isTrue);
+    expect((await sending).status, ChatSendStatus.completed);
     await Future<void>.delayed(Duration.zero);
 
     expect(player.started, isTrue);
@@ -208,7 +368,7 @@ void main() {
         autoStart: false,
       );
       await viewModel.refreshVoiceOutputStatus();
-      expect(await viewModel.send('在吗'), isTrue);
+      expect((await viewModel.send('在吗')).status, ChatSendStatus.completed);
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(speakGateway.calls, isEmpty);
       viewModel.dispose();
@@ -299,8 +459,8 @@ void main() {
       ..emitState('request-2')
       ..emitDone('request-2')
       ..closeStream('request-2');
-    expect(await second, isTrue);
-    expect(await first, isFalse);
+    expect((await second).status, ChatSendStatus.completed);
+    expect((await first).status, ChatSendStatus.staleSession);
 
     final qiyuMessages = viewModel.messages
         .where((message) => message.speaker == LocalChatSpeaker.qiyu)
@@ -336,7 +496,7 @@ void main() {
     await viewModel.stop();
     expect(gateway.cancelCalls, ['request-1']);
     gateway.emitCancelled('request-1');
-    expect(await first, isFalse);
+    expect((await first).status, ChatSendStatus.acceptedIncomplete);
     expect(viewModel.streamingText, isEmpty);
     expect(viewModel.waiting, isFalse);
     expect(viewModel.sending, isFalse);
@@ -368,7 +528,7 @@ void main() {
       ..emitState('request-1')
       ..emitDone('request-1')
       ..closeStream('request-1');
-    expect(await retry, isTrue);
+    expect((await retry).status, ChatSendStatus.completed);
     final qiyuMessages = viewModel.messages
         .where((message) => message.speaker == LocalChatSpeaker.qiyu)
         .toList();
@@ -402,7 +562,7 @@ void main() {
     await viewModel.stop();
     expect(gateway.cancelCalls, ['request-1']);
     gateway.closeStream('request-1');
-    expect(await first, isFalse);
+    expect((await first).status, ChatSendStatus.acceptedIncomplete);
     expect(viewModel.streamingText, isEmpty);
     expect(viewModel.waiting, isFalse);
     expect(viewModel.messages.map((message) => message.text), ['半句的话']);
@@ -417,7 +577,7 @@ void main() {
       ..emitState('request-1')
       ..emitDone('request-1')
       ..closeStream('request-1');
-    expect(await retry, isTrue);
+    expect((await retry).status, ChatSendStatus.completed);
     final qiyuMessages = viewModel.messages
         .where((message) => message.speaker == LocalChatSpeaker.qiyu)
         .toList();
@@ -449,7 +609,7 @@ void main() {
         ..emitState('req-1', source: ReplySource.local)
         ..emitDone('req-1')
         ..closeStream('req-1');
-      expect(await first, isTrue);
+      expect((await first).status, ChatSendStatus.completed);
       expect(viewModel.hasLocalFallback, isTrue);
 
       // 第二轮开始发送与等待期间，不展示过期的 fallback 标签
@@ -473,7 +633,7 @@ void main() {
         ..emitState('req-2')
         ..emitDone('req-2')
         ..closeStream('req-2');
-      expect(await second, isTrue);
+      expect((await second).status, ChatSendStatus.completed);
       expect(viewModel.hasLocalFallback, isFalse);
     },
   );

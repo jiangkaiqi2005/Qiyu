@@ -45,7 +45,7 @@ final class ChatVoiceCoordinator {
     String text, {
     required bool Function() isMounted,
     required void Function() onCommitted,
-    required Future<void>? Function(bool sent) onFinished,
+    required Future<void>? Function(ChatSendResult result) onFinished,
   }) async {
     final pending = android ? Completer<void>() : null;
     if (android && _pending != null) return;
@@ -53,7 +53,7 @@ final class ChatVoiceCoordinator {
       _pending = pending;
       onPendingChanged?.call();
     }
-    final sent = await viewModel.sendWhenIdle(
+    final result = await viewModel.sendWhenIdle(
       text,
       cancelled: pending?.future,
       isCancelled: pending == null ? null : () => pending.isCompleted,
@@ -66,7 +66,11 @@ final class ChatVoiceCoordinator {
       },
     );
     if (pending?.isCompleted ?? false) return;
-    final finishing = onFinished(sent);
+    if (pending != null && identical(_pending, pending)) {
+      _pending = null;
+      if (isMounted()) onPendingChanged?.call();
+    }
+    final finishing = onFinished(result);
     if (finishing != null) await finishing;
   }
 
