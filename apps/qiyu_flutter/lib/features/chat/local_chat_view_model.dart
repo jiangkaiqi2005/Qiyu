@@ -484,11 +484,11 @@ final class LocalChatViewModel extends ChangeNotifier {
             turn.waiting = true;
           case LocalChatEventKind.delta:
             turn.waiting = false;
-            turn.streamingText += event.text ?? '';
+            turn.streamingText += event.text!;
           case LocalChatEventKind.message:
-            turn.finalMessages = event.messages;
+            turn.finalMessages = event.messages!;
           case LocalChatEventKind.state:
-            turn.source = event.source;
+            turn.source = event.source!;
             turn.fallbackReason = event.fallbackReason;
           case LocalChatEventKind.fallback:
             turn.fallbackReason = event.fallbackReason;
@@ -543,7 +543,7 @@ final class LocalChatViewModel extends ChangeNotifier {
             // 迟到事件，整体丢弃。
             break turnLoop;
           case LocalChatEventKind.error:
-            throw LocalChatGatewayException(event.text ?? '本地聊天暂时不可用，请稍后重试。');
+            throw LocalChatGatewayException(event.text!);
         }
         notifyListeners();
       }

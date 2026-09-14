@@ -401,8 +401,114 @@ enum ChatDeliveryEventKind {
   done,
 }
 
-class ChatDeliveryEvent {
-  const ChatDeliveryEvent({
+/// 每类事件的必填载荷由命名构造约束；可选属性仅用于跨事件读取。
+final class ChatDeliveryEvent {
+  const ChatDeliveryEvent.accepted({
+    required String requestId,
+    String? sessionId,
+  }) : this._(
+         kind: ChatDeliveryEventKind.accepted,
+         requestId: requestId,
+         sessionId: sessionId,
+       );
+
+  const ChatDeliveryEvent.waiting({
+    required String requestId,
+    String? sessionId,
+  }) : this._(
+         kind: ChatDeliveryEventKind.waiting,
+         requestId: requestId,
+         sessionId: sessionId,
+       );
+
+  const ChatDeliveryEvent.delta({
+    required String requestId,
+    String? sessionId,
+    required String text,
+  }) : this._(
+         kind: ChatDeliveryEventKind.delta,
+         requestId: requestId,
+         sessionId: sessionId,
+         text: text,
+       );
+
+  const ChatDeliveryEvent.message({
+    required String requestId,
+    String? sessionId,
+    required List<String> messages,
+  }) : this._(
+         kind: ChatDeliveryEventKind.message,
+         requestId: requestId,
+         sessionId: sessionId,
+         messages: messages,
+       );
+
+  const ChatDeliveryEvent.state({
+    required String requestId,
+    String? sessionId,
+    required ReplySource source,
+    FallbackReason? fallbackReason,
+    String? mode,
+    SafetyKind? safety,
+  }) : this._(
+         kind: ChatDeliveryEventKind.state,
+         requestId: requestId,
+         sessionId: sessionId,
+         source: source,
+         fallbackReason: fallbackReason,
+         mode: mode,
+         safety: safety,
+       );
+
+  const ChatDeliveryEvent.fallback({
+    required String requestId,
+    String? sessionId,
+    required FallbackReason fallbackReason,
+    String? code,
+    String? text,
+  }) : this._(
+         kind: ChatDeliveryEventKind.fallback,
+         requestId: requestId,
+         sessionId: sessionId,
+         fallbackReason: fallbackReason,
+         code: code,
+         text: text,
+       );
+
+  const ChatDeliveryEvent.cancelled({
+    required String requestId,
+    String? sessionId,
+  }) : this._(
+         kind: ChatDeliveryEventKind.cancelled,
+         requestId: requestId,
+         sessionId: sessionId,
+       );
+
+  const ChatDeliveryEvent.error({
+    required String requestId,
+    String? sessionId,
+    required String text,
+    required String code,
+    required bool retryable,
+    FallbackReason? fallbackReason,
+  }) : this._(
+         kind: ChatDeliveryEventKind.error,
+         requestId: requestId,
+         sessionId: sessionId,
+         text: text,
+         code: code,
+         retryable: retryable,
+         fallbackReason: fallbackReason,
+       );
+
+  const ChatDeliveryEvent.done({required String requestId, String? sessionId})
+    : this._(
+        kind: ChatDeliveryEventKind.done,
+        requestId: requestId,
+        sessionId: sessionId,
+      );
+
+  const ChatDeliveryEvent._({
     required this.kind,
     required this.requestId,
     this.sessionId,
@@ -417,23 +523,79 @@ class ChatDeliveryEvent {
   });
 
   factory ChatDeliveryEvent.fromJson(Map<String, Object?> json) {
-    final source = json['source'] as String?;
-    final fallbackReason = json['fallbackReason'] as String?;
-    final safety = json['safety'] as String?;
-    return ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.values.byName(json['event'] as String),
-      requestId: json['requestId'] as String,
-      sessionId: json['sessionId'] as String?,
-      text: json['text'] as String?,
-      messages: (json['messages'] as List<Object?>?)?.cast<String>(),
-      source: source == null ? null : ReplySource.values.byName(source),
+    const invalid = FormatException('Invalid chat delivery event');
+    T requiredField<T>(String field) {
+      final value = json[field];
+      if (value is! T) throw invalid;
+      return value;
+    }
+
+    T? optionalField<T extends Object>(String field) {
+      final value = json[field];
+      if (value == null) return null;
+      if (value is! T) throw invalid;
+      return value;
+    }
+
+    T enumValue<T>(String name, Iterable<T> values, String Function(T) wire) =>
+        values.firstWhere(
+          (value) => wire(value) == name,
+          orElse: () => throw invalid,
+        );
+
+    final kind = enumValue(
+      requiredField<String>('event'),
+      ChatDeliveryEventKind.values,
+      (value) => value.name,
+    );
+    final requiredFields = switch (kind) {
+      ChatDeliveryEventKind.delta => ['text'],
+      ChatDeliveryEventKind.message => ['messages'],
+      ChatDeliveryEventKind.state => ['source'],
+      ChatDeliveryEventKind.fallback => ['fallbackReason'],
+      ChatDeliveryEventKind.error => ['text', 'code', 'retryable'],
+      _ => <String>[],
+    };
+    for (final field in requiredFields) {
+      if (json[field] == null) throw invalid;
+    }
+    final source = optionalField<String>('source');
+    final fallbackReason = optionalField<String>('fallbackReason');
+    final safety = optionalField<String>('safety');
+    final messages = optionalField<List<Object?>>('messages');
+    if (messages != null && messages.any((value) => value is! String)) {
+      throw invalid;
+    }
+    return ChatDeliveryEvent._(
+      kind: kind,
+      requestId: requiredField<String>('requestId'),
+      sessionId: optionalField<String>('sessionId'),
+      text: optionalField<String>('text'),
+      messages: messages == null ? null : List<String>.unmodifiable(messages),
+      source: source == null
+          ? null
+          : enumValue<ReplySource>(
+              source,
+              ReplySource.values,
+              (value) => value.name,
+            ),
       fallbackReason: fallbackReason == null
           ? null
-          : FallbackReason.fromWireName(fallbackReason),
-      mode: json['mode'] as String?,
-      safety: safety == null ? null : SafetyKind.values.byName(safety),
-      code: json['code'] as String?,
-      retryable: json['retryable'] as bool?,
+          : enumValue<FallbackReason>(
+              fallbackReason,
+              FallbackReason.values,
+              (value) => value.wireName,
+            ),
+      mode: optionalField<String>('mode'),
+      safety: safety == null
+          ? null
+          : enumValue<SafetyKind>(
+              safety,
+              SafetyKind.values,
+              (value) => value.name,
+            ),
+      code: optionalField<String>('code'),
+      retryable: optionalField<bool>('retryable'),
     );
   }
 

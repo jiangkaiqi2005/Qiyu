@@ -55,11 +55,16 @@ void main() {
       final sending = viewModel.send('尚未接管的内容');
       gateway.emit(
         'unaccepted-request',
-        LocalChatDeliveryEvent(
-          kind: kind,
-          requestId: 'unaccepted-request',
-          text: kind == LocalChatEventKind.error ? '连接中断' : null,
-        ),
+        kind == LocalChatEventKind.error
+            ? const LocalChatDeliveryEvent.error(
+                requestId: 'unaccepted-request',
+                code: 'chat_failed',
+                text: '连接中断',
+                retryable: true,
+              )
+            : const LocalChatDeliveryEvent.cancelled(
+                requestId: 'unaccepted-request',
+              ),
       );
       final result = await sending;
       expect(result.status, ChatSendStatus.notAccepted);
@@ -99,6 +104,46 @@ void main() {
     expect(viewModel.streamingText, isEmpty);
     expect(viewModel.sending, isFalse);
   });
+
+  for (final failure in ['error', 'EOF']) {
+    test('第一段完成后第二段 $failure 保留首段，半句不提交', () async {
+      final gateway = _ScriptedGateway();
+      final viewModel = LocalChatViewModel(
+        gateway,
+        requestIdFactory: () => 'two-bubbles',
+        autoStart: false,
+      );
+      addTearDown(viewModel.dispose);
+      final sending = viewModel.send('那次爬山');
+      gateway
+        ..emitAccepted('two-bubbles')
+        ..emitMessage('two-bubbles', const ['一时没想起。'])
+        ..emitState('two-bubbles')
+        ..emitDone('two-bubbles')
+        ..emitWaiting('two-bubbles')
+        ..emitDelta('two-bubbles', '对了，你');
+      if (failure == 'error') {
+        gateway.emit(
+          'two-bubbles',
+          const LocalChatDeliveryEvent.error(
+            requestId: 'two-bubbles',
+            code: 'chat_failed',
+            text: '连接中断',
+            retryable: true,
+          ),
+        );
+      } else {
+        gateway.closeStream('two-bubbles');
+      }
+      await sending;
+      expect(viewModel.messages.map((message) => message.text), [
+        '那次爬山',
+        '一时没想起。',
+      ]);
+      expect(viewModel.streamingText, isEmpty);
+      expect(viewModel.sending, isFalse);
+    });
+  }
 
   test('丢弃会话后排队的转写失效，不发送到新会话', () async {
     final gateway = _ScriptedGateway();
@@ -143,10 +188,11 @@ void main() {
       ..emitAccepted('retry-1')
       ..emit(
         'retry-1',
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.error,
+        const LocalChatDeliveryEvent.error(
           requestId: 'retry-1',
+          code: 'chat_failed',
           text: '连接中断',
+          retryable: true,
         ),
       );
     final failed = await first;
@@ -170,7 +216,10 @@ void main() {
     final completed = await finalRetry;
     expect(completed.status, ChatSendStatus.completed);
     expect(completed.requestId, 'retry-1');
-    expect(viewModel.messages.map((message) => message.text), ['这句话已接管', '听见了。']);
+    expect(viewModel.messages.map((message) => message.text), [
+      '这句话已接管',
+      '听见了。',
+    ]);
     expect(counter, 1);
   });
 
@@ -638,9 +687,7 @@ void main() {
     },
   );
 
-  testWidgets('自动启动后按默认 2 秒周期轮询连接探测，只有这一条周期计时', (
-    tester,
-  ) async {
+  testWidgets('自动启动后按默认 2 秒周期轮询连接探测，只有这一条周期计时', (tester) async {
     final probe = _CountingProbe();
     final viewModel = LocalChatViewModel(
       _TwoBubbleGateway(),
@@ -691,11 +738,7 @@ void main() {
     final initializing = viewModel.initialize();
     await Future<void>.delayed(Duration.zero);
     expect(probe.calls, 1);
-    expect(
-      gateway.restoreCalls,
-      0,
-      reason: '探测未完成不得开始恢复会话',
-    );
+    expect(gateway.restoreCalls, 0, reason: '探测未完成不得开始恢复会话');
 
     probe.gate.complete(true);
     await initializing;
@@ -779,36 +822,30 @@ final class _TwoBubbleGateway implements StreamingLocalChatGateway {
     required String text,
     String? sessionId,
   }) async* {
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: 'session-1',
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
+    yield LocalChatDeliveryEvent.waiting(
       requestId: requestId,
       sessionId: 'session-1',
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.delta,
+    yield LocalChatDeliveryEvent.delta(
       requestId: requestId,
       sessionId: 'session-1',
       text: withBubble2 ? '一时没想起。' : '在。',
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
+    yield LocalChatDeliveryEvent.message(
       requestId: requestId,
       sessionId: 'session-1',
       messages: [withBubble2 ? '一时没想起。' : '在。'],
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
+    yield LocalChatDeliveryEvent.state(
       requestId: requestId,
       sessionId: 'session-1',
       source: ReplySource.llm,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
+    yield LocalChatDeliveryEvent.done(
       requestId: requestId,
       sessionId: 'session-1',
     );
@@ -816,26 +853,22 @@ final class _TwoBubbleGateway implements StreamingLocalChatGateway {
       return;
     }
     // 轮内召回命中：同一 requestId 的第二段交付。
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.delta,
+    yield LocalChatDeliveryEvent.delta(
       requestId: requestId,
       sessionId: 'session-1',
       text: '对了，你周末是要去爬山来着。',
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
+    yield LocalChatDeliveryEvent.message(
       requestId: requestId,
       sessionId: 'session-1',
       messages: ['对了，你周末是要去爬山来着。'],
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
+    yield LocalChatDeliveryEvent.state(
       requestId: requestId,
       sessionId: 'session-1',
       source: ReplySource.llm,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
+    yield LocalChatDeliveryEvent.done(
       requestId: requestId,
       sessionId: 'session-1',
     );
@@ -871,25 +904,21 @@ final class _GatedGateway implements StreamingLocalChatGateway {
     String? sessionId,
   }) async* {
     await _gate.future;
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: 'session-1',
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
+    yield LocalChatDeliveryEvent.message(
       requestId: requestId,
       sessionId: 'session-1',
       messages: const ['看见了。'],
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
+    yield LocalChatDeliveryEvent.state(
       requestId: requestId,
       sessionId: 'session-1',
       source: ReplySource.llm,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
+    yield LocalChatDeliveryEvent.done(
       requestId: requestId,
       sessionId: 'session-1',
     );
@@ -965,8 +994,7 @@ final class _ScriptedGateway implements StreamingLocalChatGateway {
 
   void emitAccepted(String requestId) => emit(
     requestId,
-    LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: 'session-1',
     ),
@@ -974,8 +1002,7 @@ final class _ScriptedGateway implements StreamingLocalChatGateway {
 
   void emitWaiting(String requestId) => emit(
     requestId,
-    LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
+    LocalChatDeliveryEvent.waiting(
       requestId: requestId,
       sessionId: 'session-1',
     ),
@@ -983,8 +1010,7 @@ final class _ScriptedGateway implements StreamingLocalChatGateway {
 
   void emitDelta(String requestId, String text) => emit(
     requestId,
-    LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.delta,
+    LocalChatDeliveryEvent.delta(
       requestId: requestId,
       sessionId: 'session-1',
       text: text,
@@ -993,37 +1019,31 @@ final class _ScriptedGateway implements StreamingLocalChatGateway {
 
   void emitMessage(String requestId, List<String> messages) => emit(
     requestId,
-    LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
+    LocalChatDeliveryEvent.message(
       requestId: requestId,
       sessionId: 'session-1',
       messages: messages,
     ),
   );
 
-  void emitState(String requestId, {ReplySource source = ReplySource.llm}) => emit(
-    requestId,
-    LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
-      requestId: requestId,
-      sessionId: 'session-1',
-      source: source,
-    ),
-  );
+  void emitState(String requestId, {ReplySource source = ReplySource.llm}) =>
+      emit(
+        requestId,
+        LocalChatDeliveryEvent.state(
+          requestId: requestId,
+          sessionId: 'session-1',
+          source: source,
+        ),
+      );
 
   void emitDone(String requestId) => emit(
     requestId,
-    LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
-      requestId: requestId,
-      sessionId: 'session-1',
-    ),
+    LocalChatDeliveryEvent.done(requestId: requestId, sessionId: 'session-1'),
   );
 
   void emitCancelled(String requestId) => emit(
     requestId,
-    LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.cancelled,
+    LocalChatDeliveryEvent.cancelled(
       requestId: requestId,
       sessionId: 'session-1',
     ),

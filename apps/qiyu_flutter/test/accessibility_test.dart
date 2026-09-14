@@ -410,29 +410,25 @@ void main() {
         expect(statusNode.flagsCollection.isLiveRegion, isTrue);
 
         chatGateway.add(
-          const LocalChatDeliveryEvent(
-            kind: LocalChatEventKind.delta,
+          const LocalChatDeliveryEvent.delta(
             requestId: 'stream-1',
             text: '在的。',
           ),
         );
         chatGateway.add(
-          const LocalChatDeliveryEvent(
-            kind: LocalChatEventKind.message,
+          const LocalChatDeliveryEvent.message(
             requestId: 'stream-1',
             messages: ['在的。'],
           ),
         );
         chatGateway.add(
-          const LocalChatDeliveryEvent(
-            kind: LocalChatEventKind.state,
+          const LocalChatDeliveryEvent.state(
             requestId: 'stream-1',
             source: ReplySource.local,
           ),
         );
         chatGateway.add(
-          const LocalChatDeliveryEvent(
-            kind: LocalChatEventKind.done,
+          const LocalChatDeliveryEvent.done(
             requestId: 'stream-1',
           ),
         );
@@ -939,13 +935,11 @@ final class _StreamingChatGateway implements StreamingLocalChatGateway {
     required String text,
     String? sessionId,
   }) async* {
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: _restored.sessionId,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
+    yield LocalChatDeliveryEvent.waiting(
       requestId: requestId,
     );
     yield* _controller.stream;

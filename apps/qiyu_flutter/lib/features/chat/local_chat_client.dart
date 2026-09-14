@@ -241,14 +241,19 @@ final class HttpLocalChatGateway extends HostApiGateway
       if (line.trim().isEmpty) {
         continue;
       }
-      final decoded = jsonDecode(line);
-      if (decoded is! Map<String, Object?>) {
+      final LocalChatDeliveryEvent event;
+      try {
+        final decoded = jsonDecode(line);
+        if (decoded is! Map<String, Object?>) {
+          throw const FormatException('Invalid chat event');
+        }
+        event = LocalChatDeliveryEvent.fromJson(decoded);
+      } on FormatException {
         throw const LocalChatGatewayException('本机程序返回了无法读取的内容。');
       }
-      final event = LocalChatDeliveryEvent.fromJson(decoded);
       if (event.kind == LocalChatEventKind.error) {
         throw LocalChatGatewayException(
-          event.text ?? '本机聊天暂时不可用，请稍后重试。',
+          event.text!,
           code: event.fallbackReason?.wireName,
         );
       }

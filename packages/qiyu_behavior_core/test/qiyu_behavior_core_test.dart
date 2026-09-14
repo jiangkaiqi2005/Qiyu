@@ -5,6 +5,15 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('delivery rejects a delta without text at the parsing boundary', () {
+    expect(
+      () => ChatDeliveryEvent.fromJson({
+        'event': 'delta',
+        'requestId': 'invalid-delta',
+      }),
+      throwsFormatException,
+    );
+  });
   final fixtureDocument =
       jsonDecode(
             File(
@@ -13,6 +22,51 @@ void main() {
           )
           as Map<String, Object?>;
   final fixtures = fixtureDocument['cases']! as List<Object?>;
+
+  for (final value in fixtureDocument['deliveryEvents']! as List<Object?>) {
+    final fixture = value! as Map<String, Object?>;
+    final wire = fixture['wire']! as Map<String, Object?>;
+    test('delivery ${wire['event']} preserves the existing wire contract', () {
+      final decoded = ChatDeliveryEvent.fromJson(
+        jsonDecode(jsonEncode(wire)) as Map<String, Object?>,
+      );
+      expect(decoded.toJson(), wire);
+    });
+    for (final field in fixture['requiredFields']! as List<Object?>) {
+      test('delivery ${wire['event']} rejects absent or invalid $field', () {
+        for (final invalid in [null, 42, <String, Object?>{}]) {
+          final malformed = {...wire, field! as String: invalid};
+          expect(() => ChatDeliveryEvent.fromJson(malformed), throwsFormatException);
+        }
+        final missing = {...wire}..remove(field);
+        expect(() => ChatDeliveryEvent.fromJson(missing), throwsFormatException);
+      });
+    }
+  }
+
+  test('delivery eagerly rejects wrong optional fields and unknown enum values', () {
+    for (final invalid in <Map<String, Object?>>[
+      {'event': 'unknown'},
+      {'sessionId': 1},
+      {'text': false},
+      {'messages': ['valid', 1]},
+      {'source': 'unknown'},
+      {'fallbackReason': 'unknown'},
+      {'mode': []},
+      {'safety': 'unknown'},
+      {'code': true},
+      {'retryable': 'true'},
+    ]) {
+      expect(
+        () => ChatDeliveryEvent.fromJson({
+          'event': 'accepted',
+          'requestId': 'invalid-field',
+          ...invalid,
+        }),
+        throwsFormatException,
+      );
+    }
+  });
 
   for (final value
       in fixtureDocument['credentialPlaceholderMatrix']! as List<Object?>) {
@@ -198,8 +252,7 @@ void main() {
   });
 
   test('streaming delivery wire round-trips through the shared contract', () {
-    const event = ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.state,
+    const event = ChatDeliveryEvent.state(
       requestId: 'stream-1',
       sessionId: 'session-1',
       source: ReplySource.local,

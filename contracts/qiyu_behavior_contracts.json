@@ -1,5 +1,124 @@
 {
   "schemaVersion": 1,
+  "deliveryEvents": [
+    {
+      "wire": {
+        "event": "accepted",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId"
+      ]
+    },
+    {
+      "wire": {
+        "event": "waiting",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId"
+      ]
+    },
+    {
+      "wire": {
+        "event": "delta",
+        "text": "嗯。",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "text"
+      ]
+    },
+    {
+      "wire": {
+        "event": "message",
+        "messages": [
+          "嗯。",
+          "我在。"
+        ],
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "messages"
+      ]
+    },
+    {
+      "wire": {
+        "event": "state",
+        "source": "llm",
+        "mode": "open",
+        "safety": "normal",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "source"
+      ]
+    },
+    {
+      "wire": {
+        "event": "fallback",
+        "fallbackReason": "model_timeout",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "fallbackReason"
+      ]
+    },
+    {
+      "wire": {
+        "event": "cancelled",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId"
+      ]
+    },
+    {
+      "wire": {
+        "event": "error",
+        "text": "本地服务暂时不可用。",
+        "code": "internal_error",
+        "retryable": true,
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "text",
+        "code",
+        "retryable"
+      ]
+    },
+    {
+      "wire": {
+        "event": "done",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId"
+      ]
+    }
+  ],
   "promptModules": {
     "webSearch": {
       "instruction": "涉及当前时间、天气、新闻或可能变化的事实时，按需调用 `web_search`。不得将用户的私密对话、密钥或身份信息写入搜索词。"

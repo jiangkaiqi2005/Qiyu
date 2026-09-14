@@ -1072,14 +1072,12 @@ final class _HangingFailingChatGateway implements _TestChatGateway {
     String? sessionId,
   }) async* {
     if (acceptBeforeFailure) {
-      yield LocalChatDeliveryEvent(
-        kind: LocalChatEventKind.accepted,
+      yield LocalChatDeliveryEvent.accepted(
         requestId: requestId,
         sessionId: 'session-1',
       );
     }
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
+    yield LocalChatDeliveryEvent.waiting(
       requestId: requestId,
     );
     await _release.future;
@@ -1148,46 +1146,36 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
         : null;
     deliverCallCount += 1;
 
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: this.sessionId,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
+    yield LocalChatDeliveryEvent.waiting(
       requestId: requestId,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.delta,
+    yield LocalChatDeliveryEvent.delta(
       requestId: requestId,
       text: '本地基础回复',
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
+    yield LocalChatDeliveryEvent.message(
       requestId: requestId,
       messages: const ['本地基础回复'],
     );
     if (reason != null) {
-      yield LocalChatDeliveryEvent(
-        kind: LocalChatEventKind.fallback,
+      yield LocalChatDeliveryEvent.fallback(
         requestId: requestId,
         fallbackReason: reason,
         code: detail,
       );
     }
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
+    yield LocalChatDeliveryEvent.state(
       requestId: requestId,
       source: ReplySource.local,
       fallbackReason: reason,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
+    yield LocalChatDeliveryEvent.done(
       requestId: requestId,
       sessionId: this.sessionId,
-      messages: const ['本地基础回复'],
-      source: ReplySource.local,
-      fallbackReason: reason,
     );
   }
 }

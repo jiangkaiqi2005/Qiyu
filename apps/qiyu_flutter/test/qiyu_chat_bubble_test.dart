@@ -1282,10 +1282,11 @@ final class _RestoredGateway implements StreamingLocalChatGateway {
     required String text,
     String? sessionId,
   }) async* {
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.error,
+    yield LocalChatDeliveryEvent.error(
       requestId: requestId,
+      code: 'chat_failed',
       text: '这条测试链路不发送消息。',
+      retryable: false,
     );
   }
 

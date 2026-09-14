@@ -1860,25 +1860,21 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
       deliverFailuresRemaining -= 1;
       throw error;
     }
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: 'session-voice',
     );
     if (pendingDelivery != null) await pendingDelivery!.future;
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
+    yield LocalChatDeliveryEvent.message(
       requestId: requestId,
       messages: ['咋了'],
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
+    yield LocalChatDeliveryEvent.state(
       requestId: requestId,
       source: ReplySource.local,
       fallbackReason: FallbackReason.noLlmConfig,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
+    yield LocalChatDeliveryEvent.done(
       requestId: requestId,
     );
   }

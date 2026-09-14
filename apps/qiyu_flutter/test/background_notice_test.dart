@@ -528,33 +528,27 @@ final class _NoticeChatGateway implements StreamingLocalChatGateway {
     final reason = index < fallbackReasons.length
         ? fallbackReasons[index]
         : null;
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: 'session-1',
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
+    yield LocalChatDeliveryEvent.waiting(
       requestId: requestId,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.delta,
+    yield LocalChatDeliveryEvent.delta(
       requestId: requestId,
       text: '本地基础回复',
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
+    yield LocalChatDeliveryEvent.message(
       requestId: requestId,
       messages: const ['本地基础回复'],
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
+    yield LocalChatDeliveryEvent.state(
       requestId: requestId,
       source: ReplySource.local,
       fallbackReason: reason,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
+    yield LocalChatDeliveryEvent.done(
       requestId: requestId,
     );
   }

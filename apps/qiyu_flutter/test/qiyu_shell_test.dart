@@ -1350,35 +1350,29 @@ final class _StubChatGateway implements StreamingLocalChatGateway {
     required String text,
     String? sessionId,
   }) async* {
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: _restored.sessionId,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
+    yield LocalChatDeliveryEvent.waiting(
       requestId: requestId,
     );
     if (hold) {
       await _gate.future;
     }
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.delta,
+    yield LocalChatDeliveryEvent.delta(
       requestId: requestId,
       text: '在的。',
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
+    yield LocalChatDeliveryEvent.message(
       requestId: requestId,
       messages: const ['在的。'],
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
+    yield LocalChatDeliveryEvent.state(
       requestId: requestId,
       source: ReplySource.local,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
+    yield LocalChatDeliveryEvent.done(
       requestId: requestId,
     );
   }

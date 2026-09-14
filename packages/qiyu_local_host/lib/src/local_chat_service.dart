@@ -253,8 +253,7 @@ final class LocalChatService {
         final chatError = error is LocalChatException ? error : null;
         failureDetail = chatError?.code ?? 'internal_error';
         controller.add(
-          ChatDeliveryEvent(
-            kind: ChatDeliveryEventKind.error,
+          ChatDeliveryEvent.error(
             requestId: trimmedRequestId,
             text: chatError?.message ?? '本地服务暂时不可用。',
             code: chatError?.code ?? 'internal_error',
@@ -399,8 +398,7 @@ final class LocalChatService {
         retryable: error.retryable,
       ),
     };
-    yield ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.waiting,
+    yield ChatDeliveryEvent.waiting(
       requestId: trimmedRequestId,
       sessionId: session.id,
     );
@@ -938,11 +936,10 @@ final class LocalChatService {
     }
     final sessionId = session.id;
     if (result.fallbackReason != null) {
-      yield ChatDeliveryEvent(
-        kind: ChatDeliveryEventKind.fallback,
+      yield ChatDeliveryEvent.fallback(
         requestId: requestId,
         sessionId: sessionId,
-        fallbackReason: result.fallbackReason,
+        fallbackReason: result.fallbackReason!,
       );
     }
     var firstChunk = true;
@@ -958,15 +955,13 @@ final class LocalChatService {
         yield _cancelledEvent(requestId, sessionId);
         return;
       }
-      yield ChatDeliveryEvent(
-        kind: ChatDeliveryEventKind.delta,
+      yield ChatDeliveryEvent.delta(
         requestId: requestId,
         sessionId: sessionId,
         text: chunk,
       );
     }
-    yield ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.message,
+    yield ChatDeliveryEvent.message(
       requestId: requestId,
       sessionId: sessionId,
       messages: result.messages,
@@ -991,8 +986,7 @@ final class LocalChatService {
       );
     }
     completion?.session = completedSession;
-    yield ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.state,
+    yield ChatDeliveryEvent.state(
       requestId: requestId,
       sessionId: completedSession.id,
       source: result.source,
@@ -1000,8 +994,7 @@ final class LocalChatService {
       mode: result.mode,
       safety: result.safety,
     );
-    yield ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.done,
+    yield ChatDeliveryEvent.done(
       requestId: requestId,
       sessionId: completedSession.id,
     );
@@ -1119,16 +1112,14 @@ ChatResult _storedResult(RawSession session, RawSessionTurn reply) {
 
 /// 请求已受理事件：重放与新一轮交付共用同一形态。
 ChatDeliveryEvent _acceptedEvent(String requestId, String sessionId) =>
-    ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.accepted,
+    ChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: sessionId,
     );
 
 /// 交付取消事件：取消语义只交付这一个事件，不带任何内容。
 ChatDeliveryEvent _cancelledEvent(String requestId, String sessionId) =>
-    ChatDeliveryEvent(
-      kind: ChatDeliveryEventKind.cancelled,
+    ChatDeliveryEvent.cancelled(
       requestId: requestId,
       sessionId: sessionId,
     );

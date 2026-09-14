@@ -254,15 +254,13 @@ void main() {
         isEmpty,
       );
       gateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.accepted,
+        const LocalChatDeliveryEvent.accepted(
           requestId: 'stream-request',
           sessionId: 'session-1',
         ),
       );
       gateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.waiting,
+        const LocalChatDeliveryEvent.waiting(
           requestId: 'stream-request',
         ),
       );
@@ -271,8 +269,7 @@ void main() {
       expect(find.text('栖语在想…'), findsOneWidget);
       expect(find.byKey(const Key('chat-stop')), findsOneWidget);
       gateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.delta,
+        const LocalChatDeliveryEvent.delta(
           requestId: 'stream-request',
           text: '还没',
         ),
@@ -281,29 +278,25 @@ void main() {
       expect(find.text('还没'), findsOneWidget);
 
       gateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.delta,
+        const LocalChatDeliveryEvent.delta(
           requestId: 'stream-request',
           text: '睡？',
         ),
       );
       gateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.message,
+        const LocalChatDeliveryEvent.message(
           requestId: 'stream-request',
           messages: ['还没睡？'],
         ),
       );
       gateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.state,
+        const LocalChatDeliveryEvent.state(
           requestId: 'stream-request',
           source: ReplySource.llm,
         ),
       );
       gateway.add(
-        const LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.done,
+        const LocalChatDeliveryEvent.done(
           requestId: 'stream-request',
         ),
       );
@@ -335,15 +328,13 @@ void main() {
     await tester.tap(find.byKey(const Key('chat-send')));
     await tester.pump();
     gateway.add(
-      const LocalChatDeliveryEvent(
-        kind: LocalChatEventKind.accepted,
+      const LocalChatDeliveryEvent.accepted(
         requestId: 'cancel-request',
         sessionId: 'session-1',
       ),
     );
     gateway.add(
-      const LocalChatDeliveryEvent(
-        kind: LocalChatEventKind.waiting,
+      const LocalChatDeliveryEvent.waiting(
         requestId: 'cancel-request',
       ),
     );
@@ -353,8 +344,7 @@ void main() {
     await tester.pump();
     expect(gateway.cancelledRequestIds, ['cancel-request']);
     gateway.add(
-      const LocalChatDeliveryEvent(
-        kind: LocalChatEventKind.cancelled,
+      const LocalChatDeliveryEvent.cancelled(
         requestId: 'cancel-request',
       ),
     );
@@ -706,15 +696,13 @@ void main() {
       await tester.tap(find.byKey(const Key('chat-send')));
       await tester.pump();
       gateway.add(
-        LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.accepted,
+        LocalChatDeliveryEvent.accepted(
           requestId: 'scroll-request',
           sessionId: 'session-1',
         ),
       );
       gateway.add(
-        LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.waiting,
+        LocalChatDeliveryEvent.waiting(
           requestId: 'scroll-request',
         ),
       );
@@ -725,16 +713,14 @@ void main() {
 
       // 流式增量到达时不打断回读：仍停留在顶部。
       gateway.add(
-        LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.delta,
+        LocalChatDeliveryEvent.delta(
           requestId: 'scroll-request',
           text: '慢慢说，',
         ),
       );
       await tester.pump();
       gateway.add(
-        LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.delta,
+        LocalChatDeliveryEvent.delta(
           requestId: 'scroll-request',
           text: '我在听。',
         ),
@@ -746,8 +732,7 @@ void main() {
       // 恢复的历史栖语气泡带重听小喇叭（+28px/条），列表比以往更高：
       // 明确滚到最新流式内容（回读后回到最新可见的语义不变）。
       gateway.add(
-        LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.delta,
+        LocalChatDeliveryEvent.delta(
           requestId: 'scroll-request',
           text: '你继续。',
         ),
@@ -766,22 +751,19 @@ void main() {
       expect(find.textContaining('慢慢说，我在听。你继续。'), findsOneWidget);
 
       gateway.add(
-        LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.message,
+        LocalChatDeliveryEvent.message(
           requestId: 'scroll-request',
           messages: const ['慢慢说，我在听。你继续。'],
         ),
       );
       gateway.add(
-        LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.state,
+        LocalChatDeliveryEvent.state(
           requestId: 'scroll-request',
           source: ReplySource.llm,
         ),
       );
       gateway.add(
-        LocalChatDeliveryEvent(
-          kind: LocalChatEventKind.done,
+        LocalChatDeliveryEvent.done(
           requestId: 'scroll-request',
         ),
       );

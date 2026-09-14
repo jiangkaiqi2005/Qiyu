@@ -8,6 +8,85 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'support/host_transport.dart';
 
 void main() {
+  final invalidEvents = <String, Object?>{
+    'missing delta text': {'event': 'delta', 'requestId': 'r1'},
+    'wrong delta text type': {'event': 'delta', 'requestId': 'r1', 'text': 1},
+    'missing message messages': {'event': 'message', 'requestId': 'r1'},
+    'wrong message element type': {
+      'event': 'message',
+      'requestId': 'r1',
+      'messages': ['ok', 1],
+    },
+    'missing state source': {'event': 'state', 'requestId': 'r1'},
+    'unknown state source': {
+      'event': 'state',
+      'requestId': 'r1',
+      'source': 'private-source',
+    },
+    'missing error retryable': {
+      'event': 'error',
+      'requestId': 'r1',
+      'code': 'chat_failed',
+      'text': 'private-error',
+    },
+    'wrong error retryable type': {
+      'event': 'error',
+      'requestId': 'r1',
+      'code': 'chat_failed',
+      'text': 'private-error',
+      'retryable': 'yes',
+    },
+    'unknown event': {'event': 'private-event', 'requestId': 'r1'},
+    'non-object event': ['private-value'],
+  };
+  for (final entry in invalidEvents.entries) {
+    test('deliver rejects ${entry.key} with a safe diagnostic', () async {
+      final gateway = HttpLocalChatGateway(
+        client: hostTransportClient(
+          (_) => http.Response(
+            '${jsonEncode(entry.value)}\n',
+            200,
+            headers: {'content-type': 'application/x-ndjson; charset=utf-8'},
+          ),
+        ),
+        baseUri: Uri.parse('http://127.0.0.1:5173/'),
+      );
+      await expectLater(
+        gateway.deliver(requestId: 'r1', text: '在吗').toList(),
+        throwsA(
+          isA<LocalChatGatewayException>().having(
+            (error) => error.message,
+            'message',
+            '本机程序返回了无法读取的内容。',
+          ),
+        ),
+      );
+    });
+  }
+
+  test('deliver hides malformed JSON contents', () async {
+    final gateway = HttpLocalChatGateway(
+      client: hostTransportClient(
+        (_) => http.Response(
+          '{private-json\n',
+          200,
+          headers: {'content-type': 'application/x-ndjson; charset=utf-8'},
+        ),
+      ),
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+    await expectLater(
+      gateway.deliver(requestId: 'r1', text: '在吗').toList(),
+      throwsA(
+        isA<LocalChatGatewayException>().having(
+          (error) => error.message,
+          'message',
+          '本机程序返回了无法读取的内容。',
+        ),
+      ),
+    );
+  });
+
   test(
     'bootstraps CSRF, restores a session, and sends through the local API',
     () async {
