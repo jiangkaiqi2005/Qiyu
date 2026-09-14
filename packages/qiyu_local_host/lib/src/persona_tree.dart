@@ -689,20 +689,22 @@ final class PersonaTreeStore {
     path.join(memoryDirectory, 'persona-tree', 'archive', branch.fileName),
   );
 
-  /// 串行化全部树文件写操作：随手记建叶、日终整理与禁提即时生效
-  /// 分属不同任务链，必须在此汇合。
-  Future<T> _locked<T>(Future<T> Function() body) =>
-      episodePipeline.commits.commit(() {
-        final result = _tail.then((_) => body());
-        _tail = result.then<void>((_) {}, onError: (_) {});
-        return result;
-      });
+  /// 树内读写串行。只读快照与备份不取得跨存储提交锁。
+  Future<T> _locked<T>(Future<T> Function() body) {
+    final result = _tail.then((_) => body());
+    _tail = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+
+  /// 写入先取得共享提交锁再进入树内串行，避免树锁反向等待 commit。
+  Future<T> _writeLocked<T>(Future<T> Function() body) =>
+      episodePipeline.commits.commit(() => _locked(body));
 
   /// 随手记：为带画像提示的 episode 条目建立叶指针。幂等——同一条目
   /// 或同日同摘要的信号不重复建叶（相同信号合并计数）。隐私与禁提
   /// 先于叶写入；失败只记诊断，不影响对话与 episode。
   Future<void> createLeaves(List<EpisodeEntry> entries) =>
-      _locked(() => _createLeavesLocked(entries));
+      _writeLocked(() => _createLeavesLocked(entries));
 
   /// 用户明确纠正是唯一在线撤根例外（定稿）：当轮身份自述与根下
   /// 身份理解冲突时，立即把旧根从 persona.md 撤下并停止生效——旧根
@@ -710,7 +712,7 @@ final class PersonaTreeStore {
   /// 新说法的新叶由 [createLeaves] 先行建立；新中间理解仍等日终建立，
   /// 新路径使用新 ID，不拿旧证据背书。失败只记诊断，不阻塞对话。
   Future<void> revokeCorrectedIdentityRoots(List<EpisodeEntry> entries) =>
-      _locked(() async {
+      _writeLocked(() async {
         final corrections = entries
             .where(
               (entry) =>
@@ -784,7 +786,7 @@ final class PersonaTreeStore {
   Future<void> processDay(
     String date, {
     List<EpisodeEntry> extraEntries = const [],
-  }) => _locked(() async {
+  }) => _writeLocked(() async {
     final day = await episodePipeline.readDay(date);
     if (!day.readable) {
       _diagnosticsSink('persona day skipped reason=$date-unreadable');
@@ -842,7 +844,7 @@ final class PersonaTreeStore {
   /// 同样删除；命中的根连同整条子树直接删除，根下中间理解命中时
   /// 删除该理解——不进归档，彻底遗忘。根被删除后立即重投影
   /// persona.md。返回是否实际清理了内容。
-  Future<bool> applyBan(String title) => _locked(() async {
+  Future<bool> applyBan(String title) => _writeLocked(() async {
     final normalized = normalizeMemoryText(title);
     if (normalized.isEmpty) {
       return false;
@@ -898,7 +900,7 @@ final class PersonaTreeStore {
   Future<int> resyncLeafSummaries(
     String entryRef,
     String newSummary,
-  ) => _locked(() async {
+  ) => _writeLocked(() async {
     final summary = redactSessionText(newSummary).trim();
     if (entryRef.isEmpty || summary.isEmpty) {
       return 0;
@@ -955,7 +957,7 @@ final class PersonaTreeStore {
   /// 自述）。格式校验不通过返回 null；成功返回规范化后的称呼。与
   /// persona.md 的全部重投影共用树内串行锁，设定行不会在写入间隙丢失。
   Future<String?> setAppellation(String raw) =>
-      episodePipeline.commits.operation(() => _locked(() async {
+      episodePipeline.commits.operation(() => _writeLocked(() async {
         if (appellationFormatError(raw) != null) {
           return null;
         }
@@ -1073,7 +1075,7 @@ final class PersonaTreeStore {
   /// persona.md；仍有分支不可读时保留旧投影。返回实际落盘的键集合，
   /// 供恢复流程判断哪些原件可以安全清理。
   Future<Set<String>> restoreBackupFiles(Map<String, String> files) =>
-      _locked(() async {
+      _writeLocked(() async {
         final applied = <String>{};
         for (final MapEntry(:key, :value) in files.entries) {
           final archived = key.startsWith('archive/');
@@ -1114,7 +1116,7 @@ final class PersonaTreeStore {
   Future<PersonaDreamApplyResult> applyDreamChanges({
     required String date,
     required List<PersonaDreamOp> ops,
-  }) => _locked(() async {
+  }) => _writeLocked(() async {
     final outcomes = <String?>[];
     final states = <String, _BranchState>{};
     final archives = <String, _ArchiveState>{};
@@ -2309,7 +2311,7 @@ final class PersonaTreeStore {
   /// 恢复流程的投影重建入口（ticket 21）：分支修复后从活跃根重投影
   /// persona.md；仍有分支不可读时保留旧投影。
   Future<void> regeneratePersonaProjection() =>
-      _locked(() => _regeneratePersona());
+      _writeLocked(() => _regeneratePersona());
 
   /// 从活跃根重投影 persona.md：重新读取全部分支，任一分支不可读时
   /// 保留旧投影等待恢复流程，绝不写出残缺画像。

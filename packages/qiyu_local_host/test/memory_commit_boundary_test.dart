@@ -13,6 +13,37 @@ const _corrected = '用户还没有完成第一次演讲';
 final _now = DateTime(2026, 9, 14, 23);
 
 void main() {
+  test('memory browsing does not wait for an unrelated control write', () async {
+    final writer = _PausedControlWriter();
+    final fixture = await _fixture(writer: writer);
+    final actions = fixture.actions;
+    final center = MemoryCenterService(
+      memoryDirectory: actions.memoryDirectory,
+      episodePipeline: actions.episodePipeline,
+      personaTree: actions.personaTree,
+      memoryControls: actions.memoryControls,
+      dreamService: fixture.dream,
+    );
+    final freezing = actions.freeze(
+      const MemoryLongTermRef('重要事件', _original),
+    );
+    await writer.entered.future;
+    expect((await actions.memoryControls.load()).readable, isTrue);
+    final reading = Future.wait<Object>([
+      actions.personaTree.readSnapshot(),
+      actions.personaTree.backupFiles(),
+      center.overview(),
+    ]);
+    try {
+      await reading.timeout(const Duration(seconds: 3));
+      expect(writer.release.isCompleted, isFalse);
+    } finally {
+      writer.release.complete();
+      await freezing;
+      await reading;
+    }
+  });
+
   test(
     'completed writes invalidate a candidate even when content is restored',
     () async {
@@ -490,5 +521,19 @@ final class _ObservedWriter implements AtomicTextWriter {
     if (path.basename(targetPath) == target && !written.isCompleted) {
       written.complete();
     }
+  }
+}
+
+final class _PausedControlWriter implements AtomicTextWriter {
+  final entered = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<void> replace(String targetPath, String contents) async {
+    if (path.basename(targetPath) == memoryControlsFileName) {
+      entered.complete();
+      await release.future;
+    }
+    await const IoAtomicTextWriter().replace(targetPath, contents);
   }
 }

@@ -12,6 +12,16 @@ import 'markdown_memory_repository.dart';
 final class MemoryCommitCoordinator {
   MemoryCommitCoordinator(this.memoryDirectory);
 
+  static const _rootFiles = {
+    longMemoryFileName,
+    memoryControlsFileName,
+    personaFileName,
+    relationshipFileName,
+    dailyStateFileName,
+    'open-loops.md',
+  };
+  static const _markdownDirectories = {'episodes', 'persona-tree'};
+
   final String memoryDirectory;
   final Object _commitZone = Object();
   final Object _operationZone = Object();
@@ -102,17 +112,9 @@ final class MemoryCommitCoordinator {
   bool _relevant(String target) {
     final relative = path.relative(target, from: memoryDirectory);
     final parts = path.split(relative);
-    return parts.length == 1 &&
-            const {
-              longMemoryFileName,
-              memoryControlsFileName,
-              personaFileName,
-              relationshipFileName,
-              dailyStateFileName,
-              'open-loops.md',
-            }.contains(relative) ||
+    return parts.length == 1 && _rootFiles.contains(relative) ||
         parts.isNotEmpty &&
-            const {'episodes', 'persona-tree'}.contains(parts.first) &&
+            _markdownDirectories.contains(parts.first) &&
             target.endsWith('.md');
   }
 
@@ -123,20 +125,13 @@ final class MemoryCommitCoordinator {
     final hashes = <String, String>{};
     final root = Directory(memoryDirectory);
     if (await root.exists()) {
-      for (final name in [
-        longMemoryFileName,
-        memoryControlsFileName,
-        personaFileName,
-        relationshipFileName,
-        dailyStateFileName,
-        'open-loops.md',
-      ]) {
+      for (final name in _rootFiles) {
         final file = File(path.join(memoryDirectory, name));
         if (await file.exists()) {
           hashes[name] = (await sha256.bind(file.openRead()).first).toString();
         }
       }
-      for (final name in ['episodes', 'persona-tree']) {
+      for (final name in _markdownDirectories) {
         final directory = Directory(path.join(memoryDirectory, name));
         if (!await directory.exists()) continue;
         await for (final entity in directory.list(
