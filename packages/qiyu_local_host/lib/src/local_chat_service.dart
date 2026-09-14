@@ -469,6 +469,18 @@ final class LocalChatService {
                       : _fallbackReasonFor(completion.failure!),
                 )
                 as ChatResult;
+        if (completion.serviceError != null && completion.failure != null) {
+          outcome = ChatResult(
+            requestId: outcome.requestId,
+            messages: outcome.messages,
+            nextState: outcome.nextState,
+            source: outcome.source,
+            mode: outcome.mode,
+            fallbackReason: outcome.fallbackReason,
+            safety: outcome.safety,
+            serviceError: completion.serviceError,
+          );
+        }
       }
     }
 
@@ -908,7 +920,9 @@ final class LocalChatService {
           case ModelStreamEventKind.done:
             return ModelCompletion.reply(buffer.toString());
           case ModelStreamEventKind.failure:
-            return ModelCompletion.failure(event.failure!);
+            return ModelCompletion.failure(
+              event.failure!, serviceError: event.serviceError,
+            );
         }
       }
       return buffer.isEmpty
@@ -940,6 +954,7 @@ final class LocalChatService {
         requestId: requestId,
         sessionId: sessionId,
         fallbackReason: result.fallbackReason!,
+        serviceError: result.serviceError,
       );
     }
     var firstChunk = true;
@@ -980,6 +995,7 @@ final class LocalChatService {
           at: _clock(),
           source: result.source,
           fallbackReason: result.fallbackReason,
+          serviceError: result.serviceError,
           mode: result.mode,
           safety: result.safety,
         ),
@@ -991,6 +1007,7 @@ final class LocalChatService {
       sessionId: completedSession.id,
       source: result.source,
       fallbackReason: result.fallbackReason,
+      serviceError: result.serviceError,
       mode: result.mode,
       safety: result.safety,
     );
@@ -1105,6 +1122,7 @@ ChatResult _storedResult(RawSession session, RawSessionTurn reply) {
     nextState: _stateFromCompletedTurns(session.turns, ''),
     source: reply.source ?? ReplySource.local,
     fallbackReason: reply.fallbackReason,
+    serviceError: reply.serviceError,
     mode: reply.mode ?? 'local',
     safety: reply.safety,
   );
@@ -1134,6 +1152,7 @@ Map<String, Object?> _turnToPublicJson(RawSessionTurn turn) => {
   if (turn.source != null) 'source': turn.source!.name,
   if (turn.fallbackReason != null)
     'fallbackReason': turn.fallbackReason!.wireName,
+  if (turn.serviceError != null) 'serviceError': turn.serviceError!.name,
 };
 
 RawSessionTurn? _findTurn(

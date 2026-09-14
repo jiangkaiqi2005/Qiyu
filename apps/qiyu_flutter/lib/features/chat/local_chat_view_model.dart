@@ -132,8 +132,6 @@ final class LocalChatViewModel extends ChangeNotifier {
   String get streamingText => _activeTurn?.streamingText ?? '';
   bool get hostStopped => _hostMonitor.hostAvailable == false;
 
-  String? _latestFallbackDetail;
-
   /// 最近一次已完成的栖语回复的 fallbackReason。
   FallbackReason? get latestFallbackReason {
     final last = _messages.lastOrNull;
@@ -143,8 +141,11 @@ final class LocalChatViewModel extends ChangeNotifier {
     return last.fallbackReason;
   }
 
-  /// 最近一次 fallback 携带的详细信息或错误码。
-  String? get latestFallbackDetail => _latestFallbackDetail;
+  /// 最近一次已完成回复的安全服务故障类别。
+  ServiceErrorCategory? get latestServiceError {
+    final last = _messages.lastOrNull;
+    return last?.speaker == LocalChatSpeaker.qiyu ? last?.serviceError : null;
+  }
 
   /// 代际归属校验：所有界面状态写入与副作用落地前先过这一关。新发送 /
   /// 恢复 / 丢弃会话推进代数或取代活跃事务后，旧事务的任何事件都整体丢弃。
@@ -313,6 +314,7 @@ final class LocalChatViewModel extends ChangeNotifier {
             text: message.text,
             source: message.source,
             fallbackReason: message.fallbackReason,
+            serviceError: message.serviceError,
             deliveryIndex: delivery,
             at: message.at,
           ),
@@ -382,7 +384,6 @@ final class LocalChatViewModel extends ChangeNotifier {
       voiceOutput.prepareForUserInitiatedPlayback();
     }
     _errorMessage = null;
-    _latestFallbackDetail = null;
     final requestId = _pendingText == trimmed && _pendingRequestId != null
         ? _pendingRequestId!
         : _requestIdFactory();
@@ -477,9 +478,8 @@ final class LocalChatViewModel extends ChangeNotifier {
             turn.streamingText += event.text!;
           case LocalChatEventKind.message:
           case LocalChatEventKind.state:
-            break;
           case LocalChatEventKind.fallback:
-            _latestFallbackDetail = event.code ?? event.text;
+            break;
           case LocalChatEventKind.done:
             if (delivery != null) {
               // 该 requestId 的第 N 次交付段（轮内召回的 bubble 2 是
@@ -494,6 +494,7 @@ final class LocalChatViewModel extends ChangeNotifier {
                     text: message,
                     source: delivery.source,
                     fallbackReason: delivery.fallbackReason,
+                    serviceError: delivery.serviceError,
                     deliveryIndex: deliveryIndex,
                     at: _previewMoment,
                   ),

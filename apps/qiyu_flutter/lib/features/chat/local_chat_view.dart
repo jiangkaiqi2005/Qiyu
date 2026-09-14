@@ -255,41 +255,25 @@ class _LocalChatViewState extends State<LocalChatView>
   }
 
   ApiErrorCategory? _categorizeFallbackReason(
-    FallbackReason? reason, {
-    String? detail,
-  }) {
-    if (reason == null) {
-      return null;
+    FallbackReason reason,
+    ServiceErrorCategory? serviceError,
+  ) {
+    if (serviceError != null) {
+      return switch (serviceError) {
+        ServiceErrorCategory.authentication => ApiErrorCategory.authentication,
+        ServiceErrorCategory.modelNotFound => ApiErrorCategory.modelNotFound,
+        ServiceErrorCategory.rateLimited => ApiErrorCategory.rateLimited,
+        ServiceErrorCategory.client => ApiErrorCategory.otherClientError,
+        ServiceErrorCategory.server || ServiceErrorCategory.network => null,
+      };
     }
+    // 老 Host 没有分类元数据时，仅使用含义明确的既有原因。
     return switch (reason) {
       FallbackReason.modelRateLimited => ApiErrorCategory.rateLimited,
       FallbackReason.modelAuthentication => ApiErrorCategory.authentication,
       FallbackReason.modelNotFound => ApiErrorCategory.modelNotFound,
-      FallbackReason.modelProvider when _isClient4xxError(detail) =>
-        ApiErrorCategory.otherClientError,
       _ => null,
     };
-  }
-
-  static bool _isClient4xxError(String? detail) {
-    if (detail == null || detail.isEmpty) {
-      return false;
-    }
-    final lower = detail.toLowerCase();
-    // 纯 5xx 或内部错误不归为客户端错误
-    if (lower.contains('500') ||
-        lower.contains('502') ||
-        lower.contains('503') ||
-        lower.contains('504') ||
-        lower.contains('internal_server_error')) {
-      return false;
-    }
-    return lower.contains('400') ||
-        lower.contains('422') ||
-        lower.contains('bad_request') ||
-        lower.contains('unprocessable') ||
-        lower.contains('invalid_request') ||
-        lower.contains('client_error');
   }
 
   /// 统一的异常分发与会话级频控判断逻辑：供文本聊天与语音链路共用。
@@ -316,6 +300,7 @@ class _LocalChatViewState extends State<LocalChatView>
 
   Future<void> _handleTurnApiErrors(LocalChatViewModel viewModel) async {
     final reason = viewModel.latestFallbackReason;
+    final serviceError = viewModel.latestServiceError;
     if (reason == null) {
       if (_apiErrorNotice != null) {
         setState(() => _apiErrorNotice = null);
@@ -325,7 +310,11 @@ class _LocalChatViewState extends State<LocalChatView>
 
     // 严格排除设计内降级：安全拦截与未配置模型绝对不弹窗
     if (reason == FallbackReason.safety ||
-        reason == FallbackReason.noLlmConfig) {
+        reason == FallbackReason.noLlmConfig ||
+        reason == FallbackReason.forbiddenPhrases ||
+        reason == FallbackReason.personaBoundary ||
+        reason == FallbackReason.invalidModelResponse ||
+        reason == FallbackReason.emptyModelReply) {
       if (_apiErrorNotice != null) {
         setState(() => _apiErrorNotice = null);
       }
@@ -344,7 +333,8 @@ class _LocalChatViewState extends State<LocalChatView>
     }
     if (reason == FallbackReason.modelNetwork ||
         reason == FallbackReason.modelDns ||
-        reason == FallbackReason.modelTls) {
+        reason == FallbackReason.modelTls ||
+        serviceError == ServiceErrorCategory.network) {
       setState(() {
         _apiErrorNotice = const _ApiErrorNotice(
           message: '⚠️ 网络连接异常，当前保持本地基础回复',
@@ -354,11 +344,24 @@ class _LocalChatViewState extends State<LocalChatView>
       return;
     }
 
+    if (serviceError == ServiceErrorCategory.server) {
+      setState(() {
+        _apiErrorNotice = const _ApiErrorNotice(
+          message: '⚠️ 模型服务暂时不可用，当前保持本地基础回复',
+          showSettingsLink: false,
+        );
+      });
+      return;
+    }
+
     final category = _categorizeFallbackReason(
       reason,
-      detail: viewModel.latestFallbackDetail,
+      serviceError,
     );
     if (category == null) {
+      if (_apiErrorNotice != null) {
+        setState(() => _apiErrorNotice = null);
+      }
       return;
     }
 
@@ -373,12 +376,13 @@ class _LocalChatViewState extends State<LocalChatView>
     if (_isShowingApiErrorDialog || !mounted) {
       return;
     }
+    final sessionId = _chatViewModel.sessionId;
     _isShowingApiErrorDialog = true;
     try {
       if (delay) {
         // 流式落定后约 300ms 缓冲：与原型一致，留出视觉落定呼吸时间（Spec §2）
         await Future<void>.delayed(const Duration(milliseconds: 300));
-        if (!mounted) {
+        if (!mounted || _chatViewModel.sessionId != sessionId) {
           return;
         }
       }

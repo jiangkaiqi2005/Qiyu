@@ -280,6 +280,49 @@ void main() {
   });
 
   group('LocalChatView 接口限流与 40x 异常提示弹窗', () {
+    testWidgets('旧事件缺少类别时，不保留上一轮的限流提示', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [
+          FallbackReason.modelRateLimited,
+          FallbackReason.modelRateLimited,
+          FallbackReason.modelProvider,
+        ],
+      );
+      await _pumpChatView(tester, gateway: gateway);
+      for (var turn = 0; turn < 3; turn++) {
+        await tester.enterText(find.byKey(const Key('chat-input')), '你好 $turn');
+        await tester.tap(find.byKey(const Key('chat-send')));
+        await tester.pumpAndSettle();
+        if (turn == 0) {
+          await tester.tap(find.byKey(const Key('api-error-dialog-dismiss')));
+          await tester.pumpAndSettle();
+        }
+        if (turn == 1) {
+          expect(find.textContaining('接口频繁受限 (429)'), findsOneWidget);
+        }
+      }
+      expect(find.byKey(const Key('api-error-dialog')), findsNothing);
+      expect(find.textContaining('接口频繁受限 (429)'), findsNothing);
+    });
+
+    testWidgets('落定延迟期间切换会话，不将旧服务错误弹到新会话', (tester) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.modelProvider],
+        serviceErrors: const [ServiceErrorCategory.client],
+      );
+      final viewModel = await _pumpChatView(tester, gateway: gateway);
+      await tester.enterText(find.byKey(const Key('chat-input')), '你好');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pump();
+      expect(viewModel.latestServiceError, ServiceErrorCategory.client);
+      final oldSession = viewModel.sessionId!;
+      gateway.sessionId = 'new-session';
+      await viewModel.discardSession(oldSession);
+      await tester.pumpAndSettle();
+      expect(viewModel.sessionId, 'new-session');
+      expect(find.byKey(const Key('api-error-dialog')), findsNothing);
+    });
+
     testWidgets('429 限流：流式完成后弹出模态弹窗，双按钮直达设置', (tester) async {
       final gateway = _ConfigurableChatGateway(
         fallbackReasons: const [FallbackReason.modelRateLimited],
@@ -484,13 +527,13 @@ void main() {
       expect(find.text('去设置检查'), findsNothing);
     });
 
-    testWidgets('语音链路联动：STT 429 触发「语音服务受限」弹窗', (tester) async {
+    testWidgets('语音链路联动：STT 客户端错误触发「语音服务受限」弹窗', (tester) async {
       final gateway = _ConfigurableChatGateway(
         fallbackReasons: const [FallbackReason.noLlmConfig],
       );
       gateway.transcribeError = const LocalChatGatewayException(
         '语音服务请求过于频繁。',
-        code: 'stt_service_error',
+        code: 'stt_client',
       );
       final recorder = _FakeVoiceRecorder();
 
@@ -514,10 +557,10 @@ void main() {
       expect(find.textContaining('语音服务请求受限或配置异常'), findsOneWidget);
     }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
-    testWidgets('收敛 modelProvider：纯 5xx 或未识别内部错误不弹模态对话框', (tester) async {
+    testWidgets('收敛 modelProvider：服务端错误类别不弹模态对话框', (tester) async {
       final gateway = _ConfigurableChatGateway(
         fallbackReasons: const [FallbackReason.modelProvider],
-        fallbackDetails: const ['500 Internal Server Error'],
+        serviceErrors: const [ServiceErrorCategory.server],
       );
       await _pumpChatView(tester, gateway: gateway);
 
@@ -529,10 +572,10 @@ void main() {
       expect(find.byKey(const Key('api-error-dialog')), findsNothing);
     });
 
-    testWidgets('收敛 modelProvider：带有 4xx 客户端特征时弹出「模型服务异常」对话框', (tester) async {
+    testWidgets('收敛 modelProvider：明确客户端错误类别时弹出「模型服务异常」对话框', (tester) async {
       final gateway = _ConfigurableChatGateway(
         fallbackReasons: const [FallbackReason.modelProvider],
-        fallbackDetails: const ['400 bad_request: invalid prompt'],
+        serviceErrors: const [ServiceErrorCategory.client],
       );
       await _pumpChatView(tester, gateway: gateway);
 
@@ -601,7 +644,7 @@ void main() {
       );
       gateway.speakError = const LocalChatGatewayException(
         '语音合成服务异常。',
-        code: 'tts_service_error',
+        code: 'tts_config_invalid',
       );
 
       await _pumpChatView(
@@ -1088,11 +1131,11 @@ final class _HangingFailingChatGateway implements _TestChatGateway {
 final class _ConfigurableChatGateway implements _TestChatGateway {
   _ConfigurableChatGateway({
     required this.fallbackReasons,
-    this.fallbackDetails,
+    this.serviceErrors,
   });
 
   final List<FallbackReason?> fallbackReasons;
-  final List<String?>? fallbackDetails;
+  final List<ServiceErrorCategory?>? serviceErrors;
   String sessionId = 'test-session-1';
   int deliverCallCount = 0;
   Object? transcribeError;
@@ -1141,8 +1184,8 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
     final reason = index < fallbackReasons.length
         ? fallbackReasons[index]
         : (fallbackReasons.isNotEmpty ? fallbackReasons.last : null);
-    final detail = fallbackDetails != null && index < fallbackDetails!.length
-        ? fallbackDetails![index]
+    final serviceError = serviceErrors != null && index < serviceErrors!.length
+        ? serviceErrors![index]
         : null;
     deliverCallCount += 1;
 
@@ -1157,7 +1200,7 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
       yield LocalChatDeliveryEvent.fallback(
         requestId: requestId,
         fallbackReason: reason,
-        code: detail,
+        serviceError: serviceError,
       );
     }
     yield LocalChatDeliveryEvent.delta(
@@ -1172,6 +1215,7 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
       requestId: requestId,
       source: ReplySource.local,
       fallbackReason: reason,
+      serviceError: serviceError,
     );
     yield LocalChatDeliveryEvent.done(
       requestId: requestId,

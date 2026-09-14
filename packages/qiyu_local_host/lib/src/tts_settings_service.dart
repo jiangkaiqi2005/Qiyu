@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
 import 'model_gateway.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart'
@@ -299,7 +301,8 @@ final class TtsSettingsService {
     } on TtsGatewayException catch (error) {
       final failure = _ttsFailureDetails(error.kind);
       throw TtsServiceException(
-        code: failure.code,
+        code: error.serviceError == ServiceErrorCategory.client
+            ? 'tts_client' : failure.code,
         message: _ttsTestMessage(failure.status),
         retryable: true,
       );

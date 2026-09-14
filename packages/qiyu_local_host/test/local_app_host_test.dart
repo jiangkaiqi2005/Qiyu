@@ -2190,7 +2190,7 @@ void main() {
         expect(upstreamFailure.statusCode, HttpStatus.badGateway);
         final failureJson =
             jsonDecode(upstreamFailure.body) as Map<String, Object?>;
-        expect(failureJson['code'], 'stt_service_error');
+        expect(failureJson['code'], 'stt_rate_limited');
         expect(failureJson['message'], '语音服务请求过于频繁。');
         expect(upstreamFailure.body, isNot(contains('secret')));
   

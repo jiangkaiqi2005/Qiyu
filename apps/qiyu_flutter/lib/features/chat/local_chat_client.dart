@@ -20,6 +20,7 @@ final class LocalChatMessage {
     required this.text,
     this.source,
     this.fallbackReason,
+    this.serviceError,
     this.deliveryIndex,
     this.at,
   });
@@ -29,6 +30,7 @@ final class LocalChatMessage {
   final String text;
   final ReplySource? source;
   final FallbackReason? fallbackReason;
+  final ServiceErrorCategory? serviceError;
 
   /// 该栖语交付段在 requestId 内的序号（轮内召回的 bubble 2 是第二段）。
   /// 纯运行时标注：不序列化，历史恢复的消息没有它（朗读只对新交付
@@ -53,6 +55,9 @@ final class LocalChatMessage {
       fallbackReason: fallbackReason == null
           ? null
           : FallbackReason.fromWireName(fallbackReason),
+      serviceError: json['serviceError'] == null
+          ? null
+          : ServiceErrorCategory.fromWireName(json['serviceError'] as String),
       at: rawAt == null ? null : DateTime.tryParse(rawAt),
     );
   }
@@ -84,6 +89,7 @@ final class LocalChatExchange {
     required this.messages,
     required this.source,
     this.fallbackReason,
+    this.serviceError,
   });
 
   factory LocalChatExchange.fromJson(Map<String, Object?> json) =>
@@ -95,6 +101,9 @@ final class LocalChatExchange {
         fallbackReason: json['fallbackReason'] == null
             ? null
             : FallbackReason.fromWireName(json['fallbackReason']! as String),
+        serviceError: json['serviceError'] == null
+            ? null
+            : ServiceErrorCategory.fromWireName(json['serviceError'] as String),
       );
 
   final String sessionId;
@@ -102,6 +111,7 @@ final class LocalChatExchange {
   final List<String> messages;
   final ReplySource source;
   final FallbackReason? fallbackReason;
+  final ServiceErrorCategory? serviceError;
 }
 
 final class LocalChatGatewayException
@@ -216,6 +226,7 @@ final class HttpLocalChatGateway extends HostApiGateway
           .toList(),
       source: last.source,
       fallbackReason: last.fallbackReason,
+      serviceError: last.serviceError,
     );
   }
 

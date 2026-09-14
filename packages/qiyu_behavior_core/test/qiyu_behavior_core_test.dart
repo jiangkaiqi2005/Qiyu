@@ -5,6 +5,16 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('delivery preserves the safe service error category', () {
+    final wire = <String, Object?>{
+      'event': 'state',
+      'requestId': 'service-failure',
+      'source': 'local',
+      'fallbackReason': 'model_provider',
+      'serviceError': 'client',
+    };
+    expect(ChatDeliveryEvent.fromJson(wire).toJson(), wire);
+  });
   test('delivery rejects a delta without text at the parsing boundary', () {
     expect(
       () => ChatDeliveryEvent.fromJson({
@@ -22,6 +32,54 @@ void main() {
           )
           as Map<String, Object?>;
   final fixtures = fixtureDocument['cases']! as List<Object?>;
+
+  for (final category in fixtureDocument['serviceErrorCategories']! as List<Object?>) {
+    test('safe service category $category survives result and event wire', () {
+      final safeCategory = ServiceErrorCategory.fromWireName(category! as String);
+      for (final event in [
+        ChatDeliveryEvent.fallback(
+          requestId: 'service-failure',
+          fallbackReason: FallbackReason.modelProvider,
+          serviceError: safeCategory,
+        ),
+        ChatDeliveryEvent.state(
+          requestId: 'service-failure',
+          source: ReplySource.local,
+          serviceError: safeCategory,
+        ),
+      ]) {
+        final decoded = ChatDeliveryEvent.fromJson(event.toJson());
+        expect(decoded.serviceError, safeCategory);
+        expect(decoded.toJson()['serviceError'], category);
+      }
+      final original = const QiyuBehaviorCore().reply(
+        const ChatRequest(requestId: 'service-failure', text: '在吗'),
+        StateSnapshot.initial('fixture-user'),
+      ) as ChatResult;
+      final wire = {...original.toJson(), 'serviceError': category};
+      final result = ChatResult.fromJson(wire);
+      expect(result.toJson(), wire);
+      expect(result, ChatResult.fromJson(result.toJson()));
+      expect(result.hashCode, ChatResult.fromJson(result.toJson()).hashCode);
+      expect(result, isNot(original));
+    });
+  }
+
+  test('unknown or malformed public service categories are rejected safely', () {
+    for (final category in ['secret-http-body', 400, [], {}]) {
+      expect(
+        () => ChatDeliveryEvent.fromJson({
+          'event': 'state',
+          'requestId': 'invalid-category',
+          'source': 'local',
+          'serviceError': category,
+        }),
+        throwsA(isA<FormatException>().having(
+          (error) => error.toString(), 'safe diagnostic', isNot(contains('secret-http-body')),
+        )),
+      );
+    }
+  });
 
   for (final value in fixtureDocument['deliveryEvents']! as List<Object?>) {
     final fixture = value! as Map<String, Object?>;

@@ -401,4 +401,7 @@ String _newRequestId() {
 }
 
 SttGatewayException _fromModelFailure(ModelGatewayException failure) =>
-    SttGatewayException(kind: failure.kind, message: failure.message);
+    SttGatewayException(
+      kind: failure.kind, message: failure.message,
+      serviceError: failure.serviceError,
+    );

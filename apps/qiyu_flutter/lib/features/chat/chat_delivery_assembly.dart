@@ -10,11 +10,13 @@ final class CompletedChatDelivery {
     required this.messages,
     required this.source,
     this.fallbackReason,
+    this.serviceError,
   });
 
   final List<String> messages;
   final ReplySource source;
   final FallbackReason? fallbackReason;
+  final ServiceErrorCategory? serviceError;
 }
 
 /// 一条请求流的协议状态。done 只完成一段，取消、失败或 EOF 才结束流。
@@ -33,6 +35,7 @@ final class ChatDeliveryAssembly {
   List<String>? _messages;
   ReplySource? _source;
   FallbackReason? _fallbackReason;
+  ServiceErrorCategory? _serviceError;
 
   bool get accepted => _accepted;
   String? get sessionId => _sessionId;
@@ -64,6 +67,7 @@ final class ChatDeliveryAssembly {
         _phase = _SegmentPhase.collecting;
         if (event.kind == ChatDeliveryEventKind.fallback) {
           _fallbackReason = event.fallbackReason;
+          _serviceError = event.serviceError;
         }
       case ChatDeliveryEventKind.message:
         if (_phase == _SegmentPhase.message ||
@@ -77,6 +81,7 @@ final class ChatDeliveryAssembly {
         if (_phase != _SegmentPhase.message) _invalid();
         _source = event.source!;
         _fallbackReason = event.fallbackReason;
+        _serviceError = event.serviceError;
         _phase = _SegmentPhase.state;
       case ChatDeliveryEventKind.done:
         if (_phase != _SegmentPhase.state || sessionId == null) _invalid();
@@ -84,11 +89,13 @@ final class ChatDeliveryAssembly {
           messages: List.unmodifiable(_messages!),
           source: _source!,
           fallbackReason: _fallbackReason,
+          serviceError: _serviceError,
         );
         _completed.add(delivery);
         _messages = null;
         _source = null;
         _fallbackReason = null;
+        _serviceError = null;
         _phase = _SegmentPhase.ready;
         return delivery;
       case ChatDeliveryEventKind.cancelled:

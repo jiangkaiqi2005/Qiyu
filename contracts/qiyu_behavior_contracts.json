@@ -1,5 +1,8 @@
 {
   "schemaVersion": 1,
+  "serviceErrorCategories": [
+    "authentication", "modelNotFound", "rateLimited", "client", "server", "network"
+  ],
   "deliveryEvents": [
     {
       "wire": {

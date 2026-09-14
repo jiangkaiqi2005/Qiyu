@@ -7,6 +7,15 @@ import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 void main() {
+  test('voice classification never guesses from message text or code substrings', () {
+    for (final error in [
+      const LocalChatGatewayException('API Key 鉴权失败 401'),
+      const LocalChatGatewayException('unknown', code: 'custom_tts_429'),
+      const LocalChatGatewayException('unknown', code: 'tts_network'),
+    ]) {
+      expect(categorizeVoiceApiError(error, isInput: false), isNull);
+    }
+  });
   group('QiyuApiErrorDialog', () {
     testWidgets('429 限流：语义标题、正文与按钮布局', (tester) async {
       var dismissed = false;
@@ -127,22 +136,23 @@ void main() {
       expect(find.text('语音朗读受限'), findsOneWidget);
     });
 
-    test('isVoiceApiError 异常判定规则', () {
-      expect(isVoiceApiError('HTTP 429 Too Many Requests'), isTrue);
-      expect(isVoiceApiError('stt_rate_limited'), isTrue);
-      expect(isVoiceApiError('tts_rate_limited'), isTrue);
-      expect(isVoiceApiError('401 Unauthorized'), isTrue);
-      expect(isVoiceApiError('403 Forbidden'), isTrue);
-      expect(isVoiceApiError('404 Not Found'), isTrue);
-      expect(isVoiceApiError('语音服务请求过于频繁。'), isTrue);
-      expect(isVoiceApiError('鉴权失败，请检查 Key'), isTrue);
-
-      expect(isVoiceApiError('Connection timeout'), isFalse);
-      expect(isVoiceApiError('Network connection lost'), isFalse);
-      expect(isVoiceApiError('SocketException: host unreachable'), isFalse);
+    test('isVoiceApiError 仅接受公开结构化错误码', () {
+      expect(
+        isVoiceApiError(const LocalChatGatewayException('任意文案', code: 'stt_rate_limited')),
+        isTrue,
+      );
+      for (final value in [
+        'HTTP 429 Too Many Requests',
+        'stt_rate_limited',
+        '401 Unauthorized',
+        '404 Not Found',
+        '语音服务请求过于频繁。',
+        '鉴权失败，请检查 Key',
+      ]) {
+        expect(isVoiceApiError(value), isFalse);
+      }
     });
-
-    test('categorizeVoiceApiError 结构化错误码与降级规则', () {
+    test('categorizeVoiceApiError 结构化错误码与保守未知规则', () {
       expect(
         categorizeVoiceApiError(
           const LocalChatGatewayException(
@@ -182,7 +192,7 @@ void main() {
       );
       expect(
         categorizeVoiceApiError(
-          const LocalChatGatewayException('error', code: 'stt_auth_failed'),
+          const LocalChatGatewayException('error', code: 'stt_authentication'),
           isInput: true,
         ),
         ApiErrorCategory.authentication,
@@ -196,7 +206,7 @@ void main() {
       );
       expect(
         categorizeVoiceApiError(
-          const LocalChatGatewayException('error', code: 'stt_service_error'),
+          const LocalChatGatewayException('error', code: 'stt_client'),
           isInput: true,
         ),
         ApiErrorCategory.sttError,
@@ -209,37 +219,26 @@ void main() {
         ApiErrorCategory.ttsError,
       );
 
-      // code 为空时严格特征识别降级
+      // 缺少类别、网络与未知码都不根据错误文案推断。
+      for (final code in [null, 'tts_network', 'tts_dns', 'tts_tls',
+        'tts_timeout', 'tts_provider', 'tts_internal', 'stt_service_error',
+        'tts_incompatible_response', 'stt_no_speech', 'tts_turn_not_found']) {
+        expect(
+          categorizeVoiceApiError(
+            LocalChatGatewayException('模型不存在 404 鉴权失败 401', code: code),
+            isInput: false,
+          ),
+          isNull,
+        );
+      }
       expect(
         categorizeVoiceApiError(
-          const LocalChatGatewayException('模型不存在 404'),
-          isInput: false,
-        ),
-        ApiErrorCategory.modelNotFound,
-      );
-      expect(
-        categorizeVoiceApiError(
-          const LocalChatGatewayException('请求过于频繁 429'),
-          isInput: false,
-        ),
-        ApiErrorCategory.rateLimited,
-      );
-      expect(
-        categorizeVoiceApiError(
-          const LocalChatGatewayException('API Key 鉴权失败 401'),
-          isInput: true,
-        ),
-        ApiErrorCategory.authentication,
-      );
-      expect(
-        categorizeVoiceApiError(
-          const LocalChatGatewayException('network timeout'),
+          const LocalChatGatewayException('任意文案', code: 'stt_rate_limited'),
           isInput: false,
         ),
         isNull,
       );
     });
-
     test('noticeText 频控提示文案', () {
       expect(
         ApiErrorCategory.rateLimited.noticeText,

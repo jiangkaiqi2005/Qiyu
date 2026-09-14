@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
 import 'model_gateway.dart' show ModelFailureKind;
 import 'provider_config.dart';
 import 'provider_settings_service.dart'
@@ -234,11 +236,16 @@ final class SttSettingsService {
       );
     } on SttGatewayException catch (error) {
       throw SttServiceException(
-        code: switch (error.kind) {
+        code: error.serviceError == ServiceErrorCategory.client
+            ? 'stt_client'
+            : switch (error.kind) {
           ModelFailureKind.dns => 'stt_dns',
           ModelFailureKind.network => 'stt_network',
           ModelFailureKind.timeout => 'stt_timeout',
           ModelFailureKind.tls => 'stt_tls',
+          ModelFailureKind.authentication => 'stt_authentication',
+          ModelFailureKind.modelNotFound => 'stt_model_not_found',
+          ModelFailureKind.rateLimited => 'stt_rate_limited',
           _ => 'stt_service_error',
         },
         message: error.message,

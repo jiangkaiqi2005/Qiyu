@@ -150,6 +150,7 @@ final class RawSessionTurn {
     required this.at,
     required this.source,
     required this.fallbackReason,
+    this.serviceError,
     required this.mode,
     required this.safety,
   });
@@ -177,6 +178,7 @@ final class RawSessionTurn {
     required ReplySource source,
     required String mode,
     FallbackReason? fallbackReason,
+    ServiceErrorCategory? serviceError,
     SafetyKind? safety,
   }) => RawSessionTurn._(
     requestId: requestId,
@@ -186,6 +188,7 @@ final class RawSessionTurn {
     at: at.toUtc(),
     source: source,
     fallbackReason: fallbackReason,
+    serviceError: serviceError,
     mode: mode,
     safety: safety,
   );
@@ -207,6 +210,9 @@ final class RawSessionTurn {
           ? null
           : FallbackReason.fromWireName(fallbackName),
       mode: json['mode'] as String?,
+      serviceError: json['serviceError'] == null
+          ? null
+          : ServiceErrorCategory.fromWireName(json['serviceError']! as String),
       safety: safetyName == null ? null : SafetyKind.values.byName(safetyName),
     );
   }
@@ -218,6 +224,7 @@ final class RawSessionTurn {
   final DateTime at;
   final ReplySource? source;
   final FallbackReason? fallbackReason;
+  final ServiceErrorCategory? serviceError;
   final String? mode;
   final SafetyKind? safety;
 
@@ -233,6 +240,7 @@ final class RawSessionTurn {
       at: at,
       source: source,
       fallbackReason: fallbackReason,
+      serviceError: serviceError,
       mode: mode,
       safety: safety,
     );
@@ -246,6 +254,7 @@ final class RawSessionTurn {
     'at': at.toUtc().toIso8601String(),
     if (source != null) 'source': source!.name,
     if (fallbackReason != null) 'fallbackReason': fallbackReason!.wireName,
+    if (serviceError != null) 'serviceError': serviceError!.name,
     if (mode != null) 'mode': mode,
     if (safety != null) 'safety': safety!.name,
   };
@@ -1068,6 +1077,7 @@ const _markerStructuralKeys = {
   'mode',
   'speaker',
   'fallbackReason',
+  'serviceError',
   'safety',
   'personaBranch',
   'personaNature',

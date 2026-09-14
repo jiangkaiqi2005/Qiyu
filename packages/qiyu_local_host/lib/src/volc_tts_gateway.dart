@@ -218,4 +218,7 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
 const volcTtsFinishedCode = 20000000;
 
 TtsGatewayException _fromModelFailure(ModelGatewayException failure) =>
-    TtsGatewayException(kind: failure.kind, message: failure.message);
+    TtsGatewayException(
+      kind: failure.kind, message: failure.message,
+      serviceError: failure.serviceError,
+    );

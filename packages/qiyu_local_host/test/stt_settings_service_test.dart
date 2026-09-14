@@ -360,7 +360,8 @@ void main() {
         model: 'volc.seedasr.sauc.duration', apiKey: 'stt-test-key');
       await expectLater(service.transcribe(audio: [1, 2], mimeType: 'audio/wav'),
         throwsA(isA<SttServiceException>()
-          .having((error) => error.code, 'code', 'stt_service_error')
+          .having((error) => error.code, 'code', status == 429
+            ? 'stt_rate_limited' : 'stt_authentication')
           .having((error) => error.message, 'message', status == 429
             ? '语音服务请求过于频繁。' : 'API Key 未通过语音服务验证。')));
     });
@@ -408,7 +409,7 @@ void main() {
       service.transcribe(audio: [1, 2], mimeType: 'audio/webm'),
       throwsA(
         isA<SttServiceException>()
-            .having((error) => error.code, 'code', 'stt_service_error')
+            .having((error) => error.code, 'code', 'stt_rate_limited')
             .having((error) => error.message, 'message', '语音服务请求过于频繁。')
             .having(
               (error) => error.toString(),

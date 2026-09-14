@@ -19,6 +19,21 @@ enum ChatErrorCode {
 
 enum ReplySource { local, llm }
 
+/// 可向界面公开的服务故障类别，不包含服务商响应或诊断文本。
+enum ServiceErrorCategory {
+  authentication,
+  modelNotFound,
+  rateLimited,
+  client,
+  server,
+  network;
+
+  static ServiceErrorCategory fromWireName(String value) => values.firstWhere(
+    (candidate) => candidate.name == value,
+    orElse: () => throw const FormatException('Invalid service error category'),
+  );
+}
+
 enum FallbackReason {
   safety('safety'),
   noLlmConfig('no_llm_config'),
@@ -265,6 +280,7 @@ final class ChatResult extends ChatOutcome {
     required this.source,
     required this.mode,
     this.fallbackReason,
+    this.serviceError,
     this.safety,
     this.schemaVersion = contractSchemaVersion,
   }) : messages = List.unmodifiable(messages);
@@ -285,6 +301,9 @@ final class ChatResult extends ChatOutcome {
       fallbackReason: rawFallbackReason == null
           ? null
           : FallbackReason.fromWireName(rawFallbackReason),
+      serviceError: json['serviceError'] == null
+          ? null
+          : ServiceErrorCategory.fromWireName(json['serviceError'] as String),
       mode: debug['mode'] as String,
       safety: rawSafety == null ? null : SafetyKind.values.byName(rawSafety),
     );
@@ -296,6 +315,7 @@ final class ChatResult extends ChatOutcome {
   final StateSnapshot nextState;
   final ReplySource source;
   final FallbackReason? fallbackReason;
+  final ServiceErrorCategory? serviceError;
   final String mode;
   final SafetyKind? safety;
 
@@ -307,6 +327,7 @@ final class ChatResult extends ChatOutcome {
     'nextState': nextState.toJson(),
     'source': source.name,
     if (fallbackReason != null) 'fallbackReason': fallbackReason!.wireName,
+    if (serviceError != null) 'serviceError': serviceError!.name,
     'debug': {
       'mode': mode,
       if (safety != null) 'safety': safety!.name,
@@ -325,6 +346,7 @@ final class ChatResult extends ChatOutcome {
       other.nextState == nextState &&
       other.source == source &&
       other.fallbackReason == fallbackReason &&
+      other.serviceError == serviceError &&
       other.mode == mode &&
       other.safety == safety;
 
@@ -336,6 +358,7 @@ final class ChatResult extends ChatOutcome {
     nextState,
     source,
     fallbackReason,
+    serviceError,
     mode,
     safety,
   );
@@ -448,6 +471,7 @@ final class ChatDeliveryEvent {
     String? sessionId,
     required ReplySource source,
     FallbackReason? fallbackReason,
+    ServiceErrorCategory? serviceError,
     String? mode,
     SafetyKind? safety,
   }) : this._(
@@ -456,6 +480,7 @@ final class ChatDeliveryEvent {
          sessionId: sessionId,
          source: source,
          fallbackReason: fallbackReason,
+         serviceError: serviceError,
          mode: mode,
          safety: safety,
        );
@@ -464,15 +489,13 @@ final class ChatDeliveryEvent {
     required String requestId,
     String? sessionId,
     required FallbackReason fallbackReason,
-    String? code,
-    String? text,
+    ServiceErrorCategory? serviceError,
   }) : this._(
          kind: ChatDeliveryEventKind.fallback,
          requestId: requestId,
          sessionId: sessionId,
          fallbackReason: fallbackReason,
-         code: code,
-         text: text,
+         serviceError: serviceError,
        );
 
   const ChatDeliveryEvent.cancelled({
@@ -516,6 +539,7 @@ final class ChatDeliveryEvent {
     this.messages,
     this.source,
     this.fallbackReason,
+    this.serviceError,
     this.mode,
     this.safety,
     this.code,
@@ -561,6 +585,7 @@ final class ChatDeliveryEvent {
     }
     final source = optionalField<String>('source');
     final fallbackReason = optionalField<String>('fallbackReason');
+    final serviceError = optionalField<String>('serviceError');
     final safety = optionalField<String>('safety');
     final messages = optionalField<List<Object?>>('messages');
     if (messages != null && messages.any((value) => value is! String)) {
@@ -587,6 +612,9 @@ final class ChatDeliveryEvent {
               (value) => value.wireName,
             ),
       mode: optionalField<String>('mode'),
+      serviceError: serviceError == null
+          ? null
+          : ServiceErrorCategory.fromWireName(serviceError),
       safety: safety == null
           ? null
           : enumValue<SafetyKind>(
@@ -606,6 +634,7 @@ final class ChatDeliveryEvent {
   final List<String>? messages;
   final ReplySource? source;
   final FallbackReason? fallbackReason;
+  final ServiceErrorCategory? serviceError;
   final String? mode;
   final SafetyKind? safety;
   final String? code;
@@ -619,6 +648,7 @@ final class ChatDeliveryEvent {
     if (messages != null) 'messages': messages,
     if (source != null) 'source': source!.name,
     if (fallbackReason != null) 'fallbackReason': fallbackReason!.wireName,
+    if (serviceError != null) 'serviceError': serviceError!.name,
     if (mode != null) 'mode': mode,
     if (safety != null) 'safety': safety!.name,
     if (code != null) 'code': code,

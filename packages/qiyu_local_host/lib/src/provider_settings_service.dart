@@ -54,12 +54,19 @@ final class ProviderTestResult {
 }
 
 final class ModelCompletion {
-  const ModelCompletion.reply(String this.text) : failure = null;
+  const ModelCompletion.reply(String this.text)
+    : failure = null, _serviceError = null;
 
-  const ModelCompletion.failure(ModelFailureKind this.failure) : text = null;
+  const ModelCompletion.failure(
+    ModelFailureKind this.failure, {
+    this._serviceError,
+  }) : text = null;
 
   final String? text;
   final ModelFailureKind? failure;
+  final ServiceErrorCategory? _serviceError;
+  ServiceErrorCategory? get serviceError =>
+      _serviceError ?? serviceErrorForModelFailure(failure);
 
   bool get succeeded => text != null;
 }
@@ -322,7 +329,7 @@ final class ProviderSettingsService
       );
       return ModelCompletion.reply(text);
     } on ModelGatewayException catch (error) {
-      return ModelCompletion.failure(error.kind);
+      return ModelCompletion.failure(error.kind, serviceError: error.serviceError);
     } on Object {
       return const ModelCompletion.failure(ModelFailureKind.internal);
     }
@@ -402,7 +409,9 @@ final class ProviderSettingsService
       yield ModelStreamEvent.delta(text);
       yield const ModelStreamEvent.done();
     } on ModelGatewayException catch (error) {
-      yield ModelStreamEvent.failure(error.kind, error.message);
+      yield ModelStreamEvent.failure(
+        error.kind, error.message, serviceError: error.serviceError,
+      );
     } on Object {
       yield const ModelStreamEvent.failure(
         ModelFailureKind.internal,

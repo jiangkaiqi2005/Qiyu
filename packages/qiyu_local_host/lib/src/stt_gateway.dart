@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
@@ -14,10 +16,13 @@ import 'volc_seed_asr_gateway.dart';
 /// （域名解析/TLS/超时/鉴权/网络/模型不存在/限流/响应不兼容/解析
 /// 失败/服务拒绝/内部错误），文案换成「语音服务」。
 final class SttGatewayException implements Exception {
-  const SttGatewayException({required this.kind, required this.message});
+  const SttGatewayException({
+    required this.kind, required this.message, this.serviceError,
+  });
 
   final ModelFailureKind kind;
   final String message;
+  final ServiceErrorCategory? serviceError;
 
   @override
   String toString() => message;
@@ -240,7 +245,10 @@ Uint8List _multipartBody({
 }
 
 SttGatewayException _fromModelFailure(ModelGatewayException failure) =>
-    SttGatewayException(kind: failure.kind, message: failure.message);
+    SttGatewayException(
+      kind: failure.kind, message: failure.message,
+      serviceError: failure.serviceError,
+    );
 
 /// STT 家族（OpenAI 兼容与豆包流式）共用的 Key 前置校验：返回 trim 后
 /// 的 Key。空按未保存鉴权失败；脏字符按粘贴事故拦截——粘贴进表单的

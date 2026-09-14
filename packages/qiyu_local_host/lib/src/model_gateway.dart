@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
 import 'cleartext_policy.dart';
 import 'provider_config.dart';
 import 'web_search.dart';
@@ -30,10 +32,17 @@ enum ModelFailureKind {
 }
 
 final class ModelGatewayException implements Exception {
-  const ModelGatewayException({required this.kind, required this.message});
+  const ModelGatewayException({
+    required this.kind,
+    required this.message,
+    this._serviceError,
+  });
 
   final ModelFailureKind kind;
   final String message;
+  final ServiceErrorCategory? _serviceError;
+  ServiceErrorCategory? get serviceError =>
+      _serviceError ?? serviceErrorForModelFailure(kind);
 
   @override
   String toString() => message;
@@ -286,6 +295,18 @@ final class DartIoProviderHttpClient
   }
 }
 
+/// 只从已分类的故障种类推导公开类别；未知 Provider 故障不猜测文本。
+ServiceErrorCategory? serviceErrorForModelFailure(ModelFailureKind? kind) =>
+    switch (kind) {
+      ModelFailureKind.authentication => ServiceErrorCategory.authentication,
+      ModelFailureKind.modelNotFound => ServiceErrorCategory.modelNotFound,
+      ModelFailureKind.rateLimited => ServiceErrorCategory.rateLimited,
+      ModelFailureKind.dns || ModelFailureKind.tls ||
+      ModelFailureKind.timeout || ModelFailureKind.network =>
+        ServiceErrorCategory.network,
+      _ => null,
+    };
+
 /// 取消显式结束消费，不依赖 HttpClient.close 是否会为静默流派发事件。
 Stream<String> _cancelResponse(
   Stream<String> body,
@@ -513,22 +534,28 @@ enum ModelStreamEventKind { delta, done, failure }
 final class ModelStreamEvent {
   const ModelStreamEvent.delta(String this.text)
     : kind = ModelStreamEventKind.delta,
+      _serviceError = null,
       failure = null,
       message = null;
 
   const ModelStreamEvent.done()
     : kind = ModelStreamEventKind.done,
+      _serviceError = null,
       text = null,
       failure = null,
       message = null;
 
   const ModelStreamEvent.failure(
     ModelFailureKind this.failure,
-    String this.message,
-  ) : kind = ModelStreamEventKind.failure,
+    String this.message, {
+    this._serviceError,
+  }) : kind = ModelStreamEventKind.failure,
       text = null;
 
   final ModelStreamEventKind kind;
+  final ServiceErrorCategory? _serviceError;
+  ServiceErrorCategory? get serviceError =>
+      _serviceError ?? serviceErrorForModelFailure(failure);
   final String? text;
   final ModelFailureKind? failure;
   final String? message;
@@ -584,6 +611,7 @@ final class ProviderModelGateway
         throw ModelGatewayException(
           kind: event.failure!,
           message: event.message!,
+          serviceError: event.serviceError,
         );
       }
     }
@@ -660,7 +688,9 @@ final class ProviderModelGateway
     } on SocketException catch (error) {
       final failure = _socketFailure(error);
       _diagnosticsSink?.call('model connection socket error [${failure.kind}]');
-      yield ModelStreamEvent.failure(failure.kind, failure.message);
+      yield ModelStreamEvent.failure(
+        failure.kind, failure.message, serviceError: failure.serviceError,
+      );
       return;
     } on HttpException {
       _diagnosticsSink?.call('model connection http error');
@@ -671,7 +701,9 @@ final class ProviderModelGateway
       return;
     } on ModelGatewayException catch (error) {
       _diagnosticsSink?.call('model gateway error [${error.kind}] ${error.message}');
-      yield ModelStreamEvent.failure(error.kind, error.message);
+      yield ModelStreamEvent.failure(
+        error.kind, error.message, serviceError: error.serviceError,
+      );
       return;
     } on Object catch (error) {
       _diagnosticsSink?.call('model connection unexpected error [$error]');
@@ -699,7 +731,9 @@ final class ProviderModelGateway
         _diagnosticsSink?.call(
           'model response error body failure [${error.kind}]',
         );
-        yield ModelStreamEvent.failure(error.kind, error.message);
+        yield ModelStreamEvent.failure(
+        error.kind, error.message, serviceError: error.serviceError,
+      );
         return;
       } on Object catch (error) {
         _diagnosticsSink?.call('model response error body read error [$error]');
@@ -711,7 +745,9 @@ final class ProviderModelGateway
       }
       final failure = _statusFailure(response.statusCode, body);
       _diagnosticsSink?.call('model response status error [${failure.kind}] status=${response.statusCode}');
-      yield ModelStreamEvent.failure(failure.kind, failure.message);
+      yield ModelStreamEvent.failure(
+        failure.kind, failure.message, serviceError: failure.serviceError,
+      );
       return;
     }
     var emittedText = false;
@@ -754,7 +790,9 @@ final class ProviderModelGateway
       return;
     } on ModelGatewayException catch (error) {
       _diagnosticsSink?.call('model gateway error [${error.kind}] ${error.message}');
-      yield ModelStreamEvent.failure(error.kind, error.message);
+      yield ModelStreamEvent.failure(
+        error.kind, error.message, serviceError: error.serviceError,
+      );
       return;
     } on Object catch (error) {
       _diagnosticsSink?.call('model stream unexpected error [$error]');
@@ -955,7 +993,9 @@ final class ProviderModelGateway
     } on SocketException catch (error) {
       _diagnosticsSink?.call('web search socket error [$error]');
       final failure = _socketFailure(error);
-      yield ModelStreamEvent.failure(failure.kind, failure.message);
+      yield ModelStreamEvent.failure(
+        failure.kind, failure.message, serviceError: failure.serviceError,
+      );
     } on HttpException catch (error) {
       _diagnosticsSink?.call('web search http error [$error]');
       yield const ModelStreamEvent.failure(
@@ -966,7 +1006,9 @@ final class ProviderModelGateway
       _diagnosticsSink?.call(
         'web search model error [${error.kind}] ${error.message}',
       );
-      yield ModelStreamEvent.failure(error.kind, error.message);
+      yield ModelStreamEvent.failure(
+        error.kind, error.message, serviceError: error.serviceError,
+      );
     } on Object catch (error) {
       _diagnosticsSink?.call('web search unexpected error [$error]');
       yield const ModelStreamEvent.failure(
@@ -1508,11 +1550,13 @@ ModelGatewayException providerStatusFailure(
     );
   }
   final lowerBody = body.toLowerCase();
-  if (lowerBody.contains('model') &&
+  final missingModelMessage = lowerBody.contains('model') &&
       (lowerBody.contains('not found') ||
           lowerBody.contains('does not exist') ||
           lowerBody.contains('unknown model') ||
-          lowerBody.contains('no such model'))) {
+          lowerBody.contains('no such model'));
+  if (statusCode >= 400 && statusCode < 500 &&
+      (_hasMissingModelCode(body) || missingModelMessage)) {
     return const ModelGatewayException(
       kind: ModelFailureKind.modelNotFound,
       message: '模型名称不存在或当前账号不可用。',
@@ -1521,7 +1565,23 @@ ModelGatewayException providerStatusFailure(
   return ModelGatewayException(
     kind: ModelFailureKind.provider,
     message: '$serviceLabel拒绝了这次请求。',
+    serviceError: statusCode >= 400 && statusCode < 500
+        ? ServiceErrorCategory.client
+        : statusCode >= 500 && statusCode < 600
+        ? ServiceErrorCategory.server
+        : null,
   );
+}
+
+bool _hasMissingModelCode(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is! Map<String, Object?>) return false;
+    final error = decoded['error'];
+    return error is Map<String, Object?> && error['code'] == 'model_not_found';
+  } on FormatException {
+    return false;
+  }
 }
 
 ModelGatewayException _socketFailure(SocketException error) =>

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
@@ -12,10 +14,13 @@ import 'volc_tts_gateway.dart';
 /// （域名解析/TLS/超时/鉴权/网络/模型不存在/限流/响应不兼容/解析
 /// 失败/服务拒绝/内部错误），文案说「语音合成服务」。
 final class TtsGatewayException implements Exception {
-  const TtsGatewayException({required this.kind, required this.message});
+  const TtsGatewayException({
+    required this.kind, required this.message, this.serviceError,
+  });
 
   final ModelFailureKind kind;
   final String message;
+  final ServiceErrorCategory? serviceError;
 
   @override
   String toString() => message;
@@ -128,7 +133,10 @@ void ensureTtsOutboundAllowed(Uri uri) {
 }
 
 TtsGatewayException _fromModelFailure(ModelGatewayException failure) =>
-    TtsGatewayException(kind: failure.kind, message: failure.message);
+    TtsGatewayException(
+      kind: failure.kind, message: failure.message,
+      serviceError: failure.serviceError,
+    );
 
 /// TTS 家族（OpenAI 兼容与豆包）共用的 Key 前置校验：返回 trim 后的
 /// Key。空按未保存鉴权失败；脏字符（粘贴进表单常带零宽空格/中文，会

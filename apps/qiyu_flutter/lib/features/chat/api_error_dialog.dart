@@ -64,87 +64,24 @@ enum ApiErrorCategory {
   };
 }
 
-/// 基于结构化错误码或特征识别，精准归类语音链路（TTS / STT）的异常类别。
-///
-/// 消除基本类型偏执：优先且主要依赖 [LocalChatGatewayException.code]
-/// （如 `tts_model_not_found`、`stt_model_not_found`、`tts_rate_limited`、
-/// `stt_auth_failed` 等结构化错误码）。仅在 code 为空时降级为严格的特征识别。
+/// 只消费 Host 公开的精确错误码；未知故障与网络抖动保留就地提示。
 ApiErrorCategory? categorizeVoiceApiError(
   Object error, {
   required bool isInput,
 }) {
-  String? code;
-  if (error is LocalChatGatewayException) {
-    code = error.code;
-  }
-  if (code != null && code.isNotEmpty) {
-    final c = code.toLowerCase();
-    // 无有效语音只需重试或重录，不代表服务配置或额度故障。
-    if (c == 'stt_no_speech') return null;
-    // 网络故障保留就地重试，不引导用户修改已正确的配置或额度。
-    if (const {'stt_dns', 'stt_network', 'stt_timeout', 'stt_tls'}.contains(c)) {
-      return null;
-    }
-    if (c.contains('model_not_found') ||
-        c.contains('not_found') ||
-        c.contains('404')) {
-      return ApiErrorCategory.modelNotFound;
-    }
-    if (c.contains('authentication') ||
-        c.contains('auth_failed') ||
-        c.contains('401') ||
-        c.contains('403')) {
-      return ApiErrorCategory.authentication;
-    }
-    if (c.contains('rate_limited') || c.contains('429')) {
-      return ApiErrorCategory.rateLimited;
-    }
-    if (c.contains('stt_') ||
-        c.contains('tts_') ||
-        c.contains('config_invalid') ||
-        c.contains('service_error')) {
-      return isInput ? ApiErrorCategory.sttError : ApiErrorCategory.ttsError;
-    }
-  }
-
-  // code 为空时降级为严格特征识别
-  final str = error.toString().toLowerCase();
-  if (str.contains('not_found') ||
-      str.contains('404') ||
-      str.contains('不存在') ||
-      str.contains('未找到')) {
-    return ApiErrorCategory.modelNotFound;
-  }
-  if (str.contains('401') ||
-      str.contains('403') ||
-      str.contains('authentication') ||
-      str.contains('未通过验证') ||
-      str.contains('鉴权')) {
-    return ApiErrorCategory.authentication;
-  }
-  if (str.contains('429') ||
-      str.contains('rate_limited') ||
-      str.contains('过于频繁') ||
-      str.contains('请求受限')) {
-    return ApiErrorCategory.rateLimited;
-  }
-  if (isInput &&
-      (str.contains('stt') ||
-          str.contains('转写') ||
-          str.contains('语音服务') ||
-          str.contains('麦克风'))) {
-    return ApiErrorCategory.sttError;
-  }
-  if (!isInput &&
-      (str.contains('tts') ||
-          str.contains('朗读') ||
-          str.contains('合成') ||
-          str.contains('播报'))) {
-    return ApiErrorCategory.ttsError;
-  }
-  return null;
+  if (error is! LocalChatGatewayException) return null;
+  return switch ((isInput, error.code)) {
+    (true, 'stt_authentication') ||
+    (false, 'tts_authentication') => ApiErrorCategory.authentication,
+    (true, 'stt_model_not_found') ||
+    (false, 'tts_model_not_found') => ApiErrorCategory.modelNotFound,
+    (true, 'stt_rate_limited') ||
+    (false, 'tts_rate_limited') => ApiErrorCategory.rateLimited,
+    (true, 'stt_client' || 'stt_config_invalid') => ApiErrorCategory.sttError,
+    (false, 'tts_client' || 'tts_config_invalid') => ApiErrorCategory.ttsError,
+    _ => null,
+  };
 }
-
 /// 判断异常对象是否属于 429 限流或 40x 鉴权/模型不存在等配置错误。
 bool isVoiceApiError(Object error) =>
     categorizeVoiceApiError(error, isInput: true) != null ||
