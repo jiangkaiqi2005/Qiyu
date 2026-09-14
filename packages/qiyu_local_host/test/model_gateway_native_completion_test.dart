@@ -7,6 +7,130 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final scenario in [
+    (name: '无工具纯文本', useTool: false, firstOpen: true),
+    (name: '工具结果后第二回合', useTool: true, firstOpen: false),
+    (name: '工具调用前后两个回合', useTool: true, firstOpen: true),
+  ]) {
+    test('Anthropic 工具入口${scenario.name}在 HTTP 未 EOF 时完成', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final requests = <Map<String, Object?>>[];
+      server.listen((request) async {
+        requests.add(
+          jsonDecode(await utf8.decoder.bind(request).join())
+              as Map<String, Object?>,
+        );
+        final first = requests.length == 1;
+        request.response.bufferOutput = false;
+        request.response.add(
+          utf8.encode(
+            scenario.useTool && first ? _anthropicToolBody : _anthropicTextBody,
+          ),
+        );
+        try {
+          await request.response.flush();
+          if (first && !scenario.firstOpen) {
+            await request.response.close();
+          }
+        } on Object {
+          // 原生结束后的客户端取消或测试清理会关闭连接。
+        }
+      });
+      final search = _RecordingSearch();
+      final events = await _searchEvents(
+        const DartIoProviderHttpClient(),
+        search,
+        port: server.port,
+      );
+      _expectCompleted(events);
+      expect(requests, hasLength(scenario.useTool ? 2 : 1));
+      expect(search.queries, scenario.useTool ? ['今天天气'] : isEmpty);
+      if (scenario.useTool) {
+        final messages = requests.last['messages']! as List;
+        expect((messages[messages.length - 2] as Map)['content'], [
+          {
+            'type': 'tool_use',
+            'id': 'tool-1',
+            'name': 'web_search',
+            'input': {'query': '今天天气'},
+          },
+        ]);
+        expect((messages.last as Map)['content'], [
+          {'type': 'tool_result', 'tool_use_id': 'tool-1', 'content': '[]'},
+        ]);
+      }
+    });
+  }
+
+  for (final round in ['纯文本', '工具首轮', '工具次轮']) {
+    test('Anthropic 工具入口$round按终态前后顺序处理同块及分块异常', () async {
+      for (final invalid in [
+        [0xff, 0x0a],
+        [...List<int>.filled(1024 * 1024 + 1, 0x78), 0x0a],
+        utf8.encode(
+          'data: {"type":"error","error":{"message":"synthetic-error"}}\n',
+        ),
+      ]) {
+        for (final afterDone in [false, true]) {
+          final terminal = utf8.encode(
+            round == '工具首轮' ? _anthropicToolBody : _anthropicTextBody,
+          );
+          final chunks = afterDone ? [terminal, invalid] : [invalid, terminal];
+          for (final layout in [
+            chunks,
+            [chunks.expand((bytes) => bytes).toList()],
+          ]) {
+            final target = _ByteHttpClient(layout);
+            final transports = [
+              if (round == '工具次轮')
+                _ByteHttpClient([utf8.encode(_anthropicToolBody)]),
+              target,
+              if (round == '工具首轮')
+                _ByteHttpClient([utf8.encode(_anthropicTextBody)]),
+            ];
+            var requests = 0;
+            final search = _RecordingSearch();
+            final events = await _searchEvents(
+              DartIoProviderHttpClient(
+                httpClientFactory: (_) => transports[requests++],
+              ),
+              search,
+            );
+            if (afterDone) {
+              _expectCompleted(events);
+            } else {
+              expect(events.single.kind, ModelStreamEventKind.failure);
+            }
+            final searched = round == '工具次轮' || (round == '工具首轮' && afterDone);
+            expect(search.queries, searched ? ['今天天气'] : isEmpty);
+            expect(requests, searched ? 2 : 1);
+            expect(
+              transports
+                  .take(requests)
+                  .every(
+                    (transport) =>
+                        transport.closed && transport.response.cancelled,
+                  ),
+              isTrue,
+            );
+          }
+        }
+      }
+    });
+  }
+
+  test('Anthropic 工具入口结束后仍校验工具参数再执行搜索', () async {
+    final transport = _ByteHttpClient([
+      utf8.encode(_anthropicToolBody.replaceAll('query', 'unknown')),
+    ]);
+    final search = _RecordingSearch();
+    final events = await _searchEvents(transport.provider, search);
+    expect(events.single.failure, ModelFailureKind.contentParsing);
+    expect(search.queries, isEmpty);
+    expect(transport.closed && transport.response.cancelled, isTrue);
+  });
+
   for (final fixture in _nativeCompletions) {
     test('${fixture.name} 完整结束行在 HTTP 未 EOF 时完成，与普通通道一致', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -327,6 +451,51 @@ void main() {
 }
 
 const _openAiDelta = 'data: {"choices":[{"delta":{"content":"在。"}}]}\n';
+
+const _anthropicTextBody =
+    'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"在。"}}\n'
+    'data: {"type":"message_stop"}\n';
+
+const _anthropicToolBody =
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool-1","name":"web_search","input":{}}}\n'
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"query\\":\\"今天"}}\n'
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"天气\\"}"}}\n'
+    'data: {"type":"message_stop"}\n';
+
+Future<List<ModelStreamEvent>> _searchEvents(
+  ProviderHttpClient client,
+  WebSearchClient search, {
+  int port = 12345,
+}) => ProviderModelGateway(client)
+    .streamWithWebSearch(
+      config: ProviderConfig(
+        kind: ProviderKind.anthropic,
+        baseUrl: 'http://127.0.0.1:$port/v1',
+        model: 'synthetic',
+        temperature: 0.6,
+        timeoutSeconds: 1,
+      ),
+      apiKey: 'synthetic-key',
+      messages: const [ModelMessage(ModelMessageRole.user, '在吗')],
+      webSearchApiKey: 'synthetic-search-key',
+      webSearchClient: search,
+    )
+    .toList()
+    .timeout(const Duration(seconds: 5));
+
+final class _RecordingSearch implements WebSearchClient {
+  final queries = <String>[];
+
+  @override
+  Future<List<WebSearchResult>> search({
+    required String apiKey,
+    required String query,
+    Future<void>? whenCancelled,
+  }) async {
+    queries.add(query);
+    return const [];
+  }
+}
 
 const _responseLimit = 16 * 1024 * 1024;
 

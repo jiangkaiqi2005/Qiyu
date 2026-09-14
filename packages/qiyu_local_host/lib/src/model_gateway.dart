@@ -1196,7 +1196,10 @@ final class ProviderModelGateway
               : toolBuffersByIndex[event.blockIndex];
           buffer?.input.write(event.toolInputDelta);
         }
-        stopped = event.done || stopped;
+        if (event.done) {
+          stopped = true;
+          break;
+        }
       }
     } on Object {
       if (cancelled) {
