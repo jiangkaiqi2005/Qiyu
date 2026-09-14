@@ -190,6 +190,7 @@ final class LocalAppHost {
     final memoryControls = MemoryControlsStore(
       memoryDirectory: memoryDirectory,
       atomicWriter: atomicWriter,
+      commits: episodePipeline.commits,
     );
     // Open-loop 生命周期由日终归档与对话即时生效两条路径共享同一存储。
     final openLoopStore = OpenLoopStore(
@@ -200,7 +201,7 @@ final class LocalAppHost {
     // 关系生命周期由日终归档与删除即时清除共享同一实例。
     final relationshipLifecycle = RelationshipLifecycle(
       memoryDirectory: memoryDirectory,
-      atomicWriter: atomicWriter,
+      atomicWriter: episodePipeline.commits.wrap(atomicWriter),
       clock: clock,
     );
     // PersonaTree 同样由随手记建叶与日终整理两条路径共享同一实例：

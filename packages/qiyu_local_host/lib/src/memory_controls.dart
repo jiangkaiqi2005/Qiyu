@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 
 import 'markdown_memory_repository.dart';
+import 'memory_commit.dart';
 import 'memory_text_primitives.dart';
 
 /// memory-controls.md 的一条控制记录：稳定 ID（删除后不复用）、
@@ -84,23 +85,27 @@ final class MemoryControlsStore {
   MemoryControlsStore({
     required this.memoryDirectory,
     AtomicTextWriter? atomicWriter,
+    MemoryCommitCoordinator? commits,
     void Function(String message)? diagnosticsSink,
-  }) : _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
+  }) : commits = commits ?? MemoryCommitCoordinator(memoryDirectory),
+       _sourceWriter = atomicWriter,
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
   final String memoryDirectory;
-  final AtomicTextWriter _atomicWriter;
+  final MemoryCommitCoordinator commits;
+  final AtomicTextWriter? _sourceWriter;
+  late final AtomicTextWriter _atomicWriter = commits.wrap(_sourceWriter);
   final void Function(String) _diagnosticsSink;
   Future<void> _lockTail = Future.value();
 
   File get controlsFile =>
       File(path.join(memoryDirectory, memoryControlsFileName));
 
-  Future<T> _withLock<T>(Future<T> Function() body) {
+  Future<T> _withLock<T>(Future<T> Function() body) => commits.commit(() {
     final result = _lockTail.then((_) => body());
     _lockTail = result.then<void>((_) {}, onError: (_) {});
     return result;
-  }
+  });
 
   /// 读取当前控制快照；文件不存在返回空的可写快照。
   Future<MemoryControls> load() async {

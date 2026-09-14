@@ -163,17 +163,36 @@ final class LocalChatService {
   /// 成功或失败都在 finally 里恢复常规调度：维护抛异常不卡死后续
   /// 调度，未完成整理由下一次空闲补办继续。等待的只有已在途工作，
   /// 维护入口自身不在任何被等待的任务链上，不会形成自身等待死锁。
-  Future<T> runExclusively<T>(Future<T> Function() operation) =>
-      _serialized(() async {
-        memoryCadence?.pauseBackgroundScheduling();
-        try {
-          await memoryCadence?.finalizePending();
-          await _recallTask;
-          return await operation();
-        } finally {
-          memoryCadence?.resumeBackgroundScheduling();
-        }
-      });
+  Future<T> runExclusively<T>(Future<T> Function() operation) {
+    Future<T> drainAndRun() async {
+      memoryCadence?.pauseBackgroundScheduling();
+      try {
+        await memoryCadence?.finalizePending();
+        await _recallTask;
+        return await operation();
+      } finally {
+        memoryCadence?.resumeBackgroundScheduling();
+      }
+    }
+
+    final commits = episodePipeline?.commits;
+    if (commits == null) {
+      return _serialized(drainAndRun);
+    }
+    // 同步关闭新 UI 操作准入并保留聊天队列中的维护位置：等待在途
+    // UI 时，新聊天也不能插队。排空和维护都不持有短提交锁。
+    final admitted = Completer<void>();
+    late final Future<T> queued;
+    final maintenance = commits.maintenance(() {
+      admitted.complete();
+      return queued;
+    });
+    queued = _serialized(() async {
+      await admitted.future;
+      return commits.existingOperation(drainAndRun);
+    });
+    return maintenance;
+  }
 
   Future<LocalChatSnapshot> restore({String? sessionId}) => _serialized(
     () async =>
@@ -764,7 +783,9 @@ final class LocalChatService {
       return;
     }
     try {
-      final written = await tree.setAppellation(candidate);
+      final written = await tree.episodePipeline.commits.existingOperation(
+        () => tree.setAppellation(candidate),
+      );
       if (written == null) {
         _diagnosticsSink(
           'appellation self-report rejected reason=format '

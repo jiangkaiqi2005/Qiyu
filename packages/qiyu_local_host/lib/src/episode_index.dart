@@ -72,7 +72,7 @@ final class EpisodeIndexStore {
     required this.memoryDirectory,
     required this.episodePipeline,
     AtomicTextWriter? atomicWriter,
-  }) : _atomicWriter = atomicWriter ?? const IoAtomicTextWriter();
+  }) : _atomicWriter = episodePipeline.commits.wrap(atomicWriter);
 
   final String memoryDirectory;
   final EpisodeMemoryPipeline episodePipeline;
@@ -182,7 +182,7 @@ final class EpisodeIndexStore {
 
     if (monthDayLines.isEmpty) {
       if (await topIndexFile.exists()) {
-        await topIndexFile.delete();
+        await episodePipeline.commits.delete(topIndexFile);
       }
       return;
     }

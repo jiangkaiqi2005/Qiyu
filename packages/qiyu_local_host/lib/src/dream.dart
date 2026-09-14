@@ -7,6 +7,7 @@ import 'daily_finalization.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_commit.dart';
 import 'memory_controls.dart';
 import 'memory_marker_codec.dart';
 import 'memory_text_primitives.dart';
@@ -98,6 +99,9 @@ enum DreamStatus {
 
   /// 接纳过程写入失败：旧 long-memory 与上次成功时间保持原样。
   writeFailed,
+
+  /// 模型等待期间相关记忆已改变；整份旧候选延期，保留 pending。
+  deferredConflict,
 }
 
 final class DreamOutcome {
@@ -445,7 +449,7 @@ final class DreamService {
     AtomicTextWriter? atomicWriter,
     void Function(String message)? diagnosticsSink,
   }) : _clock = clock ?? DateTime.now,
-       _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
+       _atomicWriter = episodePipeline.commits.wrap(atomicWriter),
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
   final String memoryDirectory;
@@ -526,6 +530,15 @@ final class DreamService {
     // 进行中的草稿。
     await _deleteIfExists(_draftFile);
 
+    final MemoryContentSnapshot inputSnapshot;
+    try {
+      inputSnapshot = await episodePipeline.commits.snapshot();
+    } on Object {
+      return const DreamOutcome(
+        status: DreamStatus.skippedUnreadable,
+        detail: 'commit-input',
+      );
+    }
     final existingContent = await readFileIfExists(_longMemoryFile);
     LongMemoryFile? existing;
     if (existingContent != null) {
@@ -712,69 +725,90 @@ final class DreamService {
       }
     }
 
-    // 原子接纳（T10：先备份旧文件再替换；每一步都是 temp+rename）。
+    // 全库内容核对留在短锁外；进锁后版本必须仍等于两次扫描的版本。
+    // 任一相关成功写入立即废止旧凭证，不能等待整项用户动作结束。
+    final MemoryContentSnapshot currentSnapshot;
     try {
-      if (existingContent != null) {
-        await _atomicWriter.replace(_backupFile.path, existingContent);
-      }
-      await _atomicWriter.replace(_longMemoryFile.path, draftContent);
-      await _atomicWriter.replace(
-        _stateFile.path,
-        _encodeState(DreamState(lastSuccess: now, pending: false)),
+      currentSnapshot = await episodePipeline.commits.snapshot();
+    } on Object {
+      return const DreamOutcome(
+        status: DreamStatus.skippedUnreadable,
+        detail: 'commit-current',
       );
-      // 树变更落盘前先备份全部可读分支与归档（T26：PersonaTree 的
-      // 最近有效 Dream 备份是它的恢复来源）。备份失败只记诊断，
-      // 不阻断树变更（与既有「树失败不回滚长期印象」同律）。
-      await _backupPersonaTree();
-      // 长期印象替换成功后才动树：树变更失败不回滚长期印象（不同文件，
-      // 下次 Dream 可再评估），只把对应提案记为未落盘。
-      if (acceptedOps.isNotEmpty) {
-        try {
-          final result = await personaTree!.applyDreamChanges(
-            date: today,
-            ops: acceptedOps,
-          );
-          var cursor = 0;
-          for (final record in opRecords) {
-            if (record.reason != null) {
-              continue;
+    }
+    return episodePipeline.commits.commit(() async {
+      try {
+        if (!episodePipeline.commits.unchanged(inputSnapshot, currentSnapshot)) {
+          await _deleteIfExists(_draftFile);
+          await _writeChanges(_buildChanges(
+            (today: today, previousState: state, result: 'deferred (memory-changed)'),
+            input, items, existing, includeDetails: false,
+          ));
+          return const DreamOutcome(status: DreamStatus.deferredConflict);
+        }
+        // 接纳短锁覆盖长期印象与画像写入，不获取 episode 日任务锁。
+        if (existingContent != null) {
+          await _atomicWriter.replace(_backupFile.path, existingContent);
+        }
+        await _atomicWriter.replace(_longMemoryFile.path, draftContent);
+        await _atomicWriter.replace(
+          _stateFile.path,
+          _encodeState(DreamState(lastSuccess: now, pending: false)),
+        );
+        // 树变更落盘前先备份全部可读分支与归档（T26：PersonaTree 的
+        // 最近有效 Dream 备份是它的恢复来源）。备份失败只记诊断，
+        // 不阻断树变更（与既有「树失败不回滚长期印象」同律）。
+        await _backupPersonaTree();
+        // 长期印象替换成功后才动树：树变更失败不回滚长期印象（不同文件，
+        // 下次 Dream 可再评估），只把对应提案记为未落盘。
+        if (acceptedOps.isNotEmpty) {
+          try {
+            final result = await personaTree!.applyDreamChanges(
+              date: today,
+              ops: acceptedOps,
+            );
+            var cursor = 0;
+            for (final record in opRecords) {
+              if (record.reason != null) {
+                continue;
+              }
+              final outcome = result.outcomes[cursor];
+              cursor += 1;
+              if (outcome != null) {
+                record.reason = 'skipped-in-apply($outcome)';
+              }
             }
-            final outcome = result.outcomes[cursor];
-            cursor += 1;
-            if (outcome != null) {
-              record.reason = 'skipped-in-apply($outcome)';
+          } on Object catch (error) {
+            _diagnosticsSink('dream persona apply deferred [$error]');
+            for (final record in opRecords) {
+              record.reason ??= 'apply-deferred';
             }
-          }
-        } on Object catch (error) {
-          _diagnosticsSink('dream persona apply deferred [$error]');
-          for (final record in opRecords) {
-            record.reason ??= 'apply-deferred';
           }
         }
+        await _writeChanges(
+          _buildChanges(
+            (today: today, previousState: state, result: 'accepted'),
+            input,
+            items,
+            existing,
+            includeDetails: true,
+            rootOps: opRecords,
+          ),
+        );
+        await _archiveChanges(today);
+        await _deleteIfExists(_draftFile);
+      } on Object catch (error) {
+        return DreamOutcome(status: DreamStatus.writeFailed, detail: '$error');
       }
-      await _writeChanges(
-        _buildChanges(
-          (today: today, previousState: state, result: 'accepted'),
-          input,
-          items,
-          existing,
-          includeDetails: true,
-          rootOps: opRecords,
-        ),
+      final appliedCount = opRecords
+          .where((record) => record.reason == null)
+          .length;
+      return DreamOutcome(
+        status: DreamStatus.accepted,
+        rootOpsApplied: appliedCount,
+        rootOpsRejected: opRecords.length - appliedCount,
       );
-      await _archiveChanges(today);
-      await _deleteIfExists(_draftFile);
-    } on Object catch (error) {
-      return DreamOutcome(status: DreamStatus.writeFailed, detail: '$error');
-    }
-    final appliedCount = opRecords
-        .where((record) => record.reason == null)
-        .length;
-    return DreamOutcome(
-      status: DreamStatus.accepted,
-      rootOpsApplied: appliedCount,
-      rootOpsRejected: opRecords.length - appliedCount,
-    );
+    });
   }
 
   /// 只读暴露最近一次成功 Dream 的状态（ticket 19 记忆中心展示

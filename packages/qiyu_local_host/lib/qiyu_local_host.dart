@@ -18,6 +18,7 @@ export 'src/memory_backup.dart';
 export 'src/memory_cadence.dart';
 export 'src/memory_center.dart';
 export 'src/memory_controls.dart';
+export 'src/memory_commit.dart';
 export 'src/memory_marker_codec.dart';
 export 'src/memory_recall.dart';
 export 'src/memory_recovery.dart';

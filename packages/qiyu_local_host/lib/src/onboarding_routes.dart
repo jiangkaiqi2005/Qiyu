@@ -49,23 +49,25 @@ final class OnboardingRoutes implements ApiRoutes {
     }
     if (method == 'POST' && path == 'api/onboarding/complete') {
       final appellation = await _readOptionalAppellation(request);
-      if (appellation != null) {
-        // 校验先行：称呼被拒时引导保持未完成，用户可改后重试或跳过。
-        final written = await personaTree.setAppellation(appellation);
-        if (written == null) {
-          return jsonError(
-            HttpStatus.badRequest,
-            code: 'invalid_appellation',
-            message: appellationRejectedMessage,
-            retryable: false,
-          );
+      return personaTree.episodePipeline.commits.operation(() async {
+        if (appellation != null) {
+          // 校验先行：称呼被拒时引导保持未完成，用户可改后重试或跳过。
+          final written = await personaTree.setAppellation(appellation);
+          if (written == null) {
+            return jsonError(
+              HttpStatus.badRequest,
+              code: 'invalid_appellation',
+              message: appellationRejectedMessage,
+              retryable: false,
+            );
+          }
         }
-      }
-      final state = await onboardingRepository.markCompleted(DateTime.now());
-      return Response.ok(
-        jsonEncode({'completed': state.completed}),
-        headers: jsonHeaders,
-      );
+        final state = await onboardingRepository.markCompleted(DateTime.now());
+        return Response.ok(
+          jsonEncode({'completed': state.completed}),
+          headers: jsonHeaders,
+        );
+      });
     }
     return null;
   }

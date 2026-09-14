@@ -194,7 +194,7 @@ final class MemoryActionService {
          openLoopStore: openLoopStore,
          monthlySummary: monthlySummary,
        ),
-       _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
+       _atomicWriter = episodePipeline.commits.wrap(atomicWriter),
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
   final String memoryDirectory;
@@ -237,7 +237,10 @@ final class MemoryActionService {
 
   // ---------- 控制动作 ----------
 
-  Future<MemoryActionResult> freeze(MemoryItemRef ref) async {
+  Future<MemoryActionResult> freeze(MemoryItemRef ref) =>
+      episodePipeline.commits.operation(() => _freeze(ref));
+
+  Future<MemoryActionResult> _freeze(MemoryItemRef ref) async {
     final text = await _itemText(ref);
     if (text == null) {
       return _notFound;
@@ -255,7 +258,10 @@ final class MemoryActionService {
     );
   }
 
-  Future<MemoryActionResult> unfreeze(MemoryItemRef ref) async {
+  Future<MemoryActionResult> unfreeze(MemoryItemRef ref) =>
+      episodePipeline.commits.operation(() => _unfreeze(ref));
+
+  Future<MemoryActionResult> _unfreeze(MemoryItemRef ref) async {
     final text = await _itemText(ref);
     if (text == null) {
       return _notFound;
@@ -270,7 +276,10 @@ final class MemoryActionService {
     );
   }
 
-  Future<MemoryActionResult> ban(MemoryItemRef ref) async {
+  Future<MemoryActionResult> ban(MemoryItemRef ref) =>
+      episodePipeline.commits.operation(() => _ban(ref));
+
+  Future<MemoryActionResult> _ban(MemoryItemRef ref) async {
     final text = await _itemText(ref);
     if (text == null) {
       return _notFound;
@@ -309,7 +318,10 @@ final class MemoryActionService {
     );
   }
 
-  Future<MemoryActionResult> unban(MemoryItemRef ref) async {
+  Future<MemoryActionResult> unban(MemoryItemRef ref) =>
+      episodePipeline.commits.operation(() => _unban(ref));
+
+  Future<MemoryActionResult> _unban(MemoryItemRef ref) async {
     final text = await _itemText(ref);
     if (text == null) {
       return _notFound;
@@ -338,7 +350,10 @@ final class MemoryActionService {
 
   // ---------- 编辑 ----------
 
-  Future<MemoryActionResult> edit(MemoryItemRef ref, String newText) async {
+  Future<MemoryActionResult> edit(MemoryItemRef ref, String newText) =>
+      episodePipeline.commits.operation(() => _edit(ref, newText));
+
+  Future<MemoryActionResult> _edit(MemoryItemRef ref, String newText) async {
     final replacement = redactSessionText(newText).trim();
     if (replacement.isEmpty) {
       return _notAllowed('修正内容不能为空。');
@@ -347,9 +362,16 @@ final class MemoryActionService {
       case MemoryEntryRef():
         return _editEntry(ref, replacement);
       case MemoryLongTermRef():
-        return _editLongTerm(ref, replacement);
+        return episodePipeline.commits.commit(
+          () => _editLongTerm(ref, replacement),
+        );
       case MemoryRelationshipRef() when ref.list == 'sharedPast':
-        return _editLongTerm(MemoryLongTermRef('共同过往', ref.text), replacement);
+        return episodePipeline.commits.commit(
+          () => _editLongTerm(
+            MemoryLongTermRef('共同过往', ref.text),
+            replacement,
+          ),
+        );
       case MemoryRelationshipRef():
         return _notAllowed('关系状态记录不支持编辑。');
       case MemoryRootRef():
@@ -372,6 +394,7 @@ final class MemoryActionService {
     }
     var unreadable = false;
     var missing = false;
+    var saved = false;
     final deferred = <String>[];
     try {
       await episodePipeline.synchronizedOnDayFiles(() async {
@@ -420,6 +443,7 @@ final class MemoryActionService {
           finalizedAt: day.finalizedAt,
           understanding: understanding,
         );
+        saved = true;
         final indexStore = EpisodeIndexStore(
           memoryDirectory: episodePipeline.memoryDirectory,
           episodePipeline: episodePipeline,
@@ -439,6 +463,14 @@ final class MemoryActionService {
       });
     } on Object catch (error) {
       _diagnosticsSink('memory edit failed [$error]');
+      if (saved) {
+        return const MemoryActionResult(
+          status: MemoryActionStatus.partial,
+          message: '修正已保存；索引与画像的同步没有一次完成，可稍后重试。',
+          retryable: true,
+          deferred: ['索引与画像的同步'],
+        );
+      }
       return const MemoryActionResult(
         status: MemoryActionStatus.failed,
         message: '修正没有保存成功，原内容保持不变，可稍后重试。',
@@ -583,7 +615,10 @@ final class MemoryActionService {
 
   /// 执行删除：先写 deleted 抽象防复活范围，再清除全部派生内容与
   /// 索引；sessions 保留。控制记录写不进时绝不清除（可恢复失败）。
-  Future<MemoryActionResult> delete(MemoryItemRef ref) async {
+  Future<MemoryActionResult> delete(MemoryItemRef ref) =>
+      episodePipeline.commits.operation(() => _delete(ref));
+
+  Future<MemoryActionResult> _delete(MemoryItemRef ref) async {
     final text = await _itemText(ref);
     if (text == null) {
       return _notFound;
@@ -712,7 +747,7 @@ final class MemoryActionService {
       _diagnosticsSink('delete episode purge deferred [$error]');
     }
     try {
-      await _purgeLongMemory(scope);
+      await episodePipeline.commits.commit(() => _purgeLongMemory(scope));
     } on Object catch (error) {
       deferred.add('长期印象的清理');
       _diagnosticsSink('delete long-memory purge deferred [$error]');
@@ -730,7 +765,7 @@ final class MemoryActionService {
       _diagnosticsSink('delete relationship purge deferred [$error]');
     }
     try {
-      await _purgeDailyStateLines(scope);
+      await episodePipeline.commits.commit(() => _purgeDailyStateLines(scope));
     } on Object catch (error) {
       deferred.add('近日状态的清理');
       _diagnosticsSink('delete daily-state purge deferred [$error]');

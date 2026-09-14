@@ -669,7 +669,7 @@ final class PersonaTreeStore {
     this.openLoopStore,
     AtomicTextWriter? atomicWriter,
     void Function(String message)? diagnosticsSink,
-  }) : _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
+  }) : _atomicWriter = episodePipeline.commits.wrap(atomicWriter),
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
   final String memoryDirectory;
@@ -691,11 +691,12 @@ final class PersonaTreeStore {
 
   /// 串行化全部树文件写操作：随手记建叶、日终整理与禁提即时生效
   /// 分属不同任务链，必须在此汇合。
-  Future<T> _locked<T>(Future<T> Function() body) {
-    final result = _tail.then((_) => body());
-    _tail = result.then<void>((_) {}, onError: (_) {});
-    return result;
-  }
+  Future<T> _locked<T>(Future<T> Function() body) =>
+      episodePipeline.commits.commit(() {
+        final result = _tail.then((_) => body());
+        _tail = result.then<void>((_) {}, onError: (_) {});
+        return result;
+      });
 
   /// 随手记：为带画像提示的 episode 条目建立叶指针。幂等——同一条目
   /// 或同日同摘要的信号不重复建叶（相同信号合并计数）。隐私与禁提
@@ -953,16 +954,17 @@ final class PersonaTreeStore {
   /// 写入或更新称呼设定行（三个写入口共用：首见引导、记忆中心、对话
   /// 自述）。格式校验不通过返回 null；成功返回规范化后的称呼。与
   /// persona.md 的全部重投影共用树内串行锁，设定行不会在写入间隙丢失。
-  Future<String?> setAppellation(String raw) => _locked(() async {
-    if (appellationFormatError(raw) != null) {
-      return null;
-    }
-    final value = raw.trim();
-    final line = '$appellationLinePrefix$value';
-    final merged = _mergeAppellationLine(await _readPersonaContents(), line);
-    await _atomicWriter.replace(_personaFile.path, merged);
-    return value;
-  });
+  Future<String?> setAppellation(String raw) =>
+      episodePipeline.commits.operation(() => _locked(() async {
+        if (appellationFormatError(raw) != null) {
+          return null;
+        }
+        final value = raw.trim();
+        final line = '$appellationLinePrefix$value';
+        final merged = _mergeAppellationLine(await _readPersonaContents(), line);
+        await _atomicWriter.replace(_personaFile.path, merged);
+        return value;
+      }));
 
   /// 读取 persona.md 现有原文；不存在或读取失败返回 null。
   Future<String?> _readPersonaContents() async {
@@ -2169,7 +2171,7 @@ final class PersonaTreeStore {
         state.roots.isEmpty;
     if (empty) {
       if (await file.exists()) {
-        await file.delete();
+        await episodePipeline.commits.delete(file);
       }
       return;
     }
@@ -2354,7 +2356,7 @@ final class PersonaTreeStore {
           '# persona\n$appellationLine\n',
         );
       } else if (await file.exists()) {
-        await file.delete();
+        await episodePipeline.commits.delete(file);
       }
       return;
     }

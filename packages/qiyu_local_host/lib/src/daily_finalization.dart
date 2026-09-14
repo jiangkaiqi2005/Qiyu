@@ -128,12 +128,17 @@ final class DailyFinalizationService {
     void Function(String message)? diagnosticsSink,
   }) {
     final effectiveClock = clock ?? DateTime.now;
-    final effectiveAtomicWriter = atomicWriter ?? const IoAtomicTextWriter();
+    final effectiveAtomicWriter = episodePipeline.commits.wrap(atomicWriter);
     final effectiveOpenLoopStore =
         openLoopStore ??
         OpenLoopStore(
           memoryDirectory: memoryDirectory,
           atomicWriter: effectiveAtomicWriter,
+          memoryControls: MemoryControlsStore(
+            memoryDirectory: memoryDirectory,
+            commits: episodePipeline.commits,
+            atomicWriter: atomicWriter,
+          ),
         );
     return DailyFinalizationService._(
       memoryDirectory: memoryDirectory,
@@ -888,7 +893,7 @@ final class DailyFinalizationService {
     final file = _dailyStateFile;
     if (perDay.isEmpty) {
       if (readableDays > 0 && await file.exists()) {
-        await file.delete();
+        await episodePipeline.commits.delete(file);
       }
       return;
     }

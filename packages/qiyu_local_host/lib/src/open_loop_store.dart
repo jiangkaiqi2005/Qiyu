@@ -149,12 +149,13 @@ final class OpenLoopStore {
     required this.memoryDirectory,
     AtomicTextWriter? atomicWriter,
     MemoryControlsStore? memoryControls,
-  }) : _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
+  }) : _sourceWriter = atomicWriter,
        memoryControls = memoryControls ??
            MemoryControlsStore(memoryDirectory: memoryDirectory);
 
   final String memoryDirectory;
-  final AtomicTextWriter _atomicWriter;
+  final AtomicTextWriter? _sourceWriter;
+  late final AtomicTextWriter _atomicWriter = memoryControls.commits.wrap(_sourceWriter);
 
   /// 记忆控制记录的唯一读写者；禁提/冻结/删除的过滤集合都从这里取。
   final MemoryControlsStore memoryControls;
@@ -166,11 +167,12 @@ final class OpenLoopStore {
 
   /// 串行化全部 loop 文件写操作：日终归档与对话中的即时生效分属
   /// 不同任务链，必须在此汇合。controls 文件有独立的串行锁。
-  Future<T> _withLock<T>(Future<T> Function() body) {
-    final result = _lockTail.then((_) => body());
-    _lockTail = result.then<void>((_) {}, onError: (_) {});
-    return result;
-  }
+  Future<T> _withLock<T>(Future<T> Function() body) =>
+      memoryControls.commits.commit(() {
+        final result = _lockTail.then((_) => body());
+        _lockTail = result.then<void>((_) {}, onError: (_) {});
+        return result;
+      });
 
   // ---------- 读取 ----------
 

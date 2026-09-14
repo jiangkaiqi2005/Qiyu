@@ -120,7 +120,7 @@ final class MonthlySummaryStore {
              memoryDirectory: memoryDirectory,
              episodePipeline: episodePipeline,
            ),
-       _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
+       _atomicWriter = episodePipeline.commits.wrap(atomicWriter),
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
   final String memoryDirectory;

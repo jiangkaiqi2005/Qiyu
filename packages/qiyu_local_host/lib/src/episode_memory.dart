@@ -5,6 +5,7 @@ import 'package:path/path.dart' as path;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'markdown_memory_repository.dart';
+import 'memory_commit.dart';
 import 'memory_marker_codec.dart';
 
 /// 增量整理窗口：每四到六轮取最保守的一侧。写入记忆会覆盖当前窗口；
@@ -244,12 +245,16 @@ final class EpisodeMemoryPipeline {
     required this.memoryDirectory,
     Clock? clock,
     AtomicTextWriter? atomicWriter,
+    MemoryCommitCoordinator? commits,
   }) : _clock = clock ?? DateTime.now,
-       _atomicWriter = atomicWriter ?? const IoAtomicTextWriter();
+       commits = commits ?? MemoryCommitCoordinator(memoryDirectory),
+       _sourceWriter = atomicWriter;
 
   final String memoryDirectory;
   final Clock _clock;
-  final AtomicTextWriter _atomicWriter;
+  final MemoryCommitCoordinator commits;
+  final AtomicTextWriter? _sourceWriter;
+  late final AtomicTextWriter _atomicWriter = commits.wrap(_sourceWriter);
   Future<void> _dayFileTail = Future.value();
 
   Directory get _episodesDirectory =>

@@ -277,7 +277,7 @@ final class MemoryRecoveryService {
              episodePipeline: episodePipeline,
            ),
        _clock = clock ?? DateTime.now,
-       _atomicWriter = atomicWriter ?? const IoAtomicTextWriter(),
+       _atomicWriter = episodePipeline.commits.wrap(atomicWriter),
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
   final String memoryDirectory;
@@ -1074,7 +1074,7 @@ final class MemoryRecoveryService {
           'month-summary',
         );
         try {
-          await monthlySummary.summaryFile(key).delete();
+          await episodePipeline.commits.delete(monthlySummary.summaryFile(key));
         } on Object {
           // 删除失败时压缩会因不可读而跳过，下轮再试。
         }
@@ -1740,9 +1740,11 @@ final class MemoryRecoveryService {
   /// 先复制保全再移除原位文件：损坏原件退出注入、检索与整理，证据
   /// 保留在隔离区。返回隔离路径；完整恢复后由调用方删除副本。
   Future<String> _quarantineMove(File file, String layerKey) async {
-    final quarantinePath = await _quarantineCopy(file, layerKey);
-    await file.delete();
-    return quarantinePath;
+    return episodePipeline.commits.commit(() async {
+      final quarantinePath = await _quarantineCopy(file, layerKey);
+      await episodePipeline.commits.delete(file);
+      return quarantinePath;
+    });
   }
 
   /// 文件存在时复制保全（原位文件随后会被重建覆盖）。返回隔离路径；
