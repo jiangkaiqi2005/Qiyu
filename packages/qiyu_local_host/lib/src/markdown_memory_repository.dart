@@ -950,18 +950,83 @@ Iterable<JsonTextReplacement> _rawTextRedactions(String text) {
 String redactSessionText(String text) =>
     _rewriteSessionText(text, _redactUnparsedJsonText);
 
+/// 按完整回复识别凭据，保留未落入替换区间的原消息边界。
+List<String> redactSessionMessages(List<String> messages) =>
+    _rewriteSessionMessages(messages, _redactUnparsedJsonText);
+
 String _rewriteSessionText(
   String text,
   Iterable<JsonTextReplacement> Function(String text, bool decoded) rewriteText,
-) => rewriteJsonStringValues(
+) => _rewriteSessionMessages([text], rewriteText).single;
+
+List<String> _rewriteSessionMessages(
+  List<String> messages,
+  Iterable<JsonTextReplacement> Function(String text, bool decoded) rewriteText,
+) {
   // 这条旧规则完整消费 JSON 转义字符串，保留直接空值等既有输出。
-  text.replaceAllMapped(
-    _sessionKeyedRedactPatterns.first,
-    (match) => '${match.group(1)}[已脱敏]',
-  ),
-  isSecret: _jsonFieldContainsSecret,
-  rewriteText: rewriteText,
-);
+  final firstPass = _replaceSessionMessageRanges(messages, [
+    for (final match in _sessionKeyedRedactPatterns.first.allMatches(
+      messages.join('\n'),
+    ))
+      JsonTextReplacement(
+        match.start + match.group(1)!.length, match.end, '[已脱敏]',
+      ),
+  ]);
+  return _replaceSessionMessageRanges(
+    firstPass,
+    jsonStringValueReplacements(
+      firstPass.join('\n'),
+      isSecret: _jsonFieldContainsSecret,
+      rewriteText: rewriteText,
+    ),
+  );
+}
+
+List<String> _replaceSessionMessageRanges(
+  List<String> messages,
+  Iterable<JsonTextReplacement> replacements,
+) {
+  if (messages.isEmpty) return const [];
+  final text = messages.join('\n');
+  final boundaries = <int>[];
+  var offset = 0;
+  for (final message in messages.take(messages.length - 1)) {
+    offset += message.length;
+    boundaries.add(offset);
+    offset += 1;
+  }
+  final buffer = StringBuffer();
+  final safeBoundaries = <int>[];
+  var boundaryIndex = 0;
+  var cursor = 0;
+  for (final replacement in replacements) {
+    while (boundaryIndex < boundaries.length &&
+        boundaries[boundaryIndex] < replacement.start) {
+      safeBoundaries.add(boundaries[boundaryIndex++] + buffer.length - cursor);
+    }
+    buffer.write(text.substring(cursor, replacement.start));
+    buffer.write(replacement.value);
+    // PEM 等跨消息替换会消费内部换行，只移除被实际遮蔽的边界。
+    while (boundaryIndex < boundaries.length &&
+        boundaries[boundaryIndex] < replacement.end) {
+      boundaryIndex += 1;
+    }
+    cursor = replacement.end;
+  }
+  while (boundaryIndex < boundaries.length) {
+    safeBoundaries.add(boundaries[boundaryIndex++] + buffer.length - cursor);
+  }
+  buffer.write(text.substring(cursor));
+  final safeText = buffer.toString();
+  final result = <String>[];
+  var start = 0;
+  for (final boundary in safeBoundaries) {
+    result.add(safeText.substring(start, boundary));
+    start = boundary + 1;
+  }
+  result.add(safeText.substring(start));
+  return result;
+}
 
 String redactDiagnosticText(String text) => _applyRedactions(
   redactSessionText(text),

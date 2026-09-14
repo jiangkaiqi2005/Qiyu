@@ -22,6 +22,87 @@ const _plainMessages = [
 ];
 
 void main() {
+  for (final sample in const [
+    (
+      name: 'JSON',
+      messages: ['{"password":', '"split-json-synthetic-secret","count":42}'],
+      safe: ['{"password":', '"[已脱敏]","count":42}'],
+    ),
+    (
+      name: 'PEM',
+      messages: [
+        '-----BEGIN PRIVATE KEY-----',
+        'c3ludGhldGljLXBlbS1zZWNyZXQ=',
+        '-----END PRIVATE KEY-----',
+      ],
+      safe: ['[已脱敏]'],
+    ),
+    (
+      name: '普通JSON',
+      messages: ['{"count":', '42,"cookie":"饼干"}'],
+      safe: ['{"count":', '42,"cookie":"饼干"}'],
+    ),
+  ]) {
+    for (final textOnly in [false, true]) {
+      test(
+        '跨消息 ${sample.name} ${textOnly ? 'text-only' : 'messages'} 公开安全视图保留普通边界',
+        () async {
+          final messages = ['开头\n原有换行', ...sample.messages, '', '结尾\n'];
+          final safeMessages = ['开头\n原有换行', ...sample.safe, '', '结尾\n'];
+          final gateway = ScriptedModelGateway();
+          final harness = await InProcessChatHost.start(
+            modelGateway: gateway,
+            clock: () => DateTime(2026, 8, 11, 22, 32),
+            seedMemory: (directory) => _seedLegacyReply(
+              directory,
+              messages: messages,
+              textOnly: textOnly,
+            ),
+          );
+          addTearDown(harness.dispose);
+          await harness.finalizePending();
+          final before = await _memoryBytes(harness);
+          String? firstBody;
+          for (final restart in [false, false, true]) {
+            if (restart) await harness.restart();
+            final restored = await harness.readSession(sessionId: _sessionId);
+            expect(restored.statusCode, HttpStatus.ok);
+            final body = jsonDecode(restored.body) as Map<String, Object?>;
+            final turns = (body['turns']! as List).cast<Map<String, Object?>>();
+            expect(turns.last['text'], safeMessages.join('\n'));
+            final replay = await harness.sendChat(
+              requestId: _requestId,
+              text: _userText,
+              sessionId: _sessionId,
+            );
+            expect(replay.statusCode, HttpStatus.ok);
+            expect(
+              {
+                'deltaJoined': replay
+                    .eventsOf(ChatDeliveryEventKind.delta)
+                    .map((event) => event.text)
+                    .join(),
+                'messages': replay.message.messages,
+              },
+              {
+                'deltaJoined': safeMessages.join('\n'),
+                'messages': textOnly ? [safeMessages.join('\n')] : safeMessages,
+              },
+            );
+            expect(replay.eventsOf(ChatDeliveryEventKind.done), hasLength(1));
+            firstBody ??= replay.body;
+            expect(replay.body, firstBody);
+            await harness.finalizePending();
+            expect(await _memoryBytes(harness), before);
+          }
+          expect(gateway.streamCalls, isEmpty);
+          expect(gateway.completeCalls, isEmpty);
+          expect(harness.zoneErrors, isEmpty);
+        },
+      );
+    }
+  }
+
   for (final textOnly in [false, true]) {
     final shape = textOnly ? 'text-only' : 'messages';
     test('旧 $shape 回复公开重放脱敏与 restore 一致', () async {

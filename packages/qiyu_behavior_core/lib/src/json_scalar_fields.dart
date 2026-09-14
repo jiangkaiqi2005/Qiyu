@@ -337,6 +337,28 @@ String rewriteJsonStringValues(
   required Iterable<JsonTextReplacement> Function(String text, bool decoded)
   rewriteText,
 }) {
+  final buffer = StringBuffer();
+  var cursor = 0;
+  for (final replacement in jsonStringValueReplacements(
+    text,
+    isSecret: isSecret,
+    rewriteText: rewriteText,
+  )) {
+    buffer.write(text.substring(cursor, replacement.start));
+    buffer.write(replacement.value);
+    cursor = replacement.end;
+  }
+  buffer.write(text.substring(cursor));
+  return buffer.toString();
+}
+
+/// 与字符串重写共用的原文替换区间，供调用方保留未被替换的消息边界。
+List<JsonTextReplacement> jsonStringValueReplacements(
+  String text, {
+  required bool Function(String key, String? value) isSecret,
+  required Iterable<JsonTextReplacement> Function(String text, bool decoded)
+  rewriteText,
+}) {
   final stack = [_JsonRewriteFrame(text, false, rewriteText)];
   while (true) {
     final frame = stack.last;
@@ -397,15 +419,7 @@ String rewriteJsonStringValues(
     frame.addTextReplacements(frame.text.length, rewriteText);
     stack.removeLast();
     if (stack.isEmpty) {
-      final buffer = StringBuffer();
-      var cursor = 0;
-      for (final replacement in frame.replacements) {
-        buffer.write(text.substring(cursor, replacement.start));
-        buffer.write(replacement.value);
-        cursor = replacement.end;
-      }
-      buffer.write(text.substring(cursor));
-      return buffer.toString();
+      return frame.replacements;
     }
     final parent = stack.last;
     final field = parent.pending!;
