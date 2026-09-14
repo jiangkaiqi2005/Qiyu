@@ -1,5 +1,7 @@
 # 栖语安全检查记录（2026-09-12）
 
+2026-09-14 阅读说明：以下检查正文及 2026-09-13 交付记录保留各自时点的结论。后续独立复查又确认六项问题，协调实测追加第07项；历史“已修复”不表示后续问题已全部覆盖。当前产品状态、历史勘误和验收证据见文末「累计复查交付（2026-09-14）」。
+
 检查基线为 `f37257c`，开始检查时工作区干净。本次未修改产品代码；使用源码审查、现有测试、临时复现和官方资料核验。确认 2 项 P1、3 项 P2，另记录 3 个可靠性优化点与 1 处规范冲突。
 
 这里的 P1 表示应优先处理的凭据或隐私边界问题，P2 表示需要修复的条件性风险。这些问题不等同于已发生真实泄露，也不表示远程未认证用户能够直接访问 Host。
@@ -131,6 +133,8 @@ Manifest 注释声称 `allowBackup=false` 同时覆盖 Android 12+ 的云备份�
 
 上文确认的 2 项 P1、3 项 P2 与 3 个优化点，随后按九张工单逐项修复，全部提交在 develop 分支本地完成（总基线 `f37257c`，至本节更新时 HEAD 为 `7f5397e`，未推送）。每张工单由独立执行者实施，并经至少两轮全新的规范轴与需求轴双轴审查（票 01 四轮，票 02、03、04、05、07、08 各三轮，票 06 两轮），全部有效问题清零。本票（09）自身的独立双轴审查在本次报告更新时尚未执行。
 
+2026-09-14 历史勘误：上述“尚未执行”为旧报告写作时状态，旧09后续已有两轮双轴报告。旧九票共留存 54 份报告，轮数为 4/3/3/3/3/2/3/3/2；这些静态文件不能单独证明当时代理身份或所有验收真实执行。Git 历史确认旧09报告提交为 `6c9c446607bdaba8a0757699bdab1de02bf8c799`，此前最后产品提交为 `7f5397ec70658b6e56c36857d08af29febec013e`；下表旧09的提交据此勘正，与本次报告提交区分。依据为本地 [历史提交核对](../../.scratch/security-followup-2026-09-13/logs/final-report-history-commit-check.md)及[旧实施复查](../../.scratch/security-implementation-review-20260913.md)。
+
 ### 提交清单
 
 | 工单 | 提交 | 交付内容 | 对应本报告发现 |
@@ -143,7 +147,7 @@ Manifest 注释声称 `allowBackup=false` 同时覆盖 Android 12+ 的云备份�
 | 06 备份与后台写入隔离 | `c6b4df0`、`7dbbd19` | 导出、导入、回滚、清除共用维护独占边界，等待在途聊天与后台整理，期间新任务排队 | 优化点 1 |
 | 07 恢复状态如实反馈 | `78d4b75` | 恢复写回或必要清理失败时返回 restore-incomplete，不再声称已恢复，快照保留可再次恢复 | 优化点 2 |
 | 08 Provider 传输预算 | `0ee9e92`、`efa9b20`、`7f5397e` | 模型响应在解码分行前限制单帧 1 MiB、单响应 16 MiB、错误体 64 KiB，并设整体期限，五种终态统一关闭连接 | 优化点 3 |
-| 09 集成验收与报告更新 | 本提交 | 全量验证、安卓构建与合并 manifest 检查，更新本报告 | — |
+| 09 集成验收与报告更新 | `6c9c446` | 全量验证、安卓构建与合并 manifest 检查，更新本报告 | — |
 
 ### 最终验证结果
 
@@ -161,6 +165,8 @@ Manifest 注释声称 `allowBackup=false` 同时覆盖 Android 12+ 的云备份�
 
 覆盖率按 `scripts/coverage_gate.dart` 门禁核对（采集方式与持续集成一致），均不低于既有水位：行为核心 90.50%（水位 88）、Windows 宿主 93.59%（水位 91）、本机服务 93.24%（水位 92）、应用界面 93.77%（水位 91）。
 
+2026-09-14 证据勘误：旧实施复查确认，上述覆盖率只重算了既有文件，不能证明在旧最终产品上重新采集；旧 Windows 最终验证的完整原始输出也未保留。因此本节 1654 项、四个覆盖率数字及下述 69.39 MB APK 仅保留为旧日期记录，不充当本轮最终验收。2026-09-12 的 1571 项测试和依赖公告核对同样只对应原检查时点。
+
 `scripts/verify-release-baseline.ps1` 完整发布门禁退出码 0（四包分析测试、Windows 打包校验与启动冒烟通过，产物 qiyu-windows-x64-0.1.0.zip）。
 
 安卓 release 构建：`scripts/build-android-apk.ps1` 退出码 0，产出已签名 APK（版本 0.1.0(1)，69.39 MB，证书指纹与 `docs/engineering/android-release-build.md` 指纹表一致）。合并 manifest 从最终 APK 用 aapt2 反解核对：`allowBackup="false"`、`dataExtractionRules="@xml/data_extraction_rules"`、`fullBackupContent="@xml/backup_rules"` 三属性齐备；包内规则文件在云备份、设备迁移、跨平台迁移各节对 root/file/database/sharedpref 四域逐项排除；合并结果无第三方库注入的覆盖冲突，也无任何 `tools:replace` 冲突解决标记。
@@ -169,8 +175,84 @@ Manifest 注释声称 `allowBackup=false` 同时覆盖 Android 12+ 的云备份�
 
 《栖语system prompt/硬规则与优先级.md》的「运行层细则」至今仍写着流式输出首个字立即显示与服务端规则兜底召回；代码与仓库 AGENTS.md 维持完整安全校验后交付、模型隐藏动作触发召回。本轮加固按已批准的计划保持当前行为、不改外部笔记，因此两份文档的口径差异仍然存在，统一口径仍未裁定，待用户确认。
 
+2026-09-14 状态补充：本轮已明确获准保持完整安全校验后交付及模型隐藏动作触发召回，无需再次等待行为授权。外部笔记未同步，口径差异仍保留；本次文档更新不修改笔记，也不将其写成已统一。
+
 ### 仍未验证项
 
 - 真实安卓真机上的设备迁移（D2D）、跨平台迁移与覆盖升级未执行（本环境无真机）；合并 manifest 检查只在构建产物层面完成，不等于真机行为验证。真机冒烟清单见 [android-release-build.md](android-release-build.md)。
 - 真实云模型攻击测试、浏览器自动化安全测试、持续占用型资源压测均未执行。
 - 依赖核验停留在检查当日口径：本次未重新审计传递依赖、Flutter/Dart SDK、Gradle 与原生依赖。
+
+## 累计复查交付（2026-09-14）
+
+本轮总范围为 `6c9c446607bdaba8a0757699bdab1de02bf8c799` 至冻结产品 `de4ab02ed27f81b5561c5ff252091cd3798c3728`。范围包含独立复查的六项问题及真实 Host 合成探针追加的已完成旧回复重放问题，共七票；与上节旧九票分别编号。本次报告提交仅更新本文档，产品验证对象仍是该冻结产品树。
+
+### 七票产品闭环
+
+| 本轮工单 | 最终产品审查目标 SHA | 产品审查轮数 | 最后一轮规范轴 / 需求轴 |
+| --- | --- | --- | --- |
+| 01 JSON 凭据缺口 | `19144fc1a041ddf7bd18df3f8014f6b4cb0370ec` | 18 | 0 / 0 |
+| 02 旧 pending 重试 | `a49604f2d2f5d09d85644cf58649414eafce1269` | 2 | 0 / 0 |
+| 03 召回索引关键词 | `666a7f52624afb65373ca9aabf9a21b3c51f59aa` | 3 | 0 / 0 |
+| 04 旧记忆 reveal | `7e6ffad2dd2136ae176ed22acc566717b384962d` | 3 | 0 / 0 |
+| 05 ZIP 目录预算 | `03ea795ec2ace91047304c88a6b4892803621030` | 3 | 0 / 0 |
+| 06 正常完成帧 | `988540dff09672d22c653106cd9aafe1d0b6c69a` | 2 | 0 / 0 |
+| 07 已完成旧回复重放 | `de4ab02ed27f81b5561c5ff252091cd3798c3728` | 2 | 0 / 0 |
+
+每票按至少两轮换人双轴执行，有效发现交原执行者修正；上表的 0 是报告发现数，不是审查进程退出码。闭环不要求连续两轮零发现。流程与身份记录见本地 `logs/01-review-process-closure.md`、`02-review-process-closure.md`、`03-review-process-audit.md` 至 `07-review-process-audit.md`，对应各票最终两轴报告位于 `reviews/`。第01首轮规范轴原生全文未归档、需求轴缺 `AGENT_EXIT` 的历史局限保留，不以报告数量补证。
+
+第07首轮两轴各报 1P1，均为跨 messages 的 JSON 键值或 PEM 标记与正文丢失上下文。修正后第2轮两轴均为 0。**本次文档提交后的第3轮全新双轴仍待协调者安排**，需审查第07累计产品与文档差异；此处只确认产品闭环，不预填文档审查或整体任务完成。
+
+### 修复结果与正常功能对照
+
+本轮只处理已确认的凭据遗漏、安全资源异常路径和被安全改动破坏的兼容性。人格、记忆口语协议、模型触发召回、安全校验后交付、配置及 UI 保持现行行为，未作历史数据批量迁移。
+
+- **01** 补齐已有凭据规则在 JSON 边界的遗漏。公共回归覆盖普通聊天、正常 JSON、非凭据数字、空值及占位文本；按既有语义区分接受结果与公开脱敏，避免扩大拒绝范围。曾获授权更正少量已证实错误的期望：一条本票新增占位后缀的接受期望，以及九条字面 note 契约的输出；后九条保持 Core 接受判定，修正错误的 JSON 引号/正文输出并遮蔽真实凭据。不能表述为“从未修改旧 expectation”。依据为 `logs/01-r9-fix-implementation.md`、`01-r11-fix-implementation.md` 及后者所列逐例输出。
+- **02** 旧 pending 的原请求在重启后可重试，真正内容冲突仍拒绝；正常请求幂等与取消语义保持。已完成旧回复的公开脱敏另由07覆盖，没有把原02的修复范围扩大解释。[16 项回归及原始记录索引](../../.scratch/security-followup-2026-09-13/logs/02-implementation.md)。
+- **03** 在召回索引关键词入口补齐既有凭据过滤，正常关键词和非凭据数字对照保持，召回仍由模型隐藏动作触发。[32 项受控索引回归及原始记录索引](../../.scratch/security-followup-2026-09-13/logs/03-r2-fix-implementation.md)。
+- **04** 旧记忆 reveal 对外遮蔽凭据，普通敏感经历仍可按现行口语协议揭示；未用凭据过滤替换原有揭示语义。[13 项服务/真实 Host 回归及原始记录索引](../../.scratch/security-followup-2026-09-13/logs/04-r2-fix-implementation.md)。
+- **05** ZIP 目录元数据计入预算，保留普通预览/导入、可选目录签名记录、传统编码注释及恰在预算内的组合；越界拒绝不产生导入副作用，原 schema、摘要与冲突语义保持。[5 项组合预算边界及完整所属包记录索引](../../.scratch/security-followup-2026-09-13/logs/05-r2-fix.md)。
+- **06** 正常原生完成标记到达即结束，不再等待连接 EOF；包括 Anthropic 工具入口。提前 EOF、超时/原生错误、取消和传输预算继续受约束，未以取消预算换取正常完成兼容性。[104 项聚焦及原始记录索引](../../.scratch/security-followup-2026-09-13/logs/06-r1-fix-implementation.md)。
+- **07** 已完成旧回复在完整逻辑上下文应用既有过滤，messages 与 text-only 均覆盖，delta 拼接、最终 message 与 restore 使用一致安全内容。普通消息边界、单条内部换行及 source/fallback/mode/safety/state 保持；重复、重启和取消对照保持事件序及单次 done。Provider 调用为零，不重新生成或人格校验，不改旧文件、不 appendTurn，也不重复隐藏动作或记忆节奏。正式跨消息 JSON、PEM 用例分别先以漏洞断言 exit 1，再同接缝 exit 0；观察探针 exit 0 未充当正式红绿。
+
+上述对照由各票实施记录及最终两轴报告索引到公共测试和原始输出；07详见 [初次实施](../../.scratch/security-followup-2026-09-13/logs/07-implementation.md)与[完整上下文修正](../../.scratch/security-followup-2026-09-13/logs/07-fix1-implementation.md)。它们记录了中间版本，最终验收以以下冻结产品证据为准。既知笔记差异按已授权方案保留，外部笔记没有同步。
+
+### 最终累计验证
+
+以下证据均存于本地 `.scratch/security-followup-2026-09-13/`，不随本文档提交入库。核对依据是完整 raw、真实子进程退出码、受测源码清单和提交关联，不以“进程退出 0”代替具体断言或资源人工核对。
+
+| 包 | 完整发布门禁测试 | 新采集行覆盖率 | 既有水位 |
+| --- | --- | --- | --- |
+| `qiyu_behavior_core` | 1092 项通过 | 89.09%（857/962） | 88% |
+| `qiyu_local_host` | 1906 项通过 | 93.52%（9285/9928） | 92% |
+| `qiyu_windows_host` | 28 项通过 | 93.59%（219/234） | 91% |
+| `qiyu_flutter` | 704 项通过 | 93.77%（6279/6696） | 91% |
+
+完整发布门禁四包合计 **3730 项**，另有浏览器 **19 项**通过；四包 analyze 均为 `No issues found`。发布策略、Flutter Web 构建及资源检查、Windows 生命周期测试、构建打包、包校验、自检和启动冒烟全部通过，完整门禁真实退出码为 0，不依赖 Node/npm。
+
+门禁记录为 [07-fix1-release.result.json](../../.scratch/security-followup-2026-09-13/logs/07-fix1-release.result.json)，完整输出为同名前缀的 `.stdout.raw.log` / `.stderr.raw.log`。执行时 HEAD 是 `c844ee49d879cbc3c4ba88e1104c1902158feb56` 加修正工作树补丁；运行前后源码不变。随后 [07-fix1-post-commit-check.json](../../.scratch/security-followup-2026-09-13/logs/07-fix1-post-commit-check.json) 核对源码、四文件 Git blob 及累计补丁与 `de4ab02` 完全一致。因此累计验收复用这次同树门禁，未重复运行相同最终版本。
+
+- 受测全源码清单 SHA-256：`09cedd07ec173fd9ed23ac92499a93c515174728f4552190932e9b151b22dd6e`。
+- 第07固定起点 `988540d` 至冻结产品的受测/提交累计 patch SHA-256：`f78206649fb44418d81a712c43f8055eed3e5edad04610428f9ddd6887bbcb6c`；完整清单、逐文件哈希及 patch 原件保留在该 RunId 的记录中。
+
+覆盖率于 2026-09-14 对 `de4ab02` **重新采集**，独立 RunId 为 `final-coverage-20260914-105300-8a789167422746f299dd5f99bbe4193c`。其 [coverage.json](../../.scratch/security-followup-2026-09-13/logs/final-coverage-20260914-105300-8a789167422746f299dd5f99bbe4193c/coverage.json) 记录 `succeeded`、`StableTrackedTree=true`，并绑定四份新 LCOV 的路径与哈希；同目录四包 `.log` 记录上表实际计数及全部适用 TEST/FORMAT/GATE 步骤 exit 0。四包均超过原水位，浏览器用例不计入覆盖率。这些数值与上节旧覆盖率分别保留。
+
+### 新签名 APK 与资源核对
+
+正式 `scripts/build-android-apk.ps1` 于 2026-09-14 对 `de4ab02` 执行成功。独立 RunId 为 `final-apk-build-20260914-105513-63ae7ee8c23442da84abb3fbcb398d83`；[build.json](../../.scratch/security-followup-2026-09-13/logs/final-apk-build-20260914-105513-63ae7ee8c23442da84abb3fbcb398d83/build.json) 及同目录 `build.log` 记录真实 exit 0、`succeeded`、`StableTrackedTree=true`。新产物为 `apps/qiyu_flutter/build/app/outputs/flutter-apk/app-release.apk`，版本 **0.1.0(1)**，大小 **72921347 字节**，APK SHA-256 为 `568f77b48c8f8f029ef27c729c6fc82613361657bbcf39ebff0bf43b57dfb48a`。构建日志 SHA-256 为 `1d9290c229830249719a3ddb84bf6cf5f49dac86df7b21edbd2eaef7fb38a230`。历史已有的 `CupertinoIcons` 字体提示仍出现，构建通过不表示零提示。
+
+该新 APK 的检查 RunId 为 `final-apk-inspection-20260914-110537-ccdb4a7c714f43f89e6ca359461f72fa`。[inspection.json](../../.scratch/security-followup-2026-09-13/logs/final-apk-inspection-20260914-110537-ccdb4a7c714f43f89e6ca359461f72fa/inspection.json) 绑定上述构建记录及相同 APK 哈希，`inspection.log` 保留签名、badging、Manifest、资源表与两份编译 XML 的原始转储；[resource-review.md](../../.scratch/security-followup-2026-09-13/logs/final-apk-inspection-20260914-110537-ccdb4a7c714f43f89e6ca359461f72fa/resource-review.md) 记录随后实际人工核对通过：
+
+- `apksigner` exit 0，v2 签名通过、单一签名者，证书 SHA-256 为 `74c1dadc57d233c83290c9d1469d36b38406153ccd90c43d3ae1e3eb7f5c52d7`，与既有发布身份一致。
+- 应用标识 `dev.qiyu.app`，`versionName=0.1.0`、`versionCode=1`，`allowBackup=false`。
+- `fullBackupContent=@0x7f0e0000` 映射到 `xml/backup_rules`、实际包内 `res/Qq.xml`；其 `full-backup-content` 排除 root/file/database/sharedpref 四域，path 均为 `.`。
+- `dataExtractionRules=@0x7f0e0001` 映射到 `xml/data_extraction_rules`、实际包内 `res/4j.xml`；cloud-backup、device-transfer、cross-platform-transfer 三段均排除上述四域，path 均为 `.`，跨平台段为 `platform="ios"`。
+- 五次 `aapt2` 调用均真实 exit 0。JSON 中的 `ready-for-resource-review` / `ResourceReview=pending` 仅为转储阶段状态，通过结论来自上述原始转储与随后人工核对记录。
+
+首次辅助检查 `final-apk-inspection-20260914-105745-949814a121bc458fb804fd6d5e18da15` 因假设 APK 内仍使用源码资源文件名而失败，失败记录保留。确认资源表映射后只修正 scratch 辅助脚本，对同一 APK 复查通过；没有修改产品或重建、替换 APK，也没有把首次失败写成成功。
+
+### 结论与剩余边界
+
+本轮七项已确认发现已完成处理，上述冻结产品树的分析、测试、完整发布门禁、新采集覆盖率以及新签名 APK 的签名和资源核对均通过。本次仅补录正式报告，不修改产品、不重复测试或构建；报告提交 SHA 及相对产品 SHA 只含本文档的 Git 差异由本地 `logs/07-final-report-implementation.md` 记录。第07文档后的新双轴仍待执行，不能据此宣称所有任务已结束或所有潜在安全问题已消除。
+
+真机 D2D、跨平台迁移、覆盖升级、真实云模型攻击、浏览器自动化安全测试、持续资源压测及完整供应链审计仍未验证。合成 Host/假模型回归、19 项普通浏览器测试及 APK 反解分别不能替代这些验收；17 个直接依赖的公告核对仍限定在 2026-09-12，未冒充本轮重新核验。外部设计笔记的既知口径差异和未同步状态继续保留。
