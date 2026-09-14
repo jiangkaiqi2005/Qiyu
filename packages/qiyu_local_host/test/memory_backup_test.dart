@@ -1302,7 +1302,11 @@ void main() {
       return Uint8List(6 + payloadSize)..setAll(0, header.buffer.asUint8List());
     }
 
-    Uint8List withDirectoryTail(List<int> tail, {bool zip64 = false}) {
+    Uint8List withDirectoryTail(
+      List<int> tail, {
+      bool zip64 = false,
+      String fileComment = '',
+    }) {
       final bytes = Uint8List.fromList(
         utf8.encode('# long-memory\n\n## 人与关系\n- 一条合成印象\n'),
       );
@@ -1314,11 +1318,99 @@ void main() {
             sha256.convert(bytes).toString(),
           ),
         ],
-        entries: [_RawZipEntry('memory/long-memory.md', realBytes: bytes)],
+        entries: [
+          _RawZipEntry(
+            'memory/long-memory.md',
+            realBytes: bytes,
+            fileComment: fileComment,
+          ),
+        ],
         zip64Directory: zip64,
         directoryTail: tail,
       );
     }
+
+    Uint8List withCommentByte(int commentByte, {bool signed = true}) {
+      final bundle = withDirectoryTail(
+        signed ? directorySignature(4) : const [],
+        fileComment: 'A',
+      );
+      final fields = ByteData.sublistView(bundle);
+      final header = centralHeaders(bundle).last;
+      final commentOffset =
+          header +
+          46 +
+          fields.getUint16(header + 28, Endian.little) +
+          fields.getUint16(header + 30, Endian.little);
+      // raw ZIP 夹具的本地与中央 UTF-8 标志均为 0，可容纳传统编码。
+      fields.setUint8(commentOffset, commentByte);
+      return bundle;
+    }
+
+    test('回退编码注释与目录签名合计超预算拒绝且导入无副作用', () async {
+      await seedRichMemory();
+      final before = snapshotMemoryTree();
+      final service = budgeted(
+        const MemoryBackupBudget(maxEntries: 2, maxMetadataBytes: 43),
+      );
+      // 32 字节名称 + 1 字节传统编码注释 + 10 字节签名，原始共 43；
+      // 注释回退解码后 UTF-8 为 2 字节，完整总账应为 44 并拒绝。
+      final bundle = withCommentByte(0x80);
+      await expectLater(
+        () => service.previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+      await expectLater(
+        () => service.importBundle(bundle),
+        rejectedWith('unexpected-content'),
+      );
+      expect(snapshotMemoryTree(), before);
+      expect(
+        Directory(path.join(memoryDirectory, 'backups')).existsSync(),
+        isFalse,
+      );
+    });
+
+    for (final (label, commentByte, signed, limit) in [
+      ('ASCII注释与签名', 0x41, true, 43),
+      ('回退注释与签名', 0x80, true, 44),
+      ('回退注释无签名', 0x80, false, 34),
+    ]) {
+      test('目录组合元数据$label恰在预算内兼容预览导入', () async {
+        final service = budgeted(
+          MemoryBackupBudget(maxEntries: 2, maxMetadataBytes: limit),
+        );
+        final bundle = withCommentByte(commentByte, signed: signed);
+        expect(
+          (await service.previewImport(
+            bundle,
+          )).countOf(BackupItemCategory.added),
+          1,
+        );
+        expect((await service.importBundle(bundle)).added, 1);
+        expect((await service.importBundle(bundle)).skipped, 1);
+      });
+    }
+
+    test('目录组合元数据无签名仍按回退注释的UTF-8长度拒绝', () async {
+      final service = budgeted(
+        const MemoryBackupBudget(maxEntries: 2, maxMetadataBytes: 33),
+      );
+      final bundle = withCommentByte(0x80, signed: false);
+      await expectLater(
+        () => service.previewImport(bundle),
+        rejectedWith('unexpected-content'),
+      );
+      await expectLater(
+        () => service.importBundle(bundle),
+        rejectedWith('unexpected-content'),
+      );
+      expect(snapshotMemoryTree(), isEmpty);
+      expect(
+        Directory(path.join(memoryDirectory, 'backups')).existsSync(),
+        isFalse,
+      );
+    });
 
     for (final zip64 in [false, true]) {
       test('中央目录可选签名记录支持预览和导入（ZIP64=$zip64）', () async {

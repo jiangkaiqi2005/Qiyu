@@ -34,13 +34,15 @@ final class _BackupZipPreflight {
     }
   }
 
-  void validate() {
+  /// 返回已验证的签名记录字节数，供解码后的元数据总账继续计入。
+  int validate() {
     final directory = _readDirectory();
     final directoryOffset = directory.offset;
     final directoryEnd = directoryOffset + directory.size;
     var cursor = directoryOffset;
     var count = 0;
     var metadata = 0;
+    var signatureBytes = 0;
     final localOffsets = <int>{};
     while (cursor < directoryEnd) {
       _range(cursor, 4, directoryEnd);
@@ -52,6 +54,7 @@ final class _BackupZipPreflight {
         _metadataSize(metadata + recordSize);
         _range(cursor, recordSize, directoryEnd);
         if (recordSize != directoryEnd - cursor) throw _notABackup();
+        signatureBytes = recordSize;
         break;
       }
       _entryCount(++count);
@@ -77,6 +80,7 @@ final class _BackupZipPreflight {
       cursor += 46 + variableSize;
     }
     if (count != directory.count) throw _notABackup();
+    return signatureBytes;
   }
 
   ({int offset, int size, int count}) _readDirectory() {

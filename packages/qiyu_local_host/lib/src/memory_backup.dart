@@ -544,7 +544,7 @@ final class MemoryBackupService {
   /// 逐条受限解压并核对真实大小与摘要。声明值只用于提前拒绝，不能
   /// 替代实际计数。
   Future<_ExtractedBundle> _extractValidatedBundle(Uint8List bundle) async {
-    _BackupZipPreflight(bundle, budget).validate();
+    final signatureBytes = _BackupZipPreflight(bundle, budget).validate();
     final zipDirectory = ZipDirectory();
     try {
       zipDirectory.read(InputMemoryStream(bundle));
@@ -565,7 +565,7 @@ final class MemoryBackupService {
 
     // 中心目录预检：条目名称、形态与声明尺寸，全部发生在任何内容
     // 解压之前。
-    var metadataBytes = 0;
+    var metadataBytes = signatureBytes;
     var declaredTotalBytes = 0;
     final seenNames = <String>{};
     final contentHeaders = <ZipFileHeader>[];
