@@ -1069,7 +1069,9 @@ StateSnapshot _stateFromCompletedTurns(
 ChatResult _storedResult(RawSession session, RawSessionTurn reply) {
   return ChatResult(
     requestId: reply.requestId,
-    messages: reply.messages.isEmpty ? [reply.text] : reply.messages,
+    messages: (reply.messages.isEmpty ? [reply.text] : reply.messages)
+        .map(redactSessionText)
+        .toList(),
     nextState: _stateFromCompletedTurns(session.turns, ''),
     source: reply.source ?? ReplySource.local,
     fallbackReason: reply.fallbackReason,
