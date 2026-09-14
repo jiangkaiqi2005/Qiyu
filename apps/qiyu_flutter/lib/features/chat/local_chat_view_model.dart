@@ -9,6 +9,7 @@ import '../baseline/host_connection_probe.dart';
 import '../baseline/background_status_client.dart';
 import '../settings/tts_settings_client.dart';
 import '../shell/host_status_monitor.dart';
+import 'chat_delivery_assembly.dart';
 import 'local_chat_client.dart';
 import 'voice_output_controller.dart';
 
@@ -39,7 +40,8 @@ final class _ChatTurn {
     required this.generation,
     required this.requestId,
     required this.text,
-  });
+    required bool accepted,
+  }) : assembly = ChatDeliveryAssembly(requestId: requestId, accepted: accepted);
 
   /// 创建时取得的唯一代际标识：与视图模型的当前代数一致才允许落地。
   final int generation;
@@ -48,17 +50,7 @@ final class _ChatTurn {
 
   bool waiting = false;
   String streamingText = '';
-  bool accepted = false;
-
-  /// 收到过 done。
-  bool completed = false;
-
-  /// 至少一段交付成功落进气泡。
-  bool committed = false;
-
-  List<String>? finalMessages;
-  ReplySource? source;
-  FallbackReason? fallbackReason;
+  final ChatDeliveryAssembly assembly;
 }
 
 final class LocalChatViewModel extends ChangeNotifier {
@@ -399,15 +391,15 @@ final class LocalChatViewModel extends ChangeNotifier {
     // 一轮聊天即一个事务：推进代数、接管活跃事务；此后凡是代际不符的
     // 事件一律整体丢弃。
     _generation += 1;
+    final optimisticallyAdded = !_hasUserTurn(requestId);
     final turn = _ChatTurn(
       generation: _generation,
       requestId: requestId,
       text: trimmed,
+      // 重试或恢复出的用户轮已经归会话保管，连接失败也不退回草稿。
+      accepted: !optimisticallyAdded,
     );
     _activeTurn = turn;
-    final optimisticallyAdded = !_hasUserTurn(requestId);
-    // 重试或恢复出的用户轮已经归会话保管，本次连接未再受理也不退回草稿。
-    turn.accepted = !optimisticallyAdded;
     if (optimisticallyAdded) {
       _messages.add(
         LocalChatMessage(
@@ -419,9 +411,8 @@ final class LocalChatViewModel extends ChangeNotifier {
       );
     }
     notifyListeners();
-    var completed = false;
     try {
-      completed = await _sendStreaming(
+      await _sendStreaming(
         turn,
         optimisticallyAdded: optimisticallyAdded,
       );
@@ -440,9 +431,9 @@ final class LocalChatViewModel extends ChangeNotifier {
     final ChatSendStatus status;
     if (sessionScope != _sessionScope) {
       status = ChatSendStatus.staleSession;
-    } else if (completed) {
+    } else if (turn.assembly.hasCompleted) {
       status = ChatSendStatus.completed;
-    } else if (turn.accepted) {
+    } else if (turn.assembly.accepted) {
       status = ChatSendStatus.acceptedIncomplete;
     } else {
       status = ChatSendStatus.notAccepted;
@@ -450,12 +441,11 @@ final class LocalChatViewModel extends ChangeNotifier {
     return ChatSendResult(requestId: requestId, status: status);
   }
 
-  Future<bool> _sendStreaming(
+  Future<void> _sendStreaming(
     _ChatTurn turn, {
     required bool optimisticallyAdded,
   }) async {
     try {
-      turnLoop:
       await for (final event in _gateway.deliver(
         requestId: turn.requestId,
         text: turn.text,
@@ -466,10 +456,10 @@ final class LocalChatViewModel extends ChangeNotifier {
         if (!_belongsToActiveGeneration(turn)) {
           break;
         }
-        _sessionId = event.sessionId ?? _sessionId;
+        final delivery = turn.assembly.add(event);
+        _sessionId = turn.assembly.sessionId ?? _sessionId;
         switch (event.kind) {
           case LocalChatEventKind.accepted:
-            turn.accepted = true;
             if (!_hasUserTurn(turn.requestId)) {
               _messages.add(
                 LocalChatMessage(
@@ -486,35 +476,25 @@ final class LocalChatViewModel extends ChangeNotifier {
             turn.waiting = false;
             turn.streamingText += event.text!;
           case LocalChatEventKind.message:
-            turn.finalMessages = event.messages!;
           case LocalChatEventKind.state:
-            turn.source = event.source!;
-            turn.fallbackReason = event.fallbackReason;
+            break;
           case LocalChatEventKind.fallback:
-            turn.fallbackReason = event.fallbackReason;
             _latestFallbackDetail = event.code ?? event.text;
           case LocalChatEventKind.done:
-            turn.completed = true;
-            // 轮内召回的 bubble 2 会在同一条事件流里带来第二段
-            // message/state/done：每个 done 提交已收齐的一段，
-            // 而不是等流结束只保留最后一段。
-            final messages = turn.finalMessages;
-            final replySource = turn.source;
-            if (messages != null && replySource != null) {
-              turn.committed = true;
+            if (delivery != null) {
               // 该 requestId 的第 N 次交付段（轮内召回的 bubble 2 是
               // 第二段）：朗读定位与气泡的「正在朗读」指示共用。
-              final delivery = _announcedDeliveries[turn.requestId] ?? 0;
-              _announcedDeliveries[turn.requestId] = delivery + 1;
+              final deliveryIndex = _announcedDeliveries[turn.requestId] ?? 0;
+              _announcedDeliveries[turn.requestId] = deliveryIndex + 1;
               _messages.addAll(
-                messages.map(
+                delivery.messages.map(
                   (message) => LocalChatMessage(
                     requestId: turn.requestId,
                     speaker: LocalChatSpeaker.qiyu,
                     text: message,
-                    source: replySource,
-                    fallbackReason: turn.fallbackReason,
-                    deliveryIndex: delivery,
+                    source: delivery.source,
+                    fallbackReason: delivery.fallbackReason,
+                    deliveryIndex: deliveryIndex,
                     at: _previewMoment,
                   ),
                 ),
@@ -526,50 +506,43 @@ final class LocalChatViewModel extends ChangeNotifier {
               voiceOutput.offer(
                 VoiceOutputRequest(
                   requestId: turn.requestId,
-                  deliveryIndex: delivery,
+                  deliveryIndex: deliveryIndex,
                   sessionId: _sessionId,
                 ),
                 enabled: _voiceOutputEnabled,
               );
-              turn.finalMessages = null;
-              turn.source = null;
-              turn.fallbackReason = null;
             }
           case LocalChatEventKind.cancelled:
             turn.streamingText = '';
             turn.waiting = false;
-            notifyListeners();
-            // 取消即本轮终态：立刻停止消费，Host 缓冲里后续的到达都算
-            // 迟到事件，整体丢弃。
-            break turnLoop;
           case LocalChatEventKind.error:
             throw LocalChatGatewayException(event.text!);
         }
         notifyListeners();
+        // 取消即本轮终态；done 后仍消费可能到来的召回第二段。
+        if (turn.assembly.end != null) break;
       }
     } on Object {
-      if (!turn.accepted &&
-          optimisticallyAdded &&
-          _belongsToActiveGeneration(turn)) {
-        _removeUserTurn(turn.requestId);
-      }
+      turn.assembly.fail();
       rethrow;
-    }
-    if (!turn.completed || !turn.committed) {
-      if (_belongsToActiveGeneration(turn) &&
-          !turn.accepted &&
-          optimisticallyAdded) {
-        _removeUserTurn(turn.requestId);
+    } finally {
+      turn.assembly.close();
+      if (_belongsToActiveGeneration(turn)) {
+        if (!turn.assembly.accepted && optimisticallyAdded) {
+          _removeUserTurn(turn.requestId);
+        }
+        if (turn.assembly.hasCompleted) {
+          _pendingRequestId = null;
+          _pendingText = null;
+        }
+        if (turn.assembly.end == ChatDeliveryEnd.closed &&
+            (turn.assembly.hasIncompleteSegment || !turn.assembly.hasCompleted)) {
+          _errorMessage = '回复未完成，可以重新发送。';
+        }
+        turn.streamingText = '';
+        turn.waiting = false;
       }
-      return false;
     }
-    if (!_belongsToActiveGeneration(turn)) {
-      return false;
-    }
-    turn.streamingText = '';
-    _pendingRequestId = null;
-    _pendingText = null;
-    return true;
   }
 
   Future<void> stop() async {

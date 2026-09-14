@@ -410,26 +410,26 @@ void main() {
         expect(statusNode.flagsCollection.isLiveRegion, isTrue);
 
         chatGateway.add(
-          const LocalChatDeliveryEvent.delta(
-            requestId: 'stream-1',
+          LocalChatDeliveryEvent.delta(
+            requestId: chatGateway.sentRequestId!,
             text: '在的。',
           ),
         );
         chatGateway.add(
-          const LocalChatDeliveryEvent.message(
-            requestId: 'stream-1',
+          LocalChatDeliveryEvent.message(
+            requestId: chatGateway.sentRequestId!,
             messages: ['在的。'],
           ),
         );
         chatGateway.add(
-          const LocalChatDeliveryEvent.state(
-            requestId: 'stream-1',
+          LocalChatDeliveryEvent.state(
+            requestId: chatGateway.sentRequestId!,
             source: ReplySource.local,
           ),
         );
         chatGateway.add(
-          const LocalChatDeliveryEvent.done(
-            requestId: 'stream-1',
+          LocalChatDeliveryEvent.done(
+            requestId: chatGateway.sentRequestId!,
           ),
         );
         await chatGateway.close();
@@ -914,6 +914,8 @@ final class _StreamingChatGateway implements StreamingLocalChatGateway {
     ],
   );
 
+  String? sentRequestId;
+
   void add(LocalChatDeliveryEvent event) => _controller.add(event);
   Future<void> close() => _controller.close();
 
@@ -935,6 +937,7 @@ final class _StreamingChatGateway implements StreamingLocalChatGateway {
     required String text,
     String? sessionId,
   }) async* {
+    sentRequestId = requestId;
     yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: _restored.sessionId,

@@ -8,6 +8,22 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'support/host_transport.dart';
 
 void main() {
+  test('send 不把缺少 done 的 message/state 当作完整回复', () async {
+    final gateway = HttpLocalChatGateway(
+      client: hostTransportClient(
+        (_) => _streamResponse([
+          {'event': 'accepted', 'requestId': 'r1', 'sessionId': 's1'},
+          {'event': 'message', 'requestId': 'r1', 'messages': ['未落盘']},
+          {'event': 'state', 'requestId': 'r1', 'source': 'llm'},
+        ]),
+      ),
+    );
+    await expectLater(
+      gateway.send(requestId: 'r1', text: '在吗'),
+      throwsA(isA<LocalChatGatewayException>()),
+    );
+  });
+
   final invalidEvents = <String, Object?>{
     'missing delta text': {'event': 'delta', 'requestId': 'r1'},
     'wrong delta text type': {'event': 'delta', 'requestId': 'r1', 'text': 1},

@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
+import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
 
 import '../../../packages/qiyu_local_host/test/support/in_process_chat_host.dart';
 import 'support/host_transport.dart';
@@ -33,6 +34,21 @@ void main() {
     );
     expect((await _parse(replay)).last.kind, ChatDeliveryEventKind.done);
     expect(model.streamCalls, hasLength(1));
+    for (final trace in [first, replay]) {
+      final gateway = _gateway(trace);
+      final exchange = await gateway.send(requestId: 'normal', text: '在吗');
+      expect(exchange.messages, ['在。']);
+      expect(exchange.requestId, 'normal');
+      final viewModel = LocalChatViewModel(
+        gateway,
+        requestIdFactory: () => 'normal',
+        autoStart: false,
+      );
+      addTearDown(viewModel.dispose);
+      expect((await viewModel.send('在吗')).status, ChatSendStatus.completed);
+      expect(viewModel.messages.last.text, '在。');
+      expect(viewModel.messages.last.deliveryIndex, 0);
+    }
   });
 
   test('真实 Host 本地降级与安全回复由 Flutter 网关完整解析', () async {
@@ -81,16 +97,7 @@ void main() {
 }
 
 Future<List<LocalChatDeliveryEvent>> _parse(ChatEventTrace trace) async {
-  final gateway = HttpLocalChatGateway(
-    client: hostTransportClient(
-      (_) => http.Response(
-        trace.body,
-        trace.statusCode,
-        headers: {'content-type': 'application/x-ndjson; charset=utf-8'},
-      ),
-    ),
-    baseUri: Uri.parse('http://127.0.0.1:5173/'),
-  );
+  final gateway = _gateway(trace);
   final events = await gateway
       .deliver(requestId: 'parser', text: '在吗')
       .toList();
@@ -100,3 +107,14 @@ Future<List<LocalChatDeliveryEvent>> _parse(ChatEventTrace trace) async {
   );
   return events;
 }
+
+HttpLocalChatGateway _gateway(ChatEventTrace trace) => HttpLocalChatGateway(
+    client: hostTransportClient(
+      (_) => http.Response(
+        trace.body,
+        trace.statusCode,
+        headers: {'content-type': 'application/x-ndjson; charset=utf-8'},
+      ),
+    ),
+    baseUri: Uri.parse('http://127.0.0.1:5173/'),
+  );

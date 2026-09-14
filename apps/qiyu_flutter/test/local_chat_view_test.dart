@@ -1153,6 +1153,13 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
     yield LocalChatDeliveryEvent.waiting(
       requestId: requestId,
     );
+    if (reason != null) {
+      yield LocalChatDeliveryEvent.fallback(
+        requestId: requestId,
+        fallbackReason: reason,
+        code: detail,
+      );
+    }
     yield LocalChatDeliveryEvent.delta(
       requestId: requestId,
       text: '本地基础回复',
@@ -1161,13 +1168,6 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
       requestId: requestId,
       messages: const ['本地基础回复'],
     );
-    if (reason != null) {
-      yield LocalChatDeliveryEvent.fallback(
-        requestId: requestId,
-        fallbackReason: reason,
-        code: detail,
-      );
-    }
     yield LocalChatDeliveryEvent.state(
       requestId: requestId,
       source: ReplySource.local,

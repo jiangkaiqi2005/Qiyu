@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import '../baseline/host_api_gateway.dart';
+import 'chat_delivery_assembly.dart';
 
 enum LocalChatSpeaker { user, qiyu }
 
@@ -183,29 +184,38 @@ final class HttpLocalChatGateway extends HostApiGateway
     required String text,
     String? sessionId,
   }) async {
-    String? acceptedSessionId;
-    List<String>? messages;
-    ReplySource? source;
-    FallbackReason? fallbackReason;
-    await for (final event in deliver(
-      requestId: requestId,
-      text: text,
-      sessionId: sessionId,
-    )) {
-      acceptedSessionId = event.sessionId ?? acceptedSessionId;
-      messages = event.messages ?? messages;
-      source = event.source ?? source;
-      fallbackReason = event.fallbackReason ?? fallbackReason;
+    final assembly = ChatDeliveryAssembly(requestId: requestId);
+    try {
+      await for (final event in deliver(
+        requestId: requestId,
+        text: text,
+        sessionId: sessionId,
+      )) {
+        assembly.add(event);
+        if (assembly.end != null) break;
+      }
+      assembly.close();
+    } on Object catch (error) {
+      assembly.fail();
+      if (!assembly.hasCompleted) {
+        if (error is FormatException) {
+          throw const LocalChatGatewayException('回复未完成，可以重新发送。');
+        }
+        rethrow;
+      }
     }
-    if (acceptedSessionId == null || messages == null || source == null) {
+    if (!assembly.hasCompleted) {
       throw const LocalChatGatewayException('回复未完成，可以重新发送。');
     }
+    final last = assembly.completed.last;
     return LocalChatExchange(
-      sessionId: acceptedSessionId,
+      sessionId: assembly.sessionId!,
       requestId: requestId,
-      messages: messages,
-      source: source,
-      fallbackReason: fallbackReason,
+      messages: assembly.completed
+          .expand((delivery) => delivery.messages)
+          .toList(),
+      source: last.source,
+      fallbackReason: last.fallbackReason,
     );
   }
 
