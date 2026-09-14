@@ -216,10 +216,7 @@ void main() {
     final completed = await finalRetry;
     expect(completed.status, ChatSendStatus.completed);
     expect(completed.requestId, 'retry-1');
-    expect(viewModel.messages.map((message) => message.text), [
-      '这句话已接管',
-      '听见了。',
-    ]);
+    expect(viewModel.messages.map((message) => message.text), ['这句话已接管', '听见了。']);
     expect(counter, 1);
   });
 
@@ -687,7 +684,9 @@ void main() {
     },
   );
 
-  testWidgets('自动启动后按默认 2 秒周期轮询连接探测，只有这一条周期计时', (tester) async {
+  testWidgets('自动启动后按默认 2 秒周期轮询连接探测，只有这一条周期计时', (
+    tester,
+  ) async {
     final probe = _CountingProbe();
     final viewModel = LocalChatViewModel(
       _TwoBubbleGateway(),
@@ -738,7 +737,11 @@ void main() {
     final initializing = viewModel.initialize();
     await Future<void>.delayed(Duration.zero);
     expect(probe.calls, 1);
-    expect(gateway.restoreCalls, 0, reason: '探测未完成不得开始恢复会话');
+    expect(
+      gateway.restoreCalls,
+      0,
+      reason: '探测未完成不得开始恢复会话',
+    );
 
     probe.gate.complete(true);
     await initializing;
