@@ -315,8 +315,12 @@ void main() {
       contains('### [EX-M001] 重复模式｜用户靠跑步解压'),
     );
 
-    expect(await openLoopStore.banTitle('跑步解压'), isTrue);
-    expect(await store.applyBan('跑步解压'), isTrue);
+    final ban = await MemoryBanExecution(
+      openLoopStore: openLoopStore,
+      personaTree: store,
+    ).execute('跑步解压', origin: 'open-loop');
+    expect(ban.controlWritten, isTrue);
+    expect(ban.deferred, isEmpty);
 
     // 禁提内容连理解带叶彻底删除，且不进归档（不得留下可复活的副本）。
     expect(_readBranch(root.path, 'expression.md'), isNull);
@@ -530,7 +534,13 @@ void main() {
       clock: () => DateTime(2026, 8, 9, 23),
     );
     final loops = OpenLoopStore(memoryDirectory: root.path);
-    expect(await loops.banTitle('跑步解压'), isTrue);
+    expect(
+      (await MemoryBanExecution(openLoopStore: loops).execute(
+        '跑步解压',
+        origin: 'open-loop',
+      )).controlWritten,
+      isTrue,
+    );
     await _seedEpisodes(root.path, {
       '2026-08-02': [
         _entry(
@@ -926,8 +936,12 @@ $leaves''');
         contains('白噪音'),
       );
 
-      expect(await openLoopStore.banTitle('白噪音'), isTrue);
-      expect(await store.applyBan('白噪音'), isTrue);
+      final ban = await MemoryBanExecution(
+        openLoopStore: openLoopStore,
+        personaTree: store,
+      ).execute('白噪音', origin: 'open-loop');
+      expect(ban.controlWritten, isTrue);
+      expect(ban.deferred, isEmpty);
 
       // 命中禁提的根连同子树直接删除，不进归档。
       final active = _readBranch(root.path, 'preferences.md')!;

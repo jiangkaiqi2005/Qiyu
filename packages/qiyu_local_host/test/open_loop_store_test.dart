@@ -71,9 +71,11 @@ void main() {
       _candidate(id: 'entry-1', title: '医院检查'),
     ]);
 
-    final banned = await store.banTitle('医院检查');
+    final execution = MemoryBanExecution(openLoopStore: store);
+    final banned = await execution.execute('医院检查', origin: 'open-loop');
 
-    expect(banned, isTrue);
+    expect(banned.controlWritten, isTrue);
+    expect(banned.deferred, isEmpty);
     expect(await store.readItems(), isEmpty);
     final controls = await File(
       '${temporaryDirectory.path}/memory-controls.md',
@@ -83,7 +85,7 @@ void main() {
     expect(controls, contains('- [MC001] open-loop | 医院检查'));
 
     // 幂等：重复禁提不产生重复控制记录。
-    await store.banTitle('医院检查');
+    await execution.execute('医院检查', origin: 'open-loop');
     final controlsAgain = await File(
       '${temporaryDirectory.path}/memory-controls.md',
     ).readAsString(encoding: utf8);
@@ -114,7 +116,13 @@ void main() {
 
     // controls 不可识别：禁提整体不生效，热层原样保留——
     // 绝不出现「事项移走了、控制记录却没留下」的可复活空洞。
-    expect(await store.banTitle('医院检查'), isFalse);
+    expect(
+      (await MemoryBanExecution(openLoopStore: store).execute(
+        '医院检查',
+        origin: 'open-loop',
+      )).controlWritten,
+      isFalse,
+    );
     expect(await store.readItems(), hasLength(1));
     expect(
       File('${temporaryDirectory.path}/memory-controls.md')

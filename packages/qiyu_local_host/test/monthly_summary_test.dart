@@ -251,7 +251,13 @@ void main() {
     addTearDown(() => root.delete(recursive: true));
     final pipeline = EpisodeMemoryPipeline(memoryDirectory: root.path);
     final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
-    expect(await openLoopStore.banTitle('换工作'), isTrue);
+    expect(
+      (await MemoryBanExecution(openLoopStore: openLoopStore).execute(
+        '换工作',
+        origin: 'open-loop',
+      )).controlWritten,
+      isTrue,
+    );
     await _seedDay(pipeline, '2026-07-02', [
       _entry('s1:r1:0', '用户可能换工作'),
       _entry('s1:r1:1', '用户确认换工作'),

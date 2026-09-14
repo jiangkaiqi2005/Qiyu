@@ -146,7 +146,7 @@ void main() {
         );
         addTearDown(() => directory.delete(recursive: true));
         final store = OpenLoopStore(memoryDirectory: directory.path);
-        expect(await store.banTitle('加班'), isTrue);
+        expect(await store.memoryControls.ban('加班', origin: 'open-loop'), isTrue);
 
         final reopened = OpenLoopStore(memoryDirectory: directory.path);
         expect(await reopened.bannedTitles(), {'加班'});

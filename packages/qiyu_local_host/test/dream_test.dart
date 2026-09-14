@@ -445,7 +445,13 @@ void main() {
         candidateTexts: const ['用户下周去医院检查'],
         prepare: (directory) async {
           final store = OpenLoopStore(memoryDirectory: directory.path);
-          expect(await store.banTitle('医院检查'), isTrue);
+          expect(
+            (await MemoryBanExecution(openLoopStore: store).execute(
+              '医院检查',
+              origin: 'open-loop',
+            )).controlWritten,
+            isTrue,
+          );
         },
       );
     });
@@ -1349,7 +1355,13 @@ void main() {
 - [VA-L002] 2026-08-02 | 明确自述 | support | 用户看重说到做到 | episodes/2026/08/2026-08-02.md [m2]
 ''');
       final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
-      expect(await openLoopStore.banTitle('跑步解压'), isTrue);
+      expect(
+        (await MemoryBanExecution(openLoopStore: openLoopStore).execute(
+          '跑步解压',
+          origin: 'open-loop',
+        )).controlWritten,
+        isTrue,
+      );
       _seedPersonaBranch(directory.path, 'preferences.md', '''# 偏好习惯
 
 ## 未归根中间节点

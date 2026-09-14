@@ -420,29 +420,6 @@ final class OpenLoopStore {
     return changed;
   });
 
-  /// 禁提：先写 memory-controls.md 的 banned 区，再把事项移出手层
-  /// （定稿写入顺序：先控制记录后清派生）。幂等——同一事项重复禁提
-  /// 不产生重复控制记录。返回禁提是否已生效；controls 文件不可识别、
-  /// 禁提记录无法落盘时返回 false 且**不动热层**——否则事项离了热层
-  /// 又没有控制记录，次日日终会被重新提升，留下可复活空洞。
-  Future<bool> banTitle(String title, {String origin = 'open-loop'}) =>
-      _withLock(() async {
-        final normalized = normalizeLoopTitle(title);
-        if (normalized.isEmpty) {
-          return false;
-        }
-        if (!await memoryControls.ban(title, origin: origin)) {
-          return false;
-        }
-        await _removeLoopsWhere(
-          (item) => bannedTitleMatches(
-            normalizeLoopTitle(item.title),
-            {normalized},
-          ),
-        );
-        return true;
-      });
-
   /// 删除即时生效的一部分：把命中控制范围的条目永久移出手层
   /// （删除清除派生内容，与禁提的移出同一条路径）。返回移出条数。
   Future<int> removeLoopsMatching(Set<String> titles) => _withLock(() async {

@@ -317,9 +317,9 @@ void main() {
           at: clock(),
         ),
       );
-      await OpenLoopStore(
-        memoryDirectory: temporaryDirectory.path,
-      ).banTitle('医院检查');
+      await MemoryBanExecution(
+        openLoopStore: OpenLoopStore(memoryDirectory: temporaryDirectory.path),
+      ).execute('医院检查', origin: 'open-loop');
       final report = await service.finalizeForBedtime(date: '2026-08-14');
 
       final prompt = client.lastMessages!
@@ -1090,7 +1090,8 @@ void main() {
       expect(await store.readItems(), hasLength(1));
 
       // 用户要求不再提：立即禁提并移出手层。
-      await store.banTitle('医院检查');
+      await MemoryBanExecution(openLoopStore: store)
+          .execute('医院检查', origin: 'open-loop');
       expect(await store.readItems(), isEmpty);
 
       // 次日模型再次提出同一事项：日终不得重新激活。

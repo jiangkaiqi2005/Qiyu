@@ -261,7 +261,13 @@ void main() {
       });
       addTearDown(() => root.delete(recursive: true));
       final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
-      expect(await openLoopStore.banTitle('书'), isTrue);
+      expect(
+        (await MemoryBanExecution(openLoopStore: openLoopStore).execute(
+          '书',
+          origin: 'open-loop',
+        )).controlWritten,
+        isTrue,
+      );
       final client = ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
         ModelCompletion.reply('想起来了，你去了河边。'),
@@ -321,7 +327,13 @@ void main() {
         });
         addTearDown(() => root.delete(recursive: true));
         final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
-        expect(await openLoopStore.banTitle('书'), isTrue);
+        expect(
+          (await MemoryBanExecution(openLoopStore: openLoopStore).execute(
+            '书',
+            origin: 'open-loop',
+          )).controlWritten,
+          isTrue,
+        );
         final client = ScriptedChatClient([
           ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
         ]);
@@ -715,7 +727,13 @@ void main() {
       });
       addTearDown(() => root.delete(recursive: true));
       final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
-      expect(await openLoopStore.banTitle('医院检查'), isTrue);
+      expect(
+        (await MemoryBanExecution(openLoopStore: openLoopStore).execute(
+          '医院检查',
+          origin: 'open-loop',
+        )).controlWritten,
+        isTrue,
+      );
       final (recall, pipeline) = _orchestrator(
         root.path,
         client: ScriptedChatClient([
@@ -754,7 +772,13 @@ void main() {
       });
       addTearDown(() => root.delete(recursive: true));
       final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
-      expect(await openLoopStore.banTitle('青岛行程'), isTrue);
+      expect(
+        (await MemoryBanExecution(openLoopStore: openLoopStore).execute(
+          '青岛行程',
+          origin: 'open-loop',
+        )).controlWritten,
+        isTrue,
+      );
       final (recall, pipeline) = _orchestrator(
         root.path,
         client: ScriptedChatClient([

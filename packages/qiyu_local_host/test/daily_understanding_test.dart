@@ -768,7 +768,13 @@ void main() {
         throwsA(isA<MemoryRepositoryException>()),
       );
       // 失败与重试之间用户新增禁提。
-      expect(await openLoopStore.banTitle('换工作'), isTrue);
+      expect(
+        (await MemoryBanExecution(openLoopStore: openLoopStore).execute(
+          '换工作',
+          origin: 'open-loop',
+        )).controlWritten,
+        isTrue,
+      );
 
       final retry = await buildService(const IoAtomicTextWriter())
           .finalizeDay('2026-08-14');
