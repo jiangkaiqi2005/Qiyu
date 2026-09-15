@@ -11,8 +11,8 @@
 Release 1 = **Flutter Web UI + Dart Windows 本机 Host + 纯 Dart 行为核心**。Host 只监听 `127.0.0.1`，负责静态资源、Provider 调用、凭据与 Markdown 持久化；浏览器只负责 UI，API Key 永不进入浏览器。仓库为双壳结构：Windows 壳（`apps/qiyu_windows_host/`）与安卓壳（`apps/qiyu_flutter/android/`，进程内 Host + 原生编译 UI）依赖同一个平台无关服务包 `packages/qiyu_local_host`。旧 Node/JS 产品轨道已退役，不迁移旧 localStorage 或旧 `qiyu.config.local.json`，勿重新引入浏览器持久化主链路。
 
 - `packages/qiyu_behavior_core/` — 纯 Dart 行为与协议核心：安全分类、本地回复、模型输出清洗与人格边界校验、稳定 DTO 与 `ChatDeliveryEvent` 流式协议；不依赖 Flutter/DOM/Windows API/具体存储。
-- `packages/qiyu_local_host/` — 平台无关本机 Host 纯 Dart 核心包：`LocalAppHost`（loopback 站点 + 受会话/Origin/CSRF 保护的 API）、`LocalChatService`（交付编排）、`MemoryCadence`（记忆节奏：日终归档、月压缩、Dream、启动恢复扫描、空闲补办）、`model_gateway.dart`（OpenAI-compatible / Anthropic / Ollama 适配）、Markdown 会话与记忆模块（episode_memory、dream、persona_tree、memory_recall 等）、凭据仓接口 `SecretStore`（平台壳注入实现）；不依赖 Flutter/DOM/Windows API。
-- `apps/qiyu_flutter/` — Flutter Web UI，`features/` 下含 chat、settings、memory、history、onboarding、shell 等领域。
+- `packages/qiyu_local_host/` — 平台无关本机 Host 纯 Dart 核心包：`LocalAppHost`（loopback 站点 + 受会话/Origin/CSRF 保护的 API）、`LocalChatService`（交付编排）、`MemoryCadence`（记忆节奏：日终归档、月压缩、Dream、启动恢复扫描、空闲补办）、`model_gateway.dart`（OpenAI-compatible / Anthropic / Ollama 适配）、语音网关（`stt_gateway`/`tts_gateway`：豆包 ASR 转写与 TTS 朗读，各自独立设置服务与路由）、联网搜索（anysearch 客户端与通用 web_search，能力快照条文原样并入提示词硬规则）、Markdown 会话与记忆模块（episode_memory、dream、persona_tree、memory_recall、memory_ban 禁提统一执行、memory_backup 备份导出导入等）、凭据仓接口 `SecretStore`（平台壳注入实现）；不依赖 Flutter/DOM/Windows API。
+- `apps/qiyu_flutter/` — Flutter Web UI，`features/` 下含 chat、settings、memory、history、onboarding、shell 等领域；chat 内含语音输入（按住说话、授权保护、转写待发与中断取消）与语音输出（朗读、中断后即时重试），录音/播放走平台桩分流 Web 与安卓。
 - `apps/qiyu_windows_host/` — Dart Windows 薄壳：`bin/qiyu_windows_host.dart` 启动入口、`host_runner` 启动编排与单实例激活、`host_command` CLI 参数与 PC 路径缺省、`single_instance` 文件锁单实例、Windows 凭据管理器实现（`WindowsCredentialSecretStore`）、rundll32 浏览器引导（`WindowsDefaultBrowserLauncher`）与启动前自检；平台无关逻辑一律在 `qiyu_local_host`。
 - `contracts/qiyu_behavior_contracts.json` — 当前行为契约，Core 直接消费；`legacy-migration-golden-cases.json` 只冻结旧迁移 golden，运行时不消费。
 - `docs/product/behavior-spec.md` — 从产品灵魂提炼的工程行为规范。
@@ -46,12 +46,12 @@ cd apps\qiyu_flutter; flutter build apk --debug # 安卓调试包，无需 keyst
 `/chat` → `POST /api/chat` → `LocalChatService.deliver`：
 
 1. 危机/医疗/法律/金融等 non-normal 输入先在本地分类，**绝不调用 Provider**；Provider 未配置、失败或输出不合格时统一降级本地规则回复。本地规则引擎是行为基准（golden eval 锁定其输出），不是 stub。
-2. Prompt 由 `ModelPromptBuilder` 装配：人格宪法 → 硬规则 → 隐藏块协议 → `<daily_state>`/`<long_memory>`/`<persona>`（空块不输出）→ 最近已完成会话 → `<memory_context>`（仅命中时，临时附加不进 system prompt）。装配前读 `memory-controls.md` 过滤冻结/禁提内容，controls 本身不进 prompt。
+2. Prompt 由 `ModelPromptBuilder` 装配：人格宪法 → 硬规则（联网检索等能力快照条文原样并入）→ 隐藏块协议 → `<daily_state>`/`<long_memory>`/`<persona>`（空块不输出）→ 最近对话（每条消息带时刻前缀）→ 格式提醒 → `<memory_context>`（仅命中时，临时附加不进 system prompt）→ 当前用户消息。时刻前缀只活在装配瞬间：不落盘、不进 system 段、检索块不带。装配前读 `memory-controls.md` 过滤冻结/禁提内容，controls 本身不进 prompt。
 3. Provider 原始增量先在 Host 完整缓存，候选回复经清洗、违禁词与人格边界校验后才按 `ChatDeliveryEvent` 交付；**页面绝不能看到未经安全校验的原始 token**。只有协议原生终止标记（OpenAI `finish_reason`/`[DONE]`、Anthropic `message_stop`、Ollama `done:true`）才算完成；提前 EOF、超时、原生 error 必须失败降级，不能把半句当完整回复。
 4. `requestId` 幂等：刷新、Host 重启、重试复用已有 turn，不重复展示或落盘；`/api/chat/cancel` 取消只保留可重试的用户 turn。
 5. 晚安输入正常交给 Provider 结合语境回应，不走本地固定收束；晚安信号在可见回复后触发日终归档与符合间隔的 Dream。记忆召回是模型隐藏动作（`memory_recall`）触发的轮内循环，无规则兜底、不打分。
 
-安全不变量：API 需 Host 会话，修改请求还需同源 Origin + CSRF；读取设置永不返回明文 Key；对外错误只返回允许列表诊断，禁止透出授权头、Cookie、完整敏感输入、第三方错误原文或本机路径。Provider 分支集中在 Provider 层，勿散入 UI 或 Chat Service。
+安全不变量：API 需 Host 会话，修改请求还需同源 Origin + CSRF；读取设置永不返回明文 Key；秘密脱敏覆盖存储旧数据、模型上下文、召回外发与备份导出等一切出仓内容，记忆禁提由 `memory_ban` 统一执行且部分失败如实上报不静默；对外错误只返回允许列表诊断，禁止透出授权头、Cookie、完整敏感输入、第三方错误原文或本机路径。Provider 分支集中在 Provider 层，勿散入 UI 或 Chat Service。
 
 状态：会话写本机 Markdown sessions（单段最多 80 turns，活动窗口 180 天）；Provider 配置（含 Key）在本机 runtime `provider.json`，切换 Provider/URL 时不得沿用另一 credential scope 的旧 Key；浏览器不用 localStorage 作主持久化。
 
