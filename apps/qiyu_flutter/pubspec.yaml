@@ -37,6 +37,8 @@ flutter:
     - assets/fonts/OFL-NotoSerifSC.txt
     - assets/fonts/APACHE-2.0-MaterialSymbolsOutlined.txt
     - assets/images/home-night-backdrop.jpg
+    - assets/images/qiyu-web-icon.png
+    - assets/images/qiyu-app-icon.png
     # 进程内 Host 的 system prompt 装配原料（栖语人格宪法）：与仓库根
     # `栖语人格宪法.md` 保持同步（Windows 壳由打包脚本复制同名文件，
     # 安卓壳打版权期内随 APK 分发）。

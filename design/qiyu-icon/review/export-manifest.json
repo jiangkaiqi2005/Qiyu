@@ -1,0 +1,134 @@
+[
+  {
+    "file": "png/qiyu-app-icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "hasAlpha": false
+  },
+  {
+    "file": "png/qiyu-app-master.png",
+    "width": 1254,
+    "height": 1254,
+    "hasAlpha": false
+  },
+  {
+    "file": "png/qiyu-icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-128.png",
+    "width": 128,
+    "height": 128,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-16.png",
+    "width": 16,
+    "height": 16,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-180.png",
+    "width": 180,
+    "height": 180,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-192.png",
+    "width": 192,
+    "height": 192,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-24.png",
+    "width": 24,
+    "height": 24,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-256.png",
+    "width": 256,
+    "height": 256,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-32.png",
+    "width": 32,
+    "height": 32,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-48.png",
+    "width": 48,
+    "height": 48,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-512.png",
+    "width": 512,
+    "height": 512,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-64.png",
+    "width": 64,
+    "height": 64,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-96.png",
+    "width": 96,
+    "height": 96,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-icon-light-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-lockup.png",
+    "width": 580,
+    "height": 160,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-mark-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-mark-light-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-maskable-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-maskable-192.png",
+    "width": 192,
+    "height": 192,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-maskable-512.png",
+    "width": 512,
+    "height": 512,
+    "hasAlpha": true
+  },
+  {
+    "file": "png/qiyu-web-icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "hasAlpha": true
+  }
+]

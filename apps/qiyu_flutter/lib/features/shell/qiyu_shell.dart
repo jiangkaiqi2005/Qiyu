@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -720,7 +721,7 @@ class _BrandSlotState extends State<_BrandSlot> {
   }
 }
 
-/// 品牌图形本体：中性几何占位（发丝描边外圈 + 居中实心小圆点）。窄屏抽屉的
+/// 归鸟品牌图形：Web 使用黑色浅底，原生 APP 使用粉黑质感。窄屏抽屉的
 /// 品牌槽与桌面常驻开合开关共用这同一份图形与尺寸，键 `nav-brand` 始终跟着
 /// 品牌图标走（任一时刻树上只有一枚）。
 class _BrandMark extends StatelessWidget {
@@ -728,24 +729,15 @@ class _BrandMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: QiyuLayout.brandMarkSize,
-      height: QiyuLayout.brandMarkSize,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(width: QiyuLine.hairline, color: QiyuColors.line),
-        color: QiyuColors.neutralFill,
-      ),
-      child: const Center(
-        child: SizedBox.square(
-          dimension: 12,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: QiyuColors.muted,
-            ),
-          ),
-        ),
+    return ClipOval(
+      child: Image.asset(
+        kIsWeb
+            ? 'assets/images/qiyu-web-icon.png'
+            : 'assets/images/qiyu-app-icon.png',
+        width: QiyuLayout.brandMarkSize,
+        height: QiyuLayout.brandMarkSize,
+        fit: BoxFit.contain,
+        excludeFromSemantics: true,
       ),
     );
   }
