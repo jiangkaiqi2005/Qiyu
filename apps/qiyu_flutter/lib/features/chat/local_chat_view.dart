@@ -85,6 +85,13 @@ class _LocalChatViewState extends State<LocalChatView>
   bool _stickToBottom = true;
   double _lastPixels = 0;
 
+  /// 键盘 inset 的上一帧值。软键盘弹出同样压缩列表视口，而「贴底」是按
+  /// pixels 与 maxScrollExtent 的关系算的：视口变矮只抬高 max、不动 pixels，
+  /// 列表于是停在半空，最新消息沉到键盘与输入框之下。这里只认 inset 的
+  /// **上升沿**（键盘弹出、或换成更高的输入法），下降沿不主动跳——收起键盘
+  /// 时 clamp 自然把贴底态收回来，正在回读历史的用户位置也不被抢。
+  double _lastKeyboardInset = 0;
+
   late final LocalChatViewModel _chatViewModel;
   late final VoiceInputController _voiceInput;
 
@@ -252,6 +259,19 @@ class _LocalChatViewState extends State<LocalChatView>
       _stickToBottom = true;
     }
     _lastPixels = position.pixels;
+  }
+
+  /// 下一帧把列表拉回底部。内容增长与键盘压缩都要等这一帧布局落定后才能读到
+  /// 新的 `maxScrollExtent`；只有贴底态才跳，正在回读历史的用户不被抢。
+  void _scheduleStickToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_stickToBottom) {
+        return;
+      }
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      }
+    });
   }
 
   ApiErrorCategory? _categorizeFallbackReason(
@@ -422,14 +442,7 @@ class _LocalChatViewState extends State<LocalChatView>
         '${viewModel.messages.length}|$transient|${viewModel.streamingText.length}';
     if (signature != _lastListSignature) {
       _lastListSignature = signature;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_stickToBottom) {
-          return;
-        }
-        if (_scrollController.hasClients) {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-        }
-      });
+      _scheduleStickToBottom();
     }
     // 合一页（design-system §5）：还没发出消息就是空状态首页——问候 +
     // composer；发出第一句后消息流生长。没有「首页→对话页」的跳转，两条路由
@@ -445,7 +458,14 @@ class _LocalChatViewState extends State<LocalChatView>
         MediaQuery.sizeOf(context).width < QiyuLayout.desktopBreakpoint;
     // 淡出层的落点：只在聊天态取，空态下问候由 `_homeBody` 自己画。
     final fadingGreeting = empty ? null : _greetingRect;
-    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    // 键盘弹起把视口压矮，贴底态要重新贴底——否则列表停在半空，最新消息沉到
+    // 键盘之下（内容签名不含 inset，没有这一跳就没人扣扳机）。
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    if (_android && keyboardInset > _lastKeyboardInset) {
+      _scheduleStickToBottom();
+    }
+    _lastKeyboardInset = keyboardInset;
+    final keyboardVisible = keyboardInset > 0;
     return Scaffold(
       // 底色撤成透明：页面背景（夜色底 + 仅空态的夜景图）由 [QiyuShell] 铺成
       // **全幅底层**，侧边栏与抽屉作为半透明层叠在它之上。这里再铺一层不透明
@@ -555,7 +575,20 @@ class _LocalChatViewState extends State<LocalChatView>
   }) {
     return Stack(
       children: [
-        Positioned.fill(child: _messageArea(viewModel)),
+        // 收键盘走 Listener 的 down 事件而不是手势：每条消息自己带一个轻点
+        // 显隐时刻的手势，竞技场里内层先胜，页面级的 onTap 点消息时永远轮不上
+        // （框架的 tap-outside 失焦又明确排除移动端触摸）。down 事件不进竞技场，
+        // 点任何位置都先到达，气泡的轻点与重听按钮照常工作。
+        Positioned.fill(
+          child: _android
+              ? Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: (_) =>
+                      _composerKey.currentState?.dismissKeyboard(),
+                  child: _messageArea(viewModel),
+                )
+              : _messageArea(viewModel),
+        ),
         Positioned(
           left: 0,
           right: 0,

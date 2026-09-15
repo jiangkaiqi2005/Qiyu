@@ -181,6 +181,131 @@ void main() {
       variant: TargetPlatformVariant.only(TargetPlatform.android),
     );
     testWidgets(
+      '贴底态键盘弹起，列表重新贴底且最新消息完整落在键盘之上',
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        gateway.restoredMessages = _restoredSessionWithMoments();
+        final viewModel = await _pumpChatView(tester, gateway: gateway);
+        await viewModel.initialize();
+        await tester.pumpAndSettle();
+        final controller = tester
+            .widget<ListView>(find.byType(ListView))
+            .controller!;
+        expect(
+          controller.offset,
+          closeTo(controller.position.maxScrollExtent, 1),
+          reason: '前置失败：恢复长会话后没有贴底',
+        );
+
+        await tester.tap(find.byKey(const Key('chat-input')));
+        await tester.pumpAndSettle();
+        tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+        await tester.pumpAndSettle();
+
+        // 视口被键盘压矮只抬高 maxScrollExtent，滚动位置原地不动——所以贴底
+        // 态必须重新跳一次，否则最新消息沉到键盘与输入框之下。
+        expect(
+          controller.offset,
+          closeTo(controller.position.maxScrollExtent, 1),
+          reason: '键盘压矮视口后必须重新贴底',
+        );
+        final lastMessage = find.byKey(const Key('chat-message-39'));
+        expect(lastMessage, findsOneWidget, reason: '最新一条消息必须还在树上');
+        expect(
+          tester.getRect(lastMessage).bottom,
+          lessThanOrEqualTo(800 - 300),
+          reason: '最新一条消息必须完整落在键盘（视口底 500）之上',
+        );
+        expect(
+          tester.getRect(lastMessage).bottom,
+          lessThanOrEqualTo(
+            tester.getRect(find.byKey(const Key('home-go-chat'))).top,
+          ),
+          reason: '最新一条消息必须完整落在输入框之上，不被覆盖层吃掉',
+        );
+
+        tester.view.viewInsets = const FakeViewPadding();
+        await tester.pumpAndSettle();
+        expect(
+          controller.offset,
+          closeTo(controller.position.maxScrollExtent, 1),
+          reason: '键盘收起后仍应贴底',
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+    testWidgets(
+      '点消息本体收键盘，草稿与选区保留且拖拽滚动不受影响',
+      (tester) async {
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        gateway.restoredMessages = _restoredSessionWithMoments();
+        final viewModel = await _pumpChatView(tester, gateway: gateway);
+        await viewModel.initialize();
+        await tester.pumpAndSettle();
+        final controller = tester
+            .widget<ListView>(find.byType(ListView))
+            .controller!;
+        final field = find.byKey(const Key('chat-input'));
+        await tester.tap(field);
+        await tester.pumpAndSettle();
+        await tester.enterText(field, '还没说完的草稿');
+        const selection = TextSelection(baseOffset: 1, extentOffset: 3);
+        tester.testTextInput.updateEditingValue(
+          const TextEditingValue(text: '还没说完的草稿', selection: selection),
+        );
+        await tester.pump();
+        expect(tester.testTextInput.isVisible, isTrue);
+
+        // 点在消息本体上（不是列表空白）：气泡自带轻点手势，收键盘必须绕开
+        // 手势竞技场，否则这一下永远轮不到页面。
+        await tester.tap(find.text('旧消息 39，保留阅读位置。'));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
+        expect(
+          tester.widget<TextField>(field).controller!.selection,
+          selection,
+        );
+        expect(find.text('还没说完的草稿'), findsOneWidget);
+
+        // 收键盘走 down 事件、不进竞技场：拖拽滚动照常。若哪天换成
+        // GestureDetector 抢手势，这里会红。
+        final offsetBefore = controller.offset;
+        await tester.drag(find.byType(ListView), const Offset(0, 200));
+        await tester.pumpAndSettle();
+        expect(controller.offset, lessThan(offsetBefore));
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+    testWidgets(
+      '点没有时刻的旧消息也收键盘',
+      (tester) async {
+        // 没有时刻的气泡不带轻点手势，这一下由页面级手势兜住（消息区 Listener
+        // 同样收键盘）；这条锁的是那条防御路径别被当成冗余删掉——生产链路
+        // at 恒非空。
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        gateway.restoredMessages = const [
+          LocalChatMessage(
+            requestId: 'old-0',
+            speaker: LocalChatSpeaker.qiyu,
+            text: '更早的会话没有时刻。',
+          ),
+        ];
+        final viewModel = await _pumpChatView(tester, gateway: gateway);
+        await viewModel.initialize();
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('chat-input')));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isTrue);
+        await tester.tap(find.text('更早的会话没有时刻。'));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+    testWidgets(
       '点空白收键盘且保留草稿选区，输入与语音切换仍可用',
       (tester) async {
         await _pumpChatView(
@@ -1024,6 +1149,18 @@ Future<void> _startPendingInput(WidgetTester tester, {required bool voice}) asyn
   }
   await tester.pump();
 }
+
+/// 40 条带时刻的旧消息，与生产同形：Host 恢复的消息都带 `at`，气泡因此带
+/// 轻点显隐时刻的手势——正是收键盘必须绕开手势竞技场的原因。
+List<LocalChatMessage> _restoredSessionWithMoments() => List.generate(
+  40,
+  (index) => LocalChatMessage(
+    requestId: 'old-$index',
+    speaker: LocalChatSpeaker.user,
+    text: '旧消息 $index，保留阅读位置。',
+    at: DateTime(2026, 9, 2, 23, 41),
+  ),
+);
 
 Future<LocalChatViewModel> _pumpChatView(
   WidgetTester tester, {
