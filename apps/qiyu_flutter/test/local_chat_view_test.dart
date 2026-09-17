@@ -84,6 +84,181 @@ void main() {
     }
   }
   group('安卓键盘输入意图', () {
+    for (final keyboard in [false, true]) {
+      testWidgets(
+        '逐帧小步回读不会被贴底补跳中断 keyboard=$keyboard',
+        (tester) async {
+          tester.view.physicalSize = const Size(400, 800);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+          gateway.restoredMessages = _variableHeightSessionWithMoments();
+          final model = await _pumpChatView(tester, gateway: gateway);
+          await model.initialize();
+          await tester.pumpAndSettle();
+          final position = tester
+              .widget<ListView>(find.byType(ListView))
+              .controller!.position;
+          expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+          if (keyboard) {
+            await tester.tap(find.byKey(const Key('chat-input')));
+            tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+            await tester.pumpAndSettle();
+          }
+          expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+          expect(tester.binding.hasScheduledFrame, isFalse);
+          await _dragHistoryInSteps(tester, steps: 30, closeKeyboard: keyboard);
+          expect(
+            position.maxScrollExtent - position.pixels,
+            greaterThan(120),
+            reason: '每帧仅移动 8px 的真实触摸必须持续回读，不得被 jumpTo 终止',
+          );
+        },
+        variant: TargetPlatformVariant.only(TargetPlatform.android),
+      );
+    }
+    for (final send in [false, true]) {
+      testWidgets(
+        '短距离回读松手保持位置，主动回底或发送恢复跟随 send=$send',
+        (tester) async {
+          tester.view.physicalSize = const Size(400, 800);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+          gateway.restoredMessages = _variableHeightSessionWithMoments();
+          final model = await _pumpChatView(tester, gateway: gateway);
+          await model.initialize();
+          await tester.pumpAndSettle();
+          final position = tester
+              .widget<ListView>(find.byType(ListView))
+              .controller!.position;
+          expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+          await _dragHistoryInSteps(tester, steps: 10, closeKeyboard: false);
+          final gap = position.maxScrollExtent - position.pixels;
+          expect(gap, greaterThan(20));
+          expect(gap, lessThan(120));
+          final readingOffset = position.pixels;
+          await tester.pump(const Duration(seconds: 1));
+          expect(position.pixels, closeTo(readingOffset, 1));
+
+          // 短回读即使仍在旧 120px 粘滞带内，键盘变化也不能恢复跟随。
+          final field = find.byKey(const Key('chat-input'));
+          await tester.tap(field);
+          tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+          await tester.pumpAndSettle();
+          expect(position.pixels, closeTo(readingOffset, 1));
+          await tester.tapAt(const Offset(200, 140));
+          tester.view.viewInsets = const FakeViewPadding();
+          await tester.pumpAndSettle();
+          expect(position.pixels, closeTo(readingOffset, 1));
+
+          if (send) {
+            await tester.enterText(field, '回到底部');
+            await tester.tap(find.byKey(const Key('chat-send')));
+            await tester.pumpAndSettle();
+          } else {
+            await _dragHistoryInSteps(
+              tester, steps: 20, closeKeyboard: false, towardBottom: true,
+            );
+          }
+          expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+          // 用新的 viewport metrics 验证恢复的是跟随意图，而非仅偶然到底。
+          await tester.tap(field);
+          tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+          await tester.pumpAndSettle();
+          expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+        },
+        variant: TargetPlatformVariant.only(TargetPlatform.android),
+      );
+    }
+    testWidgets(
+      '严格贴底时向尾部拖动不丢贴底意图，弹键盘仍跟随',
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        gateway.restoredMessages = _variableHeightSessionWithMoments();
+        final model = await _pumpChatView(tester, gateway: gateway);
+        await model.initialize();
+        await tester.pumpAndSettle();
+        final position = tester
+            .widget<ListView>(find.byType(ListView))
+            .controller!.position;
+        expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+
+        // 已严格贴底时向尾部真实拖动：pixels 已在底缘不再增大，列表只派
+        // overscroll 而不派正向 update——这不能被当成回读。
+        final gesture = await tester.startGesture(const Offset(200, 140));
+        for (var i = 0; i < 10; i++) {
+          await gesture.moveBy(
+            const Offset(0, -8),
+            timeStamp: Duration(milliseconds: (i + 1) * 16),
+          );
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        await gesture.up(timeStamp: const Duration(milliseconds: 200));
+        await tester.pumpAndSettle();
+        expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+
+        // 此后弹键盘必须仍然贴底跟随：用户从未表达回读意图。
+        await tester.tap(find.byKey(const Key('chat-input')));
+        tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+        await tester.pumpAndSettle();
+        expect(
+          position.pixels,
+          closeTo(position.maxScrollExtent, 1),
+          reason: '贴底时朝尾部的边界拖动是误触，不得清除贴底意图',
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+    testWidgets(
+      '补跳已排队时开始真实拖动，回调不能终止拖动',
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        gateway.restoredMessages = _variableHeightSessionWithMoments();
+        final model = await _pumpChatView(tester, gateway: gateway);
+        await model.initialize();
+        await tester.pumpAndSettle();
+        final position = tester
+            .widget<ListView>(find.byType(ListView))
+            .controller!.position;
+        expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+        // 仅用通知排入一次布局补跳，不改 position、不伪造回读位置。
+        // 通知与后续帧回调之间插入真实手势，确定性锁住排队竞态。
+        final scrollContext = tester.element(find.byType(Scrollable).first);
+        ScrollMetricsNotification(
+          metrics: position.copyWith(maxScrollExtent: position.maxScrollExtent + 8),
+          context: scrollContext,
+        ).dispatch(scrollContext);
+        expect(tester.binding.hasScheduledFrame, isTrue);
+        final gesture = await tester.startGesture(const Offset(200, 140));
+        for (var i = 0; i < 10; i++) {
+          await gesture.moveBy(
+            const Offset(0, 8),
+            timeStamp: Duration(milliseconds: (i + 1) * 16),
+          );
+          // 前三个 move 先赢得拖动竞技场，再放行已排队的补跳回调。
+          if (i >= 2) await tester.pump(const Duration(milliseconds: 16));
+        }
+        final gap = position.maxScrollExtent - position.pixels;
+        expect(gap, greaterThan(20));
+        expect(gap, lessThan(120));
+        final before = position.pixels;
+        await gesture.moveBy(const Offset(0, 8));
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(position.pixels, closeTo(before - 8, 1));
+        await tester.pump(const Duration(milliseconds: 100));
+        await gesture.up(timeStamp: const Duration(milliseconds: 300));
+        await tester.pumpAndSettle();
+        expect(position.pixels, closeTo(before - 8, 1));
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
     testWidgets(
       '输入文字可长按选择复制，消息重听按钮仍执行',
       (tester) async {
@@ -227,12 +402,23 @@ void main() {
           reason: '最新一条消息必须完整落在输入框之上，不被覆盖层吃掉',
         );
 
+        await tester.tap(find.text('旧消息 39，保留阅读位置。'));
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
         tester.view.viewInsets = const FakeViewPadding();
         await tester.pumpAndSettle();
         expect(
           controller.offset,
           closeTo(controller.position.maxScrollExtent, 1),
           reason: '键盘收起后仍应贴底',
+        );
+        await tester.tap(find.byKey(const Key('chat-input')));
+        tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+        await tester.pumpAndSettle();
+        expect(
+          controller.offset,
+          closeTo(controller.position.maxScrollExtent, 1),
+          reason: '纯点击消息收键盘不能被误判为永久回读',
         );
       },
       variant: TargetPlatformVariant.only(TargetPlatform.android),
@@ -1187,6 +1373,34 @@ Future<void> _startPendingInput(WidgetTester tester, {required bool voice}) asyn
     await tester.tap(find.byKey(const Key('chat-send')));
   }
   await tester.pump();
+}
+
+/// 真实触摸逐帧拖动，按指定步数与方向移动（每步 8px，towardBottom 为真时
+/// 向上拖向尾部，否则向下拖向历史），与探针同形：帧间补跳必须在拖动开始后
+/// 被取消，不能 `jumpTo` 把活动拖动打回 Idle。
+Future<void> _dragHistoryInSteps(
+  WidgetTester tester, {
+  required int steps,
+  required bool closeKeyboard,
+  bool towardBottom = false,
+}) async {
+  final step = Offset(0, towardBottom ? -8 : 8);
+  final gesture = await tester.startGesture(
+    Offset(200, towardBottom ? 380 : 140),
+  );
+  if (closeKeyboard) {
+    tester.view.viewInsets = const FakeViewPadding();
+    await tester.pumpAndSettle();
+  }
+  await tester.pump(const Duration(milliseconds: 16));
+  for (var i = 0; i < steps; i++) {
+    await gesture.moveBy(step, timeStamp: Duration(milliseconds: (i + 1) * 16));
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  tester.view.viewInsets = const FakeViewPadding();
+  await tester.pump(const Duration(milliseconds: 100));
+  await gesture.up(timeStamp: Duration(milliseconds: steps * 16 + 100));
+  await tester.pumpAndSettle();
 }
 
 /// 40 条带时刻的**变高**旧消息，用户/栖语交替、行数由固定公式决定：

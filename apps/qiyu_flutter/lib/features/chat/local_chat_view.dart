@@ -86,6 +86,9 @@ class _LocalChatViewState extends State<LocalChatView>
   bool _stickToBottom = true;
   double _lastPixels = 0;
 
+  /// 安卓真实拖动及其惯性阶段；布局修正与程序跳转不代表用户滚动意图。
+  bool _userScrolling = false;
+
   /// 键盘 inset 的上一帧值。软键盘弹出同样压缩列表视口，而「贴底」是按
   /// pixels 与 maxScrollExtent 的关系算的：视口变矮只抬高 max、不动 pixels，
   /// 列表于是停在半空，最新消息沉到键盘与输入框之下。这里只认 inset 的
@@ -257,9 +260,10 @@ class _LocalChatViewState extends State<LocalChatView>
     _stickToBottom = true;
   }
 
-  // pixels 减少只可能来自用户上滑（程序跳转与内容增长不会减少），
-  // 以此判定离开底部；滑回底部附近则重新粘滞。
+  // Web/桌面保留原有 120px 粘滞规则；安卓由原生滚动通知判断意图，
+  // 不把键盘 clamp、布局修正或普通 metrics 更新误判为用户回到底部。
   void _trackStickToBottom() {
+    if (_android) return;
     final position = _scrollController.position;
     if (position.pixels < _lastPixels) {
       _stickToBottom = position.pixels >= position.maxScrollExtent - 120;
@@ -267,6 +271,35 @@ class _LocalChatViewState extends State<LocalChatView>
       _stickToBottom = true;
     }
     _lastPixels = position.pixels;
+  }
+
+  /// 真实拖动一开始就让位（纯点击不触发），包括已排队的贴底回调。
+  /// 松手后仍保留回读意图；只有用户向尾部滚动并实际到达底缘才恢复跟随。
+  bool _onUserDragChanged(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      _userScrolling = true;
+      _stickToBottom = false;
+    } else if (notification is ScrollUpdateNotification && _userScrolling) {
+      final delta = notification.scrollDelta ?? 0;
+      if (delta < 0) {
+        _stickToBottom = false;
+      } else if (delta > 0 && !_beyondStickTolerance(notification.metrics)) {
+        _stickToBottom = true;
+      }
+    } else if (notification is OverscrollNotification && _userScrolling) {
+      // 已严格贴底时向尾部拖动：pixels 已在底缘不再增大，SDK 不派正向
+      // update，只派 overscroll。抵住底缘继续向尾部用力仍是「要跟随」，
+      // 不得当回读；朝历史方向的 overscroll 维持回读意图不变。
+      if (notification.overscroll > 0) {
+        _stickToBottom = true;
+      }
+    } else if (notification is ScrollEndNotification && _userScrolling) {
+      _userScrolling = false;
+      if (_stickToBottom) _scheduleStickToBottom();
+    }
+    return false;
   }
 
   /// 下一帧把列表拉回底部。内容增长与键盘压缩都要等这一帧布局落定后才能读到
@@ -300,21 +333,21 @@ class _LocalChatViewState extends State<LocalChatView>
         return;
       }
       final position = _scrollController.position;
+      // jumpTo 会终止 Drag/惯性活动；即使发送重新启用跟随，也等滚动结束。
+      if (position.isScrollingNotifier.value) return;
       if (_beyondStickTolerance(position)) {
         _scrollController.jumpTo(position.maxScrollExtent);
       }
     });
   }
 
-  /// 滚动范围变化跟随（仅安卓分支挂在消息区上）：键盘压矮视口或懒加载修正
-  /// max 时，若本轮仍应贴底且离底超过容差，再安排一次帧后跳转。这个
-  /// [NotificationListener] 没有 depth 参数、包住整个 `_messageArea` 子树，
-  /// 内嵌滚动视图的 metrics 通知同样会到达；但回调只在确实仍应贴底且离底
-  /// 超过容差时才安排跳转，其余通知一律放行，不影响其他滚动视图。用户真实
-  /// 拖动会把 [_stickToBottom] 置否（[_trackStickToBottom]），这里自然停手，
-  /// 不抢回读位置。
+  /// 仅处理主列表的 metrics：普通滚动也会触发，不能据此恢复贴底意图。
+  /// 键盘与懒加载范围变化仍可收敛，但用户滚动期间不安排补跳。
   bool _onScrollMetricsChanged(ScrollMetricsNotification notification) {
-    if (_stickToBottom && _beyondStickTolerance(notification.metrics)) {
+    if (notification.depth != 0) return false;
+    if (!_userScrolling &&
+        _stickToBottom &&
+        _beyondStickTolerance(notification.metrics)) {
       _scheduleStickToBottom();
       // [ScrollMetricsNotification] 在布局帧结束后经微任务派发，此刻页面可能
       // 已静止（键盘动画结束、无输入无动画），而 [addPostFrameCallback] 自身
@@ -324,7 +357,7 @@ class _LocalChatViewState extends State<LocalChatView>
       SchedulerBinding.instance.scheduleFrame();
     }
     // 不拦截：范围变化继续向上冒泡，别的监听者不受影响。
-    return true;
+    return false;
   }
 
   /// 离底距离是否超过收敛容差（见 [_stickToBottomTolerance]）。
@@ -642,9 +675,12 @@ class _LocalChatViewState extends State<LocalChatView>
                   behavior: HitTestBehavior.opaque,
                   onPointerDown: (_) =>
                       _composerKey.currentState?.dismissKeyboard(),
-                  child: NotificationListener<ScrollMetricsNotification>(
-                    onNotification: _onScrollMetricsChanged,
-                    child: _messageArea(viewModel),
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: _onUserDragChanged,
+                    child: NotificationListener<ScrollMetricsNotification>(
+                      onNotification: _onScrollMetricsChanged,
+                      child: _messageArea(viewModel),
+                    ),
                   ),
                 )
               : _messageArea(viewModel),
