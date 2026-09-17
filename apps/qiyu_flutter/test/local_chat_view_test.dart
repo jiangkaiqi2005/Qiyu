@@ -238,6 +238,45 @@ void main() {
       variant: TargetPlatformVariant.only(TargetPlatform.android),
     );
     testWidgets(
+      '恢复变高长会话后首次弹键盘，列表收敛到底且最新消息不被输入框遮挡',
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        gateway.restoredMessages = _variableHeightSessionWithMoments();
+        final viewModel = await _pumpChatView(tester, gateway: gateway);
+        await viewModel.initialize();
+        await tester.pumpAndSettle();
+        final controller = tester
+            .widget<ListView>(find.byType(ListView))
+            .controller!;
+
+        // 不通过测试 jumpTo 修正恢复位置：懒加载范围必须由产品自己收敛。
+        await tester.tap(find.byKey(const Key('chat-input')));
+        await tester.pumpAndSettle();
+        tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+        // 收敛依赖产品侧监听自身排帧并请求帧（scheduleFrame），不手动补帧：
+        // pumpAndSettle 驱动「静止页面自行收敛」，能停即证明无自持排帧。
+        await tester.pumpAndSettle();
+
+        expect(
+          (controller.position.maxScrollExtent - controller.offset).abs(),
+          lessThanOrEqualTo(1),
+          reason: '键盘弹起后列表应经范围变化监听收敛到底（离底不超过 1px）',
+        );
+        final lastMessage = find.byKey(const Key('chat-message-39'));
+        expect(lastMessage, findsOneWidget);
+        expect(
+          tester.getRect(lastMessage).bottom,
+          lessThanOrEqualTo(
+            tester.getRect(find.byKey(const Key('home-go-chat'))).top,
+          ),
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+    testWidgets(
       '点消息本体收键盘，草稿与选区保留且拖拽滚动不受影响',
       (tester) async {
         final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
@@ -1149,6 +1188,22 @@ Future<void> _startPendingInput(WidgetTester tester, {required bool voice}) asyn
   }
   await tester.pump();
 }
+
+/// 40 条带时刻的**变高**旧消息，用户/栖语交替、行数由固定公式决定：
+/// 复现懒加载估算偏差——等高会话范围估算近乎精确，测不出一次跳转后
+/// `maxScrollExtent` 还会继续变化、最新消息被 composer 覆盖的缺陷。
+List<LocalChatMessage> _variableHeightSessionWithMoments() => List.generate(
+  40,
+  (index) => LocalChatMessage(
+    requestId: 'old-$index',
+    speaker: index.isEven ? LocalChatSpeaker.user : LocalChatSpeaker.qiyu,
+    text: List.filled(
+      ((index * 37 + 22 * 13) % 23) + 1,
+      '消息 $index，这是一段不同长度的回复。',
+    ).join('\n'),
+    at: DateTime(2026, 9, 2, 23, 41),
+  ),
+);
 
 /// 40 条带时刻的旧消息，与生产同形：Host 恢复的消息都带 `at`，气泡因此带
 /// 轻点显隐时刻的手势——正是收键盘必须绕开手势竞技场的原因。

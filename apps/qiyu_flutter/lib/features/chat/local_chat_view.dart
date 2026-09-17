@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
@@ -91,6 +92,13 @@ class _LocalChatViewState extends State<LocalChatView>
   /// **上升沿**（键盘弹出、或换成更高的输入法），下降沿不主动跳——收起键盘
   /// 时 clamp 自然把贴底态收回来，正在回读历史的用户位置也不被抢。
   double _lastKeyboardInset = 0;
+
+  /// 贴底跳转的帧后回调在途标记：同帧多次触发只排一次。
+  bool _stickToBottomScheduled = false;
+
+  /// 离底多近算「已贴底」。与 [_trackStickToBottom] 的 120px 粘滞阈值不同，
+  /// 这里是收敛终点的几何判据，超过它才需要再跳。
+  static const double _stickToBottomTolerance = 1;
 
   late final LocalChatViewModel _chatViewModel;
   late final VoiceInputController _voiceInput;
@@ -263,16 +271,65 @@ class _LocalChatViewState extends State<LocalChatView>
 
   /// 下一帧把列表拉回底部。内容增长与键盘压缩都要等这一帧布局落定后才能读到
   /// 新的 `maxScrollExtent`；只有贴底态才跳，正在回读历史的用户不被抢。
+  ///
+  /// 非安卓路径与改动前完全一致：无条件一帧后 `jumpTo`，精确贴底、无容差、
+  /// 无去重——Web/桌面零变化。
+  ///
+  /// 安卓路径处理变高、懒加载列表的范围估算：跳一次后继续布局还会修正 max，
+  /// pixels 便停在旧估算底部。所以贴底不是「一跳到底」而是**收敛**：跳转后
+  /// 的新布局若仍在贴底意图内离底超过容差（[_stickToBottomTolerance]），范围
+  /// 变化监听会再安排一次跳转，直到贴底或用户真实拖动取消意图。调度去重避免
+  /// 同帧重复排回调；已贴底不再 jump，监听不会自触发循环。
   void _scheduleStickToBottom() {
+    if (!_android) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_stickToBottom || !_scrollController.hasClients) {
+          return;
+        }
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      });
+      return;
+    }
+    if (_stickToBottomScheduled) {
+      return;
+    }
+    _stickToBottomScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_stickToBottom) {
+      _stickToBottomScheduled = false;
+      if (!mounted || !_stickToBottom || !_scrollController.hasClients) {
         return;
       }
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      final position = _scrollController.position;
+      if (_beyondStickTolerance(position)) {
+        _scrollController.jumpTo(position.maxScrollExtent);
       }
     });
   }
+
+  /// 滚动范围变化跟随（仅安卓分支挂在消息区上）：键盘压矮视口或懒加载修正
+  /// max 时，若本轮仍应贴底且离底超过容差，再安排一次帧后跳转。这个
+  /// [NotificationListener] 没有 depth 参数、包住整个 `_messageArea` 子树，
+  /// 内嵌滚动视图的 metrics 通知同样会到达；但回调只在确实仍应贴底且离底
+  /// 超过容差时才安排跳转，其余通知一律放行，不影响其他滚动视图。用户真实
+  /// 拖动会把 [_stickToBottom] 置否（[_trackStickToBottom]），这里自然停手，
+  /// 不抢回读位置。
+  bool _onScrollMetricsChanged(ScrollMetricsNotification notification) {
+    if (_stickToBottom && _beyondStickTolerance(notification.metrics)) {
+      _scheduleStickToBottom();
+      // [ScrollMetricsNotification] 在布局帧结束后经微任务派发，此刻页面可能
+      // 已静止（键盘动画结束、无输入无动画），而 [addPostFrameCallback] 自身
+      // 不请求新帧——滞留的贴底回调会永远不执行。只有真的安排了贴底回调才
+      // 请求一帧；已收敛（离底不超过容差）不会走到这里，pumpAndSettle 能正常
+      // 停，不产生自持循环。
+      SchedulerBinding.instance.scheduleFrame();
+    }
+    // 不拦截：范围变化继续向上冒泡，别的监听者不受影响。
+    return true;
+  }
+
+  /// 离底距离是否超过收敛容差（见 [_stickToBottomTolerance]）。
+  static bool _beyondStickTolerance(ScrollMetrics metrics) =>
+      metrics.maxScrollExtent - metrics.pixels > _stickToBottomTolerance;
 
   ApiErrorCategory? _categorizeFallbackReason(
     FallbackReason reason,
@@ -585,7 +642,10 @@ class _LocalChatViewState extends State<LocalChatView>
                   behavior: HitTestBehavior.opaque,
                   onPointerDown: (_) =>
                       _composerKey.currentState?.dismissKeyboard(),
-                  child: _messageArea(viewModel),
+                  child: NotificationListener<ScrollMetricsNotification>(
+                    onNotification: _onScrollMetricsChanged,
+                    child: _messageArea(viewModel),
+                  ),
                 )
               : _messageArea(viewModel),
         ),
