@@ -1384,9 +1384,10 @@ void main() {
 
     expect(find.textContaining('还没有配置语音服务'), findsOneWidget);
     expect(find.text('去设置'), findsOneWidget);
-    // SnackBar 到期退出，避免挂起计时器。
-    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 5500));
     await tester.pumpAndSettle();
+    expect(find.textContaining('还没有配置语音服务'), findsNothing);
+    expect(find.text('去设置'), findsNothing);
   }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('浏览器不支持录音：明确提示而不是无声失败', (tester) async {
@@ -1404,8 +1405,9 @@ void main() {
 
     expect(find.textContaining('不支持语音输入'), findsOneWidget);
     expect(find.text('去设置'), findsNothing);
-    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 5500));
     await tester.pumpAndSettle();
+    expect(find.textContaining('不支持语音输入'), findsNothing);
   }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('麦克风权限被拒（安卓系统弹窗拒绝）：入口如实报错，文字主链路照常', (tester) async {

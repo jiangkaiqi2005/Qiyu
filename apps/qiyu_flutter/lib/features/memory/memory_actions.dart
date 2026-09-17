@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
+import '../shell/qiyu_fading_notice.dart';
 import '../shell/qiyu_widgets.dart';
 import 'memory_client.dart';
 import 'memory_view_model.dart';
@@ -122,9 +123,7 @@ Future<void> runMemoryAction(
   /// 缺省（列表遮罩条目）在一次性对话框里展示，关闭即重新遮罩。
   void Function(String text)? onRevealed,
 }) async {
-  // await 之前取齐全部上下文依赖：viewModel 与 messenger。
   final viewModel = context.read<MemoryCenterViewModel>();
-  final messenger = ScaffoldMessenger.of(context);
   // 确认要求不随条目状态变化（见 [MemoryActionPlan.confirmationOf]），
   // 用任意状态快照查询即可；这里没有条目状态，也不为查确认编造。
   const plan = MemoryActionPlan(
@@ -135,7 +134,6 @@ Future<void> runMemoryAction(
       await _runEditFlow(
         context,
         viewModel: viewModel,
-        messenger: messenger,
         itemId: itemId,
         current: currentText ?? '',
       );
@@ -143,32 +141,16 @@ Future<void> runMemoryAction(
       await _runRevealFlow(
         context,
         viewModel: viewModel,
-        messenger: messenger,
         itemId: itemId,
         field: revealField,
         onRevealed: onRevealed,
       );
     case MemoryAction.freeze:
-      await _runDirect(
-        context,
-        messenger: messenger,
-        run: viewModel.freeze,
-        itemId: itemId,
-      );
+      await _runDirect(context, run: viewModel.freeze, itemId: itemId);
     case MemoryAction.unfreeze:
-      await _runDirect(
-        context,
-        messenger: messenger,
-        run: viewModel.unfreeze,
-        itemId: itemId,
-      );
+      await _runDirect(context, run: viewModel.unfreeze, itemId: itemId);
     case MemoryAction.unban:
-      await _runDirect(
-        context,
-        messenger: messenger,
-        run: viewModel.unban,
-        itemId: itemId,
-      );
+      await _runDirect(context, run: viewModel.unban, itemId: itemId);
     case MemoryAction.ban:
     case MemoryAction.delete:
       // 确认流程按计划矩阵分派，ban/delete 自己不再各写一份「要不要
@@ -176,19 +158,9 @@ Future<void> runMemoryAction(
       // 断言失败，也不静默执行或跳过一个破坏性动作。
       switch (plan.confirmationOf(action)) {
         case MemoryActionConfirmation.ban:
-          await _runBanFlow(
-            context,
-            viewModel: viewModel,
-            messenger: messenger,
-            itemId: itemId,
-          );
+          await _runBanFlow(context, viewModel: viewModel, itemId: itemId);
         case MemoryActionConfirmation.delete:
-          await _runDeleteFlow(
-            context,
-            viewModel: viewModel,
-            messenger: messenger,
-            itemId: itemId,
-          );
+          await _runDeleteFlow(context, viewModel: viewModel, itemId: itemId);
         case MemoryActionConfirmation.none:
           assert(false, '$action 不再要求确认，需要补直接执行流程');
       }
@@ -199,7 +171,6 @@ Future<void> runMemoryAction(
 Future<void> _runEditFlow(
   BuildContext context, {
   required MemoryCenterViewModel viewModel,
-  required ScaffoldMessengerState messenger,
   required String itemId,
   required String current,
 }) async {
@@ -214,7 +185,7 @@ Future<void> _runEditFlow(
   if (!context.mounted) {
     return; // 发起处界面已销毁：不再挂结果横幅。
   }
-  messenger.showSnackBar(memoryActionResultSnackBar(result));
+  showMemoryActionResult(context, result);
 }
 
 /// 临时揭示流程：只取一次原文；成功后交给 [onRevealed]（详情页）或
@@ -222,7 +193,6 @@ Future<void> _runEditFlow(
 Future<void> _runRevealFlow(
   BuildContext context, {
   required MemoryCenterViewModel viewModel,
-  required ScaffoldMessengerState messenger,
   required String itemId,
   required String field,
   required void Function(String text)? onRevealed,
@@ -232,7 +202,7 @@ Future<void> _runRevealFlow(
     return; // 发起处界面已销毁：原文一个字都不再落地。
   }
   if (result.status != MemoryActionStatus.success || result.text == null) {
-    messenger.showSnackBar(memoryActionResultSnackBar(result));
+    showMemoryActionResult(context, result);
     return;
   }
   final deliver = onRevealed;
@@ -249,7 +219,6 @@ Future<void> _runRevealFlow(
 /// 直接生效的控制动作（冻结 / 恢复使用 / 解除禁提）。
 Future<void> _runDirect(
   BuildContext context, {
-  required ScaffoldMessengerState messenger,
   required Future<MemoryActionResult> Function(String id) run,
   required String itemId,
 }) async {
@@ -257,14 +226,13 @@ Future<void> _runDirect(
   if (!context.mounted) {
     return; // 发起处界面已销毁：不再挂结果横幅。
   }
-  messenger.showSnackBar(memoryActionResultSnackBar(result));
+  showMemoryActionResult(context, result);
 }
 
 /// 禁提确认流程（T25 定稿）：先明确确认，取消不产生任何动作。
 Future<void> _runBanFlow(
   BuildContext context, {
   required MemoryCenterViewModel viewModel,
-  required ScaffoldMessengerState messenger,
   required String itemId,
 }) async {
   final confirmed = await showDialog<bool>(
@@ -278,7 +246,7 @@ Future<void> _runBanFlow(
   if (!context.mounted) {
     return; // 发起处界面已销毁：不再挂结果横幅。
   }
-  messenger.showSnackBar(memoryActionResultSnackBar(result));
+  showMemoryActionResult(context, result);
 }
 
 /// 删除流程：先取准确影响范围，展示后确认执行；影响范围取不到
@@ -286,7 +254,6 @@ Future<void> _runBanFlow(
 Future<void> _runDeleteFlow(
   BuildContext context, {
   required MemoryCenterViewModel viewModel,
-  required ScaffoldMessengerState messenger,
   required String itemId,
 }) async {
   final confirmed = await showDialog<bool>(
@@ -301,22 +268,22 @@ Future<void> _runDeleteFlow(
   if (!context.mounted) {
     return; // 发起处界面已销毁：不再挂结果横幅。
   }
-  messenger.showSnackBar(memoryActionResultSnackBar(result));
+  showMemoryActionResult(context, result);
 }
 
 /// 动作结果横幅（三态共用一份呈现）：中性面板底，只有失败态把前景
 /// 换成 danger。依据是 design-system §1 三色纪律的通则：暗红住「破坏
 /// 性操作」与「故障/失败态」两类，某个动作没成属后者（决策日志第五
 /// 轮 #15）。partial 既非破坏也非故障，不借危险红，三态的分别由它本
-/// 来就写明白的文案承担（#12）。
-SnackBar memoryActionResultSnackBar(MemoryActionResult result) {
+/// 来就写明白的文案承担（#12）。横幅本身经 [showQiyuFadingNotice]
+/// 之后的 5 秒渐隐链路展示。
+void showMemoryActionResult(BuildContext context, MemoryActionResult result) {
   final failed = result.status == MemoryActionStatus.failed;
-  return SnackBar(
+  showQiyuFadingNotice(
+    context,
+    result.message,
     key: const Key('memory-action-result'),
-    content: Text(
-      result.message,
-      style: failed ? const TextStyle(color: QiyuColors.danger) : null,
-    ),
+    foregroundColor: failed ? QiyuColors.danger : null,
   );
 }
 

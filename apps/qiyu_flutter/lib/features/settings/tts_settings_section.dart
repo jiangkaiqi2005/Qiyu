@@ -183,7 +183,7 @@ final class TtsSettingsForm {
   }
 
   /// 读草稿：必填校验与 extraParams 的 JSON 对象校验都在领域内。草稿
-  /// 不合法时经 [report] 给出人话并返回 null——呈现方式（SnackBar）
+  /// 不合法时经 [report] 给出人话并返回 null——呈现方式（渐隐提示）
   /// 由区块决定。
   TtsSettingsDraft? readDraftOrReport(void Function(String message) report) {
     if (baseUrlController.text.trim().isEmpty ||
@@ -254,9 +254,9 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
     super.dispose();
   }
 
-  /// 领域校验结论的呈现：SnackBar 播报。
+  /// 领域校验结论的呈现：渐隐提示播报。
   void _reportInvalidDraft(String message) =>
-      showSettingsSnackBar(context, message);
+      showSettingsNotice(context, message);
 
   Future<void> _confirmForgetKey(TtsSettingsViewModel viewModel) async {
     final confirmed = await confirmSettingsForgetKey(

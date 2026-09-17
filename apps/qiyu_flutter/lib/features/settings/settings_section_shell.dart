@@ -5,6 +5,7 @@ import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
+import '../shell/qiyu_fading_notice.dart';
 import '../shell/qiyu_widgets.dart';
 
 /// 设置页各分节共享的壳层：分节 id 名单、折叠状态下发、阅读式分节板、
@@ -312,12 +313,12 @@ Widget settingsBusyOr(bool busy, IconData icon) => busy
       )
     : Icon(icon);
 
-/// 领域校验结论的页面呈现：SnackBar 播报。带草稿校验的领域（模型连接、
+/// 领域校验结论的页面呈现：渐隐提示播报。带草稿校验的领域（模型连接、
 /// 语音朗读、语音输入）都以这一种形态播报校验失败，机制收拢为这一处；
 /// 表单持有的 `void Function(String)` 回调由区块闭包绑定 [context] 后
 /// 转来，本件只管「怎么说给人听」。
-void showSettingsSnackBar(BuildContext context, String message) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+void showSettingsNotice(BuildContext context, String message) {
+  showQiyuFadingNotice(context, message);
 }
 
 /// 「忘记已保存 Key」的确认对话框：AlertDialog＋「再想想 / 忘记 Key」

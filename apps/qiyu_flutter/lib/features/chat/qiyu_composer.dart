@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
+import '../shell/qiyu_fading_notice.dart';
 import '../shell/qiyu_widgets.dart';
 import '../navigation.dart';
 import '../accessibility.dart';
@@ -606,22 +607,16 @@ class QiyuComposerState extends State<QiyuComposer> {
       if (!_android) voice.handleMicTap();
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          voice.status == VoiceInputStatus.unsupported
-              ? (_android
-                    ? '当前设备无法使用麦克风，请检查安卓系统权限和设备状态。'
-                    : '当前浏览器不支持语音输入，请换 Chrome 或 Edge。')
-              : '还没有配置语音服务，先去设置页填写地址、模型和 Key。',
-        ),
-        action: voice.status == VoiceInputStatus.unsupported
-            ? null
-            : SnackBarAction(
-                label: '去设置',
-                onPressed: () => widget.pushAwayFromChat('/settings'),
-              ),
-      ),
+    final unsupported = voice.status == VoiceInputStatus.unsupported;
+    showQiyuFadingNotice(
+      context,
+      unsupported
+          ? (_android
+                ? '当前设备无法使用麦克风，请检查安卓系统权限和设备状态。'
+                : '当前浏览器不支持语音输入，请换 Chrome 或 Edge。')
+          : '还没有配置语音服务，先去设置页填写地址、模型和 Key。',
+      actionLabel: unsupported ? null : '去设置',
+      onAction: unsupported ? null : () => widget.pushAwayFromChat('/settings'),
     );
   }
 }

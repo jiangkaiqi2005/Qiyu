@@ -232,6 +232,16 @@ void main() {
       // 裁定就是「第 4 段（记忆中心换皮）必须换成 QiyuColors.danger」。
       // 横幅不传 backgroundColor，落到页面上的底就是主题这条默认值。
       expect(theme.snackBarTheme.backgroundColor, QiyuColors.panel);
+      // 动作字色不能缺：缺了会回落到 `colorScheme.inversePrimary`，而本主题把它
+      // 登记成同一档中性 panel（＝底色），按钮画出来等于隐形。§8 组件 2 要求无
+      // 底色的文字按钮取 accent-bright；渲染面的复核见
+      // `test/qiyu_fading_notice_test.dart`「动作按钮的字色不与底色同值」。
+      expect(theme.snackBarTheme.actionTextColor, QiyuColors.accentBright);
+      expect(
+        theme.snackBarTheme.actionTextColor,
+        isNot(theme.snackBarTheme.backgroundColor),
+        reason: '动作按钮字色与底色同值＝这颗按钮用户根本看不见',
+      );
       // 前景与底的对比按实测判：danger 压在 panel 上 7.30:1（按 WCAG 2.1 相对
       // 亮度公式复算，就是上面 `_contrast` 那条实现），AA 4.5:1 有 2.8 的余量
       // （design-system §2、§9）。这里用实测值判，不按「看着挺亮」交差。

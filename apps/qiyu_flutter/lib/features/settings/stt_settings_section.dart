@@ -129,7 +129,7 @@ final class SttSettingsForm {
   }
 
   /// 读草稿：必填校验在领域内。草稿不合法时经 [report] 给出人话并
-  /// 返回 null——呈现方式（SnackBar）由区块决定。
+  /// 返回 null——呈现方式（渐隐提示）由区块决定。
   SttSettingsDraft? readDraftOrReport(void Function(String message) report) {
     if (baseUrlController.text.trim().isEmpty ||
         modelController.text.trim().isEmpty) {
@@ -180,9 +180,9 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
     super.dispose();
   }
 
-  /// 领域校验结论的呈现：SnackBar 播报。
+  /// 领域校验结论的呈现：渐隐提示播报。
   void _reportInvalidDraft(String message) =>
-      showSettingsSnackBar(context, message);
+      showSettingsNotice(context, message);
 
   Future<void> _confirmForgetKey(SttSettingsViewModel viewModel) async {
     final confirmed = await confirmSettingsForgetKey(

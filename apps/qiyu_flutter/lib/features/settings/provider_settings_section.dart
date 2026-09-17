@@ -166,7 +166,7 @@ final class ProviderSettingsForm {
   }
 
   /// 读草稿：数值解析与必填校验都在领域内。草稿不合法时经 [report]
-  /// 给出人话并返回 null——呈现方式（SnackBar）由区块决定。
+  /// 给出人话并返回 null——呈现方式（渐隐提示）由区块决定。
   ProviderSettingsDraft? readDraftOrReport(
     void Function(String message) report,
   ) {
@@ -309,9 +309,9 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
     super.dispose();
   }
 
-  /// 领域校验结论的呈现：SnackBar 播报。
+  /// 领域校验结论的呈现：渐隐提示播报。
   void _reportInvalidDraft(String message) =>
-      showSettingsSnackBar(context, message);
+      showSettingsNotice(context, message);
 
   Future<void> _save(ProviderSettingsViewModel viewModel) async {
     await _form.save(viewModel, report: _reportInvalidDraft);
@@ -603,7 +603,7 @@ class _ProxySettingsBlockState extends State<_ProxySettingsBlock> {
   Future<void> _save(ProxySettingsViewModel viewModel) async {
     await _form.save(
       viewModel,
-      report: (message) => showSettingsSnackBar(context, message),
+      report: (message) => showSettingsNotice(context, message),
     );
   }
 

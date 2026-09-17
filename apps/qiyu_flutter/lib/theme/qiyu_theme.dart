@@ -385,10 +385,18 @@ ThemeData qiyuDarkTheme({bool reduceMotion = false, bool narrow = false}) {
       contentTextStyle: type.body,
       shape: RoundedRectangleBorder(borderRadius: QiyuRadii.cardBorder),
     ),
+    // 轻提示的观感（底色 / 圆角 / 文案字号 / 动作字色）唯一来源。应用内
+    // 不弹 Material SnackBar，读这份的是自建的渐隐提示
+    // `features/shell/qiyu_fading_notice.dart`——它按 5 秒渐隐节奏播报，
+    // 样式仍从这里取，避免两套提示色各自漂移。
     snackBarTheme: SnackBarThemeData(
       backgroundColor: QiyuColors.panel,
       contentTextStyle: type.secondary.copyWith(color: QiyuColors.ink),
       shape: RoundedRectangleBorder(borderRadius: QiyuRadii.smallBorder),
+      // 动作字色必须显式给：不给就回落到 `colorScheme.inversePrimary`，而本主题
+      // 把它登记成中性 panel——与底色同值，动作按钮画出来等于隐形（§8 组件 2
+      // 「次按钮 / 文字按钮 — 无底色，accent-bright 文字」）。
+      actionTextColor: QiyuColors.accentBright,
     ),
     // ── 会被 M3 当「填充/表面」用的组件：状态色全部从共享中性表取 ────────────
     // 只把 ColorScheme 槽位改中性是不够的：这些组件的默认样式读的就是槽位，

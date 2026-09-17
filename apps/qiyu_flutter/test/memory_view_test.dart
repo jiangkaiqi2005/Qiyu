@@ -1405,7 +1405,7 @@ void main() {
     testWidgets('动作结果横幅只走中性底，失败态换成 danger 前景字', (tester) async {
       final gateway = await _pumpMemoryCenter(tester, _fullOverview());
   
-      // 读页面上真正的那一份：底取 SnackBar 内部 Material 的 color，字色取合并
+      // 读页面上真正的那一份：底取提示内部 Material 的 color，字色取合并
       // 主题样式之后落在 RichText span 上的那一个——两处都不看 widget 上写了什么。
       Color bannerFill() => tester
           .widget<Material>(
