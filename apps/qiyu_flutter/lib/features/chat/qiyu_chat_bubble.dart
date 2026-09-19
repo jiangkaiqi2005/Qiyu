@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
@@ -24,6 +25,7 @@ class QiyuChatBubble extends StatefulWidget {
     this.onReplay,
     this.deliveryIndex,
     this.at,
+    this.enableCopy = false,
   });
 
   final String text;
@@ -40,6 +42,11 @@ class QiyuChatBubble extends StatefulWidget {
   /// 朗读定位序号（同 requestId 内第 N 次交付段）：作重听按钮的可
   /// 访问 key 标识，widget 测试可精确定位。
   final int? deliveryIndex;
+
+  /// 用户气泡的一键复制：true 时用户消息正文之下给一枚复制小钮，点
+  /// 一下把本条全文写进剪贴板（只作用于用户消息，栖语的话不给）。
+  /// 聊天页开启；历史回看页整页可选中复制，保持默认关闭。
+  final bool enableCopy;
 
   /// 消息时刻（Host 落盘的客观时刻）：消息块下方**外部一行**的次要档
   /// 弱色文字——用户消息右对齐贴气泡尾部，栖语靠左；不参与气泡内布局，
@@ -228,6 +235,12 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     super.dispose();
   }
 
+  /// 复制本条全文：把 [QiyuChatBubble.text] 原样写进剪贴板。即发即忘——
+  /// 写剪贴板没有可恢复的失败动作（浏览器拒绝授权时保持安静）。
+  void _copyMessageText() {
+    unawaited(Clipboard.setData(ClipboardData(text: widget.text)));
+  }
+
   /// 平台档初始猜测：Web 壳层 UA 映射——移动端浏览器是 android/iOS，
   /// 桌面浏览器是 windows/macos/linux，与「有没有鼠标」在这个产品里
   /// 一一对应。尚无指针事件时由它定触屏形态与常驻显现的初始值。
@@ -306,11 +319,20 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
           onReplay: widget.onReplay!,
         ),
       ],
+      // 用户消息的一键复制（聊天页）：小钮落在气泡内正文之下。历史回看
+      // 页整页可选复制，不走这个入口（enableCopy 默认关）。
+      if (widget.fromUser && widget.enableCopy) ...[
+        const SizedBox(height: 6),
+        _CopyButton(onCopy: _copyMessageText),
+      ],
     ];
     final body = extras.isEmpty
         ? content
         : Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            // 用户气泡的附加钮贴气泡尾缘（右），栖语的消息保持靠左。
+            crossAxisAlignment: widget.fromUser
+                ? CrossAxisAlignment.end
+                : CrossAxisAlignment.start,
             children: [content, ...extras],
           );
 
@@ -455,6 +477,36 @@ class _ReplayButton extends StatelessWidget {
         onPressed: onReplay,
         icon: const Icon(
           QiyuIcons.volume_up,
+          size: 16,
+          semanticLabel: _actionLabel,
+        ),
+      ),
+    );
+  }
+}
+
+/// 用户气泡正文之下的复制小钮：画法与 [_ReplayButton] 逐字同构——
+/// tooltip 与图标语义标签共用一份文案（触屏没有 hover，语义树必须有
+/// 动作名），[MergeSemantics] 汇成按钮自己的那一个语义节点。
+class _CopyButton extends StatelessWidget {
+  const _CopyButton({required this.onCopy});
+
+  /// 动作名：tooltip 与无障碍标签共用一份，不许两头各写一遍再漂移。
+  static const _actionLabel = '复制这条消息';
+
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    return MergeSemantics(
+      child: IconButton(
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        tooltip: _actionLabel,
+        onPressed: onCopy,
+        icon: const Icon(
+          QiyuIcons.content_copy,
           size: 16,
           semanticLabel: _actionLabel,
         ),

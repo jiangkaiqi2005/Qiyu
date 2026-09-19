@@ -349,9 +349,10 @@ void main() {
     );
     expect(
       controller.position.maxScrollExtent,
-      moreOrLessEquals(7358.0, epsilon: 1),
-      reason: '静息基线：maxScrollExtent 实测 7358（本环境字体度量下 40×6 行'
-          '内容总高 − 视口高）；±1 只容忍亚像素抖动，布局回归会超出',
+      moreOrLessEquals(8278.0, epsilon: 1),
+      reason: '静息基线：maxScrollExtent 实测 8278（本环境字体度量下 40×6 行'
+          '内容总高 − 视口高；用户气泡因一键复制钮增高 20×46px）；±1 只容忍'
+          '亚像素抖动，布局回归会超出',
     );
     final pixelsBefore = controller.position.pixels;
 

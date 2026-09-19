@@ -1251,6 +1251,10 @@ class _LocalChatViewState extends State<LocalChatView>
             onReplay: isQiyu && deliveryIndex != null
                 ? () => viewModel.replayVoiceOutput(message)
                 : null,
+            // 用户消息的一键复制：流式中断后不必凭记忆重打全文；组件只
+            // 在用户气泡上给入口，栖语的话与历史回看页（整页可选中复制）
+            // 不给。
+            enableCopy: true,
           );
         },
       ),

@@ -140,6 +140,14 @@ abstract final class QiyuIcons {
     fontPackage: null,
   );
 
+  // ---- 聊天消息动作 --------------------------------------------------------
+  /// 复制：用户气泡的一键复制（把本条全文写进剪贴板）。
+  static const IconData content_copy = IconData(
+    0xE14D,
+    fontFamily: QiyuIconSpec.fontFamily,
+    fontPackage: null,
+  );
+
   // ---- 记忆四区（§4 定案：时钟 / 山形 / 单人 / 双人）----------------------
   /// 最近发生：时钟。
   static const IconData schedule = IconData(

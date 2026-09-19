@@ -1,7 +1,6 @@
-import 'dart:typed_data';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
@@ -14,6 +13,7 @@ import 'package:qiyu_flutter/features/history/history_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/time_format.dart';
+import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 import 'support/shared_fakes.dart';
@@ -1171,6 +1171,70 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text(label), findsOneWidget);
+    });
+  });
+
+  group('用户气泡一键复制', () {
+    // 剪贴板桩：捕获 setData 写进来的全文，用完即撤，不污染别的用例。
+    void mockClipboard(WidgetTester tester, ValueChanged<String?> onData) {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (message) async {
+          if (message.method == 'Clipboard.setData') {
+            onData(
+              (message.arguments as Map<Object?, Object?>)['text'] as String?,
+            );
+          }
+          return null;
+        },
+      );
+      addTearDown(() => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null));
+    }
+
+    testWidgets('点复制钮：本条全文原样写进剪贴板', (tester) async {
+      String? clipText;
+      mockClipboard(tester, (text) => clipText = text);
+      const fullText = '今晚想把这段话原样发给朋友，一个字都不要丢。';
+      final handle = tester.ensureSemantics();
+      try {
+        await _pump(
+          tester,
+          const QiyuChatBubble(text: fullText, fromUser: true, enableCopy: true),
+        );
+
+        expect(find.bySemanticsLabel('复制这条消息'), findsOneWidget);
+        await tester.tap(find.byIcon(QiyuIcons.content_copy));
+        await tester.pump();
+
+        expect(clipText, fullText, reason: '复制内容必须是这条消息的全文');
+      } finally {
+        handle.dispose();
+      }
+    });
+
+    testWidgets('复制钮只在用户气泡出现：栖语的消息不给', (tester) async {
+      await _pump(
+        tester,
+        const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            QiyuChatBubble(text: '我发的话', fromUser: true, enableCopy: true),
+            QiyuChatBubble(text: '她回的话', fromUser: false, enableCopy: true),
+          ],
+        ),
+      );
+
+      expect(find.byIcon(QiyuIcons.content_copy), findsOneWidget);
+    });
+
+    testWidgets('默认不开启复制（历史回看档）：整页可选中，不给复制钮', (tester) async {
+      await _pump(
+        tester,
+        const QiyuChatBubble(text: '我发的话', fromUser: true),
+      );
+
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
     });
   });
 }
