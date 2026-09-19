@@ -928,9 +928,11 @@ final class LocalChatService {
             );
         }
       }
+      // 流干净关闭但没有任何协议终止标记（票 06）：残余缓冲一律判
+      // 失败，绝不把半句缓冲当完整回复交付。
       return buffer.isEmpty
           ? const ModelCompletion.failure(ModelFailureKind.contentParsing)
-          : ModelCompletion.reply(buffer.toString());
+          : const ModelCompletion.failure(ModelFailureKind.network);
     } finally {
       await iterator.cancel();
     }

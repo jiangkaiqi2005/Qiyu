@@ -24,6 +24,9 @@ void main() {
       expectedReply: '嗯。',
       firstDeltaLine: 'data: {"choices":[{"delta":{"content":"嗯"}}]}\n\n',
       eofBody: ['data: {"choices":[{"delta":{"content":"半句"}}]}\n\n'],
+      truncationBody: [
+        'data: {"choices":[{"delta":{"content":"半句"},"finish_reason":"length"}]}\n\n',
+      ],
       nativeErrorBody: ['{"error":{"message":"internal boom"}}\n\n'],
       nativeErrorStatus: 500,
       nativeErrorFailure: ModelFailureKind.provider,
@@ -43,6 +46,11 @@ void main() {
           'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"嗯"}}\n\n',
       eofBody: [
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"半句"}}\n\n',
+      ],
+      truncationBody: [
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"半句"}}\n\n',
+        'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}\n\n',
+        'data: {"type":"message_stop"}\n\n',
       ],
       nativeErrorBody: [
         'data: {"type":"error","error":{"message":"Authorization: Bearer leaked-token"}}\n\n',
@@ -65,6 +73,9 @@ void main() {
           '{"message":{"role":"assistant","content":"嗯"},"done":false}\n',
       eofBody: [
         '{"message":{"role":"assistant","content":"半句"},"done":false}\n',
+      ],
+      truncationBody: [
+        '{"message":{"role":"assistant","content":"半句"},"done":true,"done_reason":"length"}\n',
       ],
       // Ollama 的原生错误行不带可解析内容且没有终止标记：网关按无法
       // 解析失败关闭，不把错误原文回传，也不当作完成。
@@ -155,6 +166,33 @@ void main() {
         );
         expect(events.last.kind, ModelStreamEventKind.failure);
         expect(events.last.failure, ModelFailureKind.network);
+      });
+
+      test('open 在截断信号时失败关闭，不把半句当完成', () async {
+        final service = serviceFor(
+          configOf(
+            provider.kind,
+            provider.baseUrl,
+            withApiKey: provider.withApiKey,
+          ),
+          _ScriptedHttpClient(
+            response: ProviderHttpResponse(
+              statusCode: 200,
+              body: Stream.fromIterable(provider.truncationBody),
+            ),
+          ),
+        );
+
+        final prepared = await service.prepareChatRequest();
+        final events = await (await prepared!.openStream(messages))!.toList();
+
+        expect(
+          events.map((event) => event.kind),
+          isNot(contains(ModelStreamEventKind.done)),
+        );
+        expect(events.last.kind, ModelStreamEventKind.failure);
+        expect(events.last.failure, ModelFailureKind.contentParsing);
+        expect(events.last.message, '模型回复在完成前被截断。');
       });
 
       test('open 在连接超时时报告超时失败', () async {

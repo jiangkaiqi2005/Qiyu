@@ -326,6 +326,121 @@ void main() {
     }
   });
 
+  test('三种 Provider 的截断信号都不能把半句视为完成', () async {
+    for (final scenario in [
+      (
+        kind: ProviderKind.openAiCompatible,
+        baseUrl: 'https://api.example.com/v1',
+        body:
+            'data: {"choices":[{"delta":{"content":"半句"},"finish_reason":"length"}]}\n\n',
+      ),
+      (
+        kind: ProviderKind.openAiCompatible,
+        baseUrl: 'https://api.example.com/v1',
+        body:
+            'data: {"choices":[{"delta":{"content":"半句"},"finish_reason":"content_filter"}]}\n\n',
+      ),
+      (
+        kind: ProviderKind.anthropic,
+        baseUrl: 'https://api.anthropic.com/v1',
+        body:
+            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"半句"}}\n\n'
+            'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}\n\n'
+            'data: {"type":"message_stop"}\n\n',
+      ),
+      (
+        kind: ProviderKind.ollama,
+        baseUrl: 'http://127.0.0.1:11434',
+        body:
+            '{"message":{"role":"assistant","content":"半句"},"done":true,"done_reason":"length"}\n',
+      ),
+    ]) {
+      final events =
+          await ProviderModelGateway(
+                _RecordingHttpClient(
+                  response: ProviderHttpResponse(
+                    statusCode: 200,
+                    body: Stream.value(scenario.body),
+                  ),
+                ),
+              )
+              .stream(
+                config: _config(scenario.kind, baseUrl: scenario.baseUrl),
+                apiKey: scenario.kind == ProviderKind.ollama
+                    ? null
+                    : 'test-key',
+                messages: messages,
+              )
+              .toList();
+
+      expect(
+        events.map((event) => event.kind),
+        isNot(contains(ModelStreamEventKind.done)),
+        reason: scenario.body,
+      );
+      expect(events.last.kind, ModelStreamEventKind.failure);
+      expect(events.last.failure, ModelFailureKind.contentParsing);
+      expect(events.last.message, '模型回复在完成前被截断。');
+    }
+  });
+
+  test('其余完成原因不触发截断判定，正常完成不变', () async {
+    final anthropicEvents =
+        await ProviderModelGateway(
+              _RecordingHttpClient(
+                response: ProviderHttpResponse(
+                  statusCode: 200,
+                  body: Stream.fromIterable([
+                    'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"在。"}}\n\n',
+                    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+                    'data: {"type":"message_stop"}\n\n',
+                  ]),
+                ),
+              ),
+            )
+            .stream(
+              config: _config(
+                ProviderKind.anthropic,
+                baseUrl: 'https://api.anthropic.com/v1',
+              ),
+              apiKey: 'test-key',
+              messages: messages,
+            )
+            .toList();
+
+    expect(anthropicEvents.map((event) => event.kind), [
+      ModelStreamEventKind.delta,
+      ModelStreamEventKind.done,
+    ]);
+    expect(anthropicEvents.first.text, '在。');
+
+    final ollamaEvents =
+        await ProviderModelGateway(
+              _RecordingHttpClient(
+                response: ProviderHttpResponse(
+                  statusCode: 200,
+                  body: Stream.fromIterable([
+                    '{"message":{"role":"assistant","content":"在。"},"done":true,"done_reason":"stop"}\n',
+                  ]),
+                ),
+              ),
+            )
+            .stream(
+              config: _config(
+                ProviderKind.ollama,
+                baseUrl: 'http://127.0.0.1:11434',
+              ),
+              apiKey: null,
+              messages: messages,
+            )
+            .toList();
+
+    expect(ollamaEvents.map((event) => event.kind), [
+      ModelStreamEventKind.delta,
+      ModelStreamEventKind.done,
+    ]);
+  });
+
   test('Anthropic 原生 error 事件转为安全失败且不回传原文', () async {
     final events =
         await ProviderModelGateway(

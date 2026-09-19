@@ -532,6 +532,102 @@ void main() {
       }
     });
 
+    test('流干净关闭但无终止标记时残余缓冲判失败降级', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          // 只有增量、没有协议终止标记，流就干净关闭。
+          const ScriptedStreamEvents([ModelStreamEvent.delta('半句，')]),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'residual-buffer',
+        text: '在吗',
+      );
+
+      expect(trace.eventsOf(ChatDeliveryEventKind.fallback), hasLength(1));
+      expect(trace.state.fallbackReason, FallbackReason.modelNetwork);
+      expect(trace.state.source, ReplySource.local);
+      expect(trace.message.messages!.join(), isNot(contains('半句')));
+      final restored = await harness.storedSession(trace.sessionId);
+      final reply = restored.turns.lastWhere(
+        (turn) => turn.speaker == Speaker.qiyu,
+      );
+      expect(reply.source, ReplySource.local);
+      expect(reply.messages.join(), isNot(contains('半句')));
+    });
+
+    test('截断失败按失败降级交付，不把半句当完整回复', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamEvents([
+            ModelStreamEvent.delta('说到一半就'),
+            ModelStreamEvent.failure(
+              ModelFailureKind.contentParsing,
+              '模型回复在完成前被截断。',
+            ),
+          ]),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'truncated-fallback',
+        text: '在吗',
+      );
+
+      expect(trace.eventsOf(ChatDeliveryEventKind.fallback), hasLength(1));
+      expect(trace.state.fallbackReason, FallbackReason.modelContentParsing);
+      expect(trace.state.source, ReplySource.local);
+      expect(trace.message.messages!.join(), isNot(contains('说到一半就')));
+      final restored = await harness.storedSession(trace.sessionId);
+      final reply = restored.turns.lastWhere(
+        (turn) => turn.speaker == Speaker.qiyu,
+      );
+      expect(reply.source, ReplySource.local);
+      expect(reply.fallbackReason, FallbackReason.modelContentParsing);
+      expect(reply.messages.join(), isNot(contains('说到一半就')));
+    });
+
+    test('危机上下文里截断失败走热线兜底', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamEvents([
+            ModelStreamEvent.delta('一半的话'),
+            ModelStreamEvent.failure(
+              ModelFailureKind.contentParsing,
+              '模型回复在完成前被截断。',
+            ),
+          ]),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'truncated-crisis',
+        text: '我不想活了',
+      );
+
+      expect(trace.state.safety, SafetyKind.crisis);
+      expect(trace.state.fallbackReason, FallbackReason.modelContentParsing);
+      expect(trace.state.source, ReplySource.local);
+      expect(trace.message.messages!.join(), contains('12356'));
+      expect(trace.message.messages!.join(), isNot(contains('一半的话')));
+    });
+
     test(
       'validated replies use one accepted-to-done delivery event sequence',
       () async {

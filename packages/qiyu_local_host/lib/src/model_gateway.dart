@@ -1283,12 +1283,14 @@ final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
       return (delta: '', done: true);
     }
     final payload = jsonDecode(data) as Map<String, Object?>;
+    Object? finishReason;
+    final String text;
     try {
       final choices = payload['choices']! as List<Object?>;
       final choice = choices.first! as Map<String, Object?>;
       final delta = choice['delta'] as Map<String, Object?>?;
       final content = delta?['content'];
-      final text = content is String
+      text = content is String
           ? content
           : content is List<Object?>
           ? content
@@ -1298,13 +1300,22 @@ final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
                 )
                 .join()
           : '';
-      return (delta: text, done: choice['finish_reason'] != null);
+      finishReason = choice['finish_reason'];
     } on Object {
       throw const ModelGatewayException(
         kind: ModelFailureKind.contentParsing,
         message: '模型服务返回的内容无法解析。',
       );
     }
+    // 截断信号（票 06）：回复因长度或内容过滤被掐断时按失败降级，半句
+    // 绝不当作完整回复；stop 等其余完成原因照常视为正常终止。
+    if (finishReason == 'length' || finishReason == 'content_filter') {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.contentParsing,
+        message: '模型回复在完成前被截断。',
+      );
+    }
+    return (delta: text, done: finishReason != null);
   }
 }
 
@@ -1416,6 +1427,18 @@ _AnthropicStreamPart? _readAnthropicEvent(String line) {
             ? delta['partial_json'] as String? ?? ''
             : '',
       );
+    case 'message_delta':
+      // 截断信号（票 06）：stop_reason 为 max_tokens 时回复被掐断，按
+      // 失败降级；end_turn 等其余原因不影响 message_stop 的完成判定。
+      final delta = payload['delta'];
+      if (delta is Map<String, Object?> &&
+          delta['stop_reason'] == 'max_tokens') {
+        throw const ModelGatewayException(
+          kind: ModelFailureKind.contentParsing,
+          message: '模型回复在完成前被截断。',
+        );
+      }
+      return null;
     default:
       return null;
   }
@@ -1471,6 +1494,14 @@ final class _OllamaProtocol implements _ProviderProtocol {
       return null;
     }
     final payload = jsonDecode(line) as Map<String, Object?>;
+    // 截断信号（票 06）：done_reason 为 length 表示输出被上限掐断，按
+    // 失败降级；stop 或缺省（旧版本不带该字段）照常视为正常完成。
+    if (payload['done'] == true && payload['done_reason'] == 'length') {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.contentParsing,
+        message: '模型回复在完成前被截断。',
+      );
+    }
     final message = payload['message'] as Map<String, Object?>?;
     return (
       delta: message?['content'] as String? ?? '',
