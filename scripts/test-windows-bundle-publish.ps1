@@ -126,6 +126,33 @@ try {
     (Get-ChildItem -LiteralPath $flagExpandedRoot | Select-Object -First 1).Name -eq '栖语'
   ) '修补后解压出来的顶层目录名不是「栖语」。'
 
+  # --- EOCD 定位：zip 注释里出现 EOCD 签名时不得误命中假头 ---
+  $commentBytes = [IO.File]::ReadAllBytes($flagZipPath)
+  # 现有 zip 注释长度为 0，真中央目录结尾就在倒数 22 字节处；把注释长度
+  # 字段改成 30，并让注释开头正好是 EOCD 签名，考验扫描的自洽校验。
+  $commentLength = 30
+  $realEocdOffset = $commentBytes.Length - 22
+  $commentBytes[$realEocdOffset + 20] = $commentLength -band 0xFF
+  $commentBytes[$realEocdOffset + 21] = ($commentLength -shr 8) -band 0xFF
+  $archiveComment = New-Object byte[] $commentLength
+  $archiveComment[0] = 0x50
+  $archiveComment[1] = 0x4B
+  $archiveComment[2] = 0x05
+  $archiveComment[3] = 0x06
+  for ($filler = 4; $filler -lt $commentLength; $filler++) {
+    $archiveComment[$filler] = 0x61
+  }
+  $commentedBytes = New-Object byte[] ($commentBytes.Length + $commentLength)
+  [Array]::Copy($commentBytes, $commentedBytes, $commentBytes.Length)
+  [Array]::Copy($archiveComment, 0, $commentedBytes, $commentBytes.Length, $commentLength)
+  [IO.File]::WriteAllBytes($flagZipPath, $commentedBytes)
+  $entriesWithComment = @(Get-ZipEntryNameFlags -Path $flagZipPath)
+  Assert-Condition (
+    $entriesWithComment.Count -eq 1 -and
+    $entriesWithComment[0].Name -eq '栖语/a.txt' -and
+    $entriesWithComment[0].HasUtf8Flag
+  ) 'zip 注释含 EOCD 签名时没有跳过假头定位到真的中央目录。'
+
   # --- 发布压缩：顶层目录「栖语」与 UTF-8 标志位一次到位 ---
   $bundleSourceRoot = Join-Path $testRoot 'bundle-src'
   New-Item -ItemType Directory -Path $bundleSourceRoot -Force | Out-Null

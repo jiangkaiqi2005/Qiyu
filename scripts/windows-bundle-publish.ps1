@@ -87,8 +87,14 @@ function Get-ZipEntryNameFlags {
       $bytes[$i] -eq 0x50 -and $bytes[$i + 1] -eq 0x4B -and
       $bytes[$i + 2] -eq 0x05 -and $bytes[$i + 3] -eq 0x06
     ) {
-      $eocdOffset = $i
-      break
+      # 候选头还要自洽：注释长度字段必须恰好补到文件尾。zip 注释里
+      # 恰好出现 EOCD 签名时，从尾向前扫会先撞上假头；不满足自洽的
+      # 候选继续向下找，直到真的中央目录结尾。
+      $commentLength = [BitConverter]::ToUInt16($bytes, $i + 20)
+      if ($i + 22 + $commentLength -eq $bytes.Length) {
+        $eocdOffset = $i
+        break
+      }
     }
   }
   if ($eocdOffset -lt 0) {
