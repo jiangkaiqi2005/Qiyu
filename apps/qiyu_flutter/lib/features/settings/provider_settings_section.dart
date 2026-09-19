@@ -314,7 +314,11 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
       showSettingsNotice(context, message);
 
   Future<void> _save(ProviderSettingsViewModel viewModel) async {
-    await _form.save(viewModel, report: _reportInvalidDraft);
+    final saved = await _form.save(viewModel, report: _reportInvalidDraft);
+    // 保存成功统一轻提示：让用户确信存上了。失败路径不变（错误横幅）。
+    if (saved && mounted) {
+      showSettingsNotice(context, settingsSavedNotice);
+    }
   }
 
   Future<void> _confirmForgetKey(ProviderSettingsViewModel viewModel) async {

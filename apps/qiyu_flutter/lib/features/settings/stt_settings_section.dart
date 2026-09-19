@@ -184,6 +184,15 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
   void _reportInvalidDraft(String message) =>
       showSettingsNotice(context, message);
 
+  /// 一次保存的领域编排加成功播报：存为真时统一轻提示「已保存到本机」
+  /// （四域共用一句），失败路径不变（错误横幅）。
+  Future<void> _save(SttSettingsViewModel viewModel) async {
+    final saved = await _form.save(viewModel, report: _reportInvalidDraft);
+    if (saved && mounted) {
+      showSettingsNotice(context, settingsSavedNotice);
+    }
+  }
+
   Future<void> _confirmForgetKey(SttSettingsViewModel viewModel) async {
     final confirmed = await confirmSettingsForgetKey(
       context: context,
@@ -312,9 +321,7 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
               saveButtonKey: const Key('save-stt-settings'),
               saveLabel: '保存到本机',
               saveBusy: viewModel.saving,
-              onSave: () => unawaited(
-                _form.save(viewModel, report: _reportInvalidDraft),
-              ),
+              onSave: () => unawaited(_save(viewModel)),
               test: (
                 buttonKey: const Key('test-stt-connection'),
                 label: '测试连接',

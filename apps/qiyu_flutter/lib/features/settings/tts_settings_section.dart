@@ -258,6 +258,15 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
   void _reportInvalidDraft(String message) =>
       showSettingsNotice(context, message);
 
+  /// 一次保存的领域编排加成功播报：存为真时统一轻提示「已保存到本机」
+  /// （四域共用一句），失败路径不变（错误横幅）。
+  Future<void> _save(TtsSettingsViewModel viewModel) async {
+    final saved = await _form.save(viewModel, report: _reportInvalidDraft);
+    if (saved && mounted) {
+      showSettingsNotice(context, settingsSavedNotice);
+    }
+  }
+
   Future<void> _confirmForgetKey(TtsSettingsViewModel viewModel) async {
     final confirmed = await confirmSettingsForgetKey(
       context: context,
@@ -545,9 +554,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection> {
               saveButtonKey: const Key('save-tts-settings'),
               saveLabel: '保存到本机',
               saveBusy: viewModel.saving,
-              onSave: () => unawaited(
-                _form.save(viewModel, report: _reportInvalidDraft),
-              ),
+              onSave: () => unawaited(_save(viewModel)),
               test: (
                 buttonKey: const Key('test-tts-connection'),
                 label: '测试连接并试听',

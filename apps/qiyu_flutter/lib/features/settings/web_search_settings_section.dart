@@ -86,6 +86,15 @@ class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection> {
     super.dispose();
   }
 
+  /// 一次保存的领域编排加成功播报：存为真时统一轻提示「已保存到本机」
+  /// （四域共用一句），失败路径不变（错误横幅）。
+  Future<void> _save(WebSearchSettingsViewModel viewModel) async {
+    final saved = await _form.save(viewModel);
+    if (saved && mounted) {
+      showSettingsNotice(context, settingsSavedNotice);
+    }
+  }
+
   Future<void> _confirmForgetKey(WebSearchSettingsViewModel viewModel) async {
     final confirmed = await confirmSettingsForgetKey(
       context: context,
@@ -150,7 +159,7 @@ class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection> {
                 saveLabel: '保存到本机',
                 saveBusy: viewModel.saving,
                 // 联网搜索没有连接测试位：不传 test，只渲染保存钮。
-                onSave: () => unawaited(_form.save(viewModel)),
+                onSave: () => unawaited(_save(viewModel)),
               ),
             ],
           ],

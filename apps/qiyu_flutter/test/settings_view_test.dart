@@ -800,6 +800,8 @@ void main() {
     await tester.tap(find.byKey(const Key('save-web-search-settings')));
     await tester.pumpAndSettle();
     expect(find.text('联网搜索设置暂时不可用，请稍后重试。'), findsOneWidget);
+    // 失败路径行为不变：只留错误横幅，不给保存成功的轻提示。
+    expect(find.text('已保存到本机。'), findsNothing);
     expect(tester.widget<TextField>(field).controller?.text, isEmpty);
     expect(webSearchGateway.keySet, isTrue);
     expect(find.byKey(const Key('forget-web-search-key')), findsOneWidget);
@@ -816,6 +818,44 @@ void main() {
     await tester.pumpAndSettle();
     expect(webSearchGateway.forgetCalls, 1);
     expect(find.byKey(const Key('forget-web-search-key')), findsNothing);
+  });
+
+  testWidgets('四域保存成功统一轻提示：保存后出现「已保存到本机」，五秒渐隐', (
+    tester,
+  ) async {
+    final webSearchGateway = _MutableWebSearchSettingsGateway();
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        webSearchGateway: webSearchGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'web_search');
+
+    final field = find.byKey(const Key('web-search-api-key'));
+    await tester.scrollUntilVisible(
+      field,
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 20,
+    );
+    await tester.enterText(field, 'temporary-anysearch-key');
+    await tester.ensureVisible(
+      find.byKey(const Key('save-web-search-settings')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-web-search-settings')));
+    await tester.pumpAndSettle();
+
+    // 保存成功：统一轻提示立刻出现，四域共用同一句。
+    expect(find.text('已保存到本机。'), findsOneWidget);
+
+    // 五秒渐隐通道：走完既定节奏整条退场，不留挂起的计时器。
+    await tester.pump(const Duration(milliseconds: 5500));
+    await tester.pumpAndSettle();
+    expect(find.text('已保存到本机。'), findsNothing);
   });
 
   testWidgets('FocusNode 保护与编辑态草稿：获焦编辑中绝不被覆盖，且 tts-extra-params 为 multiline', (
