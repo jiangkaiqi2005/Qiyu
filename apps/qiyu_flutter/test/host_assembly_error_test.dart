@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:qiyu_flutter/features/baseline/host_assembly_error.dart';
 import 'package:qiyu_flutter/features/baseline/host_bootstrap.dart';
+import 'package:qiyu_flutter/main.dart' as boot;
 
 /// 装配失败错误页的验收（票 07）：安卓壳在 `main()` 里先起进程内本机
 /// Host 再跑 UI，装配一旦失败就「白屏且无诊断」。错误页此刻是唯一还
@@ -122,5 +123,35 @@ void main() {
       tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
       isNotNull,
     );
+  });
+
+  testWidgets('入口捕获装配失败：非 release 态控制台收异常线索，UI 只见人话错误页', (tester) async {
+    // 捕获 debugPrint（评审 R1）：装配失败的异常线索只进控制台（非
+    // release 编译态），不得进 UI、不上报、不落文件。flutter test 本身
+    // 就是 debug 编译态，守卫分支在这里是活的。debugPrint 是 foundation
+    // 受不变量校验的调试变量，同步收集完立即还原（tearDown 晚于校验）。
+    final console = <String?>[];
+    final originalDebugPrint = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) => console.add(message);
+    boot.runAssemblyFailureApp(StateError('装配失败的测试异常'));
+    debugPrint = originalDebugPrint;
+    await tester.pump(const Duration(milliseconds: 1));
+
+    expect(
+      console.where((line) => line!.startsWith('栖语启动装配失败')),
+      isNotEmpty,
+      reason: '开发期排障需要异常类别线索，装配失败不得静默丢弃异常',
+    );
+    expect(
+      console.where((line) => line!.contains('装配失败的测试异常')),
+      isNotEmpty,
+      reason: '控制台线索应包含异常本身，足以归类排障',
+    );
+    // 换根到错误页，且异常细节不进 UI。出口缝由 main() 的捕获分支调
+    // 用（一行接线，代码走查）；测试直接驱动缝——真 main() 会先穿过
+    // 平台通道粘合（目录解析），在测试环境挂起且按仓库既定口径归真机
+    // 冒烟，故不作为用例入口。
+    expect(find.text('栖语这次没能启动'), findsOneWidget);
+    expect(find.textContaining('StateError'), findsNothing);
   });
 }
