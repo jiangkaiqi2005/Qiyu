@@ -30,7 +30,12 @@ The conversation arc is a diminuendo: `start → ease in → unfold → the deep
 
 ## Voice: talk to her, hear her talk
 
-When you don't feel like typing before bed, just hold the microphone and speak — Qiyu transcribes your words and sends them as text. Her replies can be read aloud too — tap the speaker icon next to a bubble, or turn on auto-read in Settings.
+When you don't feel like typing before bed, just speak. The two platforms differ slightly:
+
+- On desktop: click the microphone next to the input box and start talking; click it again when you're done (the button turns into "done, turn into text"), and your words are sent as text.
+- On Android: tap the microphone once to enter voice mode, press and hold the button to speak, and release to send. Changed your mind? Slide up to cancel.
+
+Her replies can be read aloud too — tap the speaker icon next to a bubble, or turn on auto-read in Settings.
 
 Currently supported speech input:
 
@@ -94,26 +99,56 @@ In the Memory Center, you can:
 
 ## Privacy
 
-All data is stored as readable Markdown on your computer. No accounts, no cloud sync, no remote backend. API keys are never known to anyone else.
+All data is stored as readable Markdown on your own device. No accounts, no cloud sync, no remote backend. API keys are never known to anyone else.
 
 Without a configured model, only the local rule engine handles conversation — configuring a model is strongly recommended.
 
 ## Quick start (Windows)
 
-No Node.js, Dart, or Flutter installation required.
+No development tools required — extract and run.
 
 1. Extract `qiyu-windows-x64-<version>.zip`
-2. Run `install.cmd`
+2. Run the `install.cmd` inside
 3. Open **Qiyu** from the desktop or Start menu
-4. Start chatting, or connect a provider in Settings
+4. Start chatting, or connect a model in Settings
 
-Supported providers:
+The first time you run it, Windows may pop up "Windows protected your PC." That's the usual notice for an unsigned installer: click **More info**, then **Run anyway**, and installation continues.
 
-- **OpenAI-compatible** (DeepSeek, Qwen, Moonshot, GLM, etc.)
-- **Anthropic** native protocol
-- **Ollama** (fully local offline inference)
+Where to get keys for the supported model services:
 
-To uninstall, run `uninstall.cmd` from the installation directory. You can choose to keep or remove your conversations and memories.
+- **Volcengine Ark (Doubao)**: register on the Volcengine website, create an API Key in the Ark console, then choose the Volcengine Ark preset under Settings → model connection and paste it in.
+- **Other common models** (DeepSeek, Qwen, Moonshot, GLM, etc.): apply for an API Key in each provider's own console and paste it in the same place.
+- **Ollama**: runs on your own computer, fully local — no key needed.
+
+Uninstalling is covered below under "Where your data lives, and how to back it up."
+
+## Install (Android)
+
+The Android app carries everything inside your phone: no computer needs to stay on, and conversations, memories, and settings all stay on that phone.
+
+1. Download the installer from Qiyu's [releases page](https://github.com/jiangkaiqi2005/Qiyu/releases). The package is split by phone chip architecture, and the file name ends with its architecture: most phones want `arm64-v8a`; a few older phones want `armeabi-v7a`; `x86_64` is generally only for emulators on a computer. The wrong one simply won't install — pick the matching file and try again.
+2. Open the file on your phone (or download it directly on the phone). When the system warns about "unknown sources" or asks whether to allow the installation, allow it.
+3. Open **Qiyu** — at first meeting she asks what to call you.
+
+## Where your data lives, and how to back it up
+
+Qiyu has no cloud. There is exactly one copy of your data — yours:
+
+- **Windows**: everything — conversations, memories, model settings — lives in the `C:\Users\<your name>\.qiyu` folder, as Markdown text files you can open and read.
+- **Android**: everything stays inside Qiyu's own private app space, unreadable by other apps; you can see the exact location under Settings → local data.
+
+**Backup**: open Settings → local data → backup and restore, and export — you get a single Markdown file you can send to yourself. After switching phones or reinstalling, import from the same place; you preview the differences before anything is restored. API keys and model credentials never enter the backup.
+
+**Before you uninstall**: your conversations and memories have no other copy —
+
+- On Windows, run `uninstall.cmd` from the installation directory. It asks whether to keep your data: keep, and everything stays where it is; delete, and everything is wiped.
+- On Android, uninstalling the app — or clearing its data from the system settings — erases all conversations and memories. Export a backup first.
+
+## Web search
+
+When the conversation touches things that change — today's date, the weather outside, recent news — Qiyu searches the web on demand and weaves what she finds into her reply, so you don't have to look it up yourself.
+
+This needs an AnySearch API Key under Settings → web search (apply on AnySearch's website). The key stays on your machine. Without it, chatting works as usual — she just won't search.
 
 ## Architecture
 
@@ -132,6 +167,8 @@ To uninstall, run `uninstall.cmd` from the installation directory. You can choos
 
 The host listens only on `127.0.0.1`; API keys never enter the browser. Model output is sanitized and checked against persona boundaries before delivery. Crisis, medical, legal, and financial inputs go to the model as usual; when no model is configured or the model does not respond, local fallback scripts take over (crisis inputs are given the 12356 mental-health hotline).
 
+The Android app reuses the same interface and core, with the local service embedded right in the app — likewise with no cloud anywhere.
+
 ## Development
 
 ```powershell
@@ -139,7 +176,7 @@ The host listens only on `127.0.0.1`; API keys never enter the browser. Model ou
 & .\scripts\build-windows-bundle.ps1      # Build Windows bundle
 ```
 
-Release 1 targets Windows x64. iOS and Android are planned for later.
+Release 1 targets Windows and Android; iOS and other platforms come later.
 
 Technical details are in the [behavior specification](docs/product/behavior-spec.md), [release baseline](docs/engineering/windows-release-baseline.md), and [contributor guide](AGENTS.md).
 
