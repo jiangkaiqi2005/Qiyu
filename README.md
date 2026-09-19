@@ -130,7 +130,7 @@ To uninstall, run `uninstall.cmd` from the installation directory. You can choos
 └─────────────────────────────────┘
 ```
 
-The host listens only on `127.0.0.1`; API keys never enter the browser. Model output is sanitized and checked against persona boundaries before delivery. Crisis, medical, legal, and financial inputs are classified locally without calling the provider.
+The host listens only on `127.0.0.1`; API keys never enter the browser. Model output is sanitized and checked against persona boundaries before delivery. Crisis, medical, legal, and financial inputs go to the model as usual; when no model is configured or the model does not respond, local fallback scripts take over (crisis inputs are given the 12356 mental-health hotline).
 
 ## Development
 
