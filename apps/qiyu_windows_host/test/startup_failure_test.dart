@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
+import 'package:qiyu_windows_host/src/single_instance.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -137,7 +138,9 @@ void main() {
       );
       final log = logFile().readAsStringSync();
       expect(log, contains(presenter.presented.single.userMessage));
-      expect(log, contains('webAssetsMissing'));
+      expect(log, contains('[webAssetsMissing]'));
+      // 已归因的失败不需要类型线索。
+      expect(log, isNot(contains('FileSystemException')));
     });
 
     test('自检报告经呈现器落到弹窗与日志', () {
@@ -196,6 +199,24 @@ void main() {
       expect(log.split('\n').where((line) => line.isNotEmpty), hasLength(2));
       expect(log, contains('webAssetsMissing'));
       expect(log, contains('instanceConflict'));
+    });
+
+    test('未预期失败的日志附最小诊断线索，不带异常原文', () {
+      final presenter = _FakeStartupFailurePresenter();
+      final reporter = StartupFailureReporter(
+        presenter: presenter,
+        logDirectoryPath: temporaryDirectory.path,
+      );
+      final error = Exception('第三方原始错误 with C:\\secret\\path');
+
+      reporter.reportError(error);
+
+      expect(presenter.presented.single.reason,
+          StartupFailureReason.unexpected);
+      final log = logFile().readAsStringSync();
+      expect(log, contains('[unexpected:${error.runtimeType}]'));
+      expect(log, isNot(contains('secret')));
+      expect(log, isNot(contains('第三方')));
     });
 
     test('日志写不进去时安静放弃，弹窗照常呈现', () {

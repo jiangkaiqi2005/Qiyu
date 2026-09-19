@@ -5,7 +5,6 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 
 import 'secret_store.dart';
 import 'single_instance.dart';
-const String existingInstanceFailurePrefix = 'Existing Qiyu instance';
 
 final class QiyuHostRunner {
   const QiyuHostRunner({

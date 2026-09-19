@@ -135,7 +135,9 @@ final class WindowsMessageBoxPresenter implements StartupFailurePresenter {
 }
 
 /// 启动失败呈现编排：同一份人话原因先写入运行目录日志，再交给呈现器。
-/// 日志按次追加保留历史，写不进去时安静放弃，不挡弹窗与退出码。
+/// 日志按次追加保留历史，写不进去时安静放弃，不挡弹窗与退出码。未预期
+/// 失败在日志原因标记里附异常类型名作最小诊断线索（如
+/// `[unexpected:SocketException]`），异常原文与本机路径仍不落盘。
 final class StartupFailureReporter {
   StartupFailureReporter({
     required this.presenter,
@@ -147,23 +149,34 @@ final class StartupFailureReporter {
   final StartupFailurePresenter presenter;
   final String logDirectoryPath;
 
-  void report(StartupFailure failure) {
-    _appendLog(failure);
+  void report(StartupFailure failure, {String? diagnosticNote}) {
+    _appendLog(failure, diagnosticNote: diagnosticNote);
     presenter.present(failure);
   }
 
-  void reportError(Object error) => report(classifyStartupFailure(error));
+  void reportError(Object error) {
+    final failure = classifyStartupFailure(error);
+    report(
+      failure,
+      diagnosticNote: failure.reason == StartupFailureReason.unexpected
+          ? error.runtimeType.toString()
+          : null,
+    );
+  }
 
   void reportPreflightChecks(Map<String, bool> checks) =>
       report(classifyPreflightChecks(checks));
 
-  void _appendLog(StartupFailure failure) {
+  void _appendLog(StartupFailure failure, {String? diagnosticNote}) {
     try {
       final directory = Directory(logDirectoryPath)..createSync(recursive: true);
       final stamp = DateTime.now().toUtc().toIso8601String();
+      final reasonTag = diagnosticNote == null
+          ? failure.reason.name
+          : '${failure.reason.name}:$diagnosticNote';
       File('${directory.path}${Platform.pathSeparator}$logFileName')
           .writeAsStringSync(
-        '$stamp [${failure.reason.name}] ${failure.userMessage}\n',
+        '$stamp [$reasonTag] ${failure.userMessage}\n',
         mode: FileMode.append,
         flush: true,
       );
