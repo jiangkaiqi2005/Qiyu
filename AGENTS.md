@@ -53,7 +53,7 @@ cd apps\qiyu_flutter; flutter build apk --debug # 安卓调试包，无需 keyst
 
 安全不变量：API 需 Host 会话，修改请求还需同源 Origin + CSRF；读取设置永不返回明文 Key；秘密脱敏覆盖存储旧数据、模型上下文、召回外发与备份导出等一切出仓内容，记忆禁提由 `memory_ban` 统一执行且部分失败如实上报不静默；对外错误只返回允许列表诊断，禁止透出授权头、Cookie、完整敏感输入、第三方错误原文或本机路径。Provider 分支集中在 Provider 层，勿散入 UI 或 Chat Service。
 
-状态：会话写本机 Markdown sessions（单段最多 80 turns，活动窗口 180 天）；Provider 配置（含 Key）在本机 runtime `provider.json`，切换 Provider/URL 时不得沿用另一 credential scope 的旧 Key；浏览器不用 localStorage 作主持久化。
+状态：会话写本机 Markdown sessions（单段最多 80 turns），本地永久保留——唯一删除途径是用户手动删段或清除产品数据；180 天是召回候选窗口（尚未接线，行为核心的窗口常量保留为将来接线的锚点）；Provider 配置（含 Key）在本机 runtime `provider.json`，切换 Provider/URL 时不得沿用另一 credential scope 的旧 Key；浏览器不用 localStorage 作主持久化。
 
 ## 行为红线
 
