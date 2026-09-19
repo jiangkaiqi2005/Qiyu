@@ -210,8 +210,11 @@ void main() {
         ChatRequest.fromJson(requestJson),
         StateSnapshot.initial('fixture-user'),
         candidateReply: providerJson['configured'] == true
-            ? providerJson['candidateReply']! as String
+            ? providerJson['candidateReply'] as String?
             : null,
+        modelFailure: providerJson['failure'] == null
+            ? null
+            : FallbackReason.fromWireName(providerJson['failure']! as String),
       );
 
       expect(outcome, isA<ChatResult>());

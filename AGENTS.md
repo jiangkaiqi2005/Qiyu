@@ -45,7 +45,7 @@ cd apps\qiyu_flutter; flutter build apk --debug # 安卓调试包，无需 keyst
 
 `/chat` → `POST /api/chat` → `LocalChatService.deliver`：
 
-1. 危机/医疗/法律/金融等 non-normal 输入先在本地分类，**绝不调用 Provider**；Provider 未配置、失败或输出不合格时统一降级本地规则回复。本地规则引擎是行为基准（golden eval 锁定其输出），不是 stub。
+1. 一切输入（含危机/医疗/法律/金融等 non-normal 输入）照常交给 Provider 回应，本地分类不再是外呼闸门，只在降级时充当兜底话术的选择器；Provider 未配置、失败或输出不合格时统一降级本地规则回复：危机→热线兜底（12356），医疗/法律/金融→现行本地话术，其余→现行极简回复。本地规则引擎是行为基准（golden eval 锁定其输出），不是 stub。
 2. Prompt 由 `ModelPromptBuilder` 装配：人格宪法 → 硬规则（联网检索等能力快照条文原样并入）→ 隐藏块协议 → `<daily_state>`/`<long_memory>`/`<persona>`（空块不输出）→ 最近对话（每条消息带时刻前缀）→ 格式提醒 → `<memory_context>`（仅命中时，临时附加不进 system prompt）→ 当前用户消息。时刻前缀只活在装配瞬间：不落盘、不进 system 段、检索块不带。装配前读 `memory-controls.md` 过滤冻结/禁提内容，controls 本身不进 prompt。
 3. Provider 原始增量先在 Host 完整缓存，候选回复经清洗、违禁词与人格边界校验后才按 `ChatDeliveryEvent` 交付；**页面绝不能看到未经安全校验的原始 token**。只有协议原生终止标记（OpenAI `finish_reason`/`[DONE]`、Anthropic `message_stop`、Ollama `done:true`）才算完成；提前 EOF、超时、原生 error 必须失败降级，不能把半句当完整回复。
 4. `requestId` 幂等：刷新、Host 重启、重试复用已有 turn，不重复展示或落盘；`/api/chat/cancel` 取消只保留可重试的用户 turn。

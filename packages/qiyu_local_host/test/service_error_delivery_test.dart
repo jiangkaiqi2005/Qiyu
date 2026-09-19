@@ -237,7 +237,9 @@ void main() {
 
   test('安全、未配置和输出校验回退不携带服务类别', () async {
     for (final scenario in [
-      (configured: true, text: '我想自杀', expectedCalls: 0),
+      // 危机输入照常外呼；输出不合格时按分类降级兜底话术，同样不带
+      // 服务类别。
+      (configured: true, text: '我想自杀', expectedCalls: 1),
       (configured: false, text: '在吗', expectedCalls: 0),
       (configured: true, text: '在吗', expectedCalls: 1),
     ]) {

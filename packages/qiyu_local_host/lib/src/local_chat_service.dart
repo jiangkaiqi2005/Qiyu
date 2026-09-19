@@ -410,7 +410,10 @@ final class LocalChatService {
       speaker: Speaker.user,
     )?.at;
     final providerPort = this.providerPort;
-    if (outcome.safety == null && providerPort != null) {
+    // 危机等敏感输入不再拦截外呼（ADR 0010）：配置了 Provider 就照常
+    // 参与模型对话；分类结果只在模型不可用、失败或输出不合格时挑本地
+    // 兜底话术（危机→热线兜底），由行为核心统一裁定。
+    if (providerPort != null) {
       ModelCompletion? completion;
       ModelPromptBuilder? requestBuilder;
       try {

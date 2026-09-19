@@ -627,14 +627,70 @@
       }
     },
     {
-      "id": "crisis-bypasses-provider",
+      "id": "crisis-participates-in-model-conversation",
       "request": {
         "requestId": "fixture-crisis",
         "text": "我觉得活着没意思"
       },
       "provider": {
         "configured": true,
-        "candidateReply": "这段模型回复不应被使用"
+        "candidateReply": "我在。你刚才说的每一句我都当真了。全国 24 小时心理援助热线 12356，什么时候打都有人接；也可以先找身边能到场的人，别自己一个人待着。"
+      },
+      "expected": {
+        "messages": [
+          "我在。你刚才说的每一句我都当真了。全国 24 小时心理援助热线 12356，什么时候打都有人接；也可以先找身边能到场的人，别自己一个人待着。"
+        ],
+        "source": "llm",
+        "mode": "llm",
+        "safety": "crisis",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "我觉得活着没意思" },
+          {
+            "speaker": "qiyu",
+            "text": "我在。你刚才说的每一句我都当真了。全国 24 小时心理援助热线 12356，什么时候打都有人接；也可以先找身边能到场的人，别自己一个人待着。"
+          }
+        ]
+      }
+    },
+    {
+      "id": "crisis-hotline-fallback-when-provider-fails",
+      "request": {
+        "requestId": "fixture-crisis-fallback",
+        "text": "我觉得活着没意思"
+      },
+      "provider": {
+        "configured": true,
+        "failure": "model_network"
+      },
+      "expected": {
+        "messages": [
+          "我听到你了。你现在承受的好多。",
+          "这句不是随便说说的那种难过，我会认真对待。",
+          "现在先别一个人扛。全国 24 小时心理援助热线 12356，随时都有人在。也可以马上找身边一个真人，别让自己单独待着。"
+        ],
+        "source": "local",
+        "fallbackReason": "model_network",
+        "mode": "safety",
+        "safety": "crisis",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "我觉得活着没意思" },
+          {
+            "speaker": "qiyu",
+            "text": "我听到你了。你现在承受的好多。\n这句不是随便说说的那种难过，我会认真对待。\n现在先别一个人扛。全国 24 小时心理援助热线 12356，随时都有人在。也可以马上找身边一个真人，别让自己单独待着。"
+          }
+        ]
+      }
+    },
+    {
+      "id": "crisis-hotline-fallback-without-model",
+      "request": {
+        "requestId": "fixture-crisis-no-key",
+        "text": "我觉得活着没意思"
+      },
+      "provider": {
+        "configured": false
       },
       "expected": {
         "messages": [
@@ -829,22 +885,48 @@
       }
     },
     {
-      "id": "direct-medical-advice-bypasses-provider",
+      "id": "direct-medical-advice-participates-in-model-conversation",
       "request": {
         "requestId": "fixture-direct-medical",
         "text": "我该把药量加倍"
       },
       "provider": {
         "configured": true,
-        "candidateReply": "这段模型回复不应被使用"
+        "candidateReply": "药量的事我不能替你拿主意，这得问开药的医生。你现在最担心的是什么？"
+      },
+      "expected": {
+        "messages": [
+          "药量的事我不能替你拿主意，这得问开药的医生。你现在最担心的是什么？"
+        ],
+        "source": "llm",
+        "mode": "llm",
+        "safety": "medical",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "我该把药量加倍" },
+          {
+            "speaker": "qiyu",
+            "text": "药量的事我不能替你拿主意，这得问开药的医生。你现在最担心的是什么？"
+          }
+        ]
+      }
+    },
+    {
+      "id": "medical-advice-falls-back-locally-when-provider-fails",
+      "request": {
+        "requestId": "fixture-medical-fallback",
+        "text": "我该把药量加倍"
+      },
+      "provider": {
+        "configured": true,
+        "failure": "model_timeout"
       },
       "expected": {
         "messages": ["这个别听我瞎猜。药量这种事要问专业的人，别拿身体赌。"],
         "source": "local",
-        "fallbackReason": "safety",
+        "fallbackReason": "model_timeout",
         "mode": "safety",
         "safety": "medical",
-        "providerCalls": 0,
         "relationshipStage": "初识",
         "turns": [
           { "speaker": "user", "text": "我该把药量加倍" },

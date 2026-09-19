@@ -147,14 +147,40 @@ final class QiyuBehaviorCore {
 
     final safety = _classifySafety(text);
     if (safety != SafetyKind.normal) {
-      final messages = _safetyMessages(safety);
+      // 危机等敏感输入不再拦截外呼（ADR 0010）：模型可用且候选合格时
+      // 照常参与对话；未配置、调用失败或候选不合格时，分类结果只负责
+      // 挑选本地兜底话术（危机→热线兜底，其余类别→现行本地话术）。
+      if (modelFailure == null && candidateReply != null) {
+        final candidate = _validateCandidateReply(candidateReply);
+        if (candidate.failure == null) {
+          return _result(
+            request: request,
+            state: state,
+            text: text,
+            messages: candidate.messages,
+            source: ReplySource.llm,
+            mode: 'llm',
+            safety: safety,
+          );
+        }
+        return _result(
+          request: request,
+          state: state,
+          text: text,
+          messages: _safetyMessages(safety),
+          source: ReplySource.local,
+          fallbackReason: candidate.failure,
+          mode: 'safety',
+          safety: safety,
+        );
+      }
       return _result(
         request: request,
         state: state,
         text: text,
-        messages: messages,
+        messages: _safetyMessages(safety),
         source: ReplySource.local,
-        fallbackReason: FallbackReason.safety,
+        fallbackReason: modelFailure ?? FallbackReason.safety,
         mode: 'safety',
         safety: safety,
       );

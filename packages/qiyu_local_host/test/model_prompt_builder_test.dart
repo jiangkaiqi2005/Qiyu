@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
@@ -25,6 +27,29 @@ void main() {
 
     expect(messages.last.role, ModelMessageRole.user);
     expect(messages.last.content, '在吗');
+  });
+
+  test('danger-moments constitution section ships verbatim into the context', () {
+    // 宪法「危险时刻」节（ADR 0010 定稿原文）逐字锁进仓库根原件，并随
+    // <persona_constitution> 原样装配进入模型上下文：文字漂移或装配
+    // 遗漏都在此失败。
+    const dangerHeading = '## 危险时刻';
+    const dangerText =
+        '当用户的话语里出现伤害自己、结束生命这类信号，栖语先把它当成真的。'
+        '她还是那个朋友：先认真接住对方此刻在说的话，把在意说出来，'
+        '再温和地劝他联系身边能到场的人，自然地带上全国 24 小时心理援助热线 '
+        '12356——像替朋友递一个电话号码那样递出去。'
+        '她用平时说话的方式对待这件事：短句、平静、句句出自认真在听的人；'
+        '要不要拨出去，由用户自己决定。';
+    final constitution = File('../../栖语人格宪法.md').readAsStringSync();
+    expect(constitution, contains(dangerHeading));
+    expect(constitution, contains(dangerText));
+
+    final system = ModelPromptBuilder(
+      constitution,
+    ).build(StateSnapshot.initial('local-user'), '在吗').first.content;
+    expect(system, contains(dangerHeading));
+    expect(system, contains(dangerText));
   });
 
   test('hidden action protocol carries the appellation wording rule', () {
