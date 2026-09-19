@@ -1237,6 +1237,13 @@ const _chatResponseBudget = ProviderResponseBudget(
   maxErrorBodyBytes: 64 * 1024,
 );
 
+/// 截断失败的统一异常（票 06）：回复因长度或内容过滤被掐断时按失败
+/// 降级，OpenAI、Anthropic、Ollama 三处协议读取共用，防止文案漂移。
+const _truncatedReplyFailure = ModelGatewayException(
+  kind: ModelFailureKind.contentParsing,
+  message: '模型回复在完成前被截断。',
+);
+
 _ProviderProtocol _providerProtocol(ProviderKind kind) => switch (kind) {
   ProviderKind.openAiCompatible => const _OpenAiCompatibleProtocol(),
   ProviderKind.anthropic => const _AnthropicProtocol(),
@@ -1310,10 +1317,7 @@ final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
     // 截断信号（票 06）：回复因长度或内容过滤被掐断时按失败降级，半句
     // 绝不当作完整回复；stop 等其余完成原因照常视为正常终止。
     if (finishReason == 'length' || finishReason == 'content_filter') {
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.contentParsing,
-        message: '模型回复在完成前被截断。',
-      );
+      throw _truncatedReplyFailure;
     }
     return (delta: text, done: finishReason != null);
   }
@@ -1433,10 +1437,7 @@ _AnthropicStreamPart? _readAnthropicEvent(String line) {
       final delta = payload['delta'];
       if (delta is Map<String, Object?> &&
           delta['stop_reason'] == 'max_tokens') {
-        throw const ModelGatewayException(
-          kind: ModelFailureKind.contentParsing,
-          message: '模型回复在完成前被截断。',
-        );
+        throw _truncatedReplyFailure;
       }
       return null;
     default:
@@ -1497,10 +1498,7 @@ final class _OllamaProtocol implements _ProviderProtocol {
     // 截断信号（票 06）：done_reason 为 length 表示输出被上限掐断，按
     // 失败降级；stop 或缺省（旧版本不带该字段）照常视为正常完成。
     if (payload['done'] == true && payload['done_reason'] == 'length') {
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.contentParsing,
-        message: '模型回复在完成前被截断。',
-      );
+      throw _truncatedReplyFailure;
     }
     final message = payload['message'] as Map<String, Object?>?;
     return (

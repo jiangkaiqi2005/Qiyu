@@ -455,6 +455,18 @@ class _LocalChatViewState extends State<LocalChatView>
       return;
     }
 
+    // 截断与解析失败（票 06）：模型回复没说完就结束，就地轻提示给出
+    // 明确失败信号，与网络瞬态同构，绝不弹模态窗。
+    if (reason == FallbackReason.modelContentParsing) {
+      setState(() {
+        _apiErrorNotice = const _ApiErrorNotice(
+          message: '⚠️ 模型回复不完整，当前保持本地基础回复',
+          showSettingsLink: false,
+        );
+      });
+      return;
+    }
+
     if (serviceError == ServiceErrorCategory.server) {
       setState(() {
         _apiErrorNotice = const _ApiErrorNotice(

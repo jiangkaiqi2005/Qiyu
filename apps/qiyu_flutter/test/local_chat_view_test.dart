@@ -877,6 +877,24 @@ void main() {
       expect(find.text('去设置检查'), findsNothing);
     });
 
+    testWidgets('边界排除：modelContentParsing 截断轮仅状态行轻提示，不弹模态对话框', (
+      tester,
+    ) async {
+      final gateway = _ConfigurableChatGateway(
+        fallbackReasons: const [FallbackReason.modelContentParsing],
+      );
+      await _pumpChatView(tester, gateway: gateway);
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '话说一半');
+      await tester.tap(find.byKey(const Key('chat-send')));
+      await tester.pumpAndSettle();
+
+      // 截断/解析失败有明确的就地失败信号（票 06），但不弹模态窗
+      expect(find.byKey(const Key('api-error-dialog')), findsNothing);
+      expect(find.textContaining('模型回复不完整'), findsOneWidget);
+      expect(find.text('去设置检查'), findsNothing);
+    });
+
     testWidgets('语音链路联动：STT 客户端错误触发「语音服务受限」弹窗', (tester) async {
       final gateway = _ConfigurableChatGateway(
         fallbackReasons: const [FallbackReason.noLlmConfig],
