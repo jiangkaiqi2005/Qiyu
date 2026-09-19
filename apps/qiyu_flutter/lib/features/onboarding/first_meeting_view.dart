@@ -76,15 +76,9 @@ class _FirstMeetingViewState extends State<FirstMeetingView> {
                   child: const Text('开始聊天'),
                 )
               else ...[
+                // 引导优先（ADR 0011）：未配置模型时主按钮导向模型连接，
+                // 试聊退为次按钮并如实标注体验差异。
                 FilledButton(
-                  key: const Key('first-meeting-start-local'),
-                  onPressed: viewModel.completing
-                      ? null
-                      : () => unawaited(_enter(context, viewModel, '/chat')),
-                  child: const Text('先聊聊'),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
                   key: const Key('first-meeting-go-settings'),
                   onPressed: viewModel.completing
                       ? null
@@ -92,6 +86,14 @@ class _FirstMeetingViewState extends State<FirstMeetingView> {
                           _enter(context, viewModel, '/settings', push: true),
                         ),
                   child: const Text('先去连上模型'),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  key: const Key('first-meeting-start-local'),
+                  onPressed: viewModel.completing
+                      ? null
+                      : () => unawaited(_enter(context, viewModel, '/chat')),
+                  child: const Text('先聊聊'),
                 ),
                 const SizedBox(height: 8),
                 Text(
