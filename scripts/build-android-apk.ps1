@@ -164,18 +164,14 @@ if (-not (Test-Path -LiteralPath $storeFilePath -PathType Leaf)) {
 
 Push-Location $flutterPath
 try {
-  Invoke-Step 'Flutter Android release APK' {
-    flutter build apk --release
+  Invoke-Step 'Flutter Android release APK (split per ABI)' {
+    flutter build apk --release --split-per-abi
   }
 } finally {
   Pop-Location
 }
 
-$apkPath = Join-Path $flutterPath 'build\app\outputs\flutter-apk\app-release.apk'
-if (-not (Test-Path -LiteralPath $apkPath -PathType Leaf)) {
-  throw "构建已结束但找不到 release APK: $apkPath"
-}
-$apk = Get-Item -LiteralPath $apkPath
+$flutterApkDir = Join-Path $flutterPath 'build\app\outputs\flutter-apk'
 $pubspec = Get-Content -Raw -Encoding UTF8 (Join-Path $flutterPath 'pubspec.yaml')
 if ($pubspec -notmatch '(?m)^version:\s*([0-9A-Za-z.+-]+)\s*$') {
   throw '读不到 apps/qiyu_flutter/pubspec.yaml 里合法的 version 字段（需为 versionName+versionCode 形式）。'
@@ -187,11 +183,30 @@ if ($pubspecVersion -notmatch '^([0-9][0-9A-Za-z.]*)\+([0-9]+)$') {
 $versionName = $Matches[1]
 $versionCode = $Matches[2]
 
-Write-Host "==> release APK: $($apk.FullName)"
-Write-Host (
-  '==> 版本 {0}({1})，大小 {2:N2} MB' -f $versionName, $versionCode,
-  ($apk.Length / 1MB)
-)
+# --split-per-abi 按架构各出一个 APK，单个包体积小得多；产物改名成
+# 「qiyu-<版本>-<ABI>-release.apk」，不会装错旧包。项目未配置 abiFilters，
+# 工具链按 Flutter 缺省支持面出三种架构；调整支持面时同步改这份清单。
+$expectedAbis = @('arm64-v8a', 'armeabi-v7a', 'x86_64')
+# 先清掉上一轮带版本名的产物，再逐个改名，目录里留下的就是且只是本次版本的包。
+Get-ChildItem -LiteralPath $flutterApkDir -File -Filter 'qiyu-*-release.apk' |
+  Remove-Item -Force
+$releaseApks = @()
+foreach ($expectedAbi in $expectedAbis) {
+  $abiApkPath = Join-Path $flutterApkDir "app-$expectedAbi-release.apk"
+  if (-not (Test-Path -LiteralPath $abiApkPath -PathType Leaf)) {
+    throw "构建已结束但找不到 $expectedAbi 的拆分 APK：$abiApkPath"
+  }
+  $versionedApkPath = Join-Path $flutterApkDir `
+    "qiyu-$pubspecVersion-$expectedAbi-release.apk"
+  Move-Item -LiteralPath $abiApkPath -Destination $versionedApkPath -Force
+  $releaseApks += Get-Item -LiteralPath $versionedApkPath
+}
+
+foreach ($apk in $releaseApks) {
+  Write-Host ('==> release APK: {0}（{1:N2} MB）' -f `
+    $apk.FullName, ($apk.Length / 1MB))
+}
+Write-Host ('==> 版本 {0}({1})' -f $versionName, $versionCode)
 
 $apksignerPath = Find-ApkSigner -SdkRoots $sdkRoots
 if (-not $apksignerPath) {
@@ -201,19 +216,23 @@ if (-not $apksignerPath) {
   return
 }
 
-# -CollectOutput：要解析指纹行，同时复用 Invoke-Step 那段 EAP 降级与退出码兜底。
-$signerOutput = Invoke-Step `
-  -Name "签名证书指纹（apksigner $apksignerPath）" `
-  -Command { & $apksignerPath verify --print-certs $apkPath } `
-  -CollectOutput
-$digestLines = @($signerOutput | Where-Object { $_ -match 'SHA-256 digest' })
-if ($digestLines.Count -eq 0) {
-  Write-Host '==> apksigner 未报出 SHA-256 指纹，请人工核对下列原始输出：' -ForegroundColor Yellow
-  Write-Host ($signerOutput -join "`n")
-  return
-}
-foreach ($digestLine in $digestLines) {
-  Write-Host ('    ' + $digestLine.Trim())
+# 每个 ABI 的拆分包各自过一遍签名证书，指纹应完全一致（同一把 keystore）。
+foreach ($apk in $releaseApks) {
+  $apkPath = $apk.FullName
+  # -CollectOutput：要解析指纹行，同时复用 Invoke-Step 那段 EAP 降级与退出码兜底。
+  $signerOutput = Invoke-Step `
+    -Name "签名证书指纹（$($apk.Name)，apksigner $apksignerPath）" `
+    -Command { & $apksignerPath verify --print-certs $apkPath } `
+    -CollectOutput
+  $digestLines = @($signerOutput | Where-Object { $_ -match 'SHA-256 digest' })
+  if ($digestLines.Count -eq 0) {
+    Write-Host '==> apksigner 未报出 SHA-256 指纹，请人工核对下列原始输出：' -ForegroundColor Yellow
+    Write-Host ($signerOutput -join "`n")
+    return
+  }
+  foreach ($digestLine in $digestLines) {
+    Write-Host ('    ' + $digestLine.Trim())
+  }
 }
 Write-Host '==> 把这个指纹记进 docs/engineering/android-release-build.md 的指纹表，分发前逐项比对：'
 Write-Host '    签名身份换过就装不上旧设备上的数据，只能卸载重装，而卸载会把记忆全清。'

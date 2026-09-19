@@ -79,7 +79,7 @@ keytool -list -v -keystore <storeFile 指向的路径>   # 提示输入口令时
 & .\scripts\build-android-apk.ps1
 ```
 
-脚本按顺序做四件事：预检 `android/key.properties` 存在、四个字段非空、`storeFile` 指向的 keystore 真的在；跑 `flutter build apk --release`；打印 APK 绝对路径、版本与大小；用 Android SDK build-tools 里最新版本的 `apksigner verify --print-certs` 打印签名证书指纹。找不到 `apksigner` 时不失败，只提示改用 Android Studio 的 APK Analyzer 或按上一节用 `keytool -list -v` 直接读 keystore 核对签名。
+脚本按顺序做五件事：预检 `android/key.properties` 存在、四个字段非空、`storeFile` 指向的 keystore 真的在；跑 `flutter build apk --release --split-per-abi` 按架构拆分构建；把各架构产物改名为 `qiyu-<版本>-<ABI>-release.apk`（版本取自 `pubspec.yaml` 的 `version` 全串）；打印每个 APK 的绝对路径与大小、再打一行版本；用 Android SDK build-tools 里最新版本的 `apksigner verify --print-certs` 逐包打印签名证书指纹——各包出自同一把 keystore，指纹应完全一致。找不到 `apksigner` 时不失败，只提示改用 Android Studio 的 APK Analyzer 或按上一节用 `keytool -list -v` 直接读 keystore 核对签名。
 
 预检任一条不过，脚本打印一段中文指引（缺哪一项、怎么自建 keystore 与填 `key.properties`、备份怎么放）后以 exit code 1 退出，不会开始构建。
 
@@ -99,15 +99,15 @@ flutter build apk --release    # 缺 key.properties 即失败
 
 校验也绕不过去：实测留着「配好钥匙时存下的配置缓存」，再把 `key.properties` 与 keystore 删掉重跑 `./gradlew :app:assembleRelease`，Gradle 判定缓存失效、重新配置，上面那条中文校验照样生效（配置期读过的文件是缓存的输入）。即便真走到 AGP 自己的检查，签名配置不完整时它是失败或产出未签名包，**不会**静默改用调试钥匙——红线不破。
 
-产物路径固定为 `apps/qiyu_flutter/build/app/outputs/flutter-apk/app-release.apk`（`--debug` 对应同目录的 `app-debug.apk`）。
+release 产物路径固定为 `apps/qiyu_flutter/build/app/outputs/flutter-apk/qiyu-<版本>-<ABI>-release.apk`（arm64-v8a、armeabi-v7a、x86_64 各一份，由脚本从 `app-<ABI>-release.apk` 改名而来，目录里留下的就是且只是本次版本的包；`--debug` 对应同目录的 `app-debug.apk`）。
 
 ### 构建耗时与附带检查
 
 release 构建会顺带跑安卓 lint 致命检查（任务图里含 `:app:lintVitalAnalyzeRelease`、`:app:lintVitalRelease`），这两步不过发包就出不来，所以脚本 exit 0 就等于它们过了；要单独核验，跑 `cd apps\qiyu_flutter\android; .\gradlew :app:lintVitalRelease --rerun`，以退出码为准（票09 交付那次记下的 `No issues found` 文字随临时产物一起删了，已无从复核，不再当凭据）。
 
-产物大小与版本每次由脚本打印（`==> release APK: <绝对路径>` 与 `==> 版本 X(Y)，大小 Z.ZZ MB` 两行），照抄即可：票09 修复复核时重跑脚本得 69.50 MB、版本 0.1.0（versionCode 1）。
+产物大小与版本每次由脚本打印（每个 APK 一行 `==> release APK: <绝对路径>（X.XX MB）`，再加一行 `==> 版本 X(Y)`），照抄即可：票08 改拆分构建后实测（2026-09-19）为 arm64-v8a 29.56 MB、armeabi-v7a 27.44 MB、x86_64 31.02 MB，版本 0.1.0（versionCode 1）；用户按设备架构只装对应一份，比旧的单个 69.50 MB 合包（票09 复核实测）小一半以上。
 
-第一次跑 release 会明显很慢：要下载 release 侧依赖，还要用 NDK/CMake 编四条 ABI，实测跨多次尝试约 25 分钟。缓存热了就快得多：`flutter build apk --release` 一条实测 7.7 秒到 35.1 秒（差异在 flutter 侧资源打包与 lint 是否命中缓存），纯 gradle 重复跑 `./gradlew :app:assembleRelease` 多数任务 up-to-date，实测 3 秒。看到长时间没有输出不要判定为卡死去中断它。
+第一次跑 release 会明显很慢：要下载 release 侧依赖，还要用 NDK/CMake 编 armeabi-v7a、arm64-v8a、x86_64 三条架构，实测跨多次尝试约 25 分钟。缓存热了就快得多：`flutter build apk --release` 一条实测 7.7 秒到 35.1 秒（差异在 flutter 侧资源打包与 lint 是否命中缓存），纯 gradle 重复跑 `./gradlew :app:assembleRelease` 多数任务 up-to-date，实测 3 秒。看到长时间没有输出不要判定为卡死去中断它。
 
 `apps/qiyu_flutter/android/gradle.properties` 里 `kotlin.incremental=false` 是有意关掉的：Kotlin 2.3.20 的 Build Tools API 在 Windows 上会把增量缓存重复注册（`already registered` / `Could not close incremental caches`），让插件模块的 `compileDebugKotlin` 随机失败。排查安卓编译报错时先别动这一行，注释自记为「ticket 07 实测，产物不受影响」。
 
