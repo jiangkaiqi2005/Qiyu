@@ -755,6 +755,47 @@ void main() {
     },
   );
 
+  test(
+    'session files starting with a BOM stay in history and are never rewritten',
+    () async {
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      var session = await repository.openSession();
+      session = await repository.appendTurn(
+        session,
+        RawSessionTurn.user(requestId: 'bom-turn', text: '还没睡', at: now),
+      );
+      final sessionFile = File(
+        '${temporaryDirectory.path}${Platform.pathSeparator}sessions'
+        '${Platform.pathSeparator}2026${Platform.pathSeparator}08'
+        '${Platform.pathSeparator}2026-08-11-001.md',
+      );
+      Future<void> prependBom() async {
+        final bytes = await sessionFile.readAsBytes();
+        await sessionFile.writeAsBytes([0xEF, 0xBB, 0xBF, ...bytes]);
+      }
+
+      // 手动编辑过的文件可能以 BOM 开头：解析层剥 BOM 再解析，这段对
+      // 话照常进入历史，文件字节不被回写。
+      await prependBom();
+      final bomBytes = await sessionFile.readAsBytes();
+      final listing = await repository.readHistory();
+      expect(listing.sessions.map((entry) => entry.id), [session.id]);
+      expect(listing.unavailable, isEmpty);
+      expect(listing.sessions.single.turns.single.text, '还没睡');
+      expect(await sessionFile.readAsBytes(), bomBytes);
+
+      // 文件首 BOM 由 utf8 解码器丢弃后，重复 BOM 的第二个字符留在字
+      // 符串层；解析层剥除后同样照常解析。
+      await prependBom();
+      final doubled = await repository.readHistory();
+      expect(doubled.sessions.map((entry) => entry.id), [session.id]);
+      expect(doubled.unavailable, isEmpty);
+    },
+  );
+
   test('reports atomic write failures clearly', () async {
     final workingRepository = MarkdownMemoryRepository(
       memoryDirectory: temporaryDirectory.path,

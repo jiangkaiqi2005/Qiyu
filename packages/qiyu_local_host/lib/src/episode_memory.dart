@@ -753,13 +753,14 @@ final class EpisodeMemoryPipeline {
   }
 
   /// 从 Markdown 里定位元数据标记并解码载荷；标记缺失时按 [missing]
-  /// 抛出 [FormatException]。
+  /// 抛出 [FormatException]。带 BOM 的文件先剥 BOM 再匹配标记：手动
+  /// 编辑过的检查点与每日记录对带 BOM 与无 BOM 解析一致。
   Map<String, Object?> _decodeMarkerMetadata(
     String contents,
     RegExp marker,
     String missing,
   ) {
-    final match = marker.firstMatch(contents);
+    final match = marker.firstMatch(stripUtf8Bom(contents));
     if (match == null) {
       throw FormatException(missing);
     }

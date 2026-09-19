@@ -40,6 +40,53 @@ void main() {
     },
   );
 
+  test('带 BOM 的检查点与每日记录文件照常读出', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-episode-bom-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 14, 22, 30),
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [MemorySignalAction(summary: '用户明天有面试')],
+    );
+
+    // 手动编辑过的文件可能以 BOM 开头；解析层剥 BOM 再解析，检查点
+    // 与当日记录照常读出，文件字节不动。
+    final checkpointFile = File(
+      '${temporaryDirectory.path}/episodes/checkpoint.md',
+    );
+    final dayFile = File(
+      '${temporaryDirectory.path}/episodes/2026/08/2026-08-14.md',
+    );
+    Future<void> prependBom(File file) async {
+      final bytes = await file.readAsBytes();
+      await file.writeAsBytes([0xEF, 0xBB, 0xBF, ...bytes]);
+    }
+
+    await prependBom(checkpointFile);
+    await prependBom(dayFile);
+    final checkpointBytes = await checkpointFile.readAsBytes();
+
+    final checkpoint = await pipeline.readCheckpoint();
+    expect(checkpoint!.sessionId, 'session-1');
+    expect(checkpoint.lastRequestId, 'req-1');
+    final day = await pipeline.readDay('2026-08-14');
+    expect(day.entries, hasLength(1));
+    expect(day.entries.single.summary, '用户明天有面试');
+    expect(await checkpointFile.readAsBytes(), checkpointBytes);
+
+    // 文件首 BOM 由 utf8 解码器丢弃后，重复 BOM 的第二个字符留在字
+    // 符串层；解析层剥除后同样照常解析。
+    await prependBom(checkpointFile);
+    final reloaded = await pipeline.readCheckpoint();
+    expect(reloaded!.sessionId, 'session-1');
+  });
+
   test('duplicate signals for the same turn are idempotent', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-episode-duplicate-test-',

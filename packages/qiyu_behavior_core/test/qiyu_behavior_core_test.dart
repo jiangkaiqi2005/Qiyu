@@ -541,4 +541,26 @@ void main() {
     expect(chatResultThink.source, ReplySource.llm);
     expect(chatResultThink.messages, ['挺晴朗的。']);
   });
+
+  group('stripUtf8Bom', () {
+    test('strips one leading BOM and keeps the rest verbatim', () {
+      expect(stripUtf8Bom('\uFEFF{"a":1}'), '{"a":1}');
+      expect(stripUtf8Bom('\uFEFF# 会话'), '# 会话');
+    });
+
+    test('text without a BOM is returned unchanged', () {
+      expect(stripUtf8Bom('{"a":1}'), '{"a":1}');
+      expect(stripUtf8Bom(''), '');
+      expect(stripUtf8Bom('\uFEFF'), '');
+    });
+
+    test('only one BOM is stripped so callers can re-strip via idempotence',
+        () {
+      // 文件首 BOM 由 utf8 解码器丢弃后，重复 BOM 的第二个字符会留在
+      // 字符串层；解析层剥一次即可让 jsonDecode/标记正则照常工作。
+      final once = stripUtf8Bom('\uFEFF\uFEFF{"a":1}');
+      expect(once, '\uFEFF{"a":1}');
+      expect(stripUtf8Bom(once), '{"a":1}');
+    });
+  });
 }

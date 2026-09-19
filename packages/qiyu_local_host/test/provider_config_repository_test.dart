@@ -87,6 +87,116 @@ void main() {
     expect(config.toJson(), isNot(contains('apiKey')));
   });
 
+  test('带 BOM 的配置文件与无 BOM 解析一致，保存不整体重建', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-provider-bom-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    const fixtureText = '''
+{
+  "schemaVersion": 1,
+  "provider": "openai_compatible",
+  "baseUrl": "https://chat.example.com/v1",
+  "model": "chat-model",
+  "temperature": 0.6,
+  "timeoutSeconds": 25,
+  "apiKey": "fake-chat-key-not-real",
+  "stt": {
+    "provider": "openai_compatible",
+    "baseUrl": "https://stt.example.com/v1",
+    "model": "whisper-fake",
+    "apiKey": "fake-stt-key-not-real"
+  },
+  "webSearch": {
+    "apiKey": "fake-search-key-not-real"
+  },
+  "proxy": {
+    "enabled": true,
+    "host": "proxy.example.com",
+    "port": 7890
+  },
+  "unknownObject": {
+    "keptByBaseline": "do-not-touch"
+  }
+}
+''';
+    // 手动编辑过的文件可能以 UTF-8 BOM 开头：读取层剥 BOM 再解析，
+    // 与无 BOM 文件的解析结果一致。
+    final file = File(filePath);
+    await file.writeAsBytes([0xEF, 0xBB, 0xBF, ...utf8.encode(fixtureText)]);
+
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+    final loaded = await repository.load();
+    expect(loaded!.kind, ProviderKind.openAiCompatible);
+    expect(loaded.model, 'chat-model');
+    expect(loaded.apiKey, 'fake-chat-key-not-real');
+    expect((await repository.loadStt())!.apiKey, 'fake-stt-key-not-real');
+    expect((await repository.loadWebSearch())!.apiKey, 'fake-search-key-not-real');
+    expect((await repository.loadProxy())!.host, 'proxy.example.com');
+    // 读取不回写：文件字节原样保留（BOM 与内容都不动）。
+    final bytesAfterLoad = await file.readAsBytes();
+    expect(bytesAfterLoad.sublist(0, 3), [0xEF, 0xBB, 0xBF]);
+
+    // 保存设置沿用「读整份只改本段」：其余段与未知键不静默消失。
+    await repository.runTransaction(() async {
+      await repository.save(
+        const ProviderConfig(
+          kind: ProviderKind.openAiCompatible,
+          baseUrl: 'https://chat.example.com/v2',
+          model: 'chat-model-2',
+          temperature: 0.6,
+          timeoutSeconds: 25,
+        ).withApiKey('fake-chat-key-not-real'),
+      );
+    });
+    final stored =
+        jsonDecode(await file.readAsString()) as Map<String, Object?>;
+    expect(stored['model'], 'chat-model-2');
+    expect(stored['stt'], isNotNull);
+    expect(stored['webSearch'], isNotNull);
+    expect(stored['proxy'], isNotNull);
+    expect(stored['unknownObject'], isNotNull);
+  });
+
+  test('文件开头残留 BOM 字符（重复 BOM）也在解析层剥除', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-provider-bom2-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    const json = '''
+{
+  "provider": "anthropic",
+  "baseUrl": "https://api.anthropic.com/v1",
+  "model": "claude-test",
+  "temperature": 0.7,
+  "timeoutSeconds": 30,
+  "apiKey": "fake-key-not-real"
+}
+''';
+    // 文件首 BOM 由 utf8 解码器丢弃后，重复 BOM 的第二个字符会留在
+    // 字符串层；解析层剥除后同样照常解析，不再当作损坏。
+    final file = File(filePath);
+    await file.writeAsBytes([
+      0xEF, 0xBB, 0xBF, 0xEF, 0xBB, 0xBF, ...utf8.encode(json),
+    ]);
+
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+    final loaded = await repository.load();
+    expect(loaded!.kind, ProviderKind.anthropic);
+    expect(loaded.apiKey, 'fake-key-not-real');
+    // 保存也不再按整体重建：读路径与写路径都剥 BOM。
+    await repository.runTransaction(() async {
+      await repository.save(
+        const ProviderConfig(
+          kind: ProviderKind.anthropic,
+          baseUrl: 'https://api.anthropic.com/v1',
+          model: 'claude-test',
+          temperature: 0.7,
+          timeoutSeconds: 30,
+        ).withApiKey('fake-key-not-real'),
+      );
+    });
+    expect(jsonDecode(await file.readAsString()), isA<Map<String, Object?>>());
+  });
+
   test('兼容用户直接写 API_KEY 大写字段，空白值视为未设置', () async {
     final temp = await Directory.systemTemp.createTemp('qiyu-provider-alias-');
     addTearDown(() => temp.delete(recursive: true));

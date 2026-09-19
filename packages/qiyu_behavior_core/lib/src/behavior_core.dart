@@ -268,6 +268,12 @@ String sanitizeUserInput(String value) {
   return text.replaceAll(blankLinesPattern, '\n\n').trim();
 }
 
+/// 解析层共用的 BOM 剥离：手动编辑过的本机文件可能以 BOM（U+FEFF）开头，
+/// 配置与会话、记忆文件的解析入口先剥再解析，保证「带 BOM 与无 BOM 解析
+/// 结果一致」。只剥开头一个 BOM 字符；文件尾字节不受影响，落盘格式不变。
+String stripUtf8Bom(String text) =>
+    text.startsWith('\uFEFF') ? text.substring(1) : text;
+
 ({List<String> messages, String mode}) _localReply(String text) {
   if (text == '我到家了') {
     return (messages: const ['嗯'], mode: 'minimal');

@@ -353,6 +353,42 @@ void main() {
     expect(items!.length, lessThan(3));
     expect(items.isNotEmpty, isTrue);
   });
+
+  test('带 BOM 的 open-loops 文本与无 BOM 解析一致', () {
+    const contents = '# open-loops\n\n- [o1] 人生第一次演讲\n  status: active\n';
+    final baseline = parseOpenLoopItems(contents);
+    expect(baseline, isNotNull);
+    expect(baseline, hasLength(1));
+    expect(baseline!.single.title, '人生第一次演讲');
+
+    // 手动编辑过的文件可能以 BOM 开头；解析层先剥再解析，条目四字
+    // 段与原文块都一致。
+    final withBom = parseOpenLoopItems('\uFEFF$contents');
+    expect(withBom, isNotNull);
+    expect(withBom!.single.raw, baseline.single.raw);
+    expect(withBom.single.title, baseline.single.title);
+    expect(withBom.single.status, baseline.single.status);
+  });
+
+  test('带 BOM 的 open-loops 文件照常读出条目且文件原样保留', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-loop-bom-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    const contents = '# open-loops\n\n- [o1] 下周搬家\n  status: active\n';
+    final file = File('${temporaryDirectory.path}/open-loops.md');
+    await file.writeAsBytes([0xEF, 0xBB, 0xBF, ...utf8.encode(contents)]);
+    final originalBytes = await file.readAsBytes();
+
+    final store = OpenLoopStore(memoryDirectory: temporaryDirectory.path);
+    final items = await store.readItems();
+
+    expect(items, isNotNull);
+    expect(items, hasLength(1));
+    expect(items!.single.title, '下周搬家');
+    // 解析层只读不写：文件字节原样保留。
+    expect(await file.readAsBytes(), originalBytes);
+  });
 }
 
 EpisodeEntry _candidate({

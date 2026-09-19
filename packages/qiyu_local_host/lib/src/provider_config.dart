@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
+
 import 'markdown_memory_repository.dart';
 
 enum ProviderKind {
@@ -860,14 +862,16 @@ final class JsonProviderConfigRepository
 
   /// 读取整份 provider.json；文件不存在返回 null。`orThrow` 为 true 时
   /// JSON 损坏抛「无法读取」（读路径要如实暴露损坏），为 false 时返回
-  /// null（写路径无从保留损坏内容，交由调用方整体重建）。
+  /// null（写路径无从保留损坏内容，交由调用方整体重建）。带 BOM 的文
+  /// 件先剥 BOM 再解析：手动编辑过的假性损坏不算损坏，写路径才能保
+  /// 住 stt/tts 等其余段与 Key。
   Future<Map<String, Object?>?> _readRawMap({required bool orThrow}) async {
     final file = File(filePath);
     if (!await file.exists()) {
       return null;
     }
     try {
-      final decoded = jsonDecode(await file.readAsString());
+      final decoded = jsonDecode(stripUtf8Bom(await file.readAsString()));
       if (decoded is! Map<String, Object?>) {
         throw const FormatException('provider config must be an object');
       }

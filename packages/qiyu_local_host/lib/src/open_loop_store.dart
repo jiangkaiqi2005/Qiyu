@@ -584,8 +584,11 @@ String? filterOpenLoopContents(
 }
 
 /// 把 open-loops.md 拆成条目块并解析四字段；无法识别的结构返回 null。
-List<OpenLoopItem>? parseOpenLoopItems(String contents) {
-  final lines = contents.replaceAll('\r\n', '\n').split('\n');
+/// 带 BOM 的文件先剥 BOM 再解析：手动编辑过的文件不因 BOM 判为损坏。
+List<OpenLoopItem>? parseOpenLoopItems(String rawContents) {
+  final lines = stripUtf8Bom(rawContents)
+      .replaceAll('\r\n', '\n')
+      .split('\n');
   final items = <OpenLoopItem>[];
   final current = <String>[];
   var sawItem = false;

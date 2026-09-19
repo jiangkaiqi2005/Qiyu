@@ -86,14 +86,15 @@ void stderrDiagnostics(String message) {
 }
 
 /// 安全读取文本文件：不存在或读取失败（权限、占用、损坏等）一律
-/// 返回 null，由调用方按「缺失与不可读同义」处理。记忆域各存储类
-/// 共用同一份容错口径，不再各写一套。
+/// 返回 null，由调用方按「缺失与不可读同义」处理；读取成功的文本先
+/// 剥 BOM（手动编辑过的文件可能带 BOM，解析层保证带 BOM 与无 BOM 一
+/// 致）。记忆域各存储类共用同一份容错口径，不再各写一套。
 Future<String?> readFileIfExists(File file) async {
   if (!await file.exists()) {
     return null;
   }
   try {
-    return await file.readAsString(encoding: utf8);
+    return stripUtf8Bom(await file.readAsString(encoding: utf8));
   } on Object {
     return null;
   }
@@ -620,7 +621,8 @@ String renderSessionMarkdown(RawSession session) {
   return buffer.toString();
 }
 
-RawSession _parseMarkdown(String markdown) {
+RawSession _parseMarkdown(String rawMarkdown) {
+  final markdown = stripUtf8Bom(rawMarkdown);
   final metadataMatch = sessionMetaMarkerPattern.firstMatch(markdown);
   if (metadataMatch == null) {
     throw const FormatException('Missing qiyu session metadata');
