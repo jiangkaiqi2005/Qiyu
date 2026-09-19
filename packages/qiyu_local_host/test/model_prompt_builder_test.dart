@@ -4,6 +4,25 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
+/// 从运行目录向上回溯定位仓库根「栖语人格宪法.md」，不依赖 dart test
+/// 的工作目录恰为包根（与安卓宪法资产守护测试同一先例）。
+File _locateRepoConstitution() {
+  var directory = Directory.current;
+  while (true) {
+    final candidate = File(
+      '${directory.path}${Platform.pathSeparator}栖语人格宪法.md',
+    );
+    if (candidate.existsSync()) {
+      return candidate;
+    }
+    final parent = directory.parent;
+    if (parent.path == directory.path) {
+      fail('向上回溯仍找不到仓库根「栖语人格宪法.md」');
+    }
+    directory = parent;
+  }
+}
+
 void main() {
   const builder = ModelPromptBuilder('测试人格宪法');
 
@@ -41,7 +60,7 @@ void main() {
         '12356——像替朋友递一个电话号码那样递出去。'
         '她用平时说话的方式对待这件事：短句、平静、句句出自认真在听的人；'
         '要不要拨出去，由用户自己决定。';
-    final constitution = File('../../栖语人格宪法.md').readAsStringSync();
+    final constitution = _locateRepoConstitution().readAsStringSync();
     expect(constitution, contains(dangerHeading));
     expect(constitution, contains(dangerText));
 

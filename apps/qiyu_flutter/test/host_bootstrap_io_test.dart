@@ -17,7 +17,7 @@ import 'package:qiyu_flutter/features/settings/settings_client.dart';
 ///   端口）并产出会话接管绑定；
 /// - 网关经绑定读设置、发聊天（本地规则引擎降级路径，无需真
 ///   Provider）；
-/// - 危机输入在装配链路上仍被本地分类先拦（`safety` 降级标注，与
+/// - 危机输入在未连模型时由本地热线兜底接住（`safety` 降级标注，与
 ///   未配置 Provider 的 `no_llm_config` 降级可区分）；
 /// - 凭据仓缺省接的是走平台通道的 [AndroidSecretStore]（票 05）：
 ///   凭据回退读取触发 get、文件接管触发 delete（末位测试，先于它的
@@ -118,7 +118,7 @@ void main() {
     expect(exchange.fallbackReason, FallbackReason.noLlmConfig);
   });
 
-  test('危机输入在装配链路上被本地分类先拦，绝不调 Provider', () async {
+  test('危机输入在未连模型时由本地热线兜底接住', () async {
     final gateway = HttpLocalChatGateway(
       client: binding.client,
       baseUri: binding.baseUri,
@@ -131,7 +131,7 @@ void main() {
 
     expect(exchange.messages, isNotEmpty);
     expect(exchange.source, ReplySource.local);
-    // safety 降级（而非 no_llm_config）证明本地安全分类先于一切运行。
+    // safety 降级（而非 no_llm_config）：分类只挑兜底话术，危机倾诉得到热线。
     expect(exchange.fallbackReason, FallbackReason.safety);
   });
 

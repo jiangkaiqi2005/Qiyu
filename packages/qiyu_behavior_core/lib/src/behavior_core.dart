@@ -146,45 +146,11 @@ final class QiyuBehaviorCore {
     }
 
     final safety = _classifySafety(text);
-    if (safety != SafetyKind.normal) {
-      // 危机等敏感输入不再拦截外呼（ADR 0010）：模型可用且候选合格时
-      // 照常参与对话；未配置、调用失败或候选不合格时，分类结果只负责
-      // 挑选本地兜底话术（危机→热线兜底，其余类别→现行本地话术）。
-      if (modelFailure == null && candidateReply != null) {
-        final candidate = _validateCandidateReply(candidateReply);
-        if (candidate.failure == null) {
-          return _result(
-            request: request,
-            state: state,
-            text: text,
-            messages: candidate.messages,
-            source: ReplySource.llm,
-            mode: 'llm',
-            safety: safety,
-          );
-        }
-        return _result(
-          request: request,
-          state: state,
-          text: text,
-          messages: _safetyMessages(safety),
-          source: ReplySource.local,
-          fallbackReason: candidate.failure,
-          mode: 'safety',
-          safety: safety,
-        );
-      }
-      return _result(
-        request: request,
-        state: state,
-        text: text,
-        messages: _safetyMessages(safety),
-        source: ReplySource.local,
-        fallbackReason: modelFailure ?? FallbackReason.safety,
-        mode: 'safety',
-        safety: safety,
-      );
-    }
+    // 危机等敏感输入不再拦截外呼（ADR 0010）：有合格模型候选就照常参与
+    // 对话；分类结果只在降级时挑选本地兜底话术（危机→热线兜底，其余
+    // 类别→现行本地话术），正常输入维持极简回复三分支。分类标注只随
+    // 敏感轮的结果出现。
+    final fallbackSafety = safety == SafetyKind.normal ? null : safety;
 
     if (modelFailure != null) {
       return _localResult(
@@ -192,6 +158,7 @@ final class QiyuBehaviorCore {
         state: state,
         text: text,
         fallbackReason: modelFailure,
+        safety: fallbackSafety,
       );
     }
 
@@ -205,6 +172,7 @@ final class QiyuBehaviorCore {
           messages: candidate.messages,
           source: ReplySource.llm,
           mode: 'llm',
+          safety: fallbackSafety,
         );
       }
 
@@ -213,6 +181,7 @@ final class QiyuBehaviorCore {
         state: state,
         text: text,
         fallbackReason: candidate.failure!,
+        safety: fallbackSafety,
       );
     }
 
@@ -220,7 +189,10 @@ final class QiyuBehaviorCore {
       request: request,
       state: state,
       text: text,
-      fallbackReason: FallbackReason.noLlmConfig,
+      fallbackReason: fallbackSafety == null
+          ? FallbackReason.noLlmConfig
+          : FallbackReason.safety,
+      safety: fallbackSafety,
     );
   }
 
@@ -229,8 +201,11 @@ final class QiyuBehaviorCore {
     required StateSnapshot state,
     required String text,
     required FallbackReason fallbackReason,
+    SafetyKind? safety,
   }) {
-    final localReply = _localReply(text);
+    final localReply = safety == null
+        ? _localReply(text)
+        : (messages: _safetyMessages(safety), mode: 'safety');
     return _result(
       request: request,
       state: state,
@@ -239,6 +214,7 @@ final class QiyuBehaviorCore {
       source: ReplySource.local,
       fallbackReason: fallbackReason,
       mode: localReply.mode,
+      safety: safety,
     );
   }
 

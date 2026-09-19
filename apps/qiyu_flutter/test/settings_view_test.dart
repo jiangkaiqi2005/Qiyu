@@ -217,8 +217,9 @@ void main() {
 
     expect(fill(0), scheme.errorContainer, reason: '失败态必须看着就是没成（§1）');
     expect(fill(1), scheme.errorContainer, reason: '模型超时是模型侧没交付合格结果，属故障');
-    // 这两类是**设计内**降级：危机输入按规则根本不该问模型，未配模型时本机规则
-    // 引擎就是产品形态。给它们暗红等于用危险色宣布「一切正常」为异常。
+    // 这两类是**设计内**降级：危机输入的模型没回应时由本地热线话术兜底，
+    // 未配模型时本机规则引擎就是产品形态。给它们暗红等于用危险色宣布
+    // 「一切正常」为异常。
     expect(fill(2), scheme.surfaceContainerHighest, reason: 'safety 回退被误标故障');
     expect(
       fill(3),
@@ -684,7 +685,8 @@ void main() {
     expect(find.text('隐私与边界'), findsWidgets);
     expect(find.textContaining('数据只保存在你自己的设备上'), findsOneWidget);
 
-    // 页面较长逐段滚动断言；危机输入绝不发给模型是必须讲清的边界。
+    // 页面较长逐段滚动断言；危机倾诉如何被接住、热线如何给出，是必须
+    // 讲清的边界。
     await tester.scrollUntilVisible(
       find.textContaining('何时调用你选择的模型服务'),
       200,
@@ -692,7 +694,7 @@ void main() {
       maxScrolls: 20,
     );
     expect(find.textContaining('何时调用你选择的模型服务'), findsOneWidget);
-    expect(find.textContaining('绝不发送给模型'), findsOneWidget);
+    expect(find.textContaining('心理援助热线 12356'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.textContaining('永远不会被提升为记忆'),

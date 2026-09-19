@@ -12,8 +12,8 @@ export 'host_bootstrap_io.dart'
 ///
 /// - **io 侧**（`host_bootstrap_io.dart`）：准备数据目录与应用私有
 ///   web root 占位 → 起 [LocalAppHost] → 用一次性启动凭据建
-///   [NativeHostSessionClient] → 返回绑定。Host 行为（幂等、危机拦
-///   截、本地降级、晚安）全由既有包测试锁定，装配不绕过任何安全
+///   [NativeHostSessionClient] → 返回绑定。Host 行为（幂等、危机兜
+///   底、本地降级、晚安）全由既有包测试锁定，装配不绕过任何安全
 ///   校验（会话/CSRF/Origin 全链路走接管 client）。
 /// - **web 侧**（`host_bootstrap_web.dart`）：不装配，返回 null——
 ///   `QiyuApp` 收到 null 时一切维持同源缺省（`Uri.base`），与改造前
