@@ -11,6 +11,7 @@ export 'src/browser_launcher.dart';
 export 'src/host_command.dart';
 export 'src/host_runner.dart';
 export 'src/secret_store.dart';
+export 'src/startup_failure.dart';
 
 final class HostPreflightReport {
   HostPreflightReport({

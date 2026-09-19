@@ -5,6 +5,7 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 
 import 'secret_store.dart';
 import 'single_instance.dart';
+const String existingInstanceFailurePrefix = 'Existing Qiyu instance';
 
 final class QiyuHostRunner {
   const QiyuHostRunner({
@@ -78,7 +79,7 @@ final class QiyuHostRunner {
   }) async {
     // descriptor 可被本机同用户进程篡改，激活请求绝不发往 loopback 之外。
     if (!_isLoopbackOrigin(descriptor.origin)) {
-      throw StateError('Existing Qiyu instance descriptor points outside loopback');
+      throw StateError('$existingInstanceFailurePrefix descriptor points outside loopback');
     }
     if (!activateBrowser) {
       return const _ActivationResult(
@@ -111,7 +112,7 @@ final class QiyuHostRunner {
         displayUri: displayUri,
       );
     } on SocketException {
-      throw StateError('Existing Qiyu instance is not reachable');
+      throw StateError('$existingInstanceFailurePrefix is not reachable');
     } finally {
       client.close(force: true);
     }
