@@ -41,6 +41,10 @@ $packageVersion = $Matches[1]
 $packageArchive = Join-Path $hostPath `
   "build\qiyu-windows-x64-$packageVersion.zip"
 
+Invoke-Step 'Version consistency across Windows and Android packages' {
+  & (Join-Path $repositoryRoot 'scripts\verify-version-consistency.ps1')
+}
+
 Invoke-Step 'Release baseline policy tests' {
   & (Join-Path $repositoryRoot 'scripts\test-release-baseline.ps1')
 }

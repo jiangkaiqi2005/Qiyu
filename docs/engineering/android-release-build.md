@@ -125,6 +125,8 @@ release 构建会顺带跑安卓 lint 致命检查（任务图里含 `:app:lintV
 
 版本号只有一处：`apps/qiyu_flutter/pubspec.yaml` 的 `version: 0.1.0+1`。`+` 前是 versionName（用户看得见），`+` 后是 versionCode（系统判断能不能覆盖安装），Flutter 把这两个值喂给 Gradle，`android/app/build.gradle.kts` 里 `versionCode = flutter.versionCode` / `versionName = flutter.versionName` 直接取用。不要在 gradle 里另写一份。
 
+安卓的 versionName 还要与 Windows 包版本一致（Windows 包版本来自 `apps/qiyu_windows_host/pubspec.yaml`，两份 pubspec 是各自的唯一版本源）：发布门禁与 `scripts/build-android-apk.ps1` 构建前都会跑 `scripts/verify-version-consistency.ps1` 比对两处，不一致直接失败。升版本时两份 pubspec 一起改。
+
 覆盖安装要求两件事同时成立：versionCode 严格递增，签名证书与已装的完全一致。任一条不满足，系统拒装（常见的报法是 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 或「与已安装应用签名不同」），而不是静默替换。
 
 **遇到签名不匹配或降级安装被拒，正确处置是先在 App 里导出备份，再卸载重装。**不要直接卸载——卸载即清空私有目录，那一刻你手上还没有任何原件的副本。

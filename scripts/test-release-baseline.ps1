@@ -44,6 +44,7 @@ $requiredReleasePaths = @(
   'scripts\windows-bundle-publish.ps1',
   'scripts\test-windows-bundle-publish.ps1',
   'scripts\verify-release-baseline.ps1',
+  'scripts\verify-version-consistency.ps1',
   'scripts\verify-windows-package.ps1',
   'scripts\test-windows-package.ps1'
 )
@@ -114,6 +115,14 @@ Assert-Condition (
 $verificationScript = Get-Content -Raw -Encoding UTF8 (
   Join-Path $repositoryRoot 'scripts\verify-release-baseline.ps1'
 )
+$consistencyScript = 'verify-version-consistency.ps1'
+Assert-Condition ($verificationScript.Contains($consistencyScript)) `
+  'Release 1 全量门禁没有校验 Windows 包与 APK 版本一致。'
+$androidBuildScript = Get-Content -Raw -Encoding UTF8 (
+  Join-Path $repositoryRoot 'scripts\build-android-apk.ps1'
+)
+Assert-Condition ($androidBuildScript.Contains($consistencyScript)) `
+  '安卓构建脚本没有校验 Windows 包与 APK 版本一致。'
 Assert-Condition ($verificationScript -notmatch '(?im)^\s*(?:&\s*)?(?:npm|node)\b') `
   'Release 1 全量门禁仍执行 Node/npm。'
 foreach ($requiredCommand in @(

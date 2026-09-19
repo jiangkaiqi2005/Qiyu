@@ -164,6 +164,11 @@ if (-not (Test-Path -LiteralPath $storeFilePath -PathType Leaf)) {
 
 Push-Location $flutterPath
 try {
+  # 版本一致性：Windows 包与本次要出的 APK 共用一个对外版本号，
+  # 两份 pubspec 不一致就直接失败，避免双端发布物版本分叉。
+  Invoke-Step 'Version consistency across Windows and Android packages' {
+    & (Join-Path $repositoryRoot 'scripts\verify-version-consistency.ps1')
+  }
   Invoke-Step 'Flutter Android release APK (split per ABI)' {
     flutter build apk --release --split-per-abi
   }
