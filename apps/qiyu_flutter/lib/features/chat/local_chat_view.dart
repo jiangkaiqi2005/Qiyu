@@ -621,9 +621,9 @@ class _LocalChatViewState extends State<LocalChatView>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('本机程序已停止'),
+                      Text('栖语本机程序未在运行或已更新。'),
                       SizedBox(height: QiyuSpacing.xs),
-                      Text('请重新启动栖语本机程序。'),
+                      Text('请在电脑上重新启动栖语，然后刷新这个页面。'),
                     ],
                   ),
                 ),

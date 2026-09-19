@@ -728,7 +728,8 @@ void main() {
         height: 800,
         probe: _StubProbe(available: false),
       );
-      expect(find.text('本机程序已停止'), findsOneWidget);
+      expect(find.text('栖语本机程序未在运行或已更新。'), findsOneWidget);
+      expect(find.text('请在电脑上重新启动栖语，然后刷新这个页面。'), findsOneWidget);
     });
   });
 
