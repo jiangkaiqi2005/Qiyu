@@ -171,7 +171,8 @@ class SttSettingsSection extends StatefulWidget {
   State<SttSettingsSection> createState() => _SttSettingsSectionState();
 }
 
-class _SttSettingsSectionState extends State<SttSettingsSection> {
+class _SttSettingsSectionState extends State<SttSettingsSection>
+    with SettingsSaveFeedback {
   final _form = SttSettingsForm();
 
   @override
@@ -184,13 +185,11 @@ class _SttSettingsSectionState extends State<SttSettingsSection> {
   void _reportInvalidDraft(String message) =>
       showSettingsNotice(context, message);
 
-  /// 一次保存的领域编排加成功播报：存为真时统一轻提示「已保存到本机」
-  /// （四域共用一句），失败路径不变（错误横幅）。
+  /// 一次保存：读草稿 → 交视图模型，成功收尾（统一轻提示与挂载检查）
+  /// 归壳层 [SettingsSaveFeedback]。
   Future<void> _save(SttSettingsViewModel viewModel) async {
     final saved = await _form.save(viewModel, report: _reportInvalidDraft);
-    if (saved && mounted) {
-      showSettingsNotice(context, settingsSavedNotice);
-    }
+    reportSettingsSaved(saved);
   }
 
   Future<void> _confirmForgetKey(SttSettingsViewModel viewModel) async {

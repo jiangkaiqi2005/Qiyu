@@ -11,6 +11,7 @@ import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
+import '../baseline/host_stopped_gate.dart';
 import '../settings/stt_settings_client.dart';
 import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
@@ -621,9 +622,9 @@ class _LocalChatViewState extends State<LocalChatView>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('栖语本机程序未在运行或已更新。'),
+                      Text(hostStoppedGateSituation),
                       SizedBox(height: QiyuSpacing.xs),
-                      Text('请在电脑上重新启动栖语，然后刷新这个页面。'),
+                      Text(hostStoppedGateGuidance),
                     ],
                   ),
                 ),

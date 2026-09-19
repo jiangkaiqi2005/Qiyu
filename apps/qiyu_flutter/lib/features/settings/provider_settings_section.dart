@@ -300,7 +300,8 @@ class ProviderSettingsSection extends StatefulWidget {
       _ProviderSettingsSectionState();
 }
 
-class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
+class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
+    with SettingsSaveFeedback {
   final _form = ProviderSettingsForm();
 
   @override
@@ -315,10 +316,7 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
 
   Future<void> _save(ProviderSettingsViewModel viewModel) async {
     final saved = await _form.save(viewModel, report: _reportInvalidDraft);
-    // 保存成功统一轻提示：让用户确信存上了。失败路径不变（错误横幅）。
-    if (saved && mounted) {
-      showSettingsNotice(context, settingsSavedNotice);
-    }
+    reportSettingsSaved(saved);
   }
 
   Future<void> _confirmForgetKey(ProviderSettingsViewModel viewModel) async {

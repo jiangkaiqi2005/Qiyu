@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'host_stopped_gate.dart';
 import 'migration_baseline_view_model.dart';
 
 class MigrationBaselineView extends StatelessWidget {
@@ -47,9 +48,9 @@ class MigrationBaselineView extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('栖语本机程序未在运行或已更新。'),
+                      Text(hostStoppedGateSituation),
                       SizedBox(height: 8),
-                      Text('请在电脑上重新启动栖语，然后刷新这个页面。'),
+                      Text(hostStoppedGateGuidance),
                     ],
                   ),
                 ),

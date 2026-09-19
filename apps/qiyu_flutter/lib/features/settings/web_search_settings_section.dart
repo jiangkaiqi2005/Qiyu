@@ -77,7 +77,8 @@ class WebSearchSettingsSection extends StatefulWidget {
       _WebSearchSettingsSectionState();
 }
 
-class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection> {
+class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection>
+    with SettingsSaveFeedback {
   final _form = WebSearchSettingsForm();
 
   @override
@@ -86,13 +87,11 @@ class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection> {
     super.dispose();
   }
 
-  /// 一次保存的领域编排加成功播报：存为真时统一轻提示「已保存到本机」
-  /// （四域共用一句），失败路径不变（错误横幅）。
+  /// 一次保存：读草稿 → 交视图模型（本域草稿永远合法、无校验回调），
+  /// 成功收尾（统一轻提示与挂载检查）归壳层 [SettingsSaveFeedback]。
   Future<void> _save(WebSearchSettingsViewModel viewModel) async {
     final saved = await _form.save(viewModel);
-    if (saved && mounted) {
-      showSettingsNotice(context, settingsSavedNotice);
-    }
+    reportSettingsSaved(saved);
   }
 
   Future<void> _confirmForgetKey(WebSearchSettingsViewModel viewModel) async {

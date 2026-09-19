@@ -326,6 +326,20 @@ void showSettingsNotice(BuildContext context, String message) {
 /// 点在保存为真时经 [showSettingsNotice] 播报这一句，走同一条渐隐通道。
 const String settingsSavedNotice = '已保存到本机。';
 
+/// 四域保存编排的统一收尾：领域区块的 `_save` 在表单保存返回后交出结
+/// 果，这里统一判「存上了且页面还在树上」再播报 [settingsSavedNotice]
+/// ——挂载检查与播报通道收拢在这一处，未来新增凭据领域不再复制这段
+/// 收尾。失败路径不经过这里（错误横幅归各域视图模型），草稿校验失败
+/// 仍走各域自己的 [showSettingsNotice] 播报。
+mixin SettingsSaveFeedback<T extends StatefulWidget> on State<T> {
+  /// 保存结果的统一播报：[saved] 为领域表单 `save()` 的返回值。
+  void reportSettingsSaved(bool saved) {
+    if (saved && mounted) {
+      showSettingsNotice(context, settingsSavedNotice);
+    }
+  }
+}
+
 /// 「忘记已保存 Key」的确认对话框：AlertDialog＋「再想想 / 忘记 Key」
 /// 两枚按钮＋`pop(bool)`，四个凭据领域（模型连接、语音朗读、语音输入、
 /// 联网搜索）逐字同构，机制收在这里，各领域只带标题与正文文案；取消与

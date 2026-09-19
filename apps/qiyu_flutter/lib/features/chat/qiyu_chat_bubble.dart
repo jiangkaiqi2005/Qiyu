@@ -314,16 +314,22 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
         ),
       ] else if (widget.onReplay != null) ...[
         const SizedBox(height: 6),
-        _ReplayButton(
+        _MessageActionButton(
           key: Key('chat-replay-${widget.deliveryIndex}'),
-          onReplay: widget.onReplay!,
+          icon: QiyuIcons.volume_up,
+          actionLabel: _replayActionLabel,
+          onAction: widget.onReplay!,
         ),
       ],
       // 用户消息的一键复制（聊天页）：小钮落在气泡内正文之下。历史回看
       // 页整页可选复制，不走这个入口（enableCopy 默认关）。
       if (widget.fromUser && widget.enableCopy) ...[
         const SizedBox(height: 6),
-        _CopyButton(onCopy: _copyMessageText),
+        _MessageActionButton(
+          icon: QiyuIcons.content_copy,
+          actionLabel: _copyActionLabel,
+          onAction: _copyMessageText,
+        ),
       ],
     ];
     final body = extras.isEmpty
@@ -451,20 +457,36 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   }
 }
 
-/// 气泡尾部的重听小喇叭：动作名必须显式带进语义树。
+/// 重听动作名（tooltip 与无障碍标签共用，accessibility 测试按字锚定）。
+const String _replayActionLabel = '再听一遍这句';
+
+/// 复制动作名（tooltip 与无障碍标签共用，气泡复制测试按字锚定）。
+const String _copyActionLabel = '复制这条消息';
+
+/// 气泡消息上的小动作钮（重听/复制共用同一形态）：[MergeSemantics] 汇成
+/// 按钮自己的那一个语义节点。
 ///
 /// 这里不取「tooltip 即无障碍名」的说法——`test/accessibility_test.dart` 里的
 /// 探针用例实测：IconButton 只把 tooltip 写进语义节点的 **tooltip 属性**，
 /// label 仍是空的，`find.bySemanticsLabel` 读不到，而触屏没有 hover。
-/// 画法与记忆中心的常驻按钮一致：同一份文案既作 tooltip，也作图标语义标签，
-/// 再由 [MergeSemantics] 汇成按钮自己的那一个语义节点。
-class _ReplayButton extends StatelessWidget {
-  const _ReplayButton({super.key, required this.onReplay});
+/// 所以 [actionLabel] 既作 tooltip，也作图标语义标签，一份文案两处用；
+/// 画法参数（紧凑密度、零内边距、28px 最小约束、16px 图标）也一并钉死
+/// 在这一处，重听与复制不各自漂移。动作的语义归调用点：重听是重新合成
+/// 朗读，复制是写剪贴板，本件只管「画」。
+class _MessageActionButton extends StatelessWidget {
+  const _MessageActionButton({
+    super.key,
+    required this.icon,
+    required this.actionLabel,
+    required this.onAction,
+  });
+
+  final IconData icon;
 
   /// 动作名：tooltip 与无障碍标签共用一份，不许两头各写一遍再漂移。
-  static const _actionLabel = '再听一遍这句';
+  final String actionLabel;
 
-  final VoidCallback onReplay;
+  final VoidCallback onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -473,43 +495,9 @@ class _ReplayButton extends StatelessWidget {
         visualDensity: VisualDensity.compact,
         padding: EdgeInsets.zero,
         constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-        tooltip: _actionLabel,
-        onPressed: onReplay,
-        icon: const Icon(
-          QiyuIcons.volume_up,
-          size: 16,
-          semanticLabel: _actionLabel,
-        ),
-      ),
-    );
-  }
-}
-
-/// 用户气泡正文之下的复制小钮：画法与 [_ReplayButton] 逐字同构——
-/// tooltip 与图标语义标签共用一份文案（触屏没有 hover，语义树必须有
-/// 动作名），[MergeSemantics] 汇成按钮自己的那一个语义节点。
-class _CopyButton extends StatelessWidget {
-  const _CopyButton({required this.onCopy});
-
-  /// 动作名：tooltip 与无障碍标签共用一份，不许两头各写一遍再漂移。
-  static const _actionLabel = '复制这条消息';
-
-  final VoidCallback onCopy;
-
-  @override
-  Widget build(BuildContext context) {
-    return MergeSemantics(
-      child: IconButton(
-        visualDensity: VisualDensity.compact,
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-        tooltip: _actionLabel,
-        onPressed: onCopy,
-        icon: const Icon(
-          QiyuIcons.content_copy,
-          size: 16,
-          semanticLabel: _actionLabel,
-        ),
+        tooltip: actionLabel,
+        onPressed: onAction,
+        icon: Icon(icon, size: 16, semanticLabel: actionLabel),
       ),
     );
   }
