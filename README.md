@@ -134,7 +134,7 @@ The Android app carries everything inside your phone: no computer needs to stay 
 
 Qiyu has no cloud. There is exactly one copy of your data — yours:
 
-- **Windows**: everything — conversations, memories, model settings — lives in the `C:\Users\<your name>\.qiyu` folder, as Markdown text files you can open and read.
+- **Windows**: your conversations and memories live in the `C:\Users\<your name>\.qiyu` folder as readable Markdown text; your model connection settings live right beside them as a few small readable files (such as `provider.json`). Before switching computers or reinstalling, copying that whole folder takes your conversations, memories, and settings with you.
 - **Android**: everything stays inside Qiyu's own private app space, unreadable by other apps; you can see the exact location under Settings → local data.
 
 **Backup**: open Settings → local data → backup and restore, and export — you get a single Markdown file you can send to yourself. After switching phones or reinstalling, import from the same place; you preview the differences before anything is restored. API keys and model credentials never enter the backup.
