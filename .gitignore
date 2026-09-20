@@ -29,3 +29,6 @@ skills-lock.json
 
 # Codebase-memory knowledge graph artifacts, refreshed by the local indexer.
 .codebase-memory/
+
+# Local-only workspace instructions; the tracked repository copy was removed.
+AGENTS.md
