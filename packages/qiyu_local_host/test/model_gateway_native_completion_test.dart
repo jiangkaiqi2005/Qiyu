@@ -243,7 +243,9 @@ void main() {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
       server.listen((request) {
-        request.listen((_) {});
+        // 客户端在协议终态即关闭连接；请求体可能尚未送达，
+        // 吞掉服务端读取错误，避免与断言无关的 HttpException。
+        request.listen((_) {}, onError: (Object _) {});
         request.response.bufferOutput = false;
         request.response.add(utf8.encode(fixture.body));
         // 有意不 close：只有协议终态可以结束消费，flush 不保证 TCP 分块。

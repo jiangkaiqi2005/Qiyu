@@ -10,6 +10,7 @@ qiyu.config.local.json
 # nested inside each app.
 .agents/
 .claude/
+.cline/
 .codebuddy/
 .zcode/
 .scratch/

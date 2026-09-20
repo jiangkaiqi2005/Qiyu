@@ -169,6 +169,10 @@ try {
 } finally {
   $ErrorActionPreference = $previousPreference
 }
+# 反例刻意让子进程以失败收场，失败状态会残留在门禁判读的位置：
+# 本脚本被全量门禁以内联方式调用，门禁在步骤结束后据此判定成败，
+# 不清零的话策略测试永远被判失败（单独运行本脚本时看不出问题）。
+$global:LASTEXITCODE = 0
 
 Assert-Condition ($verificationScript -notmatch '(?im)^\s*(?:&\s*)?(?:npm|node)\b') `
   'Release 1 全量门禁仍执行 Node/npm。'
