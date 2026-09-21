@@ -43,9 +43,12 @@ class QiyuChatBubble extends StatefulWidget {
   /// 访问 key 标识，widget 测试可精确定位。
   final int? deliveryIndex;
 
-  /// 用户气泡的一键复制：true 时用户消息正文之下给一枚复制小钮，点
-  /// 一下把本条全文写进剪贴板（只作用于用户消息，栖语的话不给）。
-  /// 聊天页开启；历史回看页整页可选中复制，保持默认关闭。
+  /// 一键复制：true 时给每条消息一个复制入口（用户的话与栖语的话都
+  /// 算），点一下把本条全文写进剪贴板。入口按指针分两条路：桌面鼠
+  /// 标与时刻同一显隐——复制钮落在时刻行里（时刻右侧），悬停同显同
+  /// 隐；触屏/手写笔没有 hover，走长按上下文菜单（单项「复制这条消
+  /// 息」），不设常驻钮。聊天页开启；历史回看页整页可选中复制，保
+  /// 持默认关闭。
   final bool enableCopy;
 
   /// 消息时刻（Host 落盘的客观时刻）：消息块下方**外部一行**的次要档
@@ -115,16 +118,19 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   /// 拦得住；80ms 在「瞬间响应」的感知窗口（约 100ms）内，主动悬停无感。
   static const Duration revealDebounce = Duration(milliseconds: 80);
 
-  /// 时刻位常驻预留槽的总高：2px 显隐间隙 + 19px 时刻行自然行高
-  /// （Noto Serif SC 13px，hhea 垂直度量 1.437em ≈ 18.68px，引擎取整
-  /// 19）。at 非空时这条槽永远在树里——显现只是把时刻文字放进去，
-  /// 文字顶恒为气泡底 + 2px，后续消息零位移；字体或字号若变，此值
-  /// 必须与时刻行实际自然行高同步改，否则显现态会把文字挤出槽位或
-  /// 留出空当。已知边界：运行时 textScaler 大于 1 会把自然行高按比例
-  /// 抬过槽内区、被 RenderParagraph 静默裁切——生产轨道（Flutter Web）
-  /// textScaler 恒为 1.0，浏览器缩放走 devicePixelRatio 整体等比，
-  /// 登记备查。
-  static const double _atSlotHeight = 21;
+  /// 时刻位常驻预留槽的总高：2px 显隐间隙 + 28px 复制钮高。桌面悬停
+  /// 位（鼠标指针）时刻行与复制钮同行（[Row] 顶对齐，时刻文字顶因此
+  /// 恒为气泡底 + 2px，与复制钮未入行时的几何一致），行高取二者较
+  /// 大值；纯触屏路径行内只有 19px 时刻文字，槽位仍静态取高——指针
+  /// 类型切换不让布局漂移。at 非空时这条槽永远在树里——显现只是往
+  /// 槽位里放内容，显隐全程零布局位移；28px 一端（复制钮最小约束）
+  /// 与 19px 一端（时刻行自然行高，Noto Serif SC 13px，hhea 垂直度
+  /// 量 1.437em ≈ 18.68px，引擎取整 19）若变，此值必须与槽内实际高
+  /// 度同步改，否则显现态会把内容挤出槽位或留出空当。已知边界：运行
+  /// 时 textScaler 大于 1 会把自然行高按比例抬过槽内区、被
+  /// RenderParagraph 静默裁切——生产轨道（Flutter Web）textScaler
+  /// 恒为 1.0，浏览器缩放走 devicePixelRatio 整体等比，登记备查。
+  static const double _atSlotHeight = 30;
 
   @override
   void didChangeDependencies() {
@@ -241,6 +247,57 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     unawaited(Clipboard.setData(ClipboardData(text: widget.text)));
   }
 
+  /// 触屏长按起点：按压处弹出复制菜单（[_showCopyMenu]）。只有触屏/
+  /// 手写笔指针出菜单——桌面鼠标的入口是悬停显现（与时刻同一开关），
+  /// 不为鼠标造第二套；鼠标长按（按住约 500ms）识别器照常触发，这里
+  /// 按指针类型挡掉。识别器在 [build] 里按 widget 条件挂（开了复制的
+  /// 消息），长按过程中指针类型才由 [Listener] 记到——中途增删
+  /// 识别器不可靠，故在回调里按 [_lastPointerKind] 分流。
+  void _handleLongPressStart(LongPressStartDetails details) {
+    final kind = _lastPointerKind;
+    final touchPointer =
+        kind == PointerDeviceKind.touch || kind == PointerDeviceKind.stylus;
+    if (!touchPointer) {
+      return;
+    }
+    _showCopyMenu(details.globalPosition);
+  }
+
+  /// 复制上下文菜单：单项「复制这条消息」，锚在长按的按压处（贴边自动
+  /// 翻转）。点它写剪贴板——与悬停位那枚钮、防御路径那枚钮同一动作；
+  /// 点空白或 Esc 收回不带值，不复制。文本先取快照再 await：菜单路由
+  /// 存续期间消息块可能已卸载，而剪贴板动作不依赖 context。
+  Future<void> _showCopyMenu(Offset pressPosition) async {
+    final text = widget.text;
+    final selected = await showMenu<String>(
+      context: context,
+      // 锚点是按压处 1×1 的小矩形：[RelativeRect.fromRect] 按「距各边
+      // 的距离」构造——直接拼 fromLTRB 容易把右/下边按距左/上边缘传，
+      // 锚矩形退化成负宽，菜单被摆到屏幕外（实测复现过）。
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(pressPosition.dx, pressPosition.dy, 1, 1),
+        Offset.zero & MediaQuery.sizeOf(context),
+      ),
+      items: [
+        PopupMenuItem<String>(
+          value: _copyMenuValue,
+          // 子件不能自带手势（ListTile 的 InkWell 会把点击吞在竞技场
+          // 里，菜单项选不中）——图形与文字排一行非交互容器即可。
+          child: Row(
+            children: [
+              const Icon(QiyuIcons.content_copy, size: 16),
+              const SizedBox(width: QiyuSpacing.xs),
+              Text(_copyActionLabel),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (selected == _copyMenuValue) {
+      unawaited(Clipboard.setData(ClipboardData(text: text)));
+    }
+  }
+
   /// 平台档初始猜测：Web 壳层 UA 映射——移动端浏览器是 android/iOS，
   /// 桌面浏览器是 windows/macos/linux，与「有没有鼠标」在这个产品里
   /// 一一对应。尚无指针事件时由它定触屏形态与常驻显现的初始值。
@@ -292,9 +349,14 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     final revealed = persistent
         ? (_platformDefaultIsTouch || _touchRevealed)
         : _hovering;
+    // 桌面鼠标路径：复制钮与时刻同一个 revealed 开关——悬停同显同隐，
+    // 落在时刻行里（见 [_atLine]），用户消息与栖语的消息一视同仁。
+    // 触屏路径行内不放复制钮（没有 hover 可依赖），复制走长按菜单
+    // （[_handleLongPressStart]）。
+    final copyBesideMoment = widget.enableCopy && !persistent;
     final Widget? atLine = atLabel == null || !revealed
         ? null
-        : _atLine(atLabel, persistent);
+        : _atLine(atLabel, persistent, copyBesideMoment: copyBesideMoment);
 
     final extras = <Widget>[
       if (widget.isSpeaking) ...[
@@ -319,16 +381,6 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
           icon: QiyuIcons.volume_up,
           actionLabel: _replayActionLabel,
           onAction: widget.onReplay!,
-        ),
-      ],
-      // 用户消息的一键复制（聊天页）：小钮落在气泡内正文之下。历史回看
-      // 页整页可选复制，不走这个入口（enableCopy 默认关）。
-      if (widget.fromUser && widget.enableCopy) ...[
-        const SizedBox(height: 6),
-        _MessageActionButton(
-          icon: QiyuIcons.content_copy,
-          actionLabel: _copyActionLabel,
-          onAction: _copyMessageText,
         ),
       ],
     ];
@@ -377,9 +429,10 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     // 原先由气泡 margin / 文本块 padding 承担的消息间距统一挪到块外。
     // at 非空时时刻位**常驻预留**（[_atSlotHeight] 槽位，槽顶 2px 内边距
     // 就是那条显隐间隙）：未显现时槽位空占、时刻行不进树（findsNothing
-    // 与语义树语义都不变），显现只是往槽位里放文字，显隐全程零布局
-    // 位移；未显现态与下一条消息的距离因此比无时刻语义多 21px（用户
-    // 裁定接受——「对话离远了一点也应该显得优雅」）。
+    // 与语义树语义都不变），显现只是往槽位里放内容（桌面悬停位是时刻
+    // + 复制钮一行），显隐全程零布局位移；未显现态与下一条消息的距离
+    // 因此比无时刻语义多 30px（用户裁定接受——「对话离远了一点也应该
+    // 显得优雅」）。
     final Widget messageBlock = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: widget.fromUser
@@ -396,7 +449,19 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
                     padding: const EdgeInsets.only(top: 2),
                     child: atLine,
                   ),
+          )
+        // at 为 null 的防御路径（生产链路恒非空）：没有时刻行可搭，也
+        // 没有悬停机制可用（MouseRegion 只在 at 非空时挂），复制钮落
+        // 气泡/文本块下方一行常驻（贴右还是靠左由上面的 Column 贴尾/
+        // 靠左接管）；该路径不挂手势，长按菜单无从触发。
+        else if (widget.enableCopy) ...[
+          const SizedBox(height: 6),
+          _MessageActionButton(
+            icon: QiyuIcons.content_copy,
+            actionLabel: _copyActionLabel,
+            onAction: _copyMessageText,
           ),
+        ],
       ],
     );
 
@@ -406,7 +471,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     // 显现时刻，相邻消息的热区还经块底 padding 连成一片。现在
     // MouseRegion 的 bounds 收缩到内容紧致块（Column 收缩到最宽子项 =
     // 气泡宽），同行空白与块底消息间距自动出热区；at 非空时常驻预留的
-    // 空槽带（时刻位置，气泡底 +2…+21）则**留在本条热区内**——未显现
+    // 空槽带（时刻位置，气泡底 +2…+30）则**留在本条热区内**——未显现
     // 时槽位就在 Column 里，悬停时刻位置即显现本条时刻（用户裁定
     // 「时间本来就在那里，鼠标挪到那个地方自动显示」）。
     Widget block = messageBlock;
@@ -415,11 +480,12 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
       // 切换），MouseRegion 管桌面悬停显隐并包住「气泡 + 时刻行」整体，
       // 鼠标在两者之间移动不触发进出场抖动；进出场回调经列表层行进抑制
       // 门控（[_handleMouseEnter]/[_handleMouseHover]，放行经显现延迟阀；
-      // onExit 不门控立即隐藏）。GestureDetector 管触屏轻点显现——tap 要
-      // 过手势竞技场，滑动滚动列表（拖拽胜出）不再触发；behavior 显式
-      // opaque：块收缩后 RenderParagraph 只在文字处命中，deferToChild 会
-      // 漏掉气泡 padding 区域的轻点。不为消息加键盘焦点路径——消息没有
-      // 键盘操作动作。
+      // onExit 不门控立即隐藏）。GestureDetector 管触屏轻点显现与长按
+      // 复制菜单——tap 要过手势竞技场，滑动滚动列表（拖拽胜出）不再
+      // 触发；长按同样过竞技场，滑起即取消。behavior 显式 opaque：块收缩
+      // 后 RenderParagraph 只在文字处命中，deferToChild 会漏掉气泡 padding
+      // 区域的轻点。不为消息加键盘焦点路径——消息没有键盘操作动作（含
+      // 复制：键盘路径对本入口是已知边界，桌面靠悬停、触屏靠长按）。
       block = Listener(
         onPointerDown: _rememberPointerKind,
         child: MouseRegion(
@@ -429,6 +495,9 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: _handleTapped,
+            onLongPressStart: widget.enableCopy
+                ? _handleLongPressStart
+                : null,
             child: block,
           ),
         ),
@@ -445,26 +514,56 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
 
   /// 时刻行：次要档弱色文字（design-system §3 字阶表把时间戳归次要
   /// 档，不落极小档），渲染在气泡/文本块下方外部一行。触屏常驻位再压
-  /// 到约两成透明度，弱到不干扰阅读，但要看随时在。
-  Widget _atLine(String label, bool persistent) {
+  /// 到约两成透明度，弱到不干扰阅读，但要看随时在。桌面悬停位（鼠标
+  /// 指针）时刻在左原位不动，复制钮（[copyBesideMoment]）落在右侧
+  /// 同一行——Row 顶对齐，时刻文字顶恒为气泡底 + 2px，与无复制钮时
+  /// 的几何一致；用户消息整行右对齐贴气泡尾缘、栖语靠左（Column 贴
+  /// 尾/靠左接管）。
+  Widget _atLine(
+    String label,
+    bool persistent, {
+    required bool copyBesideMoment,
+  }) {
     final line = Text(
       label,
       style: QiyuTypography.of(
         context,
       ).secondary.copyWith(color: QiyuColors.muted),
     );
-    return persistent ? Opacity(opacity: 0.2, child: line) : line;
+    final moment = persistent ? Opacity(opacity: 0.2, child: line) : line;
+    if (!copyBesideMoment) {
+      return moment;
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        moment,
+        const SizedBox(width: QiyuSpacing.xs),
+        _MessageActionButton(
+          icon: QiyuIcons.content_copy,
+          actionLabel: _copyActionLabel,
+          onAction: _copyMessageText,
+        ),
+      ],
+    );
   }
 }
 
 /// 重听动作名（tooltip 与无障碍标签共用，accessibility 测试按字锚定）。
 const String _replayActionLabel = '再听一遍这句';
 
-/// 复制动作名（tooltip 与无障碍标签共用，气泡复制测试按字锚定）。
+/// 复制动作名（tooltip 与无障碍标签共用，气泡复制测试按字锚定；长按
+/// 菜单项与悬停位复制钮共用这一份文案）。
 const String _copyActionLabel = '复制这条消息';
 
-/// 气泡消息上的小动作钮（重听/复制共用同一形态）：[MergeSemantics] 汇成
-/// 按钮自己的那一个语义节点。
+/// 复制菜单项的返回值：点它才写剪贴板，收回（点空白/Esc）不带值。
+const String _copyMenuValue = 'copy';
+
+/// 消息块上的小动作钮（重听/复制共用同一形态）：[MergeSemantics] 汇成
+/// 按钮自己的那一个语义节点。两个落点：气泡内 extras（栖语消息的重
+/// 听）、消息块外部（桌面悬停位的时刻行复制钮、at 为 null 防御路径的
+/// 气泡下方一行）——画法全部钉在这一处，不各自漂移。
 ///
 /// 这里不取「tooltip 即无障碍名」的说法——`test/accessibility_test.dart` 里的
 /// 探针用例实测：IconButton 只把 tooltip 写进语义节点的 **tooltip 属性**，

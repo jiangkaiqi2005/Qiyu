@@ -349,10 +349,11 @@ void main() {
     );
     expect(
       controller.position.maxScrollExtent,
-      moreOrLessEquals(8278.0, epsilon: 1),
-      reason: '静息基线：maxScrollExtent 实测 8278（本环境字体度量下 40×6 行'
-          '内容总高 − 视口高；用户气泡因一键复制钮增高 20×46px）；±1 只容忍'
-          '亚像素抖动，布局回归会超出',
+      moreOrLessEquals(9198.0, epsilon: 1),
+      reason: '静息基线：maxScrollExtent 实测 9198（本环境字体度量下 40×6 行'
+          '内容总高 − 视口高；本用例消息不带时刻，用户与栖语的消息复制键'
+          '都走 at 为 null 的防御路径落消息下方一行，各增高 20×46px——'
+          '复制键对两边消息一视同仁）；±1 只容忍亚像素抖动，布局回归会超出',
     );
     final pixelsBefore = controller.position.pixels;
 
