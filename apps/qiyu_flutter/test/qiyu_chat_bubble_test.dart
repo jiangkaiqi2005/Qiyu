@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -1350,20 +1351,22 @@ void main() {
       );
     });
 
-    testWidgets('触屏长按用户气泡：按压处弹出复制菜单，点它写剪贴板', (
-      tester,
-    ) async {
-      String? clipText;
-      mockClipboard(tester, (text) => clipText = text);
+    testWidgets('触屏长按用户消息：起选而非出菜单', (tester) async {
+      SelectedContent? selected;
       await _pump(
         tester,
         Theme(
           data: ThemeData(platform: TargetPlatform.android),
-          child: QiyuChatBubble(
-            text: '手机上发的一句',
-            fromUser: true,
-            enableCopy: true,
-            at: moment,
+          // 划选宿主：真实页面由消息列表外的 SelectionArea 提供，单气泡
+          // 底座照它的位置包一层，官方 onSelectionChanged 回调作缝。
+          child: SelectionArea(
+            onSelectionChanged: (content) => selected = content,
+            child: QiyuChatBubble(
+              text: '手机上发的一句',
+              fromUser: true,
+              enableCopy: true,
+              at: moment,
+            ),
           ),
         ),
       );
@@ -1371,32 +1374,34 @@ void main() {
       // 触屏路径没有常驻复制钮，也不随轻点确认显时刻而出现。
       expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
 
+      // 长按归划选：选择区的长按胜出（一个手势只对应一件事），按压处
+      // 起选；复制菜单已撤，页面上没有它。
       await tester.longPress(find.text('手机上发的一句'));
-      // 菜单路由有入场动画，settle 后再断言与点击——半途的几何是动画
-      // 中间态，不是最终落点。
       await tester.pumpAndSettle();
-      expect(find.text('复制这条消息'), findsOneWidget);
-
-      await tester.tap(find.text('复制这条消息'));
-      await tester.pumpAndSettle();
-
-      expect(clipText, '手机上发的一句', reason: '菜单项复制的必须是本条全文');
+      expect(selected!.plainText, isNotEmpty, reason: '长按起选：选中的是一段而非空选区');
+      expect(
+        '手机上发的一句'.contains(selected!.plainText),
+        isTrue,
+        reason: '选中的是本条消息里的一段',
+      );
+      expect(find.text('复制这条消息'), findsNothing);
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
     });
 
-    testWidgets('触屏长按栖语气泡：同样出复制菜单，点它写剪贴板', (
-      tester,
-    ) async {
-      String? clipText;
-      mockClipboard(tester, (text) => clipText = text);
+    testWidgets('触屏长按栖语消息：同样起选而非出菜单', (tester) async {
+      SelectedContent? selected;
       await _pump(
         tester,
         Theme(
           data: ThemeData(platform: TargetPlatform.android),
-          child: QiyuChatBubble(
-            text: '手机上回的一句',
-            fromUser: false,
-            enableCopy: true,
-            at: moment,
+          child: SelectionArea(
+            onSelectionChanged: (content) => selected = content,
+            child: QiyuChatBubble(
+              text: '手机上回的一句',
+              fromUser: false,
+              enableCopy: true,
+              at: moment,
+            ),
           ),
         ),
       );
@@ -1406,24 +1411,30 @@ void main() {
 
       await tester.longPress(find.text('手机上回的一句'));
       await tester.pumpAndSettle();
-      expect(find.text('复制这条消息'), findsOneWidget);
-
-      await tester.tap(find.text('复制这条消息'));
-      await tester.pumpAndSettle();
-
-      expect(clipText, '手机上回的一句', reason: '菜单项复制的必须是本条全文');
+      expect(selected!.plainText, isNotEmpty, reason: '长按起选：选中的是一段而非空选区');
+      expect(
+        '手机上回的一句'.contains(selected!.plainText),
+        isTrue,
+        reason: '选中的是本条消息里的一段',
+      );
+      expect(find.text('复制这条消息'), findsNothing);
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
     });
 
-    testWidgets('触屏长按起手滑动：拖拽胜出，不出复制菜单', (tester) async {
+    testWidgets('触屏长按起手滑动：拖拽胜出，不起选', (tester) async {
+      SelectedContent? selected;
       await _pump(
         tester,
         Theme(
           data: ThemeData(platform: TargetPlatform.android),
-          child: QiyuChatBubble(
-            text: '手机上发的一句',
-            fromUser: true,
-            enableCopy: true,
-            at: moment,
+          child: SelectionArea(
+            onSelectionChanged: (content) => selected = content,
+            child: QiyuChatBubble(
+              text: '手机上发的一句',
+              fromUser: true,
+              enableCopy: true,
+              at: moment,
+            ),
           ),
         ),
       );
@@ -1433,13 +1444,15 @@ void main() {
         kind: PointerDeviceKind.touch,
       );
       await tester.pump();
-      // 滑动起手越过触摸 slop：拖拽识别器胜出、长按被否决。
+      // 滑动起手越过触摸 slop：拖拽识别器胜出、长按被否决（真实列表里
+      // 这一步就是滚动列表）。
       await touch.moveBy(const Offset(0, kTouchSlop + 20));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 600));
       await touch.up();
       await tester.pump();
 
+      expect(selected?.plainText, isNull, reason: '长按起手改滑动：不起选');
       expect(find.text('复制这条消息'), findsNothing);
     });
 
@@ -1468,7 +1481,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.byIcon(QiyuIcons.content_copy), findsOneWidget);
 
-      // 按住超过长按时长也不出菜单：不为鼠标造第二套入口。
+      // 按住超过长按时长也不出菜单：不为鼠标造第二套入口（单气泡底座
+      // 不挂选择区，划选宿主见聊天页 seam 的用例）。
       await tester.pump(const Duration(milliseconds: 600));
       expect(find.text('复制这条消息'), findsNothing);
     });

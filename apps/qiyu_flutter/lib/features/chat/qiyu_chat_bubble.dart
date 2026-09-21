@@ -46,9 +46,11 @@ class QiyuChatBubble extends StatefulWidget {
   /// 一键复制：true 时给每条消息一个复制入口（用户的话与栖语的话都
   /// 算），点一下把本条全文写进剪贴板。入口按指针分两条路：桌面鼠
   /// 标与时刻同一显隐——复制钮落在时刻行里（时刻右侧），悬停同显同
-  /// 隐；触屏/手写笔没有 hover，走长按上下文菜单（单项「复制这条消
-  /// 息」），不设常驻钮。聊天页开启；历史回看页整页可选中复制，保
-  /// 持默认关闭。
+  /// 隐；触屏/手写笔没有 hover，行内不设常驻钮，复制走宿主选择区
+  /// （聊天页/历史回看页的 [SelectionArea]）：长按起选、工具条复制
+  /// ——长按在竞技场里只有一个胜出者，用户裁定归划选（一个手势只对
+  /// 应一件事），曾提交的触屏长按菜单已撤。聊天页开启；历史回看页整
+  /// 页可选中复制，保持默认关闭。
   final bool enableCopy;
 
   /// 消息时刻（Host 落盘的客观时刻）：消息块下方**外部一行**的次要档
@@ -247,57 +249,6 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     unawaited(Clipboard.setData(ClipboardData(text: widget.text)));
   }
 
-  /// 触屏长按起点：按压处弹出复制菜单（[_showCopyMenu]）。只有触屏/
-  /// 手写笔指针出菜单——桌面鼠标的入口是悬停显现（与时刻同一开关），
-  /// 不为鼠标造第二套；鼠标长按（按住约 500ms）识别器照常触发，这里
-  /// 按指针类型挡掉。识别器在 [build] 里按 widget 条件挂（开了复制的
-  /// 消息），长按过程中指针类型才由 [Listener] 记到——中途增删
-  /// 识别器不可靠，故在回调里按 [_lastPointerKind] 分流。
-  void _handleLongPressStart(LongPressStartDetails details) {
-    final kind = _lastPointerKind;
-    final touchPointer =
-        kind == PointerDeviceKind.touch || kind == PointerDeviceKind.stylus;
-    if (!touchPointer) {
-      return;
-    }
-    _showCopyMenu(details.globalPosition);
-  }
-
-  /// 复制上下文菜单：单项「复制这条消息」，锚在长按的按压处（贴边自动
-  /// 翻转）。点它写剪贴板——与悬停位那枚钮、防御路径那枚钮同一动作；
-  /// 点空白或 Esc 收回不带值，不复制。文本先取快照再 await：菜单路由
-  /// 存续期间消息块可能已卸载，而剪贴板动作不依赖 context。
-  Future<void> _showCopyMenu(Offset pressPosition) async {
-    final text = widget.text;
-    final selected = await showMenu<String>(
-      context: context,
-      // 锚点是按压处 1×1 的小矩形：[RelativeRect.fromRect] 按「距各边
-      // 的距离」构造——直接拼 fromLTRB 容易把右/下边按距左/上边缘传，
-      // 锚矩形退化成负宽，菜单被摆到屏幕外（实测复现过）。
-      position: RelativeRect.fromRect(
-        Rect.fromLTWH(pressPosition.dx, pressPosition.dy, 1, 1),
-        Offset.zero & MediaQuery.sizeOf(context),
-      ),
-      items: [
-        PopupMenuItem<String>(
-          value: _copyMenuValue,
-          // 子件不能自带手势（ListTile 的 InkWell 会把点击吞在竞技场
-          // 里，菜单项选不中）——图形与文字排一行非交互容器即可。
-          child: Row(
-            children: [
-              const Icon(QiyuIcons.content_copy, size: 16),
-              const SizedBox(width: QiyuSpacing.xs),
-              Text(_copyActionLabel),
-            ],
-          ),
-        ),
-      ],
-    );
-    if (selected == _copyMenuValue) {
-      unawaited(Clipboard.setData(ClipboardData(text: text)));
-    }
-  }
-
   /// 平台档初始猜测：Web 壳层 UA 映射——移动端浏览器是 android/iOS，
   /// 桌面浏览器是 windows/macos/linux，与「有没有鼠标」在这个产品里
   /// 一一对应。尚无指针事件时由它定触屏形态与常驻显现的初始值。
@@ -351,8 +302,8 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
         : _hovering;
     // 桌面鼠标路径：复制钮与时刻同一个 revealed 开关——悬停同显同隐，
     // 落在时刻行里（见 [_atLine]），用户消息与栖语的消息一视同仁。
-    // 触屏路径行内不放复制钮（没有 hover 可依赖），复制走长按菜单
-    // （[_handleLongPressStart]）。
+    // 触屏路径行内不放复制钮（没有 hover 可依赖），复制走宿主选择区
+    // 划选：长按起选、工具条复制（Spec 决策 1、12）。
     final copyBesideMoment = widget.enableCopy && !persistent;
     final Widget? atLine = atLabel == null || !revealed
         ? null
@@ -453,7 +404,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
         // at 为 null 的防御路径（生产链路恒非空）：没有时刻行可搭，也
         // 没有悬停机制可用（MouseRegion 只在 at 非空时挂），复制钮落
         // 气泡/文本块下方一行常驻（贴右还是靠左由上面的 Column 贴尾/
-        // 靠左接管）；该路径不挂手势，长按菜单无从触发。
+        // 靠左接管）；该路径不挂手势。
         else if (widget.enableCopy) ...[
           const SizedBox(height: 6),
           _MessageActionButton(
@@ -480,12 +431,13 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
       // 切换），MouseRegion 管桌面悬停显隐并包住「气泡 + 时刻行」整体，
       // 鼠标在两者之间移动不触发进出场抖动；进出场回调经列表层行进抑制
       // 门控（[_handleMouseEnter]/[_handleMouseHover]，放行经显现延迟阀；
-      // onExit 不门控立即隐藏）。GestureDetector 管触屏轻点显现与长按
-      // 复制菜单——tap 要过手势竞技场，滑动滚动列表（拖拽胜出）不再
-      // 触发；长按同样过竞技场，滑起即取消。behavior 显式 opaque：块收缩
-      // 后 RenderParagraph 只在文字处命中，deferToChild 会漏掉气泡 padding
-      // 区域的轻点。不为消息加键盘焦点路径——消息没有键盘操作动作（含
-      // 复制：键盘路径对本入口是已知边界，桌面靠悬停、触屏靠长按）。
+      // onExit 不门控立即隐藏）。GestureDetector 只管触屏轻点显现——
+      // tap 要过手势竞技场，滑动滚动列表（拖拽胜出）不再触发；触屏的
+      // 复制入口是宿主选择区的长按起选，本块不另设长按手势（一个手势
+      // 只对应一件事）。behavior 显式 opaque：块收缩后 RenderParagraph
+      // 只在文字处命中，deferToChild 会漏掉气泡 padding 区域的轻点。
+      // 不为消息加键盘焦点路径——消息没有键盘操作动作（含复制：键盘
+      // 路径对本入口是已知边界，桌面靠悬停、触屏靠划选）。
       block = Listener(
         onPointerDown: _rememberPointerKind,
         child: MouseRegion(
@@ -495,9 +447,6 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: _handleTapped,
-            onLongPressStart: widget.enableCopy
-                ? _handleLongPressStart
-                : null,
             child: block,
           ),
         ),
@@ -553,12 +502,9 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
 /// 重听动作名（tooltip 与无障碍标签共用，accessibility 测试按字锚定）。
 const String _replayActionLabel = '再听一遍这句';
 
-/// 复制动作名（tooltip 与无障碍标签共用，气泡复制测试按字锚定；长按
-/// 菜单项与悬停位复制钮共用这一份文案）。
+/// 复制动作名（tooltip 与无障碍标签共用，气泡复制测试按字锚定；桌面
+/// 悬停位复制钮与 at 为 null 防御路径钮共用这一份文案）。
 const String _copyActionLabel = '复制这条消息';
-
-/// 复制菜单项的返回值：点它才写剪贴板，收回（点空白/Esc）不带值。
-const String _copyMenuValue = 'copy';
 
 /// 消息块上的小动作钮（重听/复制共用同一形态）：[MergeSemantics] 汇成
 /// 按钮自己的那一个语义节点。两个落点：气泡内 extras（栖语消息的重

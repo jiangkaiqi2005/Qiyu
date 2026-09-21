@@ -1197,80 +1197,96 @@ class _LocalChatViewState extends State<LocalChatView>
     // 静止光标下时 MouseTracker 会派发 onEnter，指针快速扫过时每颗气泡
     // 也会闪时刻——门控在列表层收住（滚动通知只向上冒泡经过祖先，放出
     // 气泡收不到）。
-    return QiyuHoverGate(
-      child: ListView.builder(
-        controller: _scrollController,
-        keyboardDismissBehavior:
-            !kIsWeb && defaultTargetPlatform == TargetPlatform.android
-            ? ScrollViewKeyboardDismissBehavior.onDrag
-            : ScrollViewKeyboardDismissBehavior.manual,
-        padding: const EdgeInsets.fromLTRB(
-          QiyuSpacing.lg,
-          QiyuSpacing.lg,
-          QiyuSpacing.lg,
-          // 覆盖层静息占位常量：推导与取舍见 [_chatListBottomInset]。
-          _chatListBottomInset,
-        ),
-        itemCount: viewModel.messages.length + transientCount,
-        itemBuilder: (context, index) {
-          if (index == viewModel.messages.length) {
-            // 栖语的话无气泡（design-system §7）：流式增量同样直接以书页式
-            // 正文靠左呈现，只保留语义上的 live region。
-            return Padding(
-              padding: const EdgeInsets.only(bottom: QiyuSpacing.xs),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  maxWidth: QiyuLayout.messageMaxWidth,
-                ),
-                // live region 只承载状态标签：流式期间正文不进语义树，
-                // 避免每个 delta 都重读全文；交付完成后正文以历史消息
-                // 的说话人语义呈现（ticket 24）。
-                child: Semantics(
-                  key: const Key('chat-streaming-reply'),
-                  container: true,
+    //
+    // 聊天页划选（design-system §10 第 12 条）：选择区在最外、门控在
+    // 内、消息列表在最内——与历史回看页同款同位置同口径。选区内容 =
+    // 两边消息正文、消息时刻行小字与流式增量文本（整条列表包住即自然
+    // 覆盖）；输入框与问候层不进选区（输入框有自带选区，包进去只会打
+    // 架）。鼠标左键拖动列表即划选——滚动器的竖向拖动识别器不认鼠标
+    // （`ScrollBehavior.dragDevices` 默认不含 mouse），划选无竞争者；
+    // 滚动靠滚轮、滚动条与触屏竖向拖动（触屏路径选择区只注册横向拖动
+    // 与长按）。触屏长按归划选（气泡侧不设长按手势，一个手势只对应一
+    // 件事）；横向/斜向触屏拖动会起选（选择区固有行为，登记为小边
+    // 界）。工具条、Ctrl+C 与网页右键复制出口全用原生默认，焦点行为
+    // 也全盘接受原生（起选聚焦、点选区外解散、滚动跟随）。
+    return SelectionArea(
+      child: QiyuHoverGate(
+        child: ListView.builder(
+          controller: _scrollController,
+          keyboardDismissBehavior:
+              !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+              ? ScrollViewKeyboardDismissBehavior.onDrag
+              : ScrollViewKeyboardDismissBehavior.manual,
+          padding: const EdgeInsets.fromLTRB(
+            QiyuSpacing.lg,
+            QiyuSpacing.lg,
+            QiyuSpacing.lg,
+            // 覆盖层静息占位常量：推导与取舍见 [_chatListBottomInset]。
+            _chatListBottomInset,
+          ),
+          itemCount: viewModel.messages.length + transientCount,
+          itemBuilder: (context, index) {
+            if (index == viewModel.messages.length) {
+              // 栖语的话无气泡（design-system §7）：流式增量同样直接以书页式
+              // 正文靠左呈现，只保留语义上的 live region。
+              return Padding(
+                padding: const EdgeInsets.only(bottom: QiyuSpacing.xs),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: QiyuLayout.messageMaxWidth,
+                  ),
+                  // live region 只承载状态标签：流式期间正文不进语义树，
+                  // 避免每个 delta 都重读全文；交付完成后正文以历史消息
+                  // 的说话人语义呈现（ticket 24）。
                   child: Semantics(
-                    liveRegion: true,
-                    label: viewModel.streamingText.isEmpty ? '栖语在想' : '栖语正在回复',
-                    child: ExcludeSemantics(
-                      child: viewModel.streamingText.isEmpty
-                          ? Text(
-                              '栖语在想…',
-                              style: QiyuTypography.of(
-                                context,
-                              ).qiyuMessage.copyWith(color: QiyuColors.muted),
-                            )
-                          : QiyuMarkdown(text: viewModel.streamingText),
+                    key: const Key('chat-streaming-reply'),
+                    container: true,
+                    child: Semantics(
+                      liveRegion: true,
+                      label: viewModel.streamingText.isEmpty
+                          ? '栖语在想'
+                          : '栖语正在回复',
+                      child: ExcludeSemantics(
+                        child: viewModel.streamingText.isEmpty
+                            ? Text(
+                                '栖语在想…',
+                                style: QiyuTypography.of(
+                                  context,
+                                ).qiyuMessage.copyWith(color: QiyuColors.muted),
+                              )
+                            : QiyuMarkdown(text: viewModel.streamingText),
+                      ),
                     ),
                   ),
                 ),
-              ),
+              );
+            }
+            final message = viewModel.messages[index];
+            final nowReading = viewModel.voiceOutput.nowReading;
+            final isQiyu = message.speaker == LocalChatSpeaker.qiyu;
+            final deliveryIndex = message.deliveryIndex;
+            return QiyuChatBubble(
+              key: Key('chat-message-$index'),
+              text: message.text,
+              fromUser: !isQiyu,
+              deliveryIndex: deliveryIndex,
+              at: message.at,
+              isSpeaking:
+                  nowReading != null &&
+                  message.requestId == nowReading.requestId &&
+                  deliveryIndex == nowReading.deliveryIndex,
+              // 栖语气泡的重听小喇叭：点一下立即重读这句（重听=重新合成）。
+              onReplay: isQiyu && deliveryIndex != null
+                  ? () => viewModel.replayVoiceOutput(message)
+                  : null,
+              // 一键复制：流式中断后不必凭记忆重打全文，栖语的金句也想
+              // 存就走它。入口按指针分两路——桌面鼠标与时刻同一悬停显隐
+              // （复制钮落在时刻行里），触屏/手写笔走选择区长按起选；历
+              // 史回看页（整页可选中复制）不给。
+              enableCopy: true,
             );
-          }
-          final message = viewModel.messages[index];
-          final nowReading = viewModel.voiceOutput.nowReading;
-          final isQiyu = message.speaker == LocalChatSpeaker.qiyu;
-          final deliveryIndex = message.deliveryIndex;
-          return QiyuChatBubble(
-            key: Key('chat-message-$index'),
-            text: message.text,
-            fromUser: !isQiyu,
-            deliveryIndex: deliveryIndex,
-            at: message.at,
-            isSpeaking:
-                nowReading != null &&
-                message.requestId == nowReading.requestId &&
-                deliveryIndex == nowReading.deliveryIndex,
-            // 栖语气泡的重听小喇叭：点一下立即重读这句（重听=重新合成）。
-            onReplay: isQiyu && deliveryIndex != null
-                ? () => viewModel.replayVoiceOutput(message)
-                : null,
-            // 一键复制：流式中断后不必凭记忆重打全文，栖语的金句也想
-            // 存就走它。入口按指针分两路——桌面鼠标与时刻同一悬停显隐
-            // （复制钮落在时刻行里），触屏/手写笔走长按上下文菜单；历
-            // 史回看页（整页可选中复制）不给。
-            enableCopy: true,
-          );
-        },
+          },
+        ),
       ),
     );
   }

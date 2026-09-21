@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -10,6 +11,7 @@ import 'package:qiyu_flutter/features/chat/api_error_dialog.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/chat/qiyu_hover_gate.dart';
 import 'package:qiyu_flutter/features/chat/voice_output_controller.dart';
 import 'package:qiyu_flutter/features/chat/voice_player_platform.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
@@ -17,6 +19,7 @@ import 'package:qiyu_flutter/features/settings/provider_settings_client.dart'
     show ProviderTestResult;
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
+import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
@@ -1375,6 +1378,219 @@ void main() {
       expect(find.byKey(const Key('chat-input')), findsOneWidget);
     }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
   });
+
+  group('聊天页划选（消息列表外 SelectionArea）', () {
+    testWidgets('选择区包住消息列表，输入框在外（与历史回看页同款同位置）', (tester) async {
+      await _pumpTallChatView(tester);
+
+      // 选择区在最外、悬停门控在内、消息列表在内。
+      expect(find.byType(SelectionArea), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byType(QiyuHoverGate),
+          matching: find.byType(SelectionArea),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(
+          of: find.byType(ListView),
+          matching: find.byType(SelectionArea),
+        ),
+        findsOneWidget,
+      );
+      // 输入框有自带选区，不进选区（包进去只会打架）；问候层只在空态，
+      // 同样在外。
+      expect(
+        find.ancestor(
+          of: find.byKey(const Key('chat-input')),
+          matching: find.byType(SelectionArea),
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('鼠标拖动跨消息：选区成立且列表不滚动（拖动滚动让位划选）', (tester) async {
+      await _pumpTallChatView(tester);
+      final position = tester
+          .widget<ListView>(find.byType(ListView))
+          .controller!
+          .position;
+      // 会话够长：列表真的可滚——「拖动不滚」不是无滚可滚的空断言。
+      expect(position.maxScrollExtent, greaterThan(0));
+
+      final startFinder = find.textContaining('旧消息 38，');
+      final endFinder = find.textContaining('旧消息 39，');
+      expect(startFinder.hitTestable(), findsOneWidget);
+      expect(endFinder.hitTestable(), findsOneWidget);
+      final start = tester.getCenter(startFinder);
+      final end = tester.getCenter(endFinder);
+
+      final mouse = await tester.startGesture(
+        start,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      // 先越过 pan slop 的小步（down 同点不动会被判成点击），再一步甩到
+      // 收手点：鼠标左键拖动 = 划选，竖向拖动识别器不认鼠标、无竞争者。
+      await mouse.moveBy(const Offset(2, 2));
+      await tester.pump();
+      await mouse.moveTo(end);
+      await tester.pump();
+
+      // 起止落在拖动起止两点两侧：上端点落在起手消息行内、下端点落在
+      // 收手消息行内——选区跨消息成立。（端点坐标是选择区自身坐标系，
+      // 消息矩形先换算过去再比。）
+      final endpoints = _selectionEndpointPositions(tester);
+      expect(endpoints, isNotNull);
+      expect(endpoints, hasLength(2));
+      final region = tester.renderObject<RenderBox>(
+        find.byType(SelectableRegion),
+      );
+      final startRect = _rectInSelectionRegion(tester, region, startFinder);
+      final endRect = _rectInSelectionRegion(tester, region, endFinder);
+      expect(
+        endpoints!.first.dy,
+        inInclusiveRange(startRect.top, startRect.bottom),
+        reason: '上端点应落在起手消息行内',
+      );
+      expect(
+        endpoints.last.dy,
+        inInclusiveRange(endRect.top, endRect.bottom),
+        reason: '下端点应落在收手消息行内',
+      );
+      expect(endpoints.first.dy, lessThan(endpoints.last.dy));
+      // 拖动滚动让位划选：列表一动不动。
+      expect(position.pixels, position.maxScrollExtent);
+
+      await mouse.up();
+      await tester.pump();
+      // 松手不散：划选结果不因抬手消失。
+      expect(_selectionEndpointPositions(tester), isNotNull);
+    });
+
+    testWidgets('触屏长按消息：起选而非弹复制菜单', (tester) async {
+      await _pumpTallChatView(tester);
+
+      final target = find.textContaining('旧消息 39，');
+      expect(target.hitTestable(), findsOneWidget);
+      final press = tester.getCenter(target);
+
+      await tester.longPress(target);
+      await tester.pumpAndSettle();
+
+      // 长按归划选：选择区的长按胜出，按压处起选（词粒度）；复制菜单
+      // 已撤，页面上没有它，触屏行内也没有常驻复制钮。（端点与按压点
+      // 都换算到选择区自身坐标系再比。）
+      final endpoints = _selectionEndpointPositions(tester);
+      expect(endpoints, isNotNull);
+      expect(endpoints, hasLength(2));
+      final pressLocal = tester
+          .renderObject<RenderBox>(find.byType(SelectableRegion))
+          .globalToLocal(press);
+      expect(
+        endpoints!.first.dy,
+        closeTo(endpoints.last.dy, 1),
+        reason: '起选落在同一行',
+      );
+      expect(endpoints.first.dx, lessThanOrEqualTo(pressLocal.dx));
+      expect(endpoints.last.dx, greaterThanOrEqualTo(pressLocal.dx));
+      expect(find.text('复制这条消息'), findsNothing);
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+    });
+
+    testWidgets('触屏长按起手改竖向滑动：滚动列表，不起选', (tester) async {
+      await _pumpTallChatView(tester);
+      final position = tester
+          .widget<ListView>(find.byType(ListView))
+          .controller!
+          .position;
+      final before = position.pixels;
+
+      final touch = await tester.startGesture(
+        tester.getCenter(find.textContaining('旧消息 39，')),
+        kind: PointerDeviceKind.touch,
+      );
+      await tester.pump();
+      // 起手越过触摸 slop：竖向拖动归滚动器（触屏路径选择区只注册横向
+      // 拖动与长按），长按被否决。
+      await touch.moveBy(const Offset(0, kTouchSlop + 20));
+      await tester.pump();
+      await touch.moveBy(const Offset(0, 200));
+      await tester.pump();
+
+      expect(position.pixels, lessThan(before), reason: '竖向拖动照旧滚列表');
+      expect(
+        _selectionEndpointPositions(tester),
+        isNull,
+        reason: '长按起手改滑动：不起选',
+      );
+      await touch.up();
+      await tester.pump();
+    });
+
+    testWidgets(
+      '滚轮滚动与悬停显现互不干扰：悬停出时刻与复制钮，滚动即隐',
+      (tester) async {
+        await _pumpTallChatView(tester);
+        final position = tester
+            .widget<ListView>(find.byType(ListView))
+            .controller!
+            .position;
+        final target = find.textContaining('旧消息 39，');
+        final anchor = tester.getCenter(target);
+
+        // 桌面默认不可见；悬停整条消息：时刻与复制钮一起出现。
+        expect(find.text(momentLabel), findsNothing);
+        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        await mouse.addPointer(location: anchor);
+        addTearDown(mouse.removePointer);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text(momentLabel), findsOneWidget);
+        expect(find.byIcon(QiyuIcons.content_copy), findsOneWidget);
+
+        // 滚轮照旧滚列表，且滚动开始即隐藏已显现的行（悬停门控原样）。
+        await tester.sendEventToBinding(
+          PointerScrollEvent(
+            position: anchor,
+            scrollDelta: const Offset(0, -60),
+          ),
+        );
+        await tester.pump();
+        expect(position.pixels, lessThan(position.maxScrollExtent));
+        expect(find.text(momentLabel), findsNothing);
+        expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.windows),
+    );
+
+    testWidgets(
+      '单击轻点不受影响：触屏轻点仍显现时刻，鼠标点击不滚不崩',
+      (tester) async {
+        await _pumpTallChatView(tester);
+        final position = tester
+            .widget<ListView>(find.byType(ListView))
+            .controller!
+            .position;
+        final target = find.textContaining('旧消息 39，');
+        final center = tester.getCenter(target);
+
+        // 触屏轻点归气泡：桌面平台档下这是触屏常驻显现的确认路径——
+        // 选择区不吞轻点。
+        await tester.tap(target, kind: PointerDeviceKind.touch);
+        await tester.pump();
+        expect(find.text(momentLabel), findsOneWidget);
+
+        // 鼠标点击（down/up 同点、零位移）：不崩、不滚、不划选。
+        await tester.tapAt(center, kind: PointerDeviceKind.mouse);
+        await tester.pump();
+        expect(position.pixels, position.maxScrollExtent);
+        expect(tester.takeException(), isNull);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.windows),
+    );
+  });
 }
 
 /// 本文件聊天网关替身的公共形状：聊天事件流 + 语音合成双通道。
@@ -1439,15 +1655,65 @@ List<LocalChatMessage> _variableHeightSessionWithMoments() => List.generate(
 
 /// 40 条带时刻的旧消息，与生产同形：Host 恢复的消息都带 `at`，气泡因此带
 /// 轻点显隐时刻的手势——正是收键盘必须绕开手势竞技场的原因。
-List<LocalChatMessage> _restoredSessionWithMoments() => List.generate(
-  40,
-  (index) => LocalChatMessage(
-    requestId: 'old-$index',
-    speaker: LocalChatSpeaker.user,
-    text: '旧消息 $index，保留阅读位置。',
-    at: DateTime(2026, 9, 2, 23, 41),
-  ),
-);
+/// [bodyLines] 是每条正文的行数：1 即生产同形的单行消息；调大让气泡变
+/// 高，末尾几条消息在默认视口里也分得开——鼠标拖动跨消息与触屏长按的
+/// 起止点因此落得稳（划选用例传 5）。
+List<LocalChatMessage> _restoredSessionWithMoments({int bodyLines = 1}) =>
+    List.generate(
+      40,
+      (index) => LocalChatMessage(
+        requestId: 'old-$index',
+        speaker: LocalChatSpeaker.user,
+        text: List.filled(bodyLines, '旧消息 $index，保留阅读位置。').join('\n'),
+        at: DateTime(2026, 9, 2, 23, 41),
+      ),
+    );
+
+/// [_restoredSessionWithMoments] 的消息时刻标签（本地时刻构造，不走 UTC
+/// 换算）。
+const String momentLabel = '9月2日 23:41';
+
+/// 聊天页划选缝：读当前选区端点（[SelectionAreaState.selectableRegion] 的
+/// 官方读法，端点按纵向排序、坐标为选择区自身坐标系）。无选区时 SDK 的
+/// `selectionEndpoints` 会因两端点皆空抛 TypeError——如实翻译成 null，
+/// 负向断言（没起选）用。
+List<Offset>? _selectionEndpointPositions(WidgetTester tester) {
+  final region = tester
+      .state<SelectionAreaState>(find.byType(SelectionArea))
+      .selectableRegion;
+  try {
+    return region.selectionEndpoints.map((point) => point.point).toList();
+  } on TypeError {
+    return null;
+  }
+}
+
+/// 把某个 widget 的全局矩形换算到选择区（[SelectableRegion]）的自身坐标
+/// 系：选区端点的 `point` 是选择区局部坐标，与 `tester.getRect` 的全局
+/// 坐标差一个区域原点，不换算就会差出几像素。
+Rect _rectInSelectionRegion(
+  WidgetTester tester,
+  RenderBox region,
+  Finder finder,
+) {
+  final rect = tester.getRect(finder);
+  return Rect.fromPoints(
+    region.globalToLocal(rect.topLeft),
+    region.globalToLocal(rect.bottomRight),
+  );
+}
+
+/// 划选用例的公共装配：40 条五行高的带时刻旧会话（末尾几条在默认视口
+/// 里分得开），restore → pump → initialize 一气拍完，用例直接从消息流
+/// 开工。
+Future<LocalChatViewModel> _pumpTallChatView(WidgetTester tester) async {
+  final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+  gateway.restoredMessages = _restoredSessionWithMoments(bodyLines: 5);
+  final viewModel = await _pumpChatView(tester, gateway: gateway);
+  await viewModel.initialize();
+  await tester.pumpAndSettle();
+  return viewModel;
+}
 
 Future<LocalChatViewModel> _pumpChatView(
   WidgetTester tester, {
