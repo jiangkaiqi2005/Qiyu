@@ -112,6 +112,15 @@ abstract interface class ProviderBytesHttpClient {
     required List<int> body,
     required Duration timeout,
   });
+
+  /// 二进制 GET 出网调用：语音合成服务返回公网音频地址后的下载跳用。
+  /// 不带 headers 形参是结构性决定——下载目标是不带鉴权也能取的公网
+  /// OSS 类地址（千问 24 小时有效 URL 即此形态），发鉴权头反而会把
+  /// 合成服务的 Key 泄给第三方存储域名。
+  Future<ProviderBytesHttpResponse> getBytes({
+    required Uri uri,
+    required Duration timeout,
+  });
 }
 
 abstract interface class ProviderHttpClient {
@@ -220,6 +229,28 @@ final class DartIoProviderHttpClient
         statusCode: response.statusCode,
         body: _readBytesResponse(response, client, timeout),
         headers: {'x-tt-logid': ?response.headers.value('x-tt-logid')},
+      );
+    } catch (_) {
+      client.close(force: true);
+      rethrow;
+    }
+  }
+
+  @override
+  Future<ProviderBytesHttpResponse> getBytes({
+    required Uri uri,
+    required Duration timeout,
+  }) async {
+    final client = await _createClient(uri, timeout);
+    try {
+      final request = await client.getUrl(uri).timeout(timeout);
+      // 与 postBytes 同策不跟随重定向：重定向目标绕开出网前的 SSRF
+      // 校验（下载跳的内网防护只覆盖请求地址本身）。
+      request.followRedirects = false;
+      final response = await request.close().timeout(timeout);
+      return ProviderBytesHttpResponse(
+        statusCode: response.statusCode,
+        body: _readBytesResponse(response, client, timeout),
       );
     } catch (_) {
       client.close(force: true);

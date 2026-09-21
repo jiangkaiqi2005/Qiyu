@@ -39,6 +39,7 @@ export 'src/proxy_settings_service.dart';
 export 'src/relationship_lifecycle.dart';
 export 'src/secret_store.dart';
 export 'src/secure_token.dart';
+export 'src/speech_audio_download.dart';
 export 'src/state_pack_reader.dart';
 export 'src/stt_gateway.dart';
 export 'src/stt_settings_service.dart';

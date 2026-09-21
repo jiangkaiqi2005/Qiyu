@@ -287,6 +287,12 @@ final class _StatusHttpClient
   );
 
   @override
+  Future<ProviderBytesHttpResponse> getBytes({
+    required Uri uri,
+    required Duration timeout,
+  }) async => throw UnimplementedError();
+
+  @override
   Future<ProviderHttpResponse> post({
     required Uri uri,
     required Map<String, String> headers,

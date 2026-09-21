@@ -81,7 +81,7 @@ final class OpenAiSpeechGateway implements TtsSynthesisGateway {
     final bytes = await consumeTtsBytesResponse(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       // 错误体是文本 JSON：latin1 保留字节可读性，只用于错误分类。
-      throw _fromModelFailure(
+      throw fromTtsModelFailure(
         providerStatusFailure(
           response.statusCode,
           latin1.decode(bytes, allowInvalid: true),
@@ -132,7 +132,11 @@ void ensureTtsOutboundAllowed(Uri uri) {
   }
 }
 
-TtsGatewayException _fromModelFailure(ModelGatewayException failure) =>
+/// 把 ModelGatewayException 转写成本通道的 TtsGatewayException（kind、
+/// message、serviceError 原样搬运）。合成 POST 的非 2xx 与音频地址下载跳
+/// 两条路径都要用它，故公开共享；各网关文件里曾逐份私抄，新增路径直接
+/// 复用本函数，不要再复制。
+TtsGatewayException fromTtsModelFailure(ModelGatewayException failure) =>
     TtsGatewayException(
       kind: failure.kind, message: failure.message,
       serviceError: failure.serviceError,
@@ -159,22 +163,12 @@ String requireTtsApiKey(String? apiKey) {
   return key;
 }
 
-/// TTS 家族共用的出网 POST：两协议网关的异常映射链逐字一致（含
-/// unclassified 诊断标签），在这里收口。仅限 TTS 家族内部使用。
-Future<ProviderBytesHttpResponse> postTtsBytes({
-  required ProviderBytesHttpClient httpClient,
-  required Uri uri,
-  required Map<String, String> headers,
-  required List<int> body,
-}) async {
-  final ProviderBytesHttpResponse response;
+/// TTS 家族共用的出网调用包装：合成 POST 与音频地址下载（GET）两条出网
+/// 路径的异常映射链逐字一致（含 unclassified 诊断标签），在这里收口。
+/// 仅限 TTS 家族内部使用。
+Future<T> guardTtsOutbound<T>(Future<T> Function() call) async {
   try {
-    response = await httpClient.postBytes(
-      uri: uri,
-      headers: headers,
-      body: body,
-      timeout: ttsRequestTimeout,
-    );
+    return await call();
   } on TimeoutException {
     throw const TtsGatewayException(
       kind: ModelFailureKind.timeout,
@@ -186,7 +180,7 @@ Future<ProviderBytesHttpResponse> postTtsBytes({
       message: '语音合成服务的 TLS 安全连接失败。',
     );
   } on SocketException catch (error) {
-    throw _fromModelFailure(
+    throw fromTtsModelFailure(
       providerSocketFailure(error, serviceLabel: '语音合成服务'),
     );
   } on HttpException {
@@ -202,8 +196,23 @@ Future<ProviderBytesHttpResponse> postTtsBytes({
       message: '本机程序内部出错。',
     );
   }
-  return response;
 }
+
+/// TTS 家族共用的出网 POST：两协议网关的调用形状一致，在这里收口。
+/// 仅限 TTS 家族内部使用。
+Future<ProviderBytesHttpResponse> postTtsBytes({
+  required ProviderBytesHttpClient httpClient,
+  required Uri uri,
+  required Map<String, String> headers,
+  required List<int> body,
+}) => guardTtsOutbound(
+  () => httpClient.postBytes(
+    uri: uri,
+    headers: headers,
+    body: body,
+    timeout: ttsRequestTimeout,
+  ),
+);
 
 /// TTS 家族共用的响应字节消费：读完全量音频字节再返回，响应期超时与
 /// 连接中断按本通道文案映射。

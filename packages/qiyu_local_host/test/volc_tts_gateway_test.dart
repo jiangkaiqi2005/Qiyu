@@ -556,4 +556,10 @@ final class _RecordingBytesHttpClient implements ProviderBytesHttpClient {
     bytesBody = body;
     return response!;
   }
+
+  @override
+  Future<ProviderBytesHttpResponse> getBytes({
+    required Uri uri,
+    required Duration timeout,
+  }) async => throw UnimplementedError();
 }
