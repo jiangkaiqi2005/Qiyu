@@ -213,9 +213,9 @@ final class SettingsRoutes implements ApiRoutes {
         baseUrl: _sttTextField(payload, 'baseUrl'),
         model: _sttTextField(payload, 'model'),
         apiKey: _apiKeyFromPayload(payload),
-        authHeader: _optionalSttTextField(payload, 'authHeader'),
+        authHeader: _optionalSpeechTextField(payload, 'authHeader'),
         responseShape: _sttResponseShapeFromPayload(payload),
-        responseField: _optionalSttTextField(payload, 'responseField'),
+        responseField: _optionalSpeechTextField(payload, 'responseField'),
         extraParams: _sttExtraParamsFromPayload(payload),
       );
       return Response.ok(
@@ -227,12 +227,12 @@ final class SettingsRoutes implements ApiRoutes {
       final payload = await readJsonObject(request, maxBytes: 32 * 1024);
       final result = await sttSettingsService.test(
         provider: _sttProviderFromPayload(payload),
-        baseUrl: _optionalSttTextField(payload, 'baseUrl'),
-        model: _optionalSttTextField(payload, 'model'),
+        baseUrl: _optionalSpeechTextField(payload, 'baseUrl'),
+        model: _optionalSpeechTextField(payload, 'model'),
         apiKey: _apiKeyFromPayload(payload),
-        authHeader: _optionalSttTextField(payload, 'authHeader'),
+        authHeader: _optionalSpeechTextField(payload, 'authHeader'),
         responseShape: _sttResponseShapeFromPayload(payload),
-        responseField: _optionalSttTextField(payload, 'responseField'),
+        responseField: _optionalSpeechTextField(payload, 'responseField'),
         extraParams: _sttExtraParamsFromPayload(payload),
       );
       requestDiagnostics?.record(
@@ -273,9 +273,12 @@ final class SettingsRoutes implements ApiRoutes {
         baseUrl: _sttTextField(payload, 'baseUrl'),
         model: _sttTextField(payload, 'model'),
         apiKey: _apiKeyFromPayload(payload),
-        voice: _optionalSttTextField(payload, 'voice'),
+        voice: _optionalSpeechTextField(payload, 'voice'),
         speed: _ttsSpeedFromPayload(payload),
         autoSpeak: _ttsAutoSpeakFromPayload(payload),
+        authHeader: _optionalSpeechTextField(payload, 'authHeader'),
+        responseShape: _ttsResponseShapeFromPayload(payload),
+        responseField: _optionalSpeechTextField(payload, 'responseField'),
         extraParams: _ttsExtraParamsFromPayload(payload),
       );
       return Response.ok(
@@ -287,11 +290,14 @@ final class SettingsRoutes implements ApiRoutes {
       final payload = await readJsonObject(request, maxBytes: 32 * 1024);
       final result = await ttsSettingsService.test(
         provider: _ttsProviderFromPayload(payload),
-        baseUrl: _optionalSttTextField(payload, 'baseUrl'),
-        model: _optionalSttTextField(payload, 'model'),
+        baseUrl: _optionalSpeechTextField(payload, 'baseUrl'),
+        model: _optionalSpeechTextField(payload, 'model'),
         apiKey: _apiKeyFromPayload(payload),
-        voice: _optionalSttTextField(payload, 'voice'),
+        voice: _optionalSpeechTextField(payload, 'voice'),
         speed: _ttsSpeedFromPayload(payload),
+        authHeader: _optionalSpeechTextField(payload, 'authHeader'),
+        responseShape: _ttsResponseShapeFromPayload(payload),
+        responseField: _optionalSpeechTextField(payload, 'responseField'),
         extraParams: _ttsExtraParamsFromPayload(payload),
       );
       requestDiagnostics?.record(
@@ -410,8 +416,9 @@ String _sttTextField(Map<String, Object?> payload, String key) {
   return value;
 }
 
-/// STT 连接测试的可选文本字段：空负载（测试已保存配置）允许缺失。
-String? _optionalSttTextField(Map<String, Object?> payload, String key) {
+/// 转写与合成两段共用的可选文本字段：空负载（连接测试测已保存配置）
+/// 允许缺失。
+String? _optionalSpeechTextField(Map<String, Object?> payload, String key) {
   final value = payload[key];
   if (value == null) {
     return null;
@@ -503,7 +510,22 @@ bool? _ttsAutoSpeakFromPayload(Map<String, Object?> payload) {
   return value;
 }
 
-/// TTS 自定义高级参数（extraParams）：可选 Map 对象。
+/// TTS 自定义档的响应形态（responseShape）：可选字段，缺省 raw_bytes；
+/// 非法 wire 名按配置格式错误拒绝，不落盘。
+TtsResponseShape? _ttsResponseShapeFromPayload(Map<String, Object?> payload) {
+  final value = payload['responseShape'];
+  if (value == null) {
+    return null;
+  }
+  if (value is! String) {
+    throw const ProviderConfigException('语音合成服务配置格式不正确。');
+  }
+  return TtsResponseShape.fromWireName(value);
+}
+
+/// TTS 自定义高级参数（extraParams）：可选 Map 对象（兼容 extra_params
+/// 别名写法，与配置文件同口径）。键急转为字符串：懒 cast 遇非字符串键
+/// 会抛裸 TypeError，路由层只应抛配置格式错误。
 Map<String, Object?>? _ttsExtraParamsFromPayload(
   Map<String, Object?> payload,
 ) {
@@ -512,7 +534,9 @@ Map<String, Object?>? _ttsExtraParamsFromPayload(
     return null;
   }
   if (value is! Map) {
-    throw const ProviderConfigException('语音服务配置格式不正确。');
+    throw const ProviderConfigException('语音合成服务配置格式不正确。');
   }
-  return value.cast<String, Object?>();
+  return Map<String, Object?>.from(
+    value.map((k, v) => MapEntry(k.toString(), v)),
+  );
 }

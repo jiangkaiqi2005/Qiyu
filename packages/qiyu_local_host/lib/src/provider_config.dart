@@ -515,11 +515,13 @@ final class SttConfig {
 /// 语音合成的协议类型：配置里的 wire 名与网关分派共用。缺省
 /// openai_compatible：不带 provider 字段的存量配置照常工作。
 /// 豆包协议（volc_tts）走订阅专属 HTTP 端点，千问协议（qwen_tts）走
-/// DashScope 多模态端点，同为 HTTP(S)。
+/// DashScope 多模态端点，自定义协议（custom）走用户填写的完整地址
+/// （普通 HTTP POST + JSON），同为 HTTP(S)。
 enum TtsProviderKind {
   openAiCompatible('openai_compatible'),
   volcTts('volc_tts'),
-  qwenTts('qwen_tts');
+  qwenTts('qwen_tts'),
+  custom('custom');
 
   const TtsProviderKind(this.wireName);
 
@@ -533,6 +535,48 @@ enum TtsProviderKind {
   /// 该协议允许的服务地址 scheme（配置校验与出网前 SSRF 校验共用）。
   bool allows(String scheme) => scheme == 'http' || scheme == 'https';
 }
+
+/// 自定义合成档的响应形态：配置里的 wire 名与设置页下拉共用。
+enum TtsResponseShape {
+  /// 裸音频字节：响应体原样当音频（缺省形态）。
+  rawBytes('raw_bytes'),
+
+  /// JSON 字段：整段响应按字段名取，值是 base64 或 http(s) 音频地址。
+  jsonField('json_field'),
+
+  /// 逐行 JSON：每行一个 JSON 对象，字段里的 base64 按序拼接。
+  jsonLines('json_lines');
+
+  const TtsResponseShape(this.wireName);
+
+  final String wireName;
+
+  static TtsResponseShape fromWireName(String value) => values.firstWhere(
+    (shape) => shape.wireName == value,
+    orElse: () =>
+        throw const ProviderConfigException('不支持这个合成响应形态。'),
+  );
+}
+
+/// 自定义合成档的鉴权头缺省值（整行头名）：留空即按它发，不允许无鉴权
+/// 出网。与 STT 侧同名常量同值同义（转写与合成两档各一份，按段自洽）。
+const ttsCustomDefaultAuthHeader = 'Authorization: Bearer';
+
+/// 自定义合成档的响应字段缺省值：JSON 字段与逐行 JSON 两种形态都取
+/// 顶层 data。
+const ttsCustomDefaultResponseField = 'data';
+
+/// 自定义合成档不允许用作鉴权头的保留头名（小写比较）：content-type 由
+/// 网关自己写（撞名会静默覆盖鉴权头、无鉴权出网），content-length 等由
+/// dart:io 自管（撞名写出畸形请求）。与 STT 侧同集合同理由，按段各一
+/// 份（两段配置各自校验，改一处不该静默改另一处）。
+const ttsReservedAuthHeaderNames = <String>{
+  'content-type',
+  'content-length',
+  'host',
+  'transfer-encoding',
+  'connection',
+};
 
 /// 豆包语音合成的订阅专属 HTTP 端点（设置页缺省值）：一次性发送文本、
 /// 返回 chunked 逐行 JSON 音频。地址本身就是完整端点，不做后缀拼接。
@@ -561,7 +605,9 @@ const qwenTtsDefaultVoice = 'Cherry';
 
 /// 语音合成（TTS）服务配置：provider.json 顶层的可选 `tts` 段。
 /// [speed] 为空表示用服务缺省语速；[autoSpeak] 是聊天页朗读开关的
-/// 持久化位（缺省开：配了就自动读）。
+/// 持久化位（缺省开：配了就自动读）。自定义档（custom）另有三个旋钮：
+/// [authHeader] 整行鉴权头名、[responseShape] 响应形态、[responseField]
+/// 字段名，均带缺省值，只在 custom 档校验与落盘（其余档请求形状固定）。
 final class TtsConfig {
   const TtsConfig({
     required this.baseUrl,
@@ -571,6 +617,9 @@ final class TtsConfig {
     this.voice,
     this.speed,
     this.autoSpeak = true,
+    this.authHeader,
+    this.responseShape = TtsResponseShape.rawBytes,
+    this.responseField = ttsCustomDefaultResponseField,
     this.extraParams,
   });
 
@@ -602,6 +651,14 @@ final class TtsConfig {
             rawExtra.map((k, v) => MapEntry(k.toString(), v)),
           )
         : null;
+    final rawAuthHeader = json['authHeader'];
+    if (rawAuthHeader != null && rawAuthHeader is! String) {
+      throw const ProviderConfigException('语音合成服务配置无法读取。');
+    }
+    final rawResponseField = json['responseField'];
+    if (rawResponseField != null && rawResponseField is! String) {
+      throw const ProviderConfigException('语音合成服务配置无法读取。');
+    }
     return TtsConfig(
       provider: provider,
       baseUrl: json['baseUrl']! as String,
@@ -611,6 +668,14 @@ final class TtsConfig {
       voice: voice as String?,
       speed: rawSpeed is num ? rawSpeed.toDouble() : null,
       autoSpeak: rawAutoSpeak is bool ? rawAutoSpeak : true,
+      authHeader: rawAuthHeader as String?,
+      responseShape: switch (json['responseShape']) {
+        null => TtsResponseShape.rawBytes,
+        final String value => TtsResponseShape.fromWireName(value),
+        _ => throw const ProviderConfigException('语音合成服务配置无法读取。'),
+      },
+      responseField: rawResponseField as String? ?? ttsCustomDefaultResponseField,
+      // 高级参数与合成侧同型：兼容 extraParams 与 extra_params 两种写法。
       extraParams: extraParams,
     );
   }
@@ -629,6 +694,16 @@ final class TtsConfig {
   /// 聊天页「自动朗读」开关：随配置存本机（刷新、重启都记住）。
   final bool autoSpeak;
 
+  /// 自定义档的鉴权头（整行头名，如 `Authorization: Bearer`、`X-Api-Key`）：
+  /// 空表示按缺省 Bearer 发，不允许无鉴权出网。
+  final String? authHeader;
+
+  /// 自定义档的响应形态：缺省裸音频字节。
+  final TtsResponseShape responseShape;
+
+  /// 自定义档的响应字段名：JSON 字段与逐行 JSON 两种形态共用，缺省 data。
+  final String responseField;
+
   /// 自定义高级参数（深合并入请求体）。
   final Map<String, Object?>? extraParams;
 
@@ -644,6 +719,9 @@ final class TtsConfig {
     voice: voice,
     speed: speed,
     autoSpeak: autoSpeak,
+    authHeader: authHeader,
+    responseShape: responseShape,
+    responseField: responseField,
     extraParams: extraParams,
   );
 
@@ -659,6 +737,14 @@ final class TtsConfig {
     if (voice != null && voice!.trim().isNotEmpty) 'voice': voice,
     if (speed != null) 'speed': speed,
     'autoSpeak': autoSpeak,
+    // 旋钮与高级参数只在自定义档落盘：切到别的档时不把残留写回去
+    // （extraParams 三档本就消费，落盘口径不动）。
+    if (provider == TtsProviderKind.custom) ...{
+      if (authHeader != null && authHeader!.trim().isNotEmpty)
+        'authHeader': authHeader,
+      'responseShape': responseShape.wireName,
+      'responseField': responseField,
+    },
     if (extraParams != null && extraParams!.isNotEmpty)
       'extraParams': extraParams,
   };
@@ -681,6 +767,37 @@ final class TtsConfig {
       for (final key in extraParams!.keys) {
         if (key.trim().isEmpty) {
           throw const ProviderConfigException('自定义高级参数格式不正确。');
+        }
+      }
+    }
+    // 旋钮只在自定义档校验：鉴权头按「头名: 前缀」拆开分别过可见 ASCII
+    // 脏字符检（"Authorization: Bearer" 的冒号空格是合法分隔，整行检会
+    // 误伤），还不能撞保留头名（content-type 撞名会被网关自己写的头静默
+    // 覆盖，请求无鉴权出网），也要有头名——": Bearer" 这种粘贴事故会让
+    // dart:io 写出空头名，请求期才炸未分类异常，保存前拦成人话。与
+    // 转写自定义档同律同话术。
+    if (provider == TtsProviderKind.custom) {
+      final header = authHeader?.trim();
+      if (header != null && header.isNotEmpty) {
+        final separator = header.indexOf(':');
+        final name =
+            (separator == -1 ? header : header.substring(0, separator)).trim();
+        final prefix =
+            separator == -1 ? '' : header.substring(separator + 1).trim();
+        if (containsNonVisibleAscii(name) || containsNonVisibleAscii(prefix)) {
+          throw const ProviderConfigException(
+            '鉴权头里混入了中文或看不见的字符，请重新填写。',
+          );
+        }
+        if (ttsReservedAuthHeaderNames.contains(name.toLowerCase())) {
+          throw const ProviderConfigException(
+            '鉴权头不能使用 Content-Type、Content-Length 这类保留头名，请重新填写。',
+          );
+        }
+        if (name.isEmpty) {
+          throw const ProviderConfigException(
+            '鉴权头格式不正确，请填写如 Authorization: Bearer 的头名。',
+          );
         }
       }
     }

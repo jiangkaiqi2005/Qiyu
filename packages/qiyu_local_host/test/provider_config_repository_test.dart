@@ -1098,6 +1098,199 @@ void main() {
     expect(openAi.credentialScope, isNot(qwen.credentialScope));
   });
 
+  test('tts 段 custom 往返：旋钮与高级参数落盘、缺省值、非自定义档不落盘旋钮', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-tts-custom-');
+    addTearDown(() => temp.delete(recursive: true));
+    final path = '${temp.path}${Platform.pathSeparator}provider.json';
+    JsonProviderConfigRepository repository() =>
+        JsonProviderConfigRepository(filePath: path);
+
+    // 自定义档完整往返：鉴权头、响应形态、字段名与高级参数逐一读回。
+    await repository().saveTts(
+      const TtsConfig(
+        provider: TtsProviderKind.custom,
+        baseUrl: 'https://tts.example.com/v1/audio/speech',
+        model: 'tts-test',
+        apiKey: 'custom-secret-value',
+        authHeader: 'X-Api-Key',
+        responseShape: TtsResponseShape.jsonLines,
+        responseField: 'result.audio',
+        extraParams: {'voice': 'custom-voice'},
+      ),
+    );
+    final restored = await repository().loadTts();
+    expect(restored!.provider, TtsProviderKind.custom);
+    expect(restored.authHeader, 'X-Api-Key');
+    expect(restored.responseShape, TtsResponseShape.jsonLines);
+    expect(restored.responseField, 'result.audio');
+    expect(restored.extraParams, {'voice': 'custom-voice'});
+    expect(restored.apiKey, 'custom-secret-value');
+    final json =
+        jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
+    final section = json['tts']! as Map<String, Object?>;
+    expect(section['provider'], 'custom');
+    expect(section['authHeader'], 'X-Api-Key');
+    expect(section['responseShape'], 'json_lines');
+    expect(section['responseField'], 'result.audio');
+    expect(section['extraParams'], {'voice': 'custom-voice'});
+
+    // 旋钮缺省值：custom 段不带旋钮时按缺省读（等价默认 Bearer、裸字节
+    // 形态与缺省字段 data）。
+    await File(path).writeAsString(
+      jsonEncode({
+        'tts': {
+          'provider': 'custom',
+          'baseUrl': 'https://tts.example.com/v1/audio/speech',
+          'model': 'tts-test',
+        },
+      }),
+    );
+    final defaults = await repository().loadTts();
+    expect(defaults!.authHeader, isNull);
+    expect(defaults.responseShape, TtsResponseShape.rawBytes);
+    expect(defaults.responseField, 'data');
+    expect(defaults.extraParams, isNull);
+
+    // 非自定义档不落盘旋钮：构造时带上也只在 custom 档生效（extraParams
+    // 三档本就消费，落盘口径不动）。
+    await repository().saveTts(
+      const TtsConfig(
+        provider: TtsProviderKind.qwenTts,
+        baseUrl: qwenTtsDefaultEndpoint,
+        model: qwenTtsDefaultModel,
+        authHeader: 'X-Api-Key',
+        responseShape: TtsResponseShape.jsonField,
+        responseField: 'result.audio',
+      ),
+    );
+    final qwenJson =
+        jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
+    final qwenSection = qwenJson['tts']! as Map<String, Object?>;
+    expect(qwenSection['provider'], 'qwen_tts');
+    expect(qwenSection.containsKey('authHeader'), isFalse);
+    expect(qwenSection.containsKey('responseShape'), isFalse);
+    expect(qwenSection.containsKey('responseField'), isFalse);
+
+    // 存量配置兼容：不带 provider 与旋钮的老 tts 段照常读为 OpenAI 兼容。
+    await File(path).writeAsString(
+      jsonEncode({
+        'tts': {
+          'baseUrl': 'https://tts.example.com/v1',
+          'model': 'tts-test',
+          'apiKey': 'legacy-secret-value',
+        },
+      }),
+    );
+    final legacy = await repository().loadTts();
+    expect(legacy!.provider, TtsProviderKind.openAiCompatible);
+    expect(legacy.apiKey, 'legacy-secret-value');
+    expect(legacy.responseShape, TtsResponseShape.rawBytes);
+    expect(legacy.responseField, 'data');
+  });
+
+  test('tts 段 custom 校验：HTTP scheme 放行、鉴权头脏字符与空头名人话、Key 作用域随协议隔离', () {
+    // 自定义档同属 HTTP 家族：http/https 放行，ws 拒绝。
+    expect(
+      () => const TtsConfig(
+        provider: TtsProviderKind.custom,
+        baseUrl: 'http://tts.example.com/v1/audio/speech',
+        model: 'tts-test',
+      ).validate(),
+      returnsNormally,
+    );
+    expect(
+      () => const TtsConfig(
+        provider: TtsProviderKind.custom,
+        baseUrl: 'ws://tts.example.com/v1/audio/speech',
+        model: 'tts-test',
+      ).validate(),
+      throwsA(isA<ProviderConfigException>()),
+    );
+
+    // 鉴权头脏字符与空头名（": Bearer" 这种粘贴事故会让 dart:io 写出
+    // 空头名，请求期才炸未分类异常）在保存前拦成人话。
+    expect(
+      () => const TtsConfig(
+        provider: TtsProviderKind.custom,
+        baseUrl: 'https://tts.example.com/v1/audio/speech',
+        model: 'tts-test',
+        authHeader: 'X-Api-Key\u200B',
+      ).validate(),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          '鉴权头里混入了中文或看不见的字符，请重新填写。',
+        ),
+      ),
+    );
+    expect(
+      () => const TtsConfig(
+        provider: TtsProviderKind.custom,
+        baseUrl: 'https://tts.example.com/v1/audio/speech',
+        model: 'tts-test',
+        authHeader: ': Bearer',
+      ).validate(),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          '鉴权头格式不正确，请填写如 Authorization: Bearer 的头名。',
+        ),
+      ),
+    );
+
+    // 保留头名撞名在保存前拦成人话：content-type 撞名会被网关自己写的
+    // application/json 头静默覆盖（无鉴权出网），大小写不敏感都拦。
+    for (final authHeader in ['Content-Type: Bearer', 'content-length', 'HOST']) {
+      expect(
+        () => TtsConfig(
+          provider: TtsProviderKind.custom,
+          baseUrl: 'https://tts.example.com/v1/audio/speech',
+          model: 'tts-test',
+          authHeader: authHeader,
+        ).validate(),
+        throwsA(
+          isA<ProviderConfigException>().having(
+            (error) => error.message,
+            'message',
+            '鉴权头不能使用 Content-Type、Content-Length 这类保留头名，请重新填写。',
+          ),
+        ),
+        reason: authHeader,
+      );
+    }
+
+    // 高级参数空键名按格式不正确拒绝（custom 档同样校验）。
+    expect(
+      () => const TtsConfig(
+        provider: TtsProviderKind.custom,
+        baseUrl: 'https://tts.example.com/v1/audio/speech',
+        model: 'tts-test',
+        extraParams: {'': 'value'},
+      ).validate(),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          '自定义高级参数格式不正确。',
+        ),
+      ),
+    );
+
+    // 新 wire 名自然进入「协议 + 规范化地址」作用域：换协议不沿用 Key。
+    const openAi = TtsConfig(
+      baseUrl: 'https://tts.example.com/v1/audio/speech',
+      model: 'tts-test',
+    );
+    const custom = TtsConfig(
+      provider: TtsProviderKind.custom,
+      baseUrl: 'https://tts.example.com/v1/audio/speech',
+      model: 'tts-test',
+    );
+    expect(openAi.credentialScope, isNot(custom.credentialScope));
+  });
+
   group('子段读改写现状', () {
     // 票 03 的现状回归夹具：一份规范态（键序显式、两空格缩进、末尾
     // 换行）合成整文件，含聊天字段、四种子段与未知顶层键。所有凭据

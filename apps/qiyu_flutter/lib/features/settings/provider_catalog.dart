@@ -430,4 +430,7 @@ List<TtsVoicePreset> ttsVoicePresetsFor(TtsServiceKind provider) =>
       TtsServiceKind.openAiCompatible => openAiTtsVoicePresets,
       // 千问档暂无预设音色目录：音色直给自由输入框（任何音色 ID）。
       TtsServiceKind.qwenTts => const [],
+      // 自定义合成档没有音色位：Spec 只给鉴权头/响应形态/字段名/高级
+      // 参数四件套，音色（厂商各叫各的）走高级参数传。
+      TtsServiceKind.custom => const [],
     };

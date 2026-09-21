@@ -2511,6 +2511,61 @@ void main() {
           requestBody: jsonEncode({'enabled': 'yes'}),
         );
         expect(malformedToggle.statusCode, HttpStatus.badRequest);
+
+        // 自定义合成档：三个旋钮随保存落盘，响应永不回明文 Key。
+        final customSaved = await _send(
+          host.origin.resolve('/api/provider/tts'),
+          method: 'PUT',
+          headers: browser.mutationHeaders(host.origin),
+          requestBody: jsonEncode({
+            'provider': 'custom',
+            'baseUrl': 'https://tts.example.com/v1/audio/speech',
+            'model': 'tts-test',
+            'apiKey': 'custom-secret-value',
+            'authHeader': 'X-Api-Key',
+            'responseShape': 'json_lines',
+            'responseField': 'result.audio',
+          }),
+        );
+        expect(customSaved.statusCode, HttpStatus.ok);
+        expect(customSaved.body, isNot(contains('custom-secret-value')));
+        expect(
+          jsonDecode(customSaved.body),
+          allOf(
+            containsPair('provider', 'custom'),
+            containsPair('authHeader', 'X-Api-Key'),
+            containsPair('responseShape', 'json_lines'),
+            containsPair('responseField', 'result.audio'),
+          ),
+        );
+
+        // 非法响应形态 wire 名（转写侧的 sse 不是合成形态）：拒绝且已存
+        // 配置不动。
+        final invalidShape = await _send(
+          host.origin.resolve('/api/provider/tts'),
+          method: 'PUT',
+          headers: browser.mutationHeaders(host.origin),
+          requestBody: jsonEncode({
+            'provider': 'custom',
+            'baseUrl': 'https://tts.example.com/v1/audio/speech',
+            'model': 'tts-test',
+            'responseShape': 'sse',
+          }),
+        );
+        expect(invalidShape.statusCode, HttpStatus.badRequest);
+        expect(invalidShape.body, contains('不支持这个合成响应形态'));
+        final afterInvalidShape = await _send(
+          host.origin.resolve('/api/provider/tts'),
+          headers: browser.readHeaders(host.origin),
+        );
+        expect(
+          jsonDecode(afterInvalidShape.body),
+          allOf(
+            containsPair('provider', 'custom'),
+            containsPair('responseShape', 'json_lines'),
+            containsPair('responseField', 'result.audio'),
+          ),
+        );
         await host.close();
       },
     );

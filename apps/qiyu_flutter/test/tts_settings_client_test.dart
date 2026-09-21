@@ -319,4 +319,113 @@ void main() {
       'audio_params': {'sample_rate': 16000},
     });
   });
+
+  test('自定义协议：读取回显旋钮，保存请求带 custom 与三个旋钮', () async {
+    final requests = <http.Request>[];
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'custom',
+          'baseUrl': 'https://tts.example.com/v1/audio/speech',
+          'model': 'tts-test',
+          'authHeader': 'X-Api-Key',
+          'responseShape': 'json_lines',
+          'responseField': 'result.audio',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+      requests: requests,
+    );
+    final gateway = HttpTtsSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    final settings = await gateway.read();
+    expect(settings.provider, TtsServiceKind.custom);
+    expect(settings.authHeader, 'X-Api-Key');
+    expect(settings.responseShape, TtsResponseShape.jsonLines);
+    expect(settings.responseField, 'result.audio');
+
+    final saved = await gateway.save(
+      const TtsSettingsDraft(
+        provider: TtsServiceKind.custom,
+        baseUrl: 'https://tts.example.com/v1/audio/speech',
+        model: 'tts-test',
+        apiKey: 'sk-custom-test-value',
+        authHeader: 'Authorization: Bearer',
+        responseShape: TtsResponseShape.jsonField,
+        responseField: 'data',
+      ),
+    );
+    expect(saved.provider, TtsServiceKind.custom);
+    final saveBody = jsonDecode(requests.last.body) as Map<String, Object?>;
+    expect(saveBody['provider'], 'custom');
+    expect(saveBody['authHeader'], 'Authorization: Bearer');
+    expect(saveBody['responseShape'], 'json_field');
+    expect(saveBody['responseField'], 'data');
+  });
+
+  test('自定义协议缺省字段：不带旋钮的快照按缺省形态呈现', () async {
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
+          'configured': true,
+          'keySet': false,
+          'provider': 'custom',
+          'baseUrl': 'https://tts.example.com/v1/audio/speech',
+          'model': 'tts-test',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+    );
+
+    final settings = await HttpTtsSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    ).read();
+
+    // 缺省行为等价于 Authorization: Bearer、裸音频字节形态与字段 data。
+    expect(settings.authHeader, isNull);
+    expect(settings.responseShape, TtsResponseShape.rawBytes);
+    expect(settings.responseField, isNull);
+  });
+
+  test('非自定义档草稿不携带自定义旋钮', () async {
+    final requests = <http.Request>[];
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'baseUrl': 'https://tts.example.com/v1',
+          'model': 'tts-test',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+      requests: requests,
+    );
+    final gateway = HttpTtsSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    await gateway.save(
+      const TtsSettingsDraft(
+        provider: TtsServiceKind.qwenTts,
+        baseUrl: qwenTtsDefaultEndpoint,
+        model: qwenTtsDefaultModel,
+        authHeader: 'X-Api-Key',
+        responseShape: TtsResponseShape.jsonField,
+        responseField: 'result.audio',
+      ),
+    );
+
+    final saveBody = jsonDecode(requests.last.body) as Map<String, Object?>;
+    expect(saveBody.containsKey('authHeader'), isFalse);
+    expect(saveBody.containsKey('responseShape'), isFalse);
+    expect(saveBody.containsKey('responseField'), isFalse);
+  });
 }

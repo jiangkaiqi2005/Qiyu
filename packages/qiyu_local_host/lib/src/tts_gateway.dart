@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'custom_tts_gateway.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
@@ -121,7 +122,34 @@ final class TtsModelGateway implements TtsSynthesisGateway {
     TtsProviderKind.qwenTts => QwenTtsGateway(
       httpClient,
     ).synthesize(config: config, apiKey: apiKey, text: text),
+    TtsProviderKind.custom => CustomTtsGateway(
+      httpClient,
+    ).synthesize(config: config, apiKey: apiKey, text: text),
   };
+}
+
+/// 高级参数深合并进请求体的 input：同名字段两边都是对象时逐层合并，
+/// 其余以 extraParams 为准（用户在高级参数里显式写的值优先，厂商自有
+/// 参数由此兜住）。千问与自定义两个网关的 input 都是这一个形状，合并
+/// 口径收口在这里，不要再各写一份。
+Map<String, Object?> mergeTtsExtraIntoInput(
+  Map<String, Object?> input,
+  Map<String, Object?> extra,
+) {
+  final merged = Map<String, Object?>.from(input);
+  for (final entry in extra.entries) {
+    final current = merged[entry.key];
+    final value = entry.value;
+    if (current is Map && value is Map) {
+      merged[entry.key] = mergeTtsExtraIntoInput(
+        current.cast<String, Object?>(),
+        value.cast<String, Object?>(),
+      );
+    } else {
+      merged[entry.key] = value;
+    }
+  }
+  return merged;
 }
 
 /// 语音合成的出网预算：整段文字上送 + 等待完整音频下载，与转写同级。

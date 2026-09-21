@@ -288,6 +288,149 @@ void main() {
     expect(value.showCustomVoiceField, isFalse);
     expect(value.speed, 0.8);
   });
+
+  test('未配置的自定义协议回填空档：完整地址与模型都等用户填', () {
+    final value = form();
+    value.selectProvider('custom');
+
+    expect(value.provider, TtsServiceKind.custom);
+    expect(value.baseUrlController.text, isEmpty);
+    expect(value.modelController.text, isEmpty);
+    expect(
+      value.protocolDefaults.urlHint,
+      'https://api.example.com/v1/audio/speech',
+    );
+    // 旋钮缺省态：默认 Bearer（输入框留空）、裸音频字节、字段名缺省 data
+    // （输入框留空）。
+    expect(value.authHeaderController.text, isEmpty);
+    expect(value.responseShape, TtsResponseShape.rawBytes);
+    expect(value.responseFieldController.text, isEmpty);
+    expect(value.extraParamsController.text, isEmpty);
+    // 自定义档没有音色位：Spec 只给鉴权头/响应形态/字段名/高级参数四件套。
+    expect(value.showCustomVoiceField, isFalse);
+  });
+
+  test('已配置自定义档回填旋钮：鉴权头、响应形态、字段名与高级参数 JSON', () {
+    final value = TtsSettingsForm();
+    value.sync(
+      const TtsSettings(
+        configured: true,
+        keySet: true,
+        provider: TtsServiceKind.custom,
+        baseUrl: 'https://tts.example.com/v1/audio/speech',
+        model: 'tts-test',
+        authHeader: 'X-Api-Key',
+        responseShape: TtsResponseShape.jsonField,
+        responseField: 'result.audio',
+        extraParams: {'voice': 'custom-voice'},
+      ),
+    );
+
+    expect(value.provider, TtsServiceKind.custom);
+    expect(
+      value.baseUrlController.text,
+      'https://tts.example.com/v1/audio/speech',
+    );
+    expect(value.authHeaderController.text, 'X-Api-Key');
+    expect(value.responseShape, TtsResponseShape.jsonField);
+    expect(value.responseFieldController.text, 'result.audio');
+    expect(value.extraParamsController.text, '{\n  "voice": "custom-voice"\n}');
+  });
+
+  test('切到自定义档丢掉语速草稿：自定义档没有语速参数', () {
+    final value = form();
+    value.selectSpeed(1.5);
+
+    value.selectProvider('custom');
+
+    expect(value.speed, isNull);
+  });
+
+  test('协议切换：切走自定义档时清掉旋钮草稿，不残留到别的档', () {
+    final value = form();
+    value.selectProvider('custom');
+    value.authHeaderController.text = 'X-Api-Key';
+    value.selectResponseShape('json_lines');
+    value.responseFieldController.text = 'result.audio';
+    value.extraParamsController.text = '{"voice":"custom-voice"}';
+
+    value.selectProvider('qwen_tts');
+
+    expect(value.provider, TtsServiceKind.qwenTts);
+    expect(value.authHeaderController.text, isEmpty);
+    expect(value.responseShape, TtsResponseShape.rawBytes);
+    expect(value.responseFieldController.text, isEmpty);
+    expect(value.extraParamsController.text, isEmpty);
+    // 千问档的音色 ID 输入框不受影响（既有露出条件保持）。
+    expect(value.showCustomVoiceField, isTrue);
+  });
+
+  test('校验要求自定义高级参数是合法 JSON 对象', () {
+    final scenarios = [
+      (extraText: '[1,2]', message: '自定义高级参数必须是 JSON 对象。'),
+      (extraText: '"text"', message: '自定义高级参数必须是 JSON 对象。'),
+      (extraText: '{', message: '自定义高级参数 JSON 格式不正确，请检查语法。'),
+    ];
+    for (final scenario in scenarios) {
+      final value = form();
+      value.selectProvider('custom');
+      value.baseUrlController.text = 'https://tts.example.com/v1/audio/speech';
+      value.modelController.text = 'tts-test';
+      value.extraParamsController.text = scenario.extraText;
+
+      final reported = <String>[];
+      final draft = value.readDraftOrReport(reported.add);
+
+      expect(draft, isNull, reason: scenario.extraText);
+      expect(reported, [scenario.message], reason: scenario.extraText);
+      expect(gateway.saveCalls, 0);
+    }
+  });
+
+  test('保存编排：自定义草稿带着旋钮与高级参数上送，鉴权头去空白', () async {
+    final value = form();
+    value.selectProvider('custom');
+    value.baseUrlController.text = 'https://tts.example.com/v1/audio/speech';
+    value.modelController.text = 'tts-test';
+    value.apiKeyController.text = '  sk-custom  ';
+    value.authHeaderController.text = '  X-Api-Key  ';
+    value.selectResponseShape('json_lines');
+    value.responseFieldController.text = 'result.audio';
+    value.extraParamsController.text = '{"voice":"custom-voice"}';
+
+    final saved = await value.save(viewModel, report: (_) {});
+
+    expect(saved, isTrue);
+    final draft = gateway.savedDrafts.single;
+    expect(draft.provider, TtsServiceKind.custom);
+    expect(draft.baseUrl, 'https://tts.example.com/v1/audio/speech');
+    expect(draft.model, 'tts-test');
+    expect(draft.apiKey, 'sk-custom');
+    expect(draft.authHeader, 'X-Api-Key');
+    expect(draft.responseShape, TtsResponseShape.jsonLines);
+    expect(draft.responseField, 'result.audio');
+    expect(draft.extraParams, {'voice': 'custom-voice'});
+    // 保存成功后 Key 草稿即刻清空，不留明文在输入框。
+    expect(value.apiKeyController.text, isEmpty);
+  });
+
+  test('保存编排：非自定义档草稿不带自定义旋钮', () async {
+    final value = form();
+    value.selectProvider('custom');
+    value.authHeaderController.text = 'X-Api-Key';
+    value.extraParamsController.text = '{"voice":"custom-voice"}';
+    value.selectProvider('openai_compatible');
+    value.baseUrlController.text = 'https://api.example.com/v1';
+    value.modelController.text = 'tts-1';
+
+    await value.save(viewModel, report: (_) {});
+
+    final draft = gateway.savedDrafts.single;
+    expect(draft.provider, TtsServiceKind.openAiCompatible);
+    expect(draft.authHeader, isNull);
+    expect(draft.responseShape, isNull);
+    expect(draft.responseField, isNull);
+  });
 }
 
 final class _RecordingTtsGateway implements TtsSettingsGateway {

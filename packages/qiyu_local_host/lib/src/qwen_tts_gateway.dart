@@ -39,7 +39,7 @@ final class QwenTtsGateway implements TtsSynthesisGateway {
       'model': config.model.trim(),
       // 高级参数深合并进 input：千问的 instructions 类字段就在 input 下
       // （换 instruct 模型时传指令控制）。
-      'input': extra == null ? input : _mergeExtraIntoInput(input, extra),
+      'input': extra == null ? input : mergeTtsExtraIntoInput(input, extra),
     });
     final response = await postTtsBytes(
       httpClient: httpClient,
@@ -68,29 +68,6 @@ final class QwenTtsGateway implements TtsSynthesisGateway {
       url: _extractAudioUrl(bytes),
     );
   }
-}
-
-/// 深合并：extraParams 合进基础 input——同名字段两边都是对象时逐层
-/// 合并，其余以 extraParams 为准（用户在高级参数里显式写的值优先，
-/// 厂商自有参数由此兜住）。
-Map<String, Object?> _mergeExtraIntoInput(
-  Map<String, Object?> input,
-  Map<String, Object?> extra,
-) {
-  final merged = Map<String, Object?>.from(input);
-  for (final entry in extra.entries) {
-    final current = merged[entry.key];
-    final value = entry.value;
-    if (current is Map && value is Map) {
-      merged[entry.key] = _mergeExtraIntoInput(
-        current.cast<String, Object?>(),
-        value.cast<String, Object?>(),
-      );
-    } else {
-      merged[entry.key] = value;
-    }
-  }
-  return merged;
 }
 
 /// 从非流式响应里取音频地址：output.audio.url。容忍解码——非 JSON、

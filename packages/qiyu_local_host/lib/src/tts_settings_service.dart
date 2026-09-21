@@ -88,7 +88,8 @@ final class TtsSettingsService {
   /// 与聊天/STT Key 同律但作用域独立：传入新 Key 就写入；没传时同
   /// 地址保留已存 Key，换地址（或换协议）则清空——旧服务商的 Key 不
   /// 沿用给新服务商。现值读取与 Key 沿用决定进共享事务：并发保存或
-  /// 遗忘交错时，锁外旧 Key 不得复活。
+  /// 遗忘交错时，锁外旧 Key 不得复活。自定义档旋钮（authHeader/
+  /// responseShape/responseField）随保存落盘，只在 custom 档生效。
   Future<TtsSettingsSnapshot> save({
     required String baseUrl,
     required String model,
@@ -97,6 +98,9 @@ final class TtsSettingsService {
     String? voice,
     double? speed,
     bool? autoSpeak,
+    String? authHeader,
+    TtsResponseShape? responseShape,
+    String? responseField,
     Map<String, Object?>? extraParams,
   }) async {
     await configRepository.runTransaction(() async {
@@ -108,6 +112,10 @@ final class TtsSettingsService {
         voice: ProviderConfig.normalizeKey(voice),
         speed: speed,
         autoSpeak: autoSpeak ?? previous?.autoSpeak ?? true,
+        authHeader: authHeader,
+        responseShape: responseShape ?? TtsResponseShape.rawBytes,
+        // 空白字段名归一为缺省 data：落盘的值恒有含义，回显也稳定。
+        responseField: _normalizeResponseField(responseField),
         extraParams: extraParams,
       );
       config.validate();
@@ -146,6 +154,9 @@ final class TtsSettingsService {
           voice: config.voice,
           speed: config.speed,
           autoSpeak: enabled,
+          authHeader: config.authHeader,
+          responseShape: config.responseShape,
+          responseField: config.responseField,
           extraParams: config.extraParams,
         ),
       );
@@ -165,7 +176,9 @@ final class TtsSettingsService {
 
   /// 连接测试 = 真实试听：用表单配置把内置示例句真实合成为音频，
   /// 成功即连接成功并返回音频；错误按与聊天/STT 测试相同的分类枚举
-  /// 上报。表单未填 baseUrl/model 时按已保存配置测试。
+  /// 上报。表单未填 baseUrl/model 时按已保存配置测试。自定义档旋钮随
+  /// 表单走：整份表单为空（测已存配置）时回落到已存值，表单填了就以
+  /// 表单为准（与转写自定义档同律）。
   Future<TtsTestResult> test({
     String? baseUrl,
     String? model,
@@ -173,6 +186,9 @@ final class TtsSettingsService {
     String? apiKey,
     String? voice,
     double? speed,
+    String? authHeader,
+    TtsResponseShape? responseShape,
+    String? responseField,
     Map<String, Object?>? extraParams,
   }) async {
     final stored = await configRepository.loadTts();
@@ -199,6 +215,19 @@ final class TtsSettingsService {
           ? ProviderConfig.normalizeKey(voice) ?? stored?.voice
           : ProviderConfig.normalizeKey(voice),
       speed: useStoredOptionalSettings ? speed ?? stored?.speed : speed,
+      authHeader: useStoredOptionalSettings
+          ? authHeader ?? stored?.authHeader
+          : authHeader,
+      responseShape:
+          (useStoredOptionalSettings
+              ? responseShape ?? stored?.responseShape
+              : responseShape) ??
+          TtsResponseShape.rawBytes,
+      responseField: _normalizeResponseField(
+        useStoredOptionalSettings
+            ? responseField ?? stored?.responseField
+            : responseField,
+      ),
       extraParams: useStoredOptionalSettings
           ? extraParams ?? stored?.extraParams
           : extraParams,
@@ -318,6 +347,16 @@ const ttsMaxTextLength = 4000;
 const ttsConnectionTestSentence = '你好，我是栖语。今晚也想陪你慢慢说话。';
 
 const _dirtyApiKeyMessage = 'API Key 里混入了中文或看不见的字符，请重新复制粘贴。';
+
+/// 自定义档字段名归一：去空白、空值回落缺省 data。保存与连接测试共用
+/// 同一口径，落盘与出网的值恒有含义。与转写侧的 _normalizeResponseField
+/// 同律（缺省值各按各段：转写取 text，合成取 data）。
+String _normalizeResponseField(String? responseField) {
+  final trimmed = responseField?.trim();
+  return trimmed == null || trimmed.isEmpty
+      ? ttsCustomDefaultResponseField
+      : trimmed;
+}
 
 String? _normalizeApiKey(String? value) {
   if (value == null) {

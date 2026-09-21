@@ -10,14 +10,34 @@ enum TtsServiceKind {
   openAiCompatible,
   volcTts,
   /// 千问语音合成：DashScope 多模态接口，同为 HTTP(S) 家族。
-  qwenTts;
+  qwenTts,
+  /// 自定义语音合成服务：普通 HTTP POST + JSON 请求体，完整地址直填。
+  custom;
 
   /// 与 Host `TtsProviderKind.wireName` 对应的配置 wire 名。
   String get wireName => switch (this) {
     TtsServiceKind.openAiCompatible => 'openai_compatible',
     TtsServiceKind.volcTts => 'volc_tts',
     TtsServiceKind.qwenTts => 'qwen_tts',
+    TtsServiceKind.custom => 'custom',
   };
+}
+
+/// 自定义语音合成服务的响应形态：与 Host `TtsResponseShape` 的 wire 名
+/// 对应，缺省 raw_bytes（裸音频字节）。
+enum TtsResponseShape {
+  /// 裸音频字节：响应体原样当音频。
+  rawBytes('raw_bytes'),
+
+  /// JSON 字段：字段里是 base64 或 http(s) 音频地址。
+  jsonField('json_field'),
+
+  /// 逐行 JSON：一行一块 base64 按序拼接。
+  jsonLines('json_lines');
+
+  const TtsResponseShape(this.wireName);
+
+  final String wireName;
 }
 
 /// 千问语音合成的服务地址缺省值：DashScope 多模态完整端点（与千问识别
@@ -37,7 +57,8 @@ const qwenTtsDefaultModel = 'qwen3-tts-flash';
 const qwenTtsDefaultVoice = 'Cherry';
 
 /// 语音合成（TTS）服务设置：与聊天 Provider、语音转写设置同一套读回
-/// 口径——永不回明文 Key，只回 keySet 布尔。
+/// 口径——永不回明文 Key，只回 keySet 布尔。自定义档另带回显用旋钮
+/// （authHeader/responseShape/responseField）与高级参数 extraParams。
 final class TtsSettings {
   const TtsSettings({
     required this.configured,
@@ -48,6 +69,9 @@ final class TtsSettings {
     this.voice,
     this.speed,
     this.autoSpeak = true,
+    this.authHeader,
+    this.responseShape = TtsResponseShape.rawBytes,
+    this.responseField,
     this.extraParams,
   });
 
@@ -66,6 +90,7 @@ final class TtsSettings {
       provider: switch (json['provider']) {
         'volc_tts' => TtsServiceKind.volcTts,
         'qwen_tts' => TtsServiceKind.qwenTts,
+        'custom' => TtsServiceKind.custom,
         _ => TtsServiceKind.openAiCompatible,
       },
       baseUrl: json['baseUrl'] as String?,
@@ -73,6 +98,14 @@ final class TtsSettings {
       voice: json['voice'] as String?,
       speed: (json['speed'] as num?)?.toDouble(),
       autoSpeak: json['autoSpeak'] == false ? false : true,
+      authHeader: json['authHeader'] as String?,
+      // 响应形态缺省 raw_bytes；缺失或未知值都按缺省形态呈现。
+      responseShape: switch (json['responseShape']) {
+        'json_field' => TtsResponseShape.jsonField,
+        'json_lines' => TtsResponseShape.jsonLines,
+        _ => TtsResponseShape.rawBytes,
+      },
+      responseField: json['responseField'] as String?,
       extraParams: extraParams,
     );
   }
@@ -85,6 +118,16 @@ final class TtsSettings {
   final String? voice;
   final double? speed;
   final bool autoSpeak;
+
+  /// 自定义档的鉴权头（整行头名）：空表示按默认 Bearer 发。
+  final String? authHeader;
+
+  /// 自定义档的响应形态。
+  final TtsResponseShape responseShape;
+
+  /// 自定义档的响应字段名：空表示缺省 data。
+  final String? responseField;
+
   final Map<String, Object?>? extraParams;
 }
 
@@ -97,6 +140,9 @@ final class TtsSettingsDraft {
     this.voice,
     this.speed,
     this.autoSpeak,
+    this.authHeader,
+    this.responseShape,
+    this.responseField,
     this.extraParams,
   });
 
@@ -107,6 +153,13 @@ final class TtsSettingsDraft {
   final String? voice;
   final double? speed;
   final bool? autoSpeak;
+
+  /// 自定义档旋钮：非自定义档恒为 null，不上送（Host 侧也只对 custom
+  /// 档校验与落盘）。
+  final String? authHeader;
+  final TtsResponseShape? responseShape;
+  final String? responseField;
+
   final Map<String, Object?>? extraParams;
 
   Map<String, Object?> toJson() => {
@@ -117,6 +170,13 @@ final class TtsSettingsDraft {
     if (voice != null && voice!.trim().isNotEmpty) 'voice': voice,
     'speed': ?speed,
     'autoSpeak': ?autoSpeak,
+    if (provider == TtsServiceKind.custom) ...{
+      if (authHeader != null && authHeader!.trim().isNotEmpty)
+        'authHeader': authHeader,
+      if (responseShape != null) 'responseShape': responseShape!.wireName,
+      if (responseField != null && responseField!.trim().isNotEmpty)
+        'responseField': responseField,
+    },
     if (extraParams != null && extraParams!.isNotEmpty)
       'extraParams': extraParams,
   };

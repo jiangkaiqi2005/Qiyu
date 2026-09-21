@@ -170,6 +170,205 @@ void main() {
     expect(result.message, '连接语音合成服务超时。');
   });
 
+  test('连接测试端到端：自定义档按所选响应形态完整走一遍拿到试听音频', () async {
+    // 三种形态各来一次：裸音频字节、JSON 字段（base64 与 URL 下载）、
+    // 逐行 JSON 拼接——形态选错在保存前暴露。
+    final rawClient = _RecordingBytesHttpClient(
+      postResponse: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value([1, 2]),
+      ),
+    );
+    final rawService = TtsSettingsService(
+      repository,
+      TtsModelGateway(rawClient),
+    );
+    final rawResult = await rawService.test(
+      baseUrl: 'https://tts.example.com/v1/audio/speech',
+      model: 'tts-test',
+      provider: TtsProviderKind.custom,
+      apiKey: 'sk-custom',
+      responseShape: TtsResponseShape.rawBytes,
+    );
+    expect(rawResult.succeeded, isTrue);
+    expect(base64Decode(rawResult.audioBase64!), [1, 2]);
+    expect(rawClient.downloadCalled, isFalse);
+
+    final fieldBody = jsonEncode({
+      'data': base64Encode([3, 4]),
+    });
+    final fieldClient = _RecordingBytesHttpClient(
+      postResponse: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value(utf8.encode(fieldBody)),
+      ),
+    );
+    final fieldService = TtsSettingsService(
+      repository,
+      TtsModelGateway(fieldClient),
+    );
+    final fieldResult = await fieldService.test(
+      baseUrl: 'https://tts.example.com/v1/audio/speech',
+      model: 'tts-test',
+      provider: TtsProviderKind.custom,
+      apiKey: 'sk-custom',
+      responseShape: TtsResponseShape.jsonField,
+    );
+    expect(fieldResult.succeeded, isTrue);
+    expect(base64Decode(fieldResult.audioBase64!), [3, 4]);
+
+    final linesClient = _RecordingBytesHttpClient(
+      postResponse: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value(
+          utf8.encode(
+            '{"data":"${base64Encode([5])}"}\n{"data":"${base64Encode([6])}"}\n',
+          ),
+        ),
+      ),
+    );
+    final linesService = TtsSettingsService(
+      repository,
+      TtsModelGateway(linesClient),
+    );
+    final linesResult = await linesService.test(
+      baseUrl: 'https://tts.example.com/v1/audio/speech',
+      model: 'tts-test',
+      provider: TtsProviderKind.custom,
+      apiKey: 'sk-custom',
+      responseShape: TtsResponseShape.jsonLines,
+    );
+    expect(linesResult.succeeded, isTrue);
+    expect(base64Decode(linesResult.audioBase64!), [5, 6]);
+    // 试听用的是内置示例句，请求体固定 {model, input}。
+    final body =
+        jsonDecode(utf8.decode(rawClient.bytesBody)) as Map<String, Object?>;
+    expect(body['model'], 'tts-test');
+    expect(body['input'], {'text': ttsConnectionTestSentence});
+  });
+
+  test('连接测试端到端：自定义档 URL 字段经下载跳取音频，鉴权头按表单值发出', () async {
+    final client = _RecordingBytesHttpClient(
+      postResponse: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value(
+          utf8.encode(
+            jsonEncode({'audio': 'https://oss.example.com/qiyu.mp3'}),
+          ),
+        ),
+      ),
+      downloadResponse: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value([7, 8, 9]),
+      ),
+    );
+    final service = TtsSettingsService(repository, TtsModelGateway(client));
+
+    final result = await service.test(
+      baseUrl: 'https://tts.example.com/v1/audio/speech',
+      model: 'tts-test',
+      provider: TtsProviderKind.custom,
+      apiKey: 'sk-custom',
+      authHeader: 'X-Api-Key',
+      responseShape: TtsResponseShape.jsonField,
+      responseField: 'audio',
+    );
+
+    expect(result.succeeded, isTrue);
+    expect(base64Decode(result.audioBase64!), [7, 8, 9]);
+    expect(client.downloadCalled, isTrue);
+    expect(client.headers['x-api-key'], 'sk-custom');
+    expect(client.headers['authorization'], isNull);
+  });
+
+  test('连接测试：自定义档旋钮回落已存值，鉴权头留空按默认 Bearer 测', () async {
+    final gateway = _FakeTtsGateway(audio: [1, 2, 3]);
+    final service = TtsSettingsService(repository, gateway);
+    await service.save(
+      baseUrl: 'https://tts.example.com/v1/audio/speech',
+      model: 'tts-test',
+      provider: TtsProviderKind.custom,
+      apiKey: 'secret-tts-key',
+      authHeader: 'X-Api-Key',
+      responseShape: TtsResponseShape.jsonField,
+      responseField: 'result.audio',
+    );
+
+    // 整份表单为空（测已存配置）：旋钮回落已存值。
+    await service.test();
+    expect(gateway.lastConfig?.provider, TtsProviderKind.custom);
+    expect(gateway.lastConfig?.authHeader, 'X-Api-Key');
+    expect(gateway.lastConfig?.responseShape, TtsResponseShape.jsonField);
+    expect(gateway.lastConfig?.responseField, 'result.audio');
+
+    // 表单填了就以表单为准：换一个鉴权头与形态，不与已存值混淆。
+    await service.test(
+      baseUrl: 'https://tts.example.com/v1/audio/speech',
+      model: 'tts-test',
+      provider: TtsProviderKind.custom,
+      authHeader: 'Authorization: Token',
+      responseShape: TtsResponseShape.rawBytes,
+    );
+    expect(gateway.lastConfig?.authHeader, 'Authorization: Token');
+    expect(gateway.lastConfig?.responseShape, TtsResponseShape.rawBytes);
+    // 空白字段名归一为缺省 data。
+    expect(gateway.lastConfig?.responseField, 'data');
+  });
+
+  test('保存设置：自定义档旋钮随快照返回，非自定义档不落盘旋钮', () async {
+    final service = TtsSettingsService(repository, _FakeTtsGateway());
+    final snapshot = await service.save(
+      baseUrl: 'https://tts.example.com/v1/audio/speech',
+      model: 'tts-test',
+      provider: TtsProviderKind.custom,
+      apiKey: 'secret-tts-key',
+      authHeader: 'Authorization: Bearer',
+      responseShape: TtsResponseShape.jsonLines,
+      responseField: '  ',
+      extraParams: {'voice': 'custom-voice'},
+    );
+
+    expect(snapshot.config?.authHeader, 'Authorization: Bearer');
+    expect(snapshot.config?.responseShape, TtsResponseShape.jsonLines);
+    // 空白字段名归一为缺省 data：落盘的值恒有含义。
+    expect(snapshot.config?.responseField, 'data');
+    expect(snapshot.toJson()['responseShape'], 'json_lines');
+    expect(snapshot.toJson()['responseField'], 'data');
+    expect(snapshot.toJson()['authHeader'], 'Authorization: Bearer');
+
+    final openAi = await service.save(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'tts-test',
+    );
+    expect(openAi.config?.provider, TtsProviderKind.openAiCompatible);
+    expect(openAi.config?.authHeader, isNull);
+    expect(openAi.config?.responseShape, TtsResponseShape.rawBytes);
+    expect(openAi.config?.responseField, 'data');
+    expect(openAi.toJson().containsKey('authHeader'), isFalse);
+    expect(openAi.toJson().containsKey('responseShape'), isFalse);
+    expect(openAi.toJson().containsKey('responseField'), isFalse);
+  });
+
+  test('setAutoSpeak 保留自定义档旋钮：翻朗读开关不写丢配置', () async {
+    final service = TtsSettingsService(repository, _FakeTtsGateway());
+    await service.save(
+      baseUrl: 'https://tts.example.com/v1/audio/speech',
+      model: 'tts-test',
+      provider: TtsProviderKind.custom,
+      apiKey: 'secret-tts-key',
+      authHeader: 'X-Api-Key',
+      responseShape: TtsResponseShape.jsonField,
+      responseField: 'result.audio',
+    );
+
+    final toggled = await service.setAutoSpeak(false);
+
+    expect(toggled.config?.autoSpeak, isFalse);
+    expect(toggled.config?.authHeader, 'X-Api-Key');
+    expect(toggled.config?.responseShape, TtsResponseShape.jsonField);
+    expect(toggled.config?.responseField, 'result.audio');
+  });
+
   test('保存设置保留既有朗读开关，脏 Key 不落盘', () async {
     final service = TtsSettingsService(repository, _FakeTtsGateway());
     await service.save(
@@ -485,6 +684,7 @@ final class _RecordingBytesHttpClient implements ProviderBytesHttpClient {
   bool postCalled = false;
   bool downloadCalled = false;
   late List<int> bytesBody;
+  late Map<String, String> headers;
 
   @override
   Future<ProviderBytesHttpResponse> postBytes({
@@ -494,6 +694,7 @@ final class _RecordingBytesHttpClient implements ProviderBytesHttpClient {
     required Duration timeout,
   }) async {
     postCalled = true;
+    this.headers = headers;
     bytesBody = body;
     return postResponse!;
   }
