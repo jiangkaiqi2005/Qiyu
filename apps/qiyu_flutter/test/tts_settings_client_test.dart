@@ -99,6 +99,45 @@ void main() {
     expect(jsonDecode(requests.last.body)['provider'], 'volc_tts');
   });
 
+  test('千问协议：provider 往返一致，保存请求带 qwen_tts', () async {
+    final requests = <http.Request>[];
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'qwen_tts',
+          'baseUrl': qwenTtsDefaultEndpoint,
+          'model': qwenTtsDefaultModel,
+          'voice': 'Cherry',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+      requests: requests,
+    );
+    final gateway = HttpTtsSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    final settings = await gateway.read();
+    expect(settings.provider, TtsServiceKind.qwenTts);
+    expect(settings.baseUrl, qwenTtsDefaultEndpoint);
+    expect(settings.voice, 'Cherry');
+
+    final saved = await gateway.save(
+      const TtsSettingsDraft(
+        provider: TtsServiceKind.qwenTts,
+        baseUrl: qwenTtsDefaultEndpoint,
+        model: qwenTtsDefaultModel,
+        apiKey: 'sk-dashscope-test-value',
+        voice: 'Nofish',
+      ),
+    );
+    expect(saved.provider, TtsServiceKind.qwenTts);
+    expect(jsonDecode(requests.last.body)['provider'], 'qwen_tts');
+  });
+
   test('保存与忘记 Key 都带 CSRF 头且请求体形状正确', () async {
     final requests = <http.Request>[];
     final client = hostTransportClient(

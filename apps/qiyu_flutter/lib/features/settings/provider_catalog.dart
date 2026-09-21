@@ -428,4 +428,6 @@ List<TtsVoicePreset> ttsVoicePresetsFor(TtsServiceKind provider) =>
     switch (provider) {
       TtsServiceKind.volcTts => doubaoTtsVoicePresets,
       TtsServiceKind.openAiCompatible => openAiTtsVoicePresets,
+      // 千问档暂无预设音色目录：音色直给自由输入框（任何音色 ID）。
+      TtsServiceKind.qwenTts => const [],
     };

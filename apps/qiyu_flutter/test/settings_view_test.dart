@@ -518,6 +518,102 @@ void main() {
     });
   });
 
+  testWidgets('TTS 设置区块：千问档下拉、缺省回填、音色 ID 输入框、无语速滑条', (tester) async {
+    final ttsGateway = _MutableTtsSettingsGateway(
+      const TtsSettings(configured: false, keySet: false),
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        ttsGateway: ttsGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'tts');
+
+    // 下拉出现「千问语音合成」，选中后地址、模型、音色落缺省值。
+    await _reveal(tester, find.byKey(const Key('tts-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    expect(find.text('千问语音合成'), findsOneWidget);
+    await tester.tap(find.text('千问语音合成').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-base-url')))
+          .controller!
+          .text,
+      qwenTtsDefaultEndpoint,
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-model')))
+          .controller!
+          .text,
+      qwenTtsDefaultModel,
+    );
+
+    // 音色直给「音色 ID」输入框（无预设目录）：千问档没有音色下拉。
+    await _reveal(tester, find.byKey(const Key('tts-voice')), maxScrolls: 10);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-voice')))
+          .controller!
+          .text,
+      qwenTtsDefaultVoice,
+    );
+    expect(find.byKey(const Key('tts-voice-preset')), findsNothing);
+
+    // 千问档不显示语速滑条（请求字段没有对应参数）。
+    expect(find.byKey(const Key('tts-speed-slider')), findsNothing);
+    expect(find.textContaining('语速：'), findsNothing);
+
+    // 区块文案按千问档一句话说明（下拉按钮自身也显示「千问语音合成」，
+    // 这里用具象文案锁定区块说明那一句）。
+    expect(find.textContaining('千问语音合成，走阿里云百炼'), findsOneWidget);
+
+    // 高级参数面板对千问档照常显示并参与保存（换 instruct 模型时传
+    // instructions 这类字段）。
+    await _reveal(
+      tester,
+      find.byKey(const Key('tts-advanced-params-tile')),
+      maxScrolls: 10,
+    );
+    expect(find.byKey(const Key('tts-advanced-params-tile')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
+    await tester.pumpAndSettle();
+    await _reveal(
+      tester,
+      find.byKey(const Key('tts-extra-params')),
+      maxScrolls: 10,
+    );
+    await tester.enterText(
+      find.byKey(const Key('tts-extra-params')),
+      '{"instructions": "用温柔的语气"}',
+    );
+
+    // 保存往返：provider 以 qwen_tts wire 名上送，音色与 extraParams 随行。
+    await _reveal(tester, find.byKey(const Key('tts-api-key')), maxScrolls: 10);
+    await tester.enterText(find.byKey(const Key('tts-api-key')), 'sk-qwen');
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-tts-settings')),
+      maxScrolls: 10,
+    );
+    await tester.tap(find.byKey(const Key('save-tts-settings')));
+    await tester.pumpAndSettle();
+
+    final draft = ttsGateway.savedDrafts.single;
+    expect(draft.provider, TtsServiceKind.qwenTts);
+    expect(draft.baseUrl, qwenTtsDefaultEndpoint);
+    expect(draft.model, qwenTtsDefaultModel);
+    expect(draft.voice, qwenTtsDefaultVoice);
+    expect(draft.speed, isNull);
+    expect(draft.extraParams, {'instructions': '用温柔的语气'});
+    expect(draft.apiKey, 'sk-qwen');
+  });
+
   testWidgets('forgetting the saved API key needs confirmation', (
     tester,
   ) async {

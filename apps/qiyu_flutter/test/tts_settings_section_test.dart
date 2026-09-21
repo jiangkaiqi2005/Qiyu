@@ -52,6 +52,47 @@ void main() {
     expect(value.voiceController.text, 'zh_female_vv_uranus_bigtts');
   });
 
+  test('未配置的千问协议回填 DashScope 端点、模型与缺省音色', () {
+    final value = form();
+    value.selectProvider('qwen_tts');
+
+    expect(value.provider, TtsServiceKind.qwenTts);
+    expect(value.baseUrlController.text, qwenTtsDefaultEndpoint);
+    expect(value.modelController.text, qwenTtsDefaultModel);
+    expect(value.voiceController.text, qwenTtsDefaultVoice);
+    // 千问档没有预设音色目录：音色恒为自由输入态。
+    expect(value.showCustomVoiceField, isTrue);
+  });
+
+  test('切到千问档丢掉语速草稿：千问档没有语速参数', () {
+    final value = form();
+    value.selectSpeed(1.5);
+
+    value.selectProvider('qwen_tts');
+
+    expect(value.speed, isNull);
+  });
+
+  test('千问档保存编排：自由音色 ID 与 extraParams 随草稿保存，无语速', () async {
+    final value = form();
+    value.selectProvider('qwen_tts');
+    value.voiceController.text = 'Nofish';
+    value.extraParamsController.text = '{"instructions": "用温柔的语气"}';
+    value.apiKeyController.text = 'sk-dashscope';
+
+    final saved = await value.save(viewModel, report: (_) {});
+
+    expect(saved, isTrue);
+    final draft = gateway.savedDrafts.single;
+    expect(draft.provider, TtsServiceKind.qwenTts);
+    expect(draft.baseUrl, qwenTtsDefaultEndpoint);
+    expect(draft.model, qwenTtsDefaultModel);
+    expect(draft.voice, 'Nofish');
+    expect(draft.speed, isNull);
+    expect(draft.extraParams, {'instructions': '用温柔的语气'});
+    expect(draft.apiKey, 'sk-dashscope');
+  });
+
   test('已配置时回填保存值：协议、地址、模型、自定义音色、语速与 extraParams', () {
     gateway.configured = true;
     final value = form();

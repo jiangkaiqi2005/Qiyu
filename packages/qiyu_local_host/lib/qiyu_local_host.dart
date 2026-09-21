@@ -37,6 +37,7 @@ export 'src/provider_settings_service.dart';
 export 'src/provider_web_socket.dart';
 export 'src/proxy_settings_service.dart';
 export 'src/qwen_asr_gateway.dart';
+export 'src/qwen_tts_gateway.dart';
 export 'src/relationship_lifecycle.dart';
 export 'src/secret_store.dart';
 export 'src/secure_token.dart';

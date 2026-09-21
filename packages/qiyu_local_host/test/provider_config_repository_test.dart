@@ -831,6 +831,80 @@ void main() {
     );
   });
 
+  test('tts 段 qwen_tts 往返：HTTP scheme 放行、Key 作用域随协议隔离', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-tts-qwen-');
+    addTearDown(() => temp.delete(recursive: true));
+    final path = '${temp.path}${Platform.pathSeparator}provider.json';
+    JsonProviderConfigRepository repository() =>
+        JsonProviderConfigRepository(filePath: path);
+
+    await repository().saveTts(
+      const TtsConfig(
+        provider: TtsProviderKind.qwenTts,
+        baseUrl: qwenTtsDefaultEndpoint,
+        model: qwenTtsDefaultModel,
+        voice: qwenTtsDefaultVoice,
+        apiKey: 'qwen-secret-value',
+        extraParams: {'instructions': '用温柔的语气'},
+      ),
+    );
+    final restored = await repository().loadTts();
+    expect(restored!.provider, TtsProviderKind.qwenTts);
+    expect(restored.baseUrl, qwenTtsDefaultEndpoint);
+    expect(restored.model, qwenTtsDefaultModel);
+    expect(restored.voice, qwenTtsDefaultVoice);
+    expect(restored.apiKey, 'qwen-secret-value');
+    expect(restored.extraParams, {'instructions': '用温柔的语气'});
+    final json =
+        jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
+    expect((json['tts']! as Map<String, Object?>)['provider'], 'qwen_tts');
+
+    // 手写 provider.json 的 qwen_tts 段照常读取（fromJson 路径）。
+    await File(path).writeAsString('''
+{
+  "tts": {
+    "provider": "qwen_tts",
+    "baseUrl": "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    "model": "qwen3-tts-flash",
+    "voice": "Cherry"
+  }
+}
+''');
+    final handwritten = (await repository().loadTts())!;
+    expect(handwritten.provider, TtsProviderKind.qwenTts);
+    expect(handwritten.voice, 'Cherry');
+
+    // 千问档与 OpenAI 兼容档同为 HTTP 家族：http/https 都放行，ws 拒绝。
+    expect(
+      () => const TtsConfig(
+        provider: TtsProviderKind.qwenTts,
+        baseUrl: 'http://dashscope.example.com/api/v1',
+        model: qwenTtsDefaultModel,
+      ).validate(),
+      returnsNormally,
+    );
+    expect(
+      () => const TtsConfig(
+        provider: TtsProviderKind.qwenTts,
+        baseUrl: 'ws://dashscope.example.com/api/v1',
+        model: qwenTtsDefaultModel,
+      ).validate(),
+      throwsA(isA<ProviderConfigException>()),
+    );
+
+    // 新协议自然进入「协议 + 规范化地址」作用域：同地址换协议不沿用 Key。
+    const openAi = TtsConfig(
+      baseUrl: qwenTtsDefaultEndpoint,
+      model: 'tts-1',
+    );
+    const qwen = TtsConfig(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl: qwenTtsDefaultEndpoint,
+      model: qwenTtsDefaultModel,
+    );
+    expect(openAi.credentialScope, isNot(qwen.credentialScope));
+  });
+
   group('子段读改写现状', () {
     // 票 03 的现状回归夹具：一份规范态（键序显式、两空格缩进、末尾
     // 换行）合成整文件，含聊天字段、四种子段与未知顶层键。所有凭据

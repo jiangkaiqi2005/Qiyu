@@ -8,6 +8,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
+import 'qwen_tts_gateway.dart';
 import 'volc_tts_gateway.dart';
 
 /// TTS 出网异常：kind 与聊天 Provider、STT 出网错误共用同一套分类
@@ -115,6 +116,9 @@ final class TtsModelGateway implements TtsSynthesisGateway {
       httpClient,
     ).synthesize(config: config, apiKey: apiKey, text: text),
     TtsProviderKind.volcTts => VolcTtsGateway(
+      httpClient,
+    ).synthesize(config: config, apiKey: apiKey, text: text),
+    TtsProviderKind.qwenTts => QwenTtsGateway(
       httpClient,
     ).synthesize(config: config, apiKey: apiKey, text: text),
   };

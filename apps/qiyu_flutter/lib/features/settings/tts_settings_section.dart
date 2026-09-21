@@ -75,10 +75,15 @@ final class TtsSettingsForm {
         : customVoiceValue;
   }
 
-  /// 是否亮出自定义音色输入框：选了「输入其他音色 ID」，或已存音色
-  /// 不在当前协议的预设目录里。
+  /// 是否亮出音色 ID 输入框：没有预设音色目录的档（千问）恒为自由
+  /// 输入；其余档选了「输入其他音色 ID」或已存音色不在预设目录里时
+  /// 亮出。
   bool get showCustomVoiceField {
     final presets = ttsVoicePresetsFor(_provider);
+    // 无预设目录 ⇒ 音色只能自由输入（空输入框也要能召回来）。
+    if (presets.isEmpty) {
+      return true;
+    }
     final currentVoice = voiceController.text.trim();
     return _customVoice ||
         (currentVoice.isNotEmpty && presets.every((p) => p.id != currentVoice));
@@ -142,8 +147,11 @@ final class TtsSettingsForm {
         defaults.url,
       );
       syncFocusProtectedField(modelController, modelFocusNode, defaults.model);
-      final defaultVoice = presets.isNotEmpty ? presets.first.id : '';
-      syncFocusProtectedField(voiceController, voiceFocusNode, defaultVoice);
+      syncFocusProtectedField(
+        voiceController,
+        voiceFocusNode,
+        _defaultVoiceFor(_provider),
+      );
       _customVoice = false;
       _speed = null;
       syncFocusProtectedField(extraParamsController, extraParamsFocusNode, '');
@@ -153,21 +161,27 @@ final class TtsSettingsForm {
     }
   }
 
-  /// 切换服务类型：落该协议的缺省地址与模型，并选首个音色预设。
+  /// 切换服务类型：落该协议的缺省地址与模型，并选该协议的缺省音色
+  /// （预设目录首档，千问档给官方示例音色 ID）。
   void selectProvider(String wireName) {
-    final next = wireName == 'volc_tts'
-        ? TtsServiceKind.volcTts
-        : TtsServiceKind.openAiCompatible;
+    final next = TtsServiceKind.values.firstWhere(
+      (kind) => kind.wireName == wireName,
+      orElse: () => TtsServiceKind.openAiCompatible,
+    );
     if (next == _provider) {
       return;
     }
     _provider = next;
     _customVoice = false;
-    final presets = ttsVoicePresetsFor(next);
     final defaults = _ttsProtocolDefaults(next);
     baseUrlController.text = defaults.url;
     modelController.text = defaults.model;
-    voiceController.text = presets.isNotEmpty ? presets.first.id : '';
+    voiceController.text = _defaultVoiceFor(next);
+    // 千问档没有语速参数：切过去就丢掉可能从上个协议带过来的语速草稿，
+    // 不存一个调了不动的值。
+    if (next == TtsServiceKind.qwenTts) {
+      _speed = null;
+    }
   }
 
   /// 选择音色：预设音色直接落名，「输入其他音色 ID」切到自定义态并
@@ -295,13 +309,21 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
           title: '语音朗读',
           children: [
             Text(
-              provider == TtsServiceKind.volcTts
-                  ? '把栖语写完的话读出来。豆包语音合成走火山方舟的 HTTP 接口，'
+              switch (provider) {
+                TtsServiceKind.volcTts =>
+                  '把栖语写完的话读出来。豆包语音合成走火山方舟的 HTTP 接口，'
                         '模型名称填 Resource-Id；Key 只存本机 provider.json；'
-                        '音频只存在内存，播完即丢。'
-                  : '把栖语写完的话读出来的服务（OpenAI 兼容语音合成，如 tts-1）。'
+                        '音频只存在内存，播完即丢。',
+                TtsServiceKind.qwenTts =>
+                  '把栖语写完的话读出来的服务（千问语音合成，走阿里云百炼）。'
+                        '她先把每句完整写好、过了安全检查才开口读；服务端返回'
+                        '音频地址后由本机取回完整的一段；音频只存在内存，'
+                        '播完即丢，本机不留声音文件。',
+                TtsServiceKind.openAiCompatible =>
+                  '把栖语写完的话读出来的服务（OpenAI 兼容语音合成，如 tts-1）。'
                         '她先把每句完整写好、过了安全检查才开口读；音频只存在内存，'
                         '播完即丢，本机不留声音文件。',
+              },
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.55,
@@ -311,15 +333,17 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
             SettingsControlledDropdown(
               dropdownKey: const Key('tts-provider'),
               label: '服务类型',
-              value: provider == TtsServiceKind.volcTts
-                  ? 'volc_tts'
-                  : 'openai_compatible',
+              value: provider.wireName,
               items: const [
                 DropdownMenuItem(
                   value: 'openai_compatible',
                   child: Text('OpenAI 兼容语音合成'),
                 ),
                 DropdownMenuItem(value: 'volc_tts', child: Text('豆包语音合成')),
+                DropdownMenuItem(
+                  value: 'qwen_tts',
+                  child: Text('千问语音合成'),
+                ),
               ],
               onChanged: (wireName) =>
                   setState(() => _form.selectProvider(wireName)),
@@ -359,6 +383,26 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
             const SizedBox(height: 16),
             Builder(
               builder: (context) {
+                // 千问档没有预设音色目录：音色直给「音色 ID」输入框，
+                // 任何千问音色 ID 都能填。
+                if (provider == TtsServiceKind.qwenTts) {
+                  return TextField(
+                    key: const Key('tts-voice'),
+                    controller: _form.voiceController,
+                    focusNode: _form.voiceFocusNode,
+                    decoration: InputDecoration(
+                      labelText: '音色 ID',
+                      hintText: qwenTtsDefaultVoice,
+                      border: settingsOutlineBorder(color: QiyuColors.line),
+                      enabledBorder: settingsOutlineBorder(
+                        color: QiyuColors.line,
+                      ),
+                      focusedBorder: settingsOutlineBorder(
+                        color: QiyuColors.composerFocusLine,
+                      ),
+                    ),
+                  );
+                }
                 final voicePresets = ttsVoicePresetsFor(provider);
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -416,46 +460,50 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 );
               },
             ),
-            const SizedBox(height: 8),
-            MergeSemantics(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _form.speed == null
-                              ? '语速：默认'
-                              : '语速：${_form.speed!.toStringAsFixed(2)} 倍',
-                          style: theme.textTheme.titleSmall,
-                        ),
-                      ),
-                      if (_form.speed != null)
-                        QiyuFocusRingScope(
-                          borderRadius: QiyuRadii.circleBorder,
-                          child: TextButton(
-                            key: const Key('tts-speed-reset'),
-                            onPressed: () =>
-                                setState(() => _form.selectSpeed(null)),
-                            child: const Text('默认'),
+            // 千问档没有语速参数：不显示语速滑条（厂商自有语速参数走
+            // 高级参数传），界面不出现调了不动的旋钮。
+            if (provider != TtsServiceKind.qwenTts) ...[
+              const SizedBox(height: 8),
+              MergeSemantics(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _form.speed == null
+                                ? '语速：默认'
+                                : '语速：${_form.speed!.toStringAsFixed(2)} 倍',
+                            style: theme.textTheme.titleSmall,
                           ),
                         ),
-                    ],
-                  ),
-                  Slider(
-                    key: const Key('tts-speed-slider'),
-                    value: _form.speed ?? 1.0,
-                    min: 0.5,
-                    max: 2.0,
-                    divisions: 6,
-                    label: (_form.speed ?? 1.0).toStringAsFixed(2),
-                    onChanged: (value) =>
-                        setState(() => _form.selectSpeed(value)),
-                  ),
-                ],
+                        if (_form.speed != null)
+                          QiyuFocusRingScope(
+                            borderRadius: QiyuRadii.circleBorder,
+                            child: TextButton(
+                              key: const Key('tts-speed-reset'),
+                              onPressed: () =>
+                                  setState(() => _form.selectSpeed(null)),
+                              child: const Text('默认'),
+                            ),
+                          ),
+                      ],
+                    ),
+                    Slider(
+                      key: const Key('tts-speed-slider'),
+                      value: _form.speed ?? 1.0,
+                      min: 0.5,
+                      max: 2.0,
+                      divisions: 6,
+                      label: (_form.speed ?? 1.0).toStringAsFixed(2),
+                      onChanged: (value) =>
+                          setState(() => _form.selectSpeed(value)),
+                    ),
+                  ],
+                ),
               ),
-            ),
+            ],
             const SizedBox(height: 8),
             SettingsApiKeyField(
               fieldKey: const Key('tts-api-key'),
@@ -489,16 +537,26 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        provider == TtsServiceKind.volcTts
-                            ? '配置豆包语音合成的深合并参数，例如：\n'
+                        switch (provider) {
+                          TtsServiceKind.volcTts =>
+                            '配置豆包语音合成的深合并参数，例如：\n'
                                   '{\n'
                                   '  "audio_params": { "sample_rate": 16000 },\n'
                                   '  "additions": { "explicit_dialect": "sichuan" }\n'
-                                  '}'
-                            : '配置 OpenAI 兼容语音合成的顶层扩展参数，例如：\n'
+                                  '}',
+                          // 千问的高级参数深合并进 input：换 instruct 模型时
+                          // 传 instructions 这类指令控制字段。
+                          TtsServiceKind.qwenTts =>
+                            '配置千问语音合成的扩展参数，深合并进 input，例如：\n'
+                                  '{\n'
+                                  '  "instructions": "用温柔的语气慢慢读"\n'
+                                  '}',
+                          TtsServiceKind.openAiCompatible =>
+                            '配置 OpenAI 兼容语音合成的顶层扩展参数，例如：\n'
                                   '{\n'
                                   '  "response_format": "mp3"\n'
                                   '}',
+                        },
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -573,7 +631,9 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
   }
 }
 
-/// 两套 TTS 协议各自的缺省地址、模型与输入提示档位。
+/// 三套 TTS 协议各自的缺省地址、模型与输入提示档位。千问与千问识别同
+/// 端点（阿里云百炼 DashScope 多模态接口）：地址是完整端点、不拼后缀，
+/// 模型与音色给官方示例值。
 ({String url, String model, String urlHint, String modelHint})
 _ttsProtocolDefaults(TtsServiceKind kind) => switch (kind) {
   TtsServiceKind.openAiCompatible => (
@@ -590,4 +650,25 @@ _ttsProtocolDefaults(TtsServiceKind kind) => switch (kind) {
     urlHint: 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
     modelHint: 'seed-tts-2.0',
   ),
+  TtsServiceKind.qwenTts => (
+    url: qwenTtsDefaultEndpoint,
+    model: qwenTtsDefaultModel,
+    urlHint: qwenTtsDefaultEndpoint,
+    modelHint: qwenTtsDefaultModel,
+  ),
 };
+
+/// 各协议的缺省音色：有预设目录的落首档，没有目录的档给各自的缺省值
+/// （千问直给官方示例音色 ID）。
+///
+/// 为什么按协议点名而不是按「无预设目录」推断：缺省音色是各协议自己
+/// 的值，空目录只是千问当前恰好没有目录。按空目录推断会让将来的无目录
+/// 档（如自定义合成）顺手继承千问的 Cherry；点名写死则新档位进来时
+/// 逃不过一次显式选择。
+String _defaultVoiceFor(TtsServiceKind kind) {
+  final presets = ttsVoicePresetsFor(kind);
+  if (presets.isNotEmpty) {
+    return presets.first.id;
+  }
+  return kind == TtsServiceKind.qwenTts ? qwenTtsDefaultVoice : '';
+}

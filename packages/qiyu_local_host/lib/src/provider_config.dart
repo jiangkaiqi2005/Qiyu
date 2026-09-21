@@ -377,10 +377,12 @@ final class SttConfig {
 
 /// 语音合成的协议类型：配置里的 wire 名与网关分派共用。缺省
 /// openai_compatible：不带 provider 字段的存量配置照常工作。
-/// 豆包协议（volc_tts）走订阅专属 HTTP 端点，同为 HTTP(S)。
+/// 豆包协议（volc_tts）走订阅专属 HTTP 端点，千问协议（qwen_tts）走
+/// DashScope 多模态端点，同为 HTTP(S)。
 enum TtsProviderKind {
   openAiCompatible('openai_compatible'),
-  volcTts('volc_tts');
+  volcTts('volc_tts'),
+  qwenTts('qwen_tts');
 
   const TtsProviderKind(this.wireName);
 
@@ -402,6 +404,23 @@ const volcTtsDefaultEndpoint =
 
 /// 豆包语音合成 2.0 的 Resource-Id（模型名称字段缺省值）。
 const volcTtsDefaultResourceId = 'seed-tts-2.0';
+
+/// 千问语音合成的 DashScope 端点（设置页缺省值）：与千问识别同端点，
+/// 地址本身就是完整端点，请求体直接 POST，不做后缀拼接。
+///
+/// 与 Flutter `tts_settings_client.dart` 同名常量双源同值（设置层按 HTTP
+/// 镜像防御旧版 Host，不与宿主包编译期耦合）：改动需两边同步。
+const qwenTtsDefaultEndpoint =
+    'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+
+/// 千问语音合成的模型名称缺省值（设置页缺省值；与 Flutter 侧同名常量
+/// 双源同值，改动需两边同步）。
+const qwenTtsDefaultModel = 'qwen3-tts-flash';
+
+/// 千问语音合成的音色缺省值（官方示例音色，设置页缺省值）。音色是自由
+/// 输入框：任何千问音色 ID 都能填，暂无预设目录。与 Flutter 侧同名常量
+/// 双源同值（改动需两边同步）；本包内网关空音色回落也用它，单处真相。
+const qwenTtsDefaultVoice = 'Cherry';
 
 /// 语音合成（TTS）服务配置：provider.json 顶层的可选 `tts` 段。
 /// [speed] 为空表示用服务缺省语速；[autoSpeak] 是聊天页朗读开关的

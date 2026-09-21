@@ -6,7 +6,35 @@ import 'provider_settings_client.dart' show ProviderSettingsGatewayException;
 
 /// 语音合成（TTS）的服务类型：与 Host 的 tts 段 provider 字段对应，
 /// 缺省 openai_compatible（存量配置不带该字段）。
-enum TtsServiceKind { openAiCompatible, volcTts }
+enum TtsServiceKind {
+  openAiCompatible,
+  volcTts,
+  /// 千问语音合成：DashScope 多模态接口，同为 HTTP(S) 家族。
+  qwenTts;
+
+  /// 与 Host `TtsProviderKind.wireName` 对应的配置 wire 名。
+  String get wireName => switch (this) {
+    TtsServiceKind.openAiCompatible => 'openai_compatible',
+    TtsServiceKind.volcTts => 'volc_tts',
+    TtsServiceKind.qwenTts => 'qwen_tts',
+  };
+}
+
+/// 千问语音合成的服务地址缺省值：DashScope 多模态完整端点（与千问识别
+/// 同端点，地址栏填完整端点、不拼后缀）。
+///
+/// 与宿主包 `provider_config.dart` 同名常量双源同值（设置层按 HTTP 镜像
+/// 防御旧版 Host，不与宿主包编译期耦合）：改动需两边同步。
+const qwenTtsDefaultEndpoint =
+    'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+
+/// 千问语音合成的模型名称缺省值（与宿主包侧同名常量双源同值，改动需
+/// 两边同步）。
+const qwenTtsDefaultModel = 'qwen3-tts-flash';
+
+/// 千问语音合成的音色缺省值（官方示例音色）：音色是自由输入框，任何
+/// 千问音色 ID 都能填。与宿主包侧同名常量双源同值（改动需两边同步）。
+const qwenTtsDefaultVoice = 'Cherry';
 
 /// 语音合成（TTS）服务设置：与聊天 Provider、语音转写设置同一套读回
 /// 口径——永不回明文 Key，只回 keySet 布尔。
@@ -35,9 +63,11 @@ final class TtsSettings {
       keySet: json['keySet']! as bool,
       // 快照 provider 字段缺失或未知值一律按缺省协议呈现（Host 只会回
       // 已支持的值，防御旧版 Host 的响应）。
-      provider: json['provider'] == 'volc_tts'
-          ? TtsServiceKind.volcTts
-          : TtsServiceKind.openAiCompatible,
+      provider: switch (json['provider']) {
+        'volc_tts' => TtsServiceKind.volcTts,
+        'qwen_tts' => TtsServiceKind.qwenTts,
+        _ => TtsServiceKind.openAiCompatible,
+      },
       baseUrl: json['baseUrl'] as String?,
       model: json['model'] as String?,
       voice: json['voice'] as String?,
@@ -80,10 +110,7 @@ final class TtsSettingsDraft {
   final Map<String, Object?>? extraParams;
 
   Map<String, Object?> toJson() => {
-    'provider': switch (provider) {
-      TtsServiceKind.openAiCompatible => 'openai_compatible',
-      TtsServiceKind.volcTts => 'volc_tts',
-    },
+    'provider': provider.wireName,
     'baseUrl': baseUrl,
     'model': model,
     'apiKey': ?apiKey,

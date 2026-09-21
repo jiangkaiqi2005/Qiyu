@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:qiyu_local_host/qiyu_local_host.dart';
@@ -58,6 +60,114 @@ void main() {
       model: 'tts-test',
     );
     expect(moved.keySet, isFalse);
+  });
+
+  test('Key 沿用规则：同地址换协议（换千问档）不沿用旧 Key', () async {
+    final service = TtsSettingsService(repository, _FakeTtsGateway());
+    await service.save(
+      baseUrl: qwenTtsDefaultEndpoint,
+      model: 'tts-1',
+      apiKey: 'secret-tts-key',
+    );
+
+    final switched = await service.save(
+      baseUrl: qwenTtsDefaultEndpoint,
+      model: qwenTtsDefaultModel,
+      provider: TtsProviderKind.qwenTts,
+    );
+    expect(switched.keySet, isFalse);
+    expect(switched.config?.provider, TtsProviderKind.qwenTts);
+    expect((await repository.loadTts())?.apiKey, isNull);
+
+    // 千问档同协议同地址再保存（没传新 Key）仍沿用刚存下的 Key。
+    final kept = await service.save(
+      baseUrl: qwenTtsDefaultEndpoint,
+      model: qwenTtsDefaultModel,
+      provider: TtsProviderKind.qwenTts,
+      apiKey: 'qwen-secret-value',
+    );
+    expect(kept.keySet, isTrue);
+    final sameScope = await service.save(
+      baseUrl: qwenTtsDefaultEndpoint,
+      model: qwenTtsDefaultModel,
+      provider: TtsProviderKind.qwenTts,
+    );
+    expect(sameScope.keySet, isTrue);
+  });
+
+  test('连接测试端到端：千问档经真网关两请求拿到试听音频', () async {
+    final client = _RecordingBytesHttpClient(
+      postResponse: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value(
+          utf8.encode(
+            jsonEncode({
+              'output': {
+                'audio': {'url': 'https://oss.example.com/qiyu.mp3'},
+              },
+            }),
+          ),
+        ),
+      ),
+      downloadResponse: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value([7, 8, 9]),
+      ),
+    );
+    // 真网关（分派 + 千问实现）配假 HTTP 客户端：锁住设置服务到两个
+    // 出网请求（POST 拿地址、GET 下载）的完整链路。
+    final service = TtsSettingsService(repository, TtsModelGateway(client));
+
+    final result = await service.test(
+      baseUrl: qwenTtsDefaultEndpoint,
+      model: qwenTtsDefaultModel,
+      provider: TtsProviderKind.qwenTts,
+      apiKey: 'sk-dashscope',
+      voice: 'Cherry',
+    );
+
+    expect(result.succeeded, isTrue);
+    expect(result.status, ProviderTestStatus.success);
+    expect(base64Decode(result.audioBase64!), [7, 8, 9]);
+    expect(client.postCalled, isTrue);
+    expect(client.downloadCalled, isTrue);
+    // 试听用的是内置示例句，音色按表单值上送。
+    final body =
+        jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+    expect((body['input']! as Map<String, Object?>)['text'],
+        ttsConnectionTestSentence);
+    expect((body['input']! as Map<String, Object?>)['voice'], 'Cherry');
+  });
+
+  test('连接测试端到端：千问档下载失败按人话失败，不带音频', () async {
+    final client = _RecordingBytesHttpClient(
+      postResponse: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value(
+          utf8.encode(
+            jsonEncode({
+              'output': {
+                'audio': {'url': 'https://oss.example.com/qiyu.mp3'},
+              },
+            }),
+          ),
+        ),
+      ),
+      downloadError: TimeoutException('slow'),
+    );
+    final service = TtsSettingsService(repository, TtsModelGateway(client));
+
+    final result = await service.test(
+      baseUrl: qwenTtsDefaultEndpoint,
+      model: qwenTtsDefaultModel,
+      provider: TtsProviderKind.qwenTts,
+      apiKey: 'sk-dashscope',
+    );
+
+    expect(result.succeeded, isFalse);
+    expect(result.status, ProviderTestStatus.timeout);
+    expect(result.audioBase64, isNull);
+    expect(result.message, '连接语音合成服务超时。');
   });
 
   test('保存设置保留既有朗读开关，脏 Key 不落盘', () async {
@@ -356,5 +466,47 @@ final class _FakeTtsGateway implements TtsSynthesisGateway {
       throw failure;
     }
     return audio;
+  }
+}
+
+/// 记录型二进制 HTTP 客户端：合成 POST 与音频地址下载（GET）分别留档，
+/// 端到端用例用它把「两个请求」逐条观测出来。
+final class _RecordingBytesHttpClient implements ProviderBytesHttpClient {
+  _RecordingBytesHttpClient({
+    this.postResponse,
+    this.downloadResponse,
+    this.downloadError,
+  });
+
+  final ProviderBytesHttpResponse? postResponse;
+  final ProviderBytesHttpResponse? downloadResponse;
+  final Object? downloadError;
+
+  bool postCalled = false;
+  bool downloadCalled = false;
+  late List<int> bytesBody;
+
+  @override
+  Future<ProviderBytesHttpResponse> postBytes({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) async {
+    postCalled = true;
+    bytesBody = body;
+    return postResponse!;
+  }
+
+  @override
+  Future<ProviderBytesHttpResponse> getBytes({
+    required Uri uri,
+    required Duration timeout,
+  }) async {
+    downloadCalled = true;
+    if (downloadError case final failure?) {
+      throw failure;
+    }
+    return downloadResponse!;
   }
 }
