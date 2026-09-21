@@ -401,6 +401,72 @@ void main() {
     expect(containsNonVisibleAscii(String.fromCharCode(0x7F)), isTrue);
   });
 
+  test('stt 段 qwen_asr 往返：HTTP scheme 放行、Key 作用域随协议隔离', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-stt-qwen-');
+    addTearDown(() => temp.delete(recursive: true));
+    final path = '${temp.path}${Platform.pathSeparator}provider.json';
+    JsonProviderConfigRepository repository() =>
+        JsonProviderConfigRepository(filePath: path);
+
+    await repository().saveStt(
+      const SttConfig(
+        provider: SttProviderKind.qwenAsr,
+        baseUrl: qwenAsrDefaultEndpoint,
+        model: qwenAsrDefaultModel,
+        apiKey: 'qwen-secret-value',
+      ),
+    );
+    final restored = await repository().loadStt();
+    expect(restored!.provider, SttProviderKind.qwenAsr);
+    expect(restored.baseUrl, qwenAsrDefaultEndpoint);
+    expect(restored.model, qwenAsrDefaultModel);
+    expect(restored.apiKey, 'qwen-secret-value');
+    final json = jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
+    expect((json['stt']! as Map<String, Object?>)['provider'], 'qwen_asr');
+
+    // 千问档与 OpenAI 兼容档同为 HTTP 家族：http/https 都放行，ws 拒绝。
+    expect(
+      () => const SttConfig(
+        provider: SttProviderKind.qwenAsr,
+        baseUrl: 'http://dashscope.example.com/api/v1',
+        model: qwenAsrDefaultModel,
+      ).validate(),
+      returnsNormally,
+    );
+    expect(
+      () => const SttConfig(
+        provider: SttProviderKind.qwenAsr,
+        baseUrl: 'ws://dashscope.example.com/api/v1',
+        model: qwenAsrDefaultModel,
+      ).validate(),
+      throwsA(isA<ProviderConfigException>()),
+    );
+
+    // 新协议自然进入「协议 + 规范化地址」作用域：同地址换协议不沿用 Key。
+    const openAi = SttConfig(
+      baseUrl: qwenAsrDefaultEndpoint,
+      model: 'whisper-test',
+    );
+    const qwen = SttConfig(
+      provider: SttProviderKind.qwenAsr,
+      baseUrl: qwenAsrDefaultEndpoint,
+      model: qwenAsrDefaultModel,
+    );
+    expect(openAi.credentialScope, isNot(qwen.credentialScope));
+    // 同协议换地址（地域端点）同样不沿用。
+    expect(
+      qwen.credentialScope,
+      isNot(
+        const SttConfig(
+          provider: SttProviderKind.qwenAsr,
+          baseUrl:
+              'https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+          model: qwenAsrDefaultModel,
+        ).credentialScope,
+      ),
+    );
+  });
+
   test('stt 段读写往返且 Key 只落在文件里', () async {
     final temp = await Directory.systemTemp.createTemp('qiyu-stt-section-');
     addTearDown(() => temp.delete(recursive: true));

@@ -1622,6 +1622,36 @@ void main() {
     expect(gateway.sentTexts, isEmpty);
   }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
+  testWidgets('千问档录音经浏览器转 WAV 后上送，转写文本照常进输入框', (tester) async {
+    final gateway = _VoiceChatGateway();
+    final recorder = _FakeRecorderPlatform();
+    await tester.pumpWidget(
+      _harness(
+        viewModel: _chatViewModel(gateway),
+        platform: recorder,
+        // 设置页保存千问档后的快照：聊天页据此打开浏览器侧 WAV 转换。
+        sttGateway: const _FixedSttGateway(
+          configured: true,
+          provider: SttServiceKind.qwenAsr,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('chat-input')));
+    await tester.tap(find.byKey(const Key('voice-mic')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('voice-mic-stop')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.transcribeCalls, 1);
+    // 浏览器录音（webm）先转 16k WAV：转换发生且上送的是转换后的字节。
+    expect(recorder.toWavCalls, 1);
+    expect(gateway.transcribeAudioCalls.single, [1, 2, 3]);
+    // 转写文本照常走既有发送链路，与其他档体验一致。
+    expect(gateway.sentTexts, ['今天有点累']);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+
   testWidgets('转写中按 Esc 中止：回重试态且迟到结果不发送', (tester) async {
     final gateway = _VoiceChatGateway()..hangTranscribe = true;
     await tester.pumpWidget(
@@ -1775,13 +1805,22 @@ final class _MutableSttGateway implements SttSettingsGateway {
 }
 
 final class _FixedSttGateway implements SttSettingsGateway {
-  const _FixedSttGateway({required this.configured});
+  const _FixedSttGateway({
+    required this.configured,
+    this.provider = SttServiceKind.openaiCompatible,
+  });
 
   final bool configured;
 
+  /// 服务类型：决定聊天页是否要走浏览器侧 WAV 转换。
+  final SttServiceKind provider;
+
   @override
-  Future<SttSettings> read() async =>
-      SttSettings(configured: configured, keySet: configured);
+  Future<SttSettings> read() async => SttSettings(
+    configured: configured,
+    keySet: configured,
+    provider: provider,
+  );
 
   @override
   Future<SttSettings> save(SttSettingsDraft draft) async =>
@@ -1905,6 +1944,9 @@ final class _FakeRecorderPlatform
   int starts = 0;
   Completer<Uint8List>? pendingStop;
 
+  /// 浏览器侧 WAV 转换调用计数：豆包与千问档才会触发。
+  int toWavCalls = 0;
+
   @override
   Future<VoicePermissionResult> preparePermission() async =>
       pendingPermission?.future ?? permission;
@@ -1919,8 +1961,10 @@ final class _FakeRecorderPlatform
   }
 
   @override
-  Future<RecordedAudio> toWav16kMono(RecordedAudio audio) async =>
-      RecordedAudio(bytes: audio.bytes, mimeType: 'audio/wav');
+  Future<RecordedAudio> toWav16kMono(RecordedAudio audio) async {
+    toWavCalls += 1;
+    return RecordedAudio(bytes: audio.bytes, mimeType: 'audio/wav');
+  }
 }
 
 final class _FakeRecordingSession implements VoiceRecordingSession {

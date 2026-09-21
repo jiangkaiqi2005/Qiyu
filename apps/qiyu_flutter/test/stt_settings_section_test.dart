@@ -43,6 +43,17 @@ void main() {
     expect(value.modelController.text, 'volc.seedasr.sauc.duration');
   });
 
+  test('未配置的千问协议回填 DashScope 完整端点与 qwen3-asr-flash', () {
+    final value = form();
+    value.selectProvider('qwen_asr');
+
+    expect(value.provider, SttServiceKind.qwenAsr);
+    expect(value.baseUrlController.text, qwenAsrDefaultEndpoint);
+    expect(value.modelController.text, qwenAsrDefaultModel);
+    expect(value.protocolDefaults.urlHint, qwenAsrDefaultEndpoint);
+    expect(value.protocolDefaults.modelHint, qwenAsrDefaultModel);
+  });
+
   test('已配置时回填保存值：协议、地址与模型', () {
     gateway.configured = true;
     final value = form();
@@ -109,6 +120,56 @@ void main() {
     expect(value.modelController.text, isEmpty);
   });
 
+  test('协议切换：https 地址在 OpenAI 兼容与千问之间互认，模型按既有口径回填', () {
+    final value = form();
+    value.baseUrlController.text = 'https://api.example.com/v1';
+    // 模型留空：切换后按新协议缺省回填（既有口径：空模型才回填）。
+    value.modelController.text = '';
+
+    value.selectProvider('qwen_asr');
+    expect(value.baseUrlController.text, 'https://api.example.com/v1');
+    expect(value.modelController.text, qwenAsrDefaultModel);
+
+    value.selectProvider('openai_compatible');
+    expect(value.baseUrlController.text, 'https://api.example.com/v1');
+    expect(value.modelController.text, isEmpty);
+  });
+
+  test('协议切换：HTTP 家族内互认地址，用户自填的模型不被覆盖', () {
+    final value = form();
+    value.baseUrlController.text = 'https://api.example.com/v1';
+    value.modelController.text = 'my-own-model';
+
+    value.selectProvider('qwen_asr');
+
+    expect(value.baseUrlController.text, 'https://api.example.com/v1');
+    expect(value.modelController.text, 'my-own-model');
+  });
+
+  test('协议切换：豆包 wss 地址切到千问不兼容，整体换成千问缺省档', () {
+    final value = form();
+    value.selectProvider('volc_seed_asr');
+    value.baseUrlController.text = 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream';
+    value.modelController.text = 'volc.seedasr.sauc.duration';
+
+    value.selectProvider('qwen_asr');
+
+    expect(value.baseUrlController.text, qwenAsrDefaultEndpoint);
+    expect(value.modelController.text, qwenAsrDefaultModel);
+  });
+
+  test('未知 wire 名按缺省协议处理，不改动表单', () {
+    final value = form();
+    value.baseUrlController.text = 'https://api.example.com/v1';
+    value.modelController.text = 'whisper-1';
+
+    value.selectProvider('some_future_protocol');
+
+    expect(value.provider, SttServiceKind.openaiCompatible);
+    expect(value.baseUrlController.text, 'https://api.example.com/v1');
+    expect(value.modelController.text, 'whisper-1');
+  });
+
   test('校验驳回空白服务地址或模型名称，并给出人话且不触达网关', () async {
     final value = form();
     value.baseUrlController.text = '   ';
@@ -137,6 +198,21 @@ void main() {
     expect(gateway.savedDrafts.single.model, 'volc.seedasr.sauc.duration');
     expect(gateway.savedDrafts.single.apiKey, 'sk-stt');
     // 保存成功后 Key 草稿即刻清空，不留明文在输入框。
+    expect(value.apiKeyController.text, isEmpty);
+  });
+
+  test('保存编排：千问草稿带着所选协议与端点原值上送', () async {
+    final value = form();
+    value.selectProvider('qwen_asr');
+    value.apiKeyController.text = '  sk-qwen  ';
+
+    final saved = await value.save(viewModel, report: (_) {});
+
+    expect(saved, isTrue);
+    expect(gateway.savedDrafts.single.provider, SttServiceKind.qwenAsr);
+    expect(gateway.savedDrafts.single.baseUrl, qwenAsrDefaultEndpoint);
+    expect(gateway.savedDrafts.single.model, qwenAsrDefaultModel);
+    expect(gateway.savedDrafts.single.apiKey, 'sk-qwen');
     expect(value.apiKeyController.text, isEmpty);
   });
 

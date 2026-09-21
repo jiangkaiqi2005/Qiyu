@@ -668,6 +668,94 @@ void main() {
     expect(find.textContaining('尚未保存语音服务的 API Key'), findsOneWidget);
   });
 
+  testWidgets('STT 设置区块：千问档下拉、缺省回填、区块文案与无高级参数面板', (tester) async {
+    final sttGateway = _MutableSttSettingsGateway(
+      const SttSettings(configured: false, keySet: false),
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        sttGateway: sttGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'stt');
+
+    // 下拉出现「千问语音识别」，选中后地址与模型落缺省值。
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    expect(find.text('千问语音识别'), findsOneWidget);
+    await tester.tap(find.text('千问语音识别').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-base-url')))
+          .controller!
+          .text,
+      qwenAsrDefaultEndpoint,
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-model')))
+          .controller!
+          .text,
+      qwenAsrDefaultModel,
+    );
+    // 千问档固定按千问话术说明，且不露出高级参数面板（识别侧无 extraParams）。
+    expect(find.textContaining('千问语音识别，走阿里云百炼'), findsOneWidget);
+    expect(find.text('高级参数'), findsNothing);
+
+    // 保存后 provider 以 qwen_asr wire 名上送。
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-stt-settings')),
+      maxScrolls: 10,
+    );
+    await tester.enterText(find.byKey(const Key('stt-api-key')), 'sk-qwen');
+    await tester.tap(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+    expect(sttGateway.savedDrafts.single.provider, SttServiceKind.qwenAsr);
+    expect(sttGateway.savedDrafts.single.baseUrl, qwenAsrDefaultEndpoint);
+    expect(sttGateway.savedDrafts.single.apiKey, 'sk-qwen');
+  });
+
+  testWidgets('STT 设置区块：千问档保存被主机按人话驳回时如实呈现', (tester) async {
+    final sttGateway = _MutableSttSettingsGateway(
+      const SttSettings(configured: false, keySet: false),
+      saveFailure:
+          '语音服务地址里混入了中文或看不见的字符，请重新复制粘贴。',
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        sttGateway: sttGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'stt');
+
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('千问语音识别').last);
+    await tester.pumpAndSettle();
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-stt-settings')),
+      maxScrolls: 10,
+    );
+    await tester.tap(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('语音服务地址里混入了中文或看不见的字符'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('privacy page states the local-only boundaries', (tester) async {
     await tester.pumpWidget(
       await _app(
@@ -1900,9 +1988,10 @@ final class _FixedSttSettingsGateway implements SttSettingsGateway {
 
 /// 可变 STT 设置网关：记录保存草稿、测试与忘记 Key 的调用。
 final class _MutableSttSettingsGateway implements SttSettingsGateway {
-  _MutableSttSettingsGateway(this._settings);
+  _MutableSttSettingsGateway(this._settings, {this.saveFailure});
 
   SttSettings _settings;
+  final String? saveFailure;
   final savedDrafts = <SttSettingsDraft>[];
   int testCalls = 0;
   int forgetCalls = 0;
@@ -1913,6 +2002,9 @@ final class _MutableSttSettingsGateway implements SttSettingsGateway {
   @override
   Future<SttSettings> save(SttSettingsDraft draft) async {
     savedDrafts.add(draft);
+    if (saveFailure case final message?) {
+      throw ProviderSettingsGatewayException(message);
+    }
     return _settings = SttSettings(
       configured: true,
       keySet: draft.apiKey != null || _settings.keySet,

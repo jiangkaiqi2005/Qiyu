@@ -513,6 +513,80 @@ void main() {
     );
   });
 
+  test('千问档保存往返：provider 落 qwen_asr，快照不带明文 Key', () async {
+    final service = SttSettingsService(repository(), _sttGateway('在吗'));
+
+    final saved = await service.save(
+      provider: SttProviderKind.qwenAsr,
+      baseUrl: qwenAsrDefaultEndpoint,
+      model: qwenAsrDefaultModel,
+      apiKey: 'qwen-secret-value',
+    );
+
+    expect(saved.configured, isTrue);
+    expect(saved.keySet, isTrue);
+    expect(saved.config!.provider, SttProviderKind.qwenAsr);
+    expect(saved.toJson()['provider'], 'qwen_asr');
+    expect(saved.toJson(), isNot(contains('qwen-secret-value')));
+    final stored =
+        jsonDecode(await File(configPath()).readAsString())
+            as Map<String, Object?>;
+    expect(
+      (stored['stt']! as Map<String, Object?>)['provider'],
+      'qwen_asr',
+    );
+  });
+
+  test('千问档连接测试与正式转写：原生形状请求、文本经 output 路径取出', () async {
+    final http = _StaticSttHttpClient(
+      jsonEncode({
+        'output': {
+          'choices': [
+            {
+              'message': {
+                'content': [
+                  {'text': '今天有点累'},
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    final service = SttSettingsService(repository(), SttModelGateway(http));
+
+    final tested = await service.test(
+      provider: SttProviderKind.qwenAsr,
+      baseUrl: qwenAsrDefaultEndpoint,
+      model: qwenAsrDefaultModel,
+      apiKey: 'qwen-test-key',
+    );
+    expect(tested.succeeded, isTrue);
+    expect(tested.message, '连接成功，语音输入可以使用。');
+    expect(http.lastHeaders!['authorization'], 'Bearer qwen-test-key');
+    // 静音代发音频是 WAV：data URL 的 mediatype 因此是 audio/wav。
+    final sent = jsonDecode(utf8.decode(http.lastBody!)) as Map<String, Object?>;
+    final content =
+        ((sent['input'] as Map<String, Object?>)['messages'] as List<Object?>)
+            .cast<Map<String, Object?>>()
+            .single['content'] as List<Object?>;
+    expect(
+      (content.single as Map<String, Object?>)['audio'],
+      startsWith('data:audio/wav;base64,'),
+    );
+
+    await service.save(
+      provider: SttProviderKind.qwenAsr,
+      baseUrl: qwenAsrDefaultEndpoint,
+      model: qwenAsrDefaultModel,
+      apiKey: 'qwen-secret-value',
+    );
+    expect(
+      await service.transcribe(audio: [1, 2, 3], mimeType: 'audio/wav'),
+      '今天有点累',
+    );
+  });
+
   test('损坏的 stt 段只影响 STT，不拖垮聊天配置读取', () async {
     await repository().save(
       const ProviderConfig(

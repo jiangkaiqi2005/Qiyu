@@ -166,9 +166,11 @@ Uri normalizeProviderBaseUri(String baseUrl) {
 
 /// 语音转写（STT）的协议类型：配置里的 wire 名与网关分派共用。
 /// 缺省 openai_compatible：不带 provider 字段的存量配置照常工作。
+/// 千问（qwen_asr）走 DashScope 多模态接口，同为 HTTP(S)。
 enum SttProviderKind {
   openAiCompatible('openai_compatible'),
-  volcSeedAsr('volc_seed_asr');
+  volcSeedAsr('volc_seed_asr'),
+  qwenAsr('qwen_asr');
 
   const SttProviderKind(this.wireName);
 
@@ -183,8 +185,17 @@ enum SttProviderKind {
   bool allows(String scheme) => switch (this) {
     SttProviderKind.openAiCompatible => scheme == 'http' || scheme == 'https',
     SttProviderKind.volcSeedAsr => scheme == 'ws' || scheme == 'wss',
+    SttProviderKind.qwenAsr => scheme == 'http' || scheme == 'https',
   };
 }
+
+/// 千问语音识别的 DashScope 多模态端点（设置页缺省值）：地址本身就是
+/// 完整端点，请求体按原生形状直接 POST，不做后缀拼接。
+const qwenAsrDefaultEndpoint =
+    'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+
+/// 千问语音识别的模型名称缺省值（设置页缺省值）。
+const qwenAsrDefaultModel = 'qwen3-asr-flash';
 
 /// 是否混入可见 ASCII（0x21–0x7E）之外的字符：空格、控制符、DEL、中文、
 /// 零宽字符等粘贴事故。语音转写与语音合成的地址、模型名、音色与 API
@@ -351,6 +362,8 @@ final class SttConfig {
     final schemeFailureMessage = switch (provider) {
       SttProviderKind.openAiCompatible => '语音服务地址必须是有效的 HTTP 地址。',
       SttProviderKind.volcSeedAsr => '语音服务地址必须是有效的 WebSocket 地址。',
+      // 千问同为 HTTP 档：与 OpenAI 兼容共用同一句地址话术。
+      SttProviderKind.qwenAsr => '语音服务地址必须是有效的 HTTP 地址。',
     };
     _validateSpeechEndpoint(
       baseUrl: baseUrl,

@@ -10,6 +10,7 @@ import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
 import 'provider_web_socket.dart';
+import 'qwen_asr_gateway.dart';
 import 'volc_seed_asr_gateway.dart';
 
 /// STT 出网异常：kind 与聊天 Provider 出网错误共用同一套分类
@@ -129,7 +130,7 @@ final class OpenAiTranscriptionGateway implements SttTranscriptionGateway {
 }
 
 /// 语音转写的出网入口：按 stt 配置的协议分派到具体网关。
-/// [httpClient] 供 OpenAI 兼容协议使用，[webSocketConnector] 供豆包
+/// [httpClient] 供 OpenAI 兼容与千问协议使用，[webSocketConnector] 供豆包
 /// 流式协议使用；调用面（transcribe 形状）与 v1 保持一致。
 final class SttModelGateway implements SttTranscriptionGateway {
   SttModelGateway(
@@ -157,6 +158,12 @@ final class SttModelGateway implements SttTranscriptionGateway {
         mimeType: mimeType,
       ),
     SttProviderKind.volcSeedAsr => _volcSeedAsr.transcribe(
+      config: config,
+      apiKey: apiKey,
+      audio: audio,
+      mimeType: mimeType,
+    ),
+    SttProviderKind.qwenAsr => QwenAsrGateway(httpClient).transcribe(
       config: config,
       apiKey: apiKey,
       audio: audio,

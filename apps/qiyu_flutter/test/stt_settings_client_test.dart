@@ -60,6 +60,89 @@ void main() {
     expect(settings.wantsWavAudio, isTrue);
   });
 
+  test('读取设置：千问协议回填 provider 并标记需要 WAV 转换', () async {
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'qwen_asr',
+          'baseUrl':
+              'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+          'model': 'qwen3-asr-flash',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+    );
+
+    final settings = await HttpSttSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    ).read();
+
+    expect(settings.provider, SttServiceKind.qwenAsr);
+    expect(settings.wantsWavAudio, isTrue);
+  });
+
+  test('未知 provider 值按缺省协议呈现（旧版 Host 响应防御）', () async {
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt' => hostJsonResponse({
+          'configured': true,
+          'keySet': false,
+          'provider': 'some_future_protocol',
+          'baseUrl': 'https://stt.example.com/v1',
+          'model': 'whisper-test',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+    );
+
+    final settings = await HttpSttSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    ).read();
+
+    expect(settings.provider, SttServiceKind.openaiCompatible);
+    expect(settings.wantsWavAudio, isFalse);
+  });
+
+  test('千问草稿保存：请求体带 qwen_asr wire 名与端点原值', () async {
+    final requests = <http.Request>[];
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'qwen_asr',
+          'baseUrl': qwenAsrDefaultEndpoint,
+          'model': qwenAsrDefaultModel,
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+      requests: requests,
+    );
+
+    await HttpSttSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    ).save(
+      const SttSettingsDraft(
+        provider: SttServiceKind.qwenAsr,
+        baseUrl: qwenAsrDefaultEndpoint,
+        model: qwenAsrDefaultModel,
+        apiKey: 'qwen-temporary-value',
+      ),
+    );
+
+    expect(jsonDecode(requests.last.body), {
+      'provider': 'qwen_asr',
+      'baseUrl': qwenAsrDefaultEndpoint,
+      'model': qwenAsrDefaultModel,
+      'apiKey': 'qwen-temporary-value',
+    });
+  });
+
   test('保存与忘记 Key 都带 CSRF 头且请求体形状正确', () async {
     final requests = <http.Request>[];
     final client = hostTransportClient(

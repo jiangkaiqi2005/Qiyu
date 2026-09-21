@@ -11,7 +11,7 @@ import 'stt_settings_view_model.dart';
 /// 语音输入（STT）设置领域：转写服务类型、地址、模型与 API Key。
 ///
 /// 领域的深模块边界在这里收口——控制器与焦点管理、协议缺省值
-/// （两套协议各自的地址与模型档位）、设置同步、协议切换时的地址
+/// （各协议各自的地址与模型档位）、设置同步、协议切换时的地址
 /// 兼容性回填、草稿校验与保存编排都落在 [SttSettingsForm]；
 /// [SttSettingsSection] 只负责把这些状态画出来。新增或修改本领域的
 /// 一条校验、一个缺省值或一段保存编排，只动本文件。异步编排
@@ -90,11 +90,12 @@ final class SttSettingsForm {
   }
 
   /// 切换服务类型：地址空白或 scheme 与新协议不兼容（https 不能给豆包，
-  /// wss 不能给 OpenAI 兼容）时，换成新协议的缺省地址和模型。
+  /// wss 不能给 OpenAI 兼容与千问）时，换成新协议的缺省地址和模型。
   void selectProvider(String wireName) {
-    final next = wireName == 'volc_seed_asr'
-        ? SttServiceKind.volcSeedAsr
-        : SttServiceKind.openaiCompatible;
+    final next = SttServiceKind.values.firstWhere(
+      (kind) => kind.wireName == wireName,
+      orElse: () => SttServiceKind.openaiCompatible,
+    );
     if (next == _provider) {
       return;
     }
@@ -117,6 +118,9 @@ final class SttSettingsForm {
         uri != null && (uri.scheme == 'http' || uri.scheme == 'https'),
       SttServiceKind.volcSeedAsr =>
         uri != null && (uri.scheme == 'ws' || uri.scheme == 'wss'),
+      // 千问与 OpenAI 兼容同为 HTTP 家族：http/https 互认。
+      SttServiceKind.qwenAsr =>
+        uri != null && (uri.scheme == 'http' || uri.scheme == 'https'),
     };
     if (url.isEmpty || !schemeCompatible) {
       baseUrlController.text = toDefaults.url;
@@ -220,13 +224,20 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
           title: '语音输入',
           children: [
             Text(
-              provider == SttServiceKind.volcSeedAsr
-                  ? '把说的话转成文字。豆包走官方语音识别协议；'
-                        'Key 只保存在本机 provider.json；录音只存在内存里，'
-                        '转写完成即丢弃，不会进入会话与记忆。'
-                  : '把说的话转成文字的服务（OpenAI 兼容转写，如 whisper 系列）。'
+              switch (provider) {
+                SttServiceKind.openaiCompatible =>
+                  '把说的话转成文字的服务（OpenAI 兼容转写，如 whisper 系列）。'
                         'Key 只保存在本机 provider.json；录音只存在内存里，'
                         '转写完成即丢弃，不会进入会话与记忆。',
+                SttServiceKind.volcSeedAsr =>
+                  '把说的话转成文字。豆包走官方语音识别协议；'
+                        'Key 只保存在本机 provider.json；录音只存在内存里，'
+                        '转写完成即丢弃，不会进入会话与记忆。',
+                SttServiceKind.qwenAsr =>
+                  '把说的话转成文字的服务（千问语音识别，走阿里云百炼）。'
+                        'Key 只保存在本机 provider.json；录音只存在内存里，'
+                        '转写完成即丢弃，不会进入会话与记忆。',
+              },
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.55,
@@ -236,9 +247,7 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
             SettingsControlledDropdown(
               dropdownKey: const Key('stt-provider'),
               label: '服务类型',
-              value: provider == SttServiceKind.volcSeedAsr
-                  ? 'volc_seed_asr'
-                  : 'openai_compatible',
+              value: provider.wireName,
               items: const [
                 DropdownMenuItem(
                   value: 'openai_compatible',
@@ -247,6 +256,10 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                 DropdownMenuItem(
                   value: 'volc_seed_asr',
                   child: Text('豆包流式语音识别'),
+                ),
+                DropdownMenuItem(
+                  value: 'qwen_asr',
+                  child: Text('千问语音识别'),
                 ),
               ],
               onChanged: (wireName) =>
@@ -340,7 +353,8 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
   }
 }
 
-/// 两套 STT 协议各自的缺省地址、模型与输入提示档位。
+/// 三套 STT 协议各自的缺省地址、模型与输入提示档位。千问档给完整端点
+/// 与官方示例模型（地址栏不拼后缀，两种请求形状都用同一个地址）。
 ({String url, String model, String urlHint, String modelHint})
 _sttProtocolDefaults(SttServiceKind kind) => switch (kind) {
   SttServiceKind.openaiCompatible => (
@@ -355,5 +369,11 @@ _sttProtocolDefaults(SttServiceKind kind) => switch (kind) {
     urlHint:
         'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
     modelHint: 'volc.seedasr.sauc.duration',
+  ),
+  SttServiceKind.qwenAsr => (
+    url: qwenAsrDefaultEndpoint,
+    model: qwenAsrDefaultModel,
+    urlHint: qwenAsrDefaultEndpoint,
+    modelHint: qwenAsrDefaultModel,
   ),
 };
