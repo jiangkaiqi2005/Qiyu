@@ -7,6 +7,15 @@ import 'provider_config.dart';
 import 'secret_store.dart';
 import 'web_search.dart';
 
+/// 后台整理调用的模型期限（秒）。Dream、日终理解与轮内召回都经
+/// [ProviderSettingsService.complete] 出网：提示长、输出预算大，实测
+/// 同配置下 Dream 近三分钟、日终理解亦可超过一分钟，而配置里的期限
+/// 表达的是用户等待聊天回复的耐心（聊天链路照旧沿用），后台任务没有
+/// 人等。取值与请求超时的允许上限一致——后台调用再慢也慢不过产品允许
+/// 的最慢聊天配置；超时才按失败降级，未完成的整理由补跑机制在下次
+/// 启动或空闲时继续。
+const backgroundModelTimeoutSeconds = maxConfiguredTimeoutSeconds;
+
 final class ProviderSettingsSnapshot {
   const ProviderSettingsSnapshot({required this.config, required this.keySet});
 
@@ -322,7 +331,9 @@ final class ProviderSettingsService
     }
     try {
       final text = await modelGateway.complete(
-        config: config,
+        // 后台整理调用按后台期限出网：聊天期限是用户等回复的耐心上限，
+        // 而 Dream 与日终理解没人等，链路只在超时后降级并留待补跑。
+        config: config.withTimeoutSeconds(backgroundModelTimeoutSeconds),
         apiKey: await _resolveApiKey(config),
         messages: messages,
         maxTokens: maxTokens,

@@ -80,6 +80,8 @@ void main() {
 
     expect(gateway.config, config.withApiKey('provider-key'));
     expect(gateway.webSearchApiKey, 'any-key');
+    // 聊天链路出网沿用配置里的期限，不受后台期限影响。
+    expect(gateway.config!.timeoutSeconds, config.timeoutSeconds);
     expect(
       gateway.messages!.first.content,
       contains(webSearchSystemInstruction),
@@ -194,6 +196,28 @@ void main() {
 
     await service.complete([const ModelMessage(ModelMessageRole.user, '在吗')]);
     expect(gateway.maxTokens, isNull);
+  });
+
+  test('后台 complete 调用按后台期限出网，聊天期限只归聊天', () async {
+    final repository = _MemoryProviderConfigRepository()..config = config;
+    final gateway = _FakeModelGateway(reply: '{}');
+    final service = ProviderSettingsService(
+      repository,
+      _MemorySecretStore(),
+      gateway,
+      promptBuilder,
+    );
+
+    await service.complete([const ModelMessage(ModelMessageRole.user, '整理')]);
+
+    expect(gateway.config!.timeoutSeconds, backgroundModelTimeoutSeconds);
+    expect(
+      gateway.config!.timeoutSeconds,
+      greaterThan(config.timeoutSeconds),
+    );
+    // 只换期限：目标、模型与 Key 解析结果原样透传。
+    expect(gateway.config!.baseUrl, config.baseUrl);
+    expect(gateway.config!.model, config.model);
   });
 
   test('测试当前配置返回成功结果且不会回传 Key', () async {
@@ -552,6 +576,7 @@ final class _FakeModelGateway implements ModelGateway {
 
   final String? reply;
   final ModelFailureKind? failure;
+  ProviderConfig? config;
   String? apiKey;
   List<ModelMessage>? messages;
   int? maxTokens;
@@ -563,6 +588,7 @@ final class _FakeModelGateway implements ModelGateway {
     required List<ModelMessage> messages,
     int? maxTokens,
   }) async {
+    this.config = config;
     this.apiKey = apiKey;
     this.messages = messages;
     this.maxTokens = maxTokens;

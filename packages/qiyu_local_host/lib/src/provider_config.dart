@@ -21,6 +21,10 @@ enum ProviderKind {
   );
 }
 
+/// 请求超时的允许上限（秒）：配置校验与后台整理调用期限共用这一边界，
+/// 单处改动两处生效，不各写一遍。
+const maxConfiguredTimeoutSeconds = 600;
+
 final class ProviderConfig {
   const ProviderConfig({
     required this.kind,
@@ -67,6 +71,17 @@ final class ProviderConfig {
     apiKey: apiKey,
   );
 
+  /// 换一个期限的副本（其余字段原样）：后台整理调用在出网时按后台
+  /// 期限放宽，聊天链路始终用配置里的原值。
+  ProviderConfig withTimeoutSeconds(int timeoutSeconds) => ProviderConfig(
+    kind: kind,
+    baseUrl: baseUrl,
+    model: model,
+    temperature: temperature,
+    timeoutSeconds: timeoutSeconds,
+    apiKey: apiKey,
+  );
+
   String get credentialScope =>
       '${kind.wireName}|${normalizeProviderBaseUri(baseUrl)}';
 
@@ -102,7 +117,7 @@ final class ProviderConfig {
     if (!temperature.isFinite || temperature < 0 || temperature > 2) {
       throw const ProviderConfigException('temperature 必须在 0 到 2 之间。');
     }
-    if (timeoutSeconds < 1 || timeoutSeconds > 600) {
+    if (timeoutSeconds < 1 || timeoutSeconds > maxConfiguredTimeoutSeconds) {
       throw const ProviderConfigException('超时时间必须在 1 到 600 秒之间。');
     }
   }
