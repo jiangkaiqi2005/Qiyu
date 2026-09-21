@@ -467,6 +467,199 @@ void main() {
     );
   });
 
+  test('stt 段 custom 往返：旋钮与高级参数落盘、缺省值、非自定义档不落盘旋钮', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-stt-custom-');
+    addTearDown(() => temp.delete(recursive: true));
+    final path = '${temp.path}${Platform.pathSeparator}provider.json';
+    JsonProviderConfigRepository repository() =>
+        JsonProviderConfigRepository(filePath: path);
+
+    // 自定义档完整往返：鉴权头、响应形态、字段路径与高级参数逐一读回。
+    await repository().saveStt(
+      const SttConfig(
+        provider: SttProviderKind.custom,
+        baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+        model: 'whisper-test',
+        apiKey: 'custom-secret-value',
+        authHeader: 'X-Api-Key',
+        responseShape: SttResponseShape.sse,
+        responseField: 'result.text',
+        extraParams: {'speaker': 'zh'},
+      ),
+    );
+    final restored = await repository().loadStt();
+    expect(restored!.provider, SttProviderKind.custom);
+    expect(restored.authHeader, 'X-Api-Key');
+    expect(restored.responseShape, SttResponseShape.sse);
+    expect(restored.responseField, 'result.text');
+    expect(restored.extraParams, {'speaker': 'zh'});
+    expect(restored.apiKey, 'custom-secret-value');
+    final json =
+        jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
+    final section = json['stt']! as Map<String, Object?>;
+    expect(section['provider'], 'custom');
+    expect(section['authHeader'], 'X-Api-Key');
+    expect(section['responseShape'], 'sse');
+    expect(section['responseField'], 'result.text');
+    expect(section['extraParams'], {'speaker': 'zh'});
+
+    // 旋钮缺省值：custom 段不带旋钮时按缺省读（等价默认 Bearer 与 text）。
+    await File(path).writeAsString(
+      jsonEncode({
+        'stt': {
+          'provider': 'custom',
+          'baseUrl': 'https://stt.example.com/v1/audio/transcriptions',
+          'model': 'whisper-test',
+        },
+      }),
+    );
+    final defaults = await repository().loadStt();
+    expect(defaults!.authHeader, isNull);
+    expect(defaults.responseShape, SttResponseShape.jsonPath);
+    expect(defaults.responseField, 'text');
+    expect(defaults.extraParams, isNull);
+
+    // 非自定义档不落盘旋钮与高级参数：构造时带上也只在 custom 档生效。
+    await repository().saveStt(
+      const SttConfig(
+        provider: SttProviderKind.openAiCompatible,
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-test',
+        authHeader: 'X-Api-Key',
+        responseShape: SttResponseShape.sse,
+        responseField: 'result.text',
+        extraParams: {'speaker': 'zh'},
+      ),
+    );
+    final openAi =
+        jsonDecode(await File(path).readAsString()) as Map<String, Object?>;
+    final openAiSection = openAi['stt']! as Map<String, Object?>;
+    expect(openAiSection['provider'], 'openai_compatible');
+    expect(openAiSection.containsKey('authHeader'), isFalse);
+    expect(openAiSection.containsKey('responseShape'), isFalse);
+    expect(openAiSection.containsKey('responseField'), isFalse);
+    expect(openAiSection.containsKey('extraParams'), isFalse);
+
+    // 存量配置兼容：不带 provider 与旋钮的老 stt 段照常读为 OpenAI 兼容。
+    await File(path).writeAsString(
+      jsonEncode({
+        'stt': {
+          'baseUrl': 'https://stt.example.com/v1',
+          'model': 'whisper-test',
+          'apiKey': 'legacy-secret-value',
+        },
+      }),
+    );
+    final legacy = await repository().loadStt();
+    expect(legacy!.provider, SttProviderKind.openAiCompatible);
+    expect(legacy.apiKey, 'legacy-secret-value');
+    expect(legacy.responseShape, SttResponseShape.jsonPath);
+    expect(legacy.responseField, 'text');
+  });
+
+  test('stt 段 custom 校验：HTTP scheme 放行、鉴权头脏字符与空头名人话、Key 作用域随协议隔离', () {
+    // 自定义档同属 HTTP 家族：http/https 放行，ws 拒绝。
+    expect(
+      () => const SttConfig(
+        provider: SttProviderKind.custom,
+        baseUrl: 'http://stt.example.com/v1/audio/transcriptions',
+        model: 'whisper-test',
+      ).validate(),
+      returnsNormally,
+    );
+    expect(
+      () => const SttConfig(
+        provider: SttProviderKind.custom,
+        baseUrl: 'ws://stt.example.com/v1/audio/transcriptions',
+        model: 'whisper-test',
+      ).validate(),
+      throwsA(isA<ProviderConfigException>()),
+    );
+
+    // 鉴权头脏字符与空头名（": Bearer" 这种粘贴事故会让 dart:io 写出
+    // 空头名，请求期才炸未分类异常）在保存前拦成人话。
+    expect(
+      () => const SttConfig(
+        provider: SttProviderKind.custom,
+        baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+        model: 'whisper-test',
+        authHeader: 'X-Api-Key\u200B',
+      ).validate(),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          '鉴权头里混入了中文或看不见的字符，请重新填写。',
+        ),
+      ),
+    );
+    expect(
+      () => const SttConfig(
+        provider: SttProviderKind.custom,
+        baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+        model: 'whisper-test',
+        authHeader: ': Bearer',
+      ).validate(),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          '鉴权头格式不正确，请填写如 Authorization: Bearer 的头名。',
+        ),
+      ),
+    );
+
+    // 保留头名撞名在保存前拦成人话：content-type 撞名会被网关自己写的
+    // multipart 头静默覆盖（无鉴权出网），大小写不敏感都拦。
+    for (final authHeader in ['Content-Type: Bearer', 'content-length', 'HOST']) {
+      expect(
+        () => SttConfig(
+          provider: SttProviderKind.custom,
+          baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+          model: 'whisper-test',
+          authHeader: authHeader,
+        ).validate(),
+        throwsA(
+          isA<ProviderConfigException>().having(
+            (error) => error.message,
+            'message',
+            '鉴权头不能使用 Content-Type、Content-Length 这类保留头名，请重新填写。',
+          ),
+        ),
+        reason: authHeader,
+      );
+    }
+
+    // 高级参数空键名按格式不正确拒绝（仅 custom 档校验）。
+    expect(
+      () => const SttConfig(
+        provider: SttProviderKind.custom,
+        baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+        model: 'whisper-test',
+        extraParams: {'': 'value'},
+      ).validate(),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          '自定义高级参数格式不正确。',
+        ),
+      ),
+    );
+
+    // 新 wire 名自然进入「协议 + 规范化地址」作用域：换协议不沿用 Key。
+    const openAi = SttConfig(
+      baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+      model: 'whisper-test',
+    );
+    const custom = SttConfig(
+      provider: SttProviderKind.custom,
+      baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+      model: 'whisper-test',
+    );
+    expect(openAi.credentialScope, isNot(custom.credentialScope));
+  });
+
   test('stt 段读写往返且 Key 只落在文件里', () async {
     final temp = await Directory.systemTemp.createTemp('qiyu-stt-section-');
     addTearDown(() => temp.delete(recursive: true));

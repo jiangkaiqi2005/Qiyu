@@ -166,11 +166,13 @@ Uri normalizeProviderBaseUri(String baseUrl) {
 
 /// 语音转写（STT）的协议类型：配置里的 wire 名与网关分派共用。
 /// 缺省 openai_compatible：不带 provider 字段的存量配置照常工作。
-/// 千问（qwen_asr）走 DashScope 多模态接口，同为 HTTP(S)。
+/// 千问（qwen_asr）走 DashScope 多模态接口，自定义（custom）走用户
+/// 填写的完整地址（普通 HTTP POST + multipart 表单），同为 HTTP(S)。
 enum SttProviderKind {
   openAiCompatible('openai_compatible'),
   volcSeedAsr('volc_seed_asr'),
-  qwenAsr('qwen_asr');
+  qwenAsr('qwen_asr'),
+  custom('custom');
 
   const SttProviderKind(this.wireName);
 
@@ -186,6 +188,7 @@ enum SttProviderKind {
     SttProviderKind.openAiCompatible => scheme == 'http' || scheme == 'https',
     SttProviderKind.volcSeedAsr => scheme == 'ws' || scheme == 'wss',
     SttProviderKind.qwenAsr => scheme == 'http' || scheme == 'https',
+    SttProviderKind.custom => scheme == 'http' || scheme == 'https',
   };
 }
 
@@ -196,6 +199,42 @@ const qwenAsrDefaultEndpoint =
 
 /// 千问语音识别的模型名称缺省值（设置页缺省值）。
 const qwenAsrDefaultModel = 'qwen3-asr-flash';
+
+/// 自定义转写档的响应形态：配置里的 wire 名与设置页下拉共用。
+enum SttResponseShape {
+  /// JSON 字段路径：整段响应按点号路径取文本（缺省 text，不支持数组下标）。
+  jsonPath('json_path'),
+
+  /// SSE 流式：逐行 data 事件，载荷即增量文本，按序拼成全文。
+  sse('sse');
+
+  const SttResponseShape(this.wireName);
+
+  final String wireName;
+
+  static SttResponseShape fromWireName(String value) => values.firstWhere(
+    (shape) => shape.wireName == value,
+    orElse: () =>
+        throw const ProviderConfigException('不支持这个转写响应形态。'),
+  );
+}
+
+/// 自定义转写档的鉴权头缺省值（整行头名）：留空即按它发，不允许无鉴权出网。
+const sttCustomDefaultAuthHeader = 'Authorization: Bearer';
+
+/// 自定义转写档的响应字段缺省值：JSON 字段路径形态下取顶层 text。
+const sttCustomDefaultResponseField = 'text';
+
+/// 自定义转写档不允许用作鉴权头的保留头名（小写比较）：content-type 由
+/// 网关自己写（撞名会静默覆盖鉴权头、无鉴权出网），content-length 等由
+/// dart:io 自管（撞名写出畸形请求）。都在保存前拦成人话。
+const sttReservedAuthHeaderNames = <String>{
+  'content-type',
+  'content-length',
+  'host',
+  'transfer-encoding',
+  'connection',
+};
 
 /// 是否混入可见 ASCII（0x21–0x7E）之外的字符：空格、控制符、DEL、中文、
 /// 零宽字符等粘贴事故。语音转写与语音合成的地址、模型名、音色与 API
@@ -307,13 +346,22 @@ void _validateSpeechEndpoint({
   }
 }
 
-/// 语音转写（STT）服务配置：provider.json 顶层的可选 `stt` 段。
+/// 语音转写（STT）服务配置：provider.json 顶层的可选 `stt`段。
+/// 自定义档（custom）另有三个旋钮：[authHeader] 整行鉴权头名、
+/// [responseShape] 响应形态、[responseField] 字段名/路径，均带缺省值，
+/// 只在 custom 档校验与落盘；[extraParams] 高级参数作 multipart 额外
+/// 表单字段，同样只对 custom 档落盘（其余档请求形状固定，千问的识别
+/// 参数也固定，写了没有消费方）。
 final class SttConfig {
   const SttConfig({
     required this.baseUrl,
     required this.model,
     this.provider = SttProviderKind.openAiCompatible,
     this.apiKey,
+    this.authHeader,
+    this.responseShape = SttResponseShape.jsonPath,
+    this.responseField = sttCustomDefaultResponseField,
+    this.extraParams,
   });
 
   factory SttConfig.fromJson(Map<String, Object?> json) {
@@ -323,12 +371,37 @@ final class SttConfig {
       final String value => SttProviderKind.fromWireName(value),
       _ => throw const ProviderConfigException('语音服务配置无法读取。'),
     };
+    final rawExtra = json['extraParams'] ?? json['extra_params'];
+    if (rawExtra != null && rawExtra is! Map) {
+      throw const ProviderConfigException('语音服务配置无法读取。');
+    }
+    final rawAuthHeader = json['authHeader'];
+    if (rawAuthHeader != null && rawAuthHeader is! String) {
+      throw const ProviderConfigException('语音服务配置无法读取。');
+    }
+    final rawResponseField = json['responseField'];
+    if (rawResponseField != null && rawResponseField is! String) {
+      throw const ProviderConfigException('语音服务配置无法读取。');
+    }
     return SttConfig(
       provider: provider,
       baseUrl: json['baseUrl']! as String,
       model: json['model']! as String,
       // 与聊天段同律：兼容 apiKey 与 API_KEY 两种手写法，空白视为未设置。
       apiKey: _optionalKey(json['apiKey'] ?? json['API_KEY']),
+      authHeader: rawAuthHeader as String?,
+      responseShape: switch (json['responseShape']) {
+        null => SttResponseShape.jsonPath,
+        final String value => SttResponseShape.fromWireName(value),
+        _ => throw const ProviderConfigException('语音服务配置无法读取。'),
+      },
+      responseField: rawResponseField as String? ?? sttCustomDefaultResponseField,
+      // 高级参数与合成侧同型：兼容 extraParams 与 extra_params 两种写法。
+      extraParams: rawExtra is Map
+          ? Map<String, Object?>.from(
+              rawExtra.map((k, v) => MapEntry(k.toString(), v)),
+            )
+          : null,
     );
   }
 
@@ -340,11 +413,28 @@ final class SttConfig {
   /// 同律：不进 toJson()，HTTP 快照绝不携带明文。
   final String? apiKey;
 
+  /// 自定义档的鉴权头（整行头名，如 `Authorization: Bearer`、`X-Api-Key`）：
+  /// 空表示按缺省 Bearer 发，不允许无鉴权出网。
+  final String? authHeader;
+
+  /// 自定义档的响应形态：缺省 JSON 字段路径。
+  final SttResponseShape responseShape;
+
+  /// 自定义档的响应字段名/路径（点号路径）：缺省 text。
+  final String responseField;
+
+  /// 自定义档的高级参数：multipart 上传时作额外表单字段。
+  final Map<String, Object?>? extraParams;
+
   SttConfig withApiKey(String? apiKey) => SttConfig(
     provider: provider,
     baseUrl: baseUrl,
     model: model,
     apiKey: apiKey,
+    authHeader: authHeader,
+    responseShape: responseShape,
+    responseField: responseField,
+    extraParams: extraParams,
   );
 
   /// Key 的沿用作用域看协议与规范化后的服务地址：换协议（如 OpenAI
@@ -356,14 +446,24 @@ final class SttConfig {
     'provider': provider.wireName,
     'baseUrl': baseUrl,
     'model': model,
+    // 旋钮与高级参数只在自定义档落盘：切到别的档时不把残留写回去。
+    if (provider == SttProviderKind.custom) ...{
+      if (authHeader != null && authHeader!.trim().isNotEmpty)
+        'authHeader': authHeader,
+      'responseShape': responseShape.wireName,
+      'responseField': responseField,
+      if (extraParams != null && extraParams!.isNotEmpty)
+        'extraParams': extraParams,
+    },
   };
 
   void validate() {
     final schemeFailureMessage = switch (provider) {
       SttProviderKind.openAiCompatible => '语音服务地址必须是有效的 HTTP 地址。',
       SttProviderKind.volcSeedAsr => '语音服务地址必须是有效的 WebSocket 地址。',
-      // 千问同为 HTTP 档：与 OpenAI 兼容共用同一句地址话术。
+      // 千问与自定义同为 HTTP 档：与 OpenAI 兼容共用同一句地址话术。
       SttProviderKind.qwenAsr => '语音服务地址必须是有效的 HTTP 地址。',
+      SttProviderKind.custom => '语音服务地址必须是有效的 HTTP 地址。',
     };
     _validateSpeechEndpoint(
       baseUrl: baseUrl,
@@ -372,6 +472,43 @@ final class SttConfig {
       allows: provider.allows,
       schemeFailureMessage: schemeFailureMessage,
     );
+    // 旋钮只在自定义档校验：鉴权头按「头名: 前缀」拆开分别过可见 ASCII
+    // 脏字符检（"Authorization: Bearer" 的冒号空格是合法分隔，整行检会
+    // 误伤），还不能撞保留头名（content-type 撞名会被网关自己写的头静默
+    // 覆盖，请求无鉴权出网），也要有头名——": Bearer" 这种粘贴事故会让
+    // dart:io 写出空头名，请求期才炸未分类异常，保存前拦成人话。
+    if (provider == SttProviderKind.custom) {
+      final header = authHeader?.trim();
+      if (header != null && header.isNotEmpty) {
+        final separator = header.indexOf(':');
+        final name =
+            (separator == -1 ? header : header.substring(0, separator)).trim();
+        final prefix =
+            separator == -1 ? '' : header.substring(separator + 1).trim();
+        if (containsNonVisibleAscii(name) || containsNonVisibleAscii(prefix)) {
+          throw const ProviderConfigException(
+            '鉴权头里混入了中文或看不见的字符，请重新填写。',
+          );
+        }
+        if (sttReservedAuthHeaderNames.contains(name.toLowerCase())) {
+          throw const ProviderConfigException(
+            '鉴权头不能使用 Content-Type、Content-Length 这类保留头名，请重新填写。',
+          );
+        }
+        if (name.isEmpty) {
+          throw const ProviderConfigException(
+            '鉴权头格式不正确，请填写如 Authorization: Bearer 的头名。',
+          );
+        }
+      }
+      if (extraParams != null) {
+        for (final key in extraParams!.keys) {
+          if (key.trim().isEmpty) {
+            throw const ProviderConfigException('自定义高级参数格式不正确。');
+          }
+        }
+      }
+    }
   }
 }
 

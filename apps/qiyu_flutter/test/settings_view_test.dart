@@ -852,6 +852,159 @@ void main() {
     );
   });
 
+  testWidgets('STT 设置区块：自定义档下拉、旋钮露出条件与保存上送', (tester) async {
+    final sttGateway = _MutableSttSettingsGateway(
+      const SttSettings(configured: false, keySet: false),
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        sttGateway: sttGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'stt');
+
+    // 未选自定义档前，鉴权头/响应形态/字段路径/高级参数都不露出。
+    expect(find.byKey(const Key('stt-auth-header')), findsNothing);
+    expect(find.byKey(const Key('stt-response-shape')), findsNothing);
+    expect(find.byKey(const Key('stt-response-field')), findsNothing);
+    expect(find.byKey(const Key('stt-advanced-params-tile')), findsNothing);
+
+    // 下拉出现「自定义转写服务」，选中后完整地址直填、旋钮露出。
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    expect(find.text('自定义转写服务'), findsOneWidget);
+    await tester.tap(find.text('自定义转写服务').last);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('stt-auth-header')), findsOneWidget);
+    expect(find.byKey(const Key('stt-response-shape')), findsOneWidget);
+    expect(find.byKey(const Key('stt-response-field')), findsOneWidget);
+    expect(find.byKey(const Key('stt-advanced-params-tile')), findsOneWidget);
+    expect(find.textContaining('自定义转写服务'), findsWidgets);
+    // 自定义档地址与模型都等用户填：不做缺省回填。
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-base-url')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+
+    // 响应形态切到 SSE 后字段路径输入框仍在（两个形态共用同一面板）。
+    await _reveal(tester, find.byKey(const Key('stt-response-shape')));
+    await tester.tap(find.byKey(const Key('stt-response-shape')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SSE 流式').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stt-response-field')), findsOneWidget);
+
+    // 高级参数面板展开后有 JSON 输入框。
+    await _reveal(tester, find.byKey(const Key('stt-advanced-params-tile')));
+    await tester.tap(find.byKey(const Key('stt-advanced-params-tile')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stt-extra-params')), findsOneWidget);
+
+    // 切回千问档：自定义旋钮整体收回。
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('千问语音识别').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stt-auth-header')), findsNothing);
+    expect(find.byKey(const Key('stt-response-shape')), findsNothing);
+    expect(find.byKey(const Key('stt-response-field')), findsNothing);
+    expect(find.byKey(const Key('stt-advanced-params-tile')), findsNothing);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-base-url')))
+          .controller!
+          .text,
+      qwenAsrDefaultEndpoint,
+    );
+
+    // 再切回自定义档并保存：草稿带 custom wire 名与旋钮上送。
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自定义转写服务').last);
+    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('stt-base-url')));
+    await tester.enterText(
+      find.byKey(const Key('stt-base-url')),
+      'https://stt.example.com/v1/audio/transcriptions',
+    );
+    await tester.enterText(find.byKey(const Key('stt-model')), 'whisper-test');
+    await _reveal(tester, find.byKey(const Key('stt-auth-header')));
+    await tester.enterText(
+      find.byKey(const Key('stt-auth-header')),
+      'X-Api-Key',
+    );
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-stt-settings')),
+      maxScrolls: 10,
+    );
+    await tester.enterText(find.byKey(const Key('stt-api-key')), 'sk-custom');
+    await tester.tap(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+    final draft = sttGateway.savedDrafts.single;
+    expect(draft.provider, SttServiceKind.custom);
+    expect(draft.baseUrl, 'https://stt.example.com/v1/audio/transcriptions');
+    expect(draft.authHeader, 'X-Api-Key');
+    expect(draft.responseShape, SttResponseShape.jsonPath);
+    expect(draft.apiKey, 'sk-custom');
+  });
+
+  testWidgets('STT 设置区块：自定义档鉴权头脏字符被主机按人话驳回时如实呈现', (tester) async {
+    final sttGateway = _MutableSttSettingsGateway(
+      const SttSettings(configured: false, keySet: false),
+      saveFailure: '鉴权头里混入了中文或看不见的字符，请重新填写。',
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        sttGateway: sttGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'stt');
+
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自定义转写服务').last);
+    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('stt-base-url')));
+    await tester.enterText(
+      find.byKey(const Key('stt-base-url')),
+      'https://stt.example.com/v1/audio/transcriptions',
+    );
+    await tester.enterText(find.byKey(const Key('stt-model')), 'whisper-test');
+    await _reveal(tester, find.byKey(const Key('stt-auth-header')));
+    await tester.enterText(
+      find.byKey(const Key('stt-auth-header')),
+      'X-Api-Key\u200B',
+    );
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-stt-settings')),
+      maxScrolls: 10,
+    );
+    await tester.tap(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+
+    expect(sttGateway.savedDrafts.single.authHeader, 'X-Api-Key\u200B');
+    expect(
+      find.textContaining('鉴权头里混入了中文或看不见的字符'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('privacy page states the local-only boundaries', (tester) async {
     await tester.pumpWidget(
       await _app(

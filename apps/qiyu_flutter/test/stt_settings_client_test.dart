@@ -84,6 +84,63 @@ void main() {
     expect(settings.wantsWavAudio, isTrue);
   });
 
+  test('读取设置：自定义协议回填旋钮且录音原样上送（不转 WAV）', () async {
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'custom',
+          'baseUrl': 'https://stt.example.com/v1/audio/transcriptions',
+          'model': 'whisper-test',
+          'authHeader': 'X-Api-Key',
+          'responseShape': 'sse',
+          'responseField': 'result.text',
+          'extraParams': {'speaker': 'zh'},
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+    );
+
+    final settings = await HttpSttSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    ).read();
+
+    expect(settings.provider, SttServiceKind.custom);
+    expect(settings.authHeader, 'X-Api-Key');
+    expect(settings.responseShape, SttResponseShape.sse);
+    expect(settings.responseField, 'result.text');
+    expect(settings.extraParams, {'speaker': 'zh'});
+    expect(settings.wantsWavAudio, isFalse);
+  });
+
+  test('读取设置：自定义段缺省旋钮按缺省形态读回', () async {
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'custom',
+          'baseUrl': 'https://stt.example.com/v1/audio/transcriptions',
+          'model': 'whisper-test',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+    );
+
+    final settings = await HttpSttSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    ).read();
+
+    expect(settings.provider, SttServiceKind.custom);
+    expect(settings.authHeader, isNull);
+    expect(settings.responseShape, SttResponseShape.jsonPath);
+    expect(settings.responseField, isNull);
+    expect(settings.extraParams, isNull);
+  });
+
   test('未知 provider 值按缺省协议呈现（旧版 Host 响应防御）', () async {
     final client = hostTransportClient(
       (request) => switch (request.url.path) {
@@ -140,6 +197,85 @@ void main() {
       'baseUrl': qwenAsrDefaultEndpoint,
       'model': qwenAsrDefaultModel,
       'apiKey': 'qwen-temporary-value',
+    });
+  });
+
+  test('自定义草稿保存：请求体带 custom wire 名、旋钮与高级参数', () async {
+    final requests = <http.Request>[];
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'custom',
+          'baseUrl': 'https://stt.example.com/v1/audio/transcriptions',
+          'model': 'whisper-test',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+      requests: requests,
+    );
+
+    await HttpSttSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    ).save(
+      const SttSettingsDraft(
+        provider: SttServiceKind.custom,
+        baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+        model: 'whisper-test',
+        apiKey: 'custom-temporary-value',
+        authHeader: 'X-Api-Key',
+        responseShape: SttResponseShape.sse,
+        responseField: 'result.text',
+        extraParams: {'speaker': 'zh'},
+      ),
+    );
+
+    expect(jsonDecode(requests.last.body), {
+      'provider': 'custom',
+      'baseUrl': 'https://stt.example.com/v1/audio/transcriptions',
+      'model': 'whisper-test',
+      'apiKey': 'custom-temporary-value',
+      'authHeader': 'X-Api-Key',
+      'responseShape': 'sse',
+      'responseField': 'result.text',
+      'extraParams': {'speaker': 'zh'},
+    });
+  });
+
+  test('非自定义草稿保存：请求体不带自定义旋钮', () async {
+    final requests = <http.Request>[];
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/stt' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'baseUrl': 'https://stt.example.com/v1',
+          'model': 'whisper-test',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+      requests: requests,
+    );
+
+    await HttpSttSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    ).save(
+      const SttSettingsDraft(
+        provider: SttServiceKind.openaiCompatible,
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-test',
+        apiKey: 'stt-temporary-value',
+      ),
+    );
+
+    expect(jsonDecode(requests.last.body), {
+      'provider': 'openai_compatible',
+      'baseUrl': 'https://stt.example.com/v1',
+      'model': 'whisper-test',
+      'apiKey': 'stt-temporary-value',
     });
   });
 

@@ -170,6 +170,156 @@ void main() {
     expect(value.modelController.text, 'whisper-1');
   });
 
+  test('未配置的自定义协议回填空档：完整地址与模型都等用户填', () {
+    final value = form();
+    value.selectProvider('custom');
+
+    expect(value.provider, SttServiceKind.custom);
+    expect(value.baseUrlController.text, isEmpty);
+    expect(value.modelController.text, isEmpty);
+    expect(
+      value.protocolDefaults.urlHint,
+      'https://api.example.com/v1/audio/transcriptions',
+    );
+    // 旋钮缺省态：默认 Bearer（输入框留空）、JSON 字段路径、路径缺省 text。
+    expect(value.authHeaderController.text, isEmpty);
+    expect(value.responseShape, SttResponseShape.jsonPath);
+    expect(value.responseFieldController.text, isEmpty);
+    expect(value.extraParamsController.text, isEmpty);
+  });
+
+  test('已配置自定义档回填旋钮：鉴权头、响应形态、字段路径与高级参数 JSON', () {
+    final value = SttSettingsForm();
+    value.sync(
+      const SttSettings(
+        configured: true,
+        keySet: true,
+        provider: SttServiceKind.custom,
+        baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+        model: 'whisper-test',
+        authHeader: 'X-Api-Key',
+        responseShape: SttResponseShape.sse,
+        responseField: 'result.text',
+        extraParams: {'speaker': 'zh'},
+      ),
+    );
+
+    expect(value.provider, SttServiceKind.custom);
+    expect(
+      value.baseUrlController.text,
+      'https://stt.example.com/v1/audio/transcriptions',
+    );
+    expect(value.authHeaderController.text, 'X-Api-Key');
+    expect(value.responseShape, SttResponseShape.sse);
+    expect(value.responseFieldController.text, 'result.text');
+    expect(value.extraParamsController.text, '{\n  "speaker": "zh"\n}');
+  });
+
+  test('协议切换：HTTP 家族内自定义与千问互认地址，切走时清掉自定义旋钮草稿', () {
+    final value = form();
+    value.baseUrlController.text = 'https://api.example.com/v1';
+    value.modelController.text = 'my-own-model';
+
+    value.selectProvider('custom');
+    value.authHeaderController.text = 'X-Api-Key';
+    value.selectResponseShape('sse');
+    value.responseFieldController.text = 'result.text';
+    value.extraParamsController.text = '{"speaker":"zh"}';
+
+    // https 地址在自定义与千问之间互认：用户自填的模型不被覆盖。
+    value.selectProvider('qwen_asr');
+    expect(value.baseUrlController.text, 'https://api.example.com/v1');
+    expect(value.modelController.text, 'my-own-model');
+    // 旋钮只对自定义档有意义：切走即清草稿，不残留到别的档。
+    expect(value.authHeaderController.text, isEmpty);
+    expect(value.responseShape, SttResponseShape.jsonPath);
+    expect(value.responseFieldController.text, isEmpty);
+    expect(value.extraParamsController.text, isEmpty);
+
+    value.selectProvider('custom');
+    expect(value.baseUrlController.text, 'https://api.example.com/v1');
+  });
+
+  test('协议切换：豆包 wss 地址切到自定义档不兼容，整体换成空档', () {
+    final value = form();
+    value.selectProvider('volc_seed_asr');
+
+    value.selectProvider('custom');
+
+    expect(value.baseUrlController.text, isEmpty);
+    expect(value.modelController.text, isEmpty);
+  });
+
+  test('校验要求自定义高级参数是合法 JSON 对象', () {
+    final scenarios = [
+      (extraText: '[1,2]', message: '自定义高级参数必须是 JSON 对象。'),
+      (extraText: '"text"', message: '自定义高级参数必须是 JSON 对象。'),
+      (extraText: '{', message: '自定义高级参数 JSON 格式不正确，请检查语法。'),
+    ];
+    for (final scenario in scenarios) {
+      final value = form();
+      value.selectProvider('custom');
+      value.baseUrlController.text =
+          'https://stt.example.com/v1/audio/transcriptions';
+      value.modelController.text = 'whisper-test';
+      value.extraParamsController.text = scenario.extraText;
+
+      final reported = <String>[];
+      final draft = value.readDraftOrReport(reported.add);
+
+      expect(draft, isNull, reason: scenario.extraText);
+      expect(reported, [scenario.message], reason: scenario.extraText);
+      expect(gateway.saveCalls, 0);
+    }
+  });
+
+  test('保存编排：自定义草稿带着旋钮与高级参数上送，鉴权头去空白', () async {
+    final value = form();
+    value.selectProvider('custom');
+    value.baseUrlController.text =
+        'https://stt.example.com/v1/audio/transcriptions';
+    value.modelController.text = 'whisper-test';
+    value.apiKeyController.text = '  sk-custom  ';
+    value.authHeaderController.text = '  X-Api-Key  ';
+    value.selectResponseShape('sse');
+    value.responseFieldController.text = 'result.text';
+    value.extraParamsController.text = '{"speaker":"zh"}';
+
+    final saved = await value.save(viewModel, report: (_) {});
+
+    expect(saved, isTrue);
+    final draft = gateway.savedDrafts.single;
+    expect(draft.provider, SttServiceKind.custom);
+    expect(draft.baseUrl, 'https://stt.example.com/v1/audio/transcriptions');
+    expect(draft.model, 'whisper-test');
+    expect(draft.apiKey, 'sk-custom');
+    expect(draft.authHeader, 'X-Api-Key');
+    expect(draft.responseShape, SttResponseShape.sse);
+    expect(draft.responseField, 'result.text');
+    expect(draft.extraParams, {'speaker': 'zh'});
+    // 保存成功后 Key 草稿即刻清空，不留明文在输入框。
+    expect(value.apiKeyController.text, isEmpty);
+  });
+
+  test('保存编排：非自定义档草稿不带自定义旋钮', () async {
+    final value = form();
+    value.selectProvider('custom');
+    value.authHeaderController.text = 'X-Api-Key';
+    value.extraParamsController.text = '{"speaker":"zh"}';
+    value.selectProvider('openai_compatible');
+    value.baseUrlController.text = 'https://api.example.com/v1';
+    value.modelController.text = 'whisper-1';
+
+    await value.save(viewModel, report: (_) {});
+
+    final draft = gateway.savedDrafts.single;
+    expect(draft.provider, SttServiceKind.openaiCompatible);
+    expect(draft.authHeader, isNull);
+    expect(draft.responseShape, isNull);
+    expect(draft.responseField, isNull);
+    expect(draft.extraParams, isNull);
+  });
+
   test('校验驳回空白服务地址或模型名称，并给出人话且不触达网关', () async {
     final value = form();
     value.baseUrlController.text = '   ';

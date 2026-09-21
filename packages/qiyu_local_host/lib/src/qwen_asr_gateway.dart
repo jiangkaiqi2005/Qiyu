@@ -1,6 +1,4 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
@@ -41,71 +39,27 @@ final class QwenAsrGateway implements SttTranscriptionGateway {
       ),
     );
 
-    final ProviderHttpResponse response;
-    try {
-      response = await httpClient.post(
-        uri: uri,
-        headers: {
-          'authorization': 'Bearer $key',
-          'content-type': 'application/json',
-        },
-        body: utf8.encode(body),
-        timeout: sttRequestTimeout,
-      );
-    } on TimeoutException {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.timeout,
-        message: '连接语音服务超时。',
-      );
-    } on HandshakeException {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.tls,
-        message: '语音服务的 TLS 安全连接失败。',
-      );
-    } on SocketException catch (error) {
-      throw _fromModelFailure(
-        providerSocketFailure(error, serviceLabel: '语音服务'),
-      );
-    } on HttpException {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.network,
-        message: '语音服务连接中断。',
-      );
-    } on Object catch (error) {
-      // 只打异常类型不打消息：消息可能嵌着用户输入（Key/地址/模型名）。
-      stderrDiagnostics('stt unclassified exception: ${error.runtimeType}');
-      throw const SttGatewayException(
-        kind: ModelFailureKind.internal,
-        message: '本机程序内部出错。',
-      );
-    }
-
-    String rawBody;
-    try {
-      rawBody = await response.body.join();
-    } on TimeoutException {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.timeout,
-        message: '语音服务响应超时。',
-      );
-    } on Object {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.network,
-        message: '语音服务连接中断。',
-      );
-    }
+    final response = await postSttText(
+      httpClient: httpClient,
+      uri: uri,
+      headers: {
+        'authorization': 'Bearer $key',
+        'content-type': 'application/json',
+      },
+      body: utf8.encode(body),
+    );
     // 请求标识先进诊断（错误响应同样带），再按状态码分类。
-    _logRequestId(rawBody);
+    _logRequestId(response.body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _fromModelFailure(
+      throw fromSttModelFailure(
         providerStatusFailure(
           response.statusCode,
-          rawBody,
+          response.body,
           serviceLabel: '语音服务',
         ),
       );
     }
-    return _parseTranscriptionText(rawBody, compatible: compatible);
+    return _parseTranscriptionText(response.body, compatible: compatible);
   }
 }
 
@@ -227,9 +181,3 @@ String? _extractText(Map<String, Object?> decoded, bool compatible) {
   }
   return null;
 }
-
-SttGatewayException _fromModelFailure(ModelGatewayException failure) =>
-    SttGatewayException(
-      kind: failure.kind, message: failure.message,
-      serviceError: failure.serviceError,
-    );

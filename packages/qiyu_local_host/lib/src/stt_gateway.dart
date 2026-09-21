@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'custom_stt_gateway.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
@@ -58,74 +59,34 @@ final class OpenAiTranscriptionGateway implements SttTranscriptionGateway {
   }) async {
     config.validate();
     final key = requireSttApiKey(apiKey);
-    final boundary = _newBoundary();
     final uri = appendProviderEndpoint(config.baseUrl, 'audio/transcriptions');
     // STT 是新增出网路径：出网前统一过 SSRF 校验（聊天 Provider 不走）。
     ensureSttOutboundAllowed(uri);
-    final ProviderHttpResponse response;
-    try {
-      response = await httpClient.post(
-        uri: uri,
-        headers: {
-          'authorization': 'Bearer $key',
-          'content-type': 'multipart/form-data; boundary=$boundary',
-        },
-        body: _multipartBody(
-          boundary: boundary,
-          config: config,
-          audio: audio,
-          mimeType: mimeType,
-        ),
-        timeout: sttRequestTimeout,
-      );
-    } on TimeoutException {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.timeout,
-        message: '连接语音服务超时。',
-      );
-    } on HandshakeException {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.tls,
-        message: '语音服务的 TLS 安全连接失败。',
-      );
-    } on SocketException catch (error) {
-      throw _fromModelFailure(
-        providerSocketFailure(error, serviceLabel: '语音服务'),
-      );
-    } on HttpException {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.network,
-        message: '语音服务连接中断。',
-      );
-    } on Object catch (error) {
-      // 只打异常类型不打消息：消息可能嵌着用户输入（Key/地址/模型名）。
-      stderrDiagnostics('stt unclassified exception: ${error.runtimeType}');
-      throw const SttGatewayException(
-        kind: ModelFailureKind.internal,
-        message: '本机程序内部出错。',
-      );
-    }
-
-    String body;
-    try {
-      body = await response.body.join();
-    } on TimeoutException {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.timeout,
-        message: '语音服务响应超时。',
-      );
-    } on Object {
-      throw const SttGatewayException(
-        kind: ModelFailureKind.network,
-        message: '语音服务连接中断。',
-      );
-    }
+    final boundary = newSttBoundary();
+    final response = await postSttText(
+      httpClient: httpClient,
+      uri: uri,
+      headers: {
+        'authorization': 'Bearer $key',
+        'content-type': 'multipart/form-data; boundary=$boundary',
+      },
+      body: buildSttMultipartBody(
+        boundary: boundary,
+        config: config,
+        audio: audio,
+        mimeType: mimeType,
+      ),
+    );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _fromModelFailure(
-        providerStatusFailure(response.statusCode, body, serviceLabel: '语音服务'),
+      throw fromSttModelFailure(
+        providerStatusFailure(
+          response.statusCode,
+          response.body,
+          serviceLabel: '语音服务',
+        ),
       );
     }
-    return _parseTranscriptionText(body);
+    return _parseTranscriptionText(response.body);
   }
 }
 
@@ -169,6 +130,12 @@ final class SttModelGateway implements SttTranscriptionGateway {
       audio: audio,
       mimeType: mimeType,
     ),
+    SttProviderKind.custom => CustomSttGateway(httpClient).transcribe(
+      config: config,
+      apiKey: apiKey,
+      audio: audio,
+      mimeType: mimeType,
+    ),
   };
 }
 
@@ -182,6 +149,66 @@ const sttRequestTimeout = Duration(seconds: 60);
 void ensureSttOutboundAllowed(Uri uri) {
   if (speechOutboundRefusalReason(uri) case final reason?) {
     throw SttGatewayException(kind: ModelFailureKind.provider, message: reason);
+  }
+}
+
+/// STT HTTP 出网的统一守护：post 调用与响应体读取包进同一套异常分类
+/// 阶梯（超时/TLS/Socket/Http/未分类 + 响应读失败），OpenAI 兼容、千问
+/// 与自定义三个 HTTP 网关共用，勿再复制。返回状态码与完整响应体文本，
+/// 状态码分类（providerStatusFailure）由各网关按本通道话术自行决定。
+Future<({int statusCode, String body})> postSttText({
+  required ProviderHttpClient httpClient,
+  required Uri uri,
+  required Map<String, String> headers,
+  required List<int> body,
+}) async {
+  final ProviderHttpResponse response;
+  try {
+    response = await httpClient.post(
+      uri: uri,
+      headers: headers,
+      body: body,
+      timeout: sttRequestTimeout,
+    );
+  } on TimeoutException {
+    throw const SttGatewayException(
+      kind: ModelFailureKind.timeout,
+      message: '连接语音服务超时。',
+    );
+  } on HandshakeException {
+    throw const SttGatewayException(
+      kind: ModelFailureKind.tls,
+      message: '语音服务的 TLS 安全连接失败。',
+    );
+  } on SocketException catch (error) {
+    throw fromSttModelFailure(
+      providerSocketFailure(error, serviceLabel: '语音服务'),
+    );
+  } on HttpException {
+    throw const SttGatewayException(
+      kind: ModelFailureKind.network,
+      message: '语音服务连接中断。',
+    );
+  } on Object catch (error) {
+    // 只打异常类型不打消息：消息可能嵌着用户输入（Key/地址/模型名）。
+    stderrDiagnostics('stt unclassified exception: ${error.runtimeType}');
+    throw const SttGatewayException(
+      kind: ModelFailureKind.internal,
+      message: '本机程序内部出错。',
+    );
+  }
+  try {
+    return (statusCode: response.statusCode, body: await response.body.join());
+  } on TimeoutException {
+    throw const SttGatewayException(
+      kind: ModelFailureKind.timeout,
+      message: '语音服务响应超时。',
+    );
+  } on Object {
+    throw const SttGatewayException(
+      kind: ModelFailureKind.network,
+      message: '语音服务连接中断。',
+    );
   }
 }
 
@@ -206,7 +233,9 @@ String _parseTranscriptionText(String body) {
 
 final _boundaryRandom = Random.secure();
 
-String _newBoundary() =>
+/// multipart 边界：OpenAI 兼容与自定义两个 HTTP 转写档共用（各自一次
+/// 请求一个，随机源共享无妨）。
+String newSttBoundary() =>
     'qiyu-stt-${DateTime.now().microsecondsSinceEpoch}'
     '-${_boundaryRandom.nextInt(1 << 32)}';
 
@@ -219,11 +248,17 @@ String _fileNameFor(String mimeType) => switch (mimeType) {
   _ => 'recording.bin',
 };
 
-Uint8List _multipartBody({
+/// multipart 表单构造：OpenAI 兼容与自定义两个 HTTP 转写档共用同一份
+/// 形状（model、language=zh、file 字段带文件名与 content-type），自定义
+/// 档的高级参数作额外表单字段插在文件字段之前（文件段带关闭边界，必须
+/// 最后）。高级参数值编码：字符串原样，null 跳过（没有表单语义），其余
+/// 按 JSON 编（数字/布尔/对象/列表都只能是表单字符串）。
+Uint8List buildSttMultipartBody({
   required String boundary,
   required SttConfig config,
   required List<int> audio,
   required String mimeType,
+  Map<String, Object?>? extraParams,
 }) {
   final builder = BytesBuilder(copy: false);
   void addField(String name, String value) {
@@ -237,6 +272,15 @@ Uint8List _multipartBody({
   // language 固定 zh：产品只面向中文睡前场景，避免服务端自动检测摇摆。
   addField('model', config.model.trim());
   addField('language', 'zh');
+  if (extraParams != null) {
+    for (final entry in extraParams.entries) {
+      final value = entry.value;
+      if (value == null) {
+        continue;
+      }
+      addField(entry.key, value is String ? value : jsonEncode(value));
+    }
+  }
   builder
     ..add(utf8.encode('--$boundary\r\n'))
     ..add(
@@ -251,7 +295,10 @@ Uint8List _multipartBody({
   return builder.takeBytes();
 }
 
-SttGatewayException _fromModelFailure(ModelGatewayException failure) =>
+/// 模型网关失败到 STT 出网异常的适配：三个 HTTP 转写网关（OpenAI 兼容、
+/// 千问、自定义）与共享守护 postSttText 共用，勿再复制（与 TTS 家族的
+/// fromTtsModelFailure 同律）。
+SttGatewayException fromSttModelFailure(ModelGatewayException failure) =>
     SttGatewayException(
       kind: failure.kind, message: failure.message,
       serviceError: failure.serviceError,

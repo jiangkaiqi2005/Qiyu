@@ -587,6 +587,120 @@ void main() {
     );
   });
 
+  test('自定义档保存往返：provider 落 custom，旋钮与高级参数随段落盘', () async {
+    final service = SttSettingsService(repository(), _sttGateway('在吗'));
+
+    final saved = await service.save(
+      provider: SttProviderKind.custom,
+      baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+      model: 'whisper-test',
+      apiKey: 'custom-secret-value',
+      authHeader: 'X-Api-Key',
+      responseShape: SttResponseShape.sse,
+      responseField: 'result.text',
+      extraParams: {'speaker': 'zh'},
+    );
+
+    expect(saved.configured, isTrue);
+    expect(saved.keySet, isTrue);
+    expect(saved.config!.provider, SttProviderKind.custom);
+    expect(saved.toJson()['provider'], 'custom');
+    // 快照带旋钮供界面回显，但绝不带明文 Key。
+    expect(saved.toJson()['authHeader'], 'X-Api-Key');
+    expect(saved.toJson()['responseShape'], 'sse');
+    expect(saved.toJson()['responseField'], 'result.text');
+    expect(saved.toJson()['extraParams'], {'speaker': 'zh'});
+    expect(saved.toJson(), isNot(contains('custom-secret-value')));
+    final stored =
+        jsonDecode(await File(configPath()).readAsString())
+            as Map<String, Object?>;
+    final section = stored['stt']! as Map<String, Object?>;
+    expect(section['provider'], 'custom');
+    expect(section['authHeader'], 'X-Api-Key');
+    expect(section['responseShape'], 'sse');
+    expect(section['responseField'], 'result.text');
+    expect(section['extraParams'], {'speaker': 'zh'});
+  });
+
+  test('自定义档连接测试：multipart 上送、按所选响应形态完整走一遍', () async {
+    // SSE 形态：逐行 data 事件拼出文本即算连通。
+    final http = _StaticSttHttpClient('data: 连接\n\ndata: 成功\n\n');
+    final service = SttSettingsService(repository(), SttModelGateway(http));
+
+    final tested = await service.test(
+      provider: SttProviderKind.custom,
+      baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+      model: 'whisper-test',
+      apiKey: 'custom-test-key',
+      authHeader: 'X-Api-Key',
+      responseShape: SttResponseShape.sse,
+      extraParams: {'speaker': 'zh'},
+    );
+
+    expect(tested.succeeded, isTrue);
+    expect(tested.message, '连接成功，语音输入可以使用。');
+    expect(
+      http.lastUri.toString(),
+      'https://stt.example.com/v1/audio/transcriptions',
+    );
+    // 鉴权头按配置拼接，multipart 表单带模型、语言与高级参数字段。
+    expect(http.lastHeaders!['x-api-key'], 'custom-test-key');
+    expect(http.lastHeaders!['content-type'], startsWith('multipart/form-data'));
+    final body = latin1.decode(http.lastBody!);
+    expect(body, contains('name="model"\r\n\r\nwhisper-test'));
+    expect(body, contains('name="language"\r\n\r\nzh'));
+    expect(body, contains('name="speaker"\r\n\r\nzh'));
+    expect(body, contains('filename="recording.wav"'));
+
+    // json_path 形态：嵌套点号路径取到文本即算连通。
+    final nested = SttSettingsService(
+      repository(),
+      SttModelGateway(
+        _StaticSttHttpClient('{"result":{"text":"在"}}'),
+      ),
+    );
+    final nestedResult = await nested.test(
+      provider: SttProviderKind.custom,
+      baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+      model: 'whisper-test',
+      apiKey: 'custom-test-key',
+      responseField: 'result.text',
+    );
+    expect(nestedResult.succeeded, isTrue);
+
+    // 空文本语义两半分：连接测试遇静音空文本算成功（与既有档同口径）。
+    final silent = SttSettingsService(
+      repository(),
+      SttModelGateway(_StaticSttHttpClient('data: [DONE]\n\n')),
+    );
+    final silentResult = await silent.test(
+      provider: SttProviderKind.custom,
+      baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+      model: 'whisper-test',
+      apiKey: 'custom-test-key',
+      responseShape: SttResponseShape.sse,
+    );
+    expect(silentResult.succeeded, isTrue);
+    expect(silentResult.message, '连接成功，语音输入可以使用。');
+
+    // 正式转写沿用空文本语义：识别为空视为失败。
+    final empty = SttSettingsService(repository(), _sttGateway(''));
+    await empty.save(
+      provider: SttProviderKind.custom,
+      baseUrl: 'https://stt.example.com/v1/audio/transcriptions',
+      model: 'whisper-test',
+      apiKey: 'custom-secret-value',
+    );
+    await expectLater(
+      empty.transcribe(audio: [1, 2], mimeType: 'audio/webm'),
+      throwsA(
+        isA<SttServiceException>()
+            .having((error) => error.code, 'code', 'stt_no_speech')
+            .having((error) => error.retryable, 'retryable', isTrue),
+      ),
+    );
+  });
+
   test('损坏的 stt 段只影响 STT，不拖垮聊天配置读取', () async {
     await repository().save(
       const ProviderConfig(
@@ -733,6 +847,7 @@ final class _StaticSttHttpClient implements ProviderHttpClient {
   final String responseBody;
   Object? postError;
   final int statusCode;
+  Uri? lastUri;
   List<int>? lastBody;
   Map<String, String>? lastHeaders;
 
@@ -746,6 +861,7 @@ final class _StaticSttHttpClient implements ProviderHttpClient {
     ProviderResponseBudget? budget,
   }) async {
     if (postError case final error?) throw error;
+    lastUri = uri;
     lastBody = body;
     lastHeaders = headers;
     return ProviderHttpResponse(

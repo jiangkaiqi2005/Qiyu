@@ -213,6 +213,10 @@ final class SettingsRoutes implements ApiRoutes {
         baseUrl: _sttTextField(payload, 'baseUrl'),
         model: _sttTextField(payload, 'model'),
         apiKey: _apiKeyFromPayload(payload),
+        authHeader: _optionalSttTextField(payload, 'authHeader'),
+        responseShape: _sttResponseShapeFromPayload(payload),
+        responseField: _optionalSttTextField(payload, 'responseField'),
+        extraParams: _sttExtraParamsFromPayload(payload),
       );
       return Response.ok(
         jsonEncode(settings.toJson()),
@@ -226,6 +230,10 @@ final class SettingsRoutes implements ApiRoutes {
         baseUrl: _optionalSttTextField(payload, 'baseUrl'),
         model: _optionalSttTextField(payload, 'model'),
         apiKey: _apiKeyFromPayload(payload),
+        authHeader: _optionalSttTextField(payload, 'authHeader'),
+        responseShape: _sttResponseShapeFromPayload(payload),
+        responseField: _optionalSttTextField(payload, 'responseField'),
+        extraParams: _sttExtraParamsFromPayload(payload),
       );
       requestDiagnostics?.record(
         source: RecentRequestSources.providerTest,
@@ -425,6 +433,37 @@ SttProviderKind _sttProviderFromPayload(Map<String, Object?> payload) {
     throw const ProviderConfigException('语音服务配置格式不正确。');
   }
   return SttProviderKind.fromWireName(value);
+}
+
+/// STT 自定义档的响应形态（responseShape）：可选字段，缺省 json_path；
+/// 非法 wire 名按配置格式错误拒绝，不落盘。
+SttResponseShape? _sttResponseShapeFromPayload(Map<String, Object?> payload) {
+  final value = payload['responseShape'];
+  if (value == null) {
+    return null;
+  }
+  if (value is! String) {
+    throw const ProviderConfigException('语音服务配置格式不正确。');
+  }
+  return SttResponseShape.fromWireName(value);
+}
+
+/// STT 自定义档高级参数（extraParams）：可选 Map 对象（兼容
+/// extra_params 别名写法，与配置文件同口径）。键急转为字符串：懒 cast
+/// 遇非字符串键会抛裸 TypeError，路由层只应抛配置格式错误。
+Map<String, Object?>? _sttExtraParamsFromPayload(
+  Map<String, Object?> payload,
+) {
+  final value = payload['extraParams'] ?? payload['extra_params'];
+  if (value == null) {
+    return null;
+  }
+  if (value is! Map) {
+    throw const ProviderConfigException('语音服务配置格式不正确。');
+  }
+  return Map<String, Object?>.from(
+    value.map((k, v) => MapEntry(k.toString(), v)),
+  );
 }
 
 /// TTS 设置的服务类型（provider）：缺省与校验规则同 STT。

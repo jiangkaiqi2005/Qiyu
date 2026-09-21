@@ -64,17 +64,27 @@ final class SttSettingsService {
   /// 与聊天 Key 同律但作用域独立：传入新 Key 就写入；没传时同地址保留
   /// 已存 Key，换地址则清空——旧服务商的 Key 不沿用给新服务商。
   /// 现值读取与 Key 沿用决定进共享事务：并发保存或遗忘交错时，锁外
-  /// 旧 Key 不得复活。
+  /// 旧 Key 不得复活。自定义档旋钮（authHeader/responseShape/
+  /// responseField）与高级参数随保存落盘，只在 custom 档生效。
   Future<SttSettingsSnapshot> save({
     required String baseUrl,
     required String model,
     SttProviderKind provider = SttProviderKind.openAiCompatible,
     String? apiKey,
+    String? authHeader,
+    SttResponseShape? responseShape,
+    String? responseField,
+    Map<String, Object?>? extraParams,
   }) async {
     final config = SttConfig(
       provider: provider,
       baseUrl: baseUrl,
       model: model,
+      authHeader: authHeader,
+      responseShape: responseShape ?? SttResponseShape.jsonPath,
+      // 空白字段名归一为缺省 text：落盘的值恒有含义，回显也稳定。
+      responseField: _normalizeResponseField(responseField),
+      extraParams: extraParams,
     );
     config.validate();
     await configRepository.runTransaction(() async {
@@ -98,12 +108,18 @@ final class SttSettingsService {
   /// 连接测试：用一段内置静音音频代发转写请求，HTTP 成功即算连接
   /// 成功（静音本来就识别不出内容，空文本不视为失败）；错误按与
   /// 聊天测试相同的分类枚举上报。表单未填 baseUrl/model 时按已保存
-  /// 配置测试。
+  /// 配置测试。自定义档旋钮随表单走：整份表单为空（测已存配置）时
+  /// 回落到已存值，表单填了就以表单为准（用户清空鉴权头即测默认
+  /// Bearer，不与已存值混淆）。
   Future<ProviderTestResult> test({
     String? baseUrl,
     String? model,
     SttProviderKind? provider,
     String? apiKey,
+    String? authHeader,
+    SttResponseShape? responseShape,
+    String? responseField,
+    Map<String, Object?>? extraParams,
   }) async {
     final stored = await configRepository.loadStt();
     final effectiveBaseUrl =
@@ -118,12 +134,32 @@ final class SttSettingsService {
         message: '还没有保存语音服务配置。',
       );
     }
+    // 整份表单为空（地址与模型都没填）＝测已存配置：旋钮回落已存值。
+    final useStoredOptionalSettings =
+        (baseUrl == null || baseUrl.trim().isEmpty) &&
+        (model == null || model.trim().isEmpty);
     final effectiveProvider =
         provider ?? stored?.provider ?? SttProviderKind.openAiCompatible;
     final config = SttConfig(
       provider: effectiveProvider,
       baseUrl: effectiveBaseUrl,
       model: effectiveModel,
+      authHeader: useStoredOptionalSettings
+          ? authHeader ?? stored?.authHeader
+          : authHeader,
+      responseShape:
+          (useStoredOptionalSettings
+              ? responseShape ?? stored?.responseShape
+              : responseShape) ??
+          SttResponseShape.jsonPath,
+      responseField: _normalizeResponseField(
+        useStoredOptionalSettings
+            ? responseField ?? stored?.responseField
+            : responseField,
+      ),
+      extraParams: useStoredOptionalSettings
+          ? extraParams ?? stored?.extraParams
+          : extraParams,
     );
     try {
       config.validate();
@@ -253,6 +289,15 @@ final class SttSettingsService {
       );
     }
   }
+}
+
+/// 自定义档字段名/路径归一：去空白、空值回落缺省 text。保存与连接测试
+/// 共用同一口径，落盘与出网的值恒有含义。
+String _normalizeResponseField(String? responseField) {
+  final trimmed = responseField?.trim();
+  return trimmed == null || trimmed.isEmpty
+      ? sttCustomDefaultResponseField
+      : trimmed;
 }
 
 /// 内置静音音频（16kHz、16-bit 单声道 WAV，约 0.25 秒）：连接测试代发
