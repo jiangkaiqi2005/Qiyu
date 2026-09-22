@@ -59,15 +59,17 @@ You can pick the voice you like: tone, speed, and dialect are all configurable i
 
 Audio stays in memory only — never written to disk, never cached.
 
+Speech input and readback each configure their own service and key — setting up the chat model does not set up voice; both are configured separately in Settings.
+
 ## Memory: she actually remembers you
 
-Qiyu's memory system is built entirely on **local, readable Markdown files** — zero vector databases, zero graph databases, zero remote services. You can open the folder and see exactly what she remembers.
+Qiyu's memory system is built entirely on **local, readable Markdown files** — zero vector databases, zero graph databases, zero cloud sync. Everything lives on your own device, and you can open the folder to see exactly what she remembers. Storage is local; if you connect a model service in Settings, chat, daily finalization, memory recall, and Dream send the corresponding context to the provider you chose — without a configured model, the local rule engine takes over.
 
 ### Three-tier architecture
 
 | Tier | Contents | Purpose |
 |------|----------|---------|
-| **Hot** | Daily state, long-term impressions, persona summary | Injected into each prompt, capped at 2000–3000 tokens |
+| **Hot** | Daily state, long-term impressions, persona summary | Injected into each prompt under a character budget of about 3000; trimmed before injection when over |
 | **Middle** | Monthly summaries, Dream drafts, full persona tree | Structured understanding |
 | **Cold** | Daily episode summaries, raw session transcripts | Evidence and full records, never directly injected |
 
@@ -77,11 +79,11 @@ Qiyu builds a logical tree to understand you, with five branches: **identity fac
 
 Every belief requires sufficient evidence to stabilize:
 
-- Something you stated directly — remembered after 1 occurrence
+- Something you stated directly — becomes evidence on the first telling, and grows into a stable belief through daily finalization and the next Dream
 - Personality and preferences — at least 2 dates, spanning ≥ 7 days
 - Behavioral inferences — at least 3 dates, spanning ≥ 14 days
 
-Just say "you got that wrong," and she retracts the wrong memory on the spot — she won't argue back with old evidence.
+Say "you got that wrong": identity facts are retracted on the spot, and she won't argue back with old evidence; corrections about personality or preferences are applied at that day's finalization or the next Dream.
 
 ### Five-stage memory rhythm
 
@@ -97,19 +99,32 @@ Memory is organized rhythmically:
 
 When the conversation touches on the past, the model issues a hidden action (`memory_recall`) to search memory indexes on demand and retrieve facts from specific dates. No permanent context occupation, no scoring, no hard-coded matching.
 
+### When organizing happens
+
+Daily finalization and Dream are local background tasks that run while the app is open: saying goodnight triggers the day's finalization, and Dream runs on a goodnight at least 3 days after the last one. Quitting the app immediately may interrupt an ongoing pass; the next launch or an idle moment picks it up again — nothing is organized after you shut the machine down.
+
+When a night's organizing doesn't finish, a quiet line appears in the corner of the interface — "tonight's memory organizing didn't finish; it will catch up next time" — no popups, no interruptions.
+
+If a memory file is ever corrupted, she isolates the damaged original into a local recovery area and shows a recovery report in the Memory Center: what was restored, what was only partially restored, and what is still pending — never a fake success.
+
 ### User control
 
-In the Memory Center, you can:
+The Memory Center has four layers — **recent days, long-term impressions, about you, and the two of us** — and every persona claim shows how many pieces of evidence back it, so you can see why she believes what she believes. In it you can:
 
-- **Freeze** a memory (kept but never brought up)
-- **Ban** a topic (completely excluded from conversation)
-- **Delete** any memory entry
+- **Pause (freeze)** a memory: the content stays, but it is no longer injected into conversation and no longer takes part in automatic organizing; resume it any time
+- **Ban** a topic: chat and organizing both avoid it. If you bring it up yourself, she responds to the present as usual — she won't dig up the old memory, and the ban is never lifted automatically
+- **Delete** any memory entry: before deleting, she tells you the blast radius (which days' records, persona claims, and long-term impressions are affected). Deleting a memory does not delete the raw conversation — raw sessions are only cleared when you delete a session segment by hand in History
+- **Correct** a memory: long-term impressions and daily entries can be edited directly, and the persona is corrected through conversation; after a correction she rebuilds the related indexes in the background, showing "organizing" until it settles
+
+Memories that involve private information are masked by default and can be revealed temporarily (they re-mask after 20 seconds).
+
+All three entries let you **change what she calls you**: at first meeting, in the Memory Center, or by simply saying "call me Lao Wang from now on" in chat — no need to wait for her to form a picture of you.
 
 ## Privacy
 
-All data is stored as readable Markdown on your own device. No accounts, no cloud sync, no remote backend. API keys are never known to anyone else.
+All conversations and memories are stored as readable Markdown on your own device, with settings in a few small readable files beside them (such as `provider.json`). No accounts, no cloud sync, no remote backend. API keys stay on your machine (on Windows they sit in plaintext in `provider.json`, so copying the `.qiyu` folder takes the key with it); they are only sent to the model provider you configured yourself for authentication, and they never enter a backup.
 
-Without a configured model, only the local rule engine handles conversation — configuring a model is strongly recommended.
+Without a configured model, only the local rule engine handles conversation, and memory recall and Dream do not run — configuring a model is strongly recommended. Once configured, daily finalization, Dream, and memory recall add extra model requests, billed by your provider.
 
 ## Quick start (Windows)
 
@@ -145,7 +160,7 @@ Qiyu has no cloud. There is exactly one copy of your data — yours:
 - **Windows**: your conversations and memories live in the `C:\Users\<your name>\.qiyu` folder as readable Markdown text; your model connection settings live right beside them as a few small readable files (such as `provider.json`). Before switching computers or reinstalling, copying that whole folder takes your conversations, memories, and settings with you.
 - **Android**: everything stays inside Qiyu's own private app space, unreadable by other apps; you can see the exact location under Settings → local data.
 
-**Backup**: open Settings → local data → backup and restore, and export — you get a single Markdown file you can send to yourself. After switching phones or reinstalling, import from the same place; you preview the differences before anything is restored. API keys and model credentials never enter the backup.
+**Backup**: open Settings → local data → backup and restore, and export — you get a zip archive containing all your memory Markdown plus a manifest, which you can send to yourself. After switching phones or reinstalling, import from the same place: you preview the differences first, and on confirmation she takes a rollback snapshot before restoring. API keys and model credentials never enter the backup.
 
 **Before you uninstall**: your conversations and memories have no other copy —
 
