@@ -77,6 +77,8 @@ ApiErrorCategory? categorizeVoiceApiError(
     (false, 'tts_model_not_found') => ApiErrorCategory.modelNotFound,
     (true, 'stt_rate_limited') ||
     (false, 'tts_rate_limited') => ApiErrorCategory.rateLimited,
+    (true, 'stt_model_interface_mismatch') => ApiErrorCategory.sttError,
+    (false, 'tts_model_interface_mismatch') => ApiErrorCategory.ttsError,
     (true, 'stt_client' || 'stt_config_invalid') => ApiErrorCategory.sttError,
     (false, 'tts_client' || 'tts_config_invalid') => ApiErrorCategory.ttsError,
     _ => null,

@@ -272,7 +272,10 @@ final class SttSettingsService {
       );
     } on SttGatewayException catch (error) {
       throw SttServiceException(
-        code: error.serviceError == ServiceErrorCategory.client
+        // 模型与接口不匹配显式带 client 类别，但错误码要可区分：前置
+        // 分支排除该种类，落 switch 拿 stt_model_interface_mismatch。
+        code: error.serviceError == ServiceErrorCategory.client &&
+                error.kind != ModelFailureKind.modelInterfaceMismatch
             ? 'stt_client'
             : switch (error.kind) {
           ModelFailureKind.dns => 'stt_dns',
@@ -281,6 +284,8 @@ final class SttSettingsService {
           ModelFailureKind.tls => 'stt_tls',
           ModelFailureKind.authentication => 'stt_authentication',
           ModelFailureKind.modelNotFound => 'stt_model_not_found',
+          ModelFailureKind.modelInterfaceMismatch =>
+            'stt_model_interface_mismatch',
           ModelFailureKind.rateLimited => 'stt_rate_limited',
           _ => 'stt_service_error',
         },

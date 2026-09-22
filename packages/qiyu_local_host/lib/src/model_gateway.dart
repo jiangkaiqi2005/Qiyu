@@ -24,6 +24,7 @@ enum ModelFailureKind {
   authentication,
   network,
   modelNotFound,
+  modelInterfaceMismatch,
   rateLimited,
   incompatibleResponse,
   contentParsing,
@@ -1589,6 +1590,10 @@ Uri _anthropicMessagesEndpoint(String baseUrl) {
 ModelGatewayException _statusFailure(int statusCode, String body) =>
     providerStatusFailure(statusCode, body, serviceLabel: '模型服务');
 
+/// 模型与接口不匹配的对外文案：连接测试（provider_settings_service）
+/// 与出网分类共用同一句，改动只此一处。
+const modelInterfaceMismatchMessage = '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。';
+
 /// 出网 HTTP 非 2xx 的统一分类（带服务名文案）。聊天模型与语音转写
 /// 共用同一套错误分类，供连接测试与失败提示使用。
 ModelGatewayException providerStatusFailure(
@@ -1620,6 +1625,19 @@ ModelGatewayException providerStatusFailure(
     return const ModelGatewayException(
       kind: ModelFailureKind.modelNotFound,
       message: '模型名称不存在或当前账号不可用。',
+    );
+  }
+  // 服务端因模型与接口形状不匹配而拒绝（如流式/异步型号打到 HTTP 内联
+  // 端点）时，响应体带「url error」。允许列表只认这一个连续子串：厂商
+  // 帮助链接是 error-code#error-url 形态，含不下「url error」，不误命中。
+  // 显式带 client 公开类别（与通用兜底的 4xx→client 一致）：聊天面的
+  // 错误对话框按类别弹「模型服务异常」并给前往设置入口，缺失会让这条
+  // 路径静默。
+  if (statusCode >= 400 && statusCode < 500 && lowerBody.contains('url error')) {
+    return ModelGatewayException(
+      kind: ModelFailureKind.modelInterfaceMismatch,
+      message: modelInterfaceMismatchMessage,
+      serviceError: ServiceErrorCategory.client,
     );
   }
   return ModelGatewayException(

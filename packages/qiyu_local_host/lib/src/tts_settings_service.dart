@@ -329,9 +329,13 @@ final class TtsSettingsService {
       );
     } on TtsGatewayException catch (error) {
       final failure = _ttsFailureDetails(error.kind);
+      // 模型与接口不匹配显式带 client 类别，但错误码要可区分：前置
+      // 分支排除该种类，落 tts_model_interface_mismatch。
       throw TtsServiceException(
-        code: error.serviceError == ServiceErrorCategory.client
-            ? 'tts_client' : failure.code,
+        code: error.serviceError == ServiceErrorCategory.client &&
+                error.kind != ModelFailureKind.modelInterfaceMismatch
+            ? 'tts_client'
+            : failure.code,
         message: _ttsTestMessage(failure.status),
         retryable: true,
       );
@@ -380,6 +384,7 @@ String _ttsFailureCode(ModelFailureKind kind) => switch (kind) {
   ModelFailureKind.authentication => 'tts_authentication',
   ModelFailureKind.network => 'tts_network',
   ModelFailureKind.modelNotFound => 'tts_model_not_found',
+  ModelFailureKind.modelInterfaceMismatch => 'tts_model_interface_mismatch',
   ModelFailureKind.rateLimited => 'tts_rate_limited',
   ModelFailureKind.incompatibleResponse => 'tts_incompatible_response',
   ModelFailureKind.contentParsing => 'tts_content_parsing',

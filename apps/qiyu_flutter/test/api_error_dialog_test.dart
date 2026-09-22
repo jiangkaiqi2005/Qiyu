@@ -218,6 +218,22 @@ void main() {
         ),
         ApiErrorCategory.ttsError,
       );
+      // 模型与接口不匹配走语音错误弹窗（保留前往设置入口），与 tts_client
+      // 同一处理面。
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('error', code: 'stt_model_interface_mismatch'),
+          isInput: true,
+        ),
+        ApiErrorCategory.sttError,
+      );
+      expect(
+        categorizeVoiceApiError(
+          const LocalChatGatewayException('error', code: 'tts_model_interface_mismatch'),
+          isInput: false,
+        ),
+        ApiErrorCategory.ttsError,
+      );
 
       // 缺少类别、网络与未知码都不根据错误文案推断。
       for (final code in [null, 'tts_network', 'tts_dns', 'tts_tls',

@@ -496,6 +496,9 @@ void main() {
         ModelFailureKind.authentication: FallbackReason.modelAuthentication,
         ModelFailureKind.network: FallbackReason.modelNetwork,
         ModelFailureKind.modelNotFound: FallbackReason.modelNotFound,
+        // 模型与接口不匹配的定位提示只在语音设置面；聊天面保持通用
+        // provider 降级归因。
+        ModelFailureKind.modelInterfaceMismatch: FallbackReason.modelProvider,
         ModelFailureKind.rateLimited: FallbackReason.modelRateLimited,
         ModelFailureKind.incompatibleResponse:
             FallbackReason.incompatibleModelResponse,

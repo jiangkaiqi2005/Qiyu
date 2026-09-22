@@ -276,6 +276,7 @@ void main() {
       ModelFailureKind.authentication,
       ModelFailureKind.network,
       ModelFailureKind.modelNotFound,
+      ModelFailureKind.modelInterfaceMismatch,
       ModelFailureKind.rateLimited,
       ModelFailureKind.incompatibleResponse,
       ModelFailureKind.contentParsing,
@@ -293,6 +294,20 @@ void main() {
       expect(result.status.name, kind.name);
       expect(result.toJson().toString(), isNot(contains('private-value')));
     }
+  });
+
+  test('模型与接口不匹配：连接测试给更换模型或调整地址的人话', () async {
+    final service = ProviderSettingsService(
+      _MemoryProviderConfigRepository()..config = config,
+      _MemorySecretStore()..values[config.credentialScope] = 'private-value',
+      _FakeModelGateway(failure: ModelFailureKind.modelInterfaceMismatch),
+      promptBuilder,
+    );
+
+    final result = await service.test(config: config);
+
+    expect(result.status, ProviderTestStatus.modelInterfaceMismatch);
+    expect(result.message, '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。');
   });
 
   test('测试连接会经过栖语完整输出检查', () async {

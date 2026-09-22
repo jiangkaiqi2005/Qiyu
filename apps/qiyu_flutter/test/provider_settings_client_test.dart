@@ -87,4 +87,35 @@ void main() {
     expect(result.succeeded, isFalse);
     expect(jsonDecode(requests.last.body), draft.toJson());
   });
+
+  test('parses the model interface mismatch test status', () async {
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/test' => hostJsonResponse({
+          'ok': false,
+          'status': 'modelInterfaceMismatch',
+          'message': '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+    );
+    final gateway = HttpProviderSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    const draft = ProviderSettingsDraft(
+      provider: ProviderKind.openAiCompatible,
+      baseUrl: 'https://new.example/v1',
+      model: 'new-model',
+      temperature: 0.4,
+      timeoutSeconds: 20,
+      apiKey: 'new-test-value',
+    );
+    final result = await gateway.testConnection(draft);
+
+    expect(result.status, ProviderTestStatus.modelInterfaceMismatch);
+    expect(result.succeeded, isFalse);
+    expect(result.message, '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。');
+  });
 }

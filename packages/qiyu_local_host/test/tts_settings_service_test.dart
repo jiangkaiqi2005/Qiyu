@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
@@ -512,6 +513,53 @@ void main() {
     expect(result.succeeded, isFalse);
     expect(result.audioBase64, isNull);
     expect(result.message, 'API Key 没有通过验证。');
+  });
+
+  test('模型与接口不匹配：连接测试与正式合成都给可定位提示', () async {
+    // 异常带 client 公开类别（与 providerStatusFailure 新分支一致）：
+    // 正式路径的 client 前置分支按 kind 排除本种类，错误码仍可区分。
+    final service = TtsSettingsService(
+      repository,
+      _FakeTtsGateway(
+        error: const TtsGatewayException(
+          kind: ModelFailureKind.modelInterfaceMismatch,
+          message: 'x',
+          serviceError: ServiceErrorCategory.client,
+        ),
+      ),
+    );
+    await service.save(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'qwen-audio-3.1-tts-next',
+      apiKey: 'secret-tts-key',
+    );
+
+    final result = await service.test(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'qwen-audio-3.1-tts-next',
+      apiKey: 'secret-tts-key',
+    );
+    expect(result.succeeded, isFalse);
+    expect(result.audioBase64, isNull);
+    expect(result.status, ProviderTestStatus.modelInterfaceMismatch);
+    expect(result.message, '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。');
+
+    await expectLater(
+      service.synthesize('晚安'),
+      throwsA(
+        isA<TtsServiceException>()
+            .having(
+              (error) => error.code,
+              'code',
+              'tts_model_interface_mismatch',
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。',
+            ),
+      ),
+    );
   });
 
   test('连接测试脏 Key：前置拦截人话文案，不出网', () async {

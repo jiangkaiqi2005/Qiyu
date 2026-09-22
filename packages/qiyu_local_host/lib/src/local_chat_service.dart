@@ -1176,6 +1176,9 @@ FallbackReason _fallbackReasonFor(ModelFailureKind failure) =>
       ModelFailureKind.authentication => FallbackReason.modelAuthentication,
       ModelFailureKind.network => FallbackReason.modelNetwork,
       ModelFailureKind.modelNotFound => FallbackReason.modelNotFound,
+      // 模型与接口不匹配只在语音设置面给人话提示；聊天面的降级归因保持
+      // 通用 provider 拒绝，不新增行为契约条目。
+      ModelFailureKind.modelInterfaceMismatch => FallbackReason.modelProvider,
       ModelFailureKind.rateLimited => FallbackReason.modelRateLimited,
       ModelFailureKind.incompatibleResponse =>
         FallbackReason.incompatibleModelResponse,

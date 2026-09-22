@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
@@ -645,6 +646,60 @@ void main() {
         ),
       );
     }
+  });
+
+  test('上游 url error 拒绝归为模型与接口不匹配，既有 4xx 分类不变', () {
+    ModelGatewayException failureFor(int status, String body) =>
+        providerStatusFailure(status, body, serviceLabel: '模型服务');
+
+    // 诊断实录：DashScope 对打到 HTTP 内联端点的流式/异步型号回 400
+    // 「url error」（帮助链接是 error-code#error-url 形态，不误命中）。
+    final mismatch = failureFor(
+      400,
+      '{"code":"InvalidParameter","message":"url error, please check url!"}',
+    );
+    expect(mismatch.kind, ModelFailureKind.modelInterfaceMismatch);
+    expect(mismatch.message, modelInterfaceMismatchMessage);
+    // 显式带 client 公开类别：聊天面错误对话框按类别弹「模型服务异常」。
+    expect(mismatch.serviceError, ServiceErrorCategory.client);
+
+    // DashScope 的「Model not exist.」不在找不到模型关键词表里（只认
+    // not found / does not exist / unknown model / no such model 四种
+    // 形态），保持通用 provider 分类，不被新分支改掉。
+    expect(
+      failureFor(400, '{"code":"InvalidParameter","message":"Model not exist."}').kind,
+      ModelFailureKind.provider,
+    );
+    expect(
+      failureFor(401, '{"error":{"message":"bad test-key"}}').kind,
+      ModelFailureKind.authentication,
+    );
+    expect(
+      failureFor(400, '{"code":"InvalidParameter","message":"audio bad"}').kind,
+      ModelFailureKind.provider,
+    );
+  });
+
+  test('url error 判定的顺序与边界', () {
+    ModelGatewayException failureFor(int status, String body) =>
+        providerStatusFailure(status, body, serviceLabel: '模型服务');
+
+    // 429 优先于关键词嗅探。
+    final limited = failureFor(429, '{"message":"url error"}');
+    expect(limited.kind, ModelFailureKind.rateLimited);
+    expect(limited.serviceError, ServiceErrorCategory.rateLimited);
+
+    // 5xx 不触发关键词分支：走通用兜底并带 server 类别。
+    final server = failureFor(500, '{"message":"url error"}');
+    expect(server.kind, ModelFailureKind.provider);
+    expect(server.serviceError, ServiceErrorCategory.server);
+
+    // 同一响应体同时命中找不到模型与 url error 时，找不到模型优先。
+    final both = failureFor(
+      400,
+      '{"message":"model not found; url error"}',
+    );
+    expect(both.kind, ModelFailureKind.modelNotFound);
   });
 
   test('stream records diagnostics and returns internal failure on unexpected error', () async {

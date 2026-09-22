@@ -88,6 +88,7 @@ enum ProviderTestStatus {
   authentication,
   network,
   modelNotFound,
+  modelInterfaceMismatch,
   rateLimited,
   incompatibleResponse,
   contentParsing,

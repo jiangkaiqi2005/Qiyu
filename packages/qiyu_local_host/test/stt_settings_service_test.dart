@@ -233,6 +233,46 @@ void main() {
     expect(failure.message, '语音服务请求过于频繁，请稍后再试。');
   });
 
+  test('上游 url error 拒绝：连接测试与正式转写都给可定位提示', () async {
+    // 诊断实录：流式/异步型号（如 filetrans）打到 HTTP 内联端点，服务端
+    // 回 400「url error」，帮助链接是 error-code#error-url 形态。
+    final http = _StaticSttHttpClient(
+      '{"code":"InvalidParameter","message":"url error, please check url！ For details, see: https://help.aliyun.com/zh/model-studio/error-code#error-url"}',
+      statusCode: 400,
+    );
+    final service = SttSettingsService(repository(), SttModelGateway(http));
+    await service.save(
+      baseUrl: 'https://stt.example.com/v1',
+      model: 'qwen-audio-3.0-asr-flash-filetrans',
+      apiKey: 'stt-secret-value',
+    );
+
+    final tested = await service.test(
+      baseUrl: 'https://stt.example.com/v1',
+      model: 'qwen-audio-3.0-asr-flash-filetrans',
+      apiKey: 'stt-secret-value',
+    );
+    expect(tested.status, ProviderTestStatus.modelInterfaceMismatch);
+    expect(tested.message, '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。');
+
+    await expectLater(
+      service.transcribe(audio: [1, 2], mimeType: 'audio/webm'),
+      throwsA(
+        isA<SttServiceException>()
+            .having(
+              (error) => error.code,
+              'code',
+              'stt_model_interface_mismatch',
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。',
+            ),
+      ),
+    );
+  });
+
   test('未配置时连接测试报 notConfigured，正式转写报可恢复失败', () async {
     final service = SttSettingsService(repository(), _sttGateway('在吗'));
 

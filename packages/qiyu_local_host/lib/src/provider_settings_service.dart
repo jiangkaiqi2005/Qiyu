@@ -40,6 +40,7 @@ enum ProviderTestStatus {
   authentication,
   network,
   modelNotFound,
+  modelInterfaceMismatch,
   rateLimited,
   incompatibleResponse,
   contentParsing,
@@ -433,7 +434,7 @@ final class ProviderSettingsService
 }
 
 /// 网关失败种类到连接测试状态的映射：聊天与语音输入、语音合成的
-/// 连接测试共用同一套 11 分支。
+/// 连接测试共用同一套 12 分支。
 ProviderTestStatus providerTestStatusFromFailureKind(ModelFailureKind kind) =>
     switch (kind) {
       ModelFailureKind.dns => ProviderTestStatus.dns,
@@ -442,6 +443,8 @@ ProviderTestStatus providerTestStatusFromFailureKind(ModelFailureKind kind) =>
       ModelFailureKind.authentication => ProviderTestStatus.authentication,
       ModelFailureKind.network => ProviderTestStatus.network,
       ModelFailureKind.modelNotFound => ProviderTestStatus.modelNotFound,
+      ModelFailureKind.modelInterfaceMismatch =>
+        ProviderTestStatus.modelInterfaceMismatch,
       ModelFailureKind.rateLimited => ProviderTestStatus.rateLimited,
       ModelFailureKind.incompatibleResponse =>
         ProviderTestStatus.incompatibleResponse,
@@ -452,7 +455,8 @@ ProviderTestStatus providerTestStatusFromFailureKind(ModelFailureKind kind) =>
 
 /// 三处连接测试（聊天/语音输入/语音合成）共享的状态文案表：除成功
 /// 与未配置两条各说各话外，其余 11 条只差服务标签（模型服务/语音
-/// 服务/语音合成服务），按标签逐字拼装。
+/// 服务/语音合成服务），按标签逐字拼装；模型与接口不匹配一条直说模型
+/// 与服务地址的配合关系，不带服务标签。
 String providerTestMessage(
   ProviderTestStatus status, {
   required String serviceLabel,
@@ -467,6 +471,8 @@ String providerTestMessage(
   ProviderTestStatus.authentication => 'API Key 没有通过验证。',
   ProviderTestStatus.network => '无法连接$serviceLabel，请检查地址和网络。',
   ProviderTestStatus.modelNotFound => '找不到这个模型，请检查模型名称。',
+  ProviderTestStatus.modelInterfaceMismatch =>
+    modelInterfaceMismatchMessage,
   ProviderTestStatus.rateLimited => '$serviceLabel请求过于频繁，请稍后再试。',
   ProviderTestStatus.incompatibleResponse =>
     '$serviceLabel返回了不兼容的响应格式。',
