@@ -1149,7 +1149,8 @@ final class MemoryRecoveryService {
       }
     }
 
-    // relationship.md：受管结构损坏时从全部有效剧集证据整体重建。
+    // relationship.md：受管结构损坏时按幸存日文件里最近一次持久化
+    // 的阶段判断整体重建；没有判断按初识保守重建，等日终模型追认。
     final relationship = File(path.join(memoryDirectory, 'relationship.md'));
     if (await relationship.exists()) {
       final contents = await readFileIfExists(relationship);
@@ -1161,13 +1162,13 @@ final class MemoryRecoveryService {
         try {
           final quarantinePath = await _quarantineMove(relationship, 'relationship');
           final dates = await episodePipeline.listEpisodeDates();
-          final rebuilt = await relationshipLifecycle.rebuildForRecovery(
+          final rebuild = await relationshipLifecycle.rebuildForRecovery(
             episodePipeline,
             dates,
             localSessionDate(_clock()),
           );
-          if (rebuilt) {
-            // 已从剧集证据完整重建：隔离副本随之删除。
+          if (rebuild == RelationshipRebuild.restored) {
+            // 阶段来自持久化判断，完整恢复：隔离副本随之删除。
             await _deleteIfExists(File(quarantinePath));
           }
           findings.add(
@@ -1175,14 +1176,20 @@ final class MemoryRecoveryService {
               layerKey: 'relationship',
               layer: '关系记录',
               kind: MemoryDamageKind.corrupt,
-              outcome: rebuilt
+              outcome: rebuild == RelationshipRebuild.restored
                   ? MemoryRecoveryOutcome.full
                   : MemoryRecoveryOutcome.pending,
-              evidence: rebuilt
-                  ? '从全部有效剧集证据整体重建（不受日终一级限制）'
-                  : null,
-              loss: rebuilt ? null : '关系记录内容',
-              quarantined: !rebuilt,
+              evidence: switch (rebuild) {
+                RelationshipRebuild.restored =>
+                  '从幸存日文件里最近一次持久化的阶段判断整体重建（不受日终一级限制）',
+                RelationshipRebuild.seeded =>
+                  '未找到持久化的阶段判断，按初识保守重建，等日终模型追认',
+                RelationshipRebuild.skipped => null,
+              },
+              loss: rebuild == RelationshipRebuild.restored
+                  ? null
+                  : '关系记录内容',
+              quarantined: rebuild != RelationshipRebuild.restored,
             ),
           );
         } on Object catch (error) {

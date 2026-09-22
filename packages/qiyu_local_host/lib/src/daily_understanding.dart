@@ -37,6 +37,11 @@ const understandingEvidenceMaxRunes = 80;
 const understandingMaxActiveItems = 6;
 const understandingActiveItemMaxRunes = 30;
 
+/// 阶段描述的长度上限（runes）：日终模型结合具体用户生成的一段
+/// 自然语言，随 relationship.md 的阶段描述落盘（该行不受写入关
+/// 裁剪，故解析侧就要限住）。
+const understandingStageDescriptionMaxRunes = 60;
+
 /// 日终理解调用的输出预算：一次要返回当天全部 episode 条目（上限
 /// 40 条 × 摘要 60 字 + 摘录 80 字）加整份 covered_request_ids 清单
 /// 的单个 JSON 对象，远超聊天的少说护栏。按旧 tokenizer 汉字可到
@@ -101,7 +106,11 @@ typedef UnderstandingEpisodeEntry = ({
 /// 记录本理解覆盖的当天条目范围：条目变化后理解作废，防止用旧
 /// 理解归档新增内容。[activeItems] 是「近日仍活跃」清单（每日
 /// 状态包定稿 2026-09-22）：空清单表示模型未输出，状态包装配按
-/// 日期截取兜底。
+/// 日期截取兜底。[relationshipStage]/[stageDescription] 是日终模型
+/// 对这个用户的关系阶段做的整体语义判断（T20 定稿：判断是「目标」，
+/// 升降由宿主的棘轮与每日一级决定）：阶段取值为既有
+/// [RelationshipStage] 的 wire 名，描述是模型结合具体用户生成的
+/// 一段自然语言；从未持久化过判断时阶段维持现状。
 final class DayUnderstanding {
   const DayUnderstanding({
     this.summary,
@@ -109,6 +118,8 @@ final class DayUnderstanding {
     this.loopCandidates = const [],
     this.loopClosures = const [],
     this.relationshipSignals = const [],
+    this.relationshipStage,
+    this.stageDescription,
     this.indexKeywords = const [],
     this.personaHints = const [],
     this.episodeEntries = const [],
@@ -123,6 +134,14 @@ final class DayUnderstanding {
   final List<UnderstandingLoopCandidate> loopCandidates;
   final List<UnderstandingLoopClosure> loopClosures;
   final List<UnderstandingSignal> relationshipSignals;
+
+  /// 日终模型判定的目标关系阶段（[RelationshipStage] 的 wire 名）；
+  /// 没有判断时为 null。宿主只在它高于当前阶段时按棘轮前进。
+  final String? relationshipStage;
+
+  /// 模型结合这个具体用户生成的阶段描述；没有输出时为 null，
+  /// relationship.md 回落阶段表行为边界文案。
+  final String? stageDescription;
   final List<String> indexKeywords;
   final List<UnderstandingPersonaHint> personaHints;
   final List<UnderstandingEpisodeEntry> episodeEntries;
@@ -141,6 +160,8 @@ final class DayUnderstanding {
       loopCandidates.isEmpty &&
       loopClosures.isEmpty &&
       relationshipSignals.isEmpty &&
+      relationshipStage == null &&
+      stageDescription == null &&
       indexKeywords.isEmpty &&
       personaHints.isEmpty &&
       episodeEntries.isEmpty &&
@@ -159,6 +180,8 @@ final class DayUnderstanding {
     loopCandidates: loopCandidates,
     loopClosures: loopClosures,
     relationshipSignals: relationshipSignals,
+    relationshipStage: relationshipStage,
+    stageDescription: stageDescription,
     indexKeywords: indexKeywords,
     personaHints: personaHints,
     activeItems: activeItems,
@@ -208,6 +231,10 @@ final class DayUnderstanding {
             ),
           )
           .toList(),
+      // 阶段 wire 名是枚举取值，无禁提面；描述是模型生成的用户相关
+      // 文案，命中禁提整段置空（relationship.md 回落阶段表文案）。
+      relationshipStage: relationshipStage,
+      stageDescription: _dropBanned(stageDescription, bannedTitles),
       indexKeywords: indexKeywords.where((keyword) => !hit(keyword)).toList(),
       personaHints: personaHints.where((hint) => !hit(hint.summary)).toList(),
       episodeEntries: episodeEntries
@@ -260,6 +287,8 @@ final class DayUnderstanding {
             if (signal.keep != null) 'keep': signal.keep,
           },
       ],
+    if (relationshipStage != null) 'relationshipStage': relationshipStage,
+    if (stageDescription != null) 'stageDescription': stageDescription,
     if (indexKeywords.isNotEmpty) 'indexKeywords': indexKeywords,
     if (personaHints.isNotEmpty)
       'personaHints': [
@@ -382,12 +411,24 @@ final class DayUnderstanding {
     }
     final entryCount = json['entryCount'];
     final lastEntryId = json['lastEntryId'];
+    // 阶段判断的持久化还原：只认既有 RelationshipStage 的 wire 名，
+    // 其余（缺失、非字符串、越界值）一律按无判断处理——阶段维持
+    // 现状。描述与解析侧同一管道（脱敏 + 截断），缺失按 null。
+    final rawStage = json['relationshipStage'];
+    final stageWire = rawStage is String
+        ? relationshipStageFromWire(rawStage.trim())?.wireName
+        : null;
     return DayUnderstanding(
       summary: text('summary'),
       mood: text('mood'),
       loopCandidates: candidates,
       loopClosures: closures,
       relationshipSignals: signals,
+      relationshipStage: stageWire,
+      stageDescription: _clipText(
+        json['stageDescription'],
+        understandingStageDescriptionMaxRunes,
+      ),
       indexKeywords: keywords,
       personaHints: hints,
       activeItems: activeItems,
@@ -722,12 +763,32 @@ DayUnderstanding? parseDayUnderstanding(
     }
   }
 
+  // 关系阶段的整体语义判断（T20 定稿）：阶段取值白名单化（与
+  // relationship.md 同一套 wire 名），描述与其余短句同一管道；
+  // 描述只在有阶段判断时被宿主消费，单独输出不产生效果。
+  final rawStage = json['relationship_stage'];
+  final stageWire = rawStage is String
+      ? relationshipStageFromWire(rawStage.trim())?.wireName
+      : null;
+  if (rawStage is String && stageWire == null) {
+    dropped('relationship stage not in whitelist');
+  }
+  final stageDescription = _clipText(
+    json['stage_description'],
+    understandingStageDescriptionMaxRunes,
+  );
+  if (stageDescription != null && banned(stageDescription)) {
+    dropped('stage description banned');
+  }
+
   return DayUnderstanding(
     summary: _dropBanned(summary, bannedTitles),
     mood: _dropBanned(mood, bannedTitles),
     loopCandidates: candidates,
     loopClosures: closures,
     relationshipSignals: signals,
+    relationshipStage: stageWire,
+    stageDescription: _dropBanned(stageDescription, bannedTitles),
     indexKeywords: keywords,
     personaHints: hints,
     episodeEntries: episodeEntries,
@@ -795,6 +856,8 @@ $appellationRule
 - loop_candidates: 数组，最多2项，用户提到且之后可能需要跟进的事；每项 {"title": 不超过24字的简称, "due": 可选的跟进时间, "note": 可选说明不超过30字, "keep": 可选的 "month"，只给即使整月未闭环也值得进月压缩的重要事项}；材料中已有跟进安排或已闭环的事项不要重复。日常琐事与临时任务不要标 keep。
 - loop_closures: 数组，最多1项，未闭环事项清单中已有结果、可以闭环的事项；每项 {"title": 与清单中完全一致的事项名称, "result": 不超过20字的结果}。
 - relationship_signals: 数组，最多1项，当天互动体现出的关系信号；每项 {"signal": deep_talk、temperature、boundary_open、boundary_close 之一, "summary": 自然抽象的状态描述，不超过30字，不复制原话, "keep": 可选的 "month"，只给体现关系阶段明显变化、值得进月压缩的信号}。一时的语气起伏不要标 keep。
+- relationship_stage: 字符串，结合当天完整互动对这个用户当前的关系阶段做整体语义判断，取值为 初识、熟悉、朋友、深交 之一。依据当天的对话整理记录、关系信号与待补会话综合判断，不要数互动条数、活跃天数或时间跨度；深谈信号（deep_talk）可以独立支持升级；只能判定到有依据的级别，没有把握或看不出变化就省略本字段（省略不会让阶段回退，宿主也不会自行发明判断；此前日子已持久化的目标仍会按每天最多一级继续兑现，判断结果永远不会让阶段下降）。
+- stage_description: 字符串，结合这个具体用户的相处实况写一段不超过60字的自然语言阶段描述，体现当前阶段能聊什么、不能做什么，以及你和这个用户之间真实的状态；不要写认识天数或统计数字，不要复述用户原话。没有输出 relationship_stage 时省略本字段。
 - index_keywords: 数组，3到4个当天主题词，每个不超过10字；要提炼主题，不要截断句子。
 - persona_hints: 数组，最多1项，用户稳定画像（身份、性格表达、价值原则、偏好习惯、边界禁区）的新线索；每项 {"branch": identity、expression、values、preferences、boundaries 之一, "nature": self_report表示用户明确说过，behavior表示行为观察, "summary": 不超过30字}；identity 只允许 self_report。''';
 

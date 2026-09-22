@@ -495,6 +495,8 @@ void main() {
         'summary': '第一天完整理解',
         'index_keywords': ['绿萝'],
         'active_items': ['第一次调用判断仍活跃的事'],
+        'relationship_stage': '熟悉',
+        'stage_description': '用户开始把白天的小事说给她听',
       });
       final secondResponse = jsonEncode({
         'episode_entries': [
@@ -504,6 +506,8 @@ void main() {
         // 增量调用即使返回了不同的整体字段，也不得覆盖已归档结论。
         'summary': '增量调用不应覆盖这个',
         'active_items': ['增量调用不应覆盖这个'],
+        'relationship_stage': '朋友',
+        'stage_description': '增量调用不应覆盖这个',
       });
       final client = _RecordingUnderstandingClient(
         firstResponse,
@@ -548,6 +552,10 @@ void main() {
       // 整体结论保留第一次归档的；覆盖清单合并两批。
       expect(understanding['summary'], '第一天完整理解');
       expect(understanding['activeItems'], ['第一次调用判断仍活跃的事']);
+      // 阶段判断与描述同属整体理解结论：增量补建只补原始轮次，
+      // 沿用第一次归档的值，绝不让补建推翻已归档的关系判断。
+      expect(understanding['relationshipStage'], '熟悉');
+      expect(understanding['stageDescription'], '用户开始把白天的小事说给她听');
       expect((understanding['coveredRequestIds'] as List<Object?>).toSet(), {
         'day-1',
         'day-2',
@@ -1084,12 +1092,22 @@ void main() {
     'end-of-day relationship step promotes once and replays stay stable',
     () async {
       var now = DateTime(2026, 8, 1, 22);
+      // 日终模型三天都整体判定熟悉：阶段升降交给语义判断，棘轮与
+      // 每日一级不变。
+      final client = _RecordingUnderstandingClient(
+        jsonEncode({
+          'summary': '用户聊了日常',
+          'relationship_stage': '熟悉',
+          'stage_description': '用户已经会把随口的小事说给她听',
+        }),
+      );
       final (:temporaryDirectory, :pipeline, :service) =
           await _finalizationFixture(
             'qiyu-finalization-relationship-test-',
             clock: () => now,
+            modelClient: client,
           );
-      // 三个活跃日 + 一次深谈：证据够到熟悉。
+      // 三天互动，其中一天带一次深谈：深谈信号只投影近期变化。
       for (var day = 1; day <= 3; day += 1) {
         now = DateTime(2026, 8, day, 22);
         await pipeline.processReply(
@@ -1116,6 +1134,7 @@ void main() {
       await service.finalizeDay('2026-08-03');
       var contents = await relationshipFile.readAsString(encoding: utf8);
       expect(contents, contains('stage: 熟悉'));
+      expect(contents, contains('阶段描述: 用户已经会把随口的小事说给她听'));
       expect(contents, contains('用户愿意聊到更深的工作困扰'));
 
       // 重复日终：阶段不回退也不重复升级。

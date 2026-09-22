@@ -163,6 +163,7 @@ void main() {
     List<EpisodeEntry> entries, {
     String? summary,
     bool finalized = true,
+    Map<String, Object?>? understanding,
   }) => pipeline.synchronizedOnDayFiles(
     () => pipeline.writeFinalization(
       date,
@@ -172,6 +173,7 @@ void main() {
       finalizedAt: finalized
           ? DateTime.parse('${date}T23:00:00').toUtc()
           : null,
+      understanding: understanding,
     ),
   );
 
@@ -1044,7 +1046,42 @@ void main() {
   });
 
   group('热层', () {
-    test('关系记录从剧集证据整体重建，完整恢复不留隔离副本', () async {
+    test('关系记录按幸存日文件的阶段判断整体重建，完整恢复不留隔离副本', () async {
+      await seedEpisodeDay(
+        '2026-08-05',
+        [entry('2026-08-05', 'e1', '用户打了招呼')],
+        summary: '打招呼',
+        understanding: const {
+          'relationshipStage': '深交',
+          'stageDescription': '用户和她已经能直接说心事',
+        },
+      );
+      await overwrite(
+        File(path.join(memoryDirectory, 'relationship.md')),
+        '# relationship\n{损坏的结构',
+      );
+
+      final report = await recovery.sweepAndRecover();
+
+      final rebuilt = File(path.join(memoryDirectory, 'relationship.md'));
+      expect(await rebuilt.exists(), isTrue);
+      // 整体重建不受「每次最多一级」限制：直接按持久化判断定级。
+      expect(
+        parseRelationshipStage(await rebuilt.readAsString()),
+        RelationshipStage.deep,
+      );
+      expect(
+        await rebuilt.readAsString(),
+        contains('阶段描述: 用户和她已经能直接说心事'),
+      );
+      final finding = findByKey(report, 'relationship');
+      expect(finding, isNotNull);
+      expect(finding!.outcome, MemoryRecoveryOutcome.full);
+      expect(finding.quarantined, isFalse);
+      expect(quarantineCount(), 0);
+    });
+
+    test('没有持久化阶段判断时关系记录按初识保守重建，如实报部分恢复', () async {
       await seedEpisodeDay('2026-08-05', [
         entry('2026-08-05', 'e1', '用户打了招呼'),
       ], summary: '打招呼');
@@ -1057,12 +1094,16 @@ void main() {
 
       final rebuilt = File(path.join(memoryDirectory, 'relationship.md'));
       expect(await rebuilt.exists(), isTrue);
-      expect(parseRelationshipFile(await rebuilt.readAsString()), isNotNull);
+      expect(
+        parseRelationshipStage(await rebuilt.readAsString()),
+        RelationshipStage.stranger,
+      );
       final finding = findByKey(report, 'relationship');
       expect(finding, isNotNull);
-      expect(finding!.outcome, MemoryRecoveryOutcome.full);
-      expect(finding.quarantined, isFalse);
-      expect(quarantineCount(), 0);
+      // 阶段没恢复：如实报部分恢复并保留隔离副本，等日终棘轮追认。
+      expect(finding!.outcome, MemoryRecoveryOutcome.pending);
+      expect(finding.quarantined, isTrue);
+      expect(quarantineCount(), 1);
     });
   });
 

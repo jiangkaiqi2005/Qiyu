@@ -629,7 +629,8 @@ final class DailyFinalizationService {
     // 沿用已归档结论。「近日仍活跃」清单同属整体理解结论——它是对全周
     // 语境的「哪些事还活着」的判断，增量调用只补当天轮次、不重判活跃
     // 性，故沿用旧值；旧理解缺该字段（本次改动前的归档）时按空清单
-    // 处理，状态包装配随之走日期截取兜底。
+    // 处理，状态包装配随之走日期截取兜底。阶段判断与描述同理：补建
+    // 只补原始轮次，不重做整体关系判断。
     final mergedCovered = [...restored.coveredRequestIds];
     for (final requestId in understanding.coveredRequestIds) {
       if (!mergedCovered.contains(requestId)) {
@@ -643,6 +644,8 @@ final class DailyFinalizationService {
         loopCandidates: restored.loopCandidates,
         loopClosures: restored.loopClosures,
         relationshipSignals: restored.relationshipSignals,
+        relationshipStage: restored.relationshipStage,
+        stageDescription: restored.stageDescription,
         indexKeywords: restored.indexKeywords,
         personaHints: restored.personaHints,
         episodeEntries: understanding.episodeEntries,

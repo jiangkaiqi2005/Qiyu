@@ -25,7 +25,7 @@ Ticket 26 结束迁移期。当前产品入口只有 Flutter Web UI、Dart Windo
 
 冻结 golden 中 `low_signal_arrival`、`medical_advice_safety` 与 `crisis_variant_safety` 的核心边界，在当前 Release contract 中分别由最少回应、医疗安全和危机安全用例继续执行；`bedtime_diminuendo` 仅保留在历史迁移快照中，当前契约已取消晚安强制本地收束。这不表示两个文件整体等价。
 
-其余关系相关场景——`fatigue_question`、`earned_teasing`、`fatigue_friend_with_work_memory`、`loss_soulmate_stage`、`asking_resign_stranger`、`asking_resign_friend`——依赖旧 `sessionCount + memories[] + localStorage turns` 状态模型，不直接喂给当前运行时。Spec 已将其领域语义升级为 Markdown episodes、`relationship.md`、PersonaTree 与日终阶段棘轮：`relationship_lifecycle_test.dart` 覆盖阶段建立、证据边界、每日最多晋升一级与不回退；`local_chat_service_test.dart` 的 `the state pack injection carries gated follow-up candidates` 覆盖初识/熟悉/朋友的调侃、翻旧账和主动跟进纪律，`shared-past memories inject, but stranger-stage discipline locks them` 覆盖共同过往与初识门禁，`a deep-talk signal lands in episodes and the next end-of-day relationship` 覆盖证据落 episode 后再于日终影响关系。旧场景的逐句话术期望只作为冻结迁移证据保存，不冒充当前状态模型的可执行断言。
+其余关系相关场景——`fatigue_question`、`earned_teasing`、`fatigue_friend_with_work_memory`、`loss_soulmate_stage`、`asking_resign_stranger`、`asking_resign_friend`——依赖旧 `sessionCount + memories[] + localStorage turns` 状态模型，不直接喂给当前运行时。Spec 已将其领域语义升级为 Markdown episodes、`relationship.md`、PersonaTree 与日终阶段棘轮：`relationship_lifecycle_test.dart` 覆盖阶段建立、判断驱动的棘轮与每日最多晋升一级、不回退、判断缺失时阶段不动、恢复重建各形态与描述回落；`local_chat_service_test.dart` 的 `the state pack injection carries gated follow-up candidates` 覆盖初识/熟悉/朋友的调侃、翻旧账和主动跟进纪律，`shared-past memories inject, but stranger-stage discipline locks them` 覆盖共同过往与初识门禁，`a deep-talk signal lands in episodes and the next end-of-day relationship` 覆盖证据落 episode 后再于日终影响关系。旧场景的逐句话术期望只作为冻结迁移证据保存，不冒充当前状态模型的可执行断言。
 
 旧 DOM/PWA、Node 设置文件和 localStorage 历史按 Spec 退出，Release 1 不迁移旧 localStorage；冻结快照不会重新接入这些路径。
 

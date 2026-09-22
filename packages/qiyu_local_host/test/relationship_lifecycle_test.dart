@@ -6,109 +6,6 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('evidence thresholds map to stages at exact boundaries', () {
-    RelationshipEvidence evidence({
-      int totalEntries = 0,
-      int activeDays = 0,
-      int spanDays = 0,
-      int deepTalkSignals = 0,
-    }) => RelationshipEvidence(
-      totalEntries: totalEntries,
-      activeDays: activeDays,
-      spanDays: spanDays,
-      deepTalkSignals: deepTalkSignals,
-    );
-
-    expect(evaluateTargetStage(evidence()), RelationshipStage.stranger);
-    // 熟悉：活跃天数与互动数量同时达标。
-    expect(
-      evaluateTargetStage(
-        evidence(totalEntries: 3, activeDays: 3, spanDays: 3),
-      ),
-      RelationshipStage.familiar,
-    );
-    expect(
-      evaluateTargetStage(
-        evidence(totalEntries: 3, activeDays: 2, spanDays: 3),
-      ),
-      RelationshipStage.stranger,
-    );
-    expect(
-      evaluateTargetStage(
-        evidence(totalEntries: 2, activeDays: 3, spanDays: 3),
-      ),
-      RelationshipStage.stranger,
-    );
-    // 朋友：时间跨度、活跃天数与深谈证据同时达标。
-    expect(
-      evaluateTargetStage(
-        evidence(
-          totalEntries: 40,
-          activeDays: 12,
-          spanDays: 12,
-          deepTalkSignals: 2,
-        ),
-      ),
-      RelationshipStage.friend,
-    );
-    expect(
-      evaluateTargetStage(
-        evidence(
-          totalEntries: 40,
-          activeDays: 12,
-          spanDays: 11,
-          deepTalkSignals: 2,
-        ),
-      ),
-      RelationshipStage.familiar,
-    );
-    expect(
-      evaluateTargetStage(
-        evidence(
-          totalEntries: 40,
-          activeDays: 12,
-          spanDays: 12,
-          deepTalkSignals: 1,
-        ),
-      ),
-      RelationshipStage.familiar,
-    );
-    // 深交：更长的跨度与更多深谈证据。
-    expect(
-      evaluateTargetStage(
-        evidence(
-          totalEntries: 90,
-          activeDays: 30,
-          spanDays: 30,
-          deepTalkSignals: 4,
-        ),
-      ),
-      RelationshipStage.deep,
-    );
-    expect(
-      evaluateTargetStage(
-        evidence(
-          totalEntries: 90,
-          activeDays: 30,
-          spanDays: 30,
-          deepTalkSignals: 3,
-        ),
-      ),
-      RelationshipStage.friend,
-    );
-    expect(
-      evaluateTargetStage(
-        evidence(
-          totalEntries: 90,
-          activeDays: 29,
-          spanDays: 30,
-          deepTalkSignals: 4,
-        ),
-      ),
-      RelationshipStage.friend,
-    );
-  });
-
   test('seeds stranger from the earliest traceable interaction date', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-relationship-seed-test-',
@@ -138,11 +35,13 @@ void main() {
     ).readAsString(encoding: utf8);
     expect(contents, contains('stage: 初识'));
     expect(contents, contains('since: 2026-08-14'));
+    // 没有模型判断：描述回落阶段表行为边界文案。
+    expect(contents, contains('阶段描述: 初识阶段：以回应当前话题、倾听为主；'));
     expect(contents, contains('不调侃、不翻旧账'));
   });
 
   test(
-    'promotion is ratcheted: one level per day, replays never repeat it',
+    'judgment drives the ratchet: one level per day, replays never repeat it',
     () async {
       final temporaryDirectory = await Directory.systemTemp.createTemp(
         'qiyu-relationship-promote-test-',
@@ -153,48 +52,46 @@ void main() {
         memoryDirectory: temporaryDirectory.path,
         clock: () => now,
       );
-      // 12 个活跃日 + 两次深谈：证据直接够到朋友。
+      // 12 天互动，最新一天的日终模型整体判定够到朋友。
       final dates = <String>[];
       for (var day = 1; day <= 12; day += 1) {
         final date = '2026-08-${day.toString().padLeft(2, '0')}';
         dates.add(date);
         now = DateTime(2026, 8, day, 22);
-        final actions = <HiddenAction>[
-          const MemorySignalAction(summary: '聊了日常'),
-          if (day == 3 || day == 7)
-            RelationshipSignalAction(
-              signal: RelationshipSignal.deepTalk,
-              summary: '深谈信号 $day',
-            ),
-        ];
         await _reply(
           pipeline,
           now,
           requestId: 'req-$day',
           session: 'session-1',
-          actions: actions,
+          actions: const [MemorySignalAction(summary: '聊了日常')],
         );
       }
+      await _persistJudgment(
+        pipeline,
+        '2026-08-12',
+        stage: '朋友',
+        description: '用户已经会把白天的事说给她听，也经得起她的直话',
+      );
       final lifecycle = RelationshipLifecycle(
         memoryDirectory: temporaryDirectory.path,
         clock: () => now,
       );
       final file = File('${temporaryDirectory.path}/relationship.md');
 
-      // 首次日终：播种并按整体证据评估——证据够到朋友，但单次最多升一级。
+      // 首次日终：播种，目标朋友但单次最多升一级。
       await lifecycle.updateAtEndOfDay('2026-08-12', pipeline, dates);
       expect(await _stage(file), RelationshipStage.familiar);
-      expect(
-        await file.readAsString(encoding: utf8),
-        contains('since: 2026-08-12'),
-      );
+      var contents = await file.readAsString(encoding: utf8);
+      expect(contents, contains('since: 2026-08-12'));
+      // 阶段描述取模型结合这个具体用户生成的文案。
+      expect(contents, contains('阶段描述: 用户已经会把白天的事说给她听，也经得起她的直话'));
 
       // 同一天重复执行：绝不重复升级。
       await lifecycle.updateAtEndOfDay('2026-08-12', pipeline, dates);
       await lifecycle.updateAtEndOfDay('2026-08-12', pipeline, dates);
       expect(await _stage(file), RelationshipStage.familiar);
 
-      // 次日日终：再升一级到朋友；之后证据不变不再前进。
+      // 次日日终：再升一级到朋友；之后判断不变不再前进。
       now = DateTime(2026, 8, 13, 22);
       await lifecycle.updateAtEndOfDay('2026-08-13', pipeline, dates);
       expect(await _stage(file), RelationshipStage.friend);
@@ -203,55 +100,96 @@ void main() {
     },
   );
 
-  test(
-    'catch-up backfill across old days promotes at most once per calendar day',
-    () async {
-      final temporaryDirectory = await Directory.systemTemp.createTemp(
-        'qiyu-relationship-backfill-test-',
-      );
-      addTearDown(() => temporaryDirectory.delete(recursive: true));
-      var now = DateTime(2026, 8, 16, 22);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: temporaryDirectory.path,
-        clock: () => now,
-      );
-      final dates = <String>[];
-      for (var day = 1; day <= 12; day += 1) {
-        final date = '2026-08-${day.toString().padLeft(2, '0')}';
-        dates.add(date);
-        now = DateTime(2026, 8, day, 22);
-        await _reply(
-          pipeline,
-          now,
-          requestId: 'req-$day',
-          session: 'session-1',
-          actions: [
-            RelationshipSignalAction(
-              signal: day == 2 || day == 5
-                  ? RelationshipSignal.deepTalk
-                  : RelationshipSignal.temperature,
-              summary: '关系证据 $day',
-            ),
-          ],
-        );
-      }
-      now = DateTime(2026, 8, 16, 22);
-      final lifecycle = RelationshipLifecycle(
-        memoryDirectory: temporaryDirectory.path,
-        clock: () => now,
-      );
-      final file = File('${temporaryDirectory.path}/relationship.md');
-      await lifecycle.updateAtEndOfDay('2026-08-01', pipeline, dates);
+  test('a deep-talk day alone supports a promotion judgment', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-relationship-deeptalk-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 13, 22);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    await _reply(
+      pipeline,
+      now,
+      requestId: 'req-13',
+      session: 'session-1',
+      actions: const [MemorySignalAction(summary: '聊了日常')],
+    );
+    now = DateTime(2026, 8, 14, 23);
+    await _reply(
+      pipeline,
+      now,
+      requestId: 'req-14',
+      session: 'session-1',
+      actions: const [
+        RelationshipSignalAction(
+          signal: RelationshipSignal.deepTalk,
+          summary: '用户愿意聊到很深的家庭关系',
+        ),
+      ],
+    );
+    // 只有一次深谈信号的一天：模型据此整体判定熟悉即支持升级。
+    await _persistJudgment(pipeline, '2026-08-14', stage: '熟悉');
+    final lifecycle = RelationshipLifecycle(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
 
-      // 启动补扫连续归档多个旧日：同一自然日只升一级。
-      for (final date in dates.skip(1)) {
-        await lifecycle.updateAtEndOfDay(date, pipeline, dates);
-      }
-      expect(await _stage(file), RelationshipStage.familiar);
-    },
-  );
+    await lifecycle.updateAtEndOfDay('2026-08-14', pipeline, [
+      '2026-08-13',
+      '2026-08-14',
+    ]);
 
-  test('an advanced stage never regresses when evidence is thin', () async {
+    final contents = await File(
+      '${temporaryDirectory.path}/relationship.md',
+    ).readAsString(encoding: utf8);
+    expect(contents, contains('stage: 熟悉'));
+    // 深谈信号仍照常投影近期变化。
+    expect(contents, contains('用户愿意聊到很深的家庭关系'));
+    // 判断未带描述：回落阶段表行为边界文案。
+    expect(contents, contains('阶段描述: 熟悉阶段：可以自然提起用户说过的事'));
+  });
+
+  test('no judgment leaves the stage untouched', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-relationship-nojudgment-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 12, 22);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final dates = <String>[];
+    for (var day = 1; day <= 12; day += 1) {
+      final date = '2026-08-${day.toString().padLeft(2, '0')}';
+      dates.add(date);
+      now = DateTime(2026, 8, day, 22);
+      await _reply(
+        pipeline,
+        now,
+        requestId: 'req-$day',
+        session: 'session-1',
+        actions: const [MemorySignalAction(summary: '聊了日常')],
+      );
+    }
+    final lifecycle = RelationshipLifecycle(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    final file = File('${temporaryDirectory.path}/relationship.md');
+
+    // 没有持久化的阶段判断（未配模型或模型未输出）：阶段原地不动。
+    await lifecycle.updateAtEndOfDay('2026-08-12', pipeline, dates);
+    expect(await _stage(file), RelationshipStage.stranger);
+    now = DateTime(2026, 8, 13, 22);
+    await lifecycle.updateAtEndOfDay('2026-08-13', pipeline, dates);
+    expect(await _stage(file), RelationshipStage.stranger);
+  });
+
+  test('an advanced stage never regresses without a judgment', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-relationship-ratchet-test-',
     );
@@ -290,6 +228,50 @@ void main() {
     expect(contents, contains('since: 2026-07-20'));
   });
 
+  test('a judgment below the current stage never regresses', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-relationship-noregress-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    var now = DateTime(2026, 8, 14, 23);
+    File('${temporaryDirectory.path}/relationship.md').writeAsStringSync(
+      '# relationship\n'
+      '\n'
+      'stage: 朋友\n'
+      'since: 2026-07-20\n'
+      '阶段描述: 朋友阶段：可以轻调侃、翻旧账、直说。\n',
+      encoding: utf8,
+    );
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+    await _reply(
+      pipeline,
+      now,
+      requestId: 'req-1',
+      session: 'session-1',
+      actions: const [MemorySignalAction(summary: '只聊了一句')],
+    );
+    // 模型当天整体判定只到初识：低于当前阶段，棘轮只升不降。
+    await _persistJudgment(pipeline, '2026-08-14', stage: '初识');
+    final lifecycle = RelationshipLifecycle(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => now,
+    );
+
+    await lifecycle.updateAtEndOfDay('2026-08-14', pipeline, ['2026-08-14']);
+
+    final contents = await File(
+      '${temporaryDirectory.path}/relationship.md',
+    ).readAsString(encoding: utf8);
+    expect(contents, contains('stage: 朋友'));
+    expect(contents, contains('since: 2026-07-20'));
+    // 判断未带描述：描述回落当前阶段（朋友）的行为边界文案，
+    // 不跟着被压低的判断走。
+    expect(contents, contains('阶段描述: 朋友阶段：可以轻调侃、翻旧账'));
+  });
+
   test(
     'temperature changes slowly and never touches stage permissions',
     () async {
@@ -304,7 +286,7 @@ void main() {
       );
       final dates = <String>[];
       // 两天四条温度信号 + 三条边界开合：窗口只保留最近几条。
-      // 活跃天数刻意压到 2（<3），保证阶段停在初识——温度不碰阶段。
+      // 没有任何阶段判断，阶段停在初识——温度不碰阶段。
       final signals = [
         ('2026-08-09', RelationshipSignal.temperature, '用户这几天火气比较大'),
         ('2026-08-09', RelationshipSignal.deepTalk, '用户愿意聊到更深的家庭关系'),
@@ -473,6 +455,7 @@ void main() {
         ],
       );
     }
+    await _persistJudgment(pipeline, '2026-08-12', stage: '朋友');
     now = DateTime(2026, 8, 12, 22);
     final first = RelationshipLifecycle(
       memoryDirectory: temporaryDirectory.path,
@@ -526,6 +509,8 @@ void main() {
           ],
         );
       }
+      // 模型整体判定熟悉：预算关不影响阶段判定本身。
+      await _persistJudgment(pipeline, '2026-08-10', stage: '熟悉');
       now = DateTime(2026, 8, 10, 22);
       final lifecycle = RelationshipLifecycle(
         memoryDirectory: temporaryDirectory.path,
@@ -538,14 +523,216 @@ void main() {
         '${temporaryDirectory.path}/relationship.md',
       ).readAsString(encoding: utf8);
       expect(contents.runes.length, lessThanOrEqualTo(relationshipMaxRunes));
-      // 10 个活跃日够到熟悉：预算关不影响阶段判定本身。
       expect(contents, contains('stage: 熟悉'));
     },
   );
+
+  test(
+    'catch-up backfill across old days promotes at most once per calendar day',
+    () async {
+      final temporaryDirectory = await Directory.systemTemp.createTemp(
+        'qiyu-relationship-backfill-test-',
+      );
+      addTearDown(() => temporaryDirectory.delete(recursive: true));
+      var now = DateTime(2026, 8, 16, 22);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final dates = <String>[];
+      for (var day = 1; day <= 12; day += 1) {
+        final date = '2026-08-${day.toString().padLeft(2, '0')}';
+        dates.add(date);
+        now = DateTime(2026, 8, day, 22);
+        await _reply(
+          pipeline,
+          now,
+          requestId: 'req-$day',
+          session: 'session-1',
+          actions: [
+            RelationshipSignalAction(
+              signal: day == 2 || day == 5
+                  ? RelationshipSignal.deepTalk
+                  : RelationshipSignal.temperature,
+              summary: '关系证据 $day',
+            ),
+          ],
+        );
+      }
+      await _persistJudgment(pipeline, '2026-08-12', stage: '朋友');
+      now = DateTime(2026, 8, 16, 22);
+      final lifecycle = RelationshipLifecycle(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final file = File('${temporaryDirectory.path}/relationship.md');
+      await lifecycle.updateAtEndOfDay('2026-08-01', pipeline, dates);
+
+      // 启动补扫连续归档多个旧日：同一自然日只升一级。
+      for (final date in dates.skip(1)) {
+        await lifecycle.updateAtEndOfDay(date, pipeline, dates);
+      }
+      expect(await _stage(file), RelationshipStage.familiar);
+    },
+  );
+
+  test('recovery restores the latest persisted judgment directly', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-relationship-recovery-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    // 回复发生在 08-05：episode 落当天日文件（processReply 按时钟
+    // 所在日归档）。
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 5, 22),
+    );
+    await _reply(
+      pipeline,
+      DateTime(2026, 8, 5, 22),
+      requestId: 'req-1',
+      session: 'session-1',
+      actions: const [MemorySignalAction(summary: '聊了工作')],
+    );
+    await _persistJudgment(
+      pipeline,
+      '2026-08-05',
+      stage: '深交',
+      description: '用户和她之间已经可以直接说心事，也经得起互相挑战',
+    );
+    // 损坏文件先被恢复流程隔离移走，rebuildForRecovery 面对的是
+    // 「文件已不存在」的现场。
+    File(
+      '${temporaryDirectory.path}/relationship.md',
+    ).writeAsStringSync('# relationship\n{损坏的结构', encoding: utf8);
+    await File('${temporaryDirectory.path}/relationship.md').delete();
+    final lifecycle = RelationshipLifecycle(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 19, 21),
+    );
+
+    // 整体重建不受「每次最多一级」限制：直接按持久化判断定级。
+    final rebuild = await lifecycle.rebuildForRecovery(pipeline, [
+      '2026-08-05',
+    ], '2026-08-19');
+
+    expect(rebuild, RelationshipRebuild.restored);
+    final contents = await File(
+      '${temporaryDirectory.path}/relationship.md',
+    ).readAsString(encoding: utf8);
+    expect(contents, contains('stage: 深交'));
+    expect(contents, contains('since: 2026-08-05'));
+    expect(contents, contains('阶段描述: 用户和她之间已经可以直接说心事，也经得起互相挑战'));
+  });
+
+  test('recovery seeds stranger when no judgment survives', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-relationship-recovery-seed-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 5, 22),
+    );
+    await _reply(
+      pipeline,
+      DateTime(2026, 8, 5, 22),
+      requestId: 'req-1',
+      session: 'session-1',
+      actions: const [MemorySignalAction(summary: '聊了工作')],
+    );
+    // 损坏文件先被恢复流程隔离移走，rebuildForRecovery 面对的是
+    // 「文件已不存在」的现场。
+    File(
+      '${temporaryDirectory.path}/relationship.md',
+    ).writeAsStringSync('# relationship\n{损坏的结构', encoding: utf8);
+    await File('${temporaryDirectory.path}/relationship.md').delete();
+    final lifecycle = RelationshipLifecycle(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 19, 21),
+    );
+
+    // 没有任何持久化判断：按初识保守重建，等后续日终棘轮追认。
+    final rebuild = await lifecycle.rebuildForRecovery(pipeline, [
+      '2026-08-05',
+    ], '2026-08-19');
+
+    expect(rebuild, RelationshipRebuild.seeded);
+    final contents = await File(
+      '${temporaryDirectory.path}/relationship.md',
+    ).readAsString(encoding: utf8);
+    expect(contents, contains('stage: 初识'));
+    expect(contents, contains('since: 2026-08-05'));
+    expect(contents, contains('阶段描述: 初识阶段：以回应当前话题、倾听为主；'));
+  });
+
+  test('recovery skips an existing relationship file', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-relationship-recovery-skip-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    const existing =
+        '# relationship\n\nstage: 朋友\nsince: 2026-07-01\n'
+        '阶段描述: 朋友阶段：可以轻调侃。\n';
+    File(
+      '${temporaryDirectory.path}/relationship.md',
+    ).writeAsStringSync(existing, encoding: utf8);
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 5, 22),
+    );
+    await _reply(
+      pipeline,
+      DateTime(2026, 8, 5, 22),
+      requestId: 'req-1',
+      session: 'session-1',
+      actions: const [MemorySignalAction(summary: '聊了工作')],
+    );
+    await _persistJudgment(pipeline, '2026-08-05', stage: '深交');
+    final lifecycle = RelationshipLifecycle(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 19, 21),
+    );
+
+    // 文件仍在（无论可读与否）绝不动它。
+    final rebuild = await lifecycle.rebuildForRecovery(pipeline, [
+      '2026-08-05',
+    ], '2026-08-19');
+
+    expect(rebuild, RelationshipRebuild.skipped);
+    expect(
+      File(
+        '${temporaryDirectory.path}/relationship.md',
+      ).readAsStringSync(encoding: utf8),
+      existing,
+    );
+  });
 }
 
 Future<RelationshipStage> _stage(File file) async =>
     parseRelationshipStage(await file.readAsString(encoding: utf8));
+
+/// 模拟日终模型把阶段判断持久化进当日文件元数据（键与形态同
+/// [DayUnderstanding.toJson]）。
+Future<void> _persistJudgment(
+  EpisodeMemoryPipeline pipeline,
+  String date, {
+  required String stage,
+  String? description,
+}) => pipeline.synchronizedOnDayFiles(() async {
+  final day = await pipeline.readDay(date);
+  final understanding = <String, Object?>{'relationshipStage': stage};
+  if (description != null) {
+    understanding['stageDescription'] = description;
+  }
+  await pipeline.writeFinalization(
+    date,
+    entries: day.entries,
+    finalized: true,
+    finalizedAt: DateTime.utc(2026, 8, 20, 23),
+    understanding: understanding,
+  );
+});
 
 Future<void> _reply(
   EpisodeMemoryPipeline pipeline,

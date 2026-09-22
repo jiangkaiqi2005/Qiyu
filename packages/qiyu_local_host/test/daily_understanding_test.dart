@@ -252,6 +252,72 @@ void main() {
       expect(understanding.indexKeywords, ['演讲']);
     });
 
+    test(
+      'relationship stage judgment and description parse with whitelists',
+      () {
+        final understanding = parseDayUnderstanding(
+          jsonEncode({
+            'relationship_stage': '朋友',
+            'stage_description': '  用户已经会把白天的事说给她听，也经得起她的直话  ',
+          }),
+          bannedTitles: const {},
+          diagnosticsSink: (_) {},
+        );
+
+        expect(understanding!.relationshipStage, '朋友');
+        expect(
+          understanding.stageDescription,
+          '用户已经会把白天的事说给她听，也经得起她的直话',
+        );
+
+        // 超长描述截断保留（与其余理解短句字段同一口径）。
+        final clipped = parseDayUnderstanding(
+          jsonEncode({'stage_description': '描述${'长' * 80}'}),
+          bannedTitles: const {},
+          diagnosticsSink: (_) {},
+        );
+        expect(
+          clipped!.stageDescription!.runes.length,
+          understandingStageDescriptionMaxRunes,
+        );
+      },
+    );
+
+    test('invalid stage wire values are dropped with diagnostics', () {
+      final diagnostics = <String>[];
+      final understanding = parseDayUnderstanding(
+        jsonEncode({
+          'relationship_stage': '知己',
+          'stage_description': '没有合法阶段判断时的描述',
+        }),
+        bannedTitles: const {},
+        diagnosticsSink: diagnostics.add,
+      );
+
+      // 逐字段校验：非法阶段值只丢阶段判断。
+      expect(understanding!.relationshipStage, isNull);
+      expect(
+        diagnostics.join('\n'),
+        contains('relationship stage not in whitelist'),
+      );
+    });
+
+    test('banned titles never enter the stage description', () {
+      final diagnostics = <String>[];
+      final understanding = parseDayUnderstanding(
+        jsonEncode({
+          'relationship_stage': '熟悉',
+          'stage_description': '用户聊了换工作的打算后放松下来',
+        }),
+        bannedTitles: {normalizeLoopTitle('换工作')},
+        diagnosticsSink: diagnostics.add,
+      );
+
+      expect(understanding!.relationshipStage, '熟悉');
+      expect(understanding.stageDescription, isNull);
+      expect(diagnostics.join('\n'), contains('stage description banned'));
+    });
+
     test('non-JSON output returns null and empty object stays empty', () {
       expect(
         parseDayUnderstanding('今天没什么特别的', bannedTitles: const {}),
@@ -292,6 +358,8 @@ void main() {
             keep: memorySignalKeepMonth,
           ),
         ],
+        relationshipStage: '熟悉',
+        stageDescription: '用户开始把白天的小事说给她听',
         indexKeywords: const ['演讲'],
         personaHints: const [
           (branch: 'values', nature: 'self_report', summary: '用户重视诚实'),
@@ -303,6 +371,10 @@ void main() {
       expect(restored.summary, original.summary);
       expect(restored.mood, original.mood);
       expect(restored.activeItems, original.activeItems);
+      // 阶段判断与描述随理解一起持久化：relationship_lifecycle 的
+      // 每日重建与恢复重建都读同一投影。
+      expect(restored.relationshipStage, '熟悉');
+      expect(restored.stageDescription, '用户开始把白天的小事说给她听');
       expect(restored.loopCandidates.single.title, '演讲复盘');
       // keep 随理解一起持久化：重建路径（relationship_lifecycle）与
       // 复用路径都按同一口径还原月层资格。
@@ -332,6 +404,21 @@ void main() {
       // 空清单不落键：持久化形态与旧数据逐字节一致。
       expect(
         DayUnderstanding(summary: '只有概括').toJson().containsKey('activeItems'),
+        isFalse,
+      );
+      // 旧元数据同样没有阶段判断与描述：按缺失还原，阶段维持现状。
+      expect(restored.relationshipStage, isNull);
+      expect(restored.stageDescription, isNull);
+      expect(
+        DayUnderstanding(summary: '只有概括').toJson().containsKey(
+          'relationshipStage',
+        ),
+        isFalse,
+      );
+      expect(
+        DayUnderstanding(summary: '只有概括').toJson().containsKey(
+          'stageDescription',
+        ),
         isFalse,
       );
     });
@@ -471,6 +558,45 @@ void main() {
       },
     );
 
+    test(
+      'the understanding prompt teaches the semantic stage judgment',
+      () async {
+        final client = _FakeUnderstandingClient(reply: '{}');
+        await fetchDayUnderstanding(
+          client: client,
+          date: '2026-08-20',
+          entries: const [],
+          openLoops: '# open-loops\n',
+          relationship: '# relationship\n',
+          dailyState: '# daily-state\n',
+          bannedTitles: const {},
+          diagnosticsSink: (_) {},
+        );
+        final system = client.lastMessages!.first.content;
+        expect(system, contains('relationship_stage'));
+        // 整体语义判断：结合当天完整互动，不数条数天数。
+        expect(system, contains('整体语义判断'));
+        expect(system, contains('不要数互动条数'));
+        // 深谈信号可独立支持升级。
+        expect(system, contains('深谈信号'));
+        expect(system, contains('独立支持升级'));
+        // 只能判定到有依据的级别，没有把握就省略。
+        expect(system, contains('只能判定到有依据的级别'));
+        expect(system, contains('省略本字段'));
+        // 省略的后果如实描述：不回退、宿主不发明判断，但此前持久化
+        // 的目标仍按每天最多一级兑现（与 _latestStageJudgment 的
+        // 跨日棘轮行为一致）。
+        expect(system, contains('省略不会让阶段回退'));
+        expect(system, contains('宿主也不会自行发明判断'));
+        expect(system, contains('此前日子已持久化的目标仍会按每天最多一级继续兑现'));
+        expect(system, contains('永远不会让阶段下降'));
+        // 描述由模型结合这个具体用户生成，替换固定文案。
+        expect(system, contains('stage_description'));
+        expect(system, contains('结合这个具体用户'));
+        expect(system, contains('不要写认识天数或统计数字'));
+      },
+    );
+
     test('model keep marks persist with the understanding metadata', () async {
       final root = await Directory.systemTemp.createTemp('qiyu-understand-');
       addTearDown(() => root.delete(recursive: true));
@@ -578,7 +704,7 @@ void main() {
       ).readAsStringSync();
       expect(archive, contains('搬家打包 | 闭环: 2026-08-14 | 已经搬完了'));
 
-      // 3. 关系信号投影近期变化；阶段棘轮不受模型判断影响。
+      // 3. 关系信号投影近期变化；本次输出没有阶段判断，阶段不动。
       final relationship = File(
         '${root.path}/relationship.md',
       ).readAsStringSync();
@@ -867,41 +993,154 @@ void main() {
       },
     );
 
-    test('a model deep_talk signal never promotes the stage ratchet', () async {
-      final root = await Directory.systemTemp.createTemp('qiyu-understand-');
-      addTearDown(() => root.delete(recursive: true));
-      DateTime clock() => DateTime(2026, 8, 14, 23, 30);
-      final pipeline = EpisodeMemoryPipeline(
-        memoryDirectory: root.path,
-        clock: clock,
-      );
-      await _seedDay(pipeline, '2026-08-14', [
-        _entry('s1:r1:0', '用户聊了一件心事'),
-      ]);
-      final client = _FakeUnderstandingClient(
-        reply: jsonEncode({
-          'relationship_signals': [
-            {'signal': 'deep_talk', 'summary': '用户聊到很深的家庭话题'},
-          ],
-        }),
-      );
-      final service = DailyFinalizationService(
-        memoryDirectory: root.path,
-        episodePipeline: pipeline,
-        clock: clock,
-        modelClient: client,
-        diagnosticsSink: (_) {},
-      );
+    test(
+      'a deep talk signal without a stage judgment never promotes',
+      () async {
+        final root = await Directory.systemTemp.createTemp('qiyu-understand-');
+        addTearDown(() => root.delete(recursive: true));
+        DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: root.path,
+          clock: clock,
+        );
+        await _seedDay(pipeline, '2026-08-14', [
+          _entry('s1:r1:0', '用户聊了一件心事'),
+        ]);
+        final client = _FakeUnderstandingClient(
+          reply: jsonEncode({
+            'relationship_signals': [
+              {'signal': 'deep_talk', 'summary': '用户聊到很深的家庭话题'},
+            ],
+          }),
+        );
+        final service = DailyFinalizationService(
+          memoryDirectory: root.path,
+          episodePipeline: pipeline,
+          clock: clock,
+          modelClient: client,
+          diagnosticsSink: (_) {},
+        );
 
-      await service.finalizeDay('2026-08-14');
+        await service.finalizeDay('2026-08-14');
 
-      // 模型深谈信号只是温度投影；阶段证据只认真实 episodes 互动。
-      final relationship = File(
-        '${root.path}/relationship.md',
-      ).readAsStringSync();
-      expect(relationship, contains('stage: 初识'));
-      expect(relationship, contains('用户聊到很深的家庭话题'));
-    });
+        // 深谈信号本身只是温度投影；阶段升降只认模型的整体阶段判断。
+        final relationship = File(
+          '${root.path}/relationship.md',
+        ).readAsStringSync();
+        expect(relationship, contains('stage: 初识'));
+        expect(relationship, contains('用户聊到很深的家庭话题'));
+      },
+    );
+
+    test(
+      'a model stage judgment drives the ratchet and lands its description',
+      () async {
+        final root = await Directory.systemTemp.createTemp('qiyu-understand-');
+        addTearDown(() => root.delete(recursive: true));
+        DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: root.path,
+          clock: clock,
+        );
+        await _seedDay(pipeline, '2026-08-13', [
+          _entry('s0:r0:0', '08-13 用户聊了近况'),
+        ]);
+        await _seedDay(pipeline, '2026-08-14', [
+          _entry('s1:r1:0', '用户聊了一件心事'),
+        ]);
+        final client = _FakeUnderstandingClient(
+          reply: jsonEncode({
+            'relationship_stage': '熟悉',
+            'stage_description': '用户开始把白天的小事说给她听',
+            'relationship_signals': [
+              {'signal': 'deep_talk', 'summary': '用户聊到很深的家庭话题'},
+            ],
+          }),
+        );
+        final service = DailyFinalizationService(
+          memoryDirectory: root.path,
+          episodePipeline: pipeline,
+          clock: clock,
+          modelClient: client,
+          diagnosticsSink: (_) {},
+        );
+
+        final outcome = await service.finalizeDay('2026-08-14');
+
+        expect(outcome.status, FinalizationStatus.finalized);
+        // 判断与描述随理解元数据持久化。
+        final understanding = (await pipeline.readDay('2026-08-14')).understanding;
+        expect(understanding!['relationshipStage'], '熟悉');
+        expect(
+          understanding['stageDescription'],
+          '用户开始把白天的小事说给她听',
+        );
+        // 目标熟悉：单次日终最多一级，从初识前进一步。
+        final relationship = File(
+          '${root.path}/relationship.md',
+        ).readAsStringSync();
+        expect(relationship, contains('stage: 熟悉'));
+        expect(relationship, contains('阶段描述: 用户开始把白天的小事说给她听'));
+        // 深谈信号仍照常投影近期变化。
+        expect(relationship, contains('用户聊到很深的家庭话题'));
+      },
+    );
+
+    test(
+      'the persisted judgment carries the ratchet on a deterministic day',
+      () async {
+        final root = await Directory.systemTemp.createTemp('qiyu-understand-');
+        addTearDown(() => root.delete(recursive: true));
+        var now = DateTime(2026, 8, 14, 23, 30);
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: root.path,
+          clock: () => now,
+        );
+        await _seedDay(pipeline, '2026-08-13', [
+          _entry('s0:r0:0', '08-13 用户聊了近况'),
+        ]);
+        await _seedDay(pipeline, '2026-08-14', [
+          _entry('s1:r1:0', '用户聊了一件心事'),
+        ]);
+        final client = _FakeUnderstandingClient(
+          reply: jsonEncode({
+            'relationship_stage': '朋友',
+            'stage_description': '用户和她已经能互相说心事',
+          }),
+        );
+        final service = DailyFinalizationService(
+          memoryDirectory: root.path,
+          episodePipeline: pipeline,
+          clock: () => now,
+          modelClient: client,
+          diagnosticsSink: (_) {},
+        );
+        await service.finalizeDay('2026-08-14');
+        expect(
+          File('${root.path}/relationship.md').readAsStringSync(),
+          contains('stage: 熟悉'),
+        );
+
+        // 次日没有模型参与：读 08-14 持久化的判断，棘轮再追一级。
+        now = DateTime(2026, 8, 15, 23, 30);
+        await _seedDay(pipeline, '2026-08-15', [
+          _entry('s2:r2:0', '用户随口聊了天气'),
+        ]);
+        final nextService = DailyFinalizationService(
+          memoryDirectory: root.path,
+          episodePipeline: pipeline,
+          clock: () => now,
+          diagnosticsSink: (_) {},
+        );
+        await nextService.finalizeDay('2026-08-15');
+
+        final relationship = File(
+          '${root.path}/relationship.md',
+        ).readAsStringSync();
+        expect(relationship, contains('stage: 朋友'));
+        expect(relationship, contains('阶段描述: 用户和她已经能互相说心事'));
+      },
+    );
 
     test('Provider failure falls back to the deterministic path', () async {
       final root = await Directory.systemTemp.createTemp('qiyu-understand-');
