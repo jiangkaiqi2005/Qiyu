@@ -27,6 +27,7 @@ void main() {
           'persona_hints': [
             {'branch': 'preferences', 'nature': 'self_report', 'summary': '用户喜欢睡前复盘'},
           ],
+          'active_items': ['项目 X deadline 临近', '用户在准备演讲'],
         }),
         bannedTitles: const {},
         diagnosticsSink: (_) {},
@@ -43,6 +44,7 @@ void main() {
       // 重复关键词去重。
       expect(understanding.indexKeywords, ['演讲', '深夜聊天']);
       expect(understanding.personaHints.single.branch, 'preferences');
+      expect(understanding.activeItems, ['项目 X deadline 临近', '用户在准备演讲']);
       expect(understanding.isEmpty, isFalse);
     });
 
@@ -172,6 +174,56 @@ void main() {
       );
     });
 
+    test('active items are count- and length-limited with diagnostics', () {
+      final diagnostics = <String>[];
+      final understanding = parseDayUnderstanding(
+        jsonEncode({
+          'active_items': [
+            '项目截止日临近',
+            '   ',
+            '用户在准备周末的露营活动，需要确认装备清单、天气情况和交通方式',
+            '用户在筹备演讲',
+            '用户在赶项目进度',
+            '用户在跟进体检预约',
+            '养绿萝的习惯还在保持',
+            '第七条不应进来',
+          ],
+        }),
+        bannedTitles: const {},
+        diagnosticsSink: diagnostics.add,
+      );
+
+      // 数量上限 6：先校验后计数，无效项不占名额；越界即停并记诊断。
+      expect(
+        understanding!.activeItems,
+        hasLength(understandingMaxActiveItems),
+      );
+      expect(understanding.activeItems.last, '养绿萝的习惯还在保持');
+      // 超长条目截断保留（与其余理解字段同一口径），但记诊断。
+      expect(
+        understanding.activeItems[1].runes.length,
+        lessThanOrEqualTo(understandingActiveItemMaxRunes),
+      );
+      final lines = diagnostics.join('\n');
+      expect(lines, contains('active item over rune limit'));
+      expect(lines, contains('active item invalid'));
+      expect(lines, contains('active items over count limit'));
+    });
+
+    test('banned titles never enter the active item list', () {
+      final diagnostics = <String>[];
+      final understanding = parseDayUnderstanding(
+        jsonEncode({
+          'active_items': ['换工作的面试准备', '周末露营计划'],
+        }),
+        bannedTitles: {normalizeLoopTitle('换工作')},
+        diagnosticsSink: diagnostics.add,
+      );
+
+      expect(understanding!.activeItems, ['周末露营计划']);
+      expect(diagnostics.join('\n'), contains('active item banned'));
+    });
+
     test('banned titles never enter any field', () {
       final understanding = parseDayUnderstanding(
         jsonEncode({
@@ -244,11 +296,13 @@ void main() {
         personaHints: const [
           (branch: 'values', nature: 'self_report', summary: '用户重视诚实'),
         ],
+        activeItems: const ['项目 X deadline 临近', '用户在准备演讲'],
       ).withCoverage(entries);
 
       final restored = DayUnderstanding.fromJson(original.toJson());
       expect(restored.summary, original.summary);
       expect(restored.mood, original.mood);
+      expect(restored.activeItems, original.activeItems);
       expect(restored.loopCandidates.single.title, '演讲复盘');
       // keep 随理解一起持久化：重建路径（relationship_lifecycle）与
       // 复用路径都按同一口径还原月层资格。
@@ -262,6 +316,24 @@ void main() {
       expect(restored.lastEntryId, 's1:r1:0');
       expect(restored.covers(entries), isTrue);
       expect(restored.covers(const []), isFalse);
+    });
+
+    test('persisted understanding without active items stays compatible', () {
+      // 旧元数据没有近日活跃清单字段：按空清单还原，其余字段不受影响。
+      final restored = DayUnderstanding.fromJson(const {
+        'summary': '旧数据没有近日活跃清单',
+        'mood': '平静',
+        'indexKeywords': ['旧数据'],
+      });
+
+      expect(restored.activeItems, isEmpty);
+      expect(restored.summary, '旧数据没有近日活跃清单');
+      expect(restored.indexKeywords, ['旧数据']);
+      // 空清单不落键：持久化形态与旧数据逐字节一致。
+      expect(
+        DayUnderstanding(summary: '只有概括').toJson().containsKey('activeItems'),
+        isFalse,
+      );
     });
 
     test('pending request ids survive redaction and get a plain copy list', () async {
@@ -367,6 +439,37 @@ void main() {
       expect(system, contains('loop_candidates'));
       expect(system, contains('relationship_signals'));
     });
+
+    test(
+      'the understanding prompt teaches the still-active item list',
+      () async {
+        final client = _FakeUnderstandingClient(reply: '{}');
+        await fetchDayUnderstanding(
+          client: client,
+          date: '2026-08-20',
+          entries: const [],
+          openLoops: '# open-loops\n',
+          relationship: '# relationship\n',
+          dailyState: '# daily-state\n',
+          bannedTitles: const {},
+          diagnosticsSink: (_) {},
+        );
+        final system = client.lastMessages!.first.content;
+        expect(system, contains('active_items'));
+        // 判断「仍活跃」的依据：当天整理记录 + 现状态包近日投影 + 未闭环事项。
+        expect(system, contains('仍然活跃'));
+        // 已结束、已闭环、一次性小事不列。
+        expect(system, contains('已闭环'));
+        // 防复读：不因上期状态包的近日投影里出现过就继续列出，
+        // 要按本次读到的材料重新判断哪些仍然影响当前对话。
+        expect(system, contains('不要因为上一期状态包的近日投影里出现过就继续列出'));
+        expect(system, contains('按本次读到的材料重新判断哪些仍然影响当前对话'));
+        // 一事只进其一：与 open-loop 的排重由宿主按文字规范化相等执行，
+        // 提示词只交代边界。
+        expect(system, contains('一事只进其一'));
+        expect(system, contains('没有仍然活跃的事项就省略本字段'));
+      },
+    );
 
     test('model keep marks persist with the understanding metadata', () async {
       final root = await Directory.systemTemp.createTemp('qiyu-understand-');
@@ -499,6 +602,270 @@ void main() {
       ).readAsStringSync();
       expect(preferences, contains('用户喜欢睡前复盘'));
     });
+
+    test(
+      'the model active item list drives the recent-activity section',
+      () async {
+        final root = await Directory.systemTemp.createTemp('qiyu-understand-');
+        addTearDown(() => root.delete(recursive: true));
+        DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: root.path,
+          clock: clock,
+        );
+        await _seedDay(pipeline, '2026-08-12', [
+          _entry('s1:r1:0', '08-12 用户在筹备演讲'),
+        ]);
+        await _seedDay(pipeline, '2026-08-13', [
+          _entry('s2:r2:0', '08-13 用户还在改稿'),
+        ]);
+        await _seedDay(pipeline, '2026-08-14', [
+          _entry('s3:r3:0', '08-14 用户聊了今晚的晚饭'),
+        ]);
+        final client = _FakeUnderstandingClient(
+          reply: jsonEncode({
+            'summary': '用户在筹备演讲',
+            'active_items': ['用户在筹备周末的演讲，还在改稿'],
+          }),
+        );
+        final service = DailyFinalizationService(
+          memoryDirectory: root.path,
+          episodePipeline: pipeline,
+          clock: clock,
+          modelClient: client,
+          diagnosticsSink: (_) {},
+        );
+
+        final outcome = await service.finalizeDay('2026-08-14');
+
+        expect(outcome.status, FinalizationStatus.finalized);
+        final dailyState = File(
+          '${root.path}/daily-state.md',
+        ).readAsStringSync();
+        // 近日活跃读模型清单：自然语言短句，不带日期前缀。
+        expect(dailyState, contains('## 近日活跃'));
+        expect(dailyState, contains('- 用户在筹备周末的演讲，还在改稿'));
+        // 不再按日期从旧到新截取近 7 天条目。
+        expect(dailyState, isNot(contains('(08-12)')));
+        expect(dailyState, isNot(contains('08-12 用户在筹备演讲')));
+        expect(dailyState, isNot(contains('08-13 用户还在改稿')));
+        // 用户当前近况仍取最新一天，不受清单影响。
+        expect(dailyState, contains('## 用户当前近况'));
+        expect(dailyState, contains('08-14 用户聊了今晚的晚饭'));
+      },
+    );
+
+    test('active items dedupe against open loops and clip per item', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-understand-');
+      addTearDown(() => root.delete(recursive: true));
+      DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: root.path,
+        clock: clock,
+      );
+      await _seedDay(pipeline, '2026-08-14', [
+        _entry('s1:r1:0', '08-14 用户聊了很多'),
+      ]);
+      File('${root.path}/open-loops.md').writeAsStringSync(
+        '# open-loops\n\n- [o1] 搬家打包\n  proactive: once\n  status: active\n',
+        encoding: utf8,
+      );
+      final longItem = '用户在准备周末的露营活动，需要确认装备清单、天气情况和交通方式还有预算';
+      final client = _FakeUnderstandingClient(
+        reply: jsonEncode({
+          'active_items': ['搬家打包', longItem],
+        }),
+      );
+      final service = DailyFinalizationService(
+        memoryDirectory: root.path,
+        episodePipeline: pipeline,
+        clock: clock,
+        modelClient: client,
+        diagnosticsSink: (_) {},
+      );
+
+      final outcome = await service.finalizeDay('2026-08-14');
+
+      expect(outcome.status, FinalizationStatus.finalized);
+      final dailyState = File('${root.path}/daily-state.md').readAsStringSync();
+      // 一事只进其一：已进 open-loop 的事项不重复进近日活跃。
+      expect(dailyState, isNot(contains('搬家打包')));
+      // 单条截断：渲染时仍受 daily-state 每条预算约束。
+      expect(
+        dailyState,
+        contains('- ${String.fromCharCodes(longItem.runes.take(28))}'),
+      );
+      expect(dailyState, isNot(contains(longItem)));
+    });
+
+    test(
+      'an empty active item list falls back to date-based projection',
+      () async {
+        final root = await Directory.systemTemp.createTemp('qiyu-understand-');
+        addTearDown(() => root.delete(recursive: true));
+        DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: root.path,
+          clock: clock,
+        );
+        await _seedDay(pipeline, '2026-08-12', [
+          _entry('s1:r1:0', '08-12 用户在筹备演讲'),
+        ]);
+        await _seedDay(pipeline, '2026-08-13', [
+          _entry('s2:r2:0', '08-13 用户还在改稿'),
+        ]);
+        await _seedDay(pipeline, '2026-08-14', [
+          _entry('s3:r3:0', '08-14 用户聊了今晚的晚饭'),
+        ]);
+        // 模型输出空清单与未输出同义：按日期截取兜底（定稿 2026-09-22）。
+        final client = _FakeUnderstandingClient(
+          reply: jsonEncode({'summary': '用户在筹备演讲', 'active_items': const []}),
+        );
+        final service = DailyFinalizationService(
+          memoryDirectory: root.path,
+          episodePipeline: pipeline,
+          clock: clock,
+          modelClient: client,
+          diagnosticsSink: (_) {},
+        );
+
+        final outcome = await service.finalizeDay('2026-08-14');
+
+        expect(outcome.status, FinalizationStatus.finalized);
+        final dailyState = File(
+          '${root.path}/daily-state.md',
+        ).readAsStringSync();
+        expect(dailyState, contains('## 近日活跃'));
+        expect(dailyState, contains('- (08-12) 08-12 用户在筹备演讲'));
+        expect(dailyState, contains('- (08-13) 08-13 用户还在改稿'));
+      },
+    );
+
+    test(
+      'budget cuts keep the section order and spare the recent section',
+      () async {
+        final root = await Directory.systemTemp.createTemp('qiyu-understand-');
+        addTearDown(() => root.delete(recursive: true));
+        DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: root.path,
+          clock: clock,
+        );
+        await _seedDay(pipeline, '2026-08-14', [
+          _entry('s1:r1:0', '近况甲：用户连续加班到深夜，咖啡喝了很多杯，眼睛干涩肩膀也酸'),
+          _entry('s1:r1:1', '近况乙：用户明天一早要开会，材料还没准备完，打算再熬一会儿'),
+          _entry('s1:r1:2', '近况丙：用户晚饭只吃了个三明治，说忙到没胃口但是有点饿'),
+          _entry('s1:r1:3', '近况丁：用户说周末想补觉，哪儿都不想去就在家躺着发呆'),
+        ]);
+        final client = _FakeUnderstandingClient(
+          reply: jsonEncode({
+            'mood': '最近压力有点大，晚上总是睡不好觉，白天没精神',
+            'active_items': [
+              '要点甲：用户在筹备周末的露营活动，装备清单还没有确认',
+              '要点乙：用户在赶项目进度，下周要交原型和文档说明',
+              '要点丙：用户在跟进体检预约，时间约在月底的上午',
+              '要点丁：用户养绿萝的习惯还在保持，偶尔拍照记录',
+              '要点戊：用户在准备演讲的复盘提纲，列了三个问题',
+              '要点己：用户提到楼下的花店关门了，只是随口一说',
+            ],
+          }),
+        );
+        final service = DailyFinalizationService(
+          memoryDirectory: root.path,
+          episodePipeline: pipeline,
+          clock: clock,
+          modelClient: client,
+          diagnosticsSink: (_) {},
+        );
+
+        final outcome = await service.finalizeDay('2026-08-14');
+
+        expect(outcome.status, FinalizationStatus.finalized);
+        final dailyState = File(
+          '${root.path}/daily-state.md',
+        ).readAsStringSync();
+        expect(dailyState.runes.length, lessThanOrEqualTo(dailyStateMaxRunes));
+        // 砍序不变：先整体砍近日气氛，再砍近日活跃。
+        expect(dailyState, isNot(contains('## 近日气氛')));
+        // 模型清单按重要性从高到低，砍最不重要的一端。
+        expect(dailyState, contains('要点甲'));
+        expect(dailyState, isNot(contains('要点己')));
+        // 用户当前近况永不砍。
+        expect(dailyState, contains('## 用户当前近况'));
+        for (final label in ['近况甲', '近况乙', '近况丙', '近况丁']) {
+          expect(dailyState, contains(label));
+        }
+      },
+    );
+
+    test(
+      'catch-up restore reads the persisted active item list with host caps',
+      () async {
+        final root = await Directory.systemTemp.createTemp('qiyu-understand-');
+        addTearDown(() => root.delete(recursive: true));
+        var now = DateTime(2026, 8, 12, 23);
+        final pipeline = EpisodeMemoryPipeline(
+          memoryDirectory: root.path,
+          clock: () => now,
+        );
+        await _seedDay(pipeline, '2026-08-10', [
+          _entry('s10:r10:0', '08-10 的老事项'),
+        ]);
+        await _seedDay(pipeline, '2026-08-12', [
+          _entry('s12:r12:0', '08-12 的新事项'),
+        ]);
+        // 08-12 已归档，理解元数据里直接带 8 条近日活跃（超宿主上限），
+        // 首条还超长：补扫重建走同一套宿主闸门。
+        final longItem = '很长的一条近日活跃事项${'补' * 40}';
+        await pipeline.synchronizedOnDayFiles(
+          () => pipeline.writeFinalization(
+            '2026-08-12',
+            entries: [_entry('s12:r12:0', '08-12 的新事项')],
+            summary: '08-12 摘要',
+            finalized: true,
+            finalizedAt: now.toUtc(),
+            understanding: {
+              'summary': '08-12 摘要',
+              'activeItems': [
+                longItem,
+                '活跃一',
+                '活跃二',
+                '活跃三',
+                '活跃四',
+                '活跃五',
+                '活跃六',
+                '活跃七',
+              ],
+            },
+          ),
+        );
+
+        now = DateTime(2026, 8, 13, 10);
+        final service = DailyFinalizationService(
+          memoryDirectory: root.path,
+          episodePipeline: pipeline,
+          clock: () => now,
+          diagnosticsSink: (_) {},
+        );
+        await service.catchUpUnfinalized(before: '2026-08-13');
+
+        final dailyState = File(
+          '${root.path}/daily-state.md',
+        ).readAsStringSync();
+        // 重建以最新定稿日 08-12 为窗口终点，读它持久化的近日活跃清单。
+        expect(dailyState, contains('date: 2026-08-12'));
+        // 单条截断与条数截断都由宿主持闸。
+        expect(
+          dailyState,
+          contains('- ${String.fromCharCodes(longItem.runes.take(28))}'),
+        );
+        expect(dailyState, isNot(contains(longItem)));
+        expect(dailyState, contains('- 活跃一'));
+        expect(dailyState, contains('- 活跃五'));
+        expect(dailyState, isNot(contains('活跃六')));
+        expect(dailyState, isNot(contains('活跃七')));
+      },
+    );
 
     test('a model deep_talk signal never promotes the stage ratchet', () async {
       final root = await Directory.systemTemp.createTemp('qiyu-understand-');

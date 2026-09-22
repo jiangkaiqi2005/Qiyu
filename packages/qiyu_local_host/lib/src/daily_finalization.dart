@@ -100,7 +100,9 @@ final class FinalizationReport {
 /// [modelClient] 时，每个有有效内容的归档日先做一次模型调用，输入是
 /// 日终要读写的全部（当天 episodes、open-loops、relationship、现状态包，
 /// 脱敏后整包），模型一次产出理解型材料——当天 summary、情绪余波、
-/// open-loop 候选与闭环判断、关系信号、索引主题词、persona 候选提示。
+/// open-loop 候选与闭环判断、关系信号、索引主题词、persona 候选提示、
+/// 「近日仍活跃」清单（每日状态包定稿 2026-09-22，供 daily-state 的
+/// 「近日活跃」节投影；模型未输出时该节按日期截取兜底）。
 /// 代码守全部闸门：材料按白名单逐字段校验，不合规按字段丢；各字段
 /// 仍走下面既有步骤的预算、禁提、棘轮与幂等写入。未配置 Provider、
 /// 调用失败或输出全废时整体降级为原有确定性路径，finalized 照常。
@@ -272,7 +274,12 @@ final class DailyFinalizationService {
     for (final date in past.reversed) {
       final day = await episodePipeline.readDay(date);
       if (day.readable && day.finalized) {
-        await _rebuildDailyState(date, dates, mood: day.mood);
+        await _rebuildDailyState(
+          date,
+          dates,
+          mood: day.mood,
+          activeItems: day.activeItems,
+        );
         return;
       }
     }
@@ -521,7 +528,12 @@ final class DailyFinalizationService {
     );
     await _writeStep(
       date,
-      () => _rebuildDailyState(date, effectiveDates, mood: understanding?.mood),
+      () => _rebuildDailyState(
+        date,
+        effectiveDates,
+        mood: understanding?.mood,
+        activeItems: understanding?.activeItems,
+      ),
     );
     await _writeStep(date, () => _rebuildIndexes(includingDay: date));
     await _writeStep(
@@ -614,7 +626,10 @@ final class DailyFinalizationService {
       return (understanding: understanding, usedModel: true);
     }
     // 已归档日期的增量补建：episode 与覆盖清单取本次结果，其余字段
-    // 沿用已归档结论。
+    // 沿用已归档结论。「近日仍活跃」清单同属整体理解结论——它是对全周
+    // 语境的「哪些事还活着」的判断，增量调用只补当天轮次、不重判活跃
+    // 性，故沿用旧值；旧理解缺该字段（本次改动前的归档）时按空清单
+    // 处理，状态包装配随之走日期截取兜底。
     final mergedCovered = [...restored.coveredRequestIds];
     for (final requestId in understanding.coveredRequestIds) {
       if (!mergedCovered.contains(requestId)) {
@@ -631,6 +646,7 @@ final class DailyFinalizationService {
         indexKeywords: restored.indexKeywords,
         personaHints: restored.personaHints,
         episodeEntries: understanding.episodeEntries,
+        activeItems: restored.activeItems,
         coveredRequestIds: mergedCovered,
       ),
       usedModel: true,
@@ -869,10 +885,19 @@ final class DailyFinalizationService {
   /// [mood] 是日终模型理解产出的情绪余波，投影为「近日气氛」节
   /// （每日状态包定稿 2026-08-16）；未配置模型或模型未输出时本节
   /// 留空（不渲染），绝不编造。
+  ///
+  /// [activeItems] 是日终模型理解产出的「近日仍活跃」清单（每日状态包
+  /// 定稿 2026-09-22），投影为「近日活跃」节：条目是模型写的自然语言
+  /// 短句，不带日期前缀；未配置模型、模型未输出或输出空清单时，按
+  /// 日期从旧到新截取近 7 天条目兜底（带 (MM-DD) 前缀）。两条路径都
+  /// 受宿主持闸：与 open-loop 排重（一事只进其一，文字规范化相等）、
+  /// 条数上限与单条 rune 截断。「用户当前近况」只取最新一天，两者
+  /// 都不受影响。
   Future<void> _rebuildDailyState(
     String date,
     List<String> dates, {
     String? mood,
+    List<String>? activeItems,
   }) async {
     final cutoff = localSessionDate(
       parseLocalSessionDate(date).subtract(
@@ -908,32 +933,46 @@ final class DailyFinalizationService {
       (left, right) => left.compareTo(right) >= 0 ? left : right,
     );
     // 「一事只进其一」：已进 open-loop 的条目不重复进 daily-state。
-    bool excluded(EpisodeEntry entry) =>
-        openLoopTitles.contains(normalizeMemoryText(entry.summary));
+    bool excluded(String text) =>
+        openLoopTitles.contains(normalizeMemoryText(text));
 
-    final active = <String>[];
-    for (final dayDate in perDay.keys.toList()..sort()) {
-      if (dayDate == latestDate) {
-        continue;
-      }
-      for (final entry in perDay[dayDate]!) {
-        if (excluded(entry)) {
+    final modelActive = activeItems ?? const <String>[];
+    final List<String> active;
+    if (modelActive.isEmpty) {
+      // 兜底：模型未输出清单时，按日期从旧到新截取近 7 天条目（不含
+      // 最新一天——它进「用户当前近况」），逐条截断并带 (MM-DD) 前缀。
+      active = <String>[];
+      for (final dayDate in perDay.keys.toList()..sort()) {
+        if (dayDate == latestDate) {
           continue;
         }
-        active.add(
-          '- (${dayDate.substring(5)}) '
-          '${clipRunes(entry.summary.trim(), _dailyStateMaxItemRunes)}',
-        );
+        for (final entry in perDay[dayDate]!) {
+          if (excluded(entry.summary)) {
+            continue;
+          }
+          active.add(
+            '- (${dayDate.substring(5)}) '
+            '${clipRunes(entry.summary.trim(), _dailyStateMaxItemRunes)}',
+          );
+          if (active.length >= _dailyStateMaxActiveItems) {
+            break;
+          }
+        }
         if (active.length >= _dailyStateMaxActiveItems) {
           break;
         }
       }
-      if (active.length >= _dailyStateMaxActiveItems) {
-        break;
-      }
+    } else {
+      // 模型清单：自然语言短句原样投影（不带日期前缀），宿主持闸
+      // 条数上限与单条截断。
+      active = [
+        for (final item in modelActive.take(_dailyStateMaxActiveItems))
+          if (!excluded(item))
+            '- ${clipRunes(item.trim(), _dailyStateMaxItemRunes)}',
+      ];
     }
     final recent = perDay[latestDate]!
-        .where((entry) => !excluded(entry))
+        .where((entry) => !excluded(entry.summary))
         .take(_dailyStateMaxRecentItems)
         .map(
           (entry) =>
@@ -968,8 +1007,11 @@ final class DailyFinalizationService {
     var activeSection = active.isEmpty ? '' : renderSection('近日活跃', active);
     final headerRunes = sections.toString().runes.length;
     // 预算关（T09 砍序：气氛描述是 daily-state 内的可牺牲项）：超限
-    // 先整体砍掉近日气氛，再砍近日活跃（最旧优先）；当前近况是最新
-    // 一天的事实，预算上永远放得下，不参与裁剪。
+    // 先整体砍掉近日气氛，再砍近日活跃；当前近况是最新一天的事实，
+    // 预算上永远放得下，不参与裁剪。砍近日活跃的取舍端随清单来源：
+    // 兜底清单按日期从旧到新，砍最旧（队首）；模型清单按重要性从高到
+    // 低，砍最不重要（队尾）。
+    final cutOldestFirst = modelActive.isEmpty;
     bool overBudget(int used) =>
         used + activeSection.runes.length + recentSection.runes.length >
         dailyStateMaxRunes;
@@ -979,7 +1021,11 @@ final class DailyFinalizationService {
       usedRunes = headerRunes;
     }
     while (overBudget(usedRunes) && active.isNotEmpty) {
-      active.removeAt(0);
+      if (cutOldestFirst) {
+        active.removeAt(0);
+      } else {
+        active.removeLast();
+      }
       activeSection = active.isEmpty ? '' : renderSection('近日活跃', active);
     }
     final contents = '$sections$moodSection$activeSection$recentSection';

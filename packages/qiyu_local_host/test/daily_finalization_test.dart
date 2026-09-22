@@ -494,6 +494,7 @@ void main() {
         'covered_request_ids': ['day-1'],
         'summary': '第一天完整理解',
         'index_keywords': ['绿萝'],
+        'active_items': ['第一次调用判断仍活跃的事'],
       });
       final secondResponse = jsonEncode({
         'episode_entries': [
@@ -502,6 +503,7 @@ void main() {
         'covered_request_ids': ['day-2'],
         // 增量调用即使返回了不同的整体字段，也不得覆盖已归档结论。
         'summary': '增量调用不应覆盖这个',
+        'active_items': ['增量调用不应覆盖这个'],
       });
       final client = _RecordingUnderstandingClient(
         firstResponse,
@@ -545,6 +547,7 @@ void main() {
       final understanding = day.understanding!;
       // 整体结论保留第一次归档的；覆盖清单合并两批。
       expect(understanding['summary'], '第一天完整理解');
+      expect(understanding['activeItems'], ['第一次调用判断仍活跃的事']);
       expect((understanding['coveredRequestIds'] as List<Object?>).toSet(), {
         'day-1',
         'day-2',

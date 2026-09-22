@@ -28,6 +28,15 @@ const understandingMaxPersonaHints = 1;
 const understandingMaxEpisodeEntries = 40;
 const understandingEvidenceMaxRunes = 80;
 
+/// 「近日仍活跃」清单（每日状态包定稿 2026-09-22）：日终模型从当天
+/// 整理记录、现状态包近日投影与未闭环事项里判断「哪些事仍然活跃、
+/// 会影响当前对话」，随当天理解一并产出。条目是自然语言短句，数量
+/// 与 daily-state 的近日活跃条数上限一致（状态包装配再按同一预算
+/// 截一次）；单条上限与其余理解短句字段同一量级，渲染时仍受
+/// daily-state 每条预算约束。
+const understandingMaxActiveItems = 6;
+const understandingActiveItemMaxRunes = 30;
+
 /// 日终理解调用的输出预算：一次要返回当天全部 episode 条目（上限
 /// 40 条 × 摘要 60 字 + 摘录 80 字）加整份 covered_request_ids 清单
 /// 的单个 JSON 对象，远超聊天的少说护栏。按旧 tokenizer 汉字可到
@@ -90,7 +99,9 @@ typedef UnderstandingEpisodeEntry = ({
 /// 所有字段都经过白名单校验、脱敏与禁提过滤；不合规字段在解析时
 /// 按字段丢弃，全废时整体视作无产出。[entryCount]/[lastEntryId]
 /// 记录本理解覆盖的当天条目范围：条目变化后理解作废，防止用旧
-/// 理解归档新增内容。
+/// 理解归档新增内容。[activeItems] 是「近日仍活跃」清单（每日
+/// 状态包定稿 2026-09-22）：空清单表示模型未输出，状态包装配按
+/// 日期截取兜底。
 final class DayUnderstanding {
   const DayUnderstanding({
     this.summary,
@@ -101,6 +112,7 @@ final class DayUnderstanding {
     this.indexKeywords = const [],
     this.personaHints = const [],
     this.episodeEntries = const [],
+    this.activeItems = const [],
     this.coveredRequestIds = const [],
     this.entryCount,
     this.lastEntryId,
@@ -114,6 +126,11 @@ final class DayUnderstanding {
   final List<String> indexKeywords;
   final List<UnderstandingPersonaHint> personaHints;
   final List<UnderstandingEpisodeEntry> episodeEntries;
+
+  /// 「近日仍活跃」清单：仍会影响当前对话的事项，供 daily-state 的
+  /// 「近日活跃」节投影；条目为自然语言短句，与 open-loop 的排重由
+  /// 状态包装配按文字规范化相等执行。
+  final List<String> activeItems;
   final List<String> coveredRequestIds;
   final int? entryCount;
   final String? lastEntryId;
@@ -127,6 +144,7 @@ final class DayUnderstanding {
       indexKeywords.isEmpty &&
       personaHints.isEmpty &&
       episodeEntries.isEmpty &&
+      activeItems.isEmpty &&
       coveredRequestIds.isEmpty;
 
   /// 本理解是否仍覆盖当前条目集合（条目只追加不删除，比较数量与
@@ -143,6 +161,7 @@ final class DayUnderstanding {
     relationshipSignals: relationshipSignals,
     indexKeywords: indexKeywords,
     personaHints: personaHints,
+    activeItems: activeItems,
     coveredRequestIds: coveredRequestIds,
     entryCount: entries.length,
     lastEntryId: entries.isEmpty ? null : entries.last.id,
@@ -202,6 +221,8 @@ final class DayUnderstanding {
             ),
           )
           .toList(),
+      // 与解析侧策略一致：命中禁提整条丢弃，不留半句进状态包。
+      activeItems: activeItems.where((item) => !hit(item)).toList(),
       coveredRequestIds: coveredRequestIds,
       entryCount: entryCount,
       lastEntryId: lastEntryId,
@@ -250,6 +271,7 @@ final class DayUnderstanding {
           },
       ],
     if (coveredRequestIds.isNotEmpty) 'coveredRequestIds': coveredRequestIds,
+    if (activeItems.isNotEmpty) 'activeItems': activeItems,
     if (entryCount != null) 'entryCount': entryCount,
     if (lastEntryId != null) 'lastEntryId': lastEntryId,
   };
@@ -346,6 +368,18 @@ final class DayUnderstanding {
       hints.add((branch: branch, nature: nature, summary: summary));
     }
     final coveredRequestIds = _coveredRequestIds(json['coveredRequestIds']);
+    // 「近日仍活跃」清单：旧元数据没有该字段时按空清单还原（状态包
+    // 装配侧对空清单走日期截取兜底，旧数据行为不变）。
+    final activeItems = <String>[];
+    final rawActiveItems = json['activeItems'];
+    if (rawActiveItems is List<Object?>) {
+      for (final item in rawActiveItems.whereType<String>()) {
+        final clipped = _clipText(item, understandingActiveItemMaxRunes);
+        if (clipped != null) {
+          activeItems.add(clipped);
+        }
+      }
+    }
     final entryCount = json['entryCount'];
     final lastEntryId = json['lastEntryId'];
     return DayUnderstanding(
@@ -356,6 +390,7 @@ final class DayUnderstanding {
       relationshipSignals: signals,
       indexKeywords: keywords,
       personaHints: hints,
+      activeItems: activeItems,
       coveredRequestIds: coveredRequestIds,
       entryCount: entryCount is int ? entryCount : null,
       lastEntryId: lastEntryId is String ? lastEntryId : null,
@@ -658,6 +693,35 @@ DayUnderstanding? parseDayUnderstanding(
     hints.add((branch: branch, nature: nature, summary: summaryText));
   }
 
+  // 「近日仍活跃」清单（每日状态包定稿 2026-09-22）：数量上限按收纳
+  // 条目计，越界即停；超长条目截断保留（与其余理解字段同一口径），
+  // 无效与命中禁提的条目整条丢弃，都记诊断。
+  final activeItems = <String>[];
+  final rawActiveItems = json['active_items'];
+  if (rawActiveItems is List<Object?>) {
+    for (final item in rawActiveItems.whereType<String>()) {
+      if (activeItems.length >= understandingMaxActiveItems) {
+        dropped('active items over count limit');
+        break;
+      }
+      // 与 _clipText 同一管道（脱敏 + 去空白 + 截断），另记越界诊断。
+      final cleaned = redactSessionText(item).trim();
+      if (cleaned.isEmpty) {
+        dropped('active item invalid');
+        continue;
+      }
+      if (cleaned.runes.length > understandingActiveItemMaxRunes) {
+        dropped('active item over rune limit');
+      }
+      final text = clipRunes(cleaned, understandingActiveItemMaxRunes);
+      if (banned(text)) {
+        dropped('active item banned');
+        continue;
+      }
+      activeItems.add(text);
+    }
+  }
+
   return DayUnderstanding(
     summary: _dropBanned(summary, bannedTitles),
     mood: _dropBanned(mood, bannedTitles),
@@ -667,6 +731,7 @@ DayUnderstanding? parseDayUnderstanding(
     indexKeywords: keywords,
     personaHints: hints,
     episodeEntries: episodeEntries,
+    activeItems: activeItems,
     coveredRequestIds: coveredRequestIds,
   );
 }
@@ -726,6 +791,7 @@ $appellationRule
 - covered_request_ids: 数组。只有完整检查过全部待补用户轮时才输出；直接从「## 待补 requestId 清单」原样复制全部条目，不得遗漏、改写或编造。
 - summary: 字符串，当天发生了什么的一句话概括，不超过60字，只复述记录中真实出现的事。
 - mood: 字符串，用户当天留下的情绪气氛余波，不超过20字；材料中没有情绪线索就省略。
+- active_items: 数组，最多6项，近日仍然活跃、会影响当前对话的事项。结合当天的对话整理记录、现状态包的近日投影与未闭环事项判断；每项不超过30字的自然语言短句，不带日期前缀，按对当前对话的重要性从高到低排列。已经结束、已闭环、只随口出现过一次就过去的小事不要列；不要因为上一期状态包的近日投影里出现过就继续列出，要按本次读到的材料重新判断哪些仍然影响当前对话；未闭环事项清单里已有的事不要重复列（一事只进其一，宿主还会按文字再排重一次）。没有仍然活跃的事项就省略本字段。
 - loop_candidates: 数组，最多2项，用户提到且之后可能需要跟进的事；每项 {"title": 不超过24字的简称, "due": 可选的跟进时间, "note": 可选说明不超过30字, "keep": 可选的 "month"，只给即使整月未闭环也值得进月压缩的重要事项}；材料中已有跟进安排或已闭环的事项不要重复。日常琐事与临时任务不要标 keep。
 - loop_closures: 数组，最多1项，未闭环事项清单中已有结果、可以闭环的事项；每项 {"title": 与清单中完全一致的事项名称, "result": 不超过20字的结果}。
 - relationship_signals: 数组，最多1项，当天互动体现出的关系信号；每项 {"signal": deep_talk、temperature、boundary_open、boundary_close 之一, "summary": 自然抽象的状态描述，不超过30字，不复制原话, "keep": 可选的 "month"，只给体现关系阶段明显变化、值得进月压缩的信号}。一时的语气起伏不要标 keep。

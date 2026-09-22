@@ -186,6 +186,22 @@ final class EpisodeDay {
     final raw = understanding?['mood'];
     return raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
   }
+
+  /// 日终模型理解的「近日仍活跃」清单（每日状态包定稿 2026-09-22）；
+  /// 未持久化、损坏或为空时返回 null——调用方按「模型未输出」走日期
+  /// 截取兜底。取值在解析落盘前已按条目上限截断并脱敏，此处只做
+  /// 保守还原（与 [mood] 同口径），渲染预算由状态包装配负责。
+  List<String>? get activeItems {
+    final raw = understanding?['activeItems'];
+    if (raw is! List<Object?>) {
+      return null;
+    }
+    final items = [
+      for (final item in raw.whereType<String>())
+        if (item.trim().isNotEmpty) item.trim(),
+    ];
+    return items.isEmpty ? null : items;
+  }
 }
 
 final class EpisodeCheckpoint {
