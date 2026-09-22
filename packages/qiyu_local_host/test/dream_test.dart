@@ -504,6 +504,68 @@ void main() {
     });
   });
 
+  test('sensitive candidates are rejected before the draft is written',
+      () async {
+    // 脱敏关前移到写草稿之前：含秘密的候选连瞬态草稿都不落盘
+    // （含失败即删的窗口也不留），拒绝路径其余观测与既有关失败一致。
+    var now = DateTime(2026, 8, 15, 23, 10);
+    final (:directory, :pipeline) = await _dreamFixture(
+      'qiyu-dream-sensitive-precheck-test-',
+      clock: () => now,
+    );
+    await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
+    const oldContent = '# long-memory\n\n## 重要事件\n- 旧印象保留\n';
+    File('${directory.path}/long-memory.md').writeAsStringSync(
+      oldContent,
+      encoding: utf8,
+    );
+    final writer = _RecordingAtomicWriter();
+    final draftPath = path.join(
+      directory.path,
+      'dream',
+      'draft',
+      longMemoryFileName,
+    );
+    final dream = DreamService(
+      memoryDirectory: directory.path,
+      episodePipeline: pipeline,
+      modelClient: ScriptedChatClient([
+        ModelCompletion.reply(_candidate([
+          _item(
+            '重要事件',
+            '用户的密钥是 sk-abcdefghijklmnopqrstuvwxyz123456',
+            ['2026-08-15'],
+          ),
+        ])),
+      ]),
+      clock: () => now,
+      atomicWriter: writer,
+    );
+
+    final outcome = await dream.run(bedtime: true);
+
+    expect(outcome.status, DreamStatus.validationFailed);
+    expect(outcome.detail, 'sensitive');
+    // 候选正文从未进入任何原子写回：草稿文件一次都没写过。
+    expect(writer.paths, isNot(contains(draftPath)));
+    expect(File(draftPath).existsSync(), isFalse);
+    // 拒绝路径与既有关失败同律：清单已写、旧长期印象逐字节不动、
+    // 成功时间不推进、pending 留给补跑。
+    expect(
+      File('${directory.path}/dream/changes.md').readAsStringSync(),
+      contains('result: rejected (sensitive)'),
+    );
+    expect(
+      File('${directory.path}/long-memory.md').readAsStringSync(),
+      oldContent,
+    );
+    final state = _decodeStateFile(
+      File('${directory.path}/dream/state.md').readAsStringSync(),
+    );
+    expect(state['lastSuccess'], isNull, reason: '拒绝不得更新上次成功时间');
+    expect(state['pending'], isTrue, reason: '失败的晚安请求留给补跑');
+  });
+
   test('unknown-evidence diagnostics name the first rejected reference', () async {
     final directory = await Directory.systemTemp.createTemp(
       'qiyu-dream-evidence-diag-test-',
@@ -1909,6 +1971,18 @@ Map<String, Object?> _decodeStateFile(String contents) {
   final padded = value.padRight(value.length + (4 - value.length % 4) % 4, '=');
   return jsonDecode(utf8.decode(base64Url.decode(padded)))
       as Map<String, Object?>;
+}
+
+/// 记录型原子写入器：按调用序记下每个 replace 的目标路径后透传真实
+/// 写入，供「某文件从未被写」类断言使用。
+final class _RecordingAtomicWriter implements AtomicTextWriter {
+  final List<String> paths = <String>[];
+
+  @override
+  Future<void> replace(String target, String contents) async {
+    paths.add(target);
+    return const IoAtomicTextWriter().replace(target, contents);
+  }
 }
 
 /// 与 DreamService 内部编码同构的测试夹具：直接落一份 state.md。

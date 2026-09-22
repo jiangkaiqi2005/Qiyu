@@ -93,8 +93,8 @@ enum DreamStatus {
   /// 模型调用失败或输出无法解析：旧记忆原样保留，等待下次重试。
   modelFailed,
 
-  /// 草稿未通过结构/证据/敏感/用户控制/冻结禁增/相互矛盾各自检关
-  /// 之一：整份作废，失败原因记入变更清单。
+  /// 候选未通过写草稿前的脱敏关，或草稿未通过结构/证据/用户控制/
+  /// 冻结禁增/相互矛盾各自检关之一：整份作废，失败原因记入变更清单。
   validationFailed,
 
   /// 接纳过程写入失败：旧 long-memory 与上次成功时间保持原样。
@@ -437,8 +437,9 @@ List<String>? _idList(Object? value, RegExp pattern) {
 /// 模型前按层过滤；冻结的既有长期印象条目不递模型，写出新文件时由
 /// 本地拼回原样保留。不读 sessions 原文，不写 episodes。
 ///
-/// 流程：一次模型调用产出全量候选 → 写独立草稿与变更清单 → 自检各关
-/// （结构、证据、敏感信息、用户控制、冻结禁增、相互矛盾）
+/// 流程：一次模型调用产出全量候选 → 脱敏关（含秘密的候选在写草稿前
+/// 整份拒绝，草稿不落盘）→ 写独立草稿与变更清单 → 自检各关
+/// （结构、证据、用户控制、冻结禁增、相互矛盾）
 /// → 全部通过后原子接纳：备份旧文件 → 替换 long-memory.md → 记录成功
 /// 时间 → 清单归档 history → 清空 draft。任一关不过整份作废；中断、
 /// 模型失败、验证失败或写入失败都不更新上次成功时间，也不破坏旧长期记忆。
@@ -630,6 +631,35 @@ final class DreamService {
     final proposals = personaTree == null
         ? const <PersonaDreamOp>[]
         : parseDreamRootProposals(raw, diagnosticsSink: _diagnosticsSink);
+
+    // 脱敏关：secrets 不得进入热层。拒绝路径与既有关失败同律（写
+    // rejected 变更清单、不碰旧长期印象、返回 validationFailed、
+    // pending 留给补跑），但抢在写草稿之前：含秘密的候选连瞬态
+    // 草稿都不落盘，失败即删的窗口也不留。清单同样不含候选原文。
+    for (final item in items) {
+      if (redactSessionText(item.text) != item.text) {
+        await _writeChanges(
+          _buildChanges(
+            (
+              today: today,
+              previousState: state,
+              result: 'rejected (sensitive)',
+            ),
+            input,
+            items,
+            existing,
+            includeDetails: false,
+            rootOps: [
+              for (final op in proposals) _RootOpRecord(op, 'draft-rejected'),
+            ],
+          ),
+        );
+        return DreamOutcome(
+          status: DreamStatus.validationFailed,
+          detail: 'sensitive',
+        );
+      }
+    }
 
     // 独立草稿：先写候选版与变更清单，再跑自检各关。冻结条目本地
     // 拼回：命中冻结且不命中封禁的既有长期印象条目不递模型（外发
@@ -1399,7 +1429,9 @@ final class DreamService {
     return null;
   }
 
-  /// 自检六关：任一不过返回失败原因码，整份草稿作废。[restoredItems]
+  /// 自检五关：任一不过返回失败原因码，整份草稿作废。脱敏关不在此处：
+  /// 它在写草稿之前执行（[run] 的 rejected (sensitive) 分支），含秘密的
+  /// 候选连瞬态草稿都不落盘。[restoredItems]
   /// 是写出前本地拼回的冻结条目：它们不过模型，但相互矛盾关的建模
   /// 要用它们播种——旧设计里冻结条目由模型逐字带回，本就受该关覆盖，
   /// 换成本地拼回不该把这份防护也换掉。
@@ -1441,12 +1473,6 @@ final class DreamService {
           _diagnosticsSink('dream evidence rejected [ref=$ref]');
           return 'unknown-evidence';
         }
-      }
-    }
-    // 脱敏关：secrets 不得进入热层。
-    for (final item in items) {
-      if (redactSessionText(item.text) != item.text) {
-        return 'sensitive';
       }
     }
     // 用户控制关：不得改写或复活封禁（禁提 ∪ 删除）内容。
