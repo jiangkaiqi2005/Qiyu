@@ -43,6 +43,32 @@ const dreamMaxMonthSummaries = 6;
 /// 日摘要。关系状态与未闭环线索自身体量已有分块预算，不参与裁剪。
 const dreamInputMaxRunes = 9000;
 
+/// Dream 按需回读的最大回填轮数：模型点名一次、宿主回填一次即计一轮。
+/// 取 2 的理由：成长轨迹核对需要「前后」两端日期（Dream.md 轨迹条：
+/// 按需读取相关 daily episode 核对前后证据），首轮常先发现一端、二轮补
+/// 另一端；再加轮只是线性叠加每次全量输出（[dreamMaxOutputTokens]）的
+/// 调用成本，本地原型不划算——逼模型在已有材料上收束，比无限回读更贴
+/// 近「不需要就不读原文」的裁定本意。含首发一共最多 1 +
+/// [dreamMaxReadRounds] 次调用：最后一轮回填随附「不能再读」通知，
+/// 下一次调用即最终候选。
+const dreamMaxReadRounds = 2;
+
+/// 单轮回读请求的数量上限：宿主按序处理，防止模型一次点名过多日期造成
+/// 无谓的文件读取（内容体量仍受 [dreamReadMaxRunes] 总预算约束）。
+const dreamMaxReadRequests = 8;
+
+/// Dream 单次运行回读内容的总预算（runes）：基础输入受
+/// [dreamInputMaxRunes] 约束，回读是叠加的额外 episode 原文，单独设
+/// 预算、不破坏既有口径；用尽后宿主如实告知哪些日期没读到，并要求基于
+/// 已有材料收尾。取 3000：按单条 [dreamReadEntryMaxRunes] 裁切估算约
+/// 覆盖两三个回读日，够「前后证据」两端核对，又不把原始层全量扫描的
+/// 重量加回 Dream。
+const dreamReadMaxRunes = 3000;
+
+/// 回读 episode 单条上限（runes）：与记忆召回外发的单条裁端口径一致
+/// （recallRawSummaryMaxRunes），摘要与原话摘录同一上限。
+const dreamReadEntryMaxRunes = 120;
+
 /// dream/history/ 保留的变更清单份数。
 const dreamHistoryKeep = 4;
 
@@ -423,6 +449,46 @@ List<String>? _idList(Object? value, RegExp pattern) {
   return ids.isEmpty ? null : ids;
 }
 
+/// 解析 Dream 模型输出中的按需回读请求（裁定票 04）：只认 readRequests
+/// 数组，逐条白名单校验（日期/月份形态、去重、单轮数量上限
+/// [dreamMaxReadRequests]），无效条目单条丢弃。字段缺失、类型不对或
+/// 数组为空时返回空列表——该轮输出即最终候选，单轮假响应的既有路径
+/// 不受影响。
+List<String> parseDreamReadRequests(
+  String raw, {
+  void Function(String message)? diagnosticsSink,
+}) {
+  final sink = diagnosticsSink ?? stderrDiagnostics;
+  final json = extractJsonObject(raw);
+  if (json == null) {
+    return const [];
+  }
+  final value = json['readRequests'];
+  if (value is! List<Object?>) {
+    return const [];
+  }
+  final requests = <String>[];
+  for (final entry in value) {
+    if (entry is! String) {
+      sink('dream read request dropped [not a string]');
+      continue;
+    }
+    if (requests.length >= dreamMaxReadRequests) {
+      sink('dream read request dropped [too many requests]');
+      break;
+    }
+    final trimmed = entry.trim();
+    if (_dayPattern.hasMatch(trimmed) || _monthPattern.hasMatch(trimmed)) {
+      if (!requests.contains(trimmed)) {
+        requests.add(trimmed);
+      }
+    } else {
+      sink('dream read request dropped [ref not a date or month]');
+    }
+  }
+  return requests;
+}
+
 /// Dream（五段节奏第五动作，ticket 16 / T04 / T08 / T13 定稿）。
 ///
 /// 资格：触发必须来自晚安（[run] 的 bedtime 路径），或来自上次晚安
@@ -435,14 +501,19 @@ List<String>? _idList(Object? value, RegExp pattern) {
 /// [dreamMaxMonthSummaries] 月）、关系状态、未闭环线索、现有长期印象、
 /// 封禁（禁提 ∪ 删除）清单与冻结清单。受控内容（封禁 ∪ 冻结）在递给
 /// 模型前按层过滤；冻结的既有长期印象条目不递模型，写出新文件时由
-/// 本地拼回原样保留。不读 sessions 原文，不写 episodes。
+/// 本地拼回原样保留。不读 sessions 原文，不写 episodes；按模型点名
+/// 有界回读 episode 原文（回读轮数 [dreamMaxReadRounds]、回读总预算
+/// [dreamReadMaxRunes]），证据关只认本次实际读过的材料。
 ///
-/// 流程：一次模型调用产出全量候选 → 脱敏关（含秘密的候选在写草稿前
-/// 整份拒绝，草稿不落盘）→ 写独立草稿与变更清单 → 自检各关
-/// （结构、证据、用户控制、冻结禁增、相互矛盾）
-/// → 全部通过后原子接纳：备份旧文件 → 替换 long-memory.md → 记录成功
-/// 时间 → 清单归档 history → 清空 draft。任一关不过整份作废；中断、
-/// 模型失败、验证失败或写入失败都不更新上次成功时间，也不破坏旧长期记忆。
+/// 流程：模型调用产出全量候选（基础材料不足以核实轨迹或主张时，模型
+/// 可用 readRequests 点名日期/月份，宿主回填该日 episode 全文后追加进
+/// 对话再产一次；最后一轮回填随附「不能再读」通知，下一次调用即最终
+/// 候选）→ 脱敏关（含秘密的候选在写草稿前整份拒绝，草稿不落盘）→ 写
+/// 独立草稿与变更清单 → 自检各关（结构、证据、用户控制、冻结禁增、
+/// 候选相互矛盾、与实际读过的证据矛盾）→ 全部通过后原子接纳：备份旧
+/// 文件 → 替换 long-memory.md → 记录成功时间 → 清单归档 history →
+/// 清空 draft。任一关不过整份作废；中断、模型失败、验证失败或写入
+/// 失败都不更新上次成功时间，也不破坏旧长期记忆。
 ///
 /// 未配置 Provider 时不运行：语义重组只能调用用户配置的 LLM，绝不
 /// 用规则或推断补写长期内容（对齐 T26 语义重建原则）。
@@ -580,25 +651,21 @@ final class DreamService {
     if (client == null) {
       return const DreamOutcome(status: DreamStatus.skippedNoProvider);
     }
-    ModelCompletion completion;
+    final _DreamExchange exchange;
     try {
-      final result = await client.complete(
-        _dreamMessages(input),
-        maxTokens: dreamMaxOutputTokens,
-      );
-      if (result == null) {
-        // Provider 未配置（complete 返回 null）：语义重组不做。
-        return const DreamOutcome(status: DreamStatus.skippedNoProvider);
-      }
-      completion = result;
+      exchange = await _exchangeWithModel(client, input);
     } on Object catch (error) {
       return DreamOutcome(status: DreamStatus.modelFailed, detail: '$error');
     }
-    final raw = completion.text;
+    if (exchange.noProvider) {
+      // Provider 未配置（complete 返回 null）：语义重组不做。
+      return const DreamOutcome(status: DreamStatus.skippedNoProvider);
+    }
+    final raw = exchange.raw;
     if (raw == null) {
       return DreamOutcome(
         status: DreamStatus.modelFailed,
-        detail: completion.failure?.name ?? 'failure',
+        detail: exchange.failure ?? 'failure',
       );
     }
     final parsed = parseDreamCandidate(raw, diagnosticsSink: _diagnosticsSink);
@@ -610,6 +677,7 @@ final class DreamService {
           const [],
           existing,
           includeDetails: false,
+          readDates: exchange.readDates,
         ),
       );
       return const DreamOutcome(
@@ -649,6 +717,7 @@ final class DreamService {
             items,
             existing,
             includeDetails: false,
+            readDates: exchange.readDates,
             rootOps: [
               for (final op in proposals) _RootOpRecord(op, 'draft-rejected'),
             ],
@@ -689,6 +758,7 @@ final class DreamService {
           items,
           existing,
           includeDetails: false,
+          readDates: exchange.readDates,
         ),
       );
     } on Object catch (error) {
@@ -698,11 +768,19 @@ final class DreamService {
     final gateFailure = _validateDraft(
       items: items,
       draftContent: draftContent,
-      validDates: input.validDates,
+      // 证据关只认本次实际读过的材料：输入日摘要的日期 ∪ 回读 episode
+      // 的日期（裁定票 04）。
+      validDates: {...input.validDates, ...exchange.readDates},
       validMonths: input.validMonths,
       banned: input.banned,
       frozen: input.frozen,
       restoredItems: restored,
+      // 矛盾关的播种范围同样是「实际读过」：输入日摘要与回读 episode
+      // 文本一起进（Dream.md 四关之四）。
+      evidenceTexts: [
+        for (final entry in input.summaries) entry.summary,
+        ...exchange.readTexts,
+      ],
     );
     if (gateFailure != null) {
       await _writeChanges(
@@ -716,6 +794,7 @@ final class DreamService {
           items,
           existing,
           includeDetails: false,
+          readDates: exchange.readDates,
           rootOps: [
             for (final op in proposals) _RootOpRecord(op, 'draft-rejected'),
           ],
@@ -774,6 +853,7 @@ final class DreamService {
           await _writeChanges(_buildChanges(
             (today: today, previousState: state, result: 'deferred (memory-changed)'),
             input, items, existing, includeDetails: false,
+            readDates: exchange.readDates,
           ));
           return const DreamOutcome(status: DreamStatus.deferredConflict);
         }
@@ -824,6 +904,7 @@ final class DreamService {
             existing,
             includeDetails: true,
             restoredItems: restored,
+            readDates: exchange.readDates,
             rootOps: opRecords,
           ),
         );
@@ -842,6 +923,253 @@ final class DreamService {
       );
     });
   }
+
+  /// 有界回读循环的模型交换（裁定票 04）：首次调用递基础输入（摘要层）；
+  /// 模型可在输出里用 readRequests 点名日期/月份，宿主回填该日 episode
+  /// 全文（单条受 [dreamReadEntryMaxRunes]、总量受 [dreamReadMaxRunes]
+  /// 约束）后作为新的 user 消息追加进对话再调一次，回填轮数上限
+  /// [dreamMaxReadRounds]。最后一轮回填随附「不能再读」通知，下一次
+  /// 调用即最终候选（其中若仍带 readRequests 一律忽略——已经无材料可
+  /// 读）。请求的日期无记录、已回读过或预算用尽都如实告知模型，且不计
+  /// 入已读集合。
+  Future<_DreamExchange> _exchangeWithModel(
+    ProviderChatClient client,
+    _DreamInput input,
+  ) async {
+    final messages = _dreamMessages(input);
+    final readDates = <String>{};
+    final readTexts = <String>[];
+    var remainingReadRunes = dreamReadMaxRunes;
+    var round = 0;
+    while (true) {
+      final attempt = await _completeOnce(client, messages);
+      final raw = attempt.raw;
+      if (raw == null) {
+        // Provider 未配置或输出失败：原样上交 [run] 的既有分支。
+        return attempt;
+      }
+      final requests = parseDreamReadRequests(
+        raw,
+        diagnosticsSink: _diagnosticsSink,
+      );
+      if (requests.isEmpty || round >= dreamMaxReadRounds) {
+        // 没有回读请求，或回填轮数已用尽（宿主已在最后一轮回填时告知
+        // 不能再读）：本轮输出即最终候选，其中若仍带 readRequests 一律
+        // 忽略——已经无材料可读。
+        return _DreamExchange(
+          raw: raw,
+          readDates: readDates,
+          readTexts: readTexts,
+        );
+      }
+      final fill = await _fillReadRequests(
+        requests,
+        round: round + 1,
+        remainingRunes: remainingReadRunes,
+        alreadyRead: readDates,
+        banned: input.banned,
+        frozen: input.frozen,
+      );
+      remainingReadRunes -= fill.usedRunes;
+      readDates.addAll(fill.readDates);
+      readTexts.addAll(fill.readTexts);
+      messages.add(ModelMessage(ModelMessageRole.assistant, raw));
+      // 最后一轮回填把「不能再读」通知并进同一条 user 消息（避免连续两
+      // 条 user 消息，也省掉一次注定被丢弃的全量调用）：材料与通知一次
+      // 递到，下一次调用就是最终候选。
+      final exhausted = round + 1 >= dreamMaxReadRounds;
+      messages.add(
+        ModelMessage(
+          ModelMessageRole.user,
+          exhausted ? '${fill.message}\n${_readExhaustedNotice()}' : fill.message,
+        ),
+      );
+      round += 1;
+    }
+  }
+
+  /// 单次模型调用：拿到候选原文时 [raw] 非空；否则 [noProvider] 或
+  /// [failure] 二选一解释原因，交由调用方按既有分支处理。
+  Future<_DreamExchange> _completeOnce(
+    ProviderChatClient client,
+    List<ModelMessage> messages,
+  ) async {
+    final completion = await client.complete(
+      // 每次调用递副本：脚本化客户端按引用留档，后续轮次的追加不能
+      // 改写已记录调用看到的内容。
+      List.of(messages),
+      maxTokens: dreamMaxOutputTokens,
+    );
+    if (completion == null) {
+      // Provider 未配置（complete 返回 null）：语义重组不做。
+      return const _DreamExchange(noProvider: true);
+    }
+    final raw = completion.text;
+    if (raw == null) {
+      return _DreamExchange(
+        failure: completion.failure?.name ?? 'failure',
+      );
+    }
+    return _DreamExchange(raw: raw);
+  }
+
+  /// 回填一轮回读请求：日期回填该日 episode 全文；月份展开为该月
+  /// episode 日期（升序）后同样逐日回填。受控（封禁 ∪ 冻结）条目在
+  /// 回填前剔除、自由文本套用会话脱敏规则——回读走与基础输入同一条
+  /// 外发边界（ADR 0016）。[alreadyRead] 是前几轮已回读过的日期：重复
+  /// 点名不重复回填。已回读过、无记录、受控过滤后无内容、预算用尽的
+  /// 日期如实告知且不计入已读集合（证据关不认、矛盾关不判）。
+  Future<
+    ({
+      String message,
+      Set<String> readDates,
+      List<String> readTexts,
+      int usedRunes,
+    })
+  >
+  _fillReadRequests(
+    List<String> requests, {
+    required int round,
+    required int remainingRunes,
+    required Set<String> alreadyRead,
+    required Set<String> banned,
+    required Set<String> frozen,
+  }) async {
+    bool controlled(String text) =>
+        bannedMemoryText(text, banned) || bannedMemoryText(text, frozen);
+    final dates = <String>[];
+    final skipped = <String>[];
+    for (final request in requests) {
+      if (!_monthPattern.hasMatch(request)) {
+        dates.add(request);
+        continue;
+      }
+      final monthDates =
+          (await episodePipeline.listEpisodeDates())
+              .where((date) => date.startsWith(request))
+              .toList();
+      if (monthDates.isEmpty) {
+        skipped.add('$request：该月无 episode 日期');
+        continue;
+      }
+      dates.addAll(monthDates);
+    }
+    final filled = <String>[];
+    final readDates = <String>{};
+    final readTexts = <String>[];
+    var used = 0;
+    for (final date in dates) {
+      if (readDates.contains(date) || alreadyRead.contains(date)) {
+        skipped.add('$date：已回读过');
+        continue;
+      }
+      final day = await episodePipeline.readDay(date);
+      // 文件缺失、内容为空或不可解析都归入无记录：从回读视角看该日没有
+      // 可读的 episode 内容，如实告知，绝不计入已读集合。
+      if (day.entries.isEmpty) {
+        skipped.add('$date：无 episode 记录');
+        continue;
+      }
+      final units = <({List<String> texts, List<String> lines})>[];
+      for (final entry in day.entries) {
+        final unit = _renderEntryForRead(entry, controlled);
+        if (unit != null) {
+          units.add(unit);
+        }
+      }
+      if (units.isEmpty) {
+        // 全天条目都命中受控过滤：不递模型，也不算已读。
+        skipped.add('$date：无可回读内容');
+        continue;
+      }
+      final header = '- $date';
+      final taken = <({List<String> texts, List<String> lines})>[];
+      var cost = header.runes.length + 1;
+      for (final unit in units) {
+        final unitCost = unit.lines.fold<int>(
+          0,
+          (sum, line) => sum + line.runes.length + 1,
+        );
+        if (used + cost + unitCost > remainingRunes) {
+          break;
+        }
+        taken.add(unit);
+        cost += unitCost;
+      }
+      if (taken.isEmpty) {
+        // 剩余预算连该日一个条目都放不下：跳过该日。预算按请求顺序尽力
+        // 回填、只减不增，但后续条目更短的日期仍可能放得下——所以这里
+        // 是 continue 不是 break；读了哪些、没读哪些都在下面的报告里
+        // 如实列明，证据关也只认实际读到的日期。
+        skipped.add('$date：回读预算放不下该日条目');
+        continue;
+      }
+      filled.add(header);
+      for (final unit in taken) {
+        filled.addAll(unit.lines);
+        readTexts.addAll(unit.texts);
+      }
+      used += cost;
+      readDates.add(date);
+    }
+    final buffer = StringBuffer()..writeln('## 按需回读（第$round轮）');
+    if (filled.isNotEmpty) {
+      buffer
+        ..writeln('已回读以下日期的 episode 内容（受单条长度与总预算约束），这些日期可以作为证据引用：')
+        ..writeln(filled.join('\n'));
+    } else {
+      buffer.writeln('本轮没有回读到任何新材料。');
+    }
+    if (skipped.isNotEmpty) {
+      buffer
+        ..writeln('以下日期未回读，不得作为证据引用：')
+        ..writeln(skipped.map((line) => '- $line').join('\n'));
+    }
+    return (
+      // 回读材料是记忆原文：与基础输入同一套脱敏规则后才进模型上下文。
+      message: redactSessionText(buffer.toString()),
+      readDates: readDates,
+      readTexts: readTexts,
+      usedRunes: used,
+    );
+  }
+
+  /// 回读条目的渲染与受控过滤：摘要与原话摘录各限
+  /// [dreamReadEntryMaxRunes] runes，自由文本套用会话脱敏规则；摘要
+  /// 命中受控（封禁 ∪ 冻结）整条不回读，仅原话摘录命中时只丢摘录行。
+  /// 返回 null 表示该条目没有可回读内容。[lines] 是递模型的渲染行；
+  /// [texts] 是矛盾关用的判定单元——摘要与每条原话摘录各自独立成单元：
+  /// 矛盾判定要求核心断言完全相等，把摘要和摘录拼成一个长串会让比对
+  /// 几乎永远落空（矛盾关静默失效）。
+  ({List<String> texts, List<String> lines})? _renderEntryForRead(
+    EpisodeEntry entry,
+    bool Function(String text) controlled,
+  ) {
+    final safe = entry.redactedForModel();
+    final summary = clipRunes(safe.summary.trim(), dreamReadEntryMaxRunes);
+    if (summary.isEmpty || controlled(summary)) {
+      return null;
+    }
+    final lines = <String>['- $summary'];
+    final texts = <String>[summary];
+    final evidence = safe.evidence?.trim() ?? '';
+    if (evidence.isNotEmpty) {
+      final clipped = clipRunes(evidence, dreamReadEntryMaxRunes);
+      if (!controlled(clipped)) {
+        lines.add('  原话摘录：$clipped');
+        texts.add(clipped);
+      }
+    }
+    return (texts: texts, lines: lines);
+  }
+
+  /// 轮数用尽通知：明确告知不能再读，要求基于已有材料给出最终候选。
+  String _readExhaustedNotice() =>
+      '## 回读已用尽\n'
+      '回读轮数已达上限（最多 $dreamMaxReadRounds 轮），不能再读更多 episode 原文。'
+      '请基于已读到的全部材料直接给出最终候选：必须输出 items 数组，'
+      '每条 evidence 只能取自「可用证据清单」或上面已告知可引用的回读日期，'
+      '不得再请求回读。';
 
   /// 只读暴露最近一次成功 Dream 的状态（ticket 19 记忆中心展示
   /// 「最近整理时间」用）；文件缺失或不可读时返回空状态。
@@ -1429,12 +1757,15 @@ final class DreamService {
     return null;
   }
 
-  /// 自检五关：任一不过返回失败原因码，整份草稿作废。脱敏关不在此处：
+  /// 自检各关：任一不过返回失败原因码，整份草稿作废。脱敏关不在此处：
   /// 它在写草稿之前执行（[run] 的 rejected (sensitive) 分支），含秘密的
   /// 候选连瞬态草稿都不落盘。[restoredItems]
   /// 是写出前本地拼回的冻结条目：它们不过模型，但相互矛盾关的建模
   /// 要用它们播种——旧设计里冻结条目由模型逐字带回，本就受该关覆盖，
-  /// 换成本地拼回不该把这份防护也换掉。
+  /// 换成本地拼回不该把这份防护也换掉。[evidenceTexts] 是本次实际读过
+  /// 的证据文本（输入日摘要 + 按需回读的 episode 文本）：「与实际读过
+  /// 的证据矛盾」关在它上面执行（Dream.md 四关之四），模型没读过的
+  /// 日期不在判定范围里。
   String? _validateDraft({
     required List<DreamItem> items,
     required String draftContent,
@@ -1443,9 +1774,10 @@ final class DreamService {
     required Set<String> banned,
     required Set<String> frozen,
     required List<({String section, String text})> restoredItems,
+    required List<String> evidenceTexts,
   }) {
-    // 结构关：条目数与总量都在预算内；空候选一律拒绝——没有产出就
-    // 不接纳，绝不允许一次清空已有的全部长期印象。
+    // 结构关：条目数与总量都在预算内；空候选一律拒绝——没有产出就不
+    // 接纳，绝不允许一次清空已有的全部长期印象。
     if (items.isEmpty) {
       return 'empty';
     }
@@ -1455,19 +1787,19 @@ final class DreamService {
     if (draftContent.runes.length > longMemoryMaxRunes) {
       return 'over-budget';
     }
-    // 证据关：每条必须携带至少一个真实出处，编造的一律整份作废。
-    // 日摘要只是窗口采样，月摘要却覆盖整月：日期引用命中日摘要窗口、
-    // 或其所属月份的月摘要在场，即可核；PersonaTree、关系与未闭环是
-    // 状态快照不是记录，其日期仍不认。拒绝时诊断第一个被拒引用
-    // （只含日期，绝不含候选文本）。
+    // 证据关：每条必须携带至少一个真实出处，且必须落在本次实际读过的
+    // 材料里——输入日摘要的日期或回读 episode 的日期；月份引用要求该
+    // 月月摘要在输入中。月内任意日期不再默认放行（裁定票 04）：月摘要
+    // 在场只证明该月被整理过，不证明该月任意一天有对应证据。PersonaTree、
+    // 关系与未闭环是状态快照不是记录，其日期仍不认。拒绝时诊断第一个
+    // 被拒引用（只含日期，绝不含候选文本）。
     for (final item in items) {
       if (item.evidence.isEmpty) {
         return 'missing-evidence';
       }
       for (final ref in item.evidence) {
         final known = _dayPattern.hasMatch(ref)
-            ? validDates.contains(ref) ||
-                  validMonths.contains(ref.substring(0, 7))
+            ? validDates.contains(ref)
             : _monthPattern.hasMatch(ref) && validMonths.contains(ref);
         if (!known) {
           _diagnosticsSink('dream evidence rejected [ref=$ref]');
@@ -1487,6 +1819,32 @@ final class DreamService {
     for (final item in items) {
       if (bannedMemoryText(item.text, frozen)) {
         return 'frozen';
+      }
+    }
+    // 与实际读过的证据矛盾关：「不得引入与实际读过的证据（输入日摘要与
+    // 按需回读的 episodes）矛盾的内容」（Dream.md 四关之四）。日摘要与
+    // 回读 episode 文本各取核心断言（否定词剥离后剩下的断言加极性），
+    // 候选条目的核心与某条证据断言同核心、反极性即整份拒绝。边界（文字
+    // 级确定性判定，不做语义理解）：换种说法的相反主张、要跨句拼合才
+    // 成立的主张它判不出来；漏放行的条目由下一轮 Dream 的新证据按纠错
+    // 规则覆盖。只判本次实际读过的材料——模型没读过的日期不在判定范围
+    // 里。
+    final evidenceCores = <String, bool>{};
+    for (final text in evidenceTexts) {
+      final (core, negated) = _coreAndNegation(text);
+      if (core.isEmpty) {
+        continue;
+      }
+      evidenceCores.putIfAbsent(core, () => negated);
+    }
+    for (final item in items) {
+      final (core, negated) = _coreAndNegation(item.text);
+      if (core.isEmpty) {
+        continue;
+      }
+      final seen = evidenceCores[core];
+      if (seen != null && seen != negated) {
+        return 'evidence-contradiction';
       }
     }
     // 相互矛盾关：候选版内部同一核心断言一正一反并存。拼回的冻结条目
@@ -1550,6 +1908,9 @@ final class DreamService {
   /// [restoredItems] 是写出前本地拼回的冻结条目（原样来自上一版，
   /// 不过模型）：「相对上一版」按最终文件内容记账，拼回条目与其
   /// 余保留条目同格式记在「保留」里，不当成模型候选。
+  ///
+  /// [readDates] 是本次按需回读实际读过的日期（裁定票 04）：清单作为
+  /// 诊断档案要能回答「证据在哪」，回读日期与条目证据同列。
   String _buildChanges(
     ({String today, DreamState previousState, String result}) run,
     _DreamInput input,
@@ -1557,6 +1918,7 @@ final class DreamService {
     LongMemoryFile? existing, {
     required bool includeDetails,
     List<({String section, String text})> restoredItems = const [],
+    Set<String> readDates = const {},
     List<_RootOpRecord> rootOps = const [],
   }) {
     final rangeStart = run.previousState.lastSuccess == null
@@ -1569,7 +1931,12 @@ final class DreamService {
       ..writeln(
         'range: $rangeStart → ${run.today}'
         '（日摘要 ${input.summaries.length} 天，月摘要 ${input.monthSummaries.length} 月）',
-      )
+      );
+    if (readDates.isNotEmpty) {
+      final sorted = readDates.toList()..sort();
+      buffer.writeln('回读日期: ${sorted.join('、')}');
+    }
+    buffer
       ..writeln('result: ${run.result}')
       ..writeln('候选条目数: ${items.length}');
     if (rootOps.isNotEmpty) {
@@ -1703,7 +2070,7 @@ final class DreamService {
     final system = '''
 你是栖语离线记忆的深度重组模块（Dream）。给你用户已整理的记忆与当前长期印象，请产出新长期印象的候选版。要求：
 1. 只输出一个 JSON 对象，不要输出任何其它文字、解释或代码块标记。
-2. 每条印象必须有给定材料中的依据，不得编造、不得引入材料外的事实。
+2. 每条印象必须有给定材料中的依据（含宿主按需回读的 episode 原文），不得编造、不得引入材料外的事实。
 3. 只保留高压缩的生活倾向、持续关注和关系变化：用户现实里的重要的人、值得长期记住的人生事件、经历过的变化与反复出现的主题、双方共同形成的经历；不写产品机制、逐日流水账、一次性任务细节、原话细节或证据链。模式与轨迹按成长线写：一行「时间段＋前后变化」，保持中性；共同过往只收双方真实互动、有整理日期依据的内容，不写单方面印象。
 4. 每条是一行压缩印象，不超过60字，可以带时间词。
 5. 以当前长期印象为基础保守重组：同义的合并，仍有依据的保留，被更新证据推翻的改写；拿不准就不写。
@@ -1716,8 +2083,10 @@ final class DreamService {
    boundaries 分支的行为推断只能写成「少探问」「谨慎接近」这类软边界，不得伪装成用户明确禁止。
    提案的 claim 同样不得带「最近/这周/这几天」等时间限定，不得出现敏感或禁提内容。
 $appellationRule
+9. readRequests：可选数组，最多8项，每项形如 YYYY-MM-DD 或 YYYY-MM，只能点名你在上面材料里见到过的日期或月份（月摘要条目、长期印象、PersonaTree 叶证据中出现的），没见过的不要猜。基础材料（摘要层）不足以核实某条轨迹或候选主张、需要该日 episode 原文时用它点名；宿主会回读相应 episode 全文（受单条长度与总预算约束）并如实告知哪些日期真正可读，然后你基于全部已读材料再产出一次候选。回读轮数有上限；轮数用尽时宿主会通知你不能再读，那时必须基于已有材料直接给出最终候选，items 不得省略。没有回读需求时省略该字段，直接输出 items。
 字段白名单：
-- items: 数组，最多24项，每项 {"section": 人与关系、重要事件、模式与轨迹、共同过往 之一, "text": 一行压缩印象，不超过60字, "evidence": 日期数组，每项形如 YYYY-MM-DD 或 YYYY-MM，只能取自「可用证据清单」列出的日期/月份，绝不编造}。
+- items: 数组，最多24项，每项 {"section": 人与关系、重要事件、模式与轨迹、共同过往 之一, "text": 一行压缩印象，不超过60字, "evidence": 日期数组，每项形如 YYYY-MM-DD 或 YYYY-MM，只能取自「可用证据清单」列出的日期/月份或宿主回读后告知可引用的日期，绝不编造}。
+- readRequests: 可选数组，格式与纪律见第9条；发起回读时 items 可附草案，宿主回读后你会再产出一次最终候选。
 - rootProposals: 可选数组，格式见第7条；不调整树时省略该字段。''';
 
     final user = StringBuffer()
@@ -1793,6 +2162,27 @@ $appellationRule
   }
 }
 
+/// 有界回读循环的终态。[raw] 为 null 表示没拿到可用输出：Provider
+/// 未配置时 [noProvider] 为 true，否则 [failure] 是失败原因码。
+/// [readDates] 是本次实际读过的回读日期（证据关白名单在 [run] 处与
+/// 输入日摘要日期合并）；[readTexts] 是回读 episode 的判定文本（矛盾
+/// 关在 [run] 处与输入日摘要一起播种）——模型没读过的日期两头都不认。
+final class _DreamExchange {
+  const _DreamExchange({
+    this.raw,
+    this.readDates = const {},
+    this.readTexts = const [],
+    this.noProvider = false,
+    this.failure,
+  });
+
+  final String? raw;
+  final Set<String> readDates;
+  final List<String> readTexts;
+  final bool noProvider;
+  final String? failure;
+}
+
 /// 一条根节点提案的校验/落盘记录。[reason] 为 null 表示通过校验并
 /// 落盘；否则是拒绝原因码。只存原因码与操作对象（含节点 ID），绝不
 /// 存主张原文——被拒提案可能携带敏感内容。[reason] 可变：校验通过后
@@ -1855,7 +2245,8 @@ final class _DreamInput {
   /// 命中冻结标题的模型产物一律拒绝，命中冻结节点的根提案一律拒绝。
   final Set<String> frozen;
 
-  /// 本轮实际递给模型的整理日期与月份：证据关的白名单。
+  /// 输入日摘要的日期与月份：证据关白名单的基础部分（回读 episode 的
+  /// 日期在 [DreamService.run] 处并入后才交自检各关）。
   final Set<String> validDates;
   final Set<String> validMonths;
 }

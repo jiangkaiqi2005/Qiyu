@@ -939,7 +939,7 @@ void main() {
     }
     final client = ScriptedChatClient([
       ModelCompletion.reply(_candidate([
-        _item('重要事件', '编造旧日期', ['2026-02-10']),
+        _item('重要事件', '月初的近况印象', ['2026-08-01']),
       ])),
     ]);
     final dream = DreamService(
@@ -950,8 +950,9 @@ void main() {
       clock: () => now,
     );
 
-    // 编造日期（所属月份没有月摘要在场）仍被拒绝。先跑拒绝场景，接纳
-    // 成功后三天间隔会挡住同一天的下一次运行。
+    // 窗口外日期不再因「当月月摘要在场」放行（裁定票 04）：2026-08-01
+    // 有月摘要在场但不在日摘要窗口、也没回读，证据关拒绝。先跑拒绝场景，
+    // 接纳成功后三天间隔会挡住同一天的下一次运行。
     final rejected = await dream.run(bedtime: true);
     expect(rejected.status, DreamStatus.validationFailed);
     expect(rejected.detail, 'unknown-evidence');
@@ -960,13 +961,14 @@ void main() {
         .join('\n');
     expect(rejectedPrompt, isNot(contains('2026-08-01:')));
 
-    // 换成窗口外但当月月摘要在场的日期：月摘要覆盖整月，日期仍可核，
-    // 证据关应接纳；同时检查输入窗口与月上限。
-    client.completions.add(
+    // 模型点名回读窗口外的 2026-08-01：宿主回填该日 episode 后，该日期
+    // 进入本次实际读过的集合，引用获认；同时检查输入窗口与月上限。
+    client.completions.addAll([
+      ModelCompletion.reply(_readRequest(['2026-08-01'])),
       ModelCompletion.reply(_candidate([
         _item('重要事件', '月初的近况印象', ['2026-08-01']),
       ])),
-    );
+    ]);
     final outcome = await dream.run(bedtime: true);
 
     expect(outcome.status, DreamStatus.accepted);
@@ -983,6 +985,8 @@ void main() {
     expect(prompt, contains('### 2026-03'));
     expect(prompt, isNot(contains('### 2026-02')));
     expect(prompt, isNot(contains('### 2026-01')));
+    // 回读把窗口外日期带进可引用集合（第二轮对话里的回读材料）。
+    expect(prompt, contains('- 2026-08-01'));
   });
 
   test('a stale draft from an interrupted run is discarded', () async {
@@ -1800,7 +1804,9 @@ void main() {
     final outcome = await dream.run(bedtime: true);
 
     // 证据清单显式列出全部可用日期/月份（各自排序）：长期印象与叶证据
-    // 都带旧日期，模型无从自行判断哪些可引用；七月日期因月摘要在场可核。
+    // 都带旧日期，模型无从自行判断哪些可引用；2026-07-30 在日摘要窗口
+    // 内、本身可核（月摘要在场只让该月可作月份引用，不再放行月内任意
+    // 日期——裁定票 04）。
     expect(outcome.status, DreamStatus.accepted);
     final user = client.calls.single.last.content;
     expect(user, contains('## 可用证据清单'));
@@ -1868,6 +1874,504 @@ void main() {
     expect(system, contains('一律写「用户」'));
     expect(system, contains('不要替用户起昵称'));
   });
+
+  group('on-demand episode re-read (memory-notes alignment 04)', () {
+    test('parseDreamReadRequests whitelists refs, dedupes and caps', () {
+      // 字段缺失或类型不对：没有回读请求。
+      expect(parseDreamReadRequests('{}'), isEmpty);
+      expect(parseDreamReadRequests('{"readRequests": "2026-08-01"}'), isEmpty);
+      // 形态白名单（日期/月份）、去重、非字符串条目单条丢弃。
+      expect(
+        parseDreamReadRequests(
+          '{"readRequests": ["2026-08-01", "2026-08", "2026-8-1", 5, null, "2026-08-01"]}',
+        ),
+        ['2026-08-01', '2026-08'],
+      );
+      // 单轮数量上限。
+      expect(
+        parseDreamReadRequests(
+          jsonEncode({
+            'readRequests': [
+              for (var index = 1; index <= dreamMaxReadRequests + 3; index += 1)
+                '2026-08-${'$index'.padLeft(2, '0')}',
+            ],
+          }),
+        ),
+        hasLength(dreamMaxReadRequests),
+      );
+    });
+
+    test('the dream prompt teaches the bounded re-read protocol', () async {
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-prompt-test-',
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_candidate([
+          _item('重要事件', '一条印象', ['2026-08-15']),
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: client,
+        clock: () => now,
+      );
+
+      await dream.run(bedtime: true);
+
+      final system = client.calls.single.first.content;
+      expect(system, contains('readRequests'));
+      expect(system, contains('只能点名你在上面材料里见到过的日期或月份'));
+      expect(system, contains('回读轮数有上限'));
+      expect(system, contains('必须基于已有材料直接给出最终候选'));
+    });
+
+    test('a read date is filled with its episode text and becomes citable',
+        () async {
+      final now = DateTime(2026, 8, 20, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-fill-test-',
+        clock: () => now,
+      );
+      await _seedDreamWindowDays(pipeline);
+      await _seedFinalizedDayWithEntries(pipeline, '2026-08-01', [
+        _readEntry('2026-08-01', '用户在准备换工作', evidence: '我想换个环境'),
+      ]);
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_readRequest(['2026-08-01'])),
+        ModelCompletion.reply(_candidate([
+          _item('重要事件', '用户在八月初准备换工作', ['2026-08-01']),
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      expect(outcome.status, DreamStatus.accepted);
+      // 一次点名回读 + 一次最终产出。
+      expect(client.calls, hasLength(2));
+      // 回读材料作为新的 user 消息追加，请求原样留在 assistant 消息里。
+      final secondCall = client.calls[1];
+      expect(secondCall[2].role, ModelMessageRole.assistant);
+      expect(secondCall[2].content, contains('readRequests'));
+      final fill = secondCall.last;
+      expect(fill.role, ModelMessageRole.user);
+      expect(fill.content, contains('- 2026-08-01'));
+      expect(fill.content, contains('- 用户在准备换工作'));
+      expect(fill.content, contains('原话摘录：我想换个环境'));
+      // 回读日期过证据关，落进长期印象。
+      expect(
+        File('${directory.path}/long-memory.md').readAsStringSync(),
+        contains('- 用户在八月初准备换工作'),
+      );
+      // 变更清单（诊断档案）记下回读日期：证据在哪。
+      final history = Directory('${directory.path}/dream/history').listSync();
+      expect(
+        File(history.single.path).readAsStringSync(),
+        contains('回读日期: 2026-08-01'),
+      );
+    });
+
+    test('exhausted read rounds force the final candidate', () async {
+      final now = DateTime(2026, 8, 20, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-exhaust-test-',
+        clock: () => now,
+      );
+      await _seedDreamWindowDays(pipeline);
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_readRequest(['2026-08-01'])),
+        ModelCompletion.reply(_readRequest(['2026-08-02', '2026-08-01'])),
+        // 最后一轮回填已随附「不能再读」通知：这一轮即使仍点名回读也
+        // 一律忽略，其 items 即最终候选（不多调一次全量输出）。
+        ModelCompletion.reply(
+          jsonEncode({
+            'readRequests': ['2026-08-03'],
+            'items': [
+              _item('重要事件', '基于已有材料的最终印象', ['2026-08-20']),
+            ],
+          }),
+        ),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      expect(outcome.status, DreamStatus.accepted);
+      // 首发 + 两轮回填即收束：不再有第三次注定被丢弃的全量调用。
+      expect(client.calls, hasLength(dreamMaxReadRounds + 1));
+      // 第一轮回填 08-01 的 episode 内容，不带耗尽通知。
+      final firstFill = client.calls[1].last.content;
+      expect(firstFill, contains('第1天的材料'));
+      expect(firstFill, isNot(contains('不能再读')));
+      // 第二轮回填 08-02（最后一轮）：随回填告知不能再读；08-01 已回读
+      // 过，不重复回填。
+      final secondFill = client.calls[2].last.content;
+      expect(secondFill, contains('第2天的材料'));
+      expect(secondFill, contains('- 2026-08-01：已回读过'));
+      expect(secondFill, contains('不能再读'));
+      expect(secondFill, contains('不得再请求回读'));
+      // 08-03 从未回读，也没进任何一轮对话。
+      for (final call in client.calls) {
+        for (final message in call) {
+          expect(message.content, isNot(contains('第3天的材料')));
+        }
+      }
+      expect(
+        File('${directory.path}/long-memory.md').readAsStringSync(),
+        contains('- 基于已有材料的最终印象'),
+      );
+    });
+
+    test('a read request without records is reported and never citable',
+        () async {
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-missing-test-',
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_readRequest(['2026-01-01', '2026-01'])),
+        ModelCompletion.reply(_candidate([
+          _item('重要事件', '凭空的印象', ['2026-01-01']),
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      // 无记录的日期不算已读材料：引用它照样被证据关拒绝。
+      expect(outcome.status, DreamStatus.validationFailed);
+      expect(outcome.detail, 'unknown-evidence');
+      final fill = client.calls[1].last.content;
+      expect(fill, contains('- 2026-01-01：无 episode 记录'));
+      expect(fill, contains('- 2026-01：该月无 episode 日期'));
+    });
+
+    test('a month request expands to that month episode dates', () async {
+      final now = DateTime(2026, 8, 20, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-month-test-',
+        clock: () => now,
+      );
+      await _seedDreamWindowDays(pipeline);
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_readRequest(['2026-08'])),
+        ModelCompletion.reply(_candidate([
+          _item('重要事件', '八月初的印象', ['2026-08-01']),
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      // 月份展开为该月 episode 日期逐日回填，展开回的日期同样可引用。
+      expect(outcome.status, DreamStatus.accepted);
+      final fill = client.calls[1].last.content;
+      expect(fill, contains('- 2026-08-01'));
+      expect(fill, contains('第1天的材料'));
+      expect(
+        File('${directory.path}/long-memory.md').readAsStringSync(),
+        contains('- 八月初的印象'),
+      );
+    });
+
+    test('re-read content is bounded by the total rune budget', () async {
+      final now = DateTime(2026, 8, 20, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-budget-test-',
+        clock: () => now,
+      );
+      await _seedDreamWindowDays(pipeline);
+      // 08-01 的条目多到撑爆回读总预算，08-02 只有一条。
+      await _seedFinalizedDayWithEntries(pipeline, '2026-08-01', [
+        for (var index = 1; index <= 40; index += 1)
+          _readEntry('2026-08-01', '第$index条${'长' * 100}'),
+      ]);
+      await _seedFinalizedDayWithEntries(pipeline, '2026-08-02', [
+        _readEntry('2026-08-02', '二月二的材料'),
+      ]);
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_readRequest(['2026-08-01', '2026-08-02'])),
+        ModelCompletion.reply(_candidate([
+          _item('重要事件', '二月的印象', ['2026-08-02']),
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      // 08-02 因预算用尽未回读，其日期不可引用。
+      expect(outcome.status, DreamStatus.validationFailed);
+      expect(outcome.detail, 'unknown-evidence');
+      final fill = client.calls[1].last.content;
+      // 08-01 在预算内回读了前若干条，不是全文。
+      expect(fill, contains('- 第1条'));
+      expect(fill, isNot(contains('- 第40条')));
+      // 08-02 的条目放不进剩余预算，未回读，其日期不可引用。
+      expect(fill, contains('- 2026-08-02：回读预算放不下该日条目'));
+    });
+
+    test('the contradiction gate runs on re-read material', () async {
+      final now = DateTime(2026, 8, 20, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-contradiction-test-',
+        clock: () => now,
+      );
+      await _seedDreamWindowDays(pipeline);
+      // 反例：回读原文与候选极性相反，整份作废。
+      await _seedFinalizedDayWithEntries(pipeline, '2026-08-01', [
+        _readEntry('2026-08-01', '用户去年没有换工作'),
+      ]);
+      final rejecting = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: ScriptedChatClient([
+          ModelCompletion.reply(_readRequest(['2026-08-01'])),
+          ModelCompletion.reply(_candidate([
+            _item('重要事件', '用户去年换了工作', ['2026-08-01']),
+          ])),
+        ]),
+        clock: () => now,
+      );
+      final rejected = await rejecting.run(bedtime: true);
+      expect(rejected.status, DreamStatus.validationFailed);
+      expect(rejected.detail, 'evidence-contradiction');
+
+      // 正例：极性一致即接纳（验证失败不推进成功时间，同一天可再跑）。
+      await _seedFinalizedDayWithEntries(pipeline, '2026-08-01', [
+        _readEntry('2026-08-01', '用户去年换了工作'),
+      ]);
+      final accepting = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: ScriptedChatClient([
+          ModelCompletion.reply(_readRequest(['2026-08-01'])),
+          ModelCompletion.reply(_candidate([
+            _item('重要事件', '用户去年换了工作', ['2026-08-01']),
+          ])),
+        ]),
+        clock: () => now,
+      );
+      expect((await accepting.run(bedtime: true)).status, DreamStatus.accepted);
+    });
+
+    test('the contradiction gate also covers input day summaries', () async {
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-contradiction-summary-test-',
+        clock: () => now,
+      );
+      // 反例：候选与输入日摘要（同样是实际读过的证据）极性相反。
+      await _seedFinalizedDay(pipeline, '2026-08-15', '用户去年没有换工作');
+      final rejecting = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: ScriptedChatClient([
+          ModelCompletion.reply(_candidate([
+            _item('重要事件', '用户去年换了工作', ['2026-08-15']),
+          ])),
+        ]),
+        clock: () => now,
+      );
+      final rejected = await rejecting.run(bedtime: true);
+      expect(rejected.status, DreamStatus.validationFailed);
+      expect(rejected.detail, 'evidence-contradiction');
+
+      // 正例：极性一致即接纳（验证失败不推进成功时间，同一天可再跑）。
+      await _seedFinalizedDay(pipeline, '2026-08-15', '用户去年换了工作');
+      final accepting = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: ScriptedChatClient([
+          ModelCompletion.reply(_candidate([
+            _item('重要事件', '用户去年换了工作', ['2026-08-15']),
+          ])),
+        ]),
+        clock: () => now,
+      );
+      expect((await accepting.run(bedtime: true)).status, DreamStatus.accepted);
+    });
+
+    test('re-read evidence quotes are independent contradiction units',
+        () async {
+      final now = DateTime(2026, 8, 20, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-contradiction-quote-test-',
+        clock: () => now,
+      );
+      await _seedDreamWindowDays(pipeline);
+      // 摘要本身与候选无关，相反极性在原话摘录里：摘录必须各自独立参加
+      // 矛盾判定，拼成一个长串会让核心比对落空、矛盾关静默失效。
+      await _seedFinalizedDayWithEntries(pipeline, '2026-08-01', [
+        _readEntry('2026-08-01', '用户聊了近况', evidence: '用户去年没有换工作'),
+      ]);
+      final rejecting = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: ScriptedChatClient([
+          ModelCompletion.reply(_readRequest(['2026-08-01'])),
+          ModelCompletion.reply(_candidate([
+            _item('重要事件', '用户去年换了工作', ['2026-08-01']),
+          ])),
+        ]),
+        clock: () => now,
+      );
+      final rejected = await rejecting.run(bedtime: true);
+      expect(rejected.status, DreamStatus.validationFailed);
+      expect(rejected.detail, 'evidence-contradiction');
+
+      // 正例：摘录与候选同核心同极性，接纳。
+      await _seedFinalizedDayWithEntries(pipeline, '2026-08-01', [
+        _readEntry('2026-08-01', '用户聊了近况', evidence: '用户去年换了工作'),
+      ]);
+      final accepting = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: ScriptedChatClient([
+          ModelCompletion.reply(_readRequest(['2026-08-01'])),
+          ModelCompletion.reply(_candidate([
+            _item('重要事件', '用户去年换了工作', ['2026-08-01']),
+          ])),
+        ]),
+        clock: () => now,
+      );
+      expect((await accepting.run(bedtime: true)).status, DreamStatus.accepted);
+    });
+
+    test('controlled entries never reach the model through a re-read',
+        () async {
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-controlled-test-',
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
+      // 窗口外两天：08-01 整条命中禁提；08-02 摘要可读、原话摘录命中。
+      await _seedFinalizedDayWithEntries(pipeline, '2026-08-01', [
+        _readEntry('2026-08-01', '用户下周去医院检查'),
+      ]);
+      await _seedFinalizedDayWithEntries(pipeline, '2026-08-02', [
+        _readEntry('2026-08-02', '用户聊了近况', evidence: '用户提到医院检查的安排'),
+      ]);
+      final store = OpenLoopStore(memoryDirectory: directory.path);
+      expect(
+        (await MemoryBanExecution(openLoopStore: store).execute(
+          '医院检查',
+          origin: 'open-loop',
+        )).controlWritten,
+        isTrue,
+      );
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_readRequest(['2026-08-01', '2026-08-02'])),
+        ModelCompletion.reply(_candidate([
+          _item('重要事件', '一条印象', ['2026-08-02']),
+        ])),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        openLoopStore: store,
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      // 08-02 有可读条目，照常回读并获认；受控内容一条都不外发。
+      expect(outcome.status, DreamStatus.accepted);
+      final fill = client.calls[1].last.content;
+      expect(fill, contains('- 用户聊了近况'));
+      expect(fill, isNot(contains('医院检查的安排')));
+      expect(fill, contains('- 2026-08-01：无可回读内容'));
+    });
+
+    test('a model client without a provider skips the dream', () async {
+      final now = DateTime(2026, 8, 15, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-noprovider-test-',
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了近况');
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        // 客户端在场但拿不到 Provider：complete 返回 null。
+        modelClient: ScriptedChatClient(const []),
+        clock: () => now,
+      );
+
+      expect(
+        (await dream.run(bedtime: true)).status,
+        DreamStatus.skippedNoProvider,
+      );
+    });
+
+    test('a failed final call after exhausted reads keeps old impressions',
+        () async {
+      final now = DateTime(2026, 8, 20, 23, 10);
+      final (:directory, :pipeline) = await _dreamFixture(
+        'qiyu-dream-read-final-failure-test-',
+        clock: () => now,
+      );
+      await _seedDreamWindowDays(pipeline);
+      File('${directory.path}/long-memory.md').writeAsStringSync(
+        '# long-memory\n\n## 重要事件\n- 旧印象保留\n',
+        encoding: utf8,
+      );
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_readRequest(['2026-08-01'])),
+        ModelCompletion.reply(_readRequest(['2026-08-02'])),
+        // 最后一轮回填已随附耗尽通知，这一次调用就是最终产出调用：它
+        // 失败时与普通模型失败同律。
+        const ModelCompletion.failure(ModelFailureKind.network),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        modelClient: client,
+        clock: () => now,
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      expect(outcome.status, DreamStatus.modelFailed);
+      expect(client.calls, hasLength(dreamMaxReadRounds + 1));
+      expect(
+        File('${directory.path}/long-memory.md').readAsStringSync(),
+        '# long-memory\n\n## 重要事件\n- 旧印象保留\n',
+      );
+    });
+  });
 }
 
 /// 建临时目录并装配 episode 管线：成员沿用用例原变量名。
@@ -1923,6 +2427,47 @@ Future<void> _seedFinalizedDay(
     finalizedAt: DateTime.parse('${date}T23:00:00').toUtc(),
   ),
 );
+
+/// 播种带多条条目的已归档 episode 日文件（按需回读测试用）：摘要缺省
+/// 取全部条目摘要拼接，与 [_seedFinalizedDay] 同构。
+Future<void> _seedFinalizedDayWithEntries(
+  EpisodeMemoryPipeline pipeline,
+  String date,
+  List<EpisodeEntry> entries, {
+  String? summary,
+}) => pipeline.synchronizedOnDayFiles(
+  () => pipeline.writeFinalization(
+    date,
+    entries: entries,
+    summary: summary ?? entries.map((entry) => entry.summary).join('；'),
+    finalized: true,
+    finalizedAt: DateTime.parse('${date}T23:00:00').toUtc(),
+  ),
+);
+
+/// 回读测试用条目：可带原话摘录；ID 取文件内序号保证同一天多条不重复。
+EpisodeEntry _readEntry(String date, String summary, {String? evidence}) =>
+    EpisodeEntry(
+      id: 'seed:$date:${_readEntryOrdinal++}',
+      sessionId: 'seed',
+      requestId: 'seed',
+      summary: summary,
+      evidence: evidence,
+      at: DateTime.parse('${date}T21:00:00').toUtc(),
+    );
+var _readEntryOrdinal = 0;
+
+/// 回读请求假响应：只点名日期/月份，不给候选条目。
+String _readRequest(List<String> refs) => jsonEncode({'readRequests': refs});
+
+/// 20 天已归档日摘要：日摘要窗口只递最近 14 天，2026-08-01 至
+/// 2026-08-06 落在窗口外——回读用例拿它们当「值得点名回读的旧日期」。
+Future<void> _seedDreamWindowDays(EpisodeMemoryPipeline pipeline) async {
+  for (var index = 1; index <= 20; index += 1) {
+    final date = '2026-08-${'$index'.padLeft(2, '0')}';
+    await _seedFinalizedDay(pipeline, date, '第$index天的材料');
+  }
+}
 
 /// 播种未归档的 episode 日文件，供日终归档测试使用。
 Future<void> _seedUnfinalizedDay(
