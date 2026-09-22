@@ -403,6 +403,11 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                     ? 'Resource-Id'
                     : '模型名称',
                 hintText: defaults.modelHint,
+                // 千问档亮一句支持范围说明：型号取协议缺省档位（与回填同源，
+                // 不另立一份字面量），用户只看得到缺省型号时也知道支持范围。
+                helperText: provider == SttServiceKind.qwenAsr
+                    ? '支持 HTTP 非流式识别模型，如 $qwenAsrDefaultModel'
+                    : null,
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                 focusedBorder: settingsOutlineBorder(

@@ -2,8 +2,10 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/features/settings/provider_catalog.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/settings_section_shell.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_section.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
@@ -138,6 +140,63 @@ void main() {
       reason: '获焦编辑中的草稿被同步冲掉了',
     );
     expect(value.modelController.text, 'tts-model');
+  });
+
+  testWidgets('模型框支持范围说明只在千问档出现，其余档不出现', (tester) async {
+    // 区块嵌在设置页分节壳里：拉高视口保证模型框在命中范围内。
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: viewModel,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SettingsSectionCollapseScope(
+              collapsed: const {},
+              onToggle: (_) {},
+              child: ListView(children: const [TtsSettingsSection()]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    const qwenModelHelp = '支持 HTTP 非流式合成模型，如 $qwenTtsDefaultModel';
+
+    // 说明归属锁死在模型名称框：helperText 渲染在 TextField 子树内，同一句
+    // 误挂到服务地址等别的框上时断言会红。
+    Finder modelFieldHelp() => find.descendant(
+      of: find.byKey(const Key('tts-model')),
+      matching: find.text(qwenModelHelp),
+    );
+
+    // 初值 OpenAI 兼容档：模型框旁没有支持范围说明。
+    expect(modelFieldHelp(), findsNothing);
+
+    // 切到千问档：说明出现在模型名称框旁，且只渲染一处。
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('千问语音合成').last);
+    await tester.pumpAndSettle();
+    expect(modelFieldHelp(), findsOneWidget);
+    // 全页也只此一处：同一句不得重复挂到别的字段上。
+    expect(find.text(qwenModelHelp), findsOneWidget);
+
+    // 切到豆包档：说明不再出现。
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('豆包语音合成').last);
+    await tester.pumpAndSettle();
+    expect(modelFieldHelp(), findsNothing);
+
+    // 切到自定义档：同样不出现。
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自定义合成服务').last);
+    await tester.pumpAndSettle();
+    expect(modelFieldHelp(), findsNothing);
   });
 
   test('同一份设置重复同步是幂等的，不重置输入中的草稿', () {
