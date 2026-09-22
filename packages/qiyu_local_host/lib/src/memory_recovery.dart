@@ -699,7 +699,7 @@ final class MemoryRecoveryService {
       _diagnosticsSink('checkpoint quarantine deferred [$error]');
       return;
     }
-    // 检查点可从会话完整重推（语义去重避免重复整理）：完整恢复，
+    // 检查点可从会话完整重推（条目标识去重避免重复整理）：完整恢复，
     // 隔离副本随之删除。
     await _deleteIfExists(File(quarantinePath));
     findings.add(
@@ -712,7 +712,7 @@ final class MemoryRecoveryService {
         outcome: MemoryRecoveryOutcome.full,
         evidence: orphaned
             ? '指向的会话已不存在，重置后从未归档会话开头重扫'
-            : '重置后从未归档会话开头重扫，语义去重避免重复',
+            : '重置后从未归档会话开头重扫，按条目标识去重避免重复整理',
       ),
     );
   }

@@ -6,7 +6,7 @@ import 'memory_controls.dart';
 /// 受管 Markdown 文件（long-memory.md / relationship.md）的解析。读侧
 /// 损坏判定与展示侧解析共用同一份实现，理解一行格式只看这一处。
 
-/// 规范化用于语义去重比较：折叠空白并统一大小写；不改变落盘原文。
+/// 规范化用于文字比较：折叠空白并统一大小写；不改变落盘原文。
 String normalizeMemoryText(String value) =>
     value.replaceAll(RegExp(r'\s+'), ' ').toLowerCase().trim();
 

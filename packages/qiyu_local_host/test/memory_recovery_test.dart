@@ -421,7 +421,7 @@ void main() {
       );
     });
 
-    test('检查点重置后重跑整理，语义去重不产生重复条目', () async {
+    test('检查点重置后重跑整理，条目标识去重不产生重复条目', () async {
       final session = RawSession(
         id: 'session-replay',
         date: '2026-08-19',
