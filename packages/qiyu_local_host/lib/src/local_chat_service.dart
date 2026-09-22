@@ -6,6 +6,7 @@ import 'developer_diagnostics.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
+import 'memory_alias.dart';
 import 'memory_ban.dart';
 import 'memory_cadence.dart';
 import 'memory_controls.dart';
@@ -83,6 +84,7 @@ final class LocalChatService {
     this.memoryActions,
     this.memoryCadence,
     this.requestDiagnostics,
+    this.aliasClient,
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
     Clock? clock,
@@ -113,6 +115,12 @@ final class LocalChatService {
   /// 记忆动作执行端：禁提执行器和删除管线与记忆中心 UI 共用，
   /// 保持控制范围、清理结果一致。
   final MemoryActionService? memoryActions;
+
+  /// 控制时关联扩展的 Provider 客户端（裁定票 03）：聊天禁提与冻结
+  /// 两个分支直接用它做有界别名调用（都在维护准入之外），删除走
+  /// memoryActions 的删除管线（其客户端随 memoryActions 注入）。未配置
+  /// 或调用失败都静默退回无别名，控制本身照常生效。
+  final ProviderChatClient? aliasClient;
 
   late final MemoryBanExecution? _banExecution =
       memoryActions?.banExecution ??
@@ -737,10 +745,21 @@ final class LocalChatService {
             );
           case MemoryBanAction():
             final execution = _banExecution;
+            // 别名扩展在维护准入之外：模型调用不占 operation zone
+            // （提交边界纪律），未配置或失败静默退回无别名，禁提本身
+            // 照常生效。
+            final aliases = await expandMemoryAliases(
+              aliasClient,
+              action.title,
+            );
             // 此处已经占有聊天槽，维护正在排空聊天时必须继续完成，
             // 不能再等待新 UI 操作的准入。执行器只分步取得短写锁。
             final result = await execution?.controls.commits.existingOperation(
-              () => execution.execute(action.title, origin: 'chat'),
+              () => execution.execute(
+                action.title,
+                origin: 'chat',
+                aliases: aliases,
+              ),
             );
             if (result == null || !result.controlWritten) {
               _diagnosticsSink(
@@ -760,7 +779,13 @@ final class LocalChatService {
             }
           case MemoryFreezeAction():
             final controls = memoryControls;
-            final frozen = await controls?.freeze(action.title) ?? false;
+            // 关联扩展（裁定票 03）：未配置模型或调用失败都静默退回
+            // 无别名，冻结本身照常生效。没有控制存储时不做无用调用。
+            final aliases = controls == null
+                ? const <String>[]
+                : await expandMemoryAliases(aliasClient, action.title);
+            final frozen =
+                await controls?.freeze(action.title, aliases: aliases) ?? false;
             if (!frozen) {
               _diagnosticsSink(
                 'memory freeze deferred [controls not writable] '
@@ -773,6 +798,17 @@ final class LocalChatService {
             if (removed == null) {
               _diagnosticsSink(
                 'memory unfreeze deferred [controls not writable] '
+                'request=$requestId',
+              );
+            }
+          case MemoryUnbanAction():
+            // 口语解除禁提（裁定票 03）：与 memory_unfreeze 对称，写失败
+            // 只记诊断，控制记录保持现状等待重试。
+            final controls = memoryControls;
+            final removed = await controls?.unban(action.title);
+            if (removed == null) {
+              _diagnosticsSink(
+                'memory unban deferred [controls not writable] '
                 'request=$requestId',
               );
             }

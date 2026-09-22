@@ -6,6 +6,7 @@ import 'dream.dart';
 import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
+import 'memory_alias.dart';
 import 'memory_ban.dart';
 import 'memory_center.dart';
 import 'memory_controls.dart';
@@ -14,6 +15,7 @@ import 'memory_text_primitives.dart';
 import 'monthly_summary.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
+import 'provider_settings_service.dart';
 import 'relationship_lifecycle.dart';
 
 /// 记忆动作结果三态（ticket 20 验收）：成功、部分失败（控制已生效，
@@ -35,6 +37,7 @@ final class MemoryActionResult {
     this.code,
     this.deferred = const [],
     this.revealedText,
+    this.aliasCount = 0,
   });
 
   final MemoryActionStatus status;
@@ -56,6 +59,11 @@ final class MemoryActionResult {
   /// 不写日志。
   final String? revealedText;
 
+  /// 控制时模型关联扩展找出的相近表述条数（裁定票 03）：界面向用户
+  /// 说明这条控制同时覆盖了哪些说法。0 表示没有别名（未配置模型、
+  /// 调用失败或输出为空）——别名是增强，从不是控制生效的门槛。
+  final int aliasCount;
+
   Map<String, Object?> toJson() => {
     'status': status.wireName,
     'message': message,
@@ -63,6 +71,7 @@ final class MemoryActionResult {
     if (code != null) 'code': code,
     if (deferred.isNotEmpty) 'deferred': deferred,
     if (revealedText != null) 'text': revealedText,
+    if (aliasCount > 0) 'aliasCount': aliasCount,
   };
 }
 
@@ -188,6 +197,7 @@ final class MemoryActionService {
     required this.relationshipLifecycle,
     AtomicTextWriter? atomicWriter,
     void Function(String message)? diagnosticsSink,
+    this._aliasClient,
   }) : _scopeScanner = MemoryScopeScanner(
          memoryDirectory: memoryDirectory,
          episodePipeline: episodePipeline,
@@ -197,7 +207,9 @@ final class MemoryActionService {
        ),
        _atomicWriter = episodePipeline.commits.wrap(atomicWriter),
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
-
+  // 禁提执行器与聊天路径共用（ticket 20）：别名由调用方在维护准入
+  // 之外备好经 execute 的 aliases 传入（提交边界纪律），执行器自身
+  // 只持有本地存储。
   late final MemoryBanExecution banExecution = MemoryBanExecution(
     openLoopStore: openLoopStore,
     personaTree: personaTree,
@@ -215,6 +227,10 @@ final class MemoryActionService {
   /// 全部消费它，口径以清除管线能触及的节点集合为准。
   final MemoryScopeScanner _scopeScanner;
   final AtomicTextWriter _atomicWriter;
+
+  /// 控制时关联扩展的 Provider 客户端（裁定票 03）：未配置或调用失败
+  /// 都静默退回无别名，控制本身必须成功。别名是增强不是门槛。
+  final ProviderChatClient? _aliasClient;
   final void Function(String) _diagnosticsSink;
 
   File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
@@ -243,24 +259,49 @@ final class MemoryActionService {
 
   // ---------- 控制动作 ----------
 
-  Future<MemoryActionResult> freeze(MemoryItemRef ref) =>
-      episodePipeline.commits.operation(() => _freeze(ref));
-
-  Future<MemoryActionResult> _freeze(MemoryItemRef ref) async {
+  /// 控制动作的准入外准备：取目标原文、状态包否决与别名扩展全部留在
+  /// 维护准入之外——模型调用不得占 operation zone（提交边界纪律：
+  /// 「模型调用、全库扫描和任务排空留在锁外」），失败静默退回无别名。
+  /// [failure] 非空时调用方原样返回，不再进入写入。
+  Future<({MemoryActionResult? failure, String text, List<String> aliases})>
+  _prepareControl(MemoryItemRef ref) async {
     final text = await _itemText(ref);
     if (text == null) {
-      return _notFound;
+      return (failure: _notFound, text: '', aliases: const <String>[]);
     }
     final denied = _denyStatePackControl(ref);
     if (denied != null) {
-      return denied;
+      return (failure: denied, text: '', aliases: const <String>[]);
     }
-    if (!await memoryControls.freeze(text, origin: 'memory-center')) {
+    final aliases = await expandMemoryAliases(_aliasClient, text);
+    return (failure: null, text: text, aliases: aliases);
+  }
+
+  Future<MemoryActionResult> freeze(MemoryItemRef ref) async {
+    final prepared = await _prepareControl(ref);
+    if (prepared.failure != null) {
+      return prepared.failure!;
+    }
+    return episodePipeline.commits.operation(
+      () => _freezeRecorded(prepared.text, prepared.aliases),
+    );
+  }
+
+  Future<MemoryActionResult> _freezeRecorded(
+    String text,
+    List<String> aliases,
+  ) async {
+    if (!await memoryControls.freeze(
+      text,
+      origin: 'memory-center',
+      aliases: aliases,
+    )) {
       return _controlNotWritable;
     }
-    return const MemoryActionResult(
+    return MemoryActionResult(
       status: MemoryActionStatus.success,
       message: '已暂停使用这条记忆，解除前不会出现在对话和整理里。',
+      aliasCount: aliases.length,
     );
   }
 
@@ -282,19 +323,25 @@ final class MemoryActionService {
     );
   }
 
-  Future<MemoryActionResult> ban(MemoryItemRef ref) =>
-      episodePipeline.commits.operation(() => _ban(ref));
+  Future<MemoryActionResult> ban(MemoryItemRef ref) async {
+    final prepared = await _prepareControl(ref);
+    if (prepared.failure != null) {
+      return prepared.failure!;
+    }
+    return episodePipeline.commits.operation(
+      () => _banRecorded(prepared.text, prepared.aliases),
+    );
+  }
 
-  Future<MemoryActionResult> _ban(MemoryItemRef ref) async {
-    final text = await _itemText(ref);
-    if (text == null) {
-      return _notFound;
-    }
-    final denied = _denyStatePackControl(ref);
-    if (denied != null) {
-      return denied;
-    }
-    final result = await banExecution.execute(text, origin: 'memory-center');
+  Future<MemoryActionResult> _banRecorded(
+    String text,
+    List<String> aliases,
+  ) async {
+    final result = await banExecution.execute(
+      text,
+      origin: 'memory-center',
+      aliases: aliases,
+    );
     if (!result.controlWritten) {
       return _controlNotWritable;
     }
@@ -313,11 +360,13 @@ final class MemoryActionService {
         status: MemoryActionStatus.partial,
         message: '已不再提起这条记忆；${deferred.join('、')}没有一次完成，稍后会自动补上。',
         deferred: deferred,
+        aliasCount: result.aliasCount,
       );
     }
-    return const MemoryActionResult(
+    return MemoryActionResult(
       status: MemoryActionStatus.success,
       message: '已不再提起这条记忆。',
+      aliasCount: result.aliasCount,
     );
   }
 
@@ -620,24 +669,26 @@ final class MemoryActionService {
 
   /// 执行删除：先写 deleted 抽象防复活范围，再清除全部派生内容与
   /// 索引；sessions 保留。控制记录写不进时绝不清除（可恢复失败）。
-  Future<MemoryActionResult> delete(MemoryItemRef ref) =>
-      episodePipeline.commits.operation(() => _delete(ref));
-
-  Future<MemoryActionResult> _delete(MemoryItemRef ref) async {
-    final text = await _itemText(ref);
-    if (text == null) {
-      return _notFound;
+  /// 原文读取、状态包否决与别名扩展都在准入外由调用方完成（提交边界
+  /// 纪律：模型调用不占 operation zone），本方法只做写入。
+  Future<MemoryActionResult> delete(MemoryItemRef ref) async {
+    final prepared = await _prepareControl(ref);
+    if (prepared.failure != null) {
+      return prepared.failure!;
     }
-    final denied = _denyStatePackControl(ref);
-    if (denied != null) {
-      return denied;
-    }
-    return _executeDelete(text, origin: 'memory-center');
+    return episodePipeline.commits.operation(
+      () => _executeDelete(
+        prepared.text,
+        origin: 'memory-center',
+        aliases: prepared.aliases,
+      ),
+    );
   }
 
   /// 聊天隐藏动作的删除入口（ticket 18 既有路径）：目标来自模型
   /// 摘要而非具体条目，先做只读定位扫描——任一记忆层命中才执行，
   /// 绝不让宽泛范围变成永久封禁；定位后与 [delete] 走同一清除管线。
+  /// 聊天路径本就不包维护准入，别名扩展同在这条界线之外。
   Future<MemoryActionResult> deleteByScope(
     String summary, {
     String origin = 'chat',
@@ -658,7 +709,8 @@ final class MemoryActionService {
       );
       return noTarget;
     }
-    return _executeDelete(summary, origin: origin);
+    final aliases = await expandMemoryAliases(_aliasClient, summary);
+    return _executeDelete(summary, origin: origin, aliases: aliases);
   }
 
   /// 定位扫描（只读）：统一范围扫描任一层命中即返回 true，口径与
@@ -670,10 +722,18 @@ final class MemoryActionService {
   Future<MemoryActionResult> _executeDelete(
     String text, {
     required String origin,
+    required List<String> aliases,
   }) async {
-    final scope = {normalizeMemoryText(text)};
+    final scope = {
+      normalizeMemoryText(text),
+      for (final alias in aliases) normalizeMemoryText(alias),
+    }..remove('');
 
-    if (!await memoryControls.recordDelete(text, origin: origin)) {
+    if (!await memoryControls.recordDelete(
+      text,
+      origin: origin,
+      aliases: aliases,
+    )) {
       return const MemoryActionResult(
         status: MemoryActionStatus.failed,
         message: '删除没有生效：控制记录写不进去，原有内容保持不变，可稍后重试。',
@@ -693,11 +753,13 @@ final class MemoryActionService {
             '删除已生效，这条内容不会再出现；'
             '${deferred.join('、')}没有一次完成，稍后会自动补上。',
         deferred: deferred,
+        aliasCount: aliases.length,
       );
     }
-    return const MemoryActionResult(
+    return MemoryActionResult(
       status: MemoryActionStatus.success,
       message: '已删除。原始对话记录还在，但不会再从那里整理出这条内容。',
+      aliasCount: aliases.length,
     );
   }
 

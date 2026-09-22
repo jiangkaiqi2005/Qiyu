@@ -794,6 +794,10 @@ final class MemoryRecoveryService {
     }
 
     var nextId = 1;
+    // 审计重建只恢复主摘要：控制时的模型关联扩展找出的别名不写
+    // episode 审计（那会让别名原文进入可读记忆文件），损坏重建因此
+    // 退回纯文字匹配——主摘要的控制范围不受影响，别名的增强等下次
+    // 控制动作自然补上（裁定票 03）。
     MemoryControlEntry entry(String summary) => MemoryControlEntry(
       id: nextId++,
       origin: 'recovery',

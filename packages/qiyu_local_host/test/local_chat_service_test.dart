@@ -1468,6 +1468,230 @@ void main() {
       expect((await controls.load()).frozen, isEmpty);
     });
 
+    test('被接受的候选照常提交解除禁提', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''好，那这事以后可以提了。
+<qiyu-actions>
+[{"action":"memory_unban","summary":"审查用禁提话题"}]
+</qiyu-actions>'''),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+        seedMemory: (directory) async {
+          await MemoryControlsStore(
+            memoryDirectory: directory.path,
+          ).ban('审查用禁提话题');
+        },
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'accept-unban',
+        text: '以后这事可以提了',
+      );
+
+      expect(trace.state.source, ReplySource.llm);
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      expect((await controls.load()).banned, isEmpty);
+      // 解除禁提同样留审计条目（与解除冻结同律）。
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: harness.memoryDirectory,
+        clock: () => DateTime(2026, 9, 12, 22, 31),
+      );
+      final summaries = (await pipeline.readToday()).entries
+          .map((entry) => entry.summary)
+          .toList();
+      expect(summaries, contains('解除禁提: 审查用禁提话题'));
+    });
+
+    test('被拒绝的候选不提交解除禁提', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''我理解你的感受
+<qiyu-actions>
+[{"action":"memory_unban","summary":"审查用禁提话题"}]
+</qiyu-actions>'''),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+        seedMemory: (directory) async {
+          await MemoryControlsStore(
+            memoryDirectory: directory.path,
+          ).ban('审查用禁提话题');
+        },
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'reject-unban',
+        text: '我到家了',
+      );
+
+      // 可见回复是本地回退：解除禁提不得执行，控制记录原样保留。
+      expect(trace.state.source, ReplySource.local);
+      expect(trace.state.fallbackReason, FallbackReason.forbiddenPhrases);
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      expect((await controls.load()).banned, hasLength(1));
+    });
+
+    test('控制记录写不进时解除禁提只记诊断', () async {
+      final diagnostics = <String>[];
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''好，那以后可以提了。
+<qiyu-actions>
+[{"action":"memory_unban","summary":"审查用禁提话题"}]
+</qiyu-actions>'''),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        atomicWriter: FailingAtomicTextWriter(
+          shouldFail: (target) => target.endsWith('memory-controls.md'),
+        ),
+        diagnosticsSink: diagnostics.add,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+        seedMemory: (directory) async {
+          await MemoryControlsStore(
+            memoryDirectory: directory.path,
+          ).ban('审查用禁提话题');
+        },
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'unban-unwritable',
+        text: '以后这事可以提了',
+      );
+
+      // 回复照常交付；控制写失败只记诊断，记录保持现状等待重试。
+      expect(trace.state.source, ReplySource.llm);
+      expect(
+        diagnostics.any(
+          (line) =>
+              line.contains('memory unban deferred [controls not writable]') &&
+              line.contains('unban-unwritable'),
+        ),
+        isTrue,
+      );
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      expect((await controls.load()).banned, hasLength(1));
+    });
+
+    test('聊天禁提的关联扩展把别名写进同一条控制', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''好，以后不提了。
+<qiyu-actions>
+[{"action":"memory_ban","summary":"换工作"}]
+</qiyu-actions>'''),
+        ],
+        // 别名调用（Provider 已配置）：找出同一件事的其它说法。
+        completeScript: const [
+          ScriptedCompletionReply('["跳槽","离职"]'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'ban-alias',
+        text: '换工作的事以后别跟我提了',
+      );
+
+      expect(trace.state.source, ReplySource.llm);
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      final banned = (await controls.load()).banned;
+      expect(banned, hasLength(1));
+      expect(banned.single.summary, '换工作');
+      expect(banned.single.aliases, ['跳槽', '离职']);
+    });
+
+    test('聊天冻结的关联扩展把别名写进同一条控制', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''好，先不谈这个。
+<qiyu-actions>
+[{"action":"memory_freeze","summary":"加班"}]
+</qiyu-actions>'''),
+        ],
+        completeScript: const [ScriptedCompletionReply('["开夜工"]')],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'freeze-alias',
+        text: '加班的事先别记了',
+      );
+
+      expect(trace.state.source, ReplySource.llm);
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      final frozen = (await controls.load()).frozen;
+      expect(frozen, hasLength(1));
+      expect(frozen.single.aliases, ['开夜工']);
+      // 别名进入受控集合：用别名称呼的内容同样停止注入与整理。
+      expect(
+        (await controls.load()).controlledSummaries,
+        contains('开夜工'),
+      );
+    });
+
+    test('别名调用失败时聊天禁提照常生效、不带别名', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''好，以后不提了。
+<qiyu-actions>
+[{"action":"memory_ban","summary":"换工作"}]
+</qiyu-actions>'''),
+        ],
+        // 别名调用失败：控制本身必须成功，别名是增强不是门槛。
+        completeScript: const [
+          ScriptedCompletionFailure(ModelFailureKind.provider),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'ban-alias-failed',
+        text: '换工作的事以后别跟我提了',
+      );
+
+      expect(trace.state.source, ReplySource.llm);
+      final controls = MemoryControlsStore(
+        memoryDirectory: harness.memoryDirectory,
+      );
+      final banned = (await controls.load()).banned;
+      expect(banned, hasLength(1));
+      expect(banned.single.summary, '换工作');
+      expect(banned.single.aliases, isEmpty);
+    });
+
     test('晚安信号在拒绝回退轮仍触发日终归档', () async {
       final gateway = ScriptedModelGateway(
         streamScript: [

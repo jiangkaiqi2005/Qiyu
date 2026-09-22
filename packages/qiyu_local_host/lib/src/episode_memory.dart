@@ -25,6 +25,7 @@ const episodeKindRelationshipSignal = 'relationship_signal';
 const controlAuditPrefixBan = '禁提: ';
 const controlAuditPrefixFreeze = '冻结: ';
 const controlAuditPrefixUnfreeze = '解除冻结: ';
+const controlAuditPrefixUnban = '解除禁提: ';
 const controlAuditPrefixDelete = '删除: ';
 const controlAuditPrefixForget = '不记录: ';
 
@@ -604,6 +605,7 @@ final class EpisodeMemoryPipeline {
               MemoryForgetAction() => controlAuditPrefixForget,
               MemoryFreezeAction() => controlAuditPrefixFreeze,
               MemoryUnfreezeAction() => controlAuditPrefixUnfreeze,
+              MemoryUnbanAction() => controlAuditPrefixUnban,
               MemoryDeleteAction() => controlAuditPrefixDelete,
             }}${clean(control.title)}',
         at: _clock().toUtc(),

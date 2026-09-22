@@ -279,9 +279,14 @@ Future<void> _runDeleteFlow(
 /// 之后的 5 秒渐隐链路展示。
 void showMemoryActionResult(BuildContext context, MemoryActionResult result) {
   final failed = result.status == MemoryActionStatus.failed;
+  // 关联扩展条数（裁定票 03）：控制生效时若同时覆盖了其它说法，如实
+  // 告诉用户——「宁多勿漏」的保守方向要摆在明处，不悄悄多屏蔽。
+  final message = result.aliasCount > 0
+      ? '${result.message}同时纳入 ${result.aliasCount} 条相近表述。'
+      : result.message;
   showQiyuFadingNotice(
     context,
-    result.message,
+    message,
     key: const Key('memory-action-result'),
     foregroundColor: failed ? QiyuColors.danger : null,
   );

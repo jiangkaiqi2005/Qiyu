@@ -946,6 +946,25 @@ void main() {
       expect(controls.frozenSummaries, contains('备份冻结'));
     });
 
+    test('同摘要两侧并存时别名取并集', () async {
+      // 本机这条控制没有别名，备份里同摘要那条带了别名：并集合并后
+      // 别名不丢——别名只扩展控制范围，多收才是「保留更多控制」。
+      expect(await memoryControls.ban('换工作', origin: 'user'), isTrue);
+      final bundle = buildBundle({
+        'memory-controls.md': '# memory-controls\n'
+            '## frozen\n## banned\n'
+            '- [MC001] chat | 换工作 | aliases: 跳槽、离职\n'
+            '## deleted\n',
+      });
+
+      final result = await backup.importBundle(bundle);
+      expect(result.controlsMerged, isTrue);
+      final controls = await memoryControls.load();
+      expect(controls.banned, hasLength(1));
+      expect(controls.banned.single.aliases, ['跳槽', '离职']);
+      expect(controls.bannedSummaries, containsAll(['换工作', '跳槽', '离职']));
+    });
+
     test('结构无法识别的会话归为不可恢复且不导入', () async {
       final bundle = buildBundle({
         'sessions/2026/08/2026-08-05-001.md': '无法识别的乱码',

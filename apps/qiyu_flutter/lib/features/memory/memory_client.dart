@@ -694,6 +694,7 @@ final class MemoryActionResult {
     this.retryable = false,
     this.deferred = const [],
     this.text,
+    this.aliasCount = 0,
   });
 
   factory MemoryActionResult.fromJson(Map<String, Object?> json) =>
@@ -705,6 +706,9 @@ final class MemoryActionResult {
             .whereType<String>()
             .toList(),
         text: json['text'] as String?,
+        // 控制时关联扩展找出的相近表述条数（裁定票 03）：0 或缺失
+        // 都表示没有别名（未配置模型或调用失败），不影响控制本身。
+        aliasCount: json['aliasCount'] as int? ?? 0,
       );
 
   final MemoryActionStatus status;
@@ -714,6 +718,9 @@ final class MemoryActionResult {
 
   /// 揭示动作返回的原文；只在揭示成功时出现。
   final String? text;
+
+  /// 这条控制同时覆盖的相近表述条数。
+  final int aliasCount;
 }
 
 /// 删除影响范围（删除前展示）：每一项都是准确计数与用户语言说明。

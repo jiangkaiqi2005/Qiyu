@@ -751,6 +751,13 @@ void main() {
       );
       expect(delete.actions.single, const MemoryDeleteAction(title: '医院检查'));
 
+      final unban = parseHiddenActions(
+        '<qiyu-actions>[{"action":"memory_unban","summary":"换工作话题"}]'
+        '</qiyu-actions>',
+      );
+      expect(unban.actions.single, const MemoryUnbanAction(title: '换工作话题'));
+      expect(unban.diagnostics, isEmpty);
+
       final relationship = parseHiddenActions(
         '<qiyu-actions>[{"action":"relationship_signal",'
         '"signal":"boundary_open","summary":"用户接受了轻调侃",'

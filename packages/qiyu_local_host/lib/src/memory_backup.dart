@@ -1207,7 +1207,9 @@ final class MemoryBackupService {
   }
 
   /// 控制记录并集合并：冻结、禁提、删除分别按规范化摘要取并集，
-  /// 冲突一律保留更多控制（更保守的隐私结果）。
+  /// 冲突一律保留更多控制（更保守的隐私结果）。同摘要两侧并存时
+  /// 别名取并集——别名只扩展控制范围，少收一边的别名等于少屏蔽，
+  /// 与「保留更多控制」相反。
   ({MemoryControls controls, bool changed}) _mergeControls(
     MemoryControls current,
     MemoryControls backup,
@@ -1216,14 +1218,37 @@ final class MemoryBackupService {
       List<MemoryControlEntry> currentEntries,
       List<MemoryControlEntry> backupEntries,
     ) {
-      final seen = <String>{};
       final result = <MemoryControlEntry>[];
       for (final entry in [...currentEntries, ...backupEntries]) {
         final normalized = normalizeMemoryText(entry.summary);
-        if (normalized.isEmpty || !seen.add(normalized)) {
+        if (normalized.isEmpty) {
           continue;
         }
-        result.add(entry);
+        final index = result.indexWhere(
+          (kept) => normalizeMemoryText(kept.summary) == normalized,
+        );
+        if (index < 0) {
+          result.add(entry);
+          continue;
+        }
+        final kept = result[index];
+        final mergedAliases = List<String>.of(kept.aliases);
+        final seenAliases = {
+          for (final alias in kept.aliases) normalizeMemoryText(alias),
+        };
+        for (final alias in entry.aliases) {
+          if (seenAliases.add(normalizeMemoryText(alias))) {
+            mergedAliases.add(alias);
+          }
+        }
+        if (mergedAliases.length != kept.aliases.length) {
+          result[index] = MemoryControlEntry(
+            id: kept.id,
+            origin: kept.origin,
+            summary: kept.summary,
+            aliases: mergedAliases,
+          );
+        }
       }
       return result;
     }
@@ -1237,6 +1262,8 @@ final class MemoryBackupService {
           id: nextId++,
           origin: entry.origin,
           summary: entry.summary,
+          // 别名随条目一起过合并：导入恢复后的控制覆盖与导出一致。
+          aliases: entry.aliases,
         );
     final merged = MemoryControls(
       readable: true,
@@ -1244,10 +1271,42 @@ final class MemoryBackupService {
       banned: [for (final entry in banned) renumber(entry)],
       deleted: [for (final entry in deleted) renumber(entry)],
     );
-    final changed = frozen.length != current.frozen.length ||
-        banned.length != current.banned.length ||
-        deleted.length != current.deleted.length;
+    // 变更判定不只看条数：同摘要两侧别名不同也要算变更，否则并集
+    // 合并出的别名不会落盘（changed=false 时导入跳过控制重写）。
+    final changed = !_sameControlSection(frozen, current.frozen) ||
+        !_sameControlSection(banned, current.banned) ||
+        !_sameControlSection(deleted, current.deleted);
     return (controls: merged, changed: changed);
+  }
+
+  /// 合并结果与本机现行控制是否逐条一致（摘要 + 别名集合；ID 不参与
+  /// 比较——重建后重新编号是既有行为）。别名不同同样算变更。
+  bool _sameControlSection(
+    List<MemoryControlEntry> merged,
+    List<MemoryControlEntry> current,
+  ) {
+    if (merged.length != current.length) {
+      return false;
+    }
+    for (var index = 0; index < merged.length; index += 1) {
+      final left = merged[index];
+      final right = current[index];
+      if (normalizeMemoryText(left.summary) !=
+          normalizeMemoryText(right.summary)) {
+        return false;
+      }
+      final leftAliases = {
+        for (final alias in left.aliases) normalizeMemoryText(alias),
+      };
+      final rightAliases = {
+        for (final alias in right.aliases) normalizeMemoryText(alias),
+      };
+      if (leftAliases.length != rightAliases.length ||
+          !leftAliases.containsAll(rightAliases)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// sessions 层文件的最低结构校验：必须可 UTF-8 解码且带可解析的

@@ -46,6 +46,11 @@ enum HiddenActionKind {
   /// 用户明确解除冻结；解除后内容恢复正常参与注入与整理。
   memoryUnfreeze('memory_unfreeze'),
 
+  /// 用户明确解除禁提（口语路径，与 memory_unfreeze 对称）：解除后
+  /// 内容恢复正常参与注入与整理。用户重提被禁提话题本身不算解除
+  /// （提示词纪律：只回应当下，绝不自动解除）。
+  memoryUnban('memory_unban'),
+
   /// 用户要求删除某记忆：先记录抽象防复活范围，再清除全部派生内容。
   memoryDelete('memory_delete'),
 
@@ -501,6 +506,15 @@ final class MemoryUnfreezeAction extends MemoryControlAction {
   HiddenActionKind get kind => HiddenActionKind.memoryUnfreeze;
 }
 
+/// memory_unban：用户明确解除禁提（口语路径，与 memory_unfreeze
+/// 对齐；UI 解除入口一直存在，本动作补上聊天里的明确口语解除）。
+final class MemoryUnbanAction extends MemoryControlAction {
+  const MemoryUnbanAction({required super.title});
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.memoryUnban;
+}
+
 /// memory_delete：用户要求删除记忆。
 final class MemoryDeleteAction extends MemoryControlAction {
   const MemoryDeleteAction({required super.title});
@@ -749,6 +763,8 @@ HiddenAction? _validateAction(
         diagnostics,
         MemoryUnfreezeAction.new,
       );
+    case HiddenActionKind.memoryUnban:
+      return _validateMemoryControl(item, diagnostics, MemoryUnbanAction.new);
     case HiddenActionKind.memoryDelete:
       return _validateMemoryControl(item, diagnostics, MemoryDeleteAction.new);
     case HiddenActionKind.relationshipSignal:

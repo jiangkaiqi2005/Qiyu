@@ -36,6 +36,8 @@ void main() {
       expect(freeze.kind, HiddenActionKind.memoryFreeze);
       const unfreeze = MemoryUnfreezeAction(title: '换工作话题');
       expect(unfreeze.kind, HiddenActionKind.memoryUnfreeze);
+      const unban = MemoryUnbanAction(title: '换工作话题');
+      expect(unban.kind, HiddenActionKind.memoryUnban);
       const delete = MemoryDeleteAction(title: '医院检查');
       expect(delete.kind, HiddenActionKind.memoryDelete);
 
@@ -173,6 +175,10 @@ void main() {
         '{"action":"memory_ban","summary":"医院检查"}',
       );
       expect(
+        jsonEncode(const MemoryUnbanAction(title: '医院检查').toJson()),
+        '{"action":"memory_unban","summary":"医院检查"}',
+      );
+      expect(
         jsonEncode(
           const MemorySignalAction(
             summary: '用户认定长期记忆只放极度压缩的人生记忆',
@@ -196,7 +202,7 @@ void main() {
       );
     });
 
-    test('the sealed family stays exhaustive over all eleven kinds', () {
+    test('the sealed family stays exhaustive over all twelve kinds', () {
       String wire(HiddenAction action) => switch (action) {
         MemorySignalAction() => 'memory_signal',
         MemoryRecallAction() => 'memory_recall',
@@ -207,6 +213,7 @@ void main() {
         MemoryForgetAction() => 'memory_forget',
         MemoryFreezeAction() => 'memory_freeze',
         MemoryUnfreezeAction() => 'memory_unfreeze',
+        MemoryUnbanAction() => 'memory_unban',
         MemoryDeleteAction() => 'memory_delete',
         RelationshipSignalAction() => 'relationship_signal',
       };
@@ -221,9 +228,10 @@ void main() {
         const MemoryForgetAction(title: '己'),
         const MemoryFreezeAction(title: '庚'),
         const MemoryUnfreezeAction(title: '辛'),
-        const MemoryDeleteAction(title: '壬'),
+        const MemoryUnbanAction(title: '壬'),
+        const MemoryDeleteAction(title: '癸'),
         const RelationshipSignalAction(
-          summary: '癸',
+          summary: '子',
           signal: RelationshipSignal.temperature,
         ),
       ];
@@ -245,6 +253,15 @@ void main() {
       expect(
         const MemoryBanAction(title: '医院检查'),
         isNot(const MemoryDeleteAction(title: '医院检查')),
+      );
+      // 解除禁提与解除冻结是两条不同路径：同标题也互不相等。
+      expect(
+        const MemoryUnbanAction(title: '换工作话题'),
+        isNot(const MemoryUnfreezeAction(title: '换工作话题')),
+      );
+      expect(
+        const MemoryUnbanAction(title: '换工作话题'),
+        const MemoryUnbanAction(title: '换工作话题'),
       );
       expect(
         const MemorySignalAction(

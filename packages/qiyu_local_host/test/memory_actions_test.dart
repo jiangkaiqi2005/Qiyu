@@ -6,6 +6,7 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
 import 'support/legacy_episode_fixture.dart';
+import 'support/scripted_chat_client.dart';
 
 void main() {
   late Directory temporaryDirectory;
@@ -327,6 +328,135 @@ void main() {
       expect(
         (await memoryControls.load()).bannedSummaries,
         isNot(contains('被夸时用玩笑卸力')),
+      );
+    });
+  });
+
+  group('控制关联扩展（别名）', () {
+    MemoryActionService serviceWith(ProviderChatClient? client) =>
+        MemoryActionService(
+          memoryDirectory: memoryDirectory,
+          episodePipeline: pipeline,
+          personaTree: personaTree,
+          memoryControls: memoryControls,
+          openLoopStore: openLoopStore,
+          monthlySummary: monthlySummary,
+          relationshipLifecycle: relationshipLifecycle,
+          aliasClient: client,
+          diagnosticsSink: (_) {},
+        );
+
+    test('ban aliases ride on the entry and reach every filter', () async {
+      await seedEntry('2026-08-17', '用户换工作了');
+
+      final result = await serviceWith(
+        ScriptedChatClient([const ModelCompletion.reply('["跳槽","离职"]')]),
+      ).ban(entryRef('2026-08-17', 'seed:r1:0'));
+
+      expect(result.status, MemoryActionStatus.success);
+      expect(result.aliasCount, 2);
+      final controls = await memoryControls.load();
+      expect(controls.banned.single.aliases, ['跳槽', '离职']);
+      // 别名进入注入/检索/整理统一的过滤集合：用别名称呼的内容同样被挡住。
+      expect(
+        bannedMemoryText('用户聊起跳槽的经历', controls.blockedSummaries),
+        isTrue,
+      );
+    });
+
+    test('freeze aliases lift together with the entry', () async {
+      await seedEntry('2026-08-17', '用户换工作了');
+      final service = serviceWith(
+        ScriptedChatClient([const ModelCompletion.reply('["跳槽"]')]),
+      );
+
+      final frozen = await service.freeze(entryRef('2026-08-17', 'seed:r1:0'));
+      expect(frozen.status, MemoryActionStatus.success);
+      expect(frozen.aliasCount, 1);
+      expect(
+        (await memoryControls.load()).controlledSummaries,
+        contains('跳槽'),
+      );
+
+      // 解除连带别名：整条控制一起移除。
+      final unfrozen = await service.unfreeze(
+        entryRef('2026-08-17', 'seed:r1:0'),
+      );
+      expect(unfrozen.status, MemoryActionStatus.success);
+      expect((await memoryControls.load()).frozenSummaries, isEmpty);
+    });
+
+    test('delete aliases ride on the tombstone and the purge scope', () async {
+      await seedEntry('2026-08-17', '用户换工作了', id: 'seed:q:0');
+      File(path.join(memoryDirectory, 'long-memory.md')).writeAsStringSync(
+        '# long-memory\n\n## 重要事件\n- 用户换工作了\n- 用户跳槽去北京了\n',
+      );
+
+      final result = await serviceWith(
+        ScriptedChatClient([const ModelCompletion.reply('["跳槽"]')]),
+      ).deleteByScope('用户换工作了');
+
+      expect(result.status, MemoryActionStatus.success);
+      expect(result.aliasCount, 1);
+      final controls = await memoryControls.load();
+      expect(controls.deleted.single.aliases, ['跳槽']);
+      expect(controls.deletedSummaries, contains('跳槽'));
+      // 清除范围含别名：用别名称呼的派生内容一并清除。
+      final longMemory = File(
+        path.join(memoryDirectory, 'long-memory.md'),
+      ).readAsStringSync();
+      expect(longMemory, isNot(contains('用户换工作了')));
+      expect(longMemory, isNot(contains('用户跳槽去北京了')));
+    });
+
+    test('without a client the control still applies, with no aliases',
+        () async {
+      await seedEntry('2026-08-17', '用户换工作了');
+
+      final result = await serviceWith(null).ban(
+        entryRef('2026-08-17', 'seed:r1:0'),
+      );
+
+      expect(result.status, MemoryActionStatus.success);
+      expect(result.aliasCount, 0);
+      expect((await memoryControls.load()).banned.single.aliases, isEmpty);
+    });
+
+    test('a failing client never blocks the control', () async {
+      await seedEntry('2026-08-17', '用户换工作了');
+
+      final result = await serviceWith(
+        ScriptedChatClient([
+          const ModelCompletion.failure(ModelFailureKind.provider),
+        ]),
+      ).ban(entryRef('2026-08-17', 'seed:r1:0'));
+
+      expect(result.status, MemoryActionStatus.success);
+      expect(result.aliasCount, 0);
+      expect(
+        (await memoryControls.load()).bannedSummaries,
+        contains('用户换工作了'),
+      );
+    });
+
+    test('out-of-bounds output is capped before it reaches the entry',
+        () async {
+      await seedEntry('2026-08-17', '用户换工作了');
+
+      final result = await serviceWith(
+        ScriptedChatClient([
+          const ModelCompletion.reply(
+            '["跳槽","离职","换东家","挪窝","下岗","创业","太长'
+            '的别名直接超过三十个字符上限应当被丢弃abcdefghijklmnopqrstuvwxyz"]',
+          ),
+        ]),
+      ).ban(entryRef('2026-08-17', 'seed:r1:0'));
+
+      expect(result.status, MemoryActionStatus.success);
+      expect(result.aliasCount, 5);
+      expect(
+        (await memoryControls.load()).banned.single.aliases,
+        ['跳槽', '离职', '换东家', '挪窝', '下岗'],
       );
     });
   });

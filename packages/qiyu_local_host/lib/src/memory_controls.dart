@@ -9,11 +9,16 @@ import 'memory_text_primitives.dart';
 
 /// memory-controls.md 的一条控制记录：稳定 ID（删除后不复用）、
 /// 原归属与安全摘要。删除记录存的是抽象防复活范围，绝不保留原内容。
+/// [aliases] 是控制时模型关联扩展找出的同义/相关表述（裁定票 03）：
+/// 文字包含匹配认不出「换工作」与「跳槽」是同一语义记忆，别名让
+/// 这条控制覆盖同一件事的其它说法。别名与主条目是同一条控制——
+/// 匹配、解除与恢复都整条进出，绝不拆开。
 final class MemoryControlEntry {
   const MemoryControlEntry({
     required this.id,
     required this.origin,
     required this.summary,
+    this.aliases = const [],
   });
 
   final int id;
@@ -22,6 +27,11 @@ final class MemoryControlEntry {
   /// （用户裁定 2026-08-18）：记录里不另写内容原归属层。
   final String origin;
   final String summary;
+
+  /// 同义/相关表述（未经规范化，匹配时与摘要同一谓词）。
+  final List<String> aliases;
+
+  int get aliasCount => aliases.length;
 }
 
 /// memory-controls.md 的一次解析快照。[readable] 为 false 表示文件
@@ -43,8 +53,12 @@ final class MemoryControls {
   final List<MemoryControlEntry> deleted;
 
   Set<String> _normalized(List<MemoryControlEntry> entries) => {
-    for (final entry in entries)
+    for (final entry in entries) ...[
       normalizeMemoryText(entry.summary),
+      // 别名与主摘要进同一集合：注入过滤、检索、Dream 各关与删除
+      // 清除全部经它匹配，别名的控制效力与主条目完全一致。
+      for (final alias in entry.aliases) normalizeMemoryText(alias),
+    ],
   }..remove('');
 
   /// 冻结摘要集合（规范化后）。
@@ -70,7 +84,14 @@ final class MemoryControls {
   };
 }
 
-final _controlEntryPattern = RegExp(r'^- \[MC(\d+)\]\s*([^|]*?)\s*\|\s*(.+)$');
+/// 控制记录行：`- [MCxxx] 原归属 | 安全摘要`，别名段
+/// `| aliases: 表述、表述` 可选（裁定票 03）。摘要组刻意 lazy：
+/// 无别名段时它吃到行尾（旧两段格式照常解析），有别名段时在
+/// `| aliases:` 前收住。摘要里再出现 `| aliases:` 字面会被当成别名
+/// 段切分——控制摘要是模型生成的短话题简称，该字面不出现。
+final _controlEntryPattern = RegExp(
+  r'^- \[MC(\d+)\]\s*([^|]*?)\s*\|\s*(.+?)(?:\s*\|\s*aliases:\s*(.+))?$',
+);
 final _controlIdPattern = RegExp(r'- \[MC(\d+)\]');
 
 /// 用户记忆控制（ticket 18 / T24 定稿）：`memory-controls.md` 的唯一
@@ -122,18 +143,27 @@ final class MemoryControlsStore {
     return parseMemoryControls(contents);
   }
 
-  /// 禁提：写入 banned 区。已存在同摘要记录时幂等返回 true。
-  /// 文件不可识别时返回 false，调用方必须保持现状等待重试。
-  Future<bool> ban(String summary, {String origin = 'chat'}) =>
-      _addRecord('## banned', summary, origin);
+  /// 禁提：写入 banned 区。已存在同摘要（或同别名）记录时幂等返回
+  /// true。文件不可识别时返回 false，调用方必须保持现状等待重试。
+  Future<bool> ban(
+    String summary, {
+    String origin = 'chat',
+    List<String> aliases = const [],
+  }) => _addRecord('## banned', summary, origin, aliases);
 
   /// 冻结：写入 frozen 区。语义同 [ban]。
-  Future<bool> freeze(String summary, {String origin = 'chat'}) =>
-      _addRecord('## frozen', summary, origin);
+  Future<bool> freeze(
+    String summary, {
+    String origin = 'chat',
+    List<String> aliases = const [],
+  }) => _addRecord('## frozen', summary, origin, aliases);
 
   /// 删除：写入 deleted 区（抽象防复活范围，不得保留原内容）。
-  Future<bool> recordDelete(String summary, {String origin = 'chat'}) =>
-      _addRecord('## deleted', summary, origin);
+  Future<bool> recordDelete(
+    String summary, {
+    String origin = 'chat',
+    List<String> aliases = const [],
+  }) => _addRecord('## deleted', summary, origin, aliases);
 
   /// 恢复流程整体重建控制文件（ticket 21）：文件损坏时由恢复服务从
   /// episode 控制事件审计重建快照，再经这里原子落盘。正常管线绝不
@@ -145,7 +175,7 @@ final class MemoryControlsStore {
           ..writeln('# memory-controls')
           ..writeln('## frozen');
         void writelnEntry(MemoryControlEntry entry) => buffer.writeln(
-          _formatControlEntry(entry.id, entry.origin, entry.summary),
+          _formatControlEntry(entry.id, entry.origin, entry.summary, entry.aliases),
         );
         for (final entry in controls.frozen) {
           writelnEntry(entry);
@@ -174,7 +204,12 @@ final class MemoryControlsStore {
   /// 解除禁提：语义同 [unfreeze]。
   Future<int?> unban(String summary) => _removeRecords('## banned', summary);
 
-  Future<bool> _addRecord(String section, String summary, String origin) =>
+  Future<bool> _addRecord(
+    String section,
+    String summary,
+    String origin,
+    List<String> aliases,
+  ) =>
       _withLock(() async {
         final normalized = normalizeMemoryText(summary);
         if (normalized.isEmpty) {
@@ -192,8 +227,26 @@ final class MemoryControlsStore {
         if (existing.contains(normalized)) {
           return true;
         }
+        // 别名与既有记录撞车时丢掉：同区已有的摘要本身就是控制，别名
+        // 再抄一遍只会让一次解除连带移除两条记录——过度解除违背
+        // 「只能由明确操作解除」。匹配效力不受影响：撞车的别名本来
+        // 就被既有记录覆盖。
+        final effectiveAliases = aliases
+            .where((alias) {
+              final normalizedAlias = normalizeMemoryText(alias);
+              return normalizedAlias.isNotEmpty &&
+                  normalizedAlias != normalized &&
+                  !existing.contains(normalizedAlias);
+            })
+            .toList();
         final contents = await _readRawContents();
-        final rendered = _appendRecord(contents, section, summary, origin);
+        final rendered = _appendRecord(
+          contents,
+          section,
+          summary,
+          origin,
+          effectiveAliases,
+        );
         if (rendered == null) {
           return false;
         }
@@ -253,12 +306,25 @@ final class MemoryControlsStore {
       });
 
   /// 控制记录行渲染（写入端单一出处）：恢复重建与追加记录共用，
-  /// 形态与解析端 `_controlEntryPattern` 对齐。
-  String _formatControlEntry(int id, String origin, String summary) =>
-      '- [MC${id.toString().padLeft(3, '0')}] $origin | $summary';
+  /// 形态与解析端 `_controlEntryPattern` 对齐。别名段只在有别名时
+  /// 输出：旧文件与无别名控制保持两段格式。
+  String _formatControlEntry(
+    int id,
+    String origin,
+    String summary,
+    List<String> aliases,
+  ) {
+    final line = '- [MC${id.toString().padLeft(3, '0')}] $origin | $summary';
+    if (aliases.isEmpty) {
+      return line;
+    }
+    return '$line | aliases: ${aliases.join('、')}';
+  }
 
   /// 解除匹配只认精确相等（与写侧幂等检查对称）：过度屏蔽是保守，
   /// 过度解除不是——解除 A 连带解除 B 违背「只能由明确操作解除」。
+  /// 别名例外：别名与主条目是同一条控制（同一语义记忆的其它指代），
+  /// 命中任一部分都解除整条，用户用哪个说法指代这件事都说得通。
   bool _entryMatches(String line, String normalizedSummary) {
     final match = _controlEntryPattern.firstMatch(line);
     if (match == null) {
@@ -268,7 +334,15 @@ final class MemoryControlsStore {
     if (entryNormalized.isEmpty) {
       return false;
     }
-    return entryNormalized == normalizedSummary;
+    if (entryNormalized == normalizedSummary) {
+      return true;
+    }
+    for (final alias in parseControlAliases(match.group(4))) {
+      if (normalizeMemoryText(alias) == normalizedSummary) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// 追加控制记录；结构不可识别时返回 null（不动文件）。
@@ -277,6 +351,7 @@ final class MemoryControlsStore {
     String section,
     String summary,
     String origin,
+    List<String> aliases,
   ) {
     String base;
     if (contents == null) {
@@ -293,7 +368,7 @@ final class MemoryControlsStore {
         .allMatches(base)
         .map((match) => int.tryParse(match.group(1)!) ?? 0)
         .fold<int>(0, (max, value) => value > max ? value : max);
-    final line = _formatControlEntry(maxId + 1, origin, summary);
+    final line = _formatControlEntry(maxId + 1, origin, summary, aliases);
     final header = RegExp('^${RegExp.escape(section)}\\s*\$', multiLine: true);
     if (header.hasMatch(base)) {
       return base.replaceFirstMapped(header, (_) => '$section\n$line');
@@ -349,6 +424,7 @@ MemoryControls parseMemoryControls(String contents) {
         id: int.tryParse(match.group(1)!) ?? 0,
         origin: match.group(2)!.trim(),
         summary: match.group(3)!.trim(),
+        aliases: parseControlAliases(match.group(4)),
       ),
     );
   }
@@ -358,6 +434,23 @@ MemoryControls parseMemoryControls(String contents) {
     banned: banned,
     deleted: deleted,
   );
+}
+
+/// 解析别名段（`aliases: 表述、表述`）：`、` 分隔，去空白、丢空项。
+/// 别名字面含 `、` 时会被拆成两条——两条都仍是同一语义的有效匹配
+/// 词，属「宁多勿漏」的保守方向，不影响解除对称（整条控制一起动）。
+List<String> parseControlAliases(String? raw) {
+  if (raw == null) {
+    return const [];
+  }
+  final aliases = <String>[];
+  for (final part in raw.split('、')) {
+    final trimmed = part.trim();
+    if (trimmed.isNotEmpty) {
+      aliases.add(trimmed);
+    }
+  }
+  return aliases;
 }
 
 /// 禁提范围按包含关系匹配：禁提记录存的是事项简称，派生内容（episode

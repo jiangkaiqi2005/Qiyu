@@ -235,6 +235,8 @@ final class LocalAppHost {
     );
     // 记忆动作执行端（ticket 20）：记忆中心 UI 的编辑、控制、删除
     // 与敏感揭示；聊天共用它的禁提执行器和删除管线，以及上述协调器。
+    // 控制时关联扩展（裁定票 03）与聊天、日终、Dream 共用同一
+    // Provider 配置与凭据：未配置时别名调用自动静默跳过。
     final memoryActions = MemoryActionService(
       memoryDirectory: memoryDirectory,
       episodePipeline: episodePipeline,
@@ -244,6 +246,7 @@ final class LocalAppHost {
       monthlySummary: monthlySummary,
       relationshipLifecycle: relationshipLifecycle,
       atomicWriter: atomicWriter,
+      aliasClient: effectiveProviderSettings,
     );
     // 损坏隔离与证据驱动恢复（ticket 21）：启动后台任务链上先于补
     // 归档执行；共享全部既有存储实例，写锁与各管线同律。
@@ -326,6 +329,9 @@ final class LocalAppHost {
       recallWindowWait: recallWindowWait,
       clock: clock,
       diagnosticsSink: diagnosticsSink,
+      // 聊天冻结分支的关联扩展（禁提走 memoryActions 的禁提执行器，
+      // 删除走它的删除管线，两处已随 memoryActions 注入同一客户端）。
+      aliasClient: effectiveProviderSettings,
     );
     wiredChatService = chatService;
     await chatService.initialize();

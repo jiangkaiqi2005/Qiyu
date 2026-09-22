@@ -135,6 +135,139 @@ void main() {
       expect(await store.unban('前任'), 1);
       expect((await store.load()).bannedSummaries, {'前任的猫'});
     });
+
+    test('aliases ride on the entry and join every match set', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-memory-controls-alias-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final store = MemoryControlsStore(memoryDirectory: directory.path);
+
+      expect(await store.ban('换工作', aliases: ['跳槽', '离职']), isTrue);
+
+      final contents = File(
+        '${directory.path}/memory-controls.md',
+      ).readAsStringSync();
+      expect(contents, contains('- [MC001] chat | 换工作 | aliases: 跳槽、离职'));
+
+      final controls = await store.load();
+      expect(controls.banned.single.aliases, ['跳槽', '离职']);
+      expect(controls.banned.single.aliasCount, 2);
+      // 别名进入全部匹配集合：注入过滤、Dream 各关与删除清除同一口径。
+      expect(controls.bannedSummaries, {'换工作', '跳槽', '离职'});
+      expect(controls.blockedSummaries, {'换工作', '跳槽', '离职'});
+      expect(controls.controlledSummaries, {'换工作', '跳槽', '离职'});
+
+      // 跨重启保持：别名随条目一起读回。
+      final reopened = MemoryControlsStore(memoryDirectory: directory.path);
+      expect((await reopened.load()).banned.single.aliases, ['跳槽', '离职']);
+    });
+
+    test('entries without the alias segment parse as before', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-memory-controls-legacy-line-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      File('${directory.path}/memory-controls.md').writeAsStringSync(
+        '# memory-controls\n## frozen\n## banned\n'
+        '- [MC001] chat | 前任\n## deleted\n',
+      );
+      final store = MemoryControlsStore(memoryDirectory: directory.path);
+
+      final controls = await store.load();
+      expect(controls.readable, isTrue);
+      expect(controls.banned.single.aliases, isEmpty);
+      expect(controls.bannedSummaries, {'前任'});
+    });
+
+    test('an existing alias makes a repeat control idempotent', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-memory-controls-alias-idempotent-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final store = MemoryControlsStore(memoryDirectory: directory.path);
+
+      expect(await store.ban('换工作', aliases: ['跳槽']), isTrue);
+      // 模型之后用别名指代同一件事再禁提：不产生第二条记录。
+      expect(await store.ban('跳槽'), isTrue);
+      expect((await store.load()).banned, hasLength(1));
+    });
+
+    test('aliases colliding with existing records are dropped', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-memory-controls-alias-collision-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final store = MemoryControlsStore(memoryDirectory: directory.path);
+      expect(await store.ban('前任'), isTrue);
+
+      // 别名抄了既有记录的摘要：丢掉它——否则一次「解除前任」会连带
+      // 解除两条记录（过度解除违背「只能由明确操作解除」）。
+      expect(await store.ban('换工作', aliases: ['前任', '跳槽']), isTrue);
+      final added = (await store.load()).banned;
+      expect(added, hasLength(2));
+      expect(added.firstWhere((entry) => entry.summary == '换工作').aliases, [
+        '跳槽',
+      ]);
+
+      expect(await store.unban('前任'), 1);
+      final controls = await store.load();
+      expect(controls.banned, hasLength(1));
+      expect(controls.banned.single.summary, '换工作');
+    });
+
+    test('lifting by the main summary removes the entry with its aliases',
+        () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-memory-controls-alias-lift-main-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final store = MemoryControlsStore(memoryDirectory: directory.path);
+
+      expect(await store.freeze('换工作', aliases: ['跳槽', '离职']), isTrue);
+      expect(await store.ban('换工作', aliases: ['跳槽', '离职']), isTrue);
+
+      // 解除主条目即解除整条控制：别名一并解除（unban/unfreeze 对称）。
+      expect(await store.unfreeze('换工作'), 1);
+      expect(await store.unban('换工作'), 1);
+      final controls = await store.load();
+      expect(controls.frozenSummaries, isEmpty);
+      expect(controls.bannedSummaries, isEmpty);
+    });
+
+    test('lifting by an alias lifts the whole entry', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-memory-controls-alias-lift-alias-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final store = MemoryControlsStore(memoryDirectory: directory.path);
+
+      // 用户用别名指代同一件事要求解除：整条控制（主条目 + 全部别名）
+      // 一并移除——别名本就是同一语义记忆的其它指代，留一半会留下
+      // 用户以为已经解除的控制。
+      expect(await store.ban('换工作', aliases: ['跳槽', '离职']), isTrue);
+      expect(await store.unban('离职'), 1);
+      expect((await store.load()).bannedSummaries, isEmpty);
+    });
+
+    test('replaceForRecovery keeps aliases on rebuilt entries', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-memory-controls-alias-recovery-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final store = MemoryControlsStore(memoryDirectory: directory.path);
+
+      expect(await store.ban('换工作', aliases: ['跳槽']), isTrue);
+      expect(await store.freeze('加班', aliases: ['开夜工']), isTrue);
+      final loaded = await store.load();
+      expect(await store.replaceForRecovery(loaded), isTrue);
+
+      final rebuilt = await store.load();
+      expect(rebuilt.banned.single.aliases, ['跳槽']);
+      expect(rebuilt.frozen.single.aliases, ['开夜工']);
+      expect(rebuilt.blockedSummaries, {'换工作', '跳槽'});
+      expect(rebuilt.frozenSummaries, {'加班', '开夜工'});
+    });
   });
 
   group('ban persistence', () {
@@ -1229,6 +1362,46 @@ since: 2026-08-01
       expect(outcome.detail, 'banned');
       expect(File('${directory.path}/long-memory.md').existsSync(), isFalse);
     });
+
+    test('control aliases block dream drafts phrased with the alias',
+        () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-alias-dream-gate-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      var now = DateTime(2026, 8, 15, 23, 10);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
+      final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
+      // 删除记录带别名：候选稿用别名称呼同一件事，同样过不了关。
+      expect(
+        await openLoopStore.memoryControls.recordDelete('搬家', aliases: ['乔迁']),
+        isTrue,
+      );
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(
+          _candidate([
+            _item('重要事件', '用户乔迁了新居', ['2026-08-14']),
+          ]),
+        ),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        openLoopStore: openLoopStore,
+        modelClient: client,
+        clock: () => now,
+        diagnosticsSink: (_) {},
+      );
+
+      final outcome = await dream.run(bedtime: true);
+      expect(outcome.status, DreamStatus.validationFailed);
+      expect(outcome.detail, 'banned');
+      expect(File('${directory.path}/long-memory.md').existsSync(), isFalse);
+    });
   });
 
   group('hidden action validation', () {
@@ -1244,6 +1417,7 @@ since: 2026-08-01
       for (final wireName in const [
         'memory_forget',
         'memory_unfreeze',
+        'memory_unban',
         'memory_delete',
       ]) {
         final single = parseHiddenActions(
@@ -1260,6 +1434,7 @@ since: 2026-08-01
         'memory_forget',
         'memory_freeze',
         'memory_unfreeze',
+        'memory_unban',
         'memory_delete',
       ]) {
         final missing = parseHiddenActions(

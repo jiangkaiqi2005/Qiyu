@@ -194,6 +194,27 @@ void main() {
     expect(system, contains('普通闲聊'));
   });
 
+  test('the action protocol teaches both spoken control lifts', () {
+    final system = builder
+        .build(StateSnapshot.initial('local-user'), '在吗')
+        .first
+        .content;
+
+    // 解除冻结与解除禁提两条口语路径对称教授（裁定票 03）。
+    expect(system, contains('{"action":"memory_unfreeze","summary":"解除冻结的内容简称"}'));
+    expect(system, contains('{"action":"memory_unban","summary":"解除禁提的内容简称"}'));
+    // 纪律原样保留：重提被禁提话题只回应当下，绝不自动解除。
+    expect(system, contains('用户重提已被禁提的话题只回应当下，绝不自动解除禁提'));
+  });
+
+  test('the format reminder names the spoken ban lift', () {
+    final messages = builder.build(StateSnapshot.initial('local-user'), '在吗');
+    final reminder = messages[messages.length - 2].content;
+
+    expect(reminder, contains('memory_unfreeze'));
+    expect(reminder, contains('memory_unban'));
+  });
+
   test(
     'the action protocol records everyday details and requires a decision',
     () {
