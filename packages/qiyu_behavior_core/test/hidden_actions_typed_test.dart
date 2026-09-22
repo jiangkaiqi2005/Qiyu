@@ -85,9 +85,16 @@ void main() {
         query: '火锅店',
         months: ['2026-07'],
         dates: ['2026-07-14'],
+        paths: ['PR-R001/PR-M002'],
+        entries: ['seed:1:0'],
       );
       expect(() => recall.months!.add('2026-08'), throwsUnsupportedError);
       expect(() => recall.dates!.add('2026-07-15'), throwsUnsupportedError);
+      expect(
+        () => recall.paths!.add('PR-R001/PR-M003'),
+        throwsUnsupportedError,
+      );
+      expect(() => recall.entries!.add('seed:1:1'), throwsUnsupportedError);
     });
 
     test('serialization keeps the wire keys of the flat protocol', () {
@@ -115,10 +122,13 @@ void main() {
             query: '火锅店',
             months: ['2026-07'],
             dates: ['2026-07-14'],
+            paths: ['PR-R001/PR-M002'],
+            entries: ['seed:1:0'],
           ).toJson(),
         ),
         '{"action":"memory_recall","query":"火锅店",'
-        '"months":["2026-07"],"dates":["2026-07-14"]}',
+        '"months":["2026-07"],"dates":["2026-07-14"],'
+        '"paths":["PR-R001/PR-M002"],"entries":["seed:1:0"]}',
       );
       expect(
         jsonEncode(const NoAction().toJson()),
@@ -249,6 +259,31 @@ void main() {
       expect(
         MemoryRecallAction(query: '火锅店', months: ['2026-07']),
         isNot(MemoryRecallAction(query: '火锅店')),
+      );
+      // 画像路径与条目回执同样参与相等性：选没选路径是两条不同的查找。
+      expect(
+        MemoryRecallAction(query: '跑步', paths: ['PR-R001/PR-M002']),
+        MemoryRecallAction(query: '跑步', paths: ['PR-R001/PR-M002']),
+      );
+      expect(
+        MemoryRecallAction(query: '跑步', paths: ['PR-R001/PR-M002']),
+        isNot(MemoryRecallAction(query: '跑步')),
+      );
+      expect(
+        MemoryRecallAction(query: '爬山', entries: ['seed:1:0']),
+        isNot(MemoryRecallAction(query: '爬山')),
+      );
+      expect(
+        MemoryRecallAction(
+          query: '跑步',
+          paths: ['PR-R001/PR-M002'],
+          entries: ['seed:1:0'],
+        ).hashCode,
+        MemoryRecallAction(
+          query: '跑步',
+          paths: ['PR-R001/PR-M002'],
+          entries: ['seed:1:0'],
+        ).hashCode,
       );
       expect(
         const MemoryBanAction(title: '医院检查'),

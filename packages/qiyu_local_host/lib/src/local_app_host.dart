@@ -319,6 +319,9 @@ final class LocalAppHost {
         // 凭据；未配置时轮内循环静默跳过（不召回保持现状）。
         modelClient: effectiveProviderSettings,
         openLoopStore: openLoopStore,
+        // 画像树路径检索（Memory 注入定稿）：与选日同一调用顺带选路；
+        // 树不可用或读取失败时路径检索静默跳过，episode 链路照常。
+        personaTree: personaTree,
       ),
       personaTree: personaTree,
       memoryControls: memoryControls,

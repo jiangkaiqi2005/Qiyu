@@ -892,6 +892,640 @@ void main() {
     },
   );
 
+  test(
+    'persona tree paths join the selection catalog, compose and context',
+    () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山', evidence: '这周末打算去爬山')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      _seedPersonaTree(root);
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(
+          _selectionReply(
+            dates: ['2026-08-10'],
+            paths: ['PR-R001/PR-M002', 'PR-R003/PR-M006'],
+          ),
+        ),
+        ModelCompletion.reply(
+          '想起来了，你周末打算去爬山。\n'
+          '<qiyu-actions>[{"action":"memory_recall","query":"爬山",'
+          '"entries":["seed:1:0"]}]</qiyu-actions>',
+        ),
+      ]);
+      final (recall, pipeline) = _orchestratorWithTree(root, client: client);
+      await _rebuildUnderLock(recall, pipeline);
+
+      final result = await recall.runTurnRecall(
+        userText: '我上次说爬山的事',
+        recallActions: [MemoryRecallAction(query: '爬山')],
+      );
+
+      // 选择调用收到紧凑画像索引：活跃根 + 中间理解 + 叶 ID，归档不在内。
+      final selectionInput = client.calls[0].last.content;
+      expect(selectionInput, contains('## 画像树路径索引'));
+      expect(selectionInput, contains('- 根 [PR-R001] 用户喜欢晚上散步'));
+      expect(selectionInput, contains('中间理解 [PR-M002] 重复模式｜用户周末常去河边'));
+      expect(selectionInput, contains('PR-L001 2026-08-02 明确自述'));
+      expect(selectionInput, isNot(contains('PR-R009')));
+      // 没有叶证据的中间理解照常进索引（不带叶段）。
+      expect(selectionInput, contains('中间理解 [PR-M006] 重复模式｜用户周末常看纪录片\n'));
+      expect(selectionInput, isNot(contains('PR-M006] 重复模式｜用户周末常看纪录片（叶:')));
+      // 组织调用收到展开的路径素材与带条目 ID 的记录。
+      final composeInput = client.calls[1].last.content;
+      expect(composeInput, contains('## 画像树路径'));
+      expect(composeInput, contains('- 根 [PR-R001] 用户喜欢晚上散步'));
+      expect(composeInput, contains('用户周末常去河边'));
+      // 无叶路径只展开根与中间理解。
+      expect(composeInput, contains('- 根 [PR-R003] 用户习惯周末看纪录片'));
+      expect(composeInput, contains('- [seed:1:0] 用户说周末要去爬山'));
+      expect(result.bubbleText, '想起来了，你周末打算去爬山。');
+      // 下一轮临时上下文：条目级相关性只收回声明的条目，路径素材并入。
+      expect(result.pendingContext, contains('画像树路径'));
+      expect(result.pendingContext, contains('用户喜欢晚上散步'));
+      expect(result.pendingContext, contains('用户习惯周末看纪录片'));
+      expect(result.pendingContext, contains('2026-08-10'));
+      expect(result.pendingContext, contains('用户说周末要去爬山'));
+      expect(result.diagnostics, isEmpty);
+    },
+  );
+
+  test('fabricated persona paths are dropped like fabricated dates', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    _seedPersonaTree(root);
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(
+        _selectionReply(
+          dates: ['2026-08-10'],
+          paths: ['PR-R001/PR-M002', 'VA-R001/VA-M001'],
+        ),
+      ),
+      ModelCompletion.reply('想起来了。'),
+    ]);
+    final (recall, pipeline) = _orchestratorWithTree(root, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说爬山的事',
+      recallActions: [MemoryRecallAction(query: '爬山')],
+    );
+
+    expect(result.bubbleText, '想起来了。');
+    expect(
+      result.diagnostics.join('\n'),
+      contains('path=VA-R001/VA-M001 reason=not-in-passed-index'),
+    );
+    // 合法路径照常展开。
+    expect(result.pendingContext, contains('用户喜欢晚上散步'));
+  });
+
+  test('selected leaf pointers expand with the path', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    _seedPersonaTree(root);
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(
+        _selectionReply(
+          dates: ['2026-08-10'],
+          paths: ['PR-R001/PR-M002/PR-L001,PR-L009'],
+        ),
+      ),
+      ModelCompletion.reply('想起来了。'),
+    ]);
+    final (recall, pipeline) = _orchestratorWithTree(root, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说爬山的事',
+      recallActions: [MemoryRecallAction(query: '爬山')],
+    );
+
+    final composeInput = client.calls[1].last.content;
+    // 编造的叶 ID 丢弃，真实叶指针展开。
+    expect(composeInput, contains('叶 [PR-L001] 2026-08-02 明确自述：用户周六去了河边散步'));
+    expect(composeInput, isNot(contains('PR-L009')));
+    expect(
+      result.diagnostics.join('\n'),
+      contains('leaf=PR-L009 reason=not-in-passed-index'),
+    );
+  });
+
+  test('persona path budget drops the path that does not fit', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    _seedPersonaTree(root, bulky: true);
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(
+        _selectionReply(
+          dates: ['2026-08-10'],
+          paths: [
+            'PR-R001/PR-M002/PR-L001,PR-L004',
+            'PR-R002/PR-M003/PR-L002,PR-L005',
+          ],
+        ),
+      ),
+      ModelCompletion.reply('想起来了。'),
+    ]);
+    final (recall, pipeline) = _orchestratorWithTree(root, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说爬山的事',
+      recallActions: [MemoryRecallAction(query: '爬山')],
+    );
+
+    final composeInput = client.calls[1].last.content;
+    // 第一条路径在预算内照常展开，第二条整条放弃。
+    expect(composeInput, contains('- 根 [PR-R001]'));
+    expect(composeInput, isNot(contains('- 根 [PR-R002]')));
+    expect(
+      result.diagnostics.join('\n'),
+      contains('recall persona path dropped root=PR-R002 reason=over-budget'),
+    );
+    expect(result.pendingContext, isNot(contains('PR-R002')));
+  });
+
+  test(
+    'controlled persona nodes never reach the index or the context',
+    () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      _seedPersonaTree(root);
+      final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
+    expect(
+      (await MemoryBanExecution(openLoopStore: openLoopStore).execute(
+        '晚上散步',
+        origin: 'open-loop',
+      )).controlWritten,
+      isTrue,
+    );
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(
+          _selectionReply(dates: ['2026-08-10'], paths: ['PR-R001/PR-M002']),
+        ),
+        ModelCompletion.reply('想起来了。'),
+      ]);
+      final (recall, pipeline) = _orchestratorWithTree(
+        root,
+        client: client,
+        openLoopStore: openLoopStore,
+      );
+      await _rebuildUnderLock(recall, pipeline);
+
+      final result = await recall.runTurnRecall(
+        userText: '我上次说爬山的事',
+        recallActions: [MemoryRecallAction(query: '爬山')],
+      );
+
+      // 禁提的根不进索引，路径选取随之丢弃；episode 命中照常留记录。
+      final selectionInput = client.calls[0].last.content;
+      expect(selectionInput, isNot(contains('PR-R001')));
+      expect(selectionInput, isNot(contains('晚上散步')));
+      final diagnostics = result.diagnostics.join('\n');
+      expect(
+        diagnostics,
+        contains('recall persona node dropped reason=blocked root=PR-R001'),
+      );
+      expect(
+        diagnostics,
+        contains('path=PR-R001/PR-M002 reason=not-in-passed-index'),
+      );
+      expect(result.pendingContext, isNotNull);
+      expect(result.pendingContext, isNot(contains('画像树路径')));
+      expect(result.pendingContext, isNot(contains('晚上散步')));
+    },
+  );
+
+  test(
+    'a blocked middle claim drops the whole path from the catalog',
+    () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      _seedPersonaTree(root);
+      final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
+      expect(
+        (await MemoryBanExecution(
+          openLoopStore: openLoopStore,
+        ).execute('常去河边', origin: 'open-loop')).controlWritten,
+        isTrue,
+      );
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(
+          _selectionReply(dates: ['2026-08-10'], paths: ['PR-R001/PR-M002']),
+        ),
+        ModelCompletion.reply('想起来了。'),
+      ]);
+      final (recall, pipeline) = _orchestratorWithTree(
+        root,
+        client: client,
+        openLoopStore: openLoopStore,
+      );
+      await _rebuildUnderLock(recall, pipeline);
+
+      final result = await recall.runTurnRecall(
+        userText: '我上次说爬山的事',
+        recallActions: [MemoryRecallAction(query: '爬山')],
+      );
+
+      // 中间理解被禁：整条路径不可走，根也不进索引（没有可走中间理解）。
+      final selectionInput = client.calls[0].last.content;
+      expect(selectionInput, isNot(contains('PR-R001')));
+      expect(selectionInput, isNot(contains('常去河边')));
+      // 其他根不受影响。
+      expect(selectionInput, contains('- 根 [PR-R002]'));
+      final diagnostics = result.diagnostics.join('\n');
+      expect(
+        diagnostics,
+        contains('recall persona node dropped reason=blocked middle=PR-M002'),
+      );
+      expect(
+        diagnostics,
+        contains('path=PR-R001/PR-M002 reason=not-in-passed-index'),
+      );
+      expect(result.pendingContext, isNot(contains('画像树路径')));
+    },
+  );
+
+  test('a malformed compose block only costs the entry receipt', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
+      // 隐藏块损坏：气泡照常交付，回执作废，退回受封顶的全量记录。
+      ModelCompletion.reply('想起来了。\n<qiyu-actions>{not json</qiyu-actions>'),
+    ]);
+    final (recall, pipeline) = _orchestrator(root.path, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说爬山的事',
+      recallActions: [MemoryRecallAction(query: '爬山')],
+    );
+
+    expect(result.bubbleText, '想起来了。');
+    expect(
+      result.diagnostics.join('\n'),
+      contains('recall compose dropped [hidden_action_invalid_format]'),
+    );
+    expect(result.pendingContext, contains('用户说周末要去爬山'));
+  });
+
+  test('archived persona paths never enter the recall catalog', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    _seedPersonaTree(root, archived: true);
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(
+        _selectionReply(
+          dates: ['2026-08-10'],
+          paths: ['PR-R009/PR-M009', 'PR-R001/PR-M002'],
+        ),
+      ),
+      ModelCompletion.reply('想起来了。'),
+    ]);
+    final (recall, pipeline) = _orchestratorWithTree(root, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说爬山的事',
+      recallActions: [MemoryRecallAction(query: '爬山')],
+    );
+
+    final selectionInput = client.calls[0].last.content;
+    expect(selectionInput, isNot(contains('PR-R009')));
+    expect(selectionInput, isNot(contains('半夜')));
+    expect(
+      result.diagnostics.join('\n'),
+      contains('path=PR-R009/PR-M009 reason=not-in-passed-index'),
+    );
+    expect(result.pendingContext, contains('用户喜欢晚上散步'));
+  });
+
+  test(
+    'an unreadable branch skips paths but keeps the episode chain',
+    () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      File('${root.path}/persona-tree/preferences.md')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('这是用户写坏的内容。\n', encoding: utf8);
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(
+          _selectionReply(dates: ['2026-08-10'], paths: ['PR-R001/PR-M002']),
+        ),
+        ModelCompletion.reply('想起来了。'),
+      ]);
+      final (recall, pipeline) = _orchestratorWithTree(root, client: client);
+      await _rebuildUnderLock(recall, pipeline);
+
+      final result = await recall.runTurnRecall(
+        userText: '我上次说爬山的事',
+        recallActions: [MemoryRecallAction(query: '爬山')],
+      );
+
+      // 路径是增强不是门槛：分支不可读时 episode 检索链路照常工作。
+      expect(result.bubbleText, '想起来了。');
+      expect(
+        result.diagnostics.join('\n'),
+        contains('recall persona skipped reason=preferences-unreadable'),
+      );
+      expect(
+        result.diagnostics.join('\n'),
+        contains('path=PR-R001/PR-M002 reason=not-in-passed-index'),
+      );
+    },
+  );
+
+  test('an entry receipt keeps only the entries the bubble used', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [
+        _entry('seed:1:0', '用户说周末要去爬山'),
+        _entry('seed:1:1', '用户顺便提到想买新登山包', evidence: '想买个新登山包'),
+      ],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
+      ModelCompletion.reply(
+        '想起来了，你周末打算去爬山。\n'
+        '<qiyu-actions>[{"action":"memory_recall","query":"爬山",'
+        '"entries":["seed:1:0"]}]</qiyu-actions>',
+      ),
+    ]);
+    final (recall, pipeline) = _orchestrator(root.path, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说爬山的事',
+      recallActions: [MemoryRecallAction(query: '爬山')],
+    );
+
+    // 条目级相关性：只收组织气泡声明用到的条目，不再全量 dump。
+    expect(result.pendingContext, contains('用户说周末要去爬山'));
+    expect(result.pendingContext, isNot(contains('登山包')));
+    expect(result.diagnostics, isEmpty);
+  });
+
+  test('a fabricated entry receipt falls back to the capped dump', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
+      ModelCompletion.reply(
+        '想起来了。\n'
+        '<qiyu-actions>[{"action":"memory_recall","query":"爬山",'
+        '"entries":["seed:9:9"]}]</qiyu-actions>',
+      ),
+    ]);
+    final (recall, pipeline) = _orchestrator(root.path, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说爬山的事',
+      recallActions: [MemoryRecallAction(query: '爬山')],
+    );
+
+    // 幻觉回执不构成相关性信号：丢弃并退回受总量预算封顶的全量记录。
+    expect(
+      result.diagnostics.join('\n'),
+      contains(
+        'recall entry dropped id=seed:9:9 reason=not-in-passed-evidence',
+      ),
+    );
+    expect(result.pendingContext, contains('用户说周末要去爬山'));
+  });
+
+  test('the pending context stays bounded without an entry receipt', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [
+        for (var index = 0; index < 30; index += 1)
+          _entry(
+            'seed:1:$index',
+            '用户聊到第$index件事${'甲' * 100}',
+            evidence: '原话${'乙' * 90}',
+          ),
+      ],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
+      // 组织调用没给回执：退回全量，但总量预算必须封顶。
+      ModelCompletion.reply('想起来了。'),
+    ]);
+    final (recall, pipeline) = _orchestrator(root.path, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '聊过的那些事',
+      recallActions: [MemoryRecallAction(query: '聊天')],
+    );
+
+    expect(
+      result.diagnostics.join('\n'),
+      contains('recall pending context truncated reason=over-budget'),
+    );
+    expect(result.pendingContext, contains('第0件事'));
+    expect(result.pendingContext, isNot(contains('第29件事')));
+    expect(
+      result.pendingContext!.runes.length,
+      lessThan(recallPendingContextMaxRunes + 200),
+    );
+  });
+
+  test('unreadable episode evidence still leaves the persona paths', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    _seedPersonaTree(root);
+    final client = ScriptedChatClient([
+      // 选中日期，但日文件不可读（索引指向不存在的文件）。
+      ModelCompletion.reply(
+        _selectionReply(
+          dates: ['2026-08-10'],
+          paths: ['PR-R001/PR-M002'],
+        ),
+      ),
+      ModelCompletion.reply('可能因为你平时就喜欢晚上散步。'),
+    ]);
+    final (recall, pipeline) = _orchestratorWithTree(root, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+    File('${root.path}/episodes/2026/08/2026-08-10.md').deleteSync();
+
+    final result = await recall.runTurnRecall(
+      userText: '我为什么会有这样的习惯',
+      recallActions: [MemoryRecallAction(query: '习惯依据')],
+    );
+
+    // 日期命中但证据不可读：路径素材自含依据，仍可组句。
+    expect(
+      result.diagnostics.join('\n'),
+      contains('recall episode evidence skipped reason=no-evidence'),
+    );
+    expect(result.bubbleText, '可能因为你平时就喜欢晚上散步。');
+    expect(result.pendingContext, contains('画像树路径'));
+    expect(result.pendingContext, contains('用户喜欢晚上散步'));
+    expect(result.pendingContext, isNot(contains('爬山')));
+  });
+
+  test('a persona-basis question recalls paths without any date', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    _seedPersonaTree(root);
+    final client = ScriptedChatClient([
+      // 纯画像依据：只选路径，不选月份和日期。
+      ModelCompletion.reply(_selectionReply(paths: ['PR-R001/PR-M002'])),
+      ModelCompletion.reply('可能因为你平时就喜欢晚上散步。'),
+    ]);
+    final (recall, pipeline) = _orchestratorWithTree(root, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '你为什么觉得我是这样的人',
+      recallActions: [MemoryRecallAction(query: '画像依据')],
+    );
+
+    // 选择提示词教了这种输出合法。
+    expect(client.calls[0].last.content, contains('可以只选 paths、不选月份和日期'));
+    // 组织调用只带画像路径素材，不递空的记录节。
+    final composeInput = client.calls[1].last.content;
+    expect(composeInput, contains('## 画像树路径'));
+    expect(composeInput, isNot(contains('## 查到的记录')));
+    expect(result.bubbleText, '可能因为你平时就喜欢晚上散步。');
+    // 下一轮临时上下文只带路径素材，没有 episode 记录。
+    expect(result.pendingContext, contains('画像树路径'));
+    expect(result.pendingContext, contains('用户喜欢晚上散步'));
+    expect(result.pendingContext, isNot(contains('2026-08-10')));
+    expect(result.pendingContext, isNot(contains('爬山')));
+    expect(result.diagnostics, isEmpty);
+  });
+
+  test('a failed compose on a paths-only recall keeps the paths', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    _seedPersonaTree(root);
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(_selectionReply(paths: ['PR-R001/PR-M002'])),
+      const ModelCompletion.failure(ModelFailureKind.network),
+    ]);
+    final (recall, pipeline) = _orchestratorWithTree(root, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '你为什么觉得我是这样的人',
+      recallActions: [MemoryRecallAction(query: '画像依据')],
+    );
+
+    // 组织调用失败：气泡没有，路径素材仍以降级形态留给下一轮。
+    expect(result.bubbleText, isNull);
+    expect(result.pendingContext, contains('画像树路径'));
+    expect(result.pendingContext, contains('用户喜欢晚上散步'));
+  });
+
+  test('a blocked leaf never reaches the index or the context', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    _seedPersonaTree(root);
+    final openLoopStore = OpenLoopStore(memoryDirectory: root.path);
+    expect(
+      (await MemoryBanExecution(openLoopStore: openLoopStore).execute(
+        '走了一圈',
+        origin: 'open-loop',
+      )).controlWritten,
+      isTrue,
+    );
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(
+        _selectionReply(
+          dates: ['2026-08-10'],
+          paths: ['PR-R001/PR-M002/PR-L004'],
+        ),
+      ),
+      ModelCompletion.reply('想起来了。'),
+    ]);
+    final (recall, pipeline) = _orchestratorWithTree(
+      root,
+      client: client,
+      openLoopStore: openLoopStore,
+    );
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说爬山的事',
+      recallActions: [MemoryRecallAction(query: '爬山')],
+    );
+
+    // 禁提的叶不进索引，其余叶照常。
+    final selectionInput = client.calls[0].last.content;
+    expect(selectionInput, contains('PR-L001 2026-08-02 明确自述'));
+    expect(selectionInput, isNot(contains('PR-L004')));
+    // 选中被禁提的叶：整条路径的成员校验失败按 not-in-passed-index 丢叶，
+    // 路径本身仍展开（只剩根与中间理解）。
+    expect(
+      result.diagnostics.join('\n'),
+      contains('leaf=PR-L004 reason=not-in-passed-index'),
+    );
+    final composeInput = client.calls[1].last.content;
+    expect(composeInput, contains('- 根 [PR-R001] 用户喜欢晚上散步'));
+    expect(composeInput, isNot(contains('叶 [PR-L004]')));
+    expect(result.pendingContext, isNot(contains('走了一圈')));
+  });
+
+  test('multiple entry receipts keep only the first action', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [
+        _entry('seed:1:0', '用户说周末要去爬山'),
+        _entry('seed:1:1', '用户顺便提到想买新登山包'),
+      ],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
+      // 同一隐藏块里两条 memory_recall 回执：只认第一条。
+      ModelCompletion.reply(
+        '想起来了，你周末打算去爬山。\n'
+        '<qiyu-actions>[{"action":"memory_recall","query":"爬山",'
+        '"entries":["seed:1:0"]},{"action":"memory_recall","query":"爬山",'
+        '"entries":["seed:1:1"]}]</qiyu-actions>',
+      ),
+    ]);
+    final (recall, pipeline) = _orchestrator(root.path, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说爬山的事',
+      recallActions: [MemoryRecallAction(query: '爬山')],
+    );
+
+    expect(result.pendingContext, contains('用户说周末要去爬山'));
+    expect(result.pendingContext, isNot(contains('登山包')));
+  });
+
   test('pending context is one-shot per session and latest wins', () {
     final root = Directory.systemTemp.createTempSync('qiyu-recall-pending-');
     final recall = RecallOrchestrator(
@@ -949,6 +1583,79 @@ Future<Directory> _seedEpisodes(
   return (orchestrator, pipeline);
 }
 
+/// 注入了画像树只读来源的编排器（路径检索用例）：树与 episode 管线
+/// 共用同一时钟，供 PersonaTreeStore 的提交链读取。
+(RecallOrchestrator, EpisodeMemoryPipeline) _orchestratorWithTree(
+  Directory root, {
+  ProviderChatClient? client,
+  OpenLoopStore? openLoopStore,
+}) {
+  final pipeline = EpisodeMemoryPipeline(
+    memoryDirectory: root.path,
+    clock: () => DateTime(2026, 8, 16, 22),
+  );
+  final orchestrator = RecallOrchestrator(
+    memoryDirectory: root.path,
+    episodePipeline: pipeline,
+    modelClient: client,
+    openLoopStore: openLoopStore,
+    personaTree: PersonaTreeStore(
+      memoryDirectory: root.path,
+      episodePipeline: pipeline,
+    ),
+  );
+  return (orchestrator, pipeline);
+}
+
+/// 播种一份可解析的画像树：偏好分支两个活跃根（含根下中间理解与叶），
+/// 归档分支一条已失效路径（[archived] 时写入）。[bulky] 用超长主张与
+/// 叶摘要撑爆路径预算，供预算用例断言第二条路径被整条放弃。
+void _seedPersonaTree(
+  Directory root, {
+  bool archived = false,
+  bool bulky = false,
+}) {
+  String claim(String text) => bulky ? '${'长' * 100}$text' : text;
+  final file = File('${root.path}/persona-tree/preferences.md')
+    ..createSync(recursive: true);
+  file.writeAsStringSync(
+    '# 偏好习惯\n\n'
+    '## [PR-R001] ${claim('用户喜欢晚上散步')}\n\n'
+    '### [PR-M002] 重复模式｜${claim('用户周末常去河边')}\n'
+    '- 形成: 2026-08-01 · 复核: 2026-08-10\n'
+    '- [PR-L001] 2026-08-02 | 明确自述 | support | '
+    '${claim('用户周六去了河边散步')} | episodes/2026/08/2026-08-02.md [seed:1:0]\n'
+    '- [PR-L004] 2026-08-09 | 行为观察 | support | '
+    '${claim('用户周末又在河边走了一圈')} | episodes/2026/08/2026-08-09.md [seed:2:0]\n\n'
+    '## [PR-R002] ${claim('用户习惯早起喝手冲咖啡')}\n\n'
+    '### [PR-M003] 重复模式｜${claim('用户工作日清晨冲咖啡')}\n'
+    '- 形成: 2026-08-03 · 复核: 2026-08-11\n'
+    '- [PR-L002] 2026-08-04 | 明确自述 | support | '
+    '${claim('用户说他每天早上都手冲')} | episodes/2026/08/2026-08-04.md [seed:3:0]\n'
+    '- [PR-L005] 2026-08-12 | 行为观察 | support | '
+    '${claim('用户清晨又在冲咖啡')} | episodes/2026/08/2026-08-12.md [seed:4:0]\n\n'
+    '## [PR-R003] ${claim('用户习惯周末看纪录片')}\n\n'
+    '### [PR-M006] 重复模式｜${claim('用户周末常看纪录片')}\n'
+    '- 形成: 2026-08-05 · 复核: 2026-08-13\n',
+    encoding: utf8,
+  );
+  if (!archived) {
+    return;
+  }
+  File('${root.path}/persona-tree/archive/preferences.md')
+    ..createSync(recursive: true)
+    ..writeAsStringSync(
+      '# 偏好习惯（归档）\n\n'
+      '## [PR-R009] 用户以前喜欢熬夜\n'
+      '- 失效: 2026-08-01 · 原因: 明确纠正 · 关联: PR-M009\n\n'
+      '### [PR-M009] 重复模式｜用户以前经常半夜睡\n'
+      '- 形成: 2026-07-01 · 复核: 2026-07-20\n'
+      '- [PR-L090] 2026-07-02 | 明确自述 | support | 用户半夜还在写代码 | '
+      'episodes/2026/07/2026-07-02.md [seed:9:0]\n',
+      encoding: utf8,
+    );
+}
+
 /// 重建契约要求调用方持有 episode 日文件写锁，测试也照做。
 Future<void> _rebuildUnderLock(
   RecallOrchestrator recall,
@@ -969,9 +1676,12 @@ EpisodeEntry _entry(String id, String summary, {String? evidence}) =>
 String _selectionReply({
   List<String> months = const [],
   List<String> dates = const [],
+  List<String> paths = const [],
 }) {
   final monthsJson = months.map((month) => '"$month"').join(',');
   final datesJson = dates.map((date) => '"$date"').join(',');
+  final pathsJson = paths.map((path) => '"$path"').join(',');
   return '<qiyu-actions>[{"action":"memory_recall","query":"测试查找",'
-      '"months":[$monthsJson],"dates":[$datesJson]}]</qiyu-actions>';
+      '"months":[$monthsJson],"dates":[$datesJson],"paths":[$pathsJson]}]'
+      '</qiyu-actions>';
 }

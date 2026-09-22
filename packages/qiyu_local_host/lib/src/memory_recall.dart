@@ -27,6 +27,23 @@ const recallRawEvidenceMaxRunes = 160;
 /// 并入下一用户轮的压缩整理记录用更紧的摘录预算（临时透镜只留线索）。
 const recallPendingEvidenceMaxRunes = 100;
 
+/// 画像树路径检索的单次预算（runes）：Memory 注入定稿「单次最多 2 条
+/// 相关路径、总计不超过 600 tokens」，按仓库 rune 口径保守计
+/// （1 rune ≈ 1 token，与 persona.md 投影同一口径）。超出预算的路径
+/// 整条放弃并记诊断——宁少勿超。
+const recallPersonaPathMaxRunes = 600;
+
+/// 画像路径里单条主张（根主张 / 中间理解 / 叶摘要）的裁剪预算
+/// （runes）：与递回日原文的摘要预算同口径，防手改树文件写出超长
+/// 主张顶爆路径预算。
+const recallPersonaClaimMaxRunes = 120;
+
+/// 下一轮临时 memory_context 的条目记录总量预算（runes）：条目级相关性
+/// 筛选后仍可能命中多日多条目，压缩记录必须整体有界。取画像路径预算
+/// 的两倍：单条目摘要 120 + 摘录 100 runes，覆盖常见多日命中，连同
+/// 路径素材仍稳在一块热层预算（3000 tokens）以内。
+const recallPendingContextMaxRunes = 1200;
+
 /// 选择/组织调用的输出预算：同属理解类调用，必须显式给足预算——
 /// 缺省会吃聊天护栏 512，材料变大后输出截断即整轮召回失败。
 const recallModelMaxOutputTokens = 16384;
@@ -54,6 +71,15 @@ final class RecallTurnResult {
   final List<String> diagnostics;
 }
 
+/// 画像树路径检索目录：按分支线名分组的活跃根（已受控过滤）。索引
+/// 文本（递给选择调用）与路径展开（查 ID）共用同一份数据；归档不出
+/// 现在快照里——archive/ 永不进入普通聊天检索。
+final class _PersonaCatalog {
+  _PersonaCatalog(this.byBranch);
+
+  final Map<String, List<PersonaRoot>> byBranch;
+}
+
 /// 召回模型查找轮内循环（Memory.md 查找流程定稿 2026-08-16）。
 ///
 /// 查找者是模型，不打分、无规则兜底、不常驻挂载索引：
@@ -65,11 +91,22 @@ final class RecallTurnResult {
 ///    编造的丢弃并记诊断；
 /// 4. Host 回读选中日文件的原始证据递回，模型组织 bubble 2。
 ///
+/// 画像树路径检索（Memory 注入定稿，与选日同一调用）：需要解释习惯、
+/// 核对画像依据或追溯具体事件时，选择调用随月份/日期顺带选最多 2 条
+/// 「根 → 中间理解 → 叶指针」路径（默认只取根与最相关中间理解，问题
+/// 需要依据或事件细节时每条路径再带至多 2 条叶指针），Host 展开后与
+/// 原始日证据一并供组织调用组句，并并入下一轮临时 memory_context；
+/// 不涉及具体日期的纯画像依据问题可以只选路径（跳过 episode 回读），
+/// 日期命中但证据不可用时路径素材仍可组句。persona-tree/archive/ 永不
+/// 进入普通聊天检索，冻结/禁提/删除范围同样不进索引与展开。
+///
 /// 两级索引只负责定位：索引关键词永远不是事实来源，命中必须回到
 /// 索引指向的 daily episode 原始证据（硬规则定稿）。索引缺失或损坏
 /// 时先从原始 episode 重建再继续。找到而 bubble 2 没赶上交付时，压缩
 /// 结果存入按会话保存的短期 memory context，下一轮装配取用一次后
-/// 即失效（临时透镜，不落盘、不进状态包）。
+/// 即失效（临时透镜，不落盘、不进状态包）；条目级相关性由组织调用
+/// 的回执决定（只收气泡真实用到的条目），总量受预算封顶，不搬运
+/// 选中文件全文。
 ///
 /// 未配置 Provider 不召回（保持现状）；任何失败都降级为无结果，
 /// 检索失败不纠缠，话题再来再查。
@@ -80,6 +117,7 @@ final class RecallOrchestrator {
     this.modelClient,
     EpisodeIndexStore? indexStore,
     this.openLoopStore,
+    this.personaTree,
   }) : _episodePipeline = episodePipeline,
        _indexStore =
            indexStore ??
@@ -96,6 +134,10 @@ final class RecallOrchestrator {
   final ProviderChatClient? modelClient;
   final EpisodeIndexStore _indexStore;
   final OpenLoopStore? openLoopStore;
+
+  /// 画像树只读来源（Memory 注入定稿的路径检索）：null 时不做路径
+  /// 检索，episode 检索链路照常工作——路径是增强不是门槛。
+  final PersonaTreeStore? personaTree;
 
   final Map<String, String> _pendingContexts = {};
 
@@ -165,6 +207,14 @@ final class RecallOrchestrator {
     // 压缩注入。封禁（禁提 ∪ 删除）与冻结都不得被检索。
     final banned = await _blockedTitles();
 
+    // 画像树路径检索素材（Memory 注入定稿）：快照只取活跃根与根下
+    // 中间理解，归档永不进入普通聊天检索；受控过滤与 episode 链路
+    // 同一集合。未注入树（或分支不可读）时路径检索静默跳过。
+    final personaCatalog = await _readPersonaCatalog(banned, diagnostics);
+    final personaIndex = personaCatalog == null
+        ? ''
+        : _renderPersonaIndex(personaCatalog);
+
     var topIndex = await _indexStore.readTopIndex();
     if (topIndex == null) {
       // 索引缺失或损坏：先从原始 episode 重建，再继续查找。
@@ -205,13 +255,14 @@ final class RecallOrchestrator {
     }
     final passedDates = _datesOf(dayIndexByMonth);
 
-    // 调用2：模型在递过的目录里选择月份/日期。
+    // 调用2：模型在递过的目录里选择月份/日期，顺带选画像树路径。
     var selection = await _select(
       client,
       query: query,
       userText: userText,
       topIndex: topIndex,
       dayIndexByMonth: dayIndexByMonth,
+      personaIndex: personaIndex,
       diagnostics: diagnostics,
     );
     var dates = _memberSelections(
@@ -254,6 +305,7 @@ final class RecallOrchestrator {
             userText: userText,
             topIndex: topIndex,
             dayIndexByMonth: dayIndexByMonth,
+            personaIndex: personaIndex,
             diagnostics: diagnostics,
           );
           dates = _memberSelections(
@@ -265,13 +317,24 @@ final class RecallOrchestrator {
         }
       }
     }
-    if (dates.isEmpty) {
+    // 画像树路径展开（Memory 注入定稿）：选中路径展开为「根主张 +
+    // 中间理解 + 至多 2 条叶指针」，受控过滤后的目录里做成员校验，
+    // 总量受 recallPersonaPathMaxRunes 约束。先于日期证据判定——定稿
+    // 的检索场景前两种（解释习惯、核对画像依据）不一定涉及具体日期，
+    // 纯画像依据的问题可以只选路径不选日期。
+    final personaPathText = _expandPersonaPaths(
+      selection?.paths,
+      personaCatalog,
+      diagnostics,
+    );
+    if (dates.isEmpty && personaPathText.isEmpty) {
       diagnostics.add('recall miss reason=no-date-selection');
       return RecallTurnResult(diagnostics: diagnostics);
     }
 
     // 索引只负责定位：回读选中日文件的原始证据。跨月跨年检索不设
     // 日期数量上限（定稿）；只按压缩预算裁剪单条内容，不搬运全文。
+    // 没有选日期（纯画像依据）时跳过回读，路径素材自含依据。
     final rawDays = <(String, List<EpisodeEntry>)>[];
     for (final date in dates) {
       final day = await _episodePipeline.readDay(date);
@@ -313,23 +376,37 @@ final class RecallOrchestrator {
       // 内容，不碰条目结构与索引语义。
       rawDays.add((date, entries.map((entry) => entry.redactedForModel()).toList()));
     }
-    if (rawDays.isEmpty) {
+    if (rawDays.isEmpty && personaPathText.isEmpty) {
       diagnostics.add('recall miss reason=no-evidence');
       return RecallTurnResult(diagnostics: diagnostics);
     }
+    if (dates.isNotEmpty && rawDays.isEmpty) {
+      // 日期命中但证据不可读或全被封禁：画像路径素材自含依据，仍可组句。
+      diagnostics.add('recall episode evidence skipped reason=no-evidence');
+    }
 
-    final pendingContext = _buildPendingContext(rawDays);
-
-    // 调用3：模型基于原始证据组织 bubble 2。
-    final bubbleText = await _composeBubble(
+    // 调用3：模型基于原始证据与画像路径组织 bubble 2，并回执所用条目。
+    final compose = await _composeBubble(
       client,
       query: query,
       userText: userText,
       rawDays: rawDays,
+      personaPathText: personaPathText,
       diagnostics: diagnostics,
     );
+
+    // 条目级相关性筛选（Memory 注入定稿）：只收组织气泡真实用到的
+    // 条目；模型没给回执（或回执全不可信）时才退回全量，并受总量
+    // 预算封顶——不再无条件搬运选中日的全部条目。
+    final usedEntries = _validatedEntries(compose.entryIds, rawDays, diagnostics);
+    final pendingContext = _buildPendingContext(
+      rawDays,
+      usedEntries,
+      personaPathText,
+      diagnostics,
+    );
     return RecallTurnResult(
-      bubbleText: bubbleText,
+      bubbleText: compose.text,
       pendingContext: pendingContext,
       diagnostics: diagnostics,
     );
@@ -452,14 +529,230 @@ final class RecallOrchestrator {
   Future<Set<String>> _blockedTitles() async =>
       (await openLoopStore?.controlledTitles()) ?? const {};
 
+  /// 读取画像树只读目录：活跃根 + 根下中间理解（含叶），受控过滤
+  /// （禁提/删除/冻结，与 episode 链路同一集合）在读取时一次完成，
+  /// 索引与展开都不会再看到受控节点。未归根中间理解不构成「根 →
+  /// 中间理解」路径，不进目录。未注入树返回 null；分支不可读只记
+  /// 诊断并跳过该分支，episode 检索链路不受影响。
+  Future<_PersonaCatalog?> _readPersonaCatalog(
+    Set<String> banned,
+    List<String> diagnostics,
+  ) async {
+    final tree = personaTree;
+    if (tree == null) {
+      return null;
+    }
+    final snapshot = await tree.readSnapshot();
+    final byBranch = <String, List<PersonaRoot>>{};
+    for (final branch in personaBranches) {
+      final view = snapshot.branches[branch.wireName];
+      if (view == null || !view.readable) {
+        diagnostics.add(
+          'recall persona skipped reason=${branch.wireName}-unreadable',
+        );
+        continue;
+      }
+      final roots = <PersonaRoot>[];
+      for (final root in view.roots) {
+        if (bannedMemoryText(root.claim, banned)) {
+          diagnostics.add(
+            'recall persona node dropped reason=blocked root=${root.id}',
+          );
+          continue;
+        }
+        final middles = <PersonaMiddle>[];
+        for (final middle in root.middles) {
+          if (bannedMemoryText(middle.claim, banned)) {
+            diagnostics.add(
+              'recall persona node dropped reason=blocked middle=${middle.id}',
+            );
+            continue;
+          }
+          middles.add(
+            PersonaMiddle(
+              id: middle.id,
+              type: middle.type,
+              claim: middle.claim,
+              formedOn: middle.formedOn,
+              reviewedOn: middle.reviewedOn,
+              leaves: middle.leaves
+                  .where((leaf) => !bannedMemoryText(leaf.summary, banned))
+                  .toList(),
+            ),
+          );
+        }
+        if (middles.isEmpty) {
+          // 没有可走中间理解的根给不出路径，不进索引。
+          continue;
+        }
+        roots.add(
+          PersonaRoot(id: root.id, claim: root.claim, middles: middles),
+        );
+      }
+      if (roots.isNotEmpty) {
+        byBranch[branch.wireName] = roots;
+      }
+    }
+    return _PersonaCatalog(byBranch);
+  }
+
+  /// 递回选择调用的紧凑画像索引：活跃根 + 根下中间理解主张 + 叶 ID
+  /// （带日期与来源性质，供模型在需要依据或事件细节时选叶）。不含
+  /// 归档、不含叶摘要，控制过滤已在目录构建时完成。
+  String _renderPersonaIndex(_PersonaCatalog catalog) {
+    final buffer = StringBuffer();
+    for (final branch in personaBranches) {
+      final roots = catalog.byBranch[branch.wireName];
+      if (roots == null) {
+        continue;
+      }
+      buffer.writeln('### ${branch.title}（${branch.wireName}）');
+      for (final root in roots) {
+        buffer.writeln(
+          '- 根 [${root.id}] '
+          '${clipRunes(root.claim.trim(), recallPersonaClaimMaxRunes)}',
+        );
+        for (final middle in root.middles) {
+          buffer.write(
+            '  - 中间理解 [${middle.id}] ${middle.type}｜'
+            '${clipRunes(middle.claim.trim(), recallPersonaClaimMaxRunes)}',
+          );
+          if (middle.leaves.isNotEmpty) {
+            final leaves = middle.leaves
+                .map((leaf) => '${leaf.id} ${leaf.date} ${leaf.nature}')
+                .join(', ');
+            buffer.write('（叶: $leaves）');
+          }
+          buffer.writeln();
+        }
+      }
+    }
+    return buffer.toString().trim();
+  }
+
+  /// 展开选中的画像树路径：每条 = 根主张 + 中间理解 + 至多 2 条叶指针
+  /// （叶由模型在需要依据或事件细节时选）。ID 必须出自受控过滤后的
+  /// 目录，编造的丢弃并记诊断（与月份/日期同一成员校验口径）。总量
+  /// 受 [recallPersonaPathMaxRunes] 约束，超预算的路径整条放弃。无
+  /// 命中时返回空串。
+  String _expandPersonaPaths(
+    List<String>? selections,
+    _PersonaCatalog? catalog,
+    List<String> diagnostics,
+  ) {
+    if (selections == null || catalog == null || selections.isEmpty) {
+      return '';
+    }
+    final blocks = <String>[];
+    var usedRunes = 0;
+    for (final selection in selections) {
+      final segments = selection.split('/');
+      final rootId = segments[0];
+      final middleId = segments[1];
+      final root = catalog.byBranch.values
+          .expand((roots) => roots)
+          .where((candidate) => candidate.id == rootId)
+          .firstOrNull;
+      final middle = root?.middles
+          .where((candidate) => candidate.id == middleId)
+          .firstOrNull;
+      if (root == null || middle == null) {
+        diagnostics.add(
+          'recall selection dropped path=$selection reason=not-in-passed-index',
+        );
+        continue;
+      }
+      final leaves = <PersonaLeaf>[];
+      for (final leafId in segments.length > 2
+          ? segments[2].split(',')
+          : const <String>[]) {
+        final leaf = middle.leaves
+            .where((candidate) => candidate.id == leafId)
+            .firstOrNull;
+        if (leaf == null) {
+          diagnostics.add(
+            'recall selection dropped path=$selection leaf=$leafId '
+            'reason=not-in-passed-index',
+          );
+          continue;
+        }
+        leaves.add(leaf);
+      }
+      final block = _renderPersonaPath(root, middle, leaves);
+      if (usedRunes + block.runes.length > recallPersonaPathMaxRunes) {
+        diagnostics.add(
+          'recall persona path dropped root=$rootId reason=over-budget',
+        );
+        continue;
+      }
+      usedRunes += block.runes.length;
+      blocks.add(block);
+    }
+    return blocks.join('\n');
+  }
+
+  /// 单条画像路径的渲染（组织调用输入与下一轮临时上下文共用）。
+  String _renderPersonaPath(
+    PersonaRoot root,
+    PersonaMiddle middle,
+    List<PersonaLeaf> leaves,
+  ) {
+    final buffer = StringBuffer()
+      ..writeln(
+        '- 根 [${root.id}] '
+        '${clipRunes(root.claim.trim(), recallPersonaClaimMaxRunes)}',
+      )
+      ..writeln(
+        '  - 中间理解 [${middle.id}] ${middle.type}｜'
+        '${clipRunes(middle.claim.trim(), recallPersonaClaimMaxRunes)}',
+      );
+    for (final leaf in leaves) {
+      buffer.writeln(
+        '    - 叶 [${leaf.id}] ${leaf.date} ${leaf.nature}：'
+        '${clipRunes(leaf.summary.trim(), recallPersonaClaimMaxRunes)}',
+      );
+    }
+    return buffer.toString().trimRight();
+  }
+
+  /// 组织回执的所用条目 ID 成员校验：只能取自本轮递过的原始条目，
+  /// 编造的丢弃并记诊断。全部无效（或没有回执）时返回 null——幻觉
+  /// 回执不构成相关性信号，调用方退回全量并受总量预算封顶。
+  List<String>? _validatedEntries(
+    List<String>? declared,
+    List<(String, List<EpisodeEntry>)> rawDays,
+    List<String> diagnostics,
+  ) {
+    if (declared == null) {
+      return null;
+    }
+    final known = <String>{
+      for (final (_, entries) in rawDays)
+        for (final entry in entries) entry.id,
+    };
+    final kept = <String>[];
+    for (final id in declared) {
+      if (known.contains(id)) {
+        kept.add(id);
+      } else {
+        diagnostics.add(
+          'recall entry dropped id=$id reason=not-in-passed-evidence',
+        );
+      }
+    }
+    return kept.isEmpty ? null : kept;
+  }
+
   /// 选择调用：把查找意图与递回的目录交给模型，收回 memory_recall
-  /// 选择。模型输出无法解析或没有给出动作时返回 null（没有头绪）。
+  /// 选择（月份/日期 + 画像树路径）。模型输出无法解析或没有给出动作
+  /// 时返回 null（没有头绪）。
   Future<MemoryRecallAction?> _select(
     ProviderChatClient client, {
     required String query,
     required String userText,
     required List<MonthIndexLine> topIndex,
     required Map<String, List<DayIndexLine>> dayIndexByMonth,
+    required String personaIndex,
     required List<String> diagnostics,
   }) async {
     ModelCompletion? completion;
@@ -470,6 +763,7 @@ final class RecallOrchestrator {
           userText: userText,
           topIndex: topIndex,
           dayIndexByMonth: dayIndexByMonth,
+          personaIndex: personaIndex,
         ),
         maxTokens: recallModelMaxOutputTokens,
       );
@@ -497,13 +791,17 @@ final class RecallOrchestrator {
     return action;
   }
 
-  /// 组织调用：把选中日的原始证据交给模型，请它自然地补一句。
-  /// 失败、哨兵或空输出都返回 null（压缩结果仍可留给下一轮）。
-  Future<String?> _composeBubble(
+  /// 组织调用：把选中日的原始证据与画像树路径交给模型，请它自然地
+  /// 补一句。失败、哨兵或空输出都返回 null 文本（压缩结果仍可留给
+  /// 下一轮）。回执里的所用条目 ID（entries）供下一轮临时上下文做
+  /// 条目级相关性筛选；模型没给回执时 entryIds 为 null，调用方退回
+  /// 受总量预算封顶的全量记录。
+  Future<({String? text, List<String>? entryIds})> _composeBubble(
     ProviderChatClient client, {
     required String query,
     required String userText,
     required List<(String, List<EpisodeEntry>)> rawDays,
+    required String personaPathText,
     required List<String> diagnostics,
   }) async {
     ModelCompletion? completion;
@@ -513,6 +811,7 @@ final class RecallOrchestrator {
           query: query,
           userText: userText,
           rawDays: rawDays,
+          personaPathText: personaPathText,
           // 表述惯例（称呼定稿）：称呼用户时按 persona.md 设定行走。
           appellation: await readAppellationFromMemory(memoryDirectory),
         ),
@@ -520,16 +819,20 @@ final class RecallOrchestrator {
       );
     } on Object catch (error) {
       diagnostics.add('recall compose deferred [$error]');
-      return null;
+      return (text: null, entryIds: null);
     }
     final text = completion?.text;
     if (text == null) {
       diagnostics.add(
         'recall compose deferred [${completion?.failure?.name ?? 'no-provider'}]',
       );
-      return null;
+      return (text: null, entryIds: null);
     }
-    final visibleText = parseHiddenActions(text).visibleText;
+    final parsed = parseHiddenActions(text);
+    for (final diagnostic in parsed.diagnostics) {
+      diagnostics.add('recall compose dropped [$diagnostic]');
+    }
+    final visibleText = parsed.visibleText;
     // 哨兵容忍尾部标点/空白（模型可能输出「没有了。」），避免把
     // 「没有」的表态当成 bubble 2 内容交付。
     final sentinelNormalized = visibleText
@@ -538,27 +841,62 @@ final class RecallOrchestrator {
     if (sentinelNormalized.isEmpty ||
         sentinelNormalized == _recallNoBubbleSentinel) {
       diagnostics.add('recall compose empty reason=model-passed');
-      return null;
+      return (text: null, entryIds: null);
     }
-    return visibleText;
+    // 所用条目回执：只认选择/组织协议里的 memory_recall entries 字段。
+    final receipt = parsed.actions.whereType<MemoryRecallAction>().firstOrNull;
+    return (text: visibleText, entryIds: receipt?.entries);
   }
 
-  /// 短期 memory context 内容：压缩后的证据 + 使用纪律。
-  /// 只带回与问题相关的压缩结果，不搬运选中文件全文。
-  String _buildPendingContext(List<(String, List<EpisodeEntry>)> rawDays) {
-    final buffer = StringBuffer()..writeln('此前对话的后台整理记录（临时参考，不是新发生的事）：');
+  /// 短期 memory context 内容：压缩后的证据 + 使用纪律。只带回与问题
+  /// 相关的压缩结果，不搬运选中文件全文。
+  ///
+  /// 条目级相关性筛选（Memory 注入定稿）：组织调用声明了所用条目时
+  /// 只收这些；未声明（组织失败、模型没给回执或回执全不可信）才退回
+  /// 全量。总量受 [recallPendingContextMaxRunes] 封顶——超预算的后续
+  /// 条目不再收入并记诊断，先命中的优先。
+  String _buildPendingContext(
+    List<(String, List<EpisodeEntry>)> rawDays,
+    List<String>? usedEntryIds,
+    String personaPathText,
+    List<String> diagnostics,
+  ) {
+    final used = usedEntryIds?.toSet();
+    final lines = <String>[];
+    var totalRunes = 0;
+    outer:
     for (final (date, entries) in rawDays) {
       for (final entry in entries) {
-        buffer.writeln(
-          '- $date：${clipRunes(entry.summary.trim(), recallRawSummaryMaxRunes)}',
-        );
+        if (used != null && !used.contains(entry.id)) {
+          continue;
+        }
+        final line = StringBuffer()
+          ..writeln(
+            '- $date：${clipRunes(entry.summary.trim(), recallRawSummaryMaxRunes)}',
+          );
         final evidence = entry.evidence?.trim();
         if (evidence != null && evidence.isNotEmpty) {
-          buffer.writeln(
+          line.writeln(
             '  原话摘录：${clipRunes(evidence, recallPendingEvidenceMaxRunes)}',
           );
         }
+        final text = line.toString();
+        if (totalRunes + text.runes.length > recallPendingContextMaxRunes) {
+          diagnostics.add('recall pending context truncated reason=over-budget');
+          break outer;
+        }
+        totalRunes += text.runes.length;
+        lines.add(text);
       }
+    }
+    final buffer = StringBuffer()
+      ..writeln('此前对话的后台整理记录（临时参考，不是新发生的事）：');
+    buffer.writeAll(lines);
+    if (personaPathText.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('画像树路径（根 → 中间理解 → 叶指针，只是检索到的相关依据）：')
+        ..writeln(personaPathText);
     }
     buffer.write('语境合适时自然补上；与当前话题无关就不提；拿不准时保持不确定，不声称一直记得。');
     return buffer.toString();
@@ -569,6 +907,7 @@ final class RecallOrchestrator {
     required String userText,
     required List<MonthIndexLine> topIndex,
     required Map<String, List<DayIndexLine>> dayIndexByMonth,
+    required String personaIndex,
   }) {
     const system = '''
 你是栖语的本机记忆检索模块。用户在对话里提起一件旧事，聊天模型已经请求后台查找。给你两层索引目录，请选出最可能相关的月份和日期。
@@ -604,6 +943,20 @@ final class RecallOrchestrator {
         );
       }
     }
+    // 画像树路径检索（Memory 注入定稿）：需要解释习惯、核对画像依据
+    // 或追溯具体事件时才选路径；默认只选根与最相关中间理解，问题需要
+    // 依据或事件细节时才在第三段附最多 2 条叶 ID。
+    if (personaIndex.isNotEmpty) {
+      user
+        ..writeln()
+        ..writeln('## 画像树路径索引（persona-tree，活跃根 → 中间理解）')
+        ..writeln(personaIndex)
+        ..writeln()
+        ..writeln('路径选择（需要解释习惯、核对画像依据或追溯具体事件时才选）：')
+        ..writeln('- 形式「根ID/中间理解ID」，最多 2 条；ID 只能取自上面画像树路径索引。')
+        ..writeln('- 默认只选根与最相关中间理解；只有问题需要依据或事件细节时，才在第三条段附该中间理解下最多 2 条叶 ID：「根ID/中间理解ID/叶ID,叶ID」。')
+        ..writeln('- 解释习惯、核对画像依据这类不涉及具体日期的问题，可以只选 paths、不选月份和日期。');
+    }
     return [
       const ModelMessage(ModelMessageRole.system, system),
       ModelMessage(ModelMessageRole.user, user.toString()),
@@ -631,6 +984,7 @@ final class RecallOrchestrator {
     required String query,
     required String userText,
     required List<(String, List<EpisodeEntry>)> rawDays,
+    required String personaPathText,
     String? appellation,
   }) {
     // 称呼用户的惯例（称呼定稿 2026-09-03）：有称呼自然可用，没有就
@@ -647,7 +1001,7 @@ final class RecallOrchestrator {
         '''
 你是栖语。刚才用户提起一件旧事，你先按一时没想起回应了；现在后台查找有了结果，你要自然地补一句。
 要求：
-1. 只输出要补给用户的一到两句话本身；不输出标签、解释、前缀或隐藏块。
+1. 先只输出要补给用户的一到两句话本身；不输出标签、解释或前缀。用到了哪些记录，就在气泡后另起一行追加隐藏块 <qiyu-actions>[{"action":"memory_recall","query":"查找意图原样带回","entries":["用到的条目ID",…]}]</qiyu-actions>；entries 只能取下面记录里方括号内的条目 ID，一条都没用到就省略整个隐藏块。
 2. 只能使用下面查到的记录里真实存在的内容；记录里没有的细节不提，不编造。
 3. 像刚想起来那样轻轻补上；不复述用户的话，不开新话题，不追问。
 4. 查到的记录与用户问的不是一回事时，只输出「$_recallNoBubbleSentinel」三个字。
@@ -656,22 +1010,35 @@ $appellationRule''';
 
     final user = StringBuffer()
       ..writeln('用户刚才说：$userText')
-      ..writeln('查找意图：$query')
-      ..writeln()
-      ..writeln('## 查到的记录');
-    for (final (date, entries) in rawDays) {
-      user.writeln('### $date');
-      for (final entry in entries) {
-        user.writeln(
-          '- ${clipRunes(entry.summary.trim(), recallRawSummaryMaxRunes)}',
-        );
-        final evidence = entry.evidence?.trim();
-        if (evidence != null && evidence.isNotEmpty) {
+      ..writeln('查找意图：$query');
+    // 纯画像依据的查找没有 episode 证据：整节省略，不递空节。
+    if (rawDays.isNotEmpty) {
+      user
+        ..writeln()
+        ..writeln('## 查到的记录');
+      for (final (date, entries) in rawDays) {
+        user.writeln('### $date');
+        for (final entry in entries) {
+          // 方括号内是条目 ID：组织回执按 ID 声明所用条目，Host 据此
+          // 做下一轮临时上下文的条目级相关性筛选。
           user.writeln(
-            '  原话摘录：${clipRunes(evidence, recallRawEvidenceMaxRunes)}',
+            '- [${entry.id}] '
+            '${clipRunes(entry.summary.trim(), recallRawSummaryMaxRunes)}',
           );
+          final evidence = entry.evidence?.trim();
+          if (evidence != null && evidence.isNotEmpty) {
+            user.writeln(
+              '  原话摘录：${clipRunes(evidence, recallRawEvidenceMaxRunes)}',
+            );
+          }
         }
       }
+    }
+    if (personaPathText.isNotEmpty) {
+      user
+        ..writeln()
+        ..writeln('## 画像树路径（根 → 中间理解 → 叶指针）')
+        ..writeln(personaPathText);
     }
     return [
       ModelMessage(ModelMessageRole.system, system),

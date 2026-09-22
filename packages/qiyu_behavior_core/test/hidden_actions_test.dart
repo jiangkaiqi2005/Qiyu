@@ -90,6 +90,68 @@ void main() {
     expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
   });
 
+  test('recall persona paths are format-checked, deduplicated and capped', () {
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"跑步的习惯",'
+      '"paths":["PR-R001/PR-M002","PR-R001/PR-M002","PR-R001/PR-M003",'
+      '"PR-R001/PR-M004","PR-r001/PR-M002","PR-R001/PR-X002","PR-R001",'
+      '"PR-R001/PR-M002/PR-L1"]}]</qiyu-actions>',
+    );
+
+    expect(parse.actions, hasLength(1));
+    final action = parse.actions.single as MemoryRecallAction;
+    // 合法路径去重后保留，第三条合法路径超出定稿上限整条丢弃。
+    expect(action.paths, ['PR-R001/PR-M002', 'PR-R001/PR-M003']);
+    // 四种非法形态各记一条 invalidFields，第三条合法路径记 overLimit。
+    expect(
+      parse.diagnostics.where(
+        (entry) => entry == HiddenActionDiagnostics.invalidFields,
+      ),
+      hasLength(4),
+    );
+    expect(parse.diagnostics, contains(HiddenActionDiagnostics.overLimit));
+  });
+
+  test('recall persona paths carry at most two leaf pointers each', () {
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"画像依据",'
+      '"paths":["PR-R001/PR-M002/PR-L001,PR-L004,PR-L007"]}]</qiyu-actions>',
+    );
+
+    final action = parse.actions.single as MemoryRecallAction;
+    // 叶指针截断到定稿的两条，根与中间理解保留。
+    expect(action.paths, ['PR-R001/PR-M002/PR-L001,PR-L004']);
+    expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+  });
+
+  test('recall persona path field must be an array', () {
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"跑步",'
+      '"paths":"PR-R001/PR-M002"}]</qiyu-actions>',
+    );
+
+    expect(parse.actions, hasLength(1));
+    expect((parse.actions.single as MemoryRecallAction).paths, isNull);
+    expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+  });
+
+  test('recall entry receipts are format-checked, deduplicated and capped', () {
+    final ids = List.generate(
+      maxHiddenRecallEntries + 1,
+      (index) => '"seed:req:$index"',
+    ).join(',');
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"爬山",'
+      '"entries":[$ids,"seed:req:0","bad id!"]}]</qiyu-actions>',
+    );
+
+    final action = parse.actions.single as MemoryRecallAction;
+    expect(action.entries, hasLength(maxHiddenRecallEntries));
+    expect(action.entries?.first, 'seed:req:0');
+    expect(parse.diagnostics, contains(HiddenActionDiagnostics.invalidFields));
+    expect(parse.diagnostics, contains(HiddenActionDiagnostics.overLimit));
+  });
+
   test('secrets in recall queries stay on the privilege diagnostic', () {
     // 锁定行为：检索词命中秘密也记 privilegeViolation，而非 sensitiveContent。
     final parse = parseHiddenActions(
