@@ -122,13 +122,31 @@ class _ScriptedSourceIo implements SourceFileIo {
   }
 }
 
-void _writeRelationship(Directory memoryDirectory) => File(
-  '${memoryDirectory.path}/relationship.md',
-).writeAsStringSync(
-  '# relationship\n\nstage: 初识\nsince: 2026-08-01\n'
-  '阶段描述: 初识阶段：以回应当前话题、倾听为主；不调侃、不翻旧账、不引用共同过往、不主动追问私事。\n',
+/// 指定阶段与阶段描述的关系文件（阶段名用 wire 名，如「初识」「熟悉」）。
+void _writeRelationshipStage(
+  Directory memoryDirectory,
+  String stage,
+  String description,
+) => File('${memoryDirectory.path}/relationship.md').writeAsStringSync(
+  '# relationship\n\nstage: $stage\nsince: 2026-08-01\n'
+  '阶段描述: $description\n',
   encoding: utf8,
 );
+
+void _writeRelationship(Directory memoryDirectory) => _writeRelationshipStage(
+  memoryDirectory,
+  '初识',
+  '初识阶段：以回应当前话题、倾听为主；不调侃、不翻旧账、不引用共同过往、不主动追问私事。',
+);
+
+/// 主动门控可通过的 open-loop fixture：active + proactive yes + due 已到
+/// （配 2026-08-12 时钟与熟悉起阶段）。两个纪律用例共用。
+const _arrivedLoopFixture =
+    '# open-loops\n\n'
+    '- [o1] 面试结果\n'
+    '  proactive: yes\n'
+    '  status: active\n'
+    '  due: 2026-08-10\n';
 
 /// 带初始内容的三块 builder：部分成功断言必须以非空初始值验证
 /// 「未被更新的块保持原值」，不能只以全空初始状态验证。
@@ -850,7 +868,7 @@ void main() {
       expect(first.failure, isNull);
       expect(first.dailyState, contains('【未闭环事项】'));
       expect(first.dailyState, contains('- [o1] 买牛奶'));
-      expect(first.dailyState, contains('主动跟进纪律'));
+      expect(first.dailyState, contains('主动打开新话题纪律'));
       // 缓存路径单次装配六源各读一次（seam 计数）。
       expect(io.readCalls, 6);
       expect(io.statCalls, 6);
@@ -876,6 +894,127 @@ void main() {
       // 磁盘读取。
       expect(io.statCalls, 12);
       expect(io.readCalls, 6);
+    });
+  });
+
+  group('主动打开新话题纪律', () {
+    test('三类素材齐备时纪律文案三类平级，候选列表保留 [id] 标题 格式', () async {
+      final memoryDirectory = await _seedMemory((memoryDirectory) async {
+        _writeRelationshipStage(
+          memoryDirectory,
+          '熟悉',
+          '熟悉阶段：可以自然提起用户说过的事，偶尔分享自己的想法；仍不调侃、不翻旧账、不主动追问私事。',
+        );
+        File('${memoryDirectory.path}/daily-state.md').writeAsStringSync(
+          '# daily-state\n\ndate: 2026-08-11\n\n## 近日活跃\n- 项目 X deadline\n',
+          encoding: utf8,
+        );
+        File('${memoryDirectory.path}/open-loops.md').writeAsStringSync(
+          _arrivedLoopFixture,
+          encoding: utf8,
+        );
+        File('${memoryDirectory.path}/long-memory.md').writeAsStringSync(
+          renderLongMemory({
+            '共同过往': ['深夜聊天的梗'],
+          }),
+          encoding: utf8,
+        );
+        File('${memoryDirectory.path}/persona.md').writeAsStringSync(
+          '# persona\n\n## 身份与客观事实\n- 用户在互联网行业工作\n',
+          encoding: utf8,
+        );
+      });
+      addTearDown(() => memoryDirectory.parent.delete(recursive: true));
+
+      final block = await StatePackReader(
+        memoryDirectory: memoryDirectory.path,
+        clock: () => DateTime(2026, 8, 12, 21),
+      ).readDailyStateBlock();
+
+      // 候选池三类完全平级：未闭环事项、近日活跃与当前近况、共同过往
+      // 与梗；不设固定顺序、分数、轮换、等待加权或超时强制。
+      expect(block, contains('主动打开新话题纪律'));
+      expect(block, contains('完全平级'));
+      expect(block, contains('【未闭环事项】'));
+      expect(block, contains('【近日状态】'));
+      expect(block, contains('【长期印象】'));
+      expect(block, contains('共同过往与梗'));
+      expect(block, contains('不设固定顺序、分数、轮换、等待加权或超时强制'));
+      // 命中多个候选只选一个，每轮最多主动跟进一件事。
+      expect(block, contains('只选一个'));
+      expect(block, contains('每轮最多主动跟进一件事'));
+      // 待试探不提供话题，只约束试探边界。
+      expect(block, contains('【关系温度】'));
+      expect(block, contains('待试探'));
+      expect(block, contains('不提供话题'));
+      // 无候选不编造不深查；「在吗」简短等待；无输入保持沉默。
+      expect(block, contains('不得编造话题'));
+      expect(block, contains('深查 episodes'));
+      expect(block, contains('在吗'));
+      expect(block, contains('保持沉默'));
+      // 现行行为约束保留。
+      expect(block, contains('初识阶段不主动翻旧事'));
+      expect(block, contains('绝不触碰'));
+      // open-loop 确定性候选列表保留 [id] 标题 格式。
+      expect(block, contains('主动跟进候选'));
+      expect(block, contains('[o1] 面试结果'));
+    });
+
+    test('仅近日状态存在时也追加纪律段（三类平级后的装配条件）', () async {
+      final memoryDirectory = await _seedMemory((memoryDirectory) async {
+        _writeRelationship(memoryDirectory);
+        File('${memoryDirectory.path}/daily-state.md').writeAsStringSync(
+          '# daily-state\n\ndate: 2026-08-11\n\n## 近日状态\n- 用户睡前有点累\n',
+          encoding: utf8,
+        );
+      });
+      addTearDown(() => memoryDirectory.parent.delete(recursive: true));
+
+      final block = await StatePackReader(
+        memoryDirectory: memoryDirectory.path,
+      ).readDailyStateBlock();
+
+      // 三类平级后，近日状态单独成立即可带出纪律段；无 open-loop 时
+      // 确定性候选列表缺席，纪律段单独成立。
+      expect(block, contains('【近日状态】'));
+      expect(block, contains('主动打开新话题纪律'));
+      expect(block, isNot(contains('主动跟进候选')));
+    });
+
+    test('仅有关系温度时不追加纪律段（无候选素材维持原状）', () async {
+      final memoryDirectory = await _seedMemory((memoryDirectory) async {
+        _writeRelationship(memoryDirectory);
+      });
+      addTearDown(() => memoryDirectory.parent.delete(recursive: true));
+
+      final block = await StatePackReader(
+        memoryDirectory: memoryDirectory.path,
+      ).readDailyStateBlock();
+
+      expect(block, contains('【关系温度】'));
+      expect(block, isNot(contains('主动打开新话题纪律')));
+    });
+
+    test('初识阶段候选被门禁时纪律段仍在、候选列表缺席', () async {
+      final memoryDirectory = await _seedMemory((memoryDirectory) async {
+        _writeRelationship(memoryDirectory);
+        File('${memoryDirectory.path}/open-loops.md').writeAsStringSync(
+          _arrivedLoopFixture,
+          encoding: utf8,
+        );
+      });
+      addTearDown(() => memoryDirectory.parent.delete(recursive: true));
+
+      final block = await StatePackReader(
+        memoryDirectory: memoryDirectory.path,
+        clock: () => DateTime(2026, 8, 12, 21),
+      ).readDailyStateBlock();
+
+      // 未闭环事项照常投影，但初识阶段过不了主动门禁：候选列表缺席，
+      // 纪律段（含「没有自然候选时不得编造」）照常在位。
+      expect(block, contains('【未闭环事项】'));
+      expect(block, contains('主动打开新话题纪律'));
+      expect(block, isNot(contains('主动跟进候选')));
     });
   });
 }

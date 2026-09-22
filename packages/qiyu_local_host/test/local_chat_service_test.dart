@@ -2087,7 +2087,7 @@ void main() {
       expect(system, contains('面试结果'));
       expect(system, contains('【关系温度】'));
       expect(system, contains('【近日状态】'));
-      expect(system, contains('主动跟进纪律'));
+      expect(system, contains('主动打开新话题纪律'));
       // 熟悉阶段 + due 已到 + active：进入候选池批注。
       expect(system, contains('主动跟进候选'));
       expect(system, contains('[o1] 面试结果'));
