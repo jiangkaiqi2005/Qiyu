@@ -410,8 +410,8 @@ void main() {
       expect(view.unrooted.single.claim, contains('跑步'));
     });
 
-    test('dream keeps frozen long-memory items verbatim and rejects drafts '
-        'that drop them', () async {
+    test('dream keeps frozen long-memory items out of the model input and '
+        'restores them locally', () async {
       final directory = await Directory.systemTemp.createTemp(
         'qiyu-freeze-dream-test-',
       );
@@ -435,17 +435,11 @@ void main() {
       final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
       expect(await openLoopStore.memoryControls.freeze('爬山'), isTrue);
       final client = ScriptedChatClient([
-        // 第一稿丢掉冻结条目。
+        // 模型看不见冻结条目，只重组其余内容。
         ModelCompletion.reply(
           _candidate([
             _item('重要事件', '用户去年完成了第一个马拉松', ['2026-08-14']),
-          ]),
-        ),
-        // 第二稿原样带回冻结条目。
-        ModelCompletion.reply(
-          _candidate([
-            _item('重要事件', '用户去年完成了第一个马拉松', ['2026-08-14']),
-            _item('人与关系', '用户和朋友每周末爬山', ['2026-08-14']),
+            _item('人与关系', '用户常陪朋友出门', ['2026-08-14']),
           ]),
         ),
       ]);
@@ -458,22 +452,173 @@ void main() {
         diagnosticsSink: (_) {},
       );
 
-      final rejected = await dream.run(bedtime: true);
-      expect(rejected.status, DreamStatus.validationFailed);
-      expect(rejected.detail, 'frozen');
-      // 旧长期印象原样保留，冻结内容绝不因 Dream 丢失。
-      final afterReject = File(
-        '${directory.path}/long-memory.md',
-      ).readAsStringSync();
-      expect(afterReject, contains('用户和朋友每周末爬山'));
-
       final accepted = await dream.run(bedtime: true);
       expect(accepted.status, DreamStatus.accepted);
+      // 输入侧：冻结条目全文不外发；冻结标题仍随清单递给模型，提示它
+      // 别写新内容，免得误触冻结禁增关把整份草稿拖下水。
+      final promptText = client.calls.single
+          .map((message) => message.content)
+          .join('\n');
+      expect(promptText, isNot(contains('用户和朋友每周末爬山')));
+      expect(promptText, isNot(contains('逐字原样保留')));
+      expect(promptText, contains('## 冻结清单'));
+      expect(promptText, contains('- 爬山'));
+      // 输出侧：冻结条目本地原样拼回所属分区（分区前部），不过模型。
       final afterAccept = File(
         '${directory.path}/long-memory.md',
       ).readAsStringSync();
-      expect(afterAccept, contains('- 用户和朋友每周末爬山'));
+      expect(
+        afterAccept,
+        contains('## 人与关系\n- 用户和朋友每周末爬山\n- 用户常陪朋友出门'),
+      );
       expect(afterAccept, contains('- 用户去年完成了第一个马拉松'));
+      // 变更清单如实记账：拼回条目与其余保留条目同格式记在「保留」里，
+      // 不当成模型候选。
+      final archived = File(
+        Directory('${directory.path}/dream/history').listSync().single.path,
+      ).readAsStringSync();
+      expect(archived, contains('- [人与关系] 用户和朋友每周末爬山'));
+    });
+
+    test('a new item contradicting a frozen one still rejects the draft',
+        () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-freeze-dream-contradiction-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      var now = DateTime(2026, 8, 15, 23, 10);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
+      const existing = '''# long-memory
+
+## 重要事件
+- 用户去年换了工作
+''';
+      File('${directory.path}/long-memory.md').writeAsStringSync(existing);
+      final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
+      expect(await openLoopStore.memoryControls.freeze('换了工作'), isTrue);
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(
+          _candidate([
+            _item('重要事件', '用户去年没有换工作', ['2026-08-14']),
+          ]),
+        ),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        openLoopStore: openLoopStore,
+        modelClient: client,
+        clock: () => now,
+        diagnosticsSink: (_) {},
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      // 冻结条目不进模型输入，但矛盾关仍用它建模：新条目与冻结条目
+      // 互斥，整份拒绝，旧文件原样保留。
+      expect(outcome.status, DreamStatus.validationFailed);
+      expect(outcome.detail, 'contradiction');
+      expect(
+        File('${directory.path}/long-memory.md').readAsStringSync(),
+        existing,
+      );
+    });
+
+    test('a pre-existing contradiction among frozen items does not block '
+        'dream', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-freeze-dream-old-contradiction-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      var now = DateTime(2026, 8, 15, 23, 10);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
+      File('${directory.path}/long-memory.md').writeAsStringSync(
+        '''# long-memory
+
+## 重要事件
+- 用户去年换了工作
+- 用户去年没有换工作
+''',
+      );
+      final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
+      // 冻结标题同时命中两条互斥的旧印象（「去年」两条都含），但不
+      // 命中日摘要，材料照常齐备。
+      expect(await openLoopStore.memoryControls.freeze('去年'), isTrue);
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(
+          _candidate([
+            _item('模式与轨迹', '用户最近常去爬山', ['2026-08-14']),
+          ]),
+        ),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        openLoopStore: openLoopStore,
+        modelClient: client,
+        clock: () => now,
+        diagnosticsSink: (_) {},
+      );
+
+      final outcome = await dream.run(bedtime: true);
+
+      // 冻结条目之间已有的互斥只播种不判负：旧文件里的用户数据不能
+      // 永久卡死 Dream，两条照常拼回，新条目照常接纳。
+      expect(outcome.status, DreamStatus.accepted);
+      final longMemory = File(
+        '${directory.path}/long-memory.md',
+      ).readAsStringSync();
+      expect(longMemory, contains('- 用户去年换了工作'));
+      expect(longMemory, contains('- 用户去年没有换工作'));
+      expect(longMemory, contains('- 用户最近常去爬山'));
+    });
+
+    test('dream with a frozen control but no existing long-memory runs '
+        'normally', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'qiyu-freeze-dream-no-file-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      var now = DateTime(2026, 8, 15, 23, 10);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: directory.path,
+        clock: () => now,
+      );
+      await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
+      final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
+      expect(await openLoopStore.memoryControls.freeze('爬山'), isTrue);
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(
+          _candidate([
+            _item('重要事件', '用户去年完成了第一次演讲', ['2026-08-14']),
+          ]),
+        ),
+      ]);
+      final dream = DreamService(
+        memoryDirectory: directory.path,
+        episodePipeline: pipeline,
+        openLoopStore: openLoopStore,
+        modelClient: client,
+        clock: () => now,
+        diagnosticsSink: (_) {},
+      );
+
+      final outcome = await dream.run(bedtime: true);
+      // 没有既有长期印象：无处拼回，照常只写模型候选。
+      expect(outcome.status, DreamStatus.accepted);
+      final longMemory = File(
+        '${directory.path}/long-memory.md',
+      ).readAsStringSync();
+      expect(longMemory, contains('- 用户去年完成了第一次演讲'));
+      expect(longMemory, isNot(contains('爬山')));
     });
 
     test('dream root proposals touching frozen nodes are rejected', () async {
@@ -672,7 +817,8 @@ since: 2026-08-01
       );
 
       final outcome = await dream.run(bedtime: true);
-      // 冻结禁止新增关：新印象命中冻结且不在原样保留清单 → 拒绝。
+      // 冻结禁止新增关：模型产物命中冻结标题即整份拒绝（模型看不见
+      // 冻结条目全文，命中必然是新增）。
       expect(outcome.status, DreamStatus.validationFailed);
       expect(outcome.detail, 'frozen');
       // 冻结清单只列冻结标题；冻结主张原文不进 Dream 提示词。
@@ -707,8 +853,8 @@ since: 2026-08-01
 ''',
         );
         final openLoopStore = OpenLoopStore(memoryDirectory: directory.path);
-        // 同一事项先冻结后禁提：禁提胜出（最保守），冻结保留关不得再
-        // 强制带回该条目，否则每一稿都被拒，Dream 永久卡死。
+        // 同一事项先冻结后禁提：禁提胜出（最保守），本地拼回不得再把
+        // 该条目拼回文件——封禁严格强于冻结。
         expect(await openLoopStore.memoryControls.freeze('爬山'), isTrue);
         expect(await openLoopStore.memoryControls.ban('爬山'), isTrue);
         final client = ScriptedChatClient([

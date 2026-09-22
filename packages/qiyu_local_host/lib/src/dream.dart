@@ -93,8 +93,8 @@ enum DreamStatus {
   /// 模型调用失败或输出无法解析：旧记忆原样保留，等待下次重试。
   modelFailed,
 
-  /// 草稿未通过结构/证据/敏感/用户控制/冻结保留/冻结禁增/相互矛盾
-  /// 各自检关之一：整份作废，失败原因记入变更清单。
+  /// 草稿未通过结构/证据/敏感/用户控制/冻结禁增/相互矛盾各自检关
+  /// 之一：整份作废，失败原因记入变更清单。
   validationFailed,
 
   /// 接纳过程写入失败：旧 long-memory 与上次成功时间保持原样。
@@ -176,17 +176,24 @@ String renderLongMemory(Map<String, List<String>> sections) {
 
 /// 长期印象四分区受控过滤：封禁命中条目从各分区剔除，返回过滤后的
 /// 分区与是否发生变化。Dream 输入过滤与删除清除管线共用同一份核心；
-/// 过滤谓词 [bannedMemoryText] 本体不动，解析与写入时机归调用方。
+/// Dream 输入另传 [frozen]（冻结条目同样不递模型），删除清除只传
+/// banned。过滤谓词 [bannedMemoryText] 本体不动，解析与写入时机归
+/// 调用方。
 ({Map<String, List<String>> sections, bool changed}) filterLongMemorySections(
   LongMemoryFile parsed,
-  Set<String> banned,
-) {
+  Set<String> banned, {
+  Set<String> frozen = const {},
+}) {
   var changed = false;
   final sections = <String, List<String>>{};
   for (final section in longMemorySections) {
     final items = parsed.sections[section] ?? const <String>[];
     final kept = items
-        .where((item) => !bannedMemoryText(item, banned))
+        .where(
+          (item) =>
+              !bannedMemoryText(item, banned) &&
+              !bannedMemoryText(item, frozen),
+        )
         .toList();
     if (kept.length != items.length) {
       changed = true;
@@ -426,11 +433,12 @@ List<String>? _idList(Object? value, RegExp pattern) {
 /// 输入（全部只读，遵守 [dreamInputMaxRunes] 预算）：上次成功当天及
 /// 之后的 finalized 日摘要（窗口 [dreamSummaryWindowDays] 天）、月摘要（至多
 /// [dreamMaxMonthSummaries] 月）、关系状态、未闭环线索、现有长期印象、
-/// 封禁（禁提 ∪ 删除）清单与冻结清单。受控内容在递给模型前按层过滤，
-/// 冻结的既有条目由模型原样带回。不读 sessions 原文，不写 episodes。
+/// 封禁（禁提 ∪ 删除）清单与冻结清单。受控内容（封禁 ∪ 冻结）在递给
+/// 模型前按层过滤；冻结的既有长期印象条目不递模型，写出新文件时由
+/// 本地拼回原样保留。不读 sessions 原文，不写 episodes。
 ///
 /// 流程：一次模型调用产出全量候选 → 写独立草稿与变更清单 → 自检各关
-/// （结构、证据、敏感信息、用户控制、冻结保留、冻结禁增、相互矛盾）
+/// （结构、证据、敏感信息、用户控制、冻结禁增、相互矛盾）
 /// → 全部通过后原子接纳：备份旧文件 → 替换 long-memory.md → 记录成功
 /// 时间 → 清单归档 history → 清空 draft。任一关不过整份作废；中断、
 /// 模型失败、验证失败或写入失败都不更新上次成功时间，也不破坏旧长期记忆。
@@ -623,10 +631,19 @@ final class DreamService {
         ? const <PersonaDreamOp>[]
         : parseDreamRootProposals(raw, diagnosticsSink: _diagnosticsSink);
 
-    // 独立草稿：先写候选版与变更清单，再跑自检各关。
+    // 独立草稿：先写候选版与变更清单，再跑自检各关。冻结条目本地
+    // 拼回：命中冻结且不命中封禁的既有长期印象条目不递模型（外发
+    // 边界见 ADR 0016），写出前按原所属分区原样拼回草案。拼回位置
+    // 取分区前部：用户钉住的旧锚点在前、模型新条目在后，注入关按
+    // 分区逆序裁尾时拼回条目也比新条目更晚被裁。封禁严格强于冻结：
+    // 同时命中封禁的条目不拼回，离开长期印象。
+    final restored = _restoredFrozenItems(existing, input.banned, input.frozen);
     final draftSections = <String, List<String>>{
       for (final section in longMemorySections) section: <String>[],
     };
+    for (final entry in restored) {
+      draftSections[entry.section]!.add(entry.text);
+    }
     for (final item in items) {
       draftSections[item.section]!.add(item.text);
     }
@@ -648,22 +665,6 @@ final class DreamService {
       return DreamOutcome(status: DreamStatus.writeFailed, detail: '$error');
     }
 
-    // 冻结保留清单：现有长期印象里命中冻结的条目必须在候选版中
-    // 原样保留（冻结停止自动修改）。模型删掉或改写任何一条都整份
-    // 拒绝——旧文件保持原样，冻结内容绝不丢失。同时命中封禁的条目
-    // 不保留：封禁严格强于冻结，冲突取最保守裁决（该内容离开长期
-    // 印象，Dream 对其余内容照常），绝不陷入「 banned 关要它消失、
-    // 冻结关要它留下」的死锁。
-    final frozenRequired = <String>[];
-    if (input.frozen.isNotEmpty && existing != null) {
-      for (final item in existing.allItems) {
-        if (bannedMemoryText(item, input.frozen) &&
-            !bannedMemoryText(item, input.banned)) {
-          frozenRequired.add(item);
-        }
-      }
-    }
-
     final gateFailure = _validateDraft(
       items: items,
       draftContent: draftContent,
@@ -671,7 +672,7 @@ final class DreamService {
       validMonths: input.validMonths,
       banned: input.banned,
       frozen: input.frozen,
-      frozenRequired: frozenRequired,
+      restoredItems: restored,
     );
     if (gateFailure != null) {
       await _writeChanges(
@@ -792,6 +793,7 @@ final class DreamService {
             items,
             existing,
             includeDetails: true,
+            restoredItems: restored,
             rootOps: opRecords,
           ),
         );
@@ -930,12 +932,12 @@ final class DreamService {
 
   /// 组装 Dream 输入（全部只读）并执行上下文预算裁剪。受控内容
   /// （封禁 ∪ 冻结）不参与整理：日摘要、月摘要条目、关系投影、
-  /// 未闭环线索与长期印象里的封禁条目都在递给模型前过滤；冻结的
-  /// 长期印象条目保留给模型，由冻结保留关强制原样带回。
+  /// 未闭环线索与长期印象里的受控条目都在递给模型前过滤；冻结的
+  /// 长期印象条目不递模型，写出前由本地拼回原样保留。
   Future<_DreamInput> _collectInput({required String? after}) async {
     // Dream 只读最小控制信息（定稿）：封禁集合（禁提 ∪ 删除）进自检
-    // 闸门与模型清单；冻结集合用于保持被冻结条目原样、拒绝触碰
-    // 冻结节点的根提案。
+    // 闸门与模型清单；冻结集合用于长期印象输入过滤、写出前本地拼回
+    // 与拒绝触碰冻结节点的根提案。
     final controls = openLoopStore == null
         ? null
         : await openLoopStore!.memoryControls.load();
@@ -998,6 +1000,7 @@ final class DreamService {
     final longMemory = _filterLongMemoryInput(
       await readFileIfExists(_longMemoryFile),
       banned,
+      frozen,
     );
 
     // PersonaTree 快照：模型输入只给活跃根与未归根理解（含叶证据的
@@ -1100,19 +1103,51 @@ final class DreamService {
     controlled,
   );
 
-  /// 长期印象输入过滤：封禁条目不递给模型（递给模型只会让草稿被
-  /// 用户控制关整份拒绝）；冻结条目保留，冻结保留关要求其原样带回。
-  /// 结构不可识别时原样递交。
-  String? _filterLongMemoryInput(String? contents, Set<String> banned) {
-    if (contents == null || banned.isEmpty) {
+  /// 长期印象输入过滤：封禁与冻结条目都不递给模型——封禁条目递过去
+  /// 只会让草稿被用户控制关整份拒绝，冻结条目递过去既违背「停止
+  /// 自动整理」的用户预期，又平添一次外发（写出侧本地拼回保证冻结
+  /// 条目不丢失）。结构不可识别时原样递交。
+  String? _filterLongMemoryInput(
+    String? contents,
+    Set<String> banned,
+    Set<String> frozen,
+  ) {
+    if (contents == null || (banned.isEmpty && frozen.isEmpty)) {
       return contents;
     }
     final parsed = parseLongMemory(contents);
     if (!parsed.readable) {
       return contents;
     }
-    final (:sections, :changed) = filterLongMemorySections(parsed, banned);
+    final (:sections, :changed) = filterLongMemorySections(
+      parsed,
+      banned,
+      frozen: frozen,
+    );
     return changed ? renderLongMemory(sections) : contents;
+  }
+
+  /// 冻结条目拼回清单：现有长期印象里命中冻结且不命中封禁的条目，
+  /// 按分区顺序（分区内保持原文件顺序）原样收集，写出前拼回草案。
+  /// 封禁严格强于冻结：同时命中封禁的条目不拼回，离开长期印象。
+  /// 没有既有文件或没有冻结记录时返回空。
+  List<({String section, String text})> _restoredFrozenItems(
+    LongMemoryFile? existing,
+    Set<String> banned,
+    Set<String> frozen,
+  ) {
+    if (existing == null || frozen.isEmpty) {
+      return const [];
+    }
+    final restored = <({String section, String text})>[];
+    for (final section in longMemorySections) {
+      for (final item in existing.sections[section] ?? const <String>[]) {
+        if (bannedMemoryText(item, frozen) && !bannedMemoryText(item, banned)) {
+          restored.add((section: section, text: item));
+        }
+      }
+    }
+    return restored;
   }
 
   /// PersonaTree 结构的模型输入：活跃根与未归根中间理解，附叶证据
@@ -1364,7 +1399,10 @@ final class DreamService {
     return null;
   }
 
-  /// 自检七关：任一不过返回失败原因码，整份草稿作废。
+  /// 自检六关：任一不过返回失败原因码，整份草稿作废。[restoredItems]
+  /// 是写出前本地拼回的冻结条目：它们不过模型，但相互矛盾关的建模
+  /// 要用它们播种——旧设计里冻结条目由模型逐字带回，本就受该关覆盖，
+  /// 换成本地拼回不该把这份防护也换掉。
   String? _validateDraft({
     required List<DreamItem> items,
     required String draftContent,
@@ -1372,7 +1410,7 @@ final class DreamService {
     required Set<String> validMonths,
     required Set<String> banned,
     required Set<String> frozen,
-    required List<String> frozenRequired,
+    required List<({String section, String text})> restoredItems,
   }) {
     // 结构关：条目数与总量都在预算内；空候选一律拒绝——没有产出就
     // 不接纳，绝不允许一次清空已有的全部长期印象。
@@ -1417,30 +1455,26 @@ final class DreamService {
         return 'banned';
       }
     }
-    // 冻结保留关：被冻结的既有条目必须在候选版中原样出现；缺少任何
-    // 一条都整份作废（旧长期印象不动，冻结绝不因 Dream 失效）。
-    final draftNormalized = {
-      for (final item in items) normalizeMemoryText(item.text),
-    };
-    for (final required in frozenRequired) {
-      if (!draftNormalized.contains(normalizeMemoryText(required))) {
-        return 'frozen';
-      }
-    }
-    // 冻结禁止新增关：冻结停止自动整理——候选版除了原样保留的既有
-    // 冻结条目，绝不允许出现命中冻结范围的新内容。
-    final requiredNormalized = {
-      for (final item in frozenRequired) normalizeMemoryText(item),
-    };
+    // 冻结禁止新增关：冻结停止自动整理。冻结条目全文不进模型输入，
+    // 模型无从逐字带回，其产物命中冻结标题必然是新增，一律整份拒绝。
+    // 冻结条目的保留由写出前的本地拼回保证，不靠这关。
     for (final item in items) {
-      final normalized = normalizeMemoryText(item.text);
-      if (bannedTitleMatches(normalized, frozen) &&
-          !requiredNormalized.contains(normalized)) {
+      if (bannedMemoryText(item.text, frozen)) {
         return 'frozen';
       }
     }
-    // 相互矛盾关：候选版内部同一核心断言一正一反并存。
+    // 相互矛盾关：候选版内部同一核心断言一正一反并存。拼回的冻结条目
+    // 先播种 cores：模型新条目与冻结条目互斥同样整份拒绝。冻结条目
+    // 之间已有的互斥只播种不判负——旧文件里的用户数据不能永久卡死
+    // Dream（同一核心先出现的一条定极性）。
     final cores = <String, bool>{};
+    for (final entry in restoredItems) {
+      final (core, negated) = _coreAndNegation(entry.text);
+      if (core.isEmpty) {
+        continue;
+      }
+      cores.putIfAbsent(core, () => negated);
+    }
     for (final item in items) {
       final (core, negated) = _coreAndNegation(item.text);
       if (core.isEmpty) {
@@ -1486,12 +1520,17 @@ final class DreamService {
   /// [includeDetails] 只在接纳成功（自检各关全部通过）时为 true。被拒或
   /// 待定的草稿可能携带敏感、禁提内容，清单绝不能落盘其原文，只记
   /// 结果码与数量——否则等于把模型吐出的密钥写进记忆目录。
+  ///
+  /// [restoredItems] 是写出前本地拼回的冻结条目（原样来自上一版，
+  /// 不过模型）：「相对上一版」按最终文件内容记账，拼回条目与其
+  /// 余保留条目同格式记在「保留」里，不当成模型候选。
   String _buildChanges(
     ({String today, DreamState previousState, String result}) run,
     _DreamInput input,
     List<DreamItem> items,
     LongMemoryFile? existing, {
     required bool includeDetails,
+    List<({String section, String text})> restoredItems = const [],
     List<_RootOpRecord> rootOps = const [],
   }) {
     final rangeStart = run.previousState.lastSuccess == null
@@ -1527,6 +1566,7 @@ final class DreamService {
     final oldItems = existing?.allItems ?? const <String>[];
     final newNormalized = {
       for (final item in items) normalizeMemoryText(item.text),
+      for (final entry in restoredItems) normalizeMemoryText(entry.text),
     };
     final oldNormalized = {for (final item in oldItems) normalizeMemoryText(item)};
     buffer
@@ -1559,6 +1599,9 @@ final class DreamService {
     buffer.writeln('### 保留');
     for (final item in kept) {
       buffer.writeln('- [${item.section}] ${item.text}');
+    }
+    for (final entry in restoredItems) {
+      buffer.writeln('- [${entry.section}] ${entry.text}');
     }
     buffer.writeln('### 移除');
     for (final item in removed) {
@@ -1638,7 +1681,7 @@ final class DreamService {
 3. 只保留高压缩的生活倾向、持续关注和关系变化：用户现实里的重要的人、值得长期记住的人生事件、经历过的变化与反复出现的主题、双方共同形成的经历；不写产品机制、逐日流水账、一次性任务细节、原话细节或证据链。模式与轨迹按成长线写：一行「时间段＋前后变化」，保持中性；共同过往只收双方真实互动、有整理日期依据的内容，不写单方面印象。
 4. 每条是一行压缩印象，不超过60字，可以带时间词。
 5. 以当前长期印象为基础保守重组：同义的合并，仍有依据的保留，被更新证据推翻的改写；拿不准就不写。
-6. 绝不出现密码、密钥、证件号、银行卡号等敏感内容；绝不触碰禁提清单中的话题；冻结清单命中的现有长期印象必须逐字原样保留。
+6. 绝不出现密码、密钥、证件号、银行卡号等敏感内容；绝不触碰禁提清单中的话题；冻结清单里的话题一律不得写进候选印象。
 7. rootProposals：可选数组，最多8条；递来 PersonaTree 结构时才可提保守的根节点调整，没有把握就不提，节点 ID 必须取自递来的结构，绝不编造：
    - {"op":"promote","branch":"identity|expression|values|preferences|boundaries","claim":"一句不带时间词的稳定主张，不超过60字","middles":["XX-Mnnn"]}：把证据充分的未归根中间理解升为新根；identity 分支只接受明确自述；证据不足的中间理解保持未归根，不强行升根。
    - {"op":"absorb","branch":"…","root":"XX-Rnnn","middles":["XX-Mnnn"]}：把与已有根同主张的未归根中间理解归入该根。
@@ -1714,7 +1757,7 @@ $appellationRule
       for (final title in input.banned) '- $title',
     ]);
     writeList(
-      '## 冻结清单（命中的现有长期印象必须原样保留，不得改写、合并或删除）',
+      '## 冻结清单（已停止自动整理的话题，一律不得写进候选印象）',
       [for (final title in input.frozen) '- $title'],
     );
     return [
@@ -1782,8 +1825,8 @@ final class _DreamInput {
   /// 封禁集合（禁提 ∪ 删除，规范化后）：草稿与根提案都不得触碰。
   final Set<String> banned;
 
-  /// 冻结集合（规范化后）：现有长期印象里命中的条目必须原样保留，
-  /// 命中冻结节点的根提案一律拒绝。
+  /// 冻结集合（规范化后）：长期印象输入过滤与写出前本地拼回的依据，
+  /// 命中冻结标题的模型产物一律拒绝，命中冻结节点的根提案一律拒绝。
   final Set<String> frozen;
 
   /// 本轮实际递给模型的整理日期与月份：证据关的白名单。
