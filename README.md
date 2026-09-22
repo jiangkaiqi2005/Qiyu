@@ -6,6 +6,8 @@
 **语** (yǔ) — to speak, to confide.
 **Qiyu** — someone to talk to, in the moments you come to rest.
 
+You can talk to her about anything — summarize what you did today, confide things you can only say to yourself, and more.
+
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 ---
@@ -26,26 +28,32 @@ Of course, you don't have to wait until bedtime. Chat with her whenever you feel
 - Over time, she teases you about staying up late and digs up last week's stories — but never jokes about what hurts.
 - She never says "I understand how you feel" or "thank you for sharing" — no customer-service scripts.
 
-The conversation arc is a diminuendo: `start → ease in → unfold → the deepest point → lighten → slow down → quiet`. By the end you feel like sleeping. That's the point.
-
 ## Voice: talk to her, hear her talk
 
-When you don't feel like typing before bed, just speak. The two platforms differ slightly:
+When you don't feel like typing before bed, just speak.
 
 - On desktop: click the microphone next to the input box and start talking; click it again when you're done (the button turns into "done, turn into text"), and your words are sent as text.
-- On Android: tap the microphone once to enter voice mode, press and hold the button to speak, and release to send. Changed your mind? Slide up to cancel.
+- On Android: tap the microphone once to enter voice mode, press and hold the button to speak, and release to send. Don't want to send? Slide up to cancel.
 
 Her replies can be read aloud too — tap the speaker icon next to a bubble, or turn on auto-read in Settings.
+
+Text-to-speech is genuinely fun to play with — you can freely adjust the voice tone, speed, dialect, and more. Check the official docs for your chosen TTS model to see what it supports.
+
+We recommend turning on voice readback.
 
 Currently supported speech input:
 
 - **OpenAI-compatible** (Whisper and other transcription services)
 - **Volcengine Seed ASR** (real-time streaming recognition)
+- **Qwen ASR** (Alibaba Cloud DashScope, default model `qwen3-asr-flash`; the newer `qwen-audio-3.0-asr-flash-filetrans` is not yet supported)
+- **Custom service** (bring your own endpoint, with configurable auth and response parsing)
 
 Currently supported text-to-speech:
 
 - **OpenAI-compatible** (OpenAI TTS, SiliconFlow, etc.)
 - **Volcengine seed-tts-2.0** (built-in dialect voice presets, adjustable speed)
+- **Qwen TTS** (Alibaba Cloud DashScope, default model `qwen3-tts-flash`, free-form voice ID; the newer `qwen-audio-3.1-tts-next` is not yet supported)
+- **Custom service** (bring your own endpoint; supports raw bytes, JSON field, or JSON-lines response formats)
 
 You can pick the voice you like: tone, speed, and dialect are all configurable in Settings. The Volcengine option includes presets for Mandarin, Cantonese, Sichuan dialect, Northeastern dialect, and more — see the full [seed-tts-2.0 voice list](https://docs.volcengine.com/docs/6561/1257544).
 
@@ -73,21 +81,21 @@ Every belief requires sufficient evidence to stabilize:
 - Personality and preferences — at least 2 dates, spanning ≥ 7 days
 - Behavioral inferences — at least 3 dates, spanning ≥ 14 days
 
-Just say "you got that wrong," and she retracts it on the spot — she won't argue back with old evidence.
+Just say "you got that wrong," and she retracts the wrong memory on the spot — she won't argue back with old evidence.
 
 ### Five-stage memory rhythm
 
-Memory needs rhythm, not just piling up:
+Memory is organized rhythmically:
 
 1. **Store** — Each conversation turn is appended to local session files
 2. **Note** — After each reply, key facts are extracted into the day's episode summary
 3. **Finalize** — At goodnight or day-change, gaps are filled, state packs and indexes updated
 4. **Compress** — On the first conversation of a new month, last month's episodes are condensed
-5. **Dream** — Triggered after goodnight when ≥ 3 days have passed: deep offline reorganization that distills growth arcs and shared history, adjusts the persona tree, passes four self-checks, and is silently adopted without disturbing you
+5. **Dream** — Triggered after goodnight when ≥ 3 days have passed: deep reorganization that distills growth arcs and shared history, adjusts the persona tree, passes four self-checks, and is silently adopted without disturbing you
 
 ### In-conversation recall
 
-When the conversation touches on the past, the model issues a hidden action (`memory_recall`) to search memory indexes on demand — no permanent context occupation, no scoring, no hard-coded matching.
+When the conversation touches on the past, the model issues a hidden action (`memory_recall`) to search memory indexes on demand and retrieve facts from specific dates. No permanent context occupation, no scoring, no hard-coded matching.
 
 ### User control
 
@@ -124,7 +132,7 @@ Uninstalling is covered below under "Where your data lives, and how to back it u
 
 ## Install (Android)
 
-The Android app carries everything inside your phone: no computer needs to stay on, and conversations, memories, and settings all stay on that phone.
+The Android app carries everything inside your phone. Conversations, memories, and settings all stay on that phone.
 
 1. Download the installer from Qiyu's [releases page](https://github.com/jiangkaiqi2005/Qiyu/releases). The package is split by phone chip architecture, and the file name ends with its architecture: most phones want `arm64-v8a`; a few older phones want `armeabi-v7a`; `x86_64` is generally only for emulators on a computer. The wrong one simply won't install — pick the matching file and try again.
 2. Open the file on your phone (or download it directly on the phone). When the system warns about "unknown sources" or asks whether to allow the installation, allow it.
