@@ -47,6 +47,7 @@ final class EpisodeEntry {
     this.proactive,
     this.note,
     this.signal,
+    this.keep,
     this.userEdited = false,
   });
 
@@ -64,6 +65,8 @@ final class EpisodeEntry {
     proactive: json['proactive'] as String?,
     note: json['note'] as String?,
     signal: json['signal'] as String?,
+    // 旧日文件没有该字段：按未标记解析，月压缩不收。
+    keep: json['keep'] as String?,
     userEdited: json['userEdited'] as bool? ?? false,
   );
 
@@ -94,6 +97,11 @@ final class EpisodeEntry {
   /// boundary_close），日终据此更新 relationship.md 的阶段与温度。
   final String? signal;
 
+  /// 月压缩候选标记（Memory.md 月压缩定稿）：条目创建时由模型标注，
+  /// 只收 [memorySignalKeepMonth] 一个取值——标了的条目才进当月
+  /// 月摘要，没标的不进。旧文件没有该字段，按未标记处理。
+  final String? keep;
+
   /// 用户在记忆中心修正过（ticket 20）：摘要按用户声明保存，原始
   /// 摘录随即移除——修正文本绝不伪装成原始会话证据；sessions 原文
   /// 不受影响。
@@ -113,6 +121,7 @@ final class EpisodeEntry {
     if (proactive != null) 'proactive': proactive,
     if (note != null) 'note': note,
     if (signal != null) 'signal': signal,
+    if (keep != null) 'keep': keep,
     if (userEdited) 'userEdited': true,
   };
 
@@ -133,6 +142,7 @@ final class EpisodeEntry {
     proactive: proactive,
     note: note == null ? null : redactSessionText(note!),
     signal: signal,
+    keep: keep,
     userEdited: userEdited,
   );
 }
@@ -539,6 +549,8 @@ final class EpisodeMemoryPipeline {
         at: _clock().toUtc(),
         personaBranch: action.hint?.branch.wireName,
         personaNature: action.hint?.nature.wireName,
+        // 月压缩候选标记原样落盘：月摘要只收当时标了 keep: month 的条目。
+        keep: action.keep,
       ),
       OpenLoopCandidateAction() => EpisodeEntry(
         id: id,
@@ -551,6 +563,8 @@ final class EpisodeMemoryPipeline {
         due: action.due,
         proactive: action.proactive?.wireName,
         note: redacted(action.note),
+        // 整月未闭环也值得进月摘要的候选才标；未标记不进月文件。
+        keep: action.keep,
       ),
       OpenLoopStatusAction() => EpisodeEntry(
         id: id,
@@ -590,6 +604,8 @@ final class EpisodeMemoryPipeline {
         at: _clock().toUtc(),
         kind: episodeKindRelationshipSignal,
         signal: action.signal.wireName,
+        // 体现关系阶段明显变化、值得进月摘要的信号才标；未标记不进。
+        keep: action.keep,
       ),
       // 检索请求与「没有动作」都不落 episode 条目。
       MemoryRecallAction() || NoAction() => null,

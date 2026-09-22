@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
@@ -84,6 +85,93 @@ void main() {
       expect(diagnostics.join('\n'), contains('identity hint must be self_report'));
     });
 
+    test('episode entry keep marks are whitelist-validated', () {
+      final diagnostics = <String>[];
+      final understanding = parseDayUnderstanding(
+        jsonEncode({
+          'episode_entries': [
+            {
+              'request_id': 'r1',
+              'summary': '用户认定长期记忆只放长远的事',
+              'keep': 'month',
+            },
+            {'request_id': 'r2', 'summary': '用户晚饭吃了小馄饨'},
+            {
+              'request_id': 'r3',
+              'summary': '用户喜欢爬山',
+              'keep': 'day',
+            },
+            {
+              'request_id': 'r4',
+              'summary': '用户提到了旧书店',
+              'keep': 7,
+            },
+          ],
+          'covered_request_ids': ['r1', 'r2', 'r3', 'r4'],
+        }),
+        bannedTitles: const {},
+        diagnosticsSink: diagnostics.add,
+      );
+
+      expect(understanding!.episodeEntries, hasLength(4));
+      expect(understanding.episodeEntries[0].keep, memorySignalKeepMonth);
+      // 没标 keep 的条目按未标记落盘，月压缩不收。
+      expect(understanding.episodeEntries[1].keep, isNull);
+      // 白名单外取值按字段丢弃并记诊断，条目本身保留。
+      expect(understanding.episodeEntries[2].keep, isNull);
+      // 非字符串取值与字段缺失同效：不记诊断。
+      expect(understanding.episodeEntries[3].keep, isNull);
+      expect(
+        diagnostics.where((line) => line.contains('keep')),
+        hasLength(1),
+      );
+    });
+
+    test('loop candidate and relationship signal keep marks are validated', () {
+      final diagnostics = <String>[];
+      final understanding = parseDayUnderstanding(
+        jsonEncode({
+          'loop_candidates': [
+            {'title': '租房事宜', 'keep': 'month'},
+            {'title': '普通待办', 'keep': 'day'},
+          ],
+          'relationship_signals': [
+            {'signal': 'deep_talk', 'summary': '用户聊到家庭', 'keep': 'month'},
+          ],
+        }),
+        bannedTitles: const {},
+        diagnosticsSink: diagnostics.add,
+      );
+
+      expect(understanding!.loopCandidates, hasLength(2));
+      expect(understanding.loopCandidates[0].keep, memorySignalKeepMonth);
+      // 白名单外取值按字段丢弃并记诊断，候选本身保留。
+      expect(understanding.loopCandidates[1].keep, isNull);
+      expect(understanding.relationshipSignals, hasLength(1));
+      expect(understanding.relationshipSignals[0].keep, memorySignalKeepMonth);
+      expect(
+        diagnostics.where((line) => line.contains('keep')),
+        hasLength(1),
+      );
+
+      // 关系信号的越界 keep 同样只丢字段，信号保留。
+      final signalDiagnostics = <String>[];
+      final signal = parseDayUnderstanding(
+        jsonEncode({
+          'relationship_signals': [
+            {'signal': 'temperature', 'summary': '今晚话少', 'keep': 'week'},
+          ],
+        }),
+        bannedTitles: const {},
+        diagnosticsSink: signalDiagnostics.add,
+      );
+      expect(signal!.relationshipSignals.single.keep, isNull);
+      expect(
+        signalDiagnostics.where((line) => line.contains('keep')),
+        hasLength(1),
+      );
+    });
+
     test('banned titles never enter any field', () {
       final understanding = parseDayUnderstanding(
         jsonEncode({
@@ -136,11 +224,21 @@ void main() {
         summary: '用户完成了演讲',
         mood: '放松',
         loopCandidates: const [
-          (title: '演讲复盘', due: null, proactive: 'once', note: null),
+          (
+            title: '演讲复盘',
+            due: null,
+            proactive: 'once',
+            note: null,
+            keep: memorySignalKeepMonth,
+          ),
         ],
         loopClosures: const [(title: '搬家打包', result: '已完成')],
         relationshipSignals: const [
-          (signal: 'deep_talk', summary: '用户聊到家庭'),
+          (
+            signal: 'deep_talk',
+            summary: '用户聊到家庭',
+            keep: memorySignalKeepMonth,
+          ),
         ],
         indexKeywords: const ['演讲'],
         personaHints: const [
@@ -152,6 +250,10 @@ void main() {
       expect(restored.summary, original.summary);
       expect(restored.mood, original.mood);
       expect(restored.loopCandidates.single.title, '演讲复盘');
+      // keep 随理解一起持久化：重建路径（relationship_lifecycle）与
+      // 复用路径都按同一口径还原月层资格。
+      expect(restored.loopCandidates.single.keep, memorySignalKeepMonth);
+      expect(restored.relationshipSignals.single.keep, memorySignalKeepMonth);
       expect(restored.loopClosures.single.result, '已完成');
       expect(restored.relationshipSignals.single.signal, 'deep_talk');
       expect(restored.indexKeywords, ['演讲']);
@@ -245,6 +347,71 @@ void main() {
   });
 
   group('end-of-day finalization with a model understanding call', () {
+    test('the understanding prompt teaches the month keep mark', () async {
+      final client = _FakeUnderstandingClient(reply: '{}');
+      await fetchDayUnderstanding(
+        client: client,
+        date: '2026-08-20',
+        entries: const [],
+        openLoops: '# open-loops\n',
+        relationship: '# relationship\n',
+        dailyState: '# daily-state\n',
+        bannedTitles: const {},
+        diagnosticsSink: (_) {},
+      );
+      final system = client.lastMessages!.first.content;
+      // 三类模型产出条目都教何时标 keep: month；日常琐事不标。
+      expect(system, contains('"keep": 可选的 "month"'));
+      expect(system, contains('不要标 keep'));
+      // 未闭环整月值得进月压缩的候选才标。
+      expect(system, contains('loop_candidates'));
+      expect(system, contains('relationship_signals'));
+    });
+
+    test('model keep marks persist with the understanding metadata', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-understand-');
+      addTearDown(() => root.delete(recursive: true));
+      DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: root.path,
+        clock: clock,
+      );
+      await _seedDay(pipeline, '2026-08-14', [
+        _entry('s1:r1:0', '用户完成了第一次演讲'),
+      ]);
+      final client = _FakeUnderstandingClient(
+        reply: jsonEncode({
+          'summary': '用户完成了第一次演讲',
+          'loop_candidates': [
+            {'title': '租房事宜', 'keep': 'month'},
+            {'title': '买牛奶'},
+          ],
+          'relationship_signals': [
+            {'signal': 'deep_talk', 'summary': '用户聊到家庭', 'keep': 'month'},
+          ],
+        }),
+      );
+      final service = DailyFinalizationService(
+        memoryDirectory: root.path,
+        episodePipeline: pipeline,
+        clock: clock,
+        modelClient: client,
+        diagnosticsSink: (_) {},
+      );
+
+      final outcome = await service.finalizeDay('2026-08-14');
+
+      expect(outcome.status, FinalizationStatus.finalized);
+      // keep 随理解元数据持久化：relationship_lifecycle 的每日重建与
+      // 理解复用都按同一口径还原月层资格。
+      final understanding = (await pipeline.readDay('2026-08-14')).understanding;
+      final candidates = understanding!['loopCandidates'] as List<Object?>;
+      expect((candidates[0] as Map<String, Object?>)['keep'], 'month');
+      expect((candidates[1] as Map<String, Object?>).containsKey('keep'), isFalse);
+      final signals = understanding['relationshipSignals'] as List<Object?>;
+      expect((signals.single as Map<String, Object?>)['keep'], 'month');
+    });
+
     test('model materials flow through every existing gate', () async {
       final root = await Directory.systemTemp.createTemp('qiyu-understand-');
       addTearDown(() => root.delete(recursive: true));

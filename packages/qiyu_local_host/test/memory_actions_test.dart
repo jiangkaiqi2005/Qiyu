@@ -1367,6 +1367,7 @@ void main() {
                 due: null,
                 proactive: 'no',
                 note: null,
+                keep: null,
               ),
             ],
           ).toJson(),

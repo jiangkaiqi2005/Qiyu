@@ -68,6 +68,16 @@ const maxHiddenActionsPerReply = 2;
 const maxHiddenSummaryRunes = 120;
 const maxHiddenEvidenceRunes = 200;
 
+/// memory_signal 的 keep 取值白名单（Memory.md 月压缩定稿）：只收
+/// 'month'，标记本条值得进入月压缩候选，月摘要只收当时标了的条目。
+/// 笔记里 keep 的其余取值不经这个字段生效：当天保留是 episode 的
+/// 默认行为，open-loop 与 relationship 提升由各自的隐藏动作和日终
+/// 流程承担，长期印象候选由 Dream 从证据识别，不记录由
+/// memory_forget / memory_ban 承担。白名单外取值按字段丢弃并记
+/// invalidFields，记忆信号本身保留。
+const memorySignalKeepMonth = 'month';
+const _memorySignalKeepWhitelist = {memorySignalKeepMonth};
+
 /// memory_recall 的检索意图长度上限（runes）。
 const maxHiddenQueryRunes = 100;
 
@@ -246,13 +256,22 @@ sealed class HiddenAction {
 }
 
 /// memory_signal：值得记下的事实。summary 必填；evidence 可选；
-/// 画像提示成对可选。
+/// 画像提示成对可选；keep 可选（白名单只收 'month'）。
 final class MemorySignalAction extends HiddenAction {
-  const MemorySignalAction({required this.summary, this.evidence, this.hint});
+  const MemorySignalAction({
+    required this.summary,
+    this.evidence,
+    this.hint,
+    this.keep,
+  });
 
   final String summary;
   final String? evidence;
   final PersonaHint? hint;
+
+  /// 月压缩候选标记（[memorySignalKeepMonth]）：模型认为本条值得
+  /// 进入月摘要时标注；未标记（null）的条目不进月文件。
+  final String? keep;
 
   @override
   HiddenActionKind get kind => HiddenActionKind.memorySignal;
@@ -264,6 +283,7 @@ final class MemorySignalAction extends HiddenAction {
     if (evidence != null) 'evidence': evidence,
     if (hint != null) 'branch': hint!.branch.wireName,
     if (hint != null) 'nature': hint!.nature.wireName,
+    if (keep != null) 'keep': keep,
   };
 
   @override
@@ -271,10 +291,11 @@ final class MemorySignalAction extends HiddenAction {
       other is MemorySignalAction &&
       other.summary == summary &&
       other.evidence == evidence &&
-      other.hint == hint;
+      other.hint == hint &&
+      other.keep == keep;
 
   @override
-  int get hashCode => Object.hash(summary, evidence, hint);
+  int get hashCode => Object.hash(summary, evidence, hint, keep);
 }
 
 /// memory_recall：轮内查找。聊天轮只带 query；选择调用的回应才带
@@ -346,6 +367,7 @@ final class OpenLoopCandidateAction extends HiddenAction {
     this.due,
     this.proactive,
     this.note,
+    this.keep,
   });
 
   final String title;
@@ -358,6 +380,10 @@ final class OpenLoopCandidateAction extends HiddenAction {
   /// 跟进时需要知道的背景。
   final String? note;
 
+  /// 月压缩候选标记（[memorySignalKeepMonth]）：整月未闭环也值得进
+  /// 月摘要「仍未解决的线索」时标注；未标记的候选不进月文件。
+  final String? keep;
+
   @override
   HiddenActionKind get kind => HiddenActionKind.openLoopCandidate;
 
@@ -369,6 +395,7 @@ final class OpenLoopCandidateAction extends HiddenAction {
     if (due != null) 'due': due,
     if (proactive != null) 'proactive': proactive!.wireName,
     if (note != null) 'note': note,
+    if (keep != null) 'keep': keep,
   };
 
   @override
@@ -378,10 +405,11 @@ final class OpenLoopCandidateAction extends HiddenAction {
       other.evidence == evidence &&
       other.due == due &&
       other.proactive == proactive &&
-      other.note == note;
+      other.note == note &&
+      other.keep == keep;
 
   @override
-  int get hashCode => Object.hash(title, evidence, due, proactive, note);
+  int get hashCode => Object.hash(title, evidence, due, proactive, note, keep);
 }
 
 /// open_loop_status：事项闭环、暂缓或重新活跃。
@@ -488,11 +516,16 @@ final class RelationshipSignalAction extends HiddenAction {
     required this.summary,
     required this.signal,
     this.evidence,
+    this.keep,
   });
 
   final String summary;
   final RelationshipSignal signal;
   final String? evidence;
+
+  /// 月压缩候选标记（[memorySignalKeepMonth]）：体现关系阶段明显
+  /// 变化、值得进月摘要「关系变化」时标注；未标记的信号不进月文件。
+  final String? keep;
 
   @override
   HiddenActionKind get kind => HiddenActionKind.relationshipSignal;
@@ -503,6 +536,7 @@ final class RelationshipSignalAction extends HiddenAction {
     'summary': summary,
     if (evidence != null) 'evidence': evidence,
     'signal': signal.wireName,
+    if (keep != null) 'keep': keep,
   };
 
   @override
@@ -510,10 +544,11 @@ final class RelationshipSignalAction extends HiddenAction {
       other is RelationshipSignalAction &&
       other.summary == summary &&
       other.signal == signal &&
-      other.evidence == evidence;
+      other.evidence == evidence &&
+      other.keep == keep;
 
   @override
-  int get hashCode => Object.hash(summary, signal, evidence);
+  int get hashCode => Object.hash(summary, signal, evidence, keep);
 }
 
 final _hiddenActionBlock = RegExp(
@@ -768,11 +803,29 @@ HiddenAction? _validateMemorySignal(
       diagnostics.add(HiddenActionDiagnostics.personaHintDropped);
     }
   }
+  // keep 同理按字段丢弃：白名单外取值不改变月压缩资格（未标记），
+  // 只记诊断；记忆信号本身保留。
   return MemorySignalAction(
     summary: summary,
     evidence: evidence.value,
     hint: hint,
+    keep: _parseKeep(item['keep'], diagnostics),
   );
+}
+
+/// keep 字段的统一解析（memory_signal / open_loop_candidate /
+/// relationship_signal 三类模型产出条目共用）：白名单外取值按字段
+/// 丢弃并记 invalidFields，动作本身保留。
+String? _parseKeep(Object? value, List<String> diagnostics) {
+  final keep = _cleanFieldValue(value);
+  if (keep == null) {
+    return null;
+  }
+  if (_memorySignalKeepWhitelist.contains(keep)) {
+    return keep;
+  }
+  diagnostics.add(HiddenActionDiagnostics.invalidFields);
+  return null;
 }
 
 HiddenAction? _validateMemoryRecall(
@@ -867,6 +920,7 @@ HiddenAction? _validateOpenLoopCandidate(
     due: due,
     proactive: typedProactive,
     note: note.value,
+    keep: _parseKeep(item['keep'], diagnostics),
   );
 }
 
@@ -956,6 +1010,7 @@ HiddenAction? _validateRelationshipSignal(
     summary: summary,
     signal: typedSignal,
     evidence: evidence.value,
+    keep: _parseKeep(item['keep'], diagnostics),
   );
 }
 

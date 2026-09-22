@@ -925,6 +925,8 @@ since: 2026-08-01
                     requestId: 'seed',
                     summary: '用户在青岛工作',
                     at: DateTime(2026, 7, 5, 21).toUtc(),
+                    // 月摘要只收标了 keep: month 的条目。
+                    keep: memorySignalKeepMonth,
                   ),
                 ],
                 summary: '用户在青岛工作',

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
@@ -934,6 +935,8 @@ void main() {
         pipeline,
         '$monthKey-05',
         '$monthKey 的月度材料',
+        // 月摘要只收标了 keep: month 的条目：这里标记后各月才有月材料。
+        keep: memorySignalKeepMonth,
       );
       await compressor.compressMonth(monthKey);
     }
@@ -1779,7 +1782,13 @@ void main() {
       memoryDirectory: directory.path,
       clock: () => now,
     );
-    await _seedFinalizedDay(pipeline, '2026-07-30', '七月底的材料');
+    await _seedFinalizedDay(
+      pipeline,
+      '2026-07-30',
+      '七月底的材料',
+      // 标了 keep: month，2026-07 月摘要才有条目，该月才可作月份引用。
+      keep: memorySignalKeepMonth,
+    );
     await _seedFinalizedDay(pipeline, '2026-08-14', '用户聊了工作');
     await _seedFinalizedDay(pipeline, '2026-08-15', '用户聊了周末');
     final compressor = MonthlySummaryStore(
@@ -2409,8 +2418,9 @@ void _seedPersonaBranch(
 Future<void> _seedFinalizedDay(
   EpisodeMemoryPipeline pipeline,
   String date,
-  String summary,
-) => pipeline.synchronizedOnDayFiles(
+  String summary, {
+  String? keep,
+}) => pipeline.synchronizedOnDayFiles(
   () => pipeline.writeFinalization(
     date,
     entries: [
@@ -2420,6 +2430,7 @@ Future<void> _seedFinalizedDay(
         requestId: 'seed',
         summary: summary,
         at: DateTime.parse('${date}T21:00:00').toUtc(),
+        keep: keep,
       ),
     ],
     summary: summary,

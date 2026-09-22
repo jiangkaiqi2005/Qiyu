@@ -148,8 +148,40 @@ void main() {
         '"status":"closed","result":"用户说演讲很顺利"}',
       );
       expect(
+        jsonEncode(
+          const OpenLoopCandidateAction(
+            title: '租房事宜',
+            keep: memorySignalKeepMonth,
+          ).toJson(),
+        ),
+        '{"action":"open_loop_candidate","summary":"租房事宜","keep":"month"}',
+      );
+      expect(
+        jsonEncode(
+          const RelationshipSignalAction(
+            summary: '用户近期愿意聊到更深的家庭关系',
+            signal: RelationshipSignal.deepTalk,
+            keep: memorySignalKeepMonth,
+          ).toJson(),
+        ),
+        '{"action":"relationship_signal",'
+        '"summary":"用户近期愿意聊到更深的家庭关系",'
+        '"signal":"deep_talk","keep":"month"}',
+      );
+      expect(
         jsonEncode(const MemoryBanAction(title: '医院检查').toJson()),
         '{"action":"memory_ban","summary":"医院检查"}',
+      );
+      expect(
+        jsonEncode(
+          const MemorySignalAction(
+            summary: '用户认定长期记忆只放极度压缩的人生记忆',
+            keep: memorySignalKeepMonth,
+          ).toJson(),
+        ),
+        '{"action":"memory_signal",'
+        '"summary":"用户认定长期记忆只放极度压缩的人生记忆",'
+        '"keep":"month"}',
       );
       expect(
         jsonEncode(
@@ -229,6 +261,65 @@ void main() {
             nature: PersonaNature.behavior,
           ),
         ),
+      );
+      // keep 参与相等性：标没标月压缩候选是两条不同的记忆。
+      expect(
+        const MemorySignalAction(summary: '猫', keep: memorySignalKeepMonth),
+        isNot(const MemorySignalAction(summary: '猫')),
+      );
+      expect(
+        const MemorySignalAction(summary: '猫', keep: memorySignalKeepMonth),
+        const MemorySignalAction(summary: '猫', keep: memorySignalKeepMonth),
+      );
+      expect(
+        const MemorySignalAction(
+          summary: '猫',
+          keep: memorySignalKeepMonth,
+        ).hashCode,
+        const MemorySignalAction(
+          summary: '猫',
+          keep: memorySignalKeepMonth,
+        ).hashCode,
+      );
+      // 两类生命周期动作的 keep 同样参与相等性。
+      expect(
+        const OpenLoopCandidateAction(title: '租房事宜', keep: memorySignalKeepMonth),
+        isNot(const OpenLoopCandidateAction(title: '租房事宜')),
+      );
+      expect(
+        const OpenLoopCandidateAction(
+          title: '租房事宜',
+          keep: memorySignalKeepMonth,
+        ).hashCode,
+        const OpenLoopCandidateAction(
+          title: '租房事宜',
+          keep: memorySignalKeepMonth,
+        ).hashCode,
+      );
+      expect(
+        const RelationshipSignalAction(
+          summary: '用户近期愿意聊家庭',
+          signal: RelationshipSignal.deepTalk,
+          keep: memorySignalKeepMonth,
+        ),
+        isNot(
+          const RelationshipSignalAction(
+            summary: '用户近期愿意聊家庭',
+            signal: RelationshipSignal.deepTalk,
+          ),
+        ),
+      );
+      expect(
+        const RelationshipSignalAction(
+          summary: '用户近期愿意聊家庭',
+          signal: RelationshipSignal.deepTalk,
+          keep: memorySignalKeepMonth,
+        ).hashCode,
+        const RelationshipSignalAction(
+          summary: '用户近期愿意聊家庭',
+          signal: RelationshipSignal.deepTalk,
+          keep: memorySignalKeepMonth,
+        ).hashCode,
       );
     });
   });

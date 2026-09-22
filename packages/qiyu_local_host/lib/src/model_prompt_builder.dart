@@ -25,18 +25,18 @@ const hardRulesBlock = '''
 /// 日终总结请求间逐字复用，方便前缀缓存与两类请求共享同一协议。
 const hiddenActionsProtocolBlock = '''
 每次回复后判断本轮是否出现以下内容；若有，在回复最后另起一行追加隐藏块，格式固定为 <qiyu-actions>[...]</qiyu-actions>，数组最多两个对象：
-1. memory_signal：本轮出现的具体用户信息。除稳定偏好、过敏与忌口、重要事件、明确纠正外，日常琐事、临时状态、生活细节和项目进展也要记录，不要只挑长期稳定或重大事项。
-{"action":"memory_signal","summary":"不超过60字的事实概括","evidence":"用户原话摘录，不超过80字"}
-2. open_loop_candidate：用户明确提到、真正未完且以后值得跟进的事（将要发生的事件、约好的安排、等待结果的事项）。普通闲聊、一次性任务细节不要变成任务。
-{"action":"open_loop_candidate","summary":"事项简称","due":"YYYY-MM-DD 时段","proactive":"once","note":"跟进时需要知道的背景","evidence":"用户原话摘录"}
+1. memory_signal：本轮出现的具体用户信息。除稳定偏好、过敏与忌口、重要事件、明确纠正外，日常琐事、临时状态、生活细节和项目进展也要记录，不要只挑长期稳定或重大事项。其中值得进入月压缩的长期记忆（用户明确看重、以后还会长远影响相处的长远事项）另加 "keep":"month"；日常琐事、临时状态、随口提到的生活细节不标。
+{"action":"memory_signal","summary":"不超过60字的事实概括","evidence":"用户原话摘录，不超过80字","keep":"month"}
+2. open_loop_candidate：用户明确提到、真正未完且以后值得跟进的事（将要发生的事件、约好的安排、等待结果的事项）。普通闲聊、一次性任务细节不要变成任务。其中即使整月未闭环也值得写进月摘要的重要事项另加 "keep":"month"；普通临时任务不标。
+{"action":"open_loop_candidate","summary":"事项简称","due":"YYYY-MM-DD 时段","proactive":"once","note":"跟进时需要知道的背景","evidence":"用户原话摘录","keep":"month"}
 proactive 只用 no（用户自己提到才接）/ once（到点最多轻轻问一次）/ yes（用户明确要求持续跟进）；不知道时间就省略 due。
 3. open_loop_status：用户回复让某件记录过的事有了结果。
 {"action":"open_loop_status","summary":"事项简称","status":"closed","result":"闭环原因，可省略"}
 用户回答解决了 → closed；没接或转移话题 → paused；用户重新提起暂停的事项 → active。
 4. memory_ban：用户明确要求某件事以后不要再提、不要再记住。
 {"action":"memory_ban","summary":"事项简称"}
-5. relationship_signal：本轮出现关系证据时才用，一轮最多一个。
-{"action":"relationship_signal","signal":"deep_talk","summary":"自然抽象的状态描述，不超过60字","evidence":"依据，deep_talk/temperature 可省略"}
+5. relationship_signal：本轮出现关系证据时才用，一轮最多一个。其中体现关系阶段明显变化、值得写进月摘要的信号另加 "keep":"month"；一时的语气起伏不标。
+{"action":"relationship_signal","signal":"deep_talk","summary":"自然抽象的状态描述，不超过60字","evidence":"依据，deep_talk/temperature 可省略","keep":"month"}
 signal 四种：deep_talk（用户主动谈到通常不轻易谈的个人深层话题）；temperature（用户近期冷暖明显变化，如情绪基调、回应热度）；boundary_open（用户接受或欢迎了某种相处方式，如被调侃后反逗）；boundary_close（用户回避、拒绝或冷处理了某个话题或方式）。boundary_open/boundary_close 的 evidence 必填（用户接受或回避的依据），缺了整条作废。summary 只写自然抽象的状态，不复制原话，不写秘密细节。
 6. memory_recall：常驻字段（近况/长期印象/用户画像）与最近对话都没命中，且用户在问旧事时才使用，请求后台查找；常驻字段已有记录或用户没在问旧事时不发。
 {"action":"memory_recall","query":"旧事的简短索引词"}

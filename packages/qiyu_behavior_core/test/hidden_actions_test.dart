@@ -399,6 +399,60 @@ void main() {
     );
   });
 
+  test('open-loop candidates and relationship signals may carry the keep mark', () {
+    // 月压缩定稿：这两类模型产出条目同样在创建时由模型标注 keep，
+    // 标了才进月文件对应分区（未闭环线索 / 关系变化）。
+    final candidate = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate",'
+      '"summary":"整月未闭环的租房事宜","keep":"month"}]</qiyu-actions>',
+    );
+    expect(candidate.actions, hasLength(1));
+    expect(
+      (candidate.actions.single as OpenLoopCandidateAction).keep,
+      memorySignalKeepMonth,
+    );
+    expect(candidate.diagnostics, isEmpty);
+
+    final signal = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"signal":"deep_talk","summary":"用户近期愿意聊到更深的家庭关系",'
+      '"keep":"month"}]</qiyu-actions>',
+    );
+    expect(signal.actions, hasLength(1));
+    expect(
+      (signal.actions.single as RelationshipSignalAction).keep,
+      memorySignalKeepMonth,
+    );
+    expect(signal.diagnostics, isEmpty);
+  });
+
+  test('keep values outside the whitelist are dropped on lifecycle actions', () {
+    final candidate = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate",'
+      '"summary":"普通待办","keep":"day"}]</qiyu-actions>',
+    );
+    expect(candidate.actions, hasLength(1));
+    expect((candidate.actions.single as OpenLoopCandidateAction).keep, isNull);
+    expect(candidate.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+
+    final signal = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"signal":"temperature","summary":"今晚话少","keep":"week"}]'
+      '</qiyu-actions>',
+    );
+    expect(signal.actions, hasLength(1));
+    expect((signal.actions.single as RelationshipSignalAction).keep, isNull);
+    expect(signal.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+
+    // 没有 keep 字段时不产生诊断。
+    final plain = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate","summary":"普通待办"}]'
+      '</qiyu-actions>',
+    );
+    expect((plain.actions.single as OpenLoopCandidateAction).keep, isNull);
+    expect(plain.diagnostics, isEmpty);
+  });
+
   test('a relationship signal keeps its whitelisted signal type', () {
     final parse = parseHiddenActions('''嗯，我在。
 <qiyu-actions>
@@ -538,6 +592,53 @@ void main() {
     );
     expect((noHint.actions.single as MemorySignalAction).hint, isNull);
     expect(noHint.diagnostics, isEmpty);
+  });
+
+  test('a memory signal may carry the month keep mark', () {
+    // 月压缩定稿（Memory.md）：只收当时标了 keep: month 的条目。
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal",'
+      '"summary":"用户认定长期记忆只放极度压缩的人生记忆","keep":"month"}]'
+      '</qiyu-actions>',
+    );
+
+    expect(parse.actions, hasLength(1));
+    final signal = parse.actions.single as MemorySignalAction;
+    expect(signal.keep, memorySignalKeepMonth);
+    expect(parse.diagnostics, isEmpty);
+  });
+
+  test('keep values outside the whitelist are dropped, signal survives', () {
+    // 白名单外取值（含笔记里其余 keep 值的字面量）按字段丢弃并记诊断，
+    // 记忆信号本身保留：那些流向由 kind、提升流程与 memory_ban 各自
+    // 承担，不走 keep 字段。
+    for (final value in ['day', 'open-loop', 'relationship', 'week', 'MONTH']) {
+      final parse = parseHiddenActions(
+        '<qiyu-actions>[{"action":"memory_signal",'
+        '"summary":"用户喜欢爬山","keep":${_json(value)}}]</qiyu-actions>',
+      );
+      expect(parse.actions, hasLength(1));
+      expect((parse.actions.single as MemorySignalAction).keep, isNull);
+      expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+    }
+
+    // 非字符串取值与字段缺失同效：按未标记处理，不记诊断（与画像
+    // 提示、proactive 等可选枚举字段的口径一致）。
+    final numeric = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal",'
+      '"summary":"用户喜欢爬山","keep":5}]</qiyu-actions>',
+    );
+    expect(numeric.actions, hasLength(1));
+    expect((numeric.actions.single as MemorySignalAction).keep, isNull);
+    expect(numeric.diagnostics, isEmpty);
+
+    // 没有 keep 字段时不产生诊断。
+    final absent = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢爬山"}]'
+      '</qiyu-actions>',
+    );
+    expect((absent.actions.single as MemorySignalAction).keep, isNull);
+    expect(absent.diagnostics, isEmpty);
   });
 
   test('secrets and privilege never enter relationship signals', () {

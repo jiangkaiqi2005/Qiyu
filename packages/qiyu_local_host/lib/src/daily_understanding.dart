@@ -49,19 +49,25 @@ const _understandingSignalWhitelist = {
 /// 画像来源性质白名单。
 const _understandingNatureWhitelist = {'self_report', 'behavior'};
 
+/// episode 条目的 keep 取值白名单（与隐藏动作协议同一套取值）：
+/// 只收 month——本条值得进入月压缩候选；其余记忆流向由 kind、提升
+/// 流程与 memory_ban 承担，不经这个字段。
+const _understandingKeepWhitelist = {memorySignalKeepMonth};
+
 /// 待跟进候选（白名单校验后）。
 typedef UnderstandingLoopCandidate = ({
   String title,
   String? due,
   String? proactive,
   String? note,
+  String? keep,
 });
 
 /// 闭环判断（白名单校验后）。
 typedef UnderstandingLoopClosure = ({String title, String? result});
 
 /// 关系信号（白名单校验后）。
-typedef UnderstandingSignal = ({String signal, String summary});
+typedef UnderstandingSignal = ({String signal, String summary, String? keep});
 
 /// 画像候选提示（白名单校验后）。
 typedef UnderstandingPersonaHint = ({
@@ -76,6 +82,7 @@ typedef UnderstandingEpisodeEntry = ({
   String requestId,
   String summary,
   String? evidence,
+  String? keep,
 });
 
 /// 日终一次模型理解调用的产出（Memory.md 日终归档定稿 2026-08-16）。
@@ -161,6 +168,7 @@ final class DayUnderstanding {
               due: _dropBanned(candidate.due, bannedTitles),
               proactive: candidate.proactive,
               note: _dropBanned(candidate.note, bannedTitles),
+              keep: candidate.keep,
             ),
       ],
       loopClosures: [
@@ -173,6 +181,13 @@ final class DayUnderstanding {
       ],
       relationshipSignals: relationshipSignals
           .where((signal) => !hit(signal.summary))
+          .map(
+            (signal) => (
+              signal: signal.signal,
+              summary: signal.summary,
+              keep: signal.keep,
+            ),
+          )
           .toList(),
       indexKeywords: indexKeywords.where((keyword) => !hit(keyword)).toList(),
       personaHints: personaHints.where((hint) => !hit(hint.summary)).toList(),
@@ -183,6 +198,7 @@ final class DayUnderstanding {
               requestId: entry.requestId,
               summary: entry.summary,
               evidence: _dropBanned(entry.evidence, bannedTitles),
+              keep: entry.keep,
             ),
           )
           .toList(),
@@ -203,6 +219,7 @@ final class DayUnderstanding {
             if (candidate.due != null) 'due': candidate.due,
             if (candidate.proactive != null) 'proactive': candidate.proactive,
             if (candidate.note != null) 'note': candidate.note,
+            if (candidate.keep != null) 'keep': candidate.keep,
           },
       ],
     if (loopClosures.isNotEmpty)
@@ -216,7 +233,11 @@ final class DayUnderstanding {
     if (relationshipSignals.isNotEmpty)
       'relationshipSignals': [
         for (final signal in relationshipSignals)
-          {'signal': signal.signal, 'summary': signal.summary},
+          {
+            'signal': signal.signal,
+            'summary': signal.summary,
+            if (signal.keep != null) 'keep': signal.keep,
+          },
       ],
     if (indexKeywords.isNotEmpty) 'indexKeywords': indexKeywords,
     if (personaHints.isNotEmpty)
@@ -268,6 +289,7 @@ final class DayUnderstanding {
             ? proactive
             : null,
         note: _clipText(item['note'], understandingNoteMaxRunes),
+        keep: _persistedKeep(item['keep']),
       ));
     }
     final closures = <UnderstandingLoopClosure>[];
@@ -290,7 +312,11 @@ final class DayUnderstanding {
           summary == null) {
         continue;
       }
-      signals.add((signal: signal, summary: summary));
+      signals.add((
+        signal: signal,
+        summary: summary,
+        keep: _persistedKeep(item['keep']),
+      ));
     }
     final keywords = <String>[];
     final keywordValue = json['indexKeywords'];
@@ -346,6 +372,31 @@ String? _clipText(Object? value, int maxRunes) {
     return null;
   }
   return clipRunes(cleaned, maxRunes);
+}
+
+/// 持久化 keep 的保守还原：只认白名单内的字符串，其余（缺失、非
+/// 字符串、越界值）一律按未标记处理。
+String? _persistedKeep(Object? value) =>
+    value is String && _understandingKeepWhitelist.contains(value)
+    ? value
+    : null;
+
+/// keep 字段的统一解析（episode_entries / loop_candidates /
+/// relationship_signals 三类模型产出条目共用）：白名单外取值按字段
+/// 丢弃并记诊断，条目本身保留。
+String? _parseUnderstandingKeep(
+  Object? value,
+  void Function(String reason) dropped,
+  String reason,
+) {
+  if (value is! String) {
+    return null;
+  }
+  if (_understandingKeepWhitelist.contains(value)) {
+    return value;
+  }
+  dropped(reason);
+  return null;
 }
 
 /// 禁提子字段过滤的统一形态：命中禁提置 null，其余原样返回。
@@ -482,6 +533,11 @@ DayUnderstanding? parseDayUnderstanding(
       requestId: requestId.trim(),
       summary: summaryText,
       evidence: _dropBanned(evidence, bannedTitles),
+      keep: _parseUnderstandingKeep(
+        item['keep'],
+        dropped,
+        'episode entry keep not in whitelist',
+      ),
     ));
   }
   final coveredRequestIds = _coveredRequestIds(json['covered_request_ids']);
@@ -514,6 +570,11 @@ DayUnderstanding? parseDayUnderstanding(
           ? proactive
           : null,
       note: _dropBanned(note, bannedTitles),
+      keep: _parseUnderstandingKeep(
+        item['keep'],
+        dropped,
+        'loop candidate keep not in whitelist',
+      ),
     ));
   }
 
@@ -546,7 +607,15 @@ DayUnderstanding? parseDayUnderstanding(
       dropped('relationship signal invalid or banned');
       continue;
     }
-    signals.add((signal: signal, summary: summaryText));
+    signals.add((
+      signal: signal,
+      summary: summaryText,
+      keep: _parseUnderstandingKeep(
+        item['keep'],
+        dropped,
+        'relationship signal keep not in whitelist',
+      ),
+    ));
   }
 
   final keywords = <String>[];
@@ -653,13 +722,13 @@ List<ModelMessage> _understandingMessages({
 5. 从已有 sessions 补建缺失的 episode，而不是只处理已经存在的 episode。只补“待补 requestId”标出的用户轮；日常琐事、临时状态、随口提到的生活细节和项目进展也要记录，不要只挑长期稳定或重大事项。寒暄、重复内容和纯测试话语可以不生成 episode，但仍要在完整处理后写入 covered_request_ids。
 $appellationRule
 字段白名单：
-- episode_entries: 数组，从待补用户轮整理出的 episode；每项 {"request_id": 必须取自待补 requestId, "summary": 不超过60字的事实概括, "evidence": 可选的用户原话摘录，不超过80字}。同一轮有多件小事可以分成多项。
+- episode_entries: 数组，从待补用户轮整理出的 episode；每项 {"request_id": 必须取自待补 requestId, "summary": 不超过60字的事实概括, "evidence": 可选的用户原话摘录，不超过80字, "keep": 可选的 "month"，只给值得进入月压缩的长期记忆}。同一轮有多件小事可以分成多项。日常琐事、临时状态、随口提到的生活细节不要标 keep。
 - covered_request_ids: 数组。只有完整检查过全部待补用户轮时才输出；直接从「## 待补 requestId 清单」原样复制全部条目，不得遗漏、改写或编造。
 - summary: 字符串，当天发生了什么的一句话概括，不超过60字，只复述记录中真实出现的事。
 - mood: 字符串，用户当天留下的情绪气氛余波，不超过20字；材料中没有情绪线索就省略。
-- loop_candidates: 数组，最多2项，用户提到且之后可能需要跟进的事；每项 {"title": 不超过24字的简称, "due": 可选的跟进时间, "note": 可选说明不超过30字}；材料中已有跟进安排或已闭环的事项不要重复。
+- loop_candidates: 数组，最多2项，用户提到且之后可能需要跟进的事；每项 {"title": 不超过24字的简称, "due": 可选的跟进时间, "note": 可选说明不超过30字, "keep": 可选的 "month"，只给即使整月未闭环也值得进月压缩的重要事项}；材料中已有跟进安排或已闭环的事项不要重复。日常琐事与临时任务不要标 keep。
 - loop_closures: 数组，最多1项，未闭环事项清单中已有结果、可以闭环的事项；每项 {"title": 与清单中完全一致的事项名称, "result": 不超过20字的结果}。
-- relationship_signals: 数组，最多1项，当天互动体现出的关系信号；每项 {"signal": deep_talk、temperature、boundary_open、boundary_close 之一, "summary": 自然抽象的状态描述，不超过30字，不复制原话}。
+- relationship_signals: 数组，最多1项，当天互动体现出的关系信号；每项 {"signal": deep_talk、temperature、boundary_open、boundary_close 之一, "summary": 自然抽象的状态描述，不超过30字，不复制原话, "keep": 可选的 "month"，只给体现关系阶段明显变化、值得进月压缩的信号}。一时的语气起伏不要标 keep。
 - index_keywords: 数组，3到4个当天主题词，每个不超过10字；要提炼主题，不要截断句子。
 - persona_hints: 数组，最多1项，用户稳定画像（身份、性格表达、价值原则、偏好习惯、边界禁区）的新线索；每项 {"branch": identity、expression、values、preferences、boundaries 之一, "nature": self_report表示用户明确说过，behavior表示行为观察, "summary": 不超过30字}；identity 只允许 self_report。''';
 

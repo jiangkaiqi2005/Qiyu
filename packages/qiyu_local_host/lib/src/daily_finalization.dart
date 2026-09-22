@@ -718,6 +718,9 @@ final class DailyFinalizationService {
           summary: candidate.summary,
           evidence: candidate.evidence,
           at: source.turn.at,
+          // 月压缩候选标记随补建条目落盘，与聊天轮的 memory_signal
+          // 标注同一套口径。
+          keep: candidate.keep,
         ),
       );
     }
@@ -756,6 +759,8 @@ final class DailyFinalizationService {
           due: candidate.due,
           proactive: candidate.proactive,
           note: candidate.note,
+          // 月压缩候选标记随模型理解候选落盘，与隐藏动作标注同一口径。
+          keep: candidate.keep,
         ),
     ];
   }

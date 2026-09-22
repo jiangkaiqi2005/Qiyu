@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
+import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'episode_index.dart';
 import 'episode_memory.dart';
@@ -99,11 +100,13 @@ final class MonthSummary {
 /// 日期完成归档，整体重新生成并原子替换；已完整覆盖的月份绝不重复
 /// 生成，不会产生相互冲突的摘要。
 ///
-/// 确定性提炼（当前管线无模型参与）：按条目来源分区——记忆条目进
-/// 「发生过的事情」（带不确定措辞的进「不确定内容」）、当月提升且
-/// 至今未闭环的 open-loop 候选进「仍未解决的线索」、关系证据进
-/// 「关系变化」。每条保留日期与 episode 指针；禁提内容先过滤；
-/// 全部条目脱敏后再落盘，不改写、不新增原文不存在的结论。
+/// 确定性提炼（当前管线无模型参与）：只收当时标了 keep: month 的
+/// 条目（Memory.md 月压缩定稿：没标的不进月文件），标记条目按来源
+/// 分区——记忆条目进「发生过的事情」（带不确定措辞的进「不确定
+/// 内容」）、当月提升且至今未闭环的 open-loop 候选进「仍未解决的
+/// 线索」、关系证据进「关系变化」。每条保留日期与 episode 指针；
+/// 禁提内容先过滤；全部条目脱敏后再落盘，不改写、不新增原文不
+/// 存在的结论。
 ///
 /// 月 summary 不注入、不占热层预算（T07）；查找优先级
 /// daily > 月 summary > long-memory 由召回侧遵守。
@@ -292,6 +295,11 @@ final class MonthlySummaryStore {
 
     for (final date in compressedDates) {
       for (final entry in days[date]!.entries) {
+        // 月层资格（Memory.md 月压缩定稿）：只收当时标了 keep: month
+        // 的条目，没标的不进月文件；kind 四区保留作月文件内部结构。
+        if (entry.keep != memorySignalKeepMonth) {
+          continue;
+        }
         final text = redactSessionText(entry.summary).trim();
         if (text.isEmpty) {
           continue;

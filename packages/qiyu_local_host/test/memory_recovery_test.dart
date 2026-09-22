@@ -147,6 +147,7 @@ void main() {
     String id,
     String summary, {
     String kind = episodeKindMemory,
+    String? keep,
   }) => EpisodeEntry(
     id: id,
     sessionId: 'seed-session',
@@ -154,6 +155,7 @@ void main() {
     summary: summary,
     at: DateTime.parse('${date}T20:00:00').toUtc(),
     kind: kind,
+    keep: keep,
   );
 
   Future<void> seedEpisodeDay(
@@ -663,7 +665,13 @@ void main() {
   group('月度摘要', () {
     test('损坏的月摘要从同月每日记录重新压缩', () async {
       await seedEpisodeDay('2026-07-05', [
-        entry('2026-07-05', 'e1', '用户去了海边'),
+        entry(
+          '2026-07-05',
+          'e1',
+          '用户去了海边',
+          // 月摘要只收标了 keep: month 的条目。
+          keep: memorySignalKeepMonth,
+        ),
       ], summary: '海边');
       await monthlySummary.compressMonth('2026-07');
       final summaryFile = monthlySummary.summaryFile('2026-07');

@@ -305,6 +305,11 @@ final class RelationshipLifecycle {
               summary.trim().isEmpty) {
             continue;
           }
+          // 月压缩候选标记随持久化理解还原：重建条目与当天落盘条目
+          // 同一口径，只认白名单内的 month。
+          final keep = item['keep'] == memorySignalKeepMonth
+              ? memorySignalKeepMonth
+              : null;
           final parsedDate = parseLocalSessionDate(date);
           entries.add(
             EpisodeEntry(
@@ -320,6 +325,7 @@ final class RelationshipLifecycle {
               ).toUtc(),
               kind: episodeKindRelationshipSignal,
               signal: signal,
+              keep: keep,
             ),
           );
         }

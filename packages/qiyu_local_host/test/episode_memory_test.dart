@@ -261,6 +261,160 @@ void main() {
     },
   );
 
+  test('a keep-marked memory signal round-trips through the day file', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-episode-keep-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 14, 22, 30),
+    );
+
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        MemorySignalAction(
+          summary: '用户认定长期记忆只放长远的事',
+          keep: memorySignalKeepMonth,
+        ),
+        MemorySignalAction(summary: '用户晚饭吃了小馄饨'),
+      ],
+    );
+
+    final day = await pipeline.readToday();
+    expect(day.entries, hasLength(2));
+    expect(
+      day.entries.firstWhere((entry) => entry.summary.contains('长远')).keep,
+      memorySignalKeepMonth,
+    );
+    // 没标 keep 的条目按未标记落盘，月压缩不收。
+    expect(
+      day.entries.firstWhere((entry) => entry.summary.contains('小馄饨')).keep,
+      isNull,
+    );
+  });
+
+  test('keep marks ride the lifecycle action creation paths', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-episode-keep-lifecycle-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 14, 22, 30),
+    );
+
+    // 真实创建路径：聊天轮隐藏动作落当天条目。
+    await pipeline.processReply(
+      session: _session('session-1', ['req-1']),
+      requestId: 'req-1',
+      hiddenActions: const [
+        OpenLoopCandidateAction(
+          title: '租房事宜',
+          keep: memorySignalKeepMonth,
+        ),
+        RelationshipSignalAction(
+          summary: '用户近期愿意聊到更深的家庭关系',
+          signal: RelationshipSignal.deepTalk,
+          keep: memorySignalKeepMonth,
+        ),
+      ],
+    );
+    await pipeline.processReply(
+      session: _session('session-1', ['req-2']),
+      requestId: 'req-2',
+      hiddenActions: const [
+        OpenLoopCandidateAction(title: '买牛奶'),
+        RelationshipSignalAction(
+          summary: '今晚话少',
+          signal: RelationshipSignal.temperature,
+        ),
+      ],
+    );
+
+    final day = await pipeline.readToday();
+    expect(day.entries, hasLength(4));
+    final marked = day.entries.where((entry) => entry.keep != null).toList();
+    expect(marked, hasLength(2));
+    expect(
+      marked.map((entry) => entry.summary),
+      containsAll(['租房事宜', '用户近期愿意聊到更深的家庭关系']),
+    );
+    // 没标的两类条目按未标记落盘，月文件对应分区不收。
+    expect(
+      day.entries.where((entry) => entry.keep == null).map((e) => e.summary),
+      containsAll(['买牛奶', '今晚话少']),
+    );
+  });
+
+  test('a day file written before the keep field reads back unmarked', () async {
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'qiyu-episode-keep-legacy-test-',
+    );
+    addTearDown(() => temporaryDirectory.delete(recursive: true));
+    // 旧日文件没有 keep 字段：必须照常读出，按未标记参与月压缩。
+    final dayPath =
+        '${temporaryDirectory.path}/episodes/2026/08/2026-08-14.md';
+    File(dayPath).createSync(recursive: true);
+    File(dayPath).writeAsStringSync(
+      '# 栖语每日记录\n'
+      '\n'
+      '<!-- qiyu-episode:${encodeMarkerPayload({
+        'schemaVersion': 1,
+        'date': '2026-08-14',
+        'updatedAt': '2026-08-14T22:30:00.000Z',
+        'finalized': true,
+        'finalizedAt': '2026-08-14T23:00:00.000Z',
+      })} -->\n'
+      '\n'
+      '<!-- qiyu-episode-entry:${encodeMarkerPayload({
+        'id': 'legacy:r1:0',
+        'sessionId': 'legacy',
+        'requestId': 'r1',
+        'summary': '用户明天有面试',
+        'at': '2026-08-14T22:30:00.000Z',
+      })} -->\n'
+      '\n'
+      '## 2026-08-14T22:30:00.000 · 用户明天有面试\n',
+      encoding: utf8,
+    );
+
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: temporaryDirectory.path,
+      clock: () => DateTime(2026, 8, 14, 22, 30),
+    );
+    final day = await pipeline.readDay('2026-08-14');
+
+    expect(day.readable, isTrue);
+    expect(day.entries, hasLength(1));
+    expect(day.entries.single.summary, '用户明天有面试');
+    expect(day.entries.single.keep, isNull);
+  });
+
+  test('the keep mark survives the entry JSON round trip and model copy', () {
+    final entry = EpisodeEntry(
+      id: 'session-1:req-1:0',
+      sessionId: 'session-1',
+      requestId: 'req-1',
+      summary: '用户对芒果过敏',
+      at: DateTime.utc(2026, 8, 14, 22, 30),
+      keep: memorySignalKeepMonth,
+    );
+    expect(EpisodeEntry.fromJson(entry.toJson()).keep, memorySignalKeepMonth);
+    expect(entry.redactedForModel().keep, memorySignalKeepMonth);
+    // 未标记时 toJson 不写该键，旧读取端不受影响。
+    final unmarked = EpisodeEntry(
+      id: entry.id,
+      sessionId: entry.sessionId,
+      requestId: entry.requestId,
+      summary: entry.summary,
+      at: entry.at,
+    );
+    expect(EpisodeEntry.fromJson(unmarked.toJson()).keep, isNull);
+  });
+
   test('a corrupted or foreign day file is never overwritten', () async {
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'qiyu-episode-corrupt-day-test-',

@@ -428,6 +428,8 @@ final class MemoryActionService {
           proactive: original.proactive,
           note: original.note,
           signal: original.signal,
+          // 月压缩候选标记随修正保留：编辑只改摘要，不改变月层资格。
+          keep: original.keep,
           userEdited: true,
         );
         final entries = List<EpisodeEntry>.of(day.entries)..[index] = corrected;

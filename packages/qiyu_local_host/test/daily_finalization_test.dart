@@ -178,6 +178,68 @@ void main() {
     },
   );
 
+  test('a backfilled episode entry carries the model keep mark', () async {
+    DateTime clock() => DateTime(2026, 8, 14, 23, 30);
+    final client = _RecordingUnderstandingClient(
+      jsonEncode({
+        'episode_entries': [
+          {
+            'request_id': 'keep-1',
+            'summary': '用户认定长期记忆只放长远的事',
+            'keep': 'month',
+          },
+          {
+            'request_id': 'keep-2',
+            'summary': '用户晚饭吃了小馄饨',
+          },
+        ],
+        'covered_request_ids': ['keep-1', 'keep-2'],
+        'summary': '用户聊了记忆偏好，晚饭吃了小馄饨',
+        'index_keywords': ['记忆偏好'],
+      }),
+    );
+    final (:temporaryDirectory, :pipeline, :service) =
+        await _finalizationFixture(
+          'qiyu-finalization-backfill-keep-test-',
+          clock: clock,
+          modelClient: client,
+        );
+    final repository = MarkdownMemoryRepository(
+      memoryDirectory: temporaryDirectory.path,
+      clock: clock,
+    );
+    var session = await repository.createSession();
+    session = await repository.appendTurn(
+      session,
+      RawSessionTurn.user(
+        requestId: 'keep-1',
+        text: '长期记忆只放真正重要的事吧',
+        at: clock(),
+      ),
+    );
+    session = await repository.appendTurn(
+      session,
+      RawSessionTurn.user(
+        requestId: 'keep-2',
+        text: '晚饭吃了小馄饨',
+        at: clock(),
+      ),
+    );
+    final report = await service.finalizeForBedtime(date: '2026-08-14');
+
+    expect(report.outcomes.single.status, FinalizationStatus.finalized);
+    final day = await pipeline.readDay('2026-08-14');
+    expect(day.entries, hasLength(2));
+    expect(
+      day.entries.firstWhere((entry) => entry.requestId == 'keep-1').keep,
+      memorySignalKeepMonth,
+    );
+    expect(
+      day.entries.firstWhere((entry) => entry.requestId == 'keep-2').keep,
+      isNull,
+    );
+  });
+
   test('pure bedtime farewells stay out of the backfill scope', () async {
     DateTime clock() => DateTime(2026, 8, 22, 23, 50);
     final client = _RecordingUnderstandingClient(

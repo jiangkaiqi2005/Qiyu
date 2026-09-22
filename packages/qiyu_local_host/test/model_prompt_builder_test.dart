@@ -211,6 +211,26 @@ void main() {
   );
 
   test(
+    'the action protocol teaches the month keep mark for memory signals',
+    () {
+      final system = builder
+          .build(StateSnapshot.initial('local-user'), '长期记忆只放真正重要的事')
+          .first
+          .content;
+
+      // 月压缩定稿：只收当时标了 keep: month 的条目。
+      expect(system, contains('"keep":"month"'));
+      expect(system, contains('值得进入月压缩的长期记忆'));
+      // 日常琐事不标：记录面不变，标记面收敛。
+      expect(system, contains('日常琐事、临时状态、随口提到的生活细节不标'));
+      // 两类生命周期动作同样教何时标：整月未闭环的重要事项、
+      // 关系阶段明显变化。
+      expect(system, contains('即使整月未闭环也值得写进月摘要'));
+      expect(system, contains('体现关系阶段明显变化、值得写进月摘要'));
+    },
+  );
+
+  test(
     'the protocol offers memory_recall and honest not-yet-recalled wording',
     () {
       final system = builder
