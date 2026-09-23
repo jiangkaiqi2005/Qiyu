@@ -450,10 +450,13 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                     ? 'Resource-Id'
                     : '模型名称',
                 hintText: defaults.modelHint,
-                // 千问档亮一句支持范围说明：型号取协议缺省档位（与回填同源，
+                // 千问档亮一句支持范围说明（F3 第一期：型号决定 API
+                // 家族，不做传输选择器）：型号取协议缺省档位（与回填同源，
                 // 不另立一份字面量），用户只看得到缺省型号时也知道支持范围。
+                // 官方现标 Non-streaming 的旧型号（qwen-audio-3.1-tts-next）
+                // 不用于流式场景——提示只认流式型号名。
                 helperText: provider == TtsServiceKind.qwenTts
-                    ? '支持 HTTP 非流式合成模型，如 $qwenTtsDefaultModel'
+                    ? '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）'
                     : null,
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
@@ -499,6 +502,13 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                     child: Text('逐行 JSON'),
                   ),
                 ],
+                // F3 第一期：自定义档的传输形态只列已实现的——裸音频字节
+                // （且未覆盖成压缩格式）走 HTTP 分块流式（stream_format=
+                // audio + response_format=pcm）；逐行 JSON 与 JSON 字段
+                // 拿不到音频块，按 E1 每句一整块做句子级整段朗读（现有
+                // 配置全部保留，不淘汰在用型号）。
+                helperText:
+                    '裸音频字节（且未覆盖成压缩格式）走流式分块合成；逐行 JSON 与 JSON 字段按句子级整段朗读',
                 onChanged: (wireName) =>
                     setState(() => _form.selectResponseShape(wireName)),
               ),
@@ -706,7 +716,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                             '配置 OpenAI 兼容语音合成的顶层扩展参数，例如：\n'
                                   '{\n'
                                   '  "response_format": "mp3"\n'
-                                  '}',
+                                  '}\n'
+                                  '覆盖成压缩格式将按句子级整段朗读。',
                         },
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,

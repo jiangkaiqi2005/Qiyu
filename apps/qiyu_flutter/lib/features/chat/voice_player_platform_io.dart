@@ -26,6 +26,20 @@ abstract interface class VoicePlayerNativeChannel {
   /// 实时调节指定句柄的播放音量（0.0 ~ 1.0）。
   Future<void> setPlaybackVolume(int playbackId, double volume);
 
+  /// 开一路流式 PCM 播放（票二）：原生 AudioTrack MODE_STREAM 按协商
+  /// 采样率起播，返回流句柄；无法开始返回 null。
+  Future<int?> startStream({
+    required int sampleRate,
+    required double volume,
+    int? sessionId,
+  });
+
+  /// 往流句柄写一块 PCM16 小端字节（只在内存，不落盘）。
+  Future<void> appendStreamChunk(int streamId, Uint8List pcm);
+
+  /// 声明流块收完：写完的缓冲播完即自然结束（不出声的部分不留）。
+  Future<void> endStream(int streamId);
+
   /// 订阅播放完成/出错回调（自然播完或底层出错都会到达，停止不产生
   /// 回调）；返回退订函数。
   void Function() onPlaybackFinished(void Function(int playbackId) handler);
@@ -158,6 +172,46 @@ final class MethodVoicePlayerChannel
   }
 
   @override
+  Future<int?> startStream({
+    required int sampleRate,
+    required double volume,
+    int? sessionId,
+  }) async {
+    _ensureRegistered();
+    try {
+      return await _channel.invokeMethod<int>('startStream', {
+        'sampleRate': sampleRate,
+        'volume': volume.clamp(0.0, 1.0),
+        'sessionId': ?sessionId,
+      });
+    } on Object {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> appendStreamChunk(int streamId, Uint8List pcm) async {
+    try {
+      await _channel.invokeMethod<void>('appendStreamChunk', {
+        'id': streamId,
+        'bytes': pcm,
+      });
+    } on Object {
+      // 单块写失败由原生侧按出错收尾（onPlaybackFinished 到达），这里
+      // 不重复处理。
+    }
+  }
+
+  @override
+  Future<void> endStream(int streamId) async {
+    try {
+      await _channel.invokeMethod<void>('endStream', {'id': streamId});
+    } on Object {
+      // 原生可能已收尾；结束语义以「不再出声」为准。
+    }
+  }
+
+  @override
   void Function() onPlaybackFinished(void Function(int playbackId) handler) {
     _ensureRegistered();
     _handlers.add(handler);
@@ -214,9 +268,11 @@ final class FileVoiceVolumeStore implements VoiceVolumeStore {
 }
 
 /// io 平台（安卓壳）的朗读接缝实现：Host 经 `/api/chat/speak` 返回的
-/// 完整 mp3 字节交原生 MediaPlayer 播放（内存 MediaDataSource，整段
+/// 完整音频字节交原生 MediaPlayer 播放（内存 MediaDataSource，整段
 /// 播放、不落盘），音量/静音持久化复用 web 的 localStorage 语义——
-/// 同一键名、同一序列化格式、同一缺省与钳制规则，重启后保持。
+/// 同一键名、同一序列化格式、同一缺省与钳制规则，重启后保持。流式
+/// PCM 播放（票二）走原生 AudioTrack MODE_STREAM（同一焦点/中断
+/// 语义，音频仍只在内存）。
 ///
 /// Android 无浏览器的自动播放手势限制，不实现
 /// [UserGestureVoicePlayerPlatform]（扩展函数对其自动退化为空操作）。
@@ -224,7 +280,10 @@ final class FileVoiceVolumeStore implements VoiceVolumeStore {
 /// widget 测试跑在桌面宿主上，[supported] 如实报告不可用（与 stub 同
 /// 语义）；接缝行为测试用构造参数注入 fake 通道与音量存储。
 final class IoVoicePlayerPlatform
-    implements VoicePlayerPlatform, InterruptibleVoicePlayerPlatform {
+    implements
+        VoicePlayerPlatform,
+        InterruptibleVoicePlayerPlatform,
+        StreamingVoicePlayerPlatform {
   IoVoicePlayerPlatform({
     VoicePlayerNativeChannel? channel,
     VoiceVolumeStore? volumeStore,
@@ -348,6 +407,33 @@ final class IoVoicePlayerPlatform
     }
     return _AndroidVoicePlayback(id, _channel);
   }
+
+  @override
+  Future<VoiceStreamPlayback?> startStream({
+    required int sampleRate,
+    double volume = 1.0,
+  }) async {
+    if (!supported) {
+      return null;
+    }
+    // 与整段路径同一焦点策略：控制器在首块前已准备则复用。
+    if (_session == null && !await beginOutput()) return null;
+    final session = _session;
+    final id = await _channel.startStream(
+      sampleRate: sampleRate,
+      volume: volume,
+      sessionId: session,
+    );
+    if (id == null) {
+      if (_session == session) endOutput();
+      return null;
+    }
+    if (_session != session) {
+      await _channel.stopPlayback(id);
+      return null;
+    }
+    return _AndroidVoiceStreamPlayback(id, _channel);
+  }
 }
 
 /// 一次安卓播放会话：done 在自然播完、被 stop 或底层出错时完成（不抛，
@@ -362,6 +448,83 @@ final class _AndroidVoicePlayback implements VoicePlayback {
   final Completer<void> _done = Completer<void>();
   late final void Function() _unsubscribe;
   bool _released = false;
+
+  @override
+  Future<void> get done => _done.future;
+
+  void _onFinished(int id) {
+    if (id != _id || _released) {
+      return;
+    }
+    _release();
+  }
+
+  @override
+  void setVolume(double volume) {
+    if (_released) {
+      return;
+    }
+    _swallow(_channel.setPlaybackVolume(_id, volume.clamp(0.0, 1.0)));
+  }
+
+  @override
+  void stop() {
+    if (_released) {
+      return;
+    }
+    _release();
+    // 立即发停止；原生侧释放晚于 done 完成是安全的（幂等）。
+    _swallow(_channel.stopPlayback(_id));
+  }
+
+  void _release() {
+    _released = true;
+    _unsubscribe();
+    if (!_done.isCompleted) {
+      _done.complete();
+    }
+  }
+
+  /// 停止与调音量的通道异常都以「动作意图已生效」收尾，绝不打断聊天。
+  static void _swallow(Future<void> future) {
+    unawaited(
+      future.catchError((Object _) {
+        // 静默：与 web 侧对等操作的异常语义一致。
+      }),
+    );
+  }
+}
+
+/// 一次安卓流式播放会话（票二）：块经通道进原生 AudioTrack 写队列，
+/// end 之后播完即 done；stop/setVolume 幂等且对已释放句柄安全。
+final class _AndroidVoiceStreamPlayback implements VoiceStreamPlayback {
+  _AndroidVoiceStreamPlayback(this._id, this._channel) {
+    _unsubscribe = _channel.onPlaybackFinished(_onFinished);
+  }
+
+  final int _id;
+  final VoicePlayerNativeChannel _channel;
+  final Completer<void> _done = Completer<void>();
+  late final void Function() _unsubscribe;
+  bool _released = false;
+  bool _ended = false;
+
+  @override
+  void append(Uint8List pcm) {
+    if (_released || _ended || pcm.isEmpty) {
+      return;
+    }
+    _swallow(_channel.appendStreamChunk(_id, pcm));
+  }
+
+  @override
+  void end() {
+    if (_released || _ended) {
+      return;
+    }
+    _ended = true;
+    _swallow(_channel.endStream(_id));
+  }
 
   @override
   Future<void> get done => _done.future;

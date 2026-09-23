@@ -332,6 +332,9 @@ final class LocalAppHost {
       recallWindowWait: recallWindowWait,
       clock: clock,
       diagnosticsSink: diagnosticsSink,
+      // 分句流式语音合成（票二）：与朗读路由、连接测试共用同一个
+      // TtsSettingsService 实例——配置、Key 与文本校验同一真相源。
+      voiceStreamSynthesizer: effectiveTtsSettings,
       // 聊天冻结分支的关联扩展（禁提走 memoryActions 的禁提执行器，
       // 删除走它的删除管线，两处已随 memoryActions 注入同一客户端）。
       aliasClient: effectiveProviderSettings,

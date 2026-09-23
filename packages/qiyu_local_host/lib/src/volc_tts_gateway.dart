@@ -10,10 +10,16 @@ import 'tts_gateway.dart';
 /// 豆包语音合成 2.0（火山方舟 Agent Plan）的 Host 中介客户端。按官方
 /// 文档（2026-08-23 用户提供）走订阅专属 HTTP 单向端点：一次性 POST
 /// 全文，响应是 chunked 逐行 JSON——每行的 `data` 是 base64 音频块，
-/// 按序拼接为完整 mp3，`code==20000000` 为正常结束标记，行内 `code>0`
+/// 按序拼接为完整音频，`code==20000000` 为正常结束标记，行内 `code>0`
 /// 为错误（官方未给码表，统一按服务拒绝分类，HTTP 状态码错误仍走
 /// 既有分类）。
-final class VolcTtsGateway implements TtsSynthesisGateway {
+///
+/// 音频格式统一 PCM（票二）：官方明示流式推荐 pcm、禁 wav（wav 流式会
+/// 重复返回 header）。整段路径把 PCM 包成 WAV 头后返回（现有整段播放器
+/// 零改动）；流式路径逐行直接转音频块事件，不再聚合成整段（ADR 0018
+/// 推翻 ADR 0002「完整交付后整段合成」的结论）。
+final class VolcTtsGateway
+    implements TtsSynthesisGateway, TtsStreamSynthesisGateway {
   const VolcTtsGateway(this.httpClient);
 
   final ProviderBytesHttpClient httpClient;
@@ -23,6 +29,160 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
 
   @override
   Future<List<int>> synthesize({
+    required TtsConfig config,
+    required String? apiKey,
+    required String text,
+  }) async {
+    final request = await _postRequest(
+      config: config,
+      apiKey: apiKey,
+      text: text,
+    );
+    final bytes = await _collectChunkedAudio(request.response.body);
+    // 仅当确实是裸 PCM 单声道 16-bit 才包 WAV 头：用户经高级参数把
+    // format 覆盖成 mp3/ogg_opus、或 channel/位深不是单声道 16-bit 时
+    // 原样返回——那些配置在统一 PCM 之前就能播（现有配置全部保留）。
+    return wholeResponseAudio(
+      bytes,
+      format: request.format,
+      channels: request.channels,
+      bitsPerSample: request.bitsPerSample,
+      sampleRate: request.sampleRate,
+    );
+  }
+
+  @override
+  Stream<VoiceAudioChunk> synthesizeStream({
+    required TtsConfig config,
+    required String? apiKey,
+    required String text,
+  }) {
+    // 生效格式不是裸 PCM 单声道 16-bit 时走不了块流（服务返回压缩字节
+    // 或多声道，PCM 播放器会播成噪音）——按 E1 降级成整响应当一块，
+    // 容器原样。
+    final negotiated = _effectiveAudioParams(config);
+    if (!_isStreamablePcm(negotiated)) {
+      return guardTtsAudioStream(
+        () => _streamWholeResponse(config: config, apiKey: apiKey, text: text),
+      );
+    }
+    return guardTtsAudioStream(() async* {
+      final request = await _postRequest(
+        config: config,
+        apiKey: apiKey,
+        text: text,
+      );
+      // 逐行 JSON 边到达边转块：结束码行收束，行内错误即失败，没等到
+      // 结束码断流按音频不完整拒绝（半截音频不能当完整回复）。
+      var produced = false;
+      var finished = false;
+      await for (final line in request.response.body
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())) {
+        final trimmed = line.trim();
+        if (trimmed.isEmpty) {
+          continue;
+        }
+        final decoded = _decodeLine(trimmed);
+        final code = decoded['code'];
+        if (code is! num) {
+          throw const TtsGatewayException(
+            kind: ModelFailureKind.contentParsing,
+            message: '语音合成服务返回的内容无法解析。',
+          );
+        }
+        if (code.toInt() == volcTtsFinishedCode) {
+          finished = true;
+          break;
+        }
+        if (code.toInt() > 0) {
+          // 行内错误（码表官方未给）：统一按服务拒绝，不透出原始行。
+          throw const TtsGatewayException(
+            kind: ModelFailureKind.provider,
+            message: '语音合成服务拒绝了这次请求。',
+          );
+        }
+        final data = decoded['data'];
+        if (data is! String || data.isEmpty) {
+          continue;
+        }
+        final audio = _decodeBase64(data);
+        if (audio.isEmpty) {
+          continue;
+        }
+        produced = true;
+        yield VoiceAudioChunk(bytes: audio, sampleRate: request.sampleRate);
+      }
+      if (!finished) {
+        throw const TtsGatewayException(
+          kind: ModelFailureKind.contentParsing,
+          message: '语音合成服务返回的音频不完整。',
+        );
+      }
+      if (!produced) {
+        throw const TtsGatewayException(
+          kind: ModelFailureKind.contentParsing,
+          message: '语音合成服务没有返回音频。',
+        );
+      }
+    });
+  }
+
+  /// E1 降级（票二）：整响应当一块。与整段路径同一请求、同一解析，
+  /// 容器原样（PCM 档由整段路径包 WAV 头，其余档服务自定义）。
+  Stream<VoiceAudioChunk> _streamWholeResponse({
+    required TtsConfig config,
+    required String? apiKey,
+    required String text,
+  }) async* {
+    final audio = await synthesize(
+      config: config,
+      apiKey: apiKey,
+      text: text,
+    );
+    yield VoiceAudioChunk(
+      bytes: Uint8List.fromList(audio),
+      mimeType: voiceWholeContainerMime,
+    );
+  }
+
+  /// 生效的 audio_params（含用户经高级参数的覆盖）：流式路径据此判断
+  /// 能不能走块流，整段路径据此决定要不要包 WAV 头。
+  static Map<String, Object?> _effectiveAudioParams(TtsConfig config) {
+    final params = <String, Object?>{
+      'format': 'pcm',
+      'sample_rate': volcTtsDefaultSampleRate,
+      'channel': 1,
+      'bit_depth': 16,
+    };
+    final extra = config.extraParams;
+    if (extra != null && extra['audio_params'] is Map) {
+      params.addAll((extra['audio_params'] as Map).cast<String, Object?>());
+    }
+    return params;
+  }
+
+  /// 是否是流式块可用的裸 PCM 单声道 16-bit。
+  static bool _isStreamablePcm(Map<String, Object?> audioParams) {
+    final format = switch (audioParams['format']) {
+      final String value => value.trim().toLowerCase(),
+      _ => 'pcm',
+    };
+    final channels = switch (audioParams['channel']) {
+      final num value => value.toInt(),
+      _ => 1,
+    };
+    final bits = switch (audioParams['bit_depth']) {
+      final num value => value.toInt(),
+      _ => 16,
+    };
+    return format == 'pcm' && channels == 1 && bits == 16;
+  }
+
+  /// 一次出网请求：构造并 POST 请求体，返回响应与本次协商的音频参数
+  /// （整段 WAV 头与流式块都要用它们）。两条路共用同一请求形状。
+  Future<({ProviderBytesHttpResponse response, int sampleRate, String format, int channels, int bitsPerSample})>
+  _postRequest({
     required TtsConfig config,
     required String? apiKey,
     required String text,
@@ -40,8 +200,11 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
             : rawSpeaker;
 
     final audioParams = <String, Object?>{
-      'format': 'mp3',
-      'sample_rate': 24000,
+      // 流式推荐 pcm：块直接转事件，容器头无处安放（官方明示禁 wav）。
+      // 只送官方文档有的字段——channel/bit_depth 仅作用户覆盖回读，
+      // 不臆造进请求体（严格服务端会因未知字段 400）。
+      'format': 'pcm',
+      'sample_rate': volcTtsDefaultSampleRate,
     };
     final extra = config.extraParams;
     if (extra != null && extra['audio_params'] is Map) {
@@ -54,6 +217,22 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
       audioParams['speech_rate'] =
           ((config.speed! - 1.0) * 100).round().clamp(-50, 100);
     }
+    final sampleRate = switch (audioParams['sample_rate']) {
+      final num rate => rate.toInt(),
+      _ => volcTtsDefaultSampleRate,
+    };
+    final format = switch (audioParams['format']) {
+      final String value => value,
+      _ => 'pcm',
+    };
+    final channels = switch (audioParams['channel']) {
+      final num value => value.toInt(),
+      _ => 1,
+    };
+    final bitsPerSample = switch (audioParams['bit_depth']) {
+      final num value => value.toInt(),
+      _ => 16,
+    };
 
     final effectiveAdditions = _resolveAdditions(
       extra: extra,
@@ -87,42 +266,37 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
     if (response.headers['x-tt-logid'] case final logid?) {
       stderrDiagnostics('tts volc logid: $logid');
     }
-
-    final bytes = await consumeTtsBytesResponse(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      final errorBytes = await consumeTtsBytesResponse(response);
       throw _fromModelFailure(
         providerStatusFailure(
           response.statusCode,
-          latin1.decode(bytes, allowInvalid: true),
+          latin1.decode(errorBytes, allowInvalid: true),
           serviceLabel: '语音合成服务',
         ),
       );
     }
-    return _parseChunkedAudio(bytes);
+    return (
+      response: response,
+      sampleRate: sampleRate,
+      format: format,
+      channels: channels,
+      bitsPerSample: bitsPerSample,
+    );
   }
 
-  /// 聚合 chunked 逐行 JSON 响应为完整音频字节。
-  List<int> _parseChunkedAudio(Uint8List body) {
+  /// 聚合 chunked 逐行 JSON 响应为完整音频字节（整段路径）。
+  Future<Uint8List> _collectChunkedAudio(Stream<List<int>> body) async {
     final audio = BytesBuilder(copy: false);
     var finished = false;
-    for (final rawLine in utf8.decode(body, allowMalformed: true).split('\n')) {
-      final line = rawLine.trim();
-      if (line.isEmpty) {
+    await for (final line in body
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) {
         continue;
       }
-      final Map<String, Object?> decoded;
-      try {
-        final parsed = jsonDecode(line);
-        if (parsed is! Map<String, Object?>) {
-          throw const FormatException('tts line must be an object');
-        }
-        decoded = parsed;
-      } on Object {
-        throw const TtsGatewayException(
-          kind: ModelFailureKind.contentParsing,
-          message: '语音合成服务返回的内容无法解析。',
-        );
-      }
+      final decoded = _decodeLine(trimmed);
       final code = decoded['code'];
       if (code is! num) {
         throw const TtsGatewayException(
@@ -143,14 +317,7 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
       }
       final data = decoded['data'];
       if (data is String && data.isNotEmpty) {
-        try {
-          audio.add(base64.decode(data));
-        } on Object {
-          throw const TtsGatewayException(
-            kind: ModelFailureKind.contentParsing,
-            message: '语音合成服务返回的内容无法解析。',
-          );
-        }
+        audio.add(_decodeBase64(data));
       }
     }
     if (!finished) {
@@ -168,6 +335,33 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
       );
     }
     return bytes;
+  }
+
+  /// 逐行 JSON 协议的正常结束标记码。
+  static Map<String, Object?> _decodeLine(String line) {
+    try {
+      final parsed = jsonDecode(line);
+      if (parsed is! Map<String, Object?>) {
+        throw const FormatException('tts line must be an object');
+      }
+      return parsed;
+    } on Object {
+      throw const TtsGatewayException(
+        kind: ModelFailureKind.contentParsing,
+        message: '语音合成服务返回的内容无法解析。',
+      );
+    }
+  }
+
+  static Uint8List _decodeBase64(String data) {
+    try {
+      return base64.decode(data);
+    } on Object {
+      throw const TtsGatewayException(
+        kind: ModelFailureKind.contentParsing,
+        message: '语音合成服务返回的内容无法解析。',
+      );
+    }
   }
 
   /// 检测预设方言音色 ID，并返回对应的方言代码（如 sichuan, dongbei 等）。
@@ -216,6 +410,10 @@ final class VolcTtsGateway implements TtsSynthesisGateway {
 
 /// 官方逐行 JSON 协议的正常结束标记码。
 const volcTtsFinishedCode = 20000000;
+
+/// 豆包 PCM 的协商采样率：官方 audio_params 缺省 24000（8000–48000
+/// 可调），高级参数可覆盖；WAV 头与流式块都以生效值为准。
+const volcTtsDefaultSampleRate = 24000;
 
 TtsGatewayException _fromModelFailure(ModelGatewayException failure) =>
     TtsGatewayException(

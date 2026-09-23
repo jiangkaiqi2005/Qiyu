@@ -1663,6 +1663,9 @@ final class _RestoredGateway implements StreamingLocalChatGateway {
   Future<bool> cancel(String requestId) async => true;
 
   @override
+  Future<bool> stopVoice(String requestId) async => true;
+
+  @override
   Stream<LocalChatDeliveryEvent> deliver({
     required String requestId,
     required String text,

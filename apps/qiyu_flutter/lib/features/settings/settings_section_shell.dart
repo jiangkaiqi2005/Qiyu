@@ -402,6 +402,7 @@ class SettingsControlledDropdown extends StatelessWidget {
     required this.value,
     required this.items,
     required this.onChanged,
+    this.helperText,
   });
 
   final Key dropdownKey;
@@ -410,10 +411,15 @@ class SettingsControlledDropdown extends StatelessWidget {
   final List<DropdownMenuItem<String>> items;
   final ValueChanged<String> onChanged;
 
+  /// 可选的支持范围说明（与文本框的 helperText 同一位置语义）。
+  final String? helperText;
+
   @override
   Widget build(BuildContext context) => InputDecorator(
     decoration: InputDecoration(
       labelText: label,
+      helperText: helperText,
+      helperMaxLines: 3,
       border: settingsOutlineBorder(color: QiyuColors.line),
       enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
       focusedBorder: settingsOutlineBorder(color: QiyuColors.composerFocusLine),

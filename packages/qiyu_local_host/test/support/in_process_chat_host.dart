@@ -21,6 +21,7 @@ final class InProcessChatHost {
     this.recallWindowWait,
     this.diagnosticsSink,
     this.idleCatchupPoller,
+    this._ttsSettingsService,
     this.zoneErrors,
   );
 
@@ -35,6 +36,10 @@ final class InProcessChatHost {
   final DeliveryPause? deliveryPause;
   final RecallWindowWait? recallWindowWait;
   final void Function(String message)? diagnosticsSink;
+
+  /// 注入的语音合成设置服务（票二 语音流式）：分句层与朗读路由、连接
+  /// 测试共用同一实例；null 时宿主自建生产默认（未配置 TTS）。
+  final TtsSettingsService? _ttsSettingsService;
 
   /// 注入的空闲补办轮询定时器（测试用它断言宿主收尾取消）；null 时
   /// 宿主使用生产默认的周期定时器壳。
@@ -63,6 +68,7 @@ final class InProcessChatHost {
     String personaConstitution = '测试人格宪法',
     StreamingModelGateway? modelGateway,
     bool configureProvider = true,
+    TtsSettingsService? ttsSettingsService,
     Clock? clock,
     AtomicTextWriter? atomicWriter,
     DeliveryPause? deliveryPause,
@@ -117,6 +123,7 @@ final class InProcessChatHost {
       recallWindowWait,
       diagnosticsSink,
       idleCatchupPoller,
+      ttsSettingsService,
       <Object>[],
     );
     await instance._boot();
@@ -185,6 +192,7 @@ final class InProcessChatHost {
               ),
         clock: clock,
         atomicWriter: atomicWriter,
+        ttsSettingsService: _ttsSettingsService,
         // 缺省抹掉分段停顿：与迁移前测试同律，避免真路径测试空等；
         // 需要验证停顿本身时显式传入。
         deliveryPause: deliveryPause ?? (_) async {},
@@ -316,6 +324,16 @@ final class InProcessChatHost {
     });
     final json = jsonDecode(response.body) as Map<String, Object?>;
     return json['cancelled']! as bool;
+  }
+
+  /// `POST /api/chat/voice-stop`：与浏览器停播键同路径（票二）。返回
+  /// 是否有在途分句合成被作废。
+  Future<bool> stopVoice(String requestId) async {
+    final response = await _postJson('/api/chat/voice-stop', {
+      'requestId': requestId,
+    });
+    final json = jsonDecode(response.body) as Map<String, Object?>;
+    return json['stopped']! as bool;
   }
 
   /// `GET /api/chat/session`：读取 Host 落盘后的会话快照。

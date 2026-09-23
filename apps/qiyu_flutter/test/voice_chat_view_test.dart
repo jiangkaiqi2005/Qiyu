@@ -1872,6 +1872,9 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
   }
 
   @override
+  Future<bool> stopVoice(String requestId) async => true;
+
+  @override
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,

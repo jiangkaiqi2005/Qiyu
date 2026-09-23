@@ -28,7 +28,8 @@ final class VoiceRoutes implements ApiRoutes {
   /// 朗读端点从这里取已落盘的栖语 turn 文字（Host 是文字真相源）。
   final MemoryRepository memoryRepository;
 
-  /// 朗读音频响应头：mp3 字节直出，浏览器 blob 播放，不落盘不缓存。
+  /// 朗读音频响应头：音频字节直出（PCM 档已由 Host 包 WAV 头，容器由
+  /// 播放端嗅探），不落盘不缓存。
   static const _audioHeaders = {
     HttpHeaders.contentTypeHeader: 'audio/mpeg',
     HttpHeaders.cacheControlHeader: 'no-store',

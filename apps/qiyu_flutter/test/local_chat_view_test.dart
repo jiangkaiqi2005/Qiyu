@@ -1786,6 +1786,9 @@ final class _HangingFailingChatGateway implements _TestChatGateway {
   Future<bool> cancel(String requestId) async => true;
 
   @override
+  Future<bool> stopVoice(String requestId) async => true;
+
+  @override
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
@@ -1839,6 +1842,9 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<bool> stopVoice(String requestId) async => true;
 
   @override
   Future<String> transcribe({

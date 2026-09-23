@@ -435,6 +435,12 @@ enum ChatDeliveryEventKind {
   cancelled,
   error,
   done,
+  /// 语音块（票二）：PCM 音频块搭车聊天事件流，与文字增量同连接同序。
+  voiceChunk,
+
+  /// 语音失败（票二）：某句合成失败即本段语音结束（D1）。只作信号，
+  /// 不阻断文字交付，也不结束事件流。
+  voiceError,
 }
 
 /// 每类事件的必填载荷由命名构造约束；可选属性仅用于跨事件读取。
@@ -546,6 +552,46 @@ final class ChatDeliveryEvent {
         sessionId: sessionId,
       );
 
+  /// 语音块（票二）：[data] 是 base64 编码的 PCM16 单声道字节，
+  /// [sampleRate] 是本块的协商采样率（播放端按它初始化，不猜）。
+  /// [deliveryIndex] 是该块所属的栖语交付段序号（与朗读定位同口径），
+  /// [chunkIndex] 是段内块序号（从 0 起，按序全播）。
+  ///
+  /// E1 降级（票二）：拿不到音频块的档位按句子级顺序播——[mimeType]
+  /// 非空即这是一段已合成完的完整音频（容器由服务定义，不包 WAV 头），
+  /// 播放端走既有整段播放器；此时不带 [sampleRate]。两者恰居其一。
+  const ChatDeliveryEvent.voiceChunk({
+    required String requestId,
+    String? sessionId,
+    required int deliveryIndex,
+    required int chunkIndex,
+    int? sampleRate,
+    String? mimeType,
+    required String data,
+  }) : this._(
+         kind: ChatDeliveryEventKind.voiceChunk,
+         requestId: requestId,
+         sessionId: sessionId,
+         deliveryIndex: deliveryIndex,
+         chunkIndex: chunkIndex,
+         sampleRate: sampleRate,
+         audioMimeType: mimeType,
+         audioData: data,
+       );
+
+  /// 语音失败（票二）：[deliveryIndex] 是失败的交付段。已播句子照常
+  /// standing，同会话首次失败由界面提示一次（之后静默）。
+  const ChatDeliveryEvent.voiceError({
+    required String requestId,
+    String? sessionId,
+    required int deliveryIndex,
+  }) : this._(
+         kind: ChatDeliveryEventKind.voiceError,
+         requestId: requestId,
+         sessionId: sessionId,
+         deliveryIndex: deliveryIndex,
+       );
+
   const ChatDeliveryEvent._({
     required this.kind,
     required this.requestId,
@@ -560,6 +606,11 @@ final class ChatDeliveryEvent {
     this.code,
     this.retryable,
     this.incomplete,
+    this.deliveryIndex,
+    this.chunkIndex,
+    this.sampleRate,
+    this.audioMimeType,
+    this.audioData,
   });
 
   factory ChatDeliveryEvent.fromJson(Map<String, Object?> json) {
@@ -594,10 +645,23 @@ final class ChatDeliveryEvent {
       ChatDeliveryEventKind.state => ['source'],
       ChatDeliveryEventKind.fallback => ['fallbackReason'],
       ChatDeliveryEventKind.error => ['text', 'code', 'retryable'],
+      ChatDeliveryEventKind.voiceChunk => const [
+        'deliveryIndex',
+        'chunkIndex',
+        'data',
+      ],
+      ChatDeliveryEventKind.voiceError => const ['deliveryIndex'],
       _ => <String>[],
     };
     for (final field in requiredFields) {
       if (json[field] == null) throw invalid;
+    }
+    if (kind == ChatDeliveryEventKind.voiceChunk) {
+      // PCM 块与完整容器块（E1）恰居其一：块带 mimeType 即容器块（不
+      // 带采样率）；否则必须带协商采样率（播放端按它初始化，不猜）。
+      final hasMime = json['mimeType'] != null;
+      final hasRate = json['sampleRate'] != null;
+      if (hasMime == hasRate) throw invalid;
     }
     final source = optionalField<String>('source');
     final fallbackReason = optionalField<String>('fallbackReason');
@@ -641,6 +705,11 @@ final class ChatDeliveryEvent {
       code: optionalField<String>('code'),
       retryable: optionalField<bool>('retryable'),
       incomplete: optionalField<bool>('incomplete'),
+      deliveryIndex: optionalField<int>('deliveryIndex'),
+      chunkIndex: optionalField<int>('chunkIndex'),
+      sampleRate: optionalField<int>('sampleRate'),
+      audioMimeType: optionalField<String>('mimeType'),
+      audioData: optionalField<String>('data'),
     );
   }
 
@@ -662,6 +731,25 @@ final class ChatDeliveryEvent {
   /// 即完整回复。
   final bool? incomplete;
 
+  /// 语音块/语音失败事件所属的栖语交付段序号（票二，与朗读定位同口径）。
+  final int? deliveryIndex;
+
+  /// 语音块在交付段内的序号（票二）：从 0 起严格递增，按序全播。
+  final int? chunkIndex;
+
+  /// 语音块的协商采样率（票二，Hz）：播放端按它初始化，块边界任意
+  /// （PCM 无帧对齐问题，16-bit 样本完整且有序连续即可）。完整容器块
+  /// （E1）不带它。
+  final int? sampleRate;
+
+  /// 完整容器块的 MIME（票二 E1）：非空即这是一段已合成完的完整音频
+  /// （容器由服务定义），播放端走既有整段播放器。为空即 PCM 流式块。
+  final String? audioMimeType;
+
+  /// 语音块的 base64 音频字节（票二）：wire 键名 `data`，与文字增量
+  /// 的 `text` 分开，读侧不混淆两种载荷。
+  final String? audioData;
+
   Map<String, Object?> toJson() => {
     'event': kind.name,
     'requestId': requestId,
@@ -676,6 +764,11 @@ final class ChatDeliveryEvent {
     if (code != null) 'code': code,
     if (retryable != null) 'retryable': retryable,
     if (incomplete == true) 'incomplete': true,
+    if (deliveryIndex != null) 'deliveryIndex': deliveryIndex,
+    if (chunkIndex != null) 'chunkIndex': chunkIndex,
+    if (sampleRate != null) 'sampleRate': sampleRate,
+    if (audioMimeType != null) 'mimeType': audioMimeType,
+    if (audioData != null) 'data': audioData,
   };
 }
 

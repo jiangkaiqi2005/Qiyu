@@ -9,6 +9,7 @@ import 'package:test/test.dart';
 import 'support/dream_state_fixture.dart';
 import 'support/failing_atomic_writer.dart';
 import 'support/in_process_chat_host.dart';
+import 'support/scripted_voice_synthesizer.dart';
 
 void main() {
   group('主链、幂等与分段', () {
@@ -1421,6 +1422,405 @@ void main() {
         }
       });
     }
+  });
+
+  // 契约驱动的语音流式用例（contracts/qiyu_behavior_contracts.json 的
+  // voiceStreamingCases）：PCM 音频块搭车聊天事件流的顺序/序号/搭车
+  // 关系，一句合成失败的 D1 降级（已播留着、后续不出声、提示一次），
+  // 以及拿不到音频块的档位整体不启动分句层。
+  group('契约语音流式', () {
+    final contract =
+        jsonDecode(
+              File(
+                '../../contracts/qiyu_behavior_contracts.json',
+              ).readAsStringSync(),
+            )
+            as Map<String, Object?>;
+
+    for (final value in contract['voiceStreamingCases']! as List<Object?>) {
+      final fixture = value! as Map<String, Object?>;
+      final id = fixture['id']! as String;
+      final userText = fixture['userText']! as String;
+      final expected = fixture['expected']! as Map<String, Object?>;
+      final voice = fixture['voice']! as Map<String, Object?>;
+      final script =
+          (fixture['modelEvents']! as List<Object?>)
+              .cast<Map<String, Object?>>();
+      // 应答按句子文本键控：在途合成并发完成，调用顺序本就无关；
+      // 交付顺序由分句层按句序保证，才是要锁的行为。
+      final replies =
+          (voice['replies']! as Map<String, Object?>)
+              .map((sentence, reply) => MapEntry(sentence, reply! as Map<String, Object?>));
+
+      test('契约 $id', () async {
+        final diagnostics = <String>[];
+        final requestId = 'voice-$id';
+        final root = await Directory.systemTemp.createTemp(
+          'qiyu-voice-stream-test-',
+        );
+        final configPath =
+            '${root.path}${Platform.pathSeparator}provider.json';
+        final ttsGateway = ScriptedTtsGateway(
+          replies: {
+            for (final entry in replies.entries)
+              entry.key: switch (entry.value['failure']) {
+                true => const ScriptedVoiceFailure(),
+                // E1：whole 标记的用例（拿不到音频块的档位）按整响应
+                // 一块——每句独立整段合成、按序播放。
+                _ when voice['whole'] == true => ScriptedVoiceWhole([
+                  for (final chunk
+                      in (entry.value['chunks']! as List<Object?>)
+                          .cast<List<Object?>>())
+                    ...chunk.cast<int>(),
+                ]),
+                _ => ScriptedVoiceChunks([
+                  for (final chunk
+                      in (entry.value['chunks']! as List<Object?>)
+                          .cast<List<Object?>>())
+                    chunk.cast<int>(),
+                ]),
+              },
+          },
+        );
+        // 预写 tts 段：分句层据此启动（段级保存保留它）。whole 标记的
+        // 用例配「自定义档 JSON 字段形态」——真实走 E1 降级分支（该档
+        // 拿不到音频块，每句独立整段合成、按序播放）。
+        await JsonProviderConfigRepository(
+          filePath: configPath,
+        ).saveTts(
+          voice['whole'] == true
+              ? const TtsConfig(
+                  provider: TtsProviderKind.custom,
+                  baseUrl: 'https://custom.example.com/tts',
+                  model: 'custom-tts',
+                  apiKey: 'custom-key',
+                  responseShape: TtsResponseShape.jsonField,
+                )
+              : const TtsConfig(
+                  provider: TtsProviderKind.openAiCompatible,
+                  baseUrl: 'https://tts.example.com/v1',
+                  model: 'tts-test',
+                  apiKey: 'tts-test-key',
+                ),
+        );
+        final gateway = ScriptedModelGateway(
+          streamScript: [
+            ScriptedStreamEvents([
+              for (final event in script)
+                switch (event['kind']) {
+                  'delta' => ModelStreamEvent.delta(event['text']! as String),
+                  'done' => const ModelStreamEvent.done(),
+                  'failure' => ModelStreamEvent.failure(
+                    ModelFailureKind.values.byName(
+                      event['failureKind']! as String,
+                    ),
+                    '已脱敏的脚本故障',
+                  ),
+                  _ => const ModelStreamEvent.delta(''),
+                },
+            ]),
+          ],
+        );
+        final harness = await InProcessChatHost.start(
+          rootDirectory: root,
+          modelGateway: gateway,
+          ttsSettingsService: TtsSettingsService(
+            JsonProviderConfigRepository(filePath: configPath),
+            ttsGateway,
+          ),
+          clock: () => DateTime(2026, 9, 23, 22, 30),
+          diagnosticsSink: diagnostics.add,
+        );
+        addTearDown(harness.dispose);
+
+        final trace = await harness.sendChat(
+          requestId: requestId,
+          text: userText,
+        );
+
+        final chunks = trace.eventsOf(ChatDeliveryEventKind.voiceChunk);
+        expect(chunks, hasLength(expected['voiceChunkCount']! as int));
+        expect(
+          chunks.map((chunk) => chunk.chunkIndex).toList(),
+          expected['chunkIndices'] ?? const [],
+        );
+        for (final chunk in chunks) {
+          // 搭车现有聊天事件流：requestId/sessionId 与文字事件同源。
+          expect(chunk.requestId, requestId);
+          expect(chunk.sessionId, trace.sessionId);
+          if (expected['deliveryIndex'] != null) {
+            expect(chunk.deliveryIndex, expected['deliveryIndex']);
+          }
+          if (expected['whole'] == true) {
+            // E1 整段块：容器原样（不带采样率），播放端走既有整段播放器。
+            expect(chunk.sampleRate, isNull);
+            expect(chunk.audioMimeType, voiceWholeContainerMime);
+          } else if (expected['sampleRate'] != null) {
+            expect(chunk.sampleRate, expected['sampleRate']);
+            expect(chunk.audioMimeType, isNull);
+          }
+        }
+        if (expected['chunkBytes'] != null) {
+          expect(
+            chunks.map((chunk) => chunk.audioData).toList(),
+            expected['chunkBytes'],
+          );
+        }
+        expect(
+          trace.eventsOf(ChatDeliveryEventKind.voiceError),
+          hasLength(expected['voiceErrorCount']! as int),
+        );
+        final kinds = trace.events.map((event) => event.kind).toList();
+        if (expected['firstVoiceChunkBeforeDone'] == true) {
+          // 首音搭车：第一个音频块早于协议终止事件。
+          expect(
+            kinds.indexOf(ChatDeliveryEventKind.voiceChunk) <
+                kinds.indexOf(ChatDeliveryEventKind.done),
+            isTrue,
+            reason: '第一个语音块事件必须早于 done 事件',
+          );
+        }
+        if (expected['messages'] != null) {
+          expect(
+            trace.eventsOf(ChatDeliveryEventKind.message).single.messages,
+            expected['messages'],
+          );
+        }
+        for (final line
+            in (expected['diagnosticsContain'] as List<Object?>? ?? const [])) {
+          expect(diagnostics.join('\n'), contains(line));
+        }
+        final stored = await harness.storedSession(trace.sessionId);
+        final qiyuTurns = stored.turns
+            .where((turn) => turn.speaker == Speaker.qiyu)
+            .toList();
+        if (expected['persistedQiyuTurns'] != null) {
+          expect(qiyuTurns, hasLength(expected['persistedQiyuTurns']! as int));
+        }
+        if (expected['persistedQiyuText'] != null) {
+          expect(
+            qiyuTurns.single.messages.join('\n'),
+            expected['persistedQiyuText'],
+          );
+        }
+        // 语音块只活在内存里：不进 sessions/记忆/备份（落盘会话只有
+        // 文字 turn，没有任何音频痕迹）。
+        expect(
+          stored.turns.every((turn) => !turn.text.contains('voiceChunk')),
+          isTrue,
+        );
+      });
+    }
+
+    test('分句边界即合成请求边界：一句一请求，按序不抢占', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-voice-split-');
+
+      final configPath =
+          '${root.path}${Platform.pathSeparator}provider.json';
+      final ttsGateway = ScriptedTtsGateway(
+        replies: const {
+          '在。': ScriptedVoiceChunks([
+            [1],
+          ]),
+          '刚忙完。': ScriptedVoiceChunks([
+            [2],
+          ]),
+          '今晚打算早点睡。': ScriptedVoiceChunks([
+            [3],
+          ]),
+        },
+      );
+      await JsonProviderConfigRepository(
+        filePath: configPath,
+      ).saveTts(
+        const TtsConfig(
+          provider: TtsProviderKind.openAiCompatible,
+          baseUrl: 'https://tts.example.com/v1',
+          model: 'tts-test',
+          apiKey: 'tts-test-key',
+        ),
+      );
+      final gateway = ScriptedModelGateway(
+        streamScript: const [
+          ScriptedStreamReply('在。刚忙完。今晚打算早点睡。'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        rootDirectory: root,
+        modelGateway: gateway,
+        ttsSettingsService: TtsSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          ttsGateway,
+        ),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'voice-split',
+        text: '在吗',
+      );
+
+      // 三个完整句 = 三次合成请求；没有句末标点的尾巴不额外成句。
+      // 在途合成并发完成，请求到达顺序不锁；锁的是请求集合与块顺序。
+      expect(ttsGateway.requests.toSet(), {
+        '在。',
+        '刚忙完。',
+        '今晚打算早点睡。',
+      });
+      expect(ttsGateway.requests, hasLength(3));
+      final chunks = trace.eventsOf(ChatDeliveryEventKind.voiceChunk);
+      expect(chunks.map((chunk) => chunk.chunkIndex), [0, 1, 2]);
+      // 按句序交付：首句的块先出声，句序即合成请求边界。
+      expect(
+        chunks.map((chunk) => chunk.audioData),
+        ['AQ==', 'Ag==', 'Aw=='],
+      );
+    });
+
+    test('停止信号：前端停播作废在途合成，文字交付不受影响', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-voice-stop-');
+
+      final configPath =
+          '${root.path}${Platform.pathSeparator}provider.json';
+      final gate = Completer<void>();
+      final ttsGateway = ScriptedTtsGateway(
+        replies: {
+          '在。': ScriptedVoiceGated(gate.future),
+          '刚忙完。': const ScriptedVoiceChunks([
+            [2],
+          ]),
+        },
+      );
+      await JsonProviderConfigRepository(
+        filePath: configPath,
+      ).saveTts(
+        const TtsConfig(
+          provider: TtsProviderKind.openAiCompatible,
+          baseUrl: 'https://tts.example.com/v1',
+          model: 'tts-test',
+          apiKey: 'tts-test-key',
+        ),
+      );
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedStreamReply('在。刚忙完。')],
+      );
+      final harness = await InProcessChatHost.start(
+        rootDirectory: root,
+        modelGateway: gateway,
+        ttsSettingsService: TtsSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          ttsGateway,
+        ),
+      );
+      addTearDown(harness.dispose);
+
+      final stream = harness.openChat(requestId: 'voice-stop', text: '在吗');
+      await gateway.awaitStreamOpened();
+      // 等首句进入在途合成（挂在 gate 上不出块），再发停止信号。
+      for (var attempt = 0;
+          ttsGateway.requests.isEmpty && attempt < 200;
+          attempt += 1) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(ttsGateway.requests, isNotEmpty);
+
+      final stopped = await harness.stopVoice('voice-stop');
+      expect(stopped, isTrue);
+      // 放行 gate：被作废的请求即使迟到也不得产出块。
+      gate.complete();
+      await stream.done;
+
+      expect(stream.received.where((e) => e.kind == ChatDeliveryEventKind.voiceChunk), isEmpty);
+      expect(stream.received.where((e) => e.kind == ChatDeliveryEventKind.voiceError), isEmpty);
+      // 停止只针对语音：文字照常完整交付并落盘。
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      expect(trace.message.messages, ['在。刚忙完。']);
+      final stored = await harness.storedSession(trace.sessionId);
+      expect(
+        stored.turns.lastWhere((turn) => turn.speaker == Speaker.qiyu).text,
+        '在。刚忙完。',
+      );
+    });
+
+    test('刷新与重启幂等：重放路径不重复合成语音', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-voice-replay-');
+
+      final configPath =
+          '${root.path}${Platform.pathSeparator}provider.json';
+      final ttsGateway = ScriptedTtsGateway(
+        replies: const {
+          '在。': ScriptedVoiceChunks([
+            [1],
+          ]),
+          '刚忙完。': ScriptedVoiceChunks([
+            [2],
+          ]),
+        },
+      );
+      await JsonProviderConfigRepository(
+        filePath: configPath,
+      ).saveTts(
+        const TtsConfig(
+          provider: TtsProviderKind.openAiCompatible,
+          baseUrl: 'https://tts.example.com/v1',
+          model: 'tts-test',
+          apiKey: 'tts-test-key',
+        ),
+      );
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedStreamReply('在。刚忙完。')],
+      );
+      final harness = await InProcessChatHost.start(
+        rootDirectory: root,
+        modelGateway: gateway,
+        ttsSettingsService: TtsSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          ttsGateway,
+        ),
+      );
+      addTearDown(harness.dispose);
+
+      final first = await harness.sendChat(
+        requestId: 'voice-replay',
+        text: '在吗',
+      );
+      expect(
+        first.eventsOf(ChatDeliveryEventKind.voiceChunk),
+        isNotEmpty,
+      );
+      final synthesizedBefore = ttsGateway.requests.length;
+
+      // 同一 requestId 重发（刷新/重试的幂等路径）：走已落盘 turn 的
+      // 重放，不再合成、不再推块。
+      final replay = await harness.sendChat(
+        requestId: 'voice-replay',
+        text: '在吗',
+      );
+      expect(replay.eventsOf(ChatDeliveryEventKind.voiceChunk), isEmpty);
+      expect(replay.eventsOf(ChatDeliveryEventKind.voiceError), isEmpty);
+      expect(ttsGateway.requests, hasLength(synthesizedBefore));
+      expect(replay.message.messages, ['在。刚忙完。']);
+    });
+
+    test('未配置语音合成：分句层不启动，文字流式不受影响', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedStreamReply('在。刚忙完。')],
+      );
+      final harness = await InProcessChatHost.start(modelGateway: gateway);
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'voice-unconfigured',
+        text: '在吗',
+      );
+
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceChunk), isEmpty);
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceError), isEmpty);
+      expect(trace.message.messages, ['在。刚忙完。']);
+    });
   });
   group('晚安与跨日恢复', () {
 

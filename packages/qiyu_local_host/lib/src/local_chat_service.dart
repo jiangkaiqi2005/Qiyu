@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
@@ -19,6 +20,8 @@ import 'persona_tree.dart';
 import 'provider_settings_service.dart';
 import 'relationship_lifecycle.dart';
 import 'state_pack_reader.dart';
+import 'tts_gateway.dart';
+import 'voice_stream_pipeline.dart';
 
 final class LocalChatException implements Exception {
   const LocalChatException({
@@ -73,6 +76,11 @@ const _deliveryChunkPause = Duration(milliseconds: 70);
 /// 认宽的代价只是提前归档一次。
 final _bedtimeSignalPattern = RegExp(r'晚安|睡了|先睡|睡觉了|想睡|去睡|困了|该睡了');
 
+/// 语音管线推进信号（票二）：与模型增量、取消一起进 [Future.any]，
+/// 同一个字符串哨兵区分「哪一路先到」——语音块先到就继续搭车，模型
+/// 增量先到就照常处理文字。
+const _voiceProgress = 'voice-progress';
+
 final class LocalChatService {
   LocalChatService(
     this._repository, {
@@ -90,6 +98,7 @@ final class LocalChatService {
     this.memoryCadence,
     this.requestDiagnostics,
     this.aliasClient,
+    this.voiceStreamSynthesizer,
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
     Clock? clock,
@@ -127,6 +136,12 @@ final class LocalChatService {
   /// 或调用失败都静默退回无别名，控制本身照常生效。
   final ProviderChatClient? aliasClient;
 
+  /// 分句流式语音合成的服务层接缝（票二）：文字流式推进中每出一个
+  /// 完整句，Host 经它请求该句合成，音频块搭车聊天事件流推出。未注入
+  /// （或档位拿不到音频块、自动朗读关着）时本轮就是纯文字流式，语音
+  /// 继续走 done 时的整段朗读路径。
+  final VoiceStreamSynthesizer? voiceStreamSynthesizer;
+
   late final MemoryBanExecution? _banExecution =
       memoryActions?.banExecution ??
       (openLoopStore == null
@@ -160,6 +175,12 @@ final class LocalChatService {
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
   final Map<String, _DeliveryCancellation> _activeDeliveries = {};
+
+  /// 在途分句语音合成（票二）：停止信号端点按 requestId 定位并作废，
+  /// 交付结束（正常/取消/失败）时同一出口清理，绝不留下继续烧 Provider
+  /// 配额的在途请求。与 [_activeDeliveries] 分开——取消针对轮交付，
+  /// 停止针对语音。
+  final Map<String, VoiceStreamPipeline> _activeVoiceStreams = {};
   Future<void> _pending = Future.value();
   Future<void> _recallTask = Future.value();
 
@@ -327,6 +348,61 @@ final class LocalChatService {
     return true;
   }
 
+  /// 停止信号（票二）：前端停播时通知 Host 作废该轮在途的分句合成，
+  /// 不白烧 Provider 配额。与 [cancel] 分开——停止针对语音，不撤回
+  /// 已交付的文字。返回是否有在途合成被作废。
+  bool stopVoice(String requestId) {
+    final pipeline = _activeVoiceStreams[requestId.trim()];
+    if (pipeline == null) {
+      return false;
+    }
+    pipeline.cancel();
+    return true;
+  }
+
+  /// 为本轮建分句语音合成管线：未注入接缝、档位拿不到音频块（自定义
+  /// 档 JSON 字段形态）、自动朗读关着或未配置时返回 null——本轮就是
+  /// 纯文字流式，done 时的整段朗读路径不受影响。查询本身失败只记
+  /// 诊断，同样按「不流式」处理（文字链路永远优先）。
+  Future<VoiceStreamPipeline?> _createVoicePipeline(
+    RawSession session,
+    String requestId,
+  ) async {
+    final synthesizer = voiceStreamSynthesizer;
+    if (synthesizer == null) {
+      return null;
+    }
+    final bool canStream;
+    try {
+      canStream = await synthesizer.canStream();
+    } on Object catch (error) {
+      _diagnosticsSink(
+        'voice stream probe failed [${error.runtimeType}] request=$requestId',
+      );
+      return null;
+    }
+    if (!canStream) {
+      return null;
+    }
+    // 交付段序号与朗读定位同口径：该 requestId 已落盘的栖语 turn 数
+    // （重放路径不进这里，活前缀轮恒从 0 起算，防御性取现值）。
+    final deliveryIndex = session.turns
+        .where(
+          (turn) =>
+              turn.requestId == requestId && turn.speaker == Speaker.qiyu,
+        )
+        .length;
+    final pipeline = VoiceStreamPipeline(
+      synthesizer: synthesizer,
+      requestId: requestId,
+      sessionId: session.id,
+      deliveryIndex: deliveryIndex,
+      diagnosticsSink: _diagnosticsSink,
+    );
+    _activeVoiceStreams[requestId] = pipeline;
+    return pipeline;
+  }
+
   Stream<ChatDeliveryEvent> _deliver({
     required String requestId,
     required String text,
@@ -435,6 +511,9 @@ final class LocalChatService {
     if (providerPort != null) {
       ModelPromptBuilder? requestBuilder;
       final streamed = _StreamedReply();
+      // 分句语音合成管线（票二）：Provider 分支进来时就绪，与文字流式
+      // 共用同一个活前缀；拿不到音频块的档位这里是 null。
+      final voicePipeline = await _createVoicePipeline(session, trimmedRequestId);
       try {
         requestBuilder = await _promptBuilderForRequest(session.id);
         final prepared = await providerPort.prepareChatRequest();
@@ -460,6 +539,7 @@ final class LocalChatService {
             pace: outcome.safety == null,
             precomputedLocalOutcome: outcome,
             reply: streamed,
+            voicePipeline: voicePipeline,
           );
         }
       } on Object catch (error) {
@@ -475,6 +555,14 @@ final class LocalChatService {
           FallbackReason.modelProvider,
           null,
         );
+      } finally {
+        // 交付收尾（正常/取消/异常同一出口）：作废在途分句合成并注销
+        // 登记——语音绝不比文字多活一刻。
+        voicePipeline?.cancel();
+        if (voicePipeline != null &&
+            identical(_activeVoiceStreams[trimmedRequestId], voicePipeline)) {
+          _activeVoiceStreams.remove(trimmedRequestId);
+        }
       }
       // 模型没有真正收到本轮（本地兜底/取消）时，把已取用的短期
       // memory context 放回，留给下一轮注入；「晚一拍」允许再晚一拍。
@@ -928,6 +1016,11 @@ final class LocalChatService {
   /// 落盘。取消沿用现状语义（只交付 cancelled 事件）；协议失败分叉——
   /// 还没有任何可见文字时走本地兜底，已有可见文字时把已显示部分作为
   /// 该轮最终回复交付并落盘（带「未完成」标记，不补全不伪装）。
+  ///
+  /// 语音（票二）：同一个活前缀每出一个完整句就进分句合成，PCM 音频
+  /// 块经 [VoiceStreamPipeline] 按序搭车本事件流（voiceChunk），一句
+  /// 失败即本段语音结束（voiceError，D1）；块全部吐完才终局，刷新/
+  /// 重启的重放路径不进这里，幂等与今天一致。
   Stream<ChatDeliveryEvent> _streamModelReply(
     List<ModelMessage> messages,
     _DeliveryCancellation cancellation, {
@@ -939,6 +1032,7 @@ final class LocalChatService {
     required bool pace,
     required ChatResult precomputedLocalOutcome,
     required _StreamedReply reply,
+    VoiceStreamPipeline? voicePipeline,
   }) async* {
     // 一次 open：协议适配、终止判定、错误分类与取消下传全部在快照与
     // 网关内部完成；主链只对交付事件做增量卫生与分片节奏。
@@ -960,6 +1054,8 @@ final class LocalChatService {
     var firstChunk = true;
     var terminated = false;
     var eof = false;
+    var finalized = false;
+    var voiceErrorSent = false;
     ModelFailureKind? failure;
     ServiceErrorCategory? serviceError;
     // 在途活前缀的分片上屏：取下一块就立刻吐，绝不让已到来的文字排在
@@ -990,22 +1086,78 @@ final class LocalChatService {
 
     try {
       while (true) {
+        // 语音块优先搭车：文字还在生成，先到口的音频先出声（首音 =
+        // 首句生成完 + 首个音频块）。块按序全播，与文字增量互不阻塞。
+        while (voicePipeline != null) {
+          final chunk = voicePipeline.takeChunk();
+          if (chunk == null) {
+            break;
+          }
+          yield ChatDeliveryEvent.voiceChunk(
+            requestId: requestId,
+            sessionId: sessionId,
+            deliveryIndex: voicePipeline.deliveryIndex,
+            chunkIndex: chunk.chunkIndex,
+            sampleRate: chunk.sampleRate,
+            mimeType: chunk.mimeType,
+            data: base64Encode(chunk.bytes),
+          );
+        }
+        if (voicePipeline != null &&
+            voicePipeline.failed &&
+            !voiceErrorSent) {
+          // D1：已到的块都在上面吐完了才报失败——顺序上「先有声、后
+          // 提示」，提示口径由界面按同会话首次一次落地。
+          voiceErrorSent = true;
+          yield ChatDeliveryEvent.voiceError(
+            requestId: requestId,
+            sessionId: sessionId,
+            deliveryIndex: voicePipeline.deliveryIndex,
+          );
+        }
         if (outbox.isNotEmpty) {
           yield* drainOutbox();
           continue;
         }
         if (terminated || failure != null) {
-          break;
+          if (!finalized) {
+            // 活前缀收尾只做一次：补完结尾行（新增可见文本照样走分片
+            // 节奏）→ 尾句进分句层 → 关闭（之后只剩等音频）。
+            finalized = true;
+            final trailing = visible.completeTrailingLine();
+            outbox.write(trailing);
+            voicePipeline?.addText(trailing);
+            voicePipeline?.close();
+          }
+          if (voicePipeline == null || voicePipeline.isFinished) {
+            break;
+          }
+          // 模型流已终止、语音分句还在途：块继续搭车，等它收尾再终局
+          // （done 之前用户能听到最后几句）。
+          await voicePipeline.whenProgress();
+          continue;
         }
         final moveNext = iterator.moveNext();
-        final moved = await Future.any<Object?>([
+        final waits = <Future<Object?>>[
           moveNext,
           cancellation.whenCancelled.then<Object?>((_) => null),
-        ]);
+        ];
+        // 语音管线只在没收尾时挂推进等待：已收尾还挂会空转；没挂也不
+        // 丢块——下一个模型事件或取消都会把循环带回到顶部的 flush。
+        if (voicePipeline != null && !voicePipeline.isFinished) {
+          waits.add(
+            voicePipeline.whenProgress().then<Object?>((_) => _voiceProgress),
+          );
+        }
+        final moved = await Future.any<Object?>(waits);
         if (moved == null || cancellation.isCancelled) {
           await iterator.cancel();
+          voicePipeline?.cancel();
           reply.cancelled = true;
           return;
+        }
+        if (identical(moved, _voiceProgress)) {
+          continue;
         }
         if (moved != true) {
           // 流干净关闭但没有任何协议终止标记：提前 EOF，按失败处理。
@@ -1022,7 +1174,11 @@ final class LocalChatService {
               break;
             }
             raw.write(event.text);
-            outbox.write(visible.add(event.text!));
+            // 同一个活前缀：文字分片与分句合成共用这一份通过卫生检查
+            // 的增量，不二次解析最终文本。
+            final safe = visible.add(event.text!);
+            outbox.write(safe);
+            voicePipeline?.addText(safe);
           case ModelStreamEventKind.done:
             terminated = true;
           case ModelStreamEventKind.failure:
@@ -1030,11 +1186,9 @@ final class LocalChatService {
             serviceError = event.serviceError;
         }
       }
-      // 终局后排空在途活前缀：节奏不变，用户看到的吐字不跳字。
-      yield* drainOutbox();
-      // 结尾行补完后的新增可见文本同样走分片节奏：终局 message 与已显示
-      // 内容因此始终一致，被扣留的末行不会零 delta 上屏。
-      outbox.write(visible.completeTrailingLine());
+      // 终局后排空在途活前缀：节奏不变，用户看到的吐字不跳字。结尾
+      // 行的补完与分句层关闭已在终止分支里做过（[finalized]），这里
+      // 只剩把尾句文本分片吐完；语音块也已在 break 前全部交付。
       yield* drainOutbox();
     } on Object catch (error) {
       // 流内异常（读取出错、分片停顿被打破等）：与原生 error 同判——

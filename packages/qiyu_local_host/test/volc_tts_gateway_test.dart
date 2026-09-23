@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
@@ -39,11 +40,13 @@ void main() {
       client,
     ).synthesize(config: config, apiKey: 'ark-test-key', text: '晚安。');
 
-    expect(audio, [1, 2, 3]);
-    expect(
-      client.uri.toString(),
-      'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
-    );
+    expect(audio, hasLength(44 + 3));
+    // 整段路径把 PCM 包 WAV 头（44 字节 RIFF），音频数据原样跟在后面。
+    expect(audio.sublist(0, 4), ascii.encode('RIFF'));
+    expect(audio.sublist(8, 12), ascii.encode('WAVE'));
+    expect(audio.sublist(36, 40), ascii.encode('data'));
+    expect(audio.sublist(44), [1, 2, 3]);
+    expect(client.uri.toString(), 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional');
     expect(client.headers['X-Api-Key'], 'ark-test-key');
     expect(client.headers['X-Api-Resource-Id'], 'seed-tts-2.0');
     expect(client.headers['X-Control-Require-Usage-Tokens-Return'], '*');
@@ -55,7 +58,11 @@ void main() {
     // 没填音色用官方示例缺省音色；没调语速不传 speed_ratio。
     expect(reqParams['speaker'], VolcTtsGateway.defaultSpeaker);
     expect(reqParams.containsKey('speed_ratio'), isFalse);
-    expect(reqParams['audio_params'], {'format': 'mp3', 'sample_rate': 24000});
+    // 音频格式统一 PCM（票二）：流式推荐 pcm，官方明示禁 wav。
+    expect(reqParams['audio_params'], {
+      'format': 'pcm',
+      'sample_rate': 24000,
+    });
   });
 
   test('自定义通用音色与语速转入 audio_params.speech_rate；结束码行后忽略多余内容', () async {
@@ -87,16 +94,105 @@ void main() {
       text: '嗯。',
     );
 
-    expect(audio, [9]);
+    expect(audio, hasLength(44 + 1));
+    expect(audio.sublist(44), [9]);
     final body =
         jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
     final reqParams = body['req_params']! as Map<String, Object?>;
     expect(reqParams['speaker'], 'zh_female_gaolengyujie_uranus_bigtts');
     expect(reqParams.containsKey('speed_ratio'), isFalse);
     expect(reqParams['audio_params'], {
-      'format': 'mp3',
+      'format': 'pcm',
       'sample_rate': 24000,
       'speech_rate': -20,
+    });
+  });
+
+  // 用户经高级参数覆盖音频格式/声道时，整段路径不能把非裸 PCM 的字节
+  // 包进 WAV 头（票二 P1-3：现有配置全部保留——统一 PCM 之前这些配置
+  // 原样返回就能播）。
+  group('extraParams 覆盖 format/channel 时不包 WAV 头', () {
+    Future<List<int>> synthesizeWith(
+      Map<String, Object?> audioParams,
+    ) async {
+      final client = _RecordingBytesHttpClient(
+        response: lines([
+          {
+            'code': 0,
+            'data': base64Encode([1, 2, 3]),
+          },
+          {'code': 20000000},
+        ]),
+      );
+      return TtsModelGateway(client).synthesize(
+        config: TtsConfig(
+          provider: TtsProviderKind.volcTts,
+          baseUrl:
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          model: 'seed-tts-2.0',
+          extraParams: {'audio_params': audioParams},
+        ),
+        apiKey: 'ark-test-key',
+        text: '晚安。',
+      );
+    }
+
+    test('format 覆盖成 mp3：原样返回，不包 WAV 头', () async {
+      final audio = await synthesizeWith({'format': 'mp3'});
+      expect(audio, [1, 2, 3]);
+    });
+
+    test('channel 覆盖成 2：原样返回，不包 WAV 头', () async {
+      final audio = await synthesizeWith({'channel': 2});
+      expect(audio, [1, 2, 3]);
+    });
+
+    test('bit_depth 覆盖成 8：原样返回，不包 WAV 头', () async {
+      final audio = await synthesizeWith({'bit_depth': 8});
+      expect(audio, [1, 2, 3]);
+    });
+
+    test('仍是 PCM 单声道 16-bit（含 sample_rate 覆盖）：照常包 WAV 头', () async {
+      final audio = await synthesizeWith({'sample_rate': 16000});
+      expect(audio, hasLength(44 + 3));
+      expect(audio.sublist(44), [1, 2, 3]);
+      final rate = ByteData.sublistView(
+        Uint8List.fromList(audio),
+        24,
+        28,
+      ).getUint32(0, Endian.little);
+      expect(rate, 16000);
+    });
+
+    test('流式路径对非 PCM 覆盖按 E1 整响应当一块', () async {
+      final client = _RecordingBytesHttpClient(
+        response: lines([
+          {
+            'code': 0,
+            'data': base64Encode([1, 2, 3]),
+          },
+          {'code': 20000000},
+        ]),
+      );
+      final chunks = await TtsModelGateway(client)
+          .synthesizeStream(
+            config: const TtsConfig(
+              provider: TtsProviderKind.volcTts,
+              baseUrl:
+                  'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+              model: 'seed-tts-2.0',
+              extraParams: {
+                'audio_params': {'format': 'mp3'},
+              },
+            ),
+            apiKey: 'ark-test-key',
+            text: '晚安。',
+          )
+          .toList();
+      expect(chunks, hasLength(1));
+      expect(chunks.single.bytes, [1, 2, 3]);
+      expect(chunks.single.sampleRate, isNull);
+      expect(chunks.single.mimeType, voiceWholeContainerMime);
     });
   });
 
@@ -110,7 +206,6 @@ void main() {
         {'code': 45000002, 'message': 'internal quota secret detail'},
       ]),
     );
-
     await expectLater(
       TtsModelGateway(
         client,
@@ -251,16 +346,24 @@ void main() {
       text: '你好呀。',
     );
 
-    expect(audio, [1, 2, 3]);
+    // 采样率随高级参数协商：WAV 头按生效值 16000 写，数据原样跟在后面。
+    expect(audio, hasLength(44 + 3));
+    expect(audio.sublist(44), [1, 2, 3]);
+    final wavSampleRate = ByteData.sublistView(
+      Uint8List.fromList(audio),
+      24,
+      28,
+    ).getUint32(0, Endian.little);
+    expect(wavSampleRate, 16000);
     final body =
         jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
     final reqParams = body['req_params']! as Map<String, Object?>;
     expect(reqParams['text'], '你好呀。');
     // 方言音色自动映射为基础音色 zh_female_vv_uranus_bigtts
     expect(reqParams['speaker'], VolcTtsGateway.defaultSpeaker);
-    // audio_params 保留 format: mp3 并合并 sample_rate 与 channel
+    // audio_params 保留 format: pcm 并合并 sample_rate 与 channel
     expect(reqParams['audio_params'], {
-      'format': 'mp3',
+      'format': 'pcm',
       'sample_rate': 16000,
       'channel': 1,
     });
@@ -433,7 +536,8 @@ void main() {
       text: '测试日志',
     );
 
-    expect(audio, [1]);
+    expect(audio, hasLength(44 + 1));
+    expect(audio.sublist(44), [1]);
     final body =
         jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
     final reqParams = body['req_params']! as Map<String, Object?>;

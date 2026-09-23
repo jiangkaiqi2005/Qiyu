@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
@@ -69,6 +70,12 @@ final class LocalChatViewModel extends ChangeNotifier {
        // 缺省独立创建朗读网关（与聊天网关同构；widget 测试注入桩）。
        voiceOutput =
            voiceOutput ?? VoiceOutputController(HttpLocalChatGateway()) {
+    // 停播即通知 Host 作废在途分句合成（票二）：本地不出声了就不该
+    // 继续烧 Provider 配额。与轮交付的取消路径分开。（构造体里
+    // voiceOutput 指的是可空形参，字段要显式 this。）
+    this.voiceOutput.onVoiceStopRequested = (requestId) {
+      unawaited(_gateway.stopVoice(requestId));
+    };
     // 连接探测轮询与后台失败状态的唯一所有者：计时器、重入保护、恢复
     // 提示窗口与对应生命周期都在监控模块内部，聊天事务只读它的结论。
     _hostMonitor = HostStatusMonitor(
@@ -104,6 +111,10 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool _voiceOutputEnabled = false;
   bool _voiceOutputConfigured = false;
   final Map<String, int> _announcedDeliveries = {};
+
+  /// 已流过式语音的交付段（票二，requestId#deliveryIndex）：done 时
+  /// 据此跳过整段重合成，同一段话不响两遍。
+  final Set<String> _voiceStreamedDeliveries = {};
   final List<LocalChatMessage> _messages = [];
   String? _sessionId;
   String? _errorMessage;
@@ -216,6 +227,9 @@ final class LocalChatViewModel extends ChangeNotifier {
     _generation += 1;
     final generation = _generation;
     _activeTurn = null;
+    // 初始化即翻篇：流式语音账本与交付计数都随恢复重算（见
+    // _applyRestore）。
+    _voiceStreamedDeliveries.clear();
     notifyListeners();
     try {
       unawaited(refreshVoiceOutputStatus());
@@ -328,6 +342,9 @@ final class LocalChatViewModel extends ChangeNotifier {
       _announcedDeliveries
         ..clear()
         ..addAll(deliveryCounts);
+      // 流式语音账本随恢复翻篇：恢复出来的历史段没有直播块，旧账本
+      // 只会让同 requestId 的新交付被误判成「播过」而跳过整段朗读。
+      _voiceStreamedDeliveries.clear();
       final lastMessage = _messages.isEmpty ? null : _messages.last;
       if (lastMessage?.speaker == LocalChatSpeaker.user) {
         _pendingRequestId = lastMessage!.requestId;
@@ -365,6 +382,9 @@ final class LocalChatViewModel extends ChangeNotifier {
     _pendingRequestId = null;
     _pendingText = null;
     _errorMessage = null;
+    // 丢弃会话即翻篇：流式语音账本不清就会把新会话里同 requestId 的
+    // 交付误判成「播过」（_applyRestore 也会清，这里先清保证同步语义）。
+    _voiceStreamedDeliveries.clear();
     notifyListeners();
     await _applyRestore(generation);
   }
@@ -389,6 +409,18 @@ final class LocalChatViewModel extends ChangeNotifier {
         : _requestIdFactory();
     _pendingRequestId = requestId;
     _pendingText = trimmed;
+    // 重发复用同一 requestId 开新轮（幂等）：上一轮被停播/取消后记账里
+    // 的这个 requestId 已翻篇，不清掉新轮的直播块会被当成旧轮残块丢弃
+    // ——首音提前静默失效，done 还多烧一次整段合成。
+    voiceOutput.forgetStreamStop(requestId);
+    // 「已流式播过」账本同理：只摘本次 requestId 的条目（键是
+    // requestId#deliveryIndex，# 分隔保证不误伤 req-1 与 req-10 这类
+    // 前缀相似的 id）——否则新轮直播块万一没被受理（播放器正被手动
+    // 重听占着），done 会命中旧记录跳过整段入队，这段话彻底不出声。
+    // 别的 requestId 的历史记录无辜，不整表清。
+    _voiceStreamedDeliveries.removeWhere(
+      (key) => key.startsWith('$requestId#'),
+    );
     // 一轮聊天即一个事务：推进代数、接管活跃事务；此后凡是代际不符的
     // 事件一律整体丢弃。
     _generation += 1;
@@ -476,6 +508,39 @@ final class LocalChatViewModel extends ChangeNotifier {
           case LocalChatEventKind.delta:
             turn.waiting = false;
             turn.streamingText += event.text!;
+          case LocalChatEventKind.voiceChunk:
+            // 语音块搭车（票二）：PCM 块进流式播放器、完整容器块（E1）
+            // 进整段队列。文/音解耦——块丢失或播不出来都不影响文字显示。
+            // 只有受理了才记「播过」账：未受理（被停播过、忙于别的
+            // 音频）时 done 仍走整段入队，否则这段话彻底失声。
+            final accepted = voiceOutput.offerStreamChunk(
+              VoiceStreamChunk(
+                requestId: event.requestId,
+                deliveryIndex: event.deliveryIndex!,
+                chunkIndex: event.chunkIndex ?? 0,
+                sampleRate: event.sampleRate ?? 0,
+                mimeType: event.audioMimeType,
+                data: base64Decode(event.audioData!),
+                sessionId: event.sessionId,
+              ),
+              enabled: _voiceOutputEnabled,
+            );
+            if (accepted) {
+              _voiceStreamedDeliveries.add(_deliveryKey(
+                turn.requestId,
+                event.deliveryIndex!,
+              ));
+            }
+          case LocalChatEventKind.voiceError:
+            // 一句合成失败（票二 D1）：本段语音结束——已播的留着、后续
+            // 不出声、同会话只提示一次；文字显示不受影响。失败段同样
+            // 记「不再整段重读」：用户刚听完「后面的先不读了」，不能
+            // 又被整段读一遍（还多烧一次合成配额）。
+            voiceOutput.notifyStreamFailure();
+            _voiceStreamedDeliveries.add(_deliveryKey(
+              turn.requestId,
+              event.deliveryIndex!,
+            ));
           case LocalChatEventKind.message:
           case LocalChatEventKind.state:
           case LocalChatEventKind.fallback:
@@ -503,21 +568,35 @@ final class LocalChatViewModel extends ChangeNotifier {
               );
               turn.streamingText = '';
               turn.waiting = false;
+              // 块已在流式里播过（或合成失败已收声）的交付段不再走
+              // 整段重合成——否则同一段话会响两遍。
+              final streamed = _voiceStreamedDeliveries.contains(
+                _deliveryKey(turn.requestId, deliveryIndex),
+              );
+              // 语音块收完：播完缓冲即结束（Host 在 done 前已吐完
+              // 所有块）。
+              voiceOutput.endStream(requestId: turn.requestId);
               // ADR 0002：只有完整交付并落盘的栖语 turn 才朗读——
               // done 交付即 Host 落盘完成，此时入队按序读。
-              voiceOutput.offer(
-                VoiceOutputRequest(
-                  requestId: turn.requestId,
-                  deliveryIndex: deliveryIndex,
-                  sessionId: _sessionId,
-                ),
-                enabled: _voiceOutputEnabled,
-              );
+              if (!streamed) {
+                voiceOutput.offer(
+                  VoiceOutputRequest(
+                    requestId: turn.requestId,
+                    deliveryIndex: deliveryIndex,
+                    sessionId: _sessionId,
+                  ),
+                  enabled: _voiceOutputEnabled,
+                );
+              }
             }
           case LocalChatEventKind.cancelled:
             turn.streamingText = '';
             turn.waiting = false;
+            // 轮交付取消：硬停这一路流式语音（缓冲里的 PCM 不再播），
+            // 但不清整段队列——取消针对搭车音频，排队里的整段项照常。
+            voiceOutput.stopStream(requestId: turn.requestId);
           case LocalChatEventKind.error:
+            voiceOutput.stopStream(requestId: turn.requestId);
             throw LocalChatGatewayException(event.text!);
         }
         notifyListeners();
@@ -617,6 +696,11 @@ final class LocalChatViewModel extends ChangeNotifier {
 final Uuid _requestIdUuid = Uuid();
 
 String _defaultRequestId() => 'chat-${_requestIdUuid.v4()}';
+
+/// 交付段在「是否已流式播过」账本里的键：同一 requestId 的多个交付段
+/// （轮内召回的 bubble 2）各自独立。
+String _deliveryKey(String requestId, int deliveryIndex) =>
+    '$requestId#$deliveryIndex';
 
 String _readableError(Object error) =>
     readableError(error, fallback: '本地聊天暂时不可用，请稍后重试。');

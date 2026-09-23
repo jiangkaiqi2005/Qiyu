@@ -153,6 +153,11 @@ abstract interface class StreamingLocalChatGateway {
 
   Future<bool> cancel(String requestId);
 
+  /// 停止信号（票二）：前端停播时通知 Host 作废该轮在途的分句合成，
+  /// 不白烧 Provider 配额。与 [cancel] 分开——停止针对语音，不撤回
+  /// 已交付的文字。
+  Future<bool> stopVoice(String requestId);
+
   /// 语音转写：把浏览器录音字节交给本机程序云端转写，返回识别文本。
   /// 失败（含「没有识别到语音」）抛 [LocalChatGatewayException]，
   /// message 已是面向用户的人话。
@@ -166,7 +171,8 @@ abstract interface class StreamingLocalChatGateway {
 /// 朗读可单独注入与测试，聊天 fake 不被迫实现。
 abstract interface class ChatSpeechGateway {
   /// 朗读一条已完整交付并落盘的栖语交付段：Host 按 (requestId,
-  /// deliveryIndex) 从 session 取文字合成，返回 mp3 字节（只在内存）。
+  /// deliveryIndex) 从 session 取文字合成，返回完整音频字节（PCM 档
+  /// 已包 WAV 头，其余档容器由服务定义；只在内存，播放端按字节嗅探）。
   Future<Uint8List> speak({
     required String requestId,
     required int deliveryIndex,
@@ -297,6 +303,17 @@ final class HttpLocalChatGateway extends HostApiGateway
     );
     final json = decodeSuccess(response);
     return json['cancelled'] == true;
+  }
+
+  @override
+  Future<bool> stopVoice(String requestId) async {
+    final response = await httpClient.post(
+      resolve('/api/chat/voice-stop'),
+      headers: {...await csrfHeaders(), 'content-type': 'application/json'},
+      body: jsonEncode({'requestId': requestId}),
+    );
+    final json = decodeSuccess(response);
+    return json['stopped'] == true;
   }
 
   @override

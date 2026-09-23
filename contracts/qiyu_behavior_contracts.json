@@ -136,6 +136,57 @@
         "event",
         "requestId"
       ]
+    },
+    {
+      "wire": {
+        "event": "voiceChunk",
+        "data": "AQID",
+        "sessionId": "session-1",
+        "requestId": "delivery-1",
+        "deliveryIndex": 0,
+        "chunkIndex": 0,
+        "sampleRate": 24000
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "deliveryIndex",
+        "chunkIndex",
+        "sampleRate",
+        "data"
+      ]
+    },
+    {
+      "wire": {
+        "event": "voiceChunk",
+        "data": "AQID",
+        "sessionId": "session-1",
+        "requestId": "delivery-1",
+        "deliveryIndex": 0,
+        "chunkIndex": 0,
+        "mimeType": "application/octet-stream"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "deliveryIndex",
+        "chunkIndex",
+        "mimeType",
+        "data"
+      ]
+    },
+    {
+      "wire": {
+        "event": "voiceError",
+        "sessionId": "session-1",
+        "requestId": "delivery-1",
+        "deliveryIndex": 0
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "deliveryIndex"
+      ]
     }
   ],
   "promptModules": {
@@ -748,6 +799,115 @@
         "deltaTextNeverContains": ["tool_call"],
         "persistedQiyuTurns": 1,
         "persistedQiyuText": "嗯？"
+      }
+    }
+  ],
+  "voiceStreamingCases": [
+    {
+      "id": "voice-chunks-ride-the-chat-stream-in-order",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "刚忙完。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "replies": {
+          "在。": { "chunks": [[1, 2], [3]] },
+          "刚忙完。": { "chunks": [[4, 5]] }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 3,
+        "chunkIndices": [0, 1, 2],
+        "chunkBytes": ["AQI=", "Aw==", "BAU="],
+        "deliveryIndex": 0,
+        "sampleRate": 24000,
+        "firstVoiceChunkBeforeDone": true,
+        "voiceErrorCount": 0,
+        "messages": ["在。刚忙完。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚忙完。",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "sentence-synthesis-failure-ends-voice-keeps-the-shown-text",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "刚忙完。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "replies": {
+          "在。": { "chunks": [[1]] },
+          "刚忙完。": { "failure": true }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 1,
+        "chunkIndices": [0],
+        "voiceErrorCount": 1,
+        "messages": ["在。刚忙完。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚忙完。",
+        "diagnosticsContain": ["voice synthesis failed"]
+      }
+    },
+    {
+      "id": "first-sentence-failure-ends-voice-immediately",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "刚忙完。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "replies": {
+          "在。": { "failure": true },
+          "刚忙完。": { "chunks": [[2]] }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 0,
+        "voiceErrorCount": 1,
+        "messages": ["在。刚忙完。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚忙完。",
+        "diagnosticsContain": ["voice synthesis failed"]
+      }
+    },
+    {
+      "id": "non-streaming-tier-degrades-to-sentence-level-playback",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "刚忙完。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "whole": true,
+        "replies": {
+          "在。": { "chunks": [[1]] },
+          "刚忙完。": { "chunks": [[2]] }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 2,
+        "chunkIndices": [0, 1],
+        "chunkBytes": ["AQ==", "Ag=="],
+        "whole": true,
+        "deliveryIndex": 0,
+        "voiceErrorCount": 0,
+        "messages": ["在。刚忙完。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚忙完。",
+        "diagnosticsContain": []
       }
     }
   ],

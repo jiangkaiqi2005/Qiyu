@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -424,6 +425,436 @@ void main() {
     controller.dispose();
   });
 
+  test('语音块搭车：流式播过即不再整段重合成，停播通知 Host 停止合成', () async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _StreamingPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final gateway = _ScriptedGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+      requestIdFactory: () => 'request-voice-stream',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+
+    final sending = viewModel.send('在吗');
+    void emit(LocalChatDeliveryEvent event) =>
+        gateway.emit('request-voice-stream', event);
+    emit(
+      const LocalChatDeliveryEvent.accepted(
+        requestId: 'request-voice-stream',
+        sessionId: 'session-1',
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.delta(
+        requestId: 'request-voice-stream',
+        sessionId: 'session-1',
+        text: '在。刚忙完。',
+      ),
+    );
+    // 两个语音块搭车文字事件流到达（首句、第二句各一块）。
+    for (var index = 0; index < 2; index += 1) {
+      emit(
+        LocalChatDeliveryEvent.voiceChunk(
+          requestId: 'request-voice-stream',
+          sessionId: 'session-1',
+          deliveryIndex: 0,
+          chunkIndex: index,
+          sampleRate: 24000,
+          data: base64Encode([index + 1]),
+        ),
+      );
+    }
+    // 语音块还在播：等视图模型消费完事件再停播——停播要通知 Host
+    // 作废在途合成。
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    controller.stopAll();
+    expect(gateway.stopVoiceCalls, ['request-voice-stream']);
+    expect(player.streams.single.stopped, isTrue);
+    expect(controller.phase, VoiceOutputPhase.idle);
+
+    // 之后照常终局：整段重合成不再发生（同一段话不响两遍）。
+    emit(
+      const LocalChatDeliveryEvent.message(
+        requestId: 'request-voice-stream',
+        sessionId: 'session-1',
+        messages: ['在。刚忙完。'],
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.state(
+        requestId: 'request-voice-stream',
+        sessionId: 'session-1',
+        source: ReplySource.llm,
+        mode: 'llm',
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.done(
+        requestId: 'request-voice-stream',
+        sessionId: 'session-1',
+      ),
+    );
+    gateway.closeStream('request-voice-stream');
+    expect((await sending).status, ChatSendStatus.completed);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    // 块按序进了播放器；流式播过即不再整段重合成。
+    expect(speakGateway.calls, isEmpty);
+    expect(player.streams.single.appended, [1, 2]);
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  test('首句合成失败：done 不整段重读（D1 后续不出声）', () async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _StreamingPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final gateway = _ScriptedGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+      requestIdFactory: () => 'request-voice-fail',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+
+    final sending = viewModel.send('在吗');
+    void emit(LocalChatDeliveryEvent event) =>
+        gateway.emit('request-voice-fail', event);
+    emit(
+      const LocalChatDeliveryEvent.accepted(
+        requestId: 'request-voice-fail',
+        sessionId: 'session-1',
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.delta(
+        requestId: 'request-voice-fail',
+        sessionId: 'session-1',
+        text: '在。刚忙完。',
+      ),
+    );
+    // 一个块都没到，先来失败信号（首句就失败）。
+    emit(
+      const LocalChatDeliveryEvent.voiceError(
+        requestId: 'request-voice-fail',
+        sessionId: 'session-1',
+        deliveryIndex: 0,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.failureNotice, isNotNull);
+    controller.consumeFailureNotice();
+    emit(
+      const LocalChatDeliveryEvent.message(
+        requestId: 'request-voice-fail',
+        sessionId: 'session-1',
+        messages: ['在。刚忙完。'],
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.state(
+        requestId: 'request-voice-fail',
+        sessionId: 'session-1',
+        source: ReplySource.llm,
+        mode: 'llm',
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.done(
+        requestId: 'request-voice-fail',
+        sessionId: 'session-1',
+      ),
+    );
+    gateway.closeStream('request-voice-fail');
+    expect((await sending).status, ChatSendStatus.completed);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    // 失败段不再整段重读：用户刚听完「后面的先不读了」。
+    expect(speakGateway.calls, isEmpty);
+    // 文字照常完整交付。
+    expect(
+      viewModel.messages
+          .where((message) => message.speaker == LocalChatSpeaker.qiyu)
+          .map((message) => message.text),
+      ['在。刚忙完。'],
+    );
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  test('直播块未被受理时 done 仍走整段入队（不失声）', () async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _StreamingPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final gateway = _ScriptedGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+      requestIdFactory: () => 'request-voice-busy',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+
+    final sending = viewModel.send('在吗');
+    void emit(LocalChatDeliveryEvent event) =>
+        gateway.emit('request-voice-busy', event);
+    emit(
+      const LocalChatDeliveryEvent.accepted(
+        requestId: 'request-voice-busy',
+        sessionId: 'session-1',
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.delta(
+        requestId: 'request-voice-busy',
+        sessionId: 'session-1',
+        text: '在。刚忙完。',
+      ),
+    );
+    // 先让整段路径占住播放器（手动重听旧 bubble）。
+    controller.playNow(
+      const VoiceOutputRequest(requestId: 'old', deliveryIndex: 0),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.phase, VoiceOutputPhase.playing);
+    emit(
+      LocalChatDeliveryEvent.voiceChunk(
+        requestId: 'request-voice-busy',
+        sessionId: 'session-1',
+        deliveryIndex: 0,
+        chunkIndex: 0,
+        sampleRate: 24000,
+        data: base64Encode([1]),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    // 块被丢弃（不抢占），账本不记。
+    expect(player.streams, isEmpty);
+    emit(
+      const LocalChatDeliveryEvent.message(
+        requestId: 'request-voice-busy',
+        sessionId: 'session-1',
+        messages: ['在。刚忙完。'],
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.state(
+        requestId: 'request-voice-busy',
+        sessionId: 'session-1',
+        source: ReplySource.llm,
+        mode: 'llm',
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.done(
+        requestId: 'request-voice-busy',
+        sessionId: 'session-1',
+      ),
+    );
+    gateway.closeStream('request-voice-busy');
+    expect((await sending).status, ChatSendStatus.completed);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    // 没播过的交付段 done 时仍整段入队：旧段播完后接着读。先让旧段
+    // 播完（直播块被丢弃时它还在播），队列才排到新交付段。
+    player.wholePlaybacks.first.finish();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      speakGateway.calls.map((call) => call.requestId),
+      ['old', 'request-voice-busy'],
+    );
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  test('取消后同 requestId 重发：直播块照常受理，done 不整段重读', () async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _StreamingPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final gateway = _ScriptedGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+      requestIdFactory: () => 'request-retry-voice',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+
+    // 第一轮：直播块受理后轮交付取消（停播记账写下这个 requestId）。
+    final sending = viewModel.send('在吗');
+    gateway.emitAccepted('request-retry-voice');
+    gateway.emitDelta('request-retry-voice', '在。刚忙完。');
+    gateway.emit(
+      'request-retry-voice',
+      LocalChatDeliveryEvent.voiceChunk(
+        requestId: 'request-retry-voice',
+        sessionId: 'session-1',
+        deliveryIndex: 0,
+        chunkIndex: 0,
+        sampleRate: 24000,
+        data: base64Encode([1]),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    gateway.emitCancelled('request-retry-voice');
+    gateway.closeStream('request-retry-voice');
+    expect((await sending).status, ChatSendStatus.acceptedIncomplete);
+    await Future<void>.delayed(Duration.zero);
+
+    // 重发同一文本：幂等复用同一 requestId，停播记账随新轮翻篇。
+    final retrying = viewModel.send('在吗');
+    gateway.emitAccepted('request-retry-voice');
+    gateway.emitDelta('request-retry-voice', '在。刚忙完。');
+    gateway.emit(
+      'request-retry-voice',
+      LocalChatDeliveryEvent.voiceChunk(
+        requestId: 'request-retry-voice',
+        sessionId: 'session-1',
+        deliveryIndex: 0,
+        chunkIndex: 0,
+        sampleRate: 24000,
+        data: base64Encode([2]),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    // 新轮的直播块被受理：另开一路流（不被旧轮残块记账挡住）。
+    expect(player.streams, hasLength(2));
+
+    gateway.emitMessage('request-retry-voice', ['在。刚忙完。']);
+    gateway.emitState('request-retry-voice');
+    gateway.emitDone('request-retry-voice');
+    gateway.closeStream('request-retry-voice');
+    expect((await retrying).status, ChatSendStatus.completed);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    // 播过即不整段重读：同一段话不响两遍，不多烧一次合成。
+    expect(speakGateway.calls, isEmpty);
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  test('取消后同 requestId 重发：新轮直播块未被受理时 done 仍整段入队', () async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _StreamingPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final gateway = _ScriptedGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+      requestIdFactory: () => 'request-retry-quiet',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+
+    // 第一轮：直播块受理（「播过」账本记下 requestId#0）后轮交付取消。
+    final sending = viewModel.send('在吗');
+    gateway.emitAccepted('request-retry-quiet');
+    gateway.emitDelta('request-retry-quiet', '在。刚忙完。');
+    gateway.emit(
+      'request-retry-quiet',
+      LocalChatDeliveryEvent.voiceChunk(
+        requestId: 'request-retry-quiet',
+        sessionId: 'session-1',
+        deliveryIndex: 0,
+        chunkIndex: 0,
+        sampleRate: 24000,
+        data: base64Encode([1]),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(player.streams, hasLength(1));
+    gateway.emitCancelled('request-retry-quiet');
+    gateway.closeStream('request-retry-quiet');
+    expect((await sending).status, ChatSendStatus.acceptedIncomplete);
+    await Future<void>.delayed(Duration.zero);
+
+    // 重发同一文本前先让手动重听占住播放器：新轮直播块到不了口。
+    controller.playNow(
+      const VoiceOutputRequest(requestId: 'old', deliveryIndex: 0),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.phase, VoiceOutputPhase.playing);
+
+    final retrying = viewModel.send('在吗');
+    gateway.emitAccepted('request-retry-quiet');
+    gateway.emitDelta('request-retry-quiet', '在。刚忙完。');
+    gateway.emit(
+      'request-retry-quiet',
+      LocalChatDeliveryEvent.voiceChunk(
+        requestId: 'request-retry-quiet',
+        sessionId: 'session-1',
+        deliveryIndex: 0,
+        chunkIndex: 0,
+        sampleRate: 24000,
+        data: base64Encode([2]),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    // 直播块被丢弃（不抢占），账本不记——新轮没有「播过」记录。
+    expect(player.streams, hasLength(1));
+
+    gateway.emitMessage('request-retry-quiet', ['在。刚忙完。']);
+    gateway.emitState('request-retry-quiet');
+    gateway.emitDone('request-retry-quiet');
+    gateway.closeStream('request-retry-quiet');
+    expect((await retrying).status, ChatSendStatus.completed);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    // 旧账本条目已随新轮翻篇：done 整段入队，旧段播完后接着读——不
+    // 因命中上一轮的记录彻底不出声。
+    player.wholePlaybacks.first.finish();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      speakGateway.calls.map((call) => call.requestId),
+      ['old', 'request-retry-quiet'],
+    );
+    viewModel.dispose();
+    controller.dispose();
+  });
+
   test('autoSpeak 关或未配置时交付不朗读', () async {
     for (final ttsGateway in [
       _FixedTtsSettingsGateway(configured: true, autoSpeak: false),
@@ -821,6 +1252,9 @@ final class _RestoreCountingGateway implements StreamingLocalChatGateway {
   Future<bool> cancel(String requestId) async => true;
 
   @override
+  Future<bool> stopVoice(String requestId) async => true;
+
+  @override
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
@@ -841,6 +1275,9 @@ final class _TwoBubbleGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<bool> stopVoice(String requestId) async => true;
 
   @override
   Future<String> transcribe({
@@ -922,6 +1359,9 @@ final class _GatedGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<bool> stopVoice(String requestId) async => true;
 
   @override
   Future<String> transcribe({
@@ -1008,6 +1448,7 @@ final class _RecordingSpeakGateway implements ChatSpeechGateway {
 /// 可以按任意时序推事件、关流，用来模拟迟到事件、取消与提前 EOF 的竞态。
 final class _ScriptedGateway implements StreamingLocalChatGateway {
   final cancelCalls = <String>[];
+  final stopVoiceCalls = <String>[];
   final _controllers = <String, StreamController<LocalChatDeliveryEvent>>{};
 
   StreamController<LocalChatDeliveryEvent> _controllerFor(String requestId) {
@@ -1095,6 +1536,12 @@ final class _ScriptedGateway implements StreamingLocalChatGateway {
     cancelCalls.add(requestId);
     return true;
   }
+  @override
+  Future<bool> stopVoice(String requestId) async {
+    stopVoiceCalls.add(requestId);
+    return true;
+  }
+
 
   @override
   Future<String> transcribe({
@@ -1134,7 +1581,98 @@ final class _SequentialPlayerPlatform implements VoicePlayerPlatform {
     Uint8List bytes, {
     required String mimeType,
     double volume = 1.0,
-  }) async => _InstantPlayback();
+  }) async => _AutoFinishPlayback();
+}
+
+/// 立即播完的整段播放（按序队列用例用：不等测试手动收尾）。
+final class _AutoFinishPlayback implements VoicePlayback {
+  final Completer<void> _done = Completer<void>()..complete();
+
+  @override
+  Future<void> get done => _done.future;
+
+  @override
+  void setVolume(double volume) {}
+
+  @override
+  void stop() {}
+}
+
+/// 带流式能力的播放平台假件：记录每路流的块序列与结束态。
+final class _StreamingPlayerPlatform
+    implements VoicePlayerPlatform, StreamingVoicePlayerPlatform {
+  final List<_RecordingStreamPlayback> streams = [];
+  final List<_InstantPlayback> wholePlaybacks = [];
+
+  @override
+  bool get supported => true;
+
+  @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+    double volume = 1.0,
+  }) async {
+    final playback = _InstantPlayback();
+    wholePlaybacks.add(playback);
+    return playback;
+  }
+
+  @override
+  Future<VoiceStreamPlayback?> startStream({
+    required int sampleRate,
+    double volume = 1.0,
+  }) async {
+    final playback = _RecordingStreamPlayback(sampleRate: sampleRate);
+    streams.add(playback);
+    return playback;
+  }
+}
+
+final class _RecordingStreamPlayback implements VoiceStreamPlayback {
+  _RecordingStreamPlayback({required this.sampleRate});
+
+  final int sampleRate;
+  final List<int> appended = [];
+  final Completer<void> _done = Completer<void>();
+  bool ended = false;
+  bool stopped = false;
+
+  @override
+  void append(Uint8List pcm) {
+    if (stopped || ended) {
+      return;
+    }
+    appended.addAll(pcm);
+  }
+
+  @override
+  void end() {
+    ended = true;
+    if (!_done.isCompleted) {
+      _done.complete();
+    }
+  }
+
+  @override
+  Future<void> get done => _done.future;
+
+  @override
+  void stop() {
+    stopped = true;
+    if (!_done.isCompleted) {
+      _done.complete();
+    }
+  }
+
+  @override
+  void setVolume(double volume) {}
 }
 
 final class _GestureLockedSequentialPlayer
@@ -1173,8 +1711,16 @@ final class _GestureLockedSequentialPlayer
   }
 }
 
+/// 整段播放假件：done 由测试手动收尾（[finish]）——「在播中」的用例
+/// 要靠它把播放器占住。
 final class _InstantPlayback implements VoicePlayback {
-  final Completer<void> _done = (Completer<void>()..complete());
+  final Completer<void> _done = Completer<void>();
+
+  void finish() {
+    if (!_done.isCompleted) {
+      _done.complete();
+    }
+  }
 
   @override
   Future<void> get done => _done.future;
@@ -1183,7 +1729,7 @@ final class _InstantPlayback implements VoicePlayback {
   void setVolume(double volume) {}
 
   @override
-  void stop() {}
+  void stop() => finish();
 }
 
 /// 可翻转的 TTS 设置 fake：记录 autoSpeak 写入，供 toggle 测试。

@@ -499,6 +499,9 @@ final class _RestoringChatGateway implements StreamingLocalChatGateway {
   Future<bool> cancel(String requestId) async => true;
 
   @override
+  Future<bool> stopVoice(String requestId) async => true;
+
+  @override
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,

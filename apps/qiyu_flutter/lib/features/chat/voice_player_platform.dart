@@ -31,11 +31,17 @@ double? parseVoiceVolumePreference(String? stored) {
 
 /// 音量 → 存储文本（两端唯一的**编码**规则，纯函数、不碰存储）。
 ///
-/// 沿用既有表达式：先把值限制到 0.0~1.0，再固定两位小数。非有限值与负零
+/// 沿用既有表达式：先把值限制到 0.0 ~ 1.0，再固定两位小数。非有限值与负零
 /// 的结果就是这个表达式在各平台上的实际结果（NaN 与 +Infinity 归上界、
 /// -Infinity 归下界、负零写成 "0.00"），不在此新增拒绝策略。
 String encodeVoiceVolumePreference(double volume) =>
     volume.clamp(0.0, 1.0).toStringAsFixed(2);
+
+/// 整段播放的咨询性 MIME（票二）：音频格式已统一 PCM/WAV，但 Host 端
+/// 整段响应的容器随档位不同（PCM 档包 WAV 头、其余档服务自定义），两种
+/// 播放端都按字节嗅探容器（web 的 decodeAudioData 与安卓 MediaPlayer
+/// 都不消费这个值）——用中性标注，不冒充某种具体格式。
+const voiceWholeAudioAdvisoryMime = 'application/octet-stream';
 
 /// 一次播放会话：done 在自然播完、被 stop 或播放出错时完成（不抛）。
 abstract interface class VoicePlayback {
@@ -46,6 +52,30 @@ abstract interface class VoicePlayback {
 
   /// 实时调节当前正在播放的音量（0.0 ~ 1.0）。
   void setVolume(double volume);
+}
+
+/// 一次流式 PCM 播放会话（票二）：[append] 收一块往播放器里写一块，
+/// [end] 声明块收完（播完缓冲即 [done]）。块边界任意——PCM 无帧对齐
+/// 问题，只要 16-bit 样本完整、有序连续即可。音频只在内存，不落盘。
+abstract interface class VoiceStreamPlayback {
+  void append(Uint8List pcm);
+  void end();
+  Future<void> get done;
+  void stop();
+  void setVolume(double volume);
+}
+
+/// 流式 PCM 播放的平台能力（票二）：Web 以 AudioWorklet 环形缓冲播
+/// PCM（替代整段 decodeAudioData），安卓以 AudioTrack 流式写播 PCM
+/// （替代整段 MediaDataSource）。没有这个能力的平台（旧浏览器、测试
+/// 宿主）按「读不出来」如实降级，调用方不抛异常。
+abstract interface class StreamingVoicePlayerPlatform {
+  /// 按协商采样率开一路流式播放：[sampleRate] 来自语音块事件（Host
+  /// 记录 Provider 协商结果），播放端按它初始化，不猜。
+  Future<VoiceStreamPlayback?> startStream({
+    required int sampleRate,
+    double volume = 1.0,
+  });
 }
 
 /// 语音输出的浏览器能力接缝（与录音平台接缝同构）：Web 构建走真实

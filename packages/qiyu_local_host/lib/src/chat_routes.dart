@@ -75,6 +75,19 @@ final class ChatRoutes implements ApiRoutes {
         headers: jsonHeaders,
       );
     }
+    if (method == 'POST' && path == 'api/chat/voice-stop') {
+      // 停止信号（票二）：前端停播时作废该轮在途的分句合成，不白烧
+      // Provider 配额。与 cancel 分开——停止针对语音，不动轮交付。
+      final payload = await readJsonObject(request, maxBytes: 4 * 1024);
+      final requestId = payload['requestId'];
+      if (requestId is! String || requestId.trim().isEmpty) {
+        throw invalidRequest('停止朗读请求格式不正确。');
+      }
+      return Response.ok(
+        jsonEncode({'stopped': chatService.stopVoice(requestId)}),
+        headers: jsonHeaders,
+      );
+    }
     if (method == 'POST' && path == 'api/chat') {
       final payload = await readJsonObject(request, maxBytes: 64 * 1024);
       final requestId = payload['requestId'];

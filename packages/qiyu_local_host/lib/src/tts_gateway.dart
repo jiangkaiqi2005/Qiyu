@@ -29,11 +29,15 @@ final class TtsGatewayException implements Exception {
 }
 
 /// TTS 协议网关的公共调用面：服务层（设置、朗读、连接测试）只认这个
-/// 形状，协议分支不出 Provider 层。ADR 0002：只做「一段已定稿文字 →
-/// 一段完整音频」的整段合成，不做流式分句。
+/// 形状，协议分支不出 Provider 层。ADR 0002 的整段合成语义（只做「一段
+/// 已定稿文字 → 一段完整音频」）对本接口继续有效；分句流式合成走
+/// [TtsStreamSynthesisGateway]，由 Host 行为层的分句层驱动（ADR 0018：
+/// ADR 0002「完整交付后整段合成、不在增量流上分句合成」的结论已由
+/// 流式交付架构推翻，播放队列/停播/前台/一律朗读语义延续）。
 abstract interface class TtsSynthesisGateway {
-  /// 把一段完整文字合成为完整音频（mp3 字节）。音频只在内存里流转，
-  /// Host 不落盘。
+  /// 把一段完整文字合成为完整音频字节。音频只在内存里流转，Host 不
+  /// 落盘。请求 PCM 的档位（豆包、OpenAI 兼容）由网关在本地包 WAV 头
+  /// 后返回——现有整段播放器（decodeAudioData / MediaPlayer）零改动。
   Future<List<int>> synthesize({
     required TtsConfig config,
     required String? apiKey,
@@ -41,15 +45,75 @@ abstract interface class TtsSynthesisGateway {
   });
 }
 
+/// 一个流式音频块（票二）：PCM16 单声道字节 + 本块的协商采样率。块
+/// 边界即 Provider 分块边界（PCM 无帧对齐问题：16-bit 样本完整、有序
+/// 连续即可，OpenAI 官方明示 chunk 边界任意）。
+final class VoiceAudioChunk {
+  const VoiceAudioChunk({
+    required this.bytes,
+    this.sampleRate,
+    this.mimeType,
+  }) : isWhole = mimeType != null;
+
+  /// 裸 PCM16 单声道字节 + 协商采样率（流式块）。
+  final Uint8List bytes;
+  final int? sampleRate;
+
+  /// 完整音频容器的 MIME（E1 降级的句子级整段块）：非空即这是一段
+  /// 已合成完的完整音频（容器由服务定义，不包 WAV 头），播放端走既有
+  /// 整段播放器；为空即 PCM 流式块，走流式播放器。
+  final String? mimeType;
+
+  /// 是否是完整容器块（E1）：与 [mimeType] 同义，读侧少一次空判断。
+  final bool isWhole;
+}
+
+/// 流式合成网关（票二）：一段文字 → 音频块流。与整段接口并存——整段
+/// 路径（设置试听、历史重听、连接测试）继续一问一答；分句层按完整句
+/// 逐句请求，块直接转交付事件推给前端（Host 行为层持有分句，网关与
+/// UI 都不分句）。
+///
+/// 拿不到音频块的档位不抛「不支持」：按 E1 降级返回**一个完整容器块**
+/// （[VoiceAudioChunk.isWhole]），分句层靠「一句一块」获得句子级顺序
+/// 播放——现有配置全部保留、不淘汰在用型号。
+abstract interface class TtsStreamSynthesisGateway {
+  Stream<VoiceAudioChunk> synthesizeStream({
+    required TtsConfig config,
+    required String? apiKey,
+    required String text,
+  });
+}
+
+/// 分句流式合成的服务层接缝（票二）：Host 行为层的分句层只认这个
+/// 形状，由 TtsSettingsService 实现（配置加载、Key 归一与文本校验与
+/// 整段路径同源）。LocalChatService 不直接认识 TTS 协议档位。
+abstract interface class VoiceStreamSynthesizer {
+  /// 能否启动分句层：未配置合成服务或自动朗读关着（不白烧配额）时
+  /// 如实报告 false——那些轮次就是纯文字流式，done 时的整段朗读路径
+  /// 不受影响。档位拿不到音频块不算否决（E1 句子级降级照常跑）。
+  Future<bool> canStream();
+
+  /// 合成一句完整文字为音频块流。失败抛 [TtsGatewayException]（分句层
+  /// 按 D1 降级：一句失败即本段语音结束）。
+  Stream<VoiceAudioChunk> synthesizeStream(String text);
+}
+
 /// OpenAI-compatible `/audio/speech` 的 Host 中介客户端：一次性 POST
-/// 全文，整段 mp3 响应字节返回（OpenAI、硅基流动等）。
-final class OpenAiSpeechGateway implements TtsSynthesisGateway {
+/// 全文，整段音频响应字节返回（OpenAI、硅基流动等）。流式合成走
+/// chunked 传输（`stream_format=audio` + `response_format=pcm`，官方
+/// 明示 chunk 边界任意、PCM 为 24kHz 16-bit 小端无头裸样本）。
+final class OpenAiSpeechGateway
+    implements TtsSynthesisGateway, TtsStreamSynthesisGateway {
   const OpenAiSpeechGateway(this.httpClient);
 
   final ProviderBytesHttpClient httpClient;
 
   /// OpenAI 协议的 voice 是必填字段：用户没填音色时用协议通用缺省。
   static const defaultVoice = 'alloy';
+
+  /// OpenAI pcm 的协商采样率：官方定义「24kHz 16-bit 有符号小端、无
+  /// 容器头」的裸样本，WAV 包装与播放端初始化都用它。
+  static const pcmSampleRate = 24000;
 
   @override
   Future<List<int>> synthesize({
@@ -64,12 +128,16 @@ final class OpenAiSpeechGateway implements TtsSynthesisGateway {
     ensureTtsOutboundAllowed(uri);
     final voice = config.voice?.trim();
     final body = jsonEncode({
-      if (config.extraParams != null) ...config.extraParams!,
       'model': config.model.trim(),
       'input': text,
       'voice': voice == null || voice.isEmpty ? defaultVoice : voice,
-      'response_format': 'mp3',
+      // 音频格式统一 PCM（票二）：裸样本由网关包 WAV 头，播放端零改动。
+      // extraParams 展平在后再合并——用户在高级参数里显式写的
+      // response_format 覆盖协议缺省（覆盖成压缩格式时原样返回，见
+      // wholeResponseAudio）。
+      'response_format': 'pcm',
       if (config.speed != null) 'speed': config.speed,
+      if (config.extraParams != null) ...config.extraParams!,
     });
     final response = await postTtsBytes(
       httpClient: httpClient,
@@ -97,12 +165,133 @@ final class OpenAiSpeechGateway implements TtsSynthesisGateway {
         message: '语音合成服务没有返回音频。',
       );
     }
-    return bytes;
+    return wholeResponseAudio(
+      bytes,
+      format:
+          _effectiveTextValue(config.extraParams, 'response_format') ?? 'pcm',
+      channels: 1,
+      bitsPerSample: 16,
+      sampleRate: pcmSampleRate,
+    );
   }
+
+  @override
+  Stream<VoiceAudioChunk> synthesizeStream({
+    required TtsConfig config,
+    required String? apiKey,
+    required String text,
+  }) => guardTtsAudioStream(() async* {
+    config.validate();
+    final key = requireTtsApiKey(apiKey);
+    final uri = appendProviderEndpoint(config.baseUrl, 'audio/speech');
+    ensureTtsOutboundAllowed(uri);
+    final voice = config.voice?.trim();
+    final body = jsonEncode({
+      'model': config.model.trim(),
+      'input': text,
+      'voice': voice == null || voice.isEmpty ? defaultVoice : voice,
+      'response_format': 'pcm',
+      // 官方流式开关：chunked 原始音频字节（非 SSE 事件）。用户经高级
+      // 参数覆盖成非 PCM 时不走块流（服务返回压缩字节，PCM 播放器会
+      // 播成噪音）——按 E1 降级成整响应当一块。
+      'stream_format': 'audio',
+      if (config.speed != null) 'speed': config.speed,
+      if (config.extraParams != null) ...config.extraParams!,
+    });
+    final response = await postTtsBytes(
+      httpClient: httpClient,
+      uri: uri,
+      headers: {
+        'authorization': 'Bearer $key',
+        'content-type': 'application/json',
+      },
+      body: utf8.encode(body),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final errorBytes = await consumeTtsBytesResponse(response);
+      throw fromTtsModelFailure(
+        providerStatusFailure(
+          response.statusCode,
+          latin1.decode(errorBytes, allowInvalid: true),
+          serviceLabel: '语音合成服务',
+        ),
+      );
+    }
+    final negotiatedPcm =
+        (_effectiveTextValue(config.extraParams, 'response_format') ?? 'pcm')
+                .toLowerCase() ==
+            'pcm';
+    if (!negotiatedPcm) {
+      // E1：拿不到 PCM 块——整响应当一块，容器原样（不包 WAV 头）。
+      final whole = await consumeTtsBytesResponse(response);
+      if (whole.isEmpty) {
+        throw const TtsGatewayException(
+          kind: ModelFailureKind.contentParsing,
+          message: '语音合成服务没有返回音频。',
+        );
+      }
+      yield VoiceAudioChunk(
+        bytes: Uint8List.fromList(whole),
+        mimeType: voiceWholeContainerMime,
+      );
+      return;
+    }
+    var produced = false;
+    await for (final chunk in response.body) {
+      if (chunk.isEmpty) {
+        continue;
+      }
+      produced = true;
+      yield VoiceAudioChunk(
+        bytes: Uint8List.fromList(chunk),
+        sampleRate: pcmSampleRate,
+      );
+    }
+    if (!produced) {
+      throw const TtsGatewayException(
+        kind: ModelFailureKind.contentParsing,
+        message: '语音合成服务没有返回音频。',
+      );
+    }
+  });
 }
 
-/// 语音朗读的出网入口：按 tts 配置的协议分派到具体网关。
-final class TtsModelGateway implements TtsSynthesisGateway {
+/// E1 整段块的 MIME 标注：容器由服务定义，两种播放端都按字节嗅探
+/// （web 的 decodeAudioData 与安卓 MediaPlayer 都不看这个值），用中性
+/// 标注而不是冒充某种具体格式。
+const voiceWholeContainerMime = 'application/octet-stream';
+
+/// 整段响应归一（票二）：仅当确实是裸 PCM 单声道 16-bit 时才在 Host
+/// 本地包 WAV 头（现有整段播放器零改动）；用户经高级参数覆盖成压缩
+/// 格式或多声道/别的位深时**原样返回**——那些配置在统一 PCM 之前就能
+/// 播，不能因为我们改协议而破坏（现有配置全部保留）。
+Uint8List wholeResponseAudio(
+  Uint8List bytes, {
+  required String? format,
+  required int channels,
+  required int bitsPerSample,
+  required int sampleRate,
+}) {
+  final normalized = format?.trim().toLowerCase();
+  final isRawPcm =
+      normalized == null || normalized.isEmpty || normalized == 'pcm';
+  if (!isRawPcm || channels != 1 || bitsPerSample != 16) {
+    return bytes;
+  }
+  return wrapPcmAsWav(bytes, sampleRate: sampleRate);
+}
+
+/// 高级参数里取一个文本值的生效结果（用户显式覆盖优先，协议缺省由
+/// 调用方给）。仅用于整段/流式路径回读用户覆盖的格式类参数。
+String? _effectiveTextValue(Map<String, Object?>? extra, String key) {
+  final value = extra?[key];
+  return value is String ? value : null;
+}
+
+/// 语音朗读的出网入口：按 tts 配置的协议分派到具体网关。整段与流式
+/// 两条路同一张分派表——新增协议档只加一行，路由与服务层零改动。
+final class TtsModelGateway
+    implements TtsSynthesisGateway, TtsStreamSynthesisGateway {
   const TtsModelGateway(this.httpClient);
 
   final ProviderBytesHttpClient httpClient;
@@ -125,6 +314,26 @@ final class TtsModelGateway implements TtsSynthesisGateway {
     TtsProviderKind.custom => CustomTtsGateway(
       httpClient,
     ).synthesize(config: config, apiKey: apiKey, text: text),
+  };
+
+  @override
+  Stream<VoiceAudioChunk> synthesizeStream({
+    required TtsConfig config,
+    required String? apiKey,
+    required String text,
+  }) => switch (config.provider) {
+    TtsProviderKind.openAiCompatible => OpenAiSpeechGateway(
+      httpClient,
+    ).synthesizeStream(config: config, apiKey: apiKey, text: text),
+    TtsProviderKind.volcTts => VolcTtsGateway(
+      httpClient,
+    ).synthesizeStream(config: config, apiKey: apiKey, text: text),
+    TtsProviderKind.qwenTts => QwenTtsGateway(
+      httpClient,
+    ).synthesizeStream(config: config, apiKey: apiKey, text: text),
+    TtsProviderKind.custom => CustomTtsGateway(
+      httpClient,
+    ).synthesizeStream(config: config, apiKey: apiKey, text: text),
   };
 }
 
@@ -266,4 +475,65 @@ Future<Uint8List> consumeTtsBytesResponse(ProviderBytesHttpResponse response) as
     );
   }
   return buffer.takeBytes();
+}
+
+/// 流式合成的统一收口（票二）：块边到达边消费，每块重置空闲超时
+/// （[ttsRequestTimeout] 内没有任何新块即按超时失败——半截音频不能
+/// 当完整回复，与 volc 结束码断流即失败同构）；异常按本通道既有分类
+/// 说话，绝不让裸异常越过 Provider 层。
+Stream<VoiceAudioChunk> guardTtsAudioStream(
+  Stream<VoiceAudioChunk> Function() open,
+) async* {
+  try {
+    yield* open().timeout(ttsRequestTimeout);
+  } on TtsGatewayException {
+    rethrow;
+  } on TimeoutException {
+    throw const TtsGatewayException(
+      kind: ModelFailureKind.timeout,
+      message: '语音合成服务响应超时。',
+    );
+  } on Object {
+    throw const TtsGatewayException(
+      kind: ModelFailureKind.network,
+      message: '语音合成服务连接中断。',
+    );
+  }
+}
+
+/// 裸 PCM16 单声道字节 → WAV 容器字节（44 字节 RIFF 头 + 数据）。
+/// 音频格式统一 PCM（票二）：流式通道直接送裸样本（容器头在流式下会
+/// 重复出现，官方明示流式禁用 wav），整段通道在 Host 本地补一个头，
+/// 让现有整段播放器（浏览器 decodeAudioData / 安卓 MediaPlayer）零
+/// 改动继续播。只在内存里拼接，不落盘。
+Uint8List wrapPcmAsWav(Uint8List pcm, {required int sampleRate}) {
+  const channels = 1;
+  const bitsPerSample = 16;
+  final byteRate = sampleRate * channels * bitsPerSample ~/ 8;
+  final header = BytesBuilder(copy: false);
+  void tag(String value) => header.add(ascii.encode(value));
+  void u32(int value) => header.add([
+    value & 0xff,
+    (value >> 8) & 0xff,
+    (value >> 16) & 0xff,
+    (value >> 24) & 0xff,
+  ]);
+  void u16(int value) => header.add([value & 0xff, (value >> 8) & 0xff]);
+  tag('RIFF');
+  u32(36 + pcm.length);
+  tag('WAVE');
+  tag('fmt ');
+  u32(16); // PCM fmt 块长度
+  u16(1); // audioFormat = PCM
+  u16(channels);
+  u32(sampleRate);
+  u32(byteRate);
+  u16(channels * bitsPerSample ~/ 8); // blockAlign
+  u16(bitsPerSample);
+  tag('data');
+  u32(pcm.length);
+  final wav = BytesBuilder(copy: false)
+    ..add(header.takeBytes())
+    ..add(pcm);
+  return wav.takeBytes();
 }

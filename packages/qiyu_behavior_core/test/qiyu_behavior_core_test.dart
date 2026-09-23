@@ -92,7 +92,10 @@ void main() {
     });
     for (final field in fixture['requiredFields']! as List<Object?>) {
       test('delivery ${wire['event']} rejects absent or invalid $field', () {
-        for (final invalid in [null, 42, <String, Object?>{}]) {
+        // 错误值取「对任何必填字段类型都不合法」的两个：缺席（null）与
+        // 类型不对（Map）。数字字段（语音块的序号/采样率）本身合法值
+        // 就是数字，用 42 当错误值会漏判，故统一用 Map。
+        for (final invalid in [null, <String, Object?>{}]) {
           final malformed = {...wire, field! as String: invalid};
           expect(() => ChatDeliveryEvent.fromJson(malformed), throwsFormatException);
         }
@@ -115,6 +118,10 @@ void main() {
       {'code': true},
       {'retryable': 'true'},
       {'incomplete': 'true'},
+      {'deliveryIndex': '0'},
+      {'chunkIndex': 0.5},
+      {'sampleRate': '24000'},
+      {'data': 42},
     ]) {
       expect(
         () => ChatDeliveryEvent.fromJson({
@@ -918,6 +925,72 @@ void main() {
     final decoded = ChatDeliveryEvent.fromJson(half.toJson());
     expect(decoded.incomplete, isTrue);
     expect(decoded.messages, ['在。刚']);
+  });
+
+  test('语音块事件携带交付段序号、块序号、采样率与 base64 PCM', () {
+    final chunk = ChatDeliveryEvent.voiceChunk(
+      requestId: 'stream-1',
+      sessionId: 'session-1',
+      deliveryIndex: 0,
+      chunkIndex: 2,
+      sampleRate: 24000,
+      data: base64Encode(const [1, 2, 3, 4]),
+    );
+    final wire = chunk.toJson();
+    expect(wire['event'], 'voiceChunk');
+    expect(wire['deliveryIndex'], 0);
+    expect(wire['chunkIndex'], 2);
+    expect(wire['sampleRate'], 24000);
+    expect(wire['data'], base64Encode(const [1, 2, 3, 4]));
+    // 语音块不是文字增量：text 键不出现，读侧不混淆两种载荷。
+    expect(wire, isNot(contains('text')));
+    final decoded = ChatDeliveryEvent.fromJson(wire);
+    expect(decoded.kind, ChatDeliveryEventKind.voiceChunk);
+    expect(decoded.deliveryIndex, 0);
+    expect(decoded.chunkIndex, 2);
+    expect(decoded.sampleRate, 24000);
+    expect(decoded.audioData, base64Encode(const [1, 2, 3, 4]));
+  });
+
+  test('语音块与语音失败事件缺字段在解析边界被拒', () {
+    final base = <String, Object?>{
+      'event': 'voiceChunk',
+      'requestId': 'stream-1',
+      'deliveryIndex': 0,
+      'chunkIndex': 0,
+      'sampleRate': 24000,
+      'data': 'AAAA',
+    };
+    for (final field in ['deliveryIndex', 'chunkIndex', 'sampleRate', 'data']) {
+      expect(
+        () => ChatDeliveryEvent.fromJson({...base}..remove(field)),
+        throwsFormatException,
+      );
+      // 类型不符同样拒：数字字段给文本、PCM 字段给数字。
+      final wrongType = field == 'data' ? 42 : 'not-a-number';
+      expect(
+        () => ChatDeliveryEvent.fromJson({...base, field: wrongType}),
+        throwsFormatException,
+      );
+    }
+    final failure = ChatDeliveryEvent.voiceError(
+      requestId: 'stream-1',
+      sessionId: 'session-1',
+      deliveryIndex: 0,
+    );
+    expect(failure.toJson(), {
+      'event': 'voiceError',
+      'requestId': 'stream-1',
+      'sessionId': 'session-1',
+      'deliveryIndex': 0,
+    });
+    expect(
+      () => ChatDeliveryEvent.fromJson({
+        'event': 'voiceError',
+        'requestId': 'stream-1',
+      }),
+      throwsFormatException,
+    );
   });
 
   test('user control structures are neutralized before safety and state', () {

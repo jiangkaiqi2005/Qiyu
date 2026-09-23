@@ -163,7 +163,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    const qwenModelHelp = '支持 HTTP 非流式合成模型，如 $qwenTtsDefaultModel';
+    const qwenModelHelp = '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）';
 
     // 说明归属锁死在模型名称框：helperText 渲染在 TextField 子树内，同一句
     // 误挂到服务地址等别的框上时断言会红。
@@ -254,6 +254,80 @@ void main() {
     );
     expect(reported.single, '自定义高级参数必须是 JSON 对象。');
     expect(gateway.saveCalls, 0);
+  });
+
+  testWidgets('自定义档响应形态下拉带流式/整段分工说明（F3 第一期）', (tester) async {
+    // 区块嵌在设置页分节壳里：拉高视口保证下拉在命中范围内。
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: viewModel,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SettingsSectionCollapseScope(
+              collapsed: const {},
+              onToggle: (_) {},
+              child: ListView(children: const [TtsSettingsSection()]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    const shapeHelp = '裸音频字节（且未覆盖成压缩格式）走流式分块合成；逐行 JSON 与 JSON 字段按句子级整段朗读';
+
+    // 非自定义档没有这个旋钮，说明也不出现。
+    expect(find.text(shapeHelp), findsNothing);
+
+    // 切到自定义档：说明出现在响应形态旁，且只渲染一处。
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自定义合成服务').last);
+    await tester.pumpAndSettle();
+    expect(find.text(shapeHelp), findsOneWidget);
+    expect(find.byKey(const Key('tts-response-shape')), findsOneWidget);
+  });
+
+  testWidgets('OpenAI 兼容档高级参数示例标注压缩格式按句子级整段朗读', (tester) async {
+    // 区块嵌在设置页分节壳里：拉高视口保证高级参数区在命中范围内。
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: viewModel,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SettingsSectionCollapseScope(
+              collapsed: const {},
+              onToggle: (_) {},
+              child: ListView(children: const [TtsSettingsSection()]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 高级参数区默认收起：先展开再断言示例文案。
+    await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
+    await tester.pumpAndSettle();
+
+    // 示例带降级标注：把 response_format 覆盖成压缩格式不再是静默的
+    // 句子级整段播放。
+    expect(
+      find.text(
+        '配置 OpenAI 兼容语音合成的顶层扩展参数，例如：\n'
+        '{\n'
+        '  "response_format": "mp3"\n'
+        '}\n'
+        '覆盖成压缩格式将按句子级整段朗读。',
+      ),
+      findsOneWidget,
+    );
   });
 
   test('保存编排：合法草稿带着音色、语速与 extraParams 交给视图模型', () async {

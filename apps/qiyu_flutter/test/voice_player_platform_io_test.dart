@@ -382,6 +382,53 @@ void main() {
       expect(channel.started.single.volume, 0.4);
     });
 
+    test('流式：startStream 带协商采样率，块按序过通道，end 后播完即 done', () async {
+      final stream = await platform().startStream(sampleRate: 24000);
+      expect(stream, isNotNull);
+      expect(channel.streams.single.sampleRate, 24000);
+
+      stream!.append(Uint8List.fromList([1, 2]));
+      stream.append(Uint8List.fromList([3]));
+      await _pumpMicrotask();
+      expect(channel.streamChunks.map((chunk) => chunk.bytes), [
+        [1, 2],
+        [3],
+      ]);
+
+      // end 之前原生完成回调不提前算播完。
+      var doneCompleted = false;
+      unawaited(stream.done.then((_) => doneCompleted = true));
+      await _pumpMicrotask();
+      expect(doneCompleted, isFalse);
+
+      stream.end();
+      await _pumpMicrotask();
+      expect(channel.endedStreams, [channel.streams.single.id]);
+
+      channel.emitFinished(id: channel.streams.single.id);
+      await _pumpMicrotask();
+      expect(doneCompleted, isTrue);
+    });
+
+    test('流式：stop 立即完成 done 并通知原生停止，之后到达的块丢弃', () async {
+      final stream = (await platform().startStream(sampleRate: 16000))!;
+
+      var doneCompleted = false;
+      unawaited(stream.done.then((_) => doneCompleted = true));
+      stream.append(Uint8List.fromList([1]));
+      await _pumpMicrotask();
+
+      stream.stop();
+      stream.append(Uint8List.fromList([2]));
+      await _pumpMicrotask();
+
+      expect(doneCompleted, isTrue);
+      expect(channel.stopCalls, 1);
+      expect(channel.streamChunks.map((chunk) => chunk.bytes), [
+        [1],
+      ]);
+    });
+
     test('通道载荷里没有 mimeType 键：容器由原生自行嗅探', () async {
       TestWidgetsFlutterBinding.ensureInitialized();
       final calls = <MethodCall>[];
@@ -544,12 +591,16 @@ final class _RecordingVolumeStore implements VoiceVolumeStore {
   }
 }
 
-/// 播放通道 fake：记录起播参数与控制调用，手动派发完成回调。
+/// 播放通道 fake：记录起播参数与控制调用，手动派发完成回调。流式与
+/// 整段两条路共用同一个完成分发口（原生侧同一语义）。
 final class _FakePlayerChannel implements VoicePlayerNativeChannel {
   bool startFails = false;
   final started = <_StartedPlayback>[];
   final volumeCalls = <({int id, double volume})>[];
   int stopCalls = 0;
+  final streams = <_StartedStream>[];
+  final streamChunks = <({int id, List<int> bytes})>[];
+  final endedStreams = <int>[];
   final _handlers = <void Function(int)>[];
   var _nextId = 1;
 
@@ -584,6 +635,30 @@ final class _FakePlayerChannel implements VoicePlayerNativeChannel {
   Future<void> setPlaybackVolume(int playbackId, double volume) async {
     volumeCalls.add((id: playbackId, volume: volume));
   }
+
+  @override
+  Future<int?> startStream({
+    required int sampleRate,
+    required double volume,
+    int? sessionId,
+  }) async {
+    if (startFails) {
+      return null;
+    }
+    final id = _nextId++;
+    streams.add(_StartedStream(id: id, sampleRate: sampleRate, volume: volume));
+    return id;
+  }
+
+  @override
+  Future<void> appendStreamChunk(int streamId, Uint8List pcm) async {
+    streamChunks.add((id: streamId, bytes: pcm.toList()));
+  }
+
+  @override
+  Future<void> endStream(int streamId) async {
+    endedStreams.add(streamId);
+  }
 }
 
 final class _StartedPlayback {
@@ -595,5 +670,17 @@ final class _StartedPlayback {
 
   final int id;
   final Uint8List bytes;
+  final double volume;
+}
+
+final class _StartedStream {
+  const _StartedStream({
+    required this.id,
+    required this.sampleRate,
+    required this.volume,
+  });
+
+  final int id;
+  final int sampleRate;
   final double volume;
 }

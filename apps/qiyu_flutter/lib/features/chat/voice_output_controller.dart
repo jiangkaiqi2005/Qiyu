@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:collection';
-
 import 'package:flutter/foundation.dart';
 
 import 'api_error_dialog.dart';
@@ -22,7 +21,87 @@ final class VoiceOutputRequest {
   final String? sessionId;
 }
 
+/// 一个搭车聊天事件流到达的语音块（票二）：PCM 字节 + 协商采样率 +
+/// 交付段序号与块序号（Host 已保证有序）。
+final class VoiceStreamChunk {
+  const VoiceStreamChunk({
+    required this.requestId,
+    required this.deliveryIndex,
+    required this.chunkIndex,
+    required this.sampleRate,
+    required this.data,
+    this.mimeType,
+    this.sessionId,
+  });
+
+  final String requestId;
+  final int deliveryIndex;
+  final int chunkIndex;
+
+  /// PCM 流式块的协商采样率（播放端按它初始化，不猜）。
+  final int sampleRate;
+
+  /// base64 解出的音频字节。
+  final Uint8List data;
+
+  /// 完整音频容器的 MIME（票二 E1）：非空即这是一段已合成完的完整音频
+  /// （容器由服务定义），走既有整段播放器按序播；为空即 PCM 流式块，
+  /// 走流式播放器（AudioWorklet / AudioTrack）。
+  final String? mimeType;
+
+  /// 是否是完整容器块（E1）：与 [mimeType] 同义。
+  bool get isWhole => mimeType != null;
+
+  final String? sessionId;
+}
+
 enum VoiceOutputPhase { idle, synthesizing, playing }
+
+/// 整段播放队列的一项（票二）：要么是一次 Host 端合成请求（既有路径），
+/// 要么是已在手的完整音频（E1 的句子级顺序播——每句独立整段合成，容器
+/// 原样，不包 WAV 头）。两者共用同一条按序全播的队列。
+final class _VoiceQueueItem {
+  const _VoiceQueueItem.request(this.request)
+    : audio = null,
+      mimeType = null;
+  const _VoiceQueueItem.audio({
+    required this.request,
+    required this.audio,
+    required this.mimeType,
+  });
+
+  /// 队列项的定位（「正在读」指示与合成失败归因都用它）。
+  final VoiceOutputRequest request;
+
+  /// 已在手的音频字节（E1 整段块）；null 即走 Host 端合成。
+  final Uint8List? audio;
+  final String? mimeType;
+}
+
+/// 一路流式语音播放会话（票二）：首块开流、后续块追加、end 后播完
+/// 缓冲即结束。音频只在内存，不落盘。
+final class _VoiceStreamSession {
+  _VoiceStreamSession({
+    required this.requestId,
+    required this.deliveryIndex,
+    required this.sampleRate,
+    this.sessionId,
+  });
+
+  final String requestId;
+  final int deliveryIndex;
+
+  /// 首块的协商采样率（Host 记录 Provider 协商结果）：播放端按它初始化。
+  final int sampleRate;
+  final String? sessionId;
+
+  /// 开流之前到达的块（首块的 startStream 是异步的）。
+  final List<Uint8List> pending = [];
+  VoiceStreamPlayback? playback;
+
+  /// 块收完或失败已判：之后到达的块丢弃（Host 不会发，防御性）。
+  bool closed = false;
+}
 
 /// 语音朗读的播放队列（ADR 0002）：按序全播、不抢占正在播的一段；
 /// 停止按钮 / Esc / 点麦克风清空全部队列；点小喇叭重听则立即顶播。
@@ -52,14 +131,25 @@ final class VoiceOutputController extends ChangeNotifier {
   /// 朗读合成遇到 429 或 40x 异常时的回调。
   void Function(ApiErrorCategory category)? onApiError;
 
+  /// 前端停播时通知 Host 作废在途分句合成（票二）：不白烧 Provider
+  /// 配额。与轮交付的取消路径分开——停止只针对语音。
+  void Function(String requestId)? onVoiceStopRequested;
+
   /// 页面连接录音设备占用状态，自动朗读和手动重听都在入口丢弃。
   bool Function()? isMicrophoneInUse;
 
   late double _volume;
-  final Queue<VoiceOutputRequest> _queue = Queue();
+  final Queue<_VoiceQueueItem> _queue = Queue();
   bool _failureNotified = false;
   bool _sessionInitialized = false;
   String? _sessionId;
+
+  /// 当前流式播放会话（票二）：null 即没有搭车音频在播。
+  _VoiceStreamSession? _stream;
+
+  /// 已被用户停播的 requestId（票二）：Host 收到停止信号前产出的块
+  /// 还在途，到达后直接丢弃——按了停播声音就不该再起来。换会话时清空。
+  final Set<String> _stoppedStreamRequests = <String>{};
 
   VoiceOutputPhase _phase = VoiceOutputPhase.idle;
   VoiceOutputRequest? _nowReading;
@@ -108,7 +198,7 @@ final class VoiceOutputController extends ChangeNotifier {
       return;
     }
     _enterSession(request.sessionId);
-    _queue.addLast(request);
+    _queue.addLast(_VoiceQueueItem.request(request));
     _drain();
   }
 
@@ -121,7 +211,7 @@ final class VoiceOutputController extends ChangeNotifier {
     _haltNow();
     _queue
       ..clear()
-      ..addLast(request);
+      ..addLast(_VoiceQueueItem.request(request));
     _drain();
   }
 
@@ -166,12 +256,216 @@ final class VoiceOutputController extends ChangeNotifier {
     _queue.clear();
     _playback.stop();
     _toIdle();
+    // 停播即通知 Host 停止在途合成（票二）：本地不出声了，就不该继续
+    // 烧 Provider 配额。自然播完不走这里（那时 Host 早已收尾）。
+    final session = _stream;
+    _stream = null;
+    if (session != null) {
+      _stoppedStreamRequests.add(session.requestId);
+      onVoiceStopRequested?.call(session.requestId);
+    }
   }
 
   /// 状态回到 idle（清掉「正在读」的定位）；是否通知、何时通知由调用方决定。
   void _toIdle() {
     _phase = VoiceOutputPhase.idle;
     _nowReading = null;
+  }
+
+  /// 语音块搭车到达（票二）：PCM 块开流式播放，完整容器块（E1）进既有
+  /// 整段队列按序播。文/音解耦——文字照常显示，这里只负责把先到口的
+  /// 音频按时序播出去。
+  ///
+  /// 返回是否受理：未受理（朗读关着、被中断、麦克风占用、被停播过、
+  /// 已有别的音频在读/在排队）时调用方不应把这笔账记成「播过」——
+  /// 否则该交付段在 done 时既不听整段、直播又丢了，彻底失声。
+  ///
+  /// 降级口径与整段路径一致：平台没有流式播放能力时提示一次
+  /// 「读不出来」。
+  bool offerStreamChunk(VoiceStreamChunk chunk, {required bool enabled}) {
+    if (_disposed ||
+        _interrupted ||
+        !enabled ||
+        chunk.data.isEmpty ||
+        _stoppedStreamRequests.contains(chunk.requestId) ||
+        (isMicrophoneInUse?.call() ?? false)) {
+      return false;
+    }
+    // E1：完整容器块——走既有整段播放器，按序全播、不抢占。
+    if (chunk.isWhole) {
+      if (_phase != VoiceOutputPhase.idle) {
+        // 有音频在读：排队等它（含流式会话在播）。
+        _queue.addLast(
+          _VoiceQueueItem.audio(
+            request: VoiceOutputRequest(
+              requestId: chunk.requestId,
+              deliveryIndex: chunk.deliveryIndex,
+              sessionId: chunk.sessionId,
+            ),
+            audio: chunk.data,
+            mimeType: chunk.mimeType!,
+          ),
+        );
+        return true;
+      }
+      _enterSession(chunk.sessionId);
+      _queue.addLast(
+        _VoiceQueueItem.audio(
+          request: VoiceOutputRequest(
+            requestId: chunk.requestId,
+            deliveryIndex: chunk.deliveryIndex,
+            sessionId: chunk.sessionId,
+          ),
+          audio: chunk.data,
+          mimeType: chunk.mimeType!,
+        ),
+      );
+      _drain();
+      return true;
+    }
+    final session = _stream;
+    if (session != null) {
+      if (session.closed ||
+          session.requestId != chunk.requestId ||
+          session.deliveryIndex != chunk.deliveryIndex) {
+        return false;
+      }
+      _appendToSession(session, chunk.data);
+      return true;
+    }
+    if (_phase != VoiceOutputPhase.idle || _queue.isNotEmpty) {
+      // 有整段在读/在排队：直播语音不抢占、不排长队，按丢弃处理。
+      return false;
+    }
+    final opened = _VoiceStreamSession(
+      requestId: chunk.requestId,
+      deliveryIndex: chunk.deliveryIndex,
+      sampleRate: chunk.sampleRate,
+      sessionId: chunk.sessionId,
+    );
+    _enterSession(chunk.sessionId);
+    _stream = opened;
+    _appendToSession(opened, chunk.data);
+    _startStream(opened);
+    return true;
+  }
+
+  void _appendToSession(_VoiceStreamSession session, Uint8List data) {
+    final playback = session.playback;
+    if (playback == null) {
+      session.pending.add(data);
+      return;
+    }
+    playback.append(data);
+  }
+
+  Future<void> _startStream(_VoiceStreamSession session) async {
+    final activity = _playback.capture();
+    _phase = VoiceOutputPhase.playing;
+    _nowReading = VoiceOutputRequest(
+      requestId: session.requestId,
+      deliveryIndex: session.deliveryIndex,
+      sessionId: session.sessionId,
+    );
+    notifyListeners();
+    final prepared = activity.prepare();
+    if (prepared != null) {
+      final allowed = await prepared;
+      if (!activity.isCurrent) return;
+      if (!allowed) {
+        interruptOutput();
+        return;
+      }
+    }
+    final playback = await activity.startStream(
+      sampleRate: session.sampleRate,
+      volume: _volume,
+    );
+    if (!activity.acceptStream(playback)) {
+      return;
+    }
+    if (playback == null) {
+      // 平台没有流式播放能力（旧浏览器/桌面宿主）：合成已成功，播不出
+      // 来不能冒充服务断线。
+      activity.finish();
+      if (identical(_stream, session)) {
+        _stream = null;
+      }
+      _toIdle();
+      _notifyFailureOnce('无法播放语音，点小喇叭再听一次。');
+      _drain();
+      return;
+    }
+    session.playback = playback;
+    // 开流之前到达的块按序补写，之后 arrive 的块直接进播放器。
+    final pending = List<Uint8List>.of(session.pending);
+    session.pending.clear();
+    for (final bytes in pending) {
+      playback.append(bytes);
+    }
+    if (session.closed) {
+      playback.end();
+    }
+    await playback.done;
+    if (!activity.isCurrent) {
+      return;
+    }
+    activity.finish();
+    if (identical(_stream, session)) {
+      _stream = null;
+    }
+    _toIdle();
+    notifyListeners();
+    // 流式播完不等于没事做：播放期间入队的整段项（轮内召回的 bubble 2、
+    // E1 的后续句）按序继播——不等下一次 offer。
+    _drain();
+  }
+
+  /// 块收完（轮交付 done）：声明流结束，播完缓冲即 idle。
+  void endStream({required String requestId}) {
+    final session = _stream;
+    if (session == null || session.requestId != requestId) {
+      return;
+    }
+    session.closed = true;
+    session.playback?.end();
+  }
+
+  /// 硬停一路流式播放（票二：轮交付取消时调用）：立刻停声，但**不清
+  /// 整段队列**——取消针对这一路搭车音频，排队里的整段项照常继播
+  /// （停完立刻排空，不等下一次 offer）。与 [stopAll] 的差别只有
+  /// 「清不清队列、要不要通知 Host」。
+  void stopStream({required String requestId}) {
+    final session = _stream;
+    _stoppedStreamRequests.add(requestId);
+    if (session == null || session.requestId != requestId) {
+      return;
+    }
+    _stream = null;
+    _playback.stop();
+    _toIdle();
+    notifyListeners();
+    _drain();
+  }
+
+  /// 同一 requestId 开新轮时调用（票二：幂等重发复用 requestId）：上一轮
+  /// 的停播记账已翻篇——残块丢弃的使命已完成，再留着会把新轮的直播块
+  /// 误判成旧轮残块（首音提前静默失效，done 还多烧一次整段合成）。
+  /// 新 requestId 不在账本里，调用即无操作。
+  void forgetStreamStop(String requestId) {
+    _stoppedStreamRequests.remove(requestId);
+  }
+
+  /// 一句合成失败（票二 D1）：本段语音结束——已到的块照常播完
+  /// （已播句子 standing），后续块即使到达也丢弃；同会话首次失败
+  /// 提示一次，之后静默。
+  void notifyStreamFailure() {
+    final session = _stream;
+    if (session != null) {
+      session.closed = true;
+      session.playback?.end();
+    }
+    _notifyFailureOnce('有句话没合成出来，后面的先不读了。');
   }
 
   void consumeFailureNotice() {
@@ -188,7 +482,8 @@ final class VoiceOutputController extends ChangeNotifier {
       return;
     }
     while (_queue.isNotEmpty) {
-      final request = _queue.removeFirst();
+      final item = _queue.removeFirst();
+      final request = item.request;
       final activity = _playback.capture();
       _phase = VoiceOutputPhase.synthesizing;
       _nowReading = request;
@@ -203,28 +498,39 @@ final class VoiceOutputController extends ChangeNotifier {
           return;
         }
       }
-      try {
-        audio = await _gateway.speak(
-          requestId: request.requestId,
-          deliveryIndex: request.deliveryIndex,
-          sessionId: request.sessionId,
-        );
-      } on Object catch (error) {
-        if (!activity.isCurrent) {
-          return;
+      final inHand = item.audio;
+      if (inHand != null) {
+        // E1 整段块：音频已在手，直接播（容器原样，两种播放端都按
+        // 字节嗅探）。
+        audio = inHand;
+      } else {
+        try {
+          audio = await _gateway.speak(
+            requestId: request.requestId,
+            deliveryIndex: request.deliveryIndex,
+            sessionId: request.sessionId,
+          );
+        } on Object catch (error) {
+          if (!activity.isCurrent) {
+            return;
+          }
+          activity.finish();
+          _notifyFailureOnce('语音服务连不上，这条读不出来。');
+          final category = categorizeVoiceApiError(error, isInput: false);
+          if (category != null) {
+            onApiError?.call(category);
+          }
+          continue;
         }
-        activity.finish();
-        _notifyFailureOnce('语音服务连不上，这条读不出来。');
-        final category = categorizeVoiceApiError(error, isInput: false);
-        if (category != null) {
-          onApiError?.call(category);
-        }
-        continue;
       }
       if (!activity.isCurrent) {
         return;
       }
-      final playback = await activity.play(audio, volume: _volume);
+      final playback = await activity.play(
+        audio,
+        mimeType: item.mimeType ?? voiceWholeAudioAdvisoryMime,
+        volume: _volume,
+      );
       if (!activity.accept(playback)) {
         return;
       }
@@ -261,6 +567,9 @@ final class VoiceOutputController extends ChangeNotifier {
     }
     _sessionInitialized = true;
     _sessionId = sessionId;
+    // 新会话重新计「首次失败提示一次」；停播记账也随会话翻篇（旧
+    // requestId 不会再收到块，留着只会无界增长）。
+    _stoppedStreamRequests.clear();
     _failureNotified = false;
     _failureNotice = null;
   }

@@ -42,7 +42,8 @@ final class TtsServiceException implements Exception {
 }
 
 /// TTS 连接测试结果：与聊天/STT 的测试同口径（ok/status/message），
-/// 成功时附带真实合成的试听音频（base64 mp3），设置页直接播放。
+/// 成功时附带真实合成的试听音频（base64；PCM 档已由网关包 WAV 头），
+/// 设置页直接播放。
 final class TtsTestResult {
   const TtsTestResult({
     required this.status,
@@ -68,9 +69,11 @@ final class TtsTestResult {
 }
 
 /// 语音朗读（TTS）设置与调用服务：与 SttSettingsService 同构，Key 只
-/// 存 provider.json 的 tts 段。ADR 0002：只合成「已完整交付并落盘」的
-/// 文字，本服务不做流式分句。
-final class TtsSettingsService {
+/// 存 provider.json 的 tts 段。整段合成（设置试听、历史重听、连接测试）
+/// 沿用 ADR 0002 语义；分句流式合成（票二，ADR 0018）由
+/// [VoiceStreamSynthesizer] 接缝暴露给 Host 行为层的分句层，配置加载、
+/// Key 归一与文本校验与整段路径同源。
+final class TtsSettingsService implements VoiceStreamSynthesizer {
   const TtsSettingsService(this.configRepository, this.ttsGateway);
 
   final TtsConfigRepository configRepository;
@@ -338,6 +341,73 @@ final class TtsSettingsService {
             : failure.code,
         message: _ttsTestMessage(failure.status),
         retryable: true,
+      );
+    }
+  }
+
+  /// 分句层能否启动（票二）。两个否决都是「不启动」而不是「失败」：
+  /// 未配置与自动朗读关闭时文字链路照常，整段朗读路径的既有降级不变。
+  /// 档位拿不到音频块不算否决——按 E1 句子级降级照常跑（每句独立整段
+  /// 合成、按序播放），现有配置全部保留、不淘汰在用型号。
+  @override
+  Future<bool> canStream() async {
+    final config = await configRepository.loadTts();
+    if (config == null || !config.autoSpeak) {
+      return false;
+    }
+    return true;
+  }
+
+  /// 分句流式合成（票二）：一句完整文字 → 音频块流。配置、Key 与文本
+  /// 校验口径与 [synthesize] 逐条一致；网关异常原样上抛，由分句层按
+  /// D1 降级（一句失败即本段语音结束，已播句子 standing）。
+  @override
+  Stream<VoiceAudioChunk> synthesizeStream(String text) async* {
+    final config = await configRepository.loadTts();
+    if (config == null) {
+      throw const TtsServiceException(
+        code: 'tts_not_configured',
+        message: '还没有配置语音合成服务，请先在设置页填写。',
+        retryable: false,
+      );
+    }
+    final String? apiKey;
+    try {
+      apiKey = _normalizeApiKey(config.apiKey);
+    } on ProviderConfigException {
+      throw const TtsServiceException(
+        code: 'tts_config_invalid',
+        message: _dirtyApiKeyMessage,
+        retryable: false,
+      );
+    }
+    if (text.trim().isEmpty) {
+      throw const TtsServiceException(
+        code: 'tts_empty_text',
+        message: '这段话没有可以朗读的内容。',
+        retryable: false,
+      );
+    }
+    if (text.length > ttsMaxTextLength) {
+      throw const TtsServiceException(
+        code: 'tts_text_too_long',
+        message: '这句话太长了，栖语读不完。',
+        retryable: false,
+      );
+    }
+    // 防御性：装配的网关不支持流式（组合根只会装配支持的一份）。类型
+    // 匹配直接绑定强类型变量，不依赖跨接口的类型提升。
+    if (ttsGateway case final TtsStreamSynthesisGateway gateway) {
+      yield* gateway.synthesizeStream(
+        config: config,
+        apiKey: apiKey,
+        text: text,
+      );
+    } else {
+      throw const TtsServiceException(
+        code: 'tts_stream_unavailable',
+        message: '这个语音合成服务不支持流式朗读。',
+        retryable: false,
       );
     }
   }

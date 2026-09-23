@@ -484,6 +484,9 @@ final class _StubChatGateway implements StreamingLocalChatGateway {
   Future<bool> cancel(String requestId) async => true;
 
   @override
+  Future<bool> stopVoice(String requestId) async => true;
+
+  @override
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
@@ -510,6 +513,9 @@ final class _NoticeChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<bool> stopVoice(String requestId) async => true;
 
   @override
   Future<String> transcribe({

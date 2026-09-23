@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
@@ -23,7 +24,12 @@ void main() {
       client,
     ).synthesize(config: config, apiKey: ' tts-test-key ', text: '晚安。');
 
-    expect(audio, [1, 2, 3]);
+    // 音频格式统一 PCM（票二）：裸样本在 Host 本地包 WAV 头，现有整段
+    // 播放器零改动。
+    expect(audio, wrapPcmAsWav(
+      Uint8List.fromList(const [1, 2, 3]),
+      sampleRate: OpenAiSpeechGateway.pcmSampleRate,
+    ));
     expect(client.uri.toString(), 'https://tts.example.com/v1/audio/speech');
     expect(client.headers['authorization'], 'Bearer tts-test-key');
     expect(client.headers['content-type'], 'application/json');
@@ -32,7 +38,9 @@ void main() {
     expect(body['model'], 'tts-test');
     expect(body['input'], '晚安。');
     expect(body['voice'], OpenAiSpeechGateway.defaultVoice);
-    expect(body['response_format'], 'mp3');
+    expect(body['response_format'], 'pcm');
+    // 整段路径不送流式开关：一问一答拿完整响应。
+    expect(body.containsKey('stream_format'), isFalse);
     expect(body.containsKey('speed'), isFalse);
   });
 
@@ -224,7 +232,10 @@ void main() {
       text: '你好。',
     );
 
-    expect(audio, [1, 2]);
+    expect(audio, wrapPcmAsWav(
+      Uint8List.fromList(const [1, 2]),
+      sampleRate: OpenAiSpeechGateway.pcmSampleRate,
+    ));
     final body =
         jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
     expect(body['model'], 'tts-1');
@@ -232,6 +243,126 @@ void main() {
     expect(body['voice'], 'alloy');
     expect(body['user'], 'test-user');
     expect(body['custom_field'], 123);
+  });
+
+  test('WAV 头锁定：44 字节 RIFF、PCM16 单声道、协商采样率与数据长度', () {
+    final wav = wrapPcmAsWav(
+      Uint8List.fromList(const [1, 2, 3, 4]),
+      sampleRate: 24000,
+    );
+    expect(wav, hasLength(44 + 4));
+    expect(wav.sublist(0, 4), ascii.encode('RIFF'));
+    // 块长度 = 36 + 数据长度。
+    expect(
+      ByteData.sublistView(Uint8List.fromList(wav), 4, 8).getUint32(0, Endian.little),
+      40,
+    );
+    expect(wav.sublist(8, 12), ascii.encode('WAVE'));
+    expect(wav.sublist(12, 16), ascii.encode('fmt '));
+    final header = ByteData.sublistView(Uint8List.fromList(wav), 16, 36);
+    expect(header.getUint32(0, Endian.little), 16); // fmt 块长度
+    expect(header.getUint16(4, Endian.little), 1); // audioFormat = PCM
+    expect(header.getUint16(6, Endian.little), 1); // 单声道
+    expect(header.getUint32(8, Endian.little), 24000); // 采样率
+    expect(header.getUint32(12, Endian.little), 48000); // 字节率
+    expect(header.getUint16(16, Endian.little), 2); // 块对齐
+    expect(header.getUint16(18, Endian.little), 16); // 位深
+    expect(wav.sublist(36, 40), ascii.encode('data'));
+    expect(
+      ByteData.sublistView(Uint8List.fromList(wav), 40, 44).getUint32(0, Endian.little),
+      4,
+    );
+    expect(wav.sublist(44), [1, 2, 3, 4]);
+  });
+
+  test('整段归一：非裸 PCM 的格式覆盖原样返回，不包 WAV 头', () {
+    final raw = Uint8List.fromList(const [1, 2, 3]);
+    // 压缩格式 / 多声道 / 别的位深：一律原样。
+    for (final case_ in [
+      (format: 'mp3', channels: 1, bits: 16),
+      (format: 'ogg_opus', channels: 1, bits: 16),
+      (format: 'pcm', channels: 2, bits: 16),
+      (format: 'pcm', channels: 1, bits: 8),
+      (format: null, channels: 1, bits: 16),
+    ]) {
+      expect(
+        wholeResponseAudio(
+          raw,
+          format: case_.format,
+          channels: case_.channels,
+          bitsPerSample: case_.bits,
+          sampleRate: 24000,
+        ),
+        case_.format == null ? isNot(same(raw)) : same(raw),
+        reason: 'format=${case_.format} channels=${case_.channels} '
+            'bits=${case_.bits}',
+      );
+    }
+    // 裸 PCM 单声道 16-bit：包 WAV 头。
+    expect(
+      wholeResponseAudio(
+        raw,
+        format: 'pcm',
+        channels: 1,
+        bitsPerSample: 16,
+        sampleRate: 24000,
+      ),
+      hasLength(44 + 3),
+    );
+  });
+
+  test('用户在高级参数里覆盖 response_format：值优先且不包 WAV 头', () async {
+    final client = _RecordingBytesHttpClient(
+      response: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value([1, 2, 3]),
+      ),
+    );
+
+    final audio = await TtsModelGateway(client).synthesize(
+      config: const TtsConfig(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-1',
+        extraParams: {'response_format': 'mp3'},
+      ),
+      apiKey: 'tts-test-key',
+      text: '晚安。',
+    );
+
+    // 用户显式写的格式优先于协议缺省 pcm，且原样返回（不包 WAV 头）。
+    expect(audio, [1, 2, 3]);
+    final body =
+        jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+    expect(body['response_format'], 'mp3');
+  });
+
+  test('流式路径对 response_format 覆盖按 E1 整响应当一块', () async {
+    final client = _RecordingBytesHttpClient(
+      response: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.fromIterable([
+          [1, 2],
+          [3],
+        ]),
+      ),
+    );
+
+    final chunks = await TtsModelGateway(client)
+        .synthesizeStream(
+          config: const TtsConfig(
+            baseUrl: 'https://tts.example.com/v1',
+            model: 'tts-1',
+            extraParams: {'response_format': 'mp3'},
+          ),
+          apiKey: 'tts-test-key',
+          text: '晚安。',
+        )
+        .toList();
+
+    expect(chunks, hasLength(1));
+    expect(chunks.single.bytes, [1, 2, 3]);
+    expect(chunks.single.sampleRate, isNull);
+    expect(chunks.single.mimeType, voiceWholeContainerMime);
   });
 }
 

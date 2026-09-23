@@ -15,6 +15,7 @@ import android.media.AudioManager
 import android.media.AudioRecordingConfiguration
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.AudioTrack
 import android.media.MediaDataSource
 import android.media.MediaPlayer
 import android.media.MediaRecorder
@@ -43,10 +44,11 @@ internal const val MIC_PERMISSION_REQUEST_CODE = 7061
  * 由 Dart 侧打包 RIFF/WAV 头（与 web 实现的打包产物逐字节同构）——
  * 原生侧不落盘、不转格式、不写日志。
  *
- * 播放：Host 经 /api/chat/speak 返回的完整 mp3 字节交 MediaPlayer 的
- * 内存 MediaDataSource 整段播放，不写临时文件；音量实时可调；完成与
- * 出错都以 onPlaybackFinished 通知 Dart（显式停止不通知，Dart 侧本地
- * 完成 done）。
+ * 播放：整段走 Host 经 /api/chat/speak 返回的完整音频字节 + MediaPlayer
+ * 的内存 MediaDataSource（不写临时文件）；流式走 AudioTrack MODE_STREAM
+ * 逐块写 PCM（票二，startStream/appendStreamChunk/endStream，块经通道
+ * 进原生写队列，音频只在内存）。音量实时可调；完成与出错都以
+ * onPlaybackFinished 通知 Dart（显式停止不通知，Dart 侧本地完成 done）。
  *
  * 麦克风权限：requestMicrophonePermission 在已授权时立即成功，否则
  * 发起系统权限弹窗（仅由用户点麦克风的动作触发，拒绝后不重复骚扰），
@@ -93,6 +95,15 @@ internal object VoiceBridge {
     private var outputSession: Int? = null
     private val pendingPlayers = mutableMapOf<Int, MethodChannel.Result>()
     private var releaseOutputObservers: (() -> Unit)? = null
+
+    // ---- 流式 PCM 播放（票二）：AudioTrack MODE_STREAM，块经通道写
+    // 进原生写队列，音频只在内存、不落盘。句柄表与整段 MediaPlayer
+    // 分开（onPlaybackFinished 同一分发口）。 ----
+    private val streams = ConcurrentHashMap<Int, AudioTrack>()
+    private val streamQueues = ConcurrentHashMap<Int, java.util.concurrent.LinkedBlockingQueue<ByteArray>>()
+    private val streamEnded = ConcurrentHashMap<Int, Boolean>()
+    private val streamStopped = ConcurrentHashMap<Int, Boolean>()
+    private val streamWriters = ConcurrentHashMap<Int, Thread>()
 
     /** 合成前取得焦点并观察路由；没有延迟授权或自动恢复。 */
     @Suppress("DEPRECATION")
@@ -153,6 +164,9 @@ internal object VoiceBridge {
         for (id in players.keys.toList()) {
             players.remove(id)?.let { releaseQuietly(it) }
             pendingPlayers.remove(id)?.success(null)
+        }
+        for (id in streams.keys.toList()) {
+            releaseStream(id)
         }
     }
 
@@ -477,6 +491,10 @@ internal object VoiceBridge {
                 if (id != null) {
                     players.remove(id)?.let { releaseQuietly(it) }
                     pendingPlayers.remove(id)?.success(null)
+                    // 旗标表只服务流式会话：整段 MediaPlayer 的 id 没有
+                    // writer 出口清表，写进去就是永远残留的条目——按
+                    // streams 里有没有句柄决定发不发停止信号。
+                    if (streams.containsKey(id)) releaseStream(id)
                 }
                 result.success(null)
             }
@@ -486,10 +504,182 @@ internal object VoiceBridge {
                 val volume = (args?.get("volume") as? Number)?.toDouble() ?: 1.0
                 val clamped = volume.toFloat().coerceIn(0.0f, 1.0f)
                 players[id]?.setVolume(clamped, clamped)
+                // AudioTrack.setVolume 只有单声道路：流式 PCM 是单声道，
+                // 左右同一值没有第二个入口。
+                streams[id]?.setVolume(clamped)
+                result.success(null)
+            }
+            "startStream" -> {
+                val args = call.arguments as? Map<*, *>
+                val sampleRate = (args?.get("sampleRate") as? Number)?.toInt()
+                val volume = (args?.get("volume") as? Number)?.toDouble() ?: 1.0
+                val session = args?.get("sessionId") as? Int
+                if (sampleRate == null || sampleRate <= 0 || session == null ||
+                    session != outputSession || !foreground) {
+                    result.success(null)
+                    return
+                }
+                startStream(sampleRate, volume, session, result)
+            }
+            "appendStreamChunk" -> {
+                val args = call.arguments as? Map<*, *>
+                val id = args?.get("id") as? Int
+                val bytes = args?.get("bytes") as? ByteArray
+                val queue = id?.let { streamQueues[it] }
+                if (id == null || bytes == null || bytes.isEmpty() || queue == null) {
+                    result.success(null)
+                    return
+                }
+                queue.put(bytes)
+                result.success(null)
+            }
+            "endStream" -> {
+                val id = (call.arguments as? Map<*, *>)?.get("id") as? Int
+                // 同 stopPlayback：只有流式会话有旗标表条目，整段
+                // MediaPlayer 的 id 写进去也没有 writer 出口清表。
+                if (id != null && streams.containsKey(id)) streamEnded[id] = true
                 result.success(null)
             }
             else -> result.notImplemented()
         }
+    }
+
+    /**
+     * 流式 PCM 播放（票二）：AudioTrack MODE_STREAM 按协商采样率起播，
+     * 写线程把队列里的块连续 write；endStream 后队列排空即自然结束
+     * （onPlaybackFinished 通知 Dart）。音频只在内存，不落盘。
+     */
+    private fun startStream(sampleRate: Int, volume: Double, session: Int,
+                            result: MethodChannel.Result) {
+        val id = nextPlaybackId.getAndIncrement()
+        val minBuffer = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        if (minBuffer <= 0) {
+            result.success(null)
+            return
+        }
+        val track = try {
+            AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build(),
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build(),
+                )
+                .setBufferSizeInBytes(maxOf(minBuffer * 4, 8192))
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+        } catch (_: Exception) {
+            result.success(null)
+            return
+        }
+        if (track.state != AudioTrack.STATE_INITIALIZED) {
+            releaseQuietly(track)
+            result.success(null)
+            return
+        }
+        streams[id] = track
+        streamQueues[id] = java.util.concurrent.LinkedBlockingQueue()
+        streamEnded[id] = false
+        streamStopped[id] = false
+        val clamped = volume.toFloat().coerceIn(0.0f, 1.0f)
+        // 单声道流式轨：setVolume 只收一个增益值（MediaPlayer 的双声道
+        // 重载不适用于 AudioTrack）。
+        track.setVolume(clamped)
+        try {
+            track.play()
+        } catch (_: Exception) {
+            releaseStream(id)
+            result.success(null)
+            return
+        }
+        val writer = Thread {
+            val queue = streamQueues[id] ?: return@Thread
+            var failed = false
+            var stopped = false
+            try {
+                while (true) {
+                    if (streamStopped[id] == true) {
+                        stopped = true
+                        break
+                    }
+                    // 轮询而非无限阻塞：endStream 只置旗标也能在超时内收尾
+                    // （否则 writer 卡在 take 上，Dart 侧 done 永不完成）。
+                    val chunk = queue.poll(40, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    if (chunk != null) {
+                        var offset = 0
+                        while (offset < chunk.size) {
+                            if (streamStopped[id] == true) {
+                                stopped = true
+                                break
+                            }
+                            // 轨道被底下停掉（会话收尾/焦点丢失）时不再写。
+                            if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                                failed = true
+                                break
+                            }
+                            val written = track.write(
+                                chunk, offset, chunk.size - offset,
+                                AudioTrack.WRITE_BLOCKING,
+                            )
+                            if (written < 0) {
+                                failed = true
+                                break
+                            }
+                            offset += written
+                        }
+                        if (stopped || failed) break
+                    }
+                    // endStream 后队列排空即自然播完。
+                    if (streamEnded[id] == true && queue.isEmpty()) break
+                }
+            } catch (_: InterruptedException) {
+                // 停止信号：按正常收尾，不再通知完成。
+                stopped = true
+            } catch (_: Exception) {
+                failed = true
+            }
+            // 句柄由 writer 自己释放：write 阻塞中的 AudioTrack 不能被
+            // 别的线程 release（use-after-release，行为未定义）。
+            releaseTrackQuietly(id)
+            // 显式停止不通知（Dart 侧本地完成 done）；自然播完与底层
+            // 出错都照常通知——与整段 MediaPlayer 路径同一语义。
+            if (stopped) return@Thread
+            mainHandler.post {
+                playbackChannel?.invokeMethod("onPlaybackFinished", mapOf("id" to id))
+            }
+        }
+        streamWriters[id] = writer
+        writer.start()
+        result.success(id)
+    }
+
+    /** 请求停止（停止键 / 会话收尾 / 焦点丢失）：只发信号，摘队列。
+     *  真正 release 由 writer 自己出队后做——见 startStream 尾部注释。 */
+    private fun releaseStream(id: Int) {
+        streamQueues.remove(id)
+        streamEnded.remove(id)
+        streamStopped[id] = true
+        streamWriters[id]?.interrupt() // 唤醒 poll，不解除 write 阻塞
+    }
+
+    /** writer 出口的自释放：幂等，清四张表并停轨。 */
+    private fun releaseTrackQuietly(id: Int) {
+        streamWriters.remove(id)
+        streams.remove(id)?.let { releaseQuietly(it) }
+        streamQueues.remove(id)
+        streamEnded.remove(id)
+        streamStopped.remove(id)
     }
 
     private fun startPlayback(bytes: ByteArray, volume: Double, session: Int,
@@ -574,6 +764,19 @@ internal object VoiceBridge {
         }
         try {
             player?.release()
+        } catch (_: Exception) {
+            // 释放失败没有可补救动作，静默。
+        }
+    }
+
+    private fun releaseQuietly(track: AudioTrack?) {
+        try {
+            track?.stop()
+        } catch (_: Exception) {
+            // 未起播或已停的 track stop 会抛，release 照常执行。
+        }
+        try {
+            track?.release()
         } catch (_: Exception) {
             // 释放失败没有可补救动作，静默。
         }

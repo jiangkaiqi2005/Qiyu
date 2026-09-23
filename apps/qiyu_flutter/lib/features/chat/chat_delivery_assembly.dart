@@ -111,6 +111,12 @@ final class ChatDeliveryAssembly {
         _end = ChatDeliveryEnd.cancelled;
       case ChatDeliveryEventKind.error:
         _end = ChatDeliveryEnd.failed;
+      case ChatDeliveryEventKind.voiceChunk:
+      case ChatDeliveryEventKind.voiceError:
+        // 语音块与语音失败搭车文字事件流（票二）：不参与段状态机
+        // （段只由 message/state/done 组成），任何非终态时刻到来都
+        // 只是被透传的旁路信号。
+        break;
     }
     return null;
   }
