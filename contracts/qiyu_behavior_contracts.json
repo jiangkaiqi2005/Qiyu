@@ -909,6 +909,65 @@
         "persistedQiyuText": "在。刚忙完。",
         "diagnosticsContain": []
       }
+    },
+    {
+      "id": "ws-continuous-feed-speaks-before-the-first-sentence-ends",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "我在" },
+        { "kind": "delta", "text": "。今晚月色很好，慢慢说，不着急。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "session": {
+          "replies": {
+            "我在": { "chunks": [[1, 2]] },
+            "我在。今晚月色很好，慢慢说，不着急。": { "chunks": [[3]] }
+          }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 2,
+        "chunkIndices": [0, 1],
+        "chunkBytes": ["AQI=", "Aw=="],
+        "deliveryIndex": 0,
+        "sampleRate": 24000,
+        "firstVoiceChunkBeforeDone": true,
+        "firstVoiceChunkBeforeDeltaText": "。",
+        "voiceErrorCount": 0,
+        "messages": ["我在。今晚月色很好，慢慢说，不着急。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "我在。今晚月色很好，慢慢说，不着急。",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "ws-session-failure-ends-voice-keeps-the-shown-text",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "我在" },
+        { "kind": "delta", "text": "。刚忙完。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "session": {
+          "replies": {
+            "我在": { "chunks": [[1]] }
+          },
+          "failAfterAppends": 1
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 1,
+        "chunkIndices": [0],
+        "voiceErrorCount": 1,
+        "messages": ["我在。刚忙完。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "我在。刚忙完。",
+        "diagnosticsContain": ["voice stream session failed"]
+      }
     }
   ],
   "cases": [

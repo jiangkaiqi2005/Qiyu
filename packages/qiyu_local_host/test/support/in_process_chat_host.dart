@@ -19,6 +19,7 @@ final class InProcessChatHost {
     this.atomicWriter,
     this.deliveryPause,
     this.recallWindowWait,
+    this.voiceSessionGrace,
     this.diagnosticsSink,
     this.idleCatchupPoller,
     this._ttsSettingsService,
@@ -35,6 +36,9 @@ final class InProcessChatHost {
   final AtomicTextWriter? atomicWriter;
   final DeliveryPause? deliveryPause;
   final RecallWindowWait? recallWindowWait;
+
+  /// 连续供给会话落定的有界宽限（票三）：空即生产缺省（2s）；测试注入小值避免真等。
+  final Duration? voiceSessionGrace;
   final void Function(String message)? diagnosticsSink;
 
   /// 注入的语音合成设置服务（票二 语音流式）：分句层与朗读路由、连接
@@ -73,6 +77,7 @@ final class InProcessChatHost {
     AtomicTextWriter? atomicWriter,
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
+    Duration? voiceSessionGrace,
     void Function(String message)? diagnosticsSink,
     IdleCatchupPoller? idleCatchupPoller,
     FutureOr<void> Function(Directory memoryDirectory)? seedMemory,
@@ -121,6 +126,7 @@ final class InProcessChatHost {
       atomicWriter,
       deliveryPause,
       recallWindowWait,
+      voiceSessionGrace,
       diagnosticsSink,
       idleCatchupPoller,
       ttsSettingsService,
@@ -197,6 +203,7 @@ final class InProcessChatHost {
         // 需要验证停顿本身时显式传入。
         deliveryPause: deliveryPause ?? (_) async {},
         recallWindowWait: recallWindowWait,
+        voiceSessionGrace: voiceSessionGrace,
         diagnosticsSink: diagnosticsSink,
         idleCatchupPoller: idleCatchupPoller,
       ),

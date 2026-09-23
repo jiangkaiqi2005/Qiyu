@@ -849,6 +849,10 @@ final class _ScriptedVolcConnection implements ProviderWebSocketConnection {
   @override
   Stream<List<int>> get messages => _incoming.stream;
 
+  // 票三新增的文本帧视图：转写假连接只回二进制帧，文本流恒空。
+  @override
+  Stream<String> get textMessages => const Stream.empty();
+
   @override
   void send(List<int> bytes) {
     _connector.sentFrames.add(bytes);
@@ -876,6 +880,9 @@ final class _ScriptedVolcConnection implements ProviderWebSocketConnection {
       }
     }
   }
+
+  @override
+  void sendText(String text) {}
 
   @override
   Future<void> close() async {}

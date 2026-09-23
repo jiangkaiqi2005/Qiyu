@@ -71,9 +71,11 @@ final class TtsTestResult {
 /// 语音朗读（TTS）设置与调用服务：与 SttSettingsService 同构，Key 只
 /// 存 provider.json 的 tts 段。整段合成（设置试听、历史重听、连接测试）
 /// 沿用 ADR 0002 语义；分句流式合成（票二，ADR 0018）由
-/// [VoiceStreamSynthesizer] 接缝暴露给 Host 行为层的分句层，配置加载、
+/// [VoiceStreamSynthesizer] 接缝暴露给 Host 行为层的分句层，连续供给
+/// 会话（票三，ADR 0019）由 [VoiceStreamSessionOpener] 暴露——配置加载、
 /// Key 归一与文本校验与整段路径同源。
-final class TtsSettingsService implements VoiceStreamSynthesizer {
+final class TtsSettingsService
+    implements VoiceStreamSynthesizer, VoiceStreamSessionOpener {
   const TtsSettingsService(this.configRepository, this.ttsGateway);
 
   final TtsConfigRepository configRepository;
@@ -105,6 +107,7 @@ final class TtsSettingsService implements VoiceStreamSynthesizer {
     TtsResponseShape? responseShape,
     String? responseField,
     Map<String, Object?>? extraParams,
+    TtsTransport? transport,
   }) async {
     await configRepository.runTransaction(() async {
       final previous = await configRepository.loadTts();
@@ -120,6 +123,12 @@ final class TtsSettingsService implements VoiceStreamSynthesizer {
         // 空白字段名归一为缺省 data：落盘的值恒有含义，回显也稳定。
         responseField: _normalizeResponseField(responseField),
         extraParams: extraParams,
+        // 传输方式只归豆包档：切到别的档恒回落缺省 HTTP 分块（配置不
+        // 落盘、网关不分派），切回豆包档没显式选时沿用已存值。
+        transport:
+            provider == TtsProviderKind.volcTts
+            ? (transport ?? previous?.transport ?? TtsTransport.httpChunk)
+            : TtsTransport.httpChunk,
       );
       config.validate();
       final normalizedKey = _normalizeApiKey(apiKey);
@@ -161,6 +170,7 @@ final class TtsSettingsService implements VoiceStreamSynthesizer {
           responseShape: config.responseShape,
           responseField: config.responseField,
           extraParams: config.extraParams,
+          transport: config.transport,
         ),
       );
     });
@@ -181,7 +191,8 @@ final class TtsSettingsService implements VoiceStreamSynthesizer {
   /// 成功即连接成功并返回音频；错误按与聊天/STT 测试相同的分类枚举
   /// 上报。表单未填 baseUrl/model 时按已保存配置测试。自定义档旋钮随
   /// 表单走：整份表单为空（测已存配置）时回落到已存值，表单填了就以
-  /// 表单为准（与转写自定义档同律）。
+  /// 表单为准（与转写自定义档同律）。传输方式（票三）同样随表单走——
+  /// 选了 WebSocket 双向就实测 WS 路径，不拿 HTTP 假绿。
   Future<TtsTestResult> test({
     String? baseUrl,
     String? model,
@@ -193,6 +204,7 @@ final class TtsSettingsService implements VoiceStreamSynthesizer {
     TtsResponseShape? responseShape,
     String? responseField,
     Map<String, Object?>? extraParams,
+    TtsTransport? transport,
   }) async {
     final stored = await configRepository.loadTts();
     final useStoredOptionalSettings = baseUrl == null && model == null;
@@ -234,6 +246,13 @@ final class TtsSettingsService implements VoiceStreamSynthesizer {
       extraParams: useStoredOptionalSettings
           ? extraParams ?? stored?.extraParams
           : extraParams,
+      // 传输方式只有豆包档消费（WS 双向的整段路径与连接测试按它分派），
+      // 其余档恒缺省。
+      transport:
+          (useStoredOptionalSettings
+              ? transport ?? stored?.transport
+              : transport) ??
+          TtsTransport.httpChunk,
     );
     try {
       config.validate();
@@ -410,6 +429,39 @@ final class TtsSettingsService implements VoiceStreamSynthesizer {
         retryable: false,
       );
     }
+  }
+
+  /// 连续供给会话（票三）：按配置的协议/传输/型号决定开不开 WS 会话
+  /// ——豆包档 transport=ws_bidirection（且生效音频参数可流式 PCM）或
+  /// 千问档 -realtime 型号开会话，其余组合返回 null（分句层回落票二的
+  /// 分句模式，一个字节的网络请求都不发）。建连/握手失败的异常原样上抛，
+  /// 由调用方在会话挂载时按 D1 同口径处理（failedSession 形态 + 一次
+  /// voiceError，文字链路完全不受影响，见 ADR 0019 裁定 A）。[sessionId]
+  /// 是聊天会话标识：多轮合成上下文（豆包 section_id）按它保持。
+  @override
+  Future<VoiceStreamSession?> openSession({required String sessionId}) async {
+    final config = await configRepository.loadTts();
+    if (config == null) {
+      return null;
+    }
+    final String? apiKey;
+    try {
+      apiKey = _normalizeApiKey(config.apiKey);
+    } on ProviderConfigException {
+      throw const TtsServiceException(
+        code: 'tts_config_invalid',
+        message: _dirtyApiKeyMessage,
+        retryable: false,
+      );
+    }
+    if (ttsGateway case final VoiceStreamSessionGateway gateway) {
+      return gateway.openSession(
+        config: config,
+        apiKey: apiKey,
+        sessionId: sessionId,
+      );
+    }
+    return null;
   }
 }
 

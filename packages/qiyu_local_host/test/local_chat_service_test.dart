@@ -161,11 +161,9 @@ void main() {
         },
       );
       addTearDown(harness.dispose);
-  
       final trace = await harness.sendChat(
-        requestId: 'new-segment',
+        requestId: 'seg-rollover',
         text: '在吗',
-        sessionId: almostFullId,
       );
   
       expect(trace.sessionId, isNot(almostFullId));
@@ -1446,11 +1444,15 @@ void main() {
       final script =
           (fixture['modelEvents']! as List<Object?>)
               .cast<Map<String, Object?>>();
-      // 应答按句子文本键控：在途合成并发完成，调用顺序本就无关；
-      // 交付顺序由分句层按句序保证，才是要锁的行为。
+      // 连续供给会话用例（票三）的应答按累计文本键控（边喂边出），分句
+      // 用例按句子文本键控（在途合成并发完成，调用顺序本就无关；交付
+      // 顺序由分句层按句序保证，才是要锁的行为）。
+      final voiceSession = voice['session'] as Map<String, Object?>?;
       final replies =
-          (voice['replies']! as Map<String, Object?>)
-              .map((sentence, reply) => MapEntry(sentence, reply! as Map<String, Object?>));
+          (voiceSession == null
+                  ? voice['replies']!
+                  : voiceSession['replies']!)
+              as Map<String, Object?>;
 
       test('契约 $id', () async {
         final diagnostics = <String>[];
@@ -1460,35 +1462,66 @@ void main() {
         );
         final configPath =
             '${root.path}${Platform.pathSeparator}provider.json';
-        final ttsGateway = ScriptedTtsGateway(
-          replies: {
-            for (final entry in replies.entries)
-              entry.key: switch (entry.value['failure']) {
-                true => const ScriptedVoiceFailure(),
-                // E1：whole 标记的用例（拿不到音频块的档位）按整响应
-                // 一块——每句独立整段合成、按序播放。
-                _ when voice['whole'] == true => ScriptedVoiceWhole([
-                  for (final chunk
-                      in (entry.value['chunks']! as List<Object?>)
-                          .cast<List<Object?>>())
-                    ...chunk.cast<int>(),
-                ]),
-                _ => ScriptedVoiceChunks([
-                  for (final chunk
-                      in (entry.value['chunks']! as List<Object?>)
-                          .cast<List<Object?>>())
-                    chunk.cast<int>(),
-                ]),
-              },
-          },
-        );
+        // 连续供给会话用例（票三）：应答按累计文本键控（边喂边出），
+        // 分句用例按句子文本键控（句边界即请求边界）。
+        final voiceSession = voice['session'] as Map<String, Object?>?;
+        final ttsGateway = voiceSession == null
+            ? ScriptedTtsGateway(
+                replies: {
+                  for (final entry in replies.entries)
+                    entry.key: switch (
+                      (entry.value! as Map<String, Object?>)['failure']) {
+                      true => const ScriptedVoiceFailure(),
+                      // E1：whole 标记的用例（拿不到音频块的档位）按整响应
+                      // 一块——每句独立整段合成、按序播放。
+                      _ when voice['whole'] == true => ScriptedVoiceWhole([
+                        for (final chunk
+                        in ((entry.value! as Map<String, Object?>)['chunks']!
+                                as List<Object?>)
+                            .cast<List<Object?>>())
+                          ...chunk.cast<int>(),
+                      ]),
+                      _ => ScriptedVoiceChunks([
+                        for (final chunk
+                        in ((entry.value! as Map<String, Object?>)['chunks']!
+                                as List<Object?>)
+                            .cast<List<Object?>>())
+                          chunk.cast<int>(),
+                      ]),
+                    },
+                },
+              )
+            : ScriptedTtsGateway(
+                sessionReplies: {
+                  for (final entry
+                      in (voiceSession['replies']! as Map<String, Object?>)
+                          .entries)
+                    entry.key: [
+                      for (final chunk
+                          in (entry.value! as Map<String, Object?>)['chunks']!
+                              as List<Object?>)
+                        (chunk as List<Object?>).cast<int>(),
+                    ],
+                },
+                failAfterAppends: voiceSession['failAfterAppends'] as int?,
+              );
         // 预写 tts 段：分句层据此启动（段级保存保留它）。whole 标记的
         // 用例配「自定义档 JSON 字段形态」——真实走 E1 降级分支（该档
-        // 拿不到音频块，每句独立整段合成、按序播放）。
+        // 拿不到音频块，每句独立整段合成、按序播放）；会话用例配豆包档
+        /// WebSocket 双向（票三连续供给的真实配置形态）。
         await JsonProviderConfigRepository(
           filePath: configPath,
         ).saveTts(
-          voice['whole'] == true
+          voiceSession != null
+              ? const TtsConfig(
+                  provider: TtsProviderKind.volcTts,
+                  baseUrl:
+                      'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+                  model: 'seed-tts-2.0',
+                  apiKey: 'ark-test-key',
+                  transport: TtsTransport.wsBidirection,
+                )
+              : voice['whole'] == true
               ? const TtsConfig(
                   provider: TtsProviderKind.custom,
                   baseUrl: 'https://custom.example.com/tts',
@@ -1503,22 +1536,28 @@ void main() {
                   apiKey: 'tts-test-key',
                 ),
         );
+        // 会话用例（票三）用交互式模型流：先等连续供给会话挂载（迟到
+        // 挂载——文字首字不等握手），再推增量；其余用一次性脚本流。
         final gateway = ScriptedModelGateway(
           streamScript: [
-            ScriptedStreamEvents([
-              for (final event in script)
-                switch (event['kind']) {
-                  'delta' => ModelStreamEvent.delta(event['text']! as String),
-                  'done' => const ModelStreamEvent.done(),
-                  'failure' => ModelStreamEvent.failure(
-                    ModelFailureKind.values.byName(
-                      event['failureKind']! as String,
-                    ),
-                    '已脱敏的脚本故障',
-                  ),
-                  _ => const ModelStreamEvent.delta(''),
-                },
-            ]),
+            voiceSession == null
+                ? ScriptedStreamEvents([
+                    for (final event in script)
+                      switch (event['kind']) {
+                        'delta' => ModelStreamEvent.delta(
+                          event['text']! as String,
+                        ),
+                        'done' => const ModelStreamEvent.done(),
+                        'failure' => ModelStreamEvent.failure(
+                          ModelFailureKind.values.byName(
+                            event['failureKind']! as String,
+                          ),
+                          '已脱敏的脚本故障',
+                        ),
+                        _ => const ModelStreamEvent.delta(''),
+                      },
+                  ])
+                : const ScriptedLiveStream(),
           ],
         );
         final harness = await InProcessChatHost.start(
@@ -1533,10 +1572,57 @@ void main() {
         );
         addTearDown(harness.dispose);
 
-        final trace = await harness.sendChat(
-          requestId: requestId,
-          text: userText,
-        );
+        final ChatEventTrace trace;
+        if (voiceSession == null) {
+          trace = await harness.sendChat(
+            requestId: requestId,
+            text: userText,
+          );
+        } else {
+          // 连续供给：开聊 → 等会话挂载（迟到挂载－文字首字不等握手）→ 按脚本推增量（事件之间给交付循环吸取音频块的机会）。
+          final stream = harness.openChat(
+            requestId: requestId,
+            text: userText,
+          );
+          await gateway.awaitStreamOpened();
+          for (var attempt = 0;
+              ttsGateway.lastSession == null && attempt < 200;
+              attempt += 1) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          expect(
+            ttsGateway.lastSession,
+            isNotNull,
+            reason: '连续供给会话应已挂载',
+          );
+          for (final event in script) {
+            switch (event['kind']) {
+              case 'delta':
+                gateway.liveController.add(
+                  ModelStreamEvent.delta(event['text']! as String),
+                );
+              case 'done':
+                gateway.liveController.add(const ModelStreamEvent.done());
+              case 'failure':
+                gateway.liveController.add(
+                  ModelStreamEvent.failure(
+                    ModelFailureKind.values.byName(
+                      event['failureKind']! as String,
+                    ),
+                    '已脱敏的脚本故障',
+                  ),
+                );
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          await stream.done;
+          trace = ChatEventTrace.parse(
+            await stream.statusCode,
+            stream.received
+                .map((event) => jsonEncode(event.toJson()))
+                .join('\n'),
+          );
+        }
 
         final chunks = trace.eventsOf(ChatDeliveryEventKind.voiceChunk);
         expect(chunks, hasLength(expected['voiceChunkCount']! as int));
@@ -1580,11 +1666,50 @@ void main() {
             reason: '第一个语音块事件必须早于 done 事件',
           );
         }
+        if (expected['firstVoiceChunkBeforeDeltaText'] case final String marker?) {
+          // 连续供给（票三）：第一个音频块早于第一个带该文本的 delta
+          // 事件——首句（含句末标点）还没生成完，声音就已经开始出了。
+          final firstChunk = kinds.indexOf(ChatDeliveryEventKind.voiceChunk);
+          final firstMarkerDelta = trace.events.indexWhere(
+            (event) =>
+                event.kind == ChatDeliveryEventKind.delta &&
+                (event.text ?? '').contains(marker),
+          );
+          expect(firstChunk, greaterThanOrEqualTo(0), reason: '应当有语音块');
+          expect(
+            firstMarkerDelta,
+            greaterThanOrEqualTo(0),
+            reason: '应当有带「$marker」的 delta 事件',
+          );
+          expect(
+            firstChunk < firstMarkerDelta,
+            isTrue,
+            reason: '第一个语音块必须早于首句生成完（含「$marker」的 delta）',
+          );
+        }
         if (expected['messages'] != null) {
           expect(
             trace.eventsOf(ChatDeliveryEventKind.message).single.messages,
             expected['messages'],
           );
+        }
+        if (voiceSession != null) {
+          // 连续供给（票三）：会话按聊天会话标识开（section_id 口径），
+          // 增量原文整段进会话——不按标点切句、没有逐句合成请求。会话
+          // 失败后的文本不再发送（连接已断，发了也没有接收方）。
+          expect(ttsGateway.sessionOpens.single.sessionId, trace.sessionId);
+          final expectedAppends = [
+            for (final event in script)
+              if (event['kind'] == 'delta') event['text']! as String,
+          ];
+          expect(
+            ttsGateway.lastSession?.appends,
+            switch (voiceSession['failAfterAppends'] as int?) {
+              final count? => expectedAppends.take(count).toList(),
+              null => expectedAppends,
+            },
+          );
+          expect(ttsGateway.requests, isEmpty);
         }
         for (final line
             in (expected['diagnosticsContain'] as List<Object?>? ?? const [])) {
@@ -1822,8 +1947,624 @@ void main() {
       expect(trace.message.messages, ['在。刚忙完。']);
     });
   });
-  group('晚安与跨日恢复', () {
 
+  // 连续供给（票三）：豆包双向 / 千问 Realtime WS 会话下的语音行为。
+  // 会话可用时增量原文直接进会话（不按标点切句），块按到达序交付；
+  // 票二的全部播放与降级语义逐条对应。
+  group('语音连续供给会话', () {
+    /// 预写豆包档 WebSocket 双向配置 + 脚本化会话网关，并开聊等待会话
+    /// 挂载（票三 迟到挂载：文字首字不等握手，脚本化会话在一个配置读取
+    /// 内落定——等它挂上再推模型增量，首音时序才可确定断言）。
+    Future<
+      (
+        InProcessChatHost,
+        ScriptedTtsGateway,
+        ScriptedModelGateway,
+        OpenChatStream,
+      )
+    >
+    startAttachedSessionHost(
+      Directory root, {
+      required String requestId,
+      required Map<String, List<List<int>>> sessionReplies,
+      int? failAfterAppends,
+      Future<void>? closeGate,
+      List<List<int>> closeChunks = const [],
+      Object? sessionOpenError,
+      Future<void>? sessionOpenGate,
+      Duration? chunkDelay,
+      Duration? sessionGrace,
+    }) async {
+      final configPath =
+          '${root.path}${Platform.pathSeparator}provider.json';
+      final ttsGateway = ScriptedTtsGateway(
+        sessionReplies: sessionReplies,
+        failAfterAppends: failAfterAppends,
+        closeGate: closeGate,
+        closeChunks: closeChunks,
+        sessionOpenError: sessionOpenError,
+        sessionOpenGate: sessionOpenGate,
+        chunkDelay: chunkDelay,
+      );
+      await JsonProviderConfigRepository(
+        filePath: configPath,
+      ).saveTts(
+        const TtsConfig(
+          provider: TtsProviderKind.volcTts,
+          baseUrl:
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          model: 'seed-tts-2.0',
+          apiKey: 'ark-test-key',
+          transport: TtsTransport.wsBidirection,
+        ),
+      );
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedLiveStream()],
+      );
+      final harness = await InProcessChatHost.start(
+        rootDirectory: root,
+        modelGateway: gateway,
+        ttsSettingsService: TtsSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          ttsGateway,
+        ),
+        voiceSessionGrace: sessionGrace,
+      );
+      addTearDown(harness.dispose);
+      final stream = harness.openChat(requestId: requestId, text: '在吗');
+      await gateway.awaitStreamOpened();
+      if (sessionOpenError == null && sessionOpenGate == null) {
+        // 等会话落定并挂上（开会话失败/挂起没有会话可等，走各自哨兵）。
+        for (var attempt = 0;
+            ttsGateway.lastSession == null && attempt < 200;
+            attempt += 1) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(
+          ttsGateway.lastSession,
+          isNotNull,
+          reason: '连续供给会话应已落定挂载',
+        );
+        // 挂载发生在会话 Future 胜出主循环等待集的那一刻：再让一个
+        // 事件循环过去，确保此前的增量已补喂进会话。
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      return (harness, ttsGateway, gateway, stream);
+    }
+
+    test('连续供给：增量原文整段进会话，块按到达序交付', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-voice-ws-');
+      final (harness, ttsGateway, gateway, stream) =
+          await startAttachedSessionHost(
+            root,
+            requestId: 'voice-ws',
+            sessionReplies: const {
+              '在': [[1]],
+              '在。刚忙完。': [[2]],
+            },
+          );
+
+      gateway.liveController.add(ModelStreamEvent.delta('在'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      gateway.liveController.add(ModelStreamEvent.delta('。刚忙完。'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      gateway.liveController.add(const ModelStreamEvent.done());
+      await stream.done;
+
+      // 原文按模型增量整段进会话：没有按标点切句、没有逐句合成请求。
+      expect(ttsGateway.lastSession?.appends, ['在', '。刚忙完。']);
+      expect(ttsGateway.requests, isEmpty);
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      final chunks = trace.eventsOf(ChatDeliveryEventKind.voiceChunk);
+      expect(chunks.map((chunk) => chunk.chunkIndex), [0, 1]);
+      expect(chunks.map((chunk) => chunk.audioData), ['AQ==', 'Ag==']);
+      expect(chunks.every((chunk) => chunk.sampleRate == 24000), isTrue);
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceError), isEmpty);
+      expect(trace.message.messages, ['在。刚忙完。']);
+      final stored = await harness.storedSession(trace.sessionId);
+      expect(
+        stored.turns.lastWhere((turn) => turn.speaker == Speaker.qiyu).text,
+        '在。刚忙完。',
+      );
+    });
+
+    test('首音时序：前几个字一出声音就开始酝酿（早于首句生成完）', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-voice-ws-first-');
+      final (_, ttsGateway, gateway, stream) =
+          await startAttachedSessionHost(
+            root,
+            requestId: 'voice-ws-first',
+            sessionReplies: const {
+              '我在': [[1, 2]],
+              '我在。今晚月色很好。': [[3]],
+            },
+          );
+
+      // 只推前两个字（没有任何句末标点）——连续供给下音频就应当开始出。
+      // NDJSON 响应整体缓冲，中途事件到不了客户端：首音时机用服务端
+      // 里程碑（会话产出首块时的累计文本）断言。
+      gateway.liveController.add(ModelStreamEvent.delta('我在'));
+      for (var attempt = 0;
+          (ttsGateway.lastSession?.chunkMoments.isEmpty ?? true) &&
+              attempt < 200;
+          attempt += 1) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(
+        ttsGateway.lastSession?.chunkMoments,
+        isNotEmpty,
+        reason: '前几个字一出就必须有音频块产出',
+      );
+      expect(
+        RegExp(r'[。！？!?…\n\r]').hasMatch(
+          ttsGateway.lastSession!.chunkMoments.first,
+        ),
+        isFalse,
+        reason: '首音必须早于首句生成完（产出首块时累计文本不含句末标点）',
+      );
+
+      gateway.liveController.add(ModelStreamEvent.delta('。今晚月色很好。'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      gateway.liveController.add(const ModelStreamEvent.done());
+      await stream.done;
+
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      final kinds = trace.events.map((event) => event.kind).toList();
+      expect(
+        kinds.indexOf(ChatDeliveryEventKind.voiceChunk) <
+            kinds.indexOf(ChatDeliveryEventKind.done),
+        isTrue,
+      );
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceChunk), hasLength(2));
+      expect(trace.message.messages, ['我在。今晚月色很好。']);
+    });
+
+    test('收尾后尾块照常播完：close 之后到达的音频按序交付', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-voice-ws-tail-');
+      final closeGate = Completer<void>();
+      final (_, ttsGateway, gateway, stream) =
+          await startAttachedSessionHost(
+            root,
+            requestId: 'voice-ws-tail',
+            sessionReplies: const {
+              '在。刚忙完。': [[1]],
+            },
+            closeGate: closeGate.future,
+            closeChunks: const [
+              [2],
+            ],
+          );
+
+      gateway.liveController.add(ModelStreamEvent.delta('在。刚忙完。'));
+      // 等首块产出（模型流随后终止、管线收尾，收尾门还没放行）。
+      for (var attempt = 0;
+          (ttsGateway.lastSession?.chunkMoments.length ?? 0) < 1 &&
+              attempt < 200;
+          attempt += 1) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(ttsGateway.lastSession?.chunkMoments, hasLength(1));
+      gateway.liveController.add(const ModelStreamEvent.done());
+      // 放行收尾门：尾块照常播出，交付等它播完才终局。
+      closeGate.complete();
+      await stream.done;
+
+      final chunks = stream.received
+          .where((event) => event.kind == ChatDeliveryEventKind.voiceChunk)
+          .toList();
+      expect(chunks.map((chunk) => chunk.chunkIndex), [0, 1]);
+      expect(chunks.map((chunk) => chunk.audioData), ['AQ==', 'Ag==']);
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      expect(trace.message.messages, ['在。刚忙完。']);
+    });
+
+    test('会话失败即本段语音结束：已播留着、提示一次、文字不受影响', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-voice-ws-fail-');
+      final (harness, _, gateway, stream) =
+          await startAttachedSessionHost(
+            root,
+            requestId: 'voice-ws-fail',
+            sessionReplies: const {
+              '在': [[1]],
+            },
+            failAfterAppends: 1,
+          );
+
+      gateway.liveController.add(ModelStreamEvent.delta('在'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      gateway.liveController.add(ModelStreamEvent.delta('。刚忙完。'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      gateway.liveController.add(const ModelStreamEvent.done());
+      await stream.done;
+
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      // D1：已到的块照常播完，失败只提示一次，文字完整交付并落盘。
+      expect(
+        trace.eventsOf(ChatDeliveryEventKind.voiceChunk).map(
+          (chunk) => chunk.audioData,
+        ),
+        ['AQ=='],
+      );
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceError), hasLength(1));
+      expect(trace.message.messages, ['在。刚忙完。']);
+      final stored = await harness.storedSession(trace.sessionId);
+      expect(
+        stored.turns.lastWhere((turn) => turn.speaker == Speaker.qiyu).text,
+        '在。刚忙完。',
+      );
+    });
+
+    test('停止信号：前端停播作废会话，文字交付不受影响', () async {
+      final root = await Directory.systemTemp.createTemp('qiyu-voice-ws-stop-');
+      final (harness, ttsGateway, gateway, stream) =
+          await startAttachedSessionHost(
+            root,
+            requestId: 'voice-ws-stop',
+            sessionReplies: const {},
+          );
+
+      gateway.liveController.add(ModelStreamEvent.delta('在。刚忙完。'));
+      // 等文本喂进会话（脚本会话此时不出块），再发停止信号。
+      for (var attempt = 0;
+          (ttsGateway.lastSession?.appends.isEmpty ?? true) && attempt < 200;
+          attempt += 1) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(ttsGateway.lastSession?.appends, ['在。刚忙完。']);
+
+      final stopped = await harness.stopVoice('voice-ws-stop');
+      expect(stopped, isTrue);
+      gateway.liveController.add(const ModelStreamEvent.done());
+      await stream.done;
+
+      expect(
+        stream.received.where(
+          (event) => event.kind == ChatDeliveryEventKind.voiceChunk,
+        ),
+        isEmpty,
+      );
+      expect(
+        stream.received.where(
+          (event) => event.kind == ChatDeliveryEventKind.voiceError,
+        ),
+        isEmpty,
+      );
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      expect(trace.message.messages, ['在。刚忙完。']);
+      final stored = await harness.storedSession(trace.sessionId);
+      expect(
+        stored.turns.lastWhere((turn) => turn.speaker == Speaker.qiyu).text,
+        '在。刚忙完。',
+      );
+    });
+
+    test('会话开失败：按 D1 同口径提示一次，文字完整交付不受影响', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'qiyu-voice-ws-open-fail-',
+      );
+      final (harness, _, gateway, stream) =
+          await startAttachedSessionHost(
+            root,
+            requestId: 'voice-ws-open-fail',
+            sessionReplies: const {},
+            sessionOpenError: const TtsGatewayException(
+              kind: ModelFailureKind.provider,
+              message: '语音合成服务拒绝了这次请求。',
+            ),
+          );
+
+      gateway.liveController.add(ModelStreamEvent.delta('在。刚忙完。'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      gateway.liveController.add(const ModelStreamEvent.done());
+      await stream.done;
+
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      // 用户显式选了 WebSocket 传输：开失败要有一次提示（同会话首次），
+      // 但一个音频块都没有，文字照常完整交付并落盘。
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceChunk), isEmpty);
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceError), hasLength(1));
+      expect(trace.message.messages, ['在。刚忙完。']);
+      final stored = await harness.storedSession(trace.sessionId);
+      expect(
+        stored.turns.lastWhere((turn) => turn.speaker == Speaker.qiyu).text,
+        '在。刚忙完。',
+      );
+    });
+
+    test('语音块在模型流在途时到达：moveNext 复用，回复不误判半句', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'qiyu-voice-ws-late-chunk-',
+      );
+      // 脚本会话延时发块：模型流停在在途状态（live stream 没推下一个
+      // 事件）时服务端来块——_voiceProgress 胜出而在途 moveNext 不被作废
+      // （旧实现在途 moveNext 上再调一次会抛 StateError，整轮回复被误判
+      // 成半句）。
+      final (_, ttsGateway, gateway, stream) =
+          await startAttachedSessionHost(
+        root,
+        requestId: 'voice-ws-late-chunk',
+        sessionReplies: const {
+          '我在': [[1, 2]],
+        },
+        chunkDelay: const Duration(milliseconds: 20),
+      );
+
+      gateway.liveController.add(ModelStreamEvent.delta('我在'));
+      // 等块产出（此时模型流在途，没有下一个事件）。NDJSON 响应整体缓冲，
+      // 中途事件到不了客户端：用服务端里程碑（会话产出首块时的累计文本）。
+      for (var attempt = 0;
+          (ttsGateway.lastSession?.chunkMoments.isEmpty ?? true) &&
+              attempt < 200;
+          attempt += 1) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(
+        ttsGateway.lastSession?.chunkMoments,
+        isNotEmpty,
+        reason: '模型流在往时到达的音频块应当产出',
+      );
+
+      gateway.liveController.add(ModelStreamEvent.delta('。刚忙完。'));
+      gateway.liveController.add(const ModelStreamEvent.done());
+      await stream.done;
+
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      expect(trace.message.messages, ['我在。刚忙完。']);
+      // 完整文本落皮：旧实现会把这轮误判成半句（带“未完成”标记）。
+      expect(trace.message.incomplete, isNot(true));
+    });
+
+    test('取消赶在会话落定前：无块无提示，只交付 cancelled，连接被作废', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'qiyu-voice-ws-cancel-open-',
+      );
+      final configPath =
+          '${root.path}${Platform.pathSeparator}provider.json';
+      final openGate = Completer<void>();
+      final ttsGateway = ScriptedTtsGateway(
+        sessionReplies: const {},
+        sessionOpenGate: openGate.future,
+      );
+      await JsonProviderConfigRepository(
+        filePath: configPath,
+      ).saveTts(
+        const TtsConfig(
+          provider: TtsProviderKind.volcTts,
+          baseUrl:
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          model: 'seed-tts-2.0',
+          apiKey: 'ark-test-key',
+          transport: TtsTransport.wsBidirection,
+        ),
+      );
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedLiveStream()],
+      );
+      final harness = await InProcessChatHost.start(
+        rootDirectory: root,
+        modelGateway: gateway,
+        ttsSettingsService: TtsSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          ttsGateway,
+        ),
+      );
+      addTearDown(harness.dispose);
+      final stream = harness.openChat(
+        requestId: 'voice-ws-cancel-open',
+        text: '在吗',
+      );
+      await gateway.awaitStreamOpened();
+      gateway.liveController.add(ModelStreamEvent.delta('在。刚忙完。'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      // 会话还没落定（挂在 openGate 上）就取消。
+      expect(await harness.cancelChat('voice-ws-cancel-open'), isTrue);
+      await stream.done;
+
+      expect(
+        stream.received.where(
+          (event) => event.kind == ChatDeliveryEventKind.voiceChunk,
+        ),
+        isEmpty,
+      );
+      expect(
+        stream.received.where(
+          (event) => event.kind == ChatDeliveryEventKind.voiceError,
+        ),
+        isEmpty,
+      );
+      expect(stream.received.last.kind, ChatDeliveryEventKind.cancelled);
+      final sessionId = stream.received.first.sessionId!;
+      final stored = await harness.storedSession(sessionId);
+      expect(stored.turns.map((turn) => turn.speaker), [Speaker.user]);
+
+      // 放行 openGate：迟到的会话被作废（不开火、不留连接）。
+      openGate.complete();
+      for (var attempt = 0;
+          !(ttsGateway.lastSession?.cancelled ?? false) && attempt < 200;
+          attempt += 1) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(
+        ttsGateway.lastSession?.cancelled,
+        isTrue,
+        reason: '取消后落定的会话必须被作废',
+      );
+      expect(ttsGateway.lastSession?.appends, isEmpty);
+    });
+
+    test('模型流收尾后宽限内落定：补喂缓冲文本并收尾，尾块照常播完', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'qiyu-voice-ws-late-attach-',
+      );
+      final openGate = Completer<void>();
+      final (harness, ttsGateway, gateway, stream) =
+          await startAttachedSessionHost(
+            root,
+            requestId: 'voice-ws-late-attach',
+            sessionReplies: const {
+              '晚安。': [[5, 6]],
+            },
+            sessionOpenGate: openGate.future,
+            sessionGrace: const Duration(seconds: 2),
+          );
+
+      // 短回复：一次 delta 就 done（栖语默认少说的常见形态）——文本先
+      // 缓冲，模型流收尾后会话才落定。
+      gateway.liveController.add(ModelStreamEvent.delta('晚安。'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      gateway.liveController.add(const ModelStreamEvent.done());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // 宽限内放行：落定即挂载（补喂缓冲 + 替会话收尾）。
+      openGate.complete();
+      await stream.done;
+
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      expect(
+        trace.eventsOf(ChatDeliveryEventKind.voiceChunk).map(
+          (chunk) => chunk.audioData,
+        ),
+        ['BQY='],
+      );
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceError), isEmpty);
+      expect(trace.message.messages, ['晚安。']);
+      expect(ttsGateway.lastSession?.appends, ['晚安。']);
+      final stored = await harness.storedSession(trace.sessionId);
+      expect(
+        stored.turns.lastWhere((turn) => turn.speaker == Speaker.qiyu).text,
+        '晚安。',
+      );
+    });
+
+    test('模型流收尾后宽限外落定：作废会话，无块无提示，done 正常', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'qiyu-voice-ws-late-abandon-',
+      );
+      final openGate = Completer<void>();
+      final (harness, ttsGateway, gateway, stream) =
+          await startAttachedSessionHost(
+            root,
+            requestId: 'voice-ws-late-abandon',
+            sessionReplies: const {
+              '晚安。': [[5, 6]],
+            },
+            sessionOpenGate: openGate.future,
+            // 注入小宽限：对锁用例不必真等生产的 2s；断言功能不变。
+            sessionGrace: const Duration(milliseconds: 50),
+          );
+
+      gateway.liveController.add(ModelStreamEvent.delta('晚安。'));
+      gateway.liveController.add(const ModelStreamEvent.done());
+      // 宽限（50ms）外才放行：会话落定已被作废——语音没启动，不是失败。
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      openGate.complete();
+      await stream.done;
+
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceChunk), isEmpty);
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceError), isEmpty);
+      expect(trace.message.messages, ['晚安。']);
+      // 落定的会话被作废：不开火、不留连接。
+      expect(ttsGateway.lastSession?.cancelled, isTrue);
+      expect(ttsGateway.lastSession?.appends, isEmpty);
+      final stored = await harness.storedSession(trace.sessionId);
+      expect(
+        stored.turns.lastWhere((turn) => turn.speaker == Speaker.qiyu).text,
+        '晚安。',
+      );
+    });
+
+    test('模型流收尾后宽限内落定 null：回落票二分句，缓冲文本照常播出', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'qiyu-voice-ws-late-null-',
+      );
+      final configPath =
+          '${root.path}${Platform.pathSeparator}provider.json';
+      final openGate = Completer<void>();
+      // OpenAI 档不开会话：openSession 挂门后返回 null（模拟慢速档位判定）。
+      final ttsGateway = ScriptedTtsGateway(
+        replies: const {'晚安。': ScriptedVoiceChunks([[7, 8]])},
+        sessionOpenGate: openGate.future,
+      );
+      await JsonProviderConfigRepository(
+        filePath: configPath,
+      ).saveTts(
+        const TtsConfig(
+          provider: TtsProviderKind.openAiCompatible,
+          baseUrl: 'https://tts.example.com/v1',
+          model: 'tts-test',
+          apiKey: 'tts-test-key',
+        ),
+      );
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedLiveStream()],
+      );
+      final harness = await InProcessChatHost.start(
+        rootDirectory: root,
+        modelGateway: gateway,
+        ttsSettingsService: TtsSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          ttsGateway,
+        ),
+      );
+      addTearDown(harness.dispose);
+      final stream = harness.openChat(
+        requestId: 'voice-ws-late-null',
+        text: '在吗',
+      );
+      await gateway.awaitStreamOpened();
+
+      gateway.liveController.add(ModelStreamEvent.delta('晚安。'));
+      gateway.liveController.add(const ModelStreamEvent.done());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // 宽限内落定 null：回落票二分句——缓冲文本按句合成播出。
+      openGate.complete();
+      await stream.done;
+
+      final trace = ChatEventTrace.parse(
+        await stream.statusCode,
+        stream.received.map((event) => jsonEncode(event.toJson())).join('\n'),
+      );
+      expect(
+        trace.eventsOf(ChatDeliveryEventKind.voiceChunk).map(
+          (chunk) => chunk.audioData,
+        ),
+        ['Bwg='],
+      );
+      expect(trace.eventsOf(ChatDeliveryEventKind.voiceError), isEmpty);
+      expect(trace.message.messages, ['晚安。']);
+      expect(ttsGateway.requests, ['晚安。']);
+    });
+  });
+
+  group('中晚与跳日恢复', () {
     test('bedtime uses the Provider instead of forcing a local close', () async {
       final gateway = ScriptedModelGateway(
         streamScript: [const ScriptedStreamReply('晚点再睡也行，想说什么？')],

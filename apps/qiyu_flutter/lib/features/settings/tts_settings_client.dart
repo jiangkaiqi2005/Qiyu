@@ -40,6 +40,19 @@ enum TtsResponseShape {
   final String wireName;
 }
 
+/// 语音合成的传输方式（票三）：与 Host `TtsTransport` 的 wire 名对应，
+/// 只对豆包档有意义——HTTP 分块（缺省，逐句合成）或 WebSocket 双向
+/// （边出文本边合成）。千问档按型号驱动（型号名以 -realtime 结尾走
+/// WebSocket），自定义档不动，两档都恒为缺省值、不上送。
+enum TtsTransport {
+  httpChunk('http_chunk'),
+  wsBidirection('ws_bidirection');
+
+  const TtsTransport(this.wireName);
+
+  final String wireName;
+}
+
 /// 千问语音合成的服务地址缺省值：DashScope 多模态完整端点（与千问识别
 /// 同端点，地址栏填完整端点、不拼后缀）。
 ///
@@ -73,6 +86,7 @@ final class TtsSettings {
     this.responseShape = TtsResponseShape.rawBytes,
     this.responseField,
     this.extraParams,
+    this.transport = TtsTransport.httpChunk,
   });
 
   factory TtsSettings.fromJson(Map<String, Object?> json) {
@@ -107,6 +121,12 @@ final class TtsSettings {
       },
       responseField: json['responseField'] as String?,
       extraParams: extraParams,
+      // 传输方式缺省 http_chunk；缺失或未知值都按缺省呈现（Host 只会
+      // 回已支持的值，防御旧版 Host 的响应）。
+      transport: switch (json['transport']) {
+        'ws_bidirection' => TtsTransport.wsBidirection,
+        _ => TtsTransport.httpChunk,
+      },
     );
   }
 
@@ -129,6 +149,9 @@ final class TtsSettings {
   final String? responseField;
 
   final Map<String, Object?>? extraParams;
+
+  /// 传输方式（票三）：只对豆包档有意义，其余档恒为缺省值。
+  final TtsTransport transport;
 }
 
 final class TtsSettingsDraft {
@@ -144,6 +167,7 @@ final class TtsSettingsDraft {
     this.responseShape,
     this.responseField,
     this.extraParams,
+    this.transport,
   });
 
   final TtsServiceKind provider;
@@ -162,6 +186,10 @@ final class TtsSettingsDraft {
 
   final Map<String, Object?>? extraParams;
 
+  /// 传输方式（票三）：非豆包档恒为 null，不上送（Host 侧也只对豆包档
+  /// 落盘，其余档归一为缺省 HTTP 分块）。
+  final TtsTransport? transport;
+
   Map<String, Object?> toJson() => {
     'provider': provider.wireName,
     'baseUrl': baseUrl,
@@ -177,6 +205,8 @@ final class TtsSettingsDraft {
       if (responseField != null && responseField!.trim().isNotEmpty)
         'responseField': responseField,
     },
+    if (provider == TtsServiceKind.volcTts && transport != null)
+      'transport': transport!.wireName,
     if (extraParams != null && extraParams!.isNotEmpty)
       'extraParams': extraParams,
   };

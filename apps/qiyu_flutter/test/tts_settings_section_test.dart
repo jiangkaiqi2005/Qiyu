@@ -107,12 +107,87 @@ void main() {
     expect(value.voiceDropdownValue, customVoiceValue);
     expect(value.showCustomVoiceField, isTrue);
     expect(value.speed, 1.25);
+    // 传输方式随快照回显（票三）。
+    expect(value.transport, TtsTransport.wsBidirection);
     expect(
       value.extraParamsController.text,
       const JsonEncoder.withIndent('  ').convert({
         'audio_params': {'sample_rate': 16000},
       }),
     );
+  });
+
+  test('传输方式（票三）：豆包档随草稿上送，切档回落缺省', () {
+    final value = form();
+    expect(value.transport, TtsTransport.httpChunk);
+
+    value.selectProvider('volc_tts');
+    value.selectTransport('ws_bidirection');
+    expect(value.transport, TtsTransport.wsBidirection);
+
+    // 切到别的档：传输方式回落缺省（Host 侧也不为别的档落盘）。
+    value.selectProvider('qwen_tts');
+    expect(value.transport, TtsTransport.httpChunk);
+
+    value.selectProvider('volc_tts');
+    expect(value.transport, TtsTransport.httpChunk);
+  });
+
+  test('豆包档保存编排：传输方式随草稿上送，非豆包档不上送', () async {
+    final value = form();
+    value.selectProvider('volc_tts');
+    value.selectTransport('ws_bidirection');
+
+    final saved = await value.save(viewModel, report: (_) {});
+
+    expect(saved, isTrue);
+    final draft = gateway.savedDrafts.last;
+    expect(draft.provider, TtsServiceKind.volcTts);
+    expect(draft.transport, TtsTransport.wsBidirection);
+
+    final other = form();
+    other.selectProvider('qwen_tts');
+    await other.save(viewModel, report: (_) {});
+    expect(gateway.savedDrafts.last.transport, isNull);
+  });
+
+  testWidgets('传输方式下拉只在豆包档出现，其余档不出现', (tester) async {
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: viewModel,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SettingsSectionCollapseScope(
+              collapsed: const {},
+              onToggle: (_) {},
+              child: ListView(children: const [TtsSettingsSection()]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 初值 OpenAI 兼容档：没有传输方式下拉。
+    expect(find.byKey(const Key('tts-transport')), findsNothing);
+
+    // 切到豆包档：下拉出现并默认 HTTP 分块。
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('豆包语音合成').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('tts-transport')), findsOneWidget);
+    expect(find.text('HTTP 分块'), findsOneWidget);
+
+    // 切到千问档：下拉不再出现（型号驱动，不做传输选择器）。
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('千问语音合成').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('tts-transport')), findsNothing);
   });
 
   testWidgets('获焦字段在同步时保留草稿，未获焦字段照常覆盖', (tester) async {
@@ -163,7 +238,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    const qwenModelHelp = '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）';
+    const qwenModelHelp =
+        '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）'
+        '；$qwenTtsDefaultModel-realtime（WebSocket，前几个字就出声）';
 
     // 说明归属锁死在模型名称框：helperText 渲染在 TextField 子树内，同一句
     // 误挂到服务地址等别的框上时断言会红。
@@ -589,6 +666,9 @@ final class _RecordingTtsGateway implements TtsSettingsGateway {
     model: configured ? 'tts-model' : null,
     voice: configured ? 'my-voice-id' : null,
     speed: configured ? 1.25 : null,
+    transport: configured
+        ? TtsTransport.wsBidirection
+        : TtsTransport.httpChunk,
     extraParams: configured
         ? {
             'audio_params': {'sample_rate': 16000},

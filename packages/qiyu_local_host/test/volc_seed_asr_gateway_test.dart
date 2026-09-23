@@ -763,10 +763,17 @@ final class _FakeWebSocketConnection implements ProviderWebSocketConnection {
   @override
   Stream<List<int>> get messages => _incoming.stream;
 
+  // 票三新增的文本帧视图：识别假连接只回二进制帧，文本流恒空。
+  @override
+  Stream<String> get textMessages => const Stream.empty();
+
   @override
   void send(List<int> bytes) {
     sentFrames.add(bytes);
   }
+
+  @override
+  void sendText(String text) {}
 
   @override
   Future<void> close() async {

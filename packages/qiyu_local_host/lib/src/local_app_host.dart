@@ -36,6 +36,7 @@ import 'open_loop_store.dart';
 import 'persona_tree.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
+import 'provider_web_socket.dart';
 import 'proxy_settings_service.dart';
 import 'relationship_lifecycle.dart';
 import 'secure_token.dart';
@@ -106,6 +107,8 @@ final class LocalAppHost {
     AtomicTextWriter? atomicWriter,
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
+    // 连续供给会话落定的有界宽限（票三）：缺省走生产值，测试注入小值。
+    Duration? voiceSessionGrace,
     void Function(String message)? diagnosticsSink,
     IdleCatchupPoller? idleCatchupPoller,
   }) async {
@@ -163,11 +166,17 @@ final class LocalAppHost {
           SttModelGateway(DartIoProviderHttpClient()),
         );
     // 语音朗读（TTS）：同一套律（ADR 0002：整段合成、tts 段独立）。
+    // 票三起连续喂文本走 WS：豆包双向 / 千问 Realtime 两个协议网关经
+    // 同一 WS 连接子出网（与 STT 豆包流式识别同接缝），WS 地址由 Host
+    // 从 baseUrl 派生并同样过出网校验（ADR 0019）。
     final effectiveTtsSettings =
         ttsSettingsService ??
         TtsSettingsService(
           providerConfigRepository,
-          TtsModelGateway(DartIoProviderHttpClient()),
+          TtsModelGateway(
+            DartIoProviderHttpClient(),
+            webSocketConnector: const DartIoProviderWebSocketConnector(),
+          ),
         );
     // 开发者诊断（ticket 23）：最近请求环形缓冲 + 体验选项持久化。
     // 记录器结构上不收用户文本，诊断端点只读、默认不启用。
@@ -330,6 +339,7 @@ final class LocalAppHost {
       memoryCadence: memoryCadence,
       deliveryPause: deliveryPause,
       recallWindowWait: recallWindowWait,
+      voiceSessionGrace: voiceSessionGrace,
       clock: clock,
       diagnosticsSink: diagnosticsSink,
       // 分句流式语音合成（票二）：与朗读路由、连接测试共用同一个

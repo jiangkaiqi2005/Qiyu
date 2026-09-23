@@ -81,6 +81,27 @@ final _bedtimeSignalPattern = RegExp(r'晚安|睡了|先睡|睡觉了|想睡|去
 /// 增量先到就照常处理文字。
 const _voiceProgress = 'voice-progress';
 
+/// 连续供给会话落定信号（票三 迟到挂载）：与模型增量、取消、语音块
+/// 推进同台竞争——文字首字不等会话握手。
+const _voiceSessionReady = 'voice-session-ready';
+
+/// 模型流已收尾而会话还没落定时的有界宽限缺省值（票三）：快速档位（不开
+/// 会话）一个配置读取内就回，正常 WS 握手也白送这段时间——内落定即挂载
+/// （补喂缓冲文本、替会话收尾，尾块照常播完）；端点不可达时上限默认就在
+/// 这里，超出才作废会话——done 不被握手无限期拖住。生产走缺省值；测试经
+/// [LocalChatService.voiceSessionGrace] 注入小值。
+const defaultVoiceSessionGrace = Duration(seconds: 2);
+
+/// 迟到的连续供给会话（票三）：管线先就绪并登记（文字首字不等握手），
+/// [openSession] 是开会话的 Future——由交付主循环挂进等待集，胜出才
+/// 挂载到管线；为 null 表示档位不开会话（票二分句模式，管线即刻可用）。
+final class _PendingVoiceStream {
+  _PendingVoiceStream(this.pipeline, this.openSession);
+
+  final VoiceStreamPipeline pipeline;
+  final Future<VoiceStreamSession?>? openSession;
+}
+
 final class LocalChatService {
   LocalChatService(
     this._repository, {
@@ -101,11 +122,13 @@ final class LocalChatService {
     this.voiceStreamSynthesizer,
     DeliveryPause? deliveryPause,
     RecallWindowWait? recallWindowWait,
+    Duration? voiceSessionGrace,
     Clock? clock,
     void Function(String message)? diagnosticsSink,
   }) : _behaviorCore = behaviorCore ?? const QiyuBehaviorCore(),
        _deliveryPause = deliveryPause ?? Future<void>.delayed,
        _recallWindowWait = recallWindowWait ?? Future<void>.delayed,
+       _voiceSessionGrace = voiceSessionGrace ?? defaultVoiceSessionGrace,
        _clock = clock ?? DateTime.now,
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
@@ -139,7 +162,9 @@ final class LocalChatService {
   /// 分句流式语音合成的服务层接缝（票二）：文字流式推进中每出一个
   /// 完整句，Host 经它请求该句合成，音频块搭车聊天事件流推出。未注入
   /// （或档位拿不到音频块、自动朗读关着）时本轮就是纯文字流式，语音
-  /// 继续走 done 时的整段朗读路径。
+  /// 继续走 done 时的整段朗读路径。票三起同一实例还承担连续供给会话
+  /// （[VoiceStreamSessionOpener]）：档位开了 WS 时增量原文直接进会话，
+  /// 分句层切句与在途上限都不参与。
   final VoiceStreamSynthesizer? voiceStreamSynthesizer;
 
   late final MemoryBanExecution? _banExecution =
@@ -172,6 +197,9 @@ final class LocalChatService {
   final RequestDiagnosticsRecorder? requestDiagnostics;
   final DeliveryPause _deliveryPause;
   final RecallWindowWait _recallWindowWait;
+
+  /// 模型流已收尾而会话还没落定时的有界宽限（票三）：生产走缺省值，测试注入小值。
+  final Duration _voiceSessionGrace;
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
   final Map<String, _DeliveryCancellation> _activeDeliveries = {};
@@ -360,11 +388,23 @@ final class LocalChatService {
     return true;
   }
 
-  /// 为本轮建分句语音合成管线：未注入接缝、档位拿不到音频块（自定义
-  /// 档 JSON 字段形态）、自动朗读关着或未配置时返回 null——本轮就是
-  /// 纯文字流式，done 时的整段朗读路径不受影响。查询本身失败只记
-  /// 诊断，同样按「不流式」处理（文字链路永远优先）。
-  Future<VoiceStreamPipeline?> _createVoicePipeline(
+  /// 为本轮准备分句语音合成管线（票二）+ 连续供给会话（票三）：未注入接缝、
+  /// 档位拿不到音频块（自定义档 JSON 字段形态）、自动朗读关着或未配置时
+  /// 返回 null——本轮就是纯文字流式，done 时的整段朗读路径不受影响。
+  /// 查询本身失败只记诊断，同样按「不流式」处理（文字链路永远优先）。
+  ///
+  /// 连续供给（票三）：接缝同时实现 [VoiceStreamSessionOpener] 时启动开会话
+  /// ——档位开了 WS（豆包 transport=ws_bidirection 且生效音频参数可流式
+  /// PCM、千问 -realtime 型号）就进会话模式（增量原文直接进 WS），返回
+  /// null 的档位维持票二分句模式。
+  ///
+  /// 开会话是网络 I/O（WS 握手）：返回的 Future 由交付主循环挂进等待集
+  /// （迟到挂载）——**文字首字不等握手**；会话落定才 attachSession，落定前
+  /// 喂进的文本不合成（首句可能不出声，文字永远优先）；模型流已收尾时才
+  /// 落定＝直接作废会话（语音没启动，不是失败）；开会话失败走 D1 同口径
+  /// （failedSession 形态 + 一次 voiceError），不回落分句模式（避免同一条
+  /// 链路上再烧一次配额）。
+  Future<_PendingVoiceStream?> _startVoiceStreamPipeline(
     RawSession session,
     String requestId,
   ) async {
@@ -384,24 +424,62 @@ final class LocalChatService {
     if (!canStream) {
       return null;
     }
-    // 交付段序号与朗读定位同口径：该 requestId 已落盘的栖语 turn 数
-    // （重放路径不进这里，活前缀轮恒从 0 起算，防御性取现值）。
-    final deliveryIndex = session.turns
-        .where(
-          (turn) =>
-              turn.requestId == requestId && turn.speaker == Speaker.qiyu,
-        )
-        .length;
+    if (synthesizer case final VoiceStreamSessionOpener opener) {
+      // 连续供给：管线先就绪并登记（stopVoice 握手窗口也能定位到），会话
+      // Future 交给主循环迟到挂载。
+      final pipeline = VoiceStreamPipeline(
+        synthesizer: synthesizer,
+        requestId: requestId,
+        sessionId: session.id,
+        deliveryIndex: _voiceDeliveryIndex(session, requestId),
+        diagnosticsSink: _diagnosticsSink,
+        pendingSession: true,
+      );
+      _activeVoiceStreams[requestId] = pipeline;
+      return _PendingVoiceStream(
+        pipeline,
+        opener.openSession(sessionId: session.id),
+      );
+    }
+    // 票二分句模式（档位不开会话）：管线即刻可用。
     final pipeline = VoiceStreamPipeline(
       synthesizer: synthesizer,
       requestId: requestId,
       sessionId: session.id,
-      deliveryIndex: deliveryIndex,
+      deliveryIndex: _voiceDeliveryIndex(session, requestId),
       diagnosticsSink: _diagnosticsSink,
     );
     _activeVoiceStreams[requestId] = pipeline;
-    return pipeline;
+    return _PendingVoiceStream(pipeline, null);
   }
+
+  /// 作废迟到的连续供给会话（票三）：管线 cancel 并从登记表移除（identical
+  /// 校验，重复调用无副作用），会话 Future 落定也作废——连接绝不比文字多活
+  /// 一刻；落定失败（开会话抛错）同样清表。收敛「取消赶在落定前」「模型流
+  /// 没开到」「主循环提前 break」三条泄漏路径的唯一出口。
+  void _abandonVoiceStream(_PendingVoiceStream? started, String requestId) {
+    if (started == null) {
+      return;
+    }
+    final pipeline = started.pipeline;
+    final registered = identical(_activeVoiceStreams[requestId], pipeline);
+    pipeline.cancel();
+    if (registered) {
+      _activeVoiceStreams.remove(requestId);
+    }
+    started.openSession?.then(
+      (session) => session?.cancel(),
+      onError: (_) {},
+    );
+  }
+
+  /// 语音块所属的交付段序号（与朗读定位同口径）：该 requestId 已落盘的
+  /// 栖语 turn 数（重放路径不进这里，活前缀轮恒从 0 起算，防御性取现值）。
+  int _voiceDeliveryIndex(RawSession session, String requestId) => session.turns
+      .where(
+        (turn) => turn.requestId == requestId && turn.speaker == Speaker.qiyu,
+      )
+      .length;
 
   Stream<ChatDeliveryEvent> _deliver({
     required String requestId,
@@ -511,13 +589,21 @@ final class LocalChatService {
     if (providerPort != null) {
       ModelPromptBuilder? requestBuilder;
       final streamed = _StreamedReply();
-      // 分句语音合成管线（票二）：Provider 分支进来时就绪，与文字流式
-      // 共用同一个活前缀；拿不到音频块的档位这里是 null。
-      final voicePipeline = await _createVoicePipeline(session, trimmedRequestId);
+      // 连续供给会话（票三）：Provider 分支进来时就绪，与文字流式共用
+      // 同一个活前缀；拿不到音频块的档位这里是 null。开会话是网络 I/O
+      // （WS 握手）——管线先就绪、会话 Future 由流式路径挂进主循环等待
+      // 集（迟到挂载），文字首字不等握手（票一「第一个字立刻开始出」
+      // 不被语音握手抵消）。
+      _PendingVoiceStream? pendingVoice;
       try {
         requestBuilder = await _promptBuilderForRequest(session.id);
         final prepared = await providerPort.prepareChatRequest();
         if (prepared != null) {
+          // Provider 确实可用才准备语音：没配上时不白烧握手。
+          pendingVoice = await _startVoiceStreamPipeline(
+            session,
+            trimmedRequestId,
+          );
           // 流内异常（含已吐出若干 delta 后才炸）由 _streamModelReply
           // 自行收尾成半句/本地兜底，绝不在这里重置交付状态——否则
           // 半句与兜底话术会叠加显示。
@@ -539,7 +625,7 @@ final class LocalChatService {
             pace: outcome.safety == null,
             precomputedLocalOutcome: outcome,
             reply: streamed,
-            voicePipeline: voicePipeline,
+            pendingVoice: pendingVoice,
           );
         }
       } on Object catch (error) {
@@ -556,13 +642,10 @@ final class LocalChatService {
           null,
         );
       } finally {
-        // 交付收尾（正常/取消/异常同一出口）：作废在途分句合成并注销
-        // 登记——语音绝不比文字多活一刻。
-        voicePipeline?.cancel();
-        if (voicePipeline != null &&
-            identical(_activeVoiceStreams[trimmedRequestId], voicePipeline)) {
-          _activeVoiceStreams.remove(trimmedRequestId);
-        }
+        // 模型流没开到（prepare/openStream 抛错）时会话还在途：作废并
+        // 清表，绝不留继续烧配额的连接（正常轮次里 _streamModelReply 已
+        // 收过一次，abandon 幂等）。
+        _abandonVoiceStream(pendingVoice, trimmedRequestId);
       }
       // 模型没有真正收到本轮（本地兜底/取消）时，把已取用的短期
       // memory context 放回，留给下一轮注入；「晚一拍」允许再晚一拍。
@@ -1020,7 +1103,9 @@ final class LocalChatService {
   /// 语音（票二）：同一个活前缀每出一个完整句就进分句合成，PCM 音频
   /// 块经 [VoiceStreamPipeline] 按序搭车本事件流（voiceChunk），一句
   /// 失败即本段语音结束（voiceError，D1）；块全部吐完才终局，刷新/
-  /// 重启的重放路径不进这里，幂等与今天一致。
+  /// 重启的重放路径不进这里，幂等与今天一致。连续供给（票三）：档位
+  /// 开了 WS 会话时同一活前缀的增量原文直接进会话（不等标点），音频
+  /// 块按到达序搭车——五个驱动点形状不变，模式选择在管线内部。
   Stream<ChatDeliveryEvent> _streamModelReply(
     List<ModelMessage> messages,
     _DeliveryCancellation cancellation, {
@@ -1032,7 +1117,7 @@ final class LocalChatService {
     required bool pace,
     required ChatResult precomputedLocalOutcome,
     required _StreamedReply reply,
-    VoiceStreamPipeline? voicePipeline,
+    _PendingVoiceStream? pendingVoice,
   }) async* {
     // 一次 open：协议适配、终止判定、错误分类与取消下传全部在快照与
     // 网关内部完成；主链只对交付事件做增量卫生与分片节奏。
@@ -1043,10 +1128,19 @@ final class LocalChatService {
     if (stream == null) {
       // 拿不到可用流：本轮就是普通本地兜底。沿用调用方预计算的本地
       // 结果（危机输入→热线兜底、常规输入→极简回复），不另发明原因值。
+      // 语音管线（可能在途的会话）作废并清表，不白留一条连接。
+      _abandonVoiceStream(pendingVoice, requestId);
       reply.result = precomputedLocalOutcome;
       return;
     }
     final iterator = StreamIterator<ModelStreamEvent>(stream);
+    // 连续供给会话（票三 迟到挂载）：管线先就绪，会话 Future 挂进主循环
+    // 等待集——**首个可见 delta 不等会话落定**（WS 端点不可达时文字照常
+    // 一秒级起，最坏情况只是首句不出声）。会话胜出才挂载；落定前喂进的
+    // 文本不合成。取消与「档位不开会话」都按本轮纯文字流式处理——语音
+    // 绝不拖住文字（文字链路永远优先）。
+    final voicePipeline = pendingVoice?.pipeline;
+    var pendingSession = pendingVoice?.openSession;
     final raw = StringBuffer();
     final visible = CandidateReplyStream();
     final outbox = StringBuffer();
@@ -1056,6 +1150,8 @@ final class LocalChatService {
     var eof = false;
     var finalized = false;
     var voiceErrorSent = false;
+    // 在途的 moveNext（语音块先到时跨轮复用，见下方 await 处的注释）。
+    Future<bool>? moveNext;
     ModelFailureKind? failure;
     ServiceErrorCategory? serviceError;
     // 在途活前缀的分片上屏：取下一块就立刻吐，绝不让已到来的文字排在
@@ -1129,6 +1225,26 @@ final class LocalChatService {
             voicePipeline?.addText(trailing);
             voicePipeline?.close();
           }
+          if (pendingSession case final session?) {
+            // 模型流已收尾、会话还没落定：有界宽限内落定即挂载——补喂
+            // 缓冲文本并替会话收尾，尾块照常播完（短回复一次 delta 就
+            // done，也不能整轮没声音）；宽限外落定才作废（语音没启动，
+            // 不是失败，不发提示）。done 不被慢握手无限期拖住。
+            final settled = await Future.any<Object?>([
+              session.then<Object?>(
+                (_) => _voiceSessionReady,
+                onError: (Object _) => _voiceSessionReady,
+              ),
+              Future<void>.delayed(_voiceSessionGrace).then<Object?>((_) => null),
+            ]);
+            if (identical(settled, _voiceSessionReady)) {
+              await _attachVoiceSession(voicePipeline, session);
+            } else {
+              session.then((opened) => opened?.cancel(), onError: (_) {});
+              voicePipeline?.abandonPendingSession();
+            }
+            pendingSession = null;
+          }
           if (voicePipeline == null || voicePipeline.isFinished) {
             break;
           }
@@ -1137,8 +1253,22 @@ final class LocalChatService {
           await voicePipeline.whenProgress();
           continue;
         }
-        final moveNext = iterator.moveNext();
+        // 在途的 moveNext 跨轮复用：语音块先到（_voiceProgress）时循环
+        // 回到顶部flush 音频，那一次 await 不能让在途的 moveNext 作废——
+        // StreamIterator 在上一次 moveNext 完成前再调一次会直接抛
+        // StateError，真实模型流（等下一个增量）必然踩中，整轮回复会被
+        // 误判成半句。只有 moveNext 自己胜出才清空重取。
+        (moveNext ??= iterator.moveNext());
         final waits = <Future<Object?>>[
+          // 迟到的连续供给会话（票三）排在 moveNext 之前：两者都已落定时
+          // 先挂载再处理增量——首句文字不等握手，但会话就绪也不被增量
+          // 挤掉。开会话失败同样走这条哨兵（错误在挂载处按 D1 处理，
+          // 不当成模型流故障）。
+          if (pendingSession case final session?)
+            session.then<Object?>(
+              (_) => _voiceSessionReady,
+              onError: (Object _) => _voiceSessionReady,
+            ),
           moveNext,
           cancellation.whenCancelled.then<Object?>((_) => null),
         ];
@@ -1156,9 +1286,16 @@ final class LocalChatService {
           reply.cancelled = true;
           return;
         }
+        if (identical(moved, _voiceSessionReady)) {
+          // 会话落定即挂载（迟到挂载）：此后增量原文直接进 WS。
+          await _attachVoiceSession(voicePipeline, pendingSession);
+          pendingSession = null;
+          continue;
+        }
         if (identical(moved, _voiceProgress)) {
           continue;
         }
+        moveNext = null;
         if (moved != true) {
           // 流干净关闭但没有任何协议终止标记：提前 EOF，按失败处理。
           eof = true;
@@ -1198,6 +1335,9 @@ final class LocalChatService {
       failure ??= ModelFailureKind.provider;
     } finally {
       await iterator.cancel();
+      // 语音收尾（正常/取消/异常同一出口）：作废在途会话并注销登记——
+      // 正常轮次此时已自然结束，cancel 幂等；语音绝不比文字多活一刻。
+      _abandonVoiceStream(pendingVoice, requestId);
     }
     _settleStreamedReply(
       visible: visible,
@@ -1210,6 +1350,29 @@ final class LocalChatService {
       serviceError: serviceError,
       reply: reply,
     );
+  }
+
+  /// 迟到的连续供给会话落定（票三）：挂载到管线。返回的 Future 已由
+  /// [Future.any] 判定胜出，await 立即完成；失败按 D1 同口径标记（提示
+  /// 一次、文字不受影响），返回 null（档位不支持 WS / E1）时管线回落票二
+  /// 分句模式。模型流已收尾/已停止时才落定＝直接作废会话（语音没启动，
+  /// 不是失败，由管线内部判定）。
+  Future<void> _attachVoiceSession(
+    VoiceStreamPipeline? pipeline,
+    Future<VoiceStreamSession?>? session,
+  ) async {
+    if (pipeline == null || session == null) {
+      return;
+    }
+    final VoiceStreamSession? opened;
+    try {
+      opened = await session;
+    } on Object {
+      // 开会话失败：诊断已由开启方记录，这里只按 D1 口径标记。
+      pipeline.markSessionFailed();
+      return;
+    }
+    pipeline.attachSession(opened);
   }
 
   /// 流式终局收尾：隐藏动作协议与可见文本严格分离后，按「有没有

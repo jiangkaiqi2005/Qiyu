@@ -6,6 +6,8 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
+import 'support/scripted_voice_synthesizer.dart';
+
 void main() {
   late String configPath;
   late JsonProviderConfigRepository repository;
@@ -368,6 +370,132 @@ void main() {
     expect(toggled.config?.authHeader, 'X-Api-Key');
     expect(toggled.config?.responseShape, TtsResponseShape.jsonField);
     expect(toggled.config?.responseField, 'result.audio');
+  });
+
+  test('传输方式保存口径（票三）：豆包档落盘，切档回落缺省，开关不写丢', () async {
+    final service = TtsSettingsService(repository, _FakeTtsGateway());
+
+    final saved = await service.save(
+      baseUrl:
+          'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+      model: 'seed-tts-2.0',
+      provider: TtsProviderKind.volcTts,
+      apiKey: 'ark-secret-value',
+      transport: TtsTransport.wsBidirection,
+    );
+    expect(saved.config?.transport, TtsTransport.wsBidirection);
+    // 没显式选时沿用已存值。
+    final kept = await service.save(
+      baseUrl:
+          'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+      model: 'seed-tts-2.0',
+      provider: TtsProviderKind.volcTts,
+    );
+    expect(kept.config?.transport, TtsTransport.wsBidirection);
+
+    // 翻朗读开关不写丢传输方式。
+    final toggled = await service.setAutoSpeak(false);
+    expect(toggled.config?.transport, TtsTransport.wsBidirection);
+
+    // 切到非豆包档：回落缺省 HTTP 分块（配置不落盘）。
+    final switched = await service.save(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'tts-test',
+      apiKey: 'openai-secret-value',
+    );
+    expect(switched.config?.transport, TtsTransport.httpChunk);
+    // 切回豆包档没显式选：按缺省（上一个配置已是别的档）。
+    final back = await service.save(
+      baseUrl:
+          'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+      model: 'seed-tts-2.0',
+      provider: TtsProviderKind.volcTts,
+    );
+    expect(back.config?.transport, TtsTransport.httpChunk);
+  });
+
+  test('连续供给会话路由（票三）：按协议/传输/型号决定开不开会话', () async {
+    final service = TtsSettingsService(
+      repository,
+      ScriptedTtsGateway(sessionReplies: const {
+        '我在': [[1]],
+      }),
+    );
+
+    // 未配置：不开会话。
+    expect(await service.openSession(sessionId: 'chat-1'), isNull);
+
+    // 豆包档 WebSocket 双向：开会话，配置/Key/聊天会话标识原样交给网关。
+    await service.save(
+      baseUrl:
+          'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+      model: 'seed-tts-2.0',
+      provider: TtsProviderKind.volcTts,
+      apiKey: 'ark-secret-value',
+      transport: TtsTransport.wsBidirection,
+    );
+    final session = await service.openSession(sessionId: 'chat-1');
+    expect(session, isNotNull);
+    final opened = (service.ttsGateway as ScriptedTtsGateway).sessionOpens;
+    expect(opened.single.sessionId, 'chat-1');
+    expect(opened.single.apiKey, 'ark-secret-value');
+    expect(opened.single.config.transport, TtsTransport.wsBidirection);
+    session!.appendText('我在');
+    expect(
+      await session.chunks.first,
+      isA<VoiceAudioChunk>().having((chunk) => chunk.bytes, 'bytes', [1]),
+    );
+
+    // 豆包档 HTTP 分块：不开会话，回落票二的分句模式。
+    await service.save(
+      baseUrl:
+          'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+      model: 'seed-tts-2.0',
+      provider: TtsProviderKind.volcTts,
+      transport: TtsTransport.httpChunk,
+    );
+    expect(await service.openSession(sessionId: 'chat-1'), isNull);
+
+    // 千问档型号驱动：realtime 型号开会话，其余不开。
+    await service.save(
+      baseUrl:
+          'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+      model: 'qwen3-tts-flash-realtime',
+      provider: TtsProviderKind.qwenTts,
+      apiKey: 'sk-secret-value',
+    );
+    expect(await service.openSession(sessionId: 'chat-1'), isNotNull);
+    await service.save(
+      baseUrl:
+          'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+      model: 'qwen3-tts-flash',
+      provider: TtsProviderKind.qwenTts,
+      apiKey: 'sk-secret-value',
+    );
+    expect(await service.openSession(sessionId: 'chat-1'), isNull);
+  });
+
+  test('整段路径随传输走（票三）：ws 档试听与连接测试都走 WS 会话', () async {
+    final gateway = _FakeTtsGateway(audio: [1, 2, 3]);
+    final service = TtsSettingsService(repository, gateway);
+    await service.save(
+      baseUrl:
+          'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+      model: 'seed-tts-2.0',
+      provider: TtsProviderKind.volcTts,
+      apiKey: 'ark-secret-value',
+      transport: TtsTransport.wsBidirection,
+    );
+
+    final audio = await service.synthesize('晚安。');
+
+    expect(audio, [1, 2, 3]);
+    expect(gateway.lastConfig?.transport, TtsTransport.wsBidirection);
+
+    // 连接测试随表单传输走（裁定 A）：选了 WebSocket 双向就连 WS 实测，
+    // 不拿 HTTP 假绿。
+    await service.test(transport: TtsTransport.wsBidirection);
+    expect(gateway.lastConfig?.transport, TtsTransport.wsBidirection);
   });
 
   test('保存设置保留既有朗读开关，脏 Key 不落盘', () async {

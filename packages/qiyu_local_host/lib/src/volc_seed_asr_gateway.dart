@@ -80,7 +80,7 @@ final class VolcSeedAsrGateway {
     final uri = Uri.parse(config.baseUrl.trim());
     // STT 是新增出网路径：出网前统一过 SSRF 校验（聊天 Provider 不走）。
     ensureSttOutboundAllowed(uri);
-    final requestId = _newRequestId();
+    final requestId = newVolcRequestId();
     final connection = await connector.connect(
       uri: uri,
       headers: {
@@ -390,8 +390,10 @@ int _readInt32(List<int> bytes, int offset) {
 
 final _requestIdRandom = Random.secure();
 
-/// X-Api-Request-Id 用随机 UUID v4。
-String _newRequestId() {
+/// 随机 UUID v4：豆包协议的请求/连接标志与票三双向 TTS 的
+/// session_id、section_id、X-Api-Connect-Id 共用同一来源（同族协议的
+/// 唯一标识生成口径收在一处，不要各写一份）。
+String newVolcRequestId() {
   final bytes = List<int>.generate(16, (_) => _requestIdRandom.nextInt(256));
   bytes[6] = (bytes[6] & 0x0F) | 0x40; // version 4
   bytes[8] = (bytes[8] & 0x3F) | 0x80; // RFC 4122 variant

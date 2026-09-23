@@ -824,6 +824,84 @@ void main() {
     expect(handwritten.autoSpeak, isTrue);
   });
 
+  test('tts 传输方式（票三）：豆包档落盘往返，其余档不写、缺省 http_chunk', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-tts-transport-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+
+    await repository.saveTts(
+      const TtsConfig(
+        provider: TtsProviderKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        apiKey: 'ark-secret-value',
+        transport: TtsTransport.wsBidirection,
+      ),
+    );
+    final loaded = (await repository.loadTts())!;
+    expect(loaded.transport, TtsTransport.wsBidirection);
+    expect(
+      (jsonDecode(await File(filePath).readAsString())
+          as Map<String, Object?>)['tts'] as Map<String, Object?>,
+      containsPair('transport', 'ws_bidirection'),
+    );
+
+    // 非豆包档不落盘 transport：切档即回落缺省 HTTP 分块。
+    await repository.saveTts(
+      const TtsConfig(
+        provider: TtsProviderKind.qwenTts,
+        baseUrl:
+            'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+        model: 'qwen3-tts-flash',
+        apiKey: 'sk-secret-value',
+      ),
+    );
+    final qwen = (await repository.loadTts())!;
+    expect(qwen.transport, TtsTransport.httpChunk);
+    expect(
+      (jsonDecode(await File(filePath).readAsString())
+          as Map<String, Object?>)['tts'] as Map<String, Object?>,
+      isNot(contains('transport')),
+    );
+
+    // 存量配置（没有该字段）按缺省读取；脏值按配置无法读取拒绝。
+    await File(filePath).writeAsString('''
+{
+  "tts": {
+    "provider": "volc_tts",
+    "baseUrl": "https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional",
+    "model": "seed-tts-2.0"
+  }
+}
+''');
+    expect(
+      (await repository.loadTts())!.transport,
+      TtsTransport.httpChunk,
+    );
+    await File(filePath).writeAsString('''
+{
+  "tts": {
+    "provider": "volc_tts",
+    "baseUrl": "https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional",
+    "model": "seed-tts-2.0",
+    "transport": "carrier_pigeon"
+  }
+}
+''');
+    expect(
+      () => repository.loadTts(),
+      throwsA(
+        isA<ProviderConfigException>().having(
+          (error) => error.message,
+          'message',
+          '语音合成服务配置无法读取。',
+        ),
+      ),
+    );
+  });
+
   test('聊天、stt、tts、webSearch 四段保存互不覆盖', () async {
     final temp = await Directory.systemTemp.createTemp('qiyu-tts-sections-');
     addTearDown(() => temp.delete(recursive: true));

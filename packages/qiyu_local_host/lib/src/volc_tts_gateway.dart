@@ -60,8 +60,8 @@ final class VolcTtsGateway
     // 生效格式不是裸 PCM 单声道 16-bit 时走不了块流（服务返回压缩字节
     // 或多声道，PCM 播放器会播成噪音）——按 E1 降级成整响应当一块，
     // 容器原样。
-    final negotiated = _effectiveAudioParams(config);
-    if (!_isStreamablePcm(negotiated)) {
+    final negotiated = effectiveAudioParams(config);
+    if (!isStreamablePcm(negotiated)) {
       return guardTtsAudioStream(
         () => _streamWholeResponse(config: config, apiKey: apiKey, text: text),
       );
@@ -147,8 +147,9 @@ final class VolcTtsGateway
   }
 
   /// 生效的 audio_params（含用户经高级参数的覆盖）：流式路径据此判断
-  /// 能不能走块流，整段路径据此决定要不要包 WAV 头。
-  static Map<String, Object?> _effectiveAudioParams(TtsConfig config) {
+  /// 能不能走块流，整段路径据此决定要不要包 WAV 头。HTTP 与双向 WS
+  /// （票三）两条路共用，勿另抄。
+  static Map<String, Object?> effectiveAudioParams(TtsConfig config) {
     final params = <String, Object?>{
       'format': 'pcm',
       'sample_rate': volcTtsDefaultSampleRate,
@@ -162,8 +163,10 @@ final class VolcTtsGateway
     return params;
   }
 
-  /// 是否是流式块可用的裸 PCM 单声道 16-bit。
-  static bool _isStreamablePcm(Map<String, Object?> audioParams) {
+  /// 是否是流式块可用的裸 PCM 单声道 16-bit。HTTP 与双向 WS（票三）两条
+  /// 路共用：用户经高级参数覆盖成压缩格式时，两条流式路都按 E1 降级
+  /// （压缩字节送进 PCM 播放器会播成噪音）。
+  static bool isStreamablePcm(Map<String, Object?> audioParams) {
     final format = switch (audioParams['format']) {
       final String value => value.trim().toLowerCase(),
       _ => 'pcm',
@@ -193,7 +196,7 @@ final class VolcTtsGateway
     ensureTtsOutboundAllowed(uri);
     final rawSpeaker = config.voice?.trim();
     final detectedDialect =
-        (rawSpeaker == null || rawSpeaker.isEmpty) ? null : _detectDialect(rawSpeaker);
+        (rawSpeaker == null || rawSpeaker.isEmpty) ? null : detectDialect(rawSpeaker);
     final effectiveSpeaker =
         (detectedDialect != null || rawSpeaker == null || rawSpeaker.isEmpty)
             ? defaultSpeaker
@@ -234,7 +237,7 @@ final class VolcTtsGateway
       _ => 16,
     };
 
-    final effectiveAdditions = _resolveAdditions(
+    final effectiveAdditions = resolveAdditions(
       extra: extra,
       detectedDialect: detectedDialect,
     );
@@ -366,7 +369,8 @@ final class VolcTtsGateway
 
   /// 检测预设方言音色 ID，并返回对应的方言代码（如 sichuan, dongbei 等）。
   /// 仅精准匹配预设音色库已定义的方言，避免误劫持用户自定义音色。
-  static String? _detectDialect(String voice) => _dialectVoiceMap[voice.trim()];
+  /// HTTP 与双向 WS（票三）两条路共用，勿另抄。
+  static String? detectDialect(String voice) => _dialectVoiceMap[voice.trim()];
 
   static const _dialectVoiceMap = <String, String>{
     'zh_female_sichuan_uranus_bigtts': 'sichuan',
@@ -382,8 +386,8 @@ final class VolcTtsGateway
 
   /// 火山方舟 Go 服务端中 `additions` 字段类型是 `string`。
   /// 自动注入方言参数或 extraParams 传入的对象统一序列化为 JSON 字符串，
-  /// 非空字符串直接保留。
-  static String? _resolveAdditions({
+  /// 非空字符串直接保留。HTTP 与双向 WS（票三）两条路共用，勿另抄。
+  static String? resolveAdditions({
     required Map<String, Object?>? extra,
     required String? detectedDialect,
   }) {

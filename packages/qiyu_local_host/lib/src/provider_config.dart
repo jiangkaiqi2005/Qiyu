@@ -533,6 +533,9 @@ enum TtsProviderKind {
   );
 
   /// 该协议允许的服务地址 scheme（配置校验与出网前 SSRF 校验共用）。
+  /// 恒为 http/https：即使传输选了 WebSocket 双向（票三），用户在地址栏
+  /// 填的仍是 HTTP 端点，WS 地址由 Host 按协议派生、单独过
+  /// speechOutboundRefusalReason，不经过配置校验。
   bool allows(String scheme) => scheme == 'http' || scheme == 'https';
 }
 
@@ -603,6 +606,26 @@ const qwenTtsDefaultModel = 'qwen3-tts-flash';
 /// 双源同值（改动需两边同步）；本包内网关空音色回落也用它，单处真相。
 const qwenTtsDefaultVoice = 'Cherry';
 
+/// 语音合成的传输方式（票三）：只归豆包档（volc_tts）——HTTP 分块
+/// （缺省，票二的逐行分块通道）或 WebSocket 双向（边出文本边合成的
+/// 连续供给）。千问档继续型号驱动（型号名以 -realtime 结尾走 WS），
+/// 自定义档不动。设置页只对豆包档露出下拉；WS 地址由 Host 从 baseUrl
+/// 派生，baseUrl 本身始终只允许 http/https。
+enum TtsTransport {
+  httpChunk('http_chunk'),
+  wsBidirection('ws_bidirection');
+
+  const TtsTransport(this.wireName);
+
+  final String wireName;
+
+  static TtsTransport fromWireName(String value) => values.firstWhere(
+    (transport) => transport.wireName == value,
+    orElse: () =>
+        throw const ProviderConfigException('语音合成服务配置无法读取。'),
+  );
+}
+
 /// 语音合成（TTS）服务配置：provider.json 顶层的可选 `tts` 段。
 /// [speed] 为空表示用服务缺省语速；[autoSpeak] 是聊天页朗读开关的
 /// 持久化位（缺省开：配了就自动读）。自定义档（custom）另有三个旋钮：
@@ -621,6 +644,7 @@ final class TtsConfig {
     this.responseShape = TtsResponseShape.rawBytes,
     this.responseField = ttsCustomDefaultResponseField,
     this.extraParams,
+    this.transport = TtsTransport.httpChunk,
   });
 
   factory TtsConfig.fromJson(Map<String, Object?> json) {
@@ -659,6 +683,12 @@ final class TtsConfig {
     if (rawResponseField != null && rawResponseField is! String) {
       throw const ProviderConfigException('语音合成服务配置无法读取。');
     }
+    // 传输方式字段缺失按缺省 HTTP 分块：存量配置照常工作。
+    final transport = switch (json['transport']) {
+      null => TtsTransport.httpChunk,
+      final String value => TtsTransport.fromWireName(value),
+      _ => throw const ProviderConfigException('语音合成服务配置无法读取。'),
+    };
     return TtsConfig(
       provider: provider,
       baseUrl: json['baseUrl']! as String,
@@ -677,6 +707,7 @@ final class TtsConfig {
       responseField: rawResponseField as String? ?? ttsCustomDefaultResponseField,
       // 高级参数与合成侧同型：兼容 extraParams 与 extra_params 两种写法。
       extraParams: extraParams,
+      transport: transport,
     );
   }
 
@@ -707,6 +738,11 @@ final class TtsConfig {
   /// 自定义高级参数（深合并入请求体）。
   final Map<String, Object?>? extraParams;
 
+  /// 传输方式（票三）：只对豆包档有意义——HTTP 分块（缺省）或 WebSocket
+  /// 双向连续供给。其余档恒为缺省值（千问按型号驱动、自定义档不动），
+  /// 也不落盘。WS 地址由 Host 按协议从 baseUrl 派生，不经过本字段校验。
+  final TtsTransport transport;
+
   /// 本机 provider.json 的 tts 段里保存的 API Key（明文）。与聊天 Key
   /// 同律：不进 toJson()，HTTP 快照绝不携带明文。
   final String? apiKey;
@@ -723,6 +759,7 @@ final class TtsConfig {
     responseShape: responseShape,
     responseField: responseField,
     extraParams: extraParams,
+    transport: transport,
   );
 
   /// Key 的沿用作用域看协议与规范化后的服务地址：换协议与换地址
@@ -738,7 +775,9 @@ final class TtsConfig {
     if (speed != null) 'speed': speed,
     'autoSpeak': autoSpeak,
     // 旋钮与高级参数只在自定义档落盘：切到别的档时不把残留写回去
-    // （extraParams 三档本就消费，落盘口径不动）。
+    // （extraParams 三档本就消费，落盘口径不动）。传输方式只对豆包档
+    // 落盘：其余档恒为缺省值，写回去只会让文件多出一个没人读的字段。
+    if (provider == TtsProviderKind.volcTts) 'transport': transport.wireName,
     if (provider == TtsProviderKind.custom) ...{
       if (authHeader != null && authHeader!.trim().isNotEmpty)
         'authHeader': authHeader,

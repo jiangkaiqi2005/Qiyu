@@ -9,7 +9,9 @@ import 'custom_tts_gateway.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
+import 'provider_web_socket.dart';
 import 'qwen_tts_gateway.dart';
+import 'tts_ws_gateways.dart';
 import 'volc_tts_gateway.dart';
 
 /// TTS 出网异常：kind 与聊天 Provider、STT 出网错误共用同一套分类
@@ -96,6 +98,44 @@ abstract interface class VoiceStreamSynthesizer {
   /// 合成一句完整文字为音频块流。失败抛 [TtsGatewayException]（分句层
   /// 按 D1 降级：一句失败即本段语音结束）。
   Stream<VoiceAudioChunk> synthesizeStream(String text);
+}
+
+/// 连续供给的语音合成会话（票三）：打开一个跨轮次的合成会话——增量
+/// 原文直接进 WebSocket（不按标点切句、不受在途上限约束），音频块按
+/// 到达序流出。协议档位不支持 WS 时不开会话（返回 null），分句层维持
+/// 票二的分句模式。会话失败经 [chunks] 的流错误上报（分句层按 D1
+/// 降级：本段语音结束，已播句子 standing）。
+abstract interface class VoiceStreamSession {
+  /// 追加一段增量文本（可见原文，不切句）：空段忽略，收尾后忽略。
+  void appendText(String text);
+
+  /// 收尾：不再来新文本，等在途音频播完（协议层发结束事件）。本身不
+  /// 抛异常——结束/失败都经 [chunks] 上报。
+  Future<void> close();
+
+  /// 音频块流（按到达序）。
+  Stream<VoiceAudioChunk> get chunks;
+
+  /// 作废（停止信号/轮取消）：断开连接，块流就此结束。
+  void cancel();
+}
+
+/// 服务层的会话能力（票三）：由 TtsSettingsService 实现——按配置的
+/// 协议/传输/型号决定开不开连续供给会话（档位不支持 WS 时返回 null）。
+/// [sessionId] 是聊天会话标识：多轮合成上下文（豆包 section_id）按它
+/// 保持，进程内有效（Host 重启即新值）。
+abstract interface class VoiceStreamSessionOpener {
+  Future<VoiceStreamSession?> openSession({required String sessionId});
+}
+
+/// 协议网关的会话分派面（票三）：TtsModelGateway 实现，协议分支不出
+/// Provider 层（与 synthesize/synthesizeStream 同一张分派表）。
+abstract interface class VoiceStreamSessionGateway {
+  Future<VoiceStreamSession?> openSession({
+    required TtsConfig config,
+    required String? apiKey,
+    required String sessionId,
+  });
 }
 
 /// OpenAI-compatible `/audio/speech` 的 Host 中介客户端：一次性 POST
@@ -290,11 +330,29 @@ String? _effectiveTextValue(Map<String, Object?>? extra, String key) {
 
 /// 语音朗读的出网入口：按 tts 配置的协议分派到具体网关。整段与流式
 /// 两条路同一张分派表——新增协议档只加一行，路由与服务层零改动。
+/// 票三起多一张连续供给会话的分派表（[VoiceStreamSessionGateway]）：
+/// 豆包档按传输选择（ws_bidirection 开双向会话）、千问档按型号
+/// （-realtime 结尾开 Realtime 会话），其余组合不开会话（分句层回落
+/// 票二的分句模式）。
 final class TtsModelGateway
-    implements TtsSynthesisGateway, TtsStreamSynthesisGateway {
-  const TtsModelGateway(this.httpClient);
+    implements
+        TtsSynthesisGateway,
+        TtsStreamSynthesisGateway,
+        VoiceStreamSessionGateway {
+  TtsModelGateway(
+    this.httpClient, {
+    ProviderWebSocketConnector? webSocketConnector,
+  }) : _volcBidirectionTts = VolcBidirectionTtsGateway(
+         webSocketConnector ?? const DartIoProviderWebSocketConnector(),
+         httpClient,
+       ),
+       _qwenRealtimeTts = QwenRealtimeTtsGateway(
+         webSocketConnector ?? const DartIoProviderWebSocketConnector(),
+       );
 
   final ProviderBytesHttpClient httpClient;
+  final VolcBidirectionTtsGateway _volcBidirectionTts;
+  final QwenRealtimeTtsGateway _qwenRealtimeTts;
 
   @override
   Future<List<int>> synthesize({
@@ -305,9 +363,24 @@ final class TtsModelGateway
     TtsProviderKind.openAiCompatible => OpenAiSpeechGateway(
       httpClient,
     ).synthesize(config: config, apiKey: apiKey, text: text),
+    // 豆包档传输选了 WebSocket 双向：整段路径（试听、历史重听、连接
+    // 测试）也走一次性 WS 会话——连接测试由此覆盖用户实际选的传输
+    // （选了 WS 却只测 HTTP 会是假绿）。压缩格式覆盖的配置由网关内部
+    // 回落 HTTP 单向端点（E1 不变）。
+    TtsProviderKind.volcTts
+        when config.transport == TtsTransport.wsBidirection =>
+      _volcBidirectionTts.synthesize(
+        config: config,
+        apiKey: apiKey,
+        text: text,
+      ),
     TtsProviderKind.volcTts => VolcTtsGateway(
       httpClient,
     ).synthesize(config: config, apiKey: apiKey, text: text),
+    // realtime 型号没有 HTTP 整段接口：整段路径（试听、历史重听、连接
+    // 测试）也开一次性 WS 会话，本地包 WAV 头后走既有整段播放器。
+    TtsProviderKind.qwenTts when isQwenRealtimeTtsModel(config.model) =>
+      _qwenRealtimeTts.synthesize(config: config, apiKey: apiKey, text: text),
     TtsProviderKind.qwenTts => QwenTtsGateway(
       httpClient,
     ).synthesize(config: config, apiKey: apiKey, text: text),
@@ -328,6 +401,8 @@ final class TtsModelGateway
     TtsProviderKind.volcTts => VolcTtsGateway(
       httpClient,
     ).synthesizeStream(config: config, apiKey: apiKey, text: text),
+    // realtime 型号不进分句模式：会话可用时增量原文直接进 WS（票三），
+    // 会话开不了时整轮不开语音（D1 口径），不会走到逐句 HTTP 请求。
     TtsProviderKind.qwenTts => QwenTtsGateway(
       httpClient,
     ).synthesizeStream(config: config, apiKey: apiKey, text: text),
@@ -335,6 +410,32 @@ final class TtsModelGateway
       httpClient,
     ).synthesizeStream(config: config, apiKey: apiKey, text: text),
   };
+
+  @override
+  Future<VoiceStreamSession?> openSession({
+    required TtsConfig config,
+    required String? apiKey,
+    required String sessionId,
+  }) async {
+    // 连续供给只对开了 WS 的档位生效：豆包档看传输选择，千问档看型号
+    // （型号驱动，ADR 0018）；其余组合返回 null，分句层维持票二分句。
+    return switch (config.provider) {
+      TtsProviderKind.volcTts
+          when config.transport == TtsTransport.wsBidirection =>
+        _volcBidirectionTts.openSession(
+          config: config,
+          apiKey: apiKey,
+          sessionId: sessionId,
+        ),
+      TtsProviderKind.qwenTts when isQwenRealtimeTtsModel(config.model) =>
+        _qwenRealtimeTts.openSession(
+          config: config,
+          apiKey: apiKey,
+          sessionId: sessionId,
+        ),
+      _ => null,
+    };
+  }
 }
 
 /// 高级参数深合并进请求体的 input：同名字段两边都是对象时逐层合并，

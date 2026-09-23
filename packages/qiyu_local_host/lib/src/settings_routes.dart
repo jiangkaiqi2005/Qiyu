@@ -280,6 +280,7 @@ final class SettingsRoutes implements ApiRoutes {
         responseShape: _ttsResponseShapeFromPayload(payload),
         responseField: _optionalSpeechTextField(payload, 'responseField'),
         extraParams: _ttsExtraParamsFromPayload(payload),
+        transport: _ttsTransportFromPayload(payload),
       );
       return Response.ok(
         jsonEncode(settings.toJson()),
@@ -299,6 +300,8 @@ final class SettingsRoutes implements ApiRoutes {
         responseShape: _ttsResponseShapeFromPayload(payload),
         responseField: _optionalSpeechTextField(payload, 'responseField'),
         extraParams: _ttsExtraParamsFromPayload(payload),
+        // 传输方式随表单走（票三）：连接测试实测用户选的传输。
+        transport: _ttsTransportFromPayload(payload),
       );
       requestDiagnostics?.record(
         source: RecentRequestSources.providerTest,
@@ -521,6 +524,19 @@ TtsResponseShape? _ttsResponseShapeFromPayload(Map<String, Object?> payload) {
     throw const ProviderConfigException('语音合成服务配置格式不正确。');
   }
   return TtsResponseShape.fromWireName(value);
+}
+
+/// TTS 传输方式（transport，票三）：可选字段，只对豆包档有意义（其余
+/// 档服务层归一为缺省 HTTP 分块）；非法 wire 名按配置格式错误拒绝。
+TtsTransport? _ttsTransportFromPayload(Map<String, Object?> payload) {
+  final value = payload['transport'];
+  if (value == null) {
+    return null;
+  }
+  if (value is! String) {
+    throw const ProviderConfigException('语音合成服务配置格式不正确。');
+  }
+  return TtsTransport.fromWireName(value);
 }
 
 /// TTS 自定义高级参数（extraParams）：可选 Map 对象（兼容 extra_params

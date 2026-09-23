@@ -55,6 +55,7 @@ final class TtsSettingsForm {
   bool _customVoice = false;
   double? _speed;
   TtsResponseShape _responseShape = TtsResponseShape.rawBytes;
+  TtsTransport _transport = TtsTransport.httpChunk;
   TtsSettings? _syncedSettings;
   bool _disposed = false;
 
@@ -66,6 +67,9 @@ final class TtsSettingsForm {
 
   /// 自定义档的当前响应形态（仅自定义档有意义）。
   TtsResponseShape get responseShape => _responseShape;
+
+  /// 豆包档的当前传输方式（票三）：HTTP 分块或缺省 WebSocket 双向。
+  TtsTransport get transport => _transport;
 
   /// 当前协议的缺省地址与模型（含输入提示用档位）。
   ({String url, String model, String urlHint, String modelHint})
@@ -146,6 +150,8 @@ final class TtsSettingsForm {
       syncFocusProtectedField(voiceController, voiceFocusNode, voice);
       _customVoice = voice.isNotEmpty && !presets.any((p) => p.id == voice);
       _speed = settings.speed;
+      // 传输方式随快照回显（只对豆包档有意义，其余档恒为缺省值）。
+      _transport = settings.transport;
       // 自定义档旋钮随快照回显；其余档这些值恒为空，同步即清草稿。
       _responseShape = settings.responseShape;
       syncFocusProtectedField(
@@ -183,6 +189,7 @@ final class TtsSettingsForm {
       _customVoice = false;
       _speed = null;
       _responseShape = TtsResponseShape.rawBytes;
+      _transport = TtsTransport.httpChunk;
       syncFocusProtectedField(authHeaderController, authHeaderFocusNode, '');
       syncFocusProtectedField(
         responseFieldController,
@@ -200,6 +207,8 @@ final class TtsSettingsForm {
   /// （预设目录首档，千问档给官方示例音色 ID）。千问与自定义档没有
   /// 语速参数：切过去就丢掉可能从上个协议带过来的语速草稿，不存一个
   /// 调了不动的值。自定义档旋钮只对自定义档有意义：切走时清掉草稿。
+  /// 传输方式只归豆包档：切走即回落缺省 HTTP 分块（与 Host 落盘口径
+  /// 一致，避免选了一个不消费的值）。
   void selectProvider(String wireName) {
     final next = TtsServiceKind.values.firstWhere(
       (kind) => kind.wireName == wireName,
@@ -210,6 +219,7 @@ final class TtsSettingsForm {
     }
     _provider = next;
     _customVoice = false;
+    _transport = TtsTransport.httpChunk;
     if (next != TtsServiceKind.custom) {
       _responseShape = TtsResponseShape.rawBytes;
       authHeaderController.clear();
@@ -242,6 +252,14 @@ final class TtsSettingsForm {
     _responseShape = TtsResponseShape.values.firstWhere(
       (shape) => shape.wireName == wireName,
       orElse: () => TtsResponseShape.rawBytes,
+    );
+  }
+
+  /// 切换豆包档的传输方式（票三，下拉给出 wire 名）。
+  void selectTransport(String wireName) {
+    _transport = TtsTransport.values.firstWhere(
+      (transport) => transport.wireName == wireName,
+      orElse: () => TtsTransport.httpChunk,
     );
   }
 
@@ -298,6 +316,8 @@ final class TtsSettingsForm {
           ? _responseShape
           : null,
       responseField: responseField,
+      // 传输方式只随豆包档上送：其余档 Host 归一为缺省 HTTP 分块。
+      transport: _provider == TtsServiceKind.volcTts ? _transport : null,
     );
   }
 
@@ -379,9 +399,10 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
             Text(
               switch (provider) {
                 TtsServiceKind.volcTts =>
-                  '把栖语写完的话读出来。豆包语音合成走火山方舟的 HTTP 接口，'
-                        '模型名称填 Resource-Id；Key 只存本机 provider.json；'
-                        '音频只存在内存，播完即丢。',
+                  '把栖语写完的话读出来。豆包语音合成走火山方舟接口，'
+                        '传输方式见下方下拉（HTTP 分块逐句合成，或 WebSocket '
+                        '双向边出文本边合成）；模型名称填 Resource-Id；'
+                        'Key 只存本机 provider.json；音频只存在内存，播完即丢。',
                 TtsServiceKind.qwenTts =>
                   '把栖语写完的话读出来的服务（千问语音合成，走阿里云百炼）。'
                         '她先把每句完整写好、过了安全检查才开口读；服务端返回'
@@ -450,13 +471,16 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                     ? 'Resource-Id'
                     : '模型名称',
                 hintText: defaults.modelHint,
-                // 千问档亮一句支持范围说明（F3 第一期：型号决定 API
-                // 家族，不做传输选择器）：型号取协议缺省档位（与回填同源，
-                // 不另立一份字面量），用户只看得到缺省型号时也知道支持范围。
-                // 官方现标 Non-streaming 的旧型号（qwen-audio-3.1-tts-next）
-                // 不用于流式场景——提示只认流式型号名。
+                // 千问档亮一句支持范围说明（F3：型号决定 API 家族，不做
+                // 传输选择器）：型号取协议缺省档位（与回填同源，不另立
+                // 一份字面量），用户只看得到缺省型号时也知道支持范围。
+                // 流式型号两个家族：qwen3-tts-flash（HTTP SSE，边出文字
+                // 边出声）与 qwen3-tts-flash-realtime（WebSocket 连续喂
+                // 文本，前几个字就出声）；官方现标 Non-streaming 的旧型号
+                // （qwen-audio-3.1-tts-next）不用于流式场景。
                 helperText: provider == TtsServiceKind.qwenTts
                     ? '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）'
+                          '；$qwenTtsDefaultModel-realtime（WebSocket，前几个字就出声）'
                     : null,
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
@@ -466,6 +490,33 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
               ),
             ),
             const SizedBox(height: 16),
+            // 豆包档的传输方式（票三）：HTTP 分块（逐句合成，票二形态）
+            // 或 WebSocket 双向（边出文本边合成，首音再早一截）。只列已
+            // 实现的两种；千问档按型号驱动（见模型名提示），自定义档不动。
+            if (provider == TtsServiceKind.volcTts) ...[
+              SettingsControlledDropdown(
+                dropdownKey: const Key('tts-transport'),
+                label: '传输方式',
+                value: _form.transport.wireName,
+                items: const [
+                  DropdownMenuItem(
+                    value: 'http_chunk',
+                    child: Text('HTTP 分块'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'ws_bidirection',
+                    child: Text('WebSocket 双向'),
+                  ),
+                ],
+                helperText:
+                    'HTTP 分块：每写好一句合成一句；'
+                    'WebSocket 双向：前几个字一出就开始合成，多轮对话音色语调更连贯。'
+                    '地址栏仍填 HTTP 端点，WebSocket 地址由本机自动派生',
+                onChanged: (wireName) =>
+                    setState(() => _form.selectTransport(wireName)),
+              ),
+              const SizedBox(height: 16),
+            ],
             // 自定义档旋钮：鉴权头、响应形态与字段名，只在这一档露出。
             if (provider == TtsServiceKind.custom) ...[
               TextField(

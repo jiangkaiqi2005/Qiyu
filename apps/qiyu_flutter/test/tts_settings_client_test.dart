@@ -99,6 +99,81 @@ void main() {
     expect(jsonDecode(requests.last.body)['provider'], 'volc_tts');
   });
 
+  test('传输方式（票三）：豆包档快照回显与草稿上送，缺省 http_chunk', () async {
+    final requests = <http.Request>[];
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'volc_tts',
+          'baseUrl':
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          'model': 'seed-tts-2.0',
+          'transport': 'ws_bidirection',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+      requests: requests,
+    );
+    final gateway = HttpTtsSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+
+    final settings = await gateway.read();
+    expect(settings.transport, TtsTransport.wsBidirection);
+
+    await gateway.save(
+      const TtsSettingsDraft(
+        provider: TtsServiceKind.volcTts,
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        apiKey: 'ark-test-value',
+        transport: TtsTransport.wsBidirection,
+      ),
+    );
+    expect(jsonDecode(requests.last.body)['transport'], 'ws_bidirection');
+
+    // 非豆包档草稿不上送传输方式（Host 侧归一为缺省 HTTP 分块）。
+    await gateway.save(
+      const TtsSettingsDraft(
+        provider: TtsServiceKind.qwenTts,
+        baseUrl: qwenTtsDefaultEndpoint,
+        model: qwenTtsDefaultModel,
+        transport: TtsTransport.wsBidirection,
+      ),
+    );
+    expect(
+      jsonDecode(requests.last.body).containsKey('transport'),
+      isFalse,
+    );
+  });
+
+  test('传输方式缺省字段：不带的快照按 http_chunk 呈现', () async {
+    final client = hostTransportClient(
+      (request) => switch (request.url.path) {
+        '/api/provider/tts' => hostJsonResponse({
+          'configured': true,
+          'keySet': true,
+          'provider': 'volc_tts',
+          'baseUrl':
+              'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+          'model': 'seed-tts-2.0',
+        }, 200),
+        _ => http.Response('not found', 404),
+      },
+    );
+
+    final settings = await HttpTtsSettingsGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    ).read();
+
+    expect(settings.transport, TtsTransport.httpChunk);
+  });
+
   test('千问协议：provider 往返一致，保存请求带 qwen_tts', () async {
     final requests = <http.Request>[];
     final client = hostTransportClient(

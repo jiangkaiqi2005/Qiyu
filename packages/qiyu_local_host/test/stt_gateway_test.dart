@@ -320,6 +320,10 @@ final class _StaticWebSocketConnection implements ProviderWebSocketConnection {
     ]);
   }
 
+  // 票三新增的文本帧视图：本假连接只回二进制帧，文本流恒空。
+  @override
+  Stream<String> get textMessages => const Stream.empty();
+
   static List<int> _u32(int value) => [
     (value >> 24) & 0xFF,
     (value >> 16) & 0xFF,
@@ -329,6 +333,9 @@ final class _StaticWebSocketConnection implements ProviderWebSocketConnection {
 
   @override
   void send(List<int> bytes) {}
+
+  @override
+  void sendText(String text) {}
 
   @override
   Future<void> close() async {}
