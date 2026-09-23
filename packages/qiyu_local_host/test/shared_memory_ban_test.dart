@@ -22,7 +22,7 @@ void main() {
           modelGateway: ScriptedModelGateway(
             streamScript: [
               ScriptedStreamEvents([
-                ModelStreamEvent.delta('''${accepted ? '我理解你的感受' : '好，以后不提了。'}
+                ModelStreamEvent.delta('''${accepted ? '' : '好，以后不提了。'}
 <qiyu-actions>
 [{"action":"memory_ban","summary":"被夸时用玩笑卸力"}]
 </qiyu-actions>'''),
@@ -49,7 +49,7 @@ void main() {
           text: '以后别提这件事了',
         );
         if (accepted) {
-          expect(trace.state.fallbackReason, FallbackReason.forbiddenPhrases);
+          expect(trace.state.fallbackReason, FallbackReason.emptyModelReply);
         }
         expect(
           (await MemoryControlsStore(

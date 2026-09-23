@@ -16,7 +16,7 @@ Ticket 26 结束迁移期。当前产品入口只有 Flutter Web UI、Dart Windo
 | 设置与凭据 | Provider config repository（provider.json 含 Key）、Windows Credential Manager 只读回退、Flutter Settings | 页面只见掩码；替换/忘记 Key；切换 scope 不复用旧 Key | provider config/settings/credential tests 与候选包重启验收 |
 | 备份与恢复 | `MemoryBackupService`、backup API、Flutter backup client | 导出 Markdown 快照；导入先预览与校验；可回滚；损坏先隔离再恢复 | `memory_backup_test.dart`、`memory_recovery_test.dart`、候选包备份恢复验收 |
 | 诊断 | `DeveloperDiagnosticsService`、设置/隐私/诊断页面 | 普通用户只见可理解状态；开发者模式只见脱敏来源、结果与延迟 | `developer_diagnostics_test.dart`、Flutter settings/accessibility tests |
-| 当前行为契约 | `contracts/qiyu_behavior_contracts.json`、纯 Dart Core | 本地少回应、晚安不强制本地收束、安全绕过、候选清洗、人格边界和降级结果稳定 | Dart Core 直接读取全部 Release fixture；发布门禁强制保留该引用 |
+| 当前行为契约 | `contracts/qiyu_behavior_contracts.json`、纯 Dart Core | 本地少回应、晚安不强制本地收束、安全绕过、候选清洗、流式交付与降级结果稳定 | Dart Core 直接读取全部 Release fixture；发布门禁强制保留该引用 |
 | 历史迁移基准 | `contracts/legacy-migration-golden-cases.json` | 可审计 4a5d24f 时期十个旧产品场景的输入、旧状态与期望，不进入当前运行时 | 发布策略校验 JSON、场景数和冻结 name 集合；Git blob 与旧 `eval/golden-cases.json` 一致 |
 
 ## 删除前行为对拍

@@ -593,8 +593,19 @@ final class ScriptedModelGateway implements StreamingModelGateway {
         ModelStreamEvent.failure(kind, '已脱敏的脚本故障'),
       ),
       ScriptedStreamEvents(:final events) => Stream.fromIterable(events),
+      ScriptedStreamExplodesAfter(:final text) => _explodingStream(text),
       ScriptedLiveStream() => liveController.stream,
     };
+  }
+
+  /// 先吐出 [text] 再抛异常的流：模拟网关把流内错误直接上抛（真实网关
+  /// 多转 failure 事件，这条路径测的是编排层的兜底）。
+  static Stream<ModelStreamEvent> _explodingStream(String text) async* {
+    yield ModelStreamEvent.delta(text);
+    throw const ModelGatewayException(
+      kind: ModelFailureKind.provider,
+      message: '已脱敏的流内异常',
+    );
   }
 
   @override
@@ -660,6 +671,13 @@ final class ScriptedStreamEvents extends ScriptedStream {
   const ScriptedStreamEvents(this.events);
 
   final List<ModelStreamEvent> events;
+}
+
+/// 先吐出增量再抛异常的聊天流脚本条目（流内异常路径）。
+final class ScriptedStreamExplodesAfter extends ScriptedStream {
+  const ScriptedStreamExplodesAfter(this.text);
+
+  final String text;
 }
 
 /// 走 [ScriptedModelGateway.liveController] 的交互式流。

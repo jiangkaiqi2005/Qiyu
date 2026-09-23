@@ -202,7 +202,8 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
   /// `safety` 是危机等敏感输入的本地兜底话术——模型没回应时由它接住；
   /// `no_llm_config` 是没配模型，本机规则引擎就是产品形态。把这两样也标成暗红，
   /// 等于用危险色宣布「一切正常」为异常。其余回退——模型超时、网络、鉴权、空回复、
-  /// 违禁词、人格越界、结构不合……都是模型侧没交付合格结果，属故障。
+  /// 结构不合、超长……都是模型侧没交付合格结果，属故障（话术与人格约束在提示词层
+  /// 由模型自判断，输出侧不再正则判决——ADR 0017）。
   bool _isFault(RecentRequest request) => switch (request.result) {
     'failed' => true,
     'fallback' => !_designedFallbackReasons.contains(request.fallbackReason),

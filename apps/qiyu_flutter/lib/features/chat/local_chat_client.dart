@@ -22,6 +22,7 @@ final class LocalChatMessage {
     this.fallbackReason,
     this.serviceError,
     this.deliveryIndex,
+    this.incomplete = false,
     this.at,
   });
 
@@ -36,6 +37,11 @@ final class LocalChatMessage {
   /// 纯运行时标注：不序列化，历史恢复的消息没有它（朗读只对新交付
   /// 的回复触发，与气泡的「正在朗读」指示共用。
   final int? deliveryIndex;
+
+  /// 协议失败留下的半句（票一）：模型没有正常说完，内容如实。只在
+  /// 直播流的 message 事件上携带，不落盘——刷新或恢复后这条标记不再
+  /// 出现（半句文本本身照常保留）。
+  final bool incomplete;
 
   /// 消息时刻（Host 落盘的客观时刻，wire 格式 UTC ISO8601）。恢复的
   /// 消息取 Host 权威值；直播流的新消息由视图模型用前端时钟预显、

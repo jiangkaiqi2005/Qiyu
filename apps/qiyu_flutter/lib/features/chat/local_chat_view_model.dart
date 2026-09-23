@@ -496,6 +496,7 @@ final class LocalChatViewModel extends ChangeNotifier {
                     fallbackReason: delivery.fallbackReason,
                     serviceError: delivery.serviceError,
                     deliveryIndex: deliveryIndex,
+                    incomplete: delivery.incomplete,
                     at: _previewMoment,
                   ),
                 ),

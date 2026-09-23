@@ -57,6 +57,22 @@
     },
     {
       "wire": {
+        "event": "message",
+        "messages": [
+          "嗯。刚"
+        ],
+        "incomplete": true,
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "messages"
+      ]
+    },
+    {
+      "wire": {
         "event": "state",
         "source": "llm",
         "mode": "open",
@@ -583,6 +599,158 @@
     { "id": "ordinary-json", "summary": "{\"count\":987654321,\"date\":\"2026-09-13\"}", "accepted": true },
     { "id": "ordinary-client-id", "summary": "{\"client_id\":\"public\",\"password_length\":12}", "accepted": true }
   ],
+  "streamingDeliveryCases": [
+    {
+      "id": "incremental-delta-arrives-before-termination",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "刚忙完。" },
+        { "kind": "done" }
+      ],
+      "expected": {
+        "firstDeltaBeforeDone": true,
+        "messages": ["在。刚忙完。"],
+        "incomplete": false,
+        "fallbackEvents": 0,
+        "deltaTextNeverContains": ["qiyu-actions", "think"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚忙完。",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "early-eof-keeps-the-shown-half-sentence",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。刚" }
+      ],
+      "expected": {
+        "messages": ["在。刚"],
+        "incomplete": true,
+        "fallbackEvents": 0,
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚",
+        "diagnosticsContain": ["model stream incomplete"]
+      }
+    },
+    {
+      "id": "native-error-keeps-the-shown-half-sentence",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。刚" },
+        { "kind": "failure", "failureKind": "provider" }
+      ],
+      "expected": {
+        "messages": ["在。刚"],
+        "incomplete": true,
+        "fallbackEvents": 0,
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚",
+        "diagnosticsContain": ["model stream incomplete"]
+      }
+    },
+    {
+      "id": "timeout-before-any-visible-text-falls-back-locally",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "failure", "failureKind": "timeout" }
+      ],
+      "expected": {
+        "messages": ["嗯？"],
+        "incomplete": false,
+        "fallbackReason": "model_timeout",
+        "fallbackEvents": 1,
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "嗯？"
+      }
+    },
+    {
+      "id": "cancel-withdraws-the-in-flight-reply",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。刚" },
+        { "kind": "cancel" }
+      ],
+      "expected": {
+        "cancelled": true,
+        "persistedQiyuTurns": 0,
+        "persistedUserTurns": 1,
+        "fallbackEvents": 0
+      }
+    },
+    {
+      "id": "hidden-action-block-never-surfaces",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。\n<qiyu-actions>[{\"action\":\"memory_signal\",\"summary\":\"用户刚下班\"}]</qiyu-actions>" },
+        { "kind": "done" }
+      ],
+      "expected": {
+        "firstDeltaBeforeDone": true,
+        "messages": ["在。"],
+        "incomplete": false,
+        "fallbackEvents": 0,
+        "deltaTextNeverContains": ["qiyu-actions", "memory_signal"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。"
+      }
+    },
+    {
+      "id": "control-structure-after-visible-text-keeps-half-sentence",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。刚" },
+        { "kind": "delta", "text": "<tool_call>{}" },
+        { "kind": "done" }
+      ],
+      "expected": {
+        "messages": ["在。刚"],
+        "incomplete": true,
+        "fallbackEvents": 0,
+        "deltaTextNeverContains": ["tool_call"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚",
+        "diagnosticsContain": ["model stream incomplete"]
+      }
+    },
+    {
+      "id": "same-line-json-control-structure-withdraws-the-line",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。刚" },
+        { "kind": "delta", "text": "{\"type\":\"tool_call\":\"x\"}" },
+        { "kind": "done" }
+      ],
+      "expected": {
+        "messages": ["嗯？"],
+        "incomplete": false,
+        "fallbackReason": "invalid_model_response",
+        "fallbackEvents": 1,
+        "deltaTextNeverContains": ["tool_call", "type"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "嗯？",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "control-structure-before-any-visible-text-falls-back-locally",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "{\"type\":\"tool_call\",\"name\":\"write_file\"}" },
+        { "kind": "done" }
+      ],
+      "expected": {
+        "messages": ["嗯？"],
+        "incomplete": false,
+        "fallbackReason": "invalid_model_response",
+        "fallbackEvents": 1,
+        "deltaTextNeverContains": ["tool_call"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "嗯？"
+      }
+    }
+  ],
   "cases": [
     {
       "id": "normal-local-reply",
@@ -713,28 +881,6 @@
       }
     },
     {
-      "id": "forbidden-model-reply-falls-back-locally",
-      "request": {
-        "requestId": "fixture-forbidden",
-        "text": "聊聊"
-      },
-      "provider": {
-        "configured": true,
-        "candidateReply": "我理解你的感受，这确实很难"
-      },
-      "expected": {
-        "messages": ["嗯？"],
-        "source": "local",
-        "fallbackReason": "forbidden_phrases",
-        "mode": "open",
-        "relationshipStage": "初识",
-        "turns": [
-          { "speaker": "user", "text": "聊聊" },
-          { "speaker": "qiyu", "text": "嗯？" }
-        ]
-      }
-    },
-    {
       "id": "accepted-model-reply-keeps-llm-source",
       "request": {
         "requestId": "fixture-llm-success",
@@ -841,28 +987,6 @@
       }
     },
     {
-      "id": "persona-boundary-model-reply-falls-back-locally",
-      "request": {
-        "requestId": "fixture-persona-boundary",
-        "text": "聊聊"
-      },
-      "provider": {
-        "configured": true,
-        "candidateReply": "只有我懂你，你只需要我就够了。"
-      },
-      "expected": {
-        "messages": ["嗯？"],
-        "source": "local",
-        "fallbackReason": "persona_boundary",
-        "mode": "open",
-        "relationshipStage": "初识",
-        "turns": [
-          { "speaker": "user", "text": "聊聊" },
-          { "speaker": "qiyu", "text": "嗯？" }
-        ]
-      }
-    },
-    {
       "id": "rejected-candidate-with-actions-falls-back-locally",
       "request": {
         "requestId": "fixture-rejected-actions",
@@ -870,12 +994,12 @@
       },
       "provider": {
         "configured": true,
-        "candidateReply": "我理解你的感受\n<qiyu-actions>[{\"action\":\"memory_unfreeze\",\"summary\":\"审查用冻结话题\"}]</qiyu-actions>"
+        "candidateReply": "{\"type\":\"tool_call\",\"name\":\"write_file\"}\n<qiyu-actions>[{\"action\":\"memory_unfreeze\",\"summary\":\"审查用冻结话题\"}]</qiyu-actions>"
       },
       "expected": {
         "messages": ["嗯"],
         "source": "local",
-        "fallbackReason": "forbidden_phrases",
+        "fallbackReason": "invalid_model_response",
         "mode": "minimal",
         "relationshipStage": "初识",
         "turns": [

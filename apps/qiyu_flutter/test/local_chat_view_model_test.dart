@@ -277,6 +277,35 @@ void main() {
     },
   );
 
+  test('协议失败留下的半句照常提交，消息带未完成标记', () async {
+    final gateway = _ScriptedGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      requestIdFactory: () => 'half-1',
+      autoStart: false,
+    );
+    addTearDown(viewModel.dispose);
+
+    final sending = viewModel.send('在吗');
+    await Future<void>.delayed(Duration.zero);
+    gateway
+      ..emitAccepted('half-1')
+      ..emitDelta('half-1', '在。刚')
+      ..emitMessage('half-1', const ['在。刚'], incomplete: true)
+      ..emitState('half-1')
+      ..emitDone('half-1')
+      ..closeStream('half-1');
+
+    expect((await sending).status, ChatSendStatus.completed);
+    final qiyu = viewModel.messages.last;
+    expect(qiyu.speaker, LocalChatSpeaker.qiyu);
+    expect(qiyu.text, '在。刚');
+    expect(qiyu.incomplete, isTrue);
+    // 半句不是本地兜底：没有错误提示、没有回退原因。
+    expect(viewModel.errorMessage, isNull);
+    expect(viewModel.latestFallbackReason, isNull);
+  });
+
   test('a single-bubble stream still commits exactly one message', () async {
     final gateway = _TwoBubbleGateway(withBubble2: false);
     final viewModel = LocalChatViewModel(
@@ -1020,12 +1049,17 @@ final class _ScriptedGateway implements StreamingLocalChatGateway {
     ),
   );
 
-  void emitMessage(String requestId, List<String> messages) => emit(
+  void emitMessage(
+    String requestId,
+    List<String> messages, {
+    bool incomplete = false,
+  }) => emit(
     requestId,
     LocalChatDeliveryEvent.message(
       requestId: requestId,
       sessionId: 'session-1',
       messages: messages,
+      incomplete: incomplete,
     ),
   );
 

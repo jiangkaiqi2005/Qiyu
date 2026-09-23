@@ -114,6 +114,7 @@ void main() {
       {'safety': 'unknown'},
       {'code': true},
       {'retryable': 'true'},
+      {'incomplete': 'true'},
     ]) {
       expect(
         () => ChatDeliveryEvent.fromJson({
@@ -455,28 +456,468 @@ void main() {
     },
   );
 
-  test('persona boundary violations never become visible', () {
-    for (final candidate in [
-      '只有我懂你，你只需要我就够了。',
-      '我想你了，别走。',
-      '我是你的爱人。',
-      '你都有别人陪了，还回来干什么。',
-      '你再不回来我就离开。',
-      '我嫉妒她能陪你，以后别见她了。',
-      '我等了你一整晚，你怎么才来。',
-      '你再这样我以后都不会出现了。',
-    ]) {
-      final result = const QiyuBehaviorCore().reply(
-        const ChatRequest(requestId: 'boundary-output', text: '你会一直在吗'),
-        StateSnapshot.initial('fixture-user'),
-        candidateReply: candidate,
+  group('CandidateReplyStream 流式卫生', () {
+    /// 逐字切碎同一段原始文本喂给增量处理器：累计吐出的内容必须始终
+    /// 是最终可见文本的前缀（不跳字、不收回来）。
+    void expectMonotonePrefix(String raw) {
+      final stream = CandidateReplyStream();
+      var shown = '';
+      for (var offset = 0; offset < raw.length; offset += 1) {
+        shown += stream.add(raw.substring(offset, offset + 1));
+      }
+      final messages = stream.finalizeMessages();
+      expect(
+        messages.join('\n'),
+        startsWith(shown),
+        reason: '已吐出内容不是最终文本的前缀：$raw',
       );
-
-      expect(result, isA<ChatResult>());
-      expect((result as ChatResult).source, ReplySource.local);
-      expect(result.fallbackReason, FallbackReason.personaBoundary);
-      expect(result.messages.join(), isNot(contains(candidate)));
     }
+
+    test('增量与批处理得到同一个可见结果', () {
+      const samples = [
+        '在。',
+        '在。\n刚忙完。',
+        '嗯，今天过得怎么样？',
+        '栖语：在。',
+        '（沉默了一下）\n在。',
+        '……\n在。',
+        '[2025-12-31 23:41] 嗯，还没。',
+        '在。<qiyu-actions>[{"action":"memory_signal","summary":"用户刚下班"}]</qiyu-actions>好吗',
+        '<think>内部整理</think>\n在。',
+        '等一会儿再说',
+        '轻声说着话',
+        '她说要走了',
+        '3 < 5 是成立的',
+        '```\n在。',
+        '在。\n\n\n好吗',
+        '我想说的是另一件事',
+      ];
+      for (final raw in samples) {
+        final batch = const QiyuBehaviorCore().reply(
+          const ChatRequest(requestId: 'batch', text: '在吗'),
+          StateSnapshot.initial('fixture-user'),
+          candidateReply: raw,
+        ) as ChatResult;
+        final streamed = CandidateReplyStream();
+        streamed.add(raw);
+        expect(
+          streamed.finalizeMessages(),
+          batch.messages,
+          reason: '原始文本：$raw',
+        );
+        expect(streamed.rejected, isFalse, reason: raw);
+      }
+    });
+
+    test('逐字流入也不会跳字或收回来', () {
+      for (final raw in const [
+        '在。\n刚忙完。',
+        '栖语：在。',
+        '（沉默了一下）\n在。',
+        '在。<qiyu-actions>[{"action":"memory_signal","summary":"用户刚下班"}]</qiyu-actions>好吗',
+        '等一会儿再说',
+        '轻声说',
+        '3 < 5 是成立的',
+      ]) {
+        expectMonotonePrefix(raw);
+      }
+    });
+
+    test('隐藏结构闭合前绝不吐出半个隐藏行', () {
+      final stream = CandidateReplyStream();
+      // 隐藏块之前的同一行文本照常上屏，块内一个字符都不吐。
+      expect(stream.add('在。\n<qiyu-actions>[{"action":'), '在。');
+      expect(
+        stream.add('memory_signal","summary":"用户刚下班"}]</qiyu-actions>'),
+        isEmpty,
+      );
+      expect(stream.add('\n好吗'), '\n好吗');
+      expect(stream.finalizeMessages(), ['在。', '好吗']);
+    });
+
+    test('思维链未闭合也整块扣住', () {
+      final stream = CandidateReplyStream();
+      expect(stream.add('在。\n<think>内部整理'), '在。');
+      expect(stream.finalizeMessages(), ['在。']);
+    });
+
+    test('可见区出现控制模式一票否决且不吐出该块', () {
+      final stream = CandidateReplyStream();
+      expect(stream.add('在。'), '在。');
+      // 未闭合的工具调用整块扣住，收尾时按控制模式否决。
+      expect(stream.add('<tool_call>{}'), isEmpty);
+      expect(stream.rejected, isFalse);
+      expect(stream.finalizeMessages(), ['在。']);
+      expect(stream.rejected, isTrue);
+      // 半句如实：已显示内容就是最终内容，否决后不再产出新文本。
+      expect(stream.add('更多'), isEmpty);
+    });
+
+    test('动作键值形态同样一票否决', () {
+      final stream = CandidateReplyStream();
+      stream.add('action:');
+      expect(stream.rejected, isTrue);
+      expect(stream.finalizeMessages(), isEmpty);
+    });
+
+    test('超过 2000 runes 上限时只保留限额内的部分', () {
+      final stream = CandidateReplyStream();
+      final overflow = '在' * 2100;
+      final added = stream.add(overflow);
+      expect(stream.rejected, isTrue);
+      expect(added.runes.length, 2000);
+      expect(stream.finalizeMessages().single.runes.length, 2000);
+    });
+
+    test('第 2000 个 rune 恰为换行时截断结果不带空行', () {
+      // 1999 个正文 + 换行正好压在限额上：收掉尾部换行，可见消息不该
+      // 多出一个空串尾巴。
+      final stream = CandidateReplyStream();
+      final text = '${'在' * 1999}\n${'在' * 100}';
+      stream.add(text);
+      expect(stream.rejected, isTrue);
+      final messages = stream.finalizeMessages();
+      expect(messages, hasLength(1));
+      expect(messages.single, '在' * 1999);
+    });
+
+    test('没有任何可见文字时消息为空（调用方走本地兜底）', () {
+      final stream = CandidateReplyStream();
+      stream.add(
+        '<qiyu-actions>[{"action":"memory_signal","summary":"x"}]</qiyu-actions>',
+      );
+      expect(stream.rejected, isFalse);
+      expect(stream.finalizeMessages(), isEmpty);
+    });
+
+    test('未闭合的工具调用按控制模式否决，思维链按可剥隐藏结构剥离', () {
+      final toolCall = CandidateReplyStream();
+      toolCall.add('在。<tool_call>{}');
+      expect(toolCall.finalizeMessages(), ['在。']);
+      expect(toolCall.rejected, isTrue);
+
+      final thinking = CandidateReplyStream();
+      thinking.add('在。<think>x');
+      expect(thinking.finalizeMessages(), ['在。']);
+      expect(thinking.rejected, isFalse);
+    });
+
+    test('可剥隐藏结构标签名单：批剥离与流式剥离共用同一份 const', () {
+      // strippableUnclosedHiddenTags 同时喂给批处理剥离正则与流式
+      // finalize 的标签判定：往 const 加名字，两条路必须同时认。
+      // `qiyu[-_]actions?` 的四个组合（连字符/下划线 × 单数/复数）全部
+      // 枚举——有人把 const 改成不带 `s?`，这两个单数形态会当场判红。
+      const tags = [
+        'think',
+        'analysis',
+        'reasoning',
+        'qiyu-actions',
+        'qiyu-action',
+        'qiyu_actions',
+        'qiyu_action',
+      ];
+      for (final tag in tags) {
+        // 批处理：未闭合的可剥结构整块剥掉，回复照常接受。
+        final batch = const QiyuBehaviorCore().reply(
+          const ChatRequest(requestId: 'strippable', text: '在吗'),
+          StateSnapshot.initial('fixture-user'),
+          candidateReply: '在。<$tag>内部整理',
+        ) as ChatResult;
+        expect(batch.source, ReplySource.llm, reason: tag);
+        expect(batch.messages, ['在。'], reason: tag);
+
+        // 流式：同样整块扣住，收尾后只剩干净前缀。
+        final stream = CandidateReplyStream();
+        stream.add('在。<$tag>内部整理');
+        expect(stream.finalizeMessages(), ['在。'], reason: tag);
+        expect(stream.rejected, isFalse, reason: tag);
+      }
+
+      // 不在名单里的结构（工具调用等）：两条路都按控制模式否决。
+      for (final tag in const ['tool_call', 'function_call', 'actions']) {
+        final batch = const QiyuBehaviorCore().reply(
+          const ChatRequest(requestId: 'unstrippable', text: '在吗'),
+          StateSnapshot.initial('fixture-user'),
+          candidateReply: '在。<$tag>{}',
+        ) as ChatResult;
+        expect(batch.source, ReplySource.local, reason: tag);
+        expect(batch.fallbackReason, FallbackReason.invalidModelResponse, reason: tag);
+
+        final stream = CandidateReplyStream();
+        stream.add('在。<$tag>{}');
+        // 未闭合结构的判定发生在收尾：先 finalize 再问 rejected。
+        expect(stream.finalizeMessages(), ['在。'], reason: tag);
+        expect(stream.rejected, isTrue, reason: tag);
+      }
+    });
+
+    test('舞台提示行枚举正则完整展开：逐字不显示、终局同批处理', () {
+      // 正则词干 `等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下|
+      // (?:她|他)?轻声说` 的完整展开共 14 个形态。这里独立枚举，不遍历
+      // 实现里的候选表——避免循环自证。
+      const forms = [
+        '等了一会儿', '等了一会', '等一会儿', '等一会', '等了一下',
+        '想了想', '想想',
+        '沉默了一下', '沉默一下',
+        '停顿了一下', '停顿一下',
+        '轻声说', '她轻声说', '他轻声说',
+      ];
+      for (final form in forms) {
+        // 批处理把这些行整行丢弃（空回复 → 本地兜底）。
+        final batch = const QiyuBehaviorCore().reply(
+          const ChatRequest(requestId: 'pause-line', text: '在吗'),
+          StateSnapshot.initial('fixture-user'),
+          candidateReply: form,
+        ) as ChatResult;
+        expect(batch.source, ReplySource.local, reason: form);
+        expect(
+          batch.fallbackReason,
+          FallbackReason.emptyModelReply,
+          reason: form,
+        );
+
+        // 逐 rune 流入：一个字符都不能显示。
+        final stream = CandidateReplyStream();
+        var shown = '';
+        for (var index = 0; index < form.length; index += 1) {
+          shown += stream.add(form[index]);
+        }
+        expect(shown, isEmpty, reason: '舞台提示行不该吐出任何字符：$form');
+        expect(stream.finalizeMessages(), isEmpty, reason: form);
+
+        // 带尾标点同样整行丢弃、同样不显示。
+        final punctuated = CandidateReplyStream();
+        var punctuatedShown = '';
+        for (final rune in '$form。'.runes) {
+          punctuatedShown += punctuated.add(String.fromCharCode(rune));
+        }
+        expect(punctuatedShown, isEmpty, reason: form);
+        expect(punctuated.finalizeMessages(), isEmpty, reason: form);
+      }
+    });
+
+    test('代码围栏行跨增量也不上屏，四个反引号不是围栏', () {
+      // 围栏行与 _codeFenceLinePattern 同形：1–3 个反引号（可带语言名）。
+      final fenced = CandidateReplyStream();
+      var shown = '';
+      for (final rune in '```dart\n在。'.runes) {
+        shown += fenced.add(String.fromCharCode(rune));
+      }
+      expect(shown, isNot(contains('`')));
+      expect(fenced.finalizeMessages(), ['在。']);
+
+      // 四个反引号不是围栏行：批处理照常保留，流式也必须吐。
+      final batch = const QiyuBehaviorCore().reply(
+        const ChatRequest(requestId: 'four-ticks', text: '在吗'),
+        StateSnapshot.initial('fixture-user'),
+        candidateReply: '````\n在。',
+      ) as ChatResult;
+      expect(batch.messages, ['````', '在。']);
+      final streamed = CandidateReplyStream();
+      var ticks = '';
+      for (final rune in '````\n在。'.runes) {
+        ticks += streamed.add(String.fromCharCode(rune));
+      }
+      expect(ticks, contains('`'));
+      expect(streamed.finalizeMessages(), batch.messages);
+    });
+
+    test('控制尾扣留带左边界：普通拉丁词尾不被误扣', () {
+      for (final word in const [
+        'data',
+        'chat',
+        '方案A',
+        'function 会说笑',
+        'tool 用完了',
+      ]) {
+        final stream = CandidateReplyStream();
+        var shown = '';
+        for (var index = 0; index < word.length; index += 1) {
+          shown += stream.add(word[index]);
+        }
+        // 行未完结时就已经把整段吐出来：最后一个字符不粘到行尾。
+        expect(shown, word, reason: word);
+        expect(stream.finalizeMessages(), [word]);
+      }
+    });
+
+    test('未闭合花括号整体扣住：JSON 控制载荷分裂到达也不闪现', () {
+      final stream = CandidateReplyStream();
+      expect(stream.add('在。刚{"type":'), '在。刚');
+      // 行内此前的干净文字照常吐，花括号起一个字符都不闪。
+      expect(stream.add('"tool_call":"x"}'), isEmpty);
+      expect(stream.rejected, isTrue);
+      expect(stream.finalizeMessages(), isEmpty);
+    });
+
+    // 跨增量拼成的控制构造：按不同粒度切分对比批处理终局。rejectedVisible
+    // 是「受污染行整体撤下」后应剩余的内容（null 表示批处理接受，终局
+    // 与批处理一致）。
+    const crossIncrementSamples = <({String raw, List<String>? rejectedVisible})>[
+      (raw: '{"type":"tool_call":"x"}', rejectedVisible: <String>[]),
+      (raw: 'action: x', rejectedVisible: <String>[]),
+      (raw: 'tool=1', rejectedVisible: <String>[]),
+      (raw: '"memory_action": "x"', rejectedVisible: <String>[]),
+      (raw: '在。\n{"type":"tool_call":"x"}', rejectedVisible: <String>['在。']),
+      (raw: '在。\naction: x', rejectedVisible: <String>['在。']),
+      (raw: 'a <b>', rejectedVisible: <String>[]),
+      (raw: '在。\n<b>坏了', rejectedVisible: <String>['在。']),
+      (raw: '在。刚{"type":"' '"tool_call":"x"}', rejectedVisible: <String>[]),
+      (raw: '在。\n刚忙完。', rejectedVisible: null),
+      (raw: '3 < 5 是成立的', rejectedVisible: null),
+      (raw: 'key=value 成立', rejectedVisible: null),
+    ];
+    for (final sample in crossIncrementSamples) {
+      final raw = sample.raw;
+      for (final chunk in const [1, 3, 7]) {
+        test('跨增量 $chunk runes：$raw', () {
+          final batch = const QiyuBehaviorCore().reply(
+            const ChatRequest(requestId: 'cross', text: '在吗'),
+            StateSnapshot.initial('fixture-user'),
+            candidateReply: raw,
+          ) as ChatResult;
+          final batchRejected = batch.source == ReplySource.local;
+
+          final stream = CandidateReplyStream();
+          var shown = '';
+          final runes = raw.runes.toList(growable: false);
+          for (var offset = 0; offset < runes.length; offset += chunk) {
+            final end = offset + chunk < runes.length
+                ? offset + chunk
+                : runes.length;
+            shown += stream.add(
+              String.fromCharCodes(runes.sublist(offset, end)),
+            );
+          }
+          final messages = stream.finalizeMessages();
+          if (sample.rejectedVisible != null) {
+            expect(batchRejected, isTrue, reason: raw);
+            // 否决时流式也必须否决，受污染行整体撤下。
+            expect(stream.rejected, isTrue, reason: raw);
+            expect(messages, sample.rejectedVisible, reason: raw);
+            // 已显示内容里不能留下控制构造：喂回行为核心的候选校验，必须
+            // 被当作合格回复接受（判据走公共 API，不会随实现漂移）。整轮
+            // 无残留时这句自然为空——那正是本地兜底分叉的入口。
+            if (messages.isNotEmpty) {
+              final replayed = const QiyuBehaviorCore().reply(
+                const ChatRequest(requestId: 'cross-replay', text: '在吗'),
+                StateSnapshot.initial('fixture-user'),
+                candidateReply: messages.join('\n'),
+              ) as ChatResult;
+              expect(replayed.source, ReplySource.llm, reason: raw);
+            }
+            // 细粒度增量下有两种撤回形态：受污染行此前吐出的确定性前缀
+            // 随行撤回（ADR 0017 明写的唯一例外），或干净行与污染行同在
+            // 一个增量里、整块被拒（用户什么都没看到，残留行直接进终局）。
+            // 共同不变式：已显示过的干净内容不会被改写，残留必是 shown 的
+            // 前缀；什么都没显示过时这条自然为空。
+            if (shown.isNotEmpty && messages.isNotEmpty) {
+              expect(
+                shown,
+                startsWith(messages.join('\n')),
+                reason: raw,
+              );
+            }
+          } else {
+            expect(batchRejected, isFalse, reason: raw);
+            expect(stream.rejected, isFalse, reason: raw);
+            expect(messages, batch.messages, reason: raw);
+            // 终局文本 = 已显示文本：不跳字、不收回来。
+            expect(messages.join('\n'), shown, reason: raw);
+          }
+        });
+      }
+    }
+
+    test('控制否决时受污染行整体撤下，此前的行不受影响', () {
+      // {"type": 已作为半句上屏过的旧行为：整行撤回，前面的行保留。
+      final stream = CandidateReplyStream();
+      expect(stream.add('在。\n'), '在。');
+      expect(stream.add('{"type":"tool_call":"x"}'), isEmpty);
+      expect(stream.rejected, isTrue);
+      expect(stream.finalizeMessages(), ['在。']);
+    });
+
+    test('行尾空白不抢跑：显示过的空格落盘时不会消失', () {
+      final stream = CandidateReplyStream();
+      var shown = '';
+      for (final rune in '你好 '.runes) {
+        shown += stream.add(String.fromCharCode(rune));
+      }
+      expect(shown, '你好');
+      expect(stream.finalizeMessages(), [shown]);
+    });
+
+    test('双重行首前缀两条路同结果', () {
+      final moment = MomentPrefix.format(DateTime(2025, 12, 31, 23, 41));
+      final raw = '$moment$moment 嗯，还没。';
+      final batch = const QiyuBehaviorCore().reply(
+        const ChatRequest(requestId: 'double-prefix', text: '在吗'),
+        StateSnapshot.initial('fixture-user'),
+        candidateReply: raw,
+      ) as ChatResult;
+      final stream = CandidateReplyStream();
+      stream.add(raw);
+      expect(stream.finalizeMessages(), batch.messages);
+      // 批处理只剥一次：第二条时刻前缀原样留在可见文本里。
+      expect(batch.messages.single, '$moment 嗯，还没。');
+    });
+  });
+
+  test('退休的兜底原因 wire name 读侧仍可解析', () {
+    // 删除前命中两张判决名单的轮次把这些名字写进了本机 Markdown，
+    // 会话本地永久保留：读侧必须继续认得（ADR 0017）。
+    for (final entry in const {
+      'forbidden_phrases': FallbackReason.invalidModelResponse,
+      'persona_boundary': FallbackReason.invalidModelResponse,
+    }.entries) {
+      expect(FallbackReason.fromWireName(entry.key), entry.value);
+      final result = ChatResult.fromJson({
+        'messages': ['嗯？'],
+        'nextState': StateSnapshot.initial('legacy-user').toJson(),
+        'source': 'local',
+        'fallbackReason': entry.key,
+        'debug': {'mode': 'open'},
+      });
+      expect(result.fallbackReason, entry.value);
+      expect(
+        result.toJson(),
+        containsPair('fallbackReason', entry.value.wireName),
+      );
+      final event = ChatDeliveryEvent.fallback(
+        requestId: 'legacy-reason',
+        fallbackReason: entry.value,
+      );
+      final decoded = ChatDeliveryEvent.fromJson(event.toJson());
+      expect(decoded.fallbackReason, entry.value);
+    }
+    // 真正未知的名字仍然被安全拒绝。
+    expect(
+      () => FallbackReason.fromWireName('not_a_reason'),
+      throwsFormatException,
+    );
+  });
+
+  test('message 事件的未完成标记只对 true 上线', () {
+    final complete = ChatDeliveryEvent.message(
+      requestId: 'stream-1',
+      sessionId: 'session-1',
+      messages: const ['在。'],
+    );
+    expect(complete.toJson(), isNot(contains('incomplete')));
+    expect(complete.incomplete, isFalse);
+    expect(ChatDeliveryEvent.fromJson(complete.toJson()).incomplete, isNull);
+
+    final half = ChatDeliveryEvent.message(
+      requestId: 'stream-1',
+      sessionId: 'session-1',
+      messages: const ['在。刚'],
+      incomplete: true,
+    );
+    expect(half.toJson()['incomplete'], true);
+    final decoded = ChatDeliveryEvent.fromJson(half.toJson());
+    expect(decoded.incomplete, isTrue);
+    expect(decoded.messages, ['在。刚']);
   });
 
   test('user control structures are neutralized before safety and state', () {

@@ -11,12 +11,17 @@ final class CompletedChatDelivery {
     required this.source,
     this.fallbackReason,
     this.serviceError,
+    this.incomplete = false,
   });
 
   final List<String> messages;
   final ReplySource source;
   final FallbackReason? fallbackReason;
   final ServiceErrorCategory? serviceError;
+
+  /// 协议失败留下的半句（票一）：该轮最终回复没有正常说完。内容如实，
+  /// 页面据此显示「未完成」标记，不补全不伪装。
+  final bool incomplete;
 }
 
 /// 一条请求流的协议状态。done 只完成一段，取消、失败或 EOF 才结束流。
@@ -36,6 +41,7 @@ final class ChatDeliveryAssembly {
   ReplySource? _source;
   FallbackReason? _fallbackReason;
   ServiceErrorCategory? _serviceError;
+  bool _incomplete = false;
 
   bool get accepted => _accepted;
   String? get sessionId => _sessionId;
@@ -76,6 +82,7 @@ final class ChatDeliveryAssembly {
           _invalid();
         }
         _messages = event.messages!;
+        _incomplete = event.incomplete == true;
         _phase = _SegmentPhase.message;
       case ChatDeliveryEventKind.state:
         if (_phase != _SegmentPhase.message) _invalid();
@@ -90,12 +97,14 @@ final class ChatDeliveryAssembly {
           source: _source!,
           fallbackReason: _fallbackReason,
           serviceError: _serviceError,
+          incomplete: _incomplete,
         );
         _completed.add(delivery);
         _messages = null;
         _source = null;
         _fallbackReason = null;
         _serviceError = null;
+        _incomplete = false;
         _phase = _SegmentPhase.ready;
         return delivery;
       case ChatDeliveryEventKind.cancelled:

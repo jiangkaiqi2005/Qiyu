@@ -24,6 +24,7 @@ class QiyuChatBubble extends StatefulWidget {
     this.isSpeaking = false,
     this.onReplay,
     this.deliveryIndex,
+    this.incomplete = false,
     this.at,
     this.enableCopy = false,
   });
@@ -42,6 +43,11 @@ class QiyuChatBubble extends StatefulWidget {
   /// 朗读定位序号（同 requestId 内第 N 次交付段）：作重听按钮的可
   /// 访问 key 标识，widget 测试可精确定位。
   final int? deliveryIndex;
+
+  /// 协议失败留下的半句（票一 文字流式输出）：模型没有正常说完，
+  /// 内容如实落盘、不补全不伪装。栖语气泡下方多一行极小档弱色
+  /// 「未完成」标记；用户气泡不涉及。
+  final bool incomplete;
 
   /// 一键复制：true 时给每条消息一个复制入口（用户的话与栖语的话都
   /// 算），点一下把本条全文写进剪贴板。入口按指针分两条路：桌面鼠
@@ -310,6 +316,17 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
         : _atLine(atLabel, persistent, copyBesideMoment: copyBesideMoment);
 
     final extras = <Widget>[
+      if (!widget.fromUser && widget.incomplete) ...[
+        const SizedBox(height: 4),
+        // 半句如实：标记只说明「她没说完」，不追加任何兜底话术。
+        Text(
+          '未完成',
+          style: TextStyle(
+            fontSize: QiyuTypography.of(context).tinySize,
+            color: QiyuColors.muted,
+          ),
+        ),
+      ],
       if (widget.isSpeaking) ...[
         const SizedBox(height: 6),
         // 正在读：动效位交给「正在读」文本，此时不叠重听键。

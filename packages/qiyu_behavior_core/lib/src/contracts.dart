@@ -37,9 +37,7 @@ enum ServiceErrorCategory {
 enum FallbackReason {
   safety('safety'),
   noLlmConfig('no_llm_config'),
-  forbiddenPhrases('forbidden_phrases'),
   emptyModelReply('empty_model_reply'),
-  personaBoundary('persona_boundary'),
   invalidModelResponse('invalid_model_response'),
   modelDns('model_dns'),
   modelTls('model_tls'),
@@ -58,10 +56,25 @@ enum FallbackReason {
 
   final String wireName;
 
-  static FallbackReason fromWireName(String value) => values.firstWhere(
-    (candidate) => candidate.wireName == value,
-    orElse: () => throw FormatException('Unknown fallback reason: $value'),
-  );
+  /// 已退役的兜底原因 wire name（ADR 0017 输出侧裁决退场）。删除前命中
+  /// 两张判决名单的轮次会把这些名字写进本机 Markdown 会话，而会话本地
+  /// 永久保留——读侧必须继续认得，否则整个会话文件会被标记为不可读。
+  /// 历史数据兼容专用：映射到现行的 invalid_model_response，不再产生新值。
+  static const _retiredWireNames = <String, FallbackReason>{
+    'forbidden_phrases': FallbackReason.invalidModelResponse,
+    'persona_boundary': FallbackReason.invalidModelResponse,
+  };
+
+  static FallbackReason fromWireName(String value) {
+    final retired = _retiredWireNames[value];
+    if (retired != null) {
+      return retired;
+    }
+    return values.firstWhere(
+      (candidate) => candidate.wireName == value,
+      orElse: () => throw FormatException('Unknown fallback reason: $value'),
+    );
+  }
 }
 
 enum SafetyKind { normal, crisis, medical, legal, financial }
@@ -459,11 +472,13 @@ final class ChatDeliveryEvent {
     required String requestId,
     String? sessionId,
     required List<String> messages,
+    bool incomplete = false,
   }) : this._(
          kind: ChatDeliveryEventKind.message,
          requestId: requestId,
          sessionId: sessionId,
          messages: messages,
+         incomplete: incomplete,
        );
 
   const ChatDeliveryEvent.state({
@@ -544,6 +559,7 @@ final class ChatDeliveryEvent {
     this.safety,
     this.code,
     this.retryable,
+    this.incomplete,
   });
 
   factory ChatDeliveryEvent.fromJson(Map<String, Object?> json) {
@@ -624,6 +640,7 @@ final class ChatDeliveryEvent {
             ),
       code: optionalField<String>('code'),
       retryable: optionalField<bool>('retryable'),
+      incomplete: optionalField<bool>('incomplete'),
     );
   }
 
@@ -640,6 +657,11 @@ final class ChatDeliveryEvent {
   final String? code;
   final bool? retryable;
 
+  /// 协议失败时留下的半句标记（票一）：true 表示这条 message 是该轮
+  /// 的最终回复，但模型没有正常说完——内容如实，不补全不伪装。缺席
+  /// 即完整回复。
+  final bool? incomplete;
+
   Map<String, Object?> toJson() => {
     'event': kind.name,
     'requestId': requestId,
@@ -653,6 +675,7 @@ final class ChatDeliveryEvent {
     if (safety != null) 'safety': safety!.name,
     if (code != null) 'code': code,
     if (retryable != null) 'retryable': retryable,
+    if (incomplete == true) 'incomplete': true,
   };
 }
 

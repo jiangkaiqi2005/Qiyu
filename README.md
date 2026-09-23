@@ -183,12 +183,12 @@ This needs an AnySearch API Key under Settings → web search (apply on AnySearc
 │  Dart Windows Host (127.0.0.1)  │  Session/CSRF protection · Markdown persistence
 │  apps/qiyu_windows_host         │  Five-stage memory cadence · Provider adapters
 ├─────────────────────────────────┤
-│  Behavior Core (pure Dart)      │  Safety classification · Output sanitization
-│  packages/qiyu_behavior_core    │  Persona boundary checks · Local rule engine
+│  Behavior Core (pure Dart)      │  Safety classification · Output hygiene
+│  packages/qiyu_behavior_core    │  Streaming sanitization · Local rule engine
 └─────────────────────────────────┘
 ```
 
-The host listens only on `127.0.0.1`; API keys never enter the browser. Model output is sanitized and checked against persona boundaries before delivery. Crisis, medical, legal, and financial inputs go to the model as usual; when no model is configured or the model does not respond, local fallback scripts take over (crisis inputs are given the 12356 mental-health hotline).
+The host listens only on `127.0.0.1`; API keys never enter the browser. Model output is streamed: each increment is hygiene-checked (hidden-structure stripping, control patterns, per-line cleaning, length cap) before it reaches the screen, and the final text is persisted when the protocol terminates. Persona and phrasing constraints live in the prompt layer and are judged by the model, not by host-side regexes. Crisis, medical, legal, and financial inputs go to the model as usual; when no model is configured or the model does not respond, local fallback scripts take over (crisis inputs are given the 12356 mental-health hotline).
 
 The Android app reuses the same interface and core, with the local service embedded right in the app — likewise with no cloud anywhere.
 

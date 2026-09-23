@@ -535,7 +535,7 @@ void main() {
       }
     });
 
-    test('流干净关闭但无终止标记时残余缓冲判失败降级', () async {
+    test('流干净关闭但无终止标记时留下已显示的半句', () async {
       final gateway = ScriptedModelGateway(
         streamScript: [
           // 只有增量、没有协议终止标记，流就干净关闭。
@@ -553,19 +553,55 @@ void main() {
         text: '在吗',
       );
 
+      // 提前 EOF 属于协议失败：已显示部分作为该轮最终回复落盘并交付，
+      // 带「未完成」标记，不换本地兜底。
+      expect(trace.eventsOf(ChatDeliveryEventKind.fallback), isEmpty);
+      expect(trace.state.source, ReplySource.llm);
+      expect(trace.state.fallbackReason, isNull);
+      expect(trace.message.messages, ['半句，']);
+      expect(trace.message.incomplete, isTrue);
+      final restored = await harness.storedSession(trace.sessionId);
+      final reply = restored.turns.lastWhere(
+        (turn) => turn.speaker == Speaker.qiyu,
+      );
+      expect(reply.source, ReplySource.llm);
+      expect(reply.messages.join(), '半句，');
+    });
+
+    test('空流提前 EOF：零可见文字走本地兜底', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: const [
+          // 一个事件都没有，流就干净关闭：既没有增量也没有终止标记。
+          ScriptedStreamEvents([]),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'empty-eof',
+        text: '在吗',
+      );
+
+      // EOF 且零可见文字：按内容解析失败降级本地兜底（与有增量的 EOF
+      // 分叉不同——那条留半句）。
       expect(trace.eventsOf(ChatDeliveryEventKind.fallback), hasLength(1));
-      expect(trace.state.fallbackReason, FallbackReason.modelNetwork);
+      expect(trace.state.fallbackReason, FallbackReason.modelContentParsing);
       expect(trace.state.source, ReplySource.local);
-      expect(trace.message.messages!.join(), isNot(contains('半句')));
+      expect(trace.message.messages, ['嗯？']);
+      expect(trace.eventsOf(ChatDeliveryEventKind.delta), isNotEmpty);
       final restored = await harness.storedSession(trace.sessionId);
       final reply = restored.turns.lastWhere(
         (turn) => turn.speaker == Speaker.qiyu,
       );
       expect(reply.source, ReplySource.local);
-      expect(reply.messages.join(), isNot(contains('半句')));
+      expect(reply.messages.join(), '嗯？');
     });
 
-    test('截断失败按失败降级交付，不把半句当完整回复', () async {
+    test('截断失败留下已显示的半句并带未完成标记', () async {
       final gateway = ScriptedModelGateway(
         streamScript: [
           const ScriptedStreamEvents([
@@ -588,20 +624,22 @@ void main() {
         text: '在吗',
       );
 
-      expect(trace.eventsOf(ChatDeliveryEventKind.fallback), hasLength(1));
-      expect(trace.state.fallbackReason, FallbackReason.modelContentParsing);
-      expect(trace.state.source, ReplySource.local);
-      expect(trace.message.messages!.join(), isNot(contains('说到一半就')));
+      // 截断同为协议失败：半句如实落盘，失败原因只进本机诊断。
+      expect(trace.eventsOf(ChatDeliveryEventKind.fallback), isEmpty);
+      expect(trace.state.source, ReplySource.llm);
+      expect(trace.state.fallbackReason, isNull);
+      expect(trace.message.messages, ['说到一半就']);
+      expect(trace.message.incomplete, isTrue);
       final restored = await harness.storedSession(trace.sessionId);
       final reply = restored.turns.lastWhere(
         (turn) => turn.speaker == Speaker.qiyu,
       );
-      expect(reply.source, ReplySource.local);
-      expect(reply.fallbackReason, FallbackReason.modelContentParsing);
-      expect(reply.messages.join(), isNot(contains('说到一半就')));
+      expect(reply.source, ReplySource.llm);
+      expect(reply.fallbackReason, isNull);
+      expect(reply.messages.join(), '说到一半就');
     });
 
-    test('危机上下文里截断失败走热线兜底', () async {
+    test('危机上下文里截断失败留下已显示的半句', () async {
       final gateway = ScriptedModelGateway(
         streamScript: [
           const ScriptedStreamEvents([
@@ -625,10 +663,11 @@ void main() {
       );
 
       expect(trace.state.safety, SafetyKind.crisis);
-      expect(trace.state.fallbackReason, FallbackReason.modelContentParsing);
-      expect(trace.state.source, ReplySource.local);
-      expect(trace.message.messages!.join(), contains('12356'));
-      expect(trace.message.messages!.join(), isNot(contains('一半的话')));
+      // 已经产生可见文字：半句如实落盘，不换热线兜底话术。
+      expect(trace.eventsOf(ChatDeliveryEventKind.fallback), isEmpty);
+      expect(trace.state.source, ReplySource.llm);
+      expect(trace.message.messages, ['一半的话']);
+      expect(trace.message.incomplete, isTrue);
     });
 
     test(
@@ -652,6 +691,7 @@ void main() {
           ChatDeliveryEventKind.accepted,
           ChatDeliveryEventKind.waiting,
           ChatDeliveryEventKind.delta,
+          ChatDeliveryEventKind.delta,
           ChatDeliveryEventKind.message,
           ChatDeliveryEventKind.state,
           ChatDeliveryEventKind.done,
@@ -671,6 +711,39 @@ void main() {
         );
       },
     );
+
+    test('活前缀按 12 runes 切片匀速上屏，不跳字', () async {
+      const reply = '一二三四五六七八九十十一十二十三十四十五十六';
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedStreamReply(reply)],
+      );
+      final pauses = <Duration>[];
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 9, 23, 22, 30),
+        deliveryPause: (duration) async => pauses.add(duration),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'chunked-live-prefix',
+        text: '在吗',
+      );
+
+      final chunks = trace
+          .eventsOf(ChatDeliveryEventKind.delta)
+          .map((event) => event.text!)
+          .toList();
+      // 只有末块可以不足 12 runes：匀速切片、无跳字。
+      expect(
+        chunks.take(chunks.length - 1).every((chunk) => chunk.runes.length == 12),
+        isTrue,
+      );
+      expect(chunks.join(), reply);
+      // 每两块之间一次 70ms 停顿，首块不等。
+      expect(pauses, List.filled(chunks.length - 1, const Duration(milliseconds: 70)));
+      expect(trace.message.messages, [reply]);
+    });
 
     test('cancelling generation leaves only the retryable user turn', () async {
       final gateway = ScriptedModelGateway(
@@ -700,16 +773,25 @@ void main() {
       await stream.done;
   
       expect(stream.received.last.kind, ChatDeliveryEventKind.cancelled);
+      // 流式交付：取消前到达的增量已按节奏上屏（在途显示由页面清空），
+      // 但这一轮绝不落盘、绝不交付最终回复。
       expect(
-        stream.received,
-        isNot(
-          contains(
-            predicate<ChatDeliveryEvent>(
-              (event) => event.kind == ChatDeliveryEventKind.delta,
-            ),
-          ),
-        ),
+        stream.received
+            .where((event) => event.kind == ChatDeliveryEventKind.delta)
+            .map((event) => event.text)
+            .join(),
+        isNot(contains('qiyu-actions')),
       );
+      for (final kind in const [
+        ChatDeliveryEventKind.message,
+        ChatDeliveryEventKind.state,
+        ChatDeliveryEventKind.done,
+      ]) {
+        expect(
+          stream.received,
+          isNot(contains(predicate<ChatDeliveryEvent>((event) => event.kind == kind))),
+        );
+      }
       final sessionId = stream.received.first.sessionId!;
       final restored = await harness.storedSession(sessionId);
       expect(restored.turns.map((turn) => turn.speaker), [Speaker.user]);
@@ -889,12 +971,12 @@ void main() {
     );
 
     test(
-      'half-stream failure hides partial text and delivers local fallback',
+      'half-stream failure keeps the shown half sentence with an incomplete marker',
       () async {
         final gateway = ScriptedModelGateway(
           streamScript: [
             const ScriptedStreamEvents([
-              ModelStreamEvent.delta('不该展示的半句'),
+              ModelStreamEvent.delta('说到一半的'),
               ModelStreamEvent.failure(ModelFailureKind.timeout, '已脱敏'),
             ]),
           ],
@@ -907,19 +989,19 @@ void main() {
           text: '今天有点累',
         );
   
-        expect(
-          trace.events.map((event) => event.text ?? '').join(),
-          isNot(contains('不该展示')),
+        // 半句如实：不换兜底、不追加兜底话术，消息带「未完成」标记。
+        expect(trace.eventsOf(ChatDeliveryEventKind.fallback), isEmpty);
+        expect(trace.message.messages, ['说到一半的']);
+        expect(trace.message.incomplete, isTrue);
+        expect(trace.state.source, ReplySource.llm);
+        expect(trace.state.fallbackReason, isNull);
+        // 落盘内容 = 已显示内容。
+        final restored = await harness.storedSession(trace.sessionId);
+        final reply = restored.turns.lastWhere(
+          (turn) => turn.speaker == Speaker.qiyu,
         );
-        expect(
-          trace.event(ChatDeliveryEventKind.fallback).fallbackReason,
-          FallbackReason.modelTimeout,
-        );
-        expect(trace.message.messages, ['咋了']);
-        expect(
-          trace.state.source,
-          ReplySource.local,
-        );
+        expect(reply.source, ReplySource.llm);
+        expect(reply.messages.join(), '说到一半的');
       },
     );
 
@@ -953,6 +1035,392 @@ void main() {
         );
       },
     );
+  });
+
+  // 退休兜底原因的读侧兼容（ADR 0017）：删除前命中两张判决名单的轮次会把
+  // forbidden_phrases / persona_boundary 写进本机 Markdown，会话本地永久
+  // 保留——读侧必须继续认得，否则整个会话文件被标记为不可用。
+  group('退休兜底原因的历史会话读回', () {
+    const retiredNames = ['forbidden_phrases', 'persona_boundary'];
+    for (final name in retiredNames) {
+      test('含 $name 的旧会话照常读取，不整文件不可用', () async {
+        final harness = await InProcessChatHost.start(
+          clock: () => DateTime(2026, 9, 12, 22, 30),
+          seedMemory: (directory) async {
+            final file = File(
+              '${directory.path}${Platform.pathSeparator}sessions'
+              '${Platform.pathSeparator}2026${Platform.pathSeparator}08'
+              '${Platform.pathSeparator}2026-08-11-001.md',
+            );
+            await file.parent.create(recursive: true);
+            await file.writeAsString(
+              '# 栖语原始会话\n'
+              '\n'
+              '<!-- qiyu-session:${encodeMarkerPayload({
+                'schemaVersion': 1,
+                'id': 'legacy-reason-session',
+                'date': '2026-08-11',
+                'segment': 1,
+                'createdAt': DateTime.utc(2026, 8, 11, 12).toIso8601String(),
+                'updatedAt': DateTime.utc(2026, 8, 11, 12, 1).toIso8601String(),
+              })} -->\n'
+              '\n'
+              '<!-- qiyu-turn:${encodeMarkerPayload({
+                'schemaVersion': 1,
+                'requestId': 'legacy-reason',
+                'speaker': 'user',
+                'text': '聊聊',
+                'at': DateTime.utc(2026, 8, 11, 12).toIso8601String(),
+              })} -->\n'
+              '## 用户 · 2026-08-11T12:00:00.000\n'
+              '\n'
+              '> 聊聊\n'
+              '\n'
+              '<!-- qiyu-turn:${encodeMarkerPayload({
+                'schemaVersion': 1,
+                'requestId': 'legacy-reason',
+                'speaker': 'qiyu',
+                'text': '嗯？',
+                'at': DateTime.utc(2026, 8, 11, 12, 1).toIso8601String(),
+                'source': 'local',
+                'fallbackReason': name,
+                'mode': 'open',
+              })} -->\n'
+              '## 栖语 · 2026-08-11T12:01:00.000\n'
+              '\n'
+              '> 嗯？\n',
+            );
+          },
+        );
+        addTearDown(harness.dispose);
+
+        // 会话快照明文返回两轮，回退原因映射到现行枚举。
+        final snapshot = await harness.readSession(
+          sessionId: 'legacy-reason-session',
+        );
+        expect(snapshot.statusCode, 200);
+        final body = jsonDecode(snapshot.body) as Map<String, Object?>;
+        final turns = body['turns']! as List<Object?>;
+        expect(turns, hasLength(2));
+        final reply = turns.last as Map<String, Object?>;
+        expect(reply['text'], '嗯？');
+        expect(reply['fallbackReason'], 'invalid_model_response');
+
+        // 仓储读取同样不被标记为不可用。
+        final stored = await harness.sessionReader().openSession(
+          sessionId: 'legacy-reason-session',
+        );
+        expect(stored.turns.map((turn) => turn.speaker), [
+          Speaker.user,
+          Speaker.qiyu,
+        ]);
+        expect(
+          stored.turns.last.fallbackReason,
+          FallbackReason.invalidModelResponse,
+        );
+        // 历史列表也不出现 unavailable 条目。
+        final history = await harness.readHistory();
+        final historyBody = jsonDecode(history.body) as Map<String, Object?>;
+        expect(historyBody['unavailable'], isEmpty);
+      });
+    }
+  });
+
+  // 契约驱动的流式交付用例（contracts/qiyu_behavior_contracts.json 的
+  // streamingDeliveryCases）：脚本化慢速 Provider 下验「首条增量早于
+  // 终止」「失败留半句」「取消撤回」，不依赖真实模型速度。
+  group('流式交付的评审修复回归', () {
+    test('流式 delta 与 _deliverOutcome 的 delta 同形（带 sessionId）', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedStreamReply('慢慢说，不着急。')],
+      );
+      final harness = await InProcessChatHost.start(modelGateway: gateway);
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'delta-shape',
+        text: '在吗',
+      );
+
+      final deltas = trace.eventsOf(ChatDeliveryEventKind.delta);
+      expect(deltas, isNotEmpty);
+      for (final delta in deltas) {
+        expect(delta.sessionId, trace.sessionId);
+        expect(delta.requestId, 'delta-shape');
+      }
+      // 契约 golden 的 delta 线形同样带 sessionId（线格式往返一致）。
+      for (final delta in deltas) {
+        final wire = jsonDecode(jsonEncode(delta.toJson())) as Map<String, Object?>;
+        expect(
+          ChatDeliveryEvent.fromJson(wire).toJson(),
+          wire,
+        );
+        expect(wire['sessionId'], trace.sessionId);
+      }
+    });
+
+    test('被扣留的结尾行也走分片：终局文本 = 已显示文本', () async {
+      // 结尾停在未落定尖括号上：旧实现把新增文本只塞进终局 message，
+      // delta 与最终回复因此不一致。
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedStreamReply('在。说着<thi')],
+      );
+      final harness = await InProcessChatHost.start(modelGateway: gateway);
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'trailing-flush',
+        text: '在吗',
+      );
+
+      final shown = trace
+          .eventsOf(ChatDeliveryEventKind.delta)
+          .map((event) => event.text!)
+          .join();
+      expect(shown, '在。说着<thi');
+      expect(trace.message.messages, [shown]);
+      expect(trace.message.incomplete ?? false, isFalse);
+      final stored = await harness.storedSession(trace.sessionId);
+      expect(
+        stored.turns.last.messages.join(),
+        shown,
+      );
+    });
+
+    test('半句同样带服务故障类别', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: const [
+          ScriptedStreamEvents([
+            ModelStreamEvent.delta('在。刚'),
+            ModelStreamEvent.failure(ModelFailureKind.rateLimited, '已脱敏的脚本故障'),
+          ]),
+        ],
+      );
+      final harness = await InProcessChatHost.start(modelGateway: gateway);
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'half-service-error',
+        text: '在吗',
+      );
+
+      expect(trace.message.messages, ['在。刚']);
+      expect(trace.message.incomplete, isTrue);
+      // 不弹错误框：没有 fallback 事件、没有回退原因。
+      expect(trace.eventsOf(ChatDeliveryEventKind.fallback), isEmpty);
+      expect(trace.state.fallbackReason, isNull);
+      // 服务故障类别照常随 state 事件传出。
+      expect(trace.state.serviceError, ServiceErrorCategory.rateLimited);
+    });
+
+    test('流内异常留半句，不叠加本地兜底话术', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedStreamExplodesAfter('说着半句就断了')],
+      );
+      final diagnostics = <String>[];
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        diagnosticsSink: diagnostics.add,
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'in-stream-boom',
+        text: '在吗',
+      );
+
+      // 已显示的半句照常落盘交付，本地兜底话术不会跟着再来一遍。
+      expect(trace.message.messages, ['说着半句就断了']);
+      expect(trace.message.incomplete, isTrue);
+      expect(trace.state.source, ReplySource.llm);
+      expect(trace.eventsOf(ChatDeliveryEventKind.fallback), isEmpty);
+      expect(
+        diagnostics.any(
+          (line) => line.contains('model stream error') && line.contains('in-stream-boom'),
+        ),
+        isTrue,
+      );
+      final stored = await harness.storedSession(trace.sessionId);
+      final qiyu = stored.turns.lastWhere(
+        (turn) => turn.speaker == Speaker.qiyu,
+      );
+      expect(qiyu.messages.join(), '说着半句就断了');
+      expect(qiyu.source, ReplySource.llm);
+    });
+
+    test('零可见文字的失败轮：兜底话术仍以 delta 分片到达', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: const [ScriptedStreamFailure(ModelFailureKind.timeout)],
+      );
+      final pauses = <Duration>[];
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        deliveryPause: (duration) async => pauses.add(duration),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'fallback-paced',
+        text: '今天有点累',
+      );
+
+      expect(trace.state.source, ReplySource.local);
+      expect(trace.message.messages, ['咋了']);
+      // 兜底话术整段一次出现，但仍有分片节奏（首块不等，后续每块一停）。
+      final deltas = trace.eventsOf(ChatDeliveryEventKind.delta);
+      expect(deltas.map((event) => event.text).join(), '咋了');
+      expect(pauses, isEmpty);
+    });
+  });
+
+  group('契约流式交付', () {
+    final contract =
+        jsonDecode(
+              File(
+                '../../contracts/qiyu_behavior_contracts.json',
+              ).readAsStringSync(),
+            )
+            as Map<String, Object?>;
+
+    for (final value in contract['streamingDeliveryCases']! as List<Object?>) {
+      final fixture = value! as Map<String, Object?>;
+      final id = fixture['id']! as String;
+      final userText = fixture['userText']! as String;
+      final expected = fixture['expected']! as Map<String, Object?>;
+      final script =
+          (fixture['modelEvents']! as List<Object?>)
+              .cast<Map<String, Object?>>();
+      final interactive = script.any((event) => event['kind'] == 'cancel');
+
+      test('契约 $id', () async {
+        final diagnostics = <String>[];
+        final requestId = 'contract-$id';
+        final gateway = ScriptedModelGateway(
+          streamScript: [
+            interactive
+                ? const ScriptedLiveStream()
+                : ScriptedStreamEvents([
+                    for (final event in script)
+                      switch (event['kind']) {
+                        'delta' => ModelStreamEvent.delta(
+                          event['text']! as String,
+                        ),
+                        'done' => const ModelStreamEvent.done(),
+                        'failure' => ModelStreamEvent.failure(
+                          ModelFailureKind.values.byName(
+                            event['failureKind']! as String,
+                          ),
+                          '已脱敏的脚本故障',
+                        ),
+                        _ => const ModelStreamEvent.delta(''),
+                      },
+                  ]),
+          ],
+        );
+        final harness = await InProcessChatHost.start(
+          modelGateway: gateway,
+          clock: () => DateTime(2026, 9, 23, 22, 30),
+          diagnosticsSink: diagnostics.add,
+        );
+        addTearDown(harness.dispose);
+
+        final ChatEventTrace trace;
+        if (interactive) {
+          final stream = harness.openChat(requestId: requestId, text: userText);
+          await gateway.awaitStreamOpened();
+          for (final event in script) {
+            switch (event['kind']) {
+              case 'delta':
+                gateway.liveController.add(
+                  ModelStreamEvent.delta(event['text']! as String),
+                );
+                await Future<void>.delayed(Duration.zero);
+              case 'cancel':
+                expect(await harness.cancelChat(requestId), isTrue);
+              default:
+                break;
+            }
+          }
+          await gateway.liveController.close();
+          await stream.done;
+          trace = ChatEventTrace.parse(
+            await stream.statusCode,
+            stream.received
+                .map((event) => jsonEncode(event.toJson()))
+                .join('\n'),
+          );
+        } else {
+          trace = await harness.sendChat(requestId: requestId, text: userText);
+        }
+
+        final kinds = trace.events.map((event) => event.kind).toList();
+        if (expected['firstDeltaBeforeDone'] == true) {
+          expect(
+            kinds.indexOf(ChatDeliveryEventKind.delta) <
+                kinds.indexOf(ChatDeliveryEventKind.done),
+            isTrue,
+            reason: '首条增量事件必须早于协议终止事件',
+          );
+        }
+        if (expected['cancelled'] == true) {
+          expect(kinds.last, ChatDeliveryEventKind.cancelled);
+        }
+        if (expected['messages'] != null) {
+          expect(
+            trace.eventsOf(ChatDeliveryEventKind.message).single.messages,
+            expected['messages'],
+          );
+        }
+        if (expected['incomplete'] != null) {
+          expect(
+            trace.eventsOf(ChatDeliveryEventKind.message).single.incomplete ??
+                false,
+            expected['incomplete'],
+          );
+        }
+        if (expected['fallbackEvents'] != null) {
+          expect(
+            trace.eventsOf(ChatDeliveryEventKind.fallback),
+            hasLength(expected['fallbackEvents']! as int),
+          );
+        }
+        if (expected['fallbackReason'] != null) {
+          expect(trace.state.fallbackReason?.wireName, expected['fallbackReason']);
+        }
+        final deltaText = trace
+            .eventsOf(ChatDeliveryEventKind.delta)
+            .map((event) => event.text)
+            .join();
+        for (final forbidden in (expected['deltaTextNeverContains'] as List<Object?>? ??
+            const [])) {
+          expect(deltaText, isNot(contains(forbidden)));
+        }
+        for (final line in (expected['diagnosticsContain'] as List<Object?>? ??
+            const [])) {
+          expect(diagnostics.join('\n'), contains(line));
+        }
+
+        final stored = await harness.storedSession(trace.sessionId);
+        final qiyuTurns = stored.turns
+            .where((turn) => turn.speaker == Speaker.qiyu)
+            .toList();
+        final userTurns = stored.turns
+            .where((turn) => turn.speaker == Speaker.user)
+            .toList();
+        if (expected['persistedQiyuTurns'] != null) {
+          expect(qiyuTurns, hasLength(expected['persistedQiyuTurns']! as int));
+        }
+        if (expected['persistedUserTurns'] != null) {
+          expect(userTurns, hasLength(expected['persistedUserTurns']! as int));
+        }
+        if (expected['persistedQiyuText'] != null) {
+          expect(
+            qiyuTurns.single.messages.join('\n'),
+            expected['persistedQiyuText'],
+          );
+        }
+      });
+    }
   });
   group('晚安与跨日恢复', () {
 
@@ -1244,7 +1712,7 @@ void main() {
     test('被拒绝的候选回复不提交解除冻结', () async {
       final gateway = ScriptedModelGateway(
         streamScript: [
-          const ScriptedStreamReply('''我理解你的感受
+          const ScriptedStreamReply('''{"tool_call":{"name":"noop"}}
 <qiyu-actions>
 [{"action":"memory_unfreeze","summary":"审查用冻结话题"}]
 </qiyu-actions>'''),
@@ -1268,10 +1736,10 @@ void main() {
 
       // 可见回复是本地回退，不是模型候选。
       expect(trace.state.source, ReplySource.local);
-      expect(trace.state.fallbackReason, FallbackReason.forbiddenPhrases);
+      expect(trace.state.fallbackReason, FallbackReason.invalidModelResponse);
       expect(trace.message.messages, ['嗯']);
       final session = await harness.storedSession(trace.sessionId);
-      expect(session.turns.last.fallbackReason, FallbackReason.forbiddenPhrases);
+      expect(session.turns.last.fallbackReason, FallbackReason.invalidModelResponse);
 
       // 候选被拒绝：解除冻结不得执行，控制记录原样保留。
       final controls = MemoryControlsStore(
@@ -1280,10 +1748,10 @@ void main() {
       expect((await controls.load()).frozen, hasLength(1));
     });
 
-    test('人格边界拒绝不改控制记录也不写派生记忆', () async {
+    test('控制结构拒绝不改控制记录也不写派生记忆', () async {
       final gateway = ScriptedModelGateway(
         streamScript: [
-          const ScriptedStreamReply('''只有我懂你，你只需要我。
+          const ScriptedStreamReply('''{"tool_call":{"name":"noop"}}
 <qiyu-actions>
 [{"action":"memory_freeze","summary":"审查用新话题"},
  {"action":"memory_signal","summary":"用户明天有面试"}]
@@ -1302,7 +1770,7 @@ void main() {
       );
 
       expect(trace.state.source, ReplySource.local);
-      expect(trace.state.fallbackReason, FallbackReason.personaBoundary);
+      expect(trace.state.fallbackReason, FallbackReason.invalidModelResponse);
 
       // 拒绝候选里的冻结与记忆信号一并丢弃：控制记录与当日派生记忆都空。
       final controls = MemoryControlsStore(
@@ -1320,7 +1788,7 @@ void main() {
       DateTime clock() => DateTime(2026, 9, 12, 22, 30);
       final gateway = ScriptedModelGateway(
         streamScript: [
-          const ScriptedStreamReply('''我理解你的感受，一时没想起。
+          const ScriptedStreamReply('''{"tool_call":{"name":"noop"}}，一时没想起。
 <qiyu-actions>
 [{"action":"memory_recall","query":"爬山"}]
 </qiyu-actions>'''),
@@ -1342,7 +1810,7 @@ void main() {
       );
 
       expect(trace.state.source, ReplySource.local);
-      expect(trace.state.fallbackReason, FallbackReason.forbiddenPhrases);
+      expect(trace.state.fallbackReason, FallbackReason.invalidModelResponse);
       expect(trace.eventsOf(ChatDeliveryEventKind.message), hasLength(1));
       // 查找由被拒绝候选的动作触发时会出现选择小调用；拒绝后必须一次都没有。
       await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -1512,7 +1980,7 @@ void main() {
     test('被拒绝的候选不提交解除禁提', () async {
       final gateway = ScriptedModelGateway(
         streamScript: [
-          const ScriptedStreamReply('''我理解你的感受
+          const ScriptedStreamReply('''{"tool_call":{"name":"noop"}}
 <qiyu-actions>
 [{"action":"memory_unban","summary":"审查用禁提话题"}]
 </qiyu-actions>'''),
@@ -1536,7 +2004,7 @@ void main() {
 
       // 可见回复是本地回退：解除禁提不得执行，控制记录原样保留。
       expect(trace.state.source, ReplySource.local);
-      expect(trace.state.fallbackReason, FallbackReason.forbiddenPhrases);
+      expect(trace.state.fallbackReason, FallbackReason.invalidModelResponse);
       final controls = MemoryControlsStore(
         memoryDirectory: harness.memoryDirectory,
       );
@@ -1698,7 +2166,7 @@ void main() {
           const ScriptedStreamReply('''在。
 <qiyu-actions>[{"action":"memory_signal","summary":"用户白天来找栖语"}]</qiyu-actions>'''),
           // 晚安轮候选被拒绝：可见回复回退本地，归档节奏不得跟着丢。
-          const ScriptedStreamReply('我理解你的感受'),
+          const ScriptedStreamReply('{"tool_call":{"name":"noop"}}'),
         ],
       );
       final harness = await InProcessChatHost.start(
@@ -1714,7 +2182,7 @@ void main() {
         sessionId: day.sessionId,
       );
       expect(bedtime.state.source, ReplySource.local);
-      expect(bedtime.state.fallbackReason, FallbackReason.forbiddenPhrases);
+      expect(bedtime.state.fallbackReason, FallbackReason.invalidModelResponse);
       await harness.close();
 
       final pipeline = EpisodeMemoryPipeline(
@@ -1728,7 +2196,7 @@ void main() {
       DateTime clock() => DateTime(2026, 9, 12, 22, 30);
       final gateway = ScriptedModelGateway(
         streamScript: [
-          const ScriptedStreamReply('''我理解你的感受
+          const ScriptedStreamReply('''{"tool_call":{"name":"noop"}}
 <qiyu-actions>
 [{"action":"memory_delete","summary":"审查用删除话题"}]
 </qiyu-actions>'''),
@@ -1750,7 +2218,7 @@ void main() {
       );
 
       expect(trace.state.source, ReplySource.local);
-      expect(trace.state.fallbackReason, FallbackReason.forbiddenPhrases);
+      expect(trace.state.fallbackReason, FallbackReason.invalidModelResponse);
 
       // 候选被拒绝：删除不得执行，两条记忆原样保留，无删除控制记录。
       final pipeline = EpisodeMemoryPipeline(

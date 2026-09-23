@@ -419,11 +419,10 @@ class _LocalChatViewState extends State<LocalChatView>
       return;
     }
 
-    // 严格排除设计内降级：安全拦截与未配置模型绝对不弹窗
+    // 严格排除设计内降级：安全拦截、未配置模型与输出卫生拒绝绝对不弹窗
+    // （人格与话术约束在提示词层，输出侧不再正则判决——ADR 0017）
     if (reason == FallbackReason.safety ||
         reason == FallbackReason.noLlmConfig ||
-        reason == FallbackReason.forbiddenPhrases ||
-        reason == FallbackReason.personaBoundary ||
         reason == FallbackReason.invalidModelResponse ||
         reason == FallbackReason.emptyModelReply) {
       if (_apiErrorNotice != null) {
@@ -1270,6 +1269,7 @@ class _LocalChatViewState extends State<LocalChatView>
               text: message.text,
               fromUser: !isQiyu,
               deliveryIndex: deliveryIndex,
+              incomplete: message.incomplete,
               at: message.at,
               isSpeaking:
                   nowReading != null &&

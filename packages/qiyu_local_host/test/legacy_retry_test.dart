@@ -131,9 +131,11 @@ void main() {
       await stream.done;
       expect(stream.terminationError, isNull);
       expect(stream.received.last.kind, ChatDeliveryEventKind.cancelled);
+      // 流式交付：取消前到达的增量已上屏（页面清空在途显示），但本轮
+      // 不落盘、不交付最终回复。
       expect(
         stream.received.map((event) => event.kind),
-        isNot(contains(ChatDeliveryEventKind.delta)),
+        isNot(contains(ChatDeliveryEventKind.message)),
       );
       expect(await file.readAsString(), original);
       expect((await harness.storedSession(_sessionId)).turns, hasLength(1));

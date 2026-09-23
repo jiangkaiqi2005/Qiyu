@@ -314,7 +314,7 @@ void main() {
     final service = ProviderSettingsService(
       _MemoryProviderConfigRepository()..config = config,
       _MemorySecretStore()..values[config.credentialScope] = 'private-value',
-      _FakeModelGateway(reply: '我理解你的感受'),
+      _FakeModelGateway(reply: '{"tool_call":{"name":"noop"}}'),
       promptBuilder,
     );
 

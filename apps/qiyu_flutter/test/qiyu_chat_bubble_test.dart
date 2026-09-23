@@ -1534,6 +1534,31 @@ void main() {
       expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
     });
   });
+
+  group('QiyuChatBubble 未完成标记', () {
+    testWidgets('半句消息带「未完成」标记', (tester) async {
+      await _pump(
+        tester,
+        const QiyuChatBubble(text: '在。刚', fromUser: false, incomplete: true),
+      );
+
+      expect(find.text('未完成'), findsOneWidget);
+      expect(find.text('在。刚'), findsOneWidget);
+    });
+
+    testWidgets('完整消息不带标记，用户消息更不带', (tester) async {
+      await _pump(tester, const QiyuChatBubble(text: '在。', fromUser: false));
+
+      expect(find.text('未完成'), findsNothing);
+
+      await _pump(
+        tester,
+        const QiyuChatBubble(text: '在。刚', fromUser: true, incomplete: true),
+      );
+
+      expect(find.text('未完成'), findsNothing);
+    });
+  });
 }
 
 Future<void> _pump(
