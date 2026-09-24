@@ -545,7 +545,9 @@ void main() {
     test('lookalike 主机按「主机含」语义派新形状（现语义钉死）', () {
       // 分派只改请求体形状：出网目标仍是用户填的地址、SSRF 校验照查，
       // 错形状落既有 400 分类（ADR 0015）——与识别档 path.contains 先例
-      // 同语义，不收紧为精确后缀匹配。
+      // 同语义，不收紧为精确后缀匹配。票 03 的映射表建议落位判定
+      // （qwen_tts 档 3.x 型号是否已配新版地址）也是本判定的消费者，
+      // lookalike 误判后果同性质：少给一条建议或按现语义派形状，不出网。
       expect(
         qwenTtsUsesMaasShape(
           Uri.parse('https://maas.aliyuncs.com.evil.example/api/v1'),

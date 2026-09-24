@@ -52,6 +52,7 @@ export 'src/tts_gateway.dart';
 export 'src/tts_settings_service.dart';
 export 'src/tts_ws_gateways.dart';
 export 'src/voice_stream_pipeline.dart';
+export 'src/voice_tier_mapping.dart';
 export 'src/volc_seed_asr_gateway.dart';
 export 'src/volc_tts_gateway.dart';
 export 'src/web_search.dart';

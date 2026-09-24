@@ -11,6 +11,7 @@ import 'provider_catalog.dart';
 import 'settings_section_shell.dart';
 import 'tts_settings_client.dart';
 import 'tts_settings_view_model.dart';
+import 'voice_tier_suggestion.dart';
 
 /// 语音朗读（TTS）设置领域：合成服务类型、地址、模型、音色、语速、
 /// 高级参数与 API Key。
@@ -337,6 +338,92 @@ final class TtsSettingsForm {
     }
     return saved;
   }
+
+  /// 一键换档（确认制，ADR 0020）：先算清回填计划，再按同一份计划把
+  /// 建议落位写进表单草稿——落盘仍走用户点「保存到本机」的既有保存
+  /// 路径。目标档不在已知档位集合时返回 null（对话框不弹、表单不动，
+  /// 与建议解析的保守兜底同律）。计划规则：
+  /// - 跨档：切档、按处置填地址（可代填缺省端点直接填；3.1 新版端点
+  ///   把官方地址模板整条填进输入框当草稿，`{业务空间ID}` 由用户替换——
+  ///   栖语不代填、Host 也不做替换）、填型号，并清掉 Key 草稿——沿用
+  ///   「切换服务不沿用旧 Key」既有机制（保存时已存 Key 也按凭据作用域
+  ///   清空，重填后生效）。
+  /// - 同档：只改型号。地址与 Key 一律不动（新版端点的地址按卡片指引
+  ///   自己换，Key 保留）。
+  VoiceTierRefillPlan? planSuggestionApply(VoiceTierSuggestionData suggestion) {
+    if (_ttsProviderLabel(suggestion.targetProvider) == null) {
+      return null;
+    }
+    final crossTier = _provider.wireName != suggestion.targetProvider;
+    final addressAction = !crossTier
+        ? RefillAddressAction.keepCurrent
+        : suggestion.defaultEndpoint != null
+        ? RefillAddressAction.suggestedEndpoint
+        : suggestion.addressTemplate != null
+        ? RefillAddressAction.templateDraft
+        : RefillAddressAction.keepCurrent;
+    return VoiceTierRefillPlan(
+      crossTier: crossTier,
+      providerWireName: suggestion.targetProvider,
+      model: suggestion.targetModel,
+      addressAction: addressAction,
+      baseUrl: switch (addressAction) {
+        RefillAddressAction.suggestedEndpoint => suggestion.defaultEndpoint!,
+        RefillAddressAction.templateDraft => suggestion.addressTemplate!,
+        RefillAddressAction.keepCurrent => baseUrlController.text,
+      },
+    );
+  }
+
+  /// 按 [planSuggestionApply] 的计划落草稿；null 计划是显式 no-op。
+  /// 计划在所有分支权威：keepCurrent 分支也照写 plan.baseUrl（内容即
+  /// 现状、等值回写），展示与落草稿不存在分支差异。
+  void applySuggestion(VoiceTierRefillPlan? plan) {
+    if (plan == null) {
+      return;
+    }
+    if (plan.crossTier) {
+      selectProvider(plan.providerWireName);
+    }
+    baseUrlController.text = plan.baseUrl;
+    modelController.text = plan.model;
+    if (plan.crossTier) {
+      apiKeyController.clear();
+    }
+  }
+}
+
+/// 一键换档的地址处置：保持现状（同档，或跨档但建议未给可填地址）、
+/// 填建议的缺省端点（现行形状）、把官方地址模板填作草稿（新版端点，
+/// `{业务空间ID}` 待用户替换）。
+enum RefillAddressAction { keepCurrent, suggestedEndpoint, templateDraft }
+
+/// 应用一条建议后表单将处的状态：确认对话框据此如实展示「将要改成
+/// 什么」，[TtsSettingsForm.applySuggestion] 按同一份计划落草稿——展示
+/// 与回填永远同源，不各猜各的。
+final class VoiceTierRefillPlan {
+  const VoiceTierRefillPlan({
+    required this.crossTier,
+    required this.providerWireName,
+    required this.model,
+    required this.addressAction,
+    required this.baseUrl,
+  });
+
+  /// 是否跨档：跨档清 Key 草稿（切换服务不沿用旧 Key），同档保留。
+  final bool crossTier;
+
+  /// 目标档 wire 名。
+  final String providerWireName;
+
+  /// 目标型号。
+  final String model;
+
+  /// 地址处置。
+  final RefillAddressAction addressAction;
+
+  /// 将落进地址栏的内容：建议端点、地址模板原文，或保持的现状。
+  final String baseUrl;
 }
 
 /// 语音朗读设置区块。
@@ -379,6 +466,76 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
     );
     if (confirmed) {
       await viewModel.forgetApiKey();
+    }
+  }
+
+  /// 一键换档的确认制：先展示将要改成什么（档位／地址／型号／Key），
+  /// 用户确认才写进表单草稿（落盘仍要点「保存到本机」）。取消与摸掉
+  /// 对话框都算不改。四行内容全部从回填计划的真实结果推导——展示与
+  /// 回填同源，地址行写的就是将要落进地址栏的内容。
+  Future<void> _confirmApplySuggestion(
+    VoiceTierSuggestionData suggestion,
+  ) async {
+    final plan = _form.planSuggestionApply(suggestion);
+    if (plan == null) {
+      return;
+    }
+    final involvesMaasTemplate =
+        suggestion.addressTemplate != null ||
+        plan.addressAction == RefillAddressAction.templateDraft;
+    final changes = <String>[
+      if (plan.crossTier)
+        '服务类型：${_ttsProviderLabel(_form.provider.wireName)} → '
+            '${_ttsProviderLabel(plan.providerWireName)}',
+      '模型名称：${_form.modelController.text.trim().isEmpty ? '（空）' : _form.modelController.text.trim()} → '
+          '${plan.model}',
+      switch (plan.addressAction) {
+        RefillAddressAction.suggestedEndpoint =>
+          '服务地址：填入建议地址\n${plan.baseUrl}',
+        RefillAddressAction.templateDraft =>
+          '服务地址：填入官方地址模板\n${plan.baseUrl}\n'
+              '把 {业务空间ID} 换成你自己的阿里云百炼业务空间 ID 后再保存',
+        RefillAddressAction.keepCurrent when involvesMaasTemplate =>
+          '服务地址：保持不变；保存测试前请按卡片指引把地址换成新版端点',
+        RefillAddressAction.keepCurrent => '服务地址：不变',
+      },
+      // Key 行说实话：回填动作本身跨档清 Key 草稿、同档不动；涉及新版
+      // 端点的分支再如实说明后续——同档换地址保存时按既有凭据规则 Key
+      // 需重填，跨档的新版端点需要自有百炼 Key。
+      if (plan.crossTier)
+        involvesMaasTemplate
+            ? 'API Key：清空重填，切换服务不沿用旧 Key；新版端点需自有百炼 Key'
+            : 'API Key：清空重填，切换服务不沿用旧 Key'
+      else if (involvesMaasTemplate)
+        'API Key：保留已保存的 Key；地址换成新版端点保存时，Key 按既有规则需重填'
+      else
+        'API Key：保留',
+    ];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const Key('tts-tier-suggestion-dialog'),
+        title: const Text('按建议调整？'),
+        content: Text(changes.join('\n')),
+        actions: [
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('tts-tier-suggestion-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('再想想'),
+            ),
+          ),
+          FilledButton(
+            key: const Key('tts-tier-suggestion-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('按建议调整'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() => _form.applySuggestion(plan));
     }
   }
 
@@ -428,20 +585,14 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
               dropdownKey: const Key('tts-provider'),
               label: '服务类型',
               value: provider.wireName,
-              items: const [
-                DropdownMenuItem(
-                  value: 'openai_compatible',
-                  child: Text('OpenAI 兼容语音合成'),
-                ),
-                DropdownMenuItem(value: 'volc_tts', child: Text('豆包语音合成')),
-                DropdownMenuItem(
-                  value: 'qwen_tts',
-                  child: Text('千问语音合成'),
-                ),
-                DropdownMenuItem(
-                  value: 'custom',
-                  child: Text('自定义合成服务'),
-                ),
+              // 档位目录单处共用：下拉选项、对话框档位改名与建议回填的
+              // 档位识别（未知 wire 名不回填）都从这里出。
+              items: [
+                for (final choice in _ttsProviderChoices)
+                  DropdownMenuItem(
+                    value: choice.wireName,
+                    child: Text(choice.label),
+                  ),
               ],
               onChanged: (wireName) =>
                   setState(() => _form.selectProvider(wireName)),
@@ -812,7 +963,21 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
             if (viewModel.errorMessage case final message?)
               SettingsStatusMessage(message: message, succeeded: false),
             if (viewModel.errorMessage == null)
-              if (testResult case final result?)
+              // 命中档位映射表（ADR 0020）：引导卡片取代普通失败行——
+              // Host 从未出网，结论与「按建议调整」当场可读可点。建议落
+              // 在转写域时本域回填不了，卡片只给指路文案。
+              if (testResult?.tierSuggestion case final suggestion?)
+                VoiceTierSuggestionCard(
+                  suggestion: suggestion,
+                  applyButtonKey: const Key('tts-tier-suggestion-apply'),
+                  // 建议落在转写域、或目标档本界面不认识时回填不了：
+                  // 只给指路文案（回填计划算不出来即不亮按钮）。
+                  onApply: suggestion.targetsSynthesis &&
+                          _form.planSuggestionApply(suggestion) != null
+                      ? () => unawaited(_confirmApplySuggestion(suggestion))
+                      : null,
+                )
+              else if (testResult case final result?)
                 SettingsStatusMessage(
                   message: result.message,
                   succeeded: result.succeeded,
@@ -850,6 +1015,27 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
       },
     );
   }
+}
+
+/// 朗读档位目录：wire 名 ↔ 设置页人话标签，单处共用——服务类型下拉的
+/// 选项、确认对话框里的档位名、建议回填的档位识别（[_ttsProviderLabel]
+/// 查不到即未知档位，不亮回填）都从这里出。
+const _ttsProviderChoices = <({String wireName, String label})>[
+  (wireName: 'openai_compatible', label: 'OpenAI 兼容语音合成'),
+  (wireName: 'volc_tts', label: '豆包语音合成'),
+  (wireName: 'qwen_tts', label: '千问语音合成'),
+  (wireName: 'custom', label: '自定义合成服务'),
+];
+
+/// 服务类型 wire 名 → 设置页同款人话标签；未知 wire 名返回 null
+/// （Host 表将来给出本界面不认识的档位时，保守不回填）。
+String? _ttsProviderLabel(String wireName) {
+  for (final choice in _ttsProviderChoices) {
+    if (choice.wireName == wireName) {
+      return choice.label;
+    }
+  }
+  return null;
 }
 
 /// 三套 TTS 协议各自的缺省地址、模型与输入提示档位。千问与千问识别同

@@ -664,13 +664,17 @@ void main() {
 
     final result = await service.test(
       baseUrl: 'https://tts.example.com/v1',
-      model: 'qwen-audio-3.1-tts-next',
+      // 连接测试半段用表 miss 型号：qwen-audio-3.1-tts-next 已被档位映射
+      // 表收作「不支持」，会在发请求前给结构化建议（见下方新增用例），
+      // 到不了网关；分类路径本身由表 miss 型号锁定。
+      model: 'qwen-audio-tts-next',
       apiKey: 'secret-tts-key',
     );
     expect(result.succeeded, isFalse);
     expect(result.audioBase64, isNull);
     expect(result.status, ProviderTestStatus.modelInterfaceMismatch);
     expect(result.message, '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。');
+    expect(result.tierSuggestion, isNull);
 
     await expectLater(
       service.synthesize('晚安'),
@@ -865,6 +869,133 @@ void main() {
       'format': 'wav',
       'sample_rate': 24000,
     });
+  });
+
+  test('档位映射表命中：3.1 型号配现行地址在发请求前给建议，零出网', () async {
+    final gateway = _FakeTtsGateway(audio: [1]);
+    final service = TtsSettingsService(repository, gateway);
+    await service.save(
+      baseUrl:
+          'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+      model: 'qwen3-tts-flash',
+      provider: TtsProviderKind.qwenTts,
+      apiKey: 'secret-tts-key',
+    );
+
+    final result = await service.test(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl:
+          'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+      model: ' qwen-audio-3.1-tts-flash ',
+      apiKey: 'secret-tts-key',
+    );
+
+    expect(gateway.called, isFalse, reason: '命中映射表不得出网');
+    expect(result.succeeded, isFalse);
+    expect(result.audioBase64, isNull);
+    expect(result.status, ProviderTestStatus.modelInterfaceMismatch);
+    expect(result.message, '这个型号要走千问朗读档的新版千问端点。');
+    final suggestion = result.tierSuggestion;
+    expect(suggestion, isA<VoiceTierSwitchSuggestion>());
+    final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
+    expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
+    expect(switchSuggestion.targetModel, 'qwen-audio-3.1-tts-flash');
+    // 业务空间 ID 不代填：只有模板与拼接指引。
+    expect(switchSuggestion.defaultEndpoint, isNull);
+    expect(switchSuggestion.addressTemplate, voiceTierMaasAddressTemplate);
+    expect(switchSuggestion.addressGuidance, voiceTierMaasAddressGuidance);
+  });
+
+  test('档位映射表命中：地址解析不出也按现行形状查表，建议照常给', () async {
+    // 地址解析失败（畸形 IPv6）时新形状判定回落 false：查表只按档与
+    // 型号走，命中照常给建议；不因地址草稿坏掉而跳过引导。
+    final gateway = _FakeTtsGateway(audio: [1]);
+    final service = TtsSettingsService(repository, gateway);
+    final result = await service.test(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl: 'https://[::1:80',
+      model: 'qwen-audio-3.1-tts-flash',
+      apiKey: 'secret-tts-key',
+    );
+
+    expect(gateway.called, isFalse);
+    expect(result.tierSuggestion, isA<VoiceTierSwitchSuggestion>());
+    expect(
+      (result.tierSuggestion! as VoiceTierSwitchSuggestion).addressTemplate,
+      voiceTierMaasAddressTemplate,
+    );
+  });
+
+  test('档位映射表命中：其他档误填千问朗读型号，发请求前引导换档', () async {
+    final gateway = _FakeTtsGateway(audio: [1]);
+    final service = TtsSettingsService(repository, gateway);
+    final result = await service.test(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'qwen3-tts-flash',
+      apiKey: 'secret-tts-key',
+    );
+
+    expect(gateway.called, isFalse);
+    expect(result.tierSuggestion, isA<VoiceTierSwitchSuggestion>());
+    final switchSuggestion =
+        result.tierSuggestion! as VoiceTierSwitchSuggestion;
+    expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
+    expect(switchSuggestion.defaultEndpoint, qwenTtsDefaultEndpoint);
+    expect(result.message, '这个型号要走千问朗读档。');
+  });
+
+  test('档位映射表命中：不支持型号直接给原因话术与替代型号，零出网', () async {
+    final gateway = _FakeTtsGateway(audio: [1]);
+    final service = TtsSettingsService(repository, gateway);
+    final result = await service.test(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl:
+          'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+      model: 'qwen-audio-3.1-tts-next',
+      apiKey: 'secret-tts-key',
+    );
+
+    expect(gateway.called, isFalse);
+    expect(result.tierSuggestion, isA<VoiceTierUnsupportedSuggestion>());
+    final unsupported =
+        result.tierSuggestion! as VoiceTierUnsupportedSuggestion;
+    expect(unsupported.reason, '这个型号是统一音频生成型号，官方没有给朗读用的通道，栖语接不了它。');
+    expect(unsupported.targetModel, 'qwen3-tts-flash');
+    expect(result.message, unsupported.reason);
+  });
+
+  test('表 miss 照常出网试听，结果不带建议', () async {
+    final gateway = _FakeTtsGateway(audio: [7, 8]);
+    final service = TtsSettingsService(repository, gateway);
+    final result = await service.test(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl:
+          'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+      model: 'qwen3-tts-flash',
+      apiKey: 'secret-tts-key',
+    );
+
+    expect(gateway.called, isTrue);
+    expect(result.succeeded, isTrue);
+    expect(result.tierSuggestion, isNull);
+    expect(result.audioBase64, base64Encode([7, 8]));
+  });
+
+  test('3.1 型号配新版地址：正确落位，连接测试照常出网试听', () async {
+    final gateway = _FakeTtsGateway(audio: [9]);
+    final service = TtsSettingsService(repository, gateway);
+    final result = await service.test(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl:
+          'https://ws-12345.cn-beijing.maas.aliyuncs.com'
+          '/api/v1/services/audio/tts/SpeechSynthesizer',
+      model: 'qwen-audio-3.1-tts-flash',
+      apiKey: 'sk-bailian',
+    );
+
+    expect(gateway.called, isTrue);
+    expect(result.succeeded, isTrue);
+    expect(result.tierSuggestion, isNull);
   });
 }
 

@@ -6,7 +6,9 @@ import 'model_gateway.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart'
     show ProviderTestStatus, providerTestMessage, providerTestStatusFromFailureKind;
+import 'qwen_tts_gateway.dart' show qwenTtsUsesMaasShape;
 import 'tts_gateway.dart';
+import 'voice_tier_mapping.dart';
 
 /// 语音合成设置快照：经 HTTP 返回时绝不携带明文 Key。
 final class TtsSettingsSnapshot {
@@ -43,12 +45,14 @@ final class TtsServiceException implements Exception {
 
 /// TTS 连接测试结果：与聊天/STT 的测试同口径（ok/status/message），
 /// 成功时附带真实合成的试听音频（base64；PCM 档已由网关包 WAV 头），
-/// 设置页直接播放。
+/// 设置页直接播放。命中档位映射表（ADR 0020）时 [tierSuggestion] 带结
+/// 构化建议：此时从未出网（不发计费请求），设置页当场给引导卡片。
 final class TtsTestResult {
   const TtsTestResult({
     required this.status,
     required this.message,
     this.audioBase64,
+    this.tierSuggestion,
   });
 
   final ProviderTestStatus status;
@@ -58,6 +62,10 @@ final class TtsTestResult {
   /// 恒为 null。
   final String? audioBase64;
 
+  /// 档位映射表的结构化建议（应换档／不支持）；表 miss 或测试成功时
+  /// 为 null。
+  final VoiceTierSuggestion? tierSuggestion;
+
   bool get succeeded => status == ProviderTestStatus.success;
 
   Map<String, Object?> toJson() => {
@@ -65,6 +73,7 @@ final class TtsTestResult {
     'status': status.name,
     'message': message,
     'audioBase64': ?audioBase64,
+    'suggestion': ?tierSuggestion?.toJson(),
   };
 }
 
@@ -222,6 +231,29 @@ final class TtsSettingsService
     }
     final effectiveProvider =
         provider ?? stored?.provider ?? TtsProviderKind.openAiCompatible;
+    // 档位映射表（ADR 0020）发请求前查询：命中「应换档／不支持」直接
+    // 返回结构化建议，不发计费请求、网关零调用；表 miss 一切照旧。新版
+    // 端点型号只有配了新版地址才算正确落位（业务空间 ID 只有用户知道，
+    // 建议里只给模板与拼接指引，不代填）。表 miss 时的分类、错误码与
+    // ADR 0015 文案逐字不变。
+    final suggestion = lookupVoiceTierSuggestion(
+      family: VoiceServiceFamily.synthesis,
+      currentProviderWireName: effectiveProvider.wireName,
+      model: effectiveModel,
+      currentAddressUsesMaasShape: _effectiveAddressUsesMaasShape(
+        provider: effectiveProvider,
+        baseUrl: effectiveBaseUrl,
+      ),
+    );
+    if (suggestion != null) {
+      return TtsTestResult(
+        // 复用「模型与接口不匹配」分类：表命中就是它在出网前的判型，
+        // 不新增状态种类（spec 决策 7）。
+        status: ProviderTestStatus.modelInterfaceMismatch,
+        message: suggestion.reason,
+        tierSuggestion: suggestion,
+      );
+    }
     final config = TtsConfig(
       provider: effectiveProvider,
       baseUrl: effectiveBaseUrl,
@@ -493,6 +525,20 @@ String? _normalizeApiKey(String? value) {
   }
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+/// 连接测试表单地址的新形状判定（ADR 0020 地址派形状）：只在千问朗读
+/// 档有意义；表查询在配置校验之前跑，地址可能是任意草稿，解析不出或
+/// 不是千问朗读档一律按现行形状对待。
+bool _effectiveAddressUsesMaasShape({
+  required TtsProviderKind provider,
+  required String baseUrl,
+}) {
+  if (provider != TtsProviderKind.qwenTts) {
+    return false;
+  }
+  final uri = Uri.tryParse(baseUrl.trim());
+  return uri != null && qwenTtsUsesMaasShape(uri);
 }
 
 ({String code, ProviderTestStatus status}) _ttsFailureDetails(

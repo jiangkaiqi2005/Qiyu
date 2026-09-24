@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../baseline/host_api_gateway.dart';
 import 'provider_settings_client.dart' show ProviderSettingsGatewayException;
+import 'voice_tier_suggestion.dart';
 
 /// 语音合成（TTS）的服务类型：与 Host 的 tts 段 provider 字段对应，
 /// 缺省 openai_compatible（存量配置不带该字段）。
@@ -222,25 +223,39 @@ final class TtsSettingsDraft {
 }
 
 /// TTS 连接测试结果：成功时附带试听音频（内存字节，随页面丢弃）。
+/// Host 命中档位映射表（ADR 0020）时 [tierSuggestion] 带结构化建议：
+/// 此时 Host 从未出网，设置页当场给引导卡片。
 final class TtsConnectionTest {
   const TtsConnectionTest({
     required this.succeeded,
     required this.message,
     this.audio,
+    this.tierSuggestion,
   });
 
   factory TtsConnectionTest.fromJson(Map<String, Object?> json) {
     final audioBase64 = json['audioBase64'] as String?;
+    final rawSuggestion = json['suggestion'];
     return TtsConnectionTest(
       succeeded: json['ok'] == true,
       message: json['message']! as String,
       audio: audioBase64 == null ? null : base64Decode(audioBase64),
+      tierSuggestion: rawSuggestion is Map
+          ? VoiceTierSuggestionData.fromJson(
+              Map<String, Object?>.from(
+                rawSuggestion.map((k, v) => MapEntry(k.toString(), v)),
+              ),
+            )
+          : null,
     );
   }
 
   final bool succeeded;
   final String message;
   final Uint8List? audio;
+
+  /// 档位映射建议（应换档／不支持）：表 miss 或成功时为 null。
+  final VoiceTierSuggestionData? tierSuggestion;
 }
 
 /// 独立小接口：不往聊天 ProviderSettingsGateway 塞方法，TTS 设置可
