@@ -393,39 +393,6 @@ final class TtsSettingsForm {
   }
 }
 
-/// 一键换档的地址处置：保持现状（同档，或跨档但建议未给可填地址）、
-/// 填建议的缺省端点（现行形状）、把官方地址模板填作草稿（新版端点，
-/// `{业务空间ID}` 待用户替换）。
-enum RefillAddressAction { keepCurrent, suggestedEndpoint, templateDraft }
-
-/// 应用一条建议后表单将处的状态：确认对话框据此如实展示「将要改成
-/// 什么」，[TtsSettingsForm.applySuggestion] 按同一份计划落草稿——展示
-/// 与回填永远同源，不各猜各的。
-final class VoiceTierRefillPlan {
-  const VoiceTierRefillPlan({
-    required this.crossTier,
-    required this.providerWireName,
-    required this.model,
-    required this.addressAction,
-    required this.baseUrl,
-  });
-
-  /// 是否跨档：跨档清 Key 草稿（切换服务不沿用旧 Key），同档保留。
-  final bool crossTier;
-
-  /// 目标档 wire 名。
-  final String providerWireName;
-
-  /// 目标型号。
-  final String model;
-
-  /// 地址处置。
-  final RefillAddressAction addressAction;
-
-  /// 将落进地址栏的内容：建议端点、地址模板原文，或保持的现状。
-  final String baseUrl;
-}
-
 /// 语音朗读设置区块。
 class TtsSettingsSection extends StatefulWidget {
   const TtsSettingsSection({super.key});

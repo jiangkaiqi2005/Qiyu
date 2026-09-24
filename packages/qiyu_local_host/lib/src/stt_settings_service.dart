@@ -11,6 +11,7 @@ import 'provider_settings_service.dart'
         providerTestMessage,
         providerTestStatusFromFailureKind;
 import 'stt_gateway.dart';
+import 'voice_tier_mapping.dart';
 
 /// 语音服务设置快照：经 HTTP 返回时绝不携带明文 Key。
 final class SttSettingsSnapshot {
@@ -140,6 +141,24 @@ final class SttSettingsService {
         (model == null || model.trim().isEmpty);
     final effectiveProvider =
         provider ?? stored?.provider ?? SttProviderKind.openAiCompatible;
+    // 档位映射表（ADR 0020）发请求前查询（票 04 识别侧接线）：命中「应换
+    // 档／不支持」直接返回结构化建议，不发转写请求、网关零调用；表 miss
+    // 一切照旧。识别族没有新版端点条目，新版地址判定不参与本域查表。表
+    // miss 时的分类、错误码与 ADR 0015 文案逐字不变。
+    final suggestion = lookupVoiceTierSuggestion(
+      family: VoiceServiceFamily.transcription,
+      currentProviderWireName: effectiveProvider.wireName,
+      model: effectiveModel,
+    );
+    if (suggestion != null) {
+      return ProviderTestResult(
+        // 复用「模型与接口不匹配」分类：表命中就是它在出网前的判型，
+        // 不新增状态种类（spec 决策 7）。
+        status: ProviderTestStatus.modelInterfaceMismatch,
+        message: suggestion.reason,
+        tierSuggestion: suggestion,
+      );
+    }
     final config = SttConfig(
       provider: effectiveProvider,
       baseUrl: effectiveBaseUrl,

@@ -280,6 +280,20 @@ const List<_SupportedVoiceModel> _supportedVoiceModels = [
   ),
 ];
 
+/// 支持条目的测试锁定表面（遍历用派生视图，条目真相仍在 `_supportedVoiceModels`）：与 `unsupportedVoiceModelRows` 同一「行集
+/// 公开即测试锁定的表面」契约——加行自动进入遍历，改表必同票改测试
+/// （用户故事 26）。
+final supportedVoiceModelRows = [
+  for (final row in _supportedVoiceModels)
+    (
+      model: row.model,
+      family: row.family,
+      providerWireName: row.providerWireName,
+      defaultEndpoint: row.defaultEndpoint,
+      usesMaasAddress: row.usesMaasAddress,
+    ),
+];
+
 /// 档位映射查询（纯函数）：入参服务族、当前协议档 wire 名、型号名
 /// （去空白、小写归一、精确匹配）。当前协议档以 wire 名传入
 /// （`TtsProviderKind.wireName` / `SttProviderKind.wireName`），查询不

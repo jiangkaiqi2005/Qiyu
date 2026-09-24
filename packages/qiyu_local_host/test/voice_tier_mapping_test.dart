@@ -224,6 +224,21 @@ void main() {
       );
     });
 
+    test('结构完整性：转写族所有支持条目不得是新版端点（maas）行', () {
+      // 转写设置页的回填计划保留模板分支只是共享计划形状的防御，本域
+      // 没有可诚实展示的模板话术（`{业务空间ID}` 拼接指引是朗读域话术）：
+      // 表层面锁死转写族不收 maas 行。遍历走支持条目的公开行集（加行
+      // 自动进入），将来确要给转写族加 maas 行，加行即红——届时须同票
+      // 补两域话术与用例。
+      final transcriptionRows = supportedVoiceModelRows
+          .where((row) => row.family == VoiceServiceFamily.transcription)
+          .toList();
+      expect(transcriptionRows, isNotEmpty);
+      for (final row in transcriptionRows) {
+        expect(row.usesMaasAddress, isFalse, reason: '${row.model} 不得标新版端点行');
+      }
+    });
+
     test('转写档填朗读型号被引导回千问朗读档（跨族指引）', () {
       final suggestion = lookupVoiceTierSuggestion(
         family: VoiceServiceFamily.transcription,

@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_tokens.dart';
+import '../shell/qiyu_widgets.dart';
 import 'settings_section_shell.dart';
 import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
+import 'voice_tier_suggestion.dart';
 
 /// 语音输入（STT）设置领域：转写服务类型、地址、模型、鉴权头、响应形态
 /// 与 API Key。
@@ -268,6 +270,57 @@ final class SttSettingsForm {
     }
     return saved;
   }
+
+  /// 一键换档（确认制，ADR 0020，票 04 识别侧接线）：先算清回填计划，
+  /// 再按同一份计划把建议落位写进表单草稿——落盘仍走用户点「保存到本
+  /// 机」的既有保存路径。目标档不在已知档位集合时返回 null（对话框不
+  /// 弹、表单不动，与建议解析的保守兜底同律）。计划规则与朗读侧一致：
+  /// - 跨档：切档、按处置填地址（识别族建议都带可代填缺省端点；共享
+  ///   计划形状里的官方地址模板分支照模式保留）、填型号，并清掉 Key
+  ///   草稿——沿用「切换服务不沿用旧 Key」既有机制。
+  /// - 同档（如千问识别档里把不支持型号换成替代型号）：只改型号。地址
+  ///   与 Key 一律不动。
+  VoiceTierRefillPlan? planSuggestionApply(VoiceTierSuggestionData suggestion) {
+    if (_sttProviderLabel(suggestion.targetProvider) == null) {
+      return null;
+    }
+    final crossTier = _provider.wireName != suggestion.targetProvider;
+    final addressAction = !crossTier
+        ? RefillAddressAction.keepCurrent
+        : suggestion.defaultEndpoint != null
+        ? RefillAddressAction.suggestedEndpoint
+        : suggestion.addressTemplate != null
+        ? RefillAddressAction.templateDraft
+        : RefillAddressAction.keepCurrent;
+    return VoiceTierRefillPlan(
+      crossTier: crossTier,
+      providerWireName: suggestion.targetProvider,
+      model: suggestion.targetModel,
+      addressAction: addressAction,
+      baseUrl: switch (addressAction) {
+        RefillAddressAction.suggestedEndpoint => suggestion.defaultEndpoint!,
+        RefillAddressAction.templateDraft => suggestion.addressTemplate!,
+        RefillAddressAction.keepCurrent => baseUrlController.text,
+      },
+    );
+  }
+
+  /// 按 [planSuggestionApply] 的计划落草稿；null 计划是显式 no-op。
+  /// 计划在所有分支权威：keepCurrent 分支也照写 plan.baseUrl（内容即
+  /// 现状、等值回写），展示与落草稿不存在分支差异。
+  void applySuggestion(VoiceTierRefillPlan? plan) {
+    if (plan == null) {
+      return;
+    }
+    if (plan.crossTier) {
+      selectProvider(plan.providerWireName);
+    }
+    baseUrlController.text = plan.baseUrl;
+    modelController.text = plan.model;
+    if (plan.crossTier) {
+      apiKeyController.clear();
+    }
+  }
 }
 
 /// 语音输入设置区块。
@@ -310,6 +363,66 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
     );
     if (confirmed) {
       await viewModel.forgetApiKey();
+    }
+  }
+
+  /// 一键换档的确认制（票 04 识别侧接线，与朗读侧同一体验）：先展示将
+  /// 要改成什么（档位／地址／型号／Key），用户确认才写进表单草稿（落盘
+  /// 仍要点「保存到本机」）。取消与摸掉对话框都算不改。各行内容全部从
+  /// 回填计划的真实结果推导——展示与回填同源，地址行写的就是将要落进
+  /// 地址栏的内容。
+  Future<void> _confirmApplySuggestion(
+    VoiceTierSuggestionData suggestion,
+  ) async {
+    final plan = _form.planSuggestionApply(suggestion);
+    if (plan == null) {
+      return;
+    }
+    final changes = <String>[
+      if (plan.crossTier)
+        '服务类型：${_sttProviderLabel(_form.provider.wireName)} → '
+            '${_sttProviderLabel(plan.providerWireName)}',
+      '模型名称：${_form.modelController.text.trim().isEmpty ? '（空）' : _form.modelController.text.trim()} → '
+          '${plan.model}',
+      switch (plan.addressAction) {
+        RefillAddressAction.suggestedEndpoint =>
+          '服务地址：填入建议地址\n${plan.baseUrl}',
+        RefillAddressAction.templateDraft =>
+          '服务地址：填入官方地址模板\n${plan.baseUrl}\n'
+              '把 {业务空间ID} 换成你自己的阿里云百炼业务空间 ID 后再保存',
+        RefillAddressAction.keepCurrent => '服务地址：不变',
+      },
+      // Key 行说实话：回填动作本身跨档清 Key 草稿、同档不动。
+      if (plan.crossTier)
+        'API Key：清空重填，切换服务不沿用旧 Key'
+      else
+        'API Key：保留',
+    ];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const Key('stt-tier-suggestion-dialog'),
+        title: const Text('按建议调整？'),
+        content: Text(changes.join('\n')),
+        actions: [
+          QiyuFocusRingScope(
+            borderRadius: QiyuRadii.circleBorder,
+            child: TextButton(
+              key: const Key('stt-tier-suggestion-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('再想想'),
+            ),
+          ),
+          FilledButton(
+            key: const Key('stt-tier-suggestion-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('按建议调整'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() => _form.applySuggestion(plan));
     }
   }
 
@@ -357,23 +470,14 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
               dropdownKey: const Key('stt-provider'),
               label: '服务类型',
               value: provider.wireName,
-              items: const [
-                DropdownMenuItem(
-                  value: 'openai_compatible',
-                  child: Text('OpenAI 兼容转写'),
-                ),
-                DropdownMenuItem(
-                  value: 'volc_seed_asr',
-                  child: Text('豆包流式语音识别'),
-                ),
-                DropdownMenuItem(
-                  value: 'qwen_asr',
-                  child: Text('千问语音识别'),
-                ),
-                DropdownMenuItem(
-                  value: 'custom',
-                  child: Text('自定义转写服务'),
-                ),
+              // 档位目录单处共用：下拉选项、对话框档位改名与建议回填的
+              // 档位识别（未知 wire 名不回填）都从这里出。
+              items: [
+                for (final choice in _sttProviderChoices)
+                  DropdownMenuItem(
+                    value: choice.wireName,
+                    child: Text(choice.label),
+                  ),
               ],
               onChanged: (wireName) =>
                   setState(() => _form.selectProvider(wireName)),
@@ -537,17 +641,30 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
               ),
             ],
             const SizedBox(height: 20),
-            ...settingsStatusBanners(
-              errorMessage: viewModel.errorMessage,
-              testResult: switch (viewModel.testResult) {
-                null => null,
-                final result => (
+            if (viewModel.errorMessage case final message?)
+              SettingsStatusMessage(message: message, succeeded: false),
+            if (viewModel.errorMessage == null)
+              // 命中档位映射表（ADR 0020，票 04 识别侧接线）：引导卡片取代
+              // 普通失败行——Host 从未出网，结论与「按建议调整」当场可读
+              // 可点。建议落在朗读域时本域回填不了，卡片只给指路文案。
+              if (viewModel.testResult?.tierSuggestion case final suggestion?)
+                VoiceTierSuggestionCard(
+                  suggestion: suggestion,
+                  applyButtonKey: const Key('stt-tier-suggestion-apply'),
+                  // 建议落在朗读域、或目标档本界面不认识时回填不了：
+                  // 只给指路文案（回填计划算不出来即不亮按钮）。
+                  onApply: suggestion.targetsTranscription &&
+                          _form.planSuggestionApply(suggestion) != null
+                      ? () => unawaited(_confirmApplySuggestion(suggestion))
+                      : null,
+                )
+              else if (viewModel.testResult case final result?)
+                SettingsStatusMessage(
                   message: result.message,
                   succeeded: result.succeeded,
                 ),
-              },
-              trailingGap: 14,
-            ),
+            if (viewModel.errorMessage != null || viewModel.testResult != null)
+              const SizedBox(height: 14),
             SettingsSaveTestButtons(
               saveButtonKey: const Key('save-stt-settings'),
               saveLabel: '保存到本机',
@@ -570,6 +687,27 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
       },
     );
   }
+}
+
+/// 转写档位目录：wire 名 ↔ 设置页人话标签，单处共用——服务类型下拉的
+/// 选项、确认对话框里的档位名、建议回填的档位识别（[_sttProviderLabel]
+/// 查不到即未知档位，不亮回填）都从这里出。
+const _sttProviderChoices = <({String wireName, String label})>[
+  (wireName: 'openai_compatible', label: 'OpenAI 兼容转写'),
+  (wireName: 'volc_seed_asr', label: '豆包流式语音识别'),
+  (wireName: 'qwen_asr', label: '千问语音识别'),
+  (wireName: 'custom', label: '自定义转写服务'),
+];
+
+/// 服务类型 wire 名 → 设置页同款人话标签；未知 wire 名返回 null
+/// （Host 表将来给出本界面不认识的档位时，保守不回填）。
+String? _sttProviderLabel(String wireName) {
+  for (final choice in _sttProviderChoices) {
+    if (choice.wireName == wireName) {
+      return choice.label;
+    }
+  }
+  return null;
 }
 
 /// 各套 STT 协议各自的缺省地址、模型与输入提示档位。千问档给完整端点

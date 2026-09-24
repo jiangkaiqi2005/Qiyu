@@ -5,6 +5,7 @@ import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'provider_config.dart';
 import 'secret_store.dart';
+import 'voice_tier_mapping.dart';
 import 'web_search.dart';
 
 /// 后台整理调用的模型期限（秒）。Dream、日终理解与轮内召回都经
@@ -49,10 +50,19 @@ enum ProviderTestStatus {
 }
 
 final class ProviderTestResult {
-  const ProviderTestResult({required this.status, required this.message});
+  const ProviderTestResult({
+    required this.status,
+    required this.message,
+    this.tierSuggestion,
+  });
 
   final ProviderTestStatus status;
   final String message;
+
+  /// 档位映射表（ADR 0020）的结构化建议：只有语音设置域的连接测试在
+  /// 出网前查表命中时置值（聊天域的测试从不查表，恒为 null，wire 形状
+  /// 一字不变）。
+  final VoiceTierSuggestion? tierSuggestion;
 
   bool get succeeded => status == ProviderTestStatus.success;
 
@@ -60,6 +70,7 @@ final class ProviderTestResult {
     'ok': succeeded,
     'status': status.name,
     'message': message,
+    'suggestion': ?tierSuggestion?.toJson(),
   };
 }
 

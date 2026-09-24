@@ -233,9 +233,11 @@ void main() {
     expect(failure.message, '语音服务请求过于频繁，请稍后再试。');
   });
 
-  test('上游 url error 拒绝：连接测试与正式转写都给可定位提示', () async {
+  test('filetrans：连接测试命中映射表零出网给精确建议，正式转写照旧出网给原文案', () async {
     // 诊断实录：流式/异步型号（如 filetrans）打到 HTTP 内联端点，服务端
-    // 回 400「url error」，帮助链接是 error-code#error-url 形态。
+    // 回 400「url error」，帮助链接是 error-code#error-url 形态。票 04 起
+    // 连接测试在出网前查表命中、直接给精确建议（零出网）；正式转写路径
+    // 与 ADR 0015 文案一字未动（正式路径文案升级是票 05）。
     final http = _StaticSttHttpClient(
       '{"code":"InvalidParameter","message":"url error, please check url！ For details, see: https://help.aliyun.com/zh/model-studio/error-code#error-url"}',
       statusCode: 400,
@@ -253,7 +255,9 @@ void main() {
       apiKey: 'stt-secret-value',
     );
     expect(tested.status, ProviderTestStatus.modelInterfaceMismatch);
-    expect(tested.message, '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。');
+    expect(tested.message, '这是录音文件转写型号，栖语不支持。');
+    expect(http.postCalls, 0, reason: '命中映射表不得出网');
+    expect(tested.tierSuggestion, isA<VoiceTierUnsupportedSuggestion>());
 
     await expectLater(
       service.transcribe(audio: [1, 2], mimeType: 'audio/webm'),
@@ -271,6 +275,35 @@ void main() {
             ),
       ),
     );
+    expect(http.postCalls, 1, reason: '正式转写路径照常出网');
+  });
+
+  test('表 miss 型号挂 400 url error：连接测试照常出网，分类映射与文案一字不变', () async {
+    // 既有分类映射回归：表外型号（qwen3-asr-turbo 不在映射表）走到真实
+    // 上游、400 url error 按 ADR 0015 分类为「模型与接口不匹配」，通用
+    // 文案逐字保留——filetrans 用例半段改写后，本条是连接测试路径对该
+    // 分类映射的唯一锁定（与朗读侧同构）。
+    final http = _StaticSttHttpClient(
+      '{"code":"InvalidParameter","message":"url error, please check url！ For details, see: https://help.aliyun.com/zh/model-studio/error-code#error-url"}',
+      statusCode: 400,
+    );
+    final service = SttSettingsService(repository(), SttModelGateway(http));
+    await service.save(
+      baseUrl: 'https://stt.example.com/v1',
+      model: 'qwen3-asr-turbo',
+      apiKey: 'stt-secret-value',
+    );
+
+    final tested = await service.test(
+      baseUrl: 'https://stt.example.com/v1',
+      model: 'qwen3-asr-turbo',
+      apiKey: 'stt-secret-value',
+    );
+    expect(http.postCalls, 1, reason: '表 miss 照常出网');
+    expect(tested.succeeded, isFalse);
+    expect(tested.status, ProviderTestStatus.modelInterfaceMismatch);
+    expect(tested.message, '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。');
+    expect(tested.tierSuggestion, isNull);
   });
 
   test('未配置时连接测试报 notConfigured，正式转写报可恢复失败', () async {
@@ -627,6 +660,147 @@ void main() {
     );
   });
 
+  test('档位映射表命中：OpenAI 兼容档误填千问识别型号，发请求前引导换档，零出网', () async {
+    final http = _StaticSttHttpClient('{"text":"不应到达"}');
+    final service = SttSettingsService(repository(), SttModelGateway(http));
+
+    final result = await service.test(
+      baseUrl: 'https://stt.example.com/v1',
+      // 大小写与首尾空白按表查询的归一口径命中。
+      model: ' QWEN3-ASR-Flash ',
+      apiKey: 'stt-test-key',
+    );
+
+    expect(http.postCalls, 0, reason: '命中映射表不得出网');
+    expect(result.succeeded, isFalse);
+    expect(result.status, ProviderTestStatus.modelInterfaceMismatch);
+    expect(result.message, '这个型号要走千问识别档。');
+    final suggestion = result.tierSuggestion;
+    expect(suggestion, isA<VoiceTierSwitchSuggestion>());
+    final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
+    expect(switchSuggestion.targetFamily, VoiceServiceFamily.transcription);
+    expect(switchSuggestion.targetProviderWireName, 'qwen_asr');
+    expect(switchSuggestion.targetModel, 'qwen3-asr-flash');
+    // 缺省地址与型号可代填（现行形状条目）。
+    expect(switchSuggestion.defaultEndpoint, qwenAsrDefaultEndpoint);
+    // 建议 wire 形状与票 03 朗读侧同款（同一下发通道、同一字段集）。
+    expect(result.toJson()['suggestion'], {
+      'kind': 'switchTier',
+      'targetFamily': 'transcription',
+      'targetProvider': 'qwen_asr',
+      'targetModel': 'qwen3-asr-flash',
+      'reason': '这个型号要走千问识别档。',
+      'defaultEndpoint': qwenAsrDefaultEndpoint,
+    });
+  });
+
+  test('档位映射表命中：豆包档填千问识别型号，WS 连接器零建连（第二出网面）', () async {
+    // 豆包档的出网面是 WebSocket 握手：零出网断言必须同时覆盖 HTTP POST
+    // 与 WS 建连两个面，命中映射表时一个字节都不出门。
+    final connector = _ScriptedVolcConnector(
+      responsePayload: {'result': {'text': '不应到达'}},
+    );
+    final http = _StaticSttHttpClient('{"text":"不应到达"}');
+    final service = SttSettingsService(
+      repository(),
+      SttModelGateway(http, webSocketConnector: connector),
+    );
+
+    final result = await service.test(
+      provider: SttProviderKind.volcSeedAsr,
+      baseUrl: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
+      model: 'qwen3-asr-flash',
+      apiKey: 'ark-test-key',
+    );
+
+    expect(connector.connectCalls, 0, reason: '命中映射表不得建连');
+    expect(http.postCalls, 0, reason: '命中映射表不得出网');
+    expect(result.status, ProviderTestStatus.modelInterfaceMismatch);
+    expect(result.message, '这个型号要走千问识别档。');
+    final suggestion = result.tierSuggestion;
+    expect(suggestion, isA<VoiceTierSwitchSuggestion>());
+    expect(
+      (suggestion! as VoiceTierSwitchSuggestion).targetProviderWireName,
+      'qwen_asr',
+    );
+  });
+
+  test('档位映射表命中：千问识别档填 3.1 filetrans，给不支持话术与同档替代型号，零出网', () async {
+    final http = _StaticSttHttpClient('{"text":"不应到达"}');
+    final service = SttSettingsService(repository(), SttModelGateway(http));
+
+    final result = await service.test(
+      provider: SttProviderKind.qwenAsr,
+      baseUrl: qwenAsrDefaultEndpoint,
+      model: 'qwen-audio-3.1-asr-flash-filetrans',
+      apiKey: 'qwen-test-key',
+    );
+
+    expect(http.postCalls, 0, reason: '命中映射表不得出网');
+    expect(result.status, ProviderTestStatus.modelInterfaceMismatch);
+    expect(result.message, '这是录音文件转写型号，栖语不支持。');
+    final suggestion = result.tierSuggestion;
+    expect(suggestion, isA<VoiceTierUnsupportedSuggestion>());
+    final unsupported = suggestion! as VoiceTierUnsupportedSuggestion;
+    expect(unsupported.targetFamily, VoiceServiceFamily.transcription);
+    // 替代型号落位就在当前档：界面侧据此按同档回填（只改型号、Key 保留）。
+    expect(unsupported.targetProviderWireName, 'qwen_asr');
+    expect(unsupported.targetModel, 'qwen3-asr-flash');
+    expect(unsupported.defaultEndpoint, qwenAsrDefaultEndpoint);
+
+    // 映射表只给建议不拦保存：不支持的型号照样存得进（用户故事 8）。
+    final saved = await service.save(
+      provider: SttProviderKind.qwenAsr,
+      baseUrl: qwenAsrDefaultEndpoint,
+      model: 'qwen-audio-3.1-asr-flash-filetrans',
+      apiKey: 'qwen-secret-value',
+    );
+    expect(saved.configured, isTrue);
+    expect(saved.config!.model, 'qwen-audio-3.1-asr-flash-filetrans');
+  });
+
+  test('表 miss 与正确落位照常出网连接测试，结果不带建议', () async {
+    final http = _StaticSttHttpClient('{"text":""}');
+    final service = SttSettingsService(repository(), SttModelGateway(http));
+
+    // 表外陌生型号：一切照旧。
+    final miss = await service.test(
+      baseUrl: 'https://stt.example.com/v1',
+      model: 'whisper-test',
+      apiKey: 'stt-test-key',
+    );
+    expect(miss.succeeded, isTrue);
+    expect(miss.tierSuggestion, isNull);
+    expect(http.postCalls, 1);
+
+    // 千问识别档配 qwen3-asr-flash：正确落位同样不干预、照常出网。
+    final qwenHttp = _StaticSttHttpClient(
+      jsonEncode({
+        'output': {
+          'choices': [
+            {
+              'message': {
+                'content': [
+                  {'text': ''},
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    final qwenService = SttSettingsService(repository(), SttModelGateway(qwenHttp));
+    final placedRight = await qwenService.test(
+      provider: SttProviderKind.qwenAsr,
+      baseUrl: qwenAsrDefaultEndpoint,
+      model: qwenAsrDefaultModel,
+      apiKey: 'qwen-test-key',
+    );
+    expect(placedRight.succeeded, isTrue);
+    expect(placedRight.tierSuggestion, isNull);
+    expect(qwenHttp.postCalls, 1, reason: '正确落位照常出网');
+  });
+
   test('自定义档保存往返：provider 落 custom，旋钮与高级参数随段落盘', () async {
     final service = SttSettingsService(repository(), _sttGateway('在吗'));
 
@@ -809,6 +983,7 @@ final class _ScriptedVolcConnector implements ProviderWebSocketConnector {
 
   final Map<String, Object?>? responsePayload;
   final int? errorCode;
+  int connectCalls = 0;
   final sentFrames = <List<int>>[];
   Map<String, String>? lastHeaders;
 
@@ -817,6 +992,7 @@ final class _ScriptedVolcConnector implements ProviderWebSocketConnector {
     required Uri uri,
     required Map<String, String> headers,
   }) async {
+    connectCalls += 1;
     lastHeaders = headers;
     return _ScriptedVolcConnection(this);
   }
@@ -894,6 +1070,7 @@ final class _StaticSttHttpClient implements ProviderHttpClient {
   final String responseBody;
   Object? postError;
   final int statusCode;
+  int postCalls = 0;
   Uri? lastUri;
   List<int>? lastBody;
   Map<String, String>? lastHeaders;
@@ -907,6 +1084,7 @@ final class _StaticSttHttpClient implements ProviderHttpClient {
     Future<void>? whenCancelled,
     ProviderResponseBudget? budget,
   }) async {
+    postCalls += 1;
     if (postError case final error?) throw error;
     lastUri = uri;
     lastBody = body;
