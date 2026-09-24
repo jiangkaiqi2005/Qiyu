@@ -27,6 +27,7 @@ class QiyuChatBubble extends StatefulWidget {
     this.incomplete = false,
     this.at,
     this.enableCopy = false,
+    this.reserveReplayRow = false,
   });
 
   final String text;
@@ -46,7 +47,9 @@ class QiyuChatBubble extends StatefulWidget {
 
   /// 协议失败留下的半句（票一 文字流式输出）：模型没有正常说完，
   /// 内容如实落盘、不补全不伪装。栖语气泡下方多一行极小档弱色
-  /// 「未完成」标记；用户气泡不涉及。
+  /// 「未完成」标记；用户气泡不涉及。流式完结行占位阶段无法预知
+  /// 这一行，半句交付时 done 后每条完结行会长出它——一次形变，
+  /// 已知取舍（design-system §10 条 13）。
   final bool incomplete;
 
   /// 一键复制：true 时给每条消息一个复制入口（用户的话与栖语的话都
@@ -58,6 +61,13 @@ class QiyuChatBubble extends StatefulWidget {
   /// 应一件事），曾提交的触屏长按菜单已撤。聊天页开启；历史回看页整
   /// 页可选中复制，保持默认关闭。
   final bool enableCopy;
+
+  /// 重听行占位（聊天页流式完结行专用）：没有重听键可给（deliveryIndex
+  /// 尚不存在），但要在重听行将来落位的地方留一条**同位同高**的空带——
+  /// 由隐藏但参与布局的真实按钮承载，高度随平台档自动成立，done 换届时
+  /// 小喇叭原位落进这条空带、布局零位移。历史回看页等其余用法保持默认
+  /// 关闭。
+  final bool reserveReplayRow;
 
   /// 消息时刻（Host 落盘的客观时刻）：消息块下方**外部一行**的次要档
   /// 弱色文字——用户消息右对齐贴气泡尾部，栖语靠左；不参与气泡内布局，
@@ -349,6 +359,27 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
           icon: QiyuIcons.volume_up,
           actionLabel: _replayActionLabel,
           onAction: widget.onReplay!,
+        ),
+      ] else if (widget.reserveReplayRow) ...[
+        const SizedBox(height: 6),
+        // 隐藏但参与布局的真实按钮承载占位：maintainSize 让它跟重听行
+        // 同位同高——高度由构造保证、不背魔法常量，任何平台档（移动档
+        // padded 40 / 桌面 shrinkWrap 档更矮）自动成立；不可点、不进语
+        // 义树，不构成重听键，done 换届时真实按钮原位落进这条空带。
+        // maintainAnimation/maintainState 是 maintainSize 的构造断言
+        // 链要求（按钮无动画无状态可保，保持与否无副作用）。
+        Visibility(
+          maintainSize: true,
+          maintainAnimation: true,
+          maintainState: true,
+          visible: false,
+          child: _MessageActionButton(
+            // 占位不可交互（Visibility 默认 IgnorePointer），动作位仅
+            // 为满足构造，永不会被调用。
+            onAction: () {},
+            icon: QiyuIcons.volume_up,
+            actionLabel: _replayActionLabel,
+          ),
         ),
       ],
     ];

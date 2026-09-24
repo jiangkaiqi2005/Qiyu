@@ -1192,6 +1192,9 @@ class _LocalChatViewState extends State<LocalChatView>
       return const SizedBox.shrink();
     }
     final transientCount = _transientCount(viewModel);
+    // 流式期间已完结的行：按最终消息的同一装配先行渲染（见 itemBuilder），
+    // done 换届时除尾段转正外零重排。
+    final completedLines = viewModel.streamingCompletedLines;
     // 行进抑制门控（design-system §10 第 11 条）：滚轮滚动让消息滑到
     // 静止光标下时 MouseTracker 会派发 onEnter，指针快速扫过时每颗气泡
     // 也会闪时刻——门控在列表层收住（滚动通知只向上冒泡经过祖先，放出
@@ -1223,67 +1226,99 @@ class _LocalChatViewState extends State<LocalChatView>
             // 覆盖层静息占位常量：推导与取舍见 [_chatListBottomInset]。
             _chatListBottomInset,
           ),
-          itemCount: viewModel.messages.length + transientCount,
+          itemCount:
+              viewModel.messages.length +
+              completedLines.length +
+              transientCount,
           itemBuilder: (context, index) {
-            if (index == viewModel.messages.length) {
-              // 栖语的话无气泡（design-system §7）：流式增量同样直接以书页式
-              // 正文靠左呈现，只保留语义上的 live region。
-              return Padding(
-                padding: const EdgeInsets.only(bottom: QiyuSpacing.xs),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: QiyuLayout.messageMaxWidth,
-                  ),
-                  // live region 只承载状态标签：流式期间正文不进语义树，
-                  // 避免每个 delta 都重读全文；交付完成后正文以历史消息
-                  // 的说话人语义呈现（ticket 24）。
-                  child: Semantics(
-                    key: const Key('chat-streaming-reply'),
-                    container: true,
-                    child: Semantics(
-                      liveRegion: true,
-                      label: viewModel.streamingText.isEmpty
-                          ? '栖语在想'
-                          : '栖语正在回复',
-                      child: ExcludeSemantics(
-                        child: viewModel.streamingText.isEmpty
-                            ? Text(
-                                '栖语在想…',
-                                style: QiyuTypography.of(
-                                  context,
-                                ).qiyuMessage.copyWith(color: QiyuColors.muted),
-                              )
-                            : QiyuMarkdown(text: viewModel.streamingText),
-                      ),
-                    ),
-                  ),
+            final messagesEnd = viewModel.messages.length;
+            if (index < messagesEnd) {
+              final message = viewModel.messages[index];
+              final nowReading = viewModel.voiceOutput.nowReading;
+              final isQiyu = message.speaker == LocalChatSpeaker.qiyu;
+              final deliveryIndex = message.deliveryIndex;
+              return QiyuChatBubble(
+                key: Key('chat-message-$index'),
+                text: message.text,
+                fromUser: !isQiyu,
+                deliveryIndex: deliveryIndex,
+                incomplete: message.incomplete,
+                at: message.at,
+                isSpeaking:
+                    nowReading != null &&
+                    message.requestId == nowReading.requestId &&
+                    deliveryIndex == nowReading.deliveryIndex,
+                // 栖语气泡的重听小喇叭：点一下立即重读这句（重听=重新合成）。
+                onReplay: isQiyu && deliveryIndex != null
+                    ? () => viewModel.replayVoiceOutput(message)
+                    : null,
+                // 一键复制：流式中断后不必凭记忆重打全文，栖语的金句也想
+                // 存就走它。入口按指针分两路——桌面鼠标与时刻同一悬停显隐
+                // （复制钮落在时刻行里），触屏/手写笔走选择区长按起选；历
+                // 史回看页（整页可选中复制）不给。
+                enableCopy: true,
+              );
+            }
+            final completedEnd = messagesEnd + completedLines.length;
+            if (index < completedEnd) {
+              // 流式期间已完结的行：与最终消息**同一装配**（同宽度约束、
+              // 同块底距、同时刻槽位常驻预留），done 换届时几何等值接管、
+              // 布局零位移。但本行根件是 ExcludeSemantics、终局消息根件
+              // 是 QiyuChatBubble，槽位级 canUpdate 类型失配——done 时
+              // 子树重建、悬停态瞬态复位后自愈：几何等值成立，元素不跨
+              // done 复用。deliveryIndex 尚不存在：不给重听键与朗读态，
+              // 重听行位置留同位同高空带；复制与时刻显隐同最终气泡同参
+              // 数。正文语义暂时排除——live region 不逐行重复播报，交付
+              // 完成后由历史消息语义接管（ticket 24 口径）。零位移仅对
+              // 完整交付且不立即朗读成立：半句交付每行长出「未完成」小
+              // 字、立即朗读时重听行被「正在读」行替换，done 后仍有一
+              // 次形变，已知取舍（design-system §10 条 13）。
+              return ExcludeSemantics(
+                child: QiyuChatBubble(
+                  key: Key('chat-message-$index'),
+                  text: completedLines[index - messagesEnd],
+                  fromUser: false,
+                  at: viewModel.previewMoment,
+                  enableCopy: true,
+                  // 重听键不给，但由 reserveReplayRow 留同位同高的重听
+                  // 行空带（隐藏真实按钮承载，随平台档自动成立）。
+                  reserveReplayRow: true,
                 ),
               );
             }
-            final message = viewModel.messages[index];
-            final nowReading = viewModel.voiceOutput.nowReading;
-            final isQiyu = message.speaker == LocalChatSpeaker.qiyu;
-            final deliveryIndex = message.deliveryIndex;
-            return QiyuChatBubble(
-              key: Key('chat-message-$index'),
-              text: message.text,
-              fromUser: !isQiyu,
-              deliveryIndex: deliveryIndex,
-              incomplete: message.incomplete,
-              at: message.at,
-              isSpeaking:
-                  nowReading != null &&
-                  message.requestId == nowReading.requestId &&
-                  deliveryIndex == nowReading.deliveryIndex,
-              // 栖语气泡的重听小喇叭：点一下立即重读这句（重听=重新合成）。
-              onReplay: isQiyu && deliveryIndex != null
-                  ? () => viewModel.replayVoiceOutput(message)
-                  : null,
-              // 一键复制：流式中断后不必凭记忆重打全文，栖语的金句也想
-              // 存就走它。入口按指针分两路——桌面鼠标与时刻同一悬停显隐
-              // （复制钮落在时刻行里），触屏/手写笔走选择区长按起选；历
-              // 史回看页（整页可选中复制）不给。
-              enableCopy: true,
+            // 正在增长的尾段留在临时行：栖语的话无气泡（design-system §7），
+            // 流式增量同样直接以书页式正文靠左呈现，只保留语义上的 live
+            // region；完结行已在上面按最终装配先行渲染。
+            return Padding(
+              padding: const EdgeInsets.only(bottom: QiyuSpacing.xs),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: QiyuLayout.messageMaxWidth,
+                ),
+                // live region 只承载状态标签：流式期间正文不进语义树，
+                // 避免每个 delta 都重读全文；交付完成后正文以历史消息
+                // 的说话人语义呈现（ticket 24）。
+                child: Semantics(
+                  key: const Key('chat-streaming-reply'),
+                  container: true,
+                  child: Semantics(
+                    liveRegion: true,
+                    label: viewModel.streamingText.isEmpty
+                        ? '栖语在想'
+                        : '栖语正在回复',
+                    child: ExcludeSemantics(
+                      child: viewModel.streamingText.isEmpty
+                          ? Text(
+                              '栖语在想…',
+                              style: QiyuTypography.of(
+                                context,
+                              ).qiyuMessage.copyWith(color: QiyuColors.muted),
+                            )
+                          : QiyuMarkdown(text: viewModel.streamingTailSegment),
+                    ),
+                  ),
+                ),
+              ),
             );
           },
         ),

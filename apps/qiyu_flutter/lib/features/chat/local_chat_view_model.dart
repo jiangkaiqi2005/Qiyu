@@ -52,6 +52,29 @@ final class _ChatTurn {
   bool waiting = false;
   String streamingText = '';
   final ChatDeliveryAssembly assembly;
+
+  /// 流式期间已完结的行：终局文本按 '\n' 拆、除最后一段。流式前缀＝终局
+  /// 文本前缀（协议保证），这样拆与 Host done 交付的按行拆分一致，视图
+  /// 把完结行按最终消息的同一装配渲染，done 换届时几何不变。派生即得，
+  /// 不另设状态同步。
+  List<String> get completedLines {
+    final text = streamingText;
+    if (text.isEmpty) {
+      return const [];
+    }
+    final lines = text.split('\n');
+    return lines.sublist(0, lines.length - 1);
+  }
+
+  /// 流式正在增长的尾段（最后一段，可能为空）：留在临时行，live region
+  /// 标签跟它走。
+  String get tailSegment {
+    final text = streamingText;
+    if (text.isEmpty) {
+      return '';
+    }
+    return text.substring(text.lastIndexOf('\n') + 1);
+  }
 }
 
 final class LocalChatViewModel extends ChangeNotifier {
@@ -141,6 +164,14 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool get sending => _activeTurn != null;
   bool get waiting => _activeTurn?.waiting ?? false;
   String get streamingText => _activeTurn?.streamingText ?? '';
+
+  /// 流式期间已完结的行：视图按最终消息的同一装配渲染（拆分口径见
+  /// [_ChatTurn.completedLines]）。
+  List<String> get streamingCompletedLines =>
+      _activeTurn?.completedLines ?? const [];
+
+  /// 流式正在增长的尾段：留在临时行渲染（见 [_ChatTurn.tailSegment]）。
+  String get streamingTailSegment => _activeTurn?.tailSegment ?? '';
   bool get hostStopped => _hostMonitor.hostAvailable == false;
 
   /// 最近一次已完成的栖语回复的 fallbackReason。
@@ -217,6 +248,10 @@ final class LocalChatViewModel extends ChangeNotifier {
   /// 才换上来，分钟粒度下两边不会可见地跳变——预显先保住消息在发送
   /// 瞬间就有时刻，不必等落盘往返。
   DateTime get _previewMoment => DateTime.now();
+
+  /// 流式完结行气泡的时刻：与最终消息同一预显来源（[_previewMoment]），
+  /// 分钟粒度下与 done 落盘的权威时刻不会可见地跳变。
+  DateTime get previewMoment => _previewMoment;
 
   Future<void> initialize() async {
     if (_initializing || _initialized) {

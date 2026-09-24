@@ -1379,6 +1379,179 @@ void main() {
     }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
   });
 
+  group('流式完结行按最终装配渲染（done 换届零重排）', () {
+    testWidgets('多行流式：完结行独立成块、尾段在临时行，done 换届几何不变', (tester) async {
+      // 视口加高：内容全程不滚动，几何对照不受贴底跳转干扰。
+      tester.view.physicalSize = const Size(800, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = _StreamControlledChatGateway();
+      final viewModel = await _pumpChatView(tester, gateway: gateway);
+      await viewModel.initialize();
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+      // 直接调 send 拿到轮事务的 future：轮随流终结收尾（send 在流关闭后
+      // 才落定），测试结束不留悬挂的轮事务。
+      final pending = viewModel.send('在吗');
+      await tester.pump();
+      final requestId = gateway.sentRequestId!;
+      gateway.add(
+        LocalChatDeliveryEvent.accepted(requestId: requestId, sessionId: 'session-1'),
+      );
+      gateway.add(LocalChatDeliveryEvent.waiting(requestId: requestId));
+      gateway.add(
+        LocalChatDeliveryEvent.delta(
+          requestId: requestId,
+          text: '第一句，慢慢说。\n',
+        ),
+      );
+      await tester.pump();
+      gateway.add(
+        LocalChatDeliveryEvent.delta(
+          requestId: requestId,
+          text: '第二句，也说完。\n',
+        ),
+      );
+      await tester.pump();
+      gateway.add(
+        LocalChatDeliveryEvent.delta(requestId: requestId, text: '第三句，收尾。'),
+      );
+      await tester.pump();
+
+      // 视图模型行拆分：完结行 = 除最后一段，尾段正在增长。
+      expect(viewModel.streamingCompletedLines, [
+        '第一句，慢慢说。',
+        '第二句，也说完。',
+      ]);
+      expect(viewModel.streamingTailSegment, '第三句，收尾。');
+
+      // 完结行各自独立成块，与用户轮同一气泡序列（chat-message-N）。
+      expect(find.text('第一句，慢慢说。'), findsOneWidget);
+      expect(find.text('第二句，也说完。'), findsOneWidget);
+      expect(find.byKey(const Key('chat-message-1')), findsOneWidget);
+      expect(find.byKey(const Key('chat-message-2')), findsOneWidget);
+      // 尾段留在临时行：完结行不在其中。
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('chat-streaming-reply')),
+          matching: find.text('第三句，收尾。'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('chat-streaming-reply')),
+          matching: find.text('第一句，慢慢说。'),
+        ),
+        findsNothing,
+      );
+      // deliveryIndex 尚不存在：流式完结行不给重听键。
+      expect(find.byKey(const Key('chat-replay-0')), findsNothing);
+
+      final line1Before = tester.getRect(find.byKey(const Key('chat-message-1')));
+      final line2Before = tester.getRect(find.byKey(const Key('chat-message-2')));
+      final tailBefore = tester.getRect(find.text('第三句，收尾。'));
+
+      gateway.add(
+        LocalChatDeliveryEvent.message(
+          requestId: requestId,
+          messages: const ['第一句，慢慢说。', '第二句，也说完。', '第三句，收尾。'],
+        ),
+      );
+      gateway.add(
+        LocalChatDeliveryEvent.state(requestId: requestId, source: ReplySource.llm),
+      );
+      gateway.add(LocalChatDeliveryEvent.done(requestId: requestId));
+      // Host 关流同构：轮循环在 done 后仍消费可能的召回第二段，直到流
+      // 关闭才收尾——不关流，send 的 future 永不落定。
+      await gateway.close();
+      await pending;
+      await tester.pumpAndSettle();
+
+      // done 后同一内容由历史消息接管：完结行矩形逐像素不变。
+      expect(find.text('第一句，慢慢说。'), findsOneWidget);
+      expect(find.text('第二句，也说完。'), findsOneWidget);
+      expect(find.text('第三句，收尾。'), findsOneWidget);
+      expect(tester.getRect(find.byKey(const Key('chat-message-1'))), line1Before);
+      expect(tester.getRect(find.byKey(const Key('chat-message-2'))), line2Before);
+      // 尾段转正为最后一条消息：正文顶缘不动（时刻槽向下生长，不影响上文）。
+      expect(tester.getRect(find.text('第三句，收尾。')).top, tailBefore.top);
+      // 双平台档锁定重听行占位等高：移动档（padded 按钮）与桌面档
+      // （shrinkWrap 按钮更矮）下占位与真实重听行都必须同位同高。
+    }, variant: TargetPlatformVariant({
+      TargetPlatform.android,
+      TargetPlatform.windows,
+    }));
+
+    testWidgets('流式完结行不进语义树，live region 标签跟尾段；done 后说话人语义接管', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      try {
+        final gateway = _StreamControlledChatGateway();
+        final viewModel = await _pumpChatView(tester, gateway: gateway);
+        await viewModel.initialize();
+        await tester.pumpAndSettle();
+
+        await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+        await tester.tap(find.byKey(const Key('chat-send')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        final requestId = gateway.sentRequestId!;
+        gateway.add(
+          LocalChatDeliveryEvent.accepted(
+            requestId: requestId,
+            sessionId: 'session-1',
+          ),
+        );
+        gateway.add(LocalChatDeliveryEvent.waiting(requestId: requestId));
+        await tester.pump();
+
+        // 整段为空：占位文案与「栖语在想」live region。
+        expect(find.text('栖语在想…'), findsOneWidget);
+        expect(find.bySemanticsLabel('栖语在想'), findsOneWidget);
+
+        gateway.add(
+          LocalChatDeliveryEvent.delta(requestId: requestId, text: '第一句。\n'),
+        );
+        await tester.pump();
+        gateway.add(
+          LocalChatDeliveryEvent.delta(requestId: requestId, text: '第二句。'),
+        );
+        await tester.pump();
+
+        // 完结行不进语义树（不逐行播报）；live region 标签跟尾段走。
+        expect(find.bySemanticsLabel(RegExp('栖语说')), findsNothing);
+        expect(find.bySemanticsLabel('栖语正在回复'), findsOneWidget);
+        expect(find.text('栖语在想…'), findsNothing);
+
+        gateway.add(
+          LocalChatDeliveryEvent.message(
+            requestId: requestId,
+            messages: const ['第一句。', '第二句。'],
+          ),
+        );
+        gateway.add(
+          LocalChatDeliveryEvent.state(
+            requestId: requestId,
+            source: ReplySource.llm,
+          ),
+        );
+        gateway.add(LocalChatDeliveryEvent.done(requestId: requestId));
+        await gateway.close();
+        await tester.pumpAndSettle();
+
+        // 交付完成后由历史消息语义接管（ticket 24 口径）：每行带说话人标签。
+        expect(find.bySemanticsLabel(RegExp('栖语说')), findsNWidgets(2));
+        expect(find.bySemanticsLabel('栖语正在回复'), findsNothing);
+      } finally {
+        // 断言失败也要释放，避免句柄泄漏连带影响下一个用例。
+        handle.dispose();
+      }
+    });
+  });
+
   group('聊天页划选（消息列表外 SelectionArea）', () {
     testWidgets('选择区包住消息列表，输入框在外（与历史回看页同款同位置）', (tester) async {
       await _pumpTallChatView(tester);
@@ -1818,6 +1991,54 @@ final class _HangingFailingChatGateway implements _TestChatGateway {
     );
     await _release.future;
     throw const LocalChatGatewayException('本地聊天暂时不可用，请稍后重试。');
+  }
+}
+
+/// 流式事件可控的网关替身：deliver 返回测试持有的流控制器，用例在流式
+/// 中途插断言（完结行渲染、done 换届几何）。请求 id 经 [sentRequestId]
+/// 回读——_pumpChatView 未注入 requestIdFactory，用例不能自行约定。
+///
+/// **单轮用例专用**：控制器是单订阅、跨 deliver 调用共享同一个——第二次
+/// deliver 会撞「stream 已被订阅」而崩。现用例均为单轮；多轮用例需改为
+/// 每次 deliver 新建控制器。
+final class _StreamControlledChatGateway implements _TestChatGateway {
+  final _controller = StreamController<LocalChatDeliveryEvent>();
+  String? sentRequestId;
+
+  void add(LocalChatDeliveryEvent event) => _controller.add(event);
+  Future<void> close() => _controller.close();
+
+  @override
+  Future<LocalChatSnapshot> restore({String? sessionId}) async =>
+      const LocalChatSnapshot(sessionId: 'session-1', messages: []);
+
+  @override
+  Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<bool> stopVoice(String requestId) async => true;
+
+  @override
+  Future<String> transcribe({
+    required Uint8List audio,
+    required String mimeType,
+  }) async => '测试转写文本';
+
+  @override
+  Future<Uint8List> speak({
+    required String requestId,
+    required int deliveryIndex,
+    String? sessionId,
+  }) async => Uint8List.fromList([1, 2, 3]);
+
+  @override
+  Stream<LocalChatDeliveryEvent> deliver({
+    required String requestId,
+    required String text,
+    String? sessionId,
+  }) {
+    sentRequestId = requestId;
+    return _controller.stream;
   }
 }
 
