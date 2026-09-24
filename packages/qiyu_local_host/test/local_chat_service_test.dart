@@ -487,6 +487,59 @@ void main() {
   });
   group('流式交付与失败处理', () {
 
+    test('HTTP 客户端在模型 done 前收到聊天增量', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [const ScriptedLiveStream()],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+      final stream = harness.openChat(
+        requestId: 'live-http-delta',
+        text: '在吗',
+      );
+
+      try {
+        await gateway.awaitStreamOpened();
+        gateway.liveController.add(
+          ModelStreamEvent.delta('还没睡吗？我陪你再待一会儿。'),
+        );
+
+        // liveController 保持打开，模型尚未 done；真实 loopback 客户端
+        // 必须先看到增量，而不是等整段响应结束后一次性收到。
+        await stream.waitFor(ChatDeliveryEventKind.delta).timeout(
+          const Duration(seconds: 2),
+        );
+        expect(
+          stream.received.map((event) => event.kind),
+          contains(ChatDeliveryEventKind.delta),
+        );
+        expect(
+          stream.received.map((event) => event.kind),
+          isNot(contains(ChatDeliveryEventKind.done)),
+        );
+      } finally {
+        if (!gateway.liveController.isClosed) {
+          gateway.liveController.add(ModelStreamEvent.done());
+          await gateway.liveController.close();
+        }
+        await stream.done;
+      }
+
+      expect(await stream.statusCode, HttpStatus.ok);
+      expect(stream.terminationError, isNull);
+      expect(
+        stream.received.map((event) => event.kind),
+        containsAllInOrder([
+          ChatDeliveryEventKind.delta,
+          ChatDeliveryEventKind.message,
+          ChatDeliveryEventKind.done,
+        ]),
+      );
+    });
+
     test('model failure kinds remain diagnostic after local fallback', () async {
       final expectedReasons = {
         ModelFailureKind.dns: FallbackReason.modelDns,

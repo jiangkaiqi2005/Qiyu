@@ -109,6 +109,7 @@ final class ChatRoutes implements ApiRoutes {
             )
             .map((event) => utf8.encode('${jsonEncode(event.toJson())}\n')),
         headers: _streamHeaders,
+        context: const {'shelf.io.buffer_output': false},
       );
     }
     return null;

@@ -575,8 +575,7 @@ final class ScriptedModelGateway implements StreamingModelGateway {
       StreamController<ModelStreamEvent>();
 
   /// 等待服务端打开第 [call] 次聊天流（accepted/waiting 已在其前发出）。
-  /// Host 的 NDJSON 响应整体缓冲，客户端看不到中途事件，取消类测试
-  /// 靠服务端里程碑定位时机。
+  /// 取消类测试靠这个服务端里程碑定位时机，不依赖客户端事件到达。
   Future<void> awaitStreamOpened({int call = 1}) =>
       _awaitMilestone(() => streamCalls.length >= call);
 
