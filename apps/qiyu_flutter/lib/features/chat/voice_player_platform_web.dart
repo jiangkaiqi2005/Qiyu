@@ -30,9 +30,20 @@ final class WebVoicePlayerPlatform
   web.AudioContext? _context;
   Future<bool>? _resumeAttempt;
 
+  /// 最近一次成功开流使用的上下文，仅供浏览器回归测试确认是否复用了
+  /// 手势唤醒的主上下文。
+  web.AudioContext? _debugLastStreamContext;
+
+  web.AudioContext? get debugLastStreamContext => _debugLastStreamContext;
+
   /// AudioWorklet 模块的 Blob URL（进程内建一次）：处理器源码是字符串，
   /// 包成 Blob 免去为它单开一个静态资源路由。
   static String? _workletModuleUrl;
+
+  /// 每个 AudioContext 只允许注册一次同名处理器：按上下文缓存加载
+  /// Future（弱引用，专用上下文关闭后随之回收），同一上下文后续开流
+  /// 不再重复 addModule。
+  final Expando<Future<void>> _workletModules = Expando<Future<void>>();
 
   @override
   bool get supported => true;
@@ -230,33 +241,66 @@ final class WebVoicePlayerPlatform
     required int sampleRate,
     double volume = 1.0,
   }) async {
+    web.AudioContext? context;
+    var ownsContext = false;
     try {
-      // 播放端按协商采样率建上下文：PCM 块的采样率由 Host 随块带上，
-      // 不猜、不让浏览器重采样（重采样会变调）。
-      final context = web.AudioContext(
+      final mainContext = _ensureContext();
+      if (_matchesSampleRate(mainContext, sampleRate) &&
+          !_isContextUnhealthy(mainContext)) {
+        // 发送手势已经唤醒的主上下文与协商采样率一致时直接复用，避免
+        // 自动播放策略只许可主上下文、却拒绝首块异步新建的上下文。
+        if (!await _waitUntilRunning(mainContext)) {
+          return null;
+        }
+        // _waitUntilRunning 可能在设备失效时自愈换了一个上下文；只在新
+        // 上下文仍满足采样率条件时复用，否则走下面的专用上下文。
+        final activeMain = _ensureContext();
+        if (_matchesSampleRate(activeMain, sampleRate) &&
+            !_isContextUnhealthy(activeMain)) {
+          context = activeMain;
+        }
+      }
+      context ??= web.AudioContext(
         web.AudioContextOptions(sampleRate: sampleRate),
       );
-      if (!await _waitStreamContextRunning(context)) {
+      ownsContext = !identical(context, _context);
+      if (ownsContext) {
+        // 采样率不一致时不能把 PCM 硬塞进主上下文：AudioWorklet 按
+        // 上下文采样率消费，直接复用会变速/变调。这里保留协商采样率；
+        // 若新上下文仍被浏览器策略拒绝，控制器会在 done 后整段回退。
+        if (!await _waitStreamContextRunning(context)) {
+          _closeQuietly(context);
+          return null;
+        }
+      } else if (!_matchesSampleRate(context, sampleRate)) {
         _closeQuietly(context);
         return null;
       }
+      final activeContext = context;
       final moduleUrl = _ensureWorkletModule();
       if (moduleUrl == null) {
-        _closeQuietly(context);
+        if (ownsContext) {
+          _closeQuietly(activeContext);
+        }
         return null;
       }
-      await context.audioWorklet.addModule(moduleUrl).toDart;
-      final node = web.AudioWorkletNode(context, _pcmWorkletProcessorName);
-      final gain = context.createGain();
+      await _loadWorkletModule(activeContext, moduleUrl);
+      final node = web.AudioWorkletNode(
+        activeContext,
+        _pcmWorkletProcessorName,
+      );
+      final gain = activeContext.createGain();
       gain.gain.value = volume.clamp(0.0, 1.0);
       node.connect(gain);
-      gain.connect(context.destination);
+      gain.connect(activeContext.destination);
       final playback = _WebVoiceStreamPlayback(
-        context,
+        activeContext,
         node,
         gain,
         sampleRate,
+        ownsContext: ownsContext,
       );
+      _debugLastStreamContext = activeContext;
       node.port.onmessage = ((web.MessageEvent event) {
         // 处理器只在缓冲排空后发这一个信令；字符串信令与二进制块用
         // 类型区分，不引入第二套消息协议。
@@ -268,12 +312,24 @@ final class WebVoicePlayerPlatform
       }).toJS;
       return playback;
     } on Object {
+      if (ownsContext && context != null) {
+        _closeQuietly(context);
+      }
       return null;
     }
   }
 
-  /// 流式上下文的唤醒：用户发送消息时的手势 resume 已激活页面，这里
-  /// 只负责把新上下文推到 running；推不动就如实播不了。
+  bool _matchesSampleRate(web.AudioContext context, int sampleRate) {
+    try {
+      return (context.sampleRate - sampleRate).abs() < 0.5;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// 流式上下文的唤醒：用户发送消息时的手势 resume 只保证主上下文，
+  /// 专用采样率上下文仍需在这里尝试启动；推不动就如实返回 null，交给
+  /// 终局整段回退。
   Future<bool> _waitStreamContextRunning(web.AudioContext context) async {
     try {
       if (context.state == 'running') {
@@ -288,6 +344,26 @@ final class WebVoicePlayerPlatform
     }
   }
 
+  /// 同一上下文的 Worklet 模块只加载一次。缓存的是加载 Future，首块
+  /// 开流尚未完成时并发开流也复用同一次注册；失败时清掉缓存允许重试。
+  Future<void> _loadWorkletModule(
+    web.AudioContext context,
+    String moduleUrl,
+  ) async {
+    final existing = _workletModules[context];
+    if (existing != null) {
+      return existing;
+    }
+    final loading = context.audioWorklet.addModule(moduleUrl).toDart;
+    _workletModules[context] = loading;
+    try {
+      await loading;
+    } on Object {
+      _workletModules[context] = null;
+      rethrow;
+    }
+  }
+
   static String? _ensureWorkletModule() {
     final existing = _workletModuleUrl;
     if (existing != null) {
@@ -295,7 +371,12 @@ final class WebVoicePlayerPlatform
     }
     try {
       final parts = <web.BlobPart>[_pcmWorkletSource.toJS];
-      final blob = web.Blob(parts.toJS);
+      // AudioWorklet.addModule 在 Chromium 会拒绝没有 JavaScript MIME
+      // 的 Blob；这不是 PCM 或浏览器自动播放失败，必须先保证模块可加载。
+      final blob = web.Blob(
+        parts.toJS,
+        web.BlobPropertyBag(type: 'text/javascript'),
+      );
       final url = web.URL.createObjectURL(blob);
       _workletModuleUrl = url;
       return url;
@@ -398,12 +479,17 @@ final class _WebVoiceStreamPlayback implements VoiceStreamPlayback {
     this._context,
     this._node,
     this._gain,
-    this._sampleRate,
-  );
+    this._sampleRate, {
+    required this._ownsContext,
+  });
 
   final web.AudioContext _context;
   final web.AudioWorkletNode _node;
   final web.GainNode _gain;
+
+  /// 只有专用采样率上下文才由本会话关闭；复用的主上下文必须留给
+  /// 后续整段播放与下一次用户手势。
+  final bool _ownsContext;
   final Completer<void> _done = Completer<void>();
   bool _released = false;
   bool _ended = false;
@@ -502,7 +588,7 @@ final class _WebVoiceStreamPlayback implements VoiceStreamPlayback {
       // 同上。
     }
     try {
-      if (_context.state != 'closed') {
+      if (_ownsContext && _context.state != 'closed') {
         _context.close();
       }
     } on Object {

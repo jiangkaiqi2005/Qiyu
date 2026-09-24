@@ -57,6 +57,19 @@ final class VoiceStreamChunk {
 
 enum VoiceOutputPhase { idle, synthesizing, playing }
 
+/// 失败提示的归属：只有同一交付段重新真正出声才清掉，避免队列里的
+/// 后续成功或另一交付段的成功把别的失败提示误当「过期」。
+final class _VoiceFailureNotice {
+  const _VoiceFailureNotice({required this.request, required this.message});
+
+  final VoiceOutputRequest request;
+  final String message;
+
+  bool belongsTo(VoiceOutputRequest other) =>
+      request.requestId == other.requestId &&
+      request.deliveryIndex == other.deliveryIndex;
+}
+
 /// 整段播放队列的一项（票二）：要么是一次 Host 端合成请求（既有路径），
 /// 要么是已在手的完整音频（E1 的句子级顺序播——每句独立整段合成，容器
 /// 原样，不包 WAV 头）。两者共用同一条按序全播的队列。
@@ -101,6 +114,18 @@ final class _VoiceStreamSession {
 
   /// 块收完或失败已判：之后到达的块丢弃（Host 不会发，防御性）。
   bool closed = false;
+
+  /// 平台开流失败：已到块没有真正进入播放器，等 done 后再回退整段。
+  bool startupFailed = false;
+
+  /// Host 已发 done：开流若尚未落定，失败回调要在此时补上整段回退。
+  bool endRequested = false;
+
+  /// Host 的 voiceError（D1）已判：本段不再整段回退。
+  bool synthesisFailed = false;
+
+  /// 整段回退只入队一次，避免 done 重复到达时重复合成。
+  bool fallbackQueued = false;
 }
 
 /// 语音朗读的播放队列（ADR 0002）：按序全播、不抢占正在播的一段；
@@ -153,7 +178,7 @@ final class VoiceOutputController extends ChangeNotifier {
 
   VoiceOutputPhase _phase = VoiceOutputPhase.idle;
   VoiceOutputRequest? _nowReading;
-  String? _failureNotice;
+  _VoiceFailureNotice? _failureNotice;
 
   /// 控制器是否已释放：[stopAllForLeavingPage] 的通知排在微任务里，可能落在
   /// 释放之后，那时再 notifyListeners 会撞 ChangeNotifier 的释放断言。
@@ -183,8 +208,9 @@ final class VoiceOutputController extends ChangeNotifier {
   }
 
   /// 最近一次失败的人话提示：同一生命周期最多置一次（首次提示后续
-  /// 静默），UI 展示后调用 [consumeFailureNotice] 清除。
-  String? get failureNotice => _failureNotice;
+  /// 静默），UI 展示后调用 [consumeFailureNotice] 清除。提示归属发起
+  /// 失败的交付段，只有同一段真正出声才自动清理。
+  String? get failureNotice => _failureNotice?.message;
 
   bool get isReading => _phase != VoiceOutputPhase.idle;
 
@@ -278,10 +304,12 @@ final class VoiceOutputController extends ChangeNotifier {
   ///
   /// 返回是否受理：未受理（朗读关着、被中断、麦克风占用、被停播过、
   /// 已有别的音频在读/在排队）时调用方不应把这笔账记成「播过」——
-  /// 否则该交付段在 done 时既不听整段、直播又丢了，彻底失声。
+  /// 否则该交付段在 done 时既不听整段、直播又丢了，彻底失声。PCM 首块
+  /// 的开流是异步的；这里返回 true 只表示控制器已接管，若随后开流失败，
+  /// 控制器会在 done 的 [endStream] 里补一次整段回退。
   ///
-  /// 降级口径与整段路径一致：平台没有流式播放能力时提示一次
-  /// 「读不出来」。
+  /// 降级口径与整段路径一致：平台没有流式播放能力时，等终局整段回退
+  /// 也失败才提示一次「读不出来」。
   bool offerStreamChunk(VoiceStreamChunk chunk, {required bool enabled}) {
     if (_disposed ||
         _interrupted ||
@@ -293,8 +321,9 @@ final class VoiceOutputController extends ChangeNotifier {
     }
     // E1：完整容器块——走既有整段播放器，按序全播、不抢占。
     if (chunk.isWhole) {
-      if (_phase != VoiceOutputPhase.idle) {
-        // 有音频在读：排队等它（含流式会话在播）。
+      if (_phase != VoiceOutputPhase.idle || _stream != null) {
+        // 有音频在读，或上一路流正在等 done 确认能否出声：排队等它，
+        // 不能让后续完整块越过本段回退抢先播放。
         _queue.addLast(
           _VoiceQueueItem.audio(
             request: VoiceOutputRequest(
@@ -377,24 +406,46 @@ final class VoiceOutputController extends ChangeNotifier {
         return;
       }
     }
-    final playback = await activity.startStream(
-      sampleRate: session.sampleRate,
-      volume: _volume,
-    );
+    VoiceStreamPlayback? playback;
+    try {
+      playback = await activity.startStream(
+        sampleRate: session.sampleRate,
+        volume: _volume,
+      );
+    } on Object {
+      // 平台桥接抛错与返回 null 同义：已合成但尚未出声，交给 done 回退。
+      playback = null;
+    }
     if (!activity.acceptStream(playback)) {
       return;
     }
     if (playback == null) {
-      // 平台没有流式播放能力（旧浏览器/桌面宿主）：合成已成功，播不出
-      // 来不能冒充服务断线。
+      // 平台没有流式播放能力或 AudioWorklet 开不起来：合成已成功，但
+      // 这一段还没有任何声音。先留住失败态，等 done 再把整段请求放进
+      // 队列——/speak 只能在消息落盘后调用，不能在这里抢跑。
       activity.finish();
-      if (identical(_stream, session)) {
-        _stream = null;
-      }
+      session.startupFailed = true;
+      session.closed = true;
       _toIdle();
-      _notifyFailureOnce('无法播放语音，点小喇叭再听一次。');
-      _drain();
+      if (session.endRequested) {
+        _queueStreamFallback(session);
+      }
+      notifyListeners();
       return;
+    }
+    if (!session.synthesisFailed) {
+      // 真正拿到播放句柄就算这段出声成功；只清同一段此前留下的失败
+      // 提示，不重置同会话的失败频控，也不误清其他交付段的提示。
+      final cleared = _clearFailureNoticeFor(
+        VoiceOutputRequest(
+          requestId: session.requestId,
+          deliveryIndex: session.deliveryIndex,
+          sessionId: session.sessionId,
+        ),
+      );
+      if (cleared) {
+        notifyListeners();
+      }
     }
     session.playback = playback;
     // 开流之前到达的块按序补写，之后 arrive 的块直接进播放器。
@@ -428,7 +479,50 @@ final class VoiceOutputController extends ChangeNotifier {
       return;
     }
     session.closed = true;
-    session.playback?.end();
+    session.endRequested = true;
+    if (session.playback != null) {
+      session.playback!.end();
+      return;
+    }
+    // 开流还没落定时，_startStream 的失败回调会在这里补回退；已经
+    // 失败则现在就能入队。两种情况都只交给一个幂等 helper。
+    if (session.startupFailed) {
+      _queueStreamFallback(session);
+    }
+  }
+
+  /// 开流失败且 Host 已收尾：把该交付段放回整段队列首位。它必须等到
+  /// done 才会被调用，因而不会在消息落盘前请求 /speak；放首位是为了
+  /// 不让失败期间排队的后续完整块越过本段。
+  void _queueStreamFallback(_VoiceStreamSession session) {
+    if (session.synthesisFailed) {
+      // D1 已经收声：不能把开流失败再解释成整段回退。但 ADR 0018 的
+      // D1 语义是已排队到的音频照常播完，所以只释放本段占位，不清队列。
+      if (identical(_stream, session)) {
+        _stream = null;
+      }
+      _toIdle();
+      _drain();
+      return;
+    }
+    if (session.fallbackQueued) {
+      return;
+    }
+    session.fallbackQueued = true;
+    if (identical(_stream, session)) {
+      _stream = null;
+    }
+    _queue.addFirst(
+      _VoiceQueueItem.request(
+        VoiceOutputRequest(
+          requestId: session.requestId,
+          deliveryIndex: session.deliveryIndex,
+          sessionId: session.sessionId,
+        ),
+      ),
+    );
+    _toIdle();
+    _drain();
   }
 
   /// 硬停一路流式播放（票二：轮交付取消时调用）：立刻停声，但**不清
@@ -458,14 +552,33 @@ final class VoiceOutputController extends ChangeNotifier {
 
   /// 一句合成失败（票二 D1）：本段语音结束——已到的块照常播完
   /// （已播句子 standing），后续块即使到达也丢弃；同会话首次失败
-  /// 提示一次，之后静默。
-  void notifyStreamFailure() {
+  /// 提示一次，之后静默。提示归属该交付段，同一RequestId的其他交付
+  /// 段成功播放不会把它清掉。
+  void notifyStreamFailure({
+    required String requestId,
+    required int deliveryIndex,
+  }) {
+    final request = VoiceOutputRequest(
+      requestId: requestId,
+      deliveryIndex: deliveryIndex,
+      sessionId: _sessionId,
+    );
     final session = _stream;
-    if (session != null) {
+    if (session != null &&
+        session.requestId == requestId &&
+        session.deliveryIndex == deliveryIndex) {
+      session.synthesisFailed = true;
       session.closed = true;
-      session.playback?.end();
+      if (session.startupFailed) {
+        // 没有任何播放句柄时，本段已彻底无声；只把状态回到 idle，保留
+        // closed 占位到 done，挡住迟到 PCM。已排队的整段音频按 D1 的
+        // standing 语义保留，done 后由 _queueStreamFallback 排空。
+        _toIdle();
+      } else {
+        session.playback?.end();
+      }
     }
-    _notifyFailureOnce('有句话没合成出来，后面的先不读了。');
+    _notifyFailureOnce('有句话没合成出来，后面的先不读了。', request: request);
   }
 
   void consumeFailureNotice() {
@@ -476,9 +589,20 @@ final class VoiceOutputController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 清掉同一段归属的失败提示；返回是否真的发生了变化，由调用方决定
+  /// 是否补一次通知（已在相邻状态通知里的调用不重复通知）。
+  bool _clearFailureNoticeFor(VoiceOutputRequest request) {
+    if (_failureNotice?.belongsTo(request) != true) {
+      return false;
+    }
+    _failureNotice = null;
+    return true;
+  }
+
   Future<void> _drain() async {
-    if (_phase != VoiceOutputPhase.idle) {
-      // 已有一段在读/在合成：新项已在队列里，按序等它读完。
+    if (_phase != VoiceOutputPhase.idle || _stream != null) {
+      // 已有一段在读/在合成，或上一路流在等 done 确认回退：新项已在
+      // 队列里，按序等它收尾，不能越过本段先出声。
       return;
     }
     while (_queue.isNotEmpty) {
@@ -515,7 +639,7 @@ final class VoiceOutputController extends ChangeNotifier {
             return;
           }
           activity.finish();
-          _notifyFailureOnce('语音服务连不上，这条读不出来。');
+          _notifyFailureOnce('语音服务连不上，这条读不出来。', request: request);
           final category = categorizeVoiceApiError(error, isInput: false);
           if (category != null) {
             onApiError?.call(category);
@@ -538,9 +662,12 @@ final class VoiceOutputController extends ChangeNotifier {
         activity.finish();
         // 合成已成功；播放许可、解码或音频设备失败不能冒充服务断线。
         // 文案平台中性：web 是浏览器自动播放策略，安卓是系统音频设备。
-        _notifyFailureOnce('无法播放语音，点小喇叭再听一次。');
+        _notifyFailureOnce('无法播放语音，点小喇叭再听一次。', request: request);
         continue;
       }
+      // 整段回退或手动重听真正拿到播放句柄：只清同一段此前留下的过期
+      // 失败提示。清除结果与「开始播放」的状态变化合并进下一次通知。
+      _clearFailureNoticeFor(request);
       _phase = VoiceOutputPhase.playing;
       notifyListeners();
       await playback.done;
@@ -553,10 +680,13 @@ final class VoiceOutputController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _notifyFailureOnce(String message) {
+  void _notifyFailureOnce(
+    String message, {
+    required VoiceOutputRequest request,
+  }) {
     if (!_failureNotified) {
       _failureNotified = true;
-      _failureNotice = message;
+      _failureNotice = _VoiceFailureNotice(request: request, message: message);
       notifyListeners();
     }
   }

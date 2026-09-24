@@ -253,15 +253,28 @@ final class LocalChatViewModel extends ChangeNotifier {
   /// 分钟粒度下与 done 落盘的权威时刻不会可见地跳变。
   DateTime get previewMoment => _previewMoment;
 
+  /// 翻代前释放旧事务的流式语音占位。只按旧 requestId 定域：恢复或
+  /// 丢弃会话可能打断 startStream 失败后的等待窗，旧流不会再收到
+  /// done/EOF 终局；不显式释放会让隐藏 `_stream` 堵死后续自动朗读。
+  void _releaseVoiceStreamFor(_ChatTurn? turn) {
+    final requestId = turn?.requestId;
+    if (requestId == null) {
+      return;
+    }
+    voiceOutput.stopStream(requestId: requestId);
+  }
+
   Future<void> initialize() async {
     if (_initializing || _initialized) {
       return;
     }
     _initializing = true;
+    final supersededTurn = _activeTurn;
     _sessionScope = Object();
     _generation += 1;
     final generation = _generation;
     _activeTurn = null;
+    _releaseVoiceStreamFor(supersededTurn);
     // 初始化即翻篇：流式语音账本与交付计数都随恢复重算（见
     // _applyRestore）。
     _voiceStreamedDeliveries.clear();
@@ -408,10 +421,12 @@ final class LocalChatViewModel extends ChangeNotifier {
       return;
     }
     _sessionScope = Object();
+    final supersededTurn = _activeTurn;
     _generation += 1;
     final generation = _generation;
     // 旧事务随代数失效：等待指示与流式半句一并消失，发送锁同时释放。
     _activeTurn = null;
+    _releaseVoiceStreamFor(supersededTurn);
     _sessionId = null;
     _messages.clear();
     _pendingRequestId = null;
@@ -546,8 +561,9 @@ final class LocalChatViewModel extends ChangeNotifier {
           case LocalChatEventKind.voiceChunk:
             // 语音块搭车（票二）：PCM 块进流式播放器、完整容器块（E1）
             // 进整段队列。文/音解耦——块丢失或播不出来都不影响文字显示。
-            // 只有受理了才记「播过」账：未受理（被停播过、忙于别的
-            // 音频）时 done 仍走整段入队，否则这段话彻底失声。
+            // 受理了才记「播过」账：未受理（被停播过、忙于别的音频）时
+            // done 仍走整段入队；PCM 已受理但异步开流失败时，由控制器在
+            // endStream 里补同一段的终局整段回退。
             final accepted = voiceOutput.offerStreamChunk(
               VoiceStreamChunk(
                 requestId: event.requestId,
@@ -571,7 +587,10 @@ final class LocalChatViewModel extends ChangeNotifier {
             // 不出声、同会话只提示一次；文字显示不受影响。失败段同样
             // 记「不再整段重读」：用户刚听完「后面的先不读了」，不能
             // 又被整段读一遍（还多烧一次合成配额）。
-            voiceOutput.notifyStreamFailure();
+            voiceOutput.notifyStreamFailure(
+              requestId: turn.requestId,
+              deliveryIndex: event.deliveryIndex!,
+            );
             _voiceStreamedDeliveries.add(_deliveryKey(
               turn.requestId,
               event.deliveryIndex!,
@@ -640,6 +659,12 @@ final class LocalChatViewModel extends ChangeNotifier {
       }
     } on Object {
       turn.assembly.fail();
+      // 网关异常、协议错误或传输层断开都可能发生在 done 之前；此时不
+      // 能让已受理的流式语音占位等一个不会到来的 endStream，否则下一
+      // 轮自动朗读会被堵死。
+      if (_belongsToActiveGeneration(turn)) {
+        voiceOutput.stopStream(requestId: turn.requestId);
+      }
       rethrow;
     } finally {
       turn.assembly.close();
@@ -654,6 +679,9 @@ final class LocalChatViewModel extends ChangeNotifier {
         if (turn.assembly.end == ChatDeliveryEnd.closed &&
             (turn.assembly.hasIncompleteSegment || !turn.assembly.hasCompleted)) {
           _errorMessage = '回复未完成，可以重新发送。';
+          // EOF / 半途关流同样没有 done：显式释放这一路流式语音占位，
+          // 但不伪造整段回退（消息没有完整落盘）。
+          voiceOutput.stopStream(requestId: turn.requestId);
         }
         turn.streamingText = '';
         turn.waiting = false;

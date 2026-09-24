@@ -1207,6 +1207,318 @@ void main() {
     await initializing;
     expect(gateway.restoreCalls, 1);
   });
+
+  test('PCM 块无法开流时，done 仍回退整段朗读', () async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _StreamStartFailsPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final gateway = _ScriptedGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+      requestIdFactory: () => 'request-voice-fallback',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+
+    final sending = viewModel.send('在吗');
+    void emit(LocalChatDeliveryEvent event) =>
+        gateway.emit('request-voice-fallback', event);
+    emit(
+      const LocalChatDeliveryEvent.accepted(
+        requestId: 'request-voice-fallback',
+        sessionId: 'session-1',
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.delta(
+        requestId: 'request-voice-fallback',
+        sessionId: 'session-1',
+        text: '在。刚忙完。',
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.voiceChunk(
+        requestId: 'request-voice-fallback',
+        sessionId: 'session-1',
+        deliveryIndex: 0,
+        chunkIndex: 0,
+        sampleRate: 24000,
+        data: 'AQ==',
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(player.streamStarts, 1);
+    // 开流失败先等 done，不能提前请求整段合成；回退成功前也不弹过期提示。
+    expect(speakGateway.calls, isEmpty);
+    expect(controller.failureNotice, isNull);
+
+    emit(
+      const LocalChatDeliveryEvent.message(
+        requestId: 'request-voice-fallback',
+        sessionId: 'session-1',
+        messages: ['在。刚忙完。'],
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.state(
+        requestId: 'request-voice-fallback',
+        sessionId: 'session-1',
+        source: ReplySource.llm,
+        mode: 'llm',
+      ),
+    );
+    emit(
+      const LocalChatDeliveryEvent.done(
+        requestId: 'request-voice-fallback',
+        sessionId: 'session-1',
+      ),
+    );
+    gateway.closeStream('request-voice-fallback');
+    expect((await sending).status, ChatSendStatus.completed);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(speakGateway.calls, [
+      (requestId: 'request-voice-fallback', deliveryIndex: 0),
+    ]);
+    expect(player.wholePlays, 1);
+    expect(controller.failureNotice, isNull);
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  test('开流失败且事件流半途断开时释放占位，下一轮照常朗读', () async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _StreamStartFailsPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final gateway = _ScriptedGateway();
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+      requestIdFactory: () => 'request-voice-stall',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+
+    final first = viewModel.send('在吗');
+    gateway
+      ..emitAccepted('request-voice-stall')
+      ..emitDelta('request-voice-stall', '在。刚忙完。')
+      ..emit(
+        'request-voice-stall',
+        const LocalChatDeliveryEvent.voiceChunk(
+          requestId: 'request-voice-stall',
+          sessionId: 'session-1',
+          deliveryIndex: 0,
+          chunkIndex: 0,
+          sampleRate: 24000,
+          data: 'AQ==',
+        ),
+      );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(player.streamStarts, 1);
+
+    // 没有 done，传输层直接 EOF：不能把开流失败占位留到下一轮。
+    gateway.closeStream('request-voice-stall');
+    expect((await first).status, ChatSendStatus.acceptedIncomplete);
+    await Future<void>.delayed(Duration.zero);
+
+    final second = viewModel.send('在吗');
+    gateway
+      ..emitAccepted('request-voice-stall')
+      ..emitDelta('request-voice-stall', '在。刚忙完。')
+      ..emit(
+        'request-voice-stall',
+        const LocalChatDeliveryEvent.voiceChunk(
+          requestId: 'request-voice-stall',
+          sessionId: 'session-1',
+          deliveryIndex: 0,
+          chunkIndex: 0,
+          sampleRate: 24000,
+          data: 'AQ==',
+        ),
+      )
+      ..emitMessage('request-voice-stall', ['在。刚忙完。'])
+      ..emitState('request-voice-stall')
+      ..emitDone('request-voice-stall')
+      ..closeStream('request-voice-stall');
+    expect((await second).status, ChatSendStatus.completed);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.streamStarts, 2);
+    expect(speakGateway.calls, [
+      (requestId: 'request-voice-stall', deliveryIndex: 0),
+    ]);
+    expect(player.wholePlays, 1);
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  test('丢弃会话翻代释放旧流占位，不同 requestId 的新轮照常朗读', () async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _StreamStartFailsPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final gateway = _ScriptedGateway();
+    var counter = 0;
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+      requestIdFactory: () => 'request-voice-discard-${counter += 1}',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+
+    final first = viewModel.send('第一轮的话');
+    gateway
+      ..emitAccepted('request-voice-discard-1')
+      ..emitDelta('request-voice-discard-1', '在。刚忙完。')
+      ..emit(
+        'request-voice-discard-1',
+        const LocalChatDeliveryEvent.voiceChunk(
+          requestId: 'request-voice-discard-1',
+          sessionId: 'session-1',
+          deliveryIndex: 0,
+          chunkIndex: 0,
+          sampleRate: 24000,
+          data: 'AQ==',
+        ),
+      );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(player.streamStarts, 1);
+
+    // 旧轮还在等不会到来的终局时翻代：占位必须随旧 requestId 释放。
+    await viewModel.discardSession('session-1');
+    gateway.closeStream('request-voice-discard-1');
+    expect((await first).status, ChatSendStatus.staleSession);
+    await Future<void>.delayed(Duration.zero);
+
+    final second = viewModel.send('新一轮的话');
+    gateway
+      ..emitAccepted('request-voice-discard-2')
+      ..emitDelta('request-voice-discard-2', '好，我在。')
+      ..emit(
+        'request-voice-discard-2',
+        const LocalChatDeliveryEvent.voiceChunk(
+          requestId: 'request-voice-discard-2',
+          sessionId: 'session-1',
+          deliveryIndex: 0,
+          chunkIndex: 0,
+          sampleRate: 24000,
+          data: 'AQ==',
+        ),
+      )
+      ..emitMessage('request-voice-discard-2', ['好，我在。'])
+      ..emitState('request-voice-discard-2')
+      ..emitDone('request-voice-discard-2')
+      ..closeStream('request-voice-discard-2');
+    expect((await second).status, ChatSendStatus.completed);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.streamStarts, 2);
+    expect(speakGateway.calls, [
+      (requestId: 'request-voice-discard-2', deliveryIndex: 0),
+    ]);
+    expect(player.wholePlays, 1);
+    viewModel.dispose();
+    controller.dispose();
+  });
+
+  test('恢复会话翻代释放旧流占位，不同 requestId 的新轮照常朗读', () async {
+    final speakGateway = _RecordingSpeakGateway();
+    final player = _StreamStartFailsPlayerPlatform();
+    final controller = VoiceOutputController(
+      speakGateway,
+      playerPlatform: player,
+    );
+    final gateway = _ScriptedGateway();
+    var counter = 0;
+    final viewModel = LocalChatViewModel(
+      gateway,
+      hostConnectionProbe: FakeHostConnectionProbe(const [true]),
+      requestIdFactory: () => 'request-voice-restore-${counter += 1}',
+      ttsSettingsGateway: _FixedTtsSettingsGateway(configured: true),
+      voiceOutput: controller,
+      autoStart: false,
+    );
+    await viewModel.refreshVoiceOutputStatus();
+
+    final first = viewModel.send('旧会话里的话');
+    gateway
+      ..emitAccepted('request-voice-restore-1')
+      ..emitDelta('request-voice-restore-1', '在。刚忙完。')
+      ..emit(
+        'request-voice-restore-1',
+        const LocalChatDeliveryEvent.voiceChunk(
+          requestId: 'request-voice-restore-1',
+          sessionId: 'session-1',
+          deliveryIndex: 0,
+          chunkIndex: 0,
+          sampleRate: 24000,
+          data: 'AQ==',
+        ),
+      );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(player.streamStarts, 1);
+
+    // 初始化恢复在旧轮等待窗内翻代：旧 requestId 的隐藏占位随之释放。
+    await viewModel.initialize();
+    gateway.closeStream('request-voice-restore-1');
+    expect((await first).status, ChatSendStatus.staleSession);
+    await Future<void>.delayed(Duration.zero);
+
+    final second = viewModel.send('恢复后的话');
+    gateway
+      ..emitAccepted('request-voice-restore-2')
+      ..emitDelta('request-voice-restore-2', '我在。')
+      ..emit(
+        'request-voice-restore-2',
+        const LocalChatDeliveryEvent.voiceChunk(
+          requestId: 'request-voice-restore-2',
+          sessionId: 'session-1',
+          deliveryIndex: 0,
+          chunkIndex: 0,
+          sampleRate: 24000,
+          data: 'AQ==',
+        ),
+      )
+      ..emitMessage('request-voice-restore-2', ['我在。'])
+      ..emitState('request-voice-restore-2')
+      ..emitDone('request-voice-restore-2')
+      ..closeStream('request-voice-restore-2');
+    expect((await second).status, ChatSendStatus.completed);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.streamStarts, 2);
+    expect(speakGateway.calls, [
+      (requestId: 'request-voice-restore-2', deliveryIndex: 0),
+    ]);
+    expect(player.wholePlays, 1);
+    viewModel.dispose();
+    controller.dispose();
+  });
 }
 
 /// 计数连接探针：立即返回可用。
@@ -1632,6 +1944,41 @@ final class _StreamingPlayerPlatform
     final playback = _RecordingStreamPlayback(sampleRate: sampleRate);
     streams.add(playback);
     return playback;
+  }
+}
+
+/// 模拟浏览器当前设备无法启动 AudioWorklet，但整段播放仍可用。
+final class _StreamStartFailsPlayerPlatform
+    implements VoicePlayerPlatform, StreamingVoicePlayerPlatform {
+  int streamStarts = 0;
+  int wholePlays = 0;
+
+  @override
+  bool get supported => true;
+
+  @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+    double volume = 1.0,
+  }) async {
+    wholePlays += 1;
+    return _AutoFinishPlayback();
+  }
+
+  @override
+  Future<VoiceStreamPlayback?> startStream({
+    required int sampleRate,
+    double volume = 1.0,
+  }) async {
+    streamStarts += 1;
+    return null;
   }
 }
 

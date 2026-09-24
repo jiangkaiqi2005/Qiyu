@@ -23,6 +23,70 @@ void main() {
     await playback!.done;
   });
 
+  test('流式 PCM 采样率与手势主上下文一致时复用已唤醒上下文', () async {
+    final platform = createVoicePlayerPlatform() as WebVoicePlayerPlatform;
+    platform.prepareForPlayback();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final mainContext = platform.debugAudioContext!;
+    final sampleRate = mainContext.sampleRate.round();
+    final playback = await platform.startStream(sampleRate: sampleRate);
+    expect(playback, isNotNull);
+    expect(identical(platform.debugLastStreamContext, mainContext), isTrue);
+    expect(platform.debugAudioContext?.state, 'running');
+
+    playback!.append(Uint8List.fromList([0, 0]));
+    playback.end();
+    await playback.done;
+    // 流式会话结束不能关掉复用的主上下文，整段重听仍可继续使用。
+    expect(platform.debugAudioContext?.state, 'running');
+  });
+
+  test('同一主上下文连续两次 startStream 均能自然 drain', () async {
+    final platform = createVoicePlayerPlatform() as WebVoicePlayerPlatform;
+    platform.prepareForPlayback();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final mainContext = platform.debugAudioContext!;
+    final sampleRate = mainContext.sampleRate.round();
+
+    for (var round = 0; round < 2; round += 1) {
+      final playback = await platform.startStream(sampleRate: sampleRate);
+      expect(playback, isNotNull, reason: '第 ${round + 1} 次开流失败');
+      expect(identical(platform.debugLastStreamContext, mainContext), isTrue);
+      expect(platform.debugAudioContext?.state, 'running');
+
+      playback!.append(Uint8List.fromList([0, 0]));
+      playback.end();
+      await playback.done;
+    }
+    // 两次都能自然 drain，且主上下文没有被第二次 addModule 破坏。
+    expect(platform.debugAudioContext?.state, 'running');
+  });
+
+  test('流式 PCM 采样率不同于主上下文时保留协商采样率并隔离上下文', () async {
+    final platform = createVoicePlayerPlatform() as WebVoicePlayerPlatform;
+    platform.prepareForPlayback();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final mainContext = platform.debugAudioContext!;
+    final alternateRate = mainContext.sampleRate.round() == 24000
+        ? 48000
+        : 24000;
+    final playback = await platform.startStream(sampleRate: alternateRate);
+    expect(playback, isNotNull);
+    expect(
+      (platform.debugLastStreamContext!.sampleRate - alternateRate).abs(),
+      lessThan(0.5),
+    );
+    expect(identical(platform.debugLastStreamContext, mainContext), isFalse);
+
+    playback!.append(Uint8List.fromList([0, 0]));
+    playback.end();
+    await playback.done;
+    // 专用上下文由流会话真正关闭；用户手势唤醒的主上下文仍保持可用。
+    await Future<void>.delayed(Duration.zero);
+    expect(platform.debugLastStreamContext?.state, 'closed');
+    expect(platform.debugAudioContext?.state, 'running');
+  });
+
   test('stop() 立即中止播放并结束 playback.done，且多次 stop() 保持幂等', () async {
     final platform = createVoicePlayerPlatform();
     final gesturePlayer = platform as UserGestureVoicePlayerPlatform;
