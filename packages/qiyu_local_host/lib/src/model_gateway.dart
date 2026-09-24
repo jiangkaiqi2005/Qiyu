@@ -1257,7 +1257,9 @@ typedef _AnthropicStreamPart = ({
 });
 
 /// 发给 Provider 的输出上限，各协议保持一致，防止失控的账单与超长候选。
-const _maxModelReplyTokens = 512;
+/// 思考模型的思考 token 计入同一输出预算，上限需给思考留余量；可见回复
+/// 长度仍由行为核心 2000 runes 上限与交付层原始缓冲上限约束。
+const _maxModelReplyTokens = 8192;
 
 /// 聊天与理解模型响应的传输预算（ticket 08）：单帧（一行）1 MiB、
 /// 单个 2xx 响应 16 MiB、错误响应 64 KiB，在解码、分行与聚合之前按

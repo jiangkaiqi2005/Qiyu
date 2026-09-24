@@ -44,7 +44,7 @@ void main() {
         {'role': 'user', 'content': '在吗'},
       ],
       'temperature': 0.6,
-      'max_tokens': 512,
+      'max_tokens': 8192,
       'stream': true,
     });
   });
@@ -145,7 +145,7 @@ void main() {
         {'role': 'user', 'content': '在吗'},
       ],
       'temperature': 0.6,
-      'max_tokens': 512,
+      'max_tokens': 8192,
       'stream': true,
     });
   });
