@@ -290,9 +290,21 @@ final class SttSettingsService {
         retryable: false,
       );
     } on SttGatewayException catch (error) {
+      // 模型与接口不匹配显式带 client 类别，但错误码要可区分：前置
+      // 分支排除该种类，落 switch 拿 stt_model_interface_mismatch。该
+      // 分类落定后查档位映射表（票 05），命中把 ADR 0015 通用文案升级
+      // 为精确到档建议（与连接测试引导同源同句）；表 miss 与其他失败
+      // 类别沿用网关文案逐字不变。识别族没有新版端点条目，新版地址
+      // 判定不参与本域查表（与连接测试同口径）。
+      final message = error.kind == ModelFailureKind.modelInterfaceMismatch
+          ? lookupVoiceTierFormalMessage(
+                family: VoiceServiceFamily.transcription,
+                currentProviderWireName: config.provider.wireName,
+                model: config.model,
+              ) ??
+              error.message
+          : error.message;
       throw SttServiceException(
-        // 模型与接口不匹配显式带 client 类别，但错误码要可区分：前置
-        // 分支排除该种类，落 switch 拿 stt_model_interface_mismatch。
         code: error.serviceError == ServiceErrorCategory.client &&
                 error.kind != ModelFailureKind.modelInterfaceMismatch
             ? 'stt_client'
@@ -308,7 +320,7 @@ final class SttSettingsService {
           ModelFailureKind.rateLimited => 'stt_rate_limited',
           _ => 'stt_service_error',
         },
-        message: error.message,
+        message: message,
         retryable: true,
       );
     }

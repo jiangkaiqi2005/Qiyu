@@ -384,13 +384,27 @@ final class TtsSettingsService
     } on TtsGatewayException catch (error) {
       final failure = _ttsFailureDetails(error.kind);
       // 模型与接口不匹配显式带 client 类别，但错误码要可区分：前置
-      // 分支排除该种类，落 tts_model_interface_mismatch。
+      // 分支排除该种类，落 tts_model_interface_mismatch。该分类落定后
+      // 查档位映射表（票 05），命中把 ADR 0015 通用文案升级为精确到档
+      // 建议（与连接测试引导同源同句）；表 miss 与其他失败类别沿用既有
+      // 文案逐字不变。
       throw TtsServiceException(
         code: error.serviceError == ServiceErrorCategory.client &&
                 error.kind != ModelFailureKind.modelInterfaceMismatch
             ? 'tts_client'
             : failure.code,
-        message: _ttsTestMessage(failure.status),
+        message: error.kind == ModelFailureKind.modelInterfaceMismatch
+            ? lookupVoiceTierFormalMessage(
+                  family: VoiceServiceFamily.synthesis,
+                  currentProviderWireName: config.provider.wireName,
+                  model: config.model,
+                  currentAddressUsesMaasShape: _effectiveAddressUsesMaasShape(
+                    provider: config.provider,
+                    baseUrl: config.baseUrl,
+                  ),
+                ) ??
+                _ttsTestMessage(failure.status)
+            : _ttsTestMessage(failure.status),
         retryable: true,
       );
     }

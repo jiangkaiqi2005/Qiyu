@@ -56,8 +56,8 @@ sealed class VoiceTierSuggestion {
   /// 应换档时为该型号本身；不支持时为建议替代型号。
   final String targetModel;
 
-  /// 人话结论：三处调用（连接测试、设置页卡片、正式路径文案——正式
-  /// 路径接线在票 05）同源，改话术只改这一处。
+  /// 人话结论：三处调用（连接测试、设置页卡片、正式路径文案）同源，
+  /// 改话术只改这一处。
   final String reason;
 
   /// 建议落位的可代填缺省端点：现行形状条目才有（含替代型号落位）；
@@ -361,6 +361,33 @@ VoiceTierSuggestion? lookupVoiceTierSuggestion({
                 ? '这个型号要走千问朗读档。'
                 : '这个型号要走千问识别档。',
             defaultEndpoint: row.defaultEndpoint,
-          );  }
+          );
+  }
   return null;
+}
+
+/// 正式路径的文案升级查询（票 05）：仅在出网失败已分类为「模型与接口
+/// 不匹配」（ADR 0015）之后调用，入参与 [lookupVoiceTierSuggestion] 一致。
+/// 命中返回建议的 [VoiceTierSuggestion.reason]——与连接测试下发的文案
+/// 同源同句（spec 决策 2）；表 miss 返回 null，调用方沿用 ADR 0015 通用
+/// 文案，行为一字不变。
+///
+/// 查表本身出错（表配置错误，映射表测试的结构完整性遍历会在合入前拦住）
+/// 同样返回 null：正式路径的失败处理不得因查表受影响。
+String? lookupVoiceTierFormalMessage({
+  required VoiceServiceFamily family,
+  required String currentProviderWireName,
+  required String model,
+  bool currentAddressUsesMaasShape = false,
+}) {
+  try {
+    return lookupVoiceTierSuggestion(
+      family: family,
+      currentProviderWireName: currentProviderWireName,
+      model: model,
+      currentAddressUsesMaasShape: currentAddressUsesMaasShape,
+    )?.reason;
+  } on Object {
+    return null;
+  }
 }

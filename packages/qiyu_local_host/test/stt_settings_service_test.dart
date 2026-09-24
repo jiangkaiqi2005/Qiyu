@@ -233,11 +233,12 @@ void main() {
     expect(failure.message, '语音服务请求过于频繁，请稍后再试。');
   });
 
-  test('filetrans：连接测试命中映射表零出网给精确建议，正式转写照旧出网给原文案', () async {
+  test('filetrans：连接测试零出网给精确建议，正式转写失败后查表同源升级文案', () async {
     // 诊断实录：流式/异步型号（如 filetrans）打到 HTTP 内联端点，服务端
     // 回 400「url error」，帮助链接是 error-code#error-url 形态。票 04 起
-    // 连接测试在出网前查表命中、直接给精确建议（零出网）；正式转写路径
-    // 与 ADR 0015 文案一字未动（正式路径文案升级是票 05）。
+    // 连接测试在出网前查表命中、直接给精确建议（零出网）；票 05 起正式
+    // 转写同因「模型与接口不匹配」分类落定后查表，命中给同源建议文案，
+    // 错误码与出网行为不变。
     final http = _StaticSttHttpClient(
       '{"code":"InvalidParameter","message":"url error, please check url！ For details, see: https://help.aliyun.com/zh/model-studio/error-code#error-url"}',
       statusCode: 400,
@@ -271,7 +272,7 @@ void main() {
             .having(
               (error) => error.message,
               'message',
-              '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。',
+              '这是录音文件转写型号，栖语不支持。',
             ),
       ),
     );
@@ -304,6 +305,73 @@ void main() {
     expect(tested.status, ProviderTestStatus.modelInterfaceMismatch);
     expect(tested.message, '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。');
     expect(tested.tierSuggestion, isNull);
+  });
+
+  test('正式转写命中应换档：失败分类后查表升级为精确档位建议，错误码不变', () async {
+    // 票 05：正式路径的升级只发生在「模型与接口不匹配」分类落定之后
+    // ——网关真实出网、吃 400 url error、按 ADR 0015 分好类，再查表把
+    // 通用文案换成与连接测试同源的建议话术；分类与可区分错误码不动。
+    final http = _StaticSttHttpClient(
+      '{"code":"InvalidParameter","message":"url error, please check url！ For details, see: https://help.aliyun.com/zh/model-studio/error-code#error-url"}',
+      statusCode: 400,
+    );
+    final service = SttSettingsService(repository(), SttModelGateway(http));
+    await service.save(
+      baseUrl: 'https://stt.example.com/v1',
+      model: 'qwen3-asr-flash',
+      apiKey: 'stt-secret-value',
+    );
+
+    await expectLater(
+      service.transcribe(audio: [1, 2], mimeType: 'audio/webm'),
+      throwsA(
+        isA<SttServiceException>()
+            .having(
+              (error) => error.code,
+              'code',
+              'stt_model_interface_mismatch',
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              '这个型号要走千问识别档。',
+            ),
+      ),
+    );
+    expect(http.postCalls, 1, reason: '正式转写路径照常出网后才升级文案');
+  });
+
+  test('正式转写表 miss 型号失败：文案与 ADR 0015 通用文案逐字相同', () async {
+    // 回归锁定：查不到的型号在正式路径与今天逐字一致——分类、错误码
+    // 与通用文案全不漂移（spec 决策 7）。
+    final http = _StaticSttHttpClient(
+      '{"code":"InvalidParameter","message":"url error, please check url！ For details, see: https://help.aliyun.com/zh/model-studio/error-code#error-url"}',
+      statusCode: 400,
+    );
+    final service = SttSettingsService(repository(), SttModelGateway(http));
+    await service.save(
+      baseUrl: 'https://stt.example.com/v1',
+      model: 'qwen3-asr-turbo',
+      apiKey: 'stt-secret-value',
+    );
+
+    await expectLater(
+      service.transcribe(audio: [1, 2], mimeType: 'audio/webm'),
+      throwsA(
+        isA<SttServiceException>()
+            .having(
+              (error) => error.code,
+              'code',
+              'stt_model_interface_mismatch',
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。',
+            ),
+      ),
+    );
+    expect(http.postCalls, 1);
   });
 
   test('未配置时连接测试报 notConfigured，正式转写报可恢复失败', () async {

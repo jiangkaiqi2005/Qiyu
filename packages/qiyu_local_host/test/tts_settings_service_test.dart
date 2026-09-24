@@ -676,6 +676,81 @@ void main() {
     expect(result.message, '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。');
     expect(result.tierSuggestion, isNull);
 
+    // 票 05：正式合成的「模型与接口不匹配」分类落定后查档位映射表，
+    // qwen-audio-3.1-tts-next 命中「不支持」行，通用文案升级为与连接
+    // 测试同源的精确建议；错误码不变。
+    await expectLater(
+      service.synthesize('晚安'),
+      throwsA(
+        isA<TtsServiceException>()
+            .having(
+              (error) => error.code,
+              'code',
+              'tts_model_interface_mismatch',
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              '这个型号是统一音频生成型号，官方没有给朗读用的通道，栖语接不了它。',
+            ),
+      ),
+    );
+  });
+
+  test('正式合成命中应换档：失败分类后查表升级为精确档位建议，错误码不变', () async {
+    // 票 05：正式路径的升级只发生在「模型与接口不匹配」分类落定之后
+    // ——假网关按 ADR 0015 分类抛错，查表命中「应换档」行后把通用文案
+    // 换成与连接测试同源的建议话术；分类与可区分错误码不动。
+    final gateway = _FakeTtsGateway(
+      error: const TtsGatewayException(
+        kind: ModelFailureKind.modelInterfaceMismatch,
+        message: 'x',
+        serviceError: ServiceErrorCategory.client,
+      ),
+    );
+    final service = TtsSettingsService(repository, gateway);
+    await service.save(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'qwen3-tts-flash',
+      apiKey: 'secret-tts-key',
+    );
+
+    await expectLater(
+      service.synthesize('晚安'),
+      throwsA(
+        isA<TtsServiceException>()
+            .having(
+              (error) => error.code,
+              'code',
+              'tts_model_interface_mismatch',
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              '这个型号要走千问朗读档。',
+            ),
+      ),
+    );
+    expect(gateway.called, isTrue, reason: '正式合成路径照常出网后才升级文案');
+  });
+
+  test('正式合成表 miss 型号失败：文案与 ADR 0015 通用文案逐字相同', () async {
+    // 回归锁定：查不到的型号在正式路径与今天逐字一致——分类、错误码
+    // 与通用文案全不漂移（spec 决策 7）。
+    final gateway = _FakeTtsGateway(
+      error: const TtsGatewayException(
+        kind: ModelFailureKind.modelInterfaceMismatch,
+        message: 'x',
+        serviceError: ServiceErrorCategory.client,
+      ),
+    );
+    final service = TtsSettingsService(repository, gateway);
+    await service.save(
+      baseUrl: 'https://tts.example.com/v1',
+      model: 'qwen-audio-tts-next',
+      apiKey: 'secret-tts-key',
+    );
+
     await expectLater(
       service.synthesize('晚安'),
       throwsA(
@@ -692,6 +767,71 @@ void main() {
             ),
       ),
     );
+    expect(gateway.called, isTrue);
+  });
+
+  test('正式合成千问档 3.1 型号：新版地址正确落位文案不变，现行地址升级为新版端点建议', () async {
+    // 正式路径按落盘配置的地址派形状（与连接测试同律）：配新版地址是
+    // 正确落位（表 miss，通用文案逐字不变）；配现行地址是实测必被 400
+    // 拒绝的组合，升级为新版端点建议。
+    final gateway = _FakeTtsGateway(
+      error: const TtsGatewayException(
+        kind: ModelFailureKind.modelInterfaceMismatch,
+        message: 'x',
+        serviceError: ServiceErrorCategory.client,
+      ),
+    );
+    final service = TtsSettingsService(repository, gateway);
+    await service.save(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl:
+          'https://ws-12345.cn-beijing.maas.aliyuncs.com'
+          '/api/v1/services/audio/tts/SpeechSynthesizer',
+      model: 'qwen-audio-3.1-tts-flash',
+      apiKey: 'sk-bailian',
+    );
+    await expectLater(
+      service.synthesize('晚安'),
+      throwsA(
+        isA<TtsServiceException>()
+            .having(
+              (error) => error.code,
+              'code',
+              'tts_model_interface_mismatch',
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              '这个模型不能用当前服务地址调用，请更换模型或调整服务地址。',
+            ),
+      ),
+    );
+
+    await service.save(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl:
+          'https://dashscope.aliyuncs.com'
+          '/api/v1/services/aigc/multimodal-generation/generation',
+      model: 'qwen-audio-3.1-tts-flash',
+      apiKey: 'sk-bailian',
+    );
+    await expectLater(
+      service.synthesize('晚安'),
+      throwsA(
+        isA<TtsServiceException>()
+            .having(
+              (error) => error.code,
+              'code',
+              'tts_model_interface_mismatch',
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              '这个型号要走千问朗读档的新版千问端点。',
+            ),
+      ),
+    );
+    expect(gateway.called, isTrue, reason: '两个半段都走真实出网失败路径，不是查表前置拦截');
   });
 
   test('连接测试脏 Key：前置拦截人话文案，不出网', () async {
