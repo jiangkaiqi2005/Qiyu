@@ -220,6 +220,85 @@ void main() {
     player.finish();
   });
 
+  test('整段失败后手动重听成功，清掉过期失败提示', () async {
+    final player = _FlakyWholePlayerPlatform();
+    final controller = VoiceOutputController(
+      _RecordingSpeakGateway(),
+      playerPlatform: player,
+    );
+
+    controller.offer(
+      const VoiceOutputRequest(requestId: 'r1', deliveryIndex: 0),
+      enabled: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.failureNotice, '无法播放语音，点小喇叭再听一次。');
+
+    controller.playNow(
+      const VoiceOutputRequest(requestId: 'r1', deliveryIndex: 0),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(player.plays, 2);
+    expect(controller.failureNotice, isNull);
+    expect(controller.phase, VoiceOutputPhase.playing);
+    player.finishCurrent();
+    controller.dispose();
+  });
+
+  test('队列前一项失败后下一项成功，不误清前一项失败提示', () async {
+    final player = _FlakyWholePlayerPlatform();
+    final controller = VoiceOutputController(
+      _RecordingSpeakGateway(),
+      playerPlatform: player,
+    );
+
+    controller.offer(
+      const VoiceOutputRequest(requestId: 'a', deliveryIndex: 0),
+      enabled: true,
+    );
+    controller.offer(
+      const VoiceOutputRequest(requestId: 'b', deliveryIndex: 0),
+      enabled: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(player.plays, 2);
+    expect(controller.failureNotice, '无法播放语音，点小喇叭再听一次。');
+    expect(controller.phase, VoiceOutputPhase.playing);
+
+    // B 成功只清 B 的账；A 的提示要留给用户，直到重听 A 成功。
+    player.finishCurrent();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.failureNotice, '无法播放语音，点小喇叭再听一次。');
+    controller.dispose();
+  });
+
+  test('交付段 1 的 D1 提示不会被交付段 0 的成功播放清掉', () async {
+    final player = _FakeVoicePlayerPlatform();
+    final controller = VoiceOutputController(
+      _RecordingSpeakGateway(),
+      playerPlatform: player,
+    );
+
+    // 交付段 0 已在整段回退播放中；交付段 1 的 D1 随后到达。
+    controller.offer(
+      const VoiceOutputRequest(requestId: 'r1', deliveryIndex: 0),
+      enabled: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+    controller.notifyStreamFailure(requestId: 'r1', deliveryIndex: 1);
+    expect(controller.failureNotice, '有句话没合成出来，后面的先不读了。');
+
+    // 交付段 0 播完并继续队列：它不能把交付段 1 的 D1 提示当过期清掉。
+    player.finishCurrent();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.failureNotice, '有句话没合成出来，后面的先不读了。');
+    controller.dispose();
+  });
+
   // 语音流式（票二）：块搭车聊天事件流，首块开流、后续块追加、end 后
   // 播完缓冲即 idle；失败按 D1（已播留着、提示一次）；停播通知 Host。
   group('语音流式播放', () {
@@ -302,7 +381,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       final stream = player.streams.single;
 
-      controller.notifyStreamFailure();
+      controller.notifyStreamFailure(requestId: 'r1', deliveryIndex: 0);
       expect(controller.failureNotice, '有句话没合成出来，后面的先不读了。');
       // 已到的块照常播完（已播句子 standing），后续块丢弃。
       expect(stream.ended, isTrue);
@@ -313,7 +392,7 @@ void main() {
       // 同会话第二次失败不再提示。
       controller.offerStreamChunk(chunkOf('r2', [1]), enabled: true);
       await Future<void>.delayed(Duration.zero);
-      controller.notifyStreamFailure();
+      controller.notifyStreamFailure(requestId: 'r2', deliveryIndex: 0);
       expect(controller.failureNotice, isNull);
     });
 
@@ -420,7 +499,7 @@ void main() {
       expect(controller.phase, VoiceOutputPhase.idle);
     });
 
-    test('平台没有流式播放能力：提示一次读不出来，不冒充服务断线', () async {
+    test('平台没有流式播放能力：done 后回退失败才提示，不冒充服务断线', () async {
       final player = _NonStreamingPlayerPlatform();
       final controller = VoiceOutputController(
         _RecordingSpeakGateway(),
@@ -430,8 +509,77 @@ void main() {
       controller.offerStreamChunk(chunkOf('r1', [1]), enabled: true);
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
+      expect(controller.failureNotice, isNull);
+      expect(controller.phase, VoiceOutputPhase.idle);
+
+      // 只有终局才允许走整段路径；该平台的整段播放也失败才显示提示。
+      controller.endStream(requestId: 'r1');
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
       expect(controller.failureNotice, '无法播放语音，点小喇叭再听一次。');
       expect(controller.phase, VoiceOutputPhase.idle);
+    });
+
+    test('开流失败后 voiceError 仍按 D1 收声，不整段回退', () async {
+      final player = _NonStreamingPlayerPlatform();
+      final gateway = _RecordingSpeakGateway();
+      final controller = VoiceOutputController(gateway, playerPlatform: player);
+
+      controller.offerStreamChunk(chunkOf('r1', [1]), enabled: true);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      controller.notifyStreamFailure(requestId: 'r1', deliveryIndex: 0);
+      expect(controller.failureNotice, '有句话没合成出来，后面的先不读了。');
+
+      controller.endStream(requestId: 'r1');
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.calls, isEmpty);
+      expect(controller.phase, VoiceOutputPhase.idle);
+
+      // 旧轮占位已释放，下一轮仍可重新开流（即使当前平台随后仍失败）。
+      expect(
+        controller.offerStreamChunk(chunkOf('r2', [2]), enabled: true),
+        isTrue,
+      );
+      controller.dispose();
+    });
+
+    test('D1 不清已排队到的整段块：失败段不回退，排队音频照常播', () async {
+      final player = _StreamStartFailsWholeWorksPlayerPlatform();
+      final gateway = _RecordingSpeakGateway();
+      final controller = VoiceOutputController(gateway, playerPlatform: player);
+
+      controller.offerStreamChunk(chunkOf('r1', [1]), enabled: true);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(player.streamStarts, 1);
+
+      // 失败段等待 done 期间，下一句的完整容器块已排队。
+      expect(
+        controller.offerStreamChunk(
+          chunkOf('r1', [9], deliveryIndex: 1, mimeType: 'audio/wav'),
+          enabled: true,
+        ),
+        isTrue,
+      );
+
+      controller.notifyStreamFailure(requestId: 'r1', deliveryIndex: 0);
+      controller.endStream(requestId: 'r1');
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      // D1 不给失败段 /speak 回退；已排队到的音频按 standing 语义播放。
+      expect(gateway.calls, isEmpty);
+      expect(player.wholeBlobs.single.bytes, [9]);
+      expect(player.wholeBlobs.single.mimeType, 'audio/wav');
+      expect(controller.phase, VoiceOutputPhase.playing);
+
+      player.finishCurrent();
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.phase, VoiceOutputPhase.idle);
+      controller.dispose();
     });
 
     test('整段在读时不抢占：直播语音丢弃，整段照常播完', () async {
@@ -843,4 +991,96 @@ final class _GestureLockedPlayerPlatform
   }
 
   void finish() => _playback?.finish();
+}
+
+final class _FlakyWholePlayerPlatform implements VoicePlayerPlatform {
+  int plays = 0;
+  _ManualPlayback? _current;
+
+  @override
+  bool get supported => true;
+
+  @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+    double volume = 1.0,
+  }) async {
+    plays += 1;
+    if (plays == 1) {
+      return null;
+    }
+    return _current = _ManualPlayback();
+  }
+
+  void finishCurrent() {
+    _current?.finish();
+    _current = null;
+  }
+}
+
+/// 流式开不了但整段可播的平台：锁定开流失败后的终局回退与队列行为。
+final class _StreamStartFailsWholeWorksPlayerPlatform
+    implements VoicePlayerPlatform, StreamingVoicePlayerPlatform {
+  int streamStarts = 0;
+  final List<({List<int> bytes, String mimeType})> wholeBlobs = [];
+  _ManualPlayback? _current;
+
+  @override
+  bool get supported => true;
+
+  @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+    double volume = 1.0,
+  }) async {
+    wholeBlobs.add((bytes: bytes.toList(), mimeType: mimeType));
+    return _current = _ManualPlayback();
+  }
+
+  @override
+  Future<VoiceStreamPlayback?> startStream({
+    required int sampleRate,
+    double volume = 1.0,
+  }) async {
+    streamStarts += 1;
+    return null;
+  }
+
+  void finishCurrent() {
+    _current?.finish();
+    _current = null;
+  }
+}
+
+final class _ManualPlayback implements VoicePlayback {
+  final Completer<void> _done = Completer<void>();
+
+  @override
+  Future<void> get done => _done.future;
+
+  @override
+  void setVolume(double volume) {}
+
+  @override
+  void stop() => finish();
+
+  void finish() {
+    if (!_done.isCompleted) {
+      _done.complete();
+    }
+  }
 }
