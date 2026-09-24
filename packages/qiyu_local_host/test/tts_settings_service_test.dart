@@ -816,6 +816,56 @@ void main() {
     expect(fakeGateway.called, isTrue);
     expect(fakeGateway.lastConfig?.extraParams, {'response_format': 'opus'});
   });
+
+  test('连接测试端到端：千问 3.1 新形状（maas 地址）经真网关拿到试听音频', () async {
+    // 地址主机含 maas.aliyuncs.com：网关按地址派形状走 3.1 官方
+    // SpeechSynthesizer 请求体（ADR 0020），响应音频地址照旧走下载跳。
+    final client = _RecordingBytesHttpClient(
+      postResponse: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value(
+          utf8.encode(
+            jsonEncode({
+              'output': {
+                'audio': {'url': 'https://oss.example.com/qiyu.wav'},
+              },
+            }),
+          ),
+        ),
+      ),
+      downloadResponse: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value([3, 1, 4]),
+      ),
+    );
+    final service = TtsSettingsService(repository, TtsModelGateway(client));
+
+    final result = await service.test(
+      baseUrl:
+          'https://ws-12345.cn-beijing.maas.aliyuncs.com'
+          '/api/v1/services/audio/tts/SpeechSynthesizer',
+      model: 'qwen-audio-3.1-tts-flash',
+      provider: TtsProviderKind.qwenTts,
+      apiKey: 'sk-bailian',
+      voice: 'longanhuan_v3.6',
+    );
+
+    expect(result.succeeded, isTrue);
+    expect(result.status, ProviderTestStatus.success);
+    expect(base64Decode(result.audioBase64!), [3, 1, 4]);
+    expect(client.postCalled, isTrue);
+    expect(client.downloadCalled, isTrue);
+    // 新形状请求体：CosyVoice 家族 input，无现行形状的 language_type。
+    final body =
+        jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+    expect(body['model'], 'qwen-audio-3.1-tts-flash');
+    expect(body['input'], {
+      'text': ttsConnectionTestSentence,
+      'voice': 'longanhuan_v3.6',
+      'format': 'wav',
+      'sample_rate': 24000,
+    });
+  });
 }
 
 final class _FakeTtsGateway implements TtsSynthesisGateway {

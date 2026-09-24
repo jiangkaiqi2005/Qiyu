@@ -69,6 +69,15 @@ const qwenTtsDefaultModel = 'qwen3-tts-flash';
 /// 千问音色 ID 都能填。与宿主包侧同名常量双源同值（改动需两边同步）。
 const qwenTtsDefaultVoice = 'Cherry';
 
+/// 千问 3.1 新型号（qwen-audio-3.1-tts-flash）的官方新版地址模板
+/// （ADR 0020）：地址主机含 maas.aliyuncs.com 时 Host 按官方
+/// SpeechSynthesizer 形状合成。`{业务空间ID}` 是给用户看的拼接占位——
+/// 用户把它替换成自己的阿里云百炼业务空间 ID 后整条填入地址栏，栖语
+/// 不代填、Host 也不做占位符替换。仅作设置页说明文案，不是缺省值。
+const qwenTtsMaasAddressTemplate =
+    'https://{业务空间ID}.cn-beijing.maas.aliyuncs.com'
+    '/api/v1/services/audio/tts/SpeechSynthesizer';
+
 /// 语音合成（TTS）服务设置：与聊天 Provider、语音转写设置同一套读回
 /// 口径——永不回明文 Key，只回 keySet 布尔。自定义档另带回显用旋钮
 /// （authHeader/responseShape/responseField）与高级参数 extraParams。

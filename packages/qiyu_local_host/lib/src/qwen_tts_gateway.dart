@@ -20,6 +20,14 @@ import 'tts_gateway.dart';
 /// `stop`。型号决定 API 家族（ADR 0015）：`qwen3-tts-flash` 走 HTTP
 /// SSE 流式（设置页提示流式型号名）；`qwen-audio-3.1-tts-next` 官方
 /// 标注 Non-streaming，不用于流式场景（ADR 0018 修订记录）。
+///
+/// 地址派形状（ADR 0020）：地址主机含 `maas.aliyuncs.com` 走 3.1 官方
+/// SpeechSynthesizer 端点（CosyVoice 家族请求体，见 [_maasRequestBody]），
+/// 否则走现行 multimodal 形状——沿用千问识别档「地址长相唯一确定形状」
+/// 的先例，一个档内用户不需要理解两种形状。3.1 新形状首版只接整段
+/// （SSE 逐块形状未实测，前置实测无可用通路，不赌）：流式接口按 E1
+/// 降级成句子级整段（每句一个完整容器块），设置页型号说明同步标注
+/// 「流式待补」。
 final class QwenTtsGateway
     implements TtsSynthesisGateway, TtsStreamSynthesisGateway {
   const QwenTtsGateway(this.httpClient);
@@ -37,7 +45,11 @@ final class QwenTtsGateway
     final uri = Uri.parse(config.baseUrl.trim());
     // TTS 是新增出网路径：出网前统一过 SSRF 校验（与 STT 共用判定）。
     ensureTtsOutboundAllowed(uri);
-    final body = _requestBody(config: config, text: text);
+    // 形状只判定一次：请求体按地址分派（两种形状的非流式响应同为
+    // output.audio.url 形态，提取与下载跳共用一份）。
+    final body = qwenTtsUsesMaasShape(uri)
+        ? _maasRequestBody(config: config, text: text)
+        : _requestBody(config: config, text: text);
     final response = await postTtsBytes(
       httpClient: httpClient,
       uri: uri,
@@ -71,7 +83,19 @@ final class QwenTtsGateway
     required TtsConfig config,
     required String? apiKey,
     required String text,
-  }) => guardTtsAudioStream(() async* {
+  }) {
+    // 3.1 新形状首版只接整段（SSE 逐块形状未实测，不赌）：按 E1 降级
+    // ——本句走一次整段合成，收成一个完整容器块，分句层照常按句等
+    // 整段返回（设置页型号说明同步标注流式待补）。校验（配置、Key、
+    // SSRF）与请求体分派都由整段路径负责，这里不重复。
+    if (qwenTtsUsesMaasShape(Uri.parse(config.baseUrl.trim()))) {
+      return _maasWholeSegmentStream(
+        config: config,
+        apiKey: apiKey,
+        text: text,
+      );
+    }
+    return guardTtsAudioStream(() async* {
     config.validate();
     final key = requireTtsApiKey(apiKey);
     final uri = Uri.parse(config.baseUrl.trim());
@@ -145,7 +169,26 @@ final class QwenTtsGateway
         message: '语音合成服务没有返回音频。',
       );
     }
-  });
+    });
+  }
+
+  /// 3.1 新形状的流式接口（E1 降级）：本句整段合成收成一个完整容器块。
+  /// 不套 [guardTtsAudioStream] 的外层空闲计时——首块要等合成 POST 与
+  /// 下载跳两跳串行才到，外层按单跳预算计时会把合法慢两跳（如
+  /// 40s+40s）提前砍掉；两跳各自的 60s 预算与异常分类已在出网调用
+  /// （[postTtsBytes]/[downloadSpeechAudioBytes] 共用的 guardTtsOutbound
+  /// 与响应消费）内生效，这里没有需要额外兜的裸异常面。
+  Stream<VoiceAudioChunk> _maasWholeSegmentStream({
+    required TtsConfig config,
+    required String? apiKey,
+    required String text,
+  }) async* {
+    final audio = await synthesize(config: config, apiKey: apiKey, text: text);
+    yield VoiceAudioChunk(
+      bytes: Uint8List.fromList(audio),
+      mimeType: voiceWholeContainerMime,
+    );
+  }
 
   /// 请求体：整段与流式同一形状（官方明示流式与非流式响应结构相同）。
   String _requestBody({required TtsConfig config, required String text}) {
@@ -161,6 +204,28 @@ final class QwenTtsGateway
       'model': config.model.trim(),
       // 高级参数深合并进 input：千问的 instructions 类字段就在 input 下
       // （换 instruct 模型时传指令控制）。
+      'input': extra == null ? input : mergeTtsExtraIntoInput(input, extra),
+    });
+  }
+
+  /// 3.1 新形状请求体（官方 SpeechSynthesizer 端点，CosyVoice 家族，
+  /// 形状经前置实测与官方文档核实）：input 带 text/voice/format/
+  /// sample_rate，无现行形状的 language_type。高级参数按既有千问档
+  /// 合并语义深合并进 input——官方新增字段（如 CosyVoice 的
+  /// instruction）由此透传，用户显式写的 format/sample_rate 覆盖缺省。
+  String _maasRequestBody({required TtsConfig config, required String text}) {
+    final voice = config.voice?.trim();
+    final input = <String, Object?>{
+      'text': text,
+      // 音色空缺回落本家族官方示例音色（与现行形状回落 Cherry 同律，
+      // 各按各家族的官方示例）。
+      'voice': voice == null || voice.isEmpty ? qwenTtsMaasDefaultVoice : voice,
+      'format': 'wav',
+      'sample_rate': qwenTtsPcmSampleRate,
+    };
+    final extra = config.extraParams;
+    return jsonEncode({
+      'model': config.model.trim(),
       'input': extra == null ? input : mergeTtsExtraIntoInput(input, extra),
     });
   }
@@ -293,6 +358,21 @@ final class QwenTtsGateway
     return (pcm: Uint8List(0), sampleRate: sampleRate);
   }
 }
+
+/// qwen_tts 档的形状分派（ADR 0020）：地址主机含 `maas.aliyuncs.com`
+/// 走 3.1 官方 SpeechSynthesizer 形状（CosyVoice 家族请求体），否则走
+/// 现行 multimodal 形状。沿用千问识别档「地址长相唯一确定形状」的先例
+/// （地址路径定识别形状，这里主机定合成形状），不新增独立档位、不引入
+/// 占位符语法——用户把官方地址里的业务空间 ID 替换好后整条填入。只看
+/// 主机不看路径与端口：官方端点路径由用户整条粘贴，Host 不校验也不
+/// 改写它。
+bool qwenTtsUsesMaasShape(Uri uri) =>
+    uri.host.toLowerCase().contains('maas.aliyuncs.com');
+
+/// 3.1 新形状（CosyVoice 家族）的音色缺省值：官方文档示例音色。与现行
+/// 形状的 [qwenTtsDefaultVoice] 同律——音色是自由输入框，空缺时按本
+/// 家族的官方示例回落（网关层兜底，不另设配置项）。
+const qwenTtsMaasDefaultVoice = 'longanhuan_v3.6';
 
 /// 千问 SSE 音频段的协商采样率：DashScope 实时/流式通道的 PCM 基准
 /// （24kHz 单声道 16-bit，官方 SDK 的 PCM_24000HZ_MONO_16BIT 同源）。

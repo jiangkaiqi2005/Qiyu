@@ -478,9 +478,17 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 // 边出声）与 qwen3-tts-flash-realtime（WebSocket 连续喂
                 // 文本，前几个字就出声）；官方现标 Non-streaming 的旧型号
                 // （qwen-audio-3.1-tts-next）不用于流式场景。
+                // 3.1 新型号按地址派形状（ADR 0020）：官方地址含业务空间
+                // ID 只能用户自己拼（栖语不代填），且前置实测判定聚合站
+                // Key 在业务空间校验层即被拒——可达性如实标注，缺口
+                // （流式待补）不静默。
                 helperText: provider == TtsServiceKind.qwenTts
                     ? '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）'
-                          '；$qwenTtsDefaultModel-realtime（WebSocket，前几个字就出声）'
+                          '；$qwenTtsDefaultModel-realtime（WebSocket，前几个字就出声）\n'
+                          '3.1 新型号（qwen-audio-3.1-tts-flash）要改填官方新版地址：'
+                          '$qwenTtsMaasAddressTemplate，把 {业务空间ID} 换成你自己的'
+                          '阿里云百炼业务空间 ID（栖语不代填）；新版地址需自有百炼 '
+                          'Key，聚合站 Key 不可用；流式待补，暂按句等整段返回'
                     : null,
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
