@@ -55,6 +55,8 @@ Currently supported text-to-speech:
 - **Qwen TTS** (Alibaba Cloud DashScope, default model `qwen3-tts-flash`, free-form voice ID; the newer `qwen-audio-3.1-tts-next` is not yet supported)
 - **Custom service** (bring your own endpoint; supports raw bytes, JSON field, or JSON-lines response formats)
 
+For the exact Qwen model names and addresses Qiyu supports, see the [voice model support list](docs/product/voice-models.md).
+
 You can pick the voice you like: tone, speed, and dialect are all configurable in Settings. The Volcengine option includes presets for Mandarin, Cantonese, Sichuan dialect, Northeastern dialect, and more — see the full [seed-tts-2.0 voice list](https://docs.volcengine.com/docs/6561/1257544).
 
 Audio stays in memory only — never written to disk, never cached.
