@@ -241,10 +241,12 @@ void main() {
     const qwenModelHelp =
         '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）'
         '；$qwenTtsDefaultModel-realtime（WebSocket，前几个字就出声）\n'
-        '3.1 新型号（qwen-audio-3.1-tts-flash）要改填官方新版地址：'
-        '$qwenTtsMaasAddressTemplate，把 {业务空间ID} 换成你自己的'
-        '阿里云百炼业务空间 ID（栖语不代填）；新版地址需自有百炼 '
-        'Key，聚合站 Key 不可用；流式待补，暂按句等整段返回';
+        '3.x 新型号（qwen-audio-3.1-tts-flash 等）走官方新版语音通道：'
+        '服务地址直接填 $qwenTtsWsInferenceEndpoint（推理通道按句流式）；'
+        '也可填官方 maas HTTP 端点 $qwenTtsMaasAddressTemplate，'
+        '把 {业务空间ID} 换成你自己的阿里云百炼业务空间 ID'
+        '（栖语不代填，按句等整段返回）；型号支持范围见'
+        '官方模型页：https://help.aliyun.com/zh/model-studio/qwen-tts';
 
     // 说明归属锁死在模型名称框：helperText 渲染在 TextField 子树内，同一句
     // 误挂到服务地址等别的框上时断言会红。

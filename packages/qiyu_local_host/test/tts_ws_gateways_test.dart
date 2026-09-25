@@ -1090,6 +1090,582 @@ void main() {
     });
   });
 
+  group('千问 WS 推理（经典 SpeechSynthesizer）合成会话', () {
+    const inferenceConfig = TtsConfig(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+      model: 'qwen-audio-3.0-tts-flash',
+      apiKey: 'sk-dashscope-test',
+    );
+
+    /// 探针基线形状的脚本（probe 02/03）：run-task → task-started；
+    /// continue-task → WAV binary 帧 + result-generated 文本帧；
+    /// finish-task → WAV binary 帧 + task-finished。变体经参数注入。
+    _ScriptedTtsWsConnector inferenceConnector({
+      bool extendedFrame = false,
+      bool rawPcmFrames = false,
+      String? failedEventOnContinue,
+      String? errorCodeOnRun,
+    }) => _ScriptedTtsWsConnector(
+      onTextSend: (text, connection) {
+        final event = jsonDecode(text) as Map<String, Object?>;
+        final action = (event['header']! as Map)['action']! as String;
+        switch (action) {
+          case 'run-task':
+            if (errorCodeOnRun case final code?) {
+              connection.serverText(
+                jsonEncode({
+                  'header': {
+                    'task_id': 't-1',
+                    'event': 'task-failed',
+                    'error_code': code,
+                    'error_message': 'upstream secret detail',
+                  },
+                  'payload': {},
+                }),
+              );
+              return;
+            }
+            connection.serverText(
+              jsonEncode({
+                'header': {'task_id': 't-1', 'event': 'task-started'},
+                'payload': {},
+              }),
+            );
+          case 'continue-task':
+            if (failedEventOnContinue case final name?) {
+              connection.serverText(
+                jsonEncode({
+                  'header': {
+                    'task_id': 't-1',
+                    'event': name,
+                    'error_code': 'InvalidParameter',
+                    'error_message':
+                        '[cosyvoice:]Engine error [411]: TTS speak operation failed',
+                  },
+                  'payload': {},
+                }),
+              );
+              return;
+            }
+            // rawPcmFrames：format=pcm 覆盖时服务端回裸样本帧（无 RIFF 头）。
+            connection.serverBinary(
+              rawPcmFrames ? Uint8List.fromList([1, 2]) : _inferenceWavFrame([1, 2]),
+            );
+            connection.serverText(
+              jsonEncode({
+                'header': {'task_id': 't-1', 'event': 'result-generated'},
+                'payload': {
+                  'output': {
+                    'sentence': {
+                      'index': 0,
+                      'type': 'sentence-begin',
+                      'original_text': '晚安',
+                    },
+                  },
+                },
+              }),
+            );
+          case 'finish-task':
+            connection.serverBinary(
+              rawPcmFrames
+                  ? Uint8List.fromList([3])
+                  : _inferenceWavFrame([3], extended: extendedFrame),
+            );
+            connection.serverText(
+              jsonEncode({
+                'header': {'task_id': 't-1', 'event': 'task-finished'},
+                'payload': {'output': {}},
+              }),
+            );
+        }
+      },
+    );
+
+    test('全生命周期：上行帧逐字段、binary WAV 帧剥头转块、task-finished 收束', () async {
+      final connector = inferenceConnector();
+      final session = await QwenWsInferenceTtsGateway(connector).openSession(
+        config: inferenceConfig,
+        apiKey: 'sk-dashscope-test',
+        sessionId: 'chat-1',
+      );
+      expect(session, isNotNull);
+
+      final chunks = <VoiceAudioChunk>[];
+      final done = Completer<void>();
+      session!.chunks.listen(
+        chunks.add,
+        onError: (Object error) => fail('不应失败：$error'),
+        onDone: done.complete,
+      );
+
+      session.appendText('我在');
+      await _settle();
+      session.appendText('。刚忙完。');
+      await _settle();
+      await session.close();
+      await done.future.timeout(const Duration(seconds: 5));
+
+      // binary 帧是自带 WAV 头的完整文件（probe 02 基线）：块只留裸
+      // PCM；每次 continue-task 后各到一帧，finish-task 后一帧收尾。
+      expect(chunks.map((chunk) => chunk.bytes), [
+        [1, 2],
+        [1, 2],
+        [3],
+      ]);
+      expect(chunks.every((chunk) => chunk.sampleRate == 24000), isTrue);
+      // result-generated 文本帧只登记不参与判定：流程照常走到收尾。
+
+      // 端点与鉴权：地址原样使用，Bearer 握手头。
+      expect(
+        connector.lastUri.toString(),
+        'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+      );
+      expect(
+        connector.lastHeaders!['authorization'],
+        'Bearer sk-dashscope-test',
+      );
+
+      // 上行文本帧逐字段：动作序列、固定 task_group/task/function、
+      // streaming=duplex、同一任务共用同一 task_id。
+      final events = connector.connection!.sentText
+          .map((text) => jsonDecode(text) as Map<String, Object?>)
+          .toList();
+      expect(
+        events.map((event) => (event['header']! as Map)['action']),
+        ['run-task', 'continue-task', 'continue-task', 'finish-task'],
+      );
+      final runTask = events.first;
+      final runTaskHeader = runTask['header']! as Map<String, Object?>;
+      expect(runTaskHeader['streaming'], 'duplex');
+      expect(
+        _uuidPattern.hasMatch(runTaskHeader['task_id']! as String),
+        isTrue,
+      );
+      expect(
+        events.map((event) => (event['header']! as Map)['task_id']),
+        everyElement(runTaskHeader['task_id']),
+      );
+      expect(runTask['payload'], {
+        'task_group': 'audio',
+        'task': 'tts',
+        'function': 'SpeechSynthesizer',
+        'model': 'qwen-audio-3.0-tts-flash',
+        // 音色空缺回落本家族官方示例音色；format/sample_rate 缺省
+        // wav/24000（与 maas 形状同律）。
+        'parameters': {
+          'text_type': 'PlainText',
+          'voice': 'longanhuan_v3.6',
+          'format': 'wav',
+          'sample_rate': 24000,
+        },
+        'input': <String, Object?>{},
+      });
+      // 增量原文逐段进 continue-task 的 payload.input.text。
+      expect((events[1]['payload']! as Map)['input'], {'text': '我在'});
+      expect((events[2]['payload']! as Map)['input'], {'text': '。刚忙完。'});
+      // finish-task 的 payload.input 为空对象（probe 0 文档形状）。
+      expect((events[3]['payload']! as Map)['input'], <String, Object?>{});
+    });
+
+    test('显式音色原样上送；extraParams 深合并进 parameters 并覆盖缺省', () async {
+      final connector = inferenceConnector();
+      final session = await QwenWsInferenceTtsGateway(connector).openSession(
+        config: const TtsConfig(
+          provider: TtsProviderKind.qwenTts,
+          baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+          model: 'qwen-audio-3.0-tts-flash',
+          apiKey: 'sk-dashscope-test',
+          voice: 'longanlingxi',
+          extraParams: {'volume': 50, 'sample_rate': 16000},
+        ),
+        apiKey: 'sk-dashscope-test',
+        sessionId: 'chat-1',
+      );
+      final chunks = <VoiceAudioChunk>[];
+      final done = Completer<void>();
+      session!.chunks.listen(chunks.add, onDone: done.complete);
+      session.appendText('嗯。');
+      await session.close();
+      await done.future.timeout(const Duration(seconds: 5));
+
+      final runTask =
+          jsonDecode(connector.connection!.sentText.first)
+              as Map<String, Object?>;
+      expect((runTask['payload']! as Map)['parameters'], {
+        'text_type': 'PlainText',
+        'voice': 'longanlingxi',
+        'format': 'wav',
+        'sample_rate': 16000,
+        'volume': 50,
+      });
+      // 协商采样率随覆盖后的参数标注在块上（请求送的就是它）。
+      expect(chunks.every((chunk) => chunk.sampleRate == 16000), isTrue);
+    });
+
+    test('带 LIST 扩展块的 WAV 帧按块遍历剥头（不按固定 44 字节）', () async {
+      final connector = inferenceConnector(extendedFrame: true);
+      final session = await QwenWsInferenceTtsGateway(connector).openSession(
+        config: inferenceConfig,
+        apiKey: 'sk-dashscope-test',
+        sessionId: 'chat-1',
+      );
+      final chunks = <VoiceAudioChunk>[];
+      final done = Completer<void>();
+      session!.chunks.listen(chunks.add, onDone: done.complete);
+      session.appendText('嗯。');
+      await session.close();
+      await done.future.timeout(const Duration(seconds: 5));
+      // continue 帧是标准 44 字节头，finish 帧带 LIST 扩展块：都剥成裸 PCM。
+      expect(chunks.map((chunk) => chunk.bytes), [
+        [1, 2],
+        [3],
+      ]);
+    });
+
+    test('整段路径（试听/重听/连接测试）：一次性会话收完整 PCM 并包 WAV 头', () async {
+      final connector = inferenceConnector();
+      final audio = await QwenWsInferenceTtsGateway(connector).synthesize(
+        config: inferenceConfig,
+        apiKey: 'sk-dashscope-test',
+        text: '你好，我是栖语。',
+      );
+      final wav = Uint8List.fromList(audio);
+      expect(ascii.decode(wav.sublist(0, 4)), 'RIFF');
+      expect(ascii.decode(wav.sublist(8, 12)), 'WAVE');
+      expect(
+        ByteData.sublistView(wav, 24, 28).getUint32(0, Endian.little),
+        24000,
+      );
+      expect(wav.sublist(44), [1, 2, 3]);
+      // 同一任务：run-task 一次，continue + finish 各一次。
+      final actions = connector.connection!.sentText
+          .map(
+            (text) =>
+                (jsonDecode(text) as Map<String, Object?>)['header'] as Map,
+          )
+          .map((header) => header['action']);
+      expect(actions, ['run-task', 'continue-task', 'finish-task']);
+    });
+
+    test('按句流式：一次会话内 binary 帧边到边转块，不等整句合成完', () async {
+      final connector = inferenceConnector();
+      final chunks = <VoiceAudioChunk>[];
+      await QwenWsInferenceTtsGateway(
+        connector,
+      ).synthesizeStream(
+        config: inferenceConfig,
+        apiKey: 'sk-dashscope-test',
+        text: '晚安。',
+      ).forEach(chunks.add);
+      expect(chunks.map((chunk) => chunk.bytes), [
+        [1, 2],
+        [3],
+      ]);
+      expect(chunks.every((chunk) => chunk.sampleRate == 24000), isTrue);
+    });
+
+    test('task-failed 各映射：ModelNotFound／鉴权／限流／其余按服务拒绝', () async {
+      // ModelNotFound（probe 1.1 实测形状）：握手期即失败，按既有
+      // 「找不到模型」分类，第三方错误原文不透出。
+      await expectLater(
+        QwenWsInferenceTtsGateway(
+          inferenceConnector(errorCodeOnRun: 'ModelNotFound'),
+        ).openSession(
+          config: inferenceConfig,
+          apiKey: 'sk-dashscope-test',
+          sessionId: 'c',
+        ),
+        throwsA(
+          isA<TtsGatewayException>()
+              .having((e) => e.kind, 'kind', ModelFailureKind.modelNotFound)
+              .having(
+                (e) => e.message,
+                'message',
+                '找不到这个模型，请检查模型名称。',
+              ),
+        ),
+      );
+
+      // 鉴权指纹按既有口径说话。
+      await expectLater(
+        QwenWsInferenceTtsGateway(
+          inferenceConnector(errorCodeOnRun: 'InvalidAuthorization'),
+        ).openSession(
+          config: inferenceConfig,
+          apiKey: 'sk-dashscope-test',
+          sessionId: 'c',
+        ),
+        throwsA(
+          isA<TtsGatewayException>().having(
+            (e) => e.kind,
+            'kind',
+            ModelFailureKind.authentication,
+          ),
+        ),
+      );
+
+      // 限流指纹同律。
+      await expectLater(
+        QwenWsInferenceTtsGateway(
+          inferenceConnector(errorCodeOnRun: 'Throttling'),
+        ).openSession(
+          config: inferenceConfig,
+          apiKey: 'sk-dashscope-test',
+          sessionId: 'c',
+        ),
+        throwsA(
+          isA<TtsGatewayException>().having(
+            (e) => e.kind,
+            'kind',
+            ModelFailureKind.rateLimited,
+          ),
+        ),
+      );
+
+      // 其余错误码（3.1 引擎 411 的 InvalidParameter 指纹，probe 02/03）
+      // 按服务拒绝说话：错误发生在握手后的会话中途，经块流上报。
+      final connector = inferenceConnector(
+        failedEventOnContinue: 'task-failed',
+      );
+      final session = await QwenWsInferenceTtsGateway(connector).openSession(
+        config: inferenceConfig,
+        apiKey: 'sk-dashscope-test',
+        sessionId: 'c',
+      );
+      final failure = Completer<Object>();
+      session!.chunks.listen((_) {}, onError: failure.complete);
+      session.appendText('嗯。');
+      await expectLater(
+        failure.future.timeout(const Duration(seconds: 5)),
+        completion(
+          isA<TtsGatewayException>()
+              .having((e) => e.kind, 'kind', ModelFailureKind.provider)
+              .having(
+                (e) => e.message,
+                'message',
+                '语音合成服务拒绝了这次请求。',
+              ),
+        ),
+      );
+    });
+
+    test('E1：高级参数覆盖 format=mp3 按人话拒绝，连接子零调用', () async {
+      // 压缩帧既不能当 PCM 流式播（噪音）也不能包出有效 WAV：本通道没有
+      // HTTP 回落（地址即 WS 端点），出网前按人话拒绝（票 07 评审收口）。
+      for (final format in ['mp3', 'opus']) {
+        final connector = inferenceConnector();
+        await expectLater(
+          QwenWsInferenceTtsGateway(connector).openSession(
+            config: TtsConfig(
+              provider: TtsProviderKind.qwenTts,
+              baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+              model: 'qwen-audio-3.0-tts-flash',
+              apiKey: 'sk-dashscope-test',
+              extraParams: {'format': format},
+            ),
+            apiKey: 'sk-dashscope-test',
+            sessionId: 'c',
+          ),
+          throwsA(
+            isA<TtsGatewayException>()
+                .having((e) => e.kind, 'kind', ModelFailureKind.provider)
+                .having(
+                  (e) => e.message,
+                  'message',
+                  '高级参数把音频格式覆盖成了压缩格式，本通道只支持 wav 或 '
+                      'pcm，请改回后再试。',
+                ),
+          ),
+          reason: format,
+        );
+        expect(connector.connectCalls, isZero, reason: format);
+      }
+    });
+
+    test('高级参数覆盖 format=pcm：binary 裸帧不以 RIFF 开头原样透传', () async {
+      final connector = inferenceConnector(rawPcmFrames: true);
+      final session = await QwenWsInferenceTtsGateway(connector).openSession(
+        config: const TtsConfig(
+          provider: TtsProviderKind.qwenTts,
+          baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+          model: 'qwen-audio-3.0-tts-flash',
+          apiKey: 'sk-dashscope-test',
+          extraParams: {'format': 'pcm'},
+        ),
+        apiKey: 'sk-dashscope-test',
+        sessionId: 'chat-1',
+      );
+      final chunks = <VoiceAudioChunk>[];
+      final done = Completer<void>();
+      session!.chunks.listen(chunks.add, onDone: done.complete);
+      session.appendText('嗯。');
+      await session.close();
+      await done.future.timeout(const Duration(seconds: 5));
+      // 裸样本帧原样通过（与 SSE 路径同一语义），协商采样率照常标注。
+      expect(chunks.map((chunk) => chunk.bytes), [
+        [1, 2],
+        [3],
+      ]);
+      expect(chunks.every((chunk) => chunk.sampleRate == 24000), isTrue);
+    });
+
+    test('取消按协议发 finish-task 的 cancel 指令，迟到帧丢弃', () async {
+      final connector = inferenceConnector();
+      final session = await QwenWsInferenceTtsGateway(connector).openSession(
+        config: inferenceConfig,
+        apiKey: 'sk-dashscope-test',
+        sessionId: 'chat-1',
+      );
+      final chunks = <VoiceAudioChunk>[];
+      final done = Completer<void>();
+      session!.chunks.listen(
+        chunks.add,
+        onError: (Object error) => fail('取消不是失败：$error'),
+        onDone: done.complete,
+      );
+      session.appendText('我在');
+      await _settle();
+      expect(chunks, hasLength(1));
+
+      session.cancel();
+      await done.future.timeout(const Duration(seconds: 5));
+      // 取消后追加不再产生请求；取消帧是 finish-task 带 cancel 指令。
+      session.appendText('。刚忙完。');
+      await _settle();
+      expect(chunks, hasLength(1));
+      final events = connector.connection!.sentText
+          .map((text) => jsonDecode(text) as Map<String, Object?>)
+          .toList();
+      final cancelFrame = events
+          .where(
+            (event) =>
+                ((event['header']! as Map)['action'] as String) ==
+                'finish-task',
+          )
+          .last;
+      expect((cancelFrame['payload']! as Map)['input'], {
+        'directive': 'cancel',
+      });
+    });
+
+    test('地址缺路径时补默认推理路径，host/port 保留', () async {
+      final connector = inferenceConnector();
+      await QwenWsInferenceTtsGateway(connector).openSession(
+        config: const TtsConfig(
+          provider: TtsProviderKind.qwenTts,
+          baseUrl: 'wss://tts-gateway.example.com:8443',
+          model: 'qwen-audio-3.0-tts-flash',
+          apiKey: 'sk-dashscope-test',
+        ),
+        apiKey: 'sk-dashscope-test',
+        sessionId: 'c',
+      );
+      expect(
+        connector.lastUri.toString(),
+        'wss://tts-gateway.example.com:8443/api-ws/v1/inference',
+      );
+    });
+
+    test('建连前 SSRF 拒绝：环回/私有地址一个都不连', () async {
+      for (final baseUrl in [
+        'wss://127.0.0.1/api-ws/v1/inference',
+        'ws://localhost:8080/api-ws/v1/inference',
+        'wss://192.168.1.10/api-ws/v1/inference',
+      ]) {
+        final connector = inferenceConnector();
+        await expectLater(
+          QwenWsInferenceTtsGateway(connector).openSession(
+            config: TtsConfig(
+              provider: TtsProviderKind.qwenTts,
+              baseUrl: baseUrl,
+              model: 'qwen-audio-3.0-tts-flash',
+              apiKey: 'sk-dashscope-test',
+            ),
+            apiKey: 'sk-dashscope-test',
+            sessionId: 'c',
+          ),
+          throwsA(
+            isA<TtsGatewayException>().having(
+              (e) => e.message,
+              'message',
+              '语音服务地址不允许指向本机或内网。',
+            ),
+          ),
+          reason: baseUrl,
+        );
+        expect(connector.connectCalls, isZero, reason: baseUrl);
+      }
+    });
+
+    test('非 http(s)/ws(s) scheme 在配置校验就被拒，出网前一个字节不发', () async {
+      final connector = inferenceConnector();
+      await expectLater(
+        QwenWsInferenceTtsGateway(connector).openSession(
+          config: const TtsConfig(
+            provider: TtsProviderKind.qwenTts,
+            baseUrl: 'ftp://dashscope.aliyuncs.com/api-ws/v1/inference',
+            model: 'qwen-audio-3.0-tts-flash',
+            apiKey: 'sk-dashscope-test',
+          ),
+          apiKey: 'sk-dashscope-test',
+          sessionId: 'c',
+        ),
+        throwsA(
+          isA<ProviderConfigException>().having(
+            (e) => e.message,
+            'message',
+            '语音合成服务地址必须是有效的 HTTP 或 WebSocket 地址。',
+          ),
+        ),
+      );
+      expect(connector.connectCalls, isZero);
+    });
+
+    test('缺 Key 在出网前按未保存鉴权拒绝', () async {
+      final connector = inferenceConnector();
+      await expectLater(
+        QwenWsInferenceTtsGateway(connector).openSession(
+          config: inferenceConfig,
+          apiKey: null,
+          sessionId: 'c',
+        ),
+        throwsA(
+          isA<TtsGatewayException>()
+              .having((e) => e.kind, 'kind', ModelFailureKind.authentication)
+              .having(
+                (e) => e.message,
+                'message',
+                '还没有保存语音合成服务的 API Key。',
+              ),
+        ),
+      );
+      expect(connector.connectCalls, isZero);
+    });
+
+    test('握手超时：task-started 永不来按连接超时失败，连接被断开', () async {
+      // 脚本对 run-task 不作回应：握手等待自带预算，到点按「连接超时」
+      // 失败（握手阶段不武装空闲计时器，与豆包/Realtime 同律）。
+      final connector = _ScriptedTtsWsConnector();
+      await expectLater(
+        QwenWsInferenceTtsGateway(
+          connector,
+          timeout: const Duration(milliseconds: 50),
+        ).openSession(
+          config: inferenceConfig,
+          apiKey: 'sk-dashscope-test',
+          sessionId: 'c',
+        ),
+        throwsA(
+          isA<TtsGatewayException>()
+              .having((e) => e.kind, 'kind', ModelFailureKind.timeout)
+              .having((e) => e.message, 'message', '连接语音合成服务超时。'),
+        ),
+      );
+      expect(connector.connection?.closed, isTrue);
+    });
+  });
+
   group('连续供给会话的分派', () {
     test('豆包 ws_bidirection 与千问 realtime 型号开会话，其余不开', () async {
       final connector = _ScriptedTtsWsConnector(
@@ -1221,6 +1797,184 @@ void main() {
       );
       expect(httpAudio.sublist(44), [7, 8]);
       expect(connector.connectCalls, 1);
+    });
+  });
+
+  group('千问朗读档地址派形状的四分支分派（票 07）', () {
+    // 分派优先级：① 型号驱动（-realtime）→ ② 地址 scheme ws/wss →
+    // ③ 主机含 maas.aliyuncs.com（HTTP maas 形状）→ ④ 现行 multimodal。
+    // 既有三分支的用例在原文件逐字不动，本组只锁优先级与第三分支。
+    test('① wss 地址配 -realtime 型号：Realtime 网关优先（派生 realtime 路径）', () async {
+      final connector = _ScriptedTtsWsConnector(
+        initialText: _qwenSessionCreated,
+        onTextSend: (text, connection) =>
+            _qwenScript.respond(_decodeClientTextEvent(text), connection),
+      );
+      final session = await TtsModelGateway(
+        _ExplodingBytesHttpClient(),
+        webSocketConnector: connector,
+      ).openSession(
+        config: const TtsConfig(
+          provider: TtsProviderKind.qwenTts,
+          baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+          model: 'qwen3-tts-flash-realtime',
+          apiKey: 'sk-dashscope-test',
+        ),
+        apiKey: 'sk-dashscope-test',
+        sessionId: 'chat-1',
+      );
+      expect(session, isNotNull);
+      // Realtime 网关的既有派生逻辑天然支持 wss 地址：路径按协议写死，
+      // 不保留用户地址里的推理路径。
+      expect(
+        connector.lastUri.toString(),
+        'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'
+        '?model=qwen3-tts-flash-realtime',
+      );
+    });
+
+    test('② wss 地址：整段与流式都走 WS 推理会话，HTTP 客户端零调用', () async {
+      final connector = _ScriptedTtsWsConnector(
+        onTextSend: (text, connection) {
+          final event = jsonDecode(text) as Map<String, Object?>;
+          final action = (event['header']! as Map)['action']! as String;
+          switch (action) {
+            case 'run-task':
+              connection.serverText(
+                jsonEncode({
+                  'header': {'task_id': 't-1', 'event': 'task-started'},
+                  'payload': {},
+                }),
+              );
+            case 'continue-task':
+              connection.serverBinary(_inferenceWavFrame([5]));
+            case 'finish-task':
+              connection.serverBinary(_inferenceWavFrame([6]));
+              connection.serverText(
+                jsonEncode({
+                  'header': {'task_id': 't-1', 'event': 'task-finished'},
+                  'payload': {},
+                }),
+              );
+          }
+        },
+      );
+      final gateway = TtsModelGateway(
+        _ExplodingBytesHttpClient(),
+        webSocketConnector: connector,
+      );
+      const wssConfig = TtsConfig(
+        provider: TtsProviderKind.qwenTts,
+        baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+        model: 'qwen-audio-3.0-tts-flash',
+        apiKey: 'sk-dashscope-test',
+      );
+
+      final wav = Uint8List.fromList(
+        await gateway.synthesize(config: wssConfig, apiKey: 'sk-dashscope-test', text: '晚安。'),
+      );
+      expect(wav.sublist(44), [5, 6]);
+      expect(
+        connector.lastUri.toString(),
+        'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+      );
+      final streamed = <VoiceAudioChunk>[];
+      await gateway
+          .synthesizeStream(config: wssConfig, apiKey: 'sk-dashscope-test', text: '晚安。')
+          .forEach(streamed.add);
+      expect(streamed.map((chunk) => chunk.bytes), [
+        [5],
+        [6],
+      ]);
+      // 连续供给会话同样可开：wss 地址是会话档。
+      expect(
+        await gateway.openSession(
+          config: wssConfig,
+          apiKey: 'sk-dashscope-test',
+          sessionId: 'chat-1',
+        ),
+        isNotNull,
+      );
+    });
+
+    test('② 压过 ③：wss 配 maas 主机按地址 scheme 走 WS 推理', () async {
+      final connector = _ScriptedTtsWsConnector(
+        onTextSend: (text, connection) {
+          final event = jsonDecode(text) as Map<String, Object?>;
+          switch (((event['header']! as Map)['action'] as String)) {
+            case 'run-task':
+              connection.serverText(
+                jsonEncode({
+                  'header': {'task_id': 't-1', 'event': 'task-started'},
+                  'payload': {},
+                }),
+              );
+            case 'continue-task':
+              connection.serverBinary(_inferenceWavFrame([5]));
+            case 'finish-task':
+              connection.serverBinary(_inferenceWavFrame([6]));
+              connection.serverText(
+                jsonEncode({
+                  'header': {'task_id': 't-1', 'event': 'task-finished'},
+                  'payload': {},
+                }),
+              );
+          }
+        },
+      );
+      final audio = await TtsModelGateway(
+        _ExplodingBytesHttpClient(),
+        webSocketConnector: connector,
+      ).synthesize(
+        config: const TtsConfig(
+          provider: TtsProviderKind.qwenTts,
+          baseUrl: 'wss://ws-12345.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference',
+          model: 'qwen-audio-3.1-tts-flash',
+          apiKey: 'sk-bailian',
+        ),
+        apiKey: 'sk-bailian',
+        text: '晚安。',
+      );
+      // 出网目标是 wss 地址、经 WS 连接子：maas 主机的 HTTP 形状没有截胡。
+      expect(audio.sublist(44), [5, 6]);
+      expect(connector.connectCalls, 1);
+    });
+
+    test('③ 压过 ④：https 配 maas 主机仍走 HTTP maas 形状（既有用例逐字不动）', () async {
+      // 分派只改请求体形状（ADR 0020 既有裁定），本组只确认它没有被
+      // 新分支截胡：https 地址照旧 POST 到用户填的地址，CosyVoice 家族
+      // 请求体不变，响应音频地址照旧走下载跳。
+      final client = _MaasRecordingBytesHttpClient(
+        postResponse: textResponse(
+          jsonEncode({
+            'output': {
+              'audio': {'url': 'https://oss.example.com/a.wav'},
+            },
+          }),
+        ),
+        downloadResponse: ProviderBytesHttpResponse(
+          statusCode: 200,
+          body: Stream.value([4, 5]),
+        ),
+      );
+      final gateway = TtsModelGateway(
+        client,
+        webSocketConnector: _ScriptedTtsWsConnector(),
+      );
+      final audio = await gateway.synthesize(
+        config: const TtsConfig(
+          provider: TtsProviderKind.qwenTts,
+          baseUrl: 'https://ws-12345.cn-beijing.maas.aliyuncs.com'
+              '/api/v1/services/audio/tts/SpeechSynthesizer',
+          model: 'qwen-audio-3.1-tts-flash',
+          apiKey: 'sk-bailian',
+        ),
+        apiKey: 'sk-bailian',
+        text: '晚安。',
+      );
+      expect(audio, [4, 5]);
+      expect(client.postCalls, 1);
+      expect(client.downloadCalled, isTrue);
     });
   });
 }
@@ -1393,6 +2147,15 @@ final class _ScriptedTtsWsConnection implements ProviderWebSocketConnection {
   final sentText = <String>[];
   bool closed = false;
 
+  /// 服务端帧的统一派发队列：真实连接上 binary 与 text 是同一条流按
+  /// wire 序派发的两个视图（见 DartIoProviderWebSocketConnection 的广播
+  /// 派生）。内存 fake 用两个独立控制器时，同一次脚本回调里「先音频帧
+  /// 后终态事件」的同步 add 会因微任务调度交错而乱序——经典推理协议
+  /// （票 07）的尾帧与 task-finished 正是靠 wire 序区分先后，这里按入队
+  /// 序逐帧派发以保真。
+  final _serverQueue = <({bool binary, Object? frame})>[];
+  var _serverDispatchScheduled = false;
+
   @override
   Stream<List<int>> get messages => _binary.stream;
 
@@ -1417,13 +2180,45 @@ final class _ScriptedTtsWsConnection implements ProviderWebSocketConnection {
     _closeBoth();
   }
 
-  void serverBinary(List<int> frame) => _binary.add(frame);
+  void serverBinary(List<int> frame) =>
+      _enqueueServerFrame(binary: true, frame: frame);
 
-  void serverText(String text) => _text.add(text);
+  void serverText(String text) =>
+      _enqueueServerFrame(binary: false, frame: text);
 
   /// 服务端主动断开（没有结束事件的断流）。
   Future<void> drop() async {
     _closeBoth();
+  }
+
+  void _enqueueServerFrame({required bool binary, required Object? frame}) {
+    _serverQueue.add((binary: binary, frame: frame));
+    _scheduleServerDispatch();
+  }
+
+  void _scheduleServerDispatch() {
+    if (_serverDispatchScheduled) {
+      return;
+    }
+    _serverDispatchScheduled = true;
+    scheduleMicrotask(() {
+      _serverDispatchScheduled = false;
+      if (_serverQueue.isNotEmpty) {
+        final queued = _serverQueue.removeAt(0);
+        if (queued.binary) {
+          if (!_binary.isClosed) {
+            _binary.add(queued.frame as List<int>);
+          }
+        } else {
+          if (!_text.isClosed) {
+            _text.add(queued.frame as String);
+          }
+        }
+      }
+      if (_serverQueue.isNotEmpty) {
+        _scheduleServerDispatch();
+      }
+    });
   }
 
   /// 两个视图都未必有监听方（豆包只听二进制、千问只听文本），而单订阅
@@ -1558,3 +2353,81 @@ ProviderBytesHttpResponse textResponse(
   statusCode: statusCode,
   body: Stream.value(utf8.encode(text)),
 );
+
+/// 记录型二进制 HTTP 客户端（带下载跳）：千问朗读档 maas 形状的分派
+/// 用例用——POST 与 GET 分别留档，证明新分支没有截胡既有 HTTP 形状。
+final class _MaasRecordingBytesHttpClient implements ProviderBytesHttpClient {
+  _MaasRecordingBytesHttpClient({
+    required this.postResponse,
+    required this.downloadResponse,
+  });
+
+  final ProviderBytesHttpResponse postResponse;
+  final ProviderBytesHttpResponse downloadResponse;
+
+  int postCalls = 0;
+  bool downloadCalled = false;
+
+  @override
+  Future<ProviderBytesHttpResponse> postBytes({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) async {
+    postCalls += 1;
+    return postResponse;
+  }
+
+  @override
+  Future<ProviderBytesHttpResponse> getBytes({
+    required Uri uri,
+    required Duration timeout,
+  }) async {
+    downloadCalled = true;
+    return downloadResponse;
+  }
+}
+
+/// 一帧自带完整 WAV 头的音频（probe 02/03 基线形状：每个 binary 帧是
+/// 独立的 WAV 文件）。[extended] 为 true 时 fmt 前插一个 LIST 扩展块，
+/// data 不在固定 44 字节偏移——剥头必须按块遍历。
+Uint8List _inferenceWavFrame(List<int> pcm, {bool extended = false}) {
+  final bytes = BytesBuilder(copy: false);
+  void tag(String value) => bytes.add(ascii.encode(value));
+  List<int> u32(int value) => [
+    value & 0xff,
+    (value >> 8) & 0xff,
+    (value >> 16) & 0xff,
+    (value >> 24) & 0xff,
+  ];
+  List<int> u16(int value) => [value & 0xff, (value >> 8) & 0xff];
+  void chunk(String id, List<int> body) {
+    tag(id);
+    bytes.add(u32(body.length));
+    bytes.add(body);
+    if (body.length.isOdd) {
+      bytes.add([0]);
+    }
+  }
+
+  // 扩展块夹具：fmt 前插一个 LIST/INFO 块（8 字节体，偶数无填充），
+  // data 不在固定 44 字节偏移——固定剥会剥错。
+  final listChunkSize = extended ? 8 + 8 : 0;
+  tag('RIFF');
+  bytes.add(u32(36 + pcm.length + listChunkSize));
+  tag('WAVE');
+  if (extended) {
+    chunk('LIST', ascii.encode('INFOqiyu'));
+  }
+  chunk('fmt ', [
+    ...u16(1), // PCM
+    ...u16(1), // 单声道
+    ...u32(24000),
+    ...u32(24000 * 2),
+    ...u16(2),
+    ...u16(16),
+  ]);
+  chunk('data', pcm);
+  return bytes.takeBytes();
+}

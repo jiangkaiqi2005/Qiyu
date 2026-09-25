@@ -67,13 +67,13 @@ void main() {
     });
   });
 
-  group('朗读族：3.1／3.0 新形状型号只给模板不代填', () {
+  group('朗读族：3.1／3.0 新版语音通道型号引导换档（推理地址可代填，票 07）', () {
     for (final model in [
       'qwen-audio-3.1-tts-flash',
       'qwen-audio-3.0-tts-flash',
       'qwen-audio-3.0-tts-plus',
     ]) {
-      test('$model 在千问朗读档填现行地址：引导去新版端点（同档）', () {
+      test('$model 在千问朗读档填现行地址：引导换新版语音通道（同档）', () {
         final suggestion = lookupVoiceTierSuggestion(
           family: VoiceServiceFamily.synthesis,
           currentProviderWireName: 'qwen_tts',
@@ -84,8 +84,9 @@ void main() {
         expect(switchSuggestion.targetFamily, VoiceServiceFamily.synthesis);
         expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
         expect(switchSuggestion.targetModel, model);
-        // 业务空间 ID 只有用户知道：不代填端点，只给模板与拼接指引。
-        expect(switchSuggestion.defaultEndpoint, isNull);
+        // 官方 WS 推理地址实测全链路成功（probe 02/03）：缺省端点直接
+        // 代填；maas 模板与拼接指引留作备选信息。
+        expect(switchSuggestion.defaultEndpoint, qwenTtsWsInferenceEndpoint);
         expect(
           switchSuggestion.addressTemplate,
           'https://{业务空间ID}.cn-beijing.maas.aliyuncs.com'
@@ -94,11 +95,11 @@ void main() {
         expect(switchSuggestion.addressGuidance, contains('业务空间 ID'));
         expect(
           switchSuggestion.reason,
-          '这个型号要走千问朗读档的新版千问端点。',
+          '这个型号要走千问朗读档的新版语音通道。',
         );
       });
 
-      test('$model 在其他档同样给模板引导', () {
+      test('$model 在其他档同样给推理地址与备选模板', () {
         final suggestion = lookupVoiceTierSuggestion(
           family: VoiceServiceFamily.synthesis,
           currentProviderWireName: 'openai_compatible',
@@ -107,11 +108,15 @@ void main() {
         expect(suggestion, isA<VoiceTierSwitchSuggestion>(), reason: model);
         final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
         expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
-        expect(switchSuggestion.defaultEndpoint, isNull);
+        expect(switchSuggestion.defaultEndpoint, qwenTtsWsInferenceEndpoint);
         expect(switchSuggestion.addressTemplate, isNotNull);
+        expect(
+          switchSuggestion.reason,
+          '这个型号要走千问朗读档的新版语音通道。',
+        );
       });
 
-      test('$model 在千问朗读档配新版地址：正确落位，不干预', () {
+      test('$model 在千问朗读档配 maas 地址：正确落位，不干预', () {
         expect(
           lookupVoiceTierSuggestion(
             family: VoiceServiceFamily.synthesis,
@@ -122,7 +127,30 @@ void main() {
           isNull,
         );
       });
+
+      test('$model 在千问朗读档配 wss 推理地址：正确落位，不干预', () {
+        expect(
+          lookupVoiceTierSuggestion(
+            family: VoiceServiceFamily.synthesis,
+            currentProviderWireName: 'qwen_tts',
+            model: model,
+            currentAddressUsesWsInference: true,
+          ),
+          isNull,
+        );
+      });
     }
+
+    test('结构完整性：新版端点条目的缺省端点一律是官方推理地址（遍历行集）', () {
+      final newVersionRows = supportedVoiceModelRows
+          .where((row) => row.usesNewVersionEndpoint)
+          .toList();
+      expect(newVersionRows, isNotEmpty);
+      for (final row in newVersionRows) {
+        expect(row.family, VoiceServiceFamily.synthesis, reason: row.model);
+        expect(row.defaultEndpoint, qwenTtsWsInferenceEndpoint, reason: row.model);
+      }
+    });
   });
 
   group('不支持裁定逐字锁定（spec 决策 8，遍历全表防加行漏测）', () {
@@ -224,18 +252,22 @@ void main() {
       );
     });
 
-    test('结构完整性：转写族所有支持条目不得是新版端点（maas）行', () {
+    test('结构完整性：转写族所有支持条目不得是新版端点行', () {
       // 转写设置页的回填计划保留模板分支只是共享计划形状的防御，本域
       // 没有可诚实展示的模板话术（`{业务空间ID}` 拼接指引是朗读域话术）：
-      // 表层面锁死转写族不收 maas 行。遍历走支持条目的公开行集（加行
-      // 自动进入），将来确要给转写族加 maas 行，加行即红——届时须同票
+      // 表层面锁死转写族不收新版端点行。遍历走支持条目的公开行集（加行
+      // 自动进入），将来确要给转写族加新版端点行，加行即红——届时须同票
       // 补两域话术与用例。
       final transcriptionRows = supportedVoiceModelRows
           .where((row) => row.family == VoiceServiceFamily.transcription)
           .toList();
       expect(transcriptionRows, isNotEmpty);
       for (final row in transcriptionRows) {
-        expect(row.usesMaasAddress, isFalse, reason: '${row.model} 不得标新版端点行');
+        expect(
+          row.usesNewVersionEndpoint,
+          isFalse,
+          reason: '${row.model} 不得标新版端点行',
+        );
       }
     });
 
@@ -340,8 +372,13 @@ void main() {
       model: 'qwen-audio-3.1-tts-flash',
     )! as VoiceTierSwitchSuggestion;
     expect(maasSuggestion.toJson()['kind'], 'switchTier');
+    // 新版语音通道条目：推理地址可代填与 maas 备选模板并存下发（票 07）。
+    expect(maasSuggestion.toJson()['defaultEndpoint'], qwenTtsWsInferenceEndpoint);
     expect(maasSuggestion.toJson()['addressTemplate'], isNotNull);
-    expect(maasSuggestion.toJson().containsKey('defaultEndpoint'), isFalse);
+    expect(
+      maasSuggestion.toJson()['reason'],
+      '这个型号要走千问朗读档的新版语音通道。',
+    );
 
     final unsupported = lookupVoiceTierSuggestion(
       family: VoiceServiceFamily.synthesis,

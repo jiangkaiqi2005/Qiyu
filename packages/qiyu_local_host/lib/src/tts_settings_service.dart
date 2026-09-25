@@ -6,7 +6,8 @@ import 'model_gateway.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart'
     show ProviderTestStatus, providerTestMessage, providerTestStatusFromFailureKind;
-import 'qwen_tts_gateway.dart' show qwenTtsUsesMaasShape;
+import 'qwen_tts_gateway.dart'
+    show qwenTtsUsesMaasShape, qwenTtsUsesWsInference;
 import 'tts_gateway.dart';
 import 'voice_tier_mapping.dart';
 
@@ -231,19 +232,22 @@ final class TtsSettingsService
     }
     final effectiveProvider =
         provider ?? stored?.provider ?? TtsProviderKind.openAiCompatible;
+    final addressShapes = _effectiveAddressShapes(
+      provider: effectiveProvider,
+      baseUrl: effectiveBaseUrl,
+    );
     // 档位映射表（ADR 0020）发请求前查询：命中「应换档／不支持」直接
     // 返回结构化建议，不发计费请求、网关零调用；表 miss 一切照旧。新版
-    // 端点型号只有配了新版地址才算正确落位（业务空间 ID 只有用户知道，
-    // 建议里只给模板与拼接指引，不代填）。表 miss 时的分类、错误码与
-    // ADR 0015 文案逐字不变。
+    // 语音通道型号（3.x）配 maas 地址或 wss 推理地址（票 07）才算正确
+    // 落位；配现行地址则引导换通道——建议带可代填的官方推理地址，maas
+    // 模板与拼接指引为备选信息（业务空间 ID 只有用户知道）。表 miss 时的
+    // 分类、错误码与 ADR 0015 文案逐字不变。
     final suggestion = lookupVoiceTierSuggestion(
       family: VoiceServiceFamily.synthesis,
       currentProviderWireName: effectiveProvider.wireName,
       model: effectiveModel,
-      currentAddressUsesMaasShape: _effectiveAddressUsesMaasShape(
-        provider: effectiveProvider,
-        baseUrl: effectiveBaseUrl,
-      ),
+      currentAddressUsesMaasShape: addressShapes.maasShape,
+      currentAddressUsesWsInference: addressShapes.wsInference,
     );
     if (suggestion != null) {
       return TtsTestResult(
@@ -388,6 +392,10 @@ final class TtsSettingsService
       // 查档位映射表（票 05），命中把 ADR 0015 通用文案升级为精确到档
       // 建议（与连接测试引导同源同句）；表 miss 与其他失败类别沿用既有
       // 文案逐字不变。
+      final formalAddressShapes = _effectiveAddressShapes(
+        provider: config.provider,
+        baseUrl: config.baseUrl,
+      );
       throw TtsServiceException(
         code: error.serviceError == ServiceErrorCategory.client &&
                 error.kind != ModelFailureKind.modelInterfaceMismatch
@@ -398,10 +406,8 @@ final class TtsSettingsService
                   family: VoiceServiceFamily.synthesis,
                   currentProviderWireName: config.provider.wireName,
                   model: config.model,
-                  currentAddressUsesMaasShape: _effectiveAddressUsesMaasShape(
-                    provider: config.provider,
-                    baseUrl: config.baseUrl,
-                  ),
+                  currentAddressUsesMaasShape: formalAddressShapes.maasShape,
+                  currentAddressUsesWsInference: formalAddressShapes.wsInference,
                 ) ??
                 _ttsTestMessage(failure.status)
             : _ttsTestMessage(failure.status),
@@ -541,18 +547,24 @@ String? _normalizeApiKey(String? value) {
   return trimmed.isEmpty ? null : trimmed;
 }
 
-/// 连接测试表单地址的新形状判定（ADR 0020 地址派形状）：只在千问朗读
-/// 档有意义；表查询在配置校验之前跑，地址可能是任意草稿，解析不出或
-/// 不是千问朗读档一律按现行形状对待。
-bool _effectiveAddressUsesMaasShape({
+/// 连接测试表单地址的形状判定（ADR 0020 地址派形状＋票 07 第三形状）：
+/// 只在千问朗读档有意义；表查询在配置校验之前跑，地址可能是任意草稿，
+/// 解析不出或不是千问朗读档一律按现行形状对待。
+({bool maasShape, bool wsInference}) _effectiveAddressShapes({
   required TtsProviderKind provider,
   required String baseUrl,
 }) {
   if (provider != TtsProviderKind.qwenTts) {
-    return false;
+    return (maasShape: false, wsInference: false);
   }
   final uri = Uri.tryParse(baseUrl.trim());
-  return uri != null && qwenTtsUsesMaasShape(uri);
+  if (uri == null) {
+    return (maasShape: false, wsInference: false);
+  }
+  return (
+    maasShape: qwenTtsUsesMaasShape(uri),
+    wsInference: qwenTtsUsesWsInference(baseUrl),
+  );
 }
 
 ({String code, ProviderTestStatus status}) _ttsFailureDetails(

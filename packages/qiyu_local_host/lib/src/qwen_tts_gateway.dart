@@ -295,68 +295,73 @@ final class QwenTtsGateway
     }
   }
 
-  /// 把一个 SSE 音频段归一成裸 PCM（票二）：DashScope 文档未载明中间块
-  /// 的音频格式（只称「Base64 编码的音频片段」，唯一线索是完整音频 URL
-  /// 为 .wav），请求侧也没有格式参数。块带 RIFF/WAVE 头就按块遍历定位
-  /// `fmt `/`data` 两个子块（**不按固定 44 字节**——带 LIST 等扩展块时
-  /// data 不在固定偏移，固定剥会剥错），剥掉容器只留裸样本，并读回
-  /// fmt 里的协商采样率；裸 PCM 块不以 RIFF 开头，原样通过。
-  ///
-  /// 返回的 pcm 可能为空（只有容器头没有 data 的片段），sampleRate 仍
-  /// 会带回——调用方据此统一一路流的采样率标注。
-  static ({Uint8List pcm, int? sampleRate}) _normalizeChunk(Uint8List bytes) {
-    if (bytes.length < 12) {
-      return (pcm: bytes, sampleRate: null);
-    }
-    final riff = ascii.decode(bytes.sublist(0, 4), allowInvalid: true);
-    final wave = ascii.decode(bytes.sublist(8, 12), allowInvalid: true);
-    if (riff != 'RIFF' || wave != 'WAVE') {
-      return (pcm: bytes, sampleRate: null);
-    }
-    int? sampleRate;
-    var offset = 12;
-    while (offset + 8 <= bytes.length) {
-      final id = ascii.decode(
-        bytes.sublist(offset, offset + 4),
-        allowInvalid: true,
-      );
-      final size = ByteData.sublistView(
-        bytes,
-        offset + 4,
-        offset + 8,
-      ).getUint32(0, Endian.little);
-      final bodyStart = offset + 8;
-      if (id == 'fmt ' && bodyStart + 8 <= bytes.length) {
-        sampleRate = ByteData.sublistView(
-          bytes,
-          bodyStart + 4,
-          bodyStart + 8,
-        ).getUint32(0, Endian.little);
-      }
-      if (id == 'data') {
-        // data 块可能被截断（流式分块的边界是任意的）：以实际到达为准。
-        final end = bodyStart + size > bytes.length
-            ? bytes.length
-            : bodyStart + size;
-        return (
-          pcm: Uint8List.view(
-            bytes.buffer,
-            bytes.offsetInBytes + bodyStart,
-            end - bodyStart,
-          ),
-          sampleRate: sampleRate,
-        );
-      }
-      // 块按 2 字节对齐：奇数长度后有一个填充字节。
-      offset = bodyStart + size + (size.isOdd ? 1 : 0);
-    }
-    // 有 RIFF 头但没有 data 块（纯容器头片段）：只把采样率带回去。
-    stderrDiagnostics(
-      'tts qwen chunk carries wav header without data block '
-      '(len=${bytes.length})',
-    );
-    return (pcm: Uint8List(0), sampleRate: sampleRate);
+  /// 把一个 SSE 音频段归一成裸 PCM（票二）：委托顶层 [qwenTtsNormalizeWavChunk]
+  /// （千问朗读档的 WS 推理通道（票 07）与 SSE 流共用同一份剥头口径）。
+  static ({Uint8List pcm, int? sampleRate}) _normalizeChunk(Uint8List bytes) =>
+      qwenTtsNormalizeWavChunk(bytes);
+}
+
+/// 把一段可能带 RIFF/WAVE 容器头的音频字节归一成裸 PCM（票二引入，票 07
+/// 起千问 WS 推理通道共用）：DashScope 文档未载明中间块的音频格式（只称
+/// 「Base64 编码的音频片段」，唯一线索是完整音频 URL 为 .wav），请求侧
+/// 也没有格式参数。块带 RIFF/WAVE 头就按块遍历定位 `fmt `/`data` 两个
+/// 子块（**不按固定 44 字节**——带 LIST 等扩展块时 data 不在固定偏移，
+/// 固定剥会剥错），剥掉容器只留裸样本，并读回 fmt 里的协商采样率；裸
+/// PCM 块不以 RIFF 开头，原样通过。
+///
+/// 返回的 pcm 可能为空（只有容器头没有 data 的片段），sampleRate 仍会
+/// 带回——调用方据此统一一路流的采样率标注。
+({Uint8List pcm, int? sampleRate}) qwenTtsNormalizeWavChunk(Uint8List bytes) {
+  if (bytes.length < 12) {
+    return (pcm: bytes, sampleRate: null);
   }
+  final riff = ascii.decode(bytes.sublist(0, 4), allowInvalid: true);
+  final wave = ascii.decode(bytes.sublist(8, 12), allowInvalid: true);
+  if (riff != 'RIFF' || wave != 'WAVE') {
+    return (pcm: bytes, sampleRate: null);
+  }
+  int? sampleRate;
+  var offset = 12;
+  while (offset + 8 <= bytes.length) {
+    final id = ascii.decode(
+      bytes.sublist(offset, offset + 4),
+      allowInvalid: true,
+    );
+    final size = ByteData.sublistView(
+      bytes,
+      offset + 4,
+      offset + 8,
+    ).getUint32(0, Endian.little);
+    final bodyStart = offset + 8;
+    if (id == 'fmt ' && bodyStart + 8 <= bytes.length) {
+      sampleRate = ByteData.sublistView(
+        bytes,
+        bodyStart + 4,
+        bodyStart + 8,
+      ).getUint32(0, Endian.little);
+    }
+    if (id == 'data') {
+      // data 块可能被截断（流式分块的边界是任意的）：以实际到达为准。
+      final end = bodyStart + size > bytes.length
+          ? bytes.length
+          : bodyStart + size;
+      return (
+        pcm: Uint8List.view(
+          bytes.buffer,
+          bytes.offsetInBytes + bodyStart,
+          end - bodyStart,
+        ),
+        sampleRate: sampleRate,
+      );
+    }
+    // 块按 2 字节对齐：奇数长度后有一个填充字节。
+    offset = bodyStart + size + (size.isOdd ? 1 : 0);
+  }
+  // 有 RIFF 头但没有 data 块（纯容器头片段）：只把采样率带回去。
+  stderrDiagnostics(
+    'tts qwen chunk carries wav header without data block (len=${bytes.length})',
+  );
+  return (pcm: Uint8List(0), sampleRate: sampleRate);
 }
 
 /// qwen_tts 档的形状分派（ADR 0020）：地址主机含 `maas.aliyuncs.com`
@@ -368,6 +373,21 @@ final class QwenTtsGateway
 /// 改写它。
 bool qwenTtsUsesMaasShape(Uri uri) =>
     uri.host.toLowerCase().contains('maas.aliyuncs.com');
+
+/// qwen_tts 档的第三形状分派（票 07，ADR 0020 补篇）：地址 scheme 为
+/// ws/wss 走 DashScope 经典 SpeechSynthesizer WS 推理协议（`/api-ws/v1/
+/// inference` 事件流）。地址即用户填的完整推理端点，Host 不派生路径，
+/// 只在路径空缺时补默认值（见 `QwenWsInferenceTtsGateway`）。判定只看
+/// scheme，主机与路径不参与——maas 主机配 wss 地址同样落 WS 推理
+/// （分派优先级：型号驱动 > 地址 scheme > maas 主机）。
+bool qwenTtsUsesWsInference(String baseUrl) {
+  final uri = Uri.tryParse(baseUrl.trim());
+  if (uri == null) {
+    return false;
+  }
+  final scheme = uri.scheme.toLowerCase();
+  return scheme == 'ws' || scheme == 'wss';
+}
 
 /// 3.1 新形状（CosyVoice 家族）的音色缺省值：官方文档示例音色。与现行
 /// 形状的 [qwenTtsDefaultVoice] 同律——音色是自由输入框，空缺时按本

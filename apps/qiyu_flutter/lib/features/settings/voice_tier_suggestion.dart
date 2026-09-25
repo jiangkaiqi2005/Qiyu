@@ -52,10 +52,14 @@ final class VoiceTierSuggestionData {
   /// Host 给的人话结论（设置页卡片与正式路径话术同源）。
   final String reason;
 
-  /// 可代填的缺省端点；新版端点（含业务空间 ID）为 null——栖语不代填。
+  /// 可代填的缺省端点：现行形状条目是 multimodal 端点；新版端点条目
+  /// （票 07）是官方 WS 推理地址，与 [addressTemplate] 并存下发——
+  /// maas 模板仅作备选信息，栖语不代填业务空间 ID。
   final String? defaultEndpoint;
 
-  /// 官方地址模板（含拼接占位）：只给指引不代填时非 null。
+  /// 官方地址模板（含拼接占位）：票 07 起新版条目与 [defaultEndpoint]
+  /// 并存（备选信息）；只有模板没有端点时（旧 Host JSON 的防御形状）
+  /// 才走「只给指引不代填」的老语义。
   final String? addressTemplate;
 
   /// 模板拼接指引话术。
@@ -177,8 +181,10 @@ class VoiceTierSuggestionCard extends StatelessWidget {
 }
 
 /// 一键换档的地址处置：保持现状（同档，或跨档但建议未给可填地址）、
-/// 填建议的缺省端点（现行形状）、把官方地址模板填作草稿（新版端点，
-/// `{业务空间ID}` 待用户替换）。
+/// 填建议的缺省端点（现行形状，及票 07 起新版条目两者并存时的推理
+/// 地址）、把官方地址模板填作草稿（`{业务空间ID}` 待用户替换——票 07
+/// 起新版条目两者并存、模板以卡片备选呈现，模板草稿分支只为旧 Host
+/// JSON 的防御形状保留）。
 enum RefillAddressAction { keepCurrent, suggestedEndpoint, templateDraft }
 
 /// 应用一条建议后表单将处的状态：确认对话框据此如实展示「将要改成

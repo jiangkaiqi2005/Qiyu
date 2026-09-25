@@ -1145,7 +1145,8 @@ void main() {
     expect(handwritten.provider, TtsProviderKind.qwenTts);
     expect(handwritten.voice, 'Cherry');
 
-    // 千问档与 OpenAI 兼容档同为 HTTP 家族：http/https 都放行，ws 拒绝。
+    // 千问档 http/https 放行（票 07 起 ws/wss 也放行——地址即用户填的
+    // 完整 WS 推理端点，ADR 0020 补篇）；其余 scheme 照旧拒绝。
     expect(
       () => const TtsConfig(
         provider: TtsProviderKind.qwenTts,
@@ -1157,7 +1158,23 @@ void main() {
     expect(
       () => const TtsConfig(
         provider: TtsProviderKind.qwenTts,
-        baseUrl: 'ws://dashscope.example.com/api/v1',
+        baseUrl: 'ws://dashscope.example.com/api-ws/v1/inference',
+        model: qwenTtsDefaultModel,
+      ).validate(),
+      returnsNormally,
+    );
+    expect(
+      () => const TtsConfig(
+        provider: TtsProviderKind.qwenTts,
+        baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+        model: qwenTtsDefaultModel,
+      ).validate(),
+      returnsNormally,
+    );
+    expect(
+      () => const TtsConfig(
+        provider: TtsProviderKind.qwenTts,
+        baseUrl: 'ftp://dashscope.example.com/api-ws/v1/inference',
         model: qwenTtsDefaultModel,
       ).validate(),
       throwsA(isA<ProviderConfigException>()),

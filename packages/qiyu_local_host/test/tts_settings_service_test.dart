@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
@@ -827,7 +828,9 @@ void main() {
             .having(
               (error) => error.message,
               'message',
-              '这个型号要走千问朗读档的新版千问端点。',
+              // 正式路径话术与连接测试同源同句（映射表 reason 单处改，
+              // 票 07 起为「新版语音通道」）。
+              '这个型号要走千问朗读档的新版语音通道。',
             ),
       ),
     );
@@ -1034,14 +1037,15 @@ void main() {
     expect(result.succeeded, isFalse);
     expect(result.audioBase64, isNull);
     expect(result.status, ProviderTestStatus.modelInterfaceMismatch);
-    expect(result.message, '这个型号要走千问朗读档的新版千问端点。');
+    expect(result.message, '这个型号要走千问朗读档的新版语音通道。');
     final suggestion = result.tierSuggestion;
     expect(suggestion, isA<VoiceTierSwitchSuggestion>());
     final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
     expect(switchSuggestion.targetProviderWireName, 'qwen_tts');
     expect(switchSuggestion.targetModel, 'qwen-audio-3.1-tts-flash');
-    // 业务空间 ID 不代填：只有模板与拼接指引。
-    expect(switchSuggestion.defaultEndpoint, isNull);
+    // 票 07：官方 WS 推理地址实测可用，缺省端点直接代填；maas 模板与
+    // 拼接指引留作备选信息。
+    expect(switchSuggestion.defaultEndpoint, qwenTtsWsInferenceEndpoint);
     expect(switchSuggestion.addressTemplate, voiceTierMaasAddressTemplate);
     expect(switchSuggestion.addressGuidance, voiceTierMaasAddressGuidance);
   });
@@ -1137,6 +1141,99 @@ void main() {
     expect(result.succeeded, isTrue);
     expect(result.tierSuggestion, isNull);
   });
+
+  test('3.1 型号配 wss 推理地址：正确落位，连接测试照常出网试听', () async {
+    // 票 07：ws/wss 地址按 scheme 喂查询——新版语音通道条目在 wss 地址
+    // 上是正确落位，不干预，照常出网。
+    final gateway = _FakeTtsGateway(audio: [9]);
+    final service = TtsSettingsService(repository, gateway);
+    final result = await service.test(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl: qwenTtsWsInferenceEndpoint,
+      model: 'qwen-audio-3.1-tts-flash',
+      apiKey: 'sk-bailian',
+    );
+
+    expect(gateway.called, isTrue);
+    expect(result.succeeded, isTrue);
+    expect(result.tierSuggestion, isNull);
+  });
+
+  test('连接测试端到端：wss 推理地址经新网关拿到试听音频（假 connector）', () async {
+    // 地址 scheme 为 ws/wss：网关分派走经典 WS 推理会话（票 07），HTTP
+    // 客户端一个字节都不该收到。脚本按 probe 02 实测形状回放：run-task
+    // → task-started →（continue-task 后）WAV binary 帧 → task-finished。
+    final connector = _ScriptedWsInferenceConnector();
+    final service = TtsSettingsService(
+      repository,
+      TtsModelGateway(_ExplodingBytesHttpClient(), webSocketConnector: connector),
+    );
+
+    final result = await service.test(
+      provider: TtsProviderKind.qwenTts,
+      baseUrl: qwenTtsWsInferenceEndpoint,
+      model: 'qwen-audio-3.0-tts-flash',
+      apiKey: 'sk-bailian',
+    );
+
+    expect(result.succeeded, isTrue);
+    expect(result.status, ProviderTestStatus.success);
+    // 试听音频 = 网关拼 PCM 后本地包的 WAV（帧头已剥）。
+    final wav = base64Decode(result.audioBase64!);
+    expect(ascii.decode(wav.sublist(0, 4)), 'RIFF');
+    expect(
+      ByteData.sublistView(wav, 24, 28).getUint32(0, Endian.little),
+      24000,
+    );
+    expect(wav.sublist(44), [7, 8, 9]);
+
+    // 建连细节：地址原样使用、Bearer 鉴权。
+    expect(connector.lastUri.toString(), qwenTtsWsInferenceEndpoint);
+    expect(connector.lastHeaders!['authorization'], 'Bearer sk-bailian');
+
+    // run-task 载荷逐项（官方文档字段值 + 缺省音色/格式回落）。
+    final runTask = connector.clientEvents.firstWhere(
+      (event) => (event['header']! as Map)['action'] == 'run-task',
+    );
+    final runTaskHeader = runTask['header']! as Map<String, Object?>;
+    expect(runTaskHeader['streaming'], 'duplex');
+    expect(_uuidPattern.hasMatch(runTaskHeader['task_id']! as String), isTrue);
+    expect(runTask['payload'], {
+      'task_group': 'audio',
+      'task': 'tts',
+      'function': 'SpeechSynthesizer',
+      'model': 'qwen-audio-3.0-tts-flash',
+      'parameters': {
+        'text_type': 'PlainText',
+        'voice': 'longanhuan_v3.6',
+        'format': 'wav',
+        'sample_rate': 24000,
+      },
+      'input': <String, Object?>{},
+    });
+    // 同一任务所有事件共用同一 task_id；文本在 continue-task 的
+    // payload.input.text；finish-task 的 payload.input 为空对象。
+    expect(
+      connector.clientEvents
+          .map((event) => (event['header']! as Map)['task_id'])
+          .toList(),
+      everyElement(runTaskHeader['task_id']),
+    );
+    expect(
+      connector.clientEvents
+          .map((event) => (event['header']! as Map)['action'] as String)
+          .toList(),
+      ['run-task', 'continue-task', 'finish-task'],
+    );
+    expect(
+      (connector.clientEvents[1]['payload']! as Map)['input'],
+      {'text': ttsConnectionTestSentence},
+    );
+    expect(
+      (connector.clientEvents[2]['payload']! as Map)['input'],
+      <String, Object?>{},
+    );
+  });
 }
 
 final class _FakeTtsGateway implements TtsSynthesisGateway {
@@ -1207,4 +1304,163 @@ final class _RecordingBytesHttpClient implements ProviderBytesHttpClient {
     }
     return downloadResponse!;
   }
+}
+
+/// 票 07 端到端用例的脚本化 WS 连接器：按 probe 02 实测生命周期回放
+/// 服务端事件（run-task → task-started，continue-task → WAV binary 帧，
+/// finish-task → WAV binary 帧 + task-finished），上行文本帧解码留档供
+/// 载荷断言。
+final class _ScriptedWsInferenceConnector implements ProviderWebSocketConnector {
+  final List<Map<String, Object?>> clientEvents = [];
+
+  int connectCalls = 0;
+  Uri? lastUri;
+  Map<String, String>? lastHeaders;
+
+  @override
+  Future<ProviderWebSocketConnection> connect({
+    required Uri uri,
+    required Map<String, String> headers,
+  }) async {
+    connectCalls += 1;
+    lastUri = uri;
+    lastHeaders = headers;
+    return _ScriptedWsInferenceConnection(this);
+  }
+}
+
+final class _ScriptedWsInferenceConnection
+    implements ProviderWebSocketConnection {
+  _ScriptedWsInferenceConnection(this._connector);
+
+  final _ScriptedWsInferenceConnector _connector;
+  final _binary = StreamController<List<int>>();
+  final _text = StreamController<String>();
+
+  /// 服务端帧的统一派发队列（与 tts_ws_gateways_test 的脚本化连接器同
+  /// 律）：真实连接上两个帧视图出自同一条流按 wire 序派发，内存 fake
+  /// 两个控制器直接 add 会让「尾帧 + task-finished」的同步 add 乱序，
+  /// 按入队序逐帧派发保真。
+  final _serverQueue = <({bool binary, Object? frame})>[];
+  var _serverDispatchScheduled = false;
+
+  @override
+  Stream<List<int>> get messages => _binary.stream;
+
+  @override
+  Stream<String> get textMessages => _text.stream;
+
+  @override
+  void send(List<int> bytes) =>
+      throw StateError('经典推理协议客户端只发文本帧');
+
+  @override
+  void sendText(String text) {
+    final event = jsonDecode(text) as Map<String, Object?>;
+    _connector.clientEvents.add(event);
+    final action = (event['header']! as Map)['action']! as String;
+    switch (action) {
+      case 'run-task':
+        _enqueueServerFrame(binary: false, frame: _serverEvent('task-started'));
+      case 'continue-task':
+        _enqueueServerFrame(binary: true, frame: _wavAudioFrame([7, 8]));
+      case 'finish-task':
+        _enqueueServerFrame(binary: true, frame: _wavAudioFrame([9]));
+        _enqueueServerFrame(
+          binary: false,
+          frame: _serverEvent('task-finished'),
+        );
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    unawaited(_binary.close());
+    unawaited(_text.close());
+  }
+
+  void _enqueueServerFrame({required bool binary, required Object? frame}) {
+    _serverQueue.add((binary: binary, frame: frame));
+    _scheduleServerDispatch();
+  }
+
+  void _scheduleServerDispatch() {
+    if (_serverDispatchScheduled) {
+      return;
+    }
+    _serverDispatchScheduled = true;
+    scheduleMicrotask(() {
+      _serverDispatchScheduled = false;
+      if (_serverQueue.isNotEmpty) {
+        final queued = _serverQueue.removeAt(0);
+        if (queued.binary) {
+          if (!_binary.isClosed) {
+            _binary.add(queued.frame as List<int>);
+          }
+        } else {
+          if (!_text.isClosed) {
+            _text.add(queued.frame as String);
+          }
+        }
+      }
+      if (_serverQueue.isNotEmpty) {
+        _scheduleServerDispatch();
+      }
+    });
+  }
+}
+
+String _serverEvent(String event) => jsonEncode({
+  'header': {'task_id': 't-1', 'event': event, 'attributes': {}},
+  'payload': <String, Object?>{},
+});
+
+/// 一帧自带完整 WAV 头的音频（探针基线形状：每个 binary 帧是独立的
+/// WAV 文件），标准 44 字节头。
+Uint8List _wavAudioFrame(List<int> pcm) {
+  final bytes = BytesBuilder(copy: false);
+  void tag(String value) => bytes.add(ascii.encode(value));
+  void u32(int value) => bytes.add([
+    value & 0xff,
+    (value >> 8) & 0xff,
+    (value >> 16) & 0xff,
+    (value >> 24) & 0xff,
+  ]);
+  void u16(int value) => bytes.add([value & 0xff, (value >> 8) & 0xff]);
+  tag('RIFF');
+  u32(36 + pcm.length);
+  tag('WAVE');
+  tag('fmt ');
+  u32(16);
+  u16(1);
+  u16(1);
+  u32(24000);
+  u32(24000 * 2);
+  u16(2);
+  u16(16);
+  tag('data');
+  u32(pcm.length);
+  bytes.add(pcm);
+  return bytes.takeBytes();
+}
+
+final _uuidPattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);
+
+/// WS 路径绝不碰 HTTP：被调用即失败。
+final class _ExplodingBytesHttpClient implements ProviderBytesHttpClient {
+  @override
+  Future<ProviderBytesHttpResponse> postBytes({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) => throw StateError('WS 推理路径不得走 HTTP 出网');
+
+  @override
+  Future<ProviderBytesHttpResponse> getBytes({
+    required Uri uri,
+    required Duration timeout,
+  }) => throw StateError('WS 推理路径不得走 HTTP 出网');
 }

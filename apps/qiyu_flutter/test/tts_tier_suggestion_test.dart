@@ -45,7 +45,7 @@ void main() {
       final template = TtsConnectionTest.fromJson({
         'ok': false,
         'status': 'modelInterfaceMismatch',
-        'message': '这个型号要走千问朗读档的新版千问端点。',
+        'message': '这个型号要走千问朗读档的新版语音通道。',
         'suggestion': {
           'kind': 'switchTier',
           'targetFamily': 'synthesis',
@@ -53,7 +53,7 @@ void main() {
           'targetModel': 'qwen-audio-3.1-tts-flash',
           'addressTemplate': maasTemplate,
           'addressGuidance': '把 {业务空间ID} 换成你自己的业务空间 ID。',
-          'reason': '这个型号要走千问朗读档的新版千问端点。',
+          'reason': '这个型号要走千问朗读档的新版语音通道。',
         },
       }).tierSuggestion;
       expect(template!.defaultEndpoint, isNull);
@@ -113,7 +113,40 @@ void main() {
   });
 
   group('回填计划：展示与回填同源的推导', () {
+    test('新版语音通道条目（推理地址＋备选模板并存）：同档也填推理地址', () {
+      // 票 07：3.x 型号在现行地址上调不通，同档建议也要把地址换成
+      // 官方推理地址；maas 模板只是卡片备选，不进草稿。
+      final form = TtsSettingsForm();
+      form.selectProvider('qwen_tts');
+      form.baseUrlController.text =
+          'https://ws-12345.cn-beijing.maas.aliyuncs.com'
+          '/api/v1/services/audio/tts/SpeechSynthesizer';
+      final plan = form.planSuggestionApply(
+        VoiceTierSuggestionData(
+          kind: VoiceSuggestionKind.switchTier,
+          targetFamily: 'synthesis',
+          targetProvider: 'qwen_tts',
+          targetModel: 'qwen-audio-3.1-tts-flash',
+          reason: '这个型号要走千问朗读档的新版语音通道。',
+          defaultEndpoint: qwenTtsWsInferenceEndpoint,
+          addressTemplate: maasTemplate,
+        ),
+      );
+      expect(plan, isNotNull);
+      expect(plan!.crossTier, isFalse);
+      expect(plan.addressAction, RefillAddressAction.suggestedEndpoint);
+      expect(plan.baseUrl, qwenTtsWsInferenceEndpoint);
+      expect(plan.model, 'qwen-audio-3.1-tts-flash');
+      // 回填按计划执行：地址换成推理地址、型号更新；同档不动 Key 草稿。
+      form.applySuggestion(plan);
+      expect(form.baseUrlController.text, qwenTtsWsInferenceEndpoint);
+      expect(form.modelController.text, 'qwen-audio-3.1-tts-flash');
+      form.dispose();
+    });
+
     test('跨档模板建议：地址处置为模板草稿，跨档清 Key', () {
+      // 防御形状：只有模板没有可代填端点的建议（旧 Host 形状）仍走
+      // 模板草稿分支，`{业务空间ID}` 落草稿待用户替换。
       final form = TtsSettingsForm();
       final plan = form.planSuggestionApply(
         VoiceTierSuggestionData(
@@ -338,22 +371,24 @@ void main() {
       expect(field(tester, 'tts-api-key').controller!.text, isEmpty);
     });
 
-    testWidgets('同档 3.1 建议：只改型号，不代填地址，Key 草稿保留', (tester) async {
+    testWidgets('同档 3.x 建议：填推理地址＋型号，Key 草稿保留但如实说需重填', (tester) async {
       gateway.testResult = TtsConnectionTest(
         succeeded: false,
-        message: '这个型号要走千问朗读档的新版千问端点。',
+        message: '这个型号要走千问朗读档的新版语音通道。',
         tierSuggestion: VoiceTierSuggestionData(
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'synthesis',
           targetProvider: 'qwen_tts',
           targetModel: 'qwen-audio-3.1-tts-flash',
-          reason: '这个型号要走千问朗读档的新版千问端点。',
+          reason: '这个型号要走千问朗读档的新版语音通道。',
+          // 票 07：推理地址可代填与 maas 备选模板并存下发。
+          defaultEndpoint: qwenTtsWsInferenceEndpoint,
           addressTemplate: maasTemplate,
           addressGuidance: '把 {业务空间ID} 换成你自己的阿里云百炼业务空间 ID 后整条填入服务地址。',
         ),
       );
       await pumpSection(tester);
-      // 千问档 + 已填新版端点草稿与 Key 草稿。
+      // 千问档 + 现行 HTTP 地址草稿与 Key 草稿。
       await tester.tap(find.byKey(const Key('tts-provider')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('千问语音合成').last);
@@ -374,31 +409,36 @@ void main() {
       await tester.tap(find.byKey(const Key('test-tts-connection')));
       await tester.pumpAndSettle();
 
-      // 卡片给模板与拼接指引，不给「建议地址」。
+      // 卡片明细：建议地址（推理地址）与地址模板（备选）并存。
+      expect(find.textContaining('建议地址：$qwenTtsWsInferenceEndpoint'), findsOneWidget);
       expect(find.textContaining('地址模板：'), findsOneWidget);
       expect(find.textContaining('业务空间 ID'), findsWidgets);
-      expect(find.textContaining('建议地址：'), findsNothing);
 
       await tester.tap(find.byKey(const Key('tts-tier-suggestion-apply')));
       await tester.pumpAndSettle();
-      // 同档确认框如实说明地址现状与后续：地址保持不变、保存测试前要
-      // 按指引换成新版端点；Key 保留、换成新版地址保存时按既有规则需重填。
-      expect(find.textContaining('服务地址：保持不变'), findsOneWidget);
-      expect(find.textContaining('把地址换成新版端点'), findsOneWidget);
-      expect(find.textContaining('API Key：保留已保存的 Key'), findsOneWidget);
-      expect(find.textContaining('Key 按既有规则需重填'), findsOneWidget);
+      // 同档确认框：地址换成官方推理地址；Key 草稿保留，但地址变更
+      // 保存后按既有凭据规则需重填（既有机制如实说）。
+      expect(find.textContaining('服务地址：填入官方推理地址'), findsOneWidget);
+      expect(
+        find.textContaining(qwenTtsWsInferenceEndpoint),
+        findsWidgets,
+      );
+      expect(
+        find.textContaining('API Key：地址变更保存后 Key 需重填'),
+        findsOneWidget,
+      );
       await tester.tap(find.byKey(const Key('tts-tier-suggestion-confirm')));
       await tester.pumpAndSettle();
 
-      // 型号改成建议值；地址与 Key 草稿原样保留（业务空间 ID 不代填）。
+      // 型号与地址都按建议落草稿；Key 草稿原样保留（同档不清草稿，
+      // 重填发生在保存换作用域之后）。
       expect(
         field(tester, 'tts-model').controller!.text,
         'qwen-audio-3.1-tts-flash',
       );
       expect(
         field(tester, 'tts-base-url').controller!.text,
-        'https://ws-12345.cn-beijing.maas.aliyuncs.com'
-        '/api/v1/services/audio/tts/SpeechSynthesizer',
+        qwenTtsWsInferenceEndpoint,
       );
       expect(field(tester, 'tts-api-key').controller!.text, 'sk-bailian');
     });
@@ -440,16 +480,18 @@ void main() {
       );
     });
 
-    testWidgets('跨档 3.1 模板建议：模板原文落地址栏待替换，绝不静默落成现行端点', (tester) async {
+    testWidgets('跨档 3.x 建议：推理地址与型号落草稿，模板只留在卡片备选', (tester) async {
       gateway.testResult = TtsConnectionTest(
         succeeded: false,
-        message: '这个型号要走千问朗读档的新版千问端点。',
+        message: '这个型号要走千问朗读档的新版语音通道。',
         tierSuggestion: VoiceTierSuggestionData(
           kind: VoiceSuggestionKind.switchTier,
           targetFamily: 'synthesis',
           targetProvider: 'qwen_tts',
           targetModel: 'qwen-audio-3.1-tts-flash',
-          reason: '这个型号要走千问朗读档的新版千问端点。',
+          reason: '这个型号要走千问朗读档的新版语音通道。',
+          // 票 07：推理地址可代填为主，maas 模板降为备选信息。
+          defaultEndpoint: qwenTtsWsInferenceEndpoint,
           addressTemplate: maasTemplate,
           addressGuidance: '把 {业务空间ID} 换成你自己的阿里云百炼业务空间 ID 后整条填入服务地址。',
         ),
@@ -461,20 +503,23 @@ void main() {
       );
       await runConnectionTest(tester);
 
+      // 卡片明细里建议地址与备选模板并存。
+      expect(find.textContaining('建议地址：$qwenTtsWsInferenceEndpoint'), findsOneWidget);
+      expect(find.textContaining('地址模板：$maasTemplate'), findsOneWidget);
+
       await tester.tap(find.byKey(const Key('tts-tier-suggestion-apply')));
       await tester.pumpAndSettle();
-      // 对话框如实显示：地址行写的就是将要落进地址栏的模板原文，且说明
-      // 待替换；Key 行如实说明清空重填与自有百炼 Key 要求。（模板原文
-      // 同时在卡片明细里：断言收窄到对话框子树。）
+      // 对话框如实显示：地址行写的就是将要落进地址栏的推理地址；Key
+      // 行按跨档既有机制如实说清空重填。（推理地址对可用 Key 放行，
+      // 不再附「需自有百炼 Key」。）
       Finder inDialog(Finder finder) => find.descendant(
         of: find.byKey(const Key('tts-tier-suggestion-dialog')),
         matching: finder,
       );
-      expect(inDialog(find.textContaining('服务地址：填入官方地址模板')), findsOneWidget);
-      expect(inDialog(find.textContaining(maasTemplate)), findsOneWidget);
-      expect(inDialog(find.textContaining('{业务空间ID} 换成你自己的')), findsOneWidget);
+      expect(inDialog(find.textContaining('服务地址：填入官方推理地址')), findsOneWidget);
+      expect(inDialog(find.textContaining(qwenTtsWsInferenceEndpoint)), findsOneWidget);
       expect(inDialog(find.textContaining('API Key：清空重填')), findsOneWidget);
-      expect(inDialog(find.textContaining('新版端点需自有百炼 Key')), findsOneWidget);
+      expect(inDialog(find.textContaining('新版端点需自有百炼 Key')), findsNothing);
       // 现行缺省端点（3.1 打它必被 400 拒绝）不得出现在对话框或表单里。
       expect(find.textContaining(qwenTtsDefaultEndpoint), findsNothing);
       await tester.tap(inDialog(find.byKey(const Key('tts-tier-suggestion-confirm'))));
@@ -484,8 +529,11 @@ void main() {
         field(tester, 'tts-model').controller!.text,
         'qwen-audio-3.1-tts-flash',
       );
-      // 地址栏落的是模板原文（占位待用户替换），不是现行端点。
-      expect(field(tester, 'tts-base-url').controller!.text, maasTemplate);
+      // 地址栏落的是可代填的官方推理地址。
+      expect(
+        field(tester, 'tts-base-url').controller!.text,
+        qwenTtsWsInferenceEndpoint,
+      );
       expect(field(tester, 'tts-api-key').controller!.text, isEmpty);
     });
 

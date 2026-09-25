@@ -17,12 +17,22 @@ import 'provider_config.dart';
 /// 同一个型号名在两个族里落位不同，查询必须带族。
 enum VoiceServiceFamily { transcription, synthesis }
 
-/// 千问 3.1／3.0 新形状型号的官方地址模板：`{业务空间ID}` 是给用户看的
-/// 拼接占位，栖语不代填、不做占位符替换（ADR 0020 决定 2）。与 Flutter
+/// 千问 3.1／3.0 新版语音通道（maas HTTP 形状）的官方地址模板：
+/// `{业务空间ID}` 是给用户看的拼接占位，栖语不代填、不做占位符替换
+/// （ADR 0020 决定 2）。票 07 起降为备选信息——官方 WS 推理地址
+/// （[qwenTtsWsInferenceEndpoint]）可代填、为主推落位。与 Flutter
 /// 侧 `qwenTtsMaasAddressTemplate` 双源同值，改动需两边同步。
 const voiceTierMaasAddressTemplate =
     'https://{业务空间ID}.cn-beijing.maas.aliyuncs.com'
     '/api/v1/services/audio/tts/SpeechSynthesizer';
+
+/// 千问 3.1／3.0 新版语音通道的官方 WS 推理端点（官方文档「旧域名仍可
+/// 使用」，probe 02/03 实测全链路成功）：映射表 3.x 行的可代填缺省
+/// 端点（票 07，ADR 0020 补篇）——一键换档从死路（maas 模板必被空间
+/// 校验拒绝）变成活路。与 Flutter 侧 `tts_settings_client.dart` 同名
+/// 常量双源同值，改动需两边同步。
+const qwenTtsWsInferenceEndpoint =
+    'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
 
 /// 新版端点的拼接指引话术：说清空间 ID 替换、Key 要求，并把型号支持
 /// 范围指向阿里云百炼官方模型页（spec 决策 9；聚合站域名不入代码）。
@@ -60,8 +70,9 @@ sealed class VoiceTierSuggestion {
   /// 改话术只改这一处。
   final String reason;
 
-  /// 建议落位的可代填缺省端点：现行形状条目才有（含替代型号落位）；
-  /// 新版端点条目为 null——业务空间 ID 只有用户知道，栖语不代填。
+  /// 建议落位的可代填缺省端点：现行形状条目是 multimodal 端点（含替代
+  /// 型号落位）；新版端点条目（票 07）代填官方 WS 推理地址——maas 模板
+  /// 仅作备选信息（业务空间 ID 只有用户知道，栖语不代填）。
   final String? defaultEndpoint;
 
   Map<String, Object?> toJson() => {
@@ -73,9 +84,10 @@ sealed class VoiceTierSuggestion {
   };
 }
 
-/// 应换档：有 [defaultEndpoint]（基类字段）就代填缺省端点；只有
-/// [addressTemplate]（配合 [addressGuidance]）时端点由用户自己拼
-/// （新版端点含业务空间 ID，栖语不代填）。
+/// 应换档：有 [defaultEndpoint]（基类字段）就代填缺省端点——现行形状
+/// 条目填 multimodal 端点，新版端点条目（票 07）填官方 WS 推理地址；
+/// 只有 [addressTemplate]（配合 [addressGuidance]）时端点由用户自己拼
+/// （新版端点的 maas 形状含业务空间 ID，栖语不代填，模板留作备选）。
 final class VoiceTierSwitchSuggestion extends VoiceTierSuggestion {
   const VoiceTierSwitchSuggestion({
     required super.targetFamily,
@@ -123,14 +135,15 @@ extension on VoiceServiceFamily {
 }
 
 /// 支持条目：型号在其所属档的正确落位，含缺省端点（现行形状）或
-/// 新版端点模板（[usesMaasAddress]）。
+/// 新版端点条目（[usesNewVersionEndpoint]，缺省端点为官方 WS 推理
+/// 地址）。
 final class _SupportedVoiceModel {
   const _SupportedVoiceModel(
     this.model,
     this.family,
     this.providerWireName, {
     this.defaultEndpoint,
-    this.usesMaasAddress = false,
+    this.usesNewVersionEndpoint = false,
   });
 
   /// 小写归一后的精确型号名。
@@ -138,11 +151,14 @@ final class _SupportedVoiceModel {
   final VoiceServiceFamily family;
   final String providerWireName;
 
-  /// 现行形状条目的可代填缺省端点。
+  /// 条目的可代填缺省端点：现行形状条目是 multimodal 端点，新版端点
+  /// 条目是官方 WS 推理地址（票 07）。
   final String? defaultEndpoint;
 
-  /// 新版端点条目：只给模板与指引，不代填。
-  final bool usesMaasAddress;
+  /// 新版端点条目：正确落位 = maas 形状或 ws/wss 地址（票 07 语义
+  /// 扩展）。只给模板不代填的旧语义已被 probe 02/03 实测推翻——
+  /// 推理地址可代填，maas 模板降为备选信息。
+  final bool usesNewVersionEndpoint;
 }
 
 /// 不支持条目（spec 决策 8）：栖语没接的协议家族，各带原因话术与建议
@@ -249,26 +265,29 @@ const List<_SupportedVoiceModel> _supportedVoiceModels = [
     'qwen_tts',
     defaultEndpoint: qwenTtsDefaultEndpoint,
   ),
-  // 朗读族：Qwen-Audio-TTS 家族（3.0 与 3.1），官方端点为要拼业务空间
-  // ID 的新版 SpeechSynthesizer 端点（probe 01 官方文档核查）：现行地址
-  // 调不到（probe 1.3 实测 400 url error），只给模板指引。
+  // 朗读族：Qwen-Audio-TTS 家族（3.0 与 3.1），走千问朗读档的新版语音
+  // 通道（票 07）：缺省端点为官方 WS 推理地址（probe 02/03 实测全链路
+  // 成功，可代填）；现行地址调不通它们（probe 1.3 实测 400 url error）。
   _SupportedVoiceModel(
     'qwen-audio-3.1-tts-flash',
     VoiceServiceFamily.synthesis,
     'qwen_tts',
-    usesMaasAddress: true,
+    defaultEndpoint: qwenTtsWsInferenceEndpoint,
+    usesNewVersionEndpoint: true,
   ),
   _SupportedVoiceModel(
     'qwen-audio-3.0-tts-flash',
     VoiceServiceFamily.synthesis,
     'qwen_tts',
-    usesMaasAddress: true,
+    defaultEndpoint: qwenTtsWsInferenceEndpoint,
+    usesNewVersionEndpoint: true,
   ),
   _SupportedVoiceModel(
     'qwen-audio-3.0-tts-plus',
     VoiceServiceFamily.synthesis,
     'qwen_tts',
-    usesMaasAddress: true,
+    defaultEndpoint: qwenTtsWsInferenceEndpoint,
+    usesNewVersionEndpoint: true,
   ),
   // 转写族：qwen3 现行识别型号（识别档网关按地址路径派形状，缺省端点
   // 可代填；引导接线在票 04）。
@@ -290,7 +309,7 @@ final supportedVoiceModelRows = [
       family: row.family,
       providerWireName: row.providerWireName,
       defaultEndpoint: row.defaultEndpoint,
-      usesMaasAddress: row.usesMaasAddress,
+      usesNewVersionEndpoint: row.usesNewVersionEndpoint,
     ),
 ];
 
@@ -300,10 +319,12 @@ final supportedVoiceModelRows = [
 /// 与具体枚举耦合，转写与朗读两个设置域共用同一函数。
 ///
 /// [currentAddressUsesMaasShape] 只在千问朗读档有意义：地址主机含
-/// `maas.aliyuncs.com`（`qwenTtsUsesMaasShape`）即为 true。新版端点
-/// 型号（3.1／3.0 Qwen-Audio-TTS 家族）在千问朗读档配了新版地址时是
-/// 正确落位、不干预；配现行地址则引导换新版端点——业务空间 ID 只有
-/// 用户知道，只给官方地址模板与拼接指引，不代填（ADR 0020 决定 2）。
+/// `maas.aliyuncs.com`（`qwenTtsUsesMaasShape`）即为 true。
+/// [currentAddressUsesWsInference] 同理：地址 scheme 为 ws/wss（票 07，
+/// `qwenTtsUsesWsInference`）。新版端点型号（3.1／3.0 Qwen-Audio-TTS
+/// 家族）在千问朗读档配了 maas 形状或 WS 推理地址时是正确落位、不干预；
+/// 配现行地址则引导换新版语音通道——官方 WS 推理地址可代填（probe 02/03
+/// 实测可用），maas 模板与拼接指引留作备选信息（ADR 0020 补篇）。
 ///
 /// 返回 null＝表 miss，不干预，调用方行为一字不变。
 VoiceTierSuggestion? lookupVoiceTierSuggestion({
@@ -311,6 +332,7 @@ VoiceTierSuggestion? lookupVoiceTierSuggestion({
   required String currentProviderWireName,
   required String model,
   bool currentAddressUsesMaasShape = false,
+  bool currentAddressUsesWsInference = false,
 }) {
   final normalized = model.trim().toLowerCase();
   if (normalized.isEmpty) {
@@ -329,26 +351,30 @@ VoiceTierSuggestion? lookupVoiceTierSuggestion({
         family == row.family && currentProviderWireName == row.providerWireName;
     if (placedRight) {
       // 正确落位里唯一的干预点：新版端点型号配着现行地址——实测该组合
-      // 必被 400 拒绝（probe 1.3），引导换新版端点比让用户撞墙更有用。
-      // 反向组合（现行型号配新版地址）不在本票用户故事内，照旧不干预。
-      if (row.usesMaasAddress && !currentAddressUsesMaasShape) {
+      // 必被 400 拒绝（probe 1.3），引导换新版语音通道比让用户撞墙更有
+      // 用。反向组合（现行型号配新版地址）不在本票用户故事内，照旧不干预。
+      if (row.usesNewVersionEndpoint &&
+          !currentAddressUsesMaasShape &&
+          !currentAddressUsesWsInference) {
         return VoiceTierSwitchSuggestion(
           targetFamily: row.family,
           targetProviderWireName: row.providerWireName,
           targetModel: row.model,
-          reason: '这个型号要走千问朗读档的新版千问端点。',
+          reason: _newVersionEndpointReason,
+          defaultEndpoint: qwenTtsWsInferenceEndpoint,
           addressTemplate: voiceTierMaasAddressTemplate,
           addressGuidance: voiceTierMaasAddressGuidance,
         );
       }
       return null;
     }
-    return row.usesMaasAddress
+    return row.usesNewVersionEndpoint
         ? VoiceTierSwitchSuggestion(
             targetFamily: row.family,
             targetProviderWireName: row.providerWireName,
             targetModel: row.model,
-            reason: '这个型号要走千问朗读档的新版千问端点。',
+            reason: _newVersionEndpointReason,
+            defaultEndpoint: qwenTtsWsInferenceEndpoint,
             addressTemplate: voiceTierMaasAddressTemplate,
             addressGuidance: voiceTierMaasAddressGuidance,
           )
@@ -366,6 +392,10 @@ VoiceTierSuggestion? lookupVoiceTierSuggestion({
   return null;
 }
 
+/// 新版语音通道建议的人话结论（票 07）：同档引导与跨档建议共用一句，
+/// 正式路径文案经 [lookupVoiceTierFormalMessage] 自动跟随。
+const _newVersionEndpointReason = '这个型号要走千问朗读档的新版语音通道。';
+
 /// 正式路径的文案升级查询（票 05）：仅在出网失败已分类为「模型与接口
 /// 不匹配」（ADR 0015）之后调用，入参与 [lookupVoiceTierSuggestion] 一致。
 /// 命中返回建议的 [VoiceTierSuggestion.reason]——与连接测试下发的文案
@@ -379,6 +409,7 @@ String? lookupVoiceTierFormalMessage({
   required String currentProviderWireName,
   required String model,
   bool currentAddressUsesMaasShape = false,
+  bool currentAddressUsesWsInference = false,
 }) {
   try {
     return lookupVoiceTierSuggestion(
@@ -386,6 +417,7 @@ String? lookupVoiceTierFormalMessage({
       currentProviderWireName: currentProviderWireName,
       model: model,
       currentAddressUsesMaasShape: currentAddressUsesMaasShape,
+      currentAddressUsesWsInference: currentAddressUsesWsInference,
     )?.reason;
   } on Object {
     return null;

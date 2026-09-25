@@ -343,25 +343,33 @@ final class TtsSettingsForm {
   /// 建议落位写进表单草稿——落盘仍走用户点「保存到本机」的既有保存
   /// 路径。目标档不在已知档位集合时返回 null（对话框不弹、表单不动，
   /// 与建议解析的保守兜底同律）。计划规则：
-  /// - 跨档：切档、按处置填地址（可代填缺省端点直接填；3.1 新版端点
-  ///   把官方地址模板整条填进输入框当草稿，`{业务空间ID}` 由用户替换——
-  ///   栖语不代填、Host 也不做替换）、填型号，并清掉 Key 草稿——沿用
-  ///   「切换服务不沿用旧 Key」既有机制（保存时已存 Key 也按凭据作用域
-  ///   清空，重填后生效）。
-  /// - 同档：只改型号。地址与 Key 一律不动（新版端点的地址按卡片指引
-  ///   自己换，Key 保留）。
+  /// - 新版语音通道条目（票 07：defaultEndpoint 与 addressTemplate 同时
+  ///   出现）：官方 WS 推理地址可代填，同档与跨档都把地址填成它——3.x
+  ///   型号在现行地址上调不通（probe 实测），地址必须跟着换；maas 模板
+  ///   只是卡片上的备选信息，不进草稿。
+  /// - 跨档（其余建议）：切档、按处置填地址（可代填缺省端点直接填），
+  ///   填型号，并清掉 Key 草稿——沿用「切换服务不沿用旧 Key」既有机制
+  ///   （保存时已存 Key 也按凭据作用域清空，重填后生效）。
+  /// - 同档（其余建议）：只改型号。地址与 Key 一律不动。
   VoiceTierRefillPlan? planSuggestionApply(VoiceTierSuggestionData suggestion) {
     if (_ttsProviderLabel(suggestion.targetProvider) == null) {
       return null;
     }
     final crossTier = _provider.wireName != suggestion.targetProvider;
-    final addressAction = !crossTier
-        ? RefillAddressAction.keepCurrent
-        : suggestion.defaultEndpoint != null
-        ? RefillAddressAction.suggestedEndpoint
-        : suggestion.addressTemplate != null
-        ? RefillAddressAction.templateDraft
-        : RefillAddressAction.keepCurrent;
+    final RefillAddressAction addressAction;
+    if (suggestion.defaultEndpoint != null &&
+        suggestion.addressTemplate != null) {
+      // 新版语音通道条目（票 07）：推理地址可代填，同档跨档都填。
+      addressAction = RefillAddressAction.suggestedEndpoint;
+    } else if (!crossTier) {
+      addressAction = RefillAddressAction.keepCurrent;
+    } else if (suggestion.defaultEndpoint != null) {
+      addressAction = RefillAddressAction.suggestedEndpoint;
+    } else if (suggestion.addressTemplate != null) {
+      addressAction = RefillAddressAction.templateDraft;
+    } else {
+      addressAction = RefillAddressAction.keepCurrent;
+    }
     return VoiceTierRefillPlan(
       crossTier: crossTier,
       providerWireName: suggestion.targetProvider,
@@ -447,6 +455,19 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
     if (plan == null) {
       return;
     }
+    // 新版语音通道条目（票 07）：回填的是官方推理地址，maas 模板只是
+    // 卡片备选——地址行与 Key 行都按推理地址口径如实说。
+    final fillsNewVersionEndpoint =
+        plan.addressAction == RefillAddressAction.suggestedEndpoint &&
+        suggestion.addressTemplate != null;
+    // 同档回填的地址内容是否真的会变：不变（如已在推理地址上换同档
+    // 型号）就不换凭据作用域，Key 行照旧说「保留」。比较用原始 trim 值
+    // 而非凭据作用域的地址归一（normalizeProviderBaseUri 在 Host 侧）：
+    // 本地复制一份归一逻辑会造第二真相源，宁可在此过度警示（说成需
+    // 重填而实际沿用）——作用域的真相在 Host 保存侧，反向漏警示不存在。
+    final sameTierAddressChanges = !plan.crossTier &&
+        plan.addressAction == RefillAddressAction.suggestedEndpoint &&
+        plan.baseUrl.trim() != _form.baseUrlController.text.trim();
     final involvesMaasTemplate =
         suggestion.addressTemplate != null ||
         plan.addressAction == RefillAddressAction.templateDraft;
@@ -457,6 +478,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
       '模型名称：${_form.modelController.text.trim().isEmpty ? '（空）' : _form.modelController.text.trim()} → '
           '${plan.model}',
       switch (plan.addressAction) {
+        RefillAddressAction.suggestedEndpoint when fillsNewVersionEndpoint =>
+          '服务地址：填入官方推理地址\n${plan.baseUrl}',
         RefillAddressAction.suggestedEndpoint =>
           '服务地址：填入建议地址\n${plan.baseUrl}',
         RefillAddressAction.templateDraft =>
@@ -466,14 +489,17 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
           '服务地址：保持不变；保存测试前请按卡片指引把地址换成新版端点',
         RefillAddressAction.keepCurrent => '服务地址：不变',
       },
-      // Key 行说实话：回填动作本身跨档清 Key 草稿、同档不动；涉及新版
-      // 端点的分支再如实说明后续——同档换地址保存时按既有凭据规则 Key
-      // 需重填，跨档的新版端点需要自有百炼 Key。
+      // Key 行说实话：跨档清 Key 草稿（切换服务不沿用旧 Key，既有机制）；
+      // 同档回填推理地址时地址会变——保存按既有凭据规则换作用域，Key
+      // 需重填；地址不变的同档回填与纯换型号不动 Key。跨档分支不再附
+      // 「需自有百炼 Key」：官方推理地址对可用 Key 放行（probe 实测），
+      // maas 端点的 Key 要求只随备选模板出现在卡片指引里。
       if (plan.crossTier)
-        involvesMaasTemplate
-            ? 'API Key：清空重填，切换服务不沿用旧 Key；新版端点需自有百炼 Key'
-            : 'API Key：清空重填，切换服务不沿用旧 Key'
-      else if (involvesMaasTemplate)
+        'API Key：清空重填，切换服务不沿用旧 Key'
+      else if (sameTierAddressChanges)
+        'API Key：地址变更保存后 Key 需重填（已保存的 Key 不沿用新地址）'
+      else if (involvesMaasTemplate &&
+          plan.addressAction == RefillAddressAction.keepCurrent)
         'API Key：保留已保存的 Key；地址换成新版端点保存时，Key 按既有规则需重填'
       else
         'API Key：保留',
@@ -596,17 +622,19 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 // 边出声）与 qwen3-tts-flash-realtime（WebSocket 连续喂
                 // 文本，前几个字就出声）；官方现标 Non-streaming 的旧型号
                 // （qwen-audio-3.1-tts-next）不用于流式场景。
-                // 3.1 新型号按地址派形状（ADR 0020）：官方地址含业务空间
-                // ID 只能用户自己拼（栖语不代填），且前置实测判定聚合站
-                // Key 在业务空间校验层即被拒——可达性如实标注，缺口
-                // （流式待补）不静默。
+                // 3.x 新型号按地址派形状（ADR 0020 补篇，票 07）：官方
+                // WS 推理地址实测全链路可用，直接填即可（按句流式）；
+                // maas HTTP 端点留作备选（含业务空间 ID，栖语不代填，
+                // 按句等整段返回）。
                 helperText: provider == TtsServiceKind.qwenTts
                     ? '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）'
                           '；$qwenTtsDefaultModel-realtime（WebSocket，前几个字就出声）\n'
-                          '3.1 新型号（qwen-audio-3.1-tts-flash）要改填官方新版地址：'
-                          '$qwenTtsMaasAddressTemplate，把 {业务空间ID} 换成你自己的'
-                          '阿里云百炼业务空间 ID（栖语不代填）；新版地址需自有百炼 '
-                          'Key，聚合站 Key 不可用；流式待补，暂按句等整段返回'
+                          '3.x 新型号（qwen-audio-3.1-tts-flash 等）走官方新版语音通道：'
+                          '服务地址直接填 $qwenTtsWsInferenceEndpoint（推理通道按句流式）；'
+                          '也可填官方 maas HTTP 端点 $qwenTtsMaasAddressTemplate，'
+                          '把 {业务空间ID} 换成你自己的阿里云百炼业务空间 ID'
+                          '（栖语不代填，按句等整段返回）；型号支持范围见'
+                          '官方模型页：https://help.aliyun.com/zh/model-studio/qwen-tts'
                     : null,
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),

@@ -533,10 +533,16 @@ enum TtsProviderKind {
   );
 
   /// 该协议允许的服务地址 scheme（配置校验与出网前 SSRF 校验共用）。
-  /// 恒为 http/https：即使传输选了 WebSocket 双向（票三），用户在地址栏
-  /// 填的仍是 HTTP 端点，WS 地址由 Host 按协议派生、单独过
-  /// speechOutboundRefusalReason，不经过配置校验。
-  bool allows(String scheme) => scheme == 'http' || scheme == 'https';
+  /// 除千问朗读档外恒为 http/https：即使传输选了 WebSocket 双向（票三），
+  /// 用户在地址栏填的仍是 HTTP 端点，WS 地址由 Host 按协议派生、单独过
+  /// speechOutboundRefusalReason，不经过配置校验。千问朗读档例外（票 07，
+  /// ADR 0020 补篇）：地址即用户填的完整 WS 推理端点（ws/wss 直接可辨
+  /// 形状），不经 Host 派生，配置校验按地址 scheme 放行。
+  bool allows(String scheme) => switch (this) {
+    TtsProviderKind.qwenTts =>
+      scheme == 'http' || scheme == 'https' || scheme == 'ws' || scheme == 'wss',
+    _ => scheme == 'http' || scheme == 'https',
+  };
 }
 
 /// 自定义合成档的响应形态：配置里的 wire 名与设置页下拉共用。
@@ -789,12 +795,17 @@ final class TtsConfig {
   };
 
   void validate() {
+    // scheme 话术按档分开：千问朗读档收 ws/wss（票 07），其余档仍是
+    // 纯 HTTP 档，各说各的允许 scheme。
+    final schemeFailureMessage = provider == TtsProviderKind.qwenTts
+        ? '语音合成服务地址必须是有效的 HTTP 或 WebSocket 地址。'
+        : '语音合成服务地址必须是有效的 HTTP 地址。';
     _validateSpeechEndpoint(
       baseUrl: baseUrl,
       model: model,
       serviceLabel: '语音合成服务',
       allows: provider.allows,
-      schemeFailureMessage: '语音合成服务地址必须是有效的 HTTP 地址。',
+      schemeFailureMessage: schemeFailureMessage,
     );
     if (voice != null && containsNonVisibleAscii(voice!.trim())) {
       throw const ProviderConfigException('音色里混入了中文或看不见的字符，请重新填写。');
