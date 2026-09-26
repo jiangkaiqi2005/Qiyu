@@ -2,10 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
@@ -16,26 +14,20 @@ import '../settings/stt_settings_client.dart';
 import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
 import 'api_error_dialog.dart';
+import 'api_error_policy.dart';
+import 'chat_stick_to_bottom.dart';
 import 'chat_voice_coordinator.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_chat_bubble.dart';
 import 'qiyu_composer.dart';
+import 'qiyu_greeting_fade_out.dart';
 import 'qiyu_markdown.dart';
 import 'qiyu_hover_gate.dart';
+import 'qiyu_voice_output_control.dart';
 import 'voice_input_controller.dart';
 import 'voice_output_controller.dart';
 import 'voice_recorder_platform.dart';
-
-final class _ApiErrorNotice {
-  const _ApiErrorNotice({
-    required this.message,
-    this.showSettingsLink = true,
-  });
-
-  final String message;
-  final bool showSettingsLink;
-}
 
 /// 空会话占位按当前时段分流。产品定位是夜间陪伴，但白天打开也该
 /// 贴合当下时段；凌晨到清晨都归入「今晚」，守住睡前陪伴的基调。
@@ -80,30 +72,15 @@ class _LocalChatViewState extends State<LocalChatView>
   /// 键传给 widget，空态↔聊天态换布局时 State 原位保留，输入连续。
   final _composerKey = GlobalKey<QiyuComposerState>(debugLabel: 'chat-composer');
 
-  String _lastListSignature = '';
-
-  // 会话恢复与发送后默认跟到底部；只有用户主动上滑才离开，
-  // 避免流式增量把正在回读历史的用户拉回底部。
-  bool _stickToBottom = true;
-  double _lastPixels = 0;
-
-  /// 安卓真实拖动及其惯性阶段；布局修正与程序跳转不代表用户滚动意图。
-  bool _userScrolling = false;
-
-  /// 键盘 inset 的上一帧值。软键盘弹出同样压缩列表视口，而「贴底」是按
-  /// pixels 与 maxScrollExtent 的关系算的：视口变矮只抬高 max、不动 pixels，
-  /// 列表于是停在半空，最新消息沉到键盘与输入框之下。这里只认 inset 的
-  /// **上升沿**（键盘弹出、或换成更高的输入法），下降沿不主动跳——收起键盘
-  /// 时 clamp 自然把贴底态收回来，正在回读历史的用户位置也不被抢。
-  double _lastKeyboardInset = 0;
-
-  /// 贴底跳转的帧后回调在途标记：同帧多次触发只排一次。
-  bool _stickToBottomScheduled = false;
-
-  /// 离底多近算「已贴底」。与 [_trackStickToBottom] 的 120px 粘滞阈值不同，
-  /// 这里是收敛终点的几何判据，超过它才需要再跳。
-  static const double _stickToBottomTolerance = 1;
-
+  /// 贴底收敛状态机：会话恢复、新消息、流式增量与键盘压缩视口都跟在列表
+  /// 尾部，判定与调度收在 [ChatStickToBottomController]，页面只在 build
+  /// 与通知接线处喂数据。
+  late final ChatStickToBottomController _stick =
+      ChatStickToBottomController(
+        scrollController: _scrollController,
+        android: _android,
+        isMounted: () => mounted,
+      );
   late final LocalChatViewModel _chatViewModel;
   late final VoiceInputController _voiceInput;
 
@@ -126,14 +103,17 @@ class _LocalChatViewState extends State<LocalChatView>
   Rect? _greetingRect;
 
   String? _lastTrackedSessionId;
-  final Set<ApiErrorCategory> _alertedErrorCategories = {};
-  _ApiErrorNotice? _apiErrorNotice;
+
+  /// 轮末异常的分类、会话级弹窗频控与轻提示文案全部在 [ApiErrorPolicy]
+  /// 策略表内；页面只执行判定（setState、弹窗、导航与焦点返还）。
+  final ApiErrorPolicy _errorPolicy = ApiErrorPolicy();
+  ApiErrorNotice? _apiErrorNotice;
   bool _isShowingApiErrorDialog = false;
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_trackStickToBottom);
+    _scrollController.addListener(_stick.trackScroll);
     final chatViewModel = _chatViewModel = context.read<LocalChatViewModel>();
     chatViewModel.addListener(_onChatViewModelChanged);
     _lastTrackedSessionId = chatViewModel.sessionId;
@@ -219,7 +199,7 @@ class _LocalChatViewState extends State<LocalChatView>
     final currentSessionId = _chatViewModel.sessionId;
     if (_lastTrackedSessionId != currentSessionId) {
       _lastTrackedSessionId = currentSessionId;
-      _alertedErrorCategories.clear();
+      _errorPolicy.resetSession();
       if (_apiErrorNotice != null && mounted) {
         setState(() => _apiErrorNotice = null);
       }
@@ -255,240 +235,29 @@ class _LocalChatViewState extends State<LocalChatView>
     context.push(location);
   }
 
-  /// composer 的发送起点回调（手打与转写共用）：发一条消息都视为用户要
-  /// 回到底部，与迁移前两条发送路径开头的 `_stickToBottom = true` 同口径。
-  void _onComposerSendStarted() {
-    _stickToBottom = true;
-  }
-
-  // Web/桌面保留原有 120px 粘滞规则；安卓由原生滚动通知判断意图，
-  // 不把键盘 clamp、布局修正或普通 metrics 更新误判为用户回到底部。
-  void _trackStickToBottom() {
-    if (_android) return;
-    final position = _scrollController.position;
-    if (position.pixels < _lastPixels) {
-      _stickToBottom = position.pixels >= position.maxScrollExtent - 120;
-    } else if (position.pixels >= position.maxScrollExtent - 120) {
-      _stickToBottom = true;
-    }
-    _lastPixels = position.pixels;
-  }
-
-  /// 真实拖动一开始就让位（纯点击不触发），包括已排队的贴底回调。
-  /// 松手后仍保留回读意图；只有用户向尾部滚动并实际到达底缘才恢复跟随。
-  bool _onUserDragChanged(ScrollNotification notification) {
-    if (notification.depth != 0) return false;
-    if (notification is ScrollStartNotification &&
-        notification.dragDetails != null) {
-      _userScrolling = true;
-      _stickToBottom = false;
-    } else if (notification is ScrollUpdateNotification && _userScrolling) {
-      final delta = notification.scrollDelta ?? 0;
-      if (delta < 0) {
-        _stickToBottom = false;
-      } else if (delta > 0 && !_beyondStickTolerance(notification.metrics)) {
-        _stickToBottom = true;
-      }
-    } else if (notification is OverscrollNotification && _userScrolling) {
-      // 已严格贴底时向尾部拖动：pixels 已在底缘不再增大，SDK 不派正向
-      // update，只派 overscroll。抵住底缘继续向尾部用力仍是「要跟随」，
-      // 不得当回读；朝历史方向的 overscroll 维持回读意图不变。
-      if (notification.overscroll > 0) {
-        _stickToBottom = true;
-      }
-    } else if (notification is ScrollEndNotification && _userScrolling) {
-      _userScrolling = false;
-      if (_stickToBottom) _scheduleStickToBottom();
-    }
-    return false;
-  }
-
-  /// 下一帧把列表拉回底部。内容增长与键盘压缩都要等这一帧布局落定后才能读到
-  /// 新的 `maxScrollExtent`；只有贴底态才跳，正在回读历史的用户不被抢。
-  ///
-  /// 非安卓路径与改动前完全一致：无条件一帧后 `jumpTo`，精确贴底、无容差、
-  /// 无去重——Web/桌面零变化。
-  ///
-  /// 安卓路径处理变高、懒加载列表的范围估算：跳一次后继续布局还会修正 max，
-  /// pixels 便停在旧估算底部。所以贴底不是「一跳到底」而是**收敛**：跳转后
-  /// 的新布局若仍在贴底意图内离底超过容差（[_stickToBottomTolerance]），范围
-  /// 变化监听会再安排一次跳转，直到贴底或用户真实拖动取消意图。调度去重避免
-  /// 同帧重复排回调；已贴底不再 jump，监听不会自触发循环。
-  void _scheduleStickToBottom() {
-    if (!_android) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_stickToBottom || !_scrollController.hasClients) {
-          return;
+  /// 统一的异常分发执行点：策略表给出判定，页面只负责 setState 与弹窗接线。
+  Future<void> _executeApiErrorDecision(ApiErrorTurnDecision decision) async {
+    switch (decision) {
+      case ClearApiErrorNotice():
+        if (_apiErrorNotice != null) {
+          setState(() => _apiErrorNotice = null);
         }
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-      });
-      return;
-    }
-    if (_stickToBottomScheduled) {
-      return;
-    }
-    _stickToBottomScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _stickToBottomScheduled = false;
-      if (!mounted || !_stickToBottom || !_scrollController.hasClients) {
-        return;
-      }
-      final position = _scrollController.position;
-      // jumpTo 会终止 Drag/惯性活动；即使发送重新启用跟随，也等滚动结束。
-      if (position.isScrollingNotifier.value) return;
-      if (_beyondStickTolerance(position)) {
-        _scrollController.jumpTo(position.maxScrollExtent);
-      }
-    });
-  }
-
-  /// 仅处理主列表的 metrics：普通滚动也会触发，不能据此恢复贴底意图。
-  /// 键盘与懒加载范围变化仍可收敛，但用户滚动期间不安排补跳。
-  bool _onScrollMetricsChanged(ScrollMetricsNotification notification) {
-    if (notification.depth != 0) return false;
-    if (!_userScrolling &&
-        _stickToBottom &&
-        _beyondStickTolerance(notification.metrics)) {
-      _scheduleStickToBottom();
-      // [ScrollMetricsNotification] 在布局帧结束后经微任务派发，此刻页面可能
-      // 已静止（键盘动画结束、无输入无动画），而 [addPostFrameCallback] 自身
-      // 不请求新帧——滞留的贴底回调会永远不执行。只有真的安排了贴底回调才
-      // 请求一帧；已收敛（离底不超过容差）不会走到这里，pumpAndSettle 能正常
-      // 停，不产生自持循环。
-      SchedulerBinding.instance.scheduleFrame();
-    }
-    // 不拦截：范围变化继续向上冒泡，别的监听者不受影响。
-    return false;
-  }
-
-  /// 离底距离是否超过收敛容差（见 [_stickToBottomTolerance]）。
-  static bool _beyondStickTolerance(ScrollMetrics metrics) =>
-      metrics.maxScrollExtent - metrics.pixels > _stickToBottomTolerance;
-
-  ApiErrorCategory? _categorizeFallbackReason(
-    FallbackReason reason,
-    ServiceErrorCategory? serviceError,
-  ) {
-    if (serviceError != null) {
-      return switch (serviceError) {
-        ServiceErrorCategory.authentication => ApiErrorCategory.authentication,
-        ServiceErrorCategory.modelNotFound => ApiErrorCategory.modelNotFound,
-        ServiceErrorCategory.rateLimited => ApiErrorCategory.rateLimited,
-        ServiceErrorCategory.client => ApiErrorCategory.otherClientError,
-        ServiceErrorCategory.server || ServiceErrorCategory.network => null,
-      };
-    }
-    // 老 Host 没有分类元数据时，仅使用含义明确的既有原因。
-    return switch (reason) {
-      FallbackReason.modelRateLimited => ApiErrorCategory.rateLimited,
-      FallbackReason.modelAuthentication => ApiErrorCategory.authentication,
-      FallbackReason.modelNotFound => ApiErrorCategory.modelNotFound,
-      _ => null,
-    };
-  }
-
-  /// 统一的异常分发与会话级频控判断逻辑：供文本聊天与语音链路共用。
-  Future<void> _dispatchApiError(
-    ApiErrorCategory category, {
-    bool delay = false,
-  }) async {
-    if (!mounted) {
-      return;
-    }
-    // 会话级频控去重：同会话内仅第 1 次弹窗；第 2 次及后续展示状态条轻提示
-    if (_alertedErrorCategories.contains(category)) {
-      setState(() {
-        _apiErrorNotice = _ApiErrorNotice(
-          message: category.noticeText,
-          showSettingsLink: true,
-        );
-      });
-    } else {
-      _alertedErrorCategories.add(category);
-      await _triggerApiErrorDialog(category, delay: delay);
+      case ShowApiErrorNotice(:final notice):
+        setState(() => _apiErrorNotice = notice);
+      case DispatchApiErrorDialog(:final category, :final delay):
+        await _triggerApiErrorDialog(category, delay: delay);
     }
   }
 
+  /// composer 的轮次收尾回调：兜底原因与服务错误元数据交给 [_errorPolicy]
+  /// 查表，分类/频控/弹窗节奏都不在页面。
   Future<void> _handleTurnApiErrors(LocalChatViewModel viewModel) async {
-    final reason = viewModel.latestFallbackReason;
-    final serviceError = viewModel.latestServiceError;
-    if (reason == null) {
-      if (_apiErrorNotice != null) {
-        setState(() => _apiErrorNotice = null);
-      }
-      return;
-    }
-
-    // 严格排除设计内降级：安全拦截、未配置模型与输出卫生拒绝绝对不弹窗
-    // （人格与话术约束在提示词层，输出侧不再正则判决——ADR 0017）
-    if (reason == FallbackReason.safety ||
-        reason == FallbackReason.noLlmConfig ||
-        reason == FallbackReason.invalidModelResponse ||
-        reason == FallbackReason.emptyModelReply) {
-      if (_apiErrorNotice != null) {
-        setState(() => _apiErrorNotice = null);
-      }
-      return;
-    }
-
-    // 网络瞬态（超时/网络/DNS/TLS）：维持就地轻提示，绝不弹出模态配置修复窗
-    if (reason == FallbackReason.modelTimeout) {
-      setState(() {
-        _apiErrorNotice = const _ApiErrorNotice(
-          message: '⚠️ 网络连接超时，当前保持本地基础回复',
-          showSettingsLink: false,
-        );
-      });
-      return;
-    }
-    if (reason == FallbackReason.modelNetwork ||
-        reason == FallbackReason.modelDns ||
-        reason == FallbackReason.modelTls ||
-        serviceError == ServiceErrorCategory.network) {
-      setState(() {
-        _apiErrorNotice = const _ApiErrorNotice(
-          message: '⚠️ 网络连接异常，当前保持本地基础回复',
-          showSettingsLink: false,
-        );
-      });
-      return;
-    }
-
-    // 截断与解析失败（票 06）：模型回复没说完就结束，就地轻提示给出
-    // 明确失败信号，与网络瞬态同构，绝不弹模态窗。
-    if (reason == FallbackReason.modelContentParsing) {
-      setState(() {
-        _apiErrorNotice = const _ApiErrorNotice(
-          message: '⚠️ 模型回复不完整，当前保持本地基础回复',
-          showSettingsLink: false,
-        );
-      });
-      return;
-    }
-
-    if (serviceError == ServiceErrorCategory.server) {
-      setState(() {
-        _apiErrorNotice = const _ApiErrorNotice(
-          message: '⚠️ 模型服务暂时不可用，当前保持本地基础回复',
-          showSettingsLink: false,
-        );
-      });
-      return;
-    }
-
-    final category = _categorizeFallbackReason(
-      reason,
-      serviceError,
+    await _executeApiErrorDecision(
+      _errorPolicy.decideTurn(
+        reason: viewModel.latestFallbackReason,
+        serviceError: viewModel.latestServiceError,
+      ),
     );
-    if (category == null) {
-      if (_apiErrorNotice != null) {
-        setState(() => _apiErrorNotice = null);
-      }
-      return;
-    }
-
-    // 流式落定后约 300ms 缓冲
-    await _dispatchApiError(category, delay: true);
   }
 
   Future<void> _triggerApiErrorDialog(
@@ -532,20 +301,18 @@ class _LocalChatViewState extends State<LocalChatView>
   }
 
   void _handleVoiceApiError(ApiErrorCategory category) {
-    unawaited(_dispatchApiError(category, delay: false));
+    unawaited(_executeApiErrorDecision(_errorPolicy.decideCategory(category)));
   }
 
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<LocalChatViewModel>();
     // 会话恢复、新消息与流式增量都跟在列表尾部：签名变化时下一帧滚到底。
-    final transient = _transientCount(viewModel);
-    final signature =
-        '${viewModel.messages.length}|$transient|${viewModel.streamingText.length}';
-    if (signature != _lastListSignature) {
-      _lastListSignature = signature;
-      _scheduleStickToBottom();
-    }
+    _stick.onListContent(
+      messageCount: viewModel.messages.length,
+      transientCount: _transientCount(viewModel),
+      streamingLength: viewModel.streamingText.length,
+    );
     // 合一页（design-system §5）：还没发出消息就是空状态首页——问候 +
     // composer；发出第一句后消息流生长。没有「首页→对话页」的跳转，两条路由
     // 渲染同一个视图。判定只有一处出处：`isHomeState`（含「会话恢复中不算
@@ -563,10 +330,7 @@ class _LocalChatViewState extends State<LocalChatView>
     // 键盘弹起把视口压矮，贴底态要重新贴底——否则列表停在半空，最新消息沉到
     // 键盘之下（内容签名不含 inset，没有这一跳就没人扣扳机）。
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
-    if (_android && keyboardInset > _lastKeyboardInset) {
-      _scheduleStickToBottom();
-    }
-    _lastKeyboardInset = keyboardInset;
+    _stick.onKeyboardInset(keyboardInset);
     final keyboardVisible = keyboardInset > 0;
     return Scaffold(
       // 底色撤成透明：页面背景（夜色底 + 仅空态的夜景图）由 [QiyuShell] 铺成
@@ -591,9 +355,7 @@ class _LocalChatViewState extends State<LocalChatView>
                     Expanded(
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap:
-                            !kIsWeb &&
-                                defaultTargetPlatform == TargetPlatform.android
+                        onTap: _android
                             ? () => _composerKey.currentState?.dismissKeyboard()
                             : null,
                         child: empty && !compactKeyboard
@@ -617,7 +379,7 @@ class _LocalChatViewState extends State<LocalChatView>
             Positioned.fromRect(
               rect: rect,
               child: IgnorePointer(
-                child: _GreetingFadeOut(
+                child: QiyuGreetingFadeOut(
                   key: const Key('home-greeting-fade'),
                   duration: qiyuMotion(context, QiyuMotion.base),
                   onFinished: _dropGreetingOverlay,
@@ -688,9 +450,9 @@ class _LocalChatViewState extends State<LocalChatView>
                   onPointerDown: (_) =>
                       _composerKey.currentState?.dismissKeyboard(),
                   child: NotificationListener<ScrollNotification>(
-                    onNotification: _onUserDragChanged,
+                    onNotification: _stick.onUserDrag,
                     child: NotificationListener<ScrollMetricsNotification>(
-                      onNotification: _onScrollMetricsChanged,
+                      onNotification: _stick.onScrollMetrics,
                       child: _messageArea(viewModel),
                     ),
                   ),
@@ -870,7 +632,7 @@ class _LocalChatViewState extends State<LocalChatView>
               ),
             if (viewModel.voiceOutputConfigured) ...[
               const SizedBox(width: QiyuSpacing.xs),
-              _VoiceOutputHeaderControl(viewModel: viewModel),
+              QiyuVoiceOutputControl(viewModel: viewModel),
             ],
             const SizedBox(width: QiyuSpacing.xs),
             _stripIconButton(
@@ -1028,15 +790,16 @@ class _LocalChatViewState extends State<LocalChatView>
 
   /// 输入行：合一页与输入模块（[QiyuComposer]）的唯一接缝。输入的文本、
   /// 选区、焦点、测量键、展开状态、文字度量、快捷键与监听生命周期全部
-  /// 收在模块内部；页面只接发送起点、轮次收尾（服务异常分类/频控/弹窗
-  /// 仍在页面协调）与导航三个页面侧回调，不管理输入内部状态。
+  /// 收在模块内部；页面只接发送起点、轮次收尾（异常分类与频控已收进
+  /// [ApiErrorPolicy] 策略表，这里只执行判定）与导航三个页面侧回调，
+  /// 不管理输入内部状态。
   Widget _composer(LocalChatViewModel viewModel) {
     return QiyuComposer(
       key: _composerKey,
       viewModel: viewModel,
       voiceInput: _voiceInput,
       voiceCoordinator: _voiceCoordinator,
-      onSendStarted: _onComposerSendStarted,
+      onSendStarted: _stick.requestFollow,
       // 回调无参：本轮视图模型就是模块持有的这一个，分类/频控/弹窗仍走
       // [_handleTurnApiErrors]，页面侧闭包自取 viewModel。
       onTurnCompleted: () => _handleTurnApiErrors(viewModel),
@@ -1055,11 +818,11 @@ class _LocalChatViewState extends State<LocalChatView>
       case VoiceInputStatus.recording:
         final minutes = (voice.elapsedSeconds ~/ 60).toString().padLeft(2, '0');
         final seconds = (voice.elapsedSeconds % 60).toString().padLeft(2, '0');
-        message = !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+        message = _android
             ? '正在录音 $minutes:$seconds，最长 60 秒'
             : '正在录音 $minutes:$seconds，再点一次说完，按 Esc 取消';
       case VoiceInputStatus.transcribing:
-        message = !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+        message = _android
             ? '正在转文字…'
             : '正在转文字…（Esc 中止）';
       case VoiceInputStatus.retryable:
@@ -1215,8 +978,7 @@ class _LocalChatViewState extends State<LocalChatView>
       child: QiyuHoverGate(
         child: ListView.builder(
           controller: _scrollController,
-          keyboardDismissBehavior:
-              !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+          keyboardDismissBehavior: _android
               ? ScrollViewKeyboardDismissBehavior.onDrag
               : ScrollViewKeyboardDismissBehavior.manual,
           padding: const EdgeInsets.fromLTRB(
@@ -1321,255 +1083,6 @@ class _LocalChatViewState extends State<LocalChatView>
               ),
             );
           },
-        ),
-      ),
-    );
-  }
-}
-
-/// 空态→聊天态时问候的**淡出层**：从完全不透明淡到透明，淡完通知父级把自己
-/// 摘掉（Spec User Story 2「发出第一句后背景与问候淡出」）。
-///
-/// 时长由调用方给（`qiyuMotion(context, QiyuMotion.base)`，reduced-motion 下是
-/// [Duration.zero]，第一帧就到位、等于没有动效）。它在父级重建时**必须保持同一个
-/// 键**：`_chatBody` 每次 notify 都重建，键一变这个 State 就重造、动画从头再来，
-/// 淡出永远走不完——所以父级只把它当固定的一层挂在那里，不拿内容当 key。
-class _GreetingFadeOut extends StatefulWidget {
-  const _GreetingFadeOut({
-    super.key,
-    required this.duration,
-    required this.onFinished,
-    required this.child,
-  });
-
-  final Duration duration;
-  final VoidCallback onFinished;
-  final Widget child;
-
-  @override
-  State<_GreetingFadeOut> createState() => _GreetingFadeOutState();
-}
-
-class _GreetingFadeOutState extends State<_GreetingFadeOut>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: widget.duration,
-    value: 1.0,
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    // 听 TickerFuture，不听状态监听：以 value 1.0 构造出来的控制器「上次上报的
-    // 状态」还是 dismissed，零时长（reduced-motion）下直接跳到 dismissed 不算
-    // 状态变化，监听器一次都不会触发，这一层就永远挂在树上。
-    _controller.reverse().whenComplete(_notifyFinished);
-  }
-
-  void _notifyFinished() {
-    // 再等这一帧画完才通知父级：whenComplete 的回调可能落在本帧 build 之后立刻
-    // 执行，那时 setState 会撞上「build 期间不得标脏」的限制。
-    WidgetsBinding.instance.addPostFrameCallback((_) => widget.onFinished());
-  }
-
-  @override
-  void dispose() {
-    // 父级提前摘掉这一层（例如又回到空态）时动画可能还在跑：先 stop，
-    // 不留活跃 ticker。
-    _controller
-      ..stop()
-      ..dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(opacity: _controller, child: widget.child);
-  }
-}
-
-class _VoiceOutputHeaderControl extends StatefulWidget {
-  const _VoiceOutputHeaderControl({required this.viewModel});
-
-  final LocalChatViewModel viewModel;
-
-  @override
-  State<_VoiceOutputHeaderControl> createState() =>
-      _VoiceOutputHeaderControlState();
-}
-
-class _VoiceOutputHeaderControlState extends State<_VoiceOutputHeaderControl> {
-  final _overlayController = OverlayPortalController();
-  final _link = LayerLink();
-
-  /// 焦点节点由本页持有并释放，同时交给自绘键盘焦点环与 IconButton
-  /// （§9：工具条上的图标按钮也要有带 offset 的实线外环，且只响应键盘态）。
-  final _focusNode = FocusNode(debugLabel: 'voice-output-toggle');
-
-  @override
-  void dispose() {
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final viewModel = widget.viewModel;
-    final voiceOutput = viewModel.voiceOutput;
-    return CompositedTransformTarget(
-      link: _link,
-      child: ListenableBuilder(
-        listenable: voiceOutput,
-        builder: (context, _) {
-          final isMuted =
-              !viewModel.voiceOutputEnabled || voiceOutput.volume == 0;
-          final icon = isMuted
-              ? QiyuIcons.volume_off
-              : (voiceOutput.volume < 0.5
-                    ? QiyuIcons.volume_down
-                    : QiyuIcons.volume_up);
-          return OverlayPortal(
-            controller: _overlayController,
-            overlayChildBuilder: (context) {
-              return Stack(
-                children: [
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => _overlayController.hide(),
-                      child: const SizedBox.expand(),
-                    ),
-                  ),
-                  CompositedTransformFollower(
-                    link: _link,
-                    targetAnchor: Alignment.bottomCenter,
-                    followerAnchor: Alignment.topCenter,
-                    offset: const Offset(0, 6),
-                    child: _VolumePopupCard(
-                      viewModel: viewModel,
-                      voiceOutput: voiceOutput,
-                    ),
-                  ),
-                ],
-              );
-            },
-            child: QiyuFocusRing(
-              focusNode: _focusNode,
-              borderRadius: QiyuRadii.circleBorder,
-              child: IconButton(
-                key: Key(
-                  viewModel.voiceOutputEnabled
-                      ? 'voice-output-toggle-on'
-                      : 'voice-output-toggle-off',
-                ),
-                focusNode: _focusNode,
-                color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
-                style: qiyuAndroidTouchStyle,
-                tooltip: viewModel.voiceOutputEnabled
-                    ? '朗读音量与静音调节'
-                    : '语音朗读已关闭，点击开启与调节',
-                icon: Icon(icon),
-                onPressed: () {
-                  _overlayController.toggle();
-                },
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _VolumePopupCard extends StatelessWidget {
-  const _VolumePopupCard({required this.viewModel, required this.voiceOutput});
-
-  final LocalChatViewModel viewModel;
-  final VoiceOutputController voiceOutput;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isMuted = !viewModel.voiceOutputEnabled || voiceOutput.volume == 0;
-    final percent = isMuted ? 0 : (voiceOutput.volume * 100).round();
-
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        width: 72,
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: QiyuRadii.cardBorder,
-          border: Border.all(color: theme.colorScheme.outlineVariant),
-          boxShadow: [
-            BoxShadow(
-              color: theme.shadowColor.withValues(alpha: 0.25),
-              blurRadius: 16,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            SizedBox(
-              height: 120,
-              width: 32,
-              child: RotatedBox(
-                quarterTurns: 3,
-                child: SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    trackHeight: 6,
-                    thumbShape: const RoundSliderThumbShape(
-                      enabledThumbRadius: 8,
-                    ),
-                    overlayShape: const RoundSliderOverlayShape(
-                      overlayRadius: 14,
-                    ),
-                    activeTrackColor: theme.colorScheme.primary,
-                    thumbColor: theme.colorScheme.primary,
-                    inactiveTrackColor: theme.colorScheme.surfaceContainer,
-                  ),
-                  child: Slider(
-                    key: const Key('voice-output-volume-slider'),
-                    value: isMuted ? 0.0 : voiceOutput.volume,
-                    min: 0.0,
-                    max: 1.0,
-                    onChanged: (val) {
-                      voiceOutput.setVolume(val);
-                      if (!viewModel.voiceOutputEnabled && val > 0) {
-                        unawaited(viewModel.toggleVoiceOutput());
-                      }
-                    },
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: QiyuSpacing.xs),
-            Text(
-              '$percent%',
-              style: theme.textTheme.labelLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-                letterSpacing: -0.5,
-              ),
-            ),
-            const SizedBox(height: 6),
-            const Divider(height: 1),
-            const SizedBox(height: 2),
-            IconButton(
-              key: const Key('voice-output-popover-mute-button'),
-              iconSize: 22,
-              visualDensity: VisualDensity.compact,
-              tooltip: isMuted ? '解除静音' : '静音',
-              color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
-              icon: Icon(isMuted ? QiyuIcons.volume_off : QiyuIcons.volume_up),
-              onPressed: () => unawaited(viewModel.toggleVoiceOutput()),
-            ),
-          ],
         ),
       ),
     );

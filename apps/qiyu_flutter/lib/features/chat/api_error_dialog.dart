@@ -5,64 +5,12 @@ import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../shell/qiyu_widgets.dart';
 
+import 'api_error_policy.dart';
 import 'local_chat_client.dart';
 
-/// 接口与语音服务异常类型：语义分流与文案定义（Spec §2）。
-enum ApiErrorCategory {
-  /// 429 请求过于频繁 / 限流
-  rateLimited(
-    title: '服务请求受限',
-    message: '模型服务返回请求过于频繁（429）。本次已为您切换为本地基础模式回复，建议稍后再试或检查服务商用量额度。',
-  ),
-
-  /// 401 / 403 鉴权未通过
-  authentication(
-    title: 'API Key 鉴权失败',
-    message: '服务商未通过验证（401/403），通常是 API Key 填写错误、已失效或未开通权限。本次已为您切换为本地基础模式回复。',
-  ),
-
-  /// 404 模型未找到
-  modelNotFound(
-    title: '模型名称不存在',
-    message: '服务商未找到当前配置的模型（404）。请检查模型名称拼写，或前往设置确认服务商是否支持该模型。',
-  ),
-
-  /// 其他 4xx 客户端异常
-  otherClientError(
-    title: '模型服务异常',
-    message: '服务商返回客户端请求异常。本次已为您切换为本地基础模式回复，建议前往设置检查模型配置。',
-  ),
-
-  /// 语音输入（STT 转写）受限
-  sttError(
-    title: '语音服务受限',
-    message: '语音服务请求受限或配置异常。请检查语音服务配置或服务商用量额度。',
-  ),
-
-  /// 语音朗读（TTS 合成）受限
-  ttsError(
-    title: '语音朗读受限',
-    message: '语音朗读合成请求受限或配置异常。请检查语音服务配置或服务商用量额度。',
-  );
-
-  const ApiErrorCategory({
-    required this.title,
-    required this.message,
-  });
-
-  final String title;
-  final String message;
-
-  /// 输入框上方状态行频控去重时的轻量提示文案。
-  String get noticeText => switch (this) {
-    ApiErrorCategory.rateLimited => '⚠️ 接口频繁受限 (429)，当前保持本地基础回复',
-    ApiErrorCategory.authentication => '⚠️ API Key 鉴权失败 (401/403)，当前保持本地基础回复',
-    ApiErrorCategory.modelNotFound => '⚠️ 模型名称不存在 (404)，当前保持本地基础回复',
-    ApiErrorCategory.otherClientError => '⚠️ 模型服务异常，当前保持本地基础回复',
-    ApiErrorCategory.sttError => '⚠️ 语音服务频繁受限，当前保持静音',
-    ApiErrorCategory.ttsError => '⚠️ 语音朗读频繁受限，当前保持静音',
-  };
-}
+// 异常类别枚举（含文案）已收进纯 Dart 策略表 api_error_policy.dart，
+// 这里原样导出，既有引用面不变。
+export 'api_error_policy.dart' show ApiErrorCategory;
 
 /// 只消费 Host 公开的精确错误码；未知故障与网络抖动保留就地提示。
 ApiErrorCategory? categorizeVoiceApiError(
