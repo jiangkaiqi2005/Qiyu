@@ -1,8 +1,9 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
+
+import 'support/repo_source_file.dart';
 
 /// 秘密特征表 lockstep 守门（f16-B3）。
 ///
@@ -24,8 +25,14 @@ import 'package:test/test.dart';
 /// 两侧的现行模式清单整块钉死：任一侧单边增删或改写模式，测试立即
 /// 失败。改动一侧前，必须先评估另一侧是否同步。
 void main() {
+  // 落点按包配置解析（票 10 / ADR 0022）：两包是路径依赖，能解析到
+  // 仓内真源；contracts 契约在仓库根，从本包根向上定位。从任意目录
+  // 运行测试都取到同一份文件，不再依赖「dart test 固定在包根目录
+  // 运行」的约定。
   final contract = jsonDecode(
-    File('../../contracts/qiyu_behavior_contracts.json').readAsStringSync(),
+    resolveRepoFile(
+      'contracts/qiyu_behavior_contracts.json',
+    ).readAsStringSync(),
   ) as Map<String, Object?>;
   for (final value
       in contract['credentialPlaceholderMatrix']! as List<Object?>) {
@@ -78,11 +85,6 @@ void main() {
       expect(redactSessionText(ordinary), ordinary);
     });
 
-    // 相对各自包根的源码路径；dart test 固定在包根目录运行。
-    const coreSourcePath =
-        '../../packages/qiyu_behavior_core/lib/src/hidden_actions.dart';
-    const hostSourcePath = 'lib/src/markdown_memory_repository.dart';
-
     /// 从源码里截取 `[` 与第一个 `];` 之间的模式清单本体。
     String extractPatternBlock(String source, String startMarker) {
       final start = source.indexOf(startMarker);
@@ -99,7 +101,9 @@ void main() {
     String normalize(String text) => text.replaceAll(RegExp(r'\s+'), ' ').trim();
 
     test('core 秘密特征表（记忆提升闸门）钉死现行清单', () {
-      final source = File(coreSourcePath).readAsStringSync();
+      final source = resolvePackageSource(
+        'package:qiyu_behavior_core/src/hidden_actions.dart',
+      ).readAsStringSync();
       final block = ['_tokenSecretPatterns', '_keyedSecretPatterns', '_otherSecretPatterns']
           .map((name) => extractPatternBlock(source, 'final $name = ['))
           .join('\n');
@@ -137,7 +141,9 @@ void main() {
     });
 
     test('host 落盘脱敏表钉死现行清单', () {
-      final source = File(hostSourcePath).readAsStringSync();
+      final source = resolvePackageSource(
+        'package:qiyu_local_host/src/markdown_memory_repository.dart',
+      ).readAsStringSync();
       final block = [
         '_sessionTokenRedactPatterns',
         '_sessionKeyedRedactPatterns',
@@ -215,9 +221,13 @@ void main() {
     });
 
     test('两侧清单保持有意差异：host 多覆盖的令牌特征不得反向并入 core', () {
-      final coreSource = File(coreSourcePath).readAsStringSync();
+      final coreSource = resolvePackageSource(
+        'package:qiyu_behavior_core/src/hidden_actions.dart',
+      ).readAsStringSync();
       final coreBlock = extractPatternBlock(coreSource, 'final _tokenSecretPatterns = [');
-      final hostSource = File(hostSourcePath).readAsStringSync();
+      final hostSource = resolvePackageSource(
+        'package:qiyu_local_host/src/markdown_memory_repository.dart',
+      ).readAsStringSync();
       final hostBlock = extractPatternBlock(
         hostSource,
         'final _sessionTokenRedactPatterns = <RegExp>[',

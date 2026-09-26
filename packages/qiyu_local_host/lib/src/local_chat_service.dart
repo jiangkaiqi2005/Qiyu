@@ -2,23 +2,18 @@ import 'dart:async';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'chat_memory_module.dart';
 import 'delivery_stream_state.dart';
 import 'developer_diagnostics.dart';
-import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
 import 'memory_alias.dart';
 import 'memory_ban.dart';
-import 'memory_cadence.dart';
-import 'memory_controls.dart';
 import 'memory_recall.dart';
 import 'memory_text_primitives.dart';
 import 'model_prompt_builder.dart';
-import 'open_loop_store.dart';
 import 'persona_tree.dart';
 import 'provider_settings_service.dart';
-import 'relationship_lifecycle.dart';
-import 'state_pack_reader.dart';
 import 'tts_gateway.dart';
 import 'voice_stream_pipeline.dart';
 
@@ -74,17 +69,9 @@ const defaultVoiceSessionGrace = Duration(seconds: 2);
 final class LocalChatService {
   LocalChatService(
     this._repository, {
+    required this.memory,
     this.providerPort,
     this.modelPromptBuilder = const ModelPromptBuilder(''),
-    this.episodePipeline,
-    this.openLoopStore,
-    this.statePackReader,
-    this.memoryRecall,
-    this.personaTree,
-    this.memoryControls,
-    this.relationshipLifecycle,
-    this.memoryActions,
-    this.memoryCadence,
     this.requestDiagnostics,
     this.aliasClient,
     this.voiceStreamSynthesizer,
@@ -102,23 +89,15 @@ final class LocalChatService {
   final MemoryRepository _repository;
   final QiyuBehaviorCore _behaviorCore = const QiyuBehaviorCore();
 
+  /// 记忆依赖族（票 10 / ADR 0022）：轮内整理、开环即时生效、禁提/
+  /// 冻结/删除、维护准入、交付节奏、轮内召回、称呼自述与热层装配的
+  /// 全部承载模块收成一个必填 module，忘注入在构造期报错；成员实例
+  /// 的同实例约束（控制存储与开环存储）由 [ChatMemoryModule] 构造期
+  /// 校验。
+  final ChatMemoryModule memory;
+
   final ProviderChatPort? providerPort;
   final ModelPromptBuilder modelPromptBuilder;
-  final EpisodeMemoryPipeline? episodePipeline;
-  final OpenLoopStore? openLoopStore;
-  final StatePackReader? statePackReader;
-
-  /// 用户记忆控制记录（ticket 18）：冻结/禁提/删除的落盘与读取。
-  /// 必须与 OpenLoopStore 使用同一实例，避免两条写入链互相覆盖。
-  final MemoryControlsStore? memoryControls;
-
-  /// relationship.md 生命周期：删除时需要立即清掉命中的关系证据行。
-  /// 与日终归档共享同一实例。
-  final RelationshipLifecycle? relationshipLifecycle;
-
-  /// 记忆动作执行端：禁提执行器和删除管线与记忆中心 UI 共用，
-  /// 保持控制范围、清理结果一致。
-  final MemoryActionService? memoryActions;
 
   /// 控制时关联扩展的 Provider 客户端（裁定票 03）：聊天禁提与冻结
   /// 两个分支直接用它做有界别名调用（都在维护准入之外），删除走
@@ -133,31 +112,6 @@ final class LocalChatService {
   /// （[VoiceStreamSessionOpener]）：档位开了 WS 时增量原文直接进会话，
   /// 分句层切句与在途上限都不参与。
   final VoiceStreamSynthesizer? voiceStreamSynthesizer;
-
-  late final MemoryBanExecution? _banExecution =
-      memoryActions?.banExecution ??
-      (openLoopStore == null
-          ? null
-          : MemoryBanExecution(
-              openLoopStore: openLoopStore!,
-              personaTree: personaTree,
-            ));
-
-  /// 记忆节奏（ticket 22 / ADR 0002）：交付后时间节奏链独立模块。
-  /// 聊天服务只在每轮交付完成（轮内召回循环之后）调
-  /// [MemoryCadence.onDeliveryComplete] 一个钩子，危险操作独占前经
-  /// [MemoryCadence.finalizePending] 等它的后台任务链排空；日终归档、
-  /// 月压缩、Dream、启动补扫与空闲补办全部在模块内部串行。
-  final MemoryCadence? memoryCadence;
-
-  /// 召回模型查找轮内循环。只在配置了 Provider 时有意义：查找由
-  /// 模型隐藏动作触发，命中快时当轮补 bubble 2，没赶上时压缩结果
-  /// 注入下一轮模型上下文。
-  final RecallOrchestrator? memoryRecall;
-
-  /// PersonaTree 叶与中间理解（ticket 14）。必须与日终归档使用
-  /// 同一实例：树文件的串行锁在实例内部，两个实例会互相覆盖。
-  final PersonaTreeStore? personaTree;
 
   /// 开发者诊断最近请求记录器（ticket 23）：只记来源、结果与脱敏
   /// 细节，绝不记用户文本；null 时不记录。
@@ -204,22 +158,19 @@ final class LocalChatService {
   /// 维护入口自身不在任何被等待的任务链上，不会形成自身等待死锁。
   Future<T> runExclusively<T>(Future<T> Function() operation) {
     Future<T> drainAndRun() async {
-      memoryCadence?.pauseBackgroundScheduling();
+      memory.memoryCadence.pauseBackgroundScheduling();
       try {
-        await memoryCadence?.finalizePending();
+        await memory.memoryCadence.finalizePending();
         await _recallTask;
         return await operation();
       } finally {
-        memoryCadence?.resumeBackgroundScheduling();
+        memory.memoryCadence.resumeBackgroundScheduling();
       }
     }
 
-    final commits = episodePipeline?.commits;
-    if (commits == null) {
-      return _serialized(drainAndRun);
-    }
     // 同步关闭新 UI 操作准入并保留聊天队列中的维护位置：等待在途
     // UI 时，新聊天也不能插队。排空和维护都不持有短提交锁。
+    final commits = memory.episodePipeline.commits;
     final admitted = Completer<void>();
     late final Future<T> queued;
     final maintenance = commits.maintenance(() {
@@ -631,7 +582,7 @@ final class LocalChatService {
       final modelSucceeded = streamed?.result?.source == ReplySource.llm;
       if (consumedContext.isNotEmpty &&
           (!modelSucceeded || cancellation.isCancelled)) {
-        memoryRecall?.restorePendingContext(session.id, consumedContext);
+        memory.memoryRecall.restorePendingContext(session.id, consumedContext);
       }
       if ((streamed?.cancelled ?? false) || cancellation.isCancelled) {
         yield _cancelledEvent(trimmedRequestId, session.id);
@@ -698,7 +649,7 @@ final class LocalChatService {
           cancellation: cancellation,
         );
       }
-      memoryCadence?.onDeliveryComplete(bedtime: bedtime);
+      memory.memoryCadence.onDeliveryComplete(bedtime: bedtime);
     }
   }
 
@@ -725,11 +676,7 @@ final class LocalChatService {
     required bool bedtime,
     required DeliveryCancellation cancellation,
   }) async* {
-    final recall = memoryRecall;
-    if (recall == null ||
-        providerPort == null ||
-        outcome.safety != null ||
-        bedtime) {
+    if (providerPort == null || outcome.safety != null || bedtime) {
       return;
     }
     final requestId = outcome.requestId;
@@ -746,6 +693,7 @@ final class LocalChatService {
 
     // 召回子调用（选择/组织）把当前消息拼进提示发给 Provider：
     // 与主链装配同一份脱敏规则先行过滤，秘密绝不随查找请求外发。
+    final recall = memory.memoryRecall;
     final task = recall.runTurnRecall(
       userText: redactSessionText(userText),
       recallActions: hiddenActions,
@@ -873,45 +821,43 @@ final class LocalChatService {
       }).toList();
     }
 
-    final pipeline = episodePipeline;
-    if (pipeline != null) {
-      try {
-        final result = await pipeline.processReply(
-          session: completedSession,
-          requestId: requestId,
-          hiddenActions: effectiveActions,
+    final pipeline = memory.episodePipeline;
+    try {
+      final result = await pipeline.processReply(
+        session: completedSession,
+        requestId: requestId,
+        hiddenActions: effectiveActions,
+      );
+      if (result.skippedCorruptDay) {
+        _diagnosticsSink(
+          'episode day unreadable, waiting for recovery request=$requestId',
         );
-        if (result.skippedCorruptDay) {
-          _diagnosticsSink(
-            'episode day unreadable, waiting for recovery request=$requestId',
-          );
-        }
-        // 随手记只建叶指针（ticket 14）：中间理解归日终。建叶失败
-        // 只记诊断，日终还会按当天 episode 补齐。
-        final tree = personaTree;
-        if (tree != null && result.addedEntries.isNotEmpty) {
-          await tree.createLeaves(result.addedEntries);
-          // 用户明确纠正是唯一在线撤根例外（ticket 17）：当轮身份自述
-          // 与根下理解冲突时立即撤根并重投影 persona.md，不等日终。
-          await tree.revokeCorrectedIdentityRoots(result.addedEntries);
-        }
-      } on Object catch (error) {
-        _diagnosticsSink('episode update deferred [$error] request=$requestId');
       }
+      // 随手记只建叶指针（ticket 14）：中间理解归日终。建叶失败
+      // 只记诊断，日终还会按当天 episode 补齐。
+      if (result.addedEntries.isNotEmpty) {
+        await memory.personaTree.createLeaves(result.addedEntries);
+        // 用户明确纠正是唯一在线撤根例外（ticket 17）：当轮身份自述
+        // 与根下理解冲突时立即撤根并重投影 persona.md，不等日终。
+        await memory.personaTree.revokeCorrectedIdentityRoots(
+          result.addedEntries,
+        );
+      }
+    } on Object catch (error) {
+      _diagnosticsSink('episode update deferred [$error] request=$requestId');
     }
     // 记忆控制与 Open-loop 状态变化：回复后异步立即生效，不等日终。
-    final store = openLoopStore;
     for (final action in hiddenActions) {
       try {
         switch (action) {
           case OpenLoopStatusAction():
-            await store?.applyStatusChange(
+            await memory.openLoopStore.applyStatusChange(
               title: action.title,
               status: action.status.wireName,
               result: action.result,
             );
           case MemoryBanAction():
-            final execution = _banExecution;
+            final execution = memory.memoryActions.banExecution;
             // 别名扩展在维护准入之外：模型调用不占 operation zone
             // （提交边界纪律），未配置或失败静默退回无别名，禁提本身
             // 照常生效。
@@ -921,14 +867,14 @@ final class LocalChatService {
             );
             // 此处已经占有聊天槽，维护正在排空聊天时必须继续完成，
             // 不能再等待新 UI 操作的准入。执行器只分步取得短写锁。
-            final result = await execution?.controls.commits.existingOperation(
+            final result = await execution.controls.commits.existingOperation(
               () => execution.execute(
                 action.title,
                 origin: 'chat',
                 aliases: aliases,
               ),
             );
-            if (result == null || !result.controlWritten) {
+            if (!result.controlWritten) {
               _diagnosticsSink(
                 'memory ban deferred [controls not writable] '
                 'request=$requestId',
@@ -945,14 +891,13 @@ final class LocalChatService {
               }
             }
           case MemoryFreezeAction():
-            final controls = memoryControls;
             // 关联扩展（裁定票 03）：未配置模型或调用失败都静默退回
-            // 无别名，冻结本身照常生效。没有控制存储时不做无用调用。
-            final aliases = controls == null
-                ? const <String>[]
-                : await expandMemoryAliases(aliasClient, action.title);
-            final frozen =
-                await controls?.freeze(action.title, aliases: aliases) ?? false;
+            // 无别名，冻结本身照常生效。
+            final aliases = await expandMemoryAliases(aliasClient, action.title);
+            final frozen = await memory.memoryControls.freeze(
+              action.title,
+              aliases: aliases,
+            );
             if (!frozen) {
               _diagnosticsSink(
                 'memory freeze deferred [controls not writable] '
@@ -960,8 +905,9 @@ final class LocalChatService {
               );
             }
           case MemoryUnfreezeAction():
-            final controls = memoryControls;
-            final removed = await controls?.unfreeze(action.title);
+            // 返回 null 即控制记录写不进（可恢复失败）：控制保持现状
+            // 等待重试。
+            final removed = await memory.memoryControls.unfreeze(action.title);
             if (removed == null) {
               _diagnosticsSink(
                 'memory unfreeze deferred [controls not writable] '
@@ -971,8 +917,7 @@ final class LocalChatService {
           case MemoryUnbanAction():
             // 口语解除禁提（裁定票 03）：与 memory_unfreeze 对称，写失败
             // 只记诊断，控制记录保持现状等待重试。
-            final controls = memoryControls;
-            final removed = await controls?.unban(action.title);
+            final removed = await memory.memoryControls.unban(action.title);
             if (removed == null) {
               _diagnosticsSink(
                 'memory unban deferred [controls not writable] '
@@ -1006,18 +951,13 @@ final class LocalChatService {
     String userText,
     String requestId,
   ) async {
-    final tree = personaTree;
-    if (tree == null) {
-      return;
-    }
     final candidate = extractAppellationSelfReport(userText);
     if (candidate == null) {
       return;
     }
     try {
-      final written = await tree.episodePipeline.commits.existingOperation(
-        () => tree.setAppellation(candidate),
-      );
+      final written = await memory.personaTree.episodePipeline.commits
+          .existingOperation(() => memory.personaTree.setAppellation(candidate));
       if (written == null) {
         _diagnosticsSink(
           'appellation self-report rejected reason=format '
@@ -1038,11 +978,10 @@ final class LocalChatService {
   /// （PersonaTree、episodes 与索引、长期印象、月摘要、关系证据、
   /// 近日状态、未闭环事项）。sessions 保留；重复执行安全。
   Future<void> _applyDelete(String summary, String requestId) async {
-    final actions = memoryActions;
-    if (actions == null || normalizeMemoryText(summary).isEmpty) {
+    if (normalizeMemoryText(summary).isEmpty) {
       return;
     }
-    final result = await actions.deleteByScope(
+    final result = await memory.memoryActions.deleteByScope(
       summary,
       origin: 'chat',
       requestId: requestId,
@@ -1065,16 +1004,13 @@ final class LocalChatService {
   /// 只注入一次）。
   Future<ModelPromptBuilder> _promptBuilderForRequest(String sessionId) async {
     var builder = modelPromptBuilder;
-    final reader = statePackReader;
-    if (reader != null) {
-      final prepared = await reader.readHotLayerBlocks();
-      final failure = prepared.failure;
-      if (failure != null) {
-        _diagnosticsSink('state pack unavailable [$failure]');
-      }
-      builder = prepared.applyTo(builder);
+    final prepared = await memory.statePackReader.readHotLayerBlocks();
+    final failure = prepared.failure;
+    if (failure != null) {
+      _diagnosticsSink('state pack unavailable [$failure]');
     }
-    final pendingContext = memoryRecall?.consumePendingContext(sessionId);
+    builder = prepared.applyTo(builder);
+    final pendingContext = memory.memoryRecall.consumePendingContext(sessionId);
     if (pendingContext != null) {
       builder = builder.copyWithMemoryContext(pendingContext);
     }

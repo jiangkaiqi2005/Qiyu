@@ -7,6 +7,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
+import 'support/chat_memory_test_module.dart';
 import 'support/failing_atomic_writer.dart';
 import 'support/in_process_chat_host.dart';
 import 'support/prepared_provider_port.dart';
@@ -472,14 +473,16 @@ final class _BoundaryFixture {
     AtomicTextWriter? atomicWriter,
   }) async {
     LocalChatService? wiredService;
+    // 聊天服务与日终归档共享同一 episode 管线实例（与组合根装配同构）。
+    final pipeline = EpisodeMemoryPipeline(
+      memoryDirectory: memoryDirectory,
+      clock: clock,
+    );
     final cadence = MemoryCadence(
       providerPort: providerPort ?? const PreparedProviderPort(),
       dailyFinalization: DailyFinalizationService(
         memoryDirectory: memoryDirectory,
-        episodePipeline: EpisodeMemoryPipeline(
-          memoryDirectory: memoryDirectory,
-          clock: clock,
-        ),
+        episodePipeline: pipeline,
         clock: clock,
         atomicWriter: atomicWriter,
       ),
@@ -489,7 +492,13 @@ final class _BoundaryFixture {
     );
     final service = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: memoryDirectory, clock: clock),
-      memoryCadence: cadence,
+      memory: buildChatMemoryModule(
+        memoryDirectory: memoryDirectory,
+        clock: clock,
+        atomicWriter: atomicWriter,
+        episodePipeline: pipeline,
+        memoryCadence: cadence,
+      ),
       clock: clock,
       deliveryPause: (_) async {},
       diagnosticsSink: diagnostics.add,

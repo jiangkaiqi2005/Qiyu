@@ -11,6 +11,7 @@ import 'anysearch_client.dart';
 import 'api_http.dart';
 import 'backup_routes.dart';
 import 'browser_launcher.dart';
+import 'chat_memory_module.dart';
 import 'chat_routes.dart';
 import 'daily_finalization.dart';
 import 'developer_diagnostics.dart';
@@ -312,32 +313,36 @@ final class LocalAppHost {
     );
     final chatService = LocalChatService(
       memoryRepository,
+      // 记忆依赖族（票 10 / ADR 0022）：与日终归档、记忆中心、备份等
+      // 服务共享上面装配的同一批存储实例，控制存储与开环存储的同实例
+      // 约束由 module 构造期校验兜底。
+      memory: ChatMemoryModule(
+        episodePipeline: episodePipeline,
+        openLoopStore: openLoopStore,
+        memoryControls: memoryControls,
+        memoryActions: memoryActions,
+        memoryCadence: memoryCadence,
+        memoryRecall: RecallOrchestrator(
+          memoryDirectory: memoryDirectory,
+          episodePipeline: episodePipeline,
+          // 轮内查找的选择/组织小调用与聊天共用同一 Provider 配置与
+          // 凭据；未配置时轮内循环静默跳过（不召回保持现状）。
+          modelClient: effectiveProviderSettings,
+          openLoopStore: openLoopStore,
+          // 画像树路径检索（Memory 注入定稿）：与选日同一调用顺带选路；
+          // 树不可用或读取失败时路径检索静默跳过，episode 链路照常。
+          personaTree: personaTree,
+        ),
+        personaTree: personaTree,
+        statePackReader: StatePackReader(
+          memoryDirectory: memoryDirectory,
+          openLoopStore: openLoopStore,
+          clock: clock,
+        ),
+      ),
       providerPort: effectiveProviderSettings,
       requestDiagnostics: requestDiagnostics,
       modelPromptBuilder: modelPromptBuilder,
-      episodePipeline: episodePipeline,
-      openLoopStore: openLoopStore,
-      statePackReader: StatePackReader(
-        memoryDirectory: memoryDirectory,
-        openLoopStore: openLoopStore,
-        clock: clock,
-      ),
-      memoryRecall: RecallOrchestrator(
-        memoryDirectory: memoryDirectory,
-        episodePipeline: episodePipeline,
-        // 轮内查找的选择/组织小调用与聊天共用同一 Provider 配置与
-        // 凭据；未配置时轮内循环静默跳过（不召回保持现状）。
-        modelClient: effectiveProviderSettings,
-        openLoopStore: openLoopStore,
-        // 画像树路径检索（Memory 注入定稿）：与选日同一调用顺带选路；
-        // 树不可用或读取失败时路径检索静默跳过，episode 链路照常。
-        personaTree: personaTree,
-      ),
-      personaTree: personaTree,
-      memoryControls: memoryControls,
-      relationshipLifecycle: relationshipLifecycle,
-      memoryActions: memoryActions,
-      memoryCadence: memoryCadence,
       deliveryPause: deliveryPause,
       recallWindowWait: recallWindowWait,
       voiceSessionGrace: voiceSessionGrace,

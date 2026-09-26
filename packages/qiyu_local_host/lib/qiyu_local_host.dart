@@ -2,6 +2,7 @@ library;
 
 export 'src/anysearch_client.dart';
 export 'src/browser_launcher.dart';
+export 'src/chat_memory_module.dart';
 export 'src/cleartext_policy.dart';
 export 'src/custom_stt_gateway.dart';
 export 'src/custom_tts_gateway.dart';

@@ -310,8 +310,24 @@ final class _Fixture {
     );
     final chat = LocalChatService(
       MarkdownMemoryRepository(memoryDirectory: directory.path),
-      episodePipeline: pipeline,
-      personaTree: tree,
+      memory: ChatMemoryModule(
+        episodePipeline: pipeline,
+        openLoopStore: loops,
+        memoryControls: controls,
+        memoryActions: actions,
+        memoryCadence: MemoryCadence(),
+        memoryRecall: RecallOrchestrator(
+          memoryDirectory: directory.path,
+          episodePipeline: pipeline,
+          openLoopStore: loops,
+          personaTree: tree,
+        ),
+        personaTree: tree,
+        statePackReader: StatePackReader(
+          memoryDirectory: directory.path,
+          openLoopStore: loops,
+        ),
+      ),
       deliveryPause: (_) async {},
     );
     await chat.initialize();

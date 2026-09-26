@@ -6,17 +6,21 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
+import 'support/chat_memory_test_module.dart';
 import 'support/dream_state_fixture.dart';
 import 'support/failing_atomic_writer.dart';
 import 'support/in_process_chat_host.dart';
+import 'support/repo_source_file.dart';
 import 'support/scripted_voice_synthesizer.dart';
 
 void main() {
   group('主链、幂等与分段', () {
     test('主链不再出现 Provider 能力类型判断（统一端口收口）', () {
       // 扫描主链源码钉住收口：Provider 能力判定只允许存在于网关与
-      // Provider 层。
-      final source = File('lib/src/local_chat_service.dart').readAsStringSync();
+      // Provider 层。落点按包配置解析（票 10），不依赖运行目录。
+      final source = resolvePackageSource(
+        'package:qiyu_local_host/src/local_chat_service.dart',
+      ).readAsStringSync();
       for (final marker in [
         'StreamingProviderChatClient',
         'WebSearchCapableProviderChatClient',
@@ -996,10 +1000,11 @@ void main() {
       );
       final service = LocalChatService(
         repository,
+        memory: buildChatMemoryModule(memoryDirectory: temporaryDirectory.path),
         providerPort: provider,
         deliveryPause: (_) async {},
       );
-  
+
       final streamEnded = service
           .deliver(requestId: 'exclusive-1', text: '聊到一半')
           .listen((_) {})
@@ -1116,6 +1121,9 @@ void main() {
         );
         final service = LocalChatService(
           repository,
+          memory: buildChatMemoryModule(
+            memoryDirectory: temporaryDirectory.path,
+          ),
           providerPort: provider,
           deliveryPause: (_) async {},
           diagnosticsSink: diagnostics.add,
@@ -3775,7 +3783,11 @@ void main() {
             memoryDirectory: temporaryDirectory.path,
             clock: () => DateTime(2026, 8, 12, 9),
           ),
-          episodePipeline: pipeline,
+          memory: buildChatMemoryModule(
+            memoryDirectory: temporaryDirectory.path,
+            clock: () => DateTime(2026, 8, 12, 9),
+            episodePipeline: pipeline,
+          ),
           clock: () => DateTime(2026, 8, 12, 9),
         );
         final cadence = MemoryCadence(
