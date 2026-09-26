@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
+import 'delivery_stream_state.dart';
 import 'developer_diagnostics.dart';
 import 'episode_memory.dart';
 import 'markdown_memory_repository.dart';
@@ -13,7 +13,6 @@ import 'memory_cadence.dart';
 import 'memory_controls.dart';
 import 'memory_recall.dart';
 import 'memory_text_primitives.dart';
-import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'open_loop_store.dart';
 import 'persona_tree.dart';
@@ -53,16 +52,9 @@ final class LocalChatSnapshot {
   };
 }
 
-typedef DeliveryPause = Future<void> Function(Duration duration);
-
 /// 召回窗口预算的等待注入点：与流式分段停顿（[DeliveryPause]）语义
 /// 不同，单独注入，测试可分别控制。
 typedef RecallWindowWait = Future<void> Function(Duration window);
-
-/// 交付节奏的唯一真源：分片大小（runes）与相邻两片之间的停顿。流式活
-/// 前缀与本地兜底/召回 bubble 的分片共用这份常量——改一边不会漏另一边。
-const _deliveryChunkRunes = 12;
-const _deliveryChunkPause = Duration(milliseconds: 70);
 
 /// 晚安信号词：可见回复交付后据此触发日终归档与 Dream 资格预登记。
 /// 词根定稿见笔记《栖语记忆/Memory.md》「晚安怎么认」：宁可认宽
@@ -72,31 +64,12 @@ const _deliveryChunkPause = Duration(milliseconds: 70);
 /// 认宽的代价只是提前归档一次。
 final _bedtimeSignalPattern = RegExp(r'晚安|睡了|先睡|睡觉了|想睡|去睡|困了|该睡了');
 
-/// 语音管线推进信号（票二）：与模型增量、取消一起进 [Future.any]，
-/// 同一个字符串哨兵区分「哪一路先到」——语音块先到就继续搭车，模型
-/// 增量先到就照常处理文字。
-const _voiceProgress = 'voice-progress';
-
-/// 连续供给会话落定信号（票三 迟到挂载）：与模型增量、取消、语音块
-/// 推进同台竞争——文字首字不等会话握手。
-const _voiceSessionReady = 'voice-session-ready';
-
 /// 模型流已收尾而会话还没落定时的有界宽限缺省值（票三）：快速档位（不开
 /// 会话）一个配置读取内就回，正常 WS 握手也白送这段时间——内落定即挂载
 /// （补喂缓冲文本、替会话收尾，尾块照常播完）；端点不可达时上限默认就在
 /// 这里，超出才作废会话——done 不被握手无限期拖住。生产走缺省值；测试经
 /// [LocalChatService.voiceSessionGrace] 注入小值。
 const defaultVoiceSessionGrace = Duration(seconds: 2);
-
-/// 迟到的连续供给会话（票三）：管线先就绪并登记（文字首字不等握手），
-/// [openSession] 是开会话的 Future——由交付主循环挂进等待集，胜出才
-/// 挂载到管线；为 null 表示档位不开会话（票二分句模式，管线即刻可用）。
-final class _PendingVoiceStream {
-  _PendingVoiceStream(this.pipeline, this.openSession);
-
-  final VoiceStreamPipeline pipeline;
-  final Future<VoiceStreamSession?>? openSession;
-}
 
 final class LocalChatService {
   LocalChatService(
@@ -196,7 +169,7 @@ final class LocalChatService {
   final Duration _voiceSessionGrace;
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
-  final Map<String, _DeliveryCancellation> _activeDeliveries = {};
+  final Map<String, DeliveryCancellation> _activeDeliveries = {};
 
   /// 在途分句语音合成（票二）：停止信号端点按 requestId 定位并作废，
   /// 交付结束（正常/取消/失败）时同一出口清理，绝不留下继续烧 Provider
@@ -277,7 +250,7 @@ final class LocalChatService {
     String? sessionId,
   }) {
     final trimmedRequestId = requestId.trim();
-    final cancellation = _DeliveryCancellation();
+    final cancellation = DeliveryCancellation();
     final controller = StreamController<ChatDeliveryEvent>(
       onCancel: cancellation.cancel,
     );
@@ -398,7 +371,7 @@ final class LocalChatService {
   /// 落定＝直接作废会话（语音没启动，不是失败）；开会话失败走 D1 同口径
   /// （failedSession 形态 + 一次 voiceError），不回落分句模式（避免同一条
   /// 链路上再烧一次配额）。
-  Future<_PendingVoiceStream?> _startVoiceStreamPipeline(
+  Future<DeliveryVoiceHandoff?> _startVoiceStreamPipeline(
     RawSession session,
     String requestId,
   ) async {
@@ -430,9 +403,10 @@ final class LocalChatService {
         pendingSession: true,
       );
       _activeVoiceStreams[requestId] = pipeline;
-      return _PendingVoiceStream(
-        pipeline,
-        opener.openSession(sessionId: session.id),
+      return DeliveryVoiceHandoff(
+        pipeline: pipeline,
+        requestId: requestId,
+        openSession: opener.openSession(sessionId: session.id),
       );
     }
     // 票二分句模式（档位不开会话）：管线即刻可用。
@@ -444,27 +418,27 @@ final class LocalChatService {
       diagnosticsSink: _diagnosticsSink,
     );
     _activeVoiceStreams[requestId] = pipeline;
-    return _PendingVoiceStream(pipeline, null);
+    return DeliveryVoiceHandoff(pipeline: pipeline, requestId: requestId);
   }
 
   /// 作废迟到的连续供给会话（票三）：管线 cancel 并从登记表移除（identical
   /// 校验，重复调用无副作用），会话 Future 落定也作废——连接绝不比文字多活
   /// 一刻；落定失败（开会话抛错）同样清表。收敛「取消赶在落定前」「模型流
   /// 没开到」「主循环提前 break」三条泄漏路径的唯一出口。
-  void _abandonVoiceStream(_PendingVoiceStream? started, String requestId) {
-    if (started == null) {
+  void _abandonVoiceStream(DeliveryVoiceHandoff? voice) {
+    if (voice == null) {
       return;
     }
-    final pipeline = started.pipeline;
-    final registered = identical(_activeVoiceStreams[requestId], pipeline);
+    final pipeline = voice.pipeline;
+    final registered = identical(
+      _activeVoiceStreams[voice.requestId],
+      pipeline,
+    );
     pipeline.cancel();
     if (registered) {
-      _activeVoiceStreams.remove(requestId);
+      _activeVoiceStreams.remove(voice.requestId);
     }
-    started.openSession?.then(
-      (session) => session?.cancel(),
-      onError: (_) {},
-    );
+    voice.openSession?.then((session) => session?.cancel(), onError: (_) {});
   }
 
   /// 语音块所属的交付段序号（与朗读定位同口径）：该 requestId 已落盘的
@@ -479,7 +453,7 @@ final class LocalChatService {
     required String requestId,
     required String text,
     required String? sessionId,
-    required _DeliveryCancellation cancellation,
+    required DeliveryCancellation cancellation,
   }) async* {
     final trimmedRequestId = requestId.trim();
     final trimmedText = sanitizeUserInput(text);
@@ -514,14 +488,16 @@ final class LocalChatService {
     }
     if (existingReply != null) {
       yield _acceptedEvent(trimmedRequestId, session.id);
-      yield* _deliverOutcome(
-        session,
-        _storedResult(session, existingReply),
-        cancellation,
-      );
+      yield* _OutcomeDelivery(
+        session: session,
+        result: _storedResult(session, existingReply),
+        cancellation: cancellation,
+        repository: _repository,
+        clock: _clock,
+        deliveryPause: _deliveryPause,
+      ).events();
       return;
     }
-
     if (existingUser == null) {
       if (session.turns.length > maxRawSessionTurns - 2 ||
           session.date != localSessionDate(_clock())) {
@@ -563,7 +539,8 @@ final class LocalChatService {
     // 事件种类，也不改写落盘格式（ADR 0017）。
     var incomplete = false;
     // 模型流真吐出过 delta 时才由流式路径负责交付序列；本地兜底轮
-    // （含无可用 Provider 的常规轮）仍走 _deliverOutcome 的分片节奏。
+    // （含无可用 Provider 的常规轮）仍走终局交付（_OutcomeDelivery）
+    // 的分片节奏。
     var streamedDeltas = false;
     yield ChatDeliveryEvent.waiting(
       requestId: trimmedRequestId,
@@ -582,13 +559,13 @@ final class LocalChatService {
     // 兜底话术（危机→热线兜底），由行为核心统一裁定。
     if (providerPort != null) {
       ModelPromptBuilder? requestBuilder;
-      final streamed = _StreamedReply();
+      StreamedReplyOutcome? streamed;
       // 连续供给会话（票三）：Provider 分支进来时就绪，与文字流式共用
       // 同一个活前缀；拿不到音频块的档位这里是 null。开会话是网络 I/O
-      // （WS 握手）——管线先就绪、会话 Future 由流式路径挂进主循环等待
-      // 集（迟到挂载），文字首字不等握手（票一「第一个字立刻开始出」
+      // （WS 握手）——管线先就绪、会话 Future 由流式状态机挂进等待集
+      // （迟到挂载），文字首字不等握手（票一「第一个字立刻开始出」
       // 不被语音握手抵消）。
-      _PendingVoiceStream? pendingVoice;
+      DeliveryVoiceHandoff? pendingVoice;
       try {
         requestBuilder = await _promptBuilderForRequest(session.id);
         final prepared = await providerPort.prepareChatRequest();
@@ -598,29 +575,34 @@ final class LocalChatService {
             session,
             trimmedRequestId,
           );
-          // 流内异常（含已吐出若干 delta 后才炸）由 _streamModelReply
-          // 自行收尾成半句/本地兜底，绝不在这里重置交付状态——否则
-          // 半句与兜底话术会叠加显示。
-          yield* _streamModelReply(
-            requestBuilder.build(
+          // 流式段的全部状态与转移内收在状态机（票 09）：流内异常（含
+          // 已吐出若干 delta 后才炸）由它自行收尾成半句/本地兜底，绝不
+          // 在这里重置交付状态——否则半句与兜底话术会叠加显示。
+          final machine = StreamedReplyMachine(
+            prepared: prepared,
+            messages: requestBuilder.build(
               state,
               trimmedText,
               hardRulesAddendum: prepared.hardRulesAddendum,
               at: pendingUserMoment,
             ),
-            cancellation,
-            prepared: prepared,
-            requestId: trimmedRequestId,
-            text: trimmedText,
-            state: state,
-            sessionId: session.id,
+            cancellation: cancellation,
             // 敏感输入（危机/医疗/法律/金融）的回复沿用现状：不分片
             // 停顿，整段一次到位。
             pace: outcome.safety == null,
             precomputedLocalOutcome: outcome,
-            reply: streamed,
-            pendingVoice: pendingVoice,
+            state: state,
+            requestId: trimmedRequestId,
+            sessionId: session.id,
+            text: trimmedText,
+            voice: pendingVoice,
+            abandonVoice: _abandonVoiceStream,
+            voiceSessionGrace: _voiceSessionGrace,
+            deliveryPause: _deliveryPause,
+            diagnosticsSink: _diagnosticsSink,
           );
+          yield* machine.events();
+          streamed = await machine.settled;
         }
       } on Object catch (error) {
         // 只有还没进流就炸的（提示词装配、能力快照）才在这里兜底：
@@ -628,58 +610,65 @@ final class LocalChatService {
         _diagnosticsSink(
           'model dispatch error [$error] request=$trimmedRequestId',
         );
-        streamed.result = _fallbackOutcome(
-          state,
-          trimmedRequestId,
-          trimmedText,
-          FallbackReason.modelProvider,
-          null,
+        streamed = StreamedReplyOutcome(
+          result: fallbackOutcome(
+            state,
+            trimmedRequestId,
+            trimmedText,
+            FallbackReason.modelProvider,
+            null,
+          ),
         );
       } finally {
         // 模型流没开到（prepare/openStream 抛错）时会话还在途：作废并
-        // 清表，绝不留继续烧配额的连接（正常轮次里 _streamModelReply 已
-        // 收过一次，abandon 幂等）。
-        _abandonVoiceStream(pendingVoice, trimmedRequestId);
+        // 清表，绝不留继续烧配额的连接（正常轮次里状态机已收过一次，
+        // abandon 幂等）。
+        _abandonVoiceStream(pendingVoice);
       }
       // 模型没有真正收到本轮（本地兜底/取消）时，把已取用的短期
       // memory context 放回，留给下一轮注入；「晚一拍」允许再晚一拍。
       final consumedContext = requestBuilder?.memoryContext ?? '';
-      final modelSucceeded = streamed.result?.source == ReplySource.llm;
+      final modelSucceeded = streamed?.result?.source == ReplySource.llm;
       if (consumedContext.isNotEmpty &&
           (!modelSucceeded || cancellation.isCancelled)) {
         memoryRecall?.restorePendingContext(session.id, consumedContext);
       }
-      if (streamed.cancelled || cancellation.isCancelled) {
+      if ((streamed?.cancelled ?? false) || cancellation.isCancelled) {
         yield _cancelledEvent(trimmedRequestId, session.id);
         return;
       }
       // 没有可用 Provider（prepare 返回 null）时本轮就是普通本地兜底：
       // 沿用进入 Provider 分支前算好的本地结果，行为与今天一致。
-      final streamedResult = streamed.result;
+      final streamedResult = streamed?.result;
       if (streamedResult != null) {
-        hiddenActions = streamed.hiddenActions;
+        hiddenActions = streamed!.hiddenActions;
         outcome = streamedResult;
         incomplete = streamed.incomplete;
         streamedDeltas = streamed.deltasDelivered;
       }
     }
 
-    final completion = _OutcomeCompletion();
-    ChatDeliveryEvent? lastEvent;
-    await for (final event in _deliverOutcome(
-      session,
-      outcome,
-      cancellation,
+    // 终局交付（票 09 出参盒消除）：事件流与落盘后的会话由同一对象
+    // 交付——async* 无法返回值，落盘结果经 [_OutcomeDelivery.persisted]
+    // 在事件流结束后取用，不再经过调用方持有的可变盒。
+    final delivery = _OutcomeDelivery(
+      session: session,
+      result: outcome,
+      cancellation: cancellation,
       persist: true,
-      completion: completion,
       deltasDelivered: streamedDeltas,
       incomplete: incomplete,
-    )) {
+      repository: _repository,
+      clock: _clock,
+      deliveryPause: _deliveryPause,
+    );
+    ChatDeliveryEvent? lastEvent;
+    await for (final event in delivery.events()) {
       lastEvent = event;
       yield event;
     }
     if (lastEvent != null && lastEvent.kind == ChatDeliveryEventKind.done) {
-      final completedSession = completion.session!;
+      final completedSession = (await delivery.persisted)!;
       // 只有完整且最终被接受的模型回复才提交其隐藏动作：候选被行为
       // 核心拒绝（回退本地回复）时整体丢弃——不改控制记录、不写派生
       // 记忆、不触发轮内召回；协议失败留下的半句同样没有可提交的
@@ -734,7 +723,7 @@ final class LocalChatService {
     required List<HiddenAction> hiddenActions,
     required ChatResult outcome,
     required bool bedtime,
-    required _DeliveryCancellation cancellation,
+    required DeliveryCancellation cancellation,
   }) async* {
     final recall = memoryRecall;
     if (recall == null ||
@@ -829,18 +818,23 @@ final class LocalChatService {
       }
       return;
     }
-    yield* _deliverOutcome(
-      session,
-      ChatResult(
+    // bubble 2 与 bubble 1 走同一套终局交付（票 09 归一）：重放与召回
+    // 交付不取落盘结果，persisted 完成值无人等待。
+    yield* _OutcomeDelivery(
+      session: session,
+      result: ChatResult(
         requestId: requestId,
         messages: validated.messages,
         nextState: validated.nextState,
         source: ReplySource.llm,
         mode: validated.mode,
       ),
-      cancellation,
+      cancellation: cancellation,
       persist: true,
-    );
+      repository: _repository,
+      clock: _clock,
+      deliveryPause: _deliveryPause,
+    ).events();
   }
 
   /// 可见回复落盘之后的增量记忆整理：写失败只记诊断，不影响本轮回复。
@@ -1087,409 +1081,57 @@ final class LocalChatService {
     return builder;
   }
 
-  /// 流式交付一轮模型回复（票一 文字流式输出）：Provider 增量到达后
-  /// 经 [CandidateReplyStream] 做增量卫生处理，通过的前缀立即按既有
-  /// 节奏（12 runes/70ms）以 delta 事件上屏；协议原生终止标记才收尾
-  /// 落盘。取消沿用现状语义（只交付 cancelled 事件）；协议失败分叉——
-  /// 还没有任何可见文字时走本地兜底，已有可见文字时把已显示部分作为
-  /// 该轮最终回复交付并落盘（带「未完成」标记，不补全不伪装）。
-  ///
-  /// 语音（票二）：同一个活前缀每出一个完整句就进分句合成，PCM 音频
-  /// 块经 [VoiceStreamPipeline] 按序搭车本事件流（voiceChunk），一句
-  /// 失败即本段语音结束（voiceError，D1）；块全部吐完才终局，刷新/
-  /// 重启的重放路径不进这里，幂等与今天一致。连续供给（票三）：档位
-  /// 开了 WS 会话时同一活前缀的增量原文直接进会话（不等标点），音频
-  /// 块按到达序搭车——五个驱动点形状不变，模式选择在管线内部。
-  Stream<ChatDeliveryEvent> _streamModelReply(
-    List<ModelMessage> messages,
-    _DeliveryCancellation cancellation, {
-    required PreparedProviderChatRequest prepared,
-    required String requestId,
-    required String text,
-    required StateSnapshot state,
-    required String sessionId,
-    required bool pace,
-    required ChatResult precomputedLocalOutcome,
-    required _StreamedReply reply,
-    _PendingVoiceStream? pendingVoice,
-  }) async* {
-    // 一次 open：协议适配、终止判定、错误分类与取消下传全部在快照与
-    // 网关内部完成；主链只对交付事件做增量卫生与分片节奏。
-    final stream = await prepared.openStream(
-      messages,
-      whenCancelled: cancellation.whenCancelled,
-    );
-    if (stream == null) {
-      // 拿不到可用流：本轮就是普通本地兜底。沿用调用方预计算的本地
-      // 结果（危机输入→热线兜底、常规输入→极简回复），不另发明原因值。
-      // 语音管线（可能在途的会话）作废并清表，不白留一条连接。
-      _abandonVoiceStream(pendingVoice, requestId);
-      reply.result = precomputedLocalOutcome;
-      return;
-    }
-    final iterator = StreamIterator<ModelStreamEvent>(stream);
-    // 连续供给会话（票三 迟到挂载）：管线先就绪，会话 Future 挂进主循环
-    // 等待集——**首个可见 delta 不等会话落定**（WS 端点不可达时文字照常
-    // 一秒级起，最坏情况只是首句不出声）。会话胜出才挂载；落定前喂进的
-    // 文本不合成。取消与「档位不开会话」都按本轮纯文字流式处理——语音
-    // 绝不拖住文字（文字链路永远优先）。
-    final voicePipeline = pendingVoice?.pipeline;
-    var pendingSession = pendingVoice?.openSession;
-    final raw = StringBuffer();
-    final visible = CandidateReplyStream();
-    final outbox = StringBuffer();
-    var rawRunes = 0;
-    var firstChunk = true;
-    var terminated = false;
-    var eof = false;
-    var finalized = false;
-    var voiceErrorSent = false;
-    // 在途的 moveNext（语音块先到时跨轮复用，见下方 await 处的注释）。
-    Future<bool>? moveNext;
-    ModelFailureKind? failure;
-    ServiceErrorCategory? serviceError;
-    // 在途活前缀的分片上屏：取下一块就立刻吐，绝不让已到来的文字排在
-    // 还没到来的模型增量后面。主循环保证 break 出来时 outbox 已排空，
-    // 终局段（含结尾行补完的新增文本）复用它排空残余。
-    Stream<ChatDeliveryEvent> drainOutbox() async* {
-      while (outbox.isNotEmpty) {
-        final chunk = _takeRunes(outbox, _deliveryChunkRunes);
-        if (!firstChunk && pace) {
-          await Future.any<void>([
-            _deliveryPause(_deliveryChunkPause),
-            cancellation.whenCancelled,
-          ]);
-        }
-        firstChunk = false;
-        if (cancellation.isCancelled) {
-          reply.cancelled = true;
-          return;
-        }
-        reply.deltasDelivered = true;
-        yield ChatDeliveryEvent.delta(
-          requestId: requestId,
-          sessionId: sessionId,
-          text: chunk,
-        );
-      }
-    }
-
-    try {
-      while (true) {
-        // 语音块优先搭车：文字还在生成，先到口的音频先出声（首音 =
-        // 首句生成完 + 首个音频块）。块按序全播，与文字增量互不阻塞。
-        while (voicePipeline != null) {
-          final chunk = voicePipeline.takeChunk();
-          if (chunk == null) {
-            break;
-          }
-          yield ChatDeliveryEvent.voiceChunk(
-            requestId: requestId,
-            sessionId: sessionId,
-            deliveryIndex: voicePipeline.deliveryIndex,
-            chunkIndex: chunk.chunkIndex,
-            sampleRate: chunk.sampleRate,
-            mimeType: chunk.mimeType,
-            data: base64Encode(chunk.bytes),
-          );
-        }
-        if (voicePipeline != null &&
-            voicePipeline.failed &&
-            !voiceErrorSent) {
-          // D1：已到的块都在上面吐完了才报失败——顺序上「先有声、后
-          // 提示」，提示口径由界面按同会话首次一次落地。
-          voiceErrorSent = true;
-          yield ChatDeliveryEvent.voiceError(
-            requestId: requestId,
-            sessionId: sessionId,
-            deliveryIndex: voicePipeline.deliveryIndex,
-          );
-        }
-        if (outbox.isNotEmpty) {
-          yield* drainOutbox();
-          continue;
-        }
-        if (terminated || failure != null) {
-          if (!finalized) {
-            // 活前缀收尾只做一次：补完结尾行（新增可见文本照样走分片
-            // 节奏）→ 尾句进分句层 → 关闭（之后只剩等音频）。
-            finalized = true;
-            final trailing = visible.completeTrailingLine();
-            outbox.write(trailing);
-            voicePipeline?.addText(trailing);
-            voicePipeline?.close();
-          }
-          if (pendingSession case final session?) {
-            // 模型流已收尾、会话还没落定：有界宽限内落定即挂载——补喂
-            // 缓冲文本并替会话收尾，尾块照常播完（短回复一次 delta 就
-            // done，也不能整轮没声音）；宽限外落定才作废（语音没启动，
-            // 不是失败，不发提示）。done 不被慢握手无限期拖住。
-            final settled = await Future.any<Object?>([
-              session.then<Object?>(
-                (_) => _voiceSessionReady,
-                onError: (Object _) => _voiceSessionReady,
-              ),
-              Future<void>.delayed(_voiceSessionGrace).then<Object?>((_) => null),
-            ]);
-            if (identical(settled, _voiceSessionReady)) {
-              await _attachVoiceSession(voicePipeline, session);
-            } else {
-              session.then((opened) => opened?.cancel(), onError: (_) {});
-              voicePipeline?.abandonPendingSession();
-            }
-            pendingSession = null;
-          }
-          if (voicePipeline == null || voicePipeline.isFinished) {
-            break;
-          }
-          // 模型流已终止、语音分句还在途：块继续搭车，等它收尾再终局
-          // （done 之前用户能听到最后几句）。
-          await voicePipeline.whenProgress();
-          continue;
-        }
-        // 在途的 moveNext 跨轮复用：语音块先到（_voiceProgress）时循环
-        // 回到顶部flush 音频，那一次 await 不能让在途的 moveNext 作废——
-        // StreamIterator 在上一次 moveNext 完成前再调一次会直接抛
-        // StateError，真实模型流（等下一个增量）必然踩中，整轮回复会被
-        // 误判成半句。只有 moveNext 自己胜出才清空重取。
-        (moveNext ??= iterator.moveNext());
-        final waits = <Future<Object?>>[
-          // 迟到的连续供给会话（票三）排在 moveNext 之前：两者都已落定时
-          // 先挂载再处理增量——首句文字不等握手，但会话就绪也不被增量
-          // 挤掉。开会话失败同样走这条哨兵（错误在挂载处按 D1 处理，
-          // 不当成模型流故障）。
-          if (pendingSession case final session?)
-            session.then<Object?>(
-              (_) => _voiceSessionReady,
-              onError: (Object _) => _voiceSessionReady,
-            ),
-          moveNext,
-          cancellation.whenCancelled.then<Object?>((_) => null),
-        ];
-        // 语音管线只在没收尾时挂推进等待：已收尾还挂会空转；没挂也不
-        // 丢块——下一个模型事件或取消都会把循环带回到顶部的 flush。
-        if (voicePipeline != null && !voicePipeline.isFinished) {
-          waits.add(
-            voicePipeline.whenProgress().then<Object?>((_) => _voiceProgress),
-          );
-        }
-        final moved = await Future.any<Object?>(waits);
-        if (moved == null || cancellation.isCancelled) {
-          await iterator.cancel();
-          voicePipeline?.cancel();
-          reply.cancelled = true;
-          return;
-        }
-        if (identical(moved, _voiceSessionReady)) {
-          // 会话落定即挂载（迟到挂载）：此后增量原文直接进 WS。
-          await _attachVoiceSession(voicePipeline, pendingSession);
-          pendingSession = null;
-          continue;
-        }
-        if (identical(moved, _voiceProgress)) {
-          continue;
-        }
-        moveNext = null;
-        if (moved != true) {
-          // 流干净关闭但没有任何协议终止标记：提前 EOF，按失败处理。
-          eof = true;
-          break;
-        }
-        final event = iterator.current;
-        switch (event.kind) {
-          case ModelStreamEventKind.delta:
-            rawRunes += event.text!.runes.length;
-            if (rawRunes > maxModelReplyRunes) {
-              await iterator.cancel();
-              failure = ModelFailureKind.incompatibleResponse;
-              break;
-            }
-            raw.write(event.text);
-            // 同一个活前缀：文字分片与分句合成共用这一份通过卫生检查
-            // 的增量，不二次解析最终文本。
-            final safe = visible.add(event.text!);
-            outbox.write(safe);
-            voicePipeline?.addText(safe);
-          case ModelStreamEventKind.done:
-            terminated = true;
-          case ModelStreamEventKind.failure:
-            failure = event.failure!;
-            serviceError = event.serviceError;
-        }
-      }
-      // 终局后排空在途活前缀：节奏不变，用户看到的吐字不跳字。结尾
-      // 行的补完与分句层关闭已在终止分支里做过（[finalized]），这里
-      // 只剩把尾句文本分片吐完；语音块也已在 break 前全部交付。
-      yield* drainOutbox();
-    } on Object catch (error) {
-      // 流内异常（读取出错、分片停顿被打破等）：与原生 error 同判——
-      // 已有可见文字留半句，没有则本地兜底。绝不向上抛：上层 catch 会
-      // 把本地兜底话术再分片吐一遍，与半句叠加。
-      _diagnosticsSink('model stream error [$error] request=$requestId');
-      failure ??= ModelFailureKind.provider;
-    } finally {
-      await iterator.cancel();
-      // 语音收尾（正常/取消/异常同一出口）：作废在途会话并注销登记——
-      // 正常轮次此时已自然结束，cancel 幂等；语音绝不比文字多活一刻。
-      _abandonVoiceStream(pendingVoice, requestId);
-    }
-    _settleStreamedReply(
-      visible: visible,
-      rawText: raw.toString(),
-      requestId: requestId,
-      text: text,
-      state: state,
-      failure: failure,
-      eof: eof,
-      serviceError: serviceError,
-      reply: reply,
-    );
+  Future<T> _serialized<T>(Future<T> Function() operation) {
+    final result = _pending.then((_) => operation());
+    _pending = result.then<void>((_) {}, onError: (_) {});
+    return result;
   }
+}
 
-  /// 迟到的连续供给会话落定（票三）：挂载到管线。返回的 Future 已由
-  /// [Future.any] 判定胜出，await 立即完成；失败按 D1 同口径标记（提示
-  /// 一次、文字不受影响），返回 null（档位不支持 WS / E1）时管线回落票二
-  /// 分句模式。模型流已收尾/已停止时才落定＝直接作废会话（语音没启动，
-  /// 不是失败，由管线内部判定）。
-  Future<void> _attachVoiceSession(
-    VoiceStreamPipeline? pipeline,
-    Future<VoiceStreamSession?>? session,
-  ) async {
-    if (pipeline == null || session == null) {
-      return;
-    }
-    final VoiceStreamSession? opened;
-    try {
-      opened = await session;
-    } on Object {
-      // 开会话失败：诊断已由开启方记录，这里只按 D1 口径标记。
-      pipeline.markSessionFailed();
-      return;
-    }
-    pipeline.attachSession(opened);
-  }
+/// 终局交付（票 09 出参盒消除）：可见回复的事件序列与落盘由同一对象
+/// 交付——async* 无法返回值，落盘后的会话经 [persisted] 在事件流结束
+/// 后取用，不再经过调用方持有的可变盒。主聊天、重放与召回 bubble 三条
+/// 路径共用同一份事件序列与分片节奏。
+final class _OutcomeDelivery {
+  _OutcomeDelivery({
+    required this.session,
+    required this.result,
+    required this.cancellation,
+    this.persist = false,
+    this.deltasDelivered = false,
+    this.incomplete = false,
+    required this._repository,
+    required this._clock,
+    required DeliveryPause deliveryPause,
+  }) : _pacing = DeliveryPacing(
+         pause: deliveryPause,
+         cancellation: cancellation,
+       );
 
-  /// 流式终局收尾：隐藏动作协议与可见文本严格分离后，按「有没有
-  /// 可见文字」分叉——有就作为该轮最终回复（半句带未完成标记），
-  /// 没有就走今天的本地兜底路径。
-  void _settleStreamedReply({
-    required CandidateReplyStream visible,
-    required String rawText,
-    required String requestId,
-    required String text,
-    required StateSnapshot state,
-    required ModelFailureKind? failure,
-    required bool eof,
-    required ServiceErrorCategory? serviceError,
-    required _StreamedReply reply,
-  }) {
-    // 隐藏动作只在 runtime 内部流转，绝不进入交付事件。
-    final parsed = parseHiddenActions(rawText);
-    for (final diagnostic in parsed.diagnostics) {
-      _diagnosticsSink(
-        'hidden-action dropped [$diagnostic] request=$requestId',
-      );
-    }
-    final messages = visible.finalizeMessages();
-    // 提前 EOF 与原生 error 同判失败：有可见文字留半句，没有则本地兜底。
-    final effectiveFailure =
-        failure ??
-        (eof && !visible.rejected
-            ? (messages.isEmpty
-                  ? ModelFailureKind.contentParsing
-                  : ModelFailureKind.network)
-            : null);
-    final complete = effectiveFailure == null && !visible.rejected;
-    if (complete && messages.isNotEmpty) {
-      reply.hiddenActions = parsed.actions;
-      reply.result =
-          _behaviorCore.reply(
-                ChatRequest(requestId: requestId, text: text),
-                state,
-                candidateReply: messages.join('\n'),
-              )
-              as ChatResult;
-      return;
-    }
-    final reason = effectiveFailure == null
-        ? (visible.rejected
-              ? FallbackReason.invalidModelResponse
-              : FallbackReason.emptyModelReply)
-        : _fallbackReasonFor(effectiveFailure);
-    if (messages.isNotEmpty) {
-      // 半句如实：失败原因只进本机诊断，页面不弹错、不追加兜底话术。
-      _diagnosticsSink(
-        'model stream incomplete [${reason.wireName}] request=$requestId',
-      );
-      reply.incomplete = true;
-      // 半句同样带服务故障类别：state 事件有该字段，带上不破坏「不弹
-      // 错误框、不追加兜底话术」的口径。
-      reply.result = _withServiceError(
-        _behaviorCore.reply(
-          ChatRequest(requestId: requestId, text: text),
-          state,
-          candidateReply: messages.join('\n'),
-        ) as ChatResult,
-        serviceError,
-      );
-      return;
-    }
-    reply.result = _fallbackOutcome(
-      state,
-      requestId,
-      text,
-      reason,
-      serviceError,
-    );
-  }
+  final RawSession session;
+  final ChatResult result;
+  final DeliveryCancellation cancellation;
 
-  ChatResult _fallbackOutcome(
-    StateSnapshot state,
-    String requestId,
-    String text,
-    FallbackReason reason,
-    ServiceErrorCategory? serviceError,
-  ) {
-    return _withServiceError(
-      _behaviorCore.reply(
-        ChatRequest(requestId: requestId, text: text),
-        state,
-        modelFailure: reason,
-      ) as ChatResult,
-      serviceError,
-    );
-  }
+  /// 是否把可见回复落盘为新的栖语 turn（重放路径只重发事件不落盘）。
+  final bool persist;
 
-  /// 给行为核心的结果补上服务故障类别（结果本体不变）：本地兜底与
-  /// 流式半句两条降级路径共用。
-  ChatResult _withServiceError(
-    ChatResult outcome,
-    ServiceErrorCategory? serviceError,
-  ) {
-    if (serviceError == null) {
-      return outcome;
-    }
-    return ChatResult(
-      requestId: outcome.requestId,
-      messages: outcome.messages,
-      nextState: outcome.nextState,
-      source: outcome.source,
-      mode: outcome.mode,
-      fallbackReason: outcome.fallbackReason,
-      safety: outcome.safety,
-      serviceError: serviceError,
-    );
-  }
+  /// 本轮是否真的吐出过流式 delta：吐过就不再重复分片，只补 message
+  /// 与收尾事件；本地兜底、召回 bubble 与重放仍走完整分片节奏。
+  final bool deltasDelivered;
+  final bool incomplete;
 
-  Stream<ChatDeliveryEvent> _deliverOutcome(
-    RawSession session,
-    ChatResult result,
-    _DeliveryCancellation cancellation, {
-    bool persist = false,
-    _OutcomeCompletion? completion,
-    bool deltasDelivered = false,
-    bool incomplete = false,
-  }) async* {
+  final MemoryRepository _repository;
+  final Clock _clock;
+  final DeliveryPacing _pacing;
+  final Completer<RawSession?> _persisted = Completer<RawSession?>();
+
+  /// 落盘后的会话快照：事件流结束后取用。未落盘（persist=false 或
+  /// 事件序列未走完）时完成值为 null。
+  Future<RawSession?> get persisted => _persisted.future;
+
+  Stream<ChatDeliveryEvent> events() => _events();
+
+  Stream<ChatDeliveryEvent> _events() async* {
     final requestId = result.requestId;
     if (requestId == null) {
       throw const LocalChatException(
@@ -1510,16 +1152,8 @@ final class LocalChatService {
     // 流式路径的 delta 已随活前缀上屏，这里只补本地兜底与召回
     // bubble 的分片节奏。
     if (!deltasDelivered) {
-      var firstChunk = true;
       for (final chunk in _visibleChunks(result.messages)) {
-        if (!firstChunk && result.safety == null) {
-          await Future.any<void>([
-            _deliveryPause(_deliveryChunkPause),
-            cancellation.whenCancelled,
-          ]);
-        }
-        firstChunk = false;
-        if (cancellation.isCancelled) {
+        if (!await _pacing.beforeChunk(paced: result.safety == null)) {
           yield _cancelledEvent(requestId, sessionId);
           return;
         }
@@ -1556,7 +1190,7 @@ final class LocalChatService {
         ),
       );
     }
-    completion?.session = completedSession;
+    _persisted.complete(completedSession);
     yield ChatDeliveryEvent.state(
       requestId: requestId,
       sessionId: completedSession.id,
@@ -1571,56 +1205,6 @@ final class LocalChatService {
       sessionId: completedSession.id,
     );
   }
-
-  Future<T> _serialized<T>(Future<T> Function() operation) {
-    final result = _pending.then((_) => operation());
-    _pending = result.then<void>((_) {}, onError: (_) {});
-    return result;
-  }
-}
-
-/// 一次可见结果交付完成后的最终会话快照：落盘发生在交付序列内部，
-/// 后续隐藏动作与轮内查找需要落盘后的会话，经此在私有实现内回传，
-/// 绝不随交付事件出服务边界。
-final class _OutcomeCompletion {
-  RawSession? session;
-}
-
-/// 流式交付的终局结论（票一）：delta 事件在流内边收边送，最终回复
-/// 经此回传给交付序列——完整回复、协议失败留下的半句（[incomplete]）
-/// 或本地兜底三选一；取消只置位 [cancelled]。
-final class _StreamedReply {
-  ChatResult? result;
-
-  /// 本轮是否真的吐出过 delta：只有吐过才由流式路径负责交付序列，
-  /// 零可见文字的本地兜底轮仍走 _deliverOutcome 的分片节奏。
-  bool deltasDelivered = false;
-  List<HiddenAction> hiddenActions = const [];
-  bool incomplete = false;
-  bool cancelled = false;
-}
-
-/// 从待吐缓冲头部取 [count] 个 runes：调用方以 outbox 非空为前置条件。
-String _takeRunes(StringBuffer buffer, int count) {
-  final text = buffer.toString();
-  final runes = text.runes.take(count).toList(growable: false);
-  final taken = String.fromCharCodes(runes);
-  buffer.clear();
-  buffer.write(text.substring(taken.length));
-  return taken;
-}
-
-final class _DeliveryCancellation {
-  final Completer<void> _completer = Completer<void>();
-
-  bool get isCancelled => _completer.isCompleted;
-  Future<void> get whenCancelled => _completer.future;
-
-  void cancel() {
-    if (!_completer.isCompleted) {
-      _completer.complete();
-    }
-  }
 }
 
 Iterable<String> _visibleChunks(List<String> messages) sync* {
@@ -1633,9 +1217,9 @@ Iterable<String> _visibleChunks(List<String> messages) sync* {
       yield '\n';
     }
     final runes = messages[messageIndex].runes.toList(growable: false);
-    for (var offset = 0; offset < runes.length; offset += _deliveryChunkRunes) {
-      final end = offset + _deliveryChunkRunes < runes.length
-          ? offset + _deliveryChunkRunes
+    for (var offset = 0; offset < runes.length; offset += deliveryChunkRunes) {
+      final end = offset + deliveryChunkRunes < runes.length
+          ? offset + deliveryChunkRunes
           : runes.length;
       yield String.fromCharCodes(runes.sublist(offset, end));
     }
@@ -1742,22 +1326,3 @@ RawSessionTurn? _findTurn(
 }) => turns
     .where((turn) => turn.requestId == requestId && turn.speaker == speaker)
     .firstOrNull;
-
-FallbackReason _fallbackReasonFor(ModelFailureKind failure) =>
-    switch (failure) {
-      ModelFailureKind.dns => FallbackReason.modelDns,
-      ModelFailureKind.tls => FallbackReason.modelTls,
-      ModelFailureKind.timeout => FallbackReason.modelTimeout,
-      ModelFailureKind.authentication => FallbackReason.modelAuthentication,
-      ModelFailureKind.network => FallbackReason.modelNetwork,
-      ModelFailureKind.modelNotFound => FallbackReason.modelNotFound,
-      // 模型与接口不匹配只在语音设置面给人话提示；聊天面的降级归因保持
-      // 通用 provider 拒绝，不新增行为契约条目。
-      ModelFailureKind.modelInterfaceMismatch => FallbackReason.modelProvider,
-      ModelFailureKind.rateLimited => FallbackReason.modelRateLimited,
-      ModelFailureKind.incompatibleResponse =>
-        FallbackReason.incompatibleModelResponse,
-      ModelFailureKind.contentParsing => FallbackReason.modelContentParsing,
-      ModelFailureKind.provider => FallbackReason.modelProvider,
-      ModelFailureKind.internal => FallbackReason.modelInternal,
-    };

@@ -593,6 +593,50 @@ final class ModelStreamEvent {
   final String? message;
 }
 
+/// 单次模型 turn 的内部事件（票 09 顺带项）：传输核心把协议行事件与
+/// 失败分类归一成这四种，普通流式与联网搜索工具轮各按自己的消费策略
+/// 取用——增量上屏 vs 整轮缓冲。只在 src 内流转，不进包导出面。
+sealed class _TurnEvent {
+  const _TurnEvent();
+}
+
+/// 协议产出的非空可见文本增量。
+final class _TurnDelta extends _TurnEvent {
+  const _TurnDelta(this.text);
+
+  final String text;
+}
+
+/// Anthropic 工具块事件：块开始（toolName 非空，inputDelta 为块自带的
+/// 初始参数）或参数增量（toolName 为空，按 blockIndex 归位）。
+final class _TurnTool extends _TurnEvent {
+  const _TurnTool({
+    required this.blockIndex,
+    required this.toolId,
+    required this.toolName,
+    required this.inputDelta,
+  });
+
+  final int? blockIndex;
+  final String? toolId;
+  final String? toolName;
+  final String inputDelta;
+}
+
+/// 协议原生终止标记（message_stop / [DONE] / Ollama done）。
+final class _TurnDone extends _TurnEvent {
+  const _TurnDone();
+}
+
+/// 传输或协议失败，分类已在传输核心完成。
+final class _TurnFailure extends _TurnEvent {
+  const _TurnFailure(this.kind, this.message, {this.serviceError});
+
+  final ModelFailureKind kind;
+  final String message;
+  final ServiceErrorCategory? serviceError;
+}
+
 final class ProviderModelGateway
     implements StreamingModelGateway, WebSearchStreamingModelGateway {
   const ProviderModelGateway(
@@ -693,109 +737,25 @@ final class ProviderModelGateway
     }
     final outbound = _outboundFor(config.kind);
     final chatTimeout = Duration(seconds: config.timeoutSeconds);
-    final encodedBody = utf8.encode(jsonEncode(request.body));
-    ProviderHttpResponse response;
-    try {
-      response = await outbound.post(
-        uri: request.uri,
-        headers: request.headers,
-        body: encodedBody,
-        timeout: chatTimeout,
-        budget: _chatResponseBudget,
-      );
-    } on TimeoutException {
-      _diagnosticsSink?.call('model connection timeout');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.timeout,
-        '连接模型服务超时。',
-      );
-      return;
-    } on HandshakeException {
-      _diagnosticsSink?.call('model connection tls error');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.tls,
-        '模型服务的 TLS 安全连接失败。',
-      );
-      return;
-    } on SocketException catch (error) {
-      final failure = _socketFailure(error);
-      _diagnosticsSink?.call('model connection socket error [${failure.kind}]');
-      yield ModelStreamEvent.failure(
-        failure.kind, failure.message, serviceError: failure.serviceError,
-      );
-      return;
-    } on HttpException {
-      _diagnosticsSink?.call('model connection http error');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.network,
-        '模型服务连接中断。',
-      );
-      return;
-    } on ModelGatewayException catch (error) {
-      _diagnosticsSink?.call('model gateway error [${error.kind}] ${error.message}');
-      yield ModelStreamEvent.failure(
-        error.kind, error.message, serviceError: error.serviceError,
-      );
-      return;
-    } on Object catch (error) {
-      _diagnosticsSink?.call('model connection unexpected error [$error]');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.internal,
-        '本机程序内部出错。',
-      );
-      return;
-    }
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      String body;
-      try {
-        body = await response.body.join();
-      } on TimeoutException {
-        _diagnosticsSink?.call('model response error body timeout');
-        yield const ModelStreamEvent.failure(
-          ModelFailureKind.timeout,
-          '模型服务响应超时。',
-        );
-        return;
-      } on ModelGatewayException catch (error) {
-        // 错误体读取超出预算（如超过错误体字节上限）时按其失败类别
-        // 降级，不透出错误体内容。
-        _diagnosticsSink?.call(
-          'model response error body failure [${error.kind}]',
-        );
-        yield ModelStreamEvent.failure(
-        error.kind, error.message, serviceError: error.serviceError,
-      );
-        return;
-      } on Object catch (error) {
-        _diagnosticsSink?.call('model response error body read error [$error]');
-        yield const ModelStreamEvent.failure(
-          ModelFailureKind.network,
-          '模型服务连接中断。',
-        );
-        return;
-      }
-      final failure = _statusFailure(response.statusCode, body);
-      _diagnosticsSink?.call('model response status error [${failure.kind}] status=${response.statusCode}');
-      yield ModelStreamEvent.failure(
-        failure.kind, failure.message, serviceError: failure.serviceError,
-      );
-      return;
-    }
+    // 传输核心（票 09 顺带项归一）：post、状态检查、SSE 行循环与异常
+    // 分类只有这一份，普通流式在这里只做增量上屏的增量消费。
     var emittedText = false;
-    try {
-      await for (final line in response.body.transform(const LineSplitter())) {
-        final event = protocol.readEvent(line);
-        if (event == null) {
-          continue;
-        }
-        if (event.delta.isNotEmpty) {
+    await for (final event in _modelTurnEvents(
+      protocol: protocol,
+      outbound: outbound,
+      request: request,
+      body: request.body,
+      timeout: chatTimeout,
+    )) {
+      switch (event) {
+        case _TurnDelta(:final text):
           emittedText = true;
-          yield ModelStreamEvent.delta(event.delta);
-        }
-        if (event.done) {
+          yield ModelStreamEvent.delta(text);
+        case _TurnDone():
           if (!emittedText) {
-            _diagnosticsSink?.call('model stream finished without visible text');
+            _diagnosticsSink?.call(
+              'model stream finished without visible text',
+            );
             yield const ModelStreamEvent.failure(
               ModelFailureKind.contentParsing,
               '模型服务返回的内容无法解析。',
@@ -804,35 +764,16 @@ final class ProviderModelGateway
             yield const ModelStreamEvent.done();
           }
           return;
-        }
+        case _TurnFailure():
+          yield ModelStreamEvent.failure(
+            event.kind,
+            event.message,
+            serviceError: event.serviceError,
+          );
+          return;
+        case _TurnTool():
+          break;
       }
-    } on TimeoutException {
-      _diagnosticsSink?.call('model stream response timeout');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.timeout,
-        '模型服务响应超时。',
-      );
-      return;
-    } on FormatException catch (error) {
-      _diagnosticsSink?.call('model stream format error [$error]');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.incompatibleResponse,
-        '模型服务返回了不兼容的响应格式。',
-      );
-      return;
-    } on ModelGatewayException catch (error) {
-      _diagnosticsSink?.call('model gateway error [${error.kind}] ${error.message}');
-      yield ModelStreamEvent.failure(
-        error.kind, error.message, serviceError: error.serviceError,
-      );
-      return;
-    } on Object catch (error) {
-      _diagnosticsSink?.call('model stream unexpected error [$error]');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.internal,
-        '本机程序内部出错。',
-      );
-      return;
     }
     if (!emittedText) {
       _diagnosticsSink?.call('model stream eof without visible text');
@@ -920,6 +861,10 @@ final class ProviderModelGateway
         timeout: Duration(seconds: config.timeoutSeconds),
         whenCancelled: whenCancelled,
       );
+      if (first.failure case final failure?) {
+        yield failure;
+        return;
+      }
       if (first.toolUses.isEmpty) {
         if (first.text.trim().isEmpty) {
           throw const ModelGatewayException(
@@ -950,9 +895,7 @@ final class ProviderModelGateway
             query: call.query,
             whenCancelled: whenCancelled,
           );
-          content = jsonEncode([
-            for (final result in results) result.toJson(),
-          ]);
+          content = jsonEncode([for (final result in results) result.toJson()]);
         } on ProviderRequestCancelled {
           rethrow;
         } on Object {
@@ -1000,6 +943,10 @@ final class ProviderModelGateway
         timeout: Duration(seconds: config.timeoutSeconds),
         whenCancelled: whenCancelled,
       );
+      if (second.failure case final failure?) {
+        yield failure;
+        return;
+      }
       if (second.toolUses.isNotEmpty || second.text.trim().isEmpty) {
         throw const ModelGatewayException(
           kind: ModelFailureKind.incompatibleResponse,
@@ -1010,42 +957,16 @@ final class ProviderModelGateway
       yield const ModelStreamEvent.done();
     } on ProviderRequestCancelled {
       return;
-    } on TimeoutException catch (error) {
-      _diagnosticsSink?.call('web search timeout [$error]');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.timeout,
-        '模型服务响应超时。',
-      );
-    } on HandshakeException catch (error) {
-      _diagnosticsSink?.call('web search tls error [$error]');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.tls,
-        '模型服务的 TLS 安全连接失败。',
-      );
-    } on SocketException catch (error) {
-      _diagnosticsSink?.call('web search socket error [$error]');
-      final failure = _socketFailure(error);
-      yield ModelStreamEvent.failure(
-        failure.kind, failure.message, serviceError: failure.serviceError,
-      );
-    } on HttpException catch (error) {
-      _diagnosticsSink?.call('web search http error [$error]');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.network,
-        '模型服务连接中断。',
-      );
     } on ModelGatewayException catch (error) {
+      // 工具校验抛出的受控失败：传输、协议读取与异常分类已归一进传输
+      // 核心，这里只剩消费侧自己的校验失败这一条映射。
       _diagnosticsSink?.call(
         'web search model error [${error.kind}] ${error.message}',
       );
       yield ModelStreamEvent.failure(
-        error.kind, error.message, serviceError: error.serviceError,
-      );
-    } on Object catch (error) {
-      _diagnosticsSink?.call('web search unexpected error [$error]');
-      yield const ModelStreamEvent.failure(
-        ModelFailureKind.internal,
-        '本机程序内部出错。',
+        error.kind,
+        error.message,
+        serviceError: error.serviceError,
       );
     }
   }
@@ -1090,6 +1011,12 @@ final class ProviderModelGateway
     return (id: toolUse.id, query: safeQuery);
   }
 
+  /// 工具轮的整 turn 读取（票 09 顺带项）：经传输核心 [_modelTurnEvents]
+  /// 消费协议事件，把可见文本与工具调用缓冲成一次 turn——工具回合必须
+  /// 整轮缓冲（首轮可见文本在有工具调用时不得交付），与普通流式只剩
+  /// 消费策略之差。失败不再抛异常穿越本方法：传输与协议分类已归一成
+  /// 失败事件，随 [_AnthropicTurn.failure] 回传；取消仍抛
+  /// [ProviderRequestCancelled] 由调用方静默收尾。
   Future<_AnthropicTurn> _readAnthropicTurn({
     required ProviderHttpClient outbound,
     required _ProviderRequest request,
@@ -1099,31 +1026,6 @@ final class ProviderModelGateway
   }) async {
     var cancelled = false;
     whenCancelled?.then((_) => cancelled = true);
-    // 每次工具模型请求有独立预算与整体期限；搜索请求不带模型预算。
-    final pendingResponse = outbound.post(
-      uri: request.uri,
-      headers: request.headers,
-      body: utf8.encode(jsonEncode(body)),
-      timeout: timeout,
-      budget: _chatResponseBudget,
-      whenCancelled: whenCancelled,
-    );
-    final response = await pendingResponse;
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final String responseBody;
-      try {
-        responseBody = await response.body.join();
-      } on Object {
-        if (cancelled) {
-          throw const ProviderRequestCancelled();
-        }
-        rethrow;
-      }
-      if (cancelled) {
-        throw const ProviderRequestCancelled();
-      }
-      throw _statusFailure(response.statusCode, responseBody);
-    }
     final text = StringBuffer();
     // 同一 turn 可包含多个工具块：每个 content_block 一组独立缓冲，参数
     // 增量按 index 归位；个别兼容服务省略 index 时退化为追加到最近开始
@@ -1132,65 +1034,275 @@ final class ProviderModelGateway
     final toolBuffers = <_AnthropicToolBuffer>[];
     final toolBuffersByIndex = <int, _AnthropicToolBuffer>{};
     _AnthropicToolBuffer? latestToolBuffer;
-    var stopped = false;
     try {
-      await for (final line in response.body.transform(const LineSplitter())) {
-        if (cancelled) {
-          throw const ProviderRequestCancelled();
-        }
-        final event = _readAnthropicEvent(line);
-        if (event == null) {
-          continue;
-        }
-        text.write(event.delta);
-        if (event.toolName != null) {
-          final buffer = _AnthropicToolBuffer(
-            id: event.toolId,
-            name: event.toolName!,
-          );
-          toolBuffers.add(buffer);
-          final blockIndex = event.blockIndex;
-          if (blockIndex != null) {
-            toolBuffersByIndex[blockIndex] = buffer;
-          }
-          latestToolBuffer = buffer;
-          buffer.input.write(event.toolInputDelta);
-        } else if (event.toolInputDelta.isNotEmpty) {
-          final buffer = event.blockIndex == null
-              ? latestToolBuffer
-              : toolBuffersByIndex[event.blockIndex];
-          buffer?.input.write(event.toolInputDelta);
-        }
-        if (event.done) {
-          stopped = true;
-          break;
+      await for (final event in _modelTurnEvents(
+        protocol: const _AnthropicProtocol(),
+        outbound: outbound,
+        request: request,
+        body: body,
+        timeout: timeout,
+        whenCancelled: whenCancelled,
+      )) {
+        switch (event) {
+          case _TurnDelta(text: final delta):
+            text.write(delta);
+          case _TurnTool():
+            if (event.toolName != null) {
+              final buffer = _AnthropicToolBuffer(
+                id: event.toolId,
+                name: event.toolName!,
+              );
+              toolBuffers.add(buffer);
+              final blockIndex = event.blockIndex;
+              if (blockIndex != null) {
+                toolBuffersByIndex[blockIndex] = buffer;
+              }
+              latestToolBuffer = buffer;
+              buffer.input.write(event.inputDelta);
+            } else {
+              final buffer = event.blockIndex == null
+                  ? latestToolBuffer
+                  : toolBuffersByIndex[event.blockIndex];
+              buffer?.input.write(event.inputDelta);
+            }
+          case _TurnFailure():
+            return _AnthropicTurn(
+              text: text.toString(),
+              toolUses: const [],
+              failure: ModelStreamEvent.failure(
+                event.kind,
+                event.message,
+                serviceError: event.serviceError,
+              ),
+            );
+          case _TurnDone():
+            if (cancelled) {
+              throw const ProviderRequestCancelled();
+            }
+            return _AnthropicTurn(
+              text: text.toString(),
+              toolUses: _toolUsesFrom(toolBuffers),
+            );
         }
       }
-    } on Object {
-      if (cancelled) {
-        throw const ProviderRequestCancelled();
-      }
+    } on ProviderRequestCancelled {
       rethrow;
     }
     if (cancelled) {
       throw const ProviderRequestCancelled();
     }
-    if (!stopped) {
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.network,
-        message: '模型服务连接在回复完成前中断。',
+    // 流干净关闭但没有协议终止标记：提前 EOF，与既有实现同判——连接
+    // 中断失败（消费方拿到 failure 事件而非异常）。核心只对它自己分类
+    // 的异常记诊断，EOF 出口没有归属，这里沿用工具轮旧诊断口径补记，
+    // 不与普通流式（其 EOF 诊断在自己消费出口）重复。
+    const failure = ModelStreamEvent.failure(
+      ModelFailureKind.network,
+      '模型服务连接在回复完成前中断。',
+    );
+    _diagnosticsSink?.call(
+      'web search model error [${failure.kind}] ${failure.message}',
+    );
+    return _AnthropicTurn(
+      text: text.toString(),
+      toolUses: _toolUsesFrom(toolBuffers),
+      failure: failure,
+    );
+  }
+
+  /// 从工具缓冲构造 turn 的工具调用清单：只收有 id 的块。
+  List<_AnthropicToolUse> _toolUsesFrom(
+    List<_AnthropicToolBuffer> toolBuffers,
+  ) => [
+    for (final buffer in toolBuffers)
+      if (buffer.id != null)
+        _AnthropicToolUse(
+          id: buffer.id!,
+          name: buffer.name,
+          inputJson: buffer.input.toString(),
+        ),
+  ];
+
+  /// 单次模型 turn 的传输核心（票 09 顺带项归一）：HTTP post、非 2xx
+  /// 状态检查、SSE 行循环、协议读事件与异常→失败分类只此一份——普通
+  /// 流式与联网搜索工具轮各按自己的策略消费同一事件面，第二份 SSE 行
+  /// 循环与逐级 catch 梯由此删除。取消信号下传 HTTP 客户端并按行检查，
+  /// 触发时抛 [ProviderRequestCancelled] 由调用方静默收尾。
+  Stream<_TurnEvent> _modelTurnEvents({
+    required _ProviderProtocol protocol,
+    required ProviderHttpClient outbound,
+    required _ProviderRequest request,
+    required Map<String, Object?> body,
+    required Duration timeout,
+    Future<void>? whenCancelled,
+  }) async* {
+    var cancelled = false;
+    whenCancelled?.then((_) => cancelled = true);
+    // 每次模型请求有独立预算与整体期限；搜索请求不带模型预算。
+    ProviderHttpResponse response;
+    try {
+      response = await outbound.post(
+        uri: request.uri,
+        headers: request.headers,
+        body: utf8.encode(jsonEncode(body)),
+        timeout: timeout,
+        budget: _chatResponseBudget,
+        whenCancelled: whenCancelled,
       );
+    } on ProviderRequestCancelled {
+      rethrow;
+    } on TimeoutException {
+      _diagnosticsSink?.call('model connection timeout');
+      yield const _TurnFailure(ModelFailureKind.timeout, '连接模型服务超时。');
+      return;
+    } on HandshakeException {
+      _diagnosticsSink?.call('model connection tls error');
+      yield const _TurnFailure(ModelFailureKind.tls, '模型服务的 TLS 安全连接失败。');
+      return;
+    } on SocketException catch (error) {
+      final failure = _socketFailure(error);
+      _diagnosticsSink?.call('model connection socket error [${failure.kind}]');
+      yield _TurnFailure(
+        failure.kind,
+        failure.message,
+        serviceError: failure.serviceError,
+      );
+      return;
+    } on HttpException {
+      _diagnosticsSink?.call('model connection http error');
+      yield const _TurnFailure(ModelFailureKind.network, '模型服务连接中断。');
+      return;
+    } on ModelGatewayException catch (error) {
+      _diagnosticsSink?.call(
+        'model gateway error [${error.kind}] ${error.message}',
+      );
+      yield _TurnFailure(
+        error.kind,
+        error.message,
+        serviceError: error.serviceError,
+      );
+      return;
+    } on Object catch (error) {
+      _diagnosticsSink?.call('model connection unexpected error [$error]');
+      yield const _TurnFailure(ModelFailureKind.internal, '本机程序内部出错。');
+      return;
     }
-    final toolUses = <_AnthropicToolUse>[
-      for (final buffer in toolBuffers)
-        if (buffer.id != null)
-          _AnthropicToolUse(
-            id: buffer.id!,
-            name: buffer.name,
-            inputJson: buffer.input.toString(),
-          ),
-    ];
-    return _AnthropicTurn(text: text.toString(), toolUses: toolUses);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      String errorBody;
+      try {
+        errorBody = await response.body.join();
+      } on TimeoutException {
+        if (cancelled) {
+          throw const ProviderRequestCancelled();
+        }
+        _diagnosticsSink?.call('model response error body timeout');
+        yield const _TurnFailure(ModelFailureKind.timeout, '模型服务响应超时。');
+        return;
+      } on ModelGatewayException catch (error) {
+        if (cancelled) {
+          throw const ProviderRequestCancelled();
+        }
+        // 错误体读取超出预算（如超过错误体字节上限）时按其失败类别
+        // 降级，不透出错误体内容。
+        _diagnosticsSink?.call(
+          'model response error body failure [${error.kind}]',
+        );
+        yield _TurnFailure(
+          error.kind,
+          error.message,
+          serviceError: error.serviceError,
+        );
+        return;
+      } on Object catch (error) {
+        if (cancelled) {
+          throw const ProviderRequestCancelled();
+        }
+        _diagnosticsSink?.call('model response error body read error [$error]');
+        yield const _TurnFailure(ModelFailureKind.network, '模型服务连接中断。');
+        return;
+      }
+      if (cancelled) {
+        throw const ProviderRequestCancelled();
+      }
+      final failure = _statusFailure(response.statusCode, errorBody);
+      _diagnosticsSink?.call(
+        'model response status error [${failure.kind}] status=${response.statusCode}',
+      );
+      yield _TurnFailure(
+        failure.kind,
+        failure.message,
+        serviceError: failure.serviceError,
+      );
+      return;
+    }
+    try {
+      await for (final line in response.body.transform(const LineSplitter())) {
+        if (cancelled) {
+          throw const ProviderRequestCancelled();
+        }
+        final event = protocol.readEvent(line);
+        if (event == null) {
+          continue;
+        }
+        if (event.toolName != null || event.toolInputDelta.isNotEmpty) {
+          yield _TurnTool(
+            blockIndex: event.blockIndex,
+            toolId: event.toolId,
+            toolName: event.toolName,
+            inputDelta: event.toolInputDelta,
+          );
+          continue;
+        }
+        if (event.delta.isNotEmpty) {
+          yield _TurnDelta(event.delta);
+        }
+        if (event.done) {
+          yield const _TurnDone();
+          return;
+        }
+      }
+    } on ProviderRequestCancelled {
+      rethrow;
+    } on TimeoutException {
+      if (cancelled) {
+        throw const ProviderRequestCancelled();
+      }
+      _diagnosticsSink?.call('model stream response timeout');
+      yield const _TurnFailure(ModelFailureKind.timeout, '模型服务响应超时。');
+      return;
+    } on FormatException catch (error) {
+      if (cancelled) {
+        throw const ProviderRequestCancelled();
+      }
+      _diagnosticsSink?.call('model stream format error [$error]');
+      yield const _TurnFailure(
+        ModelFailureKind.incompatibleResponse,
+        '模型服务返回了不兼容的响应格式。',
+      );
+      return;
+    } on ModelGatewayException catch (error) {
+      if (cancelled) {
+        throw const ProviderRequestCancelled();
+      }
+      _diagnosticsSink?.call(
+        'model gateway error [${error.kind}] ${error.message}',
+      );
+      yield _TurnFailure(
+        error.kind,
+        error.message,
+        serviceError: error.serviceError,
+      );
+      return;
+    } on Object catch (error) {
+      if (cancelled) {
+        throw const ProviderRequestCancelled();
+      }
+      _diagnosticsSink?.call('model stream unexpected error [$error]');
+      yield const _TurnFailure(ModelFailureKind.internal, '本机程序内部出错。');
+      return;
+    }
+    // 流结束且没有协议终止标记：提前 EOF 交给消费方按所在段分类——
+    // 普通流式区分有无可见文字，工具轮一律按连接中断失败。
   }
 }
 
@@ -1218,10 +1330,18 @@ final class _AnthropicToolBuffer {
 }
 
 final class _AnthropicTurn {
-  const _AnthropicTurn({required this.text, required this.toolUses});
+  const _AnthropicTurn({
+    required this.text,
+    required this.toolUses,
+    this.failure,
+  });
 
   final String text;
   final List<_AnthropicToolUse> toolUses;
+
+  /// 传输核心分类出的失败（含提前 EOF）：非空时本 turn 无有效内容，
+  /// 工具轮把该失败事件原样交付后结束。
+  final ModelStreamEvent? failure;
 }
 
 typedef _ProviderRequest = ({
@@ -1245,9 +1365,10 @@ abstract interface class _ProviderProtocol {
   _ProviderStreamPart? readEvent(String line);
 }
 
-typedef _ProviderStreamPart = ({String delta, bool done});
-
-typedef _AnthropicStreamPart = ({
+/// 协议单行读取结果（票 09 顺带项）：delta/done 之外携带 Anthropic 工具
+/// 块字段——普通流式只消费 delta/done，联网搜索工具轮经同一协议接口
+/// 读取工具调用，SSE 解析只有协议层这一份。
+typedef _ProviderStreamPart = ({
   String delta,
   bool done,
   int? blockIndex,
@@ -1323,7 +1444,14 @@ final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
       return null;
     }
     if (data == '[DONE]') {
-      return (delta: '', done: true);
+      return (
+        delta: '',
+        done: true,
+        blockIndex: null,
+        toolId: null,
+        toolName: null,
+        toolInputDelta: '',
+      );
     }
     final payload = jsonDecode(data) as Map<String, Object?>;
     Object? finishReason;
@@ -1355,7 +1483,14 @@ final class _OpenAiCompatibleProtocol implements _ProviderProtocol {
     if (finishReason == 'length' || finishReason == 'content_filter') {
       throw _truncatedReplyFailure;
     }
-    return (delta: text, done: finishReason != null);
+    return (
+      delta: text,
+      done: finishReason != null,
+      blockIndex: null,
+      toolId: null,
+      toolName: null,
+      toolInputDelta: '',
+    );
   }
 }
 
@@ -1399,85 +1534,80 @@ final class _AnthropicProtocol implements _ProviderProtocol {
 
   @override
   _ProviderStreamPart? readEvent(String line) {
-    final event = _readAnthropicEvent(line);
-    return event == null ? null : (delta: event.delta, done: event.done);
-  }
-}
-
-_AnthropicStreamPart? _readAnthropicEvent(String line) {
-  final data = _sseData(line);
-  if (data == null) {
-    final trimmed = line.trim();
-    if (trimmed.isNotEmpty &&
-        !trimmed.startsWith('event:') &&
-        !trimmed.startsWith(':')) {
-      throw const FormatException('invalid SSE line');
+    final data = _sseData(line);
+    if (data == null) {
+      final trimmed = line.trim();
+      if (trimmed.isNotEmpty &&
+          !trimmed.startsWith('event:') &&
+          !trimmed.startsWith(':')) {
+        throw const FormatException('invalid SSE line');
+      }
+      return null;
     }
-    return null;
-  }
-  final payload = jsonDecode(data) as Map<String, Object?>;
-  switch (payload['type']) {
-    case 'error':
-      throw const ModelGatewayException(
-        kind: ModelFailureKind.provider,
-        message: '模型服务返回了错误。',
-      );
-    case 'message_stop':
-      return (
-        delta: '',
-        done: true,
-        blockIndex: null,
-        toolId: null,
-        toolName: null,
-        toolInputDelta: '',
-      );
-    case 'content_block_start':
-      final block = payload['content_block'];
-      if (block is Map<String, Object?> && block['type'] == 'tool_use') {
-        final input = block['input'];
+    final payload = jsonDecode(data) as Map<String, Object?>;
+    switch (payload['type']) {
+      case 'error':
+        throw const ModelGatewayException(
+          kind: ModelFailureKind.provider,
+          message: '模型服务返回了错误。',
+        );
+      case 'message_stop':
         return (
           delta: '',
+          done: true,
+          blockIndex: null,
+          toolId: null,
+          toolName: null,
+          toolInputDelta: '',
+        );
+      case 'content_block_start':
+        final block = payload['content_block'];
+        if (block is Map<String, Object?> && block['type'] == 'tool_use') {
+          final input = block['input'];
+          return (
+            delta: '',
+            done: false,
+            blockIndex: _contentBlockIndex(payload),
+            toolId: block['id'] as String?,
+            toolName: block['name'] as String?,
+            toolInputDelta: input is Map && input.isNotEmpty
+                ? jsonEncode(input)
+                : '',
+          );
+        }
+        return null;
+      case 'content_block_delta':
+        final delta = payload['delta'];
+        if (delta is! Map<String, Object?>) {
+          throw const ModelGatewayException(
+            kind: ModelFailureKind.contentParsing,
+            message: '模型服务返回的内容无法解析。',
+          );
+        }
+        return (
+          delta: delta['type'] == 'input_json_delta'
+              ? ''
+              : delta['text'] as String? ?? '',
           done: false,
           blockIndex: _contentBlockIndex(payload),
-          toolId: block['id'] as String?,
-          toolName: block['name'] as String?,
-          toolInputDelta: input is Map && input.isNotEmpty
-              ? jsonEncode(input)
+          toolId: null,
+          toolName: null,
+          toolInputDelta: delta['type'] == 'input_json_delta'
+              ? delta['partial_json'] as String? ?? ''
               : '',
         );
-      }
-      return null;
-    case 'content_block_delta':
-      final delta = payload['delta'];
-      if (delta is! Map<String, Object?>) {
-        throw const ModelGatewayException(
-          kind: ModelFailureKind.contentParsing,
-          message: '模型服务返回的内容无法解析。',
-        );
-      }
-      return (
-        delta: delta['type'] == 'input_json_delta'
-            ? ''
-            : delta['text'] as String? ?? '',
-        done: false,
-        blockIndex: _contentBlockIndex(payload),
-        toolId: null,
-        toolName: null,
-        toolInputDelta: delta['type'] == 'input_json_delta'
-            ? delta['partial_json'] as String? ?? ''
-            : '',
-      );
-    case 'message_delta':
-      // 截断信号（票 06）：stop_reason 为 max_tokens 时回复被掐断，按
-      // 失败降级；end_turn 等其余原因不影响 message_stop 的完成判定。
-      final delta = payload['delta'];
-      if (delta is Map<String, Object?> &&
-          delta['stop_reason'] == 'max_tokens') {
-        throw _truncatedReplyFailure;
-      }
-      return null;
-    default:
-      return null;
+      case 'message_delta':
+        // 截断信号（票 06）：stop_reason 为 max_tokens 时回复被掐断，按
+        // 失败降级；end_turn 等其余原因不影响 message_stop 的完成判定。
+        final delta = payload['delta'];
+        if (delta is Map<String, Object?> &&
+            delta['stop_reason'] == 'max_tokens') {
+          throw _truncatedReplyFailure;
+        }
+        return null;
+      default:
+        return null;
+    }
   }
 }
 
@@ -1540,6 +1670,10 @@ final class _OllamaProtocol implements _ProviderProtocol {
     return (
       delta: message?['content'] as String? ?? '',
       done: payload['done'] == true,
+      blockIndex: null,
+      toolId: null,
+      toolName: null,
+      toolInputDelta: '',
     );
   }
 }

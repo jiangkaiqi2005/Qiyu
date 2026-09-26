@@ -7,6 +7,10 @@ export 'src/custom_stt_gateway.dart';
 export 'src/custom_tts_gateway.dart';
 export 'src/daily_finalization.dart';
 export 'src/daily_understanding.dart';
+// 交付节奏的等待注入点（票 09）：类型随流式状态机搬进
+// src/delivery_stream_state.dart，包导出面只保留这个外部仍在引用的
+// 注入点类型，状态机内部类型不进公共面。
+export 'src/delivery_stream_state.dart' show DeliveryPause;
 export 'src/developer_diagnostics.dart';
 export 'src/dream.dart';
 export 'src/episode_index.dart';
