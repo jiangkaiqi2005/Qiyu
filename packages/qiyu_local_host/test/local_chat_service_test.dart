@@ -653,6 +653,117 @@ void main() {
       expect(reply.messages.join(), '嗯？');
     });
 
+    test('原始增量超过 8192 rune 上限：按不兼容响应处理，已见文字留半句', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          ScriptedStreamEvents([
+            ModelStreamEvent.delta('前面的话，'),
+            // 超限增量整条挡在清洗之前：它自带的文字一个都不上屏。
+            ModelStreamEvent.delta('x' * 9000),
+            const ModelStreamEvent.done(),
+          ]),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'raw-overflow-half',
+        text: '在吗',
+      );
+
+      // 不兼容响应同属协议失败：已显示部分作为该轮最终回复落盘并交付，
+      // 带「未完成」标记，不换本地兜底。
+      expect(trace.eventsOf(ChatDeliveryEventKind.fallback), isEmpty);
+      expect(trace.state.source, ReplySource.llm);
+      expect(trace.state.fallbackReason, isNull);
+      expect(trace.message.messages, ['前面的话，']);
+      expect(trace.message.incomplete, isTrue);
+      final restored = await harness.storedSession(trace.sessionId);
+      final reply = restored.turns.lastWhere(
+        (turn) => turn.speaker == Speaker.qiyu,
+      );
+      expect(reply.source, ReplySource.llm);
+      expect(reply.messages.join(), '前面的话，');
+    });
+
+    test('原始增量超限且零可见文字：按不兼容响应走本地兜底', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          ScriptedStreamEvents([
+            // 第一条增量就超限：没有任何文字进过清洗层。
+            ModelStreamEvent.delta('x' * 9000),
+            const ModelStreamEvent.done(),
+          ]),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: () => DateTime(2026, 8, 12, 22, 30),
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'raw-overflow-fallback',
+        text: '在吗',
+      );
+
+      expect(trace.eventsOf(ChatDeliveryEventKind.fallback), hasLength(1));
+      expect(trace.state.source, ReplySource.local);
+      expect(
+        trace.state.fallbackReason,
+        FallbackReason.incompatibleModelResponse,
+      );
+      final restored = await harness.storedSession(trace.sessionId);
+      final reply = restored.turns.lastWhere(
+        (turn) => turn.speaker == Speaker.qiyu,
+      );
+      expect(reply.source, ReplySource.local);
+      expect(reply.messages, isNotEmpty);
+    });
+
+    test('原始增量恰好 8191 与 8192 rune（不超限）：正常交付', () async {
+      // 隐藏思维链块吃掉绝大部分原始 rune，可见侧只有 5 rune，不与可见
+      // 2000 截断纠缠；20 = '<think>' + '</think>' + '今晚陪你。' 的固定
+      // rune 数，8191/8192 恰在原始上限内，`>` 判定不触发。
+      for (final (padding, rawRunes) in [(8171, 8191), (8172, 8192)]) {
+        final gateway = ScriptedModelGateway(
+          streamScript: [
+            ScriptedStreamEvents([
+              ModelStreamEvent.delta('<think>${'思' * padding}</think>今晚陪你。'),
+              const ModelStreamEvent.done(),
+            ]),
+          ],
+        );
+        final harness = await InProcessChatHost.start(
+          modelGateway: gateway,
+          clock: () => DateTime(2026, 8, 12, 22, 30),
+        );
+        addTearDown(harness.dispose);
+
+        final trace = await harness.sendChat(
+          requestId: 'raw-limit-$rawRunes',
+          text: '在吗',
+        );
+
+        expect(
+          trace.message.messages,
+          ['今晚陪你。'],
+          reason: '原始增量恰好 $rawRunes rune 不应触发上限',
+        );
+        expect(trace.message.incomplete ?? false, isFalse, reason: '$rawRunes');
+        expect(trace.state.source, ReplySource.llm, reason: '$rawRunes');
+        expect(
+          trace.eventsOf(ChatDeliveryEventKind.fallback),
+          isEmpty,
+          reason: '$rawRunes',
+        );
+      }
+    });
+
     test('截断失败留下已显示的半句并带未完成标记', () async {
       final gateway = ScriptedModelGateway(
         streamScript: [

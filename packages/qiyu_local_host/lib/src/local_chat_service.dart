@@ -59,10 +59,6 @@ typedef DeliveryPause = Future<void> Function(Duration duration);
 /// 不同，单独注入，测试可分别控制。
 typedef RecallWindowWait = Future<void> Function(Duration window);
 
-/// 候选回复缓冲上限（runes）。可见回复在行为核心侧另有 2000 runes 限制，
-/// 这里只为防止失控的 Provider 流在超时前耗尽内存。
-const _maxModelReplyRunes = 8192;
-
 /// 交付节奏的唯一真源：分片大小（runes）与相邻两片之间的停顿。流式活
 /// 前缀与本地兜底/召回 bubble 的分片共用这份常量——改一边不会漏另一边。
 const _deliveryChunkRunes = 12;
@@ -1305,7 +1301,7 @@ final class LocalChatService {
         switch (event.kind) {
           case ModelStreamEventKind.delta:
             rawRunes += event.text!.runes.length;
-            if (rawRunes > _maxModelReplyRunes) {
+            if (rawRunes > maxModelReplyRunes) {
               await iterator.cancel();
               failure = ModelFailureKind.incompatibleResponse;
               break;

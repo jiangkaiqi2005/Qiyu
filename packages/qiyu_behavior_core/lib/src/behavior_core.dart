@@ -3,6 +3,15 @@ import 'shared_patterns.dart';
 
 const _maxVisibleReplyCharacters = 2000;
 
+/// 模型原始增量的总上限（runes）：交付层流式循环按它给进入清洗前的原始
+/// 缓冲记账，超限按不兼容响应处理——已见文字留半句，无文字走本地兜底。
+/// 与可见侧的 2000 rune 截断（[_maxVisibleReplyCharacters]）是两道闸：
+/// 这道防失控的 Provider 流在超时前耗尽内存，那道约束最终上屏长度。
+///
+/// 与模型网关发给 Provider 的 8192 token 上限同数字不同单位（runes 是
+/// 字符数、tokens 是请求计费单位），勿混改。
+const maxModelReplyRunes = 8192;
+
 // —— 用户输入净化（sanitizeUserInput）。各遍替换顺序即语义，勿合并勿换序。——
 final _controlCharacterPattern = RegExp(
   r'[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]',
