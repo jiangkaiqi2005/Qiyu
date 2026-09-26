@@ -2,8 +2,8 @@
 # 时额外执行完整的发布基线门禁（构建、打包、冒烟）。
 #
 # 覆盖率水位按本机实测基线锁定，只升不降：
-#   行为核心 89.11% → 水位 88；Windows宿主 92.17% → 91；应用界面 92.42% → 91（2026-09-07）；
-#   本机服务 92.74% → 92（2026-09-09 抽包后实测）。
+#   行为核心 93.38% → 水位 88；Windows宿主 91.87% → 91；应用界面 94.27% → 91；
+#   本机服务 94.59% → 92（2026-09-26 实测）。
 # 浏览器侧用例跑在真 Chrome 里，不计入覆盖率（平台限制）；
 # 覆盖率口径为虚拟机测试加载到的文件。
 name: CI
@@ -87,7 +87,8 @@ jobs:
           dart test --configuration dart_test.browser.yaml \
             --platform qiyu_chrome \
             test/voice_player_platform_web_test.dart \
-            test/settings_collapse_platform_web_test.dart
+            test/settings_collapse_platform_web_test.dart \
+            test/backup_platform_web_test.dart
       - name: 网页构建检查
         run: flutter build web --wasm --no-web-resources-cdn
       - name: 覆盖率门禁

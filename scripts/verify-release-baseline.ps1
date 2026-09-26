@@ -49,6 +49,10 @@ Invoke-Step 'Release baseline policy tests' {
   & (Join-Path $repositoryRoot 'scripts\test-release-baseline.ps1')
 }
 
+Invoke-Step 'Font subset content validation' {
+  dart run (Join-Path $repositoryRoot 'scripts\verify_font_assets.dart')
+}
+
 Push-Location $corePath
 try {
   Invoke-Step 'Dart core dependencies' { dart pub get }
