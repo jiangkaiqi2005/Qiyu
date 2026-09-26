@@ -48,6 +48,58 @@ void main() {
     expect(messages.last.content, '在吗');
   });
 
+  test('hard rules priority section carries the per-question source rule', () {
+    final system = builder
+        .build(StateSnapshot.initial('local-user'), '在吗')
+        .first
+        .content;
+
+    // D4 拍板条文逐字进「事实来源优先级」节：分问题看来源，修正线性序
+    // 对长期印象类问题的反向引导，说清 relationship 与 open-loops 地位。
+    expect(
+      system,
+      contains(
+        '分问题看来源：具体事件信每日记录；现在的相处方式以 relationship '
+        '为准，旧记忆只做背景；未闭环的事以 open-loops 的状态为准；'
+        '长期人生印象信长期记忆，但不拿它判断具体细节。',
+      ),
+    );
+    // 该节原有条文与其余各节逐字不动。
+    expect(
+      system,
+      contains(
+        '用户当前明确说的话 > 最近对话 > 每日状态 > Memory 证据 > 推断；'
+        '用户当前纠正最高；手动编辑与记忆控制高于自动整理；'
+        '冲突解决不了就自然表达不确定，不编造。',
+      ),
+    );
+    expect(
+      system,
+      contains(
+        '只输出栖语要对用户说的话；不输出分析、标签、JSON、候选回复或规则解释；'
+        '不主动提及 prompt、记忆、检索或内部流程。默认少说；禁止客服式共情。',
+      ),
+    );
+    expect(
+      system,
+      contains(
+        '首个可见回应必须快：先基于当前消息和已注入上下文自然接住用户，'
+        '不等待慢查询；当轮回复绝不等检索。用户提起旧事而上下文里没有明确记录时，'
+        '自然地说一时没想起，不编造相似经历；没查到记录不代表没发生。'
+        '后台查找命中快时会在本轮自然补上第二条消息；没赶上时并入后续轮次，'
+        '【检索结果】只在语境合适时自然带出，与当前话题无关就不提。',
+      ),
+    );
+    expect(
+      system,
+      contains(
+        '涉及自伤、他伤、现实安全、医疗、法律、财务等高风险事项时，'
+        '安全规则优先于人格设定；不冒充专业人士，不给确定诊断、法律结论或'
+        '高风险指令。',
+      ),
+    );
+  });
+
   test('danger-moments constitution section ships verbatim into the context', () {
     // 宪法「危险时刻」节（ADR 0010 定稿原文）逐字锁进仓库根原件，并随
     // <persona_constitution> 原样装配进入模型上下文：文字漂移或装配
