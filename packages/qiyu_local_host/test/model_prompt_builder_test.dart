@@ -396,10 +396,6 @@ void main() {
         ),
         const ChatTurn(speaker: Speaker.user, text: '没有时刻的旧消息'),
       ],
-      lastEmotion: const EmotionSnapshot(
-        kind: EmotionKind.neutral,
-        intensity: 0,
-      ),
     );
 
     test('every recent turn carries its local-time moment prefix', () {
@@ -460,10 +456,6 @@ void main() {
           userId: 'local-user',
           relationshipStage: RelationshipStage.stranger,
           turns: [ChatTurn(speaker: Speaker.user, text: '睡了吗', at: utcMoment)],
-          lastEmotion: const EmotionSnapshot(
-            kind: EmotionKind.neutral,
-            intensity: 0,
-          ),
         ),
         '在吗',
       );
@@ -490,10 +482,6 @@ void main() {
             userId: 'local-user',
             relationshipStage: RelationshipStage.stranger,
             turns: turns,
-            lastEmotion: const EmotionSnapshot(
-              kind: EmotionKind.neutral,
-              intensity: 0,
-            ),
           ),
           '在吗',
         )

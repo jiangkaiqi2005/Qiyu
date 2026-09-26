@@ -101,7 +101,6 @@ final class _PendingVoiceStream {
 final class LocalChatService {
   LocalChatService(
     this._repository, {
-    QiyuBehaviorCore? behaviorCore,
     this.providerPort,
     this.modelPromptBuilder = const ModelPromptBuilder(''),
     this.episodePipeline,
@@ -121,15 +120,14 @@ final class LocalChatService {
     Duration? voiceSessionGrace,
     Clock? clock,
     void Function(String message)? diagnosticsSink,
-  }) : _behaviorCore = behaviorCore ?? const QiyuBehaviorCore(),
-       _deliveryPause = deliveryPause ?? Future<void>.delayed,
+  }) : _deliveryPause = deliveryPause ?? Future<void>.delayed,
        _recallWindowWait = recallWindowWait ?? Future<void>.delayed,
        _voiceSessionGrace = voiceSessionGrace ?? defaultVoiceSessionGrace,
        _clock = clock ?? DateTime.now,
        _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
 
   final MemoryRepository _repository;
-  final QiyuBehaviorCore _behaviorCore;
+  final QiyuBehaviorCore _behaviorCore = const QiyuBehaviorCore();
 
   final ProviderChatPort? providerPort;
   final ModelPromptBuilder modelPromptBuilder;
@@ -1692,7 +1690,6 @@ StateSnapshot _stateFromCompletedTurns(
     userId: 'local-user',
     relationshipStage: RelationshipStage.stranger,
     turns: recent,
-    lastEmotion: const EmotionSnapshot(kind: EmotionKind.neutral, intensity: 0),
   );
 }
 

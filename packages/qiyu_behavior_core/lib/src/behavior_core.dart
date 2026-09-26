@@ -222,13 +222,9 @@ final class QiyuBehaviorCore {
     SafetyKind? safety,
   }) {
     final replyText = messages.join('\n');
-    final emotion = safety == SafetyKind.crisis
-        ? const EmotionSnapshot(kind: EmotionKind.heavy, intensity: 3)
-        : state.lastEmotion;
     final nextState = state.append(
       userTurn: ChatTurn(speaker: Speaker.user, text: text),
       qiyuTurn: ChatTurn(speaker: Speaker.qiyu, text: replyText),
-      emotion: emotion,
     );
 
     return ChatResult(
@@ -726,9 +722,8 @@ String _buildControlWordPrefixes() {
   return sorted.map(RegExp.escape).join('|');
 }
 
-/// 可整体剥除的未闭合隐藏结构标签名：与批处理剥离
-/// （trailingUnclosedHiddenStructurePattern）共用同一份 const——流式 finalize
-/// 与批剥因此不可能漂移。
+/// 可整体剥除的未闭合隐藏结构标签名：批处理剥离与流式 finalize 共用
+/// 同一份 const（[strippableUnclosedHiddenTags]）——两边因此不可能漂移。
 final _strippableUnclosedTagPattern = RegExp(
   '^(?:$strippableUnclosedHiddenTags)\$',
   caseSensitive: false,

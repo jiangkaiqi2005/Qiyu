@@ -49,8 +49,7 @@ enum FallbackReason {
   incompatibleModelResponse('incompatible_model_response'),
   modelContentParsing('model_content_parsing'),
   modelProvider('model_provider'),
-  modelInternal('model_internal'),
-  llmError('llm_error');
+  modelInternal('model_internal');
 
   const FallbackReason(this.wireName);
 
@@ -59,10 +58,13 @@ enum FallbackReason {
   /// 已退役的兜底原因 wire name（ADR 0017 输出侧裁决退场）。删除前命中
   /// 两张判决名单的轮次会把这些名字写进本机 Markdown 会话，而会话本地
   /// 永久保留——读侧必须继续认得，否则整个会话文件会被标记为不可读。
-  /// 历史数据兼容专用：映射到现行的 invalid_model_response，不再产生新值。
+  /// 历史数据兼容专用：映射到现行的就近值，不再产生新值。
   static const _retiredWireNames = <String, FallbackReason>{
     'forbidden_phrases': FallbackReason.invalidModelResponse,
     'persona_boundary': FallbackReason.invalidModelResponse,
+    // 迁移基线时代的笼统「LLM 调用异常」：产生点已被 model* 细分类
+    // 取代，旧盘会话仍可能携带；就近映射到 Provider 侧通用错误。
+    'llm_error': FallbackReason.modelProvider,
   };
 
   static FallbackReason fromWireName(String value) {
@@ -96,8 +98,6 @@ enum RelationshipStage {
     orElse: () => throw FormatException('Unknown relationship stage: $value'),
   );
 }
-
-enum EmotionKind { neutral, quiet, light, soft, heavy }
 
 sealed class ChatOutcome {
   const ChatOutcome();
@@ -177,37 +177,11 @@ final class ChatTurn {
   int get hashCode => Object.hash(speaker, text, at);
 }
 
-final class EmotionSnapshot {
-  const EmotionSnapshot({required this.kind, required this.intensity});
-
-  factory EmotionSnapshot.fromJson(Map<String, Object?> json) {
-    return EmotionSnapshot(
-      kind: EmotionKind.values.byName(json['kind'] as String),
-      intensity: json['intensity'] as int,
-    );
-  }
-
-  final EmotionKind kind;
-  final int intensity;
-
-  Map<String, Object?> toJson() => {'kind': kind.name, 'intensity': intensity};
-
-  @override
-  bool operator ==(Object other) =>
-      other is EmotionSnapshot &&
-      other.kind == kind &&
-      other.intensity == intensity;
-
-  @override
-  int get hashCode => Object.hash(kind, intensity);
-}
-
 final class StateSnapshot {
   StateSnapshot({
     required this.userId,
     required this.relationshipStage,
     required List<ChatTurn> turns,
-    required this.lastEmotion,
     this.schemaVersion = contractSchemaVersion,
   }) : turns = List.unmodifiable(turns);
 
@@ -215,7 +189,6 @@ final class StateSnapshot {
     userId: userId,
     relationshipStage: RelationshipStage.stranger,
     turns: const [],
-    lastEmotion: const EmotionSnapshot(kind: EmotionKind.neutral, intensity: 0),
   );
 
   factory StateSnapshot.fromJson(Map<String, Object?> json) {
@@ -229,9 +202,6 @@ final class StateSnapshot {
       turns: rawTurns
           .map((value) => ChatTurn.fromJson(value as Map<String, Object?>))
           .toList(),
-      lastEmotion: EmotionSnapshot.fromJson(
-        json['lastEmotion'] as Map<String, Object?>,
-      ),
     );
   }
 
@@ -239,12 +209,10 @@ final class StateSnapshot {
   final String userId;
   final RelationshipStage relationshipStage;
   final List<ChatTurn> turns;
-  final EmotionSnapshot lastEmotion;
 
   StateSnapshot append({
     required ChatTurn userTurn,
     required ChatTurn qiyuTurn,
-    EmotionSnapshot? emotion,
   }) {
     final nextTurns = [...turns, userTurn, qiyuTurn];
     return StateSnapshot(
@@ -254,7 +222,6 @@ final class StateSnapshot {
       turns: nextTurns.length <= maxStateTurns
           ? nextTurns
           : nextTurns.sublist(nextTurns.length - maxStateTurns),
-      lastEmotion: emotion ?? lastEmotion,
     );
   }
 
@@ -263,7 +230,6 @@ final class StateSnapshot {
     'userId': userId,
     'relationshipStage': relationshipStage.wireName,
     'turns': turns.map((turn) => turn.toJson()).toList(),
-    'lastEmotion': lastEmotion.toJson(),
   };
 
   @override
@@ -272,8 +238,7 @@ final class StateSnapshot {
       other.schemaVersion == schemaVersion &&
       other.userId == userId &&
       other.relationshipStage == relationshipStage &&
-      _listsEqual(other.turns, turns) &&
-      other.lastEmotion == lastEmotion;
+      _listsEqual(other.turns, turns);
 
   @override
   int get hashCode => Object.hash(
@@ -281,7 +246,6 @@ final class StateSnapshot {
     userId,
     relationshipStage,
     Object.hashAll(turns),
-    lastEmotion,
   );
 }
 

@@ -272,10 +272,6 @@ void main() {
         ChatTurn(speaker: Speaker.user, text: '睡了吗', at: moment),
         const ChatTurn(speaker: Speaker.qiyu, text: '还没'),
       ],
-      lastEmotion: const EmotionSnapshot(
-        kind: EmotionKind.neutral,
-        intensity: 0,
-      ),
     );
 
     final wire = state.toJson();
@@ -361,7 +357,7 @@ void main() {
     expect(decoded.mode, 'minimal');
   });
 
-  test('state contracts reject unknown relationship and emotion values', () {
+  test('state contracts reject unknown relationship values', () {
     expect(
       () => StateSnapshot.fromJson({
         ...StateSnapshot.initial('fixture-user').toJson(),
@@ -369,11 +365,37 @@ void main() {
       }),
       throwsFormatException,
     );
-    expect(
-      () => EmotionSnapshot.fromJson({'kind': 'unknown', 'intensity': 0}),
-      throwsA(isA<ArgumentError>()),
-    );
   });
+
+  test('state snapshot parsing ignores legacy unknown fields', () {
+    // 旧盘兼容（票 06）：已退役的 lastEmotion 字段曾随 StateSnapshot
+    // 落盘，读侧对未知字段必须安全忽略——解析只取认识的键。
+    final legacyWire = {
+      ...StateSnapshot.initial('fixture-user').toJson(),
+      'lastEmotion': {'kind': 'heavy', 'intensity': 3},
+      'retiredField': '任意历史遗留',
+    };
+
+    final decoded = StateSnapshot.fromJson(legacyWire);
+
+    expect(decoded, StateSnapshot.initial('fixture-user'));
+  });
+
+  test(
+    'fallback reason parsing retires legacy wire names to nearest values',
+    () {
+      // 迁移基线时代的笼统「LLM 调用异常」：旧盘会话可能携带，读侧
+      // 兜底映射到 Provider 侧通用错误，不得抛错标记整个会话不可读。
+      expect(
+        FallbackReason.fromWireName('llm_error'),
+        FallbackReason.modelProvider,
+      );
+      expect(
+        FallbackReason.fromWireName('forbidden_phrases'),
+        FallbackReason.invalidModelResponse,
+      );
+    },
+  );
 
   test('behavior state keeps only the latest 80 turns', () {
     var state = StateSnapshot.initial('fixture-user');

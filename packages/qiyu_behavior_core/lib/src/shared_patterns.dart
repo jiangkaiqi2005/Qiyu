@@ -3,8 +3,8 @@
 /// 本文件不进入 barrel 导出，仅供包内 src 引用。
 final blankLinesPattern = RegExp(r'\n{3,}');
 
-/// 隐藏模型结构的标签名集合：闭合块剥除与流式增量剥离共用同一份名单，
-/// 两处因此不会漂移。
+/// 隐藏模型结构的标签名集合：流式增量剥离的开/闭标签匹配共用同一份
+/// 名单，两处因此不会漂移。
 const hiddenStructureTags =
     'think|analysis|reasoning|tool_call|function_call|'
     'qiyu[-_]actions?|actions?|memory_action';
@@ -14,16 +14,6 @@ const hiddenStructureTags =
 /// 控制模式判 invalid_model_response，与批处理校验同判。
 const strippableUnclosedHiddenTags =
     'think|analysis|reasoning|qiyu[-_]actions?';
-
-/// 闭合隐藏模型结构匹配（`<tag>...</tag>`）。覆盖思维链、模型工具调用与动作块。
-final hiddenModelStructurePattern = RegExp(
-  r'<\s*(?:' +
-      hiddenStructureTags +
-      r')\b[^>]*>[\s\S]*?<\s*/\s*(?:' +
-      hiddenStructureTags +
-      r')\s*>',
-  caseSensitive: false,
-);
 
 /// 隐藏模型结构的开标签匹配：流式增量剥离据此识别「从这里开始整块
 /// 扣住」，与闭合块判定共用同一份标签名单。
@@ -38,22 +28,8 @@ final hiddenModelStructureClosePattern = RegExp(
   caseSensitive: false,
 );
 
-/// 尾部未闭合的隐藏结构匹配（直到文本末尾）：覆盖常见思维链（think/analysis/reasoning）
-/// 与动作块（qiyu-actions）。工具调用等结构由模型控制规则统一判定为 invalidModelResponse。
-final trailingUnclosedHiddenStructurePattern = RegExp(
-  r'<\s*(?:' + strippableUnclosedHiddenTags + r')\b[^>]*>[\s\S]*$',
-  caseSensitive: false,
-);
-
 /// 仅针对 qiyu-actions 的尾部未闭合结构匹配（用于动作解析层诊断）。
 final trailingUnclosedActionBlockPattern = RegExp(
   r'<\s*qiyu[-_]actions?\b[^>]*>[\s\S]*$',
   caseSensitive: false,
 );
-
-/// 剥除候选回复中的所有隐藏模型结构（含闭合与尾部未闭合）。
-String stripHiddenStructures(String text) {
-  return text
-      .replaceAll(hiddenModelStructurePattern, '')
-      .replaceFirst(trailingUnclosedHiddenStructurePattern, '');
-}
