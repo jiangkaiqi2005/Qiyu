@@ -40,7 +40,9 @@ export 'src/provider_settings_service.dart';
 export 'src/provider_web_socket.dart';
 export 'src/proxy_settings_service.dart';
 export 'src/qwen_asr_gateway.dart';
+export 'src/qwen_realtime_tts_gateway.dart';
 export 'src/qwen_tts_gateway.dart';
+export 'src/qwen_ws_inference_tts_gateway.dart';
 export 'src/relationship_lifecycle.dart';
 export 'src/secret_store.dart';
 export 'src/secure_token.dart';
@@ -50,9 +52,12 @@ export 'src/stt_gateway.dart';
 export 'src/stt_settings_service.dart';
 export 'src/tts_gateway.dart';
 export 'src/tts_settings_service.dart';
-export 'src/tts_ws_gateways.dart';
+// WsVoiceStreamSession 是三个协议 adapter 的共享基类，只在 src 内供
+// 继承，不进包导出面（与拆分前 private 可见性等价）。
+export 'src/tts_ws_session_skeleton.dart' hide WsVoiceStreamSession;
 export 'src/voice_stream_pipeline.dart';
 export 'src/voice_tier_mapping.dart';
+export 'src/volc_bidirection_tts_gateway.dart';
 export 'src/volc_seed_asr_gateway.dart';
 export 'src/volc_tts_gateway.dart';
 export 'src/web_search.dart';

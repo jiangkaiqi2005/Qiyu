@@ -10,8 +10,10 @@ import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
 import 'provider_web_socket.dart';
+import 'qwen_realtime_tts_gateway.dart';
 import 'qwen_tts_gateway.dart';
-import 'tts_ws_gateways.dart';
+import 'qwen_ws_inference_tts_gateway.dart';
+import 'volc_bidirection_tts_gateway.dart';
 import 'volc_tts_gateway.dart';
 
 /// TTS 出网异常：kind 与聊天 Provider、STT 出网错误共用同一套分类

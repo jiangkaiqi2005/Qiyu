@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'big_endian_bytes.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
@@ -229,8 +230,8 @@ Uint8List _sequencedFrame(
           serializationCompression,
           0x00,
         ])
-        ..add(_int32Bytes(sequence))
-        ..add(_uint32Bytes(payload.length))
+        ..add(i32BeBytes(sequence))
+        ..add(u32BeBytes(payload.length))
         ..add(payload))
       .takeBytes();
 }
@@ -280,7 +281,7 @@ bool _applyServerFrame(List<int> frame, StringBuffer text) {
     case 0x9: // server response：u32 payload 长度 + JSON（是否 gzip 由
       // compression 位决定——真机确认帧实测为无压缩明文 JSON）。
       skip(4);
-      final payloadSize = _readUint32(frame, offset - 4);
+      final payloadSize = readU32Be(frame, offset - 4);
       if (offset + payloadSize > frame.length) {
         throw parsingFailure();
       }
@@ -324,7 +325,7 @@ bool _applyServerFrame(List<int> frame, StringBuffer text) {
       if (offset + 8 > frame.length) {
         throw parsingFailure();
       }
-      final code = _readInt32(frame, offset);
+      final code = readI32Be(frame, offset);
       _volcErrorOutcome(code);
       return false;
     default:
@@ -366,26 +367,6 @@ List<int> _decompress(List<int> payload, int compression) {
     return gzip.decode(payload);
   }
   return payload;
-}
-
-Uint8List _uint32Bytes(int value) => Uint8List.fromList([
-  (value >> 24) & 0xFF,
-  (value >> 16) & 0xFF,
-  (value >> 8) & 0xFF,
-  value & 0xFF,
-]);
-
-Uint8List _int32Bytes(int value) => _uint32Bytes(value & 0xFFFFFFFF);
-
-int _readUint32(List<int> bytes, int offset) =>
-    (bytes[offset] << 24) |
-    (bytes[offset + 1] << 16) |
-    (bytes[offset + 2] << 8) |
-    bytes[offset + 3];
-
-int _readInt32(List<int> bytes, int offset) {
-  final raw = _readUint32(bytes, offset);
-  return raw >= 0x80000000 ? raw - 0x100000000 : raw;
 }
 
 final _requestIdRandom = Random.secure();
