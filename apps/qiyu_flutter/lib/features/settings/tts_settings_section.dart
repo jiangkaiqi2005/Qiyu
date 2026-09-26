@@ -11,25 +11,30 @@ import 'provider_catalog.dart';
 import 'settings_section_shell.dart';
 import 'tts_settings_client.dart';
 import 'tts_settings_view_model.dart';
+import 'voice_tier_metadata.dart';
 import 'voice_tier_suggestion.dart';
 
 /// 语音朗读（TTS）设置领域：合成服务类型、地址、模型、音色、语速、
 /// 高级参数与 API Key。
 ///
-/// 领域的深模块边界在这里收口——控制器与焦点管理、协议缺省值与音色
-/// 预设目录的落位、设置同步（含 extraParams 的 JSON 编排）、语速选择
-/// 态、草稿校验（必填与 extraParams 的 JSON 对象校验）与保存编排都落
-/// 在 [TtsSettingsForm]；[TtsSettingsSection] 只负责把这些状态画出来。
-/// 新增或修改本领域的一条校验、一个缺省值或一段保存编排，只动本文件。
-/// 异步编排（网关调用、加载、错误态与试听播放）仍归
-/// [TtsSettingsViewModel]。
+/// 领域的深模块边界在这里收口——控制器与焦点管理、设置同步（含
+/// extraParams 的 JSON 编排）、语速选择态、草稿校验（必填与 extraParams
+/// 的 JSON 对象校验）与保存编排都落在 [TtsSettingsForm]；
+/// [TtsSettingsSection] 只负责把这些状态画出来。新增或修改本领域的一
+/// 条校验或一段保存编排，只动本文件。异步编排（网关调用、加载、错误
+/// 态与试听播放）仍归 [TtsSettingsViewModel]。
+///
+/// 档位知识不在这里（票 08，ADR 0021）：服务类型下拉、说明文案、缺省
+/// 地址与模型、各档能力开关全部来自宿主随快照下推的档位元数据
+/// （[VoiceTierMetadata]），旧版宿主回落内置降级目录。新增一个档位＝
+/// 宿主归口加数据行，本文件零改动。
 ///
 /// 自定义档（custom）的旋钮——鉴权头、响应形态、字段名与高级参数——
-/// 只在选中自定义档时露出与上送，切走即清草稿；脏字符与结构校验在
-/// Host 保存时人话驳回（与地址、模型同律）。
+/// 只在元数据声明旋钮能力的档露出与上送，切走即清草稿；脏字符与结构
+/// 校验在 Host 保存时人话驳回（与地址、模型同律）。
 
-/// 语音朗读领域的表单控制器：服务类型与音色选择态、语速、各输入框
-/// 的控制器与焦点、已保存设置的同步、草稿校验与保存编排。
+/// 语音朗读领域的表单控制器：服务类型选择态、语速、各输入框的控制器
+/// 与焦点、已保存设置的同步、草稿校验与保存编排。
 ///
 /// 本类不是 widget，也不持有任何 UI 呈现；错误提示等「怎么说给人听」
 /// 的呈现通过 [readDraftOrReport] 的回调交给区块 widget。
@@ -52,7 +57,16 @@ final class TtsSettingsForm {
   final responseFieldFocusNode = FocusNode();
   final extraParamsFocusNode = FocusNode();
 
-  TtsServiceKind _provider = TtsServiceKind.openAiCompatible;
+  /// 当前选中的档位 wire 名（票 08）：元数据下推的档位集可以比
+  /// [TtsServiceKind] 大，表单按 wire 名持有选择、按元数据渲染。
+  String _providerWireName = 'openai_compatible';
+
+  /// 档位元数据目录：随快照下推，快照缺席（旧版宿主）回落内置降级目录。
+  VoiceTierCatalog _tierCatalog = const VoiceTierCatalog(
+    pushed: null,
+    fallback: builtinTtsTierCatalog,
+  );
+
   bool _customVoice = false;
   double? _speed;
   TtsResponseShape _responseShape = TtsResponseShape.rawBytes;
@@ -60,13 +74,56 @@ final class TtsSettingsForm {
   TtsSettings? _syncedSettings;
   bool _disposed = false;
 
-  /// 当前选中的服务类型。
-  TtsServiceKind get provider => _provider;
+  /// 当前选中的服务类型（类型化视图）：未知 wire 名按缺省档呈现，原始
+  /// 身份在 [_providerWireName]。
+  TtsServiceKind get provider =>
+      TtsServiceKind.maybeFromWireName(_providerWireName) ??
+      TtsServiceKind.openAiCompatible;
+
+  /// 当前选中档位的下推元数据：渲染与缺省回填的唯一档位知识源（票 08）。
+  VoiceTierMetadata get tier => _tierCatalog.tierFor(_providerWireName);
+
+  /// 当前选中的档位 wire 名（下拉取值、保存编排与类型化视图共用）。
+  String get providerWireName => _providerWireName;
+
+  /// 服务类型下拉的当前值：选中档在呈现行集里时用它的 wire 名；行集
+  /// 缺席该档（旧版宿主快照带未知 wire 名的防御形状）时回退类型化视
+  /// 图的 wire 名，取值与选项不失配、界面不崩溃。
+  String get dropdownValue {
+    for (final wire in [_providerWireName, provider.wireName]) {
+      if (_tierCatalog.rows.any((choice) => choice.wireName == wire)) {
+        return wire;
+      }
+    }
+    final rows = _tierCatalog.rows;
+    return rows.isEmpty ? _providerWireName : rows.first.wireName;
+  }
+
+  /// 各档的缺省音色：预设档落目录首档（目录留在界面侧，随界面版本发
+  /// 布），自由输入档给元数据带的官方示例音色，无音色位给空。
+  String _defaultVoiceFor(VoiceTierMetadata current) {
+    if (current.voiceMode == VoiceTierVoiceMode.presets) {
+      final presets = ttsVoicePresetsFor(provider);
+      if (presets.isNotEmpty) {
+        return presets.first.id;
+      }
+    }
+    return current.defaultVoice ?? '';
+  }
+
+  /// 服务类型下拉的行集：宿主下发的档位元数据，旧版宿主回落内置降级
+  /// 目录，顺序即目录顺序。
+  List<VoiceTierMetadata> get tierChoices => _tierCatalog.rows;
+
+  /// 档位 wire 名 → 人话标签（确认对话框用）：查下发与降级行集；查不
+  /// 到回退 wire 名本身（未知档位不显示成空）。
+  String tierLabelOf(String wireName) =>
+      _tierCatalog.knownTier(wireName)?.label ?? wireName;
 
   /// 当前语速档：null＝默认。
   double? get speed => _speed;
 
-  /// 自定义档的当前响应形态（仅自定义档有意义）。
+  /// 自定义档的当前响应形态（仅旋钮档有意义）。
   TtsResponseShape get responseShape => _responseShape;
 
   /// 豆包档的当前传输方式（票三）：HTTP 分块或缺省 WebSocket 双向。
@@ -74,12 +131,17 @@ final class TtsSettingsForm {
 
   /// 当前协议的缺省地址与模型（含输入提示用档位）。
   ({String url, String model, String urlHint, String modelHint})
-  get protocolDefaults => _ttsProtocolDefaults(_provider);
+  get protocolDefaults => (
+    url: tier.defaultEndpoint,
+    model: tier.defaultModel,
+    urlHint: tier.urlHint,
+    modelHint: tier.modelHint,
+  );
 
   /// 音色下拉的当前值：自定义音色态显示「输入其他音色 ID」那一档；
   /// 已存音色不在当前协议预设目录里时也按自定义态呈现。
   String get voiceDropdownValue {
-    final presets = ttsVoicePresetsFor(_provider);
+    final presets = ttsVoicePresetsFor(provider);
     final currentVoice = voiceController.text.trim();
     if (_customVoice) {
       return customVoiceValue;
@@ -92,29 +154,29 @@ final class TtsSettingsForm {
         : customVoiceValue;
   }
 
-  /// 是否亮出音色 ID 输入框。按协议显式判定而不是按「无预设目录」推断：
-  /// 千问档没有预设音色目录，音色恒为自由输入；自定义合成档同样没有
-  /// 目录，但 Spec 不给它音色位（只露出鉴权头/响应形态/字段名/高级
-  /// 参数四件套）——按空目录推断会让它连带多出一个音色输入框。
+  /// 是否亮出音色 ID 输入框。自由输入档（元数据声明）恒亮；预设档在
+  /// 自定义音色态或已存音色不在目录里时亮。
   bool get showCustomVoiceField {
-    if (_provider == TtsServiceKind.qwenTts) {
+    if (tier.voiceMode == VoiceTierVoiceMode.freeInput) {
       return true;
     }
-    final presets = ttsVoicePresetsFor(_provider);
+    final presets = ttsVoicePresetsFor(provider);
     final currentVoice = voiceController.text.trim();
     return _customVoice ||
         (currentVoice.isNotEmpty && presets.every((p) => p.id != currentVoice));
   }
 
-  /// 当前选中的是否千问实时档（型号驱动，ADR 0018）：千问档且型号草稿
-  /// trim+小写后以 `-realtime` 结尾，与网关侧 Realtime 会话的档位判定
-  /// 同口径（型号驱动优先于地址判定；WS 推理地址档与豆包、自定义等其
-  /// 余档照常消费高级参数，不算实时档）。该档网关不吃 extraParams
-  /// （写了不报错也不生效），设置页据此禁用高级参数输入并就地提示，
-  /// 不再静默吞掉用户填写的内容。
-  bool get isQwenRealtimeTier =>
-      _provider == TtsServiceKind.qwenTts &&
-      modelController.text.trim().toLowerCase().endsWith('-realtime');
+  /// 当前档位是否处于型号驱动的实时形态（型号驱动，ADR 0018）：档位
+  /// 元数据带实时后缀规则（千问档 `-realtime`）且型号草稿 trim+小写后
+  /// 以该后缀结尾，与网关侧 Realtime 会话的档位判定同口径（型号驱动
+  /// 优先于地址判定；其余档无实时形态规则，照常消费高级参数）。该形
+  /// 态网关不吃 extraParams（写了不报错也不生效），设置页据此禁用高级
+  /// 参数输入并就地提示，不再静默吞掉用户填写的内容。
+  bool get isQwenRealtimeTier {
+    final suffix = tier.realtimeModelSuffix;
+    return suffix != null &&
+        modelController.text.trim().toLowerCase().endsWith(suffix);
+  }
 
   /// 页面卸载时释放全部控制器与焦点节点。
   void dispose() {
@@ -136,16 +198,21 @@ final class TtsSettingsForm {
   }
 
   /// 已保存设置同步进表单：只处理新出现的设置对象（同一对象重复同步
-  /// 直接返回，用户的选择与草稿不被重置）；未配置时按当前协议回填
-  /// 缺省地址、模型与首个音色预设。Key 永不回显——只在未获焦时清掉
-  /// 旧草稿。
+  /// 直接返回，用户的选择与草稿不被重置）；未配置时按当前档位回填元
+  /// 数据带的缺省地址、模型与缺省音色。Key 永不回显——只在未获焦时清
+  /// 掉旧草稿。
   void sync(TtsSettings? settings) {
+    // 档位目录随快照更新（票 08）：新设置对象第一次进来就换上它下发的
+    // 行集；同一对象重复同步不重复换，用户的选择与草稿不被重置。
+    if (settings != null && !identical(settings, _syncedSettings)) {
+      _tierCatalog = settings.tierCatalog;
+    }
     if (settings == null || identical(settings, _syncedSettings)) {
       return;
     }
     _syncedSettings = settings;
-    _provider = settings.provider;
-    final presets = ttsVoicePresetsFor(_provider);
+    _providerWireName = settings.providerWireName;
+    final presets = ttsVoicePresetsFor(provider);
     if (settings.configured) {
       syncFocusProtectedField(
         baseUrlController,
@@ -161,9 +228,9 @@ final class TtsSettingsForm {
       syncFocusProtectedField(voiceController, voiceFocusNode, voice);
       _customVoice = voice.isNotEmpty && !presets.any((p) => p.id == voice);
       _speed = settings.speed;
-      // 传输方式随快照回显（只对豆包档有意义，其余档恒为缺省值）。
+      // 传输方式随快照回显（只对带传输选项的档有意义，其余档恒为缺省值）。
       _transport = settings.transport;
-      // 自定义档旋钮随快照回显；其余档这些值恒为空，同步即清草稿。
+      // 旋钮随快照回显；非旋钮档这些值恒为空，同步即清草稿。
       _responseShape = settings.responseShape;
       syncFocusProtectedField(
         authHeaderController,
@@ -185,7 +252,7 @@ final class TtsSettingsForm {
         extraText,
       );
     } else {
-      final defaults = _ttsProtocolDefaults(_provider);
+      final defaults = protocolDefaults;
       syncFocusProtectedField(
         baseUrlController,
         baseUrlFocusNode,
@@ -195,7 +262,7 @@ final class TtsSettingsForm {
       syncFocusProtectedField(
         voiceController,
         voiceFocusNode,
-        _defaultVoiceFor(_provider),
+        _defaultVoiceFor(tier),
       );
       _customVoice = false;
       _speed = null;
@@ -214,34 +281,30 @@ final class TtsSettingsForm {
     }
   }
 
-  /// 切换服务类型：落该协议的缺省地址与模型，并选该协议的缺省音色
-  /// （预设目录首档，千问档给官方示例音色 ID）。千问与自定义档没有
-  /// 语速参数：切过去就丢掉可能从上个协议带过来的语速草稿，不存一个
-  /// 调了不动的值。自定义档旋钮只对自定义档有意义：切走时清掉草稿。
-  /// 传输方式只归豆包档：切走即回落缺省 HTTP 分块（与 Host 落盘口径
-  /// 一致，避免选了一个不消费的值）。
+  /// 切换服务类型：落元数据带的缺省地址与模型，并选该档的缺省音色
+  /// （预设目录首档，自由输入档给官方示例音色 ID）。没有语速参数的档：
+  /// 切过去就丢掉可能从上个档带过来的语速草稿，不存一个调了不动的值。
+  /// 旋钮只对旋钮档有意义：切走时清掉草稿。传输方式切档即回落缺省
+  /// HTTP 分块（与 Host 落盘口径一致，避免选了一个不消费的值）。
   void selectProvider(String wireName) {
-    final next = TtsServiceKind.values.firstWhere(
-      (kind) => kind.wireName == wireName,
-      orElse: () => TtsServiceKind.openAiCompatible,
-    );
-    if (next == _provider) {
+    if (wireName == _providerWireName) {
       return;
     }
-    _provider = next;
+    _providerWireName = wireName;
     _customVoice = false;
     _transport = TtsTransport.httpChunk;
-    if (next != TtsServiceKind.custom) {
+    final next = tier;
+    if (!next.customKnobs) {
       _responseShape = TtsResponseShape.rawBytes;
       authHeaderController.clear();
       responseFieldController.clear();
       extraParamsController.clear();
     }
-    final defaults = _ttsProtocolDefaults(next);
+    final defaults = protocolDefaults;
     baseUrlController.text = defaults.url;
     modelController.text = defaults.model;
     voiceController.text = _defaultVoiceFor(next);
-    if (next == TtsServiceKind.qwenTts || next == TtsServiceKind.custom) {
+    if (!next.speedSlider) {
       _speed = null;
     }
   }
@@ -276,9 +339,9 @@ final class TtsSettingsForm {
 
   /// 读草稿：必填校验与 extraParams 的 JSON 对象校验都在领域内。草稿
   /// 不合法时经 [report] 给出人话并返回 null——呈现方式（渐隐提示）
-  /// 由区块决定。自定义档另带鉴权头、响应形态与字段名旋钮；鉴权头的
-  /// 脏字符与结构校验在 Host 保存时人话驳回（与地址、模型同律，单一
-  /// 校验源）。
+  /// 由区块决定。旋钮档另带鉴权头、响应形态与字段名旋钮（按元数据能
+  /// 力门控，票 08）；鉴权头的脏字符与结构校验在 Host 保存时人话驳回
+  /// （与地址、模型同律，单一校验源）。
   TtsSettingsDraft? readDraftOrReport(void Function(String message) report) {
     if (baseUrlController.text.trim().isEmpty ||
         modelController.text.trim().isEmpty) {
@@ -308,14 +371,20 @@ final class TtsSettingsForm {
         return null;
       }
     }
-    if (_provider == TtsServiceKind.custom) {
+    if (tier.customKnobs) {
       final header = authHeaderController.text.trim();
       final field = responseFieldController.text.trim();
       authHeader = header.isEmpty ? null : header;
       responseField = field.isEmpty ? null : field;
     }
     return TtsSettingsDraft(
-      provider: _provider,
+      provider: provider,
+      // 未知档位（不在 TtsServiceKind 里）上送原始 wire 名：档位身份
+      // 不因界面枚举封闭而丢失（票 08）。
+      providerWireName:
+          TtsServiceKind.maybeFromWireName(_providerWireName) == null
+          ? _providerWireName
+          : null,
       baseUrl: baseUrlController.text.trim(),
       model: modelController.text.trim(),
       apiKey: key.isEmpty ? null : key,
@@ -323,12 +392,10 @@ final class TtsSettingsForm {
       speed: _speed,
       extraParams: extraParams,
       authHeader: authHeader,
-      responseShape: _provider == TtsServiceKind.custom
-          ? _responseShape
-          : null,
+      responseShape: tier.customKnobs ? _responseShape : null,
       responseField: responseField,
-      // 传输方式只随豆包档上送：其余档 Host 归一为缺省 HTTP 分块。
-      transport: _provider == TtsServiceKind.volcTts ? _transport : null,
+      // 传输方式只随带传输选项的档上送：其余档 Host 归一为缺省 HTTP 分块。
+      transport: tier.transports.isNotEmpty ? _transport : null,
     );
   }
 
@@ -351,8 +418,8 @@ final class TtsSettingsForm {
 
   /// 一键换档（确认制，ADR 0020）：先算清回填计划，再按同一份计划把
   /// 建议落位写进表单草稿——落盘仍走用户点「保存到本机」的既有保存
-  /// 路径。目标档不在已知档位集合时返回 null（对话框不弹、表单不动，
-  /// 与建议解析的保守兜底同律）。计划规则：
+  /// 路径。目标档不在下发与降级行集里时返回 null（对话框不弹、表单不
+  /// 动，与建议解析的保守兜底同律）。计划规则：
   /// - 新版语音通道条目（票 07：defaultEndpoint 与 addressTemplate 同时
   ///   出现）：官方 WS 推理地址可代填，同档与跨档都把地址填成它——3.x
   ///   型号在现行地址上调不通（probe 实测），地址必须跟着换；maas 模板
@@ -362,10 +429,10 @@ final class TtsSettingsForm {
   ///   （保存时已存 Key 也按凭据作用域清空，重填后生效）。
   /// - 同档（其余建议）：只改型号。地址与 Key 一律不动。
   VoiceTierRefillPlan? planSuggestionApply(VoiceTierSuggestionData suggestion) {
-    if (_ttsProviderLabel(suggestion.targetProvider) == null) {
+    if (_tierCatalog.knownTier(suggestion.targetProvider) == null) {
       return null;
     }
-    final crossTier = _provider.wireName != suggestion.targetProvider;
+    final crossTier = _providerWireName != suggestion.targetProvider;
     final RefillAddressAction addressAction;
     if (suggestion.defaultEndpoint != null &&
         suggestion.addressTemplate != null) {
@@ -457,7 +524,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
   /// 一键换档的确认制：先展示将要改成什么（档位／地址／型号／Key），
   /// 用户确认才写进表单草稿（落盘仍要点「保存到本机」）。取消与摸掉
   /// 对话框都算不改。四行内容全部从回填计划的真实结果推导——展示与
-  /// 回填同源，地址行写的就是将要落进地址栏的内容。
+  /// 回填同源，地址行写的就是将要落进地址栏的内容。档位改名查元数据
+  /// 目录（票 08）：下发的行集优先，旧版宿主回落降级目录。
   Future<void> _confirmApplySuggestion(
     VoiceTierSuggestionData suggestion,
   ) async {
@@ -483,8 +551,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
         plan.addressAction == RefillAddressAction.templateDraft;
     final changes = <String>[
       if (plan.crossTier)
-        '服务类型：${_ttsProviderLabel(_form.provider.wireName)} → '
-            '${_ttsProviderLabel(plan.providerWireName)}',
+        '服务类型：${_form.tier.label} → ${_form.tierLabelOf(plan.providerWireName)}',
       '模型名称：${_form.modelController.text.trim().isEmpty ? '（空）' : _form.modelController.text.trim()} → '
           '${plan.model}',
       switch (plan.addressAction) {
@@ -550,34 +617,14 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
         final theme = Theme.of(context);
         final keySet = viewModel.settings?.keySet ?? false;
         final testResult = viewModel.testResult;
-        final provider = _form.provider;
+        final current = _form.tier;
         final defaults = _form.protocolDefaults;
         return SettingsSectionPanel(
           sectionId: SettingsSectionId.tts,
           title: '语音朗读',
           children: [
             Text(
-              switch (provider) {
-                TtsServiceKind.volcTts =>
-                  '把栖语写完的话读出来。豆包语音合成走火山方舟接口，'
-                        '传输方式见下方下拉（HTTP 分块逐句合成，或 WebSocket '
-                        '双向边出文本边合成）；模型名称填 Resource-Id；'
-                        'Key 只存本机 provider.json；音频只存在内存，播完即丢。',
-                TtsServiceKind.qwenTts =>
-                  '把栖语写完的话读出来的服务（千问语音合成，走阿里云百炼）。'
-                        '她先把每句完整写好、过了安全检查才开口读；服务端返回'
-                        '音频地址后由本机取回完整的一段；音频只存在内存，'
-                        '播完即丢，本机不留声音文件。',
-                TtsServiceKind.custom =>
-                  '把栖语写完的话读出来的服务（自定义语音合成服务）。'
-                        'POST 填写的完整地址，请求体固定 {model, input}，'
-                        '响应按所选形态取音频；Key 只存本机 provider.json；'
-                        '音频只存在内存，播完即丢，本机不留声音文件。',
-                TtsServiceKind.openAiCompatible =>
-                  '把栖语写完的话读出来的服务（OpenAI 兼容语音合成，如 tts-1）。'
-                        '她先把每句完整写好、过了安全检查才开口读；音频只存在内存，'
-                        '播完即丢，本机不留声音文件。',
-              },
+              current.description,
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.55,
@@ -587,11 +634,11 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
             SettingsControlledDropdown(
               dropdownKey: const Key('tts-provider'),
               label: '服务类型',
-              value: provider.wireName,
-              // 档位目录单处共用：下拉选项、对话框档位改名与建议回填的
-              // 档位识别（未知 wire 名不回填）都从这里出。
+              value: _form.dropdownValue,
+              // 档位目录随元数据下推（票 08）：下拉选项按宿主行集渲染，
+              // 对话框档位改名与建议回填的档位识别同源。
               items: [
-                for (final choice in _ttsProviderChoices)
+                for (final choice in _form.tierChoices)
                   DropdownMenuItem(
                     value: choice.wireName,
                     child: Text(choice.label),
@@ -620,36 +667,16 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
               key: const Key('tts-model'),
               controller: _form.modelController,
               focusNode: _form.modelFocusNode,
-              // 实时档判定跟着型号草稿逐键翻转（isQwenRealtimeTier 读型
-              // 号文本）：键入经 onChanged 重建界面，实时档下高级参数的
-              // 禁用与提示即时跟手。只重建，不改动草稿值。
+              // 实时形态判定跟着型号草稿逐键翻转（isQwenRealtimeTier 读
+              // 型号文本）：键入经 onChanged 重建界面，实时形态下高级参
+              // 数的禁用与提示即时跟手。只重建，不改动草稿值。
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                labelText: provider == TtsServiceKind.volcTts
-                    ? 'Resource-Id'
-                    : '模型名称',
+                labelText: current.modelLabel,
                 hintText: defaults.modelHint,
-                // 千问档亮一句支持范围说明（F3：型号决定 API 家族，不做
-                // 传输选择器）：型号取协议缺省档位（与回填同源，不另立
-                // 一份字面量），用户只看得到缺省型号时也知道支持范围。
-                // 流式型号两个家族：qwen3-tts-flash（HTTP SSE，边出文字
-                // 边出声）与 qwen3-tts-flash-realtime（WebSocket 连续喂
-                // 文本，前几个字就出声）；官方现标 Non-streaming 的旧型号
-                // （qwen-audio-3.1-tts-next）不用于流式场景。
-                // 3.x 新型号按地址派形状（ADR 0020 补篇，票 07）：官方
-                // WS 推理地址实测全链路可用，直接填即可（按句流式）；
-                // maas HTTP 端点留作备选（含业务空间 ID，栖语不代填，
-                // 按句等整段返回）。
-                helperText: provider == TtsServiceKind.qwenTts
-                    ? '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）'
-                          '；$qwenTtsDefaultModel-realtime（WebSocket，前几个字就出声）\n'
-                          '3.x 新型号（qwen-audio-3.1-tts-flash 等）走官方新版语音通道：'
-                          '服务地址直接填 $qwenTtsWsInferenceEndpoint（推理通道按句流式）；'
-                          '也可填官方 maas HTTP 端点 $qwenTtsMaasAddressTemplate，'
-                          '把 {业务空间ID} 换成你自己的阿里云百炼业务空间 ID'
-                          '（栖语不代填，按句等整段返回）；型号支持范围见'
-                          '官方模型页：https://help.aliyun.com/zh/model-studio/qwen-tts'
-                    : null,
+                // 型号支持范围说明（元数据带，千问档非空，票 08）：型号
+                // 取归口缺省档位，用户只看得到缺省型号时也知道支持范围。
+                helperText: current.modelHelperText,
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                 focusedBorder: settingsOutlineBorder(
@@ -658,43 +685,38 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
               ),
             ),
             const SizedBox(height: 16),
-            // 豆包档的传输方式（票三）：HTTP 分块（逐句合成，票二形态）
-            // 或 WebSocket 双向（边出文本边合成，首音再早一截）。只列已
-            // 实现的两种；千问档按型号驱动（见模型名提示），自定义档不动。
-            if (provider == TtsServiceKind.volcTts) ...[
+            // 传输方式（票三）：只对带传输选项的档露出（豆包档，元数据
+            // 声明选项与说明）；千问档按型号驱动（见模型名提示），自定义
+            // 档不动。
+            if (current.transports.isNotEmpty) ...[
               SettingsControlledDropdown(
                 dropdownKey: const Key('tts-transport'),
                 label: '传输方式',
                 value: _form.transport.wireName,
-                items: const [
-                  DropdownMenuItem(
-                    value: 'http_chunk',
-                    child: Text('HTTP 分块'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'ws_bidirection',
-                    child: Text('WebSocket 双向'),
-                  ),
+                items: [
+                  for (final option in current.transports)
+                    DropdownMenuItem(
+                      value: option.wireName,
+                      child: Text(option.label),
+                    ),
                 ],
-                helperText:
-                    'HTTP 分块：每写好一句合成一句；'
-                    'WebSocket 双向：前几个字一出就开始合成，多轮对话音色语调更连贯。'
-                    '地址栏仍填 HTTP 端点，WebSocket 地址由本机自动派生',
+                helperText: current.transportHelperText,
                 onChanged: (wireName) =>
                     setState(() => _form.selectTransport(wireName)),
               ),
               const SizedBox(height: 16),
             ],
-            // 自定义档旋钮：鉴权头、响应形态与字段名，只在这一档露出。
-            if (provider == TtsServiceKind.custom) ...[
+            // 旋钮档（自定义档）：鉴权头、响应形态与字段名，只在元数据
+            // 声明旋钮能力的档露出。
+            if (current.customKnobs) ...[
               TextField(
                 key: const Key('tts-auth-header'),
                 controller: _form.authHeaderController,
                 focusNode: _form.authHeaderFocusNode,
                 decoration: InputDecoration(
                   labelText: '鉴权头',
-                  hintText: 'Authorization: Bearer',
-                  helperText: '留空按默认 Authorization: Bearer 发送',
+                  hintText: current.authHeaderHint,
+                  helperText: current.authHeaderHelperText,
                   border: settingsOutlineBorder(color: QiyuColors.line),
                   enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                   focusedBorder: settingsOutlineBorder(
@@ -707,27 +729,18 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 dropdownKey: const Key('tts-response-shape'),
                 label: '响应形态',
                 value: _form.responseShape.wireName,
-                items: const [
-                  DropdownMenuItem(
-                    value: 'raw_bytes',
-                    child: Text('裸音频字节'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'json_field',
-                    child: Text('JSON 字段'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'json_lines',
-                    child: Text('逐行 JSON'),
-                  ),
+                items: [
+                  for (final option in current.responseShapeOptions)
+                    DropdownMenuItem(
+                      value: option.wireName,
+                      child: Text(option.label),
+                    ),
                 ],
-                // F3 第一期：自定义档的传输形态只列已实现的——裸音频字节
-                // （且未覆盖成压缩格式）走 HTTP 分块流式（stream_format=
-                // audio + response_format=pcm）；逐行 JSON 与 JSON 字段
-                // 拿不到音频块，按 E1 每句一整块做句子级整段朗读（现有
-                // 配置全部保留，不淘汰在用型号）。
-                helperText:
-                    '裸音频字节（且未覆盖成压缩格式）走流式分块合成；逐行 JSON 与 JSON 字段按句子级整段朗读',
+                // 流式/整段分工说明随元数据带（F3 第一期）：裸音频字节
+                // （且未覆盖成压缩格式）走 HTTP 分块流式；逐行 JSON 与
+                // JSON 字段拿不到音频块，按 E1 每句一整块做句子级整段
+                // 朗读（现有配置全部保留，不淘汰在用型号）。
+                helperText: current.responseShapeHelperText,
                 onChanged: (wireName) =>
                     setState(() => _form.selectResponseShape(wireName)),
               ),
@@ -738,8 +751,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 focusNode: _form.responseFieldFocusNode,
                 decoration: InputDecoration(
                   labelText: '字段名',
-                  hintText: 'data',
-                  helperText: 'JSON 字段与逐行 JSON 形态生效，留取缺省 data',
+                  hintText: current.responseFieldHint,
+                  helperText: current.responseFieldHelperText,
                   border: settingsOutlineBorder(color: QiyuColors.line),
                   enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                   focusedBorder: settingsOutlineBorder(
@@ -750,21 +763,21 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
             ],
             Builder(
               builder: (context) {
-                // 自定义档没有音色位：Spec 只给鉴权头/响应形态/字段名/高级
-                // 参数四件套，音色（厂商各叫各的）走高级参数传。
-                if (provider == TtsServiceKind.custom) {
+                // 无音色位的档（元数据声明）：音色（厂商各叫各的）走高级
+                // 参数传，界面不出现调了不动的旋钮。
+                if (current.voiceMode == VoiceTierVoiceMode.none) {
                   return const SizedBox.shrink();
                 }
-                // 千问档没有预设音色目录：音色直给「音色 ID」输入框，
-                // 任何千问音色 ID 都能填。
-                if (provider == TtsServiceKind.qwenTts) {
+                // 自由输入档没有预设音色目录：音色直给「音色 ID」输入框，
+                // 任何音色 ID 都能填。
+                if (current.voiceMode == VoiceTierVoiceMode.freeInput) {
                   return TextField(
                     key: const Key('tts-voice'),
                     controller: _form.voiceController,
                     focusNode: _form.voiceFocusNode,
                     decoration: InputDecoration(
                       labelText: '音色 ID',
-                      hintText: qwenTtsDefaultVoice,
+                      hintText: current.voiceHint,
                       border: settingsOutlineBorder(color: QiyuColors.line),
                       enabledBorder: settingsOutlineBorder(
                         color: QiyuColors.line,
@@ -775,7 +788,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                     ),
                   );
                 }
-                final voicePresets = ttsVoicePresetsFor(provider);
+                final voicePresets = ttsVoicePresetsFor(_form.provider);
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -815,9 +828,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                         focusNode: _form.voiceFocusNode,
                         decoration: InputDecoration(
                           labelText: '音色 ID',
-                          hintText: provider == TtsServiceKind.volcTts
-                              ? 'zh_female_vv_uranus_bigtts'
-                              : 'alloy',
+                          hintText: current.voiceHint,
                           border: settingsOutlineBorder(color: QiyuColors.line),
                           enabledBorder: settingsOutlineBorder(
                             color: QiyuColors.line,
@@ -832,10 +843,9 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 );
               },
             ),
-            // 千问与自定义档没有语速参数：不显示语速滑条（厂商自有语速
-            // 参数走高级参数传），界面不出现调了不动的旋钮。
-            if (provider != TtsServiceKind.qwenTts &&
-                provider != TtsServiceKind.custom) ...[
+            // 没有语速参数的档（元数据声明）：不显示语速滑条（厂商自有
+            // 语速参数走高级参数传），界面不出现调了不动的旋钮。
+            if (current.speedSlider) ...[
               const SizedBox(height: 8),
               MergeSemantics(
                 child: Column(
@@ -898,84 +908,64 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                   : () => unawaited(_confirmForgetKey(viewModel)),
             ),
             const SizedBox(height: 16),
-            ExpansionTile(
-              key: const Key('tts-advanced-params-tile'),
-              title: const Text('高级参数'),
-              subtitle: const Text('自定义云端扩展参数 (JSON)'),
-              tilePadding: EdgeInsets.zero,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0, bottom: 8.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        switch (provider) {
-                          TtsServiceKind.volcTts =>
-                            '配置豆包语音合成的深合并参数，例如：\n'
-                                  '{\n'
-                                  '  "audio_params": { "sample_rate": 16000 },\n'
-                                  '  "additions": { "explicit_dialect": "sichuan" }\n'
-                                  '}',
-                          // 千问的高级参数深合并进 input：换 instruct 模型时
-                          // 传 instructions 这类指令控制字段。
-                          TtsServiceKind.qwenTts =>
-                            '配置千问语音合成的扩展参数，深合并进 input，例如：\n'
-                                  '{\n'
-                                  '  "instructions": "用温柔的语气慢慢读"\n'
-                                  '}',
-                          // 自定义档的高级参数同样深合并进 input：音色、语速
-                          // 这类厂商字段名各叫各的，都从这里兜住。
-                          TtsServiceKind.custom =>
-                            '配置自定义语音合成服务的扩展参数，深合并进 input，例如：\n'
-                                  '{\n'
-                                  '  "voice": "custom-voice"\n'
-                                  '}',
-                          TtsServiceKind.openAiCompatible =>
-                            '配置 OpenAI 兼容语音合成的顶层扩展参数，例如：\n'
-                                  '{\n'
-                                  '  "response_format": "mp3"\n'
-                                  '}\n'
-                                  '覆盖成压缩格式将按句子级整段朗读。',
-                        },
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        key: const Key('tts-extra-params'),
-                        controller: _form.extraParamsController,
-                        focusNode: _form.extraParamsFocusNode,
-                        keyboardType: TextInputType.multiline,
-                        maxLines: 5,
-                        // 千问实时档不吃自定义高级参数（网关侧该档写了不
-                        // 报错也不生效）：就地禁用并如实提示，不再静默吞
-                        // 掉填写内容。禁用只挡编辑，已填草稿原样保留；切
-                        // 回普通型号或其他档即恢复。
-                        enabled: !_form.isQwenRealtimeTier,
-                        decoration: InputDecoration(
-                          labelText: '自定义扩展参数 (JSON)',
-                          hintText:
-                              '{\n  "audio_params": {\n    "sample_rate": 16000\n  }\n}',
-                          helperText: _form.isQwenRealtimeTier
-                              ? '该档不支持自定义高级参数'
-                              : null,
-                          contentPadding: const EdgeInsets.all(16),
-                          border: settingsOutlineBorder(color: QiyuColors.line),
-                          enabledBorder: settingsOutlineBorder(
-                            color: QiyuColors.line,
+            // 高级参数面板按元数据能力露出（票 08）：随船四档恒有（与改
+            // 前渲染一字不差），未知档位按元数据如实呈现，界面不出现填了
+            // 不生效的旋钮。
+            if (current.advancedParams)
+              ExpansionTile(
+                key: const Key('tts-advanced-params-tile'),
+                title: const Text('高级参数'),
+                subtitle: const Text('自定义云端扩展参数 (JSON)'),
+                tilePadding: EdgeInsets.zero,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0, bottom: 8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (current.extraParamsExample case final example?)
+                          Text(
+                            example,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
                           ),
-                          focusedBorder: settingsOutlineBorder(
-                            color: QiyuColors.composerFocusLine,
+                        const SizedBox(height: 8),
+                        TextField(
+                          key: const Key('tts-extra-params'),
+                          controller: _form.extraParamsController,
+                          focusNode: _form.extraParamsFocusNode,
+                          keyboardType: TextInputType.multiline,
+                          maxLines: 5,
+                          // 实时形态不吃自定义高级参数（网关侧该形态写了
+                          // 不报错也不生效）：就地禁用并如实提示，不再静默
+                          // 吞掉填写内容。禁用只挡编辑，已填草稿原样保留；
+                          // 切回普通型号或其他档即恢复。
+                          enabled: !_form.isQwenRealtimeTier,
+                          decoration: InputDecoration(
+                            labelText: '自定义扩展参数 (JSON)',
+                            hintText:
+                                '{\n  "audio_params": {\n    "sample_rate": 16000\n  }\n}',
+                            helperText: _form.isQwenRealtimeTier
+                                ? current.realtimeExtraParamsHint
+                                : null,
+                            contentPadding: const EdgeInsets.all(16),
+                            border: settingsOutlineBorder(
+                              color: QiyuColors.line,
+                            ),
+                            enabledBorder: settingsOutlineBorder(
+                              color: QiyuColors.line,
+                            ),
+                            focusedBorder: settingsOutlineBorder(
+                              color: QiyuColors.composerFocusLine,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
             const SizedBox(height: 20),
             if (viewModel.errorMessage case final message?)
               SettingsStatusMessage(message: message, succeeded: false),
@@ -987,8 +977,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 VoiceTierSuggestionCard(
                   suggestion: suggestion,
                   applyButtonKey: const Key('tts-tier-suggestion-apply'),
-                  // 建议落在转写域、或目标档本界面不认识时回填不了：
-                  // 只给指路文案（回填计划算不出来即不亮按钮）。
+                  // 建议落在转写域、或目标档不在下发与降级行集里时回填
+                  // 不了：只给指路文案（回填计划算不出来即不亮按钮）。
                   onApply: suggestion.targetsSynthesis &&
                           _form.planSuggestionApply(suggestion) != null
                       ? () => unawaited(_confirmApplySuggestion(suggestion))
@@ -1032,74 +1022,4 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
       },
     );
   }
-}
-
-/// 朗读档位目录：wire 名 ↔ 设置页人话标签，单处共用——服务类型下拉的
-/// 选项、确认对话框里的档位名、建议回填的档位识别（[_ttsProviderLabel]
-/// 查不到即未知档位，不亮回填）都从这里出。
-const _ttsProviderChoices = <({String wireName, String label})>[
-  (wireName: 'openai_compatible', label: 'OpenAI 兼容语音合成'),
-  (wireName: 'volc_tts', label: '豆包语音合成'),
-  (wireName: 'qwen_tts', label: '千问语音合成'),
-  (wireName: 'custom', label: '自定义合成服务'),
-];
-
-/// 服务类型 wire 名 → 设置页同款人话标签；未知 wire 名返回 null
-/// （Host 表将来给出本界面不认识的档位时，保守不回填）。
-String? _ttsProviderLabel(String wireName) {
-  for (final choice in _ttsProviderChoices) {
-    if (choice.wireName == wireName) {
-      return choice.label;
-    }
-  }
-  return null;
-}
-
-/// 三套 TTS 协议各自的缺省地址、模型与输入提示档位。千问与千问识别同
-/// 端点（阿里云百炼 DashScope 多模态接口）：地址是完整端点、不拼后缀，
-/// 模型与音色给官方示例值。自定义档给空档——完整地址由用户直填，没有
-/// 可猜的缺省端点（与转写自定义档同律）。
-({String url, String model, String urlHint, String modelHint})
-_ttsProtocolDefaults(TtsServiceKind kind) => switch (kind) {
-  TtsServiceKind.openAiCompatible => (
-    url: '',
-    model: '',
-    urlHint: 'https://api.example.com/v1',
-    modelHint: 'tts-1',
-  ),
-  // 豆包走火山方舟订阅专属 HTTP 端点（官方文档 2026-08-23 核实）：
-  // 地址是完整端点、模型名称字段填 Resource-Id（不带 volc. 前缀）。
-  TtsServiceKind.volcTts => (
-    url: 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
-    model: 'seed-tts-2.0',
-    urlHint: 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
-    modelHint: 'seed-tts-2.0',
-  ),
-  TtsServiceKind.qwenTts => (
-    url: qwenTtsDefaultEndpoint,
-    model: qwenTtsDefaultModel,
-    urlHint: qwenTtsDefaultEndpoint,
-    modelHint: qwenTtsDefaultModel,
-  ),
-  TtsServiceKind.custom => (
-    url: '',
-    model: '',
-    urlHint: 'https://api.example.com/v1/audio/speech',
-    modelHint: 'tts-1',
-  ),
-};
-
-/// 各协议的缺省音色：有预设目录的落首档，没有目录的档给各自的缺省值
-/// （千问直给官方示例音色 ID）。
-///
-/// 为什么按协议点名而不是按「无预设目录」推断：缺省音色是各协议自己
-/// 的值，空目录只是千问当前恰好没有目录。按空目录推断会让将来的无目录
-/// 档（如自定义合成）顺手继承千问的 Cherry；点名写死则新档位进来时
-/// 逃不过一次显式选择。
-String _defaultVoiceFor(TtsServiceKind kind) {
-  final presets = ttsVoicePresetsFor(kind);
-  if (presets.isNotEmpty) {
-    return presets.first.id;
-  }
-  return kind == TtsServiceKind.qwenTts ? qwenTtsDefaultVoice : '';
 }

@@ -5,16 +5,11 @@ import 'dart:typed_data';
 
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
-import 'custom_tts_gateway.dart';
 import 'markdown_memory_repository.dart';
 import 'model_gateway.dart';
 import 'provider_config.dart';
 import 'provider_web_socket.dart';
-import 'qwen_realtime_tts_gateway.dart';
-import 'qwen_tts_gateway.dart';
-import 'qwen_ws_inference_tts_gateway.dart';
-import 'volc_bidirection_tts_gateway.dart';
-import 'volc_tts_gateway.dart';
+import 'voice_tier_registry.dart';
 
 /// TTS 出网异常：kind 与聊天 Provider、STT 出网错误共用同一套分类
 /// （域名解析/TLS/超时/鉴权/网络/模型不存在/限流/响应不兼容/解析
@@ -330,18 +325,12 @@ String? _effectiveTextValue(Map<String, Object?>? extra, String key) {
   return value is String ? value : null;
 }
 
-/// 语音朗读的出网入口：按 tts 配置的协议分派到具体网关。整段与流式
-/// 两条路同一张分派表——新增协议档只加一行，路由与服务层零改动。
-/// 票三起多一张连续供给会话的分派表（[VoiceStreamSessionGateway]）：
-/// 豆包档按传输选择（ws_bidirection 开双向会话）、千问档按型号
-/// （-realtime 结尾开 Realtime 会话）或地址（ws/wss 开经典 WS 推理会
-/// 话，票 07——分派优先级型号驱动在前），其余组合不开会话（分句层
-/// 回落票二的分句模式）。
-///
-/// 千问朗读档的地址派形状（ADR 0020 及其补篇）按优先级落三张分派表
-/// 同一顺序：型号驱动（-realtime）→ 地址 scheme 为 ws/wss（经典 WS
-/// 推理）→ 主机含 maas.aliyuncs.com（HTTP maas 形状）→ 现行
-/// multimodal 形状。既有形状的判定与用例不受新分支影响。
+/// 语音朗读的出网入口（票 08）：三张分派表（整段合成、流式合成、开会
+/// 话）退化为档位归口查表——[resolveSynthesisShape] 按档位归口里该档
+/// 形状行的排列顺序解析请求形状，三种能力从同一形状行取处理网关。一
+/// 致性（三张表同一形状）与优先级（千问档型号驱动先于地址判定，豆包
+/// 档 WebSocket 双向先于 HTTP 分块）由构造保证；新增协议档只加档位归
+/// 口的数据行，本类零改动。
 final class TtsModelGateway
     implements
         TtsSynthesisGateway,
@@ -350,95 +339,31 @@ final class TtsModelGateway
   TtsModelGateway(
     this.httpClient, {
     ProviderWebSocketConnector? webSocketConnector,
-  }) : _volcBidirectionTts = VolcBidirectionTtsGateway(
-         webSocketConnector ?? const DartIoProviderWebSocketConnector(),
-         httpClient,
-       ),
-       _qwenRealtimeTts = QwenRealtimeTtsGateway(
-         webSocketConnector ?? const DartIoProviderWebSocketConnector(),
-       ),
-       _qwenWsInferenceTts = QwenWsInferenceTtsGateway(
-         webSocketConnector ?? const DartIoProviderWebSocketConnector(),
-       );
+  }) : _env = TtsGatewayEnv(httpClient, webSocketConnector);
 
   final ProviderBytesHttpClient httpClient;
-  final VolcBidirectionTtsGateway _volcBidirectionTts;
-  final QwenRealtimeTtsGateway _qwenRealtimeTts;
-  final QwenWsInferenceTtsGateway _qwenWsInferenceTts;
+
+  /// 装配环境：WS 网关每环境一份（豆包双向网关持有跨轮次的 section_id
+  /// 上下文，装配口径与构造一次、整生命周期复用一致）。
+  final TtsGatewayEnv _env;
 
   @override
   Future<List<int>> synthesize({
     required TtsConfig config,
     required String? apiKey,
     required String text,
-  }) => switch (config.provider) {
-    TtsProviderKind.openAiCompatible => OpenAiSpeechGateway(
-      httpClient,
-    ).synthesize(config: config, apiKey: apiKey, text: text),
-    // 豆包档传输选了 WebSocket 双向：整段路径（试听、历史重听、连接
-    // 测试）也走一次性 WS 会话——连接测试由此覆盖用户实际选的传输
-    // （选了 WS 却只测 HTTP 会是假绿）。压缩格式覆盖的配置由网关内部
-    // 回落 HTTP 单向端点（E1 不变）。
-    TtsProviderKind.volcTts
-        when config.transport == TtsTransport.wsBidirection =>
-      _volcBidirectionTts.synthesize(
-        config: config,
-        apiKey: apiKey,
-        text: text,
-      ),
-    TtsProviderKind.volcTts => VolcTtsGateway(
-      httpClient,
-    ).synthesize(config: config, apiKey: apiKey, text: text),
-    // realtime 型号没有 HTTP 整段接口：整段路径（试听、历史重听、连接
-    // 测试）也开一次性 WS 会话，本地包 WAV 头后走既有整段播放器。
-    TtsProviderKind.qwenTts when isQwenRealtimeTtsModel(config.model) =>
-      _qwenRealtimeTts.synthesize(config: config, apiKey: apiKey, text: text),
-    // 地址是 ws/wss：DashScope 经典 WS 推理协议（票 07，地址即用户填的
-    // 完整推理端点）。分派优先级在型号驱动之后——wss 地址配 -realtime
-    // 型号仍走上面的 Realtime 网关（其派生逻辑天然支持 wss 地址）。
-    TtsProviderKind.qwenTts when qwenTtsUsesWsInference(config.baseUrl) =>
-      _qwenWsInferenceTts.synthesize(
-        config: config,
-        apiKey: apiKey,
-        text: text,
-      ),
-    TtsProviderKind.qwenTts => QwenTtsGateway(
-      httpClient,
-    ).synthesize(config: config, apiKey: apiKey, text: text),
-    TtsProviderKind.custom => CustomTtsGateway(
-      httpClient,
-    ).synthesize(config: config, apiKey: apiKey, text: text),
-  };
+  }) => resolveSynthesisShape(
+    config,
+  ).whole(_env).synthesize(config: config, apiKey: apiKey, text: text);
 
   @override
   Stream<VoiceAudioChunk> synthesizeStream({
     required TtsConfig config,
     required String? apiKey,
     required String text,
-  }) => switch (config.provider) {
-    TtsProviderKind.openAiCompatible => OpenAiSpeechGateway(
-      httpClient,
-    ).synthesizeStream(config: config, apiKey: apiKey, text: text),
-    TtsProviderKind.volcTts => VolcTtsGateway(
-      httpClient,
-    ).synthesizeStream(config: config, apiKey: apiKey, text: text),
-    // realtime 型号不进分句模式：会话可用时增量原文直接进 WS（票三），
-    // 会话开不了时整轮不开语音（D1 口径），不会走到逐句 HTTP 请求。
-    // ws/wss 地址走经典 WS 推理的按句流式（票 07）：binary 帧边到边转
-    // PCM 块，不等整句合成完。
-    TtsProviderKind.qwenTts when qwenTtsUsesWsInference(config.baseUrl) =>
-      _qwenWsInferenceTts.synthesizeStream(
-        config: config,
-        apiKey: apiKey,
-        text: text,
-      ),
-    TtsProviderKind.qwenTts => QwenTtsGateway(
-      httpClient,
-    ).synthesizeStream(config: config, apiKey: apiKey, text: text),
-    TtsProviderKind.custom => CustomTtsGateway(
-      httpClient,
-    ).synthesizeStream(config: config, apiKey: apiKey, text: text),
-  };
+  }) => resolveSynthesisShape(
+    config,
+  ).stream(_env).synthesizeStream(config: config, apiKey: apiKey, text: text);
 
   @override
   Future<VoiceStreamSession?> openSession({
@@ -446,32 +371,15 @@ final class TtsModelGateway
     required String? apiKey,
     required String sessionId,
   }) async {
-    // 连续供给只对开了 WS 的档位生效：豆包档看传输选择，千问档看型号
-    // （型号驱动，ADR 0018）；其余组合返回 null，分句层维持票二分句。
-    return switch (config.provider) {
-      TtsProviderKind.volcTts
-          when config.transport == TtsTransport.wsBidirection =>
-        _volcBidirectionTts.openSession(
-          config: config,
-          apiKey: apiKey,
-          sessionId: sessionId,
-        ),
-      TtsProviderKind.qwenTts when isQwenRealtimeTtsModel(config.model) =>
-        _qwenRealtimeTts.openSession(
-          config: config,
-          apiKey: apiKey,
-          sessionId: sessionId,
-        ),
-      // ws/wss 地址（票 07）：经典 WS 推理会话照常可开（ADR 0019 的
-      // 增量原文直喂通道，continue-task 逐段上送）。
-      TtsProviderKind.qwenTts when qwenTtsUsesWsInference(config.baseUrl) =>
-        _qwenWsInferenceTts.openSession(
-          config: config,
-          apiKey: apiKey,
-          sessionId: sessionId,
-        ),
-      _ => null,
-    };
+    // 连续供给只对开了 WS 的形状生效（票三）：形状行没有会话通道即返
+    // 回 null，分句层维持票二的分句模式。
+    final gateway = resolveSynthesisShape(config).session;
+    if (gateway == null) {
+      return null;
+    }
+    return gateway(
+      _env,
+    ).openSession(config: config, apiKey: apiKey, sessionId: sessionId);
   }
 }
 

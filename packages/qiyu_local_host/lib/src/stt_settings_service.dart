@@ -12,8 +12,11 @@ import 'provider_settings_service.dart'
         providerTestStatusFromFailureKind;
 import 'stt_gateway.dart';
 import 'voice_tier_mapping.dart';
+import 'voice_tier_registry.dart';
 
-/// 语音服务设置快照：经 HTTP 返回时绝不携带明文 Key。
+/// 语音服务设置快照：经 HTTP 返回时绝不携带明文 Key。档位元数据随快照
+/// 下推（票 08，`tiers` 字段）：设置页按数据渲染档位知识，归口行集只有
+/// 能力/形状/端点缺省/文案，绝无密钥。
 final class SttSettingsSnapshot {
   const SttSettingsSnapshot({required this.config, required this.keySet});
 
@@ -26,6 +29,7 @@ final class SttSettingsSnapshot {
     'configured': configured,
     'keySet': keySet,
     if (config case final value?) ...value.toJson(),
+    'tiers': voiceTierMetadataRows(family: VoiceServiceFamily.transcription),
   };
 }
 

@@ -10,8 +10,11 @@ import 'qwen_tts_gateway.dart'
     show qwenTtsUsesMaasShape, qwenTtsUsesWsInference;
 import 'tts_gateway.dart';
 import 'voice_tier_mapping.dart';
+import 'voice_tier_registry.dart';
 
-/// 语音合成设置快照：经 HTTP 返回时绝不携带明文 Key。
+/// 语音合成设置快照：经 HTTP 返回时绝不携带明文 Key。档位元数据随快照
+/// 下推（票 08，`tiers` 字段）：设置页按数据渲染档位知识，归口行集只有
+/// 能力/形状/端点缺省/文案，绝无密钥。
 final class TtsSettingsSnapshot {
   const TtsSettingsSnapshot({required this.config, required this.keySet});
 
@@ -25,6 +28,7 @@ final class TtsSettingsSnapshot {
     'configured': configured,
     'keySet': keySet,
     if (config case final value?) ...value.toJson(),
+    'tiers': voiceTierMetadataRows(family: VoiceServiceFamily.synthesis),
   };
 }
 

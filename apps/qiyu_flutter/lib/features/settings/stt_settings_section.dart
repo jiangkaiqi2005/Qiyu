@@ -9,21 +9,26 @@ import '../shell/qiyu_widgets.dart';
 import 'settings_section_shell.dart';
 import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
+import 'voice_tier_metadata.dart';
 import 'voice_tier_suggestion.dart';
 
 /// 语音输入（STT）设置领域：转写服务类型、地址、模型、鉴权头、响应形态
 /// 与 API Key。
 ///
-/// 领域的深模块边界在这里收口——控制器与焦点管理、协议缺省值
-/// （各协议各自的地址与模型档位）、设置同步、协议切换时的地址
-/// 兼容性回填、草稿校验与保存编排都落在 [SttSettingsForm]；
-/// [SttSettingsSection] 只负责把这些状态画出来。新增或修改本领域的
-/// 一条校验、一个缺省值或一段保存编排，只动本文件。异步编排
-/// （网关调用、加载与错误态）仍归 [SttSettingsViewModel]。
+/// 领域的深模块边界在这里收口——控制器与焦点管理、设置同步、协议切换
+/// 时的地址兼容性回填、草稿校验与保存编排都落在 [SttSettingsForm]；
+/// [SttSettingsSection] 只负责把这些状态画出来。新增或修改本领域的一
+/// 条校验或一段保存编排，只动本文件。异步编排（网关调用、加载与错误
+/// 态）仍归 [SttSettingsViewModel]。
+///
+/// 档位知识不在这里（票 08，ADR 0021）：服务类型下拉、说明文案、缺省
+/// 地址与模型、各档能力开关全部来自宿主随快照下推的档位元数据
+/// （[VoiceTierMetadata]），旧版宿主回落内置降级目录。新增一个档位＝
+/// 宿主归口加数据行，本文件零改动。
 ///
 /// 自定义档（custom）的旋钮——鉴权头、响应形态、字段名/路径与高级
-/// 参数——只在选中自定义档时露出与上送，切走即清草稿；脏字符与结构
-/// 校验在 Host 保存时人话驳回（与地址、模型同律）。
+/// 参数——只在元数据声明旋钮能力的档露出与上送，切走即清草稿；脏字符
+/// 与结构校验在 Host 保存时人话驳回（与地址、模型同律）。
 
 /// 语音输入领域的表单控制器：服务类型选择态、各输入框的控制器与
 /// 焦点、已保存设置的同步、草稿校验与保存编排。
@@ -47,20 +52,65 @@ final class SttSettingsForm {
   final responseFieldFocusNode = FocusNode();
   final extraParamsFocusNode = FocusNode();
 
-  SttServiceKind _provider = SttServiceKind.openaiCompatible;
+  /// 当前选中的档位 wire 名（票 08）：元数据下推的档位集可以比
+  /// [SttServiceKind] 大，表单按 wire 名持有选择、按元数据渲染。
+  String _providerWireName = 'openai_compatible';
+
+  /// 档位元数据目录：随快照下推，快照缺席（旧版宿主）回落内置降级目录。
+  VoiceTierCatalog _tierCatalog = const VoiceTierCatalog(
+    pushed: null,
+    fallback: builtinSttTierCatalog,
+  );
+
   SttResponseShape _responseShape = SttResponseShape.jsonPath;
   SttSettings? _syncedSettings;
   bool _disposed = false;
 
-  /// 当前选中的服务类型。
-  SttServiceKind get provider => _provider;
+  /// 当前选中的服务类型（类型化视图）：未知 wire 名按缺省档呈现，原始
+  /// 身份在 [_providerWireName]。
+  SttServiceKind get provider =>
+      SttServiceKind.maybeFromWireName(_providerWireName) ??
+      SttServiceKind.openaiCompatible;
 
-  /// 自定义档的当前响应形态（仅自定义档有意义）。
+  /// 当前选中档位的下推元数据：渲染与缺省回填的唯一档位知识源（票 08）。
+  VoiceTierMetadata get tier => _tierCatalog.tierFor(_providerWireName);
+
+  /// 当前选中的档位 wire 名（下拉取值、保存编排与类型化视图共用）。
+  String get providerWireName => _providerWireName;
+
+  /// 服务类型下拉的当前值：选中档在呈现行集里时用它的 wire 名；行集
+  /// 缺席该档（旧版宿主快照带未知 wire 名的防御形状）时回退类型化视
+  /// 图的 wire 名，取值与选项不失配、界面不崩溃。
+  String get dropdownValue {
+    for (final wire in [_providerWireName, provider.wireName]) {
+      if (_tierCatalog.rows.any((choice) => choice.wireName == wire)) {
+        return wire;
+      }
+    }
+    final rows = _tierCatalog.rows;
+    return rows.isEmpty ? _providerWireName : rows.first.wireName;
+  }
+
+  /// 服务类型下拉的行集：宿主下发的档位元数据，旧版宿主回落内置降级
+  /// 目录，顺序即目录顺序。
+  List<VoiceTierMetadata> get tierChoices => _tierCatalog.rows;
+
+  /// 档位 wire 名 → 人话标签（确认对话框用）：查下发与降级行集；查不
+  /// 到回退 wire 名本身（未知档位不显示成空）。
+  String tierLabelOf(String wireName) =>
+      _tierCatalog.knownTier(wireName)?.label ?? wireName;
+
+  /// 自定义档的当前响应形态（仅旋钮档有意义）。
   SttResponseShape get responseShape => _responseShape;
 
   /// 当前协议的缺省地址与模型（含输入提示用档位）。
   ({String url, String model, String urlHint, String modelHint})
-  get protocolDefaults => _sttProtocolDefaults(_provider);
+  get protocolDefaults => (
+    url: tier.defaultEndpoint,
+    model: tier.defaultModel,
+    urlHint: tier.urlHint,
+    modelHint: tier.modelHint,
+  );
 
   /// 页面卸载时释放全部控制器与焦点节点。
   void dispose() {
@@ -80,14 +130,19 @@ final class SttSettingsForm {
   }
 
   /// 已保存设置同步进表单：只处理新出现的设置对象（同一对象重复同步
-  /// 直接返回，用户的选择与草稿不被重置）；未配置时按当前协议回填
-  /// 缺省地址与模型。Key 永不回显——只在未获焦时清掉旧草稿。
+  /// 直接返回，用户的选择与草稿不被重置）；未配置时按当前档位回填元
+  /// 数据带的缺省地址与模型。Key 永不回显——只在未获焦时清掉旧草稿。
   void sync(SttSettings? settings) {
+    // 档位目录随快照更新（票 08）：新设置对象第一次进来就换上它下发的
+    // 行集；同一对象重复同步不重复换，用户的选择与草稿不被重置。
+    if (settings != null && !identical(settings, _syncedSettings)) {
+      _tierCatalog = settings.tierCatalog;
+    }
     if (settings == null || identical(settings, _syncedSettings)) {
       return;
     }
     _syncedSettings = settings;
-    _provider = settings.provider;
+    _providerWireName = settings.providerWireName;
     if (settings.configured) {
       syncFocusProtectedField(
         baseUrlController,
@@ -99,7 +154,7 @@ final class SttSettingsForm {
         modelFocusNode,
         settings.model ?? '',
       );
-      // 自定义档旋钮随快照回显；其余档这些值恒为空，同步即清草稿。
+      // 旋钮随快照回显；非旋钮档这些值恒为空，同步即清草稿。
       _responseShape = settings.responseShape;
       syncFocusProtectedField(
         authHeaderController,
@@ -121,7 +176,7 @@ final class SttSettingsForm {
         extraText,
       );
     } else {
-      final defaults = _sttProtocolDefaults(_provider);
+      final defaults = protocolDefaults;
       syncFocusProtectedField(
         baseUrlController,
         baseUrlFocusNode,
@@ -142,20 +197,18 @@ final class SttSettingsForm {
     }
   }
 
-  /// 切换服务类型：地址空白或 scheme 与新协议不兼容（https 不能给豆包，
-  /// wss 不能给 OpenAI 兼容、千问与自定义）时，换成新协议的缺省地址和
-  /// 模型。自定义档旋钮只对自定义档有意义：切走时清掉草稿。
+  /// 切换服务类型：地址空白或 scheme 与新档不允许的 scheme 不兼容
+  /// （https 不能给豆包，wss 不能给 OpenAI 兼容、千问与自定义）时，换
+  /// 成新档元数据带的缺省地址和模型。旋钮只对旋钮档有意义：切走时清
+  /// 掉草稿。
   void selectProvider(String wireName) {
-    final next = SttServiceKind.values.firstWhere(
-      (kind) => kind.wireName == wireName,
-      orElse: () => SttServiceKind.openaiCompatible,
-    );
-    if (next == _provider) {
+    if (wireName == _providerWireName) {
       return;
     }
-    final previous = _provider;
-    _provider = next;
-    if (next != SttServiceKind.custom) {
+    final previous = tier;
+    _providerWireName = wireName;
+    final next = tier;
+    if (!next.customKnobs) {
       _responseShape = SttResponseShape.jsonPath;
       authHeaderController.clear();
       responseFieldController.clear();
@@ -173,36 +226,26 @@ final class SttSettingsForm {
   }
 
   void _applyProtocolDefaults({
-    required SttServiceKind from,
-    required SttServiceKind to,
+    required VoiceTierMetadata from,
+    required VoiceTierMetadata to,
   }) {
     final url = baseUrlController.text.trim();
     final model = modelController.text.trim();
-    final fromDefaults = _sttProtocolDefaults(from);
-    final toDefaults = _sttProtocolDefaults(to);
     final uri = Uri.tryParse(url);
-    final schemeCompatible = switch (to) {
-      SttServiceKind.openaiCompatible =>
-        uri != null && (uri.scheme == 'http' || uri.scheme == 'https'),
-      SttServiceKind.volcSeedAsr =>
-        uri != null && (uri.scheme == 'ws' || uri.scheme == 'wss'),
-      // 千问与自定义同为 HTTP 家族：http/https 互认。
-      SttServiceKind.qwenAsr =>
-        uri != null && (uri.scheme == 'http' || uri.scheme == 'https'),
-      SttServiceKind.custom =>
-        uri != null && (uri.scheme == 'http' || uri.scheme == 'https'),
-    };
+    // scheme 兼容看新档元数据声明的允许集合（票 08）：https 不能给豆包
+    //（只收 ws/wss），wss 不能给 HTTP 家族，http/https 家族内互认。
+    final schemeCompatible = uri != null && to.allowsScheme(uri.scheme);
     if (url.isEmpty || !schemeCompatible) {
-      baseUrlController.text = toDefaults.url;
-      if (model.isEmpty || model == fromDefaults.model || !schemeCompatible) {
-        modelController.text = toDefaults.model;
+      baseUrlController.text = to.defaultEndpoint;
+      if (model.isEmpty || model == from.defaultModel || !schemeCompatible) {
+        modelController.text = to.defaultModel;
       }
-    } else if (model.isEmpty || model == fromDefaults.model) {
-      modelController.text = toDefaults.model;
+    } else if (model.isEmpty || model == from.defaultModel) {
+      modelController.text = to.defaultModel;
     }
   }
 
-  /// 读草稿：必填校验在领域内，自定义档另校验高级参数是合法 JSON 对象。
+  /// 读草稿：必填校验在领域内，旋钮档另校验高级参数是合法 JSON 对象。
   /// 草稿不合法时经 [report] 给出人话并返回 null——呈现方式（渐隐提示）
   /// 由区块决定。鉴权头的脏字符与结构校验在 Host 保存时人话驳回（与
   /// 地址、模型同律，单一校验源）。
@@ -216,7 +259,7 @@ final class SttSettingsForm {
     Map<String, Object?>? extraParams;
     String? authHeader;
     String? responseField;
-    if (_provider == SttServiceKind.custom) {
+    if (tier.customKnobs) {
       final extraText = extraParamsController.text.trim();
       if (extraText.isNotEmpty) {
         try {
@@ -241,14 +284,18 @@ final class SttSettingsForm {
       responseField = field.isEmpty ? null : field;
     }
     return SttSettingsDraft(
-      provider: _provider,
+      provider: provider,
+      // 未知档位（不在 SttServiceKind 里）上送原始 wire 名：档位身份
+      // 不因界面枚举封闭而丢失（票 08）。
+      providerWireName:
+          SttServiceKind.maybeFromWireName(_providerWireName) == null
+          ? _providerWireName
+          : null,
       baseUrl: baseUrlController.text.trim(),
       model: modelController.text.trim(),
       apiKey: key.isEmpty ? null : key,
       authHeader: authHeader,
-      responseShape: _provider == SttServiceKind.custom
-          ? _responseShape
-          : null,
+      responseShape: tier.customKnobs ? _responseShape : null,
       responseField: responseField,
       extraParams: extraParams,
     );
@@ -273,18 +320,19 @@ final class SttSettingsForm {
 
   /// 一键换档（确认制，ADR 0020，票 04 识别侧接线）：先算清回填计划，
   /// 再按同一份计划把建议落位写进表单草稿——落盘仍走用户点「保存到本
-  /// 机」的既有保存路径。目标档不在已知档位集合时返回 null（对话框不
-  /// 弹、表单不动，与建议解析的保守兜底同律）。计划规则与朗读侧一致：
+  /// 机」的既有保存路径。目标档不在下发与降级行集里时返回 null（对话
+  /// 框不弹、表单不动，与建议解析的保守兜底同律）。计划规则与朗读侧一
+  /// 致：
   /// - 跨档：切档、按处置填地址（识别族建议都带可代填缺省端点；共享
   ///   计划形状里的官方地址模板分支照模式保留）、填型号，并清掉 Key
   ///   草稿——沿用「切换服务不沿用旧 Key」既有机制。
   /// - 同档（如千问识别档里把不支持型号换成替代型号）：只改型号。地址
   ///   与 Key 一律不动。
   VoiceTierRefillPlan? planSuggestionApply(VoiceTierSuggestionData suggestion) {
-    if (_sttProviderLabel(suggestion.targetProvider) == null) {
+    if (_tierCatalog.knownTier(suggestion.targetProvider) == null) {
       return null;
     }
-    final crossTier = _provider.wireName != suggestion.targetProvider;
+    final crossTier = _providerWireName != suggestion.targetProvider;
     final addressAction = !crossTier
         ? RefillAddressAction.keepCurrent
         : suggestion.defaultEndpoint != null
@@ -370,7 +418,8 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
   /// 要改成什么（档位／地址／型号／Key），用户确认才写进表单草稿（落盘
   /// 仍要点「保存到本机」）。取消与摸掉对话框都算不改。各行内容全部从
   /// 回填计划的真实结果推导——展示与回填同源，地址行写的就是将要落进
-  /// 地址栏的内容。
+  /// 地址栏的内容。档位改名查元数据目录（票 08）：下发的行集优先，旧
+  /// 版宿主回落降级目录。
   Future<void> _confirmApplySuggestion(
     VoiceTierSuggestionData suggestion,
   ) async {
@@ -380,8 +429,7 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
     }
     final changes = <String>[
       if (plan.crossTier)
-        '服务类型：${_sttProviderLabel(_form.provider.wireName)} → '
-            '${_sttProviderLabel(plan.providerWireName)}',
+        '服务类型：${_form.tier.label} → ${_form.tierLabelOf(plan.providerWireName)}',
       '模型名称：${_form.modelController.text.trim().isEmpty ? '（空）' : _form.modelController.text.trim()} → '
           '${plan.model}',
       switch (plan.addressAction) {
@@ -433,33 +481,14 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
         _form.sync(viewModel.settings);
         final theme = Theme.of(context);
         final keySet = viewModel.settings?.keySet ?? false;
-        final provider = _form.provider;
+        final current = _form.tier;
         final defaults = _form.protocolDefaults;
-        final custom = provider == SttServiceKind.custom;
         return SettingsSectionPanel(
           sectionId: SettingsSectionId.stt,
           title: '语音输入',
           children: [
             Text(
-              switch (provider) {
-                SttServiceKind.openaiCompatible =>
-                  '把说的话转成文字的服务（OpenAI 兼容转写，如 whisper 系列）。'
-                        'Key 只保存在本机 provider.json；录音只存在内存里，'
-                        '转写完成即丢弃，不会进入会话与记忆。',
-                SttServiceKind.volcSeedAsr =>
-                  '把说的话转成文字。豆包走官方语音识别协议；'
-                        'Key 只保存在本机 provider.json；录音只存在内存里，'
-                        '转写完成即丢弃，不会进入会话与记忆。',
-                SttServiceKind.qwenAsr =>
-                  '把说的话转成文字的服务（千问语音识别，走阿里云百炼）。'
-                        'Key 只保存在本机 provider.json；录音只存在内存里，'
-                        '转写完成即丢弃，不会进入会话与记忆。',
-                SttServiceKind.custom =>
-                  '把说的话转成文字的服务（自定义转写服务）。'
-                        'POST 填写的完整地址，录音按 multipart 表单上传；'
-                        'Key 只保存在本机 provider.json；录音只存在内存里，'
-                        '转写完成即丢弃，不会进入会话与记忆。',
-              },
+              current.description,
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.55,
@@ -469,11 +498,11 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
             SettingsControlledDropdown(
               dropdownKey: const Key('stt-provider'),
               label: '服务类型',
-              value: provider.wireName,
-              // 档位目录单处共用：下拉选项、对话框档位改名与建议回填的
-              // 档位识别（未知 wire 名不回填）都从这里出。
+              value: _form.dropdownValue,
+              // 档位目录随元数据下推（票 08）：下拉选项按宿主行集渲染，
+              // 对话框档位改名与建议回填的档位识别同源。
               items: [
-                for (final choice in _sttProviderChoices)
+                for (final choice in _form.tierChoices)
                   DropdownMenuItem(
                     value: choice.wireName,
                     child: Text(choice.label),
@@ -503,15 +532,11 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
               controller: _form.modelController,
               focusNode: _form.modelFocusNode,
               decoration: InputDecoration(
-                labelText: provider == SttServiceKind.volcSeedAsr
-                    ? 'Resource-Id'
-                    : '模型名称',
+                labelText: current.modelLabel,
                 hintText: defaults.modelHint,
-                // 千问档亮一句支持范围说明：型号取协议缺省档位（与回填同源，
-                // 不另立一份字面量），用户只看得到缺省型号时也知道支持范围。
-                helperText: provider == SttServiceKind.qwenAsr
-                    ? '支持 HTTP 非流式识别模型，如 $qwenAsrDefaultModel'
-                    : null,
+                // 型号支持范围说明（元数据带，千问档非空，票 08）：型号
+                // 取归口缺省档位，用户只看得到缺省型号时也知道支持范围。
+                helperText: current.modelHelperText,
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                 focusedBorder: settingsOutlineBorder(
@@ -519,8 +544,9 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                 ),
               ),
             ),
-            // 自定义档旋钮：鉴权头、响应形态与字段名/路径，只在这一档露出。
-            if (custom) ...[
+            // 旋钮档（自定义档）：鉴权头、响应形态与字段名/路径，只在元
+            // 数据声明旋钮能力的档露出。
+            if (current.customKnobs) ...[
               const SizedBox(height: 16),
               TextField(
                 key: const Key('stt-auth-header'),
@@ -528,8 +554,8 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                 focusNode: _form.authHeaderFocusNode,
                 decoration: InputDecoration(
                   labelText: '鉴权头',
-                  hintText: 'Authorization: Bearer',
-                  helperText: '留空按默认 Authorization: Bearer 发送',
+                  hintText: current.authHeaderHint,
+                  helperText: current.authHeaderHelperText,
                   border: settingsOutlineBorder(color: QiyuColors.line),
                   enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                   focusedBorder: settingsOutlineBorder(
@@ -542,12 +568,12 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                 dropdownKey: const Key('stt-response-shape'),
                 label: '响应形态',
                 value: _form.responseShape.wireName,
-                items: const [
-                  DropdownMenuItem(
-                    value: 'json_path',
-                    child: Text('JSON 字段路径'),
-                  ),
-                  DropdownMenuItem(value: 'sse', child: Text('SSE 流式')),
+                items: [
+                  for (final option in current.responseShapeOptions)
+                    DropdownMenuItem(
+                      value: option.wireName,
+                      child: Text(option.label),
+                    ),
                 ],
                 onChanged: (wireName) =>
                     setState(() => _form.selectResponseShape(wireName)),
@@ -559,8 +585,8 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                 focusNode: _form.responseFieldFocusNode,
                 decoration: InputDecoration(
                   labelText: '字段名/路径',
-                  hintText: 'text',
-                  helperText: 'JSON 字段路径形态生效，点号路径，如 result.text',
+                  hintText: current.responseFieldHint,
+                  helperText: current.responseFieldHelperText,
                   border: settingsOutlineBorder(color: QiyuColors.line),
                   enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                   focusedBorder: settingsOutlineBorder(
@@ -589,8 +615,9 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                   ? null
                   : () => unawaited(_confirmForgetKey(viewModel)),
             ),
-            // 高级参数面板：只对自定义档露出（其余档请求形状固定）。
-            if (custom) ...[
+            // 高级参数面板：只在元数据声明该能力的档露出（其余档请求形
+            // 状固定，界面不出现填了不生效的旋钮）。
+            if (current.advancedParams) ...[
               const SizedBox(height: 16),
               ExpansionTile(
                 key: const Key('stt-advanced-params-tile'),
@@ -603,16 +630,13 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          '配置自定义转写服务的 multipart 额外表单字段，例如：\n'
-                          '{\n'
-                          '  "speaker": "zh",\n'
-                          '  "enable_punctuation": true\n'
-                          '}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
+                        if (current.extraParamsExample case final example?)
+                          Text(
+                            example,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
                           ),
-                        ),
                         const SizedBox(height: 8),
                         TextField(
                           key: const Key('stt-extra-params'),
@@ -625,7 +649,9 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                             hintText:
                                 '{\n  "speaker": "zh"\n}',
                             contentPadding: const EdgeInsets.all(16),
-                            border: settingsOutlineBorder(color: QiyuColors.line),
+                            border: settingsOutlineBorder(
+                              color: QiyuColors.line,
+                            ),
                             enabledBorder: settingsOutlineBorder(
                               color: QiyuColors.line,
                             ),
@@ -651,8 +677,8 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                 VoiceTierSuggestionCard(
                   suggestion: suggestion,
                   applyButtonKey: const Key('stt-tier-suggestion-apply'),
-                  // 建议落在朗读域、或目标档本界面不认识时回填不了：
-                  // 只给指路文案（回填计划算不出来即不亮按钮）。
+                  // 建议落在朗读域、或目标档不在下发与降级行集里时回填
+                  // 不了：只给指路文案（回填计划算不出来即不亮按钮）。
                   onApply: suggestion.targetsTranscription &&
                           _form.planSuggestionApply(suggestion) != null
                       ? () => unawaited(_confirmApplySuggestion(suggestion))
@@ -688,56 +714,3 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
     );
   }
 }
-
-/// 转写档位目录：wire 名 ↔ 设置页人话标签，单处共用——服务类型下拉的
-/// 选项、确认对话框里的档位名、建议回填的档位识别（[_sttProviderLabel]
-/// 查不到即未知档位，不亮回填）都从这里出。
-const _sttProviderChoices = <({String wireName, String label})>[
-  (wireName: 'openai_compatible', label: 'OpenAI 兼容转写'),
-  (wireName: 'volc_seed_asr', label: '豆包流式语音识别'),
-  (wireName: 'qwen_asr', label: '千问语音识别'),
-  (wireName: 'custom', label: '自定义转写服务'),
-];
-
-/// 服务类型 wire 名 → 设置页同款人话标签；未知 wire 名返回 null
-/// （Host 表将来给出本界面不认识的档位时，保守不回填）。
-String? _sttProviderLabel(String wireName) {
-  for (final choice in _sttProviderChoices) {
-    if (choice.wireName == wireName) {
-      return choice.label;
-    }
-  }
-  return null;
-}
-
-/// 各套 STT 协议各自的缺省地址、模型与输入提示档位。千问档给完整端点
-/// 与官方示例模型（地址栏不拼后缀，两种请求形状都用同一个地址）；自定义
-/// 档给空档——完整地址由用户直填，没有可猜的缺省端点。
-({String url, String model, String urlHint, String modelHint})
-_sttProtocolDefaults(SttServiceKind kind) => switch (kind) {
-  SttServiceKind.openaiCompatible => (
-    url: '',
-    model: '',
-    urlHint: 'https://api.example.com/v1',
-    modelHint: 'whisper-1',
-  ),
-  SttServiceKind.volcSeedAsr => (
-    url: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
-    model: 'volc.seedasr.sauc.duration',
-    urlHint:
-        'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream',
-    modelHint: 'volc.seedasr.sauc.duration',
-  ),
-  SttServiceKind.qwenAsr => (
-    url: qwenAsrDefaultEndpoint,
-    model: qwenAsrDefaultModel,
-    urlHint: qwenAsrDefaultEndpoint,
-    modelHint: qwenAsrDefaultModel,
-  ),
-  SttServiceKind.custom => (
-    url: '',
-    model: '',
-    urlHint: 'https://api.example.com/v1/audio/transcriptions',
-    modelHint: 'whisper-1',
-  ),
-};
