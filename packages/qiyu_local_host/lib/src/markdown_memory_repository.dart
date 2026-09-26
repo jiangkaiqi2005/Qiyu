@@ -758,6 +758,69 @@ final _decodedValueRedactPatterns = <RegExp>[
   ..._sessionOtherRedactPatterns,
 ];
 
+/// 落盘脱敏表末位即私钥配对条目（清单被
+/// secret_patterns_lockstep_test 逐字钉死，末位恒为该条目）。该
+/// 条目的命中区间不直接跑 allMatches，改由 [_privateKeyPairRegions]
+/// 有界配对：先定位 BEGIN/END 成对区间再替换，无 END 的 BEGIN 不
+/// 进入跨整串惰性回溯，病态输入（重复 BEGIN 无 END）从平方级降为
+/// 线性，命中结果与原正则逐字一致。
+final _privateKeyPairRedactPattern = _sessionOtherRedactPatterns.last;
+
+/// 与钉死清单里私钥条目逐字一致的 BEGIN/END 标记段及其字面量头。
+/// 标记匹配必然以字面量开头，先扫字面量候选再用标记正则
+/// matchAsPrefix 校验，语义与原正则在该起点的尝试完全一致；END
+/// 候选必须这样重叠感知地收集——allMatches 的不重叠语义会漏掉与
+/// 上一 END 尾部五连字线相接的合法候选，而惰性扫描是逐位尝试的。
+final _privateKeyBeginHeadPattern = RegExp(
+  '-----BEGIN ',
+  caseSensitive: false,
+);
+final _privateKeyEndHeadPattern = RegExp('-----END ', caseSensitive: false);
+final _privateKeyBeginMarkerPattern = RegExp(
+  '-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----',
+  caseSensitive: false,
+);
+final _privateKeyEndMarkerPattern = RegExp(
+  '-----END [A-Z0-9 ]*PRIVATE KEY-----',
+  caseSensitive: false,
+);
+
+/// 私钥配对条目的命中区间：与原正则同款配对语义（每个 BEGIN 配其
+/// 后第一个合法 END，成对区间吞并其间所有候选），按起点升序返回
+/// 互不重叠的区间。扫描从上一个成对区间终点继续，与
+/// replaceAllMapped 的消费方式一致；END 耗尽后余下 BEGIN 全部不成对。
+List<({int start, int end})> _privateKeyPairRegions(String text) {
+  final begins = <Match>[];
+  for (final head in _privateKeyBeginHeadPattern.allMatches(text)) {
+    final marker = _privateKeyBeginMarkerPattern.matchAsPrefix(
+      text,
+      head.start,
+    );
+    if (marker != null) begins.add(marker);
+  }
+  if (begins.isEmpty) return const [];
+  final ends = <Match>[];
+  for (final head in _privateKeyEndHeadPattern.allMatches(text)) {
+    final marker = _privateKeyEndMarkerPattern.matchAsPrefix(text, head.start);
+    if (marker != null) ends.add(marker);
+  }
+  final regions = <({int start, int end})>[];
+  var endIndex = 0;
+  var consumed = 0;
+  for (final begin in begins) {
+    if (begin.start < consumed) continue;
+    while (endIndex < ends.length && ends[endIndex].start < begin.end) {
+      endIndex += 1;
+    }
+    if (endIndex == ends.length) break;
+    final end = ends[endIndex];
+    regions.add((start: begin.start, end: end.end));
+    consumed = end.end;
+    endIndex += 1;
+  }
+  return regions;
+}
+
 /// 诊断文本在会话脱敏之外的追加规则：授权头、Cookie、完整输入与本机路径。
 final _diagnosticRedactPatterns = <RegExp>[
   RegExp(
@@ -784,6 +847,24 @@ String _applyRedactions(String text, List<RegExp> patterns) {
     });
   }
   return result;
+}
+
+/// 单条脱敏规则的命中区间（起点已越过保留前缀，替换从该处开始）。
+/// 私钥配对条目走 [_privateKeyPairRegions] 的有界配对路径，其余
+/// 条目保持 allMatches 的原始语义与遍历顺序。
+List<({int start, int end})> _redactSpans(String text, RegExp pattern) {
+  if (identical(pattern, _privateKeyPairRedactPattern)) {
+    return _privateKeyPairRegions(text);
+  }
+  return [
+    for (final match in pattern.allMatches(text))
+      (
+        start: match.groupCount > 0
+            ? match.start + match.group(1)!.length
+            : match.start,
+        end: match.end,
+      ),
+  ];
 }
 
 // 新增 JSON 兜底仅处理无法解码的片段，不重新匹配已识别的键和值。
@@ -837,10 +918,9 @@ Iterable<JsonTextReplacement> _redactUnparsedJsonText(String text, bool decoded)
   } else {
     // 解码后的文本只按实际凭据值判定，不搬入旧原文规则的空值/占位行为。
     for (final pattern in _decodedValueRedactPatterns) {
-      for (final match in pattern.allMatches(text)) {
-        final prefix = match.groupCount > 0 ? match.group(1)!.length : 0;
+      for (final span in _redactSpans(text, pattern)) {
         replacements.add(JsonTextReplacement(
-          match.start + prefix, match.end, '[已脱敏]',
+          span.start, span.end, '[已脱敏]',
         ));
       }
     }
@@ -942,17 +1022,16 @@ Iterable<JsonTextReplacement> _rawTextRedactions(String text) {
   replacements.addAll(quoted.map((value) => value.replacement));
   for (final pattern in _sessionRedactPatterns) {
     var quotedIndex = 0;
-    for (final match in pattern.allMatches(text)) {
-      final prefix = match.groupCount > 0 ? match.group(1)!.length : 0;
-      final start = match.start + prefix;
+    for (final span in _redactSpans(text, pattern)) {
+      final start = span.start;
       while (quotedIndex < quoted.length && quoted[quotedIndex].end <= start) {
         quotedIndex += 1;
       }
       if (quotedIndex < quoted.length && quoted[quotedIndex].start <= start &&
-          match.end <= quoted[quotedIndex].end) {
+          span.end <= quoted[quotedIndex].end) {
         continue;
       }
-      replacements.add(JsonTextReplacement(start, match.end, '[已脱敏]'));
+      replacements.add(JsonTextReplacement(start, span.end, '[已脱敏]'));
     }
   }
   return replacements;

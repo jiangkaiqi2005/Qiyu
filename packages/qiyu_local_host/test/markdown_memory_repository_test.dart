@@ -566,6 +566,41 @@ void main() {
     },
   );
 
+  test('病态输入：重复 BEGIN 无 END 的私钥头在有界时间内脱敏完成', () {
+    // 损坏备份或被篡改会话的典型形态：整段全是 BEGIN 头却没有 END 尾。
+    // 修复前私钥条目跨整串惰性回溯是平方级，1MiB 输入实测 181 秒
+    // （单条正则 60 秒 × 管线 3 遍扫描）；预配对检查后无 END 的 BEGIN
+    // 不进入回溯，PEM 匹配本身降为毫秒级，整段耗时回落到既有线性
+    // 管线基线（其余 19 条模式 × 管线 3 遍，本机实测约 1 秒）。上限
+    // 断言守的是平方级回归，不是与机器比快，故给足余量取 10 秒。
+    final unit = '-----BEGIN PRIVATE KEY-----\n';
+    final pathological = unit * (1024 * 1024 ~/ unit.length);
+    // 同形态小输入先预热一遍，排除 JIT 与 Irregexp 首次编译噪声。
+    redactSessionText(unit * 4096);
+    final stopwatch = Stopwatch()..start();
+    final redacted = redactSessionText(pathological);
+    stopwatch.stop();
+    expect(redacted, pathological, reason: '无 END 的 BEGIN 不应被遮蔽');
+    expect(
+      stopwatch.elapsed,
+      lessThan(const Duration(seconds: 10)),
+      reason: '1MiB 病态输入脱敏耗时 ${stopwatch.elapsed}，'
+          '上限 10 秒（修前平方级实测 181 秒）',
+    );
+  }, timeout: Timeout(const Duration(minutes: 3)));
+
+  test('正常成对私钥完整遮蔽标记区间，跨行正文吞并、前后文保留', () {
+    const text = '帮我看看这把钥匙\n'
+        '-----BEGIN PRIVATE KEY-----\n'
+        'AUDITONLYFAKEBODYONE\nAUDITONLYFAKEBODYTWO\n'
+        '-----END PRIVATE KEY-----\n'
+        '后面是普通内容';
+    expect(
+      redactSessionText(text),
+      '帮我看看这把钥匙\n[已脱敏]\n后面是普通内容',
+    );
+  });
+
   test(
     'colon key forms share the sensitive name list with the JSON form',
     () async {

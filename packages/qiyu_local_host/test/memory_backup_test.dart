@@ -513,6 +513,55 @@ void main() {
     });
   }
 
+  test('导入含病态私钥头的备份后，后续读取脱敏有界时间内完成', () async {
+    // 旧版宿主导出的备份不做今天的脱敏：会话原文是整段 BEGIN 头却
+    // 没有 END 尾（1MiB，远在 64MiB 条目上限内）。导入原样落盘，
+    // 公开读取统一过滤时才触发脱敏，修复前平方级回溯会让读取分钟级
+    // 失去响应，现在必须有界完成。
+    final at = DateTime.parse('2026-08-05T20:10:00').toUtc();
+    final unit = '-----BEGIN PRIVATE KEY-----\n';
+    final pathological = unit * (1024 * 1024 ~/ unit.length);
+    final legacyFile = File(
+      path.join(memoryDirectory, 'sessions', '2026', '08', '2026-08-05-003.md'),
+    )..createSync(recursive: true);
+    legacyFile.writeAsStringSync(
+      renderSessionMarkdown(
+        RawSession(
+          id: 'legacy-pathological-session',
+          date: '2026-08-05',
+          segment: 3,
+          createdAt: at,
+          updatedAt: at,
+          turns: [
+            RawSessionTurn.user(
+              requestId: 'legacy-p1',
+              text: pathological,
+              at: at,
+            ),
+          ],
+        ),
+      ),
+    );
+    final exported = await backup.exportBundle();
+    await legacyFile.delete();
+    final result = await backup.importBundle(exported.bytes);
+    expect(result.unrecoverable, 0);
+    final restored = await MarkdownMemoryRepository(
+      memoryDirectory: memoryDirectory,
+    ).openSession(sessionId: 'legacy-pathological-session');
+    final turn = restored.turns.single;
+    expect(turn.text, pathological, reason: '导入不脱敏，病态原文原样落盘');
+    final watch = Stopwatch()..start();
+    final redactedTurn = turn.redacted();
+    watch.stop();
+    expect(redactedTurn.text, pathological, reason: '无 END 的 BEGIN 不应被遮蔽');
+    expect(
+      watch.elapsed,
+      lessThan(const Duration(seconds: 10)),
+      reason: '1MiB 病态条目读取脱敏耗时 ${watch.elapsed}，上限 10 秒',
+    );
+  });
+
   group('导出脱敏', () {
     test('旧记忆的秘密在导出处过滤：可见文本与载荷，干净文件逐字节保持', () async {
       // 旧会话：手工构造「旧规则时代」落盘形态，turn 载荷与可见行都带
