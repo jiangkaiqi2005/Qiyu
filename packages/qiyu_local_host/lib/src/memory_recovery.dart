@@ -241,6 +241,156 @@ final _tmpFilePattern = RegExp(r'\.\d+\.tmp$');
 /// 暂停（T26 定稿），直到用户通过备份导入等明确操作恢复归档。
 const pausedArchiveMarker = '<!-- qiyu-paused-archive:';
 
+/// 一轮恢复扫描的运行上下文：策略行的损坏判定与恢复动作经它上报
+/// 发现、使用共享的隔离与清理原语，保证全表的隔离命名、清单合并与
+/// 报告管线一致。
+final class MemoryRecoveryRun {
+  MemoryRecoveryRun._(this._service);
+
+  final MemoryRecoveryService _service;
+
+  /// 本轮累计的恢复发现（策略行逐条上报，报告与日志由此合成）。
+  final List<MemoryRecoveryFinding> findings = [];
+
+  bool _backupRestored = false;
+
+  /// 本轮是否完成过 Dream 备份恢复（须对现行控制重跑派生清除）。
+  bool get backupRestored => _backupRestored;
+
+  /// 标记本轮完成过一次 Dream 备份恢复。
+  void markBackupRestored() => _backupRestored = true;
+
+  /// 共享隔离原语：先复制保全再移除原位文件，损坏原件退出注入、
+  /// 检索与整理，证据保留在隔离区。返回隔离路径；完整恢复后由
+  /// 调用方删除副本。
+  Future<String> quarantineMove(File file, String layerKey) =>
+      _service._quarantineMove(file, layerKey);
+
+  /// 共享隔离原语：按字节复制损坏原件到隔离区（唯一原始证据的
+  /// 保全副本）。返回隔离路径。
+  Future<String> quarantineCopy(File file, String layerKey) =>
+      _service._quarantineCopy(file, layerKey);
+
+  /// 共享隔离原语：文件存在时复制保全（原位文件随后会被重建覆盖）。
+  /// 不存在或失败返回 null。
+  Future<String?> quarantineIfExists(File file, String layerKey) =>
+      _service._quarantineIfExists(file, layerKey);
+
+  /// 共享清理原语：删除已完整恢复层的隔离副本。
+  Future<void> deleteIfExists(File file) => _service._deleteIfExists(file);
+}
+
+/// 策略行的损坏判定：返回该层当前损坏的证据（恢复动作的输入），
+/// 健康返回 null。
+typedef MemoryRecoveryDetect<D> = Future<D?> Function(MemoryRecoveryRun run);
+
+/// 策略行的恢复动作：按判定证据隔离原件、从可信下层重建，并经
+/// 运行上下文上报发现。
+typedef MemoryRecoveryRecover<D> = Future<void> Function(
+  D damage,
+  MemoryRecoveryRun run,
+);
+
+/// 恢复策略表的一行：一个受保护层的「层 → 损坏判定 → 恢复动作 →
+/// 上报」。判定健康即整层跳过；动作只经 [MemoryRecoveryRun] 使用
+/// 共享样板原语（隔离、清理、上报），新增受保护层＝往表里加一行，
+/// 引擎、隔离命名与报告管线不变。
+final class MemoryRecoveryStrategy {
+  const MemoryRecoveryStrategy._(
+    this.layerKey,
+    this.stepLabel,
+    this.dayLocked,
+    this._detect,
+    this._recover,
+  );
+
+  /// 类型安全地装一行：判定与动作共享同一损坏证据类型 [D]。
+  static MemoryRecoveryStrategy typed<D>({
+    required String layerKey,
+    required String stepLabel,
+    required bool dayLocked,
+    required MemoryRecoveryDetect<D> detect,
+    required MemoryRecoveryRecover<D> recover,
+  }) =>
+      MemoryRecoveryStrategy._(
+        layerKey,
+        stepLabel,
+        dayLocked,
+        (run) => detect(run),
+        (damage, run) => recover(damage as D, run),
+      );
+
+  /// 层键：与恢复发现、隔离清单共用同一命名空间。
+  final String layerKey;
+
+  /// 诊断封套名：同名的连续行共用一个容错封套（失败只记诊断，
+  /// 绝不阻塞启动）。
+  final String stepLabel;
+
+  /// 恢复是否要求与日文件写入互斥（episodes 与索引族）。
+  final bool dayLocked;
+
+  final Future<Object?> Function(MemoryRecoveryRun) _detect;
+  final Future<void> Function(Object?, MemoryRecoveryRun) _recover;
+}
+
+/// 会话文件的损坏证据：判定阶段解析出的一切，供恢复动作抢救或隔离。
+typedef _SessionDamage = ({
+  File file,
+  String label,
+  MemoryDamageKind kind,
+  Map<String, Object?>? metadata,
+  List<RawSessionTurn> turns,
+  int failedMarkers,
+  bool truncatedTurns,
+});
+
+/// 日文件的损坏证据。
+typedef _EpisodeDayDamage = ({
+  File file,
+  String date,
+  String label,
+  bool truncated,
+  Map<String, Object?>? metadata,
+  List<EpisodeEntry> entries,
+  int failedMarkers,
+});
+
+/// 索引层的损坏证据：需要重建时附上本轮已隔离的副本清单（重建
+/// 成功后删除）。
+typedef _IndexDamage = ({List<String> quarantined});
+
+/// 月摘要层的损坏证据：待重建月份与重建所用的日历证据。
+typedef _MonthSummaryDamage = ({
+  List<String> dates,
+  List<({String month, String label, bool existed})> months,
+});
+
+/// 简单文本热层文件的损坏证据。
+typedef _PlainFileDamage = ({
+  File file,
+  String layerKey,
+  String layer,
+  String loss,
+});
+
+/// PersonaTree 层的损坏证据：恢复写入所需的树快照。
+typedef _PersonaTreeDamage = ({PersonaTreeSnapshot snapshot});
+
+/// 画像投影层的损坏证据：从原件抢救出的受保护称呼行（null 表示
+/// 没救出）。
+typedef _PersonaProjectionDamage = ({String? salvagedAppellation});
+
+/// 诊断封套组：同 stepLabel 的连续行共用一个容错封套，任一行要求
+/// 日文件互斥时整组在锁内执行——组粒度与既有扫描步骤逐一对应。
+final class _StrategyGroup {
+  _StrategyGroup({required this.stepLabel, required this.dayLocked});
+
+  final String stepLabel;
+  final bool dayLocked;
+  final List<MemoryRecoveryStrategy> strategies = <MemoryRecoveryStrategy>[];
+}
+
 /// 损坏隔离与证据驱动恢复（ticket 21 / T26 定稿）。
 ///
 /// 纪律：
@@ -257,6 +407,10 @@ const pausedArchiveMarker = '<!-- qiyu-paused-archive:';
 /// - 恢复不阻塞对话：受损层跳过，其余有效记忆继续使用；
 /// - `recovery.log` 只记时间、记忆类型、结果和损失，绝不记正文；
 /// - 用户手写内容（无栖语元数据标记的文件）绝不触碰。
+///
+/// 执行计划就是本文件的恢复策略表（[_strategies]）：一行一个受保护
+/// 层，逐行「损坏判定 → 恢复动作 → 上报」；唯一入口仍是
+/// [sweepAndRecover]，策略表只是它的内部实现。
 final class MemoryRecoveryService {
   MemoryRecoveryService({
     required this.memoryDirectory,
@@ -271,6 +425,12 @@ final class MemoryRecoveryService {
     Clock? clock,
     AtomicTextWriter? atomicWriter,
     void Function(String message)? diagnosticsSink,
+
+    /// 测试扩展点（本仓库无 meta 直接依赖，以文档契约代替
+    /// `@visibleForTesting`，与 voice_tier_mapping 的行集同律）：追加到
+    /// 策略表尾部的行，演示「新增受保护层＝加一行策略」。生产代码
+    /// 不得传，传行即视为恢复面改动，必须同票补测试。
+    List<MemoryRecoveryStrategy>? extraStrategies,
   }) : _indexStore = indexStore ??
            EpisodeIndexStore(
              memoryDirectory: memoryDirectory,
@@ -278,7 +438,8 @@ final class MemoryRecoveryService {
            ),
        _clock = clock ?? DateTime.now,
        _atomicWriter = episodePipeline.commits.wrap(atomicWriter),
-       _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
+       _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics,
+       _extraStrategies = extraStrategies ?? const [];
 
   final String memoryDirectory;
   final EpisodeMemoryPipeline episodePipeline;
@@ -292,52 +453,45 @@ final class MemoryRecoveryService {
   final Clock _clock;
   final AtomicTextWriter _atomicWriter;
   final void Function(String) _diagnosticsSink;
+  final List<MemoryRecoveryStrategy> _extraStrategies;
 
   Directory get _recoveryDirectory =>
       Directory(path.join(memoryDirectory, 'recovery'));
   Directory get _quarantineDirectory =>
       Directory(path.join(_recoveryDirectory.path, 'quarantine'));
-  File get _logFile => File(path.join(_recoveryDirectory.path, 'recovery.log'));
-  File get _reportFile =>
-      File(path.join(_recoveryDirectory.path, 'report.md'));
+  File get _logFile => memoryFile(_recoveryDirectory.path, 'recovery.log');
+  File get _reportFile => memoryFile(_recoveryDirectory.path, 'report.md');
 
   /// 一次完整的启动恢复扫描。逐层检测五类损坏、隔离原件、自底向上
   /// 重建，最后落日志与报告。任一层失败只记诊断，绝不抛出阻塞启动。
   Future<MemoryRecoveryReport> sweepAndRecover() async {
-    final findings = <MemoryRecoveryFinding>[];
-    await _step(() => _cleanOrphanedTempFiles(findings), 'temp-files');
-    await _step(() => _recoverSessions(findings), 'sessions');
+    final run = MemoryRecoveryRun._(this);
+    for (final group in _groupStrategies([
+      ..._strategies,
+      ..._extraStrategies,
+    ])) {
+      await _step(() async {
+        Future<void> runGroup() async {
+          for (final strategy in group.strategies) {
+            await _runStrategy(strategy, run);
+          }
+        }
 
-    final sessionIds = await _validSessionIds();
-    await _step(
-      () => episodePipeline.synchronizedOnDayFiles(() async {
-        await _salvageEpisodeDays(findings);
-        await _recoverCheckpoint(findings, sessionIds);
-      }),
-      'episodes',
-    );
+        if (group.dayLocked) {
+          await episodePipeline.synchronizedOnDayFiles(runGroup);
+        } else {
+          await runGroup();
+        }
+      }, group.stepLabel);
+    }
 
-    // 控制记录必须在索引与月摘要重建之前恢复：后两者的受控过滤依赖
-    // 控制集合；恢复后立刻清除可能随抢救复活的被控内容。
-    await _step(() => _recoverControls(findings), 'controls');
-
-    await _step(
-      () => episodePipeline.synchronizedOnDayFiles(() async {
-        await _recoverIndexes(findings);
-        await _recoverMonthlySummaries(findings);
-      }),
-      'indexes',
-    );
-
-    await _step(() => _recoverHotLayer(findings), 'hot-layer');
-    await _step(() => _recoverLongTerm(findings), 'long-term');
     await _step(() async {
-      await _appendQuarantineInventory(findings);
+      await _appendQuarantineInventory(run.findings);
     }, 'inventory');
 
     final report = MemoryRecoveryReport(
       generatedAt: _clock().toUtc(),
-      findings: findings,
+      findings: run.findings,
       quarantinedFiles: await _quarantineCount(),
     );
     await _persist(report);
@@ -363,6 +517,197 @@ final class MemoryRecoveryService {
     }
   }
 
+  /// 恢复策略表：一行一个受保护层，按既有「自底向上」的证据依赖
+  /// 排序（sessions → episodes → 控制 → 索引与摘要 → 热层 → 长期层）。
+  /// 同 stepLabel 的连续行共用一个诊断封套，dayLocked 组整组在日文件
+  /// 写锁内执行。
+  List<MemoryRecoveryStrategy> get _strategies => [
+    // 写入中断残留：临时文件不是证据，直接删除。
+    MemoryRecoveryStrategy.typed<List<File>>(
+      layerKey: 'temp-files',
+      stepLabel: 'temp-files',
+      dayLocked: false,
+      detect: _detectOrphanedTempFiles,
+      recover: _recoverOrphanedTempFiles,
+    ),
+    // sessions：证据最底层，优先级最高。
+    MemoryRecoveryStrategy.typed<List<_SessionDamage>>(
+      layerKey: 'session',
+      stepLabel: 'sessions',
+      dayLocked: false,
+      detect: _detectSessionDamage,
+      recover: _recoverSessions,
+    ),
+    // episodes 日文件与整理检查点：与日文件写入互斥。
+    MemoryRecoveryStrategy.typed<List<_EpisodeDayDamage>>(
+      layerKey: 'episode-day',
+      stepLabel: 'episodes',
+      dayLocked: true,
+      detect: _detectEpisodeDayDamage,
+      recover: _recoverEpisodeDays,
+    ),
+    MemoryRecoveryStrategy.typed<bool>(
+      layerKey: 'checkpoint',
+      stepLabel: 'episodes',
+      dayLocked: true,
+      detect: _detectCheckpointDamage,
+      recover: _recoverCheckpoint,
+    ),
+    // 记忆控制：必须在索引与月摘要重建之前恢复，后两者的受控过滤
+    // 依赖控制集合。
+    MemoryRecoveryStrategy.typed<bool>(
+      layerKey: 'controls',
+      stepLabel: 'controls',
+      dayLocked: false,
+      detect: _detectControlsDamage,
+      recover: _recoverControls,
+    ),
+    // 索引与月摘要：与日文件写入互斥。
+    MemoryRecoveryStrategy.typed<_IndexDamage>(
+      layerKey: 'index',
+      stepLabel: 'indexes',
+      dayLocked: true,
+      detect: _detectIndexDamage,
+      recover: _recoverIndexes,
+    ),
+    MemoryRecoveryStrategy.typed<_MonthSummaryDamage>(
+      layerKey: 'month-summary',
+      stepLabel: 'indexes',
+      dayLocked: true,
+      detect: _detectMonthSummaryDamage,
+      recover: _recoverMonthlySummaries,
+    ),
+    // 热层。
+    // open-loops.md：损坏即隔离；活跃事项无法从现有证据确定性重建，
+    // 诚实报部分恢复，等待日终重新整理。
+    MemoryRecoveryStrategy.typed<_PlainFileDamage>(
+      layerKey: 'open-loops',
+      stepLabel: 'hot-layer',
+      dayLocked: false,
+      detect: (run) => _detectPlainFileDamage(
+        file: memoryFile(memoryDirectory, 'open-loops.md'),
+        layerKey: 'open-loops',
+        layer: '未闭环事项',
+        managedHeader: '# open-loops',
+        parseable: (contents) => parseOpenLoopItems(contents) != null,
+        loss: '未闭环事项内容',
+      ),
+      recover: _recoverPlainFile,
+    ),
+    MemoryRecoveryStrategy.typed<_PlainFileDamage>(
+      layerKey: 'open-loops-archive',
+      stepLabel: 'hot-layer',
+      dayLocked: false,
+      detect: (run) => _detectPlainFileDamage(
+        file: memoryFile(memoryDirectory, 'open-loops.archive.md'),
+        layerKey: 'open-loops-archive',
+        layer: '未闭环事项归档',
+        managedHeader: '# open-loops archive',
+        parseable: null, // 归档格式宽松，只处理编码失败。
+        loss: '已闭环事项归档',
+      ),
+      recover: _recoverPlainFile,
+    ),
+    // daily-state.md：编码失败才算损坏；重建归下一次日终归档。
+    MemoryRecoveryStrategy.typed<File>(
+      layerKey: 'daily-state',
+      stepLabel: 'hot-layer',
+      dayLocked: false,
+      detect: _detectDailyStateDamage,
+      recover: _recoverDailyState,
+    ),
+    // relationship.md：受管结构损坏时按幸存日文件里最近一次持久化
+    // 的阶段判断整体重建；没有判断按初识保守重建，等日终模型追认。
+    MemoryRecoveryStrategy.typed<bool>(
+      layerKey: 'relationship',
+      stepLabel: 'hot-layer',
+      dayLocked: false,
+      detect: _detectRelationshipDamage,
+      recover: _recoverRelationship,
+    ),
+    // 长期层。long-memory 与 PersonaTree 的任何一次 Dream 备份恢复
+    // 成功后，都会由表尾的 controls-reapply 行对现行控制集合重跑
+    // 派生清除。
+    MemoryRecoveryStrategy.typed<bool>(
+      layerKey: 'long-memory',
+      stepLabel: 'long-term',
+      dayLocked: false,
+      detect: _detectLongMemoryDamage,
+      recover: _recoverLongMemoryFromBackup,
+    ),
+    // PersonaTree 分支与归档：优先 Dream 备份恢复；无备份时隔离并
+    // 暂停受影响分支的根节点操作（快照 archiveReadable 已驱动拒绝）。
+    MemoryRecoveryStrategy.typed<_PersonaTreeDamage>(
+      layerKey: 'persona-tree',
+      stepLabel: 'long-term',
+      dayLocked: false,
+      detect: _detectPersonaTreeDamage,
+      recover: _recoverPersonaTreeFromBackup,
+    ),
+    // persona.md：纯投影＋受保护称呼设定行，结构存疑时从活跃根重投
+    // 影；树不完整时隔离等待，绝不写出残缺画像。
+    MemoryRecoveryStrategy.typed<_PersonaProjectionDamage>(
+      layerKey: 'persona-projection',
+      stepLabel: 'long-term',
+      dayLocked: false,
+      detect: _detectPersonaProjectionDamage,
+      recover: _recoverPersonaProjection,
+    ),
+    // dream/state.md：损坏即隔离并重置为空状态（Dream 间隔证据丢失，
+    // 下一次晚安重新评估）。
+    MemoryRecoveryStrategy.typed<File>(
+      layerKey: 'dream-state',
+      stepLabel: 'long-term',
+      dayLocked: false,
+      detect: _detectDreamStateDamage,
+      recover: _recoverDreamState,
+    ),
+    // Dream 备份恢复后，对现行控制集合（禁提 ∪ 删除）再跑一遍派生
+    // 清除：备份定格在上次 Dream，其后被删除/禁提的内容可能随旧
+    // 备份复活（长期印象与画像分支都会立刻重新注入），必须按现行
+    // 控制拦下。
+    MemoryRecoveryStrategy.typed<bool>(
+      layerKey: 'controls-reapply',
+      stepLabel: 'long-term',
+      dayLocked: false,
+      detect: _detectControlsReapply,
+      recover: _recoverControlsReapply,
+    ),
+  ];
+
+  /// 把策略表按连续同 stepLabel 的行折成诊断封套组。
+  List<_StrategyGroup> _groupStrategies(List<MemoryRecoveryStrategy> table) {
+    final groups = <_StrategyGroup>[];
+    for (final strategy in table) {
+      final last = groups.isEmpty ? null : groups.last;
+      if (last != null &&
+          last.stepLabel == strategy.stepLabel &&
+          last.dayLocked == strategy.dayLocked) {
+        last.strategies.add(strategy);
+        continue;
+      }
+      groups.add(
+        _StrategyGroup(
+          stepLabel: strategy.stepLabel,
+          dayLocked: strategy.dayLocked,
+        )..strategies.add(strategy),
+      );
+    }
+    return groups;
+  }
+
+  /// 执行一行策略：判定健康即跳过，损坏则走恢复动作。
+  Future<void> _runStrategy(
+    MemoryRecoveryStrategy strategy,
+    MemoryRecoveryRun run,
+  ) async {
+    final damage = await strategy._detect(run);
+    if (damage == null) {
+      return;
+    }
+    await strategy._recover(damage, run);
+  }
+
   Future<void> _step(Future<void> Function() body, String label) async {
     try {
       await body();
@@ -373,29 +718,38 @@ final class MemoryRecoveryService {
 
   // ---------- 写入中断残留 ----------
 
-  /// 清理原子写中断留下的孤儿临时文件（`*.tmp`）：它们从不参与记忆
-  /// 流程，也不是原始证据，直接删除。
-  Future<void> _cleanOrphanedTempFiles(
-    List<MemoryRecoveryFinding> findings,
-  ) async {
+  /// 损坏判定：原子写中断留下的孤儿临时文件（`*.tmp`）——它们从不
+  /// 参与记忆流程，也不是原始证据。
+  Future<List<File>?> _detectOrphanedTempFiles(MemoryRecoveryRun run) async {
     final root = Directory(memoryDirectory);
     if (!await root.exists()) {
-      return;
+      return null;
     }
-    var removed = 0;
+    final orphaned = <File>[];
     await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is! File || !_tmpFilePattern.hasMatch(entity.path)) {
-        continue;
+      if (entity is File && _tmpFilePattern.hasMatch(entity.path)) {
+        orphaned.add(entity);
       }
+    }
+    return orphaned.isEmpty ? null : orphaned;
+  }
+
+  /// 恢复动作：直接删除并上报（完整恢复，无隔离）。
+  Future<void> _recoverOrphanedTempFiles(
+    List<File> orphaned,
+    MemoryRecoveryRun run,
+  ) async {
+    var removed = 0;
+    for (final file in orphaned) {
       try {
-        await entity.delete();
+        await file.delete();
         removed += 1;
       } on Object {
         // 残留清理失败不影响其余恢复。
       }
     }
     if (removed > 0) {
-      findings.add(
+      run.findings.add(
         MemoryRecoveryFinding(
           layerKey: 'temp-files',
           layer: '写入残留',
@@ -409,16 +763,21 @@ final class MemoryRecoveryService {
 
   // ---------- sessions（证据最底层，优先级最高） ----------
 
-  Future<void> _recoverSessions(List<MemoryRecoveryFinding> findings) async {
+  /// 损坏判定：逐会话文件「存在 → 读 → 校验」（元数据与全部对话块
+  /// 完整即健康，尾部无害内容不影响解析）。
+  Future<List<_SessionDamage>?> _detectSessionDamage(
+    MemoryRecoveryRun run,
+  ) async {
     final directory = Directory(path.join(memoryDirectory, 'sessions'));
     if (!await directory.exists()) {
-      return;
+      return null;
     }
     final files = await directory
         .list(recursive: true, followLinks: false)
         .where((entity) => entity is File && entity.path.endsWith('.md'))
         .cast<File>()
         .toList();
+    final damaged = <_SessionDamage>[];
     for (final file in files) {
       final name = path.basename(file.path);
       final nameMatch = _sessionFileNamePattern.firstMatch(name);
@@ -464,7 +823,7 @@ final class MemoryRecoveryService {
           metadata != null &&
           failedMarkers == 0 &&
           !truncatedTurns) {
-        // 元数据与全部对话块完整：健康（尾部无害内容不影响解析）。
+        // 元数据与全部对话块完整：健康。
         try {
           RawSession.fromJson(metadata, turns);
           continue;
@@ -473,36 +832,54 @@ final class MemoryRecoveryService {
         }
       }
 
-      final kind = encodingCorrupt ||
-              (metadataMatch != null && metadata == null)
-          ? MemoryDamageKind.corrupt
-          : MemoryDamageKind.incomplete;
+      damaged.add((
+        file: file,
+        label: label,
+        kind: encodingCorrupt || (metadataMatch != null && metadata == null)
+            ? MemoryDamageKind.corrupt
+            : MemoryDamageKind.incomplete,
+        metadata: metadata,
+        turns: turns,
+        failedMarkers: failedMarkers,
+        truncatedTurns: truncatedTurns,
+      ));
+    }
+    return damaged.isEmpty ? null : damaged;
+  }
 
-      if (metadata != null && turns.isNotEmpty) {
+  /// 恢复动作：完整对话块可独立验证时逐块重写干净文件（抢救）；
+  /// 否则隔离原件（保留唯一证据），原位移除避免继续参与扫描。
+  Future<void> _recoverSessions(
+    List<_SessionDamage> damaged,
+    MemoryRecoveryRun run,
+  ) async {
+    for (final damage in damaged) {
+      final file = damage.file;
+      if (damage.metadata != null && damage.turns.isNotEmpty) {
         // 抢救：完整对话块可独立验证，逐块重写干净文件。编码损坏但
         // 全部块完整时同样走这里——重写后内容无损，隔离副本随之删除。
         try {
-          final session = RawSession.fromJson(metadata, turns);
-          final quarantinePath = await _quarantineCopy(file, 'session');
+          final session = RawSession.fromJson(damage.metadata!, damage.turns);
+          final quarantinePath = await run.quarantineCopy(file, 'session');
           await _atomicWriter.replace(
             file.path,
             renderSessionMarkdown(session),
           );
           // 截断在标记中间时残行匹配不了完整正则，健康检查里按前缀
           // 计数的结果同样适用：这类损坏只能部分恢复。
-          final full = failedMarkers == 0 && !truncatedTurns;
+          final full = damage.failedMarkers == 0 && !damage.truncatedTurns;
           if (full) {
-            await _deleteIfExists(File(quarantinePath));
+            await run.deleteIfExists(File(quarantinePath));
           }
-          findings.add(
+          run.findings.add(
             MemoryRecoveryFinding(
               layerKey: 'session',
-              layer: label,
-              kind: kind,
+              layer: damage.label,
+              kind: damage.kind,
               outcome: full
                   ? MemoryRecoveryOutcome.full
                   : MemoryRecoveryOutcome.partial,
-              evidence: '从文件内完整对话块 ${turns.length} 段抢救',
+              evidence: '从文件内完整对话块 ${damage.turns.length} 段抢救',
               loss: full ? null : '未完整解析的对话块',
               quarantined: !full,
             ),
@@ -513,20 +890,19 @@ final class MemoryRecoveryService {
         }
       }
 
-      // 无法抢救：隔离原件（保留唯一证据），原位移除避免继续参与扫描。
       try {
-        await _quarantineMove(file, 'session');
+        await run.quarantineMove(file, 'session');
       } on Object catch (error) {
         _diagnosticsSink('session quarantine deferred [$error]');
         continue;
       }
-      findings.add(
+      run.findings.add(
         MemoryRecoveryFinding(
           layerKey: 'session',
-          layer: label,
-          kind: kind,
+          layer: damage.label,
+          kind: damage.kind,
           outcome: MemoryRecoveryOutcome.pending,
-          loss: metadata == null
+          loss: damage.metadata == null
               ? '会话头信息丢失，对话块无法归位'
               : '无完整对话块',
           quarantined: true,
@@ -549,7 +925,13 @@ final class MemoryRecoveryService {
 
   // ---------- episodes 日文件与 checkpoint ----------
 
-  Future<void> _salvageEpisodeDays(List<MemoryRecoveryFinding> findings) async {
+  /// 损坏判定：逐日文件「存在 → 读 → 校验」；没有栖语元数据标记的
+  /// 可能是用户手写的普通 Markdown，绝不触碰。宽松解析会把尾部截断
+  /// 当成可读：按标记前缀计数找出丢失的块。
+  Future<List<_EpisodeDayDamage>?> _detectEpisodeDayDamage(
+    MemoryRecoveryRun run,
+  ) async {
+    final damaged = <_EpisodeDayDamage>[];
     for (final date in await episodePipeline.listEpisodeDates()) {
       final day = await episodePipeline.readDay(date);
       if (!day.exists) {
@@ -565,10 +947,8 @@ final class MemoryRecoveryService {
       final label = '每日记录（$date）';
       if (!episodeMetaPattern.hasMatch(contents) &&
           !episodeEntryMarkerPattern.hasMatch(contents)) {
-        // 没有栖语元数据标记：可能是用户手写的普通 Markdown，绝不触碰。
         continue;
       }
-      // 宽松解析会把尾部截断当成可读：按标记前缀计数找出丢失的块。
       final matchedMarkers =
           episodeEntryMarkerPattern.allMatches(contents).length;
       final truncated =
@@ -598,18 +978,38 @@ final class MemoryRecoveryService {
         }
       }
 
-      if (entries.isEmpty && metadata == null) {
-        // 无任何可验证内容：隔离原件，原位删除，等待语义恢复。
+      damaged.add((
+        file: file,
+        date: date,
+        label: label,
+        truncated: truncated,
+        metadata: metadata,
+        entries: entries,
+        failedMarkers: failedMarkers,
+      ));
+    }
+    return damaged.isEmpty ? null : damaged;
+  }
+
+  /// 恢复动作：无任何可验证内容时隔离原件、原位删除，等待语义恢复；
+  /// 有完整条目时复用正常写入路径重写当日文件（抢救）。
+  Future<void> _recoverEpisodeDays(
+    List<_EpisodeDayDamage> damaged,
+    MemoryRecoveryRun run,
+  ) async {
+    for (final damage in damaged) {
+      final file = damage.file;
+      if (damage.entries.isEmpty && damage.metadata == null) {
         try {
-          await _quarantineMove(file, 'episode-day');
+          await run.quarantineMove(file, 'episode-day');
         } on Object catch (error) {
           _diagnosticsSink('episode quarantine deferred [$error]');
           continue;
         }
-        findings.add(
+        run.findings.add(
           MemoryRecoveryFinding(
             layerKey: 'episode-day',
-            layer: label,
+            layer: damage.label,
             kind: MemoryDamageKind.corrupt,
             outcome: MemoryRecoveryOutcome.pending,
             evidence: '同日原始会话仍在，等待语义重建',
@@ -621,36 +1021,39 @@ final class MemoryRecoveryService {
       }
 
       try {
-        final quarantinePath = await _quarantineCopy(file, 'episode-day');
+        final quarantinePath = await run.quarantineCopy(file, 'episode-day');
         await episodePipeline.writeFinalization(
-          date,
-          entries: entries,
-          summary: metadata?['summary'] as String?,
-          finalized: metadata?['finalized'] == true,
-          finalizedAt: _parseUtc(metadata?['finalizedAt'] as String?),
-          understanding: metadata?['understanding'] is Map<String, Object?>
-              ? metadata!['understanding']! as Map<String, Object?>
+          damage.date,
+          entries: damage.entries,
+          summary: damage.metadata?['summary'] as String?,
+          finalized: damage.metadata?['finalized'] == true,
+          finalizedAt: _parseUtc(damage.metadata?['finalizedAt'] as String?),
+          understanding: damage.metadata?['understanding'] is Map<String, Object?>
+              ? damage.metadata!['understanding']! as Map<String, Object?>
               : null,
         );
         // 元数据与全部条目完整（仅编码等外围损坏）：重写后内容无损。
-        final full = metadata != null && failedMarkers == 0 && !truncated;
+        final full =
+            damage.metadata != null &&
+            damage.failedMarkers == 0 &&
+            !damage.truncated;
         if (full) {
-          await _deleteIfExists(File(quarantinePath));
+          await run.deleteIfExists(File(quarantinePath));
         }
-        findings.add(
+        run.findings.add(
           MemoryRecoveryFinding(
             layerKey: 'episode-day',
-            layer: label,
-            kind: metadata == null
+            layer: damage.label,
+            kind: damage.metadata == null
                 ? MemoryDamageKind.incomplete
                 : MemoryDamageKind.corrupt,
             outcome: full
                 ? MemoryRecoveryOutcome.full
                 : MemoryRecoveryOutcome.partial,
-            evidence: '从文件内完整条目 ${entries.length} 条抢救',
+            evidence: '从文件内完整条目 ${damage.entries.length} 条抢救',
             loss: full
                 ? null
-                : metadata == null
+                : damage.metadata == null
                       ? '日终摘要与归档标记'
                       : '未完整解析的条目',
             quarantined: !full,
@@ -662,15 +1065,12 @@ final class MemoryRecoveryService {
     }
   }
 
-  Future<void> _recoverCheckpoint(
-    List<MemoryRecoveryFinding> findings,
-    Set<String> sessionIds,
-  ) async {
-    final file = File(
-      path.join(memoryDirectory, 'episodes', 'checkpoint.md'),
-    );
+  /// 损坏判定：检查点元数据缺失（语法损坏）或指向已不存在的会话
+  /// （引用失效）。
+  Future<bool?> _detectCheckpointDamage(MemoryRecoveryRun run) async {
+    final file = memoryFile(memoryDirectory, 'episodes/checkpoint.md');
     if (!await file.exists()) {
-      return;
+      return null;
     }
     final contents = await readFileIfExists(file);
     Map<String, Object?>? metadata;
@@ -685,30 +1085,34 @@ final class MemoryRecoveryService {
       }
     }
     final sessionId = metadata?['sessionId'];
+    final sessionIds = await _validSessionIds();
     final orphaned = metadata != null &&
         sessionId is String &&
         sessionIds.isNotEmpty &&
         !sessionIds.contains(sessionId);
     if (metadata != null && !orphaned) {
-      return;
+      return null;
     }
+    return orphaned;
+  }
+
+  /// 恢复动作：检查点可从会话完整重推（条目标识去重避免重复整理）：
+  /// 完整恢复，隔离副本随之删除。
+  Future<void> _recoverCheckpoint(bool orphaned, MemoryRecoveryRun run) async {
+    final file = memoryFile(memoryDirectory, 'episodes/checkpoint.md');
     String quarantinePath;
     try {
-      quarantinePath = await _quarantineMove(file, 'checkpoint');
+      quarantinePath = await run.quarantineMove(file, 'checkpoint');
     } on Object catch (error) {
       _diagnosticsSink('checkpoint quarantine deferred [$error]');
       return;
     }
-    // 检查点可从会话完整重推（条目标识去重避免重复整理）：完整恢复，
-    // 隔离副本随之删除。
-    await _deleteIfExists(File(quarantinePath));
-    findings.add(
+    await run.deleteIfExists(File(quarantinePath));
+    run.findings.add(
       MemoryRecoveryFinding(
         layerKey: 'checkpoint',
         layer: '整理检查点',
-        kind: orphaned
-            ? MemoryDamageKind.orphaned
-            : MemoryDamageKind.corrupt,
+        kind: orphaned ? MemoryDamageKind.orphaned : MemoryDamageKind.corrupt,
         outcome: MemoryRecoveryOutcome.full,
         evidence: orphaned
             ? '指向的会话已不存在，重置后从未归档会话开头重扫'
@@ -719,24 +1123,26 @@ final class MemoryRecoveryService {
 
   // ---------- 记忆控制 ----------
 
-  /// 控制文件损坏时从 episode 控制事件审计重建（禁提/冻结/解除冻结/
+  /// 损坏判定：控制文件不可读。
+  Future<bool?> _detectControlsDamage(MemoryRecoveryRun run) async {
+    final controls = await memoryControls.load();
+    return controls.readable ? null : true;
+  }
+
+  /// 恢复动作：从 episode 控制事件审计重建（禁提/冻结/解除冻结/
   /// 删除的簿记条目），重建后对封禁范围跑既有派生清除管线，绝不让
   /// 被控制内容随抢救复活。审计无法证明完整性：隔离原件一律保留。
-  Future<void> _recoverControls(List<MemoryRecoveryFinding> findings) async {
-    final controls = await memoryControls.load();
-    if (controls.readable) {
-      return;
-    }
+  Future<void> _recoverControls(bool damaged, MemoryRecoveryRun run) async {
     final file = memoryControls.controlsFile;
     String? quarantinePath;
     try {
-      quarantinePath = await _quarantineCopy(file, 'controls');
+      quarantinePath = await run.quarantineCopy(file, 'controls');
     } on Object catch (error) {
       _diagnosticsSink('controls quarantine deferred [$error]');
     }
     if (quarantinePath == null) {
       // 隔离保全失败：绝不覆盖唯一原始证据，保持现状等待下轮重试。
-      findings.add(
+      run.findings.add(
         const MemoryRecoveryFinding(
           layerKey: 'controls',
           layer: '记忆控制',
@@ -814,7 +1220,7 @@ final class MemoryRecoveryService {
       deleted: [for (final text in deleted) entry(text)],
     );
     if (!await memoryControls.replaceForRecovery(rebuilt)) {
-      findings.add(
+      run.findings.add(
         const MemoryRecoveryFinding(
           layerKey: 'controls',
           layer: '记忆控制',
@@ -841,7 +1247,7 @@ final class MemoryRecoveryService {
 
     final rebuiltCount =
         frozenEntries.length + banned.length + deleted.length;
-    findings.add(
+    run.findings.add(
       MemoryRecoveryFinding(
         layerKey: 'controls',
         layer: '记忆控制',
@@ -900,7 +1306,9 @@ final class MemoryRecoveryService {
 
   // ---------- 索引与月摘要 ----------
 
-  Future<void> _recoverIndexes(List<MemoryRecoveryFinding> findings) async {
+  /// 损坏判定：索引与现存有效每日记录逐月比对，缺失、语法损坏、
+  /// 引用失效或可容忍旧版本即上报并标记重建。
+  Future<_IndexDamage?> _detectIndexDamage(MemoryRecoveryRun run) async {
     final dates = await episodePipeline.listEpisodeDates();
     final validMonths = <String>{};
     final validDates = <String>{};
@@ -925,7 +1333,7 @@ final class MemoryRecoveryService {
       if (topExists) {
         // 索引指向的世界已不存在（删除清空或整体损坏）：重建即删除。
         dirty = true;
-        findings.add(
+        run.findings.add(
           const MemoryRecoveryFinding(
             layerKey: 'top-index',
             layer: '月份索引',
@@ -937,8 +1345,8 @@ final class MemoryRecoveryService {
       }
     } else if (!topExists) {
       dirty = true;
-      findings.add(
-        MemoryRecoveryFinding(
+      run.findings.add(
+        const MemoryRecoveryFinding(
           layerKey: 'top-index',
           layer: '月份索引',
           kind: MemoryDamageKind.missing,
@@ -948,11 +1356,11 @@ final class MemoryRecoveryService {
       );
     } else if (top == null) {
       dirty = true;
-      final quarantinePath = await _quarantineIfExists(topFile, 'top-index');
+      final quarantinePath = await run.quarantineIfExists(topFile, 'top-index');
       if (quarantinePath != null) {
         quarantined.add(quarantinePath);
       }
-      findings.add(
+      run.findings.add(
         const MemoryRecoveryFinding(
           layerKey: 'top-index',
           layer: '月份索引',
@@ -966,7 +1374,7 @@ final class MemoryRecoveryService {
       if (!validMonths.every(indexedMonths.contains) ||
           !indexedMonths.every(validMonths.contains)) {
         dirty = true;
-        findings.add(
+        run.findings.add(
           MemoryRecoveryFinding(
             layerKey: 'top-index',
             layer: '月份索引',
@@ -986,14 +1394,14 @@ final class MemoryRecoveryService {
             .toSet();
         if (dayLines == null) {
           dirty = true;
-          final quarantinePath = await _quarantineIfExists(
+          final quarantinePath = await run.quarantineIfExists(
             monthFile,
             'month-index',
           );
           if (quarantinePath != null) {
             quarantined.add(quarantinePath);
           }
-          findings.add(
+          run.findings.add(
             MemoryRecoveryFinding(
               layerKey: 'month-index',
               layer: '每日索引（$month）',
@@ -1011,7 +1419,7 @@ final class MemoryRecoveryService {
         final missingDates = monthDates.difference(indexedDates);
         if (orphanRows.isNotEmpty || missingDates.isNotEmpty) {
           dirty = true;
-          findings.add(
+          run.findings.add(
             MemoryRecoveryFinding(
               layerKey: 'month-index',
               layer: '每日索引（$month）',
@@ -1026,17 +1434,24 @@ final class MemoryRecoveryService {
       }
     }
 
-    if (dirty) {
-      await _indexStore.rebuild();
-      // 索引可完全从现存每日记录推导：重建成功后隔离副本删除。
-      for (final quarantinePath in quarantined) {
-        await _deleteIfExists(File(quarantinePath));
-      }
+    return dirty ? (quarantined: quarantined) : null;
+  }
+
+  /// 恢复动作：索引可完全从现存每日记录推导，重建成功后隔离副本
+  /// 删除。
+  Future<void> _recoverIndexes(
+    _IndexDamage damage,
+    MemoryRecoveryRun run,
+  ) async {
+    await _indexStore.rebuild();
+    for (final quarantinePath in damage.quarantined) {
+      await run.deleteIfExists(File(quarantinePath));
     }
   }
 
-  Future<void> _recoverMonthlySummaries(
-    List<MemoryRecoveryFinding> findings,
+  /// 损坏判定：非当月的已归档月份缺月摘要或摘要不可读。
+  Future<_MonthSummaryDamage?> _detectMonthSummaryDamage(
+    MemoryRecoveryRun run,
   ) async {
     final now = _clock();
     final currentMonth =
@@ -1061,6 +1476,7 @@ final class MemoryRecoveryService {
         months[month] = true;
       }
     }
+    final damaged = <({String month, String label, bool existed})>[];
     for (final MapEntry(:key, :value) in months.entries) {
       if (!value) {
         continue;
@@ -1069,37 +1485,48 @@ final class MemoryRecoveryService {
       if (summary != null && summary.readable) {
         continue;
       }
-      final label = '月度摘要（$key）';
+      damaged.add((month: key, label: '月度摘要（$key）', existed: summary != null));
+    }
+    return damaged.isEmpty ? null : (dates: dates, months: damaged);
+  }
+
+  /// 恢复动作：存在的损坏原件先隔离再删除（重建会覆盖），月摘要可
+  /// 完全从同月每日记录重新压缩：隔离副本随之删除。
+  Future<void> _recoverMonthlySummaries(
+    _MonthSummaryDamage damage,
+    MemoryRecoveryRun run,
+  ) async {
+    for (final month in damage.months) {
       String? quarantinePath;
-      if (summary != null) {
-        // 存在但不可读：隔离原件后重新压缩。
-        quarantinePath = await _quarantineIfExists(
-          monthlySummary.summaryFile(key),
+      if (month.existed) {
+        quarantinePath = await run.quarantineIfExists(
+          monthlySummary.summaryFile(month.month),
           'month-summary',
         );
         try {
-          await episodePipeline.commits.delete(monthlySummary.summaryFile(key));
+          await episodePipeline.commits.delete(
+            monthlySummary.summaryFile(month.month),
+          );
         } on Object {
           // 删除失败时压缩会因不可读而跳过，下轮再试。
         }
       }
       try {
-        await monthlySummary.compressMonth(key, episodeDates: dates);
+        await monthlySummary.compressMonth(month.month, episodeDates: damage.dates);
       } on Object catch (error) {
-        _diagnosticsSink('summary recovery deferred [$error] month=$key');
+        _diagnosticsSink('summary recovery deferred [$error] month=${month.month}');
         continue;
       }
-      // 月摘要可完全从同月每日记录重新压缩：隔离副本随之删除。
       if (quarantinePath != null) {
-        await _deleteIfExists(File(quarantinePath));
+        await run.deleteIfExists(File(quarantinePath));
       }
-      findings.add(
+      run.findings.add(
         MemoryRecoveryFinding(
           layerKey: 'month-summary',
-          layer: label,
-          kind: summary == null
-              ? MemoryDamageKind.missing
-              : MemoryDamageKind.corrupt,
+          layer: month.label,
+          kind: month.existed
+              ? MemoryDamageKind.corrupt
+              : MemoryDamageKind.missing,
           outcome: MemoryRecoveryOutcome.full,
           evidence: '从同月有效每日记录重新压缩',
         ),
@@ -1109,114 +1536,19 @@ final class MemoryRecoveryService {
 
   // ---------- 热层 ----------
 
-  Future<void> _recoverHotLayer(List<MemoryRecoveryFinding> findings) async {
-    // open-loops.md：损坏即隔离；活跃事项无法从现有证据确定性重建，
-    // 诚实报部分恢复，等待日终重新整理。
-    await _recoverPlainFile(
-      file: File(path.join(memoryDirectory, 'open-loops.md')),
-      layerKey: 'open-loops',
-      layer: '未闭环事项',
-      managedHeader: '# open-loops',
-      parseable: (contents) => parseOpenLoopItems(contents) != null,
-      loss: '未闭环事项内容',
-      findings: findings,
-    );
-    await _recoverPlainFile(
-      file: File(path.join(memoryDirectory, 'open-loops.archive.md')),
-      layerKey: 'open-loops-archive',
-      layer: '未闭环事项归档',
-      managedHeader: '# open-loops archive',
-      parseable: null, // 归档格式宽松，只处理编码失败。
-      loss: '已闭环事项归档',
-      findings: findings,
-    );
-
-    // daily-state.md：编码失败才算损坏；重建归下一次日终归档。
-    final dailyState = dailyStateMemoryFile(memoryDirectory);
-    if (await dailyState.exists() &&
-        await readFileIfExists(dailyState) == null) {
-      try {
-        await _quarantineMove(dailyState, 'daily-state');
-        findings.add(
-          const MemoryRecoveryFinding(
-            layerKey: 'daily-state',
-            layer: '近日状态',
-            kind: MemoryDamageKind.corrupt,
-            outcome: MemoryRecoveryOutcome.pending,
-            evidence: '下次日终归档按近 7 天有效记录重建',
-            loss: '近日状态内容',
-            quarantined: true,
-          ),
-        );
-      } on Object catch (error) {
-        _diagnosticsSink('daily-state quarantine deferred [$error]');
-      }
-    }
-
-    // relationship.md：受管结构损坏时按幸存日文件里最近一次持久化
-    // 的阶段判断整体重建；没有判断按初识保守重建，等日终模型追认。
-    final relationship = File(path.join(memoryDirectory, 'relationship.md'));
-    if (await relationship.exists()) {
-      final contents = await readFileIfExists(relationship);
-      final managed =
-          contents != null && contents.trimLeft().startsWith('# relationship');
-      final broken = contents == null ||
-          (managed && parseRelationshipFile(contents) == null);
-      if (broken) {
-        try {
-          final quarantinePath = await _quarantineMove(relationship, 'relationship');
-          final dates = await episodePipeline.listEpisodeDates();
-          final rebuild = await relationshipLifecycle.rebuildForRecovery(
-            episodePipeline,
-            dates,
-            localSessionDate(_clock()),
-          );
-          if (rebuild == RelationshipRebuild.restored) {
-            // 阶段来自持久化判断，完整恢复：隔离副本随之删除。
-            await _deleteIfExists(File(quarantinePath));
-          }
-          findings.add(
-            MemoryRecoveryFinding(
-              layerKey: 'relationship',
-              layer: '关系记录',
-              kind: MemoryDamageKind.corrupt,
-              outcome: rebuild == RelationshipRebuild.restored
-                  ? MemoryRecoveryOutcome.full
-                  : MemoryRecoveryOutcome.pending,
-              evidence: switch (rebuild) {
-                RelationshipRebuild.restored =>
-                  '从幸存日文件里最近一次持久化的阶段判断整体重建（不受日终一级限制）',
-                RelationshipRebuild.seeded =>
-                  '未找到持久化的阶段判断，按初识保守重建，等日终模型追认',
-                RelationshipRebuild.skipped => null,
-              },
-              loss: rebuild == RelationshipRebuild.restored
-                  ? null
-                  : '关系记录内容',
-              quarantined: rebuild != RelationshipRebuild.restored,
-            ),
-          );
-        } on Object catch (error) {
-          _diagnosticsSink('relationship recovery deferred [$error]');
-        }
-      }
-    }
-  }
-
-  /// 简单文本热层文件的恢复：编码失败或受管头部下结构解析失败即
-  /// 隔离；无受管头部视为其他用途文件，绝不触碰。[parseable] 为 null
-  /// 时只检测编码失败。
-  Future<void> _recoverPlainFile({
+  /// 简单文本热层文件的损坏判定：编码失败或受管头部下结构解析失败
+  /// 即损坏；无受管头部视为其他用途文件，绝不触碰。[parseable] 为
+  /// null 时只检测编码失败。
+  Future<_PlainFileDamage?> _detectPlainFileDamage({
     required File file,
     required String layerKey,
     required String layer,
     required String managedHeader,
     required bool Function(String contents)? parseable,
     required String loss,
-    required List<MemoryRecoveryFinding> findings,
   }) async {
     if (!await file.exists()) {
-      return;
+      return null;
     }
     String? contents;
     var encodingFailed = false;
@@ -1232,130 +1564,209 @@ final class MemoryRecoveryService {
             parser != null &&
             !parser(contents));
     if (!damaged) {
-      return;
+      return null;
     }
+    return (file: file, layerKey: layerKey, layer: layer, loss: loss);
+  }
+
+  /// 简单文本热层文件的恢复动作：隔离原件并如实上报部分恢复。
+  Future<void> _recoverPlainFile(
+    _PlainFileDamage damage,
+    MemoryRecoveryRun run,
+  ) async {
     try {
-      await _quarantineMove(file, layerKey);
+      await run.quarantineMove(damage.file, damage.layerKey);
     } on Object catch (error) {
-      _diagnosticsSink('$layerKey quarantine deferred [$error]');
+      _diagnosticsSink('${damage.layerKey} quarantine deferred [$error]');
       return;
     }
-    findings.add(
+    run.findings.add(
       MemoryRecoveryFinding(
-        layerKey: layerKey,
-        layer: layer,
+        layerKey: damage.layerKey,
+        layer: damage.layer,
         kind: MemoryDamageKind.corrupt,
         outcome: MemoryRecoveryOutcome.partial,
-        loss: loss,
+        loss: damage.loss,
         quarantined: true,
       ),
     );
   }
 
+  /// 损坏判定：daily-state.md 编码失败即损坏。
+  Future<File?> _detectDailyStateDamage(MemoryRecoveryRun run) async {
+    final dailyState = dailyStateMemoryFile(memoryDirectory);
+    if (await dailyState.exists() &&
+        await readFileIfExists(dailyState) == null) {
+      return dailyState;
+    }
+    return null;
+  }
+
+  /// 恢复动作：隔离原件并上报（下次日终归档按近 7 天有效记录重建）。
+  Future<void> _recoverDailyState(
+    File dailyState,
+    MemoryRecoveryRun run,
+  ) async {
+    try {
+      await run.quarantineMove(dailyState, 'daily-state');
+      run.findings.add(
+        const MemoryRecoveryFinding(
+          layerKey: 'daily-state',
+          layer: '近日状态',
+          kind: MemoryDamageKind.corrupt,
+          outcome: MemoryRecoveryOutcome.pending,
+          evidence: '下次日终归档按近 7 天有效记录重建',
+          loss: '近日状态内容',
+          quarantined: true,
+        ),
+      );
+    } on Object catch (error) {
+      _diagnosticsSink('daily-state quarantine deferred [$error]');
+    }
+  }
+
+  /// 损坏判定：relationship.md 编码失败或受管结构解析失败。
+  Future<bool?> _detectRelationshipDamage(MemoryRecoveryRun run) async {
+    final relationship = memoryFile(memoryDirectory, relationshipFileName);
+    if (!await relationship.exists()) {
+      return null;
+    }
+    final contents = await readFileIfExists(relationship);
+    final managed =
+        contents != null && contents.trimLeft().startsWith('# relationship');
+    final broken = contents == null ||
+        (managed && parseRelationshipFile(contents) == null);
+    return broken ? true : null;
+  }
+
+  /// 恢复动作：隔离原件后按幸存日文件里最近一次持久化的阶段判断
+  /// 整体重建。
+  Future<void> _recoverRelationship(
+    bool damaged,
+    MemoryRecoveryRun run,
+  ) async {
+    final relationship = memoryFile(memoryDirectory, relationshipFileName);
+    try {
+      final quarantinePath = await run.quarantineMove(relationship, 'relationship');
+      final dates = await episodePipeline.listEpisodeDates();
+      final rebuild = await relationshipLifecycle.rebuildForRecovery(
+        episodePipeline,
+        dates,
+        localSessionDate(_clock()),
+      );
+      if (rebuild == RelationshipRebuild.restored) {
+        // 阶段来自持久化判断，完整恢复：隔离副本随之删除。
+        await run.deleteIfExists(File(quarantinePath));
+      }
+      run.findings.add(
+        MemoryRecoveryFinding(
+          layerKey: 'relationship',
+          layer: '关系记录',
+          kind: MemoryDamageKind.corrupt,
+          outcome: rebuild == RelationshipRebuild.restored
+              ? MemoryRecoveryOutcome.full
+              : MemoryRecoveryOutcome.pending,
+          evidence: switch (rebuild) {
+            RelationshipRebuild.restored =>
+              '从幸存日文件里最近一次持久化的阶段判断整体重建（不受日终一级限制）',
+            RelationshipRebuild.seeded =>
+              '未找到持久化的阶段判断，按初识保守重建，等日终模型追认',
+            RelationshipRebuild.skipped => null,
+          },
+          loss: rebuild == RelationshipRebuild.restored ? null : '关系记录内容',
+          quarantined: rebuild != RelationshipRebuild.restored,
+        ),
+      );
+    } on Object catch (error) {
+      _diagnosticsSink('relationship recovery deferred [$error]');
+    }
+  }
+
   // ---------- PersonaTree、长期印象与 Dream 状态 ----------
 
-  Future<void> _recoverLongTerm(List<MemoryRecoveryFinding> findings) async {
-    // 任何一次 Dream 备份恢复成功后，必须对现行控制集合再跑派生清除
-    // （见 _reapplyControlsAfterBackupRestore）。
-    var restoredFromBackup = false;
-
-    // long-memory.md：优先从最近有效 Dream 备份恢复；没有备份时隔离
-    // 并等待语义恢复，绝不补写无法证明的长期内容。
-    if (await _recoverLongMemoryFromBackup(findings)) {
-      restoredFromBackup = true;
+  /// 损坏判定：long-memory.md 编码失败或受管结构不可读。
+  Future<bool?> _detectLongMemoryDamage(MemoryRecoveryRun run) async {
+    final longMemory = memoryFile(memoryDirectory, longMemoryFileName);
+    if (!await longMemory.exists()) {
+      return null;
     }
-
-    // PersonaTree 分支与归档：优先 Dream 备份恢复；无备份时隔离并
-    // 暂停受影响分支的根节点操作（快照 archiveReadable 已驱动拒绝）。
-    // 恢复前先隔离损坏原件：备份落盘成功才删除副本，落盘失败保留
-    // （详见 [_recoverPersonaTreeFromBackup]）。
-    if (await _recoverPersonaTreeFromBackup(findings)) {
-      restoredFromBackup = true;
-    }
-
-    // persona.md：纯投影＋受保护称呼设定行，结构存疑时从活跃根重投
-    // 影；树不完整时隔离等待，绝不写出残缺画像（详见
-    // [_recoverPersonaProjection]）。
-    await _recoverPersonaProjection(findings);
-
-    // dream/state.md：损坏即隔离并重置为空状态（Dream 间隔证据丢失，
-    // 下一次晚安重新评估）。
-    await _recoverDreamState(findings);
-
-    if (restoredFromBackup) {
-      await _reapplyControlsAfterBackupRestore();
-    }
+    final contents = await readFileIfExists(longMemory);
+    final managed =
+        contents != null && contents.trimLeft().startsWith('# long-memory');
+    final broken = contents == null ||
+        (managed && !parseLongMemory(contents).readable);
+    return broken ? true : null;
   }
 
-  /// long-memory.md 恢复：优先从最近有效 Dream 备份恢复；没有备份时
-  /// 隔离并等待语义恢复，绝不补写无法证明的长期内容。返回是否完成过
-  /// 备份恢复。
-  Future<bool> _recoverLongMemoryFromBackup(
-    List<MemoryRecoveryFinding> findings,
+  /// 恢复动作：优先从最近有效 Dream 备份恢复（完成过备份恢复时
+  /// 标记运行上下文，供表尾的 controls-reapply 行接力）；没有备份时
+  /// 隔离并等待语义恢复，绝不补写无法证明的长期内容。
+  Future<void> _recoverLongMemoryFromBackup(
+    bool damaged,
+    MemoryRecoveryRun run,
   ) async {
-    var restoredFromBackup = false;
-    final longMemory = File(path.join(memoryDirectory, longMemoryFileName));
-    if (await longMemory.exists()) {
-      final contents = await readFileIfExists(longMemory);
-      final managed =
-          contents != null && contents.trimLeft().startsWith('# long-memory');
-      final broken = contents == null ||
-          (managed && !parseLongMemory(contents).readable);
-      if (broken) {
-        final backup = await dreamService.readLongMemoryBackup();
-        if (backup != null) {
-          try {
-            final quarantinePath = await _quarantineCopy(
-              longMemory,
-              'long-memory',
-            );
-            await _atomicWriter.replace(longMemory.path, backup);
-            await _deleteIfExists(File(quarantinePath));
-            restoredFromBackup = true;
-            findings.add(
-              const MemoryRecoveryFinding(
-                layerKey: 'long-memory',
-                layer: '长期印象',
-                kind: MemoryDamageKind.corrupt,
-                outcome: MemoryRecoveryOutcome.full,
-                evidence: '从最近一次 Dream 备份恢复',
-              ),
-            );
-          } on Object catch (error) {
-            _diagnosticsSink('long-memory recovery deferred [$error]');
-          }
-        } else {
-          try {
-            await _quarantineMove(longMemory, 'long-memory');
-            findings.add(
-              const MemoryRecoveryFinding(
-                layerKey: 'long-memory',
-                layer: '长期印象',
-                kind: MemoryDamageKind.corrupt,
-                outcome: MemoryRecoveryOutcome.pending,
-                evidence: '无有效 Dream 备份',
-                loss: '长期印象内容',
-                quarantined: true,
-              ),
-            );
-          } on Object catch (error) {
-            _diagnosticsSink('long-memory quarantine deferred [$error]');
-          }
-        }
+    final longMemory = memoryFile(memoryDirectory, longMemoryFileName);
+    final backup = await dreamService.readLongMemoryBackup();
+    if (backup != null) {
+      try {
+        final quarantinePath = await run.quarantineCopy(
+          longMemory,
+          'long-memory',
+        );
+        await _atomicWriter.replace(longMemory.path, backup);
+        await run.deleteIfExists(File(quarantinePath));
+        run.markBackupRestored();
+        run.findings.add(
+          const MemoryRecoveryFinding(
+            layerKey: 'long-memory',
+            layer: '长期印象',
+            kind: MemoryDamageKind.corrupt,
+            outcome: MemoryRecoveryOutcome.full,
+            evidence: '从最近一次 Dream 备份恢复',
+          ),
+        );
+      } on Object catch (error) {
+        _diagnosticsSink('long-memory recovery deferred [$error]');
+      }
+    } else {
+      try {
+        await run.quarantineMove(longMemory, 'long-memory');
+        run.findings.add(
+          const MemoryRecoveryFinding(
+            layerKey: 'long-memory',
+            layer: '长期印象',
+            kind: MemoryDamageKind.corrupt,
+            outcome: MemoryRecoveryOutcome.pending,
+            evidence: '无有效 Dream 备份',
+            loss: '长期印象内容',
+            quarantined: true,
+          ),
+        );
+      } on Object catch (error) {
+        _diagnosticsSink('long-memory quarantine deferred [$error]');
       }
     }
-    return restoredFromBackup;
   }
 
-  /// PersonaTree 分支与归档恢复：优先 Dream 备份恢复；无备份时隔离
-  /// 并暂停受影响分支的根节点操作（快照 archiveReadable 已驱动拒绝）。
-  /// 恢复前先隔离损坏原件：备份落盘成功才删除副本，落盘失败保留。
-  /// 返回是否完成过备份恢复。
-  Future<bool> _recoverPersonaTreeFromBackup(
-    List<MemoryRecoveryFinding> findings,
+  /// 损坏判定：任一画像分支或归档不可读。
+  Future<_PersonaTreeDamage?> _detectPersonaTreeDamage(
+    MemoryRecoveryRun run,
   ) async {
-    var restoredFromBackup = false;
     final snapshot = await personaTree.readSnapshot();
+    final damaged = snapshot.branches.values.any(
+      (view) => !view.readable || !view.archiveReadable,
+    );
+    return damaged ? (snapshot: snapshot) : null;
+  }
+
+  /// 恢复动作：优先 Dream 备份恢复；无备份时隔离并暂停受影响分支
+  /// 的根节点操作（快照 archiveReadable 已驱动拒绝）。恢复前先隔离
+  /// 损坏原件：备份落盘成功才删除副本，落盘失败保留。
+  Future<void> _recoverPersonaTreeFromBackup(
+    _PersonaTreeDamage damage,
+    MemoryRecoveryRun run,
+  ) async {
+    final snapshot = damage.snapshot;
     final backup = await dreamService.readPersonaTreeBackup();
     final restoreSet = <String, String>{};
     // 显式记录每个待恢复项（恢复键 → 层键/标签/隔离路径），结果循环
@@ -1369,15 +1780,16 @@ final class MemoryRecoveryService {
         })>[];
     for (final branch in personaBranches) {
       final view = snapshot.branches[branch.wireName];
-      final activeFile = File(
-        path.join(memoryDirectory, 'persona-tree', branch.fileName),
+      final activeFile = memoryFile(
+        memoryDirectory,
+        'persona-tree/${branch.fileName}',
       );
       if (view != null && !view.readable && await activeFile.exists()) {
         final layerKey = 'persona-branch-${branch.wireName}';
         final label = '画像分支（${branch.title}）';
         final backupContent = backup[branch.fileName];
         try {
-          final quarantinePath = await _quarantineMove(activeFile, layerKey);
+          final quarantinePath = await run.quarantineMove(activeFile, layerKey);
           if (backupContent != null) {
             restoreSet[branch.fileName] = backupContent;
             restoreRecords.add((
@@ -1387,7 +1799,7 @@ final class MemoryRecoveryService {
               quarantinePath: quarantinePath,
             ));
           } else {
-            findings.add(
+            run.findings.add(
               MemoryRecoveryFinding(
                 layerKey: layerKey,
                 layer: label,
@@ -1403,13 +1815,9 @@ final class MemoryRecoveryService {
           _diagnosticsSink('persona quarantine deferred [$error]');
         }
       }
-      final archiveFile = File(
-        path.join(
-          memoryDirectory,
-          'persona-tree',
-          'archive',
-          branch.fileName,
-        ),
+      final archiveFile = memoryFile(
+        memoryDirectory,
+        'persona-tree/archive/${branch.fileName}',
       );
       if (view != null && !view.archiveReadable && await archiveFile.exists()) {
         final layerKey = 'persona-archive-${branch.wireName}';
@@ -1428,7 +1836,7 @@ final class MemoryRecoveryService {
         }
         final backupContent = backup[archiveKey];
         try {
-          final quarantinePath = await _quarantineMove(archiveFile, layerKey);
+          final quarantinePath = await run.quarantineMove(archiveFile, layerKey);
           if (backupContent != null) {
             restoreSet[archiveKey] = backupContent;
             restoreRecords.add((
@@ -1444,7 +1852,7 @@ final class MemoryRecoveryService {
               archiveFile.path,
               '$pausedArchiveMarker ${branch.wireName} -->\n',
             );
-            findings.add(
+            run.findings.add(
               MemoryRecoveryFinding(
                 layerKey: layerKey,
                 layer: label,
@@ -1471,9 +1879,9 @@ final class MemoryRecoveryService {
       for (final record in restoreRecords) {
         if (applied.contains(record.restoreKey)) {
           // 备份完整落盘：完整恢复，隔离副本删除。
-          await _deleteIfExists(File(record.quarantinePath));
-          restoredFromBackup = true;
-          findings.add(
+          await run.deleteIfExists(File(record.quarantinePath));
+          run.markBackupRestored();
+          run.findings.add(
             MemoryRecoveryFinding(
               layerKey: record.layerKey,
               layer: record.label,
@@ -1484,7 +1892,7 @@ final class MemoryRecoveryService {
           );
         } else {
           // 备份内容校验失败：隔离原件保留，等待语义恢复。
-          findings.add(
+          run.findings.add(
             MemoryRecoveryFinding(
               layerKey: record.layerKey,
               layer: record.label,
@@ -1500,113 +1908,141 @@ final class MemoryRecoveryService {
         }
       }
     }
-    return restoredFromBackup;
   }
 
-  /// persona.md 投影恢复：纯投影＋受保护称呼设定行，结构存疑时从
-  /// 活跃根重投影；树不完整时隔离等待，绝不写出残缺画像。隔离前先
-  /// 从原件抢救称呼行（ADR 0005）：救出就落回最小 persona.md 等下次
-  /// 重投影带上，救不出就退回「未设置」，绝不编一个称呼。
-  Future<void> _recoverPersonaProjection(
-    List<MemoryRecoveryFinding> findings,
+  /// 损坏判定：persona.md 编码失败或投影结构校验失败。
+  Future<_PersonaProjectionDamage?> _detectPersonaProjectionDamage(
+    MemoryRecoveryRun run,
   ) async {
-    final persona = File(path.join(memoryDirectory, 'persona.md'));
-    if (await persona.exists()) {
-      final contents = await readFileIfExists(persona);
-      final salvagedAppellation = extractAppellationLine(contents);
-      if (!_personaProjectionValid(contents)) {
-        final freshSnapshot = await personaTree.readSnapshot();
-        final allReadable = freshSnapshot.branches.values.every(
-          (branchView) => branchView.readable,
+    final persona = memoryFile(memoryDirectory, personaFileName);
+    if (!await persona.exists()) {
+      return null;
+    }
+    final contents = await readFileIfExists(persona);
+    if (_personaProjectionValid(contents)) {
+      return null;
+    }
+    return (salvagedAppellation: extractAppellationLine(contents));
+  }
+
+  /// 恢复动作：树完整时从活跃根重投影（重投影从仍在原地的原件抢救
+  /// 称呼行，隔离副本随后删除）；树不完整时隔离等待，救出的称呼行
+  /// 落回最小 persona.md 等下次重投影带上，救不出就退回「未设置」，
+  /// 绝不编一个称呼（ADR 0005）。
+  Future<void> _recoverPersonaProjection(
+    _PersonaProjectionDamage damage,
+    MemoryRecoveryRun run,
+  ) async {
+    final persona = memoryFile(memoryDirectory, personaFileName);
+    final salvagedAppellation = damage.salvagedAppellation;
+    final freshSnapshot = await personaTree.readSnapshot();
+    final allReadable = freshSnapshot.branches.values.every(
+      (branchView) => branchView.readable,
+    );
+    if (allReadable) {
+      try {
+        final quarantinePath = await run.quarantineCopy(
+          persona,
+          'persona-projection',
         );
-        if (allReadable) {
-          try {
-            final quarantinePath = await _quarantineCopy(
-              persona,
-              'persona-projection',
-            );
-            // 重投影从仍在原地的原件抢救称呼行，隔离副本随后删除。
-            await personaTree.regeneratePersonaProjection();
-            await _deleteIfExists(File(quarantinePath));
-            findings.add(
-              const MemoryRecoveryFinding(
-                layerKey: 'persona-projection',
-                layer: '画像投影',
-                kind: MemoryDamageKind.corrupt,
-                outcome: MemoryRecoveryOutcome.full,
-                evidence: '从画像树活跃根重新投影',
-              ),
-            );
-          } on Object catch (error) {
-            _diagnosticsSink('persona projection deferred [$error]');
-          }
-        } else {
-          try {
-            await _quarantineMove(persona, 'persona-projection');
-            if (salvagedAppellation != null) {
-              await _atomicWriter.replace(
-                persona.path,
-                '# persona\n$salvagedAppellation\n',
-              );
-            }
-            findings.add(
-              MemoryRecoveryFinding(
-                layerKey: 'persona-projection',
-                layer: '画像投影',
-                kind: MemoryDamageKind.corrupt,
-                outcome: MemoryRecoveryOutcome.pending,
-                evidence: salvagedAppellation == null
-                    ? '画像树尚不完整，等待分支恢复后重投影'
-                    : '画像树尚不完整；称呼行已抢救，等待分支恢复后重投影',
-                loss: '画像投影',
-                quarantined: true,
-              ),
-            );
-          } on Object catch (error) {
-            _diagnosticsSink('persona projection quarantine deferred [$error]');
-          }
+        await personaTree.regeneratePersonaProjection();
+        await run.deleteIfExists(File(quarantinePath));
+        run.findings.add(
+          const MemoryRecoveryFinding(
+            layerKey: 'persona-projection',
+            layer: '画像投影',
+            kind: MemoryDamageKind.corrupt,
+            outcome: MemoryRecoveryOutcome.full,
+            evidence: '从画像树活跃根重新投影',
+          ),
+        );
+      } on Object catch (error) {
+        _diagnosticsSink('persona projection deferred [$error]');
+      }
+    } else {
+      try {
+        await run.quarantineMove(persona, 'persona-projection');
+        if (salvagedAppellation != null) {
+          await _atomicWriter.replace(
+            persona.path,
+            '# persona\n$salvagedAppellation\n',
+          );
         }
+        run.findings.add(
+          MemoryRecoveryFinding(
+            layerKey: 'persona-projection',
+            layer: '画像投影',
+            kind: MemoryDamageKind.corrupt,
+            outcome: MemoryRecoveryOutcome.pending,
+            evidence: salvagedAppellation == null
+                ? '画像树尚不完整，等待分支恢复后重投影'
+                : '画像树尚不完整；称呼行已抢救，等待分支恢复后重投影',
+            loss: '画像投影',
+            quarantined: true,
+          ),
+        );
+      } on Object catch (error) {
+        _diagnosticsSink('persona projection quarantine deferred [$error]');
       }
     }
   }
 
-  /// dream/state.md 恢复：损坏即隔离并重置为空状态（Dream 间隔证据
-  /// 丢失，下一次晚安重新评估）。
-  Future<void> _recoverDreamState(List<MemoryRecoveryFinding> findings) async {
-    final state = File(path.join(memoryDirectory, 'dream', 'state.md'));
-    if (await state.exists()) {
-      var valid = false;
-      final contents = await readFileIfExists(state);
-      if (contents != null) {
-        final match = dreamStateMarkerPattern.firstMatch(contents);
-        if (match != null) {
-          try {
-            final json = decodeMarkerPayload(match.group(1)!);
-            valid = json['schemaVersion'] == 1;
-          } on Object {
-            valid = false;
-          }
-        }
-      }
-      if (!valid) {
+  /// 损坏判定：dream/state.md 状态标记缺失或解码失败。
+  Future<File?> _detectDreamStateDamage(MemoryRecoveryRun run) async {
+    final state = memoryFile(memoryDirectory, 'dream/state.md');
+    if (!await state.exists()) {
+      return null;
+    }
+    var valid = false;
+    final contents = await readFileIfExists(state);
+    if (contents != null) {
+      final match = dreamStateMarkerPattern.firstMatch(contents);
+      if (match != null) {
         try {
-          await _quarantineMove(state, 'dream-state');
-          findings.add(
-            const MemoryRecoveryFinding(
-              layerKey: 'dream-state',
-              layer: 'Dream 状态',
-              kind: MemoryDamageKind.corrupt,
-              outcome: MemoryRecoveryOutcome.partial,
-              evidence: '重置为空状态，晚安后重新评估',
-              loss: '上次 Dream 成功时间记录',
-              quarantined: true,
-            ),
-          );
-        } on Object catch (error) {
-          _diagnosticsSink('dream state quarantine deferred [$error]');
+          final json = decodeMarkerPayload(match.group(1)!);
+          valid = json['schemaVersion'] == 1;
+        } on Object {
+          valid = false;
         }
       }
     }
+    return valid ? null : state;
+  }
+
+  /// 恢复动作：隔离原件并上报（重置为空状态）。
+  Future<void> _recoverDreamState(File state, MemoryRecoveryRun run) async {
+    try {
+      await run.quarantineMove(state, 'dream-state');
+      run.findings.add(
+        const MemoryRecoveryFinding(
+          layerKey: 'dream-state',
+          layer: 'Dream 状态',
+          kind: MemoryDamageKind.corrupt,
+          outcome: MemoryRecoveryOutcome.partial,
+          evidence: '重置为空状态，晚安后重新评估',
+          loss: '上次 Dream 成功时间记录',
+          quarantined: true,
+        ),
+      );
+    } on Object catch (error) {
+      _diagnosticsSink('dream state quarantine deferred [$error]');
+    }
+  }
+
+  /// 损坏判定：本轮完成过 Dream 备份恢复——恢复出的旧备份可能带
+  /// 回其后被删除/禁提的内容。
+  Future<bool?> _detectControlsReapply(MemoryRecoveryRun run) async {
+    return run.backupRestored ? true : null;
+  }
+
+  /// 恢复动作：对现行控制集合（禁提 ∪ 删除）重跑派生清除。控制
+  /// 集合不可读时跳过——此时没有可信范围可比对，控制恢复本身已
+  /// 如实上报。
+  Future<void> _recoverControlsReapply(
+    bool damaged,
+    MemoryRecoveryRun run,
+  ) async {
+    await _reapplyControlsAfterBackupRestore();
   }
 
   /// Dream 备份恢复后，对现行控制集合（禁提 ∪ 删除）再跑一遍派生
@@ -1738,10 +2174,10 @@ final class MemoryRecoveryService {
     final directory = _quarantineDirectory;
     await directory.create(recursive: true);
     final stamp = _clock().toUtc().microsecondsSinceEpoch;
-    final target = path.join(
+    final target = memoryFile(
       directory.path,
       '${stamp}__${layerKey}__${path.basename(file.path)}',
-    );
+    ).path;
     final temporary = File('$target.$stamp.tmp');
     await file.copy(temporary.path);
     await temporary.rename(target);
@@ -1804,7 +2240,7 @@ final class MemoryRecoveryService {
   /// 委托产出的路径为正斜杠拼装：仅供 File I/O 与 basename 使用，
   /// 禁止对它做字符串等值比较。
   File _episodeDayFile(String date) =>
-      File(path.join(memoryDirectory, episodeDayRelativePath(date)));
+      memoryFile(memoryDirectory, episodeDayRelativePath(date));
 
   /// 编码损坏时的宽松解码兜底：宁可带着替换字符抢救正文结构，也
   /// 不因外围编码失败丢弃原始证据。
