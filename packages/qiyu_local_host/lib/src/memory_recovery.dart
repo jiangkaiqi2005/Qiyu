@@ -1132,7 +1132,7 @@ final class MemoryRecoveryService {
     );
 
     // daily-state.md：编码失败才算损坏；重建归下一次日终归档。
-    final dailyState = File(path.join(memoryDirectory, 'daily-state.md'));
+    final dailyState = dailyStateMemoryFile(memoryDirectory);
     if (await dailyState.exists() &&
         await readFileIfExists(dailyState) == null) {
       try {

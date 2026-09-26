@@ -236,7 +236,7 @@ final class MemoryActionService {
   File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _relationshipFile =>
       memoryFile(memoryDirectory, relationshipFileName);
-  File get _dailyStateFile => memoryFile(memoryDirectory, dailyStateFileName);
+  File get _dailyStateFile => dailyStateMemoryFile(memoryDirectory);
 
   static const _notFound = MemoryActionResult(
     status: MemoryActionStatus.failed,

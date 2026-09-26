@@ -222,7 +222,7 @@ class StatePackReader {
 
   File get _relationshipFile =>
       memoryFile(memoryDirectory, relationshipFileName);
-  File get _dailyStateFile => memoryFile(memoryDirectory, dailyStateFileName);
+  File get _dailyStateFile => dailyStateMemoryFile(memoryDirectory);
   File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _personaFile => memoryFile(memoryDirectory, personaFileName);
   // open-loops.md 无共享常量：本字面量与 OpenLoopStore、本包测试的

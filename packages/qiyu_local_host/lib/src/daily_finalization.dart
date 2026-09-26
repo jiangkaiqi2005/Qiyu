@@ -210,8 +210,7 @@ final class DailyFinalizationService {
   final AtomicTextWriter _atomicWriter;
   final void Function(String) _diagnosticsSink;
 
-  File get _dailyStateFile =>
-      File(path.join(memoryDirectory, 'daily-state.md'));
+  File get _dailyStateFile => dailyStateMemoryFile(memoryDirectory);
 
   /// 晚安归档：先补做所有更早的未完成日期，最后归档用户说晚安的当天。
   /// 当天放在最后，保证近日状态包以最新一天为窗口终点重建。
@@ -607,7 +606,7 @@ final class DailyFinalizationService {
         (text) => bannedMemoryText(text, banned),
       ),
       dailyState: filterControlledLines(
-        await _readMemoryFile('daily-state.md'),
+        await _readMemoryFile(dailyStateFileName),
         (text) => bannedMemoryText(text, banned),
       ),
       bannedTitles: banned,

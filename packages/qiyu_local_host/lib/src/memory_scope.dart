@@ -104,7 +104,7 @@ final class MemoryScopeScanner {
   File get _longMemoryFile => memoryFile(memoryDirectory, longMemoryFileName);
   File get _relationshipFile =>
       memoryFile(memoryDirectory, relationshipFileName);
-  File get _dailyStateFile => memoryFile(memoryDirectory, dailyStateFileName);
+  File get _dailyStateFile => dailyStateMemoryFile(memoryDirectory);
 
   /// 按清除管线能触及的节点集合逐层统计命中。只读，绝不写盘。
   Future<MemoryScopeHit> scan(Set<String> scope) async {

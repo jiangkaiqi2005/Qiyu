@@ -22,6 +22,11 @@ const memoryControlsFileName = 'memory-controls.md';
 File memoryFile(String directory, String name) =>
     File(path.join(directory, name));
 
+/// daily-state 文件句柄的唯一归口：读写、恢复与各视图全部经它构造，
+/// 不再各自拼 `dailyStateFileName` 的句柄。
+File dailyStateMemoryFile(String memoryDirectory) =>
+    memoryFile(memoryDirectory, dailyStateFileName);
+
 /// 跨 0 点回放窗口：睡前对话跨过午夜后短时间内（继续聊或刷新）仍
 /// 回放昨晚的段，窗口外按新的一天开新段。只影响回放，不影响写入分段
 /// 与按自然日的日终归档。
