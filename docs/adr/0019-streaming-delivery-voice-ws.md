@@ -13,7 +13,7 @@
 
 ## 协议实现与推断假设
 
-帧构造与解析集中在 `tts_ws_gateways.dart` 一套函数；客户端/服务端两个方向都有单测锁定位域。官方精确位域只放在依赖 zip（`TTS Websocket Bidirection protocols.zip`）里，页面正文与 research.md 均无，以下为实现假设，待真机验证：
+帧编解码与事件名按协议拆在三个 adapter——豆包双向 `volc_bidirection_tts_gateway.dart`、千问 realtime `qwen_realtime_tts_gateway.dart`、千问推理 `qwen_ws_inference_tts_gateway.dart`，共用的会话骨架、服务端帧动作与出网异常映射在 `tts_ws_session_skeleton.dart`（票 07 拆分）；客户端/服务端两个方向都有单测锁定位域。官方精确位域只放在依赖 zip（`TTS Websocket Bidirection protocols.zip`）里，页面正文与 research.md 均无，以下为实现假设，待真机验证：
 
 - **豆包双向帧族（推断）**：4 字节头（byte0 = version 1 + 头长 1；byte1 高 4 位消息类型、低 4 位 flags；byte2 高 4 位序列化、低 4 位压缩；byte3 保留）+ 按 flags 跳 4 字节序列号/event + 大端 u32 载荷长度 + 载荷。消息类型照单向 V3 帧家族：客户端请求 0001、服务端全量响应 1001（JSON 载荷）、服务端仅音频 1011（裸 PCM 字节）、错误 1111（i32 错误码 + u32 消息长度 + UTF-8 消息）。音频帧与 JSON/错误帧同一口径：长度越界按解析失败拒（静默截断会让半截 PCM 播成噪音）。
 - **客户端事件以 JSON 载荷的 `EventType` 字符串标识**（官方文档字段形态：「字段固定为 StartConnection」），帧头不带 event 字段。若真机要求头内 event 号，只需改帧构造一处。`StartSession` 带 `session_id`（客户端 UUID）与 `req_params`（`speaker`/`audio_params`/`additions`，section_id 在发送时并入）；`TaskRequest` 带 `session_id` 与逐段 `text`；收尾 `FinishSession`→`FinishConnection`，取消 `CancelSession`。`req_params.model` 不送（模型经 `X-Api-Resource-Id` 头传递，与 HTTP 路径同口径）。

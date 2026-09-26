@@ -1,6 +1,6 @@
 # Windows Release 1 基线
 
-Ticket 26 结束迁移期。当前产品入口只有 Flutter Web UI、Dart Windows Host 与纯 Dart 行为核心；旧 Node 服务、旧 DOM 页面、旧专用配置及其测试已经退出产品轨道。`contracts/qiyu_behavior_contracts.json` 是当前 Dart Core 可执行的 Release 契约；`contracts/legacy-migration-golden-cases.json` 是从固定迁移基线原样保留的历史 golden 快照。两者用途不同，不能按数量或名称互相替代。
+Ticket 26 结束迁移期。当前产品由 Flutter UI、Dart Host 与纯 Dart 行为核心组成，装在 Windows 壳与安卓壳（ADR 0009 端内形态）两个交付壳里；旧 Node 服务、旧 DOM 页面、旧专用配置及其测试已经退出产品轨道。`contracts/qiyu_behavior_contracts.json` 是当前 Dart Core 可执行的 Release 契约；`contracts/legacy-migration-golden-cases.json` 是从固定迁移基线原样保留的历史 golden 快照。两者用途不同，不能按数量或名称互相替代。
 
 ## 首发能力证据矩阵
 
@@ -47,4 +47,4 @@ Ticket 26 结束迁移期。当前产品入口只有 Flutter Web UI、Dart Windo
 
 ## 平台边界
 
-Release 1 只验收 Windows 本机 Web。iOS 与 Android 后续复用 Flutter UI、纯 Dart 行为核心和记忆领域规则，但不属于本基线；本票不实现移动端、云同步、远程托管或旧 localStorage 迁移。
+本基线验收 Windows 本机 Web，门禁脚本不含安卓构建步骤。安卓壳（`apps/qiyu_flutter/android/`）是仓库正式组成，复用同一套 Flutter UI、纯 Dart 行为核心和记忆领域规则，签名构建与真机冒烟见 `docs/engineering/android-release-build.md`；iOS 适配、云同步、远程托管与旧 localStorage 迁移不在 Release 1 范围。

@@ -3,12 +3,12 @@ type: product-spec
 status: ready-for-agent
 created: 2026-08-09
 release_focus: Windows 本机 Web 首发
-future_targets: iOS, Android
+future_targets: iOS
 ---
 
 # 栖语纯本地 Flutter/Dart 产品 Spec
 
-本文定义栖语从现有 Web MVP 演进为正式本地产品的目标与实现边界。最终产品面向 Windows、iOS、Android；首个交付里程碑只验收 Windows 本机 Web 版本，iOS 与 Android 在 Windows 版本稳定后适配。
+本文定义栖语从现有 Web MVP 演进为正式本地产品的目标与实现边界。最终产品面向 Windows、iOS、Android；首个交付里程碑由 Windows 本机 Web 与安卓端内形态（ADR 0009）组成，iOS 在两者稳定后适配。
 
 ## Problem Statement
 
@@ -26,7 +26,7 @@ future_targets: iOS, Android
 
 Windows 首发版本由一个打包后的本机 Dart 程序启动。该程序只在 `127.0.0.1` 回环地址提供 Flutter Web 静态页面和本机接口，并自动打开用户的默认浏览器。浏览器只负责界面；本机程序负责行为核心、模型请求、安全门、Provider 配置、API Key、Markdown 记忆、Dream、恢复和导入导出。不存在远程栖语服务器，也不远程托管 Web 资源。
 
-iOS 与 Android 后续使用同一 Flutter 界面、纯 Dart 行为核心、记忆领域模型和模型网关。移动端不再经过 HTTP 调用自身，而是在 App 进程内调用共享核心；平台差异只留在本地文件目录、密钥安全存储、应用生命周期和系统文件选择器适配层。
+安卓与 iOS 使用同一 Flutter 界面、纯 Dart 行为核心、记忆领域模型和模型网关。安卓已随 Release 1 以端内形态交付：App 进程内启动 loopback HTTP 宿主（`LocalAppHost` 绑定 127.0.0.1 随机端口），页面经本机回环接口访问共享核心；iOS 在后续版本适配。平台差异只留在本地文件目录、密钥安全存储、应用生命周期和系统文件选择器适配层。
 
 栖语运行时采用受限伪 Agent 模型：大模型可以随回复提出少量白名单内部动作，例如请求记忆检索或标记本轮存在记忆信号；本地运行时负责校验、执行、持久化和失败恢复。模型不得构造任意文件路径、执行系统命令、调用未注册工具或形成无人监督的循环。用户始终只看到栖语的自然回复。
 
@@ -166,8 +166,8 @@ iOS 与 Android 后续使用同一 Flutter 界面、纯 Dart 行为核心、记�
 ### 产品范围与发布顺序
 
 - 最终技术方向锁定为 Dart + Flutter。
-- Release 1 只交付 Windows 本机 Web：用户运行本机程序后，由默认浏览器打开栖语页面。
-- iOS 与 Android 是同一产品的后续平台适配，不属于 Release 1 验收门槛。
+- Windows 形态是本机 Web：用户运行本机程序后，由默认浏览器打开栖语页面。
+- 安卓按 ADR 0009 的端内形态（APK 内含进程内 Host 与原生编译 UI）随 Release 1 交付；iOS 是后续平台适配，不属于 Release 1 验收门槛。
 - macOS 与 Linux 暂不适配；平台层接口不得假设 Windows 是永久唯一平台。
 - 不迁移现有浏览器 localStorage 数据。正式版本首次启动时建立新的 Markdown 记忆目录。
 - 当前 JavaScript/Node 实现只作为迁移期行为基准和对拍对象；最终运行架构不依赖 Node。
@@ -332,14 +332,14 @@ iOS 与 Android 后续使用同一 Flutter 界面、纯 Dart 行为核心、记�
 - 实验室与详细诊断默认隐藏在开发者模式，不把普通用户暴露给 prompt、内部动作和技术指标。
 - 产品文案一律以栖语关系语言表达，不使用服务器、数据库、Agent 工作流或 pipeline 术语向普通用户解释体验。
 
-### iOS 与 Android 后续适配边界
+### 安卓与 iOS 适配边界
 
 - 移动端复用同一 Flutter View、ViewModel、领域模型和纯 Dart 核心，不用 WebView 承载 Windows 页面。
 - 移动端 MemoryRepository 使用 App 沙盒真实 Markdown 目录；导入导出通过系统文件选择与分享界面完成。
 - 移动端 SecretStore 使用 Keychain/Keystore；不得把 Key 降级写入 shared preferences。
-- 移动端 App 进程内调用 QiyuRuntime，不启动 localhost HTTP 宿主。
+- 移动端在 App 进程内启动 loopback HTTP 宿主（`LocalAppHost` 绑定 127.0.0.1 随机端口），会话与 CSRF 校验模型与 Windows 壳同构；不提供局域网监听。
 - App 生命周期只提供机会性整理信号；正确性仍依靠每轮落盘、checkpoint 和下次启动补跑。
-- Windows Release 1 完成前不为移动后台调度、推送、商店支付或平台特有功能增加抽象。
+- Release 1 不为移动后台调度、推送、商店支付或平台特有功能增加抽象。
 
 ## Testing Decisions
 
@@ -364,7 +364,7 @@ iOS 与 Android 后续使用同一 Flutter 界面、纯 Dart 行为核心、记�
 - 任何远程栖语静态网站、业务后端、托管 API、账号系统或云端记忆。
 - 自动跨设备同步、冲突合并、iCloud、Google Drive 或第三方同步服务。
 - macOS 与 Linux 的首版适配。
-- iOS 与 Android 的 Release 1 实现、商店上架和平台审核；它们是 Windows 验收后的后续适配阶段。
+- iOS 的 Release 1 实现、商店上架和平台审核；它们是 Windows 与安卓之后的后续适配阶段。安卓 Release 1 以手动分发 APK 交付，商店上架与平台审核同样不在范围。
 - 旧版 localStorage 对话、偏好和记忆的自动迁移。
 - T18/T19 自我世界机制。Release 1 不生成栖语自己的地点、身体或对话外经历，也不得把未记录内容说成过去事实。
 - T27 独立记忆行为测试场景设计与专项扩充。
@@ -382,7 +382,7 @@ iOS 与 Android 后续使用同一 Flutter 界面、纯 Dart 行为核心、记�
 - “伪 Agent”描述实现方式，不改变产品呈现。用户感受到的应当是一个拥有连续记忆和关系的人，而不是一个正在执行工具链的系统。
 - Windows 本机 HTTP 宿主属于设备内部实现，不构成远程业务服务器。所有非 Provider 网络请求都必须能够通过网络审计证明未离开本机。
 - 静态 Flutter Web 资源随 Windows 安装包发布，不从 CDN 加载脚本、字体或运行时代码。第三方字体或图像资产必须随包附带并核对授权。
-- Release 1 的完成判据是：普通 Windows 用户无需开发环境即可安装并启动；Provider 与 Key 能本地持久保存；聊天、关系、Markdown 记忆、五段整理、记忆控制、备份恢复和本地安全链路形成闭环；退出并重启后仍延续同一个栖语。
+- Release 1 的完成判据是：普通 Windows 用户无需开发环境即可安装并启动；Provider 与 Key 能本地持久保存；聊天、关系、Markdown 记忆、五段整理、记忆控制、备份恢复和本地安全链路形成闭环；退出并重启后仍延续同一个栖语。安卓侧的签名构建与真机冒烟判据见 `docs/engineering/android-release-build.md`。
 - 推荐实施顺序：先固化 JS/Dart 行为 fixtures；再移植纯 Dart 核心；随后实现 Windows MemoryRepository、SecretStore 和本机宿主；完成聊天垂直切片；接入完整记忆体系与记忆中心；最后做安装包、安全、恢复、无障碍和性能验收。
 - Flutter/Dart 依赖应优先选择 Flutter/Dart 团队维护或长期活跃的成熟包。每个新增依赖必须说明不可由 SDK 简单完成的理由，并通过版本锁定、许可证和维护状态检查。
 - 技术路线的一手资料与平台限制汇总见同仓库的纯本地 Flutter 跨端调研笔记；若实现阶段的 Flutter、Windows 或 Provider 能力发生变化，应先更新调研证据，再修改本 Spec 的实现决策。

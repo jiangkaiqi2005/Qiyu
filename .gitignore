@@ -13,6 +13,7 @@ qiyu.config.local.json
 .cline/
 .codebuddy/
 .zcode/
+.zcodeignore
 .scratch/
 skills-lock.json
 

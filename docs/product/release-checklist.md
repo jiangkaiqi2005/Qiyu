@@ -26,6 +26,8 @@
 
 ## 明确不在 Release 1
 
-- iOS、Android、macOS、Linux 适配。
+- iOS、macOS、Linux 适配。
 - 账号、远程托管、云同步与多设备合并。
 - 旧 localStorage 对话、偏好与记忆迁移。
+
+安卓壳（`apps/qiyu_flutter/android/`）按 ADR 0009 的端内形态属于 Release 1 正式组成：APK 内含行为核心、进程内本机服务与原生编译 UI，签名构建与真机冒烟清单见 `docs/engineering/android-release-build.md`。
