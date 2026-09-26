@@ -430,4 +430,90 @@ void main() {
       );
     });
   });
+
+  group('跨 turn 凭据在装配上下文中遮蔽', () {
+    List<String> assembledTexts(List<ChatTurn> turns) => builder
+        .build(
+          StateSnapshot(
+            userId: 'local-user',
+            relationshipStage: RelationshipStage.stranger,
+            turns: turns,
+            lastEmotion: const EmotionSnapshot(
+              kind: EmotionKind.neutral,
+              intensity: 0,
+            ),
+          ),
+          '在吗',
+        )
+        .map((message) => message.content)
+        .toList();
+
+    test('私钥 BEGIN/END 拆多条消息，历史轮次整体遮蔽且条数不变', () {
+      final texts = assembledTexts([
+        ChatTurn(
+          speaker: Speaker.user,
+          text: '-----BEGIN PRIVATE KEY-----',
+          at: DateTime(2025, 12, 31, 23, 41),
+        ),
+        ChatTurn(
+          speaker: Speaker.qiyu,
+          text: '嗯，怎么了？',
+          at: DateTime(2025, 12, 31, 23, 43),
+        ),
+        ChatTurn(
+          speaker: Speaker.user,
+          text: 'AUDITONLYFAKEPKCS8\n-----END PRIVATE KEY-----',
+          at: DateTime(2025, 12, 31, 23, 44),
+        ),
+        const ChatTurn(speaker: Speaker.qiyu, text: '先别发这个。'),
+      ]);
+
+      // 条数与顺序不变：system + 4 轮 + 格式提醒 + 当前消息。
+      expect(texts, hasLength(7));
+      // 时刻前缀在脱敏之后的文本上装配，绝不卷进脱敏区间。
+      expect(texts[1], '[2025-12-31 23:41] [已脱敏]');
+      expect(texts[2], '[2025-12-31 23:43] [已脱敏]');
+      expect(texts[3], '[2025-12-31 23:44] [已脱敏]');
+      expect(texts[4], '先别发这个。');
+      expect(texts[6], '在吗');
+      for (final text in texts) {
+        expect(text, isNot(contains('AUDITONLYFAKEPKCS8')));
+        expect(text, isNot(contains('-----BEGIN')));
+        expect(text, isNot(contains('-----END')));
+      }
+    });
+
+    test('JSON 凭据键值拆相邻消息，值跨条遮蔽', () {
+      // 同轮多 bubble 在装配里就是相邻消息，键在上一条、值在相邻下一条。
+      final texts = assembledTexts([
+        const ChatTurn(speaker: Speaker.user, text: '配置 {"password":'),
+        const ChatTurn(
+          speaker: Speaker.qiyu,
+          text: '"audit-only-json-secret","count":1}',
+        ),
+      ]);
+
+      expect(texts[1], '配置 {"password":');
+      expect(texts[2], '"[已脱敏]","count":1}');
+      expect(texts[4], '在吗');
+      for (final text in texts) {
+        expect(text, isNot(contains('audit-only-json-secret')));
+      }
+    });
+
+    test('无凭据历史轮次逐字保持原文', () {
+      final texts = assembledTexts([
+        ChatTurn(
+          speaker: Speaker.user,
+          text: '今天有点累',
+          at: DateTime(2025, 12, 31, 23, 41),
+        ),
+        const ChatTurn(speaker: Speaker.qiyu, text: '嗯，怎么了？'),
+      ]);
+
+      expect(texts[1], '[2025-12-31 23:41] 今天有点累');
+      expect(texts[2], '嗯，怎么了？');
+      expect(texts[4], '在吗');
+    });
+  });
 }

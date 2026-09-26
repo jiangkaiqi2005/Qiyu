@@ -195,6 +195,12 @@ final class ModelPromptBuilder {
     final recentTurns = state.turns.length <= 8
         ? state.turns
         : state.turns.sublist(state.turns.length - 8);
+    // 历史轮次整体过跨消息脱敏引擎：私钥或 JSON 凭据拆在多条消息里时，
+    // 逐条过滤各自不命中。保形变体保持条数与边界，跨消息命中投影到
+    // 相交轮次；时刻前缀在脱敏之后的文本上装配，绝不卷进脱敏区间。
+    final safeTurnTexts = redactSessionTurnTexts([
+      for (final turn in recentTurns) turn.text,
+    ]);
     final context = StringBuffer();
     final memoryContextTrimmed = redactSessionText(memoryContext).trim();
     if (memoryContextTrimmed.isNotEmpty) {
@@ -213,18 +219,24 @@ final class ModelPromptBuilder {
           : '${MomentPrefix.format(at)} $safeCurrentText',
     );
 
-    return [
-      ModelMessage(ModelMessageRole.system, systemSections.toString().trim()),
-      ...recentTurns.map((turn) {
-        final at = turn.at;
-        final safeText = redactSessionText(turn.text);
-        return ModelMessage(
+    final turnMessages = <ModelMessage>[];
+    for (var index = 0; index < recentTurns.length; index += 1) {
+      final turn = recentTurns[index];
+      final safeText = safeTurnTexts[index];
+      final at = turn.at;
+      turnMessages.add(
+        ModelMessage(
           turn.speaker == Speaker.user
               ? ModelMessageRole.user
               : ModelMessageRole.assistant,
           at == null ? safeText : '${MomentPrefix.format(at)} $safeText',
-        );
-      }),
+        ),
+      );
+    }
+
+    return [
+      ModelMessage(ModelMessageRole.system, systemSections.toString().trim()),
+      ...turnMessages,
       const ModelMessage(ModelMessageRole.system, hiddenActionsReminder),
       ModelMessage(ModelMessageRole.user, context.toString()),
     ];

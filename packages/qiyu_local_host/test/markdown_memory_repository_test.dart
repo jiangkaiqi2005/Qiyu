@@ -82,6 +82,141 @@ void main() {
     });
   }
 
+  group('跨消息凭据落盘出口', () {
+    test('私钥拆在多条 bubble，落盘前整体遮蔽为一条', () async {
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final session = await repository.openSession();
+      final saved = await repository.appendTurn(
+        session,
+        RawSessionTurn.qiyu(
+          requestId: 'pem-split-reply',
+          messages: [
+            '-----BEGIN PRIVATE KEY-----',
+            'AUDITONLYFAKEPKCS8',
+            '-----END PRIVATE KEY-----',
+          ],
+          at: now,
+          source: ReplySource.local,
+          mode: 'local',
+        ),
+      );
+
+      // 与旧回复重放路径同语义：跨消息成对区间吞并为一条。
+      expect(saved.turns.single.messages, ['[已脱敏]']);
+      expect(saved.turns.single.text, '[已脱敏]');
+      // 已遮蔽回合读回后再脱敏是固定点：重放与二次写入不再改写。
+      expect(saved.turns.single.redacted().messages, ['[已脱敏]']);
+      expect(saved.turns.single.redacted().text, '[已脱敏]');
+      final file = temporaryDirectory
+          .listSync(recursive: true)
+          .whereType<File>()
+          .singleWhere((file) => file.path.endsWith('-001.md'));
+      expect(file.readAsStringSync(), isNot(contains('AUDITONLYFAKEPKCS8')));
+    });
+
+    test('JSON 凭据键值拆在多条 bubble，落盘前跨条遮蔽', () async {
+      final repository = MarkdownMemoryRepository(
+        memoryDirectory: temporaryDirectory.path,
+        clock: () => now,
+      );
+      final session = await repository.openSession();
+      final saved = await repository.appendTurn(
+        session,
+        RawSessionTurn.qiyu(
+          requestId: 'json-split-reply',
+          messages: [
+            '{"password":',
+            '"audit-only-json-secret","count":1}',
+          ],
+          at: now,
+          source: ReplySource.local,
+          mode: 'local',
+        ),
+      );
+
+      expect(saved.turns.single.messages, [
+        '{"password":',
+        '"[已脱敏]","count":1}',
+      ]);
+      expect(saved.turns.single.text, '{"password":\n"[已脱敏]","count":1}');
+      final file = temporaryDirectory
+          .listSync(recursive: true)
+          .whereType<File>()
+          .singleWhere((file) => file.path.endsWith('-001.md'));
+      expect(file.readAsStringSync(), isNot(contains('audit-only-json-secret')));
+    });
+
+    test('保形出口：跨消息私钥逐条遮蔽，条数与边界保持', () {
+      final safeTexts = redactSessionTurnTexts([
+        '-----BEGIN PRIVATE KEY-----',
+        'AUDITONLYFAKEPKCS8',
+        '-----END PRIVATE KEY-----',
+        '先别发了。',
+      ]);
+
+      // 与 redactSessionMessages 的吞并语义不同：保形出口每条相交消息
+      // 各自遮蔽，非相交轮次原样，便于逐条装配。
+      expect(safeTexts, [
+        '[已脱敏]',
+        '[已脱敏]',
+        '[已脱敏]',
+        '先别发了。',
+      ]);
+    });
+
+    test('保形出口：跨消息 JSON 键值投影到值所在消息', () {
+      expect(
+        redactSessionTurnTexts([
+          '{"password":',
+          '"audit-only-json-secret","count":1}',
+        ]),
+        ['{"password":', '"[已脱敏]","count":1}'],
+      );
+    });
+
+    test('保形出口与跨消息引擎对无匹配输入都是恒等变换', () {
+      const plain = ['今天有点累', '嗯，怎么了？', '先睡吧，晚安。'];
+      // 字符串按值逐字比较：无命中时每条返回原文。
+      expect(redactSessionTurnTexts(plain), equals(plain));
+      expect(redactSessionMessages(plain), equals(plain));
+    });
+
+    test('保形出口对单条内完整凭据与单条脱敏逐字一致', () {
+      const text =
+          '配置 {"password":"audit-only-pk"} 与 Cookie: sid=audit-only-cookie';
+      expect(redactSessionTurnTexts([text]), [redactSessionText(text)]);
+    });
+
+    test('保形出口：JSON 整值替换形态保留引号（client_secret）', () {
+      const text = '{"client_secret": "audit-only-secret"}';
+      expect(redactSessionText(text), '{"client_secret": "[已脱敏]"}');
+      expect(redactSessionTurnTexts([text]), [redactSessionText(text)]);
+    });
+
+    test('保形出口：cookie JSON 键整值替换保留引号', () {
+      const text = '{"cookie": "sid=audit-only-cookie"}';
+      expect(redactSessionText(text), '{"cookie": "[已脱敏]"}');
+      expect(redactSessionTurnTexts([text]), [redactSessionText(text)]);
+    });
+
+    test('保形出口：数字标量整值替换保留引号', () {
+      const text = '{"token": 6222021234567890}';
+      expect(redactSessionText(text), '{"token": "[已脱敏]"}');
+      expect(redactSessionTurnTexts([text]), [redactSessionText(text)]);
+    });
+
+    test('保形出口：空敏感值按插入语义写出遮蔽标记', () {
+      for (final text in const ['{"password": ""}', '{"api_key": ""}']) {
+        expect(redactSessionText(text), contains('"[已脱敏]"'), reason: text);
+        expect(redactSessionTurnTexts([text]), [redactSessionText(text)],
+            reason: text);
+      }
+    });
+  });
+
   test(
     'initializes sessions and atomically persists ordered Markdown turns',
     () async {

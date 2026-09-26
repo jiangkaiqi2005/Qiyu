@@ -230,7 +230,9 @@ final class RawSessionTurn {
   final SafetyKind? safety;
 
   RawSessionTurn redacted() {
-    final safeMessages = messages.map(redactSessionText).toList();
+    // 落盘前的回合脱敏走跨消息引擎：凭据拆在同轮多条 bubble 时逐条
+    // 过滤各自不命中；无跨消息命中时与逐条脱敏逐字一致。
+    final safeMessages = redactSessionMessages(messages);
     return RawSessionTurn._(
       requestId: requestId,
       speaker: speaker,
@@ -1043,6 +1045,101 @@ String redactSessionText(String text) =>
 /// 按完整回复识别凭据，保留未落入替换区间的原消息边界。
 List<String> redactSessionMessages(List<String> messages) =>
     _rewriteSessionMessages(messages, _redactUnparsedJsonText);
+
+/// 逐条保形出口（提示词历史轮次等必须逐条装配的场景）的跨消息脱敏。
+/// 与 [redactSessionMessages] 同一引擎与命中区间，但保持消息条数与
+/// 边界：完全落在单条消息内的命中按原替换值写出（与单条脱敏逐字
+/// 一致），跨消息命中的区间投影到每条相交消息、各相交段替换为
+/// 「[已脱敏]」，不吞并相邻消息；无命中时逐字返回原文。
+List<String> redactSessionTurnTexts(List<String> messages) {
+  // 第一遍与 [_rewriteSessionMessages] 同源：键控规则在拼接文本上定位，
+  // 命中带保留前缀，替换从值起点开始。
+  final firstPass = _projectRedactions(messages, [
+    for (final match in _sessionKeyedRedactPatterns.first.allMatches(
+      messages.join('\n'),
+    ))
+      JsonTextReplacement(
+        match.start + match.group(1)!.length, match.end, '[已脱敏]',
+      ),
+  ]);
+  // 第二遍在第一遍的拼接结果上定位 JSON 字符串值替换，再投影回各条。
+  return _projectRedactions(
+    firstPass,
+    jsonStringValueReplacements(
+      firstPass.join('\n'),
+      isSecret: _jsonFieldContainsSecret,
+      rewriteText: _redactUnparsedJsonText,
+    ),
+  );
+}
+
+/// 把拼接文本坐标上的替换区间投影回各条消息：命中区间完全落在单条
+/// 消息内时按原替换值写出（保留引号整值与零长插入语义，与单条脱敏
+/// 逐字一致）；跨条区间拆到每条相交消息，各相交段替换为「[已脱敏]」。
+/// 消息条数与未相交文本逐字保留。
+List<String> _projectRedactions(
+  List<String> messages,
+  List<JsonTextReplacement> replacements,
+) {
+  if (messages.isEmpty || replacements.isEmpty) {
+    return List.of(messages);
+  }
+  final merged = <JsonTextReplacement>[];
+  final sorted = [...replacements]
+    ..sort((left, right) => left.start.compareTo(right.start));
+  for (final replacement in sorted) {
+    if (merged.isNotEmpty && replacement.start < merged.last.end) {
+      final previous = merged.removeLast();
+      // 与引擎自身合并重叠区间的口径一致：合并后退回占位值。
+      merged.add(
+        JsonTextReplacement(
+          previous.start,
+          previous.end > replacement.end ? previous.end : replacement.end,
+          '[已脱敏]',
+        ),
+      );
+    } else {
+      merged.add(replacement);
+    }
+  }
+  final result = <String>[];
+  var spanIndex = 0;
+  var messageStart = 0;
+  for (final message in messages) {
+    final messageEnd = messageStart + message.length;
+    final buffer = StringBuffer();
+    var cursor = messageStart;
+    while (spanIndex < merged.length && merged[spanIndex].end <= messageStart) {
+      spanIndex += 1;
+    }
+    for (
+      var index = spanIndex;
+      index < merged.length && merged[index].start < messageEnd;
+      index += 1
+    ) {
+      final replacement = merged[index];
+      final start = replacement.start < messageStart
+          ? messageStart
+          : replacement.start;
+      final end = messageEnd < replacement.end ? messageEnd : replacement.end;
+      if (end < start) {
+        continue;
+      }
+      buffer.write(
+        message.substring(cursor - messageStart, start - messageStart),
+      );
+      // 零长区间（空敏感值插入）同样视为完全落在单条内。
+      final contained = replacement.start >= messageStart &&
+          replacement.end <= messageEnd;
+      buffer.write(contained ? replacement.value : '[已脱敏]');
+      cursor = end;
+    }
+    buffer.write(message.substring(cursor - messageStart));
+    result.add(buffer.toString());
+    messageStart = messageEnd + 1;
+  }
+  return result;
+}
 
 String _rewriteSessionText(
   String text,
