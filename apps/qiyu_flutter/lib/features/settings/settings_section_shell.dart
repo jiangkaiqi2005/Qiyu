@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -7,14 +9,18 @@ import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../shell/qiyu_fading_notice.dart';
 import '../shell/qiyu_widgets.dart';
+import 'keyed_settings_view_model.dart';
 
 /// 设置页各分节共享的壳层：分节 id 名单、折叠状态下发、阅读式分节板、
 /// 分节头与几枚各领域共用的表单元件与小机制（受控下拉、钥匙字段、
 /// 保存/测试按钮组、结果横幅、忙碌图标、忘记 Key 确认框、校验结论播报）。
 ///
-/// 这里只有**页面级的呈现骨架**，不含任何领域的表单状态、校验或保存
-/// 编排——那些在各自的领域模块（`provider_settings_section.dart` 等）里。
-/// 壳层被七个分节共用，所以它自己不知道任何一节的业务。
+/// 领域无关的表单机制也收在这里：凭据表单骨架 [SettingsCredentialForm]
+/// （同步幂等守卫、卸载释放、保存＋清 Key 的编排只写一份）、高级参数
+/// 的 JSON 校验 [parseSettingsExtraParams] 与换档确认框
+/// [confirmSettingsTierSuggestion]。各域自己的表单状态、领域校验细节
+/// 仍在各自的领域模块（`provider_settings_section.dart` 等）里。壳层被
+/// 七个分节共用，所以它自己不知道任何一节的业务。
 
 /// 设置页分节的 id：折叠状态在本地存储里存的就是这份名单的子集（design-system
 /// §8「折叠状态本地持久化（仅 UI 状态）」）。**改名等于改历史数据**——用户上次
@@ -58,6 +64,31 @@ void syncFocusProtectedField(
 ) {
   if (!focusNode.hasFocus && controller.text != newValue) {
     controller.text = newValue;
+  }
+}
+
+/// 高级参数草稿的 JSON 对象校验与键规整（语音朗读与语音输入共用同一
+/// 份）：非空草稿必须是 JSON 对象，JSON 键统一转成字符串。不是对象或
+/// 语法不合法时经 [report] 给出人话并返回 null——调用方先判空再消费
+/// 「返回 null 即驳回」，空草稿（没有自定义参数）与不合法草稿才分开。
+Map<String, Object?>? parseSettingsExtraParams(
+  String extraText,
+  void Function(String message) report,
+) {
+  try {
+    final decoded = jsonDecode(extraText);
+    if (decoded is! Map) {
+      report('自定义高级参数必须是 JSON 对象。');
+      return null;
+    }
+    // 键名转字符串：JSON 对象键恒为字符串，懒 cast 只是给将来的手改
+    // 调用方留一条裸 TypeError 的路。
+    return Map<String, Object?>.from(
+      decoded.map((k, v) => MapEntry(k.toString(), v)),
+    );
+  } on FormatException {
+    report('自定义高级参数 JSON 格式不正确，请检查语法。');
+    return null;
   }
 }
 
@@ -340,6 +371,82 @@ mixin SettingsSaveFeedback<T extends StatefulWidget> on State<T> {
   }
 }
 
+/// 凭据设置域（模型连接、语音朗读、语音输入）的表单骨架：已保存设置的
+/// 同步幂等守卫、页面卸载释放、保存编排与 Key 草稿治理在三个域逐字
+/// 同构，只写这一份，各域表单继承后只填领域槽位——[syncNewSettings]
+/// 把新设置对象的字段写进表单，[disposeFields] 释放自己的控制器与
+/// 焦点，[readDraftOrReport] 读草稿并做领域校验。
+///
+/// 「保存即清 Key 不沿用旧凭据」的语义就收在 [save]：草稿合法才交视图
+/// 模型，真的保存成功（且页面还挂在树上）才清掉 Key 输入框，不把明文
+/// 留在界面；[sync] 的收尾同样只在未获焦时清掉旧 Key 草稿——Key 永不
+/// 回显。保存失败时草稿保留待重试。
+abstract base class SettingsCredentialForm<
+  TSettings extends Object,
+  TDraft extends Object,
+  TViewModel extends KeyedSettingsViewModel<TSettings, TDraft>
+> {
+  bool _disposed = false;
+  TSettings? _syncedSettings;
+
+  /// Key 草稿输入框：同步与保存收尾的清空落点，各域桥接到自己的字段。
+  @protected
+  TextEditingController get apiKeyDraftController;
+
+  /// Key 草稿输入框的焦点节点：获焦时不覆盖用户正在输入的草稿。
+  @protected
+  FocusNode get apiKeyDraftFocusNode;
+
+  /// 页面卸载时释放全部控制器与焦点节点：先落卸载标记（[save] 的清 Key
+  /// 收尾据此止步），再交各域释放自己的控制器与焦点。
+  void dispose() {
+    _disposed = true;
+    disposeFields();
+  }
+
+  /// 各域释放自己的控制器与焦点节点（Key 框与其焦点也在内）。
+  void disposeFields();
+
+  /// 已保存设置同步进表单：只处理新出现的设置对象（同一对象重复同步
+  /// 直接返回，用户的选择与草稿不被重置）；收尾清掉未获焦的旧 Key 草稿
+  /// ——Key 永不回显。
+  void sync(TSettings? settings) {
+    if (settings == null || identical(settings, _syncedSettings)) {
+      return;
+    }
+    _syncedSettings = settings;
+    syncNewSettings(settings);
+    if (!apiKeyDraftFocusNode.hasFocus &&
+        apiKeyDraftController.text.isNotEmpty) {
+      apiKeyDraftController.clear();
+    }
+  }
+
+  /// 同步一个新出现的设置对象：各域把自己的字段与选择态写进表单。
+  void syncNewSettings(TSettings settings);
+
+  /// 一次保存的领域编排：读草稿 → 交视图模型 → 成功后清掉 Key 草稿，
+  /// 不把明文留在输入框（失败时草稿保留待重试）。返回是否真的保存成功。
+  Future<bool> save(
+    TViewModel viewModel, {
+    void Function(String message)? report,
+  }) async {
+    final draft = readDraftOrReport(report ?? (_) {});
+    if (draft == null) {
+      return false;
+    }
+    final saved = await viewModel.save(draft);
+    if (saved && !_disposed) {
+      apiKeyDraftController.clear();
+    }
+    return saved;
+  }
+
+  /// 读草稿：必填与格式校验都在各域内。草稿不合法时经 [report] 给出
+  /// 人话并返回 null——呈现方式（渐隐提示）由区块决定。
+  TDraft? readDraftOrReport(void Function(String message) report);
+}
+
 /// 「忘记已保存 Key」的确认对话框：AlertDialog＋「再想想 / 忘记 Key」
 /// 两枚按钮＋`pop(bool)`，四个凭据领域（模型连接、语音朗读、语音输入、
 /// 联网搜索）逐字同构，机制收在这里，各领域只带标题与正文文案；取消与
@@ -375,6 +482,42 @@ Future<bool> confirmSettingsForgetKey({
           key: Key('${keyPrefix}forget-key-confirm'),
           onPressed: () => Navigator.of(dialogContext).pop(true),
           child: const Text('忘记 Key'),
+        ),
+      ],
+    ),
+  );
+  return confirmed ?? false;
+}
+
+/// 「按建议调整」的换档确认对话框：语音朗读与语音输入两域逐字同构，
+/// 机制收在这里，各域只带定位键前缀与从回填计划推导出的变更行——
+/// [changes] 展示的每一行都是将要落进表单的内容（展示与回填同源）。
+/// 返回用户是否确认：取消与摸掉对话框都算未确认；确认后的落草稿动作
+/// 由调用方接手，壳层不碰任何一节的表单。
+Future<bool> confirmSettingsTierSuggestion({
+  required BuildContext context,
+  required String keyPrefix,
+  required List<String> changes,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      key: Key('${keyPrefix}tier-suggestion-dialog'),
+      title: const Text('按建议调整？'),
+      content: Text(changes.join('\n')),
+      actions: [
+        QiyuFocusRingScope(
+          borderRadius: QiyuRadii.circleBorder,
+          child: TextButton(
+            key: Key('${keyPrefix}tier-suggestion-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('再想想'),
+          ),
+        ),
+        FilledButton(
+          key: Key('${keyPrefix}tier-suggestion-confirm'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('按建议调整'),
         ),
       ],
     ),

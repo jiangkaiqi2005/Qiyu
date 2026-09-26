@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_tokens.dart';
-import '../shell/qiyu_widgets.dart';
 import 'settings_section_shell.dart';
 import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
@@ -31,12 +30,26 @@ import 'voice_tier_suggestion.dart';
 /// 与结构校验在 Host 保存时人话驳回（与地址、模型同律）。
 
 /// 语音输入领域的表单控制器：服务类型选择态、各输入框的控制器与
-/// 焦点、已保存设置的同步、草稿校验与保存编排。
+/// 焦点、已保存设置的同步、草稿校验与保存编排。同步幂等守卫、卸载
+/// 释放与「保存即清 Key」的编排继承壳层 [SettingsCredentialForm]，这里
+/// 只填领域槽位与档位知识。
 ///
 /// 本类不是 widget，也不持有任何 UI 呈现；错误提示等「怎么说给人听」
 /// 的呈现通过 [readDraftOrReport] 的回调交给区块 widget。
-final class SttSettingsForm {
+final class SttSettingsForm
+    extends
+        SettingsCredentialForm<
+          SttSettings,
+          SttSettingsDraft,
+          SttSettingsViewModel
+        > {
   SttSettingsForm();
+
+  @override
+  TextEditingController get apiKeyDraftController => apiKeyController;
+
+  @override
+  FocusNode get apiKeyDraftFocusNode => apiKeyFocusNode;
 
   final baseUrlController = TextEditingController();
   final modelController = TextEditingController();
@@ -63,8 +76,6 @@ final class SttSettingsForm {
   );
 
   SttResponseShape _responseShape = SttResponseShape.jsonPath;
-  SttSettings? _syncedSettings;
-  bool _disposed = false;
 
   /// 当前选中的服务类型（类型化视图）：未知 wire 名按缺省档呈现，原始
   /// 身份在 [_providerWireName]。
@@ -112,9 +123,8 @@ final class SttSettingsForm {
     modelHint: tier.modelHint,
   );
 
-  /// 页面卸载时释放全部控制器与焦点节点。
-  void dispose() {
-    _disposed = true;
+  @override
+  void disposeFields() {
     baseUrlController.dispose();
     modelController.dispose();
     apiKeyController.dispose();
@@ -129,19 +139,11 @@ final class SttSettingsForm {
     extraParamsFocusNode.dispose();
   }
 
-  /// 已保存设置同步进表单：只处理新出现的设置对象（同一对象重复同步
-  /// 直接返回，用户的选择与草稿不被重置）；未配置时按当前档位回填元
-  /// 数据带的缺省地址与模型。Key 永不回显——只在未获焦时清掉旧草稿。
-  void sync(SttSettings? settings) {
-    // 档位目录随快照更新（票 08）：新设置对象第一次进来就换上它下发的
-    // 行集；同一对象重复同步不重复换，用户的选择与草稿不被重置。
-    if (settings != null && !identical(settings, _syncedSettings)) {
-      _tierCatalog = settings.tierCatalog;
-    }
-    if (settings == null || identical(settings, _syncedSettings)) {
-      return;
-    }
-    _syncedSettings = settings;
+  /// 同步一个新出现的设置对象：换上它下发的档位行集，回填各输入框
+  /// （未配置时按当前档位落元数据带的缺省地址与模型）。
+  @override
+  void syncNewSettings(SttSettings settings) {
+    _tierCatalog = settings.tierCatalog;
     _providerWireName = settings.providerWireName;
     if (settings.configured) {
       syncFocusProtectedField(
@@ -191,9 +193,6 @@ final class SttSettingsForm {
         '',
       );
       syncFocusProtectedField(extraParamsController, extraParamsFocusNode, '');
-    }
-    if (!apiKeyFocusNode.hasFocus && apiKeyController.text.isNotEmpty) {
-      apiKeyController.clear();
     }
   }
 
@@ -245,10 +244,12 @@ final class SttSettingsForm {
     }
   }
 
-  /// 读草稿：必填校验在领域内，旋钮档另校验高级参数是合法 JSON 对象。
-  /// 草稿不合法时经 [report] 给出人话并返回 null——呈现方式（渐隐提示）
-  /// 由区块决定。鉴权头的脏字符与结构校验在 Host 保存时人话驳回（与
-  /// 地址、模型同律，单一校验源）。
+  /// 读草稿：必填校验在领域内，旋钮档另校验高级参数是合法 JSON 对象
+  /// （走壳层 [parseSettingsExtraParams]）。草稿不合法时经 [report] 给
+  /// 出人话并返回 null——呈现方式（渐隐提示）由区块决定。鉴权头的脏
+  /// 字符与结构校验在 Host 保存时人话驳回（与地址、模型同律，单一校
+  /// 验源）。
+  @override
   SttSettingsDraft? readDraftOrReport(void Function(String message) report) {
     if (baseUrlController.text.trim().isEmpty ||
         modelController.text.trim().isEmpty) {
@@ -262,19 +263,8 @@ final class SttSettingsForm {
     if (tier.customKnobs) {
       final extraText = extraParamsController.text.trim();
       if (extraText.isNotEmpty) {
-        try {
-          final decoded = jsonDecode(extraText);
-          if (decoded is! Map) {
-            report('自定义高级参数必须是 JSON 对象。');
-            return null;
-          }
-          // 键急转字符串：JSON 对象键恒为字符串，懒 cast 只是给将来的
-          // 手改调用方留一条裸 TypeError 的路。
-          extraParams = Map<String, Object?>.from(
-            decoded.map((k, v) => MapEntry(k.toString(), v)),
-          );
-        } on FormatException {
-          report('自定义高级参数 JSON 格式不正确，请检查语法。');
+        extraParams = parseSettingsExtraParams(extraText, report);
+        if (extraParams == null) {
           return null;
         }
       }
@@ -299,23 +289,6 @@ final class SttSettingsForm {
       responseField: responseField,
       extraParams: extraParams,
     );
-  }
-
-  /// 一次保存的领域编排：读草稿 → 交视图模型 → 成功后清掉 Key 草稿，
-  /// 不把明文留在输入框（失败时草稿保留待重试）。返回是否真的保存成功。
-  Future<bool> save(
-    SttSettingsViewModel viewModel, {
-    void Function(String message)? report,
-  }) async {
-    final draft = readDraftOrReport(report ?? (_) {});
-    if (draft == null) {
-      return false;
-    }
-    final saved = await viewModel.save(draft);
-    if (saved && !_disposed) {
-      apiKeyController.clear();
-    }
-    return saved;
   }
 
   /// 一键换档（确认制，ADR 0020，票 04 识别侧接线）：先算清回填计划，
@@ -446,30 +419,12 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
       else
         'API Key：保留',
     ];
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmSettingsTierSuggestion(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('stt-tier-suggestion-dialog'),
-        title: const Text('按建议调整？'),
-        content: Text(changes.join('\n')),
-        actions: [
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('stt-tier-suggestion-cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('再想想'),
-            ),
-          ),
-          FilledButton(
-            key: const Key('stt-tier-suggestion-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('按建议调整'),
-          ),
-        ],
-      ),
+      keyPrefix: 'stt-',
+      changes: changes,
     );
-    if (confirmed == true && mounted) {
+    if (confirmed && mounted) {
       setState(() => _form.applySuggestion(plan));
     }
   }

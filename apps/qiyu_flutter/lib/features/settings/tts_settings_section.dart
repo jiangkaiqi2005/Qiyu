@@ -34,12 +34,26 @@ import 'voice_tier_suggestion.dart';
 /// 校验在 Host 保存时人话驳回（与地址、模型同律）。
 
 /// 语音朗读领域的表单控制器：服务类型选择态、语速、各输入框的控制器
-/// 与焦点、已保存设置的同步、草稿校验与保存编排。
+/// 与焦点、已保存设置的同步、草稿校验与保存编排。同步幂等守卫、卸载
+/// 释放与「保存即清 Key」的编排继承壳层 [SettingsCredentialForm]，这里
+/// 只填领域槽位与档位知识。
 ///
 /// 本类不是 widget，也不持有任何 UI 呈现；错误提示等「怎么说给人听」
 /// 的呈现通过 [readDraftOrReport] 的回调交给区块 widget。
-final class TtsSettingsForm {
+final class TtsSettingsForm
+    extends
+        SettingsCredentialForm<
+          TtsSettings,
+          TtsSettingsDraft,
+          TtsSettingsViewModel
+        > {
   TtsSettingsForm();
+
+  @override
+  TextEditingController get apiKeyDraftController => apiKeyController;
+
+  @override
+  FocusNode get apiKeyDraftFocusNode => apiKeyFocusNode;
 
   final baseUrlController = TextEditingController();
   final modelController = TextEditingController();
@@ -71,8 +85,6 @@ final class TtsSettingsForm {
   double? _speed;
   TtsResponseShape _responseShape = TtsResponseShape.rawBytes;
   TtsTransport _transport = TtsTransport.httpChunk;
-  TtsSettings? _syncedSettings;
-  bool _disposed = false;
 
   /// 当前选中的服务类型（类型化视图）：未知 wire 名按缺省档呈现，原始
   /// 身份在 [_providerWireName]。
@@ -178,9 +190,8 @@ final class TtsSettingsForm {
         modelController.text.trim().toLowerCase().endsWith(suffix);
   }
 
-  /// 页面卸载时释放全部控制器与焦点节点。
-  void dispose() {
-    _disposed = true;
+  @override
+  void disposeFields() {
     baseUrlController.dispose();
     modelController.dispose();
     apiKeyController.dispose();
@@ -197,20 +208,11 @@ final class TtsSettingsForm {
     extraParamsFocusNode.dispose();
   }
 
-  /// 已保存设置同步进表单：只处理新出现的设置对象（同一对象重复同步
-  /// 直接返回，用户的选择与草稿不被重置）；未配置时按当前档位回填元
-  /// 数据带的缺省地址、模型与缺省音色。Key 永不回显——只在未获焦时清
-  /// 掉旧草稿。
-  void sync(TtsSettings? settings) {
-    // 档位目录随快照更新（票 08）：新设置对象第一次进来就换上它下发的
-    // 行集；同一对象重复同步不重复换，用户的选择与草稿不被重置。
-    if (settings != null && !identical(settings, _syncedSettings)) {
-      _tierCatalog = settings.tierCatalog;
-    }
-    if (settings == null || identical(settings, _syncedSettings)) {
-      return;
-    }
-    _syncedSettings = settings;
+  /// 同步一个新出现的设置对象：换上它下发的档位行集，回填各输入框
+  /// （未配置时按当前档位落元数据带的缺省地址、模型与缺省音色）。
+  @override
+  void syncNewSettings(TtsSettings settings) {
+    _tierCatalog = settings.tierCatalog;
     _providerWireName = settings.providerWireName;
     final presets = ttsVoicePresetsFor(provider);
     if (settings.configured) {
@@ -276,9 +278,6 @@ final class TtsSettingsForm {
       );
       syncFocusProtectedField(extraParamsController, extraParamsFocusNode, '');
     }
-    if (!apiKeyFocusNode.hasFocus && apiKeyController.text.isNotEmpty) {
-      apiKeyController.clear();
-    }
   }
 
   /// 切换服务类型：落元数据带的缺省地址与模型，并选该档的缺省音色
@@ -337,11 +336,13 @@ final class TtsSettingsForm {
     );
   }
 
-  /// 读草稿：必填校验与 extraParams 的 JSON 对象校验都在领域内。草稿
-  /// 不合法时经 [report] 给出人话并返回 null——呈现方式（渐隐提示）
-  /// 由区块决定。旋钮档另带鉴权头、响应形态与字段名旋钮（按元数据能
-  /// 力门控，票 08）；鉴权头的脏字符与结构校验在 Host 保存时人话驳回
-  /// （与地址、模型同律，单一校验源）。
+  /// 读草稿：必填校验在领域内；extraParams 的 JSON 对象校验与键规整
+  /// 走壳层 [parseSettingsExtraParams]。草稿不合法时经 [report] 给出
+  /// 人话并返回 null——呈现方式（渐隐提示）由区块决定。旋钮档另带
+  /// 鉴权头、响应形态与字段名旋钮（按元数据能力门控，票 08）；鉴权头
+  /// 的脏字符与结构校验在 Host 保存时人话驳回（与地址、模型同律，
+  /// 单一校验源）。
+  @override
   TtsSettingsDraft? readDraftOrReport(void Function(String message) report) {
     if (baseUrlController.text.trim().isEmpty ||
         modelController.text.trim().isEmpty) {
@@ -355,19 +356,8 @@ final class TtsSettingsForm {
     String? responseField;
     final extraText = extraParamsController.text.trim();
     if (extraText.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(extraText);
-        if (decoded is! Map) {
-          report('自定义高级参数必须是 JSON 对象。');
-          return null;
-        }
-        // 键急转字符串：JSON 对象键恒为字符串，懒 cast 只是给将来的
-        // 手改调用方留一条裸 TypeError 的路。
-        extraParams = Map<String, Object?>.from(
-          decoded.map((k, v) => MapEntry(k.toString(), v)),
-        );
-      } on FormatException {
-        report('自定义高级参数 JSON 格式不正确，请检查语法。');
+      extraParams = parseSettingsExtraParams(extraText, report);
+      if (extraParams == null) {
         return null;
       }
     }
@@ -397,23 +387,6 @@ final class TtsSettingsForm {
       // 传输方式只随带传输选项的档上送：其余档 Host 归一为缺省 HTTP 分块。
       transport: tier.transports.isNotEmpty ? _transport : null,
     );
-  }
-
-  /// 一次保存的领域编排：读草稿 → 交视图模型 → 成功后清掉 Key 草稿，
-  /// 不把明文留在输入框（失败时草稿保留待重试）。返回是否真的保存成功。
-  Future<bool> save(
-    TtsSettingsViewModel viewModel, {
-    void Function(String message)? report,
-  }) async {
-    final draft = readDraftOrReport(report ?? (_) {});
-    if (draft == null) {
-      return false;
-    }
-    final saved = await viewModel.save(draft);
-    if (saved && !_disposed) {
-      apiKeyController.clear();
-    }
-    return saved;
   }
 
   /// 一键换档（确认制，ADR 0020）：先算清回填计划，再按同一份计划把
@@ -581,30 +554,12 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
       else
         'API Key：保留',
     ];
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmSettingsTierSuggestion(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const Key('tts-tier-suggestion-dialog'),
-        title: const Text('按建议调整？'),
-        content: Text(changes.join('\n')),
-        actions: [
-          QiyuFocusRingScope(
-            borderRadius: QiyuRadii.circleBorder,
-            child: TextButton(
-              key: const Key('tts-tier-suggestion-cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('再想想'),
-            ),
-          ),
-          FilledButton(
-            key: const Key('tts-tier-suggestion-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('按建议调整'),
-          ),
-        ],
-      ),
+      keyPrefix: 'tts-',
+      changes: changes,
     );
-    if (confirmed == true && mounted) {
+    if (confirmed && mounted) {
       setState(() => _form.applySuggestion(plan));
     }
   }

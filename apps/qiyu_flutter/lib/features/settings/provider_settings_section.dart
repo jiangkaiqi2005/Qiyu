@@ -23,11 +23,25 @@ import 'settings_section_shell.dart';
 
 /// 模型连接领域的表单控制器：页面里每一个输入框的控制器与焦点、
 /// 服务商/套餐/模型三级选择态、已保存设置的同步、草稿校验与保存编排。
+/// 同步幂等守卫、卸载释放与「保存即清 Key」的编排继承壳层
+/// [SettingsCredentialForm]，这里只填领域槽位与服务商目录知识。
 ///
 /// 本类不是 widget，也不持有任何 UI 呈现；错误提示等「怎么说给人听」
 /// 的呈现通过 [readDraftOrReport] 的回调交给区块 widget。
-final class ProviderSettingsForm {
+final class ProviderSettingsForm
+    extends
+        SettingsCredentialForm<
+          ProviderSettings,
+          ProviderSettingsDraft,
+          ProviderSettingsViewModel
+        > {
   ProviderSettingsForm();
+
+  @override
+  TextEditingController get apiKeyDraftController => apiKeyController;
+
+  @override
+  FocusNode get apiKeyDraftFocusNode => apiKeyFocusNode;
 
   final baseUrlController = TextEditingController();
   final modelController = TextEditingController();
@@ -44,8 +58,6 @@ final class ProviderSettingsForm {
   String _selectedProviderId = 'openai';
   String _selectedConnectionId = 'official';
   bool _customModel = false;
-  ProviderSettings? _syncedSettings;
-  bool _disposed = false;
 
   String get selectedProviderId => _selectedProviderId;
 
@@ -66,9 +78,8 @@ final class ProviderSettingsForm {
       ? customModelValue
       : modelController.text;
 
-  /// 页面卸载时释放全部控制器与焦点节点。
-  void dispose() {
-    _disposed = true;
+  @override
+  void disposeFields() {
     baseUrlController.dispose();
     modelController.dispose();
     temperatureController.dispose();
@@ -81,14 +92,10 @@ final class ProviderSettingsForm {
     apiKeyFocusNode.dispose();
   }
 
-  /// 已保存设置同步进表单：只处理新出现的设置对象（同一对象重复同步
-  /// 直接返回，用户的选择与草稿不被重置）；未配置时按当前套餐回填
-  /// 缺省地址与模型。Key 永不回显——只在未获焦时清掉旧草稿。
-  void sync(ProviderSettings? settings) {
-    if (settings == null || identical(settings, _syncedSettings)) {
-      return;
-    }
-    _syncedSettings = settings;
+  /// 同步一个新出现的设置对象：按服务商目录匹配套餐选择态；未配置时
+  /// 按当前套餐回填缺省地址与模型。
+  @override
+  void syncNewSettings(ProviderSettings settings) {
     final selection = matchProviderSettings(settings);
     _selectedProviderId = selection.providerId;
     _selectedConnectionId = selection.connectionId;
@@ -128,9 +135,6 @@ final class ProviderSettingsForm {
             : '',
       );
     }
-    if (!apiKeyFocusNode.hasFocus && apiKeyController.text.isNotEmpty) {
-      apiKeyController.clear();
-    }
   }
 
   /// 切换服务商：落到该商第一个套餐，并应用其地址与模型。
@@ -167,6 +171,7 @@ final class ProviderSettingsForm {
 
   /// 读草稿：数值解析与必填校验都在领域内。草稿不合法时经 [report]
   /// 给出人话并返回 null——呈现方式（渐隐提示）由区块决定。
+  @override
   ProviderSettingsDraft? readDraftOrReport(
     void Function(String message) report,
   ) {
@@ -192,22 +197,6 @@ final class ProviderSettingsForm {
     );
   }
 
-  /// 一次保存的领域编排：读草稿 → 交视图模型 → 成功后清掉 Key 草稿，
-  /// 不把明文留在输入框。返回是否真的保存成功。
-  Future<bool> save(
-    ProviderSettingsViewModel viewModel, {
-    void Function(String message)? report,
-  }) async {
-    final draft = readDraftOrReport(report ?? (_) {});
-    if (draft == null) {
-      return false;
-    }
-    final saved = await viewModel.save(draft);
-    if (saved && !_disposed) {
-      apiKeyController.clear();
-    }
-    return saved;
-  }
 }
 
 /// 出站代理领域的表单控制器（ticket 08）：开关状态、地址与端口两个
