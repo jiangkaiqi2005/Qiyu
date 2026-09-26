@@ -106,6 +106,16 @@ final class TtsSettingsForm {
         (currentVoice.isNotEmpty && presets.every((p) => p.id != currentVoice));
   }
 
+  /// 当前选中的是否千问实时档（型号驱动，ADR 0018）：千问档且型号草稿
+  /// trim+小写后以 `-realtime` 结尾，与网关侧 Realtime 会话的档位判定
+  /// 同口径（型号驱动优先于地址判定；WS 推理地址档与豆包、自定义等其
+  /// 余档照常消费高级参数，不算实时档）。该档网关不吃 extraParams
+  /// （写了不报错也不生效），设置页据此禁用高级参数输入并就地提示，
+  /// 不再静默吞掉用户填写的内容。
+  bool get isQwenRealtimeTier =>
+      _provider == TtsServiceKind.qwenTts &&
+      modelController.text.trim().toLowerCase().endsWith('-realtime');
+
   /// 页面卸载时释放全部控制器与焦点节点。
   void dispose() {
     _disposed = true;
@@ -610,6 +620,10 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
               key: const Key('tts-model'),
               controller: _form.modelController,
               focusNode: _form.modelFocusNode,
+              // 实时档判定跟着型号草稿逐键翻转（isQwenRealtimeTier 读型
+              // 号文本）：键入经 onChanged 重建界面，实时档下高级参数的
+              // 禁用与提示即时跟手。只重建，不改动草稿值。
+              onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: provider == TtsServiceKind.volcTts
                     ? 'Resource-Id'
@@ -935,10 +949,18 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                         focusNode: _form.extraParamsFocusNode,
                         keyboardType: TextInputType.multiline,
                         maxLines: 5,
+                        // 千问实时档不吃自定义高级参数（网关侧该档写了不
+                        // 报错也不生效）：就地禁用并如实提示，不再静默吞
+                        // 掉填写内容。禁用只挡编辑，已填草稿原样保留；切
+                        // 回普通型号或其他档即恢复。
+                        enabled: !_form.isQwenRealtimeTier,
                         decoration: InputDecoration(
                           labelText: '自定义扩展参数 (JSON)',
                           hintText:
                               '{\n  "audio_params": {\n    "sample_rate": 16000\n  }\n}',
+                          helperText: _form.isQwenRealtimeTier
+                              ? '该档不支持自定义高级参数'
+                              : null,
                           contentPadding: const EdgeInsets.all(16),
                           border: settingsOutlineBorder(color: QiyuColors.line),
                           enabledBorder: settingsOutlineBorder(

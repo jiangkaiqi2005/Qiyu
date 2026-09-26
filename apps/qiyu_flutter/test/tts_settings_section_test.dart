@@ -95,6 +95,55 @@ void main() {
     expect(draft.apiKey, 'sk-dashscope');
   });
 
+  test('实时档判定：千问档型号草稿以 -realtime 结尾（trim+小写同网关口径）', () {
+    final value = form();
+    expect(value.isQwenRealtimeTier, isFalse, reason: '非千问档不是实时档');
+
+    value.selectProvider('qwen_tts');
+    expect(value.isQwenRealtimeTier, isFalse, reason: '缺省型号走 HTTP SSE，非实时档');
+
+    value.modelController.text = '$qwenTtsDefaultModel-realtime';
+    expect(value.isQwenRealtimeTier, isTrue);
+
+    // 与网关侧 Realtime 会话的档位判定同口径：首尾空白与大小写不影响。
+    value.modelController.text = '  Qwen3-TTS-Flash-Realtime ';
+    expect(value.isQwenRealtimeTier, isTrue);
+
+    value.modelController.text = qwenTtsDefaultModel;
+    expect(value.isQwenRealtimeTier, isFalse);
+  });
+
+  test('实时档判定只认千问档：其余档型号带 -realtime 结尾不算', () {
+    final value = form();
+    value.selectProvider('openai_compatible');
+    value.modelController.text = 'tts-1-realtime';
+
+    expect(value.isQwenRealtimeTier, isFalse);
+  });
+
+  test('已配置千问实时档同步回显：判定实时档且已存高级参数原文保留', () {
+    final value = TtsSettingsForm();
+    value.sync(
+      const TtsSettings(
+        configured: true,
+        keySet: true,
+        provider: TtsServiceKind.qwenTts,
+        baseUrl: qwenTtsDefaultEndpoint,
+        model: '$qwenTtsDefaultModel-realtime',
+        voice: qwenTtsDefaultVoice,
+        extraParams: {'instructions': '用温柔的语气'},
+      ),
+    );
+
+    expect(value.isQwenRealtimeTier, isTrue);
+    expect(
+      value.extraParamsController.text,
+      const JsonEncoder.withIndent('  ').convert({
+        'instructions': '用温柔的语气',
+      }),
+    );
+  });
+
   test('已配置时回填保存值：协议、地址、模型、自定义音色、语速与 extraParams', () {
     gateway.configured = true;
     final value = form();
@@ -411,6 +460,121 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('千问实时档高级参数输入区禁用并就地提示，型号切回恢复可编辑且内容保留', (tester) async {
+    // 区块嵌在设置页分节壳里：拉高视口保证高级参数区在命中范围内。
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: viewModel,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SettingsSectionCollapseScope(
+              collapsed: const {},
+              onToggle: (_) {},
+              child: ListView(children: const [TtsSettingsSection()]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Finder extraField() => find.byKey(const Key('tts-extra-params'));
+    TextField extraWidget() => tester.widget<TextField>(extraField());
+
+    // 切到千问档（缺省型号非实时），展开高级参数并填入草稿。
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('千问语音合成').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
+    await tester.pumpAndSettle();
+    const filled = '{"instructions": "用温柔的语气"}';
+    await tester.enterText(extraField(), filled);
+    await tester.pump();
+    expect(extraWidget().enabled, isTrue, reason: '前置：非实时型号下输入区可编辑');
+
+    // 型号改成 -realtime：输入区就地禁用、提示挂在输入框旁，已填内容
+    // 不被清掉（禁用只挡编辑）。
+    await tester.enterText(
+      find.byKey(const Key('tts-model')),
+      '$qwenTtsDefaultModel-realtime',
+    );
+    await tester.pump();
+    expect(extraWidget().enabled, isFalse);
+    expect(
+      find.descendant(
+        of: extraField(),
+        matching: find.text('该档不支持自定义高级参数'),
+      ),
+      findsOneWidget,
+    );
+    expect(extraWidget().controller!.text, filled);
+
+    // 型号切回普通档：恢复可编辑、提示消失，草稿原样保留。
+    await tester.enterText(
+      find.byKey(const Key('tts-model')),
+      qwenTtsDefaultModel,
+    );
+    await tester.pump();
+    expect(extraWidget().enabled, isTrue);
+    expect(find.text('该档不支持自定义高级参数'), findsNothing);
+    expect(extraWidget().controller!.text, filled);
+  });
+
+  testWidgets('千问实时档切回其他服务档：高级参数恢复可编辑、提示消失，清空行为与现状一致', (tester) async {
+    // 区块嵌在设置页分节壳里：拉高视口保证高级参数区在命中范围内。
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: viewModel,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SettingsSectionCollapseScope(
+              collapsed: const {},
+              onToggle: (_) {},
+              child: ListView(children: const [TtsSettingsSection()]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Finder extraField() => find.byKey(const Key('tts-extra-params'));
+    TextField extraWidget() => tester.widget<TextField>(extraField());
+
+    // 切到千问档、填入草稿、换实时型号：输入区禁用并提示。
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('千问语音合成').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
+    await tester.pumpAndSettle();
+    await tester.enterText(extraField(), '{"instructions": "用温柔的语气"}');
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('tts-model')),
+      '$qwenTtsDefaultModel-realtime',
+    );
+    await tester.pump();
+    expect(extraWidget().enabled, isFalse, reason: '前置：实时档下输入区已禁用');
+
+    // 切回豆包档：恢复可编辑、提示消失；高级参数草稿按既有换档行为
+    // 清空（本票不改换档清空语义）。
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('豆包语音合成').last);
+    await tester.pumpAndSettle();
+    expect(extraWidget().enabled, isTrue);
+    expect(find.text('该档不支持自定义高级参数'), findsNothing);
+    expect(extraWidget().controller!.text, isEmpty);
   });
 
   test('保存编排：合法草稿带着音色、语速与 extraParams 交给视图模型', () async {
