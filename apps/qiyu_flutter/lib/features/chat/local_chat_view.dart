@@ -147,19 +147,54 @@ class _LocalChatViewState extends State<LocalChatView>
     );
     if (_android) WidgetsBinding.instance.addObserver(this);
     unawaited(_voiceInput.initialize());
+    // go 导航（侧边栏/抽屉换栈）会销毁重建本页 State：「回到聊天页」的
+    // 路由监听帮不上忙，挂载即补拉一次朗读可用状态，设置页保存的语音
+    // 配置回来就生效。VM 还没启动过 initialize 时不补（initialize 自带
+    // 刷新，见 refreshVoiceOutputStatusOnMount）；生产 autoStart 下首挂载
+    // 与 initialize 的刷新并发共读两次，幂等 GET，可接受。
+    unawaited(chatViewModel.refreshVoiceOutputStatusOnMount());
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_android) return;
     final router = GoRouter.maybeOf(context);
     if (router == _router) return;
     _router?.routerDelegate.removeListener(_onRouteChanged);
+    _router?.routerDelegate
+        .removeListener(_onRouteChangedForVoiceOutputRefresh);
     _router = router;
     _chatLocation =
         router?.routerDelegate.currentConfiguration.last.matchedLocation;
-    router?.routerDelegate.addListener(_onRouteChanged);
+    // 平台无关：设置页保存语音配置后回到聊天页必须重拉朗读可用状态
+    // （web/桌面的 push 路径 State 存活，见回页监听；go 换栈的销毁重建
+    // 路径由 initState 的挂载补拉兜住）。
+    router?.routerDelegate.addListener(_onRouteChangedForVoiceOutputRefresh);
+    // 安卓专属：离页取消未提交语音并停播（安卓专属中断语义，见
+    // ChatVoiceCoordinator.leaveRoute）；web/桌面不注册，停播行为零变更。
+    if (_android) {
+      router?.routerDelegate.addListener(_onRouteChanged);
+    }
+  }
+
+  /// 离开聊天页后尚未回来的标记：回到聊天页时据此判定「这次是回来」
+  /// 并重拉一次朗读可用状态。设置页保存 TTS 配置后返回聊天页，若不重拉，
+  /// `_voiceOutputEnabled` 就停留在进页时的 false——自动朗读静默失效、
+  /// 工具条朗读开关不渲染，直到冷启动才恢复。
+  bool _offChat = false;
+
+  /// 平台无关的路由监听（web/桌面也注册）：离开置标记，回来重拉一次
+  /// 朗读可用状态。go 导航销毁重建的路径它覆盖不了——State 全新、标记
+  /// 归零、监听刚注册，那条路由由 initState 的挂载补拉兜住。
+  void _onRouteChangedForVoiceOutputRefresh() {
+    final location =
+        _router?.routerDelegate.currentConfiguration.last.matchedLocation;
+    if (location != _chatLocation) {
+      _offChat = true;
+    } else if (_offChat) {
+      _offChat = false;
+      unawaited(_chatViewModel.refreshVoiceOutputStatus());
+    }
   }
 
   void _onRouteChanged() {
@@ -210,6 +245,8 @@ class _LocalChatViewState extends State<LocalChatView>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _router?.routerDelegate.removeListener(_onRouteChanged);
+    _router?.routerDelegate
+        .removeListener(_onRouteChangedForVoiceOutputRefresh);
     _voiceCoordinator.unsubscribe();
     _chatViewModel.removeListener(_onChatViewModelChanged);
     // 离开本页立刻闭嘴（ADR 0002）：**无条件**停播，包括还在队列里没开口的气泡。

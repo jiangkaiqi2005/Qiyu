@@ -1764,6 +1764,123 @@ void main() {
       variant: TargetPlatformVariant.only(TargetPlatform.windows),
     );
   });
+
+  group('回到聊天页重拉语音朗读状态', () {
+    testWidgets(
+      '设置页保存语音配置后返回，朗读开关立即恢复，不靠冷启动',
+      (tester) async {
+        // 初始未配置 TTS：工具条不渲染朗读开关，快照只读装配时那一次。
+        final ttsGateway = _FlippableTtsGateway();
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        final viewModel = await _pumpChatView(
+          tester,
+          gateway: gateway,
+          ttsGateway: ttsGateway,
+        );
+        expect(ttsGateway.readCount, 1);
+        expect(viewModel.voiceOutputConfigured, isFalse);
+        expect(find.byKey(const Key('voice-output-toggle-off')), findsNothing);
+        expect(find.byKey(const Key('voice-output-toggle-on')), findsNothing);
+
+        // 工具条进入设置页（真实 push 路径）：离开本身不触发刷新。
+        await tester.tap(find.byKey(const Key('open-provider-settings')));
+        await tester.pumpAndSettle();
+        expect(find.text('设置页'), findsOneWidget);
+        expect(ttsGateway.readCount, 1);
+
+        // 用户在设置页保存了语音配置：Host 侧快照翻转为已配置、自动朗读开。
+        ttsGateway.configured = true;
+        ttsGateway.autoSpeak = true;
+
+        // 返回聊天页：必须重拉，否则 enabled 停留在进页时的 false，
+        // 自动朗读静默失效、开关不渲染，直到冷启动才恢复。
+        final settingsContext = tester.element(find.text('设置页'));
+        Navigator.of(settingsContext).pop();
+        await tester.pumpAndSettle();
+
+        expect(ttsGateway.readCount, 2);
+        expect(viewModel.voiceOutputConfigured, isTrue);
+        expect(viewModel.voiceOutputEnabled, isTrue);
+        expect(find.byKey(const Key('voice-output-toggle-on')), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+
+    testWidgets(
+      'web/桌面端同样回页重拉：平台边界已消除，push 返回即按最新快照渲染',
+      (tester) async {
+        // 与安卓用例同构，variant 换 web/桌面档：路由监听不再被安卓门控，
+        // 离开（State 存活）再回来必须同样重拉。
+        final ttsGateway = _FlippableTtsGateway();
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        final viewModel = await _pumpChatView(
+          tester,
+          gateway: gateway,
+          ttsGateway: ttsGateway,
+        );
+        expect(ttsGateway.readCount, 1);
+        expect(viewModel.voiceOutputConfigured, isFalse);
+
+        await tester.tap(find.byKey(const Key('open-provider-settings')));
+        await tester.pumpAndSettle();
+        expect(find.text('设置页'), findsOneWidget);
+        expect(ttsGateway.readCount, 1);
+
+        ttsGateway.configured = true;
+        ttsGateway.autoSpeak = true;
+
+        final settingsContext = tester.element(find.text('设置页'));
+        Navigator.of(settingsContext).pop();
+        await tester.pumpAndSettle();
+
+        expect(ttsGateway.readCount, 2);
+        expect(viewModel.voiceOutputConfigured, isTrue);
+        expect(viewModel.voiceOutputEnabled, isTrue);
+        expect(find.byKey(const Key('voice-output-toggle-on')), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.windows),
+    );
+
+    testWidgets(
+      'go 导航销毁重建后挂载即按最新快照重拉，开关立即恢复',
+      (tester) async {
+        // 侧边栏/抽屉走 go 换栈（同一 ShellRoute 分支切换）：本页 State 被
+        // 销毁重建，「回到聊天页」的路由监听帮不上忙，挂载必须自己补拉。
+        final ttsGateway = _FlippableTtsGateway();
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        final viewModel = await _pumpChatView(
+          tester,
+          gateway: gateway,
+          ttsGateway: ttsGateway,
+        );
+        // 生产里 VM 随应用启动跑过 initialize；测试装配 autoStart:false，
+        // 显式跑一次对齐生产时序（也带来 initialize 自带的那次刷新）。
+        await viewModel.initialize();
+        await tester.pumpAndSettle();
+        final readsAfterInitialize = ttsGateway.readCount;
+
+        final router = GoRouter.of(tester.element(find.byType(LocalChatView)));
+        router.go('/settings');
+        await tester.pumpAndSettle();
+        // go 换栈销毁本页 State：不是 push 的「存活在栈下」路径。
+        expect(find.byType(LocalChatView), findsNothing);
+
+        // 用户在设置页保存了语音配置。
+        ttsGateway.configured = true;
+        ttsGateway.autoSpeak = true;
+
+        router.go('/chat');
+        await tester.pumpAndSettle();
+
+        // 全新 State 挂载即补拉一次，开关按最新快照立即渲染。
+        expect(ttsGateway.readCount, readsAfterInitialize + 1);
+        expect(viewModel.voiceOutputConfigured, isTrue);
+        expect(viewModel.voiceOutputEnabled, isTrue);
+        expect(find.byKey(const Key('voice-output-toggle-on')), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  });
 }
 
 /// 本文件聊天网关替身的公共形状：聊天事件流 + 语音合成双通道。
@@ -1894,12 +2011,14 @@ Future<LocalChatViewModel> _pumpChatView(
   VoiceRecorderPlatform? recorderPlatform,
   bool autoSpeak = false,
   VoiceOutputController? voiceOutput,
+  TtsSettingsGateway? ttsGateway,
 }) async {
-  final ttsGateway = _FixedTtsGateway(configured: autoSpeak, autoSpeak: autoSpeak);
+  final effectiveTtsGateway =
+      ttsGateway ?? _FixedTtsGateway(configured: autoSpeak, autoSpeak: autoSpeak);
   final viewModel = LocalChatViewModel(
     gateway,
     hostConnectionProbe: FakeHostConnectionProbe(const [true]),
-    ttsSettingsGateway: ttsGateway,
+    ttsSettingsGateway: effectiveTtsGateway,
     voiceOutput:
         voiceOutput ?? VoiceOutputController(gateway, playerPlatform: _FakeVoicePlayer()),
     autoStart: false,
@@ -2184,6 +2303,41 @@ final class _FixedTtsGateway implements TtsSettingsGateway {
 
   @override
   Future<TtsSettings> setAutoSpeak(bool enabled) async => read();
+
+  @override
+  Future<TtsSettings> forgetApiKey() => throw UnimplementedError();
+
+  @override
+  Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) =>
+      throw UnimplementedError();
+}
+
+/// 可翻转并计数读取的 TTS 设置替身：模拟「用户离开聊天页后在设置页保存
+/// 语音配置」——configured/autoSpeak 可中途翻转，readCount 供断言回到
+/// 聊天页时确实重拉过一次。
+final class _FlippableTtsGateway implements TtsSettingsGateway {
+  bool configured = false;
+  bool autoSpeak = false;
+  int readCount = 0;
+
+  @override
+  Future<TtsSettings> read() async {
+    readCount += 1;
+    return TtsSettings(
+      configured: configured,
+      keySet: configured,
+      autoSpeak: autoSpeak,
+    );
+  }
+
+  @override
+  Future<TtsSettings> save(TtsSettingsDraft draft) => throw UnimplementedError();
+
+  @override
+  Future<TtsSettings> setAutoSpeak(bool enabled) async {
+    autoSpeak = enabled;
+    return read();
+  }
 
   @override
   Future<TtsSettings> forgetApiKey() => throw UnimplementedError();

@@ -144,6 +144,14 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool _initializing = false;
   bool _initialized = false;
 
+  /// initialize 是否至少启动过（含 hostStopped 早退）：页面挂载补拉据此
+  /// 跳过与 initialize 自带刷新的并发重复。只做观测记录，不动重入门控
+  /// ——[_initialized] 仍只在恢复完成时置位。生产 autoStart 在构造期即
+  /// 置位，首挂载补拉照常发生（与 initialize 自带刷新并发共读两次，
+  /// 幂等）；门控实际只在测试装配（autoStart:false 且未显式 initialize）
+  /// 下拦截。
+  bool _everRanInitialize = false;
+
   /// 唯一代数计数器：新发送、会话恢复与丢弃会话都推进它；原恢复代数
   /// 并入这里，不再有两套代际。
   int _generation = 0;
@@ -269,6 +277,7 @@ final class LocalChatViewModel extends ChangeNotifier {
       return;
     }
     _initializing = true;
+    _everRanInitialize = true;
     final supersededTurn = _activeTurn;
     _sessionScope = Object();
     _generation += 1;
@@ -292,6 +301,18 @@ final class LocalChatViewModel extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  /// 页面挂载时的朗读状态补拉：go 导航（侧边栏/抽屉换栈）会销毁重建
+  /// 聊天页 State，「回到聊天页」的路由监听帮不上忙，挂载即拉一次。VM
+  /// 还没启动过 initialize 时不补——initialize 自带一次刷新（测试装配
+  /// 的显式刷新同理），避免与它并发重复读本机 GET；生产 autoStart 下
+  /// 首挂载补拉照常发生，与 initialize 的刷新并发共读两次，幂等可接受。
+  Future<void> refreshVoiceOutputStatusOnMount() async {
+    if (!_everRanInitialize) {
+      return;
+    }
+    await refreshVoiceOutputStatus();
   }
 
   /// 朗读可用性：配了语音合成且自动朗读开着才触发（ADR 0002：配置了

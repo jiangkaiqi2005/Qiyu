@@ -71,7 +71,9 @@ void main() {
     );
     await tester.pump();
 
-    expect(ttsGateway.readCalls, 1);
+    // 两次读都走同一注入实例（复用语义）：VM initialize 自带一次刷新，
+    // 聊天页挂载补拉（go 换栈销毁重建路径的兜底）再来一次，幂等 GET。
+    expect(ttsGateway.readCalls, 2);
   });
 
   testWidgets('restores the latest local session without duplicate messages', (
