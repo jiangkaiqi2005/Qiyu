@@ -6,15 +6,13 @@
 **语** (yǔ) — to speak, to confide.
 **Qiyu** — someone to talk to, in the moments you come to rest.
 
-You can talk to her about anything — summarize what you did today, confide things you can only say to yourself, and more.
-
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 ---
 
 ## Who she is
 
-Qiyu is a bedtime AI companion — you can talk to her about anything. She has her own preferences and judgments, and won't pretend to agree just to be pleasant. She can have emotions, and she can not know how to answer.
+Qiyu is a bedtime AI companion — you can talk to her about anything, whether summarizing what you did today, or confiding things you can only tell yourself, and more. She has her own preferences and judgments, and won't pretend to agree just to be pleasant. She can have emotions, and she can not know how to answer.
 
 Of course, you don't have to wait until bedtime. Chat with her whenever you feel like it.
 
@@ -32,7 +30,7 @@ Of course, you don't have to wait until bedtime. Chat with her whenever you feel
 
 When you don't feel like typing before bed, just speak.
 
-- On desktop: click the microphone next to the input box and start talking; click it again when you're done (the button turns into "done, turn into text"), and your words are sent as text.
+- On desktop: click the microphone next to the input box and start talking; click it again when you're done, and your words are sent as text.
 - On Android: tap the microphone once to enter voice mode, press and hold the button to speak, and release to send. Don't want to send? Slide up to cancel.
 
 Her replies can be read aloud too — tap the speaker icon next to a bubble, or turn on auto-read in Settings.
@@ -118,9 +116,13 @@ The Memory Center has four layers — **recent days, long-term impressions, abou
 - **Delete** any memory entry: before deleting, she tells you the blast radius (which days' records, persona claims, and long-term impressions are affected). Deleting a memory does not delete the raw conversation — raw sessions are only cleared when you delete a session segment by hand in History
 - **Correct** a memory: long-term impressions and daily entries can be edited directly, and the persona is corrected through conversation; after a correction she rebuilds the related indexes in the background, showing "organizing" until it settles
 
-Memories that involve private information are masked by default and can be revealed temporarily (they re-mask after 20 seconds).
+Memories that involve private information are masked by default and can be revealed temporarily.
 
-All three entries let you **change what she calls you**: at first meeting, in the Memory Center, or by simply saying "call me Lao Wang from now on" in chat — no need to wait for her to form a picture of you.
+## Web search
+
+When the conversation touches things that change — today's date, the weather outside, recent news — Qiyu searches the web on demand and weaves what she finds into her reply, so you don't have to look it up yourself.
+
+This needs an AnySearch API Key under Settings → web search (apply on AnySearch's website). The key stays on your machine. Without it, chatting works as usual — she just won't search.
 
 ## Privacy
 
@@ -169,11 +171,13 @@ Qiyu has no cloud. There is exactly one copy of your data — yours:
 - On Windows, run `uninstall.cmd` from the installation directory. It asks whether to keep your data: keep, and everything stays where it is; delete, and everything is wiped.
 - On Android, uninstalling the app — or clearing its data from the system settings — erases all conversations and memories. Export a backup first.
 
-## Web search
+## Notes
 
-When the conversation touches things that change — today's date, the weather outside, recent news — Qiyu searches the web on demand and weaves what she finds into her reply, so you don't have to look it up yourself.
-
-This needs an AnySearch API Key under Settings → web search (apply on AnySearch's website). The key stays on your machine. Without it, chatting works as usual — she just won't search.
+- **Model differences**: Chat relies on your own configured model. Different models can vary noticeably in response speed, comprehension depth, and conversational tone. A model with good instruction-following and streaming support is recommended.
+- **Background requests and token usage**: Once a model is configured, beyond your active conversations, background daily archiving, Dream consolidation, and in-conversation recall will also make model requests. If you use a pay-per-token remote API, these will consume a small amount of additional tokens.
+- **Independent voice configuration**: Speech input (ASR) and text-to-speech (TTS) are configured separately from the chat model. Connecting a chat model alone does not enable voice; you must configure your voice provider and keys in Settings.
+- **Local-only data, no cloud copy**: All conversations, memories, and settings are stored strictly on your local machine. Qiyu does not provide cloud backup. Before uninstalling, reinstalling the OS, or switching devices, export a backup under Settings → local data or copy the entire `.qiyu` directory. Deleted data cannot be recovered remotely.
+- **Background processing requirements**: Daily archiving and Dream rely on the app running on your machine. If you immediately quit the app or shut down after saying goodnight, that night's consolidation may pause (and catch up automatically on next launch), as she cannot run when the device is off.
 
 ## Architecture
 
@@ -190,7 +194,7 @@ This needs an AnySearch API Key under Settings → web search (apply on AnySearc
 └─────────────────────────────────┘
 ```
 
-The host listens only on `127.0.0.1`; API keys never enter the browser. Model output is streamed: each increment is hygiene-checked (hidden-structure stripping, control patterns, per-line cleaning, length cap) before it reaches the screen, and the final text is persisted when the protocol terminates. Persona and phrasing constraints live in the prompt layer and are judged by the model, not by host-side regexes. Crisis, medical, legal, and financial inputs go to the model as usual; when no model is configured or the model does not respond, local fallback scripts take over (crisis inputs are given the 12356 mental-health hotline).
+The host listens only on `127.0.0.1`; API keys never enter the browser. Model output is streamed: each increment is hygiene-checked (hidden-structure stripping, control patterns, per-line cleaning, length cap) before it reaches the screen, and the final text is persisted when the protocol terminates; if the protocol fails, whatever was already displayed is also persisted truthfully. Persona and phrasing constraints live in the prompt layer and are judged by the model, not by host-side regexes. Crisis, medical, legal, and financial inputs go to the model as usual.
 
 The Android app reuses the same interface and core, with the local service embedded right in the app — likewise with no cloud anywhere.
 
@@ -206,3 +210,5 @@ Release 1 targets Windows and Android; iOS and other platforms come later.
 Technical details are in the [behavior specification](docs/product/behavior-spec.md), [release baseline](docs/engineering/windows-release-baseline.md), and [contributor guide](AGENTS.md).
 
 For bugs and feature requests, use [GitHub Issues](https://github.com/jiangkaiqi2005/Qiyu/issues).
+
+Contributions are warmly welcome. Qiyu is still growing — feel free to open issues or submit pull requests. I will do my utmost to address any issues that arise.
