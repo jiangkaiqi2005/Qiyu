@@ -1552,6 +1552,240 @@ void main() {
     });
   });
 
+  group('朗读态行与重听行同几何（画面零位移）', () {
+    // 挂起型播放器：朗读态保持到 finishAll 放行，供几何断言截帧。
+    // 单轮单行交付（delta 带 \n 拆出完结行，done 交付同一行），done 后
+    // 自动朗读并保持「正在读」；返回流式期完结行的矩形基准——done 换届
+    // 与朗读态替换共用这一几何。
+    Future<Rect> pumpReadingScene(
+      WidgetTester tester, {
+      required _StreamControlledChatGateway gateway,
+      required _HoldingVoicePlayer player,
+    }) async {
+      tester.view.physicalSize = const Size(800, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final voiceOutput = VoiceOutputController(
+        gateway,
+        playerPlatform: player,
+      );
+      final viewModel = await _pumpChatView(
+        tester,
+        gateway: gateway,
+        ttsGateway: _FixedTtsGateway(configured: true, autoSpeak: true),
+        voiceOutput: voiceOutput,
+      );
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        viewModel.dispose();
+        voiceOutput.dispose();
+      });
+      await viewModel.initialize();
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+      // 直接调 send 拿到轮事务的 future：流关闭后轮收尾，不留悬挂事务。
+      final pending = viewModel.send('在吗');
+      await tester.pump();
+      final requestId = gateway.sentRequestId!;
+      gateway.add(
+        LocalChatDeliveryEvent.accepted(
+          requestId: requestId,
+          sessionId: 'session-1',
+        ),
+      );
+      gateway.add(LocalChatDeliveryEvent.waiting(requestId: requestId));
+      gateway.add(
+        LocalChatDeliveryEvent.delta(requestId: requestId, text: '第一句，慢慢说。\n'),
+      );
+      await tester.pump();
+
+      // 流式期：完结行按最终装配渲染，重听行位置是同位同高空带。
+      expect(find.text('第一句，慢慢说。'), findsOneWidget);
+      final baseline = tester.getRect(find.byKey(const Key('chat-message-1')));
+
+      gateway.add(
+        LocalChatDeliveryEvent.message(
+          requestId: requestId,
+          messages: const ['第一句，慢慢说。'],
+        ),
+      );
+      gateway.add(
+        LocalChatDeliveryEvent.state(
+          requestId: requestId,
+          source: ReplySource.llm,
+        ),
+      );
+      gateway.add(LocalChatDeliveryEvent.done(requestId: requestId));
+      await gateway.close();
+      await pending;
+      await tester.pumpAndSettle();
+      return baseline;
+    }
+
+    testWidgets(
+      '完整交付立即进入朗读态：消息块矩形逐像素不变，重听键不构成可点目标',
+      (tester) async {
+        // 语义树要先开启再泵场景：占位「不进语义树」的断言只有在真实
+        // 语义树下才咬合——未开启时 bySemanticsLabel 恒空、断言空转。
+        final handle = tester.ensureSemantics();
+        try {
+          final gateway = _StreamControlledChatGateway();
+          final player = _HoldingVoicePlayer();
+          final baseline = await pumpReadingScene(
+            tester,
+            gateway: gateway,
+            player: player,
+          );
+
+          // done 换届与朗读置位同帧落地：「正在读」落在流式期空带的同一
+          // 位置，块矩形（正文、重听行带、时刻槽）逐像素不变。
+          expect(find.text('正在读'), findsOneWidget);
+          expect(
+            tester.getRect(find.byKey(const Key('chat-message-1'))),
+            baseline,
+          );
+          // 重听键被朗读态替换：不构成可点目标，也不在语义树里（占位
+          // 由 Visibility 不可见态承载，语义树里不可见）。
+          expect(find.byKey(const Key('chat-replay-0')), findsNothing);
+          expect(find.bySemanticsLabel('再听一遍这句'), findsNothing);
+        } finally {
+          handle.dispose();
+        }
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.android,
+        TargetPlatform.windows,
+      }),
+    );
+
+    testWidgets(
+      '手动重听进入与结束朗读：重听行原位替换并原位回场，块矩形逐像素不变',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final gateway = _ConfigurableChatGateway(fallbackReasons: const [null]);
+        final player = _HoldingVoicePlayer();
+        final voiceOutput = VoiceOutputController(
+          gateway,
+          playerPlatform: player,
+        );
+        final viewModel = await _pumpChatView(
+          tester,
+          gateway: gateway,
+          // autoSpeak 关：完整交付后不自动朗读，重听键保持可点。
+          ttsGateway: _FixedTtsGateway(configured: true, autoSpeak: false),
+          voiceOutput: voiceOutput,
+        );
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox.shrink());
+          viewModel.dispose();
+          voiceOutput.dispose();
+        });
+        await viewModel.initialize();
+        await tester.pumpAndSettle();
+
+        await tester.enterText(find.byKey(const Key('chat-input')), '在吗');
+        await tester.tap(find.byKey(const Key('chat-send')));
+        await tester.pumpAndSettle();
+        expect(find.text('本地基础回复'), findsOneWidget);
+        final baseline = tester.getRect(
+          find.byKey(const Key('chat-message-1')),
+        );
+        final replayBefore = tester.getRect(
+          find.byKey(const Key('chat-replay-0')),
+        );
+
+        // 点重听小喇叭进入朗读态：朗读行替换重听行，块矩形逐像素不变。
+        await tester.tap(find.byKey(const Key('chat-replay-0')));
+        await tester.pumpAndSettle();
+        expect(find.text('正在读'), findsOneWidget);
+        expect(find.byKey(const Key('chat-replay-0')), findsNothing);
+        expect(
+          tester.getRect(find.byKey(const Key('chat-message-1'))),
+          baseline,
+        );
+
+        // 播完回场：重听键逐像素回到捕获的原位（同 left/top/宽/高），
+        // 块矩形同样不变。
+        player.finishAll();
+        await tester.pumpAndSettle();
+        expect(find.text('正在读'), findsNothing);
+        expect(find.byKey(const Key('chat-replay-0')), findsOneWidget);
+        expect(
+          tester.getRect(find.byKey(const Key('chat-replay-0'))),
+          replayBefore,
+        );
+        expect(
+          tester.getRect(find.byKey(const Key('chat-message-1'))),
+          baseline,
+        );
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.android,
+        TargetPlatform.windows,
+      }),
+    );
+
+    testWidgets(
+      '朗读结束：消息块矩形仍不变，重听键回原位',
+      (tester) async {
+        final gateway = _StreamControlledChatGateway();
+        final player = _HoldingVoicePlayer();
+        final baseline = await pumpReadingScene(
+          tester,
+          gateway: gateway,
+          player: player,
+        );
+        expect(find.text('正在读'), findsOneWidget);
+
+        player.finishAll();
+        await tester.pumpAndSettle();
+
+        expect(find.text('正在读'), findsNothing);
+        expect(find.byKey(const Key('chat-replay-0')), findsOneWidget);
+        expect(
+          tester.getRect(find.byKey(const Key('chat-message-1'))),
+          baseline,
+        );
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.android,
+        TargetPlatform.windows,
+      }),
+    );
+
+    testWidgets(
+      '朗读态行与重听行等高：同左缘同顶同高（不写死数值）',
+      (tester) async {
+        final gateway = _StreamControlledChatGateway();
+        final player = _HoldingVoicePlayer();
+        await pumpReadingScene(tester, gateway: gateway, player: player);
+        expect(find.text('正在读'), findsOneWidget);
+
+        final speakingRow = tester.getRect(
+          find.byKey(const Key('chat-speaking-row')),
+        );
+        player.finishAll();
+        await tester.pumpAndSettle();
+        final replayButton = tester.getRect(
+          find.byKey(const Key('chat-replay-0')),
+        );
+
+        // 高度随平台档漂（移动档 padded 40 / 桌面 shrinkWrap 更矮），只锁
+        // 两者几何等值：行带由隐藏的真实按钮承载，与重听行同位同高。
+        expect(speakingRow.left, replayButton.left);
+        expect(speakingRow.top, replayButton.top);
+        expect(speakingRow.height, replayButton.height);
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.android,
+        TargetPlatform.windows,
+      }),
+    );
+  });
+
   group('聊天页划选（消息列表外 SelectionArea）', () {
     testWidgets('选择区包住消息列表，输入框在外（与历史回看页同款同位置）', (tester) async {
       await _pumpTallChatView(tester);
@@ -2363,6 +2597,62 @@ final class _FakeVoicePlayer implements VoicePlayerPlatform {
     required String mimeType,
     double volume = 1.0,
   }) async => null;
+}
+
+/// 播放挂起型 fake：「正在读」状态保持到 finishAll 被调用——朗读态行
+/// 的几何断言要靠它截帧，立即结束的播放器会让朗读态一闪而过。
+final class _HoldingVoicePlayer implements VoicePlayerPlatform {
+  final _playbacks = <Completer<void>>[];
+
+  @override
+  bool get supported => true;
+
+  @override
+  double getInitialVolume() => 1.0;
+
+  @override
+  void saveVolume(double volume) {}
+
+  @override
+  Future<VoicePlayback?> play(
+    Uint8List bytes, {
+    required String mimeType,
+    double volume = 1.0,
+  }) async {
+    final playback = _HoldingVoicePlayback(this);
+    _playbacks.add(playback._done);
+    return playback;
+  }
+
+  void finishAll() {
+    for (final done in _playbacks) {
+      if (!done.isCompleted) {
+        done.complete();
+      }
+    }
+    _playbacks.clear();
+  }
+}
+
+final class _HoldingVoicePlayback implements VoicePlayback {
+  _HoldingVoicePlayback(this._platform);
+
+  final _HoldingVoicePlayer _platform;
+  final Completer<void> _done = Completer<void>();
+
+  @override
+  Future<void> get done => _done.future;
+
+  @override
+  void setVolume(double volume) {}
+
+  @override
+  void stop() {
+    _platform._playbacks.remove(_done);
+    if (!_done.isCompleted) {
+      _done.complete();
+    }
+  }
 }
 
 final class _FakeVoiceRecorder implements VoiceRecorderPlatform {

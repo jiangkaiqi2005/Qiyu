@@ -339,16 +339,44 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
       ],
       if (widget.isSpeaking) ...[
         const SizedBox(height: 6),
-        // 正在读：动效位交给「正在读」文本，此时不叠重听键。
-        // 字号随档取极小档（design-system §3 窄屏列），全页面不留大字漏网。
-        Row(
-          mainAxisSize: MainAxisSize.min,
+        // 正在读：动效位交给「正在读」文本，此时不叠重听键。行带与重
+        // 听行同位同高——底层由隐藏但参与布局的真实按钮承载（同
+        // reserveReplayRow 的技法：maintainSize 保持几何，
+        // maintainAnimation/maintainState 是构造断言链要求），高度随平
+        // 台档自动成立、不背魔法常量；Visibility 默认拦掉命中与语义，
+        // 占位不构成重听键。上层叠可见行带，垂直居中贴起始缘，图标与
+        // 重听喇叭同位——开始与结束朗读画面零位移（design-system §10
+        // 条 13）。key 供测试定位行带几何。
+        Stack(
+          key: const Key('chat-speaking-row'),
+          alignment: AlignmentDirectional.centerStart,
           children: [
-            const Icon(QiyuIcons.volume_up, size: 16),
-            const SizedBox(width: 4),
-            Text(
-              '正在读',
-              style: TextStyle(fontSize: QiyuTypography.of(context).tinySize),
+            Visibility(
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              visible: false,
+              child: _MessageActionButton(
+                // 占位不可交互（Visibility 默认 IgnorePointer），动作位仅
+                // 为满足构造，永不会被调用。
+                onAction: () {},
+                icon: QiyuIcons.volume_up,
+                actionLabel: _replayActionLabel,
+              ),
+            ),
+            // 字号随档取极小档（design-system §3 窄屏列），全页面不留大字漏网。
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(QiyuIcons.volume_up, size: 16),
+                const SizedBox(width: 4),
+                Text(
+                  '正在读',
+                  style: TextStyle(
+                    fontSize: QiyuTypography.of(context).tinySize,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

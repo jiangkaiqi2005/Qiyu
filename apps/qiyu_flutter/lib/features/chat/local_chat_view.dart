@@ -1068,10 +1068,11 @@ class _LocalChatViewState extends State<LocalChatView>
               // done 复用。deliveryIndex 尚不存在：不给重听键与朗读态，
               // 重听行位置留同位同高空带；复制与时刻显隐同最终气泡同参
               // 数。正文语义暂时排除——live region 不逐行重复播报，交付
-              // 完成后由历史消息语义接管（ticket 24 口径）。零位移仅对
-              // 完整交付且不立即朗读成立：半句交付每行长出「未完成」小
-              // 字、立即朗读时重听行被「正在读」行替换，done 后仍有一
-              // 次形变，已知取舍（design-system §10 条 13）。
+              // 完成后由历史消息语义接管（ticket 24 口径）。朗读态与重
+              // 听行同几何：「正在读」行带叠在隐藏真实按钮承载的同位同
+              // 高空带上（QiyuChatBubble 朗读态分支），开始与结束朗读画
+              // 面零位移；半句交付每行长出「未完成」小字仍有一次形变，
+              // 已知取舍（design-system §10 条 13）。
               return ExcludeSemantics(
                 child: QiyuChatBubble(
                   key: Key('chat-message-$index'),
