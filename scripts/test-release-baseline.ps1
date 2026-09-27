@@ -247,7 +247,6 @@ Assert-Condition (
 
 foreach ($relativePath in @(
   'README.md',
-  'AGENTS.md',
   'apps\qiyu_windows_host\README.md',
   'docs\engineering\windows-local-web-shell.md',
   'docs\engineering\windows-release-baseline.md',
@@ -256,6 +255,14 @@ foreach ($relativePath in @(
   $content = Get-Content -Raw -Encoding UTF8 (Join-Path $repositoryRoot $relativePath)
   Assert-Condition ($content -notmatch '(?im)^\s*(?:npm|node)\b') `
     "当前运行文档仍给出 Node/npm 命令：$relativePath"
+}
+
+# AGENTS.md 为本机工作流资产（已加入 .gitignore，不随仓库分发）；仅在本地存在时检查
+$agentsPath = Join-Path $repositoryRoot 'AGENTS.md'
+if (Test-Path -LiteralPath $agentsPath -PathType Leaf) {
+  $agentsContent = Get-Content -Raw -Encoding UTF8 $agentsPath
+  Assert-Condition ($agentsContent -notmatch '(?im)^\s*(?:npm|node)\b') `
+    "当前运行文档仍给出 Node/npm 命令：AGENTS.md"
 }
 
 $flutterLibPath = Join-Path $repositoryRoot 'apps\qiyu_flutter\lib'
