@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'browser_launcher.dart';
-import 'local_app_host.dart';
-import 'secure_token.dart';
+import 'package:qiyu_local_host/qiyu_local_host.dart';
+
+import 'secret_store.dart';
 import 'single_instance.dart';
 
 final class QiyuHostRunner {
@@ -47,6 +47,8 @@ final class QiyuHostRunner {
         memoryDirectory: memoryDirectory,
         personaConstitution: personaConstitution,
         activationToken: activationToken,
+        // 平台凭据仓注入：Windows 凭据管理器实现留在本壳。
+        secretStore: const WindowsCredentialSecretStore(),
         onActivate: () => browserLauncher.open(host.launchUri),
       );
       lease.writeDescriptor(
@@ -76,7 +78,7 @@ final class QiyuHostRunner {
   }) async {
     // descriptor 可被本机同用户进程篡改，激活请求绝不发往 loopback 之外。
     if (!_isLoopbackOrigin(descriptor.origin)) {
-      throw StateError('Existing Qiyu instance descriptor points outside loopback');
+      throw StateError('$existingInstanceFailurePrefix descriptor points outside loopback');
     }
     if (!activateBrowser) {
       return const _ActivationResult(
@@ -109,7 +111,7 @@ final class QiyuHostRunner {
         displayUri: displayUri,
       );
     } on SocketException {
-      throw StateError('Existing Qiyu instance is not reachable');
+      throw StateError('$existingInstanceFailurePrefix is not reachable');
     } finally {
       client.close(force: true);
     }

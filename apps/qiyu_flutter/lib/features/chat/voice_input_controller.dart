@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../baseline/host_api_gateway.dart';
+import 'api_error_dialog.dart';
 import 'voice_recorder_platform.dart';
 
 /// 语音输入状态机的可见状态（spec：idle → recording → transcribing →
@@ -12,6 +13,7 @@ enum VoiceInputStatus {
   unsupported,
   notConfigured,
   idle,
+  preparing,
   recording,
   transcribing,
   retryable,
@@ -30,6 +32,7 @@ final class VoiceInputController extends ChangeNotifier {
     this._serviceStatus,
     this._transcribe, {
     required this.onTranscribed,
+    this.onApiError,
     this.autoStopAfter = const Duration(seconds: 60),
   });
 
@@ -42,10 +45,13 @@ final class VoiceInputController extends ChangeNotifier {
   /// 转写成功：文本交回聊天页走既有发送链路（与手打完全一致）。
   final void Function(String text) onTranscribed;
 
+  /// 转写遇到 429 或 40x 异常时的回调。
+  final void Function(ApiErrorCategory category)? onApiError;
+
   /// 录音上限：到点自动收尾并照常转写，不丢用户的话。
   final Duration autoStopAfter;
 
-  VoiceInputStatus _status = VoiceInputStatus.idle;
+  VoiceInputStatus _status = VoiceInputStatus.notConfigured;
   String? _errorMessage;
   VoiceRecordingSession? _session;
   Uint8List? _pendingAudio;
@@ -59,11 +65,20 @@ final class VoiceInputController extends ChangeNotifier {
   /// 转写尝试令牌：Esc 中止或丢弃后，迟到的转写结果一律作废。
   int _attempt = 0;
   bool _disposed = false;
+  bool _starting = false;
+  bool _stoppingRecording = false;
+  bool _holdRecording = false;
+  bool _shortRecording = false;
+  Timer? _minimumTimer;
+  bool cancelOnRelease = false;
 
   VoiceInputStatus get status => _status;
   String? get errorMessage => _errorMessage;
   int get elapsedSeconds => _elapsedSeconds;
   bool get hasRetainedAudio => _pendingAudio != null;
+
+  /// 包括尚未返回的设备启动与停止，松手后释放前也不能混入朗读。
+  bool get isMicrophoneInUse => _starting || _session != null || _stoppingRecording;
 
   /// 聊天页初始化时拉一次：浏览器不支持或未配置语音服务都如实置灰。
   Future<void> initialize() async {
@@ -128,37 +143,84 @@ final class VoiceInputController extends ChangeNotifier {
       case VoiceInputStatus.unsupported:
       case VoiceInputStatus.notConfigured:
       case VoiceInputStatus.transcribing:
+      case VoiceInputStatus.preparing:
         break;
     }
   }
 
-  Future<void> startRecording() async {
-    if (_status != VoiceInputStatus.idle) {
+  Future<void> startRecording({bool holdToTalk = false}) async {
+    if (_disposed ||
+        _starting ||
+        _stoppingRecording ||
+        _status != VoiceInputStatus.idle) {
       return;
     }
+    _starting = true;
+    final attempt = _registerAttempt();
+    _holdRecording = holdToTalk;
+    cancelOnRelease = false;
+    _status = VoiceInputStatus.preparing;
     _errorMessage = null;
+    notifyListeners();
     VoiceRecordingSession? session;
     try {
+      final platform = _platform;
+      if (platform is InterruptibleVoiceRecorderPlatform) {
+        await (platform as InterruptibleVoiceRecorderPlatform).prepareInput();
+        if (_disposed || attempt != _attempt) {
+          _cancelPreparation();
+          return;
+        }
+      }
+      if (holdToTalk && platform is PermissionAwareVoiceRecorderPlatform) {
+        final permission =
+            await (platform as PermissionAwareVoiceRecorderPlatform)
+                .preparePermission();
+        if (_disposed || attempt != _attempt) return;
+        if (permission != VoicePermissionResult.ready) {
+          _cancelPreparation();
+          _status = VoiceInputStatus.idle;
+          _errorMessage = permission == VoicePermissionResult.grantedNow
+              ? '已允许麦克风，请重新按住说话。'
+              : '无法使用麦克风，请在安卓系统设置中允许麦克风权限。';
+          notifyListeners();
+          return;
+        }
+      }
       session = await _platform.start();
     } on Object {
       session = null;
+    } finally {
+      _starting = false;
     }
-    if (_disposed) {
+    if (_disposed || attempt != _attempt) {
       session?.discard();
       return;
     }
     if (session == null) {
-      // 授权被拒或设备不可用：留在 idle，错误就近平铺在语音状态行。
-      _errorMessage = '无法使用麦克风，请检查浏览器权限或换 Chrome / Edge。';
+      _cancelPreparation();
+      _status = VoiceInputStatus.idle;
+      _errorMessage = '无法使用麦克风，请检查麦克风权限或设备状态。';
       notifyListeners();
       return;
+    }
+    _shortRecording = holdToTalk;
+    if (holdToTalk) {
+      _minimumTimer = Timer(
+        const Duration(milliseconds: 500),
+        () => _shortRecording = false,
+      );
     }
     _session = session;
     _status = VoiceInputStatus.recording;
     _elapsedSeconds = 0;
     _autoStopTimer = Timer(autoStopAfter, () {
       if (_status == VoiceInputStatus.recording && !_disposed) {
-        unawaited(stopAndTranscribe());
+        if (_holdRecording) {
+          finishHold();
+        } else {
+          unawaited(stopAndTranscribe());
+        }
       }
     });
     _elapsedTimer = Timer.periodic(_tickInterval, (_) {
@@ -168,6 +230,24 @@ final class VoiceInputController extends ChangeNotifier {
       }
     });
     notifyListeners();
+  }
+
+  /// 松手与录音上限共用终态，准备态松手只作废设备结果。
+  void finishHold() {
+    if (_status == VoiceInputStatus.preparing) {
+      discard();
+    } else if (_status == VoiceInputStatus.recording) {
+      if (cancelOnRelease || _shortRecording) {
+        final short = _shortRecording && !cancelOnRelease;
+        discard();
+        if (short) {
+          _errorMessage = '说话时间太短，请重新按住说话';
+          notifyListeners();
+        }
+      } else {
+        unawaited(stopAndTranscribe());
+      }
+    }
   }
 
   /// 再点一次麦克风：结束录音并立即转写。
@@ -181,6 +261,7 @@ final class VoiceInputController extends ChangeNotifier {
     final attempt = _registerAttempt();
     _cancelTimers();
     _session = null;
+    _stoppingRecording = true;
     _status = VoiceInputStatus.transcribing;
     _errorMessage = null;
     notifyListeners();
@@ -195,6 +276,8 @@ final class VoiceInputController extends ChangeNotifier {
       _errorMessage = '录音结束失败，请重新说一次。';
       notifyListeners();
       return;
+    } finally {
+      _stoppingRecording = false;
     }
     if (_disposed) {
       return;
@@ -228,6 +311,7 @@ final class VoiceInputController extends ChangeNotifier {
   /// 可重试态丢弃。
   void handleEscape() {
     switch (_status) {
+      case VoiceInputStatus.preparing:
       case VoiceInputStatus.recording:
         discard();
       case VoiceInputStatus.transcribing:
@@ -248,6 +332,7 @@ final class VoiceInputController extends ChangeNotifier {
   /// 丢弃录音回 idle，不留任何字节。
   void discard() {
     _cancelTimers();
+    if (_starting) _cancelPreparation();
     _session?.discard();
     _session = null;
     _attempt += 1;
@@ -255,6 +340,13 @@ final class VoiceInputController extends ChangeNotifier {
     _status = VoiceInputStatus.idle;
     _errorMessage = null;
     notifyListeners();
+  }
+
+  void _cancelPreparation() {
+    final platform = _platform;
+    if (platform is InterruptibleVoiceRecorderPlatform) {
+      (platform as InterruptibleVoiceRecorderPlatform).cancelPreparation();
+    }
   }
 
   /// 登记一次新的转写尝试令牌：Esc 中止与丢弃都会递增 [_attempt]，
@@ -320,12 +412,23 @@ final class VoiceInputController extends ChangeNotifier {
       _status = VoiceInputStatus.idle;
       _errorMessage = null;
       notifyListeners();
-      onTranscribed(text);
+      if (!_disposed && attempt == _attempt) onTranscribed(text);
     } on Object catch (error) {
       if (_disposed || attempt != _attempt) {
         return;
       }
-      _enterRetryable(_readableError(error));
+      _enterRetryable(
+        readableError(
+          error,
+          fallback: _holdRecording
+              ? '转写没有成功，请重试或重新录制。'
+              : '转写没有成功，点麦克风重试，Esc 丢弃。',
+        ),
+      );
+      final category = categorizeVoiceApiError(error, isInput: true);
+      if (category != null) {
+        onApiError?.call(category);
+      }
     }
   }
 
@@ -336,6 +439,8 @@ final class VoiceInputController extends ChangeNotifier {
   }
 
   void _cancelTimers() {
+    _minimumTimer?.cancel();
+    _minimumTimer = null;
     _autoStopTimer?.cancel();
     _autoStopTimer = null;
     _elapsedTimer?.cancel();
@@ -346,12 +451,10 @@ final class VoiceInputController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _cancelTimers();
+    if (_starting) _cancelPreparation();
     _session?.discard();
     _session = null;
     _clearPendingAudio();
     super.dispose();
   }
 }
-
-String _readableError(Object error) =>
-    readableError(error, fallback: '转写没有成功，点麦克风重试，Esc 丢弃。');

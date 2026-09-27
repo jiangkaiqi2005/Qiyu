@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -7,11 +8,14 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/app.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_view_model.dart';
+import 'package:qiyu_flutter/features/chat/voice_player_platform.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_client.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/proxy_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/proxy_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_collapse_platform.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
@@ -26,6 +30,79 @@ import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 import 'support/shared_fakes.dart';
 
 void main() {
+  testWidgets('安卓后台中断挂起合成后按钮立即可重试，旧请求晚到不覆盖新试听', (tester) async {
+    final oldRequest = Completer<TtsConnectionTest>();
+    final gateway = _MutableTtsSettingsGateway(const TtsSettings(
+      configured: true, keySet: true, baseUrl: 'https://tts.example.com', model: 'tts'))
+      ..pendingTest = oldRequest;
+    final player = _HoldingPreviewPlayer();
+    await tester.pumpWidget(await _app(
+      settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+      providerGateway: FixedProviderSettingsGateway(configured: false),
+      ttsGateway: gateway, ttsPlayer: player,
+    ));
+    await _openSettings(tester);
+    await _expandSection(tester, 'tts');
+    final button = find.byKey(const Key('test-tts-connection'));
+    await _reveal(tester, button);
+    await tester.tap(button);
+    await tester.pump();
+    expect(gateway.testCalls, 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    gateway.pendingTest = null;
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(oldRequest.isCompleted, false);
+    expect(gateway.testCalls, 2);
+    expect(player.active, true);
+    oldRequest.complete(const TtsConnectionTest(succeeded: false, message: '旧请求失败'));
+    await tester.pumpAndSettle();
+    expect(player.active, true);
+    expect(find.text('旧请求失败'), findsNothing);
+    expect(find.byKey(const Key('tts-replay-preview')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+  for (final interruption in ['后台', '离页']) {
+    testWidgets('安卓设置试听$interruption立即停止，恢复后安静，主动试听可用', (tester) async {
+      final player = _HoldingPreviewPlayer();
+      await tester.pumpWidget(await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        ttsGateway: _MutableTtsSettingsGateway(const TtsSettings(
+          configured: true, keySet: true, baseUrl: 'https://tts.example.com', model: 'tts')),
+        ttsPlayer: player,
+      ));
+      await _openSettings(tester);
+      await _expandSection(tester, 'tts');
+      final button = find.byKey(const Key('test-tts-connection'));
+      await _reveal(tester, button);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(player.active, true);
+      if (interruption == '后台') {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        await tester.pump();
+        expect(player.active, false);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      } else {
+        GoRouter.of(tester.element(find.byType(ProviderSettingsView))).push('/history');
+        await tester.pumpAndSettle();
+        expect(player.active, false);
+        GoRouter.of(tester.element(find.byType(Scaffold).first)).pop();
+      }
+      await tester.pumpAndSettle();
+      expect(player.active, false);
+      await _reveal(tester, button);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(player.active, true);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(player.active, false);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+  }
   testWidgets(
     'developer diagnostics entry only appears after developer mode is on',
     (tester) async {
@@ -140,8 +217,9 @@ void main() {
 
     expect(fill(0), scheme.errorContainer, reason: '失败态必须看着就是没成（§1）');
     expect(fill(1), scheme.errorContainer, reason: '模型超时是模型侧没交付合格结果，属故障');
-    // 这两类是**设计内**降级：危机输入按规则根本不该问模型，未配模型时本机规则
-    // 引擎就是产品形态。给它们暗红等于用危险色宣布「一切正常」为异常。
+    // 这两类是**设计内**降级：危机输入的模型没回应时由本地热线话术兜底，
+    // 未配模型时本机规则引擎就是产品形态。给它们暗红等于用危险色宣布
+    // 「一切正常」为异常。
     expect(fill(2), scheme.surfaceContainerHighest, reason: 'safety 回退被误标故障');
     expect(
       fill(3),
@@ -414,6 +492,13 @@ void main() {
           .text,
       contains('"explicit_dialect": "sichuan"'),
     );
+    final ttsExtraField = tester.widget<TextField>(
+      find.byKey(const Key('tts-extra-params')),
+    );
+    expect(
+      (ttsExtraField.decoration?.border as OutlineInputBorder?)?.borderRadius,
+      QiyuRadii.smallBorder,
+    );
 
     // 修改 extraParams 并保存
     await tester.enterText(
@@ -431,6 +516,259 @@ void main() {
     expect(ttsGateway.savedDrafts.last.extraParams, {
       'audio_params': {'sample_rate': 16000},
     });
+  });
+
+  testWidgets('TTS 设置区块：千问档下拉、缺省回填、音色 ID 输入框、无语速滑条', (tester) async {
+    final ttsGateway = _MutableTtsSettingsGateway(
+      const TtsSettings(configured: false, keySet: false),
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        ttsGateway: ttsGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'tts');
+
+    // 下拉出现「千问语音合成」，选中后地址、模型、音色落缺省值。
+    await _reveal(tester, find.byKey(const Key('tts-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    expect(find.text('千问语音合成'), findsOneWidget);
+    await tester.tap(find.text('千问语音合成').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-base-url')))
+          .controller!
+          .text,
+      qwenTtsDefaultEndpoint,
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-model')))
+          .controller!
+          .text,
+      qwenTtsDefaultModel,
+    );
+
+    // 音色直给「音色 ID」输入框（无预设目录）：千问档没有音色下拉。
+    await _reveal(tester, find.byKey(const Key('tts-voice')), maxScrolls: 10);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-voice')))
+          .controller!
+          .text,
+      qwenTtsDefaultVoice,
+    );
+    expect(find.byKey(const Key('tts-voice-preset')), findsNothing);
+
+    // 千问档不显示语速滑条（请求字段没有对应参数）。
+    expect(find.byKey(const Key('tts-speed-slider')), findsNothing);
+    expect(find.textContaining('语速：'), findsNothing);
+
+    // 区块文案按千问档一句话说明（下拉按钮自身也显示「千问语音合成」，
+    // 这里用具象文案锁定区块说明那一句）。
+    expect(find.textContaining('千问语音合成，走阿里云百炼'), findsOneWidget);
+
+    // 高级参数面板对千问档照常显示并参与保存（换 instruct 模型时传
+    // instructions 这类字段）。
+    await _reveal(
+      tester,
+      find.byKey(const Key('tts-advanced-params-tile')),
+      maxScrolls: 10,
+    );
+    expect(find.byKey(const Key('tts-advanced-params-tile')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('tts-advanced-params-tile')));
+    await tester.pumpAndSettle();
+    await _reveal(
+      tester,
+      find.byKey(const Key('tts-extra-params')),
+      maxScrolls: 10,
+    );
+    await tester.enterText(
+      find.byKey(const Key('tts-extra-params')),
+      '{"instructions": "用温柔的语气"}',
+    );
+
+    // 保存往返：provider 以 qwen_tts wire 名上送，音色与 extraParams 随行。
+    await _reveal(tester, find.byKey(const Key('tts-api-key')), maxScrolls: 10);
+    await tester.enterText(find.byKey(const Key('tts-api-key')), 'sk-qwen');
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-tts-settings')),
+      maxScrolls: 10,
+    );
+    await tester.tap(find.byKey(const Key('save-tts-settings')));
+    await tester.pumpAndSettle();
+
+    final draft = ttsGateway.savedDrafts.single;
+    expect(draft.provider, TtsServiceKind.qwenTts);
+    expect(draft.baseUrl, qwenTtsDefaultEndpoint);
+    expect(draft.model, qwenTtsDefaultModel);
+    expect(draft.voice, qwenTtsDefaultVoice);
+    expect(draft.speed, isNull);
+    expect(draft.extraParams, {'instructions': '用温柔的语气'});
+    expect(draft.apiKey, 'sk-qwen');
+  });
+
+  testWidgets('TTS 设置区块：自定义档下拉、四件套露出、无语速滑条与音色框', (tester) async {
+    final ttsGateway = _MutableTtsSettingsGateway(
+      const TtsSettings(configured: false, keySet: false),
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        ttsGateway: ttsGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'tts');
+
+    // 未选自定义档前，鉴权头/响应形态/字段名都不露出。
+    expect(find.byKey(const Key('tts-auth-header')), findsNothing);
+    expect(find.byKey(const Key('tts-response-shape')), findsNothing);
+    expect(find.byKey(const Key('tts-response-field')), findsNothing);
+
+    // 下拉出现「自定义合成服务」，选中后完整地址直填、旋钮露出。
+    await _reveal(tester, find.byKey(const Key('tts-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    expect(find.text('自定义合成服务'), findsOneWidget);
+    await tester.tap(find.text('自定义合成服务').last);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('tts-auth-header')), findsOneWidget);
+    expect(find.byKey(const Key('tts-response-shape')), findsOneWidget);
+    expect(find.byKey(const Key('tts-response-field')), findsOneWidget);
+    // 区块说明文案按自定义档一句话说明（下拉按钮自身也显示「自定义合成
+    // 服务」，这里用具象文案锁定区块说明那一句）。
+    expect(find.textContaining('POST 填写的完整地址'), findsOneWidget);
+    // 自定义档地址与模型都等用户填：不做缺省回填。
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-base-url')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+
+    // 无语速滑条（请求字段没有对应参数），也没有音色位（Spec 只给四件套）。
+    expect(find.byKey(const Key('tts-speed-slider')), findsNothing);
+    expect(find.textContaining('语速：'), findsNothing);
+    expect(find.byKey(const Key('tts-voice')), findsNothing);
+    expect(find.byKey(const Key('tts-voice-preset')), findsNothing);
+
+    // 响应形态下拉三种形态可切，字段名输入框与高级参数面板照常露出。
+    await _reveal(tester, find.byKey(const Key('tts-response-shape')));
+    await tester.tap(find.byKey(const Key('tts-response-shape')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('JSON 字段').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('tts-response-field')), findsOneWidget);
+    await _reveal(tester, find.byKey(const Key('tts-advanced-params-tile')));
+    expect(find.byKey(const Key('tts-advanced-params-tile')), findsOneWidget);
+
+    // 切回千问档：自定义旋钮整体收回，语速滑条仍不显示，音色 ID 框回来。
+    await _reveal(tester, find.byKey(const Key('tts-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('千问语音合成').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('tts-auth-header')), findsNothing);
+    expect(find.byKey(const Key('tts-response-shape')), findsNothing);
+    expect(find.byKey(const Key('tts-response-field')), findsNothing);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('tts-base-url')))
+          .controller!
+          .text,
+      qwenTtsDefaultEndpoint,
+    );
+    await _reveal(tester, find.byKey(const Key('tts-voice')), maxScrolls: 10);
+    expect(find.byKey(const Key('tts-voice')), findsOneWidget);
+    expect(find.byKey(const Key('tts-speed-slider')), findsNothing);
+
+    // 再切回自定义档并保存：草稿带 custom wire 名与旋钮上送。
+    await _reveal(tester, find.byKey(const Key('tts-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自定义合成服务').last);
+    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('tts-base-url')));
+    await tester.enterText(
+      find.byKey(const Key('tts-base-url')),
+      'https://tts.example.com/v1/audio/speech',
+    );
+    await tester.enterText(find.byKey(const Key('tts-model')), 'tts-test');
+    await _reveal(tester, find.byKey(const Key('tts-auth-header')));
+    await tester.enterText(find.byKey(const Key('tts-auth-header')), 'X-Api-Key');
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-tts-settings')),
+      maxScrolls: 10,
+    );
+    await tester.enterText(find.byKey(const Key('tts-api-key')), 'sk-custom');
+    await tester.tap(find.byKey(const Key('save-tts-settings')));
+    await tester.pumpAndSettle();
+
+    final draft = ttsGateway.savedDrafts.single;
+    expect(draft.provider, TtsServiceKind.custom);
+    expect(draft.baseUrl, 'https://tts.example.com/v1/audio/speech');
+    expect(draft.model, 'tts-test');
+    expect(draft.authHeader, 'X-Api-Key');
+    // 缺省形态：裸音频字节（选中自定义档未动过形态下拉）。
+    expect(draft.responseShape, TtsResponseShape.rawBytes);
+    expect(draft.apiKey, 'sk-custom');
+  });
+
+  testWidgets('TTS 设置区块：自定义档鉴权头脏字符被主机按人话驳回时如实呈现', (tester) async {
+    final ttsGateway = _MutableTtsSettingsGateway(
+      const TtsSettings(configured: false, keySet: false),
+      saveFailure: '鉴权头里混入了中文或看不见的字符，请重新填写。',
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        ttsGateway: ttsGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'tts');
+
+    await _reveal(tester, find.byKey(const Key('tts-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('tts-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自定义合成服务').last);
+    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('tts-base-url')));
+    await tester.enterText(
+      find.byKey(const Key('tts-base-url')),
+      'https://tts.example.com/v1/audio/speech',
+    );
+    await tester.enterText(find.byKey(const Key('tts-model')), 'tts-test');
+    await _reveal(tester, find.byKey(const Key('tts-auth-header')));
+    await tester.enterText(
+      find.byKey(const Key('tts-auth-header')),
+      'X-Api-Key\u200B',
+    );
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-tts-settings')),
+      maxScrolls: 10,
+    );
+    await tester.tap(find.byKey(const Key('save-tts-settings')));
+    await tester.pumpAndSettle();
+
+    expect(ttsGateway.savedDrafts.single.authHeader, 'X-Api-Key\u200B');
+    expect(
+      find.textContaining('鉴权头里混入了中文或看不见的字符'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('forgetting the saved API key needs confirmation', (
@@ -583,6 +921,247 @@ void main() {
     expect(find.textContaining('尚未保存语音服务的 API Key'), findsOneWidget);
   });
 
+  testWidgets('STT 设置区块：千问档下拉、缺省回填、区块文案与无高级参数面板', (tester) async {
+    final sttGateway = _MutableSttSettingsGateway(
+      const SttSettings(configured: false, keySet: false),
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        sttGateway: sttGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'stt');
+
+    // 下拉出现「千问语音识别」，选中后地址与模型落缺省值。
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    expect(find.text('千问语音识别'), findsOneWidget);
+    await tester.tap(find.text('千问语音识别').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-base-url')))
+          .controller!
+          .text,
+      qwenAsrDefaultEndpoint,
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-model')))
+          .controller!
+          .text,
+      qwenAsrDefaultModel,
+    );
+    // 千问档固定按千问话术说明，且不露出高级参数面板（识别侧无 extraParams）。
+    expect(find.textContaining('千问语音识别，走阿里云百炼'), findsOneWidget);
+    expect(find.text('高级参数'), findsNothing);
+
+    // 保存后 provider 以 qwen_asr wire 名上送。
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-stt-settings')),
+      maxScrolls: 10,
+    );
+    await tester.enterText(find.byKey(const Key('stt-api-key')), 'sk-qwen');
+    await tester.tap(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+    expect(sttGateway.savedDrafts.single.provider, SttServiceKind.qwenAsr);
+    expect(sttGateway.savedDrafts.single.baseUrl, qwenAsrDefaultEndpoint);
+    expect(sttGateway.savedDrafts.single.apiKey, 'sk-qwen');
+  });
+
+  testWidgets('STT 设置区块：千问档保存被主机按人话驳回时如实呈现', (tester) async {
+    final sttGateway = _MutableSttSettingsGateway(
+      const SttSettings(configured: false, keySet: false),
+      saveFailure:
+          '语音服务地址里混入了中文或看不见的字符，请重新复制粘贴。',
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        sttGateway: sttGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'stt');
+
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('千问语音识别').last);
+    await tester.pumpAndSettle();
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-stt-settings')),
+      maxScrolls: 10,
+    );
+    await tester.tap(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('语音服务地址里混入了中文或看不见的字符'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('STT 设置区块：自定义档下拉、旋钮露出条件与保存上送', (tester) async {
+    final sttGateway = _MutableSttSettingsGateway(
+      const SttSettings(configured: false, keySet: false),
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        sttGateway: sttGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'stt');
+
+    // 未选自定义档前，鉴权头/响应形态/字段路径/高级参数都不露出。
+    expect(find.byKey(const Key('stt-auth-header')), findsNothing);
+    expect(find.byKey(const Key('stt-response-shape')), findsNothing);
+    expect(find.byKey(const Key('stt-response-field')), findsNothing);
+    expect(find.byKey(const Key('stt-advanced-params-tile')), findsNothing);
+
+    // 下拉出现「自定义转写服务」，选中后完整地址直填、旋钮露出。
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    expect(find.text('自定义转写服务'), findsOneWidget);
+    await tester.tap(find.text('自定义转写服务').last);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('stt-auth-header')), findsOneWidget);
+    expect(find.byKey(const Key('stt-response-shape')), findsOneWidget);
+    expect(find.byKey(const Key('stt-response-field')), findsOneWidget);
+    expect(find.byKey(const Key('stt-advanced-params-tile')), findsOneWidget);
+    expect(find.textContaining('自定义转写服务'), findsWidgets);
+    // 自定义档地址与模型都等用户填：不做缺省回填。
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-base-url')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+
+    // 响应形态切到 SSE 后字段路径输入框仍在（两个形态共用同一面板）。
+    await _reveal(tester, find.byKey(const Key('stt-response-shape')));
+    await tester.tap(find.byKey(const Key('stt-response-shape')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SSE 流式').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stt-response-field')), findsOneWidget);
+
+    // 高级参数面板展开后有 JSON 输入框。
+    await _reveal(tester, find.byKey(const Key('stt-advanced-params-tile')));
+    await tester.tap(find.byKey(const Key('stt-advanced-params-tile')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stt-extra-params')), findsOneWidget);
+
+    // 切回千问档：自定义旋钮整体收回。
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('千问语音识别').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stt-auth-header')), findsNothing);
+    expect(find.byKey(const Key('stt-response-shape')), findsNothing);
+    expect(find.byKey(const Key('stt-response-field')), findsNothing);
+    expect(find.byKey(const Key('stt-advanced-params-tile')), findsNothing);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('stt-base-url')))
+          .controller!
+          .text,
+      qwenAsrDefaultEndpoint,
+    );
+
+    // 再切回自定义档并保存：草稿带 custom wire 名与旋钮上送。
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自定义转写服务').last);
+    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('stt-base-url')));
+    await tester.enterText(
+      find.byKey(const Key('stt-base-url')),
+      'https://stt.example.com/v1/audio/transcriptions',
+    );
+    await tester.enterText(find.byKey(const Key('stt-model')), 'whisper-test');
+    await _reveal(tester, find.byKey(const Key('stt-auth-header')));
+    await tester.enterText(
+      find.byKey(const Key('stt-auth-header')),
+      'X-Api-Key',
+    );
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-stt-settings')),
+      maxScrolls: 10,
+    );
+    await tester.enterText(find.byKey(const Key('stt-api-key')), 'sk-custom');
+    await tester.tap(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+    final draft = sttGateway.savedDrafts.single;
+    expect(draft.provider, SttServiceKind.custom);
+    expect(draft.baseUrl, 'https://stt.example.com/v1/audio/transcriptions');
+    expect(draft.authHeader, 'X-Api-Key');
+    expect(draft.responseShape, SttResponseShape.jsonPath);
+    expect(draft.apiKey, 'sk-custom');
+  });
+
+  testWidgets('STT 设置区块：自定义档鉴权头脏字符被主机按人话驳回时如实呈现', (tester) async {
+    final sttGateway = _MutableSttSettingsGateway(
+      const SttSettings(configured: false, keySet: false),
+      saveFailure: '鉴权头里混入了中文或看不见的字符，请重新填写。',
+    );
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        sttGateway: sttGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'stt');
+
+    await _reveal(tester, find.byKey(const Key('stt-provider')), delta: -300);
+    await tester.tap(find.byKey(const Key('stt-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自定义转写服务').last);
+    await tester.pumpAndSettle();
+    await _reveal(tester, find.byKey(const Key('stt-base-url')));
+    await tester.enterText(
+      find.byKey(const Key('stt-base-url')),
+      'https://stt.example.com/v1/audio/transcriptions',
+    );
+    await tester.enterText(find.byKey(const Key('stt-model')), 'whisper-test');
+    await _reveal(tester, find.byKey(const Key('stt-auth-header')));
+    await tester.enterText(
+      find.byKey(const Key('stt-auth-header')),
+      'X-Api-Key\u200B',
+    );
+    await _reveal(
+      tester,
+      find.byKey(const Key('save-stt-settings')),
+      maxScrolls: 10,
+    );
+    await tester.tap(find.byKey(const Key('save-stt-settings')));
+    await tester.pumpAndSettle();
+
+    expect(sttGateway.savedDrafts.single.authHeader, 'X-Api-Key\u200B');
+    expect(
+      find.textContaining('鉴权头里混入了中文或看不见的字符'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('privacy page states the local-only boundaries', (tester) async {
     await tester.pumpWidget(
       await _app(
@@ -598,9 +1177,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('隐私与边界'), findsWidgets);
-    expect(find.textContaining('数据只保存在你的电脑上'), findsOneWidget);
+    expect(find.textContaining('数据只保存在你自己的设备上'), findsOneWidget);
 
-    // 页面较长逐段滚动断言；危机输入绝不发给模型是必须讲清的边界。
+    // 页面较长逐段滚动断言；危机倾诉如何被接住、热线如何给出，是必须
+    // 讲清的边界。
     await tester.scrollUntilVisible(
       find.textContaining('何时调用你选择的模型服务'),
       200,
@@ -608,7 +1188,7 @@ void main() {
       maxScrolls: 20,
     );
     expect(find.textContaining('何时调用你选择的模型服务'), findsOneWidget);
-    expect(find.textContaining('绝不发送给模型'), findsOneWidget);
+    expect(find.textContaining('心理援助热线 12356'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.textContaining('永远不会被提升为记忆'),
@@ -714,6 +1294,8 @@ void main() {
     await tester.tap(find.byKey(const Key('save-web-search-settings')));
     await tester.pumpAndSettle();
     expect(find.text('联网搜索设置暂时不可用，请稍后重试。'), findsOneWidget);
+    // 失败路径行为不变：只留错误横幅，不给保存成功的轻提示。
+    expect(find.text('已保存到本机。'), findsNothing);
     expect(tester.widget<TextField>(field).controller?.text, isEmpty);
     expect(webSearchGateway.keySet, isTrue);
     expect(find.byKey(const Key('forget-web-search-key')), findsOneWidget);
@@ -730,6 +1312,44 @@ void main() {
     await tester.pumpAndSettle();
     expect(webSearchGateway.forgetCalls, 1);
     expect(find.byKey(const Key('forget-web-search-key')), findsNothing);
+  });
+
+  testWidgets('四域保存成功统一轻提示：保存后出现「已保存到本机」，五秒渐隐', (
+    tester,
+  ) async {
+    final webSearchGateway = _MutableWebSearchSettingsGateway();
+    await tester.pumpWidget(
+      await _app(
+        settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+        providerGateway: FixedProviderSettingsGateway(configured: false),
+        webSearchGateway: webSearchGateway,
+      ),
+    );
+    await _openSettings(tester);
+    await _expandSection(tester, 'web_search');
+
+    final field = find.byKey(const Key('web-search-api-key'));
+    await tester.scrollUntilVisible(
+      field,
+      200,
+      scrollable: _verticalScrollable(),
+      maxScrolls: 20,
+    );
+    await tester.enterText(field, 'temporary-anysearch-key');
+    await tester.ensureVisible(
+      find.byKey(const Key('save-web-search-settings')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-web-search-settings')));
+    await tester.pumpAndSettle();
+
+    // 保存成功：统一轻提示立刻出现，四域共用同一句。
+    expect(find.text('已保存到本机。'), findsOneWidget);
+
+    // 五秒渐隐通道：走完既定节奏整条退场，不留挂起的计时器。
+    await tester.pump(const Duration(milliseconds: 5500));
+    await tester.pumpAndSettle();
+    expect(find.text('已保存到本机。'), findsNothing);
   });
 
   testWidgets('FocusNode 保护与编辑态草稿：获焦编辑中绝不被覆盖，且 tts-extra-params 为 multiline', (
@@ -1353,6 +1973,7 @@ Future<Widget> _app({
   OnboardingGateway? onboardingGateway,
   SttSettingsGateway? sttGateway,
   TtsSettingsGateway? ttsGateway,
+  VoicePlayerPlatform? ttsPlayer,
   WebSearchSettingsGateway? webSearchGateway,
 }) async {
   final providerViewModel = ProviderSettingsViewModel(
@@ -1379,10 +2000,15 @@ Future<Widget> _app({
     ),
     ttsSettingsViewModel: TtsSettingsViewModel(
       ttsGateway ?? const _FixedTtsSettingsGateway(),
+      playerPlatform: ttsPlayer,
       autoStart: false,
     ),
     webSearchSettingsViewModel: WebSearchSettingsViewModel(
       webSearchGateway ?? const _FixedWebSearchSettingsGateway(),
+      autoStart: false,
+    ),
+    proxySettingsViewModel: ProxySettingsViewModel(
+      const _FixedProxySettingsGateway(),
       autoStart: false,
     ),
     onboardingViewModel: onboardingViewModel,
@@ -1495,6 +2121,12 @@ Future<_FakeSettingsGateway> _pumpSettingsPage(
         ChangeNotifierProvider.value(
           value: WebSearchSettingsViewModel(
             const _FixedWebSearchSettingsGateway(),
+            autoStart: false,
+          ),
+        ),
+        ChangeNotifierProvider.value(
+          value: ProxySettingsViewModel(
+            const _FixedProxySettingsGateway(),
             autoStart: false,
           ),
         ),
@@ -1680,6 +2312,22 @@ final class _FixedWebSearchSettingsGateway implements WebSearchSettingsGateway {
   Future<WebSearchSettings> forgetApiKey() => throw UnimplementedError();
 }
 
+final class _FixedProxySettingsGateway implements ProxySettingsGateway {
+  const _FixedProxySettingsGateway();
+
+  @override
+  Future<ProxySettings> read() async => const ProxySettings(
+    configured: false,
+    enabled: false,
+    host: '',
+    port: 0,
+  );
+
+  @override
+  Future<ProxySettings> save(ProxySettingsDraft draft) =>
+      throw UnimplementedError();
+}
+
 final class _MutableWebSearchSettingsGateway
     implements WebSearchSettingsGateway {
   _MutableWebSearchSettingsGateway({
@@ -1746,9 +2394,10 @@ final class _FixedSttSettingsGateway implements SttSettingsGateway {
 
 /// 可变 STT 设置网关：记录保存草稿、测试与忘记 Key 的调用。
 final class _MutableSttSettingsGateway implements SttSettingsGateway {
-  _MutableSttSettingsGateway(this._settings);
+  _MutableSttSettingsGateway(this._settings, {this.saveFailure});
 
   SttSettings _settings;
+  final String? saveFailure;
   final savedDrafts = <SttSettingsDraft>[];
   int testCalls = 0;
   int forgetCalls = 0;
@@ -1759,6 +2408,9 @@ final class _MutableSttSettingsGateway implements SttSettingsGateway {
   @override
   Future<SttSettings> save(SttSettingsDraft draft) async {
     savedDrafts.add(draft);
+    if (saveFailure case final message?) {
+      throw ProviderSettingsGatewayException(message);
+    }
     return _settings = SttSettings(
       configured: true,
       keySet: draft.apiKey != null || _settings.keySet,
@@ -1788,6 +2440,29 @@ final class _MutableSttSettingsGateway implements SttSettingsGateway {
       message: '连接成功，语音输入可以使用。',
     );
   }
+}
+
+final class _HoldingPreviewPlayer implements VoicePlayerPlatform {
+  _PreviewPlayback? current;
+  bool get active => current != null && !current!.completed.isCompleted;
+  @override
+  bool get supported => true;
+  @override
+  double getInitialVolume() => 1;
+  @override
+  void saveVolume(double volume) {}
+  @override
+  Future<VoicePlayback?> play(Uint8List bytes, {required String mimeType, double volume = 1}) async => current = _PreviewPlayback();
+}
+
+final class _PreviewPlayback implements VoicePlayback {
+  final completed = Completer<void>();
+  @override
+  Future<void> get done => completed.future;
+  @override
+  void stop() { if (!completed.isCompleted) completed.complete(); }
+  @override
+  void setVolume(double volume) {}
 }
 
 final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
@@ -1821,7 +2496,11 @@ final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
 }
 
 final class _MutableTtsSettingsGateway implements TtsSettingsGateway {
-  _MutableTtsSettingsGateway(this._settings);
+  Completer<TtsConnectionTest>? pendingTest;
+  _MutableTtsSettingsGateway(this._settings, {this.saveFailure});
+
+  /// 非空时保存按主机驳回失败（人话文案由 Host 侧给出，这里只透传）。
+  final String? saveFailure;
 
   TtsSettings _settings;
   final savedDrafts = <TtsSettingsDraft>[];
@@ -1841,6 +2520,9 @@ final class _MutableTtsSettingsGateway implements TtsSettingsGateway {
   @override
   Future<TtsSettings> save(TtsSettingsDraft draft) async {
     savedDrafts.add(draft);
+    if (saveFailure case final message?) {
+      throw ProviderSettingsGatewayException(message);
+    }
     return _settings = TtsSettings(
       configured: true,
       keySet: draft.apiKey != null || _settings.keySet,
@@ -1849,6 +2531,9 @@ final class _MutableTtsSettingsGateway implements TtsSettingsGateway {
       model: draft.model,
       voice: draft.voice,
       speed: draft.speed,
+      authHeader: draft.authHeader,
+      responseShape: draft.responseShape ?? TtsResponseShape.rawBytes,
+      responseField: draft.responseField,
       extraParams: draft.extraParams,
     );
   }
@@ -1869,6 +2554,7 @@ final class _MutableTtsSettingsGateway implements TtsSettingsGateway {
   @override
   Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async {
     testCalls += 1;
+    if (pendingTest != null) return pendingTest!.future;
     return TtsConnectionTest(
       succeeded: true,
       message: '连接成功，点「听试听」可以听听栖语的声音。',

@@ -4,8 +4,8 @@
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0f0e14",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "theme_color": "#0f0e14",
+    "description": "睡前 AI 陪伴：在你栖息的时刻，有人跟你说说话。",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

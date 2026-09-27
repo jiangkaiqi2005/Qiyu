@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:qiyu_windows_host/qiyu_windows_host.dart';
+import 'package:qiyu_windows_host/src/single_instance.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -34,30 +36,32 @@ void main() {
     }
   });
 
+  // 壳编排测试共用装配：五个参数里只有 browserLauncher（个别用例连
+  // webRoot）有差异，构造形状在此收拢一次。
+  QiyuHostRunner buildRunner(
+    BrowserLauncher browserLauncher, {
+    String? webRootPath,
+  }) =>
+      QiyuHostRunner(
+        webRoot: webRootPath ?? webRoot.path,
+        runtimeDirectory: runtimeDirectory.path,
+        memoryDirectory: memoryDirectory.path,
+        personaConstitution: '测试人格宪法',
+        browserLauncher: browserLauncher,
+      );
+
   test(
     'a second launch activates the existing host instead of starting another',
     () async {
       final primaryBrowser = _RecordingBrowserLauncher();
-      final primary = await QiyuHostRunner(
-        webRoot: webRoot.path,
-        runtimeDirectory: runtimeDirectory.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-        browserLauncher: primaryBrowser,
-      ).launch();
+      final primary = await buildRunner(primaryBrowser).launch();
 
       expect(primary.isPrimary, isTrue);
       expect(primary.host, isNotNull);
       expect(primaryBrowser.openedUris, [primary.displayUri]);
 
       final secondaryBrowser = _RecordingBrowserLauncher();
-      final secondary = await QiyuHostRunner(
-        webRoot: webRoot.path,
-        runtimeDirectory: runtimeDirectory.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-        browserLauncher: secondaryBrowser,
-      ).launch();
+      final secondary = await buildRunner(secondaryBrowser).launch();
 
       expect(secondary.isPrimary, isFalse);
       expect(secondary.host, isNull);
@@ -75,13 +79,7 @@ void main() {
 
   test('browser launch failure returns a copyable local URL', () async {
     final browser = _RecordingBrowserLauncher(succeeds: false);
-    final launch = await QiyuHostRunner(
-      webRoot: webRoot.path,
-      runtimeDirectory: runtimeDirectory.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: '测试人格宪法',
-      browserLauncher: browser,
-    ).launch();
+    final launch = await buildRunner(browser).launch();
 
     expect(launch.isPrimary, isTrue);
     expect(launch.browserLaunch.succeeded, isFalse);
@@ -93,34 +91,20 @@ void main() {
 
   test('no-browser launch keeps single-instance activation headless', () async {
     final primaryBrowser = _RecordingBrowserLauncher();
-    final primary = await QiyuHostRunner(
-      webRoot: webRoot.path,
-      runtimeDirectory: runtimeDirectory.path,
-      memoryDirectory: memoryDirectory.path,
-      personaConstitution: '测试人格宪法',
-      browserLauncher: primaryBrowser,
+    final primary = await buildRunner(
+      primaryBrowser,
     ).launch(openBrowser: false);
     HostLaunchResult? secondary;
     HostLaunchResult? interactive;
     try {
-      secondary = await QiyuHostRunner(
-        webRoot: webRoot.path,
-        runtimeDirectory: runtimeDirectory.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-        browserLauncher: _RecordingBrowserLauncher(),
+      secondary = await buildRunner(
+        _RecordingBrowserLauncher(),
       ).launch(openBrowser: false);
 
       expect(secondary.isPrimary, isFalse);
       expect(primaryBrowser.openedUris, isEmpty);
 
-      interactive = await QiyuHostRunner(
-        webRoot: webRoot.path,
-        runtimeDirectory: runtimeDirectory.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-        browserLauncher: _RecordingBrowserLauncher(),
-      ).launch();
+      interactive = await buildRunner(_RecordingBrowserLauncher()).launch();
       expect(interactive.isPrimary, isFalse);
       expect(primaryBrowser.openedUris, [primary.displayUri]);
     } finally {
@@ -133,13 +117,7 @@ void main() {
   test(
     'refuses to activate an instance whose descriptor points outside loopback',
     () async {
-      final primary = await QiyuHostRunner(
-        webRoot: webRoot.path,
-        runtimeDirectory: runtimeDirectory.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-        browserLauncher: _RecordingBrowserLauncher(),
-      ).launch();
+      final primary = await buildRunner(_RecordingBrowserLauncher()).launch();
       expect(primary.isPrimary, isTrue);
 
       final descriptorFile = File(
@@ -151,13 +129,7 @@ void main() {
       json['origin'] = 'http://evil.example:8080';
       descriptorFile.writeAsStringSync(jsonEncode(json));
 
-      final secondary = QiyuHostRunner(
-        webRoot: webRoot.path,
-        runtimeDirectory: runtimeDirectory.path,
-        memoryDirectory: memoryDirectory.path,
-        personaConstitution: '测试人格宪法',
-        browserLauncher: _RecordingBrowserLauncher(),
-      );
+      final secondary = buildRunner(_RecordingBrowserLauncher());
       await expectLater(
         secondary.launch(),
         throwsA(
@@ -170,6 +142,72 @@ void main() {
       );
 
       await primary.close();
+    },
+  );
+
+  test('a failed primary launch releases the single-instance lock', () async {
+    final failing = buildRunner(
+      _RecordingBrowserLauncher(),
+      webRootPath:
+          '${temporaryDirectory.path}${Platform.pathSeparator}missing-web',
+    );
+    await expectLater(failing.launch(), throwsA(isA<ArgumentError>()));
+
+    // 启动失败必须释放文件锁，否则同一 runtime 目录永远无法再启动。
+    final retry = await buildRunner(_RecordingBrowserLauncher()).launch();
+    expect(retry.isPrimary, isTrue);
+
+    await retry.close();
+  });
+
+  test(
+    'activating a primary whose browser fails hands back its login URL',
+    () async {
+      final primary = await buildRunner(
+        _RecordingBrowserLauncher(succeeds: false),
+      ).launch();
+      expect(primary.isPrimary, isTrue);
+
+      final secondary = await buildRunner(_RecordingBrowserLauncher()).launch();
+
+      expect(secondary.isPrimary, isFalse);
+      expect(secondary.browserLaunch.succeeded, isFalse);
+      expect(secondary.browserLaunch.error, '已有栖语实例无法打开浏览器');
+      expect(secondary.displayUri, primary.displayUri);
+
+      await secondary.close();
+      await primary.close();
+    },
+  );
+
+  test(
+    'an unreachable existing instance fails activation instead of starting another',
+    () async {
+      // 模拟持有锁但已死的实例：先占用锁并写下指向空闲端口的描述文件。
+      final lease = SingleInstanceLease.tryAcquire(runtimeDirectory.path);
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final deadPort = server.port;
+      await server.close();
+      lease.writeDescriptor(
+        origin: Uri.parse('http://127.0.0.1:$deadPort'),
+        activationToken: 'stale-activation-token',
+      );
+
+      final secondary = buildRunner(_RecordingBrowserLauncher());
+      try {
+        await expectLater(
+          secondary.launch(),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('not reachable'),
+            ),
+          ),
+        );
+      } finally {
+        await lease.close();
+      }
     },
   );
 }

@@ -77,13 +77,21 @@ class WebSearchSettingsSection extends StatefulWidget {
       _WebSearchSettingsSectionState();
 }
 
-class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection> {
+class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection>
+    with SettingsSaveFeedback {
   final _form = WebSearchSettingsForm();
 
   @override
   void dispose() {
     _form.dispose();
     super.dispose();
+  }
+
+  /// 一次保存：读草稿 → 交视图模型（本域草稿永远合法、无校验回调），
+  /// 成功收尾（统一轻提示与挂载检查）归壳层 [SettingsSaveFeedback]。
+  Future<void> _save(WebSearchSettingsViewModel viewModel) async {
+    final saved = await _form.save(viewModel);
+    reportSettingsSaved(saved);
   }
 
   Future<void> _confirmForgetKey(WebSearchSettingsViewModel viewModel) async {
@@ -150,7 +158,7 @@ class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection> {
                 saveLabel: '保存到本机',
                 saveBusy: viewModel.saving,
                 // 联网搜索没有连接测试位：不传 test，只渲染保存钮。
-                onSave: () => unawaited(_form.save(viewModel)),
+                onSave: () => unawaited(_save(viewModel)),
               ),
             ],
           ],

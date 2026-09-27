@@ -1,6 +1,19 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+
+/// 平台触摸规则独立于窄屏字阶，只用于指定的安卓输入和导航控件。
+bool get qiyuAndroidTouch =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+ButtonStyle? get qiyuAndroidTouchStyle => qiyuAndroidTouch
+    ? const ButtonStyle(
+        minimumSize: WidgetStatePropertyAll(Size(48, 48)),
+        visualDensity: VisualDensity.standard,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      )
+    : null;
 
 /// 无障碍共享工具（ticket 24）：高对比模式可见边界与「小窗/字号
 /// 放大绝不溢出」的居中可滚动布局。

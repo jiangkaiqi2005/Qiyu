@@ -1,0 +1,93 @@
+{
+  "symbol": "归鸟",
+  "concept": "会记得你",
+  "svgFiles": 12,
+  "pngFiles": 22,
+  "pngChecks": [
+    {
+      "size": 16,
+      "dimensionsValid": true
+    },
+    {
+      "size": 24,
+      "dimensionsValid": true
+    },
+    {
+      "size": 32,
+      "dimensionsValid": true
+    },
+    {
+      "size": 48,
+      "dimensionsValid": true
+    },
+    {
+      "size": 64,
+      "dimensionsValid": true
+    },
+    {
+      "size": 96,
+      "dimensionsValid": true
+    },
+    {
+      "size": 128,
+      "dimensionsValid": true
+    },
+    {
+      "size": 180,
+      "dimensionsValid": true
+    },
+    {
+      "size": 192,
+      "dimensionsValid": true
+    },
+    {
+      "size": 256,
+      "dimensionsValid": true
+    },
+    {
+      "size": 512,
+      "dimensionsValid": true
+    },
+    {
+      "size": 1024,
+      "dimensionsValid": true
+    }
+  ],
+  "maskableOpaque": true,
+  "maskableMaximumRadius": 0.3019,
+  "safeCircleRadius": 0.4,
+  "icoSizes": [
+    16,
+    24,
+    32,
+    48,
+    64,
+    128,
+    256
+  ],
+  "noEmbeddedRasterFiltersScriptsOrFontDependencies": true,
+  "independentVisualReview": "两名独立审阅者均确认单色轮廓成立；24px 头部与翼缝可辨；16px 有正常细节损失。",
+  "figmaImported": false,
+  "figmaBlocker": "当前无可调用 Figma 专用工具；浏览器控制连接失败。",
+  "legacyCleanupComplete": false,
+  "legacyCleanupBlocker": "自动审批拒绝旧版本删除操作，仅返回 blocked by policy；交付 ZIP 从全新归鸟暂存目录打包。",
+  "platformSelection": {
+    "web": {
+      "style": "黑色归鸟，浅色底托",
+      "mark": "svg/qiyu-web-mark.svg",
+      "icon": "svg/qiyu-web-icon.svg",
+      "deployedFavicon": "apps/qiyu_flutter/web/favicon.svg"
+    },
+    "app": {
+      "style": "用户选定的粉黑质感原图",
+      "master": "png/qiyu-app-master.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "sha256": "44a18f8113336c35d94623b9e9f099662d821b68d50b1d7343625870daaf13c9",
+      "deployedLauncher": "apps/qiyu_flutter/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    "sourceMatchesUserAttachment": true
+  }
+}

@@ -18,7 +18,7 @@ packages:
     source: hosted
     version: "14.1.0"
   archive:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: archive
       sha256: a96e8b390886ee8abb49b7bd3ac8df6f451c621619f52a26e815fdcf568959ff
@@ -248,8 +248,15 @@ packages:
       relative: true
     source: path
     version: "0.1.0"
-  shelf:
+  qiyu_local_host:
     dependency: "direct main"
+    description:
+      path: "../../packages/qiyu_local_host"
+      relative: true
+    source: path
+    version: "0.1.0"
+  shelf:
+    dependency: transitive
     description:
       name: shelf
       sha256: e7dd780a7ffb623c57850b33f43309312fc863fb6aa3d276a754bb299839ef12
@@ -265,7 +272,7 @@ packages:
     source: hosted
     version: "3.0.2"
   shelf_static:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: shelf_static
       sha256: c87c3875f91262785dade62d135760c2c69cb217ac759485334c5857ad89f6e3

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
@@ -14,6 +15,7 @@ import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
 import 'provider_settings_section.dart';
 import 'provider_settings_view_model.dart';
+import 'proxy_settings_view_model.dart';
 import 'settings_client.dart';
 import 'settings_collapse_platform.dart';
 import 'settings_section_shell.dart';
@@ -56,7 +58,30 @@ class ProviderSettingsView extends StatefulWidget {
   State<ProviderSettingsView> createState() => _ProviderSettingsViewState();
 }
 
-class _ProviderSettingsViewState extends State<ProviderSettingsView> {
+class _ProviderSettingsViewState extends State<ProviderSettingsView>
+    with WidgetsBindingObserver {
+  TtsSettingsViewModel? _tts;
+  GoRouter? _router;
+  String? _location;
+
+  void _onRouteChanged() {
+    if (_router?.routerDelegate.currentConfiguration.last.matchedLocation != _location) {
+      _tts?.stopPreview(discardPreview: true);
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _tts?.stopPreview();
+  }
+
+  @override
+  void dispose() {
+    _tts?.stopPreview(discardPreview: true);
+    _router?.routerDelegate.removeListener(_onRouteChanged);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
   bool _requestedInitialization = false;
 
   /// 折叠状态的本地存储：同步读写，只存 UI 状态（design-system §8）。
@@ -71,6 +96,9 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   void initState() {
     super.initState();
     _collapsedSections = _readCollapsedSections();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      WidgetsBinding.instance.addObserver(this);
+    }
   }
 
   /// §8 的默认档与本机存过的档二选一：存过（含「存过空集＝上次是全部展开」）
@@ -96,6 +124,14 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _tts = context.read<TtsSettingsViewModel>();
+    final router = GoRouter.maybeOf(context);
+    if (router != _router) {
+      _router?.routerDelegate.removeListener(_onRouteChanged);
+      _router = router;
+      _location = router?.routerDelegate.currentConfiguration.last.matchedLocation;
+      router?.routerDelegate.addListener(_onRouteChanged);
+    }
     if (_requestedInitialization) {
       return;
     }
@@ -109,6 +145,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
       unawaited(context.read<SttSettingsViewModel>().initialize());
       unawaited(context.read<TtsSettingsViewModel>().initialize());
       unawaited(context.read<WebSearchSettingsViewModel>().initialize());
+      unawaited(context.read<ProxySettingsViewModel>().initialize());
       unawaited(settingsViewModel.loadPreferences());
       unawaited(settingsViewModel.loadClearPreview());
     });
@@ -131,7 +168,21 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
             child: SettingsSectionCollapseScope(
               collapsed: _collapsedSections,
               onToggle: _toggleSection,
-              child: ListView(
+              child: Theme(
+                data: theme.copyWith(
+                  inputDecorationTheme: theme.inputDecorationTheme.copyWith(
+                    border: settingsOutlineBorder(color: QiyuColors.line),
+                    enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+                    focusedBorder: settingsOutlineBorder(
+                      color: QiyuColors.composerFocusLine,
+                    ),
+                    errorBorder: settingsOutlineBorder(color: QiyuColors.danger),
+                    focusedErrorBorder: settingsOutlineBorder(
+                      color: QiyuColors.danger,
+                    ),
+                  ),
+                ),
+                child: ListView(
                 key: const Key('settings-scroll'),
                 // 顶留白取无环页头档：与记忆/历史页页头返回键的纵向同位
                 // 由页头同位回归测试锁定。
@@ -185,8 +236,9 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView> {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 /// 本地数据管理区块：本地路径、备份恢复、记忆控制总览与清除数据。
@@ -241,7 +293,7 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
           title: '本地数据',
           children: [
             Text(
-              '全部会话与记忆都是这台电脑上的 Markdown 文件，不会上传到任何服务器。',
+              '全部会话与记忆都是这台设备上的 Markdown 文件，不会上传到任何服务器。',
               style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             ),
             if (preview != null) ...[

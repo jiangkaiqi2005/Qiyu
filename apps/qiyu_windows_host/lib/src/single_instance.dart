@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+// 既有实例相关失败的稳定前缀，启动失败分类依赖它（见 startup_failure.dart）。
+const String existingInstanceFailurePrefix = 'Existing Qiyu instance';
+
 final class SingleInstanceLease {
   SingleInstanceLease._({
     required this.runtimeDirectory,
@@ -79,7 +82,9 @@ final class SingleInstanceLease {
         await Future<void>.delayed(const Duration(milliseconds: 50));
       }
     }
-    throw StateError('Existing Qiyu instance did not publish its address');
+    throw StateError(
+      '$existingInstanceFailurePrefix did not publish its address',
+    );
   }
 
   Future<void> close() async {

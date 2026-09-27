@@ -1,5 +1,89 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'shell/qiyu_shell.dart';
+
+/// 当前内容路由的安卓返回入口。模态路由位于它上面，仍由 Navigator 消费。
+class QiyuSystemBack extends StatefulWidget {
+  const QiyuSystemBack({
+    super.key,
+    required this.child,
+    this.hasUnsubmittedVoice = false,
+    this.cancelUnsubmittedVoice,
+  });
+
+  final Widget child;
+  final bool hasUnsubmittedVoice;
+  final VoidCallback? cancelUnsubmittedVoice;
+
+  @override
+  State<QiyuSystemBack> createState() => _QiyuSystemBackState();
+}
+
+class _QiyuSystemBackState extends State<QiyuSystemBack>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      setState(() {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return widget.child;
+    }
+    final router = GoRouter.maybeOf(context);
+    final route = ModalRoute.of(context);
+    final location = router?.routeInformationProvider.value.uri.path;
+    final shell = context.dependOnInheritedWidgetOfExactType<QiyuShellScope>();
+    final drawerOpen = shell?.drawerOpen ?? false;
+    // Scaffold 会从内容的 MediaQuery 移除底部 inset；监听指标变化后从
+    // 原始 View 读取，输入组件与整页包装因此遵守同一个键盘可见性口径。
+    final keyboardOpen = View.of(context).viewInsets.bottom > 0;
+    final fallback =
+        route?.isCurrent == true &&
+        router != null &&
+        !router.canPop() &&
+        location != '/' &&
+        location != '/chat';
+    return PopScope(
+      canPop:
+          !keyboardOpen &&
+          !drawerOpen &&
+          !widget.hasUnsubmittedVoice &&
+          !fallback,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (keyboardOpen) {
+          FocusManager.instance.primaryFocus?.unfocus();
+          SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+        } else if (drawerOpen) {
+          shell!.closeDrawer?.call();
+        } else if (widget.hasUnsubmittedVoice) {
+          widget.cancelUnsubmittedVoice?.call();
+        } else if (fallback) {
+          backToPrevious(context);
+        }
+      },
+      child: widget.child,
+    );
+  }
+}
 
 /// 返回键的统一出口：从别的页面 push 进来时回到上一个页面；直接打开
 /// 或刷新后没有可回退的栈时，兜底落回壳内的合一页（`/chat`）而不是 `/`。

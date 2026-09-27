@@ -1,25 +1,6 @@
 import 'dart:io';
 
-abstract interface class BrowserLauncher {
-  Future<BrowserLaunchResult> open(Uri uri);
-}
-
-final class BrowserLaunchResult {
-  const BrowserLaunchResult({
-    required this.succeeded,
-    required this.error,
-    this.attempted = true,
-  });
-
-  const BrowserLaunchResult.skipped()
-    : succeeded = false,
-      error = null,
-      attempted = false;
-
-  final bool attempted;
-  final bool succeeded;
-  final String? error;
-}
+import 'package:qiyu_local_host/qiyu_local_host.dart';
 
 final class WindowsDefaultBrowserLauncher implements BrowserLauncher {
   const WindowsDefaultBrowserLauncher();

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'credential_text.dart';
+import 'json_scalar_fields.dart';
 import 'shared_patterns.dart';
 
 /// 白名单枚举按 wire 名解析的共用实现：按声明顺序查找，未命中返回
@@ -44,6 +46,11 @@ enum HiddenActionKind {
   /// 用户明确解除冻结；解除后内容恢复正常参与注入与整理。
   memoryUnfreeze('memory_unfreeze'),
 
+  /// 用户明确解除禁提（口语路径，与 memory_unfreeze 对称）：解除后
+  /// 内容恢复正常参与注入与整理。用户重提被禁提话题本身不算解除
+  /// （提示词纪律：只回应当下，绝不自动解除）。
+  memoryUnban('memory_unban'),
+
   /// 用户要求删除某记忆：先记录抽象防复活范围，再清除全部派生内容。
   memoryDelete('memory_delete'),
 
@@ -66,14 +73,52 @@ const maxHiddenActionsPerReply = 2;
 const maxHiddenSummaryRunes = 120;
 const maxHiddenEvidenceRunes = 200;
 
+/// memory_signal 的 keep 取值白名单（Memory.md 月压缩定稿）：只收
+/// 'month'，标记本条值得进入月压缩候选，月摘要只收当时标了的条目。
+/// 笔记里 keep 的其余取值不经这个字段生效：当天保留是 episode 的
+/// 默认行为，open-loop 与 relationship 提升由各自的隐藏动作和日终
+/// 流程承担，长期印象候选由 Dream 从证据识别，不记录由
+/// memory_forget / memory_ban 承担。白名单外取值按字段丢弃并记
+/// invalidFields，记忆信号本身保留。
+const memorySignalKeepMonth = 'month';
+const _memorySignalKeepWhitelist = {memorySignalKeepMonth};
+
 /// memory_recall 的检索意图长度上限（runes）。
 const maxHiddenQueryRunes = 100;
+
+/// memory_recall 画像树路径选择数量上限（Memory 注入定稿）：单次最多
+/// 2 条相关路径。月份/日期选择不设上限（跨月跨年检索定稿），路径设限
+/// 是因为画像注入有总计 600 runes 的预算（Host 侧
+/// recallPersonaPathMaxRunes），两条已是预算内的上限。
+const maxHiddenRecallPaths = 2;
+
+/// 每条画像路径最多附带的叶指针数（Memory 注入定稿）：默认只取根与
+/// 最相关中间理解，只有问题需要依据或事件细节时才带叶，且最多 2 条。
+const maxHiddenRecallPathLeaves = 2;
+
+/// memory_recall 组织调用回执里所用 episode 条目 ID 的数量上限：条目
+/// 级相关性筛选只收组织气泡真实用到的条目，一条气泡用不到更多；Host
+/// 仍按递过的原始条目做成员校验与总量预算。
+const maxHiddenRecallEntries = 12;
 
 /// memory_recall 选择字段的合法形态。选择数量不设上限（跨月跨年
 /// 检索定稿）：Provider 输出预算天然约束块大小，Host 成员校验才是
 /// 真正的闸门。
 final _recallMonthPattern = RegExp(r'^\d{4}-\d{2}$');
 final _recallDatePattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+
+/// memory_recall 画像树路径选择的合法形态：`根ID/中间理解ID`，可带
+/// `,` 分隔的叶 ID 段（问题需要依据或事件细节时模型才选叶）。ID 形态
+/// 与 PersonaTree 落盘一致（分支前缀 + 层级 + 三位序号）。
+final _recallPathPattern = RegExp(
+  r'^[A-Z]{2}-R\d{3}/[A-Z]{2}-M\d{3}'
+  r'(?:/[A-Z]{2}-L\d{3}(?:,[A-Z]{2}-L\d{3})*)?$',
+);
+
+/// memory_recall 组织调用回执的 episode 条目 ID 形态：落盘条目 ID 为
+/// `会话ID:请求ID:序号`，字符集与 PersonaTree 叶指针的 entryRef 一致
+/// （见 persona_tree.dart 的 _safeEntryRefPattern）。
+final _recallEntryPattern = RegExp(r'^[A-Za-z0-9_:.-]{1,80}$');
 
 /// 字段内空白折叠（空行折叠模式包内共享，见 shared_patterns.dart）。
 final _fieldWhitespaceRunsPattern = RegExp(r'\s{2,}');
@@ -244,13 +289,22 @@ sealed class HiddenAction {
 }
 
 /// memory_signal：值得记下的事实。summary 必填；evidence 可选；
-/// 画像提示成对可选。
+/// 画像提示成对可选；keep 可选（白名单只收 'month'）。
 final class MemorySignalAction extends HiddenAction {
-  const MemorySignalAction({required this.summary, this.evidence, this.hint});
+  const MemorySignalAction({
+    required this.summary,
+    this.evidence,
+    this.hint,
+    this.keep,
+  });
 
   final String summary;
   final String? evidence;
   final PersonaHint? hint;
+
+  /// 月压缩候选标记（[memorySignalKeepMonth]）：模型认为本条值得
+  /// 进入月摘要时标注；未标记（null）的条目不进月文件。
+  final String? keep;
 
   @override
   HiddenActionKind get kind => HiddenActionKind.memorySignal;
@@ -262,6 +316,7 @@ final class MemorySignalAction extends HiddenAction {
     if (evidence != null) 'evidence': evidence,
     if (hint != null) 'branch': hint!.branch.wireName,
     if (hint != null) 'nature': hint!.nature.wireName,
+    if (keep != null) 'keep': keep,
   };
 
   @override
@@ -269,21 +324,27 @@ final class MemorySignalAction extends HiddenAction {
       other is MemorySignalAction &&
       other.summary == summary &&
       other.evidence == evidence &&
-      other.hint == hint;
+      other.hint == hint &&
+      other.keep == keep;
 
   @override
-  int get hashCode => Object.hash(summary, evidence, hint);
+  int get hashCode => Object.hash(summary, evidence, hint, keep);
 }
 
 /// memory_recall：轮内查找。聊天轮只带 query；选择调用的回应才带
-/// months/dates 选择。
+/// months/dates 选择与画像树 paths 选择；组织调用的回应才带所用
+/// 条目 entries 回执。
 final class MemoryRecallAction extends HiddenAction {
   MemoryRecallAction({
     required this.query,
     List<String>? months,
     List<String>? dates,
+    List<String>? paths,
+    List<String>? entries,
   }) : months = months == null ? null : List.unmodifiable(months),
-       dates = dates == null ? null : List.unmodifiable(dates);
+       dates = dates == null ? null : List.unmodifiable(dates),
+       paths = paths == null ? null : List.unmodifiable(paths),
+       entries = entries == null ? null : List.unmodifiable(entries);
 
   final String query;
 
@@ -292,6 +353,16 @@ final class MemoryRecallAction extends HiddenAction {
 
   /// 日期选择（`YYYY-MM-DD`），未选择为 null。
   final List<String>? dates;
+
+  /// 画像树路径选择（`根ID/中间理解ID[/叶ID,叶ID]`），未选择为 null。
+  /// 只出现在选择调用回应里：成员校验（路径必须出自 Host 递过的画像
+  /// 索引）与 600 runes 预算在 Host 编排层执行。
+  final List<String>? paths;
+
+  /// 组织调用回执：气泡真实用到的 episode 条目 ID。只出现在组织调用
+  /// 回应里，Host 据此做下一轮临时上下文的条目级相关性筛选；成员
+  /// 校验（条目必须出自本轮递过的原始证据）同样在 Host 编排层。
+  final List<String>? entries;
 
   @override
   HiddenActionKind get kind => HiddenActionKind.memoryRecall;
@@ -302,6 +373,8 @@ final class MemoryRecallAction extends HiddenAction {
     'query': query,
     if (months != null) 'months': months,
     if (dates != null) 'dates': dates,
+    if (paths != null) 'paths': paths,
+    if (entries != null) 'entries': entries,
   };
 
   @override
@@ -309,13 +382,17 @@ final class MemoryRecallAction extends HiddenAction {
       other is MemoryRecallAction &&
       other.query == query &&
       _sameSelections(other.months, months) &&
-      _sameSelections(other.dates, dates);
+      _sameSelections(other.dates, dates) &&
+      _sameSelections(other.paths, paths) &&
+      _sameSelections(other.entries, entries);
 
   @override
   int get hashCode => Object.hash(
     query,
     Object.hashAll(months ?? const []),
     Object.hashAll(dates ?? const []),
+    Object.hashAll(paths ?? const []),
+    Object.hashAll(entries ?? const []),
   );
 }
 
@@ -344,6 +421,7 @@ final class OpenLoopCandidateAction extends HiddenAction {
     this.due,
     this.proactive,
     this.note,
+    this.keep,
   });
 
   final String title;
@@ -356,6 +434,10 @@ final class OpenLoopCandidateAction extends HiddenAction {
   /// 跟进时需要知道的背景。
   final String? note;
 
+  /// 月压缩候选标记（[memorySignalKeepMonth]）：整月未闭环也值得进
+  /// 月摘要「仍未解决的线索」时标注；未标记的候选不进月文件。
+  final String? keep;
+
   @override
   HiddenActionKind get kind => HiddenActionKind.openLoopCandidate;
 
@@ -367,6 +449,7 @@ final class OpenLoopCandidateAction extends HiddenAction {
     if (due != null) 'due': due,
     if (proactive != null) 'proactive': proactive!.wireName,
     if (note != null) 'note': note,
+    if (keep != null) 'keep': keep,
   };
 
   @override
@@ -376,10 +459,11 @@ final class OpenLoopCandidateAction extends HiddenAction {
       other.evidence == evidence &&
       other.due == due &&
       other.proactive == proactive &&
-      other.note == note;
+      other.note == note &&
+      other.keep == keep;
 
   @override
-  int get hashCode => Object.hash(title, evidence, due, proactive, note);
+  int get hashCode => Object.hash(title, evidence, due, proactive, note, keep);
 }
 
 /// open_loop_status：事项闭环、暂缓或重新活跃。
@@ -471,6 +555,15 @@ final class MemoryUnfreezeAction extends MemoryControlAction {
   HiddenActionKind get kind => HiddenActionKind.memoryUnfreeze;
 }
 
+/// memory_unban：用户明确解除禁提（口语路径，与 memory_unfreeze
+/// 对齐；UI 解除入口一直存在，本动作补上聊天里的明确口语解除）。
+final class MemoryUnbanAction extends MemoryControlAction {
+  const MemoryUnbanAction({required super.title});
+
+  @override
+  HiddenActionKind get kind => HiddenActionKind.memoryUnban;
+}
+
 /// memory_delete：用户要求删除记忆。
 final class MemoryDeleteAction extends MemoryControlAction {
   const MemoryDeleteAction({required super.title});
@@ -486,11 +579,16 @@ final class RelationshipSignalAction extends HiddenAction {
     required this.summary,
     required this.signal,
     this.evidence,
+    this.keep,
   });
 
   final String summary;
   final RelationshipSignal signal;
   final String? evidence;
+
+  /// 月压缩候选标记（[memorySignalKeepMonth]）：体现关系阶段明显
+  /// 变化、值得进月摘要「关系变化」时标注；未标记的信号不进月文件。
+  final String? keep;
 
   @override
   HiddenActionKind get kind => HiddenActionKind.relationshipSignal;
@@ -501,6 +599,7 @@ final class RelationshipSignalAction extends HiddenAction {
     'summary': summary,
     if (evidence != null) 'evidence': evidence,
     'signal': signal.wireName,
+    if (keep != null) 'keep': keep,
   };
 
   @override
@@ -508,10 +607,11 @@ final class RelationshipSignalAction extends HiddenAction {
       other is RelationshipSignalAction &&
       other.summary == summary &&
       other.signal == signal &&
-      other.evidence == evidence;
+      other.evidence == evidence &&
+      other.keep == keep;
 
   @override
-  int get hashCode => Object.hash(summary, signal, evidence);
+  int get hashCode => Object.hash(summary, signal, evidence, keep);
 }
 
 final _hiddenActionBlock = RegExp(
@@ -529,42 +629,97 @@ final _privilegePatterns = [
   RegExp(r'\b(?:exec|powershell|cmd\.exe|bash|sh -c)\b', caseSensitive: false),
 ];
 
+/// 基线文本词表保持原样，包含 token/cookie 的后缀匹配语义。
+/// 新键单独检查真实值，避免改变已脱敏内容原有的接受/拒绝结果。
+const _sensitiveKeyNames =
+    r'api[_ -]?key|token|cookie|password|密码|口令|私钥|密钥';
+const _additionalSensitiveKeyNames =
+    r'api[_ -]?secret|secret[_ -]?key|access[_ -]?token|refresh[_ -]?token|'
+    r'client[_ -]?secret|passwd|pwd|secret|set[- ]cookie|令牌';
+
+final _sensitiveJsonKeyPattern = RegExp(
+  '^(?:$_sensitiveKeyNames|$_additionalSensitiveKeyNames)\$',
+  caseSensitive: false,
+);
+final _additionalTextSecretPattern =
+    credentialTextPattern(_additionalSensitiveKeyNames);
+final _decodedTextSecretPattern =
+    credentialTextPattern('$_sensitiveKeyNames|$_additionalSensitiveKeyNames');
+final _additionalJsonTextSecretPattern = RegExp(
+  '"($_additionalSensitiveKeyNames)' r'"\s*:\s*"((?:[^"\\]|\\.)*)',
+  caseSensitive: false,
+);
+final _jsonCookieKeyPattern = RegExp(
+  r'^(?:set[- ])?cookie$',
+  caseSensitive: false,
+);
+
 /// 秘密特征：命中即不允许提升为记忆。与 sessions 脱敏规则保持一致的
 /// 保守集合，覆盖密码、Key、令牌、验证码、私钥、证件与银行卡号。
-final _secretPatterns = [
+/// host 落盘脱敏表的「整行多项 Cookie」形态这里不收：真实 Cookie 多项
+/// 以分号串接，分号命中越权特征（命令分隔），动作已被越权闸门整体
+/// 丢弃；单项与裸值由下面的键值形态覆盖。JSON 引号键值与类型可缺省
+/// 的 PEM 私钥形态与 host 落盘脱敏表同形；两表用途不同（这里只判
+/// 命中丢弃动作，落盘表要做替换遮蔽），覆盖面差异由
+/// secret_patterns_lockstep_test.dart 钉住。
+final _tokenSecretPatterns = [
   RegExp(r'sk-[A-Za-z0-9_-]{16,}', caseSensitive: false),
   RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]{8,}', caseSensitive: false),
+];
+final _keyedSecretPatterns = [
   RegExp(
-    r'(?:api[_ -]?key|token|cookie|password|密码|口令|私钥|密钥)\s*[:=：]\s*[^\s；;，,]+',
+    r'(?:' + _sensitiveKeyNames + r')\s*[:=：]\s*[^\s；;，,]+',
     caseSensitive: false,
   ),
+  RegExp(
+    r'("(?:' + _sensitiveKeyNames + r')"\s*:\s*")(?:[^"\\]|\\.)*',
+    caseSensitive: false,
+  ),
+];
+final _otherSecretPatterns = [
   RegExp(r'(?:验证码|otp|verification code)\s*[:=：]?\s*\d{4,8}', caseSensitive: false),
   RegExp(r'(?<!\d)\d{17}[\dXx](?!\d)'),
   RegExp(r'(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)'),
   RegExp(
-    r'-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----',
+    r'-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?'
+    r'-----END [A-Z0-9 ]*PRIVATE KEY-----',
     caseSensitive: false,
   ),
+];
+
+final _secretPatterns = [
+  ..._tokenSecretPatterns,
+  ..._keyedSecretPatterns,
+  ..._otherSecretPatterns,
+];
+final _decodedValueSecretPatterns = [
+  ..._tokenSecretPatterns,
+  ..._otherSecretPatterns,
 ];
 
 /// 从模型原始输出中分离隐藏动作块与用户可见文本。
 /// 解析失败、未知动作或越权字段只被忽略并记录诊断，绝不进入可见回复。
 HiddenActionParse parseHiddenActions(String rawText) {
   final blocks = _hiddenActionBlock.allMatches(rawText).toList();
-  final visibleText = rawText
-      .replaceAll(_hiddenActionBlock, '')
+  final withoutClosed = rawText.replaceAll(_hiddenActionBlock, '');
+  final hasTrailingUnclosed =
+      trailingUnclosedActionBlockPattern.hasMatch(withoutClosed);
+  final visibleText = withoutClosed
+      .replaceFirst(trailingUnclosedActionBlockPattern, '')
       .replaceAll(blankLinesPattern, '\n\n')
       .trim();
   if (blocks.isEmpty) {
     return HiddenActionParse(
       visibleText: visibleText,
       actions: const [],
-      diagnostics: const [],
+      diagnostics: hasTrailingUnclosed
+          ? [HiddenActionDiagnostics.invalidFormat]
+          : const [],
     );
   }
 
   final diagnostics = <String>[];
-  if (blocks.length > 1) {
+  if (blocks.length > 1 || hasTrailingUnclosed) {
     diagnostics.add(HiddenActionDiagnostics.multipleBlocks);
   }
 
@@ -657,6 +812,8 @@ HiddenAction? _validateAction(
         diagnostics,
         MemoryUnfreezeAction.new,
       );
+    case HiddenActionKind.memoryUnban:
+      return _validateMemoryControl(item, diagnostics, MemoryUnbanAction.new);
     case HiddenActionKind.memoryDelete:
       return _validateMemoryControl(item, diagnostics, MemoryDeleteAction.new);
     case HiddenActionKind.relationshipSignal:
@@ -711,11 +868,29 @@ HiddenAction? _validateMemorySignal(
       diagnostics.add(HiddenActionDiagnostics.personaHintDropped);
     }
   }
+  // keep 同理按字段丢弃：白名单外取值不改变月压缩资格（未标记），
+  // 只记诊断；记忆信号本身保留。
   return MemorySignalAction(
     summary: summary,
     evidence: evidence.value,
     hint: hint,
+    keep: _parseKeep(item['keep'], diagnostics),
   );
+}
+
+/// keep 字段的统一解析（memory_signal / open_loop_candidate /
+/// relationship_signal 三类模型产出条目共用）：白名单外取值按字段
+/// 丢弃并记 invalidFields，动作本身保留。
+String? _parseKeep(Object? value, List<String> diagnostics) {
+  final keep = _cleanFieldValue(value);
+  if (keep == null) {
+    return null;
+  }
+  if (_memorySignalKeepWhitelist.contains(keep)) {
+    return keep;
+  }
+  diagnostics.add(HiddenActionDiagnostics.invalidFields);
+  return null;
 }
 
 HiddenAction? _validateMemoryRecall(
@@ -749,7 +924,20 @@ HiddenAction? _validateMemoryRecall(
     _recallDatePattern,
     diagnostics,
   );
-  return MemoryRecallAction(query: query, months: months, dates: dates);
+  final paths = _parsePathSelections(item['paths'], diagnostics);
+  final entries = _parseSelections(
+    item['entries'],
+    _recallEntryPattern,
+    diagnostics,
+    maxItems: maxHiddenRecallEntries,
+  );
+  return MemoryRecallAction(
+    query: query,
+    months: months,
+    dates: dates,
+    paths: paths,
+    entries: entries,
+  );
 }
 
 HiddenAction? _validateOpenLoopCandidate(
@@ -810,6 +998,7 @@ HiddenAction? _validateOpenLoopCandidate(
     due: due,
     proactive: typedProactive,
     note: note.value,
+    keep: _parseKeep(item['keep'], diagnostics),
   );
 }
 
@@ -899,6 +1088,7 @@ HiddenAction? _validateRelationshipSignal(
     summary: summary,
     signal: typedSignal,
     evidence: evidence.value,
+    keep: _parseKeep(item['keep'], diagnostics),
   );
 }
 
@@ -965,12 +1155,15 @@ String? _cleanFieldValue(Object? value) {
 
 /// 解析 memory_recall 的选择数组：字段缺失返回 null（未选择）；
 /// 存在但非数组、或数组里没有合法项时同样返回 null，违规项记诊断。
-/// 数量不设上限（跨月跨年检索定稿），重复项折叠。
+/// 数量不设上限（跨月跨年检索定稿），重复项折叠；[maxItems] 只给
+/// 定稿设限的字段（画像路径、条目回执）使用，超出部分丢弃并记
+/// overLimit。
 List<String>? _parseSelections(
   Object? value,
   RegExp pattern,
-  List<String> diagnostics,
-) {
+  List<String> diagnostics, {
+  int? maxItems,
+}) {
   if (value == null) {
     return null;
   }
@@ -986,17 +1179,113 @@ List<String>? _parseSelections(
       continue;
     }
     if (!selections.contains(selection)) {
+      if (maxItems != null && selections.length >= maxItems) {
+        diagnostics.add(HiddenActionDiagnostics.overLimit);
+        continue;
+      }
       selections.add(selection);
     }
   }
   return selections.isEmpty ? null : selections;
 }
 
+/// 解析画像树路径选择：形态校验 + 去重 + 数量上限（定稿
+/// [maxHiddenRecallPaths]）+ 每条路径叶指针截断（定稿
+/// [maxHiddenRecallPathLeaves]）。超限的路径整条丢弃并记 overLimit；
+/// 叶超限的路径保留根与中间理解、截断到前两条叶并记 invalidFields。
+List<String>? _parsePathSelections(Object? value, List<String> diagnostics) {
+  if (value == null) {
+    return null;
+  }
+  if (value is! List<Object?>) {
+    diagnostics.add(HiddenActionDiagnostics.invalidFields);
+    return null;
+  }
+  final selections = <String>[];
+  for (final item in value) {
+    final selection = item is String ? item.trim() : null;
+    if (selection == null || !_recallPathPattern.hasMatch(selection)) {
+      diagnostics.add(HiddenActionDiagnostics.invalidFields);
+      continue;
+    }
+    if (selections.contains(selection)) {
+      continue;
+    }
+    if (selections.length >= maxHiddenRecallPaths) {
+      diagnostics.add(HiddenActionDiagnostics.overLimit);
+      continue;
+    }
+    selections.add(_clipPathLeaves(selection, diagnostics));
+  }
+  return selections.isEmpty ? null : selections;
+}
+
+/// 每条路径最多 [maxHiddenRecallPathLeaves] 条叶指针：超出部分截断
+/// （根与中间理解保留）并记 invalidFields。
+String _clipPathLeaves(String path, List<String> diagnostics) {
+  final segments = path.split('/');
+  if (segments.length < 3) {
+    return path;
+  }
+  final leaves = segments[2].split(',');
+  if (leaves.length <= maxHiddenRecallPathLeaves) {
+    return path;
+  }
+  diagnostics.add(HiddenActionDiagnostics.invalidFields);
+  final kept = leaves.take(maxHiddenRecallPathLeaves).join(',');
+  return '${segments[0]}/${segments[1]}/$kept';
+}
+
 bool _violatesPrivilege(String value) =>
     _privilegePatterns.any((pattern) => pattern.hasMatch(value));
 
+// 旧规则照常检查原文；新增规则对 JSON 字符串按解码语义检查。
 bool _containsSecret(String value) =>
-    _secretPatterns.any((pattern) => pattern.hasMatch(value));
+    _secretPatterns.any((pattern) => pattern.hasMatch(value)) ||
+    _containsAdditionalSecrets(value);
+
+bool _containsAdditionalSecrets(String value) =>
+    rewriteJsonStringValues(
+      value,
+      isSecret: _jsonFieldContainsSecret,
+      rewriteText: (text, decoded) =>
+          _containsAdditionalSecretText(text, decoded)
+              ? [JsonTextReplacement(0, text.length, '[已脱敏]')]
+              : const [],
+    ) != value;
+
+bool _containsAdditionalSecretText(String value, bool decoded) =>
+    (decoded && _decodedValueSecretPatterns.any((pattern) => pattern.hasMatch(value))) ||
+    (decoded ? _decodedTextSecretPattern : _additionalTextSecretPattern)
+        .allMatches(value).any((match) {
+      final rawValue = match.group(3)!;
+      final key = match.group(2)!;
+      final credential = credentialTextValue(rawValue);
+      return _jsonFieldContainsSecret(key, credential.text) ||
+          (decoded && _jsonCookieKeyPattern.hasMatch(key) &&
+              (isBareCookieTextValue(credential.text, quoted: credential.start != 0) ||
+                  (credential.start != 0 &&
+                      cookieTextContinuationValues(value, match.end).isNotEmpty)));
+    }) ||
+    _additionalJsonTextSecretPattern.allMatches(value).any((match) {
+      try {
+        final text = jsonDecode('"${match.group(2)}"') as String;
+        return _jsonFieldContainsSecret(match.group(1)!, text);
+      } on FormatException {
+        // 保留不完整或非法转义的秘密片段原有拒绝，不能借解析失败放行。
+        return true;
+      }
+    });
+
+bool _jsonFieldContainsSecret(String key, String? value) {
+  if (value != null && value.trim().isEmpty) return false;
+  if (value == '[已脱敏]') return false;
+  if (!_sensitiveJsonKeyPattern.hasMatch(key)) return false;
+  if (_jsonCookieKeyPattern.hasMatch(key)) {
+    return value != null && containsCookieEntry(value);
+  }
+  return true;
+}
 
 /// 对动作字段做内容安全筛查：任一字段命中越权特征返回 privilegeViolation，
 /// 否则任一字段命中秘密特征返回 sensitiveContent，全部干净返回 null。

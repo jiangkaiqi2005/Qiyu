@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
@@ -9,23 +9,25 @@ import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
+import '../baseline/host_stopped_gate.dart';
 import '../settings/stt_settings_client.dart';
 import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
+import 'api_error_dialog.dart';
+import 'api_error_policy.dart';
+import 'chat_stick_to_bottom.dart';
+import 'chat_voice_coordinator.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
 import 'qiyu_chat_bubble.dart';
+import 'qiyu_composer.dart';
+import 'qiyu_greeting_fade_out.dart';
 import 'qiyu_markdown.dart';
 import 'qiyu_hover_gate.dart';
-import 'qiyu_send_button.dart';
+import 'qiyu_voice_output_control.dart';
 import 'voice_input_controller.dart';
 import 'voice_output_controller.dart';
 import 'voice_recorder_platform.dart';
-
-/// 输入框里按 Enter 发送；Shift+Enter / Ctrl+Enter 插入软换行。
-final class _SendChatIntent extends Intent {
-  const _SendChatIntent();
-}
 
 /// 空会话占位按当前时段分流。产品定位是夜间陪伴，但白天打开也该
 /// 贴合当下时段；凌晨到清晨都归入「今晚」，守住睡前陪伴的基调。
@@ -35,15 +37,6 @@ String qiyuEmptyChatHint(DateTime now) {
   if (hour >= 11 && hour < 13) return '中午想说点什么？';
   if (hour >= 13 && hour < 18) return '下午想说点什么？';
   return '今晚想说点什么？';
-}
-
-final class _InsertLineBreakIntent extends Intent {
-  const _InsertLineBreakIntent();
-}
-
-/// Esc 在语音输入各状态下的语义：录音中丢弃、转写中中止、可重试丢弃。
-final class _VoiceEscapeIntent extends Intent {
-  const _VoiceEscapeIntent();
 }
 
 class LocalChatView extends StatefulWidget {
@@ -65,30 +58,29 @@ class LocalChatView extends StatefulWidget {
   State<LocalChatView> createState() => _LocalChatViewState();
 }
 
-class _LocalChatViewState extends State<LocalChatView> {
-  final _controller = TextEditingController();
+class _LocalChatViewState extends State<LocalChatView>
+    with WidgetsBindingObserver {
+  late final ChatVoiceCoordinator _voiceCoordinator;
+  GoRouter? _router;
+  String? _chatLocation;
+  bool get _android =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   final _scrollController = ScrollController();
 
-  /// composer 焦点：聚焦态描边取 `composerFocusLine`（紫度 0.13），
-  /// 失焦回落到 `line` 发丝线（design-system §8 组件 5）。
-  final _inputFocusNode = FocusNode(debugLabel: 'chat-input');
+  /// 输入模块的身份与操作键：状态与生命周期都在 [QiyuComposer] 内部，
+  /// 页面只经由它调用「恢复输入焦点」与「转写文本发送」两个操作；同一枚
+  /// 键传给 widget，空态↔聊天态换布局时 State 原位保留，输入连续。
+  final _composerKey = GlobalKey<QiyuComposerState>(debugLabel: 'chat-composer');
 
-  /// composer 输入框量宽键：展开态判定要按输入框的**实际可用宽度**排版数行，
-  /// 按钮列的宽度必须排除在外，所以键挂在输入框本体而不是整行。
-  final _composerFieldKey = GlobalKey(debugLabel: 'composer-field');
-
-  /// composer 输入是否多于一行：多于一行即展开，面板下沿加到
-  /// [_composerExpandedBottomPadding]（上沿不动）；单行静息分毫不动（列表底部
-  /// 让位常量与基线测试的 492/516 都依赖这一点）。
-  bool _composerExpanded = false;
-
-  String _lastListSignature = '';
-
-  // 会话恢复与发送后默认跟到底部；只有用户主动上滑才离开，
-  // 避免流式增量把正在回读历史的用户拉回底部。
-  bool _stickToBottom = true;
-  double _lastPixels = 0;
-
+  /// 贴底收敛状态机：会话恢复、新消息、流式增量与键盘压缩视口都跟在列表
+  /// 尾部，判定与调度收在 [ChatStickToBottomController]，页面只在 build
+  /// 与通知接线处喂数据。
+  late final ChatStickToBottomController _stick =
+      ChatStickToBottomController(
+        scrollController: _scrollController,
+        android: _android,
+        isMounted: () => mounted,
+      );
   late final LocalChatViewModel _chatViewModel;
   late final VoiceInputController _voiceInput;
 
@@ -110,17 +102,26 @@ class _LocalChatViewState extends State<LocalChatView> {
   /// 就是它在自己位置上淡掉，而不是跳一处再消失（Spec User Story 2）。
   Rect? _greetingRect;
 
+  String? _lastTrackedSessionId;
+
+  /// 轮末异常的分类、会话级弹窗频控与轻提示文案全部在 [ApiErrorPolicy]
+  /// 策略表内；页面只执行判定（setState、弹窗、导航与焦点返还）。
+  final ApiErrorPolicy _errorPolicy = ApiErrorPolicy();
+  ApiErrorNotice? _apiErrorNotice;
+  bool _isShowingApiErrorDialog = false;
+
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_trackStickToBottom);
-    _inputFocusNode.addListener(_onInputFocusChange);
-    // 文本每次变化（打字、IME 组合、程序注入）都可能改变输入行行数。
-    _controller.addListener(_updateComposerExpanded);
+    _scrollController.addListener(_stick.trackScroll);
     final chatViewModel = _chatViewModel = context.read<LocalChatViewModel>();
+    chatViewModel.addListener(_onChatViewModelChanged);
+    _lastTrackedSessionId = chatViewModel.sessionId;
     final sttSettingsGateway = _resolveSttSettingsGateway();
+    final recorder =
+        widget.voiceRecorderPlatform ?? createVoiceRecorderPlatform();
     _voiceInput = VoiceInputController(
-      widget.voiceRecorderPlatform ?? createVoiceRecorderPlatform(),
+      recorder,
       // 服务类型决定是否要浏览器端 WAV 转换（豆包要 16kHz 单声道 WAV）。
       () async {
         final settings = await sttSettingsGateway.read();
@@ -130,9 +131,88 @@ class _LocalChatViewState extends State<LocalChatView> {
         );
       },
       chatViewModel.transcribeVoice,
-      onTranscribed: (text) => unawaited(_sendTranscribed(chatViewModel, text)),
+      // 转写文本交给输入模块的发送协调：清空、失败回填与页面收尾钩子
+      // 都在模块内部按既有口径执行。
+      onTranscribed: (text) =>
+          unawaited(_composerKey.currentState?.sendTranscribed(text)),
+      onApiError: _handleVoiceApiError,
     );
+    chatViewModel.voiceOutput.onApiError = _handleVoiceApiError;
+    _voiceCoordinator = ChatVoiceCoordinator(
+      viewModel: chatViewModel,
+      input: _voiceInput,
+      android: _android,
+      hasComposer: () => _composerKey.currentState != null,
+      recorder: recorder,
+    );
+    if (_android) WidgetsBinding.instance.addObserver(this);
     unawaited(_voiceInput.initialize());
+    // go 导航（侧边栏/抽屉换栈）会销毁重建本页 State：「回到聊天页」的
+    // 路由监听帮不上忙，挂载即补拉一次朗读可用状态，设置页保存的语音
+    // 配置回来就生效。VM 还没启动过 initialize 时不补（initialize 自带
+    // 刷新，见 refreshVoiceOutputStatusOnMount）；生产 autoStart 下首挂载
+    // 与 initialize 的刷新并发共读两次，幂等 GET，可接受。
+    unawaited(chatViewModel.refreshVoiceOutputStatusOnMount());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final router = GoRouter.maybeOf(context);
+    if (router == _router) return;
+    _router?.routerDelegate.removeListener(_onRouteChanged);
+    _router?.routerDelegate
+        .removeListener(_onRouteChangedForVoiceOutputRefresh);
+    _router = router;
+    _chatLocation =
+        router?.routerDelegate.currentConfiguration.last.matchedLocation;
+    // 平台无关：设置页保存语音配置后回到聊天页必须重拉朗读可用状态
+    // （web/桌面的 push 路径 State 存活，见回页监听；go 换栈的销毁重建
+    // 路径由 initState 的挂载补拉兜住）。
+    router?.routerDelegate.addListener(_onRouteChangedForVoiceOutputRefresh);
+    // 安卓专属：离页取消未提交语音并停播（安卓专属中断语义，见
+    // ChatVoiceCoordinator.leaveRoute）；web/桌面不注册，停播行为零变更。
+    if (_android) {
+      router?.routerDelegate.addListener(_onRouteChanged);
+    }
+  }
+
+  /// 离开聊天页后尚未回来的标记：回到聊天页时据此判定「这次是回来」
+  /// 并重拉一次朗读可用状态。设置页保存 TTS 配置后返回聊天页，若不重拉，
+  /// `_voiceOutputEnabled` 就停留在进页时的 false——自动朗读静默失效、
+  /// 工具条朗读开关不渲染，直到冷启动才恢复。
+  bool _offChat = false;
+
+  /// 平台无关的路由监听（web/桌面也注册）：离开置标记，回来重拉一次
+  /// 朗读可用状态。go 导航销毁重建的路径它覆盖不了——State 全新、标记
+  /// 归零、监听刚注册，那条路由由 initState 的挂载补拉兜住。
+  void _onRouteChangedForVoiceOutputRefresh() {
+    final location =
+        _router?.routerDelegate.currentConfiguration.last.matchedLocation;
+    if (location != _chatLocation) {
+      _offChat = true;
+    } else if (_offChat) {
+      _offChat = false;
+      unawaited(_chatViewModel.refreshVoiceOutputStatus());
+    }
+  }
+
+  void _onRouteChanged() {
+    final location =
+        _router?.routerDelegate.currentConfiguration.last.matchedLocation;
+    if (location != _chatLocation) {
+      _voiceCoordinator.leaveRoute();
+    }
+  }
+
+  void _cancelUnsubmittedVoice() =>
+      _voiceCoordinator.cancelForPage();
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      _voiceCoordinator.enterBackground();
+    }
   }
 
   /// 语音设置网关解析：注入优先；其次复用 app Provider 树的共享实例
@@ -150,146 +230,126 @@ class _LocalChatViewState extends State<LocalChatView> {
     }
   }
 
+  void _onChatViewModelChanged() {
+    final currentSessionId = _chatViewModel.sessionId;
+    if (_lastTrackedSessionId != currentSessionId) {
+      _lastTrackedSessionId = currentSessionId;
+      _errorPolicy.resetSession();
+      if (_apiErrorNotice != null && mounted) {
+        setState(() => _apiErrorNotice = null);
+      }
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _router?.routerDelegate.removeListener(_onRouteChanged);
+    _router?.routerDelegate
+        .removeListener(_onRouteChangedForVoiceOutputRefresh);
+    _voiceCoordinator.unsubscribe();
+    _chatViewModel.removeListener(_onChatViewModelChanged);
     // 离开本页立刻闭嘴（ADR 0002）：**无条件**停播，包括还在队列里没开口的气泡。
     // 「只在 isReading 时才停」会让排队的 bubble 跨页继续读，不是可接受的取舍；
     // 卸载期不能同步通知监听者，这一点由 stopAllForLeavingPage 自己处理。
     _chatViewModel.voiceOutput.stopAllForLeavingPage();
+    if (_chatViewModel.voiceOutput.onApiError == _handleVoiceApiError) {
+      _chatViewModel.voiceOutput.onApiError = null;
+    }
+    _voiceCoordinator.dispose();
     _voiceInput.dispose();
-    _controller.dispose();
     _scrollController.dispose();
-    _inputFocusNode
-      ..removeListener(_onInputFocusChange)
-      ..dispose();
     super.dispose();
-  }
-
-  /// 聚焦描边要跟着焦点重绘：`QiyuGlassPanel` 的装饰走 AnimatedContainer，
-  /// `line` ↔ `composerFocusLine` 是 200ms 过渡（reduced-motion 下为 0）。
-  void _onInputFocusChange() {
-    if (mounted) setState(() {});
   }
 
   /// 聊天页工具条上的顶层目的地（历史 / 模型连接）：**叠在当前位置之上**，
   /// 因此页内的「返回上一页」回到的就是刚离开的那一页。换页前无条件停播
   /// （ADR 0002），这一步与 [QiyuShell] 的导航动作同一口径。
   void _pushAwayFromChat(String location) {
+    if (_android) _cancelUnsubmittedVoice();
+    _composerKey.currentState?.dismissKeyboard();
     _chatViewModel.voiceOutput.stopAll();
     context.push(location);
   }
 
-  // pixels 减少只可能来自用户上滑（程序跳转与内容增长不会减少），
-  // 以此判定离开底部；滑回底部附近则重新粘滞。
-  void _trackStickToBottom() {
-    final position = _scrollController.position;
-    if (position.pixels < _lastPixels) {
-      _stickToBottom = position.pixels >= position.maxScrollExtent - 120;
-    } else if (position.pixels >= position.maxScrollExtent - 120) {
-      _stickToBottom = true;
-    }
-    _lastPixels = position.pixels;
-  }
-
-  Future<void> _send(LocalChatViewModel viewModel) async {
-    final text = _controller.text;
-    if (text.trim().isEmpty) {
-      return;
-    }
-    _stickToBottom = true;
-    final sending = viewModel.send(text);
-    if (mounted && _controller.text == text) {
-      _controller.clear();
-    }
-    final sent = await sending;
-    if (!sent &&
-        mounted &&
-        _controller.text.isEmpty &&
-        !viewModel.messages.any(
-          (message) =>
-              message.speaker == LocalChatSpeaker.user &&
-              message.text == text.trim(),
-        )) {
-      _controller.text = text;
-      _controller.selection = TextSelection.collapsed(offset: text.length);
+  /// 统一的异常分发执行点：策略表给出判定，页面只负责 setState 与弹窗接线。
+  Future<void> _executeApiErrorDecision(ApiErrorTurnDecision decision) async {
+    switch (decision) {
+      case ClearApiErrorNotice():
+        if (_apiErrorNotice != null) {
+          setState(() => _apiErrorNotice = null);
+        }
+      case ShowApiErrorNotice(:final notice):
+        setState(() => _apiErrorNotice = notice);
+      case DispatchApiErrorDialog(:final category, :final delay):
+        await _triggerApiErrorDialog(category, delay: delay);
     }
   }
 
-  void _insertLineBreak() {
-    final value = _controller.value;
-    final selection = value.selection;
-    final start = selection.isValid ? selection.start : value.text.length;
-    final end = selection.isValid ? selection.end : value.text.length;
-    final nextText = value.text.replaceRange(start, end, '\n');
-    _controller.value = TextEditingValue(
-      text: nextText,
-      selection: TextSelection.collapsed(offset: start + 1),
-    );
-  }
-
-  /// 语音转写出的文字直接发送：与手打共用同一条链路（requestId 幂等、
-  /// 乐观插入、失败回填输入框）。栖语正在回复时排队，回复结束即发。
-  Future<void> _sendTranscribed(
-    LocalChatViewModel viewModel,
-    String text,
-  ) async {
-    _stickToBottom = true;
-    final sent = await viewModel.sendWhenIdle(text);
-    if (!sent &&
-        mounted &&
-        _controller.text.isEmpty &&
-        text.trim().isNotEmpty) {
-      _controller.text = text;
-      _controller.selection = TextSelection.collapsed(offset: text.length);
-    }
-  }
-
-  Future<void> _showVoiceGuide() async {
-    final voice = _voiceInput;
-    // 置灰态先惰性重查一次：从设置页配好回来点麦克风直接开始说话。
-    await voice.refreshConfigured();
-    if (!mounted) {
-      return;
-    }
-    if (voice.status == VoiceInputStatus.idle) {
-      voice.handleMicTap();
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          voice.status == VoiceInputStatus.unsupported
-              ? '当前浏览器不支持语音输入，请换 Chrome 或 Edge。'
-              : '还没有配置语音服务，先去设置页填写地址、模型和 Key。',
-        ),
-        action: voice.status == VoiceInputStatus.unsupported
-            ? null
-            : SnackBarAction(
-                label: '去设置',
-                onPressed: () => _pushAwayFromChat('/settings'),
-              ),
+  /// composer 的轮次收尾回调：兜底原因与服务错误元数据交给 [_errorPolicy]
+  /// 查表，分类/频控/弹窗节奏都不在页面。
+  Future<void> _handleTurnApiErrors(LocalChatViewModel viewModel) async {
+    await _executeApiErrorDecision(
+      _errorPolicy.decideTurn(
+        reason: viewModel.latestFallbackReason,
+        serviceError: viewModel.latestServiceError,
       ),
     );
+  }
+
+  Future<void> _triggerApiErrorDialog(
+    ApiErrorCategory category, {
+    bool delay = false,
+  }) async {
+    if (_isShowingApiErrorDialog || !mounted) {
+      return;
+    }
+    final sessionId = _chatViewModel.sessionId;
+    _isShowingApiErrorDialog = true;
+    try {
+      if (delay) {
+        // 流式落定后约 300ms 缓冲：与原型一致，留出视觉落定呼吸时间（Spec §2）
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        if (!mounted || _chatViewModel.sessionId != sessionId) {
+          return;
+        }
+      }
+      _composerKey.currentState?.dismissKeyboard();
+      final goToSettings = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => QiyuApiErrorDialog(
+          category: category,
+          onDismiss: () => Navigator.of(dialogContext).pop(false),
+          onGoToSettings: () => Navigator.of(dialogContext).pop(true),
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      if (goToSettings == true) {
+        _chatViewModel.voiceOutput.stopAll();
+        context.push('/settings');
+      } else {
+        _composerKey.currentState?.restoreFocus();
+      }
+    } finally {
+      _isShowingApiErrorDialog = false;
+    }
+  }
+
+  void _handleVoiceApiError(ApiErrorCategory category) {
+    unawaited(_executeApiErrorDecision(_errorPolicy.decideCategory(category)));
   }
 
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<LocalChatViewModel>();
     // 会话恢复、新消息与流式增量都跟在列表尾部：签名变化时下一帧滚到底。
-    final transient = _transientCount(viewModel);
-    final signature =
-        '${viewModel.messages.length}|$transient|${viewModel.streamingText.length}';
-    if (signature != _lastListSignature) {
-      _lastListSignature = signature;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_stickToBottom) {
-          return;
-        }
-        if (_scrollController.hasClients) {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-        }
-      });
-    }
+    _stick.onListContent(
+      messageCount: viewModel.messages.length,
+      transientCount: _transientCount(viewModel),
+      streamingLength: viewModel.streamingText.length,
+    );
     // 合一页（design-system §5）：还没发出消息就是空状态首页——问候 +
     // composer；发出第一句后消息流生长。没有「首页→对话页」的跳转，两条路由
     // 渲染同一个视图。判定只有一处出处：`isHomeState`（含「会话恢复中不算
@@ -304,6 +364,11 @@ class _LocalChatViewState extends State<LocalChatView> {
         MediaQuery.sizeOf(context).width < QiyuLayout.desktopBreakpoint;
     // 淡出层的落点：只在聊天态取，空态下问候由 `_homeBody` 自己画。
     final fadingGreeting = empty ? null : _greetingRect;
+    // 键盘弹起把视口压矮，贴底态要重新贴底——否则列表停在半空，最新消息沉到
+    // 键盘之下（内容签名不含 inset，没有这一跳就没人扣扳机）。
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    _stick.onKeyboardInset(keyboardInset);
+    final keyboardVisible = keyboardInset > 0;
     return Scaffold(
       // 底色撤成透明：页面背景（夜色底 + 仅空态的夜景图）由 [QiyuShell] 铺成
       // **全幅底层**，侧边栏与抽屉作为半透明层叠在它之上。这里再铺一层不透明
@@ -313,15 +378,37 @@ class _LocalChatViewState extends State<LocalChatView> {
         key: _bodyStackKey,
         children: [
           SafeArea(
-            child: Column(
-              children: [
-                _utilityStrip(context, viewModel),
-                Expanded(
-                  child: empty
-                      ? _homeBody(context, viewModel, narrow: narrow)
-                      : _chatBody(context, viewModel),
-                ),
-              ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // 软键盘留下不足 200px 时优先保全编辑区；键盘收起即恢复工具栏。
+                // 用安全区内实际高度判布局，不把横屏或窗口宽度当作平台判断。
+                final compactKeyboard =
+                    qiyuAndroidTouch &&
+                    keyboardVisible &&
+                    constraints.maxHeight < 200;
+                return Column(
+                  children: [
+                    if (!compactKeyboard) _utilityStrip(context, viewModel),
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _android
+                            ? () => _composerKey.currentState?.dismissKeyboard()
+                            : null,
+                        child: empty && !compactKeyboard
+                            ? _homeBody(context, viewModel, narrow: narrow)
+                            : _chatBody(
+                                context,
+                                viewModel,
+                                editorHeight: compactKeyboard
+                                    ? constraints.maxHeight
+                                    : null,
+                              ),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
           // 聊天态才出现的问候淡出层：不接手势，也不参与命中测试。
@@ -329,7 +416,7 @@ class _LocalChatViewState extends State<LocalChatView> {
             Positioned.fromRect(
               rect: rect,
               child: IgnorePointer(
-                child: _GreetingFadeOut(
+                child: QiyuGreetingFadeOut(
                   key: const Key('home-greeting-fade'),
                   duration: qiyuMotion(context, QiyuMotion.base),
                   onFinished: _dropGreetingOverlay,
@@ -345,9 +432,9 @@ class _LocalChatViewState extends State<LocalChatView> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('本机程序已停止'),
+                      Text(hostStoppedGateSituation),
                       SizedBox(height: QiyuSpacing.xs),
-                      Text('请重新启动栖语本机程序。'),
+                      Text(hostStoppedGateGuidance),
                     ],
                   ),
                 ),
@@ -358,35 +445,6 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
-  /// M3 compact IconButton 在 tightFor([QiyuLayout.composerIconButtonSize])
-  /// 约束下的渲染增量（34 → 40，实测值）：SDK 密度调整的结果，无既有 token 可引。
-  static const double _compactIconButtonSizeDelta = 6;
-
-  /// composer 输入行（Row）的静息高，取最高子项（麦克风钮一侧）：
-  /// 图标按钮 [QiyuLayout.composerIconButtonSize] + compact 渲染增量
-  /// [_compactIconButtonSizeDelta] + 焦点环常驻留白上下
-  /// 2×[QiyuLayout.focusRingOffset]。
-  ///
-  /// 只用于列表底部让位（[_chatListBottomInset]）的推导；**不再作展开判据**——
-  /// 窄屏字阶下两行内容仍矮于按钮行，按高度判定会漏翻（见
-  /// [_updateComposerExpanded]）。
-  static const double _composerRowRestingHeight =
-      QiyuLayout.composerIconButtonSize +
-      _compactIconButtonSizeDelta +
-      2 * QiyuLayout.focusRingOffset;
-
-  /// composer 多行展开态的下沿内边距：上沿保持静息 [QiyuLayout.composerPadding]
-  /// 不动——宋体行盒的空隙大头分在文字上方（行高按字体上伸比例分配、CJK 字面
-  /// 偏上），视觉上沿自带余量；留白全部补给下沿，让最后一行离圆角远一点
-  /// （2026-09-05 用户反馈「上面太宽了，下面太窄了，离圆角太近了」；总留白
-  /// 与先前的上下对称方案一致，只是分配不同）。
-  static const double _composerExpandedBottomPadding =
-      QiyuLayout.composerPadding + 2 * QiyuSpacing.xs;
-
-  /// composer 光标宽度：[_inputField] 显式传给 TextField（渲染不变，Flutter
-  /// 默认就是 2.0），展开态判定按它扣排版宽，见 [_updateComposerExpanded]。
-  static const double _inputCursorWidth = 2.0;
-
   /// 聊天态消息列表的 bottom padding：composer 覆盖层的**静息占位**（单行输入、
   /// 通知条收起时，覆盖层从列表底缘算起占掉的高度）。取常量、不跟随 composer
   /// 实际高度联动——联动会让列表随打字移动，违背「会话不动」；composer 长高时
@@ -394,15 +452,15 @@ class _LocalChatViewState extends State<LocalChatView> {
   ///
   /// 数值推导（自下而上）：
   /// - [QiyuSpacing.lg]：面板之下原有的出屏留白（原 Column 底部的 SizedBox）；
-  /// - composer 静息面板：Row（[_composerRowRestingHeight]，实测 46）+ 上下
-  ///   内边距 2×[QiyuLayout.composerPadding] + 上下发丝边框 2×[QiyuLine.hairline]；
+  /// - composer 静息面板：Row（[QiyuComposer.restingRowHeight]，实测 46）+
+  ///   上下内边距 2×[QiyuLayout.composerPadding] + 上下发丝边框 2×[QiyuLine.hairline]；
   /// - [QiyuSpacing.lg]：一条通知条的近似余量（通知条 = 顶距 8 + 正文行盒约 21）。
   ///   通知条出现时覆盖层向上吃掉这份余量，最多再侵入最后一条消息的底部边缘，
   ///   属「会话不动」优先的既定取舍；这份 24 也接替了改造前列表自身的 bottom
   ///   padding，静息外观与改造前一致（最后一条消息距面板顶 24px）。
   static const double _chatListBottomInset =
       QiyuSpacing.lg +
-      _composerRowRestingHeight +
+      QiyuComposer.restingRowHeight +
       2 * QiyuLayout.composerPadding +
       2 * QiyuLine.hairline +
       QiyuSpacing.lg;
@@ -411,20 +469,58 @@ class _LocalChatViewState extends State<LocalChatView> {
   /// composer 随输入内容长高时只向上生长、盖住更早的消息，列表视口纹丝不动
   /// （原 Column 结构里 `Expanded` 的列表视口会被精确压缩对应行高）。列表底部
   /// 为覆盖层让位的 padding 常量见 [_chatListBottomInset]。
-  Widget _chatBody(BuildContext context, LocalChatViewModel viewModel) {
+  Widget _chatBody(
+    BuildContext context,
+    LocalChatViewModel viewModel, {
+    double? editorHeight,
+  }) {
     return Stack(
       children: [
-        Positioned.fill(child: _messageArea(viewModel)),
+        // 收键盘走 Listener 的 down 事件而不是手势：每条消息自己带一个轻点
+        // 显隐时刻的手势，竞技场里内层先胜，页面级的 onTap 点消息时永远轮不上
+        // （框架的 tap-outside 失焦又明确排除移动端触摸）。down 事件不进竞技场，
+        // 点任何位置都先到达，气泡的轻点与重听按钮照常工作。
+        Positioned.fill(
+          child: _android
+              ? Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: (_) =>
+                      _composerKey.currentState?.dismissKeyboard(),
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: _stick.onUserDrag,
+                    child: NotificationListener<ScrollMetricsNotification>(
+                      onNotification: _stick.onScrollMetrics,
+                      child: _messageArea(viewModel),
+                    ),
+                  ),
+                )
+              : _messageArea(viewModel),
+        ),
         Positioned(
           left: 0,
           right: 0,
+          top: editorHeight == null ? null : 0,
           bottom: 0,
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              _noticeBars(context, viewModel),
-              _composer(context, viewModel),
-              const SizedBox(height: QiyuSpacing.lg),
+              if (editorHeight == null) ...[
+                _noticeBars(context, viewModel),
+                _composer(viewModel),
+                const SizedBox(height: QiyuSpacing.lg),
+              ] else ...[
+                Flexible(
+                  child: SingleChildScrollView(
+                    reverse: true,
+                    child: _noticeBars(context, viewModel),
+                  ),
+                ),
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: editorHeight),
+                  child: _composer(viewModel),
+                ),
+              ],
             ],
           ),
         ),
@@ -464,7 +560,7 @@ class _LocalChatViewState extends State<LocalChatView> {
             _homeGreeting(context),
             const SizedBox(height: QiyuSpacing.xl),
             _noticeBars(context, viewModel),
-            _composer(context, viewModel),
+            _composer(viewModel),
           ],
         ),
       );
@@ -481,7 +577,7 @@ class _LocalChatViewState extends State<LocalChatView> {
           ),
         ),
         _noticeBars(context, viewModel),
-        _composer(context, viewModel),
+        _composer(viewModel),
         const SizedBox(height: QiyuSpacing.lg),
       ],
     );
@@ -540,24 +636,13 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
-  /// 聊天域内容的水平居中约束：工具条、消息区与 composer 共用同一档
-  /// `QiyuLayout.streamMaxWidth`，约束组合（Center > ConstrainedBox）收敛于此。
-  Widget _centeredStream({required Widget child}) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: QiyuLayout.streamMaxWidth),
-        child: child,
-      ),
-    );
-  }
-
   /// 会话页自带的工具条：本地规则标识、朗读开关、历史与模型连接入口。
   /// 页面导航交给导航壳，这里只留会话自身的控件；两个入口与侧边栏去同一条
   /// 目的地，因此目的地与图标都从 [QiyuNavDestination] 取。返回栈语义**两边
   /// 不同**（改造前就是这样，本轮纯视觉换皮不动它）：工具条 [_pushAwayFromChat]
   /// 叠栈，页内「返回上一页」回到来的那一页；侧边栏是常驻顶层导航，走 `go` 换栈。
   Widget _utilityStrip(BuildContext context, LocalChatViewModel viewModel) {
-    return _centeredStream(
+    return QiyuStreamWidthBox(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
           QiyuSpacing.md,
@@ -584,7 +669,7 @@ class _LocalChatViewState extends State<LocalChatView> {
               ),
             if (viewModel.voiceOutputConfigured) ...[
               const SizedBox(width: QiyuSpacing.xs),
-              _VoiceOutputHeaderControl(viewModel: viewModel),
+              QiyuVoiceOutputControl(viewModel: viewModel),
             ],
             const SizedBox(width: QiyuSpacing.xs),
             _stripIconButton(
@@ -621,6 +706,7 @@ class _LocalChatViewState extends State<LocalChatView> {
       borderRadius: QiyuRadii.circleBorder,
       builder: (context, focusNode) => IconButton(
         key: key,
+        style: qiyuAndroidTouchStyle,
         focusNode: focusNode,
         onPressed: onPressed,
         tooltip: tooltip,
@@ -628,9 +714,9 @@ class _LocalChatViewState extends State<LocalChatView> {
         iconSize: QiyuIconSpec.size,
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints.tightFor(
-          width: QiyuLayout.composerIconButtonSize,
-          height: QiyuLayout.composerIconButtonSize,
+        constraints: BoxConstraints.tightFor(
+          width: qiyuAndroidTouch ? 48 : QiyuLayout.composerIconButtonSize,
+          height: qiyuAndroidTouch ? 48 : QiyuLayout.composerIconButtonSize,
         ),
         icon: Icon(icon),
       ),
@@ -650,7 +736,71 @@ class _LocalChatViewState extends State<LocalChatView> {
               liveRegion: true,
               child: Text(
                 message,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                style: QiyuTypography.of(context).secondary.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ),
+          ),
+        if (_apiErrorNotice case final notice?)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              QiyuSpacing.md,
+              QiyuSpacing.xs,
+              QiyuSpacing.md,
+              QiyuSpacing.xs,
+            ),
+            child: QiyuStreamWidthBox(
+              child: Container(
+                key: const Key('api-error-notice-banner'),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .errorContainer
+                      .withValues(alpha: 0.12),
+                  borderRadius: QiyuRadii.smallBorder,
+                  border: Border.all(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .error
+                        .withValues(alpha: 0.3),
+                    width: QiyuLine.hairline,
+                  ),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: QiyuSpacing.md,
+                  vertical: QiyuSpacing.sm,
+                ),
+                child: Semantics(
+                  liveRegion: true,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          notice.message,
+                          key: const Key('api-error-notice-text'),
+                          style: QiyuTypography.of(context).secondary.copyWith(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                      if (notice.showSettingsLink) ...[
+                        const SizedBox(width: QiyuSpacing.xs),
+                        InkWell(
+                          key: const Key('api-error-notice-settings'),
+                          onTap: () => _pushAwayFromChat('/settings'),
+                          child: Text(
+                            '去设置检查',
+                            style: QiyuTypography.of(context).secondary.copyWith(
+                              color: QiyuColors.accentBright,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -667,7 +817,7 @@ class _LocalChatViewState extends State<LocalChatView> {
   }
 
   Widget _messageArea(LocalChatViewModel viewModel) {
-    return _centeredStream(
+    return QiyuStreamWidthBox(
       child: AnimatedBuilder(
         animation: viewModel.voiceOutput,
         builder: (context, _) => _messageList(viewModel),
@@ -675,185 +825,24 @@ class _LocalChatViewState extends State<LocalChatView> {
     );
   }
 
-  /// composer（design-system §8 组件 5）：毛玻璃胶囊、`line` 发丝描边、
-  /// 内边距 6（多行展开态下沿再让两档 xs、上沿不动，单行静息不动）、
-  /// 聚焦描边压到紫度 0.13；占位字 `muted` 且靠 34px 行高居中。
-  ///
-  /// `home-go-chat` 沿用退役前首页「去聊天」入口卡的既有测试键：合一页
-  /// 之后进入对话的动作就是这个输入容器，键位随职责搬过来。
-  Widget _composer(BuildContext context, LocalChatViewModel viewModel) {
-    // 窗口宽度变化会改折行数与字阶档位（进而改输入行高），这类变化不经过
-    // 文本控制器，靠每次 build 补一次帧后核对兜住。
-    _updateComposerExpanded();
-    final lineColor = _inputFocusNode.hasFocus
-        ? QiyuColors.composerFocusLine
-        : QiyuColors.line;
-    final bottomPadding = _composerExpanded
-        ? _composerExpandedBottomPadding
-        : QiyuLayout.composerPadding;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: QiyuSpacing.md),
-      child: _centeredStream(
-        child: QiyuGlassPanel(
-          key: const Key('home-go-chat'),
-          blurSigma: QiyuGlass.panelBlur,
-          borderColor: lineColor,
-          padding: EdgeInsets.fromLTRB(
-            QiyuSpacing.md,
-            QiyuLayout.composerPadding,
-            QiyuLayout.composerPadding,
-            bottomPadding,
-          ),
-          // 输入行本体：Enter 发送 / 软换行 / Esc 的快捷键作用域只包住它。
-          child: Shortcuts(
-            shortcuts: const {
-              SingleActivator(LogicalKeyboardKey.enter): _SendChatIntent(),
-              SingleActivator(LogicalKeyboardKey.enter, shift: true):
-                  _InsertLineBreakIntent(),
-              SingleActivator(LogicalKeyboardKey.enter, control: true):
-                  _InsertLineBreakIntent(),
-              SingleActivator(LogicalKeyboardKey.escape): _VoiceEscapeIntent(),
-            },
-            child: Actions(
-              actions: {
-                _SendChatIntent: CallbackAction<_SendChatIntent>(
-                  onInvoke: (intent) {
-                    if (!viewModel.sending) {
-                      unawaited(_send(viewModel));
-                    }
-                    return null;
-                  },
-                ),
-                _InsertLineBreakIntent: CallbackAction<_InsertLineBreakIntent>(
-                  onInvoke: (intent) {
-                    _insertLineBreak();
-                    return null;
-                  },
-                ),
-                _VoiceEscapeIntent: CallbackAction<_VoiceEscapeIntent>(
-                  onInvoke: (intent) {
-                    // 播放态下 Esc 等同停止按钮（ADR 0002 的打断规则）；
-                    // 录音/转写语义不变。
-                    viewModel.voiceOutput.stopAll();
-                    _voiceInput.handleEscape();
-                    return null;
-                  },
-                ),
-              },
-              child: Row(
-                children: [
-                  Expanded(
-                    child: KeyedSubtree(
-                      key: _composerFieldKey,
-                      child: _inputField(),
-                    ),
-                  ),
-                  const SizedBox(width: QiyuSpacing.xs),
-                  AnimatedBuilder(
-                    animation: _voiceInput,
-                    builder: (context, _) => _voiceMicButton(),
-                  ),
-                  const SizedBox(width: QiyuSpacing.xs),
-                  QiyuSendButton(
-                    sending: viewModel.sending,
-                    onPressed: viewModel.sending
-                        ? () => unawaited(viewModel.stop())
-                        : () => unawaited(_send(viewModel)),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
+  /// 输入行：合一页与输入模块（[QiyuComposer]）的唯一接缝。输入的文本、
+  /// 选区、焦点、测量键、展开状态、文字度量、快捷键与监听生命周期全部
+  /// 收在模块内部；页面只接发送起点、轮次收尾（异常分类与频控已收进
+  /// [ApiErrorPolicy] 策略表，这里只执行判定）与导航三个页面侧回调，
+  /// 不管理输入内部状态。
+  Widget _composer(LocalChatViewModel viewModel) {
+    return QiyuComposer(
+      key: _composerKey,
+      viewModel: viewModel,
+      voiceInput: _voiceInput,
+      voiceCoordinator: _voiceCoordinator,
+      onSendStarted: _stick.requestFollow,
+      // 回调无参：本轮视图模型就是模块持有的这一个，分类/频控/弹窗仍走
+      // [_handleTurnApiErrors]，页面侧闭包自取 viewModel。
+      onTurnCompleted: () => _handleTurnApiErrors(viewModel),
+      pushAwayFromChat: _pushAwayFromChat,
     );
   }
-
-  /// 展开态帧后核对：用与输入框**同源**的字体样式（[_inputTextStyle]）把当前
-  /// 文本按输入框实际可用宽度排版，行数 > 1 即展开，只在布尔翻转时 setState。
-  ///
-  /// 判定必须与真实渲染**双同源**，缺一处软折行边界就会漏判/过判（2026-09-05
-  /// 实测：`一`×35+'。' 真实渲染 2 行、判定 1 行，面板停在静息 60 下沿贴边，
-  /// 再补一个字符才跳展开——观感即「一个句号和两个句号差太多」）：
-  /// - 样式必须与渲染同源：[_inputTextStyle] 按 TextField 的实际装配方向取
-  ///   Theme `bodyLarge` merge（机制见其 doc）。裸 `QiyuTypography.body` 少了
-  ///   渲染样式自带的 `letterSpacing`，每行会比真实多容约 1 字符；
-  /// - 宽度必须扣光标边距：RenderEditable 的实际排版宽比容器窄
-  ///   `_caretMargin = 1.0 + cursorWidth`（rendering/editable.dart 的
-  ///   `_kCaretGap`），即下方的 `1.0 + _inputCursorWidth`；不扣会在临界长度
-  ///   再漏判一格。
-  ///
-  /// 判据必须是「内容行数」而非「输入行高超过按钮行（[_composerRowRestingHeight]）」：
-  /// 窄屏字阶与浏览器缩放会把单行行盒压到 22px 上下，两行内容（44px）仍矮于
-  /// 46px 的按钮行，按高度判定会漏翻——2026-09-05 用户 200% 缩放真机踩中，
-  /// 观感即「两行贴边、三行才突然松开，两行和三行差太多」。留白加在输入行
-  /// 外层的面板上，不反馈输入框自身宽度，量一次即稳。触发路径：控制器文本
-  /// 变化与 composer 每次 build（见 initState 与 [_composer]）。
-  void _updateComposerExpanded() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final box = _composerFieldKey.currentContext?.findRenderObject();
-      if (box is! RenderBox || !box.hasSize || box.size.width <= 0) return;
-      final painter = TextPainter(
-        text: TextSpan(
-          text: _controller.text,
-          style: _inputTextStyle(context),
-        ),
-        textDirection: TextDirection.ltr,
-        textScaler: MediaQuery.textScalerOf(context),
-      )..layout(maxWidth: box.size.width - 1.0 - _inputCursorWidth);
-      final expanded = painter.computeLineMetrics().length > 1;
-      painter.dispose();
-      if (expanded != _composerExpanded) {
-        setState(() => _composerExpanded = expanded);
-      }
-    });
-  }
-
-  /// 输入框本体：字色与占位字都来自 token；描边交给外层玻璃面板，
-  /// 因此这里显式撤掉 TextField 自己的边框与填充。cursorWidth 显式传
-  /// [_inputCursorWidth]（值等于默认），让展开态判定扣的光标边距有同一出处。
-  Widget _inputField() {
-    return TextField(
-      key: const Key('chat-input'),
-      controller: _controller,
-      focusNode: _inputFocusNode,
-      autofocus: true,
-      minLines: 1,
-      maxLines: 5,
-      textInputAction: TextInputAction.newline,
-      cursorWidth: _inputCursorWidth,
-      style: _inputTextStyle(context),
-      decoration: const InputDecoration(
-        hintText: '想说点什么…',
-        filled: false,
-        isDense: true,
-        contentPadding: EdgeInsets.zero,
-        border: InputBorder.none,
-        enabledBorder: InputBorder.none,
-        focusedBorder: InputBorder.none,
-        errorBorder: InputBorder.none,
-        focusedErrorBorder: InputBorder.none,
-      ),
-    );
-  }
-
-  /// 输入框文本样式：[_inputField] 与展开态行数判定（[_updateComposerExpanded]）
-  /// 必须共用同一份，行数才不会按另一份字体度量排版。
-  ///
-  /// 构造 = `Theme.of(context).textTheme.bodyLarge` merge `QiyuTypography.body`
-  /// + ink，**merge 方向必须 bodyLarge 在前**：TextStyle.merge 是 other 覆盖
-  /// this，而主题 `bodyLarge` 经 `Theme.of` 返回前的 Typography englishLike
-  /// 2021 几何 merge（theme_data.dart 的 `ThemeData.localize`）后 `inherit` 为
-  /// false——TextStyle.merge 对 inherit false 的 other 直接原样返回，反向
-  /// merge 会整个丢掉 `QiyuTypography` 当档字阶与 ink 的显式覆盖。正向 merge
-  /// 得到的样式自带渲染层的 `letterSpacing: 0.5` 与 `height: 1.5`，再过
-  /// TextField 内部的 `bodyLarge.merge(providedStyle)`（text_field.dart 的
-  /// `_m3InputStyle`）逐属性不变：渲染零变化，判定从此与渲染同源。
-  TextStyle _inputTextStyle(BuildContext context) => Theme.of(context)
-      .textTheme
-      .bodyLarge!
-      .merge(QiyuTypography.of(context).body.copyWith(color: QiyuColors.ink));
 
   /// 语音输入状态行：录音计时 / 转写等待 / 可重试提示。作为 live region
   /// 播报给屏幕阅读器；idle 无事可报时不占位。
@@ -861,12 +850,18 @@ class _LocalChatViewState extends State<LocalChatView> {
     final voice = _voiceInput;
     final String? message;
     switch (voice.status) {
+      case VoiceInputStatus.preparing:
+        message = '正在准备麦克风…';
       case VoiceInputStatus.recording:
         final minutes = (voice.elapsedSeconds ~/ 60).toString().padLeft(2, '0');
         final seconds = (voice.elapsedSeconds % 60).toString().padLeft(2, '0');
-        message = '正在录音 $minutes:$seconds，再点一次说完，按 Esc 取消';
+        message = _android
+            ? '正在录音 $minutes:$seconds，最长 60 秒'
+            : '正在录音 $minutes:$seconds，再点一次说完，按 Esc 取消';
       case VoiceInputStatus.transcribing:
-        message = '正在转文字…（Esc 中止）';
+        message = _android
+            ? '正在转文字…'
+            : '正在转文字…（Esc 中止）';
       case VoiceInputStatus.retryable:
         message = voice.errorMessage ?? '转写没有成功，点麦克风重试，Esc 丢弃。';
       case VoiceInputStatus.idle:
@@ -917,99 +912,6 @@ class _LocalChatViewState extends State<LocalChatView> {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  /// 麦克风按钮：置灰态（不支持/未配置）点击只做引导，其余状态按
-  /// 控制器状态机分派；转写中禁点（Esc 才是中止入口）。
-  ///
-  /// 五个状态共用 composer 的 34px 圆形图标按钮规格（design-system §8
-  /// 组件 3），键名、tooltip 与状态机语义逐一对应原实现。
-  Widget _voiceMicButton() {
-    final voice = _voiceInput;
-    final theme = Theme.of(context);
-    final (key, tooltip, icon, color, onPressed) = switch (voice.status) {
-      VoiceInputStatus.unsupported || VoiceInputStatus.notConfigured => (
-        'voice-mic',
-        '语音输入（当前不可用）',
-        const Icon(QiyuIcons.mic_off),
-        theme.disabledColor,
-        _showVoiceGuide,
-      ),
-      VoiceInputStatus.idle => (
-        'voice-mic',
-        '语音输入',
-        const Icon(QiyuIcons.mic),
-        null,
-        // 点麦克风她立刻闭嘴（ADR 0002 硬规则）：她的声音不能被录进
-        // 转写变成用户在自言自语。
-        () {
-          final viewModel = context.read<LocalChatViewModel>();
-          viewModel.voiceOutput.stopAll();
-          // 60 秒自动收尾没有第二次点击，必须在开始录音
-          // 的用户手势中先为稍后的回复朗读保留许可。
-          if (viewModel.voiceOutputEnabled) {
-            viewModel.voiceOutput.prepareForUserInitiatedPlayback();
-          }
-          voice.handleMicTap();
-        },
-      ),
-      VoiceInputStatus.recording => (
-        'voice-mic-stop',
-        '说完，转成文字',
-        const Icon(QiyuIcons.stop_circle),
-        theme.colorScheme.error,
-        // 转写和聊天都会跨越异步边界；说完的这次点击
-        // 是语音闭环最后一个可用的浏览器用户手势。
-        () {
-          context
-              .read<LocalChatViewModel>()
-              .voiceOutput
-              .prepareForUserInitiatedPlayback();
-          voice.handleMicTap();
-        },
-      ),
-      VoiceInputStatus.transcribing => (
-        'voice-mic-busy',
-        '正在转文字',
-        const SizedBox.square(
-          dimension: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        null,
-        null,
-      ),
-      VoiceInputStatus.retryable => (
-        'voice-mic-retry',
-        '重试转写',
-        const Icon(QiyuIcons.mic),
-        theme.colorScheme.error,
-        // 与开始录音同规则：点麦克风即停播清队列。
-        () {
-          final voiceOutput = context.read<LocalChatViewModel>().voiceOutput;
-          voiceOutput.stopAll();
-          voiceOutput.prepareForUserInitiatedPlayback();
-          voice.handleMicTap();
-        },
-      ),
-    };
-    return QiyuOwnFocusRing(
-      borderRadius: QiyuRadii.circleBorder,
-      builder: (context, focusNode) => IconButton(
-        key: Key(key),
-        focusNode: focusNode,
-        tooltip: tooltip,
-        color: color,
-        onPressed: onPressed,
-        icon: icon,
-        iconSize: QiyuIconSpec.size,
-        padding: EdgeInsets.zero,
-        visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints.tightFor(
-          width: QiyuLayout.composerIconButtonSize,
-          height: QiyuLayout.composerIconButtonSize,
         ),
       ),
     );
@@ -1090,25 +992,103 @@ class _LocalChatViewState extends State<LocalChatView> {
       return const SizedBox.shrink();
     }
     final transientCount = _transientCount(viewModel);
+    // 流式期间已完结的行：按最终消息的同一装配先行渲染（见 itemBuilder），
+    // done 换届时除尾段转正外零重排。
+    final completedLines = viewModel.streamingCompletedLines;
     // 行进抑制门控（design-system §10 第 11 条）：滚轮滚动让消息滑到
     // 静止光标下时 MouseTracker 会派发 onEnter，指针快速扫过时每颗气泡
     // 也会闪时刻——门控在列表层收住（滚动通知只向上冒泡经过祖先，放出
     // 气泡收不到）。
-    return QiyuHoverGate(
-      child: ListView.builder(
-        controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(
-          QiyuSpacing.lg,
-          QiyuSpacing.lg,
-          QiyuSpacing.lg,
-          // 覆盖层静息占位常量：推导与取舍见 [_chatListBottomInset]。
-          _chatListBottomInset,
-        ),
-        itemCount: viewModel.messages.length + transientCount,
-        itemBuilder: (context, index) {
-          if (index == viewModel.messages.length) {
-            // 栖语的话无气泡（design-system §7）：流式增量同样直接以书页式
-            // 正文靠左呈现，只保留语义上的 live region。
+    //
+    // 聊天页划选（design-system §10 第 12 条）：选择区在最外、门控在
+    // 内、消息列表在最内——与历史回看页同款同位置同口径。选区内容 =
+    // 两边消息正文、消息时刻行小字与流式增量文本（整条列表包住即自然
+    // 覆盖）；输入框与问候层不进选区（输入框有自带选区，包进去只会打
+    // 架）。鼠标左键拖动列表即划选——滚动器的竖向拖动识别器不认鼠标
+    // （`ScrollBehavior.dragDevices` 默认不含 mouse），划选无竞争者；
+    // 滚动靠滚轮、滚动条与触屏竖向拖动（触屏路径选择区只注册横向拖动
+    // 与长按）。触屏长按归划选（气泡侧不设长按手势，一个手势只对应一
+    // 件事）；横向/斜向触屏拖动会起选（选择区固有行为，登记为小边
+    // 界）。工具条、Ctrl+C 与网页右键复制出口全用原生默认，焦点行为
+    // 也全盘接受原生（起选聚焦、点选区外解散、滚动跟随）。
+    return SelectionArea(
+      child: QiyuHoverGate(
+        child: ListView.builder(
+          controller: _scrollController,
+          keyboardDismissBehavior: _android
+              ? ScrollViewKeyboardDismissBehavior.onDrag
+              : ScrollViewKeyboardDismissBehavior.manual,
+          padding: const EdgeInsets.fromLTRB(
+            QiyuSpacing.lg,
+            QiyuSpacing.lg,
+            QiyuSpacing.lg,
+            // 覆盖层静息占位常量：推导与取舍见 [_chatListBottomInset]。
+            _chatListBottomInset,
+          ),
+          itemCount:
+              viewModel.messages.length +
+              completedLines.length +
+              transientCount,
+          itemBuilder: (context, index) {
+            final messagesEnd = viewModel.messages.length;
+            if (index < messagesEnd) {
+              final message = viewModel.messages[index];
+              final nowReading = viewModel.voiceOutput.nowReading;
+              final isQiyu = message.speaker == LocalChatSpeaker.qiyu;
+              final deliveryIndex = message.deliveryIndex;
+              return QiyuChatBubble(
+                key: Key('chat-message-$index'),
+                text: message.text,
+                fromUser: !isQiyu,
+                deliveryIndex: deliveryIndex,
+                incomplete: message.incomplete,
+                at: message.at,
+                isSpeaking:
+                    nowReading != null &&
+                    message.requestId == nowReading.requestId &&
+                    deliveryIndex == nowReading.deliveryIndex,
+                // 栖语气泡的重听小喇叭：点一下立即重读这句（重听=重新合成）。
+                onReplay: isQiyu && deliveryIndex != null
+                    ? () => viewModel.replayVoiceOutput(message)
+                    : null,
+                // 一键复制：流式中断后不必凭记忆重打全文，栖语的金句也想
+                // 存就走它。入口按指针分两路——桌面鼠标与时刻同一悬停显隐
+                // （复制钮落在时刻行里），触屏/手写笔走选择区长按起选；历
+                // 史回看页（整页可选中复制）不给。
+                enableCopy: true,
+              );
+            }
+            final completedEnd = messagesEnd + completedLines.length;
+            if (index < completedEnd) {
+              // 流式期间已完结的行：与最终消息**同一装配**（同宽度约束、
+              // 同块底距、同时刻槽位常驻预留），done 换届时几何等值接管、
+              // 布局零位移。但本行根件是 ExcludeSemantics、终局消息根件
+              // 是 QiyuChatBubble，槽位级 canUpdate 类型失配——done 时
+              // 子树重建、悬停态瞬态复位后自愈：几何等值成立，元素不跨
+              // done 复用。deliveryIndex 尚不存在：不给重听键与朗读态，
+              // 重听行位置留同位同高空带；复制与时刻显隐同最终气泡同参
+              // 数。正文语义暂时排除——live region 不逐行重复播报，交付
+              // 完成后由历史消息语义接管（ticket 24 口径）。朗读态与重
+              // 听行同几何：「正在读」行带叠在隐藏真实按钮承载的同位同
+              // 高空带上（QiyuChatBubble 朗读态分支），开始与结束朗读画
+              // 面零位移；半句交付每行长出「未完成」小字仍有一次形变，
+              // 已知取舍（design-system §10 条 13）。
+              return ExcludeSemantics(
+                child: QiyuChatBubble(
+                  key: Key('chat-message-$index'),
+                  text: completedLines[index - messagesEnd],
+                  fromUser: false,
+                  at: viewModel.previewMoment,
+                  enableCopy: true,
+                  // 重听键不给，但由 reserveReplayRow 留同位同高的重听
+                  // 行空带（隐藏真实按钮承载，随平台档自动成立）。
+                  reserveReplayRow: true,
+                ),
+              );
+            }
+            // 正在增长的尾段留在临时行：栖语的话无气泡（design-system §7），
+            // 流式增量同样直接以书页式正文靠左呈现，只保留语义上的 live
+            // region；完结行已在上面按最终装配先行渲染。
             return Padding(
               padding: const EdgeInsets.only(bottom: QiyuSpacing.xs),
               child: ConstrainedBox(
@@ -1123,7 +1103,9 @@ class _LocalChatViewState extends State<LocalChatView> {
                   container: true,
                   child: Semantics(
                     liveRegion: true,
-                    label: viewModel.streamingText.isEmpty ? '栖语在想' : '栖语正在回复',
+                    label: viewModel.streamingText.isEmpty
+                        ? '栖语在想'
+                        : '栖语正在回复',
                     child: ExcludeSemantics(
                       child: viewModel.streamingText.isEmpty
                           ? Text(
@@ -1132,280 +1114,13 @@ class _LocalChatViewState extends State<LocalChatView> {
                                 context,
                               ).qiyuMessage.copyWith(color: QiyuColors.muted),
                             )
-                          : QiyuMarkdown(text: viewModel.streamingText),
+                          : QiyuMarkdown(text: viewModel.streamingTailSegment),
                     ),
                   ),
                 ),
               ),
             );
-          }
-          final message = viewModel.messages[index];
-          final nowReading = viewModel.voiceOutput.nowReading;
-          final isQiyu = message.speaker == LocalChatSpeaker.qiyu;
-          final deliveryIndex = message.deliveryIndex;
-          return QiyuChatBubble(
-            key: Key('chat-message-$index'),
-            text: message.text,
-            fromUser: !isQiyu,
-            deliveryIndex: deliveryIndex,
-            at: message.at,
-            isSpeaking:
-                nowReading != null &&
-                message.requestId == nowReading.requestId &&
-                deliveryIndex == nowReading.deliveryIndex,
-            // 栖语气泡的重听小喇叭：点一下立即重读这句（重听=重新合成）。
-            onReplay: isQiyu && deliveryIndex != null
-                ? () => viewModel.replayVoiceOutput(message)
-                : null,
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// 空态→聊天态时问候的**淡出层**：从完全不透明淡到透明，淡完通知父级把自己
-/// 摘掉（Spec User Story 2「发出第一句后背景与问候淡出」）。
-///
-/// 时长由调用方给（`qiyuMotion(context, QiyuMotion.base)`，reduced-motion 下是
-/// [Duration.zero]，第一帧就到位、等于没有动效）。它在父级重建时**必须保持同一个
-/// 键**：`_chatBody` 每次 notify 都重建，键一变这个 State 就重造、动画从头再来，
-/// 淡出永远走不完——所以父级只把它当固定的一层挂在那里，不拿内容当 key。
-class _GreetingFadeOut extends StatefulWidget {
-  const _GreetingFadeOut({
-    super.key,
-    required this.duration,
-    required this.onFinished,
-    required this.child,
-  });
-
-  final Duration duration;
-  final VoidCallback onFinished;
-  final Widget child;
-
-  @override
-  State<_GreetingFadeOut> createState() => _GreetingFadeOutState();
-}
-
-class _GreetingFadeOutState extends State<_GreetingFadeOut>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: widget.duration,
-    value: 1.0,
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    // 听 TickerFuture，不听状态监听：以 value 1.0 构造出来的控制器「上次上报的
-    // 状态」还是 dismissed，零时长（reduced-motion）下直接跳到 dismissed 不算
-    // 状态变化，监听器一次都不会触发，这一层就永远挂在树上。
-    _controller.reverse().whenComplete(_notifyFinished);
-  }
-
-  void _notifyFinished() {
-    // 再等这一帧画完才通知父级：whenComplete 的回调可能落在本帧 build 之后立刻
-    // 执行，那时 setState 会撞上「build 期间不得标脏」的限制。
-    WidgetsBinding.instance.addPostFrameCallback((_) => widget.onFinished());
-  }
-
-  @override
-  void dispose() {
-    // 父级提前摘掉这一层（例如又回到空态）时动画可能还在跑：先 stop，
-    // 不留活跃 ticker。
-    _controller
-      ..stop()
-      ..dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(opacity: _controller, child: widget.child);
-  }
-}
-
-class _VoiceOutputHeaderControl extends StatefulWidget {
-  const _VoiceOutputHeaderControl({required this.viewModel});
-
-  final LocalChatViewModel viewModel;
-
-  @override
-  State<_VoiceOutputHeaderControl> createState() =>
-      _VoiceOutputHeaderControlState();
-}
-
-class _VoiceOutputHeaderControlState extends State<_VoiceOutputHeaderControl> {
-  final _overlayController = OverlayPortalController();
-  final _link = LayerLink();
-
-  /// 焦点节点由本页持有并释放，同时交给自绘键盘焦点环与 IconButton
-  /// （§9：工具条上的图标按钮也要有带 offset 的实线外环，且只响应键盘态）。
-  final _focusNode = FocusNode(debugLabel: 'voice-output-toggle');
-
-  @override
-  void dispose() {
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final viewModel = widget.viewModel;
-    final voiceOutput = viewModel.voiceOutput;
-    return CompositedTransformTarget(
-      link: _link,
-      child: ListenableBuilder(
-        listenable: voiceOutput,
-        builder: (context, _) {
-          final isMuted =
-              !viewModel.voiceOutputEnabled || voiceOutput.volume == 0;
-          final icon = isMuted
-              ? QiyuIcons.volume_off
-              : (voiceOutput.volume < 0.5
-                    ? QiyuIcons.volume_down
-                    : QiyuIcons.volume_up);
-          return OverlayPortal(
-            controller: _overlayController,
-            overlayChildBuilder: (context) {
-              return Stack(
-                children: [
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => _overlayController.hide(),
-                      child: const SizedBox.expand(),
-                    ),
-                  ),
-                  CompositedTransformFollower(
-                    link: _link,
-                    targetAnchor: Alignment.bottomCenter,
-                    followerAnchor: Alignment.topCenter,
-                    offset: const Offset(0, 6),
-                    child: _VolumePopupCard(
-                      viewModel: viewModel,
-                      voiceOutput: voiceOutput,
-                    ),
-                  ),
-                ],
-              );
-            },
-            child: QiyuFocusRing(
-              focusNode: _focusNode,
-              borderRadius: QiyuRadii.circleBorder,
-              child: IconButton(
-                key: Key(
-                  viewModel.voiceOutputEnabled
-                      ? 'voice-output-toggle-on'
-                      : 'voice-output-toggle-off',
-                ),
-                focusNode: _focusNode,
-                color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
-                tooltip: viewModel.voiceOutputEnabled
-                    ? '朗读音量与静音调节'
-                    : '语音朗读已关闭，点击开启与调节',
-                icon: Icon(icon),
-                onPressed: () {
-                  _overlayController.toggle();
-                },
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _VolumePopupCard extends StatelessWidget {
-  const _VolumePopupCard({required this.viewModel, required this.voiceOutput});
-
-  final LocalChatViewModel viewModel;
-  final VoiceOutputController voiceOutput;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isMuted = !viewModel.voiceOutputEnabled || voiceOutput.volume == 0;
-    final percent = isMuted ? 0 : (voiceOutput.volume * 100).round();
-
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        width: 72,
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: QiyuRadii.cardBorder,
-          border: Border.all(color: theme.colorScheme.outlineVariant),
-          boxShadow: [
-            BoxShadow(
-              color: theme.shadowColor.withValues(alpha: 0.25),
-              blurRadius: 16,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            SizedBox(
-              height: 120,
-              width: 32,
-              child: RotatedBox(
-                quarterTurns: 3,
-                child: SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    trackHeight: 6,
-                    thumbShape: const RoundSliderThumbShape(
-                      enabledThumbRadius: 8,
-                    ),
-                    overlayShape: const RoundSliderOverlayShape(
-                      overlayRadius: 14,
-                    ),
-                    activeTrackColor: theme.colorScheme.primary,
-                    thumbColor: theme.colorScheme.primary,
-                    inactiveTrackColor: theme.colorScheme.surfaceContainer,
-                  ),
-                  child: Slider(
-                    key: const Key('voice-output-volume-slider'),
-                    value: isMuted ? 0.0 : voiceOutput.volume,
-                    min: 0.0,
-                    max: 1.0,
-                    onChanged: (val) {
-                      voiceOutput.setVolume(val);
-                      if (!viewModel.voiceOutputEnabled && val > 0) {
-                        unawaited(viewModel.toggleVoiceOutput());
-                      }
-                    },
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: QiyuSpacing.xs),
-            Text(
-              '$percent%',
-              style: theme.textTheme.labelLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-                letterSpacing: -0.5,
-              ),
-            ),
-            const SizedBox(height: 6),
-            const Divider(height: 1),
-            const SizedBox(height: 2),
-            IconButton(
-              key: const Key('voice-output-popover-mute-button'),
-              iconSize: 22,
-              visualDensity: VisualDensity.compact,
-              tooltip: isMuted ? '解除静音' : '静音',
-              color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
-              icon: Icon(isMuted ? QiyuIcons.volume_off : QiyuIcons.volume_up),
-              onPressed: () => unawaited(viewModel.toggleVoiceOutput()),
-            ),
-          ],
+          },
         ),
       ),
     );

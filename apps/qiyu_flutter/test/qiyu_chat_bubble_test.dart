@@ -1,7 +1,7 @@
-import 'dart:typed_data';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
@@ -14,6 +14,7 @@ import 'package:qiyu_flutter/features/history/history_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/time_format.dart';
+import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 import 'support/shared_fakes.dart';
@@ -268,7 +269,7 @@ void main() {
         ),
       );
 
-      // 未显现：时刻行不进树，但 21px 槽位已常驻占位——所以显现前后
+      // 未显现：时刻行不进树，但 30px 槽位已常驻占位——所以显现前后
       // 第二条消息 top 必须逐像素相同（旧条件进树实现实测下移 21px）。
       expect(find.text(label), findsNothing);
       final topBefore = tester.getTopLeft(find.text('晚安。')).dy;
@@ -495,11 +496,11 @@ void main() {
       );
 
       // 第一条块底的 sm（12px）间距：时刻位常驻预留后，气泡底缘之下
-      // 2…21px 已是本条消息的空槽带（悬停即显现本条时刻），落点取槽位
-      // 带之下的块底间距内（气泡底 +24px）——这段 padding 在 MouseRegion
+      // 2…30px 已是本条消息的空槽带（悬停即显现本条时刻），落点取槽位
+      // 带之下的块底间距内（气泡底 +33px）——这段 padding 在 MouseRegion
       // 外，两条消息热区以此带分界不连片。
       final gapSpot =
-          tester.getBottomRight(userBubbleBox) - const Offset(10, -24);
+          tester.getBottomRight(userBubbleBox) - const Offset(10, -33);
       final mouse = await mouseAt(tester, const Offset(0, 0));
       await mouse.moveTo(gapSpot);
       await tester.pump();
@@ -517,7 +518,7 @@ void main() {
         QiyuChatBubble(text: '临睡随手记的', fromUser: true, at: moment),
       );
 
-      // 气泡正下方的空槽带（气泡底 +2…+21，时刻的常驻预留位）属于本条
+      // 气泡正下方的空槽带（气泡底 +2…+30，时刻的常驻预留位）属于本条
       // 消息热区：悬停即显现——「时间本来就在那里，鼠标挪到那个地方
       // 自动显示」。落点取带内中段（气泡底 +12）。
       final bubbleBottomRight = tester.getBottomRight(userBubbleBox);
@@ -527,8 +528,8 @@ void main() {
       );
       expect(find.text(label), findsOneWidget, reason: '空槽带属于本条消息热区：悬停时刻位置即显现');
 
-      // 移到槽位带之下的块底 sm 间距（气泡底 +24）：出热区立即隐藏。
-      await mouse.moveTo(bubbleBottomRight - const Offset(10, -24));
+      // 移到槽位带之下的块底 sm 间距（气泡底 +33）：出热区立即隐藏。
+      await mouse.moveTo(bubbleBottomRight - const Offset(10, -33));
       await tester.pump();
       expect(find.text(label), findsNothing, reason: '槽位带之下的块底间距仍在热区外');
     });
@@ -536,7 +537,7 @@ void main() {
     testWidgets('无时刻数据不占位：at 为 null 的消息块不含预留带', (tester) async {
       // 对照设计：第一条不带时刻，第二条带时刻。at 为 null（生产链路
       // 恒非空，这里只剩测试与防御路径）必须回到无时刻语义——气泡底
-      // 直接接块底 sm 间距，不出现 21px 常驻槽位。
+      // 直接接块底 sm 间距，不出现 30px 常驻槽位。
       await _pump(
         tester,
         Column(
@@ -555,7 +556,7 @@ void main() {
         reason: 'at 为 null 不占位：块底间距就是 sm（12px）',
       );
 
-      // 对照：at 非空（未显现）时恰好多出 21px 常驻槽位。
+      // 对照：at 非空（未显现）时恰好多出 30px 常驻槽位。
       await _pump(
         tester,
         Column(
@@ -570,8 +571,8 @@ void main() {
       final bubbleBottomWithAt = tester.getBottomLeft(userBubbleBox).dy;
       expect(
         nextTopWithAt - bubbleBottomWithAt,
-        QiyuSpacing.sm + 21,
-        reason: 'at 非空未显现时槽位常驻：sm 间距 + 21px 槽位',
+        QiyuSpacing.sm + 30,
+        reason: 'at 非空未显现时槽位常驻：sm 间距 + 30px 槽位',
       );
     });
 
@@ -1173,6 +1174,391 @@ void main() {
       expect(find.text(label), findsOneWidget);
     });
   });
+
+  group('消息一键复制（用户与栖语）', () {
+    // 剪贴板桩：捕获 setData 写进来的全文，用完即撤，不污染别的用例。
+    void mockClipboard(WidgetTester tester, ValueChanged<String?> onData) {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (message) async {
+          if (message.method == 'Clipboard.setData') {
+            onData(
+              (message.arguments as Map<Object?, Object?>)['text'] as String?,
+            );
+          }
+          return null;
+        },
+      );
+      addTearDown(() => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null));
+    }
+
+    testWidgets('点复制钮：本条全文原样写进剪贴板', (tester) async {
+      String? clipText;
+      mockClipboard(tester, (text) => clipText = text);
+      const fullText = '今晚想把这段话原样发给朋友，一个字都不要丢。';
+      final handle = tester.ensureSemantics();
+      try {
+        await _pump(
+          tester,
+          QiyuChatBubble(
+            text: fullText,
+            fromUser: true,
+            enableCopy: true,
+            at: moment,
+          ),
+        );
+
+        // 桌面路径：复制钮与时刻同一显隐，未悬停不在树里。
+        expect(find.bySemanticsLabel('复制这条消息'), findsNothing);
+        await _hoverMouse(tester, find.text(fullText));
+        expect(find.bySemanticsLabel('复制这条消息'), findsOneWidget);
+
+        await tester.tap(find.byIcon(QiyuIcons.content_copy));
+        await tester.pump();
+
+        expect(clipText, fullText, reason: '复制内容必须是这条消息的全文');
+      } finally {
+        handle.dispose();
+      }
+    });
+
+    testWidgets('桌面悬停：复制钮与时刻同显同隐，落在时刻右侧同一行', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(
+          text: '刚发的一句',
+          fromUser: true,
+          enableCopy: true,
+          at: moment,
+        ),
+      );
+
+      // 未悬停：时刻与复制钮都不在树里（摘除而非透明，语义树同样干净）。
+      expect(find.text(label), findsNothing);
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+
+      final mouse = await _hoverMouse(tester, find.text('刚发的一句'));
+
+      // 悬停：同一行——时刻在左、复制钮在右，钮身右缘贴气泡尾缘。
+      expect(find.text(label), findsOneWidget);
+      expect(find.byIcon(QiyuIcons.content_copy), findsOneWidget);
+      final momentRect = tester.getRect(find.text(label));
+      final copyRect = tester.getRect(
+        find.ancestor(
+          of: find.byIcon(QiyuIcons.content_copy),
+          matching: find.byType(IconButton),
+        ),
+      );
+      expect(copyRect.left, greaterThan(momentRect.right));
+      final bubbleRect = tester.getRect(
+        find
+            .ancestor(
+              of: find.text('刚发的一句'),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      expect(copyRect.right, moreOrLessEquals(bubbleRect.right, epsilon: 0.5));
+
+      // 移开空白：一起收起（同一个 revealed 开关，无第二套显隐逻辑）。
+      await mouse.moveBy(const Offset(-600, -600));
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+    });
+
+    testWidgets('复制钮用户消息与栖语消息都出：各自落在本条时刻右侧', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            QiyuChatBubble(
+              text: '我发的话',
+              fromUser: true,
+              enableCopy: true,
+              at: moment,
+            ),
+            QiyuChatBubble(
+              text: '她回的话',
+              fromUser: false,
+              enableCopy: true,
+              at: moment,
+            ),
+          ],
+        ),
+      );
+
+      // 未悬停：两条消息的时刻与复制钮都不在树里（摘除而非透明）。
+      expect(find.text(label), findsNothing);
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+
+      // 悬停用户气泡：时刻在左、复制在右同一行，整行右缘贴气泡尾缘。
+      final mouse = await _hoverMouse(tester, find.text('我发的话'));
+      expect(find.text(label), findsOneWidget);
+      expect(find.byIcon(QiyuIcons.content_copy), findsOneWidget);
+      var momentRect = tester.getRect(find.text(label));
+      var copyRect = tester.getRect(
+        find.ancestor(
+          of: find.byIcon(QiyuIcons.content_copy),
+          matching: find.byType(IconButton),
+        ),
+      );
+      expect(copyRect.left, greaterThan(momentRect.right));
+      expect(copyRect.top, moreOrLessEquals(momentRect.top, epsilon: 0.5));
+      final bubbleRect = tester.getRect(
+        find
+            .ancestor(
+              of: find.text('我发的话'),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      expect(copyRect.right, moreOrLessEquals(bubbleRect.right, epsilon: 0.5));
+
+      // 移开：一起收。
+      await mouse.moveBy(const Offset(0, -400));
+      await tester.pump();
+      expect(find.text(label), findsNothing);
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+
+      // 悬停栖语消息：时刻照常显现，复制钮同样落在时刻右侧同一行；
+      // 栖语的时刻行靠左——时刻文字左缘贴着文本块左缘。
+      await mouse.moveTo(tester.getCenter(find.text('她回的话')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(label), findsOneWidget);
+      expect(find.byIcon(QiyuIcons.content_copy), findsOneWidget);
+      momentRect = tester.getRect(find.text(label));
+      copyRect = tester.getRect(
+        find.ancestor(
+          of: find.byIcon(QiyuIcons.content_copy),
+          matching: find.byType(IconButton),
+        ),
+      );
+      expect(copyRect.left, greaterThan(momentRect.right));
+      expect(copyRect.top, moreOrLessEquals(momentRect.top, epsilon: 0.5));
+      final qiyuTextRect = tester.getRect(find.text('她回的话'));
+      expect(
+        momentRect.left,
+        moreOrLessEquals(qiyuTextRect.left, epsilon: 1),
+        reason: '栖语的时刻行应靠左，与文本块左缘齐平',
+      );
+    });
+
+    testWidgets('触屏长按用户消息：起选而非出菜单', (tester) async {
+      SelectedContent? selected;
+      await _pump(
+        tester,
+        Theme(
+          data: ThemeData(platform: TargetPlatform.android),
+          // 划选宿主：真实页面由消息列表外的 SelectionArea 提供，单气泡
+          // 底座照它的位置包一层，官方 onSelectionChanged 回调作缝。
+          child: SelectionArea(
+            onSelectionChanged: (content) => selected = content,
+            child: QiyuChatBubble(
+              text: '手机上发的一句',
+              fromUser: true,
+              enableCopy: true,
+              at: moment,
+            ),
+          ),
+        ),
+      );
+
+      // 触屏路径没有常驻复制钮，也不随轻点确认显时刻而出现。
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+
+      // 长按归划选：选择区的长按胜出（一个手势只对应一件事），按压处
+      // 起选；复制菜单已撤，页面上没有它。
+      await tester.longPress(find.text('手机上发的一句'));
+      await tester.pumpAndSettle();
+      expect(selected!.plainText, isNotEmpty, reason: '长按起选：选中的是一段而非空选区');
+      expect(
+        '手机上发的一句'.contains(selected!.plainText),
+        isTrue,
+        reason: '选中的是本条消息里的一段',
+      );
+      expect(find.text('复制这条消息'), findsNothing);
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+    });
+
+    testWidgets('触屏长按栖语消息：同样起选而非出菜单', (tester) async {
+      SelectedContent? selected;
+      await _pump(
+        tester,
+        Theme(
+          data: ThemeData(platform: TargetPlatform.android),
+          child: SelectionArea(
+            onSelectionChanged: (content) => selected = content,
+            child: QiyuChatBubble(
+              text: '手机上回的一句',
+              fromUser: false,
+              enableCopy: true,
+              at: moment,
+            ),
+          ),
+        ),
+      );
+
+      // 触屏路径没有常驻复制钮，也不随轻点确认显时刻而出现。
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+
+      await tester.longPress(find.text('手机上回的一句'));
+      await tester.pumpAndSettle();
+      expect(selected!.plainText, isNotEmpty, reason: '长按起选：选中的是一段而非空选区');
+      expect(
+        '手机上回的一句'.contains(selected!.plainText),
+        isTrue,
+        reason: '选中的是本条消息里的一段',
+      );
+      expect(find.text('复制这条消息'), findsNothing);
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+    });
+
+    testWidgets('触屏长按起手滑动：拖拽胜出，不起选', (tester) async {
+      SelectedContent? selected;
+      await _pump(
+        tester,
+        Theme(
+          data: ThemeData(platform: TargetPlatform.android),
+          child: SelectionArea(
+            onSelectionChanged: (content) => selected = content,
+            child: QiyuChatBubble(
+              text: '手机上发的一句',
+              fromUser: true,
+              enableCopy: true,
+              at: moment,
+            ),
+          ),
+        ),
+      );
+
+      final touch = await tester.startGesture(
+        tester.getCenter(find.text('手机上发的一句')),
+        kind: PointerDeviceKind.touch,
+      );
+      await tester.pump();
+      // 滑动起手越过触摸 slop：拖拽识别器胜出、长按被否决（真实列表里
+      // 这一步就是滚动列表）。
+      await touch.moveBy(const Offset(0, kTouchSlop + 20));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      await touch.up();
+      await tester.pump();
+
+      expect(selected?.plainText, isNull, reason: '长按起手改滑动：不起选');
+      expect(find.text('复制这条消息'), findsNothing);
+    });
+
+    testWidgets('鼠标长按不出菜单：桌面的入口只有悬停', (tester) async {
+      await _pump(
+        tester,
+        QiyuChatBubble(
+          text: '握住不放的一句',
+          fromUser: true,
+          enableCopy: true,
+          at: moment,
+        ),
+      );
+
+      // 悬停位复制钮在（桌面入口）：addPointer 落点（派发进出场）后
+      // 过显现延迟阀。
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      final center = tester.getCenter(find.text('握住不放的一句'));
+      await mouse.addPointer(location: center);
+      addTearDown(mouse.removePointer);
+      await tester.pump();
+      // 按住不放：down 落在同一点、之后零位移（先大幅移动再按住会超
+      // slop 毙掉长按识别器，测不到真路径）。
+      await mouse.down(center);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byIcon(QiyuIcons.content_copy), findsOneWidget);
+
+      // 按住超过长按时长也不出菜单：不为鼠标造第二套入口（单气泡底座
+      // 不挂选择区，划选宿主见聊天页 seam 的用例）。
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('复制这条消息'), findsNothing);
+    });
+
+    testWidgets('at 为 null 的防御路径：用户与栖语都在消息下方常驻一枚', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            QiyuChatBubble(
+              text: '没有时刻的一条',
+              fromUser: true,
+              enableCopy: true,
+            ),
+            QiyuChatBubble(
+              text: '她回的没有时刻',
+              fromUser: false,
+              enableCopy: true,
+            ),
+          ],
+        ),
+      );
+
+      // 生产链路 at 恒非空；该路径没有悬停机制可用（MouseRegion 只在
+      // at 非空时挂），复制钮常驻在位，不至于把入口彻底丢掉。
+      expect(find.byIcon(QiyuIcons.content_copy), findsNWidgets(2));
+      // 两枚都落在各自消息内容的下方：按纵向位置排序，上面的属用户
+      // 消息、下面的属栖语消息。
+      final userTextRect = tester.getRect(find.text('没有时刻的一条'));
+      final qiyuTextRect = tester.getRect(find.text('她回的没有时刻'));
+      final copyRects = tester
+          .widgetList<IconButton>(find.byType(IconButton))
+          .map((button) => tester.getRect(find.byWidget(button)))
+          .toList()
+        ..sort((a, b) => a.top.compareTo(b.top));
+      expect(copyRects[0].top, greaterThan(userTextRect.bottom));
+      expect(copyRects[1].top, greaterThan(qiyuTextRect.bottom));
+    });
+
+    testWidgets('默认不开启复制（历史回看档）：整页可选中，不给复制钮', (tester) async {
+      await _pump(
+        tester,
+        const QiyuChatBubble(text: '我发的话', fromUser: true),
+      );
+
+      expect(find.byIcon(QiyuIcons.content_copy), findsNothing);
+    });
+  });
+
+  group('QiyuChatBubble 未完成标记', () {
+    testWidgets('半句消息带「未完成」标记', (tester) async {
+      await _pump(
+        tester,
+        const QiyuChatBubble(text: '在。刚', fromUser: false, incomplete: true),
+      );
+
+      expect(find.text('未完成'), findsOneWidget);
+      expect(find.text('在。刚'), findsOneWidget);
+    });
+
+    testWidgets('完整消息不带标记，用户消息更不带', (tester) async {
+      await _pump(tester, const QiyuChatBubble(text: '在。', fromUser: false));
+
+      expect(find.text('未完成'), findsNothing);
+
+      await _pump(
+        tester,
+        const QiyuChatBubble(text: '在。刚', fromUser: true, incomplete: true),
+      );
+
+      expect(find.text('未完成'), findsNothing);
+    });
+  });
 }
 
 Future<void> _pump(
@@ -1277,15 +1663,19 @@ final class _RestoredGateway implements StreamingLocalChatGateway {
   Future<bool> cancel(String requestId) async => true;
 
   @override
+  Future<bool> stopVoice(String requestId) async => true;
+
+  @override
   Stream<LocalChatDeliveryEvent> deliver({
     required String requestId,
     required String text,
     String? sessionId,
   }) async* {
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.error,
+    yield LocalChatDeliveryEvent.error(
       requestId: requestId,
+      code: 'chat_failed',
       text: '这条测试链路不发送消息。',
+      retryable: false,
     );
   }
 

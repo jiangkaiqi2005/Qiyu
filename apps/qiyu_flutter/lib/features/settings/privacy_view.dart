@@ -58,7 +58,7 @@ class PrivacyView extends StatelessWidget {
                 const SizedBox(height: 28),
                 _PrivacySection(
                   tag: '本机',
-                  title: '数据只保存在你的电脑上',
+                  title: '数据只保存在你自己的设备上',
                   body:
                       '聊天记录、整理后的每日记录、长期印象、画像与关系、'
                       '记忆控制，全部是保存在本机「栖语数据目录」里的 '
@@ -79,7 +79,9 @@ class PrivacyView extends StatelessWidget {
                       '间隔至少七天的 Dream 深度整理、对话中的记忆查找，'
                       '以及你主动发起的连接测试。'
                       '没有配置模型服务时，一切都在本机规则里完成，不产生任何网络请求。'
-                      '涉及自伤等危机的输入永远只由本机安全规则处理，绝不发送给模型。',
+                      '涉及自伤等危机的倾诉会交给模型像朋友一样认真回应，'
+                      '并自然带出全国 24 小时心理援助热线 12356；'
+                      '未连接模型或模型没有回应时，本机兜底话术也会给出 12356。',
                 ),
                 _PrivacySection(
                   tag: '记忆',

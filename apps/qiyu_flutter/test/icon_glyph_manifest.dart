@@ -6,8 +6,8 @@ import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 // 与入库子集字体是否一致的凭据（子集里 post 表已不含 glyph name，只能按码位对账）。
 //
 // 两份清单的口径**不同**，别当成一份：
-// - [iconGlyphManifest] 是**实际入库字体**的实测记录，字体没重裁就仍是 45 条形。
-// - [qiyuIconCodePoints] 是 Dart 常量侧的镜像，只列还有常量的那些（现 38 条）。
+// - [iconGlyphManifest] 是**实际入库字体**的实测记录，字体没重裁就仍是 46 条形。
+// - [qiyuIconCodePoints] 是 Dart 常量侧的镜像，只列还有常量的那些（现 39 条）。
 // 字体里留着本轮没有界面消费的图形字形是可接受的（play_arrow / pause / add /
 // remove / check / expand_more / search 的码位仍在这里，常量却已删），所以重跑
 // 裁剪脚本只会刷新上面那份，不会让下面这份自己长回来。两边因此按
@@ -52,6 +52,7 @@ const Map<String, int> iconGlyphManifest = <String, int>{
   'ac_unit': 0xEB3B,
   'block': 0xE033,
   'visibility': 0xE417,
+  'content_copy': 0xE14D,
   'play_arrow': 0xE037,
   'pause': 0xE034,
   'add': 0xE145,
@@ -101,5 +102,6 @@ const Map<String, IconData> qiyuIconCodePoints = <String, IconData>{
   'ac_unit': QiyuIcons.ac_unit,
   'block': QiyuIcons.block,
   'visibility': QiyuIcons.visibility,
+  'content_copy': QiyuIcons.content_copy,
   'arrow_drop_down': QiyuIcons.arrow_drop_down,
 };

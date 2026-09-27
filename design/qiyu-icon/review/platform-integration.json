@@ -1,0 +1,68 @@
+{
+  "web": "黑色归鸟，Web 构建及 Windows 发布包图标与源文件哈希一致。",
+  "app": "粉黑原图，APK 启动图标像素与源资源一致。",
+  "releaseBaseline": "passed",
+  "androidReleaseBuild": "passed",
+  "androidPackage": "apps\\qiyu_flutter\\build\\app\\outputs\\flutter-apk\\app-release.apk",
+  "androidApplicationId": "dev.qiyu.app",
+  "androidVersion": "0.1.0+1",
+  "adaptiveIcon": "res/BW.xml → @0x7f060006 → res/fJ.png；aapt2 已核实。",
+  "launcherChecks": [
+    {
+      "source": "mipmap-mdpi/ic_launcher.png",
+      "apkEntry": "res/9w.png",
+      "size": [
+        48,
+        48
+      ],
+      "pixelsMatch": true
+    },
+    {
+      "source": "mipmap-hdpi/ic_launcher.png",
+      "apkEntry": "res/yn.png",
+      "size": [
+        72,
+        72
+      ],
+      "pixelsMatch": true
+    },
+    {
+      "source": "mipmap-xhdpi/ic_launcher.png",
+      "apkEntry": "res/FS.png",
+      "size": [
+        96,
+        96
+      ],
+      "pixelsMatch": true
+    },
+    {
+      "source": "mipmap-xxhdpi/ic_launcher.png",
+      "apkEntry": "res/RJ.png",
+      "size": [
+        144,
+        144
+      ],
+      "pixelsMatch": true
+    },
+    {
+      "source": "mipmap-xxxhdpi/ic_launcher.png",
+      "apkEntry": "res/o-.png",
+      "size": [
+        192,
+        192
+      ],
+      "pixelsMatch": true
+    },
+    {
+      "source": "drawable-nodpi/ic_launcher_artwork.png",
+      "apkEntry": "res/fJ.png",
+      "size": [
+        432,
+        432
+      ],
+      "pixelsMatch": true
+    }
+  ],
+  "appBrandAssetMatches": true,
+  "physicalDeviceInstallation": "未执行；已完成安装包构建和包内资源核验。"
+}

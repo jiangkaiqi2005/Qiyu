@@ -356,9 +356,8 @@ abstract final class QiyuLayout {
   /// 换皮把气泡拆成用户与栖语两条分支后，`qiyu_chat_bubble.dart` 变成两处，
   /// 其中用户气泡那条一度仍写着裸值。现在这三条消费点全部取本 token。
   ///
-  /// 与本 token **同值但无关**的 520 还剩两处页面自身的内容宽度：
-  /// `features/baseline/migration_baseline_view.dart` 与
-  /// `features/onboarding/first_meeting_view.dart`，它们管的不是消息行长，
+  /// 与本 token **同值但无关**的 520 还剩一处页面自身的内容宽度：
+  /// `features/onboarding/first_meeting_view.dart`，它管的不是消息行长，
   /// 别算进本 token 的消费方，也不受这里调整影响。
   static const double messageMaxWidth = 520;
 

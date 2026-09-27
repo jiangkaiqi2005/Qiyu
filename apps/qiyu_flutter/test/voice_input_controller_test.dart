@@ -7,6 +7,36 @@ import 'package:qiyu_flutter/features/chat/voice_input_controller.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
 
 void main() {
+  test('取消重试立即释放保留音频，重复重试与迟到结果不发送', () async {
+    final sent = <String>[];
+    final late = Completer<String>();
+    var calls = 0;
+    final controller = _pumpController(
+      onTranscribed: sent.add,
+      transcribe: (_, _) async {
+        calls++;
+        if (calls == 1) throw const LocalChatGatewayException('连接语音服务超时。');
+        return late.future;
+      },
+    );
+    await controller.initialize();
+    await controller.startRecording();
+    await controller.stopAndTranscribe();
+    expect(controller.hasRetainedAudio, isTrue);
+    final retry = controller.retryTranscribe();
+    await controller.retryTranscribe();
+    expect(calls, 2);
+    controller.discard();
+    controller.discard();
+    expect(controller.hasRetainedAudio, isFalse);
+    expect(controller.status, VoiceInputStatus.idle);
+    late.complete('旧录音');
+    await retry;
+    expect(controller.hasRetainedAudio, isFalse);
+    expect(sent, isEmpty);
+    controller.dispose();
+  });
+
   test('浏览器不支持时停在 unsupported，不进入录音', () async {
     final controller = _pumpController(
       platform: _FakeRecorderPlatform(supported: false),
@@ -278,6 +308,32 @@ void main() {
     controller.dispose();
   });
 
+  test('停止录音失败：留在 idle 就地提示重说，绝不带空音频去转写', () async {
+    final platform = _FakeRecorderPlatform();
+    var transcribed = 0;
+    final controller = _pumpController(
+      platform: platform,
+      transcribe: (audio, mimeType) async {
+        transcribed += 1;
+        return '不应出现';
+      },
+    );
+    await controller.initialize();
+
+    controller.handleMicTap();
+    await Future<void>.delayed(Duration.zero);
+    platform.session!.stopError = true;
+    await controller.stopAndTranscribe();
+
+    // 通道异常在这里收成人话并回 idle：上层收得好，录音通道才敢不吞异常
+    // （吞成空字节只会把一个 44 字节头的空 WAV 送去转写）。
+    expect(controller.status, VoiceInputStatus.idle);
+    expect(controller.errorMessage, '录音结束失败，请重新说一次。');
+    expect(controller.hasRetainedAudio, isFalse);
+    expect(transcribed, 0);
+    controller.dispose();
+  });
+
   test('Esc 在录音中丢弃：不转写、不留字节', () async {
     final platform = _FakeRecorderPlatform();
     var transcribed = 0;
@@ -522,6 +578,9 @@ final class _FakeRecordingSession implements VoiceRecordingSession {
   int stopCalls = 0;
   int discardCalls = 0;
 
+  /// 置 true 后 stop() 抛错：模拟「原生停止采集时取不回字节」。
+  bool stopError = false;
+
   /// 非空时 stop() 先等待该闸门，模拟「停止录音在途」的时间窗。
   Completer<void>? stopGate;
 
@@ -532,6 +591,9 @@ final class _FakeRecordingSession implements VoiceRecordingSession {
   Future<Uint8List> stop() async {
     if (stopGate case final gate?) {
       await gate.future;
+    }
+    if (stopError) {
+      throw StateError('原生停止采集失败');
     }
     stopCalls += 1;
     return bytes;

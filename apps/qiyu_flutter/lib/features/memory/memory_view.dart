@@ -440,7 +440,6 @@ class _AppellationCard extends StatelessWidget {
   Future<void> _edit(BuildContext context) async {
     // await 之前取齐上下文依赖：发起处界面销毁后不再挂结果横幅。
     final viewModel = context.read<MemoryCenterViewModel>();
-    final messenger = ScaffoldMessenger.of(context);
     final updated = await showDialog<String>(
       context: context,
       builder: (dialogContext) => const _AppellationEditDialog(),
@@ -453,7 +452,10 @@ class _AppellationCard extends StatelessWidget {
       return;
     }
     final result = await viewModel.setAppellation(trimmed);
-    messenger.showSnackBar(memoryActionResultSnackBar(result));
+    if (!context.mounted) {
+      return; // 发起处界面已销毁：不再挂结果横幅。
+    }
+    showMemoryActionResult(context, result);
   }
 }
 

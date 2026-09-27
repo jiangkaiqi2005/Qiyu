@@ -82,11 +82,11 @@ void main() {
       find.byKey(const Key('home-go-chat')),
     );
 
-    // 静息面板高基线：输入行 46 + 上下内边距 12 + 发丝边框 2 = 60。多行展开
+    // 安卓静息面板高基线：输入行 54（48 触摸区 + 焦点环留白 6）+ 上下内边距 12 + 发丝边框 2 = 68。多行展开
     // 留白只许加在展开态，单行静息分毫不能动（面板顶 516 基线依赖这一点）。
     expect(
       composerBefore.height,
-      60.0,
+      68.0,
       reason: '静息面板高基线漂移：展开态留白必须只作用于多行展开态',
     );
     // 静息内边距基线：左右 16/6、上下 6——展开态只许改下沿，其余三边钉死。
@@ -186,8 +186,8 @@ void main() {
     // + 下 22 = 76。
     expect(
       tester.getRect(find.byKey(const Key('home-go-chat'))).height,
-      76.0,
-      reason: '两行展开态面板高度：按钮行 46 + 上 6 + 下 22 + 发丝 2',
+      84.0,
+      reason: '安卓两行展开态面板高度：按钮行 54 + 上 6 + 下 22 + 发丝 2',
     );
 
     final listAfter = tester.getRect(listView);
@@ -199,24 +199,24 @@ void main() {
     );
   });
 
-  testWidgets('软折行临界：一×35+。即展开，一×34+。不展开', (tester) async {
+  testWidgets('软折行临界：一×34+。即展开，一×33+。不展开', (tester) async {
     await pumpChat(tester, messageCount: 1);
 
-    // 症状锁（2026-09-05 用户反馈「一个句号和两个句号差太多」）：`一`×35+'。'
-    // 在本环境真实渲染 2 行（渲染样式带 letterSpacing 0.5，单行总宽 558 > 排版
-    // 可用宽 551），面板必须展开到 76、下沿让出完整留白。修复前判定样式缺这层
-    // letterSpacing、宽度又没扣光标边距，把 2 行判成 1 行，面板停在静息 60
-    // （下沿贴边），再补一个字符才突然跳到 76。
+    // 症状锁（2026-09-05 用户反馈「一个句号和两个句号差太多」）：`一`×34+'。'
+    // 在本环境真实渲染 2 行（渲染样式带 letterSpacing 0.5，单行总宽 542.5 > 排版
+    // 可用宽 537），面板必须展开到 84、下沿让出完整留白。修复前判定样式缺这层
+    // letterSpacing、宽度又没扣光标边距，把 2 行判成 1 行，面板停在静息 68
+    // （下沿贴边），再补一个字符才突然跳到 84。
     await tester.enterText(
       find.byKey(const Key('chat-input')),
-      '一' * 35 + '。',
+      '一' * 34 + '。',
     );
     await tester.pumpAndSettle();
     expect(
       tester.getRect(find.byKey(const Key('home-go-chat'))).height,
-      76.0,
-      reason: '软折行临界组合（一×35+。）必须按真实 2 行展开，'
-          '而不是停在下沿贴边的静息 60',
+      84.0,
+      reason: '软折行临界组合（一×34+。）必须按真实 2 行展开，'
+          '而不是停在下沿贴边的静息 68',
     );
     expect(
       tester
@@ -231,16 +231,16 @@ void main() {
       reason: '软折行展开的下沿留白与显式换行展开同一分配（上 6 下 22）',
     );
 
-    // 相邻防过判：`一`×34+'。' 真实渲染 1 行（单行总宽 542.5 ≤ 可用宽 551），
-    // 面板必须停在静息 60——临界组合往短挪一格就不得展开。
+    // 相邻防过判：`一`×33+'。' 真实渲染 1 行（单行总宽 527 ≤ 可用宽 537），
+    // 面板必须停在静息 68——临界组合往短挪一格就不得展开。
     await tester.enterText(
       find.byKey(const Key('chat-input')),
-      '一' * 34 + '。',
+      '一' * 33 + '。',
     );
     await tester.pumpAndSettle();
     expect(
       tester.getRect(find.byKey(const Key('home-go-chat'))).height,
-      60.0,
+      68.0,
       reason: '比临界组合短一个字符的真实 1 行内容不得展开',
     );
   });
@@ -349,9 +349,11 @@ void main() {
     );
     expect(
       controller.position.maxScrollExtent,
-      moreOrLessEquals(7350.0, epsilon: 1),
-      reason: '静息基线：maxScrollExtent 实测 7350（本环境字体度量下 40×6 行'
-          '内容总高 − 视口高）；±1 只容忍亚像素抖动，布局回归会超出',
+      moreOrLessEquals(9198.0, epsilon: 1),
+      reason: '静息基线：maxScrollExtent 实测 9198（本环境字体度量下 40×6 行'
+          '内容总高 − 视口高；本用例消息不带时刻，用户与栖语的消息复制键'
+          '都走 at 为 null 的防御路径落消息下方一行，各增高 20×46px——'
+          '复制键对两边消息一视同仁）；±1 只容忍亚像素抖动，布局回归会超出',
     );
     final pixelsBefore = controller.position.pixels;
 
@@ -455,6 +457,9 @@ final class _FakeChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<bool> stopVoice(String requestId) async => true;
 
   @override
   Future<String> transcribe({

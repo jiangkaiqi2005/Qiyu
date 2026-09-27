@@ -2,6 +2,15 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
+// 启动失败分类依赖的稳定错误文本（见 startup_failure.dart），改动措辞
+// 会连带改变弹窗与日志的归因，须同步分类测试。
+const String webAssetsMissingFailureMessage =
+    '找不到 Flutter Web 构建产物，请先运行 flutter build web';
+const String personaConstitutionMissingFailureMessage =
+    '找不到栖语人格宪法.md，无法启动模型聊天';
+const String userDirectoryMissingFailureMessage =
+    '找不到用户目录，请设置 QIYU_MEMORY_DIR。';
+
 final class HostCommandOptions {
   const HostCommandOptions({
     required this.checkOnly,
@@ -68,7 +77,7 @@ String resolveHostMemoryDirectory({
   }
   final userProfile = environment['USERPROFILE'];
   if (userProfile == null || userProfile.isEmpty) {
-    throw StateError('找不到用户目录，请设置 QIYU_MEMORY_DIR。');
+    throw StateError(userDirectoryMissingFailureMessage);
   }
   return path.join(userProfile, '.qiyu', 'memories');
 }
@@ -92,7 +101,7 @@ String resolveHostWebRoot({
       return absoluteCandidate;
     }
   }
-  throw FileSystemException('找不到 Flutter Web 构建产物，请先运行 flutter build web');
+  throw FileSystemException(webAssetsMissingFailureMessage);
 }
 
 String resolveHostRuntimeDirectory({
@@ -124,5 +133,5 @@ String resolvePersonaConstitutionPath({
       return absoluteCandidate;
     }
   }
-  throw FileSystemException('找不到栖语人格宪法.md，无法启动模型聊天');
+  throw FileSystemException(personaConstitutionMissingFailureMessage);
 }

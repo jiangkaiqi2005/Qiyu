@@ -62,7 +62,9 @@ final class WebVoiceRecorderPlatform implements VoiceRecorderPlatform {
   }
 }
 
-const _wavTargetSampleRate = 16000;
+/// 契约采样率的本地别名：值来自缝文件的共享常量（不留第二份字面值），
+/// 下面的重采样目标与 RIFF 头里的采样率因此必然同源。
+const _wavTargetSampleRate = wav16kMonoTargetSampleRate;
 
 /// webm/mp4 → AudioBuffer → 16kHz 单声道 → Int16 LE + 44 字节 RIFF 头。
 /// interop 调用全部经 lambda 显式调用（dart2js 禁止 tear-off）。
@@ -93,41 +95,12 @@ Future<Uint8List> _decodeResampleAndPack(Uint8List bytes) async {
   return _packWav(rendered.getChannelData(0).toDart);
 }
 
+/// Float32 声道 → 契约 PCM 字节（Int16 小端）；RIFF/WAV 头由两端共用的
+/// [packWav16kMonoPcm] 补齐，web 侧只负责自己那步量化。
 Uint8List _packWav(Float32List samples) {
-  final dataBytes = samples.length * 2;
-  final wav = Uint8List(44 + dataBytes);
-  final view = ByteData.view(wav.buffer);
+  final pcm = Uint8List(samples.length * 2);
+  final view = ByteData.view(pcm.buffer);
   var offset = 0;
-  void ascii(String text) {
-    for (final code in text.codeUnits) {
-      view.setUint8(offset, code);
-      offset += 1;
-    }
-  }
-
-  void u32(int value) {
-    view.setUint32(offset, value, Endian.little);
-    offset += 4;
-  }
-
-  void u16(int value) {
-    view.setUint16(offset, value, Endian.little);
-    offset += 2;
-  }
-
-  ascii('RIFF');
-  u32(36 + dataBytes);
-  ascii('WAVE');
-  ascii('fmt ');
-  u32(16); // fmt 块长度
-  u16(1); // PCM
-  u16(1); // 单声道
-  u32(_wavTargetSampleRate);
-  u32(_wavTargetSampleRate * 2); // 字节率 = 采样率 × 块对齐
-  u16(2); // 块对齐 = 2 字节
-  u16(16); // 位深
-  ascii('data');
-  u32(dataBytes);
   for (final sample in samples) {
     // 浮点采样可能略越界：clamp 到 [-1, 1] 再放大成 Int16。
     view.setInt16(
@@ -137,7 +110,7 @@ Uint8List _packWav(Float32List samples) {
     );
     offset += 2;
   }
-  return wav;
+  return packWav16kMonoPcm(pcm);
 }
 
 final class _WebVoiceRecordingSession implements VoiceRecordingSession {

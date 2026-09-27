@@ -44,6 +44,7 @@ $requiredReleasePaths = @(
   'scripts\windows-bundle-publish.ps1',
   'scripts\test-windows-bundle-publish.ps1',
   'scripts\verify-release-baseline.ps1',
+  'scripts\verify-version-consistency.ps1',
   'scripts\verify-windows-package.ps1',
   'scripts\test-windows-package.ps1'
 )
@@ -114,6 +115,65 @@ Assert-Condition (
 $verificationScript = Get-Content -Raw -Encoding UTF8 (
   Join-Path $repositoryRoot 'scripts\verify-release-baseline.ps1'
 )
+$consistencyScript = 'verify-version-consistency.ps1'
+Assert-Condition ($verificationScript.Contains($consistencyScript)) `
+  'Release 1 全量门禁没有校验 Windows 包与 APK 版本一致。'
+$androidBuildScript = Get-Content -Raw -Encoding UTF8 (
+  Join-Path $repositoryRoot 'scripts\build-android-apk.ps1'
+)
+Assert-Condition ($androidBuildScript.Contains($consistencyScript)) `
+  '安卓构建脚本没有校验 Windows 包与 APK 版本一致。'
+
+# 版本一致性检查的注入式正反用例：把一次性人工验证固化为持续锁。
+$consistencyScriptPath = Join-Path $repositoryRoot `
+  'scripts\verify-version-consistency.ps1'
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+  # 正例：仓库当前两份真 pubspec 应通过（退出码 0）。
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+    -File $consistencyScriptPath *> $null
+  Assert-Condition ($LASTEXITCODE -eq 0) `
+    '版本一致性检查对当前仓库的两份 pubspec 报了失败。'
+
+  # 反例：注入两份版本分叉的临时 pubspec，应退出码 1 且报出两处版本。
+  $versionTempRoot = Join-Path ([IO.Path]::GetTempPath()) `
+    ("qiyu-version-check-" + [guid]::NewGuid().ToString('N'))
+  try {
+    New-Item -ItemType Directory -Path $versionTempRoot | Out-Null
+    $fakeHostPubspec = Join-Path $versionTempRoot 'host-pubspec.yaml'
+    $fakeFlutterPubspec = Join-Path $versionTempRoot 'flutter-pubspec.yaml'
+    [IO.File]::WriteAllText(
+      $fakeHostPubspec,
+      "name: qiyu_windows_host`nversion: 1.2.3`n"
+    )
+    [IO.File]::WriteAllText(
+      $fakeFlutterPubspec,
+      "name: qiyu_flutter`nversion: 4.5.6+7`n"
+    )
+    $mismatchOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+      -File $consistencyScriptPath `
+      -HostPubspec $fakeHostPubspec `
+      -FlutterPubspec $fakeFlutterPubspec 2>&1
+    $mismatchText = ($mismatchOutput | ForEach-Object { "$_" }) -join "`n"
+    Assert-Condition ($LASTEXITCODE -eq 1) `
+      '版本一致性检查对注入的分叉版本没有以失败退出。'
+    Assert-Condition (
+      $mismatchText.Contains('1.2.3') -and $mismatchText.Contains('4.5.6')
+    ) '版本一致性检查的失败信息没有报出两处不一致的版本。'
+  } finally {
+    if (Test-Path -LiteralPath $versionTempRoot) {
+      Remove-Item -LiteralPath $versionTempRoot -Recurse -Force
+    }
+  }
+} finally {
+  $ErrorActionPreference = $previousPreference
+}
+# 反例刻意让子进程以失败收场，失败状态会残留在门禁判读的位置：
+# 本脚本被全量门禁以内联方式调用，门禁在步骤结束后据此判定成败，
+# 不清零的话策略测试永远被判失败（单独运行本脚本时看不出问题）。
+$global:LASTEXITCODE = 0
+
 Assert-Condition ($verificationScript -notmatch '(?im)^\s*(?:&\s*)?(?:npm|node)\b') `
   'Release 1 全量门禁仍执行 Node/npm。'
 foreach ($requiredCommand in @(

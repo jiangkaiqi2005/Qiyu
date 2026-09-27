@@ -36,6 +36,8 @@ void main() {
       expect(freeze.kind, HiddenActionKind.memoryFreeze);
       const unfreeze = MemoryUnfreezeAction(title: '换工作话题');
       expect(unfreeze.kind, HiddenActionKind.memoryUnfreeze);
+      const unban = MemoryUnbanAction(title: '换工作话题');
+      expect(unban.kind, HiddenActionKind.memoryUnban);
       const delete = MemoryDeleteAction(title: '医院检查');
       expect(delete.kind, HiddenActionKind.memoryDelete);
 
@@ -83,9 +85,16 @@ void main() {
         query: '火锅店',
         months: ['2026-07'],
         dates: ['2026-07-14'],
+        paths: ['PR-R001/PR-M002'],
+        entries: ['seed:1:0'],
       );
       expect(() => recall.months!.add('2026-08'), throwsUnsupportedError);
       expect(() => recall.dates!.add('2026-07-15'), throwsUnsupportedError);
+      expect(
+        () => recall.paths!.add('PR-R001/PR-M003'),
+        throwsUnsupportedError,
+      );
+      expect(() => recall.entries!.add('seed:1:1'), throwsUnsupportedError);
     });
 
     test('serialization keeps the wire keys of the flat protocol', () {
@@ -113,10 +122,13 @@ void main() {
             query: '火锅店',
             months: ['2026-07'],
             dates: ['2026-07-14'],
+            paths: ['PR-R001/PR-M002'],
+            entries: ['seed:1:0'],
           ).toJson(),
         ),
         '{"action":"memory_recall","query":"火锅店",'
-        '"months":["2026-07"],"dates":["2026-07-14"]}',
+        '"months":["2026-07"],"dates":["2026-07-14"],'
+        '"paths":["PR-R001/PR-M002"],"entries":["seed:1:0"]}',
       );
       expect(
         jsonEncode(const NoAction().toJson()),
@@ -148,8 +160,44 @@ void main() {
         '"status":"closed","result":"用户说演讲很顺利"}',
       );
       expect(
+        jsonEncode(
+          const OpenLoopCandidateAction(
+            title: '租房事宜',
+            keep: memorySignalKeepMonth,
+          ).toJson(),
+        ),
+        '{"action":"open_loop_candidate","summary":"租房事宜","keep":"month"}',
+      );
+      expect(
+        jsonEncode(
+          const RelationshipSignalAction(
+            summary: '用户近期愿意聊到更深的家庭关系',
+            signal: RelationshipSignal.deepTalk,
+            keep: memorySignalKeepMonth,
+          ).toJson(),
+        ),
+        '{"action":"relationship_signal",'
+        '"summary":"用户近期愿意聊到更深的家庭关系",'
+        '"signal":"deep_talk","keep":"month"}',
+      );
+      expect(
         jsonEncode(const MemoryBanAction(title: '医院检查').toJson()),
         '{"action":"memory_ban","summary":"医院检查"}',
+      );
+      expect(
+        jsonEncode(const MemoryUnbanAction(title: '医院检查').toJson()),
+        '{"action":"memory_unban","summary":"医院检查"}',
+      );
+      expect(
+        jsonEncode(
+          const MemorySignalAction(
+            summary: '用户认定长期记忆只放极度压缩的人生记忆',
+            keep: memorySignalKeepMonth,
+          ).toJson(),
+        ),
+        '{"action":"memory_signal",'
+        '"summary":"用户认定长期记忆只放极度压缩的人生记忆",'
+        '"keep":"month"}',
       );
       expect(
         jsonEncode(
@@ -164,7 +212,7 @@ void main() {
       );
     });
 
-    test('the sealed family stays exhaustive over all eleven kinds', () {
+    test('the sealed family stays exhaustive over all twelve kinds', () {
       String wire(HiddenAction action) => switch (action) {
         MemorySignalAction() => 'memory_signal',
         MemoryRecallAction() => 'memory_recall',
@@ -175,6 +223,7 @@ void main() {
         MemoryForgetAction() => 'memory_forget',
         MemoryFreezeAction() => 'memory_freeze',
         MemoryUnfreezeAction() => 'memory_unfreeze',
+        MemoryUnbanAction() => 'memory_unban',
         MemoryDeleteAction() => 'memory_delete',
         RelationshipSignalAction() => 'relationship_signal',
       };
@@ -189,9 +238,10 @@ void main() {
         const MemoryForgetAction(title: '己'),
         const MemoryFreezeAction(title: '庚'),
         const MemoryUnfreezeAction(title: '辛'),
-        const MemoryDeleteAction(title: '壬'),
+        const MemoryUnbanAction(title: '壬'),
+        const MemoryDeleteAction(title: '癸'),
         const RelationshipSignalAction(
-          summary: '癸',
+          summary: '子',
           signal: RelationshipSignal.temperature,
         ),
       ];
@@ -210,9 +260,43 @@ void main() {
         MemoryRecallAction(query: '火锅店', months: ['2026-07']),
         isNot(MemoryRecallAction(query: '火锅店')),
       );
+      // 画像路径与条目回执同样参与相等性：选没选路径是两条不同的查找。
+      expect(
+        MemoryRecallAction(query: '跑步', paths: ['PR-R001/PR-M002']),
+        MemoryRecallAction(query: '跑步', paths: ['PR-R001/PR-M002']),
+      );
+      expect(
+        MemoryRecallAction(query: '跑步', paths: ['PR-R001/PR-M002']),
+        isNot(MemoryRecallAction(query: '跑步')),
+      );
+      expect(
+        MemoryRecallAction(query: '爬山', entries: ['seed:1:0']),
+        isNot(MemoryRecallAction(query: '爬山')),
+      );
+      expect(
+        MemoryRecallAction(
+          query: '跑步',
+          paths: ['PR-R001/PR-M002'],
+          entries: ['seed:1:0'],
+        ).hashCode,
+        MemoryRecallAction(
+          query: '跑步',
+          paths: ['PR-R001/PR-M002'],
+          entries: ['seed:1:0'],
+        ).hashCode,
+      );
       expect(
         const MemoryBanAction(title: '医院检查'),
         isNot(const MemoryDeleteAction(title: '医院检查')),
+      );
+      // 解除禁提与解除冻结是两条不同路径：同标题也互不相等。
+      expect(
+        const MemoryUnbanAction(title: '换工作话题'),
+        isNot(const MemoryUnfreezeAction(title: '换工作话题')),
+      );
+      expect(
+        const MemoryUnbanAction(title: '换工作话题'),
+        const MemoryUnbanAction(title: '换工作话题'),
       );
       expect(
         const MemorySignalAction(
@@ -229,6 +313,65 @@ void main() {
             nature: PersonaNature.behavior,
           ),
         ),
+      );
+      // keep 参与相等性：标没标月压缩候选是两条不同的记忆。
+      expect(
+        const MemorySignalAction(summary: '猫', keep: memorySignalKeepMonth),
+        isNot(const MemorySignalAction(summary: '猫')),
+      );
+      expect(
+        const MemorySignalAction(summary: '猫', keep: memorySignalKeepMonth),
+        const MemorySignalAction(summary: '猫', keep: memorySignalKeepMonth),
+      );
+      expect(
+        const MemorySignalAction(
+          summary: '猫',
+          keep: memorySignalKeepMonth,
+        ).hashCode,
+        const MemorySignalAction(
+          summary: '猫',
+          keep: memorySignalKeepMonth,
+        ).hashCode,
+      );
+      // 两类生命周期动作的 keep 同样参与相等性。
+      expect(
+        const OpenLoopCandidateAction(title: '租房事宜', keep: memorySignalKeepMonth),
+        isNot(const OpenLoopCandidateAction(title: '租房事宜')),
+      );
+      expect(
+        const OpenLoopCandidateAction(
+          title: '租房事宜',
+          keep: memorySignalKeepMonth,
+        ).hashCode,
+        const OpenLoopCandidateAction(
+          title: '租房事宜',
+          keep: memorySignalKeepMonth,
+        ).hashCode,
+      );
+      expect(
+        const RelationshipSignalAction(
+          summary: '用户近期愿意聊家庭',
+          signal: RelationshipSignal.deepTalk,
+          keep: memorySignalKeepMonth,
+        ),
+        isNot(
+          const RelationshipSignalAction(
+            summary: '用户近期愿意聊家庭',
+            signal: RelationshipSignal.deepTalk,
+          ),
+        ),
+      );
+      expect(
+        const RelationshipSignalAction(
+          summary: '用户近期愿意聊家庭',
+          signal: RelationshipSignal.deepTalk,
+          keep: memorySignalKeepMonth,
+        ).hashCode,
+        const RelationshipSignalAction(
+          summary: '用户近期愿意聊家庭',
+          signal: RelationshipSignal.deepTalk,
+          keep: memorySignalKeepMonth,
+        ).hashCode,
       );
     });
   });

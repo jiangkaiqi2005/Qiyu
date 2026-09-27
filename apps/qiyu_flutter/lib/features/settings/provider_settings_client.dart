@@ -1,4 +1,5 @@
 import '../baseline/host_api_gateway.dart';
+import 'voice_tier_suggestion.dart';
 
 enum ProviderKind {
   openAiCompatible('openai_compatible', 'OpenAI 兼容'),
@@ -88,6 +89,7 @@ enum ProviderTestStatus {
   authentication,
   network,
   modelNotFound,
+  modelInterfaceMismatch,
   rateLimited,
   incompatibleResponse,
   contentParsing,
@@ -100,18 +102,33 @@ final class ProviderTestResult {
     required this.succeeded,
     required this.status,
     required this.message,
+    this.tierSuggestion,
   });
 
-  factory ProviderTestResult.fromJson(Map<String, Object?> json) =>
-      ProviderTestResult(
-        succeeded: json['ok']! as bool,
-        status: ProviderTestStatus.values.byName(json['status']! as String),
-        message: json['message']! as String,
-      );
+  factory ProviderTestResult.fromJson(Map<String, Object?> json) {
+    final rawSuggestion = json['suggestion'];
+    return ProviderTestResult(
+      succeeded: json['ok']! as bool,
+      status: ProviderTestStatus.values.byName(json['status']! as String),
+      message: json['message']! as String,
+      // 档位映射建议（ADR 0020）：只有语音设置域的连接测试在命中时下发；
+      // 聊天域的测试响应从不带该字段，解析恒为 null。
+      tierSuggestion: rawSuggestion is Map
+          ? VoiceTierSuggestionData.fromJson(
+              Map<String, Object?>.from(
+                rawSuggestion.map((k, v) => MapEntry(k.toString(), v)),
+              ),
+            )
+          : null,
+    );
+  }
 
   final bool succeeded;
   final ProviderTestStatus status;
   final String message;
+
+  /// 档位映射建议（应换档／不支持）：表 miss 或成功时为 null。
+  final VoiceTierSuggestionData? tierSuggestion;
 }
 
 final class ProviderSettingsGatewayException

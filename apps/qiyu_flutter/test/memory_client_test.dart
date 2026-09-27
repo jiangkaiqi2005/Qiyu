@@ -136,6 +136,8 @@ void main() {
               'freeze' => hostJsonResponse({
                 'status': 'success',
                 'message': '已暂停使用这条记忆。',
+                // 控制时关联扩展（裁定票 03）：同时覆盖的相近表述条数。
+                'aliasCount': 2,
               }, 200),
               'delete-preview' =>
                 body['id'] == 'gone'
@@ -172,6 +174,7 @@ void main() {
 
       final frozen = await gateway.freezeItem('item-1');
       expect(frozen.status, MemoryActionStatus.success);
+      expect(frozen.aliasCount, 2);
 
       final preview = await gateway.previewDelete('item-1');
       expect(preview, isNotNull);
@@ -182,6 +185,8 @@ void main() {
       final deleted = await gateway.deleteItem('item-1');
       expect(deleted.status, MemoryActionStatus.partial);
       expect(deleted.deferred, ['画像的清理']);
+      // 没有别名的结果缺省为 0，不影响控制本身的呈现。
+      expect(deleted.aliasCount, 0);
 
       final revealed = await gateway.revealItem('item-1');
       expect(revealed.text, '用户的手机号是13812345678');

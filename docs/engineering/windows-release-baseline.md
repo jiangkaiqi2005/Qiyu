@@ -1,6 +1,6 @@
 # Windows Release 1 基线
 
-Ticket 26 结束迁移期。当前产品入口只有 Flutter Web UI、Dart Windows Host 与纯 Dart 行为核心；旧 Node 服务、旧 DOM 页面、旧专用配置及其测试已经退出产品轨道。`contracts/qiyu_behavior_contracts.json` 是当前 Dart Core 可执行的 Release 契约；`contracts/legacy-migration-golden-cases.json` 是从固定迁移基线原样保留的历史 golden 快照。两者用途不同，不能按数量或名称互相替代。
+Ticket 26 结束迁移期。当前产品由 Flutter UI、Dart Host 与纯 Dart 行为核心组成，装在 Windows 壳与安卓壳（ADR 0009 端内形态）两个交付壳里；旧 Node 服务、旧 DOM 页面、旧专用配置及其测试已经退出产品轨道。`contracts/qiyu_behavior_contracts.json` 是当前 Dart Core 可执行的 Release 契约；`contracts/legacy-migration-golden-cases.json` 是从固定迁移基线原样保留的历史 golden 快照。两者用途不同，不能按数量或名称互相替代。
 
 ## 首发能力证据矩阵
 
@@ -16,7 +16,7 @@ Ticket 26 结束迁移期。当前产品入口只有 Flutter Web UI、Dart Windo
 | 设置与凭据 | Provider config repository（provider.json 含 Key）、Windows Credential Manager 只读回退、Flutter Settings | 页面只见掩码；替换/忘记 Key；切换 scope 不复用旧 Key | provider config/settings/credential tests 与候选包重启验收 |
 | 备份与恢复 | `MemoryBackupService`、backup API、Flutter backup client | 导出 Markdown 快照；导入先预览与校验；可回滚；损坏先隔离再恢复 | `memory_backup_test.dart`、`memory_recovery_test.dart`、候选包备份恢复验收 |
 | 诊断 | `DeveloperDiagnosticsService`、设置/隐私/诊断页面 | 普通用户只见可理解状态；开发者模式只见脱敏来源、结果与延迟 | `developer_diagnostics_test.dart`、Flutter settings/accessibility tests |
-| 当前行为契约 | `contracts/qiyu_behavior_contracts.json`、纯 Dart Core | 本地少回应、晚安不强制本地收束、安全绕过、候选清洗、人格边界和降级结果稳定 | Dart Core 直接读取全部 Release fixture；发布门禁强制保留该引用 |
+| 当前行为契约 | `contracts/qiyu_behavior_contracts.json`、纯 Dart Core | 本地少回应、晚安不强制本地收束、安全绕过、候选清洗、流式交付与降级结果稳定 | Dart Core 直接读取全部 Release fixture；发布门禁强制保留该引用 |
 | 历史迁移基准 | `contracts/legacy-migration-golden-cases.json` | 可审计 4a5d24f 时期十个旧产品场景的输入、旧状态与期望，不进入当前运行时 | 发布策略校验 JSON、场景数和冻结 name 集合；Git blob 与旧 `eval/golden-cases.json` 一致 |
 
 ## 删除前行为对拍
@@ -25,7 +25,7 @@ Ticket 26 结束迁移期。当前产品入口只有 Flutter Web UI、Dart Windo
 
 冻结 golden 中 `low_signal_arrival`、`medical_advice_safety` 与 `crisis_variant_safety` 的核心边界，在当前 Release contract 中分别由最少回应、医疗安全和危机安全用例继续执行；`bedtime_diminuendo` 仅保留在历史迁移快照中，当前契约已取消晚安强制本地收束。这不表示两个文件整体等价。
 
-其余关系相关场景——`fatigue_question`、`earned_teasing`、`fatigue_friend_with_work_memory`、`loss_soulmate_stage`、`asking_resign_stranger`、`asking_resign_friend`——依赖旧 `sessionCount + memories[] + localStorage turns` 状态模型，不直接喂给当前运行时。Spec 已将其领域语义升级为 Markdown episodes、`relationship.md`、PersonaTree 与日终阶段棘轮：`relationship_lifecycle_test.dart` 覆盖阶段建立、证据边界、每日最多晋升一级与不回退；`local_chat_service_test.dart` 的 `the state pack injection carries gated follow-up candidates` 覆盖初识/熟悉/朋友的调侃、翻旧账和主动跟进纪律，`shared-past memories inject, but stranger-stage discipline locks them` 覆盖共同过往与初识门禁，`a deep-talk signal lands in episodes and the next end-of-day relationship` 覆盖证据落 episode 后再于日终影响关系。旧场景的逐句话术期望只作为冻结迁移证据保存，不冒充当前状态模型的可执行断言。
+其余关系相关场景——`fatigue_question`、`earned_teasing`、`fatigue_friend_with_work_memory`、`loss_soulmate_stage`、`asking_resign_stranger`、`asking_resign_friend`——依赖旧 `sessionCount + memories[] + localStorage turns` 状态模型，不直接喂给当前运行时。Spec 已将其领域语义升级为 Markdown episodes、`relationship.md`、PersonaTree 与日终阶段棘轮：`relationship_lifecycle_test.dart` 覆盖阶段建立、判断驱动的棘轮与每日最多晋升一级、不回退、判断缺失时阶段不动、恢复重建各形态与描述回落；`local_chat_service_test.dart` 的 `the state pack injection carries gated follow-up candidates` 覆盖初识/熟悉/朋友的调侃、翻旧账和主动跟进纪律，`shared-past memories inject, but stranger-stage discipline locks them` 覆盖共同过往与初识门禁，`a deep-talk signal lands in episodes and the next end-of-day relationship` 覆盖证据落 episode 后再于日终影响关系。旧场景的逐句话术期望只作为冻结迁移证据保存，不冒充当前状态模型的可执行断言。
 
 旧 DOM/PWA、Node 设置文件和 localStorage 历史按 Spec 退出，Release 1 不迁移旧 localStorage；冻结快照不会重新接入这些路径。
 
@@ -47,4 +47,4 @@ Ticket 26 结束迁移期。当前产品入口只有 Flutter Web UI、Dart Windo
 
 ## 平台边界
 
-Release 1 只验收 Windows 本机 Web。iOS 与 Android 后续复用 Flutter UI、纯 Dart 行为核心和记忆领域规则，但不属于本基线；本票不实现移动端、云同步、远程托管或旧 localStorage 迁移。
+本基线验收 Windows 本机 Web，门禁脚本不含安卓构建步骤。安卓壳（`apps/qiyu_flutter/android/`）是仓库正式组成，复用同一套 Flutter UI、纯 Dart 行为核心和记忆领域规则，签名构建与真机冒烟见 `docs/engineering/android-release-build.md`；iOS 适配、云同步、远程托管与旧 localStorage 迁移不在 Release 1 范围。

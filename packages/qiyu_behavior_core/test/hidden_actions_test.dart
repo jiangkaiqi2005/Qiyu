@@ -90,6 +90,68 @@ void main() {
     expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
   });
 
+  test('recall persona paths are format-checked, deduplicated and capped', () {
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"跑步的习惯",'
+      '"paths":["PR-R001/PR-M002","PR-R001/PR-M002","PR-R001/PR-M003",'
+      '"PR-R001/PR-M004","PR-r001/PR-M002","PR-R001/PR-X002","PR-R001",'
+      '"PR-R001/PR-M002/PR-L1"]}]</qiyu-actions>',
+    );
+
+    expect(parse.actions, hasLength(1));
+    final action = parse.actions.single as MemoryRecallAction;
+    // 合法路径去重后保留，第三条合法路径超出定稿上限整条丢弃。
+    expect(action.paths, ['PR-R001/PR-M002', 'PR-R001/PR-M003']);
+    // 四种非法形态各记一条 invalidFields，第三条合法路径记 overLimit。
+    expect(
+      parse.diagnostics.where(
+        (entry) => entry == HiddenActionDiagnostics.invalidFields,
+      ),
+      hasLength(4),
+    );
+    expect(parse.diagnostics, contains(HiddenActionDiagnostics.overLimit));
+  });
+
+  test('recall persona paths carry at most two leaf pointers each', () {
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"画像依据",'
+      '"paths":["PR-R001/PR-M002/PR-L001,PR-L004,PR-L007"]}]</qiyu-actions>',
+    );
+
+    final action = parse.actions.single as MemoryRecallAction;
+    // 叶指针截断到定稿的两条，根与中间理解保留。
+    expect(action.paths, ['PR-R001/PR-M002/PR-L001,PR-L004']);
+    expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+  });
+
+  test('recall persona path field must be an array', () {
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"跑步",'
+      '"paths":"PR-R001/PR-M002"}]</qiyu-actions>',
+    );
+
+    expect(parse.actions, hasLength(1));
+    expect((parse.actions.single as MemoryRecallAction).paths, isNull);
+    expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+  });
+
+  test('recall entry receipts are format-checked, deduplicated and capped', () {
+    final ids = List.generate(
+      maxHiddenRecallEntries + 1,
+      (index) => '"seed:req:$index"',
+    ).join(',');
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_recall","query":"爬山",'
+      '"entries":[$ids,"seed:req:0","bad id!"]}]</qiyu-actions>',
+    );
+
+    final action = parse.actions.single as MemoryRecallAction;
+    expect(action.entries, hasLength(maxHiddenRecallEntries));
+    expect(action.entries?.first, 'seed:req:0');
+    expect(parse.diagnostics, contains(HiddenActionDiagnostics.invalidFields));
+    expect(parse.diagnostics, contains(HiddenActionDiagnostics.overLimit));
+  });
+
   test('secrets in recall queries stay on the privilege diagnostic', () {
     // 锁定行为：检索词命中秘密也记 privilegeViolation，而非 sensitiveContent。
     final parse = parseHiddenActions(
@@ -152,6 +214,21 @@ void main() {
       '身份证 11010519491231002X',
       '银行卡 6222 0202 0000 1234 567',
       '验证码: 482913',
+      // JSON 引号键值：字段名带引号，冒号前多一个引号。
+      '{"password":"audit-only-secret"}',
+      r'{"client\u005fsecret":"audit-only-client"}',
+      r'{"pass\u0077ord":987654321}',
+      r'{"client_secret":"audit\q-secret"}',
+      '{"client_secret":"audit-only-client"}',
+      '{"password":987654321}',
+      '{"access_token":123456}',
+      '{"passwd":"audit-only-passwd"}',
+      '{"api_secret":"audit-only-api"}',
+      '{"secret_key":"audit-only-key"}',
+      '{"set-cookie":"sid=audit-only-cookie"}',
+      // PKCS#8：BEGIN 与 PRIVATE KEY 之间没有类型词。动作字段清洗后
+      // 换行折叠为空格，这里按折叠后的形态验证。
+      '-----BEGIN PRIVATE KEY----- AUDIT ONLY FAKE KEY -----END PRIVATE KEY-----',
     ]) {
       final parse = parseHiddenActions(
         '<qiyu-actions>[{"action":"memory_signal","summary":${_json(summary)}}]'
@@ -163,6 +240,40 @@ void main() {
         contains(HiddenActionDiagnostics.sensitiveContent),
         reason: summary,
       );
+    }
+  });
+
+  test('multi-item cookie lines are dropped as privilege-shaped fields', () {
+    // 真实多项 Cookie 以分号串接：core 记忆闸门按越权特征（命令分隔）
+    // 整体丢弃，判定码与落盘脱敏表不同，但同样绝不提升为记忆。
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal",'
+      '"summary":${_json('Cookie: theme=dark; sid=audit-only-cookie')}}]'
+      '</qiyu-actions>',
+    );
+    expect(parse.actions, isEmpty);
+    expect(
+      parse.diagnostics,
+      contains(HiddenActionDiagnostics.privilegeViolation),
+    );
+  });
+
+  test('ordinary talk about secrets is still a memory signal', () {
+    for (final summary in [
+      '我把密码改成新的了',
+      '今晚聊了浏览器的 Cookie 是干嘛的',
+      '他说密钥管理要用专门的工具',
+      // 引号叙述：键名出现在引号里但后面不是「冒号+引号值」的键值形态。
+      '用户问"token是什么"',
+      '聊到"password怎么存"的话题',
+      '他说"密钥管理"很重要',
+    ]) {
+      final parse = parseHiddenActions(
+        '<qiyu-actions>[{"action":"memory_signal","summary":${_json(summary)}}]'
+        '</qiyu-actions>',
+      );
+      expect(parse.actions, hasLength(1), reason: summary);
+      expect(parse.diagnostics, isEmpty, reason: summary);
     }
   });
 
@@ -350,6 +461,60 @@ void main() {
     );
   });
 
+  test('open-loop candidates and relationship signals may carry the keep mark', () {
+    // 月压缩定稿：这两类模型产出条目同样在创建时由模型标注 keep，
+    // 标了才进月文件对应分区（未闭环线索 / 关系变化）。
+    final candidate = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate",'
+      '"summary":"整月未闭环的租房事宜","keep":"month"}]</qiyu-actions>',
+    );
+    expect(candidate.actions, hasLength(1));
+    expect(
+      (candidate.actions.single as OpenLoopCandidateAction).keep,
+      memorySignalKeepMonth,
+    );
+    expect(candidate.diagnostics, isEmpty);
+
+    final signal = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"signal":"deep_talk","summary":"用户近期愿意聊到更深的家庭关系",'
+      '"keep":"month"}]</qiyu-actions>',
+    );
+    expect(signal.actions, hasLength(1));
+    expect(
+      (signal.actions.single as RelationshipSignalAction).keep,
+      memorySignalKeepMonth,
+    );
+    expect(signal.diagnostics, isEmpty);
+  });
+
+  test('keep values outside the whitelist are dropped on lifecycle actions', () {
+    final candidate = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate",'
+      '"summary":"普通待办","keep":"day"}]</qiyu-actions>',
+    );
+    expect(candidate.actions, hasLength(1));
+    expect((candidate.actions.single as OpenLoopCandidateAction).keep, isNull);
+    expect(candidate.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+
+    final signal = parseHiddenActions(
+      '<qiyu-actions>[{"action":"relationship_signal",'
+      '"signal":"temperature","summary":"今晚话少","keep":"week"}]'
+      '</qiyu-actions>',
+    );
+    expect(signal.actions, hasLength(1));
+    expect((signal.actions.single as RelationshipSignalAction).keep, isNull);
+    expect(signal.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+
+    // 没有 keep 字段时不产生诊断。
+    final plain = parseHiddenActions(
+      '<qiyu-actions>[{"action":"open_loop_candidate","summary":"普通待办"}]'
+      '</qiyu-actions>',
+    );
+    expect((plain.actions.single as OpenLoopCandidateAction).keep, isNull);
+    expect(plain.diagnostics, isEmpty);
+  });
+
   test('a relationship signal keeps its whitelisted signal type', () {
     final parse = parseHiddenActions('''嗯，我在。
 <qiyu-actions>
@@ -491,6 +656,53 @@ void main() {
     expect(noHint.diagnostics, isEmpty);
   });
 
+  test('a memory signal may carry the month keep mark', () {
+    // 月压缩定稿（Memory.md）：只收当时标了 keep: month 的条目。
+    final parse = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal",'
+      '"summary":"用户认定长期记忆只放极度压缩的人生记忆","keep":"month"}]'
+      '</qiyu-actions>',
+    );
+
+    expect(parse.actions, hasLength(1));
+    final signal = parse.actions.single as MemorySignalAction;
+    expect(signal.keep, memorySignalKeepMonth);
+    expect(parse.diagnostics, isEmpty);
+  });
+
+  test('keep values outside the whitelist are dropped, signal survives', () {
+    // 白名单外取值（含笔记里其余 keep 值的字面量）按字段丢弃并记诊断，
+    // 记忆信号本身保留：那些流向由 kind、提升流程与 memory_ban 各自
+    // 承担，不走 keep 字段。
+    for (final value in ['day', 'open-loop', 'relationship', 'week', 'MONTH']) {
+      final parse = parseHiddenActions(
+        '<qiyu-actions>[{"action":"memory_signal",'
+        '"summary":"用户喜欢爬山","keep":${_json(value)}}]</qiyu-actions>',
+      );
+      expect(parse.actions, hasLength(1));
+      expect((parse.actions.single as MemorySignalAction).keep, isNull);
+      expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFields]);
+    }
+
+    // 非字符串取值与字段缺失同效：按未标记处理，不记诊断（与画像
+    // 提示、proactive 等可选枚举字段的口径一致）。
+    final numeric = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal",'
+      '"summary":"用户喜欢爬山","keep":5}]</qiyu-actions>',
+    );
+    expect(numeric.actions, hasLength(1));
+    expect((numeric.actions.single as MemorySignalAction).keep, isNull);
+    expect(numeric.diagnostics, isEmpty);
+
+    // 没有 keep 字段时不产生诊断。
+    final absent = parseHiddenActions(
+      '<qiyu-actions>[{"action":"memory_signal","summary":"用户喜欢爬山"}]'
+      '</qiyu-actions>',
+    );
+    expect((absent.actions.single as MemorySignalAction).keep, isNull);
+    expect(absent.diagnostics, isEmpty);
+  });
+
   test('secrets and privilege never enter relationship signals', () {
     final secret = parseHiddenActions(
       '<qiyu-actions>[{"action":"relationship_signal",'
@@ -601,6 +813,13 @@ void main() {
       );
       expect(delete.actions.single, const MemoryDeleteAction(title: '医院检查'));
 
+      final unban = parseHiddenActions(
+        '<qiyu-actions>[{"action":"memory_unban","summary":"换工作话题"}]'
+        '</qiyu-actions>',
+      );
+      expect(unban.actions.single, const MemoryUnbanAction(title: '换工作话题'));
+      expect(unban.diagnostics, isEmpty);
+
       final relationship = parseHiddenActions(
         '<qiyu-actions>[{"action":"relationship_signal",'
         '"signal":"boundary_open","summary":"用户接受了轻调侃",'
@@ -625,6 +844,15 @@ void main() {
       expect(signal, isA<MemorySignalAction>());
       expect((signal as MemorySignalAction).hint, isNull);
       expect(parse.diagnostics, [HiddenActionDiagnostics.personaHintDropped]);
+    });
+
+    test('trailing unclosed action block is stripped from visible text with invalidFormat diagnostic', () {
+      final parse = parseHiddenActions(
+        '明天天气很好。\n<qiyu-actions>[{"action":"memory_recall","query":"天气"',
+      );
+      expect(parse.visibleText, '明天天气很好。');
+      expect(parse.actions, isEmpty);
+      expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFormat]);
     });
   });
 }

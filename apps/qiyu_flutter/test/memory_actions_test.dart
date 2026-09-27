@@ -198,6 +198,55 @@ void main() {
     });
   });
 
+  group('控制结果横幅的关联条目数', () {
+    testWidgets('有别名时横幅如实带上相近表述条数', (tester) async {
+      final gateway = _HoldGateway();
+      final viewModel = MemoryCenterViewModel(gateway, autoStart: false);
+      await _pumpRunnerHarness(tester, viewModel);
+
+      gateway.hold = Completer<MemoryActionResult>();
+      await tester.tap(find.byKey(const Key('fire-freeze')));
+      await tester.pump();
+      gateway.hold!.complete(
+        const MemoryActionResult(
+          status: MemoryActionStatus.success,
+          message: '已暂停使用这条记忆，解除前不会出现在对话和整理里。',
+          aliasCount: 2,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('memory-action-result')), findsOneWidget);
+      expect(
+        find.text('已暂停使用这条记忆，解除前不会出现在对话和整理里。同时纳入 2 条相近表述。'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('没有别名时横幅不带相近表述句', (tester) async {
+      final gateway = _HoldGateway();
+      final viewModel = MemoryCenterViewModel(gateway, autoStart: false);
+      await _pumpRunnerHarness(tester, viewModel);
+
+      gateway.hold = Completer<MemoryActionResult>();
+      await tester.tap(find.byKey(const Key('fire-freeze')));
+      await tester.pump();
+      gateway.hold!.complete(
+        const MemoryActionResult(
+          status: MemoryActionStatus.success,
+          message: '好了。',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('memory-action-result')), findsOneWidget);
+      expect(find.text('好了。'), findsOneWidget);
+      expect(find.textContaining('相近表述'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   group('列表与详情一致性：同一份计划、同一执行器', () {
     // 同屏挂两侧：左边是列表条目同款的 [MemoryActionButtons]，右边是
     // 真实详情页 [MemoryItemView]，同一 itemId、同一记忆状态。可用性

@@ -489,3 +489,22 @@ class QiyuErrorRetryState extends StatelessWidget {
     );
   }
 }
+
+/// 聊天域内容的水平居中约束：会话页的工具条、消息区与提示条，以及输入模块
+/// （[QiyuLayout.streamMaxWidth] 的全部消费方）共用同一档流宽。约束组合
+/// （Center > ConstrainedBox）收敛于此，页面不得再各自抄一遍。
+class QiyuStreamWidthBox extends StatelessWidget {
+  const QiyuStreamWidthBox({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: QiyuLayout.streamMaxWidth),
+        child: child,
+      ),
+    );
+  }
+}

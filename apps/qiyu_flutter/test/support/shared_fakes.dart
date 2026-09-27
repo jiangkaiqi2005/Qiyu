@@ -233,6 +233,9 @@ final class FakeLocalChatGateway implements StreamingLocalChatGateway {
   Future<bool> cancel(String requestId) async => true;
 
   @override
+  Future<bool> stopVoice(String requestId) async => true;
+
+  @override
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
@@ -257,33 +260,27 @@ final class FakeLocalChatGateway implements StreamingLocalChatGateway {
     final source = index < replySources.length
         ? replySources[index]
         : replySources.last;
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: restored.sessionId,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
+    yield LocalChatDeliveryEvent.waiting(
       requestId: requestId,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.delta,
+    yield LocalChatDeliveryEvent.delta(
       requestId: requestId,
       text: '咋了',
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.message,
+    yield LocalChatDeliveryEvent.message(
       requestId: requestId,
       messages: const ['咋了'],
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.state,
+    yield LocalChatDeliveryEvent.state(
       requestId: requestId,
       source: source,
       fallbackReason: source == ReplySource.local ? FallbackReason.noLlmConfig : null,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.done,
+    yield LocalChatDeliveryEvent.done(
       requestId: requestId,
     );
   }

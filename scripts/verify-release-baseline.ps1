@@ -26,6 +26,7 @@ function Invoke-Step {
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $corePath = Join-Path $repositoryRoot 'packages\qiyu_behavior_core'
+$localHostPath = Join-Path $repositoryRoot 'packages\qiyu_local_host'
 $flutterPath = Join-Path $repositoryRoot 'apps\qiyu_flutter'
 $hostPath = Join-Path $repositoryRoot 'apps\qiyu_windows_host'
 $bundlePath = Join-Path $hostPath 'build\windows-bundle'
@@ -40,8 +41,16 @@ $packageVersion = $Matches[1]
 $packageArchive = Join-Path $hostPath `
   "build\qiyu-windows-x64-$packageVersion.zip"
 
+Invoke-Step 'Version consistency across Windows and Android packages' {
+  & (Join-Path $repositoryRoot 'scripts\verify-version-consistency.ps1')
+}
+
 Invoke-Step 'Release baseline policy tests' {
   & (Join-Path $repositoryRoot 'scripts\test-release-baseline.ps1')
+}
+
+Invoke-Step 'Font subset content validation' {
+  dart run (Join-Path $repositoryRoot 'scripts\verify_font_assets.dart')
 }
 
 Push-Location $corePath
@@ -49,6 +58,15 @@ try {
   Invoke-Step 'Dart core dependencies' { dart pub get }
   Invoke-Step 'Dart core analysis' { dart analyze }
   Invoke-Step 'Dart core contract tests' { dart test }
+} finally {
+  Pop-Location
+}
+
+Push-Location $localHostPath
+try {
+  Invoke-Step 'Local host dependencies' { dart pub get }
+  Invoke-Step 'Local host analysis' { dart analyze }
+  Invoke-Step 'Local host tests' { dart test }
 } finally {
   Pop-Location
 }
@@ -92,7 +110,8 @@ try {
     dart test --configuration dart_test.browser.yaml `
       --platform $browserPlatform `
       test/voice_player_platform_web_test.dart `
-      test/settings_collapse_platform_web_test.dart
+      test/settings_collapse_platform_web_test.dart `
+      test/backup_platform_web_test.dart
   }
   Invoke-Step 'Flutter Web build' {
     flutter build web --wasm --no-web-resources-cdn

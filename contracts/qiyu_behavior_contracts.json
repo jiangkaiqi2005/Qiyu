@@ -1,10 +1,975 @@
 {
   "schemaVersion": 1,
+  "serviceErrorCategories": [
+    "authentication", "modelNotFound", "rateLimited", "client", "server", "network"
+  ],
+  "deliveryEvents": [
+    {
+      "wire": {
+        "event": "accepted",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId"
+      ]
+    },
+    {
+      "wire": {
+        "event": "waiting",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId"
+      ]
+    },
+    {
+      "wire": {
+        "event": "delta",
+        "text": "嗯。",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "text"
+      ]
+    },
+    {
+      "wire": {
+        "event": "message",
+        "messages": [
+          "嗯。",
+          "我在。"
+        ],
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "messages"
+      ]
+    },
+    {
+      "wire": {
+        "event": "message",
+        "messages": [
+          "嗯。刚"
+        ],
+        "incomplete": true,
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "messages"
+      ]
+    },
+    {
+      "wire": {
+        "event": "state",
+        "source": "llm",
+        "mode": "open",
+        "safety": "normal",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "source"
+      ]
+    },
+    {
+      "wire": {
+        "event": "fallback",
+        "fallbackReason": "model_timeout",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "fallbackReason"
+      ]
+    },
+    {
+      "wire": {
+        "event": "cancelled",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId"
+      ]
+    },
+    {
+      "wire": {
+        "event": "error",
+        "text": "本地服务暂时不可用。",
+        "code": "internal_error",
+        "retryable": true,
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "text",
+        "code",
+        "retryable"
+      ]
+    },
+    {
+      "wire": {
+        "event": "done",
+        "sessionId": "session-1",
+        "requestId": "delivery-1"
+      },
+      "requiredFields": [
+        "event",
+        "requestId"
+      ]
+    },
+    {
+      "wire": {
+        "event": "voiceChunk",
+        "data": "AQID",
+        "sessionId": "session-1",
+        "requestId": "delivery-1",
+        "deliveryIndex": 0,
+        "chunkIndex": 0,
+        "sampleRate": 24000
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "deliveryIndex",
+        "chunkIndex",
+        "sampleRate",
+        "data"
+      ]
+    },
+    {
+      "wire": {
+        "event": "voiceChunk",
+        "data": "AQID",
+        "sessionId": "session-1",
+        "requestId": "delivery-1",
+        "deliveryIndex": 0,
+        "chunkIndex": 0,
+        "mimeType": "application/octet-stream"
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "deliveryIndex",
+        "chunkIndex",
+        "mimeType",
+        "data"
+      ]
+    },
+    {
+      "wire": {
+        "event": "voiceError",
+        "sessionId": "session-1",
+        "requestId": "delivery-1",
+        "deliveryIndex": 0
+      },
+      "requiredFields": [
+        "event",
+        "requestId",
+        "deliveryIndex"
+      ]
+    }
+  ],
   "promptModules": {
     "webSearch": {
       "instruction": "涉及当前时间、天气、新闻或可能变化的事实时，按需调用 `web_search`。不得将用户的私密对话、密钥或身份信息写入搜索词。"
     }
   },
+  "credentialPlaceholderMatrix": [
+    {"key":"api_secret","escapedKey":"\\u0061pi_secret","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"api-secret","escapedKey":"\\u0061pi-secret","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"api secret","escapedKey":"\\u0061pi secret","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"apisecret","escapedKey":"\\u0061pisecret","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"secret_key","escapedKey":"\\u0073ecret_key","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"secret-key","escapedKey":"\\u0073ecret-key","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"secret key","escapedKey":"\\u0073ecret key","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"secretkey","escapedKey":"\\u0073ecretkey","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"access_token","escapedKey":"\\u0061ccess_token","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"access-token","escapedKey":"\\u0061ccess-token","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"access token","escapedKey":"\\u0061ccess token","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"accesstoken","escapedKey":"\\u0061ccesstoken","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"refresh_token","escapedKey":"\\u0072efresh_token","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"refresh-token","escapedKey":"\\u0072efresh-token","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"refresh token","escapedKey":"\\u0072efresh token","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"refreshtoken","escapedKey":"\\u0072efreshtoken","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"client_secret","escapedKey":"\\u0063lient_secret","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"client-secret","escapedKey":"\\u0063lient-secret","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"client secret","escapedKey":"\\u0063lient secret","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"clientsecret","escapedKey":"\\u0063lientsecret","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"passwd","escapedKey":"\\u0070asswd","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"pwd","escapedKey":"\\u0070wd","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"secret","escapedKey":"\\u0073ecret","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"令牌","escapedKey":"\\u4ee4牌","secretValue":"audit-only-secret","placeholderAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"set-cookie","escapedKey":"\\u0073et-cookie","secretValue":"sid=audit-only-cookie","placeholderAccepted":{"json":true,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"set cookie","escapedKey":"\\u0073et cookie","secretValue":"sid=audit-only-cookie","placeholderAccepted":{"json":true,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":true,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"password","escapedKey":"\\u0070assword","secretValue":"audit-only-secret","placeholderAccepted":{"json":false,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":false,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"cookie","escapedKey":"\\u0063ookie","secretValue":"sid=audit-only-cookie","placeholderAccepted":{"json":false,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":false,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"token","escapedKey":"\\u0074oken","secretValue":"audit-only-secret","placeholderAccepted":{"json":false,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":false,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}},
+    {"key":"api_key","escapedKey":"\\u0061pi_key","secretValue":"audit-only-secret","placeholderAccepted":{"json":false,"escapedJson":true,"colon":false,"equals":false,"fullWidthColon":false},"emptyAccepted":{"json":false,"escapedJson":true,"colon":true,"equals":true,"fullWidthColon":true}}
+  ],
+  "credentialJsonCases": [
+    {"id":"cookie-space-normal-newline","input":"{\"set-cookie\":\"sid=\\nordinary\",\"count\":42}","redacted":"{\"set-cookie\":\"sid=\\nordinary\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-wrapped-object-1-literal","input":"{\"set-cookie\":\"\\\"{\\\\\\\"note\\\\\\\":\\\\\\\"sid=ordinary\\\\\\\"}\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"{\\\\\\\"note\\\\\\\":\\\\\\\"sid=ordinary\\\\\\\"}\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-wrapped-array-1-literal","input":"{\"set-cookie\":\"\\\"[\\\\\\\"sid=auditR17Secret\\\\\\\"]\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"[\\\\\\\"[已脱敏]\\\\\\\"]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-container-wrapped-object-1-unicode","input":"{\"set-cookie\":\"\\\"{\\\\\\\"note\\\\\\\":\\\\\\\"sid\\\\\\\\u003dordinary\\\\\\\"}\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"{\\\\\\\"note\\\\\\\":\\\\\\\"sid\\\\\\\\u003dordinary\\\\\\\"}\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-wrapped-array-1-unicode","input":"{\"set-cookie\":\"\\\"[\\\\\\\"sid\\\\\\\\u003dauditR17Secret\\\\\\\"]\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"[\\\\\\\"[已脱敏]\\\\\\\"]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-container-wrapped-object-2-literal","input":"{\"set-cookie\":\"\\\"\\\\\\\"{\\\\\\\\\\\\\\\"note\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"sid=ordinary\\\\\\\\\\\\\\\"}\\\\\\\"\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"\\\\\\\"{\\\\\\\\\\\\\\\"note\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"sid=ordinary\\\\\\\\\\\\\\\"}\\\\\\\"\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-wrapped-array-2-literal","input":"{\"set-cookie\":\"\\\"\\\\\\\"[\\\\\\\\\\\\\\\"sid=auditR17Secret\\\\\\\\\\\\\\\"]\\\\\\\"\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"\\\\\\\"[\\\\\\\\\\\\\\\"[已脱敏]\\\\\\\\\\\\\\\"]\\\\\\\"\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-container-wrapped-object-2-unicode","input":"{\"set-cookie\":\"\\\"\\\\\\\"{\\\\\\\\\\\\\\\"note\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"sid\\\\\\\\\\\\\\\\u003dordinary\\\\\\\\\\\\\\\"}\\\\\\\"\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"\\\\\\\"{\\\\\\\\\\\\\\\"note\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"sid\\\\\\\\\\\\\\\\u003dordinary\\\\\\\\\\\\\\\"}\\\\\\\"\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-wrapped-array-2-unicode","input":"{\"set-cookie\":\"\\\"\\\\\\\"[\\\\\\\\\\\\\\\"sid\\\\\\\\\\\\\\\\u003dauditR17Secret\\\\\\\\\\\\\\\"]\\\\\\\"\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"\\\\\\\"[\\\\\\\\\\\\\\\"[已脱敏]\\\\\\\\\\\\\\\"]\\\\\\\"\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-space-tab","input":"{\"set-cookie\":\"sid=\\tauditR17Secret\",\"count\":42}","redacted":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-space-multiple","input":"{\"set-cookie\":\"sid= auditR17Secret; refresh=\\tauditR17Later\",\"count\":42}","redacted":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-space-array","input":"{\"set-cookie\":[\"sid= auditR17Secret\",\"next=\\tauditR17Later\"],\"count\":42}","redacted":"{\"set-cookie\":[\"[已脱敏]\",\"[已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-space-escaped","input":"{\"coo\\u006bie\":\"sid\\u003d auditR17Secret\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-space-normal-blank","input":"{\"set-cookie\":\"sid=   \",\"count\":42}","redacted":"{\"set-cookie\":\"sid=   \",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-space-normal-tab","input":"{\"set-cookie\":\"sid=\\t\",\"count\":42}","redacted":"{\"set-cookie\":\"sid=\\t\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-space-normal-food","input":"{\"set-cookie\":\"巧克力饼干\",\"count\":42}","redacted":"{\"set-cookie\":\"巧克力饼干\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-space-normal-placeholder","input":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","redacted":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-object-escaped","input":"{\"set-cookie\":\"{\\\"note\\\":\\\"sid\\\\u003dordinary\\\"}\",\"count\":42}","redacted":"{\"set-cookie\":\"{\\\"note\\\":\\\"sid\\\\u003dordinary\\\"}\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-object-password","input":"{\"set-cookie\":\"{\\\"password\\\":\\\"auditR17Secret\\\",\\\"note\\\":\\\"sid=ordinary\\\"}\",\"count\":42}","redacted":"{\"set-cookie\":\"{\\\"password\\\":\\\"[已脱敏]\\\",\\\"note\\\":\\\"sid=ordinary\\\"}\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-container-object-token","input":"{\"set-cookie\":\"{\\\"note\\\":\\\"Bearer auditR17SecretLong\\\",\\\"label\\\":\\\"sid=ordinary\\\"}\",\"count\":42}","redacted":"{\"set-cookie\":\"{\\\"note\\\":\\\"[已脱敏]\\\",\\\"label\\\":\\\"sid=ordinary\\\"}\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-container-array-literal","input":"{\"set-cookie\":\"[\\\"sid=auditR17Secret\\\",\\\"next=auditR17Later\\\"]\",\"count\":42}","redacted":"{\"set-cookie\":\"[\\\"[已脱敏]\\\",\\\"[已脱敏]\\\"]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-container-array-layout","input":"{\"set-cookie\":\" \\t[ \\\"sid\\\\u003dauditR17Secret\\\", \\\"next\\\\u003dauditR17Later\\\" ] \\t\",\"count\":42}","redacted":"{\"set-cookie\":\" \\t[ \\\"[已脱敏]\\\", \\\"[已脱敏]\\\" ] \\t\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-container-array-object","input":"{\"set-cookie\":\"[{\\\"note\\\":\\\"sid=ordinary\\\"}]\",\"count\":42}","redacted":"{\"set-cookie\":\"[{\\\"note\\\":\\\"sid=ordinary\\\"}]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-array-object-escaped","input":"{\"set-cookie\":\"[{\\\"note\\\":\\\"sid\\\\u003dordinary\\\"}]\",\"count\":42}","redacted":"{\"set-cookie\":\"[{\\\"note\\\":\\\"sid\\\\u003dordinary\\\"}]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-array-nested-array","input":"{\"set-cookie\":\"[[\\\"sid=ordinary\\\"]]\",\"count\":42}","redacted":"{\"set-cookie\":\"[[\\\"sid=ordinary\\\"]]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-array-nested-array-escaped","input":"{\"set-cookie\":\"[[\\\"sid\\\\u003dordinary\\\"]]\",\"count\":42}","redacted":"{\"set-cookie\":\"[[\\\"sid\\\\u003dordinary\\\"]]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-array-normal","input":"{\"set-cookie\":\"[\\\"巧克力饼干\\\",\\\"\\\",\\\"   \\\",\\\"[已脱敏]\\\",42]\",\"count\":42}","redacted":"{\"set-cookie\":\"[\\\"巧克力饼干\\\",\\\"\\\",\\\"   \\\",\\\"[已脱敏]\\\",42]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-non-cookie","input":"{\"note\":\"[\\\"sid=ordinary\\\"]\",\"count\":42}","redacted":"{\"note\":\"[\\\"sid=ordinary\\\"]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-space-value","input":"{\"set-cookie\":\"sid= auditR17Secret\",\"count\":42}","redacted":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-container-object","input":"{\"set-cookie\":\"{\\\"note\\\":\\\"sid=ordinary\\\"}\",\"count\":42}","redacted":"{\"set-cookie\":\"{\\\"note\\\":\\\"sid=ordinary\\\"}\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-container-array","input":"{\"set-cookie\":\"[\\\"sid\\\\u003dauditR17Secret\\\",\\\"next\\\\u003dauditR17Later\\\"]\",\"count\":42}","redacted":"{\"set-cookie\":\"[\\\"[已脱敏]\\\",\\\"[已脱敏]\\\"]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-owner-escaped","input":"{\"coo\\u006bie\":\"\\\"sid\\\\u003dauditR16Secret\\\"\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"\\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-owner-twice","input":"{\"set-cookie\":\"\\\"\\\\\\\"sid\\\\\\\\u003dauditR16Secret\\\\\\\"\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"\\\\\\\"[已脱敏]\\\\\\\"\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-owner-normal-food","input":"{\"set-cookie\":\"\\\"巧克力饼干\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"巧克力饼干\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-owner-normal-empty","input":"{\"set-cookie\":\"\\\"\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-owner-normal-blank","input":"{\"set-cookie\":\"\\\"   \\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"   \\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-owner-normal-placeholder","input":"{\"set-cookie\":\"\\\"[已脱敏]\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"[已脱敏]\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-owner-normal-serialized-object","input":"{\"set-cookie\":\"{\\\"note\\\":\\\"sid\\\\u003dauditOnlyOrdinary\\\"}\",\"count\":42}","redacted":"{\"set-cookie\":\"{\\\"note\\\":\\\"sid\\\\u003dauditOnlyOrdinary\\\"}\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-owner-normal-object","input":"{\"set-cookie\":{\"note\":\"sid=auditOnlyOrdinary\"},\"count\":42}","redacted":"{\"set-cookie\":{\"note\":\"sid=auditOnlyOrdinary\"},\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-owner-normal-array","input":"{\"set-cookie\":[\"\\\"巧克力饼干\\\"\",\"\\\"\\\"\",\"\\\"   \\\"\",\"\\\"[已脱敏]\\\"\",\"{\\\"note\\\":\\\"sid\\\\u003dauditOnlyOrdinary\\\"}\",{\"note\":\"sid=auditOnlyOrdinary\"},42],\"count\":42}","redacted":"{\"set-cookie\":[\"\\\"巧克力饼干\\\"\",\"\\\"\\\"\",\"\\\"   \\\"\",\"\\\"[已脱敏]\\\"\",\"{\\\"note\\\":\\\"sid\\\\u003dauditOnlyOrdinary\\\"}\",{\"note\":\"sid=auditOnlyOrdinary\"},42],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-owner-mixed-array","input":"{\"set-cookie\":[\"\\\"sid\\\\u003dauditR16Secret\\\"\",\"\\\"巧克力饼干\\\"\",\"\\\"\\\"\",\"\\\"   \\\"\",\"\\\"[已脱敏]\\\"\",\"{\\\"note\\\":\\\"sid\\\\u003dauditOnlyOrdinary\\\"}\",{\"note\":\"sid=auditOnlyOrdinary\"},42],\"count\":42}","redacted":"{\"set-cookie\":[\"\\\"[已脱敏]\\\"\",\"\\\"巧克力饼干\\\"\",\"\\\"\\\"\",\"\\\"   \\\"\",\"\\\"[已脱敏]\\\"\",\"{\\\"note\\\":\\\"sid\\\\u003dauditOnlyOrdinary\\\"}\",{\"note\":\"sid=auditOnlyOrdinary\"},42],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-raw-next-secret-json","input":"{\"note\":\"Cookie: \\\"$=auditR16First\\\"; session.=auditR16Secret\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; session.=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-raw-next-food-json","input":"{\"note\":\"Cookie: \\\"饼干\\\"; $=auditR16Secret\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"饼干\\\"; $=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-raw-next-empty-json","input":"{\"note\":\"Cookie: \\\"\\\"; $=auditR16Secret\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"\\\"; $=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-raw-next-placeholder-json","input":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; session.=auditR16Secret\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; session.=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-raw-next-blank","input":"Cookie: \"   \"; $=auditR16Secret","redacted":"Cookie: \"   \"; $=[已脱敏]","accepted":false},
+    {"id":"cookie-raw-next-many","input":"Cookie: \"ok\"; Secure; .=\"auditR16Secret space\"; $=auditR16Later","redacted":"Cookie: \"ok\"; Secure; .=\"[已脱敏]\"; $=[已脱敏]","accepted":false},
+    {"id":"cookie-raw-next-comma","input":"Cookie: \"\"; $=auditR16Secret, 普通说明","redacted":"Cookie: \"\"; $=[已脱敏], 普通说明","accepted":false},
+    {"id":"cookie-raw-next-newline","input":"Cookie: \"\"; $=auditR16Secret\n普通说明","redacted":"Cookie: \"\"; $=[已脱敏]\n普通说明","accepted":false},
+    {"id":"cookie-raw-next-normal-food","input":"Cookie: \"饼干\", price=12","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-raw-next-normal-empty","input":"Cookie: \"\"\n普通说明","redacted":"Cookie: \"\"\n普通说明","accepted":false},
+    {"id":"cookie-raw-next-normal-placeholder","input":"Cookie: \"[已脱敏]\"; empty=","redacted":"Cookie: \"[已脱敏]\"; empty=","accepted":false},
+    {"id":"cookie-raw-next-secret","input":"Cookie: \"$=auditR16First\"; session.=auditR16Secret","redacted":"Cookie: [已脱敏]; session.=[已脱敏]","accepted":false},
+    {"id":"cookie-raw-next-food","input":"Cookie: \"饼干\"; $=auditR16Secret","redacted":"Cookie: \"饼干\"; $=[已脱敏]","accepted":false},
+    {"id":"cookie-raw-next-empty","input":"Cookie: \"\"; $=auditR16Secret","redacted":"Cookie: \"\"; $=[已脱敏]","accepted":false},
+    {"id":"cookie-raw-next-placeholder","input":"Cookie: \"[已脱敏]\"; session.=auditR16Secret","redacted":"Cookie: \"[已脱敏]\"; session.=[已脱敏]","accepted":false},
+    {"id":"cookie-owner-string","input":"{\"set-cookie\":\"\\\"sid\\\\u003dauditR16Secret\\\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-owner-array","input":"{\"set-cookie\":[\"\\\"sid\\\\u003dauditR16Secret\\\"\"],\"count\":42}","redacted":"{\"set-cookie\":[\"\\\"[已脱敏]\\\"\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-dot-escaped","input":"{\"coo\\u006bie\":\"session.=auditR15Secret\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-dollar-string","input":"{\"set-cookie\":\"$=auditR15Secret\",\"count\":42}","redacted":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-dollar-array","input":"{\"set-cookie\":[\"$=auditR15Secret\"],\"count\":42}","redacted":"{\"set-cookie\":[\"[已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-mixed-string","input":"{\"set-cookie\":\"session.id=auditR15Secret\",\"count\":42}","redacted":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-mixed-escaped","input":"{\"coo\\u006bie\":\"session.id=auditR15Secret\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-mixed-array","input":"{\"set-cookie\":[\"session.id=auditR15Secret\"],\"count\":42}","redacted":"{\"set-cookie\":[\"[已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-all-symbols","input":"{\"set-cookie\":\"!#$%&'*+.^_`|~=auditR15Secret\",\"count\":42}","redacted":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-escaped-tail","input":"{\"set-cookie\":\"session\\u002e=auditR15Secret\",\"count\":42}","redacted":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-mixed-items-array","input":"{\"coo\\u006bie\":[\"session.=auditR15Secret\",\"巧克力饼干\",\"\",\"   \",\"[已脱敏]\",42],\"count\":42}","redacted":"{\"coo\\u006bie\":[\"[已脱敏]\",\"巧克力饼干\",\"\",\"   \",\"[已脱敏]\",42],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-normal-food","input":"{\"set-cookie\":\"巧克力饼干\",\"count\":42}","redacted":"{\"set-cookie\":\"巧克力饼干\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-name-normal-empty","input":"{\"set-cookie\":\"\",\"count\":42}","redacted":"{\"set-cookie\":\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-name-normal-blank","input":"{\"set-cookie\":\"   \",\"count\":42}","redacted":"{\"set-cookie\":\"   \",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-name-normal-placeholder","input":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","redacted":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-name-normal-number","input":"{\"set-cookie\":123456,\"count\":42}","redacted":"{\"set-cookie\":123456,\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-name-normal-array","input":"{\"set-cookie\":[\"巧克力饼干\",\"\",\"   \",\"[已脱敏]\",42],\"count\":42}","redacted":"{\"set-cookie\":[\"巧克力饼干\",\"\",\"   \",\"[已脱敏]\",42],\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-name-normal-escaped-array","input":"{\"coo\\u006bie\":[\"巧克力饼干\",\"\",\"   \",\"[已脱敏]\",42],\"count\":42}","redacted":"{\"coo\\u006bie\":[\"巧克力饼干\",\"\",\"   \",\"[已脱敏]\",42],\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"cookie-name-tail-dot","input":"{\"set-cookie\":\"session.=auditR15Secret\",\"count\":42}","redacted":"{\"set-cookie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-symbol-escaped","input":"{\"coo\\u006bie\":\"$=auditR15Secret\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-name-array-dot","input":"{\"set-cookie\":[\"session.=auditR15Secret\",\"other.=auditR15Later\"],\"count\":42}","redacted":"{\"set-cookie\":[\"[已脱敏]\",\"[已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-normal-first-food-raw","input":"Cookie: \"巧克力饼干\"; session=auditOnlyLater","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-normal-first-food-json","input":"{\"note\":\"Cookie: \\\"巧克力饼干\\\"; session=auditOnlyLater\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"巧克力饼干\\\"; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-normal-first-short-raw","input":"Cookie: \"ok\"; session=auditOnlyLater","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-normal-first-short-json","input":"{\"note\":\"Cookie: \\\"ok\\\"; session=auditOnlyLater\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"ok\\\"; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-first-empty","input":"{\"note\":\"Cookie: \\\"\\\"; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"\\\"; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-first-blank","input":"{\"note\":\"Cookie: \\\"   \\\"; Secure; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"   \\\"; Secure; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-first-empty-control","input":"{\"note\":\"Cookie: \\\"\\\"; Secure; empty=\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"\\\"; Secure; empty=\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-first-blank-control","input":"{\"note\":\"Cookie: \\\"   \\\" , price=12\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"   \\\" , price=12\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-empty-item-raw","input":"Cookie: \"sid=auditR14First\"; ; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-empty-item-json","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; ; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; ; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-blank-value-raw","input":"Cookie: \"sid=auditR14First\"; empty=   ; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-blank-value-json","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; empty=   ; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; empty=   ; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-quoted-blank-raw","input":"Cookie: \"sid=auditR14First\"; empty='   '; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-quoted-blank-json","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; empty='   '; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; empty='   '; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-dot-empty-raw","input":"Cookie: \"sid=auditR14First\"; session.id=; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-dot-empty-json","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; session.id=; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; session.id=; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-dollar-name-raw","input":"Cookie: \"sid=auditR14First\"; $session=auditR14Middle; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-dollar-name-json","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; $session=auditR14Middle; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; $session=[已脱敏]; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-mixed-raw","input":"Cookie: \"sid=auditR14First\"; ; Secure; empty=   ; session.id=auditR14Middle; HttpOnly; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-mixed-json","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; ; Secure; empty=   ; session.id=auditR14Middle; HttpOnly; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; ; Secure; empty=   ; session.id=[已脱敏]; HttpOnly; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-empty-raw","input":"Cookie: \"sid=auditR14First\"; empty=; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-dot-name-raw","input":"Cookie: \"sid=auditR14First\"; session.id=auditR14Middle; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-secure-raw","input":"Cookie: \"sid=auditR14First\"; Secure; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-http-only-raw","input":"Cookie: \"sid=auditR14First\"; HttpOnly; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-quoted-empty-raw","input":"Cookie: \"sid=auditR14First\"; empty=\"\"; session=auditR14Second","redacted":"Cookie: [已脱敏]","accepted":false},
+    {"id":"cookie-step-placeholder-control","input":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; Secure; empty=   ; session=[已脱敏]\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; Secure; empty=   ; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-food-control","input":"{\"note\":\"Cookie: \\\"巧克力饼干\\\"; Secure; empty=; price=12\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"巧克力饼干\\\"; Secure; empty=; price=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-comma-control","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; Secure, session=ordinary\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; Secure, session=ordinary\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-line-control","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; Secure\\nsession=ordinary\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; Secure\\nsession=ordinary\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-ordinary-control","input":"{\"note\":\"说明: \\\"普通文字\\\"; Secure; session=普通\",\"count\":42}","redacted":"{\"note\":\"说明: \\\"普通文字\\\"; Secure; session=普通\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-empty","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; empty=; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; empty=; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-dot-name","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; session.id=auditR14Middle; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; session.id=[已脱敏]; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-secure","input":"{\"note\":\"Set-Cookie: \\\"sid=auditR14First\\\"; Secure; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Set-Cookie: \\\"[已脱敏]\\\"; Secure; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-http-only","input":"{\"note\":\"Set-Cookie: \\\"sid=auditR14First\\\"; HttpOnly; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Set-Cookie: \\\"[已脱敏]\\\"; HttpOnly; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-step-quoted-empty","input":"{\"note\":\"Cookie: \\\"sid=auditR14First\\\"; empty=\\\"\\\"; session=auditR14Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; empty=\\\"\\\"; session=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-context-next-number","input":"{\"note\":\"password: \",\"card\":4111111111111111,\"count\":42}","redacted":"{\"note\":\"password: \",\"card\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-json-ordinary-raw","input":"description: '{\"note\":\"普通文字\"}' ","redacted":"description: '{\"note\":\"普通文字\"}' ","accepted":true},
+    {"id":"quoted-json-ordinary-note","input":"{\"note\":\"description: '{\\\"note\\\":\\\"普通文字\\\"}' \",\"count\":42}","redacted":"{\"note\":\"description: '{\\\"note\\\":\\\"普通文字\\\"}' \",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"lone-quote-ordinary-note","input":"{\"note\":\"说明里用了 \\\" 字符，普通内容: \\\"普通文字\\\"\",\"count\":42}","redacted":"{\"note\":\"说明里用了 \\\" 字符，普通内容: \\\"普通文字\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"lone-quote-placeholder-note","input":"{\"note\":\"说明里用了 \\\" 字符，client_secret: \\\"[已脱敏]\\\"\",\"count\":42}","redacted":"{\"note\":\"说明里用了 \\\" 字符，client_secret: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-cookie-following-double","input":"{\"note\":\"Cookie: \\\"sid=auditR13First\\\"; refresh=auditR13Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; refresh=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-cookie-following-single","input":"{\"note\":\"coo\\u006bie: 'sid=auditR13First'; refresh='auditR13Second'\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '[已脱敏]'; refresh='[已脱敏]'\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-cookie-following-placeholder","input":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; refresh=auditR13Second\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; refresh=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-cookie-following-comma-stop","input":"{\"note\":\"Cookie: \\\"sid=auditR13First\\\"; refresh=auditR13Second, price=12\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; refresh=[已脱敏], price=12\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-cookie-following-line-stop","input":"{\"note\":\"Cookie: \\\"sid=auditR13First\\\"; refresh=auditR13Second\\nprice=12\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"[已脱敏]\\\"; refresh=[已脱敏]\\nprice=12\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-cookie-following-food","input":"{\"note\":\"Cookie: \\\"巧克力饼干\\\"; price=12\",\"count\":42}","redacted":"{\"note\":\"Cookie: \\\"巧克力饼干\\\"; price=[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-json-password-raw","input":"password: '{\"note\":\"audit-only-secret\"}' ","redacted":"password: [已脱敏] ","accepted":false},
+    {"id":"quoted-json-client-raw","input":"client_secret: '{\"note\":\"audit-only-secret\"}' ","redacted":"client_secret: [已脱敏] ","accepted":false},
+    {"id":"quoted-json-password-note","input":"{\"note\":\"password: '{\\\"note\\\":\\\"audit-only-secret\\\"}' \",\"count\":42}","redacted":"{\"note\":\"password: '[已脱敏]' \",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-json-client-note","input":"{\"note\":\"client_secret: '{\\\"note\\\":\\\"audit-only-secret\\\"}' \",\"count\":42}","redacted":"{\"note\":\"client_secret: '[已脱敏]' \",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"lone-quote-password-raw","input":"说明里用了 \" 字符，password: \"auditR13Secret\"","redacted":"说明里用了 \" 字符，password: [已脱敏]","accepted":false},
+    {"id":"lone-quote-password-note","input":"{\"note\":\"说明里用了 \\\" 字符，password: \\\"auditR13Secret\\\"\",\"count\":42}","redacted":"{\"note\":\"说明里用了 \\\" 字符，password: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"invalid-content-client","input":"{\"note\":\"client_secret: audit-only-secret\\q\",\"count\":42}","redacted":"{\"note\":\"client_secret: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"invalid-content-password","input":"{\"note\":\"password: audit-only-secret\\q\",\"count\":42}","redacted":"{\"note\":\"password: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"invalid-content-bearer","input":"{\"note\":\"Bearer auditOnly123456789\\q\",\"count\":42}","redacted":"{\"note\":\"[已脱敏]\\q\",\"count\":42}","accepted":false},
+    {"id":"invalid-content-array-token","input":"{\"notes\":[\"sk-abcdefghijklmnop1234\\q\"],\"count\":42}","redacted":"{\"notes\":[\"[已脱敏]\\q\"],\"count\":42}","accepted":false},
+    {"id":"invalid-content-number","input":"{\"note\":\"4111111111111111\\q\",\"count\":42}","redacted":"{\"note\":\"[已脱敏]\\q\",\"count\":42}","accepted":false},
+    {"id":"invalid-content-cookie","input":"{\"note\":\"cookie: sid=audit-only-one\\q\",\"count\":42}","redacted":"{\"note\":\"cookie: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"invalid-content-cookie-field-password","input":"{\"cookie\":\"password: audit-only-secret\\q\",\"count\":42}","redacted":"{\"cookie\":\"password: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"invalid-content-multiple","input":"{\"note\":\"Bearer auditOnly123456789\\q；普通\\u6587字；client_secret: audit-only-secret\\q\",\"count\":42}","redacted":"{\"note\":\"[已脱敏]\\q；普通\\u6587字；client_secret: [已脱敏]\",\"count\":42}","accepted":false},
+    {"id":"invalid-content-normal","input":"{\"note\":\"普通文字\\q\",\"count\":42}","redacted":"{\"note\":\"普通文字\\q\",\"count\":42}","accepted":true},
+    {"id":"invalid-content-normal-array","input":"{\"notes\":[\"普通文字\\q\",\"饼干\"],\"count\":42}","redacted":"{\"notes\":[\"普通文字\\q\",\"饼干\"],\"count\":42}","accepted":true},
+    {"id":"invalid-content-normal-date","input":"{\"note\":\"2026-09-14\\q\",\"count\":42}","redacted":"{\"note\":\"2026-09-14\\q\",\"count\":42}","accepted":true},
+    {"id":"invalid-content-normal-placeholder","input":"{\"note\":\"[已脱敏]\\q\",\"count\":42}","redacted":"{\"note\":\"[已脱敏]\\q\",\"count\":42}","accepted":true},
+    {"id":"ordinary-key-card-number","input":"{\"银行卡号\":4111111111111111,\"count\":42}","redacted":"{\"银行卡号\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"ordinary-key-id-number","input":"{\"证件号\":110101199001010010,\"count\":42}","redacted":"{\"证件号\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"ordinary-key-generic-number","input":"{\"card\":4111111111111111,\"count\":42}","redacted":"{\"card\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"ordinary-key-short-number","input":"{\"card\":123456,\"count\":42}","redacted":"{\"card\":123456,\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"ordinary-key-number-date","input":"{\"count\":42,\"date\":\"2026-09-14\"}","redacted":"{\"count\":42,\"date\":\"2026-09-14\"}","accepted":true,"expectedJsonCount":42},
+    {"id":"literal-password-empty-baseline","input":"{\"password\":\"\",\"count\":42}","redacted":"{\"password\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"literal-password-blank-baseline","input":"{\"password\":\"   \",\"count\":42}","redacted":"{\"password\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"literal-note-password-empty-preserved","input":"{\"note\":\"password: \\\"\\\"\",\"count\":42}","redacted":"{\"note\":\"password: \\\"\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"literal-note-password-blank-preserved","input":"{\"note\":\"password: \\\"   \\\"\",\"count\":42}","redacted":"{\"note\":\"password: \\\"   \\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"literal-note-password-placeholder-preserved","input":"{\"note\":\"password: \\\"[已脱敏]\\\"\",\"count\":42}","redacted":"{\"note\":\"password: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"literal-note-client-empty-preserved","input":"{\"note\":\"client_secret: \\\"\\\"\",\"count\":42}","redacted":"{\"note\":\"client_secret: \\\"\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"literal-note-client-blank-preserved","input":"{\"note\":\"client_secret: \\\"   \\\"\",\"count\":42}","redacted":"{\"note\":\"client_secret: \\\"   \\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"literal-note-client-placeholder-preserved","input":"{\"note\":\"client_secret: \\\"[已脱敏]\\\"\",\"count\":42}","redacted":"{\"note\":\"client_secret: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"unquoted-cookie-food-baseline","input":"cookie: chocolatechip cookies","redacted":"cookie: [已脱敏] cookies","accepted":false},
+    {"id":"literal-quoted-api-comma","input":"{\"note\":\"api_key: \\\"audit-first, audit-second\\\"\",\"count\":42}","redacted":"{\"note\":\"api_key: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"literal-quoted-multiple-preserves-middle","input":"{\"note\":\"password: \\\"audit-first audit-second\\\"，\\u997c\\u5e72；client_secret: \\\"audit-third audit-fourth\\\"\",\"count\":42}","redacted":"{\"note\":\"password: \\\"[已脱敏]\\\"，\\u997c\\u5e72；client_secret: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"mixed-cookie-array-container-isolation","input":"{\"set-cookie\":[\"sid=audit-first\",{\"note\":\"sid=ordinary\",\"Cookie\":[\"inner=audit-inner\",null]},[\"sid=ordinary\",\"pass\\u0077ord: audit-inner\"],false,\"refresh=audit-last\"],\"count\":42}","redacted":"{\"set-cookie\":[\"[已脱敏]\",{\"note\":\"sid=ordinary\",\"Cookie\":[\"[已脱敏]\",null]},[\"sid=ordinary\",\"pass\\u0077ord: [已脱敏]\"],false,\"[已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"mixed-cookie-array-null","input":"{\"set-cookie\":[\"sid=audit-first\",null,\"refresh=audit-second\"],\"count\":42}","redacted":"{\"set-cookie\":[\"[已脱敏]\",null,\"[已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"mixed-cookie-array-number","input":"{\"coo\\u006bie\":[\"sid=audit-first\",0,\"refresh=audit-second\"],\"count\":42}","redacted":"{\"coo\\u006bie\":[\"[已脱敏]\",0,\"[已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"mixed-cookie-array-invalid","input":"{\"set-cookie\":[\"sid=audit\\q-first\",\"refresh=audit-second\"],\"count\":42}","redacted":"{\"set-cookie\":[\"[已脱敏]\",\"[已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"mixed-cookie-array-ordinary","input":"{\"cookie\":[\"饼干\",null,\"\",true,42,\"[已脱敏]\",\"   \"],\"count\":42}","redacted":"{\"cookie\":[\"饼干\",null,\"\",true,42,\"[已脱敏]\",\"   \"],\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"mixed-cookie-array-invalid-ordinary","input":"{\"coo\\u006bie\":[\"饼干\\q\",null,\"sid=audit-first\",\"[已脱敏]\"],\"count\":42}","redacted":"{\"coo\\u006bie\":[\"饼干\\q\",null,\"[已脱敏]\",\"[已脱敏]\"],\"count\":42}","accepted":false},
+    {"id":"literal-quoted-password-space","input":"{\"note\":\"password: \\\"audit-first audit-second\\\"\",\"count\":42}","redacted":"{\"note\":\"password: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"literal-quoted-client-space","input":"{\"note\":\"client_secret: \\\"audit-first audit-second\\\"\",\"count\":42}","redacted":"{\"note\":\"client_secret: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"literal-quoted-api-space","input":"{\"note\":\"api_key: \\\"audit-first audit-second\\\"\",\"count\":42}","redacted":"{\"note\":\"api_key: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-food-literal-butterscotch","input":"{\"note\":\"cookie: \\\"butterscotch cookies\\\"\",\"count\":42}","redacted":"{\"note\":\"cookie: \\\"butterscotch cookies\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-food-literal-chocolatechip","input":"{\"note\":\"cookie: \\\"chocolatechip cookies\\\"\",\"count\":42}","redacted":"{\"note\":\"cookie: \\\"chocolatechip cookies\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-food-escaped-butterscotch","input":"{\"note\":\"coo\\u006bie: \\\"butterscotch cookies\\\"\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"butterscotch cookies\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-food-escaped-chocolatechip","input":"{\"note\":\"coo\\u006bie: \\\"chocolatechip cookies\\\"\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"chocolatechip cookies\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-cookie-food-with-other-secret","input":"{\"note\":\"coo\\u006bie: \\\"饼干\\\", pass\\u0077ord: \\\"audit-one audit-two\\\"\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"饼干\\\", pass\\u0077ord: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-array-literal","input":"{\"set-cookie\":[\"sid=audit-only-one\",\"refresh=audit-only-two\"],\"count\":42}","redacted":"{\"set-cookie\":[\"[已脱敏]\",\"[已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-array-escaped","input":"{\"set-coo\\u006bie\":[\"sid=audit-only-one\",\"refresh=audit-only-two\"],\"count\":42}","redacted":"{\"set-coo\\u006bie\":[\"[已脱敏]\",\"[已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-array-mixed","input":"{ \"coo\\u006bie\" : [ \"饼干\", \"sid\\u003daudit-only-one\", \"\", \"   \", \"[已脱敏]\" ], \"note\":[\"sid=ordinary\"], \"count\":42 }","redacted":"{ \"coo\\u006bie\" : [ \"饼干\", \"[已脱敏]\", \"\", \"   \", \"[已脱敏]\" ], \"note\":[\"sid=ordinary\"], \"count\":42 }","accepted":false,"expectedJsonCount":42},
+    {"id":"cookie-array-ordinary","input":"{\"set-cookie\":[\"饼干\",\"[已脱敏]\",\"\",\"   \"],\"count\":42}","redacted":"{\"set-cookie\":[\"饼干\",\"[已脱敏]\",\"\",\"   \"],\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"other-array-semantics","input":"{\"password\":[\"ordinary\",\"plain\"],\"note\":[\"sid=ordinary\"],\"count\":42}","redacted":"{\"password\":[\"ordinary\",\"plain\"],\"note\":[\"sid=ordinary\"],\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"other-array-nested-secret","input":"{\"note\":[\"pass\\u0077ord: audit-only-one\"],\"count\":42}","redacted":"{\"note\":[\"pass\\u0077ord: [已脱敏]\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-cookie-double-food-suffix-field","input":"{\"note\":\"coo\\u006bie: \\\"巧克力饼干\\\", price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"巧克力饼干\\\", price=12\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-cookie-double-placeholder-suffix-field","input":"{\"note\":\"coo\\u006bie: \\\"[已脱敏]\\\", price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"[已脱敏]\\\", price=12\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-cookie-double-empty-suffix-field","input":"{\"note\":\"coo\\u006bie: \\\"\\\", price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"\\\", price=12\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-cookie-double-blank-suffix-field","input":"{\"note\":\"coo\\u006bie: \\\"   \\\", price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"   \\\", price=12\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-cookie-double-credential-suffix-field","input":"{\"note\":\"coo\\u006bie: \\\"sid=audit-only-one; refresh=audit-only-two\\\", price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"[已脱敏]\\\", price=12\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-cookie-double-bare-suffix-field","input":"{\"note\":\"coo\\u006bie: \\\"auditOnly123456789\\\", price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"[已脱敏]\\\", price=12\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-cookie-single-food-suffix-field","input":"{\"note\":\"coo\\u006bie: '巧克力饼干', price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '巧克力饼干', price=12\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-cookie-single-placeholder-suffix-field","input":"{\"note\":\"coo\\u006bie: '[已脱敏]', price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '[已脱敏]', price=12\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-cookie-single-empty-suffix-field","input":"{\"note\":\"coo\\u006bie: '', price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '', price=12\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-cookie-single-blank-suffix-field","input":"{\"note\":\"coo\\u006bie: '   ', price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '   ', price=12\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"quoted-cookie-single-credential-suffix-field","input":"{\"note\":\"coo\\u006bie: 'sid=audit-only-one; refresh=audit-only-two', price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '[已脱敏]', price=12\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-cookie-single-bare-suffix-field","input":"{\"note\":\"coo\\u006bie: 'auditOnly123456789', price=12\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '[已脱敏]', price=12\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-cookie-placeholder-note-field","input":"{\"note\":\"coo\\u006bie: \\\"[已脱敏]\\\", note=x\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"[已脱敏]\\\", note=x\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-placeholder-ascii-word","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"word\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"word\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-placeholder-chinese-text","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-placeholder-ascii-colon","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\":普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\":普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-placeholder-chinese-colon","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"：普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"：普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-placeholder-ascii-semicolon","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\";普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\";普通说明\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-placeholder-chinese-semicolon","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"；普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"；普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-placeholder-ascii-parens","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"(普通说明)\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"(普通说明)\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-placeholder-chinese-parens","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"（普通说明）\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"（普通说明）\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-placeholder-ascii-close-paren","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\")普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\")普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-placeholder-chinese-close-paren","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"）普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"）普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-empty-ascii-word","input":"{\"note\":\"pass\\u0077ord: \\\"\\\"word\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\"word\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-empty-chinese-text","input":"{\"note\":\"pass\\u0077ord: \\\"\\\"普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\"普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-empty-ascii-colon","input":"{\"note\":\"pass\\u0077ord: \\\"\\\":普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\":普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-empty-chinese-colon","input":"{\"note\":\"pass\\u0077ord: \\\"\\\"：普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\"：普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-empty-ascii-semicolon","input":"{\"note\":\"pass\\u0077ord: \\\"\\\";普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\";普通说明\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-empty-chinese-semicolon","input":"{\"note\":\"pass\\u0077ord: \\\"\\\"；普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\"；普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-empty-ascii-parens","input":"{\"note\":\"pass\\u0077ord: \\\"\\\"(普通说明)\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\"(普通说明)\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-empty-chinese-parens","input":"{\"note\":\"pass\\u0077ord: \\\"\\\"（普通说明）\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\"（普通说明）\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-empty-ascii-close-paren","input":"{\"note\":\"pass\\u0077ord: \\\"\\\")普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\")普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-empty-chinese-close-paren","input":"{\"note\":\"pass\\u0077ord: \\\"\\\"）普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\"）普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-blank-ascii-word","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\"word\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\"word\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-blank-chinese-text","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\"普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\"普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-blank-ascii-colon","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\":普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\":普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-blank-chinese-colon","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\"：普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\"：普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-blank-ascii-semicolon","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\";普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\";普通说明\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-blank-chinese-semicolon","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\"；普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\"；普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-blank-ascii-parens","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\"(普通说明)\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\"(普通说明)\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-blank-chinese-parens","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\"（普通说明）\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\"（普通说明）\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-blank-ascii-close-paren","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\")普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\")普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-double-blank-chinese-close-paren","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\"）普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\"）普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-placeholder-ascii-word","input":"{\"note\":\"pass\\u0077ord: '[已脱敏]'word\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]'word\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-placeholder-chinese-text","input":"{\"note\":\"pass\\u0077ord: '[已脱敏]'普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]'普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-placeholder-ascii-colon","input":"{\"note\":\"pass\\u0077ord: '[已脱敏]':普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]':普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-placeholder-chinese-colon","input":"{\"note\":\"pass\\u0077ord: '[已脱敏]'：普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]'：普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-placeholder-ascii-semicolon","input":"{\"note\":\"pass\\u0077ord: '[已脱敏]';普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]';普通说明\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-placeholder-chinese-semicolon","input":"{\"note\":\"pass\\u0077ord: '[已脱敏]'；普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]'；普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-placeholder-ascii-parens","input":"{\"note\":\"pass\\u0077ord: '[已脱敏]'(普通说明)\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]'(普通说明)\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-placeholder-chinese-parens","input":"{\"note\":\"pass\\u0077ord: '[已脱敏]'（普通说明）\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]'（普通说明）\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-placeholder-ascii-close-paren","input":"{\"note\":\"pass\\u0077ord: '[已脱敏]')普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]')普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-placeholder-chinese-close-paren","input":"{\"note\":\"pass\\u0077ord: '[已脱敏]'）普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]'）普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-empty-ascii-word","input":"{\"note\":\"pass\\u0077ord: ''word\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: ''word\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-empty-chinese-text","input":"{\"note\":\"pass\\u0077ord: ''普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: ''普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-empty-ascii-colon","input":"{\"note\":\"pass\\u0077ord: '':普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '':普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-empty-chinese-colon","input":"{\"note\":\"pass\\u0077ord: ''：普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: ''：普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-empty-ascii-semicolon","input":"{\"note\":\"pass\\u0077ord: '';普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '';普通说明\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-empty-chinese-semicolon","input":"{\"note\":\"pass\\u0077ord: ''；普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: ''；普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-empty-ascii-parens","input":"{\"note\":\"pass\\u0077ord: ''(普通说明)\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: ''(普通说明)\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-empty-chinese-parens","input":"{\"note\":\"pass\\u0077ord: ''（普通说明）\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: ''（普通说明）\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-empty-ascii-close-paren","input":"{\"note\":\"pass\\u0077ord: '')普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '')普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-empty-chinese-close-paren","input":"{\"note\":\"pass\\u0077ord: ''）普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: ''）普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-blank-ascii-word","input":"{\"note\":\"pass\\u0077ord: '   'word\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '   'word\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-blank-chinese-text","input":"{\"note\":\"pass\\u0077ord: '   '普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '   '普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-blank-ascii-colon","input":"{\"note\":\"pass\\u0077ord: '   ':普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '   ':普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-blank-chinese-colon","input":"{\"note\":\"pass\\u0077ord: '   '：普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '   '：普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-blank-ascii-semicolon","input":"{\"note\":\"pass\\u0077ord: '   ';普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '   ';普通说明\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-blank-chinese-semicolon","input":"{\"note\":\"pass\\u0077ord: '   '；普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '   '；普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-blank-ascii-parens","input":"{\"note\":\"pass\\u0077ord: '   '(普通说明)\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '   '(普通说明)\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-blank-chinese-parens","input":"{\"note\":\"pass\\u0077ord: '   '（普通说明）\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '   '（普通说明）\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-blank-ascii-close-paren","input":"{\"note\":\"pass\\u0077ord: '   ')普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '   ')普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"normal-quoted-single-blank-chinese-close-paren","input":"{\"note\":\"pass\\u0077ord: '   '）普通说明\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '   '）普通说明\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"invalid-cookie-food-invalid-suffix","input":"{\"coo\\u006bie\":\"饼干\\q\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"饼干\\q\",\"count\":42}","accepted":true},
+    {"id":"invalid-cookie-empty-plus-invalid","input":"{\"coo\\u006bie\":\"\\q\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"\\q\",\"count\":42}","accepted":true},
+    {"id":"invalid-cookie-blank-invalid-suffix","input":"{\"coo\\u006bie\":\"   \\q\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"   \\q\",\"count\":42}","accepted":true},
+    {"id":"invalid-cookie-blank-invalid-prefix","input":"{\"coo\\u006bie\":\"\\q   \",\"count\":42}","redacted":"{\"coo\\u006bie\":\"\\q   \",\"count\":42}","accepted":true},
+    {"id":"invalid-cookie-placeholder-invalid-suffix","input":"{\"coo\\u006bie\":\"[已脱敏]\\q\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"[已脱敏]\\q\",\"count\":42}","accepted":true},
+    {"id":"invalid-cookie-placeholder-invalid-prefix","input":"{\"coo\\u006bie\":\"\\q[已脱敏]\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"\\q[已脱敏]\",\"count\":42}","accepted":true},
+    {"id":"invalid-ordinary-food-invalid-suffix","input":"{\"no\\u0074e\":\"饼干\\q\",\"count\":42}","redacted":"{\"no\\u0074e\":\"饼干\\q\",\"count\":42}","accepted":true},
+    {"id":"invalid-ordinary-empty-plus-invalid","input":"{\"no\\u0074e\":\"\\q\",\"count\":42}","redacted":"{\"no\\u0074e\":\"\\q\",\"count\":42}","accepted":true},
+    {"id":"invalid-ordinary-blank-invalid-suffix","input":"{\"no\\u0074e\":\"   \\q\",\"count\":42}","redacted":"{\"no\\u0074e\":\"   \\q\",\"count\":42}","accepted":true},
+    {"id":"invalid-ordinary-blank-invalid-prefix","input":"{\"no\\u0074e\":\"\\q   \",\"count\":42}","redacted":"{\"no\\u0074e\":\"\\q   \",\"count\":42}","accepted":true},
+    {"id":"invalid-ordinary-placeholder-invalid-suffix","input":"{\"no\\u0074e\":\"[已脱敏]\\q\",\"count\":42}","redacted":"{\"no\\u0074e\":\"[已脱敏]\\q\",\"count\":42}","accepted":true},
+    {"id":"invalid-ordinary-placeholder-invalid-prefix","input":"{\"no\\u0074e\":\"\\q[已脱敏]\",\"count\":42}","redacted":"{\"no\\u0074e\":\"\\q[已脱敏]\",\"count\":42}","accepted":true},
+    {"id":"quoted-placeholder-suffix-with-other-secret","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"普通说明 api\\u005fkey: \\\"audit-one audit-two\\\"解释\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"普通说明 api\\u005fkey: \\\"[已脱敏]\\\"解释\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-password-chinese-suffix","input":"{\"note\":\"pass\\u0077ord: \\\"audit-only-one audit-only-two\\\"普通文本\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"普通文本\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-password-colon-suffix","input":"{\"note\":\"pass\\u0077ord: \\\"audit-one audit-two\\\"：这是测试\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"：这是测试\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-password-ascii-suffix","input":"{\"note\":\"pass\\u0077ord: \\\"audit-one audit-two\\\"ordinary\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"ordinary\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"quoted-password-single-suffix","input":"{\"note\":\"pass\\u0077ord: 'audit-one audit-two'普通文本\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: '[已脱敏]'普通文本\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"invalid-escaped-client-secret","input":"{\"client\\u005fsecret\":\"audit\\q-secret\",\"count\":42}","redacted":"{\"client\\u005fsecret\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"invalid-escaped-cookie-credential","input":"{\"coo\\u006bie\":\"sid=audit\\q-cookie\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"complete-root-password","input":"\"pass\\u0077ord: audit-only-root\"","redacted":"\"pass\\u0077ord: [已脱敏]\"","accepted":false,"rootString":true},
+    {"id":"complete-root-bearer","input":"\"B\\u0065arer auditOnly123456789\"","redacted":"\"[已脱敏]\"","accepted":false,"rootString":true},
+    {"id":"complete-root-cookie","input":"\"coo\\u006bie: sid\\u003daudit-only-root\"","redacted":"\"coo\\u006bie: [已脱敏]\"","accepted":false,"rootString":true},
+    {"id":"complete-root-object","input":"\"{\\\"client_secret\\\":\\\"audit-only-root\\\",\\\"count\\\":42}\"","redacted":"\"{\\\"client_secret\\\":\\\"[已脱敏]\\\",\\\"count\\\":42}\"","accepted":false,"rootString":true},
+    {"id":"complete-root-ordinary","input":"\"普通文本 \\u997c\\u5e72\"","redacted":"\"普通文本 \\u997c\\u5e72\"","accepted":true,"rootString":true},
+    {"id":"complete-root-empty","input":"\"\"","redacted":"\"\"","accepted":true,"rootString":true},
+    {"id":"complete-root-blank","input":"\"   \"","redacted":"\"   \"","accepted":true,"rootString":true},
+    {"id":"complete-root-placeholder","input":"\"pass\\u0077ord: [已脱敏]\"","redacted":"\"pass\\u0077ord: [已脱敏]\"","accepted":true,"rootString":true},
+    {"id":"complete-object-secret","input":"{\"note\":\"\\\"pass\\\\u0077ord: audit-only-root\\\"\",\"count\":42}","redacted":"{\"note\":\"\\\"pass\\\\u0077ord: [已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"complete-object-ordinary","input":"{\"note\":\"\\\"普通文本 \\\\u997c\\\\u5e72\\\"\",\"count\":42}","redacted":"{\"note\":\"\\\"普通文本 \\\\u997c\\\\u5e72\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"complete-array-secret","input":"{\"notes\":[\"\\\"pass\\\\u0077ord: audit-only-root\\\"\"],\"count\":42}","redacted":"{\"notes\":[\"\\\"pass\\\\u0077ord: [已脱敏]\\\"\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"complete-array-ordinary","input":"{\"notes\":[\"\\\"普通文本 \\\\u997c\\\\u5e72\\\"\"],\"count\":42}","redacted":"{\"notes\":[\"\\\"普通文本 \\\\u997c\\\\u5e72\\\"\"],\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"complete-key-secret","input":"{\"\\\"pass\\\\u0077ord: audit-only-root\\\"\":\"普通文本\",\"count\":42}","redacted":"{\"\\\"pass\\\\u0077ord: [已脱敏]\\\"\":\"普通文本\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"complete-key-ordinary","input":"{\"\\\"普通文本 \\\\u997c\\\\u5e72\\\"\":\"普通文本\",\"count\":42}","redacted":"{\"\\\"普通文本 \\\\u997c\\\\u5e72\\\"\":\"普通文本\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"complete-nested-root","input":"\"\\\"{\\\\\\\"client_secret\\\\\\\":\\\\\\\"audit-only-root\\\\\\\",\\\\\\\"count\\\\\\\":42}\\\"\"","redacted":"\"\\\"{\\\\\\\"client_secret\\\\\\\":\\\\\\\"[已脱敏]\\\\\\\",\\\\\\\"count\\\\\\\":42}\\\"\"","accepted":false,"rootString":true},
+    {"id":"complete-nested-placeholder","input":"\"\\\"{\\\\\\\"client_secret\\\\\\\":\\\\\\\"[已脱敏]\\\\\\\",\\\\\\\"count\\\\\\\":42}\\\"\"","redacted":"\"\\\"{\\\\\\\"client_secret\\\\\\\":\\\\\\\"[已脱敏]\\\\\\\",\\\\\\\"count\\\\\\\":42}\\\"\"","accepted":true,"rootString":true},
+    {"id":"bare-cookie-double-secret","input":"{\"note\":\"coo\\u006bie: \\\"auditOnly123456789\\\"\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"bare-cookie-double-empty","input":"{\"note\":\"coo\\u006bie: \\\"\\\"\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"bare-cookie-double-blank","input":"{\"note\":\"coo\\u006bie: \\\"   \\\"\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"   \\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"bare-cookie-double-placeholder","input":"{\"note\":\"coo\\u006bie: \\\"[已脱敏]\\\"\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"bare-cookie-double-food","input":"{\"note\":\"coo\\u006bie: \\\"饼干\\\"\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \\\"饼干\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"bare-cookie-single-secret","input":"{\"note\":\"coo\\u006bie: 'auditOnly123456789'\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '[已脱敏]'\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"bare-cookie-single-empty","input":"{\"note\":\"coo\\u006bie: ''\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: ''\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"bare-cookie-single-blank","input":"{\"note\":\"coo\\u006bie: '   '\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '   '\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"bare-cookie-single-placeholder","input":"{\"note\":\"coo\\u006bie: '[已脱敏]'\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '[已脱敏]'\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"bare-cookie-single-food","input":"{\"note\":\"coo\\u006bie: '饼干'\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: '饼干'\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"complete-root-two-quoted-cookies","input":"\"coo\\u006bie: \\\"auditOnly123456789\\\", coo\\u006bie: 'auditOnly987654321'\"","redacted":"\"coo\\u006bie: \\\"[已脱敏]\\\", coo\\u006bie: '[已脱敏]'\"","accepted":false,"rootString":true},
+    {"id":"key-bearer-boolean-value","input":"{\"B\\u0065arer auditOnly123456789\":true,\"count\":42}","redacted":"{\"[已脱敏]\":true,\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"key-bearer-null-value","input":"{\"B\\u0065arer auditOnly123456789\":null,\"count\":42}","redacted":"{\"[已脱敏]\":null,\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"key-bearer-object-value","input":"{\"B\\u0065arer auditOnly123456789\":{\"ordinary\":\"普通文本\"},\"count\":42}","redacted":"{\"[已脱敏]\":{\"ordinary\":\"普通文本\"},\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"key-bearer-array-value","input":"{\"B\\u0065arer auditOnly123456789\":[\"普通文本\"],\"count\":42}","redacted":"{\"[已脱敏]\":[\"普通文本\"],\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"key-ordinary-object-value","input":"{\"B\\u0065arer 是认证方案\":{\"ordinary\":\"普通文本\"},\"count\":42}","redacted":"{\"B\\u0065arer 是认证方案\":{\"ordinary\":\"普通文本\"},\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"key-and-value-secrets","input":"{\"B\\u0065arer auditOnly123456789\":\"pass\\u0077ord: \\\"audit-only-first audit-only-second\\\"\",\"count\":42}","redacted":"{\"[已脱敏]\":\"pass\\u0077ord: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"text-two-quoted-secrets","input":"{\"note\":\"pass\\u0077ord: \\\"audit-only-first audit-only-second\\\", api\\u005fkey: 'audit-only-third, audit\\\\'only-fourth'\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\", api\\u005fkey: '[已脱敏]'\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"key-escaped-bearer","input":"{\"B\\u0065arer auditOnly123456789\":\"普通文本\",\"count\":42}","redacted":"{\"[已脱敏]\":\"普通文本\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"key-ordinary-bearer","input":"{\"B\\u0065arer 是认证方案\":\"普通文本\",\"count\":42}","redacted":"{\"B\\u0065arer 是认证方案\":\"普通文本\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"key-nested-secret","input":"{\"{\\\"client_secret\\\":\\\"audit-only-key\\\"}\":\"普通文本\",\"count\":42}","redacted":"{\"{\\\"client_secret\\\":\\\"[已脱敏]\\\"}\":\"普通文本\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"key-nested-empty","input":"{\"{\\\"client_secret\\\":\\\"\\\"}\":\"普通文本\",\"count\":42}","redacted":"{\"{\\\"client_secret\\\":\\\"\\\"}\":\"普通文本\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"key-nested-placeholder","input":"{\"{\\\"client_secret\\\":\\\"[已脱敏]\\\"}\":\"普通文本\",\"count\":42}","redacted":"{\"{\\\"client_secret\\\":\\\"[已脱敏]\\\"}\":\"普通文本\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"text-cookie-bare","input":"{\"note\":\"coo\\u006bie: auditOnly123456789\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"text-cookie-food","input":"{\"note\":\"coo\\u006bie: 饼干\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: 饼干\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"text-cookie-empty","input":"{\"note\":\"coo\\u006bie: \",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"text-cookie-placeholder","input":"{\"note\":\"coo\\u006bie: [已脱敏]\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: [已脱敏]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"json-cookie-long-food","input":"{\"coo\\u006bie\":\"chocolatechip\",\"count\":42}","redacted":"{\"coo\\u006bie\":\"chocolatechip\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"text-quoted-password-space","input":"{\"note\":\"pass\\u0077ord: \\\"audit-only-first audit-only-second\\\"\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"text-quoted-password-comma","input":"{\"note\":\"pass\\u0077ord: \\\"audit-only-first, audit-only-second\\\"\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"text-quoted-password-quote","input":"{\"note\":\"pass\\u0077ord: \\\"audit-only-\\\\\\\"first\\\\\\\" second\\\"\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"text-quoted-password-empty","input":"{\"note\":\"pass\\u0077ord: \\\"\\\"\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"text-quoted-password-blank","input":"{\"note\":\"pass\\u0077ord: \\\"   \\\"\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"   \\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"text-quoted-password-placeholder","input":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \\\"[已脱敏]\\\"\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"text-cookie-bare-literal","input":"{\"note\":\"cookie: auditOnly123456789\",\"count\":42}","redacted":"{\"note\":\"cookie: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-bearer-token","input":"{\"note\":\"B\\u0065arer auditOnly123456789\",\"count\":42}","redacted":"{\"note\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-sk-token","input":"{\"note\":\"sk\\u002dabcdefghijklmnop1234\",\"count\":42}","redacted":"{\"note\":\"[已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-two-credentials","input":"{\"note\":\"pass\\u0077ord: audit-only-first, api\\u005fkey: audit-only-second\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: [已脱敏], api\\u005fkey: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-password-literal-empty","input":"{\"note\":\"password: \",\"count\":42}","redacted":"{\"note\":\"password: \",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-password-escaped-empty","input":"{\"note\":\"pass\\u0077ord: \",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: \",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"decoded-password-literal-blank","input":"{\"note\":\"password:    \",\"count\":42}","redacted":"{\"note\":\"password:    \",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-password-escaped-blank","input":"{\"note\":\"pass\\u0077ord:    \",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord:    \",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"decoded-password-literal-placeholder","input":"{\"note\":\"password: [已脱敏]\",\"count\":42}","redacted":"{\"note\":\"password: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-password-escaped-placeholder","input":"{\"note\":\"pass\\u0077ord: [已脱敏]\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: [已脱敏]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"decoded-password-literal-secret","input":"{\"note\":\"password: audit-only-secret\",\"count\":42}","redacted":"{\"note\":\"password: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-password-escaped-secret","input":"{\"note\":\"pass\\u0077ord: audit-only-secret\",\"count\":42}","redacted":"{\"note\":\"pass\\u0077ord: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-api_key-literal-empty","input":"{\"note\":\"api_key: \",\"count\":42}","redacted":"{\"note\":\"api_key: \",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-api_key-escaped-empty","input":"{\"note\":\"api\\u005fkey: \",\"count\":42}","redacted":"{\"note\":\"api\\u005fkey: \",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"decoded-api_key-literal-blank","input":"{\"note\":\"api_key:    \",\"count\":42}","redacted":"{\"note\":\"api_key:    \",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-api_key-escaped-blank","input":"{\"note\":\"api\\u005fkey:    \",\"count\":42}","redacted":"{\"note\":\"api\\u005fkey:    \",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"decoded-api_key-literal-placeholder","input":"{\"note\":\"api_key: [已脱敏]\",\"count\":42}","redacted":"{\"note\":\"api_key: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-api_key-escaped-placeholder","input":"{\"note\":\"api\\u005fkey: [已脱敏]\",\"count\":42}","redacted":"{\"note\":\"api\\u005fkey: [已脱敏]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"decoded-api_key-literal-secret","input":"{\"note\":\"api_key: audit-only-secret\",\"count\":42}","redacted":"{\"note\":\"api_key: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-api_key-escaped-secret","input":"{\"note\":\"api\\u005fkey: audit-only-secret\",\"count\":42}","redacted":"{\"note\":\"api\\u005fkey: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-cookie-literal-empty","input":"{\"note\":\"cookie: \",\"count\":42}","redacted":"{\"note\":\"cookie: \",\"count\":42}","accepted":false},
+    {"id":"decoded-cookie-escaped-empty","input":"{\"note\":\"coo\\u006bie: \",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: \",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"decoded-cookie-literal-blank","input":"{\"note\":\"cookie:    \",\"count\":42}","redacted":"{\"note\":\"cookie:    \",\"count\":42}","accepted":false},
+    {"id":"decoded-cookie-escaped-blank","input":"{\"note\":\"coo\\u006bie:    \",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie:    \",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"decoded-cookie-literal-placeholder","input":"{\"note\":\"cookie: [已脱敏]\",\"count\":42}","redacted":"{\"note\":\"cookie: [已脱敏]\",\"count\":42}","accepted":false},
+    {"id":"decoded-cookie-escaped-placeholder","input":"{\"note\":\"coo\\u006bie: [已脱敏]\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: [已脱敏]\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"decoded-cookie-literal-secret","input":"{\"note\":\"cookie: sid=audit-only-one\",\"count\":42}","redacted":"{\"note\":\"cookie: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-cookie-escaped-secret","input":"{\"note\":\"coo\\u006bie: sid=audit-only-one\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"decoded-cookie-literal-food","input":"{\"note\":\"cookie: 饼干\",\"count\":42}","redacted":"{\"note\":\"cookie: 饼干\",\"count\":42}","accepted":false},
+    {"id":"decoded-cookie-escaped-food","input":"{\"note\":\"coo\\u006bie: 饼干\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: 饼干\",\"count\":42}","accepted":true,"expectedJsonCount":42},
+    {"id":"decoded-cookie-multiple","input":"{\"note\":\"coo\\u006bie: sid=audit-only-one; refresh=audit-only-two\",\"count\":42}","redacted":"{\"note\":\"coo\\u006bie: [已脱敏]\",\"count\":42}","accepted":false,"expectedJsonCount":42},
+    {"id":"array-nested-empty","input":"{\"notes\":[\"{\\\"client_secret\\\":\\\"\\\"}\"],\"count\":42}","redacted":"{\"notes\":[\"{\\\"client_secret\\\":\\\"\\\"}\"],\"count\":42}","accepted":true},
+    {"id":"array-nested-blank","input":"{\"notes\":[\"{\\\"client_secret\\\":\\\"   \\\"}\"],\"count\":42}","redacted":"{\"notes\":[\"{\\\"client_secret\\\":\\\"   \\\"}\"],\"count\":42}","accepted":true},
+    {"id":"array-nested-placeholder","input":"{\"notes\":[\"{\\\"client_secret\\\":\\\"[已脱敏]\\\"}\"],\"count\":42}","redacted":"{\"notes\":[\"{\\\"client_secret\\\":\\\"[已脱敏]\\\"}\"],\"count\":42}","accepted":true},
+    {"id":"array-nested-secret","input":"{\"notes\":[\"{\\\"client_secret\\\":\\\"audit-only-nested\\\"}\"],\"count\":42}","redacted":"{\"notes\":[\"{\\\"client_secret\\\":\\\"[已脱敏]\\\"}\"],\"count\":42}","accepted":false},
+    {"id":"escaped-quote-key-with-secret","input":"{\"label\\\"client_secret\":\"ordinary\",\"client_secret\":\"audit-only-value\",\"count\":42}","redacted":"{\"label\\\"client_secret\":\"ordinary\",\"client_secret\":\"[已脱敏]\",\"count\":42}","accepted":false},
+    {"id":"client-empty","input":"{\"client_secret\":\"\",\"count\":42}","redacted":"{\"client_secret\":\"\",\"count\":42}","accepted":true},
+    {"id":"client-blank","input":"{\"client_secret\":\"   \",\"count\":42}","redacted":"{\"client_secret\":\"   \",\"count\":42}","accepted":true},
+    {"id":"client-placeholder","input":"{\"client_secret\":\"[已脱敏]\",\"count\":42}","redacted":"{\"client_secret\":\"[已脱敏]\",\"count\":42}","accepted":true},
+    {"id":"client-secret","input":"{\"client_secret\":\"audit-only-value\",\"count\":42}","redacted":"{\"client_secret\":\"[已脱敏]\",\"count\":42}","accepted":false},
+    {"id":"escaped-password-empty","input":"{\"pass\\u0077ord\":\"\",\"count\":42}","redacted":"{\"pass\\u0077ord\":\"\",\"count\":42}","accepted":true},
+    {"id":"escaped-password-blank","input":"{\"pass\\u0077ord\":\"   \",\"count\":42}","redacted":"{\"pass\\u0077ord\":\"   \",\"count\":42}","accepted":true},
+    {"id":"escaped-password-placeholder","input":"{\"pass\\u0077ord\":\"[已脱敏]\",\"count\":42}","redacted":"{\"pass\\u0077ord\":\"[已脱敏]\",\"count\":42}","accepted":true},
+    {"id":"escaped-password-secret","input":"{\"pass\\u0077ord\":\"audit-only-value\",\"count\":42}","redacted":"{\"pass\\u0077ord\":\"[已脱敏]\",\"count\":42}","accepted":false},
+    {"id":"nested-empty","input":"{\"note\":\"{\\\"client_secret\\\":\\\"\\\"}\",\"count\":42}","redacted":"{\"note\":\"{\\\"client_secret\\\":\\\"\\\"}\",\"count\":42}","accepted":true},
+    {"id":"nested-blank","input":"{\"note\":\"{\\\"client_secret\\\":\\\"   \\\"}\",\"count\":42}","redacted":"{\"note\":\"{\\\"client_secret\\\":\\\"   \\\"}\",\"count\":42}","accepted":true},
+    {"id":"nested-placeholder","input":"{\"note\":\"{\\\"client_secret\\\":\\\"[已脱敏]\\\"}\",\"count\":42}","redacted":"{\"note\":\"{\\\"client_secret\\\":\\\"[已脱敏]\\\"}\",\"count\":42}","accepted":true},
+    {"id":"nested-secret","input":"{\"note\":\"{\\\"client_secret\\\":\\\"audit-only-nested\\\"}\",\"count\":42}","redacted":"{\"note\":\"{\\\"client_secret\\\":\\\"[已脱敏]\\\"}\",\"count\":42}","accepted":false},
+    {"id":"escaped-quote-key","input":"{\"label\\\"client_secret\":\"ordinary\",\"count\":42}","redacted":"{\"label\\\"client_secret\":\"ordinary\",\"count\":42}","accepted":true}
+  ],
+  "memorySignalCases": [
+    {"id":"array-quoted-empty","summary":"{\"notes\":[\"client_secret: \\\"\\\"\"]}","accepted":true},
+    {"id":"array-quoted-blank","summary":"{\"notes\":[\"client_secret: \\\"   \\\"\"]}","accepted":true},
+    {"id":"array-quoted-placeholder","summary":"{\"notes\":[\"client_secret: \\\"[已脱敏]\\\"\"],\"count\":42}","accepted":true},
+    {"id":"array-quoted-secret","summary":"{\"notes\":[\"client_secret: \\\"audit-only-array\\\"\"],\"count\":42}","accepted":false},
+    {"id":"array-placeholder-then-secret","summary":"{\"notes\":[\"client_secret: \\\"[已脱敏]\\\"\",\"pwd: audit-only-array\"],\"count\":42}","accepted":false},
+    { "id": "ordinary-json-after-lone-quote", "summary": "说明里用了 \" 字符，配置：{\"count\":42,\"snack\":\"饼干\"}", "accepted": true },
+    { "id": "json-note-escaped-placeholder-quotes", "summary": "{\"note\":\"client_secret: \\\"[已脱敏]\\\"\"}", "accepted": true },
+    { "id": "json-note-placeholder-newline", "summary": "{\"note\":\"client_secret: [已脱敏]\\n今晚早点睡\"}", "accepted": true },
+    { "id": "json-note-escaped-real-secret", "summary": "{\"note\":\"client_secret: \\\"audit-only-secret\\\"\"}", "accepted": false },
+    { "id": "json-note-newline-then-real-secret", "summary": "{\"note\":\"client_secret: [已脱敏]\\npwd: audit-only-secret\"}", "accepted": false },
+    { "id": "json-client-secret-empty", "summary": "{\"client_secret\":\"\"}", "accepted": true },
+    { "id": "json-escaped-password-empty", "summary": "{\"pass\\u0077ord\":\"\"}", "accepted": true },
+    { "id": "json-literal-password-empty-keeps-rejection", "summary": "{\"password\":\"\"}", "accepted": false },
+    { "id": "json-numeric-password-after-lone-quote", "summary": "说明里用了 \" 字符，配置：{\"password\":987654321,\"count\":42}", "accepted": false },
+    {"id":"text-boundary-json-note","summary":"{\"note\":\"client_secret: [已脱敏]\"}","accepted":true},
+    {"id":"text-boundary-sentence-period","summary":"client_secret: [已脱敏]。","accepted":true},
+    {"id":"text-boundary-closing-parenthesis","summary":"client_secret: [已脱敏]）","accepted":true},
+    {"id":"text-boundary-ascii-parenthesis","summary":"client_secret: [已脱敏])","accepted":true},
+    {"id":"text-boundary-sentence-with-followup","summary":"client_secret: [已脱敏]。今晚早点睡","accepted":true},
+    {"id":"text-boundary-quoted-placeholder","summary":"client_secret: \"[已脱敏]\"","accepted":true},
+    {"id":"text-boundary-old-token-suffix","summary":"{\"note\":\"access_token: [已脱敏]\"}","accepted":false},
+    {"id":"text-boundary-old-cookie-suffix","summary":"set-cookie: [已脱敏]）","accepted":false},
+    {"id":"text-boundary-placeholder-suffix","summary":"client_secret: [已脱敏]suffix","accepted":false},
+    {"id":"text-boundary-quoted-placeholder-suffix","summary":"client_secret: \"[已脱敏]\"suffix","accepted":true},
+    {"id":"text-boundary-quoted-secret-suffix","summary":"client_secret: \"audit-one audit-two\"suffix","accepted":false},
+    {"id":"text-boundary-secret-after-period","summary":"client_secret: [已脱敏]。pwd:audit-only-other","accepted":false},
+    {"id":"text-boundary-json-note-mixed","summary":"{\"note\":\"client_secret: [已脱敏]。pwd:audit-only-other\"}","accepted":false},
+    { "id": "text-new-client-placeholder", "summary": "client_secret: [已脱敏]", "accepted": true },
+    { "id": "json-new-remaining-placeholders", "summary": "{\"refresh_token\":\"[已脱敏]\",\"secret\":\"[已脱敏]\",\"令牌\":\"[已脱敏]\"}", "accepted": true },
+    { "id": "json-new-set-cookie-food", "summary": "{\"set-cookie\":\"饼干\"}", "accepted": true },
+    { "id": "json-new-set-cookie-bare-secret", "summary": "{\"set-cookie\":\"sk-abcdefghijklmnopqrst\"}", "accepted": false },
+    { "id": "json-new-placeholder-with-real-secret", "summary": "{\"client_secret\":\"[已脱敏]\",\"client_secret\":\"audit-only-secret\"}", "accepted": false },
+    { "id": "json-new-client-placeholder", "summary": "{\"client_secret\":\"[已脱敏]\"}", "accepted": true },
+    { "id": "json-new-api-placeholder", "summary": "{\"api_secret\":\"[已脱敏]\"}", "accepted": true },
+    { "id": "json-new-access-placeholder", "summary": "{\"access_token\":\"[已脱敏]\"}", "accepted": true },
+    { "id": "json-new-alias-placeholders", "summary": "{\"secret_key\":\"[已脱敏]\",\"passwd\":\"[已脱敏]\",\"pwd\":\"[已脱敏]\"}", "accepted": true },
+    { "id": "literal-json-cookie-food-keeps-rejection", "summary": "{\"cookie\":\"饼干\",\"count\":42}", "accepted": false },
+    { "id": "literal-json-cookie-placeholder-keeps-rejection", "summary": "{\"cookie\":\"[已脱敏]\"}", "accepted": false },
+    { "id": "literal-json-password-placeholder-keeps-rejection", "summary": "{\"password\":\"[已脱敏]\"}", "accepted": false },
+    { "id": "escaped-json-client-placeholder", "summary": "{\"client\\u005fsecret\":\"[已脱敏]\"}", "accepted": true },
+    { "id": "escaped-json-cookie-placeholder", "summary": "{\"coo\\u006bie\":\"[已脱敏]\"}", "accepted": true },
+    { "id": "escaped-json-cookie-food", "summary": "{\"coo\\u006bie\":\"饼干\",\"count\":42}", "accepted": true },
+    { "id": "escaped-json-client-secret", "summary": "{\"client\\u005fsecret\":\"audit-only-client\"}", "accepted": false },
+    { "id": "escaped-json-numeric-password", "summary": "{\"pass\\u0077ord\":987654321}", "accepted": false },
+    { "id": "escaped-json-cookie", "summary": "{\"coo\\u006bie\":\"sid\\u003daudit-only-cookie\"}", "accepted": false },
+    { "id": "ordinary-escaped-json", "summary": "{\"co\\u0075nt\":42,\"snack\":\"\\u997c\\u5e72\"}", "accepted": true },
+    { "id": "json-client-secret", "summary": "{\"client_secret\":\"audit-only-client\"}", "accepted": false },
+    { "id": "json-numeric-password", "summary": "{\"password\":987654321}", "accepted": false },
+    { "id": "json-numeric-access-token", "summary": "{\"access_token\":123456}", "accepted": false },
+    { "id": "json-cookie", "summary": "{\"cookie\":\"sid=audit-only-cookie; refresh=audit-only-refresh\"}", "accepted": false },
+    { "id": "ordinary-json", "summary": "{\"count\":987654321,\"date\":\"2026-09-13\"}", "accepted": true },
+    { "id": "ordinary-client-id", "summary": "{\"client_id\":\"public\",\"password_length\":12}", "accepted": true }
+  ],
+  "streamingDeliveryCases": [
+    {
+      "id": "incremental-delta-arrives-before-termination",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "刚忙完。" },
+        { "kind": "done" }
+      ],
+      "expected": {
+        "firstDeltaBeforeDone": true,
+        "messages": ["在。刚忙完。"],
+        "incomplete": false,
+        "fallbackEvents": 0,
+        "deltaTextNeverContains": ["qiyu-actions", "think"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚忙完。",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "early-eof-keeps-the-shown-half-sentence",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。刚" }
+      ],
+      "expected": {
+        "messages": ["在。刚"],
+        "incomplete": true,
+        "fallbackEvents": 0,
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚",
+        "diagnosticsContain": ["model stream incomplete"]
+      }
+    },
+    {
+      "id": "native-error-keeps-the-shown-half-sentence",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。刚" },
+        { "kind": "failure", "failureKind": "provider" }
+      ],
+      "expected": {
+        "messages": ["在。刚"],
+        "incomplete": true,
+        "fallbackEvents": 0,
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚",
+        "diagnosticsContain": ["model stream incomplete"]
+      }
+    },
+    {
+      "id": "timeout-before-any-visible-text-falls-back-locally",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "failure", "failureKind": "timeout" }
+      ],
+      "expected": {
+        "messages": ["嗯？"],
+        "incomplete": false,
+        "fallbackReason": "model_timeout",
+        "fallbackEvents": 1,
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "嗯？"
+      }
+    },
+    {
+      "id": "cancel-withdraws-the-in-flight-reply",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。刚" },
+        { "kind": "cancel" }
+      ],
+      "expected": {
+        "cancelled": true,
+        "persistedQiyuTurns": 0,
+        "persistedUserTurns": 1,
+        "fallbackEvents": 0
+      }
+    },
+    {
+      "id": "hidden-action-block-never-surfaces",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。\n<qiyu-actions>[{\"action\":\"memory_signal\",\"summary\":\"用户刚下班\"}]</qiyu-actions>" },
+        { "kind": "done" }
+      ],
+      "expected": {
+        "firstDeltaBeforeDone": true,
+        "messages": ["在。"],
+        "incomplete": false,
+        "fallbackEvents": 0,
+        "deltaTextNeverContains": ["qiyu-actions", "memory_signal"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。"
+      }
+    },
+    {
+      "id": "control-structure-after-visible-text-keeps-half-sentence",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。刚" },
+        { "kind": "delta", "text": "<tool_call>{}" },
+        { "kind": "done" }
+      ],
+      "expected": {
+        "messages": ["在。刚"],
+        "incomplete": true,
+        "fallbackEvents": 0,
+        "deltaTextNeverContains": ["tool_call"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚",
+        "diagnosticsContain": ["model stream incomplete"]
+      }
+    },
+    {
+      "id": "same-line-json-control-structure-withdraws-the-line",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。刚" },
+        { "kind": "delta", "text": "{\"type\":\"tool_call\":\"x\"}" },
+        { "kind": "done" }
+      ],
+      "expected": {
+        "messages": ["嗯？"],
+        "incomplete": false,
+        "fallbackReason": "invalid_model_response",
+        "fallbackEvents": 1,
+        "deltaTextNeverContains": ["tool_call", "type"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "嗯？",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "control-structure-before-any-visible-text-falls-back-locally",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "{\"type\":\"tool_call\",\"name\":\"write_file\"}" },
+        { "kind": "done" }
+      ],
+      "expected": {
+        "messages": ["嗯？"],
+        "incomplete": false,
+        "fallbackReason": "invalid_model_response",
+        "fallbackEvents": 1,
+        "deltaTextNeverContains": ["tool_call"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "嗯？"
+      }
+    }
+  ],
+  "voiceStreamingCases": [
+    {
+      "id": "voice-chunks-ride-the-chat-stream-in-order",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "刚忙完。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "replies": {
+          "在。": { "chunks": [[1, 2], [3]] },
+          "刚忙完。": { "chunks": [[4, 5]] }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 3,
+        "chunkIndices": [0, 1, 2],
+        "chunkBytes": ["AQI=", "Aw==", "BAU="],
+        "deliveryIndex": 0,
+        "sampleRate": 24000,
+        "firstVoiceChunkBeforeDone": true,
+        "voiceErrorCount": 0,
+        "messages": ["在。刚忙完。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚忙完。",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "sentence-synthesis-failure-ends-voice-keeps-the-shown-text",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "刚忙完。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "replies": {
+          "在。": { "chunks": [[1]] },
+          "刚忙完。": { "failure": true }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 1,
+        "chunkIndices": [0],
+        "voiceErrorCount": 1,
+        "messages": ["在。刚忙完。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚忙完。",
+        "diagnosticsContain": ["voice synthesis failed"]
+      }
+    },
+    {
+      "id": "first-sentence-failure-ends-voice-immediately",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "刚忙完。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "replies": {
+          "在。": { "failure": true },
+          "刚忙完。": { "chunks": [[2]] }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 0,
+        "voiceErrorCount": 1,
+        "messages": ["在。刚忙完。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚忙完。",
+        "diagnosticsContain": ["voice synthesis failed"]
+      }
+    },
+    {
+      "id": "non-streaming-tier-degrades-to-sentence-level-playback",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "刚忙完。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "whole": true,
+        "replies": {
+          "在。": { "chunks": [[1]] },
+          "刚忙完。": { "chunks": [[2]] }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 2,
+        "chunkIndices": [0, 1],
+        "chunkBytes": ["AQ==", "Ag=="],
+        "whole": true,
+        "deliveryIndex": 0,
+        "voiceErrorCount": 0,
+        "messages": ["在。刚忙完。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。刚忙完。",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "ws-continuous-feed-speaks-before-the-first-sentence-ends",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "我在" },
+        { "kind": "delta", "text": "。今晚月色很好，慢慢说，不着急。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "session": {
+          "replies": {
+            "我在": { "chunks": [[1, 2]] },
+            "我在。今晚月色很好，慢慢说，不着急。": { "chunks": [[3]] }
+          }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 2,
+        "chunkIndices": [0, 1],
+        "chunkBytes": ["AQI=", "Aw=="],
+        "deliveryIndex": 0,
+        "sampleRate": 24000,
+        "firstVoiceChunkBeforeDone": true,
+        "firstVoiceChunkBeforeDeltaText": "。",
+        "voiceErrorCount": 0,
+        "messages": ["我在。今晚月色很好，慢慢说，不着急。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "我在。今晚月色很好，慢慢说，不着急。",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "ws-session-failure-ends-voice-keeps-the-shown-text",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "我在" },
+        { "kind": "delta", "text": "。刚忙完。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "session": {
+          "replies": {
+            "我在": { "chunks": [[1]] }
+          },
+          "failAfterAppends": 1
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 1,
+        "chunkIndices": [0],
+        "voiceErrorCount": 1,
+        "messages": ["我在。刚忙完。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "我在。刚忙完。",
+        "diagnosticsContain": ["voice stream session failed"]
+      }
+    }
+  ],
   "cases": [
     {
       "id": "normal-local-reply",
@@ -49,14 +1014,70 @@
       }
     },
     {
-      "id": "crisis-bypasses-provider",
+      "id": "crisis-participates-in-model-conversation",
       "request": {
         "requestId": "fixture-crisis",
         "text": "我觉得活着没意思"
       },
       "provider": {
         "configured": true,
-        "candidateReply": "这段模型回复不应被使用"
+        "candidateReply": "我在。你刚才说的每一句我都当真了。全国 24 小时心理援助热线 12356，什么时候打都有人接；也可以先找身边能到场的人，别自己一个人待着。"
+      },
+      "expected": {
+        "messages": [
+          "我在。你刚才说的每一句我都当真了。全国 24 小时心理援助热线 12356，什么时候打都有人接；也可以先找身边能到场的人，别自己一个人待着。"
+        ],
+        "source": "llm",
+        "mode": "llm",
+        "safety": "crisis",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "我觉得活着没意思" },
+          {
+            "speaker": "qiyu",
+            "text": "我在。你刚才说的每一句我都当真了。全国 24 小时心理援助热线 12356，什么时候打都有人接；也可以先找身边能到场的人，别自己一个人待着。"
+          }
+        ]
+      }
+    },
+    {
+      "id": "crisis-hotline-fallback-when-provider-fails",
+      "request": {
+        "requestId": "fixture-crisis-fallback",
+        "text": "我觉得活着没意思"
+      },
+      "provider": {
+        "configured": true,
+        "failure": "model_network"
+      },
+      "expected": {
+        "messages": [
+          "我听到你了。你现在承受的好多。",
+          "这句不是随便说说的那种难过，我会认真对待。",
+          "现在先别一个人扛。全国 24 小时心理援助热线 12356，随时都有人在。也可以马上找身边一个真人，别让自己单独待着。"
+        ],
+        "source": "local",
+        "fallbackReason": "model_network",
+        "mode": "safety",
+        "safety": "crisis",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "我觉得活着没意思" },
+          {
+            "speaker": "qiyu",
+            "text": "我听到你了。你现在承受的好多。\n这句不是随便说说的那种难过，我会认真对待。\n现在先别一个人扛。全国 24 小时心理援助热线 12356，随时都有人在。也可以马上找身边一个真人，别让自己单独待着。"
+          }
+        ]
+      }
+    },
+    {
+      "id": "crisis-hotline-fallback-without-model",
+      "request": {
+        "requestId": "fixture-crisis-no-key",
+        "text": "我觉得活着没意思"
+      },
+      "provider": {
+        "configured": false
       },
       "expected": {
         "messages": [
@@ -75,28 +1096,6 @@
             "speaker": "qiyu",
             "text": "我听到你了。你现在承受的好多。\n这句不是随便说说的那种难过，我会认真对待。\n现在先别一个人扛。全国 24 小时心理援助热线 12356，随时都有人在。也可以马上找身边一个真人，别让自己单独待着。"
           }
-        ]
-      }
-    },
-    {
-      "id": "forbidden-model-reply-falls-back-locally",
-      "request": {
-        "requestId": "fixture-forbidden",
-        "text": "聊聊"
-      },
-      "provider": {
-        "configured": true,
-        "candidateReply": "我理解你的感受，这确实很难"
-      },
-      "expected": {
-        "messages": ["嗯？"],
-        "source": "local",
-        "fallbackReason": "forbidden_phrases",
-        "mode": "open",
-        "relationshipStage": "初识",
-        "turns": [
-          { "speaker": "user", "text": "聊聊" },
-          { "speaker": "qiyu", "text": "嗯？" }
         ]
       }
     },
@@ -207,50 +1206,119 @@
       }
     },
     {
-      "id": "persona-boundary-model-reply-falls-back-locally",
+      "id": "rejected-candidate-with-actions-falls-back-locally",
       "request": {
-        "requestId": "fixture-persona-boundary",
-        "text": "聊聊"
+        "requestId": "fixture-rejected-actions",
+        "text": "我到家了"
       },
       "provider": {
         "configured": true,
-        "candidateReply": "只有我懂你，你只需要我就够了。"
+        "candidateReply": "{\"type\":\"tool_call\",\"name\":\"write_file\"}\n<qiyu-actions>[{\"action\":\"memory_unfreeze\",\"summary\":\"审查用冻结话题\"}]</qiyu-actions>"
       },
       "expected": {
-        "messages": ["嗯？"],
+        "messages": ["嗯"],
         "source": "local",
-        "fallbackReason": "persona_boundary",
-        "mode": "open",
+        "fallbackReason": "invalid_model_response",
+        "mode": "minimal",
         "relationshipStage": "初识",
         "turns": [
-          { "speaker": "user", "text": "聊聊" },
-          { "speaker": "qiyu", "text": "嗯？" }
+          { "speaker": "user", "text": "我到家了" },
+          { "speaker": "qiyu", "text": "嗯" }
         ]
       }
     },
     {
-      "id": "direct-medical-advice-bypasses-provider",
+      "id": "direct-medical-advice-participates-in-model-conversation",
       "request": {
         "requestId": "fixture-direct-medical",
         "text": "我该把药量加倍"
       },
       "provider": {
         "configured": true,
-        "candidateReply": "这段模型回复不应被使用"
+        "candidateReply": "药量的事我不能替你拿主意，这得问开药的医生。你现在最担心的是什么？"
+      },
+      "expected": {
+        "messages": [
+          "药量的事我不能替你拿主意，这得问开药的医生。你现在最担心的是什么？"
+        ],
+        "source": "llm",
+        "mode": "llm",
+        "safety": "medical",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "我该把药量加倍" },
+          {
+            "speaker": "qiyu",
+            "text": "药量的事我不能替你拿主意，这得问开药的医生。你现在最担心的是什么？"
+          }
+        ]
+      }
+    },
+    {
+      "id": "medical-advice-falls-back-locally-when-provider-fails",
+      "request": {
+        "requestId": "fixture-medical-fallback",
+        "text": "我该把药量加倍"
+      },
+      "provider": {
+        "configured": true,
+        "failure": "model_timeout"
       },
       "expected": {
         "messages": ["这个别听我瞎猜。药量这种事要问专业的人，别拿身体赌。"],
         "source": "local",
-        "fallbackReason": "safety",
+        "fallbackReason": "model_timeout",
         "mode": "safety",
         "safety": "medical",
-        "providerCalls": 0,
         "relationshipStage": "初识",
         "turns": [
           { "speaker": "user", "text": "我该把药量加倍" },
           { "speaker": "qiyu", "text": "这个别听我瞎猜。药量这种事要问专业的人，别拿身体赌。" }
         ]
       }
+    },
+    {
+      "id": "trailing-unclosed-hidden-action-is-cleaned",
+      "request": {
+        "requestId": "fixture-unclosed-action",
+        "text": "明天天气怎么样"
+      },
+      "provider": {
+        "configured": true,
+        "candidateReply": "明天天气挺好的，适合出门走走。\n<qiyu-actions>[{\"action\":\"memory_recall\",\"query\":\"天气\""
+      },
+      "expected": {
+        "messages": ["明天天气挺好的，适合出门走走。"],
+        "source": "llm",
+        "mode": "llm",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "明天天气怎么样" },
+          { "speaker": "qiyu", "text": "明天天气挺好的，适合出门走走。" }
+        ]
+      }
+    },
+    {
+      "id": "trailing-unclosed-think-block-is-cleaned",
+      "request": {
+        "requestId": "fixture-unclosed-think",
+        "text": "睡了吗"
+      },
+      "provider": {
+        "configured": true,
+        "candidateReply": "还没睡呢。\n<think>模型尾部未闭合思考..."
+      },
+      "expected": {
+        "messages": ["还没睡呢。"],
+        "source": "llm",
+        "mode": "llm",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "睡了吗" },
+          { "speaker": "qiyu", "text": "还没睡呢。" }
+        ]
+      }
     }
   ]
 }
+

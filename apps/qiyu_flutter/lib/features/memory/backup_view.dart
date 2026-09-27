@@ -23,10 +23,22 @@ Future<void> showBackupDialog(
   return showDialog<void>(
     context: context,
     builder: (dialogContext) => _BackupDialog(
-      gateway: gateway ?? HttpBackupGateway(),
+      gateway: gateway ?? _resolveDefaultGateway(context),
       platform: platform ?? createBackupPlatform(),
     ),
   );
+}
+
+/// 备份网关解析（与聊天页 STT 设置网关同一先例）：注入优先；其次
+/// 复用 app Provider 树的共享实例（安卓壳由此拿到会话接管 client 与
+/// 显式基址）；只有脱离 app 树单独 pump 的测试才回退自建——测试里
+/// 平台接缝是 stub，不会真正发请求。
+BackupGateway _resolveDefaultGateway(BuildContext context) {
+  try {
+    return context.read<BackupGateway>();
+  } on ProviderNotFoundException {
+    return HttpBackupGateway();
+  }
 }
 
 enum _ImportPhase { idle, reading, previewing, previewed, importing, done }
@@ -99,8 +111,8 @@ class _BackupDialogState extends State<_BackupDialog> {
       }
       setState(() {
         _exportMessage = downloaded
-            ? '备份已开始下载：${export.fileName}'
-            : '当前环境不支持直接下载，请改用桌面版栖语导出。';
+            ? '备份已导出：${export.fileName}'
+            : '备份没有导出：当前环境不支持导出，或分享已取消。';
       });
     } on Object catch (error) {
       if (!mounted) {
@@ -288,6 +300,14 @@ class _BackupDialogState extends State<_BackupDialog> {
                     const Text(
                       '把栖语的完整本地记忆打包为可阅读、可携带的 Markdown '
                       '备份。API Key 与模型凭据从不进入备份。',
+                    ),
+                    const SizedBox(height: 8),
+                    // 数据警示（ticket 07）：导出是端内形态唯一的跨设备
+                    // 通道，卸载即随沙盒清空——这句必须在入口旁可见。
+                    const Text(
+                      '会话与记忆只存在这台设备上：未导出即随卸载永久丢失，'
+                      '换机前记得先导出。',
+                      key: Key('backup-data-warning'),
                     ),
                     const SizedBox(height: 12),
                     Align(

@@ -112,7 +112,8 @@ void main() {
     expect(find.byKey(const Key('chat-input')), findsOneWidget);
   });
 
-  testWidgets('a fresh user without a Provider chooses local chat first', (
+  testWidgets(
+    'a fresh user without a Provider is guided to connect a model first', (
     tester,
   ) async {
     final onboardingGateway = _FakeOnboardingGateway(completed: false);
@@ -130,10 +131,29 @@ void main() {
 
     expect(find.text('嗨。我是栖语。'), findsOneWidget);
     expect(find.textContaining('鸟归巢'), findsOneWidget);
-    expect(find.byKey(const Key('first-meeting-start-local')), findsOneWidget);
-    expect(find.byKey(const Key('first-meeting-go-settings')), findsOneWidget);
     expect(find.byKey(const Key('first-meeting-start-chat')), findsNothing);
+
+    // 主按钮导向模型连接，次按钮保留试聊；主次顺序与两处文案都被锁定。
+    final goSettings = find.byKey(const Key('first-meeting-go-settings'));
+    final startLocal = find.byKey(const Key('first-meeting-start-local'));
+    expect(goSettings, findsOneWidget);
+    expect(startLocal, findsOneWidget);
+    expect(tester.widget(goSettings), isA<FilledButton>());
+    expect(tester.widget(startLocal), isA<TextButton>());
+    expect(
+      tester.getTopLeft(goSettings).dy,
+      lessThan(tester.getTopLeft(startLocal).dy),
+    );
+    expect(find.text('先去连上模型'), findsOneWidget);
+    expect(find.text('先聊聊'), findsOneWidget);
     expect(find.text('不连模型也能聊，只是回复会简单一些。'), findsOneWidget);
+    // 标注跟着试聊按钮走：只在次按钮下方如实说明体验差异。
+    expect(
+      tester
+          .getTopLeft(find.text('不连模型也能聊，只是回复会简单一些。'))
+          .dy,
+      greaterThan(tester.getTopLeft(startLocal).dy),
+    );
 
     await tester.tap(find.byKey(const Key('first-meeting-start-local')));
     await tester.pumpAndSettle();
@@ -477,6 +497,9 @@ final class _RestoringChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<bool> stopVoice(String requestId) async => true;
 
   @override
   Future<String> transcribe({

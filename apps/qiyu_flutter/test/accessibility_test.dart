@@ -25,6 +25,8 @@ import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/proxy_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/proxy_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_collapse_platform.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
@@ -318,6 +320,12 @@ void main() {
               autoStart: false,
             ),
           ),
+          ChangeNotifierProvider.value(
+            value: ProxySettingsViewModel(
+              const _FixedProxySettingsGateway(),
+              autoStart: false,
+            ),
+          ),
           ChangeNotifierProvider.value(value: settingsViewModel),
         ],
         child: ProviderSettingsView(collapseStore: _allExpandedCollapseStore()),
@@ -402,30 +410,26 @@ void main() {
         expect(statusNode.flagsCollection.isLiveRegion, isTrue);
 
         chatGateway.add(
-          const LocalChatDeliveryEvent(
-            kind: LocalChatEventKind.delta,
-            requestId: 'stream-1',
+          LocalChatDeliveryEvent.delta(
+            requestId: chatGateway.sentRequestId!,
             text: '在的。',
           ),
         );
         chatGateway.add(
-          const LocalChatDeliveryEvent(
-            kind: LocalChatEventKind.message,
-            requestId: 'stream-1',
+          LocalChatDeliveryEvent.message(
+            requestId: chatGateway.sentRequestId!,
             messages: ['在的。'],
           ),
         );
         chatGateway.add(
-          const LocalChatDeliveryEvent(
-            kind: LocalChatEventKind.state,
-            requestId: 'stream-1',
+          LocalChatDeliveryEvent.state(
+            requestId: chatGateway.sentRequestId!,
             source: ReplySource.local,
           ),
         );
         chatGateway.add(
-          const LocalChatDeliveryEvent(
-            kind: LocalChatEventKind.done,
-            requestId: 'stream-1',
+          LocalChatDeliveryEvent.done(
+            requestId: chatGateway.sentRequestId!,
           ),
         );
         await chatGateway.close();
@@ -910,6 +914,8 @@ final class _StreamingChatGateway implements StreamingLocalChatGateway {
     ],
   );
 
+  String? sentRequestId;
+
   void add(LocalChatDeliveryEvent event) => _controller.add(event);
   Future<void> close() => _controller.close();
 
@@ -918,6 +924,9 @@ final class _StreamingChatGateway implements StreamingLocalChatGateway {
 
   @override
   Future<bool> cancel(String requestId) async => true;
+
+  @override
+  Future<bool> stopVoice(String requestId) async => true;
 
   @override
   Future<String> transcribe({
@@ -931,13 +940,12 @@ final class _StreamingChatGateway implements StreamingLocalChatGateway {
     required String text,
     String? sessionId,
   }) async* {
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.accepted,
+    sentRequestId = requestId;
+    yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
       sessionId: _restored.sessionId,
     );
-    yield LocalChatDeliveryEvent(
-      kind: LocalChatEventKind.waiting,
+    yield LocalChatDeliveryEvent.waiting(
       requestId: requestId,
     );
     yield* _controller.stream;
@@ -1056,4 +1064,17 @@ final class _FixedTtsSettingsGateway implements TtsSettingsGateway {
   @override
   Future<TtsConnectionTest> testConnection(TtsSettingsDraft draft) async =>
       const TtsConnectionTest(succeeded: false, message: '还没有保存语音合成服务配置。');
+}
+
+/// 未配置代理的固定网关：给出站代理块一个不触网的快照。
+final class _FixedProxySettingsGateway implements ProxySettingsGateway {
+  const _FixedProxySettingsGateway();
+
+  @override
+  Future<ProxySettings> read() async =>
+      const ProxySettings(configured: false, enabled: false, host: '', port: 0);
+
+  @override
+  Future<ProxySettings> save(ProxySettingsDraft draft) =>
+      throw UnimplementedError();
 }

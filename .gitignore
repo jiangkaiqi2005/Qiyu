@@ -3,14 +3,23 @@ node_modules/
 qiyu.config.local.json
 *.log
 
-# Local agent-tool directories and files: skill packs, Claude and ZCode local
-# state, scratch notes, and the skills lockfile stay machine-local. The
-# .scratch pattern also matches scratch directories nested inside each app.
+# Local agent-tool directories and files: skill packs, Claude, CodeBuddy and
+# ZCode local state, scratch notes, and the skills lockfile stay machine-local.
+# .codebuddy/skills holds symlinks into .agents/skills only, so it carries no
+# source of its own. The .scratch pattern also matches scratch directories
+# nested inside each app.
 .agents/
 .claude/
+.cline/
+.codebuddy/
 .zcode/
+.zcodeignore
 .scratch/
 skills-lock.json
+
+# Workspace-scoped agent memory (daily logs and curated notes). Local runtime
+# state, never source.
+.workbuddy/
 
 # Mimosa security-scan runtime artifacts (hooks, ledgers, reports) at any depth.
 .mimosa/
@@ -21,3 +30,6 @@ skills-lock.json
 
 # Codebase-memory knowledge graph artifacts, refreshed by the local indexer.
 .codebase-memory/
+
+# Local-only workspace instructions; the tracked repository copy was removed.
+AGENTS.md

@@ -5,8 +5,20 @@ import 'package:qiyu_windows_host/qiyu_windows_host.dart';
 
 Future<void> main(List<String> arguments) async {
   HostLaunchResult? launch;
+  // 命令行解析失败时不建呈现器：那只能来自脚本或开发者手输参数，
+  // 不为它弹模态弹窗。--check 是脚本冒烟入口，同样只走命令行输出。
+  StartupFailureReporter? failureReporter;
   try {
     final options = HostCommandOptions.parse(arguments);
+    if (!options.checkOnly) {
+      failureReporter = StartupFailureReporter(
+        presenter: const WindowsMessageBoxPresenter(),
+        logDirectoryPath: resolveHostRuntimeDirectory(
+          environment: Platform.environment,
+          overridePath: options.runtimeDirectory,
+        ),
+      );
+    }
     final webRoot = resolveHostWebRoot(
       currentDirectory: Directory.current.path,
       executablePath: Platform.resolvedExecutable,
@@ -24,7 +36,11 @@ Future<void> main(List<String> arguments) async {
       return;
     }
     if (!report.ready) {
-      throw StateError('Windows 本机宿主启动前检查失败');
+      // checkOnly 已提前返回，此处必有呈现器。
+      failureReporter!.reportPreflightChecks(report.checks);
+      stderr.writeln('栖语启动失败：启动前检查未通过');
+      exitCode = 1;
+      return;
     }
 
     final runtimeDirectory = resolveHostRuntimeDirectory(
@@ -66,6 +82,7 @@ Future<void> main(List<String> arguments) async {
 
     await ProcessSignal.sigint.watch().first;
   } on Object catch (error) {
+    failureReporter?.reportError(error);
     stderr.writeln('栖语启动失败：$error');
     exitCode = 1;
   } finally {

@@ -1,8 +1,9 @@
-# 栖语持续集成：三个包各自跑分析、测试与覆盖率门禁；推送到 main
+# 栖语持续集成：四个包各自跑分析、测试与覆盖率门禁；推送到 main
 # 时额外执行完整的发布基线门禁（构建、打包、冒烟）。
 #
-# 覆盖率水位按 2026-09-07 本机实测基线锁定，只升不降：
-#   行为核心 89.11% → 水位 88；Windows宿主 92.17% → 91；应用界面 92.42% → 91。
+# 覆盖率水位按本机实测基线锁定，只升不降：
+#   行为核心 93.38% → 水位 88；Windows宿主 91.87% → 91；应用界面 94.27% → 91；
+#   本机服务 94.59% → 92（2026-09-26 实测）。
 # 浏览器侧用例跑在真 Chrome 里，不计入覆盖率（平台限制）；
 # 覆盖率口径为虚拟机测试加载到的文件。
 name: CI
@@ -86,7 +87,8 @@ jobs:
           dart test --configuration dart_test.browser.yaml \
             --platform qiyu_chrome \
             test/voice_player_platform_web_test.dart \
-            test/settings_collapse_platform_web_test.dart
+            test/settings_collapse_platform_web_test.dart \
+            test/backup_platform_web_test.dart
       - name: 网页构建检查
         run: flutter build web --wasm --no-web-resources-cdn
       - name: 覆盖率门禁
@@ -135,6 +137,43 @@ jobs:
         with:
           name: coverage-host
           path: apps/qiyu_windows_host/coverage/lcov.info
+          retention-days: 7
+
+  local-host:
+    name: 本机服务（分析+测试+覆盖率）
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        # job 级 defaults 会整体覆盖工作流级设置，bash 必须在此重申，
+        # 否则 Windows 回退 pwsh，续行符语义不同
+        shell: bash
+        working-directory: packages/qiyu_local_host
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.12.2
+      - name: 依赖
+        run: dart pub get
+      - name: 分析
+        run: dart analyze
+      - name: 测试与覆盖率采集
+        run: dart test --coverage=coverage
+      - name: 生成覆盖率报告
+        run: |
+          dart run coverage:format_coverage --lcov \
+            --packages=.dart_tool/package_config.json \
+            --report-on=lib --in=coverage --out=coverage/lcov.info
+      - name: 覆盖率门禁
+        run: |
+          dart run ../../scripts/coverage_gate.dart \
+            --lcov coverage/lcov.info --min 92 --label 本机服务
+      - name: 上传覆盖率报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-local-host
+          path: packages/qiyu_local_host/coverage/lcov.info
           retention-days: 7
 
   # 完整发布基线：Windows 打包 + 真浏览器用例 + 冒烟，

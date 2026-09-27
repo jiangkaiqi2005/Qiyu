@@ -36,7 +36,7 @@ Provider 请求由 Host 发起。Provider 配置（含 API Key）写入本机 ru
 
 ## 数据目录
 
-记忆目录优先级为 `--memory-dir`、`QIYU_MEMORY_DIR`、`%USERPROFILE%\.qiyu\memories`。sessions 每段最多 80 turns，活动历史恢复窗口 180 天；历史 Markdown 不自动删除。运行目录可由 `--runtime-dir` 覆盖，便于隔离验收。
+记忆目录优先级为 `--memory-dir`、`QIYU_MEMORY_DIR`、`%USERPROFILE%\.qiyu\memories`。sessions 每段最多 80 turns，历史 Markdown 永久保留、不自动删除；`activeSessionHistoryWindow` 的 180 天目前仅作元数据上报，召回候选窗口的接线为后续工作（ADR 0012）。运行目录可由 `--runtime-dir` 覆盖，便于隔离验收。
 
 ## 验证
 

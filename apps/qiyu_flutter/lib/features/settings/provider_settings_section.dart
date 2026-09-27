@@ -8,6 +8,8 @@ import '../../theme/qiyu_tokens.dart';
 import 'provider_catalog.dart';
 import 'provider_settings_client.dart';
 import 'provider_settings_view_model.dart';
+import 'proxy_settings_client.dart';
+import 'proxy_settings_view_model.dart';
 import 'settings_section_shell.dart';
 
 /// 模型连接（Provider）设置领域：模型连接、参数设置与 API Key 凭据管理。
@@ -21,11 +23,25 @@ import 'settings_section_shell.dart';
 
 /// 模型连接领域的表单控制器：页面里每一个输入框的控制器与焦点、
 /// 服务商/套餐/模型三级选择态、已保存设置的同步、草稿校验与保存编排。
+/// 同步幂等守卫、卸载释放与「保存即清 Key」的编排继承壳层
+/// [SettingsCredentialForm]，这里只填领域槽位与服务商目录知识。
 ///
 /// 本类不是 widget，也不持有任何 UI 呈现；错误提示等「怎么说给人听」
 /// 的呈现通过 [readDraftOrReport] 的回调交给区块 widget。
-final class ProviderSettingsForm {
+final class ProviderSettingsForm
+    extends
+        SettingsCredentialForm<
+          ProviderSettings,
+          ProviderSettingsDraft,
+          ProviderSettingsViewModel
+        > {
   ProviderSettingsForm();
+
+  @override
+  TextEditingController get apiKeyDraftController => apiKeyController;
+
+  @override
+  FocusNode get apiKeyDraftFocusNode => apiKeyFocusNode;
 
   final baseUrlController = TextEditingController();
   final modelController = TextEditingController();
@@ -42,8 +58,6 @@ final class ProviderSettingsForm {
   String _selectedProviderId = 'openai';
   String _selectedConnectionId = 'official';
   bool _customModel = false;
-  ProviderSettings? _syncedSettings;
-  bool _disposed = false;
 
   String get selectedProviderId => _selectedProviderId;
 
@@ -64,9 +78,8 @@ final class ProviderSettingsForm {
       ? customModelValue
       : modelController.text;
 
-  /// 页面卸载时释放全部控制器与焦点节点。
-  void dispose() {
-    _disposed = true;
+  @override
+  void disposeFields() {
     baseUrlController.dispose();
     modelController.dispose();
     temperatureController.dispose();
@@ -79,14 +92,10 @@ final class ProviderSettingsForm {
     apiKeyFocusNode.dispose();
   }
 
-  /// 已保存设置同步进表单：只处理新出现的设置对象（同一对象重复同步
-  /// 直接返回，用户的选择与草稿不被重置）；未配置时按当前套餐回填
-  /// 缺省地址与模型。Key 永不回显——只在未获焦时清掉旧草稿。
-  void sync(ProviderSettings? settings) {
-    if (settings == null || identical(settings, _syncedSettings)) {
-      return;
-    }
-    _syncedSettings = settings;
+  /// 同步一个新出现的设置对象：按服务商目录匹配套餐选择态；未配置时
+  /// 按当前套餐回填缺省地址与模型。
+  @override
+  void syncNewSettings(ProviderSettings settings) {
     final selection = matchProviderSettings(settings);
     _selectedProviderId = selection.providerId;
     _selectedConnectionId = selection.connectionId;
@@ -126,9 +135,6 @@ final class ProviderSettingsForm {
             : '',
       );
     }
-    if (!apiKeyFocusNode.hasFocus && apiKeyController.text.isNotEmpty) {
-      apiKeyController.clear();
-    }
   }
 
   /// 切换服务商：落到该商第一个套餐，并应用其地址与模型。
@@ -164,7 +170,8 @@ final class ProviderSettingsForm {
   }
 
   /// 读草稿：数值解析与必填校验都在领域内。草稿不合法时经 [report]
-  /// 给出人话并返回 null——呈现方式（SnackBar）由区块决定。
+  /// 给出人话并返回 null——呈现方式（渐隐提示）由区块决定。
+  @override
   ProviderSettingsDraft? readDraftOrReport(
     void Function(String message) report,
   ) {
@@ -190,21 +197,86 @@ final class ProviderSettingsForm {
     );
   }
 
-  /// 一次保存的领域编排：读草稿 → 交视图模型 → 成功后清掉 Key 草稿，
-  /// 不把明文留在输入框。返回是否真的保存成功。
+}
+
+/// 出站代理领域的表单控制器（ticket 08）：开关状态、地址与端口两个
+/// 输入框的控制器与焦点、已保存设置的同步、草稿校验与保存编排。
+///
+/// 本类不是 widget，也不持有任何 UI 呈现。
+final class ProxySettingsForm {
+  bool enabled = false;
+
+  final hostController = TextEditingController();
+  final portController = TextEditingController();
+  final hostFocusNode = FocusNode();
+  final portFocusNode = FocusNode();
+
+  ProxySettings? _syncedSettings;
+
+  /// 页面卸载时释放控制器与焦点节点。
+  void dispose() {
+    hostController.dispose();
+    portController.dispose();
+    hostFocusNode.dispose();
+    portFocusNode.dispose();
+  }
+
+  /// 已保存设置同步进表单：只处理新出现的设置对象（同一对象重复同步
+  /// 直接返回，开关与输入草稿不被重置）。地址端口不是凭据，随快照
+  /// 回显；端口 0 表示「未填」，同步为空串。
+  void sync(ProxySettings? settings) {
+    if (settings == null || identical(settings, _syncedSettings)) {
+      return;
+    }
+    _syncedSettings = settings;
+    enabled = settings.enabled;
+    syncFocusProtectedField(hostController, hostFocusNode, settings.host);
+    syncFocusProtectedField(
+      portController,
+      portFocusNode,
+      settings.port > 0 ? '${settings.port}' : '',
+    );
+  }
+
+  /// 读草稿：启用时地址与端口必填；关闭时保留已填值（关闭＋全空也
+  /// 合法，存回空档）。草稿不合法时经 [report] 给出人话并返回 null。
+  ProxySettingsDraft? readDraftOrReport(
+    void Function(String message) report,
+  ) {
+    final host = hostController.text.trim();
+    final portText = portController.text.trim();
+    final port = portText.isEmpty ? 0 : int.tryParse(portText) ?? -1;
+    if (host.contains(' ') ||
+        host.toLowerCase().startsWith('http://') ||
+        host.toLowerCase().startsWith('https://')) {
+      report('代理地址填主机名或 IP 即可，不带 http:// 前缀。');
+      return null;
+    }
+    if (enabled && host.isEmpty) {
+      report('启用代理时请填写代理地址。');
+      return null;
+    }
+    if (host.isEmpty && portText.isNotEmpty) {
+      report('请先填写代理地址，再填写代理端口。');
+      return null;
+    }
+    if ((host.isNotEmpty || enabled) && (port < 1 || port > 65535)) {
+      report('请填写 1 到 65535 之间的代理端口。');
+      return null;
+    }
+    return ProxySettingsDraft(enabled: enabled, host: host, port: port);
+  }
+
+  /// 一次保存的领域编排：读草稿 → 交视图模型。返回是否真的保存成功。
   Future<bool> save(
-    ProviderSettingsViewModel viewModel, {
+    ProxySettingsViewModel viewModel, {
     void Function(String message)? report,
   }) async {
     final draft = readDraftOrReport(report ?? (_) {});
     if (draft == null) {
       return false;
     }
-    final saved = await viewModel.save(draft);
-    if (saved && !_disposed) {
-      apiKeyController.clear();
-    }
-    return saved;
+    return viewModel.save(draft);
   }
 }
 
@@ -217,7 +289,8 @@ class ProviderSettingsSection extends StatefulWidget {
       _ProviderSettingsSectionState();
 }
 
-class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
+class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
+    with SettingsSaveFeedback {
   final _form = ProviderSettingsForm();
 
   @override
@@ -226,12 +299,13 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
     super.dispose();
   }
 
-  /// 领域校验结论的呈现：SnackBar 播报。
+  /// 领域校验结论的呈现：渐隐提示播报。
   void _reportInvalidDraft(String message) =>
-      showSettingsSnackBar(context, message);
+      showSettingsNotice(context, message);
 
   Future<void> _save(ProviderSettingsViewModel viewModel) async {
-    await _form.save(viewModel, report: _reportInvalidDraft);
+    final saved = await _form.save(viewModel, report: _reportInvalidDraft);
+    reportSettingsSaved(saved);
   }
 
   Future<void> _confirmForgetKey(ProviderSettingsViewModel viewModel) async {
@@ -362,10 +436,14 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                   key: const Key('provider-model'),
                   controller: _form.modelController,
                   focusNode: _form.modelFocusNode,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: '模型名称',
                     hintText: '输入服务商提供的 Model ID',
-                    border: OutlineInputBorder(),
+                    border: settingsOutlineBorder(color: QiyuColors.line),
+                    enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+                    focusedBorder: settingsOutlineBorder(
+                      color: QiyuColors.composerFocusLine,
+                    ),
                   ),
                 ),
               ],
@@ -375,10 +453,15 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                   key: const Key('provider-base-url'),
                   controller: _form.baseUrlController,
                   focusNode: _form.baseUrlFocusNode,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: '服务地址',
                     hintText: 'https://example.com/v1',
-                    border: OutlineInputBorder(),
+                    helperText: '局域网地址请填 IP（明文 HTTP 不接受主机名）',
+                    border: settingsOutlineBorder(color: QiyuColors.line),
+                    enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
+                    focusedBorder: settingsOutlineBorder(
+                      color: QiyuColors.composerFocusLine,
+                    ),
                   ),
                 )
               else
@@ -408,9 +491,15 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
                           ),
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             labelText: 'temperature',
-                            border: OutlineInputBorder(),
+                            border: settingsOutlineBorder(color: QiyuColors.line),
+                            enabledBorder: settingsOutlineBorder(
+                              color: QiyuColors.line,
+                            ),
+                            focusedBorder: settingsOutlineBorder(
+                              color: QiyuColors.composerFocusLine,
+                            ),
                           ),
                         ),
                       ),
@@ -421,9 +510,15 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                           controller: _form.timeoutController,
                           focusNode: _form.timeoutFocusNode,
                           keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             labelText: '超时（秒）',
-                            border: OutlineInputBorder(),
+                            border: settingsOutlineBorder(color: QiyuColors.line),
+                            enabledBorder: settingsOutlineBorder(
+                              color: QiyuColors.line,
+                            ),
+                            focusedBorder: settingsOutlineBorder(
+                              color: QiyuColors.composerFocusLine,
+                            ),
                           ),
                         ),
                       ),
@@ -464,7 +559,147 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection> {
                   },
                 ),
               ),
+              // 出站代理块压在分节末尾（ticket 08）：凭据块与保存/测试
+              // 按钮的纵向位置不因它漂移，既有设置页滚动语义不变。
+              const SizedBox(height: 28),
+              const _ProxySettingsBlock(),
             ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 出站代理设置块（ticket 08）：嵌在「模型连接」节内，与凭据块同律
+/// ——不套 [SettingsSectionPanel]，没有可点的分节头、不参与折叠。
+/// 代理只作用于 OpenAI 兼容／Anthropic 的模型出站（Ollama 局域网直连
+/// 与语音直连不走代理），说明文字里写清这个边界。
+class _ProxySettingsBlock extends StatefulWidget {
+  const _ProxySettingsBlock();
+
+  @override
+  State<_ProxySettingsBlock> createState() => _ProxySettingsBlockState();
+}
+
+class _ProxySettingsBlockState extends State<_ProxySettingsBlock> {
+  final _form = ProxySettingsForm();
+
+  @override
+  void dispose() {
+    _form.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save(ProxySettingsViewModel viewModel) async {
+    await _form.save(
+      viewModel,
+      report: (message) => showSettingsNotice(context, message),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<ProxySettingsViewModel>(
+      builder: (context, viewModel, child) {
+        _form.sync(viewModel.settings);
+        final theme = Theme.of(context);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            MergeSemantics(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('出站代理', style: theme.textTheme.titleMedium),
+                        Text(
+                          '只作用于 OpenAI 兼容与 Anthropic 的模型出站；'
+                          '局域网 Ollama 与语音服务保持直连。'
+                          '配置保存在本机 provider.json。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    key: const Key('provider-proxy-enabled'),
+                    value: _form.enabled,
+                    onChanged: viewModel.saving
+                        ? null
+                        : (value) => setState(() => _form.enabled = value),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    key: const Key('provider-proxy-host'),
+                    controller: _form.hostController,
+                    focusNode: _form.hostFocusNode,
+                    decoration: InputDecoration(
+                      labelText: '代理地址',
+                      hintText: '如 127.0.0.1 或 proxy.example.com',
+                      border: settingsOutlineBorder(color: QiyuColors.line),
+                      enabledBorder: settingsOutlineBorder(
+                        color: QiyuColors.line,
+                      ),
+                      focusedBorder: settingsOutlineBorder(
+                        color: QiyuColors.composerFocusLine,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: TextField(
+                    key: const Key('provider-proxy-port'),
+                    controller: _form.portController,
+                    focusNode: _form.portFocusNode,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: '端口',
+                      hintText: '7890',
+                      border: settingsOutlineBorder(color: QiyuColors.line),
+                      enabledBorder: settingsOutlineBorder(
+                        color: QiyuColors.line,
+                      ),
+                      focusedBorder: settingsOutlineBorder(
+                        color: QiyuColors.composerFocusLine,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (viewModel.errorMessage case final message?) ...[
+              const SizedBox(height: 16),
+              SettingsStatusMessage(message: message, succeeded: false),
+            ],
+            const SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton(
+                key: const Key('save-proxy-settings'),
+                onPressed: viewModel.saving
+                    ? null
+                    : () => unawaited(_save(viewModel)),
+                child: viewModel.saving
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('保存代理设置'),
+              ),
+            ),
           ],
         );
       },

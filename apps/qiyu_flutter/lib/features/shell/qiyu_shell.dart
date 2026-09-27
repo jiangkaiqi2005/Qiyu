@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -192,6 +193,8 @@ class _QiyuShellState extends State<QiyuShell>
         );
 
     return QiyuShellScope(
+      drawerOpen: !desktop && _drawerOpen,
+      closeDrawer: () => unawaited(_setDrawer(false)),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -428,13 +431,19 @@ class _QiyuShellState extends State<QiyuShell>
                       focusNode: _menuFocusNode,
                       customBorder: const CircleBorder(),
                       onTap: () => unawaited(_setDrawer(!_drawerOpen)),
-                      child: SizedBox.square(
-                        dimension: QiyuLayout.menuButtonSize,
-                        child: const Center(
-                          child: Icon(
-                            QiyuIcons.menu,
-                            size: QiyuIconSpec.size,
-                            color: QiyuColors.ink,
+                      child: Semantics(
+                        label: '打开导航菜单',
+                        button: true,
+                        child: SizedBox.square(
+                          dimension: qiyuAndroidTouch
+                              ? 48
+                              : QiyuLayout.menuButtonSize,
+                          child: const Center(
+                            child: Icon(
+                              QiyuIcons.menu,
+                              size: QiyuIconSpec.size,
+                              color: QiyuColors.ink,
+                            ),
                           ),
                         ),
                       ),
@@ -464,7 +473,15 @@ class _QiyuShellState extends State<QiyuShell>
 /// 页面保留自己的 `Scaffold`（信息架构不动），只在壳真的占用同一个角时把
 /// 前导航这一件事让给壳。
 class QiyuShellScope extends InheritedWidget {
-  const QiyuShellScope({super.key, required super.child});
+  const QiyuShellScope({
+    super.key,
+    required super.child,
+    this.drawerOpen = false,
+    this.closeDrawer,
+  });
+
+  final bool drawerOpen;
+  final VoidCallback? closeDrawer;
 
   /// 页面该不该撤掉自己的返回箭头：**只在窄屏**。
   ///
@@ -490,10 +507,14 @@ class QiyuShellScope extends InheritedWidget {
   /// 左留白，所以这里给的是「占位减去那档已有留白」的差额，页面把它加在
   /// 自己的左内缩之上就够了，不必各自量一遍浮层的三层几何。
   static double headerLeftOverrun(BuildContext context) =>
-      coversFrontNavigation(context) ? QiyuLayout.narrowHeaderLeftOverrun : 0;
+      coversFrontNavigation(context)
+          ? QiyuLayout.narrowHeaderLeftOverrun +
+              (qiyuAndroidTouch ? 48 - QiyuLayout.menuButtonSize : 0)
+          : 0;
 
   @override
-  bool updateShouldNotify(QiyuShellScope oldWidget) => false;
+  bool updateShouldNotify(QiyuShellScope oldWidget) =>
+      drawerOpen != oldWidget.drawerOpen;
 }
 
 /// 功能页页头 Row 的**左侧前缀**：桌面与「没被壳包住」时是自己的返回箭头，
@@ -519,6 +540,7 @@ class QiyuPageHeaderBackButton extends StatelessWidget {
       children: [
         IconButton(
           key: buttonKey,
+          style: qiyuAndroidTouchStyle,
           onPressed: () => backToPrevious(context),
           tooltip: '返回上一页',
           icon: const Icon(QiyuIcons.arrow_back),
@@ -699,7 +721,7 @@ class _BrandSlotState extends State<_BrandSlot> {
   }
 }
 
-/// 品牌图形本体：中性几何占位（发丝描边外圈 + 居中实心小圆点）。窄屏抽屉的
+/// 归鸟品牌图形：Web 使用黑色浅底，原生 APP 使用粉黑质感。窄屏抽屉的
 /// 品牌槽与桌面常驻开合开关共用这同一份图形与尺寸，键 `nav-brand` 始终跟着
 /// 品牌图标走（任一时刻树上只有一枚）。
 class _BrandMark extends StatelessWidget {
@@ -707,24 +729,15 @@ class _BrandMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: QiyuLayout.brandMarkSize,
-      height: QiyuLayout.brandMarkSize,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(width: QiyuLine.hairline, color: QiyuColors.line),
-        color: QiyuColors.neutralFill,
-      ),
-      child: const Center(
-        child: SizedBox.square(
-          dimension: 12,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: QiyuColors.muted,
-            ),
-          ),
-        ),
+    return ClipOval(
+      child: Image.asset(
+        kIsWeb
+            ? 'assets/images/qiyu-web-icon.png'
+            : 'assets/images/qiyu-app-icon.png',
+        width: QiyuLayout.brandMarkSize,
+        height: QiyuLayout.brandMarkSize,
+        fit: BoxFit.contain,
+        excludeFromSemantics: true,
       ),
     );
   }
@@ -776,6 +789,7 @@ class _NavItemState extends State<_NavItem> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: qiyuMotion(context, QiyuMotion.fast),
+          constraints: qiyuAndroidTouch ? const BoxConstraints(minHeight: 48) : null,
           decoration: BoxDecoration(
             borderRadius: QiyuRadii.cardBorder,
             // 选中态中性暗底 rgba(255,255,255,0.04)，绝不用紫底。
@@ -796,7 +810,7 @@ class _NavItemState extends State<_NavItem> {
               Expanded(
                 child: Text(
                   widget.label,
-                  overflow: TextOverflow.ellipsis,
+                  overflow: qiyuAndroidTouch ? null : TextOverflow.ellipsis,
                   style: QiyuTypography.of(
                     context,
                   ).body.copyWith(color: labelColor),

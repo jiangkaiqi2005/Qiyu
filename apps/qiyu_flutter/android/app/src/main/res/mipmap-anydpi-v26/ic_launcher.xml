@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background>
+        <shape android:shape="rectangle">
+            <solid android:color="#181719" />
+        </shape>
+    </background>
+    <foreground>
+        <!-- 保留原图质感，内缩后鸟形完整落在系统裁切安全区。 -->
+        <inset android:inset="8%">
+            <bitmap
+                android:gravity="fill"
+                android:src="@drawable/ic_launcher_artwork" />
+        </inset>
+    </foreground>
+</adaptive-icon>

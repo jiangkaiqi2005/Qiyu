@@ -17,4 +17,18 @@ void main() {
     expect(report.checks['supportedPlatform'], isFalse);
     expect(report.checks['behaviorCore'], isTrue);
   });
+
+  test('preflight report serializes readiness for the check command', () {
+    final report = runHostPreflight(operatingSystem: 'windows');
+
+    expect(report.toJson(), {
+      'ready': true,
+      'operatingSystem': 'windows',
+      'checks': {'supportedPlatform': true, 'behaviorCore': true},
+    });
+    expect(
+      runHostPreflight(operatingSystem: 'linux').toJson()['ready'],
+      isFalse,
+    );
+  });
 }
