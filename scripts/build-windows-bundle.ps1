@@ -192,8 +192,8 @@ $hostExecutablePath = Join-Path $stagingPath 'qiyu_windows_host.exe'
 Invoke-Step 'Windows host icon and version info' {
   & $rceditPath $hostExecutablePath `
     --set-icon (Join-Path $repositoryRoot 'design\qiyu-icon\qiyu.ico') `
-    --set-version-string 'ProductName' '栖语' `
-    --set-version-string 'FileDescription' '栖语' `
+    --set-version-string 'ProductName' 'Qiyu' `
+    --set-version-string 'FileDescription' 'Qiyu' `
     --set-file-version $packageVersion `
     --set-product-version $packageVersion
 }
@@ -304,12 +304,12 @@ if (Test-Path -LiteralPath $archivePath) {
   }
   Remove-Item -LiteralPath $archivePath -Force
 }
-# 发布 zip 顶层目录用产品名「栖语」，条目名按 UTF-8 写入并置标志位
-# （见 Compress-BundleArchive），中文系统解压不会乱码。
+# 发布 zip 顶层目录用产品名「Qiyu」，条目名按 UTF-8 写入并置标志位
+# （见 Compress-BundleArchive）。
 Compress-BundleArchive `
   -BundlePath $bundlePath `
   -ArchivePath $archivePath `
-  -RootDirectoryName '栖语'
+  -RootDirectoryName 'Qiyu'
 
 Write-Host "==> Windows bundle ready: $bundlePath"
 Write-Host "==> Windows release archive ready: $archivePath"

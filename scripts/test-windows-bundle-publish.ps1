@@ -153,7 +153,7 @@ try {
     $entriesWithComment[0].HasUtf8Flag
   ) 'zip 注释含 EOCD 签名时没有跳过假头定位到真的中央目录。'
 
-  # --- 发布压缩：顶层目录「栖语」与 UTF-8 标志位一次到位 ---
+  # --- 发布压缩：顶层目录「Qiyu」与 UTF-8 标志位一次到位 ---
   $bundleSourceRoot = Join-Path $testRoot 'bundle-src'
   New-Item -ItemType Directory -Path $bundleSourceRoot -Force | Out-Null
   Set-Content -LiteralPath (Join-Path $bundleSourceRoot 'release.json') -Value '{}'
@@ -162,7 +162,7 @@ try {
   Compress-BundleArchive `
     -BundlePath $bundleSourceRoot `
     -ArchivePath $bundleArchivePath `
-    -RootDirectoryName '栖语'
+    -RootDirectoryName 'Qiyu'
   Assert-Condition (
     @(
       Get-ZipEntryNameFlags -Path $bundleArchivePath |
@@ -174,10 +174,10 @@ try {
   $bundleTopEntries = @(Get-ChildItem -LiteralPath $bundleExpandedRoot)
   Assert-Condition (
     $bundleTopEntries.Count -eq 1 -and
-    $bundleTopEntries[0].Name -eq '栖语' -and
+    $bundleTopEntries[0].Name -eq 'Qiyu' -and
     (Test-Path -LiteralPath (Join-Path $bundleTopEntries[0].FullName 'release.json')) -and
     (Test-Path -LiteralPath (Join-Path $bundleTopEntries[0].FullName 'install.cmd'))
-  ) '发布压缩产出的 zip 顶层目录应为「栖语」且包含包内文件。'
+  ) '发布压缩产出的 zip 顶层目录应为「Qiyu」且包含包内文件。'
 
   Write-Host 'Windows bundle publish tests passed'
 } finally {

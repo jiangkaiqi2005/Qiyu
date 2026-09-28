@@ -134,10 +134,10 @@ try {
 # 归鸟图标与产品名、版本信息必须在构建时嵌进 exe（rcedit），校验兜底：
 # 版本信息以 release.json 的版本为准，防止两者各自漂移。
 $versionInfo = (Get-Item -LiteralPath $executablePath).VersionInfo
-Assert-Condition ($versionInfo.ProductName -eq '栖语') `
-  '宿主可执行文件缺少产品名「栖语」，图标与版本信息可能未嵌入。'
-Assert-Condition ($versionInfo.FileDescription -eq '栖语') `
-  '宿主可执行文件缺少文件说明「栖语」。'
+Assert-Condition ($versionInfo.ProductName -eq 'Qiyu') `
+  '宿主可执行文件缺少产品名「Qiyu」，图标与版本信息可能未嵌入。'
+Assert-Condition ($versionInfo.FileDescription -eq 'Qiyu') `
+  '宿主可执行文件缺少文件说明「Qiyu」。'
 Assert-Condition ($versionInfo.ProductVersion -eq [string]$release.version) `
   ('宿主可执行文件产品版本（' + $versionInfo.ProductVersion +
     '）与 release.json 版本（' + $release.version + '）不一致。')
@@ -216,8 +216,8 @@ if (-not [string]::IsNullOrWhiteSpace($ArchivePath)) {
     Assert-Condition (
       $children.Count -eq 1 -and $children[0].PSIsContainer
     ) 'Windows 候选 zip 顶层结构不明确。'
-    Assert-Condition ($children[0].Name -eq '栖语') `
-      ('Windows 候选 zip 顶层目录应为「栖语」，实际是「' + $children[0].Name + '」。')
+    Assert-Condition ($children[0].Name -eq 'Qiyu') `
+      ('Windows 候选 zip 顶层目录应为「Qiyu」，实际是「' + $children[0].Name + '」。')
     $archiveBundle = $children[0].FullName
     & $PSCommandPath -BundlePath $archiveBundle
     if (-not $?) {

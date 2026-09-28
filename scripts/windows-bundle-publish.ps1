@@ -162,7 +162,7 @@ function Compress-BundleArchive {
     [string]$RootDirectoryName
   )
 
-  # 发布 zip 的顶层目录用产品名（如「栖语」），用户解压看到的就是它；
+  # 发布 zip 的顶层目录用产品名（如「Qiyu」），用户解压看到的就是它；
   # 条目名一律按 UTF-8 写入，写完统一补置 bit 11（原因见上面的注释）。
   Add-Type -AssemblyName System.IO.Compression
   Add-Type -AssemblyName System.IO.Compression.FileSystem
