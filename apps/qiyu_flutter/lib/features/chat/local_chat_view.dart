@@ -72,18 +72,17 @@ class _LocalChatViewState extends State<LocalChatView>
   /// 输入模块的身份与操作键：状态与生命周期都在 [QiyuComposer] 内部，
   /// 页面只经由它调用「恢复输入焦点」与「转写文本发送」两个操作；同一枚
   /// 键传给 widget，空态↔聊天态换布局时 State 原位保留，输入连续。
-  final _composerKey = GlobalKey<QiyuComposerState>(
-    debugLabel: 'chat-composer',
-  );
+  final _composerKey = GlobalKey<QiyuComposerState>(debugLabel: 'chat-composer');
 
   /// 贴底收敛状态机：会话恢复、新消息、流式增量与键盘压缩视口都跟在列表
   /// 尾部，判定与调度收在 [ChatStickToBottomController]，页面只在 build
   /// 与通知接线处喂数据。
-  late final ChatStickToBottomController _stick = ChatStickToBottomController(
-    scrollController: _scrollController,
-    android: _android,
-    isMounted: () => mounted,
-  );
+  late final ChatStickToBottomController _stick =
+      ChatStickToBottomController(
+        scrollController: _scrollController,
+        android: _android,
+        isMounted: () => mounted,
+      );
   late final LocalChatViewModel _chatViewModel;
   late final VoiceInputController _voiceInput;
 
@@ -164,9 +163,8 @@ class _LocalChatViewState extends State<LocalChatView>
     final router = GoRouter.maybeOf(context);
     if (router == _router) return;
     _router?.routerDelegate.removeListener(_onRouteChanged);
-    _router?.routerDelegate.removeListener(
-      _onRouteChangedForVoiceOutputRefresh,
-    );
+    _router?.routerDelegate
+        .removeListener(_onRouteChangedForVoiceOutputRefresh);
     _router = router;
     _chatLocation =
         router?.routerDelegate.currentConfiguration.last.matchedLocation;
@@ -209,7 +207,8 @@ class _LocalChatViewState extends State<LocalChatView>
     }
   }
 
-  void _cancelUnsubmittedVoice() => _voiceCoordinator.cancelForPage();
+  void _cancelUnsubmittedVoice() =>
+      _voiceCoordinator.cancelForPage();
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -248,9 +247,8 @@ class _LocalChatViewState extends State<LocalChatView>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _router?.routerDelegate.removeListener(_onRouteChanged);
-    _router?.routerDelegate.removeListener(
-      _onRouteChangedForVoiceOutputRefresh,
-    );
+    _router?.routerDelegate
+        .removeListener(_onRouteChangedForVoiceOutputRefresh);
     _voiceCoordinator.unsubscribe();
     _chatViewModel.removeListener(_onChatViewModelChanged);
     // 离开本页立刻闭嘴（ADR 0002）：**无条件**停播，包括还在队列里没开口的气泡。
@@ -763,14 +761,16 @@ class _LocalChatViewState extends State<LocalChatView>
               child: Container(
                 key: const Key('api-error-notice-banner'),
                 decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.errorContainer.withValues(alpha: 0.12),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .errorContainer
+                      .withValues(alpha: 0.12),
                   borderRadius: QiyuRadii.smallBorder,
                   border: Border.all(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.error.withValues(alpha: 0.3),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .error
+                        .withValues(alpha: 0.3),
                     width: QiyuLine.hairline,
                   ),
                 ),
@@ -801,11 +801,10 @@ class _LocalChatViewState extends State<LocalChatView>
                           onTap: () => _pushAwayFromChat('/settings'),
                           child: Text(
                             qiyuStrings(context).checkSettings,
-                            style: QiyuTypography.of(context).secondary
-                                .copyWith(
-                                  color: QiyuColors.accentBright,
-                                  decoration: TextDecoration.underline,
-                                ),
+                            style: QiyuTypography.of(context).secondary.copyWith(
+                              color: QiyuColors.accentBright,
+                              decoration: TextDecoration.underline,
+                            ),
                           ),
                         ),
                       ],

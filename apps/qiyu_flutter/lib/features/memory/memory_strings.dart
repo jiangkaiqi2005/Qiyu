@@ -108,6 +108,67 @@ enum MemoryLabel {
   String of(BuildContext context) => qiyuIsEn(context) ? en : zh;
 }
 
+String memoryErrorFor(BuildContext context, String message) =>
+    message == MemoryLabel.retryError.zh
+    ? MemoryLabel.retryError.of(context)
+    : message;
+
+const _recoveryLayersEn = <String, String>{
+  '原始会话': 'Original conversation',
+  '每日记录': 'Daily record',
+  '整理检查点': 'Organization checkpoint',
+  '月份索引': 'Monthly index',
+  '每日索引': 'Daily index',
+  '月度摘要': 'Monthly summary',
+  '记忆控制': 'Memory controls',
+  '未闭环事项': 'Open items',
+  '未闭环事项归档': 'Open items archive',
+  '近日状态': 'Recent state',
+  '关系记录': 'Relationship notes',
+  '长期印象': 'Long-term impressions',
+  '画像投影': 'Profile projection',
+  'Dream 状态': 'Dream state',
+  '写入残留': 'Interrupted write',
+  '记忆文件': 'Memory file',
+};
+
+const _personaBranchesEn = <String, String>{
+  '身份事实': 'Identity facts',
+  '性格表达': 'Personality and expression',
+  '价值原则': 'Values',
+  '偏好习惯': 'Preferences',
+  '边界禁区': 'Boundaries',
+  'identity': 'identity',
+  'expression': 'expression',
+  'values': 'values',
+  'preferences': 'preferences',
+  'boundaries': 'boundaries',
+};
+
+String recoveryLayerFor(BuildContext context, String layer) {
+  if (!qiyuIsEn(context)) return layer;
+  final fixed = _recoveryLayersEn[layer];
+  if (fixed != null) return fixed;
+
+  final conversation = RegExp(r'^原始会话（(\d{4}-\d{2}-\d{2}) 第 (\d+) 段）$')
+      .firstMatch(layer);
+  if (conversation != null) {
+    return 'Original conversation (${conversation[1]}, segment ${conversation[2]})';
+  }
+  final dated = RegExp(r'^(每日记录|每日索引|月度摘要)（(\d{4}-\d{2}(?:-\d{2})?)）$')
+      .firstMatch(layer);
+  final datedLabel = dated == null ? null : _recoveryLayersEn[dated[1]];
+  if (dated != null && datedLabel != null) {
+    return '$datedLabel (${dated[2]})';
+  }
+  final branch = RegExp(r'^(画像分支|画像归档)（(.+)）$').firstMatch(layer);
+  final branchLabel = branch == null ? null : _personaBranchesEn[branch[2]];
+  if (branch != null && branchLabel != null) {
+    return '${branch[1] == '画像分支' ? 'Profile branch' : 'Profile archive'} ($branchLabel)';
+  }
+  return layer;
+}
+
 enum BackupLabel {
   rollbackQuestion('回滚到导入之前？', 'Roll back to before import?'),
   rollbackDescription(

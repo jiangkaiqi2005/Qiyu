@@ -89,7 +89,7 @@ class HistoryView extends StatelessWidget {
     }
     if (viewModel.errorMessage case final message?) {
       return QiyuErrorRetryState(
-        message: message,
+        message: strings.localizeError(message),
         messageStyle: TextStyle(color: Theme.of(context).colorScheme.error),
         retryKey: const Key('retry-history'),
         onRetry: () => unawaited(viewModel.refresh()),

@@ -175,7 +175,7 @@ class MemoryView extends StatelessWidget {
     }
     if (viewModel.errorMessage case final message?) {
       return QiyuErrorRetryState(
-        message: message,
+        message: memoryErrorFor(context, message),
         messageStyle: TextStyle(color: Theme.of(context).colorScheme.error),
         retryKey: const Key('retry-memory'),
         onRetry: () => unawaited(viewModel.refresh()),
@@ -261,7 +261,7 @@ class _RecoveryBanner extends StatelessWidget {
 
   String _findingText(BuildContext context, MemoryRecoveryFindingCard finding) {
     final buffer = StringBuffer(
-      '${finding.layer}${qiyuIsEn(context) ? ': ' : '：'}${qiyuIsEn(context) ? _recoveryKindEn(finding.kind) : finding.kindLabel}${qiyuIsEn(context) ? ', ' : '，'}${qiyuIsEn(context) ? _recoveryOutcomeEn(finding.outcome) : finding.outcomeLabel}',
+      '${recoveryLayerFor(context, finding.layer)}${qiyuIsEn(context) ? ': ' : '：'}${qiyuIsEn(context) ? _recoveryKindEn(finding.kind) : finding.kindLabel}${qiyuIsEn(context) ? ', ' : '，'}${qiyuIsEn(context) ? _recoveryOutcomeEn(finding.outcome) : finding.outcomeLabel}',
     );
     final evidence = finding.evidence;
     if (evidence != null && evidence.isNotEmpty) {

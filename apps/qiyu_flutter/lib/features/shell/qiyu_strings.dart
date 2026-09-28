@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../baseline/host_stopped_gate.dart';
+
 /// 纯 Dart 强类型双语词表抽象基类（Spec & ADR 0023）。
 ///
 /// 零 flutter_localizations 与 .arb 外部依赖，编译期严格保障中英词条 1:1 对齐。
@@ -179,9 +181,9 @@ class QiyuStringsZh extends QiyuStrings {
   @override
   String get qiyuThinkingVisible => '栖语在想…';
   @override
-  String get hostStoppedSituation => '栖语本机程序未在运行或已更新。';
+  String get hostStoppedSituation => hostStoppedGateSituation;
   @override
-  String get hostStoppedGuidance => '请在电脑上重新启动栖语，然后刷新这个页面。';
+  String get hostStoppedGuidance => hostStoppedGateGuidance;
   @override
   String get switchToHoldToTalk => '切换到按住说话';
   @override

@@ -19,6 +19,43 @@ import 'support/shared_fakes.dart';
 import 'support/test_dates.dart';
 
 void main() {
+  testWidgets(
+    'English history maps its fixed load failure and keeps unknown details',
+    (tester) async {
+    final gateway = _FakeHistoryGateway(
+      _testListing(),
+      fetchError: StateError('offline'),
+    );
+    final viewModel = HistoryViewModel(
+      gateway,
+      onSessionDeleted: (_) {},
+      autoStart: false,
+    );
+    await viewModel.refresh();
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        historyViewModel: viewModel,
+        onboardingViewModel: await _onboardingViewModel(),
+        localeController: LocaleController(initialLocale: 'en'),
+      ),
+    );
+    await _settleMergedPage(tester);
+    await tester.tap(find.byKey(const Key('open-history')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('History is unavailable right now. Please try again later.'),
+      findsOneWidget,
+    );
+    expect(find.text('历史记录暂时不可用，请稍后重试。'), findsNothing);
+
+    gateway.fetchError = const HistoryGatewayException('独立诊断原文');
+    await tester.tap(find.byKey(const Key('retry-history')));
+    await tester.pumpAndSettle();
+    expect(find.text('独立诊断原文'), findsOneWidget);
+  });
+
   testWidgets('English history chrome changes while previews stay verbatim', (
     tester,
   ) async {

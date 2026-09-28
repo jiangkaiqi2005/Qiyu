@@ -31,6 +31,48 @@ import 'support/shared_fakes.dart';
 import 'support/test_dates.dart';
 
 void main() {
+  testWidgets('English memory maps fixed load failure and keeps unknown details', (
+    tester,
+  ) async {
+    final gateway = await _pumpMemoryCenter(
+      tester,
+      _fullOverview(),
+      fetchError: StateError('offline'),
+      localeController: LocaleController(initialLocale: 'en'),
+    );
+    expect(
+      find.text('Memory is unavailable right now. Please try again later.'),
+      findsOneWidget,
+    );
+    expect(find.text('记忆中心暂时不可用，请稍后重试。'), findsNothing);
+
+    gateway.fetchError = const MemoryGatewayException('独立诊断原文');
+    await tester.tap(find.byKey(const Key('retry-memory')));
+    await tester.pumpAndSettle();
+    expect(find.text('独立诊断原文'), findsOneWidget);
+  });
+
+  testWidgets('English recovery translates known layers but keeps evidence and unknown layers', (
+    tester,
+  ) async {
+    await _pumpMemoryCenter(
+      tester,
+      _recoveryOverview(extraLayer: '实验层'),
+      localeController: LocaleController(initialLocale: 'en'),
+    );
+    await tester.tap(find.byKey(const Key('memory-recovery-banner')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Long-term impressions:'), findsOneWidget);
+    expect(
+      find.textContaining('Original conversation (2026-08-05, segment 1):'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('无有效 Dream 备份'), findsOneWidget);
+    expect(find.textContaining('从文件内完整对话块 2 段抢救'), findsOneWidget);
+    expect(find.textContaining('实验层:'), findsOneWidget);
+  });
+
   testWidgets('English memory navigation keeps recorded content verbatim', (tester) async {
     await _pumpMemoryCenter(
       tester,
@@ -2121,7 +2163,7 @@ class _FakeSettingsGateway extends FakeSettingsGateway {
 
 /// 恢复状态呈现用总览（ticket 21）：受影响范围、采用证据与恢复结果
 /// 诚实可见，绝不显示虚假成功。
-MemoryOverview _recoveryOverview() => MemoryOverview(
+MemoryOverview _recoveryOverview({String? extraLayer}) => MemoryOverview(
   generatedAt: DateTime.parse('2026-08-17T13:00:00.000Z'),
   recent: MemoryRecentSection(days: []),
   longTerm: MemoryLongTermSection(
@@ -2160,6 +2202,15 @@ MemoryOverview _recoveryOverview() => MemoryOverview(
         loss: '未完整解析的对话块',
         quarantined: true,
       ),
+      if (extraLayer != null)
+        MemoryRecoveryFindingCard(
+          layer: extraLayer,
+          kind: 'corrupt',
+          outcome: MemoryRecoveryOutcome.pending,
+          evidence: '独立证据原文',
+          loss: null,
+          quarantined: false,
+        ),
     ],
   ),
 );

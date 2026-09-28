@@ -29,14 +29,13 @@ import 'qiyu_widgets.dart';
 /// 既有测试键 `home-go-<name>`——侧边栏与抽屉会同时渲染同一批文案，测试一律按
 /// Key 定位（Spec Testing Decisions 第 8 条）。
 enum QiyuNavDestination {
-  history('/history', '历史', QiyuIcons.hourglass_empty),
-  memory('/memory', '记忆中心', QiyuIcons.menu_book),
-  settings('/settings', '设置', QiyuIcons.tune);
+  history('/history', QiyuIcons.hourglass_empty),
+  memory('/memory', QiyuIcons.menu_book),
+  settings('/settings', QiyuIcons.tune);
 
-  const QiyuNavDestination(this.path, this.label, this.icon);
+  const QiyuNavDestination(this.path, this.icon);
 
   final String path;
-  final String label;
   final IconData icon;
 
   String localizedLabel(QiyuStrings strings) => switch (this) {

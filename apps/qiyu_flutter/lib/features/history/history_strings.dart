@@ -22,6 +22,7 @@ abstract class HistoryStrings {
   String get detail;
   String get emptyDetail;
   String get openError;
+  String localizeError(String message) => message;
   String messageCount(int count);
   String deleteDescription(int count);
 }
@@ -65,6 +66,12 @@ class _HistoryStringsZh extends HistoryStrings {
 
 class _HistoryStringsEn extends HistoryStrings {
   const _HistoryStringsEn();
+
+  @override
+  String localizeError(String message) =>
+      message == '历史记录暂时不可用，请稍后重试。'
+      ? 'History is unavailable right now. Please try again later.'
+      : message;
 
   @override
   String get title => 'History';
