@@ -18,8 +18,6 @@ abstract class QiyuStrings {
   // ── 双语切换控件 ──
   String get languageSwitchZh;
   String get languageSwitchEn;
-  String get languageSwitchSemanticsZh;
-  String get languageSwitchSemanticsEn;
   String get toggleLanguageSemantics;
 }
 
@@ -43,12 +41,6 @@ class QiyuStringsZh extends QiyuStrings {
   String get languageSwitchEn => 'EN';
 
   @override
-  String get languageSwitchSemanticsZh => '当前为中文，点击切换为英文';
-
-  @override
-  String get languageSwitchSemanticsEn => '切换为英文';
-
-  @override
   String get toggleLanguageSemantics => '切换为英文';
 }
 
@@ -70,12 +62,6 @@ class QiyuStringsEn extends QiyuStrings {
 
   @override
   String get languageSwitchEn => 'EN';
-
-  @override
-  String get languageSwitchSemanticsZh => 'Switch to Chinese';
-
-  @override
-  String get languageSwitchSemanticsEn => 'Currently English, tap to switch to Chinese';
 
   @override
   String get toggleLanguageSemantics => 'Switch to Chinese';
