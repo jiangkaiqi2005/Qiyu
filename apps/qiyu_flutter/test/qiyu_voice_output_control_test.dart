@@ -216,6 +216,7 @@ final class _SilentChatGateway
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '';
 
   @override
@@ -230,6 +231,7 @@ final class _SilentChatGateway
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {}
 }
 

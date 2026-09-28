@@ -100,9 +100,12 @@ final class VoiceRoutes implements ApiRoutes {
       if (mimeType == null || !mimeType.startsWith('audio/')) {
         throw invalidRequest('音频请求格式不正确。');
       }
+      final requestLocale = request.headers['x-qiyu-locale'] ??
+          request.url.queryParameters['locale'];
       final text = await sttSettingsService.transcribe(
         audio: audio,
         mimeType: mimeType,
+        locale: requestLocale,
       );
       return Response.ok(jsonEncode({'text': text}), headers: jsonHeaders);
     }

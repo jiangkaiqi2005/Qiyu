@@ -2318,6 +2318,7 @@ final class _HangingFailingChatGateway implements _TestChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '测试转写文本';
 
   @override
@@ -2332,6 +2333,7 @@ final class _HangingFailingChatGateway implements _TestChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {
     if (acceptBeforeFailure) {
       yield LocalChatDeliveryEvent.accepted(
@@ -2375,6 +2377,7 @@ final class _StreamControlledChatGateway implements _TestChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '测试转写文本';
 
   @override
@@ -2389,6 +2392,7 @@ final class _StreamControlledChatGateway implements _TestChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) {
     sentRequestId = requestId;
     return _controller.stream;
@@ -2424,6 +2428,7 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async {
     if (transcribeError != null) {
       throw transcribeError!;
@@ -2449,6 +2454,7 @@ final class _ConfigurableChatGateway implements _TestChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {
     final index = deliverCallCount;
     final reason = index < fallbackReasons.length

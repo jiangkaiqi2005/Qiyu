@@ -148,6 +148,25 @@ final class OpenAiSpeechGateway
   /// OpenAI 协议的 voice 是必填字段：用户没填音色时用协议通用缺省。
   static const defaultVoice = 'alloy';
 
+  /// 英文模式下的智能推荐音色（ADR 0023）：未手动覆盖音色且文本主要为英文时采用。
+  static const defaultVoiceEn = 'nova';
+
+  /// 判定文本是否为英文主导（含英文字母且不含 CJK 汉字）。
+  static bool _isMainlyEnglish(String text) {
+    var latinCount = 0;
+    var cjkCount = 0;
+    for (final rune in text.runes) {
+      if ((rune >= 0x4E00 && rune <= 0x9FFF) ||
+          (rune >= 0x3400 && rune <= 0x4DBF)) {
+        cjkCount++;
+      } else if ((rune >= 0x41 && rune <= 0x5A) ||
+          (rune >= 0x61 && rune <= 0x7A)) {
+        latinCount++;
+      }
+    }
+    return latinCount > 0 && cjkCount == 0;
+  }
+
   /// OpenAI pcm 的协商采样率：官方定义「24kHz 16-bit 有符号小端、无
   /// 容器头」的裸样本，WAV 包装与播放端初始化都用它。
   static const pcmSampleRate = 24000;
@@ -164,10 +183,13 @@ final class OpenAiSpeechGateway
     // TTS 是新增出网路径：出网前统一过 SSRF 校验（与 STT 共用判定）。
     ensureTtsOutboundAllowed(uri);
     final voice = config.voice?.trim();
+    final effectiveVoice = (voice == null || voice.isEmpty)
+        ? (_isMainlyEnglish(text) ? defaultVoiceEn : defaultVoice)
+        : voice;
     final body = jsonEncode({
       'model': config.model.trim(),
       'input': text,
-      'voice': voice == null || voice.isEmpty ? defaultVoice : voice,
+      'voice': effectiveVoice,
       // 音频格式统一 PCM（票二）：裸样本由网关包 WAV 头，播放端零改动。
       // extraParams 展平在后再合并——用户在高级参数里显式写的
       // response_format 覆盖协议缺省（覆盖成压缩格式时原样返回，见
@@ -223,10 +245,13 @@ final class OpenAiSpeechGateway
     final uri = appendProviderEndpoint(config.baseUrl, 'audio/speech');
     ensureTtsOutboundAllowed(uri);
     final voice = config.voice?.trim();
+    final effectiveVoice = (voice == null || voice.isEmpty)
+        ? (_isMainlyEnglish(text) ? defaultVoiceEn : defaultVoice)
+        : voice;
     final body = jsonEncode({
       'model': config.model.trim(),
       'input': text,
-      'voice': voice == null || voice.isEmpty ? defaultVoice : voice,
+      'voice': effectiveVoice,
       'response_format': 'pcm',
       // 官方流式开关：chunked 原始音频字节（非 SSE 事件）。用户经高级
       // 参数覆盖成非 PCM 时不走块流（服务返回压缩字节，PCM 播放器会

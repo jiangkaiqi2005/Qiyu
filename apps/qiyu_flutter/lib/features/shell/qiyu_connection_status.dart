@@ -62,10 +62,10 @@ class _QiyuConnectionStatusState extends State<QiyuConnectionStatus> {
     final failed = viewModel != null && viewModel.hostStopped;
     final probing = viewModel == null || !viewModel.hostStatusKnown;
     final label = failed
-        ? (isEn ? strings.connectionFailed : QiyuConnectionStatus.failedLabel)
+        ? strings.connectionFailed
         : probing
-        ? (isEn ? strings.connectionProbing : QiyuConnectionStatus.probingLabel)
-        : (isEn ? strings.connectionNormal : QiyuConnectionStatus.normalLabel);
+            ? strings.connectionProbing
+            : strings.connectionNormal;
     final color = failed ? QiyuColors.danger : QiyuColors.muted;
 
     final statusContent = Row(
@@ -103,29 +103,27 @@ class _QiyuConnectionStatusState extends State<QiyuConnectionStatus> {
           )
         : statusContent;
 
+    void setLocale(String lang) {
+      if (localeController != null) {
+        localeController.setLocale(lang);
+      } else {
+        viewModel?.setLocale(lang);
+      }
+    }
+
+    void toggleLocale() {
+      if (localeController != null) {
+        localeController.toggle();
+      } else {
+        viewModel?.toggleLocale();
+      }
+    }
+
     final toggleWidget = QiyuLanguageToggle(
       isEn: isEn,
-      onToggle: () {
-        if (localeController != null) {
-          localeController.toggle();
-        } else if (viewModel != null) {
-          viewModel.toggleLocale();
-        }
-      },
-      onSelectZh: () {
-        if (localeController != null) {
-          localeController.setLocale('zh');
-        } else if (viewModel != null) {
-          viewModel.setLocale('zh');
-        }
-      },
-      onSelectEn: () {
-        if (localeController != null) {
-          localeController.setLocale('en');
-        } else if (viewModel != null) {
-          viewModel.setLocale('en');
-        }
-      },
+      onToggle: toggleLocale,
+      onSelectZh: () => setLocale('zh'),
+      onSelectEn: () => setLocale('en'),
     );
 
     final row = Row(
@@ -186,6 +184,7 @@ class _QiyuLanguageToggleState extends State<QiyuLanguageToggle> {
   @override
   Widget build(BuildContext context) {
     final isEn = widget.isEn;
+    final strings = QiyuStrings.of(isEn ? 'en' : 'zh');
     final zhStyle = TextStyle(
       fontFamily: QiyuType.fontFamily,
       fontSize: QiyuType.secondarySize,
@@ -207,7 +206,7 @@ class _QiyuLanguageToggleState extends State<QiyuLanguageToggle> {
 
     return Semantics(
       key: const Key('language-toggle'),
-      label: isEn ? 'Switch to Chinese' : '切换为英文',
+      label: strings.toggleLanguageSemantics,
       button: true,
       child: QiyuFocusRing(
         focusNode: _focusNode,
@@ -224,7 +223,7 @@ class _QiyuLanguageToggleState extends State<QiyuLanguageToggle> {
                   key: const Key('language-toggle-zh'),
                   behavior: HitTestBehavior.opaque,
                   onTap: widget.onSelectZh ?? widget.onToggle,
-                  child: Text('中', style: zhStyle),
+                  child: Text(strings.languageSwitchZh, style: zhStyle),
                 ),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 2),
@@ -234,7 +233,7 @@ class _QiyuLanguageToggleState extends State<QiyuLanguageToggle> {
                   key: const Key('language-toggle-en'),
                   behavior: HitTestBehavior.opaque,
                   onTap: widget.onSelectEn ?? widget.onToggle,
-                  child: Text('EN', style: enStyle),
+                  child: Text(strings.languageSwitchEn, style: enStyle),
                 ),
               ],
             ),

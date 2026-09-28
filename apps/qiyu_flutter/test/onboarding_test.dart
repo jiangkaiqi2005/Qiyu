@@ -493,6 +493,7 @@ final class _RestoringChatGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {}
 
   @override
@@ -505,5 +506,6 @@ final class _RestoringChatGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '语音测试转写';
 }

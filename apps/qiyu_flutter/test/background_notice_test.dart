@@ -490,6 +490,7 @@ final class _StubChatGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '';
 
   @override
@@ -497,6 +498,7 @@ final class _StubChatGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {}
 }
 
@@ -521,6 +523,7 @@ final class _NoticeChatGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '';
 
   @override
@@ -528,6 +531,7 @@ final class _NoticeChatGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {
     final index = deliverCallCount;
     deliverCallCount += 1;

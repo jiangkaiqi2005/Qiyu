@@ -820,6 +820,7 @@ final class _StreamingFakeLocalChatGateway
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '语音测试转写';
 
   @override
@@ -827,6 +828,7 @@ final class _StreamingFakeLocalChatGateway
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) => _controller.stream;
 
   @override
@@ -853,6 +855,7 @@ final class _RestoredStreamingGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '语音测试转写';
 
   @override
@@ -860,6 +863,7 @@ final class _RestoredStreamingGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) => _controller.stream;
 
   @override

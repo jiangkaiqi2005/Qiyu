@@ -70,6 +70,52 @@ void main() {
     expect(body['speed'], 1.5);
   });
 
+  test('双语智能音色：英文文本在未配置音色时智能推荐 nova，手动覆盖优先', () async {
+    _RecordingBytesHttpClient makeClient() => _RecordingBytesHttpClient(
+      response: ProviderBytesHttpResponse(
+        statusCode: 200,
+        body: Stream.value([1, 2, 3]),
+      ),
+    );
+
+    // 1. 未配置音色，英文文本 -> 自动推荐 nova
+    final client1 = makeClient();
+    await TtsModelGateway(client1).synthesize(
+      config: config,
+      apiKey: 'tts-test-key',
+      text: 'Good night, have a restful sleep.',
+    );
+    var body =
+        jsonDecode(utf8.decode(client1.bytesBody)) as Map<String, Object?>;
+    expect(body['voice'], OpenAiSpeechGateway.defaultVoiceEn);
+    expect(body['voice'], 'nova');
+
+    // 2. 中文文本 -> 保持 alloy
+    final client2 = makeClient();
+    await TtsModelGateway(client2).synthesize(
+      config: config,
+      apiKey: 'tts-test-key',
+      text: '晚安。',
+    );
+    body = jsonDecode(utf8.decode(client2.bytesBody)) as Map<String, Object?>;
+    expect(body['voice'], OpenAiSpeechGateway.defaultVoice);
+    expect(body['voice'], 'alloy');
+
+    // 3. 手动配置音色时，即使是英文文本也尊重手动配置
+    final client3 = makeClient();
+    await TtsModelGateway(client3).synthesize(
+      config: const TtsConfig(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+        voice: 'echo',
+      ),
+      apiKey: 'tts-test-key',
+      text: 'Good night.',
+    );
+    body = jsonDecode(utf8.decode(client3.bytesBody)) as Map<String, Object?>;
+    expect(body['voice'], 'echo');
+  });
+
   test('缺 Key 直接按鉴权失败拒绝，不出网', () async {
     final client = _RecordingBytesHttpClient();
 

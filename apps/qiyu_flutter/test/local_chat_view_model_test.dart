@@ -1570,6 +1570,7 @@ final class _RestoreCountingGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '';
 
   @override
@@ -1577,6 +1578,7 @@ final class _RestoreCountingGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {}
 }
 
@@ -1595,6 +1597,7 @@ final class _TwoBubbleGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '语音测试转写';
 
   @override
@@ -1602,6 +1605,7 @@ final class _TwoBubbleGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {
     yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,
@@ -1679,6 +1683,7 @@ final class _GatedGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '语音测试转写';
 
   @override
@@ -1686,6 +1691,7 @@ final class _GatedGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {
     await _gate.future;
     yield LocalChatDeliveryEvent.accepted(
@@ -1859,6 +1865,7 @@ final class _ScriptedGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '语音测试转写';
 
   @override
@@ -1866,6 +1873,7 @@ final class _ScriptedGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) {
     // 新的一次交付取代同一 requestId 的旧流（重发即新连接）。
     _controllers[requestId]?.close();

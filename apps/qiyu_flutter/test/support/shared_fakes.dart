@@ -239,6 +239,7 @@ final class FakeLocalChatGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => transcribeText;
 
   @override
@@ -246,6 +247,7 @@ final class FakeLocalChatGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {
     sentTexts.add(text);
     sentRequestIds.add(requestId);

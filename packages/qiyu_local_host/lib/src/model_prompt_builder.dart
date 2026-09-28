@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'markdown_memory_repository.dart';
@@ -158,34 +156,6 @@ const hiddenActionsReminderEn =
     'use memory_recall when permanent fields miss and user asks about past events; '
     'use no_action if nothing to record. Do not omit the hidden block.';
 
-/// 尝试从标准路径加载英文人格宪法（docs/product/栖语人格宪法.en.md）。
-String? tryLoadDefaultPersonaConstitutionEn() {
-  try {
-    var directory = Directory.current;
-    while (true) {
-      for (final relative in [
-        'docs${Platform.pathSeparator}product${Platform.pathSeparator}栖语人格宪法.en.md',
-        '栖语人格宪法.en.md',
-        'persona-constitution.en.md',
-      ]) {
-        final file = File('${directory.path}${Platform.pathSeparator}$relative');
-        if (file.existsSync()) {
-          final content = file.readAsStringSync().trim();
-          if (content.isNotEmpty) {
-            return content;
-          }
-        }
-      }
-      final parent = directory.parent;
-      if (parent.path == directory.path) {
-        break;
-      }
-      directory = parent;
-    }
-  } catch (_) {}
-  return null;
-}
-
 /// 按设计定稿的装配图组装模型上下文：
 /// 人格宪法 → 硬规则与优先级 → 隐藏块协议 →
 /// `<daily_state>`【近况】/ `<long_memory>`【长期印象】/ `<persona>`【用户画像】
@@ -301,7 +271,7 @@ final class ModelPromptBuilder {
     final effectiveConstitution = isEn
         ? (personaConstitutionEn?.trim().isNotEmpty == true
             ? personaConstitutionEn!
-            : (tryLoadDefaultPersonaConstitutionEn() ?? personaConstitution))
+            : personaConstitution)
         : personaConstitution;
     final effectiveHardRules = isEn ? hardRulesBlockEn : hardRulesBlock;
     final effectiveHiddenActions =

@@ -22,6 +22,7 @@ final class CustomSttGateway implements SttTranscriptionGateway {
     required String? apiKey,
     required List<int> audio,
     required String mimeType,
+    String? locale,
   }) async {
     config.validate();
     final key = requireSttApiKey(apiKey);
@@ -42,6 +43,7 @@ final class CustomSttGateway implements SttTranscriptionGateway {
         audio: audio,
         mimeType: mimeType,
         extraParams: config.extraParams,
+        locale: locale,
       ),
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {

@@ -149,6 +149,7 @@ abstract interface class StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   });
 
   Future<bool> cancel(String requestId);
@@ -164,6 +165,7 @@ abstract interface class StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   });
 }
 
@@ -329,10 +331,20 @@ final class HttpLocalChatGateway extends HostApiGateway
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async {
+    final effectiveLocale = locale ?? localeSource?.call();
+    final uri = resolve('/api/chat/transcribe').replace(
+      queryParameters:
+          effectiveLocale == null ? null : {'locale': effectiveLocale},
+    );
     final response = await httpClient.post(
-      resolve('/api/chat/transcribe'),
-      headers: {...await csrfHeaders(), 'content-type': mimeType},
+      uri,
+      headers: {
+        ...await csrfHeaders(),
+        'content-type': mimeType,
+        'x-qiyu-locale': ?effectiveLocale,
+      },
       body: audio,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {

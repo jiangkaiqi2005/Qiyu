@@ -40,6 +40,7 @@ abstract interface class SttTranscriptionGateway {
     required String? apiKey,
     required List<int> audio,
     required String mimeType,
+    String? locale,
   });
 }
 
@@ -56,6 +57,7 @@ final class OpenAiTranscriptionGateway implements SttTranscriptionGateway {
     required String? apiKey,
     required List<int> audio,
     required String mimeType,
+    String? locale,
   }) async {
     config.validate();
     final key = requireSttApiKey(apiKey);
@@ -75,6 +77,8 @@ final class OpenAiTranscriptionGateway implements SttTranscriptionGateway {
         config: config,
         audio: audio,
         mimeType: mimeType,
+        extraParams: config.extraParams,
+        locale: locale,
       ),
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -110,6 +114,7 @@ final class SttModelGateway implements SttTranscriptionGateway {
     required String? apiKey,
     required List<int> audio,
     required String mimeType,
+    String? locale,
   }) => switch (config.provider) {
     SttProviderKind.openAiCompatible =>
       OpenAiTranscriptionGateway(httpClient).transcribe(
@@ -117,6 +122,7 @@ final class SttModelGateway implements SttTranscriptionGateway {
         apiKey: apiKey,
         audio: audio,
         mimeType: mimeType,
+        locale: locale,
       ),
     SttProviderKind.volcSeedAsr => _volcSeedAsr.transcribe(
       config: config,
@@ -135,6 +141,7 @@ final class SttModelGateway implements SttTranscriptionGateway {
       apiKey: apiKey,
       audio: audio,
       mimeType: mimeType,
+      locale: locale,
     ),
   };
 }
@@ -259,6 +266,7 @@ Uint8List buildSttMultipartBody({
   required List<int> audio,
   required String mimeType,
   Map<String, Object?>? extraParams,
+  String? locale,
 }) {
   final builder = BytesBuilder(copy: false);
   void addField(String name, String value) {
@@ -269,11 +277,17 @@ Uint8List buildSttMultipartBody({
       ..add(utf8.encode('\r\n'));
   }
 
-  // language 固定 zh：产品只面向中文睡前场景，避免服务端自动检测摇摆。
+  // 默认根据当前语言选择转写目标语言（英文为 en，其余默认 zh）；若 extraParams 中有手动指定的 language 则尊重覆盖。
+  final isEn = locale?.toLowerCase().startsWith('en') ?? false;
+  final defaultLang = isEn ? 'en' : 'zh';
+  final explicitLanguage = extraParams?['language'] as String?;
+  final effectiveLanguage = explicitLanguage ?? defaultLang;
+
   addField('model', config.model.trim());
-  addField('language', 'zh');
+  addField('language', effectiveLanguage);
   if (extraParams != null) {
     for (final entry in extraParams.entries) {
+      if (entry.key == 'language') continue;
       final value = entry.value;
       if (value == null) {
         continue;

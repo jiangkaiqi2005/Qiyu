@@ -2646,6 +2646,7 @@ final class _FakeChatGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {}
 
   @override
@@ -2658,6 +2659,7 @@ final class _FakeChatGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '语音测试转写';
 }
 

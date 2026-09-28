@@ -808,6 +808,62 @@ void main() {
       );
       expect(find.text('测试草稿未发送文本'), findsOneWidget);
     });
+
+    testWidgets('键盘导航：Tab 键落焦到 language-toggle 呈现 2px accentBright 焦点环，按 Enter 键可触发切换', (
+      tester,
+    ) async {
+      await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
+
+      // 初始焦点在 composer 输入框，language-toggle 的焦点环未激活
+      expect(
+        readFocusRingBorderIn(tester, const Key('language-toggle')).color,
+        isNot(QiyuColors.accentBright),
+      );
+
+      // 通过连续 Tab 键遍历焦点，直到落焦到 language-toggle
+      var landed = false;
+      for (var i = 0; i < 15 && !landed; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        landed =
+            readFocusRingBorderIn(tester, const Key('language-toggle')).color ==
+            QiyuColors.accentBright;
+      }
+      expect(landed, isTrue, reason: 'Tab 键必须能够落焦到 language-toggle 并激活自绘焦点环');
+
+      // 验证焦点环规格：2px 亮紫微外环
+      final border = readFocusRingBorderIn(tester, const Key('language-toggle'));
+      expect(border.width, QiyuLayout.focusRingWidth);
+      expect(border.color, QiyuColors.accentBright);
+
+      // 当前为中文
+      expect(
+        tester.widget<Text>(find.byKey(const Key('conn-status-text'))).data,
+        '栖语在本机',
+      );
+
+      // 按 Enter 键触发切换为英文
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(find.byKey(const Key('conn-status-text'))).data,
+        'Qiyu is local',
+      );
+      final enText = _toggleText(tester, 'language-toggle-en');
+      expect(enText.style!.color, QiyuColors.ink);
+
+      // 按 Space 键再次触发切换回中文
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(find.byKey(const Key('conn-status-text'))).data,
+        '栖语在本机',
+      );
+      final zhText = _toggleText(tester, 'language-toggle-zh');
+      expect(zhText.style!.color, QiyuColors.ink);
+    });
   });
 
   group('合一页：空状态首页与对话态', () {
@@ -1437,6 +1493,7 @@ final class _StubChatGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async => '';
 
   @override
@@ -1444,6 +1501,7 @@ final class _StubChatGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {
     yield LocalChatDeliveryEvent.accepted(
       requestId: requestId,

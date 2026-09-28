@@ -1878,6 +1878,7 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
   Future<String> transcribe({
     required Uint8List audio,
     required String mimeType,
+    String? locale,
   }) async {
     transcribeCalls += 1;
     transcribeAudioCalls.add(audio.toList());
@@ -1898,6 +1899,7 @@ final class _VoiceChatGateway implements StreamingLocalChatGateway {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {
     sentTexts.add(text);
     if (deliverError case final error? when deliverFailuresRemaining > 0) {

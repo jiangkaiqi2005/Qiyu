@@ -22,6 +22,7 @@ final class QwenAsrGateway implements SttTranscriptionGateway {
     required String? apiKey,
     required List<int> audio,
     required String mimeType,
+    String? locale,
   }) async {
     config.validate();
     final key = requireSttApiKey(apiKey);

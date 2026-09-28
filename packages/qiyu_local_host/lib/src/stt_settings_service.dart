@@ -251,6 +251,7 @@ final class SttSettingsService {
   Future<String> transcribe({
     required List<int> audio,
     required String mimeType,
+    String? locale,
   }) async {
     final config = await configRepository.loadStt();
     if (config == null) {
@@ -275,6 +276,7 @@ final class SttSettingsService {
         apiKey: config.apiKey,
         audio: audio,
         mimeType: mimeType,
+        locale: locale,
       )).trim();
       if (text.isEmpty) {
         throw const SttServiceException(

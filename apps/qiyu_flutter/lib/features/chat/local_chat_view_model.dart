@@ -110,6 +110,7 @@ final class LocalChatViewModel extends ChangeNotifier {
       monitorInterval: monitorInterval,
     );
     _hostMonitor.addListener(_onHostMonitorChanged);
+    _localeController?.addListener(notifyListeners);
     if (autoStart) {
       unawaited(initialize());
     }
@@ -127,9 +128,12 @@ final class LocalChatViewModel extends ChangeNotifier {
 
   void setLocale(String next) {
     if (locale == next) return;
-    _locale = next;
-    _localeController?.setLocale(next);
-    notifyListeners();
+    if (_localeController != null) {
+      _localeController.setLocale(next);
+    } else {
+      _locale = next;
+      notifyListeners();
+    }
   }
 
   void toggleLocale() {
@@ -573,6 +577,7 @@ final class LocalChatViewModel extends ChangeNotifier {
         requestId: turn.requestId,
         text: turn.text,
         sessionId: _sessionId,
+        locale: locale,
       )) {
         // 写入前校验代际归属：新发送 / 恢复 / 丢弃会话之后，旧事务已经
         // 失效，它余下的事件整体丢弃——不写状态、不通知。
@@ -780,13 +785,14 @@ final class LocalChatViewModel extends ChangeNotifier {
   /// 语音转写通道：录音字节经本机程序转成文字，语义与手打输入完全
   /// 一致，成功后由调用方走 [send]/[sendWhenIdle] 现有链路。
   Future<String> transcribeVoice(Uint8List audio, String mimeType) =>
-      _gateway.transcribe(audio: audio, mimeType: mimeType);
+      _gateway.transcribe(audio: audio, mimeType: mimeType, locale: locale);
 
   @override
   void dispose() {
     // 轮询计时器与恢复提示窗口随监控模块释放；活跃事务随释放失效：尚未
     // 消费完的旧流事件会在代际校验处整体丢弃，不再写入或通知已销毁的
     // 视图模型。
+    _localeController?.removeListener(notifyListeners);
     _hostMonitor.removeListener(_onHostMonitorChanged);
     _hostMonitor.dispose();
     _sessionScope = Object();

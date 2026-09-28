@@ -83,6 +83,55 @@ void main() {
     );
   });
 
+  test('双语转写语言联动：locale 为 en 时默认表单 language 为 en，手动覆盖优先', () async {
+    RecordingHttpClient makeClient() => RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.value('{"text":"Good night"}'),
+      ),
+    );
+
+    // 1. locale 为 en -> language 字段为 en
+    final client1 = makeClient();
+    await SttModelGateway(client1).transcribe(
+      config: config,
+      apiKey: 'stt-test-key',
+      audio: [1, 2, 3],
+      mimeType: 'audio/webm',
+      locale: 'en',
+    );
+    var body = latin1.decode(client1.bytesBody);
+    expect(body, contains('content-disposition: form-data; name="language"\r\n\r\nen'));
+
+    // 2. 缺省 locale 或中文 -> language 字段为 zh
+    final client2 = makeClient();
+    await SttModelGateway(client2).transcribe(
+      config: config,
+      apiKey: 'stt-test-key',
+      audio: [1, 2, 3],
+      mimeType: 'audio/webm',
+      locale: 'zh',
+    );
+    body = latin1.decode(client2.bytesBody);
+    expect(body, contains('content-disposition: form-data; name="language"\r\n\r\nzh'));
+
+    // 3. extraParams 显式指定 language 时尊重覆盖
+    final client3 = makeClient();
+    await SttModelGateway(client3).transcribe(
+      config: const SttConfig(
+        baseUrl: 'https://stt.example.com/v1',
+        model: 'whisper-test',
+        extraParams: {'language': 'ja'},
+      ),
+      apiKey: 'stt-test-key',
+      audio: [1, 2, 3],
+      mimeType: 'audio/webm',
+      locale: 'en',
+    );
+    body = latin1.decode(client3.bytesBody);
+    expect(body, contains('content-disposition: form-data; name="language"\r\n\r\nja'));
+  });
+
   test('空文本照实返回：空与失败的语义区分交给调用方', () async {
     final client = RecordingHttpClient(
       response: ProviderHttpResponse(statusCode: 200, body: Stream.value('{"text":""}')),

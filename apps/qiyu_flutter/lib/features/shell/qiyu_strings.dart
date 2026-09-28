@@ -20,6 +20,7 @@ abstract class QiyuStrings {
   String get languageSwitchEn;
   String get languageSwitchSemanticsZh;
   String get languageSwitchSemanticsEn;
+  String get toggleLanguageSemantics;
 }
 
 /// 中文界面词表（当前标准原文，严格保持字面一致）。
@@ -46,6 +47,9 @@ class QiyuStringsZh extends QiyuStrings {
 
   @override
   String get languageSwitchSemanticsEn => '切换为英文';
+
+  @override
+  String get toggleLanguageSemantics => '切换为英文';
 }
 
 /// 英文界面词表（地道英文，符合栖语安静低摩擦陪伴气质）。
@@ -72,6 +76,9 @@ class QiyuStringsEn extends QiyuStrings {
 
   @override
   String get languageSwitchSemanticsEn => 'Currently English, tap to switch to Chinese';
+
+  @override
+  String get toggleLanguageSemantics => 'Switch to Chinese';
 }
 
 /// 全局语言控制器：广播语言状态变更（Spec Implementation Decisions 1）。
