@@ -57,11 +57,19 @@ Future<void> main(List<String> arguments) async {
         executablePath: Platform.resolvedExecutable,
       ),
     ).readAsString();
+    final personaConstitutionEnPath = tryResolvePersonaConstitutionEnPath(
+      currentDirectory: Directory.current.path,
+      executablePath: Platform.resolvedExecutable,
+    );
+    final personaConstitutionEn = personaConstitutionEnPath != null
+        ? await File(personaConstitutionEnPath).readAsString()
+        : null;
     launch = await QiyuHostRunner(
       webRoot: webRoot,
       runtimeDirectory: runtimeDirectory,
       memoryDirectory: memoryDirectory,
       personaConstitution: personaConstitution,
+      personaConstitutionEn: personaConstitutionEn,
       browserLauncher: const WindowsDefaultBrowserLauncher(),
     ).launch(openBrowser: options.openBrowser);
 

@@ -9,15 +9,20 @@ import 'package:test/test.dart';
 File _locateRepoConstitution() {
   var directory = Directory.current;
   while (true) {
-    final candidate = File(
-      '${directory.path}${Platform.pathSeparator}栖语人格宪法.md',
-    );
-    if (candidate.existsSync()) {
-      return candidate;
+    for (final relative in [
+      'docs${Platform.pathSeparator}product${Platform.pathSeparator}栖语人格宪法.md',
+      '栖语人格宪法.md',
+    ]) {
+      final candidate = File(
+        '${directory.path}${Platform.pathSeparator}$relative',
+      );
+      if (candidate.existsSync()) {
+        return candidate;
+      }
     }
     final parent = directory.parent;
     if (parent.path == directory.path) {
-      fail('向上回溯仍找不到仓库根「栖语人格宪法.md」');
+      fail('向上回溯仍找不到人格宪法文件「docs/product/栖语人格宪法.md」');
     }
     directory = parent;
   }
@@ -554,6 +559,78 @@ void main() {
       expect(texts[1], '[2025-12-31 23:41] 今天有点累');
       expect(texts[2], '嗯，怎么了？');
       expect(texts[4], '在吗');
+    });
+  });
+
+  group('bilingual prompt assembly (locale)', () {
+    const customZhConstitution = '自定义中文宪法';
+    const customEnConstitution = 'Custom English Constitution';
+    const bilingualBuilder = ModelPromptBuilder(
+      customZhConstitution,
+      personaConstitutionEn: customEnConstitution,
+      persona: '用户昵称：小明',
+      dailyState: '今天心情不错',
+      longMemory: '喜欢喝乌龙茶',
+      memoryContext: '昨日散步遇到了猫',
+    );
+
+    test('locale zh uses Chinese constitution, hard rules and reminders', () {
+      final state = StateSnapshot.initial('local-user');
+      final zhBuilder = const ModelPromptBuilder(
+        customZhConstitution,
+        personaConstitutionEn: customEnConstitution,
+        persona: '用户昵称：小明',
+        dailyState: '今天心情不错',
+      );
+      final messages = zhBuilder.build(
+        state,
+        '晚上好',
+        locale: 'zh',
+      );
+
+      final system = messages.first.content;
+      expect(system, contains(customZhConstitution));
+      expect(system, contains('## 输出契约'));
+      expect(system, contains('## 首个可见回应速度'));
+      expect(system, contains('<persona>\n【用户画像】\n用户昵称：小明\n</persona>'));
+      expect(system, contains('<daily_state>\n【近况】\n今天心情不错\n</daily_state>'));
+
+      final reminder = messages[messages.length - 2].content;
+      expect(reminder, contains('回复格式提醒：'));
+      expect(reminder, contains('输出可见回复后'));
+
+      expect(messages.last.content, '晚上好');
+    });
+
+    test('locale en uses English constitution, hard rules, reminders, and preserves Chinese memory', () {
+      final state = StateSnapshot.initial('local-user');
+      final messages = bilingualBuilder.build(
+        state,
+        'How was your day?',
+        locale: 'en',
+      );
+
+      final system = messages.first.content;
+      expect(system, contains(customEnConstitution));
+      expect(system, contains('## Output Contract'));
+      expect(system, contains('## First Visible Response Speed'));
+      expect(system, contains('## Source Priority of Facts'));
+      expect(system, contains('## Safety and Professional Boundaries'));
+      expect(system, contains('standard Chinese abstraction to integrate with the Chinese memory ontology'));
+
+      // Chinese memory blocks remain untouched in Chinese
+      expect(system, contains('<persona>\n【用户画像】\n用户昵称：小明\n</persona>'));
+      expect(system, contains('<daily_state>\n【近况】\n今天心情不错\n</daily_state>'));
+      expect(system, contains('<long_memory>\n【长期印象】\n喜欢喝乌龙茶\n</long_memory>'));
+
+      // Reminder before user message
+      final reminder = messages[messages.length - 2].content;
+      expect(reminder, contains('Reply format reminder:'));
+      expect(reminder, contains('After visible reply'));
+
+      // Context block attached to user message
+      expect(messages.last.content, contains('<memory_context>\n【检索结果】\n昨日散步遇到了猫\n</memory_context>'));
+      expect(messages.last.content, endsWith('How was your day?'));
     });
   });
 }

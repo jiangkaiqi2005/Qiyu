@@ -199,6 +199,7 @@ final class LocalChatService {
     required String requestId,
     required String text,
     String? sessionId,
+    String locale = 'zh',
   }) {
     final trimmedRequestId = requestId.trim();
     final cancellation = DeliveryCancellation();
@@ -220,6 +221,7 @@ final class LocalChatService {
             text: text,
             sessionId: sessionId,
             cancellation: cancellation,
+            locale: locale,
           ).map((event) {
             if (event.kind == ChatDeliveryEventKind.state) {
               stateEvent ??= event;
@@ -405,6 +407,7 @@ final class LocalChatService {
     required String text,
     required String? sessionId,
     required DeliveryCancellation cancellation,
+    String locale = 'zh',
   }) async* {
     final trimmedRequestId = requestId.trim();
     final trimmedText = sanitizeUserInput(text);
@@ -473,7 +476,7 @@ final class LocalChatService {
     final state = _stateFromCompletedTurns(session.turns, trimmedRequestId);
     List<HiddenAction> hiddenActions = const [];
     final localOutcome = _behaviorCore.reply(
-      ChatRequest(requestId: trimmedRequestId, text: trimmedText),
+      ChatRequest(requestId: trimmedRequestId, text: trimmedText, locale: locale),
       state,
     );
     // ChatOutcome sealed 仅两子类，穷尽 switch 免去冗余强转：安全拒绝
@@ -536,6 +539,7 @@ final class LocalChatService {
               trimmedText,
               hardRulesAddendum: prepared.hardRulesAddendum,
               at: pendingUserMoment,
+              locale: locale,
             ),
             cancellation: cancellation,
             // 敏感输入（危机/医疗/法律/金融）的回复沿用现状：不分片
@@ -546,6 +550,7 @@ final class LocalChatService {
             requestId: trimmedRequestId,
             sessionId: session.id,
             text: trimmedText,
+            locale: locale,
             voice: pendingVoice,
             abandonVoice: _abandonVoiceStream,
             voiceSessionGrace: _voiceSessionGrace,
@@ -568,6 +573,7 @@ final class LocalChatService {
             trimmedText,
             FallbackReason.modelProvider,
             null,
+            locale: locale,
           ),
         );
       } finally {
@@ -647,6 +653,7 @@ final class LocalChatService {
           outcome: outcome,
           bedtime: bedtime,
           cancellation: cancellation,
+          locale: locale,
         );
       }
       memory.memoryCadence.onDeliveryComplete(bedtime: bedtime);
@@ -675,6 +682,7 @@ final class LocalChatService {
     required ChatResult outcome,
     required bool bedtime,
     required DeliveryCancellation cancellation,
+    String locale = 'zh',
   }) async* {
     if (providerPort == null || outcome.safety != null || bedtime) {
       return;
@@ -753,7 +761,7 @@ final class LocalChatService {
     // bubble 2 走与 bubble 1 同一套安全校验：行为核心拒绝候选时
     // 什么都不交付；压缩结果仍可留给下一轮。
     final validated = _behaviorCore.reply(
-      ChatRequest(requestId: requestId, text: userText),
+      ChatRequest(requestId: requestId, text: userText, locale: locale),
       state,
       candidateReply: bubbleText,
     );

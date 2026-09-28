@@ -205,6 +205,7 @@ $requiredItems = @(
   'qiyu_windows_host.exe',
   'web',
   'persona-constitution.md',
+  'persona-constitution.en.md',
   'licenses',
   'release.json',
   'Uninstall-Qiyu.ps1',

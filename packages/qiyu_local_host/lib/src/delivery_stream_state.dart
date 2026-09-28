@@ -160,6 +160,7 @@ final class StreamedReplyMachine {
     required this.requestId,
     required this.sessionId,
     required this.text,
+    this.locale = 'zh',
     required this.voice,
     required this.abandonVoice,
     required this.voiceSessionGrace,
@@ -187,6 +188,7 @@ final class StreamedReplyMachine {
   final String requestId;
   final String sessionId;
   final String text;
+  final String locale;
   final DeliveryVoiceHandoff? voice;
 
   /// 语音收尾出口（正常/取消/异常同一出口）：作废在途会话并注销登记。
@@ -549,7 +551,7 @@ final class StreamedReplyMachine {
         // 错误框、不追加兜底话术」的口径。
         result: chatResultWithServiceError(
           _behaviorCore.reply(
-                ChatRequest(requestId: requestId, text: text),
+                ChatRequest(requestId: requestId, text: text, locale: locale),
                 state,
                 candidateReply: messages.join('\n'),
               )
@@ -562,7 +564,14 @@ final class StreamedReplyMachine {
       );
     }
     return StreamedReplyOutcome(
-      result: fallbackOutcome(state, requestId, text, reason, _serviceError),
+      result: fallbackOutcome(
+        state,
+        requestId,
+        text,
+        reason,
+        _serviceError,
+        locale: locale,
+      ),
       deltasDelivered: _deltasDelivered,
       cancelled: _cancelled,
     );
@@ -615,11 +624,12 @@ ChatResult fallbackOutcome(
   String requestId,
   String text,
   FallbackReason reason,
-  ServiceErrorCategory? serviceError,
-) {
+  ServiceErrorCategory? serviceError, {
+  String locale = 'zh',
+}) {
   return chatResultWithServiceError(
     _behaviorCore.reply(
-          ChatRequest(requestId: requestId, text: text),
+          ChatRequest(requestId: requestId, text: text, locale: locale),
           state,
           modelFailure: reason,
         )

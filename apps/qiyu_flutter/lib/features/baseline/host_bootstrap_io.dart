@@ -13,6 +13,8 @@ import 'native_host_session_client.dart';
 /// Windows 壳在运行时读文件，安卓壳没有文件系统外的原料来源，改为
 /// 资产分发后经 rootBundle 读入。
 const _personaConstitutionAssetPath = 'assets/persona/persona-constitution.md';
+const _personaConstitutionEnAssetPath =
+    'assets/persona/persona-constitution.en.md';
 
 /// 静态托管的占位 web root：安卓上 UI 是 Flutter 自绘，Host 的静态
 /// 面没有消费方，但 `LocalAppHost.start` 必需一个含 `index.html` 的
@@ -42,6 +44,15 @@ Future<HostBinding?> bootstrapHost() async {
   File(
     '${webRoot.path}${Platform.pathSeparator}index.html',
   ).writeAsStringSync(_placeholderIndexHtml, flush: true);
+
+  String? personaConstitutionEn;
+  try {
+    personaConstitutionEn =
+        await rootBundle.loadString(_personaConstitutionEnAssetPath);
+  } catch (_) {
+    personaConstitutionEn = null;
+  }
+
   return startEmbeddedHost(
     webRoot: webRoot.path,
     // 数据目录（会话/记忆 Markdown + provider.json 等运行时文件）落
@@ -52,6 +63,7 @@ Future<HostBinding?> bootstrapHost() async {
     personaConstitution: await rootBundle.loadString(
       _personaConstitutionAssetPath,
     ),
+    personaConstitutionEn: personaConstitutionEn,
   );
 }
 
@@ -67,12 +79,14 @@ Future<HostBinding> startEmbeddedHost({
   required String webRoot,
   required String memoryDirectory,
   required String personaConstitution,
+  String? personaConstitutionEn,
   SecretStore? secretStore,
 }) async {
   final host = await LocalAppHost.start(
     webRoot: webRoot,
     memoryDirectory: memoryDirectory,
     personaConstitution: personaConstitution,
+    personaConstitutionEn: personaConstitutionEn,
     secretStore: secretStore ?? const AndroidSecretStore(),
   );
   // 在任何引导发生前取出启动凭据（launchUri 是 getter，兑换成功即

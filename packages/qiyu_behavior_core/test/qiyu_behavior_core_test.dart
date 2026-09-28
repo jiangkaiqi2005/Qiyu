@@ -1099,4 +1099,103 @@ void main() {
       expect(stripUtf8Bom(once), '{"a":1}');
     });
   });
+
+  group('bilingual support and fallback', () {
+    test('ChatRequest round-trips with locale', () {
+      final reqZh = const ChatRequest(requestId: 'req-zh', text: '你好', locale: 'zh');
+      final reqEn = const ChatRequest(requestId: 'req-en', text: 'Hello', locale: 'en');
+      expect(ChatRequest.fromJson(reqZh.toJson()), reqZh);
+      expect(ChatRequest.fromJson(reqEn.toJson()), reqEn);
+      expect(ChatRequest.fromJson({'requestId': 'no-loc', 'text': 'hi'}).locale, 'zh');
+    });
+
+    test('empty input with en locale returns English error message', () {
+      final res = const QiyuBehaviorCore().reply(
+        const ChatRequest(requestId: 'empty-en', text: '   ', locale: 'en'),
+        StateSnapshot.initial('u1'),
+      );
+      expect(res, isA<ErrorResult>());
+      expect((res as ErrorResult).message, 'Message cannot be empty');
+    });
+
+    test('English crisis regex matches keywords and produces 988 lifeline fallback', () {
+      final core = const QiyuBehaviorCore();
+      final crisisPhrases = [
+        'I want to commit suicide',
+        'I should end my life',
+        'I feel like I want to kill myself',
+        'I might hurt myself tonight',
+        'I just want to die',
+        'fear of overdose',
+      ];
+      for (final phrase in crisisPhrases) {
+        final outcome = core.reply(
+          ChatRequest(requestId: 'crisis-test', text: phrase, locale: 'en'),
+          StateSnapshot.initial('u1'),
+        );
+        expect(outcome, isA<ChatResult>());
+        final result = outcome as ChatResult;
+        expect(result.source, ReplySource.local);
+        expect(result.safety, SafetyKind.crisis);
+        expect(result.mode, 'safety');
+        expect(result.messages.join('\n'), contains('988'));
+        expect(result.messages.join('\n'), contains('Suicide & Crisis Lifeline'));
+      }
+    });
+
+    test('English fatigue regex matches keywords and produces "What\'s up?"', () {
+      final core = const QiyuBehaviorCore();
+      final fatiguePhrases = [
+        'I am so tired today',
+        "I'm completely exhausted",
+        'feeling sleepy already',
+        'emotionally drained after work',
+      ];
+      for (final phrase in fatiguePhrases) {
+        final outcome = core.reply(
+          ChatRequest(requestId: 'fatigue-test', text: phrase, locale: 'en'),
+          StateSnapshot.initial('u1'),
+        );
+        expect(outcome, isA<ChatResult>());
+        final result = outcome as ChatResult;
+        expect(result.source, ReplySource.local);
+        expect(result.mode, 'fatigue');
+        expect(result.messages, ["What's up?"]);
+      }
+    });
+
+    test('English minimal phrase matches "I\'m home" -> "Mmh."', () {
+      final core = const QiyuBehaviorCore();
+      for (final phrase in ["I'm home", "im home", "  I'm home  "]) {
+        final outcome = core.reply(
+          ChatRequest(requestId: 'home-test', text: phrase, locale: 'en'),
+          StateSnapshot.initial('u1'),
+        );
+        expect(outcome, isA<ChatResult>());
+        final result = outcome as ChatResult;
+        expect(result.source, ReplySource.local);
+        expect(result.mode, 'minimal');
+        expect(result.messages, ['Mmh.']);
+      }
+    });
+
+    test('English legal and financial advice fallbacks', () {
+      final core = const QiyuBehaviorCore();
+      final legalRes = core.reply(
+        const ChatRequest(requestId: 'legal-test', text: 'Should I sign this contract?', locale: 'en'),
+        StateSnapshot.initial('u1'),
+        modelFailure: FallbackReason.modelTimeout,
+      ) as ChatResult;
+      expect(legalRes.safety, SafetyKind.legal);
+      expect(legalRes.messages.first, contains('Contracts and signatures'));
+
+      final finRes = core.reply(
+        const ChatRequest(requestId: 'fin-test', text: 'Should I invest in crypto?', locale: 'en'),
+        StateSnapshot.initial('u1'),
+        modelFailure: FallbackReason.modelTimeout,
+      ) as ChatResult;
+      expect(finRes.safety, SafetyKind.financial);
+      expect(finRes.messages.first, contains('financial or trading decisions'));
+    });
+  });
 }

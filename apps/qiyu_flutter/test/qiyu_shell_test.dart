@@ -20,6 +20,7 @@ import 'package:qiyu_flutter/features/navigation.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_connection_status.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
+import 'package:qiyu_flutter/features/shell/qiyu_strings.dart';
 import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
@@ -731,6 +732,82 @@ void main() {
       expect(find.text('栖语本机程序未在运行或已更新。'), findsOneWidget);
       expect(find.text('请在电脑上重新启动栖语，然后刷新这个页面。'), findsOneWidget);
     });
+
+    testWidgets('桌面侧边栏与窄屏抽屉底部均挂载微型双语切换项，初始为中文高亮', (tester) async {
+      // 桌面形态
+      await _pumpShell(tester, width: 1200, height: 800);
+      expect(find.byKey(const Key('language-toggle')), findsOneWidget);
+      expect(find.byKey(const Key('language-toggle-zh')), findsOneWidget);
+      expect(find.byKey(const Key('language-toggle-en')), findsOneWidget);
+
+      final zhTextDesktop = _toggleText(tester, 'language-toggle-zh');
+      final enTextDesktop = _toggleText(tester, 'language-toggle-en');
+      expect(zhTextDesktop.style!.color, QiyuColors.ink);
+      expect(enTextDesktop.style!.color, QiyuColors.muted);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('conn-status-text'))).data,
+        '栖语在本机',
+      );
+
+      // 窄屏抽屉形态
+      await _pumpShell(tester, width: 420, height: 900, drawerOpen: true);
+      expect(find.byKey(const Key('language-toggle')), findsOneWidget);
+      final zhTextDrawer = _toggleText(tester, 'language-toggle-zh');
+      final enTextDrawer = _toggleText(tester, 'language-toggle-en');
+      expect(zhTextDrawer.style!.color, QiyuColors.ink);
+      expect(enTextDrawer.style!.color, QiyuColors.muted);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('conn-status-text'))).data,
+        '栖语在本机',
+      );
+    });
+
+    testWidgets('点击 EN 立即无感热切，英文字体应用 Noto Serif，状态文案变更为 Qiyu is local，保留输入草稿与路由', (
+      tester,
+    ) async {
+      await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
+      expect(_location(tester), '/chat');
+
+      // 输入草稿文本
+      await tester.enterText(find.byKey(const Key('chat-input')), '测试草稿未发送文本');
+      await tester.pump();
+      expect(find.text('测试草稿未发送文本'), findsOneWidget);
+
+      // 点击 EN
+      await tester.tap(find.byKey(const Key('language-toggle-en')));
+      await tester.pumpAndSettle();
+
+      // 断言高亮反转与英文字体
+      final zhText = _toggleText(tester, 'language-toggle-zh');
+      final enText = _toggleText(tester, 'language-toggle-en');
+      expect(zhText.style!.color, QiyuColors.muted);
+      expect(enText.style!.color, QiyuColors.ink);
+      expect(enText.style!.fontFamily, QiyuType.enFontFamily);
+
+      // 状态文案更新
+      expect(
+        tester.widget<Text>(find.byKey(const Key('conn-status-text'))).data,
+        'Qiyu is local',
+      );
+
+      // 路由未变、输入框草稿完好保留
+      expect(_location(tester), '/chat');
+      expect(find.text('测试草稿未发送文本'), findsOneWidget);
+
+      // 点击 中 切回中文
+      await tester.tap(find.byKey(const Key('language-toggle-zh')));
+      await tester.pumpAndSettle();
+
+      final zhTextBack = _toggleText(tester, 'language-toggle-zh');
+      final enTextBack = _toggleText(tester, 'language-toggle-en');
+      expect(zhTextBack.style!.color, QiyuColors.ink);
+      expect(enTextBack.style!.color, QiyuColors.muted);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('conn-status-text'))).data,
+        '栖语在本机',
+      );
+      expect(find.text('测试草稿未发送文本'), findsOneWidget);
+    });
   });
 
   group('合一页：空状态首页与对话态', () {
@@ -1134,6 +1211,7 @@ Future<void> _pumpShell(
   bool reducedMotion = false,
   _StubProbe? probe,
   LocalChatViewModel? viewModel,
+  LocaleController? localeController,
 }) async {
   tester.view.physicalSize = Size(width, height);
   tester.view.devicePixelRatio = 1;
@@ -1144,6 +1222,7 @@ Future<void> _pumpShell(
       probe: probe,
       viewModel: viewModel,
       reducedMotion: reducedMotion,
+      localeController: localeController,
     ),
   );
   if (settle) {
@@ -1162,10 +1241,14 @@ Future<Widget> _app({
   _StubProbe? probe,
   LocalChatViewModel? viewModel,
   bool reducedMotion = false,
+  LocaleController? localeController,
 }) async {
-  final chat = viewModel ?? await _viewModel(_StubChatGateway(), probe: probe);
+  final ctrl = localeController ?? LocaleController();
+  final chat = viewModel ??
+      await _viewModel(_StubChatGateway(), probe: probe, localeController: ctrl);
   return MultiProvider(
     providers: [
+      ChangeNotifierProvider<LocaleController>.value(value: ctrl),
       ChangeNotifierProvider.value(value: chat),
       ChangeNotifierProvider.value(value: await _onboardingViewModel()),
       ChangeNotifierProvider.value(value: _historyViewModel()),
@@ -1223,11 +1306,13 @@ Future<LocalChatViewModel> _viewModel(
   StreamingLocalChatGateway gateway, {
   HostConnectionProbe? probe,
   bool hostStopped = false,
+  LocaleController? localeController,
 }) async {
   final viewModel = LocalChatViewModel(
     gateway,
     hostConnectionProbe: probe ?? _StubProbe(available: !hostStopped),
     autoStart: false,
+    localeController: localeController,
   );
   await viewModel.initialize();
   return viewModel;
@@ -1264,6 +1349,12 @@ Text _navItemLabel(WidgetTester tester, String ringKey) => tester.widget<Text>(
   find
       .descendant(of: find.byKey(Key(ringKey)), matching: find.byType(Text))
       .last,
+);
+
+Text _toggleText(WidgetTester tester, String key) => tester.widget<Text>(
+  find
+      .descendant(of: find.byKey(Key(key)), matching: find.byType(Text))
+      .first,
 );
 final class _StubProbe implements HostConnectionProbe {
   _StubProbe({required this.available});

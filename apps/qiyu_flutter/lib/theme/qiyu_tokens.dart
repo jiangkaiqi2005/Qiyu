@@ -276,6 +276,14 @@ abstract final class QiyuType {
   /// 用来防止未随包字族触发远程回退（2026-08 修「字体回退卡死」的结论）。
   static const String fontFamily = 'Noto Serif SC';
 
+  /// 英文与双语切换字族（Spec & ADR 0023）：开源西文衬线 Noto Serif / Source Serif。
+  static const String enFontFamily = 'Noto Serif';
+  static const List<String> enFontFamilyFallback = [
+    'Noto Serif SC',
+    'Source Serif Pro',
+    'serif',
+  ];
+
   /// 空状态首页问候。
   static const double greetingSize = 22;
 

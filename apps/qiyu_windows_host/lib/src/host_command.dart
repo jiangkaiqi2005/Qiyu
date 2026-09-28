@@ -124,6 +124,8 @@ String resolvePersonaConstitutionPath({
 }) {
   final candidates = [
     path.join(path.dirname(executablePath), 'persona-constitution.md'),
+    path.join(currentDirectory, 'docs', 'product', '栖语人格宪法.md'),
+    path.join(currentDirectory, '..', '..', 'docs', 'product', '栖语人格宪法.md'),
     path.join(currentDirectory, '栖语人格宪法.md'),
     path.join(currentDirectory, '..', '..', '栖语人格宪法.md'),
   ];
@@ -134,4 +136,24 @@ String resolvePersonaConstitutionPath({
     }
   }
   throw FileSystemException(personaConstitutionMissingFailureMessage);
+}
+
+String? tryResolvePersonaConstitutionEnPath({
+  required String currentDirectory,
+  required String executablePath,
+}) {
+  final candidates = [
+    path.join(path.dirname(executablePath), 'persona-constitution.en.md'),
+    path.join(currentDirectory, 'docs', 'product', '栖语人格宪法.en.md'),
+    path.join(currentDirectory, '..', '..', 'docs', 'product', '栖语人格宪法.en.md'),
+    path.join(currentDirectory, '栖语人格宪法.en.md'),
+    path.join(currentDirectory, '..', '..', '栖语人格宪法.en.md'),
+  ];
+  for (final candidate in candidates) {
+    final absoluteCandidate = path.normalize(path.absolute(candidate));
+    if (File(absoluteCandidate).existsSync()) {
+      return absoluteCandidate;
+    }
+  }
+  return null;
 }

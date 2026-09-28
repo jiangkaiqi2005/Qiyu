@@ -67,6 +67,11 @@ function New-PackageFixture {
     [Text.UTF8Encoding]::new($false)
   )
   [IO.File]::WriteAllText(
+    (Join-Path $SourceRoot 'persona-constitution.en.md'),
+    '# test fixture en',
+    [Text.UTF8Encoding]::new($false)
+  )
+  [IO.File]::WriteAllText(
     (Join-Path $SourceRoot 'licenses\THIRD_PARTY_NOTICES.txt'),
     'test fixture',
     [Text.UTF8Encoding]::new($false)

@@ -6452,6 +6452,54 @@ void main() {
       expect(composeSystem, contains('称呼用户'));
       expect(composeSystem, isNot(contains('sk-abcdef1234567890')));
     });
+
+    test('English locale chat delivery with provider dispatches English prompt', () async {
+      final gateway = ScriptedModelGateway(
+        streamScript: [const ScriptedStreamReply('Mmh, how was your day?')],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        personaConstitution: '测试人格宪法',
+        personaConstitutionEn: 'Test Persona Constitution EN',
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'en-chat-1',
+        text: 'I am back',
+        locale: 'en',
+      );
+
+      expect(trace.message.messages, ['Mmh, how was your day?']);
+      expect(trace.state.source, ReplySource.llm);
+      final systemPrompt = gateway.lastStreamMessages!.first.content;
+      expect(systemPrompt, contains('Test Persona Constitution EN'));
+      expect(systemPrompt, contains('## Output Contract'));
+    });
+
+    test('English locale fallback without provider replies in English', () async {
+      final harness = await InProcessChatHost.start(
+        configureProvider: false,
+      );
+      addTearDown(harness.dispose);
+
+      final trace = await harness.sendChat(
+        requestId: 'en-fallback-1',
+        text: "I'm home",
+        locale: 'en',
+      );
+
+      expect(trace.message.messages, ['Mmh.']);
+      expect(trace.state.source, ReplySource.local);
+
+      final crisisTrace = await harness.sendChat(
+        requestId: 'en-crisis-1',
+        text: 'I want to die',
+        locale: 'en',
+      );
+      expect(crisisTrace.message.messages!.join('\n'), contains('988'));
+      expect(crisisTrace.state.source, ReplySource.local);
+    });
   });
 }
 

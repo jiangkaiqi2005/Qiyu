@@ -110,6 +110,7 @@ final class ChatRequest {
     required this.requestId,
     required this.text,
     this.schemaVersion = contractSchemaVersion,
+    this.locale = 'zh',
   });
 
   factory ChatRequest.fromJson(Map<String, Object?> json) {
@@ -117,17 +118,20 @@ final class ChatRequest {
       schemaVersion: json['schemaVersion'] as int? ?? contractSchemaVersion,
       requestId: json['requestId'] as String,
       text: json['text'] as String,
+      locale: json['locale'] as String? ?? 'zh',
     );
   }
 
   final int schemaVersion;
   final String requestId;
   final String text;
+  final String locale;
 
   Map<String, Object?> toJson() => {
     'schemaVersion': schemaVersion,
     'requestId': requestId,
     'text': text,
+    'locale': locale,
   };
 
   @override
@@ -135,10 +139,11 @@ final class ChatRequest {
       other is ChatRequest &&
       other.schemaVersion == schemaVersion &&
       other.requestId == requestId &&
-      other.text == text;
+      other.text == text &&
+      other.locale == locale;
 
   @override
-  int get hashCode => Object.hash(schemaVersion, requestId, text);
+  int get hashCode => Object.hash(schemaVersion, requestId, text, locale);
 }
 
 final class ChatTurn {

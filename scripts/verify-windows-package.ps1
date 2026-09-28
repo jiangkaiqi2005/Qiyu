@@ -70,6 +70,7 @@ $requiredFiles = @(
   'web\assets\assets\fonts\MaterialSymbolsOutlined-QiyuSubset.ttf',
   'web\assets\assets\images\home-night-backdrop.jpg',
   'persona-constitution.md',
+  'persona-constitution.en.md',
   'Install-Qiyu.ps1',
   'install.cmd',
   'Uninstall-Qiyu.ps1',

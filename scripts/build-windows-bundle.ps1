@@ -207,8 +207,23 @@ Copy-Item -LiteralPath $flutterWebPath `
   -Destination (Join-Path $stagingPath 'web') -Recurse
 $personaConstitutionFileName = ([char]0x6816) + ([char]0x8BED) + `
   ([char]0x4EBA) + ([char]0x683C) + ([char]0x5BAA) + ([char]0x6CD5) + '.md'
-Copy-Item -LiteralPath (Join-Path $repositoryRoot $personaConstitutionFileName) `
+$personaConstitutionSource = Join-Path $repositoryRoot (Join-Path 'docs\product' $personaConstitutionFileName)
+if (-not (Test-Path $personaConstitutionSource)) {
+  $personaConstitutionSource = Join-Path $repositoryRoot $personaConstitutionFileName
+}
+Copy-Item -LiteralPath $personaConstitutionSource `
   -Destination (Join-Path $stagingPath 'persona-constitution.md')
+
+$personaConstitutionEnFileName = ([char]0x6816) + ([char]0x8BED) + `
+  ([char]0x4EBA) + ([char]0x683C) + ([char]0x5BAA) + ([char]0x6CD5) + '.en.md'
+$personaConstitutionEnSource = Join-Path $repositoryRoot (Join-Path 'docs\product' $personaConstitutionEnFileName)
+if (-not (Test-Path $personaConstitutionEnSource)) {
+  $personaConstitutionEnSource = Join-Path $repositoryRoot $personaConstitutionEnFileName
+}
+if (Test-Path $personaConstitutionEnSource) {
+  Copy-Item -LiteralPath $personaConstitutionEnSource `
+    -Destination (Join-Path $stagingPath 'persona-constitution.en.md')
+}
 
 $packageScriptPath = Join-Path $repositoryRoot 'scripts\windows-package'
 foreach ($scriptName in @(

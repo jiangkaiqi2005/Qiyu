@@ -182,7 +182,13 @@ abstract interface class ChatSpeechGateway {
 
 final class HttpLocalChatGateway extends HostApiGateway
     implements LocalChatGateway, StreamingLocalChatGateway, ChatSpeechGateway {
-  HttpLocalChatGateway({super.client, super.baseUri});
+  HttpLocalChatGateway({
+    super.client,
+    super.baseUri,
+    this.localeSource,
+  });
+
+  final String Function()? localeSource;
 
   @override
   Object errorFor(String message) => LocalChatGatewayException(message);
@@ -247,6 +253,7 @@ final class HttpLocalChatGateway extends HostApiGateway
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async* {
     final request = http.Request('POST', resolve('/api/chat'));
     request.headers.addAll({
@@ -254,10 +261,12 @@ final class HttpLocalChatGateway extends HostApiGateway
       'content-type': 'application/json',
       'accept': 'application/x-ndjson',
     });
+    final effectiveLocale = locale ?? localeSource?.call();
     request.body = jsonEncode({
       'requestId': requestId,
       'text': text,
       'sessionId': ?sessionId,
+      'locale': ?effectiveLocale,
     });
     final response = await httpClient.send(request);
     if (response.statusCode < 200 || response.statusCode >= 300) {

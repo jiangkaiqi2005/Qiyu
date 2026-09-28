@@ -10,6 +10,7 @@ import '../baseline/host_connection_probe.dart';
 import '../baseline/background_status_client.dart';
 import '../settings/tts_settings_client.dart';
 import '../shell/host_status_monitor.dart';
+import '../shell/qiyu_strings.dart';
 import 'chat_delivery_assembly.dart';
 import 'local_chat_client.dart';
 import 'voice_output_controller.dart';
@@ -85,6 +86,7 @@ final class LocalChatViewModel extends ChangeNotifier {
     TtsSettingsGateway? ttsSettingsGateway,
     BackgroundStatusGateway? backgroundStatusGateway,
     VoiceOutputController? voiceOutput,
+    this._localeController,
     bool autoStart = true,
     Duration monitorInterval = const Duration(seconds: 2),
   }) : _requestIdFactory = requestIdFactory ?? _defaultRequestId,
@@ -116,6 +118,23 @@ final class LocalChatViewModel extends ChangeNotifier {
   final StreamingLocalChatGateway _gateway;
   final RequestIdFactory _requestIdFactory;
   final TtsSettingsGateway? _ttsSettingsGateway;
+  final LocaleController? _localeController;
+  String _locale = 'zh';
+
+  String get locale => _localeController?.locale ?? _locale;
+  bool get isZh => locale == 'zh';
+  bool get isEn => locale == 'en';
+
+  void setLocale(String next) {
+    if (locale == next) return;
+    _locale = next;
+    _localeController?.setLocale(next);
+    notifyListeners();
+  }
+
+  void toggleLocale() {
+    setLocale(isZh ? 'en' : 'zh');
+  }
 
   /// 连接与后台状态监控（阶段 C 收拢）：周期轮询计时器、连接三态、后台
   /// 失败快照与恢复提示窗口的唯一所有者。壳层装配仍经本视图模型读取

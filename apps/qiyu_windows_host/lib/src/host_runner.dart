@@ -12,6 +12,7 @@ final class QiyuHostRunner {
     required this.runtimeDirectory,
     required this.memoryDirectory,
     required this.personaConstitution,
+    this.personaConstitutionEn,
     required this.browserLauncher,
   });
 
@@ -19,6 +20,7 @@ final class QiyuHostRunner {
   final String runtimeDirectory;
   final String memoryDirectory;
   final String personaConstitution;
+  final String? personaConstitutionEn;
   final BrowserLauncher browserLauncher;
 
   Future<HostLaunchResult> launch({bool openBrowser = true}) async {
@@ -46,6 +48,7 @@ final class QiyuHostRunner {
         webRoot: webRoot,
         memoryDirectory: memoryDirectory,
         personaConstitution: personaConstitution,
+        personaConstitutionEn: personaConstitutionEn,
         activationToken: activationToken,
         // 平台凭据仓注入：Windows 凭据管理器实现留在本壳。
         secretStore: const WindowsCredentialSecretStore(),

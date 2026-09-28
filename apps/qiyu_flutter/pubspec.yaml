@@ -43,6 +43,7 @@ flutter:
     # `栖语人格宪法.md` 保持同步（Windows 壳由打包脚本复制同名文件，
     # 安卓壳打版权期内随 APK 分发）。
     - assets/persona/persona-constitution.md
+    - assets/persona/persona-constitution.en.md
   fonts:
     # 全局唯一字族：思源宋体静态子集（紫夜规范 §3）。
     - family: Noto Serif SC

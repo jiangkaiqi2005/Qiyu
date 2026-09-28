@@ -41,17 +41,31 @@ final _inlineSpacePattern = RegExp(r'[ \t]+');
 
 // —— 安全分类（_classifySafety）。——
 final _crisisPattern = RegExp(
-  r'活着没意思|不想活|自杀|伤害自己|想死|自残|割腕|轻生|活不下去|不想醒来|结束生命|撑不下去|离开世界|吃药.*走|吞药|跳楼|烧炭|上吊',
+  r'活着没意思|不想活|自杀|伤害自己|想死|自残|割腕|轻生|活不下去|不想醒来|结束生命|撑不下去|离开世界|吃药.*走|吞药|跳楼|烧炭|上吊|\b(?:suicide|end my life|kill myself|hurt myself|want to die|overdose|self[- ]harm)\b',
+  caseSensitive: false,
 );
 final _adviceSeekingPattern = RegExp(
-  r'能不能|要不要|应不应该|可以吗|行不行|该不该|推荐|建议|行吗|能.{0,4}吗|该.{0,4}吗|会不会有问题|帮我(?:判断|看看|确认|分析)|是否(?:安全|合适|应该|可以)|我该.{0,12}(?:加倍|加量|减量|停药|换药|签字|起诉|买入|卖出|贷款|投资)',
+  r'能不能|要不要|应不应该|可以吗|行不行|该不该|推荐|建议|行吗|能.{0,4}吗|该.{0,4}吗|会不会有问题|帮我(?:判断|看看|确认|分析)|是否(?:安全|合适|应该|可以)|我该.{0,12}(?:加倍|加量|减量|停药|换药|签字|起诉|买入|卖出|贷款|投资)|\b(?:should i|can i|could i|would it be|is it safe|is it okay|ought i|advise|advice|recommend|suggest)\b',
+  caseSensitive: false,
 );
-final _medicalKeywordPattern = RegExp(r'药|剂量|诊断|手术|症状|医院|医生');
-final _legalKeywordPattern = RegExp(r'合同|起诉|律师|违法|法律|赔偿|签字');
-final _financialKeywordPattern = RegExp(r'股票|基金|币|投资|买入|卖出|贷款');
+final _medicalKeywordPattern = RegExp(
+  r'药|剂量|诊断|手术|症状|医院|医生|\b(?:dose|dosage|medication|medicine|prescription|diagnosis|surgery|symptom|hospital|doctor)\b',
+  caseSensitive: false,
+);
+final _legalKeywordPattern = RegExp(
+  r'合同|起诉|律师|违法|法律|赔偿|签字|\b(?:contract|sue|lawsuit|lawyer|attorney|illegal|legal|compensation|sign)\b',
+  caseSensitive: false,
+);
+final _financialKeywordPattern = RegExp(
+  r'股票|基金|币|投资|买入|卖出|贷款|\b(?:stock|stocks|fund|funds|crypto|bitcoin|invest|investment|loan|mortgage)\b',
+  caseSensitive: false,
+);
 
 // —— 本地规则回复（_localReply）。——
-final _fatiguePattern = RegExp(r'累|疲惫|困');
+final _fatiguePattern = RegExp(
+  r'累|疲惫|困|\b(?:tired|exhausted|sleepy|drained)\b',
+  caseSensitive: false,
+);
 
 // —— 模型候选回复校验（CandidateReplyStream / _cleanVisibleLine）。——
 // 只做协议与格式卫生：隐藏结构剥离、控制模式、逐行清洗、长度上限、
@@ -133,7 +147,7 @@ final class QiyuBehaviorCore {
       return ErrorResult(
         requestId: request.requestId,
         code: ChatErrorCode.invalidRequest,
-        message: '消息不能为空',
+        message: request.locale == 'en' ? 'Message cannot be empty' : '消息不能为空',
         retryable: false,
       );
     }
@@ -197,8 +211,11 @@ final class QiyuBehaviorCore {
     SafetyKind? safety,
   }) {
     final localReply = safety == null
-        ? _localReply(text)
-        : (messages: _safetyMessages(safety), mode: 'safety');
+        ? _localReply(text, locale: request.locale)
+        : (
+            messages: _safetyMessages(safety, locale: request.locale),
+            mode: 'safety',
+          );
     return _result(
       request: request,
       state: state,
@@ -263,14 +280,22 @@ String sanitizeUserInput(String value) {
 String stripUtf8Bom(String text) =>
     text.startsWith('\uFEFF') ? text.substring(1) : text;
 
-({List<String> messages, String mode}) _localReply(String text) {
-  if (text == '我到家了') {
-    return (messages: const ['嗯'], mode: 'minimal');
+({List<String> messages, String mode}) _localReply(
+  String text, {
+  String locale = 'zh',
+}) {
+  final isEn = locale == 'en';
+  final normalized = text.trim().toLowerCase();
+  if (text == '我到家了' || normalized == "i'm home" || normalized == 'im home') {
+    return (messages: isEn ? const ['Mmh.'] : const ['嗯'], mode: 'minimal');
   }
   if (_fatiguePattern.hasMatch(text)) {
-    return (messages: const ['咋了'], mode: 'fatigue');
+    return (
+      messages: isEn ? const ["What's up?"] : const ['咋了'],
+      mode: 'fatigue',
+    );
   }
-  return (messages: const ['嗯？'], mode: 'open');
+  return (messages: isEn ? const ['Mmh?'] : const ['嗯？'], mode: 'open');
 }
 
 SafetyKind _classifySafety(String text) {
@@ -299,7 +324,26 @@ SafetyKind _classifySafety(String text) {
   return SafetyKind.normal;
 }
 
-List<String> _safetyMessages(SafetyKind safety) {
+List<String> _safetyMessages(SafetyKind safety, {String locale = 'zh'}) {
+  if (locale == 'en') {
+    return switch (safety) {
+      SafetyKind.crisis => const [
+        'I hear you. You are carrying so much right now.',
+        "This isn't something to brush aside, and I take it seriously.",
+        "Please don't carry this alone. The 24/7 Suicide & Crisis Lifeline 988 is always there. You can also reach out to someone around you right now—don't stay by yourself.",
+      ],
+      SafetyKind.medical => const [
+        "Don't take my guesses on this. Medication and health questions should be checked with a medical professional; please don't gamble with your body.",
+      ],
+      SafetyKind.legal => const [
+        "Contracts and signatures are best looked at by a legal professional. I can help list the points you are concerned about, but I cannot make legal judgments for you.",
+      ],
+      SafetyKind.financial => const [
+        "I cannot make financial or trading decisions for you. Money matters depend on your own risk tolerance; I can help you lay out the reasoning and risks together.",
+      ],
+      SafetyKind.normal => const [],
+    };
+  }
   return switch (safety) {
     SafetyKind.crisis => const [
       '我听到你了。你现在承受的好多。',

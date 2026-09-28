@@ -15,6 +15,7 @@ final class InProcessChatHost {
     this.rootDirectory,
     this.modelGateway,
     this.personaConstitution,
+    this.personaConstitutionEn,
     this.clock,
     this.atomicWriter,
     this.deliveryPause,
@@ -32,6 +33,7 @@ final class InProcessChatHost {
   /// 脚本化模型网关；未配置 Provider 的用例里为 null。
   final StreamingModelGateway? modelGateway;
   final String personaConstitution;
+  final String? personaConstitutionEn;
   final Clock? clock;
   final AtomicTextWriter? atomicWriter;
   final DeliveryPause? deliveryPause;
@@ -70,6 +72,7 @@ final class InProcessChatHost {
   static Future<InProcessChatHost> start({
     Directory? rootDirectory,
     String personaConstitution = '测试人格宪法',
+    String? personaConstitutionEn,
     StreamingModelGateway? modelGateway,
     bool configureProvider = true,
     TtsSettingsService? ttsSettingsService,
@@ -122,6 +125,7 @@ final class InProcessChatHost {
       root,
       modelGateway,
       personaConstitution,
+      personaConstitutionEn,
       clock,
       atomicWriter,
       deliveryPause,
@@ -180,6 +184,7 @@ final class InProcessChatHost {
         webRoot: '${rootDirectory.path}${Platform.pathSeparator}web',
         memoryDirectory: memoryDirectory,
         personaConstitution: personaConstitution,
+        personaConstitutionEn: personaConstitutionEn,
         providerSettingsService: modelGateway == null
             ? null
             : ProviderSettingsService(
@@ -194,7 +199,10 @@ final class InProcessChatHost {
                 ),
                 const _FileOnlySecretStore(),
                 modelGateway!,
-                ModelPromptBuilder(personaConstitution),
+                ModelPromptBuilder(
+                  personaConstitution,
+                  personaConstitutionEn: personaConstitutionEn,
+                ),
               ),
         clock: clock,
         atomicWriter: atomicWriter,
@@ -255,6 +263,7 @@ final class InProcessChatHost {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) async {
     final request = await _client.openUrl(
       'POST',
@@ -267,6 +276,7 @@ final class InProcessChatHost {
           'requestId': requestId,
           'text': text,
           'sessionId': ?sessionId,
+          'locale': ?locale,
         }),
       ),
     );
@@ -281,6 +291,7 @@ final class InProcessChatHost {
     required String requestId,
     required String text,
     String? sessionId,
+    String? locale,
   }) {
     final stream = OpenChatStream._();
     () async {
@@ -296,6 +307,7 @@ final class InProcessChatHost {
               'requestId': requestId,
               'text': text,
               'sessionId': ?sessionId,
+              'locale': ?locale,
             }),
           ),
         );

@@ -38,6 +38,7 @@ import 'features/settings/tts_settings_view_model.dart';
 import 'features/settings/web_search_settings_client.dart';
 import 'features/settings/web_search_settings_view_model.dart';
 import 'features/shell/qiyu_shell.dart';
+import 'features/shell/qiyu_strings.dart';
 import 'features/accessibility.dart';
 import 'features/navigation.dart';
 import 'theme/qiyu_theme.dart';
@@ -154,6 +155,7 @@ class QiyuApp extends StatefulWidget {
   const QiyuApp({
     super.key,
     this.viewModel,
+    this.localeController,
     this.providerSettingsViewModel,
     this.sttSettingsViewModel,
     this.sttSettingsGateway,
@@ -169,6 +171,7 @@ class QiyuApp extends StatefulWidget {
   });
 
   final LocalChatViewModel? viewModel;
+  final LocaleController? localeController;
   final ProviderSettingsViewModel? providerSettingsViewModel;
   final SttSettingsViewModel? sttSettingsViewModel;
 
@@ -234,16 +237,25 @@ class _QiyuAppState extends State<QiyuApp> {
   TtsSettingsGateway get _effectiveTtsGateway =>
       widget.ttsSettingsGateway ?? _defaultTtsGateway;
 
+  late final LocaleController _defaultLocaleController = LocaleController();
+  LocaleController get _effectiveLocaleController =>
+      widget.localeController ?? _defaultLocaleController;
+
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        _vm(widget.localeController, (_) => _effectiveLocaleController),
         Provider<SttSettingsGateway>.value(value: _effectiveSttGateway),
         Provider<TtsSettingsGateway>.value(value: _effectiveTtsGateway),
         _vm(
           widget.viewModel,
           (context) => LocalChatViewModel(
-            HttpLocalChatGateway(client: _hostClient, baseUri: _hostBaseUri),
+            HttpLocalChatGateway(
+              client: _hostClient,
+              baseUri: _hostBaseUri,
+              localeSource: () => context.read<LocaleController>().locale,
+            ),
             // 原生壳的连接探测与朗读网关同样走接管 client；web 缺省
             // 参数与 HostStatusMonitor/视图模型内部自建的缺省一致。
             hostConnectionProbe: HttpHostConnectionProbe(
@@ -254,8 +266,10 @@ class _QiyuAppState extends State<QiyuApp> {
               HttpLocalChatGateway(
                 client: _hostClient,
                 baseUri: _hostBaseUri,
+                localeSource: () => context.read<LocaleController>().locale,
               ),
             ),
+            localeController: context.read<LocaleController>(),
             ttsSettingsGateway: context.read<TtsSettingsGateway>(),
             backgroundStatusGateway: HttpBackgroundStatusGateway(
               client: _hostClient,

@@ -93,9 +93,11 @@ final class ChatRoutes implements ApiRoutes {
       final requestId = payload['requestId'];
       final text = payload['text'];
       final sessionId = payload['sessionId'];
+      final locale = payload['locale'];
       if (requestId is! String ||
           text is! String ||
           (sessionId != null && sessionId is! String) ||
+          (locale != null && locale is! String) ||
           requestId.trim().isEmpty ||
           text.trim().isEmpty) {
         throw invalidRequest('聊天请求格式不正确。');
@@ -106,6 +108,7 @@ final class ChatRoutes implements ApiRoutes {
               requestId: requestId,
               text: text,
               sessionId: sessionId as String?,
+              locale: (locale as String?) ?? 'zh',
             )
             .map((event) => utf8.encode('${jsonEncode(event.toJson())}\n')),
         headers: _streamHeaders,

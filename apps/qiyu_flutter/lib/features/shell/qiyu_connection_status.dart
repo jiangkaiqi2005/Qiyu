@@ -4,11 +4,12 @@ import 'package:provider/provider.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../chat/local_chat_view_model.dart';
+import 'qiyu_strings.dart';
 import 'qiyu_widgets.dart';
 
-/// 连接状态（design-system §5、Spec Implementation Decisions 第 8 条）：
+/// 连接状态与双语切换（design-system §5、Spec & ADR 0023）：
 /// 侧边栏/抽屉**底部**一枚 6px 中性小圆点 + 一行 13px `muted` 文案
-/// 「栖语在本机」，告诉用户对话没出这台机器。
+/// 「栖语在本机」，右侧挂载微型 `中 / EN` 切换项。
 ///
 /// 三色纪律：正常态**不着紫、不用 danger**（圆点取 `muted`，无发光）；只有
 /// 本机 Host 健康探测失败时圆点与文案**同时**转 `danger`，文案换成可点重试
@@ -53,16 +54,22 @@ class _QiyuConnectionStatusState extends State<QiyuConnectionStatus> {
     // 中性呈现、不报错，但也**不**替它宣称本机正常。兜底的 try/catch 与
     // 导航壳共用 [maybeProvider] 那一处。
     final viewModel = maybeProvider(() => context.watch<LocalChatViewModel>());
+    final localeController =
+        maybeProvider(() => context.watch<LocaleController>());
+    final isEn = localeController?.isEn ?? viewModel?.isEn ?? false;
+    final strings = QiyuStrings.of(isEn ? 'en' : 'zh');
+
     final failed = viewModel != null && viewModel.hostStopped;
     final probing = viewModel == null || !viewModel.hostStatusKnown;
     final label = failed
-        ? QiyuConnectionStatus.failedLabel
+        ? (isEn ? strings.connectionFailed : QiyuConnectionStatus.failedLabel)
         : probing
-        ? QiyuConnectionStatus.probingLabel
-        : QiyuConnectionStatus.normalLabel;
+        ? (isEn ? strings.connectionProbing : QiyuConnectionStatus.probingLabel)
+        : (isEn ? strings.connectionNormal : QiyuConnectionStatus.normalLabel);
     final color = failed ? QiyuColors.danger : QiyuColors.muted;
 
-    final row = Row(
+    final statusContent = Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           key: const Key('conn-status-dot'),
@@ -82,24 +89,59 @@ class _QiyuConnectionStatusState extends State<QiyuConnectionStatus> {
       ],
     );
 
+    final statusWidget = failed
+        ? QiyuFocusRing(
+            focusNode: _retryFocusNode,
+            child: InkWell(
+              key: const Key('conn-status-retry'),
+              focusNode: _retryFocusNode,
+              borderRadius: QiyuRadii.cardBorder,
+              // 点一下重新探测：不弹窗、不解释，恢复后圆点自己变回中性。
+              onTap: () => viewModel.checkHostNow(),
+              child: statusContent,
+            ),
+          )
+        : statusContent;
+
+    final toggleWidget = QiyuLanguageToggle(
+      isEn: isEn,
+      onToggle: () {
+        if (localeController != null) {
+          localeController.toggle();
+        } else if (viewModel != null) {
+          viewModel.toggleLocale();
+        }
+      },
+      onSelectZh: () {
+        if (localeController != null) {
+          localeController.setLocale('zh');
+        } else if (viewModel != null) {
+          viewModel.setLocale('zh');
+        }
+      },
+      onSelectEn: () {
+        if (localeController != null) {
+          localeController.setLocale('en');
+        } else if (viewModel != null) {
+          viewModel.setLocale('en');
+        }
+      },
+    );
+
+    final row = Row(
+      children: [
+        Expanded(child: statusWidget),
+        const SizedBox(width: QiyuSpacing.xs),
+        toggleWidget,
+      ],
+    );
+
     final padded = Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: QiyuLayout.navItemPaddingHorizontal,
         vertical: QiyuSpacing.xs,
       ),
-      child: failed
-          ? QiyuFocusRing(
-              focusNode: _retryFocusNode,
-              child: InkWell(
-                key: const Key('conn-status-retry'),
-                focusNode: _retryFocusNode,
-                borderRadius: QiyuRadii.cardBorder,
-                // 点一下重新探测：不弹窗、不解释，恢复后圆点自己变回中性。
-                onTap: () => viewModel.checkHostNow(),
-                child: row,
-              ),
-            )
-          : row,
+      child: row,
     );
 
     return Semantics(
@@ -107,6 +149,98 @@ class _QiyuConnectionStatusState extends State<QiyuConnectionStatus> {
       label: label,
       button: failed,
       child: padded,
+    );
+  }
+}
+
+/// 侧边栏/抽屉底部的微型双语切换项（Spec & ADR 0023）：
+/// 遵循三色纪律：选中项为近白文本高亮（ink），未选中项为 muted 暗灰。
+/// 英文显式指定开源衬线体 Noto Serif / Source Serif。
+class QiyuLanguageToggle extends StatefulWidget {
+  const QiyuLanguageToggle({
+    super.key,
+    required this.isEn,
+    this.onToggle,
+    this.onSelectZh,
+    this.onSelectEn,
+  });
+
+  final bool isEn;
+  final VoidCallback? onToggle;
+  final VoidCallback? onSelectZh;
+  final VoidCallback? onSelectEn;
+
+  @override
+  State<QiyuLanguageToggle> createState() => _QiyuLanguageToggleState();
+}
+
+class _QiyuLanguageToggleState extends State<QiyuLanguageToggle> {
+  final _focusNode = FocusNode(debugLabel: 'language-toggle');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEn = widget.isEn;
+    final zhStyle = TextStyle(
+      fontFamily: QiyuType.fontFamily,
+      fontSize: QiyuType.secondarySize,
+      fontWeight: isEn ? FontWeight.normal : FontWeight.w500,
+      color: isEn ? QiyuColors.muted : QiyuColors.ink,
+    );
+    final enStyle = TextStyle(
+      fontFamily: QiyuType.enFontFamily,
+      fontFamilyFallback: QiyuType.enFontFamilyFallback,
+      fontSize: QiyuType.secondarySize,
+      fontWeight: isEn ? FontWeight.w500 : FontWeight.normal,
+      color: isEn ? QiyuColors.ink : QiyuColors.muted,
+    );
+    const separatorStyle = TextStyle(
+      fontFamily: QiyuType.fontFamily,
+      fontSize: QiyuType.secondarySize,
+      color: QiyuColors.muted,
+    );
+
+    return Semantics(
+      key: const Key('language-toggle'),
+      label: isEn ? 'Switch to Chinese' : '切换为英文',
+      button: true,
+      child: QiyuFocusRing(
+        focusNode: _focusNode,
+        child: InkWell(
+          focusNode: _focusNode,
+          borderRadius: QiyuRadii.smallBorder,
+          onTap: widget.onToggle,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  key: const Key('language-toggle-zh'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onSelectZh ?? widget.onToggle,
+                  child: Text('中', style: zhStyle),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 2),
+                  child: Text('/', style: separatorStyle),
+                ),
+                GestureDetector(
+                  key: const Key('language-toggle-en'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onSelectEn ?? widget.onToggle,
+                  child: Text('EN', style: enStyle),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

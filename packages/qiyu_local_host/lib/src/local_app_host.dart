@@ -93,6 +93,7 @@ final class LocalAppHost {
     required String webRoot,
     required String memoryDirectory,
     required String personaConstitution,
+    String? personaConstitutionEn,
     String? activationToken,
     Future<BrowserLaunchResult> Function()? onActivate,
     ProviderSettingsService? providerSettingsService,
@@ -124,7 +125,10 @@ final class LocalAppHost {
         'activationToken and onActivate must either both be set or both be null',
       );
     }
-    final modelPromptBuilder = ModelPromptBuilder(personaConstitution);
+    final modelPromptBuilder = ModelPromptBuilder(
+      personaConstitution,
+      personaConstitutionEn: personaConstitutionEn,
+    );
     final runtimeDirectory = Directory(memoryDirectory).parent.path;
     final providerConfigRepository = JsonProviderConfigRepository(
       filePath: path.join(runtimeDirectory, 'provider.json'),

@@ -112,6 +112,37 @@ void main() {
     );
   });
 
+  test('resolves bundled English persona constitution beside a movable executable', () async {
+    final temporaryDirectory = await _tempDirectory('qiyu-bundle-en-test-');
+    final bundleDirectory = Directory(
+      path.join(temporaryDirectory.path, 'windows-bundle'),
+    )..createSync();
+    final personaConstitutionEn = File(
+      path.join(bundleDirectory.path, 'persona-constitution.en.md'),
+    )..writeAsStringSync('persona constitution en');
+
+    final resolved = tryResolvePersonaConstitutionEnPath(
+      currentDirectory: temporaryDirectory.path,
+      executablePath: path.join(
+        bundleDirectory.path,
+        'qiyu_windows_host.exe',
+      ),
+    );
+
+    expect(resolved, isNotNull);
+    expect(path.equals(resolved!, personaConstitutionEn.path), isTrue);
+
+    final missingResolved = tryResolvePersonaConstitutionEnPath(
+      currentDirectory: temporaryDirectory.path,
+      executablePath: path.join(
+        temporaryDirectory.path,
+        'other',
+        'qiyu_windows_host.exe',
+      ),
+    );
+    expect(missingResolved, isNull);
+  });
+
   test('preflight includes bundled Web assets when a root is supplied', () {
     final webRoot = _tempDirectorySync('qiyu-preflight-test-');
     File(

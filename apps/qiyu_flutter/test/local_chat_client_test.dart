@@ -176,6 +176,39 @@ void main() {
     },
   );
 
+  test('deliver 携带 localeSource 或显式 locale 字段', () async {
+    final requests = <http.Request>[];
+    var currentLocale = 'en';
+    final client = hostTransportClient(
+      (request) => _streamResponse([
+        {'event': 'accepted', 'requestId': 'req-locale', 'sessionId': 's-1'},
+        {'event': 'done', 'requestId': 'req-locale'},
+      ]),
+      requests: requests,
+    );
+    final gateway = HttpLocalChatGateway(
+      client: client,
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+      localeSource: () => currentLocale,
+    );
+
+    await gateway.deliver(requestId: 'req-locale', text: 'hello').toList();
+    expect(requests, isNotEmpty);
+    expect(jsonDecode(requests.last.body), {
+      'requestId': 'req-locale',
+      'text': 'hello',
+      'locale': 'en',
+    });
+
+    currentLocale = 'zh';
+    await gateway.deliver(requestId: 'req-locale-2', text: '你好').toList();
+    expect(jsonDecode(requests.last.body), {
+      'requestId': 'req-locale-2',
+      'text': '你好',
+      'locale': 'zh',
+    });
+  });
+
   test('surfaces the local API error message', () async {
     final client = hostTransportClient(
       (request) =>

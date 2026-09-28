@@ -1318,6 +1318,109 @@
           { "speaker": "qiyu", "text": "还没睡呢。" }
         ]
       }
+    },
+    {
+      "id": "english-minimal-local-reply",
+      "request": {
+        "requestId": "fixture-en-minimal",
+        "text": "I'm home",
+        "locale": "en"
+      },
+      "provider": {
+        "configured": false
+      },
+      "expected": {
+        "messages": ["Mmh."],
+        "source": "local",
+        "fallbackReason": "no_llm_config",
+        "mode": "minimal",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "I'm home" },
+          { "speaker": "qiyu", "text": "Mmh." }
+        ]
+      }
+    },
+    {
+      "id": "english-fatigue-local-reply",
+      "request": {
+        "requestId": "fixture-en-fatigue",
+        "text": "I'm so exhausted",
+        "locale": "en"
+      },
+      "provider": {
+        "configured": false
+      },
+      "expected": {
+        "messages": ["What's up?"],
+        "source": "local",
+        "fallbackReason": "no_llm_config",
+        "mode": "fatigue",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "I'm so exhausted" },
+          { "speaker": "qiyu", "text": "What's up?" }
+        ]
+      }
+    },
+    {
+      "id": "english-crisis-hotline-fallback",
+      "request": {
+        "requestId": "fixture-en-crisis-fallback",
+        "text": "I want to end my life",
+        "locale": "en"
+      },
+      "provider": {
+        "configured": false
+      },
+      "expected": {
+        "messages": [
+          "I hear you. You are carrying so much right now.",
+          "This isn't something to brush aside, and I take it seriously.",
+          "Please don't carry this alone. The 24/7 Suicide & Crisis Lifeline 988 is always there. You can also reach out to someone around you right now—don't stay by yourself."
+        ],
+        "source": "local",
+        "fallbackReason": "safety",
+        "mode": "safety",
+        "safety": "crisis",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "I want to end my life" },
+          {
+            "speaker": "qiyu",
+            "text": "I hear you. You are carrying so much right now.\nThis isn't something to brush aside, and I take it seriously.\nPlease don't carry this alone. The 24/7 Suicide & Crisis Lifeline 988 is always there. You can also reach out to someone around you right now—don't stay by yourself."
+          }
+        ]
+      }
+    },
+    {
+      "id": "english-medical-fallback",
+      "request": {
+        "requestId": "fixture-en-medical-fallback",
+        "text": "Should I double my dosage?",
+        "locale": "en"
+      },
+      "provider": {
+        "configured": true,
+        "failure": "model_timeout"
+      },
+      "expected": {
+        "messages": [
+          "Don't take my guesses on this. Medication and health questions should be checked with a medical professional; please don't gamble with your body."
+        ],
+        "source": "local",
+        "fallbackReason": "model_timeout",
+        "mode": "safety",
+        "safety": "medical",
+        "relationshipStage": "初识",
+        "turns": [
+          { "speaker": "user", "text": "Should I double my dosage?" },
+          {
+            "speaker": "qiyu",
+            "text": "Don't take my guesses on this. Medication and health questions should be checked with a medical professional; please don't gamble with your body."
+          }
+        ]
+      }
     }
   ]
 }
