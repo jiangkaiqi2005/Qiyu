@@ -75,9 +75,143 @@ void main() {
         ],
       },
       'parameters': {
+        'format': 'wav',
+        'sample_rate': 16000,
         'asr_options': {'language': 'zh', 'enable_itn': false},
       },
     });
+  });
+
+  test('千问 3.1 风格原生响应解析：支持 output.text、output.sentence.text 与顶层 text', () async {
+    // 1. output.text
+    final clientOutputText = RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.value(
+          jsonEncode({
+            'output': {
+              'text': '千问3.1输出文本',
+            },
+            'request_id': 'req-31-text',
+          }),
+        ),
+      ),
+    );
+
+    final text1 = await SttModelGateway(clientOutputText).transcribe(
+      config: const SttConfig(
+        provider: SttProviderKind.qwenAsr,
+        baseUrl:
+            'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+        model: 'qwen-audio-3.1-asr-flash',
+      ),
+      apiKey: 'sk-qwen',
+      audio: [1, 2, 3],
+      mimeType: 'audio/wav',
+    );
+    expect(text1, '千问3.1输出文本');
+    expect(bodyOf(clientOutputText)['parameters'], {
+      'format': 'wav',
+      'sample_rate': 16000,
+      'asr_options': {'language': 'zh', 'enable_itn': false},
+    });
+
+    // 2. output.sentence.text
+    final clientSentenceText = RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.value(
+          jsonEncode({
+            'output': {
+              'sentence': {
+                'text': '分句识别文本',
+              },
+            },
+          }),
+        ),
+      ),
+    );
+
+    final text2 = await SttModelGateway(clientSentenceText).transcribe(
+      config: nativeConfig,
+      apiKey: 'sk-qwen',
+      audio: [1],
+      mimeType: 'audio/wav',
+    );
+    expect(text2, '分句识别文本');
+
+    // 3. decoded.text
+    final clientTopText = RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 200,
+        body: Stream.value(
+          jsonEncode({
+            'text': '顶层文本',
+          }),
+        ),
+      ),
+    );
+
+    final text3 = await SttModelGateway(clientTopText).transcribe(
+      config: nativeConfig,
+      apiKey: 'sk-qwen',
+      audio: [1],
+      mimeType: 'audio/wav',
+    );
+    expect(text3, '顶层文本');
+  });
+
+  test('收到 HTTP 400 且包含 ASR_RESPONSE_HAVE_NO_WORDS 时当作静音返回空字符串', () async {
+    final client = RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 400,
+        body: Stream.value(
+          jsonEncode({
+            'code': 'CLIENT_ERROR',
+            'message': 'ASR_RESPONSE_HAVE_NO_WORDS',
+            'request_id': 'req-no-words-1',
+          }),
+        ),
+      ),
+    );
+
+    final result = await SttModelGateway(client).transcribe(
+      config: const SttConfig(
+        provider: SttProviderKind.qwenAsr,
+        baseUrl:
+            'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+        model: 'qwen-audio-3.1-asr-flash',
+      ),
+      apiKey: 'sk-qwen',
+      audio: [0, 0, 0],
+      mimeType: 'audio/wav',
+    );
+
+    expect(result, '');
+  });
+
+  test('普通 HTTP 400 错误仍抛出模型失败异常', () async {
+    final client = RecordingHttpClient(
+      response: ProviderHttpResponse(
+        statusCode: 400,
+        body: Stream.value(
+          jsonEncode({
+            'code': 'INVALID_PARAMETER',
+            'message': 'parameter is invalid',
+          }),
+        ),
+      ),
+    );
+
+    await expectLater(
+      SttModelGateway(client).transcribe(
+        config: nativeConfig,
+        apiKey: 'sk-qwen',
+        audio: [1],
+        mimeType: 'audio/wav',
+      ),
+      throwsA(isA<SttGatewayException>()),
+    );
   });
 
   test('兼容形状：地址路径带 /compatible-mode/ 时按兼容形状发送、文本从 choices 取出', () async {

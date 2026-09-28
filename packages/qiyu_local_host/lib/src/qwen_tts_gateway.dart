@@ -215,11 +215,12 @@ final class QwenTtsGateway
   /// instruction）由此透传，用户显式写的 format/sample_rate 覆盖缺省。
   String _maasRequestBody({required TtsConfig config, required String text}) {
     final voice = config.voice?.trim();
+    final fallbackVoice = qwenTtsDefaultVoiceForModel(config.model);
     final input = <String, Object?>{
       'text': text,
       // 音色空缺回落本家族官方示例音色（与现行形状回落 Cherry 同律，
-      // 各按各家族的官方示例）。
-      'voice': voice == null || voice.isEmpty ? qwenTtsMaasDefaultVoice : voice,
+      // 3.1 专属音色与 3.0 音色按型号区分回落）。
+      'voice': voice == null || voice.isEmpty ? fallbackVoice : voice,
       'format': 'wav',
       'sample_rate': qwenTtsPcmSampleRate,
     };
@@ -389,10 +390,18 @@ bool qwenTtsUsesWsInference(String baseUrl) {
   return scheme == 'ws' || scheme == 'wss';
 }
 
-/// 3.1 新形状（CosyVoice 家族）的音色缺省值：官方文档示例音色。与现行
+/// 3.x 新形状（CosyVoice 家族）3.0 模型的音色缺省值：官方文档示例音色。与现行
 /// 形状的 [qwenTtsDefaultVoice] 同律——音色是自由输入框，空缺时按本
 /// 家族的官方示例回落（网关层兜底，不另设配置项）。
 const qwenTtsMaasDefaultVoice = 'longanhuan_v3.6';
+
+/// 千问 3.1 语音合成模型的默认音色：官方首推女声（3.1 引擎层只认 3.1 专属音色）。
+const qwenTts31DefaultVoice = 'longanhuan_v3.1';
+
+/// 根据型号为 3.x CosyVoice 家族推断默认音色：3.1 模型回落 [qwenTts31DefaultVoice]，
+/// 其余（如 3.0）回落 [qwenTtsMaasDefaultVoice]。
+String qwenTtsDefaultVoiceForModel(String model) =>
+    model.contains('3.1') ? qwenTts31DefaultVoice : qwenTtsMaasDefaultVoice;
 
 /// 千问 SSE 音频段的协商采样率：DashScope 实时/流式通道的 PCM 基准
 /// （24kHz 单声道 16-bit，官方 SDK 的 PCM_24000HZ_MONO_16BIT 同源）。

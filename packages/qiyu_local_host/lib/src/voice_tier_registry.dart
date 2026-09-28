@@ -312,14 +312,16 @@ final qwenTtsModelHelperText =
     '流式合成型号：$qwenTtsDefaultModel（HTTP SSE，边出文字边出声）'
     '；$qwenTtsDefaultModel-realtime（WebSocket，前几个字就出声）\n'
     '3.x 新型号（qwen-audio-3.1-tts-flash 等）走官方新版语音通道：'
-    '服务地址直接填 $qwenTtsWsInferenceEndpoint（推理通道按句流式）；'
+    '服务地址直接填 $qwenTtsWsInferenceEndpoint（推理通道按句流式，'
+    '3.1 推荐音色如 longanhuan_v3.1）；'
     '也可填官方 maas HTTP 端点 $voiceTierMaasAddressTemplate，'
     '把 {业务空间ID} 换成你自己的阿里云百炼业务空间 ID'
     '（栖语不代填，按句等整段返回）；型号支持范围见'
     '官方模型页：https://help.aliyun.com/zh/model-studio/qwen-tts';
 
 /// 千问识别档的模型支持范围说明：从宿主常量现场拼装。
-final qwenAsrModelHelperText = '支持 HTTP 非流式识别模型，如 $qwenAsrDefaultModel';
+final qwenAsrModelHelperText =
+    '支持 HTTP 非流式识别模型，如 $qwenAsrDefaultModel 与 qwen-audio-3.1-asr-flash';
 
 /// 随船档位目录：当前全部四个合成档与三个转写档。**新档位发版＝在本
 /// 列表加数据行**（复用既有请求形状时无需其他代码改动）。

@@ -599,7 +599,8 @@ void main() {
     });
   });
 
-  test('3.1 新形状：音色空缺回落本家族官方示例音色', () async {
+  test('3.1 新形状：音色空缺按型号回落官方示例音色（3.1 专属 vs 3.0）', () async {
+    // 3.1 模型回落 qwenTts31DefaultVoice (longanhuan_v3.1)
     for (final voice in [null, '   ']) {
       final client = _RecordingBytesHttpClient(
         postResponse: urlResponse('https://oss.example.com/a.wav'),
@@ -617,8 +618,35 @@ void main() {
           jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
       expect(
         (body['input']! as Map<String, Object?>)['voice'],
+        qwenTts31DefaultVoice,
+        reason: '3.1 model voice=$voice',
+      );
+    }
+
+    // 3.0 模型保持回落 qwenTtsMaasDefaultVoice (longanhuan_v3.6)
+    for (final voice in [null, '   ']) {
+      final client = _RecordingBytesHttpClient(
+        postResponse: urlResponse('https://oss.example.com/a.wav'),
+        downloadResponse: ProviderBytesHttpResponse(
+          statusCode: 200,
+          body: Stream.value([1]),
+        ),
+      );
+      await TtsModelGateway(client).synthesize(
+        config: const TtsConfig(
+          provider: TtsProviderKind.qwenTts,
+          baseUrl: maasEndpoint,
+          model: 'qwen-audio-3.0-tts-flash',
+        ),
+        apiKey: 'sk-bailian',
+        text: '嗯。',
+      );
+      final body =
+          jsonDecode(utf8.decode(client.bytesBody)) as Map<String, Object?>;
+      expect(
+        (body['input']! as Map<String, Object?>)['voice'],
         qwenTtsMaasDefaultVoice,
-        reason: 'voice=$voice',
+        reason: '3.0 model voice=$voice',
       );
     }
   });

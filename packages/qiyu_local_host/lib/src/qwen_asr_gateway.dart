@@ -52,6 +52,10 @@ final class QwenAsrGateway implements SttTranscriptionGateway {
     // 请求标识先进诊断（错误响应同样带），再按状态码分类。
     _logRequestId(response.body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode == 400 &&
+          response.body.contains('ASR_RESPONSE_HAVE_NO_WORDS')) {
+        return '';
+      }
       throw fromSttModelFailure(
         providerStatusFailure(
           response.statusCode,
@@ -113,6 +117,8 @@ Map<String, Object?> _requestBody({
       ],
     },
     'parameters': {
+      'format': 'wav',
+      'sample_rate': 16000,
       'asr_options': _asrOptions,
     },
   };
@@ -138,8 +144,10 @@ void _logRequestId(String body) {
 }
 
 /// 文本提取按请求形状绑定：地址唯一确定了形状，响应就该落在同一条路径上，
-/// 不跨形状猜。兼容形状取 choices[0].message.content，原生形状取
-/// output.choices[0].message.content[0].text；取不到一律按解析失败。
+/// 不跨形状猜。兼容形状取 choices[0].message.content；原生形状优先取
+/// output.choices[0].message.content[0].text，无 choices 时支持
+/// output.text、output.sentence.text 或顶层 text（适配千问 3.1 识别模型）；
+/// 取不到一律按解析失败。
 String _parseTranscriptionText(String body, {required bool compatible}) {
   final decoded = _decodeObject(body);
   final text = decoded == null ? null : _extractText(decoded, compatible);
@@ -153,32 +161,63 @@ String _parseTranscriptionText(String body, {required bool compatible}) {
 }
 
 String? _extractText(Map<String, Object?> decoded, bool compatible) {
-  final choices = compatible ? decoded['choices'] : (decoded['output'] is Map<String, Object?>
-      ? (decoded['output'] as Map<String, Object?>)['choices']
-      : null);
-  if (choices is! List<Object?> || choices.isEmpty) {
-    return null;
-  }
-  final first = choices.first;
-  if (first is! Map<String, Object?>) {
-    return null;
-  }
-  final message = first['message'];
-  if (message is! Map<String, Object?>) {
-    return null;
-  }
-  final content = message['content'];
-  // 兼容形状的 content 是整段文本；原生形状是分块列表，取首块 text。
   if (compatible) {
+    final choices = decoded['choices'];
+    if (choices is! List<Object?> || choices.isEmpty) {
+      return null;
+    }
+    final first = choices.first;
+    if (first is! Map<String, Object?>) {
+      return null;
+    }
+    final message = first['message'];
+    if (message is! Map<String, Object?>) {
+      return null;
+    }
+    final content = message['content'];
     return content is String ? content : null;
   }
-  if (content is! List<Object?>) {
+
+  final output = decoded['output'];
+  final choices = output is Map<String, Object?>
+      ? output['choices']
+      : null;
+  if (choices is List<Object?> && choices.isNotEmpty) {
+    final first = choices.first;
+    if (first is! Map<String, Object?>) {
+      return null;
+    }
+    final message = first['message'];
+    if (message is! Map<String, Object?>) {
+      return null;
+    }
+    final content = message['content'];
+    if (content is! List<Object?>) {
+      return null;
+    }
+    for (final item in content) {
+      if (item is Map<String, Object?> && item['text'] is String) {
+        return item['text'] as String;
+      }
+    }
     return null;
   }
-  for (final item in content) {
-    if (item is Map<String, Object?> && item['text'] is String) {
-      return item['text'] as String;
+
+  if (output is Map<String, Object?>) {
+    final text = output['text'];
+    if (text is String) {
+      return text;
+    }
+    final sentence = output['sentence'];
+    if (sentence is Map<String, Object?> && sentence['text'] is String) {
+      return sentence['text'] as String;
     }
   }
+
+  final topText = decoded['text'];
+  if (topText is String) {
+    return topText;
+  }
+
   return null;
 }

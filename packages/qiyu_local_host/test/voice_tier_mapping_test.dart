@@ -252,6 +252,32 @@ void main() {
       );
     });
 
+    test('其他转写档填 qwen-audio-3.1-asr-flash 被引导去千问识别档', () {
+      final suggestion = lookupVoiceTierSuggestion(
+        family: VoiceServiceFamily.transcription,
+        currentProviderWireName: 'openai_compatible',
+        model: 'qwen-audio-3.1-asr-flash',
+      );
+      expect(suggestion, isA<VoiceTierSwitchSuggestion>());
+      final switchSuggestion = suggestion! as VoiceTierSwitchSuggestion;
+      expect(switchSuggestion.targetFamily, VoiceServiceFamily.transcription);
+      expect(switchSuggestion.targetProviderWireName, 'qwen_asr');
+      expect(switchSuggestion.targetModel, 'qwen-audio-3.1-asr-flash');
+      expect(switchSuggestion.defaultEndpoint, qwenAsrDefaultEndpoint);
+      expect(switchSuggestion.reason, '这个型号要走千问识别档。');
+    });
+
+    test('千问识别档填 qwen-audio-3.1-asr-flash：正确落位，不干预', () {
+      expect(
+        lookupVoiceTierSuggestion(
+          family: VoiceServiceFamily.transcription,
+          currentProviderWireName: 'qwen_asr',
+          model: 'qwen-audio-3.1-asr-flash',
+        ),
+        isNull,
+      );
+    });
+
     test('结构完整性：转写族所有支持条目不得是新版端点行', () {
       // 转写设置页的回填计划保留模板分支只是共享计划形状的防御，本域
       // 没有可诚实展示的模板话术（`{业务空间ID}` 拼接指引是朗读域话术）：

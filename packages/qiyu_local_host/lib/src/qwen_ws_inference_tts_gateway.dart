@@ -131,9 +131,9 @@ TtsGatewayException _qwenInferenceTaskFailedFailure(Map<String, Object?> event) 
 /// （probe 02/03 基线形状），按既有剥头口径归一成裸 PCM——整段路径拼
 /// PCM 后在 Host 包一次 WAV 头，流式路径按既有 PCM 块通道交付。
 ///
-/// 3.1（qwen-audio-3.1-tts-flash）服务端引擎层稳定故障（Engine error
-/// 411，probe 02/03 实测），与本网关实现无关：如实按 task-failed 的
-/// 既有分类报错，不做特殊处理。
+/// 3.1（qwen-audio-3.1-tts-flash 等）在 CosyVoice 引擎层只认 3.1 专属
+/// 音色（如 longanhuan_v3.1，3.0 音色会报 Engine error 411），音色
+/// 空缺时按型号自动回落为 [qwenTts31DefaultVoice]。
 final class QwenWsInferenceTtsGateway
     implements
         TtsSynthesisGateway,
@@ -158,14 +158,15 @@ final class QwenWsInferenceTtsGateway
   }
 
   /// run-task 的 payload（官方文档逐字段，probe 02 实测）：task_group/
-  /// task/function 固定，音色空缺回落本家族官方示例音色，format/
-  /// sample_rate 缺省 wav/24000（与票 02 maas 形状同律）；高级参数深
-  /// 合并进 parameters——用户显式写的字段覆盖缺省。
+  /// task/function 固定，音色空缺按型号回落本家族官方示例音色（3.1 专属
+  /// 音色 vs 3.0 音色），format/sample_rate 缺省 wav/24000（与票 02 maas
+  /// 形状同律）；高级参数深合并进 parameters——用户显式写的字段覆盖缺省。
   static Map<String, Object?> runTaskPayload(TtsConfig config) {
     final voice = config.voice?.trim();
+    final fallbackVoice = qwenTtsDefaultVoiceForModel(config.model);
     final parameters = <String, Object?>{
       'text_type': 'PlainText',
-      'voice': voice == null || voice.isEmpty ? qwenTtsMaasDefaultVoice : voice,
+      'voice': voice == null || voice.isEmpty ? fallbackVoice : voice,
       'format': 'wav',
       'sample_rate': qwenTtsPcmSampleRate,
     };

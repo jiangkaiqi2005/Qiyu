@@ -289,10 +289,16 @@ const List<_SupportedVoiceModel> _supportedVoiceModels = [
     defaultEndpoint: qwenTtsWsInferenceEndpoint,
     usesNewVersionEndpoint: true,
   ),
-  // 转写族：qwen3 现行识别型号（识别档网关按地址路径派形状，缺省端点
-  // 可代填；引导接线在票 04）。
+  // 转写族：qwen3 现行识别型号与 3.1 识别型号（识别档网关按地址路径派形状，
+  // 缺省端点可代填；引导接线在票 04）。
   _SupportedVoiceModel(
     'qwen3-asr-flash',
+    VoiceServiceFamily.transcription,
+    'qwen_asr',
+    defaultEndpoint: qwenAsrDefaultEndpoint,
+  ),
+  _SupportedVoiceModel(
+    'qwen-audio-3.1-asr-flash',
     VoiceServiceFamily.transcription,
     'qwen_asr',
     defaultEndpoint: qwenAsrDefaultEndpoint,

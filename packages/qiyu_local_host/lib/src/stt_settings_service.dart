@@ -11,6 +11,7 @@ import 'provider_settings_service.dart'
         providerTestMessage,
         providerTestStatusFromFailureKind;
 import 'stt_gateway.dart';
+import 'tts_gateway.dart' show wrapPcmAsWav;
 import 'voice_tier_mapping.dart';
 import 'voice_tier_registry.dart';
 
@@ -347,33 +348,5 @@ String _normalizeResponseField(String? responseField) {
 final List<int> sttConnectionTestAudio = () {
   const sampleRate = 16000;
   const sampleCount = sampleRate ~/ 4;
-  final data = Uint8List(sampleCount * 2);
-  final header = BytesBuilder(copy: false);
-  final riffSize = 36 + data.length;
-  final sizeBytes = Uint8List.fromList(
-    List.generate(4, (i) => (riffSize >> (8 * i)) & 0xFF),
-  );
-  final dataSizeBytes = Uint8List.fromList(
-    List.generate(4, (i) => (data.length >> (8 * i)) & 0xFF),
-  );
-  void ascii(String text) => header.add(text.codeUnits);
-  void le16(int value) => header.add(
-    Uint8List.fromList([value & 0xFF, (value >> 8) & 0xFF]),
-  );
-
-  ascii('RIFF');
-  header.add(sizeBytes);
-  ascii('WAVE');
-  ascii('fmt ');
-  le16(16); // fmt 块长度
-  le16(1); // PCM
-  le16(1); // 单声道
-  le16(sampleRate);
-  le16(sampleRate * 2); // 字节率 = 采样率 × 块对齐
-  le16(2); // 块对齐 = 2 字节
-  le16(16); // 位深
-  ascii('data');
-  header.add(dataSizeBytes);
-  header.add(data);
-  return header.takeBytes();
+  return wrapPcmAsWav(Uint8List(sampleCount * 2), sampleRate: sampleRate);
 }();

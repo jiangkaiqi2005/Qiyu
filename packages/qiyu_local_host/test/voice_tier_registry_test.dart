@@ -341,6 +341,7 @@ void main() {
       expect(qwen.modelHelperText, qwenTtsModelHelperText);
       expect(qwen.modelHelperText, contains(qwenTtsWsInferenceEndpoint));
       expect(qwen.modelHelperText, contains(voiceTierMaasAddressTemplate));
+      expect(qwen.modelHelperText, contains('longanhuan_v3.1'));
       expect(qwen.realtimeModelSuffix, '-realtime');
       expect(qwen.defaultVoice, qwenTtsDefaultVoice);
     });
