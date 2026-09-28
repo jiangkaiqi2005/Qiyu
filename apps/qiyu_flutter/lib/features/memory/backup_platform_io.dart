@@ -12,7 +12,11 @@ abstract interface class BackupSharer {
   /// 把备份交给系统分享面板。返回 true 表示备份已交出去（用户选择了
   /// 目标，或平台无法区分结果）；返回 false 表示用户取消了分享。
   /// 打不开分享面板等故障以异常抛出，由调用方按可重试失败呈现。
-  Future<bool> share(String fileName, Uint8List bytes);
+  Future<bool> share(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  });
 }
 
 /// share_plus 真实现：备份字节经本通道写入系统临时文件并打开分享
@@ -23,14 +27,18 @@ final class PluginBackupSharer implements BackupSharer {
   const PluginBackupSharer();
 
   @override
-  Future<bool> share(String fileName, Uint8List bytes) async {
+  Future<bool> share(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  }) async {
     final result = await SharePlus.instance.share(
       ShareParams(
         files: [XFile.fromData(bytes, mimeType: 'application/zip')],
         // XFile.fromData 的 name 在非 web 平台会被 cross_file 忽略，
         // 备份文件名必须走 fileNameOverrides 才能到分享目标手里。
         fileNameOverrides: [fileName],
-        title: '栖语备份',
+        title: shareTitle,
       ),
     );
     return result.status != ShareResultStatus.dismissed;
@@ -90,11 +98,15 @@ final class IoBackupPlatform implements BackupPlatform {
   bool get supported => _supportedOverride ?? Platform.isAndroid;
 
   @override
-  Future<bool> downloadBackup(String fileName, Uint8List bytes) async {
+  Future<bool> downloadBackup(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  }) async {
     if (!supported) {
       return false;
     }
-    return _sharer.share(fileName, bytes);
+    return _sharer.share(fileName, bytes, shareTitle: shareTitle);
   }
 
   @override

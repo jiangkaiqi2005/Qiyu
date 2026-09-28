@@ -31,24 +31,59 @@ enum ApiErrorCategory {
   ),
 
   /// 语音输入（STT 转写）受限
-  sttError(
-    title: '语音服务受限',
-    message: '语音服务请求受限或配置异常。请检查语音服务配置或服务商用量额度。',
-  ),
+  sttError(title: '语音服务受限', message: '语音服务请求受限或配置异常。请检查语音服务配置或服务商用量额度。'),
 
   /// 语音朗读（TTS 合成）受限
-  ttsError(
-    title: '语音朗读受限',
-    message: '语音朗读合成请求受限或配置异常。请检查语音服务配置或服务商用量额度。',
-  );
+  ttsError(title: '语音朗读受限', message: '语音朗读合成请求受限或配置异常。请检查语音服务配置或服务商用量额度。');
 
-  const ApiErrorCategory({
-    required this.title,
-    required this.message,
-  });
+  const ApiErrorCategory({required this.title, required this.message});
 
   final String title;
   final String message;
+
+  String titleForLocale(String locale) => locale == 'en'
+      ? switch (this) {
+          ApiErrorCategory.rateLimited => 'Request limit reached',
+          ApiErrorCategory.authentication => 'API Key authentication failed',
+          ApiErrorCategory.modelNotFound => 'Model not found',
+          ApiErrorCategory.otherClientError => 'Model service error',
+          ApiErrorCategory.sttError => 'Voice service unavailable',
+          ApiErrorCategory.ttsError => 'Read aloud unavailable',
+        }
+      : title;
+
+  String messageForLocale(String locale) => locale == 'en'
+      ? switch (this) {
+          ApiErrorCategory.rateLimited =>
+            'The model service received too many requests (429). Qiyu used a basic local reply this time. Try again later or check your provider usage.',
+          ApiErrorCategory.authentication =>
+            'The provider rejected your API Key (401/403). Check the Key, its validity, and access permissions. Qiyu used a basic local reply this time.',
+          ApiErrorCategory.modelNotFound =>
+            'The provider could not find this model (404). Check the model name and whether the provider supports it.',
+          ApiErrorCategory.otherClientError =>
+            'The provider rejected the request. Qiyu used a basic local reply this time. Check the model settings.',
+          ApiErrorCategory.sttError =>
+            'The voice service is limited or misconfigured. Check its settings and provider usage.',
+          ApiErrorCategory.ttsError =>
+            'Read aloud is limited or misconfigured. Check the voice settings and provider usage.',
+        }
+      : message;
+
+  String noticeForLocale(String locale) => locale == 'en'
+      ? switch (this) {
+          ApiErrorCategory.rateLimited =>
+            '⚠️ Request limit reached (429); using local replies',
+          ApiErrorCategory.authentication =>
+            '⚠️ API Key rejected (401/403); using local replies',
+          ApiErrorCategory.modelNotFound =>
+            '⚠️ Model not found (404); using local replies',
+          ApiErrorCategory.otherClientError =>
+            '⚠️ Model service error; using local replies',
+          ApiErrorCategory.sttError =>
+            '⚠️ Voice service limited; staying silent',
+          ApiErrorCategory.ttsError => '⚠️ Read aloud limited; staying silent',
+        }
+      : noticeText;
 
   /// 输入框上方状态行频控去重时的轻量提示文案。
   String get noticeText => switch (this) {
@@ -61,12 +96,24 @@ enum ApiErrorCategory {
   };
 }
 
+String localizeApiErrorNotice(String message, String locale) {
+  if (locale != 'en') return message;
+  for (final category in ApiErrorCategory.values) {
+    if (message == category.noticeText) return category.noticeForLocale(locale);
+  }
+  return switch (message) {
+    '⚠️ 网络连接超时，当前保持本地基础回复' => '⚠️ Connection timed out; using local replies',
+    '⚠️ 网络连接异常，当前保持本地基础回复' => '⚠️ Connection error; using local replies',
+    '⚠️ 模型回复不完整，当前保持本地基础回复' => '⚠️ Incomplete model reply; using local replies',
+    '⚠️ 模型服务暂时不可用，当前保持本地基础回复' =>
+      '⚠️ Model service temporarily unavailable; using local replies',
+    _ => message,
+  };
+}
+
 /// 状态条轻提示的载荷：文案与是否附「去设置检查」链接。
 final class ApiErrorNotice {
-  const ApiErrorNotice({
-    required this.message,
-    this.showSettingsLink = true,
-  });
+  const ApiErrorNotice({required this.message, this.showSettingsLink = true});
 
   final String message;
   final bool showSettingsLink;
@@ -188,10 +235,7 @@ final class ApiErrorPolicy {
   }) {
     if (_alertedCategories.contains(category)) {
       return ShowApiErrorNotice(
-        ApiErrorNotice(
-          message: category.noticeText,
-          showSettingsLink: true,
-        ),
+        ApiErrorNotice(message: category.noticeText, showSettingsLink: true),
       );
     }
     _alertedCategories.add(category);

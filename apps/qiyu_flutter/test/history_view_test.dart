@@ -10,6 +10,7 @@ import 'package:qiyu_flutter/features/history/history_client.dart';
 import 'package:qiyu_flutter/features/history/history_view.dart';
 import 'package:qiyu_flutter/features/history/history_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
+import 'package:qiyu_flutter/features/shell/qiyu_strings.dart';
 import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
@@ -18,6 +19,49 @@ import 'support/shared_fakes.dart';
 import 'support/test_dates.dart';
 
 void main() {
+  testWidgets('English history chrome changes while previews stay verbatim', (
+    tester,
+  ) async {
+    final historyViewModel = HistoryViewModel(
+      _FakeHistoryGateway(_testListing()),
+      onSessionDeleted: (_) {},
+      autoStart: false,
+    );
+    await historyViewModel.refresh();
+    final localeController = LocaleController(initialLocale: 'en');
+    await tester.pumpWidget(
+      QiyuApp(
+        viewModel: _chatViewModel(),
+        historyViewModel: historyViewModel,
+        onboardingViewModel: await _onboardingViewModel(),
+        localeController: localeController,
+      ),
+    );
+    await _settleMergedPage(tester);
+    await tester.tap(find.byKey(const Key('open-history')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byType(HistoryView),
+        matching: find.text('History'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Today'), findsOneWidget);
+    expect(find.text('Yesterday'), findsOneWidget);
+    expect(find.textContaining('4 messages'), findsOneWidget);
+    expect(find.text('今天想说的事'), findsOneWidget);
+    expect(find.text('昨天的事'), findsOneWidget);
+    localeController.setLocale('zh');
+    await tester.pumpAndSettle();
+    expect(find.text('今天'), findsOneWidget);
+    expect(find.text('今天想说的事'), findsOneWidget);
+    localeController.setLocale('en');
+    await tester.pumpAndSettle();
+    expect(find.text('Today'), findsOneWidget);
+  });
+
   testWidgets(
     'history lists sessions by day with previews, counts, and unavailable hints',
     (tester) async {

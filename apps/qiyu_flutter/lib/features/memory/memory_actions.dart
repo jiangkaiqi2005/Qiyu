@@ -7,8 +7,10 @@ import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../shell/qiyu_fading_notice.dart';
+import '../shell/qiyu_ui_locale.dart';
 import '../shell/qiyu_widgets.dart';
 import 'memory_client.dart';
+import 'memory_strings.dart';
 import 'memory_view_model.dart';
 
 /// 临时揭示的自动重新遮罩时间：只作本次展示，离开页面立即失效。
@@ -22,18 +24,21 @@ const Duration revealTimeout = Duration(seconds: 20);
 /// design-system §4 定案的五枚（铅笔 / 雪花 / 禁止圈 / 垃圾桶 / 眼睛）；
 /// 恢复使用与解除禁提沿用同一图形，两态靠状态芯片与动作名区分。
 enum MemoryAction {
-  edit('修正', QiyuIcons.edit),
-  reveal('临时查看', QiyuIcons.visibility),
-  freeze('暂停使用', QiyuIcons.ac_unit),
-  unfreeze('恢复使用', QiyuIcons.ac_unit),
-  ban('不再提起', QiyuIcons.block),
-  unban('解除禁提', QiyuIcons.block),
-  delete('删除', QiyuIcons.delete);
+  edit('修正', 'Correct', QiyuIcons.edit),
+  reveal('临时查看', 'View temporarily', QiyuIcons.visibility),
+  freeze('暂停使用', 'Pause use', QiyuIcons.ac_unit),
+  unfreeze('恢复使用', 'Resume use', QiyuIcons.ac_unit),
+  ban('不再提起', 'Do not bring up', QiyuIcons.block),
+  unban('解除禁提', 'Allow again', QiyuIcons.block),
+  delete('删除', 'Delete', QiyuIcons.delete);
 
-  const MemoryAction(this.label, this.icon);
+  const MemoryAction(this.label, this.enLabel, this.icon);
 
   final String label;
+  final String enLabel;
   final IconData icon;
+
+  String labelFor(BuildContext context) => qiyuIsEn(context) ? enLabel : label;
 }
 
 /// 条目动作状态快照：列表卡片与详情页各自从自己的 DTO 提取，喂给
@@ -281,9 +286,12 @@ void showMemoryActionResult(BuildContext context, MemoryActionResult result) {
   final failed = result.status == MemoryActionStatus.failed;
   // 关联扩展条数（裁定票 03）：控制生效时若同时覆盖了其它说法，如实
   // 告诉用户——「宁多勿漏」的保守方向要摆在明处，不悄悄多屏蔽。
+  final base = memoryActionMessage(context, result.message);
   final message = result.aliasCount > 0
-      ? '${result.message}同时纳入 ${result.aliasCount} 条相近表述。'
-      : result.message;
+      ? qiyuIsEnNow(context)
+            ? '$base ${result.aliasCount} similar expressions were also included.'
+            : '$base同时纳入 ${result.aliasCount} 条相近表述。'
+      : base;
   showQiyuFadingNotice(
     context,
     message,
@@ -367,9 +375,12 @@ class MemoryActionButtons extends StatelessWidget {
                         ),
                       )
                     : null,
-                tooltip: action.label,
+                tooltip: action.labelFor(context),
                 style: qiyuQuietIconButtonStyle(),
-                icon: Icon(action.icon, semanticLabel: action.label),
+                icon: Icon(
+                  action.icon,
+                  semanticLabel: action.labelFor(context),
+                ),
               ),
             ),
           ),
@@ -401,21 +412,21 @@ class _EditDialogState extends State<_EditDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('修正这条记忆'),
+      title: Text(MemoryLabel.editTitle.of(context)),
       content: TextField(
         key: const Key('memory-edit-field'),
         controller: _controller,
         autofocus: true,
         maxLines: 3,
         maxLength: 120,
-        decoration: const InputDecoration(hintText: '按你的说法写'),
+        decoration: InputDecoration(hintText: MemoryLabel.editHint.of(context)),
       ),
       actions: [
         QiyuFocusRingScope(
           borderRadius: QiyuRadii.circleBorder,
           child: TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
+            child: Text(MemoryLabel.cancel.of(context)),
           ),
         ),
         QiyuFocusRingScope(
@@ -423,7 +434,7 @@ class _EditDialogState extends State<_EditDialog> {
           child: TextButton(
             key: const Key('memory-edit-save'),
             onPressed: () => Navigator.of(context).pop(_controller.text),
-            child: const Text('保存'),
+            child: Text(MemoryLabel.save.of(context)),
           ),
         ),
       ],
@@ -438,14 +449,14 @@ class _BanConfirmDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('不再提起这条记忆？'),
-      content: const Text('确认后，栖语不会再主动提起它，聊天和整理都会避开这条内容。以后可以随时解除。'),
+      title: Text(MemoryLabel.banTitle.of(context)),
+      content: Text(MemoryLabel.banDescription.of(context)),
       actions: [
         QiyuFocusRingScope(
           borderRadius: QiyuRadii.circleBorder,
           child: TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('先不用'),
+            child: Text(MemoryLabel.notNow.of(context)),
           ),
         ),
         QiyuFocusRingScope(
@@ -453,7 +464,7 @@ class _BanConfirmDialog extends StatelessWidget {
           child: TextButton(
             key: const Key('memory-ban-confirm'),
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('不再提起'),
+            child: Text(MemoryLabel.banAction.of(context)),
           ),
         ),
       ],
@@ -495,7 +506,7 @@ class _RevealDialogState extends State<_RevealDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       key: const Key('memory-reveal-dialog'),
-      title: const Text('仅本次展示'),
+      title: Text(MemoryLabel.revealTitle.of(context)),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -503,7 +514,10 @@ class _RevealDialogState extends State<_RevealDialog> {
           // 不提供选择复制：敏感原文只作本次呈现，不进剪贴板。
           Text(widget.text),
           const SizedBox(height: 8),
-          Text('关闭或稍后会自动重新遮罩。', style: Theme.of(context).textTheme.bodySmall),
+          Text(
+            MemoryLabel.revealDescription.of(context),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ],
       ),
       actions: [
@@ -511,7 +525,7 @@ class _RevealDialogState extends State<_RevealDialog> {
           borderRadius: QiyuRadii.circleBorder,
           child: TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('关闭'),
+            child: Text(MemoryLabel.close.of(context)),
           ),
         ),
       ],
@@ -528,20 +542,20 @@ class _DeletePreviewDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('删除这条记忆？'),
+      title: Text(MemoryLabel.deleteTitle.of(context)),
       content: FutureBuilder<MemoryDeleteImpact?>(
         future: impact,
         builder: (context, snapshot) {
           if (!snapshot.hasData && !snapshot.hasError) {
-            return const SizedBox(
+            return SizedBox(
               height: 80,
               child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 8),
-                    Text('正在核对影响范围…'),
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 8),
+                    Text(MemoryLabel.checkingImpact.of(context)),
                   ],
                 ),
               ),
@@ -549,7 +563,7 @@ class _DeletePreviewDialog extends StatelessWidget {
           }
           final preview = snapshot.data;
           if (preview == null) {
-            return const Text('这条记忆不存在或已经变化，请返回后刷新。');
+            return Text(MemoryLabel.itemGone.of(context));
           }
           return ConstrainedBox(
             // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
@@ -580,7 +594,7 @@ class _DeletePreviewDialog extends StatelessWidget {
           borderRadius: QiyuRadii.circleBorder,
           child: TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('先不用'),
+            child: Text(MemoryLabel.notNow.of(context)),
           ),
         ),
         FutureBuilder<MemoryDeleteImpact?>(
@@ -592,7 +606,7 @@ class _DeletePreviewDialog extends StatelessWidget {
               child: TextButton(
                 key: const Key('memory-delete-confirm'),
                 onPressed: ready ? () => Navigator.of(context).pop(true) : null,
-                child: const Text('确认删除'),
+                child: Text(MemoryLabel.confirmDelete.of(context)),
               ),
             );
           },

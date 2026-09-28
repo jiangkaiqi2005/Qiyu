@@ -14,7 +14,11 @@ abstract interface class BackupPlatform {
   /// 导出落地：web 触发浏览器下载，安卓把备份交给系统分享 sheet。
   /// 已发起（web 开始下载、安卓打开分享面板）返回 true；用户取消
   /// 分享或环境不支持返回 false，故障以异常抛出由调用方呈现。
-  Future<bool> downloadBackup(String fileName, Uint8List bytes);
+  Future<bool> downloadBackup(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  });
 
   /// 打开文件选择器让用户选择备份 zip；取消返回 null。
   Future<Uint8List?> pickBackupFile();

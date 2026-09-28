@@ -15,6 +15,8 @@ import '../navigation.dart';
 import 'qiyu_background_notice.dart';
 import 'qiyu_connection_status.dart';
 import 'qiyu_home_backdrop.dart';
+import 'qiyu_strings.dart';
+import 'qiyu_ui_locale.dart';
 import 'qiyu_widgets.dart';
 
 /// 三项导航的**唯一**出处：目的地、文案与图标（design-system §4 定案选型：
@@ -36,6 +38,12 @@ enum QiyuNavDestination {
   final String path;
   final String label;
   final IconData icon;
+
+  String localizedLabel(QiyuStrings strings) => switch (this) {
+    QiyuNavDestination.history => strings.navigationHistory,
+    QiyuNavDestination.memory => strings.navigationMemory,
+    QiyuNavDestination.settings => strings.navigationSettings,
+  };
 
   Key get outerKey => Key('nav-$name');
   Key get tapKey => Key('home-go-$name');
@@ -301,7 +309,10 @@ class _QiyuShellState extends State<QiyuShell>
   /// 两态分别说清「收起侧边栏」「展开侧边栏」（无字图标按钮的读屏名必须显式
   /// 给，决策日志第五轮 #17）。
   Widget _sidebarBrandToggle() {
-    final label = _sidebarCollapsed ? '展开侧边栏' : '收起侧边栏';
+    final strings = qiyuStrings(context);
+    final label = _sidebarCollapsed
+        ? strings.expandSidebar
+        : strings.collapseSidebar;
     return Positioned(
       top: 0,
       left: 0,
@@ -368,7 +379,7 @@ class _QiyuShellState extends State<QiyuShell>
               onKeyEvent: _onScrimKeyEvent,
               child: Semantics(
                 button: true,
-                label: '关闭导航抽屉',
+                label: qiyuStrings(context).closeDrawer,
                 onTap: () => unawaited(_setDrawer(false)),
                 child: GestureDetector(
                   key: const Key('nav-scrim'),
@@ -432,7 +443,7 @@ class _QiyuShellState extends State<QiyuShell>
                       customBorder: const CircleBorder(),
                       onTap: () => unawaited(_setDrawer(!_drawerOpen)),
                       child: Semantics(
-                        label: '打开导航菜单',
+                        label: qiyuStrings(context).openNavigation,
                         button: true,
                         child: SizedBox.square(
                           dimension: qiyuAndroidTouch
@@ -508,9 +519,9 @@ class QiyuShellScope extends InheritedWidget {
   /// 自己的左内缩之上就够了，不必各自量一遍浮层的三层几何。
   static double headerLeftOverrun(BuildContext context) =>
       coversFrontNavigation(context)
-          ? QiyuLayout.narrowHeaderLeftOverrun +
-              (qiyuAndroidTouch ? 48 - QiyuLayout.menuButtonSize : 0)
-          : 0;
+      ? QiyuLayout.narrowHeaderLeftOverrun +
+            (qiyuAndroidTouch ? 48 - QiyuLayout.menuButtonSize : 0)
+      : 0;
 
   @override
   bool updateShouldNotify(QiyuShellScope oldWidget) =>
@@ -542,7 +553,7 @@ class QiyuPageHeaderBackButton extends StatelessWidget {
           key: buttonKey,
           style: qiyuAndroidTouchStyle,
           onPressed: () => backToPrevious(context),
-          tooltip: '返回上一页',
+          tooltip: qiyuStrings(context).back,
           icon: const Icon(QiyuIcons.arrow_back),
         ),
         const SizedBox(width: QiyuSpacing.xs),
@@ -642,7 +653,7 @@ class _NavPanel extends StatelessWidget {
                       key: destination.outerKey,
                       tapKey: destination.tapKey,
                       icon: destination.icon,
-                      label: destination.label,
+                      label: destination.localizedLabel(qiyuStrings(context)),
                       selected: current == destination.path,
                       onTap: () => onNavigate(destination.path),
                     ),
@@ -789,7 +800,9 @@ class _NavItemState extends State<_NavItem> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: qiyuMotion(context, QiyuMotion.fast),
-          constraints: qiyuAndroidTouch ? const BoxConstraints(minHeight: 48) : null,
+          constraints: qiyuAndroidTouch
+              ? const BoxConstraints(minHeight: 48)
+              : null,
           decoration: BoxDecoration(
             borderRadius: QiyuRadii.cardBorder,
             // 选中态中性暗底 rgba(255,255,255,0.04)，绝不用紫底。

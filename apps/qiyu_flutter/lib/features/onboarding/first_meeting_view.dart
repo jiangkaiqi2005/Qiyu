@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../accessibility.dart';
+import '../shell/qiyu_ui_locale.dart';
 import 'onboarding_view_model.dart';
 
 /// 首见页（称呼定稿 2026-09-03）：在「嗨。我是栖语。」那一页里加一个
@@ -39,13 +40,13 @@ class _FirstMeetingViewState extends State<FirstMeetingView> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '嗨。我是栖语。',
+                qiyuStrings(context).firstGreeting,
                 key: const Key('first-meeting-greeting'),
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 16),
               Text(
-                '栖，是鸟归巢的栖。\n睡不着的时候，可以跟我说说话。',
+                qiyuStrings(context).firstIntro,
                 style: Theme.of(context).textTheme.bodyLarge,
               ),
               const SizedBox(height: 40),
@@ -54,8 +55,8 @@ class _FirstMeetingViewState extends State<FirstMeetingView> {
                 controller: _appellationController,
                 enabled: !viewModel.completing,
                 maxLength: 20,
-                decoration: const InputDecoration(
-                  hintText: '怎么称呼你？',
+                decoration: InputDecoration(
+                  hintText: qiyuStrings(context).appellationHint,
                   counterText: '',
                 ),
                 onSubmitted: (_) =>
@@ -63,7 +64,7 @@ class _FirstMeetingViewState extends State<FirstMeetingView> {
               ),
               const SizedBox(height: 8),
               Text(
-                '名字、昵称、代号都行；不想说就先跳过。',
+                qiyuStrings(context).appellationGuide,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 24),
@@ -73,7 +74,7 @@ class _FirstMeetingViewState extends State<FirstMeetingView> {
                   onPressed: viewModel.completing
                       ? null
                       : () => unawaited(_enter(context, viewModel, '/chat')),
-                  child: const Text('开始聊天'),
+                  child: Text(qiyuStrings(context).startChat),
                 )
               else ...[
                 // 引导优先（ADR 0011）：未配置模型时主按钮导向模型连接，
@@ -85,7 +86,7 @@ class _FirstMeetingViewState extends State<FirstMeetingView> {
                       : () => unawaited(
                           _enter(context, viewModel, '/settings', push: true),
                         ),
-                  child: const Text('先去连上模型'),
+                  child: Text(qiyuStrings(context).connectModelFirst),
                 ),
                 const SizedBox(height: 12),
                 TextButton(
@@ -93,18 +94,18 @@ class _FirstMeetingViewState extends State<FirstMeetingView> {
                   onPressed: viewModel.completing
                       ? null
                       : () => unawaited(_enter(context, viewModel, '/chat')),
-                  child: const Text('先聊聊'),
+                  child: Text(qiyuStrings(context).chatLocallyFirst),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '不连模型也能聊，只是回复会简单一些。',
+                  qiyuStrings(context).localModeExplanation,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
               if (viewModel.completeError case final message?) ...[
                 const SizedBox(height: 16),
                 Text(
-                  message,
+                  qiyuStrings(context).localizeStatus(message),
                   key: const Key('first-meeting-error'),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.error,

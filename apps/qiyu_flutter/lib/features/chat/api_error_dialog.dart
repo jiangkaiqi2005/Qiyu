@@ -4,6 +4,7 @@ import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../shell/qiyu_widgets.dart';
+import '../shell/qiyu_ui_locale.dart';
 
 import 'api_error_policy.dart';
 import 'local_chat_client.dart';
@@ -32,6 +33,7 @@ ApiErrorCategory? categorizeVoiceApiError(
     _ => null,
   };
 }
+
 /// 判断异常对象是否属于 429 限流或 40x 鉴权/模型不存在等配置错误。
 bool isVoiceApiError(Object error) =>
     categorizeVoiceApiError(error, isInput: true) != null ||
@@ -75,7 +77,7 @@ class QiyuApiErrorDialog extends StatelessWidget {
         size: QiyuIconSpec.size,
       ),
       title: Text(
-        title,
+        customTitle ?? category.titleForLocale(qiyuIsEn(context) ? 'en' : 'zh'),
         textAlign: TextAlign.center,
         style: type.title.copyWith(color: QiyuColors.ink),
       ),
@@ -84,7 +86,8 @@ class QiyuApiErrorDialog extends StatelessWidget {
           maxWidth: QiyuLayout.dialogContentMaxWidth,
         ),
         child: Text(
-          message,
+          customMessage ??
+              category.messageForLocale(qiyuIsEn(context) ? 'en' : 'zh'),
           textAlign: TextAlign.start,
           style: type.body.copyWith(color: QiyuColors.ink),
         ),
@@ -97,7 +100,7 @@ class QiyuApiErrorDialog extends StatelessWidget {
             key: const Key('api-error-dialog-dismiss'),
             onPressed: onDismiss,
             child: Text(
-              '知道了',
+              qiyuStrings(context).acknowledge,
               style: type.body.copyWith(color: QiyuColors.muted),
             ),
           ),
@@ -125,7 +128,7 @@ class QiyuApiErrorDialog extends StatelessWidget {
                     vertical: QiyuSpacing.xs,
                   ),
                   child: Text(
-                    '前往设置',
+                    qiyuStrings(context).openSettings,
                     style: type.body.copyWith(
                       color: QiyuColors.onAccent,
                       fontWeight: FontWeight.w500,

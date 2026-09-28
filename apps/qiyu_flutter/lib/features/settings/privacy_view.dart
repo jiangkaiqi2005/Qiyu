@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../navigation.dart';
 import '../shell/qiyu_shell.dart';
+import '../shell/qiyu_ui_locale.dart';
+import 'privacy_strings.dart';
 
 /// 隐私说明页（ticket 23）：数据只在本机、何时调用用户选择的模型
 /// 服务、哪些敏感信息永不提升为记忆、日志与诊断统一脱敏。文案与
@@ -13,6 +15,7 @@ class PrivacyView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final strings = PrivacyStrings.of(qiyuIsEn(context));
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -35,12 +38,12 @@ class PrivacyView extends StatelessWidget {
                     const QiyuPageHeaderBackButton(
                       buttonKey: Key('privacy-back'),
                     ),
-                    Text('隐私与边界', style: theme.textTheme.headlineSmall),
+                    Text(strings.title, style: theme.textTheme.headlineSmall),
                   ],
                 ),
                 const SizedBox(height: 30),
                 Text(
-                  '你的夜晚只属于你',
+                  strings.heading,
                   style: theme.textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.w500,
                     letterSpacing: -0.8,
@@ -48,8 +51,7 @@ class PrivacyView extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  '栖语没有账号，没有云端记忆。这里说清楚数据在哪里、'
-                  '什么时候会用到你选择的模型服务，以及哪些内容永远不会被记住。',
+                  strings.intro,
                   style: theme.textTheme.bodyLarge?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                     height: 1.55,
@@ -57,49 +59,24 @@ class PrivacyView extends StatelessWidget {
                 ),
                 const SizedBox(height: 28),
                 _PrivacySection(
-                  tag: '本机',
-                  title: '数据只保存在你自己的设备上',
-                  body:
-                      '聊天记录、整理后的每日记录、长期印象、画像与关系、'
-                      '记忆控制，全部是保存在本机「栖语数据目录」里的 '
-                      'Markdown 文件，用任何文本编辑器都能直接打开查看。'
-                      'API Key 以明文保存在本机 provider.json 里，不落进'
-                      '记忆文件，也不会出现在备份里；请像保管密码一样保管'
-                      '这个文件，不要分享给别人。'
-                      '在设置里清除本机数据前会自动保留一份备份快照，'
-                      '随时可以在「备份与恢复」里找回；'
-                      '若你直接删除整个数据目录，则无法找回。',
+                  tag: strings.localTag,
+                  title: strings.localTitle,
+                  body: strings.localBody,
                 ),
                 _PrivacySection(
-                  tag: '模型',
-                  title: '何时调用你选择的模型服务',
-                  body:
-                      '只有你在设置里配置了模型服务时，栖语才会联网，且只发往你填写的地址：'
-                      '你发来消息需要模型回应时、晚安后的当日整理、'
-                      '间隔至少七天的 Dream 深度整理、对话中的记忆查找，'
-                      '以及你主动发起的连接测试。'
-                      '没有配置模型服务时，一切都在本机规则里完成，不产生任何网络请求。'
-                      '涉及自伤等危机的倾诉会交给模型像朋友一样认真回应，'
-                      '并自然带出全国 24 小时心理援助热线 12356；'
-                      '未连接模型或模型没有回应时，本机兜底话术也会给出 12356。',
+                  tag: strings.modelTag,
+                  title: strings.modelTitle,
+                  body: strings.modelBody,
                 ),
                 _PrivacySection(
-                  tag: '记忆',
-                  title: '这些内容永远不会被提升为记忆',
-                  body:
-                      'API Key、密码、口令、Cookie、验证码、身份证号、'
-                      '银行卡号、私钥等敏感原文，在写入任何记忆文件之前一律过滤。'
-                      '涉及私密内容的记忆在记忆中心默认打码展示，'
-                      '单次揭示需要明确确认，页面不缓存原文。',
+                  tag: strings.memoryTag,
+                  title: strings.memoryTitle,
+                  body: strings.memoryBody,
                 ),
                 _PrivacySection(
-                  tag: '诊断',
-                  title: '日志与诊断统一脱敏',
-                  body:
-                      '本机日志和开发者诊断只记录请求来源、结果与错误类别，'
-                      '不记录任何对话正文；API Key、授权头、启动凭据和'
-                      '默认遮罩的敏感原文绝不会出现在任何导出里。'
-                      '开发者诊断默认关闭，只读，不触碰任何数据。',
+                  tag: strings.diagnosticsTag,
+                  title: strings.diagnosticsTitle,
+                  body: strings.diagnosticsBody,
                 ),
                 const SizedBox(height: 12),
                 Align(
@@ -107,7 +84,7 @@ class PrivacyView extends StatelessWidget {
                   child: OutlinedButton(
                     key: const Key('privacy-back-to-settings'),
                     onPressed: () => backToPrevious(context),
-                    child: const Text('返回设置'),
+                    child: Text(strings.backToSettings),
                   ),
                 ),
               ],

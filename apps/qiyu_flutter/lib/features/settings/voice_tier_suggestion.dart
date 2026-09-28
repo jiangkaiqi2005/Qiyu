@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../theme/qiyu_icons.dart';
+import 'settings_strings.dart';
 
 /// Host 档位映射表下发的结构化建议（连接测试结果里的 `suggestion`
 /// 字段，ADR 0020）。浏览器侧只消费这个字段，不复制表、不做双源同步
@@ -105,23 +106,23 @@ class VoiceTierSuggestionCard extends StatelessWidget {
     final theme = Theme.of(context);
     final detailLines = <String>[
       if (suggestion.kind == VoiceSuggestionKind.unsupported)
-        '可以改用 ${suggestion.targetModel}。'
+        settingsText(context, '可以改用 ${suggestion.targetModel}。', 'You can use ${suggestion.targetModel} instead.')
       else ...[
         if (suggestion.defaultEndpoint != null)
-          '建议地址：${suggestion.defaultEndpoint}',
+          settingsText(context, '建议地址：${suggestion.defaultEndpoint}', 'Suggested URL: ${suggestion.defaultEndpoint}'),
         if (suggestion.addressTemplate != null) ...[
-          '地址模板：${suggestion.addressTemplate}',
+          settingsText(context, '地址模板：${suggestion.addressTemplate}', 'URL template: ${suggestion.addressTemplate}'),
           ?suggestion.addressGuidance,
         ],
-        '建议型号：${suggestion.targetModel}',
+        settingsText(context, '建议型号：${suggestion.targetModel}', 'Suggested model: ${suggestion.targetModel}'),
       ],
       if (onApply == null)
-        '请到语音${suggestion.targetsSynthesis ? '朗读' : '输入'}设置里调整。',
+        settingsText(context, '请到语音${suggestion.targetsSynthesis ? '朗读' : '输入'}设置里调整。', 'Adjust this in ${suggestion.targetsSynthesis ? 'Read aloud' : 'Voice input'} settings.'),
     ];
     return Semantics(
       liveRegion: true,
       container: true,
-      label: '换档建议。${suggestion.reason}',
+      label: settingsText(context, '换档建议。${suggestion.reason}', 'Service suggestion. ${settingsDisplayMessage(context, suggestion.reason)}'),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(14),
@@ -143,7 +144,7 @@ class VoiceTierSuggestionCard extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    suggestion.reason,
+                    settingsDisplayMessage(context, suggestion.reason),
                     style: theme.textTheme.bodyLarge,
                   ),
                 ),
@@ -151,7 +152,7 @@ class VoiceTierSuggestionCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              detailLines.join('\n'),
+              detailLines.map((line) => settingsDisplayMessage(context, line)).join('\n'),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.5,
@@ -165,10 +166,9 @@ class VoiceTierSuggestionCard extends StatelessWidget {
                   key: applyButtonKey,
                   onPressed: onApply,
                   // 读屏语义标签：按钮可见字样之外的完整动作说明。
-                  child: const Text(
-                    '按建议调整',
-                    semanticsLabel:
-                        '按建议调整，自动填好建议的档位、地址与型号，确认后才保存',
+                  child: Text(
+                    settingsText(context, '按建议调整', 'Apply suggestion'),
+                    semanticsLabel: settingsText(context, '按建议调整，自动填好建议的档位、地址与型号，确认后才保存', 'Apply suggestion. Fills the suggested service, URL, and model. Save separately after confirming.'),
                   ),
                 ),
               ),

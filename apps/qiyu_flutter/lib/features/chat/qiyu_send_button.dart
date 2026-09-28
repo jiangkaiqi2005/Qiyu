@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../shell/qiyu_widgets.dart';
+import '../shell/qiyu_ui_locale.dart';
 import '../accessibility.dart';
 
 /// 发送按钮（design-system §8 组件 4、决策日志第三轮 4）：圆形、半透明
@@ -42,7 +43,9 @@ class _QiyuSendButtonState extends State<QiyuSendButton> {
         focusNode: _focusNode,
         borderRadius: QiyuRadii.circleBorder,
         child: Tooltip(
-          message: widget.sending ? '停止回复' : '发送',
+          message: widget.sending
+              ? qiyuStrings(context).stopReply
+              : qiyuStrings(context).send,
           child: InkWell(
             key: Key(widget.sending ? 'chat-stop' : 'chat-send'),
             focusNode: _focusNode,
@@ -59,7 +62,9 @@ class _QiyuSendButtonState extends State<QiyuSendButton> {
       focusNode: _focusNode,
       borderRadius: QiyuRadii.circleBorder,
       child: Tooltip(
-        message: widget.sending ? '停止回复' : '发送',
+        message: widget.sending
+            ? qiyuStrings(context).stopReply
+            : qiyuStrings(context).send,
         child: _surface(
           InkWell(
             key: Key(widget.sending ? 'chat-stop' : 'chat-send'),

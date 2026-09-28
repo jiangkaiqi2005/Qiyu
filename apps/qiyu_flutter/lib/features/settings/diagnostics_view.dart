@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../navigation.dart';
+import '../shell/qiyu_ui_locale.dart';
+import 'diagnostics_strings.dart';
 import 'settings_client.dart';
 import 'settings_view_model.dart';
 
@@ -41,6 +43,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
   Widget build(BuildContext context) {
     final viewModel = context.watch<SettingsViewModel>();
     final theme = Theme.of(context);
+    final strings = DiagnosticsStrings.of(qiyuIsEn(context));
     final snapshot = viewModel.diagnostics;
     return Scaffold(
       body: SafeArea(
@@ -57,25 +60,25 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
                     IconButton(
                       key: const Key('diagnostics-back'),
                       onPressed: () => backToPrevious(context),
-                      tooltip: '返回设置',
+                      tooltip: strings.backToSettings,
                       icon: const Icon(QiyuIcons.arrow_back),
                     ),
                     const SizedBox(width: 8),
-                    Text('开发者诊断', style: theme.textTheme.headlineSmall),
+                    Text(strings.title, style: theme.textTheme.headlineSmall),
                     const Spacer(),
                     IconButton(
                       key: const Key('diagnostics-refresh'),
                       onPressed: viewModel.busy
                           ? null
                           : () => unawaited(viewModel.loadDiagnostics()),
-                      tooltip: '刷新诊断',
+                      tooltip: strings.refresh,
                       icon: const Icon(QiyuIcons.refresh),
                     ),
                   ],
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  '只读快照，不修改任何数据；只在本机展示，不包含对话正文。',
+                  strings.description,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -85,7 +88,7 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 16),
                     child: Text(
-                      message,
+                      qiyuStrings(context).localizeStatus(message),
                       style: TextStyle(color: theme.colorScheme.error),
                     ),
                   ),
@@ -97,27 +100,27 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
                 else ...[
                   _section(
                     context,
-                    '最近请求（本次启动以来）',
+                    strings.recentRequests,
                     _recentRequests(context, snapshot.recentRequests),
                   ),
                   _section(
                     context,
-                    '后台整理',
+                    strings.finalization,
                     _finalization(context, snapshot.finalization),
                   ),
                   _section(
                     context,
-                    'Dream 资格',
+                    strings.dream,
                     _dream(context, snapshot.dream),
                   ),
                   _section(
                     context,
-                    '本地文件健康',
+                    strings.fileHealth,
                     _fileHealth(context, snapshot.fileHealth),
                   ),
                   _section(
                     context,
-                    '数据位置',
+                    strings.dataLocation,
                     Text(
                       snapshot.memoryDirectory,
                       style: theme.textTheme.bodyMedium,
@@ -155,9 +158,10 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
 
   Widget _recentRequests(BuildContext context, List<RecentRequest> requests) {
     final theme = Theme.of(context);
+    final strings = DiagnosticsStrings.of(qiyuIsEn(context));
     if (requests.isEmpty) {
       return Text(
-        '本次启动后还没有请求记录。',
+        strings.noRequests,
         style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
       );
     }
@@ -178,10 +182,13 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                _chip(context, _sourceLabel(requests[i].source)),
+                _chip(context, strings.source(requests[i].source)),
                 _chip(
                   context,
-                  _resultLabel(requests[i]),
+                  strings.result(
+                    requests[i].result,
+                    local: requests[i].replySource == 'local',
+                  ),
                   // 定位键：这一页唯一的着色判断就是「算不算故障」，用例必须能
                   // 逐颗读到真落在那枚芯片上的底色，不能靠文案反推。
                   key: Key('diagnostics-result-$i'),
@@ -212,20 +219,24 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
 
   Widget _finalization(BuildContext context, FinalizationHealth? health) {
     final theme = Theme.of(context);
+    final strings = DiagnosticsStrings.of(qiyuIsEn(context));
     if (health == null) {
-      return Text('未启用日终整理。', style: theme.textTheme.bodyMedium);
+      return Text(
+        strings.finalizationDisabled,
+        style: theme.textTheme.bodyMedium,
+      );
     }
     final todayState = switch (health.todayFinalized) {
-      true => '今天（${health.today}）已归档',
-      false => '今天（${health.today}）尚未归档',
-      null => '今天的归档状态未知',
+      true => strings.todayArchived(health.today),
+      false => strings.todayPending(health.today),
+      null => strings.todayUnknown,
     };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(todayState, style: theme.textTheme.bodyMedium),
         Text(
-          '待补归档 ${health.pendingDays} 天 · 不可读 ${health.unreadableDays} 天',
+          strings.pendingDays(health.pendingDays, health.unreadableDays),
           style: theme.textTheme.bodyMedium,
         ),
       ],
@@ -234,21 +245,22 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
 
   Widget _dream(BuildContext context, DreamHealth? dream) {
     final theme = Theme.of(context);
+    final strings = DiagnosticsStrings.of(qiyuIsEn(context));
     if (dream == null) {
-      return Text('未启用 Dream。', style: theme.textTheme.bodyMedium);
+      return Text(strings.dreamDisabled, style: theme.textTheme.bodyMedium);
     }
     final lastSuccess = dream.lastSuccessAt == null
-        ? '还没有成功运行过 Dream'
-        : '上次成功：${dream.lastSuccessAt!.toLocal().toString().substring(0, 10)}'
-              '（${dream.daysSinceLastSuccess} 天前）';
+        ? strings.dreamNeverRan
+        : strings.dreamLastSuccess(
+            dream.lastSuccessAt!.toLocal().toString().substring(0, 10),
+            dream.daysSinceLastSuccess,
+          );
     final interval = dream.minIntervalDays == null
         ? ''
-        : '最小间隔 ${dream.minIntervalDays} 天';
-    final pending = dream.pending ? '有待补跑的晚安请求' : '没有待补跑请求';
-    final provider = dream.providerConfigured == true
-        ? '模型服务已配置'
-        : '未配置模型服务（不会运行）';
-    final eligible = dream.eligible == true ? '当前具备资格' : '当前不具备资格';
+        : strings.dreamInterval(dream.minIntervalDays!);
+    final pending = strings.dreamPending(dream.pending);
+    final provider = strings.modelConfigured(dream.providerConfigured == true);
+    final eligible = strings.dreamEligible(dream.eligible == true);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -260,23 +272,30 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
 
   Widget _fileHealth(BuildContext context, Map<String, Object?> health) {
     final theme = Theme.of(context);
+    final strings = DiagnosticsStrings.of(qiyuIsEn(context));
     final rows = <String>[
-      '会话文件：可读 ${health['sessionsReadable'] ?? 0} 份，'
-          '不可读 ${health['sessionsUnavailable'] ?? 0} 份',
-      '每日记录：共 ${health['episodeDays'] ?? 0} 天，'
-          '未归档 ${health['episodeUnfinalized'] ?? 0} 天，'
-          '不可读 ${health['episodeUnreadable'] ?? 0} 天',
-      '长期印象：${_readability(health['longMemory'])}',
-      'Dream 状态：${_readability(health['dreamState'])}',
-      '记忆控制：${_readability(health['memoryControls'])}',
-      '画像树：${_boolReadability(health['personaTreeReadable'])}',
+      strings.sessions(
+        health['sessionsReadable'] ?? 0,
+        health['sessionsUnavailable'] ?? 0,
+      ),
+      strings.episodes(
+        health['episodeDays'] ?? 0,
+        health['episodeUnfinalized'] ?? 0,
+        health['episodeUnreadable'] ?? 0,
+      ),
+      strings.longMemory(_readability(health['longMemory'], strings)),
+      strings.dreamState(_readability(health['dreamState'], strings)),
+      strings.memoryControls(_readability(health['memoryControls'], strings)),
+      strings.personaTree(
+        _boolReadability(health['personaTreeReadable'], strings),
+      ),
     ];
     final recovery = health['recovery'];
     if (recovery is Map<String, Object?>) {
       rows.add(
         recovery['reportExists'] == true
-            ? '恢复扫描：隔离原件 ${recovery['quarantinedFiles'] ?? 0} 份'
-            : '恢复扫描：还没有运行过',
+            ? strings.recoveryScanned(recovery['quarantinedFiles'] ?? 0)
+            : strings.recoveryNeverRan,
       );
     }
     return Column(
@@ -287,21 +306,22 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
     );
   }
 
-  String _readability(Object? value) {
+  String _readability(Object? value, DiagnosticsStrings strings) {
     if (value is! Map<String, Object?>) {
-      return '未知';
+      return strings.unknown;
     }
     if (value['exists'] != true) {
-      return '尚未创建';
+      return strings.notCreated;
     }
-    return value['readable'] == true ? '可读' : '不可读';
+    return value['readable'] == true ? strings.readable : strings.unreadable;
   }
 
-  String _boolReadability(Object? value) => switch (value) {
-    true => '可读',
-    false => '不可读',
-    _ => '未启用',
-  };
+  String _boolReadability(Object? value, DiagnosticsStrings strings) =>
+      switch (value) {
+        true => strings.readable,
+        false => strings.unreadable,
+        _ => strings.disabled,
+      };
 
   Widget _chip(
     BuildContext context,
@@ -329,21 +349,4 @@ class _DiagnosticsViewState extends State<DiagnosticsView> {
       ),
     );
   }
-
-  String _sourceLabel(String source) => switch (source) {
-    'chat' => '聊天',
-    'provider-test' => '连接测试',
-    'finalization' => '日终整理',
-    'dream' => 'Dream',
-    _ => source,
-  };
-
-  String _resultLabel(RecentRequest request) => switch (request.result) {
-    'ok' => request.replySource == 'local' ? '本地规则回应' : '模型回应',
-    'fallback' => '已回退本地',
-    'failed' => '失败',
-    'skipped' => '跳过',
-    'cancelled' => '已停止',
-    _ => request.result,
-  };
 }

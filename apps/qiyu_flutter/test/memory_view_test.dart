@@ -17,6 +17,7 @@ import 'package:qiyu_flutter/features/memory/memory_client.dart';
 import 'package:qiyu_flutter/features/memory/memory_view.dart';
 import 'package:qiyu_flutter/features/memory/memory_view_model.dart';
 import 'package:qiyu_flutter/features/onboarding/onboarding_view_model.dart';
+import 'package:qiyu_flutter/features/shell/qiyu_strings.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
@@ -30,6 +31,31 @@ import 'support/shared_fakes.dart';
 import 'support/test_dates.dart';
 
 void main() {
+  testWidgets('English memory navigation keeps recorded content verbatim', (tester) async {
+    await _pumpMemoryCenter(
+      tester,
+      _fullOverview(),
+      localeController: LocaleController(initialLocale: 'en'),
+    );
+    expect(find.descendant(of: find.byType(MemoryView), matching: find.text('Memory')), findsWidgets);
+    expect(find.text('Recent'), findsOneWidget);
+    expect(find.text('Long-term'), findsOneWidget);
+    expect(find.text('About you'), findsOneWidget);
+    expect(find.text('Our relationship'), findsOneWidget);
+    expect(find.text('用户说这周在准备演讲'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('memory-tab-relationship')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('memory-tab-relationship')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Current stage: Familiar'), findsOneWidget);
+    expect(find.text('可以自然提起说过的事'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('memory-backup')));
+    await tester.pumpAndSettle();
+    expect(find.text('Backup and restore'), findsOneWidget);
+    expect(find.text('Export backup'), findsWidgets);
+    expect(find.text('Import backup'), findsOneWidget);
+  });
+
   group('导航呈现', () {
     group('导航与四区', () {
       testWidgets(
@@ -1834,6 +1860,7 @@ Future<_FakeMemoryGateway> _pumpMemoryCenter(
   Object? detailError,
   _FakeChatGateway? chatGateway,
   bool viaDrawer = false,
+  LocaleController? localeController,
 }) async {
   final gateway = _FakeMemoryGateway(
     overview,
@@ -1847,6 +1874,7 @@ Future<_FakeMemoryGateway> _pumpMemoryCenter(
       viewModel: _chatViewModel(chatGateway),
       onboardingViewModel: await _onboardingViewModel(),
       memoryViewModel: memoryViewModel,
+      localeController: localeController,
     ),
   );
   await tester.pumpAndSettle();
@@ -2771,7 +2799,11 @@ final class _FakeBackupPlatform implements BackupPlatform {
   bool get supported => true;
 
   @override
-  Future<bool> downloadBackup(String fileName, Uint8List bytes) async {
+  Future<bool> downloadBackup(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  }) async {
     downloads += 1;
     return true;
   }
@@ -2790,7 +2822,11 @@ final class _RecordingSharer implements BackupSharer {
   Uint8List? sharedBytes;
 
   @override
-  Future<bool> share(String fileName, Uint8List bytes) async {
+  Future<bool> share(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  }) async {
     calls += 1;
     sharedName = fileName;
     sharedBytes = bytes;
@@ -2801,7 +2837,11 @@ final class _RecordingSharer implements BackupSharer {
 /// 故障注入的分享器替身：模拟 share_plus 打不开分享面板。
 final class _ThrowingSharer implements BackupSharer {
   @override
-  Future<bool> share(String fileName, Uint8List bytes) async {
+  Future<bool> share(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  }) async {
     throw Exception('分享面板打不开');
   }
 }

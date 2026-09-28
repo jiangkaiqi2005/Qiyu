@@ -15,7 +15,11 @@ final class WebBackupPlatform implements BackupPlatform {
   bool get supported => true;
 
   @override
-  Future<bool> downloadBackup(String fileName, Uint8List bytes) async {
+  Future<bool> downloadBackup(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  }) async {
     try {
       final blob = web.Blob([bytes.toJS].toJS);
       final url = web.URL.createObjectURL(blob);

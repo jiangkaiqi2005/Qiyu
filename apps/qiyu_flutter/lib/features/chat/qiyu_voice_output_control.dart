@@ -6,6 +6,7 @@ import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../shell/qiyu_widgets.dart';
+import '../shell/qiyu_ui_locale.dart';
 import 'local_chat_view_model.dart';
 import 'voice_output_controller.dart';
 
@@ -18,8 +19,7 @@ class QiyuVoiceOutputControl extends StatefulWidget {
   final LocalChatViewModel viewModel;
 
   @override
-  State<QiyuVoiceOutputControl> createState() =>
-      _QiyuVoiceOutputControlState();
+  State<QiyuVoiceOutputControl> createState() => _QiyuVoiceOutputControlState();
 }
 
 class _QiyuVoiceOutputControlState extends State<QiyuVoiceOutputControl> {
@@ -91,8 +91,8 @@ class _QiyuVoiceOutputControlState extends State<QiyuVoiceOutputControl> {
                 color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
                 style: qiyuAndroidTouchStyle,
                 tooltip: viewModel.voiceOutputEnabled
-                    ? '朗读音量与静音调节'
-                    : '语音朗读已关闭，点击开启与调节',
+                    ? qiyuStrings(context).voiceVolume
+                    : qiyuStrings(context).voiceDisabled,
                 icon: Icon(icon),
                 onPressed: () {
                   _overlayController.toggle();
@@ -187,7 +187,9 @@ class _VolumePopupCard extends StatelessWidget {
               key: const Key('voice-output-popover-mute-button'),
               iconSize: 22,
               visualDensity: VisualDensity.compact,
-              tooltip: isMuted ? '解除静音' : '静音',
+              tooltip: isMuted
+                  ? qiyuStrings(context).unmute
+                  : qiyuStrings(context).mute,
               color: isMuted ? theme.colorScheme.onSurfaceVariant : null,
               icon: Icon(isMuted ? QiyuIcons.volume_off : QiyuIcons.volume_up),
               onPressed: () => unawaited(viewModel.toggleVoiceOutput()),

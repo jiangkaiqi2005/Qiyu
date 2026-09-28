@@ -809,6 +809,46 @@ void main() {
       expect(find.text('测试草稿未发送文本'), findsOneWidget);
     });
 
+    testWidgets('切到英文时导航、空态和输入提示一起热更新，草稿与壳状态保留', (tester) async {
+      await _pumpShell(tester, width: 1200, height: 800, at: '/chat');
+      final shell = tester.state(find.byType(QiyuShell));
+      await tester.enterText(find.byKey(const Key('chat-input')), 'keep this draft');
+      await tester.tap(find.byKey(const Key('language-toggle-en')));
+      await tester.pumpAndSettle();
+
+      expect(tester.state(find.byType(QiyuShell)), same(shell));
+      expect(_location(tester), '/chat');
+      expect(find.text('keep this draft'), findsOneWidget);
+      for (final label in ['History', 'Memory Center', 'Settings']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.text('历史'), findsNothing);
+      expect(find.text('记忆中心'), findsNothing);
+      expect(find.text('设置'), findsNothing);
+      expect(
+        find.text(qiyuEmptyChatHint(DateTime.now(), locale: 'en')),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<TextField>(find.byKey(const Key('chat-input'))).decoration!.hintText,
+        'Say something…',
+      );
+    });
+
+    testWidgets('安卓窄屏抽屉切换英文后导航与历史标题即时更新', (tester) async {
+      await _pumpShell(tester, width: 420, height: 900, drawerOpen: true);
+      await tester.tap(find.byKey(const Key('language-toggle-en')));
+      await tester.pumpAndSettle();
+      for (final label in ['History', 'Memory Center', 'Settings']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      await tester.tap(find.byKey(const Key('home-go-history')));
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/history');
+      expect(find.text('History'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
     testWidgets('键盘导航：Tab 键落焦到 language-toggle 呈现 2px accentBright 焦点环，按 Enter 键可触发切换', (
       tester,
     ) async {

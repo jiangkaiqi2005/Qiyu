@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
+import 'qiyu_ui_locale.dart';
 
 /// 紫夜薄包装层（design-system §8 组件清单的 M3 底子 + token 换皮）：
 /// 毛玻璃面板与自绘**键盘**焦点环。侧边栏、抽屉与 composer 的毛玻璃底共用
@@ -481,7 +482,7 @@ class QiyuErrorRetryState extends StatelessWidget {
             child: TextButton(
               key: retryKey,
               onPressed: onRetry,
-              child: const Text('重试'),
+              child: Text(qiyuStrings(context).retry),
             ),
           ),
         ],

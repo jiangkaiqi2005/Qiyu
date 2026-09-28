@@ -368,7 +368,7 @@ class _QiyuAppState extends State<QiyuApp> {
 
   MaterialApp _buildMaterialApp() {
     return MaterialApp.router(
-      title: '栖语',
+      title: 'Qiyu',
       debugShowCheckedModeBanner: false,
       routerConfig: _router,
       // 紫夜主题：色板、字族、几何与组件主题全部来自 token 层

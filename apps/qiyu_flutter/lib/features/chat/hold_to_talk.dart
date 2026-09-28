@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
+import '../shell/qiyu_ui_locale.dart';
+
 import 'voice_input_controller.dart';
 
 /// 标准长按识别负责起录，原始指针只负责取消和排除额外手指。
@@ -57,27 +59,31 @@ class _HoldToTalkState extends State<HoldToTalk> with WidgetsBindingObserver {
     return AnimatedBuilder(
       animation: widget.voice,
       builder: (context, _) {
+        final strings = qiyuStrings(context);
         final voice = widget.voice;
         final active = voice.status == VoiceInputStatus.recording;
         final label = active
-            ? (voice.cancelOnRelease ? '松开取消' : '松开发送，上滑取消')
+            ? (voice.cancelOnRelease
+                  ? strings.releaseToCancel
+                  : strings.releaseToSend)
             : voice.status == VoiceInputStatus.preparing
-            ? '正在准备麦克风…'
-            : '按住说话';
+            ? strings.preparingMicrophone
+            : strings.holdToTalk;
         return Semantics(
           button: true,
           excludeSemantics: true,
           label: label,
           customSemanticsActions: {
             if (voice.status == VoiceInputStatus.idle)
-              const CustomSemanticsAction(label: '开始录音'): () {
+              CustomSemanticsAction(label: strings.startRecording): () {
                 _cancelled = false;
                 _start();
               },
             if (active)
-              const CustomSemanticsAction(label: '结束并发送'): voice.finishHold,
+              CustomSemanticsAction(label: strings.finishRecording):
+                  voice.finishHold,
             if (active || voice.status == VoiceInputStatus.preparing)
-              const CustomSemanticsAction(label: '取消录音'): _cancel,
+              CustomSemanticsAction(label: strings.cancelRecording): _cancel,
           },
           child: Listener(
             onPointerDown: (event) {

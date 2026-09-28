@@ -9,6 +9,7 @@ import '../../theme/qiyu_tokens.dart';
 import '../shell/qiyu_widgets.dart';
 import 'provider_catalog.dart';
 import 'settings_section_shell.dart';
+import 'settings_strings.dart';
 import 'tts_settings_client.dart';
 import 'tts_settings_view_model.dart';
 import 'voice_tier_metadata.dart';
@@ -484,10 +485,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
     final confirmed = await confirmSettingsForgetKey(
       context: context,
       keyPrefix: 'tts-',
-      title: '忘记语音合成的 API Key？',
-      content:
-          '忘记后本机不再保存这个 Key，栖语暂时读不出声，直到你重新输入。'
-          '语音合成服务的地址、模型、音色和语速不受影响。',
+      title: settingsTextNow(context, '忘记语音合成的 API Key？', 'Forget the speech synthesis API key?'),
+      content: settingsTextNow(context, '忘记后本机不再保存这个 Key，栖语暂时读不出声，直到你重新输入。语音合成服务的地址、模型、音色和语速不受影响。', 'The key will be removed from this device. Qiyu cannot read aloud until you enter it again. The service URL, model, voice, and speed are unaffected.'),
     );
     if (confirmed) {
       await viewModel.forgetApiKey();
@@ -557,7 +556,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
     final confirmed = await confirmSettingsTierSuggestion(
       context: context,
       keyPrefix: 'tts-',
-      changes: changes,
+      changes: changes.map((line) => settingsSuggestionLineNow(context, line)).toList(),
     );
     if (confirmed && mounted) {
       setState(() => _form.applySuggestion(plan));
@@ -576,10 +575,10 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
         final defaults = _form.protocolDefaults;
         return SettingsSectionPanel(
           sectionId: SettingsSectionId.tts,
-          title: '语音朗读',
+          title: settingsText(context, '语音朗读', 'Read aloud'),
           children: [
             Text(
-              current.description,
+              settingsVoiceDescription(context, 'tts', current.wireName, current.description),
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.55,
@@ -588,7 +587,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
             const SizedBox(height: 16),
             SettingsControlledDropdown(
               dropdownKey: const Key('tts-provider'),
-              label: '服务类型',
+              label: settingsText(context, '服务类型', 'Service type'),
               value: _form.dropdownValue,
               // 档位目录随元数据下推（票 08）：下拉选项按宿主行集渲染，
               // 对话框档位改名与建议回填的档位识别同源。
@@ -596,7 +595,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 for (final choice in _form.tierChoices)
                   DropdownMenuItem(
                     value: choice.wireName,
-                    child: Text(choice.label),
+                    child: Text(settingsCatalogLabel(context, choice.label)),
                   ),
               ],
               onChanged: (wireName) =>
@@ -608,8 +607,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
               controller: _form.baseUrlController,
               focusNode: _form.baseUrlFocusNode,
               decoration: InputDecoration(
-                labelText: '服务地址',
-                hintText: defaults.urlHint,
+                labelText: settingsText(context, '服务地址', 'Service URL'),
+                hintText: settingsCatalogLabel(context, defaults.urlHint),
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                 focusedBorder: settingsOutlineBorder(
@@ -627,11 +626,11 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
               // 数的禁用与提示即时跟手。只重建，不改动草稿值。
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                labelText: current.modelLabel,
-                hintText: defaults.modelHint,
+                labelText: settingsCatalogLabel(context, current.modelLabel),
+                hintText: settingsCatalogLabel(context, defaults.modelHint),
                 // 型号支持范围说明（元数据带，千问档非空，票 08）：型号
                 // 取归口缺省档位，用户只看得到缺省型号时也知道支持范围。
-                helperText: current.modelHelperText,
+                helperText: current.modelHelperText == null ? null : settingsCatalogLabel(context, current.modelHelperText!),
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                 focusedBorder: settingsOutlineBorder(
@@ -646,16 +645,16 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
             if (current.transports.isNotEmpty) ...[
               SettingsControlledDropdown(
                 dropdownKey: const Key('tts-transport'),
-                label: '传输方式',
+                label: settingsText(context, '传输方式', 'Transport'),
                 value: _form.transport.wireName,
                 items: [
                   for (final option in current.transports)
                     DropdownMenuItem(
                       value: option.wireName,
-                      child: Text(option.label),
+                      child: Text(settingsCatalogLabel(context, option.label)),
                     ),
                 ],
-                helperText: current.transportHelperText,
+                helperText: current.transportHelperText == null ? null : settingsCatalogLabel(context, current.transportHelperText!),
                 onChanged: (wireName) =>
                     setState(() => _form.selectTransport(wireName)),
               ),
@@ -669,9 +668,9 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 controller: _form.authHeaderController,
                 focusNode: _form.authHeaderFocusNode,
                 decoration: InputDecoration(
-                  labelText: '鉴权头',
-                  hintText: current.authHeaderHint,
-                  helperText: current.authHeaderHelperText,
+                  labelText: settingsText(context, '鉴权头', 'Authorization header'),
+                  hintText: current.authHeaderHint == null ? null : settingsCatalogLabel(context, current.authHeaderHint!),
+                  helperText: current.authHeaderHelperText == null ? null : settingsCatalogLabel(context, current.authHeaderHelperText!),
                   border: settingsOutlineBorder(color: QiyuColors.line),
                   enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                   focusedBorder: settingsOutlineBorder(
@@ -682,20 +681,20 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
               const SizedBox(height: 16),
               SettingsControlledDropdown(
                 dropdownKey: const Key('tts-response-shape'),
-                label: '响应形态',
+                label: settingsText(context, '响应形态', 'Response format'),
                 value: _form.responseShape.wireName,
                 items: [
                   for (final option in current.responseShapeOptions)
                     DropdownMenuItem(
                       value: option.wireName,
-                      child: Text(option.label),
+                      child: Text(settingsCatalogLabel(context, option.label)),
                     ),
                 ],
                 // 流式/整段分工说明随元数据带（F3 第一期）：裸音频字节
                 // （且未覆盖成压缩格式）走 HTTP 分块流式；逐行 JSON 与
                 // JSON 字段拿不到音频块，按 E1 每句一整块做句子级整段
                 // 朗读（现有配置全部保留，不淘汰在用型号）。
-                helperText: current.responseShapeHelperText,
+                helperText: current.responseShapeHelperText == null ? null : settingsCatalogLabel(context, current.responseShapeHelperText!),
                 onChanged: (wireName) =>
                     setState(() => _form.selectResponseShape(wireName)),
               ),
@@ -705,9 +704,9 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 controller: _form.responseFieldController,
                 focusNode: _form.responseFieldFocusNode,
                 decoration: InputDecoration(
-                  labelText: '字段名',
-                  hintText: current.responseFieldHint,
-                  helperText: current.responseFieldHelperText,
+                  labelText: settingsText(context, '字段名', 'Field name'),
+                  hintText: current.responseFieldHint == null ? null : settingsCatalogLabel(context, current.responseFieldHint!),
+                  helperText: current.responseFieldHelperText == null ? null : settingsCatalogLabel(context, current.responseFieldHelperText!),
                   border: settingsOutlineBorder(color: QiyuColors.line),
                   enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                   focusedBorder: settingsOutlineBorder(
@@ -731,8 +730,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                     controller: _form.voiceController,
                     focusNode: _form.voiceFocusNode,
                     decoration: InputDecoration(
-                      labelText: '音色 ID',
-                      hintText: current.voiceHint,
+                      labelText: settingsText(context, '音色 ID', 'Voice ID'),
+                      hintText: current.voiceHint == null ? null : settingsCatalogLabel(context, current.voiceHint!),
                       border: settingsOutlineBorder(color: QiyuColors.line),
                       enabledBorder: settingsOutlineBorder(
                         color: QiyuColors.line,
@@ -749,7 +748,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                   children: [
                     SettingsControlledDropdown(
                       dropdownKey: const Key('tts-voice-preset'),
-                      label: '朗读音色',
+                      label: settingsText(context, '朗读音色', 'Reading voice'),
                       value: _form.voiceDropdownValue,
                       items: [
                         for (final preset in voicePresets)
@@ -757,17 +756,17 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                             value: preset.id,
                             child: Text(
                               preset.category != null
-                                  ? '【${preset.category}】${preset.label}'
-                                  : preset.label,
+                                  ? settingsText(context, '【${preset.category}】${preset.label}', '[${settingsCatalogLabel(context, preset.category!)}] ${settingsCatalogLabel(context, preset.label)}')
+                                  : settingsCatalogLabel(context, preset.label),
                             ),
                           ),
-                        const DropdownMenuItem(
+                        DropdownMenuItem(
                           value: customVoiceValue,
                           child: Row(
                             children: [
-                              Icon(QiyuIcons.edit, size: 18),
-                              SizedBox(width: 8),
-                              Text('输入其他音色 ID'),
+                              const Icon(QiyuIcons.edit, size: 18),
+                              const SizedBox(width: 8),
+                              Text(settingsText(context, '输入其他音色 ID', 'Enter another voice ID')),
                             ],
                           ),
                         ),
@@ -782,8 +781,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                         controller: _form.voiceController,
                         focusNode: _form.voiceFocusNode,
                         decoration: InputDecoration(
-                          labelText: '音色 ID',
-                          hintText: current.voiceHint,
+                          labelText: settingsText(context, '音色 ID', 'Voice ID'),
+                          hintText: current.voiceHint == null ? null : settingsCatalogLabel(context, current.voiceHint!),
                           border: settingsOutlineBorder(color: QiyuColors.line),
                           enabledBorder: settingsOutlineBorder(
                             color: QiyuColors.line,
@@ -811,8 +810,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                         Expanded(
                           child: Text(
                             _form.speed == null
-                                ? '语速：默认'
-                                : '语速：${_form.speed!.toStringAsFixed(2)} 倍',
+                                ? settingsText(context, '语速：默认', 'Speed: default')
+                                : settingsText(context, '语速：${_form.speed!.toStringAsFixed(2)} 倍', 'Speed: ${_form.speed!.toStringAsFixed(2)}×'),
                             style: theme.textTheme.titleSmall,
                           ),
                         ),
@@ -823,7 +822,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                               key: const Key('tts-speed-reset'),
                               onPressed: () =>
                                   setState(() => _form.selectSpeed(null)),
-                              child: const Text('默认'),
+                              child: Text(settingsText(context, '默认', 'Default')),
                             ),
                           ),
                       ],
@@ -849,15 +848,15 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
               focusNode: _form.apiKeyFocusNode,
               keySet: keySet,
               title: keySet
-                  ? 'API Key 已保存在本机 provider.json'
-                  : '尚未保存语音合成的 API Key',
+                  ? settingsText(context, 'API Key 已保存在本机 provider.json', 'API key saved locally in provider.json')
+                  : settingsText(context, '尚未保存语音合成的 API Key', 'No speech synthesis API key saved'),
               titleStyle: theme.textTheme.titleSmall,
               label: 'API Key',
               hint: keySet
-                  ? '留空即可继续使用已保存的 Key'
-                  : '保存后写入本机 provider.json',
+                  ? settingsText(context, '留空即可继续使用已保存的 Key', 'Leave blank to keep using the saved key')
+                  : settingsText(context, '保存后写入本机 provider.json', 'Saved locally to provider.json'),
               forgetButtonKey: const Key('forget-tts-key'),
-              forgetLabel: '忘记语音合成的 Key',
+              forgetLabel: settingsText(context, '忘记语音合成的 Key', 'Forget speech synthesis key'),
               onForgetKey: viewModel.saving
                   ? null
                   : () => unawaited(_confirmForgetKey(viewModel)),
@@ -869,8 +868,8 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
             if (current.advancedParams)
               ExpansionTile(
                 key: const Key('tts-advanced-params-tile'),
-                title: const Text('高级参数'),
-                subtitle: const Text('自定义云端扩展参数 (JSON)'),
+                title: Text(settingsText(context, '高级参数', 'Advanced parameters')),
+                subtitle: Text(settingsText(context, '自定义云端扩展参数 (JSON)', 'Custom cloud parameters (JSON)')),
                 tilePadding: EdgeInsets.zero,
                 children: [
                   Padding(
@@ -880,7 +879,7 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                       children: [
                         if (current.extraParamsExample case final example?)
                           Text(
-                            example,
+                            settingsVoiceExample(context, 'tts', current.wireName, example),
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
@@ -898,11 +897,11 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                           // 切回普通型号或其他档即恢复。
                           enabled: !_form.isQwenRealtimeTier,
                           decoration: InputDecoration(
-                            labelText: '自定义扩展参数 (JSON)',
+                            labelText: settingsText(context, '自定义扩展参数 (JSON)', 'Custom parameters (JSON)'),
                             hintText:
                                 '{\n  "audio_params": {\n    "sample_rate": 16000\n  }\n}',
                             helperText: _form.isQwenRealtimeTier
-                                ? current.realtimeExtraParamsHint
+                                ? (current.realtimeExtraParamsHint == null ? null : settingsCatalogLabel(context, current.realtimeExtraParamsHint!))
                                 : null,
                             contentPadding: const EdgeInsets.all(16),
                             border: settingsOutlineBorder(
@@ -950,19 +949,19 @@ class _TtsSettingsSectionState extends State<TtsSettingsSection>
                 key: const Key('tts-replay-preview'),
                 onPressed: () => unawaited(viewModel.replayPreview()),
                 icon: const Icon(QiyuIcons.volume_up),
-                label: const Text('再听一次试听'),
+                label: Text(settingsText(context, '再听一次试听', 'Replay preview')),
               ),
             ],
             if (viewModel.errorMessage != null || testResult != null)
               const SizedBox(height: 14),
             SettingsSaveTestButtons(
               saveButtonKey: const Key('save-tts-settings'),
-              saveLabel: '保存到本机',
+              saveLabel: settingsText(context, '保存到本机', 'Save locally'),
               saveBusy: viewModel.saving,
               onSave: () => unawaited(_save(viewModel)),
               test: (
                 buttonKey: const Key('test-tts-connection'),
-                label: '测试连接并试听',
+                label: settingsText(context, '测试连接并试听', 'Test and preview'),
                 busy: viewModel.testing,
                 onPressed: () {
                   final draft = _form.readDraftOrReport(_reportInvalidDraft);

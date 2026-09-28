@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:qiyu_flutter/features/chat/api_error_dialog.dart';
 import 'package:qiyu_flutter/features/chat/local_chat_client.dart';
+import 'package:qiyu_flutter/features/shell/qiyu_strings.dart';
 import 'package:qiyu_flutter/theme/qiyu_icons.dart';
 import 'package:qiyu_flutter/theme/qiyu_theme.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
@@ -17,6 +19,32 @@ void main() {
     }
   });
   group('QiyuApiErrorDialog', () {
+    testWidgets('语言切换时已打开的错误弹窗原地更新文案', (tester) async {
+      final locale = LocaleController();
+      addTearDown(locale.dispose);
+      await tester.pumpWidget(
+        ChangeNotifierProvider<LocaleController>.value(
+          value: locale,
+          child: MaterialApp(
+            theme: qiyuDarkTheme(),
+            home: Scaffold(
+              body: QiyuApiErrorDialog(
+                category: ApiErrorCategory.rateLimited,
+                onDismiss: () {},
+                onGoToSettings: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('服务请求受限'), findsOneWidget);
+      locale.setLocale('en');
+      await tester.pump();
+      expect(find.text('Request limit reached'), findsOneWidget);
+      expect(find.text('Open settings'), findsOneWidget);
+      expect(find.text('服务请求受限'), findsNothing);
+    });
+
     testWidgets('429 限流：语义标题、正文与按钮布局', (tester) async {
       var dismissed = false;
       var wentToSettings = false;

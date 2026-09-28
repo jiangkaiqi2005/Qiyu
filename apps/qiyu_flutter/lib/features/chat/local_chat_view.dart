@@ -9,9 +9,10 @@ import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
-import '../baseline/host_stopped_gate.dart';
 import '../settings/stt_settings_client.dart';
 import '../shell/qiyu_shell.dart';
+import '../shell/qiyu_strings.dart';
+import '../shell/qiyu_ui_locale.dart';
 import '../shell/qiyu_widgets.dart';
 import 'api_error_dialog.dart';
 import 'api_error_policy.dart';
@@ -31,12 +32,13 @@ import 'voice_recorder_platform.dart';
 
 /// 空会话占位按当前时段分流。产品定位是夜间陪伴，但白天打开也该
 /// 贴合当下时段；凌晨到清晨都归入「今晚」，守住睡前陪伴的基调。
-String qiyuEmptyChatHint(DateTime now) {
+String qiyuEmptyChatHint(DateTime now, {String locale = 'zh'}) {
+  final strings = QiyuStrings.of(locale);
   final hour = now.hour;
-  if (hour >= 5 && hour < 11) return '早上想说点什么？';
-  if (hour >= 11 && hour < 13) return '中午想说点什么？';
-  if (hour >= 13 && hour < 18) return '下午想说点什么？';
-  return '今晚想说点什么？';
+  if (hour >= 5 && hour < 11) return strings.greetingMorning;
+  if (hour >= 11 && hour < 13) return strings.greetingNoon;
+  if (hour >= 13 && hour < 18) return strings.greetingAfternoon;
+  return strings.greetingEvening;
 }
 
 class LocalChatView extends StatefulWidget {
@@ -70,17 +72,18 @@ class _LocalChatViewState extends State<LocalChatView>
   /// 输入模块的身份与操作键：状态与生命周期都在 [QiyuComposer] 内部，
   /// 页面只经由它调用「恢复输入焦点」与「转写文本发送」两个操作；同一枚
   /// 键传给 widget，空态↔聊天态换布局时 State 原位保留，输入连续。
-  final _composerKey = GlobalKey<QiyuComposerState>(debugLabel: 'chat-composer');
+  final _composerKey = GlobalKey<QiyuComposerState>(
+    debugLabel: 'chat-composer',
+  );
 
   /// 贴底收敛状态机：会话恢复、新消息、流式增量与键盘压缩视口都跟在列表
   /// 尾部，判定与调度收在 [ChatStickToBottomController]，页面只在 build
   /// 与通知接线处喂数据。
-  late final ChatStickToBottomController _stick =
-      ChatStickToBottomController(
-        scrollController: _scrollController,
-        android: _android,
-        isMounted: () => mounted,
-      );
+  late final ChatStickToBottomController _stick = ChatStickToBottomController(
+    scrollController: _scrollController,
+    android: _android,
+    isMounted: () => mounted,
+  );
   late final LocalChatViewModel _chatViewModel;
   late final VoiceInputController _voiceInput;
 
@@ -161,8 +164,9 @@ class _LocalChatViewState extends State<LocalChatView>
     final router = GoRouter.maybeOf(context);
     if (router == _router) return;
     _router?.routerDelegate.removeListener(_onRouteChanged);
-    _router?.routerDelegate
-        .removeListener(_onRouteChangedForVoiceOutputRefresh);
+    _router?.routerDelegate.removeListener(
+      _onRouteChangedForVoiceOutputRefresh,
+    );
     _router = router;
     _chatLocation =
         router?.routerDelegate.currentConfiguration.last.matchedLocation;
@@ -205,8 +209,7 @@ class _LocalChatViewState extends State<LocalChatView>
     }
   }
 
-  void _cancelUnsubmittedVoice() =>
-      _voiceCoordinator.cancelForPage();
+  void _cancelUnsubmittedVoice() => _voiceCoordinator.cancelForPage();
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -245,8 +248,9 @@ class _LocalChatViewState extends State<LocalChatView>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _router?.routerDelegate.removeListener(_onRouteChanged);
-    _router?.routerDelegate
-        .removeListener(_onRouteChangedForVoiceOutputRefresh);
+    _router?.routerDelegate.removeListener(
+      _onRouteChangedForVoiceOutputRefresh,
+    );
     _voiceCoordinator.unsubscribe();
     _chatViewModel.removeListener(_onChatViewModelChanged);
     // 离开本页立刻闭嘴（ADR 0002）：**无条件**停播，包括还在队列里没开口的气泡。
@@ -428,13 +432,13 @@ class _LocalChatViewState extends State<LocalChatView>
             Positioned.fill(
               child: ColoredBox(
                 color: Theme.of(context).colorScheme.surface,
-                child: const Center(
+                child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(hostStoppedGateSituation),
-                      SizedBox(height: QiyuSpacing.xs),
-                      Text(hostStoppedGateGuidance),
+                      Text(qiyuStrings(context).hostStoppedSituation),
+                      const SizedBox(height: QiyuSpacing.xs),
+                      Text(qiyuStrings(context).hostStoppedGuidance),
                     ],
                   ),
                 ),
@@ -627,7 +631,10 @@ class _LocalChatViewState extends State<LocalChatView>
   /// 居中，压在虚化夜景上。
   Widget _greeting(BuildContext context) {
     return Text(
-      qiyuEmptyChatHint(DateTime.now()),
+      qiyuEmptyChatHint(
+        DateTime.now(),
+        locale: qiyuIsEn(context) ? 'en' : 'zh',
+      ),
       key: const Key('home-greeting'),
       textAlign: TextAlign.center,
       style: QiyuTypography.of(
@@ -656,7 +663,7 @@ class _LocalChatViewState extends State<LocalChatView>
             if (viewModel.hasLocalFallback)
               Flexible(
                 child: Text(
-                  '本地规则回复',
+                  qiyuStrings(context).localFallback,
                   overflow: TextOverflow.ellipsis,
                   // 字号随档取次要档（散点数值直读走 QiyuTypography.of 的
                   // 数值入口，不回 QiyuType 直读——那里只有桌面档）。
@@ -674,7 +681,9 @@ class _LocalChatViewState extends State<LocalChatView>
             const SizedBox(width: QiyuSpacing.xs),
             _stripIconButton(
               key: const Key('open-history'),
-              tooltip: QiyuNavDestination.history.label,
+              tooltip: QiyuNavDestination.history.localizedLabel(
+                qiyuStrings(context),
+              ),
               icon: QiyuNavDestination.history.icon,
               onPressed: () =>
                   _pushAwayFromChat(QiyuNavDestination.history.path),
@@ -682,7 +691,7 @@ class _LocalChatViewState extends State<LocalChatView>
             const SizedBox(width: QiyuSpacing.xs),
             _stripIconButton(
               key: const Key('open-provider-settings'),
-              tooltip: '模型连接',
+              tooltip: qiyuStrings(context).modelConnection,
               icon: QiyuNavDestination.settings.icon,
               onPressed: () =>
                   _pushAwayFromChat(QiyuNavDestination.settings.path),
@@ -735,7 +744,7 @@ class _LocalChatViewState extends State<LocalChatView>
             child: Semantics(
               liveRegion: true,
               child: Text(
-                message,
+                qiyuStrings(context).localizeStatus(message),
                 style: QiyuTypography.of(context).secondary.copyWith(
                   color: Theme.of(context).colorScheme.error,
                 ),
@@ -754,16 +763,14 @@ class _LocalChatViewState extends State<LocalChatView>
               child: Container(
                 key: const Key('api-error-notice-banner'),
                 decoration: BoxDecoration(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .errorContainer
-                      .withValues(alpha: 0.12),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.errorContainer.withValues(alpha: 0.12),
                   borderRadius: QiyuRadii.smallBorder,
                   border: Border.all(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .error
-                        .withValues(alpha: 0.3),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.error.withValues(alpha: 0.3),
                     width: QiyuLine.hairline,
                   ),
                 ),
@@ -777,7 +784,10 @@ class _LocalChatViewState extends State<LocalChatView>
                     children: [
                       Expanded(
                         child: Text(
-                          notice.message,
+                          localizeApiErrorNotice(
+                            notice.message,
+                            qiyuIsEn(context) ? 'en' : 'zh',
+                          ),
                           key: const Key('api-error-notice-text'),
                           style: QiyuTypography.of(context).secondary.copyWith(
                             color: Theme.of(context).colorScheme.error,
@@ -790,11 +800,12 @@ class _LocalChatViewState extends State<LocalChatView>
                           key: const Key('api-error-notice-settings'),
                           onTap: () => _pushAwayFromChat('/settings'),
                           child: Text(
-                            '去设置检查',
-                            style: QiyuTypography.of(context).secondary.copyWith(
-                              color: QiyuColors.accentBright,
-                              decoration: TextDecoration.underline,
-                            ),
+                            qiyuStrings(context).checkSettings,
+                            style: QiyuTypography.of(context).secondary
+                                .copyWith(
+                                  color: QiyuColors.accentBright,
+                                  decoration: TextDecoration.underline,
+                                ),
                           ),
                         ),
                       ],
@@ -848,22 +859,23 @@ class _LocalChatViewState extends State<LocalChatView>
   /// 播报给屏幕阅读器；idle 无事可报时不占位。
   Widget _voiceStatusBar(BuildContext context) {
     final voice = _voiceInput;
+    final strings = qiyuStrings(context);
     final String? message;
     switch (voice.status) {
       case VoiceInputStatus.preparing:
-        message = '正在准备麦克风…';
+        message = strings.preparingMicrophone;
       case VoiceInputStatus.recording:
         final minutes = (voice.elapsedSeconds ~/ 60).toString().padLeft(2, '0');
         final seconds = (voice.elapsedSeconds % 60).toString().padLeft(2, '0');
         message = _android
-            ? '正在录音 $minutes:$seconds，最长 60 秒'
-            : '正在录音 $minutes:$seconds，再点一次说完，按 Esc 取消';
+            ? strings.recordingAndroid('$minutes:$seconds')
+            : strings.recordingWeb('$minutes:$seconds');
       case VoiceInputStatus.transcribing:
         message = _android
-            ? '正在转文字…'
-            : '正在转文字…（Esc 中止）';
+            ? strings.transcribing
+            : strings.transcribingCancelable;
       case VoiceInputStatus.retryable:
-        message = voice.errorMessage ?? '转写没有成功，点麦克风重试，Esc 丢弃。';
+        message = voice.errorMessage ?? strings.transcriptionRetryHint;
       case VoiceInputStatus.idle:
         message = voice.errorMessage; // 麦克风授权失败等就近平铺。
       case VoiceInputStatus.unsupported:
@@ -902,7 +914,7 @@ class _LocalChatViewState extends State<LocalChatView>
             const SizedBox(width: QiyuSpacing.xs),
             Expanded(
               child: Text(
-                message,
+                qiyuStrings(context).localizeStatus(message),
                 key: const Key('voice-status'),
                 style: TextStyle(
                   color: isRetryable
@@ -943,21 +955,21 @@ class _LocalChatViewState extends State<LocalChatView>
               Expanded(
                 child: Text(
                   voiceOutput.phase == VoiceOutputPhase.synthesizing
-                      ? '栖语准备读…'
-                      : '栖语正在读',
+                      ? qiyuStrings(context).voicePreparingRead
+                      : qiyuStrings(context).voiceReading,
                   key: const Key('voice-output-status'),
                 ),
               ),
               IconButton(
                 key: const Key('voice-output-stop'),
-                tooltip: '停止朗读',
+                tooltip: qiyuStrings(context).stopReading,
                 onPressed: () => voiceOutput.stopAll(),
                 icon: const Icon(QiyuIcons.stop),
               ),
             ] else if (failure != null) ...[
               Expanded(
                 child: Text(
-                  failure,
+                  qiyuStrings(context).localizeStatus(failure),
                   key: const Key('voice-output-failure'),
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -965,7 +977,7 @@ class _LocalChatViewState extends State<LocalChatView>
                 ),
               ),
               IconButton(
-                tooltip: '知道了',
+                tooltip: qiyuStrings(context).acknowledge,
                 onPressed: () => voiceOutput.consumeFailureNotice(),
                 icon: const Icon(QiyuIcons.close),
               ),
@@ -1104,12 +1116,12 @@ class _LocalChatViewState extends State<LocalChatView>
                   child: Semantics(
                     liveRegion: true,
                     label: viewModel.streamingText.isEmpty
-                        ? '栖语在想'
-                        : '栖语正在回复',
+                        ? qiyuStrings(context).qiyuThinking
+                        : qiyuStrings(context).qiyuReplying,
                     child: ExcludeSemantics(
                       child: viewModel.streamingText.isEmpty
                           ? Text(
-                              '栖语在想…',
+                              qiyuStrings(context).qiyuThinkingVisible,
                               style: QiyuTypography.of(
                                 context,
                               ).qiyuMessage.copyWith(color: QiyuColors.muted),

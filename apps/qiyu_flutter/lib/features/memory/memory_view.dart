@@ -9,6 +9,7 @@ import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../navigation.dart';
 import '../shell/qiyu_shell.dart';
+import '../shell/qiyu_ui_locale.dart';
 import '../shell/qiyu_widgets.dart';
 import '../time_format.dart';
 import 'backup_client.dart';
@@ -16,9 +17,26 @@ import 'backup_platform.dart';
 import 'backup_view.dart';
 import 'memory_actions.dart';
 import 'memory_client.dart';
+import 'memory_strings.dart';
 import 'memory_view_model.dart';
 
-const _maskedPlaceholder = '这条内容涉及私密信息，暂不直接展示。';
+String _maskedPlaceholder(BuildContext context) =>
+    MemoryLabel.masked.of(context);
+
+String _recoveryKindEn(String kind) => switch (kind) {
+  'missing' => 'Missing',
+  'stale' => 'Outdated',
+  'corrupt' => 'Malformed',
+  'incomplete' => 'Incomplete',
+  'orphaned' => 'Broken reference',
+  _ => 'Issue',
+};
+
+String _recoveryOutcomeEn(MemoryRecoveryOutcome outcome) => switch (outcome) {
+  MemoryRecoveryOutcome.full => 'Fully recovered',
+  MemoryRecoveryOutcome.partial => 'Partially recovered',
+  MemoryRecoveryOutcome.pending => 'Pending recovery',
+};
 
 /// 四区记忆中心（ticket 19 读取 / ticket 20 控制）：最近发生、长期
 /// 印象、关于你、我们的关系。导航只用用户语言；条目操作按钮常驻，
@@ -64,7 +82,7 @@ class MemoryView extends StatelessWidget {
                           buttonKey: Key('memory-back'),
                         ),
                         Text(
-                          '记忆',
+                          MemoryLabel.title.of(context),
                           style: Theme.of(context).textTheme.headlineSmall,
                         ),
                         const Spacer(),
@@ -79,7 +97,7 @@ class MemoryView extends StatelessWidget {
                                 platform: backupPlatform,
                               ),
                             ),
-                            tooltip: '备份与恢复',
+                            tooltip: MemoryLabel.backup.of(context),
                             icon: const Icon(QiyuIcons.archive),
                           ),
                         ),
@@ -90,7 +108,7 @@ class MemoryView extends StatelessWidget {
                             onPressed: viewModel.loading
                                 ? null
                                 : () => unawaited(viewModel.refresh()),
-                            tooltip: '刷新记忆',
+                            tooltip: MemoryLabel.refresh.of(context),
                             icon: const Icon(QiyuIcons.refresh),
                           ),
                         ),
@@ -114,28 +132,28 @@ class MemoryView extends StatelessWidget {
                   // .platform` 换成 `defaultTargetPlatform`。SDK 侧只按版本 + 方法名
                   // 指路：行号会随版本漂移，按名 grep 才复核得动。结果由
                   // test/memory_view_test.dart 锁住。
-                  const TabBar(
+                  TabBar(
                     isScrollable: true,
                     tabs: [
                       Tab(
-                        key: Key('memory-tab-recent'),
-                        icon: Icon(QiyuIcons.schedule),
-                        text: '最近发生',
+                        key: const Key('memory-tab-recent'),
+                        icon: const Icon(QiyuIcons.schedule),
+                        text: MemoryLabel.recent.of(context),
                       ),
                       Tab(
-                        key: Key('memory-tab-longterm'),
-                        icon: Icon(QiyuIcons.landscape),
-                        text: '长期印象',
+                        key: const Key('memory-tab-longterm'),
+                        icon: const Icon(QiyuIcons.landscape),
+                        text: MemoryLabel.longTerm.of(context),
                       ),
                       Tab(
-                        key: Key('memory-tab-persona'),
-                        icon: Icon(QiyuIcons.person),
-                        text: '关于你',
+                        key: const Key('memory-tab-persona'),
+                        icon: const Icon(QiyuIcons.person),
+                        text: MemoryLabel.aboutYou.of(context),
                       ),
                       Tab(
-                        key: Key('memory-tab-relationship'),
-                        icon: Icon(QiyuIcons.groups),
-                        text: '我们的关系',
+                        key: const Key('memory-tab-relationship'),
+                        icon: const Icon(QiyuIcons.groups),
+                        text: MemoryLabel.relationship.of(context),
                       ),
                     ],
                   ),
@@ -203,10 +221,14 @@ class _RecoveryBanner extends StatelessWidget {
         .where((finding) => finding.outcome == MemoryRecoveryOutcome.partial)
         .length;
     final subtitle = [
-      if (pending > 0) '$pending 项待恢复',
-      if (partial > 0) '$partial 项部分恢复',
-      if (section.quarantinedFiles > 0) '${section.quarantinedFiles} 份原件保留在隔离区',
-    ].join('，');
+      if (pending > 0) qiyuIsEn(context) ? '$pending pending' : '$pending 项待恢复',
+      if (partial > 0)
+        qiyuIsEn(context) ? '$partial partially recovered' : '$partial 项部分恢复',
+      if (section.quarantinedFiles > 0)
+        qiyuIsEn(context)
+            ? '${section.quarantinedFiles} originals kept in quarantine'
+            : '${section.quarantinedFiles} 份原件保留在隔离区',
+    ].join(qiyuIsEn(context) ? ', ' : '，');
     return QiyuFocusRingScope(
       borderRadius: QiyuRadii.cardBorder,
       child: Card(
@@ -220,7 +242,7 @@ class _RecoveryBanner extends StatelessWidget {
             QiyuIcons.health_and_safety,
             color: theme.colorScheme.error,
           ),
-          title: const Text('部分记忆文件出现过损坏'),
+          title: Text(MemoryLabel.damage.of(context)),
           subtitle: subtitle.isEmpty ? null : Text(subtitle),
           children: [
             for (final finding in section.findings)
@@ -228,7 +250,7 @@ class _RecoveryBanner extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text(_findingText(finding)),
+                  child: Text(_findingText(context, finding)),
                 ),
               ),
           ],
@@ -237,17 +259,21 @@ class _RecoveryBanner extends StatelessWidget {
     );
   }
 
-  String _findingText(MemoryRecoveryFindingCard finding) {
+  String _findingText(BuildContext context, MemoryRecoveryFindingCard finding) {
     final buffer = StringBuffer(
-      '${finding.layer}：${finding.kindLabel}，${finding.outcomeLabel}',
+      '${finding.layer}${qiyuIsEn(context) ? ': ' : '：'}${qiyuIsEn(context) ? _recoveryKindEn(finding.kind) : finding.kindLabel}${qiyuIsEn(context) ? ', ' : '，'}${qiyuIsEn(context) ? _recoveryOutcomeEn(finding.outcome) : finding.outcomeLabel}',
     );
     final evidence = finding.evidence;
     if (evidence != null && evidence.isNotEmpty) {
-      buffer.write('\n采用证据：$evidence');
+      buffer.write(
+        qiyuIsEn(context) ? '\nEvidence used: $evidence' : '\n采用证据：$evidence',
+      );
     }
     final loss = finding.loss;
     if (loss != null && loss.isNotEmpty) {
-      buffer.write('\n仍无法恢复：$loss');
+      buffer.write(
+        qiyuIsEn(context) ? '\nStill unrecoverable: $loss' : '\n仍无法恢复：$loss',
+      );
     }
     return buffer.toString();
   }
@@ -261,9 +287,9 @@ class _RecentTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (section.days.isEmpty) {
-      return const _EmptyState(
-        key: Key('memory-empty-recent'),
-        text: '还没有最近的记录。\n聊过之后，这里会出现整理好的记忆。',
+      return _EmptyState(
+        key: const Key('memory-empty-recent'),
+        text: MemoryLabel.recentEmpty.of(context),
       );
     }
     return ListView(
@@ -273,19 +299,24 @@ class _RecentTab extends StatelessWidget {
           Row(
             children: [
               Text(
-                formatDayHeader(day.date),
+                formatDayHeader(
+                  day.date,
+                  locale: qiyuIsEn(context) ? 'en' : 'zh',
+                ),
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               if (!day.finalized) ...[
                 const SizedBox(width: 8),
-                const _StatusChip(
-                  key: Key('memory-day-organizing'),
-                  label: '整理中',
+                _StatusChip(
+                  key: const Key('memory-day-organizing'),
+                  label: MemoryLabel.organizing.of(context),
                 ),
               ] else if (day.finalizedAt case final organizedAt?) ...[
                 const SizedBox(width: 8),
                 Text(
-                  '整理于 ${formatClock(organizedAt)}',
+                  qiyuIsEn(context)
+                      ? 'Organized at ${formatClock(organizedAt)}'
+                      : '整理于 ${formatClock(organizedAt)}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -295,7 +326,7 @@ class _RecentTab extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(top: 4, bottom: 4),
               child: Text(
-                _visibleOr(day.summaryMasked, summary),
+                _visibleOr(context, day.summaryMasked, summary),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -317,15 +348,15 @@ class _LongTermTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!section.present) {
-      return const _EmptyState(
-        key: Key('memory-empty-longterm'),
-        text: '还没有形成长期印象。\n长期印象来自周期性的深度整理，需要一些积累。',
+      return _EmptyState(
+        key: const Key('memory-empty-longterm'),
+        text: MemoryLabel.longTermEmpty.of(context),
       );
     }
     if (!section.readable) {
-      return const _EmptyState(
-        key: Key('memory-unreadable-longterm'),
-        text: '这一部分记忆暂时读不出来，不影响其他内容。',
+      return _EmptyState(
+        key: const Key('memory-unreadable-longterm'),
+        text: MemoryLabel.unreadable.of(context),
       );
     }
     return ListView(
@@ -346,7 +377,9 @@ class _LongTermTab extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 16),
             child: Text(
-              '最近一次深度整理：${formatTime(organizedAt)}',
+              qiyuIsEn(context)
+                  ? 'Last reflection: ${formatTime(organizedAt)}'
+                  : '最近一次深度整理：${formatTime(organizedAt)}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
@@ -369,27 +402,27 @@ class _PersonaTab extends StatelessWidget {
       children: [
         _AppellationCard(appellation: section.appellation),
         if (section.appellation == null && section.isEmpty)
-          const _EmptyState(
-            key: Key('memory-empty-persona'),
-            text: '还没有形成关于你的画像。\n画像来自一次次聊天里的积累，慢慢来。',
+          _EmptyState(
+            key: const Key('memory-empty-persona'),
+            text: MemoryLabel.personaEmpty.of(context),
           ),
         for (final branch in section.branches) ...[
           Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 8),
             child: Text(
-              branch.title,
+              memoryBranchText(context, branch.wire, branch.title),
               style: Theme.of(context).textTheme.titleSmall,
             ),
           ),
           if (!branch.readable)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: Text('这一部分暂时读不出来，不影响其他内容。'),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(MemoryLabel.sectionUnreadable.of(context)),
             )
           else if (branch.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: Text('还没有形成这一部分画像。'),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(MemoryLabel.sectionEmpty.of(context)),
             )
           else ...[
             for (final root in branch.roots)
@@ -420,9 +453,12 @@ class _AppellationCard extends StatelessWidget {
     );
     return _MemoryCard(
       child: ListTile(
-        title: Text('栖语这样叫你', style: Theme.of(context).textTheme.titleSmall),
+        title: Text(
+          MemoryLabel.appellationTitle.of(context),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
         subtitle: Text(
-          appellation ?? '还没设置',
+          appellation ?? MemoryLabel.notSet.of(context),
           key: const Key('memory-appellation-value'),
         ),
         trailing: QiyuFocusRingScope(
@@ -430,7 +466,11 @@ class _AppellationCard extends StatelessWidget {
           child: TextButton(
             key: const Key('memory-appellation-edit'),
             onPressed: busy ? null : () => unawaited(_edit(context)),
-            child: Text(appellation == null ? '设置' : '修改'),
+            child: Text(
+              appellation == null
+                  ? MemoryLabel.set.of(context)
+                  : MemoryLabel.edit.of(context),
+            ),
           ),
         ),
       ),
@@ -481,14 +521,14 @@ class _AppellationEditDialogState extends State<_AppellationEditDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('栖语怎么称呼你？'),
+      title: Text(MemoryLabel.appellationQuestion.of(context)),
       content: TextField(
         key: const Key('memory-appellation-field'),
         controller: _controller,
         autofocus: true,
         maxLength: 20,
-        decoration: const InputDecoration(
-          hintText: '名字、昵称、代号都行',
+        decoration: InputDecoration(
+          hintText: MemoryLabel.appellationHint.of(context),
           counterText: '',
         ),
       ),
@@ -497,7 +537,7 @@ class _AppellationEditDialogState extends State<_AppellationEditDialog> {
           borderRadius: QiyuRadii.circleBorder,
           child: TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
+            child: Text(MemoryLabel.cancel.of(context)),
           ),
         ),
         QiyuFocusRingScope(
@@ -505,7 +545,7 @@ class _AppellationEditDialogState extends State<_AppellationEditDialog> {
           child: TextButton(
             key: const Key('memory-appellation-save'),
             onPressed: () => Navigator.of(context).pop(_controller.text),
-            child: const Text('保存'),
+            child: Text(MemoryLabel.save.of(context)),
           ),
         ),
       ],
@@ -521,9 +561,9 @@ class _RelationshipTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (section.isEmpty) {
-      return const _EmptyState(
-        key: Key('memory-empty-relationship'),
-        text: '还没有形成关系记录。\n相处方式会随着一次次的聊天慢慢清晰。',
+      return _EmptyState(
+        key: const Key('memory-empty-relationship'),
+        text: MemoryLabel.relationshipEmpty.of(context),
       );
     }
     return ListView(
@@ -531,7 +571,9 @@ class _RelationshipTab extends StatelessWidget {
       children: [
         if (section.present) ...[
           Text(
-            section.since == null
+            qiyuIsEn(context)
+                ? 'Current stage: ${memoryStageText(context, section.stage)}${section.since == null ? '' : ' · Since ${section.since}'}'
+                : section.since == null
                 ? '当前阶段：${section.stage}'
                 : '当前阶段：${section.stage} · 自 ${section.since}',
             style: Theme.of(context).textTheme.titleMedium,
@@ -539,9 +581,9 @@ class _RelationshipTab extends StatelessWidget {
           const SizedBox(height: 12),
           // 相处方式/试探/近期变化三组同为状态包投影，展示口径一致。
           for (final (title, items) in [
-            ('当前相处方式', section.confirmed),
-            ('试探中', section.probes),
-            ('近期变化', section.recentChanges),
+            (MemoryLabel.confirmed.of(context), section.confirmed),
+            (MemoryLabel.probes.of(context), section.probes),
+            (MemoryLabel.recentChanges.of(context), section.recentChanges),
           ]) ...[
             if (items.isNotEmpty) ...[
               _sectionTitle(context, title),
@@ -555,7 +597,7 @@ class _RelationshipTab extends StatelessWidget {
           ],
         ],
         if (section.sharedPast.isNotEmpty) ...[
-          _sectionTitle(context, '共同过往'),
+          _sectionTitle(context, MemoryLabel.sharedPast.of(context)),
           for (final item in section.sharedPast)
             _LongTermTile(key: Key('memory-longterm-${item.id}'), item: item),
         ],
@@ -688,13 +730,13 @@ class _MemoryItemViewState extends State<MemoryItemView> {
                         child: IconButton(
                           key: const Key('memory-item-back'),
                           onPressed: () => backToPrevious(context),
-                          tooltip: '返回记忆',
+                          tooltip: MemoryLabel.back.of(context),
                           icon: const Icon(QiyuIcons.arrow_back),
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '记忆详情',
+                        MemoryLabel.detail.of(context),
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                       if (acting) ...[
@@ -708,7 +750,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        const Text('整理中'),
+                        Text(MemoryLabel.organizing.of(context)),
                       ],
                     ],
                   ),
@@ -729,15 +771,18 @@ class _MemoryItemViewState extends State<MemoryItemView> {
     }
     if (_failed) {
       return QiyuErrorRetryState(
-        message: '记忆中心暂时不可用，请稍后重试。',
+        message: MemoryLabel.retryError.of(context),
         messageKey: const Key('memory-item-error'),
         retryKey: const Key('memory-item-retry'),
         onRetry: () => unawaited(_load()),
       );
     }
     if (_gone) {
-      return const Center(
-        child: Text('这条记忆不存在或已经变化，请返回后刷新。', key: Key('memory-item-gone')),
+      return Center(
+        child: Text(
+          MemoryLabel.itemGone.of(context),
+          key: const Key('memory-item-gone'),
+        ),
       );
     }
     final detail = _detail!;
@@ -766,9 +811,9 @@ class _MemoryItemViewState extends State<MemoryItemView> {
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 4),
-          const _StatusChip(
-            key: Key('memory-reveal-countdown'),
-            label: '仅本次展示，稍后自动重新遮罩',
+          _StatusChip(
+            key: const Key('memory-reveal-countdown'),
+            label: MemoryLabel.revealNotice.of(context),
           ),
         ],
       );
@@ -776,7 +821,10 @@ class _MemoryItemViewState extends State<MemoryItemView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(_maskedPlaceholder, style: Theme.of(context).textTheme.bodyMedium),
+        Text(
+          _maskedPlaceholder(context),
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
         QiyuFocusRingScope(
           borderRadius: QiyuRadii.circleBorder,
           child: TextButton(
@@ -784,7 +832,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
             onPressed: _revealEnabled()
                 ? () => unawaited(_reveal(field))
                 : null,
-            child: const Text('临时查看'),
+            child: Text(MemoryLabel.reveal.of(context)),
           ),
         ),
       ],
@@ -811,17 +859,17 @@ class _MemoryItemViewState extends State<MemoryItemView> {
     return [
       Row(
         children: [
-          _StatusChip(label: detail.kindLabel),
+          _StatusChip(label: memoryKindText(context, detail.entryKind)),
           const SizedBox(width: 8),
           if (detail.userEdited) ...[
-            const _StatusChip(
-              key: Key('memory-entry-user-edited'),
-              label: '由你修正',
+            _StatusChip(
+              key: const Key('memory-entry-user-edited'),
+              label: MemoryLabel.userEdited.of(context),
             ),
             const SizedBox(width: 8),
           ],
           if (detail.control case final control?)
-            _StatusChip(label: control.label),
+            _StatusChip(label: memoryControlText(context, control.label)),
         ],
       ),
       const SizedBox(height: 12),
@@ -834,12 +882,15 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         ),
       const SizedBox(height: 8),
       Text(
-        '${formatDayHeader(detail.date)} · ${formatClock(detail.at)}',
+        '${formatDayHeader(detail.date, locale: qiyuIsEn(context) ? 'en' : 'zh')} · ${formatClock(detail.at)}',
         style: Theme.of(context).textTheme.bodySmall,
       ),
       if (detail.evidenceMasked || detail.evidence != null) ...[
         const SizedBox(height: 16),
-        Text('当时的摘录', style: Theme.of(context).textTheme.titleSmall),
+        Text(
+          MemoryLabel.excerpt.of(context),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
         const SizedBox(height: 4),
         if (detail.evidenceMasked)
           _maskedOrRevealed('evidence')
@@ -851,13 +902,16 @@ class _MemoryItemViewState extends State<MemoryItemView> {
       ],
       if (detail.daySummary case final summary?) ...[
         const SizedBox(height: 16),
-        Text('当天小结', style: Theme.of(context).textTheme.titleSmall),
+        Text(
+          MemoryLabel.daySummary.of(context),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
         const SizedBox(height: 4),
         Text(summary, style: Theme.of(context).textTheme.bodyMedium),
       ],
       if (!detail.finalized) ...[
         const SizedBox(height: 16),
-        const _StatusChip(label: '整理中'),
+        _StatusChip(label: MemoryLabel.organizing.of(context)),
       ],
       const SizedBox(height: 16),
       QiyuFocusRingScope(
@@ -865,7 +919,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         child: TextButton(
           key: const Key('memory-item-day'),
           onPressed: () => openInFront(context, '/memory/item/${detail.dayId}'),
-          child: const Text('查看这一天的记录'),
+          child: Text(MemoryLabel.viewDay.of(context)),
         ),
       ),
       if (detail.sessionId case final sessionId?)
@@ -874,7 +928,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
           child: TextButton(
             key: const Key('memory-item-session'),
             onPressed: () => openInFront(context, '/history/$sessionId'),
-            child: const Text('查看当时的对话'),
+            child: Text(MemoryLabel.viewConversation.of(context)),
           ),
         ),
       const SizedBox(height: 8),
@@ -884,7 +938,9 @@ class _MemoryItemViewState extends State<MemoryItemView> {
 
   List<Widget> _personaRootBody(PersonaRootDetail detail) {
     return [
-      _StatusChip(label: detail.branchTitle),
+      _StatusChip(
+        label: memoryBranchText(context, detail.branch, detail.branchTitle),
+      ),
       const SizedBox(height: 12),
       if (detail.masked)
         _maskedOrRevealed('claim')
@@ -895,13 +951,16 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         ),
       if (detail.control case final control?) ...[
         const SizedBox(height: 8),
-        _StatusChip(label: control.label),
+        _StatusChip(label: memoryControlText(context, control.label)),
       ],
       const SizedBox(height: 16),
-      Text('支持它的理解', style: Theme.of(context).textTheme.titleSmall),
+      Text(
+        MemoryLabel.supporting.of(context),
+        style: Theme.of(context).textTheme.titleSmall,
+      ),
       const SizedBox(height: 4),
       if (detail.middles.isEmpty)
-        const Text('暂时没有记录支持它的依据。')
+        Text(MemoryLabel.noSupporting.of(context))
       else
         for (final middle in detail.middles)
           _MiddleTile(
@@ -915,12 +974,14 @@ class _MemoryItemViewState extends State<MemoryItemView> {
     return [
       Row(
         children: [
-          _StatusChip(label: detail.branchTitle),
+          _StatusChip(
+            label: memoryBranchText(context, detail.branch, detail.branchTitle),
+          ),
           const SizedBox(width: 8),
-          _StatusChip(label: detail.type),
+          _StatusChip(label: memoryStructureText(context, detail.type)),
           if (detail.control case final control?) ...[
             const SizedBox(width: 8),
-            _StatusChip(label: control.label),
+            _StatusChip(label: memoryControlText(context, control.label)),
           ],
         ],
       ),
@@ -934,18 +995,26 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         ),
       const SizedBox(height: 8),
       Text(
-        '形成于 ${detail.formedOn} · 最近复核 ${detail.reviewedOn}',
+        qiyuIsEn(context)
+            ? 'Formed ${detail.formedOn} · Reviewed ${detail.reviewedOn}'
+            : '形成于 ${detail.formedOn} · 最近复核 ${detail.reviewedOn}',
         style: Theme.of(context).textTheme.bodySmall,
       ),
       if (detail.rootClaim case final rootClaim?) ...[
         const SizedBox(height: 8),
-        Text('所属结论：$rootClaim', style: Theme.of(context).textTheme.bodySmall),
+        Text(
+          qiyuIsEn(context) ? 'Belongs to: $rootClaim' : '所属结论：$rootClaim',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ],
       const SizedBox(height: 16),
-      Text('证据', style: Theme.of(context).textTheme.titleSmall),
+      Text(
+        MemoryLabel.evidence.of(context),
+        style: Theme.of(context).textTheme.titleSmall,
+      ),
       const SizedBox(height: 4),
       if (detail.leaves.isEmpty)
-        const Text('暂时没有记录在案的证据。')
+        Text(MemoryLabel.noEvidence.of(context))
       else
         for (final leaf in detail.leaves)
           _LeafTile(
@@ -960,12 +1029,15 @@ class _MemoryItemViewState extends State<MemoryItemView> {
       Row(
         children: [
           Text(
-            formatDayHeader(detail.date),
+            formatDayHeader(
+              detail.date,
+              locale: qiyuIsEn(context) ? 'en' : 'zh',
+            ),
             style: Theme.of(context).textTheme.titleMedium,
           ),
           if (!detail.finalized) ...[
             const SizedBox(width: 8),
-            const _StatusChip(label: '整理中'),
+            _StatusChip(label: MemoryLabel.organizing.of(context)),
           ],
         ],
       ),
@@ -982,7 +1054,7 @@ class _MemoryItemViewState extends State<MemoryItemView> {
         ),
       const SizedBox(height: 12),
       if (detail.entries.isEmpty)
-        const Text('这一天没有可展示的记录。')
+        Text(MemoryLabel.noDayEntries.of(context))
       else
         for (final entry in detail.entries)
           _EntryTile(key: Key('memory-day-entry-${entry.id}'), entry: entry),
@@ -1040,7 +1112,7 @@ class _DetailActionRow extends StatelessWidget {
                         ),
                       )
                     : null,
-                child: Text(action.label),
+                child: Text(action.labelFor(context)),
               ),
             ),
       ],
@@ -1156,14 +1228,16 @@ class _EntryTile extends StatelessWidget {
             runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              _StatusChip(label: entry.kindLabel),
-              if (entry.userEdited) const _StatusChip(label: '由你修正'),
+              _StatusChip(label: memoryKindText(context, entry.kind)),
+              if (entry.userEdited)
+                _StatusChip(label: MemoryLabel.userEdited.of(context)),
               if (entry.control case final control?)
                 _StatusChip(
                   key: Key('memory-entry-control-${entry.id}'),
-                  label: control.label,
+                  label: memoryControlText(context, control.label),
                 ),
-              if (entry.hasEvidence) const _StatusChip(label: '有摘录'),
+              if (entry.hasEvidence)
+                _StatusChip(label: MemoryLabel.hasExcerpt.of(context)),
             ],
           ),
           trailing: [
@@ -1182,7 +1256,7 @@ class _EntryTile extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 6),
-        Text(_visibleOr(entry.masked, entry.content)),
+        Text(_visibleOr(context, entry.masked, entry.content)),
       ],
     );
   }
@@ -1205,11 +1279,11 @@ class _LongTermTile extends StatelessWidget {
         child: _MemoryHeaderLine(
           leading: Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(_visibleOr(item.masked, item.content)),
+            child: Text(_visibleOr(context, item.masked, item.content)),
           ),
           trailing: [
             if (item.control case final control?)
-              _StatusChip(label: control.label),
+              _StatusChip(label: memoryControlText(context, control.label)),
             if (!statePack)
               MemoryActionButtons(
                 key: Key('memory-actions-${item.id}'),
@@ -1236,7 +1310,7 @@ class _RootTile extends StatelessWidget {
     return _TappableMemoryCard(
       onTap: () => openInFront(context, '/memory/item/${root.id}'),
       children: [
-        Text(_visibleOr(root.masked, root.claim)),
+        Text(_visibleOr(context, root.masked, root.claim)),
         const SizedBox(height: 6),
         _MemoryHeaderLine(
           leading: Wrap(
@@ -1245,9 +1319,9 @@ class _RootTile extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               if (root.control case final control?)
-                _StatusChip(label: control.label),
+                _StatusChip(label: memoryControlText(context, control.label)),
               Text(
-                _evidenceSpanText(root),
+                _evidenceSpanText(context, root),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
@@ -1265,8 +1339,10 @@ class _RootTile extends StatelessWidget {
     );
   }
 
-  String _evidenceSpanText(MemoryPersonaRootCard root) {
-    final count = '${root.leafCount} 条证据';
+  String _evidenceSpanText(BuildContext context, MemoryPersonaRootCard root) {
+    final count = qiyuIsEn(context)
+        ? '${root.leafCount} ${root.leafCount == 1 ? 'piece of evidence' : 'pieces of evidence'}'
+        : '${root.leafCount} 条证据';
     final earliest = root.earliestEvidence;
     final latest = root.latestEvidence;
     if (earliest == null || latest == null) {
@@ -1286,7 +1362,7 @@ class _MiddleTile extends StatelessWidget {
     return _TappableMemoryCard(
       onTap: () => openInFront(context, '/memory/item/${middle.id}'),
       children: [
-        Text(_visibleOr(middle.masked, middle.claim)),
+        Text(_visibleOr(context, middle.masked, middle.claim)),
         const SizedBox(height: 6),
         _MemoryHeaderLine(
           leading: Wrap(
@@ -1294,15 +1370,18 @@ class _MiddleTile extends StatelessWidget {
             runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              _StatusChip(label: middle.type),
+              _StatusChip(label: memoryStructureText(context, middle.type)),
               if (middle.control case final control?)
-                _StatusChip(label: control.label),
-              if (middle.hasConflict) const _StatusChip(label: '有冲突证据'),
+                _StatusChip(label: memoryControlText(context, control.label)),
+              if (middle.hasConflict)
+                _StatusChip(label: MemoryLabel.conflictEvidence.of(context)),
             ],
           ),
           trailing: [
             Text(
-              '形成 ${middle.formedOn} · 复核 ${middle.reviewedOn}',
+              qiyuIsEn(context)
+                  ? 'Formed ${middle.formedOn} · Reviewed ${middle.reviewedOn}'
+                  : '形成 ${middle.formedOn} · 复核 ${middle.reviewedOn}',
               style: Theme.of(context).textTheme.bodySmall,
               textAlign: TextAlign.end,
             ),
@@ -1343,11 +1422,15 @@ class _LeafTile extends StatelessWidget {
                       runSpacing: 4,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        _StatusChip(label: leaf.nature),
+                        _StatusChip(
+                          label: memoryStructureText(context, leaf.nature),
+                        ),
                         if (leaf.relation == 'conflict')
-                          const _StatusChip(label: '冲突'),
+                          _StatusChip(label: MemoryLabel.conflict.of(context)),
                         if (leaf.control case final control?)
-                          _StatusChip(label: control.label),
+                          _StatusChip(
+                            label: memoryControlText(context, control.label),
+                          ),
                       ],
                     ),
                   ),
@@ -1356,7 +1439,7 @@ class _LeafTile extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 6),
-              Text(_visibleOr(leaf.masked, leaf.summary)),
+              Text(_visibleOr(context, leaf.masked, leaf.summary)),
             ],
           ),
         ),
@@ -1406,5 +1489,5 @@ class _EmptyState extends StatelessWidget {
 }
 
 /// 遮罩展示的统一出口：敏感内容只呈现占位说明，原文不出现在界面上。
-String _visibleOr(bool masked, String? content) =>
-    masked ? _maskedPlaceholder : (content ?? '');
+String _visibleOr(BuildContext context, bool masked, String? content) =>
+    masked ? _maskedPlaceholder(context) : (content ?? '');

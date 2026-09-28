@@ -5,6 +5,7 @@ import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../chat/local_chat_view_model.dart';
 import 'qiyu_widgets.dart';
+import 'qiyu_ui_locale.dart';
 
 /// 后台记忆整理提示位（ticket 21）：连接状态同区的安静位——同款 6px
 /// 小圆点 + 一行 13px 次要字。仅「有失败且未恢复」期间出现，失败着
@@ -30,7 +31,10 @@ class QiyuBackgroundNotice extends StatelessWidget {
     if (failure == null && !recovered) {
       return const SizedBox.shrink(key: Key('background-notice-gone'));
     }
-    final label = failure != null ? failureLabel : recoveredLabel;
+    final strings = qiyuStrings(context);
+    final label = failure != null
+        ? strings.backgroundFailure
+        : strings.backgroundRecovered;
     final color = failure != null ? QiyuColors.danger : QiyuColors.muted;
     return Semantics(
       key: const Key('background-notice'),

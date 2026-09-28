@@ -20,6 +20,7 @@ import 'settings_client.dart';
 import 'settings_collapse_platform.dart';
 import 'settings_section_shell.dart';
 import 'settings_view_model.dart';
+import 'settings_strings.dart';
 import 'stt_settings_section.dart';
 import 'stt_settings_view_model.dart';
 import 'tts_settings_section.dart';
@@ -208,7 +209,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView>
                         const QiyuPageHeaderBackButton(
                           buttonKey: Key('settings-back'),
                         ),
-                        Text('设置', style: theme.textTheme.headlineSmall),
+                        Text(settingsText(context, '设置', 'Settings'), style: theme.textTheme.headlineSmall),
                       ],
                     ),
                   ),
@@ -290,16 +291,16 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
         final preview = viewModel.clearPreview;
         return SettingsSectionPanel(
           sectionId: SettingsSectionId.localData,
-          title: '本地数据',
+          title: settingsText(context, '本地数据', 'Local data'),
           children: [
             Text(
-              '全部会话与记忆都是这台设备上的 Markdown 文件，不会上传到任何服务器。',
+              settingsText(context, '全部会话与记忆都是这台设备上的 Markdown 文件，不会上传到任何服务器。', 'All conversations and memories are Markdown files on this device. They are never uploaded to a server.'),
               style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             ),
             if (preview != null) ...[
               const SizedBox(height: 10),
               Text(
-                '数据位置：${preview.memoryDirectory}',
+                settingsText(context, '数据位置：${preview.memoryDirectory}', 'Data location: ${preview.memoryDirectory}'),
                 key: const Key('local-data-location'),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
@@ -321,19 +322,19 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
                     ),
                   ),
                   icon: const Icon(QiyuIcons.archive),
-                  label: const Text('备份与恢复'),
+                  label: Text(settingsText(context, '备份与恢复', 'Backup and restore')),
                 ),
                 OutlinedButton.icon(
                   key: const Key('settings-memory-center'),
                   onPressed: () => context.push('/memory'),
                   icon: const Icon(QiyuIcons.menu_book),
-                  label: const Text('记忆中心'),
+                  label: Text(settingsText(context, '记忆中心', 'Memory center')),
                 ),
                 OutlinedButton.icon(
                   key: const Key('settings-memory-controls'),
                   onPressed: () => unawaited(_showMemoryControls(viewModel)),
                   icon: const Icon(QiyuIcons.shield),
-                  label: const Text('记忆控制总览'),
+                  label: Text(settingsText(context, '记忆控制总览', 'Memory controls')),
                 ),
                 TextButton.icon(
                   key: const Key('settings-clear-data'),
@@ -344,7 +345,7 @@ class _LocalDataSectionState extends State<_LocalDataSection> {
                       ? null
                       : () => unawaited(_confirmClearData(viewModel)),
                   icon: settingsBusyOr(viewModel.clearing, QiyuIcons.delete),
-                  label: const Text('清除产品数据'),
+                  label: Text(settingsText(context, '清除产品数据', 'Clear app data')),
                 ),
               ],
             ),
@@ -364,10 +365,10 @@ class _PrivacySection extends StatelessWidget {
     final theme = Theme.of(context);
     return SettingsSectionPanel(
       sectionId: SettingsSectionId.privacy,
-      title: '隐私与边界',
+      title: settingsText(context, '隐私与边界', 'Privacy and boundaries'),
       children: [
         Text(
-          '数据只在本机；只有你配置了模型服务才会联网；敏感信息永不被记住。',
+          settingsText(context, '数据只在本机；只有你配置了模型服务才会联网；敏感信息永不被记住。', 'Your data stays on this device. Qiyu connects online only if you configure a model service. Sensitive details are never remembered.'),
           style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 14),
@@ -375,7 +376,7 @@ class _PrivacySection extends StatelessWidget {
           key: const Key('settings-privacy'),
           onPressed: () => context.push('/privacy'),
           icon: const Icon(QiyuIcons.privacy_tip),
-          label: const Text('查看隐私说明'),
+          label: Text(settingsText(context, '查看隐私说明', 'View privacy details')),
         ),
       ],
     );
@@ -398,7 +399,7 @@ class _DeveloperSectionState extends State<_DeveloperSection> {
         final theme = Theme.of(context);
         return SettingsSectionPanel(
           sectionId: SettingsSectionId.developer,
-          title: '体验与开发者选项',
+          title: settingsText(context, '体验与开发者选项', 'Experience and developer options'),
           // §8 固定顺序里的末节：不画下沿发丝线（原型 `last-of-type`）。
           isLast: true,
           children: [
@@ -409,9 +410,9 @@ class _DeveloperSectionState extends State<_DeveloperSection> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('开发者模式', style: theme.textTheme.titleSmall),
+                        Text(settingsText(context, '开发者模式', 'Developer mode'), style: theme.textTheme.titleSmall),
                         Text(
-                          '开启后出现开发者诊断入口。诊断只读，不修改任何数据。',
+                          settingsText(context, '开启后出现开发者诊断入口。诊断只读，不修改任何数据。', 'Shows developer diagnostics. Diagnostics are read-only and do not change any data.'),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
@@ -435,7 +436,7 @@ class _DeveloperSectionState extends State<_DeveloperSection> {
                 key: const Key('settings-diagnostics'),
                 onPressed: () => context.push('/settings/diagnostics'),
                 icon: const Icon(QiyuIcons.monitor_heart),
-                label: const Text('开发者诊断'),
+                label: Text(settingsText(context, '开发者诊断', 'Developer diagnostics')),
               ),
             if (viewModel.errorMessage case final message?) ...[
               const SizedBox(height: 16),
@@ -483,7 +484,7 @@ class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
     final theme = Theme.of(context);
     return AlertDialog(
       key: const Key('memory-controls-dialog'),
-      title: const Text('记忆控制总览'),
+      title: Text(settingsText(context, '记忆控制总览', 'Memory controls')),
       content: ConstrainedBox(
         // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
         constraints: const BoxConstraints(
@@ -500,8 +501,7 @@ class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      '冻结的内容仍在但不会被注入；禁提的内容栖语不再主动提起。'
-                      '解除或调整请去记忆中心。',
+                      settingsText(context, '冻结的内容仍在但不会被注入；禁提的内容栖语不再主动提起。解除或调整请去记忆中心。', 'Frozen memories remain stored but are not sent to the model. Qiyu will not bring up banned memories. Manage these in Memory center.'),
                       style: TextStyle(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -509,20 +509,20 @@ class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
                     const SizedBox(height: 12),
                     ..._controlGroup(
                       theme,
-                      title: '已冻结（${controls.frozen.length}）',
-                      emptyText: '没有冻结的记忆。',
+                      title: settingsText(context, '已冻结（${controls.frozen.length}）', 'Frozen (${controls.frozen.length})'),
+                      emptyText: settingsText(context, '没有冻结的记忆。', 'No frozen memories.'),
                       entries: controls.frozen,
                     ),
                     const SizedBox(height: 12),
                     ..._controlGroup(
                       theme,
-                      title: '已禁提（${controls.banned.length}）',
-                      emptyText: '没有禁提的内容。',
+                      title: settingsText(context, '已禁提（${controls.banned.length}）', 'Banned (${controls.banned.length})'),
+                      emptyText: settingsText(context, '没有禁提的内容。', 'No banned memories.'),
                       entries: controls.banned,
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      '已删除范围：${controls.deletedCount} 条（只保留抽象范围，防止复活）',
+                      settingsText(context, '已删除范围：${controls.deletedCount} 条（只保留抽象范围，防止复活）', 'Deleted scope: ${controls.deletedCount} items (only an abstract scope is retained to prevent restoration)'),
                       style: TextStyle(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -537,7 +537,7 @@ class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
           child: TextButton(
             key: const Key('memory-controls-close'),
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('关闭'),
+            child: Text(settingsText(context, '关闭', 'Close')),
           ),
         ),
         FilledButton(
@@ -546,7 +546,7 @@ class _MemoryControlsDialogState extends State<_MemoryControlsDialog> {
             Navigator.of(context).pop();
             context.push('/memory');
           },
-          child: const Text('去记忆中心'),
+          child: Text(settingsText(context, '去记忆中心', 'Open Memory center')),
         ),
       ],
     );
@@ -565,7 +565,7 @@ class _ClearDataDialog extends StatelessWidget {
     final theme = Theme.of(context);
     return AlertDialog(
       key: const Key('clear-data-dialog'),
-      title: const Text('清除产品数据？'),
+      title: Text(settingsText(context, '清除产品数据？', 'Clear app data?')),
       content: ConstrainedBox(
         // 上限而非定宽：窄窗口下随对话框收缩，不溢出（ticket 24）。
         constraints: const BoxConstraints(
@@ -581,18 +581,12 @@ class _ClearDataDialog extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    '将清除 ${preview.sessionCount} 段会话、'
-                    '${preview.episodeDayCount} 天的整理记录，'
-                    '以及长期印象、画像、关系、近日状态与全部记忆控制'
-                    '（冻结 ${preview.frozenCount}、禁提 ${preview.bannedCount}、'
-                    '删除范围 ${preview.deletedCount}）。',
+                    settingsText(context, '将清除 ${preview.sessionCount} 段会话、${preview.episodeDayCount} 天的整理记录，以及长期印象、画像、关系、近日状态与全部记忆控制（冻结 ${preview.frozenCount}、禁提 ${preview.bannedCount}、删除范围 ${preview.deletedCount}）。', 'This will clear ${preview.sessionCount} conversations, ${preview.episodeDayCount} days of summaries, long-term impressions, your profile, relationship state, recent state, and all memory controls (${preview.frozenCount} frozen, ${preview.bannedCount} banned, ${preview.deletedCount} deleted scopes).'),
                     style: theme.textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    '清除前会先创建一份备份快照，之后随时可以在「备份与恢复」里找回；'
-                    '聊天模型与语音设置及其 API Key 不受影响；AnySearch API Key 会一并删除。'
-                    '清除后栖语会像第一次见面一样重新开始。',
+                    settingsText(context, '清除前会先创建一份备份快照，之后随时可以在「备份与恢复」里找回；聊天模型与语音设置及其 API Key 不受影响；AnySearch API Key 会一并删除。清除后栖语会像第一次见面一样重新开始。', 'A backup snapshot is created first and can be restored later. Chat model and voice settings, including their API keys, stay intact; the AnySearch API key is deleted. Qiyu will start over as if meeting you for the first time.'),
                     style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
                   ),
                 ],
@@ -604,7 +598,7 @@ class _ClearDataDialog extends StatelessWidget {
           child: TextButton(
             key: const Key('clear-data-cancel'),
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('先不清除'),
+            child: Text(settingsText(context, '先不清除', 'Keep data')),
           ),
         ),
         FilledButton(
@@ -621,7 +615,7 @@ class _ClearDataDialog extends StatelessWidget {
                   dimension: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('确认清除'),
+              : Text(settingsText(context, '确认清除', 'Clear data')),
         ),
       ],
     );

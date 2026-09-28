@@ -11,7 +11,11 @@ final class UnsupportedBackupPlatform implements BackupPlatform {
   bool get supported => false;
 
   @override
-  Future<bool> downloadBackup(String fileName, Uint8List bytes) async => false;
+  Future<bool> downloadBackup(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  }) async => false;
 
   @override
   Future<Uint8List?> pickBackupFile() async => null;

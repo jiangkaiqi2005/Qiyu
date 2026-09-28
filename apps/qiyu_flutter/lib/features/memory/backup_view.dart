@@ -7,10 +7,38 @@ import 'package:provider/provider.dart';
 import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../baseline/host_api_gateway.dart';
+import '../shell/qiyu_ui_locale.dart';
 import 'backup_client.dart';
 import 'backup_platform.dart';
 import 'memory_view_model.dart';
+import 'memory_strings.dart';
 import '../time_format.dart';
+
+String _categoryEn(BackupItemCategory category) => switch (category) {
+  BackupItemCategory.added => 'Added',
+  BackupItemCategory.replaced => 'Replaced',
+  BackupItemCategory.conflict => 'Conflict',
+  BackupItemCategory.skipped => 'Skipped',
+  BackupItemCategory.unrecoverable => 'Unrecoverable',
+};
+
+String _previewNoteEn(String note) => switch (note) {
+  '备份中的会话结构无法识别，未导入' => 'Conversation structure not recognized; not imported',
+  '本机已有同名原始会话，保留本机版本' =>
+    'An original conversation with this name exists locally; local version kept',
+  '与本机控制记录一致' => 'Matches local memory controls',
+  '与本机控制记录按并集合并，保留更保守的隐私结果' =>
+    'Merged with local memory controls; more private outcome kept',
+  _ => note,
+};
+
+String _controlsMergeEn(String controlsMerge) => switch (controlsMerge) {
+  'union' =>
+    'Memory controls will be combined with local controls, keeping the more private outcome.',
+  'identical' => 'Memory controls match local controls.',
+  _ =>
+    'No memory controls in the backup. Local controls will stay as they are.',
+};
 
 /// 备份与恢复对话框（ticket 22）：导出下载、导入前差异预览与确认后
 /// 写入、快照回滚。默认不静默覆盖：导入必须先经用户确认，确认后
@@ -96,6 +124,7 @@ class _BackupDialogState extends State<_BackupDialog> {
   }
 
   Future<void> _export() async {
+    final shareTitle = qiyuIsEnNow(context) ? 'Qiyu backup' : '栖语备份';
     setState(() {
       _exporting = true;
       _exportMessage = null;
@@ -105,14 +134,19 @@ class _BackupDialogState extends State<_BackupDialog> {
       final downloaded = await widget.platform.downloadBackup(
         export.fileName,
         export.bytes,
+        shareTitle: shareTitle,
       );
       if (!mounted) {
         return;
       }
       setState(() {
         _exportMessage = downloaded
-            ? '备份已导出：${export.fileName}'
-            : '备份没有导出：当前环境不支持导出，或分享已取消。';
+            ? (qiyuIsEnNow(context)
+                  ? 'Backup exported: ${export.fileName}'
+                  : '备份已导出：${export.fileName}')
+            : (qiyuIsEnNow(context)
+                  ? 'Backup was not exported. Export is unavailable here, or sharing was canceled.'
+                  : '备份没有导出：当前环境不支持导出，或分享已取消。');
       });
     } on Object catch (error) {
       if (!mounted) {
@@ -211,20 +245,17 @@ class _BackupDialogState extends State<_BackupDialog> {
       context: context,
       builder: (confirmContext) => AlertDialog(
         key: const Key('backup-rollback-confirm'),
-        title: const Text('回滚到导入之前？'),
-        content: const Text(
-          '记忆会恢复到最近一次导入前的状态。'
-          '回滚前会先给当前状态留一份保底快照。',
-        ),
+        title: Text(BackupLabel.rollbackQuestion.of(context)),
+        content: Text(BackupLabel.rollbackDescription.of(context)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(confirmContext).pop(false),
-            child: const Text('先不回滚'),
+            child: Text(BackupLabel.notNow.of(context)),
           ),
           TextButton(
             key: const Key('backup-rollback-go'),
             onPressed: () => Navigator.of(confirmContext).pop(true),
-            child: const Text('确认回滚'),
+            child: Text(BackupLabel.confirmRollback.of(context)),
           ),
         ],
       ),
@@ -242,9 +273,9 @@ class _BackupDialogState extends State<_BackupDialog> {
         return;
       }
       setState(
-        () => _rollbackMessage =
-            '已恢复到导入之前（${result.restoredFiles} 份文件），'
-            '刚才的状态也留了快照。',
+        () => _rollbackMessage = qiyuIsEnNow(context)
+            ? 'Restored ${result.restoredFiles} files to their state before import. A snapshot of the previous state was also kept.'
+            : '已恢复到导入之前（${result.restoredFiles} 份文件），刚才的状态也留了快照。',
       );
       unawaited(context.read<MemoryCenterViewModel>().refresh());
       unawaited(_loadSnapshots());
@@ -260,8 +291,12 @@ class _BackupDialogState extends State<_BackupDialog> {
     }
   }
 
-  String _readable(Object error) =>
-      readableError(error, fallback: '备份操作没有成功，可稍后重试。');
+  String _readable(Object error) => readableError(
+    error,
+    fallback: qiyuIsEnNow(context)
+        ? BackupLabel.error.en
+        : BackupLabel.error.zh,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -280,12 +315,15 @@ class _BackupDialogState extends State<_BackupDialog> {
             children: [
               Row(
                 children: [
-                  Text('备份与恢复', style: theme.textTheme.titleLarge),
+                  Text(
+                    MemoryLabel.backup.of(context),
+                    style: theme.textTheme.titleLarge,
+                  ),
                   const Spacer(),
                   IconButton(
                     key: const Key('backup-close'),
                     onPressed: () => Navigator.of(context).pop(),
-                    tooltip: '关闭',
+                    tooltip: MemoryLabel.close.of(context),
                     icon: const Icon(QiyuIcons.close),
                   ),
                 ],
@@ -293,21 +331,17 @@ class _BackupDialogState extends State<_BackupDialog> {
               const SizedBox(height: 8),
               _sectionCard(
                 theme,
-                title: '导出备份',
+                title: BackupLabel.exportTitle.of(context),
                 body: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      '把栖语的完整本地记忆打包为可阅读、可携带的 Markdown '
-                      '备份。API Key 与模型凭据从不进入备份。',
-                    ),
+                    Text(BackupLabel.exportDescription.of(context)),
                     const SizedBox(height: 8),
                     // 数据警示（ticket 07）：导出是端内形态唯一的跨设备
                     // 通道，卸载即随沙盒清空——这句必须在入口旁可见。
-                    const Text(
-                      '会话与记忆只存在这台设备上：未导出即随卸载永久丢失，'
-                      '换机前记得先导出。',
-                      key: Key('backup-data-warning'),
+                    Text(
+                      BackupLabel.dataWarning.of(context),
+                      key: const Key('backup-data-warning'),
                     ),
                     const SizedBox(height: 12),
                     Align(
@@ -324,7 +358,11 @@ class _BackupDialogState extends State<_BackupDialog> {
                                 ),
                               )
                             : const Icon(QiyuIcons.download),
-                        label: Text(_exporting ? '正在打包…' : '导出备份'),
+                        label: Text(
+                          _exporting
+                              ? BackupLabel.packing.of(context)
+                              : BackupLabel.exportTitle.of(context),
+                        ),
                       ),
                     ),
                     if (_exportMessage case final message?) ...[
@@ -335,9 +373,17 @@ class _BackupDialogState extends State<_BackupDialog> {
                 ),
               ),
               const SizedBox(height: 12),
-              _sectionCard(theme, title: '导入备份', body: _importBody(theme)),
+              _sectionCard(
+                theme,
+                title: BackupLabel.importTitle.of(context),
+                body: _importBody(theme),
+              ),
               const SizedBox(height: 12),
-              _sectionCard(theme, title: '回滚', body: _rollbackBody(theme)),
+              _sectionCard(
+                theme,
+                title: BackupLabel.rollbackTitle.of(context),
+                body: _rollbackBody(theme),
+              ),
             ],
           ),
         ),
@@ -373,11 +419,7 @@ class _BackupDialogState extends State<_BackupDialog> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              '导入前会先验证备份的版本与完整性，并展示与本机数据的差异；'
-              '确认后先创建可回滚快照，再写入。本机已有的禁提与删除控制'
-              '会继续生效。',
-            ),
+            Text(BackupLabel.importDescription.of(context)),
             const SizedBox(height: 12),
             Align(
               alignment: Alignment.centerLeft,
@@ -385,13 +427,13 @@ class _BackupDialogState extends State<_BackupDialog> {
                 key: const Key('backup-import-pick'),
                 onPressed: widget.platform.supported ? _pickAndPreview : null,
                 icon: const Icon(QiyuIcons.upload_file),
-                label: const Text('选择备份文件'),
+                label: Text(BackupLabel.chooseFile.of(context)),
               ),
             ),
             if (!widget.platform.supported)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text('当前环境不支持选择文件，请改用桌面版栖语导入。'),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(BackupLabel.fileUnsupported.of(context)),
               ),
             if (_importError case final error?) ...[
               const SizedBox(height: 8),
@@ -400,44 +442,54 @@ class _BackupDialogState extends State<_BackupDialog> {
           ],
         );
       case _ImportPhase.reading:
-        return const Text('正在读取备份文件…');
+        return Text(BackupLabel.reading.of(context));
       case _ImportPhase.previewing:
-        return _busyRow('正在验证备份并比对差异…');
+        return _busyRow(BackupLabel.previewing.of(context));
       case _ImportPhase.previewed:
         final preview = _preview!;
         return _previewBody(theme, preview);
       case _ImportPhase.importing:
-        return _busyRow('正在创建快照并写入，请不要关闭栖语…');
+        return _busyRow(BackupLabel.importing.of(context));
       case _ImportPhase.done:
         final result = _importResult!;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '导入完成：新增 ${result.added} 项、替换 ${result.replaced} 项、'
-              '跳过 ${result.skipped} 项'
-              '${result.conflicts > 0 ? '、冲突保留本机 ${result.conflicts} 项' : ''}'
-              '${result.unrecoverable > 0 ? '、未导入 ${result.unrecoverable} 项' : ''}。',
+              qiyuIsEn(context)
+                  ? 'Import complete: ${result.added} added, ${result.replaced} replaced, ${result.skipped} skipped${result.conflicts > 0 ? ', ${result.conflicts} conflicts kept locally' : ''}${result.unrecoverable > 0 ? ', ${result.unrecoverable} not imported' : ''}.'
+                  : '导入完成：新增 ${result.added} 项、替换 ${result.replaced} 项、跳过 ${result.skipped} 项${result.conflicts > 0 ? '、冲突保留本机 ${result.conflicts} 项' : ''}${result.unrecoverable > 0 ? '、未导入 ${result.unrecoverable} 项' : ''}。',
             ),
             const SizedBox(height: 4),
             Text(
-              result.controlsMerged ? '记忆控制已按并集合并，更保守的隐私结果保留。' : '记忆控制保持不变。',
+              (result.controlsMerged
+                      ? BackupLabel.controlsMerged
+                      : BackupLabel.controlsUnchanged)
+                  .of(context),
             ),
             const SizedBox(height: 4),
-            const Text('如果结果不对，可以在下方「回滚」恢复原样。'),
+            Text(BackupLabel.rollbackHint.of(context)),
           ],
         );
     }
   }
 
   Widget _previewBody(ThemeData theme, BackupPreview preview) {
-    final summary = [
-      '新增 ${preview.countOf(BackupItemCategory.added)}',
-      '替换 ${preview.countOf(BackupItemCategory.replaced)}',
-      '冲突 ${preview.countOf(BackupItemCategory.conflict)}',
-      '跳过 ${preview.countOf(BackupItemCategory.skipped)}',
-      '不可恢复 ${preview.countOf(BackupItemCategory.unrecoverable)}',
-    ].join('、');
+    final summary = qiyuIsEn(context)
+        ? [
+            '${preview.countOf(BackupItemCategory.added)} added',
+            '${preview.countOf(BackupItemCategory.replaced)} replaced',
+            '${preview.countOf(BackupItemCategory.conflict)} conflicts',
+            '${preview.countOf(BackupItemCategory.skipped)} skipped',
+            '${preview.countOf(BackupItemCategory.unrecoverable)} unrecoverable',
+          ].join(', ')
+        : [
+            '新增 ${preview.countOf(BackupItemCategory.added)}',
+            '替换 ${preview.countOf(BackupItemCategory.replaced)}',
+            '冲突 ${preview.countOf(BackupItemCategory.conflict)}',
+            '跳过 ${preview.countOf(BackupItemCategory.skipped)}',
+            '不可恢复 ${preview.countOf(BackupItemCategory.unrecoverable)}',
+          ].join('、');
     final conflicted = preview.items
         .where((item) => item.category == BackupItemCategory.conflict)
         .toList();
@@ -460,11 +512,16 @@ class _BackupDialogState extends State<_BackupDialog> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '备份生成于 ${formatTime(preview.generatedAt)}，'
-          '验证通过。与本机数据对比：$summary。',
+          qiyuIsEn(context)
+              ? 'Backup created ${formatTime(preview.generatedAt)}. Verified. Compared with local data: $summary.'
+              : '备份生成于 ${formatTime(preview.generatedAt)}，验证通过。与本机数据对比：$summary。',
         ),
         const SizedBox(height: 4),
-        Text(preview.controlsMergeText),
+        Text(
+          qiyuIsEn(context)
+              ? _controlsMergeEn(preview.controlsMerge)
+              : preview.controlsMergeText,
+        ),
         if (visibleItems.isNotEmpty) ...[
           const SizedBox(height: 8),
           ConstrainedBox(
@@ -477,8 +534,12 @@ class _BackupDialogState extends State<_BackupDialog> {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 2),
                       child: Text(
-                        '${item.category.label}：${item.path}'
-                        '${item.note == null ? '' : '（${item.note}）'}',
+                        '${qiyuIsEn(context) ? _categoryEn(item.category) : item.category.label}${qiyuIsEn(context) ? ': ' : '：'}${item.path}'
+                        '${item.note == null
+                            ? ''
+                            : qiyuIsEn(context)
+                            ? ' (${_previewNoteEn(item.note!)})'
+                            : '（${item.note}）'}',
                         style: theme.textTheme.bodySmall,
                       ),
                     ),
@@ -486,8 +547,9 @@ class _BackupDialogState extends State<_BackupDialog> {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 2),
                       child: Text(
-                        '…另有 ${skippedItems.length - skippedShownMax} 项跳过'
-                        '（与本机内容一致，不写入）',
+                        qiyuIsEn(context)
+                            ? '…${skippedItems.length - skippedShownMax} more skipped (same as local data; not written)'
+                            : '…另有 ${skippedItems.length - skippedShownMax} 项跳过（与本机内容一致，不写入）',
                         style: theme.textTheme.bodySmall,
                       ),
                     ),
@@ -499,19 +561,19 @@ class _BackupDialogState extends State<_BackupDialog> {
         if (conflicted.isNotEmpty || unrecoverable.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text(
-            '冲突与不可恢复的内容不会写入本机；同名原始会话一律保留本机版本。',
+            BackupLabel.conflictWarning.of(context),
             style: theme.textTheme.bodySmall,
           ),
         ],
         const SizedBox(height: 12),
-        const Text('确认后栖语会先创建一份可回滚的快照，再写入备份内容。'),
+        Text(BackupLabel.importConfirmHint.of(context)),
         const SizedBox(height: 12),
         Row(
           children: [
             FilledButton(
               key: const Key('backup-import-confirm'),
               onPressed: _confirmImport,
-              child: const Text('确认导入'),
+              child: Text(BackupLabel.confirmImport.of(context)),
             ),
             const SizedBox(width: 12),
             TextButton(
@@ -521,7 +583,7 @@ class _BackupDialogState extends State<_BackupDialog> {
                 _pickedBundle = null;
                 _preview = null;
               }),
-              child: const Text('取消'),
+              child: Text(MemoryLabel.cancel.of(context)),
             ),
           ],
         ),
@@ -549,14 +611,14 @@ class _BackupDialogState extends State<_BackupDialog> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (_snapshotsLoading)
-          const Text('正在查看快照…')
+          Text(BackupLabel.checkingSnapshots.of(context))
         else if (_snapshots.isEmpty)
-          const Text('还没有快照。导入备份时会自动创建。')
+          Text(BackupLabel.noSnapshots.of(context))
         else ...[
           Text(
-            '最近快照：${formatTime(_snapshots.first.createdAt)}'
-            '（${_snapshots.first.fileCount} 份文件），共 '
-            '${_snapshots.length} 份。',
+            qiyuIsEn(context)
+                ? 'Latest snapshot: ${formatTime(_snapshots.first.createdAt)} (${_snapshots.first.fileCount} files), ${_snapshots.length} total.'
+                : '最近快照：${formatTime(_snapshots.first.createdAt)}（${_snapshots.first.fileCount} 份文件），共 ${_snapshots.length} 份。',
           ),
           const SizedBox(height: 12),
           Align(
@@ -564,7 +626,12 @@ class _BackupDialogState extends State<_BackupDialog> {
             child: FilledButton.tonal(
               key: const Key('backup-rollback'),
               onPressed: _rollingBack ? null : _rollback,
-              child: Text(_rollingBack ? '正在恢复…' : '回滚到导入之前'),
+              child: Text(
+                (_rollingBack
+                        ? BackupLabel.restoring
+                        : BackupLabel.rollbackBeforeImport)
+                    .of(context),
+              ),
             ),
           ),
         ],

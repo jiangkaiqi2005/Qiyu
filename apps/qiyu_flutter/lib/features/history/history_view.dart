@@ -13,9 +13,11 @@ import '../chat/qiyu_chat_bubble.dart';
 import '../chat/qiyu_hover_gate.dart';
 import '../navigation.dart';
 import '../shell/qiyu_shell.dart';
+import '../shell/qiyu_ui_locale.dart';
 import '../shell/qiyu_widgets.dart';
 import '../time_format.dart';
 import 'history_client.dart';
+import 'history_strings.dart';
 import 'history_view_model.dart';
 
 class HistoryView extends StatelessWidget {
@@ -24,6 +26,7 @@ class HistoryView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<HistoryViewModel>();
+    final strings = HistoryStrings.of(context);
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -51,7 +54,7 @@ class HistoryView extends StatelessWidget {
                         buttonKey: Key('history-back'),
                       ),
                       Text(
-                        '历史',
+                        strings.title,
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                       const Spacer(),
@@ -62,7 +65,7 @@ class HistoryView extends StatelessWidget {
                           onPressed: viewModel.loading
                               ? null
                               : () => unawaited(viewModel.refresh()),
-                          tooltip: '刷新历史',
+                          tooltip: strings.refresh,
                           icon: const Icon(QiyuIcons.refresh),
                         ),
                       ),
@@ -80,6 +83,7 @@ class HistoryView extends StatelessWidget {
   }
 
   Widget _body(BuildContext context, HistoryViewModel viewModel) {
+    final strings = HistoryStrings.of(context);
     if (viewModel.loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -94,7 +98,7 @@ class HistoryView extends StatelessWidget {
     final listing = viewModel.listing;
     if (listing == null ||
         (listing.days.isEmpty && listing.unavailable.isEmpty)) {
-      return const Center(child: Text('还没有历史记录'));
+      return Center(child: Text(strings.empty));
     }
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -103,7 +107,10 @@ class HistoryView extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 8),
             child: Text(
-              formatDayHeader(day.date),
+              formatDayHeader(
+                day.date,
+                locale: qiyuIsEn(context) ? 'en' : 'zh',
+              ),
               // Spec Decision 13「日期分组次要色小标题」。不读 textTheme.titleSmall：
               // 字阶表没登记那一档（design-system §10 待定表），读到的是 M3 默认的
               // 近白主文字色 + w500。这里取已登记的次要档（§3 的 13px）并把前景压到
@@ -123,16 +130,16 @@ class HistoryView extends StatelessWidget {
             ),
         ],
         if (listing.unavailable.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.only(top: 24, bottom: 8),
-            child: Text('以下会话文件暂时无法读取'),
+          Padding(
+            padding: const EdgeInsets.only(top: 24, bottom: 8),
+            child: Text(strings.unavailable),
           ),
           for (final entry in listing.unavailable)
             Padding(
               key: Key('history-unavailable-${entry.name}'),
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
-                '${entry.name}：${entry.message}',
+                '${entry.name}${qiyuIsEn(context) ? ': ' : '：'}${entry.message}',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -150,15 +157,14 @@ class _SessionTile extends StatelessWidget {
     required this.viewModel,
   });
 
-  /// 动作名：tooltip 与无障碍标签共用一份，不许两头各写一遍再漂移。
-  static const _actionLabel = '删除这段会话';
-
   final HistorySessionSummary session;
   final bool isLatest;
   final HistoryViewModel viewModel;
 
   @override
   Widget build(BuildContext context) {
+    final strings = HistoryStrings.of(context);
+    final actionLabel = strings.deleteAction;
     return QiyuFocusRingScope(
       borderRadius: QiyuRadii.cardBorder,
       child: Card(
@@ -175,13 +181,14 @@ class _SessionTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${formatClock(session.startedAt)} · '
-                        '${session.turnCount} 条消息',
+                        '${formatClock(session.startedAt)} · ${strings.messageCount(session.turnCount)}',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        session.preview.isEmpty ? '（空会话）' : session.preview,
+                        session.preview.isEmpty
+                            ? strings.emptySession
+                            : session.preview,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -194,7 +201,7 @@ class _SessionTile extends StatelessWidget {
                     child: TextButton(
                       key: const Key('resume-latest-session'),
                       onPressed: () => context.go('/chat'),
-                      child: const Text('继续这段对话'),
+                      child: Text(strings.resume),
                     ),
                   ),
                 QiyuFocusRingScope(
@@ -210,15 +217,12 @@ class _SessionTile extends StatelessWidget {
                       key: Key('delete-session-${session.sessionId}'),
                       onPressed: viewModel.deleting
                           ? null
-                          : () => unawaited(_confirmDelete(context)),
-                      tooltip: _actionLabel,
+                          : () => unawaited(_confirmDelete(context, strings)),
+                      tooltip: actionLabel,
                       // 主题层的「常驻但安静」档：静置 muted 出自 Spec Decision 13
                       // 「删除图标常驻次要色」，悬停提到 ink 出自 §8 组件 7。
                       style: qiyuQuietIconButtonStyle(),
-                      icon: const Icon(
-                        QiyuIcons.delete,
-                        semanticLabel: _actionLabel,
-                      ),
+                      icon: Icon(QiyuIcons.delete, semanticLabel: actionLabel),
                     ),
                   ),
                 ),
@@ -230,19 +234,22 @@ class _SessionTile extends StatelessWidget {
     );
   }
 
-  Future<void> _confirmDelete(BuildContext context) async {
+  Future<void> _confirmDelete(
+    BuildContext context,
+    HistoryStrings strings,
+  ) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('删除这段会话？'),
-        content: Text('删除后，这段会话的 ${session.turnCount} 条消息无法恢复。'),
+        title: Text(strings.deleteTitle),
+        content: Text(strings.deleteDescription(session.turnCount)),
         actions: [
           QiyuFocusRingScope(
             borderRadius: QiyuRadii.circleBorder,
             child: TextButton(
               key: const Key('cancel-delete'),
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('取消'),
+              child: Text(strings.cancel),
             ),
           ),
           QiyuFocusRingScope(
@@ -250,7 +257,7 @@ class _SessionTile extends StatelessWidget {
             child: TextButton(
               key: const Key('confirm-delete'),
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('删除'),
+              child: Text(strings.delete),
             ),
           ),
         ],
@@ -274,6 +281,7 @@ class HistorySessionView extends StatefulWidget {
 class _HistorySessionViewState extends State<HistorySessionView> {
   LocalChatSnapshot? _snapshot;
   String? _errorMessage;
+  bool _genericOpenError = false;
 
   @override
   void initState() {
@@ -294,9 +302,10 @@ class _HistorySessionViewState extends State<HistorySessionView> {
         return;
       }
       setState(() {
+        _genericOpenError = error is! LocalChatGatewayException;
         _errorMessage = switch (error) {
           LocalChatGatewayException() => error.message,
-          _ => '无法打开这段会话，请返回后重试。',
+          _ => '',
         };
       });
     }
@@ -304,6 +313,7 @@ class _HistorySessionViewState extends State<HistorySessionView> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = HistoryStrings.of(context);
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -322,13 +332,13 @@ class _HistorySessionViewState extends State<HistorySessionView> {
                         child: IconButton(
                           key: const Key('history-session-back'),
                           onPressed: () => backToPrevious(context),
-                          tooltip: '返回历史',
+                          tooltip: strings.back,
                           icon: const Icon(QiyuIcons.arrow_back),
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '会话详情',
+                        strings.detail,
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                     ],
@@ -345,15 +355,18 @@ class _HistorySessionViewState extends State<HistorySessionView> {
   }
 
   Widget _body() {
+    final strings = HistoryStrings.of(context);
     if (_errorMessage case final message?) {
-      return Center(child: Text(message));
+      return Center(
+        child: Text(_genericOpenError ? strings.openError : message),
+      );
     }
     final snapshot = _snapshot;
     if (snapshot == null) {
       return const Center(child: CircularProgressIndicator());
     }
     if (snapshot.messages.isEmpty) {
-      return const Center(child: Text('这段会话还没有消息'));
+      return Center(child: Text(strings.emptyDetail));
     }
     // 只读回看页整页可选择：拖动即可跨气泡选中并复制文字；栖语回复
     // 的 Markdown 经 gpt_markdown 的 SelectableAdapter 参与同一选区。

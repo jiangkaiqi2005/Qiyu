@@ -9,6 +9,7 @@ import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../time_format.dart';
+import '../shell/qiyu_ui_locale.dart';
 import 'qiyu_hover_gate.dart';
 import 'qiyu_markdown.dart';
 
@@ -293,7 +294,9 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
   Widget build(BuildContext context) {
     final content = MergeSemantics(
       child: Semantics(
-        label: widget.fromUser ? '你说' : '栖语说',
+        label: widget.fromUser
+            ? qiyuStrings(context).youSaid
+            : qiyuStrings(context).qiyuSaid,
         child: widget.fromUser
             ? Text(
                 widget.text,
@@ -311,7 +314,12 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
     // 触屏平台档默认常驻，桌面平台（二合一设备）要轻点确认，滑动滚动
     // 列表不再误判。
     final persistent = _touchPointer;
-    final atLabel = widget.at == null ? null : formatMessageMoment(widget.at!);
+    final atLabel = widget.at == null
+        ? null
+        : formatMessageMoment(
+            widget.at!,
+            locale: qiyuIsEn(context) ? 'en' : 'zh',
+          );
     // at 非空时 Dart 流分析已知 label 非空，无需再断言。
     final revealed = persistent
         ? (_platformDefaultIsTouch || _touchRevealed)
@@ -330,7 +338,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
         const SizedBox(height: 4),
         // 半句如实：标记只说明「她没说完」，不追加任何兜底话术。
         Text(
-          '未完成',
+          qiyuStrings(context).incomplete,
           style: TextStyle(
             fontSize: QiyuTypography.of(context).tinySize,
             color: QiyuColors.muted,
@@ -361,7 +369,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
                 // 为满足构造，永不会被调用。
                 onAction: () {},
                 icon: QiyuIcons.volume_up,
-                actionLabel: _replayActionLabel,
+                actionLabel: qiyuStrings(context).replayMessage,
               ),
             ),
             // 字号随档取极小档（design-system §3 窄屏列），全页面不留大字漏网。
@@ -371,7 +379,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
                 const Icon(QiyuIcons.volume_up, size: 16),
                 const SizedBox(width: 4),
                 Text(
-                  '正在读',
+                  qiyuStrings(context).readingShort,
                   style: TextStyle(
                     fontSize: QiyuTypography.of(context).tinySize,
                   ),
@@ -385,7 +393,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
         _MessageActionButton(
           key: Key('chat-replay-${widget.deliveryIndex}'),
           icon: QiyuIcons.volume_up,
-          actionLabel: _replayActionLabel,
+          actionLabel: qiyuStrings(context).replayMessage,
           onAction: widget.onReplay!,
         ),
       ] else if (widget.reserveReplayRow) ...[
@@ -406,7 +414,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
             // 为满足构造，永不会被调用。
             onAction: () {},
             icon: QiyuIcons.volume_up,
-            actionLabel: _replayActionLabel,
+            actionLabel: qiyuStrings(context).replayMessage,
           ),
         ),
       ],
@@ -485,7 +493,7 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
           const SizedBox(height: 6),
           _MessageActionButton(
             icon: QiyuIcons.content_copy,
-            actionLabel: _copyActionLabel,
+            actionLabel: qiyuStrings(context).copyMessage,
             onAction: _copyMessageText,
           ),
         ],
@@ -567,20 +575,13 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
         const SizedBox(width: QiyuSpacing.xs),
         _MessageActionButton(
           icon: QiyuIcons.content_copy,
-          actionLabel: _copyActionLabel,
+          actionLabel: qiyuStrings(context).copyMessage,
           onAction: _copyMessageText,
         ),
       ],
     );
   }
 }
-
-/// 重听动作名（tooltip 与无障碍标签共用，accessibility 测试按字锚定）。
-const String _replayActionLabel = '再听一遍这句';
-
-/// 复制动作名（tooltip 与无障碍标签共用，气泡复制测试按字锚定；桌面
-/// 悬停位复制钮与 at 为 null 防御路径钮共用这一份文案）。
-const String _copyActionLabel = '复制这条消息';
 
 /// 消息块上的小动作钮（重听/复制共用同一形态）：[MergeSemantics] 汇成
 /// 按钮自己的那一个语义节点。两个落点：气泡内 extras（栖语消息的重

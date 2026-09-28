@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../chat/local_chat_view.dart';
 import '../shell/qiyu_shell.dart';
+import '../shell/qiyu_ui_locale.dart';
 import 'first_meeting_view.dart';
 import 'onboarding_view_model.dart';
 
@@ -30,14 +31,14 @@ class RootView extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  message,
+                  qiyuStrings(context).localizeStatus(message),
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
                 const SizedBox(height: 12),
                 TextButton(
                   key: const Key('retry-root'),
                   onPressed: () => unawaited(viewModel.initialize()),
-                  child: const Text('重试'),
+                  child: Text(qiyuStrings(context).retry),
                 ),
               ],
             ),

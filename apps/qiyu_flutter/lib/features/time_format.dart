@@ -18,15 +18,34 @@ String formatClock(DateTime value) {
 /// 的段落与凌晨恢复昨晚的会话，光秃秃的「23:41」分不清是昨晚还是今晚；
 /// 不带年份与「今天/昨天」的相对称呼，那是日期分隔条（formatDayHeader）
 /// 的职责，两套格式不互相抢。
-String formatMessageMoment(DateTime value) {
+String formatMessageMoment(DateTime value, {String locale = 'zh'}) {
   final local = value.toLocal();
+  if (locale == 'en') {
+    return '${_englishMonths[local.month - 1]} ${local.day} '
+        '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
+  }
   return '${local.month}月${local.day}日 '
       '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
 }
 
+const _englishMonths = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
 /// 日期头部的用户语言：今天、昨天，其余落回「YYYY年M月D日」；
 /// 解析不出的一律原样展示。
-String formatDayHeader(String date) {
+String formatDayHeader(String date, {String locale = 'zh'}) {
   final parsed = DateTime.tryParse(date);
   if (parsed == null) {
     return date;
@@ -36,10 +55,13 @@ String formatDayHeader(String date) {
   final today = DateTime(now.year, now.month, now.day);
   final difference = today.difference(day).inDays;
   if (difference == 0) {
-    return '今天';
+    return locale == 'en' ? 'Today' : '今天';
   }
   if (difference == 1) {
-    return '昨天';
+    return locale == 'en' ? 'Yesterday' : '昨天';
+  }
+  if (locale == 'en') {
+    return '${_englishMonths[parsed.month - 1]} ${parsed.day}, ${parsed.year}';
   }
   return '${parsed.year}年${parsed.month}月${parsed.day}日';
 }

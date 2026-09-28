@@ -10,6 +10,7 @@ import '../accessibility.dart';
 import '../shell/qiyu_fading_notice.dart';
 import '../shell/qiyu_widgets.dart';
 import 'keyed_settings_view_model.dart';
+import 'settings_strings.dart';
 
 /// 设置页各分节共享的壳层：分节 id 名单、折叠状态下发、阅读式分节板、
 /// 分节头与几枚各领域共用的表单元件与小机制（受控下拉、钥匙字段、
@@ -349,7 +350,7 @@ Widget settingsBusyOr(bool busy, IconData icon) => busy
 /// 表单持有的 `void Function(String)` 回调由区块闭包绑定 [context] 后
 /// 转来，本件只管「怎么说给人听」。
 void showSettingsNotice(BuildContext context, String message) {
-  showQiyuFadingNotice(context, message);
+  showQiyuFadingNotice(context, settingsDisplayMessageNow(context, message));
 }
 
 /// 四个凭据领域（模型连接、语音朗读、语音输入、联网搜索）保存成功的
@@ -475,13 +476,13 @@ Future<bool> confirmSettingsForgetKey({
           child: TextButton(
             key: Key('${keyPrefix}forget-key-cancel'),
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('再想想'),
+            child: Text(settingsText(dialogContext, '再想想', 'Cancel')),
           ),
         ),
         FilledButton(
           key: Key('${keyPrefix}forget-key-confirm'),
           onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('忘记 Key'),
+          child: Text(settingsText(dialogContext, '忘记 Key', 'Forget key')),
         ),
       ],
     ),
@@ -503,7 +504,7 @@ Future<bool> confirmSettingsTierSuggestion({
     context: context,
     builder: (dialogContext) => AlertDialog(
       key: Key('${keyPrefix}tier-suggestion-dialog'),
-      title: const Text('按建议调整？'),
+      title: Text(settingsText(dialogContext, '按建议调整？', 'Apply suggested settings?')),
       content: Text(changes.join('\n')),
       actions: [
         QiyuFocusRingScope(
@@ -511,13 +512,13 @@ Future<bool> confirmSettingsTierSuggestion({
           child: TextButton(
             key: Key('${keyPrefix}tier-suggestion-cancel'),
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('再想想'),
+            child: Text(settingsText(dialogContext, '再想想', 'Cancel')),
           ),
         ),
         FilledButton(
           key: Key('${keyPrefix}tier-suggestion-confirm'),
           onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('按建议调整'),
+          child: Text(settingsText(dialogContext, '按建议调整', 'Apply suggestion')),
         ),
       ],
     ),
@@ -622,7 +623,7 @@ class SettingsStatusMessage extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(message, style: TextStyle(color: color)),
+            child: Text(settingsDisplayMessage(context, message), style: TextStyle(color: color)),
           ),
         ],
       ),

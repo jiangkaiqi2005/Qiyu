@@ -11,6 +11,7 @@ import 'provider_settings_view_model.dart';
 import 'proxy_settings_client.dart';
 import 'proxy_settings_view_model.dart';
 import 'settings_section_shell.dart';
+import 'settings_strings.dart';
 
 /// 模型连接（Provider）设置领域：模型连接、参数设置与 API Key 凭据管理。
 ///
@@ -313,10 +314,8 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
       context: context,
       // 模型连接域的对话框定位键没有领域前缀（历史如此），空串沿用。
       keyPrefix: '',
-      title: '忘记已保存的 API Key？',
-      content:
-          '忘记后本机不再保存这个 Key，栖语将无法调用模型服务，'
-          '直到你重新输入。模型连接的其他设置不受影响。',
+      title: settingsTextNow(context, '忘记已保存的 API Key？', 'Forget the saved API key?'),
+      content: settingsTextNow(context, '忘记后本机不再保存这个 Key，栖语将无法调用模型服务，直到你重新输入。模型连接的其他设置不受影响。', 'The key will be removed from this device. Qiyu cannot use the model until you enter it again. Other model settings are unaffected.'),
     );
     if (confirmed) {
       await viewModel.forgetApiKey();
@@ -335,21 +334,21 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
       controller: _form.apiKeyController,
       focusNode: _form.apiKeyFocusNode,
       keySet: keySet,
-      title: keySet ? 'API Key 已保存在本机 provider.json' : '尚未保存 API Key',
+      title: keySet ? settingsText(context, 'API Key 已保存在本机 provider.json', 'API key saved locally in provider.json') : settingsText(context, '尚未保存 API Key', 'No API key saved'),
       titleStyle: Theme.of(context).textTheme.titleMedium,
       // 只有模型连接域多这一行说明文字，间距也随之取 6/16。
       description: keySet
-          ? '留空即可继续使用；输入新值会覆盖旧值，也可以直接编辑 provider.json 更换。'
-          : 'Ollama 本地服务通常可以留空。',
+          ? settingsText(context, '留空即可继续使用；输入新值会覆盖旧值，也可以直接编辑 provider.json 更换。', 'Leave blank to keep using the saved key. A new value replaces it. You can also edit provider.json directly.')
+          : settingsText(context, 'Ollama 本地服务通常可以留空。', 'Ollama usually does not need a key.'),
       descriptionStyle: TextStyle(
         color: Theme.of(context).colorScheme.onSurfaceVariant,
       ),
       gapBelowTitle: 6,
       gapAboveField: 16,
       label: 'API Key',
-      hint: '保存后写入本机 provider.json',
+      hint: settingsText(context, '保存后写入本机 provider.json', 'Saved locally to provider.json'),
       forgetButtonKey: const Key('forget-api-key'),
-      forgetLabel: '忘记已保存的 Key',
+      forgetLabel: settingsText(context, '忘记已保存的 Key', 'Forget saved key'),
       onForgetKey: viewModel.saving
           ? null
           : () => unawaited(_confirmForgetKey(viewModel)),
@@ -365,12 +364,10 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
         final connection = _form.selectedConnection;
         return SettingsSectionPanel(
           sectionId: SettingsSectionId.provider,
-          title: '模型连接',
+          title: settingsText(context, '模型连接', 'Model connection'),
           children: [
             Text(
-              '把模型留在本机这端。普通配置和 API Key 都保存在本机 '
-              'provider.json 文件里，可以直接编辑该文件更换 Key；'
-              '页面只显示是否已保存，无法取回明文。',
+              settingsText(context, '把模型留在本机这端。普通配置和 API Key 都保存在本机 provider.json 文件里，可以直接编辑该文件更换 Key；页面只显示是否已保存，无法取回明文。', 'Your model settings and API key are saved in the local provider.json file. You can edit it to replace the key. This page only shows whether a key is saved; it cannot reveal the key.'),
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.55,
@@ -382,13 +379,13 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
             else ...[
               SettingsControlledDropdown(
                 dropdownKey: const Key('provider-preset'),
-                label: '提供商',
+                label: settingsText(context, '提供商', 'Provider'),
                 value: _form.selectedProviderId,
                 items: [
                   for (final provider in providerCatalog)
                     DropdownMenuItem(
                       value: provider.id,
-                      child: Text(provider.label),
+                      child: Text(settingsCatalogLabel(context, provider.label)),
                     ),
                 ],
                 onChanged: (providerId) =>
@@ -397,13 +394,13 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
               const SizedBox(height: 16),
               SettingsControlledDropdown(
                 dropdownKey: const Key('provider-connection'),
-                label: '套餐 / 接口类型',
+                label: settingsText(context, '套餐 / 接口类型', 'Plan / API type'),
                 value: _form.selectedConnectionId,
                 items: [
                   for (final connection in _form.selectedProvider.connections)
                     DropdownMenuItem(
                       value: connection.id,
-                      child: Text(connection.label),
+                      child: Text(settingsCatalogLabel(context, connection.label)),
                     ),
                 ],
                 onChanged: (connectionId) =>
@@ -412,18 +409,18 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
               const SizedBox(height: 16),
               SettingsControlledDropdown(
                 dropdownKey: const Key('provider-model-preset'),
-                label: '模型',
+                label: settingsText(context, '模型', 'Model'),
                 value: _form.modelDropdownValue,
                 items: [
                   for (final model in connection.models)
                     DropdownMenuItem(value: model, child: Text(model)),
-                  const DropdownMenuItem(
+                  DropdownMenuItem(
                     value: customModelValue,
                     child: Row(
                       children: [
-                        Icon(QiyuIcons.edit, size: 18),
-                        SizedBox(width: 8),
-                        Text('输入其他模型名称'),
+                        const Icon(QiyuIcons.edit, size: 18),
+                        const SizedBox(width: 8),
+                        Text(settingsText(context, '输入其他模型名称', 'Enter another model name')),
                       ],
                     ),
                   ),
@@ -437,8 +434,8 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
                   controller: _form.modelController,
                   focusNode: _form.modelFocusNode,
                   decoration: InputDecoration(
-                    labelText: '模型名称',
-                    hintText: '输入服务商提供的 Model ID',
+                    labelText: settingsText(context, '模型名称', 'Model name'),
+                    hintText: settingsText(context, '输入服务商提供的 Model ID', 'Enter the provider\'s model ID'),
                     border: settingsOutlineBorder(color: QiyuColors.line),
                     enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                     focusedBorder: settingsOutlineBorder(
@@ -454,9 +451,9 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
                   controller: _form.baseUrlController,
                   focusNode: _form.baseUrlFocusNode,
                   decoration: InputDecoration(
-                    labelText: '服务地址',
+                    labelText: settingsText(context, '服务地址', 'Service URL'),
                     hintText: 'https://example.com/v1',
-                    helperText: '局域网地址请填 IP（明文 HTTP 不接受主机名）',
+                    helperText: settingsText(context, '局域网地址请填 IP（明文 HTTP 不接受主机名）', 'Use an IP address for local networks (plain HTTP does not accept hostnames)'),
                     border: settingsOutlineBorder(color: QiyuColors.line),
                     enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                     focusedBorder: settingsOutlineBorder(
@@ -478,8 +475,8 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
                 // 为中心、向上伸出约 5px，顶部留 8px 防截断（与 TTS 设置 tile
                 // 的 Padding(top: 8) 同值）。
                 childrenPadding: const EdgeInsets.only(top: 8, bottom: 8),
-                title: const Text('高级参数'),
-                subtitle: const Text('temperature 与请求超时'),
+                title: Text(settingsText(context, '高级参数', 'Advanced parameters')),
+                subtitle: Text(settingsText(context, 'temperature 与请求超时', 'Temperature and request timeout')),
                 children: [
                   Row(
                     children: [
@@ -511,7 +508,7 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
                           focusNode: _form.timeoutFocusNode,
                           keyboardType: TextInputType.number,
                           decoration: InputDecoration(
-                            labelText: '超时（秒）',
+                            labelText: settingsText(context, '超时（秒）', 'Timeout (seconds)'),
                             border: settingsOutlineBorder(color: QiyuColors.line),
                             enabledBorder: settingsOutlineBorder(
                               color: QiyuColors.line,
@@ -543,13 +540,13 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
               ),
               SettingsSaveTestButtons(
                 saveButtonKey: const Key('save-provider-settings'),
-                saveLabel: '保存到本机',
+                saveLabel: settingsText(context, '保存到本机', 'Save locally'),
                 saveBusy: viewModel.saving,
                 onSave: () => unawaited(_save(viewModel)),
                 // 先读草稿再测试的编排留在这里，不沉进共享按钮组。
                 test: (
                   buttonKey: const Key('test-provider-connection'),
-                  label: '测试连接',
+                  label: settingsText(context, '测试连接', 'Test connection'),
                   busy: viewModel.testing,
                   onPressed: () {
                     final draft = _form.readDraftOrReport(_reportInvalidDraft);
@@ -614,11 +611,9 @@ class _ProxySettingsBlockState extends State<_ProxySettingsBlock> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('出站代理', style: theme.textTheme.titleMedium),
+                        Text(settingsText(context, '出站代理', 'Outbound proxy'), style: theme.textTheme.titleMedium),
                         Text(
-                          '只作用于 OpenAI 兼容与 Anthropic 的模型出站；'
-                          '局域网 Ollama 与语音服务保持直连。'
-                          '配置保存在本机 provider.json。',
+                          settingsText(context, '只作用于 OpenAI 兼容与 Anthropic 的模型出站；局域网 Ollama 与语音服务保持直连。配置保存在本机 provider.json。', 'Applies only to outbound OpenAI-compatible and Anthropic model requests. Local Ollama and voice services connect directly. Saved locally in provider.json.'),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
@@ -646,8 +641,8 @@ class _ProxySettingsBlockState extends State<_ProxySettingsBlock> {
                     controller: _form.hostController,
                     focusNode: _form.hostFocusNode,
                     decoration: InputDecoration(
-                      labelText: '代理地址',
-                      hintText: '如 127.0.0.1 或 proxy.example.com',
+                      labelText: settingsText(context, '代理地址', 'Proxy host'),
+                      hintText: settingsText(context, '如 127.0.0.1 或 proxy.example.com', 'e.g. 127.0.0.1 or proxy.example.com'),
                       border: settingsOutlineBorder(color: QiyuColors.line),
                       enabledBorder: settingsOutlineBorder(
                         color: QiyuColors.line,
@@ -666,7 +661,7 @@ class _ProxySettingsBlockState extends State<_ProxySettingsBlock> {
                     focusNode: _form.portFocusNode,
                     keyboardType: TextInputType.number,
                     decoration: InputDecoration(
-                      labelText: '端口',
+                      labelText: settingsText(context, '端口', 'Port'),
                       hintText: '7890',
                       border: settingsOutlineBorder(color: QiyuColors.line),
                       enabledBorder: settingsOutlineBorder(
@@ -697,7 +692,7 @@ class _ProxySettingsBlockState extends State<_ProxySettingsBlock> {
                         dimension: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Text('保存代理设置'),
+                    : Text(settingsText(context, '保存代理设置', 'Save proxy settings')),
               ),
             ),
           ],
@@ -740,7 +735,7 @@ class _ResolvedConnection extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${provider.label}协议与服务地址已自动配置',
+                    settingsText(context, '${provider.label}协议与服务地址已自动配置', '${provider.label} protocol and service URL configured automatically'),
                     style: theme.textTheme.bodyMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),

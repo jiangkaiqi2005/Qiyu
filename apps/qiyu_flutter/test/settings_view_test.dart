@@ -25,11 +25,63 @@ import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
+import 'package:qiyu_flutter/features/shell/qiyu_strings.dart';
 import 'package:qiyu_flutter/theme/qiyu_tokens.dart';
 
 import 'support/shared_fakes.dart';
 
 void main() {
+  testWidgets('English mode translates settings without leaving the page', (tester) async {
+    final locale = LocaleController();
+    await tester.pumpWidget(await _app(
+      settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+      providerGateway: FixedProviderSettingsGateway(configured: false),
+      localeController: locale,
+    ));
+    await _openSettings(tester);
+    expect(find.text('设置'), findsWidgets);
+    final apiKey = find.byKey(const Key('provider-api-key'));
+    await _reveal(tester, apiKey);
+    await tester.enterText(apiKey, 'unsaved-key-draft');
+    await _expandSection(tester, 'tts');
+    expect(find.byKey(const Key('settings-section-content-tts')), findsOneWidget);
+
+    locale.setLocale('en');
+    await tester.pumpAndSettle();
+    expect(find.byType(ProviderSettingsView), findsOneWidget);
+    expect(find.text('Settings'), findsWidgets);
+    expect(find.text('Model connection'), findsOneWidget);
+    expect(find.text('Provider'), findsOneWidget);
+    expect(find.text('Official API · OpenAI compatible'), findsOneWidget);
+    expect(find.text('设置'), findsNothing);
+    expect(tester.widget<TextField>(apiKey).controller!.text, 'unsaved-key-draft');
+    await _reveal(tester, find.byKey(const Key('settings-section-header-tts')));
+    expect(find.text('Read aloud'), findsOneWidget);
+    expect(find.byKey(const Key('settings-section-content-tts')), findsOneWidget);
+  });
+
+  testWidgets('English settings fit a 420px window', (tester) async {
+    tester.view.physicalSize = const Size(420, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(await _app(
+      settingsViewModel: SettingsViewModel(_FakeSettingsGateway()),
+      providerGateway: FixedProviderSettingsGateway(configured: false),
+      localeController: LocaleController(initialLocale: 'en'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-go-settings')));
+    await tester.pumpAndSettle();
+    expect(find.text('Model connection'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    for (final section in ['tts', 'stt', 'web_search']) {
+      await _expandSection(tester, section);
+      expect(tester.takeException(), isNull, reason: '$section overflowed');
+    }
+  });
+
   testWidgets('安卓后台中断挂起合成后按钮立即可重试，旧请求晚到不覆盖新试听', (tester) async {
     final oldRequest = Completer<TtsConnectionTest>();
     final gateway = _MutableTtsSettingsGateway(const TtsSettings(
@@ -1975,6 +2027,7 @@ Future<Widget> _app({
   TtsSettingsGateway? ttsGateway,
   VoicePlayerPlatform? ttsPlayer,
   WebSearchSettingsGateway? webSearchGateway,
+  LocaleController? localeController,
 }) async {
   final providerViewModel = ProviderSettingsViewModel(
     providerGateway,
@@ -1988,6 +2041,7 @@ Future<Widget> _app({
   );
   await onboardingViewModel.initialize();
   return QiyuApp(
+    localeController: localeController,
     viewModel: LocalChatViewModel(
       FakeLocalChatGateway.silent(),
       hostConnectionProbe: FakeHostConnectionProbe(const [true]),

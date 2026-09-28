@@ -17,6 +17,20 @@ void main() {
       expect(sharer.calls, 1);
       expect(sharer.sharedName, 'qiyu-backup.zip');
       expect(sharer.sharedBytes, bundle);
+      expect(sharer.sharedTitle, '栖语备份');
+    });
+
+    test('英文界面把英文标题交给系统分享面板', () async {
+      final sharer = _RecordingSharer(result: true);
+      final platform = IoBackupPlatform(sharer: sharer, supported: true);
+
+      await platform.downloadBackup(
+        'qiyu-backup.zip',
+        bundle,
+        shareTitle: 'Qiyu backup',
+      );
+
+      expect(sharer.sharedTitle, 'Qiyu backup');
     });
 
     test('用户取消分享时如实返回未完成，不假装成功', () async {
@@ -84,12 +98,18 @@ final class _RecordingSharer implements BackupSharer {
   final bool result;
   int calls = 0;
   String? sharedName;
+  String? sharedTitle;
   Uint8List? sharedBytes;
 
   @override
-  Future<bool> share(String fileName, Uint8List bytes) async {
+  Future<bool> share(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  }) async {
     calls += 1;
     sharedName = fileName;
+    sharedTitle = shareTitle;
     sharedBytes = bytes;
     return result;
   }
@@ -98,7 +118,11 @@ final class _RecordingSharer implements BackupSharer {
 /// 故障注入的分享器替身：模拟 share_plus 打不开分享面板。
 final class _ThrowingSharer implements BackupSharer {
   @override
-  Future<bool> share(String fileName, Uint8List bytes) async {
+  Future<bool> share(
+    String fileName,
+    Uint8List bytes, {
+    String shareTitle = '栖语备份',
+  }) async {
     throw Exception('分享面板打不开');
   }
 }

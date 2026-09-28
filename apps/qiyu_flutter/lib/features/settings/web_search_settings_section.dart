@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'settings_section_shell.dart';
+import 'settings_strings.dart';
 import 'web_search_settings_client.dart';
 import 'web_search_settings_view_model.dart';
 
@@ -98,10 +99,8 @@ class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection>
     final confirmed = await confirmSettingsForgetKey(
       context: context,
       keyPrefix: 'web-search-',
-      title: '忘记 AnySearch API Key？',
-      content:
-          '忘记后本机不再保存这个 Key，联网搜索会立即停用，'
-          '普通聊天仍可照常使用。',
+      title: settingsTextNow(context, '忘记 AnySearch API Key？', 'Forget the AnySearch API key?'),
+      content: settingsTextNow(context, '忘记后本机不再保存这个 Key，联网搜索会立即停用，普通聊天仍可照常使用。', 'The key will be removed from this device and web search will stop immediately. Regular chat will keep working.'),
     );
     if (confirmed) {
       await viewModel.forgetApiKey();
@@ -117,11 +116,10 @@ class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection>
         final keySet = viewModel.settings?.keySet ?? false;
         return SettingsSectionPanel(
           sectionId: SettingsSectionId.webSearch,
-          title: '联网搜索',
+          title: settingsText(context, '联网搜索', 'Web search'),
           children: [
             Text(
-              '需要当前时间、天气、新闻等变化中的事实时，栖语可以按需搜索。'
-              'Key 只保存在本机 provider.json，页面不会取回明文。',
+              settingsText(context, '需要当前时间、天气、新闻等变化中的事实时，栖语可以按需搜索。Key 只保存在本机 provider.json，页面不会取回明文。', 'Qiyu can search when you need changing facts such as the current time, weather, or news. The key is saved only in the local provider.json file and cannot be retrieved from this page.'),
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.55,
@@ -136,14 +134,14 @@ class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection>
                 controller: _form.apiKeyController,
                 focusNode: _form.apiKeyFocusNode,
                 keySet: keySet,
-                title: keySet ? 'AnySearch Key 已保存在本机' : '尚未保存 AnySearch Key',
+                title: keySet ? settingsText(context, 'AnySearch Key 已保存在本机', 'AnySearch key saved locally') : settingsText(context, '尚未保存 AnySearch Key', 'No AnySearch key saved'),
                 titleStyle: theme.textTheme.titleSmall,
                 label: 'ANYSEARCH_API_KEY',
                 hint: keySet
-                    ? '留空即可继续使用已保存的 Key'
-                    : '保存后写入本机 provider.json',
+                    ? settingsText(context, '留空即可继续使用已保存的 Key', 'Leave blank to keep using the saved key')
+                    : settingsText(context, '保存后写入本机 provider.json', 'Saved locally to provider.json'),
                 forgetButtonKey: const Key('forget-web-search-key'),
-                forgetLabel: '忘记 AnySearch Key',
+                forgetLabel: settingsText(context, '忘记 AnySearch Key', 'Forget AnySearch key'),
                 onForgetKey: viewModel.saving
                     ? null
                     : () => unawaited(_confirmForgetKey(viewModel)),
@@ -155,7 +153,7 @@ class _WebSearchSettingsSectionState extends State<WebSearchSettingsSection>
               ),
               SettingsSaveTestButtons(
                 saveButtonKey: const Key('save-web-search-settings'),
-                saveLabel: '保存到本机',
+                saveLabel: settingsText(context, '保存到本机', 'Save locally'),
                 saveBusy: viewModel.saving,
                 // 联网搜索没有连接测试位：不传 test，只渲染保存钮。
                 onSave: () => unawaited(_save(viewModel)),

@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../theme/qiyu_tokens.dart';
 import 'settings_section_shell.dart';
+import 'settings_strings.dart';
 import 'stt_settings_client.dart';
 import 'stt_settings_view_model.dart';
 import 'voice_tier_metadata.dart';
@@ -377,10 +378,8 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
     final confirmed = await confirmSettingsForgetKey(
       context: context,
       keyPrefix: 'stt-',
-      title: '忘记语音服务的 API Key？',
-      content:
-          '忘记后本机不再保存这个 Key，语音输入暂时不可用，直到你重新输入。'
-          '语音服务的地址和模型不受影响。',
+      title: settingsTextNow(context, '忘记语音服务的 API Key？', 'Forget the speech service API key?'),
+      content: settingsTextNow(context, '忘记后本机不再保存这个 Key，语音输入暂时不可用，直到你重新输入。语音服务的地址和模型不受影响。', 'The key will be removed from this device. Voice input will be unavailable until you enter it again. The service URL and model are unaffected.'),
     );
     if (confirmed) {
       await viewModel.forgetApiKey();
@@ -422,7 +421,7 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
     final confirmed = await confirmSettingsTierSuggestion(
       context: context,
       keyPrefix: 'stt-',
-      changes: changes,
+      changes: changes.map((line) => settingsSuggestionLineNow(context, line)).toList(),
     );
     if (confirmed && mounted) {
       setState(() => _form.applySuggestion(plan));
@@ -440,10 +439,10 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
         final defaults = _form.protocolDefaults;
         return SettingsSectionPanel(
           sectionId: SettingsSectionId.stt,
-          title: '语音输入',
+          title: settingsText(context, '语音输入', 'Voice input'),
           children: [
             Text(
-              current.description,
+              settingsVoiceDescription(context, 'stt', current.wireName, current.description),
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.55,
@@ -452,7 +451,7 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
             const SizedBox(height: 16),
             SettingsControlledDropdown(
               dropdownKey: const Key('stt-provider'),
-              label: '服务类型',
+              label: settingsText(context, '服务类型', 'Service type'),
               value: _form.dropdownValue,
               // 档位目录随元数据下推（票 08）：下拉选项按宿主行集渲染，
               // 对话框档位改名与建议回填的档位识别同源。
@@ -460,7 +459,7 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                 for (final choice in _form.tierChoices)
                   DropdownMenuItem(
                     value: choice.wireName,
-                    child: Text(choice.label),
+                    child: Text(settingsCatalogLabel(context, choice.label)),
                   ),
               ],
               onChanged: (wireName) =>
@@ -472,8 +471,8 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
               controller: _form.baseUrlController,
               focusNode: _form.baseUrlFocusNode,
               decoration: InputDecoration(
-                labelText: '服务地址',
-                hintText: defaults.urlHint,
+                labelText: settingsText(context, '服务地址', 'Service URL'),
+                hintText: settingsCatalogLabel(context, defaults.urlHint),
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                 focusedBorder: settingsOutlineBorder(
@@ -487,11 +486,11 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
               controller: _form.modelController,
               focusNode: _form.modelFocusNode,
               decoration: InputDecoration(
-                labelText: current.modelLabel,
-                hintText: defaults.modelHint,
+                labelText: settingsCatalogLabel(context, current.modelLabel),
+                hintText: settingsCatalogLabel(context, defaults.modelHint),
                 // 型号支持范围说明（元数据带，千问档非空，票 08）：型号
                 // 取归口缺省档位，用户只看得到缺省型号时也知道支持范围。
-                helperText: current.modelHelperText,
+                helperText: current.modelHelperText == null ? null : settingsCatalogLabel(context, current.modelHelperText!),
                 border: settingsOutlineBorder(color: QiyuColors.line),
                 enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                 focusedBorder: settingsOutlineBorder(
@@ -508,9 +507,9 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                 controller: _form.authHeaderController,
                 focusNode: _form.authHeaderFocusNode,
                 decoration: InputDecoration(
-                  labelText: '鉴权头',
-                  hintText: current.authHeaderHint,
-                  helperText: current.authHeaderHelperText,
+                  labelText: settingsText(context, '鉴权头', 'Authorization header'),
+                  hintText: current.authHeaderHint == null ? null : settingsCatalogLabel(context, current.authHeaderHint!),
+                  helperText: current.authHeaderHelperText == null ? null : settingsCatalogLabel(context, current.authHeaderHelperText!),
                   border: settingsOutlineBorder(color: QiyuColors.line),
                   enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                   focusedBorder: settingsOutlineBorder(
@@ -521,13 +520,13 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
               const SizedBox(height: 16),
               SettingsControlledDropdown(
                 dropdownKey: const Key('stt-response-shape'),
-                label: '响应形态',
+                label: settingsText(context, '响应形态', 'Response format'),
                 value: _form.responseShape.wireName,
                 items: [
                   for (final option in current.responseShapeOptions)
                     DropdownMenuItem(
                       value: option.wireName,
-                      child: Text(option.label),
+                      child: Text(settingsCatalogLabel(context, option.label)),
                     ),
                 ],
                 onChanged: (wireName) =>
@@ -539,9 +538,9 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                 controller: _form.responseFieldController,
                 focusNode: _form.responseFieldFocusNode,
                 decoration: InputDecoration(
-                  labelText: '字段名/路径',
-                  hintText: current.responseFieldHint,
-                  helperText: current.responseFieldHelperText,
+                  labelText: settingsText(context, '字段名/路径', 'Field name / path'),
+                  hintText: current.responseFieldHint == null ? null : settingsCatalogLabel(context, current.responseFieldHint!),
+                  helperText: current.responseFieldHelperText == null ? null : settingsCatalogLabel(context, current.responseFieldHelperText!),
                   border: settingsOutlineBorder(color: QiyuColors.line),
                   enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                   focusedBorder: settingsOutlineBorder(
@@ -557,15 +556,15 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
               focusNode: _form.apiKeyFocusNode,
               keySet: keySet,
               title: keySet
-                  ? 'API Key 已保存在本机 provider.json'
-                  : '尚未保存语音服务的 API Key',
+                  ? settingsText(context, 'API Key 已保存在本机 provider.json', 'API key saved locally in provider.json')
+                  : settingsText(context, '尚未保存语音服务的 API Key', 'No speech service API key saved'),
               titleStyle: theme.textTheme.titleSmall,
               label: 'API Key',
               hint: keySet
-                  ? '留空即可继续使用已保存的 Key'
-                  : '保存后写入本机 provider.json',
+                  ? settingsText(context, '留空即可继续使用已保存的 Key', 'Leave blank to keep using the saved key')
+                  : settingsText(context, '保存后写入本机 provider.json', 'Saved locally to provider.json'),
               forgetButtonKey: const Key('forget-stt-key'),
-              forgetLabel: '忘记语音服务的 Key',
+              forgetLabel: settingsText(context, '忘记语音服务的 Key', 'Forget speech service key'),
               onForgetKey: viewModel.saving
                   ? null
                   : () => unawaited(_confirmForgetKey(viewModel)),
@@ -576,8 +575,8 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
               const SizedBox(height: 16),
               ExpansionTile(
                 key: const Key('stt-advanced-params-tile'),
-                title: const Text('高级参数'),
-                subtitle: const Text('自定义转写服务扩展字段 (JSON)'),
+                title: Text(settingsText(context, '高级参数', 'Advanced parameters')),
+                subtitle: Text(settingsText(context, '自定义转写服务扩展字段 (JSON)', 'Custom transcription fields (JSON)')),
                 tilePadding: EdgeInsets.zero,
                 children: [
                   Padding(
@@ -587,7 +586,7 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                       children: [
                         if (current.extraParamsExample case final example?)
                           Text(
-                            example,
+                            settingsVoiceExample(context, 'stt', current.wireName, example),
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
@@ -600,7 +599,7 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
                           keyboardType: TextInputType.multiline,
                           maxLines: 5,
                           decoration: InputDecoration(
-                            labelText: '自定义扩展字段 (JSON)',
+                            labelText: settingsText(context, '自定义扩展字段 (JSON)', 'Custom fields (JSON)'),
                             hintText:
                                 '{\n  "speaker": "zh"\n}',
                             contentPadding: const EdgeInsets.all(16),
@@ -648,12 +647,12 @@ class _SttSettingsSectionState extends State<SttSettingsSection>
               const SizedBox(height: 14),
             SettingsSaveTestButtons(
               saveButtonKey: const Key('save-stt-settings'),
-              saveLabel: '保存到本机',
+              saveLabel: settingsText(context, '保存到本机', 'Save locally'),
               saveBusy: viewModel.saving,
               onSave: () => unawaited(_save(viewModel)),
               test: (
                 buttonKey: const Key('test-stt-connection'),
-                label: '测试连接',
+                label: settingsText(context, '测试连接', 'Test connection'),
                 busy: viewModel.testing,
                 onPressed: () {
                   final draft = _form.readDraftOrReport(_reportInvalidDraft);

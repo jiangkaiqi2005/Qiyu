@@ -8,6 +8,7 @@ import '../../theme/qiyu_icons.dart';
 import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../shell/qiyu_fading_notice.dart';
+import '../shell/qiyu_ui_locale.dart';
 import '../shell/qiyu_widgets.dart';
 import '../navigation.dart';
 import '../accessibility.dart';
@@ -88,7 +89,8 @@ class QiyuComposer extends StatefulWidget {
   /// 让位（列表把 composer 当静息占位预留空间）。只用于该推导，**不作
   /// 展开判据**——窄屏字阶下两行内容仍矮于按钮行，按高度判定会漏翻
   /// （见 [QiyuComposerState._updateComposerExpanded]）。
-  static const double restingRowHeight = QiyuLayout.composerIconButtonSize +
+  static const double restingRowHeight =
+      QiyuLayout.composerIconButtonSize +
       _compactIconButtonSizeDelta +
       2 * QiyuLayout.focusRingOffset;
 
@@ -379,10 +381,7 @@ class QiyuComposerState extends State<QiyuComposer> {
       final box = _composerFieldKey.currentContext?.findRenderObject();
       if (box is! RenderBox || !box.hasSize || box.size.width <= 0) return;
       final painter = TextPainter(
-        text: TextSpan(
-          text: _controller.text,
-          style: _inputTextStyle(context),
-        ),
+        text: TextSpan(text: _controller.text, style: _inputTextStyle(context)),
         textDirection: TextDirection.ltr,
         textScaler: MediaQuery.textScalerOf(context),
       )..layout(maxWidth: box.size.width - 1.0 - _inputCursorWidth);
@@ -408,8 +407,8 @@ class QiyuComposerState extends State<QiyuComposer> {
       textInputAction: TextInputAction.newline,
       cursorWidth: _inputCursorWidth,
       style: _inputTextStyle(context),
-      decoration: const InputDecoration(
-        hintText: '想说点什么…',
+      decoration: InputDecoration(
+        hintText: qiyuStrings(context).composerHint,
         filled: false,
         isDense: true,
         contentPadding: EdgeInsets.zero,
@@ -449,7 +448,7 @@ class QiyuComposerState extends State<QiyuComposer> {
       return IconButton(
         key: const Key('voice-mic'),
         style: qiyuAndroidTouchStyle,
-        tooltip: '切换到按住说话',
+        tooltip: qiyuStrings(context).switchToHoldToTalk,
         onPressed: () {
           _focusNode.unfocus();
           setState(() => _voiceMode = true);
@@ -467,28 +466,28 @@ class QiyuComposerState extends State<QiyuComposer> {
     final (key, tooltip, icon, color, onPressed) = switch (voice.status) {
       VoiceInputStatus.unsupported || VoiceInputStatus.notConfigured => (
         'voice-mic',
-        '语音输入（当前不可用）',
+        qiyuStrings(context).voiceInputUnavailable,
         const Icon(QiyuIcons.mic_off),
         theme.disabledColor,
         _showVoiceGuide,
       ),
       VoiceInputStatus.idle => (
         'voice-mic',
-        '语音输入',
+        qiyuStrings(context).voiceInput,
         const Icon(QiyuIcons.mic),
         null,
         widget.voiceCoordinator.startRecording,
       ),
       VoiceInputStatus.recording => (
         'voice-mic-stop',
-        '说完，转成文字',
+        qiyuStrings(context).finishAndTranscribe,
         const Icon(QiyuIcons.stop_circle),
         theme.colorScheme.error,
         widget.voiceCoordinator.finishRecording,
       ),
       VoiceInputStatus.preparing || VoiceInputStatus.transcribing => (
         'voice-mic-busy',
-        '正在转文字',
+        qiyuStrings(context).transcribingButton,
         const SizedBox.square(
           dimension: 16,
           child: CircularProgressIndicator(strokeWidth: 2),
@@ -498,7 +497,7 @@ class QiyuComposerState extends State<QiyuComposer> {
       ),
       VoiceInputStatus.retryable => (
         'voice-mic-retry',
-        '重试转写',
+        qiyuStrings(context).retryTranscription,
         const Icon(QiyuIcons.mic),
         theme.colorScheme.error,
         widget.voiceCoordinator.retryTranscription,
@@ -535,7 +534,7 @@ class QiyuComposerState extends State<QiyuComposer> {
           IconButton(
             key: const Key('voice-text-mode'),
             style: qiyuAndroidTouchStyle,
-            tooltip: '切换到文字输入',
+            tooltip: qiyuStrings(context).switchToTextInput,
             onPressed: () {
               cancelUnsubmittedVoice();
               setState(() => _voiceMode = false);
@@ -550,11 +549,11 @@ class QiyuComposerState extends State<QiyuComposer> {
                 ? Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text('语音待发送，等待当前回复结束'),
+                      Text(qiyuStrings(context).voicePending),
                       TextButton(
                         style: qiyuAndroidTouchStyle,
                         onPressed: cancelUnsubmittedVoice,
-                        child: const Text('取消'),
+                        child: Text(qiyuStrings(context).cancel),
                       ),
                     ],
                   )
@@ -566,18 +565,22 @@ class QiyuComposerState extends State<QiyuComposer> {
                         TextButton(
                           style: qiyuAndroidTouchStyle,
                           onPressed: () => unawaited(voice.retryTranscribe()),
-                          child: const Text('重试'),
+                          child: Text(qiyuStrings(context).retry),
                         ),
                         TextButton(
                           style: qiyuAndroidTouchStyle,
                           onPressed: cancelUnsubmittedVoice,
-                          child: const Text('重新录制'),
+                          child: Text(qiyuStrings(context).recordAgain),
                         ),
                       ],
                       TextButton(
                         style: qiyuAndroidTouchStyle,
                         onPressed: cancelUnsubmittedVoice,
-                        child: Text(retryable ? '丢弃' : '取消'),
+                        child: Text(
+                          retryable
+                              ? qiyuStrings(context).discard
+                              : qiyuStrings(context).cancel,
+                        ),
                       ),
                     ],
                   )
@@ -612,10 +615,10 @@ class QiyuComposerState extends State<QiyuComposer> {
       context,
       unsupported
           ? (_android
-                ? '当前设备无法使用麦克风，请检查安卓系统权限和设备状态。'
-                : '当前浏览器不支持语音输入，请换 Chrome 或 Edge。')
-          : '还没有配置语音服务，先去设置页填写地址、模型和 Key。',
-      actionLabel: unsupported ? null : '去设置',
+                ? qiyuStringsNow(context).microphoneUnavailableAndroid
+                : qiyuStringsNow(context).microphoneUnavailableWeb)
+          : qiyuStringsNow(context).voiceNotConfigured,
+      actionLabel: unsupported ? null : qiyuStringsNow(context).goToSettings,
       onAction: unsupported ? null : () => widget.pushAwayFromChat('/settings'),
     );
   }
