@@ -10,9 +10,11 @@
 
 ---
 
+![Qiyu main interface](.github/assets/home-en.png)
+
 ## Who she is
 
-Qiyu is a bedtime AI companion — you can talk to her about anything, whether summarizing what you did today, or confiding things you can only tell yourself, and more. She has her own preferences and judgments, and won't pretend to agree just to be pleasant. She can have emotions, and she can not know how to answer.
+Qiyu is a bedtime AI companion — you can talk to her about anything, whether summarizing what you did today, or confiding things you can only tell yourself, and more. What sets her apart most is that she actually remembers you — your preferences, recent state, and the things you talk about with her, she remembers them all. She has her own preferences and judgments, and won't pretend to agree just to be pleasant. She can have emotions, and she can not know how to answer.
 
 Of course, you don't have to wait until bedtime. Chat with her whenever you feel like it.
 
@@ -26,12 +28,16 @@ Of course, you don't have to wait until bedtime. Chat with her whenever you feel
 - Over time, she teases you about staying up late and digs up last week's stories — but never jokes about what hurts.
 - She never says "I understand how you feel" or "thank you for sharing" — no customer-service scripts.
 
+![What it feels like to talk to her](.github/assets/chat-flow.png)
+
 ## Voice: talk to her, hear her talk
 
 When you don't feel like typing before bed, just speak.
 
 - On desktop: click the microphone next to the input box and start talking; click it again when you're done, and your words are sent as text.
 - On Android: tap the microphone once to enter voice mode, press and hold the button to speak, and release to send. Don't want to send? Slide up to cancel.
+
+![Voice input](.github/assets/voice-input.png)
 
 Her replies can be read aloud too — tap the speaker icon next to a bubble, or turn on auto-read in Settings.
 
@@ -63,7 +69,11 @@ Speech input and readback each configure their own service and key — setting u
 
 ## Memory: she actually remembers you
 
-Qiyu's memory system is built entirely on **local, readable Markdown files** — zero vector databases, zero graph databases, zero cloud sync. Everything lives on your own device, and you can open the folder to see exactly what she remembers. Storage is local; if you connect a model service in Settings, chat, daily finalization, memory recall, and Dream send the corresponding context to the provider you chose — without a configured model, the local rule engine takes over.
+She remembers you — your preferences, recent state, and the things you talk about with her, she remembers them all.
+
+Don't worry about her remembering too much: like a human, she forgets things too. As time goes on, just like a person, she only holds onto the things that truly matter.
+
+Qiyu's memory system is built entirely on **local, readable Markdown files**, with all files kept on your own device. You can open the folder at any time to see exactly what she remembers. Storage is local; if you connect a model service in Settings, chat, daily finalization, memory recall, and Dream send the corresponding context to the provider you chose — without a configured model, the local rule engine takes over.
 
 ### Three-tier architecture
 
@@ -84,6 +94,8 @@ Every belief requires sufficient evidence to stabilize:
 - Behavioral inferences — at least 3 dates, spanning ≥ 14 days
 
 Say "you got that wrong": identity facts are retracted on the spot, and she won't argue back with old evidence; corrections about personality or preferences are applied at that day's finalization or the next Dream.
+
+![PersonaTree](.github/assets/persona-tree.png)
 
 ### Five-stage memory rhythm
 
@@ -117,6 +129,8 @@ The Memory Center has four layers — **recent days, long-term impressions, abou
 - **Correct** a memory: long-term impressions and daily entries can be edited directly, and the persona is corrected through conversation; after a correction she rebuilds the related indexes in the background, showing "organizing" until it settles
 
 Memories that involve private information are masked by default and can be revealed temporarily.
+
+![Memory Center](.github/assets/memory-center.png)
 
 ## Web search
 
