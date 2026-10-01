@@ -1234,6 +1234,212 @@ void main() {
       <String, Object?>{},
     );
   });
+
+  // 纯停顿与只有标点的回复不送朗读（票 02，ADR 0024 既存问题 2 的独立
+  // 修正）：整段、分句、连续供给会话三条路径都不发；文字回复照常交付
+  // 落盘（交付编排零改动），只有声音不出。
+  group('纯停顿不送朗读（票 02）', () {
+    test('整段路径（HTTP 档）：纯停顿回复拒绝，一个字节的网络请求都不发', () async {
+      final client = _RecordingBytesHttpClient();
+      final service = TtsSettingsService(
+        repository,
+        TtsModelGateway(client),
+      );
+      await service.save(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+        apiKey: 'tts-secret-value',
+      );
+
+      for (final text in const ['。。。', '……', '？？？', '。', '（等了一会儿）']) {
+        await expectLater(
+          service.synthesize(text),
+          throwsA(
+            isA<TtsServiceException>()
+                .having((error) => error.code, 'code', 'tts_empty_text')
+                .having(
+                  (error) => error.message,
+                  'message',
+                  '这段话没有可以朗读的内容。',
+                ),
+          ),
+          reason: '「$text」应拒绝且不出网',
+        );
+      }
+      expect(client.postCalled, isFalse);
+      expect(client.downloadCalled, isFalse);
+    });
+
+    test('整段路径（千问 Realtime 档）：纯停顿回复拒绝，WS 连接都不开', () async {
+      final connector = _CountingWsConnector();
+      final service = TtsSettingsService(
+        repository,
+        TtsModelGateway(
+          _ExplodingBytesHttpClient(),
+          webSocketConnector: connector,
+        ),
+      );
+      await service.save(
+        baseUrl:
+            'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+        model: 'qwen3-tts-flash-realtime',
+        provider: TtsProviderKind.qwenTts,
+        apiKey: 'sk-secret-value',
+      );
+
+      await expectLater(
+        service.synthesize('……'),
+        throwsA(
+          isA<TtsServiceException>().having(
+            (error) => error.code,
+            'code',
+            'tts_empty_text',
+          ),
+        ),
+      );
+      expect(connector.connectCount, 0, reason: '纯停顿回复不应开任何会话');
+    });
+
+    test('分句路径：纯停顿句子回空块流，不请求网关、不算失败', () async {
+      final ttsGateway = ScriptedTtsGateway(replies: const {
+        '晚安。': ScriptedVoiceChunks([[1]]),
+      });
+      final service = TtsSettingsService(repository, ttsGateway);
+      await service.save(
+        baseUrl: 'https://tts.example.com/v1',
+        model: 'tts-test',
+        apiKey: 'tts-secret-value',
+      );
+
+      // 纯停顿句子：空块流（不是异常——异常会按 D1 误杀整段语音），
+      // 网关零请求。
+      expect(await service.synthesizeStream('。。。').toList(), isEmpty);
+      expect(ttsGateway.requests, isEmpty);
+
+      // 后续实词句子照常合成：静默不是失败，分句层继续。
+      final chunks = await service.synthesizeStream('晚安。').toList();
+      expect(chunks, hasLength(1));
+      expect(chunks.single.bytes, [1]);
+      expect(ttsGateway.requests, ['晚安。']);
+    });
+
+    test('连续供给会话：纯停顿增量扣住，实词到达先补发再发送（字节序不变）', () async {
+      final ttsGateway = ScriptedTtsGateway(sessionReplies: const {
+        '嗯': [[1]],
+        '嗯。。。在。': [[2]],
+      });
+      final service = TtsSettingsService(repository, ttsGateway);
+      await service.save(
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        provider: TtsProviderKind.volcTts,
+        apiKey: 'ark-secret-value',
+        transport: TtsTransport.wsBidirection,
+      );
+      final session = await service.openSession(sessionId: 'chat-1');
+      expect(session, isNotNull);
+
+      // 块流先订阅（交付管线同口径）：单订阅流，收尾的 done 要有监听者。
+      final chunksDone = session!.chunks.map((chunk) => chunk.bytes).toList();
+
+      session.appendText('嗯');
+      expect(ttsGateway.lastSession!.appends, ['嗯']);
+
+      // 纯停顿增量扣住：不进会话，一个字节都不发。
+      session.appendText('。。。');
+      expect(ttsGateway.lastSession!.appends, ['嗯']);
+
+      // 实词到达：先补发扣住的部分再发送——内容回复进会话的文本序与
+      // 既有行为完全一致。
+      session.appendText('在。');
+      expect(ttsGateway.lastSession!.appends, ['嗯', '。。。', '在。']);
+
+      await session.close();
+      expect(
+        await chunksDone,
+        [
+          [1],
+          [2],
+        ],
+      );
+    });
+
+    test('连续供给会话：整条纯停顿的回复一个字节都不发，收尾正常', () async {
+      final ttsGateway = ScriptedTtsGateway(sessionReplies: const {});
+      final service = TtsSettingsService(repository, ttsGateway);
+      await service.save(
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        provider: TtsProviderKind.volcTts,
+        apiKey: 'ark-secret-value',
+        transport: TtsTransport.wsBidirection,
+      );
+      final session = await service.openSession(sessionId: 'chat-1');
+      expect(session, isNotNull);
+
+      // 块流先订阅（交付管线同口径）。
+      final chunksDone = session!.chunks.toList();
+
+      session.appendText('。。。');
+      session.appendText('……？');
+      session.appendText('（等了一会儿）');
+      await session.close();
+
+      expect(ttsGateway.lastSession!.appends, isEmpty);
+      expect(await chunksDone, isEmpty);
+    });
+
+    test('连续供给会话：纯停顿尾缀在收尾时补发，内容回复听感不变', () async {
+      final ttsGateway = ScriptedTtsGateway(sessionReplies: const {
+        '晚安……': [[3]],
+      });
+      final service = TtsSettingsService(repository, ttsGateway);
+      await service.save(
+        baseUrl:
+            'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        model: 'seed-tts-2.0',
+        provider: TtsProviderKind.volcTts,
+        apiKey: 'ark-secret-value',
+        transport: TtsTransport.wsBidirection,
+      );
+      final session = await service.openSession(sessionId: 'chat-1');
+      expect(session, isNotNull);
+
+      // 块流先订阅（交付管线同口径）。
+      final chunksDone = session!.chunks.map((chunk) => chunk.bytes).toList();
+
+      session.appendText('晚安');
+      session.appendText('……');
+      // 尾缀扣住中：实词已发送，纯停顿尾缀等收尾再定去留。
+      expect(ttsGateway.lastSession!.appends, ['晚安']);
+
+      await session.close();
+      // 发过实词：收尾补发尾缀，服务端拿到的仍是完整原文。
+      expect(ttsGateway.lastSession!.appends, ['晚安', '……']);
+      expect(
+        await chunksDone,
+        [
+          [3],
+        ],
+      );
+    });
+  });
+}
+
+/// 记录建连次数的 WS 连接器：断言「纯停顿回复连会话都不开」。
+final class _CountingWsConnector implements ProviderWebSocketConnector {
+  int connectCount = 0;
+
+  @override
+  Future<ProviderWebSocketConnection> connect({
+    required Uri uri,
+    required Map<String, String> headers,
+  }) async {
+    connectCount += 1;
+    throw StateError('测试不应建连');
+  }
 }
 
 final class _FakeTtsGateway implements TtsSynthesisGateway {

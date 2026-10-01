@@ -323,6 +323,42 @@ final class OpenAiSpeechGateway
 /// 标注而不是冒充某种具体格式。
 const voiceWholeContainerMime = 'application/octet-stream';
 
+// ---------------------------------------------------------------------------
+// 纯停顿回复判定（票 02，ADR 0024「顺带发现的两个既存问题」第 2 条的
+// 独立修正）：只有省略号、停顿标记或标点的回复是栖语的合法输出形态
+// （「少回应」写在产品灵魂里），但沉默被念出来本身就是错的——这类文
+// 本不送任何合成请求，与用哪个 TTS 无关。
+// ---------------------------------------------------------------------------
+
+/// 停顿标记词干：与行为核心 bracketed pause 的词干同形（等了一会儿/
+/// 想了想/沉默了一下/停顿了一下及其可省「了」与「儿」的形态）。「轻
+/// 声说」是说话方式不是沉默，行为核心也未把它算进括号停顿，这里同律。
+const _pauseStemSource = '等了?一会儿?|等了一下|想了?想|沉默了?一下|停顿了?一下';
+
+/// 括号停顿标记（全角/半角/方头括号，允许内部与尾缀标点空白）。
+final _bracketedPauseTokenPattern = RegExp(
+  '[（(【\\[]\\s*(?:$_pauseStemSource)[。.!！?？,，、\\s]*[）)】\\]]',
+);
+
+/// 裸停顿标记（无括号的舞台提示词干，如整条回复只有「等了一下」）。
+final _barePauseTokenPattern = RegExp('(?:$_pauseStemSource)');
+
+/// 剩余字符全为空白/标点/符号（Unicode P* 与 S*，省略号、破折号、
+/// 全角句读都在其中）即没有可朗读的内容。
+final _nonspeakableRestPattern = RegExp(r'^[\s\p{P}\p{S}]*$', unicode: true);
+
+/// 判定一段待朗读文本是否纯停顿/只有标点（没有可朗读的内容）：整条
+/// 只有省略号、只有停顿标记（括号或裸形式）、或只有标点符号与空白。
+/// 判定先剥停顿标记再检查剩余字符——有任何一个实词、字母或数字（危
+/// 机兜底的热线号码 12356、988，时间与称呼）都判可朗读。空文本没有
+/// 可朗读的内容，返回 true。
+bool isPurePauseReplyText(String text) {
+  final withoutPauses = text
+      .replaceAll(_bracketedPauseTokenPattern, '')
+      .replaceAll(_barePauseTokenPattern, '');
+  return _nonspeakableRestPattern.hasMatch(withoutPauses);
+}
+
 /// 整段响应归一（票二）：仅当确实是裸 PCM 单声道 16-bit 时才在 Host
 /// 本地包 WAV 头（现有整段播放器零改动）；用户经高级参数覆盖成压缩
 /// 格式或多声道/别的位深时**原样返回**——那些配置在统一 PCM 之前就能

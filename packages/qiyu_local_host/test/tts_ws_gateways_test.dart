@@ -1088,6 +1088,71 @@ void main() {
       );
       expect(connector.connectCalls, 1);
     });
+
+    test('服务层纯停顿过滤（票 02）：纯停顿增量不上线，实词照常上送', () async {
+      // 走真实服务层与真千问 Realtime 网关（TtsSettingsService →
+      // TtsModelGateway → QwenRealtimeTtsGateway）：纯停顿回复一个
+      // input_text_buffer.append 帧都不发——「沉默不送合成」落在
+      // wire 上验证；实词增量照常上送，内容回复行为不变。
+      final directory = Directory.systemTemp.createTempSync('qiyu-tts-pause');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final configPath =
+          '${directory.path}${Platform.pathSeparator}provider.json';
+      await JsonProviderConfigRepository(filePath: configPath).saveTts(
+        _qwenConfig,
+      );
+      final connector = _ScriptedTtsWsConnector(
+        initialText: _qwenSessionCreated,
+        onTextSend: (text, connection) =>
+            _qwenScript.respond(_decodeClientTextEvent(text), connection),
+      );
+      final service = TtsSettingsService(
+        JsonProviderConfigRepository(filePath: configPath),
+        TtsModelGateway(
+          _UnreachableBytesHttpClient(),
+          webSocketConnector: connector,
+        ),
+      );
+
+      final session = await service.openSession(sessionId: 'chat-1');
+      expect(session, isNotNull);
+      // 单订阅块流先订阅（交付管线同口径），收尾的 done 才有着落。
+      final chunksDone = Completer<void>();
+      session!.chunks.listen((_) {}, onDone: chunksDone.complete);
+
+      session.appendText('。。。');
+      session.appendText('……？');
+      await _settle();
+      expect(
+        connector.connection!.sentText.map(_clientEventType).toList(),
+        ['session.update'],
+        reason: '纯停顿增量不产生任何合成上行帧',
+      );
+
+      // 实词增量到达：先补发扣住的纯停顿增量（文本序与到达序一致），
+      // 再发送实词；收尾只发 finish，纯停顿回复没有多余补发。
+      session.appendText('在。');
+      await session.close();
+      await chunksDone.future.timeout(const Duration(seconds: 5));
+      expect(
+        connector.connection!.sentText.map(_clientEventType).toList(),
+        [
+          'session.update',
+          'input_text_buffer.append',
+          'input_text_buffer.append',
+          'session.finish',
+        ],
+      );
+      expect(
+        _decodeClientTextEvent(connector.connection!.sentText[1])['text'],
+        '。。。……？',
+        reason: '扣住的纯停顿增量在实词前按到达序补发',
+      );
+      expect(
+        _decodeClientTextEvent(connector.connection!.sentText[2])['text'],
+        '在。',
+      );
+    });
   });
 
   group('千问 WS 推理（经典 SpeechSynthesizer）合成会话', () {
@@ -2430,4 +2495,26 @@ Uint8List _inferenceWavFrame(List<int> pcm, {bool extended = false}) {
   ]);
   chunk('data', pcm);
   return bytes.takeBytes();
+}
+
+/// 纯停顿过滤用例（票 02）的客户端事件类型视图：sentText 是握手、
+/// 追加与收尾帧的原始 JSON，断言只看 type 序列与 append 载荷。
+String _clientEventType(String text) =>
+    _decodeClientTextEvent(text)['type']! as String;
+
+/// 纯停顿过滤用例的 HTTP 哨兵：该路径不应有任何 HTTP 出网。
+final class _UnreachableBytesHttpClient implements ProviderBytesHttpClient {
+  @override
+  Future<ProviderBytesHttpResponse> postBytes({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+  }) => throw StateError('纯停顿过滤路径不应有 HTTP 出网');
+
+  @override
+  Future<ProviderBytesHttpResponse> getBytes({
+    required Uri uri,
+    required Duration timeout,
+  }) => throw StateError('纯停顿过滤路径不应有 HTTP 出网');
 }

@@ -368,6 +368,16 @@ final class TtsSettingsService
         retryable: false,
       );
     }
+    // 纯停顿与只有标点的回复（「……」「（等了一会儿）」「。」）没有可
+    // 朗读的内容：沉默被念出来本身就是错的（票 02，ADR 0024 既存问题 2
+    // 的独立修正）。与空文本同口径拒绝，不出网。
+    if (isPurePauseReplyText(text)) {
+      throw const TtsServiceException(
+        code: 'tts_empty_text',
+        message: '这段话没有可以朗读的内容。',
+        retryable: false,
+      );
+    }
     if (text.length > ttsMaxTextLength) {
       throw const TtsServiceException(
         code: 'tts_text_too_long',
@@ -470,6 +480,12 @@ final class TtsSettingsService
         retryable: false,
       );
     }
+    // 纯停顿与只有标点的句子（「……」「。」）不出声也不算失败（票 02）：
+    // 静默是正确输出而不是 D1——回空块流，分句层照常收句、后续句子
+    // 继续。抛异常会把「该沉默」误报成「合成失败」，整段语音就此收声。
+    if (isPurePauseReplyText(text)) {
+      return;
+    }
     // 防御性：装配的网关不支持流式（组合根只会装配支持的一份）。类型
     // 匹配直接绑定强类型变量，不依赖跨接口的类型提升。
     if (ttsGateway case final TtsStreamSynthesisGateway gateway) {
@@ -511,13 +527,78 @@ final class TtsSettingsService
       );
     }
     if (ttsGateway case final VoiceStreamSessionGateway gateway) {
-      return gateway.openSession(
+      final session = await gateway.openSession(
         config: config,
         apiKey: apiKey,
         sessionId: sessionId,
       );
+      if (session == null) {
+        return null;
+      }
+      // 纯停顿过滤（票 02）：流式会话的增量是原文直进 WS，纯停顿增量
+      // 不扣住就会整段送出去合成——沉默被念出来。过滤在服务层这个既有的
+      // 「不开会话就不发一个字节」接缝上做，会话实现与交付编排零改动。
+      return _PurePauseFilteredVoiceSession(session);
     }
     return null;
+  }
+}
+
+/// 纯停顿过滤的会话包装（票 02）：纯停顿/只有标点的增量不直接进会话，
+/// 先扣住——增量粒度下「整条回复是否纯停顿」在收尾前不可知（「……」
+/// 既可能是纯停顿回复的全部，也可能只是「晚安……」的尾缀）。其后到达
+/// 的实词增量先补发扣住的部分再发送，内容回复进会话的字节序与既有行
+/// 为完全一致；收尾时只扣到过纯停顿增量、没来过实词，即整条回复是纯
+/// 停顿——扣住的部分作废，一个字节都不发，会话照常收尾。
+final class _PurePauseFilteredVoiceSession implements VoiceStreamSession {
+  _PurePauseFilteredVoiceSession(this._inner);
+
+  final VoiceStreamSession _inner;
+
+  /// 扣住的纯停顿增量（按到达序拼接）。
+  final StringBuffer _held = StringBuffer();
+
+  /// 已向会话发过实词内容：收尾时决定扣住部分去留。
+  bool _contentSent = false;
+
+  @override
+  void appendText(String text) {
+    if (text.isEmpty) {
+      return;
+    }
+    if (isPurePauseReplyText(text)) {
+      _held.write(text);
+      return;
+    }
+    _flushHeld();
+    _contentSent = true;
+    _inner.appendText(text);
+  }
+
+  @override
+  Future<void> close() async {
+    if (_contentSent) {
+      _flushHeld();
+    }
+    return _inner.close();
+  }
+
+  @override
+  Stream<VoiceAudioChunk> get chunks => _inner.chunks;
+
+  @override
+  void cancel() {
+    _held.clear();
+    _inner.cancel();
+  }
+
+  void _flushHeld() {
+    if (_held.isEmpty) {
+      return;
+    }
+    final held = _held.toString();
+    _held.clear();
+    _inner.appendText(held);
   }
 }
 

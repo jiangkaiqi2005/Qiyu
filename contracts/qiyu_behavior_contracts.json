@@ -968,6 +968,78 @@
         "persistedQiyuText": "我在。刚忙完。",
         "diagnosticsContain": ["voice stream session failed"]
       }
+    },
+    {
+      "id": "pure-pause-reply-produces-no-voice",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "。。。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "replies": {}
+      },
+      "expected": {
+        "voiceChunkCount": 0,
+        "voiceErrorCount": 0,
+        "messages": ["。。。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "。。。",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "pure-pause-sentence-does-not-end-voice",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "在。" },
+        { "kind": "delta", "text": "。。。" },
+        { "kind": "delta", "text": "晚安。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "replies": {
+          "在。": { "chunks": [[1]] },
+          "晚安。": { "chunks": [[2]] }
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 2,
+        "chunkIndices": [0, 1],
+        "chunkBytes": ["AQ==", "Ag=="],
+        "deliveryIndex": 0,
+        "sampleRate": 24000,
+        "voiceErrorCount": 0,
+        "messages": ["在。。。。晚安。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "在。。。。晚安。",
+        "diagnosticsContain": []
+      }
+    },
+    {
+      "id": "ws-session-pure-pause-reply-sends-nothing",
+      "userText": "在吗",
+      "modelEvents": [
+        { "kind": "delta", "text": "。。。" },
+        { "kind": "done" }
+      ],
+      "voice": {
+        "canStream": true,
+        "session": {
+          "replies": {},
+          "expectedAppends": []
+        }
+      },
+      "expected": {
+        "voiceChunkCount": 0,
+        "voiceErrorCount": 0,
+        "messages": ["。。。"],
+        "persistedQiyuTurns": 1,
+        "persistedQiyuText": "。。。",
+        "diagnosticsContain": []
+      }
     }
   ],
   "cases": [

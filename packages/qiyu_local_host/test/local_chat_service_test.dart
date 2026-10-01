@@ -1868,12 +1868,16 @@ void main() {
         if (voiceSession != null) {
           // 连续供给（票三）：会话按聊天会话标识开（section_id 口径），
           // 增量原文整段进会话——不按标点切句、没有逐句合成请求。会话
-          // 失败后的文本不再发送（连接已断，发了也没有接收方）。
+          // 失败后的文本不再发送（连接已断，发了也没有接收方）。纯停顿
+          // 用例（票 02）显式声明应到达会话的追加序列——纯停顿增量在
+          // 服务层被扣住/作废，默认「增量原文逐段进会话」不再成立。
           expect(ttsGateway.sessionOpens.single.sessionId, trace.sessionId);
-          final expectedAppends = [
-            for (final event in script)
-              if (event['kind'] == 'delta') event['text']! as String,
-          ];
+          final expectedAppends =
+              voiceSession['expectedAppends'] as List<Object?>? ??
+              [
+                for (final event in script)
+                  if (event['kind'] == 'delta') event['text']! as String,
+              ];
           expect(
             ttsGateway.lastSession?.appends,
             switch (voiceSession['failAfterAppends'] as int?) {

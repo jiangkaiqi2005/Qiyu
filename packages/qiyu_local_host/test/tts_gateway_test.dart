@@ -410,6 +410,60 @@ void main() {
     expect(chunks.single.sampleRate, isNull);
     expect(chunks.single.mimeType, voiceWholeContainerMime);
   });
+
+  group('纯停顿与只有标点的回复判定（票 02）', () {
+    test('整条只有省略号或标点：判定为不可朗读', () {
+      for (final text in const [
+        '……',
+        '...',
+        '。。。。。',
+        '。',
+        '？？？',
+        '……？',
+        '！！',
+        '……。',
+        '、',
+        '——',
+        ' ',
+        '',
+      ]) {
+        expect(isPurePauseReplyText(text), isTrue, reason: '「$text」应判为纯停顿');
+      }
+    });
+
+    test('整条只有停顿标记：括号停顿与裸停顿行都判为不可朗读', () {
+      for (final text in const [
+        '（等了一会儿）',
+        '(等了一会儿)',
+        '（等了一会儿）。',
+        '（想了想）',
+        '（沉默了一下）',
+        '（停顿了一下）',
+        '等了一下',
+        '等了一会儿',
+        '……（等了一会儿）……',
+      ]) {
+        expect(isPurePauseReplyText(text), isTrue, reason: '「$text」应判为纯停顿');
+      }
+    });
+
+    test('有实词/字母/数字：判定为可朗读（热线号码绝不可判停顿）', () {
+      for (final text in const [
+        '在。',
+        '嗯？',
+        '我等了一会儿才走。',
+        '让我想想。',
+        '988',
+        '988。',
+        '12356，别一个人扛。',
+        '晚安……',
+        'a.',
+        '……在。',
+      ]) {
+        expect(isPurePauseReplyText(text), isFalse, reason: '「$text」应判为可朗读');
+      }
+    });
+  });
 }
 
 final class _RecordingBytesHttpClient implements ProviderBytesHttpClient {
