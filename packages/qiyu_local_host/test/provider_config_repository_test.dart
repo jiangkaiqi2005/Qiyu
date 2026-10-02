@@ -1929,4 +1929,64 @@ void main() {
       expect(await repository().loadWebSearch(), isNull);
     });
   });
+
+  test('Omni 实时档：wire 名生效、wss 合法、http 拒绝、作用域与聊天档区分', () {
+    const wss = ProviderConfig(
+      kind: ProviderKind.qwenOmniRealtime,
+      baseUrl: 'wss://dashscope.example.com/api-ws/v1/realtime',
+      model: 'qwen3.8-omni-flash-realtime',
+      temperature: 0.7,
+      timeoutSeconds: 30,
+    );
+    wss.validate();
+    expect(
+      ProviderKind.fromWireName('qwen_omni_realtime'),
+      ProviderKind.qwenOmniRealtime,
+    );
+    expect(wss.toJson()['provider'], 'qwen_omni_realtime');
+    expect(
+      () => ProviderConfig(
+        kind: ProviderKind.qwenOmniRealtime,
+        baseUrl: 'https://dashscope.example.com/api-ws/v1/realtime',
+        model: 'qwen3.8-omni-flash-realtime',
+        temperature: 0.7,
+        timeoutSeconds: 30,
+      ).validate(),
+      throwsA(isA<ProviderConfigException>()),
+    );
+    // 同主机的聊天档与实时档凭据作用域不同：切协议不沿用旧 Key。
+    const chat = ProviderConfig(
+      kind: ProviderKind.openAiCompatible,
+      baseUrl: 'https://dashscope.example.com/compatible-mode/v1',
+      model: 'qwen3.8-max',
+      temperature: 0.7,
+      timeoutSeconds: 30,
+    );
+    chat.validate();
+    expect(wss.credentialScope, isNot(chat.credentialScope));
+    expect(wss.credentialScope, contains('qwen_omni_realtime'));
+  });
+
+  test('Omni 实时档配置往返 provider.json，快照与文件不携带明文 Key', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-omni-config-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+    const config = ProviderConfig(
+      kind: ProviderKind.qwenOmniRealtime,
+      baseUrl: 'wss://dashscope.example.com/api-ws/v1/realtime',
+      model: 'qwen3.8-omni-flash-realtime',
+      temperature: 0.7,
+      timeoutSeconds: 30,
+    );
+
+    await repository.save(config.withApiKey('omni-secret'));
+    final restored = await JsonProviderConfigRepository(
+      filePath: filePath,
+    ).load();
+
+    expect(restored, config);
+    expect(restored!.apiKey, 'omni-secret');
+    expect(config.toJson().toString(), isNot(contains('omni-secret')));
+  });
 }

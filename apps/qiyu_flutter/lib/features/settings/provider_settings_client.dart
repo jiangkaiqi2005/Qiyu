@@ -4,7 +4,11 @@ import 'voice_tier_suggestion.dart';
 enum ProviderKind {
   openAiCompatible('openai_compatible', 'OpenAI 兼容'),
   anthropic('anthropic', 'Anthropic'),
-  ollama('ollama', 'Ollama');
+  ollama('ollama', 'Ollama'),
+  // Omni 实时对话档（ADR 0026）：DashScope Realtime WebSocket，与
+  // Chat Completions 协议互斥。Host 侧快照可能回显该 wire 名（本机
+  // provider.json 可直接编辑），枚举必须能解析，避免设置页读崩。
+  qwenOmniRealtime('qwen_omni_realtime', 'Omni 实时');
 
   const ProviderKind(this.wireName, this.label);
 

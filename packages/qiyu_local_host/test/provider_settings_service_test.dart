@@ -2,6 +2,8 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'package:test/test.dart';
 
+import 'support/scripted_omni_realtime.dart';
+
 void main() {
   const config = ProviderConfig(
     kind: ProviderKind.anthropic,
@@ -557,6 +559,201 @@ void main() {
     final cleared = await service.save(config: switched);
     expect(cleared.keySet, isFalse);
     expect(repository.config!.apiKey, isNull);
+  });
+
+  group('Omni 实时档（qwen_omni_realtime）', () {
+    const omniConfig = ProviderConfig(
+      kind: ProviderKind.qwenOmniRealtime,
+      baseUrl: 'wss://dashscope.example.com/api-ws/v1/realtime',
+      model: 'qwen3.8-omni-flash-realtime',
+      temperature: 0.7,
+      timeoutSeconds: 1,
+    );
+
+    ScriptedOmniRealtimeConnector scriptedConnector([
+      List<Map<String, Object?>> replyScript = const [],
+    ]) {
+      final connector = ScriptedOmniRealtimeConnector();
+      connector.connection.onClientFrame = scriptedOmniResponder(
+        connector.connection,
+        replyScript,
+      );
+      return connector;
+    }
+
+    test('complete 经实时网关走纯文字会话，不悄悄使用旧聊天模型', () async {
+      final connector = scriptedConnector([
+        {'type': 'response.created', 'response': {'id': 'resp-1'}},
+        {'type': 'response.text.delta', 'response_id': 'resp-1', 'delta': '在。'},
+        {'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed'}},
+      ]);
+      final repository =
+          _MemoryProviderConfigRepository()
+            ..config = omniConfig.withApiKey('omni-key');
+      final chatGateway = _FakeModelGateway(reply: '不该用我');
+      final service = ProviderSettingsService(
+        repository,
+        _MemorySecretStore(),
+        chatGateway,
+        promptBuilder,
+        omniRealtimeGateway: QwenOmniRealtimeGateway(connector),
+      );
+
+      final completion = await service.complete(const [
+        ModelMessage(ModelMessageRole.system, '维护提示'),
+        ModelMessage(ModelMessageRole.user, '整理'),
+      ]);
+
+      expect(completion!.text, '在。');
+      expect(chatGateway.messages, isNull);
+      final connection = connector.connection;
+      final update = connection.framesOfType('session.update').single;
+      expect((update['session']! as Map)['modalities'], ['text']);
+      expect(connection.framesOfType('response.create'), hasLength(1));
+      expect(connector.lastHeaders?['authorization'], 'Bearer omni-key');
+    });
+
+    test('实时回复取消时如实按失败降级，半句不当完整回复', () async {
+      final connector = scriptedConnector([
+        {'type': 'response.created', 'response': {'id': 'resp-1'}},
+        {'type': 'response.text.delta', 'response_id': 'resp-1', 'delta': '半句'},
+        {'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'cancelled'}},
+      ]);
+      final repository =
+          _MemoryProviderConfigRepository()
+            ..config = omniConfig.withApiKey('omni-key');
+      final service = ProviderSettingsService(
+        repository,
+        _MemorySecretStore(),
+        _FakeModelGateway(reply: '不该用我'),
+        promptBuilder,
+        omniRealtimeGateway: QwenOmniRealtimeGateway(connector),
+      );
+
+      final completion = await service.complete(const [
+        ModelMessage(ModelMessageRole.user, '整理'),
+      ]);
+
+      expect(completion!.succeeded, isFalse);
+      expect(completion.failure, ModelFailureKind.network);
+    });
+
+    test('prepareChatRequest 对 Omni 如实失败，不把实时型号塞进聊天接口', () async {
+      final repository =
+          _MemoryProviderConfigRepository()
+            ..config = omniConfig.withApiKey('omni-key');
+      final service = ProviderSettingsService(
+        repository,
+        _MemorySecretStore(),
+        _FakeModelGateway(reply: '不该用我'),
+        promptBuilder,
+      );
+
+      final request = await service.prepareChatRequest();
+      expect(request, isNotNull);
+      expect(request!.hardRulesAddendum, isEmpty);
+      final events = await (await request.openStream(const [
+        ModelMessage(ModelMessageRole.user, '在吗'),
+      ]))!
+          .toList();
+      expect(events, hasLength(1));
+      expect(events.single.kind, ModelStreamEventKind.failure);
+      expect(events.single.failure, ModelFailureKind.provider);
+    });
+
+    test('连接测试经实时文字轮完成，成功时按正常测试状态返回', () async {
+      final connector = scriptedConnector([
+        {'type': 'response.created', 'response': {'id': 'resp-1'}},
+        {'type': 'response.text.delta', 'response_id': 'resp-1', 'delta': '在。'},
+        {'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed'}},
+      ]);
+      final repository =
+          _MemoryProviderConfigRepository()
+            ..config = omniConfig.withApiKey('omni-key');
+      final service = ProviderSettingsService(
+        repository,
+        _MemorySecretStore(),
+        _FakeModelGateway(reply: '不该用我'),
+        promptBuilder,
+        omniRealtimeGateway: QwenOmniRealtimeGateway(connector),
+      );
+
+      final result = await service.test(config: omniConfig);
+
+      expect(result.status, ProviderTestStatus.success);
+      expect(connector.lastHeaders?['authorization'], 'Bearer omni-key');
+    });
+
+    test('实时测试连接被服务端拒绝时按分类返回（鉴权）', () async {
+      final connector = ScriptedOmniRealtimeConnector();
+      connector.connection.onClientFrame = (frame) {
+        if (frame['type'] == 'session.update') {
+          connector.connection.server({
+            'type': 'error',
+            'error': {'code': 'InvalidApiKey'},
+          });
+        }
+      };
+      final repository =
+          _MemoryProviderConfigRepository()
+            ..config = omniConfig.withApiKey('omni-key');
+      final service = ProviderSettingsService(
+        repository,
+        _MemorySecretStore(),
+        _FakeModelGateway(reply: '不该用我'),
+        promptBuilder,
+        omniRealtimeGateway: QwenOmniRealtimeGateway(connector),
+      );
+
+      final result = await service.test(config: omniConfig);
+
+      expect(result.status, ProviderTestStatus.authentication);
+    });
+
+    test('保存 Omni 配置不受明文 HTTP 允许列表约束（wss 公网目标），快照不含 Key', () async {
+      final repository = _MemoryProviderConfigRepository();
+      final service = ProviderSettingsService(
+        repository,
+        _MemorySecretStore(),
+        _FakeModelGateway(reply: '在。'),
+        promptBuilder,
+      );
+
+      final settings = await service.save(
+        config: omniConfig,
+        apiKey: 'omni-private-key',
+      );
+
+      expect(settings.configured, isTrue);
+      expect(settings.keySet, isTrue);
+      expect(settings.toJson().toString(), isNot(contains('omni-private-key')));
+      expect(repository.config!.apiKey, 'omni-private-key');
+    });
+
+    test('从聊天档切到 Omni 档：换协议即换凭据作用域，旧 Key 不沿用', () async {
+      const chatConfig = ProviderConfig(
+        kind: ProviderKind.openAiCompatible,
+        baseUrl: 'https://dashscope.example.com/compatible-mode/v1',
+        model: 'qwen3.8-max',
+        temperature: 0.7,
+        timeoutSeconds: 30,
+      );
+      final repository = _MemoryProviderConfigRepository();
+      final secrets = _MemorySecretStore();
+      final service = ProviderSettingsService(
+        repository,
+        secrets,
+        _FakeModelGateway(reply: '在。'),
+        promptBuilder,
+      );
+      await service.save(config: chatConfig, apiKey: 'chat-private-key');
+
+      await service.save(config: omniConfig);
+
+      expect(repository.config!.kind, ProviderKind.qwenOmniRealtime);
+      expect(repository.config!.apiKey, isNull);
+      expect(await secrets.readApiKey(chatConfig.credentialScope), isNull);
+    });
   });
 }
 

@@ -662,7 +662,7 @@ final class ProviderModelGateway
   /// 与 Anthropic）；Ollama 目标是本机／局域网服务，走代理不可达也不
   /// 该出外网。豆包语音直连网关（volc）不经过本类，结构上不受影响。
   ProviderHttpClient _outboundFor(ProviderKind kind) => switch (kind) {
-    ProviderKind.ollama => httpClient,
+    ProviderKind.ollama || ProviderKind.qwenOmniRealtime => httpClient,
     ProviderKind.openAiCompatible ||
     ProviderKind.anthropic => _proxyHttpClient ?? httpClient,
   };
@@ -1405,6 +1405,13 @@ _ProviderProtocol _providerProtocol(ProviderKind kind) => switch (kind) {
   ProviderKind.openAiCompatible => const _OpenAiCompatibleProtocol(),
   ProviderKind.anthropic => const _AnthropicProtocol(),
   ProviderKind.ollama => const _OllamaProtocol(),
+  // Omni 实时档不经 Chat Completions 出网（spec:17）：打到这里说明上游
+  // 没有走实时分支，按模型与接口不匹配失败关闭，绝不把实时型号当聊天
+  // 模型请求。
+  ProviderKind.qwenOmniRealtime => throw const ModelGatewayException(
+    kind: ModelFailureKind.modelInterfaceMismatch,
+    message: modelInterfaceMismatchMessage,
+  ),
 };
 
 final class _OpenAiCompatibleProtocol implements _ProviderProtocol {

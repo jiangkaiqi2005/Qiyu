@@ -4,6 +4,7 @@ import 'cleartext_policy.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'provider_config.dart';
+import 'qwen_omni_realtime_gateway.dart';
 import 'secret_store.dart';
 import 'voice_tier_mapping.dart';
 import 'web_search.dart';
@@ -147,6 +148,7 @@ final class ProviderSettingsService
     this.modelPromptBuilder, {
     this.webSearchConfigRepository,
     this.webSearchClient,
+    this.omniRealtimeGateway,
     this._behaviorCore = const QiyuBehaviorCore(),
   });
 
@@ -156,6 +158,11 @@ final class ProviderSettingsService
   final ModelPromptBuilder modelPromptBuilder;
   final WebSearchConfigRepository? webSearchConfigRepository;
   final WebSearchClient? webSearchClient;
+
+  /// Omni 实时会话网关（qwen_omni_realtime 档）：选中 Omni 后的文字接线
+  /// （记忆维护等）与连接测试经它出网。缺省 null＝未装配，选中 Omni 时
+  /// 相关调用按内部错误如实失败，不悄悄换模型。
+  final QwenOmniRealtimeGateway? omniRealtimeGateway;
   final QiyuBehaviorCore _behaviorCore;
 
   Future<ProviderSettingsSnapshot> read() async {
@@ -262,8 +269,13 @@ final class ProviderSettingsService
   }
 
   /// 出网目标地址的明文拒绝原因：端点路径只由网关拼接，scheme 与
-  /// 主机在 base 地址上判定即可。
+  /// 主机在 base 地址上判定即可。Omni 实时档走 WebSocket 出网，明文
+  /// HTTP 允许列表不适用——出网校验由实时网关的 SSRF 检查承担（ws/wss
+  /// 限公网目标，见 qwen_omni_realtime_gateway）。
   static String? _chatCleartextRefusal(ProviderConfig config) {
+    if (config.kind == ProviderKind.qwenOmniRealtime) {
+      return null;
+    }
     final uri = Uri.tryParse(config.baseUrl.trim());
     if (uri == null || !uri.hasAuthority) {
       return null;
@@ -291,13 +303,22 @@ final class ProviderSettingsService
       text: '在吗',
     );
     try {
-      final candidate = await modelGateway.complete(
-        config: config,
-        apiKey:
-            apiKey ??
-            await _resolveApiKey(config, await configRepository.load()),
-        messages: modelPromptBuilder.build(state, request.text),
-      );
+      final messages = modelPromptBuilder.build(state, request.text);
+      final resolvedKey =
+          apiKey ??
+          await _resolveApiKey(config, await configRepository.load());
+      final candidate = switch (config.kind) {
+        ProviderKind.qwenOmniRealtime => await _completeViaOmniRealtime(
+          config: config,
+          apiKey: resolvedKey,
+          messages: messages,
+        ),
+        _ => await modelGateway.complete(
+          config: config,
+          apiKey: resolvedKey,
+          messages: messages,
+        ),
+      };
       final outcome = _behaviorCore.reply(
         request,
         state,
@@ -332,6 +353,28 @@ final class ProviderSettingsService
     }
   }
 
+  /// Omni 实时档的文字调用：经实时网关跑纯文字会话轮（T01 §10 已核实
+  /// 形状，选中 Omni 后不悄悄沿用旧聊天模型）。网关未装配按内部错误
+  /// 如实失败。
+  Future<String> _completeViaOmniRealtime({
+    required ProviderConfig config,
+    required String? apiKey,
+    required List<ModelMessage> messages,
+  }) async {
+    final gateway = omniRealtimeGateway;
+    if (gateway == null) {
+      throw const ModelGatewayException(
+        kind: ModelFailureKind.internal,
+        message: '本机程序内部出错。',
+      );
+    }
+    return gateway.completeText(
+      config: config,
+      apiKey: apiKey,
+      messages: messages,
+    );
+  }
+
   @override
   Future<ModelCompletion?> complete(
     List<ModelMessage> messages, {
@@ -342,14 +385,25 @@ final class ProviderSettingsService
       return null;
     }
     try {
-      final text = await modelGateway.complete(
-        // 后台整理调用按后台期限出网：聊天期限是用户等回复的耐心上限，
-        // 而 Dream 与日终理解没人等，链路只在超时后降级并留待补跑。
-        config: config.withTimeoutSeconds(backgroundModelTimeoutSeconds),
-        apiKey: await _resolveApiKey(config),
-        messages: messages,
-        maxTokens: maxTokens,
+      // 后台整理调用按后台期限出网：聊天期限是用户等回复的耐心上限，
+      // 而 Dream 与日终理解没人等，链路只在超时后降级并留待补跑。实时
+      // 协议侧没有 maxTokens 的已核实字段，输出预算不随传。
+      final backgroundConfig = config.withTimeoutSeconds(
+        backgroundModelTimeoutSeconds,
       );
+      final text = switch (config.kind) {
+        ProviderKind.qwenOmniRealtime => await _completeViaOmniRealtime(
+          config: backgroundConfig,
+          apiKey: await _resolveApiKey(config),
+          messages: messages,
+        ),
+        _ => await modelGateway.complete(
+          config: backgroundConfig,
+          apiKey: await _resolveApiKey(config),
+          messages: messages,
+          maxTokens: maxTokens,
+        ),
+      };
       return ModelCompletion.reply(text);
     } on ModelGatewayException catch (error) {
       return ModelCompletion.failure(error.kind, serviceError: error.serviceError);
@@ -363,6 +417,22 @@ final class ProviderSettingsService
     final config = await configRepository.load();
     if (config == null) {
       return null;
+    }
+    // Omni 实时档不走 Chat Completions（spec:17）：打字对话的实时接线
+    // 在对话票落地，这里如实报失败降级，不冒充已接入，也绝不把实时
+    // 型号塞进聊天接口。
+    if (config.kind == ProviderKind.qwenOmniRealtime) {
+      Stream<ModelStreamEvent> unsupported() async* {
+        yield const ModelStreamEvent.failure(
+          ModelFailureKind.provider,
+          '实时 Omni 暂不支持打字对话，请开始通话或切换其他模型。',
+        );
+      }
+
+      return PreparedProviderChatRequest(
+        hardRulesAddendum: '',
+        openStream: (messages, whenCancelled) async => unsupported(),
+      );
     }
     final apiKey = await _resolveApiKey(config);
     // 能力判定只在网关侧进行：Web Search 需要 Anthropic 协议、

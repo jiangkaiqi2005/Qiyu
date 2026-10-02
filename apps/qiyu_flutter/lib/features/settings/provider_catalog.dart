@@ -121,6 +121,16 @@ const providerCatalog = <ProviderPreset>[
         baseUrl: 'https://dashscope.aliyuncs.com/apps/anthropic',
         models: ['qwen-plus', 'qwen3.7-plus', 'qwen3.8-max'],
       ),
+      // Omni 实时对话档（ADR 0026，T02）：qwen3.8-omni-flash-realtime
+      // 走 DashScope Realtime WebSocket，地址即完整实时端点（型号由
+      // Host 以 model query 参数携带），端点与型号为 T01 实测可用值。
+      ProviderConnectionPreset(
+        id: 'omni_realtime',
+        label: 'Omni 实时对话',
+        provider: ProviderKind.qwenOmniRealtime,
+        baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
+        models: ['qwen3.8-omni-flash-realtime'],
+      ),
     ],
   ),
   ProviderPreset(
@@ -289,6 +299,20 @@ const providerCatalog = <ProviderPreset>[
       ),
     ],
   ),
+  ProviderPreset(
+    id: 'custom_omni',
+    label: '自定义 Omni 实时',
+    connections: [
+      ProviderConnectionPreset(
+        id: 'custom',
+        label: 'Omni Realtime WebSocket',
+        provider: ProviderKind.qwenOmniRealtime,
+        baseUrl: '',
+        models: [],
+        editableBaseUrl: true,
+      ),
+    ],
+  ),
 ];
 
 ProviderPreset providerPresetById(String id) =>
@@ -323,9 +347,13 @@ ProviderCatalogSelection matchProviderSettings(ProviderSettings settings) {
     }
 
     return ProviderCatalogSelection(
-      providerId: settings.provider == ProviderKind.anthropic
-          ? 'custom_anthropic'
-          : 'custom_openai',
+      // 自定义回退按协议分流：Omni 实时档必须回自己的自定义档，落到
+      // custom_openai 会在保存时把实时档静默串写成 Chat Completions。
+      providerId: switch (settings.provider) {
+        ProviderKind.anthropic => 'custom_anthropic',
+        ProviderKind.qwenOmniRealtime => 'custom_omni',
+        _ => 'custom_openai',
+      },
       connectionId: 'custom',
       customModel: true,
     );

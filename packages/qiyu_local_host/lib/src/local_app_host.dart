@@ -39,6 +39,7 @@ import 'persona_tree.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
 import 'provider_web_socket.dart';
+import 'qwen_omni_realtime_gateway.dart';
 import 'proxy_settings_service.dart';
 import 'relationship_lifecycle.dart';
 import 'secure_token.dart';
@@ -159,6 +160,12 @@ final class LocalAppHost {
           webSearchConfigRepository: providerConfigRepository,
           // 联网搜索（AnySearch）是独立的国内服务，保持直连不走代理。
           webSearchClient: const AnySearchClient(directProviderHttpClient),
+          // Omni 实时会话网关（T02）：qwen_omni_realtime 档的实时连接与
+          // 文字接线共用同一 WS 连接子，与语音 WS 网关同律直连不走代理。
+          omniRealtimeGateway: QwenOmniRealtimeGateway(
+            const DartIoProviderWebSocketConnector(),
+            diagnosticsSink: diagnosticsSink,
+          ),
         );
     final effectiveWebSearchSettings =
         webSearchSettingsService ??

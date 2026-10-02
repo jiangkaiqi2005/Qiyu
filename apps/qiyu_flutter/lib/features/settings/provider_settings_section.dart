@@ -362,6 +362,10 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
         _form.sync(viewModel.settings);
         final theme = Theme.of(context);
         final connection = _form.selectedConnection;
+        // Omni 实时档收 WebSocket 端点：地址提示与明文 HTTP 帮助文案
+        // 按协议分流（ADR 0026，T02）。
+        final isOmniRealtime =
+            connection.provider == ProviderKind.qwenOmniRealtime;
         return SettingsSectionPanel(
           sectionId: SettingsSectionId.provider,
           title: settingsText(context, '模型连接', 'Model connection'),
@@ -452,8 +456,12 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
                   focusNode: _form.baseUrlFocusNode,
                   decoration: InputDecoration(
                     labelText: settingsText(context, '服务地址', 'Service URL'),
-                    hintText: 'https://example.com/v1',
-                    helperText: settingsText(context, '局域网地址请填 IP（明文 HTTP 不接受主机名）', 'Use an IP address for local networks (plain HTTP does not accept hostnames)'),
+                    hintText: isOmniRealtime
+                        ? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'
+                        : 'https://example.com/v1',
+                    helperText: isOmniRealtime
+                        ? null
+                        : settingsText(context, '局域网地址请填 IP（明文 HTTP 不接受主机名）', 'Use an IP address for local networks (plain HTTP does not accept hostnames)'),
                     border: settingsOutlineBorder(color: QiyuColors.line),
                     enabledBorder: settingsOutlineBorder(color: QiyuColors.line),
                     focusedBorder: settingsOutlineBorder(

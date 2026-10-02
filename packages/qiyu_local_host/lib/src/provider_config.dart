@@ -9,7 +9,12 @@ import 'markdown_memory_repository.dart';
 enum ProviderKind {
   openAiCompatible('openai_compatible'),
   anthropic('anthropic'),
-  ollama('ollama');
+  ollama('ollama'),
+
+  /// Omni 实时对话档（ADR 0026，T02）：qwen3.8-omni-flash-realtime 经
+  /// DashScope Realtime WebSocket 直接听说文字与语音，独立于 Chat
+  /// Completions 协议（spec:17——不把实时型号填进聊天接口当作接入）。
+  qwenOmniRealtime('qwen_omni_realtime');
 
   const ProviderKind(this.wireName);
 
@@ -106,10 +111,21 @@ final class ProviderConfig {
 
   void validate() {
     final uri = Uri.tryParse(baseUrl.trim());
-    if (uri == null ||
-        !uri.hasAuthority ||
-        (uri.scheme != 'http' && uri.scheme != 'https')) {
-      throw const ProviderConfigException('模型服务地址必须是有效的 HTTP 地址。');
+    // scheme 白名单按档区分：聊天三档仍是 HTTP(S)；Omni 实时档走
+    // WebSocket（T01 实测端点 wss://dashscope.aliyuncs.com/api-ws/v1/
+    // realtime，型号以 query 参数携带，由网关拼装）。
+    final schemeAllowed = switch (kind) {
+      ProviderKind.qwenOmniRealtime =>
+        uri != null && (uri.scheme == 'ws' || uri.scheme == 'wss'),
+      _ => uri != null && (uri.scheme == 'http' || uri.scheme == 'https'),
+    };
+    if (uri == null || !uri.hasAuthority || !schemeAllowed) {
+      throw switch (kind) {
+        ProviderKind.qwenOmniRealtime => const ProviderConfigException(
+          '实时模型服务地址必须是有效的 WebSocket 地址。',
+        ),
+        _ => const ProviderConfigException('模型服务地址必须是有效的 HTTP 地址。'),
+      };
     }
     if (model.trim().isEmpty) {
       throw const ProviderConfigException('请填写模型名称。');
