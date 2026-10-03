@@ -84,6 +84,7 @@ final class FakeOmniCapture implements VoiceCapturePlatform {
 
   @override
   Future<VoiceCaptureSession?> start({
+    bool automatic = false,
     required void Function(Uint8List pcm) onChunk,
     required void Function(String reason) onUnavailable,
   }) async {

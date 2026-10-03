@@ -43,7 +43,9 @@ abstract interface class VoiceCapturePlatform {
   ///
   /// 返回 null 表示没有开始（授权被拒、设备不可用、采集链路起不来），
   /// 调用方按「可继续打字」如实呈现，不偷偷重试。
+  /// [automatic] 表明本次启动身份，平台不得从先前的前检结果推断身份。
   Future<VoiceCaptureSession?> start({
+    bool automatic = false,
     required void Function(Uint8List pcm) onChunk,
     required void Function(String reason) onUnavailable,
   });

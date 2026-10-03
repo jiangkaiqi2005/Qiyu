@@ -3,12 +3,16 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/features/chat/omni_call_native_channel.dart';
+import 'package:qiyu_flutter/features/chat/omni_call_controller.dart';
 import 'package:qiyu_flutter/features/chat/omni_call_player_platform_io.dart';
 import 'package:qiyu_flutter/features/chat/voice_capture_platform_io.dart';
 import 'package:qiyu_flutter/features/chat/voice_capture_platform.dart'
     hide createVoiceCapturePlatform;
 import 'package:qiyu_flutter/features/chat/voice_player_platform_io.dart';
 import 'package:qiyu_flutter/features/chat/voice_player_platform.dart';
+import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
+
+import 'support/omni_call_fakes.dart';
 
 /// Omni 通话平台缝 io（安卓）侧的契约验收（T05）：
 ///
@@ -31,6 +35,84 @@ void main() {
   });
 
   group('Omni 连续采集平台（AndroidVoiceCapturePlatform）', () {
+    for (final reason in ['离页', '隐藏', '挂断', '手动抢先']) {
+      test('$reason丢弃旧自动前检后，权限撤销仍可手动申请并拨通', () async {
+        const native = MethodChannel(androidOmniCallChannelName);
+        final precheck = Completer<bool>();
+        final sent = <String>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(native, (method) async {
+          sent.add(method.method);
+          if (method.method == 'canAutoStartCapture') return precheck.future;
+          if (method.method == 'hasMicrophonePermission') return false;
+          return true;
+        });
+        addTearDown(() => TestDefaultBinaryMessengerBinding.instance
+            .defaultBinaryMessenger.setMockMethodCallHandler(native, null));
+        final socket = FakeOmniSocket();
+        final call = OmniCallController(
+          surface: RecordingCallSurface(),
+          providerSettings: FakeOmniProviderGateway(
+            callStartupMode: CallStartupMode.autoOnChatEntry,
+          ),
+          capture: AndroidVoiceCapturePlatform(supported: true),
+          connector: (_) => socket,
+        );
+        call.updateLocation(onChat: true, visible: true);
+        await omniDrain();
+        expect(sent, ['canAutoStartCapture']);
+        switch (reason) {
+          case '离页':
+            call.updateLocation(onChat: false, visible: true);
+          case '隐藏':
+            call.updateLocation(onChat: true, visible: false);
+          case '挂断':
+            await call.end();
+          case '手动抢先':
+            expect(await call.startCall(), isTrue);
+        }
+        precheck.complete(true);
+        await omniDrain();
+        call.updateLocation(onChat: true, visible: true);
+        if (reason != '手动抢先') expect(await call.startCall(), isTrue);
+        expect(sent.where((method) => method == 'requestMicrophonePermission'), hasLength(1));
+        expect(socket.decodedFrames.single['type'], 'start');
+        call.dispose();
+        await omniDrain();
+      });
+    }
+
+    test('controller 自动启动传明身份，授权撤销时不弹权限且可手动继续', () async {
+      const native = MethodChannel(androidOmniCallChannelName);
+      final sent = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(native, (method) async {
+        sent.add(method.method);
+        if (method.method == 'hasMicrophonePermission') return false;
+        return true;
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance
+          .defaultBinaryMessenger.setMockMethodCallHandler(native, null));
+      final socket = FakeOmniSocket();
+      final call = OmniCallController(
+        surface: RecordingCallSurface(),
+        providerSettings: FakeOmniProviderGateway(
+          callStartupMode: CallStartupMode.autoOnChatEntry,
+        ),
+        capture: AndroidVoiceCapturePlatform(supported: true),
+        connector: (_) => socket,
+      );
+      call.updateLocation(onChat: true, visible: true);
+      await omniDrain();
+      expect(call.startupFailure, OmniCallStartupFailure.micUnavailable);
+      expect(sent, ['canAutoStartCapture', 'hasMicrophonePermission']);
+      expect(await call.startCall(), isTrue);
+      expect(sent.where((method) => method == 'requestMicrophonePermission'), hasLength(1));
+      expect(socket.decodedFrames.single['type'], 'start');
+      call.dispose();
+      await omniDrain();
+    });
+
     test('取消起采后手动重开，旧成功和收尾只针对旧请求', () async {
       const native = MethodChannel(androidOmniCallChannelName);
       final oldStart = Completer<bool>();
@@ -85,7 +167,7 @@ void main() {
           .defaultBinaryMessenger.setMockMethodCallHandler(native, null));
       final platform = AndroidVoiceCapturePlatform(supported: true);
       expect(await platform.canAutoStart(), isTrue);
-      expect(await platform.start(onChunk: (_) {}, onUnavailable: (_) {}), isNull);
+      expect(await platform.start(automatic: true, onChunk: (_) {}, onUnavailable: (_) {}), isNull);
       expect(sent, ['canAutoStartCapture', 'hasMicrophonePermission']);
     });
 

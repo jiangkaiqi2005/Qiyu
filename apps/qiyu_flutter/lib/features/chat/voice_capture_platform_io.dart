@@ -34,13 +34,9 @@ final class AndroidVoiceCapturePlatform
   final bool? _supportedOverride;
   static int _nextRequestId = 1;
   int? _pendingRequestId;
-  bool _automaticPrechecked = false;
-  int _precheckGeneration = 0;
 
   @override
   void cancelPendingStart() {
-    _automaticPrechecked = false;
-    _precheckGeneration++;
     final id = _pendingRequestId;
     if (id == null) return;
     _pendingRequestId = null;
@@ -51,23 +47,18 @@ final class AndroidVoiceCapturePlatform
   bool get supported => _supportedOverride ?? Platform.isAndroid;
 
   @override
-  Future<bool> canAutoStart() async {
-    final generation = ++_precheckGeneration;
-    final allowed = supported && await _channel.canAutoStartCapture();
-    if (generation != _precheckGeneration) return false;
-    _automaticPrechecked = allowed;
-    return allowed;
-  }
+  Future<bool> canAutoStart() async =>
+      supported && await _channel.canAutoStartCapture();
 
   @override
   Future<VoiceCaptureSession?> start({
+    bool automatic = false,
     required void Function(Uint8List pcm) onChunk,
     required void Function(String reason) onUnavailable,
   }) async {
     if (!supported) {
       return null;
     }
-    final automatic = _automaticPrechecked;
     cancelPendingStart();
     final id = _nextRequestId++;
     _pendingRequestId = id;

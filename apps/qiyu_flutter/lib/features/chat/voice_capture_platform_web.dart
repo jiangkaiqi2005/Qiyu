@@ -59,6 +59,7 @@ final class WebVoiceCapturePlatform
 
   @override
   Future<VoiceCaptureSession?> start({
+    bool automatic = false,
     required void Function(Uint8List pcm) onChunk,
     required void Function(String reason) onUnavailable,
   }) async {

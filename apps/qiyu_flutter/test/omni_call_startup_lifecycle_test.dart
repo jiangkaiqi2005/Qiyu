@@ -580,6 +580,7 @@ class DeferredCapture implements VoiceCapturePlatform {
 
   @override
   Future<VoiceCaptureSession?> start({
+    bool automatic = false,
     required void Function(Uint8List pcm) onChunk,
     required void Function(String reason) onUnavailable,
   }) {
@@ -595,12 +596,13 @@ class CancellableDeferredCapture extends DeferredCapture
   final chunks = <void Function(Uint8List)>[];
   @override
   Future<VoiceCaptureSession?> start({
+    bool automatic = false,
     required void Function(Uint8List pcm) onChunk,
     required void Function(String reason) onUnavailable,
   }) {
     microphoneHeld = true;
     chunks.add(onChunk);
-    return super.start(onChunk: onChunk, onUnavailable: onUnavailable);
+    return super.start(automatic: automatic, onChunk: onChunk, onUnavailable: onUnavailable);
   }
 
   @override

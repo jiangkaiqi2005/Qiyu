@@ -330,6 +330,7 @@ final class OmniCallController extends ChangeNotifier {
     VoiceCaptureSession? session;
     try {
       session = await _capture.start(
+        automatic: automatic,
         onChunk: (pcm) {
           if (_isCurrentCall(generation)) _onCaptureChunk(pcm);
         },
