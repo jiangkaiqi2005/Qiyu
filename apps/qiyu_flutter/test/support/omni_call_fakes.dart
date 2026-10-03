@@ -123,13 +123,18 @@ final class FakeOmniStreamPlayback implements VoiceStreamPlayback {
   void setVolume(double volume) {}
 }
 
-final class FakeOmniStreamingPlayer implements StreamingVoicePlayerPlatform {
+final class FakeOmniStreamingPlayer
+    implements StreamingVoicePlayerPlatform, AutoStartVoicePlayerPlatform {
   final sampleRates = <int>[];
   final volumes = <double>[];
   final playbacks = <FakeOmniStreamPlayback>[];
 
   /// 开流返回 null（能力缺失/自动播放被拒）的注入位。
   bool returnNull = false;
+  bool autoPlaybackReady = true;
+
+  @override
+  Future<bool> prepareForAutoPlayback() async => autoPlaybackReady;
 
   @override
   Future<VoiceStreamPlayback?> startStream({
@@ -177,13 +182,25 @@ final class RecordingCallSurface implements OmniCallChatSurface {
 }
 
 final class FakeOmniProviderGateway implements ProviderSettingsGateway {
-  FakeOmniProviderGateway({this.kind = ProviderKind.qwenOmniRealtime});
+  FakeOmniProviderGateway({
+    this.kind = ProviderKind.qwenOmniRealtime,
+    this.callStartupMode = CallStartupMode.manual,
+  });
 
-  final ProviderKind? kind;
+  ProviderKind? kind;
+  CallStartupMode callStartupMode;
 
   @override
-  Future<ProviderSettings> read() async =>
-      ProviderSettings(configured: true, keySet: true, provider: kind);
+  Future<ProviderSettings> read() async => ProviderSettings(
+    configured: true,
+    keySet: true,
+    provider: kind,
+    baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
+    model: 'qwen3.8-omni-flash-realtime',
+    temperature: 0.8,
+    timeoutSeconds: 30,
+    callStartupMode: callStartupMode,
+  );
 
   @override
   Future<ProviderSettings> save(ProviderSettingsDraft draft) =>

@@ -445,6 +445,7 @@ class QiyuComposerState extends State<QiyuComposer> {
       switch (call.startupFailure) {
         OmniCallStartupFailure.notReady => strings.voiceNotConfigured,
         OmniCallStartupFailure.micUnavailable => strings.omniCallMicUnavailable,
+        OmniCallStartupFailure.playbackUnavailable => strings.omniCallStartFailed,
         OmniCallStartupFailure.connectFailed => strings.omniCallStartFailed,
         null => strings.omniCallStartFailed,
       },

@@ -12,6 +12,7 @@ import 'features/chat/local_chat_client.dart';
 import 'features/chat/local_chat_view.dart';
 import 'features/chat/local_chat_view_model.dart';
 import 'features/chat/omni_call_controller.dart';
+import 'features/chat/omni_call_lifecycle.dart';
 import 'features/chat/omni_call_player_platform.dart';
 import 'features/chat/voice_capture_platform.dart';
 import 'features/chat/voice_output_controller.dart';
@@ -419,7 +420,11 @@ class _QiyuAppState extends State<QiyuApp> {
           reduceMotion: qiyuReducedMotion(context),
           narrow: QiyuTypography.isNarrow(context),
         ),
-        child: child ?? const SizedBox.shrink(),
+        child: OmniCallLifecycle(
+          router: _router,
+          rootChatReady: context.watch<OnboardingViewModel>().completed,
+          child: child ?? const SizedBox.shrink(),
+        ),
       ),
     );
   }

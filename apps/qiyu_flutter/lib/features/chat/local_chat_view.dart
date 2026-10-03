@@ -13,6 +13,7 @@ import '../settings/stt_settings_client.dart';
 import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_strings.dart';
 import '../shell/qiyu_ui_locale.dart';
+import '../shell/qiyu_fading_notice.dart';
 import '../shell/qiyu_widgets.dart';
 import 'api_error_dialog.dart';
 import 'api_error_policy.dart';
@@ -92,6 +93,7 @@ class _LocalChatViewState extends State<LocalChatView>
   /// 只解析引用并传给 composer；脱离 app 树单独 pump 的测试拿不到
   /// Provider，按 null 处理，页面回落到无通话件的既有形态。
   OmniCallController? _omniCall;
+  bool _autoCallFailureShown = false;
 
   /// 聊天 VM 与朗读控制器的合并监听：**只建一次**复用。每次 build 现造
   /// `Listenable.merge` 会把这个临时合并对象挂到 voiceOutput 上且没人摘，
@@ -160,6 +162,7 @@ class _LocalChatViewState extends State<LocalChatView>
     // 导航销毁重建本页 State，与朗读可用状态同一补拉口径）；跨页通话
     // 的状态在 app 装配的控制器里，回页不重开、不重置。
     _omniCall = _resolveOmniCall();
+    _omniCall?.addListener(_onAutoCallChanged);
     unawaited(_omniCall?.refreshAvailability());
     // go 导航（侧边栏/抽屉换栈）会销毁重建本页 State：「回到聊天页」的
     // 路由监听帮不上忙，挂载即补拉一次朗读可用状态，设置页保存的语音
@@ -252,6 +255,28 @@ class _LocalChatViewState extends State<LocalChatView>
   OmniCallController? _resolveOmniCall() =>
       maybeProvider(() => context.read<OmniCallController>());
 
+  void _onAutoCallChanged() {
+    final call = _omniCall;
+    if (call == null || !call.automaticStartFailed || _autoCallFailureShown) {
+      return;
+    }
+    _autoCallFailureShown = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _router?.routerDelegate.currentConfiguration.last.matchedLocation !=
+              _chatLocation) {
+        return;
+      }
+      final strings = qiyuStringsNow(context);
+      showQiyuFadingNotice(
+        context,
+        call.startupFailure == OmniCallStartupFailure.micUnavailable
+            ? strings.omniCallMicUnavailable
+            : strings.omniCallStartFailed,
+      );
+    });
+  }
+
   void _onChatViewModelChanged() {
     final currentSessionId = _chatViewModel.sessionId;
     if (_lastTrackedSessionId != currentSessionId) {
@@ -265,6 +290,7 @@ class _LocalChatViewState extends State<LocalChatView>
 
   @override
   void dispose() {
+    _omniCall?.removeListener(_onAutoCallChanged);
     WidgetsBinding.instance.removeObserver(this);
     _router?.routerDelegate.removeListener(_onRouteChanged);
     _router?.routerDelegate

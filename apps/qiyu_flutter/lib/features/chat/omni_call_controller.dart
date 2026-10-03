@@ -7,6 +7,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../settings/provider_settings_client.dart';
 import 'local_chat_view_model.dart';
+import 'omni_call_usage_state.dart';
 import 'voice_capture_platform.dart';
 import 'voice_player_platform.dart';
 
@@ -15,7 +16,12 @@ import 'voice_player_platform.dart';
 enum OmniCallPhase { idle, connecting, active, reconnecting, ended }
 
 /// 通话没能开始的原因（composer 据此取面向用户的话术，spec:18）。
-enum OmniCallStartupFailure { notReady, micUnavailable, connectFailed }
+enum OmniCallStartupFailure {
+  notReady,
+  micUnavailable,
+  playbackUnavailable,
+  connectFailed,
+}
 
 /// 通话显示面的最小接缝（[LocalChatViewModel] 实现）：通话事件进入
 /// 普通聊天流（T04:7），复用既有的气泡、流式行与贴底逻辑，不建第二套
@@ -81,10 +87,13 @@ final class OmniCallController extends ChangeNotifier {
     OmniCallSocketConnector? connector,
     this._baseUri,
     String Function()? requestIdFactory,
+    OmniCallUsageState? usageState,
+    this._autoStartAllowed,
   }) : _capture = capture ?? createVoiceCapturePlatform(),
        _player = player ?? _resolveStreamingPlayer(),
        _connector = connector ?? _defaultConnector,
-       _requestIdFactory = requestIdFactory ?? _defaultRequestId;
+       _requestIdFactory = requestIdFactory ?? _defaultRequestId,
+       _usageState = usageState ?? createOmniCallUsageState();
 
   final OmniCallChatSurface _surface;
   final ProviderSettingsGateway _providerSettings;
@@ -93,6 +102,13 @@ final class OmniCallController extends ChangeNotifier {
   final OmniCallSocketConnector _connector;
   final Uri? _baseUri;
   final String Function() _requestIdFactory;
+  final OmniCallUsageState _usageState;
+  final Future<bool> Function()? _autoStartAllowed;
+  bool _onChat = false;
+  bool _visible = true;
+  bool _automaticStarting = false;
+  bool _automaticStartFailed = false;
+  int _entryGeneration = 0;
 
   OmniCallPhase _phase = OmniCallPhase.idle;
   String? _phaseReason;
@@ -102,9 +118,11 @@ final class OmniCallController extends ChangeNotifier {
   bool _userSpeaking = false;
   bool _qiyuSpeaking = false;
   bool _disposed = false;
+  int _callGeneration = 0;
 
   VoiceCaptureSession? _captureSession;
   OmniCallSocket? _socket;
+  OmniCallSocket? _pendingSocket;
   StreamSubscription<String>? _socketSubscription;
 
   /// 当前 socket 的 done 信号：挂断后的对账等 Host 收尾落盘完再跑。
@@ -154,6 +172,71 @@ final class OmniCallController extends ChangeNotifier {
   OmniCallStartupFailure? get startupFailure => _startupFailure;
   bool get userSpeaking => _userSpeaking;
   bool get qiyuSpeaking => _qiyuSpeaking;
+  bool get autoStartSuppressed => _usageState.autoStartSuppressed;
+  bool get automaticStartFailed => _automaticStartFailed;
+
+  /// 路由/平台只报告当前位置。回前台不会成为新进页；活动通话跨页
+  /// 继续，只有尚未接通的自动启动在离页/隐藏时作废。
+  void updateLocation({
+    required bool onChat,
+    required bool visible,
+    String? sessionId,
+  }) {
+    final entering = onChat && !_onChat;
+    _onChat = onChat;
+    _visible = visible;
+    if (!onChat || !visible) {
+      _entryGeneration++;
+      if (_automaticStarting && _phase == OmniCallPhase.connecting) {
+        _automaticStarting = false;
+        unawaited(_endCall());
+      }
+    }
+    if (entering && visible && !callInProgress && !autoStartSuppressed) {
+      unawaited(_autoStartOnEntry(++_entryGeneration, sessionId));
+    }
+  }
+
+  bool _isCurrentEntry(int entry) =>
+      !_disposed && entry == _entryGeneration && _onChat && _visible;
+
+  Future<void> _autoStartOnEntry(int entry, String? sessionId) async {
+    final settings = await _readAvailability();
+    if (!_isCurrentEntry(entry) ||
+        settings?.callStartupMode != CallStartupMode.autoOnChatEntry ||
+        !_omniReady ||
+        callInProgress ||
+        autoStartSuppressed) {
+      return;
+    }
+    // 失败、挂断或刷新都不能在本次使用内反复开麦/弹授权。
+    _usageState.suppressAutoStart();
+    bool allowed = false;
+    try {
+      final check = _autoStartAllowed;
+      if (check != null) {
+        allowed = await check();
+      } else if (_capture case final AutoStartVoiceCapturePlatform platform) {
+        allowed = await platform.canAutoStart();
+      }
+    } on Object {
+      allowed = false;
+    }
+    if (!_isCurrentEntry(entry) || callInProgress) return;
+    if (!allowed) {
+      _automaticStartFailed = true;
+      _startupFailure = OmniCallStartupFailure.micUnavailable;
+      _notify();
+      return;
+    }
+    _automaticStarting = true;
+    final started = await startCall(sessionId: sessionId, automatic: true);
+    if (!started && _isCurrentEntry(entry)) {
+      _automaticStarting = false;
+      _automaticStartFailed = true;
+      _notify();
+    }
+  }
 
   /// 通话中打字的分流判据（composer 发送起点据此改走通话线协议）。
   bool get acceptsTypedText => _phase == OmniCallPhase.active;
@@ -169,10 +252,16 @@ final class OmniCallController extends ChangeNotifier {
   /// 刷新「选中 Omni 且已配置」判定（挂载、回页、通话结束后调用；
   /// 通话中的配置切换由 Host 断旧连接兜底，T03:16）。
   Future<void> refreshAvailability() async {
+    await _readAvailability();
+  }
+
+  Future<ProviderSettings?> _readAvailability() async {
     bool ready = false;
+    ProviderSettings? settings;
     try {
-      final settings = await _providerSettings.read();
-      ready = settings.configured &&
+      settings = await _providerSettings.read();
+      ready =
+          settings.configured &&
           settings.keySet &&
           settings.provider == ProviderKind.qwenOmniRealtime;
     } on Object {
@@ -182,6 +271,12 @@ final class OmniCallController extends ChangeNotifier {
       _omniReady = ready;
       _notify();
     }
+    if (!ready && _automaticStarting && _phase == OmniCallPhase.connecting) {
+      _entryGeneration++;
+      _automaticStarting = false;
+      await _endCall();
+    }
+    return settings;
   }
 
   // -------------------------------------------------------------------------
@@ -191,17 +286,21 @@ final class OmniCallController extends ChangeNotifier {
   /// 开始一通通话：申请麦克风 → 连接 Host 通话口 → 发 start 首帧。
   /// 返回是否进入接通流程；失败置 [startupFailure] 并回到空闲，
   /// 不抛异常、不偷偷重试（T04:17）。
-  Future<bool> startCall({String? sessionId}) async {
+  Future<bool> startCall({String? sessionId, bool automatic = false}) async {
     if (callInProgress || _disposed) {
       return false;
     }
+    if (!automatic) _entryGeneration++;
+    _automaticStarting = automatic;
     _startupFailure = null;
+    _automaticStartFailed = false;
     if (!_omniReady) {
       _startupFailure = OmniCallStartupFailure.notReady;
       _notify();
       return false;
     }
     _callSessionId = sessionId;
+    final generation = ++_callGeneration;
     _deadTurns.clear();
     _teardownPlayback();
     _uplinkBuffer.clear();
@@ -210,11 +309,20 @@ final class OmniCallController extends ChangeNotifier {
     _qiyuSpeaking = false;
     _surface.callSessionReset();
     _setPhase(OmniCallPhase.connecting, reason: null);
-    final session = await _capture.start(
-      onChunk: _onCaptureChunk,
-      onUnavailable: _onCaptureUnavailable,
-    );
-    if (_phase != OmniCallPhase.connecting || _disposed) {
+    VoiceCaptureSession? session;
+    try {
+      session = await _capture.start(
+        onChunk: (pcm) {
+          if (_isCurrentCall(generation)) _onCaptureChunk(pcm);
+        },
+        onUnavailable: (reason) {
+          if (_isCurrentCall(generation)) _onCaptureUnavailable(reason);
+        },
+      );
+    } on Object {
+      // 平台启动失败与授权拒绝同样回落到手动入口。
+    }
+    if (!_isCurrentCall(generation)) {
       // 采集等待期间通话已被结束（挂断连点）：收掉采集，不继续接通。
       session?.stop();
       return false;
@@ -226,56 +334,111 @@ final class OmniCallController extends ChangeNotifier {
       return false;
     }
     _captureSession = session;
-    final OmniCallSocket socket;
+    if (automatic) {
+      var playbackReady = false;
+      try {
+        if (_player case final AutoStartVoicePlayerPlatform player) {
+          playbackReady = await player.prepareForAutoPlayback();
+        }
+      } on Object {
+        playbackReady = false;
+      }
+      if (!_isCurrentCall(generation)) {
+        session.stop();
+        return false;
+      }
+      if (!playbackReady) {
+        session.stop();
+        _captureSession = null;
+        _setPhase(OmniCallPhase.idle, reason: null);
+        _startupFailure = OmniCallStartupFailure.playbackUnavailable;
+        _notify();
+        return false;
+      }
+    }
+    OmniCallSocket? socket;
     try {
       socket = _connector(_resolveCallUri());
+      _pendingSocket = socket;
       await socket.ready;
     } on Object {
-      await _teardownSocket();
-      await _stopCapture();
+      session.stop();
+      await _closeSocket(socket);
+      if (!_isCurrentCall(generation)) return false;
+      _pendingSocket = null;
+      _captureSession = null;
       _setPhase(OmniCallPhase.idle, reason: null);
       _startupFailure = OmniCallStartupFailure.connectFailed;
       _notify();
       return false;
     }
-    if (_phase != OmniCallPhase.connecting || _disposed) {
-      await socket.close();
-      await _stopCapture();
+    if (!_isCurrentCall(generation)) {
+      session.stop();
+      await _closeSocket(socket);
       return false;
     }
+    _pendingSocket = null;
     _socket = socket;
-    _socketDone = Completer<void>();
+    final done = _socketDone = Completer<void>();
     _socketSubscription = socket.stream.listen(
-      _onFrame,
+      (frame) {
+        if (_isCurrentCall(generation)) _onFrame(frame);
+      },
       onDone: () {
-        final done = _socketDone;
-        if (done != null && !done.isCompleted) {
+        if (!done.isCompleted) {
           done.complete();
         }
-        _onSocketDone();
+        if (_isCurrentCall(generation)) _onSocketDone();
       },
       onError: (Object _) {
-        final done = _socketDone;
-        if (done != null && !done.isCompleted) {
+        if (!done.isCompleted) {
           done.complete();
         }
-        _onSocketDone();
+        if (_isCurrentCall(generation)) _onSocketDone();
       },
       cancelOnError: true,
     );
-    socket.send(jsonEncode({'type': 'start', 'sessionId': ?_callSessionId}));
+    try {
+      socket.send(jsonEncode({'type': 'start', 'sessionId': ?_callSessionId}));
+    } on Object {
+      _callGeneration++;
+      session.stop();
+      _captureSession = null;
+      final subscription = _socketSubscription;
+      _socketSubscription = null;
+      _socket = null;
+      _socketDone = null;
+      _startupFailure = OmniCallStartupFailure.connectFailed;
+      _setPhase(OmniCallPhase.idle, reason: null);
+      await subscription?.cancel();
+      await _closeSocket(socket);
+      return false;
+    }
     return true;
   }
+
+  bool _isCurrentCall(int generation) =>
+      !_disposed && generation == _callGeneration;
 
   /// 挂断（spec:24 明确结束）：立即停麦、停声、撤等待；Host 侧按 end
   /// 帧收尾落盘后推 ended 并关连接，对账在其后执行。结束 reason 与
   /// Host stopCall 的缺省同键（omni_call_service.dart），en 会话由
   /// localizeStatus 映射。
   Future<void> end() async {
+    _usageState.suppressAutoStart();
+    _entryGeneration++;
+    await _endCall();
+  }
+
+  Future<void> _endCall() async {
     if (!callInProgress || _disposed) {
       return;
     }
-    _socket?.send(jsonEncode({'type': 'end'}));
+    try {
+      _socket?.send(jsonEncode({'type': 'end'}));
+    } on Object {
+      // 连接已断开也必须收掉本机资源。
+    }
     _finishLocally('通话已结束。');
   }
 
@@ -411,6 +574,7 @@ final class OmniCallController extends ChangeNotifier {
         }
       }
     }
+    if (phase == OmniCallPhase.active) _automaticStarting = false;
     if (phase == OmniCallPhase.ended) {
       _finishLocally(reason ?? '通话已结束。');
       return;
@@ -522,6 +686,7 @@ final class OmniCallController extends ChangeNotifier {
       return;
     }
     _playbackOpening = true;
+    final generation = _callGeneration;
     _playbackTurnId = turnId;
     _pendingPlaybackChunks
       ..clear()
@@ -534,14 +699,14 @@ final class OmniCallController extends ChangeNotifier {
         // 新回复开流时取当前值，调节后的下一句即刻生效。
         volume: _resolvePlaybackVolume(),
       );
-      _playbackOpening = false;
-      if (_disposed ||
+      if (!_isCurrentCall(generation) ||
           _phase == OmniCallPhase.idle ||
           _phase == OmniCallPhase.ended ||
           _playbackTurnId != turnId) {
         playback?.stop();
         return;
       }
+      _playbackOpening = false;
       if (playback == null) {
         // 播不出来（能力缺失/自动播放被拒）：文字照常，声音如实缺席。
         _playbackClosed = true;
@@ -610,12 +775,23 @@ final class OmniCallController extends ChangeNotifier {
   /// 清队列、清两位说话指示、置 ended（reason 与 Host 同键，en 会话由
   /// localizeStatus 映射）、启动落盘对账。不偷偷重开（T04:17）。
   void _finishLocally(String reason) {
+    _automaticStarting = false;
+    final generation = ++_callGeneration;
     unawaited(_stopCapture());
+    final pending = _pendingSocket;
+    _pendingSocket = null;
+    unawaited(_closeSocket(pending));
+    final socket = _socket;
+    final subscription = _socketSubscription;
+    final done = _socketDone;
+    _socket = null;
+    _socketSubscription = null;
+    _socketDone = null;
     _teardownPlayback();
     _userSpeaking = false;
     _qiyuSpeaking = false;
     _setPhase(OmniCallPhase.ended, reason: reason);
-    unawaited(_resyncWhenQuiescent());
+    unawaited(_resyncWhenQuiescent(socket, subscription, done, generation));
   }
 
   void _onSocketDone() {
@@ -628,8 +804,12 @@ final class OmniCallController extends ChangeNotifier {
   /// ended 后等连接真正安静再对账：挂断时 Host 还在收尾落盘在途轮
   /// （T03 stopCall 先落盘再推 ended、再关连接），恢复快照要读到落盘
   /// 后的事实；等不到就按超时对账，不无限等。
-  Future<void> _resyncWhenQuiescent() async {
-    final done = _socketDone;
+  Future<void> _resyncWhenQuiescent(
+    OmniCallSocket? socket,
+    StreamSubscription<String>? subscription,
+    Completer<void>? done,
+    int generation,
+  ) async {
     if (done != null && !done.isCompleted) {
       try {
         await done.future.timeout(const Duration(seconds: 2));
@@ -637,7 +817,9 @@ final class OmniCallController extends ChangeNotifier {
         // 超时/错误都算安静。
       }
     }
-    await _teardownSocket();
+    await subscription?.cancel();
+    await _closeSocket(socket);
+    if (!_isCurrentCall(generation)) return;
     try {
       await _surface.resyncAfterCall();
     } on Object {
@@ -651,7 +833,15 @@ final class OmniCallController extends ChangeNotifier {
     final socket = _socket;
     _socket = null;
     _socketDone = null;
-    await socket?.close();
+    await _closeSocket(socket);
+  }
+
+  Future<void> _closeSocket(OmniCallSocket? socket) async {
+    try {
+      await socket?.close();
+    } on Object {
+      // failed ready/已断开的连接也需释放本机采集，关闭失败不能抢断收尾。
+    }
   }
 
   Future<void> _stopCapture() async {
@@ -675,6 +865,8 @@ final class OmniCallController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _callGeneration++;
+    unawaited(_closeSocket(_pendingSocket));
     unawaited(_teardownSocket());
     unawaited(_stopCapture());
     _teardownPlayback();

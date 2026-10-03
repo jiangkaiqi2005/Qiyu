@@ -48,3 +48,9 @@ abstract interface class VoiceCapturePlatform {
     required void Function(String reason) onUnavailable,
   });
 }
+
+/// 自动进页必须先确认可见平台能无权限弹窗地采集（T10/T11）。
+/// 具体采集继续走 VoiceCapturePlatform.start，不增加另一条音频链路。
+abstract interface class AutoStartVoiceCapturePlatform {
+  Future<bool> canAutoStart();
+}

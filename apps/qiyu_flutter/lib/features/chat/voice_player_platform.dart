@@ -108,6 +108,12 @@ abstract interface class UserGestureVoicePlayerPlatform {
   void prepareForPlayback();
 }
 
+/// 自动通话在真实采集开始后核验输出已可播放（T10/T11）；
+/// 失败时 controller 停止未完成的采集，不冒充完整通话。
+abstract interface class AutoStartVoicePlayerPlatform {
+  Future<bool> prepareForAutoPlayback();
+}
+
 /// 安卓从合成前开始观察系统中断；停止也取消尚未取得句柄的准备工作。
 abstract interface class InterruptibleVoicePlayerPlatform {
   Future<bool> beginOutput();
