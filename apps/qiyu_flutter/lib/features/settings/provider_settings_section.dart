@@ -8,6 +8,7 @@ import '../../theme/qiyu_tokens.dart';
 import 'provider_catalog.dart';
 import 'provider_settings_client.dart';
 import 'provider_settings_view_model.dart';
+import 'omni_startup_settings.dart';
 import 'proxy_settings_client.dart';
 import 'proxy_settings_view_model.dart';
 import 'settings_section_shell.dart';
@@ -59,6 +60,29 @@ final class ProviderSettingsForm
   String _selectedProviderId = 'openai';
   String _selectedConnectionId = 'official';
   bool _customModel = false;
+  ProviderSettings? _lastSettings;
+
+  @override
+  void sync(ProviderSettings? settings) {
+    if (settings == null || identical(settings, _lastSettings)) {
+      return;
+    }
+    final previous = _lastSettings;
+    _lastSettings = settings;
+    // 单独改启动偏好不覆盖正在编辑的模型/Key 草稿。
+    if (previous != null &&
+        previous.callStartupMode != settings.callStartupMode &&
+        previous.configured == settings.configured &&
+        previous.keySet == settings.keySet &&
+        previous.provider == settings.provider &&
+        previous.baseUrl == settings.baseUrl &&
+        previous.model == settings.model &&
+        previous.temperature == settings.temperature &&
+        previous.timeoutSeconds == settings.timeoutSeconds) {
+      return;
+    }
+    super.sync(settings);
+  }
 
   String get selectedProviderId => _selectedProviderId;
 
@@ -533,6 +557,10 @@ class _ProviderSettingsSectionState extends State<ProviderSettingsSection>
               ),
               const SizedBox(height: 16),
               _credentialSection(context, viewModel),
+              if (isOmniRealtime) ...[
+                const SizedBox(height: 24),
+                const OmniStartupSettings(),
+              ],
               const SizedBox(height: 24),
               ...settingsStatusBanners(
                 errorMessage: viewModel.errorMessage,
