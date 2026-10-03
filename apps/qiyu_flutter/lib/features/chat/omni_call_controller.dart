@@ -107,6 +107,7 @@ final class OmniCallController extends ChangeNotifier {
   bool _onChat = false;
   bool _visible = true;
   bool _automaticStarting = false;
+  bool _automaticOutputHeld = false;
   bool _automaticStartFailed = false;
   int _entryGeneration = 0;
   int _availabilityGeneration = 0;
@@ -317,6 +318,7 @@ final class OmniCallController extends ChangeNotifier {
     }
     _callSessionId = sessionId;
     final generation = ++_callGeneration;
+    _stopAutomaticOutput();
     _deadTurns.clear();
     _teardownPlayback();
     _uplinkBuffer.clear();
@@ -354,6 +356,7 @@ final class OmniCallController extends ChangeNotifier {
       var playbackReady = false;
       try {
         if (_player case final AutoStartVoicePlayerPlatform player) {
+          _automaticOutputHeld = true;
           playbackReady = await player.prepareForAutoPlayback();
         }
       } on Object {
@@ -364,6 +367,7 @@ final class OmniCallController extends ChangeNotifier {
         return false;
       }
       if (!playbackReady) {
+        _stopAutomaticOutput();
         session.stop();
         _captureSession = null;
         _setPhase(OmniCallPhase.idle, reason: null);
@@ -379,6 +383,7 @@ final class OmniCallController extends ChangeNotifier {
       await socket.ready;
     } on Object {
       session.stop();
+      if (_isCurrentCall(generation)) _stopAutomaticOutput();
       await _closeSocket(socket);
       if (!_isCurrentCall(generation)) return false;
       _pendingSocket = null;
@@ -418,6 +423,7 @@ final class OmniCallController extends ChangeNotifier {
       socket.send(jsonEncode({'type': 'start', 'sessionId': ?_callSessionId}));
     } on Object {
       _callGeneration++;
+      _stopAutomaticOutput();
       session.stop();
       _captureSession = null;
       final subscription = _socketSubscription;
@@ -793,6 +799,7 @@ final class OmniCallController extends ChangeNotifier {
   void _finishLocally(String reason) {
     _automaticStarting = false;
     final generation = ++_callGeneration;
+    _stopAutomaticOutput();
     unawaited(_stopCapture());
     final pending = _pendingSocket;
     _pendingSocket = null;
@@ -866,6 +873,14 @@ final class OmniCallController extends ChangeNotifier {
     session?.stop();
   }
 
+  void _stopAutomaticOutput() {
+    if (!_automaticOutputHeld) return;
+    _automaticOutputHeld = false;
+    if (_player case final InterruptibleVoicePlayerPlatform player) {
+      player.endOutput();
+    }
+  }
+
   void _setPhase(OmniCallPhase phase, {required String? reason}) {
     _phase = phase;
     _phaseReason = reason;
@@ -882,6 +897,7 @@ final class OmniCallController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _callGeneration++;
+    _stopAutomaticOutput();
     unawaited(_closeSocket(_pendingSocket));
     unawaited(_teardownSocket());
     unawaited(_stopCapture());

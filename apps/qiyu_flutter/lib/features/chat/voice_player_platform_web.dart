@@ -26,9 +26,77 @@ final class WebVoicePlayerPlatform
     implements
         VoicePlayerPlatform,
         UserGestureVoicePlayerPlatform,
+        AutoStartVoicePlayerPlatform,
+        InterruptibleVoicePlayerPlatform,
         StreamingVoicePlayerPlatform {
   web.AudioContext? _context;
   Future<bool>? _resumeAttempt;
+  web.AudioContext? _automaticContext;
+  Completer<bool>? _automaticCancelled;
+
+  @override
+  Future<bool> prepareForAutoPlayback() async {
+    endOutput();
+    if (web.document.visibilityState != 'visible') return false;
+    final cancelled = _automaticCancelled = Completer<bool>();
+    web.AudioContext? context;
+    try {
+      // 真实采集已由 controller 验证；Chrome 活跃采集可放行 autoplay，
+      // 其他浏览器仍以 resume 后的实际状态为准。与下行 PCM 使用同一路。
+      context = _automaticContext = web.AudioContext(
+        web.AudioContextOptions(sampleRate: 24000),
+      );
+      final running = await Future.any([
+        _waitStreamContextRunning(context),
+        cancelled.future,
+      ]);
+      if (!identical(_automaticCancelled, cancelled)) return false;
+      if (running &&
+          context.state == 'running' &&
+          web.document.visibilityState == 'visible') {
+        final opening = startStream(sampleRate: 24000);
+        VoiceStreamPlayback? playback;
+        var finished = false;
+        unawaited(opening.then((latePlayback) {
+          if (finished) latePlayback?.stop();
+        }));
+        try {
+          playback = await Future.any([
+            opening,
+            cancelled.future.then<VoiceStreamPlayback?>((_) => null),
+          ]).timeout(const Duration(seconds: 2), onTimeout: () => null);
+        } finally {
+          finished = true;
+        }
+        playback?.stop();
+        if (!identical(_automaticCancelled, cancelled)) return false;
+        if (playback != null && context.state == 'running' &&
+            web.document.visibilityState == 'visible') {
+          return true;
+        }
+      }
+    } on Object {
+      // 自动播放未放行、设备失效均退回手动。
+    }
+    if (identical(_automaticCancelled, cancelled)) endOutput();
+    return false;
+  }
+
+  @override
+  Future<bool> beginOutput() async => true;
+
+  @override
+  void endOutput() {
+    final cancelled = _automaticCancelled;
+    _automaticCancelled = null;
+    if (cancelled != null && !cancelled.isCompleted) cancelled.complete(false);
+    final context = _automaticContext;
+    _automaticContext = null;
+    if (context != null) _closeQuietly(context);
+  }
+
+  @override
+  void Function() onOutputInterrupted(void Function() handler) => () {};
 
   /// 最近一次成功开流使用的上下文，仅供浏览器回归测试确认是否复用了
   /// 手势唤醒的主上下文。
@@ -169,6 +237,8 @@ final class WebVoicePlayerPlatform
   }
 
   web.AudioContext _ensureContext() {
+    final automatic = _automaticContext;
+    if (automatic != null && !_isContextUnhealthy(automatic)) return automatic;
     final existing = _context;
     if (existing != null && _isContextUnhealthy(existing)) {
       _disposeOldContext();
@@ -220,7 +290,7 @@ final class WebVoicePlayerPlatform
   }
 
   /// 供测试检查内部 AudioContext 状态。
-  web.AudioContext? get debugAudioContext => _context;
+  web.AudioContext? get debugAudioContext => _automaticContext ?? _context;
 
   /// 供测试显式关闭 AudioContext 模拟脱钩失效场景。
   void debugCloseContext() {
@@ -243,13 +313,20 @@ final class WebVoicePlayerPlatform
   }) async {
     web.AudioContext? context;
     var ownsContext = false;
+    final automatic = _automaticContext;
     try {
       final mainContext = _ensureContext();
       if (_matchesSampleRate(mainContext, sampleRate) &&
           !_isContextUnhealthy(mainContext)) {
         // 发送手势已经唤醒的主上下文与协商采样率一致时直接复用，避免
         // 自动播放策略只许可主上下文、却拒绝首块异步新建的上下文。
-        if (!await _waitUntilRunning(mainContext)) {
+        final running = identical(mainContext, automatic)
+            ? await _waitStreamContextRunning(mainContext)
+            : await _waitUntilRunning(mainContext);
+        if (!running) {
+          return null;
+        }
+        if (automatic != null && !identical(automatic, _automaticContext)) {
           return null;
         }
         // _waitUntilRunning 可能在设备失效时自愈换了一个上下文；只在新
@@ -263,7 +340,9 @@ final class WebVoicePlayerPlatform
       context ??= web.AudioContext(
         web.AudioContextOptions(sampleRate: sampleRate),
       );
-      ownsContext = !identical(context, _context);
+      ownsContext =
+          !identical(context, _context) &&
+          !identical(context, _automaticContext);
       if (ownsContext) {
         // 采样率不一致时不能把 PCM 硬塞进主上下文：AudioWorklet 按
         // 上下文采样率消费，直接复用会变速/变调。这里保留协商采样率；
@@ -285,6 +364,10 @@ final class WebVoicePlayerPlatform
         return null;
       }
       await _loadWorkletModule(activeContext, moduleUrl);
+      if (automatic != null && !identical(automatic, _automaticContext)) {
+        if (ownsContext) _closeQuietly(activeContext);
+        return null;
+      }
       final node = web.AudioWorkletNode(
         activeContext,
         _pcmWorkletProcessorName,

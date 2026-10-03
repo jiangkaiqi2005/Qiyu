@@ -15,11 +15,37 @@ import 'voice_capture_platform.dart';
 /// 按 100ms（1600 帧 @16 kHz）攒块，线性插值重采样到 16 kHz 并量化成
 /// Int16 小端，经 MessagePort 交主线程出块；块边界整齐，双工上行直接
 /// 可用。字节只在内存流转，stop 后随轨道与上下文一并释放。
-final class WebVoiceCapturePlatform implements VoiceCapturePlatform {
+final class WebVoiceCapturePlatform
+    implements VoiceCapturePlatform, AutoStartVoiceCapturePlatform {
   const WebVoiceCapturePlatform();
 
   @override
   bool get supported => true;
+
+  @override
+  Future<bool> canAutoStart() async {
+    try {
+      if (!web.window.isSecureContext ||
+          web.document.visibilityState != 'visible') {
+        return false;
+      }
+      final permission = await web.window.navigator.permissions
+          .query({'name': 'microphone'}.jsify()! as JSObject)
+          .toDart
+          .timeout(const Duration(seconds: 1));
+      if (permission.state != 'granted') return false;
+      final devices = await web.window.navigator.mediaDevices
+          .enumerateDevices()
+          .toDart
+          .timeout(const Duration(seconds: 1));
+      return web.document.visibilityState == 'visible' &&
+          permission.state == 'granted' &&
+          devices.toDart.any((device) => device.kind == 'audioinput');
+    } on Object {
+      // 不支持无弹窗权限查询时退回手动，不拿 getUserMedia 试探权限。
+      return false;
+    }
+  }
 
   @override
   Future<VoiceCaptureSession?> start({
@@ -153,36 +179,76 @@ final class _WebVoiceCaptureSession implements VoiceCaptureSession {
     void Function(String reason) onUnavailable,
   ) async {
     web.AudioContext? context;
+    _WebVoiceCaptureSession? session;
     try {
+      if (!stream.getAudioTracks().toDart.any(
+        (track) => track.readyState == 'live' && !track.muted,
+      )) {
+        return null;
+      }
       context = web.AudioContext();
       final moduleUrl = _ensureWorkletModule();
       if (moduleUrl == null) {
         await _closeContext(context);
         return null;
       }
-      await context.audioWorklet.addModule(moduleUrl).toDart;
+      await context.audioWorklet
+          .addModule(moduleUrl)
+          .toDart
+          .timeout(const Duration(seconds: 2));
+      await context.resume().toDart.timeout(const Duration(seconds: 1));
+      if (context.state != 'running') {
+        await _closeContext(context);
+        return null;
+      }
       final source = context.createMediaStreamSource(stream);
       final node = web.AudioWorkletNode(context, 'qiyu-capture-16k');
       source.connect(node);
       // 处理器不上输出目的地：采集链到 worklet 为止，绝不回灌扬声器。
       node.connect(_silentDestination(context));
+      final active = session = _WebVoiceCaptureSession._(
+        stream,
+        context,
+        node,
+        source,
+      );
+      final firstChunk = Completer<bool>();
       node.port.onmessage = ((web.MessageEvent event) {
+        if (active._stopped) return;
         if (event.data case final JSArrayBuffer buffer) {
           onChunk(buffer.toDart.asUint8List());
+          if (!firstChunk.isCompleted) firstChunk.complete(true);
         }
       }).toJS;
       // 设备失效／系统夺走轨道：如实上报，不偷偷重开（spec:23、T04:17）。
       for (final track in stream.getTracks().toDart) {
         track.onended = ((web.Event _) {
-          onUnavailable('microphone track ended');
+          if (active._stopped) return;
+          if (!firstChunk.isCompleted) {
+            firstChunk.complete(false);
+          } else {
+            onUnavailable('microphone track ended');
+          }
         }).toJS;
       }
-      final session =
-          _WebVoiceCaptureSession._(stream, context, node, source);
+      final ready = await firstChunk.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => false,
+      );
+      if (!ready ||
+          context.state != 'running' ||
+          stream.getAudioTracks().toDart.every(
+            (track) => track.readyState != 'live' || track.muted,
+          )) {
+        active.stop();
+        return null;
+      }
       context = null; // 所有权移交会话。
-      return session;
+      return active;
     } on Object {
-      if (context != null) {
+      if (session != null) {
+        session.stop();
+      } else if (context != null) {
         await _closeContext(context);
       }
       return null;
@@ -201,7 +267,7 @@ final class _WebVoiceCaptureSession implements VoiceCaptureSession {
   static Future<void> _closeContext(web.AudioContext context) async {
     try {
       if (context.state != 'closed') {
-        await context.close().toDart;
+        await context.close().toDart.timeout(const Duration(seconds: 1));
       }
     } on Object {
       // 关不掉没有可补救动作。

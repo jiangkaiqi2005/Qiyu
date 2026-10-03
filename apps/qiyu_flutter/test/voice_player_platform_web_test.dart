@@ -2,6 +2,9 @@
 library;
 
 import 'dart:typed_data';
+import 'dart:async';
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 import 'package:qiyu_flutter/features/chat/voice_player_platform.dart'
     hide createVoicePlayerPlatform;
@@ -10,6 +13,94 @@ import 'package:test/test.dart';
 import 'package:web/web.dart' as web;
 
 void main() {
+  test('自动输出只在真实 running 后就绪，复用通话 PCM 上下文', () async {
+    final platform = createVoicePlayerPlatform() as WebVoicePlayerPlatform;
+    expect(platform, isA<AutoStartVoicePlayerPlatform>());
+    final automatic = platform as AutoStartVoicePlayerPlatform;
+    expect(await automatic.prepareForAutoPlayback(), isTrue);
+    final stream = await platform.startStream(sampleRate: 24000);
+    expect(stream, isNotNull);
+    expect(platform.debugLastStreamContext?.state, 'running');
+    expect(platform.debugLastStreamContext?.sampleRate, 24000);
+    stream!.stop();
+    (platform as InterruptibleVoicePlayerPlatform).endOutput();
+    expect(platform.debugLastStreamContext?.state, 'closed');
+  });
+
+  test('resume 成功返回但输出仍 suspended，自动输出失败并关闭资源', () async {
+    final restore = _restrictResume(() => Future<JSAny?>.value(null).toJS);
+    final platform = WebVoicePlayerPlatform();
+    final ready = platform.prepareForAutoPlayback();
+    final context = platform.debugAudioContext!;
+    expect(await ready, isFalse);
+    restore();
+    expect(context.state, 'closed');
+    expect(platform.debugAudioContext, isNull);
+  });
+
+  test('AudioContext running 但 PCM 处理器加载失败不能算自动输出就绪', () async {
+    final platform = WebVoicePlayerPlatform();
+    final ready = platform.prepareForAutoPlayback();
+    final context = platform.debugAudioContext!;
+    context.audioWorklet.setProperty('addModule'.toJS, ((JSAny _) =>
+      Future<JSAny?>.error('worklet unavailable').toJS).toJS);
+    expect(await ready, isFalse);
+    expect(context.state, 'closed');
+  });
+
+  test('挂断 pending PCM 模块准备立即结束，迟到模块不能重建播放器', () async {
+    final module = Completer<JSAny?>();
+    final platform = WebVoicePlayerPlatform();
+    final ready = platform.prepareForAutoPlayback();
+    final context = platform.debugAudioContext!;
+    context.audioWorklet.setProperty('addModule'.toJS,
+      ((JSAny _) => module.future.toJS).toJS);
+    await Future<void>.delayed(Duration.zero);
+    platform.endOutput();
+    expect(await ready.timeout(const Duration(milliseconds: 200)), isFalse);
+    module.complete(null);
+    await Future<void>.delayed(Duration.zero);
+    expect(context.state, 'closed');
+    expect(platform.debugAudioContext, isNull);
+    expect(platform.debugLastStreamContext, isNull);
+  });
+
+  test('浏览器 pending resume 有界失败，迟到许可不能重建输出', () async {
+    final resume = Completer<JSAny?>();
+    final restore = _restrictResume(() => resume.future.toJS);
+    final platform = WebVoicePlayerPlatform();
+    final ready = platform.prepareForAutoPlayback();
+    final context = platform.debugAudioContext!;
+    expect(await ready.timeout(const Duration(seconds: 2)), isFalse);
+    restore();
+    resume.complete(null);
+    await Future<void>.delayed(Duration.zero);
+    expect(context.state, 'closed');
+    expect(platform.debugAudioContext, isNull);
+  });
+
+  test('endOutput 立即取消 pending 准备，旧许可不能关闭新手动输出', () async {
+    final resume = Completer<JSAny?>();
+    final restore = _restrictResume(() => resume.future.toJS);
+    final platform = WebVoicePlayerPlatform();
+    final ready = platform.prepareForAutoPlayback();
+    final context = platform.debugAudioContext!;
+    platform.endOutput();
+    expect(await ready.timeout(const Duration(milliseconds: 200)), isFalse);
+    restore();
+    platform.prepareForPlayback();
+    final manualContext = platform.debugAudioContext!;
+    final playback = await platform.startStream(
+      sampleRate: manualContext.sampleRate.round(),
+    );
+    expect(playback, isNotNull);
+    resume.complete(null);
+    await Future<void>.delayed(Duration.zero);
+    expect(context.state, 'closed');
+    expect(manualContext.state, 'running');
+    playback!.stop();
+    platform.debugCloseContext();
+  });
   test('真实 Web Audio 跨异步边界解码并播放内存音频，并能自然结束', () async {
     final platform = createVoicePlayerPlatform();
     final gesturePlayer = platform as UserGestureVoicePlayerPlatform;
@@ -304,6 +395,45 @@ void main() {
     });
   });
 }
+
+// 浏览器原生 API 是测试接缝：模拟未获 autoplay 放行；处理器仍用真实
+// Chrome AudioContext。qiyu_chrome 的 autoplay flag 不能验收默认策略。
+void Function() _restrictResume(JSPromise<JSAny?> Function() resume) {
+  final audioPrototype = globalContext
+      .getProperty<JSFunction>('AudioContext'.toJS)
+      .getProperty<JSObject>('prototype'.toJS);
+  final basePrototype = globalContext
+      .getProperty<JSFunction>('BaseAudioContext'.toJS)
+      .getProperty<JSObject>('prototype'.toJS);
+  final originalResume = audioPrototype.getProperty<JSFunction>('resume'.toJS);
+  final state = _getDescriptor(basePrototype, 'state'.toJS);
+  _defineProperty(
+    basePrototype,
+    'state'.toJS,
+    {'get': (() => 'suspended'.toJS).toJS, 'configurable': true}.jsify()!
+        as JSObject,
+  );
+  audioPrototype.setProperty('resume'.toJS, resume.toJS);
+  var restored = false;
+  void restore() {
+    if (restored) return;
+    restored = true;
+    audioPrototype.setProperty('resume'.toJS, originalResume);
+    _defineProperty(basePrototype, 'state'.toJS, state);
+  }
+
+  addTearDown(restore);
+  return restore;
+}
+
+@JS('Object.getOwnPropertyDescriptor')
+external JSObject _getDescriptor(JSObject object, JSString name);
+@JS('Object.defineProperty')
+external JSObject _defineProperty(
+  JSObject object,
+  JSString name,
+  JSObject value,
+);
 
 void _storeRawVolume(String value) =>
     web.window.localStorage.setItem(voiceOutputVolumeStorageKey, value);

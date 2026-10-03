@@ -4,12 +4,79 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/features/chat/omni_call_controller.dart';
 import 'package:qiyu_flutter/features/chat/voice_capture_platform.dart';
+import 'package:qiyu_flutter/features/chat/voice_player_platform.dart';
 import 'package:qiyu_flutter/features/chat/omni_call_usage_state.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 
 import 'support/omni_call_fakes.dart';
 
 void main() {
+  test('挂断未完成自动输出立即释放准备资源，旧许可不复活通话', () async {
+    final player = PendingAutomaticOutput();
+    final capture = FakeOmniCapture();
+    final socket = FakeOmniSocket();
+    final call = OmniCallController(
+      surface: RecordingCallSurface(),
+      providerSettings: FakeOmniProviderGateway(
+        callStartupMode: CallStartupMode.autoOnChatEntry,
+      ),
+      capture: capture,
+      player: player,
+      connector: (_) => socket,
+      autoStartAllowed: () async => true,
+    );
+    call.updateLocation(onChat: true, visible: true);
+    await omniDrain();
+    expect(player.outputHeld, isTrue);
+    await call.end();
+    expect(player.outputHeld, isFalse);
+    expect(capture.lastSession?.stopped, isTrue);
+    expect(await call.startCall(), isTrue);
+    socket.emit({'type': 'state', 'phase': 'active'});
+    player.ready.complete(true);
+    await omniDrain();
+    expect(call.phase, OmniCallPhase.active);
+    expect(capture.lastSession?.stopped, isFalse);
+    call.dispose();
+  });
+  for (final reason in ['输出失败', '连接失败', '隐藏', '离页', '销毁']) {
+    test('自动启动$reason释放采集与输出资源，保留真实结束状态', () async {
+      final player = PendingAutomaticOutput();
+      final capture = FakeOmniCapture();
+      final call = OmniCallController(
+        surface: RecordingCallSurface(),
+        providerSettings: FakeOmniProviderGateway(
+          callStartupMode: CallStartupMode.autoOnChatEntry,
+        ),
+        capture: capture,
+        player: player,
+        connector: (_) => throw const FakeOmniConnectError(),
+        autoStartAllowed: () async => true,
+      );
+      call.updateLocation(onChat: true, visible: true);
+      await omniDrain();
+      switch (reason) {
+        case '输出失败':
+          player.ready.complete(false);
+        case '连接失败':
+          player.ready.complete(true);
+        case '隐藏':
+          call.updateLocation(onChat: true, visible: false);
+        case '离页':
+          call.updateLocation(onChat: false, visible: true);
+        case '销毁':
+          call.dispose();
+      }
+      await omniDrain();
+      expect(player.outputHeld, isFalse);
+      expect(capture.lastSession?.stopped, isTrue);
+      if (reason != '销毁') expect(call.callInProgress, isFalse);
+      if (!player.ready.isCompleted) player.ready.complete(true);
+      await omniDrain();
+      if (reason != '销毁') expect(call.callInProgress, isFalse);
+      if (reason != '销毁') call.dispose();
+    });
+  }
   test('旧进页的非 Omni 读取迟到不结束后一次 Omni 自动通话', () async {
     final gateway = DeferredProviderGateway();
     final capture = FakeOmniCapture();
@@ -411,6 +478,32 @@ void main() {
     expect(sockets.single.decodedFrames.single['type'], 'start');
     call.dispose();
   });
+}
+
+class PendingAutomaticOutput
+    implements
+        StreamingVoicePlayerPlatform,
+        AutoStartVoicePlayerPlatform,
+        InterruptibleVoicePlayerPlatform {
+  final ready = Completer<bool>();
+  bool outputHeld = false;
+  @override
+  Future<bool> prepareForAutoPlayback() {
+    outputHeld = true;
+    return ready.future;
+  }
+
+  @override
+  Future<bool> beginOutput() async => true;
+  @override
+  void endOutput() => outputHeld = false;
+  @override
+  void Function() onOutputInterrupted(void Function() handler) => () {};
+  @override
+  Future<VoiceStreamPlayback?> startStream({
+    required int sampleRate,
+    double volume = 1.0,
+  }) async => FakeOmniStreamPlayback();
 }
 
 const autoOmniSettings = ProviderSettings(
