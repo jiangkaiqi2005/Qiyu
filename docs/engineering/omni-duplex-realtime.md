@@ -17,7 +17,7 @@
 
 ## 已核实的协议事实（T01 实测，代码对齐）
 
-- 端点 `wss://dashscope.aliyuncs.com/api-ws/v1/realtime`，型号以 `model` query 参数携带；Key 经 `Authorization: Bearer` 头出网（`qwen_omni_realtime_gateway.dart:238`）。
+- 端点 `wss://dashscope.aliyuncs.com/api-ws/v1/realtime`，型号以 `model` query 参数携带；Key 经 `Authorization: Bearer` 头出网（`qwen_omni_realtime_gateway.dart:275`）。
 - **默认音色必须显式配置**：服务端回显的默认音色 Chelsie 在生成时刻被拒（400），Cherry/Ethan/Nyla/Nova 同拒；实测 Tina/Serena 可生成。会话配置显式携带 Tina（`qwenOmniRealtimeDefaultVoice`，`qwen_omni_realtime_gateway.dart:21`），最终默认音色属产品裁定，未定案。
 - `turn_detection` 是会话配置参数，初值 `server_vad`（官方默认 threshold 0.5）。`semantic_vad` 裸配实测 18% 整轮漏检（含 speech_started 都不触发），不作初值；选型与参数调优待裁定（`qwen_omni_realtime_gateway.dart:41`）。
 - **回复完成判定只认 `response.done` 的 `status`**（completed/cancelled/failed/incomplete）；`response.audio.done` 在取消时也会到达，不当作完成。原生取消没有独立事件，表现为 `status=cancelled` 的 `response.done`。
