@@ -868,6 +868,9 @@ final class OmniCallController extends ChangeNotifier {
   }
 
   Future<void> _stopCapture() async {
+    if (_capture case final InterruptibleVoiceCapturePlatform capture) {
+      capture.cancelPendingStart();
+    }
     final session = _captureSession;
     _captureSession = null;
     session?.stop();

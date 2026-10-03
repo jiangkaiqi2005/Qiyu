@@ -12,6 +12,107 @@ import 'package:test/test.dart';
 import 'package:web/web.dart' as web;
 
 void main() {
+  test('取消 pending 模块采集立即停轨道，迟到模块不继续收音', () async {
+    final context = web.AudioContext();
+    final stream = context.createMediaStreamDestination().stream;
+    final devices = web.window.navigator.mediaDevices;
+    final original = devices.getProperty<JSFunction>('getUserMedia'.toJS);
+    final prototype = globalContext
+        .getProperty<JSFunction>('Worklet'.toJS)
+        .getProperty<JSObject>('prototype'.toJS);
+    final addModule = prototype.getProperty<JSFunction>('addModule'.toJS);
+    final module = Completer<JSAny?>();
+    final entered = Completer<void>();
+    addTearDown(() async {
+      devices.setProperty('getUserMedia'.toJS, original);
+      prototype.setProperty('addModule'.toJS, addModule);
+      await context.close().toDart;
+    });
+    devices.setProperty(
+      'getUserMedia'.toJS,
+      ((JSAny _) => Future<web.MediaStream>.value(stream).toJS).toJS,
+    );
+    prototype.setProperty(
+      'addModule'.toJS,
+      ((JSAny _) {
+        if (!entered.isCompleted) entered.complete();
+        return module.future.toJS;
+      }).toJS,
+    );
+    final platform = createVoiceCapturePlatform();
+    var chunks = 0;
+    final started = platform.start(
+      onChunk: (_) => chunks++,
+      onUnavailable: (_) {},
+    );
+    await entered.future;
+    (platform as InterruptibleVoiceCapturePlatform).cancelPendingStart();
+    expect(stream.getAudioTracks().toDart.single.readyState, 'ended');
+    expect(await started.timeout(const Duration(milliseconds: 200)), isNull);
+    module.complete(null);
+    await Future<void>.delayed(Duration.zero);
+    expect(chunks, 0);
+  });
+  test('取消后取流迟到立即释放；旧 finally 不清掉新采集的 pending 句柄', () async {
+    final context = web.AudioContext();
+    final oldStream = context.createMediaStreamDestination().stream;
+    final newStream = context.createMediaStreamDestination().stream;
+    final devices = web.window.navigator.mediaDevices;
+    final original = devices.getProperty<JSFunction>('getUserMedia'.toJS);
+    final prototype = globalContext
+        .getProperty<JSFunction>('Worklet'.toJS)
+        .getProperty<JSObject>('prototype'.toJS);
+    final addModule = prototype.getProperty<JSFunction>('addModule'.toJS);
+    final oldPermission = Completer<web.MediaStream>();
+    final module = Completer<JSAny?>();
+    final entered = Completer<void>();
+    addTearDown(() async {
+      devices.setProperty('getUserMedia'.toJS, original);
+      prototype.setProperty('addModule'.toJS, addModule);
+      await context.close().toDart;
+    });
+    var first = true;
+    devices.setProperty(
+      'getUserMedia'.toJS,
+      ((JSAny _) {
+        if (first) {
+          first = false;
+          return oldPermission.future.toJS;
+        }
+        return Future<web.MediaStream>.value(newStream).toJS;
+      }).toJS,
+    );
+    prototype.setProperty(
+      'addModule'.toJS,
+      ((JSAny _) {
+        if (!entered.isCompleted) entered.complete();
+        return module.future.toJS;
+      }).toJS,
+    );
+    final platform = WebVoiceCapturePlatform();
+    var chunks = 0;
+    final oldStart = platform.start(
+      onChunk: (_) => chunks++,
+      onUnavailable: (_) {},
+    );
+    platform.cancelPendingStart();
+    final newStart = platform.start(
+      onChunk: (_) => chunks++,
+      onUnavailable: (_) {},
+    );
+    expect(await oldStart.timeout(const Duration(milliseconds: 200)), isNull);
+    await entered.future;
+    oldPermission.complete(oldStream);
+    await Future<void>.delayed(Duration.zero);
+    expect(oldStream.getAudioTracks().toDart.single.readyState, 'ended');
+    expect(newStream.getAudioTracks().toDart.single.readyState, 'live');
+    platform.cancelPendingStart();
+    expect(newStream.getAudioTracks().toDart.single.readyState, 'ended');
+    expect(await newStart.timeout(const Duration(milliseconds: 200)), isNull);
+    module.complete(null);
+    await Future<void>.delayed(Duration.zero);
+    expect(chunks, 0);
+  });
   test('自动前检只接受当前 grant 与可用麦克风，不申请权限', () async {
     final platform = createVoiceCapturePlatform();
     expect(platform, isA<AutoStartVoiceCapturePlatform>());

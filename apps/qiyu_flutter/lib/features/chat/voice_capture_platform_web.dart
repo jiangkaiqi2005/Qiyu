@@ -16,8 +16,18 @@ import 'voice_capture_platform.dart';
 /// Int16 小端，经 MessagePort 交主线程出块；块边界整齐，双工上行直接
 /// 可用。字节只在内存流转，stop 后随轨道与上下文一并释放。
 final class WebVoiceCapturePlatform
-    implements VoiceCapturePlatform, AutoStartVoiceCapturePlatform {
-  const WebVoiceCapturePlatform();
+    implements
+        VoiceCapturePlatform,
+        AutoStartVoiceCapturePlatform,
+        InterruptibleVoiceCapturePlatform {
+  _PendingWebCapture? _pending;
+
+  @override
+  void cancelPendingStart() {
+    final pending = _pending;
+    _pending = null;
+    pending?.cancel();
+  }
 
   @override
   bool get supported => true;
@@ -52,26 +62,45 @@ final class WebVoiceCapturePlatform
     required void Function(Uint8List pcm) onChunk,
     required void Function(String reason) onUnavailable,
   }) async {
-    final web.MediaStream stream;
+    cancelPendingStart();
+    final pending = _pending = _PendingWebCapture();
     try {
-      stream = await web.window.navigator.mediaDevices
+      final gettingStream = web.window.navigator.mediaDevices
           .getUserMedia(
             web.MediaStreamConstraints(audio: _audioConstraints().jsify()!),
           )
-          .toDart;
+          .toDart
+          .then((stream) {
+            if (pending.isCancelled) {
+              _releaseStream(stream);
+              return null;
+            }
+            pending.stream = stream;
+            return stream;
+          });
+      final stream = await Future.any([
+        gettingStream,
+        pending.cancelled.future.then<web.MediaStream?>((_) => null),
+      ]);
+      if (stream == null || pending.isCancelled) return null;
+      final session = await _WebVoiceCaptureSession.tryCreate(
+        stream,
+        onChunk,
+        onUnavailable,
+        pending,
+      );
+      if (session == null || pending.isCancelled) {
+        pending.cancel();
+        return null;
+      }
+      return session;
     } on Object {
       // 授权被拒、设备不存在或采集不可用：按「没有开始」处理。
+      pending.cancel();
       return null;
+    } finally {
+      if (identical(_pending, pending)) _pending = null;
     }
-    final session = await _WebVoiceCaptureSession.tryCreate(
-      stream,
-      onChunk,
-      onUnavailable,
-    );
-    if (session == null) {
-      _releaseStream(stream);
-    }
-    return session;
   }
 
   /// 标准回声处理三件套：通信场景必须开，浏览器按设备能力生效。
@@ -80,6 +109,30 @@ final class WebVoiceCapturePlatform
     'noiseSuppression': true.toJS,
     'autoGainControl': true.toJS,
   };
+}
+
+final class _PendingWebCapture {
+  final cancelled = Completer<void>();
+  web.MediaStream? stream;
+  web.AudioContext? context;
+  VoiceCaptureSession? session;
+  bool get isCancelled => cancelled.isCompleted;
+
+  void cancel() {
+    if (isCancelled) return;
+    cancelled.complete();
+    final active = session;
+    if (active != null) {
+      active.stop();
+    } else {
+      final currentStream = stream;
+      if (currentStream != null) _releaseStream(currentStream);
+      final currentContext = context;
+      if (currentContext != null) {
+        unawaited(_WebVoiceCaptureSession._closeContext(currentContext));
+      }
+    }
+  }
 }
 
 void _releaseStream(web.MediaStream stream) {
@@ -177,6 +230,7 @@ final class _WebVoiceCaptureSession implements VoiceCaptureSession {
     web.MediaStream stream,
     void Function(Uint8List pcm) onChunk,
     void Function(String reason) onUnavailable,
+    _PendingWebCapture pending,
   ) async {
     web.AudioContext? context;
     _WebVoiceCaptureSession? session;
@@ -186,18 +240,22 @@ final class _WebVoiceCaptureSession implements VoiceCaptureSession {
       )) {
         return null;
       }
-      context = web.AudioContext();
+      context = pending.context = web.AudioContext();
       final moduleUrl = _ensureWorkletModule();
       if (moduleUrl == null) {
         await _closeContext(context);
         return null;
       }
-      await context.audioWorklet
-          .addModule(moduleUrl)
-          .toDart
-          .timeout(const Duration(seconds: 2));
-      await context.resume().toDart.timeout(const Duration(seconds: 1));
-      if (context.state != 'running') {
+      final loaded = await Future.any([
+        context.audioWorklet.addModule(moduleUrl).toDart.then((_) => true),
+        pending.cancelled.future.then((_) => false),
+      ]).timeout(const Duration(seconds: 2), onTimeout: () => false);
+      if (!loaded || pending.isCancelled) return null;
+      final resumed = await Future.any([
+        context.resume().toDart.then((_) => true),
+        pending.cancelled.future.then((_) => false),
+      ]).timeout(const Duration(seconds: 1), onTimeout: () => false);
+      if (!resumed || pending.isCancelled || context.state != 'running') {
         await _closeContext(context);
         return null;
       }
@@ -212,9 +270,10 @@ final class _WebVoiceCaptureSession implements VoiceCaptureSession {
         node,
         source,
       );
+      pending.session = active;
       final firstChunk = Completer<bool>();
       node.port.onmessage = ((web.MessageEvent event) {
-        if (active._stopped) return;
+        if (active._stopped || pending.isCancelled) return;
         if (event.data case final JSArrayBuffer buffer) {
           onChunk(buffer.toDart.asUint8List());
           if (!firstChunk.isCompleted) firstChunk.complete(true);
@@ -231,11 +290,12 @@ final class _WebVoiceCaptureSession implements VoiceCaptureSession {
           }
         }).toJS;
       }
-      final ready = await firstChunk.future.timeout(
-        const Duration(seconds: 2),
-        onTimeout: () => false,
-      );
+      final ready = await Future.any([
+        firstChunk.future,
+        pending.cancelled.future.then((_) => false),
+      ]).timeout(const Duration(seconds: 2), onTimeout: () => false);
       if (!ready ||
+          pending.isCancelled ||
           context.state != 'running' ||
           stream.getAudioTracks().toDart.every(
             (track) => track.readyState != 'live' || track.muted,
@@ -310,5 +370,4 @@ final class _WebVoiceCaptureSession implements VoiceCaptureSession {
   }
 }
 
-VoiceCapturePlatform createVoiceCapturePlatform() =>
-    const WebVoiceCapturePlatform();
+VoiceCapturePlatform createVoiceCapturePlatform() => WebVoiceCapturePlatform();

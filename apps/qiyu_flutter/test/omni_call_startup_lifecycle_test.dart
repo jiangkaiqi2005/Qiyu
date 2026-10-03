@@ -11,6 +11,40 @@ import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'support/omni_call_fakes.dart';
 
 void main() {
+  test('挂断 pending 采集立即取消；迟到旧 PCM 不混入新手动通话', () async {
+    final capture = CancellableDeferredCapture();
+    final socket = FakeOmniSocket();
+    final call = OmniCallController(
+      surface: RecordingCallSurface(),
+      providerSettings: FakeOmniProviderGateway(),
+      capture: capture,
+      connector: (_) => socket,
+    );
+    await call.refreshAvailability();
+    final oldStart = call.startCall();
+    expect(capture.microphoneHeld, isTrue);
+    await call.end();
+    expect(capture.microphoneHeld, isFalse);
+    final newStart = call.startCall();
+    final newSession = FakeOmniCaptureSession();
+    capture.requests.last.complete(newSession);
+    expect(await newStart, isTrue);
+    socket.emit({'type': 'state', 'phase': 'active'});
+    capture.chunks.first(Uint8List.fromList([1, 2]));
+    capture.chunks.last(Uint8List.fromList([5, 6]));
+    final oldSession = FakeOmniCaptureSession();
+    capture.requests.first.complete(oldSession);
+    expect(await oldStart, isFalse);
+    expect(oldSession.stopped, isTrue);
+    expect(newSession.stopped, isFalse);
+    expect(
+      socket.decodedFrames
+          .where((frame) => frame['type'] == 'audio')
+          .single['pcm'],
+      'BQY=',
+    );
+    call.dispose();
+  });
   test('挂断未完成自动输出立即释放准备资源，旧许可不复活通话', () async {
     final player = PendingAutomaticOutput();
     final capture = FakeOmniCapture();
@@ -553,6 +587,24 @@ class DeferredCapture implements VoiceCapturePlatform {
     requests.add(request);
     return request.future;
   }
+}
+
+class CancellableDeferredCapture extends DeferredCapture
+    implements InterruptibleVoiceCapturePlatform {
+  bool microphoneHeld = false;
+  final chunks = <void Function(Uint8List)>[];
+  @override
+  Future<VoiceCaptureSession?> start({
+    required void Function(Uint8List pcm) onChunk,
+    required void Function(String reason) onUnavailable,
+  }) {
+    microphoneHeld = true;
+    chunks.add(onChunk);
+    return super.start(onChunk: onChunk, onUnavailable: onUnavailable);
+  }
+
+  @override
+  void cancelPendingStart() => microphoneHeld = false;
 }
 
 class DeferredSocket implements OmniCallSocket {

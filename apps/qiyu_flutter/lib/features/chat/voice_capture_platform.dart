@@ -54,3 +54,9 @@ abstract interface class VoiceCapturePlatform {
 abstract interface class AutoStartVoiceCapturePlatform {
   Future<bool> canAutoStart();
 }
+
+/// start 尚未返回会话时取消本次采集准备；已有资源立即释放，迟到的
+/// 取流结果只释放、不继续建链。成功会话仍由 VoiceCaptureSession.stop 管理。
+abstract interface class InterruptibleVoiceCapturePlatform {
+  void cancelPendingStart();
+}
