@@ -10,11 +10,15 @@
          服务，锁屏/切 App 期间通话继续（spec:23）。FOREGROUND_SERVICE
          自 API 28 起是前台服务的普通前置；FOREGROUND_SERVICE_MICROPHONE
          是 API 34+ 对 microphone 类型的新增前置——两个都是普通权限，
-         运行时只弹 RECORD_AUDIO 系统弹窗。POST_NOTIFICATIONS 不声明为
-         服务前提：33+ 上仅随麦克风一并尽力请求，拒绝只影响通知可见性，
-         不影响服务与通话。 -->
+         运行时只弹 RECORD_AUDIO 系统弹窗。POST_NOTIFICATIONS 是危险
+         权限，必须声明 33+ 的运行时请求才有机会被授予（未声明的请求
+         系统直接拒绝）；它仍不作为服务启动或通话开始的前提（请求随
+         麦克风一并尽力发起、结果只看 RECORD_AUDIO），拒绝只影响前台
+         服务通知进不进通知抽屉（仍见 FGS 任务管理器），不影响服务与
+         通话本身。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- 云备份与设备迁移必须关（端内形态隐私红线）：明文 Key 的
          provider.json、会话与记忆 Markdown 一旦随系统备份离开设备，
          「数据只在我手机上」就破了——跨设备唯一通道是手动导出。
