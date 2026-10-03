@@ -29,6 +29,8 @@ final class ProviderSettingsSnapshot {
   Map<String, Object?> toJson() => {
     'configured': configured,
     'keySet': keySet,
+    'callStartupMode':
+        (config?.callStartupMode ?? CallStartupMode.manual).wireName,
     if (config case final value?) ...value.toJson(),
   };
 }
@@ -219,6 +221,7 @@ final class ProviderSettingsService
   Future<ProviderSettingsSnapshot> save({
     required ProviderConfig config,
     String? apiKey,
+    bool updateCallStartupMode = true,
   }) async {
     config.validate();
     _refusePublicCleartextTarget(config);
@@ -236,7 +239,14 @@ final class ProviderSettingsService
           previous.credentialScope == config.credentialScope) {
         persistedKey = previous.apiKey;
       }
-      await configRepository.save(config.withApiKey(persistedKey));
+      // 旧客户端和只改其他设置的请求不携带启动方式；在同一事务中
+      // 沿用现值，切换 Provider 也不会丢掉 Omni 的偏好。
+      final mode = updateCallStartupMode
+          ? config.callStartupMode
+          : previous?.callStartupMode ?? CallStartupMode.manual;
+      await configRepository.save(
+        config.withCallStartupMode(mode).withApiKey(persistedKey),
+      );
       // 切换 Provider 或地址会更换凭据作用域：旧作用域在凭据管理器里
       // 的遗留 Key 从此无人读取，保存成功后立即清掉（新旧两种 scope
       // 字符串一并清，见 [_deleteStoredApiKeys]）。

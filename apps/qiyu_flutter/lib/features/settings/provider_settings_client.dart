@@ -22,6 +22,21 @@ enum ProviderKind {
   );
 }
 
+enum CallStartupMode {
+  manual('manual'),
+  autoOnChatEntry('auto_on_chat_entry');
+
+  const CallStartupMode(this.wireName);
+
+  final String wireName;
+
+  static CallStartupMode fromWireName(Object? value) => values.firstWhere(
+    (mode) => mode.wireName == value,
+    orElse: () =>
+        throw const ProviderSettingsGatewayException('本机程序返回了未知的通话启动方式。'),
+  );
+}
+
 final class ProviderSettings {
   const ProviderSettings({
     required this.configured,
@@ -31,6 +46,7 @@ final class ProviderSettings {
     this.model,
     this.temperature,
     this.timeoutSeconds,
+    this.callStartupMode = CallStartupMode.manual,
   });
 
   factory ProviderSettings.fromJson(Map<String, Object?> json) {
@@ -45,6 +61,9 @@ final class ProviderSettings {
       model: json['model'] as String?,
       temperature: (json['temperature'] as num?)?.toDouble(),
       timeoutSeconds: json['timeoutSeconds'] as int?,
+      callStartupMode: json.containsKey('callStartupMode')
+          ? CallStartupMode.fromWireName(json['callStartupMode'])
+          : CallStartupMode.manual,
     );
   }
 
@@ -55,6 +74,7 @@ final class ProviderSettings {
   final String? model;
   final double? temperature;
   final int? timeoutSeconds;
+  final CallStartupMode callStartupMode;
 }
 
 final class ProviderSettingsDraft {
@@ -65,6 +85,7 @@ final class ProviderSettingsDraft {
     required this.temperature,
     required this.timeoutSeconds,
     this.apiKey,
+    this.callStartupMode,
   });
 
   final ProviderKind provider;
@@ -73,6 +94,8 @@ final class ProviderSettingsDraft {
   final double temperature;
   final int timeoutSeconds;
   final String? apiKey;
+  // 未携带时只改其他设置，Host 在事务内保留现有偏好。
+  final CallStartupMode? callStartupMode;
 
   Map<String, Object?> toJson() => {
     'provider': provider.wireName,
@@ -81,6 +104,7 @@ final class ProviderSettingsDraft {
     'temperature': temperature,
     'timeoutSeconds': timeoutSeconds,
     'apiKey': ?apiKey,
+    'callStartupMode': ?callStartupMode?.wireName,
   };
 }
 

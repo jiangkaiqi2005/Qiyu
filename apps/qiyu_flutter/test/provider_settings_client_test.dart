@@ -7,6 +7,45 @@ import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'support/host_transport.dart';
 
 void main() {
+  test('启动偏好读取兼容旧快照且保存自动方式经原有受保护设置入口', () async {
+    expect(
+      ProviderSettings.fromJson({
+        'configured': false,
+        'keySet': false,
+      }).callStartupMode,
+      CallStartupMode.manual,
+    );
+    final requests = <http.Request>[];
+    final gateway = HttpProviderSettingsGateway(
+      client: hostTransportClient(
+        (request) => hostJsonResponse({
+          'configured': true,
+          'keySet': false,
+          'provider': 'qwen_omni_realtime',
+          'callStartupMode': 'auto_on_chat_entry',
+        }, 200),
+        requests: requests,
+      ),
+      baseUri: Uri.parse('http://127.0.0.1:5173/'),
+    );
+    final settings = await gateway.save(
+      const ProviderSettingsDraft(
+        provider: ProviderKind.qwenOmniRealtime,
+        baseUrl: 'wss://dashscope.example.com/api-ws/v1/realtime',
+        model: 'qwen3.8-omni-flash-realtime',
+        temperature: 0.7,
+        timeoutSeconds: 30,
+        callStartupMode: CallStartupMode.autoOnChatEntry,
+      ),
+    );
+    expect(settings.callStartupMode, CallStartupMode.autoOnChatEntry);
+    expect(
+      jsonDecode(requests.last.body),
+      containsPair('callStartupMode', 'auto_on_chat_entry'),
+    );
+    expectCsrfHeader(requests.last);
+  });
+
   test('saves Provider settings without ever receiving the API Key', () async {
     final requests = <http.Request>[];
     final client = hostTransportClient(

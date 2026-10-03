@@ -706,6 +706,106 @@ void main() {
     );
   });
   group('Provider 配置与降级', () {
+    test('启动偏好默认手动，受保护保存、切换服务及重启保留且不泄露 Key', () async {
+      final configPath = _providerJsonPath(temporaryDirectory);
+      ProviderSettingsService settingsService() => ProviderSettingsService(
+        JsonProviderConfigRepository(filePath: configPath),
+        _MemorySecretStore(),
+        _StaticModelGateway('在。'),
+        const ModelPromptBuilder('测试人格宪法'),
+      );
+      var host = await _startHost(
+        webRoot,
+        memoryDirectory,
+        providerSettingsService: settingsService(),
+      );
+      addTearDown(() => host.close());
+      var browser = await _openBrowserSession(host);
+      Future<_HttpResponse> save(
+        Map<String, Object?> payload, {
+        Map<String, String>? headers,
+      }) => _send(
+        host.origin.resolve('/api/provider'),
+        method: 'PUT',
+        headers: headers ?? browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode(payload),
+      );
+      final initial = await _send(
+        host.origin.resolve('/api/provider'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(
+        jsonDecode(initial.body),
+        containsPair('callStartupMode', 'manual'),
+      );
+      final omni = <String, Object?>{
+        'provider': 'qwen_omni_realtime',
+        'baseUrl': 'wss://dashscope.example.com/api-ws/v1/realtime',
+        'model': 'qwen3.8-omni-flash-realtime',
+        'temperature': 0.7,
+        'timeoutSeconds': 30,
+        'callStartupMode': 'auto_on_chat_entry',
+      };
+      final forbidden = await save(
+        omni,
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(forbidden.statusCode, HttpStatus.forbidden);
+      final accepted = await save(omni);
+      expect(accepted.statusCode, HttpStatus.ok);
+      expect(
+        jsonDecode(accepted.body),
+        allOf(
+          containsPair('callStartupMode', 'auto_on_chat_entry'),
+          containsPair('keySet', false),
+        ),
+      );
+      final withKey = await save({...omni, 'apiKey': 'startup-private-key'});
+      expect(withKey.body, isNot(contains('startup-private-key')));
+      for (final invalid in ['unknown', null, true, 3]) {
+        final rejected = await save({...omni, 'callStartupMode': invalid});
+        expect(rejected.statusCode, HttpStatus.badRequest);
+        expect(rejected.body, contains('通话启动方式'));
+      }
+      final chat = {...omni}
+        ..remove('callStartupMode')
+        ..['provider'] = 'anthropic'
+        ..['baseUrl'] = 'https://api.example.com/v1';
+      final switched = await save(chat);
+      expect(
+        jsonDecode(switched.body),
+        allOf(
+          containsPair('callStartupMode', 'auto_on_chat_entry'),
+          containsPair('keySet', false),
+        ),
+      );
+      final back = {...omni}..remove('callStartupMode');
+      expect(
+        jsonDecode((await save(back)).body),
+        containsPair('callStartupMode', 'auto_on_chat_entry'),
+      );
+      await host.close();
+      host = await _startHost(
+        webRoot,
+        memoryDirectory,
+        providerSettingsService: settingsService(),
+      );
+      browser = await _openBrowserSession(host);
+      final restored = await _send(
+        host.origin.resolve('/api/provider'),
+        headers: browser.readHeaders(host.origin),
+      );
+      expect(
+        jsonDecode(restored.body),
+        containsPair('callStartupMode', 'auto_on_chat_entry'),
+      );
+      final manual = await save({...omni, 'callStartupMode': 'manual'});
+      expect(
+        jsonDecode(manual.body),
+        containsPair('callStartupMode', 'manual'),
+      );
+    });
+
 
     test(
       'persists Provider settings, masks Key, tests it, and uses model chat',

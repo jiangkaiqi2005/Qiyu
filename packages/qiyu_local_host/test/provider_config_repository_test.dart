@@ -7,6 +7,39 @@ import 'package:test/test.dart';
 import 'support/failing_atomic_writer.dart';
 
 void main() {
+  test('旧配置默认手动，启动方式往返保存及重启读取一致', () async {
+    final temp = await Directory.systemTemp.createTemp('qiyu-call-startup-');
+    addTearDown(() => temp.delete(recursive: true));
+    final filePath = '${temp.path}${Platform.pathSeparator}provider.json';
+    final repository = JsonProviderConfigRepository(filePath: filePath);
+    expect(await repository.load(), isNull);
+    await File(filePath).writeAsString(
+      jsonEncode({
+        'provider': 'qwen_omni_realtime',
+        'baseUrl': 'wss://dashscope.example.com/api-ws/v1/realtime',
+        'model': 'qwen3.8-omni-flash-realtime',
+        'temperature': 0.7,
+        'timeoutSeconds': 30,
+      }),
+    );
+    final old = (await repository.load())!;
+    expect(old.callStartupMode, CallStartupMode.manual);
+    for (final mode in [
+      CallStartupMode.autoOnChatEntry,
+      CallStartupMode.manual,
+    ]) {
+      await repository.save(old.withCallStartupMode(mode));
+      await repository.saveProxy(
+        const ProxyConfig(enabled: false, host: '', port: 7890),
+      );
+      final restored = (await JsonProviderConfigRepository(
+        filePath: filePath,
+      ).load())!;
+      expect(restored.callStartupMode, mode);
+      expect(restored.apiKey, isNull);
+    }
+  });
+
   test('webSearch 段独立往返且损坏只使搜索不可用', () async {
     final temp = await Directory.systemTemp.createTemp(
       'qiyu-web-search-config-',

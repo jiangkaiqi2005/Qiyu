@@ -82,6 +82,7 @@ final class SettingsRoutes implements ApiRoutes {
       final settings = await providerSettingsService.save(
         config: config,
         apiKey: _apiKeyFromPayload(payload),
+        updateCallStartupMode: payload.containsKey('callStartupMode'),
       );
       return Response.ok(
         jsonEncode(settings.toJson()),
@@ -398,6 +399,9 @@ ProviderConfig _providerConfigFromPayload(Map<String, Object?> payload) {
     model: model,
     temperature: temperature.toDouble(),
     timeoutSeconds: timeoutSeconds,
+    callStartupMode: payload.containsKey('callStartupMode')
+        ? CallStartupMode.fromWireName(payload['callStartupMode'])
+        : CallStartupMode.manual,
   );
 }
 

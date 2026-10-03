@@ -977,6 +977,30 @@ void main() {
       expect(ended['reason'], contains('API Key'));
     });
 
+    test('修改启动方式不结束已建立通话，也不影响既有断线恢复', () async {
+      final harness = _Harness();
+      await harness.start();
+      await harness.providerSettings.save(
+        config: _omniConfig.withCallStartupMode(
+          CallStartupMode.autoOnChatEntry,
+        ),
+      );
+      expect(harness.phases().last, 'active');
+      expect(harness.connection.closed, isFalse);
+      await harness.connection.close();
+      await until(() => harness.reconnectWaits.isNotEmpty, label: '重连等待');
+      final second = harness.connector.enqueue();
+      _respondWithScript(second, const []);
+      harness.reconnectWaits.single.complete();
+      await until(
+        () =>
+            harness.connector.connectCount == 2 &&
+            harness.phases().last == 'active',
+        label: '偏好修改后重连',
+      );
+      expect(second.closed, isFalse);
+    });
+
     test('Provider 切换（凭据作用域变化）后重连直接结束', () async {
       final harness = _Harness();
       await harness.start();

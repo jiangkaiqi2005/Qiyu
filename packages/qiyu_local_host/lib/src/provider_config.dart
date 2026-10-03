@@ -30,6 +30,21 @@ enum ProviderKind {
 /// 单处改动两处生效，不各写一遍。
 const maxConfiguredTimeoutSeconds = 600;
 
+enum CallStartupMode {
+  manual('manual'),
+  autoOnChatEntry('auto_on_chat_entry');
+
+  const CallStartupMode(this.wireName);
+
+  final String wireName;
+
+  static CallStartupMode fromWireName(Object? value) => values.firstWhere(
+    (mode) => mode.wireName == value,
+    orElse: () =>
+        throw const ProviderConfigException('通话启动方式必须是手动开始或进入聊天页自动开始。'),
+  );
+}
+
 final class ProviderConfig {
   const ProviderConfig({
     required this.kind,
@@ -37,6 +52,7 @@ final class ProviderConfig {
     required this.model,
     required this.temperature,
     required this.timeoutSeconds,
+    this.callStartupMode = CallStartupMode.manual,
     this.apiKey,
   });
 
@@ -46,6 +62,9 @@ final class ProviderConfig {
     model: json['model']! as String,
     temperature: (json['temperature']! as num).toDouble(),
     timeoutSeconds: json['timeoutSeconds']! as int,
+    callStartupMode: json.containsKey('callStartupMode')
+        ? CallStartupMode.fromWireName(json['callStartupMode'])
+        : CallStartupMode.manual,
     // 用户可直接编辑本文件更换 Key：兼容 apiKey 与 API_KEY 两种写法。
     apiKey: _optionalKey(json['apiKey'] ?? json['API_KEY']),
   );
@@ -61,6 +80,7 @@ final class ProviderConfig {
   final String model;
   final double temperature;
   final int timeoutSeconds;
+  final CallStartupMode callStartupMode;
 
   /// 本机 provider.json 里保存的 API Key（明文）。属于凭据而非配置
   /// 身份：不参与相等判断，也不进 toJson()——设置快照经 HTTP 返回
@@ -73,6 +93,7 @@ final class ProviderConfig {
     model: model,
     temperature: temperature,
     timeoutSeconds: timeoutSeconds,
+    callStartupMode: callStartupMode,
     apiKey: apiKey,
   );
 
@@ -84,6 +105,17 @@ final class ProviderConfig {
     model: model,
     temperature: temperature,
     timeoutSeconds: timeoutSeconds,
+    callStartupMode: callStartupMode,
+    apiKey: apiKey,
+  );
+
+  ProviderConfig withCallStartupMode(CallStartupMode mode) => ProviderConfig(
+    kind: kind,
+    baseUrl: baseUrl,
+    model: model,
+    temperature: temperature,
+    timeoutSeconds: timeoutSeconds,
+    callStartupMode: mode,
     apiKey: apiKey,
   );
 
@@ -107,6 +139,7 @@ final class ProviderConfig {
     'model': model,
     'temperature': temperature,
     'timeoutSeconds': timeoutSeconds,
+    'callStartupMode': callStartupMode.wireName,
   };
 
   void validate() {
@@ -145,11 +178,18 @@ final class ProviderConfig {
       other.baseUrl == baseUrl &&
       other.model == model &&
       other.temperature == temperature &&
-      other.timeoutSeconds == timeoutSeconds;
+      other.timeoutSeconds == timeoutSeconds &&
+      other.callStartupMode == callStartupMode;
 
   @override
-  int get hashCode =>
-      Object.hash(kind, baseUrl, model, temperature, timeoutSeconds);
+  int get hashCode => Object.hash(
+    kind,
+    baseUrl,
+    model,
+    temperature,
+    timeoutSeconds,
+    callStartupMode,
+  );
 }
 
 final class ProviderConfigException implements Exception {
