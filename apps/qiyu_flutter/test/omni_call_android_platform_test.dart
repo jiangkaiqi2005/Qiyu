@@ -5,7 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:qiyu_flutter/features/chat/omni_call_native_channel.dart';
 import 'package:qiyu_flutter/features/chat/omni_call_player_platform_io.dart';
 import 'package:qiyu_flutter/features/chat/voice_capture_platform_io.dart';
+import 'package:qiyu_flutter/features/chat/voice_capture_platform.dart'
+    hide createVoiceCapturePlatform;
 import 'package:qiyu_flutter/features/chat/voice_player_platform_io.dart';
+import 'package:qiyu_flutter/features/chat/voice_player_platform.dart';
 
 /// Omni 通话平台缝 io（安卓）侧的契约验收（T05）：
 ///
@@ -28,6 +31,107 @@ void main() {
   });
 
   group('Omni 连续采集平台（AndroidVoiceCapturePlatform）', () {
+    test('取消起采后手动重开，旧成功和收尾只针对旧请求', () async {
+      const native = MethodChannel(androidOmniCallChannelName);
+      final oldStart = Completer<bool>();
+      final startedIds = <int>[];
+      final cancelledIds = <int>[];
+      final stoppedIds = <int>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(native, (call) async {
+        final id = (call.arguments as Map<Object?, Object?>?)?['requestId'] as int?;
+        if (call.method == 'startCapture') {
+          startedIds.add(id!);
+          return startedIds.length == 1 ? oldStart.future : true;
+        }
+        if (call.method == 'cancelPendingCaptureStart') cancelledIds.add(id!);
+        if (call.method == 'stopCapture') stoppedIds.add(id!);
+        return true;
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance
+          .defaultBinaryMessenger.setMockMethodCallHandler(native, null));
+      final platform = AndroidVoiceCapturePlatform(supported: true);
+      final old = platform.start(onChunk: (_) => fail('旧通话不得收块'), onUnavailable: (_) {});
+      await Future<void>.delayed(Duration.zero);
+      platform.cancelPendingStart();
+      final chunks = <Uint8List>[];
+      final current = await platform.start(onChunk: chunks.add, onUnavailable: (_) {});
+      expect(current, isNotNull);
+      platform.cancelPendingStart(); // 已交付的 active 通话不受 pending 取消影响。
+      oldStart.complete(true);
+      expect(await old, isNull);
+      expect(startedIds.toSet(), hasLength(2));
+      expect(cancelledIds, [startedIds.first]);
+      expect(stoppedIds, [startedIds.first]);
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(androidOmniCallChannelName,
+            const StandardMethodCodec().encodeMethodCall(
+              MethodCall('onCaptureChunk', Uint8List(3200))), (_) {});
+      expect(chunks, hasLength(1));
+      current!.stop();
+      await Future<void>.delayed(Duration.zero);
+      expect(stoppedIds, startedIds);
+    });
+
+    test('自动前检后授权被撤销也不再次弹权限', () async {
+      const native = MethodChannel(androidOmniCallChannelName);
+      final sent = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(native, (call) async {
+        sent.add(call.method);
+        return call.method == 'canAutoStartCapture';
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance
+          .defaultBinaryMessenger.setMockMethodCallHandler(native, null));
+      final platform = AndroidVoiceCapturePlatform(supported: true);
+      expect(await platform.canAutoStart(), isTrue);
+      expect(await platform.start(onChunk: (_) {}, onUnavailable: (_) {}), isNull);
+      expect(sent, ['canAutoStartCapture', 'hasMicrophonePermission']);
+    });
+
+    test('挂断等待首次授权后，迟到授权不再起采', () async {
+      const native = MethodChannel(androidOmniCallChannelName);
+      final permission = Completer<bool>();
+      final sent = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(native, (call) async {
+        sent.add(call);
+        if (call.method == 'hasMicrophonePermission') return false;
+        if (call.method == 'requestMicrophonePermission') return permission.future;
+        return true;
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance
+          .defaultBinaryMessenger.setMockMethodCallHandler(native, null));
+      final platform = AndroidVoiceCapturePlatform(supported: true);
+      final pending = platform.start(onChunk: (_) {}, onUnavailable: (_) {});
+      await Future<void>.delayed(Duration.zero);
+      expect(platform, isA<InterruptibleVoiceCapturePlatform>());
+      (platform as InterruptibleVoiceCapturePlatform).cancelPendingStart();
+      permission.complete(true);
+      expect(await pending, isNull);
+      expect(sent.where((call) => call.method == 'startCapture'), isEmpty);
+    });
+
+    test('自动前检读取原生可见/权限/设备条件，不申请权限或起采', () async {
+      const native = MethodChannel(androidOmniCallChannelName);
+      final sent = <String>[];
+      var ready = true;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(native, (call) async {
+        sent.add(call.method);
+        return ready;
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance
+          .defaultBinaryMessenger.setMockMethodCallHandler(native, null));
+      final platform = AndroidVoiceCapturePlatform(supported: true);
+      expect(platform, isA<AutoStartVoiceCapturePlatform>());
+      final automatic = platform as AutoStartVoiceCapturePlatform;
+      expect(await automatic.canAutoStart(), isTrue);
+      ready = false;
+      expect(await automatic.canAutoStart(), isFalse);
+      expect(sent, ['canAutoStartCapture', 'canAutoStartCapture']);
+    });
+
     test('不支持的平台如实返回 null，不触碰通道', () async {
       final platform = AndroidVoiceCapturePlatform(
         channel: channel,
@@ -140,6 +244,30 @@ void main() {
   });
 
   group('Omni 通话播放平台（AndroidOmniCallPlayerPlatform）', () {
+    test('自动输出准备必须取得原生播放就绪，拒绝和通道故障返回失败', () async {
+      const native = MethodChannel(androidOmniCallChannelName);
+      final sent = <String>[];
+      var ready = true;
+      var broken = false;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(native, (call) async {
+        sent.add(call.method);
+        if (broken) throw PlatformException(code: 'DOWN');
+        return ready;
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance
+          .defaultBinaryMessenger.setMockMethodCallHandler(native, null));
+      final platform = AndroidOmniCallPlayerPlatform(supported: true);
+      expect(platform, isA<AutoStartVoicePlayerPlatform>());
+      final automatic = platform as AutoStartVoicePlayerPlatform;
+      expect(await automatic.prepareForAutoPlayback(), isTrue);
+      ready = false;
+      expect(await automatic.prepareForAutoPlayback(), isFalse);
+      broken = true;
+      expect(await automatic.prepareForAutoPlayback(), isFalse);
+      expect(sent, List.filled(3, 'prepareForAutoPlayback'));
+    });
+
     test('不支持的平台起流返回 null，不触碰通道', () async {
       final platform = AndroidOmniCallPlayerPlatform(
         channel: channel,
@@ -374,6 +502,12 @@ void main() {
 }
 
 final class _FakeOmniCallChannel implements OmniCallNativeChannel {
+  @override
+  Future<bool> prepareForAutoPlayback() async => true;
+
+  @override
+  Future<bool> canAutoStartCapture() async => micPermission;
+
   bool micPermission = true;
   bool requestResult = true;
   bool startCaptureResult = true;
@@ -411,13 +545,16 @@ final class _FakeOmniCallChannel implements OmniCallNativeChannel {
   }
 
   @override
-  Future<bool> startCapture() async {
+  Future<bool> startCapture({int? requestId}) async {
     startCaptureCalls++;
     return startCaptureResult;
   }
 
   @override
-  Future<void> stopCapture() async {
+  Future<void> cancelPendingCaptureStart(int requestId) async {}
+
+  @override
+  Future<void> stopCapture({int? requestId}) async {
     stopCaptureCalls++;
   }
 

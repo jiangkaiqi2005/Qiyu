@@ -23,6 +23,7 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -46,13 +47,14 @@ internal const val OMNI_MIC_PERMISSION_REQUEST_CODE = 7062
  * 生命周期归属与 VoiceBridge 的关键差异：**不跟随 Activity 前后台**。
  * 锁屏／切 App 期间通话继续（spec:23），Activity 只在销毁（onDestroy）
  * 时才经 [unregister] 收口整通（含前台服务）——界面没了麦克风必须灭。
- * 前台服务（OmniCallForegroundService）只在用户主动开始的可见界面里
+ * 前台服务（OmniCallForegroundService）只在可见聊天界面手动或已授权自动
  * 拉起，系统或用户从系统入口停止它时如实上报 Dart 结束通话，绝不自行
  * 复活（T05:14）。
  *
  * 线协议（与 Dart 侧 `omni_call_native_channel.dart` 一一对应）：
  * - Dart→原生：`hasMicrophonePermission`、`requestMicrophonePermission`、
- *   `startCapture`、`stopCapture`、`setMuted`、`startStream`、
+ *   `canAutoStartCapture`、`startCapture`、`cancelPendingCaptureStart`、
+ *   `stopCapture`、`setMuted`、`prepareForAutoPlayback`、`startStream`、
  *   `appendStreamChunk`、`endStream`、`setStreamVolume`、`stopStream`。
  * - 原生→Dart：`onCaptureChunk`（PCM16 16k 单声道约 100ms 一块，字节
  *   直接走 StandardMessageCodec）、`onCaptureUnavailable {reason}`、
@@ -96,6 +98,14 @@ internal object OmniCallBridge {
     @Volatile
     private var channel: MethodChannel? = null
 
+    @Volatile
+    private var activityVisible = false
+
+    private val cancelledCaptureRequest = AtomicInteger(-1)
+    private val bridgeGeneration = AtomicInteger(0)
+    @Volatile
+    private var activeCaptureRequest = -1
+
     private val pendingPermissionResult = AtomicReference<MethodChannel.Result?>(null)
 
     // ---- 采集状态（起/停串行在 executor 上；标志位跨线程读用 volatile） ----
@@ -113,6 +123,8 @@ internal object OmniCallBridge {
 
     private var aec: AcousticEchoCanceler? = null
     private var releaseCallObservers: (() -> Unit)? = null
+    @Volatile
+    private var callFocusHeld = false
 
     // ---- 通话播放流：AudioTrack MODE_STREAM，块经通道写进原生写队列，
     // 音频只在内存。与 VoiceBridge 的朗读流分开（焦点与生命周期归通话）。----
@@ -127,6 +139,8 @@ internal object OmniCallBridge {
     private val streamWriters = ConcurrentHashMap<Int, Thread>()
 
     fun register(messenger: BinaryMessenger, hostActivity: MainActivity) {
+        bridgeGeneration.incrementAndGet()
+        cancelledCaptureRequest.set(-1)
         activity = hostActivity
         appContext = hostActivity.applicationContext
         channel = MethodChannel(messenger, OMNI_CALL_CHANNEL).also { chan ->
@@ -151,12 +165,19 @@ internal object OmniCallBridge {
         pendingPermissionResult.getAndSet(null)?.success(granted)
     }
 
+    /** 可见性仅限制新通话；已有通话照常在后台／锁屏运行。 */
+    fun onForegroundChanged(visible: Boolean) {
+        activityVisible = visible
+    }
+
     /**
      * Activity 销毁：界面没了麦克风不该还亮着。整通收口（采集、播放、
      * 观察者、前台服务）照常执行——engine 拆除后通道已不可达，不再向
      * Dart 发任何通知，也绝不复活。
      */
     fun unregister() {
+        bridgeGeneration.incrementAndGet()
+        activityVisible = false
         pendingPermissionResult.getAndSet(null)?.error(
             "ACTIVITY_DESTROYED",
             "界面已销毁，权限请求已取消。",
@@ -172,9 +193,34 @@ internal object OmniCallBridge {
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "hasMicrophonePermission" -> result.success(hasMicPermission())
+            "canAutoStartCapture" -> result.success(canAutoStartCapture())
             "requestMicrophonePermission" -> requestMicPermission(result)
-            "startCapture" -> executor.execute { startCapture(result) }
-            "stopCapture" -> executor.execute { stopCapture(result) }
+            "startCapture" -> {
+                val requestId = captureRequestId(call) ?: 0
+                val generation = bridgeGeneration.get()
+                executor.execute { startCapture(result, requestId, generation) }
+            }
+            "cancelPendingCaptureStart" -> {
+                val requestId = captureRequestId(call)
+                if (requestId != null) {
+                    val generation = bridgeGeneration.get()
+                    cancelledCaptureRequest.accumulateAndGet(requestId) { old, next -> maxOf(old, next) }
+                    executor.execute {
+                        if (generation == bridgeGeneration.get() && activeCaptureRequest == requestId) {
+                            stopCallResources()
+                        }
+                    }
+                }
+                result.success(null)
+            }
+            "stopCapture" -> {
+                val requestId = captureRequestId(call)
+                executor.execute { stopCapture(result, requestId) }
+            }
+            "prepareForAutoPlayback" -> executor.execute {
+                val ready = prepareForAutoPlayback()
+                postResult(result) { success(ready) }
+            }
             "setMuted" -> {
                 // 闭麦只停发有效音频（spec 前端摆放）：采集继续读以免恢复
                 // 时吐旧数据，块不再出桥；Dart 侧同步发 mute 帧给 Host。
@@ -208,9 +254,20 @@ internal object OmniCallBridge {
         activity?.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 
+    private fun captureRequestId(call: MethodCall): Int? =
+        ((call.arguments as? Map<*, *>)?.get("requestId") as? Number)?.toInt()
+
+    private fun canAutoStartCapture(): Boolean {
+        if (!activityVisible || !hasMicPermission() || capturing) return false
+        val manager = activity?.getSystemService(AudioManager::class.java) ?: return false
+        if (manager.isMicrophoneMute) return false
+        if (manager.getDevices(AudioManager.GET_DEVICES_INPUTS).none { it.isSource }) return false
+        return AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, ENCODING) > 0
+    }
+
     private fun requestMicPermission(result: MethodChannel.Result) {
         val host = activity
-        if (host == null) {
+        if (host == null || !activityVisible) {
             result.success(false)
             return
         }
@@ -241,12 +298,12 @@ internal object OmniCallBridge {
     /** 起采（executor 串行）：前台服务 → AudioRecord（通信音源）→ 焦点
      *  与观察者 → 采集线程。任一步失败回滚已起资源并如实 success(false)。 */
     @SuppressLint("MissingPermission")
-    private fun startCapture(result: MethodChannel.Result) {
+    private fun startCapture(result: MethodChannel.Result, requestId: Int, generation: Int) {
         if (capturing) {
             postResult(result) { success(false) }
             return
         }
-        if (!hasMicPermission()) {
+        if (!activityVisible || !hasMicPermission() || captureRequestCancelled(requestId, generation)) {
             // Dart 侧已先请求过授权；这里复查兜底（34+ 的 while-in-use
             // 服务启动同样依赖它）。
             postResult(result) { success(false) }
@@ -255,7 +312,7 @@ internal object OmniCallBridge {
         OmniCallForegroundService.stoppedListener = {
             notifyCaptureUnavailable("foreground service stopped by system")
         }
-        if (!startForegroundService()) {
+        if (!startForegroundService(requestId, generation)) {
             OmniCallForegroundService.stoppedListener = null
             postResult(result) { success(false) }
             return
@@ -272,34 +329,49 @@ internal object OmniCallBridge {
             postResult(result) { success(false) }
             return
         }
-        attachAec(record)
-        try {
-            record.startRecording()
-        } catch (_: Exception) {
-            // startRecording 按文档会抛 IllegalStateException（设备被占用等）。
+        if (captureRequestCancelled(requestId, generation) || !activityVisible) {
             detachCallObservers()
             releaseQuietly(record)
             stopForegroundService()
             postResult(result) { success(false) }
             return
         }
+        attachAec(record)
+        try {
+            record.startRecording()
+        } catch (_: Exception) {
+            // startRecording 按文档会抛 IllegalStateException（设备被占用等）。
+            detachCallObservers()
+            releaseAecQuietly()
+            releaseQuietly(record)
+            stopForegroundService()
+            postResult(result) { success(false) }
+            return
+        }
         capturing = true
+        activeCaptureRequest = requestId
         muted = false
         captureInterrupted = false
         captureThread = Thread { captureLoop(record) }.also { it.start() }
-        postResult(result) { success(true) }
+        if (captureRequestCancelled(requestId, generation)) {
+            stopCallResources()
+            postResult(result) { success(false) }
+        } else {
+            postResult(result) { success(true) }
+        }
     }
 
     /** 停采（executor 串行）：置停标志等线程退出（释放归线程 finally），
      *  摘观察者与回声消除、清播放流、停前台服务。幂等。 */
-    private fun stopCapture(result: MethodChannel.Result) {
-        stopCallResources()
+    private fun stopCapture(result: MethodChannel.Result, requestId: Int?) {
+        if (requestId == null || activeCaptureRequest == requestId) stopCallResources()
         postResult(result) { success(null) }
     }
 
     /** 整通原生资源收口（停采 + 停流 + 停服务）。 */
     private fun stopCallResources() {
         capturing = false
+        activeCaptureRequest = -1
         captureInterrupted = true
         val thread = captureThread
         try {
@@ -384,6 +456,7 @@ internal object OmniCallBridge {
             if (!observing || change >= 0) {
                 return@OnAudioFocusChangeListener
             }
+            callFocusHeld = false
             interruptAllStreams()
             if (change == AudioManager.AUDIOFOCUS_LOSS) {
                 notifyCaptureUnavailable("audio focus lost permanently")
@@ -414,6 +487,7 @@ internal object OmniCallBridge {
         if (granted != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             return false
         }
+        callFocusHeld = true
         val devices = object : AudioDeviceCallback() {
             override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
                 if (!observing) {
@@ -455,6 +529,7 @@ internal object OmniCallBridge {
     }
 
     private fun detachCallObservers() {
+        callFocusHeld = false
         releaseCallObservers?.invoke()
         releaseCallObservers = null
     }
@@ -534,18 +609,35 @@ internal object OmniCallBridge {
         }
     }
 
-    private fun startForegroundService(): Boolean {
-        val context = appContext ?: return false
-        return try {
-            if (Build.VERSION.SDK_INT >= 26) {
-                context.startForegroundService(OmniCallForegroundService.intent(context))
-            } else {
-                context.startService(OmniCallForegroundService.intent(context))
+    private fun captureRequestCancelled(requestId: Int, generation: Int): Boolean =
+        generation != bridgeGeneration.get() || requestId <= cancelledCaptureRequest.get()
+
+    private fun startForegroundService(requestId: Int, generation: Int): Boolean {
+        // 主线程检查与 onPause 串行；不能把早先 permissionGranted 当成
+        // while-in-use FGS 的后台启动许可。
+        val done = CountDownLatch(1)
+        var started = false
+        mainHandler.post {
+            try {
+                val context = appContext
+                if (context != null && activityVisible && hasMicPermission() &&
+                    !captureRequestCancelled(requestId, generation)
+                ) {
+                    if (Build.VERSION.SDK_INT >= 26) {
+                        context.startForegroundService(OmniCallForegroundService.intent(context))
+                    } else {
+                        context.startService(OmniCallForegroundService.intent(context))
+                    }
+                    started = true
+                }
+            } catch (_: Exception) {
+                // 系统拒绝时如实回手动入口。
+            } finally {
+                done.countDown()
             }
-            true
-        } catch (_: Exception) {
-            false
         }
+        done.await()
+        return started
     }
 
     private fun stopForegroundService() {
@@ -563,6 +655,24 @@ internal object OmniCallBridge {
     // ------------------------------------------------------------------
     // 播放流（通话下行，AudioTrack MODE_STREAM）
     // ------------------------------------------------------------------
+
+    private fun prepareForAutoPlayback(): Boolean {
+        if (!capturing || captureInterrupted || !callFocusHeld || !hasMicPermission()) return false
+        // 走实际播放链路，不向模型发帧、不播放占位声音。短静音 PCM 验证
+        // 24kHz MODE_STREAM 轨的启动与写入；句柄只归本次探测，立即释放。
+        val id = openStream(24000, 0.0) ?: return false
+        return try {
+            val track = streams[id] ?: return false
+            val silence = ByteArray(480)
+            track.playState == AudioTrack.PLAYSTATE_PLAYING &&
+                track.write(silence, 0, silence.size, AudioTrack.WRITE_NON_BLOCKING) == silence.size &&
+                capturing && !captureInterrupted && callFocusHeld && hasMicPermission()
+        } catch (_: Exception) {
+            false
+        } finally {
+            releaseStream(id)
+        }
+    }
 
     private fun startStream(call: MethodCall, result: MethodChannel.Result) {
         val args = call.arguments as? Map<*, *>
@@ -620,8 +730,8 @@ internal object OmniCallBridge {
         streamEnded[id] = false
         streamStopped[id] = false
         streamInterrupted[id] = false
-        track.setVolume(volume.toFloat().coerceIn(0.0f, 1.0f))
         try {
+            track.setVolume(volume.toFloat().coerceIn(0.0f, 1.0f))
             track.play()
         } catch (_: Exception) {
             releaseTrackQuietly(id)

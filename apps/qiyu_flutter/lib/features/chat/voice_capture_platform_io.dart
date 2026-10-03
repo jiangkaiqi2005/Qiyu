@@ -21,7 +21,9 @@ import 'voice_capture_platform.dart';
 /// 权限：先查后请（系统弹窗只由用户点「拨通」的动作触发，拒绝即返回
 /// null，调用方按「可继续打字」如实呈现，不偷偷重试）；通知权限只在
 /// 33+ 一并尽力请求且不影响开始（原生桥内处理）。
-final class AndroidVoiceCapturePlatform implements VoiceCapturePlatform {
+final class AndroidVoiceCapturePlatform
+    implements VoiceCapturePlatform, AutoStartVoiceCapturePlatform,
+        InterruptibleVoiceCapturePlatform {
   AndroidVoiceCapturePlatform({
     OmniCallNativeChannel? channel,
     bool? supported,
@@ -30,9 +32,32 @@ final class AndroidVoiceCapturePlatform implements VoiceCapturePlatform {
 
   final OmniCallNativeChannel _channel;
   final bool? _supportedOverride;
+  static int _nextRequestId = 1;
+  int? _pendingRequestId;
+  bool _automaticPrechecked = false;
+  int _precheckGeneration = 0;
+
+  @override
+  void cancelPendingStart() {
+    _automaticPrechecked = false;
+    _precheckGeneration++;
+    final id = _pendingRequestId;
+    if (id == null) return;
+    _pendingRequestId = null;
+    unawaited(_channel.cancelPendingCaptureStart(id));
+  }
 
   @override
   bool get supported => _supportedOverride ?? Platform.isAndroid;
+
+  @override
+  Future<bool> canAutoStart() async {
+    final generation = ++_precheckGeneration;
+    final allowed = supported && await _channel.canAutoStartCapture();
+    if (generation != _precheckGeneration) return false;
+    _automaticPrechecked = allowed;
+    return allowed;
+  }
 
   @override
   Future<VoiceCaptureSession?> start({
@@ -42,25 +67,46 @@ final class AndroidVoiceCapturePlatform implements VoiceCapturePlatform {
     if (!supported) {
       return null;
     }
-    if (!await _channel.hasMicrophonePermission() &&
-        !await _channel.requestMicrophonePermission()) {
-      // 授权被拒或通道不可用：按「没有开始」处理，可继续打字。
-      return null;
+    final automatic = _automaticPrechecked;
+    cancelPendingStart();
+    final id = _nextRequestId++;
+    _pendingRequestId = id;
+    void Function()? unsubscribeChunk;
+    void Function()? unsubscribeUnavailable;
+    var delivered = false;
+    try {
+      final granted = await _channel.hasMicrophonePermission();
+      if (_pendingRequestId != id) return null;
+      if (!granted) {
+        if (automatic) return null;
+        final accepted = await _channel.requestMicrophonePermission();
+        if (_pendingRequestId != id || !accepted) return null;
+      }
+      // 先订阅后起采；取消后的块和中断不得进入旧通话。
+      unsubscribeChunk = _channel.onCaptureChunk((pcm) {
+        if (delivered || _pendingRequestId == id) onChunk(pcm);
+      });
+      unsubscribeUnavailable = _channel.onCaptureUnavailable((reason) {
+        if (delivered || _pendingRequestId == id) onUnavailable(reason);
+      });
+      final started = await _channel.startCapture(requestId: id);
+      if (_pendingRequestId != id) {
+        // 原生成功与取消交错也只收本次资源，不能误停新通话。
+        if (started) await _channel.stopCapture(requestId: id);
+        return null;
+      }
+      if (!started) return null;
+      delivered = true;
+      return _AndroidVoiceCaptureSession(
+        _channel, id, unsubscribeChunk, unsubscribeUnavailable,
+      );
+    } finally {
+      if (!delivered) {
+        unsubscribeChunk?.call();
+        unsubscribeUnavailable?.call();
+      }
+      if (_pendingRequestId == id) _pendingRequestId = null;
     }
-    // 先订阅后起采（T01 探针教训 4：快事件不得晚于订阅到达）——原生
-    // startCapture 一成功就可能立刻出块或报中断。
-    final unsubscribeChunk = _channel.onCaptureChunk(onChunk);
-    final unsubscribeUnavailable = _channel.onCaptureUnavailable(onUnavailable);
-    if (!await _channel.startCapture()) {
-      unsubscribeChunk();
-      unsubscribeUnavailable();
-      return null;
-    }
-    return _AndroidVoiceCaptureSession(
-      _channel,
-      unsubscribeChunk,
-      unsubscribeUnavailable,
-    );
   }
 }
 
@@ -69,11 +115,13 @@ final class AndroidVoiceCapturePlatform implements VoiceCapturePlatform {
 final class _AndroidVoiceCaptureSession implements VoiceCaptureSession {
   _AndroidVoiceCaptureSession(
     this._channel,
+    this._requestId,
     this._unsubscribeChunk,
     this._unsubscribeUnavailable,
   );
 
   final OmniCallNativeChannel _channel;
+  final int _requestId;
   final void Function() _unsubscribeChunk;
   final void Function() _unsubscribeUnavailable;
   bool _stopped = false;
@@ -97,7 +145,7 @@ final class _AndroidVoiceCaptureSession implements VoiceCaptureSession {
     // 先摘订阅再停原生：stop 后即便原生还有残余通知也不再外泄。
     _unsubscribeChunk();
     _unsubscribeUnavailable();
-    _channel.stopCapture().catchError((Object _) {
+    _channel.stopCapture(requestId: _requestId).catchError((Object _) {
       // 收尾以「不再收音」为准；原生可能已收尾。
     });
   }

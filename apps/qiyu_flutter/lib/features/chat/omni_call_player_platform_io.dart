@@ -20,7 +20,8 @@ import 'voice_player_platform.dart';
 import 'voice_player_platform_io.dart';
 
 final class AndroidOmniCallPlayerPlatform
-    implements StreamingVoicePlayerPlatform, VoicePlayerPlatform {
+    implements StreamingVoicePlayerPlatform, VoicePlayerPlatform,
+        AutoStartVoicePlayerPlatform {
   AndroidOmniCallPlayerPlatform({
     OmniCallNativeChannel? channel,
     VoiceVolumeStore? volumeStore,
@@ -40,6 +41,10 @@ final class AndroidOmniCallPlayerPlatform
 
   @override
   bool get supported => _supportedOverride ?? Platform.isAndroid;
+
+  @override
+  Future<bool> prepareForAutoPlayback() async =>
+      supported && await _channel.prepareForAutoPlayback();
 
   @override
   Future<VoiceStreamPlayback?> startStream({

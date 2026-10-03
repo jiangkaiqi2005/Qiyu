@@ -36,9 +36,11 @@ class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         VoiceBridge.onForegroundChanged(true)
+        OmniCallBridge.onForegroundChanged(true)
     }
 
     override fun onPause() {
+        OmniCallBridge.onForegroundChanged(false)
         VoiceBridge.onForegroundChanged(false)
         super.onPause()
     }

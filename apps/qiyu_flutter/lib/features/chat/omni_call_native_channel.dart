@@ -22,6 +22,9 @@ abstract interface class OmniCallNativeChannel {
 
   Future<bool> hasMicrophonePermission();
 
+  /// 仅预检 Activity 可见、既有授权和输入设备，不弹权限、不起服务。
+  Future<bool> canAutoStartCapture();
+
   /// 请求麦克风权限（系统弹窗；33+ 上随同一枚系统弹窗尽力请求通知权限，
   /// 结果只看麦克风）。返回 true 表示已授权；拒绝或通道不可用返回 false。
   Future<bool> requestMicrophonePermission();
@@ -29,10 +32,13 @@ abstract interface class OmniCallNativeChannel {
   /// 请求原生开始连续采集（VOICE_COMMUNICATION 音源 + 可用回声消除 +
   /// microphone 前台服务 + 通话级焦点）。返回 false 表示权限缺失、设备
   /// 不可用或链路起不来；成功后块经 [onCaptureChunk] 持续到达。
-  Future<bool> startCapture();
+  Future<bool> startCapture({int? requestId});
+
+  /// 只取消该次尚未交付的起采；旧请求不能停掉后来开始的通话。
+  Future<void> cancelPendingCaptureStart(int requestId);
 
   /// 结束整通通话的原生资源：停采集、清播放流、摘焦点与前台服务（幂等）。
-  Future<void> stopCapture();
+  Future<void> stopCapture({int? requestId});
 
   /// 闭麦／恢复：闭麦后原生照读不外发（恢复时无旧数据残留）。
   Future<void> setMuted(bool muted);
@@ -45,6 +51,9 @@ abstract interface class OmniCallNativeChannel {
   void Function() onCaptureUnavailable(void Function(String reason) handler);
 
   // ---- 通话播放（同桥承载，焦点已由整通持有） ----
+
+  /// 真实采集后核验通话焦点、AudioTrack 起播与 PCM 写入；不外发准备音频。
+  Future<bool> prepareForAutoPlayback();
 
   /// 开一路流式 PCM 播放（AudioTrack MODE_STREAM 按协商采样率起播），
   /// 返回流句柄；无法开始返回 null。
@@ -86,6 +95,15 @@ final class MethodOmniCallChannel implements OmniCallNativeChannel {
   final List<void Function(int)> _finishedHandlers = [];
 
   @override
+  Future<bool> canAutoStartCapture() async {
+    try {
+      return await _channel.invokeMethod<bool>('canAutoStartCapture') ?? false;
+    } on Object {
+      return false;
+    }
+  }
+
+  @override
   Future<bool> hasMicrophonePermission() async {
     try {
       return await _channel.invokeMethod<bool>('hasMicrophonePermission') ??
@@ -106,18 +124,35 @@ final class MethodOmniCallChannel implements OmniCallNativeChannel {
   }
 
   @override
-  Future<bool> startCapture() async {
+  Future<bool> startCapture({int? requestId}) async {
     try {
-      return await _channel.invokeMethod<bool>('startCapture') ?? false;
+      return await _channel.invokeMethod<bool>(
+            'startCapture',
+            requestId == null ? null : {'requestId': requestId},
+          ) ?? false;
     } on Object {
       return false;
     }
   }
 
   @override
-  Future<void> stopCapture() async {
+  Future<void> cancelPendingCaptureStart(int requestId) async {
     try {
-      await _channel.invokeMethod<void>('stopCapture');
+      await _channel.invokeMethod<void>('cancelPendingCaptureStart', {
+        'requestId': requestId,
+      });
+    } on Object {
+      // 取消后迟到结果由 Dart 所有权和原生请求 ID 双重隔离。
+    }
+  }
+
+  @override
+  Future<void> stopCapture({int? requestId}) async {
+    try {
+      await _channel.invokeMethod<void>(
+        'stopCapture',
+        requestId == null ? null : {'requestId': requestId},
+      );
     } on Object {
       // 收尾以「不再收音」为准；原生可能已收尾，异常吞掉。
     }
@@ -144,6 +179,15 @@ final class MethodOmniCallChannel implements OmniCallNativeChannel {
     _ensureRegistered();
     _unavailableHandlers.add(handler);
     return () => _unavailableHandlers.remove(handler);
+  }
+
+  @override
+  Future<bool> prepareForAutoPlayback() async {
+    try {
+      return await _channel.invokeMethod<bool>('prepareForAutoPlayback') ?? false;
+    } on Object {
+      return false;
+    }
   }
 
   @override
