@@ -112,6 +112,20 @@ abstract final class QiyuIcons {
     fontPackage: null,
   );
 
+  /// Omni 双工通话：拨号听筒（Omni 选中时替换原单段录音入口）。
+  static const IconData call = IconData(
+    0xE0B0,
+    fontFamily: QiyuIconSpec.fontFamily,
+    fontPackage: null,
+  );
+
+  /// Omni 双工通话：挂断听筒（通话中的结束入口）。
+  static const IconData call_end = IconData(
+    0xE0B1,
+    fontFamily: QiyuIconSpec.fontFamily,
+    fontPackage: null,
+  );
+
   /// 转写进行中的声波标识。
   static const IconData graphic_eq = IconData(
     0xE1B8,

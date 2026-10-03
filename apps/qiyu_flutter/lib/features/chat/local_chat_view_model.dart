@@ -13,6 +13,7 @@ import '../shell/host_status_monitor.dart';
 import '../shell/qiyu_strings.dart';
 import 'chat_delivery_assembly.dart';
 import 'local_chat_client.dart';
+import 'omni_call_controller.dart';
 import 'voice_output_controller.dart';
 
 typedef RequestIdFactory = String Function();
@@ -78,7 +79,8 @@ final class _ChatTurn {
   }
 }
 
-final class LocalChatViewModel extends ChangeNotifier {
+final class LocalChatViewModel extends ChangeNotifier
+    implements OmniCallChatSurface {
   LocalChatViewModel(
     this._gateway, {
     HostConnectionProbe? hostConnectionProbe,
@@ -194,15 +196,38 @@ final class LocalChatViewModel extends ChangeNotifier {
   bool get loading => _initializing && !_initialized;
   bool get sending => _activeTurn != null;
   bool get waiting => _activeTurn?.waiting ?? false;
-  String get streamingText => _activeTurn?.streamingText ?? '';
+
+  /// Omni 通话回复的在途文本（T04）：通话事件经 [OmniCallChatSurface]
+  /// 写入同一套流式行与消息列表；打字轮（/api/chat）与通话流互斥——
+  /// 通话中打字走通话线协议，不再进 [_activeTurn]。
+  String _callStreamingText = '';
+  int _callBubbleCounter = 0;
+
+  String get streamingText => _activeTurn?.streamingText ?? _callStreamingText;
 
   /// 流式期间已完结的行：视图按最终消息的同一装配渲染（拆分口径见
-  /// [_ChatTurn.completedLines]）。
+  /// [_ChatTurn.completedLines]）。通话流沿用同一拆分。
   List<String> get streamingCompletedLines =>
-      _activeTurn?.completedLines ?? const [];
+      _activeTurn?.completedLines ?? _callCompletedLines;
+
+  /// 通话流式的已完结行：与 [_ChatTurn.completedLines] 同一口径。
+  List<String> get _callCompletedLines {
+    final text = _callStreamingText;
+    if (text.isEmpty) {
+      return const [];
+    }
+    final lines = text.split('\n');
+    return lines.sublist(0, lines.length - 1);
+  }
 
   /// 流式正在增长的尾段：留在临时行渲染（见 [_ChatTurn.tailSegment]）。
-  String get streamingTailSegment => _activeTurn?.tailSegment ?? '';
+  String get streamingTailSegment =>
+      _activeTurn?.tailSegment ??
+      (_callStreamingText.isEmpty
+          ? ''
+          : _callStreamingText.substring(
+              _callStreamingText.lastIndexOf('\n') + 1,
+            ));
   bool get hostStopped => _hostMonitor.hostAvailable == false;
 
   /// 最近一次已完成的栖语回复的 fallbackReason。
@@ -740,6 +765,90 @@ final class LocalChatViewModel extends ChangeNotifier {
       return;
     }
     await _gateway.cancel(requestId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Omni 通话显示面（OmniCallChatSurface，T04）
+  // -------------------------------------------------------------------------
+
+  /// 通话开始：清掉上次通话可能残留的流式显示。
+  @override
+  void callSessionReset() {
+    _callStreamingText = '';
+    notifyListeners();
+  }
+
+  /// 一条用户轮进入消息流：打字轮即真；语音轮以输入转录入列，同
+  /// requestId 的后到转录整段覆盖（completed 事件是权威全文，T03）。
+  /// 只覆写用户气泡——恢复快照里同一 requestId 的栖语轮不受影响。
+  @override
+  void callUserTurn({required String requestId, required String text}) {
+    final index = _messages.indexWhere((message) {
+      return message.requestId == requestId &&
+          message.speaker == LocalChatSpeaker.user;
+    });
+    if (index >= 0) {
+      final existing = _messages[index];
+      if (existing.text == text) {
+        return;
+      }
+      _messages[index] = LocalChatMessage(
+        requestId: existing.requestId,
+        speaker: LocalChatSpeaker.user,
+        text: text,
+        at: existing.at,
+      );
+    } else {
+      _messages.add(
+        LocalChatMessage(
+          requestId: requestId,
+          speaker: LocalChatSpeaker.user,
+          text: text,
+          at: _previewMoment,
+        ),
+      );
+    }
+    notifyListeners();
+  }
+
+  /// 通话回复增量：进入流式行（与打字轮共用视图装配）。
+  @override
+  void callReplyDelta(String text) {
+    if (text.isEmpty) {
+      return;
+    }
+    _callStreamingText += text;
+    notifyListeners();
+  }
+
+  /// 一条回复终态：已显示文本落成气泡；未完成轮保留前缀并如实标记
+  /// （spec:20）。空文本不落气泡——静默工具轮没有可显示的内容，
+  /// 播过声但转录缺失的占位语由通话结束后的落盘对账补上。
+  @override
+  void callReplyDone({required bool incomplete}) {
+    final text = _callStreamingText;
+    _callStreamingText = '';
+    if (text.isNotEmpty) {
+      _messages.add(
+        LocalChatMessage(
+          requestId: 'omni-call-bubble-${_callBubbleCounter++}',
+          speaker: LocalChatSpeaker.qiyu,
+          text: text,
+          incomplete: incomplete,
+          at: _previewMoment,
+        ),
+      );
+    }
+    notifyListeners();
+  }
+
+  /// 通话结束后的落盘对账：从 Host 重新恢复会话快照，以落盘事实替换
+  /// 显示态。通话写进同一段会话（start 帧带 sessionId），恢复出的
+  /// 列表即权威序列；失败时保留现有显示（调用方捕获，不抹内容）。
+  @override
+  Future<void> resyncAfterCall() async {
+    _callStreamingText = '';
+    await _applyRestore(_generation, sessionId: _sessionId);
   }
 
   /// 等正在流式回复的一轮结束后再发送：语音转写完成时栖语可能仍在

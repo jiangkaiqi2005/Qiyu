@@ -20,6 +20,8 @@ import 'chat_stick_to_bottom.dart';
 import 'chat_voice_coordinator.dart';
 import 'local_chat_client.dart';
 import 'local_chat_view_model.dart';
+import 'omni_call_bar.dart';
+import 'omni_call_controller.dart';
 import 'qiyu_chat_bubble.dart';
 import 'qiyu_composer.dart';
 import 'qiyu_greeting_fade_out.dart';
@@ -86,6 +88,11 @@ class _LocalChatViewState extends State<LocalChatView>
   late final LocalChatViewModel _chatViewModel;
   late final VoiceInputController _voiceInput;
 
+  /// Omni 双工通话控制器（T04）：app 装配持有（跨页同一通话），本页
+  /// 只解析引用并传给 composer；脱离 app 树单独 pump 的测试拿不到
+  /// Provider，按 null 处理，页面回落到无通话件的既有形态。
+  OmniCallController? _omniCall;
+
   /// 聊天 VM 与朗读控制器的合并监听：**只建一次**复用。每次 build 现造
   /// `Listenable.merge` 会把这个临时合并对象挂到 voiceOutput 上且没人摘，
   /// 空态↔聊天态切换几次就攒出几个僵尸监听，卸载期 dispose 里的 stopAll()
@@ -149,6 +156,11 @@ class _LocalChatViewState extends State<LocalChatView>
     );
     if (_android) WidgetsBinding.instance.addObserver(this);
     unawaited(_voiceInput.initialize());
+    // Omni 通话（T04）：挂载即刷新一次「选中 Omni 且已配置」判定（go
+    // 导航销毁重建本页 State，与朗读可用状态同一补拉口径）；跨页通话
+    // 的状态在 app 装配的控制器里，回页不重开、不重置。
+    _omniCall = _resolveOmniCall();
+    unawaited(_omniCall?.refreshAvailability());
     // go 导航（侧边栏/抽屉换栈）会销毁重建本页 State：「回到聊天页」的
     // 路由监听帮不上忙，挂载即补拉一次朗读可用状态，设置页保存的语音
     // 配置回来就生效。VM 还没启动过 initialize 时不补（initialize 自带
@@ -196,6 +208,8 @@ class _LocalChatViewState extends State<LocalChatView>
     } else if (_offChat) {
       _offChat = false;
       unawaited(_chatViewModel.refreshVoiceOutputStatus());
+      // 回页补拉 Omni 可用判定：设置页切换/保存 Provider 后回来即生效。
+      unawaited(_omniCall?.refreshAvailability());
     }
   }
 
@@ -229,6 +243,16 @@ class _LocalChatViewState extends State<LocalChatView>
       return context.read<SttSettingsGateway>();
     } on ProviderNotFoundException {
       return HttpSttSettingsGateway();
+    }
+  }
+
+  /// Omni 通话控制器解析：只从 app Provider 树读（生命周期归 app 装配，
+  /// 跨页同一通）；拿不到按 null 处理。
+  OmniCallController? _resolveOmniCall() {
+    try {
+      return context.read<OmniCallController>();
+    } on ProviderNotFoundException {
+      return null;
     }
   }
 
@@ -822,6 +846,10 @@ class _LocalChatViewState extends State<LocalChatView>
           animation: _chatAndVoiceTick,
           builder: (context, _) => _voiceOutputBar(context, viewModel),
         ),
+        // Omni 通话状态栏（T04:12）：通话期间在输入框上方；控制器不在
+        // （未装配）或空闲时零占位。
+        if (_omniCall case final omniCall?)
+          QiyuOmniCallStrip(call: omniCall),
       ],
     );
   }
@@ -846,6 +874,7 @@ class _LocalChatViewState extends State<LocalChatView>
       viewModel: viewModel,
       voiceInput: _voiceInput,
       voiceCoordinator: _voiceCoordinator,
+      omniCall: _omniCall,
       onSendStarted: _stick.requestFollow,
       // 回调无参：本轮视图模型就是模块持有的这一个，分类/频控/弹窗仍走
       // [_handleTurnApiErrors]，页面侧闭包自取 viewModel。

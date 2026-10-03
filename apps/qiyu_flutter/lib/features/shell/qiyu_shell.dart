@@ -11,6 +11,7 @@ import '../../theme/qiyu_theme.dart';
 import '../../theme/qiyu_tokens.dart';
 import '../accessibility.dart';
 import '../chat/local_chat_view_model.dart';
+import '../chat/omni_call_bar.dart';
 import '../navigation.dart';
 import 'qiyu_background_notice.dart';
 import 'qiyu_connection_status.dart';
@@ -71,6 +72,7 @@ class QiyuShell extends StatefulWidget {
   const QiyuShell({
     super.key,
     this.showHomeBackdrop = false,
+    this.showOmniCallBar = false,
     required this.child,
   });
 
@@ -80,6 +82,11 @@ class QiyuShell extends StatefulWidget {
   /// 是否由壳负责渲染**合一页空态**的夜景背景：只有合一页（`/` 与 `/chat`）
   /// 为 true，功能页不带背景图（§6「仅空状态出现」）。
   final bool showHomeBackdrop;
+
+  /// 是否由壳负责渲染**跨页通话条**（T04:13）：活动通话进入记忆／历史／
+  /// 设置等功能页时，页面底部保留同语义通话条；聊天页自己有输入框上方
+  /// 的状态栏，不叠加第二条。路由装配层按「当前不是聊天页」传值。
+  final bool showOmniCallBar;
 
   @override
   State<QiyuShell> createState() => _QiyuShellState();
@@ -221,47 +228,56 @@ class _QiyuShellState extends State<QiyuShell>
           ),
           // ── 上层：壳与内容（侧边栏/抽屉是叠在背景上的半透明层）──────────
           if (desktop)
-            Row(
+            Column(
               children: [
-                // 收起/展开的宽度过渡。用 AnimatedContainer 这类隐式动画，生命
-                // 周期由框架自管，不另引入需要 dispose 的 AnimationController
-                // （见 _drawerController 处的纪律注释）。
-                //
-                // 两段编排：收起时宽度 240→0，面板先保持挂载、收到底（onEnd）才
-                // 离场，不占焦点与语义树（同抽屉 `_drawerMounted` 的口径）；展开
-                // 时面板挂回、宽度 0→240 长回来。全程面板都在 OverflowBox 里按
-                // 定宽 240 布局，不在过渡途中被压到小宽度重排（列表项里的固定
-                // 图标才不会挤爆），越出盒宽的部分由容器裁掉。
-                //
-                // 面板里**没有品牌槽**（2026-08-31 二次裁定）：品牌图标是常驻
-                // 开合开关 [_sidebarBrandToggle]，叠在面板左上角原品牌槽位置；
-                // 面板顶部用等高空位给它让位，过渡期间只有面板在动。
-                AnimatedContainer(
-                  key: const Key('nav-sidebar-size'),
-                  duration: qiyuMotion(context, QiyuMotion.drawer),
-                  curve: Curves.easeOut,
-                  width: _sidebarCollapsed ? 0 : QiyuLayout.sidebarWidth,
-                  // Container 只在带 decoration 时才接受非 none 的裁剪；空装饰
-                  // 只为放行这一条。
-                  decoration: const BoxDecoration(),
-                  clipBehavior: Clip.hardEdge,
-                  onEnd: _onSidebarAnimationEnd,
-                  child: _sidebarPanelMounted
-                      ? OverflowBox(
-                          alignment: Alignment.centerLeft,
-                          minWidth: QiyuLayout.sidebarWidth,
-                          maxWidth: QiyuLayout.sidebarWidth,
-                          child: SizedBox(
-                            width: QiyuLayout.sidebarWidth,
-                            child: _NavPanel(
-                              shape: _NavPanelShape.sidebar,
-                              onNavigate: _goTo,
-                            ),
-                          ),
-                        )
-                      : null,
+                Expanded(
+                  child: Row(
+                    children: [
+                      // 收起/展开的宽度过渡。用 AnimatedContainer 这类隐式动画，生命
+                      // 周期由框架自管，不另引入需要 dispose 的 AnimationController
+                      // （见 _drawerController 处的纪律注释）。
+                      //
+                      // 两段编排：收起时宽度 240→0，面板先保持挂载、收到底（onEnd）才
+                      // 离场，不占焦点与语义树（同抽屉 `_drawerMounted` 的口径）；展开
+                      // 时面板挂回、宽度 0→240 长回来。全程面板都在 OverflowBox 里按
+                      // 定宽 240 布局，不在过渡途中被压到小宽度重排（列表项里的固定
+                      // 图标才不会挤爆），越出盒宽的部分由容器裁掉。
+                      //
+                      // 面板里**没有品牌槽**（2026-08-31 二次裁定）：品牌图标是常驻
+                      // 开合开关 [_sidebarBrandToggle]，叠在面板左上角原品牌槽位置；
+                      // 面板顶部用等高空位给它让位，过渡期间只有面板在动。
+                      AnimatedContainer(
+                        key: const Key('nav-sidebar-size'),
+                        duration: qiyuMotion(context, QiyuMotion.drawer),
+                        curve: Curves.easeOut,
+                        width: _sidebarCollapsed ? 0 : QiyuLayout.sidebarWidth,
+                        // Container 只在带 decoration 时才接受非 none 的裁剪；空装饰
+                        // 只为放行这一条。
+                        decoration: const BoxDecoration(),
+                        clipBehavior: Clip.hardEdge,
+                        onEnd: _onSidebarAnimationEnd,
+                        child: _sidebarPanelMounted
+                            ? OverflowBox(
+                                alignment: Alignment.centerLeft,
+                                minWidth: QiyuLayout.sidebarWidth,
+                                maxWidth: QiyuLayout.sidebarWidth,
+                                child: SizedBox(
+                                  width: QiyuLayout.sidebarWidth,
+                                  child: _NavPanel(
+                                    shape: _NavPanelShape.sidebar,
+                                    onNavigate: _goTo,
+                                  ),
+                                ),
+                              )
+                            : null,
+                      ),
+                      Expanded(child: widget.child),
+                    ],
+                  ),
                 ),
-                Expanded(child: widget.child),
+                // 跨页通话条（T04:13）：占布局空间，不遮页面末尾操作；
+                // 通话不在进行中时本条整体不占位。
+                if (widget.showOmniCallBar) const QiyuOmniCallBar(),
               ],
             )
           else
@@ -361,12 +377,20 @@ class _QiyuShellState extends State<QiyuShell>
     );
   }
 
-  /// 窄屏：内容铺满视口（背景在它身下），抽屉与遮罩叠在其上。
+  /// 窄屏：内容铺满视口（背景在它身下），通话条垫在内容列底部，抽屉
+  /// 与遮罩叠在其上。
   Widget _narrowLayer(Size viewport) {
     final drawerWidth = viewport.width * QiyuLayout.drawerWidthFraction;
     return Stack(
       children: [
-        widget.child,
+        Column(
+          children: [
+            Expanded(child: widget.child),
+            // 跨页通话条（T04:13）：占布局空间不遮挡，抽屉打开时被遮罩
+            // 盖住属预期（抽屉优先）。
+            if (widget.showOmniCallBar) const QiyuOmniCallBar(),
+          ],
+        ),
         if (_drawerMounted)
           // 遮罩：点它就收回抽屉；键盘下 Esc 同样收回；语义上是按钮，读屏
           // 用户点得到也听得懂（§9）。抽屉开着时焦点归它，Esc 才进得来。

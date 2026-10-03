@@ -24,6 +24,8 @@ dependencies:
   share_plus: ^13.3.0
   uuid: ^4.6.0
   web: ^1.1.1
+  # Omni 双工通话（T04）：到本机 Host `api/omni/call` 的 WebSocket 传输。
+  web_socket_channel: ^3.0.3
 
 dev_dependencies:
   flutter_test:

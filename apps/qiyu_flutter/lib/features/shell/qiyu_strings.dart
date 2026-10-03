@@ -97,6 +97,22 @@ abstract class QiyuStrings {
   String get backgroundFailure;
   String get backgroundRecovered;
   String get openSettings;
+
+  // ── Omni 双工通话（T04，spec 前端摆放）──
+  String get omniCallStart;
+  String get omniCallConnecting;
+  String get omniCallListening;
+  String get omniCallSpeaking;
+  String get omniCallMuted;
+  String get omniCallReconnecting;
+  String get omniCallEnded;
+  String get omniCallMuteAction;
+  String get omniCallUnmuteAction;
+  String get omniCallHangupAction;
+  String get omniCallBackToChat;
+  String get omniCallMicUnavailable;
+  String get omniCallStartFailed;
+
   String localizeStatus(String message);
 }
 
@@ -252,6 +268,33 @@ class QiyuStringsZh extends QiyuStrings {
   String get unmute => '解除静音';
   @override
   String get mute => '静音';
+
+  @override
+  String get omniCallStart => '拨通栖语';
+  @override
+  String get omniCallConnecting => '正在接通…';
+  @override
+  String get omniCallListening => '正在聆听';
+  @override
+  String get omniCallSpeaking => '栖语在说话';
+  @override
+  String get omniCallMuted => '已闭麦，仍在听她说';
+  @override
+  String get omniCallReconnecting => '重连中…';
+  @override
+  String get omniCallEnded => '通话已结束';
+  @override
+  String get omniCallMuteAction => '闭麦（她还在说，说完继续听）';
+  @override
+  String get omniCallUnmuteAction => '恢复收音';
+  @override
+  String get omniCallHangupAction => '挂断';
+  @override
+  String get omniCallBackToChat => '回到通话';
+  @override
+  String get omniCallMicUnavailable => '麦克风没有就绪，这次没有开始通话，仍可以打字。';
+  @override
+  String get omniCallStartFailed => '通话没能接通，仍可以打字。';
   @override
   String get firstGreeting => '嗨。我是栖语。';
   @override
@@ -438,6 +481,35 @@ class QiyuStringsEn extends QiyuStrings {
   String get unmute => 'Unmute';
   @override
   String get mute => 'Mute';
+
+  @override
+  String get omniCallStart => 'Call Qiyu';
+  @override
+  String get omniCallConnecting => 'Connecting…';
+  @override
+  String get omniCallListening => 'Listening';
+  @override
+  String get omniCallSpeaking => 'Qiyu is speaking';
+  @override
+  String get omniCallMuted => 'Mic muted, still listening';
+  @override
+  String get omniCallReconnecting => 'Reconnecting…';
+  @override
+  String get omniCallEnded => 'Call ended';
+  @override
+  String get omniCallMuteAction => 'Mute mic (she keeps talking)';
+  @override
+  String get omniCallUnmuteAction => 'Unmute mic';
+  @override
+  String get omniCallHangupAction => 'Hang up';
+  @override
+  String get omniCallBackToChat => 'Back to the call';
+  @override
+  String get omniCallMicUnavailable =>
+      'The microphone was not ready, so the call did not start. You can still type.';
+  @override
+  String get omniCallStartFailed =>
+      'The call could not connect. You can still type.';
   @override
   String get firstGreeting => 'Hi. I’m Qiyu.';
   @override

@@ -14,6 +14,7 @@ import '../navigation.dart';
 import '../accessibility.dart';
 import 'chat_voice_coordinator.dart';
 import 'local_chat_view_model.dart';
+import 'omni_call_controller.dart';
 import 'qiyu_send_button.dart';
 import 'voice_input_controller.dart';
 import 'hold_to_talk.dart';
@@ -57,6 +58,7 @@ class QiyuComposer extends StatefulWidget {
     required this.onSendStarted,
     required this.onTurnCompleted,
     required this.pushAwayFromChat,
+    this.omniCall,
   });
 
   final LocalChatViewModel viewModel;
@@ -64,6 +66,11 @@ class QiyuComposer extends StatefulWidget {
   /// 页面创建并拥有的语音输入控制器：麦克风按钮与 Esc 只分派它。
   final VoiceInputController voiceInput;
   final ChatVoiceCoordinator voiceCoordinator;
+
+  /// Omni 双工通话控制器（T04）：选中 Omni 且平台可采集时，输入区旧
+  /// 单段录音入口换成电话图标，通话状态栏、闭麦与挂断都挂在 composer
+  /// 上方。null（测试未注入或平台未装配）时本模块不渲染通话件。
+  final OmniCallController? omniCall;
 
   /// 发送起点回调（手打与转写共用）：页面据此把消息区拉回贴底。
   final VoidCallback onSendStarted;
@@ -195,6 +202,15 @@ class QiyuComposerState extends State<QiyuComposer> {
     if (text.trim().isEmpty) {
       return;
     }
+    // 通话中打字：新用户轮走通话线协议，与语音同流（spec:21、35）；
+    // 乐观入列由控制器负责，Host 落盘后由通话结束对账归真。
+    final omniCall = widget.omniCall;
+    if (omniCall != null && omniCall.acceptsTypedText) {
+      if (omniCall.sendTypedText(text)) {
+        _controller.clear();
+      }
+      return;
+    }
     widget.onSendStarted();
     final sending = viewModel.send(text);
     if (mounted && _controller.text == text) {
@@ -279,6 +295,9 @@ class QiyuComposerState extends State<QiyuComposer> {
         //
         // `home-go-chat` 沿用退役前首页「去聊天」入口卡的既有测试键：合一页
         // 之后进入对话的动作就是这个输入容器，键位随职责搬过来。
+        //
+        // 通话状态栏不在本面板里：它由页面在 composer 上方的通知条区渲染
+        // （键 omni-call-strip），面板高度与静息几何保持与改造前一致。
         child: QiyuGlassPanel(
           key: const Key('home-go-chat'),
           blurSigma: QiyuGlass.panelBlur,
@@ -337,7 +356,15 @@ class QiyuComposerState extends State<QiyuComposer> {
                         const SizedBox(width: QiyuSpacing.xs),
                         AnimatedBuilder(
                           animation: widget.voiceInput,
-                          builder: (context, _) => _voiceMicButton(),
+                          builder: (context, _) => widget.omniCall != null
+                              ? AnimatedBuilder(
+                                  // 不用 Listenable.merge 现造合并对象：
+                                  // 与 local_chat_view 的同一纪律，嵌套
+                                  // 两层各自持有，不积僵尸监听。
+                                  animation: widget.omniCall!,
+                                  builder: (context, _) => _trailingButton(),
+                                )
+                              : _voiceMicButton(),
                         ),
                         const SizedBox(width: QiyuSpacing.xs),
                         QiyuSendButton(
@@ -352,6 +379,70 @@ class QiyuComposerState extends State<QiyuComposer> {
           ),
         ),
       ),
+    );
+  }
+
+  /// 输入行尾随按钮：选中 Omni 且平台可采集时是「拨通栖语」电话入口
+  /// （spec:29 原单段录音入口换成电话图标），通话期间本位收空——入口
+  /// 让位给状态栏上的闭麦／挂断；其余情形保持原麦克风按钮。
+  Widget _trailingButton() {
+    final omniCall = widget.omniCall;
+    if (omniCall != null &&
+        omniCall.omniReady &&
+        omniCall.captureSupported) {
+      if (omniCall.callInProgress) {
+        return const SizedBox.shrink();
+      }
+      return _omniCallStartButton(omniCall);
+    }
+    return _voiceMicButton();
+  }
+
+  /// 拨通入口：手势的同步调用栈里先恢复音频输出许可（spec:46），再进
+  /// 异步接通；失败按原因就近平铺通知，可继续打字（T04:11）。
+  Widget _omniCallStartButton(OmniCallController call) {
+    return QiyuOwnFocusRing(
+      borderRadius: QiyuRadii.circleBorder,
+      builder: (context, focusNode) => IconButton(
+        key: const Key('omni-call-start'),
+        focusNode: focusNode,
+        tooltip: qiyuStrings(context).omniCallStart,
+        onPressed: call.callInProgress
+            ? null
+            : () => unawaited(_startOmniCall(call)),
+        icon: const Icon(QiyuIcons.call),
+        iconSize: QiyuIconSpec.size,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints.tightFor(
+          width: QiyuLayout.composerIconButtonSize,
+          height: QiyuLayout.composerIconButtonSize,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _startOmniCall(OmniCallController call) async {
+    call.prepareForUserGesture();
+    if (widget.viewModel.hostStopped) {
+      if (mounted) {
+        showQiyuFadingNotice(context, qiyuStringsNow(context).omniCallStartFailed);
+      }
+      return;
+    }
+    final started = await call.startCall(sessionId: widget.viewModel.sessionId);
+    if (!mounted || started) {
+      return;
+    }
+    final strings = qiyuStringsNow(context);
+    showQiyuFadingNotice(
+      context,
+      switch (call.startupFailure) {
+        OmniCallStartupFailure.notReady => strings.voiceNotConfigured,
+        OmniCallStartupFailure.micUnavailable => strings.omniCallMicUnavailable,
+        OmniCallStartupFailure.connectFailed => strings.omniCallStartFailed,
+        null => strings.omniCallStartFailed,
+      },
     );
   }
 

@@ -11,6 +11,8 @@ import 'features/baseline/host_connection_probe.dart';
 import 'features/chat/local_chat_client.dart';
 import 'features/chat/local_chat_view.dart';
 import 'features/chat/local_chat_view_model.dart';
+import 'features/chat/omni_call_controller.dart';
+import 'features/chat/voice_capture_platform.dart';
 import 'features/chat/voice_output_controller.dart';
 import 'features/history/history_client.dart';
 import 'features/history/history_view.dart';
@@ -81,6 +83,9 @@ List<RouteBase> qiyuRoutes() => [
       key: state.pageKey,
       child: QiyuShell(
         showHomeBackdrop: state.matchedLocation == '/chat',
+        // 跨页通话条（T04:13）：聊天页有自己的状态栏，其余壳页由壳
+        // 渲染；通话不在进行中时条自身零占位。
+        showOmniCallBar: state.matchedLocation != '/chat',
         child: navigationShell,
       ),
     ),
@@ -156,6 +161,7 @@ class QiyuApp extends StatefulWidget {
     super.key,
     this.viewModel,
     this.localeController,
+    this.omniCallController,
     this.providerSettingsViewModel,
     this.sttSettingsViewModel,
     this.sttSettingsGateway,
@@ -172,6 +178,9 @@ class QiyuApp extends StatefulWidget {
 
   final LocalChatViewModel? viewModel;
   final LocaleController? localeController;
+
+  /// Omni 双工通话控制器（T04）：测试注入桩；未注入走 app 级缺省装配。
+  final OmniCallController? omniCallController;
   final ProviderSettingsViewModel? providerSettingsViewModel;
   final SttSettingsViewModel? sttSettingsViewModel;
 
@@ -225,6 +234,11 @@ class _QiyuAppState extends State<QiyuApp> {
     baseUri: _hostBaseUri,
   );
 
+  /// 未注入时的共享 Provider 设置网关：Omni 通话控制器的可用判定与
+  /// 设置页读同一份配置；独立实例避免往设置视图模型里塞职责。
+  late final ProviderSettingsGateway _defaultProviderSettingsGateway =
+      HttpProviderSettingsGateway(client: _hostClient, baseUri: _hostBaseUri);
+
   SttSettingsGateway get _effectiveSttGateway =>
       widget.sttSettingsGateway ?? _defaultSttGateway;
 
@@ -275,6 +289,17 @@ class _QiyuAppState extends State<QiyuApp> {
               client: _hostClient,
               baseUri: _hostBaseUri,
             ),
+          ),
+        ),
+        // Omni 双工通话控制器（T04）：app 级生命周期——跨页通话条与
+        // 聊天页状态栏读同一个实例，通话跨页不中断。显示面直接落在本
+        // 树上的聊天视图模型（通话转录进入普通聊天流）。
+        _vm(
+          widget.omniCallController,
+          (context) => OmniCallController(
+            surface: context.read<LocalChatViewModel>(),
+            providerSettings: _defaultProviderSettingsGateway,
+            capture: createVoiceCapturePlatform(),
           ),
         ),
         _vm(
