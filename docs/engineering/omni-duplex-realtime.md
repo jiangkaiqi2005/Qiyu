@@ -1,6 +1,6 @@
 # Omni 双工实时通话：已实装行为与限制
 
-依据 [ADR 0026](../adr/0026-omni-unified-dialogue-and-immediate-audio.md) 与一期实施 spec（`.scratch/voice-omni-duplex/spec.md`，本机资产）落地的 Omni 双工实时通话。本页记录**已实装的真实行为与限制**；协议事实来源于 T01 原型在真实端点的实测（2026-10-02，`.scratch/voice-omni-duplex/prototype-results.md`），行为以仓库代码为准。二期（自动启动）尚未实施。
+依据 [ADR 0026](../adr/0026-omni-unified-dialogue-and-immediate-audio.md) 与实施 spec（`.scratch/voice-omni-duplex/spec.md`，本机资产）落地的 Omni 双工实时通话。本页记录**已实装的工程行为与限制**；协议事实来源于 T01 原型在真实端点的实测（2026-10-02，`.scratch/voice-omni-duplex/prototype-results.md`），行为以仓库代码为准。一期手动通话与二期启动方式均已实现工程链路，三种形态的真实录放与完整体验尚未验收，不能据此宣称可发布。
 
 ## 架构与代码位置
 
@@ -10,6 +10,8 @@
 | 通话服务 | `packages/qiyu_local_host/lib/src/omni_call_service.dart` | 完整人格提示词、晚一拍回忆、隐藏动作提交、Markdown 落盘、有界重连 |
 | 传输路由 | `packages/qiyu_local_host/lib/src/omni_call_routes.dart` | `GET api/omni/call` WebSocket，经 Host 会话/Origin 鉴权 |
 | 前端控制器 | `apps/qiyu_flutter/lib/features/chat/omni_call_controller.dart` | 通话 WebSocket、上行采集、下行播放、打断与死轮隔离 |
+| 启动偏好与设置 | `packages/qiyu_local_host/lib/src/provider_settings_service.dart`、`apps/qiyu_flutter/lib/features/settings/omni_startup_settings.dart` | 本机配置保存、首次麦克风授权、只对后续启动生效 |
+| 同次使用状态 | `apps/qiyu_flutter/lib/features/chat/omni_call_usage_state.dart`、`omni_call_usage_state_web.dart` | 主动挂断与启动失败抑制；网页刷新保留、关页重开恢复 |
 | Web 采集 | `apps/qiyu_flutter/lib/features/chat/voice_capture_platform_web.dart` | AudioWorklet 连续 PCM16/16kHz，浏览器标准回声消除 |
 | Android 桥 | `apps/qiyu_flutter/android/app/src/main/kotlin/dev/qiyu/app/OmniCallBridge.kt` | 同时录放、VOICE_COMMUNICATION 音源、焦点管理、microphone 前台服务 |
 
@@ -38,6 +40,14 @@
 - **音频边界**：双方音频只在内存流转、用完即弃，不落盘、不进日志、不进备份（实现侧无文件写入，测试锁定该事实）。
 - **前端**：通话中输入框上方状态栏（连接中/正在聆听/栖语在说话/重连中/已结束），闭麦只停收音、回答照常听；通话中打字进同一会话、沿用真正插话的取消旧回应语义；活动通话跨页显示底部通话条；通话外打字沿用自动朗读开关（开=有声+transcript，关=纯文字）。
 
+## 二期启动方式
+
+- 本机 Provider 设置保存 `callStartupMode`（`manual` / `auto_on_chat_entry`），默认及旧配置缺字段均为手动。非 Omni 不自动拨通，切回 Omni 保留偏好；读取配置不返回 Key，修改沿用会话、Origin、CSRF 保护。
+- 设置中首次选择自动只申请麦克风权限并保存选择，不连接 Provider 或启动通话。Web 授权临时采集流立即停止；Android 只请求权限，不启动 FGS。拒绝、取消及过时授权结果保持现有有效设置，已有通话不受偏好修改影响。
+- 下一次进入可见 Omni 聊天页且没有已有通话，才检查并尝试自动开始。活动通话跨页或切后台回来延续同一通；主动挂断、自动准备失败或未完成启动离页后，本次不反复开麦，电话入口仍可手动继续。网页刷新保留抑制；关闭页面重开或 Android 真正进程重启恢复保存的偏好，Host 是否退出不决定网页边界。
+- Web 前检只读当前授权、可见性、安全上下文与设备；实际采集等待 AudioContext running 和首块 PCM，随后准备播放器并确认输出可用。Android 前检只读可见 Activity、已有权限、麦克风及设备条件，原生 FGS 启动时再复查可见性；自动路径不重新弹权限。`VoiceCapturePlatform.start(automatic: ...)` 显式区分本次自动／手动身份，旧前检不能影响后一次手动授权。
+- 未就绪、播放失败、挂断或过时启动释放所属采集与输出资源，迟到结果不复活通话、不停止新手动通话。已建立通话的有界重连与一期链路相同，不能把仅采集／仅播放成功视作完整通话。
+
 ## 已知限制与待裁定
 
 - **延迟目标未在真实双工环境复测**：T01 探针口径（合成上行 + waveOutWrite 锚点）P50 609–620ms 达标；P95 ≤2s 在 server_vad 下受首轮与单轮生成迟滞拖累（3241ms），semantic_vad 下达标但伴随漏检。三端真机口径的 P50/P95 待一期验收实测。
@@ -46,8 +56,11 @@
 - **被抢占的工具续答无补偿**：用户新轮抢占后，服务端静默忽略续答请求，实现选择「旧检索不唤醒旧语音、轮次直接收束」（T01 实测该服务端行为不可恢复），空档补充语义在该场景下不成立。
 - **服务端上下文不可精确裁剪**：打断只能保证本机停止播放与清队列；云端已生成但未播放的内容无法确认按听到的位置截断（`conversation.item.truncate` 未核实，未使用）。
 - **电脑休眠、系统强杀前台服务**不属于持续通话承诺范围；Android 系统从系统入口停止前台服务时如实结束通话，不自行复活。
+- **自动录放的实机证据仍缺失**：Windows 网页与 Windows App 客户端分别需在正常浏览器策略下验证真实麦克风和可听回复；带 autoplay 放行参数的自动化播放器测试不能替代。Android 可见 FGS 与录放虽有工程接线、测试及 debug APK 构建，尚无连接设备的授权、系统通知、前后台／重启与实际声音证据。
 
 ## 验证
 
 - 自动化：四包 `dart analyze && dart test` / `flutter analyze && flutter test` 全绿；协议面（三种终止、取消、超时、迟到事件、工具时序、重连、幂等、闭麦）见 `qwen_omni_realtime_gateway_test.dart`、`omni_call_service_test.dart`、`omni_call_controller_test.dart`、`omni_call_android_platform_test.dart`、`omni_call_ui_test.dart`。
+- 二期共享场景见 `omni_startup_settings_test.dart`、`omni_call_startup_lifecycle_test.dart`、`omni_call_app_lifecycle_test.dart`：设置授权不当场通话、下一次进页、跨页已有通话、挂断／前后台抑制、过时启动及手动继续。Chrome 的真实 reload／新 tab／opener 边界见 `omni_call_usage_state_web_test.dart`。
+- `scripts/verify-release-baseline.ps1` 持续运行 Web 权限、采集、使用状态和原有播放回归；`voice_auto_start_policy_web_test.dart` 单独用无 autoplay 放行参数的默认浏览器平台验证受限分支。正向采集使用合成 MediaStream，原生 API 拒绝／设备占用使用接缝替身，均不代表真人授权或默认策略下真实自动录放成功。详细本机命令、结果与逐形态待测步骤记录在 ignored `phase-two-acceptance-results.md`，CI 不依赖该文件。
 - 真机项（真实麦克风听说、回声、人耳听核、三端后台/锁屏）属一期验收范围，未测不标通过。

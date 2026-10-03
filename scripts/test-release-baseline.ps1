@@ -224,9 +224,25 @@ $browserStep = [regex]::Match(
 )
 Assert-Condition (
   $browserStep.Success -and
+  $browserStep.Value -match '--concurrency 1' -and
   $browserStep.Value -match 'test/voice_player_platform_web_test\.dart' -and
-  $browserStep.Value -match 'test/settings_collapse_platform_web_test\.dart'
-) 'Release 1 的两份浏览器侧用例必须直接挂在 Browser-side tests 步骤的命令参数里（挪进步骤外的注释或正文不算接入）。'
+  $browserStep.Value -match 'test/settings_collapse_platform_web_test\.dart' -and
+  $browserStep.Value -match 'test/backup_platform_web_test\.dart' -and
+  $browserStep.Value -match 'test/microphone_permission_platform_web_test\.dart' -and
+  $browserStep.Value -match 'test/omni_call_usage_state_web_test\.dart' -and
+  $browserStep.Value -match 'test/voice_capture_platform_web_test\.dart'
+) 'Release 浏览器回归必须直接挂在 Browser-side tests 步骤的命令参数里（挪进步骤外的注释或正文不算接入）。'
+$defaultPolicyStep = [regex]::Match(
+  $verificationScript,
+  "Invoke-Step 'Browser default autoplay policy test' \{[\s\S]*?\n    \}"
+)
+Assert-Condition (
+  $defaultPolicyStep.Success -and
+  $defaultPolicyStep.Value -match 'dart test --platform chrome' -and
+  $defaultPolicyStep.Value -match 'test/voice_auto_start_policy_web_test\.dart' -and
+  $defaultPolicyStep.Value -notmatch '--configuration|no-user-gesture-required' -and
+  $browserStep.Value -notmatch 'voice_auto_start_policy_web_test'
+) '默认自动播放策略回归必须单独使用无放行参数的 chrome 平台，不能混入自定义浏览器平台。'
 Assert-Condition (
   $verificationScript -match 'qiyu_edge' -and
   $verificationScript -match 'qiyu_chrome' -and

@@ -104,14 +104,35 @@ try {
     'qiyu_edge'
   }
   if (-not $browserPlatform) {
-    throw 'Release 门禁需要 Chrome、Chromium 或 Edge 执行真实浏览器侧用例（语音播放、折叠状态存储）。'
+    throw 'Release 门禁需要 Chrome、Chromium 或 Edge 执行真实浏览器侧用例（语音录放、启动状态、权限、折叠存储、备份）。'
   }
   Invoke-Step 'Browser-side tests' {
+    # 使用状态回归会开真实 tab，必须串行以免遮住录放测试的可见页面。
     dart test --configuration dart_test.browser.yaml `
-      --platform $browserPlatform `
+      --platform $browserPlatform --concurrency 1 `
       test/voice_player_platform_web_test.dart `
       test/settings_collapse_platform_web_test.dart `
-      test/backup_platform_web_test.dart
+      test/backup_platform_web_test.dart `
+      test/microphone_permission_platform_web_test.dart `
+      test/omni_call_usage_state_web_test.dart `
+      test/voice_capture_platform_web_test.dart
+  }
+  # 自定义平台放行 autoplay，只验证媒体链路。受限分支必须另跑默认策略；
+  # Edge 也是 Chromium 内核，沿现有浏览器选择使用其可执行文件。
+  $previousChromeExecutable = $env:CHROME_EXECUTABLE
+  $env:CHROME_EXECUTABLE = if ($chromeExecutable) {
+    $chromeExecutable
+  } elseif ($chromiumExecutable) {
+    $chromiumExecutable
+  } else {
+    $edgeExecutable
+  }
+  try {
+    Invoke-Step 'Browser default autoplay policy test' {
+      dart test --platform chrome test/voice_auto_start_policy_web_test.dart
+    }
+  } finally {
+    $env:CHROME_EXECUTABLE = $previousChromeExecutable
   }
   Invoke-Step 'Flutter Web build' {
     flutter build web --wasm --no-web-resources-cdn
