@@ -18,6 +18,7 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -75,6 +76,12 @@ internal object OmniCallBridge {
     private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
     private const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
     private const val CHUNK_BYTES = SAMPLE_RATE * 2 / 10
+
+    /** 采集线程复查麦克风授权的周期：isClientSilenced 只有 API 30+，
+     *  官方文档也未对更早版本明文保证「设置撤销即杀进程」（usage-notes
+     *  反而预期应用处理设置 toggle off 后的异常）——复查让 spec:23 的
+     *  「权限撤销真实结束」在全部受支持版本上无条件成立。 */
+    private const val PERMISSION_RECHECK_INTERVAL_MS = 2000L
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -365,7 +372,9 @@ internal object OmniCallBridge {
      *   路由与音量链路；两处属性分工是真机验证点（扬声器回声/耳机），
      *   若真机出现路由或回声异常，切通信用法是既定候选。
      * - 输入设备被移除：上报 unavailable（麦克风没了，通话如实结束）。
-     * - 录音被系统静音（API 30+，权限撤销/隐私指示）：上报 unavailable。
+     * - 录音被系统静音（API 30+，系统麦克风开关/op 级静音等进程不死的
+     *   场景）：上报 unavailable。权限撤销本身由采集线程的周期复查兜住
+     *   （全版本，见 [captureLoop]——30- 的撤销收口方式无官方明文）。
      */
     private fun attachCallObservers(record: AudioRecord): Boolean {
         val host = activity ?: return false
@@ -460,8 +469,25 @@ internal object OmniCallBridge {
         val chunk = ByteArray(CHUNK_BYTES)
         var buffered = 0
         var failed = false
+        // 周期复查麦克风授权（全版本，理由见常量注释）：撤销即如实上报
+        // 并退出采集，收口仍由 Dart 的 stopCapture 统一执行。
+        var nextPermissionRecheck =
+            SystemClock.elapsedRealtime() + PERMISSION_RECHECK_INTERVAL_MS
         try {
             while (!captureInterrupted) {
+                val now = SystemClock.elapsedRealtime()
+                if (now >= nextPermissionRecheck) {
+                    nextPermissionRecheck = now + PERMISSION_RECHECK_INTERVAL_MS
+                    // activity 已摘除时按已授权处理：unregister 会置
+                    // captureInterrupted，循环马上退出，不得误报。
+                    val granted = activity
+                        ?.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                        ?: PackageManager.PERMISSION_GRANTED
+                    if (granted != PackageManager.PERMISSION_GRANTED) {
+                        notifyCaptureUnavailable("microphone permission revoked")
+                        break
+                    }
+                }
                 val read = try {
                     record.read(scratch, 0, scratch.size, AudioRecord.READ_NON_BLOCKING)
                 } catch (_: Exception) {
