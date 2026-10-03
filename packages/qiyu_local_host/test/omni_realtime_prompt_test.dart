@@ -80,7 +80,21 @@ void main() {
       }
     });
 
-    test('session 配置携带全部工具（扁平 function 形状）', () {
+    test('session 配置携带全部工具进 payload（扁平 function 形状）', () {
+      final config = OmniRealtimeSessionConfig(
+        instructions: '你是栖语。',
+        tools: omniRealtimeMemoryTools,
+      );
+      final payload = config.toSessionPayload();
+      final tools = payload['tools']! as List<Map<String, Object?>>;
+      expect(tools, hasLength(11));
+      expect(tools.map((tool) => tool['name']), omniRealtimeMemoryTools.map((tool) => tool.name));
+      for (final tool in tools) {
+        expect(tool['type'], 'function');
+      }
+    });
+
+    test('未注册工具时 session 配置不携带 tools 键', () {
       const config = OmniRealtimeSessionConfig(
         instructions: '你是栖语。',
         tools: [],

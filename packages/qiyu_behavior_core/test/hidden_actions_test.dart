@@ -919,6 +919,19 @@ void main() {
       expect(privilege, [HiddenActionDiagnostics.privilegeViolation]);
     });
 
+    test('参数混入 action 键以工具名为准，不参与动作分型', () {
+      final diagnostics = <String>[];
+      final action = parseHiddenActionObject('memory_signal', {
+        'action': 'memory_ban',
+        'summary': '用户对芒果过敏',
+      }, diagnostics);
+      // 工具名派生分型：调用的是 memory_signal，参数里的 action 键
+      // 是外来噪声，不得把记录动作变成禁提控制。
+      expect(action, isA<MemorySignalAction>());
+      expect(action, isNot(isA<MemoryBanAction>()));
+      expect(diagnostics, isEmpty);
+    });
+
     test('与隐藏块解析同一段内容等价（同一校验器）', () {
       final viaBlock = parseHiddenActions(
         '<qiyu-actions>[{"action":"memory_signal",'

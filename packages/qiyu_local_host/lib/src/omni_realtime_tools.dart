@@ -45,7 +45,8 @@ final List<OmniRealtimeTool> omniRealtimeMemoryTools = [
         },
         'proactive': {
           'type': 'string',
-          'enum': ['no', 'once', 'yes'],
+          // 枚举取自行为核心白名单（hidden_actions.dart），不平行维护。
+          'enum': [for (final value in LoopProactive.values) value.wireName],
           'description': '跟进方式',
         },
         'note': {'type': 'string', 'description': '跟进背景，可省略'},
@@ -68,7 +69,7 @@ final List<OmniRealtimeTool> omniRealtimeMemoryTools = [
         'summary': {'type': 'string', 'description': '事项简称'},
         'status': {
           'type': 'string',
-          'enum': ['closed', 'paused', 'active'],
+          'enum': [for (final value in LoopStatus.values) value.wireName],
         },
         'result': {'type': 'string', 'description': '闭环原因，可省略'},
       },
@@ -94,7 +95,9 @@ final List<OmniRealtimeTool> omniRealtimeMemoryTools = [
       'properties': {
         'signal': {
           'type': 'string',
-          'enum': ['deep_talk', 'temperature', 'boundary_open', 'boundary_close'],
+          'enum': [
+            for (final value in RelationshipSignal.values) value.wireName,
+          ],
         },
         'summary': {
           'type': 'string',

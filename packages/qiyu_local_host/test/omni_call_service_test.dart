@@ -1020,7 +1020,7 @@ void main() {
             _argsDone(
               'resp-1',
               'item-1',
-              jsonEncode({'summary': '芒果过敏的话题'}),
+              jsonEncode({'summary': '对芒果过敏'}),
             ),
             _responseDone('resp-1', 'completed'),
           ],
@@ -1031,6 +1031,11 @@ void main() {
           ],
         ],
       );
+      // 种子近况块：受控行在禁提生效后被过滤，instructions 才有变化。
+      await harness.repository.initialize();
+      await File(
+        '${harness.memoryDirectory}${Platform.pathSeparator}daily-state.md',
+      ).writeAsString('- 用户对芒果过敏这事一直记着\n');
       await harness.start();
 
       harness.sendFront({
@@ -1046,7 +1051,14 @@ void main() {
       // 控制已写盘：受控集合出现该话题。
       expect(
         await harness.memoryModule.openLoopStore.controlledTitles(),
-        contains('芒果过敏的话题'),
+        contains('对芒果过敏'),
+      );
+      // 刷新后的 instructions 已剔除受控行。
+      final refresh = harness.connection.framesOfType('session.update').last;
+      final refreshedSession = refresh['session']! as Map<String, Object?>;
+      expect(
+        refreshedSession['instructions'],
+        isNot(contains('对芒果过敏这事一直记着')),
       );
       // 回填照常，续答交付确认语。
       final backfill = harness.connection.framesOfType('conversation.item.create')
@@ -1134,6 +1146,143 @@ void main() {
           .map(_itemText)
           .toList();
       expect(replayTexts.join('\n'), isNot(contains('梧桐里')));
+    });
+
+    test('记录动作与自述称呼后热层随轮次刷新', () async {
+      final harness = _Harness(
+        callReplies: [
+          [
+            _responseCreated('resp-1'),
+            _transcriptDelta('resp-1', '好，晚秋。'),
+            _responseDone('resp-1', 'completed'),
+          ],
+          [
+            _responseCreated('resp-2'),
+            _transcriptDelta('resp-2', '嗯。'),
+            _responseDone('resp-2', 'completed'),
+          ],
+        ],
+      );
+      await harness.start();
+
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-1',
+        'text': '以后叫我晚秋',
+      });
+      // 自述称呼写入 persona.md（当轮生效），收束后热层刷新下发。
+      await until(
+        () => harness.connection.framesOfType('session.update').length >= 2,
+        label: '记录后热层刷新下发',
+      );
+      final refresh = harness.connection.framesOfType('session.update').last;
+      final refreshedSession = refresh['session']! as Map<String, Object?>;
+      // 无记忆控制：未触发受控重建（连接保持）。
+      expect(harness.connector.connectCount, 1);
+      // 刷新后的 instructions 已带新称呼。
+      expect(refreshedSession['instructions'], contains('晚秋'));
+      // 未变化的后续轮不再重发：纯闲聊轮收束后无第二次刷新。
+      final updatesAfterRefresh =
+          harness.connection.framesOfType('session.update').length;
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-2',
+        'text': '嗯，可能吧',
+      });
+      await until(
+        () => harness.frontEvents.any(
+          (event) =>
+              event['type'] == 'replyDone' && event['turnId'] == 'text-2',
+        ),
+        label: '闲聊轮收束',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(
+        harness.connection.framesOfType('session.update').length,
+        updatesAfterRefresh,
+      );
+    });
+
+    test('挂断前未收束的语音轮补落盘用户转录', () async {
+      final harness = _Harness();
+      await harness.start();
+
+      // 判停建轮、转录已到，但回复未生成即挂断。
+      harness.connection
+        ..server({'type': 'input_audio_buffer.speech_started'})
+        ..server({'type': 'input_audio_buffer.speech_stopped'})
+        ..server({
+          'type': 'conversation.item.input_audio_transcription.completed',
+          'transcript': '讲个故事',
+        });
+      // 转录归轮经微任务分派，留一拍让它落地。
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await harness.callService.stopCall();
+
+      final snapshot = await harness.turnsOnDisk();
+      expect(
+        snapshot.turns.where((turn) => turn.speaker == Speaker.user),
+        hasLength(1),
+      );
+      expect(snapshot.turns.single.text, '讲个故事');
+      expect(
+        snapshot.turns.where((turn) => turn.speaker == Speaker.qiyu),
+        isEmpty,
+      );
+    });
+
+    test('放弃收束提交已校验动作，用户控制不因断线丢失', () async {
+      final harness = _Harness(
+        callReplies: [
+          // 静默 memory_ban 调用后连接即断，续答永远不来。
+          [
+            _responseCreated('resp-1'),
+            _functionCallItem('item-1', 'call-1', 'memory_ban'),
+            _argsDone(
+              'resp-1',
+              'item-1',
+              jsonEncode({'summary': '对芒果过敏'}),
+            ),
+            _responseDone('resp-1', 'completed'),
+          ],
+        ],
+      );
+      await harness.start();
+
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-1',
+        'text': '以后别提芒果过敏的事',
+      });
+      await until(
+        () => harness.connection.framesOfType('conversation.item.create').any(
+              (frame) =>
+                  ((frame['item']! as Map<String, Object?>)['type']) ==
+                  'function_call_output',
+            ),
+        label: '回填完成',
+      );
+      // 断线（续答与重建都未来得及发生）。
+      await harness.connection.close();
+      await until(
+        () => harness.phases().contains('reconnecting') ||
+            harness.phases().last == 'ended',
+        label: '进入收束',
+      );
+      await until(
+        () => harness.reconnectWaits.isNotEmpty,
+        label: '重连等待挂起',
+      );
+      await harness.callService.stopCall();
+      harness.reconnectWaits.single.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      // 控制动作已随放弃收束写盘（spec:56 显式用户控制不因音频模式
+      // 被丢弃）。
+      expect(
+        await harness.memoryModule.openLoopStore.controlledTitles(),
+        contains('对芒果过敏'),
+      );
     });
   });
 

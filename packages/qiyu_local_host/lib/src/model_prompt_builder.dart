@@ -281,11 +281,12 @@ final class ModelPromptBuilder {
   /// 包装内的文本协议主块替换为实时工具指令（T01 §9.7 变体 B 实测形态，
   /// 见 [omniRealtimeActionsDirective]），以及格式提醒替换为工具纪律。
   /// 最近对话不进 instructions：由会话层按对话 item 回放（T01 §11 实测
-  /// 重放后模型可准确续接）。
-  String buildRealtimeInstructions({String hardRulesAddendum = ''}) {
+  /// 重放后模型可准确续接）。实时链路未接能力快照追加条文（联网检索
+  /// 等，ADR 0026），硬规则不携带追加。
+  String buildRealtimeInstructions() {
     final sections = _systemSections(
       isEn: false,
-      hardRulesAddendum: hardRulesAddendum,
+      hardRulesAddendum: '',
       realtimeActions: true,
     );
     return '$sections\n\n${omniRealtimeToolReminder.trim()}';

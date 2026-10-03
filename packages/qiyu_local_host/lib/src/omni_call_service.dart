@@ -88,6 +88,10 @@ final class _CallTurn {
   /// 本轮最近一条回复的在途记录（静默工具轮的续答判定依据）。
   _CallResponse? currentResponse;
 
+  /// 轮次记忆（动作/称呼/晚安）是否已提交：正常收束与放弃收束共用
+  /// 同一提交入口，幂等防双写。
+  bool memoryCommitted = false;
+
   /// 晚安信号只按用户轮触发一次。
   bool bedtimeApplied = false;
 }
@@ -254,11 +258,17 @@ final class OmniRealtimeCallService {
     }
     _phase = OmniCallPhase.ended;
     _phaseReason = reason ?? '通话已结束。';
+    await _abandonOpenResponses();
+    await _detachCall();
+  }
+
+  /// 会话与前端 detachment 公共收尾（stopCall / _finishCall 共用）：
+  /// 撤结束信号与事件订阅、关闭 Provider 会话、推送终态并清空出口。
+  Future<void> _detachCall() async {
     _endRequested?.complete();
     _endRequested = null;
     _eventSubscription?.cancel();
     _eventSubscription = null;
-    await _abandonOpenResponses();
     await _session?.close();
     _session = null;
     _sendState();
@@ -329,16 +339,18 @@ final class OmniRealtimeCallService {
         return;
       }
       try {
+        final sessionConfig = await _sessionConfig();
         final session = await gateway.connect(
           config: credentials.config,
           apiKey: credentials.apiKey,
-          sessionConfig: await _sessionConfig(),
+          sessionConfig: sessionConfig,
         );
         if (_ended) {
           await session.close();
           return;
         }
         _session = session;
+        _activeInstructions = sessionConfig.instructions;
         _sessionFailure = null;
         // 先挂事件订阅（同步生效）再回放上下文：广播事件流不重放，
         // 建连后立刻到达的服务端事件绝不能落在订阅之前丢失。
@@ -366,14 +378,9 @@ final class OmniRealtimeCallService {
         if (_clock().difference(connectedAt) >= _reconnectResetAfterActive) {
           attempt = 0;
         }
-        if (attempt >= omniReconnectMaxAttempts) {
-          await _finishCall('与模型服务的实时连接多次中断，本次通话已结束。');
+        if (!await _enterReconnect(attempt)) {
           return;
         }
-        _phase = OmniCallPhase.reconnecting;
-        _phaseReason = null;
-        _sendState();
-        await _reconnectWait(omniReconnectDelays[attempt]);
         attempt += 1;
       } on ModelGatewayException catch (error) {
         if (_ended) {
@@ -384,31 +391,43 @@ final class OmniRealtimeCallService {
           await _finishCall(error.message);
           return;
         }
-        if (attempt >= omniReconnectMaxAttempts) {
-          await _finishCall('与模型服务的实时连接多次中断，本次通话已结束。');
+        if (!await _enterReconnect(attempt)) {
           return;
         }
-        _phase = OmniCallPhase.reconnecting;
-        _phaseReason = null;
-        _sendState();
-        await _reconnectWait(omniReconnectDelays[attempt]);
         attempt += 1;
       } on Object catch (error) {
         if (_ended) {
           return;
         }
         _diagnosticsSink('omni call connect error [$error]');
-        if (attempt >= omniReconnectMaxAttempts) {
-          await _finishCall('与模型服务的实时连接多次中断，本次通话已结束。');
+        if (!await _enterReconnect(attempt)) {
           return;
         }
-        _phase = OmniCallPhase.reconnecting;
-        _phaseReason = null;
-        _sendState();
-        await _reconnectWait(omniReconnectDelays[attempt]);
         attempt += 1;
       }
     }
+  }
+
+  /// 重连耗尽判定：达到上限时按可理解原因终局结束并返回 false。
+  Future<bool> _exhaustedReconnects(int attempt) async {
+    if (attempt < omniReconnectMaxAttempts) {
+      return false;
+    }
+    await _finishCall('与模型服务的实时连接多次中断，本次通话已结束。');
+    return true;
+  }
+
+  /// 进入下一次重连前的公共收尾：切 reconnecting 状态并等待退避。
+  /// 返回 false 表示期间通话已被明确结束，调用方直接收口。
+  Future<bool> _enterReconnect(int attempt) async {
+    if (await _exhaustedReconnects(attempt)) {
+      return false;
+    }
+    _phase = OmniCallPhase.reconnecting;
+    _phaseReason = null;
+    _sendState();
+    await _reconnectWait(omniReconnectDelays[attempt]);
+    return !_ended;
   }
 
   /// 挂上事件订阅并抽干一通连接直到会话结束（主动关闭、失败或断线
@@ -460,17 +479,12 @@ final class OmniRealtimeCallService {
     }
   }
 
+  /// 以给定原因终局结束（重连耗尽/鉴权失败/配置切换等）：在途工作由
+  /// 调用方先行收束，这里只做会话与前端 detachment。
   Future<void> _finishCall(String reason) async {
     _phase = OmniCallPhase.ended;
     _phaseReason = reason;
-    _endRequested?.complete();
-    _endRequested = null;
-    _eventSubscription?.cancel();
-    _eventSubscription = null;
-    await _session?.close();
-    _session = null;
-    _sendState();
-    _front = null;
+    await _detachCall();
   }
 
   // -------------------------------------------------------------------------
@@ -859,8 +873,17 @@ final class OmniRealtimeCallService {
   }
 
   /// 轮次收束：补齐用户轮落盘、提交隐藏动作（共享执行器）、对话自述
-  /// 称呼、晚安节奏与记忆控制后的上下文刷新。回复内容的落盘在每条
-  /// 回复终态时已发生（[_persistResponse]）。
+  /// 称呼、晚安节奏与热层刷新。回复内容的落盘在每条回复终态时已发生
+  /// （[_persistResponse]）。
+  ///
+  /// 动作提交语义（与聊天链路的有意分歧，裁定 2026-10-03）：聊天链路
+  /// 的动作从回复文本解析，随回复级验收 gate 整体取舍；实时链路的
+  /// 动作是独立原生工具调用——按条经行为核心校验即构成完整提案
+  /// （spec:56「完整动作仍按现有成功条件、幂等规则执行」），与可见
+  /// 回复的终态（取消/不完整/候选被拒）解耦提交。这样裁定还受 spec:56
+  /// 「显式用户控制不因音频模式被丢弃」约束：打断瞬间的 memory_ban
+  /// 等控制动作不得因回复被打断而丢失。格式不合法的半套提案仍在
+  /// 校验层整体丢弃，不进入本列表。
   Future<void> _closeTurn(_CallTurn turn) async {
     _pendingResponseTurnId = null;
     _continuationTurnId = null;
@@ -879,11 +902,44 @@ final class OmniRealtimeCallService {
       }
       turn.userPersisted = true;
     }
+    final actions = await _commitTurnMemory(raw, turn, userText);
+    // 记忆控制（禁提/冻结/删除/解除）命中本通话已说内容时触发受控
+    // 重建连接，不让云端残留绕过本机过滤（spec:56；memory_forget 是
+    // 当轮控制，不动上下文）。
+    final controls = actions
+        .whereType<MemoryControlAction>()
+        .where((action) => action is! MemoryForgetAction)
+        .toList();
+    final rebuild = controls.isNotEmpty && _controlTouchesInCall(controls);
+    if (rebuild) {
+      _diagnosticsSink('omni call rebuilding connection after control');
+      _fireAndForget(_session?.close() ?? Future.value(), 'session close');
+      return;
+    }
+    // 每轮收束后刷新热层（spec:52「实时会话不能永久使用建连时的过期
+    // 热记忆」/ T03:12）：记录动作写入的 episode、画像、开环状态与
+    // 对话自述称呼都随下一轮 instructions 生效；session.update 整体
+    // 替换、下一条回复生效为 T01 §11 实测形态。
+    await _refreshInstructions();
+  }
+
+  /// 轮次记忆提交（正常收束与放弃收束共用，幂等）：隐藏动作沿用既有
+  /// 执行器（轮内整理 + 记忆控制即时生效；动作已按条校验构成完整
+  /// 提案，提交语义见 [_closeTurn] 文档）、对话自述称呼当轮生效、
+  /// 晚安信号触发日终归档与 Dream 资格。返回已提交动作供上下文刷新
+  /// 判定。
+  Future<List<HiddenAction>> _commitTurnMemory(
+    RawSession raw,
+    _CallTurn turn,
+    String userText,
+  ) async {
+    if (turn.memoryCommitted) {
+      return const [];
+    }
+    turn.memoryCommitted = true;
     final actions = List<HiddenAction>.of(turn.actions);
     turn.actions.clear();
     if (actions.isNotEmpty) {
-      // 隐藏动作沿用既有执行器：轮内整理 + 记忆控制即时生效；动作
-      // 已按条校验，半套提案（格式不合法）在校验层整体丢弃。
       await actionExecutor.applyActions(raw, turn.requestId, actions);
     }
     if (userText.isNotEmpty) {
@@ -897,21 +953,7 @@ final class OmniRealtimeCallService {
       // 晚安信号照旧触发日终归档与 Dream 资格（交付完成后时序不变）。
       memory.memoryCadence.onDeliveryComplete(bedtime: true);
     }
-    // 记忆控制（禁提/冻结/删除/解除）后刷新实时上下文；命中本通话
-    // 已说内容的控制触发受控重建连接，不让云端残留绕过本机过滤
-    // （spec:56；memory_forget 是当轮控制，不动上下文）。
-    final controls = actions
-        .whereType<MemoryControlAction>()
-        .where((action) => action is! MemoryForgetAction)
-        .toList();
-    if (controls.isNotEmpty) {
-      if (_controlTouchesInCall(controls)) {
-        _diagnosticsSink('omni call rebuilding connection after control');
-        _fireAndForget(_session?.close() ?? Future.value(), 'session close');
-      } else {
-        await _refreshInstructions();
-      }
-    }
+    return actions;
   }
 
   /// 单条回复终态落盘（T03:15）：完成轮落校验后的最终消息；取消/失败/
@@ -1035,8 +1077,11 @@ final class OmniRealtimeCallService {
     return result;
   }
 
-  /// 连接断开或通话结束时收束在途回复：在途回复不会再回来（云端上下文
-  /// 随连接消亡），可见前缀按打断语义落盘，旧事件不能复活（T02:15）。
+  /// 连接断开或通话结束时收束在途工作：在途回复不会再回来（云端上下
+  /// 文随连接消亡），可见前缀按打断语义落盘；已建轮但尚无任何回复的
+  /// 用户输入（判停建轮后、回复到达前即挂断/断线）补落盘用户转录，
+  /// 转录缺失用标识占位——文字记录可靠且可恢复（T03:15），与聊天
+  /// 「取消仍保留用户轮」语义对齐。旧事件不能复活（T02:15）。
   Future<void> _abandonOpenResponses() async {
     _pendingResponseTurnId = null;
     _continuationTurnId = null;
@@ -1054,6 +1099,30 @@ final class OmniRealtimeCallService {
         await _persistResponse(response, OmniRealtimeResponseStatus.cancelled);
       } on Object catch (error) {
         _diagnosticsSink('omni call abandon response deferred [$error]');
+      }
+    }
+    for (final turn in _turns.values) {
+      try {
+        var raw = await _openRawSession();
+        final userText = (turn.typedText ?? turn.transcript).trim();
+        if (!turn.userPersisted && _sessionSlotAvailable(raw)) {
+          raw = await _appendTurn(
+            raw,
+            RawSessionTurn.user(
+              requestId: turn.requestId,
+              text: userText.isNotEmpty
+                  ? (turn.typedText ?? turn.transcript)
+                  : omniMissingTranscriptMarker,
+              at: _clock(),
+            ),
+          );
+          turn.userPersisted = true;
+        }
+        // 已校验的完整动作提案与称呼/晚安随放弃收束一并提交（spec:56
+        // 显式用户控制不因音频模式被丢弃）；重建/刷新无意义，跳过。
+        await _commitTurnMemory(raw, turn, userText);
+      } on Object catch (error) {
+        _diagnosticsSink('omni call abandon turn deferred [$error]');
       }
     }
   }
@@ -1075,14 +1144,23 @@ final class OmniRealtimeCallService {
     return raw.turns.any((turn) => bannedMemoryText(turn.text, titles));
   }
 
+  /// 当前活动会话已下发的 instructions（建连与每次刷新后记录）：热层
+  /// 未变化时跳过重复的 session.update。
+  String? _activeInstructions;
+
   /// 热层刷新（session.update 整体替换，T01 §11 实测下一条回复生效）：
-  /// 重读热层三块并整体重发 instructions。
+  /// 重读热层三块，内容有变化才整体重发 instructions。
   Future<void> _refreshInstructions() async {
     final session = _session;
     if (session == null || _ended) {
       return;
     }
-    session.updateSession(await _sessionConfig());
+    final config = await _sessionConfig();
+    if (config.instructions == _activeInstructions) {
+      return;
+    }
+    _activeInstructions = config.instructions;
+    session.updateSession(config);
   }
 
   void _sendState() {
