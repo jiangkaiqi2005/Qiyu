@@ -176,11 +176,6 @@ class _OmniStartupSettingsState extends State<OmniStartupSettings> {
               _permissionError!,
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
-          if (viewModel.errorMessage != null)
-            Text(
-              viewModel.errorMessage!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
         ],
       );
     },

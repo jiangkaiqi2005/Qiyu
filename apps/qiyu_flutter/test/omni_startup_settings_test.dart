@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qiyu_flutter/features/chat/voice_recorder_platform.dart';
+import 'package:qiyu_flutter/features/chat/voice_recorder_platform_io.dart';
 import 'package:qiyu_flutter/features/settings/omni_startup_settings.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_view_model.dart';
@@ -37,7 +39,7 @@ void main() {
     expect(form.apiKeyController.text, 'unsaved-private-key');
   });
 
-  testWidgets('现有设置区域只在选中 Omni 时显示启动选项', (tester) async {
+  testWidgets('现有设置区域只在选中 Omni 时显示启动选项，保存失败文案仅一次', (tester) async {
     final gateway = _Gateway();
     final viewModel = ProviderSettingsViewModel(gateway, autoStart: false);
     await viewModel.initialize();
@@ -63,6 +65,26 @@ void main() {
       ),
     );
     expect(find.text('通话启动方式'), findsOneWidget);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel(androidVoiceRecorderChannelName),
+      (call) async => call.method == 'hasMicrophonePermission',
+    );
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(
+        const MethodChannel(androidVoiceRecorderChannelName),
+        null,
+      ),
+    );
+    gateway.failSave = true;
+    final auto = find.byKey(const Key('omni-startup-auto'));
+    await tester.ensureVisible(auto);
+    await tester.tap(auto);
+    await tester.pumpAndSettle();
+    expect(viewModel.settings!.callStartupMode, CallStartupMode.manual);
+    expect(find.text('保存失败，请重试。'), findsOneWidget);
+    gateway.failSave = false;
     await viewModel.save(
       const ProviderSettingsDraft(
         provider: ProviderKind.anthropic,
@@ -142,7 +164,7 @@ void main() {
     await tester.tap(find.byKey(const Key('omni-startup-auto')));
     await tester.pumpAndSettle();
     expect(viewModel.settings!.callStartupMode, CallStartupMode.manual);
-    expect(find.text('保存失败，请重试。'), findsOneWidget);
+    expect(viewModel.errorMessage, '保存失败，请重试。');
     final group = tester.widget<RadioGroup<CallStartupMode>>(
       find.byType(RadioGroup<CallStartupMode>),
     );
