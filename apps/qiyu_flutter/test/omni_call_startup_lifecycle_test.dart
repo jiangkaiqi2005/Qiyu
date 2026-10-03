@@ -10,6 +10,74 @@ import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
 import 'support/omni_call_fakes.dart';
 
 void main() {
+  test('旧进页的非 Omni 读取迟到不结束后一次 Omni 自动通话', () async {
+    final gateway = DeferredProviderGateway();
+    final capture = FakeOmniCapture();
+    final call = OmniCallController(
+      surface: RecordingCallSurface(),
+      providerSettings: gateway,
+      capture: capture,
+      player: FakeOmniStreamingPlayer(),
+      connector: (_) => FakeOmniSocket(),
+      autoStartAllowed: () async => true,
+    );
+    call.updateLocation(onChat: true, visible: true);
+    call.updateLocation(onChat: false, visible: true);
+    call.updateLocation(onChat: true, visible: true);
+    gateway.requests.last.complete(autoOmniSettings);
+    await omniDrain();
+    expect(call.phase, OmniCallPhase.connecting);
+    gateway.requests.first.complete(nonOmniSettings);
+    await omniDrain();
+    expect(call.phase, OmniCallPhase.connecting);
+    expect(call.omniReady, isTrue);
+    expect(capture.lastSession?.stopped, isFalse);
+    call.dispose();
+  });
+
+  test('旧 refresh 可用结果不能覆盖新进页非 Omni，下一次启动仍受当前配置限制', () async {
+    final gateway = DeferredProviderGateway();
+    final call = OmniCallController(
+      surface: RecordingCallSurface(),
+      providerSettings: gateway,
+      capture: DeferredCapture(),
+      autoStartAllowed: () async => true,
+    );
+    final refresh = call.refreshAvailability();
+    call.updateLocation(onChat: true, visible: true);
+    gateway.requests.last.complete(nonOmniSettings);
+    await omniDrain();
+    gateway.requests.first.complete(autoOmniSettings);
+    await refresh;
+    expect(call.omniReady, isFalse);
+    expect(await call.startCall(), isFalse);
+    expect(call.startupFailure, OmniCallStartupFailure.notReady);
+    call.dispose();
+  });
+
+  test('进页与 refresh 并发读取时，以最新结果自动启动且旧结果不结束通话', () async {
+    final gateway = DeferredProviderGateway();
+    final capture = FakeOmniCapture();
+    final call = OmniCallController(
+      surface: RecordingCallSurface(),
+      providerSettings: gateway,
+      capture: capture,
+      player: FakeOmniStreamingPlayer(),
+      connector: (_) => FakeOmniSocket(),
+      autoStartAllowed: () async => true,
+    );
+    call.updateLocation(onChat: true, visible: true);
+    final refresh = call.refreshAvailability();
+    gateway.requests.last.complete(autoOmniSettings);
+    await refresh;
+    gateway.requests.first.complete(nonOmniSettings);
+    await omniDrain();
+    expect(call.phase, OmniCallPhase.connecting);
+    expect(call.omniReady, isTrue);
+    expect(capture.lastSession?.stopped, isFalse);
+    call.dispose();
+  });
+
   test('Provider 切换使未完成自动采集失效，迟到结果只释放不接通', () async {
     final gateway = FakeOmniProviderGateway(
       callStartupMode: CallStartupMode.autoOnChatEntry,
@@ -343,6 +411,38 @@ void main() {
     expect(sockets.single.decodedFrames.single['type'], 'start');
     call.dispose();
   });
+}
+
+const autoOmniSettings = ProviderSettings(
+  configured: true,
+  keySet: true,
+  provider: ProviderKind.qwenOmniRealtime,
+  callStartupMode: CallStartupMode.autoOnChatEntry,
+);
+const nonOmniSettings = ProviderSettings(
+  configured: true,
+  keySet: true,
+  provider: ProviderKind.openAiCompatible,
+  callStartupMode: CallStartupMode.autoOnChatEntry,
+);
+
+class DeferredProviderGateway implements ProviderSettingsGateway {
+  final requests = <Completer<ProviderSettings>>[];
+  @override
+  Future<ProviderSettings> read() {
+    final request = Completer<ProviderSettings>();
+    requests.add(request);
+    return request.future;
+  }
+
+  @override
+  Future<ProviderSettings> save(ProviderSettingsDraft draft) =>
+      throw UnimplementedError();
+  @override
+  Future<ProviderSettings> forgetApiKey() => throw UnimplementedError();
+  @override
+  Future<ProviderTestResult> testConnection(ProviderSettingsDraft draft) =>
+      throw UnimplementedError();
 }
 
 class DeferredCapture implements VoiceCapturePlatform {

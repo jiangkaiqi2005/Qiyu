@@ -109,6 +109,8 @@ final class OmniCallController extends ChangeNotifier {
   bool _automaticStarting = false;
   bool _automaticStartFailed = false;
   int _entryGeneration = 0;
+  int _availabilityGeneration = 0;
+  Future<ProviderSettings?>? _availabilityRead;
 
   OmniCallPhase _phase = OmniCallPhase.idle;
   String? _phaseReason;
@@ -201,7 +203,7 @@ final class OmniCallController extends ChangeNotifier {
       !_disposed && entry == _entryGeneration && _onChat && _visible;
 
   Future<void> _autoStartOnEntry(int entry, String? sessionId) async {
-    final settings = await _readAvailability();
+    final settings = await _readAvailability(entry: entry);
     if (!_isCurrentEntry(entry) ||
         settings?.callStartupMode != CallStartupMode.autoOnChatEntry ||
         !_omniReady ||
@@ -255,7 +257,17 @@ final class OmniCallController extends ChangeNotifier {
     await _readAvailability();
   }
 
-  Future<ProviderSettings?> _readAvailability() async {
+  Future<ProviderSettings?> _readAvailability({int? entry}) {
+    return _availabilityRead = _loadAvailability(
+      ++_availabilityGeneration,
+      entry,
+    );
+  }
+
+  Future<ProviderSettings?> _loadAvailability(
+    int generation,
+    int? entry,
+  ) async {
     bool ready = false;
     ProviderSettings? settings;
     try {
@@ -267,6 +279,10 @@ final class OmniCallController extends ChangeNotifier {
     } on Object {
       ready = false;
     }
+    // 配置读取也有归属：旧页面不得改新通话的状态。仍在同一次进页的
+    // 读取若被回页刷新赶超，则等最新结果，不能因此吞掉正常自动启动。
+    if (_disposed || (entry != null && !_isCurrentEntry(entry))) return null;
+    if (generation != _availabilityGeneration) return _availabilityRead;
     if (_omniReady != ready) {
       _omniReady = ready;
       _notify();
