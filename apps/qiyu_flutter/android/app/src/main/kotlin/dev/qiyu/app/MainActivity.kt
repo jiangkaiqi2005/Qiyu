@@ -28,6 +28,9 @@ class MainActivity : FlutterActivity() {
         // 语音链路（票 06）：录音（AudioRecord，含麦克风权限系统弹窗）
         // 与朗读（MediaPlayer 内存播放）两条原生通道，实现见 VoiceBridge。
         VoiceBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
+        // Omni 双工通话（T05）：连续采集 + 通话播放 + microphone 前台
+        // 服务，实现见 OmniCallBridge——生命周期不跟随前后台，见其类注释。
+        OmniCallBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
     }
 
     override fun onResume() {
@@ -42,8 +45,10 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         // 隐私收尾：界面销毁后麦克风不该还亮着。趁引擎尚在先请 VoiceBridge
-        // 收尾（等待中的权限回包还能送出），再交给父类拆引擎。
+        // 收尾（等待中的权限回包还能送出），通话桥同样整通收口（含前台
+        // 服务），再交给父类拆引擎。
         VoiceBridge.unregister()
+        OmniCallBridge.unregister()
         super.onDestroy()
     }
 
@@ -58,6 +63,8 @@ class MainActivity : FlutterActivity() {
                 grantResults.isNotEmpty() &&
                     grantResults[0] == PackageManager.PERMISSION_GRANTED,
             )
+        } else if (requestCode == OMNI_MIC_PERMISSION_REQUEST_CODE) {
+            OmniCallBridge.onRequestPermissionsResult(requestCode, permissions, grantResults)
         }
     }
 

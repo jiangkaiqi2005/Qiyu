@@ -105,6 +105,8 @@ Future<HostBinding> startEmbeddedHost({
   return HostBinding(
     client: session,
     baseUri: session.baseUri,
+    // 通话 WS 升级的会话头同样由会话接管 client 补齐（T05）。
+    omniCallSocketConnector: session.omniCallSocketConnector,
     shutdown: host.close,
   );
 }

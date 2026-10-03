@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Omni 通话前台服务的系统提示文案（T05）。默认资源是中文（应用主语言），
+     values-en 提供英文会话的对应文案；由系统按语言挑选，不进 Dart 词条表
+     ——这是系统托管的常驻提示，与页面内文案的双语机制不同源。 -->
+<resources>
+    <string name="omni_call_channel_name">通话</string>
+    <string name="omni_call_notification_title">栖语通话中</string>
+    <string name="omni_call_notification_text">双工对话进行中，麦克风与扬声器使用中</string>
+</resources>

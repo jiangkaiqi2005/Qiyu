@@ -1,5 +1,7 @@
 import 'package:http/http.dart' as http;
 
+import '../chat/omni_call_controller.dart' show OmniCallSocketConnector;
+
 export 'host_bootstrap_io.dart'
     if (dart.library.js_interop) 'host_bootstrap_web.dart';
 
@@ -22,6 +24,7 @@ final class HostBinding {
   HostBinding({
     required this.client,
     required this.baseUri,
+    this.omniCallSocketConnector,
     Future<void> Function()? shutdown,
   }) : // named 参数不能是私有标识；与 NativeHostSessionClient 同款先例。
        // ignore: prefer_initializing_formals
@@ -34,6 +37,11 @@ final class HostBinding {
   /// 本机 Host 的显式基址（`http://127.0.0.1:<port>`）：注入各域网关
   /// 既有的 `baseUri` 参数，与 client 同源同例。
   final Uri baseUri;
+
+  /// Omni 通话 WebSocket 连接器（T05）：`GET api/omni/call` 升级请求
+  /// 同样过 Host 会话前置，原生壳的升级头由会话接管 client 补齐。web
+  /// 不装配绑定，恒为 null——通话走浏览器自带的同源缺省连接器。
+  final OmniCallSocketConnector? omniCallSocketConnector;
 
   final Future<void> Function()? _shutdown;
 

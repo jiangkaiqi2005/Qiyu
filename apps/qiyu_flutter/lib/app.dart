@@ -12,6 +12,7 @@ import 'features/chat/local_chat_client.dart';
 import 'features/chat/local_chat_view.dart';
 import 'features/chat/local_chat_view_model.dart';
 import 'features/chat/omni_call_controller.dart';
+import 'features/chat/omni_call_player_platform.dart';
 import 'features/chat/voice_capture_platform.dart';
 import 'features/chat/voice_output_controller.dart';
 import 'features/history/history_client.dart';
@@ -293,13 +294,18 @@ class _QiyuAppState extends State<QiyuApp> {
         ),
         // Omni 双工通话控制器（T04）：app 级生命周期——跨页通话条与
         // 聊天页状态栏读同一个实例，通话跨页不中断。显示面直接落在本
-        // 树上的聊天视图模型（通话转录进入普通聊天流）。
+        // 树上的聊天视图模型（通话转录进入普通聊天流）。安卓壳（T05）
+        // 注入原生通话采集/播放与带会话头的连接器、显式基址；web 不注
+        // 入（null 回退各自缺省），行为与 T04 零变化。
         _vm(
           widget.omniCallController,
           (context) => OmniCallController(
             surface: context.read<LocalChatViewModel>(),
             providerSettings: _defaultProviderSettingsGateway,
             capture: createVoiceCapturePlatform(),
+            player: createOmniCallPlayerPlatform(),
+            connector: widget.hostBinding?.omniCallSocketConnector,
+            baseUri: _hostBaseUri,
           ),
         ),
         _vm(

@@ -6,6 +6,15 @@
          授权走系统弹窗，仅在用户点麦克风的动作里发起；拒绝后录音入口
          如实报告不可用，文字输入与朗读链路不受影响。 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- Omni 双工通话（T05）：可见界面的用户动作里启动 microphone 前台
+         服务，锁屏/切 App 期间通话继续（spec:23）。FOREGROUND_SERVICE
+         自 API 28 起是前台服务的普通前置；FOREGROUND_SERVICE_MICROPHONE
+         是 API 34+ 对 microphone 类型的新增前置——两个都是普通权限，
+         运行时只弹 RECORD_AUDIO 系统弹窗。POST_NOTIFICATIONS 不声明为
+         服务前提：33+ 上仅随麦克风一并尽力请求，拒绝只影响通知可见性，
+         不影响服务与通话。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <!-- 云备份与设备迁移必须关（端内形态隐私红线）：明文 Key 的
          provider.json、会话与记忆 Markdown 一旦随系统备份离开设备，
          「数据只在我手机上」就破了——跨设备唯一通道是手动导出。
@@ -43,6 +52,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Omni 通话前台服务（T05）：microphone 类型（API 29+ 属性，更早
+             版本忽略）；START_NOT_STICKY——系统回收后不重建，用户从系统
+             入口停止后不得自行复活通话（T05:14）。 -->
+        <service
+            android:name=".OmniCallForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

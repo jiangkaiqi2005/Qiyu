@@ -305,6 +305,11 @@ final class IoVoicePlayerPlatform
         : FileVoiceVolumeStore(directory);
   }
 
+  /// 进程级缺省音量存储的只读出口（T05）：Omni 通话播放器与朗读链路读
+  /// **同一份**持久化偏好（同一存储键），不各建第二份会漂移的存储。未
+  /// 注入目录时为 null，读取方退回缺省 1.0。
+  static VoiceVolumeStore? get sharedVolumeStore => _defaultVolumeStore;
+
   final VoicePlayerNativeChannel _channel;
   final VoiceVolumeStore? _injectedVolumeStore;
   final bool? _supportedOverride;

@@ -1,6 +1,9 @@
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/io.dart';
+
+import '../chat/omni_call_controller.dart' show OmniCallSocket, OmniCallSocketConnector;
 
 /// 会话 Cookie 名：与 Host 的 `qiyu_session`（`local_app_host.dart` 的
 /// `_sessionCookieName`）是双端约定，同 `x-qiyu-csrf` 在网关底座里以
@@ -98,6 +101,21 @@ final class NativeHostSessionClient extends http.BaseClient {
   /// SameSite=Strict` 由 Host 发出）。并发请求共享同一次引导。
   Future<void> _ensureSession() => _session ??= _exchangeStartupCredential();
 
+  /// 等待会话建立并返回会话 Cookie（`qiyu_session=…` 整值）：WebSocket
+  /// 升级请求（`GET api/omni/call`）同样过 Host 会话前置，而原生侧的
+  /// WS 连接器靠它补 `Cookie` 头。引导失败会照常抛出。
+  Future<String> sessionCookie() async {
+    await _ensureSession();
+    return _cookie!;
+  }
+
+  /// Omni 通话 WebSocket 连接器（T05）：握手前等待会话建立，把会话
+  /// Cookie 放进升级请求头（dart:io 的 WebSocket 没有浏览器的 Cookie
+  /// 罐）。web 构建不经过本类（浏览器同源升级自带 Cookie），缺省连接
+  /// 器零变化。
+  OmniCallSocketConnector get omniCallSocketConnector =>
+      (uri) => _NativeHostOmniCallSocket(uri, this);
+
   Future<void> _exchangeStartupCredential() async {
     final request = http.Request(
       'GET',
@@ -117,4 +135,40 @@ final class NativeHostSessionClient extends http.BaseClient {
 
   @override
   void close() => _inner.close();
+}
+
+/// 通话 WebSocket 的会话接管实现：`ready` 先等会话建立（共享同一次引导）
+/// 再发起带 `Cookie` 头的 WS 升级；未就绪前不创建底层通道，`close` 在
+/// 任何阶段都安全（连接失败的中途收尾路径依赖这一点）。
+final class _NativeHostOmniCallSocket implements OmniCallSocket {
+  _NativeHostOmniCallSocket(this._uri, this._session);
+
+  final Uri _uri;
+  final NativeHostSessionClient _session;
+  IOWebSocketChannel? _channel;
+
+  @override
+  Future<void> get ready async {
+    final cookie = await _session.sessionCookie();
+    final channel = IOWebSocketChannel.connect(
+      _uri,
+      headers: <String, dynamic>{HttpHeaders.cookieHeader: cookie},
+    );
+    _channel = channel;
+    await channel.ready;
+  }
+
+  @override
+  Stream<String> get stream =>
+      (_channel?.stream ?? const Stream<Object?>.empty())
+          .where((message) => message is String)
+          .cast<String>();
+
+  @override
+  void send(String frame) {
+    _channel?.sink.add(frame);
+  }
+
+  @override
+  Future<void> close() => _channel?.sink.close() ?? Future<void>.value();
 }

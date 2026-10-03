@@ -6,6 +6,7 @@ import 'package:qiyu_flutter/features/baseline/host_connection_probe.dart';
 import 'package:qiyu_flutter/features/baseline/native_host_session_client.dart';
 import 'package:qiyu_flutter/features/settings/settings_client.dart';
 import 'package:qiyu_local_host/qiyu_local_host.dart';
+import 'package:web_socket_channel/io.dart';
 
 /// 原生会话接管的端到端验收（进程内真 127.0.0.1 服务器）：
 ///
@@ -193,6 +194,27 @@ void main() {
 
       expect(statusCode, HttpStatus.forbidden);
       expect(body, 'Invalid CSRF token');
+    });
+  });
+
+  group('Omni 通话 WebSocket 升级（T05）', () {
+    Uri callUri() =>
+        session.baseUri.resolve('api/omni/call').replace(scheme: 'ws');
+
+    test('带会话 Cookie 的连接器升级成功（ready 完成即 101）', () async {
+      final cookie = await session.sessionCookie();
+      expect(cookie, startsWith('qiyu_session='));
+
+      final socket = session.omniCallSocketConnector(callUri());
+      await socket.ready;
+      await socket.close();
+    });
+
+    test('无 Cookie 的裸升级被 Host 会话前置拒绝', () async {
+      // 与连接器同形状的裸连接（不带 Cookie 头）：升级请求拿不到会话，
+      // 握手必须失败——证明连接器不是摆设。
+      final channel = IOWebSocketChannel.connect(callUri());
+      await expectLater(channel.ready, throwsA(anything));
     });
   });
 }

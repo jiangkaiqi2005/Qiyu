@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English strings for the Omni call foreground service notification (T05);
+     see values/strings.xml for the default (Chinese) copy. -->
+<resources>
+    <string name="omni_call_channel_name">Calls</string>
+    <string name="omni_call_notification_title">Qiyu call in progress</string>
+    <string name="omni_call_notification_text">Duplex call active — microphone and speaker in use</string>
+</resources>
