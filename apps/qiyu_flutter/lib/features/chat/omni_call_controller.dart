@@ -32,7 +32,9 @@ abstract interface class OmniCallChatSurface {
   void callReplyDelta(String text);
 
   /// 一条回复终态：已显示文本落成气泡；未完成轮如实标记（spec:20）。
-  void callReplyDone({required bool incomplete});
+  /// 打断（status=cancelled）与失败/超时是两种标记，分别对应
+  /// 「被打断」与「未完成」。
+  void callReplyDone({required bool incomplete, required bool interrupted});
 
   /// 通话结束后的落盘对账：从 Host 重新恢复会话快照，以落盘事实
   /// 替换显示态（乐观消息、断连期间的漂移都在这里归真）。
@@ -266,18 +268,15 @@ final class OmniCallController extends ChangeNotifier {
   }
 
   /// 挂断（spec:24 明确结束）：立即停麦、停声、撤等待；Host 侧按 end
-  /// 帧收尾落盘后推 ended 并关连接，对账在其后执行。
+  /// 帧收尾落盘后推 ended 并关连接，对账在其后执行。结束 reason 与
+  /// Host stopCall 的缺省同键（omni_call_service.dart），en 会话由
+  /// localizeStatus 映射。
   Future<void> end() async {
     if (!callInProgress || _disposed) {
       return;
     }
     _socket?.send(jsonEncode({'type': 'end'}));
-    await _stopCapture();
-    _teardownPlayback();
-    _userSpeaking = false;
-    _qiyuSpeaking = false;
-    _setPhase(OmniCallPhase.ended, reason: '通话已结束。');
-    unawaited(_resyncWhenQuiescent());
+    _finishLocally('通话已结束。');
   }
 
   /// 闭麦／恢复收音（同一通话复用，spec 前端摆放）：平台停发有效音频，
@@ -413,12 +412,7 @@ final class OmniCallController extends ChangeNotifier {
       }
     }
     if (phase == OmniCallPhase.ended) {
-      unawaited(_stopCapture());
-      _teardownPlayback();
-      _userSpeaking = false;
-      _qiyuSpeaking = false;
-      _setPhase(OmniCallPhase.ended, reason: reason ?? '通话已结束。');
-      unawaited(_resyncWhenQuiescent());
+      _finishLocally(reason ?? '通话已结束。');
       return;
     }
     _setPhase(phase, reason: reason);
@@ -457,6 +451,11 @@ final class OmniCallController extends ChangeNotifier {
   void _onReplyDone(Map<String, Object?> event) {
     final turnId = event['turnId'];
     final incomplete = event['incomplete'] == true;
+    // spec:20 区分两种标记：用户打断（status=cancelled）标记「被打断」，
+    // 失败/超时等其余未完成轮标记「未完成」；status 由线协议随 replyDone
+    // 携带（omni_call_routes.dart），completed 之外的其余取值不做第二
+    // 分档，统一按未完成如实呈现。
+    final interrupted = event['status'] == 'cancelled';
     if (turnId is String) {
       if (incomplete) {
         // 取消/失败/超时：轮终局，其后到事件按死轮隔离（T01 §13.4）。
@@ -471,7 +470,7 @@ final class OmniCallController extends ChangeNotifier {
         _endPlaybackDrain();
       }
     }
-    _surface.callReplyDone(incomplete: incomplete);
+    _surface.callReplyDone(incomplete: incomplete, interrupted: interrupted);
     _notify();
   }
 
@@ -530,6 +529,10 @@ final class OmniCallController extends ChangeNotifier {
     unawaited(() async {
       final playback = await player.startStream(
         sampleRate: playbackSampleRate,
+        // 通话播放沿用朗读的持久化音量偏好（T04「沿用现有页面、音量」）
+        // ：与 VoiceOutputController 同一枚存储键、同一读取入口；每路
+        // 新回复开流时取当前值，调节后的下一句即刻生效。
+        volume: _resolvePlaybackVolume(),
       );
       _playbackOpening = false;
       if (_disposed ||
@@ -586,20 +589,39 @@ final class OmniCallController extends ChangeNotifier {
     _playbackTurnId = null;
   }
 
+  /// 通话播放音量：读朗读链路持久化的同一份偏好（voice_output_volume
+  /// 存储键，VoicePlayerPlatform.getInitialVolume）；不支持读偏好的平台
+  /// 恒 1.0。每路新回复开流时取当前值；通话中的即时调节在下一句生效
+  /// ——现有音量控件只在配置 TTS 后出现，Omni 无 TTS 的通话本来就没
+  /// 有滑杆，不做控件级联动。
+  double _resolvePlaybackVolume() {
+    final player = _player;
+    if (player case final VoicePlayerPlatform volumeSource) {
+      return volumeSource.getInitialVolume();
+    }
+    return 1.0;
+  }
+
   // -------------------------------------------------------------------------
   // 收口
   // -------------------------------------------------------------------------
 
+  /// 就地收尾（挂断／Host ended／连接断开共用同一序列）：停采集、停播
+  /// 清队列、清两位说话指示、置 ended（reason 与 Host 同键，en 会话由
+  /// localizeStatus 映射）、启动落盘对账。不偷偷重开（T04:17）。
+  void _finishLocally(String reason) {
+    unawaited(_stopCapture());
+    _teardownPlayback();
+    _userSpeaking = false;
+    _qiyuSpeaking = false;
+    _setPhase(OmniCallPhase.ended, reason: reason);
+    unawaited(_resyncWhenQuiescent());
+  }
+
   void _onSocketDone() {
     if (_phase != OmniCallPhase.ended) {
-      // 前端连接断开即通话结束（Host 侧同一边界）；如实呈现，不偷偷
-      // 重开（T04:17）。
-      unawaited(_stopCapture());
-      _teardownPlayback();
-      _userSpeaking = false;
-      _qiyuSpeaking = false;
-      _setPhase(OmniCallPhase.ended, reason: '与通话服务的连接中断，通话已结束。');
-      unawaited(_resyncWhenQuiescent());
+      // 前端连接断开即通话结束（Host 侧同一边界），如实呈现。
+      _finishLocally('与通话服务的连接中断，通话已结束。');
     }
   }
 

@@ -36,13 +36,14 @@ void main() {
       expect(model.streamingCompletedLines, ['嗯，我在。']);
       expect(model.streamingTailSegment, '陪你待一会儿。');
 
-      model.callReplyDone(incomplete: false);
+      model.callReplyDone(incomplete: false, interrupted: false);
       expect(model.streamingText, isEmpty);
       expect(model.messages, hasLength(2));
       final reply = model.messages.last;
       expect(reply.speaker, LocalChatSpeaker.qiyu);
       expect(reply.text, '嗯，我在。\n陪你待一会儿。');
       expect(reply.incomplete, isFalse);
+      expect(reply.interrupted, isFalse);
       expect(reply.deliveryIndex, isNull, reason: '通话回复不出现在朗读队列');
     });
 
@@ -50,12 +51,18 @@ void main() {
       final model = buildModel(FakeLocalChatGateway());
       addTearDown(model.dispose);
       model.callReplyDelta('我先说到这');
-      model.callReplyDone(incomplete: true);
+      model.callReplyDone(incomplete: true, interrupted: false);
       expect(model.messages.single.incomplete, isTrue);
+      expect(model.messages.single.interrupted, isFalse);
       expect(model.messages.single.text, '我先说到这');
 
-      model.callReplyDone(incomplete: false);
-      expect(model.messages, hasLength(1), reason: '静默工具轮无可显示内容');
+      // 被打断与未完成是两种标记（spec:20）。
+      model.callReplyDelta('另一轮');
+      model.callReplyDone(incomplete: true, interrupted: true);
+      expect(model.messages.last.interrupted, isTrue);
+
+      model.callReplyDone(incomplete: false, interrupted: false);
+      expect(model.messages, hasLength(2), reason: '静默工具轮无可显示内容');
     });
 
     test('callSessionReset 清掉残留流式态', () {
@@ -64,7 +71,7 @@ void main() {
       model.callReplyDelta('旧通话残句');
       model.callSessionReset();
       expect(model.streamingText, isEmpty);
-      model.callReplyDone(incomplete: false);
+      model.callReplyDone(incomplete: false, interrupted: false);
       expect(model.messages, isEmpty);
     });
 

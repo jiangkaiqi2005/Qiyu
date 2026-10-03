@@ -399,24 +399,29 @@ class QiyuComposerState extends State<QiyuComposer> {
   }
 
   /// 拨通入口：手势的同步调用栈里先恢复音频输出许可（spec:46），再进
-  /// 异步接通；失败按原因就近平铺通知，可继续打字（T04:11）。
+  /// 异步接通；失败按原因就近平铺通知，可继续打字（T04:11）。动作名
+  /// 一份同供 tooltip 与 Icon.semanticLabel（frontend-design-decisions
+  /// #17），MergeSemantics 汇成按钮自己那一个语义节点。
   Widget _omniCallStartButton(OmniCallController call) {
-    return QiyuOwnFocusRing(
-      borderRadius: QiyuRadii.circleBorder,
-      builder: (context, focusNode) => IconButton(
-        key: const Key('omni-call-start'),
-        focusNode: focusNode,
-        tooltip: qiyuStrings(context).omniCallStart,
-        onPressed: call.callInProgress
-            ? null
-            : () => unawaited(_startOmniCall(call)),
-        icon: const Icon(QiyuIcons.call),
-        iconSize: QiyuIconSpec.size,
-        padding: EdgeInsets.zero,
-        visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints.tightFor(
-          width: QiyuLayout.composerIconButtonSize,
-          height: QiyuLayout.composerIconButtonSize,
+    final actionLabel = qiyuStrings(context).omniCallStart;
+    return MergeSemantics(
+      child: QiyuOwnFocusRing(
+        borderRadius: QiyuRadii.circleBorder,
+        builder: (context, focusNode) => IconButton(
+          key: const Key('omni-call-start'),
+          focusNode: focusNode,
+          tooltip: actionLabel,
+          onPressed: call.callInProgress
+              ? null
+              : () => unawaited(_startOmniCall(call)),
+          icon: Icon(QiyuIcons.call, semanticLabel: actionLabel),
+          iconSize: QiyuIconSpec.size,
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(
+            width: QiyuLayout.composerIconButtonSize,
+            height: QiyuLayout.composerIconButtonSize,
+          ),
         ),
       ),
     );

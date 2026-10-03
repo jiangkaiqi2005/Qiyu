@@ -113,6 +113,9 @@ abstract class QiyuStrings {
   String get omniCallMicUnavailable;
   String get omniCallStartFailed;
 
+  /// 通话回复被用户打断的标记（spec:20 与「未完成」是两种标记）。
+  String get interrupted;
+
   String localizeStatus(String message);
 }
 
@@ -282,7 +285,7 @@ class QiyuStringsZh extends QiyuStrings {
   @override
   String get omniCallReconnecting => '重连中…';
   @override
-  String get omniCallEnded => '通话已结束';
+  String get omniCallEnded => '通话已结束。';
   @override
   String get omniCallMuteAction => '闭麦（她还在说，说完继续听）';
   @override
@@ -295,6 +298,8 @@ class QiyuStringsZh extends QiyuStrings {
   String get omniCallMicUnavailable => '麦克风没有就绪，这次没有开始通话，仍可以打字。';
   @override
   String get omniCallStartFailed => '通话没能接通，仍可以打字。';
+  @override
+  String get interrupted => '被打断';
   @override
   String get firstGreeting => '嗨。我是栖语。';
   @override
@@ -495,7 +500,7 @@ class QiyuStringsEn extends QiyuStrings {
   @override
   String get omniCallReconnecting => 'Reconnecting…';
   @override
-  String get omniCallEnded => 'Call ended';
+  String get omniCallEnded => 'Call ended.';
   @override
   String get omniCallMuteAction => 'Mute mic (she keeps talking)';
   @override
@@ -510,6 +515,8 @@ class QiyuStringsEn extends QiyuStrings {
   @override
   String get omniCallStartFailed =>
       'The call could not connect. You can still type.';
+  @override
+  String get interrupted => 'Interrupted';
   @override
   String get firstGreeting => 'Hi. I’m Qiyu.';
   @override
@@ -569,6 +576,19 @@ class QiyuStringsEn extends QiyuStrings {
     '语音服务连不上，这条读不出来。' =>
       'The voice service is unavailable. This message cannot be read aloud.',
     '无法播放语音，点小喇叭再听一次。' => 'Audio could not play. Tap the speaker to try again.',
+    // Omni 通话结束原因（T04）：Host 侧 omni_call_service.dart 的原文
+    // 与前端本地收尾同键，en 会话据此翻译，zh 原样透传。
+    '通话已结束。' => 'Call ended.',
+    '与通话服务的连接中断，通话已结束。' =>
+      'The call service connection dropped. The call has ended.',
+    '新的通话已开始，本通已结束。' =>
+      'A new call has started. This call has ended.',
+    '模型配置已切换，本次通话已结束。' =>
+      'The model configuration changed. This call has ended.',
+    '与模型服务的实时连接多次中断，本次通话已结束。' =>
+      'The realtime connection dropped too many times. This call has ended.',
+    '还没有配置百炼 Omni 实时模型或 API Key。' =>
+      'The Omni realtime model or API key is not configured yet.',
     _ => message,
   };
 }

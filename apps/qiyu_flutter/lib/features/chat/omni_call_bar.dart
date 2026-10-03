@@ -14,7 +14,9 @@ import '../shell/qiyu_widgets.dart';
 import 'omni_call_controller.dart';
 
 /// 通话状态的一句话文本（聊天页状态栏与跨页通话条共用同一口径，
-/// spec 前端摆放：正在聆听／栖语在说话；reason 来自 Host 或本端边界）。
+/// spec 前端摆放：正在聆听／栖语在说话）。reason 来自 Host 或本端
+/// 收尾，经 [QiyuStrings.localizeStatus] 按 en 词表映射（zh 原样透传）
+/// ——与全仓 Host 中文消息的同一双语机制，不各写一套。
 String omniCallStatusLabel(OmniCallController call, QiyuStrings strings) {
   switch (call.phase) {
     case OmniCallPhase.connecting:
@@ -22,7 +24,10 @@ String omniCallStatusLabel(OmniCallController call, QiyuStrings strings) {
     case OmniCallPhase.reconnecting:
       return strings.omniCallReconnecting;
     case OmniCallPhase.ended:
-      return call.phaseReason ?? strings.omniCallEnded;
+      final reason = call.phaseReason;
+      return reason == null
+          ? strings.omniCallEnded
+          : strings.localizeStatus(reason);
     case OmniCallPhase.active:
       if (call.muted) {
         return strings.omniCallMuted;
@@ -33,6 +38,48 @@ String omniCallStatusLabel(OmniCallController call, QiyuStrings strings) {
       return strings.omniCallListening;
     case OmniCallPhase.idle:
       return strings.omniCallEnded;
+  }
+}
+
+/// 通话控件的无字图标按钮（frontend-design-decisions #17）：动作名一份
+/// 同供 tooltip 与 Icon.semanticLabel，再用 MergeSemantics 汇成按钮自己
+/// 那一个语义节点——tooltip 不构成无障碍名（决策 #17 实测）。
+final class QiyuOmniCallIconButton extends StatelessWidget {
+  const QiyuOmniCallIconButton({
+    super.key,
+    required this.buttonKey,
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    required this.iconColor,
+  });
+
+  final Key buttonKey;
+
+  /// 动作名：tooltip 与无障碍标签共用一份，不许两头各写一遍再漂移。
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final Color iconColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return MergeSemantics(
+      child: IconButton(
+        key: buttonKey,
+        tooltip: tooltip,
+        onPressed: onPressed,
+        color: iconColor,
+        icon: Icon(icon, semanticLabel: tooltip),
+        iconSize: QiyuIconSpec.size,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        constraints: BoxConstraints.tightFor(
+          width: qiyuAndroidTouch ? 48 : QiyuLayout.composerIconButtonSize,
+          height: qiyuAndroidTouch ? 48 : QiyuLayout.composerIconButtonSize,
+        ),
+      ),
+    );
   }
 }
 
@@ -80,45 +127,23 @@ final class QiyuOmniCallStrip extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: QiyuSpacing.sm),
-              IconButton(
-                key: const Key('omni-strip-mute'),
+              QiyuOmniCallIconButton(
+                buttonKey: const Key('omni-strip-mute'),
                 tooltip: call.muted
                     ? strings.omniCallUnmuteAction
                     : strings.omniCallMuteAction,
+                icon: call.muted ? QiyuIcons.mic_off : QiyuIcons.mic,
                 onPressed: active ? call.toggleMute : null,
-                color: QiyuColors.muted,
-                icon: Icon(call.muted ? QiyuIcons.mic_off : QiyuIcons.mic),
-                iconSize: QiyuIconSpec.size,
-                padding: EdgeInsets.zero,
-                visualDensity: VisualDensity.compact,
-                constraints: BoxConstraints.tightFor(
-                  width: qiyuAndroidTouch
-                      ? 48
-                      : QiyuLayout.composerIconButtonSize,
-                  height: qiyuAndroidTouch
-                      ? 48
-                      : QiyuLayout.composerIconButtonSize,
-                ),
+                iconColor: QiyuColors.muted,
               ),
-              IconButton(
-                key: const Key('omni-strip-end'),
+              QiyuOmniCallIconButton(
+                buttonKey: const Key('omni-strip-end'),
                 tooltip: strings.omniCallHangupAction,
+                icon: QiyuIcons.call_end,
                 onPressed: call.callInProgress
                     ? () => unawaited(call.end())
                     : null,
-                color: QiyuColors.ink,
-                icon: const Icon(QiyuIcons.call_end),
-                iconSize: QiyuIconSpec.size,
-                padding: EdgeInsets.zero,
-                visualDensity: VisualDensity.compact,
-                constraints: BoxConstraints.tightFor(
-                  width: qiyuAndroidTouch
-                      ? 48
-                      : QiyuLayout.composerIconButtonSize,
-                  height: qiyuAndroidTouch
-                      ? 48
-                      : QiyuLayout.composerIconButtonSize,
-                ),
+                iconColor: QiyuColors.ink,
               ),
             ],
           ),
@@ -198,17 +223,15 @@ final class QiyuOmniCallBar extends StatelessWidget {
                                   omniCallStatusLabel(call, strings),
                                   key: const Key('omni-callbar-status-text'),
                                   overflow: TextOverflow.ellipsis,
-                                  style: QiyuTypography.of(
-                                    context,
-                                  ).secondary.copyWith(color: QiyuColors.ink),
+                                  style: QiyuTypography.of(context).secondary
+                                      .copyWith(color: QiyuColors.ink),
                                 ),
                               ),
                               const SizedBox(width: QiyuSpacing.xs),
                               Text(
                                 strings.omniCallBackToChat,
-                                style: QiyuTypography.of(
-                                  context,
-                                ).secondary.copyWith(color: QiyuColors.muted),
+                                style: QiyuTypography.of(context).secondary
+                                    .copyWith(color: QiyuColors.muted),
                               ),
                             ],
                           ),
@@ -216,45 +239,21 @@ final class QiyuOmniCallBar extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: QiyuSpacing.sm),
-                    IconButton(
-                      key: const Key('omni-callbar-mute'),
+                    QiyuOmniCallIconButton(
+                      buttonKey: const Key('omni-callbar-mute'),
                       tooltip: call.muted
                           ? strings.omniCallUnmuteAction
                           : strings.omniCallMuteAction,
+                      icon: call.muted ? QiyuIcons.mic_off : QiyuIcons.mic,
                       onPressed: call.toggleMute,
-                      color: QiyuColors.muted,
-                      icon: Icon(
-                        call.muted ? QiyuIcons.mic_off : QiyuIcons.mic,
-                      ),
-                      iconSize: QiyuIconSpec.size,
-                      padding: EdgeInsets.zero,
-                      visualDensity: VisualDensity.compact,
-                      constraints: BoxConstraints.tightFor(
-                        width: qiyuAndroidTouch
-                            ? 48
-                            : QiyuLayout.composerIconButtonSize,
-                        height: qiyuAndroidTouch
-                            ? 48
-                            : QiyuLayout.composerIconButtonSize,
-                      ),
+                      iconColor: QiyuColors.muted,
                     ),
-                    IconButton(
-                      key: const Key('omni-callbar-end'),
+                    QiyuOmniCallIconButton(
+                      buttonKey: const Key('omni-callbar-end'),
                       tooltip: strings.omniCallHangupAction,
+                      icon: QiyuIcons.call_end,
                       onPressed: () => unawaited(call.end()),
-                      color: QiyuColors.muted,
-                      icon: const Icon(QiyuIcons.call_end),
-                      iconSize: QiyuIconSpec.size,
-                      padding: EdgeInsets.zero,
-                      visualDensity: VisualDensity.compact,
-                      constraints: BoxConstraints.tightFor(
-                        width: qiyuAndroidTouch
-                            ? 48
-                            : QiyuLayout.composerIconButtonSize,
-                        height: qiyuAndroidTouch
-                            ? 48
-                            : QiyuLayout.composerIconButtonSize,
-                      ),
+                      iconColor: QiyuColors.muted,
                     ),
                   ],
                 ),

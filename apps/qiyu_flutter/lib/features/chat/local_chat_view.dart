@@ -247,14 +247,10 @@ class _LocalChatViewState extends State<LocalChatView>
   }
 
   /// Omni 通话控制器解析：只从 app Provider 树读（生命周期归 app 装配，
-  /// 跨页同一通）；拿不到按 null 处理。
-  OmniCallController? _resolveOmniCall() {
-    try {
-      return context.read<OmniCallController>();
-    } on ProviderNotFoundException {
-      return null;
-    }
-  }
+  /// 跨页同一通）；拿不到按 null 处理。兜底形状走共用件 [maybeProvider]
+  /// ——「try/catch 只留一处」的仓库纪律（qiyu_widgets.dart）。
+  OmniCallController? _resolveOmniCall() =>
+      maybeProvider(() => context.read<OmniCallController>());
 
   void _onChatViewModelChanged() {
     final currentSessionId = _chatViewModel.sessionId;
@@ -1082,6 +1078,7 @@ class _LocalChatViewState extends State<LocalChatView>
                 fromUser: !isQiyu,
                 deliveryIndex: deliveryIndex,
                 incomplete: message.incomplete,
+                interrupted: message.interrupted,
                 at: message.at,
                 isSpeaking:
                     nowReading != null &&

@@ -18,6 +18,20 @@ import 'voice_output_controller.dart';
 
 typedef RequestIdFactory = String Function();
 
+/// 流式文本拆行——已完结行（除最后一段）：打字轮与 Omni 通话流共用
+/// 同一拆分，不许两份同形实现各自漂移。
+List<String> streamingCompletedLinesOf(String text) {
+  if (text.isEmpty) {
+    return const [];
+  }
+  final lines = text.split('\n');
+  return lines.sublist(0, lines.length - 1);
+}
+
+/// 流式文本拆行——正在增长的尾段（最后一段，可能为空）：同一共享口径。
+String streamingTailSegmentOf(String text) =>
+    text.isEmpty ? '' : text.substring(text.lastIndexOf('\n') + 1);
+
 enum ChatSendStatus {
   notAccepted,
   acceptedIncomplete,
@@ -59,24 +73,11 @@ final class _ChatTurn {
   /// 文本前缀（协议保证），这样拆与 Host done 交付的按行拆分一致，视图
   /// 把完结行按最终消息的同一装配渲染，done 换届时几何不变。派生即得，
   /// 不另设状态同步。
-  List<String> get completedLines {
-    final text = streamingText;
-    if (text.isEmpty) {
-      return const [];
-    }
-    final lines = text.split('\n');
-    return lines.sublist(0, lines.length - 1);
-  }
+  List<String> get completedLines => streamingCompletedLinesOf(streamingText);
 
   /// 流式正在增长的尾段（最后一段，可能为空）：留在临时行，live region
   /// 标签跟它走。
-  String get tailSegment {
-    final text = streamingText;
-    if (text.isEmpty) {
-      return '';
-    }
-    return text.substring(text.lastIndexOf('\n') + 1);
-  }
+  String get tailSegment => streamingTailSegmentOf(streamingText);
 }
 
 final class LocalChatViewModel extends ChangeNotifier
@@ -206,28 +207,13 @@ final class LocalChatViewModel extends ChangeNotifier
   String get streamingText => _activeTurn?.streamingText ?? _callStreamingText;
 
   /// 流式期间已完结的行：视图按最终消息的同一装配渲染（拆分口径见
-  /// [_ChatTurn.completedLines]）。通话流沿用同一拆分。
+  /// [_ChatTurn.completedLines]）。通话流沿用同一共享拆分。
   List<String> get streamingCompletedLines =>
-      _activeTurn?.completedLines ?? _callCompletedLines;
-
-  /// 通话流式的已完结行：与 [_ChatTurn.completedLines] 同一口径。
-  List<String> get _callCompletedLines {
-    final text = _callStreamingText;
-    if (text.isEmpty) {
-      return const [];
-    }
-    final lines = text.split('\n');
-    return lines.sublist(0, lines.length - 1);
-  }
+      _activeTurn?.completedLines ?? streamingCompletedLinesOf(_callStreamingText);
 
   /// 流式正在增长的尾段：留在临时行渲染（见 [_ChatTurn.tailSegment]）。
   String get streamingTailSegment =>
-      _activeTurn?.tailSegment ??
-      (_callStreamingText.isEmpty
-          ? ''
-          : _callStreamingText.substring(
-              _callStreamingText.lastIndexOf('\n') + 1,
-            ));
+      _activeTurn?.tailSegment ?? streamingTailSegmentOf(_callStreamingText);
   bool get hostStopped => _hostMonitor.hostAvailable == false;
 
   /// 最近一次已完成的栖语回复的 fallbackReason。
@@ -822,10 +808,11 @@ final class LocalChatViewModel extends ChangeNotifier
   }
 
   /// 一条回复终态：已显示文本落成气泡；未完成轮保留前缀并如实标记
-  /// （spec:20）。空文本不落气泡——静默工具轮没有可显示的内容，
-  /// 播过声但转录缺失的占位语由通话结束后的落盘对账补上。
+  /// （spec:20）——用户打断（status=cancelled）标「被打断」，失败/超时
+  /// 标「未完成」，两种标记不混用。空文本不落气泡——静默工具轮没有可
+  /// 显示的内容，播过声但转录缺失的占位语由通话结束后的落盘对账补上。
   @override
-  void callReplyDone({required bool incomplete}) {
+  void callReplyDone({required bool incomplete, required bool interrupted}) {
     final text = _callStreamingText;
     _callStreamingText = '';
     if (text.isNotEmpty) {
@@ -835,6 +822,7 @@ final class LocalChatViewModel extends ChangeNotifier
           speaker: LocalChatSpeaker.qiyu,
           text: text,
           incomplete: incomplete,
+          interrupted: interrupted,
           at: _previewMoment,
         ),
       );

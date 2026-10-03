@@ -1,12 +1,77 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:qiyu_flutter/features/chat/omni_call_bar.dart';
 import 'package:qiyu_flutter/features/chat/omni_call_controller.dart';
 import 'package:qiyu_flutter/features/settings/provider_settings_client.dart';
+import 'package:qiyu_flutter/features/shell/qiyu_strings.dart';
 
 import 'support/omni_call_fakes.dart';
 
 void main() {
+  group('Omni 通话结束文案双语（评审处置：reason 与 Host 同键，en 走词表）', () {
+    test('zh 原样透传；en 经 localizeStatus 映射为英文', () {
+      const zh = QiyuStringsZh();
+      expect(zh.localizeStatus('通话已结束。'), '通话已结束。');
+      expect(
+        zh.localizeStatus('与通话服务的连接中断，通话已结束。'),
+        '与通话服务的连接中断，通话已结束。',
+      );
+
+      final en = QiyuStrings.of('en');
+      expect(en.localizeStatus('通话已结束。'), 'Call ended.');
+      expect(
+        en.localizeStatus('与通话服务的连接中断，通话已结束。'),
+        'The call service connection dropped. The call has ended.',
+      );
+      // Host omni_call_service.dart 推来的 reason 同样可映射。
+      expect(
+        en.localizeStatus('新的通话已开始，本通已结束。'),
+        'A new call has started. This call has ended.',
+      );
+      expect(
+        en.localizeStatus('模型配置已切换，本次通话已结束。'),
+        'The model configuration changed. This call has ended.',
+      );
+      expect(
+        en.localizeStatus('与模型服务的实时连接多次中断，本次通话已结束。'),
+        'The realtime connection dropped too many times. This call has ended.',
+      );
+      expect(
+        en.localizeStatus('还没有配置百炼 Omni 实时模型或 API Key。'),
+        'The Omni realtime model or API key is not configured yet.',
+      );
+      // 未知消息原样透传（既有口径，不译也不丢）。
+      expect(en.localizeStatus('其他来源的消息。'), '其他来源的消息。');
+    });
+
+    test('ended 态状态文本经 omniCallStatusLabel 走同一映射', () async {
+      final socket = FakeOmniSocket();
+      final call = _buildController(
+        surface: RecordingCallSurface(),
+        capture: FakeOmniCapture(),
+        socket: socket,
+      );
+      await call.refreshAvailability();
+      await call.startCall();
+      socket.emit({
+        'type': 'state',
+        'phase': 'ended',
+        'reason': '模型配置已切换，本次通话已结束。',
+      });
+      await omniDrain();
+      expect(
+        omniCallStatusLabel(call, QiyuStrings.of('en')),
+        'The model configuration changed. This call has ended.',
+      );
+      expect(
+        omniCallStatusLabel(call, QiyuStrings.of('zh')),
+        '模型配置已切换，本次通话已结束。',
+      );
+      call.dispose();
+    });
+  });
+
   group('OmniCallController 线协议与状态机（T04）', () {
     test('startCall 发 start 首帧带 sessionId；建连窗口内的上行块在 active 后补发', () async {
       final capture = FakeOmniCapture();
@@ -122,7 +187,7 @@ void main() {
       });
       await omniDrain();
       expect(surface.deltas.join(), '嗯，我在。');
-      expect(surface.dones.single, isFalse);
+      expect(surface.dones.single.incomplete, isFalse);
       call.dispose();
     });
 
@@ -148,6 +213,8 @@ void main() {
       await omniDrain();
       await omniDrain();
       expect(player.sampleRates, [OmniCallController.playbackSampleRate]);
+      // 测试替身不实现 VoicePlayerPlatform：音量按无偏好缺省 1.0 开流。
+      expect(player.volumes, everyElement(1.0));
       expect(player.playbacks.first.appended, hasLength(1));
       expect(call.qiyuSpeaking, isTrue);
 
@@ -216,7 +283,8 @@ void main() {
       await omniDrain();
       expect(player.sampleRates.length, 1, reason: '旧轮迟到音频不再开新播放');
       expect(surface.deltas, isEmpty, reason: '旧轮迟到文字不追加');
-      expect(surface.dones.single, isTrue, reason: '已显示前缀如实标记未完成');
+      expect(surface.dones.single.incomplete, isTrue, reason: '已显示前缀如实标记未完成');
+      expect(surface.dones.single.interrupted, isTrue, reason: '打断与失败是两种标记（spec:20）');
 
       // 新一轮照常。
       socket.emit({
@@ -232,9 +300,10 @@ void main() {
 
     test('replyDone incomplete 的轮直接进入死轮：后到音频不复活', () async {
       final player = FakeOmniStreamingPlayer();
+      final surface = RecordingCallSurface();
       final socket = FakeOmniSocket();
       final call = _buildController(
-        surface: RecordingCallSurface(),
+        surface: surface,
         capture: FakeOmniCapture(),
         socket: socket,
         player: player,
@@ -258,6 +327,9 @@ void main() {
       await omniDrain();
       await omniDrain();
       expect(player.sampleRates, isEmpty);
+      // 失败轮标「未完成」，与打断（cancelled）的「被打断」两种标记。
+      expect(surface.dones.single.incomplete, isTrue);
+      expect(surface.dones.single.interrupted, isFalse);
       call.dispose();
     });
 
@@ -466,7 +538,7 @@ void main() {
       await omniDrain();
       expect(call.qiyuSpeaking, isFalse);
       expect(surface.deltas.join(), '我在。');
-      expect(surface.dones.single, isFalse);
+      expect(surface.dones.single.incomplete, isFalse);
       call.dispose();
     });
 

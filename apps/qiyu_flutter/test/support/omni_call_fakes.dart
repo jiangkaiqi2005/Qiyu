@@ -125,6 +125,7 @@ final class FakeOmniStreamPlayback implements VoiceStreamPlayback {
 
 final class FakeOmniStreamingPlayer implements StreamingVoicePlayerPlatform {
   final sampleRates = <int>[];
+  final volumes = <double>[];
   final playbacks = <FakeOmniStreamPlayback>[];
 
   /// 开流返回 null（能力缺失/自动播放被拒）的注入位。
@@ -136,6 +137,7 @@ final class FakeOmniStreamingPlayer implements StreamingVoicePlayerPlatform {
     double volume = 1.0,
   }) async {
     sampleRates.add(sampleRate);
+    volumes.add(volume);
     if (returnNull) {
       return null;
     }
@@ -149,7 +151,9 @@ final class RecordingCallSurface implements OmniCallChatSurface {
   int resets = 0;
   final userTurns = <({String requestId, String text})>[];
   final deltas = <String>[];
-  final dones = <bool>[];
+
+  /// 每条回复终态的两种标记（incomplete，interrupted）。
+  final dones = <({bool incomplete, bool interrupted})>[];
   int resyncs = 0;
 
   @override
@@ -164,7 +168,9 @@ final class RecordingCallSurface implements OmniCallChatSurface {
   void callReplyDelta(String text) => deltas.add(text);
 
   @override
-  void callReplyDone({required bool incomplete}) => dones.add(incomplete);
+  void callReplyDone({required bool incomplete, required bool interrupted}) {
+    dones.add((incomplete: incomplete, interrupted: interrupted));
+  }
 
   @override
   Future<void> resyncAfterCall() async => resyncs += 1;

@@ -92,7 +92,7 @@ void main() {
       harness.call.dispose();
     });
 
-    testWidgets('未完成回复如实标记（可见前缀 + 未完成标识），后到音频不复活', (tester) async {
+    testWidgets('被打断回复如实标记（可见前缀 + 被打断标识），后到音频不复活', (tester) async {
       final harness = await _pump(tester);
       await tester.tap(find.byKey(const Key('omni-call-start')));
       await tester.pumpAndSettle();
@@ -118,7 +118,10 @@ void main() {
       });
       await tester.pumpAndSettle();
       expect(find.text('我先说到这'), findsOneWidget);
-      expect(find.text('未完成'), findsOneWidget, reason: '被打断前缀不冒充完整回复');
+      // spec:20：打断标记「被打断」，与失败轮的「未完成」是两种标记。
+      expect(find.text('被打断'), findsOneWidget,
+          reason: '被打断前缀不冒充完整回复，也不与失败标记混用');
+      expect(find.text('未完成'), findsNothing);
       expect(
         harness.player.sampleRates,
         isEmpty,
@@ -168,6 +171,28 @@ void main() {
       await tester.pumpAndSettle();
       expect(harness.gateway.sentTexts, ['还在吗'], reason: '可继续打字走 /api/chat');
       harness.call.dispose();
+    });
+
+    testWidgets('通话控件无障碍名：动作名进语义 label，不只落在 tooltip（决策 #17）',
+        (tester) async {
+      // 语义句柄须在测试体内同步释放（accessibility_test 同一口径）。
+      final handle = tester.ensureSemantics();
+      try {
+        final harness = await _pump(tester);
+        // 拨通入口：label = 拨通栖语。
+        expect(find.bySemanticsLabel('拨通栖语'), findsOneWidget);
+
+        await tester.tap(find.byKey(const Key('omni-call-start')));
+        await tester.pumpAndSettle();
+        harness.socket.emit({'type': 'state', 'phase': 'active'});
+        await tester.pumpAndSettle();
+        // 状态栏两颗：闭麦与挂断的动作名进得了 label。
+        expect(find.bySemanticsLabel('闭麦（她还在说，说完继续听）'), findsOneWidget);
+        expect(find.bySemanticsLabel('挂断'), findsOneWidget);
+        harness.call.dispose();
+      } finally {
+        handle.dispose();
+      }
     });
   });
 

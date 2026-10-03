@@ -23,6 +23,7 @@ final class LocalChatMessage {
     this.serviceError,
     this.deliveryIndex,
     this.incomplete = false,
+    this.interrupted = false,
     this.at,
   });
 
@@ -42,6 +43,11 @@ final class LocalChatMessage {
   /// 直播流的 message 事件上携带，不落盘——刷新或恢复后这条标记不再
   /// 出现（半句文本本身照常保留）。
   final bool incomplete;
+
+  /// 该回复被用户打断（Omni 通话，spec:20 的「被打断」标记，与失败轮
+  /// 的 [incomplete] 是两种标记）：同 [incomplete] 一样是纯运行时标注，
+  /// 只在通话直播事件上携带，不落盘、不序列化。
+  final bool interrupted;
 
   /// 消息时刻（Host 落盘的客观时刻，wire 格式 UTC ISO8601）。恢复的
   /// 消息取 Host 权威值；直播流的新消息由视图模型用前端时钟预显、

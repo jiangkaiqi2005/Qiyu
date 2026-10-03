@@ -26,6 +26,7 @@ class QiyuChatBubble extends StatefulWidget {
     this.onReplay,
     this.deliveryIndex,
     this.incomplete = false,
+    this.interrupted = false,
     this.at,
     this.enableCopy = false,
     this.reserveReplayRow = false,
@@ -52,6 +53,11 @@ class QiyuChatBubble extends StatefulWidget {
   /// 这一行，半句交付时 done 后每条完结行会长出它——一次形变，
   /// 已知取舍（design-system §10 条 13）。
   final bool incomplete;
+
+  /// 该回复被用户打断（Omni 通话，spec:20 的「被打断」标记）：与
+  /// [incomplete]（失败/超时的「未完成」）是两种标记，打断优先呈现。
+  /// 纯运行时标注，不落盘不序列化（与 incomplete 同一口径）。
+  final bool interrupted;
 
   /// 一键复制：true 时给每条消息一个复制入口（用户的话与栖语的话都
   /// 算），点一下把本条全文写进剪贴板。入口按指针分两条路：桌面鼠
@@ -334,7 +340,18 @@ class _QiyuChatBubbleState extends State<QiyuChatBubble> {
         : _atLine(atLabel, persistent, copyBesideMoment: copyBesideMoment);
 
     final extras = <Widget>[
-      if (!widget.fromUser && widget.incomplete) ...[
+      if (!widget.fromUser && widget.interrupted) ...[
+        const SizedBox(height: 4),
+        // 被打断如实（spec:20）：只说明「她说到这被打断了」，与失败轮
+        // 的「未完成」是两种标记，不追加任何兜底话术。
+        Text(
+          qiyuStrings(context).interrupted,
+          style: TextStyle(
+            fontSize: QiyuTypography.of(context).tinySize,
+            color: QiyuColors.muted,
+          ),
+        ),
+      ] else if (!widget.fromUser && widget.incomplete) ...[
         const SizedBox(height: 4),
         // 半句如实：标记只说明「她没说完」，不追加任何兜底话术。
         Text(
