@@ -757,7 +757,8 @@ final class OmniRealtimeCallService {
       return;
     }
     // 记录／控制动作：先回填结果保持对话历史不悬挂调用；执行语义
-    // 统一在轮次收束时经共享执行器落地（与聊天的提交边界一致）。
+    // 统一在轮次收束时经共享执行器落地（提交语义见 _closeTurn 文档：
+    // 按条校验的原生工具调用即完整提案，与回复终态解耦）。
     turn.openToolBackfills -= 1;
     session.sendToolResult(
       callId: callId,
