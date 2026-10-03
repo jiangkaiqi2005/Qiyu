@@ -855,6 +855,84 @@ void main() {
       expect(parse.diagnostics, [HiddenActionDiagnostics.invalidFormat]);
     });
   });
+
+  group('单动作对象校验入口（Omni 实时原生工具参数，T03）', () {
+    test('合法动作按隐藏块同一套规则通过', () {
+      final diagnostics = <String>[];
+      final action = parseHiddenActionObject('memory_signal', {
+        'summary': '用户对芒果过敏',
+        'evidence': '我对芒果过敏',
+        'keep': 'month',
+      }, diagnostics);
+      expect(action, const MemorySignalAction(
+        summary: '用户对芒果过敏',
+        evidence: '我对芒果过敏',
+        keep: 'month',
+      ));
+      expect(diagnostics, isEmpty);
+    });
+
+    test('控制动作与回收动作同样成立', () {
+      final diagnostics = <String>[];
+      final ban = parseHiddenActionObject('memory_ban', {
+        'summary': '芒果过敏相关话题',
+      }, diagnostics);
+      expect(ban, const MemoryBanAction(title: '芒果过敏相关话题'));
+      final recall = parseHiddenActionObject('memory_recall', {
+        'query': '梧桐里',
+      }, diagnostics);
+      expect(recall, isA<MemoryRecallAction>());
+      expect(diagnostics, isEmpty);
+    });
+
+    test('缺必填字段、超限与未知动作整体丢弃并记诊断', () {
+      final missing = <String>[];
+      expect(
+        parseHiddenActionObject('memory_signal', {}, missing),
+        isNull,
+      );
+      expect(missing, [HiddenActionDiagnostics.invalidFields]);
+
+      final overLimit = <String>[];
+      parseHiddenActionObject('memory_ban', {
+        'summary': '长' * 80,
+      }, overLimit);
+      expect(overLimit, [HiddenActionDiagnostics.invalidFields]);
+
+      final unknown = <String>[];
+      parseHiddenActionObject('not_a_tool', {'summary': 'x'}, unknown);
+      expect(unknown, [HiddenActionDiagnostics.unknownAction]);
+    });
+
+    test('秘密与越权字段被拒（与隐藏块同闸门）', () {
+      final secret = <String>[];
+      parseHiddenActionObject('memory_signal', {
+        'summary': '我的密钥',
+        'evidence': 'api_key: sk-abcdefghijklmnopqrstuvwx',
+      }, secret);
+      expect(secret, [HiddenActionDiagnostics.sensitiveContent]);
+
+      final privilege = <String>[];
+      parseHiddenActionObject('memory_recall', {
+        'query': '访问 https://evil.example/x',
+      }, privilege);
+      expect(privilege, [HiddenActionDiagnostics.privilegeViolation]);
+    });
+
+    test('与隐藏块解析同一段内容等价（同一校验器）', () {
+      final viaBlock = parseHiddenActions(
+        '<qiyu-actions>[{"action":"memory_signal",'
+        '"summary":"用户对芒果过敏","evidence":"我对芒果过敏"}]</qiyu-actions>',
+      );
+      final viaObject = <String>[];
+      final action = parseHiddenActionObject('memory_signal', {
+        'summary': '用户对芒果过敏',
+        'evidence': '我对芒果过敏',
+      }, viaObject);
+      expect(viaObject, isEmpty);
+      expect(action, viaBlock.actions.single);
+    });
+  });
 }
 
 String _json(String value) =>

@@ -8,13 +8,17 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 /// 读取器读不到材料时对应块保持原值。
 ///
 /// [episodePipeline] 供需要与节奏/日终归档共享同一管线实例的夹具
-/// 复用；[memoryCadence] 供需要挂接真实日终归档链的夹具传入。
+/// 复用；[memoryCadence] 供需要挂接真实日终归档链的夹具传入；
+/// [recallModelClient] 与 [aliasClient] 供 Omni 实时通话夹具（T03）
+/// 接入选中 Provider 的查找选择小调用与控制别名扩展。
 ChatMemoryModule buildChatMemoryModule({
   required String memoryDirectory,
   DateTime Function()? clock,
   AtomicTextWriter? atomicWriter,
   EpisodeMemoryPipeline? episodePipeline,
   MemoryCadence? memoryCadence,
+  ProviderChatClient? recallModelClient,
+  ProviderChatClient? aliasClient,
 }) {
   final pipeline =
       episodePipeline ??
@@ -58,6 +62,7 @@ ChatMemoryModule buildChatMemoryModule({
       clock: clock,
     ),
     atomicWriter: atomicWriter,
+    aliasClient: aliasClient,
   );
   return ChatMemoryModule(
     episodePipeline: pipeline,
@@ -70,6 +75,7 @@ ChatMemoryModule buildChatMemoryModule({
       episodePipeline: pipeline,
       openLoopStore: loops,
       personaTree: tree,
+      modelClient: recallModelClient,
     ),
     personaTree: tree,
     statePackReader: StatePackReader(

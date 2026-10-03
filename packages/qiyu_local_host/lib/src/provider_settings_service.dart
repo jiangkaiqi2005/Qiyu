@@ -33,6 +33,23 @@ final class ProviderSettingsSnapshot {
   };
 }
 
+/// 一次 Omni 实时连接的已解析凭据（T03 通话接线）：配置与 Key 成对
+/// 解析、只在本机 Host 内流转，绝不进事件流、日志或诊断。字段完全同
+/// 名拷贝自 provider.json / 凭据仓的现行值。
+final class OmniRealtimeCredentials {
+  const OmniRealtimeCredentials({required this.config, required this.apiKey});
+
+  final ProviderConfig config;
+  final String apiKey;
+
+  /// Provider 切换判据：作用域、地址与型号任一变化都视为已切换
+  /// （T03:16 切换必须停旧连接，不得沿用另一作用域的旧 Key）。
+  bool matches(OmniRealtimeCredentials other) =>
+      config.credentialScope == other.config.credentialScope &&
+      config.baseUrl == other.config.baseUrl &&
+      config.model == other.config.model;
+}
+
 enum ProviderTestStatus {
   success,
   notConfigured,
@@ -353,6 +370,21 @@ final class ProviderSettingsService
     }
   }
 
+  /// 通话接线（T03）：解析当前选中 Omni 实时档的连接凭据。未配置、
+  /// 选中的不是 Omni 实时档或 Key 缺失都返回 null（调用方按可理解
+  /// 原因结束/拒绝），不抛凭据、不降级到别的模型。
+  Future<OmniRealtimeCredentials?> resolveRealtimeCredentials() async {
+    final config = await configRepository.load();
+    if (config == null || config.kind != ProviderKind.qwenOmniRealtime) {
+      return null;
+    }
+    final apiKey = await _resolveApiKey(config);
+    if (apiKey == null || apiKey.isEmpty) {
+      return null;
+    }
+    return OmniRealtimeCredentials(config: config, apiKey: apiKey);
+  }
+
   /// Omni 实时档的文字调用：经实时网关跑纯文字会话轮（T01 §10 已核实
   /// 形状，选中 Omni 后不悄悄沿用旧聊天模型）。网关未装配按内部错误
   /// 如实失败。
@@ -418,20 +450,16 @@ final class ProviderSettingsService
     if (config == null) {
       return null;
     }
-    // Omni 实时档不走 Chat Completions（spec:17）：打字对话的实时接线
-    // 在对话票落地，这里如实报失败降级，不冒充已接入，也绝不把实时
-    // 型号塞进聊天接口。
+    // Omni 实时档不走 Chat Completions（spec:17）：通话外打字的实时
+    // 接线（T03）以一次纯文字实时轮（T01 §10 已核实 response.text 形状）
+    // 充当流式源——整段回复作为单个 delta 交给主链流式状态机，清洗、
+    // 校验、隐藏块解析与落盘沿用聊天同一条管线，不另起一套。
     if (config.kind == ProviderKind.qwenOmniRealtime) {
-      Stream<ModelStreamEvent> unsupported() async* {
-        yield const ModelStreamEvent.failure(
-          ModelFailureKind.provider,
-          '实时 Omni 暂不支持打字对话，请开始通话或切换其他模型。',
-        );
-      }
-
+      final apiKey = await _resolveApiKey(config);
       return PreparedProviderChatRequest(
         hardRulesAddendum: '',
-        openStream: (messages, whenCancelled) async => unsupported(),
+        openStream: (messages, whenCancelled) async =>
+            _openOmniTextStream(config, apiKey, messages),
       );
     }
     final apiKey = await _resolveApiKey(config);
@@ -456,6 +484,50 @@ final class ProviderSettingsService
         whenCancelled: whenCancelled,
       ),
     );
+  }
+
+  /// 通话外打字的实时文字流（T03）：一次 [QwenOmniRealtimeGateway.completeText]
+  /// 纯文字轮（T01 §10 已核实 response.text 形状）充当流式源。实时协议
+  /// 侧没有已核实的逐 token 增量，整段回复作为单个 delta 交给主链流式
+  /// 状态机，清洗、校验、隐藏块解析与落盘沿用聊天同一条管线。取消不
+  /// 中断在途轮（单轮有界，会话在轮末必关），失败按失败事件如实降级
+  /// 本地兜底；网关未装配同样如实失败，不悄悄换模型。
+  Future<Stream<ModelStreamEvent>?> _openOmniTextStream(
+    ProviderConfig config,
+    String? apiKey,
+    List<ModelMessage> messages,
+  ) async {
+    final gateway = omniRealtimeGateway;
+    if (gateway == null) {
+      return Stream<ModelStreamEvent>.fromIterable([
+        const ModelStreamEvent.failure(
+          ModelFailureKind.internal,
+          '本机程序内部出错。',
+        ),
+      ]);
+    }
+    try {
+      final reply = await gateway.completeText(
+        config: config,
+        apiKey: apiKey,
+        messages: messages,
+      );
+      return Stream<ModelStreamEvent>.fromIterable([
+        ModelStreamEvent.delta(reply),
+        const ModelStreamEvent.done(),
+      ]);
+    } on ModelGatewayException catch (error) {
+      return Stream<ModelStreamEvent>.fromIterable([
+        ModelStreamEvent.failure(error.kind, error.message),
+      ]);
+    } on Object {
+      return Stream<ModelStreamEvent>.fromIterable([
+        const ModelStreamEvent.failure(
+          ModelFailureKind.internal,
+          '本机程序内部出错。',
+        ),
+      ]);
+    }
   }
 
   Future<Stream<ModelStreamEvent>?> _openStreamWithSnapshot(

@@ -638,7 +638,43 @@ void main() {
       expect(completion.failure, ModelFailureKind.network);
     });
 
-    test('prepareChatRequest 对 Omni 如实失败，不把实时型号塞进聊天接口', () async {
+    test('prepareChatRequest 通话外打字经实时纯文字轮交付（T03）', () async {
+      final connector = scriptedConnector([
+        {'type': 'response.created', 'response': {'id': 'resp-1'}},
+        {'type': 'response.text.delta', 'response_id': 'resp-1', 'delta': '在。'},
+        {'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed'}},
+      ]);
+      final repository =
+          _MemoryProviderConfigRepository()
+            ..config = omniConfig.withApiKey('omni-key');
+      final service = ProviderSettingsService(
+        repository,
+        _MemorySecretStore(),
+        _FakeModelGateway(reply: '不该用我'),
+        promptBuilder,
+        omniRealtimeGateway: QwenOmniRealtimeGateway(connector),
+      );
+
+      final request = await service.prepareChatRequest();
+      expect(request, isNotNull);
+      expect(request!.hardRulesAddendum, isEmpty);
+      final events = await (await request.openStream(const [
+        ModelMessage(ModelMessageRole.user, '在吗'),
+      ]))!
+          .toList();
+      // T01 §10 实测纯文字轮一次性产出：整段回复作为单个 delta 交给
+      // 聊天流式状态机，随后正常收束。
+      expect(events, hasLength(2));
+      expect(events.first.kind, ModelStreamEventKind.delta);
+      expect(events.first.text, '在。');
+      expect(events.last.kind, ModelStreamEventKind.done);
+      expect(connector.lastHeaders?['authorization'], 'Bearer omni-key');
+      // 实时型号不进聊天接口：走的是实时网关，不是 Chat Completions。
+      expect(connector.lastUri?.scheme, 'wss');
+      expect(connector.lastUri?.path, '/api-ws/v1/realtime');
+    });
+
+    test('prepareChatRequest 未装配实时网关时如实失败，不冒充接入', () async {
       final repository =
           _MemoryProviderConfigRepository()
             ..config = omniConfig.withApiKey('omni-key');
@@ -651,14 +687,13 @@ void main() {
 
       final request = await service.prepareChatRequest();
       expect(request, isNotNull);
-      expect(request!.hardRulesAddendum, isEmpty);
-      final events = await (await request.openStream(const [
+      final events = await (await request!.openStream(const [
         ModelMessage(ModelMessageRole.user, '在吗'),
       ]))!
           .toList();
       expect(events, hasLength(1));
       expect(events.single.kind, ModelStreamEventKind.failure);
-      expect(events.single.failure, ModelFailureKind.provider);
+      expect(events.single.failure, ModelFailureKind.internal);
     });
 
     test('连接测试经实时文字轮完成，成功时按正常测试状态返回', () async {

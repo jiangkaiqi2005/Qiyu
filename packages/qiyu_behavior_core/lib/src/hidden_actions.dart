@@ -774,6 +774,17 @@ HiddenActionParse parseHiddenActions(String rawText) {
   );
 }
 
+/// 校验单个动作对象（Omni 实时原生工具调用参数，T03）：wire 名与字段
+/// 校验与隐藏块解析共用同一套规则（限长、越权、秘密、枚举白名单）。
+/// [actionName] 来自工具名，[fields] 是参数 JSON 解码结果；诊断进
+/// [diagnostics]，返回 null 表示整体丢弃（与隐藏块里无效条目的丢弃
+/// 同律）。
+HiddenAction? parseHiddenActionObject(
+  String actionName,
+  Map<String, Object?> fields,
+  List<String> diagnostics,
+) => _validateAction({'action': actionName, ...fields}, diagnostics);
+
 HiddenAction? _validateAction(
   Map<String, Object?> item,
   List<String> diagnostics,

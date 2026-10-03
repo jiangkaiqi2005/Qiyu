@@ -71,6 +71,11 @@ final class RecallTurnResult {
   final List<String> diagnostics;
 }
 
+/// 一次定位结果的形状（轮内召回与实时查找共用）：选中日原始证据与
+/// 画像路径素材。
+typedef _LocatedEvidence =
+    ({List<(String, List<EpisodeEntry>)> rawDays, String personaPathText});
+
 /// 画像树路径检索目录：按分支线名分组的活跃根（已受控过滤）。索引
 /// 文本（递给选择调用）与路径展开（查 ID）共用同一份数据；归档不出
 /// 现在快照里——archive/ 永不进入普通聊天检索。
@@ -181,6 +186,49 @@ final class RecallOrchestrator {
     }
   }
 
+  /// 实时会话的后台查找（T03）：与轮内召回同一套两级索引、受控过滤与
+  /// 压缩预算定位证据，但不组气泡——命中证据压缩成临时上下文后由调用
+  /// 方回填给实时会话的 memory_recall 工具，是否补充、怎么说由会话内
+  /// 模型结合最新话题决定（spec:54，选择小调用仍走选中 Provider，不换
+  /// 模型）。绝不抛出：任何异常都降级为无结果并记诊断。
+  Future<({String? context, List<String> diagnostics})> lookupForRealtime({
+    required String query,
+    required String userText,
+  }) async {
+    final diagnostics = <String>[];
+    try {
+      if (modelClient == null) {
+        diagnostics.add('recall skipped reason=no-provider');
+        return (context: null, diagnostics: diagnostics);
+      }
+      final cleanQuery = sanitizeUserInput(query).trim();
+      if (cleanQuery.isEmpty) {
+        diagnostics.add('recall skipped reason=empty-query');
+        return (context: null, diagnostics: diagnostics);
+      }
+      final located = await _locateEvidence(
+        query: cleanQuery,
+        userText: userText,
+        diagnostics: diagnostics,
+      );
+      if (located == null) {
+        return (context: null, diagnostics: diagnostics);
+      }
+      return (
+        context: _buildPendingContext(
+          located.rawDays,
+          null,
+          located.personaPathText,
+          diagnostics,
+        ),
+        diagnostics: diagnostics,
+      );
+    } on Object catch (error) {
+      diagnostics.add('recall deferred [$error]');
+      return (context: null, diagnostics: diagnostics);
+    }
+  }
+
   Future<RecallTurnResult> _runTurnRecallInner(
     String userText,
     List<HiddenAction> recallActions,
@@ -202,6 +250,59 @@ final class RecallOrchestrator {
     if (query.isEmpty) {
       diagnostics.add('recall skipped reason=empty-query');
       return RecallTurnResult(diagnostics: diagnostics);
+    }
+    final located = await _locateEvidence(
+      query: query,
+      userText: userText,
+      diagnostics: diagnostics,
+    );
+    if (located == null) {
+      return RecallTurnResult(diagnostics: diagnostics);
+    }
+
+    // 调用3：模型基于原始证据与画像路径组织 bubble 2，并回执所用条目。
+    final compose = await _composeBubble(
+      client,
+      query: query,
+      userText: userText,
+      rawDays: located.rawDays,
+      personaPathText: located.personaPathText,
+      diagnostics: diagnostics,
+    );
+
+    // 条目级相关性筛选（Memory 注入定稿）：只收组织气泡真实用到的
+    // 条目；模型没给回执（或回执全不可信）时才退回全量，并受总量
+    // 预算封顶——不再无条件搬运选中日的全部条目。
+    final usedEntries = _validatedEntries(
+      compose.entryIds,
+      located.rawDays,
+      diagnostics,
+    );
+    final pendingContext = _buildPendingContext(
+      located.rawDays,
+      usedEntries,
+      located.personaPathText,
+      diagnostics,
+    );
+    return RecallTurnResult(
+      bubbleText: compose.text,
+      pendingContext: pendingContext,
+      diagnostics: diagnostics,
+    );
+  }
+
+  /// 定位阶段（轮内召回与实时查找共用）：受控集合 → 两级索引（缺失
+  /// 重建）→ 模型选择月份/日期与画像路径（成员校验）→ 回读选中日原始
+  /// 证据。没有可回读证据与路径素材时返回 null（miss 诊断已记）。
+  Future<_LocatedEvidence?> _locateEvidence({
+    required String query,
+    required String userText,
+    required List<String> diagnostics,
+  }) async {
+    final client = modelClient;
+    if (client == null) {
+      diagnostics.add('recall skipped reason=no-provider');
+      return null;
     }
     // 记忆控制过滤贯穿全部递给模型的材料：索引关键词、回读证据与
     // 压缩注入。封禁（禁提 ∪ 删除）与冻结都不得被检索。
@@ -226,13 +327,13 @@ final class RecallOrchestrator {
       topIndex = await _indexStore.readTopIndex();
       if (topIndex == null) {
         diagnostics.add('recall miss reason=no-episodes');
-        return RecallTurnResult(diagnostics: diagnostics);
+        return null;
       }
     }
     topIndex = _filterBannedMonthLines(topIndex, banned, diagnostics);
     if (topIndex.isEmpty) {
       diagnostics.add('recall miss reason=no-visible-months');
-      return RecallTurnResult(diagnostics: diagnostics);
+      return null;
     }
 
     // 递回目录：顶层索引全部月份 + 近期月份的每日索引。
@@ -329,7 +430,7 @@ final class RecallOrchestrator {
     );
     if (dates.isEmpty && personaPathText.isEmpty) {
       diagnostics.add('recall miss reason=no-date-selection');
-      return RecallTurnResult(diagnostics: diagnostics);
+      return null;
     }
 
     // 索引只负责定位：回读选中日文件的原始证据。跨月跨年检索不设
@@ -378,38 +479,13 @@ final class RecallOrchestrator {
     }
     if (rawDays.isEmpty && personaPathText.isEmpty) {
       diagnostics.add('recall miss reason=no-evidence');
-      return RecallTurnResult(diagnostics: diagnostics);
+      return null;
     }
     if (dates.isNotEmpty && rawDays.isEmpty) {
       // 日期命中但证据不可读或全被封禁：画像路径素材自含依据，仍可组句。
       diagnostics.add('recall episode evidence skipped reason=no-evidence');
     }
-
-    // 调用3：模型基于原始证据与画像路径组织 bubble 2，并回执所用条目。
-    final compose = await _composeBubble(
-      client,
-      query: query,
-      userText: userText,
-      rawDays: rawDays,
-      personaPathText: personaPathText,
-      diagnostics: diagnostics,
-    );
-
-    // 条目级相关性筛选（Memory 注入定稿）：只收组织气泡真实用到的
-    // 条目；模型没给回执（或回执全不可信）时才退回全量，并受总量
-    // 预算封顶——不再无条件搬运选中日的全部条目。
-    final usedEntries = _validatedEntries(compose.entryIds, rawDays, diagnostics);
-    final pendingContext = _buildPendingContext(
-      rawDays,
-      usedEntries,
-      personaPathText,
-      diagnostics,
-    );
-    return RecallTurnResult(
-      bubbleText: compose.text,
-      pendingContext: pendingContext,
-      diagnostics: diagnostics,
-    );
+    return (rawDays: rawDays, personaPathText: personaPathText);
   }
 
   /// 读取某月每日索引；缺失或损坏时整体重建（幂等）再读，仍不可读

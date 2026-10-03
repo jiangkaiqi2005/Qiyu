@@ -18,6 +18,7 @@ import 'developer_diagnostics.dart';
 import 'delivery_stream_state.dart';
 import 'dream.dart';
 import 'episode_memory.dart';
+import 'hidden_action_executor.dart';
 import 'local_chat_service.dart';
 import 'local_data_service.dart';
 import 'markdown_memory_repository.dart';
@@ -32,6 +33,8 @@ import 'memory_routes.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
 import 'monthly_summary.dart';
+import 'omni_call_routes.dart';
+import 'omni_call_service.dart';
 import 'onboarding_routes.dart';
 import 'onboarding_state.dart';
 import 'open_loop_store.dart';
@@ -322,35 +325,36 @@ final class LocalAppHost {
       clock: clock,
       diagnosticsSink: diagnosticsSink,
     );
+    // 记忆依赖族（票 10 / ADR 0022）：与日终归档、记忆中心、备份等
+    // 服务共享上面装配的同一批存储实例，控制存储与开环存储的同实例
+    // 约束由 module 构造期校验兜底；Omni 实时通话（T03）共用同一实例。
+    final chatMemoryModule = ChatMemoryModule(
+      episodePipeline: episodePipeline,
+      openLoopStore: openLoopStore,
+      memoryControls: memoryControls,
+      memoryActions: memoryActions,
+      memoryCadence: memoryCadence,
+      memoryRecall: RecallOrchestrator(
+        memoryDirectory: memoryDirectory,
+        episodePipeline: episodePipeline,
+        // 轮内查找的选择/组织小调用与聊天共用同一 Provider 配置与
+        // 凭据；未配置时轮内循环静默跳过（不召回保持现状）。
+        modelClient: effectiveProviderSettings,
+        openLoopStore: openLoopStore,
+        // 画像树路径检索（Memory 注入定稿）：与选日同一调用顺带选路；
+        // 树不可用或读取失败时路径检索静默跳过，episode 链路照常。
+        personaTree: personaTree,
+      ),
+      personaTree: personaTree,
+      statePackReader: StatePackReader(
+        memoryDirectory: memoryDirectory,
+        openLoopStore: openLoopStore,
+        clock: clock,
+      ),
+    );
     final chatService = LocalChatService(
       memoryRepository,
-      // 记忆依赖族（票 10 / ADR 0022）：与日终归档、记忆中心、备份等
-      // 服务共享上面装配的同一批存储实例，控制存储与开环存储的同实例
-      // 约束由 module 构造期校验兜底。
-      memory: ChatMemoryModule(
-        episodePipeline: episodePipeline,
-        openLoopStore: openLoopStore,
-        memoryControls: memoryControls,
-        memoryActions: memoryActions,
-        memoryCadence: memoryCadence,
-        memoryRecall: RecallOrchestrator(
-          memoryDirectory: memoryDirectory,
-          episodePipeline: episodePipeline,
-          // 轮内查找的选择/组织小调用与聊天共用同一 Provider 配置与
-          // 凭据；未配置时轮内循环静默跳过（不召回保持现状）。
-          modelClient: effectiveProviderSettings,
-          openLoopStore: openLoopStore,
-          // 画像树路径检索（Memory 注入定稿）：与选日同一调用顺带选路；
-          // 树不可用或读取失败时路径检索静默跳过，episode 链路照常。
-          personaTree: personaTree,
-        ),
-        personaTree: personaTree,
-        statePackReader: StatePackReader(
-          memoryDirectory: memoryDirectory,
-          openLoopStore: openLoopStore,
-          clock: clock,
-        ),
-      ),
+      memory: chatMemoryModule,
       providerPort: effectiveProviderSettings,
       requestDiagnostics: requestDiagnostics,
       modelPromptBuilder: modelPromptBuilder,
@@ -368,6 +372,26 @@ final class LocalAppHost {
     );
     wiredChatService = chatService;
     await chatService.initialize();
+    // Omni 双工实时通话（T03）：与聊天共享同一批记忆存储与执行器，
+    // 经同一 Provider 配置解析实时凭据，Host 内出网，前端不拿 Key。
+    final omniCallService = OmniRealtimeCallService(
+      gateway: effectiveProviderSettings.omniRealtimeGateway ??
+          QwenOmniRealtimeGateway(
+            const DartIoProviderWebSocketConnector(),
+            diagnosticsSink: diagnosticsSink,
+          ),
+      providerSettings: effectiveProviderSettings,
+      repository: memoryRepository,
+      memory: chatMemoryModule,
+      actionExecutor: HiddenActionExecutor(
+        memory: chatMemoryModule,
+        aliasClient: effectiveProviderSettings,
+        diagnosticsSink: diagnosticsSink ?? stderrDiagnostics,
+      ),
+      modelPromptBuilder: modelPromptBuilder,
+      clock: clock,
+      diagnosticsSink: diagnosticsSink,
+    );
     // 启动节奏链由组合根直调（ticket 22 / ADR 0002）：仓库初始化之后
     // 恢复扫描→补日终→补月压缩→补 Dream，全部挂后台任务链，绝不
     // 阻塞首个可见回应。
@@ -418,6 +442,8 @@ final class LocalAppHost {
     // 不再认识任何具体领域对象；调整某个领域的构造依赖不必再改安全入口。
     final apiRoutes = <ApiRoutes>[
       ChatRoutes(chatService: chatService),
+      // Omni 双工通话（T03）：与聊天并列入有序集合，鉴权前置于总控。
+      OmniCallRoutes(callService: omniCallService),
       MemoryRoutes(
         memoryCenter: memoryCenter,
         memoryActions: memoryActions,

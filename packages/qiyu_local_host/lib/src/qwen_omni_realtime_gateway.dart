@@ -185,6 +185,12 @@ final class OmniRealtimeToolCall extends OmniRealtimeEvent {
   final String arguments;
 }
 
+/// 服务端已受理一个回复（response.created）。T03 通话层据此把回复
+/// 归属到用户轮（语音判停自动建响应 / 打字显式建响应 / 工具续答）。
+final class OmniRealtimeResponseCreated extends OmniRealtimeEvent {
+  const OmniRealtimeResponseCreated(super.responseId);
+}
+
 /// 单个 response 的终态（response.done 的 status）。完成判定只认这里的
 /// status——`response.audio.done` 在取消时也会到达，不是完成信号（T01
 /// §13.3）；cancelled 即原生打断（T01 §8.3：speech_started 同毫秒以
@@ -439,7 +445,11 @@ final class OmniRealtimeSession {
   final Duration _timeout;
   final void Function(String) _diagnostics;
 
-  final _events = StreamController<OmniRealtimeEvent>.broadcast();
+  /// sync 广播：事件在帧处理内同步到达订阅方（T01 §12.4「先订阅后
+  /// 发送」——订阅先行已由调用方保证，事件绝不丢窗口）。订阅方在
+  /// 回调里发出的客户端帧（工具回填、续答）经 WebSocket 原样出网；
+  /// 订阅方不得在回调内同步订阅/取消自身，异常边界由订阅方负责。
+  final _events = StreamController<OmniRealtimeEvent>.broadcast(sync: true);
   final _sessionUpdated = Completer<void>();
   final _doneCompleter = Completer<void>();
 
@@ -534,7 +544,14 @@ final class OmniRealtimeSession {
   /// 回填原生工具结果并请求续答（T01 §9.3 实测：function_call_output +
   /// response.create 可正常续答；回填必须尽快于 call 之后、用户新轮之前
   /// ——回填前插入用户新轮会被服务端静默忽略，该时序约束由调用方保证）。
-  void sendToolResult({required String callId, required String output}) {
+  /// [requestContinuation] 为 false 时只回填结果不建续答（T03：记录类
+  /// 动作的回复已在本轮交付，回填只为对话历史不悬挂调用，续答由调用方
+  /// 按轮次状态另行决定）。
+  void sendToolResult({
+    required String callId,
+    required String output,
+    bool requestContinuation = true,
+  }) {
     _send({
       'type': 'conversation.item.create',
       'item': {
@@ -543,7 +560,9 @@ final class OmniRealtimeSession {
         'output': output,
       },
     });
-    createResponse();
+    if (requestContinuation) {
+      createResponse();
+    }
   }
 
   /// 请求生成一个回复（裸 response.create；文字重放或工具回填后的续答
@@ -615,6 +634,7 @@ final class OmniRealtimeSession {
         _pendingCreateWatchdog?.cancel();
         _pendingCreateWatchdog = null;
         _armWatchdog(id);
+        _publish(OmniRealtimeResponseCreated(id));
       case 'response.output_item.added' || 'conversation.item.created':
         _registerItem(event['item']);
       case 'response.audio.delta':

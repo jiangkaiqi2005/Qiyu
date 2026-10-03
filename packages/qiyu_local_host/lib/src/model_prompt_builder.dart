@@ -156,6 +156,35 @@ const hiddenActionsReminderEn =
     'use memory_recall when permanent fields miss and user asks about past events; '
     'use no_action if nothing to record. Do not omit the hidden block.';
 
+/// Omni 双工实时会话的动作协议指令：替换 `<memory_actions>` 包装内的
+/// 文本协议主块。T01 §9.7（2026-10-02 真实端点 actions_check）实测：
+/// 文本协议与同名工具并存时动作漏发/晚发，把主块替换为工具指令后写入
+/// 与控制动作立即稳定调用且参数零发声——前三句为实测原文，其后为同
+/// 形状补齐其余动作类型的调用指引（沿用同一实测框架，字段与白名单由
+/// 行为核心统一校验）。
+const omniRealtimeActionsDirective =
+    '动作协议（实时会话版）：隐藏动作一律通过同名函数工具调用，'
+    '不再输出任何 <qiyu-actions> 标签。本轮出现可记录的具体用户信息时调用 '
+    'memory_signal；用户明确要求不再提/不记录/冻结/解除/删除时调用对应控制'
+    '工具；需要查旧事时调用 memory_recall，本轮先按一时没想起自然回应；'
+    '没有可记录内容、也没有其他动作时，不调用任何工具。'
+    '用户明确提到真正未完、以后值得跟进的事用 open_loop_candidate；'
+    '用户回复让某件记录过的事有了结果用 open_loop_status；'
+    '出现深谈、冷暖变化或边界开合等关系证据用 relationship_signal。'
+    '控制类工具只在用户明确表达时才调用，猜测与暗示都不发；对象说不清时'
+    '先开口确认，不发任何控制动作。'
+    '工具调用不发声：绝不把工具参数读出来，也绝不向用户提及工具、'
+    '记忆、检索或内部流程。'
+    '动作参数绝不含密码、API Key、令牌、验证码、私钥、证件号或银行卡号。';
+
+/// 实时会话的工具纪律提醒：占住聊天轮 `<qiyu-actions>` 格式提醒的装配
+/// 位置（instructions 末尾、贴近生成位置），把「不能省略隐藏块」替换
+/// 为「不调用工具即无动作」，避免把模型推回文本协议。
+const omniRealtimeToolReminder =
+    '回复格式提醒：需要记录、控制或查找时直接调用对应函数工具，'
+    '不调用任何工具即表示本轮已判断过、没有动作。工具调用绝不发声，'
+    '绝不向用户提及工具或检索过程。';
+
 /// 按设计定稿的装配图组装模型上下文：
 /// 人格宪法 → 硬规则与优先级 → 隐藏块协议 →
 /// `<daily_state>`【近况】/ `<long_memory>`【长期印象】/ `<persona>`【用户画像】
@@ -247,12 +276,29 @@ final class ModelPromptBuilder {
         memoryContext: memoryContext,
       );
 
-  List<ModelMessage> build(
-    StateSnapshot state,
-    String currentText, {
-    String hardRulesAddendum = '',
-    DateTime? at,
-    String locale = 'zh',
+  /// Omni 双工实时会话的 instructions（T03）：人格宪法、硬规则与动态
+  /// 记忆块与聊天装配完全同一份代码，差异只有两处——`<memory_actions>`
+  /// 包装内的文本协议主块替换为实时工具指令（T01 §9.7 变体 B 实测形态，
+  /// 见 [omniRealtimeActionsDirective]），以及格式提醒替换为工具纪律。
+  /// 最近对话不进 instructions：由会话层按对话 item 回放（T01 §11 实测
+  /// 重放后模型可准确续接）。
+  String buildRealtimeInstructions({String hardRulesAddendum = ''}) {
+    final sections = _systemSections(
+      isEn: false,
+      hardRulesAddendum: hardRulesAddendum,
+      realtimeActions: true,
+    );
+    return '$sections\n\n${omniRealtimeToolReminder.trim()}';
+  }
+
+  /// 系统段装配（聊天 build 与实时 instructions 共用）：人格宪法 →
+  /// 硬规则（含能力快照追加条文）→ 隐藏块协议（实时会话替换为工具
+  /// 指令）→ `<daily_state>`/`<long_memory>`/`<persona>`（空块不输出）。
+  /// 脱敏规则在块的装配处统一套用。
+  String _systemSections({
+    required bool isEn,
+    required String hardRulesAddendum,
+    required bool realtimeActions,
   }) {
     final systemSections = StringBuffer();
     void appendBlock(String tag, String label, String content) {
@@ -267,17 +313,17 @@ final class ModelPromptBuilder {
         ..writeln('</$tag>');
     }
 
-    final isEn = locale == 'en';
     final effectiveConstitution = isEn
         ? (personaConstitutionEn?.trim().isNotEmpty == true
             ? personaConstitutionEn!
             : personaConstitution)
         : personaConstitution;
     final effectiveHardRules = isEn ? hardRulesBlockEn : hardRulesBlock;
-    final effectiveHiddenActions =
-        isEn ? hiddenActionsProtocolBlockEn : hiddenActionsProtocolBlock;
-    final effectiveReminder =
-        isEn ? hiddenActionsReminderEn : hiddenActionsReminder;
+    final effectiveHiddenActions = realtimeActions
+        ? omniRealtimeActionsDirective
+        : isEn
+        ? hiddenActionsProtocolBlockEn
+        : hiddenActionsProtocolBlock;
 
     systemSections
       ..writeln('<persona_constitution>')
@@ -299,6 +345,25 @@ final class ModelPromptBuilder {
     appendBlock('daily_state', '近况', redactSessionText(dailyState));
     appendBlock('long_memory', '长期印象', redactSessionText(longMemory));
     appendBlock('persona', '用户画像', redactSessionText(persona));
+    return systemSections.toString().trim();
+  }
+
+  List<ModelMessage> build(
+    StateSnapshot state,
+    String currentText, {
+    String hardRulesAddendum = '',
+    DateTime? at,
+    String locale = 'zh',
+  }) {
+    final isEn = locale == 'en';
+    final effectiveReminder =
+        isEn ? hiddenActionsReminderEn : hiddenActionsReminder;
+
+    final systemText = _systemSections(
+      isEn: isEn,
+      hardRulesAddendum: hardRulesAddendum,
+      realtimeActions: false,
+    );
 
     final recentTurns = state.turns.length <= 8
         ? state.turns
@@ -343,7 +408,7 @@ final class ModelPromptBuilder {
     }
 
     return [
-      ModelMessage(ModelMessageRole.system, systemSections.toString().trim()),
+      ModelMessage(ModelMessageRole.system, systemText),
       ...turnMessages,
       ModelMessage(ModelMessageRole.system, effectiveReminder),
       ModelMessage(ModelMessageRole.user, context.toString()),

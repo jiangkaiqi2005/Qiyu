@@ -5,14 +5,10 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 import 'chat_memory_module.dart';
 import 'delivery_stream_state.dart';
 import 'developer_diagnostics.dart';
+import 'hidden_action_executor.dart';
 import 'markdown_memory_repository.dart';
-import 'memory_actions.dart';
-import 'memory_alias.dart';
-import 'memory_ban.dart';
 import 'memory_recall.dart';
-import 'memory_text_primitives.dart';
 import 'model_prompt_builder.dart';
-import 'persona_tree.dart';
 import 'provider_settings_service.dart';
 import 'tts_gateway.dart';
 import 'voice_stream_pipeline.dart';
@@ -56,8 +52,9 @@ typedef RecallWindowWait = Future<void> Function(Duration window);
 /// （提前归档可由增量整理补回），不可认漏（一晚对话整理丢失）。
 /// 光秃秃的「睡觉」不认——「没睡觉」「不想睡觉」是抱怨，不是道别；
 /// 但带趋向的说法（「睡觉了」「想睡」「去睡」）即便带着否定也会认，
-/// 认宽的代价只是提前归档一次。
-final _bedtimeSignalPattern = RegExp(r'晚安|睡了|先睡|睡觉了|想睡|去睡|困了|该睡了');
+/// 认宽的代价只是提前归档一次。聊天与 Omni 实时通话（T03）共用
+/// 同一词根，不各养一份。
+final bedtimeSignalPattern = RegExp(r'晚安|睡了|先睡|睡觉了|想睡|去睡|困了|该睡了');
 
 /// 模型流已收尾而会话还没落定时的有界宽限缺省值（票三）：快速档位（不开
 /// 会话）一个配置读取内就回，正常 WS 握手也白送这段时间——内落定即挂载
@@ -84,7 +81,14 @@ final class LocalChatService {
        _recallWindowWait = recallWindowWait ?? Future<void>.delayed,
        _voiceSessionGrace = voiceSessionGrace ?? defaultVoiceSessionGrace,
        _clock = clock ?? DateTime.now,
-       _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics;
+       _diagnosticsSink = diagnosticsSink ?? stderrDiagnostics,
+       // 隐藏动作执行端（T03 抽出）：与 Omni 实时通话共用同一执行器，
+       // 动作语义与提交边界不随链路漂移。
+       _actionExecutor = HiddenActionExecutor(
+         memory: memory,
+         aliasClient: aliasClient,
+         diagnosticsSink: diagnosticsSink ?? stderrDiagnostics,
+       );
 
   final MemoryRepository _repository;
   final QiyuBehaviorCore _behaviorCore = const QiyuBehaviorCore();
@@ -123,6 +127,10 @@ final class LocalChatService {
   final Duration _voiceSessionGrace;
   final Clock _clock;
   final void Function(String message) _diagnosticsSink;
+
+  /// 隐藏动作执行端（T03 抽出）：与实时通话共用的同一执行器实例逻辑
+  /// （每服务各自一个实例，语义同源）。
+  final HiddenActionExecutor _actionExecutor;
   final Map<String, DeliveryCancellation> _activeDeliveries = {};
 
   /// 在途分句语音合成（票二）：停止信号端点按 requestId 定位并作废，
@@ -411,7 +419,7 @@ final class LocalChatService {
   }) async* {
     final trimmedRequestId = requestId.trim();
     final trimmedText = sanitizeUserInput(text);
-    final bedtime = _bedtimeSignalPattern.hasMatch(trimmedText);
+    final bedtime = bedtimeSignalPattern.hasMatch(trimmedText);
     final archivedText = redactSessionText(text);
     if (trimmedRequestId.isEmpty || trimmedText.isEmpty) {
       throw const LocalChatException(
@@ -632,7 +640,12 @@ final class LocalChatService {
       // 动作（文本如实落盘，动作不落地）；失败与取消的轮次根本没有
       // 可提交的动作。
       if (outcome.source == ReplySource.llm && !incomplete) {
-        await _applyHiddenActions(
+        // 只有完整且最终被接受的模型回复才提交其隐藏动作：候选被行为
+        // 核心拒绝（回退本地回复）时整体丢弃——不改控制记录、不写派生
+        // 记忆、不触发轮内召回；协议失败留下的半句同样没有可提交的
+        // 动作（文本如实落盘，动作不落地）；失败与取消的轮次根本没有
+        // 可提交的动作。
+        await _actionExecutor.applyActions(
           completedSession,
           trimmedRequestId,
           hiddenActions,
@@ -640,9 +653,7 @@ final class LocalChatService {
       }
       // 对话自述称呼（用户说「以后叫我老王」）当轮生效：与用户明确
       // 纠正同一精神，用户当前明确说的话最高；本地降级轮同样生效。
-      // 必须赶在轮内召回之前写入——召回的组织调用按 persona.md 的
-      // 称呼装配。
-      await _applyAppellationSelfReport(trimmedText, trimmedRequestId);
+      await _actionExecutor.applyAppellation(trimmedText, trimmedRequestId);
       if (outcome.source == ReplySource.llm && !incomplete) {
         // 轮内召回循环：bubble 1 交付后才开始，绝不阻塞首响。
         yield* _recallBubble(
@@ -791,215 +802,6 @@ final class LocalChatService {
       clock: _clock,
       deliveryPause: _deliveryPause,
     ).events();
-  }
-
-  /// 可见回复落盘之后的增量记忆整理：写失败只记诊断，不影响本轮回复。
-  /// 用户记忆控制（不记录/禁提/冻结/解除/删除）在回复后异步立即生效，
-  /// 不等日终（记忆控制定稿）。只在模型回复最终被接受后调用：整理
-  /// 窗口由本轮消费。
-  Future<void> _applyHiddenActions(
-    RawSession completedSession,
-    String requestId,
-    List<HiddenAction> hiddenActions,
-  ) async {
-    // 不要记（当轮控制，不产生持久记录）：命中目标的记忆信号、
-    // 未完事项候选与关系证据一律不落 episode——内容不进提升、索引
-    // 或 PersonaTree；控制动作自身保留为审计条目。
-    final forgetTargets = hiddenActions
-        .whereType<MemoryForgetAction>()
-        .map((action) => normalizeMemoryText(action.title))
-        .where((summary) => summary.isNotEmpty)
-        .toSet();
-    var effectiveActions = hiddenActions;
-    if (forgetTargets.isNotEmpty) {
-      effectiveActions = hiddenActions.where((action) {
-        final summary = switch (action) {
-          MemorySignalAction() => action.summary,
-          OpenLoopCandidateAction() => action.title,
-          RelationshipSignalAction() => action.summary,
-          OpenLoopStatusAction() ||
-          MemoryControlAction() ||
-          MemoryRecallAction() ||
-          NoAction() => null,
-        };
-        if (summary == null) {
-          return true;
-        }
-        return !bannedMemoryText(summary, forgetTargets);
-      }).toList();
-    }
-
-    final pipeline = memory.episodePipeline;
-    try {
-      final result = await pipeline.processReply(
-        session: completedSession,
-        requestId: requestId,
-        hiddenActions: effectiveActions,
-      );
-      if (result.skippedCorruptDay) {
-        _diagnosticsSink(
-          'episode day unreadable, waiting for recovery request=$requestId',
-        );
-      }
-      // 随手记只建叶指针（ticket 14）：中间理解归日终。建叶失败
-      // 只记诊断，日终还会按当天 episode 补齐。
-      if (result.addedEntries.isNotEmpty) {
-        await memory.personaTree.createLeaves(result.addedEntries);
-        // 用户明确纠正是唯一在线撤根例外（ticket 17）：当轮身份自述
-        // 与根下理解冲突时立即撤根并重投影 persona.md，不等日终。
-        await memory.personaTree.revokeCorrectedIdentityRoots(
-          result.addedEntries,
-        );
-      }
-    } on Object catch (error) {
-      _diagnosticsSink('episode update deferred [$error] request=$requestId');
-    }
-    // 记忆控制与 Open-loop 状态变化：回复后异步立即生效，不等日终。
-    for (final action in hiddenActions) {
-      try {
-        switch (action) {
-          case OpenLoopStatusAction():
-            await memory.openLoopStore.applyStatusChange(
-              title: action.title,
-              status: action.status.wireName,
-              result: action.result,
-            );
-          case MemoryBanAction():
-            final execution = memory.memoryActions.banExecution;
-            // 别名扩展在维护准入之外：模型调用不占 operation zone
-            // （提交边界纪律），未配置或失败静默退回无别名，禁提本身
-            // 照常生效。
-            final aliases = await expandMemoryAliases(
-              aliasClient,
-              action.title,
-            );
-            // 此处已经占有聊天槽，维护正在排空聊天时必须继续完成，
-            // 不能再等待新 UI 操作的准入。执行器只分步取得短写锁。
-            final result = await execution.controls.commits.existingOperation(
-              () => execution.execute(
-                action.title,
-                origin: 'chat',
-                aliases: aliases,
-              ),
-            );
-            if (!result.controlWritten) {
-              _diagnosticsSink(
-                'memory ban deferred [controls not writable] '
-                'request=$requestId',
-              );
-            } else {
-              for (final step in result.deferred) {
-                final reason = switch (step) {
-                  MemoryBanCleanup.openLoops => 'open-loops',
-                  MemoryBanCleanup.persona => 'persona',
-                };
-                _diagnosticsSink(
-                  'memory ban deferred [$reason] request=$requestId',
-                );
-              }
-            }
-          case MemoryFreezeAction():
-            // 关联扩展（裁定票 03）：未配置模型或调用失败都静默退回
-            // 无别名，冻结本身照常生效。
-            final aliases = await expandMemoryAliases(aliasClient, action.title);
-            final frozen = await memory.memoryControls.freeze(
-              action.title,
-              aliases: aliases,
-            );
-            if (!frozen) {
-              _diagnosticsSink(
-                'memory freeze deferred [controls not writable] '
-                'request=$requestId',
-              );
-            }
-          case MemoryUnfreezeAction():
-            // 返回 null 即控制记录写不进（可恢复失败）：控制保持现状
-            // 等待重试。
-            final removed = await memory.memoryControls.unfreeze(action.title);
-            if (removed == null) {
-              _diagnosticsSink(
-                'memory unfreeze deferred [controls not writable] '
-                'request=$requestId',
-              );
-            }
-          case MemoryUnbanAction():
-            // 口语解除禁提（裁定票 03）：与 memory_unfreeze 对称，写失败
-            // 只记诊断，控制记录保持现状等待重试。
-            final removed = await memory.memoryControls.unban(action.title);
-            if (removed == null) {
-              _diagnosticsSink(
-                'memory unban deferred [controls not writable] '
-                'request=$requestId',
-              );
-            }
-          case MemoryDeleteAction():
-            await _applyDelete(action.title, requestId);
-          case MemorySignalAction() ||
-              OpenLoopCandidateAction() ||
-              RelationshipSignalAction() ||
-              MemoryForgetAction() ||
-              MemoryRecallAction() ||
-              NoAction():
-            break;
-        }
-        // memory_forget 是当轮控制：内容过滤已在上面执行，
-        // 审计条目随 episode 落盘，没有额外的持久动作。
-      } on Object catch (error) {
-        _diagnosticsSink('memory control deferred [$error] request=$requestId');
-      }
-    }
-  }
-
-  /// 对话自述称呼的在线写路径（称呼定稿 2026-09-03）：用户在聊天里
-  /// 明确说「以后叫我老王」时当轮写入 persona.md 受保护设定行，复用
-  /// 「用户明确纠正」在线例外的精神——用户当前明确说的话最高。只认
-  /// 确定性句式，识别不出、格式不合法或写失败都只记诊断，绝不影响
-  /// 本轮交付。
-  Future<void> _applyAppellationSelfReport(
-    String userText,
-    String requestId,
-  ) async {
-    final candidate = extractAppellationSelfReport(userText);
-    if (candidate == null) {
-      return;
-    }
-    try {
-      final written = await memory.personaTree.episodePipeline.commits
-          .existingOperation(() => memory.personaTree.setAppellation(candidate));
-      if (written == null) {
-        _diagnosticsSink(
-          'appellation self-report rejected reason=format '
-          'request=$requestId',
-        );
-      }
-    } on Object catch (error) {
-      _diagnosticsSink(
-        'appellation self-report deferred [$error] request=$requestId',
-      );
-    }
-  }
-
-  /// 删除即时生效（ticket 18 / T24 定稿，ticket 20 起与记忆中心共用
-  /// [MemoryActionService] 同一管线）：先定位目标，无任何可定位目标
-  /// 时不写控制记录也不清除——绝不把宽泛范围变成永久封禁；定位到
-  /// 目标后先写 deleted 抽象防复活范围，再清除全部派生内容
-  /// （PersonaTree、episodes 与索引、长期印象、月摘要、关系证据、
-  /// 近日状态、未闭环事项）。sessions 保留；重复执行安全。
-  Future<void> _applyDelete(String summary, String requestId) async {
-    if (normalizeMemoryText(summary).isEmpty) {
-      return;
-    }
-    final result = await memory.memoryActions.deleteByScope(
-      summary,
-      origin: 'chat',
-      requestId: requestId,
-    );
-    if (result.status != MemoryActionStatus.success) {
-      _diagnosticsSink(
-        'memory delete deferred [${result.status.wireName}] '
-        'request=$requestId',
-      );
-    }
   }
 
   /// 组装本轮 prompt builder：热层三块（【近况】、【长期印象】、
