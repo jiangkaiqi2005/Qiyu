@@ -59,6 +59,13 @@ void main() {
           'content-security-policy',
         );
         expect(contentSecurityPolicy, contains("'wasm-unsafe-eval'"));
+        final scriptSources = contentSecurityPolicy!
+            .split(';')
+            .map((directive) => directive.trim())
+            .singleWhere((directive) => directive.startsWith('script-src '))
+            .split(RegExp(r'\s+'));
+        // AudioWorklet 模块受 script-src 控制，worker-src 放行并不足够。
+        expect(scriptSources, contains('blob:'));
         expect(contentSecurityPolicy, isNot(contains(" 'unsafe-eval'")));
         expect(contentSecurityPolicy, contains("frame-ancestors 'none'"));
         expect(response.headers.value('x-frame-options'), 'DENY');

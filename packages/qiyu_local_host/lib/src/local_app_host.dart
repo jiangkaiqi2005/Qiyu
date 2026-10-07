@@ -744,7 +744,7 @@ Middleware _securityHeaders() {
         'content-security-policy':
             "default-src 'self'; connect-src 'self'; img-src 'self' data:; "
             "font-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'wasm-unsafe-eval'; "
+            "script-src 'self' 'wasm-unsafe-eval' blob:; "
             "worker-src 'self' blob:; frame-ancestors 'none'",
         'x-frame-options': 'DENY',
         'referrer-policy': 'same-origin',
