@@ -561,8 +561,7 @@ final class LocalAppHost {
         _chatService.settlePendingRecalls(),
         // 票 05：等在途索引构建/增量同步推进到安全点（批次边界或完成），
         // 关闭后不会有延迟发布再写缓存文件。
-        _chatService.memory.embeddingRecall?.settlePendingWork() ??
-            Future<void>.value(),
+        _chatService.settlePendingIndexWork(),
       ]).timeout(const Duration(seconds: 3));
     } on Object {
       // 归档中断安全：finalized 保持 false，启动补扫会重做。

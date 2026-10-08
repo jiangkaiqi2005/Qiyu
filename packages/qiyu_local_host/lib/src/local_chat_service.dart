@@ -152,6 +152,12 @@ final class LocalChatService {
   /// 等待已调度的后台召回检索完成。检索失败只记诊断，供测试断言使用。
   Future<void> settlePendingRecalls() => _recallTask;
 
+  /// 等待在途召回索引构建与增量同步推进到安全点（票 05）：Host 关闭
+  /// 等排空场景经它收口，与 [settlePendingRecalls] 同律，不向调用方
+  /// 暴露记忆模块内部装配。未接入 Episode RAG 时是空操作。
+  Future<void> settlePendingIndexWork() =>
+      memory.embeddingRecall?.settlePendingWork() ?? Future<void>.value();
+
   /// 维护独占边界（spec「维护隔离及恢复」）：导入、回滚、清除、一致
   /// 性导出共用这唯一入口。先抑制记忆节奏与召回索引的新后台排程，再
   /// 等已在途的全部工作（在途交付、轮内召回与保存延续、补归档、月压

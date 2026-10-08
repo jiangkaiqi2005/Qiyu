@@ -11,6 +11,7 @@ import 'support/chat_memory_test_module.dart';
 import 'support/failing_atomic_writer.dart';
 import 'support/in_process_chat_host.dart';
 import 'support/prepared_provider_port.dart';
+import 'support/scripted_embedding_client.dart';
 
 void main() {
   group('维护独占边界（Host 端到端）', () {
@@ -453,6 +454,90 @@ void main() {
       await first;
       await second;
       expect(log, ['first-start', 'first-end', 'second']);
+    });
+  });
+
+  group('Host 关闭排空索引任务（票 05）', () {
+    test('settlePendingIndexWork 等在途索引构建落定；未接 RAG 时立即完成', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'qiyu-settle-index-work-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final memoryDirectory = root.path;
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: memoryDirectory,
+        clock: () => DateTime(2026, 8, 16, 22),
+      );
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          '2026-08-10',
+          entries: [
+            EpisodeEntry(
+              id: 'seed:1:0',
+              sessionId: 'seed',
+              requestId: 'seed',
+              summary: '用户聊到旧书店的事',
+              at: DateTime.utc(2026, 8, 10, 12),
+            ),
+          ],
+          summary: '用户聊到旧书店的事',
+          finalized: true,
+          finalizedAt: DateTime(2026, 8, 15, 22),
+        ),
+      );
+      final gate = Completer<void>();
+      final embedding = GatedEmbeddingClient(
+        ScriptedEmbeddingClient(
+          vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+        ),
+      )..gate = gate;
+      final rag = EpisodeRagService(
+        memoryDirectory: memoryDirectory,
+        configRepository: StaticEmbeddingConfigRepository(
+          const EmbeddingConfig(
+            baseUrl: 'https://api.example.com/v1',
+            model: 'text-embedding-test',
+            apiKey: 'sk-test',
+          ),
+        ),
+        embeddingClient: embedding,
+        episodePipeline: pipeline,
+        diagnosticsSink: (_) {},
+      );
+      final chatService = LocalChatService(
+        MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
+        memory: buildChatMemoryModule(
+          memoryDirectory: memoryDirectory,
+          episodePipeline: pipeline,
+          embeddingRagService: rag,
+        ),
+      );
+      // 显式启用：构建入链并卡在网关闸门上（模拟在途索引任务）。
+      await rag.enable();
+      await embedding.entered.future;
+
+      // 闸门放行前排空不得完成：在途索引任务真的被等待。
+      final drained = chatService.settlePendingIndexWork();
+      var settledEarly = false;
+      final earlyProbe = drained.then<void>((_) => settledEarly = true);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(settledEarly, isFalse, reason: '在途构建未落定，排空不得提前完成');
+
+      gate.complete();
+      await earlyProbe;
+      expect((await rag.status()).state, EpisodeRagState.ready);
+
+      // 未接入 Episode RAG 的服务：排空是立即完成的空操作。
+      final bareChatService = LocalChatService(
+        MarkdownMemoryRepository(memoryDirectory: memoryDirectory),
+        memory: buildChatMemoryModule(
+          memoryDirectory: memoryDirectory,
+          episodePipeline: pipeline,
+        ),
+      );
+      await bareChatService.settlePendingIndexWork().timeout(
+        const Duration(seconds: 2),
+      );
     });
   });
 }
