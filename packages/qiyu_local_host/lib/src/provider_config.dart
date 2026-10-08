@@ -979,13 +979,14 @@ abstract interface class WebSearchConfigRepository
 /// 记忆召回（Episode RAG）的 embedding 服务配置：provider.json 顶层的
 /// 可选 `embedding` 段。首版只有 OpenAI-compatible 一种协议（Spec 决策：
 /// 不增加服务商预设和模型目录），所以没有 provider 字段，凭据作用域的
-/// 协议名固定。保存与连接测试不启用 RAG；真正启用、索引与召回由后续
-/// 票接入。
+/// 协议名固定。保存与连接测试不启用 RAG；启用是显式操作（票 03），
+/// [enabled] 只由启用/停用操作改写，配置保存原样保留现值。
 final class EmbeddingConfig {
   const EmbeddingConfig({
     required this.baseUrl,
     required this.model,
     this.apiKey,
+    this.enabled = false,
   });
 
   factory EmbeddingConfig.fromJson(Map<String, Object?> json) {
@@ -999,6 +1000,8 @@ final class EmbeddingConfig {
       model: model,
       // 与聊天段同律：兼容 apiKey 与 API_KEY 两种手写法，空白视为未设置。
       apiKey: _optionalKey(json['apiKey'] ?? json['API_KEY']),
+      // 旧配置没有该字段：按未启用解析。
+      enabled: json['enabled'] as bool? ?? false,
     );
   }
 
@@ -1006,11 +1009,27 @@ final class EmbeddingConfig {
   final String model;
 
   /// 本机 provider.json 的 embedding 段里保存的 API Key（明文）。与聊天
-  /// Key 同律：不进 toJson()，HTTP 快照绝不携带明文。
+  /// Key 同律：不进 toJson() 的 HTTP 快照语义由设置快照层负责，本字段
+  /// 不随服务地址/模型外发。
   final String? apiKey;
 
-  EmbeddingConfig withApiKey(String? apiKey) =>
-      EmbeddingConfig(baseUrl: baseUrl, model: model, apiKey: apiKey);
+  /// 用户是否显式启用了 Episode RAG：true 时召回走向量定位，false 时
+  /// 保留旧目录召回（Spec 决策：保存配置不启用，停用回旧路径）。
+  final bool enabled;
+
+  EmbeddingConfig withApiKey(String? apiKey) => EmbeddingConfig(
+    baseUrl: baseUrl,
+    model: model,
+    apiKey: apiKey,
+    enabled: enabled,
+  );
+
+  EmbeddingConfig withEnabled(bool enabled) => EmbeddingConfig(
+    baseUrl: baseUrl,
+    model: model,
+    apiKey: apiKey,
+    enabled: enabled,
+  );
 
   /// Key 的沿用作用域看协议与规范化后的服务地址。首版协议只有
   /// OpenAI-compatible 一种，wire 名固定进作用域——将来若增加第二种
@@ -1018,7 +1037,11 @@ final class EmbeddingConfig {
   String get credentialScope =>
       'openai_compatible|${normalizeProviderBaseUri(baseUrl)}';
 
-  Map<String, Object?> toJson() => {'baseUrl': baseUrl, 'model': model};
+  Map<String, Object?> toJson() => {
+    'baseUrl': baseUrl,
+    'model': model,
+    'enabled': enabled,
+  };
 
   void validate() => _validateServiceEndpoint(
     baseUrl: baseUrl,

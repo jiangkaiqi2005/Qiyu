@@ -868,11 +868,84 @@ class _LocalChatViewState extends State<LocalChatView>
           animation: _chatAndVoiceTick,
           builder: (context, _) => _voiceOutputBar(context, viewModel),
         ),
+        // 记忆召回简短状态行（票 03）：准备中/需重建/暂不可用才占位；
+        // 未启用与已就绪安静。状态不是消息、不进会话历史，也不遮挡
+        // Omni 通话栏（见下方独立条带）。监控状态变化经视图模型转发。
+        AnimatedBuilder(
+          animation: viewModel,
+          builder: (context, _) => _memoryRecallStatusBar(context, viewModel),
+        ),
         // Omni 通话状态栏（T04:12）：通话期间在输入框上方；控制器不在
         // （未装配）或空闲时零占位。
         if (_omniCall case final omniCall?)
           QiyuOmniCallStrip(call: omniCall),
       ],
+    );
+  }
+
+  /// 记忆召回状态行（票 03）：与语音状态行同构的安静提示——准备中
+  /// 显示完成量，需重建/暂不可用给一句人话；就绪与未启用零占位。
+  Widget _memoryRecallStatusBar(BuildContext context, LocalChatViewModel viewModel) {
+    final status = viewModel.memoryRecallStatus;
+    if (status == null) {
+      return const SizedBox.shrink();
+    }
+    final strings = qiyuStrings(context);
+    final isPreparing = status.state == 'preparing';
+    final String message = switch (status.state) {
+      'preparing' => strings.localizeStatus(
+        qiyuIsEn(context)
+            ? 'Memory recall preparing ${status.progressDone}/${status.progressTotal}'
+            : '记忆召回准备中 ${status.progressDone}/${status.progressTotal}',
+      ),
+      'rebuildNeeded' => strings.localizeStatus(
+        qiyuIsEn(context)
+            ? 'Memory recall needs a rebuild; recall is unavailable for now'
+            : '记忆召回需要重建，暂时不可用',
+      ),
+      _ => strings.localizeStatus(
+        status.reason ??
+            (qiyuIsEn(context)
+                ? 'Memory recall is temporarily unavailable'
+                : '记忆召回暂时不可用'),
+      ),
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        QiyuSpacing.lg,
+        QiyuSpacing.xs,
+        QiyuSpacing.lg,
+        0,
+      ),
+      child: Semantics(
+        liveRegion: true,
+        child: Row(
+          children: [
+            if (isPreparing)
+              const SizedBox.square(
+                key: Key('recall-preparing-spinner'),
+                dimension: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Icon(
+                QiyuIcons.graphic_eq,
+                size: 16,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            const SizedBox(width: QiyuSpacing.xs),
+            Expanded(
+              child: Text(
+                message,
+                key: const Key('memory-recall-status'),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

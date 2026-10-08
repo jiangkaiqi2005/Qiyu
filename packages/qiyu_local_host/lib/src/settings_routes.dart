@@ -6,6 +6,7 @@ import 'package:shelf/shelf.dart';
 import 'api_http.dart';
 import 'developer_diagnostics.dart';
 import 'embedding_settings_service.dart';
+import 'episode_rag_service.dart';
 import 'local_data_service.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
@@ -27,6 +28,7 @@ final class SettingsRoutes implements ApiRoutes {
     required this.sttSettingsService,
     required this.ttsSettingsService,
     required this.embeddingSettingsService,
+    this.episodeRagService,
     required this.experienceRepository,
     required this.developerDiagnostics,
     required this.requestDiagnostics,
@@ -38,6 +40,10 @@ final class SettingsRoutes implements ApiRoutes {
   final SttSettingsService sttSettingsService;
   final TtsSettingsService ttsSettingsService;
   final EmbeddingSettingsService embeddingSettingsService;
+
+  /// Episode RAG 服务（票 03）：启用/停用/重建操作与状态快照。null 时
+  /// 记忆召回停留在「未启用」且不提供操作（与旧装配一致）。
+  final EpisodeRagService? episodeRagService;
   final ExperienceSettingsRepository experienceRepository;
   final DeveloperDiagnosticsService developerDiagnostics;
   final RequestDiagnosticsRecorder? requestDiagnostics;
@@ -339,16 +345,17 @@ final class SettingsRoutes implements ApiRoutes {
     return null;
   }
 
-  /// 记忆召回（embedding）子域：配置读取/保存、连接测试与忘记 Key。
-  /// 保存与测试不启用 RAG、不建索引、不发送 episode；启用与召回由后
-  /// 续票接入。读取只回 keySet，明文 Key 永不出仓。
+  /// 记忆召回（embedding）子域：配置读取/保存、连接测试与忘记 Key；
+  /// 启用/停用/重建操作与召回状态（票 03）。保存与测试不启用 RAG、不
+  /// 建索引、不发送 episode。读取只回 keySet 与状态快照，明文 Key 永不
+  /// 出仓。
   Future<Response?> _embeddingRoutes(Request request) async {
     final method = request.method;
     final path = request.url.path;
     if (method == 'GET' && path == 'api/provider/embedding') {
       final settings = await embeddingSettingsService.read();
       return Response.ok(
-        jsonEncode(settings.toJson()),
+        jsonEncode(await _embeddingPayload(settings)),
         headers: jsonHeaders,
       );
     }
@@ -360,7 +367,7 @@ final class SettingsRoutes implements ApiRoutes {
         apiKey: _apiKeyFromPayload(payload),
       );
       return Response.ok(
-        jsonEncode(settings.toJson()),
+        jsonEncode(await _embeddingPayload(settings)),
         headers: jsonHeaders,
       );
     }
@@ -383,12 +390,63 @@ final class SettingsRoutes implements ApiRoutes {
     if (method == 'DELETE' && path == 'api/provider/embedding/key') {
       final settings = await embeddingSettingsService.forgetApiKey();
       return Response.ok(
-        jsonEncode(settings.toJson()),
+        jsonEncode(await _embeddingPayload(settings)),
+        headers: jsonHeaders,
+      );
+    }
+    if (method == 'POST' && path == 'api/provider/embedding/enable') {
+      final rag = episodeRagService;
+      if (rag == null) {
+        throw const ProviderConfigException('记忆召回服务在本机不可用。');
+      }
+      final settings = await embeddingSettingsService.read();
+      // 启用前必须已配置服务；enable 内部同样校验，这里先读一次避免
+      // 未配置时误写启用位。
+      if (!settings.configured) {
+        throw const ProviderConfigException('还没有保存记忆召回服务配置，无法启用。');
+      }
+      await rag.enable();
+      return Response.ok(
+        jsonEncode(await _embeddingPayload(settings)),
+        headers: jsonHeaders,
+      );
+    }
+    if (method == 'POST' && path == 'api/provider/embedding/disable') {
+      final rag = episodeRagService;
+      if (rag == null) {
+        throw const ProviderConfigException('记忆召回服务在本机不可用。');
+      }
+      await rag.disable();
+      final settings = await embeddingSettingsService.read();
+      return Response.ok(
+        jsonEncode(await _embeddingPayload(settings)),
+        headers: jsonHeaders,
+      );
+    }
+    if (method == 'POST' && path == 'api/provider/embedding/rebuild') {
+      final rag = episodeRagService;
+      if (rag == null) {
+        throw const ProviderConfigException('记忆召回服务在本机不可用。');
+      }
+      await rag.rebuild();
+      final settings = await embeddingSettingsService.read();
+      return Response.ok(
+        jsonEncode(await _embeddingPayload(settings)),
         headers: jsonHeaders,
       );
     }
     return null;
   }
+
+  /// 设置快照 + 召回状态快照的合并响应体：状态（含进度与人话原因）随
+  /// 既有设置读取一并返回，前端无需第二个轮询端点。
+  Future<Map<String, Object?>> _embeddingPayload(
+    EmbeddingSettingsSnapshot settings,
+  ) async => {
+    ...settings.toJson(),
+    if (episodeRagService != null)
+      'rag': (await episodeRagService!.status()).toJson(),
+  };
 
   /// 体验选项与开发者诊断子域：选项读写；诊断入口只在开发者模式
   /// 开启时存在。

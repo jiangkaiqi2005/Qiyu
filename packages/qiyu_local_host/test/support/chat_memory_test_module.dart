@@ -10,7 +10,9 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 /// [episodePipeline] 供需要与节奏/日终归档共享同一管线实例的夹具
 /// 复用；[memoryCadence] 供需要挂接真实日终归档链的夹具传入；
 /// [recallModelClient] 与 [aliasClient] 供 Omni 实时通话夹具（T03）
-/// 接入选中 Provider 的查找选择小调用与控制别名扩展。
+/// 接入选中 Provider 的查找选择小调用与控制别名扩展；
+/// [embeddingRagService] 供 Episode RAG 用例（票 03）接入语义定位，
+/// 服务与召回编排器共享同一实例。
 ChatMemoryModule buildChatMemoryModule({
   required String memoryDirectory,
   DateTime Function()? clock,
@@ -19,6 +21,7 @@ ChatMemoryModule buildChatMemoryModule({
   MemoryCadence? memoryCadence,
   ProviderChatClient? recallModelClient,
   ProviderChatClient? aliasClient,
+  EpisodeRagService? embeddingRagService,
 }) {
   final pipeline =
       episodePipeline ??
@@ -76,6 +79,7 @@ ChatMemoryModule buildChatMemoryModule({
       openLoopStore: loops,
       personaTree: tree,
       modelClient: recallModelClient,
+      episodeRag: embeddingRagService,
     ),
     personaTree: tree,
     statePackReader: StatePackReader(
@@ -83,5 +87,6 @@ ChatMemoryModule buildChatMemoryModule({
       openLoopStore: loops,
       clock: clock,
     ),
+    embeddingRecall: embeddingRagService,
   );
 }

@@ -153,25 +153,42 @@ final class LocalChatService {
   Future<void> settlePendingRecalls() => _recallTask;
 
   /// 维护独占边界（spec「维护隔离及恢复」）：导入、回滚、清除、一致
-  /// 性导出共用这唯一入口。先抑制记忆节奏的新后台排程，再等已在途的
-  /// 全部工作（在途交付、轮内召回与保存延续、补归档、月压缩、Dream、
-  /// 召回保存），然后独占交付串行槽运行 [operation]：期间新交付与
-  /// 并发维护请求一律排在 operation 之后，空闲补办 tick 跳过当次，
-  /// 不会与之并发。「清除产品数据」「备份导入」这类整机改写操作必须
-  /// 经此执行——操作前落盘的写入都能被其快照覆盖，操作后也不会被
-  /// 在途写入把已恢复的数据复活。
+  /// 性导出共用这唯一入口。先抑制记忆节奏与召回索引的新后台排程，再
+  /// 等已在途的全部工作（在途交付、轮内召回与保存延续、补归档、月压
+  /// 缩、Dream、召回保存与索引构建），然后独占交付串行槽运行
+  /// [operation]：期间新交付与并发维护请求一律排在 operation 之后，
+  /// 空闲补办 tick 跳过当次，不会与之并发。「清除产品数据」「备份导
+  /// 入」这类整机改写操作必须经此执行——操作前落盘的写入都能被其快
+  /// 照覆盖，操作后也不会被在途写入把已恢复的数据复活。
+  ///
+  /// [invalidatesDerivedCaches] 标记本次维护改写了记忆来源（导入/回滚
+  /// /清除）：结束后召回索引缓存一律失效并显示需重建（Spec 决策 7），
+  /// 在途构建凭代数错位不得发布旧来源结果；一致性导出是只读操作，
+  /// 不传此标记、不失效缓存。
   ///
   /// 成功或失败都在 finally 里恢复常规调度：维护抛异常不卡死后续
   /// 调度，未完成整理由下一次空闲补办继续。等待的只有已在途工作，
   /// 维护入口自身不在任何被等待的任务链上，不会形成自身等待死锁。
-  Future<T> runExclusively<T>(Future<T> Function() operation) {
+  Future<T> runExclusively<T>(
+    Future<T> Function() operation, {
+    bool invalidatesDerivedCaches = false,
+  }) {
     Future<T> drainAndRun() async {
       memory.memoryCadence.pauseBackgroundScheduling();
+      memory.embeddingRecall?.pauseBackgroundScheduling();
       try {
         await memory.memoryCadence.finalizePending();
         await _recallTask;
-        return await operation();
+        await memory.embeddingRecall?.settlePendingWork();
+        final result = await operation();
+        return result;
       } finally {
+        // 来源改写型维护（含失败中断：来源可能已部分改写）结束后缓存
+        // 一律失效并显示需重建；只读维护不失效。
+        if (invalidatesDerivedCaches) {
+          memory.embeddingRecall?.onMaintenanceCompleted();
+        }
+        memory.embeddingRecall?.resumeBackgroundScheduling();
         memory.memoryCadence.resumeBackgroundScheduling();
       }
     }
@@ -521,6 +538,9 @@ final class LocalChatService {
     // 兜底话术（危机→热线兜底），由行为核心统一裁定。
     if (providerPort != null) {
       ModelPromptBuilder? requestBuilder;
+      // 本轮注入过的召回临时材料：模型没真正收到本轮时经维护边界放回
+      // （消费前已重核过，放回的是核验后的材料，下轮消费再核一次）。
+      PendingRecallMaterial? consumedPendingMaterial;
       StreamedReplyOutcome? streamed;
       // 连续供给会话（票三）：Provider 分支进来时就绪，与文字流式共用
       // 同一个活前缀；拿不到音频块的档位这里是 null。开会话是网络 I/O
@@ -529,7 +549,9 @@ final class LocalChatService {
       // 不被语音握手抵消）。
       DeliveryVoiceHandoff? pendingVoice;
       try {
-        requestBuilder = await _promptBuilderForRequest(session.id);
+        final preparedPrompt = await _promptBuilderForRequest(session.id);
+        requestBuilder = preparedPrompt.builder;
+        consumedPendingMaterial = preparedPrompt.pendingMaterial;
         final prepared = await providerPort.prepareChatRequest();
         if (prepared != null) {
           // Provider 确实可用才准备语音：没配上时不白烧握手。
@@ -591,12 +613,14 @@ final class LocalChatService {
         _abandonVoiceStream(pendingVoice);
       }
       // 模型没有真正收到本轮（本地兜底/取消）时，把已取用的短期
-      // memory context 放回，留给下一轮注入；「晚一拍」允许再晚一拍。
-      final consumedContext = requestBuilder?.memoryContext ?? '';
+      // memory context 材料放回，留给下一轮注入；「晚一拍」允许再晚一拍。
       final modelSucceeded = streamed?.result?.source == ReplySource.llm;
-      if (consumedContext.isNotEmpty &&
+      if (consumedPendingMaterial != null &&
           (!modelSucceeded || cancellation.isCancelled)) {
-        memory.memoryRecall.restorePendingContext(session.id, consumedContext);
+        memory.memoryRecall.restorePendingContext(
+          session.id,
+          consumedPendingMaterial,
+        );
       }
       if ((streamed?.cancelled ?? false) || cancellation.isCancelled) {
         yield _cancelledEvent(trimmedRequestId, session.id);
@@ -731,8 +755,8 @@ final class LocalChatService {
       for (final diagnostic in late.diagnostics) {
         _diagnosticsSink(diagnostic);
       }
-      if (late.pendingContext != null) {
-        recall.storePendingContext(session.id, late.pendingContext!);
+      if (late.pendingMaterial != null) {
+        recall.storePendingContext(session.id, late.pendingMaterial!);
       }
     });
     _recallTask = _recallTask
@@ -753,7 +777,7 @@ final class LocalChatService {
     }
 
     if (result == null) {
-      // 窗口超时或用户已停止：查找在后台继续，命中后的压缩结果由
+      // 窗口超时或用户已停止：查找在后台继续，命中后的材料由
       // lateSave 并入下一用户轮注入。
       inlineHandled.complete(false);
       return;
@@ -765,8 +789,8 @@ final class LocalChatService {
     }
     final bubbleText = result.bubbleText;
     if (bubbleText == null || cancellation.isCancelled) {
-      if (result.pendingContext != null) {
-        recall.storePendingContext(session.id, result.pendingContext!);
+      if (result.pendingMaterial != null) {
+        recall.storePendingContext(session.id, result.pendingMaterial!);
       }
       return;
     }
@@ -782,8 +806,8 @@ final class LocalChatService {
       _diagnosticsSink(
         'recall bubble dropped reason=validation request=$requestId',
       );
-      if (result.pendingContext != null) {
-        recall.storePendingContext(session.id, result.pendingContext!);
+      if (result.pendingMaterial != null) {
+        recall.storePendingContext(session.id, result.pendingMaterial!);
       }
       return;
     }
@@ -813,8 +837,10 @@ final class LocalChatService {
   /// 撤销），读取失败只记诊断降级空块，绝不阻塞回复，也绝不新映射
   /// 成 Provider 错误。
   /// 同时消费该会话上一轮后台召回命中的短期 memory context（临时透镜，
-  /// 只注入一次）。
-  Future<ModelPromptBuilder> _promptBuilderForRequest(String sessionId) async {
+  /// 只注入一次）：消费前由召回编排按当前来源重核材料，注入内容随核
+  /// 验结果重新渲染；材料一并交还调用方，本轮没被模型真正消费时放回。
+  Future<({ModelPromptBuilder builder, PendingRecallMaterial? pendingMaterial})>
+  _promptBuilderForRequest(String sessionId) async {
     var builder = modelPromptBuilder;
     final prepared = await memory.statePackReader.readHotLayerBlocks();
     final failure = prepared.failure;
@@ -822,11 +848,17 @@ final class LocalChatService {
       _diagnosticsSink('state pack unavailable [$failure]');
     }
     builder = prepared.applyTo(builder);
-    final pendingContext = memory.memoryRecall.consumePendingContext(sessionId);
-    if (pendingContext != null) {
-      builder = builder.copyWithMemoryContext(pendingContext);
+    final consumed = await memory.memoryRecall.consumePendingContext(
+      sessionId,
+      onDiagnostic: _diagnosticsSink,
+    );
+    final material = consumed.material;
+    final context = consumed.context;
+    if (material != null && context != null) {
+      builder = builder.copyWithMemoryContext(context);
+      return (builder: builder, pendingMaterial: material);
     }
-    return builder;
+    return (builder: builder, pendingMaterial: null);
   }
 
   Future<T> _serialized<T>(Future<T> Function() operation) {

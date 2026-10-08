@@ -18,6 +18,8 @@ export 'src/embedding_gateway.dart';
 export 'src/embedding_settings_service.dart';
 export 'src/episode_index.dart';
 export 'src/episode_memory.dart';
+export 'src/episode_rag_index.dart';
+export 'src/episode_rag_service.dart';
 export 'src/local_app_host.dart';
 export 'src/local_chat_service.dart';
 export 'src/local_data_service.dart';

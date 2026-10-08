@@ -324,7 +324,7 @@ void main() {
     },
   );
 
-  test('the recall discipline states index paths and selection rules', () {
+  test('the recall discipline states semantic query and selection rules', () {
     final system = builder
         .build(StateSnapshot.initial('local-user'), '在吗')
         .first
@@ -332,12 +332,14 @@ void main() {
 
     // 触发纪律：常驻字段没命中且用户问旧事才发。
     expect(system, contains('常驻字段'));
-    // 两级索引路径与格式静态写明，不常驻挂载索引内容本身。
-    expect(system, contains('episodes/index.md'));
-    expect(system, contains('episodes/YYYY/MM/index.md'));
-    expect(system, contains('- YYYY-MM | 关键词'));
-    expect(system, contains('- YYYY-MM-DD | 关键词'));
-    expect(system, isNot(contains('# episodes index')));
+    // query 语义（票 03）：语义查找目标，可消解指代，不编造细节。
+    expect(system, contains('语义查找目标'));
+    expect(system, contains('消解'));
+    expect(system, contains('不编造不知道的人名、日期或结局'));
+    expect(system, isNot(contains('话题关键词')));
+    // 后台查找定位整理后的记忆，日文件才是原始记录。
+    expect(system, contains('整理后的记忆'));
+    expect(system, contains('日文件才是原始记录'));
     // 选择纪律：只取递来的目录、可空、禁编造日期。
     expect(system, contains('选择只能取自递来的目录'));
     expect(system, contains('绝不编造日期'));

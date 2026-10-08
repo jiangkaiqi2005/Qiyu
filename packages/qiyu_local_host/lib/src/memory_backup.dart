@@ -8,6 +8,7 @@ import 'package:path/path.dart' as path;
 
 import 'episode_index.dart';
 import 'episode_memory.dart';
+import 'episode_rag_index.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_actions.dart';
 import 'memory_controls.dart';
@@ -903,10 +904,15 @@ final class MemoryBackupService {
     return true;
   }
 
-  /// 快照视角下的排除路径：快照目录自身（backups/）与临时文件
-  /// （.tmp）既不进快照，也不参与恢复清理与残留核对。
+  /// 快照视角下的排除路径（Spec 票 03：向量缓存排除于备份导出与本机
+  /// 快照）：快照目录自身（backups/）与临时文件（.tmp）既不进快照，
+  /// 也不参与恢复清理与残留核对；召回向量索引（NDJSON 派生缓存，不在
+  /// 导出白名单内）同样不进快照——回滚不得复活旧索引，回滚后由维护
+  /// 失效流程显示需重建。
   bool _isSnapshotExcludedPath(String relative) =>
-      relative.startsWith('backups/') || relative.endsWith('.tmp');
+      relative.startsWith('backups/') ||
+      relative.endsWith('.tmp') ||
+      relative == episodeRagIndexFileName;
 
   /// 记忆目录内允许进入备份的相对路径（导出与导入共用同一白名单）。
   bool _allowedMemoryPath(String relative) {

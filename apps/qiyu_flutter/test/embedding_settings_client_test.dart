@@ -144,7 +144,7 @@ final class _FailingEmbeddingSettingsGateway
     implements EmbeddingSettingsGateway {
   @override
   Future<EmbeddingSettings> read() async =>
-      const EmbeddingSettings(configured: false, keySet: false);
+      const EmbeddingSettings(configured: false, keySet: false, enabled: false);
 
   @override
   Future<EmbeddingSettings> save(EmbeddingSettingsDraft draft) =>
@@ -156,4 +156,13 @@ final class _FailingEmbeddingSettingsGateway
   @override
   Future<ProviderTestResult> testConnection(EmbeddingSettingsDraft draft) =>
       throw StateError('raw backend details');
+
+  @override
+  Future<EmbeddingSettings> enable() => throw StateError('raw backend details');
+
+  @override
+  Future<EmbeddingSettings> disable() => throw StateError('raw backend details');
+
+  @override
+  Future<EmbeddingSettings> rebuild() => throw StateError('raw backend details');
 }

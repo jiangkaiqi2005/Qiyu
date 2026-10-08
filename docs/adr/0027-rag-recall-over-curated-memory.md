@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 created: 2026-10-08
 ---
 
@@ -17,4 +17,4 @@ created: 2026-10-08
 
 既有本地 develop 提交已按 Q22 推送，远端与新工作树基线一致。Q23 决定不新增跨 episode 的纠正关系：源内容哈希仅验证同一条目，漏召回最新语义纠正作为评测限制，由当前消息、热层、近期对话和模型判断处理。
 
-全部访谈决策已综合为 ready-for-agent Specs，当前只交付本地规格，不实施产品代码或创建 PR，也未改写旧设计笔记定稿。完整规格见 `docs/specs/2026-10-08-rag-memory-recall.md`。
+全部访谈决策已综合为 ready-for-agent Specs。票 03（首次启用 Episode RAG 并完成文字旧事召回）已按规格落地：最小完整文字闭环——显式启用、后台完整构建、NDJSON 派生索引与身份校验、语义查询与来源重核、旧路径保留与维护失效；完整规格见 `docs/specs/2026-10-08-rag-memory-recall.md`。

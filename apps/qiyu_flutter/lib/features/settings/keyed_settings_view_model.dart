@@ -67,6 +67,37 @@ abstract base class KeyedSettingsViewModel<S, D> extends ChangeNotifier {
     }
   }
 
+  /// 已初始化后的轻刷新（票 03）：状态/进度类字段可能随后台任务变化，
+  /// 页面可见期间按生命周期重读现值。未初始化时等同 [initialize]。
+  /// 刷新失败只落错误位，不清空既有设置快照。
+  Future<void> refresh() async {
+    if (!_initialized) {
+      await initialize();
+      return;
+    }
+    try {
+      _settings = await readSettings();
+      _errorMessage = null;
+    } on Object catch (error) {
+      _errorMessage = readableError(error, fallback: errorFallback);
+    }
+    notifyListeners();
+  }
+
+  /// 已初始化后的领域操作（票 03：启用/停用/重建这类显式动作）：成功
+  /// 更新设置快照并清错误位，失败只落错误位、不清空既有快照。互斥
+  /// 位（busy）由子类自行把守；结束后统一通知。
+  @protected
+  Future<void> runSettingsAction(Future<S> Function() action) async {
+    try {
+      _settings = await action();
+      _errorMessage = null;
+    } on Object catch (error) {
+      _errorMessage = readableError(error, fallback: errorFallback);
+    }
+    notifyListeners();
+  }
+
   Future<bool> save(D draft) async {
     if (_saving) {
       return false;

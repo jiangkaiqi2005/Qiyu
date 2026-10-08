@@ -295,6 +295,12 @@ class _QiyuAppState extends State<QiyuApp> {
               client: _hostClient,
               baseUri: _hostBaseUri,
             ),
+            // 记忆召回简短状态（票 03）：复用记忆召回设置网关读取状态
+            // 快照，随既有轮询节拍刷新，不新开轮询器。
+            memoryRecallStatusGateway: HttpEmbeddingSettingsGateway(
+              client: _hostClient,
+              baseUri: _hostBaseUri,
+            ),
           ),
         ),
         // Omni 双工通话控制器（T04）：app 级生命周期——跨页通话条与

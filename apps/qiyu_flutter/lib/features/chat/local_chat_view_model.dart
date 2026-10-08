@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../baseline/host_api_gateway.dart';
 import '../baseline/host_connection_probe.dart';
 import '../baseline/background_status_client.dart';
+import '../settings/embedding_settings_client.dart';
 import '../settings/tts_settings_client.dart';
 import '../shell/host_status_monitor.dart';
 import '../shell/qiyu_strings.dart';
@@ -88,6 +89,7 @@ final class LocalChatViewModel extends ChangeNotifier
     RequestIdFactory? requestIdFactory,
     TtsSettingsGateway? ttsSettingsGateway,
     BackgroundStatusGateway? backgroundStatusGateway,
+    MemoryRecallStatusGateway? memoryRecallStatusGateway,
     VoiceOutputController? voiceOutput,
     this._localeController,
     bool autoStart = true,
@@ -104,11 +106,12 @@ final class LocalChatViewModel extends ChangeNotifier
     this.voiceOutput.onVoiceStopRequested = (requestId) {
       unawaited(_gateway.stopVoice(requestId));
     };
-    // 连接探测轮询与后台失败状态的唯一所有者：计时器、重入保护、恢复
-    // 提示窗口与对应生命周期都在监控模块内部，聊天事务只读它的结论。
+    // 连接探测轮询与后台/召回旁路状态的唯一所有者：计时器、重入保护、
+    // 恢复提示窗口与对应生命周期都在监控模块内部，聊天事务只读它的结论。
     _hostMonitor = HostStatusMonitor(
       hostConnectionProbe: hostConnectionProbe,
       backgroundStatusGateway: backgroundStatusGateway,
+      memoryRecallStatusGateway: memoryRecallStatusGateway,
       autoStart: autoStart,
       monitorInterval: monitorInterval,
     );
@@ -249,6 +252,12 @@ final class LocalChatViewModel extends ChangeNotifier
   /// 失败恢复后的短暂提示窗口：「已恢复」展示一会儿再隐去，由监控模块
   /// 计时；窗口只在「此前真的展示过失败」时开启。
   bool get backgroundRecoveredNotice => _hostMonitor.backgroundRecoveredNotice;
+
+  /// 聊天输入旁的记忆召回简短状态（票 03）：准备中显示进度、需重建/
+  /// 暂不可用提示不可用；未启用与已就绪安静。不是消息、不进历史，
+  /// 只按旁路快照展示。
+  MemoryRecallStatus? get memoryRecallStatus =>
+      _hostMonitor.memoryRecallStatus;
 
   /// 合一页（design-system §5）的**空状态 = 首页**唯一判定：一条消息都还没有、
   /// 不在等待与流式之中，**且会话已经恢复完**。

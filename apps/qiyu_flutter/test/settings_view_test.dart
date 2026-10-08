@@ -2388,7 +2388,7 @@ final class _FixedEmbeddingSettingsGateway implements EmbeddingSettingsGateway {
 
   @override
   Future<EmbeddingSettings> read() async =>
-      const EmbeddingSettings(configured: false, keySet: false);
+      const EmbeddingSettings(configured: false, keySet: false, enabled: false);
 
   @override
   Future<EmbeddingSettings> save(EmbeddingSettingsDraft draft) =>
@@ -2400,6 +2400,15 @@ final class _FixedEmbeddingSettingsGateway implements EmbeddingSettingsGateway {
   @override
   Future<ProviderTestResult> testConnection(EmbeddingSettingsDraft draft) =>
       throw UnimplementedError();
+
+  @override
+  Future<EmbeddingSettings> enable() => throw UnimplementedError();
+
+  @override
+  Future<EmbeddingSettings> disable() => throw UnimplementedError();
+
+  @override
+  Future<EmbeddingSettings> rebuild() => throw UnimplementedError();
 }
 
 final class _FixedProxySettingsGateway implements ProxySettingsGateway {

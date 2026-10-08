@@ -70,9 +70,11 @@ final class BackupRoutes implements ApiRoutes {
       // 请求体在边界外读：超大包校验失败不占用独占槽。
       final bundle = await _readBackupBundle(request);
       // 经聊天服务的维护独占边界执行：等在途交付、召回与后台整理全部
-      // 落定，期间没有新交付与新后台任务并发，导入才不会被旧数据写回。
+      // 落定，期间没有新交付与新后台任务并发，导入才不会被旧数据写回；
+      // 导入改写记忆来源，结束后召回索引缓存失效并显示需重建。
       final result = await _chatService.runExclusively(
         () => memoryBackup.importBundle(bundle),
+        invalidatesDerivedCaches: true,
       );
       return Response.ok(jsonEncode(result.toJson()), headers: jsonHeaders);
     }
@@ -92,9 +94,11 @@ final class BackupRoutes implements ApiRoutes {
         throw invalidRequest('回滚请求格式不正确。');
       }
       // 与导入、清除同一维护独占边界：恢复整目录数据必须等在途写入
-      // 全部落定，否则半途回复会把快照里已删掉的轮次写回来。
+      // 全部落定，否则半途回复会把快照里已删掉的轮次写回来；回滚改写
+      // 记忆来源，结束后召回索引缓存失效并显示需重建。
       final result = await _chatService.runExclusively(
         () => memoryBackup.rollbackTo(snapshotId as String?),
+        invalidatesDerivedCaches: true,
       );
       return Response.ok(jsonEncode(result.toJson()), headers: jsonHeaders);
     }
@@ -108,9 +112,11 @@ final class BackupRoutes implements ApiRoutes {
         throw invalidRequest('清除本机数据需要明确确认。');
       }
       // 经聊天服务的独占槽执行：等全部在途交付与后台任务完成，
-      // 期间没有新交付并发，清除才不会丢写入或复活已清除的数据。
+      // 期间没有新交付并发，清除才不会丢写入或复活已清除的数据；
+      // 清除一并删掉向量索引（记忆目录内派生缓存），缓存同步失效。
       final result = await _chatService.runExclusively(
         () => localDataService.clear(),
+        invalidatesDerivedCaches: true,
       );
       return Response.ok(jsonEncode(result), headers: jsonHeaders);
     }

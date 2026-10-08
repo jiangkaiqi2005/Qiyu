@@ -10,17 +10,17 @@ import 'embedding_settings_client.dart';
 import 'embedding_settings_view_model.dart';
 
 /// 记忆召回（Episode RAG）设置领域：独立的 embedding 服务地址、模型与
-/// API Key。
+/// API Key，以及显式启用后的状态展示与重建入口（票 03）。
 ///
 /// 领域的深模块边界在这里收口——控制器与焦点管理、设置同步、草稿校验
 /// 与保存编排都落在 [EmbeddingSettingsForm]；[EmbeddingSettingsSection]
 /// 只负责把这些状态画出来。异步编排（网关调用、加载与错误态）仍归
 /// [EmbeddingSettingsViewModel]。
 ///
-/// 本票只交付保存／测试／忘记 Key：页面不出现「启用」或「就绪」状态，
-/// 也不伪装召回可用——真正启用、索引状态与召回由后续票接入（Spec 票
-/// 02 范围边界）。启用后的发送范围与费用在此如实说明，用户据此决定
-/// 是否配置。
+/// 启用语义（Spec）：保存配置与启用分开；首次启用前明确说明外发范围
+/// 与费用（历史有效 episodes 的日期与摘要发给所配置服务、查询发送语义
+/// 搜索词、费用按该服务计费、证据摘录不发给 embedding）；启用后的故障
+/// 如实展示，不静默回退旧召回。
 final class EmbeddingSettingsForm
     extends
         SettingsCredentialForm<
@@ -92,7 +92,9 @@ final class EmbeddingSettingsForm
   }
 }
 
-/// 记忆召回设置区块。
+/// 记忆召回设置区块。状态行与操作按钮按可见生命周期刷新：挂载期间
+/// 周期重读（准备中的进度会随后台构建推进），离开页面或应用进入后台
+/// 时停止刷新，不留全局轮询。
 class EmbeddingSettingsSection extends StatefulWidget {
   const EmbeddingSettingsSection({super.key});
 
@@ -102,13 +104,49 @@ class EmbeddingSettingsSection extends StatefulWidget {
 }
 
 class _EmbeddingSettingsSectionState extends State<EmbeddingSettingsSection>
-    with SettingsSaveFeedback {
+    with SettingsSaveFeedback, WidgetsBindingObserver {
   final _form = EmbeddingSettingsForm();
+  Timer? _refreshTimer;
+
+  /// 可见期的状态刷新节奏：与聊天页旁路状态同拍（2 秒），足以呈现
+  /// 构建进度的推进，又不构成常驻全局轮询。
+  static const _refreshInterval = Duration(seconds: 2);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _startRefreshTimer();
+  }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _form.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _startRefreshTimer();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _stopRefreshTimer();
+    }
+  }
+
+  void _startRefreshTimer() {
+    _refreshTimer ??= Timer.periodic(_refreshInterval, (_) {
+      final viewModel = context.read<EmbeddingSettingsViewModel>();
+      unawaited(viewModel.refresh());
+    });
+  }
+
+  void _stopRefreshTimer() {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
   }
 
   /// 一次保存：读草稿 → 交视图模型，成功收尾（统一轻提示与挂载检查）
@@ -140,6 +178,56 @@ class _EmbeddingSettingsSectionState extends State<EmbeddingSettingsSection>
     }
   }
 
+  /// 首次启用前的确认：如实说明外发范围与费用（Spec 用户故事 18），
+  /// 用户确认后才触发后台完整构建。
+  Future<void> _confirmAndEnable(EmbeddingSettingsViewModel viewModel) async {
+    final draft = _form.readDraftOrReport(_reportInvalidDraft);
+    if (draft == null) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          settingsTextNow(
+            dialogContext,
+            '启用记忆召回？',
+            'Enable memory recall?',
+          ),
+        ),
+        content: Text(
+          settingsTextNow(
+            dialogContext,
+            '启用后，你有效记忆条目的日期与摘要会发送到所配置的 embedding 服务'
+            '用于建索引，查询时发送语义搜索词，费用按该服务计费。'
+            '记忆的证据摘录不会发给这个服务，只会按现有回答模型的规则使用。'
+            '首次启用会在后台完整建索引，期间正常聊天不受影响。',
+            'Once enabled, the dates and summaries of your valid memory entries are sent to the '
+            'configured embedding service to build an index; queries are sent as semantic search '
+            'terms and costs are billed by that service. Memory excerpts are never sent to it and '
+            'are only used under the existing reply-model rules. The first build runs in the '
+            'background; normal chatting is unaffected.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            key: const Key('embedding-enable-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(settingsTextNow(dialogContext, '先不启用', 'Not now')),
+          ),
+          FilledButton(
+            key: const Key('embedding-enable-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(settingsTextNow(dialogContext, '启用', 'Enable')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed ?? false) {
+      await viewModel.enable();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<EmbeddingSettingsViewModel>(
@@ -147,6 +235,7 @@ class _EmbeddingSettingsSectionState extends State<EmbeddingSettingsSection>
         _form.sync(viewModel.settings);
         final theme = Theme.of(context);
         final keySet = viewModel.settings?.keySet ?? false;
+        final enabled = viewModel.settings?.enabled ?? false;
         return SettingsSectionPanel(
           sectionId: SettingsSectionId.memoryRecall,
           title: settingsText(context, '记忆召回', 'Memory recall'),
@@ -154,12 +243,12 @@ class _EmbeddingSettingsSectionState extends State<EmbeddingSettingsSection>
             Text(
               settingsText(
                 context,
-                '配置一个兼容 OpenAI 的向量（embedding）服务，供日后启用记忆召回。'
+                '配置一个兼容 OpenAI 的向量（embedding）服务。'
                 '现在保存只是存下配置：不会启用召回，也不会发送任何记忆。'
                 '启用后，你有效记忆条目的日期与摘要会发送到这里配置的服务，'
                 '查询时发送语义搜索词，费用按该服务计费；'
                 '记忆的证据摘录不会发给这个服务，只会按现有回答模型的规则使用。',
-                'Configure an OpenAI-compatible embedding service for memory recall, which you can enable later. '
+                'Configure an OpenAI-compatible embedding service for memory recall. '
                 'Saving now only stores the configuration: recall stays off and no memories are sent. '
                 'Once enabled, the dates and summaries of your valid memory entries are sent to this service, '
                 'queries are sent as semantic search terms, and costs are billed by that service; '
@@ -174,6 +263,18 @@ class _EmbeddingSettingsSectionState extends State<EmbeddingSettingsSection>
             if (viewModel.loading)
               const Center(child: CircularProgressIndicator())
             else ...[
+              _RecallStatusView(
+                status: viewModel.settings?.rag,
+                enabled: enabled,
+                configured: viewModel.settings?.configured ?? false,
+                keySet: keySet,
+                toggling: viewModel.toggling,
+                rebuilding: viewModel.rebuilding,
+                onEnable: () => unawaited(_confirmAndEnable(viewModel)),
+                onDisable: () => unawaited(viewModel.disable()),
+                onRebuild: () => unawaited(viewModel.rebuild()),
+              ),
+              const SizedBox(height: 16),
               TextField(
                 key: const Key('embedding-base-url'),
                 controller: _form.baseUrlController,
@@ -255,6 +356,158 @@ class _EmbeddingSettingsSectionState extends State<EmbeddingSettingsSection>
           ],
         );
       },
+    );
+  }
+}
+
+/// 记忆召回状态与操作行（票 03）：状态名 + 进度 + 人话原因，启用前
+/// 呈现确认说明，就绪/故障时给出停用与重建入口。
+class _RecallStatusView extends StatelessWidget {
+  const _RecallStatusView({
+    required this.status,
+    required this.enabled,
+    required this.configured,
+    required this.keySet,
+    required this.toggling,
+    required this.rebuilding,
+    required this.onEnable,
+    required this.onDisable,
+    required this.onRebuild,
+  });
+
+  final MemoryRecallStatus? status;
+  final bool enabled;
+  final bool configured;
+  final bool keySet;
+  final bool toggling;
+  final bool rebuilding;
+  final VoidCallback onEnable;
+  final VoidCallback onDisable;
+  final VoidCallback onRebuild;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final state = status?.state ?? (enabled ? 'ready' : 'disabled');
+    final reason = status?.reason;
+    final (label, tone) = switch (state) {
+      'preparing' => (
+        settingsText(
+          context,
+          '准备中：${status?.progressDone ?? 0}/${status?.progressTotal ?? 0}',
+          'Preparing: ${status?.progressDone ?? 0}/${status?.progressTotal ?? 0}',
+        ),
+        theme.colorScheme.onSurfaceVariant,
+      ),
+      'ready' => (
+        settingsText(context, '已就绪', 'Ready'),
+        theme.colorScheme.primary,
+      ),
+      'rebuildNeeded' => (
+        settingsText(context, '需要重建', 'Rebuild needed'),
+        theme.colorScheme.error,
+      ),
+      'unavailable' => (
+        settingsText(context, '暂不可用', 'Unavailable'),
+        theme.colorScheme.error,
+      ),
+      _ => (
+        settingsText(context, '未启用', 'Not enabled'),
+        theme.colorScheme.onSurfaceVariant,
+      ),
+    };
+    final busy = toggling || rebuilding;
+    final showRebuild = enabled && (state == 'rebuildNeeded' || state == 'unavailable');
+    return Container(
+      key: const Key('embedding-recall-status'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        border: Border.all(color: QiyuColors.line),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                settingsText(context, '召回状态', 'Recall status'),
+                style: theme.textTheme.titleSmall,
+              ),
+              const Spacer(),
+              Text(
+                label,
+                key: const Key('embedding-recall-state'),
+                style: TextStyle(color: tone),
+              ),
+            ],
+          ),
+          if (state == 'preparing') ...[
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              key: const Key('embedding-recall-progress'),
+              value: (status?.progressTotal ?? 0) > 0
+                  ? (status!.progressDone / status!.progressTotal).clamp(0.0, 1.0)
+                  : null,
+            ),
+          ],
+          if (reason != null && reason.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              reason,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              if (!enabled)
+                FilledButton(
+                  key: const Key('enable-memory-recall'),
+                  onPressed: (!configured || !keySet || busy) ? null : onEnable,
+                  child: Text(settingsText(context, '启用记忆召回', 'Enable memory recall')),
+                )
+              else ...[
+                OutlinedButton(
+                  key: const Key('disable-memory-recall'),
+                  onPressed: busy ? null : onDisable,
+                  child: Text(settingsText(context, '停用', 'Disable')),
+                ),
+                if (showRebuild) ...[
+                  const SizedBox(width: 10),
+                  FilledButton.tonal(
+                    key: const Key('rebuild-memory-recall'),
+                    onPressed: busy ? null : onRebuild,
+                    child: Text(settingsText(context, '重建索引', 'Rebuild index')),
+                  ),
+                ],
+              ],
+            ],
+          ),
+          if (!enabled)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                !configured || !keySet
+                    ? settingsText(
+                        context,
+                        '先保存服务地址、模型与 Key，再启用记忆召回。',
+                        'Save the service URL, model and key before enabling memory recall.',
+                      )
+                    : settingsText(
+                        context,
+                        '启用后使用语义查找定位旧事；未启用时按原目录方式查找。',
+                        'Once enabled, past events are located by semantic search; the directory-based search stays in use until then.',
+                      ),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

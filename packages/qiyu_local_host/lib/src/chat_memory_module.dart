@@ -1,4 +1,5 @@
 import 'episode_memory.dart';
+import 'episode_rag_service.dart';
 import 'memory_actions.dart';
 import 'memory_cadence.dart';
 import 'memory_controls.dart';
@@ -28,6 +29,7 @@ final class ChatMemoryModule {
     required this.memoryRecall,
     required this.personaTree,
     required this.statePackReader,
+    this.embeddingRecall,
   }) {
     if (!identical(memoryControls, openLoopStore.memoryControls)) {
       throw ArgumentError(
@@ -74,4 +76,10 @@ final class ChatMemoryModule {
   /// 既有记忆控制过滤，模型调用前由 [StatePackReader.readHotLayerBlocks]
   /// 完成装配。
   final StatePackReader statePackReader;
+
+  /// Episode RAG 服务（票 03）：用户显式启用后的语义向量定位。与
+  /// [memoryRecall] 共享组合根创建的同一实例；null 时召回全部走旧
+  /// 目录路径（未启用语义与现状一致）。维护独占（runExclusively）
+  /// 经它排空在途构建并在导入/回滚/清除后失效缓存。
+  final EpisodeRagService? embeddingRecall;
 }

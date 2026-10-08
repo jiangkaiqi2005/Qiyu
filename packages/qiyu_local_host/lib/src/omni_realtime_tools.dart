@@ -178,7 +178,9 @@ final List<OmniRealtimeTool> omniRealtimeMemoryTools = [
       'properties': {
         'query': {
           'type': 'string',
-          'description': '旧事的简短索引词，只写话题关键词，不带疑问词',
+          'description':
+              '旧事的语义查找目标：说清已知对象、事情与时间线索，'
+              '可结合已知语境消解指代，不编造不知道的细节，不带疑问词',
         },
       },
       'required': ['query'],

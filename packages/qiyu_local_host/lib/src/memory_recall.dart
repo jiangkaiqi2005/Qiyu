@@ -4,6 +4,7 @@ import 'package:qiyu_behavior_core/qiyu_behavior_core.dart';
 
 import 'episode_index.dart';
 import 'episode_memory.dart';
+import 'episode_rag_service.dart';
 import 'markdown_memory_repository.dart';
 import 'memory_text_primitives.dart';
 import 'model_gateway.dart';
@@ -52,11 +53,44 @@ const recallModelMaxOutputTokens = 16384;
 /// 也不得牵强组织 bubble 2。
 const _recallNoBubbleSentinel = '没有了';
 
+/// 下一轮临时记忆候选的一条定位依据（票 03 结构化）：只存日期、条目
+/// ID 与可选的来源输入 hash（RAG 候选才有），不存渲染文本——消费前
+/// 按当前来源重新核对，再重新渲染。
+final class PendingRecallRef {
+  const PendingRecallRef({
+    required this.date,
+    required this.entryId,
+    this.expectedInputHash,
+  });
+
+  final String date;
+  final String entryId;
+
+  /// RAG 候选建索引时的输入（日期+换行+脱敏摘要）SHA-256：消费前复核
+  /// 摘要是否仍是被向量化的那份；旧目录候选没有该凭证（null）。
+  final String? expectedInputHash;
+}
+
+/// 一次命中的临时记忆材料（票 03 结构化）：下一用户轮一次性消费，
+/// 消费前按当前来源重新核对存在、有效性、控制状态与来源 hash。画像
+/// 路径只存选择串，消费前对着当前树快照重新展开。
+final class PendingRecallMaterial {
+  const PendingRecallMaterial({
+    required this.entries,
+    this.personaPathSelections = const [],
+  });
+
+  final List<PendingRecallRef> entries;
+  final List<String> personaPathSelections;
+
+  bool get isEmpty => entries.isEmpty && personaPathSelections.isEmpty;
+}
+
 /// 一次轮内召回查找的结果。诊断只进本机 stderr，绝不展示给用户。
 final class RecallTurnResult {
   const RecallTurnResult({
     this.bubbleText,
-    this.pendingContext,
+    this.pendingMaterial,
     this.diagnostics = const [],
   });
 
@@ -64,10 +98,10 @@ final class RecallTurnResult {
   /// 明确拒绝、未完成判断或未命中为 null。
   final String? bubbleText;
 
-  /// 命中证据的压缩整理记录：bubble 2 没赶上交付或判断未完成时并入
-  /// 下一用户轮注入；明确拒绝（不建立下一轮候选）或没有可注入内容时
-  /// 为 null。
-  final String? pendingContext;
+  /// 命中证据的定位材料：bubble 2 没赶上交付或判断未完成时并入下一
+  /// 用户轮注入（消费前重核来源）；明确拒绝（不建立下一轮候选）或
+  /// 没有可注入内容时为 null。
+  final PendingRecallMaterial? pendingMaterial;
 
   final List<String> diagnostics;
 }
@@ -99,10 +133,15 @@ final class _ComposeUnjudged extends _ComposeOutcome {
   const _ComposeUnjudged();
 }
 
-/// 一次定位结果的形状（轮内召回与实时查找共用）：选中日原始证据与
-/// 画像路径素材。
+/// 一次定位结果的形状（轮内召回与实时查找共用）：选中日原始证据、
+/// 画像路径素材，以及留给下一轮临时上下文的定位依据（票 03）。
 typedef _LocatedEvidence =
-    ({List<(String, List<EpisodeEntry>)> rawDays, String personaPathText});
+    ({
+      List<(String, List<EpisodeEntry>)> rawDays,
+      String personaPathText,
+      List<PendingRecallRef> pendingEntries,
+      List<String> personaPathSelections,
+    });
 
 /// 画像树路径检索目录：按分支线名分组的活跃根（已受控过滤）。索引
 /// 文本（递给选择调用）与路径展开（查 ID）共用同一份数据；归档不出
@@ -153,6 +192,7 @@ final class RecallOrchestrator {
     EpisodeIndexStore? indexStore,
     this.openLoopStore,
     this.personaTree,
+    this.episodeRag,
   }) : _episodePipeline = episodePipeline,
        _indexStore =
            indexStore ??
@@ -174,28 +214,146 @@ final class RecallOrchestrator {
   /// 检索，episode 检索链路照常工作——路径是增强不是门槛。
   final PersonaTreeStore? personaTree;
 
-  final Map<String, String> _pendingContexts = {};
+  /// Episode RAG 服务（票 03）：非 null 且用户显式启用后就绪查询时，
+  /// 语义向量定位替换目录选择过程；未启用时调用方走旧定位。组合根
+  /// 注入唯一实例，文字与实时查找共享。
+  final EpisodeRagService? episodeRag;
+
+  final Map<String, PendingRecallMaterial> _pendingContexts = {};
 
   EpisodeIndexStore get indexStore => _indexStore;
 
-  /// 取用并清空该会话的短期 memory context（一次性临时透镜）。
-  /// 没有待注入内容时返回 null。
-  String? consumePendingContext(String sessionId) =>
-      _pendingContexts.remove(sessionId);
+  /// 消费该会话的短期 memory context（一次性临时透镜，票 03 结构化）：
+  /// 先按当前来源重新核对每条候选（存在、有效、控制状态、来源 hash
+  /// 与脱敏）并重新渲染，再交出渲染结果与核验后的材料。全部失效时
+  /// 两个值都是 null——故障与空材料都不冒充注入内容。
+  /// [onDiagnostic] 收本机诊断，绝不展示给用户。
+  Future<({String? context, PendingRecallMaterial? material})>
+  consumePendingContext(
+    String sessionId, {
+    void Function(String message)? onDiagnostic,
+  }) async {
+    final material = _pendingContexts.remove(sessionId);
+    if (material == null) {
+      return (context: null, material: null);
+    }
+    final diagnostics = <String>[];
+    final verified = await _verifyPendingMaterial(material, diagnostics);
+    if (verified == null) {
+      for (final diagnostic in diagnostics) {
+        onDiagnostic?.call(diagnostic);
+      }
+      return (context: null, material: null);
+    }
+    final rendered = _buildPendingContext(
+      verified.rawDays,
+      null,
+      verified.personaPathText,
+      diagnostics,
+    );
+    for (final diagnostic in diagnostics) {
+      onDiagnostic?.call(diagnostic);
+    }
+    return (context: rendered, material: verified.material);
+  }
+
+  /// 消费语义的唯一实现：按当前来源重核临时材料并渲染成注入文本。
+  /// [consumePendingContext] 复用；测试用它把一次召回结果的材料渲染
+  /// 出来做内容断言。全部失效时返回 null。
+  Future<String?> verifyAndRenderPending(
+    PendingRecallMaterial material, {
+    void Function(String message)? onDiagnostic,
+  }) async {
+    final diagnostics = <String>[];
+    final verified = await _verifyPendingMaterial(material, diagnostics);
+    if (verified == null) {
+      for (final diagnostic in diagnostics) {
+        onDiagnostic?.call(diagnostic);
+      }
+      return null;
+    }
+    final rendered = _buildPendingContext(
+      verified.rawDays,
+      null,
+      verified.personaPathText,
+      diagnostics,
+    );
+    for (final diagnostic in diagnostics) {
+      onDiagnostic?.call(diagnostic);
+    }
+    return rendered;
+  }
+
+  /// 消费前的来源重核（Spec 决策 5：下一轮消费共用来源有效性规则）：
+  /// 逐条按共享核对（[revalidateEpisodeSource]）检查存在、有效、控制
+  /// 与 RAG 候选的来源 hash；画像路径对着当前树快照重新展开（成员校验
+  /// 与控制过滤在同一目录上完成）。全部失效时返回 null。
+  Future<({List<(String, List<EpisodeEntry>)> rawDays, String personaPathText, PendingRecallMaterial material})?>
+  _verifyPendingMaterial(
+    PendingRecallMaterial material,
+    List<String> diagnostics,
+  ) async {
+    try {
+      final banned = await _blockedTitles();
+      final rawDays = <(String, List<EpisodeEntry>)>[];
+      final verifiedRefs = <PendingRecallRef>[];
+      var lastDate = '';
+      for (final ref in material.entries) {
+        final entry = await revalidateEpisodeSource(
+          pipeline: _episodePipeline,
+          date: ref.date,
+          entryId: ref.entryId,
+          expectedInputHash: ref.expectedInputHash,
+          banned: banned,
+          diagnostics: diagnostics,
+          diagnosticPrefix: 'recall pending',
+        );
+        if (entry == null) {
+          continue;
+        }
+        if (ref.date != lastDate) {
+          rawDays.add((ref.date, <EpisodeEntry>[]));
+          lastDate = ref.date;
+        }
+        rawDays.last.$2.add(entry.redactedForModel());
+        verifiedRefs.add(ref);
+      }
+      final personaCatalog = await _readPersonaCatalog(banned, diagnostics);
+      final personaExpansion = _expandPersonaPaths(
+        material.personaPathSelections,
+        personaCatalog,
+        diagnostics,
+      );
+      if (verifiedRefs.isEmpty && personaExpansion.selections.isEmpty) {
+        return null;
+      }
+      return (
+        rawDays: rawDays,
+        personaPathText: personaExpansion.text,
+        material: PendingRecallMaterial(
+          entries: verifiedRefs,
+          personaPathSelections: personaExpansion.selections,
+        ),
+      );
+    } on Object catch (error) {
+      diagnostics.add('recall pending verify deferred [$error]');
+      return null;
+    }
+  }
 
   /// 本轮模型调用没有成功消费时放回短期 memory context，留给下一轮；
   /// 已有更新的结果（新的检索命中）时不覆盖。
-  void restorePendingContext(String sessionId, String context) {
-    if (context.trim().isEmpty) {
+  void restorePendingContext(String sessionId, PendingRecallMaterial context) {
+    if (context.isEmpty) {
       return;
     }
     _pendingContexts.putIfAbsent(sessionId, () => context);
   }
 
-  /// 存入一次命中的压缩结果（新结果覆盖旧结果：旧的还没被注入说明
+  /// 存入一次命中的临时材料（新结果覆盖旧结果：旧的还没被注入说明
   /// 话题已经过去，最新的才值得下一轮带出）。
-  void storePendingContext(String sessionId, String context) {
-    if (context.trim().isEmpty) {
+  void storePendingContext(String sessionId, PendingRecallMaterial context) {
+    if (context.isEmpty) {
       return;
     }
     _pendingContexts[sessionId] = context;
@@ -305,14 +463,9 @@ final class RecallOrchestrator {
     return switch (compose) {
       // 明确拒绝：候选本轮与下一轮都不再出现，不写任何记忆。
       _ComposeRejected() => RecallTurnResult(diagnostics: diagnostics),
-      // 未完成判断：材料按既有规则整体并入下一轮（受总量预算封顶）。
+      // 未完成判断：材料按既有规则整体并入下一轮（消费前重核来源）。
       _ComposeUnjudged() => RecallTurnResult(
-        pendingContext: _buildPendingContext(
-          located.rawDays,
-          null,
-          located.personaPathText,
-          diagnostics,
-        ),
+        pendingMaterial: _pendingMaterialFor(located, null),
         diagnostics: diagnostics,
       ),
       _ComposeUsed(:final text, :final entryIds) => _usedTurnResult(
@@ -322,6 +475,22 @@ final class RecallOrchestrator {
         diagnostics,
       ),
     };
+  }
+
+  /// 从定位结果收拢下一轮临时材料的定位依据：[usedIds] 非 null 时按
+  /// 组织回执收窄（票 01），null 表示未完成判断保留全部候选。
+  PendingRecallMaterial _pendingMaterialFor(
+    _LocatedEvidence located,
+    List<String>? usedIds,
+  ) {
+    final used = usedIds?.toSet();
+    return PendingRecallMaterial(
+      entries: [
+        for (final ref in located.pendingEntries)
+          if (used == null || used.contains(ref.entryId)) ref,
+      ],
+      personaPathSelections: located.personaPathSelections,
+    );
   }
 
   /// 明确使用的结果：只收回执采信的条目（票 01）。回执缺失、为空或
@@ -338,18 +507,17 @@ final class RecallOrchestrator {
       located.rawDays,
       diagnostics,
     );
-    if (usedEntries == null && located.personaPathText.isEmpty) {
+    final material = _pendingMaterialFor(
+      located,
+      // 回执不可采信时收窄为空集：只带路径素材，不搬运全部候选。
+      usedEntries ?? const [],
+    );
+    if (material.isEmpty) {
       return RecallTurnResult(bubbleText: text, diagnostics: diagnostics);
     }
     return RecallTurnResult(
       bubbleText: text,
-      pendingContext: _buildPendingContext(
-        located.rawDays,
-        // 回执不可采信时收窄为空集：只带路径素材，不搬运全部候选。
-        usedEntries ?? const [],
-        located.personaPathText,
-        diagnostics,
-      ),
+      pendingMaterial: material,
       diagnostics: diagnostics,
     );
   }
@@ -366,6 +534,52 @@ final class RecallOrchestrator {
     if (client == null) {
       diagnostics.add('recall skipped reason=no-provider');
       return null;
+    }
+    // Episode RAG（票 03）：用户显式启用后就绪查询时，语义向量定位
+    // 整体替换目录选择过程——不再选择月份、日期目录或画像路径，也不
+    // 同时走这些路径兜底。未启用时继续走下方旧目录定位。
+    final rag = episodeRag;
+    if (rag != null) {
+      switch (await rag.locate(query)) {
+        case RagNotEnabled():
+          break;
+        case RagUnavailable(:final diagnostic):
+          // 已启用但未就绪或查询失败：明确不可用，不静默回退旧路径，
+          // 也不冒充没有候选；状态由设置与聊天界面展示。
+          diagnostics.add(diagnostic);
+          return null;
+        case RagCandidates(:final hits, diagnostics: final ragDiags):
+          diagnostics.addAll(ragDiags);
+          if (hits.isEmpty) {
+            diagnostics.add('recall rag miss reason=no-candidates');
+            return null;
+          }
+          // 候选按命中日期聚合（保持余弦排名顺序），定位依据同步记入
+          // 下一轮临时材料（消费前按当前来源重核）。
+          final rawDays = <(String, List<EpisodeEntry>)>[];
+          final pendingEntries = <PendingRecallRef>[];
+          var lastDate = '';
+          for (final hit in hits) {
+            if (hit.date != lastDate) {
+              rawDays.add((hit.date, <EpisodeEntry>[]));
+              lastDate = hit.date;
+            }
+            rawDays.last.$2.add(hit.entry);
+            pendingEntries.add(
+              PendingRecallRef(
+                date: hit.date,
+                entryId: hit.entry.id,
+                expectedInputHash: hit.inputSha256,
+              ),
+            );
+          }
+          return (
+            rawDays: rawDays,
+            personaPathText: '',
+            pendingEntries: pendingEntries,
+            personaPathSelections: const <String>[],
+          );
+      }
     }
     // 记忆控制过滤贯穿全部递给模型的材料：索引关键词、回读证据与
     // 压缩注入。封禁（禁提 ∪ 删除）与冻结都不得被检索。
@@ -485,12 +699,14 @@ final class RecallOrchestrator {
     // 中间理解 + 至多 2 条叶指针」，受控过滤后的目录里做成员校验，
     // 总量受 recallPersonaPathMaxRunes 约束。先于日期证据判定——定稿
     // 的检索场景前两种（解释习惯、核对画像依据）不一定涉及具体日期，
-    // 纯画像依据的问题可以只选路径不选日期。
-    final personaPathText = _expandPersonaPaths(
+    // 纯画像依据的问题可以只选路径不选日期。通过校验的选择串一并记
+    // 下，供下一轮临时材料消费前重核。
+    final personaExpansion = _expandPersonaPaths(
       selection?.paths,
       personaCatalog,
       diagnostics,
     );
+    final personaPathText = personaExpansion.text;
     if (dates.isEmpty && personaPathText.isEmpty) {
       diagnostics.add('recall miss reason=no-date-selection');
       return null;
@@ -548,7 +764,16 @@ final class RecallOrchestrator {
       // 日期命中但证据不可读或全被封禁：画像路径素材自含依据，仍可组句。
       diagnostics.add('recall episode evidence skipped reason=no-evidence');
     }
-    return (rawDays: rawDays, personaPathText: personaPathText);
+    return (
+      rawDays: rawDays,
+      personaPathText: personaPathText,
+      pendingEntries: [
+        for (final (date, entries) in rawDays)
+          for (final entry in entries)
+            PendingRecallRef(date: date, entryId: entry.id),
+      ],
+      personaPathSelections: personaExpansion.selections,
+    );
   }
 
   /// 读取某月每日索引；缺失或损坏时整体重建（幂等）再读，仍不可读
@@ -772,17 +997,19 @@ final class RecallOrchestrator {
   /// 展开选中的画像树路径：每条 = 根主张 + 中间理解 + 至多 2 条叶指针
   /// （叶由模型在需要依据或事件细节时选）。ID 必须出自受控过滤后的
   /// 目录，编造的丢弃并记诊断（与月份/日期同一成员校验口径）。总量
-  /// 受 [recallPersonaPathMaxRunes] 约束，超预算的路径整条放弃。无
-  /// 命中时返回空串。
-  String _expandPersonaPaths(
+  /// 受 [recallPersonaPathMaxRunes] 约束，超预算的路径整条放弃。返回
+  /// 渲染文本与通过校验的选择串（供下一轮临时材料消费前重核）；无
+  /// 命中时两者皆空。
+  ({String text, List<String> selections}) _expandPersonaPaths(
     List<String>? selections,
     _PersonaCatalog? catalog,
     List<String> diagnostics,
   ) {
     if (selections == null || catalog == null || selections.isEmpty) {
-      return '';
+      return (text: '', selections: const []);
     }
     final blocks = <String>[];
+    final kept = <String>[];
     var usedRunes = 0;
     for (final selection in selections) {
       final segments = selection.split('/');
@@ -826,8 +1053,9 @@ final class RecallOrchestrator {
       }
       usedRunes += block.runes.length;
       blocks.add(block);
+      kept.add(selection);
     }
-    return blocks.join('\n');
+    return (text: blocks.join('\n'), selections: kept);
   }
 
   /// 单条画像路径的渲染（组织调用输入与下一轮临时上下文共用）。

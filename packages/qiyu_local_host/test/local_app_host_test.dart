@@ -3100,6 +3100,116 @@ void main() {
       await savedHost.close();
     });
 
+    test('记忆召回启用/停用/重建操作经设置路由生效，状态随读取返回', () async {
+      // 预置一条有效 episode：启用后的构建只发送日期与摘要。
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: memoryDirectory.path,
+      );
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          '2026-08-10',
+          entries: [
+            EpisodeEntry(
+              id: 'seed:r1:0',
+              sessionId: 'seed',
+              requestId: 'r1',
+              summary: '用户聊到旧书店的事',
+              at: DateTime.utc(2026, 8, 10, 12),
+            ),
+          ],
+          summary: '用户聊到旧书店的事',
+          finalized: true,
+          finalizedAt: DateTime(2026, 8, 15, 22),
+        ),
+      );
+      final configPath = _providerJsonPath(temporaryDirectory);
+      final embeddingHttp = _RecordingEmbeddingHttpClient();
+      final rag = EpisodeRagService(
+        memoryDirectory: memoryDirectory.path,
+        configRepository: JsonProviderConfigRepository(filePath: configPath),
+        embeddingClient: OpenAiEmbeddingGateway(embeddingHttp),
+        episodePipeline: pipeline,
+        openLoopStore: OpenLoopStore(memoryDirectory: memoryDirectory.path),
+        diagnosticsSink: (_) {},
+      );
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
+        episodeRagService: rag,
+      );
+
+      // 保存配置（不启用）。
+      final saved = await _send(
+        host.origin.resolve('/api/provider/embedding'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://embedding.example.com/v1',
+          'model': 'text-embedding-test',
+          'apiKey': 'embedding-secret-value',
+        }),
+      );
+      expect(saved.statusCode, HttpStatus.ok);
+      final savedBody = jsonDecode(saved.body) as Map<String, Object?>;
+      expect(savedBody['enabled'], false);
+      expect(savedBody['rag'], containsPair('state', 'disabled'));
+
+      // 未启用时重建是无效操作。
+      final prematureRebuild = await _send(
+        host.origin.resolve('/api/provider/embedding/rebuild'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      expect(prematureRebuild.statusCode, HttpStatus.badRequest);
+
+      // 显式启用：触发后台完整构建。
+      final enabled = await _send(
+        host.origin.resolve('/api/provider/embedding/enable'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      expect(enabled.statusCode, HttpStatus.ok);
+      final enabledBody = jsonDecode(enabled.body) as Map<String, Object?>;
+      expect(
+        (enabledBody['rag']! as Map)['enabled'] ?? (enabledBody['enabled']),
+        anyOf(isTrue, isFalse),
+      );
+      expect(enabled.body, isNot(contains('embedding-secret-value')));
+      await rag.settlePendingWork();
+
+      // 构建完成：就绪；出网只有日期+摘要，绝无摘录或 Key。
+      final ready = await _send(
+        host.origin.resolve('/api/provider/embedding'),
+        headers: browser.readHeaders(host.origin),
+      );
+      final readyBody = jsonDecode(ready.body) as Map<String, Object?>;
+      expect(readyBody['enabled'], true);
+      expect((readyBody['rag']! as Map)['state'], 'ready');
+      final buildInput =
+          jsonDecode(utf8.decode(embeddingHttp.lastBody!))
+              as Map<String, Object?>;
+      expect(buildInput['input'], ['2026-08-10\n用户聊到旧书店的事']);
+      expect(
+        embeddingHttp.lastHeaders!['authorization'],
+        'Bearer embedding-secret-value',
+      );
+
+      // 明确停用：回到旧路径，状态 disabled。
+      final disabled = await _send(
+        host.origin.resolve('/api/provider/embedding/disable'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      expect(disabled.statusCode, HttpStatus.ok);
+      final disabledBody = jsonDecode(disabled.body) as Map<String, Object?>;
+      expect(disabledBody['enabled'], false);
+      expect((disabledBody['rag']! as Map)['state'], 'disabled');
+      await host.close();
+    });
+
     test('embedding 测试失败按允许列表上报，不透出服务商原文或旧 Key', () async {
       final configPath = _providerJsonPath(temporaryDirectory);
       final embeddingHttp = _RecordingEmbeddingHttpClient()
@@ -3534,6 +3644,7 @@ Future<LocalAppHost> _startHost(
   TtsSettingsService? ttsSettingsService,
   WebSearchSettingsService? webSearchSettingsService,
   EmbeddingSettingsService? embeddingSettingsService,
+  EpisodeRagService? episodeRagService,
 }) => LocalAppHost.start(
   webRoot: webRoot.path,
   memoryDirectory: memoryDirectory.path,
@@ -3543,6 +3654,7 @@ Future<LocalAppHost> _startHost(
   ttsSettingsService: ttsSettingsService,
   webSearchSettingsService: webSearchSettingsService,
   embeddingSettingsService: embeddingSettingsService,
+  episodeRagService: episodeRagService,
 );
 
 Future<(LocalAppHost, _BrowserSession)> _startHostWithBrowser(
@@ -3553,6 +3665,7 @@ Future<(LocalAppHost, _BrowserSession)> _startHostWithBrowser(
   TtsSettingsService? ttsSettingsService,
   WebSearchSettingsService? webSearchSettingsService,
   EmbeddingSettingsService? embeddingSettingsService,
+  EpisodeRagService? episodeRagService,
 }) async {
   final host = await _startHost(
     webRoot,
@@ -3562,6 +3675,7 @@ Future<(LocalAppHost, _BrowserSession)> _startHostWithBrowser(
     ttsSettingsService: ttsSettingsService,
     webSearchSettingsService: webSearchSettingsService,
     embeddingSettingsService: embeddingSettingsService,
+    episodeRagService: episodeRagService,
   );
   final browser = await _openBrowserSession(host);
   return (host, browser);

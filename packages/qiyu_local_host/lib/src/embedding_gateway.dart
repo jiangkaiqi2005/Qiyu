@@ -27,16 +27,20 @@ final class EmbeddingGatewayException implements Exception {
   String toString() => message;
 }
 
-/// embedding 客户端的公共调用面：服务层（设置、连接测试，及后续票的
-/// 索引与查询）只认这个形状，协议分支不出 Provider 层。
+/// embedding 客户端的公共调用面：服务层（设置、连接测试、索引与查询）
+/// 只认这个形状，协议分支不出 Provider 层。
 abstract interface class EmbeddingClient {
   /// 把一批输入文本各向量化为一条向量。返回条数必须与 [inputs] 一致；
   /// 每条向量非空、长度一致且全为有限数值——零范数（全零）向量对精确
   /// 余弦不可计算，同样视为无效响应。
+  ///
+  /// [timeout] 缺省为查询时限（10 秒）；后台构建批次按 Spec 工程默认值
+  /// 传 30 秒预算，调用方各自决定，网关不隐藏差异。
   Future<List<Float32List>> embed({
     required EmbeddingConfig config,
     required String? apiKey,
     required List<String> inputs,
+    Duration? timeout,
   });
 }
 
@@ -59,6 +63,7 @@ final class OpenAiEmbeddingGateway implements EmbeddingClient {
     required EmbeddingConfig config,
     required String? apiKey,
     required List<String> inputs,
+    Duration? timeout,
   }) async {
     config.validate();
     if (inputs.isEmpty) {
@@ -85,6 +90,7 @@ final class OpenAiEmbeddingGateway implements EmbeddingClient {
       body: utf8.encode(
         jsonEncode({'model': config.model.trim(), 'input': inputs}),
       ),
+      timeout: timeout ?? embeddingRequestTimeout,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw fromEmbeddingModelFailure(
@@ -138,6 +144,7 @@ Future<({int statusCode, String body})> _postEmbeddingText({
   required Uri uri,
   required Map<String, String> headers,
   required List<int> body,
+  required Duration timeout,
 }) async {
   final ProviderHttpResponse response;
   try {
@@ -145,7 +152,7 @@ Future<({int statusCode, String body})> _postEmbeddingText({
       uri: uri,
       headers: headers,
       body: body,
-      timeout: embeddingRequestTimeout,
+      timeout: timeout,
     );
   } on TimeoutException {
     throw const EmbeddingGatewayException(

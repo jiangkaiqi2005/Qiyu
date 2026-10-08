@@ -57,7 +57,7 @@ void main() {
       );
       expect(client.maxTokens, [16384]);
       expect(result.bubbleText, isNull);
-      expect(result.pendingContext, isNull);
+      expect(result.pendingMaterial, isNull);
       expect(result.diagnostics, ['recall miss reason=no-date-selection']);
       expect(await monthFile.readAsBytes(), monthBytes);
       expect(await dayFile.readAsBytes(), dayBytes);
@@ -158,8 +158,8 @@ void main() {
       );
       expect(client.maxTokens, [16384, 16384, 16384]);
       expect(result.bubbleText, '书店那件事想起来了。');
-      expect(result.pendingContext, contains('2025-03-05'));
-      expect(result.pendingContext, contains('用户聊到旧书店的老板'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('2025-03-05'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户聊到旧书店的老板'));
       expect(result.diagnostics, [
         'recall month index supplemented month=2025-03',
       ]);
@@ -242,9 +242,9 @@ void main() {
         expect(client.calls.last.last.content, contains('上回在旧书店挑了本画册'));
         expect(client.maxTokens, [16384, 16384]);
         expect(result.bubbleText, '想起来了，你在书店挑了本画册。');
-        expect(result.pendingContext, contains('2026-08-10'));
-        expect(result.pendingContext, contains('用户聊到旧书店的老板'));
-        expect(result.pendingContext, contains('上回在旧书店挑了本画册'));
+        expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('2026-08-10'));
+        expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户聊到旧书店的老板'));
+        expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('上回在旧书店挑了本画册'));
         expect(result.diagnostics, isEmpty);
         expect(await recall.indexStore.topIndexFile.readAsBytes(), monthBytes);
         expect(
@@ -312,8 +312,8 @@ void main() {
       expect(selection, contains('散步, {"count":42}, 12345678 | 2026-08-10.md'));
       expect(client.maxTokens, [16384, 16384]);
       expect(result.bubbleText, '想起来了，你去了河边。');
-      expect(result.pendingContext, contains('2026-08-10'));
-      expect(result.pendingContext, contains('用户傍晚去河边散步'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('2026-08-10'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户傍晚去河边散步'));
       expect(result.diagnostics, isEmpty);
       expect(await monthFile.readAsBytes(), monthBytes);
       expect(await dayFile.readAsBytes(), dayBytes);
@@ -387,7 +387,7 @@ void main() {
           contains('recall index line hidden reason=blocked'),
         );
         expect(result.bubbleText, isNull);
-        expect(result.pendingContext, isNull);
+        expect(result.pendingMaterial, isNull);
         expect(await monthFile.readAsBytes(), monthBytes);
         expect(await dayFile.readAsBytes(), dayBytes);
       },
@@ -418,11 +418,11 @@ void main() {
 
     // 命中：bubble 2 候选 + 压缩结果都在。
     expect(result.bubbleText, '是想起来了，演讲那件事。');
-    expect(result.pendingContext, contains('2026-07-02'));
-    expect(result.pendingContext, contains('第一次演讲'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('2026-07-02'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('第一次演讲'));
     // 压缩结果带原话摘录，但标注只是临时参考。
-    expect(result.pendingContext, contains('下周第一次演讲，好紧张'));
-    expect(result.pendingContext, contains('临时参考'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('下周第一次演讲，好紧张'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('临时参考'));
 
     // 调用2 收到顶层索引与近期每日索引；调用3 收到回读的日原文。
     final client = recall.modelClient! as ScriptedChatClient;
@@ -592,7 +592,7 @@ void main() {
     );
 
     expect(result.bubbleText, isNull);
-    expect(result.pendingContext, isNull);
+    expect(result.pendingMaterial, isNull);
     expect(result.diagnostics.join('\n'), contains('no-date-selection'));
     expect((recall.modelClient! as ScriptedChatClient).calls, hasLength(1));
   });
@@ -611,7 +611,7 @@ void main() {
     );
 
     expect(result.bubbleText, isNull);
-    expect(result.pendingContext, isNull);
+    expect(result.pendingMaterial, isNull);
     expect(result.diagnostics.join('\n'), contains('reason=no-provider'));
   });
 
@@ -677,7 +677,7 @@ void main() {
     );
 
     expect(result.bubbleText, '火锅想起来了。');
-    expect(result.pendingContext, contains('2026-08-14'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('2026-08-14'));
     expect(File('${root.path}/episodes/index.md').existsSync(), isTrue);
   });
 
@@ -713,7 +713,7 @@ void main() {
     );
 
     expect(result.bubbleText, isNull);
-    expect(result.pendingContext, isNull);
+    expect(result.pendingMaterial, isNull);
     // 唯一月份的索引行关键词全部被禁：顶层目录直接为空，任何模型
     // 调用都不发生，被禁内容绝不递给模型。
     expect(result.diagnostics.join('\n'), contains('reason=blocked'));
@@ -755,9 +755,9 @@ void main() {
 
       // 摘要未命中禁提得以保留，命中的原话摘录整段丢掉。
       expect(result.bubbleText, '想起来了。');
-      expect(result.pendingContext, contains('用户说周末有安排'));
-      expect(result.pendingContext, isNot(contains('医院检查')));
-      expect(result.pendingContext, isNot(contains('原话摘录')));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户说周末有安排'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('医院检查')));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('原话摘录')));
       final composeInput =
           (recall.modelClient! as ScriptedChatClient).calls[1].last.content;
       expect(composeInput, contains('用户说周末有安排'));
@@ -803,7 +803,7 @@ void main() {
       expect(selectionInput, isNot(contains('2026-07-03')));
       expect(selectionInput, contains('2026-08-10'));
       expect(result.bubbleText, isNull);
-      expect(result.pendingContext, isNull);
+      expect(result.pendingMaterial, isNull);
       final diagnostics = result.diagnostics.join('\n');
       expect(diagnostics, contains('index line hidden reason=blocked'));
       expect(diagnostics, contains('not-in-passed-index'));
@@ -840,7 +840,7 @@ void main() {
     );
 
     expect(result.bubbleText, isNull);
-    expect(result.pendingContext, isNull);
+    expect(result.pendingMaterial, isNull);
     expect(result.diagnostics.join('\n'), contains('reason=no-evidence'));
   });
 
@@ -866,7 +866,7 @@ void main() {
       );
 
       expect(result.bubbleText, isNull);
-      expect(result.pendingContext, contains('第一次演讲'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('第一次演讲'));
     },
   );
 
@@ -897,7 +897,7 @@ void main() {
       // 明确拒绝（票 01）：不补气泡，也不把候选并入下一轮；
       // 拒绝不改写任何记忆。
       expect(result.bubbleText, isNull);
-      expect(result.pendingContext, isNull);
+      expect(result.pendingMaterial, isNull);
       expect(
         result.diagnostics,
         contains('recall compose rejected reason=model-sentinel'),
@@ -930,7 +930,7 @@ void main() {
       );
 
       expect(result.bubbleText, isNull);
-      expect(result.pendingContext, contains('用户准备第一次演讲'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户准备第一次演讲'));
       expect(
         result.diagnostics.join('\n'),
         contains('recall compose empty reason=unparseable'),
@@ -987,11 +987,11 @@ void main() {
       expect(composeInput, contains('- [seed:1:0] 用户说周末要去爬山'));
       expect(result.bubbleText, '想起来了，你周末打算去爬山。');
       // 下一轮临时上下文：条目级相关性只收回声明的条目，路径素材并入。
-      expect(result.pendingContext, contains('画像树路径'));
-      expect(result.pendingContext, contains('用户喜欢晚上散步'));
-      expect(result.pendingContext, contains('用户习惯周末看纪录片'));
-      expect(result.pendingContext, contains('2026-08-10'));
-      expect(result.pendingContext, contains('用户说周末要去爬山'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('画像树路径'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户喜欢晚上散步'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户习惯周末看纪录片'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('2026-08-10'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户说周末要去爬山'));
       expect(result.diagnostics, isEmpty);
     },
   );
@@ -1025,7 +1025,7 @@ void main() {
       contains('path=VA-R001/VA-M001 reason=not-in-passed-index'),
     );
     // 合法路径照常展开。
-    expect(result.pendingContext, contains('用户喜欢晚上散步'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户喜欢晚上散步'));
   });
 
   test('selected leaf pointers expand with the path', () async {
@@ -1095,7 +1095,7 @@ void main() {
       result.diagnostics.join('\n'),
       contains('recall persona path dropped root=PR-R002 reason=over-budget'),
     );
-    expect(result.pendingContext, isNot(contains('PR-R002')));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('PR-R002')));
   });
 
   test(
@@ -1145,9 +1145,9 @@ void main() {
         diagnostics,
         contains('path=PR-R001/PR-M002 reason=not-in-passed-index'),
       );
-      expect(result.pendingContext, contains('用户说周末要去爬山'));
-      expect(result.pendingContext, isNot(contains('画像树路径')));
-      expect(result.pendingContext, isNot(contains('晚上散步')));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户说周末要去爬山'));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('画像树路径')));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('晚上散步')));
     },
   );
 
@@ -1199,7 +1199,7 @@ void main() {
         diagnostics,
         contains('path=PR-R001/PR-M002 reason=not-in-passed-index'),
       );
-      expect(result.pendingContext, isNot(contains('画像树路径')));
+      expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('画像树路径')));
     },
   );
 
@@ -1227,7 +1227,7 @@ void main() {
       result.diagnostics.join('\n'),
       contains('recall compose dropped [hidden_action_invalid_format]'),
     );
-    expect(result.pendingContext, isNull);
+    expect(result.pendingMaterial, isNull);
   });
 
   test('archived persona paths never enter the recall catalog', () async {
@@ -1260,7 +1260,7 @@ void main() {
       result.diagnostics.join('\n'),
       contains('path=PR-R009/PR-M009 reason=not-in-passed-index'),
     );
-    expect(result.pendingContext, contains('用户喜欢晚上散步'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户喜欢晚上散步'));
   });
 
   test(
@@ -1325,8 +1325,8 @@ void main() {
     );
 
     // 条目级相关性：只收组织气泡声明用到的条目，不再全量 dump。
-    expect(result.pendingContext, contains('用户说周末要去爬山'));
-    expect(result.pendingContext, isNot(contains('登山包')));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户说周末要去爬山'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('登山包')));
     expect(result.diagnostics, isEmpty);
   });
 
@@ -1358,7 +1358,7 @@ void main() {
         'recall entry dropped id=seed:9:9 reason=not-in-passed-evidence',
       ),
     );
-    expect(result.pendingContext, isNull);
+    expect(result.pendingMaterial, isNull);
   });
 
   test('an empty entry receipt does not expand to the dump', () async {
@@ -1384,7 +1384,7 @@ void main() {
     );
 
     expect(result.bubbleText, '想起来了。');
-    expect(result.pendingContext, isNull);
+    expect(result.pendingMaterial, isNull);
   });
 
   test(
@@ -1409,7 +1409,7 @@ void main() {
       );
 
       expect(result.bubbleText, '想起来了。');
-      expect(result.pendingContext, isNull);
+      expect(result.pendingMaterial, isNull);
     },
   );
 
@@ -1439,14 +1439,21 @@ void main() {
       recallActions: [MemoryRecallAction(query: '聊天')],
     );
 
+    // 预算封顶发生在消费渲染时：30 条候选整体留给下一轮，注入时只装
+    // 得下开头几条，超预算的后续条目放弃并记诊断。
+    final diagnostics = <String>[];
+    final rendered = await recall.verifyAndRenderPending(
+      result.pendingMaterial!,
+      onDiagnostic: diagnostics.add,
+    );
     expect(
-      result.diagnostics.join('\n'),
+      diagnostics.join('\n'),
       contains('recall pending context truncated reason=over-budget'),
     );
-    expect(result.pendingContext, contains('第0件事'));
-    expect(result.pendingContext, isNot(contains('第29件事')));
+    expect(rendered, contains('第0件事'));
+    expect(rendered, isNot(contains('第29件事')));
     expect(
-      result.pendingContext!.runes.length,
+      rendered!.runes.length,
       lessThan(recallPendingContextMaxRunes + 200),
     );
   });
@@ -1482,9 +1489,9 @@ void main() {
       contains('recall episode evidence skipped reason=no-evidence'),
     );
     expect(result.bubbleText, '可能因为你平时就喜欢晚上散步。');
-    expect(result.pendingContext, contains('画像树路径'));
-    expect(result.pendingContext, contains('用户喜欢晚上散步'));
-    expect(result.pendingContext, isNot(contains('爬山')));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('画像树路径'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户喜欢晚上散步'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('爬山')));
   });
 
   test('a persona-basis question recalls paths without any date', () async {
@@ -1514,10 +1521,10 @@ void main() {
     expect(composeInput, isNot(contains('## 查到的记录')));
     expect(result.bubbleText, '可能因为你平时就喜欢晚上散步。');
     // 下一轮临时上下文只带路径素材，没有 episode 记录。
-    expect(result.pendingContext, contains('画像树路径'));
-    expect(result.pendingContext, contains('用户喜欢晚上散步'));
-    expect(result.pendingContext, isNot(contains('2026-08-10')));
-    expect(result.pendingContext, isNot(contains('爬山')));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('画像树路径'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户喜欢晚上散步'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('2026-08-10')));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('爬山')));
     expect(result.diagnostics, isEmpty);
   });
 
@@ -1541,8 +1548,8 @@ void main() {
 
     // 组织调用失败：气泡没有，路径素材仍以降级形态留给下一轮。
     expect(result.bubbleText, isNull);
-    expect(result.pendingContext, contains('画像树路径'));
-    expect(result.pendingContext, contains('用户喜欢晚上散步'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('画像树路径'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户喜欢晚上散步'));
   });
 
   test('a blocked leaf never reaches the index or the context', () async {
@@ -1593,7 +1600,7 @@ void main() {
     final composeInput = client.calls[1].last.content;
     expect(composeInput, contains('- 根 [PR-R001] 用户喜欢晚上散步'));
     expect(composeInput, isNot(contains('叶 [PR-L004]')));
-    expect(result.pendingContext, isNot(contains('走了一圈')));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('走了一圈')));
   });
 
   test('multiple entry receipts keep only the first action', () async {
@@ -1622,27 +1629,53 @@ void main() {
       recallActions: [MemoryRecallAction(query: '爬山')],
     );
 
-    expect(result.pendingContext, contains('用户说周末要去爬山'));
-    expect(result.pendingContext, isNot(contains('登山包')));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), contains('用户说周末要去爬山'));
+    expect(await recall.verifyAndRenderPending(result.pendingMaterial!), isNot(contains('登山包')));
   });
 
-  test('pending context is one-shot per session and latest wins', () {
-    final root = Directory.systemTemp.createTempSync('qiyu-recall-pending-');
+  test('pending material is one-shot per session and latest wins', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [
+        _entry('seed:1:0', '用户说周末要去爬山'),
+        _entry('seed:1:1', '用户聊到旧书店的事'),
+      ],
+    });
+    addTearDown(() => root.delete(recursive: true));
     final recall = RecallOrchestrator(
       memoryDirectory: root.path,
       episodePipeline: EpisodeMemoryPipeline(memoryDirectory: root.path),
     );
+    final first = PendingRecallMaterial(
+      entries: const [
+        PendingRecallRef(date: '2026-08-10', entryId: 'seed:1:0'),
+      ],
+    );
+    final second = PendingRecallMaterial(
+      entries: const [
+        PendingRecallRef(date: '2026-08-10', entryId: 'seed:1:1'),
+      ],
+    );
 
-    recall.storePendingContext('session-1', '旧结果');
-    recall.storePendingContext('session-1', '新结果');
-    expect(recall.consumePendingContext('session-1'), '新结果');
-    expect(recall.consumePendingContext('session-1'), isNull);
-    expect(recall.consumePendingContext('session-2'), isNull);
+    recall.storePendingContext('session-1', first);
+    recall.storePendingContext('session-1', second);
+    expect(
+      (await recall.consumePendingContext('session-1')).material?.entries
+          .single
+          .entryId,
+      'seed:1:1',
+    );
+    expect((await recall.consumePendingContext('session-1')).material, isNull);
+    expect((await recall.consumePendingContext('session-2')).material, isNull);
 
     // restore 不覆盖已有命中。
-    recall.storePendingContext('session-1', '命中');
-    recall.restorePendingContext('session-1', '放回');
-    expect(recall.consumePendingContext('session-1'), '命中');
+    recall.storePendingContext('session-1', first);
+    recall.restorePendingContext('session-1', second);
+    expect(
+      (await recall.consumePendingContext('session-1')).material?.entries
+          .single
+          .entryId,
+      'seed:1:0',
+    );
   });
 }
 

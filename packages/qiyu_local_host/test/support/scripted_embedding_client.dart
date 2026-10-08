@@ -1,0 +1,90 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:qiyu_local_host/src/embedding_gateway.dart';
+import 'package:qiyu_local_host/src/provider_config.dart';
+
+/// 静态 embedding 配置仓储：内存现值 + 事务直通（票 02/03 测试共用）。
+final class StaticEmbeddingConfigRepository
+    implements EmbeddingConfigRepository {
+  StaticEmbeddingConfigRepository(this.config);
+
+  EmbeddingConfig? config;
+
+  @override
+  Future<EmbeddingConfig?> loadEmbedding() async => config;
+
+  @override
+  Future<void> saveEmbedding(EmbeddingConfig config) async =>
+      this.config = config;
+
+  @override
+  Future<T> runTransaction<T>(Future<T> Function() action) => action();
+}
+
+/// 脚本化 embedding 客户端：按输入映射向量，支持批响应脚本、失败注入
+/// 与批闸门（维护竞态用例）。查询与构建请求的区分按「单条输入且不在
+/// 构建向量表内」启发：测试把真实查询词写进 [queryVectors] 即可。
+final class ScriptedEmbeddingClient implements EmbeddingClient {
+  ScriptedEmbeddingClient({
+    required this.vectors,
+    this.queryVectors = const {},
+    this.batchResponses,
+    this.failures = const [],
+    this.queryFailures = const [],
+    this.batchGate,
+  });
+
+  /// 构建输入（日期+换行+摘要）到向量的映射。
+  final Map<String, List<double>> vectors;
+
+  /// 查询词到向量的映射；缺省回退 [1.0, 0.0]。
+  final Map<String, List<double>> queryVectors;
+
+  /// 按调用次序消费的批响应脚本（跨批维度不一致等场景）。
+  final List<List<List<double>>>? batchResponses;
+
+  /// 构建请求按次序抛出的失败。
+  final List<EmbeddingGatewayException> failures;
+
+  /// 查询请求按次序抛出的失败。
+  final List<EmbeddingGatewayException> queryFailures;
+
+  /// 构建请求在响应前等待的闸门（维护竞态用例）。
+  final Completer<void>? batchGate;
+
+  final List<List<String>> calls = [];
+
+  @override
+  Future<List<Float32List>> embed({
+    required EmbeddingConfig config,
+    required String? apiKey,
+    required List<String> inputs,
+    Duration? timeout,
+  }) async {
+    calls.add(inputs);
+    final isQuery = inputs.length == 1 && !vectors.containsKey(inputs.single);
+    if (batchGate != null && !isQuery) {
+      await batchGate!.future;
+    }
+    if (isQuery && queryFailures.isNotEmpty) {
+      throw queryFailures.removeAt(0);
+    }
+    if (!isQuery && failures.isNotEmpty) {
+      throw failures.removeAt(0);
+    }
+    if (batchResponses case final responses? when responses.isNotEmpty) {
+      return [
+        for (final vector in responses.removeAt(0))
+          Float32List.fromList(vector),
+      ];
+    }
+    return [
+      for (final input in inputs)
+        Float32List.fromList(
+          (isQuery ? queryVectors[input] : vectors[input]) ??
+              const [1.0, 0.0],
+        ),
+    ];
+  }
+}

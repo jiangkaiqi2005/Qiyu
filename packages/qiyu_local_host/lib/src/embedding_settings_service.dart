@@ -57,7 +57,13 @@ final class EmbeddingSettingsService {
     await configRepository.runTransaction(() async {
       final previous = await configRepository.loadEmbedding();
       final persistedKey = _selectApiKey(config, previous, apiKey);
-      await configRepository.saveEmbedding(config.withApiKey(persistedKey));
+      // 保存不改启用位（Spec：保存配置与启用分开）：启用状态原样保留，
+      // 由显式的启用/停用操作改写。
+      await configRepository.saveEmbedding(
+        config
+            .withApiKey(persistedKey)
+            .withEnabled(previous?.enabled ?? false),
+      );
     });
     return read();
   }

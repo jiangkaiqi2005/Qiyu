@@ -20,6 +20,7 @@ import 'dream.dart';
 import 'embedding_gateway.dart';
 import 'embedding_settings_service.dart';
 import 'episode_memory.dart';
+import 'episode_rag_service.dart';
 import 'hidden_action_executor.dart';
 import 'local_chat_service.dart';
 import 'local_data_service.dart';
@@ -111,6 +112,7 @@ final class LocalAppHost {
     SttSettingsService? sttSettingsService,
     TtsSettingsService? ttsSettingsService,
     EmbeddingSettingsService? embeddingSettingsService,
+    EpisodeRagService? episodeRagService,
     // 时钟、原子写入、交付停顿与诊断出口沿用各组件既有的注入接缝，
     // 缺省全部走生产默认；测试由此在真路径上获得确定性。
     Clock? clock,
@@ -198,8 +200,9 @@ final class LocalAppHost {
           ),
         );
     // 记忆召回（Episode RAG）embedding 设置：独立 embedding 段与出网
-    // 客户端（ADR 0027）。保存／测试／忘记 Key 不启用 RAG，真正启用、
-    // 索引与召回由后续票接入。
+    // 客户端（ADR 0027）。保存／测试／忘记 Key 不启用 RAG；显式启用后
+    // 由 [EpisodeRagService] 完成索引构建与语义定位（票 03）。服务实例
+    // 由组合根创建一个，文字轮内召回与实时查找共享；测试可整体注入。
     final effectiveEmbeddingSettings =
         embeddingSettingsService ??
         EmbeddingSettingsService(
@@ -249,6 +252,22 @@ final class LocalAppHost {
       openLoopStore: openLoopStore,
       atomicWriter: atomicWriter,
     );
+    // Episode RAG 服务（票 03）：显式启用后承担向量索引构建与语义定位。
+    // 组合根创建一个实例，文字轮内召回、实时查找与设置操作共享。
+    final effectiveEpisodeRag =
+        episodeRagService ??
+        EpisodeRagService(
+          memoryDirectory: memoryDirectory,
+          configRepository: providerConfigRepository,
+          // embedding 出网与语音家族同律直连（不经聊天代理分叉）。
+          embeddingClient: const OpenAiEmbeddingGateway(
+            DartIoProviderHttpClient(),
+          ),
+          episodePipeline: episodePipeline,
+          openLoopStore: openLoopStore,
+          diagnosticsSink: diagnosticsSink ?? stderrDiagnostics,
+          atomicWriter: atomicWriter,
+        );
     // 月压缩由后台任务链触发（五段节奏第四动作），共享同一实例。
     final monthlySummary = MonthlySummaryStore(
       memoryDirectory: memoryDirectory,
@@ -356,6 +375,9 @@ final class LocalAppHost {
         // 画像树路径检索（Memory 注入定稿）：与选日同一调用顺带选路；
         // 树不可用或读取失败时路径检索静默跳过，episode 链路照常。
         personaTree: personaTree,
+        // Episode RAG（票 03）：用户显式启用后就绪查询时语义定位替换
+        // 目录选择；未启用时调用方走旧定位。组合根唯一实例。
+        episodeRag: effectiveEpisodeRag,
       ),
       personaTree: personaTree,
       statePackReader: StatePackReader(
@@ -363,6 +385,7 @@ final class LocalAppHost {
         openLoopStore: openLoopStore,
         clock: clock,
       ),
+      embeddingRecall: effectiveEpisodeRag,
     );
     final chatService = LocalChatService(
       memoryRepository,
@@ -470,6 +493,7 @@ final class LocalAppHost {
         sttSettingsService: effectiveSttSettings,
         ttsSettingsService: effectiveTtsSettings,
         embeddingSettingsService: effectiveEmbeddingSettings,
+        episodeRagService: effectiveEpisodeRag,
         experienceRepository: experienceRepository,
         developerDiagnostics: developerDiagnostics,
         requestDiagnostics: requestDiagnostics,
