@@ -53,6 +53,12 @@ final class ScriptedEmbeddingClient implements EmbeddingClient {
   /// 构建请求在响应前等待的闸门（维护竞态用例）。
   final Completer<void>? batchGate;
 
+  /// 查询请求在响应前等待的闸门（实时迟到结果用例，票 07）；置位后
+  /// 查询在网关上等待放行。[queryEntered] 在首次入闸时完成，供测试
+  /// 确定性等待「查询已在途」。
+  Completer<void>? queryGate;
+  final Completer<void> queryEntered = Completer<void>();
+
   final List<List<String>> calls = [];
 
   @override
@@ -66,6 +72,12 @@ final class ScriptedEmbeddingClient implements EmbeddingClient {
     final isQuery = inputs.length == 1 && !vectors.containsKey(inputs.single);
     if (batchGate != null && !isQuery) {
       await batchGate!.future;
+    }
+    if (isQuery && queryGate != null) {
+      if (!queryEntered.isCompleted) {
+        queryEntered.complete();
+      }
+      await queryGate!.future;
     }
     if (isQuery && queryFailures.isNotEmpty) {
       throw queryFailures.removeAt(0);

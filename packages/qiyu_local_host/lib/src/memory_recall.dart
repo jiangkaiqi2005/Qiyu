@@ -106,6 +106,59 @@ final class RecallTurnResult {
   final List<String> diagnostics;
 }
 
+/// 实时会话 memory_recall 工具的查找结果（票 07 三态）：有候选材料、
+/// 当前没有有效候选，或这次查找没能完成，三者不得互相冒充——有候选
+/// 只是后台整理记录，是否相关由会话内回答模型判断；已启用但准备中/
+/// 需重建/查询失败不回退旧路径，也不当作没有记忆。
+sealed class RealtimeRecallResult {
+  const RealtimeRecallResult({this.diagnostics = const []});
+
+  /// 本机诊断（只进 sink，不回给会话模型）。
+  final List<String> diagnostics;
+}
+
+/// 查找返回了候选：压缩后的临时上下文交回答模型自行取舍。
+final class RealtimeRecallFound extends RealtimeRecallResult {
+  const RealtimeRecallFound({required this.context, super.diagnostics});
+
+  final String context;
+}
+
+/// 查找正常完成，但当前没有可回读的有效候选证据。
+final class RealtimeRecallEmpty extends RealtimeRecallResult {
+  const RealtimeRecallEmpty({super.diagnostics});
+}
+
+/// 已启用 RAG 但这次查找没能完成（准备中、需重建、凭据缺口或查询
+/// 失败）：明确不可用，不是没有候选。
+final class RealtimeRecallUnavailable extends RealtimeRecallResult {
+  const RealtimeRecallUnavailable({super.diagnostics});
+}
+
+/// RAG 定位步的内部结论（文字轮内召回与实时查找共用同一定位入口）：
+/// 未启用走旧目录；已启用但不可用（诊断已记）不回退；就绪查询完成
+/// 时给出候选材料（空命中为 null）。
+sealed class _RagLocateStep {
+  const _RagLocateStep();
+}
+
+/// 未启用 RAG：调用方继续旧目录定位。
+final class _RagNotActive extends _RagLocateStep {
+  const _RagNotActive();
+}
+
+/// 已启用但当前不可用：诊断已记，定位终止。
+final class _RagDown extends _RagLocateStep {
+  const _RagDown();
+}
+
+/// 就绪查询完成：候选定位材料，空命中为 null。
+final class _RagLocated extends _RagLocateStep {
+  const _RagLocated(this.located);
+
+  final _LocatedEvidence? located;
+}
+
 /// 组织调用的三态判断（票 01）：明确使用、明确拒绝与未完成判断必须
 /// 分开——明确拒绝不补气泡也不建立下一轮候选，未完成判断不冒充拒绝，
 /// 明确使用按有效回执收窄下一轮材料。
@@ -382,35 +435,62 @@ final class RecallOrchestrator {
     }
   }
 
-  /// 实时会话的后台查找（T03）：与轮内召回同一套两级索引、受控过滤与
-  /// 压缩预算定位证据，但不组气泡——命中证据压缩成临时上下文后由调用
-  /// 方回填给实时会话的 memory_recall 工具，是否补充、怎么说由会话内
-  /// 模型结合最新话题决定（spec:54，选择小调用仍走选中 Provider，不换
-  /// 模型）。绝不抛出：任何异常都降级为无结果并记诊断。
-  Future<({String? context, List<String> diagnostics})> lookupForRealtime({
+  /// 实时会话的后台查找（T03；票 07 三态）：与轮内召回同一套定位、
+  /// 受控过滤与压缩预算——启用 RAG 时经组合根注入的同一共享实例语义
+  /// 定位（不依赖文字选择小调用的模型客户端），未启用走旧目录定位，
+  /// 但不组气泡——命中证据压缩成临时上下文后由调用方回填给实时会话
+  /// 的 memory_recall 工具，是否补充、怎么说由会话内模型结合最新话题
+  /// 决定（spec:54，选择小调用仍走选中 Provider，不换模型）。结果三
+  /// 态分开（票 07）：已启用但准备中/需重建/查询失败明确不可用，不
+  /// 回退旧路径，也不冒充没有候选；旧路径失败沿用「降级为无结果」
+  /// 的既有语义。绝不抛出：任何异常都降级为无结果并记诊断。
+  Future<RealtimeRecallResult> lookupForRealtime({
     required String query,
     required String userText,
   }) async {
     final diagnostics = <String>[];
     try {
-      if (modelClient == null) {
-        diagnostics.add('recall skipped reason=no-provider');
-        return (context: null, diagnostics: diagnostics);
-      }
       final cleanQuery = sanitizeUserInput(query).trim();
       if (cleanQuery.isEmpty) {
         diagnostics.add('recall skipped reason=empty-query');
-        return (context: null, diagnostics: diagnostics);
+        return RealtimeRecallEmpty(diagnostics: diagnostics);
       }
-      final located = await _locateEvidence(
+      switch (await _locateViaRag(cleanQuery, diagnostics)) {
+        case _RagDown():
+          return RealtimeRecallUnavailable(diagnostics: diagnostics);
+        case _RagLocated(:final located):
+          if (located == null) {
+            return RealtimeRecallEmpty(diagnostics: diagnostics);
+          }
+          return RealtimeRecallFound(
+            context: _buildPendingContext(
+              located.rawDays,
+              null,
+              located.personaPathText,
+              diagnostics,
+            ),
+            diagnostics: diagnostics,
+          );
+        case _RagNotActive():
+          break;
+      }
+      // 旧目录定位的选择小调用走选中 Provider：未配置时整个轮内循环
+      // 静默跳过（未配置 Provider 不召回，保持现状）。
+      final client = modelClient;
+      if (client == null) {
+        diagnostics.add('recall skipped reason=no-provider');
+        return RealtimeRecallEmpty(diagnostics: diagnostics);
+      }
+      final located = await _locateViaCatalog(
+        client: client,
         query: cleanQuery,
         userText: userText,
         diagnostics: diagnostics,
       );
       if (located == null) {
-        return (context: null, diagnostics: diagnostics);
+        return RealtimeRecallEmpty(diagnostics: diagnostics);
       }
-      return (
+      return RealtimeRecallFound(
         context: _buildPendingContext(
           located.rawDays,
           null,
@@ -421,7 +501,7 @@ final class RecallOrchestrator {
       );
     } on Object catch (error) {
       diagnostics.add('recall deferred [$error]');
-      return (context: null, diagnostics: diagnostics);
+      return RealtimeRecallEmpty(diagnostics: diagnostics);
     }
   }
 
@@ -543,52 +623,89 @@ final class RecallOrchestrator {
       diagnostics.add('recall skipped reason=no-provider');
       return null;
     }
-    // Episode RAG（票 03）：用户显式启用后就绪查询时，语义向量定位
-    // 整体替换目录选择过程——不再选择月份、日期目录或画像路径，也不
-    // 同时走这些路径兜底。未启用时继续走下方旧目录定位。
-    final rag = episodeRag;
-    if (rag != null) {
-      switch (await rag.locate(query)) {
-        case RagNotEnabled():
-          break;
-        case RagUnavailable(:final diagnostic):
-          // 已启用但未就绪或查询失败：明确不可用，不静默回退旧路径，
-          // 也不冒充没有候选；状态由设置与聊天界面展示。
-          diagnostics.add(diagnostic);
-          return null;
-        case RagCandidates(:final hits, diagnostics: final ragDiags):
-          diagnostics.addAll(ragDiags);
-          if (hits.isEmpty) {
-            diagnostics.add('recall rag miss reason=no-candidates');
-            return null;
-          }
-          // 候选按命中日期聚合（保持余弦排名顺序），定位依据同步记入
-          // 下一轮临时材料（消费前按当前来源重核）。
-          final rawDays = <(String, List<EpisodeEntry>)>[];
-          final pendingEntries = <PendingRecallRef>[];
-          var lastDate = '';
-          for (final hit in hits) {
-            if (hit.date != lastDate) {
-              rawDays.add((hit.date, <EpisodeEntry>[]));
-              lastDate = hit.date;
-            }
-            rawDays.last.$2.add(hit.entry);
-            pendingEntries.add(
-              PendingRecallRef(
-                date: hit.date,
-                entryId: hit.entry.id,
-                expectedInputHash: hit.inputSha256,
-              ),
-            );
-          }
-          return (
-            rawDays: rawDays,
-            personaPathText: '',
-            pendingEntries: pendingEntries,
-            personaPathSelections: const <String>[],
-          );
-      }
+    switch (await _locateViaRag(query, diagnostics)) {
+      case _RagDown():
+        return null;
+      case _RagLocated(:final located):
+        return located;
+      case _RagNotActive():
+        break;
     }
+    return _locateViaCatalog(
+      client: client,
+      query: query,
+      userText: userText,
+      diagnostics: diagnostics,
+    );
+  }
+
+  /// RAG 定位步（票 03/07，文字轮内召回与实时查找共用同一定位）：
+  /// 用户显式启用后就绪查询时，语义向量定位整体替换目录选择过程——
+  /// 不再选择月份、日期目录或画像路径，也不同时走这些路径兜底。
+  /// 未启用时返回 [_RagNotActive]，调用方继续走旧目录定位。
+  Future<_RagLocateStep> _locateViaRag(
+    String cleanQuery,
+    List<String> diagnostics,
+  ) async {
+    final rag = episodeRag;
+    if (rag == null) {
+      return const _RagNotActive();
+    }
+    switch (await rag.locate(cleanQuery)) {
+      case RagNotEnabled():
+        return const _RagNotActive();
+      case RagUnavailable(:final diagnostic):
+        // 已启用但未就绪或查询失败：明确不可用，不静默回退旧路径，
+        // 也不冒充没有候选；状态由设置与聊天界面展示。
+        diagnostics.add(diagnostic);
+        return const _RagDown();
+      case RagCandidates(:final hits, diagnostics: final ragDiags):
+        diagnostics.addAll(ragDiags);
+        if (hits.isEmpty) {
+          diagnostics.add('recall rag miss reason=no-candidates');
+          return const _RagLocated(null);
+        }
+        return _RagLocated(_locatedFromRagHits(hits));
+    }
+  }
+
+  /// RAG 命中聚合成定位材料：候选按命中日期聚合（保持余弦排名顺序），
+  /// 定位依据同步记入下一轮临时材料（消费前按当前来源重核）。
+  _LocatedEvidence _locatedFromRagHits(List<EpisodeRagHit> hits) {
+    final rawDays = <(String, List<EpisodeEntry>)>[];
+    final pendingEntries = <PendingRecallRef>[];
+    var lastDate = '';
+    for (final hit in hits) {
+      if (hit.date != lastDate) {
+        rawDays.add((hit.date, <EpisodeEntry>[]));
+        lastDate = hit.date;
+      }
+      rawDays.last.$2.add(hit.entry);
+      pendingEntries.add(
+        PendingRecallRef(
+          date: hit.date,
+          entryId: hit.entry.id,
+          expectedInputHash: hit.inputSha256,
+        ),
+      );
+    }
+    return (
+      rawDays: rawDays,
+      personaPathText: '',
+      pendingEntries: pendingEntries,
+      personaPathSelections: const <String>[],
+    );
+  }
+
+  /// 旧目录定位（未启用 RAG 的路径）：两级索引递回 → 模型选择月份/
+  /// 日期与画像路径（成员校验）→ 回读选中日原始证据。调用方已确保
+  /// [client] 非空（选择小调用的前提）。
+  Future<_LocatedEvidence?> _locateViaCatalog({
+    required ProviderChatClient client,
+    required String query,
+    required String userText,
+    required List<String> diagnostics,
+  }) async {
     // 记忆控制过滤贯穿全部递给模型的材料：索引关键词、回读证据与
     // 压缩注入。封禁（禁提 ∪ 删除）与冻结都不得被检索。
     final banned = await _blockedTitles();

@@ -7,6 +7,7 @@ import 'chat_memory_module.dart';
 import 'hidden_action_executor.dart';
 import 'local_chat_service.dart' show bedtimeSignalPattern;
 import 'markdown_memory_repository.dart';
+import 'memory_recall.dart';
 import 'memory_text_primitives.dart';
 import 'model_gateway.dart';
 import 'model_prompt_builder.dart';
@@ -768,31 +769,36 @@ final class OmniRealtimeCallService {
     _maybeContinueAfterTool(turn);
   }
 
-  /// 回忆工具的后台执行：两级索引查找（选择小调用仍走选中 Provider，
-  /// 不换模型，spec:54）→ 证据压缩 → 回填 → 视抢占情况请求续答。
+  /// 回忆工具的后台执行：与轮内召回同一套定位（票 07：启用 RAG 时经
+  /// 共享服务语义定位，未启用走旧目录查找；选择小调用仍走选中
+  /// Provider，不换模型，spec:54）→ 证据压缩 → 三态回填（有候选／无
+  /// 有效候选／暂不可用，不互相冒充）→ 视抢占情况请求续答。
   Future<void> _runRecallTool(
     _CallTurn turn,
     OmniRealtimeSession session,
     String callId,
     MemoryRecallAction action,
   ) async {
-    final lookup = await memory.memoryRecall.lookupForRealtime(
+    final result = await memory.memoryRecall.lookupForRealtime(
       query: action.query,
       userText: turn.typedText ?? turn.transcript,
     );
-    for (final diagnostic in lookup.diagnostics) {
+    for (final diagnostic in result.diagnostics) {
       _diagnosticsSink(diagnostic);
     }
     turn.openToolBackfills -= 1;
     if (!identical(session, _session) || _ended) {
       return;
     }
-    final context = lookup.context;
     session.sendToolResult(
       callId: callId,
-      output: jsonEncode({
-        'found': context != null,
-        'context': ?context,
+      output: jsonEncode(switch (result) {
+        RealtimeRecallFound(:final context) => {
+          'status': 'found',
+          'context': context,
+        },
+        RealtimeRecallEmpty() => const {'status': 'empty'},
+        RealtimeRecallUnavailable() => const {'status': 'unavailable'},
       }),
       requestContinuation: false,
     );

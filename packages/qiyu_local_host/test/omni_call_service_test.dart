@@ -7,6 +7,7 @@ import 'package:qiyu_local_host/qiyu_local_host.dart';
 import 'package:test/test.dart';
 
 import 'support/chat_memory_test_module.dart';
+import 'support/scripted_embedding_client.dart';
 
 /// T03 验证矩阵（票面验证与完成）：注入 Provider 连接、时钟与存储，
 /// 覆盖正常、打断、失败、缺失转录、晚到回忆、新轮抢占、旧包、重连
@@ -220,6 +221,9 @@ final class _Harness {
     List<List<Map<String, Object?>>> callReplies = const [],
     EpisodeMemoryPipeline? pipeline,
     MemoryCadence? cadence,
+    EpisodeRagService? Function(String memoryDirectory, EpisodeMemoryPipeline
+    pipeline)?
+    embeddingRagBuilder,
   }) {
     connection = connector.enqueue();
     _respondWithScript(connection, callReplies);
@@ -265,6 +269,12 @@ final class _Harness {
       recallModelClient: providerSettings,
       // 别名扩展不接（未配置时执行器静默退回无别名，既有语义）：
       // 控制动作的模型别名调用会另开脚本连接，干扰通话脚本序列。
+      // Episode RAG（票 07）：需要共享语义定位的用例经 builder 注入
+      // 同一实例——与文字召回共用同一编排与服务。
+      embeddingRagService: embeddingRagBuilder?.call(
+        memoryDirectory,
+        effectivePipeline,
+      ),
     );
     final innerRepository = MarkdownMemoryRepository(
       memoryDirectory: memoryDirectory,
@@ -423,6 +433,100 @@ final class _FakeModelGateway implements ModelGateway {
     required List<ModelMessage> messages,
     int? maxTokens,
   }) => Future.value('不该用我');
+}
+
+/// 票 07 共享 RAG 夹具：脚本化 embedding 客户端 + 静态配置仓储组装的
+/// EpisodeRagService，经 [_Harness] 的 builder 注入通话记忆模块——
+/// 服务与文字召回共享同一实例，embedding 客户端的调用记录即共享出网
+/// 的证据。
+final class _RagFixture {
+  _RagFixture(
+    String memoryDirectory,
+    EpisodeMemoryPipeline pipeline, {
+    Completer<void>? batchGate,
+    List<EmbeddingGatewayException> queryFailures = const [],
+  }) {
+    embedding = ScriptedEmbeddingClient(
+      vectors: vectors,
+      queryVectors: queryVectors,
+      batchGate: batchGate,
+      queryFailures: queryFailures,
+    );
+    service = EpisodeRagService(
+      memoryDirectory: memoryDirectory,
+      configRepository: StaticEmbeddingConfigRepository(
+        EmbeddingConfig(
+          baseUrl: 'https://api.example.com/v1',
+          model: 'text-embedding-test',
+          apiKey: 'sk-test',
+        ),
+      ),
+      embeddingClient: embedding,
+      episodePipeline: pipeline,
+      openLoopStore: OpenLoopStore(memoryDirectory: memoryDirectory),
+      diagnosticsSink: (_) {},
+    );
+  }
+
+  late final ScriptedEmbeddingClient embedding;
+  late final EpisodeRagService service;
+  final vectors = <String, List<double>>{};
+  final queryVectors = <String, List<double>>{};
+}
+
+/// 票 07 用例的种子条目：稳定 ID 的整理 episode。
+EpisodeEntry _ragEntry(String id, String summary, {String? evidence}) =>
+    EpisodeEntry(
+      id: id,
+      sessionId: id.split(':').first,
+      requestId: id.split(':').elementAt(1),
+      summary: summary,
+      evidence: evidence,
+      at: DateTime.utc(2026, 10, 1, 21),
+    );
+
+/// 预置一条整理完成的 episode（RAG 建索引与回读的当前来源）。
+Future<void> _seedRagEpisode(
+  _Harness harness,
+  String date, {
+  required String summary,
+  String? evidence,
+}) async {
+  await harness.effectivePipeline.synchronizedOnDayFiles(
+    () => harness.effectivePipeline.writeFinalization(
+      date,
+      entries: [_ragEntry('seed:1:0', summary, evidence: evidence)],
+      summary: summary,
+      finalized: true,
+      finalizedAt: DateTime(2026, 10, 1, 22),
+    ),
+  );
+}
+
+/// 等待 memory_recall 工具的回填帧并解出工具输出。
+Future<Map<String, Object?>> _recallBackfillPayload(
+  _Harness harness,
+  String callId,
+) async {
+  await until(
+    () => harness.connection.framesOfType('conversation.item.create').any(
+          (frame) {
+            final item = frame['item']! as Map<String, Object?>;
+            return item['type'] == 'function_call_output' &&
+                item['call_id'] == callId;
+          },
+        ),
+    label: '回填帧 $callId',
+  );
+  final item = harness.connection
+      .framesOfType('conversation.item.create')
+      .map((frame) => frame['item']! as Map<String, Object?>)
+      .firstWhere(
+        (item) =>
+            item['type'] == 'function_call_output' &&
+            item['call_id'] == callId,
+      );
+  return jsonDecode(item['output']! as String) as Map<String, Object?>;
 }
 
 /// 轮询等待（Host 侧大量异步落盘，微任务泵不足，用短间隔真等待）。
@@ -755,7 +859,7 @@ void main() {
           );
       final payload =
           jsonDecode(backfill['output']! as String) as Map<String, Object?>;
-      expect(payload['found'], true);
+      expect(payload['status'], 'found');
       expect(payload['context'], contains('梧桐里'));
 
       // 工具参数零发声（T01 §9.2）：可见增量里没有 JSON。
@@ -875,6 +979,420 @@ void main() {
               event['turnId'] == 'text-2' && event['type'] == 'replyDelta',
         ),
         isEmpty,
+      );
+    });
+  });
+
+  group('共享 RAG 候选（票 07）', () {
+    test('启用后回填 found：语义定位替换选择小调用，候选来自共享实例', () async {
+      late _RagFixture fixture;
+      final harness = _Harness(
+        callReplies: [
+          // 查找轮主回复：静默调用 memory_recall。
+          [
+            _responseCreated('resp-1'),
+            _functionCallItem('item-1', 'call-1', 'memory_recall'),
+            _argsDone('resp-1', 'item-1', jsonEncode({'query': '那家旧书店'})),
+            _responseDone('resp-1', 'completed'),
+          ],
+          // 回填后的续答。
+          [
+            _responseCreated('resp-2'),
+            _transcriptDelta('resp-2', '记得，你说过那家旧书店。'),
+            _responseDone('resp-2', 'completed'),
+          ],
+        ],
+        embeddingRagBuilder: (directory, pipeline) {
+          fixture = _RagFixture(directory, pipeline);
+          return fixture.service;
+        },
+      );
+      await _seedRagEpisode(
+        harness,
+        '2026-10-01',
+        summary: '用户聊到旧书店的事',
+        evidence: '他说那家店的猫很粘人',
+      );
+      fixture.vectors['2026-10-01\n用户聊到旧书店的事'] = [1.0, 0.0];
+      fixture.queryVectors['那家旧书店'] = [1.0, 0.0];
+      await fixture.service.enable();
+      await fixture.service.settlePendingWork();
+      await harness.start();
+
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-1',
+        'text': '我以前说过的那家旧书店怎么样了',
+      });
+      await until(
+        () => harness.frontEvents.any(
+          (event) =>
+              event['type'] == 'replyDelta' &&
+              (event['text']! as String).contains('旧书店'),
+        ),
+        label: '回忆续答增量',
+      );
+
+      // 工具结果三态之一：候选存在（附压缩上下文；是否相关由收到结果的
+      // 回答模型判断，形状本身不宣称答案成立）。
+      final payload = await _recallBackfillPayload(harness, 'call-1');
+      expect(payload['status'], 'found');
+      expect(payload['context'], contains('2026-10-01'));
+      expect(payload['context'], contains('用户聊到旧书店的事'));
+      expect(payload['context'], contains('他说那家店的猫很粘人'));
+      // 语义定位整体替换目录选择：没有第二次连接（选择小调用）。
+      expect(harness.connector.connectCount, 1);
+      // 共享实例出网：查询打在注入的同一 embedding 客户端上。
+      expect(fixture.embedding.calls, contains(equals(['那家旧书店'])));
+    });
+
+    test('空库零条就绪时回填 empty：查询不外发', () async {
+      late _RagFixture fixture;
+      final harness = _Harness(
+        callReplies: [
+          [
+            _responseCreated('resp-1'),
+            _functionCallItem('item-1', 'call-1', 'memory_recall'),
+            _argsDone('resp-1', 'item-1', jsonEncode({'query': '旧书店'})),
+            _responseDone('resp-1', 'completed'),
+          ],
+          [
+            _responseCreated('resp-2'),
+            _transcriptDelta('resp-2', '这会儿想不起来了。'),
+            _responseDone('resp-2', 'completed'),
+          ],
+        ],
+        embeddingRagBuilder: (directory, pipeline) {
+          fixture = _RagFixture(directory, pipeline);
+          return fixture.service;
+        },
+      );
+      await fixture.service.enable();
+      await fixture.service.settlePendingWork();
+      expect(
+        (await fixture.service.status()).state,
+        EpisodeRagState.ready,
+        reason: '空库完整构建为零条就绪',
+      );
+      await harness.start();
+
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-1',
+        'text': '我以前说过什么来着',
+      });
+      await until(
+        () => harness.frontEvents.any(
+          (event) =>
+              event['type'] == 'replyDelta' &&
+              (event['text']! as String).contains('想不起来'),
+        ),
+        label: '回忆续答增量',
+      );
+      final payload = await _recallBackfillPayload(harness, 'call-1');
+      expect(payload['status'], 'empty');
+      expect(payload.containsKey('context'), isFalse);
+      expect(fixture.embedding.calls, isEmpty, reason: '空库查询不外发');
+    });
+
+    test('embedding 查询失败回填 unavailable：不冒充没有候选', () async {
+      late _RagFixture fixture;
+      final harness = _Harness(
+        callReplies: [
+          [
+            _responseCreated('resp-1'),
+            _functionCallItem('item-1', 'call-1', 'memory_recall'),
+            _argsDone('resp-1', 'item-1', jsonEncode({'query': '旧书店'})),
+            _responseDone('resp-1', 'completed'),
+          ],
+          [
+            _responseCreated('resp-2'),
+            _transcriptDelta('resp-2', '我一时查不到，你先说说看。'),
+            _responseDone('resp-2', 'completed'),
+          ],
+        ],
+        embeddingRagBuilder: (directory, pipeline) {
+          fixture = _RagFixture(
+            directory,
+            pipeline,
+            queryFailures: [
+              const EmbeddingGatewayException(
+                kind: ModelFailureKind.timeout,
+                message: '记忆召回服务请求超时。',
+              ),
+            ],
+          );
+          return fixture.service;
+        },
+      );
+      await _seedRagEpisode(harness, '2026-10-01', summary: '用户聊到旧书店的事');
+      fixture.vectors['2026-10-01\n用户聊到旧书店的事'] = [1.0, 0.0];
+      fixture.queryVectors['旧书店'] = [1.0, 0.0];
+      await fixture.service.enable();
+      await fixture.service.settlePendingWork();
+      await harness.start();
+
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-1',
+        'text': '我以前说过的那家旧书店怎么样了',
+      });
+      await until(
+        () => harness.frontEvents.any(
+          (event) =>
+              event['type'] == 'replyDelta' &&
+              (event['text']! as String).contains('查不到'),
+        ),
+        label: '回忆续答增量',
+      );
+      final payload = await _recallBackfillPayload(harness, 'call-1');
+      expect(payload['status'], 'unavailable');
+      expect(payload.containsKey('context'), isFalse);
+      // 故障如实进本机诊断，且不静默回退旧目录路径。
+      expect(
+        harness.diagnostics.join('\n'),
+        contains('rag query deferred kind=timeout'),
+      );
+      expect(harness.connector.connectCount, 1);
+    });
+
+    test('来源失效后回填 empty：回读按当前来源核对拦下旧候选', () async {
+      late _RagFixture fixture;
+      final harness = _Harness(
+        callReplies: [
+          [
+            _responseCreated('resp-1'),
+            _functionCallItem('item-1', 'call-1', 'memory_recall'),
+            _argsDone('resp-1', 'item-1', jsonEncode({'query': '旧书店'})),
+            _responseDone('resp-1', 'completed'),
+          ],
+          [
+            _responseCreated('resp-2'),
+            _transcriptDelta('resp-2', '这会儿想不起来了。'),
+            _responseDone('resp-2', 'completed'),
+          ],
+        ],
+        embeddingRagBuilder: (directory, pipeline) {
+          fixture = _RagFixture(directory, pipeline);
+          return fixture.service;
+        },
+      );
+      await _seedRagEpisode(harness, '2026-10-01', summary: '用户聊到旧书店的事');
+      fixture.vectors['2026-10-01\n用户聊到旧书店的事'] = [1.0, 0.0];
+      fixture.queryVectors['旧书店'] = [1.0, 0.0];
+      await fixture.service.enable();
+      await fixture.service.settlePendingWork();
+      // 用户编辑当日摘要：旧输入 hash 失配，候选在回读时出局。
+      await harness.effectivePipeline.synchronizedOnDayFiles(
+        () => harness.effectivePipeline.writeFinalization(
+          '2026-10-01',
+          entries: [_ragEntry('seed:1:0', '用户聊到了新的书店天地')],
+          summary: '用户聊到了新的书店天地',
+          finalized: true,
+          finalizedAt: DateTime(2026, 10, 1, 22),
+        ),
+      );
+      await harness.start();
+
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-1',
+        'text': '我以前说过的那家旧书店怎么样了',
+      });
+      await until(
+        () => harness.frontEvents.any(
+          (event) =>
+              event['type'] == 'replyDelta' &&
+              (event['text']! as String).contains('想不起来'),
+        ),
+        label: '回忆续答增量',
+      );
+      final payload = await _recallBackfillPayload(harness, 'call-1');
+      expect(payload['status'], 'empty');
+      expect(
+        fixture.embedding.calls,
+        contains(equals(['旧书店'])),
+        reason: '查询确实外发，是回读核对拦下的，不是没查',
+      );
+    });
+
+    test('准备中回填 unavailable：首次构建完成前不开放查询', () async {
+      final batchGate = Completer<void>();
+      late _RagFixture fixture;
+      final harness = _Harness(
+        callReplies: [
+          [
+            _responseCreated('resp-1'),
+            _functionCallItem('item-1', 'call-1', 'memory_recall'),
+            _argsDone('resp-1', 'item-1', jsonEncode({'query': '旧书店'})),
+            _responseDone('resp-1', 'completed'),
+          ],
+          [
+            _responseCreated('resp-2'),
+            _transcriptDelta('resp-2', '等查好了我再跟你说。'),
+            _responseDone('resp-2', 'completed'),
+          ],
+        ],
+        embeddingRagBuilder: (directory, pipeline) {
+          fixture = _RagFixture(directory, pipeline, batchGate: batchGate);
+          return fixture.service;
+        },
+      );
+      await _seedRagEpisode(harness, '2026-10-01', summary: '用户聊到旧书店的事');
+      fixture.vectors['2026-10-01\n用户聊到旧书店的事'] = [1.0, 0.0];
+      await fixture.service.enable();
+      await until(
+        () => fixture.embedding.calls.isNotEmpty,
+        label: '构建批次在途',
+      );
+      await harness.start();
+
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-1',
+        'text': '我以前说过的那家旧书店怎么样了',
+      });
+      await until(
+        () => harness.frontEvents.any(
+          (event) =>
+              event['type'] == 'replyDelta' &&
+              (event['text']! as String).contains('等查好'),
+        ),
+        label: '回忆续答增量',
+      );
+      final payload = await _recallBackfillPayload(harness, 'call-1');
+      expect(payload['status'], 'unavailable');
+      expect(payload.containsKey('context'), isFalse);
+
+      // 收尾放行构建，不把挂起任务泄漏出测试。
+      batchGate.complete();
+      await fixture.service.settlePendingWork();
+    });
+
+    test('用户抢话后迟到的 RAG 结果只回填不续答', () async {
+      final queryGate = Completer<void>();
+      late _RagFixture fixture;
+      final harness = _Harness(
+        callReplies: [
+          [
+            _responseCreated('resp-1'),
+            _functionCallItem('item-1', 'call-1', 'memory_recall'),
+            _argsDone('resp-1', 'item-1', jsonEncode({'query': '旧书店'})),
+            _responseDone('resp-1', 'completed'),
+          ],
+          // 抢占轮的回复。
+          [
+            _responseCreated('resp-2'),
+            _transcriptDelta('resp-2', '先说你刚问的事。'),
+            _responseDone('resp-2', 'completed'),
+          ],
+        ],
+        embeddingRagBuilder: (directory, pipeline) {
+          fixture = _RagFixture(directory, pipeline);
+          fixture.embedding.queryGate = queryGate;
+          return fixture.service;
+        },
+      );
+      await _seedRagEpisode(harness, '2026-10-01', summary: '用户聊到旧书店的事');
+      fixture.vectors['2026-10-01\n用户聊到旧书店的事'] = [1.0, 0.0];
+      fixture.queryVectors['旧书店'] = [1.0, 0.0];
+      await fixture.service.enable();
+      await fixture.service.settlePendingWork();
+      await harness.start();
+
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-1',
+        'text': '我以前说过的那家旧书店怎么样了',
+      });
+      await until(
+        () => fixture.embedding.queryEntered.isCompleted,
+        label: '查询在途',
+      );
+      final createsBefore = harness.connection
+          .framesOfType('response.create')
+          .length;
+      final knownTurns = harness.frontEvents
+          .where((event) => event['type'] == 'replyDone')
+          .map((event) => event['turnId'])
+          .toSet();
+      // 抢占：查询未完成前用户开启新轮。
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-2',
+        'text': '先别管这个',
+      });
+      await until(
+        () => harness.frontEvents.any(
+          (event) =>
+              event['type'] == 'replyDone' &&
+              !knownTurns.contains(event['turnId']),
+        ),
+        label: '抢占轮收束',
+      );
+      // 释放旧查询：回填照常（对话历史不悬挂），但不请求续答。
+      queryGate.complete();
+      final payload = await _recallBackfillPayload(harness, 'call-1');
+      expect(payload['status'], 'found');
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(
+        harness.connection.framesOfType('response.create').length,
+        createsBefore + 1,
+        reason: '旧检索不唤醒旧语音：抢话后没有追加续答请求',
+      );
+      expect(
+        harness.diagnostics,
+        contains('omni call tool continuation preempted by new turn'),
+      );
+    });
+
+    test('挂断后迟到的 RAG 结果不回填对话历史', () async {
+      final queryGate = Completer<void>();
+      late _RagFixture fixture;
+      final harness = _Harness(
+        callReplies: [
+          [
+            _responseCreated('resp-1'),
+            _functionCallItem('item-1', 'call-1', 'memory_recall'),
+            _argsDone('resp-1', 'item-1', jsonEncode({'query': '旧书店'})),
+            _responseDone('resp-1', 'completed'),
+          ],
+        ],
+        embeddingRagBuilder: (directory, pipeline) {
+          fixture = _RagFixture(directory, pipeline);
+          fixture.embedding.queryGate = queryGate;
+          return fixture.service;
+        },
+      );
+      await _seedRagEpisode(harness, '2026-10-01', summary: '用户聊到旧书店的事');
+      fixture.vectors['2026-10-01\n用户聊到旧书店的事'] = [1.0, 0.0];
+      fixture.queryVectors['旧书店'] = [1.0, 0.0];
+      await fixture.service.enable();
+      await fixture.service.settlePendingWork();
+      await harness.start();
+
+      harness.sendFront({
+        'type': 'text',
+        'requestId': 'type-1',
+        'text': '我以前说过的那家旧书店怎么样了',
+      });
+      await until(
+        () => fixture.embedding.queryEntered.isCompleted,
+        label: '查询在途',
+      );
+      await harness.callService.stopCall();
+      queryGate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(
+        harness.connection
+            .framesOfType('conversation.item.create')
+            .where(
+              (frame) =>
+                  (frame['item']! as Map<String, Object?>)['type'] ==
+                  'function_call_output',
+            ),
+        isEmpty,
+        reason: '挂断后的迟到结果不再回填',
       );
     });
   });

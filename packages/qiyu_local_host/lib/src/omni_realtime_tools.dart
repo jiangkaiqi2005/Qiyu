@@ -172,7 +172,11 @@ final List<OmniRealtimeTool> omniRealtimeMemoryTools = [
     name: 'memory_recall',
     description:
         '常驻字段与最近对话都没命中、用户在问旧事时请求后台查找；'
-        '本轮先按一时没想起自然回应，绝不等查找结果。',
+        '本轮先按一时没想起自然回应，绝不等查找结果。'
+        '结果三态：found 附候选摘录，只是后台整理记录，是否相关、'
+        '怎么说由你结合当前话题判断；empty 表示当前没有有效候选；'
+        'unavailable 表示这次查找没能完成，不代表没有相关记忆，'
+        '不要断言没有。',
     parameters: {
       'type': 'object',
       'properties': {
