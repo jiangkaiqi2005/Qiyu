@@ -77,7 +77,7 @@ void main() {
       final client = ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(months: ['2025-03'])),
         ModelCompletion.reply(_selectionReply(dates: ['2025-03-05'])),
-        ModelCompletion.reply('书店那件事想起来了。'),
+        ModelCompletion.reply(_composeReply('书店那件事想起来了。', entries: ['seed:1:0'])),
       ]);
       final (recall, pipeline) = _orchestrator(root.path, client: client);
       await _rebuildUnderLock(recall, pipeline);
@@ -205,7 +205,9 @@ void main() {
         addTearDown(() => root.delete(recursive: true));
         final client = ScriptedChatClient([
           ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
-          ModelCompletion.reply('想起来了，你在书店挑了本画册。'),
+          ModelCompletion.reply(
+            _composeReply('想起来了，你在书店挑了本画册。', entries: ['seed:1:0']),
+          ),
         ]);
         final (recall, pipeline) = _orchestrator(root.path, client: client);
         await _rebuildUnderLock(recall, pipeline);
@@ -270,7 +272,7 @@ void main() {
       );
       final client = ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
-        ModelCompletion.reply('想起来了，你去了河边。'),
+        ModelCompletion.reply(_composeReply('想起来了，你去了河边。', entries: ['seed:1:0'])),
       ]);
       final (recall, pipeline) = _orchestrator(
         root.path,
@@ -402,7 +404,9 @@ void main() {
       root.path,
       client: ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
-        ModelCompletion.reply('是想起来了，演讲那件事。'),
+        ModelCompletion.reply(
+          _composeReply('是想起来了，演讲那件事。', entries: ['seed:1:0']),
+        ),
       ]),
     );
     await _rebuildUnderLock(recall, pipeline);
@@ -662,7 +666,7 @@ void main() {
       root.path,
       client: ScriptedChatClient([
         ModelCompletion.reply(_selectionReply(dates: ['2026-08-14'])),
-        ModelCompletion.reply('火锅想起来了。'),
+        ModelCompletion.reply(_composeReply('火锅想起来了。', entries: ['seed:3:0'])),
       ]),
     );
     // 没有任何索引文件：查找触发从原始 episode 重建。
@@ -738,7 +742,7 @@ void main() {
         root.path,
         client: ScriptedChatClient([
           ModelCompletion.reply(_selectionReply(dates: ['2026-07-03'])),
-          ModelCompletion.reply('想起来了。'),
+          ModelCompletion.reply(_composeReply('想起来了。', entries: ['seed:1:0'])),
         ]),
         openLoopStore: openLoopStore,
       );
@@ -867,7 +871,7 @@ void main() {
   );
 
   test(
-    'the sentinel keeps the model from forcing an unrelated bubble',
+    'the sentinel rejects the candidates for this turn and the next',
     () async {
       final root = await _seedEpisodes({
         '2026-07-02': [_entry('seed:1:0', '用户准备第一次演讲')],
@@ -877,18 +881,60 @@ void main() {
         root.path,
         client: ScriptedChatClient([
           ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
-          ModelCompletion.reply('没有了'),
+          // 哨兵容忍尾部标点：模型明确表态记录与问题无关。
+          ModelCompletion.reply('没有了。'),
         ]),
       );
       await _rebuildUnderLock(recall, pipeline);
+      final dayFile = File('${root.path}/episodes/2026/07/2026-07-02.md');
+      final dayBytes = await dayFile.readAsBytes();
 
       final result = await recall.runTurnRecall(
         userText: '潜水的事',
         recallActions: [MemoryRecallAction(query: '潜水')],
       );
 
+      // 明确拒绝（票 01）：不补气泡，也不把候选并入下一轮；
+      // 拒绝不改写任何记忆。
       expect(result.bubbleText, isNull);
-      expect(result.pendingContext, isNotNull);
+      expect(result.pendingContext, isNull);
+      expect(
+        result.diagnostics,
+        contains('recall compose rejected reason=model-sentinel'),
+      );
+      expect(await dayFile.readAsBytes(), dayBytes);
+    },
+  );
+
+  test(
+    'an unparseable compose output is unjudged, not a rejection',
+    () async {
+      final root = await _seedEpisodes({
+        '2026-07-02': [_entry('seed:1:0', '用户准备第一次演讲')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      final (recall, pipeline) = _orchestrator(
+        root.path,
+        client: ScriptedChatClient([
+          ModelCompletion.reply(_selectionReply(dates: ['2026-07-02'])),
+          // 只有一个损坏的隐藏块，既没有可见句也没有哨兵：判断没有
+          // 完成，不能冒充明确拒绝——材料按既有规则留给下一轮。
+          ModelCompletion.reply('<qiyu-actions>{not json</qiyu-actions>'),
+        ]),
+      );
+      await _rebuildUnderLock(recall, pipeline);
+
+      final result = await recall.runTurnRecall(
+        userText: '演讲的事',
+        recallActions: [MemoryRecallAction(query: '演讲')],
+      );
+
+      expect(result.bubbleText, isNull);
+      expect(result.pendingContext, contains('用户准备第一次演讲'));
+      expect(
+        result.diagnostics.join('\n'),
+        contains('recall compose empty reason=unparseable'),
+      );
     },
   );
 
@@ -1072,7 +1118,7 @@ void main() {
         ModelCompletion.reply(
           _selectionReply(dates: ['2026-08-10'], paths: ['PR-R001/PR-M002']),
         ),
-        ModelCompletion.reply('想起来了。'),
+        ModelCompletion.reply(_composeReply('想起来了。', entries: ['seed:1:0'])),
       ]);
       final (recall, pipeline) = _orchestratorWithTree(
         root,
@@ -1099,7 +1145,7 @@ void main() {
         diagnostics,
         contains('path=PR-R001/PR-M002 reason=not-in-passed-index'),
       );
-      expect(result.pendingContext, isNotNull);
+      expect(result.pendingContext, contains('用户说周末要去爬山'));
       expect(result.pendingContext, isNot(contains('画像树路径')));
       expect(result.pendingContext, isNot(contains('晚上散步')));
     },
@@ -1124,7 +1170,7 @@ void main() {
         ModelCompletion.reply(
           _selectionReply(dates: ['2026-08-10'], paths: ['PR-R001/PR-M002']),
         ),
-        ModelCompletion.reply('想起来了。'),
+        ModelCompletion.reply(_composeReply('想起来了。', entries: ['seed:1:0'])),
       ]);
       final (recall, pipeline) = _orchestratorWithTree(
         root,
@@ -1157,14 +1203,15 @@ void main() {
     },
   );
 
-  test('a malformed compose block only costs the entry receipt', () async {
+  test('a malformed compose block voids the entry receipt', () async {
     final root = await _seedEpisodes({
       '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
     });
     addTearDown(() => root.delete(recursive: true));
     final client = ScriptedChatClient([
       ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
-      // 隐藏块损坏：气泡照常交付，回执作废，退回受封顶的全量记录。
+      // 隐藏块损坏：气泡照常交付，但回执不可读＝无效回执，不把候选
+      // 扩成全量（票 01）——没有路径素材时下一轮不留任何临时上下文。
       ModelCompletion.reply('想起来了。\n<qiyu-actions>{not json</qiyu-actions>'),
     ]);
     final (recall, pipeline) = _orchestrator(root.path, client: client);
@@ -1180,7 +1227,7 @@ void main() {
       result.diagnostics.join('\n'),
       contains('recall compose dropped [hidden_action_invalid_format]'),
     );
-    expect(result.pendingContext, contains('用户说周末要去爬山'));
+    expect(result.pendingContext, isNull);
   });
 
   test('archived persona paths never enter the recall catalog', () async {
@@ -1283,7 +1330,7 @@ void main() {
     expect(result.diagnostics, isEmpty);
   });
 
-  test('a fabricated entry receipt falls back to the capped dump', () async {
+  test('a fabricated entry receipt does not expand to the dump', () async {
     final root = await _seedEpisodes({
       '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
     });
@@ -1304,17 +1351,69 @@ void main() {
       recallActions: [MemoryRecallAction(query: '爬山')],
     );
 
-    // 幻觉回执不构成相关性信号：丢弃并退回受总量预算封顶的全量记录。
+    // 越界回执不构成相关性信号：丢弃且不扩成全量候选（票 01）。
     expect(
       result.diagnostics.join('\n'),
       contains(
         'recall entry dropped id=seed:9:9 reason=not-in-passed-evidence',
       ),
     );
-    expect(result.pendingContext, contains('用户说周末要去爬山'));
+    expect(result.pendingContext, isNull);
   });
 
-  test('the pending context stays bounded without an entry receipt', () async {
+  test('an empty entry receipt does not expand to the dump', () async {
+    final root = await _seedEpisodes({
+      '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+    });
+    addTearDown(() => root.delete(recursive: true));
+    final client = ScriptedChatClient([
+      ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
+      // 空回执：模型组了气泡但没声明用到的条目，同样不扩成全量。
+      ModelCompletion.reply(
+        '想起来了。\n'
+        '<qiyu-actions>[{"action":"memory_recall","query":"爬山",'
+        '"entries":[]}]</qiyu-actions>',
+      ),
+    ]);
+    final (recall, pipeline) = _orchestrator(root.path, client: client);
+    await _rebuildUnderLock(recall, pipeline);
+
+    final result = await recall.runTurnRecall(
+      userText: '我上次说爬山的事',
+      recallActions: [MemoryRecallAction(query: '爬山')],
+    );
+
+    expect(result.bubbleText, '想起来了。');
+    expect(result.pendingContext, isNull);
+  });
+
+  test(
+    'a bubble without any receipt keeps only persona paths if any',
+    () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户说周末要去爬山')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
+        // 缺失回执（协议允许一条没用就省略隐藏块）：条目级相关性无法
+        // 采信，不扩成全量候选（票 01）；无路径素材时下一轮为空。
+        ModelCompletion.reply('想起来了。'),
+      ]);
+      final (recall, pipeline) = _orchestrator(root.path, client: client);
+      await _rebuildUnderLock(recall, pipeline);
+
+      final result = await recall.runTurnRecall(
+        userText: '我上次说爬山的事',
+        recallActions: [MemoryRecallAction(query: '爬山')],
+      );
+
+      expect(result.bubbleText, '想起来了。');
+      expect(result.pendingContext, isNull);
+    },
+  );
+
+  test('the unjudged pending context stays bounded', () async {
     final root = await _seedEpisodes({
       '2026-08-10': [
         for (var index = 0; index < 30; index += 1)
@@ -1328,8 +1427,9 @@ void main() {
     addTearDown(() => root.delete(recursive: true));
     final client = ScriptedChatClient([
       ModelCompletion.reply(_selectionReply(dates: ['2026-08-10'])),
-      // 组织调用没给回执：退回全量，但总量预算必须封顶。
-      ModelCompletion.reply('想起来了。'),
+      // 组织调用失败＝未完成判断：材料按既有规则整体留给下一轮，
+      // 但总量预算必须封顶。
+      const ModelCompletion.failure(ModelFailureKind.network),
     ]);
     final (recall, pipeline) = _orchestrator(root.path, client: client);
     await _rebuildUnderLock(recall, pipeline);
@@ -1684,4 +1784,15 @@ String _selectionReply({
   return '<qiyu-actions>[{"action":"memory_recall","query":"测试查找",'
       '"months":[$monthsJson],"dates":[$datesJson],"paths":[$pathsJson]}]'
       '</qiyu-actions>';
+}
+
+/// 模拟组织调用的模型输出：可见气泡 + 可选的所用条目回执（票 01）。
+/// 回执缺失时就是纯气泡——明确使用路径不会据此扩成全量候选。
+String _composeReply(String bubble, {List<String> entries = const []}) {
+  if (entries.isEmpty) {
+    return bubble;
+  }
+  final entriesJson = entries.map((entry) => '"$entry"').join(',');
+  return '$bubble\n<qiyu-actions>[{"action":"memory_recall","query":"测试查找",'
+      '"entries":[$entriesJson]}]</qiyu-actions>';
 }

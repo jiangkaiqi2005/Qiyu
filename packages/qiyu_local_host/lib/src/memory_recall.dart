@@ -61,14 +61,42 @@ final class RecallTurnResult {
   });
 
   /// 模型组织好的 bubble 2 候选文本（尚未经行为核心安全校验）；
-  /// 未命中或组织失败为 null。
+  /// 明确拒绝、未完成判断或未命中为 null。
   final String? bubbleText;
 
-  /// 命中证据的压缩整理记录：bubble 2 没赶上交付时并入下一用户轮
-  /// 注入（现状路径）；未命中为 null。
+  /// 命中证据的压缩整理记录：bubble 2 没赶上交付或判断未完成时并入
+  /// 下一用户轮注入；明确拒绝（不建立下一轮候选）或没有可注入内容时
+  /// 为 null。
   final String? pendingContext;
 
   final List<String> diagnostics;
+}
+
+/// 组织调用的三态判断（票 01）：明确使用、明确拒绝与未完成判断必须
+/// 分开——明确拒绝不补气泡也不建立下一轮候选，未完成判断不冒充拒绝，
+/// 明确使用按有效回执收窄下一轮材料。
+sealed class _ComposeOutcome {
+  const _ComposeOutcome();
+}
+
+/// 模型组出了候选气泡（明确使用）。[entryIds] 是回执里的所用条目 ID；
+/// null 表示没给回执，有效性由调用方按本轮递送材料成员校验。
+final class _ComposeUsed extends _ComposeOutcome {
+  const _ComposeUsed(this.text, this.entryIds);
+
+  final String text;
+  final List<String>? entryIds;
+}
+
+/// 模型明确表态查到的记录与用户问的不是一回事（哨兵输出）：不组气泡。
+final class _ComposeRejected extends _ComposeOutcome {
+  const _ComposeRejected();
+}
+
+/// 调用异常、Provider 失败或输出不可解析（既没有可见句也没有哨兵）：
+/// 判断没有完成，材料保持候选身份。
+final class _ComposeUnjudged extends _ComposeOutcome {
+  const _ComposeUnjudged();
 }
 
 /// 一次定位结果的形状（轮内召回与实时查找共用）：选中日原始证据与
@@ -109,9 +137,11 @@ final class _PersonaCatalog {
 /// 索引指向的 daily episode 原始证据（硬规则定稿）。索引缺失或损坏
 /// 时先从原始 episode 重建再继续。找到而 bubble 2 没赶上交付时，压缩
 /// 结果存入按会话保存的短期 memory context，下一轮装配取用一次后
-/// 即失效（临时透镜，不落盘、不进状态包）；条目级相关性由组织调用
-/// 的回执决定（只收气泡真实用到的条目），总量受预算封顶，不搬运
-/// 选中文件全文。
+/// 即失效（临时透镜，不落盘、不进状态包）；总量受预算封顶，不搬运
+/// 选中文件全文。组织调用的结果三态分开（票 01）：明确使用只收有效
+/// 回执条目（回执缺失、为空或全不可信不扩成全量候选）；明确拒绝
+/// （哨兵）本轮不补气泡、下一轮也不留候选；调用异常或输出不可解析
+/// 属于未完成判断，材料按既有规则留给下一轮，不冒充拒绝。
 ///
 /// 未配置 Provider 不召回（保持现状）；任何失败都降级为无结果，
 /// 检索失败不纠缠，话题再来再查。
@@ -261,6 +291,9 @@ final class RecallOrchestrator {
     }
 
     // 调用3：模型基于原始证据与画像路径组织 bubble 2，并回执所用条目。
+    // 结果三态分开（票 01）：明确拒绝不补气泡也不建下一轮 pending；
+    // 未完成判断（调用异常、Provider 失败或输出不可解析）保持候选
+    // 身份，按既有规则留给下一轮；明确使用按有效回执收窄。
     final compose = await _composeBubble(
       client,
       query: query,
@@ -269,24 +302,54 @@ final class RecallOrchestrator {
       personaPathText: located.personaPathText,
       diagnostics: diagnostics,
     );
+    return switch (compose) {
+      // 明确拒绝：候选本轮与下一轮都不再出现，不写任何记忆。
+      _ComposeRejected() => RecallTurnResult(diagnostics: diagnostics),
+      // 未完成判断：材料按既有规则整体并入下一轮（受总量预算封顶）。
+      _ComposeUnjudged() => RecallTurnResult(
+        pendingContext: _buildPendingContext(
+          located.rawDays,
+          null,
+          located.personaPathText,
+          diagnostics,
+        ),
+        diagnostics: diagnostics,
+      ),
+      _ComposeUsed(:final text, :final entryIds) => _usedTurnResult(
+        text,
+        entryIds,
+        located,
+        diagnostics,
+      ),
+    };
+  }
 
-    // 条目级相关性筛选（Memory 注入定稿）：只收组织气泡真实用到的
-    // 条目；模型没给回执（或回执全不可信）时才退回全量，并受总量
-    // 预算封顶——不再无条件搬运选中日的全部条目。
+  /// 明确使用的结果：只收回执采信的条目（票 01）。回执缺失、为空或
+  /// 全部不可信时不把候选扩成全量——没有可注入条目也没有路径素材时
+  /// 下一轮不留任何临时上下文。
+  RecallTurnResult _usedTurnResult(
+    String text,
+    List<String>? entryIds,
+    _LocatedEvidence located,
+    List<String> diagnostics,
+  ) {
     final usedEntries = _validatedEntries(
-      compose.entryIds,
+      entryIds,
       located.rawDays,
       diagnostics,
     );
-    final pendingContext = _buildPendingContext(
-      located.rawDays,
-      usedEntries,
-      located.personaPathText,
-      diagnostics,
-    );
+    if (usedEntries == null && located.personaPathText.isEmpty) {
+      return RecallTurnResult(bubbleText: text, diagnostics: diagnostics);
+    }
     return RecallTurnResult(
-      bubbleText: compose.text,
-      pendingContext: pendingContext,
+      bubbleText: text,
+      pendingContext: _buildPendingContext(
+        located.rawDays,
+        // 回执不可采信时收窄为空集：只带路径素材，不搬运全部候选。
+        usedEntries ?? const [],
+        located.personaPathText,
+        diagnostics,
+      ),
       diagnostics: diagnostics,
     );
   }
@@ -792,8 +855,10 @@ final class RecallOrchestrator {
   }
 
   /// 组织回执的所用条目 ID 成员校验：只能取自本轮递过的原始条目，
-  /// 编造的丢弃并记诊断。全部无效（或没有回执）时返回 null——幻觉
-  /// 回执不构成相关性信号，调用方退回全量并受总量预算封顶。
+  /// 编造的丢弃并记诊断。没有可采信回执（没给回执、回执为空或全部
+  /// 编造）时返回 null——幻觉回执不构成相关性信号，明确使用路径
+  /// 不把候选扩成全量（票 01）；只有未完成判断（调用失败、输出不可
+  /// 解析）才按既有规则保留全量材料。
   List<String>? _validatedEntries(
     List<String>? declared,
     List<(String, List<EpisodeEntry>)> rawDays,
@@ -868,11 +933,15 @@ final class RecallOrchestrator {
   }
 
   /// 组织调用：把选中日的原始证据与画像树路径交给模型，请它自然地
-  /// 补一句。失败、哨兵或空输出都返回 null 文本（压缩结果仍可留给
-  /// 下一轮）。回执里的所用条目 ID（entries）供下一轮临时上下文做
-  /// 条目级相关性筛选；模型没给回执时 entryIds 为 null，调用方退回
-  /// 受总量预算封顶的全量记录。
-  Future<({String? text, List<String>? entryIds})> _composeBubble(
+  /// 补一句。返回三态结果（票 01）：
+  /// - 明确使用：模型组出了候选气泡；回执条目 ID（entries）供下一轮
+  ///   临时上下文做条目级相关性筛选，没给回执时 entryIds 为 null，
+  ///   调用方不扩成全量。
+  /// - 明确拒绝：哨兵输出（容忍尾部标点/空白），查到的记录与用户问
+  ///   的不是一回事——本轮不补气泡，下一轮也不留候选。
+  /// - 未完成判断：调用异常、Provider 失败或输出不可解析（既没有
+  ///   可见句也没有哨兵），不能冒充明确拒绝或没有候选。
+  Future<_ComposeOutcome> _composeBubble(
     ProviderChatClient client, {
     required String query,
     required String userText,
@@ -895,14 +964,14 @@ final class RecallOrchestrator {
       );
     } on Object catch (error) {
       diagnostics.add('recall compose deferred [$error]');
-      return (text: null, entryIds: null);
+      return const _ComposeUnjudged();
     }
     final text = completion?.text;
     if (text == null) {
       diagnostics.add(
         'recall compose deferred [${completion?.failure?.name ?? 'no-provider'}]',
       );
-      return (text: null, entryIds: null);
+      return const _ComposeUnjudged();
     }
     final parsed = parseHiddenActions(text);
     for (final diagnostic in parsed.diagnostics) {
@@ -914,23 +983,30 @@ final class RecallOrchestrator {
     final sentinelNormalized = visibleText
         .replaceAll(RegExp(r'[。．.…!！?？,，、\s]+$'), '')
         .trim();
-    if (sentinelNormalized.isEmpty ||
-        sentinelNormalized == _recallNoBubbleSentinel) {
-      diagnostics.add('recall compose empty reason=model-passed');
-      return (text: null, entryIds: null);
+    if (sentinelNormalized == _recallNoBubbleSentinel) {
+      // 明确拒绝（票 01）：模型表态查到的记录与用户问的不是一回事。
+      diagnostics.add('recall compose rejected reason=model-sentinel');
+      return const _ComposeRejected();
+    }
+    if (sentinelNormalized.isEmpty) {
+      // 输出不可解析（既没有可见句也没有哨兵）：判断没有完成，不能
+      // 冒充明确拒绝（票 01），材料按未判断留给下一轮。
+      diagnostics.add('recall compose empty reason=unparseable');
+      return const _ComposeUnjudged();
     }
     // 所用条目回执：只认选择/组织协议里的 memory_recall entries 字段。
     final receipt = parsed.actions.whereType<MemoryRecallAction>().firstOrNull;
-    return (text: visibleText, entryIds: receipt?.entries);
+    return _ComposeUsed(visibleText, receipt?.entries);
   }
 
   /// 短期 memory context 内容：压缩后的证据 + 使用纪律。只带回与问题
   /// 相关的压缩结果，不搬运选中文件全文。
   ///
   /// 条目级相关性筛选（Memory 注入定稿）：组织调用声明了所用条目时
-  /// 只收这些；未声明（组织失败、模型没给回执或回执全不可信）才退回
-  /// 全量。总量受 [recallPendingContextMaxRunes] 封顶——超预算的后续
-  /// 条目不再收入并记诊断，先命中的优先。
+  /// 只收这些；未完成判断（组织调用失败、输出不可解析）才退回全量。
+  /// 明确使用而回执不可采信时收窄为空集（只带路径素材），不把候选
+  /// 统一扩成全量（票 01）。总量受 [recallPendingContextMaxRunes]
+  /// 封顶——超预算的后续条目不再收入并记诊断，先命中的优先。
   String _buildPendingContext(
     List<(String, List<EpisodeEntry>)> rawDays,
     List<String>? usedEntryIds,

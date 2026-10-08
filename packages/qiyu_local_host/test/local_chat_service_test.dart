@@ -4279,7 +4279,7 @@ void main() {
           ),
           ScriptedGatedCompletion(
             gate: composeGate.future,
-            reply: '对了，你周末是要去爬山来着。',
+            reply: '对了，你周末是要去爬山来着。\n$_hikingComposeReceipt',
           ),
         ],
       );
@@ -4358,7 +4358,9 @@ void main() {
             ScriptedCompletionReply(
               _recallSelection(dates: ['2026-08-05', '2099-01-01']),
             ),
-            const ScriptedCompletionReply('对了，你周末要去爬山。'),
+            const ScriptedCompletionReply(
+              '对了，你周末要去爬山。\n$_hikingComposeReceipt',
+            ),
           ],
         );
         final harness = await InProcessChatHost.start(
@@ -4411,6 +4413,113 @@ void main() {
         );
       },
     );
+
+    test('an explicit compose rejection exits this turn and the next',
+        () async {
+      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''一时没想起。
+<qiyu-actions>
+[{"action":"memory_recall","query":"爬山"}]
+</qiyu-actions>'''),
+          const ScriptedStreamReply('嗯。'),
+        ],
+        completeScript: [
+          ScriptedCompletionReply(_recallSelection(dates: ['2026-08-05'])),
+          // 组织调用明确拒绝：查到的记录与用户问的不是一回事（票 01）。
+          const ScriptedCompletionReply('没有了'),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        // 窗口预算内等查找完成：拒绝在本轮内落定。
+        recallWindowWait: (_) =>
+            Future<void>.delayed(const Duration(milliseconds: 500)),
+        seedMemory: (memoryDirectory) => _seedRecallEpisode(
+          memoryDirectory.path,
+          clock,
+          evidence: '这周末打算去爬山',
+        ),
+      );
+      addTearDown(harness.dispose);
+
+      final first = await harness.sendChat(
+        requestId: 'recall-reject-1',
+        text: '我上次说爬山的事',
+      );
+      // 第一轮：明确拒绝不补气泡，本轮只有一条栖语消息。
+      expect(first.message.messages, ['一时没想起。']);
+      expect(first.eventsOf(ChatDeliveryEventKind.done), hasLength(1));
+
+      // 第二轮：候选不并入下一轮，模型收不到临时检索结果。
+      await harness.sendChat(
+        requestId: 'recall-reject-2',
+        text: '嗯嗯',
+        sessionId: first.sessionId,
+      );
+      final nextPrompt = gateway.lastStreamMessages!.last.content;
+      expect(nextPrompt, isNot(contains('<memory_context>')));
+      expect(nextPrompt, isNot(contains('用户说周末要去爬山')));
+      expect(nextPrompt, isNot(contains('这周末打算去爬山')));
+    });
+
+    test('a failed compose is not a rejection: candidates reach the next turn',
+        () async {
+      DateTime clock() => DateTime(2026, 8, 16, 22, 30);
+      final diagnostics = <String>[];
+      final gateway = ScriptedModelGateway(
+        streamScript: [
+          const ScriptedStreamReply('''一时没想起。
+<qiyu-actions>
+[{"action":"memory_recall","query":"爬山"}]
+</qiyu-actions>'''),
+        ],
+        completeScript: [
+          // 编造日期落下哨兵诊断：窗口超时后的后台保存链何时落定可观测。
+          ScriptedCompletionReply(
+            _recallSelection(dates: ['2026-08-05', '2099-01-01']),
+          ),
+          const ScriptedCompletionFailure(ModelFailureKind.network),
+        ],
+      );
+      final harness = await InProcessChatHost.start(
+        modelGateway: gateway,
+        clock: clock,
+        diagnosticsSink: diagnostics.add,
+        // 窗口立即超时：组织调用失败后在后台落定。
+        recallWindowWait: (_) async {},
+        seedMemory: (memoryDirectory) => _seedRecallEpisode(
+          memoryDirectory.path,
+          clock,
+          evidence: '这周末打算去爬山',
+        ),
+      );
+      addTearDown(harness.dispose);
+
+      final first = await harness.sendChat(
+        requestId: 'recall-fail-1',
+        text: '我上次说爬山的事',
+      );
+      // 第一轮：调用失败没有候选气泡，也没有把失败冒充成明确拒绝。
+      expect(first.message.messages, ['一时没想起。']);
+      expect(first.eventsOf(ChatDeliveryEventKind.done), hasLength(1));
+      await _awaitDiagnostic(
+        diagnostics,
+        'recall selection dropped date=2099-01-01',
+      );
+
+      // 第二轮：未判断材料保持候选身份，按既有规则临时注入一次。
+      await harness.sendChat(
+        requestId: 'recall-fail-2',
+        text: '嗯嗯',
+        sessionId: first.sessionId,
+      );
+      final nextPrompt = gateway.lastStreamMessages!.last.content;
+      expect(nextPrompt, contains('<memory_context>'));
+      expect(nextPrompt, contains('用户说周末要去爬山'));
+    });
 
     test(
       'recall only starts from a model request, not from input phrasing',
@@ -4535,7 +4644,9 @@ void main() {
           ScriptedCompletionReply(
             _recallSelection(dates: ['2026-08-05', '2099-01-01']),
           ),
-          const ScriptedCompletionReply('对了，你周末要去爬山。'),
+          const ScriptedCompletionReply(
+            '对了，你周末要去爬山。\n$_hikingComposeReceipt',
+          ),
         ],
       );
       final harness = await InProcessChatHost.start(
@@ -6755,6 +6866,12 @@ String _recallSelection({
   return '<qiyu-actions>[{"action":"memory_recall","query":"测试查找",'
       '"months":[$monthsJson],"dates":[$datesJson]}]</qiyu-actions>';
 }
+
+/// 组织调用的有效条目回执（票 01）：种子材料里的条目 ID 固定为
+/// seed:1:0（见 [_seedRecallEpisode]），命中候选据此并入下一轮。
+const _hikingComposeReceipt =
+    '<qiyu-actions>[{"action":"memory_recall","query":"爬山",'
+    '"entries":["seed:1:0"]}]</qiyu-actions>';
 
 /// ---- 空闲补办轮询器测试辅助 ----
 
