@@ -287,6 +287,44 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('状态刷新按页面生命周期启停：后台停读、恢复续读，不留常驻轮询（票 06）', (
+    tester,
+  ) async {
+    gateway.configured = true;
+    gateway.ragState = 'preparing';
+    gateway.progressTotal = 4;
+    await pumpSection(tester);
+    final baseline = gateway.readCalls;
+
+    // 可见期：周期重读随构建推进（2 秒一拍，进度照常更新）。
+    gateway.progressDone = 2;
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(gateway.readCalls, greaterThan(baseline));
+    expect(find.textContaining('准备中：2/4'), findsOneWidget);
+
+    // 应用进入后台：刷新停拍，不再发起读取。
+    tester.binding
+      ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
+      ..handleAppLifecycleStateChanged(AppLifecycleState.hidden)
+      ..handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    final whilePaused = gateway.readCalls;
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+    expect(gateway.readCalls, whilePaused, reason: '后台期间不刷新');
+
+    // 回到前台：刷新续拍，进度继续可见。
+    gateway.progressDone = 4;
+    tester.binding
+      ..handleAppLifecycleStateChanged(AppLifecycleState.hidden)
+      ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
+      ..handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(gateway.readCalls, greaterThan(whilePaused));
+    expect(find.textContaining('准备中：4/4'), findsOneWidget);
+  });
 }
 
 final class _RecordingEmbeddingGateway implements EmbeddingSettingsGateway {
@@ -300,6 +338,7 @@ final class _RecordingEmbeddingGateway implements EmbeddingSettingsGateway {
   bool failSave = false;
   final savedDrafts = <EmbeddingSettingsDraft>[];
   final testDrafts = <EmbeddingSettingsDraft>[];
+  int readCalls = 0;
   int forgetCalls = 0;
   int enableCalls = 0;
   int disableCalls = 0;
@@ -316,6 +355,7 @@ final class _RecordingEmbeddingGateway implements EmbeddingSettingsGateway {
     failSave = false;
     savedDrafts.clear();
     testDrafts.clear();
+    readCalls = 0;
     forgetCalls = 0;
     enableCalls = 0;
     disableCalls = 0;
@@ -338,7 +378,10 @@ final class _RecordingEmbeddingGateway implements EmbeddingSettingsGateway {
   );
 
   @override
-  Future<EmbeddingSettings> read() async => snapshot;
+  Future<EmbeddingSettings> read() async {
+    readCalls += 1;
+    return snapshot;
+  }
 
   @override
   Future<EmbeddingSettings> save(EmbeddingSettingsDraft draft) async {

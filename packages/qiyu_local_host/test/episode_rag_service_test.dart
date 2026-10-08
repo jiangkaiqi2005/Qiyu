@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:qiyu_local_host/src/embedding_gateway.dart';
+import 'package:qiyu_local_host/src/embedding_settings_service.dart';
 import 'package:qiyu_local_host/src/episode_memory.dart';
 import 'package:qiyu_local_host/src/episode_rag_index.dart';
 import 'package:qiyu_local_host/src/episode_rag_service.dart';
@@ -339,7 +341,7 @@ void main() {
       expect(result.hits.first.entry.evidence, '他说那家店的猫很粘人');
     });
 
-    test('查询向量维度与索引身份不符按不可用处理', () async {
+    test('查询返回维度与索引身份不符：落需重建，明确重建后恢复（票 06）', () async {
       final harness = await _RagHarness.create(
         episodes: {
           '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
@@ -353,8 +355,22 @@ void main() {
 
       final result = await harness.service.locate('旧书店');
       expect(result, isA<RagUnavailable>());
-      // 一次查询失败不销毁仍有效的索引。
+      // 实际维度是索引身份的组成成分：服务端维度漂移是确定性的身份
+      // 失配（单次网络失败才保持 ready）——旧索引立即停止查询并显示
+      // 需重建（票 06 验收：换实际维度使旧身份索引停止查询）。
+      expect(
+        (await harness.service.status()).state,
+        EpisodeRagState.rebuildNeeded,
+      );
+
+      // 明确重建以新维度发布新身份：不再卡死在旧维度上。
+      await harness.service.rebuild();
+      await harness.service.settlePendingWork();
       expect((await harness.service.status()).state, EpisodeRagState.ready);
+      // 服务端恢复原维度后查询照常命中。
+      harness.embedding.inner.queryVectors['旧书店'] = [1.0, 0.0];
+      final recovered = await harness.service.locate('旧书店');
+      expect(recovered, isA<RagCandidates>());
     });
 
     test('发往 embedding 的查询先脱敏：秘密不出仓，整句秘密不外发', () async {
@@ -1098,6 +1114,267 @@ void main() {
       expect((await harness.service.status()).state, EpisodeRagState.ready);
     });
   });
+
+  group('身份切换、凭据缺口与请求窗口（票 06）', () {
+    test('同维度换模型：旧索引停止查询显示需重建，无历史外发；重建后恢复', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+        queryVectors: {'旧书店': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      final buildCalls = harness.embedding.calls.length;
+
+      // 换成同维度（2 维）的另一模型：仅模型名变化即身份失配——
+      // 同维度换模型也不能沿用旧向量空间（票 06 验收）。
+      final previous = harness.repository.config!;
+      harness.repository.config = EmbeddingConfig(
+        baseUrl: previous.baseUrl,
+        model: 'another-embedding-model',
+        apiKey: previous.apiKey,
+        enabled: previous.enabled,
+      );
+
+      final status = await harness.service.status();
+      expect(status.state, EpisodeRagState.rebuildNeeded);
+      expect(
+        harness.embedding.calls,
+        hasLength(buildCalls),
+        reason: '换模型只落状态，不外发历史',
+      );
+      expect(await harness.service.locate('旧书店'), isA<RagUnavailable>());
+
+      // 明确重建后以新模型身份发布（同维度也重算，不沿用旧索引）。
+      await harness.service.rebuild();
+      await harness.service.settlePendingWork();
+      final index = await harness.indexStoreRead();
+      expect(index!.identity.model, 'another-embedding-model');
+      expect(
+        index.identity.dimension,
+        2,
+        reason: '同维度换模型仍经历完整重建',
+      );
+      expect((await harness.service.status()).state, EpisodeRagState.ready);
+      expect(await harness.service.locate('旧书店'), isA<RagCandidates>());
+    });
+
+    test('换地址保存清 Key：启用状态如实暂不可用；补 Key 后需重建，重建恢复', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+        queryVectors: {'旧书店': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+
+      // 换地址保存且未输入新 Key：地址作用域变化不带旧 Key，保存不改
+      // 启用位（Spec：保存配置与启用分开）。
+      final settings = EmbeddingSettingsService(
+        harness.repository,
+        harness.embedding,
+      );
+      final previousModel = harness.repository.config!.model;
+      await settings.save(
+        baseUrl: 'https://other.example.com/v1',
+        model: previousModel,
+      );
+      expect(
+        harness.repository.config!.apiKey,
+        isNull,
+        reason: '地址作用域变化不得带旧 Key',
+      );
+      expect(
+        harness.repository.config!.enabled,
+        isTrue,
+        reason: '保存不改启用位',
+      );
+
+      // 启用状态下 Key 缺失：如实暂不可用，不自动停用掩盖，也不查询。
+      final status = await harness.service.status();
+      expect(status.state, EpisodeRagState.unavailable);
+      expect(status.reason, contains('API Key'));
+      expect(await harness.service.locate('旧书店'), isA<RagUnavailable>());
+      expect(
+        harness.embedding.calls,
+        hasLength(1),
+        reason: '凭据缺口期间查询不外发',
+      );
+
+      // 补上新作用域的 Key：凭据缺口恢复，但地址身份已变——需重建。
+      await settings.save(
+        baseUrl: 'https://other.example.com/v1',
+        model: previousModel,
+        apiKey: 'sk-other',
+      );
+      expect(
+        (await harness.service.status()).state,
+        EpisodeRagState.rebuildNeeded,
+      );
+
+      // 明确重建后以新地址恢复查询。
+      await harness.service.rebuild();
+      await harness.service.settlePendingWork();
+      expect((await harness.service.status()).state, EpisodeRagState.ready);
+      expect(await harness.service.locate('旧书店'), isA<RagCandidates>());
+    });
+
+    test('忘记 Key：启用状态暂不可用而非自动停用；同作用域补回即恢复，不重算', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+        queryVectors: {'旧书店': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      final buildCalls = harness.embedding.calls.length;
+
+      final settings = EmbeddingSettingsService(
+        harness.repository,
+        harness.embedding,
+      );
+      await settings.forgetApiKey();
+      expect(
+        harness.repository.config!.enabled,
+        isTrue,
+        reason: '忘记 Key 不用自动停用掩盖故障',
+      );
+
+      final status = await harness.service.status();
+      expect(status.state, EpisodeRagState.unavailable);
+      expect(status.reason, contains('API Key'));
+      expect(await harness.service.locate('旧书店'), isA<RagUnavailable>());
+
+      // 同作用域补回 Key：按缓存身份恢复就绪，不重算有效向量。
+      final config = harness.repository.config!;
+      await settings.save(
+        baseUrl: config.baseUrl,
+        model: config.model,
+        apiKey: 'sk-test',
+      );
+      final recovered = await harness.service.status();
+      expect(recovered.state, EpisodeRagState.ready);
+      await harness.service.settlePendingWork();
+      expect(
+        harness.embedding.calls,
+        hasLength(buildCalls),
+        reason: '同作用域仅换 Key 不重算有效向量',
+      );
+      expect(await harness.service.locate('旧书店'), isA<RagCandidates>());
+      expect(
+        harness.embedding.calls,
+        hasLength(buildCalls + 1),
+        reason: '恢复后只多出一次查询请求',
+      );
+    });
+
+    test('请求途中停用：结果发布前核对，不把旧请求结果当有效候选', () async {
+      _RagHarness? box;
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+        queryVectors: {'旧书店': [1.0, 0.0]},
+        onEmbed: () => box!.service.disable(),
+      );
+      box = harness;
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+
+      final result = await harness.service.locate('旧书店');
+      expect(
+        result,
+        isA<RagUnavailable>(),
+        reason: '停用发生在请求窗口内：旧请求结果不发布',
+      );
+      expect(
+        (await harness.service.status()).state,
+        EpisodeRagState.disabled,
+      );
+    });
+
+    test('请求途中换模型：结果发布前核对身份，不把旧请求结果当新服务结果', () async {
+      _RagHarness? box;
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+        queryVectors: {'旧书店': [1.0, 0.0]},
+        onEmbed: () async {
+          final previous = box!.repository.config!;
+          box.repository.config = EmbeddingConfig(
+            baseUrl: previous.baseUrl,
+            model: 'midflight-model',
+            apiKey: previous.apiKey,
+            enabled: previous.enabled,
+          );
+        },
+      );
+      box = harness;
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+
+      final result = await harness.service.locate('旧书店');
+      expect(
+        result,
+        isA<RagUnavailable>(),
+        reason: '配置在请求窗口内更换：旧请求结果不当新服务有效结果',
+      );
+      expect(
+        (await harness.service.status()).state,
+        EpisodeRagState.rebuildNeeded,
+        reason: '身份已漂移：旧索引停止查询',
+      );
+    });
+
+    test('增量同步遇服务端维度漂移：落需重建而非卡死待处理；重建后恢复', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+
+      // 新条目等待入索引，但服务端此时已整体换到 3 维输出。
+      await harness.addEpisodes({
+        '2026-08-12': [_entry('s:r3:0', '用户开始养猫了')],
+      });
+      harness.embedding.vectors['2026-08-12\n用户开始养猫了'] = [0.0, 1.0, 0.0];
+      harness.service.scheduleIncrementalSync();
+      await harness.service.settlePendingWork();
+
+      // 不保留待处理记账死循环：旧索引身份失配，如实落需重建。
+      final status = await harness.service.status();
+      expect(status.state, EpisodeRagState.rebuildNeeded);
+      expect(status.reason, contains('维度'));
+
+      // 服务端整体漂移后，明确重建以新维度恢复。
+      harness.embedding.vectors['2026-08-10\n用户聊到旧书店的事'] = [
+        1.0, 0.0, 0.0,
+      ];
+      await harness.service.rebuild();
+      await harness.service.settlePendingWork();
+      expect((await harness.service.status()).state, EpisodeRagState.ready);
+      harness.embedding.inner.queryVectors['养猫'] = [0.0, 1.0, 0.0];
+      expect(await harness.service.locate('养猫'), isA<RagCandidates>());
+    });
+  });
 }
 
 // ---------- 测试基架 ----------
@@ -1108,10 +1385,11 @@ final class _RagHarness {
     this.pipeline,
     this.repository,
     this.embedding,
+    EmbeddingClient serviceEmbedding,
   ) : service = EpisodeRagService(
        memoryDirectory: root.path,
        configRepository: repository,
-       embeddingClient: embedding,
+       embeddingClient: serviceEmbedding,
        episodePipeline: pipeline,
        openLoopStore: OpenLoopStore(memoryDirectory: root.path),
        diagnosticsSink: (_) {},
@@ -1127,6 +1405,7 @@ final class _RagHarness {
     String? banned,
     Completer<void>? batchGate,
     bool configured = true,
+    Future<void> Function()? onEmbed,
   }) async {
     final root = await Directory.systemTemp.createTemp('qiyu-rag-service-');
     final pipeline = EpisodeMemoryPipeline(
@@ -1162,7 +1441,7 @@ final class _RagHarness {
             )
           : null,
     );
-    final embedding = GatedEmbeddingClient(
+    final gated = GatedEmbeddingClient(
       _ScriptedEmbedding(
         vectors: Map<String, List<double>>.of(vectors),
         queryVectors: Map<String, List<double>>.of(queryVectors),
@@ -1172,7 +1451,24 @@ final class _RagHarness {
         batchGate: batchGate,
       ),
     );
-    final harness = _RagHarness._(root, pipeline, repository, embedding);
+    // 查询钩子（票 06）：仅查询请求在途时改配置或停用，制造「请求
+    // 途中变化」的确定性竞态；无钩子时与既有用例完全同构。
+    final serviceEmbedding = onEmbed == null
+        ? gated
+        : (
+            _QueryHookEmbeddingClient(
+              gated,
+              buildInputs: vectors.keys.toSet(),
+            )
+              ..onEmbed = onEmbed
+          );
+    final harness = _RagHarness._(
+      root,
+      pipeline,
+      repository,
+      gated,
+      serviceEmbedding,
+    );
     return harness;
   }
 
@@ -1243,3 +1539,38 @@ typedef _StaticEmbeddingRepository = StaticEmbeddingConfigRepository;
 
 /// 脚本化 embedding 客户端（support 共享版）。
 typedef _ScriptedEmbedding = ScriptedEmbeddingClient;
+
+/// 查询钩子包装（票 06）：查询请求（单条输入且不在构建向量表内，与
+/// Scripted/Gated 同一启发）发出前执行 [onEmbed]——在 locate 已读过
+/// 配置、请求在途的窗口内改配置或停用，验证结果发布前的核对。构建
+/// 请求直通，不影响首次建索引。
+final class _QueryHookEmbeddingClient implements EmbeddingClient {
+  _QueryHookEmbeddingClient(this.inner, {required this.buildInputs});
+
+  final EmbeddingClient inner;
+
+  /// 构建输入（日期+换行+摘要）集合：命中即构建请求，hook 不触发。
+  final Set<String> buildInputs;
+
+  Future<void> Function()? onEmbed;
+
+  @override
+  Future<List<Float32List>> embed({
+    required EmbeddingConfig config,
+    required String? apiKey,
+    required List<String> inputs,
+    Duration? timeout,
+  }) async {
+    final isQuery =
+        inputs.length == 1 && !buildInputs.contains(inputs.single);
+    if (onEmbed != null && isQuery) {
+      await onEmbed!();
+    }
+    return inner.embed(
+      config: config,
+      apiKey: apiKey,
+      inputs: inputs,
+      timeout: timeout,
+    );
+  }
+}

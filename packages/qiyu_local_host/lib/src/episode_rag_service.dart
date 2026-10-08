@@ -176,6 +176,12 @@ final class EpisodeRagService {
   /// 维护暂停位：置位期间不启动新构建（已入链的构建开头自查让路）。
   bool _paused = false;
 
+  /// 凭据缺口位（票 06）：启用状态下 Key 被忘记或缺失时置位——状态
+  /// 如实落「暂不可用」，不用自动停用掩盖故障；Key 重新填写后据此
+  /// 自动恢复对账（不需要重建），构建/维护等其它原因的暂不可用不经
+  /// 这条路径恢复。
+  bool _credentialGap = false;
+
   /// 当前状态快照：先与持久化事实对齐（启用位、缓存身份），再返回。
   Future<EpisodeRagStatus> status() async {
     await _syncState();
@@ -221,6 +227,7 @@ final class EpisodeRagService {
       }
     });
     _enabled = false;
+    _credentialGap = false;
     _state = EpisodeRagState.disabled;
     _reason = null;
     _clearProgress();
@@ -301,8 +308,15 @@ final class EpisodeRagService {
 
   /// 语义查询定位（Spec 决策「隐藏动作与回答交付」）：查询向量与索引
   /// 逐条精确余弦，取最多 10 条候选，回读当前来源并核对有效性、控制
-  /// 状态与来源 hash。查询失败按一次失败处理：不销毁仍有效的索引，
-  /// 不冒充没有候选。
+  /// 状态与来源 hash。网络失败按一次失败处理：不销毁仍有效的索引，
+  /// 不冒充没有候选（票 06：单次超时不能无理由销毁有效索引，也不能
+  /// 宣称没有相关记忆）。
+  ///
+  /// 请求窗口与发布前各核对一次当前配置（票 06：更改配置或停用发生
+  /// 在请求途中时，结果发布必须核对当前身份和启用状态，不得把旧请求
+  /// 结果当新服务有效结果）。服务端实际维度与缓存身份不符是确定性的
+  /// 身份失配（实际维度是身份成分），落需重建——它与单次网络失败的
+  /// 区别在于重试永远无法自愈。
   ///
   /// 出网前查询先过秘密脱敏（Spec：查询 embedding 只接收脱敏后的
   /// query；秘密脱敏覆盖召回外发等一切出仓内容）——这是 embedding
@@ -342,15 +356,34 @@ final class EpisodeRagService {
         apiKey: config.apiKey,
         inputs: [cleanQuery],
       );
+      // 请求窗口核对（票 06）：embed 等待期间被停用或换配置时，旧请求
+      // 的结果不得当新服务的有效结果发布——先核对启用位与身份再继续。
+      if (!await _stillEnabledWithIdentity(index.identity)) {
+        return const RagUnavailable(
+          'rag unavailable reason=identity-changed-midflight',
+        );
+      }
       final queryVector = vectors.single;
       if (queryVector.length != index.identity.dimension) {
-        // 同名模型返回了不同维度：余弦不可计算，按查询失败处理。
+        // 服务端实际维度与缓存身份不符：实际维度是索引身份的组成成分
+        // （Spec 表「索引身份」），这是确定性的身份失配证据而非单次
+        // 网络故障——旧索引立即停止查询并落需重建，明确重建后以新
+        // 维度恢复（票 06 验收：换实际维度显示需重建）。
+        _markDimensionDrift();
         return const RagUnavailable(
-          'rag unavailable reason=query-dimension-mismatch',
+          'rag unavailable reason=index-dimension-changed',
         );
       }
       final candidates = index.topByCosine(queryVector, episodeRagQueryLimit);
-      return await _readback(candidates);
+      final readback = await _readback(candidates);
+      // 发布前最后一刻核对（票 06）：回读窗口内的停用或换配置同样
+      // 不得把旧请求结果当新服务的有效结果交出去。
+      if (!await _stillEnabledWithIdentity(index.identity)) {
+        return const RagUnavailable(
+          'rag unavailable reason=identity-changed-midflight',
+        );
+      }
+      return readback;
     } on EmbeddingGatewayException catch (error) {
       diagnosticsSink('episode rag query deferred kind=${error.kind.name}');
       return RagUnavailable('rag query deferred kind=${error.kind.name}');
@@ -394,8 +427,8 @@ final class EpisodeRagService {
 
   // ---------- 状态同步 ----------
 
-  /// 与持久化事实对齐：读启用位；启用时确保缓存已加载并核对身份。
-  /// 幂等，每次状态读取与查询前调用。
+  /// 与持久化事实对齐：读启用位；启用时先核凭据缺口（票 06），再确保
+  /// 缓存已加载并核对身份。幂等，每次状态读取与查询前调用。
   Future<void> _syncState({bool forceReload = false}) async {
     final config = await _readConfig();
     final enabled = config?.enabled ?? false;
@@ -406,6 +439,35 @@ final class EpisodeRagService {
         _reason = null;
         _progressDone = 0;
         _progressTotal = 0;
+        _credentialGap = false;
+      }
+      return;
+    }
+    // 凭据缺口核对（票 06 验收：忘记 Key 表示暂不可用，不用自动停用
+    // 掩盖故障）：启用位为真但 Key 已忘记或缺失时，状态如实落「暂不
+    // 可用」并带人话原因；旧索引不动（重填 Key 即恢复，无需重建）。
+    // 准备中与更新中不抢——构建链的下一次出网会按鉴权失败落暂不可用。
+    final key = config?.apiKey?.trim();
+    if (key == null || key.isEmpty) {
+      if (_state != EpisodeRagState.preparing &&
+          _state != EpisodeRagState.updating &&
+          !_credentialGap) {
+        _credentialGap = true;
+        _state = EpisodeRagState.unavailable;
+        _reason = '记忆召回服务的 API Key 已忘记或缺失，请重新填写后重试。';
+        _clearProgress();
+      }
+      return;
+    }
+    if (_credentialGap) {
+      // Key 重新填写后的恢复（票 06）：凭据缺口是唯一自动恢复的暂不
+      // 可用——按缓存身份重新落状态（匹配即就绪，不符则需重建），
+      // 缺口期间丢掉的增量欠账由一次对账补上。
+      _credentialGap = false;
+      _reason = null;
+      await _adoptCachedIndex(config, forceReload: forceReload);
+      if (_state == EpisodeRagState.ready) {
+        scheduleIncrementalSync();
       }
       return;
     }
@@ -477,6 +539,18 @@ final class EpisodeRagService {
 
   Future<EmbeddingConfig?> _readConfig() => configRepository.loadEmbedding();
 
+  /// 查询窗口核对（票 06 验收：请求途中改配置或停用，结果发布必须核对
+  /// 当前身份和启用状态）：重读当前配置，启用位与索引身份都未变才算
+  /// 仍然有效。身份不含 Key——同作用域换 Key 不打断查询。
+  Future<bool> _stillEnabledWithIdentity(
+    EpisodeRagIndexIdentity identity,
+  ) async {
+    final config = await _readConfig();
+    return config != null &&
+        config.enabled &&
+        _identityMatches(identity, config);
+  }
+
   Future<Set<String>> _controlledTitles() =>
       openLoopStore?.controlledTitles() ?? Future.value(const <String>{});
 
@@ -507,6 +581,16 @@ final class EpisodeRagService {
     _progressTotal = 0;
     _pendingCount = pending;
     _reason = reason;
+  }
+
+  /// 落「需重建」（票 06）：服务端实际维度与缓存身份不符时的统一出口
+  /// ——旧索引立即停止查询（丢弃加载的缓存），等用户明确重建后以新
+  /// 维度恢复；重建完成前重试只会重复失败，不保留待处理记账死循环。
+  void _markDimensionDrift() {
+    _loadedIndex = null;
+    _state = EpisodeRagState.rebuildNeeded;
+    _reason = '记忆召回服务返回的向量维度已变化，请重建索引。';
+    _clearProgress();
   }
 
   // ---------- 共享来源扫描与发布重核 ----------
@@ -767,8 +851,18 @@ final class EpisodeRagService {
           if (dimension == 0) {
             dimension = vector.length;
           } else if (vector.length != dimension) {
-            // 增量向量必须与现有索引同维：余弦不可计算，按本趟失败
-            // 处理，不合法响应不进入有效索引。
+            if (index.entries.isNotEmpty) {
+              // 已有索引遇到不同维度：服务端实际维度已漂移，余弦不可
+              // 计算，旧索引身份失配——不再保留待处理记账死循环，落
+              // 需重建等用户明确重建（票 06 验收：实际维度变化需重建）。
+              _markDimensionDrift();
+              diagnosticsSink(
+                'episode rag update deferred reason=dimension-changed',
+              );
+              return;
+            }
+            // 空库补齐维度时批间自相矛盾：响应损坏，按本趟失败处理，
+            // 不合法响应不进入有效索引。
             throw EmbeddingGatewayException(
               kind: ModelFailureKind.incompatibleResponse,
               message: '记忆召回服务返回的向量维度与现有索引不一致，无法更新索引。',
