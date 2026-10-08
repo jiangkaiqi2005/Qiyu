@@ -225,8 +225,9 @@ final class RecallOrchestrator {
 
   /// 消费该会话的短期 memory context（一次性临时透镜，票 03 结构化）：
   /// 先按当前来源重新核对每条候选（存在、有效、控制状态、来源 hash
-  /// 与脱敏）并重新渲染，再交出渲染结果与核验后的材料。全部失效时
-  /// 两个值都是 null——故障与空材料都不冒充注入内容。
+  /// 与脱敏）并重新渲染，再交出渲染结果与核验后的材料（只含存活条目，
+  /// 供本轮未消费时放回，下轮不必再扫死引用）。全部失效时两个值都是
+  /// null——故障与空材料都不冒充注入内容。
   /// [onDiagnostic] 收本机诊断，绝不展示给用户。
   Future<({String? context, PendingRecallMaterial? material})>
   consumePendingContext(
@@ -237,40 +238,46 @@ final class RecallOrchestrator {
     if (material == null) {
       return (context: null, material: null);
     }
-    final diagnostics = <String>[];
-    final verified = await _verifyPendingMaterial(material, diagnostics);
-    if (verified == null) {
-      for (final diagnostic in diagnostics) {
-        onDiagnostic?.call(diagnostic);
-      }
+    final outcome = await _verifyAndRender(material);
+    _emitDiagnostics(outcome.diagnostics, onDiagnostic);
+    if (outcome.rendered == null) {
       return (context: null, material: null);
     }
-    final rendered = _buildPendingContext(
-      verified.rawDays,
-      null,
-      verified.personaPathText,
-      diagnostics,
-    );
-    for (final diagnostic in diagnostics) {
-      onDiagnostic?.call(diagnostic);
-    }
-    return (context: rendered, material: verified.material);
+    return (context: outcome.rendered, material: outcome.material);
   }
 
-  /// 消费语义的唯一实现：按当前来源重核临时材料并渲染成注入文本。
-  /// [consumePendingContext] 复用；测试用它把一次召回结果的材料渲染
-  /// 出来做内容断言。全部失效时返回 null。
+  /// 重核与渲染的公共实现（consumePendingContext 与测试共用同一份核
+  /// 对→渲染→诊断编排）：按当前来源重核临时材料，通过后渲染成注入
+  /// 文本。全部失效时返回 null。测试用它把一次召回结果的材料渲染出
+  /// 来做内容断言。
   Future<String?> verifyAndRenderPending(
     PendingRecallMaterial material, {
     void Function(String message)? onDiagnostic,
   }) async {
+    final outcome = await _verifyAndRender(material);
+    _emitDiagnostics(outcome.diagnostics, onDiagnostic);
+    return outcome.rendered;
+  }
+
+  void _emitDiagnostics(
+    List<String> diagnostics,
+    void Function(String message)? onDiagnostic,
+  ) {
+    if (onDiagnostic == null) {
+      return;
+    }
+    for (final diagnostic in diagnostics) {
+      onDiagnostic(diagnostic);
+    }
+  }
+
+  Future<_VerifyRenderOutcome> _verifyAndRender(
+    PendingRecallMaterial material,
+  ) async {
     final diagnostics = <String>[];
     final verified = await _verifyPendingMaterial(material, diagnostics);
     if (verified == null) {
-      for (final diagnostic in diagnostics) {
-        onDiagnostic?.call(diagnostic);
-      }
-      return null;
+      return _VerifyRenderOutcome._(null, null, diagnostics);
     }
     final rendered = _buildPendingContext(
       verified.rawDays,
@@ -278,10 +285,11 @@ final class RecallOrchestrator {
       verified.personaPathText,
       diagnostics,
     );
-    for (final diagnostic in diagnostics) {
-      onDiagnostic?.call(diagnostic);
-    }
-    return rendered;
+    return _VerifyRenderOutcome._(
+      rendered,
+      verified.material,
+      diagnostics,
+    );
   }
 
   /// 消费前的来源重核（Spec 决策 5：下一轮消费共用来源有效性规则）：
@@ -1425,4 +1433,14 @@ $appellationRule''';
       ModelMessage(ModelMessageRole.user, user.toString()),
     ];
   }
+}
+
+/// [_verifyAndRender] 的结果：渲染文本与存活材料（全部失效时皆 null），
+/// 诊断无论成败都随行。
+final class _VerifyRenderOutcome {
+  const _VerifyRenderOutcome._(this.rendered, this.material, this.diagnostics);
+
+  final String? rendered;
+  final PendingRecallMaterial? material;
+  final List<String> diagnostics;
 }

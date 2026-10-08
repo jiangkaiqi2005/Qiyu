@@ -5,7 +5,7 @@ import 'episode_index.dart';
 import 'episode_memory.dart';
 import 'episode_rag_index.dart';
 import 'markdown_memory_repository.dart'
-    show AtomicTextWriter, stderrDiagnostics;
+    show AtomicTextWriter, redactSessionText, stderrDiagnostics;
 import 'memory_text_primitives.dart';
 import 'model_gateway.dart' show ModelFailureKind;
 import 'open_loop_store.dart';
@@ -253,6 +253,10 @@ final class EpisodeRagService {
   /// 逐条精确余弦，取最多 10 条候选，回读当前来源并核对有效性、控制
   /// 状态与来源 hash。查询失败按一次失败处理：不销毁仍有效的索引，
   /// 不冒充没有候选。
+  ///
+  /// 出网前查询先过秘密脱敏（Spec：查询 embedding 只接收脱敏后的
+  /// query；秘密脱敏覆盖召回外发等一切出仓内容）——这是 embedding
+  /// 外发的唯一边界，调用方传入的 query 在此统一脱敏。
   Future<EpisodeRagLocateResult> locate(String query) async {
     try {
       await _syncState();
@@ -267,6 +271,11 @@ final class EpisodeRagService {
       if (index.entries.isEmpty) {
         return const RagCandidates([]);
       }
+      final cleanQuery = redactSessionText(query).trim();
+      if (cleanQuery.isEmpty) {
+        // 整句都是秘密：脱敏后无事可查，绝不外发原文。
+        return const RagCandidates([]);
+      }
       final config = await configRepository.loadEmbedding();
       if (config == null ||
           !_identityMatches(index.identity, config) ||
@@ -277,7 +286,7 @@ final class EpisodeRagService {
       final vectors = await embeddingClient.embed(
         config: config,
         apiKey: config.apiKey,
-        inputs: [query],
+        inputs: [cleanQuery],
       );
       final queryVector = vectors.single;
       if (queryVector.length != index.identity.dimension) {

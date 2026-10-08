@@ -399,13 +399,10 @@ final class SettingsRoutes implements ApiRoutes {
       if (rag == null) {
         throw const ProviderConfigException('记忆召回服务在本机不可用。');
       }
-      final settings = await embeddingSettingsService.read();
-      // 启用前必须已配置服务；enable 内部同样校验，这里先读一次避免
-      // 未配置时误写启用位。
-      if (!settings.configured) {
-        throw const ProviderConfigException('还没有保存记忆召回服务配置，无法启用。');
-      }
+      // 变更后再读快照：响应里的 enabled/rag 状态必须反映本次操作之后
+      // 的事实（与 disable/rebuild 同一顺序）。
       await rag.enable();
+      final settings = await embeddingSettingsService.read();
       return Response.ok(
         jsonEncode(await _embeddingPayload(settings)),
         headers: jsonHeaders,

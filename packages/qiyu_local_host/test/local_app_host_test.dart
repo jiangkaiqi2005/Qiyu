@@ -3163,7 +3163,7 @@ void main() {
       );
       expect(prematureRebuild.statusCode, HttpStatus.badRequest);
 
-      // 显式启用：触发后台完整构建。
+      // 显式启用：触发后台完整构建；响应反映启用之后的事实。
       final enabled = await _send(
         host.origin.resolve('/api/provider/embedding/enable'),
         method: 'POST',
@@ -3172,10 +3172,8 @@ void main() {
       );
       expect(enabled.statusCode, HttpStatus.ok);
       final enabledBody = jsonDecode(enabled.body) as Map<String, Object?>;
-      expect(
-        (enabledBody['rag']! as Map)['enabled'] ?? (enabledBody['enabled']),
-        anyOf(isTrue, isFalse),
-      );
+      expect(enabledBody['enabled'], true, reason: '响应必须是启用后的快照');
+      expect((enabledBody['rag']! as Map)['state'], 'preparing');
       expect(enabled.body, isNot(contains('embedding-secret-value')));
       await rag.settlePendingWork();
 

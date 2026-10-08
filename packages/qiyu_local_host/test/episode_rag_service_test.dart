@@ -355,6 +355,40 @@ void main() {
       expect((await harness.service.status()).state, EpisodeRagState.ready);
     });
 
+    test('发往 embedding 的查询先脱敏：秘密不出仓，整句秘密不外发', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+        queryVectors: {'旧书店': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      harness.embedding.calls.clear();
+
+      // 查询带着秘密：外发的是脱敏后的文本，绝不携带原值。
+      final result =
+          await harness.service.locate('旧书店 密码 {"password": "s3cret-9"}')
+              as RagCandidates;
+      final sent = harness.embedding.calls.single.single;
+      expect(sent.contains('s3cret-9'), isFalse);
+      expect(sent.contains('[已脱敏]'), isTrue);
+      expect(sent.contains('旧书店'), isTrue);
+      expect(result, isA<RagCandidates>());
+
+      // 整句都是秘密：外发的文本同样只有脱敏形态，原值绝不出现。
+      harness.embedding.calls.clear();
+      final fullySecret =
+          await harness.service.locate('{"password": "s3cret-9"}')
+              as RagCandidates;
+      expect(fullySecret, isA<RagCandidates>());
+      final secretSent = harness.embedding.calls.single.single;
+      expect(secretSent.contains('s3cret-9'), isFalse);
+      expect(secretSent.contains('[已脱敏]'), isTrue);
+    });
+
     test('摘要编辑后旧向量立即不可用（来源 hash 失配）', () async {
       final harness = await _RagHarness.create(
         episodes: {
