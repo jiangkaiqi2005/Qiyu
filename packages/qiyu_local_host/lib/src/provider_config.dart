@@ -379,10 +379,10 @@ bool _isPublicIpv6(Uint8List b) {
   return true;
 }
 
-/// 语音两段配置（转写/合成）共享的前半校验：地址脏字符→URI+scheme→
-/// 模型名空→模型名脏字符四连检；scheme 白名单用各协议现成的 allows
-/// 判定，全部人话文案按服务标签逐字拼装。
-void _validateSpeechEndpoint({
+/// 各段服务配置（转写/合成/记忆召回 embedding）共享的前半校验：地址
+/// 脏字符→URI+scheme→模型名空→模型名脏字符四连检；scheme 白名单用各
+/// 协议现成的 allows 判定，全部人话文案按服务标签逐字拼装。
+void _validateServiceEndpoint({
   required String baseUrl,
   required String model,
   required String serviceLabel,
@@ -531,7 +531,7 @@ final class SttConfig {
       SttProviderKind.qwenAsr => '语音服务地址必须是有效的 HTTP 地址。',
       SttProviderKind.custom => '语音服务地址必须是有效的 HTTP 地址。',
     };
-    _validateSpeechEndpoint(
+    _validateServiceEndpoint(
       baseUrl: baseUrl,
       model: model,
       serviceLabel: '语音服务',
@@ -866,7 +866,7 @@ final class TtsConfig {
     final schemeFailureMessage = provider == TtsProviderKind.qwenTts
         ? '语音合成服务地址必须是有效的 HTTP 或 WebSocket 地址。'
         : '语音合成服务地址必须是有效的 HTTP 地址。';
-    _validateSpeechEndpoint(
+    _validateServiceEndpoint(
       baseUrl: baseUrl,
       model: model,
       serviceLabel: '语音合成服务',
@@ -918,6 +918,25 @@ final class TtsConfig {
       }
     }
   }
+}
+
+/// 凭据 Key 的保存与连接测试取舍：trim 后非空的新 Key 优先；否则同凭
+/// 据作用域沿用已存 Key，作用域变化不沿用旧服务商的 Key。转写与记忆
+/// 召回 embedding 两个设置服务共用同一份逻辑（合成的保存编排因同时归
+/// 一音色等字段而另行内联，语义勿混用）。
+String? selectScopedApiKey({
+  required String? apiKeyInput,
+  required String? storedKey,
+  required bool sameCredentialScope,
+}) {
+  final trimmed = apiKeyInput?.trim();
+  if (trimmed != null && trimmed.isNotEmpty) {
+    return trimmed;
+  }
+  if (sameCredentialScope) {
+    return storedKey;
+  }
+  return null;
 }
 
 /// provider.json 共享读改写事务的排队入口。聊天、语音转写、语音合成、
@@ -1001,7 +1020,7 @@ final class EmbeddingConfig {
 
   Map<String, Object?> toJson() => {'baseUrl': baseUrl, 'model': model};
 
-  void validate() => _validateSpeechEndpoint(
+  void validate() => _validateServiceEndpoint(
     baseUrl: baseUrl,
     model: model,
     serviceLabel: '记忆召回服务',

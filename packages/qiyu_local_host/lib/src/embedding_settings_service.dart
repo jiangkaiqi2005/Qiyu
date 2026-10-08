@@ -153,16 +153,12 @@ final class EmbeddingSettingsService {
     EmbeddingConfig config,
     EmbeddingConfig? stored,
     String? apiKey,
-  ) {
-    final trimmed = apiKey?.trim();
-    if (trimmed != null && trimmed.isNotEmpty) {
-      return trimmed;
-    }
-    if (stored != null && stored.credentialScope == config.credentialScope) {
-      return stored.apiKey;
-    }
-    return null;
-  }
+  ) => selectScopedApiKey(
+    apiKeyInput: apiKey,
+    storedKey: stored?.apiKey,
+    sameCredentialScope:
+        stored != null && stored.credentialScope == config.credentialScope,
+  );
 }
 
 /// 连接测试的固定文本：非私人、与真实记忆无关，只用于验证服务可达且

@@ -74,7 +74,7 @@ void main() {
     expect(vectors2[1], orderedCloseTo([0.4, 0.4]));
   });
 
-  test('维度不一致、embedding 缺失与非列表响应均不可发布', () async {
+  test('维度不一致、embedding 缺失、重复序号与非列表响应均不可发布', () async {
     final ragged = _StubEmbeddingHttp(
       responseBody: jsonEncode({
         'data': [
@@ -91,6 +91,33 @@ void main() {
           'kind',
           ModelFailureKind.incompatibleResponse,
         ),
+      ),
+    );
+
+    // 两条条目挤同一序号：另一个输入没有向量，重复序号必须拒绝而不是
+    // 让空占位向量出仓。
+    final duplicated = _StubEmbeddingHttp(
+      responseBody: jsonEncode({
+        'data': [
+          {'index': 0, 'embedding': [0.1, 0.2]},
+          {'index': 0, 'embedding': [0.3, 0.4]},
+        ],
+      }),
+    );
+    await expectLater(
+      gateway(duplicated).embed(config: config, apiKey: 'k', inputs: ['a', 'b']),
+      throwsA(
+        isA<EmbeddingGatewayException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              ModelFailureKind.incompatibleResponse,
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              '记忆召回服务返回了重复的向量序号。',
+            ),
       ),
     );
 

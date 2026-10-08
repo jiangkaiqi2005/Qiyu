@@ -236,16 +236,12 @@ final class SttSettingsService {
     SttConfig config,
     SttConfig? stored,
     String? apiKey,
-  ) {
-    final trimmed = apiKey?.trim();
-    if (trimmed != null && trimmed.isNotEmpty) {
-      return trimmed;
-    }
-    if (stored != null && stored.credentialScope == config.credentialScope) {
-      return stored.apiKey;
-    }
-    return null;
-  }
+  ) => selectScopedApiKey(
+    apiKeyInput: apiKey,
+    storedKey: stored?.apiKey,
+    sameCredentialScope:
+        stored != null && stored.credentialScope == config.credentialScope,
+  );
 
   /// 正式转写：识别文本为空视为失败（「没有识别到语音」），录音留在
   /// 浏览器内存里可重试。

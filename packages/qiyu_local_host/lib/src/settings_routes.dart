@@ -215,12 +215,12 @@ final class SettingsRoutes implements ApiRoutes {
       final payload = await readJsonObject(request, maxBytes: 32 * 1024);
       final settings = await sttSettingsService.save(
         provider: _sttProviderFromPayload(payload),
-        baseUrl: _sttTextField(payload, 'baseUrl'),
-        model: _sttTextField(payload, 'model'),
+        baseUrl: _settingsTextField(payload, 'baseUrl', _speechConfigFormatError),
+        model: _settingsTextField(payload, 'model', _speechConfigFormatError),
         apiKey: _apiKeyFromPayload(payload),
-        authHeader: _optionalSpeechTextField(payload, 'authHeader'),
+        authHeader: _optionalSettingsTextField(payload, 'authHeader', _speechConfigFormatError),
         responseShape: _sttResponseShapeFromPayload(payload),
-        responseField: _optionalSpeechTextField(payload, 'responseField'),
+        responseField: _optionalSettingsTextField(payload, 'responseField', _speechConfigFormatError),
         extraParams: _sttExtraParamsFromPayload(payload),
       );
       return Response.ok(
@@ -232,12 +232,12 @@ final class SettingsRoutes implements ApiRoutes {
       final payload = await readJsonObject(request, maxBytes: 32 * 1024);
       final result = await sttSettingsService.test(
         provider: _sttProviderFromPayload(payload),
-        baseUrl: _optionalSpeechTextField(payload, 'baseUrl'),
-        model: _optionalSpeechTextField(payload, 'model'),
+        baseUrl: _optionalSettingsTextField(payload, 'baseUrl', _speechConfigFormatError),
+        model: _optionalSettingsTextField(payload, 'model', _speechConfigFormatError),
         apiKey: _apiKeyFromPayload(payload),
-        authHeader: _optionalSpeechTextField(payload, 'authHeader'),
+        authHeader: _optionalSettingsTextField(payload, 'authHeader', _speechConfigFormatError),
         responseShape: _sttResponseShapeFromPayload(payload),
-        responseField: _optionalSpeechTextField(payload, 'responseField'),
+        responseField: _optionalSettingsTextField(payload, 'responseField', _speechConfigFormatError),
         extraParams: _sttExtraParamsFromPayload(payload),
       );
       requestDiagnostics?.record(
@@ -275,15 +275,15 @@ final class SettingsRoutes implements ApiRoutes {
       final payload = await readJsonObject(request, maxBytes: 32 * 1024);
       final settings = await ttsSettingsService.save(
         provider: _ttsProviderFromPayload(payload),
-        baseUrl: _sttTextField(payload, 'baseUrl'),
-        model: _sttTextField(payload, 'model'),
+        baseUrl: _settingsTextField(payload, 'baseUrl', _speechConfigFormatError),
+        model: _settingsTextField(payload, 'model', _speechConfigFormatError),
         apiKey: _apiKeyFromPayload(payload),
-        voice: _optionalSpeechTextField(payload, 'voice'),
+        voice: _optionalSettingsTextField(payload, 'voice', _speechConfigFormatError),
         speed: _ttsSpeedFromPayload(payload),
         autoSpeak: _ttsAutoSpeakFromPayload(payload),
-        authHeader: _optionalSpeechTextField(payload, 'authHeader'),
+        authHeader: _optionalSettingsTextField(payload, 'authHeader', _speechConfigFormatError),
         responseShape: _ttsResponseShapeFromPayload(payload),
-        responseField: _optionalSpeechTextField(payload, 'responseField'),
+        responseField: _optionalSettingsTextField(payload, 'responseField', _speechConfigFormatError),
         extraParams: _ttsExtraParamsFromPayload(payload),
         transport: _ttsTransportFromPayload(payload),
       );
@@ -296,14 +296,14 @@ final class SettingsRoutes implements ApiRoutes {
       final payload = await readJsonObject(request, maxBytes: 32 * 1024);
       final result = await ttsSettingsService.test(
         provider: _ttsProviderFromPayload(payload),
-        baseUrl: _optionalSpeechTextField(payload, 'baseUrl'),
-        model: _optionalSpeechTextField(payload, 'model'),
+        baseUrl: _optionalSettingsTextField(payload, 'baseUrl', _speechConfigFormatError),
+        model: _optionalSettingsTextField(payload, 'model', _speechConfigFormatError),
         apiKey: _apiKeyFromPayload(payload),
-        voice: _optionalSpeechTextField(payload, 'voice'),
+        voice: _optionalSettingsTextField(payload, 'voice', _speechConfigFormatError),
         speed: _ttsSpeedFromPayload(payload),
-        authHeader: _optionalSpeechTextField(payload, 'authHeader'),
+        authHeader: _optionalSettingsTextField(payload, 'authHeader', _speechConfigFormatError),
         responseShape: _ttsResponseShapeFromPayload(payload),
-        responseField: _optionalSpeechTextField(payload, 'responseField'),
+        responseField: _optionalSettingsTextField(payload, 'responseField', _speechConfigFormatError),
         extraParams: _ttsExtraParamsFromPayload(payload),
         // 传输方式随表单走（票三）：连接测试实测用户选的传输。
         transport: _ttsTransportFromPayload(payload),
@@ -355,8 +355,8 @@ final class SettingsRoutes implements ApiRoutes {
     if (method == 'PUT' && path == 'api/provider/embedding') {
       final payload = await readJsonObject(request, maxBytes: 8 * 1024);
       final settings = await embeddingSettingsService.save(
-        baseUrl: _embeddingTextField(payload, 'baseUrl'),
-        model: _embeddingTextField(payload, 'model'),
+        baseUrl: _settingsTextField(payload, 'baseUrl', _embeddingConfigFormatError),
+        model: _settingsTextField(payload, 'model', _embeddingConfigFormatError),
         apiKey: _apiKeyFromPayload(payload),
       );
       return Response.ok(
@@ -367,8 +367,8 @@ final class SettingsRoutes implements ApiRoutes {
     if (method == 'POST' && path == 'api/provider/embedding/test') {
       final payload = await readJsonObject(request, maxBytes: 8 * 1024);
       final result = await embeddingSettingsService.test(
-        baseUrl: _optionalEmbeddingTextField(payload, 'baseUrl'),
-        model: _optionalEmbeddingTextField(payload, 'model'),
+        baseUrl: _optionalSettingsTextField(payload, 'baseUrl', _embeddingConfigFormatError),
+        model: _optionalSettingsTextField(payload, 'model', _embeddingConfigFormatError),
         apiKey: _apiKeyFromPayload(payload),
       );
       requestDiagnostics?.record(
@@ -469,53 +469,40 @@ String? _apiKeyFromPayload(Map<String, Object?> payload) {
   return apiKey as String?;
 }
 
-/// STT 设置必填文本字段：缺失或类型不对按配置格式错误拒绝。
-String _sttTextField(Map<String, Object?> payload, String key) {
-  final value = payload[key];
-  if (value is! String) {
-    throw const ProviderConfigException('语音服务配置格式不正确。');
-  }
-  return value;
-}
-
-/// 记忆召回（embedding）设置必填文本字段：缺失或类型不对按配置格式
-/// 错误拒绝。
-String _embeddingTextField(Map<String, Object?> payload, String key) {
-  final value = payload[key];
-  if (value is! String) {
-    throw const ProviderConfigException('记忆召回服务配置格式不正确。');
-  }
-  return value;
-}
-
-/// 记忆召回（embedding）设置的可选文本字段：空负载（连接测试测已保存
-/// 配置）允许缺失。
-String? _optionalEmbeddingTextField(
+/// 设置必填文本字段的共享取值：缺失或类型不对按各段自己的格式错误拒
+/// 绝。STT/TTS 与 embedding 各段共用同一形状，错误文案按段落传。
+String _settingsTextField(
   Map<String, Object?> payload,
   String key,
+  String failureMessage,
+) {
+  final value = payload[key];
+  if (value is! String) {
+    throw ProviderConfigException(failureMessage);
+  }
+  return value;
+}
+
+/// 设置可选文本字段的共享取值：空负载（连接测试测已保存配置）允许缺
+/// 失，类型不对按各段自己的格式错误拒绝。
+String? _optionalSettingsTextField(
+  Map<String, Object?> payload,
+  String key,
+  String failureMessage,
 ) {
   final value = payload[key];
   if (value == null) {
     return null;
   }
   if (value is! String) {
-    throw const ProviderConfigException('记忆召回服务配置格式不正确。');
+    throw ProviderConfigException(failureMessage);
   }
   return value;
 }
 
-/// 转写与合成两段共用的可选文本字段：空负载（连接测试测已保存配置）
-/// 允许缺失。
-String? _optionalSpeechTextField(Map<String, Object?> payload, String key) {
-  final value = payload[key];
-  if (value == null) {
-    return null;
-  }
-  if (value is! String) {
-    throw const ProviderConfigException('语音服务配置格式不正确。');
-  }
-  return value;
-}
+/// 各段设置格式错误的人话文案：按本段服务名各说各的，字段助手共用。
+const _speechConfigFormatError = '语音服务配置格式不正确。';
+const _embeddingConfigFormatError = '记忆召回服务配置格式不正确。';
 
 /// STT 设置的服务类型（provider）：可选字段，缺省 openai_compatible；
 /// 非法协议名按配置格式错误拒绝，不落盘。

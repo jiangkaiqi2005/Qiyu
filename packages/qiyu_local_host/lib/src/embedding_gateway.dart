@@ -230,11 +230,19 @@ List<Float32List> _parseEmbeddingResponse(
         message: '记忆召回服务返回的内容无法解析。',
       );
     }
-    // 条目自带 index 时按它落位：请求多输入时服务可能乱序返回。
+    // 条目自带 index 时按它落位：请求多输入时服务可能乱序返回。落位
+    // 前校验槽位未被占用——重复 index（或缺带混排撞槽）会让某个输入
+    // 没有向量，遗留的空占位绝不能冒充有效向量出仓。
     var slot = i;
     final rawIndex = entry['index'];
     if (rawIndex is int && rawIndex >= 0 && rawIndex < data.length) {
       slot = rawIndex;
+    }
+    if (vectors[slot].isNotEmpty) {
+      throw const EmbeddingGatewayException(
+        kind: ModelFailureKind.incompatibleResponse,
+        message: '记忆召回服务返回了重复的向量序号。',
+      );
     }
     final rawVector = entry['embedding'];
     if (rawVector is! List || rawVector.isEmpty) {
@@ -280,6 +288,13 @@ List<Float32List> _parseEmbeddingResponse(
       );
     }
     vectors[slot] = vector;
+  }
+  // 兜底与接口文档同口径：任何槽位仍空着（向量缺失）都不可出仓。
+  if (vectors.any((vector) => vector.isEmpty)) {
+    throw const EmbeddingGatewayException(
+      kind: ModelFailureKind.incompatibleResponse,
+      message: '记忆召回服务返回的向量数量与请求不一致。',
+    );
   }
   return vectors;
 }
