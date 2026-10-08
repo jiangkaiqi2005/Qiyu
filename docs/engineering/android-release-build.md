@@ -2,7 +2,7 @@
 
 安卓版是端内形态（`docs/adr/0009-android-embedded-form.md`）：APK 内含行为核心、进程内本机服务与原生编译的 UI，会话、记忆与 Provider Key 只落在手机的 App 私有目录里。这份文档管三件事——签名怎么一次性建好、release 包怎么构建与自检、上真机要逐项过什么。
 
-签名不是构建细节，而是数据安全的一部分：签名身份换过，系统就拒绝覆盖安装，唯一出路是卸载重装，而卸载会把私有目录里的会话与记忆全清掉。**没有云端可以捞回来，跨设备唯一通道是手动导出**（`.scratch/android-apk-spec.md` 实现决策第 5 条「数据＝App 私有目录＋手动导出」与改动面「签名」那条红线）。所以下面这些看起来啰嗦的步骤，都是在保护那台手机上唯一的原件。
+签名不是构建细节，而是数据安全的一部分：签名身份换过，系统就拒绝覆盖安装，唯一出路是卸载重装，而卸载会把私有目录里的会话与记忆全清掉。**没有云端可以捞回来，跨设备唯一通道是手动导出**（`docs/specs/2026-09-09-android-apk.md` 实现决策第 5 条「数据＝App 私有目录＋手动导出」与改动面「签名」那条红线）。所以下面这些看起来啰嗦的步骤，都是在保护那台手机上唯一的原件。
 
 ## 一次性准备：自建 keystore 与备份
 
@@ -119,7 +119,7 @@ release 构建会顺带跑安卓 lint 致命检查（任务图里含 `:app:lintV
 
 ### CI 不跑安卓构建
 
-既定决策，见 `.scratch/android-apk-spec.md` 实现决策第 8 条：CI 时长与现状相当，安卓由本地脚本加真机冒烟清单兜底。核对过现状——`.github/workflows/ci.yml` 里与安卓相关的构建一步都没有（Flutter job 只跑 `flutter build web --wasm --no-web-resources-cdn`），`scripts/verify-release-baseline.ps1` 也不含安卓步骤，它跑的是四包分析/测试、Web 构建与 Windows 打包验收。也就是说：交付门禁全绿不代表 release APK 能构建出来，安卓那一头只有本文件和下面的清单在守。
+既定决策，见 `docs/specs/2026-09-09-android-apk.md` 实现决策第 8 条：CI 时长与现状相当，安卓由本地脚本加真机冒烟清单兜底。核对过现状——`.github/workflows/ci.yml` 里与安卓相关的构建一步都没有（Flutter job 只跑 `flutter build web --wasm --no-web-resources-cdn`），`scripts/verify-release-baseline.ps1` 也不含安卓步骤，它跑的是四包分析/测试、Web 构建与 Windows 打包验收。也就是说：交付门禁全绿不代表 release APK 能构建出来，安卓那一头只有本文件和下面的清单在守。
 
 ## 版本与覆盖升级
 
