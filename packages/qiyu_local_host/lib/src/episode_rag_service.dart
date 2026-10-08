@@ -19,12 +19,14 @@ const episodeRagBatchTimeout = Duration(seconds: 30);
 /// 查询取回的当前有效候选上限（Spec 表「排名」）：精确余弦最多 10 条。
 const episodeRagQueryLimit = 10;
 
-/// 召回状态的六个展示口径里，本票先落地五个（「更新中」随增量同步在
-/// 后续票引入）：未启用、准备中、已就绪、需重建、暂不可用。
+/// 召回状态的六个展示口径（Spec 表「设置与聊天状态」）：未启用、准备中
+/// （首次完整构建）、已就绪、更新中（增量同步处理新条目与变更条目）、
+/// 需重建、暂不可用。
 enum EpisodeRagState {
   disabled('disabled'),
   preparing('preparing'),
   ready('ready'),
+  updating('updating'),
   rebuildNeeded('rebuildNeeded'),
   unavailable('unavailable');
 
@@ -33,29 +35,37 @@ enum EpisodeRagState {
   final String wireName;
 }
 
-/// 召回状态快照：经 HTTP 返回时只含状态名、进度与人话原因，不含地址
-/// 以外的服务细节，绝不携带 Key。
+/// 召回状态快照：经 HTTP 返回时只含状态名、进度、待处理量与人话原因，
+/// 不含地址以外的服务细节，绝不携带 Key。
 final class EpisodeRagStatus {
   const EpisodeRagStatus({
     required this.state,
     this.progressDone = 0,
     this.progressTotal = 0,
+    this.pendingCount = 0,
     this.reason,
   });
 
   final EpisodeRagState state;
 
-  /// 准备中的完成量（已完成条目数 / 总条目数）；其余状态为 0。
+  /// 准备中或更新中的完成量（本趟已完成条目数 / 本趟总条目数）；其余
+  /// 状态为 0。
   final int progressDone;
   final int progressTotal;
 
-  /// 暂不可用或需重建的简短人话原因；其余状态为 null。
+  /// 增量同步尚待嵌入的条目数（新条目、摘要/日期变化条目与上次更新
+  /// 失败保留的条目）。更新中与「就绪但有未完成更新」时大于 0。
+  final int pendingCount;
+
+  /// 暂不可用或需重建的简短人话原因；就绪状态下仅在增量更新未完成
+  /// 待重试时携带原因；其余状态为 null。
   final String? reason;
 
   Map<String, Object?> toJson() => {
     'state': state.wireName,
     'progressDone': progressDone,
     'progressTotal': progressTotal,
+    'pendingCount': pendingCount,
     if (reason != null) 'reason': reason,
   };
 }
@@ -144,6 +154,10 @@ final class EpisodeRagService {
   int _progressDone = 0;
   int _progressTotal = 0;
 
+  /// 增量同步尚待嵌入的条目数：同步任务扫描后记账，逐批递减；更新
+  /// 失败时保留（重试或下一次来源变化触发时再消化）。
+  int _pendingCount = 0;
+
   /// 已加载的缓存索引：就绪状态的查询与身份核对都基于它。加载失败或
   /// 身份失配时为 null（需重建）。
   EpisodeRagIndex? _loadedIndex;
@@ -169,6 +183,7 @@ final class EpisodeRagService {
       state: _state,
       progressDone: _progressDone,
       progressTotal: _progressTotal,
+      pendingCount: _pendingCount,
       reason: _reason,
     );
   }
@@ -196,8 +211,8 @@ final class EpisodeRagService {
   }
 
   /// 显式停用（Spec：明确停用后返回旧路径）：清除启用位，召回立即走
-  /// 旧目录；在途构建在批次边界发现停用后放弃，不发布。缓存文件保留，
-  /// 重新启用时同身份可直接就绪。
+  /// 旧目录；在途构建与增量同步在批次边界发现停用后放弃，不发布。
+  /// 缓存文件保留，重新启用时同身份可直接就绪。
   Future<EpisodeRagStatus> disable() async {
     await configRepository.runTransaction(() async {
       final config = await configRepository.loadEmbedding();
@@ -210,20 +225,56 @@ final class EpisodeRagService {
     _reason = null;
     _progressDone = 0;
     _progressTotal = 0;
+    _pendingCount = 0;
     return status();
   }
 
-  /// 明确重建/重试（Spec：需重建与暂不可用都提供明确重试入口）：按
-  /// 当前配置完整重建。未启用时重建是无效操作。
+  /// 明确重建/重试（Spec：需重建与暂不可用都提供明确重试入口）：无有
+  /// 效索引时按当前配置完整重建；已有有效索引时（增量更新失败待重试）
+  /// 走便宜的增量对账，只重嵌待处理条目，不整库重算。未启用时重建是
+  /// 无效操作。
   Future<EpisodeRagStatus> rebuild() async {
     await _syncState();
     if (!_enabled) {
       throw const ProviderConfigException('记忆召回未启用，无需重建。');
     }
+    if (_state == EpisodeRagState.ready && _loadedIndex != null) {
+      scheduleIncrementalSync();
+      return status();
+    }
     _scheduleBuild();
     _state = EpisodeRagState.preparing;
     _reason = null;
     return status();
+  }
+
+  /// 来源或控制变化后的增量同步调度（票 04）：episode 保存、记忆中心
+  /// 编辑/删除/冻结/禁提与启动来源扫描都汇到这一个入口——网络在任务
+  /// 链上（记忆锁之外）执行，不阻塞保存或可见回复；同一时刻至多一个
+  /// 同步在推进，与完整构建同链串行。未启用、维护暂停或无有效索引时
+  /// 调度是空操作（完整构建与维护失效各自负责那些状态）。
+  void scheduleIncrementalSync() {
+    Future<void> run() async {
+      final generation = _maintenanceGeneration;
+      try {
+        await _runIncrementalSync(generation);
+      } on Object catch (error) {
+        // 同步是后台增强：任何未预期失败都保留仍有效索引与待处理
+        // 记账，等待显式重试或下一次来源变化，不无限立即重试。
+        diagnosticsSink('episode rag update deferred [$error]');
+        if (_state == EpisodeRagState.updating &&
+            _maintenanceGeneration == generation &&
+            _enabled) {
+          _state = EpisodeRagState.ready;
+          _progressDone = 0;
+          _progressTotal = 0;
+          _reason ??= '记忆召回索引更新失败，请重试。';
+        }
+      }
+    }
+
+    final task = _buildTask.then((_) => run());
+    _buildTask = task.then<void>((_) {}, onError: (_) {});
   }
 
   /// 维护独占排空：等已入链的构建推进到安全点（批次边界或完成）。
@@ -240,6 +291,7 @@ final class EpisodeRagService {
   /// 加载的缓存索引，在途构建凭代数错位自行放弃发布。
   void onMaintenanceCompleted() {
     _maintenanceGeneration += 1;
+    _pendingCount = 0;
     if (_enabled) {
       _loadedIndex = null;
       _state = EpisodeRagState.rebuildNeeded;
@@ -263,7 +315,11 @@ final class EpisodeRagService {
       if (!_enabled) {
         return const RagNotEnabled();
       }
-      if (_state != EpisodeRagState.ready || _loadedIndex == null) {
+      // 更新中（增量同步在途）仍可查询：仍有效的已有条目照常命中，
+      // 新条目允许短暂缺口（Spec：增量期间只检索仍有效的旧条目）。
+      if ((_state != EpisodeRagState.ready &&
+              _state != EpisodeRagState.updating) ||
+          _loadedIndex == null) {
         return RagUnavailable('rag unavailable reason=${_state.wireName}');
       }
       final index = _loadedIndex!;
@@ -368,8 +424,10 @@ final class EpisodeRagService {
           _state = EpisodeRagState.rebuildNeeded;
           _loadedIndex = null;
           _reason = '记忆召回服务或模型已更换，请重建索引。';
+          _pendingCount = 0;
         }
       case EpisodeRagState.preparing:
+      case EpisodeRagState.updating:
       case EpisodeRagState.unavailable:
       case EpisodeRagState.rebuildNeeded:
         // 构建链与失败/需重建状态由对应流程推进，这里不覆盖。
@@ -377,13 +435,16 @@ final class EpisodeRagService {
     }
   }
 
-  /// 加载缓存索引并按当前配置身份落状态：可读且身份匹配 → 就绪；
-  /// 缺失/损坏/身份不符 → 需重建。
+  /// 加载缓存索引并按当前配置身份落状态：可读且身份匹配 → 就绪（并
+  /// 调度一次来源扫描：宿主停用期间或 Host 未运行时的外部编辑、删除
+  /// 与控制解除，由对账发现，不只沿用盘上旧索引）；缺失/损坏/身份不
+  /// 符 → 需重建。
   Future<void> _adoptCachedIndex(
     EmbeddingConfig? config, {
     bool forceReload = false,
   }) async {
-    if (_loadedIndex == null || forceReload) {
+    final freshLoad = _loadedIndex == null || forceReload;
+    if (freshLoad) {
       _loadedIndex = await _indexStore.read();
     }
     final loaded = _loadedIndex;
@@ -402,6 +463,12 @@ final class EpisodeRagService {
     _reason = null;
     _progressDone = 0;
     _progressTotal = 0;
+    _pendingCount = 0;
+    if (freshLoad) {
+      // 启动/重启后的来源对账（票 04）：盘上索引只是缓存，当前来源
+      // 才是事实——同步在任务链上后台执行，不阻塞状态读取。
+      scheduleIncrementalSync();
+    }
   }
 
   /// 索引身份与当前配置是否匹配：规范化地址、模型与输入格式版本一致
@@ -459,6 +526,8 @@ final class EpisodeRagService {
     _reason = null;
     _progressDone = 0;
     _progressTotal = 0;
+    // 全量重建接管一切增量欠账：待处理记账清零，防陈旧标志残留。
+    _pendingCount = 0;
 
     // 枚举当前有效 episodes（Spec 决策 1）：排除空、簿记与关系信号
     // 条目；受控（禁提/删除/冻结）条目不入索引；sessions、月摘要、
@@ -558,6 +627,218 @@ final class EpisodeRagService {
     _loadedIndex = index;
     _state = EpisodeRagState.ready;
     _reason = null;
+  }
+
+  // ---------- 增量同步（票 04） ----------
+
+  /// 增量同步主体：重新扫描当前有效 episodes，与已加载索引对账——仍
+  /// 有效且输入未变的记录保留；新条目与摘要/日期变化（旧输入 hash 失
+  /// 配）的条目重新嵌入；删除、禁提、冻结、失效或来源消失的条目从发
+  /// 布结果中剔除。网络嵌入在记忆锁之外的本任务链上执行；发布前重核
+  /// 来源与控制状态（Spec 决策 2/5），在途请求期间的变化不得把旧结果
+  /// 重新写回为有效向量。
+  ///
+  /// 状态推进：有待嵌入任务时先落「更新中」（待处理量随批次递减），
+  /// 收尾回「就绪」；部分失败时保留待处理记账与人话原因，仍有效索引
+  /// 照常可查，等待显式重试（[rebuild] 的就绪分支）或下一次来源变化
+  /// 触发，不立即无限重试。
+  Future<void> _runIncrementalSync(int generation) async {
+    if (_paused) {
+      // 维护独占进行中：让路，不扫描也不发布；维护完成后的缓存失效与
+      // 重建或下一次触发接管。
+      return;
+    }
+    final config = await _readConfig();
+    if (config == null || !config.enabled) {
+      return;
+    }
+    final index = _loadedIndex;
+    if (index == null) {
+      // 无有效索引（未就绪/需重建/维护失效）：增量无从谈起，完整
+      // 构建负责。
+      return;
+    }
+    if (!_identityMatches(index.identity, config)) {
+      // 身份已漂移：需重建状态由 _syncState 落定，这里不嵌不入。
+      return;
+    }
+    if (_state != EpisodeRagState.ready &&
+        _state != EpisodeRagState.updating) {
+      // 准备中（完整构建在途，发布前自带重核）、需重建、暂不可用：
+      // 增量不越过对应流程。
+      return;
+    }
+
+    // 1. 扫描当前有效来源（Spec 决策 5：与查询、回读、下一轮消费同一
+    // 套有效性规则）：排除空、簿记与关系信号条目；受控（禁提/删除/
+    // 冻结）条目不入索引；sessions、月摘要、PersonaTree 与归档画像从
+    // 不进入枚举范围。手工外部编辑即使没有写入回调，也由本次扫描发现。
+    final banned = await _controlledTitles();
+    final current = <String, _BuildJob>{};
+    for (final date in await episodePipeline.listEpisodeDates()) {
+      final day = await episodePipeline.readDay(date);
+      if (!day.readable) {
+        continue;
+      }
+      for (final entry in validEpisodeEntries(day.entries)) {
+        if (bannedMemoryText(entry.summary, banned)) {
+          continue;
+        }
+        final input = episodeRagEmbeddingInput(date, entry.summary);
+        current['$date|${entry.id}'] = (
+          date: date,
+          entryId: entry.id,
+          input: input,
+          inputSha256: episodeRagInputHash(input),
+        );
+      }
+    }
+
+    // 2. 对账：输入未变的记录保留；新条目与 hash 失配条目（摘要或日期
+    // 已变）入待嵌入队列；索引里指向已消失、受控或失效来源的记录剔除。
+    final byKey = <String, EpisodeRagIndexEntry>{
+      for (final record in index.entries)
+        '${record.date}|${record.entryId}': record,
+    };
+    final kept = <EpisodeRagIndexEntry>[];
+    final jobs = <_BuildJob>[];
+    current.forEach((key, job) {
+      final existing = byKey[key];
+      if (existing != null && existing.inputSha256 == job.inputSha256) {
+        kept.add(existing);
+      } else {
+        jobs.add(job);
+      }
+    });
+    if (jobs.isEmpty && kept.length == index.entries.length) {
+      // 索引与当前来源一致：无事可做，不发布、不改状态。
+      return;
+    }
+
+    // 3. 嵌入待处理条目（每批最多 10 条、每批 30 秒）。网络在锁外：
+    // 本任务链不持有任何记忆锁，嵌入窗口内来源可以继续变化。
+    if (jobs.isNotEmpty) {
+      _state = EpisodeRagState.updating;
+      _reason = null;
+      _progressDone = 0;
+      _progressTotal = jobs.length;
+      _pendingCount = jobs.length;
+    }
+    // 零条就绪索引（空库）维度记 0：以首批实际向量补齐身份维度。
+    var dimension = index.entries.isEmpty ? 0 : index.identity.dimension;
+    final embedded = <EpisodeRagIndexEntry>[];
+    String? failure;
+    for (var start = 0; start < jobs.length; start += episodeRagBatchSize) {
+      if (_maintenanceGeneration != generation || !_enabled) {
+        // 维护开始或构建链入队后被停用：放弃本趟，不发布（维护完成会
+        // 整体失效缓存；停用后索引文件保留待重新启用对账）。
+        return;
+      }
+      final end = (start + episodeRagBatchSize).clamp(0, jobs.length);
+      final batch = jobs.sublist(start, end);
+      try {
+        final results = await embeddingClient.embed(
+          config: config,
+          apiKey: config.apiKey,
+          inputs: [for (final job in batch) job.input],
+          timeout: episodeRagBatchTimeout,
+        );
+        for (var i = 0; i < batch.length; i++) {
+          final vector = results[i];
+          if (dimension == 0) {
+            dimension = vector.length;
+          } else if (vector.length != dimension) {
+            // 增量向量必须与现有索引同维：余弦不可计算，按本趟失败
+            // 处理，不合法响应不进入有效索引。
+            throw EmbeddingGatewayException(
+              kind: ModelFailureKind.incompatibleResponse,
+              message: '记忆召回服务返回的向量维度与现有索引不一致，无法更新索引。',
+            );
+          }
+          embedded.add(
+            EpisodeRagIndexEntry(
+              date: batch[i].date,
+              entryId: batch[i].entryId,
+              inputSha256: batch[i].inputSha256,
+              vector: vector,
+            ),
+          );
+        }
+        _progressDone = end;
+        _pendingCount = jobs.length - end;
+      } on EmbeddingGatewayException catch (error) {
+        // 失败即停：本趟已成功的条目随发布保留，其余留待处理，不
+        // 立即无限重试。
+        failure = error.message;
+        diagnosticsSink('episode rag update deferred kind=${error.kind.name}');
+        break;
+      } on Object catch (error) {
+        failure = '记忆召回索引更新失败，请重试。';
+        diagnosticsSink('episode rag update deferred [$error]');
+        break;
+      }
+    }
+
+    // 4. 发布前重核来源与控制状态（Spec 决策 2）：嵌入窗口内被编辑、
+    // 删除、禁提或冻结的条目不得随本趟结果重新写回为有效向量。
+    if (_maintenanceGeneration != generation) {
+      return;
+    }
+    if (!_enabled) {
+      _state = EpisodeRagState.disabled;
+      _reason = null;
+      _progressDone = 0;
+      _progressTotal = 0;
+      _pendingCount = 0;
+      return;
+    }
+    final recheckBanned = await _controlledTitles();
+    final published = <EpisodeRagIndexEntry>[];
+    final recheckDiagnostics = <String>[];
+    for (final record in [...kept, ...embedded]) {
+      final entry = await revalidateEpisodeSource(
+        pipeline: episodePipeline,
+        date: record.date,
+        entryId: record.entryId,
+        expectedInputHash: record.inputSha256,
+        banned: recheckBanned,
+        diagnostics: recheckDiagnostics,
+        diagnosticPrefix: 'rag update recheck',
+      );
+      if (entry == null) {
+        continue;
+      }
+      published.add(record);
+    }
+    if (_maintenanceGeneration != generation || !_enabled) {
+      return;
+    }
+    // 5. 原子发布：与完整构建同一发布路径——读者要么看到旧索引，要么
+    // 看到完整新索引。发布失败时旧索引保持加载，仍可查询。
+    final updated = EpisodeRagIndex(
+      identity: index.entries.isEmpty
+          ? EpisodeRagIndexIdentity.identityFor(config, dimension)
+          : index.identity,
+      entries: published,
+    );
+    try {
+      await _indexStore.publish(updated);
+    } on Object catch (error) {
+      diagnosticsSink('episode rag update deferred [$error]');
+      _state = EpisodeRagState.ready;
+      _progressDone = 0;
+      _progressTotal = 0;
+      _pendingCount = jobs.length;
+      _reason = '记忆召回索引保存失败，请重试。';
+      return;
+    }
+    _loadedIndex = updated;
+    final pending = jobs.length - embedded.length;
+    _state = EpisodeRagState.ready;
+    _progressDone = 0;
+    _progressTotal = 0;
+    _pendingCount = pending;
+    _reason = pending > 0 ? (failure ?? '记忆召回索引更新未完成，请重试。') : null;
   }
 }
 

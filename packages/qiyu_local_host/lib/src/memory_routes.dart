@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:shelf/shelf.dart';
 
 import 'api_http.dart';
+import 'episode_rag_service.dart';
 import 'memory_actions.dart';
 import 'memory_cadence.dart';
 import 'memory_center.dart';
@@ -23,6 +24,7 @@ final class MemoryRoutes implements ApiRoutes {
     required this.memoryControls,
     required this.personaTree,
     required this.memoryCadence,
+    this.embeddingRecall,
   });
 
   final MemoryCenterService memoryCenter;
@@ -36,6 +38,11 @@ final class MemoryRoutes implements ApiRoutes {
   /// 后台失败状态（ticket 21）：只读记忆节奏模块的最近失败记账，
   /// 序列化时只透平实任务名、时刻、次数与是否已恢复。
   final MemoryCadence memoryCadence;
+
+  /// Episode RAG 服务（票 04）：记忆中心编辑、删除、冻结、禁提等来源
+  /// 与控制变化成功后调度增量同步。null（未装配）时静默跳过，动作
+  /// 本身不受影响。
+  final EpisodeRagService? embeddingRecall;
 
   @override
   Future<Response?> handle(Request request) async {
@@ -128,6 +135,22 @@ final class MemoryRoutes implements ApiRoutes {
         'memory_delete_no_target' => HttpStatus.badRequest,
         _ => HttpStatus.ok,
       };
+      // 票 04：来源或控制变化成功（含部分失败但控制已写入）后调度召回
+      // 索引的增量同步——后台任务链执行，动作响应不等待网络。
+      final sourceChanged = switch (action) {
+        'edit' ||
+        'freeze' ||
+        'unfreeze' ||
+        'ban' ||
+        'unban' ||
+        'delete' => true,
+        _ => false,
+      };
+      if (sourceChanged &&
+          (result.status == MemoryActionStatus.success ||
+              result.status == MemoryActionStatus.partial)) {
+        embeddingRecall?.scheduleIncrementalSync();
+      }
       return Response(
         statusCode,
         body: jsonEncode(result.toJson()),

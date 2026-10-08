@@ -360,8 +360,9 @@ class _EmbeddingSettingsSectionState extends State<EmbeddingSettingsSection>
   }
 }
 
-/// 记忆召回状态与操作行（票 03）：状态名 + 进度 + 人话原因，启用前
-/// 呈现确认说明，就绪/故障时给出停用与重建入口。
+/// 记忆召回状态与操作行（票 03/04）：状态名 + 进度/待处理量 + 人话
+/// 原因，启用前呈现确认说明，就绪/故障时给出停用与重建入口；就绪但
+/// 有未完成更新时给出增量重试入口。
 class _RecallStatusView extends StatelessWidget {
   const _RecallStatusView({
     required this.status,
@@ -390,12 +391,22 @@ class _RecallStatusView extends StatelessWidget {
     final theme = Theme.of(context);
     final state = status?.state ?? (enabled ? 'ready' : 'disabled');
     final reason = status?.reason;
+    final pending = status?.pendingCount ?? 0;
     final (label, tone) = switch (state) {
       'preparing' => (
         settingsText(
           context,
           '准备中：${status?.progressDone ?? 0}/${status?.progressTotal ?? 0}',
           'Preparing: ${status?.progressDone ?? 0}/${status?.progressTotal ?? 0}',
+        ),
+        theme.colorScheme.onSurfaceVariant,
+      ),
+      // 更新中（票 04）：增量同步在途，显示待处理量；已有索引照常可查。
+      'updating' => (
+        settingsText(
+          context,
+          '更新中：待处理 $pending',
+          'Updating: $pending pending',
         ),
         theme.colorScheme.onSurfaceVariant,
       ),
@@ -417,7 +428,11 @@ class _RecallStatusView extends StatelessWidget {
       ),
     };
     final busy = toggling || rebuilding;
-    final showRebuild = enabled && (state == 'rebuildNeeded' || state == 'unavailable');
+    // 就绪但有未完成更新（票 04）：给「重试更新」入口——只补待处理
+    // 条目，不整库重算；需重建/暂不可用仍给完整重建。
+    final showRetryUpdate = state == 'ready' && pending > 0;
+    final showRebuild =
+        enabled && (state == 'rebuildNeeded' || state == 'unavailable');
     return Container(
       key: const Key('embedding-recall-status'),
       padding: const EdgeInsets.all(14),
@@ -475,6 +490,14 @@ class _RecallStatusView extends StatelessWidget {
                   onPressed: busy ? null : onDisable,
                   child: Text(settingsText(context, '停用', 'Disable')),
                 ),
+                if (showRetryUpdate) ...[
+                  const SizedBox(width: 10),
+                  FilledButton.tonal(
+                    key: const Key('retry-memory-recall-update'),
+                    onPressed: busy ? null : onRebuild,
+                    child: Text(settingsText(context, '重试更新', 'Retry update')),
+                  ),
+                ],
                 if (showRebuild) ...[
                   const SizedBox(width: 10),
                   FilledButton.tonal(

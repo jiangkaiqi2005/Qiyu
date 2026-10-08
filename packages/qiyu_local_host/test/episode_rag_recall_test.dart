@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
@@ -272,6 +273,122 @@ void main() {
         isFalse,
         reason: '向量缓存不进本机快照',
       );
+    });
+  });
+
+  group('来源变化触发增量同步（票 04）', () {
+    test('聊天写入新 episode 后后台入索引：保存不等网络，公共召回命中新条', () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户聊到旧书店的事')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: root.path,
+        clock: () => DateTime(2026, 8, 16, 22),
+      );
+      final repository = StaticEmbeddingConfigRepository(
+        EmbeddingConfig(
+          baseUrl: 'https://api.example.com/v1',
+          model: 'text-embedding-test',
+          apiKey: 'sk-test',
+        ),
+      );
+      final vectors = <String, List<double>>{
+        '2026-08-10\n用户聊到旧书店的事': [1.0, 0.0],
+      };
+      final embedding = GatedEmbeddingClient(
+        ScriptedEmbeddingClient(
+          vectors: vectors,
+          queryVectors: {'养的宠物': [1.0, 0.0]},
+        ),
+      );
+      final service = EpisodeRagService(
+        memoryDirectory: root.path,
+        configRepository: repository,
+        embeddingClient: embedding,
+        episodePipeline: pipeline,
+        openLoopStore: OpenLoopStore(memoryDirectory: root.path),
+        diagnosticsSink: (_) {},
+      );
+      await service.enable();
+      await service.settlePendingWork();
+      embedding.calls.clear();
+
+      // 聊天链路（hidden_action_executor.applyActions 在回复接受后运行）
+      // 成功写入新 episode，即调度召回索引的增量同步。
+      vectors['2026-08-16\n用户开始养猫了'] = [0.0, 1.0];
+      final gate = Completer<void>();
+      embedding.gate = gate;
+      final module = buildChatMemoryModule(
+        memoryDirectory: root.path,
+        episodePipeline: pipeline,
+        embeddingRagService: service,
+      );
+      final executor = HiddenActionExecutor(
+        memory: module,
+        diagnosticsSink: (_) {},
+      );
+      final session = RawSession(
+        id: 's1',
+        date: '2026-08-16',
+        segment: 1,
+        createdAt: DateTime.utc(2026, 8, 16, 21),
+        updatedAt: DateTime.utc(2026, 8, 16, 22),
+        turns: [
+          RawSessionTurn.user(
+            requestId: 'r9',
+            text: '我开始养猫了，猫粮刚到',
+            at: DateTime.utc(2026, 8, 16, 21, 59),
+          ),
+          RawSessionTurn.qiyu(
+            requestId: 'r9',
+            messages: const ['恭喜呀，记得拍张照给我看。'],
+            at: DateTime.utc(2026, 8, 16, 22),
+            source: ReplySource.llm,
+            mode: 'text',
+          ),
+        ],
+      );
+      await executor.applyActions(session, 'r9', [
+        const MemorySignalAction(summary: '用户开始养猫了', evidence: '猫粮刚到'),
+      ]);
+      // 保存已完成；等同步任务推进到在途嵌入，证明保存没有等网络。
+      await embedding.entered.future.timeout(const Duration(seconds: 2));
+      expect(gate.isCompleted, isFalse, reason: 'episode 保存不等 embedding 响应');
+
+      gate.complete();
+      await service.settlePendingWork();
+      final index = await EpisodeRagIndexStore(
+        memoryDirectory: root.path,
+        commits: pipeline.commits,
+      ).read();
+      expect(
+        index!.entries.map((record) => record.entryId),
+        containsAll(['seed:1:0', 's1:r9:0']),
+        reason: '新条目已入索引',
+      );
+
+      // 公共召回入口命中新条：组织调用收到当前摘要与摘录。
+      final client = ScriptedChatClient([
+        ModelCompletion.reply(
+          _composeReply('恭喜呀。', entries: ['s1:r9:0']),
+        ),
+      ]);
+      final orchestrator = RecallOrchestrator(
+        memoryDirectory: root.path,
+        episodePipeline: pipeline,
+        openLoopStore: OpenLoopStore(memoryDirectory: root.path),
+        modelClient: client,
+        episodeRag: service,
+      );
+      final result = await orchestrator.runTurnRecall(
+        userText: '我最近养的宠物',
+        recallActions: [MemoryRecallAction(query: '养的宠物')],
+      );
+      expect(result.bubbleText, '恭喜呀。');
+      final composeInput = client.calls.single.last.content;
+      expect(composeInput, contains('用户开始养猫了'));
+      expect(composeInput, contains('猫粮刚到'));
     });
   });
 }

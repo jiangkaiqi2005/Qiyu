@@ -266,6 +266,8 @@ void main() {
       );
 
       await harness.service.enable();
+      // 再启用采纳缓存并调度一次来源对账：排空它（同身份不重算）。
+      await harness.service.settlePendingWork();
       final status = await harness.service.status();
       expect(status.state, EpisodeRagState.ready);
       expect(harness.embedding.calls, hasLength(1), reason: '首轮构建一次');
@@ -565,6 +567,367 @@ void main() {
       );
     });
   });
+
+  group('增量同步与来源对账（票 04）', () {
+    test('新增 episode 后增量入索引：更新中显示待处理量，旧条目照常可查', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      harness.embedding.calls.clear();
+
+      // 两个新条目入待处理队列：批量请求卡在闸门上时观察更新中状态。
+      final gate = Completer<void>();
+      harness.embedding.gate = gate;
+      await harness.addEpisodes({
+        '2026-08-12': [_entry('s:r3:0', '用户开始养猫了')],
+        '2026-08-13': [_entry('s:r4:0', '用户换了一份新工作')],
+      });
+      harness.embedding.vectors['2026-08-12\n用户开始养猫了'] = [0.0, 1.0];
+      harness.embedding.vectors['2026-08-13\n用户换了一份新工作'] = [0.5, 0.5];
+      harness.service.scheduleIncrementalSync();
+      await harness.embedding.entered.future;
+
+      final updating = await harness.service.status();
+      expect(updating.state, EpisodeRagState.updating);
+      expect(updating.pendingCount, 2);
+      // 更新中仍可查询：仍有效的旧条目照常命中。
+      final during = await harness.service.locate('旧书店') as RagCandidates;
+      expect(during.hits, hasLength(1));
+      expect(during.hits.single.entry.summary, '用户聊到旧书店的事');
+
+      gate.complete();
+      await harness.service.settlePendingWork();
+      final done = await harness.service.status();
+      expect(done.state, EpisodeRagState.ready);
+      expect(done.pendingCount, 0);
+      final index = await harness.indexStoreRead();
+      expect(index!.entries, hasLength(3));
+      // 增量只发送了两个新条目（旧向量未重算）；期间还有一次更新中的
+      // 查询请求，各自成批——批请求闸门放行后才记账，排在查询之后。
+      expect(harness.embedding.calls, hasLength(2));
+      expect(harness.embedding.calls.last, hasLength(2));
+      expect(
+        harness.embedding.calls.last,
+        containsAll(<String>[
+          '2026-08-12\n用户开始养猫了',
+          '2026-08-13\n用户换了一份新工作',
+        ]),
+      );
+    });
+
+    test('摘要编辑重嵌入新向量；只改证据摘录不重嵌入且回读新摘录', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [
+            _entry(
+              's:r1:0',
+              '用户聊到旧书店的事',
+              evidence: '他说那家店的猫很粘人',
+            ),
+          ],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+        queryVectors: {'书店': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      harness.embedding.calls.clear();
+
+      // 摘要变化：旧 hash 失配 → 重嵌入。
+      await harness.pipeline.synchronizedOnDayFiles(
+        () => harness.pipeline.writeFinalization(
+          '2026-08-10',
+          entries: [
+            _entry(
+              's:r1:0',
+              '用户聊到了新的书店天地',
+              evidence: '他说那家店的猫很粘人',
+            ),
+          ],
+          finalized: true,
+        ),
+      );
+      harness.embedding.vectors['2026-08-10\n用户聊到了新的书店天地'] = [0.9, 0.1];
+      harness.service.scheduleIncrementalSync();
+      await harness.service.settlePendingWork();
+
+      expect(harness.embedding.calls, hasLength(1));
+      expect(harness.embedding.calls.single.single, '2026-08-10\n用户聊到了新的书店天地');
+      expect(
+        harness.embedding.calls.single.single.contains('猫很粘人'),
+        isFalse,
+        reason: '证据摘录不进入 embedding 输入',
+      );
+      final afterSummary = await harness.service.locate('书店') as RagCandidates;
+      expect(afterSummary.hits.single.entry.summary, '用户聊到了新的书店天地');
+      harness.embedding.calls.clear();
+
+      // 只改证据摘录：输入 hash 不变 → 不重嵌入，回读得到当前摘录。
+      await harness.pipeline.synchronizedOnDayFiles(
+        () => harness.pipeline.writeFinalization(
+          '2026-08-10',
+          entries: [
+            _entry(
+              's:r1:0',
+              '用户聊到了新的书店天地',
+              evidence: '他提到店主养了三只橘猫',
+            ),
+          ],
+          finalized: true,
+        ),
+      );
+      harness.service.scheduleIncrementalSync();
+      await harness.service.settlePendingWork();
+
+      expect(harness.embedding.calls, isEmpty, reason: '证据变化不重嵌入');
+      final afterEvidence =
+          await harness.service.locate('书店') as RagCandidates;
+      expect(afterEvidence.hits.single.entry.evidence, '他提到店主养了三只橘猫');
+    });
+
+    test('删除与禁提同步后出索引；解除禁提重新入索引', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户说下周去医院检查')],
+          '2026-08-11': [_entry('s:r2:0', '用户说他开始跑步了')],
+        },
+        vectors: {
+          '2026-08-10\n用户说下周去医院检查': [1.0, 0.0],
+          '2026-08-11\n用户说他开始跑步了': [0.0, 1.0],
+        },
+        queryVectors: {'医院': [1.0, 0.0], '跑步': [0.0, 1.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      harness.embedding.calls.clear();
+
+      // 删除医院条目（重写日文件）并禁提跑步条目：两者都退出索引。
+      await harness.pipeline.synchronizedOnDayFiles(
+        () => harness.pipeline.writeFinalization(
+          '2026-08-10',
+          entries: const [],
+          finalized: true,
+        ),
+      );
+      await harness.writeBanned('跑步');
+      harness.service.scheduleIncrementalSync();
+      await harness.service.settlePendingWork();
+
+      final index = await harness.indexStoreRead();
+      expect(index!.entries, isEmpty, reason: '删除与禁提条目不再有效');
+      expect(harness.embedding.calls, isEmpty, reason: '剔除不触发重嵌入');
+      expect(
+        (await harness.service.locate('跑步') as RagCandidates).hits,
+        isEmpty,
+      );
+
+      // 解除禁提：按当前来源重新验证后重新嵌入入索引。
+      await harness.writeBanned(null);
+      harness.service.scheduleIncrementalSync();
+      await harness.service.settlePendingWork();
+
+      final recovered = await harness.indexStoreRead();
+      expect(recovered!.entries, hasLength(1));
+      expect(recovered.entries.single.entryId, 's:r2:0');
+      expect(harness.embedding.calls.single.single, contains('跑步'));
+      final hits = await harness.service.locate('跑步') as RagCandidates;
+      expect(hits.hits.single.entry.summary, '用户说他开始跑步了');
+    });
+
+    test('启动来源扫描：重启后手工外部编辑由对账发现', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+        queryVectors: {'书店': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+
+      // 手工改写摘要（不经 Host 写入回调），再模拟重启：新实例从盘上
+      // 采纳缓存索引，来源扫描发现 hash 失配并重嵌入。
+      await harness.pipeline.synchronizedOnDayFiles(
+        () => harness.pipeline.writeFinalization(
+          '2026-08-10',
+          entries: [_entry('s:r1:0', '用户聊到了山脚的书摊')],
+          finalized: true,
+        ),
+      );
+      harness.embedding.vectors['2026-08-10\n用户聊到了山脚的书摊'] = [0.8, 0.2];
+      final restarted = EpisodeRagService(
+        memoryDirectory: harness.root.path,
+        configRepository: harness.repository,
+        embeddingClient: harness.embedding,
+        episodePipeline: harness.pipeline,
+        openLoopStore: OpenLoopStore(memoryDirectory: harness.root.path),
+        diagnosticsSink: (_) {},
+      );
+      expect((await restarted.status()).state, EpisodeRagState.ready);
+      await restarted.settlePendingWork();
+
+      final index = await harness.indexStoreRead();
+      expect(index!.entries, hasLength(1));
+      expect(
+        index.entries.single.inputSha256,
+        episodeRagInputHash('2026-08-10\n用户聊到了山脚的书摊'),
+      );
+      final hits = await restarted.locate('书店') as RagCandidates;
+      expect(hits.hits.single.entry.summary, '用户聊到了山脚的书摊');
+    });
+
+    test('在途竞争：嵌入窗口内删除待处理条目，旧结果不复活', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+        queryVectors: {'书店': [1.0, 0.0], '养猫': [0.0, 1.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+
+      final gate = Completer<void>();
+      harness.embedding.gate = gate;
+      await harness.addEpisodes({
+        '2026-08-12': [_entry('s:r3:0', '用户开始养猫了')],
+      });
+      harness.embedding.vectors['2026-08-12\n用户开始养猫了'] = [0.0, 1.0];
+      harness.service.scheduleIncrementalSync();
+      await harness.embedding.entered.future;
+
+      // 嵌入请求在途时删除待处理条目，再放行响应。
+      await harness.pipeline.synchronizedOnDayFiles(
+        () => harness.pipeline.writeFinalization(
+          '2026-08-12',
+          entries: const [],
+          finalized: true,
+        ),
+      );
+      gate.complete();
+      await harness.service.settlePendingWork();
+
+      final index = await harness.indexStoreRead();
+      expect(
+        index!.entries.map((record) => record.entryId),
+        ['s:r1:0'],
+        reason: '在途结果不得把已删除条目写回有效索引',
+      );
+      final hits = await harness.service.locate('养猫') as RagCandidates;
+      expect(hits.hits.map((hit) => hit.entry.id), ['s:r1:0']);
+      expect(hits.hits.single.entry.summary, '用户聊到旧书店的事');
+    });
+
+    test('更新失败保留待处理：旧索引可查，重试只补失败条', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+          '2026-08-11': [_entry('s:r2:0', '用户说他开始跑步了')],
+        },
+        vectors: {
+          '2026-08-10\n用户聊到旧书店的事': [1.0, 0.0],
+          '2026-08-11\n用户说他开始跑步了': [0.0, 1.0],
+        },
+        queryVectors: {'书店': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      harness.embedding.calls.clear();
+
+      harness.embedding.vectors['2026-08-12\n用户开始养猫了'] = [0.0, 1.0];
+      await harness.addEpisodes({
+        '2026-08-12': [_entry('s:r3:0', '用户开始养猫了')],
+      });
+      harness.embedding.failures.add(
+        const EmbeddingGatewayException(
+          kind: ModelFailureKind.timeout,
+          message: '连接记忆召回服务超时。',
+        ),
+      );
+      harness.service.scheduleIncrementalSync();
+      await harness.service.settlePendingWork();
+
+      final failed = await harness.service.status();
+      expect(failed.state, EpisodeRagState.ready, reason: '仍有效索引不破坏');
+      expect(failed.pendingCount, 1);
+      expect(failed.reason, isNotNull);
+      final during = await harness.service.locate('书店') as RagCandidates;
+      // 无阈值：旧索引里仍有效的两条都返回，失败条目不在其中。
+      expect(during.hits.map((hit) => hit.entry.id), ['s:r1:0', 's:r2:0']);
+      expect(during.hits.first.entry.summary, '用户聊到旧书店的事');
+
+      // 显式重试（就绪态的重建入口走增量对账）：只补失败条，不整库重算。
+      await harness.service.rebuild();
+      await harness.service.settlePendingWork();
+      final retried = await harness.service.status();
+      expect(retried.state, EpisodeRagState.ready);
+      expect(retried.pendingCount, 0);
+      expect(retried.reason, isNull);
+      // 期间一次失败批次、一次查询、一次重试批次；重试只补失败条。
+      expect(harness.embedding.calls, hasLength(3));
+      expect(harness.embedding.calls.last.single, contains('养猫'));
+      final index = await harness.indexStoreRead();
+      expect(index!.entries, hasLength(3));
+    });
+
+    test('零条就绪索引后首条新增：维度以实际向量补齐', () async {
+      final harness = await _RagHarness.create();
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      expect(harness.embedding.calls, isEmpty);
+
+      harness.embedding.vectors['2026-08-12\n用户开始养猫了'] = [0.0, 1.0];
+      await harness.addEpisodes({
+        '2026-08-12': [_entry('s:r3:0', '用户开始养猫了')],
+      });
+      harness.service.scheduleIncrementalSync();
+      await harness.service.settlePendingWork();
+
+      final index = await harness.indexStoreRead();
+      expect(index!.entries, hasLength(1));
+      expect(index.identity.dimension, 2);
+      expect((await harness.service.status()).state, EpisodeRagState.ready);
+      final hits =
+          await harness.service.locate('养猫') as RagCandidates;
+      expect(hits.hits.single.entry.summary, '用户开始养猫了');
+    });
+
+    test('维护暂停期间调度增量同步是空操作', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      harness.embedding.calls.clear();
+
+      harness.service.pauseBackgroundScheduling();
+      await harness.addEpisodes({
+        '2026-08-12': [_entry('s:r3:0', '用户开始养猫了')],
+      });
+      harness.embedding.vectors['2026-08-12\n用户开始养猫了'] = [0.0, 1.0];
+      harness.service.scheduleIncrementalSync();
+      await harness.service.settlePendingWork();
+
+      expect(harness.embedding.calls, isEmpty, reason: '暂停期间不嵌入');
+      expect((await harness.service.status()).state, EpisodeRagState.ready);
+    });
+  });
 }
 
 // ---------- 测试基架 ----------
@@ -629,13 +992,15 @@ final class _RagHarness {
             )
           : null,
     );
-    final embedding = _ScriptedEmbedding(
-      vectors: vectors,
-      queryVectors: queryVectors,
-      batchResponses: batchResponses,
-      failures: failures ?? [],
-      queryFailures: queryFailures ?? [],
-      batchGate: batchGate,
+    final embedding = GatedEmbeddingClient(
+      _ScriptedEmbedding(
+        vectors: Map<String, List<double>>.of(vectors),
+        queryVectors: Map<String, List<double>>.of(queryVectors),
+        batchResponses: batchResponses,
+        failures: failures ?? [],
+        queryFailures: queryFailures ?? [],
+        batchGate: batchGate,
+      ),
     );
     final harness = _RagHarness._(root, pipeline, repository, embedding);
     return harness;
@@ -644,10 +1009,41 @@ final class _RagHarness {
   final Directory root;
   final EpisodeMemoryPipeline pipeline;
   final _StaticEmbeddingRepository repository;
-  final _ScriptedEmbedding embedding;
+  final GatedEmbeddingClient embedding;
   late final EpisodeRagService service;
 
-  void dispose() => root.delete(recursive: true);
+  Future<void> dispose() async {
+    // 先排空后台任务链：在途增量同步可能仍在写索引文件，直接删临时
+    // 目录会在 Windows 上撞「目录不是空的」。
+    await service.settlePendingWork();
+    await root.delete(recursive: true);
+  }
+
+  /// 在既有日文件上追加条目（新增 episode 的增量用例）。
+  Future<void> addEpisodes(Map<String, List<EpisodeEntry>> episodes) async {
+    for (final MapEntry(:key, :value) in episodes.entries) {
+      await pipeline.synchronizedOnDayFiles(() async {
+        final day = await pipeline.readDay(key);
+        return pipeline.writeFinalization(
+          key,
+          entries: [...day.entries, ...value],
+          summary: day.summary,
+          finalized: day.finalized,
+          finalizedAt: day.finalizedAt,
+        );
+      });
+    }
+  }
+
+  /// 重写 memory-controls.md 的禁提区（null = 清空禁提）。
+  Future<void> writeBanned(String? keyword) => File(
+    '${root.path}/memory-controls.md',
+  ).writeAsString(
+    '# memory-controls\n## frozen\n## banned\n'
+    '${keyword == null ? '' : '- [MC001] open-loop | $keyword\n'}'
+    '## deleted\n',
+    encoding: utf8,
+  );
 }
 
 /// 从 harness 拿已发布的索引（走文件读回，供断言身份）。

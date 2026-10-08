@@ -3250,6 +3250,108 @@ void main() {
       expect(tested.body, isNot(contains('embedding-secret-value')));
       await host.close();
     });
+
+    test('记忆中心编辑经增量同步更新召回索引（票 04）', () async {
+      // 记忆中心总览只列最近窗口内的日期：种子条目落在当天。
+      final today = localSessionDate(DateTime.now());
+      final pipeline = EpisodeMemoryPipeline(
+        memoryDirectory: memoryDirectory.path,
+      );
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          today,
+          entries: [
+            EpisodeEntry(
+              id: 'seed:r1:0',
+              sessionId: 'seed',
+              requestId: 'r1',
+              summary: '用户聊到旧书店的事',
+              at: DateTime.now().toUtc(),
+            ),
+          ],
+          summary: '用户聊到旧书店的事',
+          finalized: true,
+          finalizedAt: DateTime.now().toUtc(),
+        ),
+      );
+      final configPath = _providerJsonPath(temporaryDirectory);
+      final embeddingHttp = _RecordingEmbeddingHttpClient();
+      final rag = EpisodeRagService(
+        memoryDirectory: memoryDirectory.path,
+        configRepository: JsonProviderConfigRepository(filePath: configPath),
+        embeddingClient: OpenAiEmbeddingGateway(embeddingHttp),
+        episodePipeline: pipeline,
+        openLoopStore: OpenLoopStore(memoryDirectory: memoryDirectory.path),
+        diagnosticsSink: (_) {},
+      );
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
+        episodeRagService: rag,
+      );
+
+      // 保存配置并启用：完整建库后就绪。
+      await _send(
+        host.origin.resolve('/api/provider/embedding'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://embedding.example.com/v1',
+          'model': 'text-embedding-test',
+          'apiKey': 'embedding-secret-value',
+        }),
+      );
+      await _send(
+        host.origin.resolve('/api/provider/embedding/enable'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      await rag.settlePendingWork();
+      final buildCalls = embeddingHttp.postCalls;
+      expect(buildCalls, 1, reason: '完整构建一次外发');
+
+      // 记忆中心编辑条目摘要：动作响应不等待网络，增量同步在后台对账。
+      final overview = await _send(
+        host.origin.resolve('/api/memory'),
+        headers: browser.readHeaders(host.origin),
+      );
+      final overviewData = jsonDecode(overview.body) as Map<String, Object?>;
+      final days = (overviewData['recent']! as Map)['days']! as List;
+      final entryId = (days.first as Map)['entries']!.first['id'];
+      final edited = await _send(
+        host.origin.resolve('/api/memory/action'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'action': 'edit',
+          'id': entryId,
+          'text': '用户聊到了新的书店天地',
+        }),
+      );
+      expect(edited.statusCode, HttpStatus.ok);
+      await rag.settlePendingWork();
+
+      final after = await _send(
+        host.origin.resolve('/api/provider/embedding'),
+        headers: browser.readHeaders(host.origin),
+      );
+      final afterBody = jsonDecode(after.body) as Map<String, Object?>;
+      expect((afterBody['rag']! as Map)['state'], 'ready');
+      expect((afterBody['rag']! as Map)['pendingCount'], 0);
+      expect(embeddingHttp.postCalls, buildCalls + 1, reason: '只重嵌被编辑条目');
+      final syncInput =
+          jsonDecode(utf8.decode(embeddingHttp.lastBody!))
+              as Map<String, Object?>;
+      expect(syncInput['input'], ['$today\n用户聊到了新的书店天地']);
+      final index = await EpisodeRagIndexStore(
+        memoryDirectory: memoryDirectory.path,
+        commits: pipeline.commits,
+      ).read();
+      expect(index!.entries.single.inputSha256,
+          episodeRagInputHash('$today\n用户聊到了新的书店天地'));
+      await host.close();
+    });
   });
   group('Web Search 设置', () {
 

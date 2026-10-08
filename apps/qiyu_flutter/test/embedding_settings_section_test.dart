@@ -173,6 +173,45 @@ void main() {
     expect(find.byKey(const Key('rebuild-memory-recall')), findsOneWidget);
   });
 
+  testWidgets('更新中展示待处理量；就绪但有未完成更新给重试入口（票 04）', (tester) async {
+    gateway.configured = true;
+    gateway.enabled = true;
+    gateway.ragState = 'updating';
+    gateway.pendingCount = 2;
+    await pumpSection(tester);
+
+    // 更新中：显示待处理量；增量同步不打扰正常使用，不给重建入口。
+    expect(find.textContaining('更新中：待处理 2'), findsOneWidget);
+    expect(find.byKey(const Key('rebuild-memory-recall')), findsNothing);
+    expect(find.byKey(const Key('retry-memory-recall-update')), findsNothing);
+
+    // 更新完成回到就绪：重试入口消失。
+    gateway.ragState = 'ready';
+    gateway.pendingCount = 0;
+    await viewModel.refresh();
+    await tester.pumpAndSettle();
+    expect(find.text('已就绪'), findsOneWidget);
+    expect(find.byKey(const Key('retry-memory-recall-update')), findsNothing);
+
+    // 部分失败保留待处理：就绪 + 原因 + 重试更新入口。
+    gateway.ragState = 'ready';
+    gateway.pendingCount = 1;
+    gateway.ragReason = '连接记忆召回服务超时。';
+    await viewModel.refresh();
+    await tester.pumpAndSettle();
+    expect(find.text('已就绪'), findsOneWidget);
+    expect(find.text('连接记忆召回服务超时。'), findsOneWidget);
+    expect(find.byKey(const Key('retry-memory-recall-update')), findsOneWidget);
+
+    // 重试更新：显式出网走重建入口（Host 按就绪态落到增量对账）。
+    gateway.pendingCount = 0;
+    gateway.ragReason = null;
+    gateway.ragState = 'ready';
+    await tester.tap(find.byKey(const Key('retry-memory-recall-update')));
+    await tester.pumpAndSettle();
+    expect(gateway.rebuildCalls, 1);
+  });
+
   testWidgets('停用与重建是显式操作：点击出网并以返回快照回显', (tester) async {
     gateway.configured = true;
     gateway.enabled = true;
@@ -257,6 +296,7 @@ final class _RecordingEmbeddingGateway implements EmbeddingSettingsGateway {
   String? ragReason;
   int progressDone = 0;
   int progressTotal = 0;
+  int pendingCount = 0;
   bool failSave = false;
   final savedDrafts = <EmbeddingSettingsDraft>[];
   final testDrafts = <EmbeddingSettingsDraft>[];
@@ -272,6 +312,7 @@ final class _RecordingEmbeddingGateway implements EmbeddingSettingsGateway {
     ragReason = null;
     progressDone = 0;
     progressTotal = 0;
+    pendingCount = 0;
     failSave = false;
     savedDrafts.clear();
     testDrafts.clear();
@@ -291,6 +332,7 @@ final class _RecordingEmbeddingGateway implements EmbeddingSettingsGateway {
       state: ragState,
       progressDone: progressDone,
       progressTotal: progressTotal,
+      pendingCount: pendingCount,
       reason: ragReason,
     ),
   );

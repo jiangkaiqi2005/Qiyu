@@ -37,17 +37,19 @@ final class EmbeddingSettings {
   final String? baseUrl;
   final String? model;
 
-  /// 召回状态快照（未启用/准备中/已就绪/需重建/暂不可用 + 进度与原因）；
-  /// 旧 Host 不返回时为 null。
+  /// 召回状态快照（未启用/准备中/已就绪/更新中/需重建/暂不可用 + 进度
+  /// 、待处理量与原因）；旧 Host 不返回时为 null。
   final MemoryRecallStatus? rag;
 }
 
-/// 记忆召回状态快照（票 03）：只含状态名、准备进度与人话原因。
+/// 记忆召回状态快照（票 03/04）：只含状态名、进度、待处理量与人话
+/// 原因，绝不回明文 Key。
 final class MemoryRecallStatus {
   const MemoryRecallStatus({
     required this.state,
     required this.progressDone,
     required this.progressTotal,
+    this.pendingCount = 0,
     this.reason,
   });
 
@@ -56,16 +58,22 @@ final class MemoryRecallStatus {
         state: json['state']! as String,
         progressDone: json['progressDone'] as int? ?? 0,
         progressTotal: json['progressTotal'] as int? ?? 0,
+        // 旧 Host 没有该字段：按无待处理解析。
+        pendingCount: json['pendingCount'] as int? ?? 0,
         reason: json['reason'] as String?,
       );
 
   static MemoryRecallStatus? fromJsonOrNull(Map<String, Object?>? json) =>
       json == null ? null : MemoryRecallStatus.fromJson(json);
 
-  /// disabled / preparing / ready / rebuildNeeded / unavailable。
+  /// disabled / preparing / ready / updating / rebuildNeeded / unavailable。
   final String state;
   final int progressDone;
   final int progressTotal;
+
+  /// 增量同步尚待嵌入的条目数（票 04）：更新中与「就绪但有未完成
+  /// 更新」时大于 0。
+  final int pendingCount;
   final String? reason;
 
   /// 值相等（与 [BackgroundFailureStatus] 同律）：监控轮询按它去重，
@@ -76,10 +84,12 @@ final class MemoryRecallStatus {
       other.state == state &&
       other.progressDone == progressDone &&
       other.progressTotal == progressTotal &&
+      other.pendingCount == pendingCount &&
       other.reason == reason;
 
   @override
-  int get hashCode => Object.hash(state, progressDone, progressTotal, reason);
+  int get hashCode =>
+      Object.hash(state, progressDone, progressTotal, pendingCount, reason);
 }
 
 /// 聊天页旁路状态的小接口（票 03）：HostStatusMonitor 按既有轮询节拍
@@ -123,7 +133,8 @@ abstract interface class EmbeddingSettingsGateway {
   /// 显式停用：召回回到旧目录路径。
   Future<EmbeddingSettings> disable();
 
-  /// 明确重建/重试（需重建与暂不可用状态的重试入口）。
+  /// 明确重建/重试：需重建与暂不可用走完整重建；就绪但有未完成更新
+  /// 时为增量重试（票 04，只补待处理条目）。
   Future<EmbeddingSettings> rebuild();
 }
 

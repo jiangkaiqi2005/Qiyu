@@ -114,6 +114,11 @@ final class HiddenActionExecutor {
           'episode day unreadable, waiting for recovery request=$requestId',
         );
       }
+      if (result.writtenEntries > 0) {
+        // 票 04：episode 成功保存后调度召回索引的增量同步——任务链上
+        // 锁外执行，不在日文件锁或可见回复里等待网络。
+        memory.embeddingRecall?.scheduleIncrementalSync();
+      }
       // 随手记只建叶指针（ticket 14）：中间理解归日终。建叶失败
       // 只记诊断，日终还会按当天 episode 补齐。
       if (result.addedEntries.isNotEmpty) {

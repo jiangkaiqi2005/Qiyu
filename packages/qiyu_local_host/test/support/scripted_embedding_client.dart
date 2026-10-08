@@ -88,3 +88,44 @@ final class ScriptedEmbeddingClient implements EmbeddingClient {
     ];
   }
 }
+
+/// 可控闸门包装（票 04）：批请求（非查询）可暂停在网关上，用于观察
+/// 「更新中」状态与制造在途竞争；查询请求永不入闸。[entered] 在首次
+/// 入闸时完成，供测试确定性等待「请求已在途」。
+final class GatedEmbeddingClient implements EmbeddingClient {
+  GatedEmbeddingClient(this.inner);
+
+  final ScriptedEmbeddingClient inner;
+
+  /// 置位后批请求在响应前等待；null 直通。
+  Completer<void>? gate;
+
+  final Completer<void> entered = Completer<void>();
+
+  List<List<String>> get calls => inner.calls;
+  Map<String, List<double>> get vectors => inner.vectors;
+  List<EmbeddingGatewayException> get failures => inner.failures;
+
+  @override
+  Future<List<Float32List>> embed({
+    required EmbeddingConfig config,
+    required String? apiKey,
+    required List<String> inputs,
+    Duration? timeout,
+  }) async {
+    final isQuery =
+        inputs.length == 1 && !inner.vectors.containsKey(inputs.single);
+    if (gate != null && !isQuery) {
+      if (!entered.isCompleted) {
+        entered.complete();
+      }
+      await gate!.future;
+    }
+    return inner.embed(
+      config: config,
+      apiKey: apiKey,
+      inputs: inputs,
+      timeout: timeout,
+    );
+  }
+}

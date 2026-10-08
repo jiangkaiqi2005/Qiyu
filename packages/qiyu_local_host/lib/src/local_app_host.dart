@@ -485,6 +485,9 @@ final class LocalAppHost {
         memoryControls: memoryControls,
         personaTree: personaTree,
         memoryCadence: memoryCadence,
+        // 票 04：记忆中心来源/控制动作成功后调度召回索引的增量同步
+        //（组合根唯一实例）。
+        embeddingRecall: effectiveEpisodeRag,
       ),
       SettingsRoutes(
         providerSettingsService: effectiveProviderSettings,
