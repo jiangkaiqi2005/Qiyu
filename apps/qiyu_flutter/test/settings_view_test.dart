@@ -23,6 +23,8 @@ import 'package:qiyu_flutter/features/settings/stt_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/stt_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/tts_settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/embedding_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/embedding_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_strings.dart';
@@ -1458,7 +1460,7 @@ void main() {
   });
 
   testWidgets('设置页是阅读式：分节不带卡片底，标题是可点的次要色小字距分节头', (tester) async {
-    // 整页层面的断言要七节同时在场（设置页是懒建的 ListView）。
+    // 整页层面的断言要八节同时在场（设置页是懒建的 ListView）。
     _useFullPageViewport(tester);
     await tester.pumpWidget(
       await _app(
@@ -1467,7 +1469,7 @@ void main() {
       ),
     );
     await _openSettings(tester);
-    // 默认档只展开两节，其余五节的正文根本不在树上；这里要看的是七节的形态，
+    // 默认档只展开两节，其余六节的正文根本不在树上；这里要看的是八节的形态，
     // 所以先全部展开（折叠态自身的断言在折叠那几条用例里）。
     await _expandAllSections(tester);
 
@@ -1475,7 +1477,7 @@ void main() {
       tester.element(find.byKey(const Key('settings-scroll'))),
     ).colorScheme;
 
-    // 七节各自成节，且每节都有一个可点的分节头——§8「分节标题本身就是导航」，
+    // 八节各自成节，且每节都有一个可点的分节头——§8「分节标题本身就是导航」，
     // 所以既不做吸顶子导航，也不给某节换成别的入口。
     for (final id in _sectionIds) {
       expect(
@@ -1645,7 +1647,7 @@ void main() {
   });
 
   testWidgets('分节顺序按 §8 定案序排列，且每一格排的确实是点名的那一节', (tester) async {
-    // 整页层面的次序要七节同时在场。
+    // 整页层面的次序要八节同时在场。
     _useFullPageViewport(tester);
     await tester.pumpWidget(
       await _app(
@@ -1655,7 +1657,7 @@ void main() {
     );
     await _openSettings(tester);
 
-    // 次序量的是**页面上的纵向位置**，不是「这一节的文本在场」：七节标题都在树
+    // 次序量的是**页面上的纵向位置**，不是「这一节的文本在场」：八节标题都在树
     // 上（§8 的默认档收起只藏正文，标题就是导航），比的是每一节的顶边一节比一节低。
     final headerTops = <String, double>{};
     for (final id in _sectionIds) {
@@ -1685,7 +1687,7 @@ void main() {
   });
 
   testWidgets('折叠默认档：只展开模型连接与本地数据，收起的节里控件不在树上', (tester) async {
-    // 整页层面的默认档要七节同时在场。
+    // 整页层面的默认档要八节同时在场。
     _useFullPageViewport(tester);
     await tester.pumpWidget(
       await _app(
@@ -1695,7 +1697,7 @@ void main() {
     );
     await _openSettings(tester);
 
-    // §8：默认展开「模型连接」「本地数据」，其余五节收起。
+    // §8：默认展开「模型连接」「本地数据」，其余六节收起。
     for (final id in _sectionIds) {
       expect(
         _isSectionExpanded(tester, id),
@@ -1733,6 +1735,7 @@ void main() {
     await _expandSection(tester, 'web_search');
     expect(find.byKey(const Key('web-search-api-key')), findsOneWidget);
     expect(store.readCollapsed(), {
+      'memory_recall',
       'tts',
       'stt',
       'privacy',
@@ -1754,6 +1757,7 @@ void main() {
       reason: '再点标题没能把这一节展开回来',
     );
     expect(store.readCollapsed(), {
+      'memory_recall',
       'tts',
       'stt',
       'privacy',
@@ -1788,9 +1792,10 @@ void main() {
       isTrue,
       reason: '上次展开的节下次进来还开着',
     );
-    // 存的就是「收起的节 id 集合」：默认收起的五节里去掉联网搜索（展开了）、
+    // 存的就是「收起的节 id 集合」：默认收起的六节里去掉联网搜索（展开了）、
     // 再加上本地数据（收起了）；模型连接这一路没碰过。
     expect(store.readCollapsed(), {
+      'memory_recall',
       'tts',
       'stt',
       'privacy',
@@ -1978,6 +1983,7 @@ void main() {
 /// `_SettingsSectionId` 一致——折叠状态在本地存储里存的就是这些 id。
 const _sectionIds = <String>[
   'provider',
+  'memory_recall',
   'tts',
   'stt',
   'web_search',
@@ -1995,6 +2001,7 @@ const _sectionIds = <String>[
 /// 「语音转写」四个字。本用例按页面文案取值，不替规范另立一种叫法。
 const _sectionTitlesInOrder = <String, String>{
   'provider': '模型连接',
+  'memory_recall': '记忆召回',
   'tts': '语音朗读',
   'stt': '语音输入',
   'web_search': '联网搜索',
@@ -2061,6 +2068,10 @@ Future<Widget> _app({
       webSearchGateway ?? const _FixedWebSearchSettingsGateway(),
       autoStart: false,
     ),
+    embeddingSettingsViewModel: EmbeddingSettingsViewModel(
+      const _FixedEmbeddingSettingsGateway(),
+      autoStart: false,
+    ),
     proxySettingsViewModel: ProxySettingsViewModel(
       const _FixedProxySettingsGateway(),
       autoStart: false,
@@ -2109,7 +2120,7 @@ bool _isSectionExpanded(WidgetTester tester, String sectionId) => find
     .evaluate()
     .isNotEmpty;
 
-/// 整页层面的断言要七节同时在场，而设置页是**懒建的 ListView**：默认 600 高的
+/// 整页层面的断言要八节同时在场，而设置页是**懒建的 ListView**：默认 600 高的
 /// 视口只建得出头两三节，「某一节的正文在不在树上」这类判据会因为它还没被建
 /// 出来而误判成收起。宽度仍取 1200（内容列由 `pageReadingMaxWidth` 限宽），
 /// 只是把视口拉高，不改变任何布局档位。
@@ -2119,7 +2130,7 @@ void _useFullPageViewport(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
-/// §8 默认档里点名展开的两节；其余五节默认收起。
+/// §8 默认档里点名展开的两节；其余六节默认收起。
 const _defaultExpandedSectionIds = <String>['provider', 'local_data'];
 
 /// 点一次某一节的标题（不判当前状态，也不幂等）。
@@ -2179,6 +2190,12 @@ Future<_FakeSettingsGateway> _pumpSettingsPage(
           ),
         ),
         ChangeNotifierProvider.value(
+          value: EmbeddingSettingsViewModel(
+            const _FixedEmbeddingSettingsGateway(),
+            autoStart: false,
+          ),
+        ),
+        ChangeNotifierProvider.value(
           value: ProxySettingsViewModel(
             const _FixedProxySettingsGateway(),
             autoStart: false,
@@ -2215,7 +2232,7 @@ Future<void> _expandSection(WidgetTester tester, String sectionId) async {
   expect(_isSectionExpanded(tester, sectionId), isTrue, reason: sectionId);
 }
 
-/// 按 §8 顺序把七节全部展开，供整页层面的视觉断言使用。
+/// 按 §8 顺序把八节全部展开，供整页层面的视觉断言使用。
 Future<void> _expandAllSections(WidgetTester tester) async {
   for (final id in _sectionIds) {
     await _expandSection(tester, id);
@@ -2364,6 +2381,25 @@ final class _FixedWebSearchSettingsGateway implements WebSearchSettingsGateway {
 
   @override
   Future<WebSearchSettings> forgetApiKey() => throw UnimplementedError();
+}
+
+final class _FixedEmbeddingSettingsGateway implements EmbeddingSettingsGateway {
+  const _FixedEmbeddingSettingsGateway();
+
+  @override
+  Future<EmbeddingSettings> read() async =>
+      const EmbeddingSettings(configured: false, keySet: false);
+
+  @override
+  Future<EmbeddingSettings> save(EmbeddingSettingsDraft draft) =>
+      throw UnimplementedError();
+
+  @override
+  Future<EmbeddingSettings> forgetApiKey() => throw UnimplementedError();
+
+  @override
+  Future<ProviderTestResult> testConnection(EmbeddingSettingsDraft draft) =>
+      throw UnimplementedError();
 }
 
 final class _FixedProxySettingsGateway implements ProxySettingsGateway {

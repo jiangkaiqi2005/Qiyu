@@ -29,6 +29,8 @@ import 'package:qiyu_flutter/features/settings/proxy_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/proxy_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/settings_collapse_platform.dart';
 import 'package:qiyu_flutter/features/settings/settings_view_model.dart';
+import 'package:qiyu_flutter/features/settings/embedding_settings_client.dart';
+import 'package:qiyu_flutter/features/settings/embedding_settings_view_model.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_client.dart';
 import 'package:qiyu_flutter/features/settings/web_search_settings_view_model.dart';
 import 'package:qiyu_flutter/features/shell/qiyu_shell.dart';
@@ -317,6 +319,12 @@ void main() {
           ChangeNotifierProvider.value(
             value: WebSearchSettingsViewModel(
               const _FixedWebSearchSettingsGateway(),
+              autoStart: false,
+            ),
+          ),
+          ChangeNotifierProvider.value(
+            value: EmbeddingSettingsViewModel(
+              const _FixedEmbeddingSettingsGateway(),
               autoStart: false,
             ),
           ),
@@ -1010,6 +1018,25 @@ final class _FixedWebSearchSettingsGateway implements WebSearchSettingsGateway {
 
   @override
   Future<WebSearchSettings> forgetApiKey() => throw UnimplementedError();
+}
+
+final class _FixedEmbeddingSettingsGateway implements EmbeddingSettingsGateway {
+  const _FixedEmbeddingSettingsGateway();
+
+  @override
+  Future<EmbeddingSettings> read() async =>
+      const EmbeddingSettings(configured: false, keySet: false);
+
+  @override
+  Future<EmbeddingSettings> save(EmbeddingSettingsDraft draft) =>
+      throw UnimplementedError();
+
+  @override
+  Future<EmbeddingSettings> forgetApiKey() => throw UnimplementedError();
+
+  @override
+  Future<ProviderTestResult> testConnection(EmbeddingSettingsDraft draft) =>
+      throw UnimplementedError();
 }
 
 final class _FixedSttSettingsGateway implements SttSettingsGateway {

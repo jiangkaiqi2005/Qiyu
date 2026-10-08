@@ -5,6 +5,7 @@ import 'package:shelf/shelf.dart';
 
 import 'api_http.dart';
 import 'developer_diagnostics.dart';
+import 'embedding_settings_service.dart';
 import 'local_data_service.dart';
 import 'provider_config.dart';
 import 'provider_settings_service.dart';
@@ -14,8 +15,8 @@ import 'tts_settings_service.dart';
 import 'web_search_settings_service.dart';
 
 /// 设置领域路由：模型 Provider、联网搜索、语音转写（STT）、语音合成
-/// （TTS）四段配置的读写与连接测试，出站代理配置，体验选项，以及
-/// 开发者诊断入口。
+/// （TTS）、记忆召回 embedding 五段配置的读写与连接测试，出站代理配
+/// 置，体验选项，以及开发者诊断入口。
 ///
 /// 本模块持有设置领域的路径匹配、payload 解析（含各字段的类型与缺省
 /// 规则）、序列化与错误翻译；删除本模块，这些职责会整体摊回路由总控。
@@ -25,6 +26,7 @@ final class SettingsRoutes implements ApiRoutes {
     required this.webSearchSettingsService,
     required this.sttSettingsService,
     required this.ttsSettingsService,
+    required this.embeddingSettingsService,
     required this.experienceRepository,
     required this.developerDiagnostics,
     required this.requestDiagnostics,
@@ -35,6 +37,7 @@ final class SettingsRoutes implements ApiRoutes {
   final WebSearchSettingsService webSearchSettingsService;
   final SttSettingsService sttSettingsService;
   final TtsSettingsService ttsSettingsService;
+  final EmbeddingSettingsService embeddingSettingsService;
   final ExperienceSettingsRepository experienceRepository;
   final DeveloperDiagnosticsService developerDiagnostics;
   final RequestDiagnosticsRecorder? requestDiagnostics;
@@ -55,6 +58,7 @@ final class SettingsRoutes implements ApiRoutes {
       _proxyRoutes,
       _sttRoutes,
       _ttsRoutes,
+      _embeddingRoutes,
       _preferenceRoutes,
     ]) {
       final response = await subdomain(request);
@@ -335,6 +339,57 @@ final class SettingsRoutes implements ApiRoutes {
     return null;
   }
 
+  /// 记忆召回（embedding）子域：配置读取/保存、连接测试与忘记 Key。
+  /// 保存与测试不启用 RAG、不建索引、不发送 episode；启用与召回由后
+  /// 续票接入。读取只回 keySet，明文 Key 永不出仓。
+  Future<Response?> _embeddingRoutes(Request request) async {
+    final method = request.method;
+    final path = request.url.path;
+    if (method == 'GET' && path == 'api/provider/embedding') {
+      final settings = await embeddingSettingsService.read();
+      return Response.ok(
+        jsonEncode(settings.toJson()),
+        headers: jsonHeaders,
+      );
+    }
+    if (method == 'PUT' && path == 'api/provider/embedding') {
+      final payload = await readJsonObject(request, maxBytes: 8 * 1024);
+      final settings = await embeddingSettingsService.save(
+        baseUrl: _embeddingTextField(payload, 'baseUrl'),
+        model: _embeddingTextField(payload, 'model'),
+        apiKey: _apiKeyFromPayload(payload),
+      );
+      return Response.ok(
+        jsonEncode(settings.toJson()),
+        headers: jsonHeaders,
+      );
+    }
+    if (method == 'POST' && path == 'api/provider/embedding/test') {
+      final payload = await readJsonObject(request, maxBytes: 8 * 1024);
+      final result = await embeddingSettingsService.test(
+        baseUrl: _optionalEmbeddingTextField(payload, 'baseUrl'),
+        model: _optionalEmbeddingTextField(payload, 'model'),
+        apiKey: _apiKeyFromPayload(payload),
+      );
+      requestDiagnostics?.record(
+        source: RecentRequestSources.providerTest,
+        result: result.succeeded
+            ? RecentRequestResults.ok
+            : RecentRequestResults.failed,
+        detail: 'embedding status=${result.status.name}',
+      );
+      return Response.ok(jsonEncode(result.toJson()), headers: jsonHeaders);
+    }
+    if (method == 'DELETE' && path == 'api/provider/embedding/key') {
+      final settings = await embeddingSettingsService.forgetApiKey();
+      return Response.ok(
+        jsonEncode(settings.toJson()),
+        headers: jsonHeaders,
+      );
+    }
+    return null;
+  }
+
   /// 体验选项与开发者诊断子域：选项读写；诊断入口只在开发者模式
   /// 开启时存在。
   Future<Response?> _preferenceRoutes(Request request) async {
@@ -419,6 +474,32 @@ String _sttTextField(Map<String, Object?> payload, String key) {
   final value = payload[key];
   if (value is! String) {
     throw const ProviderConfigException('语音服务配置格式不正确。');
+  }
+  return value;
+}
+
+/// 记忆召回（embedding）设置必填文本字段：缺失或类型不对按配置格式
+/// 错误拒绝。
+String _embeddingTextField(Map<String, Object?> payload, String key) {
+  final value = payload[key];
+  if (value is! String) {
+    throw const ProviderConfigException('记忆召回服务配置格式不正确。');
+  }
+  return value;
+}
+
+/// 记忆召回（embedding）设置的可选文本字段：空负载（连接测试测已保存
+/// 配置）允许缺失。
+String? _optionalEmbeddingTextField(
+  Map<String, Object?> payload,
+  String key,
+) {
+  final value = payload[key];
+  if (value == null) {
+    return null;
+  }
+  if (value is! String) {
+    throw const ProviderConfigException('记忆召回服务配置格式不正确。');
   }
   return value;
 }

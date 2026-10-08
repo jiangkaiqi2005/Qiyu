@@ -306,23 +306,33 @@ bool containsNonVisibleAscii(String value) =>
 /// 本通道的异常类型。边界：聊天 Provider（模型对话）出网不走这条
 /// 校验——Ollama 本机部署（如 localhost:11434）是 AGENTS 明确支持的
 /// 产品功能，而语音服务始终是云端第三方，不允许被指向内网。
-String? speechOutboundRefusalReason(Uri uri) {
+String? speechOutboundRefusalReason(Uri uri) =>
+    nonLocalOutboundRefusalReason(uri, serviceLabel: '语音服务');
+
+/// 云端第三方服务出网前的统一 SSRF 校验（语音与记忆召回 embedding 等
+/// 新增出网路径共用）：判定与 [speechOutboundRefusalReason] 逐字一致，
+/// 只有拒绝文案里的服务名由 [serviceLabel] 参数化——各域的人话各说各
+/// 的名字，判定规则只有这一份。
+String? nonLocalOutboundRefusalReason(
+  Uri uri, {
+  required String serviceLabel,
+}) {
   final scheme = uri.scheme.toLowerCase();
   if (scheme != 'http' &&
       scheme != 'https' &&
       scheme != 'ws' &&
       scheme != 'wss') {
-    return '语音服务地址必须是有效的 HTTP 或 WebSocket 地址。';
+    return '$serviceLabel地址必须是有效的 HTTP 或 WebSocket 地址。';
   }
   final host = uri.host.toLowerCase();
   if (host.isEmpty || host == 'localhost' || host.endsWith('.localhost')) {
-    return '语音服务地址不允许指向本机或内网。';
+    return '$serviceLabel地址不允许指向本机或内网。';
   }
   final address = InternetAddress.tryParse(host);
   // 域名字面量无法静态判定（DNS 解析后的内网 IP 由系统网络层路由），
   // 这里只拦字面量形态的内网地址。
   if (address != null && !_isPublicInternetAddress(address.rawAddress)) {
-    return '语音服务地址不允许指向本机或内网。';
+    return '$serviceLabel地址不允许指向本机或内网。';
   }
   return null;
 }
@@ -911,11 +921,12 @@ final class TtsConfig {
 }
 
 /// provider.json 共享读改写事务的排队入口。聊天、语音转写、语音合成、
-/// 联网搜索与代理五类设置共用同一份文件，「读取现值 → 决定 Key 去留
-/// → 写回 → 旧凭据清理」的完整流程必须经 [runTransaction] 排队执行：
-/// 只有事务内的读取才能看到前一个事务的写回，锁外读到的旧值、旧 Key
-/// 一律不得带回事务内使用。同一仓储实例上的事务彼此串行，单个事务
-/// 失败（含写回失败）只影响自身，队列照常放行后续事务。
+/// 联网搜索、代理与记忆召回 embedding 六类设置共用同一份文件，「读取
+/// 现值 → 决定 Key 去留 → 写回 → 旧凭据清理」的完整流程必须经
+/// [runTransaction] 排队执行：只有事务内的读取才能看到前一个事务的写
+/// 回，锁外读到的旧值、旧 Key 一律不得带回事务内使用。同一仓储实例上
+/// 的事务彼此串行，单个事务失败（含写回失败）只影响自身，队列照常放
+/// 行后续事务。
 abstract interface class ProviderConfigTransactionQueue {
   Future<T> runTransaction<T>(Future<T> Function() action);
 }
@@ -944,6 +955,66 @@ abstract interface class WebSearchConfigRepository
   Future<WebSearchConfig?> loadWebSearch();
 
   Future<void> saveWebSearch(WebSearchConfig? config);
+}
+
+/// 记忆召回（Episode RAG）的 embedding 服务配置：provider.json 顶层的
+/// 可选 `embedding` 段。首版只有 OpenAI-compatible 一种协议（Spec 决策：
+/// 不增加服务商预设和模型目录），所以没有 provider 字段，凭据作用域的
+/// 协议名固定。保存与连接测试不启用 RAG；真正启用、索引与召回由后续
+/// 票接入。
+final class EmbeddingConfig {
+  const EmbeddingConfig({
+    required this.baseUrl,
+    required this.model,
+    this.apiKey,
+  });
+
+  factory EmbeddingConfig.fromJson(Map<String, Object?> json) {
+    final baseUrl = json['baseUrl'];
+    final model = json['model'];
+    if (baseUrl is! String || model is! String) {
+      throw const ProviderConfigException('记忆召回服务配置无法读取。');
+    }
+    return EmbeddingConfig(
+      baseUrl: baseUrl,
+      model: model,
+      // 与聊天段同律：兼容 apiKey 与 API_KEY 两种手写法，空白视为未设置。
+      apiKey: _optionalKey(json['apiKey'] ?? json['API_KEY']),
+    );
+  }
+
+  final String baseUrl;
+  final String model;
+
+  /// 本机 provider.json 的 embedding 段里保存的 API Key（明文）。与聊天
+  /// Key 同律：不进 toJson()，HTTP 快照绝不携带明文。
+  final String? apiKey;
+
+  EmbeddingConfig withApiKey(String? apiKey) =>
+      EmbeddingConfig(baseUrl: baseUrl, model: model, apiKey: apiKey);
+
+  /// Key 的沿用作用域看协议与规范化后的服务地址。首版协议只有
+  /// OpenAI-compatible 一种，wire 名固定进作用域——将来若增加第二种
+  /// embedding 协议，换协议即换作用域，不沿用旧服务商的 Key。
+  String get credentialScope =>
+      'openai_compatible|${normalizeProviderBaseUri(baseUrl)}';
+
+  Map<String, Object?> toJson() => {'baseUrl': baseUrl, 'model': model};
+
+  void validate() => _validateSpeechEndpoint(
+    baseUrl: baseUrl,
+    model: model,
+    serviceLabel: '记忆召回服务',
+    allows: (scheme) => scheme == 'http' || scheme == 'https',
+    schemeFailureMessage: '记忆召回服务地址必须是有效的 HTTP 地址。',
+  );
+}
+
+abstract interface class EmbeddingConfigRepository
+    implements ProviderConfigTransactionQueue {
+  Future<EmbeddingConfig?> loadEmbedding();
+
+  Future<void> saveEmbedding(EmbeddingConfig config);
 }
 
 /// 出站代理配置（ticket 08）：provider.json 顶层的可选 `proxy` 段，
@@ -1050,7 +1121,7 @@ abstract interface class TtsConfigRepository
   Future<void> saveTts(TtsConfig config);
 }
 
-/// provider.json 的 JSON 仓储：五个仓储接口共用同一份文件。保存类
+/// provider.json 的 JSON 仓储：六个仓储接口共用同一份文件。保存类
 /// 方法实现「读整份 → 只改本段 → 原子写回」，但排队边界在
 /// [runTransaction]——调用方必须把「读取现值 → 决定 Key 去留 → 写回
 /// → 旧凭据清理」的整段流程包进共享事务，在事务外直接保存会失去与
@@ -1062,7 +1133,8 @@ final class JsonProviderConfigRepository
         SttConfigRepository,
         TtsConfigRepository,
         WebSearchConfigRepository,
-        ProxyConfigRepository {
+        ProxyConfigRepository,
+        EmbeddingConfigRepository {
   JsonProviderConfigRepository({
     required this.filePath,
     this.writer = const IoAtomicTextWriter(),
@@ -1131,7 +1203,7 @@ final class JsonProviderConfigRepository
   }
 
   @override
-  Future<SttConfig?> loadStt() => _loadSpeechSection(
+  Future<SttConfig?> loadStt() => _loadSection(
     'stt',
     '语音服务配置无法读取。',
     (section) {
@@ -1149,7 +1221,7 @@ final class JsonProviderConfigRepository
   }
 
   @override
-  Future<TtsConfig?> loadTts() => _loadSpeechSection(
+  Future<TtsConfig?> loadTts() => _loadSection(
     'tts',
     '语音合成服务配置无法读取。',
     (section) {
@@ -1166,10 +1238,31 @@ final class JsonProviderConfigRepository
     await _saveSection('tts', {...config.toJson(), 'apiKey': ?config.apiKey});
   }
 
-  /// 语音两段（stt/tts）共享的段级加载：读原始 map→取段→段类型检查→
-  /// parse（fromJson+validate）→异常包装，段键与人话文案各段自带。
-  /// 顶层 load() 因聊天键的前置判定不同保持独立。
-  Future<T?> _loadSpeechSection<T extends Object>(
+  @override
+  Future<EmbeddingConfig?> loadEmbedding() => _loadSection(
+    'embedding',
+    '记忆召回服务配置无法读取。',
+    (section) {
+      final config = EmbeddingConfig.fromJson(section);
+      config.validate();
+      return config;
+    },
+  );
+
+  @override
+  Future<void> saveEmbedding(EmbeddingConfig config) async {
+    config.validate();
+    // 入参恒非空：embedding 段只替换、不删除，不走助手的删除分支。
+    await _saveSection('embedding', {
+      ...config.toJson(),
+      'apiKey': ?config.apiKey,
+    });
+  }
+
+  /// 各可选配置段（stt/tts/embedding）共享的段级加载：读原始 map→取段→
+  /// 段类型检查→parse（fromJson+validate）→异常包装，段键与人话文案
+  /// 各段自带。顶层 load() 因聊天键的前置判定不同保持独立。
+  Future<T?> _loadSection<T extends Object>(
     String sectionKey,
     String failureMessage,
     T Function(Map<String, Object?> section) parse,

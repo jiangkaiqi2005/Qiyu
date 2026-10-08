@@ -13,6 +13,8 @@ import '../memory/backup_view.dart';
 import '../onboarding/onboarding_view_model.dart';
 import '../shell/qiyu_shell.dart';
 import '../shell/qiyu_widgets.dart';
+import 'embedding_settings_section.dart';
+import 'embedding_settings_view_model.dart';
 import 'provider_settings_section.dart';
 import 'provider_settings_view_model.dart';
 import 'proxy_settings_view_model.dart';
@@ -143,6 +145,7 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView>
       }
       final settingsViewModel = context.read<SettingsViewModel>();
       unawaited(context.read<ProviderSettingsViewModel>().initialize());
+      unawaited(context.read<EmbeddingSettingsViewModel>().initialize());
       unawaited(context.read<SttSettingsViewModel>().initialize());
       unawaited(context.read<TtsSettingsViewModel>().initialize());
       unawaited(context.read<WebSearchSettingsViewModel>().initialize());
@@ -214,14 +217,15 @@ class _ProviderSettingsViewState extends State<ProviderSettingsView>
                     ),
                   ),
                   const SizedBox(height: 30),
-                  // 分节顺序由 design-system §8 固定（模型连接 → 语音朗读 →
-                  // 语音转写 → 联网搜索 → 本地数据 → 隐私与边界 →
+                  // 分节顺序由 design-system §8 固定（模型连接 → 记忆召回 →
+                  // 语音朗读 → 语音转写 → 联网搜索 → 本地数据 → 隐私与边界 →
                   // 体验与开发者选项），settings_view_test 按各节标题在页面上的
-                  // 纵向位置核这条次序。第三节的叫法两处不同且 §8 已登记：规范按
-                  // **机制**叫「语音转写」，[SttSettingsSection] 渲染的标题是「语音输入」，
-                  // §8 明写不声称页面上有「语音转写」四个字——这里只按 §8 排
-                  // **次序**，不改标题文案。
+                  // 纵向位置核这条次序。语音输入一节的叫法两处不同且 §8 已登记：
+                  // 规范按**机制**叫「语音转写」，[SttSettingsSection] 渲染的
+                  // 标题是「语音输入」，§8 明写不声称页面上有「语音转写」四个字
+                  // ——这里只按 §8 排**次序**，不改标题文案。
                   const ProviderSettingsSection(),
+                  const EmbeddingSettingsSection(),
                   const TtsSettingsSection(),
                   const SttSettingsSection(),
                   const WebSearchSettingsSection(),

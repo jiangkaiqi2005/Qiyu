@@ -17,6 +17,8 @@ import 'daily_finalization.dart';
 import 'developer_diagnostics.dart';
 import 'delivery_stream_state.dart';
 import 'dream.dart';
+import 'embedding_gateway.dart';
+import 'embedding_settings_service.dart';
 import 'episode_memory.dart';
 import 'hidden_action_executor.dart';
 import 'local_chat_service.dart';
@@ -108,6 +110,7 @@ final class LocalAppHost {
     WebSearchSettingsService? webSearchSettingsService,
     SttSettingsService? sttSettingsService,
     TtsSettingsService? ttsSettingsService,
+    EmbeddingSettingsService? embeddingSettingsService,
     // 时钟、原子写入、交付停顿与诊断出口沿用各组件既有的注入接缝，
     // 缺省全部走生产默认；测试由此在真路径上获得确定性。
     Clock? clock,
@@ -193,6 +196,15 @@ final class LocalAppHost {
             DartIoProviderHttpClient(),
             webSocketConnector: const DartIoProviderWebSocketConnector(),
           ),
+        );
+    // 记忆召回（Episode RAG）embedding 设置：独立 embedding 段与出网
+    // 客户端（ADR 0027）。保存／测试／忘记 Key 不启用 RAG，真正启用、
+    // 索引与召回由后续票接入。
+    final effectiveEmbeddingSettings =
+        embeddingSettingsService ??
+        EmbeddingSettingsService(
+          providerConfigRepository,
+          OpenAiEmbeddingGateway(DartIoProviderHttpClient()),
         );
     // 开发者诊断（ticket 23）：最近请求环形缓冲 + 体验选项持久化。
     // 记录器结构上不收用户文本，诊断端点只读、默认不启用。
@@ -457,6 +469,7 @@ final class LocalAppHost {
         proxySettingsService: proxySettingsService,
         sttSettingsService: effectiveSttSettings,
         ttsSettingsService: effectiveTtsSettings,
+        embeddingSettingsService: effectiveEmbeddingSettings,
         experienceRepository: experienceRepository,
         developerDiagnostics: developerDiagnostics,
         requestDiagnostics: requestDiagnostics,

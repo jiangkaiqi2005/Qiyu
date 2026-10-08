@@ -21,13 +21,14 @@ import 'settings_strings.dart';
 /// 的 JSON 校验 [parseSettingsExtraParams] 与换档确认框
 /// [confirmSettingsTierSuggestion]。各域自己的表单状态、领域校验细节
 /// 仍在各自的领域模块（`provider_settings_section.dart` 等）里。壳层被
-/// 七个分节共用，所以它自己不知道任何一节的业务。
+/// 八个分节共用，所以它自己不知道任何一节的业务。
 
 /// 设置页分节的 id：折叠状态在本地存储里存的就是这份名单的子集（design-system
 /// §8「折叠状态本地持久化（仅 UI 状态）」）。**改名等于改历史数据**——用户上次
 /// 收起来的节会凭一个陌生 id 变回默认态，所以这里只增不改不删。
 abstract final class SettingsSectionId {
   static const provider = 'provider';
+  static const memoryRecall = 'memory_recall';
   static const tts = 'tts';
   static const stt = 'stt';
   static const webSearch = 'web_search';
@@ -35,9 +36,10 @@ abstract final class SettingsSectionId {
   static const privacy = 'privacy';
   static const developer = 'developer';
 
-  /// 七节全集：本地存储里出现的陌生 id 靠它做成员校验（认生的 id 不采纳）。
+  /// 八节全集：本地存储里出现的陌生 id 靠它做成员校验（认生的 id 不采纳）。
   static const all = <String>{
     provider,
+    memoryRecall,
     tts,
     stt,
     webSearch,
@@ -46,9 +48,10 @@ abstract final class SettingsSectionId {
     developer,
   };
 
-  /// design-system §8 的默认档：展开「模型连接」「本地数据」，其余五节收起。
+  /// design-system §8 的默认档：展开「模型连接」「本地数据」，其余六节收起。
   /// 它与 [all] 的差集就是默认展开的那两节。
   static const defaultCollapsed = <String>{
+    memoryRecall,
     tts,
     stt,
     webSearch,
@@ -96,7 +99,7 @@ Map<String, Object?>? parseSettingsExtraParams(
 /// 折叠状态的页内下发：由设置页挂在整列之上，[SettingsSectionPanel] 就地读
 /// 「我这一节展开没有」并把点击交回去。
 ///
-/// 走 InheritedWidget 而不是给七个分节 widget 各加两个构造参数：那七个节是各自
+/// 走 InheritedWidget 而不是给八个分节 widget 各加两个构造参数：那八个节是各自
 /// 持有 controller 与 FocusNode 的 StatefulWidget，参数只是为了把状态搬运一层，
 /// 搬运会把真正的表单代码埋掉。
 class SettingsSectionCollapseScope extends InheritedWidget {
@@ -116,7 +119,7 @@ class SettingsSectionCollapseScope extends InheritedWidget {
   bool isExpanded(String sectionId) => !collapsed.contains(sectionId);
 
   static SettingsSectionCollapseScope of(BuildContext context) {
-    // 必须是**登记依赖**的这一种读法：七个分节在 [ListView] 里是 `const` 子节点，
+    // 必须是**登记依赖**的这一种读法：八个分节在 [ListView] 里是 `const` 子节点，
     // 页面 setState 时 `updateChild` 会因为子控件实例没变而整块跳过重建，
     // `getInheritedWidgetOfExactType` 那种「只取值不挂钩」的读法于是永远拿不到新的
     // collapsed——点分节头表面有涟漪、实际一栏都不展开。挂上依赖后由

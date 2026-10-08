@@ -39,6 +39,8 @@ import 'features/settings/stt_settings_client.dart';
 import 'features/settings/tts_settings_client.dart';
 import 'features/settings/stt_settings_view_model.dart';
 import 'features/settings/tts_settings_view_model.dart';
+import 'features/settings/embedding_settings_client.dart';
+import 'features/settings/embedding_settings_view_model.dart';
 import 'features/settings/web_search_settings_client.dart';
 import 'features/settings/web_search_settings_view_model.dart';
 import 'features/shell/qiyu_shell.dart';
@@ -170,6 +172,7 @@ class QiyuApp extends StatefulWidget {
     this.ttsSettingsViewModel,
     this.ttsSettingsGateway,
     this.webSearchSettingsViewModel,
+    this.embeddingSettingsViewModel,
     this.proxySettingsViewModel,
     this.historyViewModel,
     this.onboardingViewModel,
@@ -194,6 +197,7 @@ class QiyuApp extends StatefulWidget {
   /// 语音朗读设置网关：同上，缺省共享单例；测试注入桩。
   final TtsSettingsGateway? ttsSettingsGateway;
   final WebSearchSettingsViewModel? webSearchSettingsViewModel;
+  final EmbeddingSettingsViewModel? embeddingSettingsViewModel;
   final ProxySettingsViewModel? proxySettingsViewModel;
   final HistoryViewModel? historyViewModel;
   final OnboardingViewModel? onboardingViewModel;
@@ -337,6 +341,18 @@ class _QiyuAppState extends State<QiyuApp> {
           widget.webSearchSettingsViewModel,
           (_) => WebSearchSettingsViewModel(
             HttpWebSearchSettingsGateway(
+              client: _hostClient,
+              baseUri: _hostBaseUri,
+            ),
+            autoStart: false,
+          ),
+        ),
+        // 记忆召回（embedding）设置域：与语音域同形状，网关经共享
+        // client 与显式基址构造，CSRF 不重复换取。
+        _vm(
+          widget.embeddingSettingsViewModel,
+          (_) => EmbeddingSettingsViewModel(
+            HttpEmbeddingSettingsGateway(
               client: _hostClient,
               baseUri: _hostBaseUri,
             ),

@@ -2961,6 +2961,188 @@ void main() {
       await host.close();
     });
   });
+  group('记忆召回 embedding 设置', () {
+
+    test('embedding 路由受会话、Origin 与 CSRF 保护，保存后只回 keySet', () async {
+      final configPath = _providerJsonPath(temporaryDirectory);
+      JsonProviderConfigRepository repository() =>
+          JsonProviderConfigRepository(filePath: configPath);
+      final embeddingHttp = _RecordingEmbeddingHttpClient();
+      EmbeddingSettingsService embeddingService() => EmbeddingSettingsService(
+        repository(),
+        OpenAiEmbeddingGateway(embeddingHttp),
+      );
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
+        embeddingSettingsService: embeddingService(),
+      );
+
+      // 变更请求缺 CSRF / 缺 Origin 一律拒绝；读取缺会话拒绝。
+      final noCsrf = await _send(
+        host.origin.resolve('/api/provider/embedding'),
+        method: 'PUT',
+        headers: {
+          ...browser.readHeaders(host.origin),
+          'origin': host.origin.toString().replaceFirst(RegExp(r'/$'), ''),
+        },
+        requestBody: jsonEncode({
+          'baseUrl': 'https://embedding.example.com/v1',
+          'model': 'text-embedding-test',
+        }),
+      );
+      expect(noCsrf.statusCode, HttpStatus.forbidden);
+      final noOrigin = await _send(
+        host.origin.resolve('/api/provider/embedding'),
+        method: 'PUT',
+        headers: {
+          ...browser.readHeaders(host.origin),
+          'x-qiyu-csrf': browser.csrfToken,
+        },
+        requestBody: jsonEncode({
+          'baseUrl': 'https://embedding.example.com/v1',
+          'model': 'text-embedding-test',
+        }),
+      );
+      expect(noOrigin.statusCode, HttpStatus.forbidden);
+      final noSession = await _send(
+        host.origin.resolve('/api/provider/embedding'),
+        headers: {HttpHeaders.refererHeader: host.origin.toString()},
+      );
+      expect(noSession.statusCode, HttpStatus.unauthorized);
+      await host.close();
+
+      // 保存：Key 只落文件，响应永不回明文，也不带 apiKey 字段名。
+      final (savedHost, savedBrowser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
+        embeddingSettingsService: embeddingService(),
+      );
+      final saved = await _send(
+        savedHost.origin.resolve('/api/provider/embedding'),
+        method: 'PUT',
+        headers: savedBrowser.mutationHeaders(savedHost.origin),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://embedding.example.com/v1',
+          'model': 'text-embedding-test',
+          'apiKey': 'embedding-secret-value',
+        }),
+      );
+      expect(saved.statusCode, HttpStatus.ok);
+      expect(saved.body, isNot(contains('embedding-secret-value')));
+      expect(saved.body, isNot(contains('apiKey')));
+      expect(
+        jsonDecode(saved.body),
+        allOf(
+          containsPair('configured', true),
+          containsPair('keySet', true),
+          containsPair('baseUrl', 'https://embedding.example.com/v1'),
+          containsPair('model', 'text-embedding-test'),
+        ),
+      );
+
+      // 连接测试：空负载按已保存配置，只发送固定测试句，成功回 ok。
+      embeddingHttp.responseBody = jsonEncode({
+        'data': [
+          {'index': 0, 'embedding': [0.1, 0.2, 0.3]},
+        ],
+      });
+      final tested = await _send(
+        savedHost.origin.resolve('/api/provider/embedding/test'),
+        method: 'POST',
+        headers: savedBrowser.mutationHeaders(savedHost.origin),
+        requestBody: '{}',
+      );
+      expect(tested.statusCode, HttpStatus.ok);
+      expect(jsonDecode(tested.body), containsPair('ok', true));
+      final testBody =
+          jsonDecode(utf8.decode(embeddingHttp.lastBody!))
+              as Map<String, Object?>;
+      expect(testBody['input'], [embeddingConnectionTestText]);
+      expect(
+        embeddingHttp.lastHeaders!['authorization'],
+        'Bearer embedding-secret-value',
+      );
+
+      // 保存聊天 Provider 不得抹掉 embedding 段；embedding 读取仍就绪。
+      final chatSaved = await _send(
+        savedHost.origin.resolve('/api/provider'),
+        method: 'PUT',
+        headers: savedBrowser.mutationHeaders(savedHost.origin),
+        requestBody: jsonEncode({
+          'provider': 'openai_compatible',
+          'baseUrl': 'https://chat.example.com/v1',
+          'model': 'chat-model',
+          'temperature': 0.6,
+          'timeoutSeconds': 25,
+        }),
+      );
+      expect(chatSaved.statusCode, HttpStatus.ok);
+      final embeddingStillThere = await _send(
+        savedHost.origin.resolve('/api/provider/embedding'),
+        headers: savedBrowser.readHeaders(savedHost.origin),
+      );
+      expect(
+        jsonDecode(embeddingStillThere.body),
+        containsPair('configured', true),
+      );
+      expect(embeddingStillThere.body, isNot(contains('apiKey')));
+
+      // 忘记 Key：keySet 变 false，配置本身保留。
+      final forgotten = await _send(
+        savedHost.origin.resolve('/api/provider/embedding/key'),
+        method: 'DELETE',
+        headers: savedBrowser.mutationHeaders(savedHost.origin),
+      );
+      expect(forgotten.statusCode, HttpStatus.ok);
+      expect(jsonDecode(forgotten.body), containsPair('keySet', false));
+      expect(jsonDecode(forgotten.body), containsPair('configured', true));
+      await savedHost.close();
+    });
+
+    test('embedding 测试失败按允许列表上报，不透出服务商原文或旧 Key', () async {
+      final configPath = _providerJsonPath(temporaryDirectory);
+      final embeddingHttp = _RecordingEmbeddingHttpClient()
+        ..statusCode = 429
+        ..responseBody = '{"error":"quota detail with 10.0.0.1 path"}';
+      final (host, browser) = await _startHostWithBrowser(
+        webRoot,
+        memoryDirectory,
+        embeddingSettingsService: EmbeddingSettingsService(
+          JsonProviderConfigRepository(filePath: configPath),
+          OpenAiEmbeddingGateway(embeddingHttp),
+        ),
+      );
+
+      final saved = await _send(
+        host.origin.resolve('/api/provider/embedding'),
+        method: 'PUT',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: jsonEncode({
+          'baseUrl': 'https://embedding.example.com/v1',
+          'model': 'text-embedding-test',
+          'apiKey': 'embedding-secret-value',
+        }),
+      );
+      expect(saved.statusCode, HttpStatus.ok);
+
+      final tested = await _send(
+        host.origin.resolve('/api/provider/embedding/test'),
+        method: 'POST',
+        headers: browser.mutationHeaders(host.origin),
+        requestBody: '{}',
+      );
+      expect(tested.statusCode, HttpStatus.ok);
+      final result = jsonDecode(tested.body) as Map<String, Object?>;
+      expect(result['ok'], false);
+      expect(result['status'], 'rateLimited');
+      expect(result['message'], '记忆召回服务请求过于频繁，请稍后再试。');
+      expect(tested.body, isNot(contains('10.0.0.1')));
+      expect(tested.body, isNot(contains('quota detail')));
+      expect(tested.body, isNot(contains('embedding-secret-value')));
+      await host.close();
+    });
+  });
   group('Web Search 设置', () {
 
     test('Web Search 设置端点只返回状态并与其他配置段互不覆盖', () async {
@@ -3351,6 +3533,7 @@ Future<LocalAppHost> _startHost(
   SttSettingsService? sttSettingsService,
   TtsSettingsService? ttsSettingsService,
   WebSearchSettingsService? webSearchSettingsService,
+  EmbeddingSettingsService? embeddingSettingsService,
 }) => LocalAppHost.start(
   webRoot: webRoot.path,
   memoryDirectory: memoryDirectory.path,
@@ -3359,6 +3542,7 @@ Future<LocalAppHost> _startHost(
   sttSettingsService: sttSettingsService,
   ttsSettingsService: ttsSettingsService,
   webSearchSettingsService: webSearchSettingsService,
+  embeddingSettingsService: embeddingSettingsService,
 );
 
 Future<(LocalAppHost, _BrowserSession)> _startHostWithBrowser(
@@ -3368,6 +3552,7 @@ Future<(LocalAppHost, _BrowserSession)> _startHostWithBrowser(
   SttSettingsService? sttSettingsService,
   TtsSettingsService? ttsSettingsService,
   WebSearchSettingsService? webSearchSettingsService,
+  EmbeddingSettingsService? embeddingSettingsService,
 }) async {
   final host = await _startHost(
     webRoot,
@@ -3376,6 +3561,7 @@ Future<(LocalAppHost, _BrowserSession)> _startHostWithBrowser(
     sttSettingsService: sttSettingsService,
     ttsSettingsService: ttsSettingsService,
     webSearchSettingsService: webSearchSettingsService,
+    embeddingSettingsService: embeddingSettingsService,
   );
   final browser = await _openBrowserSession(host);
   return (host, browser);
@@ -3736,6 +3922,46 @@ final class _RecordingSttHttpClient implements ProviderHttpClient {
     statusCode: statusCode,
     body: Stream.value(responseBody),
   );
+}
+
+/// 记录型 embedding 出网客户端：响应可编排，记录最后一次请求的载荷与
+/// 鉴权头，供路由全链路验证「测试只发送固定文本」「不发送旧 Key」。
+final class _RecordingEmbeddingHttpClient implements ProviderHttpClient {
+  _RecordingEmbeddingHttpClient({String? responseBody})
+    : responseBody =
+          responseBody ??
+          jsonEncode({
+            'data': [
+              {
+                'index': 0,
+                'embedding': [0.1, 0.2, 0.3],
+              },
+            ],
+          });
+
+  int statusCode = 200;
+  String responseBody;
+  int postCalls = 0;
+  List<int>? lastBody;
+  Map<String, String>? lastHeaders;
+
+  @override
+  Future<ProviderHttpResponse> post({
+    required Uri uri,
+    required Map<String, String> headers,
+    required List<int> body,
+    required Duration timeout,
+    Future<void>? whenCancelled,
+    ProviderResponseBudget? budget,
+  }) async {
+    postCalls += 1;
+    lastBody = body;
+    lastHeaders = headers;
+    return ProviderHttpResponse(
+      statusCode: statusCode,
+      body: Stream.value(responseBody),
+    );
+  }
 }
 
 /// TTS 网关测试替身：合成结果与异常可按用例改写，记录最近一次文本。

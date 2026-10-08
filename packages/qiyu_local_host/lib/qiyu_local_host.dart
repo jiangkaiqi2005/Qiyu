@@ -14,6 +14,8 @@ export 'src/daily_understanding.dart';
 export 'src/delivery_stream_state.dart' show DeliveryPause;
 export 'src/developer_diagnostics.dart';
 export 'src/dream.dart';
+export 'src/embedding_gateway.dart';
+export 'src/embedding_settings_service.dart';
 export 'src/episode_index.dart';
 export 'src/episode_memory.dart';
 export 'src/local_app_host.dart';
