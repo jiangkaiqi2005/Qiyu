@@ -549,7 +549,8 @@ final class LocalAppHost {
   }
 
   /// 关闭前先停掉空闲补办轮询定时器（不再产生新 tick），再等待后台
-  /// 日终归档与召回检索收尾；归档幂等且每步原子写入，超时或失败不
+  /// 日终归档、召回检索与索引任务收尾（票 05：Host 关闭排空既有索引
+  /// 任务，不留下延迟发布）；归档幂等且每步原子写入，超时或失败不
   /// 阻塞关闭，未完成的归档由下次启动补扫继续，未完成的召回只是失去
   /// 一次「晚一拍想起」，不丢记忆。
   Future<void> close() async {
@@ -558,6 +559,10 @@ final class LocalAppHost {
       await Future.wait<void>([
         _memoryCadence.finalizePending(),
         _chatService.settlePendingRecalls(),
+        // 票 05：等在途索引构建/增量同步推进到安全点（批次边界或完成），
+        // 关闭后不会有延迟发布再写缓存文件。
+        _chatService.memory.embeddingRecall?.settlePendingWork() ??
+            Future<void>.value(),
       ]).timeout(const Duration(seconds: 3));
     } on Object {
       // 归档中断安全：finalized 保持 false，启动补扫会重做。

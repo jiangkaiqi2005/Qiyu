@@ -276,6 +276,292 @@ void main() {
     });
   });
 
+  group('维护与恢复不复活旧候选（票 05）', () {
+    test('回滚到旧快照后：需重建、旧 pending 消费判失效，重建只含当前条目', () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户聊到旧书店的事')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      final (harness, pipeline) = await _ragHarness(
+        root.path,
+        vectors: {
+          '2026-08-10\n用户聊到旧书店的事': [1.0, 0.0],
+          '2026-08-12\n用户开始养猫了': [0.0, 1.0],
+        },
+        queryVectors: {
+          '养的宠物': [0.0, 1.0],
+        },
+      );
+      final module = buildChatMemoryModule(
+        memoryDirectory: root.path,
+        episodePipeline: pipeline,
+        embeddingRagService: harness.service,
+      );
+      final backup = MemoryBackupService(
+        memoryDirectory: root.path,
+        memoryControls: module.memoryControls,
+        episodePipeline: pipeline,
+        personaTree: module.personaTree,
+        memoryActions: module.memoryActions,
+      );
+      // 快照打在只有 08-10 的时候：回滚后 08-12 应当消失。
+      final snapshotId = await backup.createSnapshot();
+      await pipeline.synchronizedOnDayFiles(
+        () => pipeline.writeFinalization(
+          '2026-08-12',
+          entries: [_entry('seed:2:0', '用户开始养猫了')],
+          summary: '用户开始养猫了',
+          finalized: true,
+          finalizedAt: DateTime(2026, 8, 12, 22),
+        ),
+      );
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      final before = await harness.service.locate('养的宠物') as RagCandidates;
+      expect(
+        before.hits.map((hit) => hit.entry.summary),
+        contains('用户开始养猫了'),
+      );
+
+      // 未完成判断的召回把两条候选都留给下一轮一次性消费。
+      final client = ScriptedChatClient([
+        const ModelCompletion.failure(ModelFailureKind.network),
+      ]);
+      final orchestrator = _orchestrator(root.path, pipeline, client, harness.service);
+      final turn = await orchestrator.runTurnRecall(
+        userText: '旧事',
+        recallActions: [MemoryRecallAction(query: '养的宠物')],
+      );
+      expect(turn.pendingMaterial, isNotNull);
+      orchestrator.storePendingContext('session-1', turn.pendingMaterial!);
+
+      // 经维护独占入口回滚：08-12 随快照恢复消失。
+      final chatService = LocalChatService(
+        MarkdownMemoryRepository(memoryDirectory: root.path),
+        memory: module,
+      );
+      await chatService.runExclusively(
+        () => backup.rollbackTo(snapshotId),
+        invalidatesDerivedCaches: true,
+      );
+
+      // 状态如实显示需重建，不冒充就绪。
+      expect(
+        (await harness.service.status()).state,
+        EpisodeRagState.rebuildNeeded,
+      );
+      // 旧 pending 消费前按当前来源判失效：消失的条目整条出局。
+      final diagnostics = <String>[];
+      final consumed = await orchestrator.consumePendingContext(
+        'session-1',
+        onDiagnostic: diagnostics.add,
+      );
+      expect(consumed.context, contains('用户聊到旧书店的事'));
+      expect(consumed.context, isNot(contains('用户开始养猫了')));
+      expect(consumed.material!.entries.single.entryId, 'seed:1:0');
+      expect(diagnostics.join('\n'), contains('reason='));
+
+      // 明确重建只纳入维护后的当前有效条目。
+      await harness.service.rebuild();
+      await harness.service.settlePendingWork();
+      expect((await harness.service.status()).state, EpisodeRagState.ready);
+      final after = await harness.service.locate('养的宠物') as RagCandidates;
+      expect(
+        after.hits.map((hit) => hit.entry.summary),
+        isNot(contains('用户开始养猫了')),
+      );
+    });
+
+    test('恢复扫描隔离损坏日后：失效来源不再成为候选，重建对账出索引', () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户聊到旧书店的事')],
+        '2026-08-12': [_entry('seed:2:0', '用户开始养猫了')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      final (harness, pipeline) = await _ragHarness(
+        root.path,
+        vectors: {
+          '2026-08-10\n用户聊到旧书店的事': [1.0, 0.0],
+          '2026-08-12\n用户开始养猫了': [0.0, 1.0],
+        },
+        queryVectors: {
+          '养的宠物': [0.0, 1.0],
+        },
+      );
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+
+      // 08-12 写成带栖语标记但元数据损坏的文件（日文件在 episodes/
+      // YYYY/MM/ 两级目录下）：恢复扫描会隔离原件，当日来源消失。
+      // 08-10 只追加一个截断的条目标记：完整条目可抢救，恢复按原内容
+      // 重写当日文件。
+      File(
+        '${root.path}/episodes/2026/08/2026-08-12.md',
+      ).writeAsStringSync('<!-- qiyu-episode:aGlz -->\n');
+      File(
+        '${root.path}/episodes/2026/08/2026-08-10.md',
+      ).writeAsStringSync(
+        '${File('${root.path}/episodes/2026/08/2026-08-10.md').readAsStringSync()}'
+        '<!-- qiyu-episode-entry:broken',
+      );
+      final module = buildChatMemoryModule(
+        memoryDirectory: root.path,
+        episodePipeline: pipeline,
+      );
+      final monthly = MonthlySummaryStore(
+        memoryDirectory: root.path,
+        episodePipeline: pipeline,
+        openLoopStore: module.openLoopStore,
+      );
+      // 时钟固定在当月：月摘要策略跳过 2026-08，聚焦日文件隔离。
+      final recovery = MemoryRecoveryService(
+        memoryDirectory: root.path,
+        episodePipeline: pipeline,
+        memoryControls: module.memoryControls,
+        personaTree: module.personaTree,
+        dreamService: DreamService(
+          memoryDirectory: root.path,
+          episodePipeline: pipeline,
+          openLoopStore: module.openLoopStore,
+          monthlySummary: monthly,
+          personaTree: module.personaTree,
+        ),
+        monthlySummary: monthly,
+        relationshipLifecycle: RelationshipLifecycle(memoryDirectory: root.path),
+        memoryActions: module.memoryActions,
+        clock: () => DateTime(2026, 8, 19, 21),
+        diagnosticsSink: (_) {},
+      );
+      final report = await recovery.sweepAndRecover();
+      final dayFindings = report.findings
+          .where((finding) => finding.layerKey == 'episode-day')
+          .toList();
+      expect(
+        dayFindings.map((finding) => finding.outcome),
+        contains(MemoryRecoveryOutcome.pending),
+        reason: '元数据损坏的日文件被隔离，当日来源消失',
+      );
+      expect(
+        dayFindings.map((finding) => finding.outcome),
+        contains(MemoryRecoveryOutcome.partial),
+        reason: '截断日文件从完整条目抢救重写',
+      );
+
+      // 旧索引仍显示就绪：被隔离日的候选在回读时被来源核对拦下；
+      // 抢救修复日按当前来源验证——内容未变，有效候选照常命中。
+      expect((await harness.service.status()).state, EpisodeRagState.ready);
+      final hits = await harness.service.locate('养的宠物') as RagCandidates;
+      expect(
+        hits.hits.map((hit) => hit.entry.summary),
+        isNot(contains('用户开始养猫了')),
+      );
+      expect(
+        hits.hits.map((hit) => hit.entry.summary),
+        contains('用户聊到旧书店的事'),
+        reason: '修复后的当前来源仍支持原候选，不因维护误伤有效条目',
+      );
+
+      // 明确重建按当前来源对账：损坏日出索引，有效条目保留。
+      await harness.service.rebuild();
+      await harness.service.settlePendingWork();
+      expect((await harness.service.status()).state, EpisodeRagState.ready);
+      final rebuilt = await EpisodeRagIndexStore(
+        memoryDirectory: root.path,
+        commits: pipeline.commits,
+      ).read();
+      expect(
+        rebuilt!.entries.map((record) => record.entryId),
+        ['seed:1:0'],
+      );
+    });
+
+    test('清除产品数据后：索引随记忆目录删除，需重建且重建落零条就绪', () async {
+      final root = await _seedEpisodes({
+        '2026-08-10': [_entry('seed:1:0', '用户聊到旧书店的事')],
+      });
+      addTearDown(() => root.delete(recursive: true));
+      final (harness, pipeline) = await _ragHarness(
+        root.path,
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+      );
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      expect(
+        File('${root.path}/$episodeRagIndexFileName').existsSync(),
+        isTrue,
+      );
+
+      final module = buildChatMemoryModule(
+        memoryDirectory: root.path,
+        episodePipeline: pipeline,
+        embeddingRagService: harness.service,
+      );
+      final backup = MemoryBackupService(
+        memoryDirectory: root.path,
+        memoryControls: module.memoryControls,
+        episodePipeline: pipeline,
+        personaTree: module.personaTree,
+        memoryActions: module.memoryActions,
+      );
+      final configRepository = _ClearTestProviderConfigRepository();
+      final providerSettings = ProviderSettingsService(
+        configRepository,
+        _ClearTestSecretStore(),
+        const _ClearTestUnusedGateway(),
+        const ModelPromptBuilder(''),
+      );
+      // 运行时目录与记忆目录分开（与组合根同构）：引导状态在运行时侧。
+      final runtime = await Directory.systemTemp.createTemp(
+        'qiyu-rag-clear-runtime-',
+      );
+      addTearDown(() => runtime.delete(recursive: true));
+      final localData = LocalDataService(
+        memoryDirectory: root.path,
+        repository: MarkdownMemoryRepository(memoryDirectory: root.path),
+        backupService: backup,
+        providerSettingsService: providerSettings,
+        webSearchSettingsService: WebSearchSettingsService(configRepository),
+        onboardingFilePath: '${runtime.path}/onboarding.json',
+        episodePipeline: pipeline,
+        memoryControls: module.memoryControls,
+      );
+      final chatService = LocalChatService(
+        MarkdownMemoryRepository(memoryDirectory: root.path),
+        memory: module,
+      );
+      await chatService.runExclusively(
+        () => localData.clear(),
+        invalidatesDerivedCaches: true,
+      );
+
+      // 向量缓存随记忆目录一并清除；状态按实际显示需重建（配置仍在）。
+      expect(
+        File('${root.path}/$episodeRagIndexFileName').existsSync(),
+        isFalse,
+      );
+      expect(
+        (await harness.service.status()).state,
+        EpisodeRagState.rebuildNeeded,
+      );
+      expect(
+        await harness.service.locate('旧书店'),
+        isA<RagUnavailable>(),
+      );
+
+      // 明确重建后当前来源为空：零条就绪，查询不外发。
+      harness.embedding.calls.clear();
+      await harness.service.rebuild();
+      await harness.service.settlePendingWork();
+      final status = await harness.service.status();
+      expect(status.state, EpisodeRagState.ready);
+      expect(
+        await harness.service.locate('旧书店'),
+        isA<RagCandidates>(),
+      );
+      expect(harness.embedding.calls, isEmpty, reason: '空库查询不外发');
+    });
+  });
+
   group('来源变化触发增量同步（票 04）', () {
     test('聊天写入新 episode 后后台入索引：保存不等网络，公共召回命中新条', () async {
       final root = await _seedEpisodes({
@@ -496,4 +782,45 @@ String _composeReply(String bubble, {List<String> entries = const []}) {
   final entriesJson = entries.map((entry) => '"$entry"').join(',');
   return '$bubble\n<qiyu-actions>[{"action":"memory_recall","query":"测试查找",'
       '"entries":[$entriesJson]}]</qiyu-actions>';
+}
+
+/// 清除产品数据用例的内存 Provider 配置仓储（local_data_service_test 同律）。
+final class _ClearTestProviderConfigRepository
+    implements ProviderConfigRepository, WebSearchConfigRepository {
+  @override
+  Future<ProviderConfig?> load() async => null;
+
+  @override
+  Future<void> save(ProviderConfig config) async {}
+
+  @override
+  Future<WebSearchConfig?> loadWebSearch() async => null;
+
+  @override
+  Future<void> saveWebSearch(WebSearchConfig? config) async {}
+
+  @override
+  Future<T> runTransaction<T>(Future<T> Function() action) => action();
+}
+
+final class _ClearTestSecretStore implements SecretStore {
+  @override
+  Future<void> deleteApiKey(String scope) async {}
+
+  @override
+  Future<String?> readApiKey(String scope) async => null;
+}
+
+final class _ClearTestUnusedGateway implements ModelGateway {
+  const _ClearTestUnusedGateway();
+
+  @override
+  Future<String> complete({
+    required ProviderConfig config,
+    required String? apiKey,
+    required List<ModelMessage> messages,
+    int? maxTokens,
+  }) {
+    throw UnsupportedError('clear tests never call the model');
+  }
 }

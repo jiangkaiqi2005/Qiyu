@@ -566,6 +566,117 @@ void main() {
         reason: '维护后的在途结果不得发布',
       );
     });
+
+    test('在途增量同步在维护代数推进后不得发布旧来源结果（票 05）', () async {
+      final gate = Completer<void>();
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+
+      // 新增条目触发增量同步，请求卡在网关上（模拟在途增量）。
+      await harness.addEpisodes({
+        '2026-08-12': [_entry('s:r2:0', '用户开始养猫了')],
+      });
+      harness.embedding.vectors['2026-08-12\n用户开始养猫了'] = [0.0, 1.0];
+      harness.embedding.gate = gate;
+      harness.service.scheduleIncrementalSync();
+      await harness.embedding.entered.future;
+
+      // 维护在增量嵌入未完成时推进代数：放行后不得发布旧来源结果。
+      harness.service.onMaintenanceCompleted();
+      gate.complete();
+      await harness.service.settlePendingWork();
+
+      final index = await harness.indexStoreRead();
+      expect(
+        index!.entries.map((record) => record.entryId),
+        isNot(contains('s:r2:0')),
+        reason: '维护后的在途增量结果不得发布',
+      );
+      expect(
+        (await harness.service.status()).state,
+        EpisodeRagState.rebuildNeeded,
+      );
+      expect(
+        await harness.service.locate('旧书店'),
+        isA<RagUnavailable>(),
+      );
+    });
+
+    test('首次启动索引缺失：不外发历史内容，明确重建后才入索引（票 05）', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      // 启用位已在（配置持久化过），但索引文件从未建成（缓存缺失）：
+      // 模拟「清除缓存/缓存丢失后的首次启动」。
+      harness.repository.config = harness.repository.config!.withEnabled(
+        true,
+      );
+      final restarted = EpisodeRagService(
+        memoryDirectory: harness.root.path,
+        configRepository: harness.repository,
+        embeddingClient: harness.embedding,
+        episodePipeline: harness.pipeline,
+        openLoopStore: OpenLoopStore(memoryDirectory: harness.root.path),
+        diagnosticsSink: (_) {},
+      );
+
+      // 首启对齐状态：需重建，且绝不自动把历史摘要外发给 embedding。
+      expect(
+        (await restarted.status()).state,
+        EpisodeRagState.rebuildNeeded,
+      );
+      expect(harness.embedding.calls, isEmpty, reason: '缺失缓存首启不外发');
+      expect(
+        await restarted.locate('旧书店'),
+        isA<RagUnavailable>(),
+      );
+      expect(harness.embedding.calls, isEmpty, reason: '未就绪不外发查询');
+
+      // 明确重建后按当前有效条目建索引。
+      await restarted.rebuild();
+      await restarted.settlePendingWork();
+      expect((await restarted.status()).state, EpisodeRagState.ready);
+      final hits = await restarted.locate('旧书店') as RagCandidates;
+      expect(hits.hits.single.entry.summary, '用户聊到旧书店的事');
+    });
+
+    test('配置被清除后维护状态对齐为未启用，不擅自恢复（票 05）', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+        },
+        vectors: {'2026-08-10\n用户聊到旧书店的事': [1.0, 0.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      expect((await harness.service.status()).state, EpisodeRagState.ready);
+
+      // 配置已清除（embedding 段不存在）：维护结束后按实际状态显示
+      // 未启用，且不自动重建、不外发任何历史内容。
+      harness.repository.config = null;
+      harness.service.onMaintenanceCompleted();
+      harness.embedding.calls.clear();
+
+      final status = await harness.service.status();
+      expect(status.state, EpisodeRagState.disabled);
+      expect(
+        await harness.service.locate('旧书店'),
+        isA<RagNotEnabled>(),
+      );
+      expect(harness.embedding.calls, isEmpty, reason: '未启用不外发');
+    });
   });
 
   group('增量同步与来源对账（票 04）', () {
