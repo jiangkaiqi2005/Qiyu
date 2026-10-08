@@ -259,7 +259,7 @@
 
 - `README.md`
 - `docs/product/release-checklist.md`
-- `docs/superpowers/plans/2026-06-01-llm-api-integration.md`（只追加“已知问题/修复后流程”，不要重写旧计划）
+- `docs/plans/2026-06-01-llm-api-integration.md`（只追加“已知问题/修复后流程”，不要重写旧计划）
 
 **要做的事:**
 

@@ -33,7 +33,7 @@
 
 ## 3. 字体 (Typography)
 
-全局唯一字族：**思源宋体（Noto Serif SC）**，OFL 授权，由一次性资产准备脚本裁出静态子集随包入库（不做构建期子集化；子集必须覆盖的字区清单见 Spec `docs/superpowers/specs/2026-08-28-qiyu-web-purple-night-visual-revamp.md`）。不引入第二套字族；精细靠字号与字重，不靠换字体。
+全局唯一字族：**思源宋体（Noto Serif SC）**，OFL 授权，由一次性资产准备脚本裁出静态子集随包入库（不做构建期子集化；子集必须覆盖的字区清单见 Spec `docs/specs/2026-08-28-qiyu-web-purple-night-visual-revamp.md`）。不引入第二套字族；精细靠字号与字重，不靠换字体。
 
 `pubspec.yaml` 中的 `Roboto` 别名保留并改指新宋体资产：它是 2026-08 修「字体回退卡死」时为防止未随包字族触发远程回退而设，删掉会重新引入同一 bug。
 

@@ -1324,7 +1324,7 @@ Type and name consistency:
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-06-01-llm-api-integration.md`. Two execution options:
+Plan complete and saved to `docs/plans/2026-06-01-llm-api-integration.md`. Two execution options:
 
 1. **Subagent-Driven (recommended)** - dispatch a fresh subagent per task, review between tasks, fast iteration.
 2. **Inline Execution** - execute tasks in this session using `superpowers:executing-plans`, batch execution with checkpoints.

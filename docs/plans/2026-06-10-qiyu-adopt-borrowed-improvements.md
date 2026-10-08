@@ -187,8 +187,8 @@ Expected: all selected tests pass.
 **Files:**
 - Delete: `.claude/workflows/iterative-review.js`
 - Delete: `.claude/workflows/strict-review-loop.js`
-- Delete: `docs/superpowers/plans/2026-06-09-qiyu-text-waiting-rhythm.md`
-- Delete: `docs/superpowers/plans/2026-06-09-qiyu-text-waiting-rhythm-repair.md`
+- Delete: `docs/plans/2026-06-09-qiyu-text-waiting-rhythm.md`
+- Delete: `docs/plans/2026-06-09-qiyu-text-waiting-rhythm-repair.md`
 - Modify: `src/qiyu/state.js`
 - Modify: `src/qiyu/reply-policy.js`
 - Modify: `test/qiyu/state.test.js`
@@ -201,8 +201,8 @@ Remove only these four files:
 ```text
 .claude/workflows/iterative-review.js
 .claude/workflows/strict-review-loop.js
-docs/superpowers/plans/2026-06-09-qiyu-text-waiting-rhythm.md
-docs/superpowers/plans/2026-06-09-qiyu-text-waiting-rhythm-repair.md
+docs/plans/2026-06-09-qiyu-text-waiting-rhythm.md
+docs/plans/2026-06-09-qiyu-text-waiting-rhythm-repair.md
 ```
 
 Expected: no `.claude/` files remain in `git status --short`.

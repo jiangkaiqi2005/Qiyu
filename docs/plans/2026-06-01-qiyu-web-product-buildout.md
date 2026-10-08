@@ -16,7 +16,7 @@ This plan is not a single giant feature. It is a staged product buildout. Each s
 
 Source spec:
 
-- `E:\Agent\栖语\docs\superpowers\specs\2026-06-01-qiyu-web-product-design.md`
+- `E:\Agent\栖语\docs\specs\2026-06-01-qiyu-web-product-design.md`
 
 Current known foundation:
 
@@ -530,7 +530,7 @@ No-code constraint:
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-06-01-qiyu-web-product-buildout.md`. Two execution options:
+Plan complete and saved to `docs/plans/2026-06-01-qiyu-web-product-buildout.md`. Two execution options:
 
 1. **Subagent-Driven (recommended)** - dispatch a fresh subagent per task, review between tasks, fast iteration.
 2. **Inline Execution** - execute tasks in this session using `superpowers:executing-plans`, batch execution with checkpoints.

@@ -101,7 +101,7 @@
 - `src/server/settings-route.js`
 - `src/server/config.js`
 - `test/server/settings-route.test.js`
-- `docs/superpowers/plans/2026-06-04-qiyu-api-connection-fix.md`
+- `docs/plans/2026-06-04-qiyu-api-connection-fix.md`
 
 **要做的事:**
 
@@ -271,7 +271,7 @@
 - `README.md`
 - `docs/product/behavior-spec.md`
 - `docs/product/release-checklist.md`
-- `docs/superpowers/plans/2026-06-04-qiyu-api-connection-fix.md`
+- `docs/plans/2026-06-04-qiyu-api-connection-fix.md`
 
 **要做的事:**
 
