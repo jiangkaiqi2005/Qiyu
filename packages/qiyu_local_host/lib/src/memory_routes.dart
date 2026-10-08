@@ -44,6 +44,17 @@ final class MemoryRoutes implements ApiRoutes {
   /// 本身不受影响。
   final EpisodeRagService? embeddingRecall;
 
+  /// 会改写记忆来源或控制记录的动作名（票 04）：成功后调度增量同步。
+  /// 与动作分发 switch 的分支一一对应，新增来源变更动作时同步维护。
+  static const Set<String> _sourceChangingActions = {
+    'edit',
+    'freeze',
+    'unfreeze',
+    'ban',
+    'unban',
+    'delete',
+  };
+
   @override
   Future<Response?> handle(Request request) async {
     // 本领域没有共享口径之外的异常差异：请求体不可读、invalid_request、
@@ -136,17 +147,10 @@ final class MemoryRoutes implements ApiRoutes {
         _ => HttpStatus.ok,
       };
       // 票 04：来源或控制变化成功（含部分失败但控制已写入）后调度召回
-      // 索引的增量同步——后台任务链执行，动作响应不等待网络。
-      final sourceChanged = switch (action) {
-        'edit' ||
-        'freeze' ||
-        'unfreeze' ||
-        'ban' ||
-        'unban' ||
-        'delete' => true,
-        _ => false,
-      };
-      if (sourceChanged &&
+      // 索引的增量同步——后台任务链执行，动作响应不等待网络。集合必须
+      // 与上方动作分发 switch 中「改写来源/控制」的分支保持一致：新增
+      // 此类动作时两处同步修改（delete-preview/reveal 只读，不入集合）。
+      if (_sourceChangingActions.contains(action) &&
           (result.status == MemoryActionStatus.success ||
               result.status == MemoryActionStatus.partial)) {
         embeddingRecall?.scheduleIncrementalSync();

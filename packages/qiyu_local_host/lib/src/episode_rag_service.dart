@@ -223,9 +223,7 @@ final class EpisodeRagService {
     _enabled = false;
     _state = EpisodeRagState.disabled;
     _reason = null;
-    _progressDone = 0;
-    _progressTotal = 0;
-    _pendingCount = 0;
+    _clearProgress();
     return status();
   }
 
@@ -291,13 +289,13 @@ final class EpisodeRagService {
   /// 加载的缓存索引，在途构建凭代数错位自行放弃发布。
   void onMaintenanceCompleted() {
     _maintenanceGeneration += 1;
-    _pendingCount = 0;
     if (_enabled) {
       _loadedIndex = null;
       _state = EpisodeRagState.rebuildNeeded;
       _reason = '记忆数据刚经历过维护（导入/回滚/清除），请重建索引。';
-      _progressDone = 0;
-      _progressTotal = 0;
+      _clearProgress();
+    } else {
+      _pendingCount = 0;
     }
   }
 
@@ -461,9 +459,7 @@ final class EpisodeRagService {
     }
     _state = EpisodeRagState.ready;
     _reason = null;
-    _progressDone = 0;
-    _progressTotal = 0;
-    _pendingCount = 0;
+    _clearProgress();
     if (freshLoad) {
       // 启动/重启后的来源对账（票 04）：盘上索引只是缓存，当前来源
       // 才是事实——同步在任务链上后台执行，不阻塞状态读取。
@@ -483,6 +479,95 @@ final class EpisodeRagService {
 
   Future<Set<String>> _controlledTitles() =>
       openLoopStore?.controlledTitles() ?? Future.value(const <String>{});
+
+  // ---------- 状态迁移助手（票 04 评审收拢） ----------
+
+  /// 清零进度与待处理记账：状态切换的辅助复位，状态与原因由调用方
+  /// 决定。收拢原先散在各转换点的成组复位，防单边修改造成陈旧残留。
+  void _clearProgress() {
+    _progressDone = 0;
+    _progressTotal = 0;
+    _pendingCount = 0;
+  }
+
+  /// 进入「更新中」：本趟待嵌入 jobs 条，进度从头起算。
+  void _markUpdating(int jobs) {
+    _state = EpisodeRagState.updating;
+    _reason = null;
+    _progressDone = 0;
+    _progressTotal = jobs;
+    _pendingCount = jobs;
+  }
+
+  /// 回到「已就绪」：进度清零；[pending] 与 [reason] 携带增量更新的
+  /// 未完成欠账（全部完成时为 0 与 null）。
+  void _markReady({int pending = 0, String? reason}) {
+    _state = EpisodeRagState.ready;
+    _progressDone = 0;
+    _progressTotal = 0;
+    _pendingCount = pending;
+    _reason = reason;
+  }
+
+  // ---------- 共享来源扫描与发布重核 ----------
+
+  /// 扫描当前有效 episodes（Spec 决策 5：完整构建与增量同步共用同一
+  /// 套枚举有效性规则）：排除空、簿记与关系信号条目；受控（禁提/
+  /// 删除/冻结）条目不入索引；sessions、月摘要、PersonaTree 与归档
+  /// 画像从不进入枚举范围。返回以「日期|条目 ID」为键的任务表（插入
+  /// 序 = 日期升序内按条目序，确定性分批依赖它）。手工外部编辑即使
+  /// 没有写入回调，也由每次扫描发现。
+  Future<Map<String, _BuildJob>> _scanValidEpisodeJobs() async {
+    final banned = await _controlledTitles();
+    final jobs = <String, _BuildJob>{};
+    for (final date in await episodePipeline.listEpisodeDates()) {
+      final day = await episodePipeline.readDay(date);
+      if (!day.readable) {
+        continue;
+      }
+      for (final entry in validEpisodeEntries(day.entries)) {
+        if (bannedMemoryText(entry.summary, banned)) {
+          continue;
+        }
+        final input = episodeRagEmbeddingInput(date, entry.summary);
+        jobs['$date|${entry.id}'] = (
+          date: date,
+          entryId: entry.id,
+          input: input,
+          inputSha256: episodeRagInputHash(input),
+        );
+      }
+    }
+    return jobs;
+  }
+
+  /// 发布前重核（Spec 决策 2：完整构建与增量同步发布同一纪律）：逐条
+  /// 按当前日文件核对仍存在、仍有效、未命中控制范围且输入 hash 未变；
+  /// 重核窗口内被编辑、删除、禁提或冻结的条目不得进入发布结果。
+  Future<List<EpisodeRagIndexEntry>> _recheckPublishable(
+    List<EpisodeRagIndexEntry> records,
+    String diagnosticPrefix,
+  ) async {
+    final recheckBanned = await _controlledTitles();
+    final published = <EpisodeRagIndexEntry>[];
+    final recheckDiagnostics = <String>[];
+    for (final record in records) {
+      final entry = await revalidateEpisodeSource(
+        pipeline: episodePipeline,
+        date: record.date,
+        entryId: record.entryId,
+        expectedInputHash: record.inputSha256,
+        banned: recheckBanned,
+        diagnostics: recheckDiagnostics,
+        diagnosticPrefix: diagnosticPrefix,
+      );
+      if (entry == null) {
+        continue;
+      }
+      published.add(record);
+    }
+    return published;
+  }
 
   // ---------- 后台完整构建 ----------
 
@@ -524,34 +609,11 @@ final class EpisodeRagService {
     }
     _state = EpisodeRagState.preparing;
     _reason = null;
-    _progressDone = 0;
-    _progressTotal = 0;
-    // 全量重建接管一切增量欠账：待处理记账清零，防陈旧标志残留。
-    _pendingCount = 0;
+    // 全量重建接管一切增量欠账：待处理记账一并清零，防陈旧标志残留。
+    _clearProgress();
 
-    // 枚举当前有效 episodes（Spec 决策 1）：排除空、簿记与关系信号
-    // 条目；受控（禁提/删除/冻结）条目不入索引；sessions、月摘要、
-    // PersonaTree 与归档画像从不进入枚举范围。
-    final banned = await _controlledTitles();
-    final jobs = <_BuildJob>[];
-    for (final date in await episodePipeline.listEpisodeDates()) {
-      final day = await episodePipeline.readDay(date);
-      if (!day.readable) {
-        continue;
-      }
-      for (final entry in validEpisodeEntries(day.entries)) {
-        if (bannedMemoryText(entry.summary, banned)) {
-          continue;
-        }
-        final input = episodeRagEmbeddingInput(date, entry.summary);
-        jobs.add((
-          date: date,
-          entryId: entry.id,
-          input: input,
-          inputSha256: episodeRagInputHash(input),
-        ));
-      }
-    }
+    // 枚举当前有效 episodes：共享扫描（Spec 决策 1/5 同一套有效性规则）。
+    final jobs = (await _scanValidEpisodeJobs()).values.toList();
     _progressTotal = jobs.length;
 
     final vectors = <EpisodeRagIndexEntry>[];
@@ -597,24 +659,7 @@ final class EpisodeRagService {
     if (_maintenanceGeneration != generation || !_enabled) {
       return;
     }
-    final recheckBanned = await _controlledTitles();
-    final published = <EpisodeRagIndexEntry>[];
-    final recheckDiagnostics = <String>[];
-    for (final vector in vectors) {
-      final entry = await revalidateEpisodeSource(
-        pipeline: episodePipeline,
-        date: vector.date,
-        entryId: vector.entryId,
-        expectedInputHash: vector.inputSha256,
-        banned: recheckBanned,
-        diagnostics: recheckDiagnostics,
-        diagnosticPrefix: 'rag publish recheck',
-      );
-      if (entry == null) {
-        continue;
-      }
-      published.add(vector);
-    }
+    final published = await _recheckPublishable(vectors, 'rag publish recheck');
     if (_maintenanceGeneration != generation || !_enabled) {
       // 重核期间维护开始或被停用：放弃，不发布。
       return;
@@ -625,8 +670,7 @@ final class EpisodeRagService {
     );
     await _indexStore.publish(index);
     _loadedIndex = index;
-    _state = EpisodeRagState.ready;
-    _reason = null;
+    _markReady();
   }
 
   // ---------- 增量同步（票 04） ----------
@@ -669,30 +713,9 @@ final class EpisodeRagService {
       return;
     }
 
-    // 1. 扫描当前有效来源（Spec 决策 5：与查询、回读、下一轮消费同一
-    // 套有效性规则）：排除空、簿记与关系信号条目；受控（禁提/删除/
-    // 冻结）条目不入索引；sessions、月摘要、PersonaTree 与归档画像从
-    // 不进入枚举范围。手工外部编辑即使没有写入回调，也由本次扫描发现。
-    final banned = await _controlledTitles();
-    final current = <String, _BuildJob>{};
-    for (final date in await episodePipeline.listEpisodeDates()) {
-      final day = await episodePipeline.readDay(date);
-      if (!day.readable) {
-        continue;
-      }
-      for (final entry in validEpisodeEntries(day.entries)) {
-        if (bannedMemoryText(entry.summary, banned)) {
-          continue;
-        }
-        final input = episodeRagEmbeddingInput(date, entry.summary);
-        current['$date|${entry.id}'] = (
-          date: date,
-          entryId: entry.id,
-          input: input,
-          inputSha256: episodeRagInputHash(input),
-        );
-      }
-    }
+    // 1. 扫描当前有效来源：共享扫描（Spec 决策 5 同一套有效性规则），
+    // 手工外部编辑即使没有写入回调也由本次扫描发现。
+    final current = await _scanValidEpisodeJobs();
 
     // 2. 对账：输入未变的记录保留；新条目与 hash 失配条目（摘要或日期
     // 已变）入待嵌入队列；索引里指向已消失、受控或失效来源的记录剔除。
@@ -718,11 +741,7 @@ final class EpisodeRagService {
     // 3. 嵌入待处理条目（每批最多 10 条、每批 30 秒）。网络在锁外：
     // 本任务链不持有任何记忆锁，嵌入窗口内来源可以继续变化。
     if (jobs.isNotEmpty) {
-      _state = EpisodeRagState.updating;
-      _reason = null;
-      _progressDone = 0;
-      _progressTotal = jobs.length;
-      _pendingCount = jobs.length;
+      _markUpdating(jobs.length);
     }
     // 零条就绪索引（空库）维度记 0：以首批实际向量补齐身份维度。
     var dimension = index.entries.isEmpty ? 0 : index.identity.dimension;
@@ -787,29 +806,13 @@ final class EpisodeRagService {
     if (!_enabled) {
       _state = EpisodeRagState.disabled;
       _reason = null;
-      _progressDone = 0;
-      _progressTotal = 0;
-      _pendingCount = 0;
+      _clearProgress();
       return;
     }
-    final recheckBanned = await _controlledTitles();
-    final published = <EpisodeRagIndexEntry>[];
-    final recheckDiagnostics = <String>[];
-    for (final record in [...kept, ...embedded]) {
-      final entry = await revalidateEpisodeSource(
-        pipeline: episodePipeline,
-        date: record.date,
-        entryId: record.entryId,
-        expectedInputHash: record.inputSha256,
-        banned: recheckBanned,
-        diagnostics: recheckDiagnostics,
-        diagnosticPrefix: 'rag update recheck',
-      );
-      if (entry == null) {
-        continue;
-      }
-      published.add(record);
-    }
+    final published = await _recheckPublishable(
+      [...kept, ...embedded],
+      'rag update recheck',
+    );
     if (_maintenanceGeneration != generation || !_enabled) {
       return;
     }
@@ -825,20 +828,18 @@ final class EpisodeRagService {
       await _indexStore.publish(updated);
     } on Object catch (error) {
       diagnosticsSink('episode rag update deferred [$error]');
-      _state = EpisodeRagState.ready;
-      _progressDone = 0;
-      _progressTotal = 0;
-      _pendingCount = jobs.length;
-      _reason = '记忆召回索引保存失败，请重试。';
+      _markReady(
+        pending: jobs.length,
+        reason: '记忆召回索引保存失败，请重试。',
+      );
       return;
     }
     _loadedIndex = updated;
     final pending = jobs.length - embedded.length;
-    _state = EpisodeRagState.ready;
-    _progressDone = 0;
-    _progressTotal = 0;
-    _pendingCount = pending;
-    _reason = pending > 0 ? (failure ?? '记忆召回索引更新未完成，请重试。') : null;
+    _markReady(
+      pending: pending,
+      reason: pending > 0 ? (failure ?? '记忆召回索引更新未完成，请重试。') : null,
+    );
   }
 }
 

@@ -717,7 +717,7 @@ void main() {
           finalized: true,
         ),
       );
-      await harness.writeBanned('跑步');
+      await harness.writeControls(banned: '跑步');
       harness.service.scheduleIncrementalSync();
       await harness.service.settlePendingWork();
 
@@ -730,7 +730,7 @@ void main() {
       );
 
       // 解除禁提：按当前来源重新验证后重新嵌入入索引。
-      await harness.writeBanned(null);
+      await harness.writeControls();
       harness.service.scheduleIncrementalSync();
       await harness.service.settlePendingWork();
 
@@ -740,6 +740,65 @@ void main() {
       expect(harness.embedding.calls.single.single, contains('跑步'));
       final hits = await harness.service.locate('跑步') as RagCandidates;
       expect(hits.hits.single.entry.summary, '用户说他开始跑步了');
+    });
+
+    test('冻结条目随增量同步出索引；解除冻结重新入索引', () async {
+      final harness = await _RagHarness.create(
+        episodes: {
+          '2026-08-10': [_entry('s:r1:0', '用户聊到旧书店的事')],
+          '2026-08-11': [_entry('s:r2:0', '用户说他开始跑步了')],
+        },
+        vectors: {
+          '2026-08-10\n用户聊到旧书店的事': [1.0, 0.0],
+          '2026-08-11\n用户说他开始跑步了': [0.0, 1.0],
+        },
+        queryVectors: {'跑步': [0.0, 1.0]},
+      );
+      addTearDown(harness.dispose);
+      await harness.service.enable();
+      await harness.service.settlePendingWork();
+      harness.embedding.calls.clear();
+
+      // 冻结跑步条目：与禁提同走受控集合，同步后退出索引。
+      await harness.writeControls(frozen: '跑步');
+      harness.service.scheduleIncrementalSync();
+      await harness.service.settlePendingWork();
+
+      final index = await harness.indexStoreRead();
+      expect(
+        index!.entries.map((record) => record.entryId),
+        ['s:r1:0'],
+        reason: '冻结条目不再有效，旧向量随同步剔除',
+      );
+      expect(harness.embedding.calls, isEmpty, reason: '剔除不触发重嵌入');
+      final hits = await harness.service.locate('跑步') as RagCandidates;
+      expect(hits.hits.map((hit) => hit.entry.id), ['s:r1:0']);
+      expect(
+        (await harness.service.status()).pendingCount,
+        0,
+        reason: '受控剔除是清理，不算待嵌入欠账',
+      );
+
+      // 解除冻结：按当前来源重新验证后重新嵌入入索引。
+      harness.embedding.calls.clear();
+      await harness.writeControls();
+      harness.service.scheduleIncrementalSync();
+      await harness.service.settlePendingWork();
+
+      final recovered = await harness.indexStoreRead();
+      expect(recovered!.entries, hasLength(2));
+      expect(harness.embedding.calls.single.single, contains('跑步'));
+      final unfrozen = await harness.service.locate('跑步') as RagCandidates;
+      expect(
+        unfrozen.hits.map((hit) => hit.entry.id),
+        containsAll(['s:r1:0', 's:r2:0']),
+      );
+      expect(
+        unfrozen.hits.singleWhere(
+          (hit) => hit.entry.id == 's:r2:0',
+        ).entry.summary,
+        '用户说他开始跑步了',
+      );
     });
 
     test('启动来源扫描：重启后手工外部编辑由对账发现', () async {
@@ -1035,12 +1094,14 @@ final class _RagHarness {
     }
   }
 
-  /// 重写 memory-controls.md 的禁提区（null = 清空禁提）。
-  Future<void> writeBanned(String? keyword) => File(
+  /// 重写 memory-controls.md 的冻结与禁提区（null = 清空对应区）。
+  Future<void> writeControls({String? banned, String? frozen}) => File(
     '${root.path}/memory-controls.md',
   ).writeAsString(
-    '# memory-controls\n## frozen\n## banned\n'
-    '${keyword == null ? '' : '- [MC001] open-loop | $keyword\n'}'
+    '# memory-controls\n## frozen\n'
+    '${frozen == null ? '' : '- [MC001] open-loop | $frozen\n'}'
+    '## banned\n'
+    '${banned == null ? '' : '- [MC002] open-loop | $banned\n'}'
     '## deleted\n',
     encoding: utf8,
   );
