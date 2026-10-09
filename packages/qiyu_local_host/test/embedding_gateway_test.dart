@@ -74,7 +74,7 @@ void main() {
     expect(vectors2[1], orderedCloseTo([0.4, 0.4]));
   });
 
-  test('维度不一致、embedding 缺失、重复序号与非列表响应均不可发布', () async {
+  test('维度不一致、embedding 缺失、非全等的重复序号与非列表响应均不可发布', () async {
     final ragged = _StubEmbeddingHttp(
       responseBody: jsonEncode({
         'data': [
@@ -94,18 +94,23 @@ void main() {
       ),
     );
 
-    // 两条条目挤同一序号：另一个输入没有向量，重复序号必须拒绝而不是
+    // 非全等的重复序号（如 0、1、1）：会有输入没有向量，必须拒绝而不是
     // 让空占位向量出仓。
     final duplicated = _StubEmbeddingHttp(
       responseBody: jsonEncode({
         'data': [
           {'index': 0, 'embedding': [0.1, 0.2]},
-          {'index': 0, 'embedding': [0.3, 0.4]},
+          {'index': 1, 'embedding': [0.3, 0.4]},
+          {'index': 1, 'embedding': [0.5, 0.6]},
         ],
       }),
     );
     await expectLater(
-      gateway(duplicated).embed(config: config, apiKey: 'k', inputs: ['a', 'b']),
+      gateway(duplicated).embed(
+        config: config,
+        apiKey: 'k',
+        inputs: ['a', 'b', 'c'],
+      ),
       throwsA(
         isA<EmbeddingGatewayException>()
             .having(
@@ -150,6 +155,27 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('完全一致的编号视为无有效编号：按返回顺序落位（真百炼批量形态）', () async {
+    // 2026-10-04 真百炼实测（票 08 集成检查复核确认）：compatible-mode
+    // 批量 embedding 响应的 index 恒为 0，按出现顺序落位，不得当作畸形
+    // 拒绝——否则真实服务的完整索引构建必然失败。
+    final uniform = _StubEmbeddingHttp(
+      responseBody: jsonEncode({
+        'data': [
+          {'index': 0, 'embedding': [0.3, 0.3]},
+          {'index': 0, 'embedding': [0.4, 0.4]},
+        ],
+      }),
+    );
+    final vectors = await gateway(uniform).embed(
+      config: config,
+      apiKey: 'k',
+      inputs: ['第一条', '第二条'],
+    );
+    expect(vectors[0], orderedCloseTo([0.3, 0.3]));
+    expect(vectors[1], orderedCloseTo([0.4, 0.4]));
   });
 
   test('非 2xx 按共享分类映射；鉴权失败文案带记忆召回服务标签', () async {

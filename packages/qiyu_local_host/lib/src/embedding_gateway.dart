@@ -196,10 +196,11 @@ Future<({int statusCode, String body})> _postEmbeddingText({
   }
 }
 
-/// OpenAI-compatible embeddings 响应解析与有效性校验。data 按条目自带
-/// 的 index 排序（缺 index 字段按出现顺序）；条目数、维度一致性、有限
-/// 数值与零范数任一不合法都按内容解析失败给人话——不合法响应不可当
-/// 作连接成功，也不可进入有效索引（Spec 工程默认值）。
+/// OpenAI-compatible embeddings 响应解析与有效性校验。data[].index 的
+/// 三种真实行为见落位注释：排列按 index 排序、全等编号与缺 index 按出
+/// 现顺序；条目数、维度一致性、有限数值与零范数任一不合法都按内容解析
+/// 失败给人话——不合法响应不可当作连接成功，也不可进入有效索引（Spec
+/// 工程默认值）。
 List<Float32List> _parseEmbeddingResponse(
   String body, {
   required int expectedCount,
@@ -229,6 +230,18 @@ List<Float32List> _parseEmbeddingResponse(
   }
   final vectors = List<Float32List>.filled(data.length, Float32List(0));
   var dimension = -1;
+  // data[].index 的三种真实行为（2026-10-04 真百炼实测，票 08 集成检查
+  // 复核确认）：0..n-1 排列按 index 落位防乱序；完全一致的编号（百炼
+  // compatible-mode 批量响应恒为 0）视为无有效编号、按返回顺序保留；
+  // 缺 index 的条目按出现顺序落位。落位前校验槽位未被占用——其余重复
+  // index（部分缺失混排撞槽）会让某个输入没有向量，遗留的空占位绝不
+  // 能冒充有效向量出仓。
+  final rawIndexes = [
+    for (final entry in data)
+      entry is Map<String, Object?> ? entry['index'] : null,
+  ];
+  final uniformIndex =
+      rawIndexes.every((index) => index is int && index == rawIndexes.first);
   for (var i = 0; i < data.length; i++) {
     final entry = data[i];
     if (entry is! Map<String, Object?>) {
@@ -237,12 +250,9 @@ List<Float32List> _parseEmbeddingResponse(
         message: '记忆召回服务返回的内容无法解析。',
       );
     }
-    // 条目自带 index 时按它落位：请求多输入时服务可能乱序返回。落位
-    // 前校验槽位未被占用——重复 index（或缺带混排撞槽）会让某个输入
-    // 没有向量，遗留的空占位绝不能冒充有效向量出仓。
     var slot = i;
-    final rawIndex = entry['index'];
-    if (rawIndex is int && rawIndex >= 0 && rawIndex < data.length) {
+    final rawIndex = rawIndexes[i];
+    if (!uniformIndex && rawIndex is int && rawIndex >= 0 && rawIndex < data.length) {
       slot = rawIndex;
     }
     if (vectors[slot].isNotEmpty) {
