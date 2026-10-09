@@ -393,6 +393,15 @@ abstract base class SettingsCredentialForm<
   bool _disposed = false;
   TSettings? _syncedSettings;
 
+  /// 两份设置在「表单回显」意义上是否等值：等值则 [sync] 不重灌任何
+  /// 字段、也不清 Key 草稿。默认按对象同一判断——各域的设置对象只在
+  /// 显式动作（加载、保存、忘记 Key、启停）时更换实例，对象恒定期间
+  /// 草稿自然安全；自带周期轻刷新的领域（记忆召回）每次轮询经反序列
+  /// 化产生新快照对象，覆写为按内容比较，值未变的轮询快照不得擦掉
+  /// 用户草稿。
+  @protected
+  bool settingsContentEquals(TSettings a, TSettings b) => identical(a, b);
+
   /// Key 草稿输入框：同步与保存收尾的清空落点，各域桥接到自己的字段。
   @protected
   TextEditingController get apiKeyDraftController;
@@ -411,11 +420,16 @@ abstract base class SettingsCredentialForm<
   /// 各域释放自己的控制器与焦点节点（Key 框与其焦点也在内）。
   void disposeFields();
 
-  /// 已保存设置同步进表单：只处理新出现的设置对象（同一对象重复同步
-  /// 直接返回，用户的选择与草稿不被重置）；收尾清掉未获焦的旧 Key 草稿
+  /// 已保存设置同步进表单：只处理**内容有变化**的设置对象（同一对象
+  /// 或值未变的新对象重复同步直接返回，用户的选择与草稿不被重置——
+  /// 判等见 [settingsContentEquals]）；收尾清掉未获焦的旧 Key 草稿
   /// ——Key 永不回显。
   void sync(TSettings? settings) {
-    if (settings == null || identical(settings, _syncedSettings)) {
+    if (settings == null) {
+      return;
+    }
+    if (_syncedSettings != null && settingsContentEquals(_syncedSettings!, settings)) {
+      _syncedSettings = settings;
       return;
     }
     _syncedSettings = settings;

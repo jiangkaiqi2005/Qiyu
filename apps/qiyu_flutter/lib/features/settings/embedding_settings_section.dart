@@ -54,6 +54,19 @@ final class EmbeddingSettingsForm
     apiKeyFocusNode.dispose();
   }
 
+  /// 轮询轻刷新（票 03）每次经 fromJson 产生**新**快照对象，表单回显
+  /// 因此按内容判等（壳层 [SettingsCredentialForm.sync] 的收口）：地址
+  /// 、模型与 Key 保存态都没变就跳过同步——值未变的轮询快照不得重灌
+  /// 失焦字段的草稿、不得清 Key 草稿；保存成功、忘记／更换 Key 这类
+  /// 内容确实变化的显式动作照常回显。启用态与 RAG 状态行不进表单，
+  /// 由 build 直接读视图模型，不参与判等。
+  @override
+  bool settingsContentEquals(EmbeddingSettings a, EmbeddingSettings b) =>
+      a.configured == b.configured &&
+      a.keySet == b.keySet &&
+      a.baseUrl == b.baseUrl &&
+      a.model == b.model;
+
   /// 同步一个新出现的设置对象：回显已存的地址与模型。Key 永不回显
   /// （壳层 sync 的收尾清掉未获焦的旧 Key 草稿）。
   @override
